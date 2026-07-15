@@ -1,0 +1,8 @@
+[project]
+name = "game-asset-character"
+version = "0.1.0"
+description = "从角色设定到可进引擎的 2D 角色动作素材工作流（MS1 空骨架）"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
