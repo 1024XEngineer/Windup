@@ -12,7 +12,7 @@ class LoopMode(str, Enum):
 
 class GenRoute(str, Enum):
     A_REFIMG = "A"   # 参考图 + 姿态约束 + 锁身份（主线）
-    B_I2V = "B"      # 图生视频（仅 spike 证伪）
+    B_I2V = "B"      # 图生视频（可插拔第二工作流，已验证可行；当前主线仍逐帧 route A）
 
 
 @dataclass
