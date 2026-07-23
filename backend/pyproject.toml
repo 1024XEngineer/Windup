@@ -1,0 +1,42 @@
+# windup uv workspace 根(虚拟工作区,本身不是包)
+# 成员:common / framework / ai_engine / app 四个独立可打包的包
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+windup-common = { workspace = true }
+windup-framework = { workspace = true }
+windup-ai-engine = { workspace = true }
+windup-app = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.0",
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+# ── 分层依赖约束(CI 用 `lint-imports` 强制,防循环依赖)─────────────────
+# 契约 ① 主分层链:每层只能依赖其下层;web/worker 同层 -> 互不可依赖
+# 契约 ② 入口层(web/worker)不得直连 ai_engine,必须经 server
+[tool.importlinter]
+root_packages = ["windup_common", "windup_framework", "windup_ai_engine", "windup_app"]
+
+[[tool.importlinter.contracts]]
+name = "包分层链"
+type = "layers"
+layers = [
+    "windup_app.bootstrap",
+    "windup_app.web | windup_app.worker",
+    "windup_app.server",
+    "windup_ai_engine",
+    "windup_framework",
+    "windup_common",
+]
+
+[[tool.importlinter.contracts]]
+name = "入口层不经 ai_engine 直连"
+type = "forbidden"
+source_modules = ["windup_app.web", "windup_app.worker"]
+forbidden_modules = ["windup_ai_engine"]
