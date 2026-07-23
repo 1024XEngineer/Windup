@@ -148,7 +148,7 @@ flowchart TB
 | `playtest`      | 动作绑定、模拟试玩和结果记录  | 动作、播放规则          | 试玩结果保存      |
 | `export`        | 选择内容、发起导出和下载    | 正式资产、导出任务        | 导出任务与下载地址   |
 
-所有 feature 都可以使用 `shared/ui` 和 `shared/lib`，但仅使用与自身职责相关的部分。Canvas、Worker、PixiJS 等专用实现保留在所属 feature 内部，不提前放进 `shared`。浏览器下载属于 `features/export` 的职责，不作为 `shared/lib` 的通用能力。
+所有 feature 都可以使用 `shared/ui` 和 `shared/lib`，但仅使用与自身职责相关的部分。Canvas、Worker、PixiJS 等专用实现保留在所属 feature 内部，不提前放进 `shared`。
 
 ### 2.5 精确 Import 权限
 
@@ -157,13 +157,10 @@ flowchart TB
 | `app` | `pages`、`api/client`、`shared` | feature 内部、`api/generated` |
 | `pages` | 各 feature 的 `index.ts`、`shared` | feature 内部、`api/generated`、`app` |
 | `features/<name>` | `api/client`、`shared` | 其他 feature、`pages`、`app`、`api/generated` |
-| `api/client` | `api/generated`、`api/mock`、`shared/lib` | `features`、`pages`、`app`、`shared/ui` |
-| `api/mock` | `shared/lib` | `api/client`、`api/generated`、`features`、`pages`、`app`、`shared/ui` |
+| `api/client` | `api/generated`、`shared/lib` | `features`、`pages`、`app`、`shared/ui` |
 | `shared` | `shared` 内部文件 | 所有业务层 |
 
-`shared/lib` 只保存无状态、无 UI、无浏览器和网络依赖的纯工具。`api/mock` 是 `api/client` 背后的私有本地数据源实现，只能由 `api/client` 选择和调用；feature、page 和 app 不得直接 import `api/mock`。`api/client` 负责将 Mock 与真实传输结果统一为相同的公开结果，因此切换数据源不会改变 Feature 的依赖方向。
-
-浏览器下载不属于 `shared/lib`：`api/client` 只负责取得导出任务状态或下载地址，`features/export` 负责用户触发下载以及 `Blob`、`URL`、`document`、锚点元素等浏览器 API 的使用。
+`shared/lib` 只保存无状态、无 UI、无浏览器和网络依赖的纯工具。
 
 禁止项：
 
@@ -236,11 +233,11 @@ src/
 ├─ api/                    前端与 Python 后端的唯一通信入口
 │  ├─ generated/           根据接口契约自动生成，禁止手改
 │  ├─ client/              请求、进度更新和错误转换
-│  └─ mock/                仅供 api/client 选择的本地数据源，禁止业务层直接使用
+│  └─ mock/                与真实客户端保持同一接口的骨架实现
 │
 └─ shared/                 无业务依赖的通用零件
    ├─ ui/                  按钮、弹窗、输入框、进度条等
-   ├─ lib/                 不依赖浏览器和网络的格式化等纯工具
+   ├─ lib/                 格式化、下载等通用工具
    └─ testing/             通用测试辅助工具
 
 tests/
@@ -300,7 +297,7 @@ Quick Start 与从项目开始均由 `features/creation/` 创建或恢复同一�
 app 启动
 → 打开一个 page
 → page 使用一个 feature
-→ feature 通过 api/client 获得数据（骨架阶段由 api/client 选择 api/mock）
+→ feature 通过 api/mock 获得数据
 → 使用 shared/ui 显示结果
 ```
 
