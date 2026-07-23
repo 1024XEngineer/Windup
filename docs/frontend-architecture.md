@@ -231,9 +231,10 @@ src/
 │  └─ export/              导出
 │
 ├─ api/                    前端与 Python 后端的唯一通信入口
-│  ├─ generated/           根据接口契约自动生成，禁止手改
-│  ├─ client/              请求、进度更新和错误转换
-│  └─ mock/                与真实客户端保持同一接口的骨架实现
+│  ├─ generated/           根据接口契约自动生成的类型，禁止手改
+│  └─ client/              唯一对外接口：请求、进度更新和错误转换
+│     ├─ real/             真实现：调用后端
+│     └─ mock/             假实现：后端未就绪时顶替，由配置切换、上线前删
 │
 └─ shared/                 无业务依赖的通用零件
    ├─ ui/                  按钮、弹窗、输入框、进度条等
@@ -281,7 +282,7 @@ Quick Start 与从项目开始均由 `features/creation/` 创建或恢复同一�
 
 ### API 边界与 Feature 模型
 
-浏览器向 Python 后端发送的请求统一经过 `api/client/`。自动生成的接口类型放在 `api/generated/`，重新生成而不手工修改。
+浏览器向 Python 后端发送的请求统一经过 `api/client/`。自动生成的接口类型放在 `api/generated/`，重新生成而不手工修改。`api/client/` 对外只暴露一套接口，其真实实现（`real/`）与桩实现（`mock/`）由环境配置切换、同一时间只启用一个，后端就绪后弃用 mock。
 
 `api/generated/` 表示后端传输格式，仅允许 `api/client/` 直接使用。Feature 默认使用 `api/client/` 的公开结果；如果某个 Feature 需要不同的数据形状，在该 Feature 内按需增加 `model.ts` 和 `adapter.ts`，不提前建立全局模型层。分页参数、错误响应等传输对象保留在 API 层。
 
@@ -297,7 +298,7 @@ Quick Start 与从项目开始均由 `features/creation/` 创建或恢复同一�
 app 启动
 → 打开一个 page
 → page 使用一个 feature
-→ feature 通过 api/mock 获得数据
+→ feature 通过 api/client（骨架期走 mock 实现）获得数据
 → 使用 shared/ui 显示结果
 ```
 
