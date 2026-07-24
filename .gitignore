@@ -25,6 +25,3 @@ output/
 .ruff_cache/
 .pytest_cache/
 .import_linter_cache/
-
-# 依赖锁文件(骨架阶段暂不入库,稳定后可取消忽略)
-uv.lock
