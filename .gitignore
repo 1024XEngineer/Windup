@@ -11,12 +11,21 @@ venv/
 .idea/
 .vscode/
 
+# 本地 agent / 工具产物(个人本地,不入库)
+.agents/
+.claude/
+.evolver/
+skills-lock.json
+docs/
+
 # 系统文件
 .DS_Store
 
 # 敏感配置(切勿提交)
 .env
 .env.*
+# .env.example 是模板,需入库供参考
+!.env.example
 
 # 运行产物
 output/
