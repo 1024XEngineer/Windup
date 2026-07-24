@@ -13,6 +13,9 @@ dependencies = [
     "sqlalchemy>=2.0",
 ]
 
+[project.scripts]
+windup = "windup_app.bootstrap.app:main"
+
 [tool.uv.sources]
 windup-common = { workspace = true }
 windup-framework = { workspace = true }
