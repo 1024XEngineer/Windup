@@ -5,7 +5,7 @@
 ## 1. 技术边界
 
 - 工作台前端：React + Vite + TypeScript + Tailwind CSS。
-- 业务后端：Python；后端是项目、角色、资产、任务和 `WorkflowRun` 的持久化事实来源。
+- 业务后端：Python；后端是项目、角色、动作模板、穿戴资产、任务和 `WorkflowRun` 的持久化事实来源。
 - 前端不复制一套业务真相，只保存渲染和交互所需的查询缓存与临时界面状态。
 - 架构参考 FSD 官方分层规则，但只使用本项目确有价值的层。
 
@@ -15,16 +15,16 @@
 |---|---|---|
 | `app` | 启动和全局配置 | Router、Provider、全局布局、错误边界 |
 | `pages` | 对应完整路由页面 | 首页、项目页、资产库页、工作流页 |
-| `widgets` | 组合多个下层模块形成完整界面区块 | Quick Start、Workflow Editor |
-| `features` | 用户对业务对象执行的操作 | 生成、质检、审核、试玩、导出 |
-| `entities` | 前端反复使用的业务对象 | Project、Character、Asset、WorkflowRun |
+| `widgets` | 组合多个下层模块形成完整界面区块 | Quick Start、Workflow Editor、QC Station、Asset Library |
+| `features` | 用户对业务对象执行的操作 | 角色与动作设置、生成、审核(含质检结果)、试玩、导出 |
+| `entities` | 前端反复使用的业务对象 | Project、Character、ActionTemplate、Wearable、WorkflowRun |
 | `shared` | 不理解 Windup 业务的基础代码 | API 传输、UI 基础件、通用工具、测试辅助 |
 
 判断方式：
 
 - `Project`、`Character`、`WorkflowRun` 是名词，是 Entity。
 - "生成动作""审核帧""导出资产"是用户操作，是 Feature。
-- Quick Start 与 Workflow Editor 会组合多个 Feature 和 Entity，是 Widget。
+- Quick Start、Workflow Editor、QC Station 与 Asset Library 会组合多个 Feature 和 Entity，是 Widget。
 - Button、Modal、HTTP 客户端不知道什么是 Project，属于 Shared。
 
 ## 3. 依赖方向
@@ -93,6 +93,7 @@ widgets/quick-start → widgets/workflow-editor
 export interface WorkflowRun {
   id: string;
   projectId: string;
+  characterId: string | null;  // 流程走到建角色那一步之前为 null，建出角色后回填
   currentStepId: string | null;
   steps: WorkflowStep[];
   status: WorkflowRunStatus;
@@ -103,7 +104,7 @@ export interface WorkflowRun {
 
 ```text
 entities/workflow-run/
-├─ api/
+├─ api/                          （对应后端接口待补充，需与后端同学确认）
 │  ├─ create-workflow-run.ts
 │  ├─ get-workflow-run.ts
 │  └─ submit-workflow-step.ts
@@ -161,26 +162,41 @@ flowchart LR
     run --> api["shared/api"]
 ```
 
+### AssetLibraryPage
+
+```mermaid
+flowchart LR
+    page["AssetLibraryPage"] --> lib["AssetLibrary Widget"]
+    lib --> character["Character Entity"]
+    lib --> template["ActionTemplate Entity"]
+    lib -. 继续补充动作 .-> charFeature["CharacterSetup Feature"]
+    lib -. 从动作资产进入 .-> qc["QCStation Widget"]
+    character --> api["shared/api"]
+    template --> api
+```
+
+`AssetLibraryPage` 只挂 `AssetLibrary` Widget。该 Widget 直接读 `Character`、`ActionTemplate` 两个 Entity 做浏览与筛选，自己管筛选状态；"继续补充动作"复用 `CharacterSetup` Feature，不重新实现；"从动作资产进入审核台"是页面跳转，指向 `QCStation` Widget。
+
 ### WorkflowPage
 
 ```mermaid
 flowchart TB
     page["WorkflowPage"] --> editor["WorkflowEditor Widget"]
+    page --> qc["QCStation Widget"]
+    page --> export["Export Feature"]
+    editor --> characterSetup["CharacterSetup Feature"]
     editor --> generation["Generation Feature"]
-    editor --> quality["Quality Feature"]
-    editor --> review["Review Feature"]
-    editor --> playtest["Playtest Feature"]
-    editor --> export["Export Feature"]
-    editor --> run["WorkflowRun Entity"]
+    qc --> review["Review Feature"]
+    qc --> playtest["Playtest Feature"]
+    characterSetup --> run["WorkflowRun Entity"]
     generation --> run
-    quality --> run
     review --> run
     playtest --> run
     export --> run
     run --> api["shared/api"]
 ```
 
-`WorkflowPage` 只负责路由参数、页面外壳和挂载 Widget。Workflow Editor Widget 负责组合完整工作流界面，但不重新实现 Generation、Review 等 Feature。
+`WorkflowPage` 只负责路由参数、页面外壳，挂载 `WorkflowEditor`、`QCStation` 两个 Widget，并直接使用 `Export` Feature(它没有自己的交互状态，不需要包一层 Widget)。`WorkflowEditor` 管理角色与动作设置、生成这两段；`QCStation` 组合 `Review` 与 `Playtest`，两者共用同一个 `runId` 对应的 `WorkflowRun`。
 
 ## 6. 目录结构
 
@@ -192,26 +208,29 @@ src/
 ├─ pages/                       路由级完整页面
 │  ├─ home/                     挂载 Quick Start
 │  ├─ projects/                 项目列表与详情
-│  ├─ asset-library/            当前项目资产库
-│  └─ workflow/                 挂载 Workflow Editor，传递 runId
+│  ├─ asset-library/            挂载 Asset Library Widget
+│  └─ workflow/                 挂载 Workflow Editor、QC Station，直接用 Export
 │
 ├─ widgets/                     组合多个 Feature 和 Entity 的完整界面区块
 │  ├─ quick-start/              AI 快捷入口，自动驱动同一份 WorkflowRun
-│  └─ workflow-editor/          手动画布入口
-│     ├─ canvas/                节点、连线和画布交互
-│     └─ navigation/            步骤导航与当前处理位置
+│  ├─ workflow-editor/          手动画布入口，管理角色/动作设置与生成
+│  │  ├─ canvas/                节点、连线和画布交互
+│  │  └─ navigation/            步骤导航与当前处理位置
+│  ├─ qc-station/               质检台：组合 Review 与 Playtest
+│  └─ asset-library/            按角色/视角/动作浏览资产，自己管筛选状态
 │
 ├─ features/                    用户对 Entity 执行的操作
+│  ├─ character-setup/         创建/确认角色与母版，选择动作模板应用到角色
 │  ├─ generation/              发起生成、重试、确认候选
-│  ├─ quality/                 查看和处理自动质检结果
-│  ├─ review/                  人工审核与退回修复
+│  ├─ review/                  人工审核、查看自动质检结果与退回修复
 │  ├─ playtest/                浏览器内手感模拟质检
 │  └─ export/                  选择内容、发起导出和下载
 │
 ├─ entities/                    Windup 业务对象
 │  ├─ project/                 项目数据、查询和通用展示
-│  ├─ character/               角色、造型、母版和动作关系
-│  ├─ asset/                   正式资产、候选与生成记录引用
+│  ├─ character/               角色、造型、母版、动作(Action)及候选/正式状态、帧
+│  ├─ action-template/         可复用的动作模板，跨角色/跨造型复用
+│  ├─ wearable/                可复用的穿戴资产，跨角色/跨造型复用
 │  └─ workflow-run/            两个入口共用的运行数据和命令
 │
 └─ shared/                      无 Windup 业务含义的基础代码
@@ -244,9 +263,11 @@ tests/
 ### Widgets
 
 - `quick-start` 组合 AI 输入、Generation 与 WorkflowRun。
-- `workflow-editor` 组合画布、Generation、Quality、Review、Playtest、Export 与 WorkflowRun。
+- `workflow-editor` 组合画布、CharacterSetup、Generation 与 WorkflowRun。
+- `qc-station` 组合 Review、Playtest 与 WorkflowRun。
+- `asset-library` 组合 Character、ActionTemplate，复用 CharacterSetup 的补充动作能力。
 - Widget 之间不互相 import。
-- 只保存本 Widget 的界面状态，如画布缩放、选中节点、对话输入草稿。
+- 只保存本 Widget 的界面状态，如画布缩放、选中节点、对话输入草稿、当前审核帧、播放状态、资产筛选条件。
 
 ### Features
 
@@ -258,7 +279,7 @@ tests/
 ### Entities
 
 - 保存前端所需的业务模型、查询和通用业务展示。
-- Project、Character、Asset、WorkflowRun 都是 Entity。
+- Project、Character、ActionTemplate、Wearable、WorkflowRun 都是 Entity。
 - Entity 不依赖 Feature 或 Widget。
 - 后端仍是持久化事实来源。
 
@@ -275,10 +296,14 @@ tests/
 |---|---|---|
 | WorkflowRun、步骤、当前进度 | `entities/workflow-run` | Python 后端 |
 | Project | `entities/project` | Python 后端 |
-| Character、造型、动作关系 | `entities/character` | Python 后端 |
-| 候选与正式资产引用 | `entities/asset` | Python 后端 |
+| Character、造型、动作(候选/正式状态)、帧 | `entities/character` | Python 后端 |
+| ActionTemplate | `entities/action-template` | Python 后端 |
+| Wearable | `entities/wearable` | Python 后端 |
 | 画布缩放、拖拽、选中节点 | `widgets/workflow-editor` | 前端临时状态 |
 | Quick Start 输入草稿 | `widgets/quick-start` | 前端临时状态 |
+| 当前审核帧、播放状态 | `widgets/qc-station` | 前端临时状态 |
+| 资产筛选条件(角色/视角/动作) | `widgets/asset-library` | 前端临时状态 |
+| CharacterSetup 交互状态 | `features/character-setup` | 角色/母版数据来自后端 |
 | Generation 交互状态 | `features/generation` | 任务状态来自后端 |
 | Review 交互状态 | `features/review` | 审核结论来自后端 |
 
@@ -286,7 +311,7 @@ tests/
 
 ## 9. 资产、审核与导出约束
 
-- 生成候选归属于 Generation Job。
+- 生成候选归属于生成记录(Generation Run)。
 - 候选经用户明确确认后才能成为正式资产。
 - 新候选不得直接覆盖正式资产。
 - 系统质检通过不等于人工审核通过。
