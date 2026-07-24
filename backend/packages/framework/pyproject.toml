@@ -13,7 +13,7 @@ dependencies = [
     "pyjwt>=2.9",
     # 以下两项按选型启用:
     # "rocketmq-client",   # RocketMQ Python 客户端(5.x gRPC 版 / C++ 绑定版二选一)
-    # "minio",             # 对象存储;若用 OSS/S3 换 oss2 / boto3
+    "qiniu>=7.14",        # 对象存储(七牛 Kodo);若换 OSS/S3/MinIO 改 oss2 / boto3 / minio
 ]
 
 [tool.uv.sources]

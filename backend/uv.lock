@@ -1031,6 +1031,18 @@ wheels = [
 ]
 
 [[package]]
+name = "qiniu"
+version = "7.18.0"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
+dependencies = [
+    { name = "requests" },
+]
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/32/e5/82e5078de1204b641d6b24fdd15b3c5a87a7dd71f514e4a3cfb845a2d988/qiniu-7.18.0.tar.gz", hash = "sha256:d9edca3a1c5217c13638a08d9095cd1661f5ba6cf92ea3827949ff3d332ea4fa" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/1d/56/9368cd96d2132017f5748a812cb20a87263498de314e1823472cb4bdbad9/qiniu-7.18.0-py3-none-any.whl", hash = "sha256:0f1be608ac6800ad5f32690d1aa02353b6b2ff5edc78f32a2318859d375a27df" },
+]
+
+[[package]]
 name = "requests"
 version = "2.34.2"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
@@ -1513,6 +1525,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyjwt" },
+    { name = "qiniu" },
     { name = "sqlalchemy" },
     { name = "windup-common" },
 ]
@@ -1524,6 +1537,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-settings", specifier = ">=2.4" },
     { name = "pyjwt", specifier = ">=2.9" },
+    { name = "qiniu", specifier = ">=7.14" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "windup-common", editable = "packages/common" },
 ]
