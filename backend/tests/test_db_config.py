@@ -1,5 +1,6 @@
 """数据库配置与 engine 的单元测试(不连真实库)。"""
 
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase
 
 from windup_framework.config.database import DatabaseSettings, settings
@@ -31,3 +32,15 @@ def test_engine_and_session_factory_created():
 def test_base_is_declarative():
     """Base 是 DeclarativeBase 子类,可被领域模型继承。"""
     assert issubclass(Base, DeclarativeBase)
+
+
+def test_url_escapes_reserved_password_chars(monkeypatch):
+    """密码含保留字符(@ : / !)时,url 仍能被 SQLAlchemy 正确解析并往返。"""
+    monkeypatch.setenv("POSTGRES_PASSWORD", "p@ss:word/!")
+    s = DatabaseSettings()
+    parsed = make_url(s.url)  # 旧 f-string 实现会在此抛 ValueError
+    assert parsed.password == "p@ss:word/!"
+    assert parsed.port == s.port
+    assert parsed.host == s.host
+    assert parsed.database == s.db
+    assert s.url.startswith("postgresql+psycopg://")

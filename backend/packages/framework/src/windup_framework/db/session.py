@@ -22,15 +22,16 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 
-async def get_session() -> Iterator[Session]:
-    """FastAPI 依赖:每请求一个 session,请求结束自动关闭。"""
-    async with SessionLocal() as session:
-        try :
-            yield session
-            await session.commit()
+def get_session() -> Iterator[Session]:
+    """FastAPI 依赖:每请求一个同步 session,请求结束自动提交/回滚并关闭。
 
+    引擎与 SessionLocal 均为同步(``create_engine`` / ``sessionmaker``),
+    因此本依赖是普通生成器,配合同步路由使用。
+    """
+    with SessionLocal() as session:
+        try:
+            yield session
+            session.commit()
         except Exception:
-            await session.rollback()
+            session.rollback()
             raise
-        finally:
-            await session.close()

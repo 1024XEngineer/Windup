@@ -6,6 +6,7 @@
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import URL
 
 
 class DatabaseSettings(BaseSettings):
@@ -30,11 +31,19 @@ class DatabaseSettings(BaseSettings):
 
     @property
     def url(self) -> str:
-        """SQLAlchemy 连接串(psycopg3 驱动)。"""
-        return (
-            f"postgresql+psycopg://{self.user}:{self.password}"
-            f"@{self.host}:{self.port}/{self.db}"
-        )
+        """SQLAlchemy 连接串(psycopg3 驱动)。
+
+        用 ``URL.create`` 构造以正确转义密码中的保留字符(``@ : /`` 等),
+        再渲染为 str 以保持返回类型契约。
+        """
+        return URL.create(
+            drivername="postgresql+psycopg",
+            username=self.user,
+            password=self.password,
+            host=self.host,
+            port=self.port,
+            database=self.db,
+        ).render_as_string(hide_password=False)
 
 
 settings = DatabaseSettings()
