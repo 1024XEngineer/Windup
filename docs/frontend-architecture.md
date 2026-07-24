@@ -1,315 +1,335 @@
 # Windup MS2 前端架构设计
 
-> 本文定义 MS2 前端的技术边界、目录结构、依赖方向与骨架验收范围。
+> 本文定义 MS2 前端的 FSD 分层、模块职责、依赖方向，以及 Quick Start 与 Workflow Editor 共用同一份 `WorkflowRun` 的方式。
 
 ## 1. 技术边界
 
 - 工作台前端：React + Vite + TypeScript + Tailwind CSS。
-- 业务后端：Python，前端统一通过 API 与其通信。
+- 业务后端：Python；后端是项目、角色、资产、任务和 `WorkflowRun` 的持久化事实来源。
+- 前端不复制一套业务真相，只保存渲染和交互所需的查询缓存与临时界面状态。
+- 架构参考 FSD 官方分层规则，但只使用本项目确有价值的层。
 
-## 2. 依赖方向
+## 2. 分层定义
 
-### 2.1 应用主干
+| 层级 | 一句话职责 | Windup 中的内容 |
+|---|---|---|
+| `app` | 启动和全局配置 | Router、Provider、全局布局、错误边界 |
+| `pages` | 对应完整路由页面 | 首页、项目页、资产库页、工作流页 |
+| `widgets` | 组合多个下层模块形成完整界面区块 | Quick Start、Workflow Editor |
+| `features` | 用户对业务对象执行的操作 | 生成、质检、审核、试玩、导出 |
+| `entities` | 前端反复使用的业务对象 | Project、Character、Asset、WorkflowRun |
+| `shared` | 不理解 Windup 业务的基础代码 | API 传输、UI 基础件、通用工具、测试辅助 |
 
+判断方式：
 
+- `Project`、`Character`、`WorkflowRun` 是名词，是 Entity。
+- "生成动作""审核帧""导出资产"是用户操作，是 Feature。
+- Quick Start 与 Workflow Editor 会组合多个 Feature 和 Entity，是 Widget。
+- Button、Modal、HTTP 客户端不知道什么是 Project，属于 Shared。
 
-```mermaid
-flowchart LR
-    app(["app<br/>启动应用"]) --> pages("pages<br/>组装页面") --> entry["features/name/index.ts<br/>功能公开入口"]
-
-    classDef appNode fill:#F1EEFA,stroke:#7261A8,color:#302653,stroke-width:1.5px;
-    classDef pageNode fill:#EAF1F8,stroke:#58789B,color:#24384D,stroke-width:1.5px;
-    classDef featureNode fill:#EDF5F0,stroke:#5F816C,color:#294235,stroke-width:1.5px;
-    class app appNode;
-    class pages pageNode;
-    class entry featureNode;
-```
-
-### 2.2 页面与 Feature 协作
-
-| 页面                 | 调用的 Feature                                                           | 页面负责                          |
-| ------------------ | --------------------------------------------------------------------- | ----------------------------- |
-| `HomePage`         | `creation`                                                            | 选择制作入口，创建或恢复 `WorkflowRun`    |
-| `ProjectsPage`     | `project`、`creation`                                                  | 查看项目；从选中项目创建或恢复 `WorkflowRun` |
-| `AssetLibraryPage` | `asset-library`、`character`                                           | 组合资产浏览与角色、母版、动作管理             |
-| `WorkflowPage`     | `workflow-editor`、`generation`、`quality`、`review`、`playtest`、`export` | 组合运行画布及各步骤界面，传递 `runId` 和路由参数 |
-
-页面只负责布局、路由和模块组装，不保存跨步骤业务真相，也不直接实现生成、审核或导出逻辑。
-
-### 2.3 页面与 Feature 完整协作关系
-
-箭头从 Page 指向 Feature，表示页面通过该 Feature 的 `index.ts` 调用其公开能力；箭头从 Feature 指向 `api/client`，表示业务请求统一经过 API 层。Feature 之间不互相 import。
-
-#### HomePage
+## 3. 依赖方向
 
 ```mermaid
 flowchart LR
-    page("HomePage<br/>选择制作入口") --> creation["creation<br/>创建或恢复运行"]
-    creation --> api{{"api/client"}} --> backend[("Python 后端<br/>业务数据事实来源")]
-
-    classDef pageNode fill:#EAF1F8,stroke:#58789B,color:#24384D,stroke-width:1.5px;
-    classDef featureNode fill:#EDF5F0,stroke:#5F816C,color:#294235,stroke-width:1.5px;
-    classDef apiNode fill:#FAF1E3,stroke:#A47738,color:#573C18,stroke-width:1.5px;
-    classDef backendNode fill:#F0F1F3,stroke:#6F7782,color:#30343B,stroke-width:1.5px;
-    class page pageNode;
-    class creation featureNode;
-    class api apiNode;
-    class backend backendNode;
+    app["app"] --> pages["pages"]
+    pages --> widgets["widgets"]
+    pages --> features["features"]
+    pages --> entities["entities"]
+    widgets --> features
+    widgets --> entities
+    features --> entities
+    entities --> shared["shared"]
+    features --> shared
+    widgets --> shared
+    pages --> shared
 ```
 
-#### ProjectsPage
+统一规则：
 
-```mermaid
-flowchart TB
-    page("ProjectsPage<br/>项目列表与详情")
-    page --> project["project<br/>项目查询与编辑"]
-    page --> creation["creation<br/>从项目创建或恢复运行"]
-    project --> api{{"api/client"}}
-    creation --> api
-    api --> backend[("Python 后端<br/>业务数据事实来源")]
+1. 代码只能依赖更低层。
+2. 同一层的不同 Slice 不能互相 import。
+3. 每个 Slice 只通过根目录 `index.ts` 暴露公开接口。
+4. 禁止绕过 `index.ts` 读取另一个 Slice 的内部文件。
+5. 禁止循环依赖。
 
-    classDef pageNode fill:#EAF1F8,stroke:#58789B,color:#24384D,stroke-width:1.5px;
-    classDef featureNode fill:#EDF5F0,stroke:#5F816C,color:#294235,stroke-width:1.5px;
-    classDef apiNode fill:#FAF1E3,stroke:#A47738,color:#573C18,stroke-width:1.5px;
-    classDef backendNode fill:#F0F1F3,stroke:#6F7782,color:#30343B,stroke-width:1.5px;
-    class page pageNode;
-    class project,creation featureNode;
-    class api apiNode;
-    class backend backendNode;
+因此：
+
+```text
+widgets/workflow-editor → features/generation → entities/workflow-run
+widgets/workflow-editor → features/review     → entities/workflow-run
+widgets/quick-start     → features/generation → entities/workflow-run
 ```
 
-#### AssetLibraryPage
+合法；但：
 
-```mermaid
-flowchart TB
-    page("AssetLibraryPage<br/>当前项目资产库")
-    page --> library["asset-library<br/>浏览、筛选和入口跳转"]
-    page --> character["character<br/>角色、母版和动作管理"]
-    library --> api{{"api/client"}}
-    character --> api
-    api --> backend[("Python 后端<br/>业务数据事实来源")]
-
-    classDef pageNode fill:#EAF1F8,stroke:#58789B,color:#24384D,stroke-width:1.5px;
-    classDef featureNode fill:#EDF5F0,stroke:#5F816C,color:#294235,stroke-width:1.5px;
-    classDef apiNode fill:#FAF1E3,stroke:#A47738,color:#573C18,stroke-width:1.5px;
-    classDef backendNode fill:#F0F1F3,stroke:#6F7782,color:#30343B,stroke-width:1.5px;
-    class page pageNode;
-    class library,character featureNode;
-    class api apiNode;
-    class backend backendNode;
+```text
+features/generation → features/review
+entities/workflow-run → features/generation
+widgets/quick-start → widgets/workflow-editor
 ```
 
-#### WorkflowPage
+禁止。
 
-```mermaid
-flowchart TB
-    page("WorkflowPage<br/>组合步骤并传入 runId")
-
-    page --> workflowEditor["workflow-editor<br/>步骤与画布"]
-    page --> generation["generation<br/>生成与候选"]
-    page --> quality["quality<br/>自动质检"]
-    page --> review["review<br/>人工审核"]
-    page --> playtest["playtest<br/>可选试玩"]
-    page --> export["export<br/>导出"]
-
-    workflowEditor --> api{{"api/client"}}
-    generation --> api
-    quality --> api
-    review --> api
-    playtest --> api
-    export --> api
-
-    api --> backend[("Python 后端<br/>WorkflowRun 事实来源")]
-
-    classDef pageNode fill:#EAF1F8,stroke:#58789B,color:#24384D,stroke-width:1.5px;
-    classDef featureNode fill:#EDF5F0,stroke:#5F816C,color:#294235,stroke-width:1.5px;
-    classDef apiNode fill:#FAF1E3,stroke:#A47738,color:#573C18,stroke-width:1.5px;
-    classDef backendNode fill:#F0F1F3,stroke:#6F7782,color:#30343B,stroke-width:1.5px;
-    class page pageNode;
-    class workflowEditor,generation,quality,review,playtest,export featureNode;
-    class api apiNode;
-    class backend backendNode;
-```
-
-`WorkflowPage` 向各 Feature 传入同一个 `runId`。例如，`generation` 不直接调用 `review`；两者分别通过 `api/client` 使用同一份后端运行状态。
-
-### 2.4 Feature 与基础模块协作
-
-| Feature         | 对外能力            | 使用的业务数据          | 使用的 API 能力  |
-| --------------- | --------------- | ---------------- | ----------- |
-| `creation`      | 创建、恢复运行         | `WorkflowRun`、步骤 | 创建与恢复运行     |
-| `project`       | 项目列表、详情和编辑      | 项目               | 项目查询与保存     |
-| `character`     | 角色、母版和动作管理      | 角色、动作、帧          | 角色与动作资产读写   |
-| `asset-library` | 资产浏览、筛选和入口跳转    | 角色、动作、帧          | 项目资产查询      |
-| `workflow-editor` | 运行步骤、画布和当前状态    | `WorkflowRun`、步骤 | 运行状态读取与提交   |
-| `generation`    | 发起、重试、查看候选和确认入库 | 生成任务、候选、正式资产     | 生成任务与候选入库   |
-| `quality`       | 展示自动质检结果        | 质检结论、问题项         | 质检结果查询      |
-| `review`        | 逐帧审核、修复和人工结论    | 帧、审核结论、播放规则      | 审核状态保存与修复任务 |
-| `playtest`      | 动作绑定、模拟试玩和结果记录  | 动作、播放规则          | 试玩结果保存      |
-| `export`        | 选择内容、发起导出和下载    | 正式资产、导出任务        | 导出任务与下载地址   |
-
-所有 feature 都可以使用 `shared/ui` 和 `shared/lib`，但仅使用与自身职责相关的部分。Canvas、Worker、PixiJS 等专用实现保留在所属 feature 内部，不提前放进 `shared`。
-
-### 2.5 精确 Import 权限
+### 精确 Import 权限
 
 | 调用方 | 允许 import | 禁止 import |
 |---|---|---|
-| `app` | `pages`、`api/client`、`shared` | feature 内部、`api/generated` |
-| `pages` | 各 feature 的 `index.ts`、`shared` | feature 内部、`api/generated`、`app` |
-| `features/<name>` | `api/client`、`shared` | 其他 feature、`pages`、`app`、`api/generated` |
-| `api/client` | `api/generated`、`shared/lib` | `features`、`pages`、`app`、`shared/ui` |
-| `shared` | `shared` 内部文件 | 所有业务层 |
+| `app` | `pages`、`widgets`、`features`、`entities`、`shared` 的公开接口 | 任意 Slice 内部文件 |
+| `pages/<name>` | `widgets`、`features`、`entities`、`shared` 的公开接口 | 其他 Page、任意内部文件 |
+| `widgets/<name>` | `features`、`entities`、`shared` 的公开接口 | 其他 Widget、Pages、App |
+| `features/<name>` | `entities`、`shared` 的公开接口 | 其他 Feature、Widgets、Pages、App |
+| `entities/<name>` | `shared` 的公开接口 | 其他 Entity、Features、Widgets、Pages、App |
+| `shared` | `shared` 内部模块 | 所有业务层 |
 
-`shared/lib` 只保存无状态、无 UI、无浏览器和网络依赖的纯工具。
+## 4. WorkflowRun 的唯一归属
 
-禁止项：
+### 4.1 为什么是 Entity
 
-- 下层反过来 import 上层。
-- 任意 feature import 另一个 feature，包括对方的 `index.ts`。
-- `pages` 绕过 `features/<name>/index.ts` 进入 feature 的内部目录；`app` 直接 import feature。
-- 任何循环依赖。
+`WorkflowRun` 是 Quick Start、Workflow Editor、Generation、Review 等多个模块共同使用的业务对象。它不是一个页面，也不是一个用户操作，因此不放在 Widget 或 Feature。
 
-### 2.6 Feature 封装方式
+前端 Entity 只描述前端需要使用的运行数据；完整数据仍由后端保存。
 
-每个 feature 是一个独立黑盒，只通过根目录的 `index.ts` 暴露稳定能力。
+```ts
+export interface WorkflowRun {
+  id: string;
+  projectId: string;
+  currentStepId: string | null;
+  steps: WorkflowStep[];
+  status: WorkflowRunStatus;
+}
+```
+
+### 4.2 Entity 内部职责
 
 ```text
-features/generation/
-├─ index.ts              唯一公开入口
-├─ GenerationStep.tsx    对外页面组件
-├─ model.ts              按需定义本功能内部模型
-├─ adapter.ts            按需转换 API 数据
-├─ components/           内部组件
-├─ hooks/                内部交互逻辑
-└─ state/                内部界面状态
+entities/workflow-run/
+├─ api/
+│  ├─ create-workflow-run.ts
+│  ├─ get-workflow-run.ts
+│  └─ submit-workflow-step.ts
+├─ model/
+│  ├─ types.ts
+│  ├─ queries.ts
+│  └─ selectors.ts
+└─ index.ts
 ```
 
-`index.ts` 只导出外部真正需要的内容：
+- `api/`：调用 `shared/api/client`，把传输数据转换为 `WorkflowRun`。
+- `model/`：类型、查询缓存键、当前步骤等纯计算。
+- `index.ts`：两个 Widget 和各 Feature 使用的唯一入口。
+- 不包含画布、AI 对话、生成界面、审核界面。
+
+### 4.3 两个 Widget 如何共用
+
+Quick Start 创建或恢复运行后得到 `runId`：
 
 ```ts
-export { GenerationStep } from './GenerationStep';
-export type { GenerationStepProps } from './GenerationStep';
+import { createWorkflowRun } from '@/entities/workflow-run';
+
+const run = await createWorkflowRun(input);
+navigate(`/workflow/${run.id}`);
 ```
 
-`pages` 必须从公开入口使用该功能：
+Workflow Editor 使用同一个 `runId`：
 
 ```ts
-import { GenerationStep } from '@/features/generation';
+import { useWorkflowRun } from '@/entities/workflow-run';
+
+const run = useWorkflowRun(runId);
 ```
 
-禁止绕过公开入口进入内部目录；其他 feature 连该 `index.ts` 也不得引用。
+两者共用的不是两份前端流程代码，而是：
 
-`model.ts` 和 `adapter.ts` 不是固定模板，只在该 Feature 确有独立模型或数据转换时创建。模型优先靠近所属 Feature，不预建全局模型层。
+```text
+同一个 entities/workflow-run 公开接口
+            +
+同一个后端 WorkflowRun（由 runId 标识）
+```
 
-ESLint 负责 import 规则的即时检查，dependency-cruiser 负责跨层依赖与循环依赖检查；CI 统一运行 `npm run verify:architecture`。
+Quick Start 负责把 AI 决策转换成步骤提交；Workflow Editor 负责把用户点击转换成步骤提交。两者最终都调用 `entities/workflow-run` 的同一组命令。
 
-## 3. 目录结构
+## 5. 页面、Widget、Feature 与 Entity 的协作
+
+### HomePage
+
+```mermaid
+flowchart LR
+    home["HomePage"] --> quick["QuickStart Widget"]
+    quick --> generation["Generation Feature"]
+    quick --> run["WorkflowRun Entity"]
+    generation --> run
+    run --> api["shared/api"]
+```
+
+### WorkflowPage
+
+```mermaid
+flowchart TB
+    page["WorkflowPage"] --> editor["WorkflowEditor Widget"]
+    editor --> generation["Generation Feature"]
+    editor --> quality["Quality Feature"]
+    editor --> review["Review Feature"]
+    editor --> playtest["Playtest Feature"]
+    editor --> export["Export Feature"]
+    editor --> run["WorkflowRun Entity"]
+    generation --> run
+    quality --> run
+    review --> run
+    playtest --> run
+    export --> run
+    run --> api["shared/api"]
+```
+
+`WorkflowPage` 只负责路由参数、页面外壳和挂载 Widget。Workflow Editor Widget 负责组合完整工作流界面，但不重新实现 Generation、Review 等 Feature。
+
+## 6. 目录结构
 
 ```text
 src/
-├─ app/                    应用启动、Router、Provider、全局配置
-│  └─ layout/              常驻 header 与全站导航外壳，包在所有页面外层
+├─ app/                         应用启动、Router、Provider、全局配置
+│  └─ layout/                   常驻 Header 与全站导航外壳
 │
-├─ pages/                  路由级页面，只负责组合 feature
-│  ├─ home/                制作入口
-│  ├─ projects/            项目列表与详情
-│  ├─ asset-library/       当前项目资产库
-│  └─ workflow/            工作流外壳、画布与步骤页面
+├─ pages/                       路由级完整页面
+│  ├─ home/                     挂载 Quick Start
+│  ├─ projects/                 项目列表与详情
+│  ├─ asset-library/            当前项目资产库
+│  └─ workflow/                 挂载 Workflow Editor，传递 runId
 │
-├─ features/               Windup 业务功能
-│  ├─ creation/            制作入口、创建和恢复 WorkflowRun
-│  ├─ project/             项目
-│  ├─ character/           角色、造型、基准帧和动作
-│  ├─ asset-library/       当前项目的角色、动作和帧资产库
-│  ├─ workflow-editor/     工作流运行、步骤编排与画布展示（workflow editor）
-│  │  ├─ runtime/          获取和更新本次 WorkflowRun
-│  │  └─ canvas/           节点、连线和画布交互
-│  ├─ generation/          生成任务、候选确认与正式入库
-│  ├─ quality/             系统自动质检结果
-│  ├─ review/              逐帧人工审核与修复
-│  ├─ playtest/            浏览器内手感模拟质检
-│  └─ export/              导出
+├─ widgets/                     组合多个 Feature 和 Entity 的完整界面区块
+│  ├─ quick-start/              AI 快捷入口，自动驱动同一份 WorkflowRun
+│  └─ workflow-editor/          手动画布入口
+│     ├─ canvas/                节点、连线和画布交互
+│     └─ navigation/            步骤导航与当前处理位置
 │
-├─ api/                    前端与 Python 后端的唯一通信入口
-│  ├─ generated/           根据接口契约自动生成的类型，禁止手改
-│  └─ client/              唯一对外接口：请求、进度更新和错误转换
-│     ├─ real/             真实现：调用后端
-│     └─ mock/             假实现：后端未就绪时顶替，由配置切换、上线前删
+├─ features/                    用户对 Entity 执行的操作
+│  ├─ generation/              发起生成、重试、确认候选
+│  ├─ quality/                 查看和处理自动质检结果
+│  ├─ review/                  人工审核与退回修复
+│  ├─ playtest/                浏览器内手感模拟质检
+│  └─ export/                  选择内容、发起导出和下载
 │
-└─ shared/                 无业务依赖的通用零件
-   ├─ ui/                  按钮、弹窗、输入框、进度条等
-   ├─ lib/                 格式化、下载等通用工具
-   └─ testing/             通用测试辅助工具
+├─ entities/                    Windup 业务对象
+│  ├─ project/                 项目数据、查询和通用展示
+│  ├─ character/               角色、造型、母版和动作关系
+│  ├─ asset/                   正式资产、候选与生成记录引用
+│  └─ workflow-run/            两个入口共用的运行数据和命令
+│
+└─ shared/                      无 Windup 业务含义的基础代码
+   ├─ api/
+   │  ├─ generated/            根据后端契约自动生成，禁止手改
+   │  └─ client/
+   │     ├─ real/              真实后端实现
+   │     ├─ mock/              测试和开发使用的替代实现
+   │     └─ mappers/           传输格式的通用转换与错误映射
+   ├─ ui/                      Button、Modal、Input、Progress 等
+   ├─ lib/                     单一职责的纯工具
+   └─ testing/                 通用测试辅助工具
 
 tests/
-├─ integration/            多个模块组合测试
-└─ e2e/                    完整用户流程测试
+├─ integration/                多 Slice 组合测试
+└─ e2e/                        完整用户流程测试
 ```
 
-目录按实际实现增量创建，不提交无实现的空模块。`pages` 与 `features` 不要求一一对应：页面负责组合功能，生成、审核、试玩与导出作为工作流子页面存在。Feature 专属的模型和数据转换留在该 Feature 内；只有出现真实、稳定的跨 Feature 复用后，才提取新的公共模块。
+目录按真实实现增量创建，不提交空目录。Project、Character 的创建或编辑操作只有在多处复用时才提取成 Feature；仅在单个页面使用时可以保留在对应 Page 内。
 
-## 4. 关键约束
+## 7. 各层职责边界
 
-### 状态归属
+### Pages
 
-不建立顶层 `stores/`。工作流画布状态归属 `features/workflow-editor/canvas/`，审核状态归属 `features/review/`，试玩状态归属 `features/playtest/`；主题、全局反馈，以及常驻的 header/导航外壳（`app/layout/`）等应用级内容由 `app` 提供。
+- 对应路由与完整屏幕。
+- 读取路由参数，挂载 Widget。
+- 可以组合下层公开接口。
+- 不保存跨页面业务真相。
 
-Python 后端是 `WorkflowRun` 的事实来源。`api/client/` 提供运行数据，`features/workflow-editor/runtime/` 负责加载、刷新和提交；前端仅保留界面交互所需状态。`WorkflowCanvas` 是 `WorkflowRun` 的可视化与操作界面，不作为业务状态来源。
+### Widgets
 
-Quick Start 与从项目开始均由 `features/creation/` 创建或恢复同一种 `WorkflowRun`，后续共用生成、审核、试玩和导出能力，不因入口不同派生两套资产状态、任务或审核逻辑。
+- `quick-start` 组合 AI 输入、Generation 与 WorkflowRun。
+- `workflow-editor` 组合画布、Generation、Quality、Review、Playtest、Export 与 WorkflowRun。
+- Widget 之间不互相 import。
+- 只保存本 Widget 的界面状态，如画布缩放、选中节点、对话输入草稿。
 
-### 候选与正式资产
+### Features
 
-生成候选归属于 Generation Job。候选经用户明确确认后才能正式入库；新候选不得直接覆盖正式资产。动作入库后的初始状态为待审核，系统质检通过不得自动标记为可导出。
+- 每个 Feature 表示一类用户操作。
+- 可以使用 Entity 和 Shared。
+- Feature 之间不互相 import。
+- Generation 不实现 Review，Review 不实现 Export。
 
-### 自动质检与人工审核
+### Entities
 
-`features/quality/` 展示系统质检结果，`features/review/` 保存人工审核决定。系统质检通过不等同于人工审核通过。
+- 保存前端所需的业务模型、查询和通用业务展示。
+- Project、Character、Asset、WorkflowRun 都是 Entity。
+- Entity 不依赖 Feature 或 Widget。
+- 后端仍是持久化事实来源。
 
-### 试玩与导出
+### Shared
 
-`features/playtest/` 是建议执行的验收步骤，不作为导出硬门禁。动作通过人工审核后即可导出；未试玩或试玩发现问题时显示风险提示并保存结果，但不阻断导出。
+- 不理解 Project、Character、WorkflowRun 等 Windup 业务概念。
+- `shared/api` 只处理传输、鉴权、真实/Mock 切换和通用错误。
+- Entity 负责把传输数据转换成业务对象。
+- Mock 保留用于开发、测试和故障复现，不在上线时删除。
 
-### 技术适配归属
+## 8. 状态归属
 
-- 逐帧审核 Canvas 与 Worker 归属 `features/review/canvas/`。
-- PixiJS 试玩适配归属 `features/playtest/player/`。
-- 仅在多个业务模块产生真实复用后提取公共能力。
+| 状态 | 前端归属 | 持久化事实来源 |
+|---|---|---|
+| WorkflowRun、步骤、当前进度 | `entities/workflow-run` | Python 后端 |
+| Project | `entities/project` | Python 后端 |
+| Character、造型、动作关系 | `entities/character` | Python 后端 |
+| 候选与正式资产引用 | `entities/asset` | Python 后端 |
+| 画布缩放、拖拽、选中节点 | `widgets/workflow-editor` | 前端临时状态 |
+| Quick Start 输入草稿 | `widgets/quick-start` | 前端临时状态 |
+| Generation 交互状态 | `features/generation` | 任务状态来自后端 |
+| Review 交互状态 | `features/review` | 审核结论来自后端 |
 
-### 播放配置来源
+不建立顶层全局业务 Store。Entity 的查询缓存按 ID 管理，同一个 `runId` 只能对应同一份 `WorkflowRun` 查询键。
 
-帧率、循环和方向来自统一业务契约或后端播放配置，经 `api/client/` 提供给审核、试玩和导出，不在 Feature 内写死。各 Feature 先保留自己的播放适配；只有出现真实且稳定的重复实现后，才提取公共播放模块。
+## 9. 资产、审核与导出约束
 
-### API 边界与 Feature 模型
+- 生成候选归属于 Generation Job。
+- 候选经用户明确确认后才能成为正式资产。
+- 新候选不得直接覆盖正式资产。
+- 系统质检通过不等于人工审核通过。
+- 逐帧审核 Canvas 与 Worker 归 `features/review`。
+- PixiJS 试玩适配归 `features/playtest`。
+- 下载属于 `features/export`，不放入 `shared/lib`。
+- 帧率、循环和方向来自后端契约，不在 Feature 内写死。
 
-浏览器向 Python 后端发送的请求统一经过 `api/client/`。自动生成的接口类型放在 `api/generated/`，重新生成而不手工修改。`api/client/` 对外只暴露一套接口，其真实实现（`real/`）与桩实现（`mock/`）由环境配置切换、同一时间只启用一个，后端就绪后弃用 mock。
+## 10. 骨架范围与验收
 
-`api/generated/` 表示后端传输格式，仅允许 `api/client/` 直接使用。Feature 默认使用 `api/client/` 的公开结果；如果某个 Feature 需要不同的数据形状，在该 Feature 内按需增加 `model.ts` 和 `adapter.ts`，不提前建立全局模型层。分页参数、错误响应等传输对象保留在 API 层。
-
-### 测试布局
-
-单元测试与被测代码就近放置。根目录 `tests/` 保存跨模块 integration 测试与完整流程 e2e 测试；`shared/testing/` 仅提供通用测试工具。
-
-## 5. 骨架范围与验收
-
-骨架阶段跑通一条最小竖线：
+第一条骨架竖线：
 
 ```text
 app 启动
-→ 打开一个 page
-→ page 使用一个 feature
-→ feature 通过 api/client（骨架期走 mock 实现）获得数据
-→ 使用 shared/ui 显示结果
+→ HomePage
+→ QuickStart Widget
+→ entities/workflow-run 创建 WorkflowRun
+→ shared/api/client 使用 mock 返回 runId
+→ 跳转 WorkflowPage
+→ WorkflowEditor Widget 用同一 runId 加载 WorkflowRun
 ```
 
-`api/client` 对外提供最小 `WorkflowRun` 占位数据：
+最小 `WorkflowRun`：
 
 ```text
 id
+projectId
 currentStepId
+status
 steps: [{ id, type, status }]
 ```
 
-当前步骤序号由 `currentStepId` 与步骤列表计算，其他业务字段随功能实现增量补充。
+验收条件：
 
-骨架验收条件：应用可启动并完成生产构建；Mock 竖线可展示；类型检查、测试与 `npm run verify:architecture` 通过。
+- Quick Start 创建后能进入 Workflow Editor。
+- 两边使用同一个 `runId` 和同一个查询键。
+- Widget 不互相 import。
+- Feature 不互相 import。
+- 所有跨 Slice 引用只经过 `index.ts`。
+- Mock 与真实客户端实现同一接口。
+- 生产构建、类型检查、单元测试、集成测试和依赖检查通过。
+
+## 11. 参考规范
+
+- FSD Layers：https://feature-sliced.design/docs/reference/layers
+- FSD Slices and Segments：https://feature-sliced.design/docs/reference/slices-segments
