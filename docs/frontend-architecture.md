@@ -186,13 +186,15 @@ flowchart LR
 flowchart LR
     page["AssetLibraryPage"] --> character["Character Entity"]
     page --> template["ActionTemplate Entity"]
+    page --> wearable["Wearable Entity"]
     page -. 继续补充动作 .-> charFeature["CharacterSetup Feature"]
     page -. 从动作资产进入 .-> workflow["WorkflowEditorPage"]
     character --> api["shared/api"]
     template --> api
+    wearable --> api
 ```
 
-`AssetLibraryPage` 直接读 `Character`、`ActionTemplate` 两个 Entity 做浏览与筛选，自己管筛选状态；"继续补充动作"复用 `CharacterSetup` Feature，不重新实现；"从动作资产进入审核台"是页面跳转，指向 `pages/workflow-editor`。
+`AssetLibraryPage` 直接读 `Character`、`ActionTemplate`、`Wearable` 三个 Entity 做浏览与筛选，自己管筛选状态；"继续补充动作"复用 `CharacterSetup` Feature，不重新实现；"从动作资产进入审核台"是页面跳转，指向 `pages/workflow-editor`。
 
 ### WorkflowEditorPage(`pages/workflow-editor`)
 
@@ -236,7 +238,7 @@ src/
 │  ├─ quick-start/              解析一句话描述，直接用 character-setup、generation
 │  ├─ workflow-editor/          手动画布，直接用 character-setup、generation、review、export
 │  ├─ projects/                 项目列表详情；"从项目开始"复用 character-setup
-│  ├─ asset-library/            按角色/视角/动作浏览，直接用 Character、ActionTemplate Entity
+│  ├─ asset-library/            按角色/视角/动作浏览，直接用 Character、ActionTemplate、Wearable Entity
 │  └─ playtest/                 独立预览页面，浏览器内手感模拟质检
 │
 ├─ features/                    用户对 Entity 执行的操作
@@ -275,10 +277,10 @@ tests/
 ### Pages
 
 - 对应路由与完整屏幕。
-- 读取路由参数，直接组合所需 Feature 与 Entity(不再经过 Widget 这层)。
+- 读取路由参数，直接组合所需 Feature 与 Entity。
 - `quick-start` 直接用 CharacterSetup、Generation。
 - `workflow-editor` 直接用 CharacterSetup、Generation、Review、Export，画布按节点切换显示哪个 Feature 的界面。
-- `asset-library` 直接用 Character、ActionTemplate，复用 CharacterSetup 的补充动作能力。
+- `asset-library` 直接用 Character、ActionTemplate、Wearable，复用 CharacterSetup 的补充动作能力。
 - Page 之间不互相 import；跨页面靠 URL 跳转 + 同一个 `runId`，不是直接引用。
 - 不保存跨页面业务真相，但可以持有本页独有的界面状态(如画布缩放/选中节点、当前审核帧、资产筛选条件、`PlaytestPage` 的播放状态与按键绑定)。
 
