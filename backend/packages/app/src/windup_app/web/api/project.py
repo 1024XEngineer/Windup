@@ -40,8 +40,8 @@ class ProjectOut(ProjectCreate):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    created_at: datetime
-    updated_at: datetime
+    create_at: datetime
+    update_at: datetime
 
 
 @router.post("", response_model=Response[ProjectOut])

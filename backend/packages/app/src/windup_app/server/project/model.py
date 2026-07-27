@@ -26,12 +26,12 @@ class Project(Base):
     sprite_height: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     game_style: Mapped[str | None] = mapped_column(Text, nullable=True)
     sprite_sample_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
+    create_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
-    updated_at: Mapped[datetime] = mapped_column(
+    update_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
