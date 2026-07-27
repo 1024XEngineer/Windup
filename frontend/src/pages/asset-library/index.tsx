@@ -9,7 +9,7 @@ import { PageHeader } from '@/shared/ui'
  */
 export function AssetLibraryPage() {
   const [search] = useSearchParams()
-  const projectId = Number(search.get('projectId') ?? 0)
+  const projectId = search.get('projectId') ?? ''
 
   if (!projectId) {
     return (

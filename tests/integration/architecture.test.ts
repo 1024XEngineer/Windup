@@ -33,6 +33,10 @@ const PAGE_MODULE_ROOTS = [
   'pages/playtest/inspection-preview',
 ]
 
+function relativeSrc(file: string): string {
+  return relative(SRC, file).replaceAll('\\', '/')
+}
+
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
     const full = join(dir, name)
@@ -59,7 +63,7 @@ interface Violation {
 }
 
 function sourceLocation(file: string): SourceLocation {
-  const parts = relative(SRC, file).split('/')
+  const parts = relativeSrc(file).split('/')
   const layer = ALLOWED[parts[0]] ? parts[0] : null
   if (!layer) return { layer: null, slice: null }
   return {
@@ -74,7 +78,7 @@ function targetLocation(file: string, specifier: string): TargetLocation | null 
     parts = specifier.slice(2).split('/')
   } else if (specifier.startsWith('.')) {
     const target = resolve(dirname(file), specifier)
-    const rel = relative(SRC, target)
+    const rel = relativeSrc(target)
     if (rel.startsWith('..')) return null
     parts = rel.split('/')
   } else {
@@ -93,7 +97,7 @@ function targetLocation(file: string, specifier: string): TargetLocation | null 
 function targetRelativePath(file: string, specifier: string): string | null {
   if (specifier.startsWith('@/')) return specifier.slice(2)
   if (!specifier.startsWith('.')) return null
-  const rel = relative(SRC, resolve(dirname(file), specifier))
+  const rel = relativeSrc(resolve(dirname(file), specifier))
   return rel.startsWith('..') ? null : rel
 }
 
@@ -131,7 +135,7 @@ function moduleSpecifiers(file: string, source: string): string[] {
 }
 
 function violationFor(file: string, specifier: string): Violation | null {
-  const rel = relative(SRC, file)
+  const rel = relativeSrc(file)
   const source = sourceLocation(file)
 
   if (
@@ -229,7 +233,7 @@ function collectCycles(): string[][] {
   function visit(file: string): void {
     if (visiting.has(file)) {
       const start = stack.indexOf(file)
-      cycles.push([...stack.slice(start), file].map((item) => relative(SRC, item)))
+      cycles.push([...stack.slice(start), file].map((item) => relativeSrc(item)))
       return
     }
     if (visited.has(file)) return
@@ -301,5 +305,29 @@ describe('依赖边界', () => {
 
   it('源码依赖图没有循环', () => {
     expect(collectCycles()).toEqual([])
+  })
+
+  it('业务层不得直接发网络请求或依赖测试辅助', () => {
+    const offenders: string[] = []
+    for (const file of walk(SRC)) {
+      const rel = relative(SRC, file).replaceAll('\\', '/')
+      const source = readFileSync(file, 'utf8')
+      const isTransport =
+        rel.startsWith('shared/api/client/real/') ||
+        rel === 'shared/api/upload.ts' ||
+        rel === 'shared/api/stream.ts'
+      if (!isTransport && /\bfetch\s*\(/.test(source)) {
+        offenders.push(`${rel}: direct fetch`)
+      }
+      for (const specifier of moduleSpecifiers(file, source)) {
+        if (specifier === '@/shared/testing' || specifier.startsWith('@/shared/testing/')) {
+          offenders.push(`${rel}: ${specifier}`)
+        }
+        if (specifier === '@/tests' || specifier.startsWith('@/tests/')) {
+          offenders.push(`${rel}: ${specifier}`)
+        }
+      }
+    }
+    expect(offenders).toEqual([])
   })
 })

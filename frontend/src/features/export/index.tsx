@@ -2,7 +2,7 @@
  * 选择内容、发起导出和下载。下载属于本 feature，不放 shared/lib。
  */
 export interface ExportProps {
-  characterId: number
+  characterId: string
   onExported?: (downloadUrl: string) => void
 }
 

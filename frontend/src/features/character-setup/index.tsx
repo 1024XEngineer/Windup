@@ -5,9 +5,9 @@ import type { Character } from '@/entities'
  * 宿主：quick-start、workflow-editor、projects、asset-library 的「继续补充动作」。
  */
 export interface CharacterSetupProps {
-  projectId: number
+  projectId: string
   /** 已有角色时传入，用于补充动作；不传表示新建。 */
-  characterId?: number
+  characterId?: string
   /** 角色建好或母版确认后通知宿主。 */
   onCharacterReady?: (character: Character) => void
 }

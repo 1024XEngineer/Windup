@@ -5,13 +5,13 @@
  */
 export interface ReviewProps {
   /** 进来只需要一个角色。 */
-  characterId: number
+  characterId: string
   /** 受控选择：当前动作与帧由宿主持有，Review 不再保存第二份状态。 */
-  actionId?: number
+  actionId?: string
   frameIndex?: number
-  onSelectFrame?: (actionId: number, frameIndex: number) => void
+  onSelectFrame?: (actionId: string, frameIndex: number) => void
   /** 退回某帧。只报告是哪一帧，跳去哪由宿主决定。 */
-  onRejectFrame?: (actionId: number, frameIndex: number) => void
+  onRejectFrame?: (actionId: string, frameIndex: number) => void
 }
 
 export function Review({ characterId, actionId, frameIndex }: ReviewProps) {

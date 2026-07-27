@@ -15,12 +15,12 @@ export type {
 } from './types'
 
 /** 带全部动作与帧。审核台进入只需这一个调用。 */
-export async function fetchCharacter(_id: number): Promise<Character> {
+export async function fetchCharacter(_id: string): Promise<Character> {
   throw new Error('not implemented：等待后端 GET /characters/{id}')
 }
 
 /** 资产库与项目详情页用。 */
-export async function fetchCharactersByProject(_projectId: number): Promise<Character[]> {
+export async function fetchCharactersByProject(_projectId: string): Promise<Character[]> {
   throw new Error('not implemented：等待后端 GET /projects/{id}/characters')
 }
 
@@ -30,29 +30,29 @@ export async function createCharacter(_input: CreateCharacterInput): Promise<Cha
 }
 
 /** 确认母版后才能加动作。 */
-export async function confirmTemplate(_characterId: number): Promise<Character> {
+export async function confirmTemplate(_characterId: string): Promise<Character> {
   throw new Error('not implemented：等待后端 POST /characters/{id}/template/confirm')
 }
 
 /** 加一个动作，此时还未生成。 */
 export async function addAction(
-  _characterId: number,
-  _input: { name: string; kind: 'preset' | 'custom'; templateId?: number },
+  _characterId: string,
+  _input: { name: string; kind: 'preset' | 'custom'; templateId?: string },
 ): Promise<Action> {
   throw new Error('not implemented：等待后端 POST /characters/{id}/actions')
 }
 
 /** 候选转正式。新候选不覆盖正式资产。 */
-export async function confirmAction(_actionId: number): Promise<Action> {
+export async function confirmAction(_actionId: string): Promise<Action> {
   throw new Error('not implemented：等待后端 POST /actions/{id}/confirm')
 }
 
 /** 订阅一个角色。 */
-export function useCharacter(id: number): AsyncState<Character> {
+export function useCharacter(id: string): AsyncState<Character> {
   return useAsync(() => fetchCharacter(id), [id])
 }
 
 /** 订阅项目下的角色列表。 */
-export function useCharacters(projectId: number): AsyncState<Character[]> {
+export function useCharacters(projectId: string): AsyncState<Character[]> {
   return useAsync(() => fetchCharactersByProject(projectId), [projectId])
 }

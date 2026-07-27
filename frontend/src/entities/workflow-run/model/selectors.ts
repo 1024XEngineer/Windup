@@ -1,98 +1,105 @@
-import type {
-  WorkflowCommand,
-  WorkflowCommandKind,
-  WorkflowLocation,
-  WorkflowRun,
-  WorkflowStep,
-  WorkflowStepType,
+import {
+  WORKFLOW_NODE_ORDER,
+  type WorkflowCommand,
+  type WorkflowNode,
+  type WorkflowNodeType,
+  type WorkflowRevision,
+  type WorkflowRun,
 } from './types'
 
-/**
- * 当前步骤等纯计算。AI 自动与用户手动两个入口读的是同一份规则。
- * 纯函数，不碰网络也不碰界面。
- */
-
-function stepsOfType(run: WorkflowRun, type: WorkflowStepType): WorkflowStep[] {
-  return run.steps.filter((step) => step.type === type)
+export function getRevision(run: WorkflowRun, revisionId: string): WorkflowRevision | null {
+  return run.revisions.find((revision) => revision.id === revisionId) ?? null
 }
 
-function isDone(steps: WorkflowStep[]): boolean {
-  return steps.length > 0 && steps.every((step) => step.status === 'done')
+export function getCurrentRevision(run: WorkflowRun): WorkflowRevision {
+  const revision = getRevision(run, run.currentRevisionId)
+  if (!revision) throw new Error(`工作流 ${run.id} 缺少当前版本 ${run.currentRevisionId}`)
+  return revision
 }
 
-/** 当前停在哪一步。 */
-export function currentStep(run: WorkflowRun): WorkflowStep | null {
-  return run.steps.find((step) => step.id === run.currentStepId) ?? null
+export function listRevisionHistory(run: WorkflowRun): WorkflowRevision[] {
+  return [...run.revisions].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
 }
 
-/** 此刻允许执行哪些命令。界面用它决定按钮状态，AI 用它约束自己不越步。 */
-export function availableCommands(run: WorkflowRun): WorkflowCommandKind[] {
-  if (run.status === 'completed' || run.status === 'failed') return []
-  // 有任务在跑时不接新命令，避免连点产生重复任务
-  if (run.steps.some((step) => step.status === 'running')) return []
-
-  const templateDone = isDone(stepsOfType(run, 'generate-template'))
-  const templateConfirmed = isDone(stepsOfType(run, 'confirm-template'))
-  const added = stepsOfType(run, 'add-action')
-  const generated = stepsOfType(run, 'generate-action')
-
-  if (!templateDone) return ['generate-template']
-  if (!templateConfirmed) return ['confirm-template', 'generate-template']
-
-  const commands: WorkflowCommandKind[] = ['add-action']
-  // 两个条件都需要：本地 submitWorkflowStep 成对追加 add-action(done) 与
-  // generate-action(pending)，走第一个条件；后端接管 workflow 后步骤未必成对，
-  // 可能只有 add-action 而没有对应的生成步骤，那时靠第二个条件兜住。
-  if (generated.some((step) => step.status === 'pending') || added.length > generated.length) {
-    commands.push('generate-action')
-  }
-  // 生成过动作才谈得上退回与收尾
-  if (generated.some((step) => step.status === 'done')) {
-    commands.push('reject-frame', 'finish')
-  }
-  return commands
-}
-
-/**
- * AI 自动驱动时下一步做什么。手动驱动时由用户选。
- * @param plan AI 解析那句话得到的计划：母版描述 + 要哪些动作。
- */
-export function suggestNextCommand(
+export function getNode(
   run: WorkflowRun,
-  plan: { description: string; actionNames: string[] },
-): WorkflowCommand | null {
-  const allowed = availableCommands(run)
-  if (allowed.length === 0) return null
-
-  if (allowed.includes('generate-template') && !isDone(stepsOfType(run, 'generate-template'))) {
-    return { kind: 'generate-template', description: plan.description }
-  }
-  if (allowed.includes('confirm-template')) return { kind: 'confirm-template' }
-
-  const added = stepsOfType(run, 'add-action')
-  if (added.length < plan.actionNames.length) {
-    return { kind: 'add-action', name: plan.actionNames[added.length], source: 'preset' }
-  }
-
-  const pending = run.steps.find(
-    (step) => step.type === 'generate-action' && step.status === 'pending',
-  )
-  if (pending && pending.actionId !== null) {
-    return { kind: 'generate-action', actionId: pending.actionId }
-  }
-
-  return allowed.includes('finish') ? { kind: 'finish' } : null
+  revisionId: string,
+  nodeId: string,
+): WorkflowNode | null {
+  return getRevision(run, revisionId)?.nodes.find((node) => node.id === nodeId) ?? null
 }
 
-/** 审核台点「重新生成此帧」时用，拿返回值跳回编辑器定位。 */
-export function locateFrame(
-  run: WorkflowRun,
-  actionId: number,
-  frameIndex: number,
-): WorkflowLocation | null {
-  const step = run.steps.find(
-    (item) => item.type === 'generate-action' && item.actionId === actionId,
+export function getNodeByType(
+  revision: WorkflowRevision,
+  type: WorkflowNodeType,
+): WorkflowNode | null {
+  return revision.nodes.find((node) => node.type === type) ?? null
+}
+
+export function getCurrentNode(run: WorkflowRun): WorkflowNode | null {
+  return getCurrentRevision(run).nodes.find((node) => node.status === 'active') ?? null
+}
+
+export function getFirstAccessibleNodeType(revision: WorkflowRevision): WorkflowNodeType {
+  return (
+    revision.nodes.find((node) => node.status === 'active')?.type ??
+    revision.nodes.at(-1)?.type ??
+    WORKFLOW_NODE_ORDER[0]
   )
-  if (!step) return null
-  return { runId: run.id, stepId: step.id, actionId, frameIndex }
+}
+
+export function canEnterNode(
+  run: WorkflowRun,
+  revisionId: string,
+  type: WorkflowNodeType,
+): boolean {
+  const node = getRevision(run, revisionId)?.nodes.find((item) => item.type === type)
+  return node?.status === 'active' || node?.status === 'passed' || node?.status === 'failed'
+}
+
+export function canRestartFromNode(
+  run: WorkflowRun,
+  revisionId: string,
+  nodeId: string,
+): boolean {
+  const revision = getRevision(run, revisionId)
+  const node = revision?.nodes.find((item) => item.id === nodeId)
+  return Boolean(revision && node && node.status !== 'locked' && node.status !== 'available')
+}
+
+export function canSubmitCommand(run: WorkflowRun, command: WorkflowCommand): boolean {
+  if (command.kind === 'record-playtest') {
+    return getRevision(run, command.revisionId)?.generationStatus === 'completed'
+  }
+
+  if (command.kind === 'restart-from-node') {
+    return canRestartFromNode(run, command.sourceRevisionId, command.nodeId)
+  }
+
+  const revision = getCurrentRevision(run)
+  if (revision.status === 'abandoned') return false
+
+  if (command.kind === 'set-export-status') {
+    const exportNode = getNodeByType(revision, 'export')
+    return revision.generationStatus === 'completed' && exportNode?.status === 'active'
+  }
+
+  const node = revision.nodes.find((item) => item.id === command.nodeId)
+  if (!node || node.status !== 'active') return false
+  if (command.kind === 'record-quality-result') return node.type === 'candidate'
+  if (command.kind === 'complete-node') return node.type !== 'candidate'
+  return true
+}
+
+export function canImportToPlaytest(run: WorkflowRun, revisionId: string): boolean {
+  return getRevision(run, revisionId)?.generationStatus === 'completed'
+}
+
+export function nextNodeType(type: WorkflowNodeType): WorkflowNodeType | null {
+  const index = WORKFLOW_NODE_ORDER.indexOf(type)
+  return WORKFLOW_NODE_ORDER[index + 1] ?? null
+}
+
+export function isWorkflowNodeType(value: string | undefined): value is WorkflowNodeType {
+  return WORKFLOW_NODE_ORDER.includes(value as WorkflowNodeType)
 }

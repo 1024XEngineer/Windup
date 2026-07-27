@@ -1,63 +1,156 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import {
-  availableCommands,
+  canImportToPlaytest,
   createWorkflowRun,
   fetchWorkflowRun,
-  submitWorkflowStep,
-  suggestNextCommand,
+  getCurrentNode,
+  getCurrentRevision,
+  getNodeByType,
+  getRevision,
+  submitWorkflowCommand,
 } from '@/entities'
 
-/**
- * entities/workflow-run 的存取契约：创建后能用同一 runId 取回。
- * 只覆盖数据层，不渲染页面、不走路由——页面竖线尚未自动验证。
- */
-describe('entities/workflow-run 存取契约', () => {
-  it('创建后拿得到 runId，且用它取回的是同一份运行数据', async () => {
-    const created = await createWorkflowRun({ projectId: 1, driver: 'ai', prompt: '像素小骑士' })
-    expect(created.id).toBeTruthy()
-    expect(created.projectId).toBe(1)
-    expect(created.driver).toBe('ai')
+describe('entities/workflow-run Revision 契约', () => {
+  beforeEach(() => {
+    globalThis.localStorage?.clear()
+  })
 
+  it('Quick Start 和手动入口创建同一种 WorkflowRun', async () => {
+    const ai = await createWorkflowRun({
+      projectId: 'quick-start',
+      driver: 'ai',
+      prompt: '像素小骑士',
+    })
+    const manual = await createWorkflowRun({ projectId: 'project-1', driver: 'manual' })
+
+    expect(getCurrentNode(ai)?.type).toBe('generation')
+    expect(getNodeByType(getCurrentRevision(ai), 'asset')?.status).toBe('passed')
+    expect(getCurrentNode(manual)?.type).toBe('asset')
+    expect(ai.revisions).toHaveLength(1)
+    expect(manual.revisions).toHaveLength(1)
+  })
+
+  it('用同一个 runId 持久化并取回同一版本', async () => {
+    const created = await createWorkflowRun({ projectId: 'project-1', driver: 'manual' })
     const loaded = await fetchWorkflowRun(created.id)
     expect(loaded.id).toBe(created.id)
-    expect(loaded.steps.length).toBe(created.steps.length)
+    expect(loaded.currentRevisionId).toBe(created.currentRevisionId)
   })
 
-  it('新建的工作流第一步只能生成母版', async () => {
-    const run = await createWorkflowRun({ projectId: 1, driver: 'manual' })
-    expect(availableCommands(run)).toEqual(['generate-template'])
-  })
-
-  it('AI 建议与手动命令共用同一提交接口推进运行', async () => {
-    const manualRun = await createWorkflowRun({ projectId: 1, driver: 'manual' })
-    const manuallyAdvanced = await submitWorkflowStep(manualRun.id, {
-      kind: 'generate-template',
-      description: '手动输入的母版描述',
+  it('生成完成后进入质量门禁，连续失败两次才阻断', async () => {
+    let run = await createWorkflowRun({ projectId: 'quick-start', driver: 'ai', prompt: '骑士' })
+    const generation = getCurrentNode(run)!
+    run = await submitWorkflowCommand(run.id, {
+      kind: 'complete-node',
+      nodeId: generation.id,
+      output: { jobId: 'job-1' },
     })
-    expect(manuallyAdvanced.steps[0].status).toBe('done')
+    const candidate = getCurrentNode(run)!
 
-    const plan = { description: '像素小骑士', actionNames: ['行走'] }
-    let run = await createWorkflowRun({ projectId: 1, driver: 'ai', prompt: plan.description })
+    run = await submitWorkflowCommand(run.id, {
+      kind: 'record-quality-result',
+      nodeId: candidate.id,
+      passed: false,
+      report: { reason: '抖动' },
+    })
+    expect(getCurrentNode(run)?.qualityFailureCount).toBe(1)
+    expect(getCurrentNode(run)?.status).toBe('active')
 
-    for (let index = 0; index < 5; index += 1) {
-      const command = suggestNextCommand(run, plan)
-      expect(command).not.toBeNull()
-      run = await submitWorkflowStep(run.id, command!)
-    }
-
-    expect(run.status).toBe('completed')
-    expect(run.currentStepId).toBeNull()
-    expect(run.steps.map((step) => step.type)).toEqual([
-      'generate-template',
-      'confirm-template',
-      'add-action',
-      'generate-action',
-    ])
-    expect(suggestNextCommand(run, plan)).toBeNull()
+    run = await submitWorkflowCommand(run.id, {
+      kind: 'record-quality-result',
+      nodeId: candidate.id,
+      passed: false,
+      report: { reason: '轮廓断裂' },
+    })
+    expect(getNodeByType(getCurrentRevision(run), 'candidate')?.status).toBe('failed')
+    expect(getCurrentRevision(run).generationStatus).toBe('failed')
+    expect(run.status).toBe('failed')
   })
 
-  it('取一个不存在的工作流会报错，不会返回空对象', async () => {
+  it('质量门禁通过后形成可导入 Playtest 的历史版本', async () => {
+    let run = await createWorkflowRun({ projectId: 'quick-start', driver: 'ai', prompt: '骑士' })
+    run = await submitWorkflowCommand(run.id, {
+      kind: 'complete-node',
+      nodeId: getCurrentNode(run)!.id,
+    })
+    run = await submitWorkflowCommand(run.id, {
+      kind: 'record-quality-result',
+      nodeId: getCurrentNode(run)!.id,
+      passed: true,
+      report: { passed: true },
+    })
+
+    expect(getCurrentRevision(run).generationStatus).toBe('completed')
+    expect(getCurrentNode(run)?.type).toBe('review')
+    expect(canImportToPlaytest(run, run.currentRevisionId)).toBe(true)
+  })
+
+  it('导出必须进入 export 节点，不能绕过 review', async () => {
+    let run = await createWorkflowRun({ projectId: 'quick-start', driver: 'ai', prompt: '骑士' })
+    run = await submitWorkflowCommand(run.id, {
+      kind: 'complete-node',
+      nodeId: getCurrentNode(run)!.id,
+    })
+    run = await submitWorkflowCommand(run.id, {
+      kind: 'record-quality-result',
+      nodeId: getCurrentNode(run)!.id,
+      passed: true,
+    })
+
+    await expect(
+      submitWorkflowCommand(run.id, { kind: 'set-export-status', status: 'exported' }),
+    ).rejects.toThrow(/不允许命令/)
+
+    run = await submitWorkflowCommand(run.id, {
+      kind: 'complete-node',
+      nodeId: getCurrentNode(run)!.id,
+    })
+    expect(getCurrentNode(run)?.type).toBe('export')
+
+    run = await submitWorkflowCommand(run.id, {
+      kind: 'set-export-status',
+      status: 'exported',
+    })
+    expect(getCurrentRevision(run).exportStatus).toBe('exported')
+    expect(getNodeByType(getCurrentRevision(run), 'export')?.status).toBe('passed')
+  })
+
+  it('从历史节点重启会保留前缀引用并移除后续执行线', async () => {
+    let run = await createWorkflowRun({ projectId: 'quick-start', driver: 'ai', prompt: '骑士' })
+    run = await submitWorkflowCommand(run.id, {
+      kind: 'complete-node',
+      nodeId: getCurrentNode(run)!.id,
+    })
+    run = await submitWorkflowCommand(run.id, {
+      kind: 'record-quality-result',
+      nodeId: getCurrentNode(run)!.id,
+      passed: true,
+    })
+    const sourceRevision = getCurrentRevision(run)
+    const generationNode = getNodeByType(sourceRevision, 'generation')!
+
+    run = await submitWorkflowCommand(run.id, {
+      kind: 'restart-from-node',
+      sourceRevisionId: sourceRevision.id,
+      nodeId: generationNode.id,
+    })
+    const restarted = getCurrentRevision(run)
+
+    expect(run.revisions).toHaveLength(2)
+    expect(restarted.basedOnRevisionId).toBe(sourceRevision.id)
+    expect(restarted.nodes.map((node) => node.type)).toEqual(['asset', 'generation'])
+    expect(getCurrentNode(run)?.type).toBe('generation')
+    expect(getNodeByType(restarted, 'generation')?.referenceNodeIds).toContain(generationNode.id)
+    expect(getRevision(run, sourceRevision.id)?.nodes.map((node) => node.type)).toEqual([
+      'asset',
+      'generation',
+      'candidate',
+      'review',
+    ])
+  })
+
+  it('不存在的工作流明确报错', async () => {
     await expect(fetchWorkflowRun('run-does-not-exist')).rejects.toThrow()
   })
 })

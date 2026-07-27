@@ -16,6 +16,6 @@ export function useProjects(query: PageQuery = {}): AsyncState<Paged<Project>> {
 }
 
 /** 订阅单个项目。 */
-export function useProject(id: number): AsyncState<Project> {
+export function useProject(id: string): AsyncState<Project> {
   return useAsync(() => fetchProject(id), [id])
 }

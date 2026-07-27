@@ -10,11 +10,11 @@ import { PageHeader } from '@/shared/ui'
 export function ProjectDetailPage() {
   const navigate = useNavigate()
   const { projectId = '' } = useParams()
-  const { data: project, loading, error } = useProject(Number(projectId))
+  const { data: project, loading, error } = useProject(projectId)
 
   async function start() {
-    const run = await createWorkflowRun({ projectId: Number(projectId), driver: 'manual' })
-    navigate(`/workflow-editor/${run.id}`)
+    const run = await createWorkflowRun({ projectId, driver: 'manual' })
+    navigate(`/workflow-editor/${run.id}/asset`)
   }
 
   return (

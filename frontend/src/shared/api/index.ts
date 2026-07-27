@@ -8,8 +8,8 @@ import type { ApiListResponse, ApiResponse, Paged } from './client/mappers'
 import { realRequest } from './client/real'
 import type { RequestOptions } from './client/types'
 
-/** 两种实现对外一致，业务代码不感知。.env.local 里 VITE_USE_MOCK=false 切真后端。 */
-const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false'
+/** 开发默认 Mock；生产构建永远使用真实 transport，不能回退演示数据。 */
+const USE_MOCK = !import.meta.env.PROD && import.meta.env.VITE_USE_MOCK !== 'false'
 
 const send = <R,>(path: string, options: RequestOptions): Promise<R> =>
   USE_MOCK ? mockRequest<R>(path, options) : realRequest<R>(path, options)
@@ -30,3 +30,4 @@ export async function requestList<T>(
 export { ApiError } from './client/mappers'
 export type { ApiListResponse, ApiResponse, Paged, PageQuery } from './client/mappers'
 export type { RequestOptions } from './client/types'
+export { uploadFile } from './upload'

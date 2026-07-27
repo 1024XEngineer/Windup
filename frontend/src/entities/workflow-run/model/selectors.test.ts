@@ -1,139 +1,118 @@
 import { describe, expect, it } from 'vitest'
 
-import { availableCommands, locateFrame, suggestNextCommand } from './selectors'
-import type { WorkflowRun, WorkflowStep, WorkflowStepStatus, WorkflowStepType } from './types'
+import {
+  canEnterNode,
+  canImportToPlaytest,
+  canRestartFromNode,
+  canSubmitCommand,
+  getCurrentNode,
+  getCurrentRevision,
+  getFirstAccessibleNodeType,
+  getNodeByType,
+  isWorkflowNodeType,
+  nextNodeType,
+} from './selectors'
+import type { WorkflowNode, WorkflowRevision, WorkflowRun } from './types'
 
-function step(
+function node(
   id: string,
-  type: WorkflowStepType,
-  status: WorkflowStepStatus,
-  actionId: number | null = null,
-): WorkflowStep {
-  return { id, type, status, actionId, taskId: null }
+  type: WorkflowNode['type'],
+  status: WorkflowNode['status'],
+  order: number,
+): WorkflowNode {
+  return {
+    id,
+    type,
+    status,
+    order,
+    input: null,
+    output: null,
+    referenceNodeIds: [],
+    qualityFailureCount: 0,
+  }
 }
 
-function run(steps: WorkflowStep[], overrides: Partial<WorkflowRun> = {}): WorkflowRun {
+function revision(overrides: Partial<WorkflowRevision> = {}): WorkflowRevision {
   return {
-    id: 'run-1',
-    projectId: 1,
-    characterId: null,
-    driver: 'manual',
-    status: 'running',
-    currentStepId: null,
-    steps,
+    id: 'revision-1',
+    basedOnRevisionId: null,
+    restartNodeId: null,
+    status: 'active',
+    nodes: [node('asset-1', 'asset', 'passed', 0), node('generation-1', 'generation', 'active', 1)],
+    generationStatus: 'in_progress',
+    exportStatus: 'not_exported',
+    playtestStatus: 'not_tested',
+    createdAt: '2026-07-27T00:00:00.000Z',
     ...overrides,
   }
 }
 
-describe('availableCommands', () => {
-  it('母版还没生成时，只能生成母版', () => {
-    expect(availableCommands(run([step('s1', 'generate-template', 'pending')]))).toEqual([
-      'generate-template',
-    ])
+function run(current: WorkflowRevision = revision(), history: WorkflowRevision[] = []): WorkflowRun {
+  return {
+    id: 'run-1',
+    projectId: 'project-1',
+    characterId: null,
+    driver: 'ai',
+    status: 'active',
+    currentRevisionId: current.id,
+    revisions: [...history, current],
+    prompt: '像素小骑士',
+  }
+}
+
+describe('WorkflowRun selectors', () => {
+  it('读取当前版本、当前节点和首个可访问节点', () => {
+    const value = run()
+    expect(getCurrentRevision(value).id).toBe('revision-1')
+    expect(getCurrentNode(value)?.id).toBe('generation-1')
+    expect(getFirstAccessibleNodeType(getCurrentRevision(value))).toBe('generation')
+    expect(getNodeByType(getCurrentRevision(value), 'asset')?.status).toBe('passed')
   })
 
-  it('有任务正在跑时，不允许发起任何新命令（防止连点产生重复任务）', () => {
-    expect(availableCommands(run([step('s1', 'generate-template', 'running')]))).toEqual([])
+  it('只允许进入当前执行线上已经存在的节点', () => {
+    const value = run()
+    expect(canEnterNode(value, 'revision-1', 'asset')).toBe(true)
+    expect(canEnterNode(value, 'revision-1', 'generation')).toBe(true)
+    expect(canEnterNode(value, 'revision-1', 'candidate')).toBe(false)
   })
 
-  it('母版生成完但没确认时，可以确认，也可以重新生成', () => {
-    const result = availableCommands(run([step('s1', 'generate-template', 'done')]))
-    expect(result).toContain('confirm-template')
-    expect(result).toContain('generate-template')
+  it('已经存在的节点允许作为重新开始位置', () => {
+    const value = run()
+    expect(canRestartFromNode(value, 'revision-1', 'asset-1')).toBe(true)
+    expect(canRestartFromNode(value, 'revision-1', 'missing')).toBe(false)
   })
 
-  it('母版确认后可以加动作，但还不能退回帧或收尾', () => {
-    expect(
-      availableCommands(
-        run([step('s1', 'generate-template', 'done'), step('s2', 'confirm-template', 'done')]),
-      ),
-    ).toEqual(['add-action'])
-  })
-
-  it('加了动作还没生成时，可以发起生成', () => {
-    expect(
-      availableCommands(
-        run([
-          step('s1', 'generate-template', 'done'),
-          step('s2', 'confirm-template', 'done'),
-          step('s3', 'add-action', 'done', 10),
-        ]),
-      ),
-    ).toContain('generate-action')
-  })
-
-  it('生成步骤已创建但仍在待办时，仍允许发起生成', () => {
-    const commands = availableCommands(
-      run([
-        step('s1', 'generate-template', 'done'),
-        step('s2', 'confirm-template', 'done'),
-        step('s3', 'add-action', 'done', 10),
-        step('s4', 'generate-action', 'pending', 10),
-      ]),
-    )
-    expect(commands).toContain('generate-action')
-    expect(commands).not.toContain('finish')
-  })
-
-  it('生成过动作之后，才能退回某一帧并收尾', () => {
-    const result = availableCommands(
-      run([
-        step('s1', 'generate-template', 'done'),
-        step('s2', 'confirm-template', 'done'),
-        step('s3', 'add-action', 'done', 10),
-        step('s4', 'generate-action', 'done', 10),
-      ]),
-    )
-    expect(result).toContain('reject-frame')
-    expect(result).toContain('finish')
-  })
-
-  it('已完成或已失败的工作流不接受任何命令', () => {
-    expect(availableCommands(run([], { status: 'completed' }))).toEqual([])
-    expect(availableCommands(run([], { status: 'failed' }))).toEqual([])
-  })
-})
-
-describe('suggestNextCommand（AI 自动驱动）', () => {
-  const plan = { description: '像素小骑士', actionNames: ['行走', '奔跑'] }
-
-  it('从零开始时，第一步是生成母版', () => {
-    expect(suggestNextCommand(run([step('s1', 'generate-template', 'pending')]), plan)).toEqual({
-      kind: 'generate-template',
-      description: '像素小骑士',
+  it('候选节点只能提交质量门禁结果，不能直接标记完成', () => {
+    const candidateRevision = revision({
+      nodes: [
+        node('asset-1', 'asset', 'passed', 0),
+        node('generation-1', 'generation', 'passed', 1),
+        node('candidate-1', 'candidate', 'active', 2),
+      ],
     })
-  })
-
-  it('母版好了就确认，不需要用户点', () => {
-    expect(suggestNextCommand(run([step('s1', 'generate-template', 'done')]), plan)).toEqual({
-      kind: 'confirm-template',
-    })
-  })
-
-  it('确认后按计划逐个加动作，顺序与计划一致', () => {
-    const base = [step('s1', 'generate-template', 'done'), step('s2', 'confirm-template', 'done')]
-    expect(suggestNextCommand(run(base), plan)).toMatchObject({ kind: 'add-action', name: '行走' })
+    const value = run(candidateRevision)
     expect(
-      suggestNextCommand(run([...base, step('s3', 'add-action', 'done', 10)]), plan),
-    ).toMatchObject({ kind: 'add-action', name: '奔跑' })
+      canSubmitCommand(value, {
+        kind: 'record-quality-result',
+        nodeId: 'candidate-1',
+        passed: true,
+      }),
+    ).toBe(true)
+    expect(
+      canSubmitCommand(value, { kind: 'complete-node', nodeId: 'candidate-1' }),
+    ).toBe(false)
   })
 
-  it('任务进行中时不给下一步，等它跑完', () => {
-    expect(suggestNextCommand(run([step('s1', 'generate-template', 'running')]), plan)).toBeNull()
-  })
-})
-
-describe('locateFrame', () => {
-  it('能定位到生成某个动作的那一步，供审核台退回时跳回编辑器', () => {
-    expect(locateFrame(run([step('s4', 'generate-action', 'done', 10)]), 10, 3)).toEqual({
-      runId: 'run-1',
-      stepId: 's4',
-      actionId: 10,
-      frameIndex: 3,
-    })
+  it('只有系统质检通过的版本可以导入核验台', () => {
+    const value = run(revision({ generationStatus: 'completed' }))
+    expect(canImportToPlaytest(value, 'revision-1')).toBe(true)
+    expect(canImportToPlaytest(run(), 'revision-1')).toBe(false)
   })
 
-  it('找不到对应步骤时返回 null，不假装定位成功', () => {
-    expect(locateFrame(run([]), 10, 3)).toBeNull()
+  it('节点顺序和类型判断保持稳定', () => {
+    expect(nextNodeType('asset')).toBe('generation')
+    expect(nextNodeType('export')).toBeNull()
+    expect(isWorkflowNodeType('review')).toBe(true)
+    expect(isWorkflowNodeType('unknown')).toBe(false)
   })
 })

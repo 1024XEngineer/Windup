@@ -1,55 +1,58 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createWorkflowRun } from '@/entities'
+import { createWorkflowRun, getCurrentRevision } from '@/entities'
 import { WorkflowEditor } from './index'
 
-describe('WorkflowEditor 模块契约', () => {
-  beforeEach(() => {
-    localStorage.clear()
-  })
+afterEach(cleanup)
 
-  afterEach(() => {
-    cleanup()
-  })
-
-  it('不依赖 Router 也能通过公开接口加载工作流', async () => {
-    const run = await createWorkflowRun({ projectId: 1, driver: 'manual' })
+describe('WorkflowEditor', () => {
+  it('稳定渲染五个节点，未进入执行线的节点保持锁定', async () => {
+    const run = await createWorkflowRun({ projectId: 'project-1', driver: 'manual' })
+    const revision = getCurrentRevision(run)
 
     render(
       <WorkflowEditor
-        runId={run.id}
-        focus={{ kind: 'step', stepId: run.steps[0].id }}
+        run={run}
+        revision={revision}
+        activeType="asset"
+        readOnly={false}
+        onSelectNode={vi.fn()}
+        onOpenRevision={vi.fn()}
+        onRestartNode={vi.fn()}
         onOpenPreview={vi.fn()}
       />,
     )
 
-    expect(await screen.findByText(`定位步骤 ${run.steps[0].id}`)).toBeTruthy()
-    expect(screen.getByText(/generate-template/)).toBeTruthy()
+    expect((screen.getByRole('button', { name: /资产设置/ }) as HTMLButtonElement).disabled).toBe(false)
+    expect((screen.getByRole('button', { name: /AI 生成/ }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: /导出/ }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText(/当前版本/)).toBeTruthy()
   })
 
-  it('focus 变化时同步新的帧定位', async () => {
-    const run = await createWorkflowRun({ projectId: 1, driver: 'manual' })
-    const onOpenPreview = vi.fn()
-    const view = render(
+  it('历史版本显示只读状态并允许从已有节点重新开始', async () => {
+    const run = await createWorkflowRun({ projectId: 'quick-start', driver: 'ai', prompt: '骑士' })
+    const revision = getCurrentRevision(run)
+    const onRestartNode = vi.fn(async () => undefined)
+
+    render(
       <WorkflowEditor
-        runId={run.id}
-        focus={{ kind: 'step', stepId: 'step-1' }}
-        onOpenPreview={onOpenPreview}
+        run={{ ...run, currentRevisionId: 'revision-current' }}
+        revision={revision}
+        activeType="generation"
+        readOnly
+        onSelectNode={vi.fn()}
+        onOpenRevision={vi.fn()}
+        onRestartNode={onRestartNode}
+        onOpenPreview={vi.fn()}
       />,
     )
 
-    expect(await screen.findByText('定位步骤 step-1')).toBeTruthy()
-
-    view.rerender(
-      <WorkflowEditor
-        runId={run.id}
-        focus={{ kind: 'frame', stepId: 'step-2', actionId: 7, frameIndex: 2 }}
-        onOpenPreview={onOpenPreview}
-      />,
+    expect(screen.getByText(/历史只读/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '从此节点重新开始' }))
+    expect(onRestartNode).toHaveBeenCalledWith(
+      revision.nodes.find((node) => node.type === 'generation')!.id,
     )
-
-    expect(await screen.findByText('定位步骤 step-2／动作 7 第 3 帧')).toBeTruthy()
   })
 })

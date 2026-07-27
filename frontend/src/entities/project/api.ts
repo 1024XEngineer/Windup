@@ -1,4 +1,4 @@
-import { ApiError, request, requestList } from '@/shared/api'
+import { ApiError, request, requestList, uploadFile } from '@/shared/api'
 import type { Paged, PageQuery } from '@/shared/api'
 import type { CreateProjectInput, Project } from './types'
 
@@ -26,9 +26,9 @@ const CURRENT_USER_ID = 1
 /** 后端形状 → 业务对象。 */
 function toProject(dto: ProjectDto): Project {
   return {
-    id: dto.id,
-    ownerId: dto.user_id,
-    workflowId: dto.workflow_id,
+    id: String(dto.id),
+    ownerId: String(dto.user_id),
+    workflowId: dto.workflow_id === null ? null : String(dto.workflow_id),
     name: dto.project_name,
     perspective: dto.character_perspective,
     directionalMovement: dto.directional_movement,
@@ -53,7 +53,7 @@ export async function fetchProjects(query: PageQuery = {}): Promise<Paged<Projec
 }
 
 /** GET /projects/{id}，不存在时抛 ApiError(404)。 */
-export async function fetchProject(id: number): Promise<Project> {
+export async function fetchProject(id: string): Promise<Project> {
   const dto = await request<ProjectDto>(`/projects/${id}`)
   if (!dto) throw new Error(`项目 ${id} 返回为空`)
   return toProject(dto)
@@ -80,7 +80,7 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
 }
 
 /** DELETE /projects/{id} */
-export async function deleteProject(id: number): Promise<void> {
+export async function deleteProject(id: string): Promise<void> {
   await request<null>(`/projects/${id}`, { method: 'DELETE' })
 }
 
@@ -96,20 +96,6 @@ export async function uploadImage(file: File): Promise<string> {
     throw new ApiError('仅支持 jpg/png/webp/gif 图片', 400)
   }
 
-  const form = new FormData()
-  form.append('file', file)
-
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL ?? '/api'}/upload/image`, {
-    method: 'POST',
-    body: form,
-  })
-  const payload = (await response.json()) as {
-    code: number
-    message: string
-    data: { url: string } | null
-  }
-  if (payload.code !== 200 || !payload.data) {
-    throw new ApiError(payload.message, payload.code)
-  }
-  return payload.data.url
+  const payload = await uploadFile<{ url: string }>('/upload/image', file)
+  return payload.url
 }

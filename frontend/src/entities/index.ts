@@ -1,13 +1,6 @@
 /**
- * 模块一：数据层。本模块唯一对外入口，外部不得 import 内部文件。
- *
- * 这份清单是前后端契约的落点，但目前只有一部分算「已确认」：
- *
- * - 【已对接】Project —— 字段与路径对照后端 PR #57 的真实实现。
- * - 【提案·待双方 review】Character / WorkflowRun / ActionTemplate / Wearable ——
- *   后端接口尚未提供，签名是前端按界面需要拟的，等同于向后端提的需求；
- *   未经前后端一起走查前不得当作已定契约。阻断项见 frontend/README.md
- *   「给后端的问题清单」，代码里对应 TODO(对后端)。
+ * entities 唯一公开门面。外部不得绕过本文件访问内部 Entity 文件。
+ * Project 已有后端实现；WorkflowRun、Character 和其他资产接口仍按冻结的领域边界等待后端接入。
  */
 
 /* 项目 —— 已对接后端 PR #57 */
@@ -46,30 +39,45 @@ export type {
   FrameQcResult,
 } from './character'
 
-/* 工作流数据 —— 提案，待与后端 review */
+/* 工作流数据 —— Revision、五节点和领域门禁 */
 export {
-  availableCommands,
+  WORKFLOW_NODE_ORDER,
+  canEnterNode,
+  canImportToPlaytest,
+  canRestartFromNode,
+  canSubmitCommand,
   createWorkflowRun,
-  currentStep,
   fetchWorkflowRun,
-  locateFrame,
+  getCurrentNode,
+  getCurrentRevision,
+  getFirstAccessibleNodeType,
+  getNode,
+  getNodeByType,
+  getRevision,
+  isWorkflowNodeType,
+  listRevisionHistory,
+  nextNodeType,
   subscribeTask,
-  submitWorkflowStep,
-  suggestNextCommand,
+  submitWorkflowCommand,
   useWorkflowRun,
   workflowRunKeys,
 } from './workflow-run'
 export type {
   CreateWorkflowRunInput,
+  ExportStatus,
+  GenerationStatus,
+  PlaytestStatus,
   WorkflowCommand,
   WorkflowCommandKind,
   WorkflowDriver,
   WorkflowLocation,
+  WorkflowNode,
+  WorkflowNodeStatus,
+  WorkflowNodeType,
+  WorkflowRevision,
+  WorkflowRevisionStatus,
   WorkflowRun,
   WorkflowRunStatus,
-  WorkflowStep,
-  WorkflowStepStatus,
-  WorkflowStepType,
 } from './workflow-run'
 
 /* 资产库 —— 提案，待与后端 review */

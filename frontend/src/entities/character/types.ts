@@ -30,8 +30,8 @@ export interface Frame {
 }
 
 export interface Action {
-  id: number
-  characterId: number
+  id: string
+  characterId: string
 
   name: string
   kind: ActionKind
@@ -48,8 +48,8 @@ export interface Action {
 
 /** 项目下的核心资产，带一整套动作。 */
 export interface Character {
-  id: number
-  projectId: number
+  id: string
+  projectId: string
   name: string
   /** 母版图，确认后作为后续动作的一致性基准。 */
   templateImageUrl: string | null
@@ -59,7 +59,7 @@ export interface Character {
 }
 
 export interface CreateCharacterInput {
-  projectId: number
+  projectId: string
   name: string
   /** 交给模型生成母版。 */
   description: string

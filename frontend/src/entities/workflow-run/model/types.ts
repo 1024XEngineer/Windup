@@ -1,66 +1,76 @@
-/**
- * 一次工作流的运行数据，后端持久化，这份是投影。
- * 两个入口共用同一份数据，只差一个 driver 字段。
- */
-
-/** UI 文案叫「AI 快捷创作」「节点工作流」，代码里用这两个词。 */
+/** Quick Start 与手动工作流只改变输入方式，共用同一种运行模型。 */
 export type WorkflowDriver = 'ai' | 'manual'
 
-/** 会调生成能力的步骤在后端对应一个 generation 任务。 */
-export type WorkflowStepType =
-  | 'generate-template'
-  | 'confirm-template'
-  | 'add-action'
-  | 'generate-action'
-  | 'review'
+export const WORKFLOW_NODE_ORDER = [
+  'asset',
+  'generation',
+  'candidate',
+  'review',
+  'export',
+] as const
 
-export type WorkflowStepStatus = 'pending' | 'running' | 'done' | 'failed'
+export type WorkflowNodeType = (typeof WORKFLOW_NODE_ORDER)[number]
+export type WorkflowNodeStatus = 'locked' | 'available' | 'active' | 'passed' | 'failed'
+export type WorkflowRevisionStatus = 'active' | 'completed' | 'failed' | 'abandoned'
+export type WorkflowRunStatus = 'active' | 'completed' | 'failed'
+export type GenerationStatus = 'in_progress' | 'completed' | 'failed'
+export type ExportStatus = 'not_exported' | 'exporting' | 'exported' | 'failed'
+export type PlaytestStatus = 'not_tested' | 'passed' | 'issues_found'
 
-export interface WorkflowStep {
+export interface WorkflowNode {
   id: string
-  type: WorkflowStepType
-  status: WorkflowStepStatus
-  /** 添加/生成动作时有值。 */
-  actionId: number | null
-  /** 异步任务 id，前端用 SSE 取结果。 */
-  taskId: string | null
+  type: WorkflowNodeType
+  order: number
+  status: WorkflowNodeStatus
+  input: unknown
+  output: unknown
+  referenceNodeIds: string[]
+  qualityFailureCount: number
 }
 
-export type WorkflowRunStatus = 'draft' | 'running' | 'paused' | 'completed' | 'failed'
+export interface WorkflowRevision {
+  id: string
+  basedOnRevisionId: string | null
+  restartNodeId: string | null
+  status: WorkflowRevisionStatus
+  nodes: WorkflowNode[]
+  generationStatus: GenerationStatus
+  exportStatus: ExportStatus
+  playtestStatus: PlaytestStatus
+  createdAt: string
+}
 
 export interface WorkflowRun {
   id: string
-  projectId: number
-  /** 建出角色前为 null。 */
-  characterId: number | null
+  projectId: string
+  characterId: string | null
   driver: WorkflowDriver
   status: WorkflowRunStatus
-  currentStepId: string | null
-  steps: WorkflowStep[]
+  currentRevisionId: string
+  revisions: WorkflowRevision[]
+  prompt: string | null
 }
 
 export interface CreateWorkflowRunInput {
-  projectId: number
+  projectId: string
   driver: WorkflowDriver
-  /** AI 驱动时用户输入的那句话。 */
   prompt?: string
 }
 
-/** 工作流上可以发生的事，不区分是用户点的还是 AI 推的。 */
 export type WorkflowCommand =
-  | { kind: 'generate-template'; description: string; referenceImageUrl?: string }
-  | { kind: 'confirm-template' }
-  | { kind: 'add-action'; name: string; source: 'preset' | 'custom' | 'template'; templateId?: number }
-  | { kind: 'generate-action'; actionId: number }
-  | { kind: 'reject-frame'; actionId: number; frameIndex: number }
-  | { kind: 'finish' }
+  | { kind: 'complete-node'; nodeId: string; output?: unknown }
+  | { kind: 'fail-node'; nodeId: string; error: string }
+  | { kind: 'record-quality-result'; nodeId: string; passed: boolean; report?: unknown }
+  | { kind: 'restart-from-node'; sourceRevisionId: string; nodeId: string }
+  | { kind: 'set-export-status'; status: ExportStatus }
+  | { kind: 'record-playtest'; revisionId: string; status: Exclude<PlaytestStatus, 'not_tested'> }
 
 export type WorkflowCommandKind = WorkflowCommand['kind']
 
-/** 退回一帧后要跳回编辑器的哪个位置。 */
 export interface WorkflowLocation {
   runId: string
-  stepId: string
-  actionId: number
-  frameIndex: number
+  revisionId: string
+  nodeId: string
+  actionId?: string
+  frameIndex?: number
 }

@@ -3,11 +3,11 @@
  * 字段对照后端 ProjectOut（PR #57），命名转换在 ./api.ts。
  */
 export interface Project {
-  id: number
+  id: string
   /** 后端目前要求前端显式传 user_id，无登录态前写死。 */
-  ownerId: number
+  ownerId: string
   /** 未开始生成时为 null。 */
-  workflowId: number | null
+  workflowId: string | null
   /** 后端限制 1–20 字符，同一用户下不可重名。 */
   name: string
   /** 游戏视角，见 CHARACTER_PERSPECTIVE。 */

@@ -1,122 +1,206 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 import {
-  availableCommands,
-  locateFrame,
-  useWorkflowRun,
+  WORKFLOW_NODE_ORDER,
+  canImportToPlaytest,
+  canRestartFromNode,
+  getNodeByType,
 } from '@/entities'
-import type { Action, Character, Frame, WorkflowRun, WorkflowStep } from '@/entities'
+import type {
+  WorkflowNodeType,
+  WorkflowRevision,
+  WorkflowRun,
+} from '@/entities'
+import { CharacterSetup } from '@/features/character-setup'
 import { Export } from '@/features/export'
 import { Generation } from '@/features/generation'
 import { Review } from '@/features/review'
 
-/** 编辑器可定位到节点，或进一步定位到某一帧。 */
-export type WorkflowEditorFocus =
-  | {
-      kind: 'step'
-      stepId: WorkflowStep['id']
-    }
-  | {
-      kind: 'frame'
-      stepId: WorkflowStep['id']
-      actionId: Action['id']
-      frameIndex: Frame['index']
-    }
-
-/**
- * Workflow Editor 模块的全部公开接口。
- *
- * 运行数据由模块自己经 entities 加载；模块不读 Router，只上报跨页意图。
- */
-export interface WorkflowEditorProps {
-  runId: WorkflowRun['id']
-  focus?: WorkflowEditorFocus
-  onOpenPreview: (characterId: Character['id']) => void
+const NODE_LABELS: Record<WorkflowNodeType, string> = {
+  asset: '资产设置',
+  generation: 'AI 生成',
+  candidate: '系统质检',
+  review: '人工审核',
+  export: '导出',
 }
 
-/**
- * 用户手动组织、查看并运行 Workflow 的编辑器。
- *
- * 本 Issue 只落模块边界；画布、拖拽与真实节点面板属后续实现。
- */
-export function WorkflowEditor({ runId, focus, onOpenPreview }: WorkflowEditorProps) {
-  const { data: run, loading, error } = useWorkflowRun(runId)
-  const [activeFocus, setActiveFocus] = useState<WorkflowEditorFocus | undefined>(focus)
+export interface WorkflowEditorProps {
+  run: WorkflowRun
+  revision: WorkflowRevision
+  activeType: WorkflowNodeType
+  readOnly: boolean
+  onSelectNode: (type: WorkflowNodeType) => void
+  onOpenRevision: (revisionId: string) => void
+  onRestartNode: (nodeId: string) => Promise<void>
+  onOpenPreview: (characterId: string) => void
+}
 
-  // 依赖 focus 的内容而不是对象引用：readFocus 每次渲染都产生新对象，
-  // 按引用比较会在 Page 任意一次重渲染时把用户在画布里点选的帧覆盖回 URL 里的值。
-  const focusKey = serializeFocus(focus)
-  useEffect(() => {
-    setActiveFocus(focus)
-    // focus 的内容已由 focusKey 表达
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusKey])
+/** 不读取 Router 的页面内编辑器；URL 和跨页导航全部由外层 Page 适配。 */
+export function WorkflowEditor({
+  run,
+  revision,
+  activeType,
+  readOnly,
+  onSelectNode,
+  onOpenRevision,
+  onRestartNode,
+  onOpenPreview,
+}: WorkflowEditorProps) {
+  const [restarting, setRestarting] = useState(false)
+  const activeNode = getNodeByType(revision, activeType)
+  const canRestart = activeNode
+    ? canRestartFromNode(run, revision.id, activeNode.id)
+    : false
 
-  if (loading) return <p className="text-sm text-slate-400">加载中…</p>
-  if (error) return <p className="text-sm text-red-500">加载失败：{error.message}</p>
-  if (!run) return null
-  const loadedRun = run
-  const characterId = run.characterId
-
-  const selectFrame = (actionId: number, frameIndex: number): void => {
-    const target = locateFrame(loadedRun, actionId, frameIndex)
-    if (!target) return
-    setActiveFocus({
-      kind: 'frame',
-      stepId: target.stepId,
-      actionId: target.actionId,
-      frameIndex: target.frameIndex,
-    })
+  async function restart() {
+    if (!activeNode || restarting) return
+    setRestarting(true)
+    try {
+      await onRestartNode(activeNode.id)
+    } finally {
+      setRestarting(false)
+    }
   }
 
-  // 退回与选中语义不同：退回除定位外还要标记该帧被拒，
-  // 等 entities 提供写入接口后在此补上，先不与 selectFrame 合流。
-  const rejectFrame = (actionId: number, frameIndex: number): void => {
-    selectFrame(actionId, frameIndex)
+  return (
+    <div className="space-y-6">
+      <section aria-label="工作流节点" className="border-y border-slate-200 py-4">
+        <ol className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+          {WORKFLOW_NODE_ORDER.map((type, index) => {
+            const node = getNodeByType(revision, type)
+            const selected = type === activeType
+            return (
+              <li key={type} className="min-w-0">
+                <button
+                  type="button"
+                  disabled={!node}
+                  onClick={() => onSelectNode(type)}
+                  className={`min-h-16 w-full border px-3 py-2 text-left text-sm ${
+                    selected
+                      ? 'border-slate-900 bg-slate-900 text-white'
+                      : 'border-slate-200 bg-white text-slate-700 hover:border-slate-400'
+                  } disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-300`}
+                >
+                  <span className="block text-xs opacity-70">{index + 1}</span>
+                  <span className="block truncate font-medium">{NODE_LABELS[type]}</span>
+                  <span className="block text-xs opacity-70">{node?.status ?? 'locked'}</span>
+                </button>
+              </li>
+            )
+          })}
+        </ol>
+      </section>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+        <p className="text-slate-500">
+          {readOnly ? '历史只读' : '当前版本'} · {revision.id} · 生成 {revision.generationStatus}
+        </p>
+        {canRestart ? (
+          <button
+            type="button"
+            disabled={restarting}
+            onClick={() => void restart()}
+            className="border border-slate-300 px-3 py-2 hover:border-slate-500 disabled:opacity-50"
+          >
+            {restarting ? '正在创建新版本…' : '从此节点重新开始'}
+          </button>
+        ) : null}
+      </div>
+
+      {activeNode ? (
+        <StageContent
+          run={run}
+          revision={revision}
+          type={activeType}
+          readOnly={readOnly}
+          onOpenPreview={onOpenPreview}
+        />
+      ) : (
+        <p className="text-sm text-slate-500">该节点不在当前执行线上。</p>
+      )}
+
+      <section aria-label="版本历史" className="border-t border-slate-200 pt-5">
+        <h2 className="text-sm font-semibold">版本历史</h2>
+        <ul className="mt-3 space-y-2">
+          {[...run.revisions].reverse().map((item) => (
+            <li key={item.id}>
+              <button
+                type="button"
+                onClick={() => onOpenRevision(item.id)}
+                className="flex w-full items-center justify-between border border-slate-200 px-3 py-2 text-left text-sm hover:border-slate-400"
+              >
+                <span>{item.id}</span>
+                <span className="text-slate-500">
+                  {item.generationStatus} · {item.exportStatus} · {item.playtestStatus}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
+    </div>
+  )
+}
+
+function StageContent({
+  run,
+  revision,
+  type,
+  readOnly,
+  onOpenPreview,
+}: {
+  run: WorkflowRun
+  revision: WorkflowRevision
+  type: WorkflowNodeType
+  readOnly: boolean
+  onOpenPreview: (characterId: string) => void
+}) {
+  if (type === 'asset') {
+    return readOnly ? (
+      <ReadOnlyNotice text="查看该版本使用的资产输入。" />
+    ) : (
+      <CharacterSetup projectId={run.projectId} characterId={run.characterId ?? undefined} />
+    )
+  }
+  if (type === 'generation') return <Generation runId={run.id} />
+  if (type === 'candidate') {
+    return (
+      <ReadOnlyNotice
+        text={
+          revision.generationStatus === 'failed'
+            ? '系统质检连续失败两次，需要从生成节点重新开始。'
+            : '候选必须通过真实系统质检后才能交付；当前不提供模拟通过。'
+        }
+      />
+    )
+  }
+  if (type === 'review') {
+    return run.characterId ? (
+      <Review characterId={run.characterId} />
+    ) : (
+      <ReadOnlyNotice text="生成结果尚未关联角色，无法进入人工审核。" />
+    )
   }
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-slate-500">
-        状态 {run.status} · 当前步骤 {run.currentStepId ?? '（无）'} · 可执行{' '}
-        {availableCommands(run).join('、') || '（无）'}
-      </p>
-      {activeFocus ? (
-        <p className="text-sm text-slate-500">{describeFocus(activeFocus)}</p>
+      {run.characterId ? <Export characterId={run.characterId} /> : <ReadOnlyNotice text="暂无可导出的角色。" />}
+      {run.characterId && canImportToPlaytest(run, revision.id) ? (
+        <button
+          type="button"
+          onClick={() => onOpenPreview(run.characterId!)}
+          className="border border-slate-300 px-4 py-2 text-sm hover:border-slate-500"
+        >
+          导入核验台
+        </button>
       ) : null}
-      <p className="text-sm text-slate-400">画布待实现，下面按节点切换显示各 Feature。</p>
-      <Generation runId={run.id} />
-      {characterId !== null ? (
-        <>
-          <Review
-            characterId={characterId}
-            actionId={activeFocus?.kind === 'frame' ? activeFocus.actionId : undefined}
-            frameIndex={activeFocus?.kind === 'frame' ? activeFocus.frameIndex : undefined}
-            onSelectFrame={selectFrame}
-            onRejectFrame={rejectFrame}
-          />
-          <Export characterId={characterId} />
-          <button
-            type="button"
-            onClick={() => onOpenPreview(characterId)}
-            className="rounded-lg border border-slate-200 px-4 py-2 text-sm hover:border-slate-400"
-          >
-            进入试玩
-          </button>
-        </>
+      {revision.playtestStatus === 'issues_found' ? (
+        <p className="text-sm text-amber-700">核验台发现问题，建议重新生成；当前结果仍允许导出。</p>
       ) : null}
     </div>
   )
 }
 
-/** 把定位压成可比较的字符串，用于判断 URL 里的定位是否真的变了。 */
-function serializeFocus(focus: WorkflowEditorFocus | undefined): string {
-  if (!focus) return ''
-  if (focus.kind === 'step') return `step:${focus.stepId}`
-  return `frame:${focus.stepId}:${focus.actionId}:${focus.frameIndex}`
-}
-
-function describeFocus(focus: WorkflowEditorFocus): string {
-  if (focus.kind === 'step') return `定位步骤 ${focus.stepId}`
-  return `定位步骤 ${focus.stepId}／动作 ${focus.actionId} 第 ${focus.frameIndex + 1} 帧`
+function ReadOnlyNotice({ text }: { text: string }) {
+  return <p className="border border-dashed border-slate-300 p-5 text-sm text-slate-500">{text}</p>
 }

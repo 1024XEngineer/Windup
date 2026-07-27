@@ -1,21 +1,18 @@
 import type { CreateWorkflowRunInput, WorkflowRun } from '../model/types'
-import { initialSteps, newRunId, saveRun } from './local-store'
+import { initialRevision, newId, saveRun } from './local-store'
 
-/**
- * 新建一次运行，两个入口都调它。
- *
- * 后端暂不存 workflow，先落本地。未来改成 POST /workflows 时以保持调用方稳定为目标，
- * 最终签名仍需前后端共同 Review。
- */
+/** 创建运行。未来 Python adapter 必须保持相同领域返回值。 */
 export async function createWorkflowRun(input: CreateWorkflowRunInput): Promise<WorkflowRun> {
-  const steps = initialSteps()
+  const prompt = input.prompt?.trim() || null
+  const revision = initialRevision({ driver: input.driver, prompt })
   return saveRun({
-    id: newRunId(),
+    id: newId('run'),
     projectId: input.projectId,
     characterId: null,
     driver: input.driver,
-    status: 'running',
-    currentStepId: steps[0].id,
-    steps,
+    status: 'active',
+    currentRevisionId: revision.id,
+    revisions: [revision],
+    prompt,
   })
 }

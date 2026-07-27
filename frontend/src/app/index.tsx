@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes } from 'react-router'
 
 import { AssetLibraryPage } from '@/pages/asset-library'
+import { HomePage } from '@/pages/home'
 import { NotFoundPage } from '@/pages/not-found'
 import { PlaytestPage } from '@/pages/playtest'
 import { ProjectDetailPage } from '@/pages/project-detail'
@@ -17,10 +18,12 @@ export function App() {
       <AppShell>
         <ErrorBoundary>
           <Routes>
-            <Route path="/" element={<QuickStartPage />} />
+            <Route path="/" element={<HomePage />} />
+            <Route path="/quick-start" element={<QuickStartPage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
             <Route path="/workflow-editor/:runId" element={<WorkflowEditorPage />} />
+            <Route path="/workflow-editor/:runId/:stage" element={<WorkflowEditorPage />} />
             <Route path="/playtest/:characterId" element={<PlaytestPage />} />
             <Route path="/asset-library" element={<AssetLibraryPage />} />
             <Route path="*" element={<NotFoundPage />} />

@@ -7,8 +7,8 @@ import type { AsyncState } from '@/shared/lib'
  */
 
 export interface ActionTemplate {
-  id: number
-  projectId: number
+  id: string
+  projectId: string
   name: string
   /** 通常取第一帧。 */
   previewImageUrl: string | null
@@ -17,11 +17,11 @@ export interface ActionTemplate {
   hasDisplacement: boolean
 }
 
-export async function fetchActionTemplates(_projectId: number): Promise<ActionTemplate[]> {
+export async function fetchActionTemplates(_projectId: string): Promise<ActionTemplate[]> {
   throw new Error('not implemented：等待后端 GET /projects/{id}/action-templates')
 }
 
 /** 订阅动作模板列表。 */
-export function useActionTemplates(projectId: number): AsyncState<ActionTemplate[]> {
+export function useActionTemplates(projectId: string): AsyncState<ActionTemplate[]> {
   return useAsync(() => fetchActionTemplates(projectId), [projectId])
 }
