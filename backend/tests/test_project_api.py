@@ -29,8 +29,8 @@ def _project(project_id: int = 1, user_id: int = 1, name: str = "Demo") -> Proje
         workflow_id=None,
     )
     now = datetime.now(timezone.utc)
-    project.create_at = now
-    project.update_at = now
+    project.created_at = now
+    project.updated_at = now
     return project
 
 
