@@ -14,6 +14,8 @@ from fastapi import FastAPI
 
 from windup_app.bootstrap.banner import print_banner
 from windup_app.web.api.health import router as health_router
+from windup_app.web.api.project import router as project_router
+from windup_app.web.api.upload import router as upload_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
 
 
@@ -27,6 +29,8 @@ async def _lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="windup", version="0.1.0", lifespan=_lifespan)
     app.include_router(health_router)
+    app.include_router(project_router)
+    app.include_router(upload_router)
     register_exception_handlers(app)
     return app
 

@@ -18,7 +18,7 @@ from windup_common.enums.biz_code import BizCode
 from windup_common.exceptions import BizException
 from windup_common.result import Response
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("windup.handler")
 
 
 def _jsonify(resp: Response, status_code: int = 200) -> JSONResponse:
