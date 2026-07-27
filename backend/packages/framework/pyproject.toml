@@ -5,6 +5,7 @@ description = "windup 基础设施:DB / MQ / 对象存储 / 搜索 / AI 模型�
 requires-python = ">=3.12"
 dependencies = [
     "windup-common",
+    "langchain-core>=0.3",
     "pydantic>=2.7",
     "pydantic-settings>=2.4",
     "sqlalchemy>=2.0",
@@ -14,10 +15,15 @@ dependencies = [
     # 以下两项按选型启用:
     # "rocketmq-client",   # RocketMQ Python 客户端(5.x gRPC 版 / C++ 绑定版二选一)
     "qiniu>=7.14",        # 对象存储(七牛 Kodo);若换 OSS/S3/MinIO 改 oss2 / boto3 / minio
+    "langchain-openai>=0.3",
 ]
 
 [tool.uv.sources]
 windup-common = { workspace = true }
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
 
 [build-system]
 requires = ["hatchling"]
