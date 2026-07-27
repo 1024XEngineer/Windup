@@ -19,6 +19,11 @@ from windup_app.web.api.upload import router as upload_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
 
 
+def _env_flag(name: str) -> bool:
+    """把环境变量解析为真正的布尔值:仅 1/true/yes/on(忽略大小写与空白)视为 True。"""
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     """应用启动时打印 banner,关闭时无特殊处理。"""
@@ -47,7 +52,7 @@ def main() -> None:
         factory=True,
         host=os.getenv("WINDUP_HOST", "127.0.0.1"),
         port=int(os.getenv("WINDUP_PORT", "8000")),
-        reload=bool(os.getenv("WINDUP_RELOAD")),
+        reload=_env_flag("WINDUP_RELOAD"),
     )
 
 
