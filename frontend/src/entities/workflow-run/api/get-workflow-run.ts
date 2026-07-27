@@ -1,14 +1,10 @@
+import { request } from '@/shared/api'
 import type { WorkflowRun } from '../model/types'
-import { loadRun } from './local-store'
+import { toWorkflowRun, type WorkflowRunDto } from './dto'
 
-/**
- * 按 id 取回一次运行，刷新页面与从审核台跳回时靠它恢复现场。
- *
- * 后端暂不存 workflow。未来改成 GET /workflows/{id} 时以保持调用方稳定为目标，
- * 最终签名仍需前后端共同 Review。
- */
+/** GET /workflows/{id}，不存在时抛 ApiError(404)。 */
 export async function fetchWorkflowRun(runId: string): Promise<WorkflowRun> {
-  const run = loadRun(runId)
-  if (!run) throw new Error(`工作流 ${runId} 不存在`)
-  return run
+  const dto = await request<WorkflowRunDto>(`/workflows/${runId}`)
+  if (!dto) throw new Error(`工作流 ${runId} 返回为空`)
+  return toWorkflowRun(dto)
 }
