@@ -1,0 +1,8 @@
+@import 'tailwindcss';
+
+/* 全局只放这一点点：其余样式一律走 Tailwind 工具类，避免样式散落各处。 */
+html,
+body,
+#root {
+  height: 100%;
+}
