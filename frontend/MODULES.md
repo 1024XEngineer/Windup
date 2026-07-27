@@ -60,8 +60,9 @@ export interface WorkflowEditorProps {
 }
 ```
 
-调用方先创建 run，再以同一 `runId` 进入；已有 run 直接按 `runId` 恢复。退回时额外传
-`focus`。`runId` 或 `focus` 变化后模块必须重新加载/定位，不能沿用上一个 run 的界面状态。
+项目详情页创建手动 run 后以 `runId` 进入；审核台退回时以已有 `runId` 恢复，
+并额外传 `focus`。Quick Start 在自己的页面驱动 AI run，不进入 Workflow Editor。
+`runId` 或 `focus` 变化后模块必须重新加载/定位，不能沿用上一个 run 的界面状态。
 
 **不负责**：读取 Router、页头、浏览器前进后退、跨页跳转、Workflow 业务真相。
 
@@ -104,6 +105,9 @@ export interface InspectionPreviewProps {
 
 - Character、Action、Frame、WorkflowRun、TaskEvent 等后端 Schema。
 - `Action.sourceWorkflowId → WorkflowRun → WorkflowLocation` 的单帧回改链。
+  当前 `reject-frame` 只追加一条 `review` 记录，不产生「重新生成该帧」的待办，
+  连续提交会让步骤列表持续增长。修它需要先定退回产生什么步骤（复用
+  `generate-action` 还是新增步骤类型），与回改链一起做；目前无产品调用点。
 - 检查/预览台真实播放、PixiJS 与按键绑定。
 - Workflow Editor 的画布库、节点面板和编辑状态实现。
 

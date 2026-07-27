@@ -41,13 +41,15 @@ npm run lint
 Props、参数与返回类型已列出。Project 已对接 PR #57；Character、WorkflowRun、
 ActionTemplate、Wearable 和 SSE 仍是待前后端共同 Review 的提案，不是已冻结契约。
 
-第一条骨架竖线已通（文档第 10 节，实现与该节措辞有一处出入）：
-`app 启动 → pages/quick-start → 创建 WorkflowRun → 拿到 runId → 跳 pages/workflow-editor
-→ 用同一 runId 加载`。文档写的是「shared/api/client 使用 mock 返回 runId」，但后端暂不存
-workflow，这条线不经过 api 层，runId 由本地存储生成。项目数据仍走 api + mock。
+Quick Start 创建 AI 驱动的 `WorkflowRun` 后留在本页展示进度与结果；
+Workflow Editor 从自己的入口创建或恢复手动 `WorkflowRun`。两个页面只共享
+`entities/workflow-run` 这一个工作流边界，不互相跳转或引用。当前 Quick Start 已完成
+AI `WorkflowRun` 的创建和本页承载；本地骨架已通过 `suggestNextCommand →
+submitWorkflowStep` 自动推进。真实 AI 计划解析、生成任务和进度事件仍待后端接入。
+后端暂不存 workflow，当前 runId 由本地存储生成。项目数据仍走 api + mock。
 
 `entities/workflow-run/model/selectors.ts` 里「当前步骤、此刻允许哪些操作、AI 下一步
-做什么」是真实现，13 个单元测试覆盖。
+做什么」是真实现，已有单元测试覆盖。
 
 ## 与后端的对接状态
 
