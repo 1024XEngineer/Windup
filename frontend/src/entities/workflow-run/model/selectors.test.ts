@@ -62,6 +62,19 @@ describe('availableCommands', () => {
     ).toContain('generate-action')
   })
 
+  it('生成步骤已创建但仍在待办时，仍允许发起生成', () => {
+    const commands = availableCommands(
+      run([
+        step('s1', 'generate-template', 'done'),
+        step('s2', 'confirm-template', 'done'),
+        step('s3', 'add-action', 'done', 10),
+        step('s4', 'generate-action', 'pending', 10),
+      ]),
+    )
+    expect(commands).toContain('generate-action')
+    expect(commands).not.toContain('finish')
+  })
+
   it('生成过动作之后，才能退回某一帧并收尾', () => {
     const result = availableCommands(
       run([

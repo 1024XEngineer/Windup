@@ -40,10 +40,16 @@ export function availableCommands(run: WorkflowRun): WorkflowCommandKind[] {
   if (!templateConfirmed) return ['confirm-template', 'generate-template']
 
   const commands: WorkflowCommandKind[] = ['add-action']
-  // 有已加未生成的动作才能发起生成
-  if (added.length > generated.length) commands.push('generate-action')
+  // 两个条件都需要：本地 submitWorkflowStep 成对追加 add-action(done) 与
+  // generate-action(pending)，走第一个条件；后端接管 workflow 后步骤未必成对，
+  // 可能只有 add-action 而没有对应的生成步骤，那时靠第二个条件兜住。
+  if (generated.some((step) => step.status === 'pending') || added.length > generated.length) {
+    commands.push('generate-action')
+  }
   // 生成过动作才谈得上退回与收尾
-  if (generated.length > 0) commands.push('reject-frame', 'finish')
+  if (generated.some((step) => step.status === 'done')) {
+    commands.push('reject-frame', 'finish')
+  }
   return commands
 }
 
