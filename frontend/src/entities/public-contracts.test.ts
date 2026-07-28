@@ -12,6 +12,7 @@ import type {
   Project,
   Task,
   WorkflowRun,
+  WorkflowTaskLink,
 } from './index'
 
 describe('entities 公开契约', () => {
@@ -44,10 +45,16 @@ describe('entities 公开契约', () => {
 
   it('异步任务提供可查询和恢复的完整快照', () => {
     expectTypeOf<Task>().toHaveProperty('id').toBeString()
-    expectTypeOf<Task>().toHaveProperty('runId').toBeString()
-    expectTypeOf<Task>().toHaveProperty('revisionId').toBeString()
+    expectTypeOf<Task>().not.toHaveProperty('runId')
+    expectTypeOf<Task>().not.toHaveProperty('revisionId')
     expectTypeOf<Task>().toHaveProperty('progress').toEqualTypeOf<number | null>()
     expectTypeOf<Task>().toHaveProperty('result').toBeUnknown()
+    expectTypeOf<WorkflowTaskLink>().toEqualTypeOf<{
+      taskId: string
+      runId: string
+      revisionId: string
+      nodeId: string
+    }>()
   })
 
   it('Project 在领域层使用字符串枚举，数字只保留在 DTO', () => {

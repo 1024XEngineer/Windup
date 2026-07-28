@@ -76,6 +76,7 @@ export type {
   Task,
   TaskEvent,
   TaskStatus,
+  WorkflowTaskLink,
   WorkflowCommand,
   WorkflowCommandKind,
   WorkflowDriver,

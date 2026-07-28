@@ -24,7 +24,7 @@ export {
   nextNodeType,
 } from './model/selectors'
 export { WORKFLOW_NODE_ORDER } from './model/types'
-export type { Task, TaskEvent, TaskStatus } from './model/task'
+export type { Task, TaskEvent, TaskStatus, WorkflowTaskLink } from './model/task'
 export type {
   CreateWorkflowRunInput,
   ExportStatus,
