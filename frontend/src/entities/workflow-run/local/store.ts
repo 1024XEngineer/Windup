@@ -1,4 +1,5 @@
 import type { WorkflowRun } from '../model/types'
+import { parseWorkflowRunMap } from './validation'
 
 const STORAGE_KEY = 'windup.workflow-runs.v1'
 
@@ -15,19 +16,12 @@ function storage(): Storage | null {
   }
 }
 
-function isRunMap(value: unknown): value is RunMap {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  return Object.values(value).every(
-    (run: WorkflowRun) => typeof run?.id === 'string' && Array.isArray(run?.revisions),
-  )
-}
-
 function readPersisted(): RunMap {
   try {
     const raw = storage()?.getItem(STORAGE_KEY)
     if (!raw) return {}
     const parsed: unknown = JSON.parse(raw)
-    return isRunMap(parsed) ? parsed : {}
+    return parseWorkflowRunMap(parsed)
   } catch {
     return {}
   }

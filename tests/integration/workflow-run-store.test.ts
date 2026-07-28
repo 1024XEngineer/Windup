@@ -41,6 +41,62 @@ function createWriteRejectingStorage(snapshot: string): Storage {
   }
 }
 
+function createStorageWithRuns(runs: Record<string, unknown>): Storage {
+  const storage = createMemoryStorage()
+  storage.setItem('windup.workflow-runs.v1', JSON.stringify(runs))
+  return storage
+}
+
+function persistedRun(id: string) {
+  const revisionId = `revision-${id}`
+  return {
+    id,
+    projectId: 'project-from-storage',
+    characterId: null,
+    driver: 'manual',
+    status: 'active',
+    currentRevisionId: revisionId,
+    revisions: [
+      {
+        id: revisionId,
+        basedOnRevisionId: null,
+        restartNodeId: null,
+        status: 'active',
+        nodes: [
+          {
+            id: `node-${id}`,
+            type: 'asset',
+            order: 0,
+            status: 'active',
+            input: { prompt: null },
+            output: null,
+            referenceNodeIds: [],
+            qualityFailureCount: 0,
+          },
+        ],
+        generationStatus: 'not_started',
+        exportStatus: 'not_exported',
+        playtestStatus: 'not_tested',
+        createdAt: '2026-07-28T00:00:00.000Z',
+      },
+    ],
+    prompt: null,
+  }
+}
+
+function withoutProjectId(id: string): Record<string, unknown> {
+  const run: Record<string, unknown> = { ...persistedRun(id) }
+  delete run.projectId
+  return run
+}
+
+function withoutRevisionNodes(id: string) {
+  const run = persistedRun(id)
+  const revision: Record<string, unknown> = { ...run.revisions[0] }
+  delete revision.nodes
+  return { ...run, revisions: [revision] }
+}
+
 describe('entities/workflow-run Revision 契约', () => {
   beforeEach(() => {
     vi.stubGlobal('localStorage', createMemoryStorage())
@@ -157,6 +213,59 @@ describe('entities/workflow-run Revision 契约', () => {
     expect(first.id).toMatch(/^run-/)
     expect(second.id).toMatch(/^run-/)
     expect(second.id).not.toBe(first.id)
+  })
+
+  it('缺失字段、非法枚举或错误引用的损坏记录不会被读取', async () => {
+    const invalidDriver = persistedRun('run-invalid-driver')
+    const missingNodes = withoutRevisionNodes('run-missing-nodes')
+    const invalidNodeStatus = persistedRun('run-invalid-node-status')
+    const missingCurrentRevision = persistedRun('run-missing-current-revision')
+    const mismatchedMapValue = persistedRun('run-map-value')
+
+    const cases: Array<[lookupId: string, record: unknown]> = [
+      ['run-missing-project', withoutProjectId('run-missing-project')],
+      ['run-invalid-driver', { ...invalidDriver, driver: 'robot' }],
+      ['run-missing-nodes', missingNodes],
+      [
+        'run-invalid-node-status',
+        {
+          ...invalidNodeStatus,
+          revisions: [
+            {
+              ...invalidNodeStatus.revisions[0],
+              nodes: [{ ...invalidNodeStatus.revisions[0].nodes[0], status: 'unknown' }],
+            },
+          ],
+        },
+      ],
+      [
+        'run-missing-current-revision',
+        { ...missingCurrentRevision, currentRevisionId: 'revision-does-not-exist' },
+      ],
+      ['run-map-key', mismatchedMapValue],
+    ]
+
+    for (const [lookupId, record] of cases) {
+      vi.stubGlobal('localStorage', createStorageWithRuns({ [lookupId]: record }))
+      await expect(fetchWorkflowRun(lookupId)).rejects.toThrow(/不存在/)
+    }
+  })
+
+  it('过滤损坏记录时仍保留同一快照中的合法记录', async () => {
+    const valid = persistedRun('run-valid-sibling')
+    vi.stubGlobal(
+      'localStorage',
+      createStorageWithRuns({
+        'run-invalid-sibling': withoutProjectId('run-invalid-sibling'),
+        [valid.id]: valid,
+      }),
+    )
+
+    await expect(fetchWorkflowRun('run-invalid-sibling')).rejects.toThrow(/不存在/)
+    await expect(fetchWorkflowRun(valid.id)).resolves.toMatchObject({
+      id: valid.id,
+      currentRevisionId: valid.currentRevisionId,
+    })
   })
 
   it('生成完成后进入质量门禁，连续失败两次才阻断', async () => {
