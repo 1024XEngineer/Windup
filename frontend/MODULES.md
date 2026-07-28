@@ -29,11 +29,14 @@ WorkflowRun 的领域模型包含：
 - 多个只读/当前 Revision。
 - 当前先固定五个有序节点：asset、generation、candidate、review、export。
 - 节点门禁、Revision 重启、历史查看和质量门禁 selector/command。
-- 本地 Repository Port/Adapter；页面不依赖存储实现。
+- 返回 Promise 的 Repository Port，以及唯一实现组合入口；页面和编排函数不依赖本地存储实现。
+- 当前本地 Adapter 使用 localStorage + 内存覆盖层；写入失败以内存最新值为准，读取时逐条校验完整领域形状。
+- `GenerationStatus` 区分素材准备的 `not_started` 与实际生成的 `in_progress`。
 - 不含 run/revision 的后端 Task 快照，以及前端专用的 `WorkflowTaskLink` 关联。
 
 WorkflowRun 只负责前端页面编排。后端 OpenAPI 落地后，Generation、Asset、Review、Playtest、
-Export 等独立能力 Adapter 由该 Entity 内部组合，页面公开调用方式不变。
+Export 等独立能力 Adapter 由该 Entity 内部组合，且只在 `entities/workflow-run/repository.ts` 选择
+实现，页面公开调用方式不变。本地 ID 在 `randomUUID` 缺失时有随机字节和会话序列两级兜底。
 
 Character 与动作资产的当前前端契约：
 
@@ -89,4 +92,5 @@ README 说明职责，未实现能力不得返回假成功。
 ## 测试
 
 架构测试检查分层、公开入口、Router 隔离、直接网络请求、测试依赖和循环依赖；
-WorkflowRun 单元/集成测试检查 Revision、节点重启、质量门禁、历史和 Playtest 导入规则。
+WorkflowRun 单元/集成测试检查异步 Port、单点实现选择、存储失败回退、ID 降级、完整数据校验、
+`not_started` 状态、Revision、节点重启、质量门禁、历史和 Playtest 导入规则。

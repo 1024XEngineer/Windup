@@ -255,9 +255,7 @@ function appendNextNode(revision: WorkflowRevision, source: WorkflowNode): Workf
       },
     ],
   }
-  return type === 'generation'
-    ? { ...nextRevision, generationStatus: 'in_progress' }
-    : nextRevision
+  return type === 'generation' ? { ...nextRevision, generationStatus: 'in_progress' } : nextRevision
 }
 
 function revisionOf(run: WorkflowRun, revisionId: string): WorkflowRevision | null {

@@ -53,9 +53,14 @@ Quick Start 与手动 Workflow 共用同一个 WorkflowRun。一个 run 可以�
 Quick Start 不展示节点、Revision 或 Workflow Editor。它以简化创作台呈现自然语言进度；
 完成后满足条件时可导入核验台，导出入口待后端任务接入。Workflow Editor 则保留完整的人工控制能力。
 
-WorkflowRun 是前端编排模型，通过 Entity 内的 Repository Port/Adapter 访问，本地状态临时使用
-localStorage；它不经过 shared/api，也不对应后端 `/workflows` 资源。数据模型已经使用 Revision +
-有序五节点：asset、generation、candidate、review、export。
+WorkflowRun 是前端编排模型，通过 Entity 内返回 Promise 的 Repository Port 访问。三个编排函数
+只依赖唯一组合入口；当前入口选择 localStorage Adapter，不经过 shared/api，也不对应后端
+`/workflows` 资源。未来增加真实 Adapter 时只更换该入口，页面调用方式不变。
+
+本地存储以当前会话内存覆盖磁盘旧快照，写入失败不会让刚创建的流程消失；读取磁盘记录时会完整
+校验 run、revision、node 和状态。ID 在 `randomUUID` 缺失的环境也能生成。手动流程先处于
+`not_started`，进入 generation 节点后才切换为 `in_progress`。数据模型使用 Revision + 有序五节点：
+asset、generation、candidate、review、export。
 
 Project、Media、Generation、Asset、Review、Playtest、Export 等独立后端能力仍经 shared/api 的
 Mock/Real transport 切换。OpenAPI 落地后只替换这些能力 Adapter，页面继续使用现有 WorkflowRun

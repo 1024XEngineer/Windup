@@ -68,16 +68,25 @@ const url = await uploadImage(file)
 ## 前端本地编排：WorkflowRun
 
 `WorkflowRun`、`WorkflowRevision` 和五个页面节点用于组织 Quick Start、Workflow Editor、
-Playtest 与历史查看。它们由前端 `entities/workflow-run` 的本地 Repository 持久化，不经过
-`shared/api`，也不存在对应的 `/workflows` 或 `/workflow-runs` 后端路径。
+Playtest 与历史查看。它们由前端 `entities/workflow-run` 的异步 Repository Port 持久化，不经过
+`shared/api`，也不存在对应的 `/workflows` 或 `/workflow-runs` 后端路径。当前唯一组合入口
+`entities/workflow-run/repository.ts` 选择本地 Adapter，三个编排函数不直接依赖具体实现。
 
 页面继续使用稳定的前端门面：
 
 ```ts
-createWorkflowRun(input)
-fetchWorkflowRun(runId)
-submitWorkflowCommand(runId, command)
+createWorkflowRun(input): Promise<WorkflowRun>
+fetchWorkflowRun(runId): Promise<WorkflowRun>
+submitWorkflowCommand(runId, command): Promise<WorkflowRun>
 ```
+
+Repository 内部的 `create/get/submit` 同样全部返回 Promise。未来真实能力契约冻结后，只在组合入口
+新增或切换远程/混合 Adapter，不需要重写页面或三个编排调用点。当前本地 Adapter 还保证：
+
+- localStorage 写入失败时，本次会话的最新内存数据优先于磁盘旧快照。
+- `crypto.randomUUID` 不可用时依次使用随机字节和本地序列生成 ID。
+- 手动流程在素材准备期间使用 `not_started`，进入 generation 后才是 `in_progress`。
+- 从 localStorage 恢复时完整校验 run、revision、node、枚举和当前版本引用，逐条忽略损坏记录。
 
 真实后端集成按照 PR #62 拆为 Project、Media、Character、Generation、Asset、Review、
 Playtest 和 Export 等独立能力。其 OpenAPI 冻结后，由 WorkflowRun 编排层组合对应 Adapter；

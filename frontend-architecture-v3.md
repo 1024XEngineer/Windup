@@ -145,10 +145,13 @@ Generation、Asset 和 Review 能力返回，前端只据此更新对应节点�
 状态拆分：
 
 ~ ~ ~
-generationStatus: in_progress | completed | failed
+generationStatus: not_started | in_progress | completed | failed
 exportStatus: not_exported | exporting | exported | failed
 playtestStatus: not_tested | passed | issues_found
 ~ ~ ~
+
+手动流程在素材准备阶段使用 `not_started`，进入 generation 节点后才切换为 `in_progress`；
+Quick Start 创建后已经进入 generation，因此初始为 `in_progress`。
 
 Playtest 可从 Quick Start、Workflow 或历史 Revision 导入。URL 形式：
 
@@ -174,7 +177,9 @@ shared/api/
 
 - shared/api 负责 HTTP、响应壳、分页、通用错误和 transport。
 - entities 负责业务 DTO 到领域模型的转换和非法状态校验。
-- WorkflowRun 由 Entity 内部的 Repository Port/Adapter 持久化，不注册 shared/api Mock route。
+- WorkflowRun 由 Entity 内部返回 Promise 的 Repository Port 持久化，不注册 shared/api Mock route。
+- 三个编排函数只依赖唯一组合入口；当前入口绑定本地 Adapter，未来实现只在该入口替换或组合。
+- 本地存储以内存覆盖层保护写入失败后的最新状态，恢复时逐条校验完整领域形状；本地 ID 不强制依赖 `randomUUID`。
 - 非法节点、状态、Revision 或 ID 必须抛出契约错误，不能用默认值伪造成功。
 - JSON、上传、SSE 分别走 request/upload/stream，业务层禁止直接 fetch。
 - 独立后端能力的 Mock 只在开发/测试显式启用；生产只能使用真实 API，失败不得回退 Mock。
@@ -212,8 +217,9 @@ shared/api/
 1. Entity 状态机、Revision、节点重启、历史只读和门禁。
 2. Quick Start 与手动 Workflow 共用同一个 WorkflowRun。
 3. 质检连续失败 2 次、生成完成、导出状态和 Playtest 非阻断规则。
-4. 页面路由参数、历史模式和 Playtest 导入。
-5. 独立后端能力接通后补真实 API Adapter、Provider、SSE 和跨入口 E2E。
+4. Repository 异步契约、唯一实现入口、存储失败回退、ID 降级、`not_started` 与损坏数据过滤。
+5. 页面路由参数、历史模式和 Playtest 导入。
+6. 独立后端能力接通后补真实 API Adapter、Provider、SSE 和跨入口 E2E。
 
 架构测试立即检查当前可验证的 import、fetch、测试依赖和循环依赖；generated client、真实 Python API 和 Mock/Real 完整能力一致性在对应代码出现后启用。
 
@@ -221,7 +227,9 @@ shared/api/
 
 已实现：
 
-- WorkflowRun 的前端编排门面、本地 Repository Port/Adapter、Revision、有序五节点和字符串领域 ID。
+- WorkflowRun 的前端编排门面、异步 Repository Port、唯一组合入口、本地 Adapter、Revision、有序五节点和字符串领域 ID。
+- localStorage 写入失败的内存优先回退、完整恢复校验，以及缺少 `randomUUID` 时的 ID 生成兜底。
+- 手动流程的 `not_started` 到 `in_progress` 状态转换，以及从素材节点重启后的状态恢复。
 - 节点门禁、历史只读、从节点重启和后续执行线移除。
 - 前端演示门禁连续失败两次的页面规则，以及对应的生成状态展示。
 - Quick Start 创建统一 WorkflowRun 并进入独立的简化创作台；后台进入 generation，但页面不展示工作流内部结构。
