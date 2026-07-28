@@ -8,7 +8,7 @@
 - 后端：Python；WorkflowRun、Provider Job、质量门禁和导出任务最终由后端保存或执行。开发和测试阶段经 Mock transport 验证接口契约，生产构建只使用真实 transport。
 - 分层：app -> pages -> features -> entities -> shared。
 - Quick Start 与手动 Workflow 是两种输入入口，最终进入同一套 WorkflowRun、Revision、生成、质检、历史、Playtest 和导出流程。
-- 当前后端 WorkflowRun 尚未提供，本地 adapter 只用于开发和联调前的骨架验证。
+- 当前后端 WorkflowRun 尚未提供；Mock transport 仅用于开发、测试和联调前的接口骨架验证。
 
 ## 2. 分层职责
 
