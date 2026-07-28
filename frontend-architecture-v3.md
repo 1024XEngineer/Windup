@@ -67,6 +67,7 @@ ProjectsPage、ProjectDetailPage 和 AssetLibraryPage 当前直接使用 Entity�
 pages/workflow-editor/
 ├─ index.tsx
 ├─ canvas/
+├─ editor/                 编辑器组件与交互测试
 └─ steps/
    ├─ asset-step/
    ├─ generation-step/
