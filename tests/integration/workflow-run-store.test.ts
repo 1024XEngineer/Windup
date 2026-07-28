@@ -25,6 +25,22 @@ function createMemoryStorage(): Storage {
   }
 }
 
+function createWriteRejectingStorage(snapshot: string): Storage {
+  const values = new Map([['windup.workflow-runs.v1', snapshot]])
+  return {
+    get length() {
+      return values.size
+    },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => [...values.keys()][index] ?? null,
+    removeItem: (key) => values.delete(key),
+    setItem: () => {
+      throw new Error('QuotaExceededError')
+    },
+  }
+}
+
 describe('entities/workflow-run Revision 契约', () => {
   beforeEach(() => {
     vi.stubGlobal('localStorage', createMemoryStorage())
@@ -57,6 +73,18 @@ describe('entities/workflow-run Revision 契约', () => {
 
     const stored = JSON.parse(localStorage.getItem('windup.workflow-runs.v1') ?? '{}')
     expect(stored[created.id]).toEqual(created)
+  })
+
+  it('localStorage 写入失败后仍读取本次会话的最新工作流', async () => {
+    await createWorkflowRun({ projectId: 'old-project', driver: 'manual' })
+    const oldSnapshot = localStorage.getItem('windup.workflow-runs.v1')!
+    vi.stubGlobal('localStorage', createWriteRejectingStorage(oldSnapshot))
+
+    const created = await createWorkflowRun({ projectId: 'new-project', driver: 'manual' })
+    const loaded = await fetchWorkflowRun(created.id)
+
+    expect(loaded.id).toBe(created.id)
+    expect(loaded.currentRevisionId).toBe(created.currentRevisionId)
   })
 
   it('生成完成后进入质量门禁，连续失败两次才阻断', async () => {

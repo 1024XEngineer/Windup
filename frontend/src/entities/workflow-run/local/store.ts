@@ -21,21 +21,25 @@ function isRunMap(value: unknown): value is RunMap {
   )
 }
 
-function readAll(): RunMap {
+function readPersisted(): RunMap {
   try {
     const raw = storage()?.getItem(STORAGE_KEY)
-    if (!raw) return memory
+    if (!raw) return {}
     const parsed: unknown = JSON.parse(raw)
-    return isRunMap(parsed) ? parsed : memory
+    return isRunMap(parsed) ? parsed : {}
   } catch {
-    return memory
+    return {}
   }
 }
 
+function readAll(): RunMap {
+  return { ...readPersisted(), ...memory }
+}
+
 export function saveRun(run: WorkflowRun): WorkflowRun {
-  memory = { ...readAll(), [run.id]: run }
+  memory = { ...memory, [run.id]: run }
   try {
-    storage()?.setItem(STORAGE_KEY, JSON.stringify(memory))
+    storage()?.setItem(STORAGE_KEY, JSON.stringify(readAll()))
   } catch {
     // 无痕模式等场景无法落盘时，本次会话仍使用内存仓库。
   }
