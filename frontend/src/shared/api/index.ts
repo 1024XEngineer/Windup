@@ -4,9 +4,10 @@
  */
 import { mockRequest } from './client/mock'
 import { unwrap, unwrapList } from './client/mappers'
-import type { ApiListResponse, ApiResponse, Paged } from './client/mappers'
+import type { ApiListResponse, ApiResponse } from './client/mappers'
 import { realRequest } from './client/real'
 import type { RequestOptions } from './client/types'
+import type { Paged } from '@/shared/pagination'
 
 /** 开发默认 Mock；生产构建永远使用真实 transport，不能回退演示数据。 */
 const USE_MOCK = !import.meta.env.PROD && import.meta.env.VITE_USE_MOCK !== 'false'
@@ -28,6 +29,6 @@ export async function requestList<T>(
 }
 
 export { ApiError } from './client/mappers'
-export type { ApiListResponse, ApiResponse, Paged, PageQuery } from './client/mappers'
+export type { ApiListResponse, ApiResponse } from './client/mappers'
 export type { RequestOptions } from './client/types'
 export { uploadFile } from './upload'

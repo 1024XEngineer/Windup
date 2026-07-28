@@ -1,5 +1,7 @@
 /** 传输格式的通用转换与错误映射。不认识任何业务概念。 */
 
+import type { Paged } from '@/shared/pagination'
+
 /** 后端统一响应，见 windup_common/result/response.py（PR #57）。成功 code = 200。 */
 export interface ApiResponse<T> {
   /** 业务状态码；当前约定 200 表示成功，非 200 由 unwrap 转成 ApiError。 */
@@ -28,26 +30,6 @@ export interface ApiListResponse<T> {
   page_size: number
   /** 后端可选的响应生成时间；格式需以后端 OpenAPI 为准。 */
   timestamp?: string
-}
-
-/** 分页入参，各处列表统一用这份。 */
-export interface PageQuery {
-  /** 请求页码，当前约定从 1 开始；省略时由具体 Entity 提供默认值。 */
-  page?: number
-  /** 每页条数；传输层会映射为后端的 page_size。 */
-  pageSize?: number
-}
-
-/** 去除后端响应壳并转换为前端命名后的分页结果。 */
-export interface Paged<T> {
-  /** 当前页的数据项。 */
-  items: T[]
-  /** 满足查询条件的数据总条数。 */
-  total: number
-  /** 当前页码，当前约定从 1 开始。 */
-  page: number
-  /** 当前页容量。 */
-  pageSize: number
 }
 
 /** code !== 200 时抛出，用于区分业务失败与网络失败。 */

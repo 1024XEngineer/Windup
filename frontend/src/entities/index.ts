@@ -12,7 +12,6 @@ export {
   deleteProject,
   fetchProject,
   fetchProjects,
-  uploadImage,
   useProject,
   useProjects,
 } from './project'

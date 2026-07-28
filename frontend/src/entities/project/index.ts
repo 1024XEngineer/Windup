@@ -1,12 +1,12 @@
 import { useAsync } from '@/shared/hooks'
 import type { AsyncState } from '@/shared/hooks'
-import type { Paged, PageQuery } from '@/shared/api'
+import type { Paged, PageQuery } from '@/shared/pagination'
 import { fetchProject, fetchProjects } from './api'
 import type { Project } from './types'
 
 /** 项目。后端 GET/POST /projects、GET/DELETE /projects/{id} 已实现（PR #57）。 */
 
-export { createProject, deleteProject, fetchProject, fetchProjects, uploadImage } from './api'
+export { createProject, deleteProject, fetchProject, fetchProjects } from './api'
 export { CHARACTER_PERSPECTIVE, DIRECTIONAL_MOVEMENT, SPRITE_SIZES } from './types'
 export type {
   CharacterPerspective,
