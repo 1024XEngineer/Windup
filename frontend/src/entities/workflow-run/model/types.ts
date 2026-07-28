@@ -22,8 +22,8 @@ export type WorkflowRevisionStatus = 'active' | 'completed' | 'failed' | 'abando
 /** 整次前端页面流程的汇总状态：进行中、已完成或失败。 */
 export type WorkflowRunStatus = 'active' | 'completed' | 'failed'
 
-/** 当前版本在生成阶段的页面汇总状态，不等同于后端 Generation Task 状态。 */
-export type GenerationStatus = 'in_progress' | 'completed' | 'failed'
+/** 当前版本在生成阶段的页面汇总状态；素材准备期间为 not_started。 */
+export type GenerationStatus = 'not_started' | 'in_progress' | 'completed' | 'failed'
 
 /** 当前版本在导出阶段的页面汇总状态。 */
 export type ExportStatus = 'not_exported' | 'exporting' | 'exported' | 'failed'

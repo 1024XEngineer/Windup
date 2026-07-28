@@ -65,6 +65,52 @@ describe('entities/workflow-run Revision 契约', () => {
     expect(manual.revisions).toHaveLength(1)
   })
 
+  it('手动流程在进入生成节点前明确标记为尚未开始', async () => {
+    let manual = await createWorkflowRun({ projectId: 'manual-not-started', driver: 'manual' })
+
+    expect(getCurrentRevision(manual).generationStatus).toBe('not_started')
+    manual = await submitWorkflowCommand(manual.id, {
+      kind: 'complete-node',
+      nodeId: getCurrentNode(manual)!.id,
+    })
+    expect(getCurrentNode(manual)?.type).toBe('generation')
+    expect(getCurrentRevision(manual).generationStatus).toBe('in_progress')
+
+    const quickStart = await createWorkflowRun({
+      projectId: 'quick-start-in-progress',
+      driver: 'ai',
+      prompt: '骑士',
+    })
+    expect(getCurrentRevision(quickStart).generationStatus).toBe('in_progress')
+  })
+
+  it('从素材节点重启时生成状态回到尚未开始', async () => {
+    let run = await createWorkflowRun({ projectId: 'manual-restart', driver: 'manual' })
+    run = await submitWorkflowCommand(run.id, {
+      kind: 'complete-node',
+      nodeId: getCurrentNode(run)!.id,
+    })
+    const source = getCurrentRevision(run)
+    const asset = getNodeByType(source, 'asset')!
+    const generation = getNodeByType(source, 'generation')!
+
+    run = await submitWorkflowCommand(run.id, {
+      kind: 'restart-from-node',
+      sourceRevisionId: source.id,
+      nodeId: asset.id,
+    })
+    expect(getCurrentNode(run)?.type).toBe('asset')
+    expect(getCurrentRevision(run).generationStatus).toBe('not_started')
+
+    run = await submitWorkflowCommand(run.id, {
+      kind: 'restart-from-node',
+      sourceRevisionId: source.id,
+      nodeId: generation.id,
+    })
+    expect(getCurrentNode(run)?.type).toBe('generation')
+    expect(getCurrentRevision(run).generationStatus).toBe('in_progress')
+  })
+
   it('用同一个 runId 持久化并取回同一版本', async () => {
     const created = await createWorkflowRun({ projectId: 'project-1', driver: 'manual' })
     const loaded = await fetchWorkflowRun(created.id)

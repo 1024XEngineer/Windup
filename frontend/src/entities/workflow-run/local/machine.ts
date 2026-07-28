@@ -46,7 +46,7 @@ function initialRevision(driver: WorkflowRun['driver'], prompt: string | null): 
     restartNodeId: null,
     status: 'active',
     nodes,
-    generationStatus: 'in_progress',
+    generationStatus: driver === 'ai' ? 'in_progress' : 'not_started',
     exportStatus: 'not_exported',
     playtestStatus: 'not_tested',
     createdAt: new Date().toISOString(),
@@ -216,6 +216,7 @@ function restartRevision(source: WorkflowRevision, nodeId: string): WorkflowRevi
     qualityFailureCount: index === selectedIndex ? 0 : item.qualityFailureCount,
   }))
   const selectedOrder = WORKFLOW_NODE_ORDER.indexOf(nodes.at(-1)!.type)
+  const selectedType = nodes.at(-1)!.type
 
   return {
     id: newId('revision'),
@@ -224,9 +225,11 @@ function restartRevision(source: WorkflowRevision, nodeId: string): WorkflowRevi
     status: 'active',
     nodes,
     generationStatus:
-      selectedOrder <= WORKFLOW_NODE_ORDER.indexOf('candidate')
-        ? 'in_progress'
-        : source.generationStatus,
+      selectedType === 'asset'
+        ? 'not_started'
+        : selectedOrder <= WORKFLOW_NODE_ORDER.indexOf('candidate')
+          ? 'in_progress'
+          : source.generationStatus,
     exportStatus: 'not_exported',
     playtestStatus: 'not_tested',
     createdAt: new Date().toISOString(),
@@ -236,7 +239,7 @@ function restartRevision(source: WorkflowRevision, nodeId: string): WorkflowRevi
 function appendNextNode(revision: WorkflowRevision, source: WorkflowNode): WorkflowRevision {
   const type = WORKFLOW_NODE_ORDER[WORKFLOW_NODE_ORDER.indexOf(source.type) + 1]
   if (!type) return revision
-  return {
+  const nextRevision: WorkflowRevision = {
     ...revision,
     nodes: [
       ...revision.nodes,
@@ -252,6 +255,9 @@ function appendNextNode(revision: WorkflowRevision, source: WorkflowNode): Workf
       },
     ],
   }
+  return type === 'generation'
+    ? { ...nextRevision, generationStatus: 'in_progress' }
+    : nextRevision
 }
 
 function revisionOf(run: WorkflowRun, revisionId: string): WorkflowRevision | null {
