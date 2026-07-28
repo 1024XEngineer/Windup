@@ -22,6 +22,7 @@ npm run lint
 - /quick-start/:runId：Quick Start 的持续创作页；以自然语言展示生成、检查和结果状态
 - /projects：项目列表
 - /projects/:projectId：项目详情
+- /workflow-editor/:runId：当前 Revision 的工作流入口
 - /workflow-editor/:runId/:stage：当前 Revision 的工作流节点
 - /playtest/:characterId?runId=:runId&revision=:revisionId：独立核验台
 
@@ -44,10 +45,10 @@ app -> pages -> features -> entities -> shared
 Quick Start 与手动 Workflow 共用同一个 WorkflowRun。一个 run 可以有多个 Revision；
 从某节点重新开始会保留节点及以前的参考，移除之后的当前执行线，旧 Revision 仍只读保留。
 
-Quick Start 不展示节点、Revision 或 Workflow Editor。它以简化创作台呈现自然语言进度，
-完成后可直接导出或导入核验台；Workflow Editor 则保留完整的人工控制能力。
+Quick Start 不展示节点、Revision 或 Workflow Editor。它以简化创作台呈现自然语言进度；
+完成后满足条件时可导入核验台，导出入口待后端任务接入。Workflow Editor 则保留完整的人工控制能力。
 
-当前本地 adapter 使用 localStorage 仅作为 Python WorkflowRun API 上线前的临时实现，
-数据模型已经使用 Revision + 有序五节点：asset、generation、candidate、review、export。
+WorkflowRun 经 shared API 门面访问：开发与测试使用 Mock transport（其存储临时使用 localStorage），
+生产构建只使用真实 API。数据模型已经使用 Revision + 有序五节点：asset、generation、candidate、review、export。
 
 Provider、系统质量门禁、SSE、正式角色资产和导出任务尚待后端契约；未实现能力不会返回伪造成功。

@@ -5,7 +5,7 @@
 ## 1. 技术边界
 
 - 前端：React + Vite + TypeScript + Tailwind CSS。
-- 后端：Python；WorkflowRun、Provider Job、质量门禁和导出任务最终由后端保存或执行。
+- 后端：Python；WorkflowRun、Provider Job、质量门禁和导出任务最终由后端保存或执行。开发和测试阶段经 Mock transport 验证接口契约，生产构建只使用真实 transport。
 - 分层：app -> pages -> features -> entities -> shared。
 - Quick Start 与手动 Workflow 是两种输入入口，最终进入同一套 WorkflowRun、Revision、生成、质检、历史、Playtest 和导出流程。
 - 当前后端 WorkflowRun 尚未提供，本地 adapter 只用于开发和联调前的骨架验证。
@@ -17,7 +17,7 @@
 | app | 启动、Router、Provider、全局布局、错误边界 | 已有基础实现 |
 | pages | 完整路由页面、URL、页面临时状态和模块组合 | 已有部分页面，Workflow steps 待实现 |
 | features | 用户对业务对象执行的完整操作 | 已有占位 Feature，按真实实现增量拆分 |
-| entities | 业务对象、查询、命令、选择器和领域规则 | Project 已接后端；WorkflowRun Revision/门禁已由本地 adapter 实现 |
+| entities | 业务对象、查询、命令、选择器和领域规则 | Project 已接后端；WorkflowRun Revision/门禁已经 shared API 门面实现，开发时由 Mock transport 承载 |
 | shared | 通用 API transport、UI、工具和测试辅助 | 已有基础 API/UI，upload/stream 边界待补 |
 
 Account、Billing 和资产库复用 Feature 当前只在本文中预留，不创建代码入口。
@@ -157,7 +157,7 @@ Playtest 保存独立核验记录，可回流到对应 Revision 的 Review，但
 
 ~ ~ ~
 shared/api/
-├─ request.ts       JSON 请求
+├─ index.ts         JSON 请求的公开门面，以及 Mock/Real transport 切换
 ├─ upload.ts        文件上传
 ├─ stream.ts        SSE/流式任务预留
 ├─ generated/       预留，不伪造生成代码
@@ -209,7 +209,7 @@ shared/api/
 
 已实现：
 
-- 本地 WorkflowRun adapter、Revision、有序五节点和字符串领域 ID。
+- WorkflowRun 的 shared API 门面、开发 Mock transport、Revision、有序五节点和字符串领域 ID。
 - 节点门禁、历史只读、从节点重启和后续执行线移除。
 - 系统质检连续失败两次的领域规则，以及质检通过后的生成完成状态。
 - Quick Start 创建统一 WorkflowRun 并进入独立的简化创作台；后台进入 generation，但页面不展示工作流内部结构。
