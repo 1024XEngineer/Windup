@@ -333,6 +333,7 @@ describe('依赖边界', () => {
 
   it('WorkflowRun 是前端编排模型，不通过 HTTP transport', () => {
     const workflowRoot = join(SRC, 'entities/workflow-run')
+    const orchestrationRoot = join(workflowRoot, 'orchestration')
     const offenders: string[] = []
 
     for (const file of walk(workflowRoot)) {
@@ -345,6 +346,18 @@ describe('依赖边界', () => {
       if (/['"`]\/workflow-runs?(?:\/|['"`])/.test(source)) {
         offenders.push(`${rel}: runtime workflow HTTP path`)
       }
+      if (file.startsWith(orchestrationRoot)) {
+        for (const specifier of moduleSpecifiers(file, source)) {
+          const target = targetRelativePath(file, specifier)
+          if (target?.startsWith('entities/workflow-run/local/')) {
+            offenders.push(`${rel}: binds local repository directly`)
+          }
+        }
+      }
+    }
+
+    if (!existsSync(join(workflowRoot, 'repository.ts'))) {
+      offenders.push('entities/workflow-run/repository.ts composition entry is missing')
     }
 
     const mockWorkflowDir = join(SRC, 'shared/api/client/mock/workflow-run')
