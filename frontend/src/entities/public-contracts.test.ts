@@ -7,9 +7,9 @@ import type {
   AddActionInput,
   Character,
   CharacterPerspective,
-  CharacterVariant,
   DirectionalMovement,
   Frame,
+  Outfit,
   Project,
   Task,
   WorkflowRun,
@@ -24,21 +24,15 @@ describe('entities 公开契约', () => {
   })
 
   it('角色母版与动作模板使用不同概念', () => {
-    expectTypeOf<Character>().toHaveProperty('variants').toEqualTypeOf<CharacterVariant[]>()
-    expectTypeOf<CharacterVariant>()
-      .toHaveProperty('candidateCharacterTemplates')
-      .toEqualTypeOf<string[]>()
-    expectTypeOf<CharacterVariant>()
-      .toHaveProperty('characterTemplateUrl')
-      .toEqualTypeOf<string | null>()
-    expectTypeOf<CharacterVariant>().not.toHaveProperty('baseImageUrl')
-    expectTypeOf(confirmCharacterTemplate).toEqualTypeOf<
-      (variantId: string) => Promise<CharacterVariant>
-    >()
+    expectTypeOf<Character>().toHaveProperty('outfits').toEqualTypeOf<Outfit[]>()
+    expectTypeOf<Outfit>().toHaveProperty('candidateCharacterTemplates').toEqualTypeOf<string[]>()
+    expectTypeOf<Outfit>().toHaveProperty('characterTemplateUrl').toEqualTypeOf<string | null>()
+    expectTypeOf<Outfit>().not.toHaveProperty('baseImageUrl')
+    expectTypeOf(confirmCharacterTemplate).toEqualTypeOf<(outfitId: string) => Promise<Outfit>>()
     expectTypeOf(addAction).toEqualTypeOf<
-      (variantId: string, input: AddActionInput) => Promise<Action>
+      (outfitId: string, input: AddActionInput) => Promise<Action>
     >()
-    expectTypeOf<Action>().toHaveProperty('variantId').toBeString()
+    expectTypeOf<Action>().toHaveProperty('outfitId').toBeString()
     expectTypeOf<Action>()
       .toHaveProperty('sourceWorkflowRunId')
       .toEqualTypeOf<WorkflowRun['id'] | null>()
