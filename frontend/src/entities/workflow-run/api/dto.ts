@@ -1,9 +1,4 @@
-import type {
-  WorkflowCommand,
-  WorkflowNode,
-  WorkflowRevision,
-  WorkflowRun,
-} from '../model/types'
+import type { WorkflowCommand, WorkflowNode, WorkflowRevision, WorkflowRun } from '../model/types'
 
 /** 后端原始形状，只在 api/ 内出现；出了这里全项目只认 WorkflowRun。 */
 export interface WorkflowNodeDto {

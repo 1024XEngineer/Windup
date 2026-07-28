@@ -6,11 +6,7 @@ import {
   canRestartFromNode,
   getNodeByType,
 } from '@/entities'
-import type {
-  WorkflowNodeType,
-  WorkflowRevision,
-  WorkflowRun,
-} from '@/entities'
+import type { WorkflowNodeType, WorkflowRevision, WorkflowRun } from '@/entities'
 import { CharacterSetup } from '@/features/character-setup'
 import { Export } from '@/features/export'
 import { Generation } from '@/features/generation'
@@ -48,9 +44,7 @@ export function WorkflowEditor({
 }: WorkflowEditorProps) {
   const [restarting, setRestarting] = useState(false)
   const activeNode = getNodeByType(revision, activeType)
-  const canRestart = activeNode
-    ? canRestartFromNode(run, revision.id, activeNode.id)
-    : false
+  const canRestart = activeNode ? canRestartFromNode(run, revision.id, activeNode.id) : false
 
   async function restart() {
     if (!activeNode || restarting) return
@@ -184,7 +178,11 @@ function StageContent({
 
   return (
     <div className="space-y-4">
-      {run.characterId ? <Export characterId={run.characterId} /> : <ReadOnlyNotice text="暂无可导出的角色。" />}
+      {run.characterId ? (
+        <Export characterId={run.characterId} />
+      ) : (
+        <ReadOnlyNotice text="暂无可导出的角色。" />
+      )}
       {run.characterId && canImportToPlaytest(run, revision.id) ? (
         <button
           type="button"

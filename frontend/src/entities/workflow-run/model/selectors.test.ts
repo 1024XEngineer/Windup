@@ -47,7 +47,10 @@ function revision(overrides: Partial<WorkflowRevision> = {}): WorkflowRevision {
   }
 }
 
-function run(current: WorkflowRevision = revision(), history: WorkflowRevision[] = []): WorkflowRun {
+function run(
+  current: WorkflowRevision = revision(),
+  history: WorkflowRevision[] = [],
+): WorkflowRun {
   return {
     id: 'run-1',
     projectId: 'project-1',
@@ -98,9 +101,7 @@ describe('WorkflowRun selectors', () => {
         passed: true,
       }),
     ).toBe(true)
-    expect(
-      canSubmitCommand(value, { kind: 'complete-node', nodeId: 'candidate-1' }),
-    ).toBe(false)
+    expect(canSubmitCommand(value, { kind: 'complete-node', nodeId: 'candidate-1' })).toBe(false)
   })
 
   it('只有系统质检通过的版本可以导入核验台', () => {

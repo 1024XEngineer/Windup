@@ -16,13 +16,18 @@ export {
   useProject,
   useProjects,
 } from './project'
-export type { CreateProjectInput, Project } from './project'
+export type {
+  CharacterPerspective,
+  CreateProjectInput,
+  DirectionalMovement,
+  Project,
+} from './project'
 
 /* 角色 / 动作 / 帧 —— 提案，待与后端 review */
 export {
   addAction,
   confirmAction,
-  confirmTemplate,
+  confirmBaseImage,
   createCharacter,
   fetchCharacter,
   fetchCharactersByProject,
@@ -34,6 +39,7 @@ export type {
   ActionKind,
   ActionStatus,
   Character,
+  CharacterVariant,
   CreateCharacterInput,
   Frame,
   FrameQcResult,
@@ -67,6 +73,9 @@ export type {
   ExportStatus,
   GenerationStatus,
   PlaytestStatus,
+  Task,
+  TaskEvent,
+  TaskStatus,
   WorkflowCommand,
   WorkflowCommandKind,
   WorkflowDriver,

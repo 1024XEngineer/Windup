@@ -1,6 +1,11 @@
 import { useNavigate, useParams } from 'react-router'
 
-import { CHARACTER_PERSPECTIVE, DIRECTIONAL_MOVEMENT, createWorkflowRun, useProject } from '@/entities'
+import {
+  CHARACTER_PERSPECTIVE,
+  DIRECTIONAL_MOVEMENT,
+  createWorkflowRun,
+  useProject,
+} from '@/entities'
 import { PageHeader } from '@/shared/ui'
 
 /**
@@ -56,7 +61,7 @@ export function ProjectDetailPage() {
           </p>
           <button
             type="button"
-            onClick={() => navigate(`/asset-library?projectId=${project.id}`)}
+            onClick={() => navigate(`/projects/${encodeURIComponent(project.id)}/assets`)}
             className="mt-3 rounded-lg border border-slate-200 px-4 py-2 text-sm hover:border-slate-400"
           >
             查看本项目资产库

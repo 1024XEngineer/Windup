@@ -1,13 +1,7 @@
 /** Quick Start 与手动工作流只改变输入方式，共用同一种运行模型。 */
 export type WorkflowDriver = 'ai' | 'manual'
 
-export const WORKFLOW_NODE_ORDER = [
-  'asset',
-  'generation',
-  'candidate',
-  'review',
-  'export',
-] as const
+export const WORKFLOW_NODE_ORDER = ['asset', 'generation', 'candidate', 'review', 'export'] as const
 
 export type WorkflowNodeType = (typeof WORKFLOW_NODE_ORDER)[number]
 export type WorkflowNodeStatus = 'locked' | 'available' | 'active' | 'passed' | 'failed'

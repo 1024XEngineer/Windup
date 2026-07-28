@@ -21,11 +21,7 @@ export function listRevisionHistory(run: WorkflowRun): WorkflowRevision[] {
   return [...run.revisions].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
 }
 
-export function getNode(
-  run: WorkflowRun,
-  revisionId: string,
-  nodeId: string,
-): WorkflowNode | null {
+export function getNode(run: WorkflowRun, revisionId: string, nodeId: string): WorkflowNode | null {
   return getRevision(run, revisionId)?.nodes.find((node) => node.id === nodeId) ?? null
 }
 
@@ -57,11 +53,7 @@ export function canEnterNode(
   return node?.status === 'active' || node?.status === 'passed' || node?.status === 'failed'
 }
 
-export function canRestartFromNode(
-  run: WorkflowRun,
-  revisionId: string,
-  nodeId: string,
-): boolean {
+export function canRestartFromNode(run: WorkflowRun, revisionId: string, nodeId: string): boolean {
   const revision = getRevision(run, revisionId)
   const node = revision?.nodes.find((item) => item.id === nodeId)
   return Boolean(revision && node && node.status !== 'locked' && node.status !== 'available')

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { uploadImage } from './api'
+import { fetchProject, uploadImage } from './api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -17,5 +17,14 @@ describe('uploadImage', () => {
 
     await expect(uploadImage(file)).rejects.toThrow('文件超过大小上限(10485760 字节)')
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('Project DTO mapper', () => {
+  it('把后端数字枚举转换成前端字符串领域值', async () => {
+    const project = await fetchProject('1')
+
+    expect(project.perspective).toBe('side')
+    expect(project.directionalMovement).toBe('four-way')
   })
 })

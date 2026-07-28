@@ -11,14 +11,14 @@ export interface Project {
   /** 后端限制 1–20 字符，同一用户下不可重名。 */
   name: string
   /** 游戏视角，见 CHARACTER_PERSPECTIVE。 */
-  perspective: number
+  perspective: CharacterPerspective
   /** 移动方向，见 DIRECTIONAL_MOVEMENT。 */
-  directionalMovement: number
+  directionalMovement: DirectionalMovement
   /** 后端校验 32–2048，实际取 SPRITE_SIZES 里的档位。 */
   spriteSize: { width: number; height: number }
-  /** 会进生成提示词。 */
+  /** 项目级画风描述，会作为本项目所有角色与动作生成的视觉约束。 */
   gameStyle: string | null
-  /** 由 POST /upload/image 上传后拿到。 */
+  /** 项目级画风参考图；不是生成结果或角色母版，URL 来自 POST /upload/image。 */
   sampleImageUrl: string | null
   createdAt: string
   updatedAt: string
@@ -27,25 +27,28 @@ export interface Project {
 /** 新建项目的入参。 */
 export interface CreateProjectInput {
   name: string
-  perspective: number
-  directionalMovement: number
+  perspective: CharacterPerspective
+  directionalMovement: DirectionalMovement
   spriteSize: { width: number; height: number }
   gameStyle?: string | null
   sampleImageUrl?: string | null
 }
 
-/** 游戏视角。取值与含义来自 windup_project 表注释（2026-07-27 后端接口文档）。 */
-export const CHARACTER_PERSPECTIVE: Record<number, string> = {
-  1: '横版视角',
-  2: '俯视',
-  3: '2.5D',
+export type CharacterPerspective = 'side' | 'top-down' | 'isometric'
+export type DirectionalMovement = 'single' | 'four-way' | 'eight-way'
+
+/** 游戏视角。DTO 数字值只在 api mapper 内存在。 */
+export const CHARACTER_PERSPECTIVE: Record<CharacterPerspective, string> = {
+  side: '横版视角',
+  'top-down': '俯视',
+  isometric: '2.5D',
 }
 
 /** 移动方向，决定一个动作要生成几套朝向的帧。 */
-export const DIRECTIONAL_MOVEMENT: Record<number, string> = {
-  1: '单向',
-  2: '四向',
-  3: '八向',
+export const DIRECTIONAL_MOVEMENT: Record<DirectionalMovement, string> = {
+  single: '单向',
+  'four-way': '四向',
+  'eight-way': '八向',
 }
 
 /**

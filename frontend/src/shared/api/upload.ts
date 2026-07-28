@@ -18,7 +18,10 @@ export async function uploadFile<T>(path: string, file: File): Promise<T> {
     data: T | null
   }
   if (!response.ok || payload.code !== 200 || payload.data === null) {
-    throw new ApiError(payload.message || `上传失败：HTTP ${response.status}`, payload.code || response.status)
+    throw new ApiError(
+      payload.message || `上传失败：HTTP ${response.status}`,
+      payload.code || response.status,
+    )
   }
   return payload.data
 }

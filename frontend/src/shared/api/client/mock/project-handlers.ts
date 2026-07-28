@@ -92,9 +92,7 @@ export const projectMockHandlers: MockRoute[] = [
       const body = options.body as Partial<ProjectDto>
       const userId = body.user_id ?? 1
       if (
-        store.some(
-          (item) => item.user_id === userId && item.project_name === body.project_name,
-        )
+        store.some((item) => item.user_id === userId && item.project_name === body.project_name)
       ) {
         return { code: 400, message: '项目名称已存在', data: null }
       }

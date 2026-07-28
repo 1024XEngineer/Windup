@@ -69,7 +69,10 @@ export function initialRevision(driver: RunDto['driver'], prompt: string | null)
   const asset = node('asset', driver === 'ai' ? 'passed' : 'active', { prompt })
   const nodes =
     driver === 'ai'
-      ? [asset, { ...node('generation', 'active', { prompt }), order: 1, reference_node_ids: [asset.id] }]
+      ? [
+          asset,
+          { ...node('generation', 'active', { prompt }), order: 1, reference_node_ids: [asset.id] },
+        ]
       : [asset]
 
   return {

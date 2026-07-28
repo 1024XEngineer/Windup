@@ -13,6 +13,8 @@ npm run typecheck
 npm run build
 npm run test
 npm run lint
+npm run format
+npm run format:check
 ~~~
 
 接口联调状态、请求形式与未接通能力见 [API_CONTRACT.md](API_CONTRACT.md)。
@@ -24,6 +26,7 @@ npm run lint
 - /quick-start/:runId：Quick Start 的持续创作页；以自然语言展示生成、检查和结果状态
 - /projects：项目列表
 - /projects/:projectId：项目详情
+- /projects/:projectId/assets：项目资产库；展示项目资产及系统内置动作模板
 - /workflow-editor/:runId：当前 Revision 的工作流入口
 - /workflow-editor/:runId/:stage：当前 Revision 的工作流节点
 - /playtest/:characterId?runId=:runId&revision=:revisionId：独立核验台
@@ -38,7 +41,7 @@ app -> pages -> features -> entities -> shared
 - pages：路由、URL、页面临时状态和模块组合。
 - features：生成、角色设置、审核和导出等用户操作。
 - entities：Project、Character、WorkflowRun、Revision 和领域规则。
-- shared：通用 API transport、UI、工具和测试辅助。
+- shared：通用 API transport、React hooks、UI 和测试辅助。
 
 跨模块只能走公开 index.ts；页面、Feature 和 Entity 不直接调用 fetch。
 

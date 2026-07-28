@@ -1,3 +1,5 @@
+import type { WorkflowRun } from '../workflow-run'
+
 /** 角色、动作、帧。后端接口尚未提供，形状按界面需要先定，待与后端对齐。 */
 
 /** 预设动作（行走/奔跑/跳跃/待机等 6–10 个）或自定义。 */
@@ -20,8 +22,6 @@ export type ActionStatus =
 export type FrameQcResult = 'pending' | 'passed' | 'failed'
 
 export interface Frame {
-  /** 动作内序号。一个动作几帧由后端决定，前端不写死。 */
-  index: number
   imageUrl: string
 
   qc: FrameQcResult
@@ -31,29 +31,37 @@ export interface Frame {
 
 export interface Action {
   id: string
-  characterId: string
+  variantId: CharacterVariant['id']
 
   name: string
   kind: ActionKind
   status: ActionStatus
-  /** 播放时是否位移：跳跃有，待机、蹲下没有。由后端按动作标签给出。 */
-  hasDisplacement: boolean
+  /** 每个动作明确携带帧率；预览和导出不得使用前端全局常量。 */
+  fps: number
   frames: Frame[]
   /**
-   * 生成它的工作流 id，审核台退回单帧后据此跳回编辑器定位。
+   * 生成它的 WorkflowRun id，审核台退回单帧后据此跳回编辑器定位。
    * 类型必须与 WorkflowRun.id 一致，否则这条恢复链在类型上就是断的。
    */
-  sourceWorkflowId: string | null
+  sourceWorkflowRunId: WorkflowRun['id'] | null
 }
 
-/** 项目下的核心资产，带一整套动作。 */
+/** 同一角色的一套独立造型；MVP UI 只展示第一套，但数据结构不折叠该层。 */
+export interface CharacterVariant {
+  id: string
+  characterId: string
+  name: string
+  /** 母版图，确认后作为该造型后续动作的一致性基准。 */
+  baseImageUrl: string | null
+  actions: Action[]
+}
+
+/** 项目下的角色资产；造型拥有各自的母版和动作帧。 */
 export interface Character {
   id: string
   projectId: string
   name: string
-  /** 母版图，确认后作为后续动作的一致性基准。 */
-  templateImageUrl: string | null
-  actions: Action[]
+  variants: CharacterVariant[]
   createdAt: string
   updatedAt: string
 }

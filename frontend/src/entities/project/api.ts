@@ -1,6 +1,11 @@
 import { ApiError, request, requestList, uploadFile } from '@/shared/api'
 import type { Paged, PageQuery } from '@/shared/api'
-import type { CreateProjectInput, Project } from './types'
+import type {
+  CharacterPerspective,
+  CreateProjectInput,
+  DirectionalMovement,
+  Project,
+} from './types'
 
 const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
 const MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -24,15 +29,41 @@ interface ProjectDto {
 /** TODO(对后端)：user_id 应由后端从 token 推出，不该前端传。暂时写死。 */
 const CURRENT_USER_ID = 1
 
+const PERSPECTIVE_FROM_DTO: Record<number, CharacterPerspective> = {
+  1: 'side',
+  2: 'top-down',
+  3: 'isometric',
+}
+const PERSPECTIVE_TO_DTO: Record<CharacterPerspective, number> = {
+  side: 1,
+  'top-down': 2,
+  isometric: 3,
+}
+const MOVEMENT_FROM_DTO: Record<number, DirectionalMovement> = {
+  1: 'single',
+  2: 'four-way',
+  3: 'eight-way',
+}
+const MOVEMENT_TO_DTO: Record<DirectionalMovement, number> = {
+  single: 1,
+  'four-way': 2,
+  'eight-way': 3,
+}
+
 /** 后端形状 → 业务对象。 */
 function toProject(dto: ProjectDto): Project {
+  const perspective = PERSPECTIVE_FROM_DTO[dto.character_perspective]
+  const directionalMovement = MOVEMENT_FROM_DTO[dto.directional_movement]
+  if (!perspective || !directionalMovement) {
+    throw new Error(`项目 ${dto.id} 返回了未知的视角或移动方向`)
+  }
   return {
     id: String(dto.id),
     ownerId: String(dto.user_id),
     workflowId: dto.workflow_id === null ? null : String(dto.workflow_id),
     name: dto.project_name,
-    perspective: dto.character_perspective,
-    directionalMovement: dto.directional_movement,
+    perspective,
+    directionalMovement,
     spriteSize: { width: dto.sprite_width, height: dto.sprite_height },
     gameStyle: dto.game_style,
     sampleImageUrl: dto.sprite_sample_url,
@@ -68,8 +99,8 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
       user_id: CURRENT_USER_ID,
       workflow_id: null,
       project_name: input.name,
-      character_perspective: input.perspective,
-      directional_movement: input.directionalMovement,
+      character_perspective: PERSPECTIVE_TO_DTO[input.perspective],
+      directional_movement: MOVEMENT_TO_DTO[input.directionalMovement],
       sprite_width: input.spriteSize.width,
       sprite_height: input.spriteSize.height,
       game_style: input.gameStyle ?? null,

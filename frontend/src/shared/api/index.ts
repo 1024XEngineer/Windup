@@ -11,7 +11,7 @@ import type { RequestOptions } from './client/types'
 /** 开发默认 Mock；生产构建永远使用真实 transport，不能回退演示数据。 */
 const USE_MOCK = !import.meta.env.PROD && import.meta.env.VITE_USE_MOCK !== 'false'
 
-const send = <R,>(path: string, options: RequestOptions): Promise<R> =>
+const send = <R>(path: string, options: RequestOptions): Promise<R> =>
   USE_MOCK ? mockRequest<R>(path, options) : realRequest<R>(path, options)
 
 /** 取单个对象。code !== 200 时抛 ApiError，调用方不必判断 code。 */

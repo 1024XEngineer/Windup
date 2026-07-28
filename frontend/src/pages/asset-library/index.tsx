@@ -1,32 +1,20 @@
-import { useSearchParams } from 'react-router'
+import { useParams } from 'react-router'
 
 import { CharacterSetup } from '@/features/character-setup'
 import { PageHeader } from '@/shared/ui'
 
 /**
- * 资产库是项目下属的，不是全站总库，所以必须带 projectId 进来。
+ * 资产库以项目为上下文；系统内置动作模板作为当前项目可用资源一并展示。
  * 按角色/视角/动作浏览，「继续补充动作」复用 CharacterSetup。
  */
 export function AssetLibraryPage() {
-  const [search] = useSearchParams()
-  const projectId = search.get('projectId') ?? ''
-
-  if (!projectId) {
-    return (
-      <>
-        <PageHeader title="资产库" />
-        <p className="text-sm text-slate-500">
-          资产库属于某个项目，请先从项目页进入（/asset-library?projectId=…）。
-        </p>
-      </>
-    )
-  }
+  const { projectId = '' } = useParams()
 
   return (
     <>
       <PageHeader title="资产库" subtitle={`项目 ${projectId} 内可复用的角色、动作与穿戴`} />
       <p className="mb-4 text-sm text-slate-400">
-        待实现：读 Character / ActionTemplate / Wearable 三个列表并筛选。
+        待实现：读取当前项目的 Character、ActionTemplate、Wearable，以及系统内置 ActionTemplate。
       </p>
       <CharacterSetup projectId={projectId} />
     </>

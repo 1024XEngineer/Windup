@@ -5,6 +5,7 @@
 ## 1. 技术边界
 
 - 前端：React + Vite + TypeScript + Tailwind CSS。
+- 工具链：Oxlint 负责代码检查，Oxfmt 负责格式化；Tailwind 与 Vite 插件属于构建期开发依赖。
 - 后端：Python；WorkflowRun、Provider Job、质量门禁和导出任务最终由后端保存或执行。开发和测试阶段经 Mock transport 验证接口契约，生产构建只使用真实 transport。
 - 分层：app -> pages -> features -> entities -> shared。
 - Quick Start 与手动 Workflow 是两种输入入口，最终进入同一套 WorkflowRun、Revision、生成、质检、历史、Playtest 和导出流程。
@@ -47,17 +48,17 @@ Account、Billing 和资产库复用 Feature 当前只在本文中预留，不�
 /quick-start/:runId              Quick Start 简化创作台
 /projects                        项目列表
 /projects/:projectId             项目详情
+/projects/:projectId/assets      项目资产库
 /workflow-editor/:runId          当前 Revision 的工作流入口
 /workflow-editor/:runId/:stage   当前 Revision 的指定节点
 /playtest/:characterId           独立核验台
-/asset-library                   资产库预留页面
 ~~~
 
 / 不再承担 Quick Start 具体业务；Quick Start 使用 /quick-start。项目详情保留当前的 /projects/:projectId，不改为 /project/:projectId。
 
 Home 只提供 Quick Start 和从项目开始两个入口，不保存业务状态。Quick Start 负责自然语言输入和初始计划解析，创建与手动入口完全相同的 WorkflowRun 后停留在独立的简化创作台（/quick-start/:runId）。该页面使用自然语言展示生成、检查和结果，不展示五个节点、Revision、WorkflowRun 或 Workflow Editor；后台仍复用同一套领域状态。需要精细控制时才进入 Workflow Editor。
 
-ProjectsPage、ProjectDetailPage 和 AssetLibraryPage 当前直接使用 Entity；不提前创建 features/project 或 features/asset-library。出现复杂复用后再提取 Feature。
+ProjectsPage、ProjectDetailPage 和 AssetLibraryPage 当前直接使用 Entity；不提前创建 features/project 或 features/asset-library。Asset Library 以项目为上下文，展示项目 Character、项目 ActionTemplate、Wearable 以及系统内置 ActionTemplate。出现复杂复用后再提取 Feature。
 
 ## 5. Workflow Editor
 
@@ -179,10 +180,16 @@ shared/api/
 
 - WorkflowRun、Revision、节点、命令和门禁归 entities/workflow-run。
 - Project、Character、ActionTemplate、Wearable 归各自 Entity。
+- Task 快照包含 run、revision、状态、进度、错误和未冻结的 result；SSE 事件复用同一组状态字段。
+- Character 保留 variants 层；造型拥有各自的母版和 Action，MVP UI 只展示第一套造型。
+- Action 自身携带 fps；Frame 顺序由 Action.frames 数组表达，不重复保存 index。
+- Action 使用 sourceWorkflowRunId 回指 WorkflowRun；前端领域 ID 和枚举统一使用语义明确的字符串。
+- ActionTemplate 使用 system/project 作用域；系统模板不属于任何项目，项目资产页合并展示两类模板。
 - URL、画布缩放、节点选中、资产筛选和当前审核位置归对应 Page。
 - Generation、Review、Playtest 的局部交互状态归对应 Feature 或 Playtest Page。
 - 不建立 Redux、Zustand 等全局业务 Store。
 - 先保留 query key、query function、mutation 和 data/loading/error/refresh 语义，暂不绑定 React Query。
+- 跨 Entity 复用的异步 React 状态放在 shared/hooks，不使用含义宽泛的 shared/lib。
 
 ## 10. 目录增量规则
 
@@ -216,6 +223,8 @@ shared/api/
 - Quick Start 创建统一 WorkflowRun 并进入独立的简化创作台；后台进入 generation，但页面不展示工作流内部结构。
 - Workflow Editor 节点路由、历史 Revision URL 和重启交互。
 - Playtest 的完整 Revision 导入门禁、核验结论记录和非阻断导出提示。
+- 项目资产库路由及系统/项目 ActionTemplate 作用域契约。
+- Task 快照、CharacterVariant、Action fps、Frame 数组顺序和角色母版的明确前端命名。
 - 生产构建强制使用真实 API transport，业务层禁止直接 fetch。
 
 仍待真实后端或业务实现：

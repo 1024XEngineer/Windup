@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { Link, MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ErrorBoundary } from './error-boundary'
+import { ErrorBoundary, RouteErrorBoundary } from './error-boundary'
 
 /**
  * 错误边界得真的兜得住才算数：这里让子组件抛异常，验证应用没有白屏、
@@ -41,6 +42,44 @@ describe('全局错误边界', () => {
       </ErrorBoundary>,
     )
     expect(screen.getByText('一切正常')).toBeTruthy()
+    expect(screen.queryByText('这个页面出错了')).toBeNull()
+  })
+
+  it('路由位置变化后清除上一页的错误状态', () => {
+    const view = render(
+      <ErrorBoundary resetKey="/broken">
+        <Boom />
+      </ErrorBoundary>,
+    )
+    expect(screen.getByText('这个页面出错了')).toBeTruthy()
+
+    view.rerender(
+      <ErrorBoundary resetKey="/healthy">
+        <p>新页面正常</p>
+      </ErrorBoundary>,
+    )
+
+    expect(screen.getByText('新页面正常')).toBeTruthy()
+    expect(screen.queryByText('这个页面出错了')).toBeNull()
+  })
+
+  it('页面抛错后可以通过导航进入正常页面', async () => {
+    render(
+      <MemoryRouter initialEntries={['/broken']}>
+        <Link to="/healthy">离开错误页</Link>
+        <RouteErrorBoundary>
+          <Routes>
+            <Route path="/broken" element={<Boom />} />
+            <Route path="/healthy" element={<p>目标页面正常</p>} />
+          </Routes>
+        </RouteErrorBoundary>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText('这个页面出错了')).toBeTruthy()
+    fireEvent.click(screen.getByRole('link', { name: '离开错误页' }))
+
+    expect(await screen.findByText('目标页面正常')).toBeTruthy()
     expect(screen.queryByText('这个页面出错了')).toBeNull()
   })
 })

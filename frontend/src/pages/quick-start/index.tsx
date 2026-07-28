@@ -28,7 +28,8 @@ export function QuickStartPage() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  if (runId) return <QuickStartCreation runId={runId} onCreateAnother={() => navigate('/quick-start')} />
+  if (runId)
+    return <QuickStartCreation runId={runId} onCreateAnother={() => navigate('/quick-start')} />
 
   async function start() {
     const prompt = description.trim()
@@ -83,12 +84,19 @@ export function QuickStartPage() {
   )
 }
 
-function QuickStartCreation({ runId, onCreateAnother }: { runId: string; onCreateAnother: () => void }) {
+function QuickStartCreation({
+  runId,
+  onCreateAnother,
+}: {
+  runId: string
+  onCreateAnother: () => void
+}) {
   const navigate = useNavigate()
   const query = useWorkflowRun(runId)
 
   if (query.loading) return <p className="text-sm text-slate-500">正在准备创作…</p>
-  if (query.error) return <p className="text-sm text-red-600">无法继续这次创作：{query.error.message}</p>
+  if (query.error)
+    return <p className="text-sm text-red-600">无法继续这次创作：{query.error.message}</p>
   if (!query.data) return <p className="text-sm text-red-600">未找到这次创作记录。</p>
 
   const run = query.data
@@ -114,15 +122,25 @@ function QuickStartCreation({ runId, onCreateAnother }: { runId: string; onCreat
         }
       />
 
-      <section aria-label="创作进度" className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-6">
+      <section
+        aria-label="创作进度"
+        className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-6"
+      >
         <div>
           <p className="text-base font-semibold">{completed ? '已经为你准备好结果。' : title}</p>
-          <p className="mt-1 text-sm text-slate-600">{completed ? '你可以继续导出或导入核验台。' : detail}</p>
+          <p className="mt-1 text-sm text-slate-600">
+            {completed ? '你可以继续导出或导入核验台。' : detail}
+          </p>
         </div>
         <ol className="grid gap-2 text-sm sm:grid-cols-3">
           {['理解设定', '生成角色', '检查交付'].map((label, index) => {
             const currentIndex = activeNode ? Math.min(activeNode.order, 2) : 2
-            const state = completed || index < currentIndex ? '已完成' : index === currentIndex ? '进行中' : '等待中'
+            const state =
+              completed || index < currentIndex
+                ? '已完成'
+                : index === currentIndex
+                  ? '进行中'
+                  : '等待中'
             return (
               <li key={label} className="rounded-lg border border-slate-200 bg-white px-3 py-3">
                 <p className="font-medium text-slate-800">{label}</p>
@@ -157,7 +175,9 @@ function QuickStartCreation({ runId, onCreateAnother }: { runId: string; onCreat
       ) : (
         <section className="rounded-xl border border-dashed border-slate-300 p-6 text-sm text-slate-600">
           <p className="font-medium text-slate-800">生成服务暂未连接</p>
-          <p className="mt-1">服务接入后，这里会持续更新创作进度和结果；当前不会显示虚假的完成结果。</p>
+          <p className="mt-1">
+            服务接入后，这里会持续更新创作进度和结果；当前不会显示虚假的完成结果。
+          </p>
         </section>
       )}
     </div>

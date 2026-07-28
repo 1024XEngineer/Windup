@@ -1,5 +1,5 @@
-import { useAsync } from '@/shared/lib'
-import type { AsyncState } from '@/shared/lib'
+import { useAsync } from '@/shared/hooks'
+import type { AsyncState } from '@/shared/hooks'
 import type { Paged, PageQuery } from '@/shared/api'
 import { fetchProject, fetchProjects } from './api'
 import type { Project } from './types'
@@ -8,7 +8,12 @@ import type { Project } from './types'
 
 export { createProject, deleteProject, fetchProject, fetchProjects, uploadImage } from './api'
 export { CHARACTER_PERSPECTIVE, DIRECTIONAL_MOVEMENT, SPRITE_SIZES } from './types'
-export type { CreateProjectInput, Project } from './types'
+export type {
+  CharacterPerspective,
+  CreateProjectInput,
+  DirectionalMovement,
+  Project,
+} from './types'
 
 /** 订阅项目列表。 */
 export function useProjects(query: PageQuery = {}): AsyncState<Paged<Project>> {

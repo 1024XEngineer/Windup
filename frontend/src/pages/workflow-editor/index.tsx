@@ -21,9 +21,7 @@ export function WorkflowEditorPage() {
   const query = useWorkflowRun(runId)
   const requestedRevisionId = search.get('revision')
   const run = query.data
-  const revision = run
-    ? getRevision(run, requestedRevisionId ?? run.currentRevisionId)
-    : null
+  const revision = run ? getRevision(run, requestedRevisionId ?? run.currentRevisionId) : null
   const requestedType = isWorkflowNodeType(stage) ? stage : null
   const fallbackType = revision ? getFirstAccessibleNodeType(revision) : null
   const activeType =
@@ -66,7 +64,10 @@ export function WorkflowEditorPage() {
           const target = getRevision(run, revisionId)
           if (!target) return
           const type = getFirstAccessibleNodeType(target)
-          const suffix = revisionId === run.currentRevisionId ? '' : `?revision=${encodeURIComponent(revisionId)}`
+          const suffix =
+            revisionId === run.currentRevisionId
+              ? ''
+              : `?revision=${encodeURIComponent(revisionId)}`
           navigate(`/workflow-editor/${run.id}/${type}${suffix}`)
         }}
         onRestartNode={async (nodeId) => {
@@ -77,7 +78,9 @@ export function WorkflowEditorPage() {
           })
           const nextRevision = getRevision(updated, updated.currentRevisionId)!
           const nextNode = getNodeByType(nextRevision, activeType)
-          navigate(`/workflow-editor/${updated.id}/${nextNode?.type ?? getFirstAccessibleNodeType(nextRevision)}`)
+          navigate(
+            `/workflow-editor/${updated.id}/${nextNode?.type ?? getFirstAccessibleNodeType(nextRevision)}`,
+          )
           query.refresh()
         }}
         onOpenPreview={(characterId) =>

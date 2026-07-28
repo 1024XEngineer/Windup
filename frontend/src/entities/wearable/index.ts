@@ -1,5 +1,5 @@
-import { useAsync } from '@/shared/lib'
-import type { AsyncState } from '@/shared/lib'
+import { useAsync } from '@/shared/hooks'
+import type { AsyncState } from '@/shared/hooks'
 
 /** 可复用的穿戴资产，与 action-template 同属项目资产库，先占好入口。 */
 

@@ -42,6 +42,17 @@
 
 `user_id` 目前是演示值；接入认证后应由后端从令牌推导，前端不再传递它。
 
+后端当前用数字表达视角和移动方向，前端领域层统一使用字符串枚举，数字只在 Project mapper
+内转换：
+
+```ts
+type CharacterPerspective = 'side' | 'top-down' | 'isometric'
+type DirectionalMovement = 'single' | 'four-way' | 'eight-way'
+```
+
+`gameStyle` 是项目级画风约束，会进入本项目的生成上下文；`sampleImageUrl` 是项目级画风
+参考图，不是生成结果或角色母版。
+
 ### 参考图片上传
 
 - `POST /upload/image`
@@ -86,9 +97,92 @@ const url = await uploadImage(file)
 
 - `GET /characters/{id}`、`POST /characters`
 - `GET /projects/{id}/characters`
-- `POST /characters/{id}/template/confirm`
-- `POST /characters/{id}/actions`、`POST /actions/{id}/confirm`
+- 造型母版确认、为造型添加动作、`POST /actions/{id}/confirm`（前两项路径待定）
 - `GET /projects/{id}/action-templates`
 - `GET /projects/{id}/wearables`
 
-SSE 也只有前端 transport 预留，尚无订阅地址、事件名称或字段契约。
+前端领域模型使用明确且互不冲突的名称：角色母版是 `baseImageUrl`，动作模板是
+`ActionTemplate`。`/characters/{id}/template/confirm` 是尚待后端确认的传输路径，不改变
+前端领域命名。
+
+```ts
+interface Frame {
+  imageUrl: string
+  qc: 'pending' | 'passed' | 'failed'
+  rejected: boolean
+}
+
+interface Action {
+  id: string
+  variantId: string
+  fps: number
+  frames: Frame[]
+  sourceWorkflowRunId: string | null
+}
+
+interface CharacterVariant {
+  id: string
+  characterId: string
+  name: string
+  baseImageUrl: string | null
+  actions: Action[]
+}
+
+interface Character {
+  id: string
+  projectId: string
+  name: string
+  variants: CharacterVariant[]
+}
+
+interface ActionTemplateBase {
+  id: string
+  name: string
+  previewImageUrl: string | null
+  frameCount: number
+  fps: number
+}
+
+type ActionTemplate = ActionTemplateBase &
+  (
+    | { scope: 'system'; projectId: null }
+    | { scope: 'project'; projectId: string }
+  )
+```
+
+即使 MVP UI 只展示一个造型，Character 也通过 `variants` 保留造型层，母版与动作归属具体
+CharacterVariant。`sourceWorkflowRunId` 明确引用 WorkflowRun，前端全部业务 ID 都是 string；
+后端数字 ID 只在 DTO mapper 中转换。
+
+`Action.frames` 的数组顺序就是播放顺序，因此 Frame 不重复携带 `index`。审核和页面定位可以
+临时使用 `frameIndex`；如果后端以后支持独立 Frame 资源，应另行提供稳定 ID。Action 的 `fps`
+由后端返回，预览和导出不得依赖前端全局常量。
+
+项目模板查询应返回“系统内置模板 + 当前项目自定义模板”的合集，并通过 `scope` 与
+`projectId` 区分归属。系统模板不虚构项目 ID。
+
+## 未对齐：异步任务与 SSE
+
+任务创建、查询和断线恢复需要完整快照；流式事件使用同一组状态字段：
+
+```ts
+type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+
+interface Task {
+  id: string
+  runId: string
+  revisionId: string
+  status: TaskStatus
+  progress: number | null
+  error: string | null
+  result: unknown
+}
+
+interface TaskEvent extends Omit<Task, 'id'> {
+  taskId: Task['id']
+}
+```
+
+`result` 在具体生成产物契约冻结前保持 `unknown`。SSE 当前只有 transport 预留，订阅地址、
+事件名称、断线重连、补发策略以及 Task 创建/查询接口均未与后端对齐，前端不得把它描述为
+已接通能力。

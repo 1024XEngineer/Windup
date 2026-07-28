@@ -1,5 +1,5 @@
 /**
- * 选择内容、发起导出和下载。下载属于本 feature，不放 shared/lib。
+ * 选择内容、发起导出和下载。下载属于本 feature，不放 shared/hooks。
  */
 export interface ExportProps {
   characterId: string

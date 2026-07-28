@@ -1,3 +1,5 @@
+import type { WorkflowRevision, WorkflowRun } from './types'
+
 /**
  * 异步任务契约，与 WorkflowRun 节点是两回事。
  *
@@ -11,8 +13,11 @@
  */
 export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed'
 
-export interface TaskEvent {
-  taskId: string
+/** 创建、查询和断线恢复都使用的完整任务快照。 */
+export interface Task {
+  id: string
+  runId: WorkflowRun['id']
+  revisionId: WorkflowRevision['id']
   status: TaskStatus
   /** 0–100。后端给不出就是 null，界面显示不确定进度。 */
   progress: number | null
@@ -23,4 +28,9 @@ export interface TaskEvent {
    * 保持 unknown 而不是先猜一个形状：猜错会让调用方写出依赖假结构的代码。
    */
   result: unknown
+}
+
+/** SSE 每条事件携带完整状态，taskId 对应 Task.id。 */
+export interface TaskEvent extends Omit<Task, 'id'> {
+  taskId: Task['id']
 }

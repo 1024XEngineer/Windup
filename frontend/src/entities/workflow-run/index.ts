@@ -1,5 +1,5 @@
-import { useAsync } from '@/shared/lib'
-import type { AsyncState } from '@/shared/lib'
+import { useAsync } from '@/shared/hooks'
+import type { AsyncState } from '@/shared/hooks'
 import { fetchWorkflowRun } from './api/get-workflow-run'
 import type { TaskEvent } from './model/task'
 import type { WorkflowRun } from './model/types'
@@ -24,7 +24,7 @@ export {
   nextNodeType,
 } from './model/selectors'
 export { WORKFLOW_NODE_ORDER } from './model/types'
-export type { TaskEvent, TaskStatus } from './model/task'
+export type { Task, TaskEvent, TaskStatus } from './model/task'
 export type {
   CreateWorkflowRunInput,
   ExportStatus,
@@ -44,10 +44,7 @@ export type {
 } from './model/types'
 
 /** 任务流协议尚未冻结，调用会明确失败而不是伪造进度。 */
-export function subscribeTask(
-  _taskId: string,
-  _onEvent: (event: TaskEvent) => void,
-): () => void {
+export function subscribeTask(_taskId: string, _onEvent: (event: TaskEvent) => void): () => void {
   throw new Error('subscribeTask 的 SSE 协议尚未与后端确定，暂不可调用')
 }
 

@@ -22,7 +22,9 @@ export function InspectionPreview({
     <div className="space-y-5">
       <section className="border border-slate-200 p-5">
         <p className="text-sm text-slate-500">角色 {characterId}</p>
-        <p className="mt-1 text-sm text-slate-500">来源 {runId} / {revisionId}</p>
+        <p className="mt-1 text-sm text-slate-500">
+          来源 {runId} / {revisionId}
+        </p>
         <div className="mt-5 min-h-56 border border-dashed border-slate-300 p-5 text-sm text-slate-500">
           播放器、按键绑定和动作状态机等待真实角色资产与渲染实现接入。
         </div>

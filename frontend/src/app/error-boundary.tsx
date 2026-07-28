@@ -1,5 +1,6 @@
 import { Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
+import { useLocation } from 'react-router'
 
 /**
  * 全局错误边界。任何一页渲染时抛出的异常都在这里兜住，
@@ -10,6 +11,8 @@ import type { ErrorInfo, ReactNode } from 'react'
  */
 interface ErrorBoundaryProps {
   children: ReactNode
+  /** 路由位置变化时清除上一页的错误，避免 fallback 挡住新页面。 */
+  resetKey?: string
 }
 
 interface ErrorBoundaryState {
@@ -26,6 +29,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   componentDidCatch(error: Error, info: ErrorInfo): void {
     // 骨架阶段只打控制台；接监控是生产阶段的事，不在本次范围
     console.error('[Windup] 未捕获的渲染错误', error, info.componentStack)
+  }
+
+  componentDidUpdate(previous: ErrorBoundaryProps): void {
+    if (this.state.error && previous.resetKey !== this.props.resetKey) this.reset()
   }
 
   reset = (): void => {
@@ -50,4 +57,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       </section>
     )
   }
+}
+
+/** 把 Router 位置适配为错误边界的重置键；导航栏放在此组件外部。 */
+export function RouteErrorBoundary({ children }: { children: ReactNode }) {
+  const location = useLocation()
+  return <ErrorBoundary resetKey={location.key}>{children}</ErrorBoundary>
 }

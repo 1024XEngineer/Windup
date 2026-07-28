@@ -28,6 +28,16 @@ WorkflowRun 的领域模型包含：
 - 多个只读/当前 Revision。
 - 当前先固定五个有序节点：asset、generation、candidate、review、export。
 - 节点门禁、Revision 重启、历史查看和质量门禁 selector/command。
+- 创建、查询和流式事件共用字段的 Task 快照；具体 SSE 协议仍待后端冻结。
+
+Character 与动作资产的当前前端契约：
+
+- Character 始终包含 `variants`；MVP UI 可以只展示第一套造型，但不把造型层折叠掉。
+- 角色造型母版在前端称为 `baseImage`，避免与 `ActionTemplate` 混淆。
+- Action 自身携带 `fps`；预览和导出不使用全局帧率常量。
+- `Action.frames` 的数组顺序就是帧顺序，Frame 不重复保存 `index`。
+- `sourceWorkflowRunId` 引用 WorkflowRun；前端领域 ID 统一使用 string。
+- `ActionTemplate` 分为 `system` 和 `project` 作用域；系统模板的 `projectId` 为 `null`。
 
 ## 页面内模块
 
@@ -49,6 +59,13 @@ WorkflowRun 的领域模型包含：
 Playtest 是独立核验台 Page，不是通用 Feature。它接收完整生成 Revision，保存独立核验结论，
 问题可以回流 Review，但不会阻断导出。
 
+### Asset Library
+
+入口：`/projects/:projectId/assets`。
+
+页面以项目为上下文，展示当前项目的 Character、项目自定义 ActionTemplate 和 Wearable，
+同时展示可供该项目使用的系统内置 ActionTemplate。
+
 ## Features
 
 Feature 表示用户操作，Feature 之间不互相 import。当前真实实现仍按功能增量推进；规划子目录使用
@@ -58,8 +75,8 @@ README 说明职责，未实现能力不得返回假成功。
 
 - shared/api：传输、响应壳、错误、上传和流式任务。
 - shared/api/generated：未来 OpenAPI 生成代码的接入位置，当前不放伪代码。
+- shared/hooks：跨 Entity 复用的 React hooks 和对应状态类型。
 - shared/ui：业务无关 UI；只维护已经存在的组件。
-- shared/lib：通用工具和异步状态抽象。
 - shared/testing：仅测试代码使用，生产代码不得导入。
 
 ## 测试

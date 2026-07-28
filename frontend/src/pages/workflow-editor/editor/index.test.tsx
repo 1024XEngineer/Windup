@@ -25,8 +25,12 @@ describe('WorkflowEditor', () => {
       />,
     )
 
-    expect((screen.getByRole('button', { name: /资产设置/ }) as HTMLButtonElement).disabled).toBe(false)
-    expect((screen.getByRole('button', { name: /AI 生成/ }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: /资产设置/ }) as HTMLButtonElement).disabled).toBe(
+      false,
+    )
+    expect((screen.getByRole('button', { name: /AI 生成/ }) as HTMLButtonElement).disabled).toBe(
+      true,
+    )
     expect((screen.getByRole('button', { name: /导出/ }) as HTMLButtonElement).disabled).toBe(true)
     expect(screen.getByText(/当前版本/)).toBeTruthy()
   })

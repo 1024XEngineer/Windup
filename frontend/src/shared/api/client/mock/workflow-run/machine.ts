@@ -33,20 +33,30 @@ export function advanceRun(runId: string, command: CommandDto): RunDto {
     const updated = replaceNode(current, exportNode.id, (node) => ({
       ...node,
       status:
-        command.status === 'exported' ? 'passed' : command.status === 'failed' ? 'failed' : node.status,
+        command.status === 'exported'
+          ? 'passed'
+          : command.status === 'failed'
+            ? 'failed'
+            : node.status,
     }))
     const exported = command.status === 'exported'
     return saveRun(
       replaceRevision(
         run,
-        { ...updated, export_status: command.status, status: exported ? 'completed' : updated.status },
+        {
+          ...updated,
+          export_status: command.status,
+          status: exported ? 'completed' : updated.status,
+        },
         exported ? 'completed' : run.status,
       ),
     )
   }
 
   if (command.kind === 'record-quality-result') {
-    return saveRun(applyQualityResult(run, current, command.node_id, command.passed, command.report))
+    return saveRun(
+      applyQualityResult(run, current, command.node_id, command.passed, command.report),
+    )
   }
 
   if (command.kind === 'fail-node') {
@@ -125,7 +135,11 @@ function applyQualityResult(
     }
   })
   if (failureCount < 2) return replaceRevision(run, failed)
-  return replaceRevision(run, { ...failed, generation_status: 'failed', status: 'failed' }, 'failed')
+  return replaceRevision(
+    run,
+    { ...failed, generation_status: 'failed', status: 'failed' },
+    'failed',
+  )
 }
 
 /** 从某节点重开：保留该节点及之前的前缀作为参考，后续执行线不带过来。 */
