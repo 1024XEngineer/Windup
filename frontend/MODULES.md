@@ -37,7 +37,7 @@ Export 等独立能力 Adapter 由该 Entity 内部组合，页面公开调用�
 
 Character 与动作资产的当前前端契约：
 
-- Character 始终包含 `variants`；MVP UI 可以只展示第一套造型，但不把造型层折叠掉。
+- Character 始终包含 `outfits`；MVP UI 可以只展示第一套造型，但不把造型层折叠掉。
 - 动作模板使用 `ActionTemplate` / `actionTemplateId`；角色母版使用
   `candidateCharacterTemplates` / `characterTemplateUrl` / `confirmCharacterTemplate`，不使用裸的 template。
 - 母版确认后展开的多方向基准帧保持命名为 `baseFrames`。

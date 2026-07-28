@@ -108,13 +108,13 @@ interface Frame {
 
 interface Action {
   id: string
-  variantId: string
+  outfitId: string
   fps: number
   frames: Frame[]
   sourceWorkflowRunId: string | null
 }
 
-interface CharacterVariant {
+interface Outfit {
   id: string
   characterId: string
   name: string
@@ -127,7 +127,7 @@ interface Character {
   id: string
   projectId: string
   name: string
-  variants: CharacterVariant[]
+  outfits: Outfit[]
 }
 
 interface ActionTemplateBase {
@@ -142,10 +142,10 @@ type ActionTemplate = ActionTemplateBase &
     | { scope: 'project'; projectId: string }
   )
 
-declare function confirmCharacterTemplate(variantId: string): Promise<CharacterVariant>
+declare function confirmCharacterTemplate(outfitId: string): Promise<Outfit>
 
 declare function addAction(
-  variantId: string,
+  outfitId: string,
   input: {
     name: string
     kind: 'preset' | 'custom'
@@ -154,8 +154,8 @@ declare function addAction(
 ): Promise<Action>
 ```
 
-即使 MVP UI 只展示一个造型，Character 也通过 `variants` 保留造型层，候选母版、选定母版与
-动作都归属具体 CharacterVariant。`sourceWorkflowRunId` 是前端编排定位信息，不要求后端 Action 认识
+即使 MVP UI 只展示一个造型，Character 也通过 `outfits` 保留造型层，候选母版、选定母版与
+动作都归属具体 Outfit。`sourceWorkflowRunId` 是前端编排定位信息，不要求后端 Action 认识
 WorkflowRun；后端可返回自己的 Task、Execution 或 Asset 引用，再由前端建立关联。前端全部
 业务 ID 都是 string，后端数字 ID 只在 DTO mapper 中转换。
 
