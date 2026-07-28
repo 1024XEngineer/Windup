@@ -15,18 +15,19 @@ const SRC = join(dirname(fileURLToPath(import.meta.url)), '../../frontend/src')
 
 /** 每层允许 import 的层。 */
 const ALLOWED: Record<string, string[]> = {
-  app: ['pages', 'features', 'entities', 'shared'],
-  pages: ['features', 'entities', 'shared'],
-  features: ['entities', 'shared'],
+  app: ['pages', 'features', 'capabilities', 'entities', 'shared'],
+  pages: ['features', 'capabilities', 'entities', 'shared'],
+  features: ['capabilities', 'entities', 'shared'],
+  capabilities: ['entities', 'shared'],
   entities: ['shared'],
   shared: [],
 }
 
-/** 这两层的不同 Slice 不得互相引用。entities 已选择作为一个整体模块。 */
-const ISOLATED_SLICE_LAYERS = new Set(['pages', 'features'])
+/** 这三层的不同 Slice 不得互相引用。entities 已选择作为一个整体模块。 */
+const ISOLATED_SLICE_LAYERS = new Set(['pages', 'features', 'capabilities'])
 
 /** 跨层引用时，这些层以第二段目录作为公开入口根。 */
-const PUBLIC_SLICE_LAYERS = new Set(['pages', 'features', 'entities', 'shared'])
+const PUBLIC_SLICE_LAYERS = new Set(['pages', 'features', 'capabilities', 'entities', 'shared'])
 
 const PAGE_MODULE_ROOTS = [
   'pages/workflow-editor/editor',
@@ -103,7 +104,7 @@ function targetRelativePath(file: string, specifier: string): string | null {
 
 function capabilityMockViolation(file: string, specifier: string): Violation | null {
   const source = relativeSrc(file)
-  if (/\.test\.tsx?$/.test(source) || source === 'app/capabilities/development.ts') return null
+  if (/\.test\.tsx?$/.test(source) || source === 'app/composition/development.ts') return null
 
   const target = targetRelativePath(file, specifier)
   const isLegacyProjectTransport = target?.startsWith('shared/api/client/mock') ?? false
@@ -278,7 +279,7 @@ describe('依赖边界', () => {
     const page = join(SRC, 'pages/quick-start/index.tsx')
 
     expect(
-      capabilityMockViolation(page, '@/entities/generation/adapters/mock')?.reason,
+      capabilityMockViolation(page, '@/capabilities/image-generation/adapters/mock')?.reason,
     ).toBe('生产代码不得直接选择能力 Mock Adapter')
   })
 
