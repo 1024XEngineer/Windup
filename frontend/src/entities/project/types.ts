@@ -24,7 +24,11 @@ export interface Project {
   }
   /** 项目级画风描述，会作为本项目所有角色与动作生成的视觉约束。 */
   gameStyle: string | null
-  /** 项目级画风参考图；不是生成结果或角色母版，URL 来自 POST /upload/image。 */
+  /**
+   * 项目级画风参考图，本项目所有角色都照它的风格生成；URL 来自 POST /upload/image。
+   * 别跟角色自己的参考图（CreateCharacterInput.referenceImageUrl）混：
+   * 那张定的是单个角色长什么样，这张定的是整个项目的统一风格。
+   */
   sampleImageUrl: string | null
   /** 项目创建时间，保留后端返回的时间字符串。 */
   createdAt: string
