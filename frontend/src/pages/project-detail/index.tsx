@@ -6,16 +6,17 @@ import {
   createWorkflowRun,
   useProject,
 } from '@/entities'
+import type { ProjectRepository } from '@/entities'
 import { PageHeader } from '@/shared/ui'
 
 /**
  * 单个项目的内容浏览：项目约束 + 项目下的全部内容（一期只角色，后续加动作模板、穿戴）。
  * 与项目列表是两页，07-22 会议要求两页都要有。
  */
-export function ProjectDetailPage() {
+export function ProjectDetailPage({ repository }: { repository: ProjectRepository }) {
   const navigate = useNavigate()
   const { projectId = '' } = useParams()
-  const { data: project, loading, error } = useProject(projectId)
+  const { data: project, loading, error } = useProject(repository, projectId)
 
   async function start() {
     const run = await createWorkflowRun({ projectId, driver: 'manual' })

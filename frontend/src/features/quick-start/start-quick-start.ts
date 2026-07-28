@@ -1,16 +1,10 @@
 import {
-  createProject,
-  createWorkflowRun,
   type CreateProjectInput,
   type CreateWorkflowRunInput,
   type Project,
   type WorkflowRun,
 } from '@/entities'
-import {
-  planMvpQuickStartProject,
-  type QuickStartInput,
-  type QuickStartProjectPlanner,
-} from './model/project-planner'
+import { type QuickStartInput, type QuickStartProjectPlanner } from './model/project-planner'
 
 export interface QuickStartDependencies {
   planProject: QuickStartProjectPlanner
@@ -39,9 +33,3 @@ export function createQuickStartStarter(dependencies: QuickStartDependencies) {
     return { project, run }
   }
 }
-
-export const startQuickStart = createQuickStartStarter({
-  planProject: planMvpQuickStartProject,
-  createProject,
-  createWorkflowRun,
-})

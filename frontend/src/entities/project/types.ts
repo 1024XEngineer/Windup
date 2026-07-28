@@ -1,11 +1,11 @@
 /**
  * 项目：角色生成的容器，保存全局约束（视角、尺寸、画风）。
- * 字段对照后端 ProjectOut（PR #57），命名转换在 ./api.ts。
+ * 字段对照后端 ProjectOut（PR #57），命名转换在 ./http-repository.ts。
  */
 export interface Project {
   /** 后端 Project ID；领域层统一转为字符串。 */
   id: string
-  /** 后端目前要求前端显式传 user_id，无登录态前写死。 */
+  /** Project 所属用户 ID；当前由后端响应给出。 */
   ownerId: string
   /** 未开始生成时为 null。 */
   workflowId: string | null

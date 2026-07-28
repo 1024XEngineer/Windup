@@ -76,9 +76,7 @@ describe('entities 公开契约', () => {
   it('Provider Session 是独立实体，不由 Generation Feature 定义', () => {
     expectTypeOf<ProviderSession>().toHaveProperty('id').toBeString()
     expectTypeOf<ProviderSession>().toHaveProperty('providerId').toBeString()
-    expectTypeOf<ProviderSession>()
-      .toHaveProperty('status')
-      .toEqualTypeOf<ProviderSessionStatus>()
+    expectTypeOf<ProviderSession>().toHaveProperty('status').toEqualTypeOf<ProviderSessionStatus>()
     expectTypeOf<ProviderSession>().toHaveProperty('expiresAt').toEqualTypeOf<string | null>()
   })
 

@@ -32,6 +32,9 @@ export interface TaskEvent extends Omit<Task, 'id'> {
  * 任务流协议尚未冻结，调用会明确失败而不是伪造进度。
  * 待确定 SSE 端点、事件格式、result 形状和断线恢复策略后再提供实现。
  */
-export function subscribeTask(_taskId: Task['id'], _onEvent: (event: TaskEvent) => void): () => void {
+export function subscribeTask(
+  _taskId: Task['id'],
+  _onEvent: (event: TaskEvent) => void,
+): () => void {
   throw new Error('subscribeTask 的 SSE 协议尚未与后端确定，暂不可调用')
 }

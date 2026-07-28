@@ -8,29 +8,39 @@ import { ProjectDetailPage } from '@/pages/project-detail'
 import { ProjectsPage } from '@/pages/projects'
 import { QuickStartPage } from '@/pages/quick-start'
 import { WorkflowEditorPage } from '@/pages/workflow-editor'
+import type { AppServices } from './composition'
 import { RouteErrorBoundary } from './error-boundary'
 import { AppShell } from './layout'
 
 /** 路由表与全局外壳。app 层只做启动与装配。 */
-export function App() {
+export function App({ services }: { services: AppServices }) {
   return (
     <BrowserRouter>
       <AppShell>
-        <AppRoutes />
+        <AppRoutes services={services} />
       </AppShell>
     </BrowserRouter>
   )
 }
 
-function AppRoutes() {
+function AppRoutes({ services }: { services: AppServices }) {
   return (
     <RouteErrorBoundary>
       <Routes>
         <Route path="/" element={<HomePage />} />
-        <Route path="/quick-start" element={<QuickStartPage />} />
-        <Route path="/quick-start/:runId" element={<QuickStartPage />} />
-        <Route path="/projects" element={<ProjectsPage />} />
-        <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+        <Route
+          path="/quick-start"
+          element={<QuickStartPage projectRepository={services.projects} />}
+        />
+        <Route
+          path="/quick-start/:runId"
+          element={<QuickStartPage projectRepository={services.projects} />}
+        />
+        <Route path="/projects" element={<ProjectsPage repository={services.projects} />} />
+        <Route
+          path="/projects/:projectId"
+          element={<ProjectDetailPage repository={services.projects} />}
+        />
         <Route path="/projects/:projectId/assets" element={<AssetLibraryPage />} />
         <Route path="/workflow-editor/:runId" element={<WorkflowEditorPage />} />
         <Route path="/workflow-editor/:runId/:stage" element={<WorkflowEditorPage />} />

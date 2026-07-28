@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { createDevelopmentAppServices } from './composition/development'
 import { App } from './index'
 
 describe('QuickStartPage', () => {
@@ -15,7 +16,7 @@ describe('QuickStartPage', () => {
   })
 
   it('从 Home 进入 Quick Start 后创建统一运行并保留在简化创作台', async () => {
-    render(<App />)
+    render(<App services={createDevelopmentAppServices()} />)
 
     fireEvent.click(screen.getAllByRole('link', { name: /快速开始/ })[0])
 

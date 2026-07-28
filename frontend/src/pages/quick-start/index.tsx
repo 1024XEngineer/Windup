@@ -1,8 +1,14 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 
-import { canImportToPlaytest, getCurrentRevision, useWorkflowRun } from '@/entities'
-import { startQuickStart } from '@/features/quick-start'
+import {
+  canImportToPlaytest,
+  createWorkflowRun,
+  getCurrentRevision,
+  useWorkflowRun,
+} from '@/entities'
+import type { ProjectRepository } from '@/entities'
+import { createQuickStartStarter, planMvpQuickStartProject } from '@/features/quick-start'
 import { PageHeader } from '@/shared/ui'
 
 const CREATION_COPY = {
@@ -17,12 +23,21 @@ const CREATION_COPY = {
  * Quick Start 是面向创作的独立体验。它复用 WorkflowRun 的领域状态，
  * 但不向用户暴露节点、版本或编辑器术语。
  */
-export function QuickStartPage() {
+export function QuickStartPage({ projectRepository }: { projectRepository: ProjectRepository }) {
   const navigate = useNavigate()
   const { runId } = useParams()
   const [description, setDescription] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const startQuickStart = useMemo(
+    () =>
+      createQuickStartStarter({
+        planProject: planMvpQuickStartProject,
+        createProject: projectRepository.create,
+        createWorkflowRun,
+      }),
+    [projectRepository],
+  )
 
   if (runId)
     return <QuickStartCreation runId={runId} onCreateAnother={() => navigate('/quick-start')} />

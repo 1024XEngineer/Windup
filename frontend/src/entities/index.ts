@@ -8,18 +8,18 @@ export {
   CHARACTER_PERSPECTIVE,
   DIRECTIONAL_MOVEMENT,
   SPRITE_SIZES,
-  createProject,
-  deleteProject,
-  fetchProject,
-  fetchProjects,
+  createHttpProjectRepository,
   useProject,
   useProjects,
 } from './project'
 export type {
   CharacterPerspective,
+  CreateHttpProjectRepositoryOptions,
   CreateProjectInput,
   DirectionalMovement,
   Project,
+  ProjectRepository,
+  ProjectRepositoryAdapterKind,
 } from './project'
 
 /* 角色 / 动作 / 帧 —— 提案，待与后端 review */

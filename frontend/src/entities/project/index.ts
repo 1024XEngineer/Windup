@@ -1,12 +1,14 @@
 import { useAsync } from '@/shared/hooks'
 import type { AsyncState } from '@/shared/hooks'
 import type { Paged, PageQuery } from '@/shared/pagination'
-import { fetchProject, fetchProjects } from './api'
+import type { ProjectRepository } from './repository'
 import type { Project } from './types'
 
 /** 项目。后端 GET/POST /projects、GET/DELETE /projects/{id} 已实现（PR #57）。 */
 
-export { createProject, deleteProject, fetchProject, fetchProjects } from './api'
+export { createHttpProjectRepository } from './http-repository'
+export type { CreateHttpProjectRepositoryOptions } from './http-repository'
+export type { ProjectRepository, ProjectRepositoryAdapterKind } from './repository'
 export { CHARACTER_PERSPECTIVE, DIRECTIONAL_MOVEMENT, SPRITE_SIZES } from './types'
 export type {
   CharacterPerspective,
@@ -16,11 +18,14 @@ export type {
 } from './types'
 
 /** 订阅项目列表。 */
-export function useProjects(query: PageQuery = {}): AsyncState<Paged<Project>> {
-  return useAsync(() => fetchProjects(query), [query.page, query.pageSize])
+export function useProjects(
+  repository: ProjectRepository,
+  query: PageQuery = {},
+): AsyncState<Paged<Project>> {
+  return useAsync(() => repository.list(query), [repository, query.page, query.pageSize])
 }
 
 /** 订阅单个项目。 */
-export function useProject(id: string): AsyncState<Project> {
-  return useAsync(() => fetchProject(id), [id])
+export function useProject(repository: ProjectRepository, id: Project['id']): AsyncState<Project> {
+  return useAsync(() => repository.get(id), [repository, id])
 }

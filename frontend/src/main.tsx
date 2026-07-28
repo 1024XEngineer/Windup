@@ -1,11 +1,16 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
-import { App } from '@/app'
+import { App, loadAppServices } from '@/app'
 import './index.css'
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
+async function bootstrap(): Promise<void> {
+  const services = await loadAppServices()
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <App services={services} />
+    </StrictMode>,
+  )
+}
+
+void bootstrap()

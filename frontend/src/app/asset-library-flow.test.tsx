@@ -2,6 +2,7 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { createDevelopmentAppServices } from './composition/development'
 import { App } from './index'
 
 describe('AssetLibraryPage', () => {
@@ -15,7 +16,7 @@ describe('AssetLibraryPage', () => {
   })
 
   it('从项目路径读取资产库所属项目', () => {
-    render(<App />)
+    render(<App services={createDevelopmentAppServices()} />)
 
     expect(screen.getByRole('heading', { name: '资产库' })).toBeTruthy()
     expect(screen.getByText('项目 project-1 内可复用的角色、动作与穿戴')).toBeTruthy()

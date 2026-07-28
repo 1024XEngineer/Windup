@@ -1,12 +1,13 @@
 import { useNavigate } from 'react-router'
 
 import { CHARACTER_PERSPECTIVE, useProjects } from '@/entities'
+import type { ProjectRepository } from '@/entities'
 import { PageHeader } from '@/shared/ui'
 
 /** 项目列表。点进去是项目内容页，「开始工作流」在那一页上。 */
-export function ProjectsPage() {
+export function ProjectsPage({ repository }: { repository: ProjectRepository }) {
   const navigate = useNavigate()
-  const { data, loading, error } = useProjects({ page: 1, pageSize: 20 })
+  const { data, loading, error } = useProjects(repository, { page: 1, pageSize: 20 })
 
   return (
     <>
