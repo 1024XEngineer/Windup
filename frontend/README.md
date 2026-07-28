@@ -18,7 +18,8 @@ npm run lint
 默认页面是 Home：
 
 - /：选择 Quick Start 或从项目开始
-- /quick-start：自然语言输入，创建 WorkflowRun 后进入 Workflow Editor
+- /quick-start：自然语言输入；创建 WorkflowRun 后进入独立的简化创作台，隐藏工作流节点与版本术语
+- /quick-start/:runId：Quick Start 的持续创作页；以自然语言展示生成、检查和结果状态
 - /projects：项目列表
 - /projects/:projectId：项目详情
 - /workflow-editor/:runId/:stage：当前 Revision 的工作流节点
@@ -42,6 +43,9 @@ app -> pages -> features -> entities -> shared
 
 Quick Start 与手动 Workflow 共用同一个 WorkflowRun。一个 run 可以有多个 Revision；
 从某节点重新开始会保留节点及以前的参考，移除之后的当前执行线，旧 Revision 仍只读保留。
+
+Quick Start 不展示节点、Revision 或 Workflow Editor。它以简化创作台呈现自然语言进度，
+完成后可直接导出或导入核验台；Workflow Editor 则保留完整的人工控制能力。
 
 当前本地 adapter 使用 localStorage 仅作为 Python WorkflowRun API 上线前的临时实现，
 数据模型已经使用 Revision + 有序五节点：asset、generation、candidate、review、export。

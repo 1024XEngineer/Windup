@@ -43,7 +43,8 @@ Account、Billing 和资产库复用 Feature 当前只在本文中预留，不�
 
 ~~~
 /                                Home（目标入口）
-/quick-start                     Quick Start
+/quick-start                     Quick Start 输入页
+/quick-start/:runId              Quick Start 简化创作台
 /projects                        项目列表
 /projects/:projectId             项目详情
 /workflow-editor/:runId          当前 Revision 的工作流入口
@@ -54,7 +55,7 @@ Account、Billing 和资产库复用 Feature 当前只在本文中预留，不�
 
 / 不再承担 Quick Start 具体业务；Quick Start 使用 /quick-start。项目详情保留当前的 /projects/:projectId，不改为 /project/:projectId。
 
-Home 只提供 Quick Start 和从项目开始两个入口，不保存业务状态。Quick Start 负责自然语言输入和初始计划解析，创建与手动入口完全相同的 WorkflowRun 后跳转到 /workflow-editor/:runId。
+Home 只提供 Quick Start 和从项目开始两个入口，不保存业务状态。Quick Start 负责自然语言输入和初始计划解析，创建与手动入口完全相同的 WorkflowRun 后停留在独立的简化创作台（/quick-start/:runId）。该页面使用自然语言展示生成、检查和结果，不展示五个节点、Revision、WorkflowRun 或 Workflow Editor；后台仍复用同一套领域状态。需要精细控制时才进入 Workflow Editor。
 
 ProjectsPage、ProjectDetailPage 和 AssetLibraryPage 当前直接使用 Entity；不提前创建 features/project 或 features/asset-library。出现复杂复用后再提取 Feature。
 
@@ -211,7 +212,7 @@ shared/api/
 - 本地 WorkflowRun adapter、Revision、有序五节点和字符串领域 ID。
 - 节点门禁、历史只读、从节点重启和后续执行线移除。
 - 系统质检连续失败两次的领域规则，以及质检通过后的生成完成状态。
-- Quick Start 创建统一 WorkflowRun 并进入 generation。
+- Quick Start 创建统一 WorkflowRun 并进入独立的简化创作台；后台进入 generation，但页面不展示工作流内部结构。
 - Workflow Editor 节点路由、历史 Revision URL 和重启交互。
 - Playtest 的完整 Revision 导入门禁、核验结论记录和非阻断导出提示。
 - 生产构建强制使用真实 API transport，业务层禁止直接 fetch。

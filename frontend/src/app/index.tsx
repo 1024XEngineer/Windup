@@ -20,6 +20,7 @@ export function App() {
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/quick-start" element={<QuickStartPage />} />
+            <Route path="/quick-start/:runId" element={<QuickStartPage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
             <Route path="/workflow-editor/:runId" element={<WorkflowEditorPage />} />

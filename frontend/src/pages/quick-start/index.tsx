@@ -1,16 +1,34 @@
 import { useState } from 'react'
-import { Link } from 'react-router'
+import { useNavigate, useParams } from 'react-router'
 
-import { createWorkflowRun, getCurrentRevision, useWorkflowRun } from '@/entities'
-import { Generation } from '@/features/generation'
+import {
+  canImportToPlaytest,
+  createWorkflowRun,
+  getCurrentRevision,
+  useWorkflowRun,
+} from '@/entities'
 import { PageHeader } from '@/shared/ui'
 
-/** AI 入口。与手动入口共用同一种 WorkflowRun，但结果留在本页，不自动跳走。 */
+const CREATION_COPY = {
+  asset: ['正在理解你的设定', '已准备好角色创作所需的基础信息。'],
+  generation: ['正在生成角色', '正在连接生成服务并准备创作素材。'],
+  candidate: ['正在检查结果', '系统正在检查生成内容是否符合交付要求。'],
+  review: ['正在整理交付版本', '生成结果已准备好，正在完成最终整理。'],
+  export: ['正在准备文件', '正在整理可导出和可核验的角色文件。'],
+} as const
+
+/**
+ * Quick Start 是面向创作的独立体验。它复用 WorkflowRun 的领域状态，
+ * 但不向用户暴露节点、版本或编辑器术语。
+ */
 export function QuickStartPage() {
+  const navigate = useNavigate()
+  const { runId } = useParams()
   const [description, setDescription] = useState('')
-  const [runId, setRunId] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  if (runId) return <QuickStartCreation runId={runId} onCreateAnother={() => navigate('/quick-start')} />
 
   async function start() {
     const prompt = description.trim()
@@ -22,8 +40,12 @@ export function QuickStartPage() {
     setSubmitting(true)
     setError(null)
     try {
-      const run = await createWorkflowRun({ projectId: 'quick-start', driver: 'ai', prompt })
-      setRunId(run.id)
+      const run = await createWorkflowRun({
+        projectId: 'quick-start',
+        driver: 'ai',
+        prompt,
+      })
+      navigate(`/quick-start/${run.id}`)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -33,7 +55,7 @@ export function QuickStartPage() {
 
   return (
     <>
-      <PageHeader title="快速开始" subtitle="一句话描述你想要的角色" />
+      <PageHeader title="快速开始" subtitle="一句话描述你想要的角色，我们会帮你完成创作。" />
       <form
         className="space-y-4"
         onSubmit={(event) => {
@@ -53,35 +75,91 @@ export function QuickStartPage() {
           disabled={submitting}
           className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-700 disabled:opacity-50"
         >
-          {submitting ? '创建中…' : '开始生成'}
+          {submitting ? '正在开始…' : '开始创作'}
         </button>
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
       </form>
-      {runId ? <QuickStartRun runId={runId} /> : null}
     </>
   )
 }
 
-function QuickStartRun({ runId }: { runId: string }) {
-  const { data: run, loading, error } = useWorkflowRun(runId)
+function QuickStartCreation({ runId, onCreateAnother }: { runId: string; onCreateAnother: () => void }) {
+  const navigate = useNavigate()
+  const query = useWorkflowRun(runId)
 
-  if (loading) return <p className="mt-8 text-sm text-slate-500">加载生成进度…</p>
-  if (error) return <p className="mt-8 text-sm text-red-600">加载失败：{error.message}</p>
-  if (!run) return null
+  if (query.loading) return <p className="text-sm text-slate-500">正在准备创作…</p>
+  if (query.error) return <p className="text-sm text-red-600">无法继续这次创作：{query.error.message}</p>
+  if (!query.data) return <p className="text-sm text-red-600">未找到这次创作记录。</p>
+
+  const run = query.data
+  const revision = getCurrentRevision(run)
+  const activeNode = revision.nodes.find((node) => node.status === 'active')
+  const [title, detail] = CREATION_COPY[activeNode?.type ?? 'export']
+  const completed = revision.generationStatus === 'completed'
+  const canOpenPlaytest = Boolean(run.characterId && canImportToPlaytest(run, revision.id))
 
   return (
-    <section className="mt-8 space-y-3" aria-label="AI 快速生成">
-      <p className="text-sm text-slate-500">
-        工作流 {run.id} · 生成 {getCurrentRevision(run).generationStatus}
-      </p>
-      <Generation runId={run.id} />
-      {/* 跳转由用户主动触发；审核、导出这些节点只在编辑器里做。 */}
-      <Link
-        to={`/workflow-editor/${run.id}/generation`}
-        className="inline-block border border-slate-300 px-4 py-2 text-sm hover:border-slate-500"
-      >
-        打开完整工作流
-      </Link>
-    </section>
+    <div className="mx-auto max-w-2xl space-y-6">
+      <PageHeader
+        title={completed ? '角色创作完成' : title}
+        subtitle={run.prompt ?? '正在根据你的描述准备角色。'}
+        actions={
+          <button
+            type="button"
+            onClick={onCreateAnother}
+            className="shrink-0 whitespace-nowrap text-sm text-slate-600 hover:text-slate-900"
+          >
+            新建创作
+          </button>
+        }
+      />
+
+      <section aria-label="创作进度" className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-6">
+        <div>
+          <p className="text-base font-semibold">{completed ? '已经为你准备好结果。' : title}</p>
+          <p className="mt-1 text-sm text-slate-600">{completed ? '你可以继续导出或导入核验台。' : detail}</p>
+        </div>
+        <ol className="grid gap-2 text-sm sm:grid-cols-3">
+          {['理解设定', '生成角色', '检查交付'].map((label, index) => {
+            const currentIndex = activeNode ? Math.min(activeNode.order, 2) : 2
+            const state = completed || index < currentIndex ? '已完成' : index === currentIndex ? '进行中' : '等待中'
+            return (
+              <li key={label} className="rounded-lg border border-slate-200 bg-white px-3 py-3">
+                <p className="font-medium text-slate-800">{label}</p>
+                <p className="mt-1 text-xs text-slate-500">{state}</p>
+              </li>
+            )
+          })}
+        </ol>
+      </section>
+
+      {completed ? (
+        <section className="space-y-3 rounded-xl border border-slate-200 p-6">
+          <h2 className="font-semibold">下一步</h2>
+          <p className="text-sm text-slate-600">
+            导出服务会在后端任务接入后显示下载入口。核验台可独立记录试用结果，不会影响当前完成状态。
+          </p>
+          {canOpenPlaytest ? (
+            <button
+              type="button"
+              onClick={() =>
+                navigate(
+                  `/playtest/${encodeURIComponent(run.characterId!)}?runId=${encodeURIComponent(run.id)}` +
+                    `&revision=${encodeURIComponent(revision.id)}`,
+                )
+              }
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-700"
+            >
+              导入核验台
+            </button>
+          ) : null}
+        </section>
+      ) : (
+        <section className="rounded-xl border border-dashed border-slate-300 p-6 text-sm text-slate-600">
+          <p className="font-medium text-slate-800">生成服务暂未连接</p>
+          <p className="mt-1">服务接入后，这里会持续更新创作进度和结果；当前不会显示虚假的完成结果。</p>
+        </section>
+      )}
+    </div>
   )
 }
