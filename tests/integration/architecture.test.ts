@@ -29,6 +29,32 @@ const ISOLATED_SLICE_LAYERS = new Set(['pages', 'features', 'capabilities'])
 /** 跨层引用时，这些层以第二段目录作为公开入口根。 */
 const PUBLIC_SLICE_LAYERS = new Set(['pages', 'features', 'capabilities', 'entities', 'shared'])
 
+/** 全局审计后的一级模块清单；新增目录必须先说明归属并更新这里。 */
+const DECLARED_SLICES = {
+  pages: [
+    'asset-library',
+    'home',
+    'not-found',
+    'playtest',
+    'project-detail',
+    'projects',
+    'quick-start',
+    'workflow-editor',
+  ],
+  features: ['character-setup', 'export', 'generation', 'quick-start', 'review'],
+  capabilities: ['image-generation', 'image-upload'],
+  entities: [
+    'action-template',
+    'character',
+    'project',
+    'provider-session',
+    'task',
+    'wearable',
+    'workflow-run',
+  ],
+  shared: ['api', 'hooks', 'pagination', 'ui'],
+} as const
+
 const PAGE_MODULE_ROOTS = [
   'pages/workflow-editor/editor',
   'pages/playtest/inspection-preview',
@@ -107,12 +133,7 @@ function capabilityMockViolation(file: string, specifier: string): Violation | n
   if (/\.test\.tsx?$/.test(source) || source === 'app/composition/development.ts') return null
 
   const target = targetRelativePath(file, specifier)
-  const isLegacyProjectTransport = target?.startsWith('shared/api/client/mock') ?? false
-  if (
-    !target ||
-    isLegacyProjectTransport ||
-    !/(?:^|\/)(?:adapters\/)?mock(?:\/|$)/.test(target)
-  ) {
+  if (!target || !/(?:^|\/)(?:adapters\/)?mocks?(?:\/|$)/.test(target)) {
     return null
   }
 
@@ -274,7 +295,53 @@ function collectCycles(): string[][] {
   return cycles
 }
 
+type DeclaredSliceLayer = keyof typeof DECLARED_SLICES
+
+function moduleOwnershipViolation(layer: DeclaredSliceLayer, actual: string[]): string | null {
+  const expected = new Set<string>(DECLARED_SLICES[layer])
+  const actualSet = new Set(actual)
+  const unexpected = [...actualSet].filter((slice) => !expected.has(slice)).sort()
+  const missing = [...expected].filter((slice) => !actualSet.has(slice)).sort()
+  const reasons: string[] = []
+
+  if (unexpected.length > 0) reasons.push(`有未登记目录：${unexpected.join('、')}`)
+  if (missing.length > 0) reasons.push(`缺少已登记目录：${missing.join('、')}`)
+  return reasons.length > 0 ? `${layer} ${reasons.join('；')}` : null
+}
+
 describe('依赖边界', () => {
+  it('检查器能指出未登记的一级模块', () => {
+    expect(
+      moduleOwnershipViolation('entities', [...DECLARED_SLICES.entities, 'generation']),
+    ).toBe('entities 有未登记目录：generation')
+  })
+
+  it('一级模块与全局审计清单完全一致，并各自提供公开入口', () => {
+    const violations: string[] = []
+    const actualLayers = readdirSync(SRC, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort()
+    expect(actualLayers).toEqual(Object.keys(ALLOWED).sort())
+
+    for (const layer of Object.keys(DECLARED_SLICES) as DeclaredSliceLayer[]) {
+      const actual = readdirSync(join(SRC, layer), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+      const ownership = moduleOwnershipViolation(layer, actual)
+      if (ownership) violations.push(ownership)
+
+      for (const slice of DECLARED_SLICES[layer]) {
+        const root = join(SRC, layer, slice)
+        if (!existsSync(join(root, 'index.ts')) && !existsSync(join(root, 'index.tsx'))) {
+          violations.push(`${layer}/${slice} 缺少公开入口 index.ts(x)`)
+        }
+      }
+    }
+
+    expect(violations).toEqual([])
+  })
+
   it('检查器能识别生产代码直接选择能力 Mock Adapter', () => {
     const page = join(SRC, 'pages/quick-start/index.tsx')
 
@@ -346,8 +413,7 @@ describe('依赖边界', () => {
       const source = readFileSync(file, 'utf8')
       const isTransport =
         rel.startsWith('shared/api/client/real/') ||
-        rel === 'shared/api/upload.ts' ||
-        rel === 'shared/api/stream.ts'
+        rel === 'shared/api/upload.ts'
       if (!isTransport && /\bfetch\s*\(/.test(source)) {
         offenders.push(`${rel}: direct fetch`)
       }
@@ -390,11 +456,6 @@ describe('依赖边界', () => {
 
     if (!existsSync(join(workflowRoot, 'repository.ts'))) {
       offenders.push('entities/workflow-run/repository.ts composition entry is missing')
-    }
-
-    const mockWorkflowDir = join(SRC, 'shared/api/client/mock/workflow-run')
-    if (existsSync(mockWorkflowDir) && walk(mockWorkflowDir).length > 0) {
-      offenders.push('shared/api/client/mock/workflow-run contains runtime code')
     }
 
     expect(offenders).toEqual([])

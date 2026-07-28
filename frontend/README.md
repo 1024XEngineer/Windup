@@ -1,7 +1,8 @@
 # Windup 前端
 
-React + Vite + TypeScript + Tailwind CSS。当前架构定义以仓库根目录的
-frontend-architecture-v3.md 为准。
+React + Vite + TypeScript + Tailwind CSS。完整架构以仓库根目录的
+[frontend-architecture-v3.md](../frontend-architecture-v3.md) 为准，接口联调状态见
+[API_CONTRACT.md](API_CONTRACT.md)。
 
 ## 运行
 
@@ -10,66 +11,72 @@ cd frontend
 npm install
 npm run dev
 npm run typecheck
-npm run build
 npm run test
 npm run lint
-npm run format
 npm run format:check
+npm run build
 ~~~
 
-接口联调状态、请求形式与未接通能力见 [API_CONTRACT.md](API_CONTRACT.md)。
+开发环境默认使用 app 层注入的 Project 内存 Repository，便于在后端未启动时开发页面。需要联调
+真实 Project API 时，在 `.env.local` 中设置：
 
-默认页面是 Home：
+~~~dotenv
+VITE_PROJECT_ADAPTER=http
+VITE_API_BASE_URL=/api
+~~~
 
-- /：选择 Quick Start 或从项目开始
-- /quick-start：自然语言输入；后台自动创建 Project 与 WorkflowRun 后进入简化创作台，隐藏工作流节点与版本术语
-- /quick-start/:runId：Quick Start 的持续创作页；以自然语言展示生成、检查和结果状态
-- /projects：项目列表
-- /projects/:projectId：项目详情
-- /projects/:projectId/assets：项目资产库；展示项目资产及系统内置动作模板
-- /workflow-editor/:runId：当前 Revision 的工作流入口
-- /workflow-editor/:runId/:stage：当前 Revision 的工作流节点
-- /playtest/:characterId?runId=:runId&revision=:revisionId：独立核验台
+生产构建无条件使用 Project HTTP Repository，真实请求失败会直接报错，不会回退开发数据。
+
+## 路由
+
+- `/`：选择 Quick Start 或从项目开始。
+- `/quick-start`：自然语言输入；自动创建 Project 与 WorkflowRun。
+- `/quick-start/:runId`：Quick Start 简化创作台，隐藏节点与版本术语。
+- `/projects`：项目列表。
+- `/projects/:projectId`：项目详情。
+- `/projects/:projectId/assets`：项目资产库。
+- `/workflow-editor/:runId`：当前 Revision 的工作流入口。
+- `/workflow-editor/:runId/:stage`：当前 Revision 的指定节点。
+- `/playtest/:characterId?runId=:runId&revision=:revisionId`：独立核验台。
 
 ## 分层
 
 ~~~text
-app -> pages -> features -> entities -> shared
+app -> pages -> features -> capabilities -> entities -> shared
 ~~~
 
-- app：启动、Router、全局布局和错误边界。
-- pages：路由、URL、页面临时状态和模块组合。
-- features：生成、角色设置、审核和导出等用户操作。
-- entities：Project、Character、WorkflowRun、Revision 和领域规则。
-- shared：通用 API transport、React hooks、UI 和测试辅助。
+- `app`：启动、Router、全局布局、错误边界和真实/开发实现组合。
+- `pages`：路由、URL、页面临时状态和模块组合。
+- `features`：生成、角色设置、审核、导出和 Quick Start 等用户操作。
+- `capabilities`：调用外部能力的稳定 Port、服务和 Adapter；当前包含图片生成与图片上传。
+- `entities`：Project、Character、Task、ProviderSession、WorkflowRun 等有身份或生命周期的数据。
+- `shared`：真实 HTTP transport、通用分页、React hooks 和无业务 UI。
 
-跨模块只能走公开 index.ts；页面、Feature 和 Entity 不直接调用 fetch。
+跨 Slice 只能走目录根 `index.ts(x)`。上层使用 Entity 时统一从 `@/entities` 进入。Page、Feature
+和 Entity 不直接调用 `fetch`；HTTP Adapter 经 `shared/api` 发请求。
 
-## WorkflowRun
+## 一套制作流程，两种控制方式
 
-Quick Start 与手动 Workflow 共用同一个 WorkflowRun。一个 run 可以有多个 Revision；
-从某节点重新开始会保留节点及以前的参考，移除之后的当前执行线，旧 Revision 仍只读保留。
+Quick Start 与手动 Workflow 共用同一种 WorkflowRun、Revision 和五个有序节点：`asset`、
+`generation`、`candidate`、`review`、`export`。手动模式等待用户逐步操作；Quick Start 将来由前端
+Agent 自动提交相同命令连续推进。隐藏步骤不等于跳过步骤。
 
-Quick Start 不展示节点、Revision 或 Workflow Editor。它以简化创作台呈现自然语言进度；
-完成后满足条件时可导入核验台，导出入口待后端任务接入。Workflow Editor 则保留完整的人工控制能力。
+Quick Start 先通过注入的 Project Repository 创建真实项目，再用返回的 Project ID 创建
+WorkflowRun，禁止使用 `quick-start` 一类伪 ID。两种入口都从 `asset` 和 `not_started` 开始，
+真正进入生成节点后才切换为 `in_progress`。
 
-两种入口使用同一条素材、生成、候选、审核和导出执行线。新流程都从素材节点开始，Quick Start
-将来由前端 Agent 自动提交相同命令连续推进，传统工作流则等待用户逐步操作；隐藏步骤不等于跳过
-步骤。Quick Start 会先通过 Project 能力创建项目，禁止使用 `quick-start` 等伪 ID。
+WorkflowRun 是前端编排模型，通过返回 Promise 的本地 Repository 持久化，不对应后端
+`/workflows` 资源。内存覆盖层会保护 localStorage 写入失败后的最新数据；恢复时完整校验 run、
+revision、node 和状态；ID 在 `randomUUID` 缺失时也有后备生成方式。
 
-WorkflowRun 是前端编排模型，通过 Entity 内返回 Promise 的 Repository Port 访问。三个编排函数
-只依赖唯一组合入口；当前入口选择 localStorage Adapter，不经过 shared/api，也不对应后端
-`/workflows` 资源。该 Repository 只持久化前端流程，不承载 Generation、Review 或 Export 调用。
+## 外部能力边界
 
-本地存储以当前会话内存覆盖磁盘旧快照，写入失败不会让刚创建的流程消失；读取磁盘记录时会完整
-校验 run、revision、node 和状态。ID 在 `randomUUID` 缺失的环境也能生成。两种入口都先处于
-`not_started`，进入 generation 节点后才切换为 `in_progress`。数据模型使用 Revision + 有序五节点：
-asset、generation、candidate、review、export。
-
-Project、Media、Generation、Asset、Review、Playtest、Export 等独立后端能力通过各自业务 Port
-接入，Real/Mock 在能力组合点选择。图片生成已经定义 `ImageGenerationPort` 与生产 Mock 保护，
-但尚未猜测未冻结的 HTTP 路径；现有 Project 暂时继续使用 shared/api 的全局 transport，路演后再
-按能力迁移。页面、手动控制器和 Quick Start Agent 只依赖能力 Port。
-
-Provider、系统质量门禁、SSE、正式角色资产和导出任务尚待后端契约；未实现能力不会返回伪造成功。
-本地 WorkflowRun 的节点变化只表达页面编排状态，不代表后端已经生成、审核或导出产物。
+- Project 页面和 Quick Start 只依赖同一份异步 `ProjectRepository`。app 启动阶段选择开发内存实现
+  或生产 HTTP 实现，三个消费者不再各自选择 Mock。
+- 图片生成位于 `capabilities/image-generation`。当前 Port 已冻结，真实 HTTP 路径尚未冻结，因此
+  不提供猜测的 Real Adapter。
+- 图片上传位于 `capabilities/image-upload`。HTTP Adapter 负责格式、10 MiB 上限、multipart 和响应
+  URL 映射，不属于 Project Entity。
+- `Task` 与 `ProviderSession` 是独立 Entity；`WorkflowTaskLink` 只负责把后端任务映射到前端
+  WorkflowRun 节点。
+- Generation、Review、Export 等未接通能力会明确保持未实现，不返回伪造成功。

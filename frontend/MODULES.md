@@ -1,103 +1,97 @@
 # Windup 前端模块契约
 
-完整架构以根目录 frontend-architecture-v3.md 为准；本文只记录代码模块的公开边界。
+完整架构以根目录 [frontend-architecture-v3.md](../frontend-architecture-v3.md) 为准；本文记录当前代码
+模块的公开边界。
 
-## 分层
+## 分层与依赖
 
 ~~~text
-app -> pages -> features -> entities -> shared
+app -> pages -> features -> capabilities -> entities -> shared
 ~~~
 
-代码只能向下依赖。Page、Feature、Entity 不直接调用 fetch，所有后端网络能力经
-shared/api 的 request、upload 或 stream 边界访问；前端 WorkflowRun 编排使用自己的本地
-Repository，不伪装成 HTTP 资源。
+代码只能向下依赖。同层 Page、Feature 和 Capability Slice 不得互相导入；跨 Slice 只能从目录根
+`index.ts(x)` 进入。Entity 作为一个数据模块，对上层只公开 `@/entities`。`shared` 不认识业务概念。
 
-## entities
+当前一级模块清单由架构测试锁定：
 
-entities 是对外统一的数据门面，调用方使用：
+| 层 | 允许的一级模块 |
+|---|---|
+| pages | asset-library、home、not-found、playtest、project-detail、projects、quick-start、workflow-editor |
+| features | character-setup、export、generation、quick-start、review |
+| capabilities | image-generation、image-upload |
+| entities | action-template、character、project、provider-session、task、wearable、workflow-run |
+| shared | api、hooks、pagination、ui |
+
+新增一级目录必须先明确它是页面、用户操作、外部能力、实体还是通用基础设施，再同步清单和文档。
+
+## App Composition
+
+`app/composition` 是唯一实现选择点。`AppServices` 当前注入 `projects: ProjectRepository`：
+
+- 开发默认动态加载内存 Repository；延迟由构造参数注入，测试不依赖环境变量特判。
+- 开发设置 `VITE_PROJECT_ADAPTER=http` 时联调真实 Project API。
+- 生产组合只创建 HTTP Repository，并由测试锁定 `adapterKind === 'real'`。
+- 开发种子模块只从开发组合入口加载，生产产物不得包含种子数据。
+
+## Capabilities
+
+Capability 表示“前端调用一个外部业务能力”，不是有 ID 和生命周期的数据，也不是 UI Feature。
+
+- `image-generation`：公开图片生成 Port、业务输入/结果和服务工厂。生产 runtime 拒绝 Mock；真实
+  Generation OpenAPI 未冻结前不猜测 URL 或 DTO。
+- `image-upload`：公开上传 Port、服务工厂和真实 HTTP Adapter。Adapter 处理支持格式、大小上限、
+  multipart 以及 `{ url }` 响应映射。
+
+页面和 Feature 只能从 `@/capabilities/<slice>` 进入，不能直接导入内部 Adapter。Mock 只能由 app
+开发组合或测试选择，生产代码不得运行时降级。
+
+## Entities
+
+外部统一这样使用：
 
 ~~~ts
 import { createWorkflowRun, getCurrentRevision } from '@/entities'
+import type { ProjectRepository, Task } from '@/entities'
 ~~~
 
-Project、Character、ActionTemplate、Wearable 和 WorkflowRun 是内部业务分区。外部不得绕过
-@/entities 访问内部文件；Entity 之间默认不产生运行时依赖，关系通过 ID、类型契约或输入对象表达。
+- `project`：Project 领域形状、异步 Repository Port、HTTP Repository 和 React 查询 Hook。图片上传
+  不属于 Project。
+- `character`：Character、Outfit、Action、Frame。Character 不反向保存 WorkflowRun 定位字段。
+- `task`：后端异步任务快照、事件和尚未冻结的订阅入口。
+- `provider-session`：Provider 描述、凭据模式和短期会话形状；Generation Feature 只消费它。
+- `workflow-run`：前端 WorkflowRun、Revision、五节点、命令、门禁和本地 Repository。
+- `action-template`、`wearable`：资产库数据形状和待后端冻结的查询签名。
 
-WorkflowRun 的领域模型包含：
+`Task` 不含 run、revision 或 node。前端专用 `WorkflowTaskLink` 留在 WorkflowRun，只保存 `taskId`、
+`runId`、`revisionId` 和 `nodeId`。两者不能合并成一个后端 Task 形状。
 
-- 一个 runId。
-- 多个只读/当前 Revision。
-- 当前先固定五个有序节点：asset、generation、candidate、review、export。
-- 节点门禁、Revision 重启、历史查看和质量门禁 selector/command。
-- 返回 Promise 的 Repository Port，以及唯一实现组合入口；页面和编排函数不依赖本地存储实现。
-- 当前本地 Adapter 使用 localStorage + 内存覆盖层；写入失败以内存最新值为准，读取时逐条校验完整领域形状。
-- `GenerationStatus` 区分素材准备的 `not_started` 与实际生成的 `in_progress`。
-- 不含 run/revision 的后端 Task 快照，以及前端专用的 `WorkflowTaskLink` 关联。
+Character 契约继续区分：
 
-WorkflowRun 只负责前端页面编排和本地持久化，`entities/workflow-run/repository.ts` 只选择流程
-Repository，不选择 Generation、Asset、Review、Playtest 或 Export 实现。独立后端能力使用各自
-业务 Port；手动控制器与 Quick Start Agent 调用同一 Port，再把结果转换成 WorkflowCommand。
-本地 ID 在 `randomUUID` 缺失时有随机字节和会话序列两级兜底。
+- 动作模板：`ActionTemplate`、`actionTemplateId`。
+- 角色母版：`candidateCharacterTemplates`、`characterTemplateUrl`、`confirmCharacterTemplate`。
+- 多方向基准帧：`baseFrames`，不使用 template 命名。
+- Action 自带 `fps`；Frame 顺序由 `Action.frames` 数组表达，不重复保存 `index`。
 
-Quick Start 启动时先创建真实 Project，再使用返回 ID 创建与手动入口相同的 WorkflowRun。两种
-入口都从 asset 节点和 `not_started` 开始；AI 自动化负责连续推进节点，不改变节点模型。
+## Pages 与 Features
 
-图片生成当前公开 `ImageGenerationPort`、业务输入/结果和服务工厂。服务由调用方显式注入 Adapter，
-生产 runtime 会拒绝 Mock；真实 HTTP Adapter 等后端 OpenAPI 冻结后再实现。
+Page 读取 Router 并组合模块。`workflow-editor/editor` 和 `playtest/inspection-preview` 是页面内部模块，
+不读取 Router，外部只能从各自目录根进入。
 
-Character 与动作资产的当前前端契约：
-
-- Character 始终包含 `outfits`；MVP UI 可以只展示第一套造型，但不把造型层折叠掉。
-- 动作模板使用 `ActionTemplate` / `actionTemplateId`；角色母版使用
-  `candidateCharacterTemplates` / `characterTemplateUrl` / `confirmCharacterTemplate`，不使用裸的 template。
-- 母版确认后展开的多方向基准帧保持命名为 `baseFrames`。
-- Action 自身携带 `fps`；预览和导出不使用全局帧率常量。
-- `Action.frames` 的数组顺序就是帧顺序，Frame 不重复保存 `index`。
-- `sourceWorkflowRunId` 是前端定位信息，不要求后端资产依赖 WorkflowRun；前端领域 ID 统一使用 string。
-- `ActionTemplate` 分为 `system` 和 `project` 作用域；系统模板的 `projectId` 为 `null`。
-
-## 页面内模块
-
-### Workflow Editor
-
-入口：pages/workflow-editor/editor/index.tsx。
-
-它只接收已解析的 run、revision 和节点类型，不读取 Router。外层 Page 负责：
-
-- 读取 runId、节点路径和 revision query。
-- 未解锁节点的重定向。
-- 当前/历史只读模式。
-- 跨页跳转到 Playtest。
-
-### Playtest
-
-入口：pages/playtest/inspection-preview/index.tsx。
-
-Playtest 是独立核验台 Page，不是通用 Feature。它接收完整生成 Revision，保存独立核验结论，
-问题可以回流 Review，但不会阻断导出。
-
-### Asset Library
-
-入口：`/projects/:projectId/assets`。
-
-页面以项目为上下文，展示当前项目的 Character、项目自定义 ActionTemplate 和 Wearable，
-同时展示可供该项目使用的系统内置 ActionTemplate。
-
-## Features
-
-Feature 表示用户操作，Feature 之间不互相 import。当前真实实现仍按功能增量推进；规划子目录使用
-README 说明职责，未实现能力不得返回假成功。
+Feature 表示用户操作，Feature 之间不互相导入。规划子目录可用 README 说明职责，但不得用占位代码
+返回假成功。Generation 的 `provider-connection` 只负责配置与展示，不拥有 ProviderSession 数据形状。
 
 ## Shared
 
-- shared/api：独立后端能力的传输、响应壳、错误、上传和流式任务；不承载 WorkflowRun。
-- shared/api/generated：未来 OpenAPI 生成代码的接入位置，当前不放伪代码。
-- shared/hooks：跨 Entity 复用的 React hooks 和对应状态类型。
-- shared/ui：业务无关 UI；只维护已经存在的组件。
-- shared/testing：仅测试代码使用，生产代码不得导入。
+- `shared/api`：只处理真实 HTTP、响应壳、通用错误和 multipart；不含业务 Mock，也不承载
+  WorkflowRun。
+- `shared/pagination`：与传输协议无关的 `PageQuery` 与 `Paged<T>`。
+- `shared/hooks`：跨 Entity 复用的异步 React 状态。
+- `shared/ui`：无业务含义且已经实际使用的 UI。
+
+不建立含义宽泛的 `shared/lib`，也不保留生产代码可导入的 `shared/testing`。
 
 ## 测试
 
-架构测试检查分层、公开入口、Router 隔离、直接网络请求、测试依赖和循环依赖；
-WorkflowRun 单元/集成测试检查异步 Port、单点实现选择、存储失败回退、ID 降级、完整数据校验、
-`not_started` 状态、Revision、节点重启、质量门禁、历史和 Playtest 导入规则。
+架构测试使用 TypeScript AST 检查依赖方向、同层 Slice 隔离、公开入口、Router 隔离、Mock 引入、
+直接网络请求、循环依赖以及完整一级目录清单。行为测试覆盖 Project Repository 注入、生产组合护栏、
+Quick Start 项目归属、WorkflowRun 存储回退与完整校验、Revision、节点重启和 Playtest 门禁。

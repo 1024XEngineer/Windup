@@ -1,5 +1,10 @@
 # Quick Start 与能力级 Adapter 设计
 
+> 后续全局模块审计已将图片生成从原先规划的 `entities/generation` 迁至
+> `capabilities/image-generation`，并用 app 注入的 `ProjectRepository` 替代全局 Project 假 HTTP。
+> 当前边界以 [前端模块归属设计](2026-07-28-frontend-module-ownership-design.md) 为准；本文保留
+> Quick Start 同流程与 Project 归属决策。
+
 ## 目标
 
 Windup 当前由前端维护制作流程，后端只提供逐步落地的独立能力。Quick Start 与传统工作流不是
@@ -42,7 +47,7 @@ Quick Start 与手动流程创建后都从 `asset` 节点开始并使用 `not_st
 
 ```ts
 interface ImageGenerationPort {
-  readonly kind: 'real' | 'mock'
+  readonly adapterKind: 'real' | 'mock'
   generate(input: GenerateImagesInput): Promise<GeneratedImage[]>
 }
 ```
@@ -62,15 +67,15 @@ interface ImageGenerationPort {
 - Real Adapter 的 URL、响应壳和 DTO 映射必须由独立契约测试覆盖。
 - 真实调用失败必须向上抛出，生产环境不得运行时降级到 Mock。
 
-现有 Project 假 HTTP transport 暂时保留，避免路演前扩大重构范围；图片生成验证新模式后，再按
-Project、Character、Review、Export 的业务能力逐步迁移，最后删除全局 `VITE_USE_MOCK`。
+后续全局审计已经完成 Project 迁移：页面统一依赖 Promise 形式的 `ProjectRepository`，app 开发
+组合动态加载内存实现，生产组合只使用 HTTP 实现；`shared/api` 不再提供全局 Mock transport。
 
 ## 明确不做
 
 - 不实现完整 Quick Start Agent 循环。
 - 不新增或猜测 Generation HTTP 路径、Task/SSE 契约。
 - 不上传参考图或实现 Project 重命名页面。
-- 不迁移现有 Project transport。
+- 本设计原始范围不迁移 Project transport；该项已由后续全局模块归属重构完成。
 - 不实现 Review、Export、Character 的能力 Adapter。
 
 ## 验收

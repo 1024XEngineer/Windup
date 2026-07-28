@@ -2,8 +2,8 @@
 
 本文是前端当前调用和需求签名的清单，不替代未来由后端 OpenAPI 生成的客户端。
 在 OpenAPI 落地前，只有标为“已核对”的接口可以按真实后端接口联调；其余接口
-不能被描述为已接通后端。独立业务能力在开发或测试中可以由 Mock transport 承载，但生产请求
-仍需等待明确的后端契约。WorkflowRun 是前端编排模型，不属于后端 API 契约。
+不能被描述为已接通后端。开发或测试可以在业务 Port 后注入假实现，但 `shared/api` 只负责真实
+HTTP，生产请求不会回退假数据。WorkflowRun 是前端编排模型，不属于后端 API 契约。
 
 ## 通用约定
 
@@ -11,8 +11,9 @@
 - 单项响应：`{ code, message, data, timestamp? }`；只有 `code === 200` 才是成功。
 - 列表响应额外包含 `total`、`page` 和 `page_size`。
 - 生产构建只使用真实 transport；不会回退到 Mock 数据。
-- 当前全局 `VITE_USE_MOCK` 只作为 Project 假 HTTP 的过渡方案；新能力按业务 Port 注入 Adapter，
-  不继续扩大这个总开关。
+- Project 页面统一依赖异步 `ProjectRepository`。开发默认由 app 注入内存实现；设置
+  `VITE_PROJECT_ADAPTER=http` 时联调真实接口；生产 app 只能注入 HTTP 实现。
+- 图片生成、图片上传等调用按业务 Capability 注入 Adapter，不在 transport 层用全局开关选实现。
 
 ## 已核对：项目与上传
 
@@ -59,6 +60,21 @@ Quick Start 也必须先创建 Project。当前 MS2 Project Planner 从自然语
 项目名，并使用侧视、四方向、64×64 默认约束；将来由 Agent 参数规划实现替换。WorkflowRun 必须
 保存 Project API 返回的 ID，不能使用 `quick-start` 等固定假值。
 
+Project 的页面接口保持异步，并由 app 一次性注入同一个实现：
+
+```ts
+interface ProjectRepository {
+  readonly adapterKind: 'real' | 'mock'
+  list(query?: PageQuery): Promise<Paged<Project>>
+  get(id: string): Promise<Project>
+  create(input: CreateProjectInput): Promise<Project>
+  remove(id: string): Promise<void>
+}
+```
+
+HTTP Repository 负责上述 URL、数字枚举和 DTO 映射；页面、Quick Start 和 React Hook 不直接选择
+真实或开发实现。
+
 ### 参考图片上传
 
 - `POST /upload/image`
@@ -67,9 +83,16 @@ Quick Start 也必须先创建 Project。当前 MS2 Project Planner 从自然语
 - 最大 10 MiB；前端会在发起网络请求前拒绝超限文件。
 
 ```ts
-const url = await uploadImage(file)
+const upload = createImageUploadService({
+  adapter: httpImageUploadAdapter,
+  runtime: 'production',
+})
+const url = await upload.upload(file)
 // 成功响应：{ code: 200, message: 'success', data: { url } }
 ```
+
+这项调用属于 `capabilities/image-upload`，不属于 Project Entity。业务调用方只接收 URL；文件校验、
+multipart、端点和响应壳都由 HTTP Adapter 处理。
 
 ## 前端本地编排：WorkflowRun
 
@@ -154,7 +177,6 @@ interface Action {
   outfitId: string
   fps: number
   frames: Frame[]
-  sourceWorkflowRunId: string | null
 }
 
 interface Outfit {
@@ -198,9 +220,10 @@ declare function addAction(
 ```
 
 即使 MVP UI 只展示一个造型，Character 也通过 `outfits` 保留造型层，候选母版、选定母版与
-动作都归属具体 Outfit。`sourceWorkflowRunId` 是前端编排定位信息，不要求后端 Action 认识
-WorkflowRun；后端可返回自己的 Task、Execution 或 Asset 引用，再由前端建立关联。前端全部
-业务 ID 都是 string，后端数字 ID 只在 DTO mapper 中转换。
+动作都归属具体 Outfit。Action 不保存 `sourceWorkflowRunId`；核验与编辑器跳转由当前页面已知的
+runId、revisionId、actionId 和 frameIndex 组合，不要求后端 Action 认识前端 WorkflowRun。后端可
+返回自己的 Task、Execution 或 Asset 引用，再由前端单独建立关联。前端全部业务 ID 都是 string，
+后端数字 ID 只在 DTO mapper 中转换。
 
 `Action.frames` 的数组顺序就是播放顺序，因此 Frame 不重复携带 `index`。审核和页面定位可以
 临时使用 `frameIndex`；如果后端以后支持独立 Frame 资源，应另行提供稳定 ID。Action 的 `fps`
@@ -208,6 +231,28 @@ WorkflowRun；后端可返回自己的 Task、Execution 或 Asset 引用，再�
 
 项目模板查询应返回“系统内置模板 + 当前项目自定义模板”的合集，并通过 `scope` 与
 `projectId` 区分归属。系统模板不虚构项目 ID。
+
+## 仅有需求签名：Provider Session
+
+ProviderSession 是有独立 ID、状态和过期时间的后端数据，因此归 `entities/provider-session`；
+Generation Feature 只负责连接配置和状态展示。
+
+```ts
+type ProviderCredentialMode = 'client' | 'server'
+type ProviderSessionStatus = 'unconfigured' | 'connecting' | 'ready' | 'failed'
+
+interface ProviderSession {
+  id: string
+  providerId: string
+  model: string
+  credentialMode: ProviderCredentialMode
+  status: ProviderSessionStatus
+  expiresAt: string | null
+}
+```
+
+API Key 不进入 WorkflowRun、localStorage 或 ProviderSession 响应。创建、验证、刷新和失效接口尚未
+冻结，因此本节只说明前端所需数据形状，不声明后端 URL。
 
 ## 未对齐：异步任务与 SSE
 
@@ -236,7 +281,7 @@ interface WorkflowTaskLink {
 }
 ```
 
-后端 Task 不依赖前端 WorkflowRun。`WorkflowTaskLink` 只保存在前端，用于把后端 `taskId`
-映射回当前 run、revision 和 node。`result` 在具体生成产物契约冻结前保持 `unknown`。SSE 当前
-只有 transport 预留，订阅地址、事件名称、断线重连、补发策略以及 Task 创建/查询接口均未与
-后端对齐，前端不得把它描述为已接通能力。
+`Task` 是独立 Entity，不依赖前端 WorkflowRun。`WorkflowTaskLink` 留在 WorkflowRun，只用于把
+后端 `taskId` 映射回当前 run、revision 和 node。`result` 在具体生成产物契约冻结前保持
+`unknown`。前端没有可调用的 SSE transport；订阅地址、事件名称、断线重连、补发策略以及 Task
+创建/查询接口均未与后端对齐，`subscribeTask` 会明确失败，不能把它描述为已接通能力。

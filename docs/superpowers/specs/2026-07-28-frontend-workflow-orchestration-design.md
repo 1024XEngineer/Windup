@@ -2,7 +2,8 @@
 
 > 更新：Quick Start 统一从素材节点开始、自动创建 Project，以及独立业务能力 Port 的最新决策见
 > [Quick Start 与能力级 Adapter 设计](2026-07-28-quick-start-capability-adapters-design.md)。本文其余
-> WorkflowRun 前端归属和 Revision 规则继续有效。
+> WorkflowRun 前端归属和 Revision 规则继续有效。六层目录、Task/Provider 独立 Entity、Capability
+> 归属和 app 组合以 [前端模块归属设计](2026-07-28-frontend-module-ownership-design.md) 为准。
 
 ## 背景与决策
 
@@ -169,8 +170,8 @@ Task SSE 事件也只携带后端 Task 字段。断线恢复、事件名和 payl
 
 实施遵循测试先行：
 
-1. 新增边界测试，证明调用三个 WorkflowRun 公开函数不会触发通用 HTTP `fetch`，也不依赖
-   `VITE_USE_MOCK`。
+1. 新增边界测试，证明调用三个 WorkflowRun 公开函数不会触发通用 HTTP `fetch`，也不依赖任何
+   全局 transport 实现开关。
 2. 新增/调整 Repository 测试，覆盖创建、读取、命令推进和未知 run。
 3. 先增加类型测试，要求 `Task` 不再包含 `runId/revisionId`，并要求
    `WorkflowTaskLink` 精确包含 task/run/revision/node 四个 ID。

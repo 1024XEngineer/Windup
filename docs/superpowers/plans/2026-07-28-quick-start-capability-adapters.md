@@ -1,5 +1,10 @@
 # Quick Start Capability Adapters Implementation Plan
 
+> Historical plan: the later global ownership refactor moved generation to
+> `frontend/src/capabilities/image-generation`, removed the default module-level `startQuickStart`, and replaced
+> Project fake HTTP with app-injected `ProjectRepository`. Current paths and boundaries are defined by
+> `../specs/2026-07-28-frontend-module-ownership-design.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Give Quick Start a real Project identity, align AI/manual runs on one pipeline, and introduce an injectable image-generation capability with a production Mock guard.
@@ -113,12 +118,11 @@ Expected: both test files pass.
 ### Task 3: Image Generation Capability Port
 
 **Files:**
-- Create: `frontend/src/entities/generation/model/types.ts`
-- Create: `frontend/src/entities/generation/model/port.ts`
-- Create: `frontend/src/entities/generation/service.ts`
-- Create: `frontend/src/entities/generation/service.test.ts`
-- Create: `frontend/src/entities/generation/index.ts`
-- Modify: `frontend/src/entities/index.ts`
+- Create: `frontend/src/capabilities/image-generation/model/types.ts`
+- Create: `frontend/src/capabilities/image-generation/model/port.ts`
+- Create: `frontend/src/capabilities/image-generation/service.ts`
+- Create: `frontend/src/capabilities/image-generation/service.test.ts`
+- Create: `frontend/src/capabilities/image-generation/index.ts`
 
 **Interfaces:**
 - Produces: `ImageGenerationPort`, `GenerateImagesInput`, `GeneratedImage`, and `createImageGenerationService`.
@@ -131,7 +135,7 @@ throws immediately when given a `kind: 'mock'` adapter. The fake adapter lives i
 
 - [ ] **Step 2: Verify the tests fail for missing service code**
 
-Run: `npm test -- src/entities/generation/service.test.ts`
+Run: `npm test -- src/capabilities/image-generation/service.test.ts`
 
 Expected: FAIL because the generation module does not exist.
 
@@ -142,7 +146,7 @@ and rejects Mock in production. Do not create an HTTP adapter.
 
 - [ ] **Step 4: Verify focused tests pass**
 
-Run: `npm test -- src/entities/generation/service.test.ts`
+Run: `npm test -- src/capabilities/image-generation/service.test.ts`
 
 Expected: all focused tests pass.
 

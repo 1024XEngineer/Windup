@@ -7,7 +7,7 @@
 - 前端：React + Vite + TypeScript + Tailwind CSS。
 - 工具链：Oxlint 负责代码检查，Oxfmt 负责格式化；Tailwind 与 Vite 插件属于构建期开发依赖。
 - 后端：Python；按 PR #62 分为 Project、Media、Character、Generation、Asset、Review、Playtest、Export，以及未来的 workflow definition / execution 等独立能力。后端 Job、质量门禁和导出任务由对应业务域保存或执行。
-- 分层：app -> pages -> features -> entities -> shared。
+- 分层：app -> pages -> features -> capabilities -> entities -> shared。
 - Quick Start 与手动 Workflow 是同一套制作引擎的两种控制方式：前者由前端 Agent 自动连续驱动并隐藏节点，后者由用户逐步驱动；两者进入同一套 WorkflowRun、Revision、生成、质检、历史、Playtest 和导出流程。
 - WorkflowRun、Revision 和页面节点由前端本地 Repository 编排，不要求后端提供同名资源。
 
@@ -18,21 +18,22 @@
 | app | 启动、Router、Provider、全局布局、错误边界 | 已有基础实现 |
 | pages | 完整路由页面、URL、页面临时状态和模块组合 | 已有部分页面，Workflow steps 待实现 |
 | features | 用户对业务对象执行的完整操作 | 已有占位 Feature，按真实实现增量拆分 |
-| entities | 业务对象、查询、命令、选择器和领域规则 | Project 已接后端；WorkflowRun Revision/门禁由前端 Repository Port/Adapter 承载 |
-| shared | 通用 API transport、UI、工具和测试辅助 | 已有基础 API/UI，upload/stream 边界待补 |
+| capabilities | 调用外部业务能力的稳定 Port、服务和 Adapter，不含 UI | 图片生成 Port 与图片上传 HTTP Adapter 已实现 |
+| entities | 有身份或生命周期的数据、Repository、命令、选择器和领域规则 | Project 有 HTTP/开发 Repository；WorkflowRun 由前端本地 Repository 承载 |
+| shared | 无业务含义的真实 HTTP transport、分页、Hook 和 UI | 已有 API、pagination、hooks、ui |
 
 Account、Billing 和资产库复用 Feature 当前只在本文中预留，不创建代码入口。
 
 ## 3. 依赖规则
 
-1. 代码只能依赖更低层：app -> pages -> features -> entities -> shared。
+1. 代码只能依赖更低层：app -> pages -> features -> capabilities -> entities -> shared。
 2. 同一层不同 Slice 默认不能互相 import。
 3. 对外统一从 Slice 根 index.ts 进入。
 4. entities 对外使用统一门面 @/entities；Entity 内部默认不产生其他 Entity 的运行时依赖。
 5. Entity 之间通过 ID、类型契约或输入对象传递关系，不直接调用另一个 Entity 的内部 API。
 6. shared 不得依赖任何 Windup 业务层。
-7. Page、Feature、Entity 不直接调用 fetch；后端网络访问只能经 shared/api，WorkflowRun 本地编排不经过 HTTP。
-8. 生产代码不得导入 tests 或 shared/testing。
+7. Page、Feature、Capability 和 Entity 不直接调用 fetch；真实 Adapter 经 shared/api 访问网络，WorkflowRun 本地编排不经过 HTTP。
+8. Mock 只能由 app 开发组合或测试选择；生产组合不得导入 Mock，真实失败不得运行时降级。
 9. 不允许深层路径绕过公开入口，不允许循环依赖。
 10. 未实现能力不得返回伪造成功结果。
 
@@ -58,7 +59,7 @@ Account、Billing 和资产库复用 Feature 当前只在本文中预留，不�
 
 Home 只提供 Quick Start 和从项目开始两个入口，不保存业务状态。Quick Start 负责自然语言输入和初始计划解析，先自动创建真实 Project，再用返回的 Project ID 创建与手动入口完全相同的 WorkflowRun，最后停留在独立的简化创作台（/quick-start/:runId）。该页面使用自然语言展示生成、检查和结果，不展示五个节点、Revision、WorkflowRun 或 Workflow Editor；后台仍复用同一套领域状态。需要精细控制时才进入 Workflow Editor。
 
-ProjectsPage、ProjectDetailPage 和 AssetLibraryPage 当前直接使用 Entity；不提前创建 features/project 或 features/asset-library。Asset Library 以项目为上下文，展示项目 Character、项目 ActionTemplate、Wearable 以及系统内置 ActionTemplate。出现复杂复用后再提取 Feature。
+ProjectsPage、ProjectDetailPage 和 QuickStartPage 由 app 注入同一份异步 ProjectRepository；页面不选择 HTTP 或开发实现。AssetLibraryPage 当前直接使用 Entity；不提前创建 features/project 或 features/asset-library。Asset Library 以项目为上下文，展示项目 Character、项目 ActionTemplate、Wearable 以及系统内置 ActionTemplate。出现复杂复用后再提取 Feature。
 
 ## 5. Workflow Editor
 
@@ -165,47 +166,63 @@ Playtest 保存独立核验记录，可回流到对应 Revision 的 Review，但
 ## 8. API 与数据边界
 
 ~ ~ ~
-shared/api/
-├─ index.ts         JSON 请求的公开门面，以及 Mock/Real transport 切换
-├─ upload.ts        文件上传
-├─ stream.ts        SSE/流式任务预留
-├─ generated/       预留，不伪造生成代码
-└─ client/
-   ├─ real/
-   ├─ mock/
-   └─ mappers/
+app/composition/
+├─ index.ts         启动时选择实现；生产固定使用真实实现
+├─ production.ts    只组合真实 Adapter/Repository
+├─ development.ts   动态加载开发实现
+└─ mocks/           开发业务假实现，不模仿 HTTP
+
+capabilities/
+├─ image-generation/  图片生成 Port 与服务
+└─ image-upload/      图片上传 Port、服务与 HTTP Adapter
+
+shared/
+├─ api/             只处理真实 HTTP、响应壳、错误与 multipart
+├─ pagination/      PageQuery 与 Paged<T>
+├─ hooks/           通用异步 React 状态
+└─ ui/              无业务 UI
 ~ ~ ~
 
-- shared/api 负责 HTTP、响应壳、分页、通用错误和 transport。
+- shared/api 负责真实 HTTP、响应壳和通用错误；分页业务无关形状归 shared/pagination。
 - entities 负责业务 DTO 到领域模型的转换和非法状态校验。
 - WorkflowRun 由 Entity 内部返回 Promise 的 Repository Port 持久化，不注册 shared/api Mock route。
 - 三个流程状态函数只依赖唯一 Repository 组合入口；当前入口绑定本地 Adapter，且永远不负责选择 Generation、Review、Export 等业务能力实现。
-- 独立后端能力按业务 Port 选择 Adapter；手动控制器与 Quick Start Agent 复用同一 Port，再把真实结果转换为 WorkflowCommand。
+- 独立后端调用归 capabilities；手动控制器与 Quick Start Agent 复用同一 Port，再把真实结果转换为 WorkflowCommand。
 - 图片生成已经定义 Promise 形式的 `ImageGenerationPort`；生产 runtime 拒绝 Mock。真实 HTTP Adapter 等 OpenAPI 冻结后实现，不提前猜测路径或 DTO。
+- 图片上传已经定义 `ImageUploadPort` 与 HTTP Adapter；文件规则、multipart 和响应 URL 映射不属于 Project Entity。
+- Project 页面统一依赖 `ProjectRepository`。app 开发组合默认动态加载内存实现，`VITE_PROJECT_ADAPTER=http` 可联调真实接口，生产组合无条件创建 HTTP Repository。
 - 本地存储以内存覆盖层保护写入失败后的最新状态，恢复时逐条校验完整领域形状；本地 ID 不强制依赖 `randomUUID`。
 - 非法节点、状态、Revision 或 ID 必须抛出契约错误，不能用默认值伪造成功。
-- JSON、上传、SSE 分别走 request/upload/stream，业务层禁止直接 fetch。
-- 现有 Project 假 HTTP 继续由全局 transport 临时承载；新增能力不扩大该总开关，按能力显式注入 Adapter。
-- 独立后端能力的 Mock 只在开发/测试显式启用；生产组合不得静态引入能力 Mock，真实 API 失败不得回退 Mock。
+- JSON 与 multipart 分别走 request/upload；SSE 契约未冻结前不保留可调用的假 transport。
+- shared/api 不含业务 Mock 或全局 Mock 开关。独立能力的 Mock 只在开发/测试显式注入；真实 API 失败不得回退 Mock。
 - generated 只作为未来 OpenAPI 客户端接入点，不创建不存在的代码。
 
 ## 9. 状态归属和查询抽象
 
 - WorkflowRun、Revision、节点、命令和门禁归 entities/workflow-run。
 - 当前制作推进逻辑归前端 Production Engine；手动控制器执行一步后等待用户，Quick Start Agent 使用同一能力和命令连续推进。
-- Project、Character、ActionTemplate、Wearable 归各自 Entity。
-- 后端 Task 快照只包含任务自身的状态、进度、错误和未冻结的 result；前端用 `WorkflowTaskLink` 将 taskId 关联到 run、revision 和 node。
+- Project、Character、ActionTemplate、Wearable、Task、ProviderSession 归各自 Entity。
+- 后端 Task Entity 只包含任务自身的状态、进度、错误和未冻结的 result；`WorkflowTaskLink` 留在 WorkflowRun，将 taskId 关联到 run、revision 和 node。
 - Character 保留 outfits 层；造型通过 candidateCharacterTemplates 保存候选母版，通过 characterTemplateUrl 保存用户选定母版，并拥有各自的 Action；MVP UI 只展示第一套造型。
 - Action 自身携带 fps；Frame 顺序由 Action.frames 数组表达，不重复保存 index。
-- Action 的 sourceWorkflowRunId 是前端定位信息，不要求后端资产依赖 WorkflowRun；前端领域 ID 和枚举统一使用语义明确的字符串。
+- Action 不保存 sourceWorkflowRunId；页面使用已有 runId、revisionId、actionId 和 frameIndex 完成定位，不让 Character 资产反向认识 WorkflowRun。
 - ActionTemplate 使用 system/project 作用域并携带动作提示词；addAction 只通过 actionTemplateId 引用它。角色母版统一使用 characterTemplate 前缀，多方向基准帧保持命名为 baseFrames。
 - URL、画布缩放、节点选中、资产筛选和当前审核位置归对应 Page。
 - Generation、Review、Playtest 的局部交互状态归对应 Feature 或 Playtest Page。
 - 不建立 Redux、Zustand 等全局业务 Store。
-- 先保留 query key、query function、mutation 和 data/loading/error/refresh 语义，暂不绑定 React Query。
-- 跨 Entity 复用的异步 React 状态放在 shared/hooks，不使用含义宽泛的 shared/lib。
+- 跨 Entity 复用的异步 React 状态放在 shared/hooks；分页形状放在 shared/pagination；不使用含义宽泛的 shared/lib。
 
 ## 10. 目录增量规则
+
+当前一级模块清单由架构测试精确锁定：
+
+- pages：asset-library、home、not-found、playtest、project-detail、projects、quick-start、workflow-editor。
+- features：character-setup、export、generation、quick-start、review。
+- capabilities：image-generation、image-upload。
+- entities：action-template、character、project、provider-session、task、wearable、workflow-run。
+- shared：api、hooks、pagination、ui。
+
+新增一级目录必须先按职责归类、提供根 `index.ts(x)` 并同步架构清单，不能照搬后端模块名。
 
 计划中的 Feature 子目录可以现在创建，但不写伪实现：
 
@@ -223,8 +240,9 @@ shared/api/
 2. Quick Start 与手动 Workflow 共用同一个 WorkflowRun。
 3. 质检连续失败 2 次、生成完成、导出状态和 Playtest 非阻断规则。
 4. Repository 异步契约、唯一实现入口、存储失败回退、ID 降级、`not_started` 与损坏数据过滤。
-5. 页面路由参数、历史模式和 Playtest 导入。
-6. 独立后端能力接通后补真实 API Adapter、Provider、SSE 和跨入口 E2E。
+5. app 组合注入、生产真实实现护栏和生产包不包含开发种子数据。
+6. 页面路由参数、历史模式和 Playtest 导入。
+7. 独立后端能力接通后补真实 API Adapter、Provider、SSE 和跨入口 E2E。
 
 架构测试立即检查当前可验证的 import、fetch、测试依赖和循环依赖；generated client、真实 Python API 和 Mock/Real 完整能力一致性在对应代码出现后启用。
 
@@ -234,7 +252,10 @@ shared/api/
 
 - WorkflowRun 的前端编排门面、异步 Repository Port、唯一组合入口、本地 Adapter、Revision、有序五节点和字符串领域 ID。
 - Quick Start 自动创建 Project，并使用返回的真实 ID 创建统一 WorkflowRun；AI/手动入口都从素材节点开始。
+- 六层依赖架构、完整一级模块清单和公开入口检查。
 - 图片生成业务 Port、显式依赖注入和生产 Mock 拒绝保护；真实 HTTP Adapter 尚未实现。
+- 图片上传业务 Port、HTTP Adapter、格式/大小校验和 multipart 响应映射。
+- Project 异步 Repository、app 级开发/生产组合、生产真实实现护栏；旧全局假 HTTP 已删除。
 - localStorage 写入失败的内存优先回退、完整恢复校验，以及缺少 `randomUUID` 时的 ID 生成兜底。
 - 手动流程的 `not_started` 到 `in_progress` 状态转换，以及从素材节点重启后的状态恢复。
 - 节点门禁、历史只读、从节点重启和后续执行线移除。
@@ -243,7 +264,7 @@ shared/api/
 - Workflow Editor 节点路由、历史 Revision URL 和重启交互。
 - Playtest 的完整 Revision 导入门禁、核验结论记录和非阻断导出提示。
 - 项目资产库路由及系统/项目 ActionTemplate 作用域契约。
-- Task/WorkflowTaskLink 分离、Outfit、Action fps、Frame 数组顺序，以及 ActionTemplate / characterTemplate / baseFrames 三类概念的明确前端命名。
+- Task/WorkflowTaskLink 分离、ProviderSession 独立 Entity、Outfit、Action fps、Frame 数组顺序，以及 ActionTemplate / characterTemplate / baseFrames 三类概念的明确前端命名。
 - 生产构建强制使用真实 API transport，业务层禁止直接 fetch。
 
 仍待真实后端或业务实现：
