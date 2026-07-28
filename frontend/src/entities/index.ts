@@ -38,6 +38,7 @@ export type {
   Action,
   ActionKind,
   ActionStatus,
+  AddActionInput,
   Character,
   CharacterVariant,
   CreateCharacterInput,

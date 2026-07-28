@@ -1,5 +1,6 @@
 import { useAsync } from '@/shared/hooks'
 import type { AsyncState } from '@/shared/hooks'
+import type { ActionTemplate } from '../action-template'
 import type { Action, Character, CharacterVariant, CreateCharacterInput } from './types'
 
 /** 角色、动作、帧。后端接口未提供，下面的签名即我们提给后端的需求。 */
@@ -35,18 +36,34 @@ export async function confirmCharacterTemplate(_variantId: string): Promise<Char
   throw new Error('not implemented：等待后端角色造型母版确认接口')
 }
 
+/**
+ * 加动作的入参。
+ *
+ * 写成可辨识联合而不是「kind 加一个可选 id」，是因为后者允许 kind: 'preset' 却不给
+ * actionTemplateId——声明用了预设，却说不出用的是哪一份。那种组合没有意义，
+ * 这里让它在类型上就不成立。
+ *
+ * TODO(待定)：自定义动作的提示词从哪来还没定。一种走法是自定义动作也先落成一份
+ * project 作用域的 ActionTemplate，那样这里只剩模板 id，kind 可以取消。
+ */
+export type AddActionInput =
+  | {
+      /** 面向用户展示的动作名称。 */
+      name: string
+      /** 来自系统内置或项目自定义的动作模板。 */
+      kind: 'preset'
+      /** 选用的动作模板；预设动作必须指明。 */
+      actionTemplateId: ActionTemplate['id']
+    }
+  | {
+      /** 面向用户展示的动作名称。 */
+      name: string
+      /** 用户临时描述的动作，不走模板。 */
+      kind: 'custom'
+    }
+
 /** 加一个动作，此时还未生成。 */
-export async function addAction(
-  _variantId: string,
-  _input: {
-    /** 面向用户展示的动作名称。 */
-    name: string
-    /** 动作来自系统预设还是用户自定义。 */
-    kind: 'preset' | 'custom'
-    /** 选用的 ActionTemplate ID；不使用动作模板时可以省略。 */
-    actionTemplateId?: string
-  },
-): Promise<Action> {
+export async function addAction(_variantId: string, _input: AddActionInput): Promise<Action> {
   throw new Error('not implemented：等待后端角色造型动作接口')
 }
 
