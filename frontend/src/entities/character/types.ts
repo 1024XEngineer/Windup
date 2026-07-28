@@ -36,8 +36,8 @@ export interface Frame {
 export interface Action {
   /** 动作领域 ID；由 Character/Asset 接口返回，具体格式等待 OpenAPI 确定。 */
   id: string
-  /** 拥有该动作的 CharacterVariant ID。 */
-  variantId: CharacterVariant['id']
+  /** 拥有该动作的 Outfit ID。 */
+  outfitId: Outfit['id']
 
   /** 面向用户展示的动作名称。 */
   name: string
@@ -57,7 +57,7 @@ export interface Action {
 }
 
 /** 同一角色的一套独立造型；MVP UI 只展示第一套，但数据结构不折叠该层。 */
-export interface CharacterVariant {
+export interface Outfit {
   /** 造型领域 ID；具体来源和格式等待 Character OpenAPI 确定。 */
   id: string
   /** 该造型所属的 Character ID。 */
@@ -68,7 +68,7 @@ export interface CharacterVariant {
   candidateCharacterTemplates: string[]
   /** 用户从候选图中选定的角色母版 URL；尚未选定时为 null。 */
   characterTemplateUrl: string | null
-  /** 该造型拥有的动作集合；每个 Action.variantId 必须等于本造型 ID。 */
+  /** 该造型拥有的动作集合；每个 Action.outfitId 必须等于本造型 ID。 */
   actions: Action[]
 }
 
@@ -81,7 +81,7 @@ export interface Character {
   /** 面向用户展示的角色名称。 */
   name: string
   /** 角色的全部独立造型；MVP 页面至少保留这一层，即使当前只有一个成员。 */
-  variants: CharacterVariant[]
+  outfits: Outfit[]
   /** 角色创建时间，预期使用后端返回的 ISO 8601 字符串。 */
   createdAt: string
   /** 角色最后更新时间，预期使用后端返回的 ISO 8601 字符串。 */

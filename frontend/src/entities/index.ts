@@ -40,10 +40,10 @@ export type {
   ActionStatus,
   AddActionInput,
   Character,
-  CharacterVariant,
   CreateCharacterInput,
   Frame,
   FrameQcResult,
+  Outfit,
 } from './character'
 
 /* 工作流数据 —— Revision、五节点和领域门禁 */

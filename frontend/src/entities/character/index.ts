@@ -1,7 +1,7 @@
 import { useAsync } from '@/shared/hooks'
 import type { AsyncState } from '@/shared/hooks'
 import type { ActionTemplate } from '../action-template'
-import type { Action, Character, CharacterVariant, CreateCharacterInput } from './types'
+import type { Action, Character, CreateCharacterInput, Outfit } from './types'
 
 /** 角色、动作、帧。后端接口未提供，下面的签名即我们提给后端的需求。 */
 
@@ -10,10 +10,10 @@ export type {
   ActionKind,
   ActionStatus,
   Character,
-  CharacterVariant,
   CreateCharacterInput,
   Frame,
   FrameQcResult,
+  Outfit,
 } from './types'
 
 /** 带全部动作与帧。审核台进入只需这一个调用。 */
@@ -32,7 +32,7 @@ export async function createCharacter(_input: CreateCharacterInput): Promise<Cha
 }
 
 /** 确认某套造型的母版后才能为该造型添加动作。 */
-export async function confirmCharacterTemplate(_variantId: string): Promise<CharacterVariant> {
+export async function confirmCharacterTemplate(_outfitId: string): Promise<Outfit> {
   throw new Error('not implemented：等待后端角色造型母版确认接口')
 }
 
@@ -63,7 +63,7 @@ export type AddActionInput =
     }
 
 /** 加一个动作，此时还未生成。 */
-export async function addAction(_variantId: string, _input: AddActionInput): Promise<Action> {
+export async function addAction(_outfitId: string, _input: AddActionInput): Promise<Action> {
   throw new Error('not implemented：等待后端角色造型动作接口')
 }
 
