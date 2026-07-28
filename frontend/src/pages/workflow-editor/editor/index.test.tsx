@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createWorkflowRun, getCurrentRevision } from '@/entities'
+import { createWorkflowRun, getCurrentRevision, submitWorkflowCommand } from '@/entities'
 import { WorkflowEditor } from './index'
 
 afterEach(cleanup)
@@ -36,7 +36,15 @@ describe('WorkflowEditor', () => {
   })
 
   it('历史版本显示只读状态并允许从已有节点重新开始', async () => {
-    const run = await createWorkflowRun({ projectId: 'quick-start', driver: 'ai', prompt: '骑士' })
+    let run = await createWorkflowRun({
+      projectId: 'project-quick-start-editor',
+      driver: 'ai',
+      prompt: '骑士',
+    })
+    run = await submitWorkflowCommand(run.id, {
+      kind: 'complete-node',
+      nodeId: getCurrentRevision(run).nodes[0].id,
+    })
     const revision = getCurrentRevision(run)
     const onRestartNode = vi.fn(async () => undefined)
 

@@ -1,5 +1,8 @@
 # WorkflowRun Repository Hardening Implementation Plan
 
+> Historical note: the Quick Start initial-node rule was superseded by
+> `2026-07-28-quick-start-capability-adapters.md`; the repository hardening tasks stay valid.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the frontend-owned WorkflowRun repository network-shaped and replaceable while preventing local persistence loss, unsupported-ID crashes, incorrect initial generation state, and malformed hydration.

@@ -9,7 +9,24 @@ import {
   getNodeByType,
   getRevision,
   submitWorkflowCommand,
+  type WorkflowRun,
 } from '@/entities'
+
+async function advanceToCandidate(
+  run: WorkflowRun,
+  generationOutput: unknown = null,
+): Promise<WorkflowRun> {
+  let updated = await submitWorkflowCommand(run.id, {
+    kind: 'complete-node',
+    nodeId: getCurrentNode(run)!.id,
+  })
+  updated = await submitWorkflowCommand(updated.id, {
+    kind: 'complete-node',
+    nodeId: getCurrentNode(updated)!.id,
+    output: generationOutput,
+  })
+  return updated
+}
 
 function createMemoryStorage(): Storage {
   const values = new Map<string, string>()
@@ -108,15 +125,17 @@ describe('entities/workflow-run Revision 契约', () => {
 
   it('Quick Start 和手动入口创建同一种 WorkflowRun', async () => {
     const ai = await createWorkflowRun({
-      projectId: 'quick-start',
+      projectId: 'project-quick-start',
       driver: 'ai',
       prompt: '像素小骑士',
     })
     const manual = await createWorkflowRun({ projectId: 'project-1', driver: 'manual' })
 
-    expect(getCurrentNode(ai)?.type).toBe('generation')
-    expect(getNodeByType(getCurrentRevision(ai), 'asset')?.status).toBe('passed')
+    expect(getCurrentNode(ai)?.type).toBe('asset')
+    expect(getNodeByType(getCurrentRevision(ai), 'asset')?.status).toBe('active')
     expect(getCurrentNode(manual)?.type).toBe('asset')
+    expect(getCurrentRevision(ai).generationStatus).toBe('not_started')
+    expect(getCurrentRevision(manual).generationStatus).toBe('not_started')
     expect(ai.revisions).toHaveLength(1)
     expect(manual.revisions).toHaveLength(1)
   })
@@ -133,11 +152,11 @@ describe('entities/workflow-run Revision 契约', () => {
     expect(getCurrentRevision(manual).generationStatus).toBe('in_progress')
 
     const quickStart = await createWorkflowRun({
-      projectId: 'quick-start-in-progress',
+      projectId: 'project-quick-start-not-started',
       driver: 'ai',
       prompt: '骑士',
     })
-    expect(getCurrentRevision(quickStart).generationStatus).toBe('in_progress')
+    expect(getCurrentRevision(quickStart).generationStatus).toBe('not_started')
   })
 
   it('从素材节点重启时生成状态回到尚未开始', async () => {
@@ -269,13 +288,12 @@ describe('entities/workflow-run Revision 契约', () => {
   })
 
   it('生成完成后进入质量门禁，连续失败两次才阻断', async () => {
-    let run = await createWorkflowRun({ projectId: 'quick-start', driver: 'ai', prompt: '骑士' })
-    const generation = getCurrentNode(run)!
-    run = await submitWorkflowCommand(run.id, {
-      kind: 'complete-node',
-      nodeId: generation.id,
-      output: { jobId: 'job-1' },
+    let run = await createWorkflowRun({
+      projectId: 'project-quality-failure',
+      driver: 'ai',
+      prompt: '骑士',
     })
+    run = await advanceToCandidate(run, { jobId: 'job-1' })
     const candidate = getCurrentNode(run)!
 
     run = await submitWorkflowCommand(run.id, {
@@ -299,11 +317,12 @@ describe('entities/workflow-run Revision 契约', () => {
   })
 
   it('质量门禁通过后形成可导入 Playtest 的历史版本', async () => {
-    let run = await createWorkflowRun({ projectId: 'quick-start', driver: 'ai', prompt: '骑士' })
-    run = await submitWorkflowCommand(run.id, {
-      kind: 'complete-node',
-      nodeId: getCurrentNode(run)!.id,
+    let run = await createWorkflowRun({
+      projectId: 'project-quality-passed',
+      driver: 'ai',
+      prompt: '骑士',
     })
+    run = await advanceToCandidate(run)
     run = await submitWorkflowCommand(run.id, {
       kind: 'record-quality-result',
       nodeId: getCurrentNode(run)!.id,
@@ -317,11 +336,12 @@ describe('entities/workflow-run Revision 契约', () => {
   })
 
   it('导出必须进入 export 节点，不能绕过 review', async () => {
-    let run = await createWorkflowRun({ projectId: 'quick-start', driver: 'ai', prompt: '骑士' })
-    run = await submitWorkflowCommand(run.id, {
-      kind: 'complete-node',
-      nodeId: getCurrentNode(run)!.id,
+    let run = await createWorkflowRun({
+      projectId: 'project-export-gate',
+      driver: 'ai',
+      prompt: '骑士',
     })
+    run = await advanceToCandidate(run)
     run = await submitWorkflowCommand(run.id, {
       kind: 'record-quality-result',
       nodeId: getCurrentNode(run)!.id,
@@ -347,11 +367,12 @@ describe('entities/workflow-run Revision 契约', () => {
   })
 
   it('从历史节点重启会保留前缀引用并移除后续执行线', async () => {
-    let run = await createWorkflowRun({ projectId: 'quick-start', driver: 'ai', prompt: '骑士' })
-    run = await submitWorkflowCommand(run.id, {
-      kind: 'complete-node',
-      nodeId: getCurrentNode(run)!.id,
+    let run = await createWorkflowRun({
+      projectId: 'project-revision-restart',
+      driver: 'ai',
+      prompt: '骑士',
     })
+    run = await advanceToCandidate(run)
     run = await submitWorkflowCommand(run.id, {
       kind: 'record-quality-result',
       nodeId: getCurrentNode(run)!.id,

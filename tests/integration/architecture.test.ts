@@ -101,6 +101,27 @@ function targetRelativePath(file: string, specifier: string): string | null {
   return rel.startsWith('..') ? null : rel
 }
 
+function capabilityMockViolation(file: string, specifier: string): Violation | null {
+  const source = relativeSrc(file)
+  if (/\.test\.tsx?$/.test(source) || source === 'app/capabilities/development.ts') return null
+
+  const target = targetRelativePath(file, specifier)
+  const isLegacyProjectTransport = target?.startsWith('shared/api/client/mock') ?? false
+  if (
+    !target ||
+    isLegacyProjectTransport ||
+    !/(?:^|\/)(?:adapters\/)?mock(?:\/|$)/.test(target)
+  ) {
+    return null
+  }
+
+  return {
+    file: source,
+    specifier,
+    reason: '生产代码不得直接选择能力 Mock Adapter',
+  }
+}
+
 function moduleSpecifiers(file: string, source: string): string[] {
   const sourceFile = ts.createSourceFile(
     file,
@@ -137,6 +158,8 @@ function moduleSpecifiers(file: string, source: string): string[] {
 function violationFor(file: string, specifier: string): Violation | null {
   const rel = relativeSrc(file)
   const source = sourceLocation(file)
+  const mockViolation = capabilityMockViolation(file, specifier)
+  if (mockViolation) return mockViolation
 
   if (
     (rel.startsWith('pages/workflow-editor/editor/') ||
@@ -251,6 +274,14 @@ function collectCycles(): string[][] {
 }
 
 describe('依赖边界', () => {
+  it('检查器能识别生产代码直接选择能力 Mock Adapter', () => {
+    const page = join(SRC, 'pages/quick-start/index.tsx')
+
+    expect(
+      capabilityMockViolation(page, '@/entities/generation/adapters/mock')?.reason,
+    ).toBe('生产代码不得直接选择能力 Mock Adapter')
+  })
+
   it('检查器能识别双引号、export-from 和动态 import', () => {
     const source = `
       import type { Project } from "@/entities"

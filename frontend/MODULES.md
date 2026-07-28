@@ -34,9 +34,16 @@ WorkflowRun 的领域模型包含：
 - `GenerationStatus` 区分素材准备的 `not_started` 与实际生成的 `in_progress`。
 - 不含 run/revision 的后端 Task 快照，以及前端专用的 `WorkflowTaskLink` 关联。
 
-WorkflowRun 只负责前端页面编排。后端 OpenAPI 落地后，Generation、Asset、Review、Playtest、
-Export 等独立能力 Adapter 由该 Entity 内部组合，且只在 `entities/workflow-run/repository.ts` 选择
-实现，页面公开调用方式不变。本地 ID 在 `randomUUID` 缺失时有随机字节和会话序列两级兜底。
+WorkflowRun 只负责前端页面编排和本地持久化，`entities/workflow-run/repository.ts` 只选择流程
+Repository，不选择 Generation、Asset、Review、Playtest 或 Export 实现。独立后端能力使用各自
+业务 Port；手动控制器与 Quick Start Agent 调用同一 Port，再把结果转换成 WorkflowCommand。
+本地 ID 在 `randomUUID` 缺失时有随机字节和会话序列两级兜底。
+
+Quick Start 启动时先创建真实 Project，再使用返回 ID 创建与手动入口相同的 WorkflowRun。两种
+入口都从 asset 节点和 `not_started` 开始；AI 自动化负责连续推进节点，不改变节点模型。
+
+图片生成当前公开 `ImageGenerationPort`、业务输入/结果和服务工厂。服务由调用方显式注入 Adapter，
+生产 runtime 会拒绝 Mock；真实 HTTP Adapter 等后端 OpenAPI 冻结后再实现。
 
 Character 与动作资产的当前前端契约：
 

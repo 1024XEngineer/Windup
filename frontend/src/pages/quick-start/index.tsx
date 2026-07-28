@@ -1,12 +1,8 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 
-import {
-  canImportToPlaytest,
-  createWorkflowRun,
-  getCurrentRevision,
-  useWorkflowRun,
-} from '@/entities'
+import { canImportToPlaytest, getCurrentRevision, useWorkflowRun } from '@/entities'
+import { startQuickStart } from '@/features/quick-start'
 import { PageHeader } from '@/shared/ui'
 
 const CREATION_COPY = {
@@ -41,11 +37,7 @@ export function QuickStartPage() {
     setSubmitting(true)
     setError(null)
     try {
-      const run = await createWorkflowRun({
-        projectId: 'quick-start',
-        driver: 'ai',
-        prompt,
-      })
+      const { run } = await startQuickStart({ prompt })
       navigate(`/quick-start/${run.id}`)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))

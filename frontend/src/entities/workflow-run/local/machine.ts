@@ -25,28 +25,15 @@ function node(
   }
 }
 
-/** AI 入口跳过资产设置直接进生成，手动入口从资产设置开始。 */
-function initialRevision(driver: WorkflowRun['driver'], prompt: string | null): WorkflowRevision {
-  const asset = node('asset', driver === 'ai' ? 'passed' : 'active', { prompt })
-  const nodes =
-    driver === 'ai'
-      ? [
-          asset,
-          {
-            ...node('generation', 'active', { prompt }),
-            order: 1,
-            referenceNodeIds: [asset.id],
-          },
-        ]
-      : [asset]
-
+/** 两种入口共用同一条执行线；AI 只负责自动推进，不跳过内部节点。 */
+function initialRevision(prompt: string | null): WorkflowRevision {
   return {
     id: newId('revision'),
     basedOnRevisionId: null,
     restartNodeId: null,
     status: 'active',
-    nodes,
-    generationStatus: driver === 'ai' ? 'in_progress' : 'not_started',
+    nodes: [node('asset', 'active', { prompt })],
+    generationStatus: 'not_started',
     exportStatus: 'not_exported',
     playtestStatus: 'not_tested',
     createdAt: new Date().toISOString(),
@@ -55,7 +42,7 @@ function initialRevision(driver: WorkflowRun['driver'], prompt: string | null): 
 
 export function createLocalRun(input: CreateWorkflowRunInput): WorkflowRun {
   const prompt = input.prompt?.trim() || null
-  const revision = initialRevision(input.driver, prompt)
+  const revision = initialRevision(prompt)
   return saveRun({
     id: newId('run'),
     projectId: input.projectId,

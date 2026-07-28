@@ -5,8 +5,9 @@ import type { MockRoute } from './types'
 export type { MockHandler, MockRoute } from './types'
 
 /**
- * mock 分发。与真实现形状一致，业务代码换实现不用改。
- * 后端接口到位后删掉对应 handler 即可，不必整体切换。
+ * Project 假 HTTP 的过渡分发，与真实响应壳保持一致。
+ * 当前开关仍是全局的，删除单个 handler 不会让该路径自动改走真实接口；新增业务能力应使用
+ * 能力级 Port/Adapter，不继续扩充这张路由表。
  */
 const routes: MockRoute[] = [...projectMockHandlers]
 

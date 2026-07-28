@@ -24,10 +24,16 @@ describe('QuickStartPage', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '开始创作' }))
 
-    expect(await screen.findByRole('heading', { name: '正在生成角色' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '正在理解你的设定' })).toBeTruthy()
     expect(screen.getByLabelText('创作进度')).toBeTruthy()
     expect(screen.getByText('生成服务暂未连接')).toBeTruthy()
     expect(window.location.pathname).toMatch(/^\/quick-start\/run-[^/]+$/)
+    const runId = window.location.pathname.split('/').at(-1)!
+    const persistedRuns = JSON.parse(
+      localStorage.getItem('windup.workflow-runs.v1') ?? '{}',
+    ) as Record<string, { projectId: string }>
+    expect(persistedRuns[runId]?.projectId).toMatch(/^\d+$/)
+    expect(persistedRuns[runId]?.projectId).not.toBe('quick-start')
     expect(screen.queryByRole('heading', { name: '工作流' })).toBeNull()
     expect(screen.queryByText(/Provider Session/)).toBeNull()
   })

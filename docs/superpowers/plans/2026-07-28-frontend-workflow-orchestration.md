@@ -1,5 +1,8 @@
 # Frontend Workflow Orchestration Implementation Plan
 
+> Historical note: Quick Start initialization and capability composition were superseded by
+> `2026-07-28-quick-start-capability-adapters.md`; the remaining WorkflowRun and Revision work stays valid.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make WorkflowRun an explicitly frontend-owned orchestration model while preserving its public API and preparing separate backend capability adapters without inventing unfrozen endpoints.

@@ -8,7 +8,7 @@
 - 工具链：Oxlint 负责代码检查，Oxfmt 负责格式化；Tailwind 与 Vite 插件属于构建期开发依赖。
 - 后端：Python；按 PR #62 分为 Project、Media、Character、Generation、Asset、Review、Playtest、Export，以及未来的 workflow definition / execution 等独立能力。后端 Job、质量门禁和导出任务由对应业务域保存或执行。
 - 分层：app -> pages -> features -> entities -> shared。
-- Quick Start 与手动 Workflow 是两种输入入口，最终进入同一套 WorkflowRun、Revision、生成、质检、历史、Playtest 和导出流程。
+- Quick Start 与手动 Workflow 是同一套制作引擎的两种控制方式：前者由前端 Agent 自动连续驱动并隐藏节点，后者由用户逐步驱动；两者进入同一套 WorkflowRun、Revision、生成、质检、历史、Playtest 和导出流程。
 - WorkflowRun、Revision 和页面节点由前端本地 Repository 编排，不要求后端提供同名资源。
 
 ## 2. 分层职责
@@ -56,7 +56,7 @@ Account、Billing 和资产库复用 Feature 当前只在本文中预留，不�
 
 / 不再承担 Quick Start 具体业务；Quick Start 使用 /quick-start。项目详情保留当前的 /projects/:projectId，不改为 /project/:projectId。
 
-Home 只提供 Quick Start 和从项目开始两个入口，不保存业务状态。Quick Start 负责自然语言输入和初始计划解析，创建与手动入口完全相同的 WorkflowRun 后停留在独立的简化创作台（/quick-start/:runId）。该页面使用自然语言展示生成、检查和结果，不展示五个节点、Revision、WorkflowRun 或 Workflow Editor；后台仍复用同一套领域状态。需要精细控制时才进入 Workflow Editor。
+Home 只提供 Quick Start 和从项目开始两个入口，不保存业务状态。Quick Start 负责自然语言输入和初始计划解析，先自动创建真实 Project，再用返回的 Project ID 创建与手动入口完全相同的 WorkflowRun，最后停留在独立的简化创作台（/quick-start/:runId）。该页面使用自然语言展示生成、检查和结果，不展示五个节点、Revision、WorkflowRun 或 Workflow Editor；后台仍复用同一套领域状态。需要精细控制时才进入 Workflow Editor。
 
 ProjectsPage、ProjectDetailPage 和 AssetLibraryPage 当前直接使用 Entity；不提前创建 features/project 或 features/asset-library。Asset Library 以项目为上下文，展示项目 Character、项目 ActionTemplate、Wearable 以及系统内置 ActionTemplate。出现复杂复用后再提取 Feature。
 
@@ -150,8 +150,9 @@ exportStatus: not_exported | exporting | exported | failed
 playtestStatus: not_tested | passed | issues_found
 ~ ~ ~
 
-手动流程在素材准备阶段使用 `not_started`，进入 generation 节点后才切换为 `in_progress`；
-Quick Start 创建后已经进入 generation，因此初始为 `in_progress`。
+Quick Start 与手动流程创建后都位于素材节点并使用 `not_started`。传统工作流等待用户完成素材设置；
+Quick Start Agent 自动完成同一节点。只有真正进入 generation 后才切换为 `in_progress`，自动化不等于
+跳过内部节点。
 
 Playtest 可从 Quick Start、Workflow 或历史 Revision 导入。URL 形式：
 
@@ -178,16 +179,20 @@ shared/api/
 - shared/api 负责 HTTP、响应壳、分页、通用错误和 transport。
 - entities 负责业务 DTO 到领域模型的转换和非法状态校验。
 - WorkflowRun 由 Entity 内部返回 Promise 的 Repository Port 持久化，不注册 shared/api Mock route。
-- 三个编排函数只依赖唯一组合入口；当前入口绑定本地 Adapter，未来实现只在该入口替换或组合。
+- 三个流程状态函数只依赖唯一 Repository 组合入口；当前入口绑定本地 Adapter，且永远不负责选择 Generation、Review、Export 等业务能力实现。
+- 独立后端能力按业务 Port 选择 Adapter；手动控制器与 Quick Start Agent 复用同一 Port，再把真实结果转换为 WorkflowCommand。
+- 图片生成已经定义 Promise 形式的 `ImageGenerationPort`；生产 runtime 拒绝 Mock。真实 HTTP Adapter 等 OpenAPI 冻结后实现，不提前猜测路径或 DTO。
 - 本地存储以内存覆盖层保护写入失败后的最新状态，恢复时逐条校验完整领域形状；本地 ID 不强制依赖 `randomUUID`。
 - 非法节点、状态、Revision 或 ID 必须抛出契约错误，不能用默认值伪造成功。
 - JSON、上传、SSE 分别走 request/upload/stream，业务层禁止直接 fetch。
-- 独立后端能力的 Mock 只在开发/测试显式启用；生产只能使用真实 API，失败不得回退 Mock。
+- 现有 Project 假 HTTP 继续由全局 transport 临时承载；新增能力不扩大该总开关，按能力显式注入 Adapter。
+- 独立后端能力的 Mock 只在开发/测试显式启用；生产组合不得静态引入能力 Mock，真实 API 失败不得回退 Mock。
 - generated 只作为未来 OpenAPI 客户端接入点，不创建不存在的代码。
 
 ## 9. 状态归属和查询抽象
 
 - WorkflowRun、Revision、节点、命令和门禁归 entities/workflow-run。
+- 当前制作推进逻辑归前端 Production Engine；手动控制器执行一步后等待用户，Quick Start Agent 使用同一能力和命令连续推进。
 - Project、Character、ActionTemplate、Wearable 归各自 Entity。
 - 后端 Task 快照只包含任务自身的状态、进度、错误和未冻结的 result；前端用 `WorkflowTaskLink` 将 taskId 关联到 run、revision 和 node。
 - Character 保留 outfits 层；造型通过 candidateCharacterTemplates 保存候选母版，通过 characterTemplateUrl 保存用户选定母版，并拥有各自的 Action；MVP UI 只展示第一套造型。
@@ -228,11 +233,13 @@ shared/api/
 已实现：
 
 - WorkflowRun 的前端编排门面、异步 Repository Port、唯一组合入口、本地 Adapter、Revision、有序五节点和字符串领域 ID。
+- Quick Start 自动创建 Project，并使用返回的真实 ID 创建统一 WorkflowRun；AI/手动入口都从素材节点开始。
+- 图片生成业务 Port、显式依赖注入和生产 Mock 拒绝保护；真实 HTTP Adapter 尚未实现。
 - localStorage 写入失败的内存优先回退、完整恢复校验，以及缺少 `randomUUID` 时的 ID 生成兜底。
 - 手动流程的 `not_started` 到 `in_progress` 状态转换，以及从素材节点重启后的状态恢复。
 - 节点门禁、历史只读、从节点重启和后续执行线移除。
 - 前端演示门禁连续失败两次的页面规则，以及对应的生成状态展示。
-- Quick Start 创建统一 WorkflowRun 并进入独立的简化创作台；后台进入 generation，但页面不展示工作流内部结构。
+- Quick Start 创建真实 Project 和统一 WorkflowRun 后进入独立的简化创作台；后台保留完整执行线，由未来 Agent 自动推进，页面不展示工作流内部结构。
 - Workflow Editor 节点路由、历史 Revision URL 和重启交互。
 - Playtest 的完整 Revision 导入门禁、核验结论记录和非阻断导出提示。
 - 项目资产库路由及系统/项目 ActionTemplate 作用域契约。
@@ -241,7 +248,8 @@ shared/api/
 
 仍待真实后端或业务实现：
 
-- Generation、Asset、Review、Playtest、Export 等独立后端能力的 OpenAPI Adapter。
+- Image Generation、Asset、Review、Playtest、Export 等独立后端能力的 OpenAPI Adapter。
+- Quick Start Agent 的自动决策循环、参考图输入和 Project 参数智能规划；当前 Project Planner 使用明确的 MS2 默认约束。
 - 两个 Provider 的真实 Session、模型验证、Job runtime 和 SSE。
 - 后端 quality-gate 报告和生成产物。
 - Character/Action/Frame 正式接口、Review 修复任务和真实播放器。

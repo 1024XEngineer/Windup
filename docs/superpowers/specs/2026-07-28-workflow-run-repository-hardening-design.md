@@ -1,5 +1,9 @@
 # WorkflowRun Repository 异步化与本地存储加固设计
 
+> 更新：Quick Start 不再跳过素材节点，最新初始化规则见
+> [Quick Start 与能力级 Adapter 设计](2026-07-28-quick-start-capability-adapters-design.md)。本文的异步
+> Repository、存储回退、ID 降级和恢复校验规则继续有效。
+
 ## 背景与架构决策
 
 当前页面通过 `createWorkflowRun`、`fetchWorkflowRun` 和

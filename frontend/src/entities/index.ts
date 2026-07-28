@@ -96,3 +96,15 @@ export { fetchActionTemplates, useActionTemplates } from './action-template'
 export type { ActionTemplate } from './action-template'
 export { fetchWearables, useWearables } from './wearable'
 export type { Wearable } from './wearable'
+
+/* 图片生成能力 —— 业务 Port 已落地，真实 HTTP Adapter 等待 OpenAPI */
+export { createImageGenerationService } from './generation'
+export type {
+  CapabilityAdapterKind,
+  CreateImageGenerationServiceOptions,
+  FrontendRuntime,
+  GenerateImagesInput,
+  GeneratedImage,
+  ImageGenerationPort,
+  ImageGenerationService,
+} from './generation'

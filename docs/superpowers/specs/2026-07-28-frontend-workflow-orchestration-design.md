@@ -1,5 +1,9 @@
 # 前端 WorkflowRun 编排边界设计
 
+> 更新：Quick Start 统一从素材节点开始、自动创建 Project，以及独立业务能力 Port 的最新决策见
+> [Quick Start 与能力级 Adapter 设计](2026-07-28-quick-start-capability-adapters-design.md)。本文其余
+> WorkflowRun 前端归属和 Revision 规则继续有效。
+
 ## 背景与决策
 
 PR #62 的 `docs/architecture.md` 是后端目标架构的唯一依据。MS2 阶段的

@@ -11,6 +11,8 @@
 - 单项响应：`{ code, message, data, timestamp? }`；只有 `code === 200` 才是成功。
 - 列表响应额外包含 `total`、`page` 和 `page_size`。
 - 生产构建只使用真实 transport；不会回退到 Mock 数据。
+- 当前全局 `VITE_USE_MOCK` 只作为 Project 假 HTTP 的过渡方案；新能力按业务 Port 注入 Adapter，
+  不继续扩大这个总开关。
 
 ## 已核对：项目与上传
 
@@ -53,6 +55,10 @@ type DirectionalMovement = 'single' | 'four-way' | 'eight-way'
 `gameStyle` 是项目级画风约束，会进入本项目的生成上下文；`sampleImageUrl` 是项目级画风
 参考图，不是生成结果或角色母版。
 
+Quick Start 也必须先创建 Project。当前 MS2 Project Planner 从自然语言生成不超过 20 字符的临时
+项目名，并使用侧视、四方向、64×64 默认约束；将来由 Agent 参数规划实现替换。WorkflowRun 必须
+保存 Project API 返回的 ID，不能使用 `quick-start` 等固定假值。
+
 ### 参考图片上传
 
 - `POST /upload/image`
@@ -81,16 +87,44 @@ submitWorkflowCommand(runId, command): Promise<WorkflowRun>
 ```
 
 Repository 内部的 `create/get/submit` 同样全部返回 Promise。未来真实能力契约冻结后，只在组合入口
-新增或切换远程/混合 Adapter，不需要重写页面或三个编排调用点。当前本地 Adapter 还保证：
+新增独立业务 Port/Adapter，不把 Generation、Review 或 Export 塞进 WorkflowRun Repository。
+当前本地 Adapter 还保证：
 
 - localStorage 写入失败时，本次会话的最新内存数据优先于磁盘旧快照。
 - `crypto.randomUUID` 不可用时依次使用随机字节和本地序列生成 ID。
-- 手动流程在素材准备期间使用 `not_started`，进入 generation 后才是 `in_progress`。
+- Quick Start 与手动流程都从素材节点和 `not_started` 开始；AI 自动控制器完成素材节点后才进入
+  generation 并切换为 `in_progress`。
 - 从 localStorage 恢复时完整校验 run、revision、node、枚举和当前版本引用，逐条忽略损坏记录。
 
 真实后端集成按照 PR #62 拆为 Project、Media、Character、Generation、Asset、Review、
-Playtest 和 Export 等独立能力。其 OpenAPI 冻结后，由 WorkflowRun 编排层组合对应 Adapter；
-页面不需要知道后端模块拆分，也不提前猜测未确定的路径和 DTO。
+Playtest 和 Export 等独立能力。其 OpenAPI 冻结后，由前端制作控制层组合对应业务 Port；
+WorkflowRun Repository 继续只管流程存取。页面不需要知道后端模块拆分，也不提前猜测未确定的
+路径和 DTO。
+
+## 前端能力 Port：图片生成
+
+后端 Generation HTTP 契约尚未冻结，但前端当前已确定最小业务边界：
+
+```ts
+interface GenerateImagesInput {
+  projectId: string
+  prompt: string
+  referenceImageUrls: string[]
+}
+
+interface GeneratedImage {
+  url: string
+}
+
+interface ImageGenerationPort {
+  readonly adapterKind: 'real' | 'mock'
+  generate(input: GenerateImagesInput): Promise<GeneratedImage[]>
+}
+```
+
+传统工作流和 Quick Start Agent 必须调用同一个 Port。测试通过构造参数注入 Fake；生产 runtime 在
+服务构造阶段拒绝 Mock Adapter。真实 Adapter 等 OpenAPI 冻结后负责 URL、响应壳和 DTO 映射，
+真实调用失败不得回退 Mock。本节不是对后端路径或 Task 协议的声明。
 
 ## 仅有需求签名：角色与资产
 
