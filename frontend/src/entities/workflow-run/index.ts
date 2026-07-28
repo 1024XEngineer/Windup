@@ -1,12 +1,12 @@
 import { useAsync } from '@/shared/hooks'
 import type { AsyncState } from '@/shared/hooks'
-import { fetchWorkflowRun } from './api/get-workflow-run'
+import { fetchWorkflowRun } from './orchestration/get-workflow-run'
 import type { TaskEvent } from './model/task'
 import type { WorkflowRun } from './model/types'
 
-export { createWorkflowRun } from './api/create-workflow-run'
-export { fetchWorkflowRun } from './api/get-workflow-run'
-export { submitWorkflowCommand } from './api/submit-workflow-command'
+export { createWorkflowRun } from './orchestration/create-workflow-run'
+export { fetchWorkflowRun } from './orchestration/get-workflow-run'
+export { submitWorkflowCommand } from './orchestration/submit-workflow-command'
 export { workflowRunKeys } from './model/queries'
 export {
   canEnterNode,

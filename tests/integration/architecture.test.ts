@@ -330,4 +330,28 @@ describe('依赖边界', () => {
     }
     expect(offenders).toEqual([])
   })
+
+  it('WorkflowRun 是前端编排模型，不通过 HTTP transport', () => {
+    const workflowRoot = join(SRC, 'entities/workflow-run')
+    const offenders: string[] = []
+
+    for (const file of walk(workflowRoot)) {
+      if (/\.test\.tsx?$/.test(file)) continue
+      const source = readFileSync(file, 'utf8')
+      const rel = relativeSrc(file)
+      if (moduleSpecifiers(file, source).includes('@/shared/api')) {
+        offenders.push(`${rel}: imports @/shared/api`)
+      }
+      if (/['"`]\/workflow-runs?(?:\/|['"`])/.test(source)) {
+        offenders.push(`${rel}: runtime workflow HTTP path`)
+      }
+    }
+
+    const mockWorkflowDir = join(SRC, 'shared/api/client/mock/workflow-run')
+    if (existsSync(mockWorkflowDir) && walk(mockWorkflowDir).length > 0) {
+      offenders.push('shared/api/client/mock/workflow-run contains runtime code')
+    }
+
+    expect(offenders).toEqual([])
+  })
 })

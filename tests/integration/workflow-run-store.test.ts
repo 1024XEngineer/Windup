@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   canImportToPlaytest,
@@ -11,9 +11,27 @@ import {
   submitWorkflowCommand,
 } from '@/entities'
 
+function createMemoryStorage(): Storage {
+  const values = new Map<string, string>()
+  return {
+    get length() {
+      return values.size
+    },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => [...values.keys()][index] ?? null,
+    removeItem: (key) => values.delete(key),
+    setItem: (key, value) => values.set(key, value),
+  }
+}
+
 describe('entities/workflow-run Revision 契约', () => {
   beforeEach(() => {
-    globalThis.localStorage?.clear()
+    vi.stubGlobal('localStorage', createMemoryStorage())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   it('Quick Start 和手动入口创建同一种 WorkflowRun', async () => {
@@ -36,6 +54,9 @@ describe('entities/workflow-run Revision 契约', () => {
     const loaded = await fetchWorkflowRun(created.id)
     expect(loaded.id).toBe(created.id)
     expect(loaded.currentRevisionId).toBe(created.currentRevisionId)
+
+    const stored = JSON.parse(localStorage.getItem('windup.workflow-runs.v1') ?? '{}')
+    expect(stored[created.id]).toEqual(created)
   })
 
   it('生成完成后进入质量门禁，连续失败两次才阻断', async () => {
