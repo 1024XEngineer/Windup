@@ -4,6 +4,7 @@ import { addAction, confirmCharacterTemplate } from './index'
 import type {
   Action,
   ActionTemplate,
+  AddActionInput,
   Character,
   CharacterPerspective,
   CharacterVariant,
@@ -35,20 +36,21 @@ describe('entities 公开契约', () => {
       (variantId: string) => Promise<CharacterVariant>
     >()
     expectTypeOf(addAction).toEqualTypeOf<
-      (
-        variantId: string,
-        input: {
-          name: string
-          kind: 'preset' | 'custom'
-          actionTemplateId?: string
-        },
-      ) => Promise<Action>
+      (variantId: string, input: AddActionInput) => Promise<Action>
     >()
     expectTypeOf<Action>().toHaveProperty('variantId').toBeString()
     expectTypeOf<Action>()
       .toHaveProperty('sourceWorkflowRunId')
       .toEqualTypeOf<WorkflowRun['id'] | null>()
     expectTypeOf<Action>().not.toHaveProperty('sourceWorkflowId')
+  })
+
+  it('预设动作必须指明用哪份模板', () => {
+    type Preset = Extract<AddActionInput, { kind: 'preset' }>
+    type Custom = Extract<AddActionInput, { kind: 'custom' }>
+
+    expectTypeOf<Preset>().toHaveProperty('actionTemplateId').toEqualTypeOf<ActionTemplate['id']>()
+    expectTypeOf<Custom>().not.toHaveProperty('actionTemplateId')
   })
 
   it('系统模板与项目模板通过作用域区分归属', () => {
