@@ -89,13 +89,15 @@ Playtest 和 Export 等独立能力。其 OpenAPI 冻结后，由 WorkflowRun �
 
 - `GET /characters/{id}`、`POST /characters`
 - `GET /projects/{id}/characters`
-- 造型母版确认、为造型添加动作、`POST /actions/{id}/confirm`（前两项路径待定）
+- `confirmCharacterTemplate`、`addAction`、`POST /actions/{id}/confirm`（前两项路径待定）
 - `GET /projects/{id}/action-templates`
 - `GET /projects/{id}/wearables`
 
-前端领域模型使用明确且互不冲突的名称：角色母版是 `baseImageUrl`，动作模板是
-`ActionTemplate`。`/characters/{id}/template/confirm` 是尚待后端确认的传输路径，不改变
-前端领域命名。
+前端禁止单独使用 `template` 表达不同业务概念：动作模板统一使用 `ActionTemplate` 和
+`actionTemplateId`；角色母版统一使用 `candidateCharacterTemplates`、`characterTemplateUrl`
+和 `confirmCharacterTemplate`。母版确认的后端路径同样必须包含 `character-template` 前缀，
+具体资源层级仍以后端 OpenAPI 为准。母版确认后展开的多方向基准帧继续称为 `baseFrames`，
+不使用 template。
 
 ```ts
 interface Frame {
@@ -116,7 +118,8 @@ interface CharacterVariant {
   id: string
   characterId: string
   name: string
-  baseImageUrl: string | null
+  candidateCharacterTemplates: string[]
+  characterTemplateUrl: string | null
   actions: Action[]
 }
 
@@ -130,9 +133,7 @@ interface Character {
 interface ActionTemplateBase {
   id: string
   name: string
-  previewImageUrl: string | null
-  frameCount: number
-  fps: number
+  prompt: string
 }
 
 type ActionTemplate = ActionTemplateBase &
@@ -140,10 +141,21 @@ type ActionTemplate = ActionTemplateBase &
     | { scope: 'system'; projectId: null }
     | { scope: 'project'; projectId: string }
   )
+
+declare function confirmCharacterTemplate(variantId: string): Promise<CharacterVariant>
+
+declare function addAction(
+  variantId: string,
+  input: {
+    name: string
+    kind: 'preset' | 'custom'
+    actionTemplateId?: string
+  },
+): Promise<Action>
 ```
 
-即使 MVP UI 只展示一个造型，Character 也通过 `variants` 保留造型层，母版与动作归属具体
-CharacterVariant。`sourceWorkflowRunId` 是前端编排定位信息，不要求后端 Action 认识
+即使 MVP UI 只展示一个造型，Character 也通过 `variants` 保留造型层，候选母版、选定母版与
+动作都归属具体 CharacterVariant。`sourceWorkflowRunId` 是前端编排定位信息，不要求后端 Action 认识
 WorkflowRun；后端可返回自己的 Task、Execution 或 Asset 引用，再由前端建立关联。前端全部
 业务 ID 都是 string，后端数字 ID 只在 DTO mapper 中转换。
 

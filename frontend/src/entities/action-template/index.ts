@@ -8,12 +8,8 @@ interface ActionTemplateBase {
   id: string
   /** 面向用户展示的模板名称，如“行走”或“待机”。 */
   name: string
-  /** 模板预览图 URL，通常取第一帧；没有可展示预览时为 null。 */
-  previewImageUrl: string | null
-  /** 模板预期生成的总帧数，由后端给出，前端不写死。 */
-  frameCount: number
-  /** 模板建议播放帧率，单位为帧/秒。 */
-  fps: number
+  /** 创建该动作时提交给生成能力的提示词。 */
+  prompt: string
 }
 
 /**

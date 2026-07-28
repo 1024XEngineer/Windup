@@ -185,10 +185,10 @@ shared/api/
 - WorkflowRun、Revision、节点、命令和门禁归 entities/workflow-run。
 - Project、Character、ActionTemplate、Wearable 归各自 Entity。
 - 后端 Task 快照只包含任务自身的状态、进度、错误和未冻结的 result；前端用 `WorkflowTaskLink` 将 taskId 关联到 run、revision 和 node。
-- Character 保留 variants 层；造型拥有各自的母版和 Action，MVP UI 只展示第一套造型。
+- Character 保留 variants 层；造型通过 candidateCharacterTemplates 保存候选母版，通过 characterTemplateUrl 保存用户选定母版，并拥有各自的 Action；MVP UI 只展示第一套造型。
 - Action 自身携带 fps；Frame 顺序由 Action.frames 数组表达，不重复保存 index。
 - Action 的 sourceWorkflowRunId 是前端定位信息，不要求后端资产依赖 WorkflowRun；前端领域 ID 和枚举统一使用语义明确的字符串。
-- ActionTemplate 使用 system/project 作用域；系统模板不属于任何项目，项目资产页合并展示两类模板。
+- ActionTemplate 使用 system/project 作用域并携带动作提示词；addAction 只通过 actionTemplateId 引用它。角色母版统一使用 characterTemplate 前缀，多方向基准帧保持命名为 baseFrames。
 - URL、画布缩放、节点选中、资产筛选和当前审核位置归对应 Page。
 - Generation、Review、Playtest 的局部交互状态归对应 Feature 或 Playtest Page。
 - 不建立 Redux、Zustand 等全局业务 Store。
@@ -228,7 +228,7 @@ shared/api/
 - Workflow Editor 节点路由、历史 Revision URL 和重启交互。
 - Playtest 的完整 Revision 导入门禁、核验结论记录和非阻断导出提示。
 - 项目资产库路由及系统/项目 ActionTemplate 作用域契约。
-- Task/WorkflowTaskLink 分离、CharacterVariant、Action fps、Frame 数组顺序和角色母版的明确前端命名。
+- Task/WorkflowTaskLink 分离、CharacterVariant、Action fps、Frame 数组顺序，以及 ActionTemplate / characterTemplate / baseFrames 三类概念的明确前端命名。
 - 生产构建强制使用真实 API transport，业务层禁止直接 fetch。
 
 仍待真实后端或业务实现：

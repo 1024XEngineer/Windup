@@ -27,7 +27,7 @@ export type {
 export {
   addAction,
   confirmAction,
-  confirmBaseImage,
+  confirmCharacterTemplate,
   createCharacter,
   fetchCharacter,
   fetchCharactersByProject,

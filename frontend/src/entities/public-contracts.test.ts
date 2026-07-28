@@ -1,6 +1,6 @@
 import { describe, expectTypeOf, it } from 'vitest'
 
-import { confirmBaseImage } from './index'
+import { addAction, confirmCharacterTemplate } from './index'
 import type {
   Action,
   ActionTemplate,
@@ -24,9 +24,26 @@ describe('entities 公开契约', () => {
 
   it('角色母版与动作模板使用不同概念', () => {
     expectTypeOf<Character>().toHaveProperty('variants').toEqualTypeOf<CharacterVariant[]>()
-    expectTypeOf<Character>().not.toHaveProperty('baseImageUrl')
-    expectTypeOf<CharacterVariant>().toHaveProperty('baseImageUrl').toEqualTypeOf<string | null>()
-    expectTypeOf(confirmBaseImage).toEqualTypeOf<(variantId: string) => Promise<CharacterVariant>>()
+    expectTypeOf<CharacterVariant>()
+      .toHaveProperty('candidateCharacterTemplates')
+      .toEqualTypeOf<string[]>()
+    expectTypeOf<CharacterVariant>()
+      .toHaveProperty('characterTemplateUrl')
+      .toEqualTypeOf<string | null>()
+    expectTypeOf<CharacterVariant>().not.toHaveProperty('baseImageUrl')
+    expectTypeOf(confirmCharacterTemplate).toEqualTypeOf<
+      (variantId: string) => Promise<CharacterVariant>
+    >()
+    expectTypeOf(addAction).toEqualTypeOf<
+      (
+        variantId: string,
+        input: {
+          name: string
+          kind: 'preset' | 'custom'
+          actionTemplateId?: string
+        },
+      ) => Promise<Action>
+    >()
     expectTypeOf<Action>().toHaveProperty('variantId').toBeString()
     expectTypeOf<Action>()
       .toHaveProperty('sourceWorkflowRunId')
@@ -40,6 +57,10 @@ describe('entities 公开契约', () => {
 
     expectTypeOf<SystemTemplate>().toHaveProperty('projectId').toEqualTypeOf<null>()
     expectTypeOf<ProjectTemplate>().toHaveProperty('projectId').toBeString()
+    expectTypeOf<ActionTemplate>().toHaveProperty('prompt').toBeString()
+    expectTypeOf<ActionTemplate>().not.toHaveProperty('previewImageUrl')
+    expectTypeOf<ActionTemplate>().not.toHaveProperty('frameCount')
+    expectTypeOf<ActionTemplate>().not.toHaveProperty('fps')
     expectTypeOf<ActionTemplate>().not.toHaveProperty('hasDisplacement')
   })
 

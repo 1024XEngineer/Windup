@@ -64,8 +64,10 @@ export interface CharacterVariant {
   characterId: string
   /** 面向用户展示的造型名称。 */
   name: string
-  /** 母版图，确认后作为该造型后续动作的一致性基准。 */
-  baseImageUrl: string | null
+  /** 母版生成阶段返回的三张候选图 URL；生成完成前可以为空数组。 */
+  candidateCharacterTemplates: string[]
+  /** 用户从候选图中选定的角色母版 URL；尚未选定时为 null。 */
+  characterTemplateUrl: string | null
   /** 该造型拥有的动作集合；每个 Action.variantId 必须等于本造型 ID。 */
   actions: Action[]
 }

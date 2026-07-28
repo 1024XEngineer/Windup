@@ -38,7 +38,9 @@ Export 等独立能力 Adapter 由该 Entity 内部组合，页面公开调用�
 Character 与动作资产的当前前端契约：
 
 - Character 始终包含 `variants`；MVP UI 可以只展示第一套造型，但不把造型层折叠掉。
-- 角色造型母版在前端称为 `baseImage`，避免与 `ActionTemplate` 混淆。
+- 动作模板使用 `ActionTemplate` / `actionTemplateId`；角色母版使用
+  `candidateCharacterTemplates` / `characterTemplateUrl` / `confirmCharacterTemplate`，不使用裸的 template。
+- 母版确认后展开的多方向基准帧保持命名为 `baseFrames`。
 - Action 自身携带 `fps`；预览和导出不使用全局帧率常量。
 - `Action.frames` 的数组顺序就是帧顺序，Frame 不重复保存 `index`。
 - `sourceWorkflowRunId` 是前端定位信息，不要求后端资产依赖 WorkflowRun；前端领域 ID 统一使用 string。
