@@ -1,11 +1,17 @@
 import type { PlaytestStatus } from '@/entities'
 
 export interface InspectionPreviewProps {
+  /** 要在核验台加载的后端 Character ID。 */
   characterId: string
+  /** 该核验记录所属的前端 WorkflowRun ID。 */
   runId: string
+  /** 被核验的前端版本 ID；核验结果写回这个版本。 */
   revisionId: string
+  /** 当前已保存的核验结论。 */
   status: PlaytestStatus
+  /** 保存明确的通过或发现问题结论；未核验状态不能由用户提交。 */
   onRecordStatus: (status: Exclude<PlaytestStatus, 'not_tested'>) => Promise<void>
+  /** 返回审核页面；具体路由和定位由外层 Page 决定。 */
   onOpenReview: () => void
 }
 

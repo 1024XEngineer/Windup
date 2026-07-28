@@ -21,13 +21,21 @@ const NODE_LABELS: Record<WorkflowNodeType, string> = {
 }
 
 export interface WorkflowEditorProps {
+  /** 当前完整的前端 WorkflowRun，用于版本列表和跨阶段门禁判断。 */
   run: WorkflowRun
+  /** 当前打开的版本；可以是当前可编辑版本，也可以是历史只读版本。 */
   revision: WorkflowRevision
+  /** 当前显示的页面节点类型，由外层路由状态控制。 */
   activeType: WorkflowNodeType
+  /** 是否禁止修改；打开非 currentRevisionId 的历史版本时应为 true。 */
   readOnly: boolean
+  /** 用户切换页面节点时通知外层更新路由。 */
   onSelectNode: (type: WorkflowNodeType) => void
+  /** 用户选择历史版本时通知外层打开对应版本。 */
   onOpenRevision: (revisionId: string) => void
+  /** 从指定节点创建新版本；Promise 完成前编辑器保持重启中状态。 */
   onRestartNode: (nodeId: string) => Promise<void>
+  /** 打开指定 Character 的独立核验台。 */
   onOpenPreview: (characterId: string) => void
 }
 

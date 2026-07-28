@@ -3,6 +3,7 @@
  * 字段对照后端 ProjectOut（PR #57），命名转换在 ./api.ts。
  */
 export interface Project {
+  /** 后端 Project ID；领域层统一转为字符串。 */
   id: string
   /** 后端目前要求前端显式传 user_id，无登录态前写死。 */
   ownerId: string
@@ -15,26 +16,47 @@ export interface Project {
   /** 移动方向，见 DIRECTIONAL_MOVEMENT。 */
   directionalMovement: DirectionalMovement
   /** 后端校验 32–2048，实际取 SPRITE_SIZES 里的档位。 */
-  spriteSize: { width: number; height: number }
+  spriteSize: {
+    /** 精灵图宽度，单位为像素。 */
+    width: number
+    /** 精灵图高度，单位为像素。 */
+    height: number
+  }
   /** 项目级画风描述，会作为本项目所有角色与动作生成的视觉约束。 */
   gameStyle: string | null
   /** 项目级画风参考图；不是生成结果或角色母版，URL 来自 POST /upload/image。 */
   sampleImageUrl: string | null
+  /** 项目创建时间，保留后端返回的时间字符串。 */
   createdAt: string
+  /** 项目最后更新时间，保留后端返回的时间字符串。 */
   updatedAt: string
 }
 
 /** 新建项目的入参。 */
 export interface CreateProjectInput {
+  /** 项目名称；后端当前限制 1–20 字符，同一用户下不可重名。 */
   name: string
+  /** 游戏视角；传输层会映射成后端数字枚举。 */
   perspective: CharacterPerspective
+  /** 移动方向；传输层会映射成后端数字枚举。 */
   directionalMovement: DirectionalMovement
-  spriteSize: { width: number; height: number }
+  /** 精灵图宽高，单位为像素；当前页面从 SPRITE_SIZES 中选择。 */
+  spriteSize: {
+    /** 目标精灵图宽度。 */
+    width: number
+    /** 目标精灵图高度。 */
+    height: number
+  }
+  /** 可选的项目级画风描述；不设置或明确清空时发送 null。 */
   gameStyle?: string | null
+  /** 可选的项目级参考图 URL；由图片上传接口返回。 */
   sampleImageUrl?: string | null
 }
 
+/** 前端使用的游戏视角枚举；仅在 mapper 中转换为后端数字。 */
 export type CharacterPerspective = 'side' | 'top-down' | 'isometric'
+
+/** 前端使用的移动方向枚举；仅在 mapper 中转换为后端数字。 */
 export type DirectionalMovement = 'single' | 'four-way' | 'eight-way'
 
 /** 游戏视角。DTO 数字值只在 api mapper 内存在。 */

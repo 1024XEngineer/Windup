@@ -9,9 +9,13 @@ export type {
 
 /** Generation 只展示任务和 Provider 状态；真实连接由后端契约接入。 */
 export interface GenerationProps {
+  /** 当前前端 WorkflowRun ID，仅用于页面编排和任务关联。 */
   runId: string
+  /** 要生成的 Action ID；生成母版等非动作任务可以省略。 */
   actionId?: string
+  /** 当前 Provider 会话状态；省略时按尚未配置展示。 */
   providerStatus?: ProviderSessionStatus
+  /** 后端确认动作生成完成后触发，并返回对应 Action ID。 */
   onGenerated?: (actionId: string) => void
 }
 

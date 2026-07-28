@@ -5,8 +5,11 @@ import { useEffect, useState } from 'react'
  * 自己定义而不直接暴露某个请求库的类型，是为了以后换实现时页面不用改。
  */
 export interface AsyncState<T> {
+  /** 最近一次成功取得的数据；首次完成前或尚无数据时为 null。 */
   data: T | null
+  /** 首次加载或 refresh 触发的请求进行中时为 true。 */
   loading: boolean
+  /** 最近一次请求失败的 Error；加载开始和成功后为 null。 */
   error: Error | null
   /** 失败重试或外部操作后刷新。 */
   refresh: () => void

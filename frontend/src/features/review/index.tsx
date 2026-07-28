@@ -4,11 +4,13 @@
  * 不提供「通过此帧」：用户只在有问题时点退回。
  */
 export interface ReviewProps {
-  /** 进来只需要一个角色。 */
+  /** 要审核的后端 Character ID。 */
   characterId: string
-  /** 受控选择：当前动作与帧由宿主持有，Review 不再保存第二份状态。 */
+  /** 受控选择中的 Action ID；省略表示尚未选中动作。 */
   actionId?: string
+  /** 受控选择中的零基帧索引；省略表示尚未选中具体帧。 */
   frameIndex?: number
+  /** 用户切换帧时通知宿主；Review 不保存第二份选择状态。 */
   onSelectFrame?: (actionId: string, frameIndex: number) => void
   /** 退回某帧。只报告是哪一帧，跳去哪由宿主决定。 */
   onRejectFrame?: (actionId: string, frameIndex: number) => void

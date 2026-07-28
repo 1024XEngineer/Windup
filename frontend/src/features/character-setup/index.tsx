@@ -5,6 +5,7 @@ import type { Character } from '@/entities'
  * 宿主：quick-start、workflow-editor、projects、asset-library 的「继续补充动作」。
  */
 export interface CharacterSetupProps {
+  /** 要创建或编辑角色的后端 Project ID。 */
   projectId: string
   /** 已有角色时传入，用于补充动作；不传表示新建。 */
   characterId?: string

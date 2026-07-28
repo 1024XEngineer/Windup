@@ -7,6 +7,7 @@ import { Link } from 'react-router'
  */
 
 export interface AppShellProps {
+  /** 渲染在全局导航下方的当前路由页面。 */
   children: ReactNode
 }
 
