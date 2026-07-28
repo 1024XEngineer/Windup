@@ -1,11 +1,4 @@
-import type { ProviderSessionStatus } from './provider-session'
-
-export type {
-  ProviderCredentialMode,
-  ProviderDescriptor,
-  ProviderSession,
-  ProviderSessionStatus,
-} from './provider-session'
+import type { ProviderSessionStatus } from '@/entities'
 
 /** Generation 只展示任务和 Provider 状态；真实连接由后端契约接入。 */
 export interface GenerationProps {

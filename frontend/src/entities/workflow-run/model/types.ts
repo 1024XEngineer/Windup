@@ -159,17 +159,3 @@ export type WorkflowCommand =
 
 /** WorkflowCommand 判别字段的联合类型。 */
 export type WorkflowCommandKind = WorkflowCommand['kind']
-
-/** 跨页面恢复编辑位置时使用的前端定位信息。 */
-export interface WorkflowLocation {
-  /** 要打开的 WorkflowRun ID。 */
-  runId: string
-  /** 要查看或编辑的版本 ID。 */
-  revisionId: string
-  /** 要聚焦的页面节点 ID。 */
-  nodeId: string
-  /** 可选的 Action ID；只有需要定位到具体动作时提供。 */
-  actionId?: string
-  /** Action.frames 中的零基索引；只有需要定位到具体帧时提供。 */
-  frameIndex?: number
-}

@@ -1,5 +1,3 @@
-import type { WorkflowRun } from '../workflow-run'
-
 /** 角色、动作、帧。后端接口尚未提供，形状按界面需要先定，待与后端对齐。 */
 
 /** 预设动作（行走/奔跑/跳跃/待机等 6–10 个）或自定义。 */
@@ -49,11 +47,6 @@ export interface Action {
   fps: number
   /** 按播放顺序排列的帧；数组下标就是零基帧序号。 */
   frames: Frame[]
-  /**
-   * 生成它的 WorkflowRun id，审核台退回单帧后据此跳回编辑器定位。
-   * 类型必须与 WorkflowRun.id 一致，否则这条恢复链在类型上就是断的。
-   */
-  sourceWorkflowRunId: WorkflowRun['id'] | null
 }
 
 /** 同一角色的一套独立造型；MVP UI 只展示第一套，但数据结构不折叠该层。 */

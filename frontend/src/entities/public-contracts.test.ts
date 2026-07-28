@@ -11,8 +11,9 @@ import type {
   Frame,
   Outfit,
   Project,
+  ProviderSession,
+  ProviderSessionStatus,
   Task,
-  WorkflowRun,
   WorkflowTaskLink,
 } from './index'
 
@@ -33,9 +34,7 @@ describe('entities 公开契约', () => {
       (outfitId: string, input: AddActionInput) => Promise<Action>
     >()
     expectTypeOf<Action>().toHaveProperty('outfitId').toBeString()
-    expectTypeOf<Action>()
-      .toHaveProperty('sourceWorkflowRunId')
-      .toEqualTypeOf<WorkflowRun['id'] | null>()
+    expectTypeOf<Action>().not.toHaveProperty('sourceWorkflowRunId')
     expectTypeOf<Action>().not.toHaveProperty('sourceWorkflowId')
   })
 
@@ -72,6 +71,15 @@ describe('entities 公开契约', () => {
       revisionId: string
       nodeId: string
     }>()
+  })
+
+  it('Provider Session 是独立实体，不由 Generation Feature 定义', () => {
+    expectTypeOf<ProviderSession>().toHaveProperty('id').toBeString()
+    expectTypeOf<ProviderSession>().toHaveProperty('providerId').toBeString()
+    expectTypeOf<ProviderSession>()
+      .toHaveProperty('status')
+      .toEqualTypeOf<ProviderSessionStatus>()
+    expectTypeOf<ProviderSession>().toHaveProperty('expiresAt').toEqualTypeOf<string | null>()
   })
 
   it('Project 在领域层使用字符串枚举，数字只保留在 DTO', () => {

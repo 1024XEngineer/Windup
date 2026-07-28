@@ -1,13 +1,11 @@
 import { useAsync } from '@/shared/hooks'
 import type { AsyncState } from '@/shared/hooks'
 import { fetchWorkflowRun } from './orchestration/get-workflow-run'
-import type { TaskEvent } from './model/task'
 import type { WorkflowRun } from './model/types'
 
 export { createWorkflowRun } from './orchestration/create-workflow-run'
 export { fetchWorkflowRun } from './orchestration/get-workflow-run'
 export { submitWorkflowCommand } from './orchestration/submit-workflow-command'
-export { workflowRunKeys } from './model/queries'
 export {
   canEnterNode,
   canImportToPlaytest,
@@ -24,7 +22,7 @@ export {
   nextNodeType,
 } from './model/selectors'
 export { WORKFLOW_NODE_ORDER } from './model/types'
-export type { Task, TaskEvent, TaskStatus, WorkflowTaskLink } from './model/task'
+export type { WorkflowTaskLink } from './model/task-link'
 export type {
   CreateWorkflowRunInput,
   ExportStatus,
@@ -33,7 +31,6 @@ export type {
   WorkflowCommand,
   WorkflowCommandKind,
   WorkflowDriver,
-  WorkflowLocation,
   WorkflowNode,
   WorkflowNodeStatus,
   WorkflowNodeType,
@@ -42,11 +39,6 @@ export type {
   WorkflowRun,
   WorkflowRunStatus,
 } from './model/types'
-
-/** 任务流协议尚未冻结，调用会明确失败而不是伪造进度。 */
-export function subscribeTask(_taskId: string, _onEvent: (event: TaskEvent) => void): () => void {
-  throw new Error('subscribeTask 的 SSE 协议尚未与后端确定，暂不可调用')
-}
 
 export function useWorkflowRun(runId: string): AsyncState<WorkflowRun> {
   return useAsync(() => fetchWorkflowRun(runId), [runId])

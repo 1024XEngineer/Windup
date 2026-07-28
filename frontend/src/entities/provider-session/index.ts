@@ -1,13 +1,7 @@
-/**
- * Provider Session 的凭据来源。
- * client 表示浏览器临时提交，server 表示服务端预先配置；两者都不在前端持久化明文 API Key。
- */
+/** Provider Session 的凭据来源；两种模式都不在前端持久化明文 API Key。 */
 export type ProviderCredentialMode = 'client' | 'server'
 
-/**
- * 前端展示的 Provider Session 连接状态。
- * unconfigured 尚未配置，connecting 正在连接，ready 可用，failed 连接失败；最终值以后端契约为准。
- */
+/** 前端展示的 Provider Session 连接状态；最终值以后端契约为准。 */
 export type ProviderSessionStatus = 'unconfigured' | 'connecting' | 'ready' | 'failed'
 
 /** 后端声明的一个可用 AI Provider 及其能力。 */
@@ -27,7 +21,7 @@ export interface ProviderSession {
   /** 后端生成的会话 ID，供 Generation 请求引用。 */
   id: string
   /** 会话连接的 ProviderDescriptor.id。 */
-  providerId: string
+  providerId: ProviderDescriptor['id']
   /** 本次会话选定的模型标识。 */
   model: string
   /** 本次会话采用的凭据提供方式。 */

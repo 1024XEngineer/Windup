@@ -63,24 +63,18 @@ export {
   isWorkflowNodeType,
   listRevisionHistory,
   nextNodeType,
-  subscribeTask,
   submitWorkflowCommand,
   useWorkflowRun,
-  workflowRunKeys,
 } from './workflow-run'
 export type {
   CreateWorkflowRunInput,
   ExportStatus,
   GenerationStatus,
   PlaytestStatus,
-  Task,
-  TaskEvent,
-  TaskStatus,
   WorkflowTaskLink,
   WorkflowCommand,
   WorkflowCommandKind,
   WorkflowDriver,
-  WorkflowLocation,
   WorkflowNode,
   WorkflowNodeStatus,
   WorkflowNodeType,
@@ -89,6 +83,18 @@ export type {
   WorkflowRun,
   WorkflowRunStatus,
 } from './workflow-run'
+
+/* 后端异步任务 —— 独立于前端 WorkflowRun 编排 */
+export { subscribeTask } from './task'
+export type { Task, TaskEvent, TaskStatus } from './task'
+
+/* AI Provider 临时会话 —— Generation 只消费，不拥有其数据形状 */
+export type {
+  ProviderCredentialMode,
+  ProviderDescriptor,
+  ProviderSession,
+  ProviderSessionStatus,
+} from './provider-session'
 
 /* 资产库 —— 提案，待与后端 review */
 export { fetchActionTemplates, useActionTemplates } from './action-template'
