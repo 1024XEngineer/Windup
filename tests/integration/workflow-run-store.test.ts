@@ -87,6 +87,32 @@ describe('entities/workflow-run Revision 契约', () => {
     expect(loaded.currentRevisionId).toBe(created.currentRevisionId)
   })
 
+  it('randomUUID 缺失时使用 getRandomValues 创建工作流 ID', async () => {
+    vi.stubGlobal('crypto', {
+      getRandomValues: (values: Uint8Array) => {
+        values.fill(7)
+        return values
+      },
+    })
+
+    const run = await createWorkflowRun({ projectId: 'project-random-values', driver: 'manual' })
+
+    expect(run.id).toMatch(/^run-/)
+    expect(getCurrentRevision(run).id).toMatch(/^revision-/)
+    expect(getCurrentNode(run)?.id).toMatch(/^node-/)
+  })
+
+  it('Web Crypto 不可用时仍能创建不重复的工作流 ID', async () => {
+    vi.stubGlobal('crypto', undefined)
+
+    const first = await createWorkflowRun({ projectId: 'project-fallback-1', driver: 'manual' })
+    const second = await createWorkflowRun({ projectId: 'project-fallback-2', driver: 'manual' })
+
+    expect(first.id).toMatch(/^run-/)
+    expect(second.id).toMatch(/^run-/)
+    expect(second.id).not.toBe(first.id)
+  })
+
   it('生成完成后进入质量门禁，连续失败两次才阻断', async () => {
     let run = await createWorkflowRun({ projectId: 'quick-start', driver: 'ai', prompt: '骑士' })
     const generation = getCurrentNode(run)!

@@ -5,6 +5,7 @@ const STORAGE_KEY = 'windup.workflow-runs.v1'
 type RunMap = Record<string, WorkflowRun>
 
 let memory: RunMap = {}
+let fallbackSequence = 0
 
 function storage(): Storage | null {
   try {
@@ -50,6 +51,23 @@ export function loadRun(runId: WorkflowRun['id']): WorkflowRun | null {
   return readAll()[runId] ?? null
 }
 
+function randomSuffix(): string {
+  const cryptoApi = globalThis.crypto
+  if (typeof cryptoApi?.randomUUID === 'function') {
+    return cryptoApi.randomUUID().replaceAll('-', '').slice(0, 12)
+  }
+  if (typeof cryptoApi?.getRandomValues === 'function') {
+    const bytes = new Uint8Array(8)
+    cryptoApi.getRandomValues(bytes)
+    return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('')
+  }
+
+  fallbackSequence += 1
+  return `${Date.now().toString(36)}${fallbackSequence.toString(36)}${Math.random()
+    .toString(36)
+    .slice(2, 8)}`
+}
+
 export function newId(prefix: 'run' | 'revision' | 'node'): string {
-  return `${prefix}-${globalThis.crypto.randomUUID().slice(0, 8)}`
+  return `${prefix}-${randomSuffix()}`
 }
