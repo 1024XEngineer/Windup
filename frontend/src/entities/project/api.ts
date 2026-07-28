@@ -3,6 +3,7 @@ import type { Paged, PageQuery } from '@/shared/api'
 import type { CreateProjectInput, Project } from './types'
 
 const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
+const MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024
 
 /** 后端原始形状，只在本文件出现；出了这里全项目只认 Project。 */
 interface ProjectDto {
@@ -94,6 +95,9 @@ export async function deleteProject(id: string): Promise<void> {
 export async function uploadImage(file: File): Promise<string> {
   if (!SUPPORTED_IMAGE_TYPES.has(file.type)) {
     throw new ApiError('仅支持 jpg/png/webp/gif 图片', 400)
+  }
+  if (file.size > MAX_IMAGE_UPLOAD_BYTES) {
+    throw new ApiError(`文件超过大小上限(${MAX_IMAGE_UPLOAD_BYTES} 字节)`, 400)
   }
 
   const payload = await uploadFile<{ url: string }>('/upload/image', file)

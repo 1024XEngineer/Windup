@@ -15,6 +15,8 @@ npm run test
 npm run lint
 ~~~
 
+接口联调状态、请求形式与未接通能力见 [API_CONTRACT.md](API_CONTRACT.md)。
+
 默认页面是 Home：
 
 - /：选择 Quick Start 或从项目开始
