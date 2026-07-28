@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 7,
+  "quality_profile": "standard",
+  "width": 1100,
+  "height": 520,
+  "title": "MS2 Demo to Final Product",
+  "subtitle": "阶段性前端流程使用最终后端能力，未来再接入工作流系统",
+  "containers": [],
+  "nodes": [
+    {
+      "id": "ms2",
+      "kind": "double_rect",
+      "x": 90,
+      "y": 230,
+      "width": 220,
+      "height": 90,
+      "label": "MS2 Frontend",
+      "sublabel": "页面推进 + 独立 API",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "apis",
+      "kind": "rect",
+      "x": 410,
+      "y": 230,
+      "width": 220,
+      "height": 90,
+      "label": "Business APIs",
+      "sublabel": "Project / Generation / Review",
+      "fill": "#fff2d9",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "workflow",
+      "kind": "double_rect",
+      "x": 730,
+      "y": 130,
+      "width": 220,
+      "height": 90,
+      "label": "Workflow Definition",
+      "sublabel": "节点 / 连接 / 模板",
+      "fill": "#f2e9f8",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "execution",
+      "kind": "rect",
+      "x": 730,
+      "y": 330,
+      "width": 220,
+      "height": 90,
+      "label": "Execution Engine",
+      "sublabel": "调度 / 重试 / 缓存",
+      "fill": "#f2e9f8",
+      "stroke": "#6685b2"
+    }
+  ],
+  "arrows": [
+    {
+      "id": "m-a",
+      "source": "ms2",
+      "target": "apis",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "a-w",
+      "source": "apis",
+      "target": "workflow",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "w-e",
+      "source": "workflow",
+      "target": "execution",
+      "source_port": "bottom",
+      "target_port": "top",
+      "flow": "control",
+      "label": ""
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 50,
+  "legend_y": 465,
+  "legend_locked": false,
+  "legend": [
+    {
+      "flow": "control",
+      "label": "业务流程"
+    },
+    {
+      "flow": "read",
+      "label": "读取 / 消费"
+    },
+    {
+      "flow": "write",
+      "label": "写入 / 产物"
+    }
+  ],
+  "footer": "Windup Architecture"
+}

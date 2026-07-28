@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 1,
+  "quality_profile": "standard",
+  "width": 1200,
+  "height": 560,
+  "title": "Windup Media and Asset Storage",
+  "subtitle": "输入素材与输出产物共享存储能力，但业务语义分离",
+  "containers": [],
+  "nodes": [
+    {
+      "id": "project",
+      "kind": "rect",
+      "x": 70,
+      "y": 220,
+      "width": 170,
+      "height": 65,
+      "label": "Project / Node",
+      "sublabel": "引用输入",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "media",
+      "kind": "double_rect",
+      "x": 300,
+      "y": 150,
+      "width": 170,
+      "height": 65,
+      "label": "Media",
+      "sublabel": "输入素材",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "asset",
+      "kind": "double_rect",
+      "x": 300,
+      "y": 350,
+      "width": 170,
+      "height": 65,
+      "label": "Asset",
+      "sublabel": "输出产物",
+      "fill": "#e4f2ea",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "storage",
+      "kind": "cylinder",
+      "x": 600,
+      "y": 250,
+      "width": 190,
+      "height": 75,
+      "label": "framework/storage",
+      "sublabel": "签名 / 上传 / 下载",
+      "fill": "#f4f0e8",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "kodo",
+      "kind": "cylinder",
+      "x": 920,
+      "y": 250,
+      "width": 170,
+      "height": 75,
+      "label": "Qiniu Kodo",
+      "sublabel": "Blob 对象",
+      "fill": "#e4e8f4",
+      "stroke": "#6685b2"
+    }
+  ],
+  "arrows": [
+    {
+      "id": "p-m",
+      "source": "project",
+      "target": "media",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "m-s",
+      "source": "media",
+      "target": "storage",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": ""
+    },
+    {
+      "id": "a-s",
+      "source": "asset",
+      "target": "storage",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": ""
+    },
+    {
+      "id": "s-k",
+      "source": "storage",
+      "target": "kodo",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": ""
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 50,
+  "legend_y": 505,
+  "legend_locked": false,
+  "legend": [
+    {
+      "flow": "control",
+      "label": "业务流程"
+    },
+    {
+      "flow": "read",
+      "label": "读取 / 消费"
+    },
+    {
+      "flow": "write",
+      "label": "写入 / 产物"
+    }
+  ],
+  "footer": "Windup Architecture"
+}

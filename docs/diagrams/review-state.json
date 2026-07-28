@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 1,
+  "quality_profile": "standard",
+  "width": 1200,
+  "height": 500,
+  "title": "Asset Review States",
+  "subtitle": "系统质检与人工审核的独立状态流",
+  "containers": [],
+  "nodes": [
+    {
+      "id": "candidate",
+      "kind": "double_rect",
+      "x": 80,
+      "y": 220,
+      "width": 170,
+      "height": 70,
+      "label": "Candidate",
+      "sublabel": "生成候选",
+      "fill": "#fff2d9",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "qa",
+      "kind": "rect",
+      "x": 300,
+      "y": 220,
+      "width": 170,
+      "height": 70,
+      "label": "Auto QA",
+      "sublabel": "系统质检",
+      "fill": "#e4f2ea",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "pending",
+      "kind": "rect",
+      "x": 520,
+      "y": 220,
+      "width": 180,
+      "height": 70,
+      "label": "Manual Pending",
+      "sublabel": "等待人工审核",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "approved",
+      "kind": "rect",
+      "x": 750,
+      "y": 140,
+      "width": 170,
+      "height": 70,
+      "label": "Approved",
+      "sublabel": "确认正式资产",
+      "fill": "#dff1e5",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "rejected",
+      "kind": "rect",
+      "x": 750,
+      "y": 310,
+      "width": 170,
+      "height": 70,
+      "label": "Rejected",
+      "sublabel": "退回修复",
+      "fill": "#f8e3df",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "formal",
+      "kind": "cylinder",
+      "x": 990,
+      "y": 220,
+      "width": 170,
+      "height": 70,
+      "label": "Formal Asset",
+      "sublabel": "试玩 / 导出",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    }
+  ],
+  "arrows": [
+    {
+      "id": "c-q",
+      "source": "candidate",
+      "target": "qa",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "q-p",
+      "source": "qa",
+      "target": "pending",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "p-a",
+      "source": "pending",
+      "target": "approved",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "p-r",
+      "source": "pending",
+      "target": "rejected",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "a-f",
+      "source": "approved",
+      "target": "formal",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": ""
+    },
+    {
+      "id": "r-c",
+      "source": "rejected",
+      "target": "candidate",
+      "source_port": "top",
+      "target_port": "bottom",
+      "flow": "control",
+      "label": "修复重试"
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 50,
+  "legend_y": 445,
+  "legend_locked": false,
+  "legend": [
+    {
+      "flow": "control",
+      "label": "业务调用"
+    },
+    {
+      "flow": "read",
+      "label": "读取 / 消费"
+    },
+    {
+      "flow": "write",
+      "label": "写入 / 事件"
+    }
+  ],
+  "footer": "Windup Architecture"
+}

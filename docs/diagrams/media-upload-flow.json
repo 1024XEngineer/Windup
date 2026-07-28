@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 1,
+  "quality_profile": "standard",
+  "width": 1100,
+  "height": 500,
+  "title": "Reference Media Upload",
+  "subtitle": "签名 URL 直传与上传确认",
+  "containers": [],
+  "nodes": [
+    {
+      "id": "client",
+      "kind": "rect",
+      "x": 60,
+      "y": 230,
+      "width": 170,
+      "height": 65,
+      "label": "Frontend",
+      "sublabel": "选择文件",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "intent",
+      "kind": "rect",
+      "x": 265,
+      "y": 230,
+      "width": 170,
+      "height": 65,
+      "label": "Upload Intent",
+      "sublabel": "预分配 media_id",
+      "fill": "#fff2d9",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "kodo",
+      "kind": "rect",
+      "x": 470,
+      "y": 230,
+      "width": 170,
+      "height": 65,
+      "label": "Kodo",
+      "sublabel": "直传文件",
+      "fill": "#e4e8f4",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "confirm",
+      "kind": "rect",
+      "x": 675,
+      "y": 230,
+      "width": 170,
+      "height": 65,
+      "label": "Confirm",
+      "sublabel": "校验对象存在",
+      "fill": "#e4f2ea",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "record",
+      "kind": "rect",
+      "x": 880,
+      "y": 230,
+      "width": 170,
+      "height": 65,
+      "label": "Media Record",
+      "sublabel": "保存元数据",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    }
+  ],
+  "arrows": [
+    {
+      "id": "u0",
+      "source": "client",
+      "target": "intent",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "u1",
+      "source": "intent",
+      "target": "kodo",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": ""
+    },
+    {
+      "id": "u2",
+      "source": "kodo",
+      "target": "confirm",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": ""
+    },
+    {
+      "id": "u3",
+      "source": "confirm",
+      "target": "record",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 50,
+  "legend_y": 445,
+  "legend_locked": false,
+  "legend": [
+    {
+      "flow": "control",
+      "label": "业务流程"
+    },
+    {
+      "flow": "read",
+      "label": "读取 / 消费"
+    },
+    {
+      "flow": "write",
+      "label": "写入 / 产物"
+    }
+  ],
+  "footer": "Windup Architecture"
+}

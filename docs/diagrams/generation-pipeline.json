@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 1,
+  "quality_profile": "standard",
+  "width": 1200,
+  "height": 500,
+  "title": "Generation Pipeline",
+  "subtitle": "生成请求、积分、异步任务、AI 能力与候选资产",
+  "containers": [],
+  "nodes": [
+    {
+      "id": "request",
+      "kind": "rect",
+      "x": 60,
+      "y": 220,
+      "width": 180,
+      "height": 65,
+      "label": "Generation Request",
+      "sublabel": "项目约束 + 参考图",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "quota",
+      "kind": "rect",
+      "x": 290,
+      "y": 220,
+      "width": 170,
+      "height": 65,
+      "label": "Quota Check",
+      "sublabel": "预估 / 扣减",
+      "fill": "#fff2d9",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "queue",
+      "kind": "rect",
+      "x": 500,
+      "y": 220,
+      "width": 170,
+      "height": 65,
+      "label": "Task Queue",
+      "sublabel": "异步任务",
+      "fill": "#f4f0e8",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "worker",
+      "kind": "rect",
+      "x": 710,
+      "y": 220,
+      "width": 160,
+      "height": 65,
+      "label": "Worker",
+      "sublabel": "节点编排",
+      "fill": "#e4f2ea",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "ai",
+      "kind": "rect",
+      "x": 910,
+      "y": 150,
+      "width": 170,
+      "height": 65,
+      "label": "AI Engine",
+      "sublabel": "模型调用",
+      "fill": "#e4f2ea",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "asset",
+      "kind": "rect",
+      "x": 910,
+      "y": 300,
+      "width": 170,
+      "height": 65,
+      "label": "Asset",
+      "sublabel": "候选产物",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    }
+  ],
+  "arrows": [
+    {
+      "id": "r-q",
+      "source": "request",
+      "target": "quota",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "q-q",
+      "source": "quota",
+      "target": "queue",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": ""
+    },
+    {
+      "id": "q-w",
+      "source": "queue",
+      "target": "worker",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "w-ai",
+      "source": "worker",
+      "target": "ai",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "ai-a",
+      "source": "ai",
+      "target": "asset",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": ""
+    },
+    {
+      "id": "w-a",
+      "source": "worker",
+      "target": "asset",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": ""
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 50,
+  "legend_y": 445,
+  "legend_locked": false,
+  "legend": [
+    {
+      "flow": "control",
+      "label": "业务调用"
+    },
+    {
+      "flow": "read",
+      "label": "读取 / 消费"
+    },
+    {
+      "flow": "write",
+      "label": "写入 / 事件"
+    }
+  ],
+  "footer": "Windup Architecture"
+}

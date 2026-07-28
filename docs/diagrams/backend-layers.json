@@ -1,0 +1,228 @@
+{
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 3,
+  "quality_profile": "standard",
+  "width": 1200,
+  "height": 820,
+  "title": "Windup Backend Layers",
+  "subtitle": "入口、业务编排、AI 能力、基础设施与共享内核",
+  "containers": [
+    {
+      "id": "entry",
+      "x": 60,
+      "y": 110,
+      "width": 1080,
+      "height": 100,
+      "label": "Entry",
+      "stroke": "#365b7a",
+      "fill": "#10263e"
+    },
+    {
+      "id": "business",
+      "x": 60,
+      "y": 250,
+      "width": 1080,
+      "height": 180,
+      "label": "Business Orchestration",
+      "stroke": "#365b7a",
+      "fill": "#10263e"
+    },
+    {
+      "id": "capability",
+      "x": 60,
+      "y": 470,
+      "width": 1080,
+      "height": 100,
+      "label": "Capability",
+      "stroke": "#365b7a",
+      "fill": "#10263e"
+    },
+    {
+      "id": "foundation",
+      "x": 60,
+      "y": 610,
+      "width": 1080,
+      "height": 100,
+      "label": "Foundation",
+      "stroke": "#365b7a",
+      "fill": "#10263e"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "web",
+      "kind": "rect",
+      "x": 180,
+      "y": 140,
+      "width": 220,
+      "height": 55,
+      "label": "web",
+      "sublabel": "API / Schema / SSE",
+      "fill": "#173b5f",
+      "stroke": "#6ea4c8"
+    },
+    {
+      "id": "worker",
+      "kind": "rect",
+      "x": 780,
+      "y": 140,
+      "width": 220,
+      "height": 55,
+      "label": "worker",
+      "sublabel": "异步任务入口",
+      "fill": "#173b5f",
+      "stroke": "#6ea4c8"
+    },
+    {
+      "id": "domains",
+      "kind": "double_rect",
+      "x": 180,
+      "y": 295,
+      "width": 280,
+      "height": 80,
+      "label": "server domains",
+      "sublabel": "project / media / asset / review",
+      "fill": "#214d68",
+      "stroke": "#84bdd2"
+    },
+    {
+      "id": "workflow",
+      "kind": "rect",
+      "x": 520,
+      "y": 295,
+      "width": 220,
+      "height": 80,
+      "label": "workflow + execution",
+      "sublabel": "最终节点工作流",
+      "fill": "#214d68",
+      "stroke": "#84bdd2"
+    },
+    {
+      "id": "generation",
+      "kind": "rect",
+      "x": 800,
+      "y": 295,
+      "width": 220,
+      "height": 80,
+      "label": "generation",
+      "sublabel": "扣费 + 生成编排",
+      "fill": "#214d68",
+      "stroke": "#84bdd2"
+    },
+    {
+      "id": "ai",
+      "kind": "double_rect",
+      "x": 490,
+      "y": 495,
+      "width": 220,
+      "height": 55,
+      "label": "ai_engine",
+      "sublabel": "AI 原子能力",
+      "fill": "#285d62",
+      "stroke": "#8ed1c2"
+    },
+    {
+      "id": "infra",
+      "kind": "rect",
+      "x": 350,
+      "y": 635,
+      "width": 220,
+      "height": 55,
+      "label": "framework",
+      "sublabel": "DB / MQ / Storage / OAuth",
+      "fill": "#264761",
+      "stroke": "#85afd1"
+    },
+    {
+      "id": "common",
+      "kind": "cylinder",
+      "x": 730,
+      "y": 625,
+      "width": 180,
+      "height": 70,
+      "label": "common",
+      "sublabel": "响应 / 异常 / 枚举",
+      "fill": "#384b66",
+      "stroke": "#a6bddb"
+    }
+  ],
+  "arrows": [
+    {
+      "id": "web-server",
+      "source": "web",
+      "target": "domains",
+      "source_port": "bottom",
+      "target_port": "top",
+      "flow": "control",
+      "label": "调用用例",
+      "label_style": "offset"
+    },
+    {
+      "id": "worker-execution",
+      "source": "worker",
+      "target": "workflow",
+      "source_port": "bottom",
+      "target_port": "top",
+      "flow": "control",
+      "label": "消费任务",
+      "label_style": "offset"
+    },
+    {
+      "id": "domains-workflow",
+      "source": "domains",
+      "target": "workflow",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": "",
+      "label_style": "offset"
+    },
+    {
+      "id": "workflow-generation",
+      "source": "workflow",
+      "target": "generation",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": "",
+      "label_style": "offset"
+    },
+    {
+      "id": "generation-ai",
+      "source": "generation",
+      "target": "ai",
+      "source_port": "bottom",
+      "target_port": "right",
+      "flow": "control",
+      "label": "",
+      "label_style": "offset"
+    },
+    {
+      "id": "ai-infra",
+      "source": "ai",
+      "target": "infra",
+      "source_port": "bottom",
+      "target_port": "top",
+      "flow": "read",
+      "label": "",
+      "label_style": "offset"
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 80,
+  "legend_y": 790,
+  "legend_locked": false,
+  "legend": [
+    {
+      "flow": "control",
+      "label": "业务调用 / 编排"
+    },
+    {
+      "flow": "read",
+      "label": "技术能力 / 共享协议"
+    }
+  ],
+  "footer": "Windup · Backend Layered Architecture"
+}

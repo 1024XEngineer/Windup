@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 500" width="1100" height="500" data-generator="fireworks-tech-graph" data-schema-version="1" data-text-metrics="heuristic-v1" data-style-id="1" data-visual-theme="Flat Icon" data-diagram-type="architecture" data-motion-scene="" data-semantic-profile="generic" data-semantic-valid="true" data-quality-profile="standard" data-max-bends-per-edge="12" data-max-total-bends="100" data-max-route-stretch="5.0" data-max-bridged-crossings="8" data-min-node-gap="0.0" data-min-container-gutter="0.0" data-min-label-clearance="2.0" data-min-segment-length="0.0">
+  <defs>
+    <marker id="arrowA" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#7c3aed"/>
+    </marker>
+    <marker id="arrowB" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#10b981"/>
+    </marker>
+    <marker id="arrowC" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#2563eb"/>
+    </marker>
+    <marker id="arrowE" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#f97316"/>
+    </marker>
+    <marker id="arrowF" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#7c3aed"/>
+    </marker>
+    <marker id="arrowG" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#ef4444"/>
+    </marker>
+    <marker id="arrowH" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#6b7280"/>
+    </marker>
+    <filter id="shadowSoft" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <filter id="shadowGlass" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#020617" flood-opacity="0.28"/>
+    </filter>
+    <style>
+    text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', 'Microsoft JhengHei', 'SimHei', sans-serif; }
+    .title { font-size: 30px; font-weight: 700; fill: #111827; }
+    .subtitle { font-size: 14px; font-weight: 500; fill: #6b7280; }
+    .section { font-size: 13px; font-weight: 700; fill: #2563eb; letter-spacing: 1.4px; }
+    .section-sub { font-size: 12px; font-weight: 500; fill: #94a3b8; }
+    .node-title { font-weight: 700; fill: #111827; }
+    .node-sub { font-size: 12px; font-weight: 500; fill: #6b7280; }
+    .node-type { font-size: 12px; font-weight: 700; fill: #9ca3af; letter-spacing: 0.08em; }
+    .arrow-label { font-size: 12px; font-weight: 600; fill: #6b7280; }
+    .legend { font-size: 12px; font-weight: 500; fill: #6b7280; }
+    .footnote { font-size: 12px; font-weight: 500; fill: #94a3b8; }
+    .metric-label { font-size: 8.5px; font-weight: 700; fill: #94a3b8; text-transform: uppercase; }
+    .metric-value { font-size: 9.5px; font-weight: 700; fill: #111827; }
+    </style>
+  </defs>
+  <rect data-graph-role="background" width="1100.0" height="500.0" fill="#ffffff"/>
+  <text x="550.0" y="56" text-anchor="middle" class="title">Reference Media Upload</text>
+  <text x="550.0" y="82" text-anchor="middle" class="subtitle">签名 URL 直传与上传确认</text>
+  <path id="u0" data-graph-role="edge" data-edge-id="u0" data-source="client" data-target="intent" data-edge-kind="flow" data-topic-id="" data-flow="control" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 230,262.5 L 265,262.5" fill="none" stroke="#7c3aed" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowA)"/>
+  <path id="u1" data-graph-role="edge" data-edge-id="u1" data-source="intent" data-target="kodo" data-edge-kind="flow" data-topic-id="" data-flow="write" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 435,262.5 L 470,262.5" fill="none" stroke="#10b981" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowB)"/>
+  <path id="u2" data-graph-role="edge" data-edge-id="u2" data-source="kodo" data-target="confirm" data-edge-kind="flow" data-topic-id="" data-flow="write" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 640,262.5 L 675,262.5" fill="none" stroke="#10b981" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowB)"/>
+  <path id="u3" data-graph-role="edge" data-edge-id="u3" data-source="confirm" data-target="record" data-edge-kind="flow" data-topic-id="" data-flow="control" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 845,262.5 L 880,262.5" fill="none" stroke="#7c3aed" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowA)"/>
+  <g id="node-client" data-graph-role="node" data-node-id="client" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="60,230,230,295">
+  <rect x="60.0" y="230.0" width="170.0" height="65.0" rx="10.0" fill="#e8f0fb" stroke="#6685b2" stroke-width="1.8" filter="url(#shadowSoft)"/>
+  <text x="145.0" y="262.5" text-anchor="middle" class="node-title" font-size="18.0">Frontend</text>
+  <text x="145.0" y="284.5" text-anchor="middle" class="node-sub">选择文件</text>
+  </g>
+  <g id="node-intent" data-graph-role="node" data-node-id="intent" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="265,230,435,295">
+  <rect x="265.0" y="230.0" width="170.0" height="65.0" rx="10.0" fill="#fff2d9" stroke="#6685b2" stroke-width="1.8" filter="url(#shadowSoft)"/>
+  <text x="350.0" y="262.5" text-anchor="middle" class="node-title" font-size="18.0">Upload Intent</text>
+  <text x="350.0" y="284.5" text-anchor="middle" class="node-sub">预分配 media_id</text>
+  </g>
+  <g id="node-kodo" data-graph-role="node" data-node-id="kodo" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="470,230,640,295">
+  <rect x="470.0" y="230.0" width="170.0" height="65.0" rx="10.0" fill="#e4e8f4" stroke="#6685b2" stroke-width="1.8" filter="url(#shadowSoft)"/>
+  <text x="555.0" y="262.5" text-anchor="middle" class="node-title" font-size="18.0">Kodo</text>
+  <text x="555.0" y="284.5" text-anchor="middle" class="node-sub">直传文件</text>
+  </g>
+  <g id="node-confirm" data-graph-role="node" data-node-id="confirm" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="675,230,845,295">
+  <rect x="675.0" y="230.0" width="170.0" height="65.0" rx="10.0" fill="#e4f2ea" stroke="#6685b2" stroke-width="1.8" filter="url(#shadowSoft)"/>
+  <text x="760.0" y="262.5" text-anchor="middle" class="node-title" font-size="18.0">Confirm</text>
+  <text x="760.0" y="284.5" text-anchor="middle" class="node-sub">校验对象存在</text>
+  </g>
+  <g id="node-record" data-graph-role="node" data-node-id="record" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="880,230,1050,295">
+  <rect x="880.0" y="230.0" width="170.0" height="65.0" rx="10.0" fill="#e8f0fb" stroke="#6685b2" stroke-width="1.8" filter="url(#shadowSoft)"/>
+  <text x="965.0" y="262.5" text-anchor="middle" class="node-title" font-size="18.0">Media Record</text>
+  <text x="965.0" y="284.5" text-anchor="middle" class="node-sub">保存元数据</text>
+  </g>
+  <g id="legend" data-graph-role="legend">
+    <rect id="legend-zone" data-graph-role="reserved" data-reserved-kind="legend" x="40" y="420" width="381.2" height="46" rx="10" fill="none" stroke="none"/>
+    <line data-graph-role="decoration" x1="50.0" y1="434.0" x2="80.0" y2="434.0" stroke="#7c3aed" stroke-width="2.4" marker-end="url(#arrowA)"/>
+    <text data-graph-role="decoration" x="90.0" y="438.0" class="legend">业务流程</text>
+    <line data-graph-role="decoration" x1="166.0" y1="434.0" x2="196.0" y2="434.0" stroke="#2563eb" stroke-width="2.4" marker-end="url(#arrowC)"/>
+    <text data-graph-role="decoration" x="206.0" y="438.0" class="legend">读取 / 消费</text>
+    <line data-graph-role="decoration" x1="297.6" y1="434.0" x2="327.6" y2="434.0" stroke="#10b981" stroke-width="2.4" marker-end="url(#arrowB)"/>
+    <text data-graph-role="decoration" x="337.6" y="438.0" class="legend">写入 / 产物</text>
+  </g>
+  <g id="footer" data-graph-role="reserved" data-graph-bounds="42,472,182,488">
+  <text x="42.0" y="484.0" class="footnote">Windup Architecture</text>
+  </g>
+</svg>

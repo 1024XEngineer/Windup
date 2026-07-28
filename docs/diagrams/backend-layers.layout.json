@@ -1,0 +1,276 @@
+{
+  "canvas": {
+    "height": 820.0,
+    "width": 1200.0
+  },
+  "composition": {
+    "limits": {
+      "max_bends_per_edge": 12,
+      "max_bridged_crossings": 8,
+      "max_route_stretch": 5.0,
+      "max_total_bends": 100,
+      "min_container_gutter": 0.0,
+      "min_label_clearance": 2.0,
+      "min_node_gap": 0.0,
+      "min_segment_length": 0.0,
+      "profile": "standard"
+    },
+    "metrics": {
+      "bridged_crossings": 0,
+      "max_route_stretch": 1.0,
+      "minimum_container_gutter": 15.0,
+      "minimum_node_gap": 60.0,
+      "shortest_segment": 12.2,
+      "total_bends": 7
+    },
+    "ok": true,
+    "profile": "standard",
+    "score": 98,
+    "violations": []
+  },
+  "edges": [
+    {
+      "bends": 2,
+      "bridges": [],
+      "crossings": [],
+      "id": "web-server",
+      "length": 130.0,
+      "route": [
+        [
+          290.0,
+          195.0
+        ],
+        [
+          290.0,
+          215.4
+        ],
+        [
+          320.0,
+          215.4
+        ],
+        [
+          320.0,
+          295.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "web",
+      "source_port": [
+        290.0,
+        195.0
+      ],
+      "target": "domains",
+      "target_port": [
+        320.0,
+        295.0
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 2,
+      "bridges": [],
+      "crossings": [],
+      "id": "worker-execution",
+      "length": 360.0,
+      "route": [
+        [
+          890.0,
+          195.0
+        ],
+        [
+          890.0,
+          207.2
+        ],
+        [
+          630.0,
+          207.2
+        ],
+        [
+          630.0,
+          295.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "worker",
+      "source_port": [
+        890.0,
+        195.0
+      ],
+      "target": "workflow",
+      "target_port": [
+        630.0,
+        295.0
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 0,
+      "bridges": [],
+      "crossings": [],
+      "id": "domains-workflow",
+      "length": 60.0,
+      "route": [
+        [
+          460.0,
+          335.0
+        ],
+        [
+          520.0,
+          335.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "domains",
+      "source_port": [
+        460.0,
+        335.0
+      ],
+      "target": "workflow",
+      "target_port": [
+        520.0,
+        335.0
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 0,
+      "bridges": [],
+      "crossings": [],
+      "id": "workflow-generation",
+      "length": 60.0,
+      "route": [
+        [
+          740.0,
+          335.0
+        ],
+        [
+          800.0,
+          335.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "workflow",
+      "source_port": [
+        740.0,
+        335.0
+      ],
+      "target": "generation",
+      "target_port": [
+        800.0,
+        335.0
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 1,
+      "bridges": [],
+      "crossings": [],
+      "id": "generation-ai",
+      "length": 347.5,
+      "route": [
+        [
+          910.0,
+          375.0
+        ],
+        [
+          910.0,
+          522.5
+        ],
+        [
+          710.0,
+          522.5
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "generation",
+      "source_port": [
+        910.0,
+        375.0
+      ],
+      "target": "ai",
+      "target_port": [
+        710.0,
+        522.5
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 2,
+      "bridges": [],
+      "crossings": [],
+      "id": "ai-infra",
+      "length": 225.0,
+      "route": [
+        [
+          600.0,
+          550.0
+        ],
+        [
+          600.0,
+          570.4
+        ],
+        [
+          460.0,
+          570.4
+        ],
+        [
+          460.0,
+          635.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "ai",
+      "source_port": [
+        600.0,
+        550.0
+      ],
+      "target": "infra",
+      "target_port": [
+        460.0,
+        635.0
+      ],
+      "waypoints": []
+    }
+  ],
+  "input_schema": "v1",
+  "issues": [],
+  "mode": "architecture",
+  "ok": true,
+  "placements": {
+    "legend": {
+      "actual": [
+        82.0,
+        754.0
+      ],
+      "bounds": [
+        72.0,
+        740.0,
+        409.2,
+        786.0
+      ],
+      "moved": true,
+      "requested": [
+        80.0,
+        790.0
+      ]
+    }
+  },
+  "schema_version": 1,
+  "semantics": {
+    "details": {},
+    "ok": true,
+    "profile": "generic",
+    "style": 3,
+    "visual_theme": "Blueprint"
+  },
+  "style": {
+    "id": 3,
+    "name": "Blueprint"
+  },
+  "summary": {
+    "bridged_crossings": 0,
+    "edges": 6,
+    "nodes": 8
+  },
+  "text_metrics": "heuristic-v1"
+}

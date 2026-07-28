@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 1,
+  "quality_profile": "standard",
+  "width": 1100,
+  "height": 420,
+  "title": "Windup Target Deployment",
+  "subtitle": "API、Worker、数据基础设施与外部服务",
+  "containers": [],
+  "nodes": [
+    {
+      "id": "browser",
+      "kind": "rect",
+      "x": 70,
+      "y": 120,
+      "width": 150,
+      "height": 60,
+      "label": "Browser",
+      "sublabel": "前端静态资源",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "lb",
+      "kind": "double_rect",
+      "x": 310,
+      "y": 120,
+      "width": 170,
+      "height": 60,
+      "label": "LB / CDN",
+      "sublabel": "入口与分发",
+      "fill": "#fff2d9",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "api",
+      "kind": "rect",
+      "x": 580,
+      "y": 80,
+      "width": 170,
+      "height": 60,
+      "label": "API × N",
+      "sublabel": "无状态实例",
+      "fill": "#e4f2ea",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "worker",
+      "kind": "rect",
+      "x": 580,
+      "y": 190,
+      "width": 170,
+      "height": 60,
+      "label": "Worker × N",
+      "sublabel": "异步任务",
+      "fill": "#e4f2ea",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "data",
+      "kind": "cylinder",
+      "x": 850,
+      "y": 80,
+      "width": 170,
+      "height": 60,
+      "label": "Postgres + MQ",
+      "sublabel": "状态与队列",
+      "fill": "#e4e8f4",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "storage",
+      "kind": "cylinder",
+      "x": 850,
+      "y": 190,
+      "width": 170,
+      "height": 60,
+      "label": "Kodo / AI",
+      "sublabel": "外部服务",
+      "fill": "#e4e8f4",
+      "stroke": "#6685b2"
+    }
+  ],
+  "arrows": [
+    {
+      "id": "b-l",
+      "source": "browser",
+      "target": "lb",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "read",
+      "label": ""
+    },
+    {
+      "id": "l-api",
+      "source": "lb",
+      "target": "api",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "l-worker",
+      "source": "lb",
+      "target": "worker",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "api-data",
+      "source": "api",
+      "target": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": ""
+    },
+    {
+      "id": "worker-data",
+      "source": "worker",
+      "target": "data",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": ""
+    },
+    {
+      "id": "worker-storage",
+      "source": "worker",
+      "target": "storage",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": ""
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 50,
+  "legend_y": 365,
+  "legend_locked": false,
+  "legend": [
+    {
+      "flow": "control",
+      "label": "业务流程"
+    },
+    {
+      "flow": "read",
+      "label": "读取 / 消费"
+    },
+    {
+      "flow": "write",
+      "label": "写入 / 产物"
+    }
+  ],
+  "footer": "Windup Architecture"
+}

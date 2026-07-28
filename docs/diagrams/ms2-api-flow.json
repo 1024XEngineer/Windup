@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 7,
+  "quality_profile": "standard",
+  "width": 1200,
+  "height": 460,
+  "title": "MS2 Frontend API Flow",
+  "subtitle": "前端页面推进由多个独立后端能力接口支撑",
+  "containers": [],
+  "nodes": [
+    {
+      "id": "p",
+      "kind": "rect",
+      "x": 60,
+      "y": 200,
+      "width": 150,
+      "height": 70,
+      "label": "Project API",
+      "sublabel": "创建约束",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "m",
+      "kind": "rect",
+      "x": 240,
+      "y": 200,
+      "width": 150,
+      "height": 70,
+      "label": "Media API",
+      "sublabel": "上传参考图",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "c",
+      "kind": "rect",
+      "x": 420,
+      "y": 200,
+      "width": 150,
+      "height": 70,
+      "label": "Character API",
+      "sublabel": "创建角色",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "g",
+      "kind": "rect",
+      "x": 600,
+      "y": 200,
+      "width": 160,
+      "height": 70,
+      "label": "Generation API",
+      "sublabel": "异步生成",
+      "fill": "#fff2d9",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "r",
+      "kind": "rect",
+      "x": 790,
+      "y": 200,
+      "width": 160,
+      "height": 70,
+      "label": "Review API",
+      "sublabel": "质检 / 审核",
+      "fill": "#e4f2ea",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "e",
+      "kind": "rect",
+      "x": 980,
+      "y": 200,
+      "width": 150,
+      "height": 70,
+      "label": "Export API",
+      "sublabel": "导出下载",
+      "fill": "#e4f2ea",
+      "stroke": "#6685b2"
+    }
+  ],
+  "arrows": [
+    {
+      "id": "p-m",
+      "source": "p",
+      "target": "m",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "m-c",
+      "source": "m",
+      "target": "c",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "c-g",
+      "source": "c",
+      "target": "g",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "g-r",
+      "source": "g",
+      "target": "r",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "r-e",
+      "source": "r",
+      "target": "e",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 50,
+  "legend_y": 405,
+  "legend_locked": false,
+  "legend": [
+    {
+      "flow": "control",
+      "label": "业务调用"
+    },
+    {
+      "flow": "read",
+      "label": "读取 / 消费"
+    },
+    {
+      "flow": "write",
+      "label": "写入 / 事件"
+    }
+  ],
+  "footer": "Windup Architecture"
+}

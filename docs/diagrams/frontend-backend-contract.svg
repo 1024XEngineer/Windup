@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 500" width="1200" height="500" data-generator="fireworks-tech-graph" data-schema-version="1" data-text-metrics="heuristic-v1" data-style-id="7" data-visual-theme="OpenAI" data-diagram-type="architecture" data-motion-scene="" data-semantic-profile="generic" data-semantic-valid="true" data-quality-profile="standard" data-max-bends-per-edge="12" data-max-total-bends="100" data-max-route-stretch="5.0" data-max-bridged-crossings="8" data-min-node-gap="0.0" data-min-container-gutter="0.0" data-min-label-clearance="2.0" data-min-segment-length="0.0">
+  <defs>
+    <marker id="arrowA" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#10a37f"/>
+    </marker>
+    <marker id="arrowB" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#0f766e"/>
+    </marker>
+    <marker id="arrowC" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#0891b2"/>
+    </marker>
+    <marker id="arrowE" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#f59e0b"/>
+    </marker>
+    <marker id="arrowF" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+    </marker>
+    <marker id="arrowG" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#475569"/>
+    </marker>
+    <marker id="arrowH" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8"/>
+    </marker>
+    <style>
+    text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', 'Microsoft JhengHei', 'SimHei', sans-serif; }
+    .title { font-size: 24px; font-weight: 700; fill: #0f172a; }
+    .subtitle { font-size: 13px; font-weight: 500; fill: #64748b; }
+    .section { font-size: 13px; font-weight: 700; fill: #10a37f; letter-spacing: 1.4px; }
+    .section-sub { font-size: 12px; font-weight: 500; fill: #94a3b8; }
+    .node-title { font-weight: 700; fill: #0f172a; }
+    .node-sub { font-size: 12px; font-weight: 500; fill: #475569; }
+    .node-type { font-size: 11px; font-weight: 700; fill: #94a3b8; letter-spacing: 0.08em; }
+    .arrow-label { font-size: 12px; font-weight: 600; fill: #475569; }
+    .legend { font-size: 12px; font-weight: 500; fill: #475569; }
+    .footnote { font-size: 12px; font-weight: 500; fill: #94a3b8; }
+    .metric-label { font-size: 8.5px; font-weight: 700; fill: #94a3b8; text-transform: uppercase; }
+    .metric-value { font-size: 9.5px; font-weight: 700; fill: #0f172a; }
+    </style>
+  </defs>
+  <rect data-graph-role="background" width="1200.0" height="500.0" fill="#ffffff"/>
+  <text x="48.0" y="48" text-anchor="start" class="title">Frontend–Backend Contract</text>
+  <text x="48.0" y="72" text-anchor="start" class="subtitle">OpenAPI、类型生成与 SSE 事件协作</text>
+  <line x1="48" y1="100" x2="1152.0" y2="100" stroke="#e2e8f0" stroke-width="1"/>
+  <path id="f-o" data-graph-role="edge" data-edge-id="f-o" data-source="frontend" data-target="openapi" data-edge-kind="flow" data-topic-id="" data-flow="read" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 270,265 L 350,265" fill="none" stroke="#0891b2" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowC)"/>
+  <path id="o-w" data-graph-role="edge" data-edge-id="o-w" data-source="openapi" data-target="web" data-edge-kind="flow" data-topic-id="" data-flow="control" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="2" data-route-stretch="1.0" data-bridges="" d="M 550,274 L 570.4,274 L 570.4,165 L 620,165" fill="none" stroke="#10a37f" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowA)"/>
+  <path id="o-e-bridge-mask" data-graph-role="bridge-mask" data-owner="o-e" d="M 550,256 L 565.4,256 A 5 5 0 0 0 575.4,256 L 585,256 L 585,335 L 620,335" fill="none" stroke="#ffffff" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path id="o-e" data-graph-role="edge" data-edge-id="o-e" data-source="openapi" data-target="events" data-edge-kind="flow" data-topic-id="" data-flow="control" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="2" data-route-stretch="1.0" data-bridges="570.4,256" d="M 550,256 L 565.4,256 A 5 5 0 0 0 575.4,256 L 585,256 L 585,335 L 620,335" fill="none" stroke="#10a37f" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowA)"/>
+  <path id="w-b" data-graph-role="edge" data-edge-id="w-b" data-source="web" data-target="backend" data-edge-kind="flow" data-topic-id="" data-flow="control" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="2" data-route-stretch="1.0" data-bridges="" d="M 800,165 L 820.4,165 L 820.4,274 L 900,274" fill="none" stroke="#10a37f" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowA)"/>
+  <path id="e-b-bridge-mask" data-graph-role="bridge-mask" data-owner="e-b" d="M 800,335 L 824,335 L 824,279 A 5 5 0 0 0 824,269 L 824,256 L 900,256" fill="none" stroke="#ffffff" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path id="e-b" data-graph-role="edge" data-edge-id="e-b" data-source="events" data-target="backend" data-edge-kind="flow" data-topic-id="" data-flow="read" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="2" data-route-stretch="1.0" data-bridges="824,274" d="M 800,335 L 824,335 L 824,279 A 5 5 0 0 0 824,269 L 824,256 L 900,256" fill="none" stroke="#0891b2" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowC)"/>
+  <g id="node-frontend" data-graph-role="node" data-node-id="frontend" data-semantic-role="double_rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="60,220,270,310">
+  <rect x="60.0" y="220.0" width="210.0" height="90.0" rx="14.0" fill="#e8f0fb" stroke="#6685b2" stroke-width="2.0"/>
+  <rect x="66.0" y="226.0" width="198.0" height="78.0" rx="11.0" fill="none" stroke="#6685b2" stroke-width="1.2" opacity="0.65"/>
+  <text x="165.0" y="265.0" text-anchor="middle" class="node-title" font-size="18.0">Frontend FSD</text>
+  <text x="165.0" y="287.0" text-anchor="middle" class="node-sub">app / pages / features / entities</text>
+  </g>
+  <g id="node-openapi" data-graph-role="node" data-node-id="openapi" data-semantic-role="double_rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="350,220,550,310">
+  <rect x="350.0" y="220.0" width="200.0" height="90.0" rx="14.0" fill="#fff2d9" stroke="#6685b2" stroke-width="2.0"/>
+  <rect x="356.0" y="226.0" width="188.0" height="78.0" rx="11.0" fill="none" stroke="#6685b2" stroke-width="1.2" opacity="0.65"/>
+  <text x="450.0" y="265.0" text-anchor="middle" class="node-title" font-size="17.67">OpenAPI Contract</text>
+  <text x="450.0" y="287.0" text-anchor="middle" class="node-sub">唯一接口来源</text>
+  </g>
+  <g id="node-web" data-graph-role="node" data-node-id="web" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="620,130,800,200">
+  <rect x="620.0" y="130.0" width="180.0" height="70.0" rx="14.0" fill="#e4f2ea" stroke="#6685b2" stroke-width="1.8"/>
+  <text x="710.0" y="165.0" text-anchor="middle" class="node-title" font-size="18.0">Windup Web</text>
+  <text x="710.0" y="187.0" text-anchor="middle" class="node-sub">FastAPI / Schema</text>
+  </g>
+  <g id="node-events" data-graph-role="node" data-node-id="events" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="620,300,800,370">
+  <rect x="620.0" y="300.0" width="180.0" height="70.0" rx="14.0" fill="#e4f2ea" stroke="#6685b2" stroke-width="1.8"/>
+  <text x="710.0" y="335.0" text-anchor="middle" class="node-title" font-size="18.0">SSE Events</text>
+  <text x="710.0" y="357.0" text-anchor="middle" class="node-sub">进度与状态</text>
+  </g>
+  <g id="node-backend" data-graph-role="node" data-node-id="backend" data-semantic-role="double_rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="900,220,1110,310">
+  <rect x="900.0" y="220.0" width="210.0" height="90.0" rx="14.0" fill="#e8f0fb" stroke="#6685b2" stroke-width="2.0"/>
+  <rect x="906.0" y="226.0" width="198.0" height="78.0" rx="11.0" fill="none" stroke="#6685b2" stroke-width="1.2" opacity="0.65"/>
+  <text x="1005.0" y="265.0" text-anchor="middle" class="node-title" font-size="18.0">Backend Domains</text>
+  <text x="1005.0" y="287.0" text-anchor="middle" class="node-sub">业务能力接口</text>
+  </g>
+  <g id="legend" data-graph-role="legend">
+    <rect id="legend-zone" data-graph-role="reserved" data-reserved-kind="legend" x="40" y="420" width="381.2" height="46" rx="10" fill="none" stroke="none"/>
+    <line data-graph-role="decoration" x1="50.0" y1="434.0" x2="80.0" y2="434.0" stroke="#10a37f" stroke-width="2.0" marker-end="url(#arrowA)"/>
+    <text data-graph-role="decoration" x="90.0" y="438.0" class="legend">业务调用</text>
+    <line data-graph-role="decoration" x1="166.0" y1="434.0" x2="196.0" y2="434.0" stroke="#0891b2" stroke-width="2.0" marker-end="url(#arrowC)"/>
+    <text data-graph-role="decoration" x="206.0" y="438.0" class="legend">读取 / 消费</text>
+    <line data-graph-role="decoration" x1="297.6" y1="434.0" x2="327.6" y2="434.0" stroke="#0f766e" stroke-width="2.0" marker-end="url(#arrowB)"/>
+    <text data-graph-role="decoration" x="337.6" y="438.0" class="legend">写入 / 事件</text>
+  </g>
+  <g id="footer" data-graph-role="reserved" data-graph-bounds="42,472,182,488">
+  <text x="42.0" y="484.0" class="footnote">Windup Architecture</text>
+  </g>
+</svg>

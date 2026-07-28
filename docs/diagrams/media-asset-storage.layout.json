@@ -1,0 +1,236 @@
+{
+  "canvas": {
+    "height": 560.0,
+    "width": 1200.0
+  },
+  "composition": {
+    "limits": {
+      "max_bends_per_edge": 12,
+      "max_bridged_crossings": 8,
+      "max_route_stretch": 5.0,
+      "max_total_bends": 100,
+      "min_container_gutter": 0.0,
+      "min_label_clearance": 2.0,
+      "min_node_gap": 0.0,
+      "min_segment_length": 0.0,
+      "profile": "standard"
+    },
+    "metrics": {
+      "bridged_crossings": 1,
+      "max_route_stretch": 1.0,
+      "minimum_container_gutter": null,
+      "minimum_node_gap": 60.21,
+      "shortest_segment": 20.4,
+      "total_bends": 6
+    },
+    "ok": true,
+    "profile": "standard",
+    "score": 88,
+    "violations": []
+  },
+  "edges": [
+    {
+      "bends": 2,
+      "bridges": [],
+      "crossings": [],
+      "id": "p-m",
+      "length": 130.0,
+      "route": [
+        [
+          240.0,
+          252.5
+        ],
+        [
+          260.4,
+          252.5
+        ],
+        [
+          260.4,
+          182.5
+        ],
+        [
+          300.0,
+          182.5
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "project",
+      "source_port": [
+        240.0,
+        252.5
+      ],
+      "target": "media",
+      "target_port": [
+        300.0,
+        182.5
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 2,
+      "bridges": [],
+      "crossings": [],
+      "id": "m-s",
+      "length": 244.0,
+      "route": [
+        [
+          470.0,
+          182.5
+        ],
+        [
+          490.4,
+          182.5
+        ],
+        [
+          490.4,
+          296.5
+        ],
+        [
+          600.0,
+          296.5
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "media",
+      "source_port": [
+        470.0,
+        182.5
+      ],
+      "target": "storage",
+      "target_port": [
+        600.0,
+        296.5
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 2,
+      "bridges": [
+        [
+          494.0,
+          296.5
+        ]
+      ],
+      "crossings": [
+        [
+          494.0,
+          296.5
+        ]
+      ],
+      "id": "a-s",
+      "length": 234.0,
+      "route": [
+        [
+          470.0,
+          382.5
+        ],
+        [
+          494.0,
+          382.5
+        ],
+        [
+          494.0,
+          278.5
+        ],
+        [
+          600.0,
+          278.5
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "asset",
+      "source_port": [
+        470.0,
+        382.5
+      ],
+      "target": "storage",
+      "target_port": [
+        600.0,
+        278.5
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 0,
+      "bridges": [],
+      "crossings": [],
+      "id": "s-k",
+      "length": 130.0,
+      "route": [
+        [
+          790.0,
+          287.5
+        ],
+        [
+          920.0,
+          287.5
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "storage",
+      "source_port": [
+        790.0,
+        287.5
+      ],
+      "target": "kodo",
+      "target_port": [
+        920.0,
+        287.5
+      ],
+      "waypoints": []
+    }
+  ],
+  "input_schema": "v1",
+  "issues": [
+    {
+      "code": "EDGE_CROSSING_BRIDGED",
+      "coordinates": [
+        [
+          494.0,
+          296.5
+        ]
+      ],
+      "element": "a-s",
+      "severity": "info"
+    }
+  ],
+  "mode": "architecture",
+  "ok": true,
+  "placements": {
+    "legend": {
+      "actual": [
+        50.0,
+        490.0
+      ],
+      "bounds": [
+        40.0,
+        476.0,
+        421.2,
+        522.0
+      ],
+      "moved": true,
+      "requested": [
+        50.0,
+        505.0
+      ]
+    }
+  },
+  "schema_version": 1,
+  "semantics": {
+    "details": {},
+    "ok": true,
+    "profile": "generic",
+    "style": 1,
+    "visual_theme": "Flat Icon"
+  },
+  "style": {
+    "id": 1,
+    "name": "Flat Icon"
+  },
+  "summary": {
+    "bridged_crossings": 1,
+    "edges": 4,
+    "nodes": 5
+  },
+  "text_metrics": "heuristic-v1"
+}

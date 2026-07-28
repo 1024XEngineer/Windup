@@ -1,0 +1,288 @@
+{
+  "canvas": {
+    "height": 420.0,
+    "width": 1100.0
+  },
+  "composition": {
+    "limits": {
+      "max_bends_per_edge": 12,
+      "max_bridged_crossings": 8,
+      "max_route_stretch": 5.0,
+      "max_total_bends": 100,
+      "min_container_gutter": 0.0,
+      "min_label_clearance": 2.0,
+      "min_node_gap": 0.0,
+      "min_segment_length": 0.0,
+      "profile": "standard"
+    },
+    "metrics": {
+      "bridged_crossings": 0,
+      "max_route_stretch": 1.0,
+      "minimum_container_gutter": null,
+      "minimum_node_gap": 50.0,
+      "shortest_segment": 9.0,
+      "total_bends": 10
+    },
+    "ok": true,
+    "profile": "standard",
+    "score": 92,
+    "violations": []
+  },
+  "edges": [
+    {
+      "bends": 0,
+      "bridges": [],
+      "crossings": [],
+      "id": "b-l",
+      "length": 90.0,
+      "route": [
+        [
+          220.0,
+          150.0
+        ],
+        [
+          310.0,
+          150.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "browser",
+      "source_port": [
+        220.0,
+        150.0
+      ],
+      "target": "lb",
+      "target_port": [
+        310.0,
+        150.0
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 2,
+      "bridges": [],
+      "crossings": [],
+      "id": "l-api",
+      "length": 131.0,
+      "route": [
+        [
+          480.0,
+          141.0
+        ],
+        [
+          500.4,
+          141.0
+        ],
+        [
+          500.4,
+          110.0
+        ],
+        [
+          580.0,
+          110.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "lb",
+      "source_port": [
+        480.0,
+        141.0
+      ],
+      "target": "api",
+      "target_port": [
+        580.0,
+        110.0
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 2,
+      "bridges": [],
+      "crossings": [],
+      "id": "l-worker",
+      "length": 161.0,
+      "route": [
+        [
+          480.0,
+          159.0
+        ],
+        [
+          500.4,
+          159.0
+        ],
+        [
+          500.4,
+          220.0
+        ],
+        [
+          580.0,
+          220.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "lb",
+      "source_port": [
+        480.0,
+        159.0
+      ],
+      "target": "worker",
+      "target_port": [
+        580.0,
+        220.0
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 2,
+      "bridges": [],
+      "crossings": [],
+      "id": "api-data",
+      "length": 109.0,
+      "route": [
+        [
+          750.0,
+          110.0
+        ],
+        [
+          770.4,
+          110.0
+        ],
+        [
+          770.4,
+          101.0
+        ],
+        [
+          850.0,
+          101.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "api",
+      "source_port": [
+        750.0,
+        110.0
+      ],
+      "target": "data",
+      "target_port": [
+        850.0,
+        101.0
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 2,
+      "bridges": [],
+      "crossings": [],
+      "id": "worker-data",
+      "length": 192.0,
+      "route": [
+        [
+          750.0,
+          211.0
+        ],
+        [
+          774.0,
+          211.0
+        ],
+        [
+          774.0,
+          119.0
+        ],
+        [
+          850.0,
+          119.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "worker",
+      "source_port": [
+        750.0,
+        211.0
+      ],
+      "target": "data",
+      "target_port": [
+        850.0,
+        119.0
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 2,
+      "bridges": [],
+      "crossings": [],
+      "id": "worker-storage",
+      "length": 109.0,
+      "route": [
+        [
+          750.0,
+          229.0
+        ],
+        [
+          770.4,
+          229.0
+        ],
+        [
+          770.4,
+          220.0
+        ],
+        [
+          850.0,
+          220.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "worker",
+      "source_port": [
+        750.0,
+        229.0
+      ],
+      "target": "storage",
+      "target_port": [
+        850.0,
+        220.0
+      ],
+      "waypoints": []
+    }
+  ],
+  "input_schema": "v1",
+  "issues": [],
+  "mode": "architecture",
+  "ok": true,
+  "placements": {
+    "legend": {
+      "actual": [
+        50.0,
+        354.0
+      ],
+      "bounds": [
+        40.0,
+        340.0,
+        421.2,
+        386.0
+      ],
+      "moved": true,
+      "requested": [
+        50.0,
+        365.0
+      ]
+    }
+  },
+  "schema_version": 1,
+  "semantics": {
+    "details": {},
+    "ok": true,
+    "profile": "generic",
+    "style": 1,
+    "visual_theme": "Flat Icon"
+  },
+  "style": {
+    "id": 1,
+    "name": "Flat Icon"
+  },
+  "summary": {
+    "bridged_crossings": 0,
+    "edges": 6,
+    "nodes": 6
+  },
+  "text_metrics": "heuristic-v1"
+}

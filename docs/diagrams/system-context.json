@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 1,
+  "quality_profile": "standard",
+  "width": 1200,
+  "height": 720,
+  "title": "Windup System Context",
+  "subtitle": "外部参与者、平台边界与第三方依赖",
+  "containers": [
+    {
+      "id": "windup-boundary",
+      "x": 300,
+      "y": 110,
+      "width": 590,
+      "height": 440,
+      "label": "Windup Platform",
+      "stroke": "#b8aa93",
+      "fill": "#fbf7ee"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "creator",
+      "kind": "rect",
+      "x": 60,
+      "y": 300,
+      "width": 170,
+      "height": 60,
+      "label": "Creator",
+      "sublabel": "浏览器用户",
+      "fill": "#dcecf5",
+      "stroke": "#47758a"
+    },
+    {
+      "id": "windup-api",
+      "kind": "double_rect",
+      "x": 480,
+      "y": 180,
+      "width": 220,
+      "height": 70,
+      "label": "Windup API",
+      "sublabel": "业务接口 + SSE",
+      "fill": "#f7e5b8",
+      "stroke": "#9a6b2f"
+    },
+    {
+      "id": "windup-worker",
+      "kind": "rect",
+      "x": 480,
+      "y": 390,
+      "width": 220,
+      "height": 70,
+      "label": "Windup Worker",
+      "sublabel": "异步生成与处理",
+      "fill": "#f7e5b8",
+      "stroke": "#9a6b2f"
+    },
+    {
+      "id": "oauth",
+      "kind": "rect",
+      "x": 970,
+      "y": 160,
+      "width": 170,
+      "height": 60,
+      "label": "OAuth Providers",
+      "sublabel": "GitHub / Google",
+      "fill": "#e8e3d8",
+      "stroke": "#6f685d"
+    },
+    {
+      "id": "ai",
+      "kind": "rect",
+      "x": 970,
+      "y": 300,
+      "width": 170,
+      "height": 60,
+      "label": "AI Model Services",
+      "sublabel": "Gemini 等模型服务",
+      "fill": "#e2eee8",
+      "stroke": "#477a65"
+    },
+    {
+      "id": "kodo",
+      "kind": "cylinder",
+      "x": 970,
+      "y": 440,
+      "width": 170,
+      "height": 70,
+      "label": "Qiniu Kodo",
+      "sublabel": "对象存储",
+      "fill": "#e4e8f4",
+      "stroke": "#596b9a"
+    }
+  ],
+  "arrows": [
+    {
+      "id": "creator-api",
+      "source": "creator",
+      "target": "windup-api",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "read",
+      "label": "HTTPS / API",
+      "label_style": "offset"
+    },
+    {
+      "id": "api-oauth",
+      "source": "windup-api",
+      "target": "oauth",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": "OAuth",
+      "label_style": "offset"
+    },
+    {
+      "id": "worker-ai",
+      "source": "windup-worker",
+      "target": "ai",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": "生成 / 审查",
+      "label_style": "offset"
+    },
+    {
+      "id": "api-kodo",
+      "source": "windup-api",
+      "target": "kodo",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": "签名 URL",
+      "label_style": "offset"
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 50,
+  "legend_y": 640,
+  "legend_locked": false,
+  "legend": [
+    {
+      "flow": "read",
+      "label": "用户请求"
+    },
+    {
+      "flow": "control",
+      "label": "调用 / 编排"
+    },
+    {
+      "flow": "write",
+      "label": "写入对象存储"
+    }
+  ],
+  "footer": "Windup · System Context"
+}

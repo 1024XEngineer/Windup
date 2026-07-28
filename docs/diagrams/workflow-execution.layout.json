@@ -1,0 +1,260 @@
+{
+  "canvas": {
+    "height": 600.0,
+    "width": 1200.0
+  },
+  "composition": {
+    "limits": {
+      "max_bends_per_edge": 12,
+      "max_bridged_crossings": 8,
+      "max_route_stretch": 5.0,
+      "max_total_bends": 100,
+      "min_container_gutter": 0.0,
+      "min_label_clearance": 2.0,
+      "min_node_gap": 0.0,
+      "min_segment_length": 0.0,
+      "profile": "standard"
+    },
+    "metrics": {
+      "bridged_crossings": 0,
+      "max_route_stretch": 1.0,
+      "minimum_container_gutter": 15.0,
+      "minimum_node_gap": 40.0,
+      "shortest_segment": 20.0,
+      "total_bends": 6
+    },
+    "ok": true,
+    "profile": "standard",
+    "score": 98,
+    "violations": []
+  },
+  "edges": [
+    {
+      "bends": 0,
+      "bridges": [],
+      "crossings": [],
+      "id": "def-task",
+      "length": 130.0,
+      "route": [
+        [
+          260.0,
+          225.0
+        ],
+        [
+          390.0,
+          225.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "definition-node",
+      "source_port": [
+        260.0,
+        225.0
+      ],
+      "target": "execution-task",
+      "target_port": [
+        390.0,
+        225.0
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 0,
+      "bridges": [],
+      "crossings": [],
+      "id": "task-node",
+      "length": 40.0,
+      "route": [
+        [
+          570.0,
+          225.0
+        ],
+        [
+          590.0,
+          225.0
+        ],
+        [
+          610.0,
+          225.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "execution-task",
+      "source_port": [
+        570.0,
+        225.0
+      ],
+      "target": "node-execution",
+      "target_port": [
+        610.0,
+        225.0
+      ],
+      "waypoints": [
+        [
+          570.0,
+          225.0
+        ],
+        [
+          590.0,
+          225.0
+        ],
+        [
+          610.0,
+          225.0
+        ]
+      ]
+    },
+    {
+      "bends": 4,
+      "bridges": [],
+      "crossings": [],
+      "id": "generation-asset",
+      "length": 481.5,
+      "route": [
+        [
+          550.0,
+          327.5
+        ],
+        [
+          570.4,
+          327.5
+        ],
+        [
+          570.4,
+          284.0
+        ],
+        [
+          804.0,
+          284.0
+        ],
+        [
+          804.0,
+          216.0
+        ],
+        [
+          920.0,
+          216.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "generation",
+      "source_port": [
+        550.0,
+        327.5
+      ],
+      "target": "asset",
+      "target_port": [
+        920.0,
+        216.0
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 2,
+      "bridges": [],
+      "crossings": [],
+      "id": "review-asset",
+      "length": 263.5,
+      "route": [
+        [
+          750.0,
+          327.5
+        ],
+        [
+          814.0,
+          327.5
+        ],
+        [
+          814.0,
+          234.0
+        ],
+        [
+          920.0,
+          234.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "review",
+      "source_port": [
+        750.0,
+        327.5
+      ],
+      "target": "asset",
+      "target_port": [
+        920.0,
+        234.0
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 0,
+      "bridges": [],
+      "crossings": [],
+      "id": "asset-export",
+      "length": 40.0,
+      "route": [
+        [
+          1005.0,
+          260.0
+        ],
+        [
+          1005.0,
+          300.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "asset",
+      "source_port": [
+        1005.0,
+        260.0
+      ],
+      "target": "export",
+      "target_port": [
+        1005.0,
+        300.0
+      ],
+      "waypoints": []
+    }
+  ],
+  "input_schema": "v1",
+  "issues": [],
+  "mode": "architecture",
+  "ok": true,
+  "placements": {
+    "legend": {
+      "actual": [
+        60.0,
+        500.0
+      ],
+      "bounds": [
+        50.0,
+        486.0,
+        400.0,
+        532.0
+      ],
+      "moved": false,
+      "requested": [
+        60.0,
+        500.0
+      ]
+    }
+  },
+  "schema_version": 1,
+  "semantics": {
+    "details": {},
+    "ok": true,
+    "profile": "generic",
+    "style": 7,
+    "visual_theme": "OpenAI"
+  },
+  "style": {
+    "id": 7,
+    "name": "OpenAI"
+  },
+  "summary": {
+    "bridged_crossings": 0,
+    "edges": 5,
+    "nodes": 7
+  },
+  "text_metrics": "heuristic-v1"
+}

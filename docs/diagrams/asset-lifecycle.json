@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 1,
+  "quality_profile": "standard",
+  "width": 1150,
+  "height": 500,
+  "title": "Asset Lifecycle",
+  "subtitle": "生成候选、审核确认与正式资产",
+  "containers": [],
+  "nodes": [
+    {
+      "id": "generated",
+      "kind": "rect",
+      "x": 70,
+      "y": 230,
+      "width": 170,
+      "height": 65,
+      "label": "Generated",
+      "sublabel": "生成结果",
+      "fill": "#e4f2ea",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "candidate",
+      "kind": "rect",
+      "x": 285,
+      "y": 230,
+      "width": 170,
+      "height": 65,
+      "label": "Candidate",
+      "sublabel": "待确认",
+      "fill": "#fff2d9",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "auto",
+      "kind": "rect",
+      "x": 500,
+      "y": 230,
+      "width": 170,
+      "height": 65,
+      "label": "Auto QA",
+      "sublabel": "系统质检",
+      "fill": "#e4f2ea",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "manual",
+      "kind": "rect",
+      "x": 715,
+      "y": 230,
+      "width": 170,
+      "height": 65,
+      "label": "Manual Review",
+      "sublabel": "人工审核",
+      "fill": "#e4f2ea",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "formal",
+      "kind": "rect",
+      "x": 930,
+      "y": 230,
+      "width": 170,
+      "height": 65,
+      "label": "Formal Asset",
+      "sublabel": "可试玩 / 导出",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    }
+  ],
+  "arrows": [
+    {
+      "id": "l0",
+      "source": "generated",
+      "target": "candidate",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": ""
+    },
+    {
+      "id": "l1",
+      "source": "candidate",
+      "target": "auto",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": ""
+    },
+    {
+      "id": "l2",
+      "source": "auto",
+      "target": "manual",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "l3",
+      "source": "manual",
+      "target": "formal",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 50,
+  "legend_y": 445,
+  "legend_locked": false,
+  "legend": [
+    {
+      "flow": "control",
+      "label": "业务流程"
+    },
+    {
+      "flow": "read",
+      "label": "读取 / 消费"
+    },
+    {
+      "flow": "write",
+      "label": "写入 / 产物"
+    }
+  ],
+  "footer": "Windup Architecture"
+}

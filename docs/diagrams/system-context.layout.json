@@ -1,0 +1,260 @@
+{
+  "canvas": {
+    "height": 720.0,
+    "width": 1200.0
+  },
+  "composition": {
+    "limits": {
+      "max_bends_per_edge": 12,
+      "max_bridged_crossings": 8,
+      "max_route_stretch": 5.0,
+      "max_total_bends": 100,
+      "min_container_gutter": 0.0,
+      "min_label_clearance": 2.0,
+      "min_node_gap": 0.0,
+      "min_segment_length": 0.0,
+      "profile": "standard"
+    },
+    "metrics": {
+      "bridged_crossings": 1,
+      "max_route_stretch": 1.796,
+      "minimum_container_gutter": 70.0,
+      "minimum_node_gap": 80.0,
+      "shortest_segment": 20.4,
+      "total_bends": 12
+    },
+    "ok": true,
+    "profile": "standard",
+    "score": 76,
+    "violations": []
+  },
+  "edges": [
+    {
+      "bends": 2,
+      "bridges": [],
+      "crossings": [],
+      "id": "creator-api",
+      "length": 365.0,
+      "route": [
+        [
+          230.0,
+          330.0
+        ],
+        [
+          250.4,
+          330.0
+        ],
+        [
+          250.4,
+          215.0
+        ],
+        [
+          480.0,
+          215.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "creator",
+      "source_port": [
+        230.0,
+        330.0
+      ],
+      "target": "windup-api",
+      "target_port": [
+        480.0,
+        215.0
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 2,
+      "bridges": [],
+      "crossings": [],
+      "id": "api-oauth",
+      "length": 304.0,
+      "route": [
+        [
+          700.0,
+          224.0
+        ],
+        [
+          720.4,
+          224.0
+        ],
+        [
+          720.4,
+          190.0
+        ],
+        [
+          970.0,
+          190.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "windup-api",
+      "source_port": [
+        700.0,
+        224.0
+      ],
+      "target": "oauth",
+      "target_port": [
+        970.0,
+        190.0
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 2,
+      "bridges": [],
+      "crossings": [],
+      "id": "worker-ai",
+      "length": 365.0,
+      "route": [
+        [
+          700.0,
+          425.0
+        ],
+        [
+          720.4,
+          425.0
+        ],
+        [
+          720.4,
+          330.0
+        ],
+        [
+          970.0,
+          330.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "windup-worker",
+      "source_port": [
+        700.0,
+        425.0
+      ],
+      "target": "ai",
+      "target_port": [
+        970.0,
+        330.0
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 6,
+      "bridges": [
+        [
+          720.4,
+          206.0
+        ]
+      ],
+      "crossings": [
+        [
+          720.4,
+          206.0
+        ]
+      ],
+      "id": "api-kodo",
+      "length": 967.8,
+      "route": [
+        [
+          700.0,
+          206.0
+        ],
+        [
+          724.0,
+          206.0
+        ],
+        [
+          724.0,
+          275.0
+        ],
+        [
+          1164.0,
+          275.0
+        ],
+        [
+          1164.0,
+          384.0
+        ],
+        [
+          949.6,
+          384.0
+        ],
+        [
+          949.6,
+          475.0
+        ],
+        [
+          970.0,
+          475.0
+        ]
+      ],
+      "route_stretch": 1.796,
+      "source": "windup-api",
+      "source_port": [
+        700.0,
+        206.0
+      ],
+      "target": "kodo",
+      "target_port": [
+        970.0,
+        475.0
+      ],
+      "waypoints": []
+    }
+  ],
+  "input_schema": "v1",
+  "issues": [
+    {
+      "code": "EDGE_CROSSING_BRIDGED",
+      "coordinates": [
+        [
+          720.4,
+          206.0
+        ]
+      ],
+      "element": "api-kodo",
+      "severity": "info"
+    }
+  ],
+  "mode": "architecture",
+  "ok": true,
+  "placements": {
+    "legend": {
+      "actual": [
+        50.0,
+        640.0
+      ],
+      "bounds": [
+        40.0,
+        626.0,
+        429.6,
+        672.0
+      ],
+      "moved": false,
+      "requested": [
+        50.0,
+        640.0
+      ]
+    }
+  },
+  "schema_version": 1,
+  "semantics": {
+    "details": {},
+    "ok": true,
+    "profile": "generic",
+    "style": 1,
+    "visual_theme": "Flat Icon"
+  },
+  "style": {
+    "id": 1,
+    "name": "Flat Icon"
+  },
+  "summary": {
+    "bridged_crossings": 1,
+    "edges": 4,
+    "nodes": 6
+  },
+  "text_metrics": "heuristic-v1"
+}

@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 1,
+  "quality_profile": "standard",
+  "width": 1200,
+  "height": 920,
+  "title": "Windup Backend Dependency Rules",
+  "subtitle": "依赖只能向下：入口 → 业务 → 能力 → 基础设施 → 共享内核",
+  "containers": [],
+  "nodes": [
+    {
+      "id": "entry",
+      "kind": "double_rect",
+      "x": 350,
+      "y": 130,
+      "width": 500,
+      "height": 90,
+      "label": "web / worker",
+      "sublabel": "入口层：HTTP API、SSE、异步任务入口",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "server",
+      "kind": "double_rect",
+      "x": 350,
+      "y": 280,
+      "width": 500,
+      "height": 90,
+      "label": "server",
+      "sublabel": "业务域：项目、生成、资产、审核、导出",
+      "fill": "#fff2d9",
+      "stroke": "#c28a36"
+    },
+    {
+      "id": "ai",
+      "kind": "double_rect",
+      "x": 350,
+      "y": 430,
+      "width": 500,
+      "height": 90,
+      "label": "ai_engine",
+      "sublabel": "AI 能力：模型调用、识别、生成、自动质检",
+      "fill": "#e4f2ea",
+      "stroke": "#5c9974"
+    },
+    {
+      "id": "framework",
+      "kind": "double_rect",
+      "x": 350,
+      "y": 580,
+      "width": 500,
+      "height": 90,
+      "label": "framework",
+      "sublabel": "技术设施：Postgres、MQ、Storage、OAuth、HTTP Client",
+      "fill": "#e4e8f4",
+      "stroke": "#596b9a"
+    },
+    {
+      "id": "common",
+      "kind": "cylinder",
+      "x": 350,
+      "y": 730,
+      "width": 500,
+      "height": 90,
+      "label": "common",
+      "sublabel": "共享内核：Response、Exception、Enum、Shared Types",
+      "fill": "#f1edf7",
+      "stroke": "#8064a2"
+    }
+  ],
+  "arrows": [
+    {
+      "id": "entry-server",
+      "source": "entry",
+      "target": "server",
+      "source_port": "bottom",
+      "target_port": "top",
+      "flow": "control",
+      "label": "调用业务用例"
+    },
+    {
+      "id": "server-ai",
+      "source": "server",
+      "target": "ai",
+      "source_port": "bottom",
+      "target_port": "top",
+      "flow": "control",
+      "label": "调用 AI 能力"
+    },
+    {
+      "id": "ai-framework",
+      "source": "ai",
+      "target": "framework",
+      "source_port": "bottom",
+      "target_port": "top",
+      "flow": "read",
+      "label": "使用技术适配器"
+    },
+    {
+      "id": "framework-common",
+      "source": "framework",
+      "target": "common",
+      "source_port": "bottom",
+      "target_port": "top",
+      "flow": "read",
+      "label": "复用共享协议"
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 350,
+  "legend_y": 850,
+  "legend_locked": false,
+  "legend": [
+    {"flow": "control", "label": "业务调用"},
+    {"flow": "read", "label": "技术能力 / 共享协议"}
+  ],
+  "footer": "Windup · One-way dependency rule",
+  "footer_x": 350,
+  "footer_y": 900
+}

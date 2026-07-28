@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 1,
+  "quality_profile": "standard",
+  "width": 1200,
+  "height": 500,
+  "title": "Windup Core Value Stream",
+  "subtitle": "从项目约束到可交付游戏资产",
+  "containers": [],
+  "nodes": [
+    {
+      "id": "project",
+      "kind": "rect",
+      "x": 60,
+      "y": 250,
+      "width": 170,
+      "height": 65,
+      "label": "Project",
+      "sublabel": "约束",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "media",
+      "kind": "rect",
+      "x": 240,
+      "y": 250,
+      "width": 170,
+      "height": 65,
+      "label": "Media",
+      "sublabel": "参考图",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "generation",
+      "kind": "rect",
+      "x": 420,
+      "y": 250,
+      "width": 170,
+      "height": 65,
+      "label": "Generation",
+      "sublabel": "AI 生成",
+      "fill": "#fff2d9",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "review",
+      "kind": "rect",
+      "x": 600,
+      "y": 250,
+      "width": 170,
+      "height": 65,
+      "label": "Review",
+      "sublabel": "质检 / 审核",
+      "fill": "#e4f2ea",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "asset",
+      "kind": "rect",
+      "x": 780,
+      "y": 250,
+      "width": 170,
+      "height": 65,
+      "label": "Asset",
+      "sublabel": "候选 / 正式",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "export",
+      "kind": "rect",
+      "x": 960,
+      "y": 250,
+      "width": 170,
+      "height": 65,
+      "label": "Export",
+      "sublabel": "交付格式",
+      "fill": "#e4f2ea",
+      "stroke": "#6685b2"
+    }
+  ],
+  "arrows": [
+    {
+      "id": "a0",
+      "source": "project",
+      "target": "media",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "a1",
+      "source": "media",
+      "target": "generation",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": ""
+    },
+    {
+      "id": "a2",
+      "source": "generation",
+      "target": "review",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": ""
+    },
+    {
+      "id": "a3",
+      "source": "review",
+      "target": "asset",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": ""
+    },
+    {
+      "id": "a4",
+      "source": "asset",
+      "target": "export",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 50,
+  "legend_y": 445,
+  "legend_locked": false,
+  "legend": [
+    {
+      "flow": "control",
+      "label": "业务流程"
+    },
+    {
+      "flow": "read",
+      "label": "读取 / 消费"
+    },
+    {
+      "flow": "write",
+      "label": "写入 / 产物"
+    }
+  ],
+  "footer": "Windup Architecture"
+}

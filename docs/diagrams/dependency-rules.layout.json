@@ -1,0 +1,190 @@
+{
+  "canvas": {
+    "height": 920.0,
+    "width": 1200.0
+  },
+  "composition": {
+    "limits": {
+      "max_bends_per_edge": 12,
+      "max_bridged_crossings": 8,
+      "max_route_stretch": 5.0,
+      "max_total_bends": 100,
+      "min_container_gutter": 0.0,
+      "min_label_clearance": 2.0,
+      "min_node_gap": 0.0,
+      "min_segment_length": 0.0,
+      "profile": "standard"
+    },
+    "metrics": {
+      "bridged_crossings": 0,
+      "max_route_stretch": 1.0,
+      "minimum_container_gutter": null,
+      "minimum_node_gap": 60.0,
+      "shortest_segment": 60.0,
+      "total_bends": 0
+    },
+    "ok": true,
+    "profile": "standard",
+    "score": 100,
+    "violations": []
+  },
+  "edges": [
+    {
+      "bends": 0,
+      "bridges": [],
+      "crossings": [],
+      "id": "entry-server",
+      "length": 60.0,
+      "route": [
+        [
+          600.0,
+          220.0
+        ],
+        [
+          600.0,
+          280.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "entry",
+      "source_port": [
+        600.0,
+        220.0
+      ],
+      "target": "server",
+      "target_port": [
+        600.0,
+        280.0
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 0,
+      "bridges": [],
+      "crossings": [],
+      "id": "server-ai",
+      "length": 60.0,
+      "route": [
+        [
+          600.0,
+          370.0
+        ],
+        [
+          600.0,
+          430.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "server",
+      "source_port": [
+        600.0,
+        370.0
+      ],
+      "target": "ai",
+      "target_port": [
+        600.0,
+        430.0
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 0,
+      "bridges": [],
+      "crossings": [],
+      "id": "ai-framework",
+      "length": 60.0,
+      "route": [
+        [
+          600.0,
+          520.0
+        ],
+        [
+          600.0,
+          580.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "ai",
+      "source_port": [
+        600.0,
+        520.0
+      ],
+      "target": "framework",
+      "target_port": [
+        600.0,
+        580.0
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 0,
+      "bridges": [],
+      "crossings": [],
+      "id": "framework-common",
+      "length": 60.0,
+      "route": [
+        [
+          600.0,
+          670.0
+        ],
+        [
+          600.0,
+          730.0
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "framework",
+      "source_port": [
+        600.0,
+        670.0
+      ],
+      "target": "common",
+      "target_port": [
+        600.0,
+        730.0
+      ],
+      "waypoints": []
+    }
+  ],
+  "input_schema": "v1",
+  "issues": [],
+  "mode": "architecture",
+  "ok": true,
+  "placements": {
+    "legend": {
+      "actual": [
+        350.0,
+        850.0
+      ],
+      "bounds": [
+        340.0,
+        836.0,
+        637.6,
+        882.0
+      ],
+      "moved": false,
+      "requested": [
+        350.0,
+        850.0
+      ]
+    }
+  },
+  "schema_version": 1,
+  "semantics": {
+    "details": {},
+    "ok": true,
+    "profile": "generic",
+    "style": 1,
+    "visual_theme": "Flat Icon"
+  },
+  "style": {
+    "id": 1,
+    "name": "Flat Icon"
+  },
+  "summary": {
+    "bridged_crossings": 0,
+    "edges": 4,
+    "nodes": 5
+  },
+  "text_metrics": "heuristic-v1"
+}

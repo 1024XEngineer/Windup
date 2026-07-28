@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 7,
+  "quality_profile": "standard",
+  "width": 1200,
+  "height": 500,
+  "title": "Frontend–Backend Contract",
+  "subtitle": "OpenAPI、类型生成与 SSE 事件协作",
+  "containers": [],
+  "nodes": [
+    {
+      "id": "frontend",
+      "kind": "double_rect",
+      "x": 60,
+      "y": 220,
+      "width": 210,
+      "height": 90,
+      "label": "Frontend FSD",
+      "sublabel": "app / pages / features / entities",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "openapi",
+      "kind": "double_rect",
+      "x": 350,
+      "y": 220,
+      "width": 200,
+      "height": 90,
+      "label": "OpenAPI Contract",
+      "sublabel": "唯一接口来源",
+      "fill": "#fff2d9",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "web",
+      "kind": "rect",
+      "x": 620,
+      "y": 130,
+      "width": 180,
+      "height": 70,
+      "label": "Windup Web",
+      "sublabel": "FastAPI / Schema",
+      "fill": "#e4f2ea",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "events",
+      "kind": "rect",
+      "x": 620,
+      "y": 300,
+      "width": 180,
+      "height": 70,
+      "label": "SSE Events",
+      "sublabel": "进度与状态",
+      "fill": "#e4f2ea",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "backend",
+      "kind": "double_rect",
+      "x": 900,
+      "y": 220,
+      "width": 210,
+      "height": 90,
+      "label": "Backend Domains",
+      "sublabel": "业务能力接口",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    }
+  ],
+  "arrows": [
+    {
+      "id": "f-o",
+      "source": "frontend",
+      "target": "openapi",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "read",
+      "label": ""
+    },
+    {
+      "id": "o-w",
+      "source": "openapi",
+      "target": "web",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "o-e",
+      "source": "openapi",
+      "target": "events",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "w-b",
+      "source": "web",
+      "target": "backend",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": ""
+    },
+    {
+      "id": "e-b",
+      "source": "events",
+      "target": "backend",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "read",
+      "label": ""
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 50,
+  "legend_y": 445,
+  "legend_locked": false,
+  "legend": [
+    {
+      "flow": "control",
+      "label": "业务调用"
+    },
+    {
+      "flow": "read",
+      "label": "读取 / 消费"
+    },
+    {
+      "flow": "write",
+      "label": "写入 / 事件"
+    }
+  ],
+  "footer": "Windup Architecture"
+}

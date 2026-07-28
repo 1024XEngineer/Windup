@@ -1,0 +1,302 @@
+{
+  "canvas": {
+    "height": 500.0,
+    "width": 1200.0
+  },
+  "composition": {
+    "limits": {
+      "max_bends_per_edge": 12,
+      "max_bridged_crossings": 8,
+      "max_route_stretch": 5.0,
+      "max_total_bends": 100,
+      "min_container_gutter": 0.0,
+      "min_label_clearance": 2.0,
+      "min_node_gap": 0.0,
+      "min_segment_length": 0.0,
+      "profile": "standard"
+    },
+    "metrics": {
+      "bridged_crossings": 1,
+      "max_route_stretch": 1.234,
+      "minimum_container_gutter": null,
+      "minimum_node_gap": 40.0,
+      "shortest_segment": 16.0,
+      "total_bends": 8
+    },
+    "ok": true,
+    "profile": "standard",
+    "score": 88,
+    "violations": []
+  },
+  "edges": [
+    {
+      "bends": 0,
+      "bridges": [],
+      "crossings": [],
+      "id": "r-q",
+      "length": 50.0,
+      "route": [
+        [
+          240.0,
+          252.5
+        ],
+        [
+          290.0,
+          252.5
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "request",
+      "source_port": [
+        240.0,
+        252.5
+      ],
+      "target": "quota",
+      "target_port": [
+        290.0,
+        252.5
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 0,
+      "bridges": [],
+      "crossings": [],
+      "id": "q-q",
+      "length": 40.0,
+      "route": [
+        [
+          460.0,
+          252.5
+        ],
+        [
+          500.0,
+          252.5
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "quota",
+      "source_port": [
+        460.0,
+        252.5
+      ],
+      "target": "queue",
+      "target_port": [
+        500.0,
+        252.5
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 0,
+      "bridges": [],
+      "crossings": [],
+      "id": "q-w",
+      "length": 40.0,
+      "route": [
+        [
+          670.0,
+          252.5
+        ],
+        [
+          710.0,
+          252.5
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "queue",
+      "source_port": [
+        670.0,
+        252.5
+      ],
+      "target": "worker",
+      "target_port": [
+        710.0,
+        252.5
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 2,
+      "bridges": [],
+      "crossings": [],
+      "id": "w-ai",
+      "length": 119.0,
+      "route": [
+        [
+          870.0,
+          261.5
+        ],
+        [
+          886.0,
+          261.5
+        ],
+        [
+          886.0,
+          182.5
+        ],
+        [
+          910.0,
+          182.5
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "worker",
+      "source_port": [
+        870.0,
+        261.5
+      ],
+      "target": "ai",
+      "target_port": [
+        910.0,
+        182.5
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 4,
+      "bridges": [],
+      "crossings": [],
+      "id": "ai-a",
+      "length": 383.8,
+      "route": [
+        [
+          1080.0,
+          182.5
+        ],
+        [
+          1100.4,
+          182.5
+        ],
+        [
+          1100.4,
+          215.0
+        ],
+        [
+          894.0,
+          215.0
+        ],
+        [
+          894.0,
+          323.5
+        ],
+        [
+          910.0,
+          323.5
+        ]
+      ],
+      "route_stretch": 1.234,
+      "source": "ai",
+      "source_port": [
+        1080.0,
+        182.5
+      ],
+      "target": "asset",
+      "target_port": [
+        910.0,
+        323.5
+      ],
+      "waypoints": []
+    },
+    {
+      "bends": 2,
+      "bridges": [
+        [
+          886.0,
+          243.5
+        ]
+      ],
+      "crossings": [
+        [
+          886.0,
+          243.5
+        ]
+      ],
+      "id": "w-a",
+      "length": 138.0,
+      "route": [
+        [
+          870.0,
+          243.5
+        ],
+        [
+          889.6,
+          243.5
+        ],
+        [
+          889.6,
+          341.5
+        ],
+        [
+          910.0,
+          341.5
+        ]
+      ],
+      "route_stretch": 1.0,
+      "source": "worker",
+      "source_port": [
+        870.0,
+        243.5
+      ],
+      "target": "asset",
+      "target_port": [
+        910.0,
+        341.5
+      ],
+      "waypoints": []
+    }
+  ],
+  "input_schema": "v1",
+  "issues": [
+    {
+      "code": "EDGE_CROSSING_BRIDGED",
+      "coordinates": [
+        [
+          886.0,
+          243.5
+        ]
+      ],
+      "element": "w-a",
+      "severity": "info"
+    }
+  ],
+  "mode": "architecture",
+  "ok": true,
+  "placements": {
+    "legend": {
+      "actual": [
+        50.0,
+        434.0
+      ],
+      "bounds": [
+        40.0,
+        420.0,
+        421.2,
+        466.0
+      ],
+      "moved": true,
+      "requested": [
+        50.0,
+        445.0
+      ]
+    }
+  },
+  "schema_version": 1,
+  "semantics": {
+    "details": {},
+    "ok": true,
+    "profile": "generic",
+    "style": 1,
+    "visual_theme": "Flat Icon"
+  },
+  "style": {
+    "id": 1,
+    "name": "Flat Icon"
+  },
+  "summary": {
+    "bridged_crossings": 1,
+    "edges": 6,
+    "nodes": 6
+  },
+  "text_metrics": "heuristic-v1"
+}

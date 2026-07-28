@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 7,
+  "quality_profile": "standard",
+  "width": 1200,
+  "height": 600,
+  "title": "Windup Workflow Execution",
+  "subtitle": "最终产品：工作流定义到正式资产",
+  "containers": [
+    {
+      "id": "definition",
+      "x": 40,
+      "y": 120,
+      "width": 260,
+      "height": 250,
+      "label": "Definition",
+      "stroke": "#c8d6e5",
+      "fill": "#f5f9fd"
+    },
+    {
+      "id": "runtime",
+      "x": 340,
+      "y": 120,
+      "width": 470,
+      "height": 250,
+      "label": "Execution Runtime",
+      "stroke": "#c8d6e5",
+      "fill": "#f5f9fd"
+    },
+    {
+      "id": "result",
+      "x": 850,
+      "y": 120,
+      "width": 300,
+      "height": 250,
+      "label": "Results",
+      "stroke": "#c8d6e5",
+      "fill": "#f5f9fd"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "definition-node",
+      "kind": "double_rect",
+      "x": 80,
+      "y": 190,
+      "width": 180,
+      "height": 70,
+      "label": "Workflow Definition",
+      "sublabel": "节点 / 连接 / 版本",
+      "fill": "#e6f0fa",
+      "stroke": "#487ca8"
+    },
+    {
+      "id": "execution-task",
+      "kind": "rect",
+      "x": 390,
+      "y": 190,
+      "width": 180,
+      "height": 70,
+      "label": "Execution Task",
+      "sublabel": "约束快照 / 状态",
+      "fill": "#fff1d6",
+      "stroke": "#bb7b17"
+    },
+    {
+      "id": "node-execution",
+      "kind": "rect",
+      "x": 610,
+      "y": 190,
+      "width": 170,
+      "height": 70,
+      "label": "Node Execution",
+      "sublabel": "调度 / 重试 / 缓存",
+      "fill": "#fff1d6",
+      "stroke": "#bb7b17"
+    },
+    {
+      "id": "generation",
+      "kind": "rect",
+      "x": 390,
+      "y": 300,
+      "width": 160,
+      "height": 55,
+      "label": "Generation",
+      "sublabel": "AI 生成节点",
+      "fill": "#e6f3eb",
+      "stroke": "#4e8f6b"
+    },
+    {
+      "id": "review",
+      "kind": "rect",
+      "x": 590,
+      "y": 300,
+      "width": 160,
+      "height": 55,
+      "label": "Review",
+      "sublabel": "质检 / 审核",
+      "fill": "#e6f3eb",
+      "stroke": "#4e8f6b"
+    },
+    {
+      "id": "asset",
+      "kind": "cylinder",
+      "x": 920,
+      "y": 190,
+      "width": 170,
+      "height": 70,
+      "label": "Asset",
+      "sublabel": "候选 → 正式",
+      "fill": "#e6f0fa",
+      "stroke": "#487ca8"
+    },
+    {
+      "id": "export",
+      "kind": "rect",
+      "x": 920,
+      "y": 300,
+      "width": 170,
+      "height": 55,
+      "label": "Export",
+      "sublabel": "GIF / 图集 / 引擎文件",
+      "fill": "#e6f3eb",
+      "stroke": "#4e8f6b"
+    }
+  ],
+  "arrows": [
+    {
+      "id": "def-task",
+      "source": "definition-node",
+      "target": "execution-task",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": "运行版本",
+      "label_style": "offset"
+    },
+    {
+      "id": "task-node",
+      "source": "execution-task",
+      "target": "node-execution",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": "",
+      "label_style": "offset",
+      "route_points": [
+        [
+          570,
+          225
+        ],
+        [
+          590,
+          225
+        ],
+        [
+          610,
+          225
+        ]
+      ]
+    },
+    {
+      "id": "generation-asset",
+      "source": "generation",
+      "target": "asset",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": "候选产物",
+      "label_style": "offset"
+    },
+    {
+      "id": "review-asset",
+      "source": "review",
+      "target": "asset",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "write",
+      "label": "确认状态",
+      "label_style": "offset"
+    },
+    {
+      "id": "asset-export",
+      "source": "asset",
+      "target": "export",
+      "source_port": "bottom",
+      "target_port": "top",
+      "flow": "read",
+      "label": "正式资产",
+      "label_style": "offset"
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 60,
+  "legend_y": 500,
+  "legend_locked": false,
+  "legend": [
+    {
+      "flow": "control",
+      "label": "执行控制"
+    },
+    {
+      "flow": "write",
+      "label": "产物写入"
+    },
+    {
+      "flow": "read",
+      "label": "资产消费"
+    }
+  ],
+  "footer": "Windup · Workflow Definition → Execution → Asset"
+}
