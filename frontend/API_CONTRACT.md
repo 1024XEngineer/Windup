@@ -2,8 +2,8 @@
 
 本文是前端当前调用和需求签名的清单，不替代未来由后端 OpenAPI 生成的客户端。
 在 OpenAPI 落地前，只有标为“已核对”的接口可以按真实后端接口联调；其余接口
-不能被描述为已接通后端。它们在开发或测试中可以由 Mock transport 承载，但生产请求
-仍需等待明确的后端契约。
+不能被描述为已接通后端。独立业务能力在开发或测试中可以由 Mock transport 承载，但生产请求
+仍需等待明确的后端契约。WorkflowRun 是前端编排模型，不属于后端 API 契约。
 
 ## 通用约定
 
@@ -65,31 +65,23 @@ const url = await uploadImage(file)
 // 成功响应：{ code: 200, message: 'success', data: { url } }
 ```
 
-## 未对齐：WorkflowRun
+## 前端本地编排：WorkflowRun
 
-前端目前有以下调用与 DTO：
+`WorkflowRun`、`WorkflowRevision` 和五个页面节点用于组织 Quick Start、Workflow Editor、
+Playtest 与历史查看。它们由前端 `entities/workflow-run` 的本地 Repository 持久化，不经过
+`shared/api`，也不存在对应的 `/workflows` 或 `/workflow-runs` 后端路径。
 
-- `POST /workflows`
-- `GET /workflows/{id}`
-- `POST /workflows/{id}/commands`
+页面继续使用稳定的前端门面：
 
-它们服务于 Quick Start 和 Workflow Editor 的页面状态，并在 Mock transport 中有完整状态机。
-生产 transport 会向这些路径发出真实请求，但当前仓库没有与之对应的后端路由、OpenAPI
-或 SSE 事件契约；后端目标架构也倾向让 MS2 前端直接调用项目、媒体、角色、生成、审核与
-导出等独立能力接口。因此这些路径在后端提供明确契约前不得视为可联调接口。
-
-命令请求的形式为：
-
-```json
-{
-  "kind": "restart-from-node",
-  "source_revision_id": "revision-1",
-  "node_id": "node-generation"
-}
+```ts
+createWorkflowRun(input)
+fetchWorkflowRun(runId)
+submitWorkflowCommand(runId, command)
 ```
 
-后端如选择支持该接口，必须先确认 `WorkflowRunDto`、节点状态枚举、命令幂等性、错误码
-和进度事件；否则前端应改接独立业务 API。
+真实后端集成按照 PR #62 拆为 Project、Media、Character、Generation、Asset、Review、
+Playtest 和 Export 等独立能力。其 OpenAPI 冻结后，由 WorkflowRun 编排层组合对应 Adapter；
+页面不需要知道后端模块拆分，也不提前猜测未确定的路径和 DTO。
 
 ## 仅有需求签名：角色与资产
 
@@ -151,8 +143,9 @@ type ActionTemplate = ActionTemplateBase &
 ```
 
 即使 MVP UI 只展示一个造型，Character 也通过 `variants` 保留造型层，母版与动作归属具体
-CharacterVariant。`sourceWorkflowRunId` 明确引用 WorkflowRun，前端全部业务 ID 都是 string；
-后端数字 ID 只在 DTO mapper 中转换。
+CharacterVariant。`sourceWorkflowRunId` 是前端编排定位信息，不要求后端 Action 认识
+WorkflowRun；后端可返回自己的 Task、Execution 或 Asset 引用，再由前端建立关联。前端全部
+业务 ID 都是 string，后端数字 ID 只在 DTO mapper 中转换。
 
 `Action.frames` 的数组顺序就是播放顺序，因此 Frame 不重复携带 `index`。审核和页面定位可以
 临时使用 `frameIndex`；如果后端以后支持独立 Frame 资源，应另行提供稳定 ID。Action 的 `fps`
@@ -170,8 +163,6 @@ type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed'
 
 interface Task {
   id: string
-  runId: string
-  revisionId: string
   status: TaskStatus
   progress: number | null
   error: string | null
@@ -181,8 +172,16 @@ interface Task {
 interface TaskEvent extends Omit<Task, 'id'> {
   taskId: Task['id']
 }
+
+interface WorkflowTaskLink {
+  taskId: Task['id']
+  runId: string
+  revisionId: string
+  nodeId: string
+}
 ```
 
-`result` 在具体生成产物契约冻结前保持 `unknown`。SSE 当前只有 transport 预留，订阅地址、
-事件名称、断线重连、补发策略以及 Task 创建/查询接口均未与后端对齐，前端不得把它描述为
-已接通能力。
+后端 Task 不依赖前端 WorkflowRun。`WorkflowTaskLink` 只保存在前端，用于把后端 `taskId`
+映射回当前 run、revision 和 node。`result` 在具体生成产物契约冻结前保持 `unknown`。SSE 当前
+只有 transport 预留，订阅地址、事件名称、断线重连、补发策略以及 Task 创建/查询接口均未与
+后端对齐，前端不得把它描述为已接通能力。

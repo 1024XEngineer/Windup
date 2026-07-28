@@ -1,6 +1,6 @@
 /**
  * entities 唯一公开门面。外部不得绕过本文件访问内部 Entity 文件。
- * Project 已有后端实现；WorkflowRun、Character 和其他资产接口仍按冻结的领域边界等待后端接入。
+ * WorkflowRun 是前端编排模型；Project 已有后端实现，其他独立能力等待 OpenAPI 接入。
  */
 
 /* 项目 —— 已对接后端 PR #57 */

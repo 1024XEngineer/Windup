@@ -8,8 +8,9 @@
 app -> pages -> features -> entities -> shared
 ~~~
 
-代码只能向下依赖。Page、Feature、Entity 不直接调用 fetch，所有网络能力经
-shared/api 的 request、upload 或 stream 边界访问。
+代码只能向下依赖。Page、Feature、Entity 不直接调用 fetch，所有后端网络能力经
+shared/api 的 request、upload 或 stream 边界访问；前端 WorkflowRun 编排使用自己的本地
+Repository，不伪装成 HTTP 资源。
 
 ## entities
 
@@ -28,7 +29,11 @@ WorkflowRun 的领域模型包含：
 - 多个只读/当前 Revision。
 - 当前先固定五个有序节点：asset、generation、candidate、review、export。
 - 节点门禁、Revision 重启、历史查看和质量门禁 selector/command。
-- 创建、查询和流式事件共用字段的 Task 快照；具体 SSE 协议仍待后端冻结。
+- 本地 Repository Port/Adapter；页面不依赖存储实现。
+- 不含 run/revision 的后端 Task 快照，以及前端专用的 `WorkflowTaskLink` 关联。
+
+WorkflowRun 只负责前端页面编排。后端 OpenAPI 落地后，Generation、Asset、Review、Playtest、
+Export 等独立能力 Adapter 由该 Entity 内部组合，页面公开调用方式不变。
 
 Character 与动作资产的当前前端契约：
 
@@ -36,7 +41,7 @@ Character 与动作资产的当前前端契约：
 - 角色造型母版在前端称为 `baseImage`，避免与 `ActionTemplate` 混淆。
 - Action 自身携带 `fps`；预览和导出不使用全局帧率常量。
 - `Action.frames` 的数组顺序就是帧顺序，Frame 不重复保存 `index`。
-- `sourceWorkflowRunId` 引用 WorkflowRun；前端领域 ID 统一使用 string。
+- `sourceWorkflowRunId` 是前端定位信息，不要求后端资产依赖 WorkflowRun；前端领域 ID 统一使用 string。
 - `ActionTemplate` 分为 `system` 和 `project` 作用域；系统模板的 `projectId` 为 `null`。
 
 ## 页面内模块
@@ -73,7 +78,7 @@ README 说明职责，未实现能力不得返回假成功。
 
 ## Shared
 
-- shared/api：传输、响应壳、错误、上传和流式任务。
+- shared/api：独立后端能力的传输、响应壳、错误、上传和流式任务；不承载 WorkflowRun。
 - shared/api/generated：未来 OpenAPI 生成代码的接入位置，当前不放伪代码。
 - shared/hooks：跨 Entity 复用的 React hooks 和对应状态类型。
 - shared/ui：业务无关 UI；只维护已经存在的组件。

@@ -6,10 +6,10 @@
 
 - 前端：React + Vite + TypeScript + Tailwind CSS。
 - 工具链：Oxlint 负责代码检查，Oxfmt 负责格式化；Tailwind 与 Vite 插件属于构建期开发依赖。
-- 后端：Python；WorkflowRun、Provider Job、质量门禁和导出任务最终由后端保存或执行。开发和测试阶段经 Mock transport 验证接口契约，生产构建只使用真实 transport。
+- 后端：Python；按 PR #62 分为 Project、Media、Character、Generation、Asset、Review、Playtest、Export，以及未来的 workflow definition / execution 等独立能力。后端 Job、质量门禁和导出任务由对应业务域保存或执行。
 - 分层：app -> pages -> features -> entities -> shared。
 - Quick Start 与手动 Workflow 是两种输入入口，最终进入同一套 WorkflowRun、Revision、生成、质检、历史、Playtest 和导出流程。
-- 当前后端 WorkflowRun 尚未提供；Mock transport 仅用于开发、测试和联调前的接口骨架验证。
+- WorkflowRun、Revision 和页面节点由前端本地 Repository 编排，不要求后端提供同名资源。
 
 ## 2. 分层职责
 
@@ -18,7 +18,7 @@
 | app | 启动、Router、Provider、全局布局、错误边界 | 已有基础实现 |
 | pages | 完整路由页面、URL、页面临时状态和模块组合 | 已有部分页面，Workflow steps 待实现 |
 | features | 用户对业务对象执行的完整操作 | 已有占位 Feature，按真实实现增量拆分 |
-| entities | 业务对象、查询、命令、选择器和领域规则 | Project 已接后端；WorkflowRun Revision/门禁已经 shared API 门面实现，开发时由 Mock transport 承载 |
+| entities | 业务对象、查询、命令、选择器和领域规则 | Project 已接后端；WorkflowRun Revision/门禁由前端 Repository Port/Adapter 承载 |
 | shared | 通用 API transport、UI、工具和测试辅助 | 已有基础 API/UI，upload/stream 边界待补 |
 
 Account、Billing 和资产库复用 Feature 当前只在本文中预留，不创建代码入口。
@@ -31,7 +31,7 @@ Account、Billing 和资产库复用 Feature 当前只在本文中预留，不�
 4. entities 对外使用统一门面 @/entities；Entity 内部默认不产生其他 Entity 的运行时依赖。
 5. Entity 之间通过 ID、类型契约或输入对象传递关系，不直接调用另一个 Entity 的内部 API。
 6. shared 不得依赖任何 Windup 业务层。
-7. Page、Feature、Entity 不直接调用 fetch；网络访问只能经 shared/api。
+7. Page、Feature、Entity 不直接调用 fetch；后端网络访问只能经 shared/api，WorkflowRun 本地编排不经过 HTTP。
 8. 生产代码不得导入 tests 或 shared/testing。
 9. 不允许深层路径绕过公开入口，不允许循环依赖。
 10. 未实现能力不得返回伪造成功结果。
@@ -83,7 +83,7 @@ pages/workflow-editor/
 
 ## 6. WorkflowRun、Revision 与节点
 
-前端领域层所有业务 ID 使用 string；后端 DTO 保留真实类型，由 Entity mapper 转换。
+前端领域层所有业务 ID 使用 string；独立后端能力的 DTO 保留真实类型，由对应 Entity mapper 转换。
 
 同一个 runId 下可以有多个 Revision：
 
@@ -137,6 +137,9 @@ generation
       -> 通过：交付人工审核
 ~ ~ ~
 
+以上是当前 MS2 的前端展示门禁，不是后端业务事实来源。真实生成与质检结果由后端
+Generation、Asset 和 Review 能力返回，前端只据此更新对应节点。
+
 质检通过后立即将 Revision 标记为生成完成并进入历史。人工审核和 Playtest 可以发现问题并发起新的 Revision，但不是逐帧强制通过门槛。
 
 状态拆分：
@@ -171,19 +174,20 @@ shared/api/
 
 - shared/api 负责 HTTP、响应壳、分页、通用错误和 transport。
 - entities 负责业务 DTO 到领域模型的转换和非法状态校验。
+- WorkflowRun 由 Entity 内部的 Repository Port/Adapter 持久化，不注册 shared/api Mock route。
 - 非法节点、状态、Revision 或 ID 必须抛出契约错误，不能用默认值伪造成功。
 - JSON、上传、SSE 分别走 request/upload/stream，业务层禁止直接 fetch。
-- Mock 只在开发/测试显式启用；生产只能使用真实 API，失败不得回退 Mock。
+- 独立后端能力的 Mock 只在开发/测试显式启用；生产只能使用真实 API，失败不得回退 Mock。
 - generated 只作为未来 OpenAPI 客户端接入点，不创建不存在的代码。
 
 ## 9. 状态归属和查询抽象
 
 - WorkflowRun、Revision、节点、命令和门禁归 entities/workflow-run。
 - Project、Character、ActionTemplate、Wearable 归各自 Entity。
-- Task 快照包含 run、revision、状态、进度、错误和未冻结的 result；SSE 事件复用同一组状态字段。
+- 后端 Task 快照只包含任务自身的状态、进度、错误和未冻结的 result；前端用 `WorkflowTaskLink` 将 taskId 关联到 run、revision 和 node。
 - Character 保留 variants 层；造型拥有各自的母版和 Action，MVP UI 只展示第一套造型。
 - Action 自身携带 fps；Frame 顺序由 Action.frames 数组表达，不重复保存 index。
-- Action 使用 sourceWorkflowRunId 回指 WorkflowRun；前端领域 ID 和枚举统一使用语义明确的字符串。
+- Action 的 sourceWorkflowRunId 是前端定位信息，不要求后端资产依赖 WorkflowRun；前端领域 ID 和枚举统一使用语义明确的字符串。
 - ActionTemplate 使用 system/project 作用域；系统模板不属于任何项目，项目资产页合并展示两类模板。
 - URL、画布缩放、节点选中、资产筛选和当前审核位置归对应 Page。
 - Generation、Review、Playtest 的局部交互状态归对应 Feature 或 Playtest Page。
@@ -209,7 +213,7 @@ shared/api/
 2. Quick Start 与手动 Workflow 共用同一个 WorkflowRun。
 3. 质检连续失败 2 次、生成完成、导出状态和 Playtest 非阻断规则。
 4. 页面路由参数、历史模式和 Playtest 导入。
-5. 后端接通后补真实 API、Provider、SSE 和跨入口 E2E。
+5. 独立后端能力接通后补真实 API Adapter、Provider、SSE 和跨入口 E2E。
 
 架构测试立即检查当前可验证的 import、fetch、测试依赖和循环依赖；generated client、真实 Python API 和 Mock/Real 完整能力一致性在对应代码出现后启用。
 
@@ -217,19 +221,19 @@ shared/api/
 
 已实现：
 
-- WorkflowRun 的 shared API 门面、开发 Mock transport、Revision、有序五节点和字符串领域 ID。
+- WorkflowRun 的前端编排门面、本地 Repository Port/Adapter、Revision、有序五节点和字符串领域 ID。
 - 节点门禁、历史只读、从节点重启和后续执行线移除。
-- 系统质检连续失败两次的领域规则，以及质检通过后的生成完成状态。
+- 前端演示门禁连续失败两次的页面规则，以及对应的生成状态展示。
 - Quick Start 创建统一 WorkflowRun 并进入独立的简化创作台；后台进入 generation，但页面不展示工作流内部结构。
 - Workflow Editor 节点路由、历史 Revision URL 和重启交互。
 - Playtest 的完整 Revision 导入门禁、核验结论记录和非阻断导出提示。
 - 项目资产库路由及系统/项目 ActionTemplate 作用域契约。
-- Task 快照、CharacterVariant、Action fps、Frame 数组顺序和角色母版的明确前端命名。
+- Task/WorkflowTaskLink 分离、CharacterVariant、Action fps、Frame 数组顺序和角色母版的明确前端命名。
 - 生产构建强制使用真实 API transport，业务层禁止直接 fetch。
 
 仍待真实后端或业务实现：
 
-- Python WorkflowRun API adapter。
+- Generation、Asset、Review、Playtest、Export 等独立后端能力的 OpenAPI Adapter。
 - 两个 Provider 的真实 Session、模型验证、Job runtime 和 SSE。
 - 后端 quality-gate 报告和生成产物。
 - Character/Action/Frame 正式接口、Review 修复任务和真实播放器。
