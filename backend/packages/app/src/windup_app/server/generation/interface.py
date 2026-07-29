@@ -13,8 +13,6 @@
 from abc import ABC, abstractmethod
 
 from windup_app.server.generation.model import (
-    CharacterActionInput,
-    CharacterImageInput,
     GenerationResult,
     GenerationTask,
     GenerationType,
