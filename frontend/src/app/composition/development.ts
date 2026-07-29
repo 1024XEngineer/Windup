@@ -5,7 +5,7 @@ export interface CreateDevelopmentAppServicesOptions {
   projectLatencyMs?: number
 }
 
-/** 开发组合只在 loadAppServices 的动态开发分支中加载。 */
+/** 开发与 Preview 演示复用同一内存实现；具体环境只由 app 入口选择。 */
 export function createDevelopmentAppServices({
   projectLatencyMs = 0,
 }: CreateDevelopmentAppServicesOptions = {}): AppServices {
