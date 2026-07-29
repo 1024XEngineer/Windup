@@ -29,8 +29,8 @@ app -> pages -> features -> capabilities -> entities -> shared
 `app/composition` 是唯一实现选择点。`AppServices` 当前注入 `projects: ProjectRepository`：
 
 - 开发默认动态加载内存 Repository；延迟由构造参数注入，测试不依赖环境变量特判。
-- 开发设置 `VITE_PROJECT_ADAPTER=http` 时联调真实 Project API。
-- 生产组合只创建 HTTP Repository，并由测试锁定 `adapterKind === 'real'`。
+- 开发设置 `VITE_PROJECT_ADAPTER=pr57-candidate` 时才加载 PR #57 候选 HTTP Repository。
+- 生产组合在正式 OpenAPI 到位前注入不可用 Repository，不装配 Mock 或候选接口。
 - 开发种子模块只从开发组合入口加载，生产产物不得包含种子数据。
 
 ## Capabilities
@@ -54,8 +54,8 @@ import { createWorkflowRun, getCurrentRevision } from '@/entities'
 import type { ProjectRepository, Task } from '@/entities'
 ~~~
 
-- `project`：Project 领域形状、异步 Repository Port、HTTP Repository 和 React 查询 Hook。图片上传
-  不属于 Project。
+- `project`：Project 领域形状、异步 Repository Port、候选 HTTP Repository 和 React 查询 Hook。
+  图片上传不属于 Project。
 - `character`：Character、Outfit、Action、Frame。Character 不反向保存 WorkflowRun 定位字段。
 - `task`：后端异步任务快照、事件和尚未冻结的订阅入口。
 - `provider-session`：Provider 描述、凭据模式和短期会话形状；Generation Feature 只消费它。

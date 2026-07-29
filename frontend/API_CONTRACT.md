@@ -1,9 +1,10 @@
 # 前端 API 契约状态
 
 本文是前端当前调用和需求签名的清单，不替代未来由后端 OpenAPI 生成的客户端。
-在 OpenAPI 落地前，只有标为“已核对”的接口可以按真实后端接口联调；其余接口
-不能被描述为已接通后端。开发或测试可以在业务 Port 后注入假实现，但 `shared/api` 只负责真实
-HTTP，生产请求不会回退假数据。WorkflowRun 是前端编排模型，不属于后端 API 契约。
+在 OpenAPI 落地前，只有标为“已核对”的接口可以按真实后端接口联调；Project 的现有 HTTP 映射
+只能作为候选实现供开发环境显式启用。开发或测试可以在业务 Port 后注入假实现，但 `shared/api`
+只负责真实 HTTP，生产请求不会装配 Project 候选接口或回退假数据。WorkflowRun 是前端编排模型，
+不属于后端 API 契约。
 
 ## 通用约定
 
@@ -12,13 +13,14 @@ HTTP，生产请求不会回退假数据。WorkflowRun 是前端编排模型，�
 - 列表响应额外包含 `total`、`page` 和 `page_size`。
 - 生产构建只使用真实 transport；不会回退到 Mock 数据。
 - Project 页面统一依赖异步 `ProjectRepository`。开发默认由 app 注入内存实现；设置
-  `VITE_PROJECT_ADAPTER=http` 时联调真实接口；生产 app 只能注入 HTTP 实现。
+  `VITE_PROJECT_ADAPTER=pr57-candidate` 时联调候选映射；生产 app 在正式接口到位前明确不可用。
 - 图片生成、图片上传等调用按业务 Capability 注入 Adapter，不在 transport 层用全局开关选实现。
 
-## 已核对：项目与上传
+## 候选映射：项目
 
-以下接口的路径、方法、字段和响应壳已与后端 PR #57 对照。该 PR 尚未合并或部署，
-因此它们是“可联调契约”，不是当前已验证可访问的服务。
+以下 Project 路径和 HTTP DTO 来自已关闭且未合并的后端 PR #57。PR #64 延续了统一响应壳、
+分页形状和 Project 内部模型，但尚未提供 FastAPI 路由或 OpenAPI。因此以下内容只供开发环境
+显式联调，不是当前已验证可访问的正式服务。
 
 ### 项目
 
@@ -58,13 +60,13 @@ type DirectionalMovement = 'single' | 'four-way' | 'eight-way'
 
 Quick Start 也必须先创建 Project。当前 MS2 Project Planner 从自然语言生成不超过 20 字符的临时
 项目名，并使用侧视、四方向、64×64 默认约束；将来由 Agent 参数规划实现替换。WorkflowRun 必须
-保存 Project API 返回的 ID，不能使用 `quick-start` 等固定假值。
+保存 ProjectRepository 返回的 ID，不能使用 `quick-start` 等固定假值。
 
 Project 的页面接口保持异步，并由 app 一次性注入同一个实现：
 
 ```ts
 interface ProjectRepository {
-  readonly adapterKind: 'real' | 'mock'
+  readonly adapterKind: 'mock' | 'candidate' | 'unavailable'
   list(query?: PageQuery): Promise<Paged<Project>>
   get(id: string): Promise<Project>
   create(input: CreateProjectInput): Promise<Project>
@@ -72,10 +74,10 @@ interface ProjectRepository {
 }
 ```
 
-HTTP Repository 负责上述 URL、数字枚举和 DTO 映射；页面、Quick Start 和 React Hook 不直接选择
-真实或开发实现。
+候选 HTTP Repository 负责上述 URL、数字枚举和 DTO 映射；页面、Quick Start 和 React Hook
+不直接选择具体实现。
 
-### 参考图片上传
+## 参考图片上传
 
 - `POST /upload/image`
 - `multipart/form-data`，字段名为 `file`
