@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from qiniu import Auth, put_data
-
 from windup_framework.config.storage import settings as storage_settings
 
 from windup_app.server.media.interface import MediaService
@@ -26,6 +24,8 @@ class ObjectStorageMediaService(MediaService):
     ) -> MediaUploadResult:
         suffix = _file_suffix(metadata.filename)
         object_key = f"media/{metadata.category}/{uuid4().hex}{suffix}"
+
+        from qiniu import Auth, put_data
 
         auth = Auth(storage_settings.access_key, storage_settings.secret_key)
         token = auth.upload_token(storage_settings.bucket_name, object_key)
