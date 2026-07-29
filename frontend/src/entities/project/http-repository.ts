@@ -71,12 +71,17 @@ function toProject(dto: ProjectDto): Project {
   }
 }
 
-/** 真实 Project HTTP Adapter；DTO、URL 和用户参数不会泄漏到页面。 */
+/**
+ * PR #57 候选 Project HTTP Adapter。
+ *
+ * PR #64 延续了 Project 模型与响应壳，但尚未提供 HTTP 路由或 OpenAPI；
+ * 因此本实现只供开发环境显式联调，不得进入生产组合。
+ */
 export function createHttpProjectRepository({
   currentUserId,
 }: CreateHttpProjectRepositoryOptions): ProjectRepository {
   return {
-    adapterKind: 'real',
+    adapterKind: 'candidate',
 
     async list(query = {}) {
       const paged = await requestList<ProjectDto>('/projects', {

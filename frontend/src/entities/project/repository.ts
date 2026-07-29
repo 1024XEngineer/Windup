@@ -1,12 +1,12 @@
 import type { Paged, PageQuery } from '@/shared/pagination'
 import type { CreateProjectInput, Project } from './types'
 
-/** Project Repository 的实现来源；生产应用组合只能使用 real。 */
-export type ProjectRepositoryAdapterKind = 'real' | 'mock'
+/** 当前可装配的 Project Repository 来源；正式 HTTP 契约尚未接入。 */
+export type ProjectRepositoryAdapterKind = 'mock' | 'candidate' | 'unavailable'
 
 /**
  * Project 的异步存取端口。
- * 页面和用例始终依赖 Promise 形状，不关心背后是真实 HTTP 还是开发内存实现。
+ * 页面和用例始终依赖 Promise 形状，不在业务代码里选择具体实现。
  */
 export interface ProjectRepository {
   readonly adapterKind: ProjectRepositoryAdapterKind

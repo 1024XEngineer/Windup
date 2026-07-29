@@ -1,6 +1,6 @@
 /**
  * 项目：角色生成的容器，保存全局约束（视角、尺寸、画风）。
- * 字段对照后端 ProjectOut（PR #57），命名转换在 ./http-repository.ts。
+ * 字段与 PR #64 的后端 Project 模型保持对应；HTTP DTO 仍由候选 Repository 隔离。
  */
 export interface Project {
   /** 后端 Project ID；领域层统一转为字符串。 */
