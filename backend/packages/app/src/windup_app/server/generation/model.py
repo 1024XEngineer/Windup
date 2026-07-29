@@ -1,18 +1,23 @@
-"""生成任务领域模型。"""
+"""生成任务领域模型。
+
+生成任务按类型区分：角色图片生成（→ ``Character.reference_image_url``）、
+角色动作生成（→ ``character_data.outfits[].actions[].frames[]``）。
+前端拿到生成结果后可直接回填 character 模块的对应字段。
+"""
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any
 
 
 # -- 枚举 ----------------------------------------------------------------
 
+
 class GenerationType(StrEnum):
     """生成任务类型——每新增一种生成能力，在此加一个成员。"""
 
-    CHARACTER_IMAGE = "character_image"    # 角色立绘 / 头像
-    CHARACTER_ACTION = "character_action"  # 角色动作（walk / idle / attack / jump / custom）
+    CHARACTER_IMAGE = "character_image"      # 角色参考图
+    CHARACTER_ACTION = "character_action"    # 角色动作帧序列
 
 
 class ActionType(StrEnum):
@@ -21,20 +26,20 @@ class ActionType(StrEnum):
     WALK = "walk"
     IDLE = "idle"
     ATTACK = "attack"
-    JUMP = "jump"
     CUSTOM = "custom"
 
 
 class TaskStatus(StrEnum):
     """生成任务状态。"""
 
-    PENDING = "pending"        # 排队中
-    RUNNING = "running"        # 生成中
-    COMPLETED = "completed"    # 成功
-    FAILED = "failed"          # 失败
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
-# -- 入参（策略各自持有自己的输入模型）----------------------------------
+# -- 入参 ----------------------------------------------------------------
+
 
 @dataclass
 class CharacterImageInput:
@@ -45,8 +50,7 @@ class CharacterImageInput:
     negative_prompt: str = ""
     width: int = 1024
     height: int = 1024
-    num_images: int = 1  #默认生成一张，后续可根据业务来选择合适数目
-
+    num_images: int = 1
 
 
 @dataclass
@@ -55,23 +59,49 @@ class CharacterActionInput:
 
     character_id: int
     action_type: ActionType
-    custom_prompt: str | None = None            # CUSTOM 时必填
-    reference_video_url: str | None = None      # 可选参考视频
-    reference_image_urls: list[str] = field(default_factory=list)  # 可选参考图片
-    num_frames: int = 16                      # 默认16帧数，后续可根据业务来选择。
+    custom_prompt: str | None = None
+    reference_video_url: str | None = None
+    reference_image_urls: list[str] = field(default_factory=list)
+    num_frames: int = 16
 
 
-# -- 出参 ----------------------------------------------------------------
+# -- 出参（按任务类型细化，前端可直接回填 character 模块）------------------
+
 
 @dataclass
-class GenerationResult:
-    """单次生成结果。"""
+class CharacterImageOutput:
+    """角色图片生成结果。
 
-    urls: list[str] = field(default_factory=list)   # 生成产物 URL（图片/视频）
-    metadata: dict[str, Any] = field(default_factory=dict)
+    前端拿到 ``image_url`` 后直接写入 ``Character.reference_image_url``。
+    """
+
+    image_url: str
+
+
+@dataclass
+class CharacterActionFrame:
+    """动作帧——前端写入 ``CharacterAction.frames[]``。"""
+
+    index: int
+    image_url: str
+    duration_ms: int | None = None
+
+
+@dataclass
+class CharacterActionOutput:
+    """角色动作生成结果。
+
+    前端拿到后写入 ``character_data.outfits[].actions[]``：
+    ``action_type`` → ``CharacterAction.type``，
+    ``frames`` → ``CharacterAction.frames[]``。
+    """
+
+    action_type: str
+    frames: list[CharacterActionFrame] = field(default_factory=list)
 
 
 # -- 任务记录 ------------------------------------------------------------
+
 
 @dataclass
 class GenerationTask:
@@ -82,8 +112,8 @@ class GenerationTask:
     project_id: int | None = None
     task_type: GenerationType = GenerationType.CHARACTER_IMAGE
     status: TaskStatus = TaskStatus.PENDING
-    input_payload: dict[str, Any] = field(default_factory=dict)
-    result: GenerationResult | None = None
+    input_payload: dict | None = None
+    result: CharacterImageOutput | CharacterActionOutput | None = None
     error_message: str | None = None
     create_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     update_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

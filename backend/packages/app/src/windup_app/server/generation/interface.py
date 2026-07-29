@@ -1,105 +1,61 @@
-"""生成任务领域抽象接口。
+"""生成任务领域服务接口。
 
-采用策略模式：
+API 层只依赖本模块定义的抽象。具体实现（AI 引擎调用、任务队列等）
+在应用装配层继承 :class:`GenerationService` 后通过依赖注入提供。
 
-- :class:`GenerationStrategy` — 策略接口，每种生成类型一个实现，
-  封装输入校验、prompt 模板、模型调用。
-- :class:`GenerationService` — 上下文，持有策略注册表，负责编排
-  任务生命周期（提交→排队→轮询→回调），按 ``task_type`` 分发到对应策略。
+调用流程
+--------
+1. 前端调用 ``generate_character_image`` / ``generate_character_action`` 提交任务，
+   拿到 ``task_id``。
+2. 前端通过 SSE 订阅任务状态变更,无需轮询。
+   web 层提供 ``GET /generation/tasks/{task_id}/stream`` 端点,
+   服务端在任务状态变化时推送 ``task_update`` 事件。
+   事件 payload 包含 ``task_id`` / ``task_type`` / ``status``,
+   完成时附带 ``result``,失败时附带 ``error_message``。
+3. 前端从 ``task.status`` 判断完成,从 ``result`` 取出出参,回填 character 模块：
 
-新增生成能力只需新增一个 ``GenerationStrategy`` 子类并注册即可。
+   .. code-block:: text
+
+       CharacterImageOutput.image_url  → Character.reference_image_url
+       CharacterActionOutput.frames[]  → character_data.outfits[].actions[].frames[]
 """
 
 from abc import ABC, abstractmethod
 
 from windup_app.server.generation.model import (
-    GenerationResult,
+    CharacterActionInput,
+    CharacterImageInput,
     GenerationTask,
-    GenerationType,
 )
 
 
-# -- 策略接口 ------------------------------------------------------------
-
-class GenerationStrategy(ABC):
-    """单一生成类型的策略。
-
-    子类 = 一种生成能力（角色图片 / 角色动作 / …）。
-    """
-
-    @property
-    @abstractmethod
-    def task_type(self) -> GenerationType:
-        """该策略处理的生成类型。"""
-
-    @abstractmethod
-    def validate_input(self, payload: dict) -> None:
-        """校验入参，不合法则抛 BizException。
-
-        子类负责将 payload 反序列化为自己的输入模型并校验字段。
-        """
-
-    @abstractmethod
-    async def generate(self, payload: dict) -> GenerationResult:
-        """执行生成，返回产物 URL 列表和元数据。
-
-        由 :class:`GenerationService` 在任务状态变为 RUNNING 后调用。
-        """
-
-
-# -- 上下文接口 ----------------------------------------------------------
-
 class GenerationService(ABC):
-    """生成任务用例的稳定边界。
+    """生成任务用例的抽象边界。"""
 
-    持有策略注册表 :meth:`register_strategy`，API 层不感知具体策略。
-    """
-
-    # -- 策略注册 ---------------------------------------------------------
+    # -- 任务提交 ------------------------------------------------------------
 
     @abstractmethod
-    def register_strategy(self, strategy: GenerationStrategy) -> None:
-        """注册生成策略。
+    def generate_character_image(self, input: CharacterImageInput) -> GenerationTask:
+        """提交角色图片生成任务。
 
-        通常在应用装配层调用：
-        ``service.register_strategy(CharacterImageStrategy())``
-        """
-
-    # -- 任务生命周期 ------------------------------------------------------
-
-    @abstractmethod
-    def submit(
-        self,
-        *,
-        user_id: int,
-        task_type: GenerationType,
-        payload: dict,
-        project_id: int | None = None,
-    ) -> GenerationTask:
-        """提交生成任务（状态 = PENDING）。
-
-        内部按 ``task_type`` 查找对应策略并调用 ``validate_input``，
-        校验通过后持久化任务并入队。
-
-        :raises windup_common.exceptions.BizException: 不支持的 task_type 或入参校验失败。
+        入参包含参考图 URL 和 prompt 等参数；出参为 ``CharacterImageOutput``，
+        前端拿到 ``image_url`` 后回填 ``Character.reference_image_url``。
         """
 
     @abstractmethod
-    def get_task(self, task_id: int) -> GenerationTask | None:
-        """查询单个任务（含最新状态和结果）。"""
+    def generate_character_action(self, input: CharacterActionInput) -> GenerationTask:
+        """提交角色动作生成任务。
+
+        入参包含角色 ID、动作类型和参考素材；出参为 ``CharacterActionOutput``，
+        前端拿到 ``frames[]`` 后回填 ``character_data.outfits[].actions[].frames[]``。
+        """
+
+    # -- 查询 ----------------------------------------------------------------
 
     @abstractmethod
-    def list_tasks(
-        self,
-        *,
-        user_id: int,
-        project_id: int | None = None,
-        task_type: GenerationType | None = None,
-        page: int = 1,
-        page_size: int = 20,
-    ) -> tuple[list[GenerationTask], int]:
-        """分页查询用户的任务列表，可按项目和类型过滤。"""
+    def get_task(self, project_id: int, task_id: int) -> GenerationTask | None:
+        """查询任务状态与结果。
 
-    @abstractmethod
-    def cancel(self, task_id: int) -> bool:
-        """取消未开始的任务（PENDING → 取消）。"""
+        返回完整的 ``GenerationTask``，前端根据 ``status`` 判断是否完成，
+        从 ``result`` 中读取对应类型的出参。
+        """

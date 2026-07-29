@@ -10,10 +10,8 @@ from windup_app.server.user.model import (
     LoginByCodeInput,
     LoginByPasswordInput,
     LoginResult,
-    OAuthCallbackInput,
     RegisterInput,
     User,
-    UserOAuth,
 )
 
 
@@ -59,30 +57,8 @@ class UserService(ABC):
         """销毁会话。"""
 
     # -- OAuth -----------------------------------------------------------
-
-    @abstractmethod
-    def get_oauth_authorize_url(self, provider: str, redirect_uri: str) -> str:
-        """获取第三方授权页 URL。
-
-        :param provider: ``"github"`` / ``"google"``。
-        :param redirect_uri: 回调地址。
-        :raises windup_common.exceptions.BizException: 不支持的 provider。
-        """
-
-    @abstractmethod
-    def login_by_oauth(self, input: OAuthCallbackInput) -> LoginResult:
-        """OAuth 回调：已有绑定则直接登录，新用户则自动注册并绑定。
-
-        :raises windup_common.exceptions.BizException: OAuth 授权失败 / 账号已封禁。
-        """
-
-    @abstractmethod
-    def bind_oauth(self, user_id: int, input: OAuthCallbackInput) -> UserOAuth:
-        """为已登录用户绑定第三方账号。
-
-        :raises windup_common.exceptions.BizException: 该第三方账号已被其他用户绑定。
-        """
-
+    # 第三方认证暂不设计、不实现。保留该区域作为后续扩展占位。
+    # 相关 authorize / callback / bind 接口和 UserOAuth 模型暂时停用。
     # -- 会话管理 ---------------------------------------------------------
 
     @abstractmethod
@@ -115,6 +91,4 @@ class UserService(ABC):
     def get_by_email(self, email: str) -> User | None:
         """按邮箱查询用户。"""
 
-    @abstractmethod
-    def get_oauth_bindings(self, user_id: int) -> list[UserOAuth]:
-        """查询用户已绑定的第三方账号列表。"""
+    # 第三方认证暂不设计、不实现,因此没有 OAuth 绑定查询接口。
