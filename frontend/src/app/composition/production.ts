@@ -11,7 +11,7 @@ import type {
   TaskRepository,
 } from '@/entities'
 import type { WorkflowRunRepository } from '@/entities'
-import type { QuickStartPort } from '@/features/quick-start'
+import type { QuickStartService } from '@/pages/quick-start'
 import type { AppServices } from './types'
 
 /**
@@ -91,7 +91,7 @@ export function createProductionAppServices(): AppServices {
     },
   }
 
-  const quickStart: QuickStartPort = {
+  const quickStart: QuickStartService = {
     async start() {
       throw new Error('Quick Start 用例尚未配置')
     },

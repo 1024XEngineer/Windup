@@ -11,7 +11,7 @@ import type {
   TaskRepository,
   WorkflowRunRepository,
 } from '@/entities'
-import type { QuickStartPort } from '@/features/quick-start'
+import type { QuickStartService } from '@/pages/quick-start'
 
 /** 由应用启动阶段一次性选择的外部实现。 */
 export interface AppServices {
@@ -27,8 +27,8 @@ export interface AppServices {
   /** 任务事件订阅入口；不直接注入页面。 */
   taskEvents: TaskEventSource
   imageUpload: ImageUploadPort
-  /** Quick Start 页面唯一可调用的自动创作用例。 */
-  quickStart: QuickStartPort
+  /** Quick Start 页面专用的自动创作会话服务。 */
+  quickStart: QuickStartService
   /** 手动与自动入口共用的单次制作执行边界。 */
   productionEngine: ProductionEnginePort
   /** 从历史节点创建新执行线的唯一公开用例。 */
