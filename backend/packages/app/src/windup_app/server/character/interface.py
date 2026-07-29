@@ -1,64 +1,50 @@
-"""角色领域抽象接口。
+"""角色领域服务接口。
 
-前端 master-detail 布局：
+角色 API 只依赖本模块定义的抽象接口。具体实现（SQLAlchemy 等）应在
+应用装配层继承 :class:`CharacterService` 后通过依赖注入提供。
 
-- 左侧列表：:meth:`CharacterService.list_characters`
-- 右侧内容区：:meth:`CharacterService.get_character_detail`
-  一次性返回模板 / 动作（按 action_type 分组）/ 穿戴道具。
-
-子实体管理（模板/动作/穿戴）由各自领域包负责：
-:mod:`windup_app.server.character.character_template` /
-:mod:`windup_app.server.character.action` /
-:mod:`windup_app.server.character.wearable`。
+约定
+----
+- session-per-call: ``session`` 由调用方（FastAPI 的 ``get_session`` 依赖）按请求传入。
+- 具体实现保持无状态，可作为模块级单例。
+- ``character_data`` 内造型/动作/帧的校验由 Pydantic schema 在 API 层完成，
+  接口层不感知其内部结构。
 """
 
 from abc import ABC, abstractmethod
 
-from windup_app.server.character.model import (
-    Character,
-    CharacterDetail,
-    CreateCharacterInput,
-    UpdateCharacterInput,
-)
+from sqlalchemy.orm import Session
+
+from windup_app.server.character.model import Character
 
 
 class CharacterService(ABC):
-    """角色用例的稳定边界。"""
-
-    # -- CRUD ------------------------------------------------------------
+    """角色 CRUD 用例的抽象边界。"""
 
     @abstractmethod
-    def create_character(self, input: CreateCharacterInput) -> Character:
-        """创建角色。"""
+    def create_character(self, session: Session, **fields) -> Character:
+        """创建角色。
+
+        ``fields`` 对齐请求体的字段集，由实现组装成 :class:`Character` 后持久化。
+        """
 
     @abstractmethod
-    def get_character(self, character_id: int) -> Character | None:
+    def get_character(self, session: Session, character_id: int) -> Character | None:
         """按 ID 查询角色。"""
 
     @abstractmethod
     def list_characters(
-        self, *, project_id: int, page: int = 1, page_size: int = 20,
+        self, session: Session, *, project_id: int, page: int, page_size: int,
     ) -> tuple[list[Character], int]:
-        """分页查询项目下的角色列表（左侧面板）。"""
+        """分页查询项目下的角色列表，返回 (当前页数据, 总数)。"""
 
     @abstractmethod
-    def update_character(self, character_id: int, input: UpdateCharacterInput) -> Character | None:
-        """更新角色名称 / 描述。"""
+    def update_character(self, session: Session, character_id: int, **fields) -> Character | None:
+        """更新角色描述、参考图或 character_data 等字段。
 
-    @abstractmethod
-    def delete_character(self, character_id: int) -> bool:
-        """删除角色及其所有关联。"""
-
-    # -- 详情聚合（右侧内容区）---------------------------------------------
-
-    @abstractmethod
-    def get_character_detail(self, character_id: int) -> CharacterDetail | None:
-        """获取角色详情。
-
-        一次性返回：
-        - 角色基本信息
-        - 当前启用的模板
-        - 所有模板版本列表
-        - 动作列表（按 action_type 分组）
-        - 穿戴道具列表（含挂载定位）
+        返回更新后的角色；不存在时返回 ``None``。
         """
+
+    @abstractmethod
+    def delete_character(self, session: Session, character_id: int) -> bool:
+        """删除角色并返回是否找到。"""
