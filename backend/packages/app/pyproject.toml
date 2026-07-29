@@ -11,7 +11,11 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "pydantic>=2.7",
     "sqlalchemy>=2.0",
+    "python-multipart>=0.0.9",
 ]
+
+[project.scripts]
+windup = "windup_app.bootstrap.app:main"
 
 [tool.uv.sources]
 windup-common = { workspace = true }
