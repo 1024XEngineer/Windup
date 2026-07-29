@@ -47,7 +47,6 @@ const DECLARED_SLICES = {
     'action-template',
     'character',
     'project',
-    'provider-session',
     'task',
     'wearable',
     'workflow-run',
