@@ -35,6 +35,7 @@ describe('Project HTTP Repository', () => {
     requestMock.mockResolvedValue(dto)
     const repository = createHttpProjectRepository({ currentUserId: 7 })
 
+    expect(repository.adapterKind).toBe('candidate')
     await expect(repository.get('42')).resolves.toMatchObject({
       id: '42',
       perspective: 'side',
