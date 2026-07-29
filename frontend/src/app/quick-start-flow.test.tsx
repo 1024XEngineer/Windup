@@ -27,7 +27,7 @@ describe('QuickStartPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '开始创作' }))
 
     await waitFor(() => expect(window.location.pathname).toMatch(/^\/quick-start\/run-/))
-    expect(screen.getByText(/创作会话 run-/)).toBeTruthy()
+    expect(await screen.findByText(/创作会话 run-/)).toBeTruthy()
     expect(await screen.findByText(/自动制作中|等待人工审核/)).toBeTruthy()
     expect(localStorage.getItem('windup.workflow-runs.v1')).toBeNull()
   })
