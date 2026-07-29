@@ -1,287 +1,236 @@
-# Windup MS2 前端架构定义（最终冻结版）
+# Windup 前端架构 v3
 
-本文记录当前已确认的前端目标架构，并区分已落地代码与尚待后端/业务实现的接口。不存在的能力只保留接口和说明，不伪造成功结果。
+本文记录导师 2026-07-28 确认的目标架构及当前前端落地状态。目标合同与当前后端可调用能力必须分开：
+WorkflowRun 后端落库、Character 整树更新和三类 Task 是已确认的产品/领域方向，但不表示 PR #64
+已经提供了所有对应 HTTP 路由。
 
-> 2026-07-29 契约状态勘误：本文涉及 Project“生产固定使用 HTTP”的条目已经失效。
-> 当前以 `frontend/API_CONTRACT.md` 为准：开发默认使用 Memory，PR #57 映射仅供开发显式联调，
-> 生产在正式 OpenAPI 到位前保持不可用；其他冻结结论不变。
-
-> 2026-07-29 Provider 产品边界勘误：用户不选择 AI Provider、模型或提交 API Key，相关配置由
-> 后端内部负责。本文中的 ProviderSession、短期 sessionId、双 Provider 和前端凭据模式条目已经
-> 失效；前端只保留与供应商无关的生成能力与 Task 边界。
-
-## 1. 技术边界
+## 1. 当前基线
 
 - 前端：React + Vite + TypeScript + Tailwind CSS。
-- 工具链：Oxlint 负责代码检查，Oxfmt 负责格式化；Tailwind 与 Vite 插件属于构建期开发依赖。
-- 后端：Python；按 PR #62 分为 Project、Media、Character、Generation、Asset、Review、Playtest、Export，以及未来的 workflow definition / execution 等独立能力。后端 Job、质量门禁和导出任务由对应业务域保存或执行。
-- 分层：app -> pages -> features -> capabilities -> entities -> shared。
-- Quick Start 与手动 Workflow 是同一套制作引擎的两种控制方式：前者由前端 Agent 自动连续驱动并隐藏节点，后者由用户逐步驱动；两者进入同一套 WorkflowRun、Revision、生成、质检、历史、Playtest 和导出流程。
-- WorkflowRun、Revision 和页面节点由前端本地 Repository 编排，不要求后端提供同名资源。
+- 后端代码基线：PR #64 head `975c594`。
+- 当前唯一已接通的真实业务 HTTP 能力是图片上传：
+  `POST /media/upload?category=reference-image`。
+- Preview/开发通过与正式 Port 同形的异步内存 Mock 走通页面入口和工作流推进。
+- Production 未配置的能力明确失败，不导入开发 Mock，也不在真实请求失败后回退 Mock。
+- 仓库根目录的 `project-api.md` 已确认错误，不再作为前端契约来源。
 
-## 2. 分层职责
+## 2. 分层
 
-| 层 | 职责 | 当前状态 |
-|---|---|---|
-| app | 启动、Router、Provider、全局布局、错误边界 | 已有基础实现 |
-| pages | 完整路由页面、URL、页面临时状态和模块组合 | 已有部分页面，Workflow steps 待实现 |
-| features | 用户对业务对象执行的完整操作 | 已有占位 Feature，按真实实现增量拆分 |
-| capabilities | 调用外部业务能力的稳定 Port、服务和 Adapter，不含 UI | 图片生成 Port 与图片上传 HTTP Adapter 已实现 |
-| entities | 有身份或生命周期的数据、Repository、命令、选择器和领域规则 | Project 有 HTTP/开发 Repository；WorkflowRun 由前端本地 Repository 承载 |
-| shared | 无业务含义的真实 HTTP transport、分页、Hook 和 UI | 已有 API、pagination、hooks、ui |
+```text
+app -> pages -> features -> application -> capabilities -> entities -> shared
+```
 
-Account、Billing 和资产库复用 Feature 当前只在本文中预留，不创建代码入口。
+| 层 | 职责 |
+|---|---|
+| app | 启动、路由、全局布局和服务装配 |
+| pages | 路由参数、页面临时状态与模块组合 |
+| features | 面向用户的生成、设置、审核、导出等操作 |
+| application | 跨页面、跨能力的 UI 无关用例 |
+| capabilities | 图片生成、上传等外部能力 Port |
+| entities | 有身份和生命周期的数据及 Repository |
+| shared | 无业务语义的网络、分页、Hooks 和 UI 基础 |
 
-## 3. 依赖规则
+依赖规则：
 
-1. 代码只能依赖更低层：app -> pages -> features -> capabilities -> entities -> shared。
-2. 同一层不同 Slice 默认不能互相 import。
-3. 对外统一从 Slice 根 index.ts 进入。
-4. entities 对外使用统一门面 @/entities；Entity 内部默认不产生其他 Entity 的运行时依赖。
-5. Entity 之间通过 ID、类型契约或输入对象传递关系，不直接调用另一个 Entity 的内部 API。
-6. shared 不得依赖任何 Windup 业务层。
-7. Page、Feature、Capability 和 Entity 不直接调用 fetch；真实 Adapter 经 shared/api 访问网络，WorkflowRun 本地编排不经过 HTTP。
-8. Mock 只能由 app 开发组合或测试选择；生产组合不得导入 Mock，真实失败不得运行时降级。
-9. 不允许深层路径绕过公开入口，不允许循环依赖。
-10. 未实现能力不得返回伪造成功结果。
+1. 只能向下依赖，不允许反向依赖。
+2. 同层 Page、Feature、Application、Capability Slice 互不导入。
+3. 跨 Slice 只从根 `index.ts(x)` 进入；Entity 统一从 `@/entities` 使用。
+4. Page、Feature 和 Entity 不直接调用 `fetch`。
+5. Mock 只由 app 的开发组合注入，不能写死在页面或 Port 中。
+6. 后端尚未冻结的能力只保留 Port/类型，不猜 URL、响应壳或成功数据。
 
-当前仓库已有 AST 架构检查；新增规则在当前代码可验证时加入，依赖未来后端/generated client 的规则先作为文档验收项。
-
-## 4. 路由与页面
-
-当前确认的路由：
-
-~~~
-/                                Home（目标入口）
-/quick-start                     Quick Start 输入页
-/quick-start/:runId              Quick Start 简化创作台
-/projects                        项目列表
-/projects/:projectId             项目详情
-/projects/:projectId/assets      项目资产库
-/workflow-editor/:runId          当前 Revision 的工作流入口
-/workflow-editor/:runId/:stage   当前 Revision 的指定节点
-/playtest/:characterId           独立核验台
-~~~
-
-/ 不再承担 Quick Start 具体业务；Quick Start 使用 /quick-start。项目详情保留当前的 /projects/:projectId，不改为 /project/:projectId。
-
-Home 只提供 Quick Start 和从项目开始两个入口，不保存业务状态。Quick Start 负责自然语言输入和初始计划解析，先自动创建真实 Project，再用返回的 Project ID 创建与手动入口完全相同的 WorkflowRun，最后停留在独立的简化创作台（/quick-start/:runId）。该页面使用自然语言展示生成、检查和结果，不展示五个节点、Revision、WorkflowRun 或 Workflow Editor；后台仍复用同一套领域状态。需要精细控制时才进入 Workflow Editor。
-
-ProjectsPage、ProjectDetailPage 和 QuickStartPage 由 app 注入同一份异步 ProjectRepository；页面不选择 HTTP 或开发实现。AssetLibraryPage 当前直接使用 Entity；不提前创建 features/project 或 features/asset-library。Asset Library 以项目为上下文，展示项目 Character、项目 ActionTemplate、Wearable 以及系统内置 ActionTemplate。出现复杂复用后再提取 Feature。
-
-## 5. Workflow Editor
-
-目录边界：
-
-~~~
-pages/workflow-editor/
-├─ index.tsx
-├─ canvas/
-├─ editor/                 编辑器组件与交互测试
-└─ steps/
-   ├─ asset-step/
-   ├─ generation-step/
-   ├─ candidate-step/
-   ├─ review-step/
-   └─ export-step/
-~~~
-
-五个节点当前先写死，但通过有序 nodes 数组表达，后续可扩展节点类型。步骤页面负责 URL、布局、Feature 组合和页面临时状态；生成、质检、审核、修复和导出操作归对应 Feature。
-
-未解锁的后续节点访问时重定向到当前可执行节点；已执行历史节点允许只读查看；已通过节点允许重新开始。
-
-## 6. WorkflowRun、Revision 与节点
-
-前端领域层所有业务 ID 使用 string；独立后端能力的 DTO 保留真实类型，由对应 Entity mapper 转换。
-
-同一个 runId 下可以有多个 Revision：
-
-~~~
-run-1
-├─ revision-1：历史完整流程
-└─ revision-2：从某节点重新开始的当前流程
-~~~
-
-已经跑通的 Revision 永久保留、可查看；重新开始不会覆盖旧 Revision。
-
-当前节点类型：
-
-~~~
-asset | generation | candidate | review | export
-~~~
-
-节点状态：
-
-~~~
-locked | available | active | passed | failed
-~~~
-
-用户从节点 N3 重新开始时：
-
-1. N1、N2 的结果和输入可以作为新 Revision 的参考。
-2. N3 的旧结果可以作为重新执行的参考输入，但新 N3 必须重新通过。
-3. N4 及之后从新 Revision 的当前执行线上移除，不得作为新生成参考。
-4. 旧 Revision 的 N4 及之后仍保留，只能历史查看。
-5. 新 Revision 必须从 N3 重新跑到末尾，才能形成新的完整结果。
-
-流程门禁统一由 entities/workflow-run 的 selector/command 负责。Page 和 Feature 不复制门禁逻辑。
-
-## 7. 生成、质检、历史、Playtest 与导出
-
-当前需要真实联通两个 Provider，后续可扩展。前后端都可以持有凭据：
-
-~~~
-client | server
-~~~
-
-API Key 不写入 localStorage、WorkflowRun、Revision、Job 或历史记录。后端持有时前端只使用短期 sessionId；前端持有时只存于内存，刷新后重新建立 session。
-
-生成候选必须先经过系统质检：
-
-~ ~ ~
-generation
-  -> quality-gate
-      -> 第 1 次失败：自动重试
-      -> 第 2 次失败：阻断并请求重新生成
-      -> 通过：交付人工审核
-~ ~ ~
-
-以上是当前 MS2 的前端展示门禁，不是后端业务事实来源。真实生成与质检结果由后端
-Generation、Asset 和 Review 能力返回，前端只据此更新对应节点。
-
-质检通过后立即将 Revision 标记为生成完成并进入历史。人工审核和 Playtest 可以发现问题并发起新的 Revision，但不是逐帧强制通过门槛。
-
-状态拆分：
-
-~ ~ ~
-generationStatus: not_started | in_progress | completed | failed
-exportStatus: not_exported | exporting | exported | failed
-playtestStatus: not_tested | passed | issues_found
-~ ~ ~
-
-Quick Start 与手动流程创建后都位于素材节点并使用 `not_started`。传统工作流等待用户完成素材设置；
-Quick Start Agent 自动完成同一节点。只有真正进入 generation 后才切换为 `in_progress`，自动化不等于
-跳过内部节点。
-
-Playtest 可从 Quick Start、Workflow 或历史 Revision 导入。URL 形式：
-
-~ ~ ~
-/playtest/:characterId?runId=:runId&revision=:revisionId
-~ ~ ~
-
-Playtest 保存独立核验记录，可回流到对应 Revision 的 Review，但不修改历史结果。Playtest 未通过不阻断导出，只在导出时给出重新生成建议。
-
-## 8. API 与数据边界
-
-~ ~ ~
-app/composition/
-├─ index.ts         启动时选择实现；生产固定使用真实实现
-├─ production.ts    只组合真实 Adapter/Repository
-├─ development.ts   动态加载开发实现
-└─ mocks/           开发业务假实现，不模仿 HTTP
-
-capabilities/
-├─ image-generation/  图片生成 Port 与服务
-└─ image-upload/      图片上传 Port、服务与 HTTP Adapter
-
-shared/
-├─ api/             只处理真实 HTTP、响应壳、错误与 multipart
-├─ pagination/      PageQuery 与 Paged<T>
-├─ hooks/           通用异步 React 状态
-└─ ui/              无业务 UI
-~ ~ ~
-
-- shared/api 负责真实 HTTP、响应壳和通用错误；分页业务无关形状归 shared/pagination。
-- entities 负责业务 DTO 到领域模型的转换和非法状态校验。
-- WorkflowRun 由 Entity 内部返回 Promise 的 Repository Port 持久化，不注册 shared/api Mock route。
-- 三个流程状态函数只依赖唯一 Repository 组合入口；当前入口绑定本地 Adapter，且永远不负责选择 Generation、Review、Export 等业务能力实现。
-- 独立后端调用归 capabilities；手动控制器与 Quick Start Agent 复用同一 Port，再把真实结果转换为 WorkflowCommand。
-- 图片生成已经定义 Promise 形式的 `ImageGenerationPort`；生产 runtime 拒绝 Mock。真实 HTTP Adapter 等 OpenAPI 冻结后实现，不提前猜测路径或 DTO。
-- 图片上传已经定义 `ImageUploadPort` 与 HTTP Adapter；文件规则、multipart 和响应 URL 映射不属于 Project Entity。
-- Project 页面统一依赖 `ProjectRepository`。app 开发组合默认动态加载内存实现，`VITE_PROJECT_ADAPTER=http` 可联调真实接口，生产组合无条件创建 HTTP Repository。
-- 本地存储以内存覆盖层保护写入失败后的最新状态，恢复时逐条校验完整领域形状；本地 ID 不强制依赖 `randomUUID`。
-- 非法节点、状态、Revision 或 ID 必须抛出契约错误，不能用默认值伪造成功。
-- JSON 与 multipart 分别走 request/upload；SSE 契约未冻结前不保留可调用的假 transport。
-- shared/api 不含业务 Mock 或全局 Mock 开关。独立能力的 Mock 只在开发/测试显式注入；真实 API 失败不得回退 Mock。
-- generated 只作为未来 OpenAPI 客户端接入点，不创建不存在的代码。
-
-## 9. 状态归属和查询抽象
-
-- WorkflowRun、Revision、节点、命令和门禁归 entities/workflow-run。
-- 当前制作推进逻辑归前端 Production Engine；手动控制器执行一步后等待用户，Quick Start Agent 使用同一能力和命令连续推进。
-- Project、Character、ActionTemplate、Wearable、Task、ProviderSession 归各自 Entity。
-- 后端 Task Entity 只包含任务自身的状态、进度、错误和未冻结的 result；`WorkflowTaskLink` 留在 WorkflowRun，将 taskId 关联到 run、revision 和 node。
-- Character 保留 outfits 层；造型通过 candidateCharacterTemplates 保存候选母版，通过 characterTemplateUrl 保存用户选定母版，并拥有各自的 Action；MVP UI 只展示第一套造型。
-- Action 自身携带 fps；Frame 顺序由 Action.frames 数组表达，不重复保存 index。
-- Action 不保存 sourceWorkflowRunId；页面使用已有 runId、revisionId、actionId 和 frameIndex 完成定位，不让 Character 资产反向认识 WorkflowRun。
-- ActionTemplate 使用 system/project 作用域并携带动作提示词；addAction 只通过 actionTemplateId 引用它。角色母版统一使用 characterTemplate 前缀，多方向基准帧保持命名为 baseFrames。
-- URL、画布缩放、节点选中、资产筛选和当前审核位置归对应 Page。
-- Generation、Review、Playtest 的局部交互状态归对应 Feature 或 Playtest Page。
-- 不建立 Redux、Zustand 等全局业务 Store。
-- 跨 Entity 复用的异步 React 状态放在 shared/hooks；分页形状放在 shared/pagination；不使用含义宽泛的 shared/lib。
-
-## 10. 目录增量规则
-
-当前一级模块清单由架构测试精确锁定：
+当前一级目录：
 
 - pages：asset-library、home、not-found、playtest、project-detail、projects、quick-start、workflow-editor。
 - features：character-setup、export、generation、quick-start、review。
+- application：production-engine、workflow-controller、workflow-restart。
 - capabilities：image-generation、image-upload。
-- entities：action-template、character、project、provider-session、task、wearable、workflow-run。
+- entities：action-template、character、media、playtest-inspection、project、task、workflow-run。
 - shared：api、hooks、pagination、ui。
 
-新增一级目录必须先按职责归类、提供根 `index.ts(x)` 并同步架构清单，不能照搬后端模块名。
+## 3. 一套内在流程，两套独立界面
 
-计划中的 Feature 子目录可以现在创建，但不写伪实现：
+Quick Start 与传统 Workflow 的业务顺序一致，但控制方式和显示内容完全不同：
 
-- 有公开职责的目录使用 index.ts/index.tsx，只包含类型、Props、签名和注释。
-- 没有可定义接口的目录使用 README.md 说明职责、输入输出和禁止事项。
-- shared/ui 不提前创建 Button、Modal、Toast 等空组件；只维护真实存在的组件，并用 README 说明未来规范。
-- Account/Billing 只在本文预留，不创建页面、Feature 或 Entity。
-- 资产库复用 Feature 只在本文预留，不创建 features/asset-library。
+- Quick Start 是自然语言/参考图入口，由 Agent 连续推进并隐藏节点、Revision 和专业参数。
+- Workflow Editor 逐步展示页面节点，等待用户确认后再推进下一步。
+- 两者共用 UI 无关的 `WorkflowControllerPort` 和同一种 WorkflowRun，不共用彼此的页面 UI。
+- Quick Start 不得使用 `quick-start` 等伪 Project ID；启动时创建真实形状的 Project 与 WorkflowRun。
 
-## 11. 测试策略
+标准节点顺序：
 
-优先覆盖：
+```text
+character-setup
+-> character-template
+-> template-candidate
+-> action-setup
+-> first-frame
+-> complete-animation
+-> review
+-> export
+```
 
-1. Entity 状态机、Revision、节点重启、历史只读和门禁。
-2. Quick Start 与手动 Workflow 共用同一个 WorkflowRun。
-3. 质检连续失败 2 次、生成完成、导出状态和 Playtest 非阻断规则。
-4. Repository 异步契约、唯一实现入口、存储失败回退、ID 降级、`not_started` 与损坏数据过滤。
-5. app 组合注入、生产真实实现护栏和生产包不包含开发种子数据。
-6. 页面路由参数、历史模式和 Playtest 导入。
-7. 独立后端能力接通后补真实 API Adapter、Provider、SSE 和跨入口 E2E。
+该顺序只由 `WORKFLOW_NODE_ORDER` 定义。一个 Revision 的实际顺序以 `nodes` 数组位置为准，节点不重复
+保存 `order`。手动编辑器调用 `advance` 一次推进一步；Quick Start 调用同一个 Controller 连续推进。
 
-架构测试立即检查当前可验证的 import、fetch、测试依赖和循环依赖；generated client、真实 Python API 和 Mock/Real 完整能力一致性在对应代码出现后启用。
+## 4. WorkflowRun 归属与持久化
 
-## 12. 当前实现状态
+WorkflowRun 是后端持久化的业务资源，前端负责推进其页面流程。这两个责任不冲突：
+
+```text
+前端 WorkflowController 决定下一步
+        -> WorkflowRunRepository.save
+        -> 后端持久化 WorkflowRun/Revision 快照
+```
+
+页面不直接改 Repository 快照；状态变化由 Application 用例完成。Repository 只提供异步
+`create/get/save`，不执行中断、生成、重启或命令。
+
+WorkflowRun 状态为：
+
+```text
+active | interrupted | completed | failed
+```
+
+`interrupted` 表示用户主动停止前端自动推进，已有 Revision 仍保留；它不等于失败，也不证明远端 Task
+已经停止。重新开始会追加 Revision，不覆盖旧历史。
+
+### 已有角色加动作
+
+项目详情为已有角色添加动作时，必须先创建 `purpose: 'add_action'` 的 WorkflowRun，并预填：
+
+- `characterId`
+- `outfitId`
+- `characterTemplateUrl`
+- `baseFrameUrls`
+
+该分支从 `action-setup` 开始，避免用户重新走角色母版流程。`CreateWorkflowRunInput` 使用判别联合，
+四项缺一时不能形成合法的 add_action 输入。
+
+## 5. Character 整树
+
+Character 是前端聚合根：
+
+```text
+Character
+└─ Outfit
+   └─ Action
+      └─ Frame[]
+```
+
+后端目标以单条 Character 记录和 `character_data` JSONB 保存整棵树。前端相应只定义：
+
+- `CharacterReader.get/listByProject`：只读查询，Playtest 仅依赖它。
+- `CharacterRepository.create/update`：创建以及整棵 Character 更新。
+
+确认母版、添加动作、更新帧都先产生新的 Character 整树，再调用 `update(character)`；不并存
+`confirmTemplate`、`addAction` 等局部后端写合同，避免未来真实接口接入时逐处重写。
+
+概念命名保持清楚：
+
+- 动作模板：`ActionTemplate`、`actionTemplateId`。
+- 角色候选母版：`candidateCharacterTemplates`。
+- 用户选定母版：`characterTemplateUrl`。
+- 多方向基准帧：`baseFrames`，不使用 template 命名。
+- Action 必须归属具体 Outfit。
+
+PR #64 已采用 Character JSONB 方向，但真实路由、DTO 和缺失字段仍未闭合；前端不以默认值掩盖差异。
+
+## 6. Task 粒度与生成边界
+
+Task 是后端异步任务快照，不等于 WorkflowRun 节点，也不按底层某一次模型调用划分。
+
+固定 TaskType：
+
+```text
+character_template | first_frame | complete_animation
+```
+
+- `character_template`：生成角色母版候选。
+- `first_frame`：生成动作首帧。
+- `complete_animation`：生成完整动画；内部即使多次模型调用，对前端仍是一个 Task。
+
+`ImageGenerationPort.submit` 返回 `Promise<Task<T['type']>>`；`TaskRepository.get` 返回运行时校验过的
+封闭 `TaskType`，不能把任意字符串当合法任务。Task 不保存 run、revision 或 node，这些关联由
+`WorkflowTaskLink` 单独表达。
+
+`ProductionEnginePort` 屏蔽任务提交、等待和结果解析。页面不直接使用 TaskRepository 或
+TaskEventSource。PR #64 仍未提供符合上述三类任务的完整 HTTP/SSE 契约，因此当前只有 Port 与
+Preview/开发 Mock，不声称真实 Adapter 已接通。
+
+## 7. Playtest
+
+Playtest 只做核验，没有修改能力。独立入口为：
+
+```text
+/playtest/:characterId/:outfitId?actionId=:actionId
+```
+
+`characterId + outfitId` 是必填播放目标，`actionId` 仅用于可选动作定位。从 Workflow 进入时还可携带
+`runId + revision` 作为返回来源，但二者不是独立播放前置条件。
+
+Playtest 通过 `CharacterReader` 只读 Character→Outfit→Action→Frame。核验结论“通过 / 发现问题”
+保存到独立 `PlaytestInspectionRepository`，不修改 Character、WorkflowRun、Revision 或生成产物。
+PR #64 尚未提供该记录的正式 HTTP 接口。
+
+## 8. App Composition
+
+`app/composition` 是唯一实现选择点。`AppServices` 当前包含：Project、Character、WorkflowRun、Image
+Generation、Task、Task Event、Image Upload、Quick Start、Production Engine、Workflow Restart、
+Workflow Controller 和 Playtest Inspection。
+
+- Preview/开发：异步内存 Repository 和能力 Mock，用于页面开发、恢复路径和行为测试。
+- Production：图片上传使用真实 Adapter，其余未接通能力明确失败。
+- 页面只接收所需的最窄接口，例如 Playtest 接收 `CharacterReader` 而不是 CharacterRepository。
+- Port 不公开 `real/mock/unconfigured` 字段。
+
+## 9. 路由
+
+```text
+/                                      模式选择
+/quick-start                           Quick Start 输入
+/quick-start/:runId                    Quick Start 独立创作台
+/projects                              项目列表
+/projects/:projectId                   项目详情
+/projects/:projectId/assets            项目资产库
+/workflow-editor/:runId                当前 Revision 工作流
+/workflow-editor/:runId/:stage         指定工作流节点
+/playtest/:characterId/:outfitId        独立核验台
+```
+
+资产库是项目内 Character 与 ActionTemplate 的前端聚合页面名，不表示后端存在统一 Asset 实体。
+Wearable 当前暂缓；Outfit 继续保留。
+
+## 10. 当前已实现与待接入
 
 已实现：
 
-- WorkflowRun 的前端编排门面、异步 Repository Port、唯一组合入口、本地 Adapter、Revision、有序五节点和字符串领域 ID。
-- Quick Start 自动创建 Project，并使用返回的真实 ID 创建统一 WorkflowRun；AI/手动入口都从素材节点开始。
-- 六层依赖架构、完整一级模块清单和公开入口检查。
-- 图片生成业务 Port、显式依赖注入和生产 Mock 拒绝保护；真实 HTTP Adapter 尚未实现。
-- 图片上传业务 Port、HTTP Adapter、格式/大小校验和 multipart 响应映射。
-- Project 异步 Repository、app 级开发/生产组合、生产真实实现护栏；旧全局假 HTTP 已删除。
-- localStorage 写入失败的内存优先回退、完整恢复校验，以及缺少 `randomUUID` 时的 ID 生成兜底。
-- 手动流程的 `not_started` 到 `in_progress` 状态转换，以及从素材节点重启后的状态恢复。
-- 节点门禁、历史只读、从节点重启和后续执行线移除。
-- 前端演示门禁连续失败两次的页面规则，以及对应的生成状态展示。
-- Quick Start 创建真实 Project 和统一 WorkflowRun 后进入独立的简化创作台；后台保留完整执行线，由未来 Agent 自动推进，页面不展示工作流内部结构。
-- Workflow Editor 节点路由、历史 Revision URL 和重启交互。
-- Playtest 的完整 Revision 导入门禁、核验结论记录和非阻断导出提示。
-- 项目资产库路由及系统/项目 ActionTemplate 作用域契约。
-- Task/WorkflowTaskLink 分离、ProviderSession 独立 Entity、Outfit、Action fps、Frame 数组顺序，以及 ActionTemplate / characterTemplate / baseFrames 三类概念的明确前端命名。
-- 生产构建强制使用真实 API transport，业务层禁止直接 fetch。
+- 七层目录、依赖边界和唯一 app 装配入口。
+- WorkflowRun/Revision/八节点类型、Repository Port 和 UI 无关 WorkflowController。
+- Quick Start、Project 加动作和 Workflow Editor 的 Preview/开发路径。
+- CharacterReader、CharacterRepository 整树更新合同。
+- 三类 TaskType、图片生成 Port、Task Repository 与事件 Port。
+- 图片上传真实 HTTP Adapter。
+- Playtest 的 Character+Outfit 独立入口、只读角色树和独立核验记录。
+- Preview/开发异步 Mock 与 Production 明确失败隔离。
+- Quick Start 会话可恢复状态且只中断 `active` 运行；Preview 在 Review/Export 未配置时停住，不写伪成功。
 
-仍待真实后端或业务实现：
+仍待真实后端或正式契约：
 
-- Image Generation、Asset、Review、Playtest、Export 等独立后端能力的 OpenAPI Adapter。
-- Quick Start Agent 的自动决策循环、参考图输入和 Project 参数智能规划；当前 Project Planner 使用明确的 MS2 默认约束。
-- 两个 Provider 的真实 Session、模型验证、Job runtime 和 SSE。
-- 后端 quality-gate 报告和生成产物。
-- Character/Action/Frame 正式接口、Review 修复任务和真实播放器。
-- ExportJob、文件生成和下载。
+- Project、Character、WorkflowRun 的 HTTP Repository/Adapter。
+- 三类 Generation/Task 查询、取消、结果 DTO 与 SSE。
+- Review、Export、ActionTemplate、PlaytestInspection 等接口。
+- Character 缺失字段、Action 来源、Outfit 参数、候选数量等前后端映射缺口。
 
-未实现部分只能保留类型和公开边界，不得返回假成功或伪造后端结果。
+前端补代码时只能在这些稳定 Port 后新增实现，不得让页面拼 URL，也不得把未落地的 PR #64 能力写成
+“已经接通”。
+
+## 11. 测试重点
+
+1. 分层方向、Slice 隔离、公开入口和循环依赖。
+2. Quick Start 与手动编辑器共用 Controller，但保持独立 UI。
+3. `add_action` 输入四项预填不变量。
+4. TaskType 只能是三个前端可见异步步骤。
+5. Playtest 必须 Character+Outfit、只读 Character、独立保存核验结论。
+6. Preview/开发 Mock 与 Production 隔离，真实请求失败不降级。
+7. 图片上传的 URL、multipart、响应映射和错误处理。

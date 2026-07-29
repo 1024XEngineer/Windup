@@ -1,83 +1,58 @@
-import { useAsync } from '@/shared/hooks'
-import type { AsyncState } from '@/shared/hooks'
 import type { ActionTemplate } from '../action-template'
-import type { Action, Character, CreateCharacterInput, Outfit } from './types'
-
-/** 角色、动作、帧。后端接口未提供，下面的签名即我们提给后端的需求。 */
+import type { ActionType, Character, CreateCharacterInput } from './types'
 
 export type {
   Action,
   ActionKind,
+  ActionType,
   ActionStatus,
+  BaseFrame,
   Character,
+  CharacterTemplateCandidate,
+  ConfirmCharacterTemplateInput,
   CreateCharacterInput,
   Frame,
   FrameQcResult,
+  FrameRootMotion,
   Outfit,
 } from './types'
 
-/** 带全部动作与帧。审核台进入只需这一个调用。 */
-export async function fetchCharacter(_id: string): Promise<Character> {
-  throw new Error('not implemented：等待后端 GET /characters/{id}')
-}
-
-/** 资产库与项目详情页用。 */
-export async function fetchCharactersByProject(_projectId: string): Promise<Character[]> {
-  throw new Error('not implemented：等待后端 GET /projects/{id}/characters')
-}
-
-/** 建角色及第一套造型并生成候选母版。异步任务返回前候选列表可以为空。 */
-export async function createCharacter(_input: CreateCharacterInput): Promise<Character> {
-  throw new Error('not implemented：等待后端 POST /characters')
-}
-
-/** 确认某套造型的母版后才能为该造型添加动作。 */
-export async function confirmCharacterTemplate(_outfitId: string): Promise<Outfit> {
-  throw new Error('not implemented：等待后端角色造型母版确认接口')
-}
-
 /**
- * 加动作的入参。
- *
- * 写成可辨识联合而不是「kind 加一个可选 id」，是因为后者允许 kind: 'preset' 却不给
- * actionTemplateId——声明用了预设，却说不出用的是哪一份。那种组合没有意义，
- * 这里让它在类型上就不成立。
- *
- * TODO(待定)：自定义动作的提示词从哪来还没定。一种走法是自定义动作也先落成一份
- * project 作用域的 ActionTemplate，那样这里只剩模板 id，kind 可以取消。
+ * 将动作定义应用到角色时，同时提交来源方式和业务语义。
+ * kind 与最终 Action.kind 含义一致；type 与最终 Action.type 含义一致。
+ * 两者相互独立，不能从 preset/custom 推断 walk/idle 等业务语义。
  */
 export type AddActionInput =
   | {
       /** 面向用户展示的动作名称。 */
       name: string
-      /** 来自系统内置或项目自定义的动作模板。 */
+      /** 复用已有预设定义的来源方式。 */
       kind: 'preset'
-      /** 选用的动作模板；预设动作必须指明。 */
+      /** 动作实际表达的业务语义；不由 preset 自动推断。 */
+      type: ActionType
+      /** 本次复用的动作模板；preset 分支必须明确指定。 */
       actionTemplateId: ActionTemplate['id']
     }
   | {
       /** 面向用户展示的动作名称。 */
       name: string
-      /** 用户临时描述的动作，不走模板。 */
+      /** 用户自行定义动作的来源方式。 */
       kind: 'custom'
+      /** 动作实际表达的业务语义；custom 来源仍可选择 walk、attack 等已知语义。 */
+      type: ActionType
     }
 
-/** 加一个动作，此时还未生成。 */
-export async function addAction(_outfitId: string, _input: AddActionInput): Promise<Action> {
-  throw new Error('not implemented：等待后端角色造型动作接口')
+/**
+ * Character 的异步存取契约。造型、动作和帧是 Character 内的完整 JSON 树，
+ * 不通过独立后端粒度方法写入；每次确认后整棵更新。
+ */
+/** 只读角色查询边界；Playtest 等核验模块只依赖这一部分。 */
+export interface CharacterReader {
+  get(id: Character['id']): Promise<Character>
+  listByProject(projectId: string): Promise<Character[]>
 }
 
-/** 候选转正式。新候选不覆盖正式资产。 */
-export async function confirmAction(_actionId: string): Promise<Action> {
-  throw new Error('not implemented：等待后端 POST /actions/{id}/confirm')
-}
-
-/** 订阅一个角色。 */
-export function useCharacter(id: string): AsyncState<Character> {
-  return useAsync(() => fetchCharacter(id), [id])
-}
-
-/** 订阅项目下的角色列表。 */
-export function useCharacters(projectId: string): AsyncState<Character[]> {
-  return useAsync(() => fetchCharactersByProject(projectId), [projectId])
+export interface CharacterRepository extends CharacterReader {
+  create(input: CreateCharacterInput): Promise<Character>
+  update(character: Character): Promise<Character>
 }

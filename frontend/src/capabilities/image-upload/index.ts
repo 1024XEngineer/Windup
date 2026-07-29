@@ -1,8 +1,2 @@
-export { httpImageUploadAdapter } from './adapters/http'
-export { createImageUploadService } from './service'
-export type { ImageUploadAdapterKind, ImageUploadPort } from './model/port'
-export type {
-  CreateImageUploadServiceOptions,
-  ImageUploadRuntime,
-  ImageUploadService,
-} from './service'
+export { createImageUploadAdapter } from './adapters/http'
+export type { ImageUploadPort } from './model/port'

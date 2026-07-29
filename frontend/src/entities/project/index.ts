@@ -4,11 +4,9 @@ import type { Paged, PageQuery } from '@/shared/pagination'
 import type { ProjectRepository } from './repository'
 import type { Project } from './types'
 
-/** 项目业务边界；现有 HTTP Repository 来自 PR #57，仅供开发候选联调。 */
+/** Project 当前只保留前端领域形状与异步 Repository Port，真实 API 契约已撤回。 */
 
-export { createHttpProjectRepository } from './http-repository'
-export type { CreateHttpProjectRepositoryOptions } from './http-repository'
-export type { ProjectRepository, ProjectRepositoryAdapterKind } from './repository'
+export type { ProjectRepository } from './repository'
 export { CHARACTER_PERSPECTIVE, DIRECTIONAL_MOVEMENT, SPRITE_SIZES } from './types'
 export type {
   CharacterPerspective,

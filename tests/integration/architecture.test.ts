@@ -15,19 +15,27 @@ const SRC = join(dirname(fileURLToPath(import.meta.url)), '../../frontend/src')
 
 /** 每层允许 import 的层。 */
 const ALLOWED: Record<string, string[]> = {
-  app: ['pages', 'features', 'capabilities', 'entities', 'shared'],
-  pages: ['features', 'capabilities', 'entities', 'shared'],
-  features: ['capabilities', 'entities', 'shared'],
+  app: ['pages', 'features', 'application', 'capabilities', 'entities', 'shared'],
+  pages: ['features', 'application', 'capabilities', 'entities', 'shared'],
+  features: ['application', 'capabilities', 'entities', 'shared'],
+  application: ['capabilities', 'entities', 'shared'],
   capabilities: ['entities', 'shared'],
   entities: ['shared'],
   shared: [],
 }
 
 /** 这三层的不同 Slice 不得互相引用。entities 已选择作为一个整体模块。 */
-const ISOLATED_SLICE_LAYERS = new Set(['pages', 'features', 'capabilities'])
+const ISOLATED_SLICE_LAYERS = new Set(['pages', 'features', 'application', 'capabilities'])
 
 /** 跨层引用时，这些层以第二段目录作为公开入口根。 */
-const PUBLIC_SLICE_LAYERS = new Set(['pages', 'features', 'capabilities', 'entities', 'shared'])
+const PUBLIC_SLICE_LAYERS = new Set([
+  'pages',
+  'features',
+  'application',
+  'capabilities',
+  'entities',
+  'shared',
+])
 
 /** 全局审计后的一级模块清单；新增目录必须先说明归属并更新这里。 */
 const DECLARED_SLICES = {
@@ -42,22 +50,21 @@ const DECLARED_SLICES = {
     'workflow-editor',
   ],
   features: ['character-setup', 'export', 'generation', 'quick-start', 'review'],
+  application: ['production-engine', 'workflow-controller', 'workflow-restart'],
   capabilities: ['image-generation', 'image-upload'],
   entities: [
     'action-template',
     'character',
+    'media',
+    'playtest-inspection',
     'project',
     'task',
-    'wearable',
     'workflow-run',
   ],
   shared: ['api', 'hooks', 'pagination', 'ui'],
 } as const
 
-const PAGE_MODULE_ROOTS = [
-  'pages/workflow-editor/editor',
-  'pages/playtest/inspection-preview',
-]
+const PAGE_MODULE_ROOTS = ['pages/workflow-editor/editor', 'pages/playtest/inspection-preview']
 
 function relativeSrc(file: string): string {
   return relative(SRC, file).replaceAll('\\', '/')
@@ -254,8 +261,16 @@ function resolveInternalFile(file: string, specifier: string): string | null {
   else if (specifier.startsWith('.')) base = resolve(dirname(file), specifier)
   else return null
 
-  const candidates = [base, `${base}.ts`, `${base}.tsx`, join(base, 'index.ts'), join(base, 'index.tsx')]
-  return candidates.find((candidate) => existsSync(candidate) && statSync(candidate).isFile()) ?? null
+  const candidates = [
+    base,
+    `${base}.ts`,
+    `${base}.tsx`,
+    join(base, 'index.ts'),
+    join(base, 'index.tsx'),
+  ]
+  return (
+    candidates.find((candidate) => existsSync(candidate) && statSync(candidate).isFile()) ?? null
+  )
 }
 
 function collectCycles(): string[][] {
@@ -310,9 +325,9 @@ function moduleOwnershipViolation(layer: DeclaredSliceLayer, actual: string[]): 
 
 describe('依赖边界', () => {
   it('检查器能指出未登记的一级模块', () => {
-    expect(
-      moduleOwnershipViolation('entities', [...DECLARED_SLICES.entities, 'generation']),
-    ).toBe('entities 有未登记目录：generation')
+    expect(moduleOwnershipViolation('entities', [...DECLARED_SLICES.entities, 'generation'])).toBe(
+      'entities 有未登记目录：generation',
+    )
   })
 
   it('一级模块与全局审计清单完全一致，并各自提供公开入口', () => {
@@ -364,24 +379,18 @@ describe('依赖边界', () => {
 
   it.each([
     ['pages/workflow-editor/index.tsx', './editor', './editor/internal/canvas'],
-    [
-      'pages/playtest/index.tsx',
-      './inspection-preview',
-      './inspection-preview/internal/player',
-    ],
+    ['pages/playtest/index.tsx', './inspection-preview', './inspection-preview/internal/player'],
   ])('%s 不能绕过页面内模块的目录根 index', (pagePath, root, deep) => {
     const page = join(SRC, pagePath)
     expect(violationFor(page, root)).toBeNull()
-    expect(violationFor(page, deep)?.reason).toBe(
-      '页面内模块只能通过目录根 index 进入',
-    )
+    expect(violationFor(page, deep)?.reason).toBe('页面内模块只能通过目录根 index 进入')
   })
 
   it('没有任何一条 import 违反分层、Slice 或模块入口规则', () => {
     const violations = collectViolations()
     expect(
-      violations.map((violation) =>
-        `${violation.file}: ${violation.specifier} —— ${violation.reason}`,
+      violations.map(
+        (violation) => `${violation.file}: ${violation.specifier} —— ${violation.reason}`,
       ),
     ).toEqual([])
   })
@@ -410,9 +419,7 @@ describe('依赖边界', () => {
     for (const file of walk(SRC)) {
       const rel = relative(SRC, file).replaceAll('\\', '/')
       const source = readFileSync(file, 'utf8')
-      const isTransport =
-        rel.startsWith('shared/api/client/real/') ||
-        rel === 'shared/api/upload.ts'
+      const isTransport = rel.startsWith('shared/api/')
       if (!isTransport && /\bfetch\s*\(/.test(source)) {
         offenders.push(`${rel}: direct fetch`)
       }
@@ -428,10 +435,24 @@ describe('依赖边界', () => {
     expect(offenders).toEqual([])
   })
 
-  it('WorkflowRun 是前端编排模型，不通过 HTTP transport', () => {
+  it('WorkflowRun 只保留类型与异步 Repository 契约，不包含本地运行时', () => {
     const workflowRoot = join(SRC, 'entities/workflow-run')
-    const orchestrationRoot = join(workflowRoot, 'orchestration')
     const offenders: string[] = []
+    const forbiddenFiles = [
+      'local/machine.ts',
+      'local/repository.ts',
+      'local/store.ts',
+      'local/validation.ts',
+      'repository.ts',
+      'orchestration/create-workflow-run.ts',
+      'orchestration/get-workflow-run.ts',
+      'orchestration/submit-workflow-command.ts',
+      'model/selectors.ts',
+    ]
+
+    for (const file of forbiddenFiles) {
+      if (existsSync(join(workflowRoot, file))) offenders.push(`entities/workflow-run/${file}`)
+    }
 
     for (const file of walk(workflowRoot)) {
       if (/\.test\.tsx?$/.test(file)) continue
@@ -443,18 +464,202 @@ describe('依赖边界', () => {
       if (/['"`]\/workflow-runs?(?:\/|['"`])/.test(source)) {
         offenders.push(`${rel}: runtime workflow HTTP path`)
       }
-      if (file.startsWith(orchestrationRoot)) {
-        for (const specifier of moduleSpecifiers(file, source)) {
-          const target = targetRelativePath(file, specifier)
-          if (target?.startsWith('entities/workflow-run/local/')) {
-            offenders.push(`${rel}: binds local repository directly`)
-          }
-        }
+      if (/\blocalStorage\b|\bcreateLocalRun\b|\badvanceLocalRun\b/.test(source)) {
+        offenders.push(`${rel}: local workflow implementation`)
       }
     }
 
-    if (!existsSync(join(workflowRoot, 'repository.ts'))) {
-      offenders.push('entities/workflow-run/repository.ts composition entry is missing')
+    const publicEntry = readFileSync(join(workflowRoot, 'index.ts'), 'utf8')
+    if (!/WorkflowRunRepository/.test(publicEntry)) {
+      offenders.push('entities/workflow-run/index.ts: repository contract is missing')
+    }
+
+    expect(offenders).toEqual([])
+  })
+
+  it('业务 Mock 只集中在 app 开发组合，不回流到领域或 Capability Service', () => {
+    const forbiddenFiles = [
+      join(SRC, 'app/composition/mocks/project.ts'),
+      join(SRC, 'features/quick-start/model/project-planner.ts'),
+      join(SRC, 'features/quick-start/start-quick-start.ts'),
+      join(SRC, 'capabilities/image-generation/service.ts'),
+      join(SRC, 'capabilities/image-upload/service.ts'),
+      join(SRC, 'entities/provider-session/index.ts'),
+      join(SRC, 'features/generation/provider-connection/README.md'),
+      join(SRC, 'features/generation/asset-intake/README.md'),
+      join(SRC, 'entities/wearable/index.ts'),
+    ]
+    expect(forbiddenFiles.filter(existsSync).map(relativeSrc)).toEqual([])
+
+    const offenders: string[] = []
+    for (const file of walk(SRC)) {
+      if (/\.test\.tsx?$/.test(file)) continue
+      const source = readFileSync(file, 'utf8')
+      if (/\bSEED_PROJECTS\b|\bplanMvpQuickStartProject\b|\bPROJECT_NAME_LIMIT\b/.test(source)) {
+        offenders.push(relativeSrc(file))
+      }
+      if (/\bonGenerated\b|\bqualityFailureCount\b|record-quality-result/.test(source)) {
+        offenders.push(`${relativeSrc(file)}: duplicates backend result ownership`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('不提前定义被导师质疑的 Media CRUD、通用加工或后端 Asset 资源', () => {
+    const forbidden = /\b(?:MediaRecord|MediaRepository|MediaProcessor|AssetRepository)\b/
+    const offenders: string[] = []
+
+    for (const file of walk(SRC)) {
+      if (/\.test\.tsx?$/.test(file)) continue
+      if (forbidden.test(readFileSync(file, 'utf8'))) offenders.push(relativeSrc(file))
+    }
+
+    expect(offenders).toEqual([])
+  })
+
+  it('只允许已冻结的媒体上传 Adapter，继续禁止 Project HTTP 与旧上传路由', () => {
+    const removedFiles = [
+      join(SRC, 'entities/project/http-repository.ts'),
+      join(SRC, 'shared/api/upload.ts'),
+    ]
+    const forbidden =
+      /\b(?:createHttpProjectRepository|httpImageUploadAdapter)\b|VITE_PROJECT_ADAPTER|['"]\/upload\/image/
+    const offenders: string[] = []
+
+    for (const file of removedFiles) {
+      if (existsSync(file)) offenders.push(relativeSrc(file))
+    }
+    for (const file of walk(SRC)) {
+      const source = readFileSync(file, 'utf8')
+      if (forbidden.test(source)) offenders.push(relativeSrc(file))
+      const rel = relativeSrc(file)
+      if (moduleSpecifiers(file, source).includes('@/shared/api')) {
+        if (rel.startsWith('entities/project/')) {
+          offenders.push(`${rel}: imports @/shared/api`)
+        }
+        if (
+          rel.startsWith('capabilities/image-upload/') &&
+          rel !== 'capabilities/image-upload/adapters/http.ts'
+        ) {
+          offenders.push(`${rel}: only the real Adapter may import @/shared/api`)
+        }
+      }
+    }
+    const viteConfig = readFileSync(join(dirname(SRC), 'vite.config.ts'), 'utf8')
+    if (/\bproxy\s*:|['"]\/api['"]/.test(viteConfig)) {
+      offenders.push('vite.config.ts: withdrawn API proxy')
+    }
+
+    expect(offenders).toEqual([])
+  })
+
+  it('Playtest 只读 Character 造型树并独立保存核验记录', () => {
+    const playtestRoot = join(SRC, 'pages/playtest')
+    const allowedEntityImports = new Set([
+      'PlaytestInspectionRepository',
+      'PlaytestInspectionStatus',
+      'CharacterReader',
+      'Outfit',
+    ])
+    const offenders: string[] = []
+
+    for (const file of walk(playtestRoot)) {
+      if (/\.test\.tsx?$/.test(file)) continue
+      const source = readFileSync(file, 'utf8')
+      const sourceFile = ts.createSourceFile(
+        file,
+        source,
+        ts.ScriptTarget.Latest,
+        true,
+        file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+      )
+
+      function inspectReference(node: ts.Node, specifier: string): void {
+        const target = targetRelativePath(file, specifier)
+        if (!target) return
+        if (/^(?:application|capabilities|features|shared\/api)(?:\/|$)/.test(target)) {
+          offenders.push(`${relativeSrc(file)}: ${specifier}`)
+          return
+        }
+        if (!/^entities(?:\/|$)/.test(target)) return
+
+        if (!ts.isImportDeclaration(node) || specifier !== '@/entities') {
+          offenders.push(`${relativeSrc(file)}: non-static entities import ${specifier}`)
+          return
+        }
+        const clause = node.importClause
+        if (!clause || clause.name || !clause.namedBindings) {
+          offenders.push(`${relativeSrc(file)}: unsupported entities import`)
+          return
+        }
+        if (ts.isNamespaceImport(clause.namedBindings)) {
+          offenders.push(`${relativeSrc(file)}: namespace entities import`)
+          return
+        }
+        for (const element of clause.namedBindings.elements) {
+          const importedName = element.propertyName?.text ?? element.name.text
+          if (!allowedEntityImports.has(importedName)) {
+            offenders.push(`${relativeSrc(file)}: ${importedName}`)
+          }
+        }
+      }
+
+      function visit(node: ts.Node): void {
+        if (
+          (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+          node.moduleSpecifier &&
+          ts.isStringLiteralLike(node.moduleSpecifier)
+        ) {
+          inspectReference(node, node.moduleSpecifier.text)
+        }
+        if (
+          ts.isCallExpression(node) &&
+          node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+          node.arguments.length === 1 &&
+          ts.isStringLiteralLike(node.arguments[0])
+        ) {
+          inspectReference(node, node.arguments[0].text)
+        }
+        ts.forEachChild(node, visit)
+      }
+
+      visit(sourceFile)
+    }
+
+    expect(offenders).toEqual([])
+  })
+
+  it('页面不直接编排后端 Task', () => {
+    const forbiddenTaskImports = new Set(['Task', 'TaskEvent', 'TaskEventSource', 'TaskRepository'])
+    const offenders: string[] = []
+
+    for (const file of walk(join(SRC, 'pages'))) {
+      if (/\.test\.tsx?$/.test(file)) continue
+      const sourceFile = ts.createSourceFile(
+        file,
+        readFileSync(file, 'utf8'),
+        ts.ScriptTarget.Latest,
+        true,
+        file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+      )
+
+      sourceFile.forEachChild((node) => {
+        if (
+          !ts.isImportDeclaration(node) ||
+          !ts.isStringLiteralLike(node.moduleSpecifier) ||
+          node.moduleSpecifier.text !== '@/entities'
+        ) {
+          return
+        }
+        const bindings = node.importClause?.namedBindings
+        if (!bindings || !ts.isNamedImports(bindings)) return
+        for (const element of bindings.elements) {
+          const importedName = element.propertyName?.text ?? element.name.text
+          if (forbiddenTaskImports.has(importedName)) {
+            offenders.push(`${relativeSrc(file)}: ${importedName}`)
+          }
+        }
+      })
     }
 
     expect(offenders).toEqual([])

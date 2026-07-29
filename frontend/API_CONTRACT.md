@@ -1,267 +1,185 @@
 # 前端 API 契约状态
 
-本文是前端当前调用和需求签名的清单，不替代未来由后端 OpenAPI 生成的客户端。
-在 OpenAPI 落地前，只有标为“已核对”的接口可以按真实后端接口联调；Project 的现有 HTTP 映射
-只能作为候选实现供开发环境显式启用。开发或测试可以在业务 Port 后注入假实现，但 `shared/api`
-只负责真实 HTTP，生产请求不会装配 Project 候选接口或回退假数据。WorkflowRun 是前端编排模型，
-不属于后端 API 契约。
+## 口径与实现状态
 
-## 通用约定
+本文以导师 2026-07-28 会议口径为业务目标，以 PR #64 head `975c594` 为当前后端代码事实。
+仓库根目录的 `project-api.md` 已确认错误，不再作为契约来源。
 
-- 开发环境以 `/api` 为基址；Vite 将其代理到 `http://127.0.0.1:8000`。
-- 单项响应：`{ code, message, data, timestamp? }`；只有 `code === 200` 才是成功。
-- 列表响应额外包含 `total`、`page` 和 `page_size`。
-- 生产构建只使用真实 transport；不会回退到 Mock 数据。
-- Project 页面统一依赖异步 `ProjectRepository`。开发默认由 app 注入内存实现；设置
-  `VITE_PROJECT_ADAPTER=pr57-candidate` 时联调候选映射；生产 app 在正式接口到位前明确不可用。
-- 图片生成、图片上传等调用按业务 Capability 注入 Adapter，不在 transport 层用全局开关选实现。
+- WorkflowRun 是后端持久化的业务资源，但制作顺序和页面状态由前端推进。
+- Character 由后端以 `character_data` JSONB 保存整棵数据树；前端更新造型、动作或帧后，通过
+  `CharacterRepository.update(character)` 提交完整 Character，不再定义局部确认母版或加动作写接口。
+- Task 按前端可见的异步步骤划分，不按底层模型调用划分，固定为
+  `character_template | first_frame | complete_animation`。
+- 当前 PR #64 中唯一已注册、可直接接入的业务 HTTP 路由仍是
+  `POST /media/upload?category=reference-image`。WorkflowRun、Character、Generation、Task、SSE 等
+  目标契约不等于 PR #64 已经提供了对应路由；真实 Adapter 必须等待正式接口。
+- Preview/开发通过 app 组合注入与正式 Port 同形的异步内存 Mock，使核心页面流程可开发和验证；
+  Production 对未配置能力明确失败，真实请求失败时不会回退 Mock。
 
-## 候选映射：项目
+`VITE_API_BASE_URL` 为空时使用同源地址，不自动追加 `/api`，也不猜后端端口或 Vite 代理。PR #64
+当前未注册 CORS middleware；分端口直连必须由后端启用 CORS 或由外部反向代理提供同源入口。
 
-以下 Project 路径和 HTTP DTO 来自已关闭且未合并的后端 PR #57。PR #64 延续了统一响应壳、
-分页形状和 Project 内部模型，但尚未提供 FastAPI 路由或 OpenAPI。因此以下内容只供开发环境
-显式联调，不是当前已验证可访问的正式服务。
+## 应用装配边界
 
-### 项目
+`AppServices` 是页面和用例获取外部实现的唯一入口，包含：
 
-- `GET /projects?page=1&page_size=20&user_id=1`
-- `GET /projects/{id}`
-- `POST /projects`
-- `DELETE /projects/{id}`
-
-创建项目示例：
-
-```json
-{
-  "user_id": 1,
-  "workflow_id": null,
-  "project_name": "Knight",
-  "character_perspective": 1,
-  "directional_movement": 1,
-  "sprite_width": 64,
-  "sprite_height": 64,
-  "game_style": null,
-  "sprite_sample_url": null
+```ts
+interface AppServices {
+  projects: ProjectRepository
+  characters: CharacterRepository
+  workflowRuns: WorkflowRunRepository
+  imageGeneration: ImageGenerationPort
+  tasks: TaskRepository
+  taskEvents: TaskEventSource
+  imageUpload: ImageUploadPort
+  quickStart: QuickStartPort
+  productionEngine: ProductionEnginePort
+  workflowRestart: WorkflowRestartPort
+  workflowController: WorkflowControllerPort
+  playtestInspections: PlaytestInspectionRepository
 }
 ```
 
-`user_id` 目前是演示值；接入认证后应由后端从令牌推导，前端不再传递它。
+Mock 只从 `app/composition/development` 动态装配；Production 不导入开发 Mock。Port 不公开
+`adapterKind` 等实现选择字段，页面也不直接调用 `fetch` 或拼接 URL。
 
-后端当前用数字表达视角和移动方向，前端领域层统一使用字符串枚举，数字只在 Project mapper
-内转换：
+## WorkflowRun
 
-```ts
-type CharacterPerspective = 'side' | 'top-down' | 'isometric'
-type DirectionalMovement = 'single' | 'four-way' | 'eight-way'
-```
+Quick Start 和手动 Workflow 使用同一种 WorkflowRun 与 Revision，区别只在驱动方式和界面：
 
-`gameStyle` 是项目级画风约束，会进入本项目的生成上下文；`sampleImageUrl` 是项目级画风
-参考图，不是生成结果或角色母版。
+- 手动编辑器一次调用 `WorkflowControllerPort.advance` 推进一步。
+- Quick Start 由 Agent 连续调用同一个 UI 无关的 `WorkflowControllerPort`，并隐藏节点、Revision 等术语。
+- 两个入口拥有独立页面，不复用对方的 UI 组件或路由状态。
 
-Quick Start 也必须先创建 Project。当前 MS2 Project Planner 从自然语言生成不超过 20 字符的临时
-项目名，并使用侧视、四方向、64×64 默认约束；将来由 Agent 参数规划实现替换。WorkflowRun 必须
-保存 ProjectRepository 返回的 ID，不能使用 `quick-start` 等固定假值。
-
-Project 的页面接口保持异步，并由 app 一次性注入同一个实现：
+WorkflowRun 通过异步 Repository 存取：
 
 ```ts
-interface ProjectRepository {
-  readonly adapterKind: 'mock' | 'candidate' | 'unavailable'
-  list(query?: PageQuery): Promise<Paged<Project>>
-  get(id: string): Promise<Project>
-  create(input: CreateProjectInput): Promise<Project>
-  remove(id: string): Promise<void>
+interface WorkflowRunRepository {
+  create(input: CreateWorkflowRunInput): Promise<WorkflowRun>
+  get(runId: string): Promise<WorkflowRun | null>
+  save(run: WorkflowRun): Promise<void>
 }
 ```
 
-候选 HTTP Repository 负责上述 URL、数字枚举和 DTO 映射；页面、Quick Start 和 React Hook
-不直接选择具体实现。
-
-## 参考图片上传
-
-- `POST /upload/image`
-- `multipart/form-data`，字段名为 `file`
-- 允许 `image/jpeg`、`image/png`、`image/webp`、`image/gif`
-- 最大 10 MiB；前端会在发起网络请求前拒绝超限文件。
+`create_character` 从角色资料阶段开始。为已有角色加动作时使用 `purpose: 'add_action'`，并在创建时
+强制预填以下四项：
 
 ```ts
-const upload = createImageUploadService({
-  adapter: httpImageUploadAdapter,
-  runtime: 'production',
-})
-const url = await upload.upload(file)
-// 成功响应：{ code: 200, message: 'success', data: { url } }
+type AddActionWorkflowInput = {
+  purpose: 'add_action'
+  characterId: string
+  outfitId: string
+  characterTemplateUrl: string
+  baseFrameUrls: readonly string[]
+}
 ```
 
-这项调用属于 `capabilities/image-upload`，不属于 Project Entity。业务调用方只接收 URL；文件校验、
-multipart、端点和响应壳都由 HTTP Adapter 处理。
+它从 `action-setup` 开始，不重复走角色母版步骤。标准节点顺序由 `WORKFLOW_NODE_ORDER` 唯一定义：
 
-## 前端本地编排：WorkflowRun
-
-`WorkflowRun`、`WorkflowRevision` 和五个页面节点用于组织 Quick Start、Workflow Editor、
-Playtest 与历史查看。它们由前端 `entities/workflow-run` 的异步 Repository Port 持久化，不经过
-`shared/api`，也不存在对应的 `/workflows` 或 `/workflow-runs` 后端路径。当前唯一组合入口
-`entities/workflow-run/repository.ts` 选择本地 Adapter，三个编排函数不直接依赖具体实现。
-
-页面继续使用稳定的前端门面：
-
-```ts
-createWorkflowRun(input): Promise<WorkflowRun>
-fetchWorkflowRun(runId): Promise<WorkflowRun>
-submitWorkflowCommand(runId, command): Promise<WorkflowRun>
+```text
+character-setup -> character-template -> template-candidate -> action-setup
+-> first-frame -> complete-animation -> review -> export
 ```
 
-Repository 内部的 `create/get/submit` 同样全部返回 Promise。未来真实能力契约冻结后，只在组合入口
-新增独立业务 Port/Adapter，不把 Generation、Review 或 Export 塞进 WorkflowRun Repository。
-当前本地 Adapter 还保证：
+Repository 只负责存取，不执行推进、中断或重启。`WorkflowRunStatus` 为
+`active | interrupted | completed | failed`；`interrupted` 表示前端停止自动推进并保留历史，不证明后端
+Task 已终止。真实 WorkflowRun HTTP 路由尚未在 PR #64 落地，当前 Preview/开发使用同契约 Mock。
 
-- localStorage 写入失败时，本次会话的最新内存数据优先于磁盘旧快照。
-- `crypto.randomUUID` 不可用时依次使用随机字节和本地序列生成 ID。
-- Quick Start 与手动流程都从素材节点和 `not_started` 开始；AI 自动控制器完成素材节点后才进入
-  generation 并切换为 `in_progress`。
-- 从 localStorage 恢复时完整校验 run、revision、node、枚举和当前版本引用，逐条忽略损坏记录。
+## Character 整树合同
 
-真实后端集成按照 PR #62 拆为 Project、Media、Character、Generation、Asset、Review、
-Playtest 和 Export 等独立能力。其 OpenAPI 冻结后，由前端制作控制层组合对应业务 Port；
-WorkflowRun Repository 继续只管流程存取。页面不需要知道后端模块拆分，也不提前猜测未确定的
-路径和 DTO。
-
-## 前端能力 Port：图片生成
-
-后端 Generation HTTP 契约尚未冻结，但前端当前已确定最小业务边界：
+Character 的读取和更新边界为：
 
 ```ts
-interface GenerateImagesInput {
-  projectId: string
-  prompt: string
-  referenceImageUrls: string[]
+interface CharacterReader {
+  get(id: string): Promise<Character>
+  listByProject(projectId: string): Promise<Character[]>
 }
 
-interface GeneratedImage {
-  url: string
+interface CharacterRepository extends CharacterReader {
+  create(input: CreateCharacterInput): Promise<Character>
+  update(character: Character): Promise<Character>
 }
+```
+
+`Outfit -> Action -> Frame` 属于 Character 整树。更新任何子级后都提交完整 Character；前端不同时维护
+`confirmTemplate`、`addAction` 等另一套局部写合同。动作必须归属具体 Outfit。动作模板使用
+`ActionTemplate/actionTemplateId`；角色母版使用 `candidateCharacterTemplates/characterTemplateUrl`；
+多方向基准帧保持 `baseFrames` 命名。
+
+PR #64 当前的 Character 模型确实使用 `character_data` JSONB，但可调用路由和与前端字段完全一致的 DTO
+仍未完成。因此这里冻结的是 Repository 形状和整树更新原则，不声称真实 HTTP Adapter 已接通。
+
+## Generation 与 Task
+
+图片生成提交后返回独立 Task，不伪装成立即拿到最终图片：
+
+```ts
+type TaskType = 'character_template' | 'first_frame' | 'complete_animation'
 
 interface ImageGenerationPort {
-  readonly adapterKind: 'real' | 'mock'
-  generate(input: GenerateImagesInput): Promise<GeneratedImage[]>
+  submit<T extends GenerationInput>(
+    input: T,
+    options?: { signal?: AbortSignal },
+  ): Promise<Task<T['type']>>
+}
+
+interface TaskRepository {
+  get(taskId: string): Promise<Task>
+  cancel(taskId: string): Promise<void>
 }
 ```
 
-传统工作流和 Quick Start Agent 必须调用同一个 Port。测试通过构造参数注入 Fake；生产 runtime 在
-服务构造阶段拒绝 Mock Adapter。真实 Adapter 等 OpenAPI 冻结后负责 URL、响应壳和 DTO 映射，
-真实调用失败不得回退 Mock。本节不是对后端路径或 Task 协议的声明。
+完整动画内部可以包含视频生成、截帧或多次模型调用，但对前端仍是一个
+`complete_animation` Task。`Task` 不携带 run、revision 或 node；二者的关联由
+`WorkflowTaskLink` 单独表达。`TaskRepository.get` 必须运行时校验封闭的 `TaskType`，不能放行任意
+`string`。
 
-## 仅有需求签名：角色与资产
+PR #64 当前 Generation/Task 的实现和命名仍未达到上述导师口径，也没有可调用的查询、取消或 SSE 路由，
+因此这里只保留 Port 和 Preview/开发 Mock，不新增猜测 HTTP Adapter。
 
-以下函数当前会明确抛出 `not implemented`，不存在真实网络调用：
-
-- `GET /characters/{id}`、`POST /characters`
-- `GET /projects/{id}/characters`
-- `confirmCharacterTemplate`、`addAction`、`POST /actions/{id}/confirm`（前两项路径待定）
-- `GET /projects/{id}/action-templates`
-- `GET /projects/{id}/wearables`
-
-前端禁止单独使用 `template` 表达不同业务概念：动作模板统一使用 `ActionTemplate` 和
-`actionTemplateId`；角色母版统一使用 `candidateCharacterTemplates`、`characterTemplateUrl`
-和 `confirmCharacterTemplate`。母版确认的后端路径同样必须包含 `character-template` 前缀，
-具体资源层级仍以后端 OpenAPI 为准。母版确认后展开的多方向基准帧继续称为 `baseFrames`，
-不使用 template。
+## 图片上传
 
 ```ts
-interface Frame {
-  imageUrl: string
-  qc: 'pending' | 'passed' | 'failed'
-  rejected: boolean
-}
-
-interface Action {
-  id: string
-  outfitId: string
-  fps: number
-  frames: Frame[]
-}
-
-interface Outfit {
-  id: string
-  characterId: string
-  name: string
-  candidateCharacterTemplates: string[]
-  characterTemplateUrl: string | null
-  actions: Action[]
-}
-
-interface Character {
-  id: string
-  projectId: string
-  name: string
-  outfits: Outfit[]
-}
-
-interface ActionTemplateBase {
-  id: string
-  name: string
-  prompt: string
-}
-
-type ActionTemplate = ActionTemplateBase &
-  (
-    | { scope: 'system'; projectId: null }
-    | { scope: 'project'; projectId: string }
-  )
-
-declare function confirmCharacterTemplate(outfitId: string): Promise<Outfit>
-
-declare function addAction(
-  outfitId: string,
-  input: {
-    name: string
-    kind: 'preset' | 'custom'
-    actionTemplateId?: string
-  },
-): Promise<Action>
-```
-
-即使 MVP UI 只展示一个造型，Character 也通过 `outfits` 保留造型层，候选母版、选定母版与
-动作都归属具体 Outfit。Action 不保存 `sourceWorkflowRunId`；核验与编辑器跳转由当前页面已知的
-runId、revisionId、actionId 和 frameIndex 组合，不要求后端 Action 认识前端 WorkflowRun。后端可
-返回自己的 Task、Execution 或 Asset 引用，再由前端单独建立关联。前端全部业务 ID 都是 string，
-后端数字 ID 只在 DTO mapper 中转换。
-
-`Action.frames` 的数组顺序就是播放顺序，因此 Frame 不重复携带 `index`。审核和页面定位可以
-临时使用 `frameIndex`；如果后端以后支持独立 Frame 资源，应另行提供稳定 ID。Action 的 `fps`
-由后端返回，预览和导出不得依赖前端全局常量。
-
-项目模板查询应返回“系统内置模板 + 当前项目自定义模板”的合集，并通过 `scope` 与
-`projectId` 区分归属。系统模板不虚构项目 ID。
-
-## 未对齐：异步任务与 SSE
-
-任务创建、查询和断线恢复需要完整快照；流式事件使用同一组状态字段：
-
-```ts
-type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed'
-
-interface Task {
-  id: string
-  status: TaskStatus
-  progress: number | null
-  error: string | null
-  result: unknown
-}
-
-interface TaskEvent extends Omit<Task, 'id'> {
-  taskId: Task['id']
-}
-
-interface WorkflowTaskLink {
-  taskId: Task['id']
-  runId: string
-  revisionId: string
-  nodeId: string
+interface ImageUploadPort {
+  upload(file: File): Promise<MediaReference>
 }
 ```
 
-`Task` 是独立 Entity，不依赖前端 WorkflowRun。`WorkflowTaskLink` 留在 WorkflowRun，只用于把
-后端 `taskId` 映射回当前 run、revision 和 node。`result` 在具体生成产物契约冻结前保持
-`unknown`。前端没有可调用的 SSE transport；订阅地址、事件名称、断线重连、补发策略以及 Task
-创建/查询接口均未与后端对齐，`subscribeTask` 会明确失败，不能把它描述为已接通能力。
+真实 Adapter 调用 `POST /media/upload?category=reference-image`，以 multipart 的 `file` 字段上传
+`image/*`。后端成功响应 `data` 包含 `url`、`object_key`、`filename`、`content_type`、`size`，但 Adapter
+只将 `data.url` 转成不透明 `MediaReference`，消费者不能依赖后端存储结构。失败直接报错，不回退 Mock。
+
+## Playtest
+
+Playtest 是独立核验入口，不是 Workflow Editor 的修改步骤：
+
+```text
+/playtest/:characterId/:outfitId?actionId=:actionId&runId=:runId&revision=:revisionId
+```
+
+- `characterId + outfitId` 是必填播放目标，`actionId` 仅用于可选动作定位。
+- `runId + revision` 仅表示从某次 Workflow 进入时的可选来源；独立进入 Playtest 不需要它们。
+- Playtest 通过 `CharacterReader` 只读 Character→Outfit→Action→Frame，不修改 Character、WorkflowRun、
+  Revision 或产物。
+- “通过 / 发现问题”通过独立 `PlaytestInspectionRepository` 保存，不反写制作状态。
+- PR #64 尚未提供该记录的正式 HTTP 接口，当前只有领域 Port 与 Preview/开发 Mock。
+
+## 控制边界
+
+- `QuickStartPort.getSession`：只返回会话状态和当前公开阶段，不把完整 Revision/节点树泄漏给 Quick Start UI。
+- `QuickStartPort.interrupt`：只允许中断 `active` 会话；立即停止 Agent 后续自动决策，并使当前精确 attempt 失效。
+- `ProductionEnginePort.cancelAttempt`：丢弃该 attempt 的迟到结果，并尽力请求远端取消。
+- `WorkflowControllerPort`：手动和自动入口共用的流程推进用例。
+- `WorkflowRestartPort.restart`：从历史节点建立新的 Revision。
+- `WorkflowRunRepository`：仅存取后端持久化的 WorkflowRun 快照。
+
+远端取消尚无可调用接口，但不能因此删除上层“本地失效 + 远端 best-effort cancel”语义。
+
+## 仍待后端冻结或落地
+
+- Project、Character、WorkflowRun 的正式 HTTP 路径、DTO、认证、分页和错误响应。
+- 三类 Generation/Task 的提交、查询、取消、结果 DTO 与 SSE 断线恢复。
+- Review、Export、ActionTemplate 和 PlaytestInspection 的正式接口。
+- Character 当前缺失字段、Action 来源字段、`outfit_id`、候选数量与结果形状等前后端映射缺口。
+
+只有后端提供并确认 OpenAPI 或等价正式契约后，才新增真实 Adapter；页面与 Feature 无需因此改签名。

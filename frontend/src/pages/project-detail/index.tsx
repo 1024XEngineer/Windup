@@ -1,26 +1,64 @@
+import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 
-import {
-  CHARACTER_PERSPECTIVE,
-  DIRECTIONAL_MOVEMENT,
-  createWorkflowRun,
-  useProject,
+import { CHARACTER_PERSPECTIVE, DIRECTIONAL_MOVEMENT, useProject } from '@/entities'
+import type {
+  Character,
+  CharacterReader,
+  CreateWorkflowRunInput,
+  ProjectRepository,
+  WorkflowRun,
 } from '@/entities'
-import type { ProjectRepository } from '@/entities'
 import { PageHeader } from '@/shared/ui'
 
 /**
  * 单个项目的内容浏览：项目约束 + 项目下的全部内容（一期只角色，后续加动作模板、穿戴）。
  * 与项目列表是两页，07-22 会议要求两页都要有。
  */
-export function ProjectDetailPage({ repository }: { repository: ProjectRepository }) {
+export function ProjectDetailPage({
+  repository,
+  characters,
+  createWorkflowRun,
+}: {
+  repository: ProjectRepository
+  characters: CharacterReader
+  createWorkflowRun: (input: CreateWorkflowRunInput) => Promise<WorkflowRun>
+}) {
   const navigate = useNavigate()
   const { projectId = '' } = useParams()
   const { data: project, loading, error } = useProject(repository, projectId)
+  const [projectCharacters, setProjectCharacters] = useState<Character[]>([])
+  const [starting, setStarting] = useState(false)
+  const [startError, setStartError] = useState<string | null>(null)
 
-  async function start() {
-    const run = await createWorkflowRun({ projectId, driver: 'manual' })
-    navigate(`/workflow-editor/${run.id}/asset`)
+  useEffect(() => {
+    if (!projectId) return
+    let active = true
+    void characters
+      .listByProject(projectId)
+      .then((items) => {
+        if (active) setProjectCharacters(items)
+      })
+      .catch(() => {
+        if (active) setProjectCharacters([])
+      })
+    return () => {
+      active = false
+    }
+  }, [characters, projectId])
+
+  async function startWorkflow(input: CreateWorkflowRunInput): Promise<void> {
+    setStarting(true)
+    setStartError(null)
+    try {
+      const run = await createWorkflowRun(input)
+      const stage = input.purpose === 'add_action' ? '/action-setup' : ''
+      navigate(`/workflow-editor/${encodeURIComponent(run.id)}${stage}`)
+    } catch (reason) {
+      setStartError(reason instanceof Error ? reason.message : '创建工作流失败')
+    } finally {
+      setStarting(false)
+    }
   }
 
   return (
@@ -33,8 +71,15 @@ export function ProjectDetailPage({ repository }: { repository: ProjectRepositor
           project ? (
             <button
               type="button"
-              onClick={() => void start()}
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-700"
+              disabled={starting}
+              onClick={() =>
+                void startWorkflow({
+                  projectId: project.id,
+                  driver: 'manual',
+                  purpose: 'create_character',
+                })
+              }
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40"
             >
               开始工作流
             </button>
@@ -57,9 +102,44 @@ export function ProjectDetailPage({ repository }: { repository: ProjectRepositor
             <dt className="text-slate-500">画风</dt>
             <dd>{project.gameStyle ?? '未设置'}</dd>
           </dl>
-          <p className="text-sm text-slate-400">
-            待实现：本项目下的角色列表，以及跳转到项目资产库。
-          </p>
+          {startError ? <p className="text-sm text-red-600">启动失败：{startError}</p> : null}
+          <section className="mt-6 space-y-3" aria-label="项目角色">
+            <h2 className="font-medium">角色</h2>
+            {projectCharacters.length === 0 ? (
+              <p className="text-sm text-slate-400">当前项目还没有角色。</p>
+            ) : (
+              projectCharacters.map((character) => (
+                <article key={character.id} className="rounded-lg border border-slate-200 p-4">
+                  <p className="font-medium">{character.name}</p>
+                  {character.outfits.map((outfit) => (
+                    <button
+                      key={outfit.id}
+                      type="button"
+                      disabled={
+                        starting || !outfit.characterTemplateUrl || outfit.baseFrames.length === 0
+                      }
+                      onClick={() =>
+                        outfit.characterTemplateUrl && outfit.baseFrames.length > 0
+                          ? void startWorkflow({
+                              projectId: project.id,
+                              driver: 'manual',
+                              purpose: 'add_action',
+                              characterId: character.id,
+                              outfitId: outfit.id,
+                              characterTemplateUrl: outfit.characterTemplateUrl,
+                              baseFrameUrls: outfit.baseFrames.map((frame) => frame.imageUrl),
+                            })
+                          : undefined
+                      }
+                      className="mt-2 rounded border border-slate-300 px-3 py-2 text-sm"
+                    >
+                      为 {outfit.name} 添加动作
+                    </button>
+                  ))}
+                </article>
+              ))
+            )}
+          </section>
           <button
             type="button"
             onClick={() => navigate(`/projects/${encodeURIComponent(project.id)}/assets`)}

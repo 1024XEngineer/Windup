@@ -4,24 +4,37 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { InspectionPreview } from './index'
 
+const outfit = {
+  id: 'outfit-1',
+  characterId: 'character-42',
+  name: '默认造型',
+  candidateCharacterTemplates: [],
+  characterTemplateUrl: null,
+  baseFrames: [],
+  actions: [],
+}
+
 describe('InspectionPreview 模块契约', () => {
   afterEach(cleanup)
 
-  it('不依赖 Router 即可记录非阻断核验结论', () => {
-    const onRecordStatus = vi.fn(async () => undefined)
+  it('只上报通过或发现问题，不直接修改工作流', () => {
+    const onRecordStatus = vi.fn(async () => {})
     render(
       <InspectionPreview
         characterId="character-42"
-        runId="run-1"
-        revisionId="revision-1"
-        status="not_tested"
+        outfit={outfit}
+        status={null}
         onRecordStatus={onRecordStatus}
-        onOpenReview={vi.fn()}
       />,
     )
 
-    expect(screen.getByText(/来源 run-1 \/ revision-1/)).toBeTruthy()
+    expect(screen.getByText(/默认造型/)).toBeTruthy()
+    expect(screen.getByText(/尚未记录/)).toBeTruthy()
+    expect(screen.queryByRole('toolbar', { name: '预览工具' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '记录为通过' }))
+    expect(onRecordStatus).toHaveBeenLastCalledWith('passed')
     fireEvent.click(screen.getByRole('button', { name: '记录发现问题' }))
-    expect(onRecordStatus).toHaveBeenCalledWith('issues_found')
+    expect(onRecordStatus).toHaveBeenLastCalledWith('issues_found')
+    expect(screen.queryByRole('button', { name: '返回审核' })).toBeNull()
   })
 })

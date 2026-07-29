@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { createDevelopmentAppServices } from './composition/development'
@@ -15,26 +15,20 @@ describe('QuickStartPage', () => {
     cleanup()
   })
 
-  it('从 Home 进入 Quick Start 后创建统一运行并保留在简化创作台', async () => {
-    render(<App services={createDevelopmentAppServices()} />)
+  it('从 Home 进入 Quick Start 后创建 Project 和 WorkflowRun 并进入独立会话页', async () => {
+    const services = createDevelopmentAppServices()
+    render(<App services={services} />)
 
     fireEvent.click(screen.getAllByRole('link', { name: /快速开始/ })[0])
 
-    fireEvent.change(screen.getByPlaceholderText(/一个戴斗篷的像素小骑士/), {
-      target: { value: '像素小骑士，要走路' },
-    })
+    expect(screen.getByLabelText('创作描述')).toBeTruthy()
+    expect(screen.getByText(/底层媒体上传已可用/)).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('创作描述'), { target: { value: '像素小骑士' } })
     fireEvent.click(screen.getByRole('button', { name: '开始创作' }))
 
-    expect(await screen.findByRole('heading', { name: '正在理解你的设定' })).toBeTruthy()
-    expect(screen.getByLabelText('创作进度')).toBeTruthy()
-    expect(screen.getByText('生成服务暂未连接')).toBeTruthy()
-    expect(window.location.pathname).toMatch(/^\/quick-start\/run-[^/]+$/)
-    const runId = window.location.pathname.split('/').at(-1)!
-    const persistedRuns = JSON.parse(
-      localStorage.getItem('windup.workflow-runs.v1') ?? '{}',
-    ) as Record<string, { projectId: string }>
-    expect(persistedRuns[runId]?.projectId).toMatch(/^\d+$/)
-    expect(persistedRuns[runId]?.projectId).not.toBe('quick-start')
-    expect(screen.queryByRole('heading', { name: '工作流' })).toBeNull()
+    await waitFor(() => expect(window.location.pathname).toMatch(/^\/quick-start\/run-/))
+    expect(screen.getByText(/创作会话 run-/)).toBeTruthy()
+    expect(await screen.findByText(/自动制作中|等待人工审核/)).toBeTruthy()
+    expect(localStorage.getItem('windup.workflow-runs.v1')).toBeNull()
   })
 })

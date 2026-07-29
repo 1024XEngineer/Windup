@@ -28,23 +28,60 @@ function AppRoutes({ services }: { services: AppServices }) {
     <RouteErrorBoundary>
       <Routes>
         <Route path="/" element={<HomePage />} />
-        <Route
-          path="/quick-start"
-          element={<QuickStartPage projectRepository={services.projects} />}
-        />
+        <Route path="/quick-start" element={<QuickStartPage quickStart={services.quickStart} />} />
         <Route
           path="/quick-start/:runId"
-          element={<QuickStartPage projectRepository={services.projects} />}
+          element={<QuickStartPage quickStart={services.quickStart} />}
         />
         <Route path="/projects" element={<ProjectsPage repository={services.projects} />} />
         <Route
           path="/projects/:projectId"
-          element={<ProjectDetailPage repository={services.projects} />}
+          element={
+            <ProjectDetailPage
+              repository={services.projects}
+              characters={services.characters}
+              createWorkflowRun={(input) => services.workflowRuns.create(input)}
+            />
+          }
         />
         <Route path="/projects/:projectId/assets" element={<AssetLibraryPage />} />
-        <Route path="/workflow-editor/:runId" element={<WorkflowEditorPage />} />
-        <Route path="/workflow-editor/:runId/:stage" element={<WorkflowEditorPage />} />
-        <Route path="/playtest/:characterId" element={<PlaytestPage />} />
+        <Route
+          path="/workflow-editor/:runId"
+          element={
+            <WorkflowEditorPage
+              services={{
+                workflowRuns: services.workflowRuns,
+                productionEngine: services.productionEngine,
+                workflowRestart: services.workflowRestart,
+                workflowController: services.workflowController,
+                imageUpload: services.imageUpload,
+              }}
+            />
+          }
+        />
+        <Route
+          path="/workflow-editor/:runId/:stage"
+          element={
+            <WorkflowEditorPage
+              services={{
+                workflowRuns: services.workflowRuns,
+                productionEngine: services.productionEngine,
+                workflowRestart: services.workflowRestart,
+                workflowController: services.workflowController,
+                imageUpload: services.imageUpload,
+              }}
+            />
+          }
+        />
+        <Route
+          path="/playtest/:characterId/:outfitId"
+          element={
+            <PlaytestPage
+              characters={services.characters}
+              inspections={services.playtestInspections}
+            />
+          }
+        />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </RouteErrorBoundary>

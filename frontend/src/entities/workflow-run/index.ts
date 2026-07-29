@@ -1,33 +1,11 @@
-import { useAsync } from '@/shared/hooks'
-import type { AsyncState } from '@/shared/hooks'
-import { fetchWorkflowRun } from './orchestration/get-workflow-run'
-import type { WorkflowRun } from './model/types'
-
-export { createWorkflowRun } from './orchestration/create-workflow-run'
-export { fetchWorkflowRun } from './orchestration/get-workflow-run'
-export { submitWorkflowCommand } from './orchestration/submit-workflow-command'
-export {
-  canEnterNode,
-  canImportToPlaytest,
-  canRestartFromNode,
-  canSubmitCommand,
-  getCurrentNode,
-  getCurrentRevision,
-  getFirstAccessibleNodeType,
-  getNode,
-  getNodeByType,
-  getRevision,
-  isWorkflowNodeType,
-  listRevisionHistory,
-  nextNodeType,
-} from './model/selectors'
+/** WorkflowRun 当前只公开领域形状和异步 Repository 契约，不提供本地运行时。 */
+export type { WorkflowRunReader, WorkflowRunRepository } from './model/repository'
 export { WORKFLOW_NODE_ORDER } from './model/types'
 export type { WorkflowTaskLink } from './model/task-link'
 export type {
   CreateWorkflowRunInput,
   ExportStatus,
   GenerationStatus,
-  PlaytestStatus,
   WorkflowCommand,
   WorkflowCommandKind,
   WorkflowDriver,
@@ -37,9 +15,6 @@ export type {
   WorkflowRevision,
   WorkflowRevisionStatus,
   WorkflowRun,
+  WorkflowRunPurpose,
   WorkflowRunStatus,
 } from './model/types'
-
-export function useWorkflowRun(runId: string): AsyncState<WorkflowRun> {
-  return useAsync(() => fetchWorkflowRun(runId), [runId])
-}

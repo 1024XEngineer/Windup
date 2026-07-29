@@ -1,8 +1,14 @@
-export { createImageGenerationService } from './service'
+export type { ImageGenerationCallOptions, ImageGenerationPort } from './model/port'
 export type {
-  CreateImageGenerationServiceOptions,
-  ImageGenerationRuntime,
-  ImageGenerationService,
-} from './service'
-export type { ImageGenerationAdapterKind, ImageGenerationPort } from './model/port'
-export type { GenerateImagesInput, GeneratedImage } from './model/types'
+  CharacterTemplateGenerationInput,
+  CharacterTemplateGenerationResult,
+  CompleteAnimationGenerationInput,
+  CompleteAnimationGenerationResult,
+  FirstFrameGenerationInput,
+  FirstFrameGenerationResult,
+  GeneratedImage,
+  GenerationInput,
+  GenerationResult,
+  GenerationResultFor,
+  GenerationType,
+} from './model/types'

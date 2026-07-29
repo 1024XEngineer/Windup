@@ -1,48 +1,43 @@
-/**
- * 项目：角色生成的容器，保存全局约束（视角、尺寸、画风）。
- * 字段与 PR #64 的后端 Project 模型保持对应；HTTP DTO 仍由候选 Repository 隔离。
- */
+/** Project 前端领域骨架；字段只表达当前页面需要，不对应任何已确认后端 DTO。 */
 export interface Project {
-  /** 后端 Project ID；领域层统一转为字符串。 */
+  /** 前端统一使用的 Project ID。 */
   id: string
-  /** Project 所属用户 ID；当前由后端响应给出。 */
+  /** Project 所属用户 ID；认证和后端来源尚未冻结。 */
   ownerId: string
-  /** 未开始生成时为 null。 */
-  workflowId: string | null
-  /** 后端限制 1–20 字符，同一用户下不可重名。 */
+  /** 项目展示名称；最终长度和唯一性规则等待正确契约。 */
   name: string
   /** 游戏视角，见 CHARACTER_PERSPECTIVE。 */
   perspective: CharacterPerspective
   /** 移动方向，见 DIRECTIONAL_MOVEMENT。 */
   directionalMovement: DirectionalMovement
-  /** 后端校验 32–2048，实际取 SPRITE_SIZES 里的档位。 */
+  /** 当前页面使用建议档位，后端范围尚未确认。 */
   spriteSize: {
     /** 精灵图宽度，单位为像素。 */
     width: number
     /** 精灵图高度，单位为像素。 */
     height: number
   }
-  /** 项目级画风描述，会作为本项目所有角色与动作生成的视觉约束。 */
+  /** 项目级画风描述，作为本项目所有角色和动作生成的视觉约束。 */
   gameStyle: string | null
   /**
-   * 项目级画风参考图，本项目所有角色都照它的风格生成；URL 来自 POST /upload/image。
-   * 别跟角色自己的参考图（CreateCharacterInput.referenceImageUrl）混：
-   * 那张定的是单个角色长什么样，这张定的是整个项目的统一风格。
+   * 项目级画风参考图，本项目所有角色和动作都遵循它的视觉风格。
+   * 它不决定某个角色具体长什么样；角色自身参考图由 CreateCharacterInput.referenceImageUrl 表达。
+   * 上传来源和后端媒体引用形式仍等待正式契约。
    */
   sampleImageUrl: string | null
-  /** 项目创建时间，保留后端返回的时间字符串。 */
+  /** 项目创建时间，使用 ISO 8601 字符串。 */
   createdAt: string
-  /** 项目最后更新时间，保留后端返回的时间字符串。 */
+  /** 项目最后更新时间，使用 ISO 8601 字符串。 */
   updatedAt: string
 }
 
 /** 新建项目的入参。 */
 export interface CreateProjectInput {
-  /** 项目名称；后端当前限制 1–20 字符，同一用户下不可重名。 */
+  /** 项目名称；最终校验规则等待正确契约。 */
   name: string
-  /** 游戏视角；传输层会映射成后端数字枚举。 */
+  /** 游戏视角。 */
   perspective: CharacterPerspective
-  /** 移动方向；传输层会映射成后端数字枚举。 */
+  /** 移动方向。 */
   directionalMovement: DirectionalMovement
   /** 精灵图宽高，单位为像素；当前页面从 SPRITE_SIZES 中选择。 */
   spriteSize: {
@@ -51,19 +46,19 @@ export interface CreateProjectInput {
     /** 目标精灵图高度。 */
     height: number
   }
-  /** 可选的项目级画风描述；不设置或明确清空时发送 null。 */
+  /** 可选的项目级画风描述。 */
   gameStyle?: string | null
-  /** 可选的项目级参考图 URL；由图片上传接口返回。 */
+  /** 可选的项目级画风参考图；真实上传能力和媒体引用形式尚未接入。 */
   sampleImageUrl?: string | null
 }
 
-/** 前端使用的游戏视角枚举；仅在 mapper 中转换为后端数字。 */
+/** 前端使用的游戏视角枚举；后端映射尚未冻结。 */
 export type CharacterPerspective = 'side' | 'top-down' | 'isometric'
 
-/** 前端使用的移动方向枚举；仅在 mapper 中转换为后端数字。 */
+/** 前端使用的移动方向枚举；后端映射尚未冻结。 */
 export type DirectionalMovement = 'single' | 'four-way' | 'eight-way'
 
-/** 游戏视角。DTO 数字值只在 api mapper 内存在。 */
+/** 游戏视角的页面文案。 */
 export const CHARACTER_PERSPECTIVE: Record<CharacterPerspective, string> = {
   side: '横版视角',
   'top-down': '俯视',
@@ -77,10 +72,5 @@ export const DIRECTIONAL_MOVEMENT: Record<DirectionalMovement, string> = {
   'eight-way': '八向',
 }
 
-/**
- * 精灵图尺寸档位，来自 windup_project 表注释。
- *
- * 注意：接口文档与 pydantic 校验写的是「32～2048 任意整数」，表注释列的却是这七个档。
- * 前端按档位做选择器，避免用户填出后端不打算支持的尺寸。TODO(对后端)：以哪个为准。
- */
+/** UI 使用的建议尺寸档位；不代表后端约束。 */
 export const SPRITE_SIZES = [32, 64, 128, 256, 512, 1024, 2048] as const

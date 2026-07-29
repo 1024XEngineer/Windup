@@ -1,192 +1,134 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 
-import {
-  canImportToPlaytest,
-  createWorkflowRun,
-  getCurrentRevision,
-  useWorkflowRun,
-} from '@/entities'
-import type { ProjectRepository } from '@/entities'
-import { createQuickStartStarter, planMvpQuickStartProject } from '@/features/quick-start'
+import type { QuickStartPort, QuickStartSessionSnapshot } from '@/features/quick-start'
 import { PageHeader } from '@/shared/ui'
 
-const CREATION_COPY = {
-  asset: ['正在理解你的设定', '已准备好角色创作所需的基础信息。'],
-  generation: ['正在生成角色', '正在连接生成服务并准备创作素材。'],
-  candidate: ['正在检查结果', '系统正在检查生成内容是否符合交付要求。'],
-  review: ['正在整理交付版本', '生成结果已准备好，正在完成最终整理。'],
-  export: ['正在准备文件', '正在整理可导出和可核验的角色文件。'],
-} as const
+export interface QuickStartPageProps {
+  /** 页面只调用 Quick Start 用例，不直接操作生成、Repository 或重启端口。 */
+  quickStart: QuickStartPort
+}
 
-/**
- * Quick Start 是面向创作的独立体验。它复用 WorkflowRun 的领域状态，
- * 但不向用户暴露节点、版本或编辑器术语。
- */
-export function QuickStartPage({ projectRepository }: { projectRepository: ProjectRepository }) {
-  const navigate = useNavigate()
+/** Quick Start 独立页面；页面只调用用例，项目与 WorkflowRun 由用例协调创建。 */
+export function QuickStartPage({ quickStart }: QuickStartPageProps) {
   const { runId } = useParams()
-  const [description, setDescription] = useState('')
+  const navigate = useNavigate()
+  const [prompt, setPrompt] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const startQuickStart = useMemo(
-    () =>
-      createQuickStartStarter({
-        planProject: planMvpQuickStartProject,
-        createProject: projectRepository.create,
-        createWorkflowRun,
-      }),
-    [projectRepository],
-  )
+  const [session, setSession] = useState<QuickStartSessionSnapshot | null>(null)
 
-  if (runId)
-    return <QuickStartCreation runId={runId} onCreateAnother={() => navigate('/quick-start')} />
-
-  async function start() {
-    const prompt = description.trim()
-    if (!prompt) {
-      setError('请先描述要制作的角色。')
-      return
+  useEffect(() => {
+    if (!runId) return
+    let active = true
+    async function refresh(): Promise<void> {
+      try {
+        const snapshot = await quickStart.getSession(runId ?? '')
+        if (active) {
+          setSession(snapshot)
+          setError(null)
+        }
+      } catch (reason) {
+        if (active) setError(reason instanceof Error ? reason.message : '读取创作会话失败')
+      }
     }
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), 250)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [quickStart, runId])
 
+  async function start(): Promise<void> {
+    if (!prompt.trim() || submitting) return
     setSubmitting(true)
     setError(null)
     try {
-      const { run } = await startQuickStart({ prompt })
-      navigate(`/quick-start/${run.id}`)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      const session = await quickStart.start({ prompt: prompt.trim() })
+      navigate(`/quick-start/${encodeURIComponent(session.runId)}`)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '开始创作失败')
     } finally {
       setSubmitting(false)
     }
   }
 
-  return (
-    <>
-      <PageHeader title="快速开始" subtitle="一句话描述你想要的角色，我们会帮你完成创作。" />
-      <form
-        className="space-y-4"
-        onSubmit={(event) => {
-          event.preventDefault()
-          void start()
-        }}
-      >
-        <textarea
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-          rows={4}
-          placeholder="例如：一个戴斗篷的像素小骑士，要走路、奔跑和跳跃"
-          className="w-full rounded-lg border border-slate-200 p-3 text-sm outline-none focus:border-slate-400"
-        />
-        <button
-          type="submit"
-          disabled={submitting}
-          className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-700 disabled:opacity-50"
-        >
-          {submitting ? '正在开始…' : '开始创作'}
-        </button>
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
-      </form>
-    </>
-  )
-}
+  async function interruptSession(): Promise<void> {
+    if (!runId) return
+    try {
+      await quickStart.interrupt(runId)
+      setSession(await quickStart.getSession(runId))
+      setError(null)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '中断创作会话失败')
+    }
+  }
 
-function QuickStartCreation({
-  runId,
-  onCreateAnother,
-}: {
-  runId: string
-  onCreateAnother: () => void
-}) {
-  const navigate = useNavigate()
-  const query = useWorkflowRun(runId)
-
-  if (query.loading) return <p className="text-sm text-slate-500">正在准备创作…</p>
-  if (query.error)
-    return <p className="text-sm text-red-600">无法继续这次创作：{query.error.message}</p>
-  if (!query.data) return <p className="text-sm text-red-600">未找到这次创作记录。</p>
-
-  const run = query.data
-  const revision = getCurrentRevision(run)
-  const activeNode = revision.nodes.find((node) => node.status === 'active')
-  const [title, detail] = CREATION_COPY[activeNode?.type ?? 'export']
-  const completed = revision.generationStatus === 'completed'
-  const canOpenPlaytest = Boolean(run.characterId && canImportToPlaytest(run, revision.id))
-
-  return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      <PageHeader
-        title={completed ? '角色创作完成' : title}
-        subtitle={run.prompt ?? '正在根据你的描述准备角色。'}
-        actions={
-          <button
-            type="button"
-            onClick={onCreateAnother}
-            className="shrink-0 whitespace-nowrap text-sm text-slate-600 hover:text-slate-900"
-          >
-            新建创作
-          </button>
-        }
-      />
-
-      <section
-        aria-label="创作进度"
-        className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-6"
-      >
-        <div>
-          <p className="text-base font-semibold">{completed ? '已经为你准备好结果。' : title}</p>
-          <p className="mt-1 text-sm text-slate-600">
-            {completed ? '你可以继续导出或导入核验台。' : detail}
+  if (runId) {
+    const statusText = session
+      ? session.status === 'active'
+        ? session.currentStage === 'review'
+          ? '等待人工审核'
+          : '自动制作中'
+        : session.status === 'completed'
+          ? '制作已完成'
+          : session.status === 'interrupted'
+            ? '制作已中断'
+            : '制作失败'
+      : '正在恢复会话…'
+    return (
+      <>
+        <PageHeader title="快速开始" subtitle={`创作会话 ${runId}`} />
+        <section className="rounded-xl border border-dashed border-slate-300 p-6 text-sm text-slate-500">
+          <p className="font-medium text-slate-800">自动制作会话</p>
+          <p className="mt-2">{statusText}</p>
+          <p className="mt-2">
+            Quick Start 会隐藏节点细节，但内部仍使用与 Workflow Editor 相同的 WorkflowRun。
           </p>
-        </div>
-        <ol className="grid gap-2 text-sm sm:grid-cols-3">
-          {['理解设定', '生成角色', '检查交付'].map((label, index) => {
-            const currentIndex = activeNode ? Math.min(activeNode.order, 2) : 2
-            const state =
-              completed || index < currentIndex
-                ? '已完成'
-                : index === currentIndex
-                  ? '进行中'
-                  : '等待中'
-            return (
-              <li key={label} className="rounded-lg border border-slate-200 bg-white px-3 py-3">
-                <p className="font-medium text-slate-800">{label}</p>
-                <p className="mt-1 text-xs text-slate-500">{state}</p>
-              </li>
-            )
-          })}
-        </ol>
-      </section>
-
-      {completed ? (
-        <section className="space-y-3 rounded-xl border border-slate-200 p-6">
-          <h2 className="font-semibold">下一步</h2>
-          <p className="text-sm text-slate-600">
-            导出服务会在后端任务接入后显示下载入口。核验台可独立记录试用结果，不会影响当前完成状态。
-          </p>
-          {canOpenPlaytest ? (
+          {session?.status === 'active' ? (
             <button
               type="button"
-              onClick={() =>
-                navigate(
-                  `/playtest/${encodeURIComponent(run.characterId!)}?runId=${encodeURIComponent(run.id)}` +
-                    `&revision=${encodeURIComponent(revision.id)}`,
-                )
-              }
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-700"
+              onClick={() => void interruptSession()}
+              className="mt-4 rounded-lg border border-slate-300 px-4 py-2 text-sm"
             >
-              导入核验台
+              中断自动制作
             </button>
           ) : null}
+          {error ? <p className="mt-2 text-red-600">读取失败：{error}</p> : null}
         </section>
-      ) : (
-        <section className="rounded-xl border border-dashed border-slate-300 p-6 text-sm text-slate-600">
-          <p className="font-medium text-slate-800">生成服务暂未连接</p>
-          <p className="mt-1">
-            服务接入后，这里会持续更新创作进度和结果；当前不会显示虚假的完成结果。
-          </p>
-        </section>
-      )}
-    </div>
+      </>
+    )
+  }
+
+  return (
+    <>
+      <PageHeader title="快速开始" subtitle="用自然语言和参考图描述最终产物。" />
+      <section className="space-y-4 rounded-xl border border-slate-200 p-6">
+        <label htmlFor="quick-start-prompt" className="block text-sm font-medium">
+          创作描述
+        </label>
+        <textarea
+          id="quick-start-prompt"
+          rows={4}
+          value={prompt}
+          onChange={(event) => setPrompt(event.target.value)}
+          placeholder="例如：一个戴斗篷的像素小骑士，要走路、奔跑和跳跃"
+          className="w-full rounded-lg border border-slate-200 p-3 text-sm"
+        />
+        <p className="text-sm text-slate-500">
+          底层媒体上传已可用；参考图控件将在 Quick Start 用例实现时接入。
+        </p>
+        <button
+          type="button"
+          disabled={!prompt.trim() || submitting}
+          onClick={() => void start()}
+          className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40"
+        >
+          {submitting ? '正在创建…' : '开始创作'}
+        </button>
+        {error ? <p className="text-sm text-red-600">创建失败：{error}</p> : null}
+      </section>
+    </>
   )
 }

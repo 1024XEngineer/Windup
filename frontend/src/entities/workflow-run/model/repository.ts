@@ -1,11 +1,15 @@
-import type { CreateWorkflowRunInput, WorkflowCommand, WorkflowRun } from './types'
+import type { CreateWorkflowRunInput, WorkflowRun } from './types'
 
-/** WorkflowRun 是前端编排模型；仓库端口不表达 HTTP 或后端资源。 */
-export interface WorkflowRunRepository {
-  /** 创建并持久化一个新的前端流程。 */
-  create(input: CreateWorkflowRunInput): Promise<WorkflowRun>
-  /** 按前端运行 ID 读取流程；不存在时返回 null。 */
+/** 页面可使用的只读流程端口。 */
+export interface WorkflowRunReader {
+  /** 按运行 ID 读取流程；不存在时返回 null。 */
   get(runId: WorkflowRun['id']): Promise<WorkflowRun | null>
-  /** 校验并应用本地编排命令，然后返回更新后的完整流程。 */
-  submit(runId: WorkflowRun['id'], command: WorkflowCommand): Promise<WorkflowRun>
+}
+
+/** WorkflowRun 的完整异步存取契约；只在 app 装配和 Application 用例内部使用。 */
+export interface WorkflowRunRepository extends WorkflowRunReader {
+  /** 创建新的前端流程。 */
+  create(input: CreateWorkflowRunInput): Promise<WorkflowRun>
+  /** 保存已经由上层用例完成合法状态转换的流程快照。 */
+  save(run: WorkflowRun): Promise<void>
 }
