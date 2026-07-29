@@ -7,9 +7,9 @@
   一次性返回模板 / 动作（按 action_type 分组）/ 穿戴道具。
 
 子实体管理（模板/动作/穿戴）由各自领域包负责：
-:mod:`windup_app.server.character_template` /
-:mod:`windup_app.server.action` /
-:mod:`windup_app.server.wearable`。
+:mod:`windup_app.server.character.character_template` /
+:mod:`windup_app.server.character.action` /
+:mod:`windup_app.server.character.wearable`。
 """
 
 from abc import ABC, abstractmethod
