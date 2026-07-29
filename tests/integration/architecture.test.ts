@@ -49,7 +49,7 @@ const DECLARED_SLICES = {
     'quick-start',
     'workflow-editor',
   ],
-  features: ['character-setup', 'export', 'generation', 'quick-start', 'review'],
+  features: ['character-setup', 'export', 'generation', 'review'],
   application: ['production-engine', 'workflow-controller', 'workflow-restart'],
   capabilities: ['image-generation', 'image-upload'],
   entities: [
