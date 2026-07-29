@@ -1,12 +1,19 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 
-import type { QuickStartPort, QuickStartSessionSnapshot } from '@/features/quick-start'
 import { PageHeader } from '@/shared/ui'
+import type { QuickStartService, QuickStartSessionSnapshot } from './model/service'
+
+export type {
+  QuickStartRequest,
+  QuickStartService,
+  QuickStartSession,
+  QuickStartSessionSnapshot,
+} from './model/service'
 
 export interface QuickStartPageProps {
-  /** 页面只调用 Quick Start 用例，不直接操作生成、Repository 或重启端口。 */
-  quickStart: QuickStartPort
+  /** 页面只调用自己的会话服务，不直接操作生成、Repository 或重启端口。 */
+  quickStart: QuickStartService
 }
 
 /** Quick Start 独立页面；页面只调用用例，项目与 WorkflowRun 由用例协调创建。 */
