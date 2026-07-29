@@ -70,7 +70,7 @@ Quick Start 与手动 Workflow 共用同一种 WorkflowRun、Revision 和八个�
 已选结果，选择本身不等于人工审核。Preview/开发组合只提供可替换的异步 Mock 推进；真实选择算法、
 质检和 HTTP Adapter 仍待正式契约。
 
-Quick Start 通过 `QuickStartPort` 创建真实形状的 Project 与 WorkflowRun，禁止使用 `quick-start`
+Quick Start 通过页面所属的 `QuickStartService` 创建真实形状的 Project 与 WorkflowRun，禁止使用 `quick-start`
 一类伪 ID。Preview/开发组合会连续调用同一个 `WorkflowControllerPort`；生产组合未接通时明确失败。
 会话页通过 `getSession` 恢复状态，只在运行仍为 `active` 时提供中断；没有 Review/Export 结果时停在
 对应阶段，不伪造完成或已导出。
@@ -86,7 +86,7 @@ WorkflowRun 由前端推进，但是后端持久化的业务资源。页面只�
 ## 外部能力边界
 
 - Project 页面只依赖异步 `ProjectRepository`。Preview/开发使用同契约内存实现，Production 在正确
-  OpenAPI 冻结前明确失败；Quick Start 使用独立 `QuickStartPort`。
+  OpenAPI 冻结前明确失败；Quick Start 使用页面所属的 `QuickStartService`。
 - 图片生成位于 `capabilities/image-generation`。`submit` 只提交异步生成并返回 Task，
   不伪装成立即拿到最终结果；泛型返回值保留输入的 `type` 字面量，固定使用角色母版、首帧、完整动画
   三套判别输入/结果。

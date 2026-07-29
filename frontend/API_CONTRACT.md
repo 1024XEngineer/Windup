@@ -32,7 +32,7 @@ interface AppServices {
   tasks: TaskRepository
   taskEvents: TaskEventSource
   imageUpload: ImageUploadPort
-  quickStart: QuickStartPort
+  quickStart: QuickStartService
   productionEngine: ProductionEnginePort
   workflowRestart: WorkflowRestartPort
   workflowController: WorkflowControllerPort
@@ -166,8 +166,8 @@ Playtest 是独立核验入口，不是 Workflow Editor 的修改步骤：
 
 ## 控制边界
 
-- `QuickStartPort.getSession`：只返回会话状态和当前公开阶段，不把完整 Revision/节点树泄漏给 Quick Start UI。
-- `QuickStartPort.interrupt`：只允许中断 `active` 会话；立即停止 Agent 后续自动决策，并使当前精确 attempt 失效。
+- `QuickStartService.getSession`：只返回会话状态和当前公开阶段，不把完整 Revision/节点树泄漏给 Quick Start UI。
+- `QuickStartService.interrupt`：只允许中断 `active` 会话；立即停止 Agent 后续自动决策，并使当前精确 attempt 失效。
 - `ProductionEnginePort.cancelAttempt`：丢弃该 attempt 的迟到结果，并尽力请求远端取消。
 - `WorkflowControllerPort`：手动和自动入口共用的流程推进用例。
 - `WorkflowRestartPort.restart`：从历史节点建立新的 Revision。
