@@ -36,6 +36,5 @@ describe('QuickStartPage', () => {
     expect(persistedRuns[runId]?.projectId).toMatch(/^\d+$/)
     expect(persistedRuns[runId]?.projectId).not.toBe('quick-start')
     expect(screen.queryByRole('heading', { name: '工作流' })).toBeNull()
-    expect(screen.queryByText(/Provider Session/)).toBeNull()
   })
 })

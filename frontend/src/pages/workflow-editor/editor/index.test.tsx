@@ -62,6 +62,8 @@ describe('WorkflowEditor', () => {
     )
 
     expect(screen.getByText(/历史只读/)).toBeTruthy()
+    expect(screen.getByText('生成服务尚未接入。')).toBeTruthy()
+    expect(screen.queryByText(/Provider/)).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '从此节点重新开始' }))
     expect(onRestartNode).toHaveBeenCalledWith(
       revision.nodes.find((node) => node.type === 'generation')!.id,
