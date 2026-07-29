@@ -27,6 +27,18 @@ VITE_API_BASE_URL=/api
 
 正式 Project OpenAPI 尚未接入，生产组合会明确返回不可用，不会装配候选接口或回退开发数据。
 
+## CI Preview
+
+Vercel 项目的 Root Directory 设置为 `frontend`，其余构建与 SPA 路由配置由
+[`vercel.json`](vercel.json) 管理。Vercel 的 Preview 环境必须设置：
+
+~~~dotenv
+VITE_APP_ENV=preview
+~~~
+
+该变量只用于 PR Preview，显式启用演示数据；Production 环境不得设置，仍遵守正式接口未接入时
+明确不可用的边界。仓库不保存 Vercel Token 或其他部署密钥。
+
 ## 路由
 
 - `/`：选择 Quick Start 或从项目开始。

@@ -30,8 +30,9 @@ app -> pages -> features -> capabilities -> entities -> shared
 
 - 开发默认动态加载内存 Repository；延迟由构造参数注入，测试不依赖环境变量特判。
 - 开发设置 `VITE_PROJECT_ADAPTER=pr57-candidate` 时才加载 PR #57 候选 HTTP Repository。
+- Vercel Preview 设置 `VITE_APP_ENV=preview` 时动态加载演示组合，不连接未冻结的正式接口。
 - 生产组合在正式 OpenAPI 到位前注入不可用 Repository，不装配 Mock 或候选接口。
-- 开发种子模块只从开发组合入口加载，生产产物不得包含种子数据。
+- 种子模块只由开发或 Preview 组合加载，生产产物不得包含种子数据。
 
 ## Capabilities
 
