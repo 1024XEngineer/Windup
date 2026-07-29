@@ -234,28 +234,6 @@ runId、revisionId、actionId 和 frameIndex 组合，不要求后端 Action 认
 项目模板查询应返回“系统内置模板 + 当前项目自定义模板”的合集，并通过 `scope` 与
 `projectId` 区分归属。系统模板不虚构项目 ID。
 
-## 仅有需求签名：Provider Session
-
-ProviderSession 是有独立 ID、状态和过期时间的后端数据，因此归 `entities/provider-session`；
-Generation Feature 只负责连接配置和状态展示。
-
-```ts
-type ProviderCredentialMode = 'client' | 'server'
-type ProviderSessionStatus = 'unconfigured' | 'connecting' | 'ready' | 'failed'
-
-interface ProviderSession {
-  id: string
-  providerId: string
-  model: string
-  credentialMode: ProviderCredentialMode
-  status: ProviderSessionStatus
-  expiresAt: string | null
-}
-```
-
-API Key 不进入 WorkflowRun、localStorage 或 ProviderSession 响应。创建、验证、刷新和失效接口尚未
-冻结，因此本节只说明前端所需数据形状，不声明后端 URL。
-
 ## 未对齐：异步任务与 SSE
 
 任务创建、查询和断线恢复需要完整快照；流式事件使用同一组状态字段：

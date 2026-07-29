@@ -19,7 +19,7 @@ app -> pages -> features -> capabilities -> entities -> shared
 | pages | asset-library、home、not-found、playtest、project-detail、projects、quick-start、workflow-editor |
 | features | character-setup、export、generation、quick-start、review |
 | capabilities | image-generation、image-upload |
-| entities | action-template、character、project、provider-session、task、wearable、workflow-run |
+| entities | action-template、character、project、task、wearable、workflow-run |
 | shared | api、hooks、pagination、ui |
 
 新增一级目录必须先明确它是页面、用户操作、外部能力、实体还是通用基础设施，再同步清单和文档。
@@ -58,7 +58,6 @@ import type { ProjectRepository, Task } from '@/entities'
   图片上传不属于 Project。
 - `character`：Character、Outfit、Action、Frame。Character 不反向保存 WorkflowRun 定位字段。
 - `task`：后端异步任务快照、事件和尚未冻结的订阅入口。
-- `provider-session`：Provider 描述、凭据模式和短期会话形状；Generation Feature 只消费它。
 - `workflow-run`：前端 WorkflowRun、Revision、五节点、命令、门禁和本地 Repository。
 - `action-template`、`wearable`：资产库数据形状和待后端冻结的查询签名。
 
@@ -78,7 +77,7 @@ Page 读取 Router 并组合模块。`workflow-editor/editor` 和 `playtest/insp
 不读取 Router，外部只能从各自目录根进入。
 
 Feature 表示用户操作，Feature 之间不互相导入。规划子目录可用 README 说明职责，但不得用占位代码
-返回假成功。Generation 的 `provider-connection` 只负责配置与展示，不拥有 ProviderSession 数据形状。
+返回假成功。Generation 当前只保留生成入口和明确的未接入状态。
 
 ## Shared
 

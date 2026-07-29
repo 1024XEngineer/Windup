@@ -49,7 +49,7 @@ app -> pages -> features -> capabilities -> entities -> shared
 - `pages`：路由、URL、页面临时状态和模块组合。
 - `features`：生成、角色设置、审核、导出和 Quick Start 等用户操作。
 - `capabilities`：调用外部能力的稳定 Port、服务和 Adapter；当前包含图片生成与图片上传。
-- `entities`：Project、Character、Task、ProviderSession、WorkflowRun 等有身份或生命周期的数据。
+- `entities`：Project、Character、Task、WorkflowRun 等有身份或生命周期的数据。
 - `shared`：真实 HTTP transport、通用分页、React hooks 和无业务 UI。
 
 跨 Slice 只能走目录根 `index.ts(x)`。上层使用 Entity 时统一从 `@/entities` 进入。Page、Feature
@@ -77,6 +77,5 @@ revision、node 和状态；ID 在 `randomUUID` 缺失时也有后备生成方�
   不提供猜测的 Real Adapter。
 - 图片上传位于 `capabilities/image-upload`。HTTP Adapter 负责格式、10 MiB 上限、multipart 和响应
   URL 映射，不属于 Project Entity。
-- `Task` 与 `ProviderSession` 是独立 Entity；`WorkflowTaskLink` 只负责把后端任务映射到前端
-  WorkflowRun 节点。
+- `Task` 是独立 Entity；`WorkflowTaskLink` 只负责把后端任务映射到前端 WorkflowRun 节点。
 - Generation、Review、Export 等未接通能力会明确保持未实现，不返回伪造成功。
