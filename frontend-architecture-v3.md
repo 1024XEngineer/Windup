@@ -42,7 +42,7 @@ app -> pages -> features -> application -> capabilities -> entities -> shared
 当前一级目录：
 
 - pages：asset-library、home、not-found、playtest、project-detail、projects、quick-start、workflow-editor。
-- features：character-setup、export、generation、quick-start、review。
+- features：character-setup、export、generation、review。
 - application：production-engine、workflow-controller、workflow-restart。
 - capabilities：image-generation、image-upload。
 - entities：action-template、character、media、playtest-inspection、project、task、workflow-run。

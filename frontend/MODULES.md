@@ -17,7 +17,7 @@ app -> pages -> features -> application -> capabilities -> entities -> shared
 | 层 | 允许的一级模块 |
 |---|---|
 | pages | asset-library、home、not-found、playtest、project-detail、projects、quick-start、workflow-editor |
-| features | character-setup、export、generation、quick-start、review |
+| features | character-setup、export、generation、review |
 | application | production-engine、workflow-controller、workflow-restart |
 | capabilities | image-generation、image-upload |
 | entities | action-template、character、media、playtest-inspection、project、task、workflow-run |
@@ -46,7 +46,7 @@ attempt 在前端失效，再通过 ImageGeneration Adapter 的 `AbortSignal` �
 - `tasks: TaskRepository`
 - `taskEvents: TaskEventSource`
 - `imageUpload: ImageUploadPort`
-- `quickStart: QuickStartPort`
+- `quickStart: QuickStartService`
 - `productionEngine: ProductionEnginePort`
 - `workflowRestart: WorkflowRestartPort`
 - `workflowController: WorkflowControllerPort`
@@ -61,7 +61,8 @@ attempt 在前端失效，再通过 ImageGeneration Adapter 的 `AbortSignal` �
 上传 Adapter 读取 `VITE_API_BASE_URL`；空值表示同源，不自动添加 `/api`，也不猜默认后端端口或
 Vite 代理。PR #64 当前未注册 CORS middleware，分端口直连时需后端 CORS 或外部反向代理。
 
-Quick Start 页面只注入 `QuickStartPort`，通过 `getSession` 读取会话级状态且只中断 `active` 运行。
+Quick Start 页面只注入页面所属的 `QuickStartService`，通过 `getSession` 读取会话级状态且只中断
+`active` 运行；该契约位于 `pages/quick-start/model`，不再重复建立同名 Feature Slice。
 Workflow Editor 注入只读 `WorkflowRunReader`、Production Engine、
 Workflow Restart 和上传 Port；原始 `ImageGenerationPort` 留在 app 装配层，供未来构造 Production Engine，
 不允许页面绕过制作引擎直接调用。
