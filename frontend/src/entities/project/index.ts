@@ -4,7 +4,7 @@ import type { Paged, PageQuery } from '@/shared/pagination'
 import type { ProjectRepository } from './repository'
 import type { Project } from './types'
 
-/** 项目。后端 GET/POST /projects、GET/DELETE /projects/{id} 已实现（PR #57）。 */
+/** 项目业务边界；现有 HTTP Repository 来自 PR #57，仅供开发候选联调。 */
 
 export { createHttpProjectRepository } from './http-repository'
 export type { CreateHttpProjectRepositoryOptions } from './http-repository'

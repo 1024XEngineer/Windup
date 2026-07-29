@@ -1,9 +1,9 @@
 /**
  * entities 唯一公开门面。外部不得绕过本文件访问内部 Entity 文件。
- * WorkflowRun 是前端编排模型；Project 已有后端实现，其他独立能力等待 OpenAPI 接入。
+ * WorkflowRun 是前端编排模型；Project HTTP 映射仍是候选，其他能力分别等待正式契约。
  */
 
-/* 项目 —— 已对接后端 PR #57 */
+/* 项目 —— 稳定业务 Port；PR #57 HTTP 映射仅供开发候选联调 */
 export {
   CHARACTER_PERSPECTIVE,
   DIRECTIONAL_MOVEMENT,
