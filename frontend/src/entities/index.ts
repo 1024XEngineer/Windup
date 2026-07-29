@@ -88,14 +88,6 @@ export type {
 export { subscribeTask } from './task'
 export type { Task, TaskEvent, TaskStatus } from './task'
 
-/* AI Provider 临时会话 —— Generation 只消费，不拥有其数据形状 */
-export type {
-  ProviderCredentialMode,
-  ProviderDescriptor,
-  ProviderSession,
-  ProviderSessionStatus,
-} from './provider-session'
-
 /* 资产库 —— 提案，待与后端 review */
 export { fetchActionTemplates, useActionTemplates } from './action-template'
 export type { ActionTemplate } from './action-template'
