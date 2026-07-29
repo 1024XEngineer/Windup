@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Vercel 本地项目链接元数据，不提交账号和项目 ID
+.vercel
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -22,3 +25,4 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+.env*
