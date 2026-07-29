@@ -1,101 +1,45 @@
-"""媒体资产领域模型。"""
+"""媒体文件领域模型。
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+媒体模块负责把前端上传的文件写入对象存储,并向调用方返回可保存到业务
+数据(例如 ``Character.reference_image_url`` / ``character_data``)中的 URL。
+媒体记录本身不与角色表耦合;同一个上传服务可处理参考图、造型预览图和动作帧。
+"""
+
 from enum import StrEnum
-from typing import Any
+
+from pydantic import BaseModel, Field
 
 
-# -- 枚举 ----------------------------------------------------------------
+class MediaCategory(StrEnum):
+    """上传文件的业务分类,用于生成对象存储 key 的目录。"""
 
-class MediaType(StrEnum):
-    """媒体类型——每新增一种媒体格式，在此加一个成员。"""
-
-    IMAGE = "image"
-    VIDEO = "video"
-    AUDIO = "audio"
-    MODEL_3D = "model_3d"
+    REFERENCE_IMAGE = "reference-image"
+    OUTFIT_PREVIEW = "outfit-preview"
+    ACTION_FRAME = "action-frame"
+    GENERAL = "general"
 
 
-class DerivativeKind(StrEnum):
-    """加工产物类型。"""
+class MediaUploadInput(BaseModel):
+    """待上传文件的元信息。
 
-    THUMBNAIL = "thumbnail"
-    PREVIEW = "preview"            # GIF / 短视频预览
-    TRANSCODED = "transcoded"      # 转码后（兼容播放）
-    WAVEFORM = "waveform"          # 音频波形
+    文件二进制内容由 service 方法单独接收;该模型只保存前端文件信息和
+    业务分类,避免把 ``UploadFile`` 这类 FastAPI 类型泄漏到 server 层。
+    """
 
-
-# -- 加工选项（策略各自持有自己的选项模型）-------------------------------
-
-@dataclass
-class ImageProcessOptions:
-    """图片加工选项。"""
-
-    width: int | None = None
-    height: int | None = None
-    format: str | None = None       # jpg / png / webp
-    quality: int = 85
+    filename: str = Field(min_length=1, max_length=255, description="前端原始文件名")
+    content_type: str = Field(min_length=1, max_length=100, description="MIME 类型")
+    size: int = Field(ge=0, description="文件大小(字节)")
+    category: MediaCategory = Field(
+        default=MediaCategory.GENERAL,
+        description="文件业务分类",
+    )
 
 
-@dataclass
-class VideoProcessOptions:
-    """视频加工选项。"""
+class MediaUploadResult(BaseModel):
+    """对象存储上传结果,前端使用 ``url`` 回填角色数据。"""
 
-    width: int | None = None
-    height: int | None = None
-    format: str | None = None       # mp4 / webm
-    fps: int | None = None
-    generate_gif_preview: bool = False
-
-
-@dataclass
-class AudioProcessOptions:
-    """音频加工选项。"""
-
-    format: str | None = None       # mp3 / ogg / wav
-    bitrate: int | None = None      # kbps
-    generate_waveform: bool = False
-
-
-@dataclass
-class Model3DProcessOptions:
-    """3D 模型加工选项。"""
-
-    format: str | None = None       # glb / gltf / fbx
-    render_thumbnail: bool = True
-    thumbnail_width: int = 512
-    thumbnail_height: int = 512
-
-
-# -- 加工产物 ------------------------------------------------------------
-
-@dataclass
-class Derivative:
-    """单个加工产物。"""
-
-    kind: DerivativeKind
-    url: str
-    format: str = ""
-    width: int | None = None
-    height: int | None = None
-    file_size: int | None = None
-
-
-# -- 媒体记录 ------------------------------------------------------------
-
-@dataclass
-class MediaRecord:
-    """媒体资产（贯穿上传→加工→使用全生命周期）。"""
-
-    id: int | None = None
-    project_id: int | None = None
-    user_id: int = 0
-    media_type: MediaType = MediaType.IMAGE
-    original_url: str = ""
-    original_name: str = ""
-    file_size: int = 0
-    derivatives: list[Derivative] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
-    create_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    update_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    url: str = Field(description="对象存储公开访问 URL")
+    object_key: str = Field(description="对象存储中的对象 key")
+    filename: str = Field(description="原始文件名")
+    content_type: str = Field(description="MIME 类型")
+    size: int = Field(ge=0, description="文件大小(字节)")
