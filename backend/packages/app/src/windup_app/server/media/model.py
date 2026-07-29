@@ -5,18 +5,9 @@
 媒体记录本身不与角色表耦合;同一个上传服务可处理参考图、造型预览图和动作帧。
 """
 
-from enum import StrEnum
-
 from pydantic import BaseModel, Field
 
-
-class MediaCategory(StrEnum):
-    """上传文件的业务分类,用于生成对象存储 key 的目录。"""
-
-    REFERENCE_IMAGE = "reference-image"
-    OUTFIT_PREVIEW = "outfit-preview"
-    ACTION_FRAME = "action-frame"
-    GENERAL = "general"
+from windup_common.enums.media import MediaCategory
 
 
 class MediaUploadInput(BaseModel):
