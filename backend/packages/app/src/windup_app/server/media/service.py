@@ -1,30 +1,23 @@
-"""媒体上传服务的对象存储实现。"""
+"""媒体上传服务——七牛 Kodo 对象存储实现。"""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from uuid import uuid4
+
+from qiniu import Auth, put_data
+
+from windup_framework.config.storage import settings as storage_settings
 
 from windup_app.server.media.interface import MediaService
 from windup_app.server.media.model import MediaUploadInput, MediaUploadResult
 
-if TYPE_CHECKING:
-    from windup_framework.storage import KodoStorage
-
 
 class ObjectStorageMediaService(MediaService):
-    """使用对象存储适配器上传媒体文件。"""
+    """通过七牛 Kodo 对象存储上传媒体文件。
 
-    def __init__(self, storage: KodoStorage | None = None) -> None:
-        self._storage = storage
-
-    @property
-    def storage(self) -> KodoStorage:
-        if self._storage is None:
-            from windup_framework.storage import KodoStorage
-
-            self._storage = KodoStorage()
-        return self._storage
+    配置来自 ``windup_framework.config.storage.settings``
+    (环境变量前缀 ``QINIU_``)。
+    """
 
     def upload(
         self,
@@ -33,7 +26,20 @@ class ObjectStorageMediaService(MediaService):
     ) -> MediaUploadResult:
         suffix = _file_suffix(metadata.filename)
         object_key = f"media/{metadata.category}/{uuid4().hex}{suffix}"
-        url = self.storage.upload(data, object_key, metadata.content_type)
+
+        auth = Auth(storage_settings.access_key, storage_settings.secret_key)
+        token = auth.upload_token(storage_settings.bucket_name, object_key)
+        ret, resp = put_data(
+            token,
+            object_key,
+            data,
+            mime_type=metadata.content_type,
+        )
+        if resp.status_code != 200 or ret is None:
+            msg = f"七牛上传失败: status={resp.status_code}, body={resp.text}"
+            raise RuntimeError(msg)
+
+        url = f"{storage_settings.download_base}/{object_key}"
         return MediaUploadResult(
             url=url,
             object_key=object_key,
