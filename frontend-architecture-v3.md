@@ -6,6 +6,10 @@
 > 当前以 `frontend/API_CONTRACT.md` 为准：开发默认使用 Memory，PR #57 映射仅供开发显式联调，
 > 生产在正式 OpenAPI 到位前保持不可用；其他冻结结论不变。
 
+> 2026-07-29 Provider 产品边界勘误：用户不选择 AI Provider、模型或提交 API Key，相关配置由
+> 后端内部负责。本文中的 ProviderSession、短期 sessionId、双 Provider 和前端凭据模式条目已经
+> 失效；前端只保留与供应商无关的生成能力与 Task 边界。
+
 ## 1. 技术边界
 
 - 前端：React + Vite + TypeScript + Tailwind CSS。
