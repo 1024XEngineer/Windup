@@ -72,7 +72,13 @@ export interface WorkflowStep {
   referenceStepIds: string[]
 }
 
-/** 一次页面执行版本；当前版本会推进，从旧步骤重开则追加新版本。 */
+/**
+ * 一次页面执行版本；当前版本会推进，从旧步骤重开则追加新版本。
+ *
+ * MVP 只走单条执行线：revisions 恒为一个成员，basedOnRevisionId 与 restartStepId 恒为 null。
+ * 「从历史步骤重开并保留旧版本」尚未进入产品定义，结构先留出位置但不实现，
+ * 避免真要做时改动波及 WorkflowRun 的持久化形状。
+ */
 export interface WorkflowRevision {
   id: string
   /** 首次创建的版本没有来源，因此为 null。 */

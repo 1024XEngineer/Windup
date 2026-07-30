@@ -58,7 +58,11 @@ export const CHARACTER_PERSPECTIVE: Record<CharacterPerspective, string> = {
   isometric: '2.5D',
 }
 
-/** 移动方向，决定一个动作要生成几套朝向的帧。 */
+/**
+ * 移动方向，决定一个动作要生成几套朝向的帧。
+ * 多朝向在 Action 上如何存放尚未定义，当前 Action.frames 只表达单朝向；
+ * 选了四向/八向的项目，生成侧还接不上，见 Action.frames 的说明。
+ */
 export const DIRECTIONAL_MOVEMENT: Record<DirectionalMovement, string> = {
   single: '单向',
   'four-way': '四向',
