@@ -52,14 +52,16 @@ pages -> features -> entities -> shared
 
 ## 3. 接口命名
 
-每个模块暴露一组后端接口，统一叫 `XxxApis`：
+需要访问后端资源的模块暴露一组接口，统一叫 `XxxApis`：
 
 ```text
 ProjectApis  CharacterApis  ActionTemplateApis  GenerationApis
-TaskApis  WorkflowRunApis
+TaskApis
 ```
 
 **不使用 `Repository` / `Port` / `Adapter` 这些叫法**，也不做接口与实现的分离——实现跟着接口放在同一个模块里。
+
+`WorkflowRun` 是前端运行态，不声明后端接口。后端不读取、不推进、也不持久化它。
 
 ---
 
@@ -75,7 +77,7 @@ Controller 围绕同一份 WorkflowRun 提供推进、更新、重启和中断�
 角色资料 → 角色图 → 候选选择 → 动作资料 → 首帧 → 完整动画 → 审核 → 导出
 ```
 
-**步骤怎么走由前端决定。** `WorkflowRunApis` 只负责存取运行记录，不负责推进。
+**步骤怎么走、运行状态如何保存都由前端决定。** 后端不参与 WorkflowRun，只接收各节点发起的生成请求，并在最终确认时持久化角色与动作资产。
 
 从历史步骤重开会追加一个新 Revision，旧 Revision 保留为只读历史，不会被改写成失败或完成。
 

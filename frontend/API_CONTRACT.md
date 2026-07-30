@@ -1,57 +1,63 @@
 # 前后端接口对齐清单
 
-前端各模块的 `XxxApis` 与后端 PR #64（head `10dd958`）逐条比对结果。
+前端各模块的 `XxxApis` 与后端 2026-07-30 接口文档逐条比对结果。
 
 后端现有四个相关模块：`project`、`character`、`generation`、`media`。`asset` 与 `wearable` 已按 07-30 评审要求删除。
 
 ---
 
-## 一、前端预期有、后端目前没有
+## 一、已经确认的边界
 
-**这几条需要后端明确做或不做；不做的前端删掉。**
+- `WorkflowRun` 是前端固定工作流的运行态。后端不读取、不推进、也不持久化，前端不声明 `WorkflowRunApis`。
+- `Character` 不使用独立 `name` 字段；前端已删除。
+- 前端保留 `jump` 动作类型，由后端补充对应枚举。
+- 前端工作流节点不与后端 `GenerationType` 一一对应，按下表调用：
 
-| 前端接口 | 后端情况 |
-|---|---|
-| `WorkflowRunApis`（`get` / `create` / `save`） | 没有 workflow 模块 |
-| `ActionTemplateApis.listAvailable` | 没有 action template 模块 |
-| 独立的 `task` 模块 | 后端 Task 不独立，是 `generation` 内的 `GenerationTask` |
+| 前端工作流节点 | 后端接口 | 后端任务类型 |
+|---|---|---|
+| `character_template` | `POST /generation/image` | `character_image` |
+| `first_frame` | `POST /generation/image`，以上一步角色图作为参考图 | `character_image` |
+| `complete_animation` | `POST /generation/action`，以已确认动作首帧作为参考图 | `character_action` |
 
-前端已按服务端现状去掉 `TaskApis.cancel`——`GenerationService` 没有取消能力，不声明前端用不到的接口。
+图片生成和动作生成只返回任务及结果，不自动修改 WorkflowRun 或角色资产。用户最终确认后，前端再通过角色更新接口保存角色图和完整动作数据。
 
 ---
 
-## 二、形状不一致
+## 二、前端预期有、后端目前没有
 
-### 生成步骤：后端一步，前端两步
+**这些接口仍需要确定由后端提供，还是改为前端本地能力。**
 
-| 后端 `GenerationType` | 前端 `GenerationType` |
+| 前端接口 | 后端情况 |
 |---|---|
-| `character_image` | `character_template` |
-| `character_action` | `first_frame` → `complete_animation` |
+| `ActionTemplateApis.listAvailable` | 没有 action template 模块 |
+| `ProjectApis.update` | 没有 `PATCH /projects/{project_id}` |
 
-前端设计是先出动作首帧、用户确认后再生成完整动画。后端 `generate_character_action` 是一次到底。
+前端已按服务端现状去掉 `TaskApis.cancel`——后端没有取消能力，不声明前端用不到的接口。
 
-**这不是命名差异，是交互差异。需要确认首帧确认这一步保不保。**
+---
 
-### 其他
+## 三、形状不一致
+
+这些差异可以在前端接口层转换，不要求领域类型与后端 DTO 使用相同命名。
 
 | 项 | 后端 | 前端 |
 |---|---|---|
 | 角色列表 | `list_characters` 分页，返回 `(list, total)` | `listByProject` 无分页 |
 | 更新角色 | `update_character(character_id, **fields)` 部分更新 | `update(character)` 整棵树替换 |
 | 查任务 | `get_task(project_id, task_id)` 需要 `project_id` | `get(taskId)` 只传 taskId |
-| 动作类型 | `walk` `idle` `attack` `custom` | 多一个 `jump` |
-| 删除项目 | 返回 `bool`（是否找到） | 返回 `void` |
+| 等待任务完成 | 提供 `GET /generation/tasks/{task_id}` 轮询 | `TaskApis.subscribe`，实现时可封装轮询 |
+| 图片生成数量 | 入参有 `num_images`，结果只有一个 `image_url` | 角色图候选结果是 `images[]` |
+| 动作类型 | `walk` `idle` `attack` `custom`；待增加 `jump` | `walk` `idle` `attack` `jump` `custom` |
+| 角色视角 | `character_perspective` 为 `1~3`，文档中 2、3 都写成“正面” | `side` `top-down` `isometric` |
 
 ID 类型后端为 `int`、前端为 `string`，由前端转换层处理，不需要后端改动。
 
 ---
 
-## 三、后端有、前端没接
+## 四、后端有、前端没接
 
 | 后端 | 说明 |
 |---|---|
-| `project_name_exists(user_id, project_name)` | 建项目时的重名校验，前端未接 |
 | `delete_character` | 前端 `CharacterApis` 没有删除 |
 | `Character.description` | 后端存在实体上；前端只在创建入参里，创建完查不到 |
 | `Character.reference_image_url` | 后端存在实体上；前端 `Character` 类型没有这个字段 |
@@ -59,7 +65,7 @@ ID 类型后端为 `int`、前端为 `string`，由前端转换层处理，不�
 
 ---
 
-## 四、审核数据无处保存
+## 五、前端资产字段在后端没有落点
 
 后端 `character_data` 的嵌套结构（见 `character/model.py`）：
 
@@ -71,22 +77,18 @@ frames[]  → index / image_url / duration_ms
 
 前端以下字段在后端结构里没有落点：
 
-- `Frame.qc`（系统质检结论）
-- `Frame.rejected`（人工打回）
 - `Action.kind`（preset / custom 来源）
-- `Action.status`（planned / generating / candidate / confirmed / failed）
 - `Action.keyFrameIndex`
 - `Frame.rootMotion`
 - `Outfit.candidateCharacterTemplates`（母版候选列表）
+- `Outfit.characterTemplateUrl`（每套造型的已确认角色图）
 - `Outfit.baseFrames`
 
-**其中 `qc` 与 `rejected` 是审核台的全部依据。后端不存这两个字段，审核结果就落不了库。**
-
-`candidateCharacterTemplates` 同理：前端设计是生成多张候选让用户选，后端 `CharacterImageInput.num_images` 默认 1，`character_data` 里也没有候选列表。
+`candidateCharacterTemplates` 属于生成过程数据；若只在当前 WorkflowRun 中使用，可以留在前端。其余字段若要随最终资产恢复，需要后端增加字段，或者前端在 MVP 中删除。
 
 ---
 
-## 五、概念不一致
+## 六、概念不一致
 
 后端 `character/model.py` 字段说明：
 
@@ -103,11 +105,16 @@ frames[]  → index / image_url / duration_ms
 
 ## 待确认
 
-- [ ] 第一节四条：后端做还是不做
-- [ ] 动作生成一步还是两步
-- [ ] `Frame.qc` / `Frame.rejected` 落不落库
+- [ ] `ActionTemplateApis` 由后端提供还是前端内置
+- [ ] 查询生成任务统一使用 `taskId`，还是 `projectId + taskId`
 - [ ] 母版候选几张
 - [ ] 参考图与角色图是一个字段还是两个
 - [ ] `Character.description` 前端要不要跟着存
-- [ ] `jump` 动作类型后端加不加
+- [ ] `Action.kind` / `Action.keyFrameIndex` / `Frame.rootMotion` 是否进入最终资产
 - [ ] 上传模块何时提交
+
+## 已分工
+
+- [x] 前端删除 `WorkflowRunApis`，WorkflowRun 全程由前端管理
+- [x] 前端删除 `Character.name`
+- [ ] 后端增加 `jump` 动作类型
