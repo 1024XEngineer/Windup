@@ -103,6 +103,6 @@ export interface Generation<TType extends GenerationType = GenerationType> {
 export interface GenerationApis {
   /** 创建一次生成任务。 */
   create<T extends GenerationInput>(input: T): Promise<Generation<T['type']>>
-  /** 读取生成任务的最新快照。 */
-  get(id: Generation['id']): Promise<Generation>
+  /** 按所属项目和任务 ID 读取生成任务的最新快照。 */
+  get(projectId: Generation['projectId'], id: Generation['id']): Promise<Generation>
 }
