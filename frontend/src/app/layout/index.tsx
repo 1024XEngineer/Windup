@@ -14,6 +14,7 @@ export interface AppShellProps {
 export function AppShell({ children }: AppShellProps) {
   const { pathname } = useLocation()
   const isPlaytestWorkspace = pathname.startsWith('/playtest/')
+  const isHomePage = pathname === '/'
 
   return (
     <div className="min-h-screen bg-white text-slate-900">
@@ -22,7 +23,9 @@ export function AppShell({ children }: AppShellProps) {
         className={
           isPlaytestWorkspace
             ? 'w-full px-2 pb-2 pt-24 sm:px-4 sm:pb-4 sm:pt-24'
-            : 'mx-auto max-w-5xl px-6 pb-8 pt-24'
+            : isHomePage
+              ? 'w-full'
+              : 'mx-auto max-w-5xl px-6 pb-8 pt-24'
         }
       >
         {children}

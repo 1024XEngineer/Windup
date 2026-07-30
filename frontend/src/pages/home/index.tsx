@@ -3,7 +3,7 @@ import { HomeChoiceCard } from './choice-card'
 /** 根入口只负责提供两种制作入口，不持有工作流业务状态。 */
 export function HomePage() {
   return (
-    <div className="relative left-1/2 -mb-8 -mt-24 w-screen -translate-x-1/2 overflow-hidden bg-[#e5e8e3] text-[#191b18]">
+    <div className="relative w-full overflow-hidden bg-[#e5e8e3] text-[#191b18]">
       <div
         aria-hidden="true"
         className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white to-transparent"
