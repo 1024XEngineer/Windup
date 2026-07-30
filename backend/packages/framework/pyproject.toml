@@ -15,8 +15,10 @@ dependencies = [
     "langchain-core>=0.3",
     "langchain-openai>=0.3",
     # 抠图 MatteProvider:onnxruntime 直跑 u2netp(替代 rembg,其 numba 老链在 3.12 无轮子)。
+    # 上限 <1.24:onnxruntime 自 1.24 起砍了 macOS Intel(x86_64)轮子;1.23.x 仍覆盖
+    # Intel/arm64/Linux + py3.12,保证 Intel Mac 也能装。API 与新版一致,不改抠图代码。
     "numpy>=1.26",
-    "onnxruntime>=1.17",
+    "onnxruntime>=1.17,<1.24",
     "pillow>=10.4",
     # 对象存储(七牛 Kodo);若换 OSS/S3/MinIO 改 oss2 / boto3 / minio。
     "qiniu>=7.14",
