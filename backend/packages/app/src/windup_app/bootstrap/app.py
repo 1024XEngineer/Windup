@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 import windup_framework.db  # noqa: F401  组装时显式触发 DB engine/session 初始化
 from fastapi import FastAPI
 
+from windup_app.web.api.generation import router as generation_router
 from windup_app.web.api.project import router as project_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
 
@@ -37,6 +38,7 @@ async def _lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="windup", version="0.1.0", lifespan=_lifespan)
     app.include_router(project_router)
+    app.include_router(generation_router)
     register_exception_handlers(app)
     return app
 
