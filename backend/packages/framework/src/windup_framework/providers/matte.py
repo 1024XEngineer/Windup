@@ -45,8 +45,10 @@ class OnnxU2NetMatteProvider(MatteProvider):
 
     def _get_session(self):
         if self._session is None:
-            import onnxruntime as ort  # 惰性:导入慢
-
+            try:
+                import onnxruntime as ort  # 惰性:导入慢
+            except ImportError:
+                return None  # onnxruntime 不可用(如 macOS x86_64),走 Pillow 兜底
             self._session = ort.InferenceSession(
                 str(self._ensure_model()), providers=["CPUExecutionProvider"]
             )
@@ -71,8 +73,31 @@ class OnnxU2NetMatteProvider(MatteProvider):
 
     def cutout(self, frame: bytes) -> bytes:
         img = Image.open(io.BytesIO(frame)).convert("RGBA")
-        mask = self._predict_mask(img)
+        session = self._get_session()
+        if session is not None:
+            mask = self._predict_mask(img)
+        else:
+            mask = self._fallback_mask(img)
         cut = Image.composite(img, Image.new("RGBA", img.size, (0, 0, 0, 0)), mask)
         buf = io.BytesIO()
         cut.save(buf, "PNG")
         return buf.getvalue()
+
+    @staticmethod
+    def _fallback_mask(img: Image.Image) -> Image.Image:
+        """Pillow 兜底:取四角主色做 chroma-key 式去背(精度远低于 u2netp,仅开发用)。"""
+        import numpy as np
+
+        ary = np.array(img.convert("RGB"))
+        # 取四角 8×8 采样主色
+        corners = np.concatenate([
+            ary[:8, :8].reshape(-1, 3),
+            ary[:8, -8:].reshape(-1, 3),
+            ary[-8:, :8].reshape(-1, 3),
+            ary[-8:, -8:].reshape(-1, 3),
+        ])
+        bg = corners.mean(axis=0)
+        diff = np.linalg.norm(ary.astype(float) - bg, axis=2)
+        # 阈值:距离 < 60 视为背景
+        mask = (diff > 60).astype(np.uint8) * 255
+        return Image.fromarray(mask, "L").resize(img.size, Image.LANCZOS)
