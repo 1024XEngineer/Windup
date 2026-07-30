@@ -170,13 +170,7 @@ function EvidenceContent({
                 ? '无法计算'
                 : `${frame.geometry.width} × ${frame.geometry.height} px`
             }
-            state={
-              frame.geometry === null
-                ? 'not_applicable'
-                : frame.geometry.width === 256 && frame.geometry.height === 256
-                  ? 'normal'
-                  : 'anomaly'
-            }
+            state={frame.canvasState}
           />
           <EvidenceRow
             label="脚底线"
@@ -215,13 +209,21 @@ function EvidenceContent({
           </p>
         ) : null}
         <dl className="mt-1">
-          <EvidenceRow label="整段画布规格" value="要求 256 × 256" state={summary.canvasState} />
+          <EvidenceRow
+            label="整段画布规格"
+            value={
+              summary.expectedCanvas === null
+                ? '无法推断序列基线'
+                : `序列基线 ${summary.expectedCanvas.width} × ${summary.expectedCanvas.height}`
+            }
+            state={summary.canvasState}
+          />
           <EvidenceRow
             label="最大脚底漂移"
             value={
               actionType === 'jump' && summary.footState === 'attention'
-                ? `${optionalPixels(summary.footDrift)} / 固定脚底阈值 3.0 px；允许离地，需人工判断`
-                : `${optionalPixels(summary.footDrift)} / 阈值 3.0 px`
+                ? `${optionalPixels(summary.footDrift)} / 本序列阈值 ${optionalPixels(summary.footThreshold)}；允许离地，需人工判断`
+                : `${optionalPixels(summary.footDrift)} / 阈值 ${optionalPixels(summary.footThreshold)}`
             }
             state={summary.footState}
           />
@@ -250,7 +252,7 @@ function EvidenceContent({
             value={
               summary.maxAreaDeltaPercent === null
                 ? '不适用'
-                : `最大 ${summary.maxAreaDeltaPercent.toFixed(1)}% / 阈值 28.0%`
+                : `最大 ${summary.maxAreaDeltaPercent.toFixed(1)}% / 阈值 ${summary.areaThresholdPercent.toFixed(1)}%`
             }
             state={summary.areaState}
           />

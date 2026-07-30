@@ -62,11 +62,6 @@ export function PlaytestWorkbench({
     resetKey: `${character.id}:${outfitId}`,
   })
   const { setMirrored } = stageMotion
-  const walkAvailable =
-    preview?.actions.some(
-      (action) =>
-        action.type === 'walk' && action.sequences.some((sequence) => sequence.frames.length > 0),
-    ) ?? false
   const jumpAvailable =
     preview?.actions.some(
       (action) =>
@@ -117,20 +112,20 @@ export function PlaytestWorkbench({
       lastFrame,
       toggleLoop,
       playLeft: () => {
-        if (!walkAvailable) return
+        if (playback.action === null) return
         if (horizontalHoldStartedPaused.current === null) {
           horizontalHoldStartedPaused.current = !isPlaying
         }
-        setMirrored(true)
-        continueActionType('walk')
+        if (playback.action.type === 'walk') setMirrored(true)
+        continueActionType(playback.action.type)
       },
       playRight: () => {
-        if (!walkAvailable) return
+        if (playback.action === null) return
         if (horizontalHoldStartedPaused.current === null) {
           horizontalHoldStartedPaused.current = !isPlaying
         }
-        setMirrored(false)
-        continueActionType('walk')
+        if (playback.action.type === 'walk') setMirrored(false)
+        continueActionType(playback.action.type)
       },
       stopHorizontal: () => {
         const shouldRestorePause = horizontalHoldStartedPaused.current === true
@@ -157,7 +152,7 @@ export function PlaytestWorkbench({
       isPlaying,
       setMirrored,
       togglePlaying,
-      walkAvailable,
+      playback.action?.type,
       jumpAvailable,
       crouchAvailable,
     ],

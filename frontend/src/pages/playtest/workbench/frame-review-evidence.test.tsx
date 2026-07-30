@@ -27,6 +27,7 @@ const readyState: FrameReviewEvidenceState = {
         previousDelta: null,
         expectedRootDelta: null,
         composedPreviewDelta: null,
+        canvasState: 'normal',
         coverageState: 'normal',
         movementState: 'not_applicable',
         areaState: 'not_applicable',
@@ -46,6 +47,7 @@ const readyState: FrameReviewEvidenceState = {
         previousDelta: { dx: 3, dy: 4, distance: 5, areaDeltaPercent: 20 },
         expectedRootDelta: { dx: 10, dy: 6, distance: Math.sqrt(136) },
         composedPreviewDelta: { dx: 13, dy: 2, distance: Math.sqrt(173) },
+        canvasState: 'normal',
         coverageState: 'normal',
         movementState: 'normal',
         areaState: 'normal',
@@ -58,6 +60,9 @@ const readyState: FrameReviewEvidenceState = {
       maxStep: 5,
       movementThreshold: 15,
       heightThreshold: 12,
+      footThreshold: 3,
+      areaThresholdPercent: 28,
+      expectedCanvas: { width: 256, height: 256 },
       maxAreaDeltaPercent: 20,
       canvasState: 'normal',
       footState: 'normal',
@@ -108,6 +113,32 @@ describe('FrameReviewEvidencePanel', () => {
     expect(screen.queryAllByRole('button')).toHaveLength(0)
   })
 
+  it('shows the inferred canvas baseline and scaled pixel thresholds', () => {
+    const scaledState: FrameReviewEvidenceState = {
+      status: 'ready',
+      evidence: {
+        ...readyState.evidence!,
+        frames: readyState.evidence!.frames.map((frame) => ({
+          ...frame,
+          geometry: frame.geometry === null ? null : { ...frame.geometry, width: 512, height: 512 },
+        })),
+        summary: {
+          ...readyState.evidence!.summary,
+          expectedCanvas: { width: 512, height: 512 },
+          footThreshold: 6,
+          heightThreshold: 24,
+        },
+      },
+    }
+
+    render(<FrameReviewEvidencePanel state={scaledState} frameIndex={1} actionType="walk" />)
+
+    expect(screen.getByText('512 × 512 px')).toBeTruthy()
+    expect(screen.getByText('序列基线 512 × 512')).toBeTruthy()
+    expect(screen.getByText('1.0 px / 阈值 6.0 px')).toBeTruthy()
+    expect(screen.getByText('0.0 px / 阈值 24.0 px')).toBeTruthy()
+  })
+
   it('does not fabricate an adjacent comparison for the first frame', () => {
     // Catches first-frame null deltas being displayed as a successful zero movement.
     render(<FrameReviewEvidencePanel state={readyState} frameIndex={0} actionType="walk" />)
@@ -131,7 +162,7 @@ describe('FrameReviewEvidencePanel', () => {
 
     render(<FrameReviewEvidencePanel state={jumpState} frameIndex={1} actionType="jump" />)
 
-    expect(screen.getByText('42.0 px / 固定脚底阈值 3.0 px；允许离地，需人工判断')).toBeTruthy()
+    expect(screen.getByText('42.0 px / 本序列阈值 3.0 px；允许离地，需人工判断')).toBeTruthy()
   })
 
   it('explains action-allowed jump height variation without a false anomaly', () => {
@@ -169,6 +200,7 @@ describe('FrameReviewEvidencePanel', () => {
             previousDelta: null,
             expectedRootDelta: null,
             composedPreviewDelta: null,
+            canvasState: 'not_applicable',
             coverageState: 'not_applicable',
             movementState: 'not_applicable',
             areaState: 'not_applicable',

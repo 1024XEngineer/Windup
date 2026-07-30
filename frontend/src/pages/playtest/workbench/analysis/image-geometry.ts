@@ -13,6 +13,21 @@ function pixelReadFailure(error: unknown): FrameGeometryResult {
   return unavailable('浏览器无法读取图片像素')
 }
 
+let sharedCanvas: HTMLCanvasElement | null = null
+let sharedContext: CanvasRenderingContext2D | null = null
+
+function getSharedContext(width: number, height: number): CanvasRenderingContext2D | null {
+  if (sharedCanvas === null) {
+    sharedCanvas = document.createElement('canvas')
+    sharedContext = sharedCanvas.getContext('2d', { willReadFrequently: true })
+  }
+  if (sharedCanvas.width !== width || sharedCanvas.height !== height) {
+    sharedCanvas.width = width
+    sharedCanvas.height = height
+  }
+  return sharedContext
+}
+
 export function readImageGeometry(
   imageUrl: string,
   signal?: AbortSignal,
@@ -36,10 +51,7 @@ export function readImageGeometry(
 
     image.crossOrigin = 'anonymous'
     image.onload = () => {
-      const canvas = document.createElement('canvas')
-      canvas.width = image.naturalWidth
-      canvas.height = image.naturalHeight
-      const context = canvas.getContext('2d', { willReadFrequently: true })
+      const context = getSharedContext(image.naturalWidth, image.naturalHeight)
 
       if (context === null) {
         finish(unavailable('浏览器无法读取图片像素'))
@@ -48,7 +60,7 @@ export function readImageGeometry(
 
       try {
         context.drawImage(image, 0, 0)
-        const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
+        const imageData = context.getImageData(0, 0, image.naturalWidth, image.naturalHeight)
         const geometry = measureFrameGeometry(imageData)
         finish(geometry === null ? unavailable('图片没有可见主体') : { status: 'ready', geometry })
       } catch (error) {

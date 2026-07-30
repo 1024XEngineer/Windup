@@ -119,6 +119,87 @@ describe('buildSequenceEvidence', () => {
     })
   })
 
+  it('infers a consistent canvas baseline instead of requiring 256 pixels', () => {
+    const evidence = buildSequenceEvidence(
+      [
+        ready(geometry({ width: 512, height: 512, footY: 200, subjectHeight: 40 })),
+        ready(geometry({ width: 512, height: 512, footY: 205, subjectHeight: 60 })),
+      ],
+      'walk',
+    )
+
+    expect(evidence.findings.map((finding) => finding.code)).not.toContain('canvas_size_mismatch')
+    expect(evidence.summary).toMatchObject({
+      expectedCanvas: { width: 512, height: 512 },
+      footThreshold: 6,
+      heightThreshold: 24,
+      footState: 'normal',
+      heightState: 'normal',
+    })
+  })
+
+  it('flags only frames that disagree with the locally inferred canvas baseline', () => {
+    const evidence = buildSequenceEvidence(
+      [
+        ready(geometry({ width: 512, height: 512 })),
+        ready(geometry({ width: 512, height: 512 })),
+        ready(geometry({ width: 256, height: 256 })),
+      ],
+      'idle',
+    )
+
+    expect(
+      evidence.findings
+        .filter((finding) => finding.code === 'canvas_size_mismatch')
+        .map((finding) => finding.frameIndex),
+    ).toEqual([2])
+    expect(evidence.summary.expectedCanvas).toEqual({ width: 512, height: 512 })
+    expect(evidence.frames[2]?.previousDelta).toBeNull()
+    expect(evidence.findings.map((finding) => finding.code)).not.toContain('motion_spike')
+  })
+
+  it('excludes non-baseline canvas frames from sequence-level measurements', () => {
+    const evidence = buildSequenceEvidence(
+      [
+        ready(geometry({ width: 512, height: 512, footY: 200, subjectHeight: 40 })),
+        ready(geometry({ width: 512, height: 512, footY: 205, subjectHeight: 42 })),
+        ready(geometry({ width: 512, height: 512, footY: 202, subjectHeight: 41 })),
+        ready(geometry({ width: 256, height: 256, footY: 100, subjectHeight: 10 })),
+        ready(geometry({ width: 256, height: 256, footY: 120, subjectHeight: 20 })),
+      ],
+      'walk',
+    )
+
+    expect(evidence.summary).toMatchObject({
+      expectedCanvas: { width: 512, height: 512 },
+      footDrift: 5,
+      heightDrift: 2,
+    })
+    expect(evidence.findings.map((finding) => finding.code)).toEqual(
+      expect.arrayContaining(['canvas_size_mismatch']),
+    )
+    expect(evidence.findings.map((finding) => finding.code)).not.toContain('foot_drift')
+  })
+
+  it('scales the local motion floor with the inferred canvas size', () => {
+    const evidence = buildSequenceEvidence(
+      [
+        ready(geometry({ width: 512, height: 512, x: 0 })),
+        ready(geometry({ width: 512, height: 512, x: 2 })),
+        ready(geometry({ width: 512, height: 512, x: 4 })),
+        ready(geometry({ width: 512, height: 512, x: 14 })),
+      ],
+      'walk',
+    )
+
+    expect(evidence.summary).toMatchObject({
+      maxStep: 10,
+      movementThreshold: 12,
+      movementState: 'normal',
+    })
+    expect(evidence.findings.map((finding) => finding.code)).not.toContain('motion_spike')
+  })
+
   it('does not compare across an unreadable middle frame', () => {
     // Catches filtered valid frames becoming false neighbours and producing a misleading offset.
     const evidence = buildSequenceEvidence(

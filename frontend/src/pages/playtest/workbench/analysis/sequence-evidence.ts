@@ -2,14 +2,7 @@ import type { Frame } from '@/entities/character'
 
 import type { PlaytestActionType } from '../model/types'
 import type { FrameGeometry } from './frame-geometry'
-
-const EXPECTED_CANVAS_SIZE = 256
-const MAX_COVERAGE_RATIO = 0.65
-const MAX_FOOT_DRIFT = 3
-const MAX_HEIGHT_DRIFT = 7
-const MAX_AREA_DELTA_PERCENT = 28
-const MIN_COVERAGE_RATIO = 0.005
-const DUPLICATE_DISTANCE = 0.02
+import { deriveLocalQualityPolicy, type CanvasBaseline } from './quality-policy'
 
 export type EvidenceState = 'normal' | 'attention' | 'anomaly' | 'not_applicable'
 
@@ -63,6 +56,7 @@ export interface FrameReviewEvidence {
   previousDelta: AdjacentFrameDelta | null
   expectedRootDelta: MotionVector | null
   composedPreviewDelta: MotionVector | null
+  canvasState: EvidenceState
   coverageState: EvidenceState
   movementState: EvidenceState
   areaState: EvidenceState
@@ -80,6 +74,9 @@ export interface SequenceReviewEvidence {
     maxStep: number | null
     movementThreshold: number | null
     heightThreshold: number | null
+    footThreshold: number | null
+    areaThresholdPercent: number
+    expectedCanvas: CanvasBaseline | null
     maxAreaDeltaPercent: number | null
     canvasState: EvidenceState
     footState: EvidenceState
@@ -113,28 +110,13 @@ function fingerprintDistance(
   return total / left.length
 }
 
-function isCropped(geometry: FrameGeometry): boolean {
+function isCropped(geometry: FrameGeometry, margin: { x: number; y: number }): boolean {
   return (
-    geometry.bounds.left <= 1 ||
-    geometry.bounds.top <= 1 ||
-    geometry.bounds.right >= geometry.width - 2 ||
-    geometry.bounds.bottom >= geometry.height - 2
+    geometry.bounds.left < margin.x ||
+    geometry.bounds.top < margin.y ||
+    geometry.bounds.right >= geometry.width - margin.x ||
+    geometry.bounds.bottom >= geometry.height - margin.y
   )
-}
-
-function heightFindingThreshold(actionType: PlaytestActionType): number | null {
-  if (actionType === 'jump' || actionType === 'crouch') return null
-  if (actionType === 'idle') return 7
-  if (actionType === 'walk') return 12
-  return 20
-}
-
-function absoluteMovementThreshold(actionType: PlaytestActionType): number {
-  if (actionType === 'idle') return 6
-  if (actionType === 'walk') return 24
-  if (actionType === 'crouch') return 16
-  if (actionType === 'jump') return 64
-  return 48
 }
 
 function median(values: readonly number[]): number | null {
@@ -187,9 +169,15 @@ export function buildSequenceEvidence(
   const readyGeometries = results.flatMap((result) =>
     result.status === 'ready' ? [result.geometry] : [],
   )
+  const policy = deriveLocalQualityPolicy(readyGeometries, actionType)
+  const isBaselineGeometry = (geometry: FrameGeometry): boolean =>
+    policy.expectedCanvas !== null &&
+    geometry.width === policy.expectedCanvas.width &&
+    geometry.height === policy.expectedCanvas.height
   const deltas = results.map((result, index): AdjacentFrameDelta | null => {
     const previous = results[index - 1]
     if (index === 0 || previous?.status !== 'ready' || result.status !== 'ready') return null
+    if (!isBaselineGeometry(previous.geometry) || !isBaselineGeometry(result.geometry)) return null
     return adjacentDelta(previous.geometry, result.geometry)
   })
   const rootDeltas = inputs.map((input, index): MotionVector | null => {
@@ -206,18 +194,23 @@ export function buildSequenceEvidence(
   const relativeMovementThreshold =
     medianStep === null
       ? null
-      : Math.max(medianStep * 2.6 + 2, medianStep + (movementMad ?? 0) * 3 + 2, 6)
+      : Math.max(
+          medianStep * 2.6 + policy.movementPadding,
+          medianStep + (movementMad ?? 0) * 3 + policy.movementPadding,
+          policy.movementFloor,
+        )
   const movementThreshold =
     relativeMovementThreshold === null
       ? null
-      : Math.min(relativeMovementThreshold, absoluteMovementThreshold(actionType))
+      : Math.min(relativeMovementThreshold, policy.movementCeiling)
   const maxStep = steps.length === 0 ? null : Math.max(...steps)
   const maxAreaDeltaPercent = areaDeltas.length === 0 ? null : Math.max(...areaDeltas)
-  const footDrift = spread(readyGeometries.map((geometry) => geometry.footY))
-  const heightDrift = spread(readyGeometries.map((geometry) => geometry.subjectHeight))
+  const baselineGeometries = readyGeometries.filter(isBaselineGeometry)
+  const footDrift = spread(baselineGeometries.map((geometry) => geometry.footY))
+  const heightDrift = spread(baselineGeometries.map((geometry) => geometry.subjectHeight))
   const unavailableFrameCount = results.length - readyGeometries.length
   const findings: QualityFinding[] = []
-  const heightThreshold = heightFindingThreshold(actionType)
+  const heightThreshold = policy.heightDriftThreshold
 
   const frames = results.map((result, index): FrameReviewEvidence => {
     const expectedRootDelta = rootDeltas[index] ?? null
@@ -228,6 +221,7 @@ export function buildSequenceEvidence(
         previousDelta: null,
         expectedRootDelta,
         composedPreviewDelta: null,
+        canvasState: 'not_applicable',
         coverageState: 'not_applicable',
         movementState: 'not_applicable',
         areaState: 'not_applicable',
@@ -245,7 +239,17 @@ export function buildSequenceEvidence(
       previousDelta: delta,
       expectedRootDelta,
       composedPreviewDelta,
-      coverageState: result.geometry.coverageRatio > MAX_COVERAGE_RATIO ? 'anomaly' : 'normal',
+      canvasState:
+        policy.expectedCanvas !== null &&
+        result.geometry.width === policy.expectedCanvas.width &&
+        result.geometry.height === policy.expectedCanvas.height
+          ? 'normal'
+          : 'anomaly',
+      coverageState:
+        result.geometry.coverageRatio < policy.minimumCoverageRatio ||
+        result.geometry.coverageRatio > policy.maximumCoverageRatio
+          ? 'anomaly'
+          : 'normal',
       movementState:
         delta === null || movementThreshold === null
           ? 'not_applicable'
@@ -255,7 +259,7 @@ export function buildSequenceEvidence(
       areaState:
         delta === null
           ? 'not_applicable'
-          : delta.areaDeltaPercent > MAX_AREA_DELTA_PERCENT
+          : delta.areaDeltaPercent > policy.areaDeltaThresholdPercent
             ? 'anomaly'
             : 'normal',
     }
@@ -275,16 +279,25 @@ export function buildSequenceEvidence(
     }
 
     const { geometry } = result
-    if (geometry.width !== EXPECTED_CANVAS_SIZE || geometry.height !== EXPECTED_CANVAS_SIZE) {
+    if (
+      policy.expectedCanvas !== null &&
+      (geometry.width !== policy.expectedCanvas.width ||
+        geometry.height !== policy.expectedCanvas.height)
+    ) {
       findings.push({
         code: 'canvas_size_mismatch',
         severity: 'error',
         frameIndex: index,
-        message: '画布尺寸与预期规格不一致',
-        metrics: { width: geometry.width, height: geometry.height },
+        message: '画布尺寸与当前序列基线不一致',
+        metrics: {
+          width: geometry.width,
+          height: geometry.height,
+          expectedWidth: policy.expectedCanvas.width,
+          expectedHeight: policy.expectedCanvas.height,
+        },
       })
     }
-    if (isCropped(geometry)) {
+    if (isCropped(geometry, policy.edgeMargin)) {
       findings.push({
         code: 'subject_cropped',
         severity: 'error',
@@ -298,7 +311,7 @@ export function buildSequenceEvidence(
         },
       })
     }
-    if (geometry.coverageRatio < MIN_COVERAGE_RATIO) {
+    if (geometry.coverageRatio < policy.minimumCoverageRatio) {
       findings.push({
         code: 'coverage_too_low',
         severity: 'warning',
@@ -306,7 +319,7 @@ export function buildSequenceEvidence(
         message: '主体在画布中的占比过小',
         metrics: { coverageRatio: geometry.coverageRatio },
       })
-    } else if (geometry.coverageRatio > MAX_COVERAGE_RATIO) {
+    } else if (geometry.coverageRatio > policy.maximumCoverageRatio) {
       findings.push({
         code: 'coverage_too_high',
         severity: 'error',
@@ -322,7 +335,7 @@ export function buildSequenceEvidence(
       previous.geometry.fingerprint,
       geometry.fingerprint,
     )
-    if (duplicateDistance !== null && duplicateDistance <= DUPLICATE_DISTANCE) {
+    if (duplicateDistance !== null && duplicateDistance <= policy.duplicateDistance) {
       findings.push({
         code: 'duplicate_frame',
         severity: 'warning',
@@ -342,7 +355,7 @@ export function buildSequenceEvidence(
         metrics: { distance: delta.distance, threshold: movementThreshold },
       })
     }
-    if (delta !== null && delta.areaDeltaPercent > MAX_AREA_DELTA_PERCENT) {
+    if (delta !== null && delta.areaDeltaPercent > policy.areaDeltaThresholdPercent) {
       findings.push({
         code: 'area_spike',
         severity: 'warning',
@@ -353,7 +366,12 @@ export function buildSequenceEvidence(
     }
 
     const expected = rootDeltas[index]
-    if (delta !== null && expected !== null && expected.distance >= 2 && delta.distance >= 2) {
+    if (
+      delta !== null &&
+      expected !== null &&
+      expected.distance >= policy.rootMotionDirectionMinimum &&
+      delta.distance >= policy.rootMotionDirectionMinimum
+    ) {
       const dot = delta.dx * expected.dx + -delta.dy * expected.dy
       if (dot < 0) {
         findings.push({
@@ -367,13 +385,18 @@ export function buildSequenceEvidence(
     }
   })
 
-  if (footDrift !== null && footDrift > MAX_FOOT_DRIFT && actionType !== 'jump') {
+  if (
+    footDrift !== null &&
+    policy.footDriftThreshold !== null &&
+    footDrift > policy.footDriftThreshold &&
+    actionType !== 'jump'
+  ) {
     findings.push({
       code: 'foot_drift',
       severity: 'error',
       frameIndex: null,
       message: '序列脚底线漂移超过动作允许范围',
-      metrics: { drift: footDrift, threshold: MAX_FOOT_DRIFT },
+      metrics: { drift: footDrift, threshold: policy.footDriftThreshold },
     })
   }
   if (heightDrift !== null && heightThreshold !== null && heightDrift > heightThreshold) {
@@ -398,30 +421,36 @@ export function buildSequenceEvidence(
       maxStep,
       movementThreshold,
       heightThreshold,
+      footThreshold: policy.footDriftThreshold,
+      areaThresholdPercent: policy.areaDeltaThresholdPercent,
+      expectedCanvas: policy.expectedCanvas,
       maxAreaDeltaPercent,
       canvasState:
-        readyGeometries.length === 0
+        policy.expectedCanvas === null
           ? 'not_applicable'
           : readyGeometries.every(
                 (geometry) =>
-                  geometry.width === EXPECTED_CANVAS_SIZE &&
-                  geometry.height === EXPECTED_CANVAS_SIZE,
+                  geometry.width === policy.expectedCanvas?.width &&
+                  geometry.height === policy.expectedCanvas?.height,
               )
             ? 'normal'
             : 'anomaly',
       footState:
         footDrift === null
           ? 'not_applicable'
-          : footDrift <= MAX_FOOT_DRIFT
-            ? 'normal'
-            : actionType === 'jump'
-              ? 'attention'
-              : 'anomaly',
+          : policy.footDriftThreshold === null
+            ? 'not_applicable'
+            : footDrift <= policy.footDriftThreshold
+              ? 'normal'
+              : actionType === 'jump'
+                ? 'attention'
+                : 'anomaly',
       heightState:
         heightDrift === null
           ? 'not_applicable'
           : heightThreshold === null
-            ? heightDrift > MAX_HEIGHT_DRIFT
+            ? policy.heightAttentionThreshold !== null &&
+              heightDrift > policy.heightAttentionThreshold
               ? 'attention'
               : 'normal'
             : heightDrift > heightThreshold
@@ -436,7 +465,7 @@ export function buildSequenceEvidence(
       areaState:
         maxAreaDeltaPercent === null
           ? 'not_applicable'
-          : maxAreaDeltaPercent > MAX_AREA_DELTA_PERCENT
+          : maxAreaDeltaPercent > policy.areaDeltaThresholdPercent
             ? 'anomaly'
             : 'normal',
     },

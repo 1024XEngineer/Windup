@@ -37,14 +37,6 @@ function createFingerprint(
   const sums = new Float64Array(64)
   const cellPixels = new Uint32Array(64)
 
-  for (let y = 0; y < bounds.height; y += 1) {
-    for (let x = 0; x < bounds.width; x += 1) {
-      const cellX = Math.min(7, Math.floor((x * 8) / bounds.width))
-      const cellY = Math.min(7, Math.floor((y * 8) / bounds.height))
-      cellPixels[cellY * 8 + cellX] += 1
-    }
-  }
-
   for (const index of subjectPixels) {
     const x = index % width
     const y = Math.floor(index / width)
@@ -56,7 +48,9 @@ function createFingerprint(
     const luminance = (red * 0.2126 + green * 0.7152 + blue * 0.0722) / 255
     const cellX = Math.min(7, Math.floor(((x - bounds.left) * 8) / bounds.width))
     const cellY = Math.min(7, Math.floor(((y - bounds.top) * 8) / bounds.height))
-    sums[cellY * 8 + cellX] += alpha * (0.25 + luminance * 0.75)
+    const cell = cellY * 8 + cellX
+    sums[cell] += alpha * (0.25 + luminance * 0.75)
+    cellPixels[cell] += 1
   }
 
   return Array.from(sums, (sum, index) => {
@@ -65,26 +59,39 @@ function createFingerprint(
   })
 }
 
-function visibleComponents(data: Uint8ClampedArray, width: number, height: number): number[][] {
-  const visible = new Uint8Array(width * height)
-  const visited = new Uint8Array(width * height)
-  const components: number[][] = []
+interface VisibleComponentsResult {
+  components: number[][]
+  largestSize: number
+}
 
-  for (let index = 0; index < visible.length; index += 1) {
+function visibleComponents(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+): VisibleComponentsResult {
+  const pixelCount = width * height
+  const visible = new Uint8Array(pixelCount)
+  const visited = new Uint8Array(pixelCount)
+  const components: number[][] = []
+  const queue = new Int32Array(pixelCount)
+  let largestSize = 0
+
+  for (let index = 0; index < pixelCount; index += 1) {
     const alpha = data[index * 4 + 3]
     if (alpha !== undefined && alpha > ALPHA_THRESHOLD) visible[index] = 1
   }
 
-  for (let start = 0; start < visible.length; start += 1) {
+  for (let start = 0; start < pixelCount; start += 1) {
     if (visible[start] === 0 || visited[start] === 1) continue
 
     const component: number[] = []
-    const queue = [start]
+    let head = 0
+    let tail = 0
+    queue[tail++] = start
     visited[start] = 1
 
-    for (let head = 0; head < queue.length; head += 1) {
-      const index = queue[head]
-      if (index === undefined) continue
+    while (head < tail) {
+      const index = queue[head++]
       component.push(index)
 
       const x = index % width
@@ -99,15 +106,16 @@ function visibleComponents(data: Uint8ClampedArray, width: number, height: numbe
           const next = nextY * width + nextX
           if (visible[next] === 0 || visited[next] === 1) continue
           visited[next] = 1
-          queue.push(next)
+          queue[tail++] = next
         }
       }
     }
 
+    if (component.length > largestSize) largestSize = component.length
     components.push(component)
   }
 
-  return components
+  return { components, largestSize }
 }
 
 export function measureFrameGeometry(pixels: FramePixelData): FrameGeometry | null {
@@ -117,10 +125,9 @@ export function measureFrameGeometry(pixels: FramePixelData): FrameGeometry | nu
     throw new RangeError('RGBA 像素长度与画布尺寸不一致')
   }
 
-  const components = visibleComponents(data, width, height)
+  const { components, largestSize } = visibleComponents(data, width, height)
   if (components.length === 0) return null
 
-  const largestSize = Math.max(...components.map((component) => component.length))
   const minimumSize = Math.min(
     largestSize,
     Math.max(MIN_COMPONENT_PIXELS, Math.ceil(largestSize * RELATIVE_COMPONENT_RATIO)),
