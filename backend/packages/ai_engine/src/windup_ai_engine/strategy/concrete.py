@@ -17,7 +17,7 @@ from windup_common.models import ActionSpec, ActionType, CharacterCard, GenRoute
 from windup_framework.providers import ImageProvider, MatteProvider, VideoProvider
 
 from windup_ai_engine.master_prep import prepare_master
-from windup_ai_engine.ports import Callbacks
+from windup_ai_engine.ports import ProgressPort
 from windup_ai_engine.postprocess import master_pixel_spec, pixelate_frames
 from windup_ai_engine.slicing import extract_all_frames_bytes, pick_cycle, pick_oneshot
 from windup_ai_engine.prompt import (
@@ -69,11 +69,14 @@ class VideoFrameStrategy(DerivationStrategy):
         return build(facing=action.facing)
 
     def derive(
-        self, card: CharacterCard, action: ActionSpec, cb: Callbacks
+        self,
+        card: CharacterCard,
+        action: ActionSpec,
+        master: bytes,
+        progress: ProgressPort,
     ) -> list[bytes]:
         n = action.n_frames or 8
-        cb.progress.step("derive", 0, 3, f"{action.action}: i2v 生成视频")
-        master = cb.store.get(card.master_ref)
+        progress.step("derive", 0, 3, f"{action.action}: i2v 生成视频")
         # 母版按动作预处理:jump 要在顶部补空间,否则角色腾空时头顶顶出视频画面被裁
         framed = prepare_master(master, action.action.value)
         video = self._video.i2v(framed, self._build_prompt(action), seconds=5)
@@ -87,10 +90,10 @@ class VideoFrameStrategy(DerivationStrategy):
             _ys, _ = np.where(np.asarray(_first)[:, :, 3] > 128)
             ref_h = float(_ys.max() - _ys.min()) if len(_ys) else None
         if action.action in CYCLIC_ACTIONS:
-            cb.progress.step("derive", 1, 3, f"步态周期取 {n} 帧(无缝 loop)+ 抠图")
+            progress.step("derive", 1, 3, f"步态周期取 {n} 帧(无缝 loop)+ 抠图")
             picked = pick_cycle(dense, n)                   # 单周期闭环(#21)
         else:
-            cb.progress.step("derive", 1, 3, f"裁动作区间取 {n} 帧(不闭环)+ 抠图")
+            progress.step("derive", 1, 3, f"裁动作区间取 {n} 帧(不闭环)+ 抠图")
             kind = "airborne" if action.action is ActionType.JUMP else "swing"
             picked = pick_oneshot(dense, n, kind=kind)      # 一次性动作:裁起止
         cut = [_img(self._matte.cutout(_png(im))) for im in picked]
@@ -99,7 +102,7 @@ class VideoFrameStrategy(DerivationStrategy):
         # pixel=像素化。原生像素角色**按母版规格**做:吸附母版像素网格 + 锁母版色板,
         # 顺带消掉首帧 JPG / H.264 在硬边留下的灰颗粒(实测:通用降采样+量化反而更糊)。
         if action.stylize == "none":
-            cb.progress.step("derive", 2, 3, "保留 i2v 画风(不像素化)")
+            progress.step("derive", 2, 3, "保留 i2v 画风(不像素化)")
             return [_png(im) for im in cut]
 
         target_h, palette = action.pixel_h, None
@@ -109,7 +112,7 @@ class VideoFrameStrategy(DerivationStrategy):
                 target_h, palette = logical_h, pal
         except Exception:                          # 母版非像素画/量不出 → 回退通用量化
             pass
-        cb.progress.step(
+        progress.step(
             "derive", 2, 3,
             f"像素化(h={target_h}{'·锁母版色板' if palette is not None else '·通用量化'})",
         )
@@ -130,9 +133,13 @@ class PerFrameStrategy(DerivationStrategy):
         self._matte = matte
 
     def derive(
-        self, card: CharacterCard, action: ActionSpec, cb: Callbacks
+        self,
+        card: CharacterCard,
+        action: ActionSpec,
+        master: bytes,
+        progress: ProgressPort,
     ) -> list[bytes]:
-        cb.progress.step("derive", 0, 1, f"{action.action}: 逐帧图生图")
+        progress.step("derive", 0, 1, f"{action.action}: 逐帧图生图")
         # TODO(dev, #53): 逐 pose image.gen_image(母版, pose) → matte.cutout（不加骨架）
         return [b"" for _ in range(action.n_frames)]  # 桩
 
@@ -147,8 +154,12 @@ class ProcIdleStrategy(DerivationStrategy):
         self._matte = matte
 
     def derive(
-        self, card: CharacterCard, action: ActionSpec, cb: Callbacks
+        self,
+        card: CharacterCard,
+        action: ActionSpec,
+        master: bytes,
+        progress: ProgressPort,
     ) -> list[bytes]:
-        cb.progress.step("derive", 0, 1, f"{action.action}: Idle-B 程序化呼吸")
+        progress.step("derive", 0, 1, f"{action.action}: Idle-B 程序化呼吸")
         # TODO(dev, #53): 母版抠图 → 躯干带保体积缩放，腿冻结
         return [b"" for _ in range(action.n_frames)]  # 桩

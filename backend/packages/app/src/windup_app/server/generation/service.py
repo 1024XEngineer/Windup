@@ -1,94 +1,54 @@
-"""生成任务领域服务实现。
+"""生成任务领域服务(提交 + 查询)。
 
-:class:`AiGenerationService` 继承 :class:`GenerationService` 接口，
-编排 AI 引擎调用与任务持久化。
+:class:`AiGenerationService` 只负责**建任务记录 + 查任务**——web 层依赖本模块。
+实际 AI 生成(调 ai_engine)在 :mod:`.executor` 后台跑,本模块**不碰 ai_engine**,
+以满足"入口层(web/worker)不经 ai_engine 直连"的分层门禁(web → service 不得牵出 ai_engine)。
 
-无状态：``session`` 由调用方按请求传入，本对象作为模块级单例
-(:data:`service`)。
-
-AI 客户端懒加载——首次调用时才创建，避免 import-time 依赖外部配置。
+无状态:``session`` 由调用方按请求传入,本对象作模块级单例(:data:`service`)。
 """
 
 from __future__ import annotations
 
-import logging
-from typing import Any
+import dataclasses
 
 from sqlalchemy.orm import Session
 
+from windup_app.server.generation import task_repo
 from windup_app.server.generation.interface import GenerationService
 from windup_app.server.generation.model import (
     CharacterActionInput,
     CharacterImageInput,
     GenerationTask,
+    GenerationType,
 )
-from windup_app.server.generation import task_repo
-
-logger = logging.getLogger("windup.generation.service")
 
 
 class AiGenerationService(GenerationService):
-    """基于 AI 引擎的生成服务编排层。
-
-    职责：
-    1. 校验入参、创建任务记录（PENDING）
-    2. 调用 AI Engine 获取生成结果
-    3. 将结果写回任务记录（COMPLETED / FAILED）
-    4. 返回领域对象给 API 层
-    """
-
-    def __init__(self) -> None:
-        self._image_client: Any | None = None
-        self._video_client: Any | None = None
-
-    # -- 任务提交 ----------------------------------------------------------
+    """生成任务服务:提交(建 PENDING 记录)+ 查询。生成执行在 executor 后台。"""
 
     def generate_character_image(
-        self,
-        session: Session,
-        *,
-        user_id: int,
-        input: CharacterImageInput,
+        self, session: Session, *, user_id: int, input: CharacterImageInput,
     ) -> GenerationTask:
-        """提交角色图片生成任务。
-
-        1. 创建任务记录（PENDING）
-        2.然后返回给前端任务结果。
-        3.异步调用ai_engine提供的图片生成
-        4. 更行任务结果
-        5. 调用media上传接口，将AI生成的图片存储进入对象存储
-        6.封装返回数据，将结果写入 任务表。后续前端轮训拿到最总的URL。
-        """
-
-
+        return task_repo.create_task(
+            session, user_id=user_id, project_id=None,
+            task_type=GenerationType.CHARACTER_IMAGE,
+            input_payload=dataclasses.asdict(input),
+        )
 
     def generate_character_action(
-        self,
-        session: Session,
-        *,
-        user_id: int,
-        input: CharacterActionInput,
+        self, session: Session, *, user_id: int, input: CharacterActionInput,
     ) -> GenerationTask:
-        """提交角色动作生成任务。
-        1. 创建任务记录（PENDING）
-        2.然后返回给前端任务结果。
-        3.异步调用ai_engine提供的动作生成
-        4. 更行任务结果
-        5. 调用media上传接口，将AI生成的图片存储进入对象存储
-        6.封装返回数据，将结果写入 任务表。后续前端轮训拿到最总的URL。
-        """
-
-    # -- 查询 --------------------------------------------------------------
+        """建动作生成任务(PENDING)并返回;实际生成由 executor 后台跑,前端轮询 get_task。"""
+        return task_repo.create_task(
+            session, user_id=user_id, project_id=None,
+            task_type=GenerationType.CHARACTER_ACTION,
+            input_payload=dataclasses.asdict(input),
+        )
 
     def get_task(
-        self,
-        session: Session,
-        project_id: int,
-        task_id: int,
+        self, session: Session, project_id: int, task_id: int,
     ) -> GenerationTask | None:
-        """查询任务状态与结果。"""
         return task_repo.get_task(session, task_id)
-
 
 
 service = AiGenerationService()

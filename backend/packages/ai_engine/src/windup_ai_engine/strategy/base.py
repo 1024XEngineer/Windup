@@ -16,7 +16,7 @@ from abc import ABC, abstractmethod
 
 from windup_common.models import ActionSpec, ActionType, CharacterCard, GenRoute
 
-from windup_ai_engine.ports import Callbacks
+from windup_ai_engine.ports import ProgressPort
 
 # 动作类型 → 生成路线(架构决策,写死为契约)
 ROUTE_MATRIX: dict[ActionType, GenRoute] = {
@@ -36,7 +36,11 @@ class DerivationStrategy(ABC):
 
     @abstractmethod
     def derive(
-        self, card: CharacterCard, action: ActionSpec, cb: Callbacks
+        self,
+        card: CharacterCard,
+        action: ActionSpec,
+        master: bytes,
+        progress: ProgressPort,
     ) -> list[bytes]:
-        """返回对齐前的角色帧(RGBA PNG bytes 列表)。"""
+        """从母版 bytes 产出对齐前的角色帧(RGBA PNG bytes 列表)。"""
         raise NotImplementedError

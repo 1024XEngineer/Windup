@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -126,9 +126,11 @@ def submit_image_generation(
 @router.post("/action", response_model=Response[GenerationTaskOut])
 def submit_action_generation(
     body: CharacterActionGenerateRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
     session: Session = Depends(get_session),
 ) -> Response[GenerationTaskOut]:
-    """提交角色动作生成任务。"""
+    """提交角色动作生成任务:建 PENDING 记录立即返回,实际生成后台跑。"""
     input_data = CharacterActionInput(
         character_id=body.character_id,
         action_type=body.action_type,
@@ -139,6 +141,11 @@ def submit_action_generation(
     )
     task = generation_service.generate_character_action(
         session, user_id=body.user_id, input=input_data,
+    )
+    # 请求 session 提交后,后台自开 session 跑生成(经项目约束 → ai_engine)。
+    # 调度器由 bootstrap 注入 app.state,web 不静态依赖 ai_engine(满足入口层门禁)。
+    background_tasks.add_task(
+        request.app.state.run_action_task, task.id, input_data, body.project_id,
     )
     return Response.success(_task_to_out(task), message="任务已提交")
 
