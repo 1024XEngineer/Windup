@@ -84,27 +84,27 @@ const walkFrames = [
   {
     imageUrl: fixtureUrl('walk-03.png'),
     durationMs: 120,
-    rootMotion: { dx: demoWalkStep, dy: 0 },
+    rootMotion: { dx: demoWalkStep * 2, dy: 0 },
   },
   {
     imageUrl: fixtureUrl('walk-04.png'),
     durationMs: null,
-    rootMotion: { dx: demoWalkStep, dy: 0 },
+    rootMotion: { dx: demoWalkStep * 3, dy: 0 },
   },
   {
     imageUrl: fixtureUrl('walk-05.png'),
     durationMs: null,
-    rootMotion: { dx: demoWalkStep, dy: 0 },
+    rootMotion: { dx: demoWalkStep * 4, dy: 0 },
   },
   {
     imageUrl: fixtureUrl('walk-06.png'),
     durationMs: null,
-    rootMotion: { dx: demoWalkStep, dy: 0 },
+    rootMotion: { dx: demoWalkStep * 5, dy: 0 },
   },
   {
     imageUrl: fixtureUrl('walk-07.png'),
     durationMs: 120,
-    rootMotion: { dx: demoWalkStep, dy: 0 },
+    rootMotion: { dx: demoWalkStep * 6, dy: 0 },
   },
   {
     imageUrl: fixtureUrl('walk-08.png'),

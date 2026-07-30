@@ -179,7 +179,10 @@ export function PlaytestWorkbench({
   }
 
   return (
-    <main aria-label="Playtest" className="mx-auto max-w-[1600px] space-y-4 p-4 text-slate-900">
+    <main
+      aria-label="Playtest"
+      className="mx-auto w-full max-w-[1920px] space-y-3 p-2 text-slate-900 sm:p-4"
+    >
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-[10px] font-semibold tracking-[0.18em] text-slate-400">PLAYTEST</p>
@@ -190,10 +193,10 @@ export function PlaytestWorkbench({
         <p className="text-xs text-slate-500">只读预览，不写入角色、动作或帧</p>
       </header>
       <div
-        className={`grid items-stretch gap-4 xl:h-[calc(100vh-128px)] xl:min-h-[720px] xl:max-h-[880px] ${
+        className={`grid items-stretch gap-4 lg:h-[calc(100vh-112px)] lg:min-h-[720px] lg:max-h-[920px] ${
           actionSidebarCollapsed
-            ? 'xl:grid-cols-[48px_minmax(0,1fr)_300px]'
-            : 'xl:grid-cols-[190px_minmax(0,1fr)_300px]'
+            ? 'lg:grid-cols-[48px_minmax(0,1fr)_300px]'
+            : 'lg:grid-cols-[190px_minmax(0,1fr)_300px]'
         }`}
       >
         <nav

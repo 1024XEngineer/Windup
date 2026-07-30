@@ -8,6 +8,7 @@ import {
   PLAYTEST_DEMO_CHARACTER,
   PLAYTEST_DEMO_OUTFIT_ID,
 } from './demo-character'
+import { createPreviewModel } from '../workbench/model/create-preview-model'
 
 describe('PLAYTEST_DEMO_CHARACTER', () => {
   it('provides a confirmed boy outfit with complete idle and walk fixtures', () => {
@@ -21,11 +22,18 @@ describe('PLAYTEST_DEMO_CHARACTER', () => {
     expect(outfit!.actions.every((action) => action.frames.length === 8)).toBe(true)
 
     const walkFrames = outfit!.actions.find((action) => action.type === 'walk')!.frames
-    const walkSteps = walkFrames.flatMap((frame) =>
+    const walkAbsoluteOffsets = walkFrames.flatMap((frame) =>
       frame.rootMotion === null ? [] : [frame.rootMotion.dx],
     )
-    expect(walkSteps).toEqual([4, 4, 4, 4, 4, 4])
-    expect(walkSteps.reduce((sum, step) => sum + step, 0)).toBe(24)
+    expect(walkAbsoluteOffsets).toEqual([4, 8, 12, 16, 20, 24])
+
+    const preview = createPreviewModel(PLAYTEST_DEMO_CHARACTER, PLAYTEST_DEMO_OUTFIT_ID)
+    if (!preview.ok) throw new Error('expected demo preview model')
+    const walkPreviewFrames = preview.model.actions.find((action) => action.type === 'walk')!
+      .sequences[0].frames
+    expect(walkPreviewFrames.map((frame) => frame.rootMotion?.dx ?? 0)).toEqual([
+      0, 4, 4, 4, 4, 4, 4, 0,
+    ])
 
     const frames = outfit!.actions.flatMap((action) => action.frames)
     expect(frames.some((frame) => frame.durationMs !== null)).toBe(true)
