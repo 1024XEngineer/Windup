@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes } from 'react-router'
 import { AssetLibraryPage } from '@/pages/asset-library'
 import { HomePage } from '@/pages/home'
 import { NotFoundPage } from '@/pages/not-found'
+import { PlaytestDemoPage } from '@/pages/playtest/demo-page'
 import { PlaytestPage } from '@/pages/playtest'
 import { ProjectDetailPage } from '@/pages/project-detail'
 import { ProjectsPage } from '@/pages/projects'
@@ -27,6 +28,7 @@ export function App() {
           <Route path="/projects/:projectId/assets" element={<AssetLibraryPage />} />
           <Route path="/workflow-editor/:runId" element={<WorkflowEditorPage />} />
           <Route path="/workflow-editor/:runId/:stage" element={<WorkflowEditorPage />} />
+          <Route path="/playtest/demo" element={<PlaytestDemoPage />} />
           <Route path="/playtest/:characterId/:outfitId" element={<PlaytestPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
