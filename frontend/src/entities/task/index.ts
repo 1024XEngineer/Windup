@@ -36,12 +36,10 @@ export interface TaskEvent<TType extends TaskType = TaskType> extends Omit<Task<
   taskId: Task['id']
 }
 
-/** Task 对应的一组后端接口；订阅端点与断线恢复策略尚未冻结。 */
+/** Task 对应的一组后端接口。服务端没有取消能力，因此这里不声明 cancel。 */
 export interface TaskApis {
   /** 按后端 Task ID 读取最新快照；实现必须在运行时校验 task_type 后才返回。 */
   get(taskId: Task['id']): Promise<Task>
-  /** 请求取消该后端任务；不负责停止工作流推进。 */
-  cancel(taskId: Task['id']): Promise<void>
   /** 订阅任务状态变化，返回取消订阅函数。 */
   subscribe(taskId: Task['id'], onEvent: (event: TaskEvent) => void): () => void
 }
