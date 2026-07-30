@@ -62,6 +62,12 @@ export interface WorkflowStep {
   input: unknown
   /** 步骤完成后的结果或引用；尚无结果时为 null。 */
   output: unknown
+  /**
+   * 本步骤已提交、结果尚未写回 output 的生成任务 ID；没有在途任务时为 null。
+   * 它随 WorkflowRun 一起持久化，页面重开后据此查回在途任务的状态，
+   * 因而不会重复发起同一次生成。任务本身不认识步骤，反向关联不存在。
+   */
+  taskId: Task['id'] | null
   /** 该步骤沿用或依赖的步骤 ID，用于版本来源追踪，不代表后端执行依赖。 */
   referenceStepIds: string[]
 }
@@ -135,16 +141,6 @@ export type CreateWorkflowRunInput = CreateWorkflowRunInputBase &
         baseFrameUrls: readonly string[]
       }
   )
-
-/** 前端编排关联；后端 Task 不需要认识 WorkflowRun、Revision 或流程步骤。 */
-export interface WorkflowTaskLink {
-  taskId: Task['id']
-  runId: WorkflowRun['id']
-  /** 发起任务时所在的版本 ID，避免结果写入后来创建的新版本。 */
-  revisionId: WorkflowRevision['id']
-  /** 发起任务的步骤 ID，用于把结果映射回正确页面阶段。 */
-  stepId: WorkflowStep['id']
-}
 
 /** WorkflowRun 对应的一组后端接口；只负责存取，不负责推进。 */
 export interface WorkflowRunApis {

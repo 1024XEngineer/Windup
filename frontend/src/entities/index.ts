@@ -74,7 +74,6 @@ export type {
   WorkflowRunApis,
   WorkflowRunPurpose,
   WorkflowRunStatus,
-  WorkflowTaskLink,
 } from './workflow-run'
 
 /* Playtest 核验记录 —— 独立于 Character 与 WorkflowRun */
