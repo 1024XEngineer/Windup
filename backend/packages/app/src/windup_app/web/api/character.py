@@ -137,8 +137,6 @@ def update_character(
     session: Session = Depends(get_session),
 ) -> Response[CharacterOut]:
     fields = body.model_dump(exclude_unset=True)
-    if "character_data" in fields and fields["character_data"] is not None:
-        fields["character_data"] = fields["character_data"].model_dump()
     character = character_service.update_character(session, character_id, **fields)
     if character is None:
         raise BizException("角色不存在", code=BizCode.NOT_FOUND)
