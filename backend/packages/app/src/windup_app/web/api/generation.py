@@ -15,9 +15,7 @@ from windup_framework.db import get_session
 
 from windup_app.server.generation.model import (
     CharacterActionInput,
-    CharacterActionOutput,
     CharacterImageInput,
-    CharacterImageOutput,
     ActionType,
     GenerationTask,
 )
