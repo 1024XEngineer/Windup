@@ -129,7 +129,7 @@ class _SpyGenerator:
         from windup_ai_engine.ports import GeneratedAction
 
         self.seen_facing = action.facing
-        return GeneratedAction(frames=[b"png"], durations=[100], fps=10)
+        return GeneratedAction(frames=[_tiny_png()], durations=[100], fps=10)
 
 
 def test_project_perspective_constrains_facing(session_factory):

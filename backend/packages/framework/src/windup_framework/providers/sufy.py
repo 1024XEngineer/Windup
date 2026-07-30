@@ -103,13 +103,38 @@ class SufyVideoProvider(VideoProvider):
 
 
 class SufyImageProvider(ImageProvider):
-    """图像 provider(gemini-flash-image)。逐帧图生图路线(hit/idle)待开发。
+    """图像 provider:gemini 系图生图(OpenAI 兼容 ``/chat/completions``,返回 base64 图)。
 
-    见 #53 / PerFrameStrategy:per-frame 路线不在"视频优先"首个竖线内,此处留真接口、
-    未接 HTTP,避免 ship 一个假装能跑的桩。walk 主链不经此 provider。
+    参考图 + 文字约束 → 生成一张图(角色基准图 CHARACTER_IMAGE / 逐帧图生图)。
+    key / base_url 由 ``AIProviderSettings`` 注入,provider 内不读 env。
     """
 
+    def __init__(
+        self,
+        config: AIProviderSettings = settings,
+        model: str = "gemini-2.5-flash-image",
+    ) -> None:
+        self._cfg = config
+        self._model = model
+
     def gen_image(self, prompt: str, refs: list[bytes]) -> bytes:
-        raise NotImplementedError(
-            "逐帧图生图 provider 待开发(见 #53 / PerFrameStrategy);walk 视频主链不用它"
-        )
+        import json
+        import re
+
+        content: list = [{"type": "text", "text": prompt}]
+        for r in refs:
+            b64 = base64.b64encode(r).decode()
+            content.append(
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64," + b64}}
+            )
+        body = {"model": self._model, "messages": [{"role": "user", "content": content}]}
+        with httpx.Client(
+            base_url=self._cfg.normalized_base_url,
+            headers={"Authorization": f"Bearer {self._cfg.api_key}"},
+            timeout=self._cfg.timeout,
+        ) as client:
+            res = client.post(self._cfg.chat_completions_path, json=body).raise_for_status().json()
+        m = re.search(r"data:image/[^;]+;base64,([A-Za-z0-9+/=]{100,})", json.dumps(res))
+        if not m:
+            raise RuntimeError(f"图像响应无有效图: {json.dumps(res)[:200]}")
+        return base64.b64decode(m.group(1))
