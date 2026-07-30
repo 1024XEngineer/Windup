@@ -15,8 +15,7 @@ const productNavigation: ProductNavigationItem[] = [
   },
   {
     to: '/projects',
-    label: '项目资产',
-    compactLabel: '项目',
+    label: '项目',
     isActive: (pathname) => pathname.startsWith('/projects') || pathname.startsWith('/playtest'),
   },
   {
@@ -29,7 +28,7 @@ const productNavigation: ProductNavigationItem[] = [
 
 function getWorkspaceLabel(pathname: string): { title: string; detail: string } {
   if (pathname.startsWith('/projects') || pathname.startsWith('/playtest')) {
-    return { title: '项目资产', detail: '角色、造型与动作' }
+    return { title: '项目与历史记录', detail: '角色、动作与完成版本' }
   }
 
   if (pathname.startsWith('/quick-start') || pathname.startsWith('/workflow-editor')) {

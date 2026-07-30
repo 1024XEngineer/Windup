@@ -16,7 +16,7 @@ describe('AppHeader', () => {
     )
 
     expect(screen.getByRole('link', { name: '返回 Windup 首页' }).getAttribute('href')).toBe('/')
-    expect(screen.getByRole('link', { name: '项目资产' }).getAttribute('href')).toBe('/projects')
+    expect(screen.getByRole('link', { name: '项目' }).getAttribute('href')).toBe('/projects')
     expect(screen.getByRole('link', { name: '创作' }).getAttribute('aria-current')).toBe('page')
   })
 })

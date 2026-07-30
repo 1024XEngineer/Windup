@@ -1,7 +1,7 @@
 import { BrowserRouter, Route, Routes } from 'react-router'
 
-import { AssetLibraryPage } from '@/pages/asset-library'
 import { HomePage } from '@/pages/home'
+import { HistoryPage } from '@/pages/history'
 import { NotFoundPage } from '@/pages/not-found'
 import { PlaytestDemoPage } from '@/pages/playtest/demo-page'
 import { PlaytestPage } from '@/pages/playtest'
@@ -25,7 +25,7 @@ export function App() {
           <Route path="/quick-start/:runId" element={<QuickStartPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
-          <Route path="/projects/:projectId/assets" element={<AssetLibraryPage />} />
+          <Route path="/projects/:projectId/history" element={<HistoryPage />} />
           <Route path="/workflow-editor/:runId" element={<WorkflowEditorPage />} />
           <Route path="/workflow-editor/:runId/:stage" element={<WorkflowEditorPage />} />
           <Route path="/playtest/demo" element={<PlaytestDemoPage />} />
