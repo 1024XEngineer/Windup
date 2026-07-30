@@ -1,5 +1,3 @@
-import type { ActionTemplate } from '../action-template'
-
 /**
  * 动作「如何被定义」的来源维度：preset 复用预设定义，custom 由用户自定义。
  * 它与动作做什么的 ActionType 相互独立，例如 custom + walk 和 preset + custom 都是合法组合。
@@ -127,26 +125,6 @@ export interface CreateCharacterInput {
   description: string
   referenceImageUrl?: string | null
 }
-
-/**
- * 将动作定义应用到造型时，同时提交来源方式和业务语义。
- * 两者相互独立，不能从 preset/custom 推断 walk/idle 等业务语义。
- */
-export type AddActionInput =
-  | {
-      name: string
-      /** 复用已有预设定义的来源方式。 */
-      kind: 'preset'
-      type: ActionType
-      /** 本次复用的动作模板；preset 分支必须明确指定。 */
-      actionTemplateId: ActionTemplate['id']
-    }
-  | {
-      name: string
-      /** 用户自行定义动作的来源方式。 */
-      kind: 'custom'
-      type: ActionType
-    }
 
 /**
  * Character 对应的一组后端接口。
