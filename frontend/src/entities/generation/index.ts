@@ -1,6 +1,6 @@
 import type { ActionType } from '../character'
 import type { MediaReference } from '../media'
-import type { Task } from '../task'
+import type { TaskStatus } from '../task'
 
 /**
  * Generation 是业务数据，不是「调用图片生成能力」。
@@ -83,11 +83,26 @@ export type GenerationResultFor<T extends GenerationInput> =
       ? FirstFrameGenerationResult
       : CompleteAnimationGenerationResult
 
+/**
+ * 一次生成任务的完整快照。
+ * 它是服务端的资源，不是一次「调用能力」——前端创建它，然后订阅或轮询它的状态。
+ */
+export interface Generation<TType extends GenerationType = GenerationType> {
+  id: string
+  projectId: string
+  /** 与创建时的输入判别字段保持同一字面量类型。 */
+  type: TType
+  status: TaskStatus
+  /** 完成前为 null；完成后形状由 type 决定。 */
+  result: GenerationResult | null
+  /** status 为 failed 时有值。 */
+  error: string | null
+}
+
 /** Generation 对应的一组后端接口。 */
 export interface GenerationApis {
-  /**
-   * 创建一个 generation，返回后端任务。
-   * 返回的 Task.type 与输入判别字段保持同一字面量类型；结果解析由调用方在运行时完成。
-   */
-  create<T extends GenerationInput>(input: T): Promise<Task<T['type']>>
+  /** 创建一次生成任务。 */
+  create<T extends GenerationInput>(input: T): Promise<Generation<T['type']>>
+  /** 读取生成任务的最新快照。 */
+  get(id: Generation['id']): Promise<Generation>
 }
