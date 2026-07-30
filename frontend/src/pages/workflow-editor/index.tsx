@@ -6,6 +6,7 @@ import { useCallback, useState } from 'react'
 
 import { WorkflowCanvas } from './workflow-canvas'
 import { NODE_STATUS_LABELS, type StudioMode, type WorkflowNodeType } from './types'
+import './workflow-editor.css'
 
 /** 节点信息 — 匹配 skeleton 的 NODE_INFO */
 const NODE_INFO: Record<WorkflowNodeType, { title: string; detail: string }> = {
