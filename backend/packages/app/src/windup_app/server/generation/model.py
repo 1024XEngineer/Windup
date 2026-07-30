@@ -31,7 +31,7 @@ class ActionType(StrEnum):
 
     WALK = "walk"
     IDLE = "idle"
-    JUMP = "JUMP"
+    JUMP = "jump"
     ATTACK = "attack"
     CUSTOM = "custom"
 
