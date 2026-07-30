@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import httpx
@@ -23,7 +24,11 @@ from sqlalchemy.orm import Session
 from windup_common.models import ActionSpec, ActionType as EngineActionType, CharacterCard
 
 from windup_app.server.generation import task_repo
-from windup_app.server.generation.model import CharacterActionInput, TaskStatus
+from windup_app.server.generation.model import (
+    CharacterActionInput,
+    CharacterImageInput,
+    TaskStatus,
+)
 
 if TYPE_CHECKING:
     from windup_ai_engine.ports import CharacterGeneratorPort, ProgressPort
@@ -32,9 +37,71 @@ logger = logging.getLogger("windup.generation.executor")
 
 _ACTION_RESULT = "character_action"  # task_repo._deserialize_result 按此标签反序列化
 
-# Project.character_perspective(1-3)→ 提示词/母版朝向 facing(side/front)。
-# 朝向必须与母版一致(#35),故生成前从项目约束取。1/2/3 语义待与作者确认,暂:1=侧视,余=正面。
-_PERSPECTIVE_TO_FACING: dict[int, str] = {1: "side", 2: "front", 3: "front"}
+# ── 项目全局约束(Project 表)→ 统合喂给生成逻辑 ─────────────────────────
+# character_perspective 游戏视角:1=横版(侧视) 2=俯视 3=2.5D → 生成朝向/视角
+_PERSPECTIVE_FACING: dict[int, str] = {1: "side", 2: "front", 3: "front"}
+_PERSPECTIVE_VIEW: dict[int, str] = {
+    1: "side view, horizontal side-scroller",
+    2: "top-down view",
+    3: "2.5D three-quarter view",
+}
+# directional_movement 移动方向:1=单向 2=四向 3=八向 → 需生成的方向数
+_MOVEMENT_DIRECTIONS: dict[int, int] = {1: 1, 2: 4, 3: 8}
+
+
+@dataclass
+class ProjectConstraints:
+    """从 Project 取的全局生成约束,统一约束角色图/动作生成。"""
+
+    facing: str = "side"        # character_perspective → 朝向(须与母版一致 #35)
+    view: str = "side view, horizontal side-scroller"
+    perspective: int = 1        # 1横版 2俯视 3 2.5D
+    directions: int = 1         # directional_movement → 方向数(1/4/8)
+    sprite_w: int = 256         # 输出/切帧尺寸(关键)
+    sprite_h: int = 256
+    style: str = ""             # game_style 画风
+    stylize: str = "none"       # 由 style 推:像素游戏 → pixel
+
+
+def _load_constraints(session: Session, project_id: int | None) -> ProjectConstraints:
+    """查 Project 组装全局约束;无 project_id / 查不到 → 缺省。"""
+    if project_id is None:
+        return ProjectConstraints()
+    from windup_app.server.project.service import SqlAlchemyProjectService
+
+    p = SqlAlchemyProjectService().get_project(session, project_id)
+    if p is None:
+        return ProjectConstraints()
+    style = p.game_style or ""
+    is_pixel = "pixel" in style.lower() or "像素" in style
+    return ProjectConstraints(
+        facing=_PERSPECTIVE_FACING.get(p.character_perspective, "side"),
+        view=_PERSPECTIVE_VIEW.get(p.character_perspective, _PERSPECTIVE_VIEW[1]),
+        perspective=p.character_perspective,
+        directions=_MOVEMENT_DIRECTIONS.get(p.directional_movement, 1),
+        sprite_w=p.sprite_width,
+        sprite_h=p.sprite_height,
+        style=style,
+        stylize="pixel" if is_pixel else "none",
+    )
+
+
+def _fit_to(png: bytes, w: int, h: int) -> bytes:
+    """把帧等比缩放进 w×h(透明补边),落实项目 sprite 尺寸约束。"""
+    import io
+
+    from PIL import Image
+
+    im = Image.open(io.BytesIO(png)).convert("RGBA")
+    if im.size == (w, h):
+        return png
+    fitted = im.copy()
+    fitted.thumbnail((w, h), Image.NEAREST)
+    canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    canvas.alpha_composite(fitted, ((w - fitted.width) // 2, (h - fitted.height) // 2))
+    buf = io.BytesIO()
+    canvas.save(buf, "PNG")
+    return buf.getvalue()
 
 
 class _LogProgress:
@@ -64,13 +131,13 @@ class ActionTaskExecutor:
         generator: CharacterGeneratorPort | None = None,
         upload: Callable[[bytes], str] | None = None,
         fetch_master: Callable[[CharacterActionInput], bytes] | None = None,
-        fetch_facing: Callable[[Session, int | None], str] | None = None,
+        fetch_constraints: Callable[[Session, int | None], ProjectConstraints] | None = None,
         session_factory: Callable[[], Session] | None = None,
     ) -> None:
         self._generator = generator          # None → 懒加载真实装配
         self._upload = upload                # None → 真实对象存储上传
         self._fetch_master = fetch_master    # None → 下载 reference_image_urls[0]
-        self._fetch_facing = fetch_facing    # None → 查 project 约束(character_perspective)
+        self._fetch_constraints = fetch_constraints  # None → 查 project 全局约束
         self._session_factory = session_factory  # None → SessionLocal
 
     def run_action_task(
@@ -83,8 +150,8 @@ class ActionTaskExecutor:
     ) -> None:
         """跑一个动作任务;异常兜底为 FAILED,不抛。
 
-        先从 ``project`` 取约束(朝向)再调 ai_engine。``session`` 缺省时自开一个
-        (后台场景);测试可传入自己的 session。
+        先从 ``project`` 取全局约束(朝向/画风/尺寸/方向)再调 ai_engine。``session``
+        缺省时自开一个(后台场景);测试可传入自己的 session。
         """
         own = session is None
         session = session or self._make_session()
@@ -93,8 +160,8 @@ class ActionTaskExecutor:
             if own:
                 session.commit()
 
-            facing = self._resolve_facing(session, project_id)   # 项目约束
-            result = self._produce_action(input, facing)
+            cons = (self._fetch_constraints or _load_constraints)(session, project_id)
+            result = self._produce_action(input, cons)
             task_repo.update_result(session, task_id, _ACTION_RESULT, result)
             if own:
                 session.commit()
@@ -111,35 +178,31 @@ class ActionTaskExecutor:
 
     # -- 内部 --------------------------------------------------------------
 
-    def _resolve_facing(self, session: Session, project_id: int | None) -> str:
-        """从 project 约束取朝向(character_perspective → facing);缺省侧视。"""
-        if self._fetch_facing is not None:
-            return self._fetch_facing(session, project_id)
-        if project_id is None:
-            return "side"
-        from windup_app.server.project.service import SqlAlchemyProjectService
+    def _produce_action(self, input: CharacterActionInput, cons: ProjectConstraints) -> dict:
+        """母版 → ai_engine 出帧 → 按项目尺寸切帧 → 逐帧上传 → 组结果 dict。
 
-        project = SqlAlchemyProjectService().get_project(session, project_id)
-        if project is None:
-            return "side"
-        return _PERSPECTIVE_TO_FACING.get(project.character_perspective, "side")
-
-    def _produce_action(self, input: CharacterActionInput, facing: str) -> dict:
-        """母版 → ai_engine 出帧 → 逐帧上传 → 组 character_action 结果 dict。"""
+        项目约束落实:``facing`` 随视角、``stylize`` 随画风(像素游戏→像素化)、
+        输出帧尺寸随 ``sprite_w×sprite_h``。方向数(directions)MVP 先出主方向,
+        四向/八向为扩展(需多次生成或镜像)。
+        """
+        if cons.directions > 1:
+            logger.info("项目要求 %s 方向,MVP 先出主方向(多方向待扩展)", cons.directions)
         master = (self._fetch_master or self._download_master)(input)
         card = CharacterCard(name=f"char-{input.character_id}", desc=input.custom_prompt or "")
         action = ActionSpec(
             action=_to_engine_action(input.action_type),
             poses=[""] * input.num_frames,
-            facing=facing,
-            stylize="none",
+            facing=cons.facing,
+            stylize=cons.stylize,
         )
         progress: ProgressPort = _LogProgress()
         generated = self._get_generator().generate(card, action, master, progress)
 
         upload = self._upload or self._upload_frame
         frames = [
-            {"index": i, "image_url": upload(png), "duration_ms": dur}
+            {"index": i,
+             "image_url": upload(_fit_to(png, cons.sprite_w, cons.sprite_h)),
+             "duration_ms": dur}
             for i, (png, dur) in enumerate(zip(generated.frames, generated.durations))
         ]
         return {"action_type": input.action_type.value, "frames": frames}
@@ -197,6 +260,99 @@ class ActionTaskExecutor:
         return SessionLocal()
 
 
-# 默认执行器(真实依赖);bootstrap 取 run_action_task 注入 app.state
+_IMAGE_RESULT = "character_image"  # task_repo._deserialize_result 按此标签反序列化
+
+
+class ImageTaskExecutor:
+    """跑角色图片生成任务:参考图 + prompt → 图生图 → 上传 → 回写 image_url。"""
+
+    def __init__(
+        self,
+        *,
+        image=None,                                      # None → 懒加载 SufyImageProvider
+        upload: Callable[[bytes], str] | None = None,    # None → 真实对象存储上传
+        fetch_ref: Callable[[str], bytes] | None = None, # None → 下载 reference_image_url
+        session_factory: Callable[[], Session] | None = None,
+    ) -> None:
+        self._image = image
+        self._upload = upload
+        self._fetch_ref = fetch_ref
+        self._session_factory = session_factory
+
+    def run_image_task(
+        self,
+        task_id: int,
+        input: CharacterImageInput,
+        project_id: int | None = None,
+        *,
+        session: Session | None = None,
+    ) -> None:
+        own = session is None
+        session = session or self._make_session()
+        try:
+            task_repo.update_status(session, task_id, TaskStatus.RUNNING)
+            if own:
+                session.commit()
+            cons = _load_constraints(session, project_id)   # 角色图也受项目约束
+            url = self._produce_image(input, cons)
+            task_repo.update_result(session, task_id, _IMAGE_RESULT, {"image_url": url})
+            if own:
+                session.commit()
+        except Exception as exc:  # noqa: BLE001 —— 兜底
+            logger.exception("图片任务 %s 失败", task_id)
+            task_repo.update_status(session, task_id, TaskStatus.FAILED, error_message=str(exc))
+            if own:
+                session.commit()
+        finally:
+            if own:
+                session.close()
+
+    def _produce_image(self, input: CharacterImageInput, cons: ProjectConstraints) -> str:
+        """参考图 + 项目约束(视角/画风)拼提示词 → 图生图 → 上传。"""
+        refs: list[bytes] = []
+        if input.reference_image_url:
+            fetch = self._fetch_ref or self._download
+            refs = [fetch(input.reference_image_url)]
+        base = input.prompt or "Clean full-body character reference of the figure in the image."
+        parts = [base, f"{cons.view}, full body head to feet, centered."]
+        if cons.style:
+            parts.append(f"Art style: {cons.style}.")
+        parts.append("Plain light-gray background, no shadow.")
+        img = self._get_image().gen_image(" ".join(parts), refs)
+        return (self._upload or self._upload_image)(img)
+
+    def _get_image(self):
+        if self._image is None:
+            from windup_framework.providers import SufyImageProvider
+
+            self._image = SufyImageProvider()
+        return self._image
+
+    def _download(self, url: str) -> bytes:
+        resp = httpx.get(url, timeout=30.0)
+        resp.raise_for_status()
+        return resp.content
+
+    def _upload_image(self, png: bytes) -> str:
+        from windup_app.server.media.model import MediaCategory, MediaUploadInput
+        from windup_app.server.media.service import service as media_service
+
+        meta = MediaUploadInput(
+            filename="character.png", content_type="image/png",
+            size=len(png), category=MediaCategory.REFERENCE_IMAGE,
+        )
+        return media_service.upload(png, meta).url
+
+    def _make_session(self) -> Session:
+        if self._session_factory is not None:
+            return self._session_factory()
+        from windup_framework.db.session import SessionLocal
+
+        return SessionLocal()
+
+
+# 默认执行器(真实依赖);bootstrap 取 run_action_task / run_image_task 注入 app.state
 executor = ActionTaskExecutor()
 run_action_task = executor.run_action_task
+image_executor = ImageTaskExecutor()
+run_image_task = image_executor.run_image_task
