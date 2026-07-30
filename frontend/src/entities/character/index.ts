@@ -111,7 +111,6 @@ export interface Outfit {
 export interface Character {
   id: string
   projectId: string
-  name: string
   /** 角色的全部独立造型；MVP 页面至少保留这一层，即使当前只有一个成员。 */
   outfits: Outfit[]
   createdAt: string
@@ -121,7 +120,6 @@ export interface Character {
 /** 创建角色并发起母版生成所需的入参。 */
 export interface CreateCharacterInput {
   projectId: string
-  name: string
   /** 交给模型生成母版。 */
   description: string
   referenceImageUrl?: string | null
