@@ -1,9 +1,177 @@
-/** 工作流画布。 */
+/**
+ * 工作流编辑器页面，对齐 skeleton 的节点画布设计。
+ * 左侧为节点画布，右侧为属性检查面板。
+ */
+import { useCallback, useState } from 'react'
+
+import { WorkflowCanvas } from './workflow-canvas'
+import { NODE_STATUS_LABELS, type StudioMode, type WorkflowNodeType } from './types'
+
+/** 节点信息 — 匹配 skeleton 的 NODE_INFO */
+const NODE_INFO: Record<WorkflowNodeType, { title: string; detail: string }> = {
+  project: { title: '项目信息', detail: '填写项目名称、视角和美术风格。' },
+  source: { title: '选择角色起点', detail: '选择一种母版输入方式：新建或上传参考图。' },
+  'master-gen': { title: '生成参考母版', detail: '基于已确认的设定生成 6 张候选母版，约 15 秒。' },
+  master: { title: '确认母版', detail: '从候选中选择一张作为身份母版，后续动作均基于此。' },
+  'walk-key': { title: 'Walk 第一帧', detail: '描述步态、重心和速度，生成行走动作首帧。' },
+  'idle-key': { title: 'Idle 第一帧', detail: '描述呼吸、重心和待机细节，生成待机动作首帧。' },
+  'custom-action': { title: '自定义动作', detail: '添加额外动作类型，如攻击、跳跃或特殊动作。' },
+  'walk-animation': { title: 'Walk 动画', detail: '首帧确认后，生成完整 8 帧行走循环动画。' },
+  'idle-animation': { title: 'Idle 动画', detail: '首帧确认后，生成完整 8 帧待机循环动画。' },
+  publish: { title: '正式入库', detail: '母版、Idle 与 Walk 已完成，确认后写入正式资产。' },
+}
+
+/** 可生成的节点 */
+const GENERATABLE_NODES: WorkflowNodeType[] = [
+  'master-gen',
+  'master',
+  'walk-key',
+  'idle-key',
+  'walk-animation',
+  'idle-animation',
+  'publish',
+]
+
 export function WorkflowEditorPage() {
+  const [activeNode, setActiveNode] = useState<WorkflowNodeType | null>('source')
+  const [studioMode, setStudioMode] = useState<StudioMode>(null)
+  const [generating, setGenerating] = useState(false)
+
+  const handleGenerate = useCallback(() => {
+    if (!activeNode || generating) return
+    setGenerating(true)
+    setTimeout(() => {
+      setGenerating(false)
+      alert(`节点「${NODE_INFO[activeNode].title}」生成完成！`)
+    }, 1500)
+  }, [activeNode, generating])
+
   return (
-    <section className="border border-dashed border-slate-300 p-6">
-      <h1 className="font-medium">工作流画布</h1>
-      <p className="mt-2 text-sm text-slate-500">本次只提交模块划分与接口，页面实现进后续 PR。</p>
+    <section className="production-canvas-workspace">
+      {/* Studio Bar — 匹配 asset lab 的 studio-bar */}
+      <header className="studio-bar">
+        <div className="studio-bar__left">
+          {studioMode === 'workflow' && (
+            <button
+              type="button"
+              className="studio-bar__mode-back"
+              onClick={() => setStudioMode(null)}
+            >
+              返回
+            </button>
+          )}
+          <a className="studio-bar__brand" href="/">
+            <span className="product-brand__mark" aria-hidden="true" />
+            <b>Windup</b>
+          </a>
+          <span className="studio-bar__project">
+            <b>{studioMode === 'workflow' ? '节点工作流' : '创作中心'}</b>
+            <small>
+              {studioMode === 'workflow' ? '选择素材来源并逐步确认' : '选择一种创作方式'}
+            </small>
+          </span>
+        </div>
+        <div className="studio-bar__right">
+          <nav className="studio-bar__nav" aria-label="创作导航">
+            <a href="/" className="">
+              首页
+            </a>
+            <a href="/projects" className="">
+              项目资产
+            </a>
+            <a href="/workflow-editor" className="is-active" aria-current="page">
+              创作
+            </a>
+          </nav>
+          <div className="studio-bar__actions">
+            <button type="button">整理节点</button>
+            <button type="button">重置流程</button>
+          </div>
+        </div>
+      </header>
+
+      {/* 模式选择器 — 匹配 asset lab 的 studio-mode-chooser */}
+      {!studioMode && (
+        <div className="studio-mode-chooser">
+          <div className="studio-mode-chooser__content">
+            <span className="overline">STUDIO MODE</span>
+            <h2>选择创作方式</h2>
+            <p>选择一种方式开始创建角色资产。</p>
+            <div className="studio-mode-chooser__cards">
+              <button
+                type="button"
+                className="studio-mode-card"
+                onClick={() => setStudioMode('workflow')}
+              >
+                <span className="studio-mode-card__icon">⚙</span>
+                <b>节点工作流</b>
+                <small>选择素材来源并逐步确认，适合精确控制每个步骤。</small>
+              </button>
+              <button
+                type="button"
+                className="studio-mode-card studio-mode-card--secondary"
+                disabled
+              >
+                <span className="studio-mode-card__icon">✦</span>
+                <b>AI 智能生成</b>
+                <small>一句话描述角色，AI 自动完成全部流程。即将推出。</small>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 工作流编辑器主体 */}
+      {studioMode === 'workflow' && (
+        <div className="node-graph-layout">
+          {/* 左侧：节点画布 */}
+          <WorkflowCanvas activeNode={activeNode} onNodeSelect={setActiveNode} />
+
+          {/* 右侧：检查面板 */}
+          <aside className="inspection-panel">
+            <header className="inspection-panel__header">
+              <span className="overline">INSPECTOR</span>
+              <h2>属性与检查</h2>
+            </header>
+
+            <div className="inspection-panel__content">
+              {activeNode ? (
+                <div className="inspection-panel__node">
+                  <div className="inspection-panel__node-info">
+                    <span className="overline">SELECTED NODE</span>
+                    <h3>{NODE_INFO[activeNode].title}</h3>
+                    <p>{NODE_INFO[activeNode].detail}</p>
+                  </div>
+
+                  <div className="inspection-panel__meta">
+                    <div>
+                      <dt>状态</dt>
+                      <dd>{NODE_STATUS_LABELS.ready}</dd>
+                    </div>
+                    <div>
+                      <dt>节点 ID</dt>
+                      <dd className="mono">{activeNode}</dd>
+                    </div>
+                  </div>
+
+                  {GENERATABLE_NODES.includes(activeNode) && (
+                    <button
+                      type="button"
+                      className="inspection-panel__generate"
+                      onClick={handleGenerate}
+                      disabled={generating}
+                    >
+                      {generating ? '生成中…' : `生成${NODE_INFO[activeNode].title}`}
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <p className="inspection-panel__empty">点击画布中的节点查看属性。</p>
+              )}
+            </div>
+          </aside>
+        </div>
+      )}
     </section>
   )
 }
