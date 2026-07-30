@@ -22,8 +22,8 @@ export interface RecordPlaytestInspectionInput {
   status: PlaytestInspectionStatus
 }
 
-/** 独立核验记录的异步存取边界；Preview 有同契约内存实现，Production 等待真实端点。 */
-export interface PlaytestInspectionRepository {
+/** PlaytestInspection 对应的一组后端接口。 */
+export interface PlaytestInspectionApis {
   getLatest(target: { characterId: string; outfitId: string }): Promise<PlaytestInspection | null>
   record(input: RecordPlaytestInspectionInput): Promise<PlaytestInspection>
 }

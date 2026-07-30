@@ -1,11 +1,11 @@
 /**
  * 异步任务实体，与 WorkflowRun 的页面节点是两回事。
  *
- * 任务粒度 = 前端可见的一个异步步骤，而不是内部某次模型调用。任务生命周期不等于工作流节点状态，
- * WorkflowRun 只通过单独的 WorkflowTaskLink 记录两者关系。
+ * 任务粒度 = 前端可见的一个异步步骤，而不是内部某次模型调用。
+ * 任务生命周期不等于工作流节点状态，WorkflowRun 只通过 WorkflowTaskLink 记录两者关系。
  */
 
-/** PR #64 后端异步任务状态；pending 表示已提交但尚未执行。 */
+/** 后端异步任务状态；pending 表示已提交但尚未执行。 */
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed'
 
 /**
@@ -16,16 +16,14 @@ export type TaskType = 'character_template' | 'first_frame' | 'complete_animatio
 
 /**
  * 创建、查询和断线恢复都使用的完整任务快照。
- * TType 在调用边界已知时保留精确任务类型；按 ID 恢复时使用默认 string，等待运行时解析后再收窄。
+ * TType 在调用边界已知时保留精确任务类型；按 ID 恢复时使用默认值，等待运行时解析后再收窄。
  */
 export interface Task<TType extends TaskType = TaskType> {
   /** 后端生成的任务 ID，是查询状态和订阅事件的唯一标识。 */
   id: string
-  /**
-   * 后端 `task_type` 对应的领域判别字段。任务类型是前后端合同的一部分，不接受任意字符串。
-   */
+  /** 后端 task_type 对应的领域判别字段，不接受任意字符串。 */
   type: TType
-  /** 后端任务当前状态；它不会直接改变 WorkflowNodeStatus。 */
+  /** 后端任务当前状态；它不会直接改变工作流节点状态。 */
   status: TaskStatus
   /** 失败原因，status 为 failed 时有值。completed 不表示工作流节点已通过。 */
   error: string | null
@@ -33,23 +31,17 @@ export interface Task<TType extends TaskType = TaskType> {
   result: unknown
 }
 
-/** 异步任务的最小存取契约；列表和分页等正式 DTO 冻结后再增加。 */
-export interface TaskRepository {
-  /**
-   * 按后端 Task ID 读取最新快照。Adapter 必须在运行时校验 task_type 后才返回。
-   */
-  get(taskId: Task['id']): Promise<Task>
-  /** 请求取消该后端任务；不负责停止 Quick Start 会话或重启工作流。 */
-  cancel(taskId: Task['id']): Promise<void>
-}
-
-/** SSE 每条事件携带同类型 Task 的完整状态，taskId 对应 Task.id。 */
+/** 每条事件携带同类型 Task 的完整状态，taskId 对应 Task.id。 */
 export interface TaskEvent<TType extends TaskType = TaskType> extends Omit<Task<TType>, 'id'> {
-  /** 发生变化的后端任务 ID。 */
   taskId: Task['id']
 }
 
-/** 任务事件订阅契约；SSE 端点和断线恢复策略冻结后再提供实现。 */
-export interface TaskEventSource {
+/** Task 对应的一组后端接口；订阅端点与断线恢复策略尚未冻结。 */
+export interface TaskApis {
+  /** 按后端 Task ID 读取最新快照；实现必须在运行时校验 task_type 后才返回。 */
+  get(taskId: Task['id']): Promise<Task>
+  /** 请求取消该后端任务；不负责停止工作流推进。 */
+  cancel(taskId: Task['id']): Promise<void>
+  /** 订阅任务状态变化，返回取消订阅函数。 */
   subscribe(taskId: Task['id'], onEvent: (event: TaskEvent) => void): () => void
 }

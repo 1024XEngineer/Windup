@@ -1,21 +1,9 @@
-import { useNavigate } from 'react-router'
-
-import { PageHeader } from '@/shared/ui'
-
-/** 路由兜底：地址不存在时不留白屏，给一条回去的路。 */
+/** 页面不存在。 */
 export function NotFoundPage() {
-  const navigate = useNavigate()
-
   return (
-    <>
-      <PageHeader title="页面不存在" subtitle="地址可能拼错了，或者这个页面还没做" />
-      <button
-        type="button"
-        onClick={() => navigate('/')}
-        className="rounded-lg border border-slate-200 px-4 py-2 text-sm hover:border-slate-400"
-      >
-        回到快速开始
-      </button>
-    </>
+    <section className="border border-dashed border-slate-300 p-6">
+      <h1 className="font-medium">页面不存在</h1>
+      <p className="mt-2 text-sm text-slate-500">本次只提交模块划分与接口，页面实现进后续 PR。</p>
+    </section>
   )
 }

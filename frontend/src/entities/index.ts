@@ -1,38 +1,28 @@
 /**
- * entities 唯一公开门面。外部不得绕过本文件访问内部 Entity 文件。
- * WorkflowRun 由前端推进、后端持久化；当前通过异步 Repository 保持调用方稳定。
+ * entities 唯一公开入口。外部不得绕过本文件访问内部文件。
+ * 本次只提交类型与接口，不提交实现。
  */
 
-/* 项目 —— 前端领域骨架，真实 API 契约已撤回 */
-export {
-  CHARACTER_PERSPECTIVE,
-  DIRECTIONAL_MOVEMENT,
-  SPRITE_SIZES,
-  useProject,
-  useProjects,
-} from './project'
+/* 项目 —— 全局约束：视角、朝向、精灵尺寸、画风 */
+export { CHARACTER_PERSPECTIVE, DIRECTIONAL_MOVEMENT, SPRITE_SIZES } from './project'
 export type {
   CharacterPerspective,
   CreateProjectInput,
   DirectionalMovement,
   Project,
-  ProjectRepository,
+  ProjectApis,
 } from './project'
 
-/* 媒体引用 —— 不承诺 URL 或后端 Media ID 的具体表示 */
-export type { MediaReference } from './media'
-
-/* 角色 / 动作 / 帧 —— 仅类型与 Repository 契约 */
+/* 角色 —— 资产本体；造型、动作、帧都在这棵树里 */
 export type {
   Action,
   ActionKind,
-  ActionType,
   ActionStatus,
+  ActionType,
   AddActionInput,
   BaseFrame,
   Character,
-  CharacterReader,
-  CharacterRepository,
+  CharacterApis,
   CharacterTemplateCandidate,
   ConfirmCharacterTemplateInput,
   CreateCharacterInput,
@@ -42,15 +32,37 @@ export type {
   Outfit,
 } from './character'
 
-/* 工作流数据 —— 后端持久化的 WorkflowRun、Revision、八阶段节点和异步 Repository 契约 */
+/* 动作模板 —— 能跨角色复用的配方 */
+export type { ActionTemplate, ActionTemplateApis } from './action-template'
+
+/* 生成 —— 业务数据，不是「调用生成能力」 */
+export type {
+  CharacterTemplateGenerationInput,
+  CharacterTemplateGenerationResult,
+  CompleteAnimationGenerationInput,
+  CompleteAnimationGenerationResult,
+  FirstFrameGenerationInput,
+  FirstFrameGenerationResult,
+  GeneratedImage,
+  GenerationApis,
+  GenerationInput,
+  GenerationResult,
+  GenerationResultFor,
+  GenerationType,
+} from './generation'
+
+/* 媒体引用 —— 不承诺 URL 或后端 Media ID 的具体表示 */
+export type { MediaReference } from './media'
+
+/* 后端异步任务 —— 与工作流节点是两回事 */
+export type { Task, TaskApis, TaskEvent, TaskStatus, TaskType } from './task'
+
+/* 工作流 —— 节点由前端推进，运行记录由后端持久化 */
 export { WORKFLOW_NODE_ORDER } from './workflow-run'
 export type {
   CreateWorkflowRunInput,
   ExportStatus,
   GenerationStatus,
-  WorkflowTaskLink,
-  WorkflowCommand,
-  WorkflowCommandKind,
   WorkflowDriver,
   WorkflowNode,
   WorkflowNodeStatus,
@@ -58,22 +70,16 @@ export type {
   WorkflowRevision,
   WorkflowRevisionStatus,
   WorkflowRun,
+  WorkflowRunApis,
   WorkflowRunPurpose,
-  WorkflowRunReader,
-  WorkflowRunRepository,
   WorkflowRunStatus,
+  WorkflowTaskLink,
 } from './workflow-run'
 
-/* 后端异步任务 —— 独立于前端 WorkflowRun 编排 */
-export type { Task, TaskEvent, TaskEventSource, TaskRepository, TaskStatus, TaskType } from './task'
-
-/* Playtest 核验记录 —— 独立于 Character、WorkflowRun 和 Revision */
+/* Playtest 核验记录 —— 独立于 Character 与 WorkflowRun */
 export type {
   PlaytestInspection,
-  PlaytestInspectionRepository,
+  PlaytestInspectionApis,
   PlaytestInspectionStatus,
   RecordPlaytestInspectionInput,
 } from './playtest-inspection'
-
-/* 动作模板 —— 仅类型与 Repository 契约 */
-export type { ActionTemplate, ActionTemplateRepository } from './action-template'

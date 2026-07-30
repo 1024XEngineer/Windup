@@ -1,23 +1,29 @@
-import type { ActionType, MediaReference } from '@/entities'
+import type { ActionType } from '../character'
+import type { MediaReference } from '../media'
+import type { Task } from '../task'
 
-/** 生成能力对应的三个前端可见异步步骤。 */
+/**
+ * Generation 是业务数据，不是「调用图片生成能力」。
+ * 前端只创建 generation 并订阅它的状态；真正调用模型的是后端，前端不接触那一层。
+ */
+
+/** 生成对应的三个前端可见异步步骤。 */
 export type GenerationType = 'character_template' | 'first_frame' | 'complete_animation'
 
 interface GenerationInputBase {
-  /** 本次生成归属的 Project ID；来源由上层 Repository 决定。 */
   projectId: string
-  /** 可选参考媒体；不透明引用由上传 Adapter 产生，没有参考图时传空数组。 */
+  /** 可选参考媒体；没有参考图时传空数组。 */
   referenceMedia: readonly MediaReference[]
 }
 
-/** 角色立绘或母版候选生成。 */
+/** 角色母版候选生成。 */
 export interface CharacterTemplateGenerationInput extends GenerationInputBase {
   type: 'character_template'
-  /** 已由手动输入或 Quick Start Agent 整理好的角色提示词。 */
+  /** 已由手动输入或 Quick Start 整理好的角色提示词。 */
   prompt: string
 }
 
-/** 指定角色造型下的动作生成；不能只绑定 Character。 */
+/** 指定角色造型下的动作首帧生成；不能只绑定 Character。 */
 export interface FirstFrameGenerationInput extends GenerationInputBase {
   type: 'first_frame'
   characterId: string
@@ -33,9 +39,8 @@ export interface CompleteAnimationGenerationInput extends GenerationInputBase {
   characterId: string
   outfitId: string
   actionType: ActionType
-  /** 已确认的生成首帧 URL；它不是上传 Adapter 创建的 MediaReference。 */
+  /** 已确认的生成首帧 URL。 */
   firstFrameUrl: string
-  /** 自定义动作或额外动作要求；没有时为 null。 */
   prompt: string | null
 }
 
@@ -46,23 +51,21 @@ export type GenerationInput =
 
 /** 后端当前能交付给前端的最小图片结果。 */
 export interface GeneratedImage {
-  /** 可供预览或后续资产登记使用的图片 URL。 */
   url: string
 }
 
-/** 角色图片生成结果；与动作帧结果分开定义。 */
+/** 结果按 type 分别定义，不共用一个 urls 数组。 */
 export interface CharacterTemplateGenerationResult {
   type: 'character_template'
   images: readonly GeneratedImage[]
 }
 
-/** 动作首帧生成结果。 */
 export interface FirstFrameGenerationResult {
   type: 'first_frame'
   image: GeneratedImage
 }
 
-/** 完整动画生成结果；帧顺序由数组位置表达。 */
+/** 帧顺序由数组位置表达。 */
 export interface CompleteAnimationGenerationResult {
   type: 'complete_animation'
   frames: readonly GeneratedImage[]
@@ -79,3 +82,12 @@ export type GenerationResultFor<T extends GenerationInput> =
     : T extends FirstFrameGenerationInput
       ? FirstFrameGenerationResult
       : CompleteAnimationGenerationResult
+
+/** Generation 对应的一组后端接口。 */
+export interface GenerationApis {
+  /**
+   * 创建一个 generation，返回后端任务。
+   * 返回的 Task.type 与输入判别字段保持同一字面量类型；结果解析由调用方在运行时完成。
+   */
+  create<T extends GenerationInput>(input: T): Promise<Task<T['type']>>
+}

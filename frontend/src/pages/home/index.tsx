@@ -1,28 +1,13 @@
-import { Link } from 'react-router'
-
-import { PageHeader } from '@/shared/ui'
-
-/** 根入口只负责提供两种制作入口，不持有工作流业务状态。 */
+/** 首页：入口与项目概览。 */
 export function HomePage() {
+  return <PagePlaceholder title="首页" />
+}
+
+function PagePlaceholder({ title }: { title: string }) {
   return (
-    <>
-      <PageHeader title="开始制作" subtitle="选择一种工作方式" />
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Link
-          to="/quick-start"
-          className="rounded-lg border border-slate-200 p-5 hover:border-slate-400"
-        >
-          <span className="block font-medium">快速开始</span>
-          <span className="mt-1 block text-sm text-slate-500">用一句话描述你想制作的角色。</span>
-        </Link>
-        <Link
-          to="/projects"
-          className="rounded-lg border border-slate-200 p-5 hover:border-slate-400"
-        >
-          <span className="block font-medium">从项目开始</span>
-          <span className="mt-1 block text-sm text-slate-500">从已有项目进入工作流。</span>
-        </Link>
-      </div>
-    </>
+    <section className="border border-dashed border-slate-300 p-6">
+      <h1 className="font-medium">{title}</h1>
+      <p className="mt-2 text-sm text-slate-500">本次只提交模块划分与接口，页面实现进后续 PR。</p>
+    </section>
   )
 }
