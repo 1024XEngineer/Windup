@@ -7,10 +7,10 @@ export type WorkflowDriver = 'ai' | 'manual'
 export type WorkflowRunPurpose = 'create_character' | 'add_action'
 
 /**
- * 页面节点类型的唯一标准顺序；它不是后端 Workflow 或 Execution 定义。
- * 某个 Revision 已进入执行线的节点顺序，由 WorkflowRevision.nodes 的数组位置表达。
+ * 流程步骤类型的唯一标准顺序；它不是后端 Workflow 或 Execution 定义。
+ * 某个 Revision 已进入执行线的步骤顺序，由 WorkflowRevision.nodes 的数组位置表达。
  */
-export const WORKFLOW_NODE_ORDER = [
+export const WORKFLOW_STEP_ORDER = [
   'character-setup',
   'character-template',
   'template-candidate',
@@ -21,14 +21,14 @@ export const WORKFLOW_NODE_ORDER = [
   'export',
 ] as const
 
-/** 前端页面节点类型，与 WORKFLOW_NODE_ORDER 的成员保持一致。 */
-export type WorkflowNodeType = (typeof WORKFLOW_NODE_ORDER)[number]
+/** 前端流程步骤类型，与 WORKFLOW_STEP_ORDER 的成员保持一致。 */
+export type WorkflowStepType = (typeof WORKFLOW_STEP_ORDER)[number]
 
 /**
- * 节点的可用性和执行结果；不直接复用后端任务状态。
+ * 步骤的可用性和执行结果；不直接复用后端任务状态。
  * locked/available 表示尚未执行，active 表示当前页面阶段，passed/failed 表示结果。
  */
-export type WorkflowNodeStatus = 'locked' | 'available' | 'active' | 'passed' | 'failed'
+export type WorkflowStepStatus = 'locked' | 'available' | 'active' | 'passed' | 'failed'
 
 /**
  * 单个版本的生命周期。
@@ -50,35 +50,35 @@ export type GenerationStatus = 'not_started' | 'in_progress' | 'completed' | 'fa
 export type ExportStatus = 'not_exported' | 'exporting' | 'exported' | 'failed'
 
 /**
- * 一个 Revision 中已经进入执行线的页面节点。
- * 节点自身不重复保存顺序；其在 nodes 中的数组位置就是该版本的执行顺序。
+ * 一个 Revision 中已经进入执行线的流程步骤。
+ * 步骤自身不重复保存顺序；其在 nodes 中的数组位置就是该版本的执行顺序。
  */
-export interface WorkflowNode {
+export interface WorkflowStep {
   /** 只用于编排和页面定位，不作为业务 ID 发送给后端。 */
   id: string
-  type: WorkflowNodeType
-  status: WorkflowNodeStatus
-  /** 进入节点时保存的输入快照。 */
+  type: WorkflowStepType
+  status: WorkflowStepStatus
+  /** 进入步骤时保存的输入快照。 */
   input: unknown
-  /** 节点完成后的结果或引用；尚无结果时为 null。 */
+  /** 步骤完成后的结果或引用；尚无结果时为 null。 */
   output: unknown
-  /** 该节点沿用或依赖的节点 ID，用于版本来源追踪，不代表后端执行依赖。 */
-  referenceNodeIds: string[]
+  /** 该步骤沿用或依赖的步骤 ID，用于版本来源追踪，不代表后端执行依赖。 */
+  referenceStepIds: string[]
 }
 
-/** 一次页面执行版本；当前版本会推进，从旧节点重开则追加新版本。 */
+/** 一次页面执行版本；当前版本会推进，从旧步骤重开则追加新版本。 */
 export interface WorkflowRevision {
   id: string
   /** 首次创建的版本没有来源，因此为 null。 */
   basedOnRevisionId: string | null
-  /** 在来源版本中选择的重启节点 ID；非重启创建的版本为 null。 */
-  restartNodeId: string | null
+  /** 在来源版本中选择的重启步骤 ID；非重启创建的版本为 null。 */
+  restartStepId: string | null
   status: WorkflowRevisionStatus
   /**
-   * 已进入当前执行线的节点；数组位置是该版本节点顺序的唯一来源。
-   * 尚未推进到的后续节点可以不存在；完整节点类型顺序以 WORKFLOW_NODE_ORDER 为准。
+   * 已进入当前执行线的步骤；数组位置是该版本步骤顺序的唯一来源。
+   * 尚未推进到的后续步骤可以不存在；完整步骤类型顺序以 WORKFLOW_STEP_ORDER 为准。
    */
-  nodes: WorkflowNode[]
+  steps: WorkflowStep[]
   generationStatus: GenerationStatus
   exportStatus: ExportStatus
   createdAt: string
@@ -86,7 +86,7 @@ export interface WorkflowRevision {
 
 /**
  * 一次由前端推进的页面流程。
- * 节点怎么走由前端决定；WorkflowRun 本身由后端持久化，前端通过 WorkflowRunApis 读写。
+ * 步骤怎么走由前端决定；WorkflowRun 本身由后端持久化，前端通过 WorkflowRunApis 读写。
  */
 export interface WorkflowRun {
   id: string
@@ -136,14 +136,14 @@ export type CreateWorkflowRunInput = CreateWorkflowRunInputBase &
       }
   )
 
-/** 前端编排关联；后端 Task 不需要认识 WorkflowRun、Revision 或页面节点。 */
+/** 前端编排关联；后端 Task 不需要认识 WorkflowRun、Revision 或流程步骤。 */
 export interface WorkflowTaskLink {
   taskId: Task['id']
   runId: WorkflowRun['id']
   /** 发起任务时所在的版本 ID，避免结果写入后来创建的新版本。 */
   revisionId: WorkflowRevision['id']
-  /** 发起任务的节点 ID，用于把结果映射回正确页面阶段。 */
-  nodeId: WorkflowNode['id']
+  /** 发起任务的步骤 ID，用于把结果映射回正确页面阶段。 */
+  stepId: WorkflowStep['id']
 }
 
 /** WorkflowRun 对应的一组后端接口；只负责存取，不负责推进。 */

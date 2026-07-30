@@ -11,6 +11,7 @@ export type {
   DirectionalMovement,
   Project,
   ProjectApis,
+  UpdateProjectInput,
 } from './project'
 
 /* 角色 —— 资产本体；造型、动作、帧都在这棵树里 */
@@ -19,7 +20,6 @@ export type {
   ActionKind,
   ActionStatus,
   ActionType,
-  AddActionInput,
   BaseFrame,
   Character,
   CharacterApis,
@@ -44,6 +44,7 @@ export type {
   FirstFrameGenerationInput,
   FirstFrameGenerationResult,
   GeneratedImage,
+  Generation,
   GenerationApis,
   GenerationInput,
   GenerationResult,
@@ -58,15 +59,15 @@ export type { MediaReference } from './media'
 export type { Task, TaskApis, TaskEvent, TaskStatus, TaskType } from './task'
 
 /* 工作流 —— 节点由前端推进，运行记录由后端持久化 */
-export { WORKFLOW_NODE_ORDER } from './workflow-run'
+export { WORKFLOW_STEP_ORDER } from './workflow-run'
 export type {
   CreateWorkflowRunInput,
   ExportStatus,
   GenerationStatus,
   WorkflowDriver,
-  WorkflowNode,
-  WorkflowNodeStatus,
-  WorkflowNodeType,
+  WorkflowStep,
+  WorkflowStepStatus,
+  WorkflowStepType,
   WorkflowRevision,
   WorkflowRevisionStatus,
   WorkflowRun,
