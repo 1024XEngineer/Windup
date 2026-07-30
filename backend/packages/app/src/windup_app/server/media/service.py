@@ -1,4 +1,4 @@
-"""媒体上传服务——七牛 Kodo 对象存储实现。"""
+"""媒体上传 / 删除服务——七牛 Kodo 对象存储实现。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from windup_app.server.media.model import MediaUploadInput, MediaUploadResult
 
 
 class ObjectStorageMediaService(MediaService):
-    """通过七牛 Kodo 对象存储上传媒体文件。
+    """通过七牛 Kodo 对象存储上传 / 删除媒体文件。
 
     配置来自 ``windup_framework.config.storage.settings``
     (环境变量前缀 ``QINIU_``)。
@@ -22,19 +22,14 @@ class ObjectStorageMediaService(MediaService):
         data: bytes,
         metadata: MediaUploadInput,
     ) -> MediaUploadResult:
+        from qiniu import Auth, put_data
+
         suffix = _file_suffix(metadata.filename)
         object_key = f"media/{metadata.category}/{uuid4().hex}{suffix}"
 
-        from qiniu import Auth, put_data
-
         auth = Auth(storage_settings.access_key, storage_settings.secret_key)
         token = auth.upload_token(storage_settings.bucket_name, object_key)
-        ret, resp = put_data(
-            token,
-            object_key,
-            data,
-            mime_type=metadata.content_type,
-        )
+        ret, resp = put_data(token, object_key, data, mime_type=metadata.content_type)
         if resp.status_code != 200 or ret is None:
             msg = f"七牛上传失败: status={resp.status_code}, body={resp.text}"
             raise RuntimeError(msg)
@@ -47,6 +42,16 @@ class ObjectStorageMediaService(MediaService):
             content_type=metadata.content_type,
             size=metadata.size,
         )
+
+    def delete(self, object_key: str) -> None:
+        from qiniu import Auth, BucketManager
+
+        auth = Auth(storage_settings.access_key, storage_settings.secret_key)
+        manager = BucketManager(auth)
+        ret, resp = manager.delete(storage_settings.bucket_name, object_key)
+        if resp.status_code != 200:
+            msg = f"七牛删除失败: status={resp.status_code}, body={resp.text}"
+            raise RuntimeError(msg)
 
 
 def _file_suffix(filename: str) -> str:
