@@ -14,19 +14,21 @@ from __future__ import annotations
 __all__ = ["build_idle_prompt", "build_attack_prompt"]
 
 _IDLE_SIDE = (
-    "The character stands in place, seen from the side facing right: the chest and shoulders "
-    "rise and fall in one slow steady rhythm, the whole torso settling down and lifting back "
-    "up in that same rhythm, {weapon} resting steady at the side in a fixed grip, {garment} "
-    "hanging and swaying gently in the same rhythm, both boots planted firmly on the ground, "
-    "weight centered, the character stays in the same spot and keeps facing right."
+    "The character stands in place, seen from the side facing right: the chest breathes in one "
+    "slow, even rhythm, the ribcage expanding and easing back while the shoulders stay level and "
+    "settled at the same height, the torso rising and lowering in that same slow rhythm, "
+    "{weapon} resting steady at the side in a fixed grip, {garment} hanging and swaying in the "
+    "same rhythm, both boots planted firmly on the ground, weight centered, the character stays "
+    "in the same spot and keeps facing right."
 )
 
 _IDLE_FRONT = (
-    "The character stands in place facing the viewer: the chest and shoulders rise and fall "
-    "in one slow steady rhythm, the whole torso settling down and lifting back up in that same "
-    "rhythm, {weapon} resting steady at the side in a fixed grip, {garment} hanging and swaying "
-    "gently in the same rhythm, both boots planted firmly on the ground, weight centered, the "
-    "character keeps FACING THE VIEWER and stays in the same spot."
+    "The character stands in place facing the viewer: the chest breathes in one slow, even "
+    "rhythm, the ribcage expanding and easing back while the shoulders stay level and settled at "
+    "the same height, the torso rising and lowering in that same slow rhythm, {weapon} resting "
+    "steady at the side in a fixed grip, {garment} hanging and swaying in the same rhythm, both "
+    "boots planted firmly on the ground, weight centered, the character keeps FACING THE VIEWER "
+    "and stays in the same spot."
 )
 
 _ATTACK_SIDE = (
