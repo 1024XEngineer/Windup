@@ -1,5 +1,6 @@
 """生成任务 API。"""
 
+import dataclasses
 import logging
 import threading
 
@@ -35,7 +36,7 @@ class CharacterImageGenerateRequest(BaseModel):
 
     user_id: int = Field(gt=0)
     project_id: int | None = None
-    reference_image_url: str
+    reference_image_url: str | None = None
     prompt: str = ""
     negative_prompt: str = ""
     width: int = 1024
@@ -78,17 +79,7 @@ def _task_to_out(task: GenerationTask) -> GenerationTaskOut:
     """领域 dataclass → 响应模型。"""
     result_dict = None
     if task.result is not None:
-        if isinstance(task.result, CharacterImageOutput):
-            result_dict = {"type": "character_image", "image_url": task.result.image_url}
-        elif isinstance(task.result, CharacterActionOutput):
-            result_dict = {
-                "type": "character_action",
-                "action_type": task.result.action_type,
-                "frames": [
-                    {"index": f.index, "image_url": f.image_url, "duration_ms": f.duration_ms}
-                    for f in task.result.frames
-                ],
-            }
+        result_dict = dataclasses.asdict(task.result)
     return GenerationTaskOut(
         id=task.id,
         user_id=task.user_id,
@@ -120,7 +111,7 @@ def submit_image_generation(
         num_images=body.num_images,
     )
     task = generation_service.generate_character_image(
-        session, user_id=body.user_id, input=input_data,
+        session, user_id=body.user_id, project_id=body.project_id, input=input_data,
     )
     threading.Thread(
         target=request.app.state.run_image_task,
@@ -146,7 +137,7 @@ def submit_action_generation(
         num_frames=body.num_frames,
     )
     task = generation_service.generate_character_action(
-        session, user_id=body.user_id, input=input_data,
+        session, user_id=body.user_id, project_id=body.project_id, input=input_data,
     )
     # 后台线程自开 session 跑生成(经项目约束 → ai_engine)。调度器由 bootstrap 注入
     # app.state,web 不静态依赖 ai_engine(满足入口层门禁)。

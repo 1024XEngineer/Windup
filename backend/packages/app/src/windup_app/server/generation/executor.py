@@ -205,7 +205,7 @@ class ActionTaskExecutor:
              "duration_ms": dur}
             for i, (png, dur) in enumerate(zip(generated.frames, generated.durations))
         ]
-        return {"action_type": input.action_type.value, "frames": frames}
+        return {"type": "character_action", "action_type": input.action_type.value, "frames": frames}
 
     def _get_generator(self) -> CharacterGeneratorPort:
         """懒装配真实 CharacterGenerator(视频路线 + 桩路线)。"""
@@ -294,8 +294,13 @@ class ImageTaskExecutor:
             if own:
                 session.commit()
             cons = _load_constraints(session, project_id)   # 角色图也受项目约束
-            url = self._produce_image(input, cons)
-            task_repo.update_result(session, task_id, _IMAGE_RESULT, {"image_url": url})
+            urls = self._produce_image(input, cons)
+            result: dict = {"type": "character_image"}
+            if len(urls) == 1:
+                result["image_url"] = urls[0]
+            else:
+                result["image_urls"] = urls
+            task_repo.update_result(session, task_id, _IMAGE_RESULT, result)
             if own:
                 session.commit()
         except Exception as exc:  # noqa: BLE001 —— 兜底
@@ -307,19 +312,26 @@ class ImageTaskExecutor:
             if own:
                 session.close()
 
-    def _produce_image(self, input: CharacterImageInput, cons: ProjectConstraints) -> str:
-        """参考图 + 项目约束(视角/画风)拼提示词 → 图生图 → 上传。"""
+    def _produce_image(self, input: CharacterImageInput, cons: ProjectConstraints) -> list[str]:
+        """参考图 + 项目约束(视角/画风)拼提示词 → 图生图 → 上传。返回 URL 列表。"""
         refs: list[bytes] = []
-        if input.reference_image_url:
+        url = (input.reference_image_url or "").strip()
+        if url and url.lower() not in ("null", "none", ""):
             fetch = self._fetch_ref or self._download
-            refs = [fetch(input.reference_image_url)]
+            refs = [fetch(url)]
         base = input.prompt or "Clean full-body character reference of the figure in the image."
         parts = [base, f"{cons.view}, full body head to feet, centered."]
         if cons.style:
             parts.append(f"Art style: {cons.style}.")
         parts.append("Plain light-gray background, no shadow.")
-        img = self._get_image().gen_image(" ".join(parts), refs)
-        return (self._upload or self._upload_image)(img)
+        prompt = " ".join(parts)
+        image_gen = self._get_image()
+        upload = self._upload or self._upload_image
+        urls: list[str] = []
+        for _ in range(max(1, input.num_images)):
+            img = image_gen.gen_image(prompt, refs)
+            urls.append(upload(img))
+        return urls
 
     def _get_image(self):
         if self._image is None:

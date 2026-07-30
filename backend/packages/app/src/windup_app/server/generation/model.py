@@ -31,6 +31,7 @@ class ActionType(StrEnum):
 
     WALK = "walk"
     IDLE = "idle"
+    JUMP = "JUMP"
     ATTACK = "attack"
     CUSTOM = "custom"
 
@@ -51,7 +52,7 @@ class TaskStatus(StrEnum):
 class CharacterImageInput:
     """角色图片生成入参。"""
 
-    reference_image_url: str
+    reference_image_url: str | None = None
     prompt: str = ""
     negative_prompt: str = ""
     width: int = 1024
@@ -78,10 +79,13 @@ class CharacterActionInput:
 class CharacterImageOutput:
     """角色图片生成结果。
 
-    前端拿到 ``image_url`` 后直接写入 ``Character.reference_image_url``。
+    前端拿到 ``image_urls`` 后写入 ``Character.reference_image_url``。
     """
 
-    image_url: str
+    type: str = "character_image"
+    image_urls: list[str] = field(default_factory=list)
+    # 兼容旧版单图
+    image_url: str = ""
 
 
 @dataclass
@@ -102,7 +106,8 @@ class CharacterActionOutput:
     ``frames`` → ``CharacterAction.frames[]``。
     """
 
-    action_type: str
+    type: str = "character_action"
+    action_type: str = ""
     frames: list[CharacterActionFrame] = field(default_factory=list)
 
 

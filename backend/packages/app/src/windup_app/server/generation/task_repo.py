@@ -135,7 +135,11 @@ def _deserialize_result(
     if raw is None or result_type is None:
         return None
     if result_type == "character_image":
-        return CharacterImageOutput(image_url=raw["image_url"])
+        return CharacterImageOutput(
+            type=raw.get("type", "character_image"),
+            image_urls=raw.get("image_urls", []),
+            image_url=raw.get("image_url", ""),
+        )
     if result_type == "character_action":
         from windup_app.server.generation.model import CharacterActionFrame
 
@@ -148,7 +152,8 @@ def _deserialize_result(
             for f in raw.get("frames", [])
         ]
         return CharacterActionOutput(
-            action_type=raw["action_type"],
+            type=raw.get("type", "character_action"),
+            action_type=raw.get("action_type", ""),
             frames=frames,
         )
     return None

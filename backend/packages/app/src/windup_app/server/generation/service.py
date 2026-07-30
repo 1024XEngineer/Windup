@@ -27,20 +27,22 @@ class AiGenerationService(GenerationService):
     """生成任务服务:提交(建 PENDING 记录)+ 查询。生成执行在 executor 后台。"""
 
     def generate_character_image(
-        self, session: Session, *, user_id: int, input: CharacterImageInput,
+        self, session: Session, *, user_id: int, project_id: int | None = None,
+        input: CharacterImageInput,
     ) -> GenerationTask:
         return task_repo.create_task(
-            session, user_id=user_id, project_id=None,
+            session, user_id=user_id, project_id=project_id,
             task_type=GenerationType.CHARACTER_IMAGE,
             input_payload=dataclasses.asdict(input),
         )
 
     def generate_character_action(
-        self, session: Session, *, user_id: int, input: CharacterActionInput,
+        self, session: Session, *, user_id: int, project_id: int | None = None,
+        input: CharacterActionInput,
     ) -> GenerationTask:
         """建动作生成任务(PENDING)并返回;实际生成由 executor 后台跑,前端轮询 get_task。"""
         return task_repo.create_task(
-            session, user_id=user_id, project_id=None,
+            session, user_id=user_id, project_id=project_id,
             task_type=GenerationType.CHARACTER_ACTION,
             input_payload=dataclasses.asdict(input),
         )
