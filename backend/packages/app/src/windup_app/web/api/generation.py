@@ -93,6 +93,22 @@ def _task_to_out(task: GenerationTask) -> GenerationTaskOut:
 # ── 端点 ─────────────────────────────────────────────────────────────────────
 
 
+def _validate_project_size(session: Session, project_id: int | None, width: int, height: int) -> None:
+    """校验输入尺寸与项目约束是否一致;不一致则抛异常。"""
+    if project_id is None:
+        return
+    from windup_app.server.project.service import SqlAlchemyProjectService
+
+    project = SqlAlchemyProjectService().get_project(session, project_id)
+    if project is None:
+        return
+    if width != project.sprite_width or height != project.sprite_height:
+        raise BizException(
+            f"输入尺寸 {width}×{height} 与项目约束 {project.sprite_width}×{project.sprite_height} 不一致",
+            code=BizCode.BAD_REQUEST,
+        )
+
+
 @router.post("/image", response_model=Response[GenerationTaskOut])
 def submit_image_generation(
     body: CharacterImageGenerateRequest,
@@ -100,6 +116,7 @@ def submit_image_generation(
     session: Session = Depends(get_session),
 ) -> Response[GenerationTaskOut]:
     """提交角色图片生成任务:建 PENDING 记录立即返回,实际图生图后台跑。"""
+    _validate_project_size(session, body.project_id, body.width, body.height)
     input_data = CharacterImageInput(
         reference_image_url=body.reference_image_url,
         prompt=body.prompt,
