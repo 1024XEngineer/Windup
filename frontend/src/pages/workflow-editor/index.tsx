@@ -61,37 +61,45 @@ export function WorkflowEditorPage() {
         </div>
       </header>
 
-      {/* Studio Mode Gateway — 与 asset-lab 的 renderStudioModeChooser 结构一致，去掉 AI 智能生成 */}
-      {!studioMode && (
-        <section className="studio-mode-gateway" data-studio-mode-gateway="">
-          <header className="studio-mode-gateway__header">
-            <span className="overline">CREATE / WORKFLOW</span>
-            <h1>节点工作流</h1>
-            <p>从一个项目开始，逐节点连接、生成与确认角色动作资产。</p>
-          </header>
-          <div className="studio-mode-gateway__choices">
-            <button
-              className="studio-mode-card studio-mode-card--workflow"
-              type="button"
-              data-pointer-card=""
-              onClick={() => setStudioMode('workflow')}
-            >
-              <span className="studio-mode-card__eyebrow">STEP BY STEP</span>
-              <span className="studio-mode-card__index">01</span>
-              <span className="studio-mode-card__copy">
-                <small>GUIDED WORKFLOW</small>
-                <b>从一个项目开始</b>
-                <p>保留从零开始、上传参考图和复用资产库三种来源，逐节点连接、生成与确认。</p>
+      {/* production-canvas-workspace 包裹 studio-mode-gateway 和 node-graph-workspace */}
+      <div className="production-canvas-workspace">
+        {/* Studio Mode Gateway — 与 asset-lab 的 renderStudioModeChooser 结构一致，去掉 AI 智能生成 */}
+        {!studioMode && (
+          <section className="studio-mode-gateway" data-studio-mode-gateway="">
+            <header className="studio-mode-gateway__header">
+              <span className="overline">CREATE / WORKFLOW</span>
+              <h1 id="workflowPageTitle">节点工作流</h1>
+              <p>从一个项目开始，逐节点连接、生成与确认角色动作资产。</p>
+            </header>
+            <div className="studio-mode-gateway__choices">
+              <button
+                className="studio-mode-card studio-mode-card--workflow"
+                type="button"
+                data-pointer-card=""
+                onClick={() => setStudioMode('workflow')}
+              >
+                <span className="studio-mode-card__eyebrow">STEP BY STEP</span>
+                <span className="studio-mode-card__index">01</span>
+                <span className="studio-mode-card__copy">
+                  <small>GUIDED WORKFLOW</small>
+                  <b>从一个项目开始</b>
+                  <p>保留从零开始、上传参考图和复用资产库三种来源，逐节点连接、生成与确认。</p>
+                </span>
+                <span className="studio-mode-card__action">进入工作流  ↗</span>
+              </button>
+            </div>
+            <footer className="studio-mode-gateway__note">
+              <i aria-hidden="true" />
+              <span>
+                <b>节点工作流</b>
+                <small>每个节点由你连接并确认，适合精确控制。</small>
               </span>
-              <span className="studio-mode-card__action">进入工作流  ↗</span>
-            </button>
-          </div>
-        </section>
-      )}
+            </footer>
+          </section>
+        )}
 
-      {/* 工作流编辑器主体 — 与 asset-lab 的 node-graph-workspace 结构一致 */}
-      {studioMode === 'workflow' && (
-        <div className="production-canvas-workspace">
+        {/* 工作流编辑器主体 — 与 asset-lab 的 node-graph-workspace 结构一致 */}
+        {studioMode === 'workflow' && (
           <div className="node-graph-layout">
             <WorkflowCanvas activeNode={activeNode} onNodeSelect={setActiveNode} />
 
@@ -124,8 +132,8 @@ export function WorkflowEditorPage() {
               </div>
             </aside>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }
