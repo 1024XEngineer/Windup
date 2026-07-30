@@ -1,0 +1,4 @@
+# macOS
+.DS_Store
+
+# 依赖与构建产物由各子项目的 .gitignore 负责
