@@ -14,7 +14,6 @@
 |---|---|
 | `WorkflowRunApis`（`get` / `create` / `save`） | 没有 workflow 模块 |
 | `ActionTemplateApis.listAvailable` | 没有 action template 模块 |
-| `PlaytestInspectionApis`（`getLatest` / `record`） | 没有对应模块 |
 | 独立的 `task` 模块 | 后端 Task 不独立，是 `generation` 内的 `GenerationTask` |
 
 前端已按服务端现状去掉 `TaskApis.cancel`——`GenerationService` 没有取消能力，不声明前端用不到的接口。

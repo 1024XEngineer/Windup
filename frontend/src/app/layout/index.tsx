@@ -1,10 +1,7 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 
-/**
- * 模块五：跨页面常驻导航。不属于任何单个页面，故上提到 app 层。
- * 页内头部 PageHeader 在 shared/ui —— pages 不能 import app 层。
- */
+/** 跨页面常驻导航属于应用外壳，由 app 层统一承载。 */
 
 export interface AppShellProps {
   /** 渲染在全局导航下方的当前路由页面。 */

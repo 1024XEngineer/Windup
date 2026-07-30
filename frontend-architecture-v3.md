@@ -17,7 +17,6 @@
 | `media` | 已上传媒体的不透明引用 |
 | `task` | 后端异步步骤的状态 |
 | `workflow-run` | 制作流程的运行记录 |
-| `playtest-inspection` | 核验结论，独立于角色与流程 |
 
 **模块判据：这个东西能不能被单独取到。**
 
@@ -57,7 +56,7 @@ pages -> features -> entities -> shared
 
 ```text
 ProjectApis  CharacterApis  ActionTemplateApis  GenerationApis
-TaskApis  WorkflowRunApis  PlaytestInspectionApis
+TaskApis  WorkflowRunApis
 ```
 
 **不使用 `Repository` / `Port` / `Adapter` 这些叫法**，也不做接口与实现的分离——实现跟着接口放在同一个模块里。
