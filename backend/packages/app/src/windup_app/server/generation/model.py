@@ -45,7 +45,7 @@ class TaskStatus(StrEnum):
 class CharacterImageInput:
     """角色图片生成入参。"""
 
-    reference_image_url: str
+    reference_image_url: str | None = None
     prompt: str = ""
     negative_prompt: str = ""
     width: int = 1024
@@ -72,10 +72,12 @@ class CharacterActionInput:
 class CharacterImageOutput:
     """角色图片生成结果。
 
-    前端拿到 ``image_url`` 后直接写入 ``Character.reference_image_url``。
+    前端拿到 ``image_urls`` 后写入 ``Character.reference_image_url``。
+    单张也用列表: ``["url"]``。
     """
 
-    image_url: str
+    type: str = "character_image"
+    image_urls: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -96,7 +98,8 @@ class CharacterActionOutput:
     ``frames`` → ``CharacterAction.frames[]``。
     """
 
-    action_type: str
+    type: str = "character_action"
+    action_type: str = ""
     frames: list[CharacterActionFrame] = field(default_factory=list)
 
 
