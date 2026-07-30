@@ -18,7 +18,6 @@ export type {
 export type {
   Action,
   ActionKind,
-  ActionStatus,
   ActionType,
   BaseFrame,
   Character,
@@ -27,7 +26,6 @@ export type {
   ConfirmCharacterTemplateInput,
   CreateCharacterInput,
   Frame,
-  FrameQcResult,
   FrameRootMotion,
   Outfit,
 } from './character'
@@ -75,11 +73,3 @@ export type {
   WorkflowRunPurpose,
   WorkflowRunStatus,
 } from './workflow-run'
-
-/* Playtest 核验记录 —— 独立于 Character 与 WorkflowRun */
-export type {
-  PlaytestInspection,
-  PlaytestInspectionApis,
-  PlaytestInspectionStatus,
-  RecordPlaytestInspectionInput,
-} from './playtest-inspection'

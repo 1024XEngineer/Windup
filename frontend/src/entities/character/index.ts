@@ -10,22 +10,6 @@ export type ActionKind = 'preset' | 'custom'
  */
 export type ActionType = 'walk' | 'idle' | 'attack' | 'jump' | 'custom'
 
-/** 动作在生成流水线上的位置。 */
-export type ActionStatus =
-  /** 已加入工作流但还没开始生成 */
-  | 'planned'
-  /** 后端任务进行中 */
-  | 'generating'
-  /** 生成完成，是候选，还没被用户确认 */
-  | 'candidate'
-  /** 用户确认后成为正式资产 */
-  | 'confirmed'
-  /** 生成失败 */
-  | 'failed'
-
-/** 系统质检结论。系统通过不等于人工通过，分开记。 */
-export type FrameQcResult = 'pending' | 'passed' | 'failed'
-
 /** 单帧相对动作首帧的根位移，单位为像素。 */
 export interface FrameRootMotion {
   dx: number
@@ -33,7 +17,12 @@ export interface FrameRootMotion {
   dy: number
 }
 
-/** 动作序列中的一张有序画面；帧序号由其在 Action.frames 中的位置决定。 */
+/**
+ * 动作序列中的一张有序画面；帧序号由其在 Action.frames 中的位置决定。
+ *
+ * 不带任何审核字段：服务端只交付生成好的帧，不返回质检结论；用户侧的审核也只是查看，
+ * 没有打回。前端若要做自动质检，那是读取帧之后在本地算出来的临时结论，不属于资产数据。
+ */
 export interface Frame {
   imageUrl: string
   /**
@@ -43,10 +32,6 @@ export interface Frame {
   durationMs: number | null
   /** null 表示不提供根位移，Playtest 与 Export 不应据此施加任何位移。 */
   rootMotion: FrameRootMotion | null
-  /** 后端自动质检结论，与人工 rejected 状态相互独立。 */
-  qc: FrameQcResult
-  /** 人工退回。不设「通过此帧」，故是布尔量而非三态。 */
-  rejected: boolean
 }
 
 /** 一张母版候选；attemptId 用于区分候选所属的生成尝试。 */
@@ -69,6 +54,10 @@ export interface BaseFrame {
 
 /** 某个角色造型下的一段动画动作。 */
 export interface Action {
+  /**
+   * 仅在所属 Outfit 内唯一。动作没有自己的表，整棵树存在 character 记录里，
+   * 因此不存在全局唯一的动作 ID：任何按 ID 定位动作的地方都必须同时带上造型。
+   */
   id: string
   outfitId: Outfit['id']
   name: string
@@ -76,7 +65,6 @@ export interface Action {
   kind: ActionKind
   /** 动作业务语义；与 kind 的 preset/custom 来源维度相互独立。 */
   type: ActionType
-  status: ActionStatus
   /**
    * 每秒播放帧数。仅当某帧 durationMs 为 null 时用于等时长回退；
    * Playtest 与 Export 不得用前端全局常量替代，也不得覆盖帧自己的 durationMs。
@@ -87,12 +75,20 @@ export interface Action {
    * 非 null 值必须指向当前 frames 数组内的成员。
    */
   keyFrameIndex: number | null
-  /** 按播放顺序排列的帧；数组下标就是零基帧序号。 */
+  /**
+   * 按播放顺序排列的帧；数组下标就是零基帧序号。
+   * 当前只表达单朝向。Project.directionalMovement 的四向/八向要如何落到这里
+   * （本层再分组，还是一个朝向一条 Action）尚未有产品定义，不要凭猜先定结构。
+   */
   frames: Frame[]
 }
 
 /** 同一角色的一套独立造型；MVP UI 只展示第一套，但数据结构不折叠该层。 */
 export interface Outfit {
+  /**
+   * 仅在所属 Character 内唯一。造型没有自己的表，与动作一起存在 character 记录里，
+   * 因此不存在全局唯一的造型 ID：任何按 ID 定位造型的地方都必须同时带上角色。
+   */
   id: string
   characterId: string
   name: string
@@ -106,7 +102,12 @@ export interface Outfit {
   actions: Action[]
 }
 
-/** 项目下的角色资产；造型拥有各自的母版和动作帧。 */
+/**
+ * 项目下的角色资产；造型拥有各自的母版和动作帧。
+ *
+ * 这棵树只承载已导出到资产库的内容，因此其中的动作一律是已确认的，不带生成过程状态。
+ * 工作流运行期间的造型、动作和帧活在 WorkflowRun 的步骤里，直到用户确认导出才整体写入。
+ */
 export interface Character {
   id: string
   projectId: string
