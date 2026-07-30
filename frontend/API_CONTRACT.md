@@ -11,6 +11,7 @@
 - `WorkflowRun` 是前端固定工作流的运行态。后端不读取、不推进、也不持久化，前端不声明 `WorkflowRunApis`。
 - `Character` 不使用独立 `name` 字段；前端已删除。
 - 前端保留 `jump` 动作类型，由后端补充对应枚举。
+- 查询生成任务统一携带 `projectId + taskId`。
 - 前端工作流节点不与后端 `GenerationType` 一一对应，按下表调用：
 
 | 前端工作流节点 | 后端接口 | 后端任务类型 |
@@ -44,7 +45,6 @@
 |---|---|---|
 | 角色列表 | `list_characters` 分页，返回 `(list, total)` | `listByProject` 无分页 |
 | 更新角色 | `update_character(character_id, **fields)` 部分更新 | `update(character)` 整棵树替换 |
-| 查任务 | `get_task(project_id, task_id)` 需要 `project_id` | `get(taskId)` 只传 taskId |
 | 等待任务完成 | 提供 `GET /generation/tasks/{task_id}` 轮询 | `TaskApis.subscribe`，实现时可封装轮询 |
 | 图片生成数量 | 入参有 `num_images`，结果只有一个 `image_url` | 角色图候选结果是 `images[]` |
 | 动作类型 | `walk` `idle` `attack` `custom`；待增加 `jump` | `walk` `idle` `attack` `jump` `custom` |
@@ -106,7 +106,6 @@ frames[]  → index / image_url / duration_ms
 ## 待确认
 
 - [ ] `ActionTemplateApis` 由后端提供还是前端内置
-- [ ] 查询生成任务统一使用 `taskId`，还是 `projectId + taskId`
 - [ ] 母版候选几张
 - [ ] 参考图与角色图是一个字段还是两个
 - [ ] `Character.description` 前端要不要跟着存
