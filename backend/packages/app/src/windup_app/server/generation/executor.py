@@ -61,6 +61,7 @@ class ProjectConstraints:
     sprite_h: int = 256
     style: str = ""             # game_style 画风
     stylize: str = "none"       # 由 style 推:像素游戏 → pixel
+    sprite_sample_url: str = "" # 项目风格参考图 URL
 
 
 def _load_constraints(session: Session, project_id: int | None) -> ProjectConstraints:
@@ -83,6 +84,7 @@ def _load_constraints(session: Session, project_id: int | None) -> ProjectConstr
         sprite_h=p.sprite_height,
         style=style,
         stylize="pixel" if is_pixel else "none",
+        sprite_sample_url=p.sprite_sample_url or "",
     )
 
 
@@ -188,7 +190,11 @@ class ActionTaskExecutor:
         if cons.directions > 1:
             logger.info("项目要求 %s 方向,MVP 先出主方向(多方向待扩展)", cons.directions)
         master = (self._fetch_master or self._download_master)(input)
-        card = CharacterCard(name=f"char-{input.character_id}", desc=input.custom_prompt or "")
+        # 视频 i2v 没有独立的 style reference 字段,风格约束走提示词文字
+        desc_parts = [input.custom_prompt or ""]
+        if cons.style:
+            desc_parts.append(f"Art style: {cons.style}")
+        card = CharacterCard(name=f"char-{input.character_id}", desc=" ".join(desc_parts))
         action = ActionSpec(
             action=_to_engine_action(input.action_type),
             poses=[""] * input.num_frames,
@@ -311,18 +317,50 @@ class ImageTaskExecutor:
                 session.close()
 
     def _produce_image(self, input: CharacterImageInput, cons: ProjectConstraints) -> list[str]:
-        """参考图 + 项目约束(视角/画风)拼提示词 → 图生图 → 上传。返回 URL 列表。"""
+        """根据项目约束决定生成模式,返回 URL 列表。
+
+        模式判断:
+          - 项目有 sprite_sample_url → **图生图**: 风格参考图 + 提示词
+          - 项目无 sprite_sample_url → **文生图**: 纯提示词
+        用户传入的 reference_image_url 始终作为角色一致性参考(可选)。
+        """
+        fetch = self._fetch_ref or self._download
         refs: list[bytes] = []
-        url = (input.reference_image_url or "").strip()
-        if url and url.lower() not in ("null", "none", ""):
-            fetch = self._fetch_ref or self._download
-            refs = [fetch(url)]
+        has_style_ref = False
+
+        # 1. 角色参考图(用户传入,可选,做角色一致性约束)
+        char_url = (input.reference_image_url or "").strip()
+        if char_url and char_url.lower() not in ("null", "none", ""):
+            refs.append(fetch(char_url))
+
+        # 2. 风格参考图(项目级,有 sprite_sample_url 时走图生图模式)
+        style_url = (cons.sprite_sample_url or "").strip()
+        if style_url and style_url.lower() not in ("null", "none", ""):
+            try:
+                refs.append(fetch(style_url))
+                has_style_ref = True
+            except Exception:
+                pass  # 风格参考图下载失败不阻断
+
+        # 3. 构建提示词
         base = input.prompt or "Clean full-body character reference of the figure in the image."
         parts = [base, f"{cons.view}, full body head to feet, centered."]
         if cons.style:
             parts.append(f"Art style: {cons.style}.")
         parts.append("Plain light-gray background, no shadow.")
+
+        # 图生图模式:明确标注两张图的各自用途
+        if has_style_ref:
+            prefix = (
+                "This is an image-to-image task. "
+                "The first image is the CHARACTER reference — preserve its identity. "
+                "The second image is the STYLE reference — follow its art style, "
+                "color palette, and rendering technique. "
+            )
+            parts.insert(0, prefix)
+
         prompt = " ".join(parts)
+
         image_gen = self._get_image()
         upload = self._upload or self._upload_image
         urls: list[str] = []
