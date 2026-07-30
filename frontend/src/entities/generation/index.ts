@@ -1,6 +1,6 @@
 import type { ActionType } from '../character'
 import type { MediaReference } from '../media'
-import type { TaskStatus } from '../task'
+import type { Task, TaskStatus } from '../task'
 
 /**
  * Generation 是业务数据，不是「调用图片生成能力」。
@@ -60,6 +60,21 @@ export interface CharacterTemplateGenerationResult {
   images: readonly GeneratedImage[]
 }
 
+/** Task.result 来自运行时边界，写回 WorkflowRun 前必须按生成类型收窄。 */
+export function parseCharacterTemplateGenerationResult(
+  value: unknown,
+): CharacterTemplateGenerationResult | null {
+  if (!isRecord(value) || value.type !== 'character_template' || !Array.isArray(value.images)) {
+    return null
+  }
+  const images = value.images.filter(
+    (image): image is GeneratedImage =>
+      isRecord(image) && typeof image.url === 'string' && image.url.length > 0,
+  )
+  if (images.length === 0 || images.length !== value.images.length) return null
+  return { type: 'character_template', images }
+}
+
 export interface FirstFrameGenerationResult {
   type: 'first_frame'
   image: GeneratedImage
@@ -88,7 +103,8 @@ export type GenerationResultFor<T extends GenerationInput> =
  * 它是服务端的资源，不是一次「调用能力」——前端创建它，然后订阅或轮询它的状态。
  */
 export interface Generation<TType extends GenerationType = GenerationType> {
-  id: string
+  /** 创建接口返回的后端 Task ID；后续查询与订阅必须把它交给 TaskApis。 */
+  id: Task['id']
   projectId: string
   /** 与创建时的输入判别字段保持同一字面量类型。 */
   type: TType
@@ -105,4 +121,8 @@ export interface GenerationApis {
   create<T extends GenerationInput>(input: T): Promise<Generation<T['type']>>
   /** 按所属项目和任务 ID 读取生成任务的最新快照。 */
   get(projectId: Generation['projectId'], id: Generation['id']): Promise<Generation>
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

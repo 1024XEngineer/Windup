@@ -44,6 +44,9 @@ export interface TaskApis {
    * projectId 不能从 taskId 推导；后端查询接口要求两者同时传入。
    */
   get(projectId: string, taskId: Task['id']): Promise<Task>
-  /** 订阅任务状态变化，返回取消订阅函数。 */
+  /**
+   * 订阅后必须立即发送一次最新完整快照，随后再发送状态变化；任务已经终止也必须发送。
+   * 该语义关闭 get/create 与开始监听之间的终态竞态。
+   */
   subscribe(projectId: string, taskId: Task['id'], onEvent: (event: TaskEvent) => void): () => void
 }

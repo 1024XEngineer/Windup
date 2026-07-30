@@ -1,26 +1,32 @@
+import type {
+  CharacterTemplateGenerationInput,
+  CharacterTemplateGenerationResult,
+} from '../generation'
+import type { MediaReference } from '../media'
 import type { Task } from '../task'
+import {
+  EXPORT_STATUSES,
+  GENERATION_STATUSES,
+  WORKFLOW_DRIVERS,
+  WORKFLOW_PURPOSES,
+  WORKFLOW_REVISION_STATUSES,
+  WORKFLOW_RUN_STATUSES,
+  WORKFLOW_STEP_ORDER,
+  WORKFLOW_STEP_STATUSES,
+} from './constants'
+
+export { WORKFLOW_STEP_ORDER } from './constants'
 
 /** Quick Start 与手动工作流只改变输入方式，共用同一种运行模型。 */
-export type WorkflowDriver = 'ai' | 'manual'
+export type WorkflowDriver = (typeof WORKFLOW_DRIVERS)[number]
 
 /** 创建 WorkflowRun 时要完成的用户意图。 */
-export type WorkflowRunPurpose = 'create_character' | 'add_action'
+export type WorkflowRunPurpose = (typeof WORKFLOW_PURPOSES)[number]
 
 /**
  * 流程步骤类型的唯一标准顺序；它不是后端 Workflow 或 Execution 定义。
- * 某个 Revision 已进入执行线的步骤顺序，由 WorkflowRevision.nodes 的数组位置表达。
+ * 某个 Revision 已进入执行线的步骤顺序，由 WorkflowRevision.steps 的数组位置表达。
  */
-export const WORKFLOW_STEP_ORDER = [
-  'character-setup',
-  'character-template',
-  'template-candidate',
-  'action-setup',
-  'first-frame',
-  'complete-animation',
-  'review',
-  'export',
-] as const
-
 /** 前端流程步骤类型，与 WORKFLOW_STEP_ORDER 的成员保持一致。 */
 export type WorkflowStepType = (typeof WORKFLOW_STEP_ORDER)[number]
 
@@ -28,40 +34,31 @@ export type WorkflowStepType = (typeof WORKFLOW_STEP_ORDER)[number]
  * 步骤的可用性和执行结果；不直接复用后端任务状态。
  * locked/available 表示尚未执行，active 表示当前页面阶段，passed/failed 表示结果。
  */
-export type WorkflowStepStatus = 'locked' | 'available' | 'active' | 'passed' | 'failed'
+export type WorkflowStepStatus = (typeof WORKFLOW_STEP_STATUSES)[number]
 
 /**
  * 单个版本的生命周期。
  * abandoned 表示停止沿用但仍保留为历史。
  */
-export type WorkflowRevisionStatus = 'active' | 'completed' | 'failed' | 'abandoned'
+export type WorkflowRevisionStatus = (typeof WORKFLOW_REVISION_STATUSES)[number]
 
 /**
  * 整次流程的汇总状态。
  * interrupted 只表示用户主动停止自动推进：历史仍保留且可只读查看，它不等于 failed 或 completed。
- * 后端 Task 是否真正停止是独立问题；从历史重启成功后可重新进入 active。
+ * 后端 Task 是否真正停止是独立问题；当前纵切不提供重启操作。
  */
-export type WorkflowRunStatus = 'active' | 'interrupted' | 'completed' | 'failed'
+export type WorkflowRunStatus = (typeof WORKFLOW_RUN_STATUSES)[number]
 
 /** 当前版本在生成阶段的汇总状态；素材准备期间为 not_started。 */
-export type GenerationStatus = 'not_started' | 'in_progress' | 'completed' | 'failed'
+export type GenerationStatus = (typeof GENERATION_STATUSES)[number]
 
 /** 当前版本在导出阶段的汇总状态。 */
-export type ExportStatus = 'not_exported' | 'exporting' | 'exported' | 'failed'
+export type ExportStatus = (typeof EXPORT_STATUSES)[number]
 
-/**
- * 一个 Revision 中已经进入执行线的流程步骤。
- * 步骤自身不重复保存顺序；其在 nodes 中的数组位置就是该版本的执行顺序。
- */
-export interface WorkflowStep {
+interface WorkflowStepBase {
   /** 只用于编排和页面定位，不作为业务 ID 发送给后端。 */
   id: string
-  type: WorkflowStepType
   status: WorkflowStepStatus
-  /** 进入步骤时保存的输入快照。 */
-  input: unknown
-  /** 步骤完成后的结果或引用；尚无结果时为 null。 */
-  output: unknown
   /**
    * 本步骤已提交、结果尚未写回 output 的生成任务 ID；没有在途任务时为 null。
    * 它由前端随 WorkflowRun 一起维护，据此查回在途任务的状态，因而不会在同一次
@@ -69,16 +66,62 @@ export interface WorkflowStep {
    * 任务本身不认识步骤，反向关联不存在。
    */
   taskId: Task['id'] | null
+  /**
+   * 前端开始提交、但后端 taskId 尚未返回时的本地尝试标识。
+   * 它非 null 而 taskId 为 null 时不能重复提交；若页面在这个窗口刷新，
+   * Controller 会把本地 Run 标为失败。它不是后端字段，也不冒充幂等键。
+   */
+  submissionId: string | null
+  /** 步骤失败后供页面解释原因；未失败时必须为 null。 */
+  error: string | null
   /** 该步骤沿用或依赖的步骤 ID，用于版本来源追踪，不代表后端执行依赖。 */
   referenceStepIds: string[]
 }
 
+/** 角色资料步骤保存的输入；参考媒体为空表示仅使用文字描述。 */
+export interface CharacterSetupStepInput {
+  description: string
+  referenceMedia: readonly MediaReference[]
+}
+
+export interface CharacterSetupWorkflowStep extends WorkflowStepBase {
+  type: 'character-setup'
+  input: CharacterSetupStepInput | null
+  output: null
+}
+
+export interface CharacterTemplateWorkflowStep extends WorkflowStepBase {
+  type: 'character-template'
+  /** 发起任务前为 null；提交时保存实际发送给 GenerationApis 的输入快照。 */
+  input: CharacterTemplateGenerationInput | null
+  output: CharacterTemplateGenerationResult | null
+}
+
+type RemainingWorkflowStepType = Exclude<WorkflowStepType, 'character-setup' | 'character-template'>
+
+interface RemainingWorkflowStep extends WorkflowStepBase {
+  type: RemainingWorkflowStepType
+  /** 候选选择及后五步尚未实现，输入输出等对应纵切开始时再收窄。 */
+  input: unknown
+  output: unknown
+}
+
+/**
+ * 一个 Revision 中已经进入执行线的流程步骤。
+ * 前两个执行步骤已冻结输入输出；候选选择及后五步进入对应纵切时再收窄，
+ * 不提前猜页面尚未产生的数据形状。
+ */
+export type WorkflowStep =
+  | CharacterSetupWorkflowStep
+  | CharacterTemplateWorkflowStep
+  | RemainingWorkflowStep
+
 /**
  * 一次页面执行版本；当前版本会推进，从旧步骤重开则追加新版本。
  *
- * MVP 只走单条执行线：revisions 恒为一个成员，basedOnRevisionId 与 restartStepId 恒为 null。
- * 「从历史步骤重开并保留旧版本」尚未进入产品定义，结构先留出位置但不实现，
- * 避免真要做时改动波及 WorkflowRun 的持久化形状。
+ * 当前本地存储版本只接受单条执行线：revisions 恒为一个成员，
+ * basedOnRevisionId 与 restartStepId 恒为 null。「从历史步骤重开并保留旧版本」
+ * 尚未进入产品定义；实现时需要同步升级存储版本和迁移规则。
  */
 export interface WorkflowRevision {
   id: string
@@ -88,8 +131,8 @@ export interface WorkflowRevision {
   restartStepId: string | null
   status: WorkflowRevisionStatus
   /**
-   * 已进入当前执行线的步骤；数组位置是该版本步骤顺序的唯一来源。
-   * 尚未推进到的后续步骤可以不存在；完整步骤类型顺序以 WORKFLOW_STEP_ORDER 为准。
+   * 当前版本固定保存全部八步；数组位置是步骤顺序的唯一来源。
+   * 完整步骤类型顺序以 WORKFLOW_STEP_ORDER 为准。
    */
   steps: WorkflowStep[]
   generationStatus: GenerationStatus
@@ -149,3 +192,6 @@ export type CreateWorkflowRunInput = CreateWorkflowRunInputBase &
         baseFrameUrls: readonly string[]
       }
   )
+
+export { createWorkflowRunStore } from './store'
+export type { CreateWorkflowRunStoreOptions, WorkflowRunStore } from './store'

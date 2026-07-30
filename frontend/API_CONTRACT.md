@@ -45,7 +45,7 @@
 |---|---|---|
 | 角色列表 | `list_characters` 分页，返回 `(list, total)` | `listByProject` 无分页 |
 | 更新角色 | `update_character(character_id, **fields)` 部分更新 | `update(character)` 整棵树替换 |
-| 等待任务完成 | 提供 `GET /generation/tasks/{task_id}` 轮询 | `TaskApis.subscribe`，实现时可封装轮询 |
+| 等待任务完成 | 提供 `GET /generation/tasks/{task_id}` 轮询 | `TaskApis.subscribe`；适配器先立即回放当前快照，再继续轮询 |
 | 图片生成数量 | 入参有 `num_images`，结果只有一个 `image_url` | 角色图候选结果是 `images[]` |
 | 动作类型 | `walk` `idle` `attack` `custom`；待增加 `jump` | `walk` `idle` `attack` `jump` `custom` |
 | 角色视角 | `character_perspective` 为 `1~3`，文档中 2、3 都写成“正面” | `side` `top-down` `isometric` |
