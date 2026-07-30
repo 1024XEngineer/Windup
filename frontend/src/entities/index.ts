@@ -56,7 +56,7 @@ export type { MediaReference } from './media'
 /* 后端异步任务 —— 与工作流节点是两回事 */
 export type { Task, TaskApis, TaskEvent, TaskStatus, TaskType } from './task'
 
-/* 工作流 —— 节点由前端推进，运行记录由后端持久化 */
+/* 工作流 —— 节点与运行状态都由前端管理 */
 export { WORKFLOW_STEP_ORDER } from './workflow-run'
 export type {
   CreateWorkflowRunInput,
@@ -69,7 +69,6 @@ export type {
   WorkflowRevision,
   WorkflowRevisionStatus,
   WorkflowRun,
-  WorkflowRunApis,
   WorkflowRunPurpose,
   WorkflowRunStatus,
 } from './workflow-run'

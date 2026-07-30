@@ -32,7 +32,7 @@ export interface ApplyServerResultInput {
  * Controller 围绕同一份 WorkflowRun 提供推进、更新、重启和中断。这些操作依赖同一份
  * 步骤数据，不拆成互不共享状态的独立模块。
  *
- * 步骤怎么走由前端决定，服务端只负责持久化 WorkflowRun 和提供生成能力。
+ * 步骤和运行状态由前端管理；服务端只提供生成能力，并持久化最终确认的资产。
  */
 export interface WorkflowController {
   /** 初始化一条创建角色或增加动作的流程。 */

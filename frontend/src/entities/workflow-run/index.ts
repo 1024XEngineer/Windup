@@ -64,8 +64,9 @@ export interface WorkflowStep {
   output: unknown
   /**
    * 本步骤已提交、结果尚未写回 output 的生成任务 ID；没有在途任务时为 null。
-   * 它随 WorkflowRun 一起持久化，页面重开后据此查回在途任务的状态，
-   * 因而不会重复发起同一次生成。任务本身不认识步骤，反向关联不存在。
+   * 它由前端随 WorkflowRun 一起维护，据此查回在途任务的状态，因而不会在同一次
+   * 前端运行中重复发起生成。是否写入浏览器存储属于前端实现，不形成后端契约。
+   * 任务本身不认识步骤，反向关联不存在。
    */
   taskId: Task['id'] | null
   /** 该步骤沿用或依赖的步骤 ID，用于版本来源追踪，不代表后端执行依赖。 */
@@ -98,7 +99,8 @@ export interface WorkflowRevision {
 
 /**
  * 一次由前端推进的页面流程。
- * 步骤怎么走由前端决定；WorkflowRun 本身由后端持久化，前端通过 WorkflowRunApis 读写。
+ * 步骤推进和运行状态都由前端管理；后端不读取、不推进、也不持久化 WorkflowRun。
+ * 后端只处理生成任务，并在用户最终确认时持久化角色与动作资产。
  */
 export interface WorkflowRun {
   id: string
@@ -147,11 +149,3 @@ export type CreateWorkflowRunInput = CreateWorkflowRunInputBase &
         baseFrameUrls: readonly string[]
       }
   )
-
-/** WorkflowRun 对应的一组后端接口；只负责存取，不负责推进。 */
-export interface WorkflowRunApis {
-  get(runId: WorkflowRun['id']): Promise<WorkflowRun | null>
-  create(input: CreateWorkflowRunInput): Promise<WorkflowRun>
-  /** 保存已由 WorkflowController 完成合法状态转换的流程快照。 */
-  save(run: WorkflowRun): Promise<void>
-}
