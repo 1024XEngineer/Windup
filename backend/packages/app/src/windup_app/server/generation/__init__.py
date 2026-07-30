@@ -7,9 +7,12 @@ from windup_app.server.generation.model import (
     CharacterActionOutput,
     CharacterImageInput,
     GenerationTask,
+    GenerationTaskRecord,
     GenerationType,
     TaskStatus,
 )
+from windup_app.server.generation.service import service as generation_service
+from windup_app.server.generation import task_repo
 
 __all__ = [
     "ActionType",
@@ -18,6 +21,9 @@ __all__ = [
     "CharacterActionOutput",
     "CharacterImageInput",
     "GenerationTask",
+    "GenerationTaskRecord",
     "GenerationType",
     "TaskStatus",
+    "generation_service",
+    "task_repo",
 ]
