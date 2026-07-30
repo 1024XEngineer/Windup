@@ -295,12 +295,10 @@ class ImageTaskExecutor:
                 session.commit()
             cons = _load_constraints(session, project_id)   # 角色图也受项目约束
             urls = self._produce_image(input, cons)
-            result: dict = {"type": "character_image"}
-            if len(urls) == 1:
-                result["image_url"] = urls[0]
-            else:
-                result["image_urls"] = urls
-            task_repo.update_result(session, task_id, _IMAGE_RESULT, result)
+            task_repo.update_result(session, task_id, _IMAGE_RESULT, {
+                "type": "character_image",
+                "image_urls": urls,
+            })
             if own:
                 session.commit()
         except Exception as exc:  # noqa: BLE001 —— 兜底

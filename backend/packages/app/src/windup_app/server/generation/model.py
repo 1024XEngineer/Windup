@@ -80,12 +80,11 @@ class CharacterImageOutput:
     """角色图片生成结果。
 
     前端拿到 ``image_urls`` 后写入 ``Character.reference_image_url``。
+    单张也用列表: ``["url"]``。
     """
 
     type: str = "character_image"
     image_urls: list[str] = field(default_factory=list)
-    # 兼容旧版单图
-    image_url: str = ""
 
 
 @dataclass
