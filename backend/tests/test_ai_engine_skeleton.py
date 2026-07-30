@@ -58,8 +58,9 @@ def test_route_matrix_is_the_measured_contract():
     assert ROUTE_MATRIX[ActionType.WALK] is GenRoute.VIDEO_I2V
     assert ROUTE_MATRIX[ActionType.RUN] is GenRoute.VIDEO_I2V
     assert ROUTE_MATRIX[ActionType.ATTACK] is GenRoute.VIDEO_I2V
+    assert ROUTE_MATRIX[ActionType.JUMP] is GenRoute.VIDEO_I2V
     assert ROUTE_MATRIX[ActionType.HIT] is GenRoute.PER_FRAME
-    assert ROUTE_MATRIX[ActionType.IDLE] is GenRoute.PROC_IDLE
+    assert ROUTE_MATRIX[ActionType.IDLE] is GenRoute.VIDEO_I2V
 
 
 def test_generate_walk_is_wired_end_to_end():
