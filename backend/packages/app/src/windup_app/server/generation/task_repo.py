@@ -7,8 +7,6 @@
 
 from __future__ import annotations
 
-import dataclasses
-import json
 from datetime import datetime, timezone
 
 from sqlalchemy import select

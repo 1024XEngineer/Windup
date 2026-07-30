@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 import windup_framework.db  # noqa: F401  组装时显式触发 DB engine/session 初始化
 from fastapi import FastAPI
 
+from windup_app.server.generation.executor import run_action_task
 from windup_app.web.api.generation import router as generation_router
 from windup_app.web.api.project import router as project_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
@@ -39,6 +40,9 @@ def create_app() -> FastAPI:
     app = FastAPI(title="windup", version="0.1.0", lifespan=_lifespan)
     app.include_router(project_router)
     app.include_router(generation_router)
+    # 生成后台调度器注入 app.state:bootstrap(composition root)持有 ai_engine 依赖,
+    # web 端运行期从 request.app.state 取,避免 web 静态 import ai_engine(入口层门禁)。
+    app.state.run_action_task = run_action_task
     register_exception_handlers(app)
     return app
 
