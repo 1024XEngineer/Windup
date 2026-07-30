@@ -2,11 +2,11 @@
 
 ## app
 
-只负责启动、路由和全局布局。它不构造业务服务，也不决定 Workflow 如何推进。本 PR 不提交 app 实现。
+只负责启动、路由和全局布局。它不构造业务服务，也不决定 Workflow 如何推进。本 PR 保留 `src/app/README.md` 固定边界，不提交 app 运行实现。
 
 ## pages
 
-页面是路由入口，负责组合粗粒度 Feature。Quick Start 与 Workflow Editor 是两个独立页面；Playtest 是只读核验入口。本 PR 不提交页面实现。
+页面是路由入口，负责组合粗粒度 Feature。Quick Start 与 Workflow Editor 是两个独立页面；Playtest 是只读核验入口。本 PR 保留 `src/pages/README.md` 固定边界，不提交页面运行实现。
 
 ## features
 
@@ -16,7 +16,7 @@
 - `export`：展示导出条件、配置与结果。
 
 当前不继续拆分 Feature 内部目录。
-本 PR 不提交 Feature 实现或占位组件。
+本 PR 保留 `src/features/README.md` 固定边界，不提交 Feature 实现或占位组件。
 
 ## workflow-controller
 
