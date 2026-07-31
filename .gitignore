@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 虚拟环境
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# 系统文件
+.DS_Store
+
+# 敏感配置(切勿提交)
+.env
+.env.*
+
+# 运行产物
+output/
+
+# 构建缓存
+.ruff_cache/
+.pytest_cache/
+.import_linter_cache/
