@@ -14,15 +14,17 @@ export interface AppShellProps {
 export function AppShell({ children }: AppShellProps) {
   const { pathname } = useLocation()
   const isPlaytestWorkspace = pathname.startsWith('/playtest/')
+  const isWorkflowWorkspace = pathname.startsWith('/workflow-editor')
   const isHomePage = pathname === '/'
 
   return (
     <div className="min-h-screen bg-white text-slate-900">
-      <AppHeader />
+      {/* workflow-editor 有自己的 studio-bar，不显示全局 header */}
+      {!isWorkflowWorkspace && <AppHeader />}
       <main
         className={
-          isPlaytestWorkspace
-            ? 'w-full px-2 pb-2 pt-24 sm:px-4 sm:pb-4 sm:pt-24'
+          isPlaytestWorkspace || isWorkflowWorkspace
+            ? 'w-full px-0 pb-0 pt-0'
             : isHomePage
               ? 'w-full'
               : 'mx-auto max-w-5xl px-6 pb-8 pt-24'

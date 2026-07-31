@@ -12,7 +12,7 @@ import {
 } from './constants'
 
 export const WORKFLOW_RUN_STORAGE_KEY = 'windup.workflow-runs'
-export const WORKFLOW_RUN_STORAGE_VERSION = 1
+export const WORKFLOW_RUN_STORAGE_VERSION = 3
 
 type WorkflowRunListener = (run: WorkflowRun) => void
 
@@ -133,7 +133,7 @@ function isWorkflowRun(value: unknown): value is WorkflowRun {
     isMember(value.driver, WORKFLOW_DRIVERS) &&
     isMember(value.status, WORKFLOW_RUN_STATUSES) &&
     typeof value.currentRevisionId === 'string' &&
-    value.revisions.length === 1 &&
+    value.revisions.length > 0 &&
     value.revisions.every(isWorkflowRevision) &&
     value.revisions.some(
       (revision) => isRecord(revision) && revision.id === value.currentRevisionId,
@@ -145,9 +145,7 @@ function isWorkflowRun(value: unknown): value is WorkflowRun {
     (revision) => isRecord(revision) && revision.id === value.currentRevisionId,
   )
   if (!isRecord(currentRevision) || !Array.isArray(currentRevision.steps)) return false
-  if (currentRevision.basedOnRevisionId !== null || currentRevision.restartStepId !== null) {
-    return false
-  }
+  if (!hasValidRevisionLine(value.revisions)) return false
 
   const expectedRevisionStatus =
     value.status === 'failed' ? 'failed' : value.status === 'completed' ? 'completed' : 'active'
@@ -178,6 +176,141 @@ function isWorkflowRun(value: unknown): value is WorkflowRun {
   )
 }
 
+function hasValidRevisionLine(revisions: unknown[]): boolean {
+  const seenRevisionIds = new Set<string>()
+  const byId = new Map<string, Record<string, unknown>>()
+
+  for (const [index, revision] of revisions.entries()) {
+    if (
+      !isRecord(revision) ||
+      typeof revision.id !== 'string' ||
+      seenRevisionIds.has(revision.id)
+    ) {
+      return false
+    }
+    seenRevisionIds.add(revision.id)
+
+    if (index === 0) {
+      if (revision.basedOnRevisionId !== null || revision.restartStepId !== null) return false
+    } else {
+      if (
+        typeof revision.basedOnRevisionId !== 'string' ||
+        typeof revision.restartStepId !== 'string'
+      ) {
+        return false
+      }
+      const source = byId.get(revision.basedOnRevisionId)
+      if (
+        !source ||
+        !Array.isArray(source.steps) ||
+        !source.steps.some(
+          (step) =>
+            isRecord(step) && step.id === revision.restartStepId && step.status === 'passed',
+        )
+      ) {
+        return false
+      }
+    }
+
+    byId.set(revision.id, revision)
+  }
+
+  return true
+}
+
+function migrateVersionOneRun(value: unknown): WorkflowRun | null {
+  if (!isRecord(value) || !Array.isArray(value.revisions)) return null
+
+  const revisions: unknown[] = []
+  for (const revision of value.revisions) {
+    const migratedRevision = migrateVersionOneRevision(revision)
+    if (!migratedRevision) return null
+    revisions.push(migratedRevision)
+  }
+
+  const migrated = { ...value, revisions }
+  return isWorkflowRun(migrated) ? migrated : null
+}
+
+function migrateVersionTwoRun(value: unknown): WorkflowRun | null {
+  return isWorkflowRun(value) ? value : null
+}
+
+function migrateVersionOneRevision(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value) || typeof value.id !== 'string' || !Array.isArray(value.steps)) return null
+
+  const steps = value.steps
+  const legacyOrder = [
+    'character-setup',
+    'character-template',
+    'template-candidate',
+    'action-setup',
+    'first-frame',
+    'complete-animation',
+    'review',
+    'export',
+  ] as const
+  if (
+    steps.length !== legacyOrder.length ||
+    !steps.every((step, index) => isRecord(step) && step.type === legacyOrder[index])
+  ) {
+    return null
+  }
+
+  const [
+    characterSetup,
+    characterTemplate,
+    templateCandidate,
+    actionSetup,
+    firstFrame,
+    animation,
+    review,
+  ] = steps
+  if (
+    !isRecord(characterSetup) ||
+    !isRecord(characterTemplate) ||
+    !isRecord(templateCandidate) ||
+    !isRecord(actionSetup) ||
+    !isRecord(firstFrame) ||
+    !isRecord(animation) ||
+    !isRecord(review)
+  ) {
+    return null
+  }
+
+  const actionSteps = [actionSetup, firstFrame, animation]
+  const collapsedAction =
+    actionSteps.find((step) => step.status === 'active') ??
+    actionSteps.find((step) => step.status === 'failed') ??
+    (actionSteps.every((step) => step.status === 'passed') ? animation : actionSetup)
+  const actionStepId = `${value.id}:action-generation`
+  const legacyActionIds = new Set(
+    actionSteps.map((step) => step.id).filter((id): id is string => typeof id === 'string'),
+  )
+
+  function migrateReferences(step: Record<string, unknown>): Record<string, unknown> {
+    const referenceStepIds = Array.isArray(step.referenceStepIds)
+      ? step.referenceStepIds.map((id) => (legacyActionIds.has(id) ? actionStepId : id))
+      : step.referenceStepIds
+    return { ...step, referenceStepIds }
+  }
+
+  return {
+    ...value,
+    steps: [
+      migrateReferences(characterSetup),
+      migrateReferences(characterTemplate),
+      migrateReferences(templateCandidate),
+      {
+        ...migrateReferences(collapsedAction),
+        id: actionStepId,
+        type: 'action-generation',
+      },
+      migrateReferences(review),
+    ],
+  }
+}
+
 function readPersistedRuns(storage: WorkflowRunStorage | null): WorkflowRun[] {
   if (storage === null) return []
 
@@ -186,15 +319,27 @@ function readPersistedRuns(storage: WorkflowRunStorage | null): WorkflowRun[] {
     if (serialized === null) return []
 
     const persisted: unknown = JSON.parse(serialized)
-    if (
-      !isRecord(persisted) ||
-      persisted.version !== WORKFLOW_RUN_STORAGE_VERSION ||
-      !Array.isArray(persisted.runs)
-    ) {
-      return []
+    if (!isRecord(persisted) || !Array.isArray(persisted.runs)) return []
+
+    if (persisted.version === WORKFLOW_RUN_STORAGE_VERSION) {
+      return persisted.runs.filter(isWorkflowRun).map((run) => structuredClone(run))
     }
 
-    return persisted.runs.filter(isWorkflowRun).map((run) => structuredClone(run))
+    if (persisted.version === 1) {
+      return persisted.runs
+        .map(migrateVersionOneRun)
+        .filter((run): run is WorkflowRun => run !== null)
+        .map((run) => structuredClone(run))
+    }
+
+    if (persisted.version === 2) {
+      return persisted.runs
+        .map(migrateVersionTwoRun)
+        .filter((run): run is WorkflowRun => run !== null)
+        .map((run) => structuredClone(run))
+    }
+
+    return []
   } catch {
     return []
   }

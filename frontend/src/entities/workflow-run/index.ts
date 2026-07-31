@@ -101,14 +101,14 @@ type RemainingWorkflowStepType = Exclude<WorkflowStepType, 'character-setup' | '
 
 interface RemainingWorkflowStep extends WorkflowStepBase {
   type: RemainingWorkflowStepType
-  /** 候选选择及后五步尚未实现，输入输出等对应纵切开始时再收窄。 */
+  /** 候选确认、动作生成与系统质检尚未实现，输入输出等对应纵切开始时再收窄。 */
   input: unknown
   output: unknown
 }
 
 /**
  * 一个 Revision 中已经进入执行线的流程步骤。
- * 前两个执行步骤已冻结输入输出；候选选择及后五步进入对应纵切时再收窄，
+ * 前两个执行步骤已冻结输入输出；后续三步进入对应纵切时再收窄，
  * 不提前猜页面尚未产生的数据形状。
  */
 export type WorkflowStep =
@@ -119,9 +119,8 @@ export type WorkflowStep =
 /**
  * 一次页面执行版本；当前版本会推进，从旧步骤重开则追加新版本。
  *
- * 当前本地存储版本只接受单条执行线：revisions 恒为一个成员，
- * basedOnRevisionId 与 restartStepId 恒为 null。「从历史步骤重开并保留旧版本」
- * 尚未进入产品定义；实现时需要同步升级存储版本和迁移规则。
+ * 从历史步骤重开时，旧 Revision 保留为只读记录，新 Revision 引用它的重开步骤。
+ * 新执行线中的下游步骤会清空并重新锁定，不能作为新生成的参考依据。
  */
 export interface WorkflowRevision {
   id: string
@@ -131,7 +130,7 @@ export interface WorkflowRevision {
   restartStepId: string | null
   status: WorkflowRevisionStatus
   /**
-   * 当前版本固定保存全部八步；数组位置是步骤顺序的唯一来源。
+   * 当前版本固定保存全部五步；数组位置是步骤顺序的唯一来源。
    * 完整步骤类型顺序以 WORKFLOW_STEP_ORDER 为准。
    */
   steps: WorkflowStep[]

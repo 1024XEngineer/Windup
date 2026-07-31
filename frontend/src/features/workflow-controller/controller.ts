@@ -12,6 +12,7 @@ import {
   getActiveStep,
   getCurrentRevision,
   interruptWorkflowRunState,
+  restartWorkflowRunState,
   requireActiveWorkflow,
   updateCharacterSetupState,
   type CreateWorkflowRunStateInput,
@@ -44,6 +45,9 @@ export interface WorkflowController {
 
   /** 只停止前端自动推进和任务订阅；后端当前没有取消任务能力。 */
   interrupt(runId: WorkflowRun['id']): WorkflowRun
+
+  /** 从当前执行线中一个已通过的节点创建新的本地 Revision。 */
+  restart(runId: WorkflowRun['id'], stepId: string): WorkflowRun
 }
 
 export interface CreateWorkflowControllerOptions {
@@ -148,12 +152,23 @@ export function createWorkflowController({
     return save(interruptWorkflowRunState(latest))
   }
 
+  function restart(runId: WorkflowRun['id'], stepId: string): WorkflowRun {
+    characterTemplateTask.stop(runId)
+    return save(
+      restartWorkflowRunState(requireWorkflow(runId), stepId, {
+        revisionId: createId('revision'),
+        createdAt: now(),
+      }),
+    )
+  }
+
   return {
     create,
     getWorkflow,
     subscribe,
     updateCharacterSetup,
     nextStep,
+    restart,
     resume,
     interrupt,
   }

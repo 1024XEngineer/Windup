@@ -1,5 +1,6 @@
-import type { Project, WorkflowRun } from '@/entities'
-import type { WorkflowController } from '@/features/workflow-controller'
+import type { GenerationApis, Project, ProjectApis, TaskApis, WorkflowRun } from '@/entities'
+import { createWorkflowRunStore, type WorkflowRunStore } from '@/entities/workflow-run/store'
+import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
 
 /**
  * Quick Start 创建项目所需的页面级边界。
@@ -108,4 +109,53 @@ export const unavailableQuickStartService: QuickStartService = {
   interrupt() {
     return null
   },
+}
+
+/**
+ * 自动创建项目的 prepareProject 实现。
+ *
+ * 使用默认参数（侧视、单方向、64x64），用户无需手动设置。
+ * 项目名取提示词前 20 字符。
+ */
+export function createAutoPrepareProject(projectApis: ProjectApis): PrepareQuickStartProject {
+  return async (prompt: string) => {
+    const name = prompt.length > 20 ? prompt.slice(0, 20) + '…' : prompt
+    const project = await projectApis.create({
+      name,
+      perspective: 'side',
+      directionalMovement: 'single',
+      spriteSize: { width: 64, height: 64 },
+    })
+    return { id: project.id }
+  }
+}
+
+export interface CreateRealQuickStartServiceOptions {
+  projectApis: ProjectApis
+  generationApis: GenerationApis
+  taskApis: TaskApis
+  store?: WorkflowRunStore
+}
+
+/**
+ * 创建真实的 QuickStartService。
+ *
+ * 将 Project、Generation、Task 适配器与 WorkflowController 组合成完整的服务。
+ * 用于生产环境，调用真实后端 API。
+ */
+export function createRealQuickStartService({
+  projectApis,
+  generationApis,
+  taskApis,
+  store,
+}: CreateRealQuickStartServiceOptions): QuickStartService {
+  const workflowStore = store ?? createWorkflowRunStore()
+  const controller = createWorkflowController({
+    store: workflowStore,
+    generationApis,
+    taskApis,
+  })
+  const prepareProject = createAutoPrepareProject(projectApis)
+
+  return createQuickStartService({ controller, prepareProject })
 }

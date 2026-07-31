@@ -60,18 +60,42 @@ export interface CharacterTemplateGenerationResult {
   images: readonly GeneratedImage[]
 }
 
-/** Task.result 来自运行时边界，写回 WorkflowRun 前必须按生成类型收窄。 */
+/**
+ * Task.result 来自运行时边界，写回 WorkflowRun 前必须按生成类型收窄。
+ *
+ * 兼容后端两种返回格式：
+ * - 旧版单图：`{ type, image_url: "..." }`
+ * - 新版多图：`{ type, image_urls: ["...", "..."] }`
+ */
 export function parseCharacterTemplateGenerationResult(
   value: unknown,
 ): CharacterTemplateGenerationResult | null {
-  if (!isRecord(value) || value.type !== 'character_template' || !Array.isArray(value.images)) {
+  if (!isRecord(value) || value.type !== 'character_template') {
     return null
   }
-  const images = value.images.filter(
-    (image): image is GeneratedImage =>
-      isRecord(image) && typeof image.url === 'string' && image.url.length > 0,
-  )
-  if (images.length === 0 || images.length !== value.images.length) return null
+
+  // 优先使用 image_urls（多图），兼容 image_url（单图）
+  const rawUrls: string[] = []
+  if (Array.isArray(value.image_urls)) {
+    for (const item of value.image_urls) {
+      if (typeof item === 'string' && item.length > 0) rawUrls.push(item)
+    }
+  } else if (typeof value.image_url === 'string' && value.image_url.length > 0) {
+    rawUrls.push(value.image_url)
+  }
+
+  // 兼容旧版 images 数组格式
+  if (rawUrls.length === 0 && Array.isArray(value.images)) {
+    for (const image of value.images) {
+      if (isRecord(image) && typeof image.url === 'string' && image.url.length > 0) {
+        rawUrls.push(image.url)
+      }
+    }
+  }
+
+  if (rawUrls.length === 0) return null
+
+  const images: GeneratedImage[] = rawUrls.map((url) => ({ url }))
   return { type: 'character_template', images }
 }
 

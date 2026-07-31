@@ -181,7 +181,7 @@ async function startCharacterTemplate(harness: ReturnType<typeof createHarness>)
 }
 
 describe('createWorkflowController', () => {
-  it('creates one revision with the fixed eight steps and seeds AI input from the prompt', async () => {
+  it('creates one revision with the fixed five steps and seeds AI input from the prompt', async () => {
     const harness = createHarness()
 
     expect(harness.controller).toEqual(
@@ -191,6 +191,7 @@ describe('createWorkflowController', () => {
         subscribe: expect.any(Function),
         updateCharacterSetup: expect.any(Function),
         nextStep: expect.any(Function),
+        restart: expect.any(Function),
         resume: expect.any(Function),
         interrupt: expect.any(Function),
       }),
@@ -209,9 +210,6 @@ describe('createWorkflowController', () => {
     expect(revision.steps.map(({ type }) => type)).toEqual(WORKFLOW_STEP_ORDER)
     expect(revision.steps.map(({ status }) => status)).toEqual([
       'active',
-      'locked',
-      'locked',
-      'locked',
       'locked',
       'locked',
       'locked',
@@ -603,5 +601,31 @@ describe('createWorkflowController', () => {
     )
 
     unsubscribe()
+  })
+
+  it('restarts from a passed stage as a new local revision', async () => {
+    const harness = createHarness()
+    const run = await createAiRun(harness)
+    await harness.controller.nextStep(run.id)
+    const advanced = harness.controller.getWorkflow(run.id)
+    if (!advanced) throw new Error('Expected the workflow to remain available')
+    const original = currentRevision(advanced)
+    const restarted = harness.controller.restart(advanced.id, `${original.id}:character-setup`)
+
+    const revision = currentRevision(restarted)
+    expect(restarted.status).toBe('active')
+    expect(restarted.revisions).toHaveLength(2)
+    expect(restarted.revisions[0]?.status).toBe('abandoned')
+    expect(revision).toMatchObject({
+      id: 'id-4',
+      basedOnRevisionId: original.id,
+      restartStepId: `${original.id}:character-setup`,
+      createdAt: NOW,
+    })
+    expect(step(restarted, 'character-setup')).toMatchObject({
+      id: 'id-4:character-setup',
+      status: 'active',
+      referenceStepIds: [`${original.id}:character-setup`],
+    })
   })
 })

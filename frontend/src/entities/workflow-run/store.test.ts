@@ -77,6 +77,86 @@ function createRun(id = 'run-1'): WorkflowRun {
   }
 }
 
+function createLegacyRun(): unknown {
+  const run = createRun()
+  const revision = run.revisions[0]
+  if (!revision) throw new Error('Expected a revision')
+
+  const [characterSetup, characterTemplate, templateCandidate, actionGeneration, review] =
+    revision.steps
+  if (!characterSetup || !characterTemplate || !templateCandidate || !actionGeneration || !review) {
+    throw new Error('Expected the five current workflow steps')
+  }
+
+  return {
+    ...run,
+    revisions: [
+      {
+        ...revision,
+        steps: [
+          characterSetup,
+          characterTemplate,
+          templateCandidate,
+          { ...actionGeneration, id: 'revision-1:action-setup', type: 'action-setup' },
+          { ...actionGeneration, id: 'revision-1:first-frame', type: 'first-frame' },
+          { ...actionGeneration, id: 'revision-1:complete-animation', type: 'complete-animation' },
+          review,
+          { ...review, id: 'revision-1:export', type: 'export' },
+        ],
+      },
+    ],
+  }
+}
+
+function createRestartedRun(): WorkflowRun {
+  const source = createRun()
+  const sourceRevision = source.revisions[0]!
+  const sourceSteps = sourceRevision.steps.map((step) =>
+    step.type === 'character-setup' || step.type === 'character-template'
+      ? { ...step, status: 'passed' as const }
+      : step.type === 'template-candidate'
+        ? { ...step, status: 'active' as const }
+        : step,
+  )
+  const restartedSteps = sourceSteps.map((step, index) => {
+    const common = {
+      ...step,
+      id: `revision-2:${step.type}`,
+      taskId: null,
+      submissionId: null,
+      error: null,
+    }
+    if (index === 0) return { ...common, status: 'passed' as const, referenceStepIds: [step.id] }
+    if (index === 1) {
+      return {
+        ...common,
+        status: 'active' as const,
+        output: null,
+        referenceStepIds: [step.id],
+      }
+    }
+    return { ...common, status: 'locked' as const, input: null, output: null, referenceStepIds: [] }
+  }) as WorkflowStep[]
+
+  return {
+    ...source,
+    currentRevisionId: 'revision-2',
+    revisions: [
+      { ...sourceRevision, status: 'abandoned', steps: sourceSteps },
+      {
+        id: 'revision-2',
+        basedOnRevisionId: 'revision-1',
+        restartStepId: 'revision-1:character-template',
+        status: 'active',
+        steps: restartedSteps,
+        generationStatus: 'not_started',
+        exportStatus: 'not_exported',
+        createdAt: '2026-07-31T03:00:00.000Z',
+      },
+    ],
+  }
+}
+
 describe('createWorkflowRunStore', () => {
   it('stores a versioned snapshot and returns defensive clones', () => {
     const storage = new TestStorage()
@@ -112,9 +192,54 @@ describe('createWorkflowRunStore', () => {
     expect(store.get(run.id)).toEqual(run)
   })
 
+  it('migrates a version-one run to the fixed five-step model', () => {
+    const store = createWorkflowRunStore({
+      storage: new TestStorage(
+        JSON.stringify({
+          version: 1,
+          runs: [createLegacyRun()],
+        }),
+      ),
+    })
+
+    expect(store.get('run-1')?.revisions[0]?.steps.map((step) => step.type)).toEqual([
+      'character-setup',
+      'character-template',
+      'template-candidate',
+      'action-generation',
+      'review',
+    ])
+    expect(store.get('run-1')?.revisions[0]?.exportStatus).toBe('not_exported')
+  })
+
+  it('migrates version-two runs and restores their restart history', () => {
+    const legacyRun = createRun()
+    const versionTwoStore = createWorkflowRunStore({
+      storage: new TestStorage(JSON.stringify({ version: 2, runs: [legacyRun] })),
+    })
+    const historyStore = createWorkflowRunStore({
+      storage: new TestStorage(
+        JSON.stringify({ version: WORKFLOW_RUN_STORAGE_VERSION, runs: [createRestartedRun()] }),
+      ),
+    })
+
+    expect(versionTwoStore.get('run-1')).toEqual(legacyRun)
+    expect(historyStore.get('run-1')).toMatchObject({
+      currentRevisionId: 'revision-2',
+      revisions: [
+        { id: 'revision-1', status: 'abandoned' },
+        {
+          id: 'revision-2',
+          basedOnRevisionId: 'revision-1',
+          restartStepId: 'revision-1:character-template',
+        },
+      ],
+    })
+  })
+
   it.each([
     ['invalid JSON', '{'],
-    ['unknown version', JSON.stringify({ version: 2, runs: [createRun()] })],
+    ['unknown version', JSON.stringify({ version: 4, runs: [createRun()] })],
     ['invalid payload', JSON.stringify({ version: WORKFLOW_RUN_STORAGE_VERSION, runs: {} })],
     [
       'invalid run',
@@ -131,36 +256,15 @@ describe('createWorkflowRunStore', () => {
       }),
     ],
     [
-      'multiple revisions in storage version 1',
+      'orphaned restart revision',
       JSON.stringify({
         version: WORKFLOW_RUN_STORAGE_VERSION,
         runs: [
           {
-            ...createRun(),
+            ...createRestartedRun(),
             revisions: [
-              ...createRun().revisions,
-              {
-                ...createRun().revisions[0],
-                id: 'revision-2',
-                status: 'abandoned',
-              },
-            ],
-          },
-        ],
-      }),
-    ],
-    [
-      'restart metadata in storage version 1',
-      JSON.stringify({
-        version: WORKFLOW_RUN_STORAGE_VERSION,
-        runs: [
-          {
-            ...createRun(),
-            revisions: [
-              {
-                ...createRun().revisions[0],
-                restartStepId: 'revision-1:character-setup',
-              },
+              createRestartedRun().revisions[0],
+              { ...createRestartedRun().revisions[1], basedOnRevisionId: 'missing-revision' },
             ],
           },
         ],

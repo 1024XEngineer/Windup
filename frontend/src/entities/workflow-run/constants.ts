@@ -6,14 +6,11 @@ export const GENERATION_STATUSES = ['not_started', 'in_progress', 'completed', '
 export const EXPORT_STATUSES = ['not_exported', 'exporting', 'exported', 'failed'] as const
 export const WORKFLOW_STEP_STATUSES = ['locked', 'available', 'active', 'passed', 'failed'] as const
 
-/** 当前产品工作流的固定八步，也是存储校验与进度 UI 的唯一顺序来源。 */
+/** 当前产品工作流的固定五步，也是存储校验与进度 UI 的唯一顺序来源。 */
 export const WORKFLOW_STEP_ORDER = [
   'character-setup',
   'character-template',
   'template-candidate',
-  'action-setup',
-  'first-frame',
-  'complete-animation',
+  'action-generation',
   'review',
-  'export',
 ] as const

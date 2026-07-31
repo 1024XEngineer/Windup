@@ -11,6 +11,7 @@ describe('AppShell', () => {
   it.each([
     ['/', '首页'],
     ['/playtest/demo', 'Playtest'],
+    ['/workflow-editor/run-1', 'Workflow Editor'],
   ])('为%s 使用全宽页面容器', (pathname) => {
     render(
       <MemoryRouter initialEntries={[pathname]}>

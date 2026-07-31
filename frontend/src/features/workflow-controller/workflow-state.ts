@@ -26,6 +26,11 @@ export interface WorkflowStepTarget {
   stepId: WorkflowStep['id']
 }
 
+export interface RestartWorkflowRunStateOptions {
+  revisionId: WorkflowRevision['id']
+  createdAt: string
+}
+
 export function createWorkflowRunState(
   input: CreateWorkflowRunStateInput,
   { runId, revisionId, createdAt }: CreateWorkflowRunStateOptions,
@@ -172,6 +177,96 @@ export function advanceCharacterSetupState(workflow: WorkflowRun): {
 
 export function interruptWorkflowRunState(run: WorkflowRun): WorkflowRun {
   return run.status === 'active' ? { ...run, status: 'interrupted' } : run
+}
+
+/**
+ * 从已通过节点开启新的执行线。
+ *
+ * 旧 Revision 保留为只读历史；重开点之前的结果作为新线参考，重开点及之后的结果
+ * 不会进入新线。流程节点始终固定为五个，因此“移除下游”在数据中表现为清空它们的
+ * 输入、输出与引用，并重新锁定。
+ */
+export function restartWorkflowRunState(
+  run: WorkflowRun,
+  restartStepId: WorkflowStep['id'],
+  { revisionId, createdAt }: RestartWorkflowRunStateOptions,
+): WorkflowRun {
+  const sourceRevision = getCurrentRevision(run)
+  const restartIndex = sourceRevision.steps.findIndex((step) => step.id === restartStepId)
+  const restartStep = sourceRevision.steps[restartIndex]
+  if (!restartStep || restartStep.status !== 'passed') {
+    throw new Error('只能从已通过的步骤重新开始')
+  }
+
+  const steps = sourceRevision.steps.map((step, index) => {
+    if (index < restartIndex) return copyReferenceStep(step, revisionId)
+    if (index === restartIndex) return createRestartStep(step, revisionId)
+
+    return lockFreshStep(step.type, revisionId, index, run.prompt)
+  })
+
+  const revision: WorkflowRevision = {
+    id: revisionId,
+    basedOnRevisionId: sourceRevision.id,
+    restartStepId: restartStep.id,
+    status: 'active',
+    steps,
+    generationStatus: 'not_started',
+    exportStatus: 'not_exported',
+    createdAt,
+  }
+
+  return {
+    ...run,
+    status: 'active',
+    currentRevisionId: revision.id,
+    revisions: [
+      ...run.revisions.map((item) =>
+        item.id === sourceRevision.id ? { ...item, status: 'abandoned' as const } : item,
+      ),
+      revision,
+    ],
+  }
+}
+
+function copyReferenceStep(step: WorkflowStep, revisionId: WorkflowRevision['id']): WorkflowStep {
+  const source = structuredClone(step)
+  return {
+    ...source,
+    id: `${revisionId}:${source.type}`,
+    status: 'passed',
+    taskId: null,
+    submissionId: null,
+    error: null,
+    referenceStepIds: [step.id],
+  }
+}
+
+function createRestartStep(step: WorkflowStep, revisionId: WorkflowRevision['id']): WorkflowStep {
+  const source = structuredClone(step)
+  return {
+    ...source,
+    id: `${revisionId}:${source.type}`,
+    status: 'active',
+    taskId: null,
+    submissionId: null,
+    error: null,
+    output: null,
+    referenceStepIds: [step.id],
+  } as WorkflowStep
+}
+
+function lockFreshStep(
+  type: WorkflowStepType,
+  revisionId: WorkflowRevision['id'],
+  index: number,
+  prompt: string | null,
+): WorkflowStep {
+  return {
+    ...createInitialStep(type, revisionId, index, prompt),
+    status: 'locked',
+    referenceStepIds: [],
+  }
 }
 
 function createInitialStep(

@@ -8,7 +8,7 @@ import { HomePage } from './index'
 afterEach(cleanup)
 
 describe('HomePage', () => {
-  it('提供快速开始和项目工作台两个既有入口', () => {
+  it('提供快速开始、新建项目和项目历史两个明确入口', () => {
     render(
       <MemoryRouter>
         <HomePage />
@@ -17,6 +17,11 @@ describe('HomePage', () => {
 
     expect(screen.getByRole('heading', { name: /真正登场/ })).toBeTruthy()
     expect(screen.getByRole('link', { name: /快速开始/ }).getAttribute('href')).toBe('/quick-start')
-    expect(screen.getByRole('link', { name: /从项目开始/ }).getAttribute('href')).toBe('/projects')
+    expect(screen.getByRole('link', { name: /新建项目/ }).getAttribute('href')).toBe(
+      '/projects/new',
+    )
+    expect(screen.getByRole('link', { name: '查看项目历史' }).getAttribute('href')).toBe(
+      '/projects',
+    )
   })
 })

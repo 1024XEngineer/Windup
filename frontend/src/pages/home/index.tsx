@@ -78,12 +78,13 @@ export function HomePage() {
                 tone="dark"
               />
               <HomeChoiceCard
-                to="/projects"
-                eyebrow="PROJECT WORKSPACE"
+                to="/workflow-editor"
+                eyebrow="PROJECT SETUP"
                 index="02"
-                title="从项目开始"
-                description="进入已有项目，继续管理角色、造型与动作制作。"
-                actionLabel="查看项目"
+                title="新建项目"
+                description="建立项目后，沿可回退的五步工作流制作角色、动作与完成版本。"
+                actionLabel="开始创建项目"
+                secondaryAction={{ to: '/projects', label: '查看项目历史' }}
               />
             </div>
           </div>
