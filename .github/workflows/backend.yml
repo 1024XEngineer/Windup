@@ -1,0 +1,45 @@
+name: Backend CI
+
+on:
+  push:
+  pull_request:
+
+# 同一 ref 新 run 取消旧的,省额度
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# 开源项目最小权限
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend   # uv workspace 在 backend/,不是 repo 根
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        # setup-uv 自 v8.0.0 起停止发布 floating major tag(@v7/@v8),
+        # 出于安全只发布 immutable tag,故用具体版本号
+        uses: astral-sh/setup-uv@v8.3.2
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --frozen        # 用提交的 uv.lock 锁定版本,不偷偷升级
+
+      - name: Ruff
+        run: uv run ruff check .
+
+      - name: Import-linter (分层契约)
+        run: uv run lint-imports
+
+      - name: Pytest
+        run: uv run pytest -q
