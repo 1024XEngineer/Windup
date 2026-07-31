@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 import windup_framework.db  # noqa: F401  组装时显式触发 DB engine/session 初始化
 from fastapi import FastAPI
 
-from windup_app.server.generation.executor import run_action_task, run_image_task
+from windup_app.server.orchestrator.executor import run_action_task, run_image_task
 from windup_app.web.api.character import router as character_router
 from windup_app.web.api.generation import router as generation_router
 from windup_app.web.api.media import router as media_router

@@ -25,7 +25,7 @@ from abc import ABC, abstractmethod
 
 from sqlalchemy.orm import Session
 
-from windup_app.server.generation.model import (
+from windup_app.server.orchestrator.model import (
     CharacterActionInput,
     CharacterImageInput,
     GenerationTask,

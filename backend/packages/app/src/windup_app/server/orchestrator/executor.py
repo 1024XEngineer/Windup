@@ -23,8 +23,8 @@ from sqlalchemy.orm import Session
 
 from windup_common.models import ActionSpec, ActionType as EngineActionType, CharacterCard
 
-from windup_app.server.generation import task_repo
-from windup_app.server.generation.model import (
+from windup_app.server.orchestrator import task_repo
+from windup_app.server.orchestrator.model import (
     CharacterActionInput,
     CharacterImageInput,
     TaskStatus,
