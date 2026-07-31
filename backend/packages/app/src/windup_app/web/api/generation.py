@@ -16,7 +16,7 @@ from windup_common.exceptions import BizException
 from windup_common.result import Response
 from windup_framework.db import get_session
 
-from windup_app.server.generation.model import (
+from windup_app.server.orchestrator.model import (
     ActionType,
     GenerationTask,
 )

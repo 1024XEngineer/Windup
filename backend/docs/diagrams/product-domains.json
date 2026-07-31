@@ -1,0 +1,270 @@
+{
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 1,
+  "quality_profile": "standard",
+  "width": 1200,
+  "height": 760,
+  "title": "Windup Product Domains",
+  "subtitle": "最终产品业务能力与核心依赖",
+  "containers": [
+    {
+      "id": "foundation-domains",
+      "x": 40,
+      "y": 120,
+      "width": 1120,
+      "height": 120,
+      "label": "Foundation Domains",
+      "stroke": "#b9c6d8",
+      "fill": "#f4f8fc"
+    },
+    {
+      "id": "workflow-domains",
+      "x": 40,
+      "y": 290,
+      "width": 700,
+      "height": 150,
+      "label": "Workflow Domains",
+      "stroke": "#c9b8d9",
+      "fill": "#faf5fc"
+    },
+    {
+      "id": "ai-engine-domain",
+      "x": 780,
+      "y": 290,
+      "width": 380,
+      "height": 150,
+      "label": "AI Engine Domain",
+      "stroke": "#89c4a8",
+      "fill": "#f0f9f4"
+    },
+    {
+      "id": "result-domains",
+      "x": 40,
+      "y": 490,
+      "width": 1120,
+      "height": 120,
+      "label": "Result Domains",
+      "stroke": "#b8d0c2",
+      "fill": "#f5fbf7"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "user",
+      "kind": "rect",
+      "x": 80,
+      "y": 155,
+      "width": 150,
+      "height": 55,
+      "label": "user",
+      "sublabel": "身份与会话",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "quota",
+      "kind": "rect",
+      "x": 270,
+      "y": 155,
+      "width": 150,
+      "height": 55,
+      "label": "quota",
+      "sublabel": "订阅与积分",
+      "fill": "#fff2d9",
+      "stroke": "#c28a36"
+    },
+    {
+      "id": "project",
+      "kind": "double_rect",
+      "x": 460,
+      "y": 155,
+      "width": 170,
+      "height": 55,
+      "label": "project",
+      "sublabel": "全局约束容器",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "media",
+      "kind": "rect",
+      "x": 670,
+      "y": 155,
+      "width": 150,
+      "height": 55,
+      "label": "media",
+      "sublabel": "输入参考素材",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "character",
+      "kind": "rect",
+      "x": 860,
+      "y": 155,
+      "width": 180,
+      "height": 55,
+      "label": "character / asset",
+      "sublabel": "角色与产物",
+      "fill": "#e8f0fb",
+      "stroke": "#6685b2"
+    },
+    {
+      "id": "workflow",
+      "kind": "double_rect",
+      "x": 80,
+      "y": 330,
+      "width": 180,
+      "height": 70,
+      "label": "workflow",
+      "sublabel": "定义 / 节点 / 模板",
+      "fill": "#f2e9f8",
+      "stroke": "#89659e"
+    },
+    {
+      "id": "execution",
+      "kind": "rect",
+      "x": 320,
+      "y": 330,
+      "width": 180,
+      "height": 70,
+      "label": "execution",
+      "sublabel": "调度 / 重试 / 缓存",
+      "fill": "#f2e9f8",
+      "stroke": "#89659e"
+    },
+    {
+      "id": "generation",
+      "kind": "rect",
+      "x": 560,
+      "y": 330,
+      "width": 180,
+      "height": 70,
+      "label": "generation",
+      "sublabel": "生成业务编排",
+      "fill": "#fff2d9",
+      "stroke": "#c28a36"
+    },
+    {
+      "id": "ai-engine",
+      "kind": "rect",
+      "x": 880,
+      "y": 330,
+      "width": 180,
+      "height": 70,
+      "label": "ai_engine",
+      "sublabel": "模型能力适配",
+      "fill": "#e4f2ea",
+      "stroke": "#5c9974"
+    },
+    {
+      "id": "review",
+      "kind": "rect",
+      "x": 230,
+      "y": 525,
+      "width": 180,
+      "height": 55,
+      "label": "review",
+      "sublabel": "质检 + 人工审核",
+      "fill": "#e4f2ea",
+      "stroke": "#5c9974"
+    },
+    {
+      "id": "playtest",
+      "kind": "rect",
+      "x": 510,
+      "y": 525,
+      "width": 180,
+      "height": 55,
+      "label": "playtest",
+      "sublabel": "预览与试玩",
+      "fill": "#e4f2ea",
+      "stroke": "#5c9974"
+    },
+    {
+      "id": "export",
+      "kind": "rect",
+      "x": 790,
+      "y": 525,
+      "width": 180,
+      "height": 55,
+      "label": "export",
+      "sublabel": "格式转换与下载",
+      "fill": "#e4f2ea",
+      "stroke": "#5c9974"
+    }
+  ],
+  "arrows": [
+    {
+      "id": "workflow-execution",
+      "source": "workflow",
+      "target": "execution",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": "定义",
+      "label_style": "offset"
+    },
+    {
+      "id": "execution-generation",
+      "source": "execution",
+      "target": "generation",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": "节点调用",
+      "label_style": "offset"
+    },
+    {
+      "id": "generation-ai",
+      "source": "generation",
+      "target": "ai-engine",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "control",
+      "label": "AI 能力",
+      "label_style": "offset"
+    },
+    {
+      "id": "review-playtest",
+      "source": "review",
+      "target": "playtest",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "read",
+      "label": "正式资产",
+      "label_style": "offset"
+    },
+    {
+      "id": "playtest-export",
+      "source": "playtest",
+      "target": "export",
+      "source_port": "right",
+      "target_port": "left",
+      "flow": "read",
+      "label": "导出数据",
+      "label_style": "offset"
+    }
+  ],
+  "legend_orientation": "horizontal",
+  "legend_x": 70,
+  "legend_y": 680,
+  "legend_locked": false,
+  "legend": [
+    {
+      "flow": "control",
+      "label": "业务编排"
+    },
+    {
+      "flow": "read",
+      "label": "读取 / 消费"
+    },
+    {
+      "flow": "write",
+      "label": "产物 / 输入流"
+    }
+  ],
+  "footer": "Windup · Final Product Domain Map"
+}

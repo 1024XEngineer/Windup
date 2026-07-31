@@ -1,6 +1,6 @@
 """生成任务领域。"""
 
-from windup_app.server.generation.model import (
+from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionFrame,
     CharacterActionInput,

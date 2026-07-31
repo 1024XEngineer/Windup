@@ -1,0 +1,171 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" width="1200" height="760" data-generator="fireworks-tech-graph" data-schema-version="1" data-text-metrics="heuristic-v1" data-style-id="1" data-visual-theme="Flat Icon" data-diagram-type="architecture" data-motion-scene="" data-semantic-profile="generic" data-semantic-valid="true" data-quality-profile="standard" data-max-bends-per-edge="12" data-max-total-bends="100" data-max-route-stretch="5.0" data-max-bridged-crossings="8" data-min-node-gap="0.0" data-min-container-gutter="0.0" data-min-label-clearance="2.0" data-min-segment-length="0.0">
+  <defs>
+    <marker id="arrowA" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#7c3aed"/>
+    </marker>
+    <marker id="arrowB" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#10b981"/>
+    </marker>
+    <marker id="arrowC" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#2563eb"/>
+    </marker>
+    <marker id="arrowE" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#f97316"/>
+    </marker>
+    <marker id="arrowF" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#7c3aed"/>
+    </marker>
+    <marker id="arrowG" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#ef4444"/>
+    </marker>
+    <marker id="arrowH" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#6b7280"/>
+    </marker>
+    <filter id="shadowSoft" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <filter id="shadowGlass" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#020617" flood-opacity="0.28"/>
+    </filter>
+    <style>
+    text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', 'Microsoft JhengHei', 'SimHei', sans-serif; }
+    .title { font-size: 30px; font-weight: 700; fill: #111827; }
+    .subtitle { font-size: 14px; font-weight: 500; fill: #6b7280; }
+    .section { font-size: 13px; font-weight: 700; fill: #2563eb; letter-spacing: 1.4px; }
+    .section-sub { font-size: 12px; font-weight: 500; fill: #94a3b8; }
+    .node-title { font-weight: 700; fill: #111827; }
+    .node-sub { font-size: 12px; font-weight: 500; fill: #6b7280; }
+    .node-type { font-size: 12px; font-weight: 700; fill: #9ca3af; letter-spacing: 0.08em; }
+    .arrow-label { font-size: 12px; font-weight: 600; fill: #6b7280; }
+    .legend { font-size: 12px; font-weight: 500; fill: #6b7280; }
+    .footnote { font-size: 12px; font-weight: 500; fill: #94a3b8; }
+    .metric-label { font-size: 8.5px; font-weight: 700; fill: #94a3b8; text-transform: uppercase; }
+    .metric-value { font-size: 9.5px; font-weight: 700; fill: #111827; }
+    </style>
+  </defs>
+  <rect data-graph-role="background" width="1200.0" height="760.0" fill="#ffffff"/>
+  <text x="600.0" y="56" text-anchor="middle" class="title">Windup Product Domains</text>
+  <text x="600.0" y="82" text-anchor="middle" class="subtitle">最终产品业务能力与核心依赖</text>
+  <g id="foundation-domains" data-graph-role="container" data-container-id="foundation-domains" data-semantic-role="boundary" data-graph-bounds="40,120,1160,240">
+  <rect data-graph-role="container" x="40.0" y="120.0" width="1120.0" height="120.0" rx="16.0" fill="#f4f8fc" stroke="#b9c6d8" stroke-width="1.4" stroke-dasharray="6 5"/>
+  <text x="58.0" y="144.0" class="section">FOUNDATION DOMAINS</text>
+  <text x="620.0" y="144.0" class="section-sub" text-anchor="end">基础业务域：管理基础数据，被其他域消费</text>
+    <rect id="foundation-domains-header" data-graph-role="reserved" data-reserved-kind="container-header" x="48" y="126" width="159.22" height="30" fill="none" stroke="none"/>
+  </g>
+  <g id="workflow-domains" data-graph-role="container" data-container-id="workflow-domains" data-semantic-role="boundary" data-graph-bounds="40,290,740,440">
+  <rect data-graph-role="container" x="40.0" y="290.0" width="700.0" height="150.0" rx="16.0" fill="#faf5fc" stroke="#c9b8d9" stroke-width="1.4" stroke-dasharray="6 5"/>
+  <text x="58.0" y="314.0" class="section">WORKFLOW DOMAINS</text>
+  <text x="420.0" y="314.0" class="section-sub" text-anchor="end">工作流域：任务调度与编排</text>
+    <rect id="workflow-domains-header" data-graph-role="reserved" data-reserved-kind="container-header" x="48" y="296" width="153.76" height="30" fill="none" stroke="none"/>
+  </g>
+  <g id="pipeline-domain" data-graph-role="container" data-container-id="pipeline-domain" data-semantic-role="boundary" data-graph-bounds="780,290,1160,440">
+  <rect data-graph-role="container" x="780.0" y="290.0" width="380.0" height="150.0" rx="16.0" fill="#f0f9f4" stroke="#89c4a8" stroke-width="1.4" stroke-dasharray="6 5"/>
+  <text x="798.0" y="314.0" class="section">PIPELINE DOMAIN</text>
+  <text x="955.0" y="314.0" class="section-sub">生成管线：提示词→出图→抠图→截帧</text>
+    <rect id="pipeline-domain-header" data-graph-role="reserved" data-reserved-kind="container-header" x="788" y="296" width="155.44" height="30" fill="none" stroke="none"/>
+  </g>
+  <g id="result-domains" data-graph-role="container" data-container-id="result-domains" data-semantic-role="boundary" data-graph-bounds="40,490,1160,610">
+  <rect data-graph-role="container" x="40.0" y="490.0" width="1120.0" height="120.0" rx="16.0" fill="#f5fbf7" stroke="#b8d0c2" stroke-width="1.4" stroke-dasharray="6 5"/>
+  <text x="58.0" y="514.0" class="section">RESULT DOMAINS</text>
+  <text x="195.0" y="514.0" class="section-sub">结果域：处理生成产物（审核/预览/导出）</text>
+    <rect id="result-domains-header" data-graph-role="reserved" data-reserved-kind="container-header" x="48" y="496" width="132.44" height="30" fill="none" stroke="none"/>
+  </g>
+  <path id="workflow-execution" data-graph-role="edge" data-edge-id="workflow-execution" data-source="workflow" data-target="execution" data-edge-kind="flow" data-topic-id="" data-flow="control" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 260,365 L 320,365" fill="none" stroke="#7c3aed" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowA)"/>
+  <path id="execution-orchestrator" data-graph-role="edge" data-edge-id="execution-orchestrator" data-source="execution" data-target="orchestrator" data-edge-kind="flow" data-topic-id="" data-flow="control" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 500,365 L 560,365" fill="none" stroke="#7c3aed" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowA)"/>
+  <path id="orchestrator-pipeline" data-graph-role="edge" data-edge-id="orchestrator-pipeline" data-source="orchestrator" data-target="ai-engine" data-edge-kind="flow" data-topic-id="" data-flow="control" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 740,365 L 880,365" fill="none" stroke="#7c3aed" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowA)"/>
+  <path id="review-preview" data-graph-role="edge" data-edge-id="review-preview" data-source="review" data-target="preview" data-edge-kind="flow" data-topic-id="" data-flow="read" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 410,552.5 L 510,552.5" fill="none" stroke="#2563eb" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowC)"/>
+  <path id="preview-export" data-graph-role="edge" data-edge-id="preview-export" data-source="preview" data-target="export" data-edge-kind="flow" data-topic-id="" data-flow="read" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 690,552.5 L 790,552.5" fill="none" stroke="#2563eb" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowC)"/>
+  <g id="node-user" data-graph-role="node" data-node-id="user" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="80,155,230,210">
+  <rect x="80.0" y="155.0" width="150.0" height="55.0" rx="10.0" fill="#f3f4f6" stroke="#9ca3af" stroke-width="1.8" filter="url(#shadowSoft)"/>
+  <text x="155.0" y="182.5" text-anchor="middle" class="node-title" font-size="18.0">user</text>
+  <text x="155.0" y="204.5" text-anchor="middle" class="node-sub">身份与会话</text>
+  </g>
+  <g id="node-quota" data-graph-role="node" data-node-id="quota" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="270,155,420,210">
+  <rect x="270.0" y="155.0" width="150.0" height="55.0" rx="10.0" fill="#f3f4f6" stroke="#9ca3af" stroke-width="1.8" filter="url(#shadowSoft)"/>
+  <text x="345.0" y="182.5" text-anchor="middle" class="node-title" font-size="18.0">quota</text>
+  <text x="345.0" y="204.5" text-anchor="middle" class="node-sub">订阅与积分</text>
+  </g>
+  <g id="node-project" data-graph-role="node" data-node-id="project" data-semantic-role="double_rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="460,155,630,210">
+  <rect x="460.0" y="155.0" width="170.0" height="55.0" rx="10.0" fill="#dcfce7" stroke="#16a34a" stroke-width="2.0" filter="url(#shadowSoft)"/>
+  <rect x="466.0" y="161.0" width="158.0" height="43.0" rx="7.0" fill="none" stroke="#16a34a" stroke-width="1.2" opacity="0.65"/>
+  <text x="545.0" y="182.5" text-anchor="middle" class="node-title" font-size="18.0">project</text>
+  <text x="545.0" y="204.5" text-anchor="middle" class="node-sub">全局约束容器</text>
+  </g>
+  <g id="node-media" data-graph-role="node" data-node-id="media" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="670,155,820,210">
+  <rect x="670.0" y="155.0" width="150.0" height="55.0" rx="10.0" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8" filter="url(#shadowSoft)"/>
+  <text x="745.0" y="182.5" text-anchor="middle" class="node-title" font-size="18.0">media</text>
+  <text x="745.0" y="204.5" text-anchor="middle" class="node-sub">输入参考素材</text>
+  </g>
+  <g id="node-character" data-graph-role="node" data-node-id="character" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="860,155,1040,210">
+  <rect x="860.0" y="155.0" width="180.0" height="55.0" rx="10.0" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8" filter="url(#shadowSoft)"/>
+  <text x="950.0" y="182.5" text-anchor="middle" class="node-title" font-size="15.33">character / asset</text>
+  <text x="950.0" y="204.5" text-anchor="middle" class="node-sub">角色与产物</text>
+  </g>
+  <g id="node-workflow" data-graph-role="node" data-node-id="workflow" data-semantic-role="double_rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="80,330,260,400">
+  <rect x="80.0" y="330.0" width="180.0" height="70.0" rx="10.0" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2.0" filter="url(#shadowSoft)"/>
+  <rect x="86.0" y="336.0" width="168.0" height="58.0" rx="7.0" fill="none" stroke="#9ca3af" stroke-width="1.2" opacity="0.65"/>
+  <text x="170.0" y="365.0" text-anchor="middle" class="node-title" font-size="18.0">workflow</text>
+  <text x="170.0" y="387.0" text-anchor="middle" class="node-sub">定义 / 节点 / 模板</text>
+  </g>
+  <g id="node-execution" data-graph-role="node" data-node-id="execution" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="320,330,500,400">
+  <rect x="320.0" y="330.0" width="180.0" height="70.0" rx="10.0" fill="#f3f4f6" stroke="#9ca3af" stroke-width="1.8" filter="url(#shadowSoft)"/>
+  <text x="410.0" y="365.0" text-anchor="middle" class="node-title" font-size="18.0">execution</text>
+  <text x="410.0" y="387.0" text-anchor="middle" class="node-sub">调度 / 重试 / 缓存</text>
+  </g>
+  <g id="node-orchestrator" data-graph-role="node" data-node-id="orchestrator" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="560,330,740,400">
+  <rect x="560.0" y="330.0" width="180.0" height="70.0" rx="10.0" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8" filter="url(#shadowSoft)"/>
+  <text x="650.0" y="365.0" text-anchor="middle" class="node-title" font-size="18.0">orchestrator</text>
+  <text x="650.0" y="387.0" text-anchor="middle" class="node-sub">生成任务调度</text>
+  </g>
+  <g id="node-ai-engine" data-graph-role="node" data-node-id="ai-engine" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="880,330,1060,400">
+  <rect x="880.0" y="330.0" width="180.0" height="70.0" rx="10.0" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8" filter="url(#shadowSoft)"/>
+  <text x="970.0" y="365.0" text-anchor="middle" class="node-title" font-size="18.0">ai_engine</text>
+  <text x="970.0" y="387.0" text-anchor="middle" class="node-sub">生成管线</text>
+  </g>
+  <g id="node-review" data-graph-role="node" data-node-id="review" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="230,525,410,580">
+  <rect x="230.0" y="525.0" width="180.0" height="55.0" rx="10.0" fill="#fef3c7" stroke="#d97706" stroke-width="1.8" filter="url(#shadowSoft)"/>
+  <text x="320.0" y="552.5" text-anchor="middle" class="node-title" font-size="18.0">review</text>
+  <text x="320.0" y="574.5" text-anchor="middle" class="node-sub">质检 + 人工审核</text>
+  </g>
+  <g id="node-preview" data-graph-role="node" data-node-id="preview" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="510,525,690,580">
+  <rect x="510.0" y="525.0" width="180.0" height="55.0" rx="10.0" fill="#fef3c7" stroke="#d97706" stroke-width="1.8" filter="url(#shadowSoft)"/>
+  <text x="600.0" y="552.5" text-anchor="middle" class="node-title" font-size="18.0">preview</text>
+  <text x="600.0" y="574.5" text-anchor="middle" class="node-sub">预览台</text>
+  </g>
+  <g id="node-export" data-graph-role="node" data-node-id="export" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="790,525,970,580">
+  <rect x="790.0" y="525.0" width="180.0" height="55.0" rx="10.0" fill="#f3f4f6" stroke="#9ca3af" stroke-width="1.8" filter="url(#shadowSoft)"/>
+  <text x="880.0" y="552.5" text-anchor="middle" class="node-title" font-size="18.0">export</text>
+  <text x="880.0" y="574.5" text-anchor="middle" class="node-sub">格式转换与下载</text>
+  </g>
+  <g id="workflow-execution-label" data-graph-role="label" data-owner="workflow-execution" data-graph-bounds="281,334,319,354">
+  <text x="290.0" y="348.0" text-anchor="middle" class="arrow-label">定义</text>
+  </g>
+  <g id="execution-orchestrator-label" data-graph-role="label" data-owner="execution-orchestrator" data-graph-bounds="521,334,559,354">
+  <text x="530.0" y="348.0" text-anchor="middle" class="arrow-label">节点调用</text>
+  </g>
+  <g id="orchestrator-pipeline-label" data-graph-role="label" data-owner="orchestrator-pipeline" data-graph-bounds="794,334,846,354">
+  <text x="810.0" y="348.0" text-anchor="middle" class="arrow-label">调用管线</text>
+  </g>
+  <g id="review-preview-label" data-graph-role="label" data-owner="review-preview" data-graph-bounds="429,521.5,491,541.5">
+  <text x="460.0" y="535.5" text-anchor="middle" class="arrow-label">正式资产</text>
+  </g>
+  <g id="preview-export-label" data-graph-role="label" data-owner="preview-export" data-graph-bounds="709,521.5,771,541.5">
+  <text x="740.0" y="535.5" text-anchor="middle" class="arrow-label">导出数据</text>
+  </g>
+  <g id="legend" data-graph-role="legend">
+    <rect id="legend-zone" data-graph-role="reserved" data-reserved-kind="legend" x="60" y="666" width="700" height="46" rx="10" fill="none" stroke="none"/>
+    <line data-graph-role="decoration" x1="70.0" y1="680.0" x2="100.0" y2="680.0" stroke="#7c3aed" stroke-width="2.4" marker-end="url(#arrowA)"/>
+    <text data-graph-role="decoration" x="110.0" y="684.0" class="legend">业务编排</text>
+    <line data-graph-role="decoration" x1="186.0" y1="680.0" x2="216.0" y2="680.0" stroke="#2563eb" stroke-width="2.4" marker-end="url(#arrowC)"/>
+    <text data-graph-role="decoration" x="226.0" y="684.0" class="legend">读取 / 消费</text>
+    <rect data-graph-role="decoration" x1="310" y1="672" width="16" height="16" rx="3" fill="#dcfce7" stroke="#16a34a" stroke-width="1.2"/>
+    <text data-graph-role="decoration" x="332.0" y="684.0" class="legend">MVP 已实现</text>
+    <rect data-graph-role="decoration" x1="420" y1="672" width="16" height="16" rx="3" fill="#fef3c7" stroke="#d97706" stroke-width="1.2"/>
+    <text data-graph-role="decoration" x="442.0" y="684.0" class="legend">部分实现</text>
+    <rect data-graph-role="decoration" x1="510" y1="672" width="16" height="16" rx="3" fill="#f3f4f6" stroke="#9ca3af" stroke-width="1.2"/>
+    <text data-graph-role="decoration" x="532.0" y="684.0" class="legend">待实现</text>
+  </g>
+  <g id="footer" data-graph-role="reserved" data-graph-bounds="42,732,273,748">
+  <text x="42.0" y="744.0" class="footnote">Windup · Final Product Domain Map</text>
+  </g>
+</svg>
