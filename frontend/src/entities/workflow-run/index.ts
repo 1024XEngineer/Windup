@@ -1,4 +1,4 @@
-import type { Task } from '../task'
+import type { Generation } from '../generation'
 
 /** Quick Start 与手动工作流只改变输入方式，共用同一种运行模型。 */
 export type WorkflowDriver = 'ai' | 'manual'
@@ -39,11 +39,14 @@ export type WorkflowRevisionStatus = 'active' | 'completed' | 'failed' | 'abando
 /**
  * 整次流程的汇总状态。
  * interrupted 只表示用户主动停止自动推进：历史仍保留且可只读查看，它不等于 failed 或 completed。
- * 后端 Task 是否真正停止是独立问题；从历史重启成功后可重新进入 active。
+ * 后端生成任务是否真正停止是独立问题；从历史重启成功后可重新进入 active。
  */
 export type WorkflowRunStatus = 'active' | 'interrupted' | 'completed' | 'failed'
 
-/** 当前版本在生成阶段的汇总状态；素材准备期间为 not_started。 */
+/**
+ * 当前版本在生成阶段的汇总状态；素材准备期间为 not_started。
+ * 它是版本级别的汇总，不是单次生成任务的状态——后者是 TaskStatus。
+ */
 export type GenerationStatus = 'not_started' | 'in_progress' | 'completed' | 'failed'
 
 /** 当前版本在导出阶段的汇总状态。 */
@@ -63,12 +66,15 @@ export interface WorkflowStep {
   /** 步骤完成后的结果或引用；尚无结果时为 null。 */
   output: unknown
   /**
-   * 本步骤已提交、结果尚未写回 output 的生成任务 ID；没有在途任务时为 null。
+   * 本步骤已提交、结果尚未写回 output 的 Generation ID；没有在途任务时为 null。
    * 它由前端随 WorkflowRun 一起维护，据此查回在途任务的状态，因而不会在同一次
    * 前端运行中重复发起生成。是否写入浏览器存储属于前端实现，不形成后端契约。
-   * 任务本身不认识步骤，反向关联不存在。
+   * Generation 本身不认识步骤，反向关联不存在。
+   *
+   * 字段名沿用后端的 task_id。步骤类型不能从 Generation.type 反推——后端只有
+   * character_image 和 character_action 两种，本步骤是哪一步以 WorkflowStep.type 为准。
    */
-  taskId: Task['id'] | null
+  taskId: Generation['id'] | null
   /** 该步骤沿用或依赖的步骤 ID，用于版本来源追踪，不代表后端执行依赖。 */
   referenceStepIds: string[]
 }

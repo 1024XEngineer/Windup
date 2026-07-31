@@ -56,7 +56,6 @@ pages -> features -> entities -> shared
 
 ```text
 ProjectApis  CharacterApis  ActionTemplateApis  GenerationApis
-TaskApis
 ```
 
 **不使用 `Repository` / `Port` / `Adapter` 这些叫法**，也不做接口与实现的分离——实现跟着接口放在同一个模块里。

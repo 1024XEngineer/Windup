@@ -33,7 +33,7 @@
 | `ActionTemplateApis.listAvailable` | 没有 action template 模块 |
 | `ProjectApis.update` | 没有 `PATCH /projects/{project_id}` |
 
-前端已按服务端现状去掉 `TaskApis.cancel`——后端没有取消能力，不声明前端用不到的接口。
+前端已按服务端现状去掉生成任务的 `cancel`——后端没有取消能力，不声明前端用不到的接口。
 
 ---
 
@@ -45,7 +45,7 @@
 |---|---|---|
 | 角色列表 | `list_characters` 分页，返回 `(list, total)` | `listByProject` 无分页 |
 | 更新角色 | `update_character(character_id, **fields)` 部分更新 | `update(character)` 整棵树替换 |
-| 等待任务完成 | 提供 `GET /generation/tasks/{task_id}` 轮询 | `TaskApis.subscribe`，实现时可封装轮询 |
+| 等待任务完成 | 提供 `GET /generation/tasks/{task_id}` 轮询 | `GenerationApis.subscribe`，实现时可封装轮询 |
 | 图片生成数量 | 入参有 `num_images`，结果只有一个 `image_url` | 角色图候选结果是 `images[]` |
 | 动作类型 | `walk` `idle` `attack` `custom`；待增加 `jump` | `walk` `idle` `attack` `jump` `custom` |
 | 角色视角 | `character_perspective` 为 `1~3`，文档中 2、3 都写成“正面” | `side` `top-down` `isometric` |

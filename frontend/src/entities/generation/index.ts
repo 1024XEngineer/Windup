@@ -1,13 +1,27 @@
 import type { ActionType } from '../character'
 import type { MediaReference } from '../media'
-import type { TaskStatus } from '../task'
 
 /**
  * Generation 是业务数据，不是「调用图片生成能力」。
  * 前端只创建 generation 并订阅它的状态；真正调用模型的是后端，前端不接触那一层。
+ *
+ * 后端只有 GenerationTask 一个实体，generation 与 task 指同一条记录；
+ * `/generation/tasks/{task_id}` 里的 tasks 只是路径段，前端不为它另立实体。
  */
 
-/** 生成对应的三个前端可见异步步骤。 */
+/**
+ * 后端 GenerationTask.status，与 WorkflowRevision.generationStatus 不是一回事：
+ * 这里是单次生成任务的状态，那里是一个版本在生成阶段的汇总状态。
+ * pending 表示已提交但尚未执行。
+ */
+export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed'
+
+/**
+ * 生成对应的三个前端可见异步步骤。
+ * 它是前端工作流粒度，不等于后端 task_type——后端只有 character_image 与
+ * character_action 两种，character_template 和 first_frame 都落在 character_image 上。
+ * 完整动画内部可含视频生成、截帧和多次图像处理，但对前端仍是一次 Generation。
+ */
 export type GenerationType = 'character_template' | 'first_frame' | 'complete_animation'
 
 interface GenerationInputBase {
@@ -84,8 +98,11 @@ export type GenerationResultFor<T extends GenerationInput> =
       : CompleteAnimationGenerationResult
 
 /**
- * 一次生成任务的完整快照。
+ * 一次生成任务的完整快照，创建、查询和断线恢复都用它。
  * 它是服务端的资源，不是一次「调用能力」——前端创建它，然后订阅或轮询它的状态。
+ *
+ * TType 在调用边界已知时保留精确类型；按 ID 恢复时用默认值，等运行时解析后再收窄。
+ * 完成不代表工作流节点已通过，节点状态由 WorkflowStep 自己判定。
  */
 export interface Generation<TType extends GenerationType = GenerationType> {
   id: string
@@ -99,10 +116,32 @@ export interface Generation<TType extends GenerationType = GenerationType> {
   error: string | null
 }
 
-/** Generation 对应的一组后端接口。 */
+/**
+ * 一条状态变更事件。
+ * 不含 projectId：后端事件 payload 只有 task_id、task_type、status，
+ * 以及完成时的 result 和失败时的 error_message。
+ */
+export interface GenerationEvent<TType extends GenerationType = GenerationType> extends Omit<
+  Generation<TType>,
+  'id' | 'projectId'
+> {
+  /** 对应 Generation.id，字段名沿用后端事件里的 task_id。 */
+  taskId: Generation['id']
+}
+
+/** Generation 对应的一组后端接口。服务端没有取消能力，因此这里不声明 cancel。 */
 export interface GenerationApis {
   /** 创建一次生成任务。 */
   create<T extends GenerationInput>(input: T): Promise<Generation<T['type']>>
-  /** 按所属项目和任务 ID 读取生成任务的最新快照。 */
+  /**
+   * 按所属项目和任务 ID 读取最新快照。
+   * projectId 不能从 id 推导，后端查询接口要求两者同时传入。
+   */
   get(projectId: Generation['projectId'], id: Generation['id']): Promise<Generation>
+  /** 订阅状态变化，返回取消订阅函数。 */
+  subscribe(
+    projectId: Generation['projectId'],
+    id: Generation['id'],
+    onEvent: (event: GenerationEvent) => void,
+  ): () => void
 }

@@ -21,7 +21,7 @@
 
 ## 不允许放入
 
-- Project、Character、Generation、Task、WorkflowRun 等业务数据
+- Project、Character、Generation、WorkflowRun 等业务数据
 - `ProjectApis`、`CharacterApis` 这类业务接口集合
 - 流程的推进、重启、中断和 Revision 规则
 - 为开发与生产各维护一套实现的切换机制
