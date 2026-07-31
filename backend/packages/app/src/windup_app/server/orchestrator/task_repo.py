@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from windup_app.server.generation.model import (
+from windup_app.server.orchestrator.model import (
     CharacterActionOutput,
     CharacterImageOutput,
     GenerationTask,
@@ -140,7 +140,7 @@ def _deserialize_result(
             image_urls=raw.get("image_urls", []),
         )
     if result_type == "character_action":
-        from windup_app.server.generation.model import CharacterActionFrame
+        from windup_app.server.orchestrator.model import CharacterActionFrame
 
         frames = [
             CharacterActionFrame(

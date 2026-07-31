@@ -13,9 +13,9 @@ import dataclasses
 
 from sqlalchemy.orm import Session
 
-from windup_app.server.generation import task_repo
-from windup_app.server.generation.interface import GenerationService
-from windup_app.server.generation.model import (
+from windup_app.server.orchestrator import task_repo
+from windup_app.server.orchestrator.interface import GenerationService
+from windup_app.server.orchestrator.model import (
     CharacterActionInput,
     CharacterImageInput,
     GenerationTask,

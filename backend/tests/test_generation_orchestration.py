@@ -16,14 +16,14 @@ from sqlalchemy.pool import StaticPool
 
 from windup_framework.db.base import Base
 from windup_app.server.project.model import Project  # 注册 windup_project 表(create_all 用)
-from windup_app.server.generation.model import (
+from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
     CharacterActionOutput,
     TaskStatus,
 )
-from windup_app.server.generation.executor import ActionTaskExecutor
-from windup_app.server.generation.service import AiGenerationService
+from windup_app.server.orchestrator.executor import ActionTaskExecutor
+from windup_app.server.orchestrator.service import AiGenerationService
 from windup_ai_engine.impl import CharacterGenerator
 from windup_ai_engine.strategy.concrete import VideoFrameStrategy
 from windup_common.models import GenRoute

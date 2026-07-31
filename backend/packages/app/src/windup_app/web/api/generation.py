@@ -13,13 +13,13 @@ from windup_common.exceptions import BizException
 from windup_common.result import Response
 from windup_framework.db import get_session
 
-from windup_app.server.generation.model import (
+from windup_app.server.orchestrator.model import (
     CharacterActionInput,
     CharacterImageInput,
     ActionType,
     GenerationTask,
 )
-from windup_app.server.generation.service import service as generation_service
+from windup_app.server.orchestrator.service import service as generation_service
 
 logger = logging.getLogger("windup.generation.api")
 
