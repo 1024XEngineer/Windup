@@ -1,0 +1,15 @@
+[project]
+name = "windup-common"
+version = "0.1.0"
+description = "windup 共享内核:DTO/VO、统一返回、枚举、异常、常量、工具"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/windup_common"]

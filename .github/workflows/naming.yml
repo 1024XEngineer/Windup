@@ -1,0 +1,108 @@
+name: Naming Convention
+
+on:
+  push:
+  pull_request:
+
+# 与 backend.yml 的 concurrency group 区分,避免两个 workflow 互相取消
+concurrency:
+  group: naming-${{ github.ref }}
+  cancel-in-progress: true
+
+# 开源项目最小权限
+permissions:
+  contents: read
+
+jobs:
+  # ── 命名规范门禁 ─────────────────────────────────────────────
+  # 分支名:<type>/<description>,如 feat/login、fix/redirect、docs/api
+  # 提交信息:Conventional Commits,<type>(<scope>)?: <描述>
+  # 长期分支(main/develop/release/*)与无斜杠的扁平分支名豁免;
+  # 上游 squash-merge 提交(结尾 (#NN))豁免--贡献者无法改写上游历史。
+  validate-branch:
+    name: Branch name
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check branch name
+        env:
+          # 用 env 传参,避免 ${{ }} 直接插值进 shell 造成命令注入
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -uo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            branch="$HEAD_REF"
+          else
+            branch="$REF_NAME"
+          fi
+          echo "Branch: $branch"
+          # 长期分支豁免
+          case "$branch" in
+            main|master|develop) echo "豁免(长期分支): $branch"; exit 0 ;;
+            release/*|hotfix/*)  echo "豁免(release/hotfix): $branch"; exit 0 ;;
+          esac
+          # 无斜杠的扁平分支名豁免(如 backend-architecture、upstream-sync)
+          case "$branch" in
+            */*) ;;
+            *) echo "豁免(扁平名): $branch"; exit 0 ;;
+          esac
+          PATTERN='^(feat|fix|docs|doc|chore|refactor|test|style|perf|ci|build|revert|explore|wip)/.+'
+          if printf '%s' "$branch" | grep -Eq "$PATTERN"; then
+            echo "OK: '$branch'"
+            exit 0
+          fi
+          echo "::error::分支 '$branch' 不符合 <type>/<description> 规范。"
+          echo "允许的 type: feat fix docs doc chore refactor test style perf ci build revert explore wip"
+          echo "示例: feat/backend-architecture、fix/login-redirect、docs/api-reference"
+          exit 1
+
+  validate-commits:
+    name: Commit messages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0          # 需要完整历史来算 merge-base
+      - name: Check commit messages
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF_PR: ${{ github.base_ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            BASE_REF="$BASE_REF_PR"
+          else
+            BASE_REF="$DEFAULT_BRANCH"
+          fi
+          echo "Base ref: $BASE_REF"
+          git fetch --no-tags origin "$BASE_REF"
+          BASE=$(git merge-base "origin/$BASE_REF" HEAD)
+          echo "检查范围: $BASE..HEAD(merge 提交与上游 squash (#NN) 豁免)"
+          TYPE='(feat|fix|docs|chore|refactor|test|style|perf|ci|build|revert)'
+          SCOPE='(\([^)]+\))?'
+          PATTERN="^${TYPE}${SCOPE}!?: .+"
+          fail=0; total=0
+          for sha in $(git rev-list --no-merges "$BASE..HEAD"); do
+            total=$((total + 1))
+            subject=$(git log -1 --format=%s "$sha")
+            if printf '%s' "$subject" | grep -Eq '\(#[0-9]+\)$'; then
+              echo "skip(上游 squash): $sha '$subject'"
+              continue
+            fi
+            if printf '%s' "$subject" | grep -Eq "$PATTERN"; then
+              echo "ok: $sha '$subject'"
+            else
+              echo "::error::commit $sha 不符合 Conventional Commits: '$subject'"
+              fail=1
+            fi
+          done
+          echo "共检查 $total 个非 merge 提交"
+          if [ "$fail" -ne 0 ]; then
+            echo ""
+            echo "格式: <type>(<scope>)?: <简要描述>"
+            echo "type: feat fix docs chore refactor test style perf ci build revert"
+            echo "示例: feat: 添加健康检查路由   fix(parser): 修复空指针"
+            exit 1
+          fi
