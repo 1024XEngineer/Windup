@@ -158,6 +158,23 @@ function createRestartedRun(): WorkflowRun {
 }
 
 describe('createWorkflowRunStore', () => {
+  it('lists cloned snapshots and notifies whole-store subscribers', () => {
+    const store = createWorkflowRunStore({ storage: null })
+    const listener = vi.fn()
+    const unsubscribe = store.subscribeAll(listener)
+
+    store.save(createRun('run-1'))
+    store.save(createRun('run-2'))
+
+    expect(store.list().map((run) => run.id)).toEqual(['run-1', 'run-2'])
+    expect(listener).toHaveBeenLastCalledWith([
+      expect.objectContaining({ id: 'run-1' }),
+      expect.objectContaining({ id: 'run-2' }),
+    ])
+    unsubscribe()
+    store.save(createRun('run-3'))
+    expect(listener).toHaveBeenCalledTimes(2)
+  })
   it('stores a versioned snapshot and returns defensive clones', () => {
     const storage = new TestStorage()
     const store = createWorkflowRunStore({ storage })
@@ -190,6 +207,50 @@ describe('createWorkflowRunStore', () => {
     const store = createWorkflowRunStore({ storage })
 
     expect(store.get(run.id)).toEqual(run)
+  })
+
+  it('migrates version-three single-frame action output without dropping history', () => {
+    const run = createRun()
+    const revision = run.revisions[0]!
+    revision.steps = revision.steps.map((step) => {
+      if (step.type === 'character-setup') return { ...step, status: 'passed' }
+      if (step.type === 'character-template') {
+        return {
+          ...step,
+          status: 'passed',
+          output: { type: 'character_template', images: [{ url: 'template.png' }] },
+        }
+      }
+      if (step.type === 'template-candidate') return { ...step, status: 'passed' }
+      if (step.type === 'action-generation') {
+        return {
+          ...step,
+          status: 'passed',
+          input: {
+            type: 'complete_animation',
+            projectId: 'project-1',
+            characterId: 'character-1',
+            outfitId: 'outfit-1',
+            actionType: 'idle',
+            firstFrameUrl: 'template.png',
+            prompt: null,
+            referenceMedia: ['template.png'],
+          },
+          output: { type: 'first_frame', image: { url: 'frame.png' } },
+        } as unknown as WorkflowStep
+      }
+      return { ...step, status: 'active' }
+    })
+    const storage = new TestStorage(JSON.stringify({ version: 3, runs: [run] }))
+
+    const restored = createWorkflowRunStore({ storage }).get(run.id)
+    const action = restored?.revisions[0]?.steps.find((step) => step.type === 'action-generation')
+
+    expect(action?.output).toEqual({
+      type: 'complete_animation',
+      actionType: 'idle',
+      frames: [{ url: 'frame.png', durationMs: null }],
+    })
   })
 
   it('migrates a version-one run to the fixed five-step model', () => {
@@ -239,7 +300,7 @@ describe('createWorkflowRunStore', () => {
 
   it.each([
     ['invalid JSON', '{'],
-    ['unknown version', JSON.stringify({ version: 4, runs: [createRun()] })],
+    ['unknown version', JSON.stringify({ version: 99, runs: [createRun()] })],
     ['invalid payload', JSON.stringify({ version: WORKFLOW_RUN_STORAGE_VERSION, runs: {} })],
     [
       'invalid run',

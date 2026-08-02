@@ -7,13 +7,16 @@ interface ApiEnvelope<T> {
 }
 
 export class ApiError extends Error {
-  constructor(
-    public readonly status: number,
-    public readonly code: number,
-    message: string,
-  ) {
+  /** HTTP 状态码。 */
+  readonly status: number
+  /** 业务码（与 HTTP 状态码分离）。 */
+  readonly code: number
+
+  constructor(status: number, code: number, message: string) {
     super(message)
     this.name = 'ApiError'
+    this.status = status
+    this.code = code
   }
 }
 
@@ -40,7 +43,19 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(response.status, code, message)
   }
 
-  const envelope = (await response.json()) as ApiEnvelope<T>
+  let envelope: ApiEnvelope<T>
+  try {
+    envelope = (await response.json()) as ApiEnvelope<T>
+  } catch {
+    throw new ApiError(response.status, response.status, '响应格式错误，无法解析 JSON')
+  }
+  if (envelope.data === null || envelope.data === undefined) {
+    throw new ApiError(
+      response.status,
+      envelope.code ?? response.status,
+      envelope.message || '服务端未返回数据',
+    )
+  }
   return envelope.data
 }
 

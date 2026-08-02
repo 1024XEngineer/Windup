@@ -5,8 +5,8 @@
 import { useEffect, useRef } from 'react'
 
 import type { WorkflowRun, WorkflowRevision, WorkflowStep } from '@/entities'
+import { canPublishToPlaytest } from '@/features/publish'
 import { NodeCanvasController } from './node-canvas'
-import { workflowRunToCharacter, canExportToPlaytest, buildPlaytestUrl } from './workflow-to-character'
 
 interface WorkflowCanvasProps {
   controller: NodeCanvasController
@@ -15,16 +15,13 @@ interface WorkflowCanvasProps {
   onStepAction?: (stepType: string, action: string, data?: unknown) => void
 }
 
-/** 节点布局位置 */
+/** 节点布局位置（5 步流程） */
 const NODE_POSITIONS: Record<string, { x: number; y: number }> = {
   'character-setup': { x: 70, y: 280 },
   'character-template': { x: 510, y: 180 },
   'template-candidate': { x: 950, y: 240 },
-  'action-setup': { x: 1390, y: 180 },
-  'first-frame': { x: 1820, y: 60 },
-  'complete-animation': { x: 1820, y: 300 },
-  review: { x: 2250, y: 180 },
-  export: { x: 2680, y: 180 },
+  'action-generation': { x: 1390, y: 180 },
+  review: { x: 1820, y: 240 },
 }
 
 /** 节点标题 */
@@ -32,11 +29,8 @@ const NODE_TITLES: Record<string, { eyebrow: string; title: string }> = {
   'character-setup': { eyebrow: '01 · SETUP', title: '角色设定' },
   'character-template': { eyebrow: '02 · GENERATE', title: '生成角色图' },
   'template-candidate': { eyebrow: '03 · CONFIRM', title: '确认候选' },
-  'action-setup': { eyebrow: '04 · ACTIONS', title: '动作设定' },
-  'first-frame': { eyebrow: '05 · KEYFRAME', title: '生成首帧' },
-  'complete-animation': { eyebrow: '06 · ANIMATE', title: '生成动画' },
-  review: { eyebrow: '07 · REVIEW', title: '审核' },
-  export: { eyebrow: '08 · EXPORT', title: '导出' },
+  'action-generation': { eyebrow: '04 · ANIMATE', title: '动作生成' },
+  review: { eyebrow: '05 · REVIEW', title: '审核' },
 }
 
 const STEP_STATUS_LABELS: Record<string, string> = {
@@ -50,23 +44,29 @@ function getCurrentRevision(run: WorkflowRun): WorkflowRevision | null {
   return run.revisions.find((r) => r.id === run.currentRevisionId) ?? null
 }
 
-function buildNodeHtml(step: WorkflowStep, unavailableReason: string | null, run: WorkflowRun): string {
+function escapeAttribute(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;')
+}
+
+function buildNodeHtml(
+  step: WorkflowStep,
+  unavailableReason: string | null,
+  run: WorkflowRun,
+): string {
   const meta = NODE_TITLES[step.type] || { eyebrow: step.type.toUpperCase(), title: step.type }
   const pos = NODE_POSITIONS[step.type] || { x: 0, y: 0 }
   const statusLabel = STEP_STATUS_LABELS[step.status] || step.status
   const isActive = step.status === 'active'
   const isPassed = step.status === 'passed'
-  const isLocked = step.status === 'locked'
 
   let bodyHtml = ''
 
-  // 接口不可用 + 当前步骤 → 显示提示 + 跳过
+  // 接口不可用时如实阻断当前步骤，不伪造一条成功记录。
   if (isActive && unavailableReason) {
     bodyHtml = `
       <div class="node-status node-status--active"><span>${meta.title}</span><b>${statusLabel}</b></div>
       <div class="node-api-notice">
         <p>${unavailableReason}</p>
-        <button type="button" class="node-action node-action--secondary" data-skip-step="">跳过此步</button>
       </div>
     `
   } else {
@@ -96,11 +96,15 @@ function buildNodeHtml(step: WorkflowStep, unavailableReason: string | null, run
         if (isActive) {
           bodyHtml = `
             <div class="node-status node-status--active"><span>生成角色图</span><b>生成中…</b></div>
-            <div class="node-generation__dots" aria-label="母版候选实时到达">${Array.from({ length: 81 }, (_, i) => {
-              const x = i % 9 - 4, y = Math.floor(i / 9) - 4
-              const ring = Math.max(Math.abs(x), Math.abs(y))
-              return `<i class="dot-ring-${ring}"></i>`
-            }).join('')}</div>
+            <div class="node-generation__dots" aria-label="母版候选实时到达">${Array.from(
+              { length: 81 },
+              (_, i) => {
+                const x = (i % 9) - 4,
+                  y = Math.floor(i / 9) - 4
+                const ring = Math.max(Math.abs(x), Math.abs(y))
+                return `<i class="dot-ring-${ring}"></i>`
+              },
+            ).join('')}</div>
             <small class="node-hint">正在生成 6 张候选母版…</small>
           `
         } else if (isPassed) {
@@ -115,18 +119,18 @@ function buildNodeHtml(step: WorkflowStep, unavailableReason: string | null, run
 
       case 'template-candidate':
         if (isActive) {
+          const templateStep = getCurrentRevision(run)?.steps.find(
+            (item) => item.type === 'character-template',
+          )
+          const candidates =
+            templateStep?.type === 'character-template' ? (templateStep.output?.images ?? []) : []
           bodyHtml = `
             <div class="node-status node-status--active"><span>确认候选</span><b>${statusLabel}</b></div>
             <p class="node-desc">从候选中选择一张作为身份母版。</p>
             <div class="node-candidate-list">
-              <button type="button" class="node-candidate" data-select-candidate="0"><small>候选 01</small></button>
-              <button type="button" class="node-candidate" data-select-candidate="1"><small>候选 02</small></button>
-              <button type="button" class="node-candidate" data-select-candidate="2"><small>候选 03</small></button>
-              <button type="button" class="node-candidate" data-select-candidate="3"><small>候选 04</small></button>
-              <button type="button" class="node-candidate" data-select-candidate="4"><small>候选 05</small></button>
-              <button type="button" class="node-candidate" data-select-candidate="5"><small>候选 06</small></button>
+              ${candidates.map((candidate, index) => `<button type="button" class="node-candidate" data-select-candidate="${index}" data-candidate-url="${escapeAttribute(candidate.url)}"><img src="${escapeAttribute(candidate.url)}" alt="候选 ${index + 1}"><small>候选 ${String(index + 1).padStart(2, '0')}</small></button>`).join('')}
             </div>
-            <button type="button" class="node-action" data-confirm-candidate="" data-connection-required="character-template:template-candidate">确认候选</button>
+            ${candidates.length > 0 ? '<button type="button" class="node-action" data-confirm-candidate="" disabled>确认候选</button>' : '<p class="node-desc">生成结果中没有可用候选。</p>'}
           `
         } else if (isPassed) {
           bodyHtml = `
@@ -138,136 +142,62 @@ function buildNodeHtml(step: WorkflowStep, unavailableReason: string | null, run
         }
         break
 
-      case 'action-setup':
+      case 'action-generation':
         if (isActive) {
           bodyHtml = `
-            <div class="node-status node-status--active"><span>动作设定</span><b>${statusLabel}</b></div>
-            <p class="node-desc">选择要生成的动作类型。</p>
-            <div class="node-action-list">
-              <button type="button" class="node-action-option" data-action-type="walk" data-connection-required="template-candidate:action-setup">
-                <strong>Walk</strong>
-                <small>行走循环动画</small>
-              </button>
-              <button type="button" class="node-action-option" data-action-type="idle" data-connection-required="template-candidate:action-setup">
-                <strong>Idle</strong>
-                <small>待机动画</small>
-              </button>
-            </div>
-          `
-        } else if (isPassed) {
-          bodyHtml = `
-            <div class="node-status node-status--passed"><span>动作设定</span><b>${statusLabel}</b></div>
-            <p class="node-desc">已选择动作类型。</p>
-          `
-        } else {
-          bodyHtml = `<div class="node-status node-status--${step.status}"><span>动作设定</span><b>${statusLabel}</b></div>`
-        }
-        break
-
-      case 'first-frame':
-        if (isActive) {
-          bodyHtml = `
-            <div class="node-status node-status--active"><span>生成首帧</span><b>生成中…</b></div>
-            <div class="node-generating"><i class="pulse"></i><small>正在生成动作首帧…</small></div>
-          `
-        } else if (isPassed) {
-          bodyHtml = `
-            <div class="node-status node-status--passed"><span>生成首帧</span><b>${statusLabel}</b></div>
-            <p class="node-desc">首帧已生成，确认后开始完整动画。</p>
-            <button type="button" class="node-action" data-confirm-keyframe="" data-connection-required="action-setup:first-frame">确认首帧</button>
-          `
-        } else {
-          bodyHtml = `<div class="node-status node-status--${step.status}"><span>生成首帧</span><b>${statusLabel}</b></div>`
-        }
-        break
-
-      case 'complete-animation':
-        if (isActive) {
-          bodyHtml = `
-            <div class="node-status node-status--active"><span>生成动画</span><b>生成中…</b></div>
-            <div class="node-generating"><i class="pulse"></i><small>正在生成 8 帧动画…</small></div>
+            <div class="node-status node-status--active"><span>动作生成</span><b>生成中…</b></div>
+            <div class="node-generating"><i class="pulse"></i><small>正在生成 16 帧动作动画…</small></div>
             <div class="node-frame-strip">
-              ${Array.from({ length: 8 }, (_, i) => `<span class="is-pending"><small>${String(i + 1).padStart(2, '0')}</small></span>`).join('')}
+              ${Array.from({ length: 16 }, (_, i) => `<span class="is-pending"><small>${String(i + 1).padStart(2, '0')}</small></span>`).join('')}
             </div>
           `
         } else if (isPassed) {
+          const frames = step.type === 'action-generation' ? (step.output?.frames ?? []) : []
           bodyHtml = `
-            <div class="node-status node-status--passed"><span>生成动画</span><b>${statusLabel}</b></div>
+            <div class="node-status node-status--passed"><span>动作生成</span><b>${statusLabel}</b></div>
             <div class="node-frame-strip">
-              ${Array.from({ length: 8 }, (_, i) => `<span class="is-arrived"><small>${String(i + 1).padStart(2, '0')}</small></span>`).join('')}
+              ${frames.map((frame, i) => `<span class="is-arrived"><img src="${escapeAttribute(frame.url)}" alt="动作第 ${i + 1} 帧"><small>${String(i + 1).padStart(2, '0')}</small></span>`).join('')}
             </div>
-            <button type="button" class="node-action" data-confirm-animation="" data-connection-required="first-frame:complete-animation">确认动画</button>
+            <p class="node-desc">动作帧已生成，进入审核。</p>
           `
         } else {
-          bodyHtml = `<div class="node-status node-status--${step.status}"><span>生成动画</span><b>${statusLabel}</b></div>`
+          bodyHtml = `<div class="node-status node-status--${step.status}"><span>动作生成</span><b>${statusLabel}</b></div>`
         }
         break
 
-      case 'review':
+      case 'review': {
+        const publishReady = canPublishToPlaytest(run)
+
         if (isActive) {
           bodyHtml = `
             <div class="node-status node-status--active"><span>审核</span><b>${statusLabel}</b></div>
             <p class="node-desc">检查所有动作是否符合预期。</p>
-            <button type="button" class="node-action" data-confirm-review="" data-connection-required="complete-animation:review">审核通过</button>
+            <button type="button" class="node-action" data-confirm-review="">审核通过</button>
           `
         } else if (isPassed) {
           bodyHtml = `
-            <div class="node-status node-status--passed"><span>审核</span><b>${statusLabel}</b></div>
-            <p class="node-desc">已通过审核。</p>
+            <div class="node-status node-status--passed"><span>审核</span><b>已完成</b></div>
+            <p class="node-desc">全部完成！</p>
+            <div class="node-export-options">
+              <button type="button" class="node-action${publishReady ? '' : ' is-disabled'}" ${publishReady ? 'data-confirm-review=""' : 'disabled'}>
+                <strong>发布到 Playtest 预览</strong>
+                <small>重新写入资产并进入预览台</small>
+              </button>
+            </div>
           `
         } else {
           bodyHtml = `<div class="node-status node-status--${step.status}"><span>审核</span><b>${statusLabel}</b></div>`
         }
         break
-
-      case 'export': {
-        const character = workflowRunToCharacter(run)
-        const playtestUrl = character ? buildPlaytestUrl(character) : '/playtest/demo'
-        const exportReady = canExportToPlaytest(run)
-
-        if (isActive) {
-          bodyHtml = `
-            <div class="node-status node-status--active"><span>导出</span><b>${statusLabel}</b></div>
-            <p class="node-desc">${exportReady ? '资产已就绪，选择导出方式。' : '等待上游步骤完成。'}</p>
-            <div class="node-export-options">
-              <a class="node-action${exportReady ? '' : ' is-disabled'}" href="${playtestUrl}" ${exportReady ? 'data-export-to-playtest=""' : 'aria-disabled="true"'}>
-                <strong>导出到 Playtest 预览</strong>
-                <small>在预览台检查动作播放与循环效果</small>
-              </a>
-              <button type="button" class="node-action node-action--secondary" data-export-pack="" ${exportReady ? '' : 'disabled'}>
-                <strong>导出资产</strong>
-                <small>下载 Sprite Sheet 与 animation.json</small>
-              </button>
-            </div>
-          `
-        } else if (isPassed) {
-          bodyHtml = `
-            <div class="node-status node-status--passed"><span>导出</span><b>已完成</b></div>
-            <p class="node-desc">全部完成！</p>
-            <div class="node-export-options">
-              <a class="node-action" href="${playtestUrl}" data-export-to-playtest="">
-                <strong>导出到 Playtest 预览</strong>
-                <small>在预览台检查动作播放与循环效果</small>
-              </a>
-              <button type="button" class="node-action node-action--secondary" data-export-pack="">
-                <strong>导出资产</strong>
-                <small>下载 Sprite Sheet 与 animation.json</small>
-              </button>
-            </div>
-          `
-        } else {
-          bodyHtml = `<div class="node-status node-status--${step.status}"><span>导出</span><b>${statusLabel}</b></div>`
-        }
-        break
       }
 
       default:
-        bodyHtml = `<div class="node-status node-status--${step.status}"><span>${meta.title}</span><b>${statusLabel}</b></div>`
+        bodyHtml = `<div class="node-status"><span>${meta.title}</span><b>${statusLabel}</b></div>`
     }
   }
 
   const hasInput = step.type !== 'character-setup'
-  const hasOutput = step.type !== 'export'
+  const hasOutput = step.type !== 'review'
   const outputEnabled = isPassed || isActive
 
   return `
@@ -284,22 +214,19 @@ function buildNodeHtml(step: WorkflowStep, unavailableReason: string | null, run
   `
 }
 
-export function WorkflowCanvas({ controller, run, unavailableReason, onStepAction }: WorkflowCanvasProps) {
+export function WorkflowCanvas({
+  controller,
+  run,
+  unavailableReason,
+  onStepAction,
+}: WorkflowCanvasProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const revision = getCurrentRevision(run)
 
-  // 渲染连线 + 同步连接门控
+  // 连线只表达 WorkflowStep 的先后关系，不再作为第二套业务状态门控按钮。
   useEffect(() => {
     if (!revision) return
     controller.renderWires()
-
-    // 连接门控：禁用 data-connection-required 按钮直到连接建立
-    rootRef.current?.querySelectorAll('[data-connection-required]').forEach((el) => {
-      const requirements = (el as HTMLElement).dataset.connectionRequired!.split(',')
-      const connected = requirements.every((req) => controller.connections.has(req.trim()))
-      ;(el as HTMLButtonElement).disabled = !connected
-      el.closest('[data-node-id]')?.classList.toggle('is-waiting-connection', !connected)
-    })
   }, [controller, revision])
 
   // 绑定交互事件
@@ -307,17 +234,47 @@ export function WorkflowCanvas({ controller, run, unavailableReason, onStepActio
     if (!rootRef.current || !revision) return
     controller.attach(rootRef.current)
     const root = rootRef.current
+    const form = root.querySelector<HTMLFormElement>('#characterSetupForm')
+    const handleSetupSubmit = (event: Event) => {
+      event.preventDefault()
+      const description = new FormData(form!).get('description')
+      if (typeof description === 'string' && description.trim()) {
+        onStepAction?.('character-setup', 'submit', { description: description.trim() })
+      }
+    }
+    form?.addEventListener('submit', handleSetupSubmit)
 
-    // 跳过步骤按钮
-    root.querySelectorAll('[data-skip-step]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const stepEl = btn.closest('[data-node-id]') as HTMLElement
-        const stepType = stepEl?.dataset.nodeId
-        if (stepType) onStepAction?.(stepType, 'skip')
-      })
-    })
+    const candidateButtons = Array.from(
+      root.querySelectorAll<HTMLButtonElement>('[data-select-candidate]'),
+    )
+    const confirmCandidate = root.querySelector<HTMLButtonElement>('[data-confirm-candidate]')
+    const selectCandidate = (event: Event) => {
+      candidateButtons.forEach((button) => button.classList.remove('is-selected'))
+      const selected = event.currentTarget as HTMLButtonElement
+      selected.classList.add('is-selected')
+      if (confirmCandidate) {
+        confirmCandidate.dataset.candidateUrl = selected.dataset.candidateUrl
+        confirmCandidate.disabled = false
+      }
+    }
+    candidateButtons.forEach((button) => button.addEventListener('click', selectCandidate))
+    const handleCandidateConfirm = () => {
+      const selectedImageUrl = confirmCandidate?.dataset.candidateUrl
+      if (selectedImageUrl) onStepAction?.('template-candidate', 'confirm', { selectedImageUrl })
+    }
+    confirmCandidate?.addEventListener('click', handleCandidateConfirm)
 
-    return () => controller.detach()
+    const approveReview = root.querySelector<HTMLButtonElement>('[data-confirm-review]')
+    const handleReviewApprove = () => onStepAction?.('review', 'approve')
+    approveReview?.addEventListener('click', handleReviewApprove)
+
+    return () => {
+      form?.removeEventListener('submit', handleSetupSubmit)
+      candidateButtons.forEach((button) => button.removeEventListener('click', selectCandidate))
+      confirmCandidate?.removeEventListener('click', handleCandidateConfirm)
+      approveReview?.removeEventListener('click', handleReviewApprove)
+      controller.detach()
+    }
   }, [controller, revision, onStepAction])
 
   if (!revision) {
@@ -357,10 +314,16 @@ export function WorkflowCanvas({ controller, run, unavailableReason, onStepActio
           </span>
         </div>
         <div className="node-zoom" aria-label="画布缩放">
-          <button type="button" aria-label="缩小画布" data-node-zoom-out="">−</button>
+          <button type="button" aria-label="缩小画布" data-node-zoom-out="">
+            −
+          </button>
           <output data-node-zoom-label="">100%</output>
-          <button type="button" aria-label="放大画布" data-node-zoom-in="">+</button>
-          <button type="button" aria-label="整理节点" data-node-arrange="">↺</button>
+          <button type="button" aria-label="放大画布" data-node-zoom-in="">
+            +
+          </button>
+          <button type="button" aria-label="整理节点" data-node-arrange="">
+            ↺
+          </button>
         </div>
       </div>
     </section>

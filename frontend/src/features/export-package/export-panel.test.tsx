@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { PlaytestPreviewModel } from '../model/types'
+import type { ExportPackageModel as PlaytestPreviewModel } from './model'
 import { ExportPanel } from './export-panel'
 
 const model = {

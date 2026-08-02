@@ -7,9 +7,8 @@ import {
   createWorkflowRunStore,
   type Generation,
   type GenerationApis,
+  type GenerationEvent,
   type GenerationInput,
-  type TaskApis,
-  type TaskEvent,
   type WorkflowRun,
   type WorkflowStep,
 } from '@/entities'
@@ -20,14 +19,16 @@ import { createQuickStartService } from './service'
 afterEach(cleanup)
 
 interface HarnessOptions {
-  prepareProject?: (prompt: string) => Promise<{ id: string }>
+  prepareProject?: (
+    prompt: string,
+  ) => Promise<{ id: string; spriteSize: { width: number; height: number } }>
   createGeneration?: GenerationApis['create']
   nextStepError?: Error
 }
 
 function createHarness(options: HarnessOptions = {}) {
   const store = createWorkflowRunStore({ storage: null })
-  const taskListeners = new Map<string, (event: TaskEvent) => void>()
+  const taskListeners = new Map<string, (event: GenerationEvent) => void>()
 
   const createGeneration: GenerationApis['create'] =
     options.createGeneration ??
@@ -41,9 +42,11 @@ function createHarness(options: HarnessOptions = {}) {
         error: null,
       }) as Generation<T['type']>)
 
-  const taskApis: TaskApis = {
+  const generationApis: GenerationApis = {
+    create: createGeneration,
     get: vi.fn(async (_projectId, taskId) => ({
       id: taskId,
+      projectId: _projectId,
       type: 'character_template' as const,
       status: 'pending' as const,
       result: null,
@@ -66,8 +69,7 @@ function createHarness(options: HarnessOptions = {}) {
 
   const controller = createWorkflowController({
     store,
-    generationApis: { create: createGeneration },
-    taskApis,
+    generationApis,
     createId: (scope) =>
       scope === 'run' ? 'run-1' : scope === 'revision' ? 'revision-1' : 'submission-1',
     now: () => '2026-07-31T03:30:00.000Z',
@@ -78,14 +80,15 @@ function createHarness(options: HarnessOptions = {}) {
     })
   }
   const prepareProject =
-    options.prepareProject ?? vi.fn(async (_prompt: string) => ({ id: ' project-1 ' }))
+    options.prepareProject ??
+    vi.fn(async (_prompt: string) => ({ id: ' project-1 ', spriteSize: { width: 64, height: 64 } }))
   const service = createQuickStartService({ controller, prepareProject })
 
   return {
     prepareProject,
     service,
     store,
-    emit(event: TaskEvent) {
+    emit(event: GenerationEvent) {
       const listener = taskListeners.get(`project-1:${event.taskId}`)
       if (!listener) throw new Error(`Missing listener for task ${event.taskId}`)
       listener(event)

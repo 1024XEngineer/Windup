@@ -23,11 +23,10 @@ CI 按上面顺序全跑一遍。
 
 ## 结构
 
-模块划分、依赖规则与命名约定见仓库根目录 `frontend-architecture-v3.md`。
+六个业务模块见 `MODULES.md`，代码依赖规则见 `ARCHITECTURE_GUARDRAILS.md`。
 
-当前已实现纯前端 `WorkflowRun` 存储，以及
-`角色资料 → 角色图生成 → 候选选择` 的首个 Controller 纵切。Playtest 已提供可交互的
-只读核验工作台和 `/playtest/demo` 演示入口；Quick Start、Workflow Editor 等其余页面仍是
-占位外壳。后五步和真实 `XxxApis` 实现按模块拆成后续 PR。
+当前 Project、Character、Generation、Media 已接真实后端适配器。Quick Start 与 Workflow
+Editor 共享同一套 `WorkflowRun` 和 Controller；项目页、资产库、历史记录与 Playtest 分别
+承担不同产品职责。Playtest 提供只读检查与独立下载包能力。
 
 与后端尚未对齐的接口见 `API_CONTRACT.md`。

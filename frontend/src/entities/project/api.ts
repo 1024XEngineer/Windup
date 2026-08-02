@@ -1,7 +1,7 @@
-import type { CreateProjectInput, Project, ProjectApis, UpdateProjectInput } from '@/entities'
+import type { CreateProjectInput, Project, ProjectApis } from '.'
 import type { Paged, PageQuery } from '@/shared/pagination'
 
-import { del, get, patch, post } from './http-client'
+import { del, get, post } from '@/shared/api'
 
 /* ─── 后端 DTO ─── */
 
@@ -74,30 +74,7 @@ function toCreatePayload(input: CreateProjectInput) {
   }
 }
 
-function toUpdatePayload(input: UpdateProjectInput) {
-  const payload: Record<string, unknown> = {}
-  if (input.name !== undefined) payload.project_name = input.name
-  if (input.perspective !== undefined)
-    payload.character_perspective = PERSPECTIVE_REVERSE[input.perspective]
-  if (input.directionalMovement !== undefined)
-    payload.directional_movement = MOVEMENT_REVERSE[input.directionalMovement]
-  if (input.spriteSize !== undefined) {
-    payload.sprite_width = input.spriteSize.width
-    payload.sprite_height = input.spriteSize.height
-  }
-  if (input.gameStyle !== undefined) payload.game_style = input.gameStyle
-  if (input.sampleImageUrl !== undefined) payload.sprite_sample_url = input.sampleImageUrl
-  return payload
-}
-
 /* ─── 适配器 ─── */
-
-interface BackendListResponse {
-  data: BackendProject[]
-  total: number
-  page: number
-  page_size: number
-}
 
 export function createProjectApis(): ProjectApis {
   return {
@@ -106,12 +83,13 @@ export function createProjectApis(): ProjectApis {
       if (query?.page) params.set('page', String(query.page))
       if (query?.pageSize) params.set('page_size', String(query.pageSize))
       const qs = params.toString()
-      const raw = await get<BackendListResponse>(`/projects${qs ? `?${qs}` : ''}`)
+      // http-client 已解包 ApiEnvelope，data 字段就是项目数组本身
+      const raw = await get<BackendProject[]>(`/projects${qs ? `?${qs}` : ''}`)
       return {
-        items: raw.data.map(toProject),
-        total: raw.total,
-        page: raw.page,
-        pageSize: raw.page_size,
+        items: raw.map(toProject),
+        total: raw.length,
+        page: query?.page ?? 1,
+        pageSize: query?.pageSize ?? raw.length,
       }
     },
 
@@ -122,11 +100,6 @@ export function createProjectApis(): ProjectApis {
 
     async create(input: CreateProjectInput): Promise<Project> {
       const raw = await post<BackendProject>('/projects', toCreatePayload(input))
-      return toProject(raw)
-    },
-
-    async update(id: string, input: UpdateProjectInput): Promise<Project> {
-      const raw = await patch<BackendProject>(`/projects/${id}`, toUpdatePayload(input))
       return toProject(raw)
     },
 

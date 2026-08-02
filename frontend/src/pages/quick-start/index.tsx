@@ -9,6 +9,7 @@ import {
   type WorkflowStep,
   type WorkflowStepType,
 } from '@/entities'
+import { buildPlaytestPath } from '@/features/publish'
 import { unavailableQuickStartService, type QuickStartService } from './service'
 
 export type {
@@ -21,11 +22,8 @@ const STEP_LABELS: Record<WorkflowStepType, string> = {
   'character-setup': '角色设定',
   'character-template': '角色图',
   'template-candidate': '候选选择',
-  'action-setup': '动作设定',
-  'first-frame': '动作首帧',
-  'complete-animation': '完整动画',
+  'action-generation': '动作生成',
   review: '审核',
-  export: '导出',
 }
 
 const EXAMPLES = [
@@ -42,7 +40,7 @@ const EXAMPLES = [
 export interface QuickStartPageProps {
   /**
    * 页面测试与后续生产组合可以注入同一份服务实例。
-   * 默认实现明确不可用，直到真实 Project / Generation / Task 实现到位。
+   * 默认实现明确不可用，直到真实 Project / Character / Generation 实现到位。
    */
   service?: QuickStartService
 }
@@ -205,6 +203,8 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
   const navigate = useNavigate()
   const [run, setRun] = useState<WorkflowRun | null>(() => service.getWorkflow(runId))
   const [error, setError] = useState<string | null>(null)
+  const [selectedCandidate, setSelectedCandidate] = useState<string | null>(null)
+  const [actionDescription, setActionDescription] = useState('')
 
   useEffect(() => {
     let active = true
@@ -214,15 +214,26 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
     if (!current) return
 
     const unsubscribe = service.subscribe(runId, (updated) => {
-      setRun(updated)
-      setError(null)
+      if (active) {
+        setRun(updated)
+        setError(null)
+      }
     })
     void service.resume(runId).catch((cause) => {
       if (active) setError(errorMessage(cause, '恢复生成任务失败'))
     })
+
+    // 兜底轮询：异步动作生成完成后 store subscription 可能漏掉，每 3s 刷新一次
+    const pollTimer = setInterval(() => {
+      if (!active) return
+      const latest = service.getWorkflow(runId)
+      if (latest) setRun(latest)
+    }, 3000)
+
     return () => {
       active = false
       unsubscribe()
+      clearInterval(pollTimer)
     }
   }, [runId, service])
 
@@ -255,6 +266,17 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
   const candidates = templateStep?.output?.images ?? []
   const passedCount = revision.steps.filter((step) => step.status === 'passed').length
 
+  const actionStep = revision.steps.find((step) => step.type === 'action-generation')
+  const actionFrames =
+    actionStep?.type === 'action-generation' && actionStep.status === 'passed'
+      ? (actionStep.output?.frames ?? [])
+      : []
+  const reviewStep = revision.steps.find((step) => step.type === 'review')
+  const canPublish =
+    actionFrames.length > 0 && (reviewStep?.status === 'active' || reviewStep?.status === 'passed')
+  const isActionActive = actionStep?.status === 'active'
+  const isActionFailed = actionStep?.status === 'failed'
+
   async function interrupt() {
     try {
       const interrupted = service.interrupt(runId)
@@ -262,6 +284,39 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
     } catch (cause) {
       setError(errorMessage(cause, '中断自动制作失败'))
     }
+  }
+
+  async function confirmSelection() {
+    if (!selectedCandidate) return
+    try {
+      const updated = await service.confirmCandidate(runId, selectedCandidate, actionDescription)
+      setRun(updated)
+      setSelectedCandidate(null)
+      setActionDescription('')
+    } catch (cause) {
+      setError(errorMessage(cause, '确认选择失败'))
+    }
+  }
+
+  async function regenerate() {
+    if (!run?.prompt) return
+    try {
+      const newRun = await service.start(run.prompt)
+      navigate(`/quick-start/${encodeURIComponent(newRun.id)}`)
+    } catch (cause) {
+      setError(errorMessage(cause, '重新生成失败'))
+    }
+  }
+
+  async function publishToPlaytest() {
+    await service.approveReview(runId)
+    // 内存 Map / 持久化引用缺失时（动作生成中或旧运行记录），从后端按项目反查
+    const info = service.getCharacterInfo(runId) ?? (await service.resolveCharacterInfo(runId))
+    if (info) {
+      navigate(buildPlaytestPath(info))
+      return
+    }
+    setError('尚未找到可导出的角色，请等待动作生成完成后再试')
   }
 
   return (
@@ -298,23 +353,93 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
 
         <div className="grid min-h-0 gap-5 lg:grid-cols-[1.35fr_0.65fr]">
           <section className="grid min-h-[340px] place-items-center overflow-hidden rounded-[1.4rem] border border-[#c4cbc5] bg-[#eef1ed]/90 p-5">
-            {candidates.length ? (
-              <div className="grid w-full grid-cols-2 gap-4 sm:grid-cols-3">
-                {candidates.map((candidate, index) => (
-                  <figure
-                    key={`${candidate.url}:${index}`}
-                    className="overflow-hidden rounded-xl border border-[#c7cec8] bg-[#e7ebe6] p-3"
-                  >
-                    <img
-                      src={candidate.url}
-                      alt={`角色图候选 ${index + 1}`}
-                      className="aspect-square w-full object-contain [image-rendering:pixelated]"
-                    />
-                    <figcaption className="mt-2 font-mono text-[9px] tracking-[0.1em] text-[#687069]">
-                      CANDIDATE {String(index + 1).padStart(2, '0')}
-                    </figcaption>
-                  </figure>
+            {actionFrames.length > 0 ? (
+              <div className="grid w-full grid-cols-4 gap-2 sm:grid-cols-8">
+                {actionFrames.map((frame, index) => (
+                  <img
+                    key={`${frame.url}:${index}`}
+                    src={frame.url}
+                    alt={`动作第 ${index + 1} 帧`}
+                    className="aspect-square w-full border border-[#c7cec8] bg-[#e7ebe6] object-contain [image-rendering:pixelated]"
+                  />
                 ))}
+              </div>
+            ) : isActionActive ? (
+              <div className="grid place-items-center gap-5 text-center">
+                <div className="relative grid h-44 w-44 place-items-center rounded-[1.4rem] border border-dashed border-[#aeb9b0] bg-[#e5e9e4]">
+                  <i className="h-12 w-12 animate-pulse rounded-full border border-[#819184] bg-[#d5ddd6] shadow-[0_0_0_16px_rgba(53,88,63,0.05)] motion-reduce:animate-none" />
+                </div>
+                <span>
+                  <b className="block text-base text-[#354039]">正在生成动作</b>
+                  <small className="mt-2 block max-w-md leading-6 text-[#687069]">
+                    正在生成 idle 动作帧，请稍候…
+                  </small>
+                </span>
+              </div>
+            ) : isActionFailed ? (
+              <div className="grid place-items-center gap-5 text-center">
+                <b className="text-base text-[#8b332a]">动作生成失败</b>
+                <small className="max-w-md leading-6 text-[#687069]">
+                  {typeof actionStep?.error === 'string' ? actionStep.error : '动作生成失败'}
+                </small>
+              </div>
+            ) : candidates.length ? (
+              <div className="grid w-full gap-4">
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                  {candidates.map((candidate, index) => (
+                    <button
+                      key={`${candidate.url}:${index}`}
+                      type="button"
+                      onClick={() => setSelectedCandidate(candidate.url)}
+                      className={`overflow-hidden rounded-xl border-2 p-2 text-left transition ${
+                        selectedCandidate === candidate.url
+                          ? 'border-[#35583f] bg-[#d5e5d8]'
+                          : 'border-[#c7cec8] bg-[#e7ebe6] hover:border-[#8fa092]'
+                      }`}
+                    >
+                      <img
+                        src={candidate.url}
+                        alt={`角色图候选 ${index + 1}`}
+                        className="aspect-square w-full object-contain [image-rendering:pixelated]"
+                      />
+                      <p className="mt-2 font-mono text-[9px] tracking-[0.1em] text-[#687069]">
+                        CANDIDATE {String(index + 1).padStart(2, '0')}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+                <div className="mx-auto flex w-full max-w-xl flex-col gap-3">
+                  <label className="grid gap-1.5" htmlFor="quick-start-action-description">
+                    <span className="text-[11px] font-semibold text-[#515a53]">
+                      动作描述（可选，留空生成待机动作）
+                    </span>
+                    <input
+                      id="quick-start-action-description"
+                      value={actionDescription}
+                      onChange={(event) => setActionDescription(event.target.value)}
+                      placeholder="例如：在画板上画画、挥舞灯笼、扫地…"
+                      className="rounded-xl border border-[#c7cec8] bg-white px-4 py-2.5 text-sm text-[#1d251f] outline-none placeholder:text-[#7a817b] focus:border-[#8fa092]"
+                    />
+                  </label>
+                  <div className="flex justify-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void regenerate()}
+                      className="rounded-xl border border-[#aeb8b0] px-5 py-3 text-sm font-semibold text-[#515a53] transition hover:border-[#8fa092]"
+                    >
+                      重新生成
+                    </button>
+                    {selectedCandidate ? (
+                      <button
+                        type="button"
+                        onClick={() => void confirmSelection()}
+                        className="rounded-xl bg-[#35583f] px-6 py-3 text-sm font-bold text-white transition hover:bg-[#456c51]"
+                      >
+                        确认选择，继续下一步
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="grid place-items-center gap-5 text-center">
@@ -387,6 +512,17 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
                   className="rounded-xl border border-[#aeb8b0] px-4 py-2 text-xs font-semibold text-[#515a53]"
                 >
                   中断自动制作
+                </button>
+              ) : null}
+              {canPublish ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void publishToPlaytest()
+                  }}
+                  className="rounded-xl bg-[#2a5284] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#3668a0]"
+                >
+                  发布到预览台
                 </button>
               ) : null}
               {candidates.length || run.status === 'failed' || run.status === 'interrupted' ? (
@@ -473,6 +609,29 @@ function describeRun(run: WorkflowRun, revision: WorkflowRevision) {
       error: null,
     }
   }
+  const actionStep = revision.steps.find((step) => step.type === 'action-generation')
+  if (actionStep?.status === 'active') {
+    return {
+      title: '正在生成动作',
+      description: '角色图已确认，正在生成 idle 动作帧…',
+      error: null,
+    }
+  }
+  if (actionStep?.status === 'passed') {
+    return {
+      title: '动作生成完成',
+      description: '角色动作已生成，可以导出到预览台。',
+      error: null,
+    }
+  }
+  if (actionStep?.status === 'failed') {
+    return {
+      title: '动作生成失败',
+      description: typeof actionStep.error === 'string' ? actionStep.error : '动作生成失败',
+      error: typeof actionStep.error === 'string' ? actionStep.error : '动作生成失败',
+    }
+  }
+
   return {
     title: '正在理解角色设定',
     description: '正在把创作指令整理成角色资料。',

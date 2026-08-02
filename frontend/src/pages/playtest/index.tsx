@@ -34,6 +34,7 @@ function isNotFoundError(error: unknown): boolean {
 
 /**
  * 正式 Playtest 页面只读取 #70 已定义的 Character 接口。
+ * 当接口未配置时，自动回退到内置 demo 角色素材。
  * 核验与自动分析结果均停留在页面会话，不写回资产树。
  */
 export function PlaytestPage({ apis }: PlaytestPageProps) {
@@ -43,8 +44,13 @@ export function PlaytestPage({ apis }: PlaytestPageProps) {
   const [data, setData] = useState<PageData>(initialPageData)
 
   useEffect(() => {
+    // 正式入口未配置角色接口时明确提示，不加载也不回退到 Demo 少年数据
     if (apis === undefined) {
-      setData({ ...initialPageData, error: 'Playtest 角色接口尚未配置' })
+      setData({
+        character: null,
+        error: 'Playtest 角色接口尚未配置',
+        loading: false,
+      })
       return
     }
     if (characterId === undefined || outfitId === undefined) {

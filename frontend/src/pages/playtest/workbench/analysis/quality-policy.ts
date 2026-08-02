@@ -11,6 +11,7 @@ export interface LocalQualityPolicy {
   edgeMargin: { x: number; y: number }
   minimumCoverageRatio: number
   maximumCoverageRatio: number
+  /** 相邻帧指纹平均距离 ≤ 该值时判定为重复帧（duplicate_frame）。 */
   duplicateDistance: number
   footDriftThreshold: number | null
   heightDriftThreshold: number | null
@@ -88,6 +89,7 @@ export function deriveLocalQualityPolicy(
       minimumCoverageRatio: MINIMUM_COVERAGE_RATIO,
       maximumCoverageRatio: MAXIMUM_COVERAGE_RATIO,
       duplicateDistance: DUPLICATE_DISTANCE,
+
       footDriftThreshold: null,
       heightDriftThreshold: null,
       heightAttentionThreshold: null,

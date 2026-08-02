@@ -6,9 +6,9 @@ import type {
   CreateCharacterInput,
   Frame,
   Outfit,
-} from '@/entities'
+} from '.'
 
-import { del, get, patch, post } from './http-client'
+import { get, patch, post } from '@/shared/api'
 
 /* ─── 后端 DTO ─── */
 
@@ -75,9 +75,7 @@ function toAction(raw: BackendAction, outfitId: string): Action {
     type: toActionType(raw.type),
     fps: raw.fps,
     keyFrameIndex: null, // 后端不提供关键帧索引
-    frames: raw.frames
-      .sort((a, b) => a.index - b.index)
-      .map(toFrame),
+    frames: raw.frames.sort((a, b) => a.index - b.index).map(toFrame),
   }
 }
 
@@ -106,13 +104,6 @@ function toCharacter(raw: BackendCharacter): Character {
 
 /* ─── 适配器 ─── */
 
-interface BackendListResponse {
-  data: BackendCharacter[]
-  total: number
-  page: number
-  page_size: number
-}
-
 export function createCharacterApis(): CharacterApis {
   return {
     async get(id: string): Promise<Character> {
@@ -121,10 +112,11 @@ export function createCharacterApis(): CharacterApis {
     },
 
     async listByProject(projectId: string): Promise<Character[]> {
-      const raw = await get<BackendListResponse>(
+      // http-client 已解包 ApiEnvelope，data 字段就是角色数组本身
+      const raw = await get<BackendCharacter[]>(
         `/characters?project_id=${encodeURIComponent(projectId)}`,
       )
-      return raw.data.map(toCharacter)
+      return raw.map(toCharacter)
     },
 
     async create(input: CreateCharacterInput): Promise<Character> {

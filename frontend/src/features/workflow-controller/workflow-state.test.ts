@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   advanceCharacterSetupState,
+  approveReviewState,
   createWorkflowRunState,
   restartWorkflowRunState,
   updateCharacterSetupState,
@@ -69,7 +70,7 @@ describe('workflow state transitions', () => {
       referenceMedia: [],
     })
 
-    const transitioned = advanceCharacterSetupState(run)
+    const transitioned = advanceCharacterSetupState(run, { width: 64, height: 64 })
 
     expect(transitioned.target).toEqual({
       revisionId: 'revision-1',
@@ -85,6 +86,8 @@ describe('workflow state transitions', () => {
           projectId: 'project-1',
           prompt: 'revised knight',
           referenceMedia: [],
+          spriteWidth: 64,
+          spriteHeight: 64,
         },
       },
       { type: 'template-candidate', status: 'locked' },
@@ -92,7 +95,7 @@ describe('workflow state transitions', () => {
   })
 
   it('creates a new revision from a passed stage without retaining downstream outputs', () => {
-    const prepared = advanceCharacterSetupState(createRun()).run
+    const prepared = advanceCharacterSetupState(createRun(), { width: 64, height: 64 }).run
     const sourceRevision = prepared.revisions[0]!
     const run = {
       ...prepared,
@@ -156,5 +159,26 @@ describe('workflow state transitions', () => {
         createdAt: '2026-07-31T03:00:00.000Z',
       }),
     ).toThrow('只能从已通过的步骤重新开始')
+  })
+
+  it('completes the revision and run when the active review is approved', () => {
+    const run = createRun()
+    const readyForReview = {
+      ...run,
+      revisions: run.revisions.map((revision) => ({
+        ...revision,
+        generationStatus: 'completed' as const,
+        steps: revision.steps.map((step) => ({
+          ...step,
+          status: step.type === 'review' ? ('active' as const) : ('passed' as const),
+        })),
+      })),
+    }
+
+    const completed = approveReviewState(readyForReview)
+
+    expect(completed.status).toBe('completed')
+    expect(completed.revisions[0]?.status).toBe('completed')
+    expect(completed.revisions[0]?.steps.every((step) => step.status === 'passed')).toBe(true)
   })
 })

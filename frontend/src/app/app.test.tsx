@@ -25,4 +25,13 @@ describe('App', () => {
 
     expect(screen.getByRole('heading', { name: '历史记录' })).toBeTruthy()
   })
+
+  it('keeps the asset library separate from workflow history', () => {
+    window.history.replaceState({}, '', '/projects/project-1/assets')
+
+    render(<App />)
+
+    expect(screen.getByRole('heading', { name: '资产库' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: '历史记录' })).toBeNull()
+  })
 })

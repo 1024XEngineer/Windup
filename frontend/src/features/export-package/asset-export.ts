@@ -1,9 +1,4 @@
-import type {
-  PlaytestPreviewModel,
-  PreviewAction,
-  PreviewFrame,
-  PreviewSequence,
-} from '../model/types'
+import type { ExportAction, ExportFrame, ExportPackageModel, ExportSequence } from './model'
 
 export type AssetExportPhase = 'collecting' | 'rendering' | 'packing'
 
@@ -27,14 +22,14 @@ export interface AssetExportRuntime {
 }
 
 export interface PlannedFrame {
-  frame: PreviewFrame
+  frame: ExportFrame
   index: number
   filename: string
 }
 
 export interface PlannedSequence {
-  action: PreviewAction
-  sequence: PreviewSequence
+  action: ExportAction
+  sequence: ExportSequence
   folder: string
   columns: number
   rows: number
@@ -80,7 +75,7 @@ function extensionForBlob(blob: Blob, imageUrl: string): string {
   return byMime[blob.type.toLowerCase()] ?? extensionFromUrl(imageUrl)
 }
 
-export function createAssetExportPlan(model: PlaytestPreviewModel): readonly PlannedSequence[] {
+export function createAssetExportPlan(model: ExportPackageModel): readonly PlannedSequence[] {
   return model.actions.flatMap((action) => {
     const actionFolder = `${safeSegment(action.name, 'action')}-${idSuffix(action.id)}`
     return action.sequences.flatMap((sequence) => {
@@ -238,7 +233,7 @@ function storedZip(entries: readonly ZipEntry[]): Blob {
 }
 
 export async function exportGameAssets(
-  model: PlaytestPreviewModel,
+  model: ExportPackageModel,
   runtime: AssetExportRuntime = defaultRuntime,
   onPhase?: (phase: AssetExportPhase) => void,
 ): Promise<AssetExportResult> {

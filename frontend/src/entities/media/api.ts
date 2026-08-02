@@ -1,6 +1,6 @@
-import type { MediaReference } from '@/entities'
+import type { MediaApis, MediaCategory, MediaReference } from '.'
 
-import { upload as uploadRequest } from './http-client'
+import { upload as uploadRequest } from '@/shared/api'
 
 /* ─── 后端 DTO ─── */
 
@@ -10,18 +10,6 @@ interface BackendMediaUpload {
   filename: string
   content_type: string
   size: number
-}
-
-/* ─── 前端接口 ─── */
-
-export type MediaCategory =
-  | 'reference-image'
-  | 'outfit-preview'
-  | 'action-frame'
-  | 'general'
-
-export interface MediaApis {
-  upload(file: File, category?: MediaCategory): Promise<MediaReference>
 }
 
 /* ─── 适配器 ─── */

@@ -1,0 +1,114 @@
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "id": 25,
+    "project_id": 37,
+    "description": "Quick Start auto-created character",
+    "reference_image_url": "http://tio55tpsq.hd-bkt.clouddn.com/media/reference-image/3f8ce3bdb9664258b2e5dbc54c16589e.png",
+    "character_data": {
+      "version": 1,
+      "outfits": [
+        {
+          "id": "outfit-25-default",
+          "name": "默认造型",
+          "description": null,
+          "preview_url": "http://tio55tpsq.hd-bkt.clouddn.com/media/reference-image/3f8ce3bdb9664258b2e5dbc54c16589e.png",
+          "actions": [
+            {
+              "id": "25-custom",
+              "type": "custom",
+              "name": "自定义动作",
+              "loop": false,
+              "fps": 8.0,
+              "frame_count": 16,
+              "frames": [
+                {
+                  "index": 0,
+                  "image_url": "http://tio55tpsq.hd-bkt.clouddn.com/media/action-frame/7987aecc98e2428ebcffb778361e1f48.png",
+                  "duration_ms": 125
+                },
+                {
+                  "index": 1,
+                  "image_url": "http://tio55tpsq.hd-bkt.clouddn.com/media/action-frame/9d7e0b10812b471c96fbf482018e52cb.png",
+                  "duration_ms": 125
+                },
+                {
+                  "index": 2,
+                  "image_url": "http://tio55tpsq.hd-bkt.clouddn.com/media/action-frame/d35de7b47cb441b6a9a9611f2c89b9d0.png",
+                  "duration_ms": 125
+                },
+                {
+                  "index": 3,
+                  "image_url": "http://tio55tpsq.hd-bkt.clouddn.com/media/action-frame/cebef9f9c9bf459f8a033df0fe3f8df5.png",
+                  "duration_ms": 125
+                },
+                {
+                  "index": 4,
+                  "image_url": "http://tio55tpsq.hd-bkt.clouddn.com/media/action-frame/33fd127521024445879c4e0d8bae2010.png",
+                  "duration_ms": 125
+                },
+                {
+                  "index": 5,
+                  "image_url": "http://tio55tpsq.hd-bkt.clouddn.com/media/action-frame/88028d713cb24fbca27db0f740256296.png",
+                  "duration_ms": 125
+                },
+                {
+                  "index": 6,
+                  "image_url": "http://tio55tpsq.hd-bkt.clouddn.com/media/action-frame/2843e05a4b114a83bf8697a2fa7775f3.png",
+                  "duration_ms": 125
+                },
+                {
+                  "index": 7,
+                  "image_url": "http://tio55tpsq.hd-bkt.clouddn.com/media/action-frame/ef6a63d4656f4151b9bc8ce2470c3e49.png",
+                  "duration_ms": 125
+                },
+                {
+                  "index": 8,
+                  "image_url": "http://tio55tpsq.hd-bkt.clouddn.com/media/action-frame/97ba64c6beb744f28904a15e5d7c2b70.png",
+                  "duration_ms": 125
+                },
+                {
+                  "index": 9,
+                  "image_url": "http://tio55tpsq.hd-bkt.clouddn.com/media/action-frame/3e7f820ebb324ad68a10ccbd9106be55.png",
+                  "duration_ms": 125
+                },
+                {
+                  "index": 10,
+                  "image_url": "http://tio55tpsq.hd-bkt.clouddn.com/media/action-frame/d791896c1d4e44df953156d86b50e4a1.png",
+                  "duration_ms": 125
+                },
+                {
+                  "index": 11,
+                  "image_url": "http://tio55tpsq.hd-bkt.clouddn.com/media/action-frame/bb2cc0c50cd24e08b13e9dcdea4a9a1c.png",
+                  "duration_ms": 125
+                },
+                {
+                  "index": 12,
+                  "image_url": "http://tio55tpsq.hd-bkt.clouddn.com/media/action-frame/09b9029b5d88438b9b629ecdd4da0b71.png",
+                  "duration_ms": 125
+                },
+                {
+                  "index": 13,
+                  "image_url": "http://tio55tpsq.hd-bkt.clouddn.com/media/action-frame/a5b81b4bdd6c4fc09c1cffc2dae17ce9.png",
+                  "duration_ms": 125
+                },
+                {
+                  "index": 14,
+                  "image_url": "http://tio55tpsq.hd-bkt.clouddn.com/media/action-frame/1b0797d0baf249ae9d94f60b0604b740.png",
+                  "duration_ms": 125
+                },
+                {
+                  "index": 15,
+                  "image_url": "http://tio55tpsq.hd-bkt.clouddn.com/media/action-frame/1bf258a7b2384ae194425b01a4beb337.png",
+                  "duration_ms": 125
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "status": 1
+  }
+}

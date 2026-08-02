@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useReducer, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useMemo, useReducer, useState, type KeyboardEvent } from 'react'
 
 import type { Character } from '@/entities/character'
 
@@ -9,7 +9,7 @@ import { AnimationStage } from './animation-stage'
 import { AuditPanel } from './audit/audit-panel'
 import { reduceAuditSession } from './audit/audit-session'
 import { FrameTimeline } from './frame-timeline'
-import { ExportPanel } from './export/export-panel'
+import { ExportPanel } from '@/features/export-package'
 import { Inspector } from './inspector'
 import { createPreviewModel } from './model/create-preview-model'
 import type { PreviewAction } from './model/types'
@@ -50,7 +50,6 @@ export function PlaytestWorkbench({
     nextFrame,
     previousFrame,
     playActionType,
-    continueActionType,
     toggleLoop,
     togglePlaying,
   } = playback
@@ -79,7 +78,6 @@ export function PlaytestWorkbench({
   const [activeRightPanel, setActiveRightPanel] = useState<RightPanel>('inspect')
   const [actionSidebarCollapsed, setActionSidebarCollapsed] = useState(false)
   const [manualIssues, dispatchAudit] = useReducer(reduceAuditSession, [])
-  const horizontalHoldStartedPaused = useRef<boolean | null>(null)
 
   const frameCount = playback.sequence?.frames.length ?? 0
   const automaticFindings =
@@ -106,31 +104,27 @@ export function PlaytestWorkbench({
   const keyboardCommands = useMemo(
     () => ({
       togglePlaying,
-      previousFrame,
-      nextFrame,
+      previousFrame: () => {
+        if (isPlaying) togglePlaying()
+        previousFrame()
+      },
+      nextFrame: () => {
+        if (isPlaying) togglePlaying()
+        nextFrame()
+      },
       firstFrame,
       lastFrame,
       toggleLoop,
       playLeft: () => {
-        if (playback.action === null) return
-        if (horizontalHoldStartedPaused.current === null) {
-          horizontalHoldStartedPaused.current = !isPlaying
-        }
-        if (playback.action.type === 'walk') setMirrored(true)
-        continueActionType(playback.action.type)
+        if (isPlaying) togglePlaying()
+        previousFrame()
       },
       playRight: () => {
-        if (playback.action === null) return
-        if (horizontalHoldStartedPaused.current === null) {
-          horizontalHoldStartedPaused.current = !isPlaying
-        }
-        if (playback.action.type === 'walk') setMirrored(false)
-        continueActionType(playback.action.type)
+        if (isPlaying) togglePlaying()
+        nextFrame()
       },
       stopHorizontal: () => {
-        const shouldRestorePause = horizontalHoldStartedPaused.current === true
-        horizontalHoldStartedPaused.current = null
-        if (shouldRestorePause && isPlaying) togglePlaying()
+        // A/D 松开后无需恢复播放，用户通过空格控制播放
       },
       playJump: () => {
         if (!jumpAvailable) return
@@ -147,12 +141,9 @@ export function PlaytestWorkbench({
       nextFrame,
       previousFrame,
       playActionType,
-      continueActionType,
       toggleLoop,
       isPlaying,
-      setMirrored,
       togglePlaying,
-      playback.action?.type,
       jumpAvailable,
       crouchAvailable,
     ],
@@ -228,6 +219,18 @@ export function PlaytestWorkbench({
             className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
           >
             <span className="mr-1 text-xs font-semibold text-slate-500">方向</span>
+            <button
+              type="button"
+              onClick={() => setMirrored(!stageMotion.mirrored)}
+              className={`rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
+                stageMotion.mirrored
+                  ? 'border-sky-600 bg-sky-600 text-white'
+                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-400'
+              }`}
+              title="翻转水平方向 (F)"
+            >
+              ⇄ 翻转
+            </button>
             {playback.action?.sequences.map((sequence) => (
               <button
                 key={sequence.direction}

@@ -13,19 +13,15 @@ function pixelReadFailure(error: unknown): FrameGeometryResult {
   return unavailable('浏览器无法读取图片像素')
 }
 
-let sharedCanvas: HTMLCanvasElement | null = null
-let sharedContext: CanvasRenderingContext2D | null = null
-
+/**
+ * 每次读取创建独立 canvas。帧检查是低频操作（每帧 onload 一次），
+ * 不缓存可避免模块级状态在测试间泄漏（mock 无法重置）。
+ */
 function getSharedContext(width: number, height: number): CanvasRenderingContext2D | null {
-  if (sharedCanvas === null) {
-    sharedCanvas = document.createElement('canvas')
-    sharedContext = sharedCanvas.getContext('2d', { willReadFrequently: true })
-  }
-  if (sharedCanvas.width !== width || sharedCanvas.height !== height) {
-    sharedCanvas.width = width
-    sharedCanvas.height = height
-  }
-  return sharedContext
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  return canvas.getContext('2d', { willReadFrequently: true })
 }
 
 export function readImageGeometry(

@@ -4,16 +4,15 @@ import {
   createWorkflowRunStore,
   type Generation,
   type GenerationApis,
+  type GenerationEvent,
   type GenerationInput,
-  type TaskApis,
-  type TaskEvent,
 } from '@/entities'
 import { createWorkflowController } from '.'
 
 describe('WorkflowRun first vertical slice', () => {
   it('runs character setup through a completed character-template task', async () => {
     const store = createWorkflowRunStore({ storage: null })
-    const taskChannel: { listener?: (event: TaskEvent) => void } = {}
+    const taskChannel: { listener?: (event: GenerationEvent) => void } = {}
 
     const createGeneration: GenerationApis['create'] = async <T extends GenerationInput>(
       input: T,
@@ -27,10 +26,8 @@ describe('WorkflowRun first vertical slice', () => {
         error: null,
       }) as Generation<T['type']>
 
-    const generationApis: Pick<GenerationApis, 'create'> = {
+    const generationApis: GenerationApis = {
       create: vi.fn(createGeneration),
-    }
-    const taskApis: TaskApis = {
       get: vi.fn(async () => {
         throw new Error('not used in this slice')
       }),
@@ -52,7 +49,6 @@ describe('WorkflowRun first vertical slice', () => {
     const controller = createWorkflowController({
       store,
       generationApis,
-      taskApis,
       createId: () => ids.shift() ?? 'unexpected-id',
       now: () => '2026-07-30T12:00:00.000Z',
     })
@@ -64,7 +60,7 @@ describe('WorkflowRun first vertical slice', () => {
       prompt: '像素骑士',
     })
 
-    await controller.nextStep(created.id)
+    await controller.nextStep(created.id, { width: 64, height: 64 })
 
     const inFlight = store.get(created.id)
     expect(

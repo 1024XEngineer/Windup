@@ -82,7 +82,7 @@ export function HomePage() {
                 eyebrow="PROJECT SETUP"
                 index="02"
                 title="新建项目"
-                description="建立项目后，沿可回退的五步工作流制作角色、动作与完成版本。"
+                description="建立项目后，沿可回退的节点工作流制作角色、动作与完成版本。"
                 actionLabel="开始创建项目"
                 secondaryAction={{ to: '/projects', label: '查看项目历史' }}
               />

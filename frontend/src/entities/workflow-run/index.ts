@@ -1,9 +1,11 @@
 import type {
+  Generation,
   CharacterTemplateGenerationInput,
   CharacterTemplateGenerationResult,
+  CompleteAnimationGenerationInput,
+  CompleteAnimationGenerationResult,
 } from '../generation'
 import type { MediaReference } from '../media'
-import type { Task } from '../task'
 import {
   EXPORT_STATUSES,
   GENERATION_STATUSES,
@@ -45,7 +47,7 @@ export type WorkflowRevisionStatus = (typeof WORKFLOW_REVISION_STATUSES)[number]
 /**
  * 整次流程的汇总状态。
  * interrupted 只表示用户主动停止自动推进：历史仍保留且可只读查看，它不等于 failed 或 completed。
- * 后端 Task 是否真正停止是独立问题；当前纵切不提供重启操作。
+ * 后端 Generation 是否真正停止是独立问题；前端中断只停止自动推进与订阅。
  */
 export type WorkflowRunStatus = (typeof WORKFLOW_RUN_STATUSES)[number]
 
@@ -65,7 +67,7 @@ interface WorkflowStepBase {
    * 前端运行中重复发起生成。是否写入浏览器存储属于前端实现，不形成后端契约。
    * 任务本身不认识步骤，反向关联不存在。
    */
-  taskId: Task['id'] | null
+  taskId: Generation['id'] | null
   /**
    * 前端开始提交、但后端 taskId 尚未返回时的本地尝试标识。
    * 它非 null 而 taskId 为 null 时不能重复提交；若页面在这个窗口刷新，
@@ -97,11 +99,20 @@ export interface CharacterTemplateWorkflowStep extends WorkflowStepBase {
   output: CharacterTemplateGenerationResult | null
 }
 
-type RemainingWorkflowStepType = Exclude<WorkflowStepType, 'character-setup' | 'character-template'>
+export interface ActionGenerationWorkflowStep extends WorkflowStepBase {
+  type: 'action-generation'
+  input: CompleteAnimationGenerationInput | null
+  output: CompleteAnimationGenerationResult | null
+}
+
+type RemainingWorkflowStepType = Exclude<
+  WorkflowStepType,
+  'character-setup' | 'character-template' | 'action-generation'
+>
 
 interface RemainingWorkflowStep extends WorkflowStepBase {
   type: RemainingWorkflowStepType
-  /** 候选确认、动作生成与系统质检尚未实现，输入输出等对应纵切开始时再收窄。 */
+  /** 候选确认与审核的具体输入输出在对应纵切中继续收窄。 */
   input: unknown
   output: unknown
 }
@@ -114,6 +125,7 @@ interface RemainingWorkflowStep extends WorkflowStepBase {
 export type WorkflowStep =
   | CharacterSetupWorkflowStep
   | CharacterTemplateWorkflowStep
+  | ActionGenerationWorkflowStep
   | RemainingWorkflowStep
 
 /**

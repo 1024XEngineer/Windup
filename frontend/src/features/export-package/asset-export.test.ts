@@ -1,7 +1,11 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, vi } from 'vitest'
 
-import type { PlaytestPreviewModel, PreviewAction, PreviewFrame } from '../model/types'
+import type {
+  ExportAction as PreviewAction,
+  ExportFrame as PreviewFrame,
+  ExportPackageModel as PlaytestPreviewModel,
+} from './model'
 import { createAssetExportPlan, exportGameAssets, type AssetExportRuntime } from './asset-export'
 
 function frame(index: number): PreviewFrame {

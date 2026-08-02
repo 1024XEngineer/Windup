@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-import type { PlaytestPreviewModel } from '../model/types'
+import type { ExportPackageModel } from './model'
 import {
   createAssetExportPlan,
   exportGameAssets,
@@ -9,12 +9,12 @@ import {
 } from './asset-export'
 
 export type AssetExporter = (
-  model: PlaytestPreviewModel,
+  model: ExportPackageModel,
   onPhase?: (phase: AssetExportPhase) => void,
 ) => Promise<AssetExportResult>
 
 export interface ExportPanelProps {
-  model: PlaytestPreviewModel
+  model: ExportPackageModel
   qualityIssueCount?: number
   exporter?: AssetExporter
 }

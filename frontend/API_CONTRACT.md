@@ -22,18 +22,16 @@
 
 图片生成和动作生成只返回任务及结果，不自动修改 WorkflowRun 或角色资产。用户最终确认后，前端再通过角色更新接口保存角色图和完整动作数据。
 
+动作任务的 `frames[]` 会完整映射为 WorkflowRun 的 `complete_animation` 结果，保留顺序和
+`duration_ms`。审核前为满足动作生成接口的 `character_id/outfit_id` 要求，前端会创建一条
+尚无动作的角色草稿；只有审核通过后才把完整动作写回该角色。当前后端没有草稿/已发布状态，
+因此资产库暂以“造型至少包含一个动作”作为已发布资产的显示条件。
+
 ---
 
-## 二、前端预期有、后端目前没有
+## 二、前端不声明的后端缺失能力
 
-**这些接口仍需要确定由后端提供，还是改为前端本地能力。**
-
-| 前端接口 | 后端情况 |
-|---|---|
-| `ActionTemplateApis.listAvailable` | 没有 action template 模块 |
-| `ProjectApis.update` | 没有 `PATCH /projects/{project_id}` |
-
-前端已按服务端现状去掉 `TaskApis.cancel`——后端没有取消能力，不声明前端用不到的接口。
+后端目前没有项目更新和生成任务取消接口，前端相应地不声明 `ProjectApis.update` 或生成取消方法。创建、查询和轮询统一由 `GenerationApis` 提供。
 
 ---
 
@@ -45,7 +43,7 @@
 |---|---|---|
 | 角色列表 | `list_characters` 分页，返回 `(list, total)` | `listByProject` 无分页 |
 | 更新角色 | `update_character(character_id, **fields)` 部分更新 | `update(character)` 整棵树替换 |
-| 等待任务完成 | 提供 `GET /generation/tasks/{task_id}` 轮询 | `TaskApis.subscribe`；适配器先立即回放当前快照，再继续轮询 |
+| 等待任务完成 | 提供 `GET /generation/tasks/{task_id}` 轮询 | `GenerationApis.subscribe`；适配器先立即回放当前快照，再继续轮询 |
 | 图片生成数量 | 入参有 `num_images`，结果只有一个 `image_url` | 角色图候选结果是 `images[]` |
 | 动作类型 | `walk` `idle` `attack` `custom`；待增加 `jump` | `walk` `idle` `attack` `jump` `custom` |
 | 角色视角 | `character_perspective` 为 `1~3`，文档中 2、3 都写成“正面” | `side` `top-down` `isometric` |
@@ -61,7 +59,6 @@ ID 类型后端为 `int`、前端为 `string`，由前端转换层处理，不�
 | `delete_character` | 前端 `CharacterApis` 没有删除 |
 | `Character.description` | 后端存在实体上；前端只在创建入参里，创建完查不到 |
 | `Character.reference_image_url` | 后端存在实体上；前端 `Character` 类型没有这个字段 |
-| `MediaService.upload` | 前端本次未提交上传模块 |
 
 ---
 
@@ -105,12 +102,10 @@ frames[]  → index / image_url / duration_ms
 
 ## 待确认
 
-- [ ] `ActionTemplateApis` 由后端提供还是前端内置
 - [ ] 母版候选几张
 - [ ] 参考图与角色图是一个字段还是两个
 - [ ] `Character.description` 前端要不要跟着存
 - [ ] `Action.kind` / `Action.keyFrameIndex` / `Frame.rootMotion` 是否进入最终资产
-- [ ] 上传模块何时提交
 
 ## 已分工
 

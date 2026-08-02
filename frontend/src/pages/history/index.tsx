@@ -1,36 +1,19 @@
 /**
  * 历史记录页面 — 读取 WorkflowRunStore 展示已完成的工作流。
  */
-import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router'
+import { useEffect, useState } from 'react'
+import { Link, useParams } from 'react-router'
 
-import type { WorkflowRun } from '@/entities'
-import { createWorkflowRunStore, type WorkflowRunStore } from '@/entities/workflow-run/store'
+import type { WorkflowRun, WorkflowRunStore } from '@/entities'
 
-export interface HistoryPageProps {
-  store?: WorkflowRunStore
-}
-
-export function HistoryPage({ store }: HistoryPageProps) {
-  const defaultStore = useMemo(() => store ?? createWorkflowRunStore(), [store])
-  const [runs, setRuns] = useState<WorkflowRun[]>([])
+export function HistoryPage({ store }: { store: WorkflowRunStore }) {
+  const { projectId } = useParams()
+  const [runs, setRuns] = useState<WorkflowRun[]>(() => filterRuns(store.list(), projectId))
 
   useEffect(() => {
-    // 从 localStorage 读取所有 run
-    const allRuns = defaultStore.get('__list__') // hack: store doesn't have list, read directly
-    // 实际上 store 没有 list 方法，需要直接读 localStorage
-    try {
-      const raw = localStorage.getItem('windup.workflow-runs')
-      if (raw) {
-        const parsed = JSON.parse(raw)
-        if (Array.isArray(parsed.runs)) {
-          setRuns(parsed.runs as WorkflowRun[])
-        }
-      }
-    } catch {
-      setRuns([])
-    }
-  }, [defaultStore])
+    setRuns(filterRuns(store.list(), projectId))
+    return store.subscribeAll((items) => setRuns(filterRuns(items, projectId)))
+  }, [projectId, store])
 
   const completedRuns = runs.filter((r) => r.status === 'completed')
   const activeRuns = runs.filter((r) => r.status === 'active' || r.status === 'interrupted')
@@ -41,12 +24,8 @@ export function HistoryPage({ store }: HistoryPageProps) {
         <p className="font-mono text-[10px] font-semibold tracking-[0.16em] text-[#747973]">
           HISTORY
         </p>
-        <h1 className="mt-2 font-serif text-3xl font-medium tracking-[-0.03em]">
-          历史记录
-        </h1>
-        <p className="mt-2 text-sm text-[#666b64]">
-          已完成和进行中的创作记录。
-        </p>
+        <h1 className="mt-2 font-serif text-3xl font-medium tracking-[-0.03em]">历史记录</h1>
+        <p className="mt-2 text-sm text-[#666b64]">已完成和进行中的创作记录。</p>
       </header>
 
       {activeRuns.length > 0 && (
@@ -86,21 +65,30 @@ export function HistoryPage({ store }: HistoryPageProps) {
   )
 }
 
+function filterRuns(runs: WorkflowRun[], projectId?: string) {
+  return projectId ? runs.filter((run) => run.projectId === projectId) : runs
+}
+
 function RunCard({ run }: { run: WorkflowRun }) {
   const revision = run.revisions.find((r) => r.id === run.currentRevisionId)
   const passedCount = revision?.steps.filter((s) => s.status === 'passed').length ?? 0
   const totalCount = revision?.steps.length ?? 0
 
   const statusLabel =
-    run.status === 'completed' ? '已完成'
-    : run.status === 'failed' ? '失败'
-    : run.status === 'interrupted' ? '已中断'
-    : '进行中'
+    run.status === 'completed'
+      ? '已完成'
+      : run.status === 'failed'
+        ? '失败'
+        : run.status === 'interrupted'
+          ? '已中断'
+          : '进行中'
 
   const statusColor =
-    run.status === 'completed' ? 'text-[#3d6b4a]'
-    : run.status === 'failed' ? 'text-[#8b332a]'
-    : 'text-[#687069]'
+    run.status === 'completed'
+      ? 'text-[#3d6b4a]'
+      : run.status === 'failed'
+        ? 'text-[#8b332a]'
+        : 'text-[#687069]'
 
   return (
     <Link
@@ -118,9 +106,7 @@ function RunCard({ run }: { run: WorkflowRun }) {
           {passedCount} / {totalCount} 步骤完成
         </p>
       </div>
-      <span className={`text-xs font-semibold ${statusColor}`}>
-        {statusLabel}
-      </span>
+      <span className={`text-xs font-semibold ${statusColor}`}>{statusLabel}</span>
     </Link>
   )
 }

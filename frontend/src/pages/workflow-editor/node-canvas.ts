@@ -61,27 +61,53 @@ export class NodeCanvasController {
         el.style.left = `${saved.x}px`
         el.style.top = `${saved.y}px`
       }
-      el.querySelector('[data-node-drag]')?.addEventListener('pointerdown', (event) => {
-        this.startNodeDrag(event as PointerEvent, el)
-      }, options)
+      el.querySelector('[data-node-drag]')?.addEventListener(
+        'pointerdown',
+        (event) => {
+          this.startNodeDrag(event as PointerEvent, el)
+        },
+        options,
+      )
     })
 
-    this.viewport.addEventListener('pointerdown', (event) => {
-      this.startPan(event as PointerEvent)
-    }, options)
-    this.viewport.addEventListener('pointermove', (event) => {
-      this.pointerMove(event as PointerEvent)
-    }, options)
-    this.viewport.addEventListener('pointerup', (event) => {
-      this.pointerUp(event as PointerEvent)
-    }, options)
-    this.viewport.addEventListener('wheel', (event) => {
-      this.wheel(event as WheelEvent)
-    }, { ...options, passive: false })
+    this.viewport.addEventListener(
+      'pointerdown',
+      (event) => {
+        this.startPan(event as PointerEvent)
+      },
+      options,
+    )
+    this.viewport.addEventListener(
+      'pointermove',
+      (event) => {
+        this.pointerMove(event as PointerEvent)
+      },
+      options,
+    )
+    this.viewport.addEventListener(
+      'pointerup',
+      (event) => {
+        this.pointerUp(event as PointerEvent)
+      },
+      options,
+    )
+    this.viewport.addEventListener(
+      'wheel',
+      (event) => {
+        this.wheel(event as WheelEvent)
+      },
+      { ...options, passive: false },
+    )
 
-    root.querySelector('[data-node-zoom-in]')?.addEventListener('click', () => this.zoomBy(0.1), options)
-    root.querySelector('[data-node-zoom-out]')?.addEventListener('click', () => this.zoomBy(-0.1), options)
-    root.querySelector('[data-node-arrange]')?.addEventListener('click', () => this.resetLayout(), options)
+    root
+      .querySelector('[data-node-zoom-in]')
+      ?.addEventListener('click', () => this.zoomBy(0.1), options)
+    root
+      .querySelector('[data-node-zoom-out]')
+      ?.addEventListener('click', () => this.zoomBy(-0.1), options)
+    root
+      .querySelector('[data-node-arrange]')
+      ?.addEventListener('click', () => this.resetLayout(), options)
 
     this.applyTransform()
     this.renderWires()
@@ -112,7 +138,10 @@ export class NodeCanvasController {
     }
     const onUp = (e: PointerEvent) => {
       node.classList.remove('is-dragging')
-      this.positions[node.dataset.nodeId!] = { x: parseFloat(node.style.left) || 0, y: parseFloat(node.style.top) || 0 }
+      this.positions[node.dataset.nodeId!] = {
+        x: parseFloat(node.style.left) || 0,
+        y: parseFloat(node.style.top) || 0,
+      }
       node.removeEventListener('pointermove', onMove)
       node.removeEventListener('pointerup', onUp)
       node.releasePointerCapture(e.pointerId)
@@ -153,7 +182,11 @@ export class NodeCanvasController {
   wheel(event: WheelEvent) {
     event.preventDefault()
     if (event.ctrlKey || event.metaKey) this.zoomBy(-event.deltaY * 0.0014)
-    else { this.pan.x -= event.deltaX; this.pan.y -= event.deltaY; this.applyTransform() }
+    else {
+      this.pan.x -= event.deltaX
+      this.pan.y -= event.deltaY
+      this.applyTransform()
+    }
   }
 
   zoomBy(delta: number) {
@@ -189,8 +222,12 @@ export class NodeCanvasController {
     // 已连接的线 — 实线
     this.connections.forEach((key) => {
       const [from, to] = key.split(':')
-      const output = this.surface?.querySelector(`[data-node-id="${from}"] [data-port="output"]`) as HTMLElement
-      const input = this.surface?.querySelector(`[data-node-id="${to}"] [data-port="input"]`) as HTMLElement
+      const output = this.surface?.querySelector(
+        `[data-node-id="${from}"] [data-port="output"]`,
+      ) as HTMLElement
+      const input = this.surface?.querySelector(
+        `[data-node-id="${to}"] [data-port="input"]`,
+      ) as HTMLElement
       if (!output || !input) return
       this.appendWire(this.portPoint(output), this.portPoint(input), 'node-wire is-connected')
     })
@@ -199,13 +236,17 @@ export class NodeCanvasController {
     this.surface?.querySelectorAll('[data-node-id]').forEach((node) => {
       const el = node as HTMLElement
       const fromId = el.dataset.nodeId!
-      const output = el.querySelector('[data-port="output"][data-enabled="true"]') as HTMLElement | null
+      const output = el.querySelector(
+        '[data-port="output"][data-enabled="true"]',
+      ) as HTMLElement | null
       if (!output) return
 
       // 找到所有允许的下游节点
       ALLOWED_CONNECTIONS.filter(([from]) => from === fromId).forEach(([, to]) => {
         if (this.connections.has(`${fromId}:${to}`)) return
-        const input = this.surface?.querySelector(`[data-node-id="${to}"] [data-port="input"]`) as HTMLElement | null
+        const input = this.surface?.querySelector(
+          `[data-node-id="${to}"] [data-port="input"]`,
+        ) as HTMLElement | null
         if (!input) return
         this.appendWire(this.portPoint(output), this.portPoint(input), 'node-wire is-suggested')
       })
@@ -224,7 +265,10 @@ export class NodeCanvasController {
     if (!this.surface) return { x: 0, y: 0 }
     const surfaceBounds = this.surface.getBoundingClientRect()
     const bounds = port.getBoundingClientRect()
-    return { x: (bounds.left + bounds.width / 2 - surfaceBounds.left) / this.scale, y: (bounds.top + bounds.height / 2 - surfaceBounds.top) / this.scale }
+    return {
+      x: (bounds.left + bounds.width / 2 - surfaceBounds.left) / this.scale,
+      y: (bounds.top + bounds.height / 2 - surfaceBounds.top) / this.scale,
+    }
   }
 
   setConnections(connections: Array<{ from: string; to: string }>) {

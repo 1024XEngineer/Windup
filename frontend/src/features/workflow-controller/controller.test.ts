@@ -4,10 +4,8 @@ import {
   WORKFLOW_STEP_ORDER,
   type Generation,
   type GenerationApis,
+  type GenerationEvent,
   type GenerationInput,
-  type Task,
-  type TaskApis,
-  type TaskEvent,
   type WorkflowRevision,
   type WorkflowRun,
   type WorkflowStep,
@@ -26,6 +24,7 @@ function cloneRun(run: WorkflowRun): WorkflowRun {
 function createMemoryStore() {
   const runs = new Map<string, WorkflowRun>()
   const listeners = new Map<string, Set<RunListener>>()
+  const listListeners = new Set<(runs: WorkflowRun[]) => void>()
 
   const get = vi.fn((runId: string): WorkflowRun | null => {
     const run = runs.get(runId)
@@ -39,6 +38,7 @@ function createMemoryStore() {
     for (const listener of listeners.get(run.id) ?? []) {
       listener(cloneRun(snapshot))
     }
+    for (const listener of listListeners) listener([...runs.values()].map(cloneRun))
   })
 
   const subscribe = vi.fn((runId: string, listener: RunListener): (() => void) => {
@@ -51,7 +51,13 @@ function createMemoryStore() {
     }
   })
 
-  return { get, save, subscribe }
+  const list = vi.fn(() => [...runs.values()].map(cloneRun))
+  const subscribeAll = vi.fn((listener: (runs: WorkflowRun[]) => void) => {
+    listListeners.add(listener)
+    return () => listListeners.delete(listener)
+  })
+
+  return { get, list, save, subscribe, subscribeAll }
 }
 
 function createIdFactory() {
@@ -83,7 +89,7 @@ function pendingCharacterTemplateGeneration(): Generation<'character_template'> 
 
 function createHarness() {
   const store = createMemoryStore()
-  const taskListeners = new Map<string, (event: TaskEvent) => void>()
+  const taskListeners = new Map<string, (event: GenerationEvent) => void>()
 
   const createGeneration: GenerationApis['create'] = async <T extends GenerationInput>(input: T) =>
     ({
@@ -95,12 +101,8 @@ function createHarness() {
       error: null,
     }) as Generation<T['type']>
 
-  const generationApis: Pick<GenerationApis, 'create'> = {
-    create: vi.fn(createGeneration),
-  }
-
   const subscribeTask = vi.fn(
-    (projectId: string, taskId: string, onEvent: (event: TaskEvent) => void) => {
+    (projectId: string, taskId: string, onEvent: (event: GenerationEvent) => void) => {
       taskListeners.set(`${projectId}:${taskId}`, onEvent)
       onEvent({
         taskId,
@@ -114,10 +116,10 @@ function createHarness() {
       }
     },
   )
-
-  const taskApis: TaskApis = {
+  const generationApis: GenerationApis = {
+    create: vi.fn(createGeneration),
     get: vi.fn(async () => {
-      throw new Error('TaskApis.get is not used until a run is resumed')
+      throw new Error('GenerationApis.get is not used until a run is resumed')
     }),
     subscribe: subscribeTask,
   }
@@ -125,7 +127,6 @@ function createHarness() {
   const controller = createWorkflowController({
     store,
     generationApis,
-    taskApis,
     createId: createIdFactory(),
     now: () => NOW,
   })
@@ -135,11 +136,10 @@ function createHarness() {
     generationApis,
     subscribeTask,
     store,
-    taskApis,
     getTaskListener(projectId: string, taskId: string) {
       return taskListeners.get(`${projectId}:${taskId}`) ?? null
     },
-    emitTask(projectId: string, taskId: string, event: TaskEvent) {
+    emitTask(projectId: string, taskId: string, event: GenerationEvent) {
       const listener = taskListeners.get(`${projectId}:${taskId}`)
       expect(listener, `missing task subscription for ${projectId}:${taskId}`).toBeTypeOf(
         'function',
@@ -174,9 +174,11 @@ async function createAiRun(harness: ReturnType<typeof createHarness>) {
   })
 }
 
+const SPRITE_SIZE = { width: 64, height: 64 }
+
 async function startCharacterTemplate(harness: ReturnType<typeof createHarness>) {
   const run = await createAiRun(harness)
-  await harness.controller.nextStep(run.id)
+  await harness.controller.nextStep(run.id, SPRITE_SIZE)
   return run
 }
 
@@ -236,6 +238,8 @@ describe('createWorkflowController', () => {
       projectId: 'project-1',
       prompt: 'pixel knight',
       referenceMedia: [],
+      spriteWidth: 64,
+      spriteHeight: 64,
     })
     expect(harness.subscribeTask).toHaveBeenCalledWith('project-1', 'task-1', expect.any(Function))
 
@@ -266,8 +270,8 @@ describe('createWorkflowController', () => {
     const run = await createAiRun(harness)
     const deferred = deferNextGeneration(harness)
 
-    const first = harness.controller.nextStep(run.id)
-    const second = harness.controller.nextStep(run.id)
+    const first = harness.controller.nextStep(run.id, SPRITE_SIZE)
+    const second = harness.controller.nextStep(run.id, SPRITE_SIZE)
 
     expect(harness.generationApis.create).toHaveBeenCalledTimes(1)
     deferred.resolve(pendingCharacterTemplateGeneration())
@@ -284,7 +288,7 @@ describe('createWorkflowController', () => {
     const run = await createAiRun(harness)
     const deferred = deferNextGeneration(harness)
 
-    const submission = harness.controller.nextStep(run.id)
+    const submission = harness.controller.nextStep(run.id, SPRITE_SIZE)
     const resumed = await harness.controller.resume(run.id)
 
     expect(resumed?.status).toBe('active')
@@ -321,7 +325,7 @@ describe('createWorkflowController', () => {
     })
 
     const run = await createAiRun(harness)
-    await harness.controller.nextStep(run.id)
+    await harness.controller.nextStep(run.id, SPRITE_SIZE)
 
     expect(step(harness.controller.getWorkflow(run.id)!, 'character-template')).toMatchObject({
       status: 'passed',
@@ -410,30 +414,27 @@ describe('createWorkflowController', () => {
   it('resumes a persisted in-flight task without creating another generation', async () => {
     const harness = createHarness()
     const run = await startCharacterTemplate(harness)
-    vi.mocked(harness.taskApis.get).mockResolvedValueOnce({
+    vi.mocked(harness.generationApis.get).mockResolvedValueOnce({
       id: 'task-1',
+      projectId: 'project-1',
       type: 'character_template',
       status: 'running',
       error: null,
       result: null,
     })
     const resumeSubscribe = vi.fn(
-      (_projectId: string, _taskId: string, _onEvent: (event: TaskEvent) => void) => () =>
+      (_projectId: string, _taskId: string, _onEvent: (event: GenerationEvent) => void) => () =>
         undefined,
     )
     const resumedController = createWorkflowController({
       store: harness.store,
-      generationApis: harness.generationApis,
-      taskApis: {
-        get: harness.taskApis.get,
-        subscribe: resumeSubscribe,
-      },
+      generationApis: { ...harness.generationApis, subscribe: resumeSubscribe },
     })
 
     const resumed = await resumedController.resume(run.id)
 
     expect(resumed?.id).toBe(run.id)
-    expect(harness.taskApis.get).toHaveBeenCalledWith('project-1', 'task-1')
+    expect(harness.generationApis.get).toHaveBeenCalledWith('project-1', 'task-1')
     expect(resumeSubscribe).toHaveBeenCalledWith('project-1', 'task-1', expect.any(Function))
     expect(harness.generationApis.create).toHaveBeenCalledTimes(1)
   })
@@ -441,8 +442,9 @@ describe('createWorkflowController', () => {
   it('applies a completed task found during refresh before subscribing again', async () => {
     const harness = createHarness()
     const run = await startCharacterTemplate(harness)
-    vi.mocked(harness.taskApis.get).mockResolvedValueOnce({
+    vi.mocked(harness.generationApis.get).mockResolvedValueOnce({
       id: 'task-1',
+      projectId: 'project-1',
       type: 'character_template',
       status: 'completed',
       error: null,
@@ -452,16 +454,12 @@ describe('createWorkflowController', () => {
       },
     })
     const resumeSubscribe = vi.fn(
-      (_projectId: string, _taskId: string, _onEvent: (event: TaskEvent) => void) => () =>
+      (_projectId: string, _taskId: string, _onEvent: (event: GenerationEvent) => void) => () =>
         undefined,
     )
     const resumedController = createWorkflowController({
       store: harness.store,
-      generationApis: harness.generationApis,
-      taskApis: {
-        get: harness.taskApis.get,
-        subscribe: resumeSubscribe,
-      },
+      generationApis: { ...harness.generationApis, subscribe: resumeSubscribe },
     })
 
     const resumed = await resumedController.resume(run.id)
@@ -477,18 +475,18 @@ describe('createWorkflowController', () => {
   it('does not subscribe after interrupting while resume waits for the task query', async () => {
     const harness = createHarness()
     const run = await startCharacterTemplate(harness)
-    let resolveTask!: (task: Task) => void
-    const pendingTask = new Promise<Task>((resolve) => {
+    let resolveTask!: (task: Generation) => void
+    const pendingTask = new Promise<Generation>((resolve) => {
       resolveTask = resolve
     })
     const resumeSubscribe = vi.fn(
-      (_projectId: string, _taskId: string, _onEvent: (event: TaskEvent) => void) => () =>
+      (_projectId: string, _taskId: string, _onEvent: (event: GenerationEvent) => void) => () =>
         undefined,
     )
     const resumedController = createWorkflowController({
       store: harness.store,
-      generationApis: harness.generationApis,
-      taskApis: {
+      generationApis: {
+        ...harness.generationApis,
         get: vi.fn(() => pendingTask),
         subscribe: resumeSubscribe,
       },
@@ -498,6 +496,7 @@ describe('createWorkflowController', () => {
     resumedController.interrupt(run.id)
     resolveTask({
       id: 'task-1',
+      projectId: 'project-1',
       type: 'character_template',
       status: 'running',
       error: null,
@@ -525,7 +524,6 @@ describe('createWorkflowController', () => {
     const restoredController = createWorkflowController({
       store: harness.store,
       generationApis: harness.generationApis,
-      taskApis: harness.taskApis,
     })
 
     const restored = await restoredController.resume(run.id)
@@ -545,7 +543,7 @@ describe('createWorkflowController', () => {
     const run = await createAiRun(harness)
     const deferred = deferNextGeneration(harness)
 
-    const submission = harness.controller.nextStep(run.id)
+    const submission = harness.controller.nextStep(run.id, SPRITE_SIZE)
     await harness.controller.interrupt(run.id)
     deferred.resolve(pendingCharacterTemplateGeneration())
     await submission
@@ -603,10 +601,77 @@ describe('createWorkflowController', () => {
     unsubscribe()
   })
 
+  it('completes the active action-generation step without throwing and activates review', async () => {
+    const harness = createHarness()
+    const run = await startCharacterTemplate(harness)
+    harness.emitTask('project-1', 'task-1', {
+      taskId: 'task-1',
+      type: 'character_template',
+      status: 'completed',
+      error: null,
+      result: {
+        type: 'character_template',
+        images: [{ url: 'https://example.com/candidate.png' }],
+      },
+    })
+    const confirmed = harness.controller.confirmCandidate(
+      run.id,
+      'https://example.com/candidate.png',
+    )
+
+    expect(step(confirmed, 'template-candidate')).toMatchObject({
+      status: 'passed',
+      output: { selectedImageUrl: 'https://example.com/candidate.png' },
+    })
+    expect(step(confirmed, 'action-generation').status).toBe('active')
+
+    const result = {
+      type: 'complete_animation' as const,
+      actionType: 'idle' as const,
+      frames: [{ url: 'https://example.com/frame.png', durationMs: 125 }],
+    }
+    const completed = harness.controller.completeActionGeneration(run.id, result)
+
+    expect(step(completed, 'action-generation')).toMatchObject({
+      status: 'passed',
+      output: result,
+      error: null,
+    })
+    // 动作完成后 review 进入 active，保证刷新后 run 仍满足“恰好一个 active 步骤”的存储校验
+    expect(step(completed, 'review').status).toBe('active')
+  })
+
+  it('marks the action-generation step failed when the result carries an error', async () => {
+    const harness = createHarness()
+    const run = await startCharacterTemplate(harness)
+    harness.emitTask('project-1', 'task-1', {
+      taskId: 'task-1',
+      type: 'character_template',
+      status: 'completed',
+      error: null,
+      result: {
+        type: 'character_template',
+        images: [{ url: 'https://example.com/candidate.png' }],
+      },
+    })
+    harness.controller.confirmCandidate(run.id, 'https://example.com/candidate.png')
+
+    const failed = harness.controller.completeActionGeneration(run.id, {
+      error: '动作生成完成但未返回有效帧图片',
+    })
+
+    expect(step(failed, 'action-generation')).toMatchObject({
+      status: 'failed',
+      error: '动作生成完成但未返回有效帧图片',
+    })
+    expect(step(failed, 'review').status).toBe('locked')
+    expect(failed.status).toBe('failed')
+  })
+
   it('restarts from a passed stage as a new local revision', async () => {
     const harness = createHarness()
     const run = await createAiRun(harness)
-    await harness.controller.nextStep(run.id)
+    await harness.controller.nextStep(run.id, SPRITE_SIZE)
     const advanced = harness.controller.getWorkflow(run.id)
     if (!advanced) throw new Error('Expected the workflow to remain available')
     const original = currentRevision(advanced)

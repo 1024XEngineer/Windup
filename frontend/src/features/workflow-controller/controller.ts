@@ -1,17 +1,23 @@
 import type {
   CharacterSetupStepInput,
+  CompleteAnimationGenerationInput,
+  CompleteAnimationGenerationResult,
   GenerationApis,
-  TaskApis,
   WorkflowRun,
   WorkflowRunStore,
 } from '@/entities'
+import { createActionGenerationTask } from './action-generation-task'
 import { createCharacterTemplateTask } from './character-template-task'
 import {
   advanceCharacterSetupState,
+  approveReviewState,
+  completeActionGenerationState,
+  confirmCandidateState,
   createWorkflowRunState,
   getActiveStep,
   getCurrentRevision,
   interruptWorkflowRunState,
+  recordActionGenerationTaskState,
   restartWorkflowRunState,
   requireActiveWorkflow,
   updateCharacterSetupState,
@@ -37,8 +43,12 @@ export interface WorkflowController {
   /**
    * 推进一个步骤。当前纵切只实现角色资料到角色图生成；
    * 后续步骤进入各自实现 PR 后再扩展，不在这里伪造完成。
+   * spriteSize 为项目精灵图尺寸，角色图生成步骤需要传给后端做尺寸校验。
    */
-  nextStep(runId: WorkflowRun['id']): Promise<WorkflowRun>
+  nextStep(
+    runId: WorkflowRun['id'],
+    spriteSize?: { width: number; height: number },
+  ): Promise<WorkflowRun>
 
   /** 页面恢复时先读取任务终态；仍在运行时再恢复订阅。 */
   resume(runId: WorkflowRun['id']): Promise<WorkflowRun | null>
@@ -46,14 +56,40 @@ export interface WorkflowController {
   /** 只停止前端自动推进和任务订阅；后端当前没有取消任务能力。 */
   interrupt(runId: WorkflowRun['id']): WorkflowRun
 
+  /** 确认候选选择，推进到下一个步骤。 */
+  confirmCandidate(runId: WorkflowRun['id'], selectedImageUrl: string): WorkflowRun
+
+  /** 动作生成完成后写回结果，标记 action-generation 为 passed。 */
+  completeActionGeneration(
+    runId: WorkflowRun['id'],
+    result: CompleteAnimationGenerationResult | { error: string },
+  ): WorkflowRun
+
+  /** 提交完整动作生成，并由 Controller 统一处理订阅和刷新恢复。 */
+  startActionGeneration(
+    runId: WorkflowRun['id'],
+    input: CompleteAnimationGenerationInput,
+  ): Promise<WorkflowRun>
+
+  /** 审核通过后完成当前版本和整条运行；不在这里执行发布或下载。 */
+  approveReview(runId: WorkflowRun['id']): WorkflowRun
+
+  /** 动作生成任务提交后把任务 ID 落盘，供页面刷新后 resume 恢复轮询。 */
+  recordActionGenerationTask(runId: WorkflowRun['id'], taskId: string): WorkflowRun
+
+  /** 记录动作生成关联的角色与造型 ID，供导出到 Playtest 使用（刷新后可恢复）。 */
+  recordCharacterRefs(
+    runId: WorkflowRun['id'],
+    refs: { characterId: string; outfitId: string },
+  ): WorkflowRun
+
   /** 从当前执行线中一个已通过的节点创建新的本地 Revision。 */
   restart(runId: WorkflowRun['id'], stepId: string): WorkflowRun
 }
 
 export interface CreateWorkflowControllerOptions {
   store: WorkflowRunStore
-  generationApis: Pick<GenerationApis, 'create'>
-  taskApis: TaskApis
+  generationApis: GenerationApis
   /** 测试可注入确定性 ID；生产默认使用浏览器随机 UUID。 */
   createId?: (scope: 'run' | 'revision' | 'submission') => string
   /** 测试可注入确定性时间。 */
@@ -70,14 +106,17 @@ export interface CreateWorkflowControllerOptions {
 export function createWorkflowController({
   store,
   generationApis,
-  taskApis,
   createId = createRuntimeId,
   now = () => new Date().toISOString(),
 }: CreateWorkflowControllerOptions): WorkflowController {
   const characterTemplateTask = createCharacterTemplateTask({
     store,
     generationApis,
-    taskApis,
+    createSubmissionId: () => createId('submission'),
+  })
+  const actionGenerationTask = createActionGenerationTask({
+    store,
+    generationApis,
     createSubmissionId: () => createId('submission'),
   })
 
@@ -117,7 +156,10 @@ export function createWorkflowController({
     return save(updateCharacterSetupState(requireWorkflow(runId), input))
   }
 
-  async function nextStep(runId: WorkflowRun['id']): Promise<WorkflowRun> {
+  async function nextStep(
+    runId: WorkflowRun['id'],
+    spriteSize?: { width: number; height: number },
+  ): Promise<WorkflowRun> {
     const run = requireActiveWorkflow(requireWorkflow(runId))
     const revision = getCurrentRevision(run)
     const activeStep = getActiveStep(revision)
@@ -133,13 +175,20 @@ export function createWorkflowController({
       throw new Error(`步骤 ${activeStep.type} 尚未进入本轮实现`)
     }
 
-    const transitioned = advanceCharacterSetupState(run)
+    if (!spriteSize) throw new Error('推进角色资料步骤需要项目精灵图尺寸')
+
+    const transitioned = advanceCharacterSetupState(run, spriteSize)
     save(transitioned.run)
     return characterTemplateTask.start(runId, transitioned.target)
   }
 
   function resume(runId: WorkflowRun['id']) {
-    return characterTemplateTask.resume(runId)
+    const run = store.get(runId)
+    if (!run || run.status !== 'active') return Promise.resolve(run)
+    const step = getActiveStep(getCurrentRevision(run))
+    return step?.type === 'action-generation'
+      ? actionGenerationTask.resume(runId)
+      : characterTemplateTask.resume(runId)
   }
 
   function interrupt(runId: WorkflowRun['id']): WorkflowRun {
@@ -147,13 +196,69 @@ export function createWorkflowController({
     if (run.status !== 'active') return run
 
     characterTemplateTask.stop(runId)
+    actionGenerationTask.stop(runId)
     const latest = requireWorkflow(runId)
     if (latest.status !== 'active') return latest
     return save(interruptWorkflowRunState(latest))
   }
 
+  function confirmCandidate(runId: WorkflowRun['id'], selectedImageUrl: string): WorkflowRun {
+    return save(confirmCandidateState(requireWorkflow(runId), selectedImageUrl))
+  }
+
+  function completeActionGeneration(
+    runId: WorkflowRun['id'],
+    result: CompleteAnimationGenerationResult | { error: string },
+  ): WorkflowRun {
+    const run = requireWorkflow(runId)
+    if (run.status !== 'active') {
+      console.warn('[completeActionGen] run not active:', run.status)
+      return run
+    }
+    const revision = getCurrentRevision(run)
+    const step = revision.steps.find((s) => s.type === 'action-generation')
+    if (!step || step.status !== 'active') {
+      console.warn('[completeActionGen] step not active:', step?.type, step?.status)
+      return run
+    }
+    return save(completeActionGenerationState(run, result))
+  }
+
+  function startActionGeneration(
+    runId: WorkflowRun['id'],
+    input: CompleteAnimationGenerationInput,
+  ) {
+    return actionGenerationTask.start(runId, input)
+  }
+
+  function approveReview(runId: WorkflowRun['id']): WorkflowRun {
+    return save(approveReviewState(requireWorkflow(runId)))
+  }
+
+  function recordActionGenerationTask(runId: WorkflowRun['id'], taskId: string): WorkflowRun {
+    const run = requireWorkflow(runId)
+    if (run.status !== 'active') {
+      console.warn('[recordActionTask] run not active:', run.status)
+      return run
+    }
+    return save(recordActionGenerationTaskState(run, taskId))
+  }
+
+  function recordCharacterRefs(
+    runId: WorkflowRun['id'],
+    refs: { characterId: string; outfitId: string },
+  ): WorkflowRun {
+    const run = requireWorkflow(runId)
+    if (run.status !== 'active') {
+      console.warn('[recordCharacterRefs] run not active:', run.status)
+      return run
+    }
+    return save({ ...run, characterId: refs.characterId, outfitId: refs.outfitId })
+  }
+
   function restart(runId: WorkflowRun['id'], stepId: string): WorkflowRun {
     characterTemplateTask.stop(runId)
+    actionGenerationTask.stop(runId)
     return save(
       restartWorkflowRunState(requireWorkflow(runId), stepId, {
         revisionId: createId('revision'),
@@ -168,6 +273,12 @@ export function createWorkflowController({
     subscribe,
     updateCharacterSetup,
     nextStep,
+    confirmCandidate,
+    completeActionGeneration,
+    startActionGeneration,
+    approveReview,
+    recordActionGenerationTask,
+    recordCharacterRefs,
     restart,
     resume,
     interrupt,

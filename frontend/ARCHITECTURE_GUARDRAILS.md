@@ -1,52 +1,41 @@
 # Frontend Architecture Guardrails
 
-This document governs frontend changes as the product workflow evolves. It takes precedence over early skeleton references to an asset library or reusable assets.
-
-## Module Direction
+## Code Layers
 
 ```text
-app -> pages -> features -> workflow-controller / entities -> shared
+app -> pages -> features -> entities -> shared
+                  |
+                  +-> workflow-controller -> entities
 ```
 
-Dependencies move only to the right. `workflow-controller` may use entity contracts; entities do not use the controller. `shared` is business-agnostic and imports none of the other layers. Use each module's public entrypoint rather than a deep implementation import.
+- `app` 只组装真实 API、共享 Controller、路由和全局外壳。
+- `pages` 负责一个路由场景，不定义后端 DTO 或第二套业务状态。
+- `features` 负责可复用的用户行为，例如审核、发布和下载包。
+- `features` 不依赖 `pages` 内部类型；需要共享的只读模型由 Feature 自己声明结构边界。
+- `workflow-controller` 是创作运行、步骤推进、Revision 和异步结果写回的唯一入口。
+- `entities` 保存领域类型、实体 API 契约及其 DTO 转换。
+- `shared` 只保存通用 HTTP、分页、UI、Hook 和工具，不能理解 Windup 业务词汇。
 
-- `app` starts the application and owns routing, global layout, and app-wide providers.
-- `pages` translate route state into a product scene and compose features. They do not implement domain transitions or call transport code directly.
-- `features` own user-facing capabilities and may prepare controller inputs or call entity APIs. They do not own a second workflow state machine.
-- `workflow-controller` owns `WorkflowRun` progression, revision lineage, restart, interruption, and application of async results.
-- `entities` own business types and stable frontend API contracts. `shared` contains only generic UI, hooks, utilities, and validated runtime configuration.
+## State Ownership
+
+`WorkflowRun` 和 `WorkflowStep` 是 Quick Start 与 Workflow Editor 共用的唯一流程状态。画布节点只由步骤投影而来；连线和 URL 中的 `stepId` 只控制显示与聚焦，不能决定业务是否可推进。刷新恢复时，角色图与完整动作都通过同一 `GenerationApis.get/subscribe` 继续查询；完整动作结果必须保留全部帧，不能降级成首帧。
+
+## Product Boundaries
+
+- `AssetLibrary` 展示后端已经保存的 `Character -> Outfit -> Action -> Frame` 资产树。
+- `History` 展示 `WorkflowRun` 的执行与版本记录。两者不能互相改名或合并。
+- `Review` 在创作流程中做通过或回推决定，会改变 WorkflowRun。
+- `Playtest` 只检查已发布资产，问题记录不会反向修改工作流或角色数据。
+- `Publish` 把审核通过的结果写入资产并进入 Playtest。
+- `ExportPackage` 只在 Playtest 中下载 Sprite Sheet 和清单文件，不等于发布。
 
 ## Backend Boundary
 
-Backend URLs, DTO envelopes, media handling, authentication, events, and error formats remain unstable until explicitly frozen. Keep their translation behind an entity API adapter:
+页面和 Feature 不直接 `fetch`。通用传输逻辑在 `shared/api`；项目、角色、生成和媒体 DTO 分别在对应 `entities/*/api.ts` 映射。后端没有的能力不得用本地假成功、假 ID 或“跳过步骤”代替。
 
-- Pages, features, and the controller depend on frontend entity contracts, never backend DTOs or direct `fetch` calls.
-- Adapters validate and map untrusted transport data to frontend types. `unknown` results must be narrowed before business use.
-- Do not promote a temporary endpoint shape into shared types, page props, or workflow rules. Change the adapter contract deliberately, with its callers and tests, when the backend contract is frozen.
+## Review Checklist
 
-## Workflow Invariants
-
-`WorkflowRun` is a project-owned record shared by Quick Start and Workflow Editor. A run has one current revision; historical revisions are read-only. Async work is associated with the revision that started it, and a result for an obsolete revision must be ignored.
-
-The product currently presents five ordered workflow stages. Treat that order as per-run configuration, not a permanently hard-coded stage count or array index: future products may configure a different sequence. Supporting model step names may be more granular, but the visible stage order must remain explicit.
-
-Restarting from a selected stage creates a new descendant revision. The new lineage preserves inputs through that selected stage only; it invalidates or removes all downstream execution, outputs, and completion evidence. The source revision stays intact for history, but its downstream results are not valid inputs to the new lineage.
-
-Only successful system QC marks a version complete. Playtest is downstream, read-only verification and cannot change a run or revision to completed. Export is a separate post-completion action and separately records that a completed version was exported; it does not redefine completion.
-
-## Product Surface Boundaries
-
-- **Quick Start** accepts intent and references, drives the same `WorkflowRun` automatically, and hides stages, revisions, restart mechanics, and other workflow internals.
-- **Workflow Editor** exposes the configured stage sequence and is the only surface for deliberate step-level editing, revision history, and restart.
-- **Playtest** consumes a selected completed version as a read-only inspection target. It may save an independent inspection conclusion, but never changes characters, frames, workflow data, QC, completion, or export state.
-
-Completed versions are project-scoped history, retained for traceability and selectable for import into Playtest. They are not a reusable asset library: do not add cross-project browsing, copying, sharing, or reuse contracts/UI without an explicit product decision.
-
-## Pre-change Review
-
-- Is the code in the lowest layer that can own it, with dependencies following the direction above?
-- Does every backend interaction remain behind a typed entity adapter rather than leaking provisional transport data?
-- Does workflow behavior preserve one current revision, ignore stale async results, and invalidate downstream work after restart?
-- Does completion come only from system QC, with Playtest and export kept separate?
-- Does the UI preserve Quick Start, Workflow Editor, and Playtest boundaries and keep completed-version history inside its project?
-- Do focused tests cover the changed contract, especially restart lineage, stale results, status transitions, and read-only Playtest behavior?
+- 是否复用了同一个 WorkflowController，而非在页面创建状态机？
+- 是否区分资产库、历史、审核、预览、发布和下载？
+- 是否由实体 API 隔离了后端字段与前端领域类型？
+- 是否覆盖失败、刷新恢复、重复提交和终态转换？

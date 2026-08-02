@@ -8,6 +8,7 @@
 
 ## 现有内容
 
+- `api/` —— 通用 HTTP 请求、信封解包与传输错误；不认识任何业务 DTO。
 - `pagination/` —— 与传输协议无关的分页请求与结果形状。
 
 ## 后续允许放入
@@ -21,7 +22,7 @@
 
 ## 不允许放入
 
-- Project、Character、Generation、Task、WorkflowRun 等业务数据
+- Project、Character、Generation、WorkflowRun 等业务数据
 - `ProjectApis`、`CharacterApis` 这类业务接口集合
 - 流程的推进、重启、中断和 Revision 规则
 - 为开发与生产各维护一套实现的切换机制

@@ -1,14 +1,24 @@
-import type { GenerationApis, Project, ProjectApis, TaskApis, WorkflowRun } from '@/entities'
+import type {
+  CharacterApis,
+  GenerationApis,
+  MediaReference,
+  Project,
+  ProjectApis,
+  WorkflowRun,
+} from '@/entities'
 import { createWorkflowRunStore, type WorkflowRunStore } from '@/entities/workflow-run/store'
 import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
+import { publishWorkflowRun } from '@/features/publish'
+import { submitReview } from '@/features/review'
 
 /**
  * Quick Start 创建项目所需的页面级边界。
  *
- * 当前项目规划规则和 ProjectApis 实现都未落地，所以页面不能自己猜视角、方向、
- * 尺寸或伪造 projectId。后续实现负责把提示词整理成项目参数并返回真实项目。
+ * 页面不直接拼接后端字段；prepareProject 负责把提示词整理成真实项目并返回项目约束。
  */
-export type PrepareQuickStartProject = (prompt: string) => Promise<Pick<Project, 'id'>>
+export type PrepareQuickStartProject = (
+  prompt: string,
+) => Promise<Pick<Project, 'id' | 'spriteSize'>>
 
 export interface QuickStartService {
   /** 为 null 时可以创建；非 null 时页面必须明确阻止提交，不能回退到假数据。 */
@@ -18,11 +28,34 @@ export interface QuickStartService {
   subscribe(runId: WorkflowRun['id'], listener: (run: WorkflowRun) => void): () => void
   resume(runId: WorkflowRun['id']): Promise<WorkflowRun | null>
   interrupt(runId: WorkflowRun['id']): WorkflowRun | null
+  /**
+   * 确认候选选择并触发动作生成。
+   * actionDescription 可选：提供时生成该描述的自定义动作（如"在画板上画画"），
+   * 缺省生成 idle 待机动作。
+   */
+  confirmCandidate(
+    runId: WorkflowRun['id'],
+    selectedImageUrl: string,
+    actionDescription?: string,
+  ): Promise<WorkflowRun>
+  /** 审核通过后结束运行；进入预览台属于随后发生的发布行为。 */
+  approveReview(runId: WorkflowRun['id']): Promise<WorkflowRun>
+  /** 获取导出到 Playtest 所需的角色和造型 ID。 */
+  getCharacterInfo(runId: WorkflowRun['id']): { characterId: string; outfitId: string } | null
+  /**
+   * 导出前兜底恢复：内存 Map 与持久化引用都缺失时（旧运行记录），
+   * 按项目 ID 从后端反查最近创建的角色与造型。
+   */
+  resolveCharacterInfo(
+    runId: WorkflowRun['id'],
+  ): Promise<{ characterId: string; outfitId: string } | null>
 }
 
 export interface CreateQuickStartServiceOptions {
   controller: WorkflowController
   prepareProject: PrepareQuickStartProject
+  characterApis?: CharacterApis
+  generationApis?: GenerationApis
 }
 
 /**
@@ -32,7 +65,25 @@ export interface CreateQuickStartServiceOptions {
 export function createQuickStartService({
   controller,
   prepareProject,
+  characterApis,
+  generationApis,
 }: CreateQuickStartServiceOptions): QuickStartService {
+  /** 记录每个 runId 对应的角色和造型 ID，供导出到 Playtest 使用。 */
+  const characterMap = new Map<string, { characterId: string; outfitId: string }>()
+
+  function readCharacterInfo(
+    runId: WorkflowRun['id'],
+  ): { characterId: string; outfitId: string } | null {
+    const fromMap = characterMap.get(runId)
+    if (fromMap) return fromMap
+    // 刷新后内存 Map 为空，从持久化的 run 恢复角色与造型引用
+    const run = controller.getWorkflow(runId)
+    if (run?.characterId && run?.outfitId) {
+      return { characterId: run.characterId, outfitId: run.outfitId }
+    }
+    return null
+  }
+
   return {
     unavailableReason: null,
 
@@ -52,10 +103,11 @@ export function createQuickStartService({
       })
 
       try {
-        return await controller.nextStep(created.id)
+        return await controller.nextStep(created.id, {
+          width: project.spriteSize.width,
+          height: project.spriteSize.height,
+        })
       } catch (cause) {
-        // Controller 会把生成提交失败写回同一条 Run。页面仍进入这条 Run 展示真实失败，
-        // 而不是丢失 runId 后重新创建第二条记录。
         const stored = controller.getWorkflow(created.id)
         if (stored?.status === 'failed') return stored
         throw cause
@@ -78,13 +130,144 @@ export function createQuickStartService({
       const run = controller.getWorkflow(runId)
       return run ? controller.interrupt(runId) : null
     },
+
+    async confirmCandidate(runId, selectedImageUrl, actionDescription) {
+      const normalizedDescription = actionDescription?.trim()
+      if (characterApis && generationApis) {
+        return triggerActionGeneration(
+          runId,
+          selectedImageUrl,
+          normalizedDescription,
+          characterApis,
+          controller,
+          characterMap,
+        )
+      } else {
+        throw new Error('角色或生成服务尚未配置，不能继续动作生成')
+      }
+    },
+
+    async approveReview(runId) {
+      if (!characterApis) throw new Error('角色服务尚未配置，不能发布资产')
+      const run = controller.getWorkflow(runId)
+      if (!run) throw new Error(`WorkflowRun 不存在：${runId}`)
+      const revision = run.revisions.find((item) => item.id === run.currentRevisionId)
+      const reviewStep = revision?.steps.find((item) => item.type === 'review')
+      const approved =
+        run.status === 'active' && reviewStep?.status === 'active'
+          ? submitReview(controller, { runId, decision: { kind: 'approve' } })
+          : run.status === 'completed' && reviewStep?.status === 'passed'
+            ? run
+            : null
+      if (!approved) throw new Error('审核步骤尚未就绪，不能发布资产')
+      await publishWorkflowRun(characterApis, approved)
+      return approved
+    },
+
+    getCharacterInfo(runId) {
+      return readCharacterInfo(runId)
+    },
+
+    async resolveCharacterInfo(runId) {
+      const cached = readCharacterInfo(runId)
+      if (cached) return cached
+      const run = controller.getWorkflow(runId)
+      if (!run?.projectId || !characterApis) return null
+      // 旧运行记录没有持久化角色引用：按项目反查，quick-start 每 run 只创建一个角色
+      try {
+        const characters = await characterApis.listByProject(run.projectId)
+        const character = characters[characters.length - 1]
+        const outfitId = character?.outfits[0]?.id
+        if (!character || !outfitId) return null
+        return { characterId: character.id, outfitId }
+      } catch (err) {
+        console.warn('[resolve-character-info] backend lookup failed:', err)
+        return null
+      }
+    },
+  }
+}
+
+/**
+ * 确认候选后自动触发动作生成：创建角色 → 提交动作生成任务 → 轮询结果写回 WorkflowRun。
+ * actionDescription 提供时生成自定义动作（如"在画板上画画"），缺省生成 idle 待机。
+ */
+async function triggerActionGeneration(
+  runId: string,
+  templateImageUrl: string,
+  actionDescription: string | undefined,
+  characterApis: CharacterApis,
+  controller: WorkflowController,
+  characterMap: Map<string, { characterId: string; outfitId: string }>,
+) {
+  try {
+    const run = controller.getWorkflow(runId)
+    if (!run) throw new Error(`WorkflowRun 不存在：${runId}`)
+    // 1. 创建角色，母版图作为参考
+    console.debug('[action-gen] creating character for run', runId)
+    let character = await characterApis.create({
+      projectId: run.projectId,
+      description: 'Quick Start auto-created character',
+      referenceImageUrl: templateImageUrl,
+    })
+
+    // 后端默认不创建造型；补充一个默认造型，确保动作写回和 Playtest 加载有效
+    if (character.outfits.length === 0) {
+      character = await characterApis.update({
+        ...character,
+        outfits: [
+          {
+            id: `outfit-${character.id}-default`,
+            characterId: character.id,
+            name: '默认造型',
+            candidateCharacterTemplates: [],
+            characterTemplateUrl: templateImageUrl,
+            baseFrames: [],
+            actions: [],
+          },
+        ],
+      })
+    }
+
+    const outfitId = character.outfits[0]?.id ?? ''
+    const updated = controller.confirmCandidate(runId, templateImageUrl)
+    controller.recordCharacterRefs(runId, { characterId: character.id, outfitId })
+    characterMap.set(runId, { characterId: character.id, outfitId })
+    console.debug('[action-gen] character created:', character.id, 'outfit:', outfitId)
+
+    // 2. 提交完整动画生成（16 帧，母版图作为参考）。
+    //    提供动作描述时走 custom 路线（提示词驱动的自定义动作）；缺省 idle 待机。
+    const isCustom = Boolean(actionDescription)
+    return controller.startActionGeneration(runId, {
+      type: 'complete_animation',
+      projectId: updated.projectId,
+      characterId: character.id,
+      outfitId,
+      actionType: isCustom ? 'custom' : 'idle',
+      firstFrameUrl: templateImageUrl,
+      prompt: isCustom ? (actionDescription ?? null) : null,
+      referenceMedia: [templateImageUrl as MediaReference],
+    })
+  } catch (err) {
+    console.error('[action-gen] unexpected error:', err)
+    const latest = controller.getWorkflow(runId)
+    if (latest?.status === 'active') {
+      const revision = latest.revisions.find((item) => item.id === latest.currentRevisionId)
+      const step = revision?.steps.find((item) => item.type === 'action-generation')
+      if (step?.status === 'active' && !step.taskId && !step.submissionId) {
+        const message =
+          err instanceof Error && err.message.trim() ? err.message.trim() : '动作生成失败'
+        controller.completeActionGeneration(runId, { error: message })
+      }
+    }
+    throw err
   }
 }
 
 const UNAVAILABLE_REASON = '项目与生成服务尚未配置，暂时无法开始新的创作'
 
 /**
- * 当前生产组合还没有 Project / Generation / Task 实现。这里故意不可用，
+ * 当前生产组合还没有 Project / Generation 实现时，这里会明确不可用，
  * 让未配置环境停在入口并说明原因，不能静默切换到 Mock 或伪造成功。
  */
 export const unavailableQuickStartService: QuickStartService = {
@@ -109,53 +292,72 @@ export const unavailableQuickStartService: QuickStartService = {
   interrupt() {
     return null
   },
+
+  async confirmCandidate() {
+    throw new Error(UNAVAILABLE_REASON)
+  },
+
+  approveReview() {
+    throw new Error(UNAVAILABLE_REASON)
+  },
+
+  getCharacterInfo() {
+    return null
+  },
+
+  async resolveCharacterInfo() {
+    return null
+  },
 }
 
 /**
  * 自动创建项目的 prepareProject 实现。
  *
- * 使用默认参数（侧视、单方向、64x64），用户无需手动设置。
- * 项目名取提示词前 20 字符。
+ * 使用默认参数（侧视、单方向、256x256）。256 保证生成帧有足够细节，
+ * 预览台放大后仍清晰；项目名取提示词前 16 字符 + 完整时间戳 + 4 位随机串，
+ * 避免同一提示词重复提交时名称冲突。
  */
 export function createAutoPrepareProject(projectApis: ProjectApis): PrepareQuickStartProject {
   return async (prompt: string) => {
-    const name = prompt.length > 20 ? prompt.slice(0, 20) + '…' : prompt
+    const base = prompt.length > 16 ? prompt.slice(0, 16) + '…' : prompt
+    const ts = Date.now().toString(36)
+    const rand = Math.random().toString(36).slice(2, 6)
+    const name = `${base}-${ts}-${rand}`
     const project = await projectApis.create({
       name,
       perspective: 'side',
       directionalMovement: 'single',
-      spriteSize: { width: 64, height: 64 },
+      spriteSize: { width: 256, height: 256 },
     })
-    return { id: project.id }
+    return { id: project.id, spriteSize: project.spriteSize }
   }
 }
 
 export interface CreateRealQuickStartServiceOptions {
   projectApis: ProjectApis
+  characterApis: CharacterApis
   generationApis: GenerationApis
-  taskApis: TaskApis
   store?: WorkflowRunStore
 }
 
 /**
  * 创建真实的 QuickStartService。
  *
- * 将 Project、Generation、Task 适配器与 WorkflowController 组合成完整的服务。
+ * 将 Project、Character、Generation 适配器与 WorkflowController 组合成完整的服务。
  * 用于生产环境，调用真实后端 API。
  */
 export function createRealQuickStartService({
   projectApis,
+  characterApis,
   generationApis,
-  taskApis,
   store,
 }: CreateRealQuickStartServiceOptions): QuickStartService {
   const workflowStore = store ?? createWorkflowRunStore()
   const controller = createWorkflowController({
     store: workflowStore,
     generationApis,
-    taskApis,
   })
   const prepareProject = createAutoPrepareProject(projectApis)
 
-  return createQuickStartService({ controller, prepareProject })
+  return createQuickStartService({ controller, prepareProject, characterApis, generationApis })
 }

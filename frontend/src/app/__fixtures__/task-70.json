@@ -1,0 +1,29 @@
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "id": 70,
+    "user_id": 1,
+    "project_id": 37,
+    "task_type": "character_image",
+    "status": "completed",
+    "input_payload": {
+      "reference_image_url": null,
+      "prompt": "会画画的猪八戒，侧视像素风，手持画笔，在画板前",
+      "negative_prompt": "",
+      "width": 256,
+      "height": 256,
+      "num_images": 4
+    },
+    "result": {
+      "type": "character_image",
+      "image_urls": [
+        "http://tio55tpsq.hd-bkt.clouddn.com/media/reference-image/3f8ce3bdb9664258b2e5dbc54c16589e.png",
+        "http://tio55tpsq.hd-bkt.clouddn.com/media/reference-image/a5039393515b4001a04620cc99faaa2d.png",
+        "http://tio55tpsq.hd-bkt.clouddn.com/media/reference-image/429643d53e324aa5886eb42c908c028f.png",
+        "http://tio55tpsq.hd-bkt.clouddn.com/media/reference-image/3d1c26ed7d634ef3b36ca5d6ef7b6b1c.png"
+      ]
+    },
+    "error_message": null
+  }
+}

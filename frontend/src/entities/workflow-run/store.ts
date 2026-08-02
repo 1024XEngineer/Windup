@@ -1,5 +1,8 @@
 import type { WorkflowRun } from './index'
-import { parseCharacterTemplateGenerationResult } from '../generation'
+import {
+  parseCharacterTemplateGenerationResult,
+  parseCompleteAnimationGenerationResult,
+} from '../generation'
 import {
   EXPORT_STATUSES,
   GENERATION_STATUSES,
@@ -12,9 +15,10 @@ import {
 } from './constants'
 
 export const WORKFLOW_RUN_STORAGE_KEY = 'windup.workflow-runs'
-export const WORKFLOW_RUN_STORAGE_VERSION = 3
+export const WORKFLOW_RUN_STORAGE_VERSION = 4
 
 type WorkflowRunListener = (run: WorkflowRun) => void
+type WorkflowRunListListener = (runs: WorkflowRun[]) => void
 
 interface WorkflowRunStorage {
   getItem(key: string): string | null
@@ -23,8 +27,10 @@ interface WorkflowRunStorage {
 
 export interface WorkflowRunStore {
   get(runId: WorkflowRun['id']): WorkflowRun | null
+  list(): WorkflowRun[]
   save(run: WorkflowRun): void
   subscribe(runId: WorkflowRun['id'], listener: WorkflowRunListener): () => void
+  subscribeAll(listener: WorkflowRunListListener): () => void
 }
 
 export interface CreateWorkflowRunStoreOptions {
@@ -96,6 +102,20 @@ function isWorkflowStep(value: unknown): boolean {
           typeof value.input.prompt === 'string' &&
           isStringArray(value.input.referenceMedia))) &&
       (value.output === null || parseCharacterTemplateGenerationResult(value.output) !== null)
+    )
+  }
+  if (value.type === 'action-generation') {
+    return (
+      (value.input === null ||
+        (isRecord(value.input) &&
+          value.input.type === 'complete_animation' &&
+          typeof value.input.projectId === 'string' &&
+          typeof value.input.characterId === 'string' &&
+          typeof value.input.outfitId === 'string' &&
+          typeof value.input.firstFrameUrl === 'string' &&
+          typeof value.input.actionType === 'string' &&
+          isStringArray(value.input.referenceMedia))) &&
+      (value.output === null || parseCompleteAnimationGenerationResult(value.output) !== null)
     )
   }
   return true
@@ -171,7 +191,12 @@ function isWorkflowRun(value: unknown): value is WorkflowRun {
         const submissionId = step.submissionId
         if (taskId !== null && submissionId !== null) return false
         if (taskId === null && submissionId === null) return true
-        return step.type === 'character-template' && step.status === 'active'
+        // 只有 character-template 与 action-generation 允许在 active 步骤上
+        // 持有任务 ID（角色图 / 动作生成任务，刷新后可恢复轮询）
+        return (
+          (step.type === 'character-template' || step.type === 'action-generation') &&
+          step.status === 'active'
+        )
       }),
   )
 }
@@ -229,11 +254,44 @@ function migrateVersionOneRun(value: unknown): WorkflowRun | null {
   }
 
   const migrated = { ...value, revisions }
-  return isWorkflowRun(migrated) ? migrated : null
+  return migrateVersionThreeRun(migrated)
 }
 
 function migrateVersionTwoRun(value: unknown): WorkflowRun | null {
-  return isWorkflowRun(value) ? value : null
+  return migrateVersionThreeRun(value)
+}
+
+function migrateVersionThreeRun(value: unknown): WorkflowRun | null {
+  if (!isRecord(value) || !Array.isArray(value.revisions)) return null
+  const revisions = value.revisions.map((revision) => {
+    if (!isRecord(revision) || !Array.isArray(revision.steps)) return revision
+    return {
+      ...revision,
+      steps: revision.steps.map((step) => {
+        if (!isRecord(step) || step.type !== 'action-generation' || !isRecord(step.output)) {
+          return step
+        }
+        if (step.output.type !== 'first_frame' || !isRecord(step.output.image)) return step
+        const url = step.output.image.url
+        if (typeof url !== 'string' || !url) return step
+        const actionType =
+          isRecord(step.input) &&
+          ['walk', 'idle', 'attack', 'jump', 'custom'].includes(String(step.input.actionType))
+            ? step.input.actionType
+            : 'custom'
+        return {
+          ...step,
+          output: {
+            type: 'complete_animation',
+            actionType,
+            frames: [{ url, durationMs: null }],
+          },
+        }
+      }),
+    }
+  })
+  const migrated = { ...value, revisions }
+  return isWorkflowRun(migrated) ? migrated : null
 }
 
 function migrateVersionOneRevision(value: unknown): Record<string, unknown> | null {
@@ -339,6 +397,13 @@ function readPersistedRuns(storage: WorkflowRunStorage | null): WorkflowRun[] {
         .map((run) => structuredClone(run))
     }
 
+    if (persisted.version === 3) {
+      return persisted.runs
+        .map(migrateVersionThreeRun)
+        .filter((run): run is WorkflowRun => run !== null)
+        .map((run) => structuredClone(run))
+    }
+
     return []
   } catch {
     return []
@@ -365,11 +430,16 @@ export function createWorkflowRunStore(
   const storage = options.storage === undefined ? resolveBrowserStorage() : options.storage
   const runs = new Map(readPersistedRuns(storage).map((run) => [run.id, run] as const))
   const listeners = new Map<WorkflowRun['id'], Set<WorkflowRunListener>>()
+  const listListeners = new Set<WorkflowRunListListener>()
 
   return {
     get(runId) {
       const run = runs.get(runId)
       return run === undefined ? null : structuredClone(run)
+    },
+
+    list() {
+      return [...runs.values()].map((run) => structuredClone(run))
     },
 
     save(run) {
@@ -394,6 +464,14 @@ export function createWorkflowRunStore(
           // 订阅方渲染失败不能撤销已经保存的运行状态，也不能阻断其他订阅方。
         }
       }
+      const snapshot = [...runs.values()].map((run) => structuredClone(run))
+      for (const listener of listListeners) {
+        try {
+          listener(snapshot.map((run) => structuredClone(run)))
+        } catch {
+          // 一个列表订阅方失败不能阻断其他页面刷新。
+        }
+      }
     },
 
     subscribe(runId, listener) {
@@ -405,6 +483,11 @@ export function createWorkflowRunStore(
         runListeners.delete(listener)
         if (runListeners.size === 0) listeners.delete(runId)
       }
+    },
+
+    subscribeAll(listener) {
+      listListeners.add(listener)
+      return () => listListeners.delete(listener)
     },
   }
 }

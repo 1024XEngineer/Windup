@@ -1,9 +1,8 @@
 import {
   parseCharacterTemplateGenerationResult,
+  type Generation,
   type GenerationApis,
-  type Task,
-  type TaskApis,
-  type TaskEvent,
+  type GenerationEvent,
   type WorkflowRevision,
   type WorkflowRun,
   type WorkflowRunStore,
@@ -40,21 +39,19 @@ export interface CharacterTemplateTask {
 
 interface CreateCharacterTemplateTaskOptions {
   store: WorkflowRunStore
-  generationApis: Pick<GenerationApis, 'create'>
-  taskApis: TaskApis
+  generationApis: GenerationApis
   createSubmissionId: () => string
 }
 
 /**
  * 角色图异步任务的生命周期。
  *
- * 它只处理当前角色图步骤与后端 Task 的关联，不决定整个工作流下一步走什么。
+ * 它只处理当前角色图步骤与后端 Generation 的关联，不决定整个工作流下一步走什么。
  * submissions 与 subscriptions 属于实例锁；生产环境必须复用同一个实例。
  */
 export function createCharacterTemplateTask({
   store,
   generationApis,
-  taskApis,
   createSubmissionId,
 }: CreateCharacterTemplateTaskOptions): CharacterTemplateTask {
   const submissions = new Map<string, Promise<WorkflowRun>>()
@@ -155,8 +152,18 @@ export function createCharacterTemplateTask({
       ) {
         return latest
       }
-      if (generation.type !== 'character_template' || generation.projectId !== latest.projectId) {
-        throw new Error('生成任务返回的类型或项目与当前 WorkflowRun 不匹配')
+      const typeOk =
+        generation.type === 'character_template' || generation.type === 'character_image'
+      // project_id 有一方为 null/undefined 时容忍（后端可能未返回）；双方都有值时必须一致
+      const projectOk =
+        generation.projectId == null ||
+        latest.projectId == null ||
+        String(generation.projectId) === String(latest.projectId)
+      if (!typeOk || !projectOk) {
+        throw new Error(
+          `生成任务返回的类型或项目与当前 WorkflowRun 不匹配 ` +
+            `(type: ${generation.type}, project: ${generation.projectId} vs ${latest.projectId})`,
+        )
       }
 
       const withTask = replaceWorkflowStep(latest, target.revisionId, target.stepId, (current) => {
@@ -202,8 +209,8 @@ export function createCharacterTemplateTask({
 
     subscriptions.set(key, { runId: run.id, stop: () => undefined })
     try {
-      const stop = taskApis.subscribe(run.projectId, taskId, (event) => {
-        handleTaskEvent(run.id, { revisionId, stepId }, taskId, event)
+      const stop = generationApis.subscribe(run.projectId, taskId, (event) => {
+        handleGenerationEvent(run.id, { revisionId, stepId }, taskId, event)
       })
       const active = subscriptions.get(key)
       if (active) subscriptions.set(key, { ...active, stop })
@@ -214,11 +221,11 @@ export function createCharacterTemplateTask({
     }
   }
 
-  function handleTaskEvent(
+  function handleGenerationEvent(
     runId: WorkflowRun['id'],
     target: WorkflowStepTarget,
     taskId: string,
-    event: TaskEvent,
+    event: GenerationEvent,
   ) {
     if (event.taskId !== taskId) return
     if (event.status === 'pending' || event.status === 'running') return
@@ -260,7 +267,7 @@ export function createCharacterTemplateTask({
       )
     }
     if (activeStep.taskId) {
-      const task = await taskApis.get(run.projectId, activeStep.taskId)
+      const task = await generationApis.get(run.projectId, activeStep.taskId)
       const latest = getWorkflow(run.id)
       if (!latest || latest.status !== 'active' || latest.currentRevisionId !== revision.id) {
         return latest
@@ -289,7 +296,7 @@ export function createCharacterTemplateTask({
       if (task.status === 'pending' || task.status === 'running') {
         ensureTaskSubscription(latest, latestRevision.id, latestStep.id, latestStep.taskId)
       } else {
-        handleTaskEvent(
+        handleGenerationEvent(
           latest.id,
           { revisionId: latestRevision.id, stepId: latestStep.id },
           latestStep.taskId,
@@ -425,7 +432,7 @@ export function createCharacterTemplateTask({
   return { start, resume, stop }
 }
 
-function taskEvent(task: Task): TaskEvent {
+function taskEvent(task: Generation): GenerationEvent {
   return {
     taskId: task.id,
     type: task.type,
