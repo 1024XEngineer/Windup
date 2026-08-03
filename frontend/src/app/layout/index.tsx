@@ -23,7 +23,8 @@ export function AppShell({ children }: AppShellProps) {
           </Link>
         </div>
       </nav>
-      <main className="mx-auto max-w-5xl px-6 py-8">{children}</main>
+      {/* 外壳只管顶栏。页面自己决定宽度与留白，不在这里统一夹到屏幕中间。 */}
+      <main className="w-full">{children}</main>
     </div>
   )
 }
