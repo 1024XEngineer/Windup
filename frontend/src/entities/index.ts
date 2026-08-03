@@ -56,8 +56,9 @@ export type {
 export type { MediaReference } from './media'
 
 /* 工作流 —— 节点与运行状态都由前端管理 */
-export { WORKFLOW_STEP_ORDER } from './workflow-run'
+export { createWorkflowRunStore, WORKFLOW_STEP_ORDER } from './workflow-run'
 export type {
+  CreateWorkflowRunStoreOptions,
   CreateWorkflowRunInput,
   ExportStatus,
   GenerationStatus,
@@ -68,6 +69,7 @@ export type {
   WorkflowRevision,
   WorkflowRevisionStatus,
   WorkflowRun,
+  WorkflowRunStore,
   WorkflowRunPurpose,
   WorkflowRunStatus,
 } from './workflow-run'
