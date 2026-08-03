@@ -1,6 +1,6 @@
 # Windup 前端架构
 
-本文记录当前前端的模块划分与依赖规则。功能实现按可独立审核的模块逐步提交。
+本文记录当前前端的模块划分与依赖规则。2026-07-30 按当日评审意见重写：本阶段只提交模块边界与接口，实现进后续 PR。
 
 ---
 
@@ -84,15 +84,15 @@ Controller 围绕同一份 WorkflowRun 提供推进、更新、重启和中断�
 
 ---
 
-## 5. 当前实现范围
+## 5. 本次不包含
 
-`entities/workflow-run` 已实现版本化本地 Store：保存当前运行、刷新恢复、按运行订阅，
-并保留 `WorkflowRevision` 版本链供 History 页面读取。从历史步骤重开时追加 Revision，
-不能覆盖旧版本。
+- 任何实现代码（真实请求、假数据、组件内部逻辑）
+- 测试文件
+- 图片上传模块（体量太小，本次不单独体现）
+- 穿戴道具相关（产品侧未设计）
+- 第三方登录
 
-本模块 PR 不包含 WorkflowController、Quick Start、Workflow Editor、History 页面或
-Asset Library 页面。History 读取 WorkflowRun 的过程版本；Asset Library 读取已确认的
-Character 资产树，二者不能合并为同一概念。
+页面当前是占位外壳，只声明路由与模块边界。
 
 ---
 
