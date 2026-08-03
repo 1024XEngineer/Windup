@@ -1,0 +1,424 @@
+/*
+ * 画布样式。取 asset-lab live demo 的近单色底：纸白工作区、墨黑文字、极浅描边，
+ * 不引入第二种色相；状态只用深浅区分，不用红绿。
+ */
+
+.canvas-page {
+  --ink: #1d1d1f;
+  --muted: #737378;
+  --paper: #dfe3df;
+  --line: rgba(31, 35, 41, 0.14);
+  --shadow: 0 14px 38px rgba(29, 29, 31, 0.08);
+
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* ---- 顶栏 ---- */
+
+.canvas-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(223, 227, 223, 0.92);
+  backdrop-filter: blur(8px);
+}
+
+.canvas-bar__left {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.35;
+}
+
+.canvas-bar__left b {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.canvas-bar__left span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.canvas-constraints {
+  display: flex;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.canvas-constraints li {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.canvas-bar__right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.canvas-bar__right button {
+  min-width: 30px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.canvas-bar__right button:hover {
+  background: #fff;
+}
+
+/* ---- 视口 ---- */
+
+.canvas-viewport {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  cursor: grab;
+  background-image: radial-gradient(circle, rgba(31, 35, 41, 0.13) 1px, transparent 1px);
+  background-size: 26px 26px;
+  touch-action: none;
+}
+
+.canvas-viewport:active {
+  cursor: grabbing;
+}
+
+.canvas-world {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+.canvas-wires {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 4000px;
+  height: 3000px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.canvas-wire {
+  fill: none;
+  stroke: rgba(31, 35, 41, 0.28);
+  stroke-width: 1.5;
+}
+
+.canvas-slot {
+  position: absolute;
+}
+
+/* ---- 卡片 ---- */
+
+.canvas-card {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.canvas-card[data-status='confirmed'] {
+  border-color: rgba(31, 35, 41, 0.45);
+}
+
+.canvas-card[data-status='running'] {
+  border-style: dashed;
+}
+
+/* 卡片头部是拖动把手，正文里的输入框不参与拖动。 */
+.canvas-card__head {
+  position: relative;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid rgba(31, 35, 41, 0.07);
+  cursor: grab;
+  user-select: none;
+}
+
+.canvas-card__head:active {
+  cursor: grabbing;
+}
+
+.canvas-card__eyebrow {
+  display: block;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: rgba(115, 115, 120, 0.85);
+}
+
+.canvas-card__head h2 {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.canvas-card__status {
+  position: absolute;
+  right: 14px;
+  top: 14px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.canvas-card[data-status='confirmed'] .canvas-card__status {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+
+.canvas-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px 16px;
+}
+
+.canvas-card__remove {
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-top: 1px solid rgba(31, 35, 41, 0.07);
+  background: transparent;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.canvas-card__remove:hover {
+  color: var(--ink);
+}
+
+/* ---- 表单件 ---- */
+
+.canvas-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.canvas-field span {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.canvas-field textarea,
+.canvas-field input,
+.canvas-field select {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfcfb;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  resize: none;
+}
+
+.canvas-field textarea:focus,
+.canvas-field input:focus,
+.canvas-field select:focus {
+  outline: 2px solid rgba(31, 35, 41, 0.35);
+  outline-offset: 1px;
+}
+
+.canvas-field--inline {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.canvas-action {
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+}
+
+.canvas-action:disabled {
+  background: rgba(31, 35, 41, 0.2);
+  cursor: not-allowed;
+}
+
+.canvas-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.canvas-override {
+  padding: 1px 6px;
+  border: 1px solid var(--ink);
+  border-radius: 999px;
+  font-size: 9px;
+  font-style: normal;
+  color: var(--ink);
+}
+
+.canvas-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.canvas-master img,
+.canvas-keyframe img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f6f7f6;
+  image-rendering: pixelated;
+}
+
+.canvas-master figcaption {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.canvas-formats {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.canvas-formats legend {
+  padding: 0 4px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
+.canvas-formats label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ---- 加号与菜单 ---- */
+
+.canvas-card__plus-wrap {
+  position: absolute;
+  right: -16px;
+  bottom: -16px;
+}
+
+.canvas-card__plus {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--ink);
+  border-radius: 50%;
+  background: #fff;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink);
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.canvas-card__plus:hover {
+  background: var(--ink);
+  color: #fff;
+}
+
+.canvas-menu {
+  position: absolute;
+  left: 40px;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  min-width: 190px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.canvas-menu__item,
+.canvas-menu__back {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.canvas-menu__item + .canvas-menu__item {
+  border-top: 1px solid rgba(31, 35, 41, 0.06);
+}
+
+.canvas-menu__item b {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.canvas-menu__item small {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.canvas-menu__item:hover:not(:disabled) {
+  background: #f2f4f2;
+}
+
+.canvas-menu__item:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.canvas-menu__back {
+  border-bottom: 1px solid rgba(31, 35, 41, 0.06);
+  font-size: 11px;
+  color: var(--muted);
+}

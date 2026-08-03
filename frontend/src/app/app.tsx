@@ -25,6 +25,7 @@ export function App() {
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
           <Route path="/projects/:projectId/assets" element={<AssetLibraryPage />} />
+          <Route path="/workflow-editor" element={<WorkflowEditorPage />} />
           <Route path="/workflow-editor/:runId" element={<WorkflowEditorPage />} />
           <Route path="/workflow-editor/:runId/:stage" element={<WorkflowEditorPage />} />
           <Route path="/playtest/:characterId/:outfitId" element={<PlaytestPage />} />

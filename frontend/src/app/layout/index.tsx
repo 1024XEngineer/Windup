@@ -21,6 +21,9 @@ export function AppShell({ children }: AppShellProps) {
           <Link to="/projects" className="hover:text-slate-900">
             项目
           </Link>
+          <Link to="/workflow-editor" className="hover:text-slate-900">
+            工作流编辑器
+          </Link>
         </div>
       </nav>
       <main className="mx-auto max-w-5xl px-6 py-8">{children}</main>
