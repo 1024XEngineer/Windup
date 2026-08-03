@@ -8,7 +8,7 @@ import type {
   Outfit,
 } from '.'
 
-import { get, patch, post } from '@/shared/api'
+import { del, get, patch, post } from '@/shared/api'
 
 /* ─── 后端 DTO ─── */
 
@@ -16,6 +16,7 @@ interface BackendFrame {
   index: number
   image_url: string
   duration_ms: number | null
+  root_motion?: { dx: number; dy: number } | null
 }
 
 interface BackendAction {
@@ -62,7 +63,7 @@ function toFrame(raw: BackendFrame): Frame {
   return {
     imageUrl: raw.image_url,
     durationMs: raw.duration_ms,
-    rootMotion: null, // 后端不提供根位移
+    rootMotion: raw.root_motion ?? null,
   }
 }
 
@@ -114,7 +115,7 @@ export function createCharacterApis(): CharacterApis {
     async listByProject(projectId: string): Promise<Character[]> {
       // http-client 已解包 ApiEnvelope，data 字段就是角色数组本身
       const raw = await get<BackendCharacter[]>(
-        `/characters?project_id=${encodeURIComponent(projectId)}`,
+        `/characters?project_id=${encodeURIComponent(projectId)}&page_size=100`,
       )
       return raw.map(toCharacter)
     },
@@ -130,6 +131,7 @@ export function createCharacterApis(): CharacterApis {
 
     async update(character: Character): Promise<Character> {
       const payload = {
+        project_id: Number(character.projectId),
         character_data: {
           version: 1,
           outfits: character.outfits.map((outfit) => ({
@@ -148,13 +150,22 @@ export function createCharacterApis(): CharacterApis {
                 index,
                 image_url: frame.imageUrl,
                 duration_ms: frame.durationMs,
+                root_motion: frame.rootMotion,
               })),
             })),
           })),
         },
       }
       const raw = await patch<BackendCharacter>(`/characters/${character.id}`, payload)
-      return toCharacter(raw)
+      const saved = toCharacter(raw)
+      if (saved.projectId !== character.projectId) {
+        throw new Error('后端未保存新的项目归属')
+      }
+      return saved
+    },
+
+    async remove(id: string): Promise<void> {
+      await del(`/characters/${id}`)
     },
   }
 }

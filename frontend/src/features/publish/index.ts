@@ -19,6 +19,11 @@ const ACTION_NAMES: Record<ActionType, string> = {
   custom: '自定义动作',
 }
 
+/** 动作 ID 绑定本次运行，允许同一角色保存多个 custom 或同类型动作。 */
+export function buildPublishedActionId(characterId: string, runId: string): string {
+  return `${characterId}-${runId}`
+}
+
 /** 审核通过时才把 WorkflowRun 中的完整动画写入正式 Character 资产树。 */
 export async function publishWorkflowRun(
   characterApis: CharacterApis,
@@ -34,11 +39,14 @@ export async function publishWorkflowRun(
   const character = await characterApis.get(run.characterId)
   const outfit = character.outfits.find((item) => item.id === run.outfitId)
   if (!outfit) throw new Error('角色中没有找到工作流关联的造型')
-  const actionId = `${character.id}-${result.actionType}`
+  const actionId = buildPublishedActionId(character.id, run.id)
   const action = {
     id: actionId,
     outfitId: outfit.id,
-    name: ACTION_NAMES[result.actionType],
+    name:
+      result.actionType === 'custom'
+        ? run.prompt?.trim() || '自定义动作'
+        : ACTION_NAMES[result.actionType],
     kind: 'custom' as const,
     type: result.actionType,
     fps: 8,

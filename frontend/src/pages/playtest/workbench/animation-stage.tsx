@@ -102,7 +102,7 @@ export function AnimationStage({
     <section
       ref={stageRef}
       aria-label="动画预览舞台"
-      className={`relative grid h-full min-h-[320px] place-items-center overflow-hidden rounded-2xl border border-slate-300 ${
+      className={`relative grid h-full min-h-[360px] place-items-center overflow-hidden rounded-lg border border-[#c8cec9] ${
         showChecker
           ? 'bg-[linear-gradient(45deg,#e5e7eb_25%,transparent_25%),linear-gradient(-45deg,#e5e7eb_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#e5e7eb_75%),linear-gradient(-45deg,transparent_75%,#e5e7eb_75%)] bg-[length:24px_24px] bg-[position:0_0,0_12px,12px_-12px,-12px_0px]'
           : 'bg-slate-100'
@@ -149,7 +149,7 @@ export function AnimationStage({
       )}
 
       {/* Zoom controls */}
-      <div className="absolute bottom-3 right-3 z-20 flex items-center gap-1 rounded-lg border border-slate-300 bg-white/90 px-1.5 py-1 text-xs shadow-sm">
+      <div className="absolute bottom-3 right-3 z-20 flex items-center gap-1 rounded-md border border-[#bfc7c0] bg-white/90 px-1.5 py-1 text-xs">
         <button
           type="button"
           onClick={zoomOut}

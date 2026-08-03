@@ -107,7 +107,7 @@ describe('useFrameReviewEvidence', () => {
     expect(reader.mock.calls[1]?.[1]).toBeInstanceOf(AbortSignal)
   })
 
-  it('reuses settled image results when frames are selected or revisited', async () => {
+  it('rereads revisited image URLs so regenerated content cannot reuse stale geometry', async () => {
     // Catches frame navigation repeatedly decoding every image in the same review session.
     const reader = vi.fn<ImageGeometryReader>(async (imageUrl) =>
       geometry(imageUrl.includes('one') ? 1 : 2),
@@ -127,7 +127,7 @@ describe('useFrameReviewEvidence', () => {
     await waitFor(() => expect(result.current.evidence?.frames[0]?.geometry?.centroid.x).toBe(2))
     rerender({ current: first })
     await waitFor(() => expect(result.current.evidence?.frames[0]?.geometry?.centroid.x).toBe(1))
-    expect(reader).toHaveBeenCalledTimes(2)
+    expect(reader).toHaveBeenCalledTimes(3)
   })
 
   it('retries an unavailable image when its sequence is revisited', async () => {

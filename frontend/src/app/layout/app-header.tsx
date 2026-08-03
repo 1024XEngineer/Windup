@@ -16,7 +16,12 @@ const productNavigation: ProductNavigationItem[] = [
   {
     to: '/projects',
     label: '项目',
-    isActive: (pathname) => pathname.startsWith('/projects') || pathname.startsWith('/playtest'),
+    isActive: (pathname) => pathname.startsWith('/projects'),
+  },
+  {
+    to: '/playtest',
+    label: '预览台',
+    isActive: (pathname) => pathname.startsWith('/playtest'),
   },
   {
     to: '/quick-start',
@@ -27,7 +32,11 @@ const productNavigation: ProductNavigationItem[] = [
 ]
 
 function getWorkspaceLabel(pathname: string): { title: string; detail: string } {
-  if (pathname.startsWith('/projects') || pathname.startsWith('/playtest')) {
+  if (pathname.startsWith('/playtest')) {
+    return { title: 'Playtest', detail: '动作预览与质量核验' }
+  }
+
+  if (pathname.startsWith('/projects')) {
     return { title: '项目与历史记录', detail: '角色、动作与完成版本' }
   }
 
@@ -42,9 +51,14 @@ function getWorkspaceLabel(pathname: string): { title: string; detail: string } 
 export function AppHeader() {
   const { pathname } = useLocation()
   const workspace = getWorkspaceLabel(pathname)
+  const isPlaytest = pathname.startsWith('/playtest')
 
   return (
-    <header className="pointer-events-none fixed inset-x-0 top-3.5 z-50 flex items-start justify-between gap-2 px-3 text-[#1c231e] sm:gap-4 sm:px-[18px]">
+    <header
+      className={`pointer-events-none z-50 flex items-start justify-between gap-2 px-3 text-[#1c231e] sm:gap-4 sm:px-[18px] ${
+        isPlaytest ? 'relative pt-3.5' : 'fixed inset-x-0 top-3.5'
+      }`}
+    >
       <div className="pointer-events-auto flex min-h-[3.625rem] min-w-0 items-center gap-3 rounded-xl border border-[#171817]/14 bg-[#dfe3df] px-2.5 py-[7px] sm:min-w-[min(26rem,42vw)] sm:px-3.5">
         <Link
           to="/"

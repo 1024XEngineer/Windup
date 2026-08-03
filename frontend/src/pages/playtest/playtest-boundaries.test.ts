@@ -12,7 +12,11 @@ const prohibitedImports = [
   'entities/workflow-run',
   'entities/generation',
 ] as const
-const allowedEntityImports = ['@/entities/character'] as const
+const allowedEntityImports = [
+  '@/entities/character',
+  '@/entities/playtest-inspection',
+  '@/entities/project',
+] as const
 
 function sourceFiles(directory: string): readonly string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {

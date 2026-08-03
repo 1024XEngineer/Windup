@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { useNavigate, useParams } from 'react-router'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 
 import {
   WORKFLOW_STEP_ORDER,
@@ -9,7 +9,7 @@ import {
   type WorkflowStep,
   type WorkflowStepType,
 } from '@/entities'
-import { buildPlaytestPath } from '@/features/publish'
+import { buildPlaytestPath, buildPublishedActionId } from '@/features/publish'
 import { unavailableQuickStartService, type QuickStartService } from './service'
 
 export type {
@@ -48,11 +48,86 @@ export interface QuickStartPageProps {
 /** Quick Start 独立完成 AI 入口；它不跳转 Workflow Editor。 */
 export function QuickStartPage({ service = unavailableQuickStartService }: QuickStartPageProps) {
   const { runId } = useParams()
+  const [searchParams] = useSearchParams()
+  const characterId = searchParams.get('characterId')
+  const outfitId = searchParams.get('outfitId')
 
   return runId ? (
     <QuickStartRun service={service} runId={runId} />
+  ) : characterId && outfitId ? (
+    <QuickStartActionInput service={service} target={{ characterId, outfitId }} />
   ) : (
     <QuickStartInput service={service} />
+  )
+}
+
+function QuickStartActionInput({
+  service,
+  target,
+}: {
+  service: QuickStartService
+  target: { characterId: string; outfitId: string }
+}) {
+  const navigate = useNavigate()
+  const [description, setDescription] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const prompt = description.trim()
+    if (!prompt || submitting || service.unavailableReason) return
+    setSubmitting(true)
+    setError(null)
+    try {
+      const run = await service.startAction(target, prompt)
+      navigate(`/quick-start/${encodeURIComponent(run.id)}`)
+    } catch (cause) {
+      setError(errorMessage(cause, '创建动作失败，请稍后重试'))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <section className="min-h-[560px] border border-[#c9d0ca] bg-[#dfe3df] p-6 text-[#171817] sm:p-10">
+      <Link
+        to={buildPlaytestPath(target)}
+        className="text-xs font-semibold text-[#59635b] hover:text-[#2f4e38]"
+      >
+        ← 返回当前 Playtest
+      </Link>
+      <div className="mx-auto mt-14 max-w-2xl">
+        <p className="font-mono text-[10px] font-bold text-[#687069]">ADD ACTION</p>
+        <h1 className="mt-3 font-serif text-4xl">给当前角色增加动作</h1>
+        <p className="mt-3 text-sm text-[#687069]">
+          新动作会追加到角色 {target.characterId} 的当前造型，不会新建角色或覆盖已有动作。
+        </p>
+        <form onSubmit={submit} className="mt-8 space-y-4">
+          <label className="block text-xs font-semibold text-[#4f5b52]">
+            动作描述
+            <textarea
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="例如：挥手打招呼、蹲下查看地面、举起画笔作画"
+              className="mt-2 min-h-32 w-full resize-y rounded-lg border border-[#aeb8b0] bg-white p-4 text-base outline-none focus:border-[#35583f]"
+            />
+          </label>
+          {error ? (
+            <p role="alert" className="text-sm text-[#983c32]">
+              {error}
+            </p>
+          ) : null}
+          <button
+            type="submit"
+            disabled={!description.trim() || submitting || Boolean(service.unavailableReason)}
+            className="min-h-11 rounded-lg bg-[#35583f] px-5 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {submitting ? '正在开始生成…' : '开始生成新动作'}
+          </button>
+        </form>
+      </div>
+    </section>
   )
 }
 
@@ -205,6 +280,7 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
   const [error, setError] = useState<string | null>(null)
   const [selectedCandidate, setSelectedCandidate] = useState<string | null>(null)
   const [actionDescription, setActionDescription] = useState('')
+  const [publishing, setPublishing] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -309,14 +385,31 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
   }
 
   async function publishToPlaytest() {
-    await service.approveReview(runId)
-    // 内存 Map / 持久化引用缺失时（动作生成中或旧运行记录），从后端按项目反查
-    const info = service.getCharacterInfo(runId) ?? (await service.resolveCharacterInfo(runId))
-    if (info) {
-      navigate(buildPlaytestPath(info))
-      return
+    if (publishing) return
+    setPublishing(true)
+    setError(null)
+    try {
+      const approved = await service.approveReview(runId)
+      setRun(approved)
+      // 内存 Map / 持久化引用缺失时（旧运行记录），从后端按项目反查。
+      const info = service.getCharacterInfo(runId) ?? (await service.resolveCharacterInfo(runId))
+      if (!info) throw new Error('动作已生成，但没有找到对应的角色资产')
+      const approvedRevision = approved.revisions.find(
+        (item) => item.id === approved.currentRevisionId,
+      )
+      const approvedAction = approvedRevision?.steps.find(
+        (step) => step.type === 'action-generation',
+      )
+      const actionId =
+        approvedAction?.type === 'action-generation' && approvedAction.output
+          ? buildPublishedActionId(info.characterId, approved.id)
+          : undefined
+      navigate(buildPlaytestPath({ ...info, actionId }))
+    } catch (cause) {
+      setError(errorMessage(cause, '导入 Playtest 失败'))
+    } finally {
+      setPublishing(false)
     }
-    setError('尚未找到可导出的角色，请等待动作生成完成后再试')
   }
 
   return (
@@ -517,12 +610,11 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
               {canPublish ? (
                 <button
                   type="button"
-                  onClick={() => {
-                    void publishToPlaytest()
-                  }}
-                  className="rounded-xl bg-[#2a5284] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#3668a0]"
+                  onClick={() => void publishToPlaytest()}
+                  disabled={publishing}
+                  className="rounded-lg bg-[#2a5284] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#3668a0] disabled:cursor-wait disabled:opacity-60"
                 >
-                  发布到预览台
+                  {publishing ? '正在导入…' : '一键导入 Playtest'}
                 </button>
               ) : null}
               {candidates.length || run.status === 'failed' || run.status === 'interrupted' ? (
@@ -590,6 +682,29 @@ function describeRun(run: WorkflowRun, revision: WorkflowRevision) {
     }
   }
 
+  const actionStep = revision.steps.find((step) => step.type === 'action-generation')
+  if (actionStep?.status === 'active') {
+    return {
+      title: '正在生成动作',
+      description: '角色图已确认，正在生成动作帧…',
+      error: null,
+    }
+  }
+  if (actionStep?.status === 'passed') {
+    return {
+      title: '动作生成完成',
+      description: '动作帧已回传，可以一键写入资产并载入 Playtest。',
+      error: null,
+    }
+  }
+  if (actionStep?.status === 'failed') {
+    return {
+      title: '动作生成失败',
+      description: typeof actionStep.error === 'string' ? actionStep.error : '动作生成失败',
+      error: typeof actionStep.error === 'string' ? actionStep.error : '动作生成失败',
+    }
+  }
+
   const templateStep = revision.steps.find(
     (step): step is CharacterTemplateWorkflowStep => step.type === 'character-template',
   )
@@ -607,28 +722,6 @@ function describeRun(run: WorkflowRun, revision: WorkflowRevision) {
         ? '任务 ID 已保存，刷新页面后仍可恢复同一次生成。'
         : '正在等待生成服务返回可追踪的任务 ID。',
       error: null,
-    }
-  }
-  const actionStep = revision.steps.find((step) => step.type === 'action-generation')
-  if (actionStep?.status === 'active') {
-    return {
-      title: '正在生成动作',
-      description: '角色图已确认，正在生成 idle 动作帧…',
-      error: null,
-    }
-  }
-  if (actionStep?.status === 'passed') {
-    return {
-      title: '动作生成完成',
-      description: '角色动作已生成，可以导出到预览台。',
-      error: null,
-    }
-  }
-  if (actionStep?.status === 'failed') {
-    return {
-      title: '动作生成失败',
-      description: typeof actionStep.error === 'string' ? actionStep.error : '动作生成失败',
-      error: typeof actionStep.error === 'string' ? actionStep.error : '动作生成失败',
     }
   }
 

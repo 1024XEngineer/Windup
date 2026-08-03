@@ -13,7 +13,7 @@ export interface AppShellProps {
 /** 全站外壳，全局导航常驻。 */
 export function AppShell({ children }: AppShellProps) {
   const { pathname } = useLocation()
-  const isPlaytestWorkspace = pathname.startsWith('/playtest/')
+  const isPlaytestWorkspace = pathname.startsWith('/playtest')
   const isWorkflowWorkspace = pathname.startsWith('/workflow-editor')
   const isHomePage = pathname === '/'
 

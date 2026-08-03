@@ -12,10 +12,7 @@ import {
   type WorkflowStepType,
 } from '@/entities'
 
-export type CreateWorkflowRunStateInput = Extract<
-  CreateWorkflowRunInput,
-  { purpose: 'create_character' }
->
+export type CreateWorkflowRunStateInput = CreateWorkflowRunInput
 
 export interface CreateWorkflowRunStateOptions {
   runId: WorkflowRun['id']
@@ -38,12 +35,13 @@ export function createWorkflowRunState(
   { runId, revisionId, createdAt }: CreateWorkflowRunStateOptions,
 ): WorkflowRun {
   const prompt = input.prompt?.trim() || null
+  const steps = createInitialSteps(input, revisionId, prompt)
 
   return {
     id: runId,
     projectId: input.projectId,
-    characterId: null,
-    outfitId: null,
+    characterId: input.purpose === 'add_action' ? input.characterId : null,
+    outfitId: input.purpose === 'add_action' ? input.outfitId : null,
     purpose: input.purpose,
     driver: input.driver,
     status: 'active',
@@ -54,9 +52,7 @@ export function createWorkflowRunState(
         basedOnRevisionId: null,
         restartStepId: null,
         status: 'active',
-        steps: WORKFLOW_STEP_ORDER.map((type, index) =>
-          createInitialStep(type, revisionId, index, prompt),
-        ),
+        steps,
         generationStatus: 'not_started',
         exportStatus: 'not_exported',
         createdAt,
@@ -64,6 +60,51 @@ export function createWorkflowRunState(
     ],
     prompt,
   }
+}
+
+function createInitialSteps(
+  input: CreateWorkflowRunStateInput,
+  revisionId: string,
+  prompt: string | null,
+): WorkflowStep[] {
+  const steps = WORKFLOW_STEP_ORDER.map((type, index) =>
+    createInitialStep(type, revisionId, index, prompt),
+  )
+  if (input.purpose === 'create_character') return steps
+
+  return steps.map((step) => {
+    if (step.type === 'character-setup') {
+      return {
+        ...step,
+        status: 'passed' as const,
+        input: {
+          description: prompt ?? '为已有角色添加动作',
+          referenceMedia: [],
+        },
+      }
+    }
+    if (step.type === 'character-template') {
+      return {
+        ...step,
+        status: 'passed' as const,
+        output: {
+          type: 'character_template' as const,
+          images: [{ url: input.characterTemplateUrl }],
+        },
+      }
+    }
+    if (step.type === 'template-candidate') {
+      return {
+        ...step,
+        status: 'passed' as const,
+        output: { selectedImageUrl: input.characterTemplateUrl },
+      }
+    }
+    if (step.type === 'action-generation') {
+      return { ...step, status: 'active' as const }
+    }
+    return step
+  })
 }
 
 export function getCurrentRevision(run: WorkflowRun): WorkflowRevision {

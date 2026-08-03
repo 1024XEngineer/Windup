@@ -4,6 +4,7 @@ import { BrowserRouter, Route, Routes } from 'react-router'
 import {
   createCharacterApis,
   createGenerationApis,
+  createPlaytestInspectionApis,
   createProjectApis,
   createWorkflowRunStore,
 } from '@/entities'
@@ -14,6 +15,7 @@ import { HistoryPage } from '@/pages/history'
 import { NotFoundPage } from '@/pages/not-found'
 import { PlaytestDemoPage } from '@/pages/playtest/demo-page'
 import { PlaytestPage } from '@/pages/playtest'
+import { PlaytestCatalogPage } from '@/pages/playtest/catalog'
 import { ProjectDetailPage } from '@/pages/project-detail'
 import { ProjectCreatePage } from '@/pages/project-create'
 import { ProjectsPage } from '@/pages/projects'
@@ -24,7 +26,14 @@ import { createAutoPrepareProject, createQuickStartService } from '@/pages/quick
 import { createWorkflowEditorService } from '@/pages/workflow-editor/service'
 
 function PlaytestFromBackend() {
-  const apis = useMemo(() => ({ characters: createCharacterApis() }), [])
+  const apis = useMemo(
+    () => ({
+      characters: createCharacterApis(),
+      projects: createProjectApis(),
+      inspections: createPlaytestInspectionApis(),
+    }),
+    [],
+  )
   return <PlaytestPage apis={apis} />
 }
 
@@ -72,7 +81,8 @@ export function App() {
         return { id: project.id, spriteSize: project.spriteSize }
       },
     })
-    return { projectApis, characterApis, quickStart, workflowEditor, store }
+    const playtestCatalog = { projects: projectApis, characters: characterApis }
+    return { projectApis, characterApis, quickStart, workflowEditor, store, playtestCatalog }
   }, [])
 
   return (
@@ -113,6 +123,10 @@ export function App() {
             element={<WorkflowEditorPage service={services.workflowEditor} />}
           />
           <Route path="/playtest/demo" element={<PlaytestDemoPage />} />
+          <Route
+            path="/playtest"
+            element={<PlaytestCatalogPage apis={services.playtestCatalog} />}
+          />
           <Route path="/playtest/:characterId/:outfitId" element={<PlaytestFromBackend />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>

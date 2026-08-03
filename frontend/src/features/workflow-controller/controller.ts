@@ -24,7 +24,7 @@ import {
   type CreateWorkflowRunStateInput,
 } from './workflow-state'
 
-/** 首个纵切只开放创建角色；增加动作进入对应步骤实现时再加入 Controller。 */
+/** 创建角色与给已有角色增加动作共用同一条运行状态机。 */
 export type CreateWorkflowControllerInput = CreateWorkflowRunStateInput
 
 export interface WorkflowController {

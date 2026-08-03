@@ -51,7 +51,22 @@ describe('playtest visual primitives', () => {
     const onSelectAction = vi.fn()
 
     render(
-      <ActionSelector actions={actions} selectedActionId="walk" onSelectAction={onSelectAction} />,
+      <ActionSelector
+        assets={[
+          {
+            key: 'character-1:outfit-1',
+            characterId: 'character-1',
+            outfitId: 'outfit-1',
+            name: '默认造型',
+            actionCount: actions.length,
+          },
+        ]}
+        selectedAssetKey="character-1:outfit-1"
+        actions={actions}
+        selectedActionId="walk"
+        onSelectAsset={vi.fn()}
+        onSelectAction={onSelectAction}
+      />,
     )
 
     expect(screen.getByRole('button', { name: /行走/ }).textContent).toContain('12 FPS')
@@ -161,9 +176,9 @@ describe('playtest visual primitives', () => {
     fireEvent.click(screen.getByRole('button', { name: '下一帧' }))
     expect(onTogglePlaying).toHaveBeenCalledTimes(1)
     expect(onNextFrame).toHaveBeenCalledTimes(1)
-    expect(screen.getByText('A 左行走')).toBeTruthy()
-    expect(screen.getByText('D 右行走')).toBeTruthy()
-    expect(screen.getByText('未提供跳跃动作')).toBeTruthy()
-    expect(screen.getByText('下蹲动作可用')).toBeTruthy()
+    expect(screen.getByText('跳跃不可用，下蹲可用')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '循环播放' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    )
   })
 })

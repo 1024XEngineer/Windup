@@ -9,7 +9,13 @@ function geometry(
       FrameGeometry,
       'width' | 'height' | 'footY' | 'subjectHeight' | 'opaquePixels' | 'coverageRatio'
     >
-  > & { x?: number; y?: number; fingerprint?: readonly number[]; cropped?: boolean } = {},
+  > & {
+    x?: number
+    y?: number
+    fingerprint?: readonly number[]
+    contentHash?: string
+    cropped?: boolean
+  } = {},
 ): FrameGeometry {
   const subjectHeight = overrides.subjectHeight ?? 20
 
@@ -30,6 +36,7 @@ function geometry(
     opaquePixels: overrides.opaquePixels ?? 100,
     coverageRatio: overrides.coverageRatio ?? 0.25,
     fingerprint: overrides.fingerprint,
+    contentHash: overrides.contentHash,
   }
 }
 
@@ -42,11 +49,11 @@ function ready(
 
 describe('buildSequenceEvidence', () => {
   it('returns structured findings for incomplete, cropped and duplicate frames', () => {
-    const fingerprint = Array.from({ length: 64 }, (_, index) => index / 64)
+    const contentHash = 'same-frame'
     const evidence = buildSequenceEvidence(
       [
-        ready(geometry({ cropped: true, fingerprint })),
-        ready(geometry({ fingerprint })),
+        ready(geometry({ cropped: true, contentHash })),
+        ready(geometry({ contentHash })),
         { geometry: { status: 'unavailable', reason: '图片没有可见主体' }, rootMotion: null },
       ],
       'walk',
@@ -189,7 +196,7 @@ describe('buildSequenceEvidence', () => {
         ready(geometry({ width: 512, height: 512, x: 4 })),
         ready(geometry({ width: 512, height: 512, x: 14 })),
       ],
-      'walk',
+      'attack',
     )
 
     expect(evidence.summary).toMatchObject({
@@ -352,5 +359,49 @@ describe('buildSequenceEvidence', () => {
 
     expect(evidence.frames[2]?.expectedRootDelta).toMatchObject({ dx: 3, dy: 2 })
     expect(evidence.frames[2]?.composedPreviewDelta).toMatchObject({ dx: 5, dy: 1 })
+  })
+
+  it('does not mislabel merely similar adjacent frames as duplicates', () => {
+    const fingerprint = Array.from({ length: 64 }, () => 0.5)
+    const evidence = buildSequenceEvidence(
+      [
+        ready(geometry({ fingerprint, contentHash: 'frame-a' })),
+        ready(geometry({ fingerprint, contentHash: 'frame-b' })),
+      ],
+      'attack',
+    )
+
+    expect(evidence.findings.map((finding) => finding.code)).not.toContain('duplicate_frame')
+  })
+
+  it('checks a loop boundary against the ordinary adjacent-frame baseline', () => {
+    const evidence = buildSequenceEvidence(
+      [ready(geometry({ x: 0 })), ready(geometry({ x: 20 })), ready(geometry({ x: 40 }))],
+      'walk',
+    )
+
+    expect(evidence.summary.movementThreshold).toBe(24)
+    expect(evidence.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'motion_spike',
+          frameIndex: 0,
+          message: '循环首尾出现异常位移突变',
+        }),
+      ]),
+    )
+  })
+
+  it('uses the project canvas contract instead of accepting a consistently wrong sequence', () => {
+    const evidence = buildSequenceEvidence(
+      [ready(geometry({ width: 256, height: 256 })), ready(geometry({ width: 256, height: 256 }))],
+      'idle',
+      { width: 512, height: 512 },
+    )
+
+    expect(evidence.summary.expectedCanvas).toEqual({ width: 512, height: 512 })
+    expect(
+      evidence.findings.filter((finding) => finding.code === 'canvas_size_mismatch'),
+    ).toHaveLength(2)
   })
 })

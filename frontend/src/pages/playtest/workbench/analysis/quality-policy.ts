@@ -11,8 +11,6 @@ export interface LocalQualityPolicy {
   edgeMargin: { x: number; y: number }
   minimumCoverageRatio: number
   maximumCoverageRatio: number
-  /** 相邻帧指纹平均距离 ≤ 该值时判定为重复帧（duplicate_frame）。 */
-  duplicateDistance: number
   footDriftThreshold: number | null
   heightDriftThreshold: number | null
   heightAttentionThreshold: number | null
@@ -26,7 +24,6 @@ export interface LocalQualityPolicy {
 const REFERENCE_CANVAS_SIZE = 256
 const MINIMUM_COVERAGE_RATIO = 0.005
 const MAXIMUM_COVERAGE_RATIO = 0.65
-const DUPLICATE_DISTANCE = 0.02
 const AREA_DELTA_THRESHOLD_PERCENT = 28
 
 function scaledPixels(referencePixels: number, scale: number): number {
@@ -80,16 +77,15 @@ function movementCeilingReferencePixels(actionType: PlaytestActionType): number 
 export function deriveLocalQualityPolicy(
   geometries: readonly FrameGeometry[],
   actionType: PlaytestActionType,
+  expectedCanvasOverride: CanvasBaseline | null = null,
 ): LocalQualityPolicy {
-  const expectedCanvas = inferCanvasBaseline(geometries)
+  const expectedCanvas = expectedCanvasOverride ?? inferCanvasBaseline(geometries)
   if (expectedCanvas === null) {
     return {
       expectedCanvas: null,
       edgeMargin: { x: 1, y: 1 },
       minimumCoverageRatio: MINIMUM_COVERAGE_RATIO,
       maximumCoverageRatio: MAXIMUM_COVERAGE_RATIO,
-      duplicateDistance: DUPLICATE_DISTANCE,
-
       footDriftThreshold: null,
       heightDriftThreshold: null,
       heightAttentionThreshold: null,
@@ -114,7 +110,6 @@ export function deriveLocalQualityPolicy(
     },
     minimumCoverageRatio: MINIMUM_COVERAGE_RATIO,
     maximumCoverageRatio: MAXIMUM_COVERAGE_RATIO,
-    duplicateDistance: DUPLICATE_DISTANCE,
     footDriftThreshold: scaledPixels(3, verticalScale),
     heightDriftThreshold:
       heightReference === null ? null : scaledPixels(heightReference, verticalScale),

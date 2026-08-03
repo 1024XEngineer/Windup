@@ -24,7 +24,12 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${BASE_URL}${path}`
   const headers = new Headers(init?.headers)
 
-  if (!headers.has('Content-Type') && !(init?.body instanceof FormData)) {
+  if (
+    init?.body !== undefined &&
+    init.body !== null &&
+    !headers.has('Content-Type') &&
+    !(init.body instanceof FormData)
+  ) {
     headers.set('Content-Type', 'application/json')
   }
 

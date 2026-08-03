@@ -110,6 +110,27 @@ function expectRefreshable(
 }
 
 describe('store invariants across every state transition', () => {
+  it('an add_action run survives refresh before generation starts', () => {
+    const harness = createHarness()
+    const created = harness.controller.create({
+      projectId: 'project-1',
+      purpose: 'add_action',
+      driver: 'ai',
+      prompt: '挥手',
+      characterId: 'character-1',
+      outfitId: 'outfit-1',
+      characterTemplateUrl: 'https://example.com/template.png',
+      baseFrameUrls: [],
+    })
+
+    const restored = expectRefreshable(harness, created.id, '增加动作运行创建后')
+    expect(restored.characterId).toBe('character-1')
+    expect(restored.outfitId).toBe('outfit-1')
+    expect(
+      restored.revisions[0]?.steps.find((step) => step.type === 'action-generation')?.status,
+    ).toBe('active')
+  })
+
   it('every step of the happy path survives a refresh', async () => {
     const harness = createHarness()
 

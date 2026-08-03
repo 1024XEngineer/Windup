@@ -57,6 +57,16 @@ export type {
 export { createMediaApis } from './media/api'
 export type { MediaApis, MediaCategory, MediaReference } from './media'
 
+/* Playtest 核验 —— 每个动作当前最新的核验结论，不形成历史版本 */
+export { createPlaytestInspectionApis } from './playtest-inspection/api'
+export type {
+  PlaytestInspection,
+  PlaytestInspectionApis,
+  PlaytestInspectionStatus,
+  PlaytestInspectionTarget,
+  SavePlaytestInspectionInput,
+} from './playtest-inspection'
+
 /* 工作流 —— 节点与运行状态都由前端管理 */
 export { createWorkflowRunStore, WORKFLOW_STEP_ORDER } from './workflow-run'
 export type {

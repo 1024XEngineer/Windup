@@ -10,6 +10,7 @@ afterEach(cleanup)
 describe('AppShell', () => {
   it.each([
     ['/', '首页'],
+    ['/playtest', 'Playtest'],
     ['/playtest/demo', 'Playtest'],
     ['/workflow-editor/run-1', 'Workflow Editor'],
   ])('为%s 使用全宽页面容器', (pathname) => {

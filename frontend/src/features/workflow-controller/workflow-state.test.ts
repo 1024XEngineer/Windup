@@ -52,6 +52,40 @@ describe('workflow state transitions', () => {
     })
   })
 
+  it('starts add_action directly at action generation for the existing outfit', () => {
+    const run = createWorkflowRunState(
+      {
+        projectId: 'project-1',
+        purpose: 'add_action',
+        driver: 'ai',
+        prompt: '挥手打招呼',
+        characterId: 'character-1',
+        outfitId: 'outfit-1',
+        characterTemplateUrl: 'https://example.com/template.png',
+        baseFrameUrls: [],
+      },
+      {
+        runId: 'run-action-1',
+        revisionId: 'revision-action-1',
+        createdAt: CREATED_AT,
+      },
+    )
+
+    expect(run).toMatchObject({
+      purpose: 'add_action',
+      characterId: 'character-1',
+      outfitId: 'outfit-1',
+      prompt: '挥手打招呼',
+    })
+    expect(run.revisions[0]?.steps.map(({ type, status }) => ({ type, status }))).toEqual([
+      { type: 'character-setup', status: 'passed' },
+      { type: 'character-template', status: 'passed' },
+      { type: 'template-candidate', status: 'passed' },
+      { type: 'action-generation', status: 'active' },
+      { type: 'review', status: 'locked' },
+    ])
+  })
+
   it('normalizes character setup input before storing it', () => {
     const updated = updateCharacterSetupState(createRun(), {
       description: '  revised knight  ',

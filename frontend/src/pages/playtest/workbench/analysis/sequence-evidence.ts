@@ -91,23 +91,8 @@ function medianAbsoluteDeviation(values: readonly number[], center: number | nul
   return median(values.map((value) => Math.abs(value - center)))
 }
 
-function fingerprintDistance(
-  left: readonly number[] | undefined,
-  right: readonly number[] | undefined,
-): number | null {
-  if (
-    left === undefined ||
-    right === undefined ||
-    left.length === 0 ||
-    left.length !== right.length
-  )
-    return null
-
-  const total = left.reduce(
-    (sum, value, index) => sum + Math.abs(value - (right[index] ?? value)),
-    0,
-  )
-  return total / left.length
+function framesAreIdentical(left: FrameGeometry, right: FrameGeometry): boolean {
+  return left.contentHash !== undefined && left.contentHash === right.contentHash
 }
 
 function isCropped(geometry: FrameGeometry, margin: { x: number; y: number }): boolean {
@@ -164,12 +149,13 @@ function rootMotion(frame: FrameEvidenceInput): { dx: number; dy: number } {
 export function buildSequenceEvidence(
   inputs: readonly FrameEvidenceInput[],
   actionType: PlaytestActionType,
+  expectedCanvas: CanvasBaseline | null = null,
 ): SequenceReviewEvidence {
   const results = inputs.map((input) => input.geometry)
   const readyGeometries = results.flatMap((result) =>
     result.status === 'ready' ? [result.geometry] : [],
   )
-  const policy = deriveLocalQualityPolicy(readyGeometries, actionType)
+  const policy = deriveLocalQualityPolicy(readyGeometries, actionType, expectedCanvas)
   const isBaselineGeometry = (geometry: FrameGeometry): boolean =>
     policy.expectedCanvas !== null &&
     geometry.width === policy.expectedCanvas.width &&
@@ -180,6 +166,19 @@ export function buildSequenceEvidence(
     if (!isBaselineGeometry(previous.geometry) || !isBaselineGeometry(result.geometry)) return null
     return adjacentDelta(previous.geometry, result.geometry)
   })
+  const checksLoopBoundary = actionType === 'idle' || actionType === 'walk'
+  const firstResult = results[0]
+  const lastResult = results.at(-1)
+  const closingDelta =
+    checksLoopBoundary &&
+    results.length > 1 &&
+    results.every((result) => result.status === 'ready') &&
+    firstResult?.status === 'ready' &&
+    lastResult?.status === 'ready' &&
+    isBaselineGeometry(firstResult.geometry) &&
+    isBaselineGeometry(lastResult.geometry)
+      ? adjacentDelta(lastResult.geometry, firstResult.geometry)
+      : null
   const rootDeltas = inputs.map((input, index): MotionVector | null => {
     if (index === 0) return null
 
@@ -331,17 +330,13 @@ export function buildSequenceEvidence(
 
     const previous = results[index - 1]
     if (previous?.status !== 'ready') return
-    const duplicateDistance = fingerprintDistance(
-      previous.geometry.fingerprint,
-      geometry.fingerprint,
-    )
-    if (duplicateDistance !== null && duplicateDistance <= policy.duplicateDistance) {
+    if (framesAreIdentical(previous.geometry, geometry)) {
       findings.push({
         code: 'duplicate_frame',
         severity: 'warning',
         frameIndex: index,
-        message: '当前帧与上一帧高度相似',
-        metrics: { distance: duplicateDistance },
+        message: '当前帧与上一帧完全相同',
+        metrics: {},
       })
     }
 
@@ -384,6 +379,36 @@ export function buildSequenceEvidence(
       }
     }
   })
+
+  if (closingDelta !== null && firstResult?.status === 'ready' && lastResult?.status === 'ready') {
+    if (framesAreIdentical(lastResult.geometry, firstResult.geometry)) {
+      findings.push({
+        code: 'duplicate_frame',
+        severity: 'warning',
+        frameIndex: 0,
+        message: '循环首帧与尾帧完全相同，可能产生停顿',
+        metrics: {},
+      })
+    }
+    if (movementThreshold !== null && closingDelta.distance > movementThreshold) {
+      findings.push({
+        code: 'motion_spike',
+        severity: 'error',
+        frameIndex: 0,
+        message: '循环首尾出现异常位移突变',
+        metrics: { distance: closingDelta.distance, threshold: movementThreshold },
+      })
+    }
+    if (closingDelta.areaDeltaPercent > policy.areaDeltaThresholdPercent) {
+      findings.push({
+        code: 'area_spike',
+        severity: 'warning',
+        frameIndex: 0,
+        message: '循环首尾轮廓面积变化过大',
+        metrics: { percent: closingDelta.areaDeltaPercent },
+      })
+    }
+  }
 
   if (
     footDrift !== null &&

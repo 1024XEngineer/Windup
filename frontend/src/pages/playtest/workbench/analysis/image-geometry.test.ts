@@ -84,6 +84,7 @@ describe('readImageGeometry', () => {
         opaquePixels: 1,
         coverageRatio: 0.25,
         fingerprint: expect.any(Array),
+        contentHash: expect.any(String),
       },
     })
   })

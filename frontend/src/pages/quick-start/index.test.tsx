@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
@@ -15,6 +15,7 @@ import {
 import { createWorkflowController } from '@/features/workflow-controller'
 import { QuickStartPage } from '.'
 import { createQuickStartService } from './service'
+import type { QuickStartService } from './service'
 
 afterEach(cleanup)
 
@@ -101,12 +102,16 @@ function currentStep(run: WorkflowRun, type: WorkflowStep['type']) {
 }
 
 function LocationProbe() {
-  return <output aria-label="当前路径">{useLocation().pathname}</output>
+  const location = useLocation()
+  return <output aria-label="当前路径">{location.pathname + location.search}</output>
 }
 
-function renderQuickStart(service: ReturnType<typeof createHarness>['service']) {
+function renderQuickStart(
+  service: ReturnType<typeof createHarness>['service'] | QuickStartService,
+  initialEntry = '/quick-start',
+) {
   return render(
-    <MemoryRouter initialEntries={['/quick-start']}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route
           path="/quick-start"
@@ -127,6 +132,7 @@ function renderQuickStart(service: ReturnType<typeof createHarness>['service']) 
           }
         />
         <Route path="/workflow-editor/:runId" element={<h1>工作流画布</h1>} />
+        <Route path="/playtest/:characterId/:outfitId" element={<LocationProbe />} />
       </Routes>
     </MemoryRouter>,
   )
@@ -229,4 +235,134 @@ describe('QuickStartPage', () => {
     expect(currentStep(run!, 'character-template')?.status).toBe('passed')
     expect(currentStep(run!, 'template-candidate')?.status).toBe('active')
   })
+
+  it('publishes once and opens the generated action in Playtest', async () => {
+    const run = completedActionRun()
+    const service: QuickStartService = {
+      unavailableReason: null,
+      start: vi.fn(),
+      startAction: vi.fn(),
+      getWorkflow: vi.fn(() => run),
+      subscribe: vi.fn(() => () => undefined),
+      resume: vi.fn(async () => run),
+      interrupt: vi.fn(() => run),
+      confirmCandidate: vi.fn(),
+      approveReview: vi.fn(async () => ({ ...run, status: 'completed' as const })),
+      getCharacterInfo: vi.fn(() => ({ characterId: '25', outfitId: 'outfit-25-default' })),
+      resolveCharacterInfo: vi.fn(),
+    }
+
+    renderQuickStart(service, '/quick-start/run-1')
+    fireEvent.click(await screen.findByRole('button', { name: '一键导入 Playtest' }))
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('当前路径').textContent).toBe(
+        '/playtest/25/outfit-25-default?actionId=25-run-1',
+      ),
+    )
+    expect(service.approveReview).toHaveBeenCalledExactlyOnceWith('run-1')
+  })
+
+  it('starts an action-only run for the character selected in Playtest', async () => {
+    const run = completedActionRun()
+    const service: QuickStartService = {
+      unavailableReason: null,
+      start: vi.fn(),
+      startAction: vi.fn(async () => run),
+      getWorkflow: vi.fn(() => run),
+      subscribe: vi.fn(() => () => undefined),
+      resume: vi.fn(async () => run),
+      interrupt: vi.fn(() => run),
+      confirmCandidate: vi.fn(),
+      approveReview: vi.fn(async () => run),
+      getCharacterInfo: vi.fn(() => ({ characterId: '25', outfitId: 'outfit-25-default' })),
+      resolveCharacterInfo: vi.fn(),
+    }
+
+    renderQuickStart(service, '/quick-start?characterId=25&outfitId=outfit-25-default')
+    fireEvent.change(screen.getByLabelText('动作描述'), {
+      target: { value: '挥手打招呼' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '开始生成新动作' }))
+
+    await waitFor(() =>
+      expect(service.startAction).toHaveBeenCalledWith(
+        { characterId: '25', outfitId: 'outfit-25-default' },
+        '挥手打招呼',
+      ),
+    )
+    await waitFor(() =>
+      expect(screen.getByLabelText('当前路径').textContent).toBe('/quick-start/run-1'),
+    )
+  })
 })
+
+function completedActionRun(): WorkflowRun {
+  const common = {
+    taskId: null,
+    submissionId: null,
+    error: null,
+    referenceStepIds: [],
+  }
+  return {
+    id: 'run-1',
+    projectId: '37',
+    characterId: '25',
+    outfitId: 'outfit-25-default',
+    purpose: 'create_character',
+    driver: 'ai',
+    status: 'active',
+    currentRevisionId: 'revision-1',
+    prompt: '提着灯笼的守夜人',
+    revisions: [
+      {
+        id: 'revision-1',
+        basedOnRevisionId: null,
+        restartStepId: null,
+        status: 'active',
+        generationStatus: 'completed',
+        exportStatus: 'not_exported',
+        createdAt: '2026-08-03T00:00:00.000Z',
+        steps: [
+          {
+            ...common,
+            id: 'setup',
+            type: 'character-setup',
+            status: 'passed',
+            input: null,
+            output: null,
+          },
+          {
+            ...common,
+            id: 'template',
+            type: 'character-template',
+            status: 'passed',
+            input: null,
+            output: { type: 'character_template', images: [{ url: 'character.png' }] },
+          },
+          {
+            ...common,
+            id: 'candidate',
+            type: 'template-candidate',
+            status: 'passed',
+            input: null,
+            output: null,
+          },
+          {
+            ...common,
+            id: 'action',
+            type: 'action-generation',
+            status: 'passed',
+            input: null,
+            output: {
+              type: 'complete_animation',
+              actionType: 'custom',
+              frames: [{ url: 'frame.png', durationMs: 125 }],
+            },
+          },
+          { ...common, id: 'review', type: 'review', status: 'active', input: null, output: null },
+        ],
+      },
+    ],
+  }
+}

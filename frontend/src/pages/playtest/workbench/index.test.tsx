@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Character } from '@/entities/character'
+import type { PlaytestInspectionApis } from '@/entities/playtest-inspection'
 
 import type { FrameGeometryResult } from './analysis/sequence-evidence'
 import { PlaytestWorkbench } from './index'
@@ -146,13 +147,41 @@ describe('PlaytestWorkbench on the PR #70 character contract', () => {
     expect(screen.getByRole('button', { name: /Crouch/ }).getAttribute('aria-pressed')).toBe('true')
   })
 
-  it('keeps acceptance as session-only state without a persistence API', () => {
-    render(<PlaytestWorkbench character={character} outfitId="outfit-1" />)
+  it('loads and saves the current action inspection through the Playtest API', async () => {
+    const inspections: Pick<PlaytestInspectionApis, 'get' | 'save'> = {
+      get: vi.fn().mockResolvedValue(null),
+      save: vi.fn().mockImplementation(async (input) => ({
+        id: 'inspection-1',
+        ...input,
+        createdAt: '2026-08-03T00:00:00.000Z',
+        updatedAt: '2026-08-03T00:00:00.000Z',
+      })),
+    }
+    render(
+      <PlaytestWorkbench character={character} outfitId="outfit-1" inspectionApis={inspections} />,
+    )
 
+    await waitFor(() =>
+      expect(inspections.get).toHaveBeenCalledWith({
+        characterId: 'character-1',
+        outfitId: 'outfit-1',
+        actionId: 'walk',
+      }),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '打开检查工具' }))
     fireEvent.click(screen.getByRole('button', { name: '发现问题' }))
+    await waitFor(() =>
+      expect(inspections.save).toHaveBeenCalledWith({
+        characterId: 'character-1',
+        outfitId: 'outfit-1',
+        actionId: 'walk',
+        status: 'issues_found',
+      }),
+    )
     const acceptance = screen.getByRole('region', { name: '核验状态' })
     expect(within(acceptance).getAllByText('发现问题')).toHaveLength(2)
-    expect(within(acceptance).getByText('仅保存在当前页面，不写入后端')).toBeTruthy()
+    expect(within(acceptance).getByText('已保存到 Playtest 核验记录')).toBeTruthy()
   })
 
   it('reports a missing outfit instead of falling back to another asset', () => {
@@ -164,10 +193,22 @@ describe('PlaytestWorkbench on the PR #70 character contract', () => {
   it('keeps inspect, audit, and export in the same workbench', () => {
     render(<PlaytestWorkbench character={character} outfitId="outfit-1" />)
 
+    expect(screen.queryByRole('tab', { name: '帧检查' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '打开检查工具' }))
     expect(screen.getByRole('tab', { name: '帧检查' })).toBeTruthy()
     fireEvent.click(screen.getByRole('tab', { name: '问题记录' }))
     expect(screen.getByRole('tabpanel', { name: '问题记录' })).toBeTruthy()
     fireEvent.click(screen.getByRole('tab', { name: '资产导出' }))
     expect(screen.getByRole('button', { name: '导出游戏资产包' })).toBeTruthy()
+  })
+
+  it('delegates adding an action for the current character', () => {
+    const onAddAction = vi.fn()
+    render(
+      <PlaytestWorkbench character={character} outfitId="outfit-1" onAddAction={onAddAction} />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '添加动作' }))
+    expect(onAddAction).toHaveBeenCalledTimes(1)
   })
 })

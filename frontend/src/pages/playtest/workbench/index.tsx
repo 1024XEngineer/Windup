@@ -1,9 +1,11 @@
-import { useCallback, useMemo, useReducer, useState, type KeyboardEvent } from 'react'
+import { useMemo, useReducer, useState, type KeyboardEvent } from 'react'
 
 import type { Character } from '@/entities/character'
+import type { PlaytestInspectionApis } from '@/entities/playtest-inspection'
+import type { CanvasBaseline } from './analysis/quality-policy'
 
-import { ActionSelector } from './action-selector'
-import { Acceptance, type PlaytestInspectionStatus } from './acceptance'
+import { ActionSelector, type PlaytestAssetOption } from './action-selector'
+import { Acceptance } from './acceptance'
 import { useFrameReviewEvidence } from './analysis/use-frame-review-evidence'
 import { AnimationStage } from './animation-stage'
 import { AuditPanel } from './audit/audit-panel'
@@ -18,12 +20,20 @@ import { usePlaybackController } from './playback/use-playback-controller'
 import { useStageMotion } from './stage-motion'
 import { StatusPanel } from './status-panel'
 import { usePlaytestKeyboard } from './use-playtest-keyboard'
+import { usePlaytestInspection } from './use-playtest-inspection'
 
 export interface PlaytestWorkbenchProps {
   character: Character
   outfitId: string
+  assetOptions?: readonly PlaytestAssetOption[]
+  expectedCanvas?: CanvasBaseline | null
+  inspectionApis?: Pick<PlaytestInspectionApis, 'get' | 'save'>
   initialActionId?: string | null
+  onSelectAsset?(asset: PlaytestAssetOption): void
+  onAddAction?(): void
 }
+
+export type { PlaytestAssetOption } from './action-selector'
 
 const EMPTY_PREVIEW_ACTIONS: readonly PreviewAction[] = []
 const RIGHT_PANELS = [
@@ -36,7 +46,12 @@ type RightPanel = (typeof RIGHT_PANELS)[number][0]
 export function PlaytestWorkbench({
   character,
   outfitId,
+  assetOptions = [],
+  expectedCanvas = null,
+  inspectionApis,
   initialActionId = null,
+  onSelectAsset = () => undefined,
+  onAddAction,
 }: PlaytestWorkbenchProps) {
   const previewResult = useMemo(
     () => createPreviewModel(character, outfitId),
@@ -71,18 +86,35 @@ export function PlaytestWorkbench({
       (action) =>
         action.type === 'crouch' && action.sequences.some((sequence) => sequence.frames.length > 0),
     ) ?? false
-  const reviewEvidence = useFrameReviewEvidence(playback.sequence, playback.action?.type ?? null)
-  const [demoInspectionStatus, setDemoInspectionStatus] = useState<PlaytestInspectionStatus | null>(
-    null,
+  const reviewEvidence = useFrameReviewEvidence(
+    playback.sequence,
+    playback.action?.type ?? null,
+    undefined,
+    expectedCanvas,
   )
+  const inspectionTarget = useMemo(
+    () =>
+      playback.action === null
+        ? null
+        : {
+            characterId: character.id,
+            outfitId,
+            actionId: playback.action.id,
+          },
+    [character.id, outfitId, playback.action],
+  )
+  const inspection = usePlaytestInspection(inspectionApis, inspectionTarget)
   const [activeRightPanel, setActiveRightPanel] = useState<RightPanel>('inspect')
-  const [actionSidebarCollapsed, setActionSidebarCollapsed] = useState(false)
+  const [toolsOpen, setToolsOpen] = useState(false)
   const [manualIssues, dispatchAudit] = useReducer(reduceAuditSession, [])
 
   const frameCount = playback.sequence?.frames.length ?? 0
   const automaticFindings =
     reviewEvidence.status === 'ready' ? reviewEvidence.evidence.findings : []
-  const qualityIssueCount = automaticFindings.length + manualIssues.length
+  const automaticErrorCount = automaticFindings.filter(
+    (finding) => finding.severity === 'error',
+  ).length
+  const qualityIssueCount = automaticErrorCount + manualIssues.length
 
   const movePanelFocus = (event: KeyboardEvent<HTMLButtonElement>, current: RightPanel) => {
     const currentIndex = RIGHT_PANELS.findIndex(([value]) => value === current)
@@ -150,10 +182,6 @@ export function PlaytestWorkbench({
   )
   usePlaytestKeyboard(keyboardCommands, preview !== null)
 
-  const recordStatus = useCallback((status: PlaytestInspectionStatus) => {
-    setDemoInspectionStatus(status)
-  }, [])
-
   if (preview === null) {
     return (
       <main aria-label="Playtest">
@@ -164,91 +192,78 @@ export function PlaytestWorkbench({
     )
   }
 
+  const selectedAssetKey = `${character.id}:${outfitId}`
+  const availableAssets =
+    assetOptions.length > 0
+      ? assetOptions
+      : [
+          {
+            key: selectedAssetKey,
+            characterId: character.id,
+            outfitId,
+            name: preview.outfitName,
+            actionCount: preview.actions.length,
+          },
+        ]
+
   return (
     <main
       aria-label="Playtest"
-      className="mx-auto w-full max-w-[1920px] space-y-3 p-2 text-slate-900 sm:p-4"
+      className="mx-auto min-h-[calc(100vh-5rem)] w-full max-w-[1920px] space-y-3 bg-[#eef0ed] px-3 pb-4 pt-2 text-[#202722] sm:px-5"
     >
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="text-[10px] font-semibold tracking-[0.18em] text-slate-400">PLAYTEST</p>
-          <h1 className="mt-1 text-xl font-semibold">
+      <header className="flex min-h-14 flex-wrap items-center justify-between gap-3 border-b border-[#d3d8d4] pb-3">
+        <div className="min-w-0">
+          <p className="font-mono text-[9px] font-semibold text-[#79817b]">PLAYTEST</p>
+          <h1 className="mt-1 truncate text-lg font-semibold">
             {preview.characterName} · {preview.outfitName}
           </h1>
         </div>
-        <p className="text-xs text-slate-500">只读预览，不写入角色、动作或帧</p>
+        <div className="flex items-center gap-3">
+          <p className="hidden text-[10px] text-[#727a74] sm:block">
+            只读预览，不写入角色、动作或帧
+          </p>
+          <button
+            type="button"
+            aria-label={toolsOpen ? '关闭检查工具' : '打开检查工具'}
+            aria-expanded={toolsOpen}
+            aria-controls="playtest-tools"
+            onClick={() => setToolsOpen((open) => !open)}
+            className={`inline-flex min-h-9 items-center gap-2 rounded-md border px-3 text-xs font-semibold transition-colors ${
+              toolsOpen
+                ? 'border-[#35583f] bg-[#35583f] text-white'
+                : 'border-[#aeb7b0] bg-white text-[#35583f] hover:border-[#718278]'
+            }`}
+          >
+            检查
+            {qualityIssueCount > 0 ? (
+              <span className="min-w-5 rounded bg-[#f7e2de] px-1 py-0.5 text-[9px] text-[#8d352d]">
+                {qualityIssueCount}
+              </span>
+            ) : null}
+          </button>
+        </div>
       </header>
       <div
-        className={`grid items-stretch gap-4 lg:h-[calc(100vh-112px)] lg:min-h-[720px] lg:max-h-[920px] ${
-          actionSidebarCollapsed
-            ? 'lg:grid-cols-[48px_minmax(0,1fr)_300px]'
-            : 'lg:grid-cols-[190px_minmax(0,1fr)_300px]'
+        className={`grid items-stretch gap-3 lg:min-h-[680px] lg:grid-cols-[208px_minmax(0,1fr)] ${
+          toolsOpen ? 'xl:grid-cols-[208px_minmax(0,1fr)_320px]' : ''
         }`}
       >
         <nav
           aria-label="动作列表"
-          className={
-            actionSidebarCollapsed ? 'h-full min-h-0 w-12' : 'flex h-full min-h-0 min-w-0 flex-col'
-          }
+          className="min-h-0 min-w-0 overflow-hidden rounded-lg lg:h-[calc(100vh-9.5rem)] lg:min-h-[680px] lg:max-h-[900px]"
         >
-          <button
-            type="button"
-            aria-label={actionSidebarCollapsed ? '展开动作栏' : '收起动作栏'}
-            aria-expanded={!actionSidebarCollapsed}
-            aria-controls="playtest-action-list"
-            onClick={() => setActionSidebarCollapsed((collapsed) => !collapsed)}
-            className="mb-2 grid h-10 w-full shrink-0 place-items-center rounded-lg border border-slate-300 bg-white text-lg font-semibold text-slate-600 shadow-sm hover:border-slate-500"
-          >
-            {actionSidebarCollapsed ? '›' : '‹'}
-          </button>
-          <div id="playtest-action-list" hidden={actionSidebarCollapsed} className="min-h-0 flex-1">
-            <ActionSelector
-              actions={preview.actions}
-              selectedActionId={playback.state.actionId}
-              onSelectAction={playback.selectAction}
-            />
-          </div>
+          <ActionSelector
+            assets={availableAssets}
+            selectedAssetKey={selectedAssetKey}
+            actions={preview.actions}
+            selectedActionId={playback.state.actionId}
+            onSelectAsset={onSelectAsset}
+            onSelectAction={playback.selectAction}
+            onAddAction={onAddAction}
+          />
         </nav>
-        <section
-          aria-label="调试工作台"
-          className="flex h-full min-h-0 min-w-0 flex-col gap-4 overflow-hidden"
-        >
-          <div
-            role="group"
-            aria-label="方向选择"
-            className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
-          >
-            <span className="mr-1 text-xs font-semibold text-slate-500">方向</span>
-            <button
-              type="button"
-              onClick={() => setMirrored(!stageMotion.mirrored)}
-              className={`rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
-                stageMotion.mirrored
-                  ? 'border-sky-600 bg-sky-600 text-white'
-                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-400'
-              }`}
-              title="翻转水平方向 (F)"
-            >
-              ⇄ 翻转
-            </button>
-            {playback.action?.sequences.map((sequence) => (
-              <button
-                key={sequence.direction}
-                type="button"
-                aria-pressed={sequence.direction === playback.state.direction}
-                disabled={sequence.frames.length === 0}
-                onClick={() => playback.selectDirection(sequence.direction)}
-                className={`rounded-lg border px-3 py-2 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-                  sequence.direction === playback.state.direction
-                    ? 'border-emerald-900 bg-emerald-950 text-white'
-                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-400'
-                }`}
-              >
-                {sequence.direction}
-              </button>
-            ))}
-          </div>
-          <div className="min-h-[320px] flex-1">
+        <section aria-label="预览工作台" className="flex min-h-0 min-w-0 flex-col gap-2">
+          <div className="relative min-h-[360px] flex-1 lg:min-h-[480px]">
             <AnimationStage
               currentFrame={playback.frame}
               motionOffset={stageMotion.offset}
@@ -257,6 +272,42 @@ export function PlaytestWorkbench({
               showGrid
               showChecker
             />
+            <div
+              role="group"
+              aria-label="方向选择"
+              className="absolute left-3 top-3 z-20 flex max-w-[calc(100%-1.5rem)] flex-wrap items-center gap-1 rounded-md border border-[#aeb7b0] bg-white/90 p-1 backdrop-blur-sm"
+            >
+              <button
+                type="button"
+                aria-label="翻转方向"
+                aria-pressed={stageMotion.mirrored}
+                onClick={() => setMirrored(!stageMotion.mirrored)}
+                className={`grid h-8 w-8 place-items-center rounded text-base transition-colors ${
+                  stageMotion.mirrored
+                    ? 'bg-[#35583f] text-white'
+                    : 'text-[#59635b] hover:bg-[#e7ebe7]'
+                }`}
+                title="翻转水平方向 (F)"
+              >
+                ⇄
+              </button>
+              {playback.action?.sequences.map((sequence) => (
+                <button
+                  key={sequence.direction}
+                  type="button"
+                  aria-pressed={sequence.direction === playback.state.direction}
+                  disabled={sequence.frames.length === 0}
+                  onClick={() => playback.selectDirection(sequence.direction)}
+                  className={`min-h-8 rounded px-2 text-[10px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                    sequence.direction === playback.state.direction
+                      ? 'bg-[#252a27] text-white'
+                      : 'text-[#59635b] hover:bg-[#e7ebe7]'
+                  }`}
+                >
+                  {sequence.direction}
+                </button>
+              ))}
+            </div>
           </div>
           <div role="group" aria-label="播放控制">
             <PlaybackControls
@@ -281,84 +332,105 @@ export function PlaytestWorkbench({
             onSelectFrame={playback.selectFrame}
           />
         </section>
-        <aside
-          aria-label="Playtest 工具栏"
-          className="flex h-full min-h-0 flex-col gap-4 overflow-hidden"
-        >
-          <div
-            role="tablist"
-            aria-label="Playtest 工具"
-            className="grid grid-cols-3 gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm"
+        {toolsOpen ? (
+          <aside
+            id="playtest-tools"
+            aria-label="Playtest 工具栏"
+            className="flex min-h-0 flex-col gap-3 rounded-lg border border-[#cdd4ce] bg-[#f8f9f7] p-2 lg:col-span-2 xl:col-span-1 xl:h-[calc(100vh-9.5rem)] xl:min-h-[680px] xl:max-h-[900px]"
           >
-            {RIGHT_PANELS.map(([value, label]) => (
+            <header className="flex min-h-9 items-center justify-between border-b border-[#d9ded9] px-1 pb-2">
+              <strong className="text-xs">检查工具</strong>
               <button
-                key={value}
-                id={`playtest-tool-tab-${value}`}
                 type="button"
-                role="tab"
-                aria-selected={activeRightPanel === value}
-                aria-controls={`playtest-tool-panel-${value}`}
-                tabIndex={activeRightPanel === value ? 0 : -1}
-                onClick={() => setActiveRightPanel(value)}
-                onKeyDown={(event) => movePanelFocus(event, value)}
-                className={`rounded-lg px-2 py-2 text-[11px] font-semibold ${
-                  activeRightPanel === value
-                    ? 'bg-slate-900 text-white'
-                    : 'text-slate-500 hover:bg-slate-50'
-                }`}
+                aria-label="关闭检查工具"
+                onClick={() => setToolsOpen(false)}
+                className="grid h-8 w-8 place-items-center rounded text-lg text-[#687069] hover:bg-[#e8ece8]"
               >
-                {label}
+                ×
               </button>
-            ))}
-          </div>
-          <div
-            id="playtest-tool-panel-inspect"
-            role="tabpanel"
-            aria-labelledby="playtest-tool-tab-inspect"
-            hidden={activeRightPanel !== 'inspect'}
-            className="min-h-0 flex-1 overflow-y-auto pr-1"
-          >
-            <Inspector
-              action={playback.action}
-              sequence={playback.sequence}
-              frame={playback.frame}
-              frameIndex={playback.state.frameIndex}
-              reviewEvidence={reviewEvidence}
+            </header>
+            <div
+              role="tablist"
+              aria-label="Playtest 工具"
+              className="grid grid-cols-3 gap-1 rounded-md bg-[#e7ebe7] p-1"
+            >
+              {RIGHT_PANELS.map(([value, label]) => (
+                <button
+                  key={value}
+                  id={`playtest-tool-tab-${value}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeRightPanel === value}
+                  aria-controls={`playtest-tool-panel-${value}`}
+                  tabIndex={activeRightPanel === value ? 0 : -1}
+                  onClick={() => setActiveRightPanel(value)}
+                  onKeyDown={(event) => movePanelFocus(event, value)}
+                  className={`rounded px-2 py-2 text-[10px] font-semibold ${
+                    activeRightPanel === value
+                      ? 'bg-white text-[#26372c] shadow-sm'
+                      : 'text-[#667068] hover:text-[#26372c]'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div
+              id="playtest-tool-panel-inspect"
+              role="tabpanel"
+              aria-labelledby="playtest-tool-tab-inspect"
+              hidden={activeRightPanel !== 'inspect'}
+              className="min-h-0 flex-1 overflow-y-auto"
+            >
+              <Inspector
+                action={playback.action}
+                sequence={playback.sequence}
+                frame={playback.frame}
+                frameIndex={playback.state.frameIndex}
+                reviewEvidence={reviewEvidence}
+              />
+            </div>
+            <div
+              id="playtest-tool-panel-audit"
+              role="tabpanel"
+              aria-labelledby="playtest-tool-tab-audit"
+              hidden={activeRightPanel !== 'audit'}
+              className="min-h-0 flex-1 overflow-y-auto"
+            >
+              <AuditPanel
+                actionId={playback.action?.id ?? null}
+                actionName={playback.action?.name ?? null}
+                direction={playback.sequence?.direction ?? null}
+                frameIndex={playback.state.frameIndex}
+                frame={playback.frame}
+                automaticFindings={automaticFindings}
+                issues={manualIssues}
+                onAdd={(issue) => dispatchAudit({ type: 'add', issue })}
+                onUpdate={(id, category, note) =>
+                  dispatchAudit({ type: 'update', id, category, note })
+                }
+                onRemove={(id) => dispatchAudit({ type: 'remove', id })}
+              />
+            </div>
+            <div
+              id="playtest-tool-panel-export"
+              role="tabpanel"
+              aria-labelledby="playtest-tool-tab-export"
+              hidden={activeRightPanel !== 'export'}
+              className="min-h-0 flex-1 overflow-y-auto"
+            >
+              <ExportPanel model={preview} qualityIssueCount={qualityIssueCount} />
+            </div>
+            <Acceptance
+              inspectionStatus={inspection.status}
+              available={inspection.available}
+              loading={inspection.loading}
+              saving={inspection.saving}
+              error={inspection.error}
+              onRecordStatus={inspection.save}
             />
-          </div>
-          <div
-            id="playtest-tool-panel-audit"
-            role="tabpanel"
-            aria-labelledby="playtest-tool-tab-audit"
-            hidden={activeRightPanel !== 'audit'}
-            className="min-h-0 flex-1 overflow-y-auto pr-1"
-          >
-            <AuditPanel
-              actionId={playback.action?.id ?? null}
-              actionName={playback.action?.name ?? null}
-              direction={playback.sequence?.direction ?? null}
-              frameIndex={playback.state.frameIndex}
-              frame={playback.frame}
-              automaticFindings={automaticFindings}
-              issues={manualIssues}
-              onAdd={(issue) => dispatchAudit({ type: 'add', issue })}
-              onUpdate={(id, category, note) =>
-                dispatchAudit({ type: 'update', id, category, note })
-              }
-              onRemove={(id) => dispatchAudit({ type: 'remove', id })}
-            />
-          </div>
-          <div
-            id="playtest-tool-panel-export"
-            role="tabpanel"
-            aria-labelledby="playtest-tool-tab-export"
-            hidden={activeRightPanel !== 'export'}
-            className="min-h-0 flex-1 overflow-y-auto pr-1"
-          >
-            <ExportPanel model={preview} qualityIssueCount={qualityIssueCount} />
-          </div>
-          <Acceptance inspectionStatus={demoInspectionStatus} onRecordStatus={recordStatus} />
-        </aside>
+          </aside>
+        ) : null}
       </div>
     </main>
   )

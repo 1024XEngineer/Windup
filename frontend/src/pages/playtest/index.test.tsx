@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useNavigate, type NavigateFunction } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -63,7 +63,10 @@ describe('PlaytestPage', () => {
 
   it('loads the requested character through the standard skeleton API only', async () => {
     const apis: PlaytestPageApis = {
-      characters: { get: vi.fn().mockResolvedValue(character) },
+      characters: {
+        get: vi.fn().mockResolvedValue(character),
+        listByProject: vi.fn().mockResolvedValue([character]),
+      },
     }
 
     renderPage(apis, '/playtest/character-1/outfit-1?actionId=idle')
@@ -76,7 +79,9 @@ describe('PlaytestPage', () => {
   it.each([{ code: 404 }, { status: 404 }])(
     'maps a missing character response to a stable message',
     async (error) => {
-      renderPage({ characters: { get: vi.fn().mockRejectedValue(error) } })
+      renderPage({
+        characters: { get: vi.fn().mockRejectedValue(error), listByProject: vi.fn() },
+      })
 
       expect(await screen.findByText('角色不存在')).toBeTruthy()
     },
@@ -84,7 +89,10 @@ describe('PlaytestPage', () => {
 
   it('does not mislabel a transport failure as not found', async () => {
     renderPage({
-      characters: { get: vi.fn().mockRejectedValue(new Error('network unavailable')) },
+      characters: {
+        get: vi.fn().mockRejectedValue(new Error('network unavailable')),
+        listByProject: vi.fn(),
+      },
     })
 
     expect(await screen.findByText('角色读取失败')).toBeTruthy()
@@ -101,6 +109,7 @@ describe('PlaytestPage', () => {
       outfits: [{ ...character.outfits[0], characterId: 'character-2' }],
     }
     const get = vi.fn().mockReturnValueOnce(firstRequest).mockResolvedValueOnce(secondCharacter)
+    const listByProject = vi.fn().mockResolvedValue([character, secondCharacter])
     let navigate: NavigateFunction | undefined
 
     function NavigationProbe() {
@@ -114,7 +123,7 @@ describe('PlaytestPage', () => {
         <Routes>
           <Route
             path="/playtest/:characterId/:outfitId"
-            element={<PlaytestPage apis={{ characters: { get } }} />}
+            element={<PlaytestPage apis={{ characters: { get, listByProject } }} />}
           />
         </Routes>
       </MemoryRouter>,
@@ -129,5 +138,43 @@ describe('PlaytestPage', () => {
     )
     expect(get).toHaveBeenNthCalledWith(1, 'character-1')
     expect(get).toHaveBeenNthCalledWith(2, 'character-2')
+  })
+
+  it('switches assets from the action sidebar without returning to the catalog', async () => {
+    const secondCharacter: Character = {
+      ...character,
+      id: 'character-2',
+      outfits: [
+        {
+          ...character.outfits[0]!,
+          id: 'outfit-2',
+          characterId: 'character-2',
+          name: 'Knight',
+          actions: character.outfits[0]!.actions.map((action) => ({
+            ...action,
+            outfitId: 'outfit-2',
+            name: 'Guard',
+          })),
+        },
+      ],
+    }
+    const get = vi
+      .fn()
+      .mockImplementation(async (id: string) =>
+        id === secondCharacter.id ? secondCharacter : character,
+      )
+    const listByProject = vi.fn().mockResolvedValue([character, secondCharacter])
+
+    renderPage({ characters: { get, listByProject } })
+
+    const selector = await screen.findByRole('combobox', { name: '同项目资产' })
+    fireEvent.click(selector)
+    const options = screen.getAllByRole('option')
+    expect(options).toHaveLength(2)
+    fireEvent.click(screen.getByRole('option', { name: /Knight/ }))
+
+    expect(await screen.findByRole('heading', { name: 'character-2 · Knight' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Guard/ })).toBeTruthy()
+    expect(get).toHaveBeenLastCalledWith('character-2')
   })
 })

@@ -26,6 +26,17 @@ export interface FrameGeometry {
   coverageRatio: number
   /** Compact 8×8 alpha/luminance signature used for adjacent-frame similarity checks. */
   fingerprint?: readonly number[]
+  /** Exact RGBA content hash used to identify genuinely duplicated frames. */
+  contentHash?: string
+}
+
+function hashPixels(data: Uint8ClampedArray): string {
+  let hash = 0x811c9dc5
+  for (const value of data) {
+    hash ^= value
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0')
 }
 
 function createFingerprint(
@@ -181,5 +192,6 @@ export function measureFrameGeometry(pixels: FramePixelData): FrameGeometry | nu
       width: subjectWidth,
       height: subjectHeight,
     }),
+    contentHash: hashPixels(data),
   }
 }

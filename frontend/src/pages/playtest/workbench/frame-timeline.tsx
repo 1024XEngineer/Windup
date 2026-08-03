@@ -10,23 +10,17 @@ export function FrameTimeline({ sequence, currentFrameIndex, onSelectFrame }: Fr
   const frames = sequence?.frames ?? []
 
   return (
-    <section
-      aria-label="逐帧时间线"
-      className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
-    >
-      <header className="mb-3 flex items-center justify-between gap-4">
-        <span>
-          <strong className="block text-xs">逐帧预览</strong>
-          <small className="text-[10px] text-slate-400">点击帧定位；Playtest 不写入审核结论</small>
-        </span>
-        <span className="text-[10px] font-semibold text-emerald-900">READ ONLY</span>
+    <section aria-label="逐帧时间线" className="rounded-lg border border-[#d2d8d3] bg-white p-2">
+      <header className="mb-2 flex items-center justify-between gap-4 px-1">
+        <strong className="text-[10px] text-[#59635b]">逐帧</strong>
+        <span className="font-mono text-[9px] text-[#7a827c]">{frames.length} FRAMES</span>
       </header>
       {frames.length === 0 ? (
         <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">
           当前方向没有帧
         </p>
       ) : (
-        <div className="flex gap-2 overflow-x-auto pb-1">
+        <div className="flex gap-1.5 overflow-x-auto pb-1">
           {frames.map((frame, index) => (
             <button
               key={`${frame.imageUrl}-${index}`}
@@ -34,7 +28,7 @@ export function FrameTimeline({ sequence, currentFrameIndex, onSelectFrame }: Fr
               aria-label={`第 ${index + 1} 帧`}
               aria-pressed={index === currentFrameIndex}
               onClick={() => onSelectFrame(index)}
-              className={`w-28 shrink-0 overflow-hidden rounded-lg border p-1 text-left transition-colors ${
+              className={`w-20 shrink-0 overflow-hidden rounded-md border p-1 text-left transition-colors ${
                 index === currentFrameIndex
                   ? 'border-emerald-900 bg-emerald-50'
                   : 'border-slate-200 bg-slate-50 hover:border-slate-400'

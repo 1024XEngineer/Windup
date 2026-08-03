@@ -24,6 +24,11 @@ export interface QuickStartService {
   /** 为 null 时可以创建；非 null 时页面必须明确阻止提交，不能回退到假数据。 */
   readonly unavailableReason: string | null
   start(prompt: string): Promise<WorkflowRun>
+  /** 复用已有角色和造型，直接开始一条增加动作的运行。 */
+  startAction(
+    target: { characterId: string; outfitId: string },
+    actionDescription: string,
+  ): Promise<WorkflowRun>
   getWorkflow(runId: WorkflowRun['id']): WorkflowRun | null
   subscribe(runId: WorkflowRun['id'], listener: (run: WorkflowRun) => void): () => void
   resume(runId: WorkflowRun['id']): Promise<WorkflowRun | null>
@@ -112,6 +117,43 @@ export function createQuickStartService({
         if (stored?.status === 'failed') return stored
         throw cause
       }
+    },
+
+    async startAction(target, actionDescription) {
+      if (!characterApis || !generationApis) {
+        throw new Error('角色或生成服务尚未配置，不能增加动作')
+      }
+      const prompt = actionDescription.trim()
+      if (!prompt) throw new Error('请先描述要添加的动作')
+
+      const character = await characterApis.get(target.characterId)
+      const outfit = character.outfits.find((item) => item.id === target.outfitId)
+      if (!outfit) throw new Error('当前角色中没有找到目标造型')
+      const firstFrameUrl = outfit.characterTemplateUrl ?? outfit.baseFrames[0]?.imageUrl ?? null
+      if (!firstFrameUrl) throw new Error('当前造型没有可用于生成动作的角色图')
+
+      const created = controller.create({
+        projectId: character.projectId,
+        purpose: 'add_action',
+        driver: 'ai',
+        prompt,
+        characterId: character.id,
+        outfitId: outfit.id,
+        characterTemplateUrl: firstFrameUrl,
+        baseFrameUrls: outfit.baseFrames.map((frame) => frame.imageUrl),
+      })
+      characterMap.set(created.id, { characterId: character.id, outfitId: outfit.id })
+
+      return controller.startActionGeneration(created.id, {
+        type: 'complete_animation',
+        projectId: character.projectId,
+        characterId: character.id,
+        outfitId: outfit.id,
+        actionType: 'custom',
+        firstFrameUrl,
+        prompt,
+        referenceMedia: [firstFrameUrl as MediaReference],
+      })
     },
 
     getWorkflow(runId) {
@@ -274,6 +316,10 @@ export const unavailableQuickStartService: QuickStartService = {
   unavailableReason: UNAVAILABLE_REASON,
 
   async start() {
+    throw new Error(UNAVAILABLE_REASON)
+  },
+
+  async startAction() {
     throw new Error(UNAVAILABLE_REASON)
   },
 

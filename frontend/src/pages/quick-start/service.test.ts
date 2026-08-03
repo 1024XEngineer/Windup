@@ -135,6 +135,7 @@ describe('createQuickStartService export recovery', () => {
       listByProject: vi.fn(async () => [character]),
       create: vi.fn(async () => character),
       update: vi.fn(async (input) => input),
+      remove: vi.fn(async () => undefined),
     }
     const { service, store } = createHarness(characterApis)
     const run: WorkflowRun = {
@@ -170,6 +171,7 @@ describe('createQuickStartService export recovery', () => {
       update: vi.fn(async () => {
         throw new Error('not used')
       }),
+      remove: vi.fn(async () => undefined),
     }
     const { service, store } = createHarness(characterApis)
     const run: WorkflowRun = {
@@ -193,6 +195,64 @@ describe('createQuickStartService export recovery', () => {
 })
 
 describe('createQuickStartService action generation', () => {
+  it('adds a new custom action to the existing outfit without replacing another custom action', async () => {
+    const character = makeCharacter('42', 'outfit-42-default')
+    character.outfits[0]!.actions.push({
+      id: '42-older-run',
+      outfitId: 'outfit-42-default',
+      name: '画画',
+      kind: 'custom',
+      type: 'custom',
+      fps: 8,
+      keyFrameIndex: 0,
+      frames: [{ imageUrl: 'https://example.com/old.png', durationMs: 125, rootMotion: null }],
+    })
+    const characterApis: CharacterApis = {
+      get: vi.fn(async () => character),
+      listByProject: vi.fn(async () => [character]),
+      create: vi.fn(async () => character),
+      update: vi.fn(async (input) => input),
+      remove: vi.fn(async () => undefined),
+    }
+    const harness = createHarness(characterApis)
+
+    const started = await harness.service.startAction(
+      { characterId: '42', outfitId: 'outfit-42-default' },
+      '挥手打招呼',
+    )
+
+    expect(started.purpose).toBe('add_action')
+    expect(characterApis.create).not.toHaveBeenCalled()
+    expect(harness.generationCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'complete_animation',
+        characterId: '42',
+        outfitId: 'outfit-42-default',
+        actionType: 'custom',
+        prompt: '挥手打招呼',
+      }),
+    )
+
+    harness.taskListeners.get('task-complete_animation')?.({
+      taskId: 'task-complete_animation',
+      type: 'complete_animation',
+      status: 'completed',
+      error: null,
+      result: {
+        type: 'complete_animation',
+        actionType: 'custom',
+        frames: [{ url: 'https://example.com/new.png', durationMs: 125 }],
+      },
+    })
+    await harness.service.approveReview(started.id)
+
+    const saved = vi.mocked(characterApis.update).mock.calls[0]?.[0]
+    expect(saved?.outfits[0]?.actions.map(({ id, name }) => ({ id, name }))).toEqual([
+      { id: '42-older-run', name: '画画' },
+      { id: '42-id-run-1', name: '挥手打招呼' },
+    ])
+  })
+
   it('does not enter action generation before character preparation can be persisted', async () => {
     const character = makeCharacter('42', 'outfit-42-default')
     let resolveCharacter!: (value: Character) => void
@@ -204,6 +264,7 @@ describe('createQuickStartService action generation', () => {
       listByProject: vi.fn(async () => [character]),
       create: vi.fn(() => pendingCharacter),
       update: vi.fn(async (input) => input),
+      remove: vi.fn(async () => undefined),
     }
     const harness = createHarness(characterApis)
     await advanceToCandidate(harness)
@@ -238,6 +299,7 @@ describe('createQuickStartService action generation', () => {
       listByProject: vi.fn(async () => [character]),
       create: vi.fn(async () => character),
       update: vi.fn(async (input) => input),
+      remove: vi.fn(async () => undefined),
     }
     const harness = createHarness(characterApis)
     await advanceToCandidate(harness)
@@ -264,6 +326,7 @@ describe('createQuickStartService action generation', () => {
       listByProject: vi.fn(async () => [character]),
       create: vi.fn(async () => character),
       update: vi.fn(async (input) => input),
+      remove: vi.fn(async () => undefined),
     }
     const harness = createHarness(characterApis)
     await advanceToCandidate(harness)

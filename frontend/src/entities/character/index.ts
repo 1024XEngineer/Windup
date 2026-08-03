@@ -134,4 +134,5 @@ export interface CharacterApis {
   listByProject(projectId: string): Promise<Character[]>
   create(input: CreateCharacterInput): Promise<Character>
   update(character: Character): Promise<Character>
+  remove(id: Character['id']): Promise<void>
 }

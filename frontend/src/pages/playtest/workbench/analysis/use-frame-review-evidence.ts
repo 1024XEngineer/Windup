@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import type { PlaytestActionType, PreviewFrame, PreviewSequence } from '../model/types'
 import { readImageGeometry } from './image-geometry'
+import type { CanvasBaseline } from './quality-policy'
 import {
   buildSequenceEvidence,
   type FrameGeometryResult,
@@ -18,11 +19,6 @@ export type ImageGeometryReader = (
   signal?: AbortSignal,
 ) => Promise<FrameGeometryResult>
 
-interface CachedReads {
-  reader: ImageGeometryReader
-  entries: Map<string, FrameGeometryResult>
-}
-
 interface ResolvedState {
   key: string | null
   value: FrameReviewEvidenceState
@@ -35,23 +31,20 @@ export function useFrameReviewEvidence(
   sequence: PreviewSequence | null,
   actionType: PlaytestActionType | null,
   reader: ImageGeometryReader = readImageGeometry,
+  expectedCanvas: CanvasBaseline | null = null,
 ): FrameReviewEvidenceState {
   const sequenceKey =
     sequence === null || actionType === null
       ? null
       : JSON.stringify([
           actionType,
+          expectedCanvas,
           ...sequence.frames.map((frame) => ({
             imageUrl: frame.imageUrl,
             rootMotion: frame.rootMotion,
           })),
         ])
-  const cache = useRef<CachedReads | null>(null)
   const [resolved, setResolved] = useState<ResolvedState>({ key: null, value: IDLE_STATE })
-
-  if (cache.current === null || cache.current.reader !== reader) {
-    cache.current = { reader, entries: new Map() }
-  }
 
   useEffect(() => {
     if (sequenceKey === null || actionType === null) {
@@ -59,32 +52,26 @@ export function useFrameReviewEvidence(
       return
     }
 
-    const [, ...frameDescriptors] = JSON.parse(sequenceKey) as [
+    const [, , ...frameDescriptors] = JSON.parse(sequenceKey) as [
       PlaytestActionType,
+      CanvasBaseline | null,
       ...Array<{ imageUrl: string; rootMotion: PreviewFrame['rootMotion'] }>,
     ]
     const imageUrls = frameDescriptors.map((frame) => frame.imageUrl)
 
     const controller = new AbortController()
     let active = true
-    const reads = cache.current?.entries
     const inFlight = new Map<string, Promise<FrameGeometryResult>>()
 
     setResolved({ key: sequenceKey, value: LOADING_STATE })
 
     const results = imageUrls.map((imageUrl) => {
-      const cached = reads?.get(imageUrl)
-      if (cached !== undefined) return Promise.resolve(cached)
-
       const existing = inFlight.get(imageUrl)
       if (existing !== undefined) return existing
 
-      const pending = reader(imageUrl, controller.signal)
-        .catch((): FrameGeometryResult => ({ status: 'unavailable', reason: '图片分析失败' }))
-        .then((result) => {
-          if (!controller.signal.aborted && result.status === 'ready') reads?.set(imageUrl, result)
-          return result
-        })
+      const pending = reader(imageUrl, controller.signal).catch(
+        (): FrameGeometryResult => ({ status: 'unavailable', reason: '图片分析失败' }),
+      )
       inFlight.set(imageUrl, pending)
       return pending
     })
@@ -102,6 +89,7 @@ export function useFrameReviewEvidence(
               rootMotion: frameDescriptors[index]?.rootMotion ?? null,
             })),
             actionType,
+            expectedCanvas,
           ),
         },
       })
@@ -111,7 +99,7 @@ export function useFrameReviewEvidence(
       active = false
       controller.abort()
     }
-  }, [actionType, reader, sequenceKey])
+  }, [actionType, expectedCanvas, reader, sequenceKey])
 
   if (sequenceKey === null) return IDLE_STATE
   return resolved.key === sequenceKey ? resolved.value : LOADING_STATE

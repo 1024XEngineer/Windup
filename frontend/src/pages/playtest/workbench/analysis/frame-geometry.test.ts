@@ -45,6 +45,7 @@ describe('measureFrameGeometry', () => {
       opaquePixels: 4,
       coverageRatio: 0.25,
       fingerprint: expect.any(Array),
+      contentHash: expect.any(String),
     })
     expect(geometry?.fingerprint).toHaveLength(64)
   })

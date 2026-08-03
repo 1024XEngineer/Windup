@@ -34,4 +34,12 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: '资产库' })).toBeTruthy()
     expect(screen.queryByRole('heading', { name: '历史记录' })).toBeNull()
   })
+
+  it('provides a dedicated Playtest entry', () => {
+    window.history.replaceState({}, '', '/playtest')
+
+    render(<App />)
+
+    expect(screen.getByRole('heading', { name: 'Playtest' })).toBeTruthy()
+  })
 })
