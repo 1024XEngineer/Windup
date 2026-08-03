@@ -58,7 +58,7 @@ MS2 已完成 Windup 的产品 MVP，验证了角色资产生产的核心链路�
 
 ## 本地开发 / Local Development
 
-前端使用 Node.js 24：
+前端支持 Node.js `^20.19.0`、`^22.12.0` 或 `>=24.0.0`；CI 使用 Node.js 24：
 
 ```bash
 cd frontend
