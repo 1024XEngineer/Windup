@@ -18,7 +18,7 @@
 
 Windup 面向缺少美术产能的个人开发者和小型团队，把角色构思、动作生成、逐帧质检、试玩与引擎导出收进同一条生产链。用户从文字描述或参考图出发，最终得到可继续补动作、修缺陷、重新导出的角色资产，而不是一次性的生成结果。
 
-## 产品链路
+## 产品链路 / Product Workflow
 
 ```text
 文字描述 / 参考图
@@ -32,7 +32,7 @@ Playtest 试玩 → 透明 PNG / Sprite Sheet / 元数据 → 游戏引擎
 
 Windup 用角色母版约束跨帧、跨动作的视觉一致性，再用确定性的工程后处理完成去背景、切帧、对齐和打包。当某一帧出问题时，返工单位应该缩小到该帧或该节点，不让已经通过的结果陪着重做。
 
-## 核心对象
+## 核心对象 / Core Concepts
 
 | 对象 | 职责 |
 | --- | --- |
@@ -44,7 +44,7 @@ Windup 用角色母版约束跨帧、跨动作的视觉一致性，再用确定�
 
 产品提供两种入口：`Quick Start` 用自然语言建立标准生产流程；`Workflow Editor` 用画布编排节点、处理并行动作和局部返工。两者共用同一套流程状态和质量门禁，不是两套独立产品。
 
-## 当前阶段
+## 当前阶段 / Project Status
 
 > [!IMPORTANT]
 > `main` 当前是 MS2 工程基线，不是已完成前后端联调的正式产品。
@@ -57,13 +57,13 @@ Windup 用角色母版约束跨帧、跨动作的视觉一致性，再用确定�
 
 当前进度以 [`main`](https://github.com/1024XEngineer/Windup/tree/main) 的已合并代码为准。Preview、候选 PR 和 Live Demo 只证明对应的交互或技术验证，不等同于完整产品已交付。
 
-## 技术栈
+## 技术栈 / Tech Stack
 
 - 前端：React 19、TypeScript 6、Vite 8、Tailwind CSS 4、Vitest
 - 后端：Python 3.12、FastAPI、Pydantic、SQLAlchemy、uv workspace
 - 工程约束：GitHub Actions、Ruff、Pytest、Import Linter、oxlint、oxfmt
 
-## 本地开发
+## 本地开发 / Local Development
 
 前端使用 Node.js 24：
 
@@ -81,7 +81,7 @@ uv sync --frozen
 uv run uvicorn windup_app.bootstrap.app:create_app --factory --reload
 ```
 
-## 质量检查
+## 质量检查 / Quality Checks
 
 ```bash
 # frontend/
@@ -97,7 +97,7 @@ uv run lint-imports
 uv run pytest -q
 ```
 
-## 仓库结构
+## 仓库结构 / Repository Structure
 
 ```text
 Windup/
@@ -108,7 +108,7 @@ Windup/
 └── README.md
 ```
 
-## 相关文档
+## 相关文档 / Documentation
 
 - [Windup 产品策划案](https://github.com/1024XEngineer/Windup/issues/37)
 - [核心流程与工作流](https://github.com/1024XEngineer/Windup/issues/25)
@@ -116,12 +116,12 @@ Windup/
 - [前后端 API 契约差异](frontend/API_CONTRACT.md)
 - [后端模块划分](docs/module-split.md)
 
-## 参与贡献
+## 参与贡献 / Contributing
 
 问题、需求和实验记录统一进入 [Issues](https://github.com/1024XEngineer/Windup/issues)。功能和核心改动按 `Proposal → Issue → Branch → Pull Request → Review` 推进。开发前请先查看对应 Issue 与领域契约，不要把 Mock 成功、页面预览或未合并 PR 当作主分支交付。
 
 项目的维护与历史贡献见 [Contributors](https://github.com/1024XEngineer/Windup/graphs/contributors)。
 
-## License
+## 许可证 / License
 
 [Apache License 2.0](LICENSE)
