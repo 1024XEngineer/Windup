@@ -23,8 +23,10 @@ CI 按上面顺序全跑一遍。
 
 ## 结构
 
-模块划分、依赖规则与命名约定见仓库根目录 `frontend-architecture-v3.md`。
+模块划分、依赖规则、状态归属和当前产品范围见仓库根目录
+`frontend-architecture-v3.md`。前端采用 `app -> pages -> features -> entities -> shared`
+五层结构；架构边界由 `src/architecture-boundaries.test.ts` 自动检查。
 
-**本阶段只提交模块边界与接口，不含实现。** 页面是占位外壳，各模块只有类型与 `XxxApis` 接口。实现按模块拆成后续 PR。
+功能实现按独立页面、Feature 或 Entity 拆成后续小 PR，不与架构规则一次性提交。
 
 与后端尚未对齐的接口见 `API_CONTRACT.md`。

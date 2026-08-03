@@ -1,101 +1,66 @@
 # Windup 前端架构
 
-本文记录当前前端的模块划分与依赖规则。2026-07-30 按当日评审意见重写：本阶段只提交模块边界与接口，实现进后续 PR。
+本文只约束 `frontend/`。后端在前端视角中是外部 API 提供方；后端如何拆包、执行生成或保存数据，不属于本文范围。
 
----
+## 1. 五层目录
 
-## 1. 模块划分
+```text
+frontend/src/
+├── app/       # 应用入口、路由、全局布局和依赖装配
+├── pages/     # 一个目录对应一个完整路由场景
+├── features/  # 跨实体的用户操作和流程协调
+├── entities/  # 业务数据、API 契约和传输映射
+└── shared/    # 不理解 Windup 业务的通用能力
+```
 
-业务模块都在 `src/entities/` 下：
+依赖只能向下：`app -> pages -> features -> entities -> shared`。上层可以跳过中间层使用更低层；下层不得反向引用上层。
 
-| 模块 | 职责 |
+| 层 | 可以负责 | 不应该负责 |
+|---|---|---|
+| `app` | 路由、应用外壳、组装 API 和共享服务 | 业务状态机、页面业务逻辑 |
+| `pages` | 组合页面、读取路由参数、处理页面状态 | 定义后端 DTO、复制 Workflow 状态机 |
+| `features` | 审核、发布、导出、流程推进等用户行为 | 导入页面实现、直接定义路由 |
+| `entities` | 领域类型、`XxxApis`、DTO 转换 | 页面展示、跨流程编排 |
+| `shared` | HTTP、分页、通用工具和无业务 UI | Character、Playtest 等业务概念 |
+
+## 2. 六个实体模块
+
+目录层级不等于业务模块。当前前端冻结六个实体边界：
+
+| 实体 | 前端职责 |
 |---|---|
-| `project` | 项目级全局约束：视角、朝向数、精灵尺寸、画风 |
-| `character` | 角色资产。造型、动作、帧是它内部的一棵树 |
-| `action-template` | 能跨角色复用的动作配方 |
-| `generation` | 一次生成任务这份业务数据 |
-| `media` | 已上传媒体的不透明引用 |
-| `task` | 后端异步步骤的状态 |
-| `workflow-run` | 制作流程的运行记录 |
+| `project` | 项目名称、画布规格、视角、方向和画风约束 |
+| `character` | 已确认的角色、造型、动作和帧数据树 |
+| `generation` | 异步生成任务的创建、读取和状态订阅 |
+| `workflow-run` | Quick Start 与 Workflow Editor 共用的前端运行状态 |
+| `playtest-inspection` | 每个 Playtest 目标当前最新的核验结论，不表示历史版本 |
+| `media` | 上传后媒体的不透明引用和上传入口 |
 
-**模块判据：这个东西能不能被单独取到。**
+`Outfit`、`Action`、`Frame` 属于 `Character`，不各建实体。`workflow-controller` 是 Feature，不是第七个实体。外部使用实体时统一从 `@/entities` 公共入口导入。
 
-能单独取，说明它需要自己的一套取数逻辑，才值得一个模块；取不到的，它只是别人身上的一个字段。
+## 3. 页面与 Feature
 
-按这条判据，`Outfit`、`Action`、`Frame` 没有独立模块——它们不能脱离 `Character` 被取到，所以是 `character` 内部的类型。`ActionTemplate` 有独立模块，因为它能被不同角色复用。
+当前产品页面范围为 `home`、`projects`、`quick-start`、`workflow-editor`、`playtest` 和 `not-found`。
 
----
+- `projects` 同时承载列表、创建和详情，避免用三个顶层页面目录表达同一个路由域。
+- `quick-start` 和 `workflow-editor` 是两种创作入口，共用一份 `WorkflowRun` 和一个 `workflow-controller`。
+- `playtest` 是独立核验台，只读取已确认的 Character，并保存当前核验结论。
+- 当前不建设 History 和 Asset Library。Playtest 不承担二者职责，也不使用二者名称。
 
-## 2. 层次
+`features/workflow-controller` 是流程推进的唯一入口。页面不能自行维护第二套步骤状态。审核、发布和下载应保持为不同动作；下载文件不等于发布角色。
 
-```text
-pages -> features -> entities -> shared
-```
+## 4. 状态归属
 
-| 层 | 内容 |
-|---|---|
-| `pages` | 八个路由页面 |
-| `features` | 用户操作：角色设置、生成、审核、导出；以及流程推进 `workflow-controller` |
-| `entities` | 上表业务模块 |
-| `shared` | 无业务语义的形状，目前只有分页 |
+- 项目与已确认角色来自实体 API。
+- 生成中状态属于 `Generation`；传输可以由轮询切换到 SSE，调用页面不感知实现方式。
+- 创作步骤、候选选择和恢复信息属于前端 `WorkflowRun`。
+- Playtest 播放器状态属于页面会话；核验结论通过 `PlaytestInspectionApis` 保存。
+- 自动质量检测结果是从帧计算出的证据，不写回 `Frame` 或伪装成后端结论。
 
-`app` 只做启动和路由，不构造服务、不向下注入。
+## 5. 外部接口边界
 
-### 依赖规则
+页面和 Feature 不直接调用 `fetch`。通用 HTTP 行为放在 `shared/api`，项目、角色、生成、媒体和核验接口分别由对应 `entities/*/api.ts` 适配。后端尚未提供的能力必须明确报错，不得返回假成功、假 ID 或假生成结果。
 
-1. 只能向下依赖，不允许反向。
-2. 同层模块之间不互相导入。要共用就往下沉。
-3. 跨模块只从模块目录的 `index.ts` 进入；`entities` 统一从 `@/entities` 使用。
-4. `entities` 内部模块之间可以互相导入，对外仍是一个门。
+## 6. 增量迁移
 
----
-
-## 3. 接口命名
-
-需要访问后端资源的模块暴露一组接口，统一叫 `XxxApis`：
-
-```text
-ProjectApis  CharacterApis  ActionTemplateApis  GenerationApis
-```
-
-**不使用 `Repository` / `Port` / `Adapter` 这些叫法**，也不做接口与实现的分离——实现跟着接口放在同一个模块里。
-
-`WorkflowRun` 是前端运行态，不声明后端接口。后端不读取、不推进、也不持久化它。
-
----
-
-## 4. 流程推进
-
-`features/workflow-controller` 是快速开始与手动工作流共用的推进边界，不含界面。
-
-Controller 围绕同一份 WorkflowRun 提供推进、更新、重启和中断。这些操作依赖同一份步骤数据，不拆成互不共享状态的独立模块。
-
-步骤顺序固定八步：
-
-```text
-角色资料 → 角色图 → 候选选择 → 动作资料 → 首帧 → 完整动画 → 审核 → 导出
-```
-
-**步骤怎么走、运行状态如何保存都由前端决定。** 后端不参与 WorkflowRun，只接收各节点发起的生成请求，并在最终确认时持久化角色与动作资产。
-
-从历史步骤重开会追加一个新 Revision，旧 Revision 保留为只读历史，不会被改写成失败或完成。
-
-快速开始与手动模式共用同一份推进逻辑，区别只是前者连续调用、后者一次一步。隐藏步骤不等于跳过步骤——门禁写在流程模型里，不在界面里。
-
----
-
-## 5. 本次不包含
-
-- 任何实现代码（真实请求、假数据、组件内部逻辑）
-- 测试文件
-- 图片上传模块（体量太小，本次不单独体现）
-- 穿戴道具相关（产品侧未设计）
-- 第三方登录
-
-页面当前是占位外壳，只声明路由与模块边界。
-
----
-
-## 6. 未与后端对齐的部分
-
-明细见 `frontend/API_CONTRACT.md`。
+`main` 中仍有早期骨架占位，例如 `action-template`、`asset-library` 和独立的 `project-detail` 目录。它们不代表新的目标架构，将在后续小 PR 中逐项处理。本 PR 只冻结规则并增加自动门禁，不混入页面重构或业务实现。
