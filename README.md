@@ -10,6 +10,12 @@
 
 <p align="center"><strong>交付的是资产，而不是图片。</strong></p>
 
+<p align="center">
+  <a href="https://github.com/1024XEngineer/Windup/actions/workflows/frontend-ci.yml"><img src="https://github.com/1024XEngineer/Windup/actions/workflows/frontend-ci.yml/badge.svg?branch=main" alt="Frontend CI"></a>
+  <a href="https://github.com/1024XEngineer/Windup/actions/workflows/backend.yml"><img src="https://github.com/1024XEngineer/Windup/actions/workflows/backend.yml/badge.svg?branch=main" alt="Backend CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/1024XEngineer/Windup" alt="License"></a>
+</p>
+
 Windup 面向缺少美术产能的个人开发者和小型团队，把角色构思、动作生成、逐帧质检、试玩与引擎导出收进同一条生产链。用户从文字描述或参考图出发，最终得到可继续补动作、修缺陷、重新导出的角色资产，而不是一次性的生成结果。
 
 ## 产品链路
@@ -112,7 +118,9 @@ Windup/
 
 ## 参与贡献
 
-功能和核心改动按 `Proposal → Issue → Branch → Pull Request → Review` 推进。开发前请先查看对应 Issue 与领域契约，不要把 Mock 成功、页面预览或未合并 PR 当作主分支交付。
+问题、需求和实验记录统一进入 [Issues](https://github.com/1024XEngineer/Windup/issues)。功能和核心改动按 `Proposal → Issue → Branch → Pull Request → Review` 推进。开发前请先查看对应 Issue 与领域契约，不要把 Mock 成功、页面预览或未合并 PR 当作主分支交付。
+
+项目的维护与历史贡献见 [Contributors](https://github.com/1024XEngineer/Windup/graphs/contributors)。
 
 ## License
 
