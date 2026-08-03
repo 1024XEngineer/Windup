@@ -51,13 +51,10 @@ export interface WorkflowRevision {
   createdAt: string
 }
 
-/** 一次前端创作流程，后端不读取、推进或持久化该结构。 */
-export interface WorkflowRun {
+/** 两种创作目的共用的运行字段。 */
+interface WorkflowRunBase {
   id: string
   projectId: string
-  characterId: string | null
-  outfitId: string | null
-  purpose: WorkflowRunPurpose
   driver: WorkflowDriver
   status: WorkflowRunStatus
   /** 当前可继续编辑的版本，必须存在于 revisions 中。 */
@@ -66,6 +63,24 @@ export interface WorkflowRun {
   revisions: WorkflowRevision[]
   prompt: string | null
 }
+
+/**
+ * 一次前端创作流程，后端不读取、推进或持久化该结构。
+ * 新建角色允许稍后补齐角色引用；给已有角色添加动作必须从创建起就绑定角色和造型。
+ */
+export type WorkflowRun = WorkflowRunBase &
+  (
+    | {
+        purpose: 'create_character'
+        characterId: string | null
+        outfitId: string | null
+      }
+    | {
+        purpose: 'add_action'
+        characterId: string
+        outfitId: string
+      }
+  )
 
 interface CreateWorkflowRunInputBase {
   projectId: string

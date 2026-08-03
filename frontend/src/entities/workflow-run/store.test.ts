@@ -68,6 +68,15 @@ function createRun(id = 'run-1'): WorkflowRun {
   }
 }
 
+function createAddActionRun(): WorkflowRun {
+  return {
+    ...createRun('run-add-action'),
+    purpose: 'add_action',
+    characterId: 'character-1',
+    outfitId: 'outfit-1',
+  }
+}
+
 function createRunWithHistory(): WorkflowRun {
   const first = createRevision()
   first.status = 'abandoned'
@@ -166,6 +175,28 @@ describe('createWorkflowRunStore', () => {
 
     expect(() => store.save(invalid)).toThrow('Invalid WorkflowRun snapshot')
     expect(store.get(invalid.id)).toBeNull()
+  })
+
+  it('requires character and outfit references when adding an action', () => {
+    const valid = createAddActionRun()
+    const store = createWorkflowRunStore({ storage: null })
+
+    store.save(valid)
+    expect(store.get(valid.id)).toEqual(valid)
+
+    const invalid = {
+      ...valid,
+      characterId: null,
+      outfitId: null,
+    } as unknown as WorkflowRun
+    expect(() => store.save(invalid)).toThrow('Invalid WorkflowRun snapshot')
+
+    const hydrated = createWorkflowRunStore({
+      storage: new TestStorage(
+        JSON.stringify({ version: WORKFLOW_RUN_STORAGE_VERSION, runs: [invalid] }),
+      ),
+    })
+    expect(hydrated.get(invalid.id)).toBeNull()
   })
 
   it('keeps memory authoritative when persistence fails', () => {

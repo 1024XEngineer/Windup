@@ -47,6 +47,10 @@ function isNullableString(value: unknown): value is string | null {
   return typeof value === 'string' || value === null
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0
+}
+
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string')
 }
@@ -159,13 +163,19 @@ function isWorkflowRun(value: unknown): value is WorkflowRun {
     return false
   }
 
+  const targetIsValid =
+    value.purpose === 'add_action'
+      ? isNonEmptyString(value.characterId) && isNonEmptyString(value.outfitId)
+      : value.purpose === 'create_character' &&
+        ((value.characterId === null && value.outfitId === null) ||
+          (isNonEmptyString(value.characterId) && isNonEmptyString(value.outfitId)))
+
   return (
     typeof value.id === 'string' &&
     value.id.length > 0 &&
     typeof value.projectId === 'string' &&
-    isNullableString(value.characterId) &&
-    isNullableString(value.outfitId) &&
     isMember(value.purpose, WORKFLOW_PURPOSES) &&
+    targetIsValid &&
     isMember(value.driver, WORKFLOW_DRIVERS) &&
     isMember(value.status, WORKFLOW_RUN_STATUSES) &&
     isNullableString(value.prompt)
