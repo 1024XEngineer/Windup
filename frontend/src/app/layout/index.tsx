@@ -13,7 +13,10 @@ export function AppShell({ children }: AppShellProps) {
   return (
     <div className="min-h-screen bg-white text-slate-900">
       <nav className="flex items-center justify-between border-b border-slate-200 px-6 py-3">
-        <span className="font-semibold tracking-tight">Windup</span>
+        {/* 首屏不带这条顶栏，站名是其余页面唯一的回程入口，必须是链接。 */}
+        <Link to="/" className="font-semibold tracking-tight hover:text-slate-600">
+          Windup
+        </Link>
         <div className="flex gap-4 text-sm text-slate-600">
           <Link to="/quick-start" className="hover:text-slate-900">
             快速开始
