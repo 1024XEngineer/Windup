@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Link } from 'react-router'
+import { Link, Outlet } from 'react-router'
 
 /** 跨页面常驻导航属于应用外壳，由 app 层统一承载。 */
 
@@ -25,5 +25,17 @@ export function AppShell({ children }: AppShellProps) {
       </nav>
       <main className="mx-auto max-w-5xl px-6 py-8">{children}</main>
     </div>
+  )
+}
+
+/**
+ * 外壳的路由形态，套在一组子路由外面。
+ * 哪些页面带外壳是路由决策，写在 app 的路由表里；外壳自身不读 pathname、不判断自己该不该出现。
+ */
+export function AppShellRoute() {
+  return (
+    <AppShell>
+      <Outlet />
+    </AppShell>
   )
 }
