@@ -1,0 +1,77 @@
+# ── Windup Docker Compose ─────────────────────────────────────────────
+# 使用方式:
+#   启动服务: docker compose up -d
+#   查看日志: docker compose logs -f [service]
+#   停止服务: docker compose down
+#   清理数据: docker compose down -v  (⚠️ 会删除数据库数据)
+#   重新构建: docker compose up -d --build
+
+services:
+  # ── PostgreSQL 数据库 ──
+  postgres:
+    image: postgres:16-alpine
+    container_name: windup-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-root}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-W1ndup@2026!Secure}
+      POSTGRES_DB: ${POSTGRES_DB:-windup}
+    ports:
+      - "${POSTGRES_EXTERNAL_PORT:-7856}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-root} -d ${POSTGRES_DB:-windup}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - windup-net
+
+  # ── 后端 API 服务 ──
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: windup-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # 数据库连接（容器内部通信用 postgres 主机名，端口 5432）
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-root}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin123}
+      POSTGRES_DB: ${POSTGRES_DB:-windup}
+      # LLM 配置
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_MODEL_ID: ${LLM_MODEL_ID:-doubao-seed-2.0-mini}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.qnaigc.com/v1}
+      LLM_IMAGE_MODEL_ID: ${LLM_IMAGE_MODEL_ID:-gemini-3.0-pro-image-preview}
+      LLM_VIDEO_MODEL_ID: ${LLM_VIDEO_MODEL_ID}
+      # 搜索
+      SERPAPI_API_KEY: ${SERPAPI_API_KEY}
+      # 七牛云存储
+      QINIU_ACCESS_KEY: ${QINIU_ACCESS_KEY}
+      QINIU_SECRET_KEY: ${QINIU_SECRET_KEY}
+      QINIU_BUCKET_NAME: ${QINIU_BUCKET_NAME}
+      QINIU_BUCKET_DOMAIN: ${QINIU_BUCKET_DOMAIN}
+      QINIU_PRIVATE_SPACE: ${QINIU_PRIVATE_SPACE:-false}
+      # AI Provider
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.qnaigc.com/v1}
+      AI_API_KEY: ${AI_API_KEY}
+    ports:
+      - "${WINDUP_PORT:-8000}:8000"
+    networks:
+      - windup-net
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  windup-net:
+    driver: bridge
