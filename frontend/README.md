@@ -25,9 +25,11 @@ CI 按上面顺序全跑一遍。
 
 模块划分、依赖规则与命名约定见仓库根目录 `frontend-architecture-v3.md`。
 
-模块边界与接口已经落地，页面实现按模块拆成多个 PR 陆续进来。**目前只有首页是真实现，其余七个路由仍是占位外壳**，`entities` 与 `features` 也只有类型和 `XxxApis` 接口；`shared/api` 已提供后续实现可复用的公共 HTTP 请求能力。
+模块边界与接口已经落地，页面实现按模块拆成多个 PR 陆续进来。**目前只有首页是真实现，其余七个路由仍是占位外壳**，`entities` 与 `features` 也只有类型和 `XxxApis` 接口，没有真实请求。
 
 页面自己决定宽度与留白，`AppShell` 只提供顶栏，不再统一夹一个居中容器。
+
+`shared/api` 提供后续业务接口可复用的公共 HTTP 请求能力。
 
 运行项目前需要配置 `VITE_API_BASE_URL`。Bearer token 由登录模块取得后，通过 `registerApiAccessTokenProvider` 注册读取函数；业务请求统一从该边界读取。本轮不定义 token 的保存方式。
 
