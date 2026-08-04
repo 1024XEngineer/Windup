@@ -111,6 +111,10 @@ export interface PublishActionResult {
 }
 
 export interface WorkflowRunService {
+  /** 暂停进行中的 Run；当前 Revision 和 active 步骤保持不变。 */
+  interruptRun(runId: string): WorkflowRun
+  /** 将已暂停的 Run 恢复为可执行状态；对 active Run 幂等。 */
+  continueRun(runId: string): WorkflowRun
   startCharacter(input: StartCharacterRunInput): Promise<CharacterCandidateBatch>
   resumeCharacterCandidates(runId: string): Promise<CharacterCandidateBatch>
   confirmCharacter(input: ConfirmCharacterSelectionInput): Promise<WorkflowRun>
@@ -137,6 +141,34 @@ export function createWorkflowRunService({
   candidateConfirmationApis,
   now = () => new Date().toISOString(),
 }: CreateWorkflowRunServiceOptions): WorkflowRunService {
+  function interruptRun(runId: string): WorkflowRun {
+    const run = requireRun(store, runId)
+    if (run.status === 'interrupted') return run
+    if (run.status !== 'active') throw new Error('只有进行中的 WorkflowRun 可以中断')
+
+    const interrupted: WorkflowRun = {
+      ...run,
+      status: 'interrupted',
+      updatedAt: now(),
+    }
+    store.save(interrupted)
+    return interrupted
+  }
+
+  function continueRun(runId: string): WorkflowRun {
+    const run = requireRun(store, runId)
+    if (run.status === 'active') return run
+    if (run.status !== 'interrupted') throw new Error('只有已中断的 WorkflowRun 可以继续')
+
+    const active: WorkflowRun = {
+      ...run,
+      status: 'active',
+      updatedAt: now(),
+    }
+    store.save(active)
+    return active
+  }
+
   async function startCharacter(input: StartCharacterRunInput): Promise<CharacterCandidateBatch> {
     const prompt = input.prompt.trim()
     if (!prompt) throw new Error('请先描述想要创建的角色')
@@ -489,6 +521,8 @@ export function createWorkflowRunService({
   }
 
   return {
+    interruptRun,
+    continueRun,
     startCharacter,
     resumeCharacterCandidates,
     confirmCharacter,

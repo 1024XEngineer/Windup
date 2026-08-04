@@ -239,6 +239,30 @@ describe('createWorkflowRunService', () => {
     expect(fixture.store.get(batch.run.id)?.status).toBe('active')
   })
 
+  it('interrupts an active run and continues it without changing the active step', async () => {
+    const { service, store } = createService()
+    const batch = await service.startCharacter({
+      projectId: 'project-1',
+      prompt: '角色',
+      driver: 'ai',
+    })
+    const activeStepId = batch.run.revisions[0]?.steps.find((step) => step.status === 'active')?.id
+
+    const interrupted = service.interruptRun(batch.run.id)
+    expect(interrupted.status).toBe('interrupted')
+    expect(interrupted.revisions[0]?.steps.find((step) => step.status === 'active')?.id).toBe(
+      activeStepId,
+    )
+    expect(store.get(batch.run.id)?.status).toBe('interrupted')
+
+    const resumed = service.continueRun(batch.run.id)
+    expect(resumed.status).toBe('active')
+    expect(resumed.revisions[0]?.steps.find((step) => step.status === 'active')?.id).toBe(
+      activeStepId,
+    )
+    expect(store.get(batch.run.id)?.status).toBe('active')
+  })
+
   it('restores two persisted first-frame candidates and only creates the two missing tasks', async () => {
     const { service, store, generation } = createService()
     const run = store.create({
