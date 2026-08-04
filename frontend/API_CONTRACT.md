@@ -2,14 +2,16 @@
 
 前端各模块的 `XxxApis` 与后端 2026-07-30 接口文档逐条比对结果。
 
-后端现有四个相关模块：`project`、`character`、`generation`、`media`。`asset` 与 `wearable` 已按 07-30 评审要求删除。
+这份清单保留 07-30 的差异记录；08-04 当前产品定义只向用户暴露 ActionTemplate，不展示或预留 Wearable 入口。
 
 ---
 
 ## 一、已经确认的边界
 
 - `WorkflowRun` 是前端固定工作流的运行态。后端不读取、不推进、也不持久化，前端不声明 `WorkflowRunApis`。
-- `Character` 不使用独立 `name` 字段；前端已删除。
+- `Character` 使用独立 `name` 字段，作为跨造型稳定的角色显示名；08-04 已确认由前后端共同保留。
+- `Outfit` 层继续保留，但当前 UI 中造型就是人物的视觉资产，不拆解穿戴组成。
+- `ActionTemplate` 是当前唯一可复用资产；未来由 WorkflowEditor 的「增加节点」读取，角色详情不直接应用模板。
 - 前端保留 `jump` 动作类型，由后端补充对应枚举。
 - 查询生成任务统一携带 `projectId + taskId`。
 - 前端工作流节点不与后端 `GenerationType` 一一对应，按下表调用：
@@ -30,7 +32,6 @@
 
 | 前端接口 | 后端情况 |
 |---|---|
-| `ActionTemplateApis.listAvailable` | 没有 action template 模块 |
 | `ProjectApis.update` | 没有 `PATCH /projects/{project_id}` |
 
 前端已按服务端现状去掉生成任务的 `cancel`——后端没有取消能力，不声明前端用不到的接口。
@@ -105,7 +106,7 @@ frames[]  → index / image_url / duration_ms
 
 ## 待确认
 
-- [ ] `ActionTemplateApis` 由后端提供还是前端内置
+- [x] `ActionTemplateApis` 由后端提供，前端可同时展示系统预设与项目自定义模板
 - [ ] 母版候选几张
 - [ ] 参考图与角色图是一个字段还是两个
 - [ ] `Character.description` 前端要不要跟着存
@@ -115,5 +116,5 @@ frames[]  → index / image_url / duration_ms
 ## 已分工
 
 - [x] 前端删除 `WorkflowRunApis`，WorkflowRun 全程由前端管理
-- [x] 前端删除 `Character.name`
+- [x] 前后端保留 `Character.name`
 - [ ] 后端增加 `jump` 动作类型
