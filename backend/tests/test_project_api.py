@@ -23,8 +23,8 @@ def _payload(**overrides):
 # -- POST /projects ----------------------------------------------------------
 
 
-def test_create_success(client):
-    resp = client.post("/projects", json=_payload(project_name="新建"))
+def test_create_success(auth_client):
+    resp = auth_client.post("/projects", json=_payload(project_name="新建"))
 
     assert resp.status_code == 200
     body = resp.json()
@@ -36,9 +36,9 @@ def test_create_success(client):
     assert "timestamp" not in body
 
 
-def test_create_duplicate_name_returns_400(client):
-    client.post("/projects", json=_payload(project_name="重名"))
-    resp = client.post("/projects", json=_payload(project_name="重名"))
+def test_create_duplicate_name_returns_400(auth_client):
+    auth_client.post("/projects", json=_payload(project_name="重名"))
+    resp = auth_client.post("/projects", json=_payload(project_name="重名"))
 
     assert resp.status_code == 200
     body = resp.json()
@@ -47,8 +47,8 @@ def test_create_duplicate_name_returns_400(client):
     assert body["data"] is None
 
 
-def test_create_validation_error_returns_400(client):
-    resp = client.post("/projects", json=_payload(project_name="x" * 21))
+def test_create_validation_error_returns_400(auth_client):
+    resp = auth_client.post("/projects", json=_payload(project_name="x" * 21))
 
     assert resp.status_code == 200
     assert resp.json()["code"] == 400
@@ -57,16 +57,16 @@ def test_create_validation_error_returns_400(client):
 # -- GET /projects/{id} ------------------------------------------------------
 
 
-def test_get_success(client):
-    created = client.post("/projects", json=_payload(project_name="详情")).json()["data"]
-    resp = client.get(f"/projects/{created['id']}")
+def test_get_success(auth_client):
+    created = auth_client.post("/projects", json=_payload(project_name="详情")).json()["data"]
+    resp = auth_client.get(f"/projects/{created['id']}")
 
     assert resp.json()["code"] == 200
     assert resp.json()["data"]["project_name"] == "详情"
 
 
-def test_get_not_found_returns_404(client):
-    resp = client.get("/projects/99999")
+def test_get_not_found_returns_404(auth_client):
+    resp = auth_client.get("/projects/99999")
 
     body = resp.json()
     assert body["code"] == 404
@@ -77,8 +77,8 @@ def test_get_not_found_returns_404(client):
 # -- GET /projects -----------------------------------------------------------
 
 
-def test_list_empty(client):
-    resp = client.get("/projects")
+def test_list_empty(auth_client):
+    resp = auth_client.get("/projects")
 
     body = resp.json()
     assert body["code"] == 200
@@ -88,12 +88,12 @@ def test_list_empty(client):
     assert body["page_size"] == 20
 
 
-def test_list_paginates_and_filters(client):
+def test_list_paginates_and_filters(auth_client):
     for i in range(3):
-        client.post("/projects", json=_payload(user_id=10001, project_name=f"a{i}"))
-    client.post("/projects", json=_payload(user_id=20002, project_name="other"))
+        auth_client.post("/projects", json=_payload(user_id=10001, project_name=f"a{i}"))
+    auth_client.post("/projects", json=_payload(user_id=20002, project_name="other"))
 
-    resp = client.get("/projects", params={"page": 1, "page_size": 2, "user_id": 10001})
+    resp = auth_client.get("/projects", params={"page": 1, "page_size": 2, "user_id": 10001})
 
     body = resp.json()
     assert body["total"] == 3
@@ -105,17 +105,17 @@ def test_list_paginates_and_filters(client):
 # -- DELETE /projects/{id} ---------------------------------------------------
 
 
-def test_delete_success(client):
-    created = client.post("/projects", json=_payload(project_name="删除")).json()["data"]
-    resp = client.delete(f"/projects/{created['id']}")
+def test_delete_success(auth_client):
+    created = auth_client.post("/projects", json=_payload(project_name="删除")).json()["data"]
+    resp = auth_client.delete(f"/projects/{created['id']}")
 
     body = resp.json()
     assert body["code"] == 200
     assert body["message"] == "删除成功"
-    assert client.get(f"/projects/{created['id']}").json()["code"] == 404
+    assert auth_client.get(f"/projects/{created['id']}").json()["code"] == 404
 
 
-def test_delete_not_found_returns_404(client):
-    resp = client.delete("/projects/99999")
+def test_delete_not_found_returns_404(auth_client):
+    resp = auth_client.delete("/projects/99999")
 
     assert resp.json()["code"] == 404
