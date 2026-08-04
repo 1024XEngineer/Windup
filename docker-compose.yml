@@ -75,3 +75,7 @@ volumes:
 networks:
   windup-net:
     driver: bridge
+    # 宿主机链路 MTU 是 1480（eno1），compose 自建网络不会继承 daemon 的 mtu 设置，
+    # 默认仍是 1500 → 大包被丢，表现为 TLS 握手超时（七牛上传域名连不上、pip 下载卡死）。
+    driver_opts:
+      com.docker.network.driver.mtu: "1450"
