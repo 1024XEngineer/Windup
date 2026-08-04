@@ -22,6 +22,10 @@ dependencies = [
     "pillow>=10.4",
     # 对象存储(七牛 Kodo);若换 OSS/S3/MinIO 改 oss2 / boto3 / minio。
     "qiniu>=7.14",
+    # 用户模块:密码哈希 / Redis / 邮件
+    "passlib[bcrypt]>=1.7",
+    "redis>=5.0",
+    "resend>=2.0",
     # 以下按选型启用:
     # "rocketmq-client",   # RocketMQ Python 客户端(5.x gRPC 版 / C++ 绑定版二选一)
 ]

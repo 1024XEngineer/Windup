@@ -14,11 +14,14 @@ import windup_framework.db  # noqa: F401  组装时显式触发 DB engine/sessio
 from fastapi import FastAPI
 
 from windup_app.server.orchestrator.executor import run_action_task, run_image_task
+from windup_app.web.api.auth import router as auth_router
 from windup_app.web.api.character import router as character_router
 from windup_app.web.api.generation import router as generation_router
 from windup_app.web.api.media import router as media_router
 from windup_app.web.api.project import router as project_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
+from windup_app.web.middleware.auth import AuthMiddleware
+from windup_app.web.middleware.ratelimit import RateLimitMiddleware
 
 
 def _env_flag(name: str) -> bool:
@@ -40,23 +43,28 @@ async def _lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="windup", version="0.1.0", lifespan=_lifespan)
+
+    # 中间件（执行顺序：请求先进 RateLimit，再进 Auth，最后到路由）
+    app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(AuthMiddleware)
+
+    # 路由
+    app.include_router(auth_router)
     app.include_router(project_router)
     app.include_router(character_router)
     app.include_router(media_router)
     app.include_router(generation_router)
-    # 生成后台调度器注入 app.state:bootstrap(composition root)持有 ai_engine 依赖,
-    # web 端运行期从 request.app.state 取,避免 web 静态 import ai_engine(入口层门禁)。
+
+    # 生成后台调度器注入 app.state
     app.state.run_action_task = run_action_task
     app.state.run_image_task = run_image_task
+
     register_exception_handlers(app)
     return app
 
 
 def main() -> None:
-    """开发启动入口:用 uvicorn 跑 ``create_app``。
-
-    host/port/reload 可用 ``WINDUP_HOST`` / ``WINDUP_PORT`` / ``WINDUP_RELOAD`` 覆盖。
-    """
+    """开发启动入口:用 uvicorn 跑 ``create_app``。"""
     import uvicorn
 
     uvicorn.run(
@@ -68,6 +76,5 @@ def main() -> None:
     )
 
 
-
 if __name__ == "__main__":
-        main()
+    main()

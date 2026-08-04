@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from windup_app.bootstrap.app import create_app
 from windup_app.server.project.model import Project
+from windup_app.server.user.model import User
 from windup_framework.db import Base, get_session
 
 
@@ -27,9 +28,9 @@ def _make_engine():
 
 @pytest.fixture()
 def engine():
-    """建好 ``windup_project`` 表的内存 engine。"""
+    """建好 ``windup_project`` 和 ``windup_user`` 表的内存 engine。"""
     engine = _make_engine()
-    Base.metadata.create_all(engine, tables=[Project.__table__])
+    Base.metadata.create_all(engine, tables=[Project.__table__, User.__table__])
     yield engine
     engine.dispose()
 
