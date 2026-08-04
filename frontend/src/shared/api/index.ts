@@ -96,18 +96,18 @@ async function readEnvelope(response: Response): Promise<ApiEnvelope> {
 
 /** 后端业务异常仍返回 HTTP 200，因此不能只依赖 Response.ok。 */
 function assertSuccessfulEnvelope(response: Response, envelope: ApiEnvelope): void {
-  if (envelope.code !== 200) {
-    throw new ApiError(envelope.message, {
-      kind: 'business',
-      code: envelope.code,
+  if (!response.ok) {
+    throw new ApiError('HTTP 请求失败', {
+      kind: 'http',
       status: response.status,
       data: envelope.data,
     })
   }
 
-  if (!response.ok) {
-    throw new ApiError('HTTP 请求失败', {
-      kind: 'http',
+  if (envelope.code !== 200) {
+    throw new ApiError(envelope.message, {
+      kind: 'business',
+      code: envelope.code,
       status: response.status,
       data: envelope.data,
     })
