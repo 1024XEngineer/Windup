@@ -6,3 +6,16 @@ body,
 #root {
   height: 100%;
 }
+
+@keyframes action-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-18px) scale(0.97);
+    clip-path: inset(0 8% 72% round 1.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    clip-path: inset(0 round 1.5rem);
+  }
+}

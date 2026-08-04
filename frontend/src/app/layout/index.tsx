@@ -11,17 +11,32 @@ export interface AppShellProps {
 /** 全站外壳，全局导航常驻。 */
 export function AppShell({ children }: AppShellProps) {
   return (
-    <div className="min-h-screen bg-white text-slate-900">
-      <nav className="flex items-center justify-between border-b border-slate-200 px-6 py-3">
+    <div className="min-h-screen bg-[#fafbf8] text-slate-900">
+      <nav className="flex h-14 items-center justify-between border-b border-[#e0e3dd] bg-white px-6">
         {/* 首屏不带这条顶栏，站名是其余页面唯一的回程入口，必须是链接。 */}
-        <Link to="/" className="font-semibold tracking-tight hover:text-slate-600">
+        <Link
+          to="/"
+          className="flex items-center gap-2 font-semibold tracking-[-0.02em] hover:text-slate-600"
+        >
+          <span
+            aria-hidden="true"
+            className="grid h-7 w-7 place-items-center rounded-lg bg-[#263f2d] text-xs font-bold text-white"
+          >
+            W
+          </span>
           Windup
         </Link>
-        <div className="flex gap-4 text-sm text-slate-600">
-          <Link to="/quick-start" className="hover:text-slate-900">
+        <div className="flex items-center gap-1 text-sm text-[#5f685f]">
+          <Link
+            to="/quick-start"
+            className="rounded-lg px-3 py-2 hover:bg-[#f3f5f1] hover:text-slate-900"
+          >
             快速开始
           </Link>
-          <Link to="/projects" className="hover:text-slate-900">
+          <Link
+            to="/projects"
+            className="rounded-lg px-3 py-2 hover:bg-[#f3f5f1] hover:text-slate-900"
+          >
             项目
           </Link>
         </div>

@@ -1,6 +1,7 @@
-import { BrowserRouter, Route, Routes } from 'react-router'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
 
 import { AssetLibraryPage } from '@/pages/asset-library'
+import { CharacterDetailPage } from '@/pages/character-detail'
 import { HomePage } from '@/pages/home'
 import { NotFoundPage } from '@/pages/not-found'
 import { PlaytestPage } from '@/pages/playtest'
@@ -18,20 +19,30 @@ import { AppShellRoute } from './layout'
 export function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route element={<AppShellRoute />}>
-          <Route path="/quick-start" element={<QuickStartPage />} />
-          <Route path="/quick-start/:runId" element={<QuickStartPage />} />
-          <Route path="/projects" element={<ProjectsPage />} />
-          <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
-          <Route path="/projects/:projectId/assets" element={<AssetLibraryPage />} />
-          <Route path="/workflow-editor/:runId" element={<WorkflowEditorPage />} />
-          <Route path="/workflow-editor/:runId/:stage" element={<WorkflowEditorPage />} />
-          <Route path="/playtest/:characterId/:outfitId" element={<PlaytestPage />} />
-          <Route path="*" element={<NotFoundPage />} />
-        </Route>
-      </Routes>
+      <AppRoutes />
     </BrowserRouter>
+  )
+}
+
+/** 路由声明独立导出，测试用 MemoryRouter 验证直达地址，不再改写浏览器全局 history。 */
+export function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/" element={<HomePage />} />
+      <Route element={<AppShellRoute />}>
+        <Route path="/quick-start" element={<QuickStartPage />} />
+        <Route path="/quick-start/:runId" element={<QuickStartPage />} />
+        <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/workflow-editor/:runId" element={<WorkflowEditorPage />} />
+        <Route path="/workflow-editor/:runId/:stage" element={<WorkflowEditorPage />} />
+        <Route path="/playtest/:characterId/:outfitId" element={<PlaytestPage />} />
+        <Route path="*" element={<NotFoundPage />} />
+      </Route>
+      <Route path="/projects/:projectId" element={<ProjectDetailPage />}>
+        <Route index element={<Navigate replace to="assets" />} />
+        <Route path="assets" element={<AssetLibraryPage />} />
+        <Route path="assets/:characterId" element={<CharacterDetailPage />} />
+      </Route>
+    </Routes>
   )
 }
