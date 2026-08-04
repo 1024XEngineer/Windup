@@ -1,10 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiError, createApiClient } from './index'
+import {
+  ApiError,
+  createApiClient,
+  getApiAccessToken,
+  registerApiAccessTokenProvider,
+} from './index'
 
 afterEach(() => vi.unstubAllEnvs())
 
 describe('createApiClient', () => {
+  it('reads the latest registered token provider and restores the previous provider', () => {
+    const unregisterFirst = registerApiAccessTokenProvider(() => 'first-token')
+    const unregisterSecond = registerApiAccessTokenProvider(() => 'second-token')
+
+    expect(getApiAccessToken()).toBe('second-token')
+    unregisterSecond()
+    expect(getApiAccessToken()).toBe('first-token')
+    unregisterFirst()
+    expect(getApiAccessToken()).toBeUndefined()
+  })
+
   it('returns data from a successful backend response envelope', async () => {
     const client = createApiClient({
       baseUrl: 'https://api.windup.test',
