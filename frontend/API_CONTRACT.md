@@ -1,119 +1,76 @@
 # 前后端接口对齐清单
 
-前端各模块的 `XxxApis` 与后端 2026-07-30 接口文档逐条比对结果。
+本实现以尚未合并的后端 PR #75 为目标契约，并要求按 **#75 → 本前端 PR** 的顺序合并。`upstream/main` 当前尚未挂载这些接口。
 
-后端现有四个相关模块：`project`、`character`、`generation`、`media`。`asset` 与 `wearable` 已按 07-30 评审要求删除。
+## 一、本轮已接入
 
----
+### Project
 
-## 一、已经确认的边界
-
-- `WorkflowRun` 是前端固定工作流的运行态。后端不读取、不推进、也不持久化，前端不声明 `WorkflowRunApis`。
-- `Character` 不使用独立 `name` 字段；前端已删除。
-- 前端保留 `jump` 动作类型，由后端补充对应枚举。
-- 查询生成任务统一携带 `projectId + taskId`。
-- 前端工作流节点不与后端 `GenerationType` 一一对应，按下表调用：
-
-| 前端工作流节点 | 后端接口 | 后端任务类型 |
+| 前端方法 | HTTP | 后端能力 |
 |---|---|---|
-| `character_template` | `POST /generation/image` | `character_image` |
-| `first_frame` | `POST /generation/image`，以上一步角色图作为参考图 | `character_image` |
-| `complete_animation` | `POST /generation/action`，以已确认动作首帧作为参考图 | `character_action` |
+| `ProjectApis.list` | `GET /projects` | `page`、`page_size`、可选 `user_id` |
+| `ProjectApis.get` | `GET /projects/{id}` | 项目详情 |
+| `ProjectApis.create` | `POST /projects` | 创建项目记录 |
+| `ProjectApis.remove` | `DELETE /projects/{id}` | 删除项目记录 |
 
-图片生成和动作生成只返回任务及结果，不自动修改 WorkflowRun 或角色资产。用户最终确认后，前端再通过角色更新接口保存角色图和完整动作数据。
+`ProjectOut` 的 `user_id`、`workflow_id`、`project_name`、`character_perspective`、`directional_movement`、精灵宽高、画风、参考图和时间字段，均在 `entities/project` 内显式映射为 camelCase。PR #75 没有项目更新端点，因此前端不声明 `ProjectApis.update`。
 
----
+后端枚举按下表映射：
 
-## 二、前端预期有、后端目前没有
-
-**这些接口仍需要确定由后端提供，还是改为前端本地能力。**
-
-| 前端接口 | 后端情况 |
-|---|---|
-| `ActionTemplateApis.listAvailable` | 没有 action template 模块 |
-| `ProjectApis.update` | 没有 `PATCH /projects/{project_id}` |
-
-前端已按服务端现状去掉生成任务的 `cancel`——后端没有取消能力，不声明前端用不到的接口。
-
----
-
-## 三、形状不一致
-
-这些差异可以在前端接口层转换，不要求领域类型与后端 DTO 使用相同命名。
-
-| 项 | 后端 | 前端 |
+| 后端值 | `character_perspective` | `directional_movement` |
 |---|---|---|
-| 角色列表 | `list_characters` 分页，返回 `(list, total)` | `listByProject` 无分页 |
-| 更新角色 | `update_character(character_id, **fields)` 部分更新 | `update(character)` 整棵树替换 |
-| 等待任务完成 | 提供 `GET /generation/tasks/{task_id}` 轮询 | `GenerationApis.subscribe`，实现时可封装轮询 |
-| 图片生成数量 | 入参有 `num_images`，结果只有一个 `image_url` | 角色图候选结果是 `images[]` |
-| 动作类型 | `walk` `idle` `attack` `custom`；待增加 `jump` | `walk` `idle` `attack` `jump` `custom` |
-| 角色视角 | `character_perspective` 为 `1~3`，文档中 2、3 都写成“正面” | `side` `top-down` `isometric` |
+| `1` | `side` | `single` |
+| `2` | `top-down` | `four-way` |
+| `3` | `isometric` | `eight-way` |
 
-ID 类型后端为 `int`、前端为 `string`，由前端转换层处理，不需要后端改动。
+### Character 资产树
 
----
+| 前端方法 | HTTP | 后端能力 |
+|---|---|---|
+| `CharacterApis.listByProject` | `GET /characters?project_id=...` | 项目内角色分页列表 |
+| `CharacterApis.get` | `GET /characters/{id}` | 角色详情 |
+| `CharacterApis.create` | `POST /characters` | 创建空角色记录 |
+| `CharacterApis.update` | `PATCH /characters/{id}` | 更新角色及完整资产树 |
+| `CharacterApis.remove` | `DELETE /characters/{id}` | 删除角色及其媒体对象 |
 
-## 四、后端有、前端没接
-
-| 后端 | 说明 |
-|---|---|
-| `delete_character` | 前端 `CharacterApis` 没有删除 |
-| `Character.description` | 后端存在实体上；前端只在创建入参里，创建完查不到 |
-| `Character.reference_image_url` | 后端存在实体上；前端 `Character` 类型没有这个字段 |
-| `MediaService.upload` | 前端本次未提交上传模块 |
-
----
-
-## 五、前端资产字段在后端没有落点
-
-后端 `character_data` 的嵌套结构（见 `character/model.py`）：
+后端持久化层级为：
 
 ```text
-outfits[] → id / name / preview_url / actions[]
-actions[] → id / type / name / loop / fps / frame_count / frames[]
-frames[]  → index / image_url / duration_ms
+Character
+└── character_data
+    └── outfits[]
+        └── actions[]
+            └── frames[]
 ```
 
-前端以下字段在后端结构里没有落点：
+前端只映射后端真实字段：
 
-- `Action.kind`（preset / custom 来源）
-- `Action.keyFrameIndex`
-- `Frame.rootMotion`
-- `Outfit.candidateCharacterTemplates`（母版候选列表）
-- `Outfit.characterTemplateUrl`（每套造型的已确认角色图）
-- `Outfit.baseFrames`
+- Character：`id`、`project_id`、`name`、`description`、`reference_image_url`、`character_data.version`、`status`
+- Outfit：`id`、`name`、`description`、`preview_url`、`actions`
+- Action：`id`、`type`、`name`、`loop`、`fps`、`frame_count`、`frames`
+- Frame：`index`、`image_url`、`duration_ms`
 
-`candidateCharacterTemplates` 属于生成过程数据；若只在当前 WorkflowRun 中使用，可以留在前端。其余字段若要随最终资产恢复，需要后端增加字段，或者前端在 MVP 中删除。
+Outfit、Action、Frame 没有独立端点。`outfit.characterId` 与 `action.outfitId` 仅由嵌套关系推导；修改任一子项时通过 `PATCH Character` 提交完整 `character_data`。
 
----
+## 二、本轮明确不实现
 
-## 六、概念不一致
+- 新建项目流程：只保留禁用入口，后续单独实现。
+- Workflow Editor 与生成流程：不在 Projects / 资产库模块内创建弹窗或复制生成逻辑。
+- Action Template：后端没有模块、存储或 HTTP 接口，只保留带原因的禁用入口。
+- 导出：PR #75 没有导出接口；PR #97 是尚未接入资产页的前端打包实现，只保留带原因的禁用入口。
+- 穿戴资产：当前产品定义不向用户暴露独立 Wearable 层级。
+- GIF：Character 契约只提供 Frame 图片 URL；动作卡预览使用排序后的第一帧，不伪造 GIF 字段。
 
-后端 `character/model.py` 字段说明：
+## 三、仍需后端处理
 
-> `reference_image_url`: 角色参考图，即旧概念中的 Character Template
+这些问题不由前端降级或伪造数据规避：
 
-前端把这两者当成不同的东西：
+1. PR #75 的 `POST /characters` DTO 接收 `name`，但路由没有把 `body.name` 传给 service；前端仍按已声明契约发送 `name`。
+2. Project / Character 路由通过 JWT，但资源查询没有按 `request.state.current_user` 强制归属隔离；前端不能代替后端完成权限边界。
+3. Project 删除没有级联 Character，可能留下孤立角色；数据一致性由后端修复。
 
-- 用户上传的参考图 —— 创建角色时的输入
-- AI 生成后用户选定的角色图（母版）—— `Outfit.characterTemplateUrl`
+## 四、运行前置
 
-**后端合成了一个字段。** 07-30 评审也提到「模板」这个叫法容易与 action template 混淆，暂改称「角色图」。三方对这里是几个概念的理解需要统一。
-
----
-
-## 待确认
-
-- [ ] `ActionTemplateApis` 由后端提供还是前端内置
-- [ ] 母版候选几张
-- [ ] 参考图与角色图是一个字段还是两个
-- [ ] `Character.description` 前端要不要跟着存
-- [ ] `Action.kind` / `Action.keyFrameIndex` / `Frame.rootMotion` 是否进入最终资产
-- [ ] 上传模块何时提交
-
-## 已分工
-
-- [x] 前端删除 `WorkflowRunApis`，WorkflowRun 全程由前端管理
-- [x] 前端删除 `Character.name`
-- [ ] 后端增加 `jump` 动作类型
+- 配置 `VITE_API_BASE_URL`。
+- PR #75 的 Project / Character 路由要求 Bearer access token。Project、Character 实例已统一使用 `getApiAccessToken`；后续登录模块通过 `registerApiAccessTokenProvider` 提供实际 token。token 的取得、保存与刷新不属于本轮，接入前不能把未鉴权请求视为端到端可用。
+- 本模块的生产代码不包含 Mock API 或 livedemo 资产。测试只在 Vitest 中用 HTTP 服务替身验证请求、响应映射与页面行为。
