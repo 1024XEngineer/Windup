@@ -70,6 +70,15 @@ async function executeRequest<T>(
   } catch {
     throw new ApiError(response.status, response.status, '响应格式错误，无法解析 JSON')
   }
+  // HTTP 200 只说明请求到达服务器，不能代替业务成功。必须先判断业务码，
+  // 再处理 DELETE 等允许 data=null 的接口，否则失败信封会被误报为删除成功。
+  if (!Number.isInteger(envelope.code) || envelope.code < 200 || envelope.code >= 300) {
+    throw new ApiError(
+      response.status,
+      Number.isInteger(envelope.code) ? envelope.code : response.status,
+      envelope.message || '请求失败',
+    )
+  }
   if (envelope.data === null || envelope.data === undefined) {
     if (allowEmpty) return envelope
     throw new ApiError(
@@ -77,9 +86,6 @@ async function executeRequest<T>(
       envelope.code ?? response.status,
       envelope.message || '服务端未返回数据',
     )
-  }
-  if (envelope.code < 200 || envelope.code >= 300) {
-    throw new ApiError(response.status, envelope.code, envelope.message || '请求失败')
   }
   return envelope
 }
@@ -104,7 +110,7 @@ export async function getPage<T>(path: string): Promise<Paged<T>> {
     !Number.isInteger(envelope.page) ||
     envelope.page < 1 ||
     !Number.isInteger(envelope.page_size) ||
-    envelope.page_size < 1
+    envelope.page_size < 0
   ) {
     throw new ApiError(200, envelope.code, '分页响应缺少有效的 total、page 或 page_size')
   }

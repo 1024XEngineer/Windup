@@ -39,6 +39,24 @@ describe('http client request headers', () => {
     await expect(del('/projects/3')).resolves.toBeUndefined()
   })
 
+  it('rejects an HTTP 200 delete envelope whose business code reports failure', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ code: 404, message: '角色不存在', data: null }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    )
+
+    await expect(del('/characters/404')).rejects.toMatchObject({
+      status: 200,
+      code: 404,
+      message: '角色不存在',
+    })
+  })
+
   it('preserves backend pagination metadata for list responses', async () => {
     vi.stubGlobal(
       'fetch',
@@ -69,6 +87,32 @@ describe('http client request headers', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse([])))
 
     await expect(getPage('/projects')).rejects.toBeInstanceOf(ApiError)
+  })
+
+  it('accepts page_size zero as the backend full-list marker', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            code: 200,
+            message: 'success',
+            data: [{ id: 1 }, { id: 2 }],
+            total: 2,
+            page: 1,
+            page_size: 0,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ),
+    )
+
+    await expect(getPage<{ id: number }>('/projects')).resolves.toEqual({
+      items: [{ id: 1 }, { id: 2 }],
+      total: 2,
+      page: 1,
+      pageSize: 0,
+    })
   })
 })
 

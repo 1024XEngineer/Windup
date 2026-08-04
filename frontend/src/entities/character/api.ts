@@ -1,6 +1,6 @@
 import type { Action, ActionType, Character, CharacterApis, Frame, Outfit } from '.'
 
-import { del, get, patch } from '@/shared/api'
+import { del, get, getPage, patch } from '@/shared/api'
 
 /* ─── 后端 DTO ─── */
 
@@ -109,11 +109,33 @@ export function createCharacterApis(): Pick<
     },
 
     async listByProject(projectId: string): Promise<Character[]> {
-      // http-client 已解包 ApiEnvelope，data 字段就是角色数组本身
-      const raw = await get<BackendCharacter[]>(
-        `/characters?project_id=${encodeURIComponent(projectId)}&page_size=100`,
+      const encodedProjectId = encodeURIComponent(projectId)
+      const pageSize = 100
+      const firstPage = await getPage<BackendCharacter>(
+        `/characters?project_id=${encodedProjectId}&page=1&page_size=${pageSize}`,
       )
-      return raw.map(toCharacter)
+
+      // page_size=0 是后端 ListResponse 的“已返回全量”标记，不需要继续翻页。
+      // 分页响应则按 total 继续读取，保证 Playtest 的角色切换器不会只显示前 100 个。
+      const all = [...firstPage.items]
+      if (firstPage.pageSize === 0) return all.map(toCharacter)
+
+      let currentPage = firstPage.page
+      while (all.length < firstPage.total) {
+        currentPage += 1
+        const nextPage = await getPage<BackendCharacter>(
+          `/characters?project_id=${encodedProjectId}&page=${currentPage}&page_size=${pageSize}`,
+        )
+        if (nextPage.page !== currentPage) {
+          throw new Error(`角色分页响应页码不一致：请求 ${currentPage}，返回 ${nextPage.page}`)
+        }
+        if (nextPage.items.length === 0) {
+          throw new Error(`角色分页在读取完 total 前返回空页：${all.length}/${firstPage.total}`)
+        }
+        all.push(...nextPage.items)
+        if (nextPage.pageSize === 0) break
+      }
+      return all.map(toCharacter)
     },
 
     async update(character: Character): Promise<Character> {

@@ -56,7 +56,56 @@ describe('character API adapter', () => {
     }
     expect(updateBody.character_data.outfits[0]?.actions[0]?.loop).toBe(true)
   })
+
+  it('loads every character page for a project instead of truncating after 100 items', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        listResponse(
+          Array.from({ length: 100 }, (_, index) => character(index + 1)),
+          101,
+          1,
+          100,
+        ),
+      )
+      .mockResolvedValueOnce(listResponse([character(101)], 101, 2, 100))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await createCharacterApis().listByProject('3')
+
+    expect(result).toHaveLength(101)
+    expect(result[0]?.id).toBe('1')
+    expect(result[100]?.id).toBe('101')
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:8000/characters?project_id=3&page=1&page_size=100',
+      expect.any(Object),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:8000/characters?project_id=3&page=2&page_size=100',
+      expect.any(Object),
+    )
+  })
 })
+
+function character(id: number) {
+  return {
+    id,
+    project_id: 3,
+    description: null,
+    reference_image_url: null,
+    status: 1,
+    character_data: { version: 1, outfits: [] },
+  }
+}
+
+function listResponse(data: unknown[], total: number, page: number, pageSize: number) {
+  return new Response(
+    JSON.stringify({ code: 200, message: 'success', data, total, page, page_size: pageSize }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } },
+  )
+}
 
 function jsonResponse(data: unknown) {
   return new Response(JSON.stringify({ code: 200, message: 'success', data }), {
