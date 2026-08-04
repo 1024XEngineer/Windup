@@ -8,13 +8,19 @@ import type {
   WorkflowStepStatus,
   WorkflowStepType,
 } from '@/entities'
-import type { WorkflowController } from '@/features/workflow-controller'
 
 /**
- * History 只需要 Controller 的两个只读能力。
- * 使用 Pick 可以防止页面顺手调用生成、确认或审核命令，守住“历史页面不改业务”的边界。
+ * History 面向 Controller 定义自己的最小只读接口，而不依赖 Controller 的具体实现文件。
+ * 正式 WorkflowController 只要提供查询和订阅能力，就可以直接作为这个参数传入。
+ * 页面拿不到生成、确认、审核等命令，因此从类型层面守住“历史页面不改业务”的边界。
  */
-export type HistoryController = Pick<WorkflowController, 'listWorkflows' | 'subscribeAll'>
+export interface HistoryController {
+  /** 读取指定项目当前保存的全部任务快照。 */
+  listWorkflows(projectId: string): readonly WorkflowRun[]
+
+  /** 监听任务集合变化；返回值用于页面卸载时取消监听。 */
+  subscribeAll(listener: (runs: readonly WorkflowRun[]) => void): () => void
+}
 
 export interface HistoryPageProps {
   controller: HistoryController
@@ -59,7 +65,6 @@ const STEP_LABELS: Readonly<Record<WorkflowStepType, string>> = {
   'template-candidate': '确认角色候选',
   'action-setup': '动作设定',
   'first-frame': '动作首帧生成',
-  'first-frame-candidate': '确认动作首帧',
   'complete-animation': '完整动画生成',
   review: '动作审核',
   export: '写入角色资产',
@@ -180,10 +185,15 @@ export function HistoryPage({ controller }: HistoryPageProps) {
 
 function RunCard({ run }: { run: WorkflowRun }) {
   const revision = run.revisions.find((item) => item.id === run.currentRevisionId)
+  const latestRevisionAt = latestRevisionTime(run)
   const purposeLabel = run.purpose === 'create_character' ? '创建角色' : '生成动作'
   const title = run.prompt?.trim() || `${purposeLabel}任务 ${shortId(run.id)}`
   const passedCount = revision?.steps.filter((step) => step.status === 'passed').length ?? 0
   const totalCount = revision?.steps.length ?? 0
+  const canContinue = run.status === 'active' || run.status === 'interrupted'
+  const target = canContinue
+    ? continuationPath(run)
+    : `/workflow-editor/${encodeURIComponent(run.id)}`
 
   return (
     <article data-testid="history-run" className="border border-slate-200 bg-white p-5">
@@ -199,15 +209,15 @@ function RunCard({ run }: { run: WorkflowRun }) {
           </div>
           <h3 className="mt-2 break-words text-base font-semibold text-slate-950">{title}</h3>
           <p className="mt-1 text-xs text-slate-500">
-            Run {shortId(run.id)} · 更新于{' '}
-            <time dateTime={run.updatedAt}>{formatTime(run.updatedAt)}</time>
+            Run {shortId(run.id)} · 最近版本于{' '}
+            <time dateTime={latestRevisionAt}>{formatTime(latestRevisionAt)}</time>
           </p>
         </div>
         <Link
-          to={`/workflow-editor/${encodeURIComponent(run.id)}`}
+          to={target}
           className="border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-800 hover:border-slate-500"
         >
-          {run.status === 'active' || run.status === 'interrupted' ? '继续任务' : '查看记录'}
+          {canContinue ? '继续任务' : '查看记录'}
         </Link>
       </div>
 
@@ -241,6 +251,16 @@ function RunCard({ run }: { run: WorkflowRun }) {
       )}
     </article>
   )
+}
+
+/**
+ * 自动创作与手动画布只是同一 WorkflowRun 的两种操作界面。
+ * History 不负责恢复流程，但必须把用户送回创建该 Run 的界面，否则 Quick Start
+ * 创建的任务会丢失原来的简化交互语境。
+ */
+function continuationPath(run: WorkflowRun): string {
+  const runId = encodeURIComponent(run.id)
+  return run.driver === 'ai' ? `/quick-start/${runId}` : `/workflow-editor/${runId}`
 }
 
 function RevisionHistory({
@@ -293,7 +313,21 @@ function RevisionHistory({
 }
 
 function sortRuns(runs: readonly WorkflowRun[]): WorkflowRun[] {
-  return [...runs].sort((left, right) => timestamp(right.updatedAt) - timestamp(left.updatedAt))
+  return [...runs].sort(
+    (left, right) => timestamp(latestRevisionTime(right)) - timestamp(latestRevisionTime(left)),
+  )
+}
+
+/**
+ * main 中的 WorkflowRun 本身没有更新时间，Revision 的创建时间才是可靠的活动时间。
+ * 取最新 Revision 可以正确反映首次执行和重做，同时不在页面层伪造 Entity 字段。
+ */
+function latestRevisionTime(run: WorkflowRun): string {
+  return run.revisions.reduce(
+    (latest, revision) =>
+      timestamp(revision.createdAt) > timestamp(latest) ? revision.createdAt : latest,
+    '',
+  )
 }
 
 function timestamp(value: string): number {

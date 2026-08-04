@@ -20,20 +20,18 @@ function revision(id: string, options: Partial<WorkflowRevision> = {}): Workflow
         id: `${id}-setup`,
         type: 'character-setup',
         status: 'passed',
+        input: null,
+        output: null,
         taskId: null,
-        candidateTaskIds: [],
-        submissionId: null,
-        error: null,
         referenceStepIds: [],
       },
       {
         id: `${id}-template`,
         type: 'character-template',
         status: 'active',
+        input: null,
+        output: null,
         taskId: 'generation-1',
-        candidateTaskIds: [],
-        submissionId: null,
-        error: null,
         referenceStepIds: [],
       },
     ],
@@ -44,11 +42,12 @@ function revision(id: string, options: Partial<WorkflowRevision> = {}): Workflow
   }
 }
 
-type PendingCharacterRun = Extract<WorkflowRun, { purpose: 'create_character'; characterId: null }>
+type RunOptions = Partial<WorkflowRun> & { revisionCreatedAt?: string }
 
-function run(id: string, options: Partial<PendingCharacterRun> = {}): WorkflowRun {
-  const current = revision(`${id}-revision`)
-  const base: PendingCharacterRun = {
+function run(id: string, options: RunOptions = {}): WorkflowRun {
+  const { revisionCreatedAt = NOW, ...overrides } = options
+  const current = revision(`${id}-revision`, { createdAt: revisionCreatedAt })
+  const base: WorkflowRun = {
     id,
     projectId: 'project-1',
     purpose: 'create_character',
@@ -57,13 +56,10 @@ function run(id: string, options: Partial<PendingCharacterRun> = {}): WorkflowRu
     currentRevisionId: current.id,
     revisions: [current],
     prompt: `任务 ${id}`,
-    createdAt: NOW,
-    updatedAt: NOW,
     characterId: null,
     outfitId: null,
-    selectedAt: null,
   }
-  return { ...base, ...options }
+  return { ...base, ...overrides }
 }
 
 function controller(initial: WorkflowRun[] = []): HistoryController & {
@@ -101,9 +97,9 @@ function renderHistory(testController: HistoryController, path = '/projects/proj
 afterEach(cleanup)
 
 describe('HistoryPage', () => {
-  it('只展示当前项目，并按更新时间从新到旧排列', () => {
-    const older = run('older-run', { updatedAt: '2026-08-03T10:00:00.000Z' })
-    const newer = run('newer-run', { updatedAt: '2026-08-04T11:00:00.000Z' })
+  it('只展示当前项目，并按最近 Revision 时间从新到旧排列', () => {
+    const older = run('older-run', { revisionCreatedAt: '2026-08-03T10:00:00.000Z' })
+    const newer = run('newer-run', { revisionCreatedAt: '2026-08-04T11:00:00.000Z' })
     const anotherProject = run('foreign-run', { projectId: 'project-2' })
     const testController = controller([older, anotherProject, newer])
 
@@ -133,6 +129,26 @@ describe('HistoryPage', () => {
     expect(screen.getByRole('heading', { name: '已完成' })).toBeTruthy()
     expect(screen.getAllByRole('link', { name: '继续任务' })).toHaveLength(2)
     expect(screen.getAllByRole('link', { name: '查看记录' })).toHaveLength(2)
+  })
+
+  it('继续任务时回到创建该 Run 的交互界面', () => {
+    renderHistory(
+      controller([
+        run('ai-run', { driver: 'ai' }),
+        run('manual-run', { driver: 'manual', status: 'interrupted' }),
+      ]),
+    )
+
+    const aiCard = screen.getByText('任务 ai-run').closest('article')
+    const manualCard = screen.getByText('任务 manual-run').closest('article')
+    expect(aiCard).not.toBeNull()
+    expect(manualCard).not.toBeNull()
+    expect(within(aiCard!).getByRole('link', { name: '继续任务' }).getAttribute('href')).toBe(
+      '/quick-start/ai-run',
+    )
+    expect(within(manualCard!).getByRole('link', { name: '继续任务' }).getAttribute('href')).toBe(
+      '/workflow-editor/manual-run',
+    )
   })
 
   it('展开 Run 后展示 Revision 来源与步骤状态', () => {
