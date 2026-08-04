@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type {
   ActionFirstFrameCandidateBatch,
+  ActionReviewResult,
   CharacterCandidateBatch,
   WorkflowRun,
   WorkflowRunService,
@@ -85,6 +86,7 @@ function createFixture(initialRuns: WorkflowRun[] = []) {
     resumeActionFirstFrameCandidates: vi.fn(),
     confirmActionFirstFrame: vi.fn(),
     resumeAction: vi.fn(),
+    getActionReview: vi.fn(),
     approveAction: vi.fn(),
   } as unknown as WorkflowRunService
   return { controller: createWorkflowController({ store, service }), store, service }
@@ -93,6 +95,14 @@ function createFixture(initialRuns: WorkflowRun[] = []) {
 describe('createWorkflowController', () => {
   it('delegates business commands to WorkflowRun Service without saving snapshots itself', async () => {
     const { controller, store, service } = createFixture()
+    const reviewing = createRun('add_action', 'review')
+    const review: ActionReviewResult = {
+      run: reviewing as Extract<WorkflowRun, { purpose: 'add_action' }>,
+      generationId: 'animation-1',
+      frames: [{ imageUrl: 'frame-1.png' }, { imageUrl: 'frame-2.png' }],
+    }
+    vi.mocked(service.confirmActionFirstFrame).mockResolvedValue(reviewing)
+    vi.mocked(service.getActionReview).mockResolvedValue(review)
     const characterInput = { projectId: 'project-1', prompt: '角色', driver: 'ai' as const }
     const actionInput = {
       projectId: 'project-1',
@@ -107,10 +117,12 @@ describe('createWorkflowController', () => {
     await controller.startCharacter(characterInput)
     await controller.confirmCharacter({ runId: 'character-run', selectedImageUrl: 'character.png' })
     await controller.startAction(actionInput)
-    await controller.confirmActionFirstFrame({
-      runId: 'action-run',
-      selectedImageUrl: 'first-frame.png',
-    })
+    await expect(
+      controller.confirmActionFirstFrame({
+        runId: 'action-run',
+        selectedImageUrl: 'first-frame.png',
+      }),
+    ).resolves.toEqual(review)
     await controller.approveAction('action-run')
 
     expect(service.startCharacter).toHaveBeenCalledWith(characterInput)
@@ -123,6 +135,7 @@ describe('createWorkflowController', () => {
       runId: 'action-run',
       selectedImageUrl: 'first-frame.png',
     })
+    expect(service.getActionReview).toHaveBeenCalledWith(reviewing.id)
     expect(service.approveAction).toHaveBeenCalledWith('action-run')
     expect(store.save).not.toHaveBeenCalled()
   })
@@ -164,11 +177,35 @@ describe('createWorkflowController', () => {
     const reviewing = createRun('add_action', 'review')
     const { controller, service } = createFixture([generating])
     vi.mocked(service.resumeAction).mockResolvedValue(reviewing)
+    const review: ActionReviewResult = {
+      run: reviewing as Extract<WorkflowRun, { purpose: 'add_action' }>,
+      generationId: 'animation-1',
+      frames: [{ imageUrl: 'frame-1.png' }, { imageUrl: 'frame-2.png' }],
+    }
+    vi.mocked(service.getActionReview).mockResolvedValue(review)
 
     await expect(controller.resume(generating.id)).resolves.toEqual({
       phase: 'action-review',
-      run: reviewing,
+      ...review,
     })
+    expect(service.getActionReview).toHaveBeenCalledWith(reviewing.id)
+  })
+
+  it('restores an existing review with frames instead of returning only the run', async () => {
+    const reviewing = createRun('add_action', 'review')
+    const review: ActionReviewResult = {
+      run: reviewing as Extract<WorkflowRun, { purpose: 'add_action' }>,
+      generationId: 'animation-1',
+      frames: [{ imageUrl: 'frame-1.png' }],
+    }
+    const { controller, service } = createFixture([reviewing])
+    vi.mocked(service.getActionReview).mockResolvedValue(review)
+
+    await expect(controller.resume(reviewing.id)).resolves.toEqual({
+      phase: 'action-review',
+      ...review,
+    })
+    expect(service.resumeAction).not.toHaveBeenCalled()
   })
 
   it('returns setup and terminal snapshots without invoking generation recovery', async () => {

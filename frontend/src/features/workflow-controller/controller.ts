@@ -8,6 +8,7 @@
 
 import type {
   ActionFirstFrameCandidateBatch,
+  ActionReviewResult,
   CharacterCandidateBatch,
   ConfirmActionFirstFrameInput,
   ConfirmCharacterSelectionInput,
@@ -23,7 +24,7 @@ import type {
 /**
  * 页面恢复结果。
  *
- * 候选阶段携带当次从后端取回的临时 URL；其他阶段只携带 Run。
+ * 候选阶段携带当次从后端取回的临时 URL；动作审核阶段携带完整动画帧。
  * 页面用 phase 选择界面，无需自己解释步骤顺序或后端任务状态。
  */
 export type WorkflowControllerSnapshot =
@@ -31,7 +32,7 @@ export type WorkflowControllerSnapshot =
   | ({ phase: 'character-candidates' } & CharacterCandidateBatch)
   | { phase: 'action-setup'; run: WorkflowRun }
   | ({ phase: 'action-first-frame-candidates' } & ActionFirstFrameCandidateBatch)
-  | { phase: 'action-review'; run: WorkflowRun }
+  | ({ phase: 'action-review' } & ActionReviewResult)
   | { phase: 'terminal'; run: WorkflowRun }
 
 export interface WorkflowController {
@@ -41,8 +42,8 @@ export interface WorkflowController {
   confirmCharacter(input: ConfirmCharacterSelectionInput): Promise<WorkflowRun>
   /** 用户点击生成动作时创建独立 Run，返回 4 张动作首帧候选。 */
   startAction(input: StartActionRunInput): Promise<ActionFirstFrameCandidateBatch>
-  /** 选中 1 张首帧后生成完整动画，直到进入审核。 */
-  confirmActionFirstFrame(input: ConfirmActionFirstFrameInput): Promise<WorkflowRun>
+  /** 选中 1 张首帧后生成完整动画，并返回审核页可直接播放的有序帧。 */
+  confirmActionFirstFrame(input: ConfirmActionFirstFrameInput): Promise<ActionReviewResult>
   /** 审核通过后写入 Character，返回导入 Playtest 所需的稳定 ID。 */
   approveAction(runId: WorkflowRun['id']): Promise<PublishActionResult>
 
@@ -111,17 +112,29 @@ export function createWorkflowController({
       return { phase: 'action-first-frame-candidates', ...batch }
     }
     if (activeStep.type === 'complete-animation') {
-      return toActionSnapshot(await service.resumeAction(run.id))
+      return toActionSnapshot(await service.resumeAction(run.id), service)
     }
-    if (activeStep.type === 'review') return { phase: 'action-review', run }
+    if (activeStep.type === 'review') {
+      const review = await service.getActionReview(run.id)
+      return { phase: 'action-review', ...review }
+    }
     throw new Error(`动作 WorkflowRun 无法恢复未知步骤：${activeStep.type}`)
+  }
+
+  async function confirmActionFirstFrame(
+    input: ConfirmActionFirstFrameInput,
+  ): Promise<ActionReviewResult> {
+    // Service 先完成状态推进，再通过只读用例返回同一任务的审核帧。
+    // Controller 不查询 Generation，也不把帧 URL 塞进 WorkflowRun Store。
+    const run = await service.confirmActionFirstFrame(input)
+    return service.getActionReview(run.id)
   }
 
   return {
     startCharacter: (input) => service.startCharacter(input),
     confirmCharacter: (input) => service.confirmCharacter(input),
     startAction: (input) => service.startAction(input),
-    confirmActionFirstFrame: (input) => service.confirmActionFirstFrame(input),
+    confirmActionFirstFrame,
     approveAction: (runId) => service.approveAction(runId),
     getWorkflow,
     listWorkflows,
@@ -139,9 +152,15 @@ function getActiveStep(run: WorkflowRun): WorkflowStep {
   return active
 }
 
-function toActionSnapshot(run: WorkflowRun): WorkflowControllerSnapshot {
+async function toActionSnapshot(
+  run: WorkflowRun,
+  service: WorkflowRunService,
+): Promise<WorkflowControllerSnapshot> {
   if (run.status !== 'active') return { phase: 'terminal', run }
   const active = getActiveStep(run)
-  if (active.type === 'review') return { phase: 'action-review', run }
+  if (active.type === 'review') {
+    const review = await service.getActionReview(run.id)
+    return { phase: 'action-review', ...review }
+  }
   throw new Error(`动画恢复后未进入审核：${active.type}`)
 }
