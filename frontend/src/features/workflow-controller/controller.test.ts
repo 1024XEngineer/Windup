@@ -35,7 +35,10 @@ function createRun(
           {
             id: 'step-1',
             type: activeType,
-            status: status === 'active' ? ('active' as const) : ('passed' as const),
+            status:
+              status === 'active' || status === 'interrupted'
+                ? ('active' as const)
+                : ('passed' as const),
             taskId: null,
             candidateTaskIds: [],
             submissionId: null,
@@ -88,8 +91,18 @@ function createFixture(initialRuns: WorkflowRun[] = []) {
     resumeAction: vi.fn(),
     getActionReview: vi.fn(),
     approveAction: vi.fn(),
+    interruptRun: vi.fn(),
+    continueRun: vi.fn(),
   } as unknown as WorkflowRunService
   return { controller: createWorkflowController({ store, service }), store, service }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve
+  })
+  return { promise, resolve }
 }
 
 describe('createWorkflowController', () => {
@@ -103,6 +116,7 @@ describe('createWorkflowController', () => {
     }
     vi.mocked(service.confirmActionFirstFrame).mockResolvedValue(reviewing)
     vi.mocked(service.getActionReview).mockResolvedValue(review)
+    vi.mocked(service.interruptRun).mockReturnValue(reviewing)
     const characterInput = { projectId: 'project-1', prompt: '角色', driver: 'ai' as const }
     const actionInput = {
       projectId: 'project-1',
@@ -124,6 +138,7 @@ describe('createWorkflowController', () => {
       }),
     ).resolves.toEqual(review)
     await controller.approveAction('action-run')
+    expect(controller.interrupt(reviewing.id)).toEqual(reviewing)
 
     expect(service.startCharacter).toHaveBeenCalledWith(characterInput)
     expect(service.confirmCharacter).toHaveBeenCalledWith({
@@ -137,6 +152,7 @@ describe('createWorkflowController', () => {
     })
     expect(service.getActionReview).toHaveBeenCalledWith(reviewing.id)
     expect(service.approveAction).toHaveBeenCalledWith('action-run')
+    expect(service.interruptRun).toHaveBeenCalledWith(reviewing.id)
     expect(store.save).not.toHaveBeenCalled()
   })
 
@@ -223,6 +239,60 @@ describe('createWorkflowController', () => {
     })
     expect(service.resumeCharacterCandidates).not.toHaveBeenCalled()
     expect(service.resumeAction).not.toHaveBeenCalled()
+  })
+
+  it('continues an interrupted run before restoring its active page', async () => {
+    const interrupted = createRun('create_character', 'character-setup', 'interrupted')
+    const active = { ...interrupted, status: 'active' as const }
+    const { controller, service } = createFixture([interrupted])
+    vi.mocked(service.continueRun).mockReturnValue(active)
+
+    await expect(controller.resume(interrupted.id)).resolves.toEqual({
+      phase: 'character-setup',
+      run: active,
+    })
+    expect(service.continueRun).toHaveBeenCalledWith(interrupted.id)
+  })
+
+  it('shares one in-flight recovery when the same run is resumed concurrently', async () => {
+    const run = createRun('add_action', 'first-frame-candidate')
+    const batch: ActionFirstFrameCandidateBatch = {
+      run,
+      candidateTaskIds: ['first-1', 'first-2', 'first-3', 'first-4'],
+      candidates: ['a.png', 'b.png', 'c.png', 'd.png'],
+    }
+    const pending = deferred<ActionFirstFrameCandidateBatch>()
+    const { controller, service } = createFixture([run])
+    vi.mocked(service.resumeActionFirstFrameCandidates).mockReturnValue(pending.promise)
+
+    const first = controller.resume(run.id)
+    const second = controller.resume(run.id)
+    expect(service.resumeActionFirstFrameCandidates).toHaveBeenCalledTimes(1)
+
+    pending.resolve(batch)
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { phase: 'action-first-frame-candidates', ...batch },
+      { phase: 'action-first-frame-candidates', ...batch },
+    ])
+  })
+
+  it('reads the existing review when confirming a first frame is retried after advancement', async () => {
+    const reviewing = createRun('add_action', 'review')
+    const review: ActionReviewResult = {
+      run: reviewing as Extract<WorkflowRun, { purpose: 'add_action' }>,
+      generationId: 'animation-1',
+      frames: [{ imageUrl: 'frame-1.png' }],
+    }
+    const { controller, service } = createFixture([reviewing])
+    vi.mocked(service.getActionReview).mockResolvedValue(review)
+
+    await expect(
+      controller.confirmActionFirstFrame({
+        runId: reviewing.id,
+        selectedImageUrl: 'first-frame.png',
+      }),
+    ).resolves.toEqual(review)
+    expect(service.confirmActionFirstFrame).not.toHaveBeenCalled()
   })
 
   it('delegates reads, project filtering and subscriptions to Store', () => {

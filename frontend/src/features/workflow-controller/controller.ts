@@ -46,15 +46,17 @@ export interface WorkflowController {
   confirmActionFirstFrame(input: ConfirmActionFirstFrameInput): Promise<ActionReviewResult>
   /** 审核通过后写入 Character，返回导入 Playtest 所需的稳定 ID。 */
   approveAction(runId: WorkflowRun['id']): Promise<PublishActionResult>
+  /** 暂停进行中的 Run；状态变更由 WorkflowRun Service 执行。 */
+  interrupt(runId: WorkflowRun['id']): WorkflowRun
 
   /** 按 ID 读取防御性快照；不存在时返回 null。 */
   getWorkflow(runId: WorkflowRun['id']): WorkflowRun | null
   /** 列出全部 Run，可选按项目过滤，供后续历史页使用。 */
-  listWorkflows(projectId?: string): WorkflowRun[]
+  listWorkflows(projectId?: string): readonly WorkflowRun[]
   /** 订阅单个 Run；Controller 不额外缓存副本。 */
   subscribe(runId: WorkflowRun['id'], listener: (run: WorkflowRun) => void): () => void
   /** 订阅列表变化，供后续项目/历史视图复用。 */
-  subscribeAll(listener: (runs: WorkflowRun[]) => void): () => void
+  subscribeAll(listener: (runs: readonly WorkflowRun[]) => void): () => void
 
   /**
    * 页面刷新或路由重进时的唯一恢复入口。
@@ -74,11 +76,17 @@ export function createWorkflowController({
   store,
   service,
 }: CreateWorkflowControllerOptions): WorkflowController {
+  /**
+   * React StrictMode、路由重进或多个只读视图可能同时恢复同一个 Run。
+   * 共享在途 Promise，避免 Service 为同一首帧阶段重复补建 Generation。
+   */
+  const pendingResumes = new Map<WorkflowRun['id'], Promise<WorkflowControllerSnapshot | null>>()
+
   function getWorkflow(runId: WorkflowRun['id']): WorkflowRun | null {
     return store.get(runId)
   }
 
-  function listWorkflows(projectId?: string): WorkflowRun[] {
+  function listWorkflows(projectId?: string): readonly WorkflowRun[] {
     const runs = store.list()
     return projectId === undefined ? runs : runs.filter((run) => run.projectId === projectId)
   }
@@ -87,13 +95,29 @@ export function createWorkflowController({
     return store.subscribe(runId, listener)
   }
 
-  function subscribeAll(listener: (runs: WorkflowRun[]) => void) {
+  function subscribeAll(listener: (runs: readonly WorkflowRun[]) => void) {
     return store.subscribeAll(listener)
   }
 
-  async function resume(runId: WorkflowRun['id']): Promise<WorkflowControllerSnapshot | null> {
-    const run = store.get(runId)
+  function resume(runId: WorkflowRun['id']): Promise<WorkflowControllerSnapshot | null> {
+    const pending = pendingResumes.get(runId)
+    if (pending) return pending
+
+    const request = restoreWorkflow(runId)
+    pendingResumes.set(runId, request)
+    const clear = () => {
+      if (pendingResumes.get(runId) === request) pendingResumes.delete(runId)
+    }
+    void request.then(clear, clear)
+    return request
+  }
+
+  async function restoreWorkflow(
+    runId: WorkflowRun['id'],
+  ): Promise<WorkflowControllerSnapshot | null> {
+    let run = store.get(runId)
     if (!run) return null
+    if (run.status === 'interrupted') run = service.continueRun(run.id)
     if (run.status !== 'active') return { phase: 'terminal', run }
 
     const activeStep = getActiveStep(run)
@@ -124,6 +148,14 @@ export function createWorkflowController({
   async function confirmActionFirstFrame(
     input: ConfirmActionFirstFrameInput,
   ): Promise<ActionReviewResult> {
+    const existing = store.get(input.runId)
+    if (existing?.purpose === 'add_action' && existing.status === 'active') {
+      const activeStep = getActiveStep(existing)
+      if (activeStep.type === 'complete-animation' || activeStep.type === 'review') {
+        return readActionReview(existing, service)
+      }
+    }
+
     // Service 先完成状态推进，再通过只读用例返回同一任务的审核帧。
     // Controller 不查询 Generation，也不把帧 URL 塞进 WorkflowRun Store。
     const run = await service.confirmActionFirstFrame(input)
@@ -136,12 +168,31 @@ export function createWorkflowController({
     startAction: (input) => service.startAction(input),
     confirmActionFirstFrame,
     approveAction: (runId) => service.approveAction(runId),
+    interrupt: (runId) => service.interruptRun(runId),
     getWorkflow,
     listWorkflows,
     subscribe,
     subscribeAll,
     resume,
   }
+}
+
+/**
+ * 首帧确认已经把 Run 推进到动画或审核阶段时，重试只能读取既有结果。
+ * 再次调用确认用例会重复消费旧候选，并把已经成功推进的任务误报为失败。
+ */
+async function readActionReview(
+  run: Extract<WorkflowRun, { purpose: 'add_action' }>,
+  service: WorkflowRunService,
+): Promise<ActionReviewResult> {
+  let reviewing: WorkflowRun = run
+  if (getActiveStep(reviewing).type === 'complete-animation') {
+    reviewing = await service.resumeAction(reviewing.id)
+  }
+  if (reviewing.status !== 'active' || getActiveStep(reviewing).type !== 'review') {
+    throw new Error('动作首帧已确认，但任务尚未进入审核阶段')
+  }
+  return service.getActionReview(reviewing.id)
 }
 
 function getActiveStep(run: WorkflowRun): WorkflowStep {
