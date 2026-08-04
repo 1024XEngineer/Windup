@@ -25,7 +25,9 @@ backend/
 │               ├── media/            # [foundation] 用户素材上传
 │               ├── project/          # [foundation] 项目约束配置
 │               ├── character/        # [foundation] 角色资产数据
-│               └── orchestrator/     # [workflow] 生成任务调度
+│               ├── orchestrator/     # [workflow] 生成任务调度
+│               ├── workflow/         # [workflow] 工作流画布（功能型卡片）
+│               └── agent/            # [workflow] Agent 智能体（懒人模式）
 ```
 
 > 注：`[foundation]` / `[workflow]` 标注所属业务域。
@@ -51,18 +53,31 @@ ai_engine     foundation
    ▲          ▲    ▲
    │     ┌────┘    │
    │   workflow    result
-   │     │         │
-   └─────┘─────────┘
+   │   │  │  │     │
+   │   │  │  │     │
+   └───┘──┘──┘─────┘
+       │  │
+    orchestrator
+       │
+    agent
 ```
+
+**模块关系**：
+- **workflow**（工作流画布）：卡片编排，调用 orchestrator 触动生成
+- **orchestrator**（生成任务调度）：管理生成任务生命周期，调用 ai_engine
+- **agent**（懒人智能体）：一句话入口，内部调用 workflow API
+- **ai_engine**（生成管线）：实际 AI 生成，被 orchestrator 调用
 
 **规则**：
 - foundation → framework, common
-- workflow → foundation, ai_engine, framework, common
+- workflow → orchestrator, foundation, framework, common
+- orchestrator → ai_engine, foundation, framework, common
+- agent → workflow, framework, common
 - result → foundation, framework, common
 - ai_engine → framework.providers（接口）, common
-- **禁止**：foundation → workflow / result / ai_engine
-- **禁止**：ai_engine → foundation / workflow / result
-- **禁止**：result → workflow
+- **禁止**：foundation → workflow / orchestrator / agent / result / ai_engine
+- **禁止**：ai_engine → foundation / workflow / orchestrator / agent / result
+- **禁止**：result → workflow / orchestrator / agent
 
 ---
 
@@ -164,6 +179,54 @@ ai_engine     foundation
 | `generate_character_action(input)` | 提交角色动作生成任务 |
 | `get_task(project_id, task_id)` | 查询任务状态与结果 |
 
+### workflow — 工作流画布
+
+**对应表：** `windup_workflow` / `windup_canvas_card` / `windup_generation_attempt`
+**接口：** `WorkflowService` / `CardService`
+
+功能型卡片体系：CHARACTER（角色实体）→ CANDIDATE（母版候选）/ ACTION（角色动作）/ EXPORT（资产导出）。
+
+**卡片类型 `CardType`：** character / candidate / action / export
+
+**WorkflowService 接口：**
+
+| 方法 | 说明 |
+|---|---|
+| `create_workflow(user_id, project_id, name)` | 创建工作流（自动创建 CHARACTER 根卡片） |
+| `get_workflow(workflow_id)` | 获取工作流详情（含全部 active 卡片） |
+| `delete_workflow(workflow_id)` | 删除工作流（级联软删除） |
+
+**CardService 接口：**
+
+| 方法 | 说明 |
+|---|---|
+| `create_card(workflow_id, card_type, parent_card_id, ...)` | 创建子卡片（ACTION/EXPORT） |
+| `confirm_card(card_id, user_input, spec_overrides?)` | 确认卡片，触发生成 |
+| `regenerate_card(card_id, user_input?)` | 重新生成（新 attempt） |
+| `delete_card(card_id)` | 删除卡片（级联软删除） |
+
+**SSE 衔接：** 确认卡片返回 `GenerationAttempt`（含 `task_id`），前端订阅 Task SSE 获取进度。
+
+### agent — Agent 智能体
+
+**对应表：** `agent_session` / `agent_message` / `agent_tool_call`
+**接口：** `AgentService`
+
+懒人智能体：一句话搞定角色资产生成。Agent 内部调用 Workflow API 完成实际操作。
+
+**工具定义：** create_project / create_character / generate_character_image / generate_character_action
+
+**AgentService 接口：**
+
+| 方法 | 说明 |
+|---|---|
+| `create_session(user_id, context?)` | 创建 Agent 会话 |
+| `send_message(session_id, content)` | 发送用户消息 |
+| `send_choice(session_id, message_id, value)` | 发送用户选择 |
+| `get_messages(session_id, limit?, before?)` | 获取会话历史 |
+
+**SSE 事件：** message / tool_call / tool_result / state_change / error
+
 ---
 
 ## 生成管线域（Pipeline）
@@ -202,4 +265,6 @@ ai_engine     foundation
 | project | foundation | windup_project | POST/GET/DELETE /projects |
 | character | foundation | windup_character | POST/GET/PATCH/DELETE /characters |
 | orchestrator | workflow | windup_generation_task | POST /generation/image, POST /generation/action, GET /generation/tasks/{id} |
+| workflow | workflow | windup_workflow, windup_canvas_card, windup_generation_attempt | POST/GET/DELETE /workflow, POST/PATCH/DELETE /workflow/{id}/cards, POST /cards/{id}/confirm, POST /cards/{id}/regenerate |
+| agent | workflow | agent_session, agent_message, agent_tool_call | POST /agent/sessions, POST /agent/sessions/{id}/messages, POST /agent/sessions/{id}/choices, GET /agent/sessions/{id}/messages |
 | ai_engine | pipeline | （无独立表） | （内部调用，不暴露 API） |
