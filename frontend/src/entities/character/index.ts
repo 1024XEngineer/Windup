@@ -61,6 +61,8 @@ export interface Action {
   id: string
   outfitId: Outfit['id']
   name: string
+  /** 是否在播放到末帧后从首帧继续；整树更新时必须原样保存。 */
+  loop?: boolean
   /** 定义来源方式；与 type 正交，不用于推断动作业务语义。 */
   kind: ActionKind
   /** 动作业务语义；与 kind 的 preset/custom 来源维度相互独立。 */
@@ -134,4 +136,5 @@ export interface CharacterApis {
   listByProject(projectId: string): Promise<Character[]>
   create(input: CreateCharacterInput): Promise<Character>
   update(character: Character): Promise<Character>
+  remove(id: Character['id']): Promise<void>
 }
