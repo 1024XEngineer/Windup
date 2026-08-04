@@ -193,6 +193,32 @@ describe('createApiClient', () => {
     })
   })
 
+  it('prioritizes an HTTP failure when the response also has a non-200 business code', async () => {
+    const client = createApiClient({
+      baseUrl: 'https://api.windup.test',
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            code: 500,
+            message: '服务暂时不可用',
+            data: { request_id: 'request-7' },
+          }),
+          { status: 503, headers: { 'content-type': 'application/json' } },
+        ),
+    })
+
+    const error = await client.request('/resources').catch((reason: unknown) => reason)
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error).toMatchObject({
+      kind: 'http',
+      code: null,
+      status: 503,
+      message: 'HTTP 请求失败',
+      data: { request_id: 'request-7' },
+    })
+  })
+
   it('does not accept a success envelope carried by a failed HTTP response', async () => {
     const client = createApiClient({
       baseUrl: 'https://api.windup.test',
