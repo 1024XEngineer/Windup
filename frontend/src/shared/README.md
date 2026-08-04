@@ -11,7 +11,7 @@
 - `pagination/` —— 与传输协议无关的分页请求与结果形状。
 - `api/` —— 后端公共 HTTP 客户端：统一响应解包、业务码、分页、Bearer 请求头和传输错误。
 
-`api/` 默认从 `VITE_API_BASE_URL` 读取服务地址，并在发出请求时调用可选的 `getAccessToken`。它只消费 token，不决定 token 如何登录取得、保存或刷新。
+`api/` 默认从 `VITE_API_BASE_URL` 读取服务地址，并在发出请求时调用可选的 `getAccessToken`。业务 API 统一使用 `getApiAccessToken`，后续登录模块通过 `registerApiAccessTokenProvider` 注册实际读取函数。公共层只保存这个函数，不决定 token 如何登录取得、保存或刷新。
 
 ## 后续允许放入
 
