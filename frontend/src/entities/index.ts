@@ -31,7 +31,8 @@ export { characterApis } from './character'
 /* 动作模板 —— 能跨角色复用的配方 */
 export type { ActionTemplate, ActionTemplateApis } from './action-template'
 
-/* 生成 —— 业务数据，不是「调用生成能力」 */
+/* 生成 —— 业务数据，不是「调用生成能力」；后端的 task 就是它，不另立实体 */
+export { createGenerationApis, GenerationApiError } from './generation'
 export type {
   CharacterTemplateGenerationInput,
   CharacterTemplateGenerationResult,
@@ -43,10 +44,14 @@ export type {
   Generation,
   GenerationApis,
   GenerationEvent,
+  GenerationExpectation,
   GenerationInput,
+  GenerationImageSize,
   GenerationResult,
   GenerationResultFor,
   GenerationType,
+  GenerationApiConfig,
+  GenerationTransport,
   TaskStatus,
 } from './generation'
 
