@@ -28,6 +28,7 @@ class CharacterCreate(BaseModel):
     """创建角色请求。"""
 
     project_id: int = Field(gt=0)
+    name: str | None = Field(default=None, max_length=20)
     description: str | None = None
     reference_image_url: str | None = None
     character_data: CharacterData = Field(default_factory=CharacterData)
@@ -36,6 +37,7 @@ class CharacterCreate(BaseModel):
 class CharacterUpdate(BaseModel):
     """更新角色请求——所有字段可选。"""
 
+    name: str | None = Field(default=None, max_length=20)
     description: str | None = None
     reference_image_url: str | None = None
     character_data: CharacterData | None = None
@@ -48,6 +50,7 @@ class CharacterOut(BaseModel):
 
     id: int
     project_id: int
+    name: str | None = None
     description: str | None = None
     reference_image_url: str | None = None
     character_data: dict
