@@ -41,7 +41,7 @@ pages -> features -> entities -> shared
 
 `app` 只做启动和路由，不构造服务、不向下注入。
 
-`shared/api` 只处理后端所有模块共用的传输契约：从环境读取 API 地址、附加调用方提供的 access token、解包统一响应、识别业务码并转换分页字段。它不知道 Project、Character 等业务 DTO，也不保存 token；各 `XxxApis` 的路径、字段映射与实例仍跟随对应 `entities` 模块。
+`shared/api` 只处理后端所有模块共用的传输契约：从环境读取 API 地址、附加调用方提供的 access token、解包统一响应、识别业务码并转换分页字段。登录模块通过 `registerApiAccessTokenProvider` 注册惰性读取函数，各业务 API 统一使用 `getApiAccessToken`；公共层只保存读取函数，不保存、刷新或解析 token。各 `XxxApis` 的路径、字段映射与实例仍跟随对应 `entities` 模块。
 
 外壳套在哪些页面上也是路由决策：`AppShellRoute` 写在 `app.tsx` 的路由表里，谁在里面谁就有顶栏。目前全部路由都在里面，根路由也是——顶栏悬浮在内容之上、不占布局高度，首屏仍是满幅，而首页同样需要通往项目资产的常驻入口。外壳组件自身不读 pathname，不判断自己该不该出现——那种写法每多一个特殊页面就多一条 `if`；顶栏内部读 pathname 只为高亮当前项，与此无关。外壳也不统一夹居中容器，宽度与留白由页面自己决定：顶栏既然悬浮，避让由页面负责，内容页统一走 `PageContainer`。
 
