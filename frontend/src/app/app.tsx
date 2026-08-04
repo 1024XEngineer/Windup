@@ -13,14 +13,15 @@ import { AppShellRoute } from './layout'
 /**
  * 路由表与全局外壳。
  * 页面自己获取所需数据，不再由 app 层构造服务后逐层传入。
- * 外壳的边界画在这张表上：根路由是满幅首屏，自带入口卡片，不进外壳；其余页面共用常驻导航。
+ * 外壳的边界画在这张表上：全部路由都在里面，包括根路由——顶栏悬浮不占高度，
+ * 首屏仍是满幅，同时首页也才有通往项目资产的常驻入口。
  */
 export function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<HomePage />} />
         <Route element={<AppShellRoute />}>
+          <Route path="/" element={<HomePage />} />
           <Route path="/quick-start" element={<QuickStartPage />} />
           <Route path="/quick-start/:runId" element={<QuickStartPage />} />
           <Route path="/projects" element={<ProjectsPage />} />

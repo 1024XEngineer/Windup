@@ -71,7 +71,7 @@ export function HomePage() {
                 </h2>
               </div>
               <p className="max-w-56 text-[10px] leading-4 text-[#747973] sm:max-w-36 sm:text-right">
-                快速开始负责连续创作，项目工作台适合逐步掌控。
+                一句话交给系统跑完，或在画布上逐个节点确认。
               </p>
             </header>
 
@@ -81,17 +81,26 @@ export function HomePage() {
                 eyebrow="ONE COMMAND"
                 index="01"
                 title="快速开始"
-                description="用自然语言描述角色和动作，从同一套制作流程开始。"
+                description="用自然语言描述角色和动作，系统按同一套流程连续跑完。"
                 actionLabel="写下角色设定"
                 tone="dark"
               />
+              {/*
+                画布入口必须先确定角色挂在哪个项目下，所以动作条悬停后分成新建与继续两条。
+                两条现在都落在 /projects 占位页；建项目、建 workflow run 再进
+                /workflow-editor/:runId 的真实链路等后端接口对齐后接上。
+              */}
               <HomeChoiceCard
                 to="/projects"
-                eyebrow="PROJECT WORKSPACE"
+                eyebrow="NODE CANVAS"
                 index="02"
-                title="从项目开始"
-                description="进入已有项目，继续管理角色、造型与动作制作。"
-                actionLabel="查看项目"
+                title="工作流画布"
+                description="打开工作流画布，逐个节点决定生成什么、留下哪一版。"
+                actionLabel="打开画布"
+                actions={[
+                  { to: '/projects', label: '创建新项目' },
+                  { to: '/projects', label: '继续已有项目' },
+                ]}
               />
             </div>
           </div>

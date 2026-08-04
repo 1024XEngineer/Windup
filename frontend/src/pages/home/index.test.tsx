@@ -8,7 +8,7 @@ import { HomePage } from './index'
 afterEach(cleanup)
 
 describe('HomePage', () => {
-  it('提供快速开始和项目工作台两个既有入口', () => {
+  it('按交互形态提供快速开始与工作流画布两个入口', () => {
     render(
       <MemoryRouter>
         <HomePage />
@@ -17,7 +17,11 @@ describe('HomePage', () => {
 
     expect(screen.getByRole('heading', { name: /真正登场/ })).toBeTruthy()
     expect(screen.getByRole('link', { name: /快速开始/ }).getAttribute('href')).toBe('/quick-start')
-    expect(screen.getByRole('link', { name: /从项目开始/ }).getAttribute('href')).toBe('/projects')
+    expect(screen.getByText('工作流画布')).toBeTruthy()
+    expect(screen.getByRole('link', { name: '创建新项目' }).getAttribute('href')).toBe('/projects')
+    expect(screen.getByRole('link', { name: '继续已有项目' }).getAttribute('href')).toBe(
+      '/projects',
+    )
     expect(screen.getByTestId('home-brand-bird').tagName).toBe('CANVAS')
   })
 })
