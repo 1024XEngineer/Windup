@@ -1,23 +1,27 @@
 /** @vitest-environment jsdom */
+import Ajv2020 from 'ajv/dist/2020.js'
 import { describe, expect, it, vi } from 'vitest'
 
-import type {
-  ExportAction as PreviewAction,
-  ExportFrame as PreviewFrame,
-  ExportPackageModel as PlaytestPreviewModel,
-} from './model'
-import { createAssetExportPlan, exportGameAssets, type AssetExportRuntime } from './asset-export'
+import {
+  createAssetExportPlan,
+  exportGameAssets,
+  type AssetExportRuntime,
+  type AssetExportTarget,
+} from './asset-export'
+import { COCOS_TARGET_READINESS, toCocosAnchor } from './cocos-target'
+import { EXPORT_PACKAGE_JSON_SCHEMA_TEXT } from './contract'
+import type { ExportAction, ExportFrame, ExportPackageModel } from './model'
 
-function frame(index: number): PreviewFrame {
+function frame(index: number): ExportFrame {
   return {
     imageUrl: `/frames/walk-${index}.png`,
-    durationMs: 100 + index,
+    durationMs: 100,
     rootMotion: { dx: index, dy: 0 },
     keyFrame: index === 0,
   }
 }
 
-function action(frameCount = 9): PreviewAction {
+function action(frameCount = 9): ExportAction {
   return {
     id: 'walk-abcdef12',
     name: 'Walk / Forward',
@@ -26,37 +30,54 @@ function action(frameCount = 9): PreviewAction {
     sequences: [
       {
         direction: 'south',
+        expectedFrameCount: frameCount,
+        loop: true,
+        anchor: { x: 0.5, y: 0.9 },
+        footY: 36,
+        qualityStatus: 'passed',
         frames: Array.from({ length: frameCount }, (_, index) => frame(index)),
       },
     ],
   }
 }
 
-const model: PlaytestPreviewModel = {
+const model: ExportPackageModel = {
   characterId: 'character-1',
   characterName: 'Aster',
   outfitId: 'outfit-1',
   outfitName: 'Explorer',
   characterTemplateUrl: null,
   baseFrameCount: 0,
-  actions: [action(), action(0)],
+  canvas: { width: 32, height: 40 },
+  source: { workflowRunId: 'run-1', generationIds: ['generation-1'] },
+  actions: [action()],
+}
+
+/** 构造足够让契约检查识别为 RGBA PNG 的文件头，解码由测试运行时接管。 */
+function rgbaPng(): Blob {
+  const data = new Uint8Array(33)
+  data.set([137, 80, 78, 71, 13, 10, 26, 10], 0)
+  new DataView(data.buffer).setUint32(8, 13, false)
+  data.set([73, 72, 68, 82], 12)
+  data[25] = 6
+  return new Blob([data], { type: 'image/png' })
 }
 
 async function readStoredZip(blob: Blob): Promise<Map<string, Uint8Array>> {
-  const bytes = new Uint8Array(await blob.arrayBuffer())
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const data = new Uint8Array(await blob.arrayBuffer())
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
   const decoder = new TextDecoder()
   const entries = new Map<string, Uint8Array>()
   let offset = 0
 
-  while (offset + 4 <= bytes.length && view.getUint32(offset, true) === 0x04034b50) {
+  while (offset + 4 <= data.length && view.getUint32(offset, true) === 0x04034b50) {
     const compressedSize = view.getUint32(offset + 18, true)
     const nameLength = view.getUint16(offset + 26, true)
     const extraLength = view.getUint16(offset + 28, true)
     const nameStart = offset + 30
     const dataStart = nameStart + nameLength + extraLength
-    const name = decoder.decode(bytes.slice(nameStart, nameStart + nameLength))
-    entries.set(name, bytes.slice(dataStart, dataStart + compressedSize))
+    const name = decoder.decode(data.slice(nameStart, nameStart + nameLength))
+    entries.set(name, data.slice(dataStart, dataStart + compressedSize))
     offset = dataStart + compressedSize
   }
   return entries
@@ -66,11 +87,11 @@ function runtime(failingUrl: string | null = null): AssetExportRuntime {
   return {
     fetchFrame: vi.fn(async (url) => {
       if (url === failingUrl) throw new Error('missing')
-      return new Blob([`original:${url}`], { type: 'image/png' })
+      return rgbaPng()
     }),
-    decodeFrame: vi.fn(async (blob) => ({
+    decodeFrame: vi.fn(async () => ({
       source: {} as CanvasImageSource,
-      width: blob.size % 2 === 0 ? 32 : 24,
+      width: 32,
       height: 40,
       close: vi.fn(),
     })),
@@ -79,10 +100,14 @@ function runtime(failingUrl: string | null = null): AssetExportRuntime {
       canvas.width = width
       canvas.height = height
       Object.defineProperty(canvas, 'getContext', {
-        value: () => ({ clearRect: vi.fn(), drawImage: vi.fn() }),
+        value: () => ({
+          clearRect: vi.fn(),
+          drawImage: vi.fn(),
+          getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(width * height * 4) })),
+        }),
       })
       Object.defineProperty(canvas, 'toBlob', {
-        value: (callback: BlobCallback) => callback(new Blob(['sheet'], { type: 'image/png' })),
+        value: (callback: BlobCallback) => callback(new Blob(['atlas'], { type: 'image/png' })),
       })
       return canvas
     }),
@@ -90,70 +115,137 @@ function runtime(failingUrl: string | null = null): AssetExportRuntime {
 }
 
 describe('asset export', () => {
-  it('plans non-empty sequences and wraps after eight columns', () => {
+  it('明确 Cocos 尚未就绪，并只落地已确认的锚点坐标转换', () => {
+    expect(COCOS_TARGET_READINESS.ready).toBe(false)
+    const anchor = toCocosAnchor({ x: 0.5, y: 0.9 })
+    expect(anchor.x).toBe(0.5)
+    expect(anchor.y).toBeCloseTo(0.1)
+  })
+
+  it('按动作名和方向生成连续三位帧名，并按八列排列图集', () => {
     const plan = createAssetExportPlan(model)
 
     expect(plan).toHaveLength(1)
     expect(plan[0]).toMatchObject({
+      exportName: 'Walk-Forward-south',
+      framesFolder: 'frames/Walk-Forward-south',
+      atlasFile: 'atlas/Walk-Forward-south.png',
+      previewFile: 'preview/Walk-Forward-south.gif',
       columns: 8,
       rows: 2,
-      folder: 'actions/Walk-Forward-abcdef12/south',
     })
-    expect(plan[0]?.frames.map((item) => item.filename)).toEqual([
-      '000.png',
-      '001.png',
-      '002.png',
-      '003.png',
-      '004.png',
-      '005.png',
-      '006.png',
-      '007.png',
-      '008.png',
-    ])
+    expect(plan[0]?.frames[0]?.filename).toBe('Walk-Forward-south_000.png')
+    expect(plan[0]?.frames[8]?.filename).toBe('Walk-Forward-south_008.png')
   })
 
-  it('creates a zip containing only original frames, a sprite sheet and animation json', async () => {
+  it('生成通用目录、透明 PNG、图集、GIF、README、Schema 和可校验的 meta.json', async () => {
     const phases: string[] = []
-    const result = await exportGameAssets(model, runtime(), (phase) => phases.push(phase))
+    const result = await exportGameAssets(model, {
+      runtime: runtime(),
+      onPhase: (phase) => phases.push(phase),
+    })
     const entries = await readStoredZip(result.blob)
+    const root = 'Aster-character-1'
     const names = [...entries.keys()]
 
-    expect(result).toMatchObject({ filename: 'windup-Aster-Explorer.zip', incomplete: false })
-    expect(phases).toEqual(['collecting', 'rendering', 'packing'])
-    expect(names).toContain('actions/Walk-Forward-abcdef12/south/sprite-sheet.png')
-    expect(names).toContain('actions/Walk-Forward-abcdef12/south/animation.json')
+    expect(result.filename).toBe('windup-Aster-character-1.zip')
+    expect(phases).toEqual(['validating', 'collecting', 'rendering', 'packing'])
+    expect(names).toContain(`${root}/meta.json`)
+    expect(names).toContain(`${root}/schema.json`)
+    expect(names).toContain(`${root}/README.md`)
+    expect(names).toContain(`${root}/atlas/Walk-Forward-south.png`)
+    expect(names).toContain(`${root}/preview/Walk-Forward-south.gif`)
     expect(names.filter((name) => name.includes('/frames/'))).toHaveLength(9)
-    expect(names.some((name) => /manifest|audit/i.test(name))).toBe(false)
 
-    const jsonBytes = entries.get('actions/Walk-Forward-abcdef12/south/animation.json')
-    const animation = JSON.parse(new TextDecoder().decode(jsonBytes))
-    expect(animation.spriteSheet).toMatchObject({ columns: 8, rows: 2 })
-    expect(animation.frames[0]).toMatchObject({
-      index: 0,
-      source: 'frames/000.png',
-      available: true,
-      durationMs: 100,
-      keyFrame: true,
+    const meta = JSON.parse(new TextDecoder().decode(entries.get(`${root}/meta.json`)))
+    const schema = JSON.parse(EXPORT_PACKAGE_JSON_SCHEMA_TEXT)
+    const validate = new Ajv2020().compile(schema)
+    expect(validate(meta), JSON.stringify(validate.errors)).toBe(true)
+    expect(meta).toMatchObject({
+      schema_version: '1.0.0',
+      character: { id: 'character-1', name: 'Aster' },
+      canvas: { w: 32, h: 40 },
+      source: { workflow_run_id: 'run-1', generation_ids: ['generation-1'] },
     })
+    expect(meta.actions[0]).toMatchObject({
+      name: 'Walk-Forward-south',
+      fps: 10,
+      loop: true,
+      anchor: { x: 0.5, y: 0.9 },
+      foot_y: 36,
+      atlas: { cols: 8, rows: 2, cell: { w: 32, h: 40 } },
+    })
+    expect(
+      new TextDecoder().decode(entries.get(`${root}/preview/Walk-Forward-south.gif`)).slice(0, 6),
+    ).toBe('GIF89a')
   })
 
-  it('keeps a transparent cell and marks a failed original frame unavailable', async () => {
-    const result = await exportGameAssets(model, runtime('/frames/walk-4.png'))
-    const entries = await readStoredZip(result.blob)
-    const animation = JSON.parse(
-      new TextDecoder().decode(entries.get('actions/Walk-Forward-abcdef12/south/animation.json')),
+  it('声明帧数与实际帧数不一致时，在读取图片前拒绝导出', async () => {
+    const badModel: ExportPackageModel = {
+      ...model,
+      actions: [
+        {
+          ...action(),
+          sequences: [{ ...action().sequences[0]!, expectedFrameCount: 10 }],
+        },
+      ],
+    }
+    const testRuntime = runtime()
+
+    await expect(exportGameAssets(badModel, { runtime: testRuntime })).rejects.toThrow(
+      'actions[0].sequences[0].frames: 缺帧，期望 10 帧，实际 9 帧',
     )
-
-    expect(result.incomplete).toBe(true)
-    expect(entries.has('actions/Walk-Forward-abcdef12/south/frames/004.png')).toBe(false)
-    expect(animation.frames[4]).toMatchObject({
-      index: 4,
-      source: 'frames/004.png',
-      available: false,
-    })
+    expect(testRuntime.fetchFrame).not.toHaveBeenCalled()
   })
 
-  it('releases decoded images when sprite-sheet rendering fails', async () => {
+  it('任一原图读取失败时拒绝整个导出，不再生成透明占位包', async () => {
+    await expect(
+      exportGameAssets(model, { runtime: runtime('/frames/walk-4.png') }),
+    ).rejects.toThrow('frames/Walk-Forward-south/Walk-Forward-south_004.png: 图片读取失败')
+  })
+
+  it('质量状态未通过时禁止导出', async () => {
+    const badModel: ExportPackageModel = {
+      ...model,
+      actions: [
+        {
+          ...action(),
+          sequences: [{ ...action().sequences[0]!, qualityStatus: 'pending' }],
+        },
+      ],
+    }
+
+    await expect(exportGameAssets(badModel, { runtime: runtime() })).rejects.toThrow(
+      'actions[0].sequences[0].qualityStatus: 质量检测未通过，禁止导出',
+    )
+  })
+
+  it('空 target 不改变通用层，新增 target 文件只进入自己的目录', async () => {
+    const emptyTarget: AssetExportTarget = {
+      id: 'empty',
+      createFiles: vi.fn(async () => []),
+    }
+    const cocosProbe: AssetExportTarget = {
+      id: 'cocos-probe',
+      createFiles: vi.fn(async ({ metadata }) => [
+        { path: 'anchor-map.json', data: JSON.stringify({ source: metadata.actions[0]?.anchor }) },
+      ]),
+    }
+    const common = await readStoredZip((await exportGameAssets(model, { runtime: runtime() })).blob)
+    const extended = await readStoredZip(
+      (await exportGameAssets(model, { runtime: runtime(), targets: [emptyTarget, cocosProbe] }))
+        .blob,
+    )
+    const targetPath = 'Aster-character-1/targets/cocos-probe/anchor-map.json'
+
+    expect([...extended.keys()].filter((name) => !name.includes('/targets/'))).toEqual([
+      ...common.keys(),
+    ])
+    expect(extended.has(targetPath)).toBe(true)
+    expect(emptyTarget.createFiles).toHaveBeenCalledTimes(1)
+  })
+
+  it('渲染失败时释放已经解码的全部图片', async () => {
     const baseRuntime = runtime()
     const closes: Array<ReturnType<typeof vi.fn>> = []
     const failingRuntime: AssetExportRuntime = {
@@ -161,7 +253,7 @@ describe('asset export', () => {
       decodeFrame: vi.fn(async () => {
         const close = vi.fn()
         closes.push(close)
-        return { source: {} as CanvasImageSource, width: 24, height: 40, close }
+        return { source: {} as CanvasImageSource, width: 32, height: 40, close }
       }),
       createCanvas: vi.fn((width, height) => {
         const canvas = document.createElement('canvas')
@@ -172,8 +264,8 @@ describe('asset export', () => {
       }),
     }
 
-    await expect(exportGameAssets(model, failingRuntime)).rejects.toThrow(
-      '浏览器无法创建 Sprite Sheet',
+    await expect(exportGameAssets(model, { runtime: failingRuntime })).rejects.toThrow(
+      'atlas/Walk-Forward-south.png: 浏览器无法创建 2D 画布',
     )
     expect(closes).toHaveLength(9)
     expect(closes.every((close) => close.mock.calls.length === 1)).toBe(true)

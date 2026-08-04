@@ -22,17 +22,17 @@ export interface ExportPanelProps {
 type ExportState =
   | { status: 'idle' }
   | { status: 'working'; phase: AssetExportPhase }
-  | { status: 'success'; incomplete: boolean }
-  | { status: 'failure' }
+  | { status: 'success' }
+  | { status: 'failure'; message: string }
 
 const PHASE_LABELS: Readonly<Record<AssetExportPhase, string>> = {
+  validating: '正在检查导出条件',
   collecting: '正在整理素材',
   rendering: '正在生成图片',
   packing: '正在打包',
 }
 
-const defaultExporter: AssetExporter = (model, onPhase) =>
-  exportGameAssets(model, undefined, onPhase)
+const defaultExporter: AssetExporter = (model, onPhase) => exportGameAssets(model, { onPhase })
 
 export function ExportPanel({
   model,
@@ -45,7 +45,7 @@ export function ExportPanel({
 
   const startExport = async () => {
     if (working) return
-    setState({ status: 'working', phase: 'collecting' })
+    setState({ status: 'working', phase: 'validating' })
     try {
       const result = await exporter(model, (phase) => setState({ status: 'working', phase }))
       const url = URL.createObjectURL(result.blob)
@@ -54,9 +54,12 @@ export function ExportPanel({
       anchor.download = result.filename
       anchor.click()
       URL.revokeObjectURL(url)
-      setState({ status: 'success', incomplete: result.incomplete })
-    } catch {
-      setState({ status: 'failure' })
+      setState({ status: 'success' })
+    } catch (error) {
+      setState({
+        status: 'failure',
+        message: error instanceof Error ? error.message : '未知错误',
+      })
     }
   }
 
@@ -69,7 +72,7 @@ export function ExportPanel({
       <header>
         <p className="text-[10px] font-semibold tracking-[0.18em] text-slate-400">GAME ASSETS</p>
         <h2 className="mt-1 text-sm font-semibold text-slate-900">资产导出</h2>
-        <p className="mt-1 text-[11px] text-slate-500">逐帧原图、Sprite Sheet 与动画 JSON</p>
+        <p className="mt-1 text-[11px] text-slate-500">透明 PNG、图集、GIF 与通用元数据</p>
       </header>
 
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-xs">
@@ -84,8 +87,8 @@ export function ExportPanel({
       </dl>
 
       {qualityIssueCount > 0 ? (
-        <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          当前核验存在 {qualityIssueCount} 项质量问题，仍可导出
+        <p role="alert" className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-800">
+          当前有 {qualityIssueCount} 项质量问题，全部通过后才能导出
         </p>
       ) : null}
 
@@ -95,22 +98,15 @@ export function ExportPanel({
         </p>
       ) : state.status === 'failure' ? (
         <p role="alert" className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-800">
-          导出失败，可重试
+          导出失败：{state.message}
         </p>
       ) : state.status === 'success' ? (
-        <div className="space-y-2">
-          <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">下载完成</p>
-          {state.incomplete ? (
-            <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
-              导出不完整，缺失图片已保留透明占位
-            </p>
-          ) : null}
-        </div>
+        <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">下载完成</p>
       ) : null}
 
       <button
         type="button"
-        disabled={working || plan.length === 0}
+        disabled={working || plan.length === 0 || qualityIssueCount > 0}
         onClick={() => void startExport()}
         className="w-full rounded-lg bg-orange-500 px-3 py-2 text-xs font-semibold text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-40"
       >

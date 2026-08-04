@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { ExportPackageModel as PlaytestPreviewModel } from './model'
+import type { ExportPackageModel } from './model'
 import { ExportPanel } from './export-panel'
 
 const model = {
@@ -12,6 +12,8 @@ const model = {
   outfitName: 'Explorer',
   characterTemplateUrl: null,
   baseFrameCount: 0,
+  canvas: { width: 32, height: 40 },
+  source: { workflowRunId: 'run-1', generationIds: ['generation-1'] },
   actions: [
     {
       id: 'walk-abcdef12',
@@ -21,6 +23,11 @@ const model = {
       sequences: [
         {
           direction: 'south',
+          expectedFrameCount: 1,
+          loop: true,
+          anchor: { x: 0.5, y: 0.9 },
+          footY: 36,
+          qualityStatus: 'passed',
           frames: [
             {
               imageUrl: '/walk.png',
@@ -33,7 +40,7 @@ const model = {
       ],
     },
   ],
-} satisfies PlaytestPreviewModel
+} satisfies ExportPackageModel
 
 afterEach(() => {
   cleanup()
@@ -41,30 +48,26 @@ afterEach(() => {
 })
 
 describe('ExportPanel', () => {
-  it('warns about current quality issues without blocking export', () => {
+  it('质量问题会阻止导出，而不是只显示警告', () => {
     render(<ExportPanel model={model} qualityIssueCount={3} />)
 
-    expect(screen.getByText('当前核验存在 3 项质量问题，仍可导出')).toBeTruthy()
+    expect(screen.getByText('当前有 3 项质量问题，全部通过后才能导出')).toBeTruthy()
     expect(
       (screen.getByRole('button', { name: '导出游戏资产包' }) as HTMLButtonElement).disabled,
-    ).toBe(false)
+    ).toBe(true)
   })
 
-  it('shows progress, prevents duplicate export, downloads and revokes the object url', async () => {
-    let resolveExport: (value: {
-      blob: Blob
-      filename: string
-      incomplete: boolean
-    }) => void = () => {
+  it('显示进度、阻止重复点击、下载后释放临时地址', async () => {
+    let resolveExport: (value: { blob: Blob; filename: string }) => void = () => {
       throw new Error('export promise was not initialized')
     }
     const exporter = vi.fn(
       (
-        _model: PlaytestPreviewModel,
-        onPhase?: (phase: 'collecting' | 'rendering' | 'packing') => void,
+        _model: ExportPackageModel,
+        onPhase?: (phase: 'validating' | 'collecting' | 'rendering' | 'packing') => void,
       ) => {
         onPhase?.('rendering')
-        return new Promise<{ blob: Blob; filename: string; incomplete: boolean }>((resolve) => {
+        return new Promise<{ blob: Blob; filename: string }>((resolve) => {
           resolveExport = resolve
         })
       },
@@ -84,8 +87,7 @@ describe('ExportPanel', () => {
 
     resolveExport({
       blob: new Blob(['zip'], { type: 'application/zip' }),
-      filename: 'windup-Aster-Explorer.zip',
-      incomplete: false,
+      filename: 'windup-Aster-character-1.zip',
     })
     await waitFor(() => expect(screen.getByText('下载完成')).toBeTruthy())
     expect(createObjectURL).toHaveBeenCalledTimes(1)
@@ -94,14 +96,13 @@ describe('ExportPanel', () => {
     click.mockRestore()
   })
 
-  it('warns for incomplete packages and allows retry after failure', async () => {
+  it('展示具体错误字段，并允许修复后重试', async () => {
     const exporter = vi
       .fn()
-      .mockRejectedValueOnce(new Error('pack failed'))
+      .mockRejectedValueOnce(new Error('actions[0].frames: 缺帧'))
       .mockResolvedValueOnce({
         blob: new Blob(['zip'], { type: 'application/zip' }),
-        filename: 'windup-Aster-Explorer.zip',
-        incomplete: true,
+        filename: 'windup-Aster-character-1.zip',
       })
     Object.defineProperty(URL, 'createObjectURL', {
       configurable: true,
@@ -112,9 +113,9 @@ describe('ExportPanel', () => {
 
     render(<ExportPanel model={model} exporter={exporter} />)
     fireEvent.click(screen.getByRole('button', { name: '导出游戏资产包' }))
-    await waitFor(() => expect(screen.getByText('导出失败，可重试')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('导出失败：actions[0].frames: 缺帧')).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: '重新导出' }))
-    await waitFor(() => expect(screen.getByText('导出不完整，缺失图片已保留透明占位')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('下载完成')).toBeTruthy())
     expect(exporter).toHaveBeenCalledTimes(2)
   })
 })
