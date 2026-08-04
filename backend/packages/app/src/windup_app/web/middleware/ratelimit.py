@@ -1,6 +1,7 @@
 """接口限流中间件。
 
 基于 Redis 的滑动窗口计数器，在鉴权中间件之前执行。
+Redis 不可用时优雅降级（跳过限流）。
 """
 
 import logging
@@ -11,8 +12,6 @@ from starlette.responses import Response
 
 from windup_common.enums.biz_code import BizCode
 from windup_common.exceptions import BizException
-
-from windup_framework.db.redis import get_redis
 
 logger = logging.getLogger("windup.ratelimit")
 
@@ -55,10 +54,15 @@ def _get_client_ip(request: Request) -> str:
 
 def _check_rate(redis_client, key: str, limit: int, window: int) -> bool:
     """检查是否超出限流，返回 True 表示允许通过。"""
-    current = redis_client.incr(key)
-    if current == 1:
-        redis_client.expire(key, window)
-    return current <= limit
+    try:
+        current = redis_client.incr(key)
+        if current == 1:
+            redis_client.expire(key, window)
+        return current <= limit
+    except Exception:
+        # Redis 不可用时跳过限流
+        logger.warning("[WINDUP] Redis 不可用，跳过限流检查 | key=%s", key)
+        return True
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -67,14 +71,27 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app) -> None:
         super().__init__(app)
         self._redis = None
+        self._redis_available = True
 
     @property
     def redis(self):
         if self._redis is None:
-            self._redis = get_redis()
+            try:
+                from windup_framework.db.redis import get_redis
+                self._redis = get_redis()
+                # 测试连接
+                self._redis.ping()
+            except Exception:
+                self._redis_available = False
+                logger.warning("[WINDUP] Redis 连接失败，限流中间件将跳过限流检查")
+                return None
         return self._redis
 
     async def dispatch(self, request: Request, call_next) -> Response:
+        # Redis 不可用时直接放行
+        if not self._redis_available or self.redis is None:
+            return await call_next(request)
+
         client_ip = _get_client_ip(request)
 
         # 全局限流
