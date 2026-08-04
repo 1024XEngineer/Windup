@@ -27,6 +27,27 @@ export interface ApiClientOptions {
   getAccessToken?: () => string | null | undefined
 }
 
+export type ApiAccessTokenProvider = NonNullable<ApiClientOptions['getAccessToken']>
+
+const accessTokenProviders: ApiAccessTokenProvider[] = []
+
+/**
+ * 注册登录模块持有的 token 读取函数；这里只保存读取函数，不保存、刷新或解析 token。
+ * 返回值用于模块卸载或测试结束时撤销本次注册。
+ */
+export function registerApiAccessTokenProvider(provider: ApiAccessTokenProvider): () => void {
+  accessTokenProviders.push(provider)
+  return () => {
+    const index = accessTokenProviders.lastIndexOf(provider)
+    if (index >= 0) accessTokenProviders.splice(index, 1)
+  }
+}
+
+/** 业务 API 实例统一传给 createApiClient 的惰性 token 读取边界。 */
+export function getApiAccessToken(): string | null | undefined {
+  return accessTokenProviders.at(-1)?.()
+}
+
 export type ApiErrorKind = 'business' | 'http' | 'invalid-response' | 'network'
 
 /** 后端业务错误与传输错误统一进入这一种前端错误。 */
