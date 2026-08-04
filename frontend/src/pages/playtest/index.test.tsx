@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes, useNavigate, type NavigateFunction } from 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { Character } from '@/entities/character'
+import type { Project } from '@/entities/project'
 
 import { PlaytestPage, type PlaytestPageApis } from './index'
 
@@ -42,8 +43,21 @@ const character: Character = {
   ],
 }
 
+const project: Project = {
+  id: 'project-1',
+  ownerId: 'user-1',
+  name: '探索者项目',
+  perspective: 'side',
+  directionalMovement: 'single',
+  spriteSize: { width: 256, height: 256 },
+  gameStyle: null,
+  sampleImageUrl: null,
+  createdAt: '',
+  updatedAt: '',
+}
+
 function renderPage(apis?: PlaytestPageApis, initialEntry = '/playtest/character-1/outfit-1') {
-  render(
+  return render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/playtest/:characterId/:outfitId" element={<PlaytestPage apis={apis} />} />
@@ -140,10 +154,11 @@ describe('PlaytestPage', () => {
     expect(get).toHaveBeenNthCalledWith(2, 'character-2')
   })
 
-  it('switches assets from the action sidebar without returning to the catalog', async () => {
+  it('在同一个左栏汇总跨项目资产，并排除没有可播放动作的空资产', async () => {
     const secondCharacter: Character = {
       ...character,
       id: 'character-2',
+      projectId: 'project-2',
       outfits: [
         {
           ...character.outfits[0]!,
@@ -158,23 +173,114 @@ describe('PlaytestPage', () => {
         },
       ],
     }
+    const emptyCharacter: Character = {
+      ...character,
+      id: 'character-empty',
+      projectId: 'project-empty',
+      outfits: [
+        {
+          ...character.outfits[0]!,
+          id: 'outfit-empty',
+          characterId: 'character-empty',
+          name: 'Empty',
+          actions: [
+            {
+              ...character.outfits[0]!.actions[0]!,
+              id: 'empty-action',
+              outfitId: 'outfit-empty',
+              name: 'Empty action',
+              frames: [],
+            },
+          ],
+        },
+      ],
+    }
     const get = vi
       .fn()
       .mockImplementation(async (id: string) =>
         id === secondCharacter.id ? secondCharacter : character,
       )
-    const listByProject = vi.fn().mockResolvedValue([character, secondCharacter])
+    const listByProject = vi.fn().mockImplementation(async (projectId: string) => {
+      if (projectId === 'project-2') return [secondCharacter]
+      if (projectId === 'project-empty') return [emptyCharacter]
+      return [character]
+    })
+    const projects = [
+      project,
+      { ...project, id: 'project-2', name: '骑士项目' },
+      { ...project, id: 'project-empty', name: '空项目' },
+    ]
 
-    renderPage({ characters: { get, listByProject } })
+    renderPage({
+      characters: { get, listByProject },
+      projects: {
+        list: vi.fn().mockResolvedValue({ items: projects, total: 3, page: 1, pageSize: 100 }),
+        get: vi.fn().mockResolvedValue(project),
+      },
+    })
 
-    const selector = await screen.findByRole('combobox', { name: '同项目资产' })
+    const selector = await screen.findByRole('combobox', { name: '全部 Playtest 资产' })
     fireEvent.click(selector)
     const options = screen.getAllByRole('option')
     expect(options).toHaveLength(2)
+    expect(screen.queryByRole('option', { name: /Empty/ })).toBeNull()
     fireEvent.click(screen.getByRole('option', { name: /Knight/ }))
 
     expect(await screen.findByRole('heading', { name: 'character-2 · Knight' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Guard/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Guard8 FPS1 帧' })).toBeTruthy()
     expect(get).toHaveBeenLastCalledWith('character-2')
+  })
+
+  it('在左栏通过 Character 更新接口改名资产和动作', async () => {
+    const update = vi.fn(async (input: Character) => input)
+    renderPage({
+      characters: {
+        get: vi.fn().mockResolvedValue(character),
+        listByProject: vi.fn().mockResolvedValue([character]),
+        update,
+      },
+    })
+
+    await screen.findByRole('heading', { name: 'character-1 · Explorer' })
+    fireEvent.click(screen.getByRole('button', { name: '重命名资产 Explorer' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '资产名称' }), {
+      target: { value: 'Night Explorer' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update.mock.calls[0]?.[0].outfits[0]?.name).toBe('Night Explorer')
+
+    fireEvent.click(screen.getByRole('button', { name: '重命名动作 Idle' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '动作名称' }), {
+      target: { value: 'Breathe' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+    expect(update.mock.calls[1]?.[0].outfits[0]?.actions[0]?.name).toBe('Breathe')
+  })
+
+  it('删除动作和最后一个造型时分别调用更新与角色删除接口', async () => {
+    const update = vi.fn(async (input: Character) => input)
+    const remove = vi.fn(async () => undefined)
+    const get = vi.fn().mockResolvedValue(character)
+    const listByProject = vi.fn().mockResolvedValue([character])
+
+    const { unmount } = renderPage({
+      characters: { get, listByProject, update, remove },
+    })
+    await screen.findByRole('heading', { name: 'character-1 · Explorer' })
+    fireEvent.click(screen.getByRole('button', { name: '删除动作 Idle' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认删除' }))
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update.mock.calls[0]?.[0].outfits[0]?.actions).toHaveLength(0)
+
+    unmount()
+    renderPage({ characters: { get, listByProject, update, remove } })
+    await screen.findByRole('heading', { name: 'character-1 · Explorer' })
+    fireEvent.click(screen.getByRole('button', { name: '删除资产 Explorer' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认删除' }))
+    await waitFor(() => expect(remove).toHaveBeenCalledExactlyOnceWith('character-1'))
   })
 })

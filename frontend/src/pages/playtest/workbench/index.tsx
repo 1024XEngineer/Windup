@@ -29,6 +29,11 @@ export interface PlaytestWorkbenchProps {
   inspectionApis?: Pick<PlaytestInspectionApis, 'get' | 'save'>
   initialActionId?: string | null
   onSelectAsset?(asset: PlaytestAssetOption): void
+  onAddAction?(): void
+  onRenameAsset?(asset: PlaytestAssetOption, name: string): Promise<void>
+  onDeleteAsset?(asset: PlaytestAssetOption): Promise<void>
+  onRenameAction?(actionId: string, name: string): Promise<void>
+  onDeleteAction?(actionId: string): Promise<void>
 }
 
 export type { PlaytestAssetOption } from './action-selector'
@@ -48,6 +53,11 @@ export function PlaytestWorkbench({
   inspectionApis,
   initialActionId = null,
   onSelectAsset = () => undefined,
+  onAddAction,
+  onRenameAsset,
+  onDeleteAsset,
+  onRenameAction,
+  onDeleteAction,
 }: PlaytestWorkbenchProps) {
   const [frameAvailable, setFrameAvailable] = useState(false)
   const previewResult = useMemo(
@@ -202,6 +212,12 @@ export function PlaytestWorkbench({
             actionCount: preview.actions.length,
           },
         ]
+  const selectedAsset =
+    availableAssets.find((asset) => asset.key === selectedAssetKey) ?? availableAssets[0] ?? null
+  const workspaceTitle =
+    selectedAsset && selectedAsset.name !== preview.outfitName
+      ? `${selectedAsset.name} · ${preview.outfitName}`
+      : `${preview.characterName} · ${preview.outfitName}`
 
   return (
     <main
@@ -211,14 +227,9 @@ export function PlaytestWorkbench({
       <header className="flex min-h-14 flex-wrap items-center justify-between gap-3 border-b border-[#d3d8d4] pb-3">
         <div className="min-w-0">
           <p className="font-mono text-[9px] font-semibold text-[#79817b]">PLAYTEST</p>
-          <h1 className="mt-1 truncate text-lg font-semibold">
-            {preview.characterName} · {preview.outfitName}
-          </h1>
+          <h1 className="mt-1 truncate text-lg font-semibold">{workspaceTitle}</h1>
         </div>
         <div className="flex items-center gap-3">
-          <p className="hidden text-[10px] text-[#727a74] sm:block">
-            只读预览，不写入角色、动作或帧
-          </p>
           <button
             type="button"
             aria-label={toolsOpen ? '关闭检查工具' : '打开检查工具'}
@@ -241,8 +252,8 @@ export function PlaytestWorkbench({
         </div>
       </header>
       <div
-        className={`grid items-stretch gap-3 lg:min-h-[680px] lg:grid-cols-[208px_minmax(0,1fr)] ${
-          toolsOpen ? 'xl:grid-cols-[208px_minmax(0,1fr)_320px]' : ''
+        className={`grid items-stretch gap-3 lg:min-h-[680px] lg:grid-cols-[260px_minmax(0,1fr)] ${
+          toolsOpen ? 'xl:grid-cols-[260px_minmax(0,1fr)_320px]' : ''
         }`}
       >
         <nav
@@ -256,6 +267,11 @@ export function PlaytestWorkbench({
             selectedActionId={playback.state.actionId}
             onSelectAsset={onSelectAsset}
             onSelectAction={playback.selectAction}
+            onAddAction={onAddAction}
+            onRenameAsset={onRenameAsset}
+            onDeleteAsset={onDeleteAsset}
+            onRenameAction={onRenameAction}
+            onDeleteAction={onDeleteAction}
           />
         </nav>
         <section aria-label="预览工作台" className="flex min-h-0 min-w-0 flex-col gap-2">

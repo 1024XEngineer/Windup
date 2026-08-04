@@ -17,6 +17,7 @@ export interface AnimationStageProps {
   showGrid: boolean
   showChecker: boolean
   onHorizontalBoundsChange?(bounds: HorizontalStageBounds | null): void
+  /** 告诉核验区当前帧是否已经由浏览器成功解码。 */
   onFrameAvailabilityChange?(available: boolean): void
 }
 

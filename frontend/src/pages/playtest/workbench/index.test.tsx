@@ -117,7 +117,7 @@ describe('PlaytestWorkbench on the PR #70 character contract', () => {
     expect(screen.getByRole('button', { name: /Jump/ })).toBeTruthy()
     expect(screen.getByRole('button', { name: /Crouch/ })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'default' })).toBeTruthy()
-    expect(screen.getByText('只读预览，不写入角色、动作或帧')).toBeTruthy()
+    expect(screen.queryByText('只读预览，不写入角色、动作或帧')).toBeNull()
     await waitFor(() => expect(readImageGeometry).toHaveBeenCalled())
   })
 
@@ -215,7 +215,7 @@ describe('PlaytestWorkbench on the PR #70 character contract', () => {
     expect(screen.getByText('找不到指定造型，无法构造只读预览。')).toBeTruthy()
   })
 
-  it('keeps inspection and issue recording in the same workbench', () => {
+  it('keeps inspection and issue records in the Playtest workbench', () => {
     render(<PlaytestWorkbench character={character} outfitId="outfit-1" />)
 
     expect(screen.queryByRole('tab', { name: '帧检查' })).toBeNull()
@@ -223,5 +223,16 @@ describe('PlaytestWorkbench on the PR #70 character contract', () => {
     expect(screen.getByRole('tab', { name: '帧检查' })).toBeTruthy()
     fireEvent.click(screen.getByRole('tab', { name: '问题记录' }))
     expect(screen.getByRole('tabpanel', { name: '问题记录' })).toBeTruthy()
+    expect(screen.queryByRole('tab', { name: '资产导出' })).toBeNull()
+  })
+
+  it('delegates adding an action for the current character', () => {
+    const onAddAction = vi.fn()
+    render(
+      <PlaytestWorkbench character={character} outfitId="outfit-1" onAddAction={onAddAction} />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '添加动作' }))
+    expect(onAddAction).toHaveBeenCalledTimes(1)
   })
 })

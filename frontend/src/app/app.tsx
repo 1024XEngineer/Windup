@@ -6,7 +6,7 @@ import { AssetLibraryPage } from '@/pages/asset-library'
 import { HomePage } from '@/pages/home'
 import { NotFoundPage } from '@/pages/not-found'
 import { PlaytestPage } from '@/pages/playtest'
-import { PlaytestCatalogPage } from '@/pages/playtest/catalog'
+import { PlaytestEntryPage } from '@/pages/playtest/entry'
 import { ProjectDetailPage } from '@/pages/project-detail'
 import { ProjectsPage } from '@/pages/projects'
 import { QuickStartPage } from '@/pages/quick-start'
@@ -36,7 +36,7 @@ function PlaytestFromBackend() {
  * 外壳的边界画在这张表上：根路由是满幅首屏，自带入口卡片，不进外壳；其余页面共用常驻导航。
  */
 export function App() {
-  const catalogApis = useMemo(
+  const playtestApis = useMemo(
     () => ({ projects: createProjectApis(), characters: createCharacterApis() }),
     [],
   )
@@ -45,6 +45,9 @@ export function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<HomePage />} />
+        {/* Playtest 是独立工作台：根入口和详情页都不显示站点目录栏。 */}
+        <Route path="/playtest" element={<PlaytestEntryPage apis={playtestApis} />} />
+        <Route path="/playtest/:characterId/:outfitId" element={<PlaytestFromBackend />} />
         <Route element={<AppShellRoute />}>
           <Route path="/quick-start" element={<QuickStartPage />} />
           <Route path="/quick-start/:runId" element={<QuickStartPage />} />
@@ -53,8 +56,6 @@ export function App() {
           <Route path="/projects/:projectId/assets" element={<AssetLibraryPage />} />
           <Route path="/workflow-editor/:runId" element={<WorkflowEditorPage />} />
           <Route path="/workflow-editor/:runId/:stage" element={<WorkflowEditorPage />} />
-          <Route path="/playtest" element={<PlaytestCatalogPage apis={catalogApis} />} />
-          <Route path="/playtest/:characterId/:outfitId" element={<PlaytestFromBackend />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>

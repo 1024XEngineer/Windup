@@ -83,7 +83,7 @@ describe('Playtest architecture boundaries', () => {
     }
   })
 
-  it('imports Entity contracts only from the approved direct entrypoints', () => {
+  it('imports Entity contracts only from the two approved direct entrypoints', () => {
     // Catches alias or relative root barrels and deep paths that hide Playtest's dependencies.
     for (const file of sourceFiles(playtestDirectory)) {
       const entityImports = moduleSpecifiers(readFileSync(file, 'utf8'))

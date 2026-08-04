@@ -5,6 +5,7 @@ import type { PlaytestInspectionStatus } from '@/entities/playtest-inspection'
 export interface AcceptanceProps {
   inspectionStatus: PlaytestInspectionStatus | null
   available: boolean
+  /** 当前帧图片已经真实加载成功时，才允许把动作标记为核验通过。 */
   canPass: boolean
   loading: boolean
   saving: boolean

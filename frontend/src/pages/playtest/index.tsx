@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
+import { useNavigate, useParams, useSearchParams } from 'react-router'
 
 import type { Character, CharacterApis } from '@/entities/character'
 import type { PlaytestInspectionApis } from '@/entities/playtest-inspection'
 import type { ProjectApis } from '@/entities/project'
+import { loadPlayableCharacters, toPlayableCharacter } from './assets'
 import { buildPlaytestPath } from './path'
 import { PlaytestWorkbench, type PlaytestAssetOption } from './workbench'
 
 export interface PlaytestPageApis {
-  characters: Pick<CharacterApis, 'get' | 'listByProject'>
-  projects?: Pick<ProjectApis, 'get'>
+  characters: Pick<CharacterApis, 'get' | 'listByProject'> &
+    Partial<Pick<CharacterApis, 'update' | 'remove'>>
+  projects?: Pick<ProjectApis, 'get' | 'list'>
   inspections?: Pick<PlaytestInspectionApis, 'get' | 'save'>
 }
 
@@ -19,7 +21,7 @@ export interface PlaytestPageProps {
 
 interface PageData {
   character: Character | null
-  projectCharacters: Character[]
+  playableCharacters: Character[]
   expectedCanvas: { width: number; height: number } | null
   error: string | null
   loading: boolean
@@ -27,7 +29,7 @@ interface PageData {
 
 const initialPageData: PageData = {
   character: null,
-  projectCharacters: [],
+  playableCharacters: [],
   expectedCanvas: null,
   error: null,
   loading: false,
@@ -47,7 +49,7 @@ function isNotFoundError(error: unknown): boolean {
 /**
  * 正式 Playtest 页面只读取 #70 已定义的 Character 接口。
  * 当接口未配置时，自动回退到内置 demo 角色素材。
- * 核验与自动分析结果均停留在页面会话，不写回资产树。
+ * 预览、播放和自动分析本身不改资产；只有用户明确触发改名或删除时才写回 Character。
  */
 export function PlaytestPage({ apis }: PlaytestPageProps) {
   const { characterId, outfitId } = useParams()
@@ -61,7 +63,7 @@ export function PlaytestPage({ apis }: PlaytestPageProps) {
     if (apis === undefined) {
       setData({
         character: null,
-        projectCharacters: [],
+        playableCharacters: [],
         expectedCanvas: null,
         error: 'Playtest 角色接口尚未配置',
         loading: false,
@@ -77,18 +79,45 @@ export function PlaytestPage({ apis }: PlaytestPageProps) {
     setData({ ...initialPageData, loading: true })
     void apis.characters.get(characterId).then(
       async (character) => {
-        let projectCharacters = [character]
+        const playableCharacter = toPlayableCharacter(character)
+        if (playableCharacter === null) {
+          if (!cancelled) {
+            setData({ ...initialPageData, error: '这个角色没有可预览的动作' })
+          }
+          return
+        }
+
+        let playableCharacters = [playableCharacter]
         let expectedCanvas: PageData['expectedCanvas'] = null
         const [charactersResult, projectResult] = await Promise.allSettled([
-          apis.characters.listByProject(character.projectId),
+          apis.projects
+            ? loadPlayableCharacters({ projects: apis.projects, characters: apis.characters })
+            : apis.characters
+                .listByProject(character.projectId)
+                .then((characters) =>
+                  characters
+                    .map(toPlayableCharacter)
+                    .filter((candidate): candidate is Character => candidate !== null),
+                ),
           apis.projects?.get(character.projectId) ?? Promise.resolve(null),
         ])
-        if (charactersResult.status === 'fulfilled') projectCharacters = charactersResult.value
+        if (charactersResult.status === 'fulfilled') {
+          playableCharacters = [
+            playableCharacter,
+            ...charactersResult.value.filter((candidate) => candidate.id !== playableCharacter.id),
+          ]
+        }
         if (projectResult.status === 'fulfilled' && projectResult.value !== null) {
           expectedCanvas = projectResult.value.spriteSize
         }
         if (!cancelled) {
-          setData({ character, projectCharacters, expectedCanvas, error: null, loading: false })
+          setData({
+            character: playableCharacter,
+            playableCharacters,
+            expectedCanvas,
+            error: null,
+            loading: false,
+          })
         }
       },
       (error: unknown) => {
@@ -110,38 +139,145 @@ export function PlaytestPage({ apis }: PlaytestPageProps) {
   if (data.loading || data.character === null)
     return <PlaytestPageMessage>加载 Playtest 数据中</PlaytestPageMessage>
 
-  const assetOptions = buildAssetOptions(data.projectCharacters)
+  const assetOptions = buildAssetOptions(data.playableCharacters)
+
+  function replaceCharacter(saved: Character | null, characterId: string): Character[] {
+    const playable = saved ? toPlayableCharacter(saved) : null
+    const nextCharacters = data.playableCharacters.flatMap((candidate) => {
+      if (candidate.id !== characterId) return [candidate]
+      return playable ? [playable] : []
+    })
+    if (playable && !nextCharacters.some((candidate) => candidate.id === playable.id)) {
+      nextCharacters.push(playable)
+    }
+    setData((current) => ({
+      ...current,
+      character: current.character?.id === characterId ? playable : current.character,
+      playableCharacters: nextCharacters,
+    }))
+    return nextCharacters
+  }
+
+  async function renameAsset(asset: PlaytestAssetOption, name: string) {
+    if (!apis?.characters.update) throw new Error('角色更新接口尚未配置')
+    const source = await apis.characters.get(asset.characterId)
+    if (!source.outfits.some((outfit) => outfit.id === asset.outfitId)) {
+      throw new Error('没有找到需要改名的造型')
+    }
+    const saved = await apis.characters.update({
+      ...source,
+      outfits: source.outfits.map((outfit) =>
+        outfit.id === asset.outfitId ? { ...outfit, name } : outfit,
+      ),
+    })
+    replaceCharacter(saved, source.id)
+  }
+
+  async function deleteAsset(asset: PlaytestAssetOption) {
+    if (!apis?.characters.remove || !apis.characters.update) {
+      throw new Error('角色删除接口尚未配置')
+    }
+    const source = await apis.characters.get(asset.characterId)
+    const saved =
+      source.outfits.length === 1
+        ? (await apis.characters.remove(source.id), null)
+        : await apis.characters.update({
+            ...source,
+            outfits: source.outfits.filter((outfit) => outfit.id !== asset.outfitId),
+          })
+    const nextCharacters = replaceCharacter(saved, source.id)
+    const nextAsset = buildAssetOptions(nextCharacters)[0]
+    navigate(
+      nextAsset
+        ? buildPlaytestPath({ characterId: nextAsset.characterId, outfitId: nextAsset.outfitId })
+        : '/playtest',
+      { replace: true },
+    )
+  }
+
+  async function renameAction(actionId: string, name: string) {
+    if (!apis?.characters.update) throw new Error('角色更新接口尚未配置')
+    const source = await apis.characters.get(data.character!.id)
+    const saved = await apis.characters.update({
+      ...source,
+      outfits: source.outfits.map((outfit) =>
+        outfit.id === outfitId
+          ? {
+              ...outfit,
+              actions: outfit.actions.map((action) =>
+                action.id === actionId ? { ...action, name } : action,
+              ),
+            }
+          : outfit,
+      ),
+    })
+    replaceCharacter(saved, source.id)
+  }
+
+  async function deleteAction(actionId: string) {
+    if (!apis?.characters.update) throw new Error('角色更新接口尚未配置')
+    const source = await apis.characters.get(data.character!.id)
+    const saved = await apis.characters.update({
+      ...source,
+      outfits: source.outfits.map((outfit) =>
+        outfit.id === outfitId
+          ? { ...outfit, actions: outfit.actions.filter((action) => action.id !== actionId) }
+          : outfit,
+      ),
+    })
+    const nextCharacters = replaceCharacter(saved, source.id)
+    const savedPlayable = toPlayableCharacter(saved)
+    const remainingOutfit = savedPlayable?.outfits.find((outfit) => outfit.id === outfitId)
+    const nextAction = remainingOutfit?.actions[0]
+    if (remainingOutfit && nextAction) {
+      navigate(
+        buildPlaytestPath({
+          characterId: saved.id,
+          outfitId: remainingOutfit.id,
+          actionId: nextAction.id,
+        }),
+        { replace: true },
+      )
+      return
+    }
+    const nextAsset = buildAssetOptions(nextCharacters)[0]
+    navigate(
+      nextAsset
+        ? buildPlaytestPath({ characterId: nextAsset.characterId, outfitId: nextAsset.outfitId })
+        : '/playtest',
+      { replace: true },
+    )
+  }
 
   return (
-    <div className="bg-[#eef0ed] pt-2">
-      <div className="px-3 sm:px-5">
-        <Link
-          to="/playtest"
-          aria-label="返回全部 Playtest"
-          className="inline-flex min-h-8 items-center gap-1 rounded-md px-2 text-[11px] font-semibold text-[#59635b] hover:bg-[#e1e5e1] hover:text-[#2f4e38]"
-        >
-          <span aria-hidden="true">←</span>
-          全部 Playtest
-        </Link>
-      </div>
-      <PlaytestWorkbench
-        key={`${data.character.id}:${outfitId}:${initialActionId ?? ''}`}
-        character={data.character}
-        outfitId={outfitId ?? ''}
-        assetOptions={assetOptions}
-        expectedCanvas={data.expectedCanvas}
-        inspectionApis={apis?.inspections}
-        initialActionId={initialActionId}
-        onSelectAsset={(asset) =>
-          navigate(
-            buildPlaytestPath({
-              characterId: asset.characterId,
-              outfitId: asset.outfitId,
-            }),
-          )
-        }
-      />
-    </div>
+    <PlaytestWorkbench
+      key={`${data.character.id}:${outfitId}:${initialActionId ?? ''}`}
+      character={data.character}
+      outfitId={outfitId ?? ''}
+      assetOptions={assetOptions}
+      expectedCanvas={data.expectedCanvas}
+      inspectionApis={apis?.inspections}
+      initialActionId={initialActionId}
+      onSelectAsset={(asset) =>
+        navigate(
+          buildPlaytestPath({
+            characterId: asset.characterId,
+            outfitId: asset.outfitId,
+          }),
+        )
+      }
+      onAddAction={() => {
+        const params = new URLSearchParams({
+          characterId: data.character!.id,
+          outfitId: outfitId ?? '',
+        })
+        navigate(`/quick-start?${params.toString()}`)
+      }}
+      onRenameAsset={renameAsset}
+      onDeleteAsset={deleteAsset}
+      onRenameAction={renameAction}
+      onDeleteAction={deleteAction}
+    />
   )
 }
 
@@ -153,10 +289,24 @@ function buildAssetOptions(characters: Character[]): PlaytestAssetOption[] {
         key: `${character.id}:${outfit.id}`,
         characterId: character.id,
         outfitId: outfit.id,
-        name: `${outfit.name}（角色 ${character.id}）`,
+        name: assetDisplayName(character.id, outfit.name, outfit.actions[0]?.name),
+        outfitName: outfit.name,
+        previewUrl: outfit.characterTemplateUrl ?? outfit.actions[0]?.frames[0]?.imageUrl ?? null,
         actionCount: outfit.actions.length,
       })),
   )
+}
+
+function assetDisplayName(
+  characterId: string,
+  outfitName: string,
+  firstActionName?: string,
+): string {
+  const normalizedOutfitName = outfitName.trim()
+  const generatedDefault =
+    normalizedOutfitName === '默认造型' || /^default(?: outfit)?$/i.test(normalizedOutfitName)
+  if (!generatedDefault && normalizedOutfitName) return normalizedOutfitName
+  return firstActionName?.trim() || `角色 ${characterId}`
 }
 
 function PlaytestPageMessage({ children }: { children: string }) {

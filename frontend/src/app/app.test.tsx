@@ -10,11 +10,13 @@ afterEach(() => {
 })
 
 describe('App Playtest route', () => {
-  it('routes /playtest to the standalone Playtest catalog', () => {
+  it('routes /playtest to the standalone workbench entry without the site navigation', () => {
     window.history.replaceState({}, '', '/playtest')
 
     render(<App />)
 
     expect(screen.getByRole('heading', { name: 'Playtest' })).toBeTruthy()
+    expect(screen.queryByRole('navigation')).toBeNull()
+    expect(screen.queryByText('项目')).toBeNull()
   })
 })
