@@ -61,6 +61,8 @@ export interface Action {
   id: string
   outfitId: Outfit['id']
   name: string
+  /** null 表示此动作不是从可复用模板创建。 */
+  actionTemplateId: string | null
   /** 定义来源方式；与 type 正交，不用于推断动作业务语义。 */
   kind: ActionKind
   /** 动作业务语义；与 kind 的 preset/custom 来源维度相互独立。 */
@@ -111,6 +113,12 @@ export interface Outfit {
 export interface Character {
   id: string
   projectId: string
+  /**
+   * 角色的显示名，跨造型稳定。
+   * 07-30 评审曾按后端当时无此字段删除过一次；08-04 前后端重新确认保留该字段，
+   * 资产库以它作为角色卡与角色详情的标题。
+   */
+  name: string
   /** 角色的全部独立造型；MVP 页面至少保留这一层，即使当前只有一个成员。 */
   outfits: Outfit[]
   createdAt: string
@@ -120,6 +128,8 @@ export interface Character {
 /** 创建角色并发起母版生成所需的入参。 */
 export interface CreateCharacterInput {
   projectId: string
+  /** 角色的显示名，创建后不随造型切换而变化。 */
+  name: string
   /** 交给模型生成母版。 */
   description: string
   referenceImageUrl?: string | null
