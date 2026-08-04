@@ -24,6 +24,9 @@ export function AppShell({ children }: AppShellProps) {
           <Link to="/projects" className="hover:text-slate-900">
             项目
           </Link>
+          <Link to="/playtest" className="hover:text-slate-900">
+            Playtest
+          </Link>
         </div>
       </nav>
       {/* 外壳只管顶栏。页面自己决定宽度与留白，不在这里统一夹到屏幕中间。 */}
