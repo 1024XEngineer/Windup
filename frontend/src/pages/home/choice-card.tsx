@@ -2,7 +2,7 @@ import { Link } from 'react-router'
 
 export type HomeChoiceCardTone = 'light' | 'dark'
 
-/** 悬停后展开的次级入口；两个都指向真实路由，卡片本身不再是链接。 */
+/** 展开后的次级入口；两个都指向真实路由，卡片本身不再是链接。 */
 export interface HomeChoiceCardAction {
   to: string
   label: string
@@ -17,8 +17,8 @@ export interface HomeChoiceCardProps {
   actionLabel: string
   tone?: HomeChoiceCardTone
   /**
-   * 给出时，底部动作条在悬停或键盘聚焦后由 actionLabel 换成这几个入口，
-   * 卡片随之从 Link 降级为 section——链接不能嵌套链接。
+   * 给出时，底部动作条由 actionLabel 换成这几个入口：能 hover 的设备悬停或键盘聚焦后展开，
+   * 触屏设备常显。卡片随之从 Link 降级为 section——链接不能嵌套链接。
    * 不给时卡片整体是一个链接，指向 to。
    */
   actions?: HomeChoiceCardAction[]
@@ -113,13 +113,17 @@ export function HomeChoiceCard({
       {body}
 
       <div className={`relative mt-5 border-t pt-4 text-xs font-semibold ${actionBorder}`}>
-        {/* 两层叠在一起换位，不用 display:none——隐藏的链接无法聚焦，键盘用户就够不到次级入口。 */}
-        <div className="flex items-center justify-between transition-opacity duration-200 group-hover:opacity-0 group-focus-within:opacity-0">
+        {/* 两层叠在一起换位，不用 display:none——隐藏的链接无法聚焦，键盘用户就够不到次级入口。
+            any-pointer-coarse 那一份是触屏的基线：Tailwind v4 把 hover: 包在 @media (hover: hover) 里，
+            触屏既没有 hover 也没有 Tab，只留 hover 展开的话这两个入口在手机上根本触发不到。
+            用 any-pointer 而非 pointer，是因为触屏笔记本、配鼠标的 iPad 主指针报 fine，
+            只判主指针那类设备用手指仍然点不动；代价是它们两个分支同时命中，按钮常显。 */}
+        <div className="flex items-center justify-between transition-opacity duration-200 group-hover:opacity-0 group-focus-within:opacity-0 any-pointer-coarse:hidden">
           {actionLabel}
           <span aria-hidden="true">→</span>
         </div>
 
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex gap-2 opacity-0 transition-opacity duration-200 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex gap-2 opacity-0 transition-opacity duration-200 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 any-pointer-coarse:static any-pointer-coarse:opacity-100 any-pointer-coarse:pointer-events-auto">
           {actions.map((action) => (
             <Link
               key={action.to + action.label}
