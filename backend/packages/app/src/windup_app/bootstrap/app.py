@@ -6,10 +6,14 @@
 
 from fastapi import FastAPI
 
+from windup_app.web.api.agent import router as agent_router
 from windup_app.web.api.media import router as media_router
+from windup_app.web.api.workflow import router as workflow_router
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="windup", version="0.1.0")
     app.include_router(media_router)
+    app.include_router(workflow_router)
+    app.include_router(agent_router)
     return app
