@@ -79,6 +79,29 @@ export interface ConfirmActionFirstFrameInput {
   selectedImageUrl: string
 }
 
+/**
+ * 动作审核页真正需要的一帧。
+ *
+ * 这里不直接把 Generation 的 DTO 暴露给页面：Generation 负责描述后端任务结果，
+ * WorkflowRun 则只交付当前任务已经确认可用于审核的图片地址。
+ */
+export interface ActionReviewFrame {
+  imageUrl: string
+}
+
+/**
+ * 完整动画生成结束后的只读审核结果。
+ *
+ * generationId 让调用方能够定位本次完整动画任务；frames 的数组顺序就是播放顺序。
+ * 读取该结果不会修改 Run，也不会把临时图片 URL 写进 WorkflowRun 快照。
+ */
+export interface ActionReviewResult {
+  /** 审核结果只可能属于动作任务，调用方无需再次判断 purpose。 */
+  run: Extract<WorkflowRun, { purpose: 'add_action' }>
+  generationId: string
+  frames: readonly ActionReviewFrame[]
+}
+
 export interface PublishActionResult {
   run: WorkflowRun
   character: Character
@@ -95,6 +118,7 @@ export interface WorkflowRunService {
   resumeActionFirstFrameCandidates(runId: string): Promise<ActionFirstFrameCandidateBatch>
   confirmActionFirstFrame(input: ConfirmActionFirstFrameInput): Promise<WorkflowRun>
   resumeAction(runId: string): Promise<WorkflowRun>
+  getActionReview(runId: string): Promise<ActionReviewResult>
   approveAction(runId: string): Promise<PublishActionResult>
 }
 
@@ -388,7 +412,7 @@ export function createWorkflowRunService({
     }
   }
 
-  async function approveAction(runId: string): Promise<PublishActionResult> {
+  async function getActionReview(runId: string): Promise<ActionReviewResult> {
     const run = requireRun(store, runId)
     if (run.purpose !== 'add_action') throw new Error('该 WorkflowRun 不是动作任务')
     if (run.status !== 'active' || requireStep(run, 'review').status !== 'active') {
@@ -399,6 +423,19 @@ export function createWorkflowRunService({
     const animation = requireAnimation(
       await generationApis.get(run.projectId, animationStep.taskId),
     )
+
+    return {
+      run,
+      generationId: animationStep.taskId,
+      frames: animation.frames.map((frame) => ({ imageUrl: frame.url })),
+    }
+  }
+
+  async function approveAction(runId: string): Promise<PublishActionResult> {
+    // 审核页展示和最终写入角色必须读取同一份、经过同一套校验的动画结果。
+    // 这样可以避免页面看见一组帧，点击通过后却导入另一组帧。
+    const review = await getActionReview(runId)
+    const run = review.run
 
     const character = await characterApis.get(run.characterId)
     const outfit = character.outfits.find((item) => item.id === run.outfitId)
@@ -411,8 +448,8 @@ export function createWorkflowRunService({
       type: run.actionType,
       fps: run.fps,
       keyFrameIndex: null,
-      frames: animation.frames.map<Frame>((frame) => ({
-        imageUrl: frame.url,
+      frames: review.frames.map<Frame>((frame) => ({
+        imageUrl: frame.imageUrl,
         durationMs: null,
         rootMotion: null,
       })),
@@ -459,6 +496,7 @@ export function createWorkflowRunService({
     resumeActionFirstFrameCandidates,
     confirmActionFirstFrame,
     resumeAction,
+    getActionReview,
     approveAction,
   }
 }

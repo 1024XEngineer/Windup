@@ -186,6 +186,14 @@ describe('createWorkflowRunService', () => {
     )
     expect(generation.create).toHaveBeenCalledTimes(6)
 
+    const review = await service.getActionReview(actionRun.id)
+    expect(review).toEqual({
+      run: actionRun,
+      generationId: 'generation-6',
+      frames: [{ imageUrl: 'frame-1.png' }, { imageUrl: 'frame-2.png' }],
+    })
+    expect(store.get(actionRun.id)).toEqual(actionRun)
+
     const published = await service.approveAction(actionRun.id)
     expect(published.run.status).toBe('completed')
     expect(published.actionId).toBe(actionRun.actionId)
@@ -293,10 +301,29 @@ describe('createWorkflowRunService', () => {
     expect(characterApis.get).toHaveBeenCalledTimes(2)
 
     const resumed = await service.resumeAction(actionRun.id)
+    const review = await service.getActionReview(actionRun.id)
 
     expect(resumed).toEqual(actionRun)
+    expect(review.frames).toEqual([{ imageUrl: 'frame-1.png' }, { imageUrl: 'frame-2.png' }])
     expect(generation.create).toHaveBeenCalledTimes(5)
     expect(characterApis.get).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not expose animation frames before the action reaches review', async () => {
+    const { service } = createService()
+    const firstFrames = await service.startAction({
+      projectId: 'project-1',
+      characterId: 'character-1',
+      outfitId: 'outfit-1',
+      actionName: '行走',
+      actionType: 'walk',
+      fps: 12,
+      driver: 'ai',
+    })
+
+    await expect(service.getActionReview(firstFrames.run.id)).rejects.toThrow(
+      '动作尚未进入可审核状态',
+    )
   })
 
   it('rejects a first-frame image that is not one of the four current candidates', async () => {

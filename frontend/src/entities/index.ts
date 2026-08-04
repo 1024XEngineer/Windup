@@ -74,6 +74,8 @@ export {
 } from './workflow-run'
 export type {
   ActionFirstFrameCandidateBatch,
+  ActionReviewFrame,
+  ActionReviewResult,
   CreateWorkflowRunStoreOptions,
   CreateWorkflowRunServiceOptions,
   CreateWorkflowRunInput,

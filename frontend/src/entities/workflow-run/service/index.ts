@@ -8,6 +8,8 @@
 export { createWorkflowRunService } from './workflow-run-service'
 export type {
   ActionFirstFrameCandidateBatch,
+  ActionReviewFrame,
+  ActionReviewResult,
   CharacterCandidateBatch,
   CharacterCandidateConfirmationApis,
   ConfirmCharacterSelectionInput,

@@ -29,6 +29,8 @@ export type { CreateWorkflowRunStoreOptions, WorkflowRunStore } from './store'
 export { createWorkflowRunService } from './service'
 export type {
   ActionFirstFrameCandidateBatch,
+  ActionReviewFrame,
+  ActionReviewResult,
   CharacterCandidateBatch,
   CharacterCandidateConfirmationApis,
   ConfirmCharacterSelectionInput,
