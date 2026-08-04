@@ -16,7 +16,6 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from windup_app.server.orchestrator.model import TaskStatus
-from windup_app.server.orchestrator import task_repo
 from windup_app.web.sse.event_bus import EventBus, SSEEvent
 from windup_framework.db import get_session
 

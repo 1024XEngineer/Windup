@@ -14,11 +14,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from windup_app.server.workflow.model import (
-    AttemptStatus,
-    CardStatus,
-    CardType,
     Direction,
-    WorkflowStatus,
 )
 
 
