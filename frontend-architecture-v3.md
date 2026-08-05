@@ -37,7 +37,7 @@ pages -> features -> entities -> shared
 | `pages` | 八个路由页面 |
 | `features` | 用户操作：角色设置、生成、审核、导出；以及流程推进 `workflow-controller` |
 | `entities` | 上表业务模块 |
-| `shared` | 无业务语义的形状，目前只有分页 |
+| `shared` | 无业务语义的分页形状、HTTP 传输与通用 UI |
 
 `app` 只做启动和路由，不构造服务、不向下注入。
 
@@ -49,6 +49,8 @@ pages -> features -> entities -> shared
 2. 同层模块之间不互相导入。要共用就往下沉。
 3. 跨模块只从模块目录的 `index.ts` 进入；`entities` 统一从 `@/entities` 使用。
 4. `entities` 内部模块之间可以互相导入，对外仍是一个门。
+
+`shared/api` 只处理后端所有模块共用的传输契约：从环境读取 API 地址、附加调用方提供的 access token、解包统一响应、识别业务码并转换分页字段。登录模块通过 `registerApiAccessTokenProvider` 注册惰性读取函数，各业务 API 统一使用 `getApiAccessToken`；公共层只保存读取函数，不保存、刷新或解析 token。各 `XxxApis` 的路径、字段映射与实例仍跟随对应 `entities` 模块。
 
 ---
 

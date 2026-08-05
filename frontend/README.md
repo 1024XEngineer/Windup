@@ -29,4 +29,8 @@ CI 按上面顺序全跑一遍。
 
 页面自己决定宽度与留白，`AppShell` 只提供顶栏，不再统一夹一个居中容器。
 
+`shared/api` 提供后续业务接口可复用的公共 HTTP 请求能力。
+
+运行项目前需要配置 `VITE_API_BASE_URL`。Bearer token 由登录模块取得后，通过 `registerApiAccessTokenProvider` 注册读取函数；业务请求统一从该边界读取。本轮不定义 token 的保存方式。
+
 与后端尚未对齐的接口见 `API_CONTRACT.md`。
