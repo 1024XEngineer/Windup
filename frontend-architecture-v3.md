@@ -41,7 +41,7 @@ pages -> features -> entities -> shared
 
 `app` 只做启动和路由，不构造服务、不向下注入。
 
-外壳套在哪些页面上也是路由决策：`AppShellRoute` 写在 `app.tsx` 的路由表里，谁在里面谁就有顶栏。目前全部路由都在里面，根路由也是——顶栏悬浮在内容之上、不占布局高度，首屏仍是满幅，而首页同样需要通往项目资产的常驻入口。外壳组件自身不读 pathname，不判断自己该不该出现——那种写法每多一个特殊页面就多一条 `if`；顶栏内部读 pathname 只为高亮当前项，与此无关。外壳也不统一夹居中容器，宽度与留白由页面自己决定：顶栏既然悬浮，避让由页面负责，内容页统一走 `PageContainer`。
+外壳套在哪些页面上也是路由决策：`AppShellRoute` 写在 `app.tsx` 的路由表里，谁在里面谁就有顶栏。首页、快速开始、Workflow Editor 与 Playtest 使用全局外壳；`/projects/:projectId/*` 是独立项目工作区，由 `ProjectDetailPage` 提供项目级导航，不重复套全局顶栏。外壳组件自身不读 pathname，不判断自己该不该出现；顶栏内部读 pathname 只为高亮当前项。外壳也不统一夹居中容器，宽度与留白由页面自己决定。
 
 ### 依赖规则
 
@@ -88,18 +88,18 @@ Controller 围绕同一份 WorkflowRun 提供推进、更新、重启和中断�
 
 ---
 
-## 5. 尚未包含
+## 5. 当前实现范围
 
-- 真实请求与数据获取，`XxxApis` 目前只有接口
-- 首页之外的页面实现，其余七个路由仍是占位外壳
-- 图片上传模块（体量太小，不单独体现）
-- 穿戴道具相关（产品侧未设计）
-- 第三方登录
+- `ProjectApis` 与 `CharacterApis` 实现 PR #75 的 Project、Character HTTP 契约；snake_case 只存在于各实体模块内部的 DTO 映射。
+- 项目中心、项目工作区、角色资产库、角色详情按 `Project → Character → Outfit → Action → Frame` 层级读取真实接口。
+- 测试通过 HTTP 替身返回契约数据；本模块的生产代码不包含 Mock API、演示实体或 livedemo 资产。
 
-首页已按本文的分层落地：它不依赖 `entities` 与 `features`，两张入口卡片只做路由跳转。首屏那三段制作路径是 `WORKFLOW_STEP_ORDER` 八步的粗粒度概括，写死在页面文案里，改流程时要一并改。
+本轮不包含新建项目流程、Workflow Editor 实现、Action Template 后端能力、导出接线、图片上传与登录流程。穿戴道具不作为独立资产层暴露。
+
+首页仍不依赖 `entities` 与 `features`，两张入口卡片只做路由跳转。首屏三段制作路径是 `WORKFLOW_STEP_ORDER` 八步的粗粒度概括，改流程时要一并改。
 
 ---
 
 ## 6. 未与后端对齐的部分
 
-明细见 `frontend/API_CONTRACT.md`。
+PR #75 尚未合并，因此本实现要求先合并该后端 PR；契约明细与仍需后端处理的问题见 `frontend/API_CONTRACT.md`。
