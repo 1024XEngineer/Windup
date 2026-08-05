@@ -38,4 +38,26 @@ describe('ProjectDetailPage', () => {
     expect(await screen.findByRole('heading', { name: '轻装信使' })).toBeTruthy()
     expect(container.querySelector('[data-route-transition="/projects/42/assets/51"]')).toBeTruthy()
   })
+
+  it('keeps the Project workspace available when the character count request fails', async () => {
+    const backend = createProjectAssetsBackend()
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      if (request.url.includes('/characters?project_id=42')) {
+        return Promise.reject(new Error('characters endpoint unavailable'))
+      }
+      return backend.fetch(input, init)
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/42/assets/51']}>
+        <AppRoutes />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('heading', { name: '点灯人 · MVP' })).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(await screen.findByRole('heading', { name: '轻装信使' })).toBeTruthy()
+  })
 })

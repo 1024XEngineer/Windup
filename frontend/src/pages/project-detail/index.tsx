@@ -28,19 +28,21 @@ export function ProjectDetailPage() {
 
     setProject(null)
     setError(null)
-    void Promise.all([
+    void Promise.allSettled([
       projectApis.get(projectId),
       characterApis.listByProject(projectId, { page: 1, pageSize: 1 }),
-    ]).then(
-      ([nextProject, charactersPage]) => {
-        if (!active) return
-        setProject(nextProject)
-        setCharacterCount(charactersPage.total)
-      },
-      () => {
-        if (active) setError('这个项目不存在或暂时无法读取')
-      },
-    )
+    ]).then(([projectResult, characterResult]) => {
+      if (!active) return
+      if (projectResult.status === 'rejected') {
+        setError('这个项目不存在或暂时无法读取')
+        return
+      }
+
+      setProject(projectResult.value)
+      if (characterResult.status === 'fulfilled') {
+        setCharacterCount(characterResult.value.total)
+      }
+    })
 
     return () => {
       active = false
