@@ -202,6 +202,10 @@ export function createApiClient({
 
       return envelope.data as T
     },
+    /**
+     * 后端 ListResponse 固定为 { data: T[], total, page, page_size }；
+     * 分页字段与 data 同级，不在 data 内再嵌套分页对象。
+     */
     async requestList<T>(path: string, options?: ApiRequestOptions) {
       const response = await send(path, options)
       const envelope = await readEnvelope(response)
