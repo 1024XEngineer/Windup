@@ -5,14 +5,16 @@
 
 端点一览
 --------
-POST   /workflow-runs                                  创建执行记录
-GET    /workflow-runs/{id}                              获取执行记录详情
-GET    /workflow-runs/{id}/tree                         获取执行记录树（含全部节点）
-DELETE /workflow-runs/{id}                              软删除执行记录
-POST   /workflow-runs/{id}/nodes                       记录一个执行步骤
-PATCH  /workflow-runs/{id}/nodes/{node_id}             更新节点状态/结果
-POST   /workflow-runs/{id}/rollback/{node_id}          回滚到指定节点
-POST   /workflow-runs/{id}/diff/{old_run_id}           对比新旧 run
+POST   /workflow-runs                     创建执行记录
+GET    /workflow-runs/{id}                 获取执行记录（含 nodes）
+PATCH  /workflow-runs/{id}                 全量更新（含 nodes）
+DELETE /workflow-runs/{id}                 软删除
+POST   /workflow-runs/{id}/diff/{old_id}   对比新旧 run
+
+设计原则
+--------
+后端不感知节点结构，nodes 字段由前端自定义，
+后端只做全量读写，不校验 nodes 内部结构。
 """
 
 from __future__ import annotations
@@ -27,12 +29,9 @@ from windup_framework.db import get_session
 
 from windup_app.server.workflow_run.schema import (
     DiffResultOut,
-    NodeCreateRequest,
-    NodeUpdateRequest,
     WorkflowRunCreateRequest,
-    WorkflowRunNodeOut,
     WorkflowRunOut,
-    WorkflowRunTreeOut,
+    WorkflowRunUpdateRequest,
 )
 
 logger = logging.getLogger("windup.workflow_run.api")
@@ -51,6 +50,7 @@ def create_run(
     """创建执行记录。
 
     修改角色模板时传 parent_run_id，形成版本链。
+    nodes 为前端定义的初始节点树（可选）。
     """
     # TODO: service.create_run
     raise NotImplementedError
@@ -61,21 +61,23 @@ def get_run(
     run_id: int,
     session: Session = Depends(get_session),
 ) -> Response[WorkflowRunOut]:
-    """获取执行记录详情（不含节点树）。"""
+    """获取执行记录详情（含 nodes JSONB）。"""
     # TODO: service.get_run
     raise NotImplementedError
 
 
-@router.get("/{run_id}/tree", response_model=Response[WorkflowRunTreeOut])
-def get_run_tree(
+@router.patch("/{run_id}", response_model=Response[WorkflowRunOut])
+def update_run(
     run_id: int,
+    body: WorkflowRunUpdateRequest,
     session: Session = Depends(get_session),
-) -> Response[WorkflowRunTreeOut]:
-    """获取执行记录及其全部节点。
+) -> Response[WorkflowRunOut]:
+    """全量更新执行记录。
 
-    前端根据 parent_node_id 组装树形结构。
+    前端维护节点树后，通过此接口全量写回。
+    后端不校验 nodes 内部结构。
     """
-    # TODO: service.get_run_tree
+    # TODO: service.update_run
     raise NotImplementedError
 
 
@@ -89,56 +91,15 @@ def delete_run(
     raise NotImplementedError
 
 
-# ── 节点操作 ────────────────────────────────────────────────────────────────
-
-
-@router.post("/{run_id}/nodes", response_model=Response[WorkflowRunNodeOut])
-def create_node(
-    run_id: int,
-    body: NodeCreateRequest,
-    session: Session = Depends(get_session),
-) -> Response[WorkflowRunNodeOut]:
-    """记录一个执行步骤。
-
-    前端提交原子能力调用后，通过此端点记录步骤。
-    task_id 用于关联 SSE 进度订阅。
-    """
-    # TODO: service.create_node
-    raise NotImplementedError
-
-
-@router.patch("/{run_id}/nodes/{node_id}", response_model=Response[WorkflowRunNodeOut])
-def update_node(
-    run_id: int,
-    node_id: int,
-    body: NodeUpdateRequest,
-    session: Session = Depends(get_session),
-) -> Response[WorkflowRunNodeOut]:
-    """更新节点状态和/或输出。
-
-    前端收到 SSE completed 事件后，通过此端点更新节点结果。
-    """
-    # TODO: service.update_node
-    raise NotImplementedError
-
-
-@router.post("/{run_id}/rollback/{node_id}", response_model=Response[WorkflowRunOut])
-def rollback_to_node(
-    run_id: int,
-    node_id: int,
-    session: Session = Depends(get_session),
-) -> Response[WorkflowRunOut]:
-    """回滚到指定节点——标记该节点及其下游为 rolled_back。"""
-    # TODO: service.rollback_to_node
-    raise NotImplementedError
-
-
 @router.post("/{run_id}/diff/{old_run_id}", response_model=Response[DiffResultOut])
 def diff_runs(
     run_id: int,
     old_run_id: int,
     session: Session = Depends(get_session),
 ) -> Response[DiffResultOut]:
-    """对比新旧 run，返回可复用节点和需要重新执行的能力。"""
+    """对比新旧 run，返回差异信息。
+
+    前端可用于判断哪些节点可以复用，哪些需要重新执行。
+    """
     # TODO: service.diff_runs
     raise NotImplementedError

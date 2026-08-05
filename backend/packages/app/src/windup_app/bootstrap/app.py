@@ -7,20 +7,17 @@
 from fastapi import FastAPI
 
 from windup_app.web.api.agent import router as ai_router
+from windup_app.web.api.generation import router as generation_router
 from windup_app.web.api.media import router as media_router
 from windup_app.web.api.workflow_run import router as workflow_run_router
-from windup_app.web.sse import EventBus, sse_router
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="windup", version="0.1.0")
 
-    # SSE 基础设施
-    app.state.event_bus = EventBus()
-    app.include_router(sse_router)
-
     # 业务路由
     app.include_router(media_router)
+    app.include_router(generation_router)
     app.include_router(workflow_run_router)
     app.include_router(ai_router)
 
