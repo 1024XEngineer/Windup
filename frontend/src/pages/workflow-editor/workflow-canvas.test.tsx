@@ -1,4 +1,6 @@
 /** @vitest-environment jsdom */
+import { readFileSync } from 'node:fs'
+
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -116,5 +118,35 @@ describe('WorkflowCanvas candidate selection', () => {
     expect(onStepAction).toHaveBeenCalledWith('template-candidate', 'confirm', {
       selectedImageUrl: 'https://cdn.example.test/candidate-2.png',
     })
+  })
+
+  it('角色描述输入区清晰可见，并为长文本提供稳定的多行布局', () => {
+    const run = createCandidateRun()
+    const steps = run.revisions[0]!.steps
+    steps[0]!.status = 'active'
+    steps[0]!.input = null
+    steps[1]!.status = 'locked'
+
+    render(
+      <WorkflowCanvas
+        controller={new NodeCanvasController()}
+        run={run}
+        unavailableReason={null}
+        onStepAction={vi.fn()}
+      />,
+    )
+
+    const description = screen.getByRole('textbox', { name: '角色描述' })
+    expect(description.classList.contains('node-brief-form__textarea')).toBe(true)
+    expect(description.getAttribute('rows')).toBe('5')
+    expect(description.getAttribute('aria-describedby')).toBe('characterSetupDescriptionHint')
+    expect(screen.getByText('支持多行输入，最多 500 字。')).toBeTruthy()
+
+    const css = readFileSync('src/pages/workflow-editor/workflow-editor.css', 'utf8')
+    const rule = css.match(/\.node-brief-form__textarea\s*\{([^}]*)\}/s)?.[1] ?? ''
+    expect(rule).toContain('width: 100%')
+    expect(rule).toContain('background:')
+    expect(rule).toContain('white-space: pre-wrap')
+    expect(rule).toContain('overflow-wrap: anywhere')
   })
 })

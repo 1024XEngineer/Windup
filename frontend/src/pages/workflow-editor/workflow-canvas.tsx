@@ -81,7 +81,11 @@ function buildNodeHtml(
             <div class="node-status node-status--active"><span>角色设定</span><b>${statusLabel}</b></div>
             <p class="node-desc">填写角色身份、外观和视觉风格，或直接上传已准备好的角色母版。</p>
             <form class="node-brief-form" id="characterSetupForm">
-              <label><span>角色描述</span><textarea name="description" maxlength="500" rows="3" placeholder="描述角色身份、外观和视觉风格…"></textarea></label>
+              <div class="node-brief-form__field">
+                <label class="node-brief-form__label" for="characterSetupDescription">角色描述</label>
+                <textarea class="node-brief-form__textarea" id="characterSetupDescription" name="description" maxlength="500" rows="5" aria-describedby="characterSetupDescriptionHint" placeholder="描述角色身份、外观和视觉风格…"></textarea>
+                <small class="node-brief-form__hint" id="characterSetupDescriptionHint">支持多行输入，最多 500 字。</small>
+              </div>
               <label class="node-template-upload"><span>角色母版图片</span><input name="templateFile" type="file" accept="image/*" /><small>选择图片后，角色描述可作为可选动作说明，并会跳过角色图生成。</small></label>
               <button class="node-action" type="submit">提交设定</button>
             </form>

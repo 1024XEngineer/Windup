@@ -458,7 +458,8 @@
 .graph-node {
   position: absolute;
   z-index: 3;
-  width: 324px;
+  width: 360px;
+  max-width: calc(100vw - 40px);
   overflow: visible;
   border: 1px solid rgba(27, 38, 30, 0.2);
   border-radius: 12px;
@@ -500,6 +501,7 @@
 }
 .graph-node > header span {
   display: grid;
+  min-width: 0;
   gap: 2px;
 }
 .graph-node > header small {
@@ -512,6 +514,8 @@
   margin: 0;
   font-size: 12px;
   font-weight: 720;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 .graph-node > header > i {
   display: flex;
@@ -525,6 +529,7 @@
 }
 .graph-node__body {
   display: grid;
+  min-width: 0;
   gap: 10px;
   padding: 15px;
 }
@@ -570,10 +575,14 @@
   background: rgba(27, 38, 30, 0.04);
 }
 .node-status span {
+  min-width: 0;
   font-size: 10px;
   color: #5a5f5a;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 .node-status b {
+  flex: 0 0 auto;
   font-size: 10px;
   font-weight: 700;
 }
@@ -609,6 +618,73 @@
   font-size: 11px;
   color: #5a5f5a;
   line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* 角色设定输入区必须在画布缩放和 Tailwind reset 下仍保持明确的编辑边界。 */
+.node-brief-form {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  user-select: text;
+}
+.node-brief-form__field {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+.node-brief-form__label {
+  color: #2f4134;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+.node-brief-form__textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 116px;
+  max-height: 280px;
+  resize: vertical;
+  padding: 11px 12px;
+  overflow: auto;
+  border: 1px solid #98a59b;
+  border-radius: 8px;
+  outline: none;
+  color: #1f2d23;
+  background: #fff;
+  box-shadow: inset 0 1px 2px rgba(24, 39, 29, 0.08);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.6;
+  caret-color: var(--wf-accent);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+.node-brief-form__textarea::placeholder {
+  color: #7b847d;
+  opacity: 1;
+}
+.node-brief-form__textarea:hover {
+  border-color: #75877a;
+}
+.node-brief-form__textarea:focus-visible {
+  border-color: var(--wf-accent);
+  box-shadow:
+    0 0 0 3px rgba(38, 63, 45, 0.14),
+    inset 0 1px 2px rgba(24, 39, 29, 0.06);
+}
+.node-brief-form__hint {
+  color: #667169;
+  font-size: 9px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .node-template-upload {
