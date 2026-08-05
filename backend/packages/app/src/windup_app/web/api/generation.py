@@ -1,13 +1,14 @@
-"""生成任务 API。
+"""生成任务 API。"""
 
-契约层：定义前端请求/响应的 Pydantic 模型，与 server 层解耦。
-实际逻辑由 server 层实现，本文件只做参数校验和格式转换。
-"""
-
+import asyncio
 import dataclasses
+import json
 import logging
+import threading
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -17,9 +18,13 @@ from windup_common.result import Response
 from windup_framework.db import get_session
 
 from windup_app.server.generation.model import (
+    CharacterActionInput,
+    CharacterImageInput,
     ActionType,
+    DEFAULT_ACTION_FRAME_COUNT,
     GenerationTask,
 )
+from windup_app.server.generation.service import service as generation_service
 
 logger = logging.getLogger("windup.generation.api")
 
@@ -52,7 +57,7 @@ class CharacterActionGenerateRequest(BaseModel):
     custom_prompt: str | None = None
     reference_video_url: str | None = None
     reference_image_urls: list[str] = Field(default_factory=list)
-    num_frames: int = 16
+    num_frames: int = DEFAULT_ACTION_FRAME_COUNT
 
 
 # ── 响应模型 ─────────────────────────────────────────────────────────────────
@@ -93,7 +98,9 @@ def _task_to_out(task: GenerationTask) -> GenerationTaskOut:
 # ── 端点 ─────────────────────────────────────────────────────────────────────
 
 
-def _validate_project_size(session: Session, project_id: int | None, width: int, height: int) -> None:
+def _validate_project_size(
+    session: Session, project_id: int | None, width: int, height: int
+) -> None:
     """校验输入尺寸与项目约束是否一致;不一致则抛异常。"""
     if project_id is None:
         return
@@ -117,8 +124,29 @@ def submit_image_generation(
 ) -> Response[GenerationTaskOut]:
     """提交角色图片生成任务:建 PENDING 记录立即返回,实际图生图后台跑。"""
     _validate_project_size(session, body.project_id, body.width, body.height)
-    # TODO: service.create_image_task + background_tasks.add_task
-    raise BizException("接口待实现", code=BizCode.BAD_REQUEST)
+    input_data = CharacterImageInput(
+        reference_image_url=body.reference_image_url,
+        prompt=body.prompt,
+        negative_prompt=body.negative_prompt,
+        width=body.width,
+        height=body.height,
+        num_images=body.num_images,
+    )
+    task = generation_service.generate_character_image(
+        session,
+        user_id=body.user_id,
+        project_id=body.project_id,
+        input=input_data,
+    )
+    # 后台执行器使用独立 session；必须先提交，否则它可能读不到刚创建的任务，
+    # 最终生成成功也无法写回，任务会永久停在 PENDING。
+    session.commit()
+    threading.Thread(
+        target=request.app.state.run_image_task,
+        args=(task.id, input_data, body.project_id),
+        daemon=True,
+    ).start()
+    return Response.success(_task_to_out(task), message="任务已提交")
 
 
 @router.post("/action", response_model=Response[GenerationTaskOut])
@@ -128,8 +156,30 @@ def submit_action_generation(
     session: Session = Depends(get_session),
 ) -> Response[GenerationTaskOut]:
     """提交角色动作生成任务:建 PENDING 记录立即返回,实际生成后台跑。"""
-    # TODO: service.create_action_task + background_tasks.add_task
-    raise BizException("接口待实现", code=BizCode.BAD_REQUEST)
+    input_data = CharacterActionInput(
+        character_id=body.character_id,
+        action_type=body.action_type,
+        custom_prompt=body.custom_prompt,
+        reference_video_url=body.reference_video_url,
+        reference_image_urls=body.reference_image_urls,
+        num_frames=body.num_frames,
+    )
+    task = generation_service.generate_character_action(
+        session,
+        user_id=body.user_id,
+        project_id=body.project_id,
+        input=input_data,
+    )
+    # 同图片任务：先让任务记录对后台 session 可见，再启动生成线程。
+    session.commit()
+    # 后台线程自开 session 跑生成(经项目约束 → ai_engine)。调度器由 bootstrap 注入
+    # app.state,web 不静态依赖 ai_engine(满足入口层门禁)。
+    threading.Thread(
+        target=request.app.state.run_action_task,
+        args=(task.id, input_data, body.project_id),
+        daemon=True,
+    ).start()
+    return Response.success(_task_to_out(task), message="任务已提交")
 
 
 @router.get("/tasks/{task_id}", response_model=Response[GenerationTaskOut])
@@ -139,5 +189,55 @@ def get_task(
     session: Session = Depends(get_session),
 ) -> Response[GenerationTaskOut]:
     """查询生成任务状态与结果。"""
-    # TODO: service.get_task
-    raise BizException("接口待实现", code=BizCode.BAD_REQUEST)
+    task = generation_service.get_task(session, project_id, task_id)
+    if task is None:
+        raise BizException("任务不存在", code=BizCode.NOT_FOUND)
+    return Response.success(_task_to_out(task))
+
+
+def _task_event(task: GenerationTask) -> str:
+    """把任务快照编码成前端 GenerationApis 约定的命名 SSE 事件。"""
+    payload = _task_to_out(task).model_dump()
+    payload["task_id"] = payload.pop("id")
+    return f"event: task_update\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+async def _task_event_stream(
+    request: Request,
+    session: Session,
+    project_id: int,
+    task_id: int,
+) -> AsyncIterator[str]:
+    """发送当前任务快照，并持续查询数据库直到任务进入终态。"""
+    last_update = None
+    while not await request.is_disconnected():
+        # 结束上一轮读取事务，确保能看到后台 session 已提交的新状态。
+        session.rollback()
+        task = generation_service.get_task(session, project_id, task_id)
+        if task is None:
+            return
+        update_key = (task.status, task.update_at, task.error_message)
+        if update_key != last_update:
+            yield _task_event(task)
+            last_update = update_key
+        if task.status.value in {"completed", "failed"}:
+            return
+        await asyncio.sleep(1)
+
+
+@router.get("/tasks/{task_id}/stream")
+def stream_task(
+    task_id: int,
+    request: Request,
+    project_id: int = Query(..., gt=0),
+    session: Session = Depends(get_session),
+) -> StreamingResponse:
+    """订阅生成任务状态；连接建立后先发送当前快照，终态后自动关闭。"""
+    task = generation_service.get_task(session, project_id, task_id)
+    if task is None:
+        raise BizException("任务不存在", code=BizCode.NOT_FOUND)
+    return StreamingResponse(
+        _task_event_stream(request, session, project_id, task_id),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

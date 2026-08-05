@@ -7,20 +7,23 @@ API 层只依赖本模块定义的抽象。具体实现（AI 引擎调用、任�
 --------
 1. 前端调用 ``generate_character_image`` / ``generate_character_action`` 提交任务，
    拿到 ``task_id``。
-2. 前端通过 SSE 订阅任务状态变更,无需轮询。
-   web 层提供 ``GET /generation/tasks/{task_id}/stream`` 端点,
-   服务端在任务状态变化时推送 ``task_update`` 事件。
-   事件 payload 包含 ``task_id`` / ``task_type`` / ``status``,
-   完成时附带 ``result``,失败时附带 ``error_message``。
+2. 前端通过 SSE 订阅状态，刷新恢复时使用 ``get_task`` 查询当前快照。
 3. 前端从 ``task.status`` 判断完成,从 ``result`` 取出出参,回填 character 模块：
 
    .. code-block:: text
 
        CharacterImageOutput.image_url  → Character.reference_image_url
        CharacterActionOutput.frames[]  → character_data.outfits[].actions[].frames[]
+
+约定
+----
+- session-per-call: ``session`` 由调用方（FastAPI 的 ``get_session`` 依赖）按请求传入。
+- 具体实现保持无状态,可作为模块级单例。
 """
 
 from abc import ABC, abstractmethod
+
+from sqlalchemy.orm import Session
 
 from windup_app.server.generation.model import (
     CharacterActionInput,
@@ -35,7 +38,9 @@ class GenerationService(ABC):
     # -- 任务提交 ------------------------------------------------------------
 
     @abstractmethod
-    def generate_character_image(self, input: CharacterImageInput) -> GenerationTask:
+    def generate_character_image(
+        self, session: Session, *, user_id: int, input: CharacterImageInput,
+    ) -> GenerationTask:
         """提交角色图片生成任务。
 
         入参包含参考图 URL 和 prompt 等参数；出参为 ``CharacterImageOutput``，
@@ -43,7 +48,9 @@ class GenerationService(ABC):
         """
 
     @abstractmethod
-    def generate_character_action(self, input: CharacterActionInput) -> GenerationTask:
+    def generate_character_action(
+        self, session: Session, *, user_id: int, input: CharacterActionInput,
+    ) -> GenerationTask:
         """提交角色动作生成任务。
 
         入参包含角色 ID、动作类型和参考素材；出参为 ``CharacterActionOutput``，
@@ -53,7 +60,9 @@ class GenerationService(ABC):
     # -- 查询 ----------------------------------------------------------------
 
     @abstractmethod
-    def get_task(self, project_id: int, task_id: int) -> GenerationTask | None:
+    def get_task(
+        self, session: Session, project_id: int, task_id: int,
+    ) -> GenerationTask | None:
         """查询任务状态与结果。
 
         返回完整的 ``GenerationTask``，前端根据 ``status`` 判断是否完成，

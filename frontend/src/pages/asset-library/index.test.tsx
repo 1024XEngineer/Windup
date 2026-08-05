@@ -1,9 +1,7 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MemoryRouter } from 'react-router'
-
-import { AppRoutes } from '@/app'
+import { renderAuthenticatedAppRoute } from '@/test/authenticated-app-routes'
 import { createProjectAssetsBackend } from '@/test/project-assets-backend'
 
 afterEach(() => {
@@ -16,11 +14,7 @@ function renderRoute(route: string) {
   const backend = createProjectAssetsBackend()
   vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
   vi.stubGlobal('fetch', backend.fetch)
-  return render(
-    <MemoryRouter initialEntries={[route]}>
-      <AppRoutes />
-    </MemoryRouter>,
-  )
+  return renderAuthenticatedAppRoute(route)
 }
 
 describe('AssetLibraryPage', () => {
@@ -51,11 +45,7 @@ describe('AssetLibraryPage', () => {
     const backend = createProjectAssetsBackend({ characterCount: 25 })
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
     vi.stubGlobal('fetch', backend.fetch)
-    render(
-      <MemoryRouter initialEntries={['/projects/42/assets']}>
-        <AppRoutes />
-      </MemoryRouter>,
-    )
+    renderAuthenticatedAppRoute('/projects/42/assets')
 
     expect(await screen.findAllByRole('link', { name: /查看角色/ })).toHaveLength(24)
     fireEvent.click(screen.getByRole('button', { name: '下一页' }))

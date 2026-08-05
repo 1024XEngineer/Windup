@@ -127,10 +127,10 @@ CharacterData
 
 ## 4. generation — AI 生成任务
 
-**接口：** `GenerationService`  **传输：** SSE 推送任务状态
+**接口：** `GenerationService`  **目标传输：** SSE 推送任务状态（当前实现仍为轮询）
 
-职责：管理生成任务生命周期，按任务类型区分入参和出参。前端通过 SSE 订阅任务
-状态变更，无需轮询。
+职责：管理生成任务生命周期，按任务类型区分入参和出参。当前前端每 2 秒查询任务
+快照；目标是通过 SSE 订阅任务状态变化，接口见 `sse-generation-flow.md`。
 
 **任务类型与出参对应关系：**
 
@@ -158,7 +158,7 @@ CharacterData
 | `generate_character_action(input)` | 提交角色动作生成任务 |
 | `get_task(project_id, task_id)` | 查询任务状态与结果 |
 
-**SSE 调用流程：**
+**目标 SSE 调用流程：**
 
 1. 前端 POST 提交任务，拿到 `task_id`。
 2. 前端连接 `GET /generation/tasks/{task_id}/stream`，服务端在任务状态变化时
@@ -169,7 +169,8 @@ CharacterData
 > **与旧设计的差异：** 不再使用策略模式（`GenerationStrategy` / `register_strategy` /
 > `submit(payload)`），改为按任务类型拆分明确的接口方法。不再使用泛化出参
 > `GenerationResult(urls, metadata)`，改为按任务类型细化出参
-> `CharacterImageOutput` / `CharacterActionOutput`。不再使用前端轮询，改为 SSE 推送。
+> `CharacterImageOutput` / `CharacterActionOutput`。SSE 尚未落地，当前前端轮询将在
+> stream 接口完成后替换。
 
 ---
 

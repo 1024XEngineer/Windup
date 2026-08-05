@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
-import { characterApis, type Action, type Character, type Outfit } from '@/entities'
+import type { Action, Character, CharacterApis, Outfit } from '@/entities'
 
 const ACTION_TYPE_LABELS: Record<string, string> = {
   walk: '行走',
@@ -15,14 +15,14 @@ function actionTypeLabel(type: string) {
 }
 
 function orderedFrames(action: Action) {
-  return [...action.frames].sort((left, right) => left.index - right.index)
+  return action.frames
 }
 
 function characterName(character: Character) {
-  return character.name ?? '未命名角色'
+  return character.name?.trim() || character.description?.trim() || `角色 ${character.id}`
 }
 
-export function CharacterDetailPage() {
+export function CharacterDetailPage({ apis }: { apis: CharacterApis }) {
   const { projectId, characterId } = useParams()
   const [character, setCharacter] = useState<Character | null>(null)
   const [selectedOutfitId, setSelectedOutfitId] = useState<string | null>(null)
@@ -40,7 +40,7 @@ export function CharacterDetailPage() {
     setCharacter(null)
     setSelectedOutfitId(null)
     setError(null)
-    void characterApis.get(characterId).then(
+    void apis.get(characterId).then(
       (nextCharacter) => {
         if (!active) return
         if (nextCharacter.projectId !== projectId) {
@@ -58,7 +58,7 @@ export function CharacterDetailPage() {
     return () => {
       active = false
     }
-  }, [characterId, projectId])
+  }, [apis, characterId, projectId])
 
   if (error) {
     return (
@@ -151,9 +151,9 @@ function OutfitMaster({ character, outfit }: { character: Character; outfit: Out
   return (
     <section aria-labelledby="outfit-master-title" className="flex min-w-0 items-center gap-4 py-2">
       <div className="h-28 w-28 shrink-0 sm:h-32 sm:w-32">
-        {outfit.previewUrl ? (
+        {outfit.characterTemplateUrl ? (
           <img
-            src={outfit.previewUrl}
+            src={outfit.characterTemplateUrl}
             alt={`${name}的${outfit.name}预览`}
             className="h-full w-full object-contain [image-rendering:pixelated]"
           />
@@ -254,8 +254,8 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
                         <span className="text-sm text-[#69756b]">{expanded ? '−' : '↗'}</span>
                       </div>
                       <p className="mt-1 text-xs text-[#747b73]">
-                        {actionTypeLabel(action.type)} · {action.fps} FPS · {action.frameCount} 帧 ·{' '}
-                        {action.loop ? '循环' : '单次'}
+                        {actionTypeLabel(action.type)} · {action.fps} FPS · {action.frames.length}{' '}
+                        帧 · {action.loop ? '循环' : '单次'}
                       </p>
                     </div>
                   </button>
@@ -278,7 +278,7 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
                     </span>
                   </div>
                   <p className="mt-2 text-xs text-[#747b73]">
-                    {selectedAction.fps} FPS · {selectedAction.frameCount} 帧 ·{' '}
+                    {selectedAction.fps} FPS · {selectedAction.frames.length} 帧 ·{' '}
                     {selectedAction.loop ? '循环播放' : '单次播放'}
                   </p>
                 </div>
@@ -309,17 +309,17 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
               </p>
               <div className="mt-3 overflow-x-auto pb-1">
                 <ol className="flex min-w-max gap-2.5">
-                  {orderedFrames(selectedAction).map((frame) => (
-                    <li key={`${selectedAction.id}-${frame.index}`} className="w-20 shrink-0">
+                  {orderedFrames(selectedAction).map((frame, frameIndex) => (
+                    <li key={`${selectedAction.id}-${frameIndex}`} className="w-20 shrink-0">
                       <div className="overflow-hidden rounded-xl border border-[#dde0d9]">
                         <img
                           src={frame.imageUrl}
-                          alt={`${selectedAction.name}第 ${frame.index + 1} 帧`}
+                          alt={`${selectedAction.name}第 ${frameIndex + 1} 帧`}
                           className="aspect-square w-full object-contain p-1 [image-rendering:pixelated]"
                         />
                       </div>
                       <div className="mt-2 flex items-center justify-between gap-1 text-[0.65rem] text-[#7b827a]">
-                        <span>#{String(frame.index + 1).padStart(2, '0')}</span>
+                        <span>#{String(frameIndex + 1).padStart(2, '0')}</span>
                         <span>
                           {frame.durationMs === null
                             ? `按 ${selectedAction.fps} FPS`

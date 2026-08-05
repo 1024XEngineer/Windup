@@ -1,9 +1,7 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MemoryRouter } from 'react-router'
-
-import { AppRoutes } from '@/app'
+import { renderAuthenticatedAppRoute } from '@/test/authenticated-app-routes'
 import { createProjectAssetsBackend } from '@/test/project-assets-backend'
 
 afterEach(() => {
@@ -16,11 +14,7 @@ function renderCharacter(characterId: string) {
   const backend = createProjectAssetsBackend()
   vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
   vi.stubGlobal('fetch', backend.fetch)
-  return render(
-    <MemoryRouter initialEntries={[`/projects/42/assets/${characterId}`]}>
-      <AppRoutes />
-    </MemoryRouter>,
-  )
+  return renderAuthenticatedAppRoute(`/projects/42/assets/${characterId}`)
 }
 
 describe('CharacterDetailPage', () => {

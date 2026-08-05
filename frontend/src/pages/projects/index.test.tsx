@@ -1,9 +1,7 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MemoryRouter } from 'react-router'
-
-import { AppRoutes } from '@/app'
+import { renderAuthenticatedAppRoute } from '@/test/authenticated-app-routes'
 import { createProjectAssetsBackend } from '@/test/project-assets-backend'
 
 afterEach(() => {
@@ -22,11 +20,7 @@ function installBackend() {
 describe('ProjectsPage', () => {
   it('renders backend Projects as the first browsing level', async () => {
     installBackend()
-    const { container } = render(
-      <MemoryRouter initialEntries={['/projects']}>
-        <AppRoutes />
-      </MemoryRouter>,
-    )
+    const { container } = renderAuthenticatedAppRoute('/projects')
 
     expect(await screen.findByRole('heading', { name: '项目中心' })).toBeTruthy()
     expect(await screen.findAllByRole('link', { name: /打开项目/ })).toHaveLength(2)
@@ -40,11 +34,7 @@ describe('ProjectsPage', () => {
 
   it('keeps creation out of this module and deletes through the Project API', async () => {
     const backend = installBackend()
-    render(
-      <MemoryRouter initialEntries={['/projects']}>
-        <AppRoutes />
-      </MemoryRouter>,
-    )
+    renderAuthenticatedAppRoute('/projects')
 
     expect(await screen.findAllByRole('link', { name: /打开项目/ })).toHaveLength(2)
     const createButton = screen.getByRole('button', { name: '新建项目' })
@@ -68,11 +58,7 @@ describe('ProjectsPage', () => {
     const backend = createProjectAssetsBackend({ projectCount: 13 })
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
     vi.stubGlobal('fetch', backend.fetch)
-    render(
-      <MemoryRouter initialEntries={['/projects']}>
-        <AppRoutes />
-      </MemoryRouter>,
-    )
+    renderAuthenticatedAppRoute('/projects')
 
     expect(await screen.findAllByRole('link', { name: /打开项目/ })).toHaveLength(12)
     fireEvent.click(screen.getByRole('button', { name: '下一页' }))

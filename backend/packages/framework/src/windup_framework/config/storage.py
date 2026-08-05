@@ -4,7 +4,14 @@
 本地开发需在 ``.env`` 填入 AccessKey / SecretKey / Bucket / 绑定域名。
 """
 
+from pathlib import Path
+
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 显式加载项目根目录的 .env,避免 CWD 不同时相对路径找不到文件
+_ROOT_ENV = Path(__file__).resolve().parents[6] / ".env"
+load_dotenv(_ROOT_ENV, override=False)
 
 
 class StorageSettings(BaseSettings):
@@ -12,8 +19,7 @@ class StorageSettings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="QINIU_",
-        # 兼容从 backend/ 或项目根运行:../.env 覆盖根目录,.env 覆盖当前目录
-        env_file=("../.env", ".env"),
+        env_file=(_ROOT_ENV, ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -33,7 +39,11 @@ class StorageSettings(BaseSettings):
     @property
     def download_base(self) -> str:
         """下载 URL 基础域名,去掉末尾 ``/``,客户端拼接 key 即可。"""
-        return self.bucket_domain.rstrip("/")
+        domain = self.bucket_domain.rstrip("/")
+        if domain and not domain.startswith(("http://", "https://")):
+            # 七牛测试域名 SSL 证书可能不匹配，默认用 http
+            domain = f"http://{domain}"
+        return domain
 
 
 settings = StorageSettings()

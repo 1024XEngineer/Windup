@@ -1,8 +1,9 @@
-"""Postgres 数据库连接配置。
+"""数据库连接配置。
 
-从环境变量(或 ``.env``)读取,字段前缀 ``POSTGRES_``。
-本地开发默认值对应 Docker 容器 root/admin123@localhost:4000。
+优先使用 SQLite(通过 SQLITE_PATH 环境变量),否则回退到 PostgreSQL。
 """
+
+import os
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -14,7 +15,6 @@ class DatabaseSettings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="POSTGRES_",
-        # 兼容从 backend/ 或项目根运行:../.env 覆盖根目录,.env 覆盖当前目录
         env_file=("../.env", ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
@@ -31,11 +31,14 @@ class DatabaseSettings(BaseSettings):
 
     @property
     def url(self) -> str:
-        """SQLAlchemy 连接串(psycopg3 驱动)。
+        """SQLAlchemy 连接串。
 
-        用 ``URL.create`` 构造以正确转义密码中的保留字符(``@ : /`` 等),
-        再渲染为 str 以保持返回类型契约。
+        若设置 SQLITE_PATH 环境变量则使用 SQLite,否则连接 PostgreSQL。
         """
+        sqlite_path = os.getenv("SQLITE_PATH")
+        if sqlite_path:
+            return f"sqlite:///{sqlite_path}"
+
         return URL.create(
             drivername="postgresql+psycopg",
             username=self.user,

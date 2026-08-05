@@ -1,17 +1,17 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
-import { characterApis, type Character } from '@/entities'
+import type { Character, CharacterApis } from '@/entities'
 import type { Paged } from '@/shared/pagination'
 import { Pagination } from '@/shared/ui'
 
 const CHARACTER_PAGE_SIZE = 24
 
 function characterName(character: Character) {
-  return character.name ?? '未命名角色'
+  return character.name?.trim() || character.description?.trim() || `角色 ${character.id}`
 }
 
-export function AssetLibraryPage() {
+export function AssetLibraryPage({ apis }: { apis: CharacterApis }) {
   const { projectId } = useParams()
   const [pageNumber, setPageNumber] = useState(1)
   const [charactersPage, setCharactersPage] = useState<Paged<Character> | null>(null)
@@ -28,23 +28,29 @@ export function AssetLibraryPage() {
 
     setCharactersPage(null)
     setError(null)
-    void characterApis
-      .listByProject(projectId, {
-        page: pageNumber,
-        pageSize: CHARACTER_PAGE_SIZE,
-      })
-      .then(
-        (page) => {
-          if (active) setCharactersPage(page)
-        },
-        () => {
-          if (active) setError('资产库暂时无法读取')
-        },
-      )
+    const pagePromise = apis.listPageByProject
+      ? apis.listPageByProject(projectId, {
+          page: pageNumber,
+          pageSize: CHARACTER_PAGE_SIZE,
+        })
+      : apis.listByProject(projectId).then((items) => ({
+          items,
+          total: items.length,
+          page: 1,
+          pageSize: items.length || CHARACTER_PAGE_SIZE,
+        }))
+    void pagePromise.then(
+      (page) => {
+        if (active) setCharactersPage(page)
+      },
+      () => {
+        if (active) setError('资产库暂时无法读取')
+      },
+    )
     return () => {
       active = false
     }
-  }, [pageNumber, projectId])
+  }, [apis, pageNumber, projectId])
 
   return (
     <section aria-labelledby="asset-library-title" className="min-h-full min-w-0">
@@ -105,9 +111,9 @@ function CharacterGrid({ projectId, characters }: { projectId: string; character
             className="group overflow-hidden rounded-[1.25rem] border border-[#d7dbd4] bg-white transition hover:border-[#9ca79c]"
           >
             <div className="relative aspect-[4/3] overflow-hidden bg-[#f0f2ed]">
-              {outfit?.previewUrl ? (
+              {outfit?.characterTemplateUrl ? (
                 <img
-                  src={outfit.previewUrl}
+                  src={outfit.characterTemplateUrl}
                   alt={`${name}的${outfit.name}预览`}
                   className="h-full w-full object-contain p-5 [image-rendering:pixelated] transition group-hover:scale-[1.025]"
                 />

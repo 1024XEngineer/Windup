@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Outlet } from 'react-router'
+import { useLocation } from 'react-router'
 
 import { AppHeader } from './app-header'
 
@@ -12,27 +12,33 @@ export interface AppShellProps {
 
 /** 全站外壳，全局导航常驻。 */
 export function AppShell({ children }: AppShellProps) {
-  return (
-    <div className="min-h-screen bg-white text-slate-900">
-      <AppHeader />
-      {/*
-        外壳只管顶栏。页面自己决定宽度与留白，不在这里统一夹到屏幕中间，
-        也不按 pathname 分支给不同页面配不同容器。
-        顶栏悬浮不占布局高度，内容页的避让由 PageContainer 统一让出，满幅页面自己让。
-      */}
-      <main className="w-full">{children}</main>
-    </div>
-  )
-}
+  const { pathname, search } = useLocation()
+  const isPlaytestWorkspace = pathname.startsWith('/playtest')
+  const isWorkflowWorkspace = pathname.startsWith('/workflow-editor')
+  const isProjectWorkspace =
+    /^\/projects\/[^/]+(?:\/|$)/u.test(pathname) && pathname !== '/projects/new'
+  const isHomePage = pathname === '/'
+  const isHomeAccountOpen = isHomePage && new URLSearchParams(search).has('account')
+  const pageClassName =
+    isPlaytestWorkspace || isWorkflowWorkspace || isProjectWorkspace
+      ? 'w-full px-0 pb-0 pt-0'
+      : isHomePage
+        ? 'w-full'
+        : 'mx-auto max-w-5xl px-6 pb-8 pt-24'
 
-/**
- * 外壳的路由形态，套在一组子路由外面。
- * 哪些页面带外壳是路由决策，写在 app 的路由表里；外壳自身不读 pathname、不判断自己该不该出现。
- */
-export function AppShellRoute() {
   return (
-    <AppShell>
-      <Outlet />
-    </AppShell>
+    <div
+      aria-hidden={isHomeAccountOpen || undefined}
+      inert={isHomeAccountOpen || undefined}
+      className="min-h-screen bg-white text-slate-900"
+    >
+      {/* Playtest 保留产品导航；workflow-editor 和项目详情使用各自的工作台导航。 */}
+      {!isWorkflowWorkspace && !isProjectWorkspace && <AppHeader />}
+      {isPlaytestWorkspace ? (
+        <div className={pageClassName}>{children}</div>
+      ) : (
+        <main className={pageClassName}>{children}</main>
+      )}
+    </div>
   )
 }

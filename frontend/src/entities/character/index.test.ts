@@ -51,7 +51,7 @@ afterEach(() => {
 async function loadCharacterApis(fetchFn: typeof fetch) {
   vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
   vi.stubGlobal('fetch', fetchFn)
-  return (await import('./index')).characterApis
+  return (await import('./api')).createCharacterApis()
 }
 
 function jsonResponse(data: unknown) {
@@ -78,10 +78,10 @@ describe('characterApis', () => {
       )
     })
 
-    const page = await characterApis.listByProject('42', { page: 1, pageSize: 20 })
+    const page = await characterApis.listPageByProject!('42', { page: 1, pageSize: 20 })
 
     expect(requestUrl).toBe('https://api.windup.test/characters?project_id=42&page=1&page_size=20')
-    expect(page).toEqual({
+    expect(page).toMatchObject({
       items: [
         {
           id: '51',
@@ -97,7 +97,7 @@ describe('characterApis', () => {
               characterId: '51',
               name: '常态造型',
               description: '旅行装束',
-              previewUrl: 'https://cdn.windup.test/outfit.png',
+              characterTemplateUrl: 'https://cdn.windup.test/outfit.png',
               actions: [
                 {
                   id: 'walk',
@@ -106,17 +106,16 @@ describe('characterApis', () => {
                   name: '行走',
                   loop: true,
                   fps: 10,
-                  frameCount: 2,
                   frames: [
                     {
-                      index: 1,
-                      imageUrl: 'https://cdn.windup.test/walk-02.png',
-                      durationMs: 120,
-                    },
-                    {
-                      index: 0,
                       imageUrl: 'https://cdn.windup.test/walk-01.png',
                       durationMs: null,
+                      rootMotion: null,
+                    },
+                    {
+                      imageUrl: 'https://cdn.windup.test/walk-02.png',
+                      durationMs: 120,
+                      rootMotion: null,
                     },
                   ],
                 },
@@ -199,7 +198,19 @@ describe('characterApis', () => {
       reference_image_url: 'https://cdn.windup.test/reference.png',
       character_data: {
         version: 2,
-        outfits: characterDto.character_data.outfits,
+        outfits: [
+          {
+            ...characterDto.character_data.outfits[0],
+            actions: [
+              {
+                ...characterDto.character_data.outfits[0]!.actions[0],
+                frames: [...characterDto.character_data.outfits[0]!.actions[0]!.frames].sort(
+                  (left, right) => left.index - right.index,
+                ),
+              },
+            ],
+          },
+        ],
       },
     })
   })

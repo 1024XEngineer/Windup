@@ -1,12 +1,26 @@
-/**
- * 逐帧查看已生成的动作，供用户在导出前过一遍。
- *
- * 只看不改：服务端不返回质检结论，产品上也不设「打回此帧」，
- * 所以这里没有任何写操作，帧数据不会因为查看而改变。
- */
-export interface ReviewProps {
-  /** 动作 ID 只在造型内唯一，调用方须自行持有所属造型，不能拿它跨角色定位。 */
-  actionId: string
-  frameIndex: number
-  onSelectFrame(index: number): void
+import type { WorkflowRun } from '@/entities'
+
+/** 工作流审核的用户决定。Playtest 中的逐帧检查不使用这套写操作。 */
+export type ReviewDecision =
+  | { kind: 'approve' }
+  | { kind: 'request_changes'; restartStepId: string }
+
+export interface ReviewSubmission {
+  runId: WorkflowRun['id']
+  decision: ReviewDecision
+}
+
+interface ReviewController {
+  approveReview(runId: WorkflowRun['id']): WorkflowRun
+  restart(runId: WorkflowRun['id'], stepId: string): WorkflowRun
+}
+
+/** 把审核决定交给唯一的 WorkflowController 执行，不在 Review Feature 中复制状态机。 */
+export function submitReview(
+  controller: ReviewController,
+  { runId, decision }: ReviewSubmission,
+): WorkflowRun {
+  return decision.kind === 'approve'
+    ? controller.approveReview(runId)
+    : controller.restart(runId, decision.restartStepId)
 }

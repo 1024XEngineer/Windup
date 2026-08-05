@@ -9,11 +9,22 @@ dependencies = [
     "pydantic-settings>=2.4",
     "sqlalchemy>=2.0",
     "psycopg[binary]>=3.2",
+    "redis>=5.0",
     "httpx>=0.27",
     "pyjwt>=2.9",
-    # 以下两项按选型启用:
+    # AI 模型适配器(providers/):chat 走 langchain,video/image 走 httpx。
+    "langchain-core>=0.3",
+    "langchain-openai>=0.3",
+    # 抠图 MatteProvider:onnxruntime 直跑 u2netp(替代 rembg,其 numba 老链在 3.12 无轮子)。
+    # 上限 <1.24:onnxruntime 自 1.24 起砍了 macOS Intel(x86_64)轮子;1.23.x 仍覆盖
+    # Intel/arm64/Linux + py3.12,保证 Intel Mac 也能装。API 与新版一致,不改抠图代码。
+    "numpy>=1.26",
+    "onnxruntime>=1.17,<1.24",
+    "pillow>=10.4",
+    # 对象存储(七牛 Kodo);若换 OSS/S3/MinIO 改 oss2 / boto3 / minio。
+    "qiniu>=7.14",
+    # 以下按选型启用:
     # "rocketmq-client",   # RocketMQ Python 客户端(5.x gRPC 版 / C++ 绑定版二选一)
-    # "minio",             # 对象存储;若用 OSS/S3 换 oss2 / boto3
 ]
 
 [tool.uv.sources]

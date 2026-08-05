@@ -1,14 +1,19 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router'
 
-import { CHARACTER_PERSPECTIVE, DIRECTIONAL_MOVEMENT, projectApis, type Project } from '@/entities'
+import {
+  CHARACTER_PERSPECTIVE,
+  DIRECTIONAL_MOVEMENT,
+  type Project,
+  type ProjectApis,
+} from '@/entities'
 import type { Paged } from '@/shared/pagination'
 import { PageContainer, Pagination } from '@/shared/ui'
 
 const PROJECT_PAGE_SIZE = 12
 
 /** 项目中心；项目是角色资产与生成规格的隔离边界。 */
-export function ProjectsPage() {
+export function ProjectsPage({ apis }: { apis: ProjectApis }) {
   const [pageNumber, setPageNumber] = useState(1)
   const [projectsPage, setProjectsPage] = useState<Paged<Project> | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null)
@@ -19,7 +24,7 @@ export function ProjectsPage() {
     let active = true
     setProjectsPage(null)
     setError(null)
-    void projectApis.list({ page: pageNumber, pageSize: PROJECT_PAGE_SIZE }).then(
+    void apis.list({ page: pageNumber, pageSize: PROJECT_PAGE_SIZE }).then(
       (page) => {
         if (active) setProjectsPage(page)
       },
@@ -30,13 +35,13 @@ export function ProjectsPage() {
     return () => {
       active = false
     }
-  }, [pageNumber])
+  }, [apis, pageNumber])
 
   async function deleteProject(project: Project) {
     setDeleting(true)
     setError(null)
     try {
-      await projectApis.remove(project.id)
+      await apis.remove(project.id)
       if (projectsPage?.items.length === 1 && projectsPage.page > 1) {
         setPageNumber(projectsPage.page - 1)
       } else {

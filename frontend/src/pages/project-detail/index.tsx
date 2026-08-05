@@ -4,13 +4,19 @@ import { Link, Outlet, useLocation, useParams } from 'react-router'
 import {
   CHARACTER_PERSPECTIVE,
   DIRECTIONAL_MOVEMENT,
-  characterApis,
-  projectApis,
+  type CharacterApis,
   type Project,
+  type ProjectApis,
 } from '@/entities'
 
 /** 项目常驻工作区；子路由负责具体资产内容。 */
-export function ProjectDetailPage() {
+export function ProjectDetailPage({
+  projectApis,
+  characterApis,
+}: {
+  projectApis: ProjectApis
+  characterApis: CharacterApis
+}) {
   const { projectId } = useParams()
   const location = useLocation()
   const [project, setProject] = useState<Project | null>(null)
@@ -28,26 +34,32 @@ export function ProjectDetailPage() {
 
     setProject(null)
     setError(null)
-    void Promise.allSettled([
-      projectApis.get(projectId),
-      characterApis.listByProject(projectId, { page: 1, pageSize: 1 }),
-    ]).then(([projectResult, characterResult]) => {
-      if (!active) return
-      if (projectResult.status === 'rejected') {
-        setError('这个项目不存在或暂时无法读取')
-        return
-      }
-
-      setProject(projectResult.value)
-      if (characterResult.status === 'fulfilled') {
-        setCharacterCount(characterResult.value.total)
-      }
-    })
+    void projectApis.get(projectId).then(
+      (nextProject) => {
+        if (active) setProject(nextProject)
+      },
+      () => {
+        if (active) setError('这个项目不存在或暂时无法读取')
+      },
+    )
+    const countPromise = characterApis.listPageByProject
+      ? characterApis
+          .listPageByProject(projectId, { page: 1, pageSize: 1 })
+          .then((page) => page.total)
+      : characterApis.listByProject(projectId).then((items) => items.length)
+    void countPromise.then(
+      (count) => {
+        if (active) setCharacterCount(count)
+      },
+      () => {
+        // 角色数量是辅助信息，读取失败不应阻断项目工作区。
+      },
+    )
 
     return () => {
       active = false
     }
-  }, [projectId])
+  }, [characterApis, projectApis, projectId])
 
   if (error) {
     return (

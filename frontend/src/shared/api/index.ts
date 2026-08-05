@@ -157,8 +157,6 @@ function buildRequestInit(
   options: ApiRequestOptions | undefined,
   accessToken: string | null | undefined,
 ): RequestInit | undefined {
-  if (!options && !accessToken) return undefined
-
   const { json, query: _query, headers: inputHeaders, ...init } = options ?? {}
   const headers = new Headers(inputHeaders)
   if (accessToken && !headers.has('authorization')) {
@@ -197,15 +195,12 @@ export function createApiClient({
   return {
     async request<T>(path: string, options?: ApiRequestOptions) {
       const response = await send(path, options)
+      if (response.status === 204) return undefined as T
       const envelope = await readEnvelope(response)
       assertSuccessfulEnvelope(response, envelope)
 
       return envelope.data as T
     },
-    /**
-     * 后端 ListResponse 固定为 { data: T[], total, page, page_size }；
-     * 分页字段与 data 同级，不在 data 内再嵌套分页对象。
-     */
     async requestList<T>(path: string, options?: ApiRequestOptions) {
       const response = await send(path, options)
       const envelope = await readEnvelope(response)
@@ -232,4 +227,45 @@ export function createApiClient({
       }
     },
   }
+}
+
+/**
+ * 兼容现有实体适配器的便捷方法。它们与 createApiClient 共用同一套鉴权、
+ * 错误分类和响应信封解析，不再维护第二套 HTTP 实现。
+ */
+function getDefaultApiClient(): ApiClient {
+  return createApiClient({
+    baseUrl:
+      import.meta.env.VITE_API_BASE_URL ??
+      (import.meta.env.DEV ? 'http://127.0.0.1:8000' : undefined),
+    getAccessToken: getApiAccessToken,
+  })
+}
+
+export function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return getDefaultApiClient().request<T>(path, init)
+}
+
+export function get<T>(path: string): Promise<T> {
+  return request<T>(path)
+}
+
+export function getPage<T>(path: string): Promise<ApiListResult<T>> {
+  return getDefaultApiClient().requestList<T>(path)
+}
+
+export function post<T>(path: string, body: unknown): Promise<T> {
+  return getDefaultApiClient().request<T>(path, { method: 'POST', json: body })
+}
+
+export function patch<T>(path: string, body: unknown): Promise<T> {
+  return getDefaultApiClient().request<T>(path, { method: 'PATCH', json: body })
+}
+
+export async function del(path: string): Promise<void> {
+  await getDefaultApiClient().request<null>(path, { method: 'DELETE' })
+}
+
+export function upload<T>(path: string, formData: FormData): Promise<T> {
+  return getDefaultApiClient().request<T>(path, { method: 'POST', body: formData })
 }

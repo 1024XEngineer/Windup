@@ -9,6 +9,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
 
+from sqlalchemy import BigInteger, DateTime, Integer, JSON, Text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
+
+from windup_framework.db import Base
+
 
 # -- 枚举 ----------------------------------------------------------------
 
@@ -16,8 +22,8 @@ from enum import StrEnum
 class GenerationType(StrEnum):
     """生成任务类型——每新增一种生成能力，在此加一个成员。"""
 
-    CHARACTER_IMAGE = "character_image"      # 角色参考图
-    CHARACTER_ACTION = "character_action"    # 角色动作帧序列
+    CHARACTER_IMAGE = "character_image"  # 角色参考图
+    CHARACTER_ACTION = "character_action"  # 角色动作帧序列
 
 
 class ActionType(StrEnum):
@@ -25,6 +31,7 @@ class ActionType(StrEnum):
 
     WALK = "walk"
     IDLE = "idle"
+    JUMP = "jump"
     ATTACK = "attack"
     CUSTOM = "custom"
 
@@ -39,6 +46,9 @@ class TaskStatus(StrEnum):
 
 
 # -- 入参 ----------------------------------------------------------------
+
+
+DEFAULT_ACTION_FRAME_COUNT = 32
 
 
 @dataclass
@@ -62,7 +72,7 @@ class CharacterActionInput:
     custom_prompt: str | None = None
     reference_video_url: str | None = None
     reference_image_urls: list[str] = field(default_factory=list)
-    num_frames: int = 16
+    num_frames: int = DEFAULT_ACTION_FRAME_COUNT
 
 
 # -- 出参（按任务类型细化，前端可直接回填 character 模块）------------------
@@ -124,3 +134,57 @@ class GenerationTask:
     @property
     def is_terminal(self) -> bool:
         return self.status in (TaskStatus.COMPLETED, TaskStatus.FAILED)
+
+
+# -- ORM -----------------------------------------------------------------
+
+
+class GenerationTaskRecord(Base):
+    """生成任务持久化记录。
+
+    ``input_payload`` 和 ``result`` 以 JSON 存储；``result_type`` 标识
+    ``result`` 的具体类型，读出后按类型反序列化为对应 dataclass。
+    """
+
+    __tablename__ = "windup_generation_task"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    project_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    task_type: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default=GenerationType.CHARACTER_IMAGE.value,
+    )
+    status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default=TaskStatus.PENDING.value,
+    )
+    input_payload: Mapped[dict] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=False,
+        default=dict,
+    )
+    result_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=True,
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    create_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    update_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )

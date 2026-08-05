@@ -24,7 +24,7 @@ afterEach(() => {
 async function loadProjectApis(fetchFn: typeof fetch) {
   vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
   vi.stubGlobal('fetch', fetchFn)
-  return (await import('./index')).projectApis
+  return (await import('./api')).createProjectApis()
 }
 
 function jsonResponse(data: unknown) {
