@@ -15,7 +15,7 @@
 
 `ProjectOut` 的 `user_id`、`workflow_id`、`project_name`、`character_perspective`、`directional_movement`、精灵宽高、画风、参考图和时间字段，均在 `entities/project` 内显式映射为 camelCase。PR #75 没有项目更新端点，因此前端不声明 `ProjectApis.update`。
 
-`POST /projects` 把 `user_id` 放在请求体里，不从 token 推导，所以前端除 token 外还需要单独拿到当前用户 ID。该值由 `shared/api` 的 `getCurrentUserId()` 提供；登录模块尚未接入，没有人注册来源时 `/projects/new` 的创建入口保持禁用，不使用占位 ID。
+项目归属由后端从 access token 取：`ProjectCreate` 不含 `user_id`，`/projects` 各路由统一读 `request.state.current_user.id`，且 `/projects` 不在鉴权白名单里。因此 `CreateProjectInput` 没有 ownerId，请求体也不带 `user_id`——带了等于宣称调用方可以替别人建项目，那正是后端刚修掉的越权口子。`/projects/new` 的创建入口只看有没有 access token（`getApiAccessToken()`）；登录模块尚未接入时保持禁用并写明需要登录。
 
 后端枚举按下表映射：
 
