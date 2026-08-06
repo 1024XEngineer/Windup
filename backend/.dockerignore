@@ -1,0 +1,35 @@
+# 构建上下文排除项。
+#
+# 不加这个文件的话，`docker build ./backend` 会把本地开发产物一起送进 daemon：
+# 实测 backend/.venv 单独就有 161MB，而它在镜像里会被 builder 阶段重新装一遍，
+# 送过去纯属浪费；.git 与缓存目录同理，还会让 layer cache 因无关文件变动而失效。
+
+# 本地虚拟环境（镜像内由 uv sync 重建）
+.venv/
+venv/
+
+# 版本库与编辑器
+.git/
+.gitignore
+.idea/
+.vscode/
+
+# Python 缓存与构建产物
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# 各类工具缓存
+.pytest_cache/
+.ruff_cache/
+.import_linter_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# 环境变量与密钥：绝不进镜像
+.env
+.env.*
+!.env.example

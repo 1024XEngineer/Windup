@@ -12,6 +12,9 @@ dependencies = [
     "pydantic>=2.7",
     "sqlalchemy>=2.0",
     "python-multipart>=0.0.9",
+    # server/media/service.py 用它上传 Kodo。函数内延迟 import,不声明的话
+    # 镜像照样能起来,直到第一次 POST /media/upload 才 ModuleNotFoundError。
+    "qiniu>=7.13",
 ]
 
 [project.scripts]

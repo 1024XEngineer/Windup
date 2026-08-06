@@ -74,6 +74,37 @@ uv sync --frozen
 uv run uvicorn windup_app.bootstrap.app:create_app --factory --reload
 ```
 
+## 部署 / Deployment
+
+一条命令起后端与数据库（需要 Docker）：
+
+```bash
+docker compose up -d --build      # 起服务
+docker compose logs -f backend    # 看日志
+docker compose down               # 停止（加 -v 会删库数据）
+```
+
+健康检查端点 `GET /health`，容器 HEALTHCHECK 用的就是它。
+
+### 环境变量 / Environment Variables
+
+| 变量 | 必填 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `POSTGRES_PASSWORD` | 是 | 无 | 不给默认值，避免弱口令跟着编排进生产 |
+| `POSTGRES_USER` / `POSTGRES_DB` | 否 | `root` / `windup` | |
+| `POSTGRES_EXTERNAL_PORT` / `WINDUP_PORT` | 否 | `7856` / `8000` | 宿主机映射端口 |
+| `QINIU_ACCESS_KEY` / `QINIU_SECRET_KEY` / `QINIU_BUCKET_NAME` / `QINIU_BUCKET_DOMAIN` | 是 | 无 | 对象存储；缺失时 `/media/upload` 会失败 |
+| `AI_BASE_URL` / `AI_API_KEY` | 是 | 无 | 模型网关 |
+| `WINDUP_CORS_ORIGINS` | 否 | 本地 dev 来源 | 逗号分隔的前端来源。默认放行 `localhost`/`127.0.0.1` 的 `5173`(vite dev)、`4173`(vite preview)、`3000` |
+| `WINDUP_CORS_ORIGIN_REGEX` | 否 | 空（不启用） | 预览域名正则。**只写自家项目的域名形态**，例如 `https://<项目名>-[a-z0-9-]+\.vercel\.app`；写成整个平台通配等于把带凭证的跨域请求放行给该平台上任意第三方应用 |
+
+前端连后端靠构建期变量 `VITE_API_BASE_URL`（未配置时启动直接报错，不会静默连本机）：
+
+```bash
+cd frontend
+VITE_API_BASE_URL=http://<后端地址>:8000 npm run build
+```
+
 ## 质量检查 / Quality Checks
 
 ```bash

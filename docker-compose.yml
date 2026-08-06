@@ -1,0 +1,70 @@
+# ── Windup 本地 / 服务器部署编排 ──────────────────────────────────────
+#   启动: docker compose up -d --build
+#   日志: docker compose logs -f backend
+#   停止: docker compose down          （加 -v 会删库数据）
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: windup-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-root}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 里设置，不要用默认值}
+      POSTGRES_DB: ${POSTGRES_DB:-windup}
+    ports:
+      - "${POSTGRES_EXTERNAL_PORT:-7856}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-root} -d ${POSTGRES_DB:-windup}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [windup-net]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: windup-backend
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-root}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:-windup}
+      # 七牛 Kodo（media 上传用）
+      QINIU_ACCESS_KEY: ${QINIU_ACCESS_KEY}
+      QINIU_SECRET_KEY: ${QINIU_SECRET_KEY}
+      QINIU_BUCKET_NAME: ${QINIU_BUCKET_NAME}
+      QINIU_BUCKET_DOMAIN: ${QINIU_BUCKET_DOMAIN}
+      QINIU_PRIVATE_SPACE: ${QINIU_PRIVATE_SPACE:-false}
+      # AI provider
+      AI_BASE_URL: ${AI_BASE_URL}
+      AI_API_KEY: ${AI_API_KEY}
+      # 允许跨域的前端来源，逗号分隔；不设则用代码里的开发默认值
+      WINDUP_CORS_ORIGINS: ${WINDUP_CORS_ORIGINS:-}
+      # 预览域名正则（可选）。只写自家项目的预览域名形态，别写成整个平台通配 ——
+      # 后端开了 allow_credentials，通配等于放行该平台下任意第三方应用。
+      # 例: https://<项目名>-[a-z0-9-]+\.vercel\.app
+      WINDUP_CORS_ORIGIN_REGEX: ${WINDUP_CORS_ORIGIN_REGEX:-}
+    ports:
+      - "${WINDUP_PORT:-8000}:8000"
+    networks: [windup-net]
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  windup-net:
+    driver: bridge
+    # 云主机链路 MTU 常小于 1500（实测某部署机 eno1 为 1480）。compose 自建网络
+    # **不继承** daemon.json 里的 mtu 设置，默认仍是 1500 → 大包被丢，表现为
+    # TLS 握手超时（对象存储上传挂死、pip 下载卡死），而不是明确报错。
+    driver_opts:
+      com.docker.network.driver.mtu: "1450"

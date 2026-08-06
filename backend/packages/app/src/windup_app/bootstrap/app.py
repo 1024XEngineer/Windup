@@ -33,6 +33,15 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.get("/health", tags=["ops"])
+    def health() -> dict[str, str]:
+        """存活探针。
+
+        容器 HEALTHCHECK 不打 ``/docs`` —— 生产通常会关掉交互文档
+        (``docs_url=None``)，那时健康检查会永远失败，容器被反复判死。
+        """
+        return {"status": "ok"}
+
     # 业务路由
     app.include_router(media_router)
     app.include_router(generation_router)
