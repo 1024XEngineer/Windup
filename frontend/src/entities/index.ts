@@ -1,5 +1,9 @@
 /** entities 唯一公开入口。外部不得绕过本文件访问内部文件。 */
 
+/* 用户 —— 认证传输与稳定会话身份 */
+export { createUserApis, userApis } from './user'
+export type { AuthTokens, CreateUserApisOptions, SendCodePurpose, User, UserApis } from './user'
+
 /* 项目 —— 全局约束：视角、朝向、精灵尺寸、画风 */
 export { CHARACTER_PERSPECTIVE, DIRECTIONAL_MOVEMENT } from './project'
 export { projectApis } from './project'
