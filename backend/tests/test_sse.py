@@ -14,8 +14,6 @@ import pytest
 
 from windup_app.web.api.generation import event_bus
 
-pytestmark = pytest.mark.asyncio
-
 
 @pytest.fixture(autouse=True)
 def _clean_bus():
