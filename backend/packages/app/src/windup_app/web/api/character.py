@@ -98,6 +98,7 @@ def create_character(
     character = character_service.create_character(
         session,
         project_id=body.project_id,
+        name=body.name,
         description=body.description,
         reference_image_url=body.reference_image_url,
         character_data=body.character_data.model_dump(),
