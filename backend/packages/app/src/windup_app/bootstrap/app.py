@@ -14,6 +14,7 @@ import windup_framework.db  # noqa: F401  组装时显式触发 DB engine/sessio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from windup_app.server.orchestrator import task_repo
 from windup_app.server.orchestrator.executor import run_action_task, run_image_task
 from windup_app.web.api.auth import router as auth_router
 from windup_app.web.api.character import router as character_router
@@ -82,6 +83,10 @@ def create_app() -> FastAPI:
     # 生成后台调度器注入 app.state
     app.state.run_action_task = run_action_task
     app.state.run_image_task = run_image_task
+
+    # 绑定 EventBus: task_repo 状态变更时自动推送 SSE（延迟导入避免循环依赖）
+    from windup_app.web.api.generation import event_bus
+    task_repo.bind_event_bus(event_bus)
 
     register_exception_handlers(app)
     return app
