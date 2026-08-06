@@ -99,7 +99,45 @@ class SufyVideoProvider(VideoProvider):
                     raise RuntimeError(f"i2v 失败: {status}")
             if not url:
                 raise RuntimeError("i2v 未取得视频 URL(超时或失败)")
-            return client.get(url).raise_for_status().content
+            return _download(client, url)
+
+
+class IncompleteDownloadError(RuntimeError):
+    """视频下载到的字节数与 ``Content-Length`` 不符。"""
+
+
+def _download(client: httpx.Client, url: str, tries: int = 3) -> bytes:
+    """下载已生成好的视频,带重试 + 长度校验。
+
+    为什么单次读取不够(2026-08-05 实测,同一角色连续两单复现):原实现是
+    ``client.get(url).raise_for_status().content``。**视频此时已经生成、费用已经产生**,
+    只要读 body 时连接断一次,整单就废::
+
+        peer closed connection without sending complete message body
+        (received 720450 bytes, expected 929531)
+
+    重试是安全的:这是对成品 URL 的 GET,幂等且不再计费——**代价是一次重下,
+    不重试的代价是一次重新生成**。
+
+    长度校验是因为截断不一定抛异常:服务端提前关流而客户端已收到部分 body 时,
+    ``.content`` 可能直接返回短 bytes,那样坏视频会一路流到出帧环节才暴露,
+    在那里看起来像"解码失败",很难回溯到这里。``Content-Length`` 缺失(分块传输)时跳过校验。
+    """
+    last: Exception | None = None
+    for attempt in range(tries):
+        try:
+            response = client.get(url)
+            response.raise_for_status()
+            body = response.content
+            expected = response.headers.get("content-length")
+            if expected and len(body) != int(expected):
+                raise IncompleteDownloadError(f"视频下载不完整: {len(body)}/{expected} 字节")
+            return body
+        except (httpx.HTTPError, IncompleteDownloadError) as exc:
+            last = exc
+            if attempt < tries - 1:
+                time.sleep(2**attempt)
+    raise RuntimeError(f"视频下载失败(已重试 {tries} 次): {last}") from last
 
 
 class SufyImageProvider(ImageProvider):
