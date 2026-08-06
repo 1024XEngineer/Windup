@@ -12,18 +12,26 @@ import { ApiError, getCurrentUserId } from '@/shared/api'
 import { ProjectCreatePixelMark } from './pixel-mark'
 
 /**
- * 项目名称上限跟随后端 `windup_project.project_name` 的 String(20)。
- * 后端 PR #126 想放宽到 64，这里按更严的一边取值，两种契约下都能提交成功。
+ * 项目名称上限跟随 main 上 `windup_project.project_name` 的 `String(20)`。
+ * 尚未合入的两个后端 PR 在这里不一致（#75 限 20、#126 放宽到 64），取更严的一边，
+ * 哪条先落地都能提交成功；放宽是加法，反过来会立刻退回重名与截断。
  */
 const NAME_MAX_LENGTH = 20
 
-/** 精灵宽高的合法区间由后端 ProjectCreate 的 Field(ge=32, le=2048) 决定。 */
+/**
+ * 精灵宽高的合法区间。写在前端是因为 main 的后端还没有 `/projects` 路由，
+ * 取值依据是 issue #141 的产品规则（与未合入的 #75 / #126 请求校验一致）。
+ */
 const SPRITE_MIN = 32
 const SPRITE_MAX = 2048
 
 /** 常用档位只是快捷填充，用户仍可以填这三档之外的任意合法宽高。 */
 const SPRITE_PRESETS = [128, 256, 512]
 
+/**
+ * 画风约束的长度上限只存在于前端：后端 `game_style` 是没有长度约束的 Text。
+ * 定这个数是为了让它维持在「一句风格描述」的量级，不是契约要求。
+ */
 const GAME_STYLE_MAX_LENGTH = 240
 
 /** 创建真实项目；首页画布入口与项目中心的新建按钮共用这一页。 */
@@ -240,7 +248,10 @@ export function ProjectCreatePage() {
           ) : null}
 
           <footer className="flex flex-wrap items-center justify-between gap-4 border-t border-[#d8dbd4] pt-6">
-            <small id="project-create-hint" className="max-w-sm text-[11px] leading-5 text-[#747973]">
+            <small
+              id="project-create-hint"
+              className="max-w-sm text-[11px] leading-5 text-[#747973]"
+            >
               {ownerId
                 ? '创建后进入该项目的资产工作区。'
                 : '登录模块尚未接入，暂时拿不到当前账号，创建入口保持关闭。'}
