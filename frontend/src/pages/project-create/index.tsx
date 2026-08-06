@@ -77,14 +77,15 @@ export function ProjectCreatePage() {
 
   return (
     <div className="grid min-h-[calc(100vh-4rem)] w-full bg-[#e5e8e3] text-[#191b18] lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
-      <aside className="hidden place-content-center justify-items-center gap-8 px-10 py-16 lg:grid">
+      <aside className="hidden place-content-center justify-items-center gap-8 px-10 pb-16 pt-24 lg:grid">
         <ProjectCreatePixelMark />
         <p className="max-w-72 text-center text-xs leading-6 text-[#747973]">
           项目决定角色资产的视角、朝向与精灵尺寸。这些约束建立之后会跟着项目下的每一个角色。
         </p>
       </aside>
 
-      <section className="bg-white/70 px-6 py-12 sm:px-12 lg:px-16 lg:py-20">
+      {/* pt-24 与 PageContainer 同源：给 fixed 顶栏（top-3.5 加最小高 3.625rem）让位，改顶栏尺寸时一起改。 */}
+      <section className="bg-white/70 px-6 pb-12 pt-24 sm:px-12 lg:px-16 lg:pb-20 lg:pt-28">
         <form noValidate onSubmit={submit} className="mx-auto grid max-w-2xl gap-7">
           <header>
             <p className="font-mono text-[10px] font-semibold tracking-[0.18em] text-[#8b9089]">
