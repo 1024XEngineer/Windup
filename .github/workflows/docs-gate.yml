@@ -1,0 +1,142 @@
+name: Docs Gate
+
+# 工程文档不入仓:设计/架构决策类文档写进 Issue(靠 Issue 描述区编辑历史做版本管理),
+# 不 commit 成仓库里的 md。本门禁只拦最明确的两类位置,其余一律放行——
+# 设计原则是「宁可漏拦,不可误拦」,误伤别人正常工作的门禁会被直接关掉。
+#
+# 拦什么:
+#   - docs/** 下新增或修改的 md
+#   - 仓库根目录新增的 md
+# 不拦什么(故意的):
+#   - 删除文件(把文档搬走正是我们想要的)
+#   - 子目录里的 md(frontend/**、backend/** 的 README / MODULES.md 等,团队约定要留在代码旁)
+#   - 允许清单里的路径(见下方 ALLOW 逻辑)
+#   - 打了豁免 label 的 PR
+#
+# 规范全文:CONTRIBUTING.md 第 2.1 节
+
+on:
+  pull_request:
+    # labeled / unlabeled 也触发,这样加完豁免 label 无需手动 re-run
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    paths:
+      - 'docs/**'
+      - '*.md'
+
+concurrency:
+  group: docs-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check-docs:
+    name: Engineering docs stay in Issues
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0          # 需要完整历史来算 merge-base
+
+      - name: Check for engineering docs committed to the repo
+        env:
+          # 用 env 传参,避免 ${{ }} 直接插值进 shell 造成命令注入
+          BASE_REF: ${{ github.base_ref }}
+          # PR 当前的 label 列表(JSON 数组)
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+
+          # ── 0. label 豁免 ──────────────────────────────────────
+          # 确实该入仓的用户文档,打上这个 label 即放行。
+          # 只认 user-doc,不认 Documented——后者是打在 Issue 上的生命周期状态
+          # (用户文档已提供),不是 PR 属性,借来当门禁开关会把两套语义搅在一起。
+          EXEMPT_LABELS='user-doc'
+          for lbl in $EXEMPT_LABELS; do
+            if printf '%s' "$PR_LABELS" | jq -e --arg l "$lbl" 'index($l) != null' >/dev/null 2>&1; then
+              echo "豁免:PR 带 label '$lbl',跳过检查。"
+              exit 0
+            fi
+          done
+
+          # ── 1. 取出本 PR 的改动清单 ────────────────────────────
+          git fetch --no-tags origin "$BASE_REF"
+          BASE=$(git merge-base "origin/$BASE_REF" HEAD)
+          echo "检查范围: $BASE..HEAD"
+          echo ""
+
+          flagged=""
+
+          while IFS=$'\t' read -r status path rest; do
+            [ -n "${path:-}" ] || continue
+            # 重命名/复制的记录是 R100<TAB>旧路径<TAB>新路径,取新路径
+            case "$status" in
+              R*|C*) path="${rest:-$path}"; status="A" ;;
+            esac
+            # 删除永远放行:把文档搬去 Issue 正是我们想要的动作
+            case "$status" in
+              D*) continue ;;
+            esac
+
+            # ── 2. 允许清单 ─────────────────────────────────────
+            case "$path" in
+              README.md|CONTRIBUTING.md|CHANGELOG.md|LICENSE|LICENSE.md|SECURITY.md|CODE_OF_CONDUCT.md)
+                echo "allow(仓库元文件): $path"; continue ;;
+              .github/*|.github/**)
+                echo "allow(CI 与仓库模板): $path"; continue ;;
+              .claude/*|.claude/**)
+                echo "allow(agent 工具配置): $path"; continue ;;
+              docs/user/*|docs/user/**|docs/guide/*|docs/guide/**|docs/usage/*|docs/usage/**)
+                echo "allow(用户文档目录): $path"; continue ;;
+            esac
+
+            # ── 3. 判定 ─────────────────────────────────────────
+            case "$path" in
+              docs/*)
+                # docs/ 下新增或修改都拦
+                flagged="${flagged}  - ${path}  (${status})"$'\n'
+                continue ;;
+              */*)
+                # 子目录里的 md 不拦(README / MODULES.md 等按团队约定留在代码旁)
+                continue ;;
+              *.md)
+                # 根目录:只拦新增,已有的存量文件修改放行
+                if [ "$status" = "A" ]; then
+                  flagged="${flagged}  - ${path}  (新增于仓库根目录)"$'\n'
+                fi
+                continue ;;
+            esac
+          done < <(git diff --name-status "$BASE" HEAD)
+
+          # ── 4. 报告 ───────────────────────────────────────────
+          if [ -z "$flagged" ]; then
+            echo ""
+            echo "OK:本 PR 没有把工程文档写进仓库。"
+            exit 0
+          fi
+
+          echo ""
+          echo "::error::检测到疑似工程文档进入仓库"
+          echo ""
+          echo "以下文件被拦下:"
+          printf '%s' "$flagged"
+          echo ""
+          echo "规范:设计 / 架构决策 / 模块拆分 / 接口契约说明 / AI 生成的 plan 与 spec"
+          echo "      写进 Issue 正文(版本靠 Issue 描述区的编辑历史,定稿后只读),不 commit 进仓库。"
+          echo "      细则见仓库根目录 CONTRIBUTING.md 第 2.1 节。"
+          echo ""
+          echo "三种放行方式,任选其一:"
+          echo "  1) 内容搬进对应 Issue,然后 git rm 掉这些文件,PR 描述写「内容已迁到 #NN」;"
+          echo "  2) 这确实是【用户文档】(讲怎么用,不讲为什么这么设计)"
+          echo "     → 给本 PR 打 label 'user-doc',本检查会自动重跑并放行;"
+          echo "  3) 属于长期该入仓的用户文档目录 → 放到 docs/user/ 或 docs/guide/ 下。"
+          echo ""
+          echo "本门禁刻意保守:只拦 docs/** 与根目录新增 md,子目录 README / MODULES.md 一律不管。"
+          echo ""
+          echo "如果上面某个文件在 main 上明明已经存在,那不是它真的被新增,是你的分支落后了——"
+          echo "本检查按 merge-base 算差异,陈旧的 base 会把「早就在 main 上的文件」算成新增。"
+          echo "先 git fetch upstream && git rebase upstream/main,本检查会自动放行。"
+          echo ""
+          echo "如果它误伤了你的正常工作,请开 Issue 说明,别绕过后就不提——门禁自身的问题要单独修。"
+          exit 1
