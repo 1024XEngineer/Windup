@@ -166,4 +166,18 @@ describe('ProjectCreatePage', () => {
 
     expect(screen.queryByRole('alert')).toBeNull()
   })
+  it('点尺寸预设后撤掉上一次的错误', async () => {
+    installBackend()
+    signIn()
+    renderProjectCreate()
+
+    fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '雾港来信' } })
+    fireEvent.change(screen.getByLabelText('宽度（像素）'), { target: { value: '16' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
+    expect(await screen.findByRole('alert')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '256 × 256' }))
+
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
 })

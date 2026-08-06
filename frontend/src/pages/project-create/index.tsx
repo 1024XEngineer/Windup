@@ -181,6 +181,8 @@ export function ProjectCreatePage() {
                   onClick={() => {
                     setSpriteWidth(String(preset))
                     setSpriteHeight(String(preset))
+                    // 按钮点击不是表单的 change 事件，收不到表单上那个清错误的处理，只能自己清。
+                    setError(null)
                   }}
                   aria-pressed={spriteWidth === String(preset) && spriteHeight === String(preset)}
                   className="rounded-full border border-[#d5d9d2] px-4 py-1.5 text-xs text-[#41473f] aria-pressed:border-[#252825] aria-pressed:bg-[#252825] aria-pressed:text-white"
