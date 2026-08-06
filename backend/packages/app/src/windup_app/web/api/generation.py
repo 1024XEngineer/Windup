@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import json
 import logging
 import threading
+from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import event
 from sqlalchemy.orm import Session
