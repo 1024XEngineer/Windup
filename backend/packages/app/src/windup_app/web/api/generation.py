@@ -6,6 +6,7 @@ import threading
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
@@ -93,6 +94,17 @@ def _task_to_out(task: GenerationTask) -> GenerationTaskOut:
 # ── 端点 ─────────────────────────────────────────────────────────────────────
 
 
+def _dispatch_after_commit(session: Session, target, *args) -> None:
+    """注册 after_commit 回调:session 提交成功后再启动后台线程。
+
+    解决竞态: create_task() 只 flush,session 在 handler 返回后才 commit。
+    若直接起线程,后台 session 可能读不到未提交的行,导致 update 静默跳过。
+    """
+    @event.listens_for(session, "after_commit", once=True)
+    def _after_commit(session):
+        threading.Thread(target=target, args=args, daemon=True).start()
+
+
 def _validate_project_size(session: Session, project_id: int | None, width: int, height: int) -> None:
     """校验输入尺寸与项目约束是否一致;不一致则抛异常。"""
     if project_id is None:
@@ -128,11 +140,8 @@ def submit_image_generation(
     task = generation_service.generate_character_image(
         session, user_id=body.user_id, project_id=body.project_id, input=input_data,
     )
-    threading.Thread(
-        target=request.app.state.run_image_task,
-        args=(task.id, input_data, body.project_id),
-        daemon=True,
-    ).start()
+    # commit 后再启动后台线程,避免任务行未提交时线程读不到记录
+    _dispatch_after_commit(session, request.app.state.run_image_task, task.id, input_data, body.project_id)
     return Response.success(_task_to_out(task), message="任务已提交")
 
 
@@ -154,13 +163,8 @@ def submit_action_generation(
     task = generation_service.generate_character_action(
         session, user_id=body.user_id, project_id=body.project_id, input=input_data,
     )
-    # 后台线程自开 session 跑生成(经项目约束 → ai_engine)。调度器由 bootstrap 注入
-    # app.state,web 不静态依赖 ai_engine(满足入口层门禁)。
-    threading.Thread(
-        target=request.app.state.run_action_task,
-        args=(task.id, input_data, body.project_id),
-        daemon=True,
-    ).start()
+    # commit 后再启动后台线程,避免任务行未提交时线程读不到记录
+    _dispatch_after_commit(session, request.app.state.run_action_task, task.id, input_data, body.project_id)
     return Response.success(_task_to_out(task), message="任务已提交")
 
 
