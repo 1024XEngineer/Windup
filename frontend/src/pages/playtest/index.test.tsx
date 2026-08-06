@@ -1,0 +1,99 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { AppRoutes } from '@/app'
+import { createProjectAssetsBackend } from '@/test/project-assets-backend'
+
+afterEach(() => {
+  cleanup()
+  vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
+})
+
+/**
+ * 停掉动画循环，让断言只看某一次输入之后的静止状态。
+ * 逐帧推进本身由 runtime 的纯函数测试覆盖，不靠页面测试的时序碰运气。
+ */
+function freezeAnimationFrame() {
+  vi.stubGlobal('requestAnimationFrame', () => 0)
+  vi.stubGlobal('cancelAnimationFrame', () => undefined)
+}
+
+function renderPlaytest(path: string, fetchFn?: typeof globalThis.fetch) {
+  freezeAnimationFrame()
+  vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+  vi.stubGlobal('fetch', fetchFn ?? createProjectAssetsBackend().fetch)
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <AppRoutes />
+    </MemoryRouter>,
+  )
+}
+
+function stageFrameUrl() {
+  return screen.getByRole('region', { name: '试玩舞台' }).querySelector('img')?.getAttribute('src')
+}
+
+describe('PlaytestPage', () => {
+  it('loads the routed character through the Character API', async () => {
+    renderPlaytest('/playtest/51/outfit-default')
+
+    expect(screen.getByText('加载 Playtest 数据中')).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '51 · 常态造型' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '绑定动作：呼吸待机' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '绑定动作：行走' })).toBeTruthy()
+  })
+
+  it('plays frames in backend index order, not array order', async () => {
+    renderPlaytest('/playtest/51/outfit-default')
+
+    expect(await screen.findByRole('heading', { name: '51 · 常态造型' })).toBeTruthy()
+    // 后端给的 walk 帧顺序是 index 2、0、1；照数组播会从 walk-03 起步。
+    fireEvent.click(screen.getByRole('button', { name: '绑定动作：行走' }))
+
+    expect(stageFrameUrl()).toBe('https://cdn.windup.test/walk-01.png')
+  })
+
+  it('starts on the idle action when the route names none', async () => {
+    renderPlaytest('/playtest/51/outfit-default')
+
+    expect(await screen.findByRole('heading', { name: '51 · 常态造型' })).toBeTruthy()
+    expect(stageFrameUrl()).toBe('https://cdn.windup.test/idle-01.png')
+  })
+
+  it('opens on the action named by the route query', async () => {
+    renderPlaytest('/playtest/51/outfit-default?actionId=walk')
+
+    expect(await screen.findByRole('heading', { name: '51 · 常态造型' })).toBeTruthy()
+    expect(stageFrameUrl()).toBe('https://cdn.windup.test/walk-01.png')
+  })
+
+  it('reports a missing outfit instead of falling back to another one', async () => {
+    renderPlaytest('/playtest/51/outfit-missing')
+
+    expect(await screen.findByText('找不到指定造型，无法进入试玩。')).toBeTruthy()
+  })
+
+  it('maps the business not-found code to a stable message', async () => {
+    renderPlaytest('/playtest/9999/outfit-default')
+
+    expect(await screen.findByText('角色不存在')).toBeTruthy()
+  })
+
+  it('does not mislabel a transport failure as not found', async () => {
+    renderPlaytest('/playtest/51/outfit-default', () =>
+      Promise.reject(new TypeError('network unavailable')),
+    )
+
+    expect(await screen.findByText('角色读取失败')).toBeTruthy()
+  })
+
+  it('shows an empty stage for an outfit whose actions have no frames', async () => {
+    renderPlaytest('/playtest/52/outfit-draft')
+
+    expect(await screen.findByRole('heading', { name: '52 · 未命名造型' })).toBeTruthy()
+    expect(screen.getByText('暂无可播放帧')).toBeTruthy()
+  })
+})
