@@ -16,42 +16,19 @@ from windup_app.web.api.workflow_run import router as workflow_run_router
 
 
 def _cors_origins() -> list[str]:
-    """允许跨域的前端来源；逗号分隔的 ``WINDUP_CORS_ORIGINS`` 覆盖。
-
-    不挂这个中间件的话，浏览器会把前端的**所有**请求拦在预检那一步
-    （OPTIONS 返回 405、响应无 access-control-* 头），而且后端日志里连请求都看不到，
-    很容易被误判成前端问题。默认值覆盖本地 dev server。
-    """
+    """开发阶段全放行；部署时用 ``WINDUP_CORS_ORIGINS``(逗号分隔)收窄。"""
     raw = os.getenv("WINDUP_CORS_ORIGINS", "").strip()
-    if raw:
-        return [o.strip() for o in raw.split(",") if o.strip()]
-    # 5173 = vite dev、4173 = vite preview(生产构建，本地看真实构建走这个)、3000 = 备用
-    return ["http://localhost:5173", "http://127.0.0.1:5173",
-            "http://localhost:4173", "http://127.0.0.1:4173",
-            "http://localhost:3000", "http://127.0.0.1:3000"]
-
-
-def _cors_origin_regex() -> str | None:
-    """预览域名的来源正则；由 ``WINDUP_CORS_ORIGIN_REGEX`` 提供，默认不开。
-
-    这里**不写死** ``https://.*\\.vercel\\.app``：下面 ``allow_credentials=True``，
-    那条正则等于把带凭证的跨域请求放行给整个 vercel.app 域下的任意第三方应用，
-    而且显式配了 ``WINDUP_CORS_ORIGINS`` 也关不掉它。预览域名形态随部署环境变，
-    所以交给部署方自己配，例如 ``https://<项目名>-[a-z0-9-]+\\.vercel\\.app``
-    （starlette 用 ``fullmatch``，不必自己加 ``^$``）。
-    """
-    raw = os.getenv("WINDUP_CORS_ORIGIN_REGEX", "").strip()
-    return raw or None
+    return [o.strip() for o in raw.split(",") if o.strip()] or ["*"]
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="windup", version="0.1.0")
 
+    # 鉴权走 Authorization 头不走 cookie，故关掉 credentials —— 这样 "*" 才合法。
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
-        allow_origin_regex=_cors_origin_regex(),
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
