@@ -30,7 +30,15 @@ MASTER_POSES = {
     "walk": "",     # 中性站立即可,但必须朝侧向
     "run": "",
     "idle": "",
-    "jump": "",     # 中性站立 + 顶部留白(见 prepare_master)
+    # jump:与 attack 同理——重甲带剑角色的"跳跃"强动作先验压不住(站立母版会让模型摆
+    # 造型、只举剑不腾空,实测)。给**极限蓄力半蹲母版**,模型只能"接着往上蹬"。顶部留白
+    # 由 prepare_master(add_headroom)保证。
+    "jump": (
+        "deep crouch coiled to spring straight upward: the knees bent low and the hips sunk down, "
+        "both arms drawn back behind the body, the weight loaded onto both legs at the very moment "
+        "before springing straight up, the weapon kept in a fixed grip; "
+        "leave generous empty space above the head"
+    ),
     "attack": (
         "extreme wind-up stance for a horizontal slash: the weapon drawn far BACK behind the body "
         "at WAIST height, the torso twisted back and coiled, weight fully loaded on the back leg, "
