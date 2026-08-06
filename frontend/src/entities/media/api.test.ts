@@ -176,6 +176,16 @@ describe('MediaApis.upload', () => {
       createMediaApis().upload(imageFile(), 'reference-image', controller.signal),
     ).rejects.toBe(abortError)
   })
+
+  it('不包装响应体读取期间抛出的取消错误', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8000')
+    const abortError = new DOMException('This operation was aborted', 'AbortError')
+    const response = new Response(null, { status: 200 })
+    vi.spyOn(response, 'json').mockRejectedValue(abortError)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response))
+
+    await expect(createMediaApis().upload(imageFile())).rejects.toBe(abortError)
+  })
 })
 
 function imageFile(): File {

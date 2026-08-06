@@ -79,7 +79,11 @@ function requireApiBaseUrl(): string {
 async function readResponseBody(response: Response): Promise<unknown> {
   try {
     return await response.json()
-  } catch {
+  } catch (error) {
+    // 请求可能在响应头到达后、响应体读取完成前被取消。此时 json() 也会抛出
+    // AbortError；必须保留原错误，调用方才能把用户取消与上传失败区分开。
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
+
     if (!response.ok) {
       throw new UploadRequestError(
         response.status,
