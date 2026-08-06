@@ -60,6 +60,8 @@ class Character(Base):
 
     project_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
+    workflow_run_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     reference_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
