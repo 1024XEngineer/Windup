@@ -4,14 +4,23 @@
 验证通过后将用户信息注入 ``request.state.current_user``。
 """
 
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
 from windup_common.enums.biz_code import BizCode
-from windup_common.exceptions import BizException
+from windup_common.result import Response as Resp
 
 from windup_app.server.user.service import decode_token
+
+
+def _biz_error(msg: str, code: int) -> JSONResponse:
+    """BizException → JSONResponse，用于 middleware 层（绕过 ExceptionMiddleware）。"""
+    return JSONResponse(
+        status_code=200,
+        content=Resp.fail(msg, code=code).model_dump(mode="json"),
+    )
 
 # -- 白名单路径（不需要鉴权）---------------------------------------------
 
@@ -53,14 +62,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # 提取 Authorization header
         auth_header = request.headers.get("authorization", "")
         if not auth_header.startswith("Bearer "):
-            raise BizException("未登录", code=BizCode.UNAUTHORIZED)
+            return _biz_error("未登录", BizCode.UNAUTHORIZED)
 
         token = auth_header[7:]  # 去掉 "Bearer " 前缀
 
         # 解码 + 验证
         payload = decode_token(token)
         if payload.get("type") != "access":
-            raise BizException("token 类型错误", code=BizCode.UNAUTHORIZED)
+            return _biz_error("token 类型错误", BizCode.UNAUTHORIZED)
 
         # 注入当前用户到 request.state
         request.state.current_user = type(
