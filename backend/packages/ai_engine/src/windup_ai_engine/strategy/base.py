@@ -25,7 +25,9 @@ ROUTE_MATRIX: dict[ActionType, GenRoute] = {
     ActionType.JUMP: GenRoute.VIDEO_I2V,
     ActionType.ATTACK: GenRoute.VIDEO_I2V,
     ActionType.HIT: GenRoute.PER_FRAME,
-    ActionType.IDLE: GenRoute.PROC_IDLE,
+    # idle 走 i2v(build_idle_prompt:躯干缓慢起伏呼吸)——"快速看着对"的待机路线。
+    # ¥0 的程序化 Idle-B(局部网格呼吸)是后续可选优化,当前 ProcIdleStrategy 仍是桩。
+    ActionType.IDLE: GenRoute.VIDEO_I2V,
 }
 
 
