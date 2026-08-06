@@ -96,7 +96,6 @@ uv run pytest -q
 Windup/
 ├── frontend/                  # React 前端、页面与制作流程
 ├── backend/                   # Python 工作区、领域服务与 API
-├── docs/                      # 后端模块划分等工程文档
 ├── frontend-architecture-v3.md
 └── README.md
 ```
@@ -107,7 +106,6 @@ Windup/
 - [核心流程与工作流](https://github.com/1024XEngineer/Windup/issues/25)
 - [前端架构与模块边界](frontend-architecture-v3.md)
 - [前后端 API 契约差异](frontend/API_CONTRACT.md)
-- [后端模块划分](docs/module-split.md)
 
 ## 参与贡献 / Contributing
 
