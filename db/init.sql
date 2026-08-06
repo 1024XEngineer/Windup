@@ -17,7 +17,9 @@ CREATE TABLE windup_project (
     game_style TEXT,
     sprite_sample_url TEXT,
     create_at TIMESTAMPTZ,
-    update_at TIMESTAMPTZ
+    update_at TIMESTAMPTZ,
+
+    CONSTRAINT uq_windup_project_user_name UNIQUE (user_id, project_name)
 );
 
 COMMENT ON TABLE windup_project IS '项目表';
