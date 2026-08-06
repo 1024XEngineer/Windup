@@ -9,12 +9,11 @@ POST   /workflow-runs                     创建执行记录
 GET    /workflow-runs/{id}                 获取执行记录（含 nodes）
 PATCH  /workflow-runs/{id}                 全量更新（含 nodes）
 DELETE /workflow-runs/{id}                 软删除
-POST   /workflow-runs/{id}/diff/{old_id}   对比新旧 run
 
 设计原则
 --------
-后端不感知节点结构，nodes 字段由前端自定义，
-后端只做全量读写，不校验 nodes 内部结构。
+后端只做存储，不感知节点结构。
+nodes 字段由前端自定义，后端只做全量读写，不校验 nodes 内部结构。
 """
 
 from __future__ import annotations
@@ -28,7 +27,6 @@ from windup_common.result import Response
 from windup_framework.db import get_session
 
 from windup_app.server.workflow_run.schema import (
-    DiffResultOut,
     WorkflowRunCreateRequest,
     WorkflowRunOut,
     WorkflowRunUpdateRequest,
@@ -49,7 +47,6 @@ def create_run(
 ) -> Response[WorkflowRunOut]:
     """创建执行记录。
 
-    修改角色模板时传 parent_run_id，形成版本链。
     nodes 为前端定义的初始节点树（可选）。
     """
     # TODO: service.create_run
@@ -88,18 +85,4 @@ def delete_run(
 ) -> Response[None]:
     """软删除执行记录。"""
     # TODO: service.delete_run
-    raise NotImplementedError
-
-
-@router.post("/{run_id}/diff/{old_run_id}", response_model=Response[DiffResultOut])
-def diff_runs(
-    run_id: int,
-    old_run_id: int,
-    session: Session = Depends(get_session),
-) -> Response[DiffResultOut]:
-    """对比新旧 run，返回差异信息。
-
-    前端可用于判断哪些节点可以复用，哪些需要重新执行。
-    """
-    # TODO: service.diff_runs
     raise NotImplementedError

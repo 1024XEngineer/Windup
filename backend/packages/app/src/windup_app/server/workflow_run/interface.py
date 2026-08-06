@@ -6,7 +6,6 @@ API 层只依赖本模块定义的抽象。具体实现在应用装配层继承�
 ----
 - 存储执行记录（含前端维护的节点树 JSONB）
 - 支持版本管理（修改角色模板 → 新版本 run）
-- 支持跨 run diff（新旧 run 对比）
 
 不做
 ----
@@ -18,7 +17,6 @@ API 层只依赖本模块定义的抽象。具体实现在应用装配层继承�
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
 
 from windup_app.server.workflow_run.model import (
     RunStatus,
@@ -36,14 +34,10 @@ class WorkflowRunService(ABC):
         self,
         *,
         project_id: int,
-        parent_run_id: int | None = None,
-        root_capability: str,
-        root_input: dict | None = None,
         nodes: list | None = None,
     ) -> WorkflowRun:
         """创建执行记录。
 
-        修改角色模板时传 parent_run_id，形成版本链。
         nodes 为前端定义的初始节点树（可选）。
         """
 
@@ -56,7 +50,6 @@ class WorkflowRunService(ABC):
         self,
         run_id: int,
         *,
-        root_output: dict | None = None,
         nodes: list | None = None,
         status: RunStatus | None = None,
     ) -> WorkflowRun:
@@ -68,22 +61,3 @@ class WorkflowRunService(ABC):
     @abstractmethod
     def delete_run(self, run_id: int) -> None:
         """软删除执行记录。"""
-
-    # -- Diff -----------------------------------------------------------------
-
-    @abstractmethod
-    def diff_runs(self, new_run_id: int, old_run_id: int) -> DiffResult:
-        """对比新旧 run，返回差异信息。"""
-
-
-# -- Diff 结果模型 ---------------------------------------------------------
-
-
-@dataclass
-class DiffResult:
-    """跨 run diff 结果。"""
-
-    old_nodes: list = field(default_factory=list)
-    new_nodes: list = field(default_factory=list)
-    root_input_changed: bool = False
-    root_capability_changed: bool = False
