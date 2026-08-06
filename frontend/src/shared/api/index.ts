@@ -48,32 +48,6 @@ export function getApiAccessToken(): string | null | undefined {
   return accessTokenProviders.at(-1)?.()
 }
 
-/**
- * 当前登录用户的 ID 读取函数。
- * 后端多数写接口把 user_id 放在请求体里而不是从 token 推导，所以前端除了 token
- * 之外还要能单独拿到这个 ID；两者都由登录模块持有，这里只保存读取函数。
- */
-export type CurrentUserIdProvider = () => string | null | undefined
-
-const currentUserIdProviders: CurrentUserIdProvider[] = []
-
-/** 注册当前用户 ID 的读取函数；返回值用于模块卸载或测试结束时撤销本次注册。 */
-export function registerCurrentUserIdProvider(provider: CurrentUserIdProvider): () => void {
-  currentUserIdProviders.push(provider)
-  return () => {
-    const index = currentUserIdProviders.lastIndexOf(provider)
-    if (index >= 0) currentUserIdProviders.splice(index, 1)
-  }
-}
-
-/**
- * 读取当前登录用户 ID；登录模块尚未接入时返回 null。
- * 调用方必须按「拿不到就不让写」处理，不允许退回到任何常量 ID。
- */
-export function getCurrentUserId(): string | null {
-  return currentUserIdProviders.at(-1)?.() ?? null
-}
-
 export type ApiErrorKind = 'business' | 'http' | 'invalid-response' | 'network'
 
 /** 后端业务错误与传输错误统一进入这一种前端错误。 */
