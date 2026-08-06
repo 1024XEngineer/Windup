@@ -8,7 +8,7 @@ import logging
 import threading
 from collections import defaultdict
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import event
 from sqlalchemy.orm import Session
@@ -18,6 +18,7 @@ from windup_common.exceptions import BizException
 from windup_common.result import Response
 from windup_framework.db import get_session
 
+from windup_app.server.orchestrator import task_repo
 from windup_app.server.orchestrator.model import (
     CharacterActionInput,
     CharacterImageInput,
@@ -25,6 +26,7 @@ from windup_app.server.orchestrator.model import (
     GenerationTask,
 )
 from windup_app.server.orchestrator.service import service as generation_service
+from windup_app.server.project.service import service as project_service
 
 logger = logging.getLogger("windup.generation.api")
 
@@ -78,7 +80,6 @@ event_bus = _EventBus()
 class CharacterImageGenerateRequest(BaseModel):
     """提交角色图片生成任务。"""
 
-    user_id: int = Field(gt=0)
     project_id: int | None = None
     reference_image_url: str | None = None
     prompt: str = ""
@@ -91,7 +92,6 @@ class CharacterImageGenerateRequest(BaseModel):
 class CharacterActionGenerateRequest(BaseModel):
     """提交角色动作生成任务。"""
 
-    user_id: int = Field(gt=0)
     project_id: int | None = None
     character_id: int = Field(gt=0)
     action_type: ActionType
@@ -149,13 +149,22 @@ def _dispatch_after_commit(session: Session, target, *args) -> None:
         threading.Thread(target=target, args=args, daemon=True).start()
 
 
+def _validate_project_ownership(
+    session: Session, project_id: int | None, user_id: int,
+):
+    """校验项目是否存在且归属当前用户;不存在或不匹配抛 404。"""
+    if project_id is None:
+        return
+    project = project_service.get_project(session, project_id)
+    if project is None or project.user_id != user_id:
+        raise BizException("项目不存在", code=BizCode.NOT_FOUND)
+
+
 def _validate_project_size(session: Session, project_id: int | None, width: int, height: int) -> None:
     """校验输入尺寸与项目约束是否一致;不一致则抛异常。"""
     if project_id is None:
         return
-    from windup_app.server.project.service import SqlAlchemyProjectService
-
-    project = SqlAlchemyProjectService().get_project(session, project_id)
+    project = project_service.get_project(session, project_id)
     if project is None:
         return
     if width != project.sprite_width or height != project.sprite_height:
@@ -172,6 +181,8 @@ def submit_image_generation(
     session: Session = Depends(get_session),
 ) -> Response[GenerationTaskOut]:
     """提交角色图片生成任务:建 PENDING 记录立即返回,实际图生图后台跑。"""
+    user_id = request.state.current_user.id
+    _validate_project_ownership(session, body.project_id, user_id)
     _validate_project_size(session, body.project_id, body.width, body.height)
     input_data = CharacterImageInput(
         reference_image_url=body.reference_image_url,
@@ -182,7 +193,7 @@ def submit_image_generation(
         num_images=body.num_images,
     )
     task = generation_service.generate_character_image(
-        session, user_id=body.user_id, project_id=body.project_id, input=input_data,
+        session, user_id=user_id, project_id=body.project_id, input=input_data,
     )
     # commit 后再启动后台线程,避免任务行未提交时线程读不到记录
     _dispatch_after_commit(session, request.app.state.run_image_task, task.id, input_data, body.project_id)
@@ -196,6 +207,8 @@ def submit_action_generation(
     session: Session = Depends(get_session),
 ) -> Response[GenerationTaskOut]:
     """提交角色动作生成任务:建 PENDING 记录立即返回,实际生成后台跑。"""
+    user_id = request.state.current_user.id
+    _validate_project_ownership(session, body.project_id, user_id)
     input_data = CharacterActionInput(
         character_id=body.character_id,
         action_type=body.action_type,
@@ -205,7 +218,7 @@ def submit_action_generation(
         num_frames=body.num_frames,
     )
     task = generation_service.generate_character_action(
-        session, user_id=body.user_id, project_id=body.project_id, input=input_data,
+        session, user_id=user_id, project_id=body.project_id, input=input_data,
     )
     # commit 后再启动后台线程,避免任务行未提交时线程读不到记录
     _dispatch_after_commit(session, request.app.state.run_action_task, task.id, input_data, body.project_id)
@@ -215,11 +228,12 @@ def submit_action_generation(
 @router.get("/tasks/{task_id}", response_model=Response[GenerationTaskOut])
 def get_task(
     task_id: int,
-    project_id: int = Query(..., gt=0),
+    request: Request,
     session: Session = Depends(get_session),
 ) -> Response[GenerationTaskOut]:
     """查询生成任务状态与结果。"""
-    task = generation_service.get_task(session, project_id, task_id)
+    user_id = request.state.current_user.id
+    task = task_repo.get_task_by_user(session, user_id, task_id)
     if task is None:
         raise BizException("任务不存在", code=BizCode.NOT_FOUND)
     return Response.success(_task_to_out(task))
