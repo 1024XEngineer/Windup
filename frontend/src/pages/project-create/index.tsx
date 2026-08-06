@@ -240,7 +240,7 @@ export function ProjectCreatePage() {
           ) : null}
 
           <footer className="flex flex-wrap items-center justify-between gap-4 border-t border-[#d8dbd4] pt-6">
-            <small className="max-w-sm text-[11px] leading-5 text-[#747973]">
+            <small id="project-create-hint" className="max-w-sm text-[11px] leading-5 text-[#747973]">
               {ownerId
                 ? '创建后进入该项目的资产工作区。'
                 : '登录模块尚未接入，暂时拿不到当前账号，创建入口保持关闭。'}
@@ -248,6 +248,7 @@ export function ProjectCreatePage() {
             <button
               type="submit"
               disabled={submitting || !ownerId}
+              aria-describedby="project-create-hint"
               className="rounded-full bg-[#252825] px-6 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#a4aaa2]"
             >
               {submitting ? '正在创建…' : '创建项目'}
