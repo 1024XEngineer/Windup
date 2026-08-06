@@ -25,3 +25,6 @@ output/
 .ruff_cache/
 .pytest_cache/
 .import_linter_cache/
+
+# 本地数据库初始化脚本
+init.sql
