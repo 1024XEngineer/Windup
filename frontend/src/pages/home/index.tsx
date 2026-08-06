@@ -87,8 +87,9 @@ export function HomePage() {
               />
               {/*
                 画布入口必须先确定角色挂在哪个项目下，所以动作条悬停后分成新建与继续两条。
-                两条现在都落在 /projects 占位页；建项目、建 workflow run 再进
-                /workflow-editor/:runId 的真实链路等后端接口对齐后接上。
+                新建直达创建页；继续先落项目中心选项目，等项目级 WorkflowRun 历史页面就位后
+                再指到那里。两条都还进不了 /workflow-editor/:runId——建 workflow run 需要
+                WorkflowController，它目前只有接口没有实现。
               */}
               <HomeChoiceCard
                 to="/projects"
@@ -98,7 +99,7 @@ export function HomePage() {
                 description="打开工作流画布，逐个节点决定生成什么、留下哪一版。"
                 actionLabel="打开画布"
                 actions={[
-                  { to: '/projects', label: '创建新项目' },
+                  { to: '/projects/new', label: '创建新项目' },
                   { to: '/projects', label: '继续已有项目' },
                 ]}
               />

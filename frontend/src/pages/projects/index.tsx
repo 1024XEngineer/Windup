@@ -76,15 +76,13 @@ export function ProjectsPage() {
               项目隔离角色资产与生成规格；先选项目，再管理其资产。
             </p>
           </div>
-          <button
-            type="button"
+          <Link
+            to="/projects/new"
             aria-label="新建项目"
-            disabled
-            title="新建项目流程不在本模块中"
-            className="cursor-not-allowed rounded-full border border-[#cbd1c8] px-5 py-2.5 text-sm font-semibold text-[#858c84]"
+            className="rounded-full border border-[#cbd1c8] px-5 py-2.5 text-sm font-semibold text-[#3a403a] transition hover:border-[#9da59b] hover:bg-white"
           >
             ＋ 新建项目
-          </button>
+          </Link>
         </header>
 
         {error ? (
@@ -99,7 +97,9 @@ export function ProjectsPage() {
         ) : projectsPage.total === 0 ? (
           <div className="mt-6 rounded-2xl border border-dashed border-[#c9cec6] p-7">
             <h2 className="font-semibold text-[#252a25]">还没有项目</h2>
-            <p className="mt-2 text-sm text-[#6d736c]">完成新建项目流程后，项目会显示在这里。</p>
+            <p className="mt-2 text-sm text-[#6d736c]">
+              从右上角新建一个项目，之后它会显示在这里。
+            </p>
           </div>
         ) : (
           <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
