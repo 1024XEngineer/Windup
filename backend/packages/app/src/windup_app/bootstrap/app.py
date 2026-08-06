@@ -16,10 +16,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from windup_app.server.orchestrator.executor import run_action_task, run_image_task
 from windup_app.web.api.auth import router as auth_router
+from windup_app.web.api.agent import router as ai_router
 from windup_app.web.api.character import router as character_router
 from windup_app.web.api.generation import router as generation_router
 from windup_app.web.api.media import router as media_router
 from windup_app.web.api.project import router as project_router
+from windup_app.web.api.workflow_run import router as workflow_run_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
 from windup_app.web.middleware.auth import AuthMiddleware
 from windup_app.web.middleware.ratelimit import RateLimitMiddleware
@@ -32,16 +34,15 @@ def _env_flag(name: str) -> bool:
 
 
 def _cors_origins() -> list[str]:
-    """允许跨域的前端来源，逗号分隔的 WINDUP_CORS_ORIGINS 覆盖。
+    """允许跨域的前端来源；逗号分隔的 ``WINDUP_CORS_ORIGINS`` 覆盖。
 
-    不配这个中间件的话，浏览器会把前端的**所有**请求拦在预检那一步
-    （OPTIONS 返回 405、响应无 access-control-* 头），后端日志里连请求都看不到。
-    默认值覆盖本地 dev server 与 Vercel 预览域名。
+    4173 是 vite preview（本地跑生产构建），与 dev server 的 5173 不同，两个都要。
     """
     raw = os.getenv("WINDUP_CORS_ORIGINS", "").strip()
     if raw:
         return [o.strip() for o in raw.split(",") if o.strip()]
     return ["http://localhost:5173", "http://127.0.0.1:5173",
+            "http://localhost:4173", "http://127.0.0.1:4173",
             "http://localhost:3000", "http://127.0.0.1:3000"]
 
 
@@ -69,8 +70,9 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
-        allow_origin_regex=r"https://.*\.vercel\.app",
-        allow_credentials=True,
+        # 鉴权走 Authorization 头不走 cookie，故关掉 credentials。
+        # 开着的话配上平台通配正则，等于对该平台任意应用放行带凭证跨域。
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -78,6 +80,8 @@ def create_app() -> FastAPI:
     app.include_router(character_router)
     app.include_router(media_router)
     app.include_router(generation_router)
+    app.include_router(workflow_run_router)
+    app.include_router(ai_router)
 
     # 生成后台调度器注入 app.state
     app.state.run_action_task = run_action_task
