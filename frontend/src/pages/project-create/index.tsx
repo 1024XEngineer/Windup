@@ -90,7 +90,12 @@ export function ProjectCreatePage() {
 
       {/* pt-24 与 PageContainer 同源：给 fixed 顶栏（top-3.5 加最小高 3.625rem）让位，改顶栏尺寸时一起改。 */}
       <section className="bg-white/70 px-6 pb-12 pt-24 sm:px-12 lg:px-16 lg:pb-20 lg:pt-28">
-        <form noValidate onSubmit={submit} className="mx-auto grid max-w-2xl gap-7">
+        <form
+          noValidate
+          onSubmit={submit}
+          onChange={() => setError(null)}
+          className="mx-auto grid max-w-2xl gap-7"
+        >
           <header>
             <p className="font-mono text-[10px] font-semibold tracking-[0.18em] text-[#8b9089]">
               PROJECT SETUP
