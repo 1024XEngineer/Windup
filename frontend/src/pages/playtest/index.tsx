@@ -34,7 +34,7 @@ export function PlaytestPage() {
   const [data, setData] = useState<PageData>(initialPageData)
 
   useEffect(() => {
-    if (characterId === undefined || outfitId === undefined) return
+    if (characterId === undefined) return
 
     let cancelled = false
     setData({ ...initialPageData, loading: true })
@@ -55,7 +55,7 @@ export function PlaytestPage() {
     return () => {
       cancelled = true
     }
-  }, [characterId, outfitId])
+  }, [characterId])
 
   if (characterId === undefined || outfitId === undefined)
     return <PlaytestPageMessage>Playtest 路由参数不完整</PlaytestPageMessage>
@@ -65,7 +65,6 @@ export function PlaytestPage() {
 
   return (
     <PlaytestWorkbench
-      key={initialActionId ?? ''}
       character={data.character}
       outfitId={outfitId}
       initialActionId={initialActionId}

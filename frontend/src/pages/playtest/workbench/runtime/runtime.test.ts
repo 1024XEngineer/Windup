@@ -76,6 +76,30 @@ describe('playtest runtime', () => {
     expect(looped.frameIndex).toBe(0)
   })
 
+  it('clamps zero duration frames inside the playback loop', () => {
+    const zeroDurationActions: readonly PlaytestAction[] = [
+      {
+        id: 'idle',
+        name: '待机',
+        type: 'idle',
+        loop: true,
+        frames: [
+          { imageUrl: '/idle-1.png', durationMs: 0 },
+          { imageUrl: '/idle-2.png', durationMs: 100 },
+        ],
+      },
+    ]
+    const advanced = advanceRuntime(
+      createRuntime(zeroDurationActions, 'idle'),
+      zeroDurationActions,
+      5,
+      { minX: 0, maxX: 0 },
+      0,
+    )
+
+    expect(advanced).toMatchObject({ frameIndex: 1, frameElapsedMs: 4 })
+  })
+
   it('stops a one-shot action on its last frame instead of restarting it', () => {
     const attacking = selectRuntimeAction(createRuntime(actions, null), actions, 'attack')
     const played = [0, 1, 2, 3, 4, 5, 6, 7].reduce(
@@ -84,6 +108,16 @@ describe('playtest runtime', () => {
     )
 
     expect(played.frameIndex).toBe(1)
+  })
+
+  it('keeps the same runtime reference when a stopped one-shot action does not change', () => {
+    const stopped = {
+      ...selectRuntimeAction(createRuntime(actions, null), actions, 'attack'),
+      frameIndex: 1,
+      frameElapsedMs: 150,
+    }
+
+    expect(advanceRuntime(stopped, actions, 50, { minX: 0, maxX: 0 }, 0)).toBe(stopped)
   })
 
   it('keeps every bound action directly selectable without extra playback state', () => {

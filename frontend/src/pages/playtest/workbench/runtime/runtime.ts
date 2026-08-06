@@ -79,6 +79,10 @@ function horizontalAxis(held: PlaytestRuntime['held']): -1 | 0 | 1 {
   return held.left ? -1 : 1
 }
 
+function frameDurationMs(action: PlaytestAction, frameIndex: number): number {
+  return Math.max(1, action.frames[frameIndex]?.durationMs ?? 1)
+}
+
 export function setDirectionInput(
   runtime: PlaytestRuntime,
   actions: readonly PlaytestAction[],
@@ -123,14 +127,24 @@ export function advanceRuntime(
   let frameIndex = Math.min(runtime.frameIndex, lastFrameIndex)
   let frameElapsedMs = runtime.frameElapsedMs + deltaMs
 
-  while (frameElapsedMs >= (action.frames[frameIndex]?.durationMs ?? 1)) {
+  let currentFrameDurationMs = frameDurationMs(action, frameIndex)
+  while (frameElapsedMs >= currentFrameDurationMs) {
     // 非循环动作走到末帧就停住：攻击、跳跃这类一次性动作回到首帧会变成假的循环动画。
     if (!action.loop && frameIndex === lastFrameIndex) {
-      frameElapsedMs = action.frames[lastFrameIndex]?.durationMs ?? 1
+      frameElapsedMs = currentFrameDurationMs
       break
     }
-    frameElapsedMs -= action.frames[frameIndex]?.durationMs ?? 1
+    frameElapsedMs -= currentFrameDurationMs
     frameIndex = (frameIndex + 1) % action.frames.length
+    currentFrameDurationMs = frameDurationMs(action, frameIndex)
+  }
+
+  if (
+    nextX === runtime.x &&
+    frameIndex === runtime.frameIndex &&
+    frameElapsedMs === runtime.frameElapsedMs
+  ) {
+    return runtime
   }
 
   return { ...runtime, x: nextX, frameIndex, frameElapsedMs }
