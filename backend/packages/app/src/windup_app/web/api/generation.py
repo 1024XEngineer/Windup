@@ -1,10 +1,15 @@
 """生成任务 API。"""
 
+from __future__ import annotations
+
+import asyncio
 import dataclasses
+import json
 import logging
 import threading
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import event
 from sqlalchemy.orm import Session
@@ -27,7 +32,48 @@ logger = logging.getLogger("windup.generation.api")
 router = APIRouter(prefix="/generation", tags=["generation"])
 
 
-# ── 请求模型 ─────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# EventBus（任务进度推送）
+# ══════════════════════════════════════════════════════════════════════════════
+
+# 心跳间隔(秒)
+_HEARTBEAT_TIMEOUT = 30.0
+
+# 终态事件
+_TERMINAL_EVENTS = {"completed", "failed"}
+
+
+class _EventBus:
+    """任务进度内存发布-订阅。"""
+
+    def __init__(self) -> None:
+        self._queues: dict[str, list[asyncio.Queue]] = defaultdict(list)
+
+    async def subscribe(self, task_id: int) -> asyncio.Queue:
+        queue: asyncio.Queue = asyncio.Queue()
+        self._queues[str(task_id)].append(queue)
+        return queue
+
+    async def unsubscribe(self, task_id: int, queue: asyncio.Queue) -> None:
+        key = str(task_id)
+        subs = self._queues.get(key)
+        if subs and queue in subs:
+            subs.remove(queue)
+            if not subs:
+                del self._queues[key]
+
+    def publish(self, task_id: int, event: str, data: dict) -> None:
+        for queue in self._queues.get(str(task_id), []):
+            queue.put_nowait((event, data))
+
+
+# 全局实例，挂到 app.state.event_bus
+event_bus = _EventBus()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 请求/响应模型
+# ══════════════════════════════════════════════════════════════════════════════
 
 
 class CharacterImageGenerateRequest(BaseModel):
@@ -54,9 +100,6 @@ class CharacterActionGenerateRequest(BaseModel):
     reference_video_url: str | None = None
     reference_image_urls: list[str] = Field(default_factory=list)
     num_frames: int = 16
-
-
-# ── 响应模型 ─────────────────────────────────────────────────────────────────
 
 
 class GenerationTaskOut(BaseModel):
@@ -91,7 +134,9 @@ def _task_to_out(task: GenerationTask) -> GenerationTaskOut:
     )
 
 
-# ── 端点 ─────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# 端点
+# ══════════════════════════════════════════════════════════════════════════════
 
 
 def _dispatch_after_commit(session: Session, target, *args) -> None:

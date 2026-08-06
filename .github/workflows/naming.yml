@@ -17,7 +17,7 @@ jobs:
   # ── 命名规范门禁 ─────────────────────────────────────────────
   # 分支名:<type>/<description>,如 feat/login、fix/redirect、docs/api
   # 提交信息:Conventional Commits,<type>(<scope>)?: <描述>
-  # 长期分支(main/develop/release/*)与无斜杠的扁平分支名豁免;
+  # 长期分支(main/develop/release/*)、FennoAI 托管分支与无斜杠的扁平分支名豁免;
   # 上游 squash-merge 提交(结尾 (#NN))豁免--贡献者无法改写上游历史。
   validate-branch:
     name: Branch name
@@ -41,6 +41,7 @@ jobs:
           case "$branch" in
             main|master|develop) echo "豁免(长期分支): $branch"; exit 0 ;;
             release/*|hotfix/*)  echo "豁免(release/hotfix): $branch"; exit 0 ;;
+            fennoai/*)           echo "豁免(FennoAI 托管分支): $branch"; exit 0 ;;
           esac
           # 无斜杠的扁平分支名豁免(如 backend-architecture、upstream-sync)
           case "$branch" in
