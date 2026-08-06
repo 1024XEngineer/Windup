@@ -15,6 +15,8 @@
 
 `ProjectOut` 的 `user_id`、`workflow_id`、`project_name`、`character_perspective`、`directional_movement`、精灵宽高、画风、参考图和时间字段，均在 `entities/project` 内显式映射为 camelCase。PR #75 没有项目更新端点，因此前端不声明 `ProjectApis.update`。
 
+`POST /projects` 把 `user_id` 放在请求体里，不从 token 推导，所以前端除 token 外还需要单独拿到当前用户 ID。该值由 `shared/api` 的 `getCurrentUserId()` 提供；登录模块尚未接入，没有人注册来源时 `/projects/new` 的创建入口保持禁用，不使用占位 ID。
+
 后端枚举按下表映射：
 
 | 后端值 | `character_perspective` | `directional_movement` |
@@ -54,7 +56,6 @@ Outfit、Action、Frame 没有独立端点。`outfit.characterId` 与 `action.ou
 
 ## 二、本轮明确不实现
 
-- 新建项目流程：只保留禁用入口，后续单独实现。
 - Workflow Editor 与生成流程：不在 Projects / 资产库模块内创建弹窗或复制生成逻辑。
 - Action Template：后端没有模块、存储或 HTTP 接口，只保留带原因的禁用入口。
 - 导出：PR #75 没有导出接口；PR #97 是尚未接入资产页的前端打包实现，只保留带原因的禁用入口。
