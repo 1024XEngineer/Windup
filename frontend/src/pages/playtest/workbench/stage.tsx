@@ -71,9 +71,11 @@ export function PlaytestStage({ frame, x, facing, onBoundsChange }: PlaytestStag
           aria-hidden="true"
           draggable={false}
           onLoad={measureBounds}
-          className="pointer-events-none absolute left-1/2 w-[clamp(150px,22vw,256px)] -translate-x-1/2 select-none object-contain [image-rendering:pixelated] drop-shadow-[0_14px_9px_rgba(27,25,20,0.18)] will-change-transform"
+          className="pointer-events-none absolute left-1/2 w-[clamp(150px,22vw,256px)] select-none object-contain [image-rendering:pixelated] drop-shadow-[0_14px_9px_rgba(27,25,20,0.18)] will-change-transform"
           style={{
             bottom: 'calc(50% - 18px)',
+            // 居中和位移合并在这一处。Tailwind v4 的 -translate-x-1/2 走独立的 translate 属性，
+            // 与 transform 叠加而不是覆盖，两处都写会让静止位置左偏半个精灵宽。
             transform: `translate3d(calc(-50% + ${x}px), 0, 0) scaleX(${facing})`,
           }}
         />
