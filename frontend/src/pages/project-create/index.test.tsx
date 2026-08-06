@@ -116,4 +116,54 @@ describe('ProjectCreatePage', () => {
     await waitFor(() => expect(creationRequests(backend).length).toBeGreaterThan(0))
     expect(creationRequests(backend)).toHaveLength(1)
   })
+  it('名称留空时在提交前拦下', async () => {
+    const backend = installBackend()
+    signIn()
+    renderProjectCreate()
+
+    fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
+
+    expect((await screen.findByRole('alert')).textContent).toBe('请填写项目名称')
+    expect(creationRequests(backend)).toHaveLength(0)
+  })
+
+  it('精灵宽高越界时在提交前拦下', async () => {
+    const backend = installBackend()
+    signIn()
+    renderProjectCreate()
+
+    fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '雾港来信' } })
+    fireEvent.change(screen.getByLabelText('宽度（像素）'), { target: { value: '16' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
+
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      '精灵宽高需要是 32 到 2048 之间的整数',
+    )
+    expect(creationRequests(backend)).toHaveLength(0)
+  })
+
+  it('传输失败时收敛成一句统一文案', async () => {
+    installBackend()
+    vi.stubGlobal('fetch', () => Promise.reject(new TypeError('offline')))
+    signIn()
+    renderProjectCreate()
+
+    fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '雾港来信' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
+
+    expect((await screen.findByRole('alert')).textContent).toBe('项目暂时无法创建')
+  })
+
+  it('改动任一字段后撤掉上一次的错误', async () => {
+    installBackend()
+    signIn()
+    renderProjectCreate()
+
+    fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
+    expect(await screen.findByRole('alert')).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '雾港来信' } })
+
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
 })
