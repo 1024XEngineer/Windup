@@ -7,6 +7,19 @@
 #   重新构建: docker compose up -d --build
 
 services:
+  # ── Redis 缓存（验证码 / refresh_token） ──
+  redis:
+    image: redis:7-alpine
+    container_name: windup-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - windup-net
+
   # ── PostgreSQL 数据库 ──
   postgres:
     image: postgres:16-alpine
@@ -39,7 +52,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
+      # Redis（验证码 / refresh_token）
+      REDIS_URL: redis://redis:6379/0
       # 数据库连接（容器内部通信用 postgres 主机名，端口 5432）
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
