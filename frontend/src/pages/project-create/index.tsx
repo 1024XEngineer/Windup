@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 
 import {
@@ -39,10 +39,12 @@ export function ProjectCreatePage() {
   const [gameStyle, setGameStyle] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** 同一批事件里 submitting 还是上一次 render 的值，按钮变灰之前的重复提交只能靠这个挡。 */
+  const inFlight = useRef(false)
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (submitting || !ownerId) return
+    if (inFlight.current || !ownerId) return
 
     const trimmedName = name.trim()
     const width = Number(spriteWidth)
@@ -54,6 +56,7 @@ export function ProjectCreatePage() {
       return setError(`精灵宽高需要是 ${SPRITE_MIN} 到 ${SPRITE_MAX} 之间的整数`)
     }
 
+    inFlight.current = true
     setSubmitting(true)
     setError(null)
     try {
@@ -71,6 +74,7 @@ export function ProjectCreatePage() {
       setError(
         cause instanceof ApiError && cause.kind === 'business' ? cause.message : '项目暂时无法创建',
       )
+      inFlight.current = false
       setSubmitting(false)
     }
   }
