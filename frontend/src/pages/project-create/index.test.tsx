@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 
 import { AppRoutes } from '@/app'
-import { registerCurrentUserIdProvider } from '@/shared/api'
+import { registerApiAccessTokenProvider } from '@/shared/api'
 import { createProjectAssetsBackend } from '@/test/project-assets-backend'
 
 const revokeProviders: Array<() => void> = []
@@ -23,9 +23,9 @@ function installBackend() {
   return backend
 }
 
-/** 登录模块尚未落地，测试里用同一个 provider 边界冒充已登录用户。 */
-function signIn(ownerId = '7') {
-  revokeProviders.push(registerCurrentUserIdProvider(() => ownerId))
+/** 登录模块尚未落地，测试里用同一个 provider 边界冒充已签发的 access token。 */
+function signIn(accessToken = 'access-token-for-test') {
+  revokeProviders.push(registerApiAccessTokenProvider(() => accessToken))
 }
 
 function renderProjectCreate() {
@@ -57,8 +57,9 @@ describe('ProjectCreatePage', () => {
 
     expect(await screen.findByRole('heading', { name: '角色' })).toBeTruthy()
     const [request] = creationRequests(backend)
-    expect(await request.json()).toMatchObject({
-      user_id: 7,
+    expect(request.headers.get('authorization')).toBe('Bearer access-token-for-test')
+    const body = (await request.json()) as Record<string, unknown>
+    expect(body).toMatchObject({
       project_name: '雾港来信',
       character_perspective: 2,
       directional_movement: 3,
@@ -66,9 +67,11 @@ describe('ProjectCreatePage', () => {
       sprite_height: 512,
       game_style: '低饱和像素绘本',
     })
+    // 归属由后端从 JWT 取；请求体再带 user_id 就等于宣称可以替别人建项目。
+    expect(Object.hasOwn(body, 'user_id')).toBe(false)
   })
 
-  it('没有当前用户来源时禁用创建并说明原因', async () => {
+  it('没有登录凭证时禁用创建并说明原因', async () => {
     const backend = installBackend()
     renderProjectCreate()
 

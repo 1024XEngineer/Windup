@@ -16,9 +16,12 @@ export interface Project {
   updatedAt: string
 }
 
-/** 后端创建 Project 需要的完整字段；创建流程本身不属于资产库页面。 */
+/**
+ * 后端创建 Project 需要的完整字段。
+ * 这里没有 ownerId：归属由后端从 access token 里取（`ProjectCreate` 不含 user_id），
+ * 请求体再带一个用户 ID 就等于宣称调用方可以替别人建项目。
+ */
 export interface CreateProjectInput {
-  ownerId: string
   workflowId?: string | null
   name: string
   perspective: CharacterPerspective
@@ -163,7 +166,6 @@ export const projectApis: ProjectApis = {
     const dto = await getApiClient().request<ProjectDto>('/projects', {
       method: 'POST',
       json: {
-        user_id: toBackendId(input.ownerId, 'ownerId'),
         workflow_id:
           input.workflowId === undefined
             ? undefined

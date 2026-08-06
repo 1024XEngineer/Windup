@@ -206,7 +206,6 @@ export function createProjectAssetsBackend({
 
     if (request.method === 'POST' && url.pathname === '/projects') {
       const body = (await request.json()) as {
-        user_id: number
         workflow_id?: number | null
         project_name: string
         character_perspective: number
@@ -223,7 +222,8 @@ export function createProjectAssetsBackend({
       }
       const created = {
         id: 4_242,
-        user_id: body.user_id,
+        // 后端从 access token 取归属，请求体里没有 user_id；这里跟 fixture 用同一个用户。
+        user_id: 7,
         workflow_id: body.workflow_id ?? null,
         project_name: body.project_name,
         character_perspective: body.character_perspective,

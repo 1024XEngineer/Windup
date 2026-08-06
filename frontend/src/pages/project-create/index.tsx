@@ -8,7 +8,7 @@ import {
   type CharacterPerspective,
   type DirectionalMovement,
 } from '@/entities'
-import { ApiError, getCurrentUserId } from '@/shared/api'
+import { ApiError, getApiAccessToken } from '@/shared/api'
 import { ProjectCreatePixelMark } from './pixel-mark'
 
 /**
@@ -37,7 +37,12 @@ const GAME_STYLE_MAX_LENGTH = 240
 /** 创建真实项目；首页画布入口与项目中心的新建按钮共用这一页。 */
 export function ProjectCreatePage() {
   const navigate = useNavigate()
-  const ownerId = getCurrentUserId()
+  /**
+   * 能不能建项目只取决于有没有登录：后端 `/projects` 不在鉴权白名单里，
+   * 归属也从 access token 里取。登录模块尚未接入时没有人注册 provider，
+   * 这里拿到 null，入口保持禁用并写明原因，不塞占位值让它看起来能用。
+   */
+  const signedIn = Boolean(getApiAccessToken())
 
   const [name, setName] = useState('')
   const [perspective, setPerspective] = useState<CharacterPerspective>('side')
@@ -52,7 +57,7 @@ export function ProjectCreatePage() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (inFlight.current || !ownerId) return
+    if (inFlight.current || !signedIn) return
 
     const trimmedName = name.trim()
     const width = Number(spriteWidth)
@@ -69,7 +74,6 @@ export function ProjectCreatePage() {
     setError(null)
     try {
       const project = await projectApis.create({
-        ownerId,
         name: trimmedName,
         perspective,
         directionalMovement,
@@ -254,13 +258,13 @@ export function ProjectCreatePage() {
               id="project-create-hint"
               className="max-w-sm text-[11px] leading-5 text-[#747973]"
             >
-              {ownerId
+              {signedIn
                 ? '创建后进入该项目的资产工作区。'
-                : '登录模块尚未接入，暂时拿不到当前账号，创建入口保持关闭。'}
+                : '创建项目需要先登录。登录模块尚未接入，创建入口暂时保持关闭。'}
             </small>
             <button
               type="submit"
-              disabled={submitting || !ownerId}
+              disabled={submitting || !signedIn}
               aria-describedby="project-create-hint"
               className="rounded-full bg-[#252825] px-6 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#a4aaa2]"
             >

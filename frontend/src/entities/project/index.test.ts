@@ -82,7 +82,6 @@ describe('projectApis', () => {
     })
 
     await projectApis.create({
-      ownerId: '7',
       workflowId: '9',
       name: '点灯人',
       perspective: 'isometric',
@@ -93,8 +92,8 @@ describe('projectApis', () => {
     })
 
     expect(request?.method).toBe('POST')
+    // 请求体不含 user_id：归属由后端从 access token 取，见 CreateProjectInput 的注释。
     await expect(request?.json()).resolves.toEqual({
-      user_id: 7,
       workflow_id: 9,
       project_name: '点灯人',
       character_perspective: 3,
