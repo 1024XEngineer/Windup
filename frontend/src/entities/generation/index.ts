@@ -10,8 +10,8 @@ import type { MediaReference } from '../media'
  */
 
 /**
- * 后端 GenerationTask.status，与 WorkflowRevision.generationStatus 不是一回事：
- * 这里是单次生成任务的状态，那里是一个版本在生成阶段的汇总状态。
+ * 后端 GenerationTask.status，与 WorkflowNode.status 不是一回事：
+ * 这里是单次生成任务的状态，那里是一个卡片的前端流程状态。
  * pending 表示已提交但尚未执行。
  */
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed'
@@ -102,7 +102,7 @@ export type GenerationResultFor<T extends GenerationInput> =
  * 它是服务端的资源，不是一次「调用能力」——前端创建它，然后订阅或轮询它的状态。
  *
  * TType 在调用边界已知时保留精确类型；按 ID 恢复时用默认值，等运行时解析后再收窄。
- * 完成不代表工作流节点已通过，节点状态由 WorkflowStep 自己判定。
+ * 完成不代表工作流节点已通过，节点状态由 WorkflowNode 自己判定。
  */
 export interface Generation<TType extends GenerationType = GenerationType> {
   id: string

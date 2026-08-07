@@ -1,67 +1,56 @@
-import type {
-  CreateWorkflowRunInput,
-  WorkflowRevision,
-  WorkflowRun,
-  WorkflowStep,
-} from '@/entities'
+import type { CreateWorkflowRunInput, WorkflowNode, WorkflowRun } from '@/entities'
 
-/** 更新当前 Revision 中某个步骤的业务数据。 */
-export interface UpdateWorkflowStepInput {
-  stepId: WorkflowStep['id']
+/** 更新工作流图中某个节点的业务数据。 */
+export interface UpdateWorkflowNodeInput {
+  nodeId: WorkflowNode['id']
   data: unknown
 }
 
-/** 从指定 Revision 的指定步骤建立新的执行版本。 */
-export interface RestartWorkflowFromStepInput {
-  revisionId: WorkflowRevision['id']
-  stepId: WorkflowStep['id']
+/** 从指定节点重做；旧结果会被覆盖，不创建 Revision。 */
+export interface RestartWorkflowFromNodeInput {
+  nodeId: WorkflowNode['id']
 }
 
-/** 把某次服务端调用的结果写回目标步骤。 */
+/** 把某次服务端调用的结果写回目标节点。 */
 export interface ApplyServerResultInput {
-  /** 发起请求时所属的 Revision，防止旧的异步结果污染重启后的新版本。 */
-  revisionId: WorkflowRevision['id']
-  stepId: WorkflowStep['id']
+  nodeId: WorkflowNode['id']
+  /** 必须仍是目标节点当前关联的任务，防止重做前的晚到结果覆盖新结果。 */
+  taskId: string
   result: unknown
 }
 
 /**
  * Quick Start 与手动工作流共用的流程推进边界，不含界面。
- * 两套界面共享同一套流程：手动模式一次推进一步，Quick Start 连续推进到终点。
+ * 两套界面共享同一张节点图：手动模式由用户逐个推进，Quick Start 自动连续推进。
  *
- * Controller 围绕同一份 WorkflowRun 提供推进、更新、重启和中断。这些操作依赖同一份
- * 步骤数据，不拆成互不共享状态的独立模块。
- *
- * 步骤和运行状态由前端管理；服务端只提供生成能力，并持久化最终确认的资产。
+ * 节点和边由前端管理；服务端提供生成能力，并原样持久化 WorkflowRun.nodes。
+ * 节点能否推进由 dependsOnNodeIds 指向的前置节点状态决定，不依赖数组位置。
  */
 export interface WorkflowController {
-  /** 初始化一条创建角色或增加动作的流程。 */
+  /** 初始化一条节点图。 */
   create(input: CreateWorkflowRunInput): Promise<WorkflowRun>
 
-  /** 读取当前维护的完整流程快照。 */
+  /** 读取当前维护的完整流程。 */
   getWorkflow(): WorkflowRun
 
-  /** 按前端规则完成当前步骤并进入下一步；需要服务端时创建对应的 generation。 */
-  nextStep(): Promise<WorkflowRun>
+  /** 推进指定节点；无依赖关系的多个 Action 节点可以并行。 */
+  advanceNode(nodeId: WorkflowNode['id']): Promise<WorkflowRun>
 
-  /** 连续推进到终点，Quick Start 使用。 */
+  /** 连续推进所有当前可用节点到终点，Quick Start 使用。 */
   runToCompletion(): Promise<WorkflowRun>
 
-  /** 更新指定步骤的数据；页面不绕过 Controller 直接改流程状态。 */
-  updateStep(input: UpdateWorkflowStepInput): Promise<WorkflowRun>
+  /** 更新指定节点的数据；页面不绕过 Controller 直接改流程状态。 */
+  updateNode(input: UpdateWorkflowNodeInput): Promise<WorkflowRun>
 
   /**
-   * 把服务端返回的结果写回目标步骤。
-   * 目标 Revision 已被重启取代时丢弃该结果，不写入新的执行线。
+   * 把服务端返回的结果写回目标节点。
+   * taskId 已不再属于目标节点时丢弃结果，避免旧请求污染重做后的状态。
    */
   applyServerResult(input: ApplyServerResultInput): Promise<WorkflowRun>
 
-  /**
-   * 从历史步骤开出新的执行线。
-   * 旧 Revision 保留为只读历史，不会被改写成失败或完成。
-   */
-  restartFromStep(input: RestartWorkflowFromStepInput): Promise<WorkflowRun>
+  /** 从指定节点重做并覆盖其旧结果；后端不提供 Revision 历史。 */
+  restartFromNode(input: RestartWorkflowFromNodeInput): Promise<WorkflowRun>
 
-  /** 用户主动停止自动推进；历史保留，不等于失败或完成。 */
+  /** 用户主动停止自动推进；已完成节点保留，不等于失败或完成。 */
   interrupt(): Promise<WorkflowRun>
 }

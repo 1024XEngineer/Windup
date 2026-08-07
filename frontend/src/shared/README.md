@@ -26,6 +26,6 @@
 
 - Project、Character、Generation、WorkflowRun 等业务数据
 - `ProjectApis`、`CharacterApis` 这类业务接口集合
-- 流程的推进、重启、中断和 Revision 规则
+- 流程的推进、重做、中断和异步结果防串线规则
 - 为开发与生产各维护一套实现的切换机制
 - 只被单个页面或模块使用、却以「复用」名义提前抽出的代码

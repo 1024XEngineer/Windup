@@ -27,7 +27,7 @@ export { characterApis } from './character'
 /* 动作模板 —— 能跨角色复用的配方 */
 export type { ActionTemplate, ActionTemplateApis } from './action-template'
 
-/* 生成 —— 业务数据，不是「调用生成能力」；后端的 task 就是它，不另立实体 */
+/* 生成 —— 业务数据，不是「调用生成能力」 */
 export type {
   CharacterTemplateGenerationInput,
   CharacterTemplateGenerationResult,
@@ -49,19 +49,21 @@ export type {
 /* 媒体引用 —— 不承诺 URL 或后端 Media ID 的具体表示 */
 export type { MediaReference } from './media'
 
-/* 工作流 —— 节点与运行状态都由前端管理 */
-export { WORKFLOW_STEP_ORDER } from './workflow-run'
+/* 工作流 —— 前端管理节点，后端只持久化完整 nodes 文档 */
+export { workflowRunApis } from './workflow-run'
 export type {
+  ActionWorkflowNode,
+  CharacterWorkflowNode,
   CreateWorkflowRunInput,
-  ExportStatus,
-  GenerationStatus,
-  WorkflowDriver,
-  WorkflowStep,
-  WorkflowStepStatus,
-  WorkflowStepType,
-  WorkflowRevision,
-  WorkflowRevisionStatus,
+  WorkflowActionInput,
+  WorkflowCharacterInput,
+  WorkflowGenerationRef,
+  WorkflowGenerationRole,
+  WorkflowNode,
+  WorkflowNodePhase,
+  WorkflowNodeStatus,
+  WorkflowNodeType,
+  WorkflowRunApis,
+  WorkflowRunStorageStatus,
   WorkflowRun,
-  WorkflowRunPurpose,
-  WorkflowRunStatus,
 } from './workflow-run'
