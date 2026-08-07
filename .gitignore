@@ -17,6 +17,7 @@ venv/
 # 敏感配置(切勿提交)
 .env
 .env.*
+!.env.example
 
 # Docker 数据
 data/
