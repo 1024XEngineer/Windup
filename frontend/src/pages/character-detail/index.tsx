@@ -287,7 +287,7 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
                     type="button"
                     aria-label={`重新生成${selectedAction.name}`}
                     disabled
-                    title="需要原 WorkflowRun 的版本与步骤上下文"
+                    title="需要原 WorkflowRun 的版本与节点上下文"
                     className="cursor-not-allowed rounded-full border border-[#d8dcd5] px-3 py-1.5 text-xs font-semibold text-[#959b94]"
                   >
                     重新生成

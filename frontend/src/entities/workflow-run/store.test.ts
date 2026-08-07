@@ -1,40 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { WORKFLOW_STEP_ORDER } from './constants'
-import type { WorkflowRun, WorkflowStep } from './index'
-import {
-  createWorkflowRunStore,
-  WORKFLOW_RUN_STORAGE_KEY,
-  WORKFLOW_RUN_STORAGE_VERSION,
-} from './store'
+import { WORKFLOW_NODE_ORDER } from './constants'
+import type { WorkflowRun, WorkflowNode } from './index'
+import { createWorkflowRunStore } from './store'
 
-class TestStorage {
-  value: string | null
-  failOnSet = false
-
-  constructor(value: string | null = null) {
-    this.value = value
-  }
-
-  getItem(): string | null {
-    return this.value
-  }
-
-  setItem(_key: string, value: string): void {
-    if (this.failOnSet) throw new Error('storage unavailable')
-    this.value = value
-  }
-}
-
-function createSteps(): WorkflowStep[] {
-  return WORKFLOW_STEP_ORDER.map((type, index) => {
+function createNodes(): WorkflowNode[] {
+  return WORKFLOW_NODE_ORDER.map((type, index) => {
     const common = {
-      id: `revision-1:${type}`,
+      id: `run-1:${type}`,
       status: index === 0 ? ('active' as const) : ('locked' as const),
       taskId: null,
       submissionId: null,
       error: null,
-      referenceStepIds: [],
     }
     if (type === 'character-setup') {
       return {
@@ -47,7 +24,7 @@ function createSteps(): WorkflowStep[] {
     if (type === 'character-template') {
       return { ...common, type, input: null, output: null }
     }
-    return { ...common, type, input: null, output: null } as WorkflowStep
+    return { ...common, type, input: null, output: null } as WorkflowNode
   })
 }
 
@@ -58,346 +35,296 @@ function createRun(id = 'run-1'): WorkflowRun {
     characterId: null,
     outfitId: null,
     purpose: 'create_character',
-    driver: 'ai',
     status: 'active',
-    currentRevisionId: 'revision-1',
-    revisions: [
-      {
-        id: 'revision-1',
-        basedOnRevisionId: null,
-        restartStepId: null,
-        status: 'active',
-        steps: createSteps(),
-        generationStatus: 'not_started',
-        exportStatus: 'not_exported',
-        createdAt: '2026-07-30T12:00:00.000Z',
-      },
-    ],
+    nodes: createNodes(),
+    generationStatus: 'not_started',
+    exportStatus: 'not_exported',
     prompt: 'Create a slime',
+    createdAt: '2026-07-30T12:00:00.000Z',
   }
 }
 
-function createLegacyRun(): unknown {
-  const run = createRun()
-  const revision = run.revisions[0]
-  if (!revision) throw new Error('Expected a revision')
+/** 后端响应包装：Response<T> { code, message, data: T } */
+function wrapResponse<T>(data: T) {
+  return { code: 0, message: 'ok', data }
+}
 
-  const [characterSetup, characterTemplate, templateCandidate, actionGeneration, review] =
-    revision.steps
-  if (!characterSetup || !characterTemplate || !templateCandidate || !actionGeneration || !review) {
-    throw new Error('Expected the five current workflow steps')
-  }
-
+/** 前端 WorkflowRun → 后端 nodes[0] 载荷。与 store._toNodePayload 保持一致。 */
+function packNodes(run: WorkflowRun): Record<string, unknown> {
   return {
-    ...run,
-    revisions: [
-      {
-        ...revision,
-        steps: [
-          characterSetup,
-          characterTemplate,
-          templateCandidate,
-          { ...actionGeneration, id: 'revision-1:action-setup', type: 'action-setup' },
-          { ...actionGeneration, id: 'revision-1:first-frame', type: 'first-frame' },
-          { ...actionGeneration, id: 'revision-1:complete-animation', type: 'complete-animation' },
-          review,
-          { ...review, id: 'revision-1:export', type: 'export' },
-        ],
-      },
-    ],
+    projectId: run.projectId,
+    characterId: run.characterId,
+    outfitId: run.outfitId,
+    purpose: run.purpose,
+    status: run.status,
+    nodes: run.nodes,
+    generationStatus: run.generationStatus,
+    exportStatus: run.exportStatus,
+    prompt: run.prompt,
+    createdAt: run.createdAt,
   }
 }
 
-function createRestartedRun(): WorkflowRun {
-  const source = createRun()
-  const sourceRevision = source.revisions[0]!
-  const sourceSteps = sourceRevision.steps.map((step) =>
-    step.type === 'character-setup' || step.type === 'character-template'
-      ? { ...step, status: 'passed' as const }
-      : step.type === 'template-candidate'
-        ? { ...step, status: 'active' as const }
-        : step,
-  )
-  const restartedSteps = sourceSteps.map((step, index) => {
-    const common = {
-      ...step,
-      id: `revision-2:${step.type}`,
-      taskId: null,
-      submissionId: null,
-      error: null,
-    }
-    if (index === 0) return { ...common, status: 'passed' as const, referenceStepIds: [step.id] }
-    if (index === 1) {
-      return {
-        ...common,
-        status: 'active' as const,
-        output: null,
-        referenceStepIds: [step.id],
+const BASE = '/workflow-runs'
+
+function createMockApi() {
+  // 后端内部使用前端 string ID 索引（保持简单）；
+  // 响应时仍返回整数 ID，由被测 _fromBackend 转换回 string。
+  const runs = new Map<string, WorkflowRun>()
+  let nextNumericId = 1
+
+  const fetch = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.url
+    const method = init?.method ?? 'GET'
+
+    // POST /workflow-runs → create
+    if (method === 'POST' && url === BASE) {
+      const body = JSON.parse((init?.body as string) ?? '{}')
+      const node = body.nodes?.[0] ?? {}
+      const runId = `run-${nextNumericId}`
+      const run: WorkflowRun = {
+        id: runId,
+        // projectId 优先从 nodes 取（保留原始前端 string 值），回退到 project_id
+        projectId:
+          (node.projectId as string) ?? String(body.project_id ?? ''),
+        characterId: node.characterId ?? null,
+        outfitId: node.outfitId ?? null,
+        purpose: node.purpose ?? 'create_character',
+        status: node.status ?? 'active',
+        nodes: node.nodes ?? [],
+        generationStatus: node.generationStatus ?? 'not_started',
+        exportStatus: node.exportStatus ?? 'not_exported',
+        prompt: node.prompt ?? null,
+        createdAt: node.createdAt ?? new Date().toISOString(),
       }
-    }
-    return { ...common, status: 'locked' as const, input: null, output: null, referenceStepIds: [] }
-  }) as WorkflowStep[]
-
-  return {
-    ...source,
-    currentRevisionId: 'revision-2',
-    revisions: [
-      { ...sourceRevision, status: 'abandoned', steps: sourceSteps },
-      {
-        id: 'revision-2',
-        basedOnRevisionId: 'revision-1',
-        restartStepId: 'revision-1:character-template',
+      runs.set(runId, run)
+      return wrapResponse({
+        id: nextNumericId++,
+        project_id: body.project_id,
+        nodes: [packNodes(run)],
         status: 'active',
-        steps: restartedSteps,
-        generationStatus: 'not_started',
-        exportStatus: 'not_exported',
-        createdAt: '2026-07-31T03:00:00.000Z',
-      },
-    ],
-  }
+        version: 1,
+      })
+    }
+
+    // GET /workflow-runs → list all (getByCharacter 回退)
+    if (method === 'GET' && url === BASE) {
+      return wrapResponse(
+        [...runs.entries()].map(([rid, run]) => ({
+          id: Number(rid.split('-')[1] ?? rid),
+          project_id: Number(run.projectId.split('-')[1] ?? run.projectId),
+          nodes: [packNodes(run)],
+          status: 'active',
+          version: 1,
+        })),
+      )
+    }
+
+    // GET /workflow-runs?project_id=X → list by project
+    // GET /workflow-runs?characterId=X → list by character
+    if (method === 'GET' && url.startsWith(`${BASE}?`)) {
+      const params = new URLSearchParams(url.split('?')[1])
+      const characterId = params.get('characterId')
+      const projectId = params.get('project_id')
+      const all = [...runs.entries()]
+        .filter(([, r]) => {
+          if (characterId) return r.characterId === characterId
+          if (projectId) return r.projectId === projectId
+          return true
+        })
+        .map(([rid, run]) => ({
+          id: Number(rid.split('-')[1] ?? rid),
+          project_id: Number(run.projectId.split('-')[1] ?? run.projectId),
+          nodes: [packNodes(run)],
+          status: 'active',
+          version: 1,
+        }))
+      return wrapResponse(all)
+    }
+
+    // GET /workflow-runs/{id} → get by ID
+    if (method === 'GET' && url.startsWith(`${BASE}/`)) {
+      const numericId = url.split('/').pop()!
+      const runId = `run-${numericId}`
+      const run = runs.get(runId)
+      if (!run) throw Object.assign(new Error('Not Found'), { status: 404 })
+      return wrapResponse({
+        id: Number(numericId),
+        project_id: Number(run.projectId.split('-')[1] ?? run.projectId),
+        nodes: [packNodes(run)],
+        status: 'active',
+        version: 1,
+      })
+    }
+
+    // PATCH /workflow-runs/{id} → update
+    if (method === 'PATCH' && url.startsWith(`${BASE}/`)) {
+      const numericId = url.split('/').pop()!
+      const runId = `run-${numericId}`
+      if (!runs.has(runId))
+        throw Object.assign(new Error('Not Found'), { status: 404 })
+      const body = JSON.parse((init?.body as string) ?? '{}')
+      const node = body.nodes?.[0] ?? {}
+      const existing = runs.get(runId)!
+      const updated: WorkflowRun = {
+        id: runId,
+        projectId: String(body.project_id ?? existing.projectId),
+        characterId:
+          node.characterId !== undefined
+            ? node.characterId
+            : existing.characterId,
+        outfitId:
+          node.outfitId !== undefined ? node.outfitId : existing.outfitId,
+        purpose: node.purpose ?? existing.purpose,
+        status: node.status ?? existing.status,
+        nodes: node.nodes ?? existing.nodes,
+        generationStatus:
+          node.generationStatus ?? existing.generationStatus,
+        exportStatus: node.exportStatus ?? existing.exportStatus,
+        prompt: node.prompt !== undefined ? node.prompt : existing.prompt,
+        createdAt: node.createdAt ?? existing.createdAt,
+      }
+      runs.set(runId, updated)
+      return wrapResponse({
+        id: Number(numericId),
+        project_id: Number(updated.projectId.split('-')[1] ?? updated.projectId),
+        nodes: [packNodes(updated)],
+        status: 'active',
+        version: 1,
+      })
+    }
+
+    throw Object.assign(new Error('Not Found'), { status: 404 })
+  })
+
+  return { runs, fetch }
 }
 
 describe('createWorkflowRunStore', () => {
-  it('lists cloned snapshots and notifies whole-store subscribers', () => {
-    const store = createWorkflowRunStore({ storage: null })
-    const listener = vi.fn()
-    const unsubscribe = store.subscribeAll(listener)
+  it('creates a run and returns the server-persisted snapshot', async () => {
+    const api = createMockApi()
+    const store = createWorkflowRunStore({ api })
 
-    store.save(createRun('run-1'))
-    store.save(createRun('run-2'))
-
-    expect(store.list().map((run) => run.id)).toEqual(['run-1', 'run-2'])
-    expect(listener).toHaveBeenLastCalledWith([
-      expect.objectContaining({ id: 'run-1' }),
-      expect.objectContaining({ id: 'run-2' }),
-    ])
-    unsubscribe()
-    store.save(createRun('run-3'))
-    expect(listener).toHaveBeenCalledTimes(2)
-  })
-  it('stores a versioned snapshot and returns defensive clones', () => {
-    const storage = new TestStorage()
-    const store = createWorkflowRunStore({ storage })
-    const source = createRun()
-
-    store.save(source)
-    source.prompt = 'mutated outside'
-
-    const firstRead = store.get(source.id)
-    expect(firstRead?.prompt).toBe('Create a slime')
-
-    firstRead!.revisions[0].steps[0].status = 'failed'
-    expect(store.get(source.id)?.revisions[0].steps[0].status).toBe('active')
-
-    expect(JSON.parse(storage.value!)).toEqual({
-      version: WORKFLOW_RUN_STORAGE_VERSION,
-      runs: [createRun()],
+    const run = await store.create({
+      projectId: 'project-1',
+      purpose: 'create_character',
+      prompt: 'A fire dragon',
     })
-  })
 
-  it('hydrates valid runs from localStorage', () => {
-    const run = createRun()
-    const storage = new TestStorage(
-      JSON.stringify({
-        version: WORKFLOW_RUN_STORAGE_VERSION,
-        runs: [run],
-      }),
+    expect(run.id).toBeTruthy()
+    expect(run.prompt).toBe('A fire dragon')
+    expect(run.purpose).toBe('create_character')
+    expect(api.fetch).toHaveBeenCalledWith(
+      BASE,
+      expect.objectContaining({ method: 'POST' }),
     )
-
-    const store = createWorkflowRunStore({ storage })
-
-    expect(store.get(run.id)).toEqual(run)
   })
 
-  it('migrates version-three single-frame action output without dropping history', () => {
-    const run = createRun()
-    const revision = run.revisions[0]!
-    revision.steps = revision.steps.map((step) => {
-      if (step.type === 'character-setup') return { ...step, status: 'passed' }
-      if (step.type === 'character-template') {
-        return {
-          ...step,
-          status: 'passed',
-          output: { type: 'character_template', images: [{ url: 'template.png' }] },
-        }
-      }
-      if (step.type === 'template-candidate') return { ...step, status: 'passed' }
-      if (step.type === 'action-generation') {
-        return {
-          ...step,
-          status: 'passed',
-          input: {
-            type: 'complete_animation',
-            projectId: 'project-1',
-            characterId: 'character-1',
-            outfitId: 'outfit-1',
-            actionType: 'idle',
-            firstFrameUrl: 'template.png',
-            prompt: null,
-            referenceMedia: ['template.png'],
-          },
-          output: { type: 'first_frame', image: { url: 'frame.png' } },
-        } as unknown as WorkflowStep
-      }
-      return { ...step, status: 'active' }
+  it('gets a run by ID', async () => {
+    const api = createMockApi()
+    const store = createWorkflowRunStore({ api })
+    const created = await store.create({
+      projectId: 'project-1',
+      purpose: 'create_character',
     })
-    const storage = new TestStorage(JSON.stringify({ version: 3, runs: [run] }))
 
-    const restored = createWorkflowRunStore({ storage }).get(run.id)
-    const action = restored?.revisions[0]?.steps.find((step) => step.type === 'action-generation')
+    const found = await store.get(created.id)
 
-    expect(action?.output).toEqual({
-      type: 'complete_animation',
-      actionType: 'idle',
-      frames: [{ url: 'frame.png', durationMs: null }],
-    })
+    expect(found?.id).toBe(created.id)
   })
 
-  it('migrates a version-one run to the fixed five-step model', () => {
+  it('returns null when getting a non-existent run', async () => {
+    const api = createMockApi()
+    const store = createWorkflowRunStore({ api })
+
+    const result = await store.get('999')
+
+    expect(result).toBeNull()
+  })
+
+  it('does not disguise a server failure as a missing run', async () => {
+    const failure = Object.assign(new Error('Service Unavailable'), {
+      status: 503,
+    })
     const store = createWorkflowRunStore({
-      storage: new TestStorage(
-        JSON.stringify({
-          version: 1,
-          runs: [createLegacyRun()],
-        }),
-      ),
+      api: { fetch: vi.fn().mockRejectedValue(failure) },
     })
 
-    expect(store.get('run-1')?.revisions[0]?.steps.map((step) => step.type)).toEqual([
-      'character-setup',
-      'character-template',
-      'template-candidate',
-      'action-generation',
-      'review',
-    ])
-    expect(store.get('run-1')?.revisions[0]?.exportStatus).toBe('not_exported')
+    await expect(store.get('run-1')).rejects.toBe(failure)
+    await expect(store.getByCharacter('character-1')).rejects.toBe(failure)
   })
 
-  it('migrates version-two runs and restores their restart history', () => {
-    const legacyRun = createRun()
-    const versionTwoStore = createWorkflowRunStore({
-      storage: new TestStorage(JSON.stringify({ version: 2, runs: [legacyRun] })),
+  it('finds the run bound to a character', async () => {
+    const api = createMockApi()
+    const store = createWorkflowRunStore({ api })
+    const created = await store.create({
+      projectId: 'project-1',
+      purpose: 'create_character',
     })
-    const historyStore = createWorkflowRunStore({
-      storage: new TestStorage(
-        JSON.stringify({ version: WORKFLOW_RUN_STORAGE_VERSION, runs: [createRestartedRun()] }),
-      ),
-    })
+    created.characterId = 'character-1'
+    await store.save(created)
 
-    expect(versionTwoStore.get('run-1')).toEqual(legacyRun)
-    expect(historyStore.get('run-1')).toMatchObject({
-      currentRevisionId: 'revision-2',
-      revisions: [
-        { id: 'revision-1', status: 'abandoned' },
-        {
-          id: 'revision-2',
-          basedOnRevisionId: 'revision-1',
-          restartStepId: 'revision-1:character-template',
-        },
-      ],
-    })
+    const found = await store.getByCharacter('character-1')
+
+    expect(found?.id).toBe(created.id)
+    expect(found?.characterId).toBe('character-1')
   })
 
-  it.each([
-    ['invalid JSON', '{'],
-    ['unknown version', JSON.stringify({ version: 99, runs: [createRun()] })],
-    ['invalid payload', JSON.stringify({ version: WORKFLOW_RUN_STORAGE_VERSION, runs: {} })],
-    [
-      'invalid run',
-      JSON.stringify({
-        version: WORKFLOW_RUN_STORAGE_VERSION,
-        runs: [{ ...createRun(), currentRevisionId: 'missing-revision' }],
-      }),
-    ],
-    [
-      'inconsistent run status',
-      JSON.stringify({
-        version: WORKFLOW_RUN_STORAGE_VERSION,
-        runs: [{ ...createRun(), status: 'failed' }],
-      }),
-    ],
-    [
-      'orphaned restart revision',
-      JSON.stringify({
-        version: WORKFLOW_RUN_STORAGE_VERSION,
-        runs: [
-          {
-            ...createRestartedRun(),
-            revisions: [
-              createRestartedRun().revisions[0],
-              { ...createRestartedRun().revisions[1], basedOnRevisionId: 'missing-revision' },
-            ],
-          },
-        ],
-      }),
-    ],
-  ])('ignores %s in localStorage', (_label, serialized) => {
-    const store = createWorkflowRunStore({ storage: new TestStorage(serialized) })
+  it('returns null when no run is bound to a character', async () => {
+    const api = createMockApi()
+    const store = createWorkflowRunStore({ api })
 
-    expect(store.get('run-1')).toBeNull()
+    const result = await store.getByCharacter('missing')
+
+    expect(result).toBeNull()
   })
 
-  it('keeps the memory snapshot and notifies subscribers when persistence fails', () => {
-    const storage = new TestStorage()
-    storage.failOnSet = true
-    const store = createWorkflowRunStore({ storage })
-    const listener = vi.fn()
-    const run = createRun()
-
-    store.subscribe(run.id, listener)
-
-    expect(() => store.save(run)).not.toThrow()
-    expect(store.get(run.id)).toEqual(run)
-    expect(listener).toHaveBeenCalledWith(run)
-  })
-
-  it('isolates subscriber values and stops notifications after unsubscribe', () => {
-    const store = createWorkflowRunStore({ storage: null })
-    const run = createRun()
-    const secondListener = vi.fn()
-    const unsubscribeFirst = store.subscribe(run.id, (savedRun) => {
-      savedRun.prompt = 'mutated by first listener'
-    })
-    const unsubscribeSecond = store.subscribe(run.id, secondListener)
-
-    store.save(run)
-
-    expect(secondListener).toHaveBeenLastCalledWith(run)
-    expect(store.get(run.id)).toEqual(run)
-
-    unsubscribeFirst()
-    unsubscribeSecond()
-    store.save({ ...run, prompt: 'new prompt' })
-
-    expect(secondListener).toHaveBeenCalledTimes(1)
-  })
-
-  it('does not let one failing subscriber block the saved state or other subscribers', () => {
-    const store = createWorkflowRunStore({ storage: null })
-    const run = createRun()
-    const secondListener = vi.fn()
-
-    store.subscribe(run.id, () => {
-      throw new Error('render failed')
-    })
-    store.subscribe(run.id, secondListener)
-
-    expect(() => store.save(run)).not.toThrow()
-    expect(store.get(run.id)).toEqual(run)
-    expect(secondListener).toHaveBeenCalledWith(run)
-  })
-
-  it('uses the stable storage key by default', () => {
-    const setItem = vi.fn()
-    const store = createWorkflowRunStore({
-      storage: {
-        getItem: vi.fn(() => null),
-        setItem,
-      },
+  it('lists runs by project', async () => {
+    const api = createMockApi()
+    const store = createWorkflowRunStore({ api })
+    await store.create({ projectId: 'project-1', purpose: 'create_character' })
+    await store.create({
+      projectId: 'project-1',
+      purpose: 'create_character',
+      prompt: '',
     })
 
-    store.save(createRun())
+    const runs = await store.list('project-1')
 
-    expect(setItem).toHaveBeenCalledWith(WORKFLOW_RUN_STORAGE_KEY, expect.any(String))
+    expect(runs).toHaveLength(2)
+    expect(runs[0]?.projectId).toBe('project-1')
+    expect(runs[1]?.projectId).toBe('project-1')
+  })
+
+  it('saves a run and persists changes', async () => {
+    const api = createMockApi()
+    const store = createWorkflowRunStore({ api })
+    const created = await store.create({
+      projectId: 'project-1',
+      purpose: 'create_character',
+    })
+
+    created.status = 'completed'
+    await store.save(created)
+
+    const reloaded = await store.get(created.id)
+    expect(reloaded?.status).toBe('completed')
+  })
+
+  it('creates an add_action run with required character fields', async () => {
+    const api = createMockApi()
+    const store = createWorkflowRunStore({ api })
+
+    const run = await store.create({
+      projectId: 'project-1',
+      purpose: 'add_action',
+      characterId: 'char-1',
+      outfitId: 'outfit-1',
+      characterTemplateUrl: 'https://example.com/template.png',
+      baseFrameUrls: ['https://example.com/frame1.png'],
+    })
+
+    expect(run.purpose).toBe('add_action')
+    expect(run.characterId).toBe('char-1')
   })
 })

@@ -66,22 +66,17 @@ export function AppRoutes({ userApis }: { userApis?: UserApis } = {}) {
     const generationApis = createGenerationApis()
     const mediaApis = createMediaApis()
     const store = createWorkflowRunStore()
-    const controller = createWorkflowController({ store, generationApis })
+    const controller = createWorkflowController({ store, generationApis, characterApis })
     const quickStart = createQuickStartService({
       controller,
       prepareProject: createAutoPrepareProject(projectApis),
       characterApis,
-      generationApis,
       mediaApis,
     })
     const workflowEditor = createWorkflowEditorService({
       controller,
-      confirmCandidate: (runId, selectedImageUrl) =>
-        quickStart.confirmCandidate(runId, selectedImageUrl),
-      continueWithUploadedTemplate: (runId, file, actionDescription, signal) =>
-        quickStart.continueWithUploadedTemplate(runId, file, actionDescription, signal),
+      mediaApis,
       getProject: (projectId) => projectApis.get(projectId),
-      approveReview: (runId) => quickStart.approveReview(runId),
       prepareProject: async (input) => {
         const project = await projectApis.create({
           name: input.projectName,
@@ -208,7 +203,7 @@ export function AppRoutes({ userApis }: { userApis?: UserApis } = {}) {
             }
           />
           <Route
-            path="/workflow-editor/:runId/:stepId"
+            path="/workflow-editor/:runId/:nodeId"
             element={
               <ProtectedRoute>
                 <WorkflowEditorPage service={services.workflowEditor} />

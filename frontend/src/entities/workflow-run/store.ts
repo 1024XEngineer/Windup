@@ -1,493 +1,240 @@
-import type { WorkflowRun } from './index'
-import {
-  parseCharacterTemplateGenerationResult,
-  parseCompleteAnimationGenerationResult,
-} from '../generation'
-import {
-  EXPORT_STATUSES,
-  GENERATION_STATUSES,
-  WORKFLOW_DRIVERS,
-  WORKFLOW_PURPOSES,
-  WORKFLOW_REVISION_STATUSES,
-  WORKFLOW_RUN_STATUSES,
-  WORKFLOW_STEP_ORDER,
-  WORKFLOW_STEP_STATUSES,
-} from './constants'
+import type { CreateWorkflowRunInput, WorkflowRun } from "./index";
 
-export const WORKFLOW_RUN_STORAGE_KEY = 'windup.workflow-runs'
-export const WORKFLOW_RUN_STORAGE_VERSION = 4
-
-type WorkflowRunListener = (run: WorkflowRun) => void
-type WorkflowRunListListener = (runs: WorkflowRun[]) => void
-
-interface WorkflowRunStorage {
-  getItem(key: string): string | null
-  setItem(key: string, value: string): void
-}
-
+/**
+ * WorkflowRun 持久化契约。
+ *
+ * 持久化走服务端 API，所有方法均为异步。前端不保留 localStorage 副本，
+ * 也不提供 subscribe / subscribeAll——状态变更由前端逻辑自身驱动。
+ *
+ * 后端 API 契约（对齐 commit 4246389b）
+ * --------------------------------
+ * POST   /workflow-runs       创建执行记录
+ * GET    /workflow-runs/{id}   获取执行记录（含 nodes JSONB）
+ * PATCH  /workflow-runs/{id}   全量更新（含 nodes）
+ * DELETE /workflow-runs/{id}   软删除
+ *
+ * 后端只做存储，不感知节点结构。前端 WorkflowRun 的完整状态（除 id / projectId 外）
+ * 序列化到后端 nodes 字段。id/projectId 映射为后端顶层 id/project_id。
+ */
 export interface WorkflowRunStore {
-  get(runId: WorkflowRun['id']): WorkflowRun | null
-  list(): WorkflowRun[]
-  save(run: WorkflowRun): void
-  subscribe(runId: WorkflowRun['id'], listener: WorkflowRunListener): () => void
-  subscribeAll(listener: WorkflowRunListListener): () => void
+  /** 创建一条新的 WorkflowRun，返回服务端持久化后的完整快照。 */
+  create(input: CreateWorkflowRunInput): Promise<WorkflowRun>;
+  /** 按 ID 读取 WorkflowRun 最新快照；不存在时返回 null。 */
+  get(runId: WorkflowRun["id"]): Promise<WorkflowRun | null>;
+  /** 按已关联的 Character ID 查找唯一绑定的 WorkflowRun（客户端过滤）。 */
+  getByCharacter(characterId: string): Promise<WorkflowRun | null>;
+  /** 列出当前项目下的全部 WorkflowRun。 */
+  list(projectId?: string): Promise<WorkflowRun[]>;
+  /** 保存 WorkflowRun 最新状态到服务端。 */
+  save(run: WorkflowRun): Promise<void>;
 }
 
 export interface CreateWorkflowRunStoreOptions {
   /**
-   * 传 null 可显式创建仅内存存储；不传时在浏览器中使用 localStorage。
-   * 该入口也让纯逻辑测试无需模拟完整 DOM。
+   * HTTP 客户端，提供 fetch 方法。
+   * 不传时使用仅内存存储（测试友好）。
    */
-  storage?: WorkflowRunStorage | null
+  api?: { fetch(input: RequestInfo, init?: RequestInit): Promise<unknown> };
 }
 
-interface PersistedWorkflowRuns {
-  version: typeof WORKFLOW_RUN_STORAGE_VERSION
-  runs: WorkflowRun[]
+// ── 序列化 ─────────────────────────────────────────────────────────────────
+
+/** 后端 WorkflowRun 响应形状（nodes JSONB 透传）。 */
+interface BackendWorkflowRun {
+  id: number;
+  project_id: number;
+  nodes: Record<string, unknown>[];
+  status: string;
+  version: number;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
+/** 把前端 WorkflowRun 的丰富字段序列化到后端 nodes 载荷中。 */
+function _toNodePayload(run: WorkflowRun): Record<string, unknown> {
+  return {
+    // projectId 同时写进 nodes：后端 project_id 是整数，前端用 string ID，
+    // 读取时优先从 nodes 还原以保持原始值。
+    projectId: run.projectId,
+    characterId: run.characterId,
+    outfitId: run.outfitId,
+    purpose: run.purpose,
+    status: run.status,
+    nodes: run.nodes,
+    generationStatus: run.generationStatus,
+    exportStatus: run.exportStatus,
+    prompt: run.prompt,
+    createdAt: run.createdAt,
+  };
 }
 
-function isNullableString(value: unknown): value is string | null {
-  return typeof value === 'string' || value === null
+/** 从后端响应重建前端 WorkflowRun。 */
+function _fromBackend(b: BackendWorkflowRun): WorkflowRun {
+  const node = b.nodes[0] ?? {};
+  return {
+    id: String(b.id),
+    // 优先从 nodes 取 projectId（保持前端原始 string 值），
+    // 不存时回退到后端 project_id。
+    projectId:
+      (node.projectId as string) ?? String(b.project_id),
+    characterId: (node.characterId as string) ?? null,
+    outfitId: (node.outfitId as string) ?? null,
+    purpose: (node.purpose as WorkflowRun["purpose"]) ?? "create_character",
+    status: (node.status as WorkflowRun["status"]) ?? "active",
+    nodes: (node.nodes as WorkflowRun["nodes"]) ?? [],
+    generationStatus:
+      (node.generationStatus as WorkflowRun["generationStatus"]) ??
+      "not_started",
+    exportStatus:
+      (node.exportStatus as WorkflowRun["exportStatus"]) ?? "not_exported",
+    prompt: (node.prompt as string | null) ?? null,
+    createdAt: (node.createdAt as string) ?? new Date().toISOString(),
+  };
 }
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string')
-}
+// ── 内存存储（测试/过渡期） ──────────────────────────────────────────────────
 
-function isMember<T extends string>(value: unknown, members: readonly T[]): value is T {
-  return typeof value === 'string' && members.includes(value as T)
-}
-
-function isWorkflowStep(value: unknown): boolean {
-  if (!isRecord(value)) return false
-
-  const commonFieldsAreValid =
-    typeof value.id === 'string' &&
-    isMember(value.type, WORKFLOW_STEP_ORDER) &&
-    isMember(value.status, WORKFLOW_STEP_STATUSES) &&
-    isNullableString(value.taskId) &&
-    isNullableString(value.submissionId) &&
-    isStringArray(value.referenceStepIds) &&
-    'input' in value &&
-    'output' in value
-  if (!commonFieldsAreValid) return false
-  const error = value.error
-  if (!isNullableString(error)) return false
-  if (
-    (value.status === 'failed' && (error === null || error.trim().length === 0)) ||
-    (value.status !== 'failed' && error !== null)
-  ) {
-    return false
-  }
-
-  if (value.type === 'character-setup') {
-    return (
-      value.output === null &&
-      (value.input === null ||
-        (isRecord(value.input) &&
-          typeof value.input.description === 'string' &&
-          isStringArray(value.input.referenceMedia)))
-    )
-  }
-  if (value.type === 'character-template') {
-    return (
-      (value.input === null ||
-        (isRecord(value.input) &&
-          value.input.type === 'character_template' &&
-          typeof value.input.projectId === 'string' &&
-          typeof value.input.prompt === 'string' &&
-          isStringArray(value.input.referenceMedia))) &&
-      (value.output === null || parseCharacterTemplateGenerationResult(value.output) !== null)
-    )
-  }
-  if (value.type === 'action-generation') {
-    return (
-      (value.input === null ||
-        (isRecord(value.input) &&
-          value.input.type === 'complete_animation' &&
-          typeof value.input.projectId === 'string' &&
-          typeof value.input.characterId === 'string' &&
-          typeof value.input.outfitId === 'string' &&
-          typeof value.input.firstFrameUrl === 'string' &&
-          typeof value.input.actionType === 'string' &&
-          isStringArray(value.input.referenceMedia))) &&
-      (value.output === null || parseCompleteAnimationGenerationResult(value.output) !== null)
-    )
-  }
-  return true
-}
-
-function isWorkflowRevision(value: unknown): boolean {
-  if (!isRecord(value)) return false
-
-  return (
-    typeof value.id === 'string' &&
-    isNullableString(value.basedOnRevisionId) &&
-    isNullableString(value.restartStepId) &&
-    isMember(value.status, WORKFLOW_REVISION_STATUSES) &&
-    Array.isArray(value.steps) &&
-    value.steps.length === WORKFLOW_STEP_ORDER.length &&
-    value.steps.every(
-      (step, index) =>
-        isWorkflowStep(step) && isRecord(step) && step.type === WORKFLOW_STEP_ORDER[index],
-    ) &&
-    isMember(value.generationStatus, GENERATION_STATUSES) &&
-    isMember(value.exportStatus, EXPORT_STATUSES) &&
-    typeof value.createdAt === 'string'
-  )
-}
-
-function isWorkflowRun(value: unknown): value is WorkflowRun {
-  if (!isRecord(value) || !Array.isArray(value.revisions)) return false
-
-  const fieldsAreValid =
-    typeof value.id === 'string' &&
-    typeof value.projectId === 'string' &&
-    isNullableString(value.characterId) &&
-    isNullableString(value.outfitId) &&
-    isMember(value.purpose, WORKFLOW_PURPOSES) &&
-    isMember(value.driver, WORKFLOW_DRIVERS) &&
-    isMember(value.status, WORKFLOW_RUN_STATUSES) &&
-    typeof value.currentRevisionId === 'string' &&
-    value.revisions.length > 0 &&
-    value.revisions.every(isWorkflowRevision) &&
-    value.revisions.some(
-      (revision) => isRecord(revision) && revision.id === value.currentRevisionId,
-    ) &&
-    isNullableString(value.prompt)
-  if (!fieldsAreValid) return false
-
-  const currentRevision = value.revisions.find(
-    (revision) => isRecord(revision) && revision.id === value.currentRevisionId,
-  )
-  if (!isRecord(currentRevision) || !Array.isArray(currentRevision.steps)) return false
-  if (!hasValidRevisionLine(value.revisions)) return false
-
-  const expectedRevisionStatus =
-    value.status === 'failed' ? 'failed' : value.status === 'completed' ? 'completed' : 'active'
-  if (currentRevision.status !== expectedRevisionStatus) return false
-
-  const activeStepCount = currentRevision.steps.filter(
-    (step) => isRecord(step) && step.status === 'active',
-  ).length
-  if (
-    ((value.status === 'active' || value.status === 'interrupted') && activeStepCount !== 1) ||
-    ((value.status === 'failed' || value.status === 'completed') && activeStepCount !== 0)
-  ) {
-    return false
-  }
-
-  return value.revisions.every(
-    (revision) =>
-      isRecord(revision) &&
-      Array.isArray(revision.steps) &&
-      revision.steps.every((step) => {
-        if (!isRecord(step)) return false
-        const taskId = step.taskId
-        const submissionId = step.submissionId
-        if (taskId !== null && submissionId !== null) return false
-        if (taskId === null && submissionId === null) return true
-        // 只有 character-template 与 action-generation 允许在 active 步骤上
-        // 持有任务 ID（角色图 / 动作生成任务，刷新后可恢复轮询）
-        return (
-          (step.type === 'character-template' || step.type === 'action-generation') &&
-          step.status === 'active'
-        )
-      }),
-  )
-}
-
-function hasValidRevisionLine(revisions: unknown[]): boolean {
-  const seenRevisionIds = new Set<string>()
-  const byId = new Map<string, Record<string, unknown>>()
-
-  for (const [index, revision] of revisions.entries()) {
-    if (
-      !isRecord(revision) ||
-      typeof revision.id !== 'string' ||
-      seenRevisionIds.has(revision.id)
-    ) {
-      return false
-    }
-    seenRevisionIds.add(revision.id)
-
-    if (index === 0) {
-      if (revision.basedOnRevisionId !== null || revision.restartStepId !== null) return false
-    } else {
-      if (
-        typeof revision.basedOnRevisionId !== 'string' ||
-        typeof revision.restartStepId !== 'string'
-      ) {
-        return false
-      }
-      const source = byId.get(revision.basedOnRevisionId)
-      if (
-        !source ||
-        !Array.isArray(source.steps) ||
-        !source.steps.some(
-          (step) =>
-            isRecord(step) && step.id === revision.restartStepId && step.status === 'passed',
-        )
-      ) {
-        return false
-      }
-    }
-
-    byId.set(revision.id, revision)
-  }
-
-  return true
-}
-
-function migrateVersionOneRun(value: unknown): WorkflowRun | null {
-  if (!isRecord(value) || !Array.isArray(value.revisions)) return null
-
-  const revisions: unknown[] = []
-  for (const revision of value.revisions) {
-    const migratedRevision = migrateVersionOneRevision(revision)
-    if (!migratedRevision) return null
-    revisions.push(migratedRevision)
-  }
-
-  const migrated = { ...value, revisions }
-  return migrateVersionThreeRun(migrated)
-}
-
-function migrateVersionTwoRun(value: unknown): WorkflowRun | null {
-  return migrateVersionThreeRun(value)
-}
-
-function migrateVersionThreeRun(value: unknown): WorkflowRun | null {
-  if (!isRecord(value) || !Array.isArray(value.revisions)) return null
-  const revisions = value.revisions.map((revision) => {
-    if (!isRecord(revision) || !Array.isArray(revision.steps)) return revision
-    return {
-      ...revision,
-      steps: revision.steps.map((step) => {
-        if (!isRecord(step) || step.type !== 'action-generation' || !isRecord(step.output)) {
-          return step
-        }
-        if (step.output.type !== 'first_frame' || !isRecord(step.output.image)) return step
-        const url = step.output.image.url
-        if (typeof url !== 'string' || !url) return step
-        const actionType =
-          isRecord(step.input) &&
-          ['walk', 'idle', 'attack', 'jump', 'custom'].includes(String(step.input.actionType))
-            ? step.input.actionType
-            : 'custom'
-        return {
-          ...step,
-          output: {
-            type: 'complete_animation',
-            actionType,
-            frames: [{ url, durationMs: null }],
-          },
-        }
-      }),
-    }
-  })
-  const migrated = { ...value, revisions }
-  return isWorkflowRun(migrated) ? migrated : null
-}
-
-function migrateVersionOneRevision(value: unknown): Record<string, unknown> | null {
-  if (!isRecord(value) || typeof value.id !== 'string' || !Array.isArray(value.steps)) return null
-
-  const steps = value.steps
-  const legacyOrder = [
-    'character-setup',
-    'character-template',
-    'template-candidate',
-    'action-setup',
-    'first-frame',
-    'complete-animation',
-    'review',
-    'export',
-  ] as const
-  if (
-    steps.length !== legacyOrder.length ||
-    !steps.every((step, index) => isRecord(step) && step.type === legacyOrder[index])
-  ) {
-    return null
-  }
-
-  const [
-    characterSetup,
-    characterTemplate,
-    templateCandidate,
-    actionSetup,
-    firstFrame,
-    animation,
-    review,
-  ] = steps
-  if (
-    !isRecord(characterSetup) ||
-    !isRecord(characterTemplate) ||
-    !isRecord(templateCandidate) ||
-    !isRecord(actionSetup) ||
-    !isRecord(firstFrame) ||
-    !isRecord(animation) ||
-    !isRecord(review)
-  ) {
-    return null
-  }
-
-  const actionSteps = [actionSetup, firstFrame, animation]
-  const collapsedAction =
-    actionSteps.find((step) => step.status === 'active') ??
-    actionSteps.find((step) => step.status === 'failed') ??
-    (actionSteps.every((step) => step.status === 'passed') ? animation : actionSetup)
-  const actionStepId = `${value.id}:action-generation`
-  const legacyActionIds = new Set(
-    actionSteps.map((step) => step.id).filter((id): id is string => typeof id === 'string'),
-  )
-
-  function migrateReferences(step: Record<string, unknown>): Record<string, unknown> {
-    const referenceStepIds = Array.isArray(step.referenceStepIds)
-      ? step.referenceStepIds.map((id) => (legacyActionIds.has(id) ? actionStepId : id))
-      : step.referenceStepIds
-    return { ...step, referenceStepIds }
-  }
+function createInMemoryStore(): WorkflowRunStore {
+  const runs = new Map<string, WorkflowRun>();
 
   return {
-    ...value,
-    steps: [
-      migrateReferences(characterSetup),
-      migrateReferences(characterTemplate),
-      migrateReferences(templateCandidate),
-      {
-        ...migrateReferences(collapsedAction),
-        id: actionStepId,
-        type: 'action-generation',
-      },
-      migrateReferences(review),
-    ],
-  }
+    async create(input) {
+      const run: WorkflowRun = {
+        id: `run-${runs.size + 1}`,
+        projectId: input.projectId,
+        characterId:
+          "characterId" in input ? (input.characterId as string) : null,
+        outfitId: "outfitId" in input ? (input.outfitId as string) : null,
+        purpose: input.purpose,
+        status: "active",
+        nodes: [],
+        generationStatus: "not_started",
+        exportStatus: "not_exported",
+        prompt: input.prompt ?? null,
+        createdAt: new Date().toISOString(),
+      };
+      runs.set(run.id, structuredClone(run));
+      return structuredClone(run);
+    },
+
+    async get(runId) {
+      const run = runs.get(runId);
+      return run ? structuredClone(run) : null;
+    },
+
+    async getByCharacter(characterId) {
+      for (const run of runs.values()) {
+        if (run.characterId === characterId) return structuredClone(run);
+      }
+      return null;
+    },
+
+    async list(projectId) {
+      return [...runs.values()]
+        .filter((run) => !projectId || run.projectId === projectId)
+        .map((run) => structuredClone(run));
+    },
+
+    async save(run) {
+      runs.set(run.id, structuredClone(run));
+    },
+  };
 }
 
-function readPersistedRuns(storage: WorkflowRunStorage | null): WorkflowRun[] {
-  if (storage === null) return []
+// ── HTTP 存储 ──────────────────────────────────────────────────────────────
 
-  try {
-    const serialized = storage.getItem(WORKFLOW_RUN_STORAGE_KEY)
-    if (serialized === null) return []
-
-    const persisted: unknown = JSON.parse(serialized)
-    if (!isRecord(persisted) || !Array.isArray(persisted.runs)) return []
-
-    if (persisted.version === WORKFLOW_RUN_STORAGE_VERSION) {
-      return persisted.runs.filter(isWorkflowRun).map((run) => structuredClone(run))
-    }
-
-    if (persisted.version === 1) {
-      return persisted.runs
-        .map(migrateVersionOneRun)
-        .filter((run): run is WorkflowRun => run !== null)
-        .map((run) => structuredClone(run))
-    }
-
-    if (persisted.version === 2) {
-      return persisted.runs
-        .map(migrateVersionTwoRun)
-        .filter((run): run is WorkflowRun => run !== null)
-        .map((run) => structuredClone(run))
-    }
-
-    if (persisted.version === 3) {
-      return persisted.runs
-        .map(migrateVersionThreeRun)
-        .filter((run): run is WorkflowRun => run !== null)
-        .map((run) => structuredClone(run))
-    }
-
-    return []
-  } catch {
-    return []
-  }
-}
-
-function resolveBrowserStorage(): WorkflowRunStorage | null {
-  if (typeof window === 'undefined') return null
-
-  try {
-    return window.localStorage
-  } catch {
-    return null
-  }
+function isNotFoundError(cause: unknown): boolean {
+  return (
+    typeof cause === "object" &&
+    cause !== null &&
+    "status" in cause &&
+    cause.status === 404
+  );
 }
 
 /**
- * WorkflowRun 的内存快照是当前会话的权威状态，localStorage 只负责刷新恢复。
- * 因此 save 先更新内存；浏览器拒绝写入时，本次运行仍能继续读取和订阅。
+ * 创建 WorkflowRunStore。
+ * 传入 api 时走 HTTP 持久化（对齐后端 /workflow-runs 接口），
+ * 否则使用仅内存存储（用于测试和过渡期）。
  */
 export function createWorkflowRunStore(
   options: CreateWorkflowRunStoreOptions = {},
 ): WorkflowRunStore {
-  const storage = options.storage === undefined ? resolveBrowserStorage() : options.storage
-  const runs = new Map(readPersistedRuns(storage).map((run) => [run.id, run] as const))
-  const listeners = new Map<WorkflowRun['id'], Set<WorkflowRunListener>>()
-  const listListeners = new Set<WorkflowRunListListener>()
+  const api = options.api;
+  if (!api) return createInMemoryStore();
+
+  /** 后端通用响应包装：Response<T> { code, message, data: T } */
+  function _unwrap<T>(response: unknown): T {
+    const r = response as { data?: T };
+    if (r.data !== undefined) return r.data;
+    return response as T;
+  }
 
   return {
-    get(runId) {
-      const run = runs.get(runId)
-      return run === undefined ? null : structuredClone(run)
+    async create(input) {
+      const response = await api.fetch("/workflow-runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: Number(input.projectId),
+          nodes: [
+            {
+              // 创建时前端 WorkflowRun 字段（除 id）全部进入 nodes
+              projectId: input.projectId,
+              characterId:
+                "characterId" in input ? input.characterId : null,
+              outfitId: "outfitId" in input ? input.outfitId : null,
+              purpose: input.purpose,
+              status: "active",
+              nodes: [],
+              generationStatus: "not_started",
+              exportStatus: "not_exported",
+              prompt: input.prompt ?? null,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        }),
+      });
+      return _fromBackend(_unwrap(response) as BackendWorkflowRun);
     },
 
-    list() {
-      return [...runs.values()].map((run) => structuredClone(run))
-    },
-
-    save(run) {
-      const savedRun = structuredClone(run)
-      runs.set(savedRun.id, savedRun)
-
-      const persisted: PersistedWorkflowRuns = {
-        version: WORKFLOW_RUN_STORAGE_VERSION,
-        runs: [...runs.values()],
-      }
-
+    async get(runId) {
       try {
-        storage?.setItem(WORKFLOW_RUN_STORAGE_KEY, JSON.stringify(persisted))
-      } catch {
-        // 内存已成功更新；持久化失败不能中断当前会话中的工作流。
-      }
-
-      for (const listener of listeners.get(savedRun.id) ?? []) {
-        try {
-          listener(structuredClone(savedRun))
-        } catch {
-          // 订阅方渲染失败不能撤销已经保存的运行状态，也不能阻断其他订阅方。
-        }
-      }
-      const snapshot = [...runs.values()].map((run) => structuredClone(run))
-      for (const listener of listListeners) {
-        try {
-          listener(snapshot.map((run) => structuredClone(run)))
-        } catch {
-          // 一个列表订阅方失败不能阻断其他页面刷新。
-        }
+        const response = await api.fetch(`/workflow-runs/${runId}`);
+        return _fromBackend(_unwrap(response) as BackendWorkflowRun);
+      } catch (cause) {
+        if (isNotFoundError(cause)) return null;
+        throw cause;
       }
     },
 
-    subscribe(runId, listener) {
-      const runListeners = listeners.get(runId) ?? new Set<WorkflowRunListener>()
-      runListeners.add(listener)
-      listeners.set(runId, runListeners)
-
-      return () => {
-        runListeners.delete(listener)
-        if (runListeners.size === 0) listeners.delete(runId)
+    async getByCharacter(characterId) {
+      try {
+        // 后端无 characterId 查询参数，先全量拉取再客户端过滤。
+        const runs = await api.fetch("/workflow-runs");
+        const all = (_unwrap(runs) as BackendWorkflowRun[]).map(_fromBackend);
+        return all.find((r) => r.characterId === characterId) ?? null;
+      } catch (cause) {
+        if (isNotFoundError(cause)) return null;
+        throw cause;
       }
     },
 
-    subscribeAll(listener) {
-      listListeners.add(listener)
-      return () => listListeners.delete(listener)
+    async list(projectId) {
+      const query = projectId
+        ? `?project_id=${encodeURIComponent(projectId)}`
+        : "";
+      const response = await api.fetch(`/workflow-runs${query}`);
+      const items = _unwrap(response) as BackendWorkflowRun[];
+      return items.map(_fromBackend);
     },
-  }
+
+    async save(run) {
+      await api.fetch(`/workflow-runs/${run.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nodes: [_toNodePayload(run)],
+        }),
+      });
+    },
+  };
 }

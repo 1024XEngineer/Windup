@@ -37,20 +37,14 @@ export type {
 export { createCharacterApis } from './character/api'
 
 /* 生成 —— 业务数据，不是「调用生成能力」 */
-export {
-  COMPLETE_ANIMATION_FRAME_COUNT,
-  parseCharacterTemplateGenerationResult,
-} from './generation'
+export { CHARACTER_ACTION_FRAME_COUNT } from './generation'
 export { createGenerationApis } from './generation/api'
 export type {
-  CharacterTemplateGenerationInput,
-  CharacterTemplateGenerationResult,
-  CompleteAnimationGenerationInput,
-  CompleteAnimationGenerationResult,
-  FirstFrameGenerationInput,
-  FirstFrameGenerationResult,
-  GeneratedAnimationFrame,
-  GeneratedImage,
+  CharacterActionFrame,
+  CharacterActionGenerationInput,
+  CharacterActionOutput,
+  CharacterImageGenerationInput,
+  CharacterImageOutput,
   Generation,
   GenerationApis,
   GenerationEvent,
@@ -76,24 +70,22 @@ export type {
 } from './playtest-inspection'
 
 /* 工作流 —— 节点与运行状态都由前端管理 */
-export { createWorkflowRunStore, WORKFLOW_STEP_ORDER } from './workflow-run'
+export { createWorkflowRunStore, WORKFLOW_NODE_ORDER } from './workflow-run'
 export type {
-  CharacterSetupStepInput,
-  CharacterSetupWorkflowStep,
-  CharacterTemplateWorkflowStep,
-  ActionGenerationWorkflowStep,
-  CreateWorkflowRunStoreOptions,
+  CharacterSetupNodeInput,
+  CharacterSetupWorkflowNode,
+  CharacterTemplateWorkflowNode,
+  ActionGenerationWorkflowNode,
   CreateWorkflowRunInput,
   ExportStatus,
   GenerationStatus,
-  WorkflowDriver,
-  WorkflowStep,
-  WorkflowStepStatus,
-  WorkflowStepType,
-  WorkflowRevision,
-  WorkflowRevisionStatus,
+  WorkflowNode,
+  WorkflowNodeStatus,
+  WorkflowNodeType,
   WorkflowRun,
   WorkflowRunStore,
   WorkflowRunPurpose,
   WorkflowRunStatus,
+  WorkflowRevision,
+  CreateWorkflowRunStoreOptions,
 } from './workflow-run'

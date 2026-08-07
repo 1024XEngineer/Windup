@@ -4,16 +4,6 @@
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
-const ALLOWED_CONNECTIONS: readonly [string, string][] = [
-  ['character-setup', 'character-template'],
-  ['character-template', 'template-candidate'],
-  ['template-candidate', 'action-setup'],
-  ['action-setup', 'first-frame'],
-  ['first-frame', 'complete-animation'],
-  ['complete-animation', 'review'],
-  ['review', 'export'],
-]
-
 function wirePath(start: { x: number; y: number }, end: { x: number; y: number }): string {
   const bend = Math.max(70, Math.abs(end.x - start.x) * 0.46)
   return `M ${start.x} ${start.y} C ${start.x + bend} ${start.y}, ${end.x - bend} ${end.y}, ${end.x} ${end.y}`
@@ -221,7 +211,7 @@ export class NodeCanvasController {
 
     // 已连接的线 — 实线
     this.connections.forEach((key) => {
-      const [from, to] = key.split(':')
+      const [from, to] = JSON.parse(key) as [string, string]
       const output = this.surface?.querySelector(
         `[data-node-id="${from}"] [data-port="output"]`,
       ) as HTMLElement
@@ -232,24 +222,19 @@ export class NodeCanvasController {
       this.appendWire(this.portPoint(output), this.portPoint(input), 'node-wire is-connected')
     })
 
-    // 建议连线 — 虚线（已通过的步骤 → 下一步）
-    this.surface?.querySelectorAll('[data-node-id]').forEach((node) => {
+    // DOM 顺序就是当前 Revision 的真实节点顺序。按相邻节点连线后，新增动作对
+    // 会自然接在旧审核之后，不再依赖只能描述固定五步的类型白名单。
+    const nodes = Array.from(this.surface?.querySelectorAll('[data-node-id]') ?? [])
+    nodes.forEach((node, index) => {
       const el = node as HTMLElement
-      const fromId = el.dataset.nodeId!
       const output = el.querySelector(
         '[data-port="output"][data-enabled="true"]',
       ) as HTMLElement | null
       if (!output) return
-
-      // 找到所有允许的下游节点
-      ALLOWED_CONNECTIONS.filter(([from]) => from === fromId).forEach(([, to]) => {
-        if (this.connections.has(`${fromId}:${to}`)) return
-        const input = this.surface?.querySelector(
-          `[data-node-id="${to}"] [data-port="input"]`,
-        ) as HTMLElement | null
-        if (!input) return
-        this.appendWire(this.portPoint(output), this.portPoint(input), 'node-wire is-suggested')
-      })
+      const next = nodes[index + 1] as HTMLElement | undefined
+      const input = next?.querySelector('[data-port="input"]') as HTMLElement | null
+      if (!input) return
+      this.appendWire(this.portPoint(output), this.portPoint(input), 'node-wire is-suggested')
     })
   }
 
@@ -272,7 +257,8 @@ export class NodeCanvasController {
   }
 
   setConnections(connections: Array<{ from: string; to: string }>) {
-    this.connections = new Set(connections.map(({ from, to }) => `${from}:${to}`))
+    // Node ID 自身包含冒号，JSON 元组避免用字符串分隔符时发生截断。
+    this.connections = new Set(connections.map(({ from, to }) => JSON.stringify([from, to])))
     this.renderWires()
   }
 }

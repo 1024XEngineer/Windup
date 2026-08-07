@@ -1,8 +1,7 @@
 /**
  * WorkflowRun → Character 桥接层。
- * 从工作流步骤中提取数据，组装为 Playtest 可消费的 Character 实体。
- * 按 5 步流程读取：character-setup / character-template / template-candidate /
- * action-generation / review。
+ * 从工作流节点中提取数据，组装为 Playtest 可消费的 Character 实体。
+ * 前三个角色节点只读取一次，后续按 action-generation / review 成对读取全部动作。
  */
 import type {
   Action,
@@ -12,101 +11,124 @@ import type {
   Outfit,
   WorkflowRevision,
   WorkflowRun,
-  WorkflowStep,
-} from '@/entities'
+  WorkflowNode,
+} from "@/entities";
 
 function getRevision(run: WorkflowRun): WorkflowRevision | null {
-  return run.revisions.find((r) => r.id === run.currentRevisionId) ?? null
+  return [run].find((r) => r.id === run.id) ?? null;
 }
 
-function getStep(revision: WorkflowRevision, type: string): WorkflowStep | null {
-  return revision.steps.find((s) => s.type === type) ?? null
+function getNode(
+  revision: WorkflowRevision,
+  type: string,
+): WorkflowNode | null {
+  return revision.nodes.find((s) => s.type === type) ?? null;
 }
 
-/** 从 character-template 步骤提取母版 URL */
-function extractCharacterTemplateUrl(revision: WorkflowRevision): string | null {
-  const step = getStep(revision, 'character-template')
-  const output = step?.output as { images?: Array<{ url: string }> } | null
-  if (!output?.images?.length) return null
-  return output.images[0]?.url ?? null
+/** 从 character-template 节点提取母版 URL */
+function extractCharacterTemplateUrl(
+  revision: WorkflowRevision,
+): string | null {
+  const candidate = getNode(revision, "template-candidate");
+  const output = candidate?.output as { selectedImageUrl?: string } | null;
+  if (output?.selectedImageUrl) return output.selectedImageUrl;
+  const template = getNode(revision, "character-template");
+  const templateOutput = template?.output as { imageUrls?: string[] } | null;
+  return templateOutput?.imageUrls?.[0] ?? null;
 }
 
-/** 从 character-template 步骤提取候选列表 */
-function extractCandidates(revision: WorkflowRevision): CharacterTemplateCandidate[] {
-  const step = getStep(revision, 'character-template')
-  const output = step?.output as { images?: Array<{ url: string }> } | null
-  if (!output?.images) return []
-  return output.images.map((img, i) => ({
+/** 从 character-template 节点提取候选列表 */
+function extractCandidates(
+  revision: WorkflowRevision,
+): CharacterTemplateCandidate[] {
+  const node = getNode(revision, "character-template");
+  const output = node?.output as { imageUrls?: string[] } | null;
+  if (!output?.imageUrls) return [];
+  return output.imageUrls.map((imageUrl, i) => ({
     id: `candidate-${i}`,
-    imageUrl: img.url,
+    imageUrl,
     attemptId: `attempt-${Date.now()}`,
-  }))
+  }));
 }
 
-/** 从 character-setup 步骤提取角色描述 */
+/** 从 character-setup 节点提取角色描述 */
 function extractDescription(revision: WorkflowRevision): string {
-  const step = getStep(revision, 'character-setup')
-  const input = step?.input as { description?: string } | null
-  return input?.description?.trim() || '未命名角色'
+  const node = getNode(revision, "character-setup");
+  const input = node?.input as { description?: string } | null;
+  return input?.description?.trim() || "未命名角色";
 }
 
-/** 动作生成结果的帧 URL 列表（兼容 first_frame 单帧与 complete_animation 多帧） */
-function extractActionResult(revision: WorkflowRevision) {
-  const step = getStep(revision, 'action-generation')
-  return step?.type === 'action-generation' ? step.output : null
+/** 只导出已经通过对应审核的动作，未审核的中间结果不进入正式 Character。 */
+function extractReviewedActions(revision: WorkflowRevision) {
+  return revision.nodes.flatMap((node, index) => {
+    const review = revision.nodes[index + 1];
+    return node.type === "action-generation" &&
+      node.status === "passed" &&
+      node.output &&
+      review?.type === "review" &&
+      review.status === "passed"
+      ? [node]
+      : [];
+  });
 }
 
 /**
  * 将 WorkflowRun 转换为 Character 实体。
- * 如果关键步骤未完成，返回 null。
+ * 如果关键节点未完成，返回 null。
  */
 export function workflowRunToCharacter(run: WorkflowRun): Character | null {
-  const revision = getRevision(run)
-  if (!revision) return null
+  const revision = getRevision(run);
+  if (!revision) return null;
 
-  const templateStep = getStep(revision, 'character-template')
+  const templateNode = getNode(revision, "character-template");
 
   // 至少需要母版已生成
-  if (!templateStep || templateStep.status !== 'passed') return null
+  if (!templateNode || templateNode.status !== "passed") return null;
 
-  const characterTemplateUrl = extractCharacterTemplateUrl(revision)
-  const candidates = extractCandidates(revision)
-  const description = extractDescription(revision)
-  const actionResult = extractActionResult(revision)
+  const characterTemplateUrl = extractCharacterTemplateUrl(revision);
+  const candidates = extractCandidates(revision);
+  const description = extractDescription(revision);
+  const reviewedActions = extractReviewedActions(revision);
 
-  // 构建帧列表
-  const frames: Frame[] = (actionResult?.frames ?? []).map((frame) => ({
-    imageUrl: frame.url,
-    durationMs: frame.durationMs,
-    rootMotion: null,
-  }))
-
-  // 构建动作
-  const actions: Action[] = []
-  if (frames.length > 0) {
-    actions.push({
-      id: `${run.id}-action`,
+  // 一条 Run 可以持续追加动作；每个动作使用节点 ID 作为稳定后缀，避免发布时互相覆盖。
+  const actions: Action[] = reviewedActions.map((node, index) => {
+    const frames: Frame[] = (node.output?.frames ?? []).map((frame) => ({
+      imageUrl: frame.imageUrl,
+      durationMs: frame.durationMs,
+      rootMotion: null,
+    }));
+    const customName = node.input?.prompt?.trim();
+    return {
+      id: `${run.id}-${node.id}`,
       outfitId: `${run.id}-outfit`,
-      name: description.length > 8 ? `${description.slice(0, 8)}…` : description || '动作',
+      name:
+        customName ||
+        (reviewedActions.length === 1
+          ? description.length > 8
+            ? `${description.slice(0, 8)}…`
+            : description || "动作"
+          : `动作 ${index + 1}`),
       expectedFrameCount: frames.length,
-      kind: 'custom',
-      type: actionResult?.actionType ?? 'custom',
+      kind: "custom",
+      type: node.output?.actionType ?? "custom",
       fps: 8,
       keyFrameIndex: null,
       frames,
-    })
-  }
+    };
+  });
 
   // 构建造型
   const outfit: Outfit = {
     id: `${run.id}-outfit`,
     characterId: run.id,
-    name: '默认造型',
+    name: "默认造型",
     candidateCharacterTemplates: candidates,
     characterTemplateUrl,
-    baseFrames: characterTemplateUrl ? [{ imageUrl: characterTemplateUrl }] : [],
+    baseFrames: characterTemplateUrl
+      ? [{ imageUrl: characterTemplateUrl }]
+      : [],
     actions,
-  }
+  };
 
   // 构建角色
   const character: Character = {
@@ -115,9 +137,9 @@ export function workflowRunToCharacter(run: WorkflowRun): Character | null {
     outfits: [outfit],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-  }
+  };
 
-  return character
+  return character;
 }
 
 /**
@@ -125,17 +147,15 @@ export function workflowRunToCharacter(run: WorkflowRun): Character | null {
  * 至少需要：母版已确认 + 动作生成完成。
  */
 export function canPublishToPlaytest(run: WorkflowRun): boolean {
-  const revision = getRevision(run)
-  if (!revision) return false
+  const revision = getRevision(run);
+  if (!revision) return false;
 
-  const templateStep = getStep(revision, 'character-template')
-  const actionStep = getStep(revision, 'action-generation')
-
-  const reviewStep = getStep(revision, 'review')
+  const templateNode = getNode(revision, "character-template");
+  const reviewedActions = extractReviewedActions(revision);
   return (
-    run.status === 'completed' &&
-    templateStep?.status === 'passed' &&
-    actionStep?.status === 'passed' &&
-    reviewStep?.status === 'passed'
-  )
+    run.status === "completed" &&
+    templateNode?.status === "passed" &&
+    reviewedActions.length > 0 &&
+    reviewedActions.every((node) => Boolean(node.output?.frames.length))
+  );
 }

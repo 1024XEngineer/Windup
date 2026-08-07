@@ -115,7 +115,7 @@ export interface Outfit {
  * 项目下的角色资产；造型拥有各自的母版和动作帧。
  *
  * 这棵树只承载已导出到资产库的内容，因此其中的动作一律是已确认的，不带生成过程状态。
- * 工作流运行期间的造型、动作和帧活在 WorkflowRun 的步骤里，直到用户确认导出才整体写入。
+ * 工作流运行期间的造型、动作和帧活在 WorkflowRun 的节点里，直到用户确认导出才整体写入。
  */
 export interface Character {
   id: string

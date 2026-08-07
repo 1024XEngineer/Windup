@@ -7,7 +7,9 @@
 ``main`` 是开发启动入口:``python -m windup_app`` 或 ``windup`` 命令。
 """
 
+import asyncio
 import os
+import sys
 from contextlib import asynccontextmanager
 
 import windup_framework.db  # noqa: F401  组装时显式触发 DB engine/session 初始化
@@ -15,11 +17,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from windup_app.server.generation.executor import run_action_task, run_image_task
+from windup_app.web.api.agent import router as ai_router
 from windup_app.web.api.character import router as character_router
 from windup_app.web.api.generation import router as generation_router
 from windup_app.web.api.media import router as media_router
 from windup_app.web.api.playtest_inspection import router as playtest_inspection_router
 from windup_app.web.api.project import router as project_router
+from windup_app.web.api.workflow_run import router as workflow_run_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
 
 
@@ -67,6 +71,8 @@ def create_app() -> FastAPI:
     app.include_router(character_router)
     app.include_router(media_router)
     app.include_router(generation_router)
+    app.include_router(workflow_run_router)
+    app.include_router(ai_router)
     app.include_router(playtest_inspection_router)
     # 生成后台调度器注入 app.state:bootstrap(composition root)持有 ai_engine 依赖,
     # web 端运行期从 request.app.state 取,避免 web 静态 import ai_engine(入口层门禁)。
@@ -83,12 +89,17 @@ def main() -> None:
     """
     import uvicorn
 
+    # Uvicorn 0.51 会显式创建自己的 loop，单改全局 policy 会被覆盖。Windows 下
+    # 直接传 Selector factory，避免浏览器关闭 SSE 时 Proactor transport 打印 10054。
+    loop_factory = asyncio.SelectorEventLoop if sys.platform == "win32" else "auto"
+
     uvicorn.run(
         "windup_app.bootstrap.app:create_app",
         factory=True,
         host=os.getenv("WINDUP_HOST", "127.0.0.1"),
         port=int(os.getenv("WINDUP_PORT", "8000")),
         reload=_env_flag("WINDUP_RELOAD"),
+        loop=loop_factory,
     )
 
 

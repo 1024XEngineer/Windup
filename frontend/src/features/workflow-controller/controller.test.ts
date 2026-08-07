@@ -1,696 +1,307 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from "vitest";
 
 import {
-  WORKFLOW_STEP_ORDER,
+  CHARACTER_ACTION_FRAME_COUNT,
+  type Character,
+  type CharacterApis,
   type Generation,
   type GenerationApis,
   type GenerationEvent,
   type GenerationInput,
-  type WorkflowRevision,
   type WorkflowRun,
-  type WorkflowStep,
-  type WorkflowStepType,
-} from '@/entities'
-import { createWorkflowController } from '.'
+  type WorkflowRunStore,
+} from "@/entities";
+import { createWorkflowController } from ".";
 
-const NOW = '2026-07-30T12:00:00.000Z'
+const NOW = "2026-07-30T12:00:00.000Z";
 
-type RunListener = (run: WorkflowRun) => void
-
-function cloneRun(run: WorkflowRun): WorkflowRun {
-  return structuredClone(run)
-}
-
-function createMemoryStore() {
-  const runs = new Map<string, WorkflowRun>()
-  const listeners = new Map<string, Set<RunListener>>()
-  const listListeners = new Set<(runs: WorkflowRun[]) => void>()
-
-  const get = vi.fn((runId: string): WorkflowRun | null => {
-    const run = runs.get(runId)
-    return run ? cloneRun(run) : null
-  })
-
-  const save = vi.fn((run: WorkflowRun): void => {
-    const snapshot = cloneRun(run)
-    runs.set(run.id, snapshot)
-
-    for (const listener of listeners.get(run.id) ?? []) {
-      listener(cloneRun(snapshot))
-    }
-    for (const listener of listListeners) listener([...runs.values()].map(cloneRun))
-  })
-
-  const subscribe = vi.fn((runId: string, listener: RunListener): (() => void) => {
-    const runListeners = listeners.get(runId) ?? new Set<RunListener>()
-    runListeners.add(listener)
-    listeners.set(runId, runListeners)
-
-    return () => {
-      runListeners.delete(listener)
-    }
-  })
-
-  const list = vi.fn(() => [...runs.values()].map(cloneRun))
-  const subscribeAll = vi.fn((listener: (runs: WorkflowRun[]) => void) => {
-    listListeners.add(listener)
-    return () => listListeners.delete(listener)
-  })
-
-  return { get, list, save, subscribe, subscribeAll }
-}
-
-function createIdFactory() {
-  let nextId = 0
-  return vi.fn(() => `id-${++nextId}`)
-}
-
-function deferNextGeneration(harness: ReturnType<typeof createHarness>) {
-  let resolve!: (generation: Generation<'character_template'>) => void
-  const promise = new Promise<Generation<'character_template'>>((resolvePromise) => {
-    resolve = resolvePromise
-  })
-  vi.mocked(harness.generationApis.create).mockImplementationOnce(
-    async <T extends GenerationInput>() => (await promise) as Generation<T['type']>,
-  )
-  return { resolve }
-}
-
-function pendingCharacterTemplateGeneration(): Generation<'character_template'> {
+function createStore(): WorkflowRunStore {
+  const runs = new Map<string, WorkflowRun>();
   return {
-    id: 'task-1',
-    projectId: 'project-1',
-    type: 'character_template',
-    status: 'pending',
-    result: null,
-    error: null,
-  }
+    async create(input) {
+      return {
+        id: `run-${runs.size + 1}`,
+        projectId: input.projectId,
+        characterId: input.purpose === "add_action" ? input.characterId : null,
+        outfitId: input.purpose === "add_action" ? input.outfitId : null,
+        purpose: input.purpose,
+        status: "active",
+        nodes: [],
+        generationStatus: "not_started",
+        exportStatus: "not_exported",
+        prompt: input.prompt ?? null,
+        createdAt: NOW,
+      };
+    },
+    async get(id) {
+      const run = runs.get(id);
+      return run ? structuredClone(run) : null;
+    },
+    async getByCharacter(characterId) {
+      const run = [...runs.values()].find(
+        (item) => item.characterId === characterId,
+      );
+      return run ? structuredClone(run) : null;
+    },
+    async list(projectId) {
+      return [...runs.values()]
+        .filter((run) => !projectId || run.projectId === projectId)
+        .map((run) => structuredClone(run));
+    },
+    async save(run) {
+      runs.set(run.id, structuredClone(run));
+    },
+  };
 }
 
-function createHarness() {
-  const store = createMemoryStore()
-  const taskListeners = new Map<string, (event: GenerationEvent) => void>()
-
-  const createGeneration: GenerationApis['create'] = async <T extends GenerationInput>(input: T) =>
+function createHarness(characterApis?: CharacterApis) {
+  const listeners = new Map<string, (event: GenerationEvent) => void>();
+  const createGeneration: GenerationApis["create"] = async <
+    T extends GenerationInput,
+  >(
+    input: T,
+  ) =>
     ({
-      id: 'task-1',
+      id: input.type === "character_image" ? "task-image-1" : "task-action-1",
       projectId: input.projectId,
       type: input.type,
-      status: 'pending',
+      status: "pending",
       result: null,
       error: null,
-    }) as Generation<T['type']>
-
-  const subscribeTask = vi.fn(
-    (projectId: string, taskId: string, onEvent: (event: GenerationEvent) => void) => {
-      taskListeners.set(`${projectId}:${taskId}`, onEvent)
-      onEvent({
-        taskId,
-        type: 'character_template',
-        status: 'pending',
-        error: null,
-        result: null,
-      })
-      return () => {
-        taskListeners.delete(`${projectId}:${taskId}`)
-      }
-    },
-  )
+    }) as Generation<T["type"]>;
   const generationApis: GenerationApis = {
     create: vi.fn(createGeneration),
     get: vi.fn(async () => {
-      throw new Error('GenerationApis.get is not used until a run is resumed')
+      throw new Error("not used");
     }),
-    subscribe: subscribeTask,
-  }
-
+    subscribe: vi.fn((_projectId, taskId, onEvent) => {
+      listeners.set(taskId, onEvent);
+      return () => listeners.delete(taskId);
+    }),
+  };
+  const store = createStore();
   const controller = createWorkflowController({
     store,
     generationApis,
-    createId: createIdFactory(),
+    characterApis,
     now: () => NOW,
-  })
-
+    createId: () => "submission-1",
+  });
   return {
     controller,
-    generationApis,
-    subscribeTask,
     store,
-    getTaskListener(projectId: string, taskId: string) {
-      return taskListeners.get(`${projectId}:${taskId}`) ?? null
+    emit(taskId: string, event: GenerationEvent) {
+      const listener = listeners.get(taskId);
+      if (!listener) throw new Error(`missing listener ${taskId}`);
+      listener(event);
     },
-    emitTask(projectId: string, taskId: string, event: GenerationEvent) {
-      const listener = taskListeners.get(`${projectId}:${taskId}`)
-      expect(listener, `missing task subscription for ${projectId}:${taskId}`).toBeTypeOf(
-        'function',
-      )
-      listener?.(event)
-    },
-  }
+  };
 }
 
-function currentRevision(run: WorkflowRun): WorkflowRevision {
-  const revision = run.revisions.find(({ id }) => id === run.currentRevisionId)
-  if (!revision) {
-    throw new Error(`Current revision ${run.currentRevisionId} is missing`)
-  }
-  return revision
-}
+describe("createWorkflowController", () => {
+  it("creates and persists the frontend-owned node graph", async () => {
+    const { controller, store } = createHarness();
+    const run = await controller.create({
+      projectId: "project-1",
+      purpose: "create_character",
+      prompt: "pixel knight",
+    });
 
-function step(run: WorkflowRun, type: WorkflowStepType): WorkflowStep {
-  const workflowStep = currentRevision(run).steps.find((item) => item.type === type)
-  if (!workflowStep) {
-    throw new Error(`Workflow step ${type} is missing`)
-  }
-  return workflowStep
-}
+    expect(run.nodes).toHaveLength(5);
+    expect(run.nodes[0]).toMatchObject({
+      type: "character-setup",
+      status: "active",
+    });
+    expect(await store.get(run.id)).toEqual(run);
+  });
 
-async function createAiRun(harness: ReturnType<typeof createHarness>) {
-  return harness.controller.create({
-    projectId: 'project-1',
-    purpose: 'create_character',
-    driver: 'ai',
-    prompt: '  pixel knight  ',
-  })
-}
+  it("notifies page subscribers whenever the persisted snapshot changes", async () => {
+    const { controller } = createHarness();
+    const run = await controller.create({
+      projectId: "project-1",
+      purpose: "create_character",
+    });
+    const listener = vi.fn();
+    const unsubscribe = controller.subscribe(run.id, listener);
 
-const SPRITE_SIZE = { width: 64, height: 64 }
+    await controller.updateCharacterSetup(run.id, {
+      description: "revised knight",
+      referenceMedia: [],
+    });
 
-async function startCharacterTemplate(harness: ReturnType<typeof createHarness>) {
-  const run = await createAiRun(harness)
-  await harness.controller.nextStep(run.id, SPRITE_SIZE)
-  return run
-}
-
-describe('createWorkflowController', () => {
-  it('creates one revision with the fixed five steps and seeds AI input from the prompt', async () => {
-    const harness = createHarness()
-
-    expect(harness.controller).toEqual(
+    expect(listener).toHaveBeenCalledWith(
       expect.objectContaining({
-        create: expect.any(Function),
-        getWorkflow: expect.any(Function),
-        subscribe: expect.any(Function),
-        updateCharacterSetup: expect.any(Function),
-        nextStep: expect.any(Function),
-        restart: expect.any(Function),
-        resume: expect.any(Function),
-        interrupt: expect.any(Function),
+        nodes: expect.arrayContaining([
+          expect.objectContaining({
+            type: "character-setup",
+            input: expect.objectContaining({ description: "revised knight" }),
+          }),
+        ]),
       }),
-    )
+    );
+    unsubscribe();
+  });
 
-    const run = await createAiRun(harness)
-    const revision = currentRevision(run)
+  it("rolls the page cache back when persistence fails", async () => {
+    const { controller, store } = createHarness();
+    const run = await controller.create({
+      projectId: "project-1",
+      purpose: "create_character",
+    });
+    const listener = vi.fn();
+    controller.subscribe(run.id, listener);
+    store.save = vi.fn().mockRejectedValue(new Error("save failed"));
 
-    expect(run.prompt).toBe('pixel knight')
-    expect(run.projectId).toBe('project-1')
-    expect(run.revisions).toHaveLength(1)
-    expect(run.currentRevisionId).toBe(revision.id)
-    expect(revision.basedOnRevisionId).toBeNull()
-    expect(revision.restartStepId).toBeNull()
-    expect(revision.createdAt).toBe(NOW)
-    expect(revision.steps.map(({ type }) => type)).toEqual(WORKFLOW_STEP_ORDER)
-    expect(revision.steps.map(({ status }) => status)).toEqual([
-      'active',
-      'locked',
-      'locked',
-      'locked',
-      'locked',
-    ])
-    expect(step(run, 'character-setup').input).toEqual({
-      description: 'pixel knight',
-      referenceMedia: [],
-    })
+    await expect(
+      controller.updateCharacterSetup(run.id, {
+        description: "must not appear as saved",
+        referenceMedia: [],
+      }),
+    ).rejects.toThrow("save failed");
 
-    const allIds = [run.id, revision.id, ...revision.steps.map(({ id }) => id)]
-    expect(new Set(allIds).size).toBe(allIds.length)
-    expect(harness.store.save).toHaveBeenCalledWith(run)
-  })
+    expect(controller.getWorkflow(run.id)).toEqual(run);
+    expect(listener).toHaveBeenLastCalledWith(run);
+  });
 
-  it('persists the task id before subscribing and never submits the active generation twice', async () => {
-    const harness = createHarness()
+  it("moves from setup to candidate selection when the image task completes", async () => {
+    const { controller, emit } = createHarness();
+    const run = await controller.create({
+      projectId: "project-1",
+      purpose: "create_character",
+      prompt: "pixel knight",
+    });
+    await controller.nextStep(run.id, { width: 64, height: 64 });
 
-    await startCharacterTemplate(harness)
-
-    expect(harness.generationApis.create).toHaveBeenCalledTimes(1)
-    expect(harness.generationApis.create).toHaveBeenCalledWith({
-      type: 'character_template',
-      projectId: 'project-1',
-      prompt: 'pixel knight',
-      referenceMedia: [],
-      spriteWidth: 64,
-      spriteHeight: 64,
-    })
-    expect(harness.subscribeTask).toHaveBeenCalledWith('project-1', 'task-1', expect.any(Function))
-
-    const taskSaveIndex = harness.store.save.mock.calls.findIndex(([savedRun]) => {
-      return step(savedRun, 'character-template').taskId === 'task-1'
-    })
-    expect(taskSaveIndex).toBeGreaterThanOrEqual(0)
-    expect(harness.store.save.mock.invocationCallOrder[taskSaveIndex]).toBeLessThan(
-      harness.subscribeTask.mock.invocationCallOrder[0],
-    )
-
-    const createdRun = harness.store.save.mock.calls[0]?.[0]
-    if (!createdRun) throw new Error('Expected the created WorkflowRun to be saved')
-    const activeRun = harness.controller.getWorkflow(createdRun.id)
-    if (!activeRun) throw new Error('Expected the WorkflowRun to remain available')
-    expect(step(activeRun, 'character-setup').status).toBe('passed')
-    expect(step(activeRun, 'character-template')).toMatchObject({
-      status: 'active',
-      taskId: 'task-1',
-    })
-
-    await harness.controller.nextStep(activeRun.id)
-    expect(harness.generationApis.create).toHaveBeenCalledTimes(1)
-  })
-
-  it('shares one submission when nextStep is called concurrently', async () => {
-    const harness = createHarness()
-    const run = await createAiRun(harness)
-    const deferred = deferNextGeneration(harness)
-
-    const first = harness.controller.nextStep(run.id, SPRITE_SIZE)
-    const second = harness.controller.nextStep(run.id, SPRITE_SIZE)
-
-    expect(harness.generationApis.create).toHaveBeenCalledTimes(1)
-    deferred.resolve(pendingCharacterTemplateGeneration())
-    await Promise.all([first, second])
-
-    expect(harness.generationApis.create).toHaveBeenCalledTimes(1)
-    expect(step(harness.controller.getWorkflow(run.id)!, 'character-template').taskId).toBe(
-      'task-1',
-    )
-  })
-
-  it('keeps an active submission alive when resume uses the same controller', async () => {
-    const harness = createHarness()
-    const run = await createAiRun(harness)
-    const deferred = deferNextGeneration(harness)
-
-    const submission = harness.controller.nextStep(run.id, SPRITE_SIZE)
-    const resumed = await harness.controller.resume(run.id)
-
-    expect(resumed?.status).toBe('active')
-    expect(step(resumed!, 'character-template')).toMatchObject({
-      status: 'active',
-      taskId: null,
-      submissionId: expect.any(String),
-    })
-
-    deferred.resolve(pendingCharacterTemplateGeneration())
-    await submission
-
-    expect(harness.generationApis.create).toHaveBeenCalledTimes(1)
-    expect(step(harness.controller.getWorkflow(run.id)!, 'character-template').taskId).toBe(
-      'task-1',
-    )
-  })
-
-  it('handles a terminal snapshot emitted synchronously when subscribing', async () => {
-    const harness = createHarness()
-    const stop = vi.fn()
-    harness.subscribeTask.mockImplementationOnce((_projectId, _taskId, onEvent) => {
-      onEvent({
-        taskId: 'task-1',
-        type: 'character_template',
-        status: 'completed',
-        error: null,
-        result: {
-          type: 'character_template',
-          images: [{ url: 'https://example.com/synchronous.png' }],
-        },
-      })
-      return stop
-    })
-
-    const run = await createAiRun(harness)
-    await harness.controller.nextStep(run.id, SPRITE_SIZE)
-
-    expect(step(harness.controller.getWorkflow(run.id)!, 'character-template')).toMatchObject({
-      status: 'passed',
-      taskId: null,
-    })
-    expect(step(harness.controller.getWorkflow(run.id)!, 'template-candidate').status).toBe(
-      'active',
-    )
-    expect(stop).toHaveBeenCalledOnce()
-  })
-
-  it('ignores another task result and advances only when the matching task completes', async () => {
-    const harness = createHarness()
-
-    const run = await startCharacterTemplate(harness)
-
-    harness.emitTask('project-1', 'task-1', {
-      taskId: 'another-task',
-      type: 'character_template',
-      status: 'completed',
+    emit("task-image-1", {
+      taskId: "task-image-1",
+      type: "character_image",
+      status: "completed",
       error: null,
       result: {
-        type: 'character_template',
-        images: [{ url: 'https://example.com/wrong.png' }],
+        type: "character_image",
+        imageUrls: ["https://example.com/knight.png"],
       },
-    })
+    });
 
-    const unchangedRun = harness.controller.getWorkflow(run.id)
-    if (!unchangedRun) throw new Error('Expected the WorkflowRun to remain available')
-    expect(step(unchangedRun, 'character-template')).toMatchObject({
-      status: 'active',
-      output: null,
-      taskId: 'task-1',
-    })
-    expect(step(unchangedRun, 'template-candidate').status).toBe('locked')
+    await vi.waitFor(() => {
+      expect(controller.getWorkflow(run.id)?.nodes[2]).toMatchObject({
+        type: "template-candidate",
+        status: "active",
+      });
+    });
+  });
 
-    const result = {
-      type: 'character_template' as const,
-      images: [{ url: 'https://example.com/knight.png' }],
-    }
-    harness.emitTask('project-1', 'task-1', {
-      taskId: 'task-1',
-      type: 'character_template',
-      status: 'completed',
-      error: null,
-      result,
-    })
+  it("keeps interruption as frontend state and preserves the active node", async () => {
+    const { controller } = createHarness();
+    const run = await controller.create({
+      projectId: "project-1",
+      purpose: "create_character",
+    });
 
-    const completedRun = harness.controller.getWorkflow(run.id)
-    if (!completedRun) throw new Error('Expected the WorkflowRun to remain available')
-    expect(step(completedRun, 'character-template')).toMatchObject({
-      status: 'passed',
-      output: result,
-      taskId: null,
-    })
-    expect(step(completedRun, 'template-candidate').status).toBe('active')
-  })
+    const interrupted = await controller.interrupt(run.id);
 
-  it('marks the step, revision, generation, and run as failed when the task fails', async () => {
-    const harness = createHarness()
+    expect(interrupted.status).toBe("interrupted");
+    expect(
+      interrupted.nodes.filter((node) => node.status === "active"),
+    ).toHaveLength(1);
+  });
 
-    const run = await startCharacterTemplate(harness)
-
-    harness.emitTask('project-1', 'task-1', {
-      taskId: 'task-1',
-      type: 'character_template',
-      status: 'failed',
-      error: 'model unavailable',
-      result: null,
-    })
-
-    const failedRun = harness.controller.getWorkflow(run.id)
-    if (!failedRun) throw new Error('Expected the WorkflowRun to remain available')
-    const revision = currentRevision(failedRun)
-    expect(step(failedRun, 'character-template')).toMatchObject({
-      status: 'failed',
-      taskId: null,
-      submissionId: null,
-      error: 'model unavailable',
-    })
-    expect(revision.status).toBe('failed')
-    expect(revision.generationStatus).toBe('failed')
-    expect(failedRun.status).toBe('failed')
-  })
-
-  it('resumes a persisted in-flight task without creating another generation', async () => {
-    const harness = createHarness()
-    const run = await startCharacterTemplate(harness)
-    vi.mocked(harness.generationApis.get).mockResolvedValueOnce({
-      id: 'task-1',
-      projectId: 'project-1',
-      type: 'character_template',
-      status: 'running',
-      error: null,
-      result: null,
-    })
-    const resumeSubscribe = vi.fn(
-      (_projectId: string, _taskId: string, _onEvent: (event: GenerationEvent) => void) => () =>
-        undefined,
-    )
-    const resumedController = createWorkflowController({
-      store: harness.store,
-      generationApis: { ...harness.generationApis, subscribe: resumeSubscribe },
-    })
-
-    const resumed = await resumedController.resume(run.id)
-
-    expect(resumed?.id).toBe(run.id)
-    expect(harness.generationApis.get).toHaveBeenCalledWith('project-1', 'task-1')
-    expect(resumeSubscribe).toHaveBeenCalledWith('project-1', 'task-1', expect.any(Function))
-    expect(harness.generationApis.create).toHaveBeenCalledTimes(1)
-  })
-
-  it('applies a completed task found during refresh before subscribing again', async () => {
-    const harness = createHarness()
-    const run = await startCharacterTemplate(harness)
-    vi.mocked(harness.generationApis.get).mockResolvedValueOnce({
-      id: 'task-1',
-      projectId: 'project-1',
-      type: 'character_template',
-      status: 'completed',
-      error: null,
-      result: {
-        type: 'character_template',
-        images: [{ url: 'https://example.com/recovered.png' }],
-      },
-    })
-    const resumeSubscribe = vi.fn(
-      (_projectId: string, _taskId: string, _onEvent: (event: GenerationEvent) => void) => () =>
-        undefined,
-    )
-    const resumedController = createWorkflowController({
-      store: harness.store,
-      generationApis: { ...harness.generationApis, subscribe: resumeSubscribe },
-    })
-
-    const resumed = await resumedController.resume(run.id)
-
-    expect(step(resumed!, 'character-template')).toMatchObject({
-      status: 'passed',
-      taskId: null,
-    })
-    expect(step(resumed!, 'template-candidate').status).toBe('active')
-    expect(resumeSubscribe).not.toHaveBeenCalled()
-  })
-
-  it('does not subscribe after interrupting while resume waits for the task query', async () => {
-    const harness = createHarness()
-    const run = await startCharacterTemplate(harness)
-    let resolveTask!: (task: Generation) => void
-    const pendingTask = new Promise<Generation>((resolve) => {
-      resolveTask = resolve
-    })
-    const resumeSubscribe = vi.fn(
-      (_projectId: string, _taskId: string, _onEvent: (event: GenerationEvent) => void) => () =>
-        undefined,
-    )
-    const resumedController = createWorkflowController({
-      store: harness.store,
-      generationApis: {
-        ...harness.generationApis,
-        get: vi.fn(() => pendingTask),
-        subscribe: resumeSubscribe,
-      },
-    })
-
-    const resuming = resumedController.resume(run.id)
-    resumedController.interrupt(run.id)
-    resolveTask({
-      id: 'task-1',
-      projectId: 'project-1',
-      type: 'character_template',
-      status: 'running',
-      error: null,
-      result: null,
-    })
-    const resumed = await resuming
-
-    expect(resumed?.status).toBe('interrupted')
-    expect(resumeSubscribe).not.toHaveBeenCalled()
-  })
-
-  it('fails safely after refresh when the request was sent before taskId arrived', async () => {
-    const harness = createHarness()
-    const run = await startCharacterTemplate(harness)
-    const uncertainSnapshot = harness.store.save.mock.calls
-      .map(([savedRun]) => savedRun)
-      .find((savedRun) => {
-        const template = step(savedRun, 'character-template')
-        return template.submissionId !== null && template.taskId === null
-      })
-    if (!uncertainSnapshot) throw new Error('expected the submitting snapshot to be persisted')
-    harness.store.save(uncertainSnapshot)
-    vi.mocked(harness.generationApis.create).mockClear()
-
-    const restoredController = createWorkflowController({
-      store: harness.store,
-      generationApis: harness.generationApis,
-    })
-
-    const restored = await restoredController.resume(run.id)
-
-    expect(restored?.status).toBe('failed')
-    expect(step(restored!, 'character-template')).toMatchObject({
-      status: 'failed',
-      taskId: null,
-      submissionId: null,
-      error: '页面刷新时生成请求尚未返回任务 ID，已停止恢复以避免重复提交',
-    })
-    expect(harness.generationApis.create).not.toHaveBeenCalled()
-  })
-
-  it('records a task id that returns after the run was interrupted', async () => {
-    const harness = createHarness()
-    const run = await createAiRun(harness)
-    const deferred = deferNextGeneration(harness)
-
-    const submission = harness.controller.nextStep(run.id, SPRITE_SIZE)
-    await harness.controller.interrupt(run.id)
-    deferred.resolve(pendingCharacterTemplateGeneration())
-    await submission
-
-    const interrupted = harness.controller.getWorkflow(run.id)
-    expect(interrupted?.status).toBe('interrupted')
-    expect(step(interrupted!, 'character-template')).toMatchObject({
-      status: 'active',
-      taskId: 'task-1',
-      submissionId: null,
-    })
-    expect(harness.subscribeTask).not.toHaveBeenCalled()
-  })
-
-  it('keeps an interrupted run interrupted when a queued failure arrives late', async () => {
-    const harness = createHarness()
-    const run = await startCharacterTemplate(harness)
-    const queuedListener = harness.getTaskListener('project-1', 'task-1')
-    if (!queuedListener) throw new Error('expected an active task subscription')
-
-    await harness.controller.interrupt(run.id)
-    queuedListener({
-      taskId: 'task-1',
-      type: 'character_template',
-      status: 'failed',
-      error: 'late failure',
-      result: null,
-    })
-
-    expect(harness.controller.getWorkflow(run.id)?.status).toBe('interrupted')
-  })
-
-  it('publishes saved updates and can interrupt the current run', async () => {
-    const harness = createHarness()
-    const run = await createAiRun(harness)
-    const listener = vi.fn<RunListener>()
-    const unsubscribe = harness.controller.subscribe(run.id, listener)
-
-    const updated = await harness.controller.updateCharacterSetup(run.id, {
-      description: 'revised knight',
-      referenceMedia: [],
-    })
-    expect(step(updated, 'character-setup').input).toEqual({
-      description: 'revised knight',
-      referenceMedia: [],
-    })
-
-    const interrupted = await harness.controller.interrupt(run.id)
-
-    expect(interrupted.status).toBe('interrupted')
-    expect(listener).toHaveBeenLastCalledWith(
-      expect.objectContaining({ id: run.id, status: 'interrupted' }),
-    )
-
-    unsubscribe()
-  })
-
-  it('completes the active action-generation step without throwing and activates review', async () => {
-    const harness = createHarness()
-    const run = await startCharacterTemplate(harness)
-    harness.emitTask('project-1', 'task-1', {
-      taskId: 'task-1',
-      type: 'character_template',
-      status: 'completed',
-      error: null,
-      result: {
-        type: 'character_template',
-        images: [{ url: 'https://example.com/candidate.png' }],
-      },
-    })
-    const confirmed = harness.controller.confirmCandidate(
-      run.id,
-      'https://example.com/candidate.png',
-    )
-
-    expect(step(confirmed, 'template-candidate')).toMatchObject({
-      status: 'passed',
-      output: { selectedImageUrl: 'https://example.com/candidate.png' },
-    })
-    expect(step(confirmed, 'action-generation').status).toBe('active')
-
-    const result = {
-      type: 'complete_animation' as const,
-      actionType: 'idle' as const,
-      frames: [{ url: 'https://example.com/frame.png', durationMs: 125 }],
-    }
-    const completed = harness.controller.completeActionGeneration(run.id, result)
-
-    expect(step(completed, 'action-generation')).toMatchObject({
-      status: 'passed',
-      output: result,
-      error: null,
-    })
-    // 动作完成后 review 进入 active，保证刷新后 run 仍满足“恰好一个 active 步骤”的存储校验
-    expect(step(completed, 'review').status).toBe('active')
-  })
-
-  it('marks the action-generation step failed when the result carries an error', async () => {
-    const harness = createHarness()
-    const run = await startCharacterTemplate(harness)
-    harness.emitTask('project-1', 'task-1', {
-      taskId: 'task-1',
-      type: 'character_template',
-      status: 'completed',
-      error: null,
-      result: {
-        type: 'character_template',
-        images: [{ url: 'https://example.com/candidate.png' }],
-      },
-    })
-    harness.controller.confirmCandidate(run.id, 'https://example.com/candidate.png')
-
-    const failed = harness.controller.completeActionGeneration(run.id, {
-      error: '动作生成完成但未返回有效帧图片',
-    })
-
-    expect(step(failed, 'action-generation')).toMatchObject({
-      status: 'failed',
-      error: '动作生成完成但未返回有效帧图片',
-    })
-    expect(step(failed, 'review').status).toBe('locked')
-    expect(failed.status).toBe('failed')
-  })
-
-  it('restarts from a passed stage as a new local revision', async () => {
-    const harness = createHarness()
-    const run = await createAiRun(harness)
-    await harness.controller.nextStep(run.id, SPRITE_SIZE)
-    const advanced = harness.controller.getWorkflow(run.id)
-    if (!advanced) throw new Error('Expected the workflow to remain available')
-    const original = currentRevision(advanced)
-    const restarted = harness.controller.restart(advanced.id, `${original.id}:character-setup`)
-
-    const revision = currentRevision(restarted)
-    expect(restarted.status).toBe('active')
-    expect(restarted.revisions).toHaveLength(2)
-    expect(restarted.revisions[0]?.status).toBe('abandoned')
-    expect(revision).toMatchObject({
-      id: 'id-4',
-      basedOnRevisionId: original.id,
-      restartStepId: `${original.id}:character-setup`,
+  it("deduplicates concurrent character creation for one candidate", async () => {
+    const character: Character = {
+      id: "character-1",
+      projectId: "project-1",
       createdAt: NOW,
-    })
-    expect(step(restarted, 'character-setup')).toMatchObject({
-      id: 'id-4:character-setup',
-      status: 'active',
-      referenceStepIds: [`${original.id}:character-setup`],
-    })
-  })
-})
+      updatedAt: NOW,
+      outfits: [
+        {
+          id: "outfit-1",
+          characterId: "character-1",
+          name: "默认造型",
+          candidateCharacterTemplates: [],
+          characterTemplateUrl: "https://example.com/knight.png",
+          baseFrames: [],
+          actions: [],
+        },
+      ],
+    };
+    let releaseCreate: ((character: Character) => void) | undefined;
+    const characterApis: CharacterApis = {
+      get: vi.fn(async () => character),
+      listByProject: vi.fn(async () => [character]),
+      create: vi.fn(
+        () =>
+          new Promise<Character>((resolve) => {
+            releaseCreate = resolve;
+          }),
+      ),
+      update: vi.fn(async (updated) => updated),
+      remove: vi.fn(async () => undefined),
+    };
+    const { controller, emit } = createHarness(characterApis);
+    const run = await controller.create({
+      projectId: "project-1",
+      purpose: "create_character",
+      prompt: "pixel knight",
+    });
+    await controller.nextStep(run.id, { width: 64, height: 64 });
+    emit("task-image-1", {
+      taskId: "task-image-1",
+      type: "character_image",
+      status: "completed",
+      error: null,
+      result: {
+        type: "character_image",
+        imageUrls: ["https://example.com/knight.png"],
+      },
+    });
+    await vi.waitFor(() => {
+      expect(controller.getWorkflow(run.id)?.nodes[2]?.status).toBe("active");
+    });
+
+    const first = controller.startActionFromTemplate(
+      run.id,
+      "https://example.com/knight.png",
+    );
+    const second = controller.startActionFromTemplate(
+      run.id,
+      "https://example.com/knight.png",
+    );
+    await vi.waitFor(() => expect(characterApis.create).toHaveBeenCalledOnce());
+    releaseCreate?.(character);
+    await Promise.all([first, second]);
+
+    expect(characterApis.create).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an action result that is not exactly 32 frames", async () => {
+    const { controller } = createHarness();
+    const run = await controller.create({
+      projectId: "project-1",
+      purpose: "add_action",
+      characterId: "character-1",
+      outfitId: "outfit-1",
+      characterTemplateUrl: "template.png",
+      baseFrameUrls: [],
+    });
+    const result = await controller.completeActionGeneration(run.id, {
+      type: "character_action",
+      actionType: "idle",
+      frames: Array.from(
+        { length: CHARACTER_ACTION_FRAME_COUNT - 1 },
+        (_, index) => ({
+          index,
+          imageUrl: `frame-${index}.png`,
+          durationMs: null,
+        }),
+      ),
+    });
+
+    expect(result.status).toBe("failed");
+    expect(
+      result.nodes.find((node) => node.type === "action-generation"),
+    ).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("32 帧"),
+    });
+  });
+});
