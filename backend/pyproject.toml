@@ -14,8 +14,12 @@ windup-app = { workspace = true }
 dev = [
     "import-linter>=2.0",
     "pytest>=8.0",
+    "pytest-asyncio>=0.23",
     "ruff>=0.6",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 
 # ── 分层依赖约束(CI 用 `lint-imports` 强制,防循环依赖)─────────────────
 # 契约 ① 主分层链:每层只能依赖其下层;web/worker 同层 -> 互不可依赖

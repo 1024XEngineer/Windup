@@ -3,10 +3,15 @@
 纯 CRUD 操作，不含业务逻辑。所有函数接收 ``session: Session``，
 由调用方（FastAPI ``get_session`` 依赖）管理事务边界——本模块只
 ``flush`` 不 ``commit``。
+
+状态变更时自动向 EventBus 推送完整 task 数据（若已绑定），
+供 SSE 端点实时推送给前端，替代轮询。
 """
 
 from __future__ import annotations
 
+import dataclasses
+import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -20,6 +25,34 @@ from windup_app.server.orchestrator.model import (
     GenerationType,
     TaskStatus,
 )
+
+logger = logging.getLogger("windup.task_repo")
+
+# EventBus 引用（bootstrap 中绑定，避免循环导入）
+_event_bus = None
+
+
+def bind_event_bus(event_bus) -> None:
+    """绑定 EventBus 实例（bootstrap 中调用）。"""
+    global _event_bus
+    _event_bus = event_bus
+
+
+def _publish_task_update(task_id: int, task: GenerationTask) -> None:
+    """将完整 task 推送到 EventBus（若有订阅者）。"""
+    if _event_bus is None:
+        return
+    result_dict = dataclasses.asdict(task.result) if task.result else None
+    _event_bus.publish(task_id, "task_update", {
+        "id": task.id,
+        "user_id": task.user_id,
+        "project_id": task.project_id,
+        "task_type": task.task_type.value,
+        "status": task.status.value,
+        "input_payload": task.input_payload,
+        "result": result_dict,
+        "error_message": task.error_message,
+    })
 
 
 # ── 写入 ─────────────────────────────────────────────────────────────────
@@ -61,6 +94,7 @@ def update_status(
     record.error_message = error_message
     record.update_at = datetime.now(timezone.utc)
     session.flush()
+    _publish_task_update(task_id, _record_to_domain(record))
 
 
 def update_result(
@@ -78,6 +112,7 @@ def update_result(
     record.status = TaskStatus.COMPLETED.value
     record.update_at = datetime.now(timezone.utc)
     session.flush()
+    _publish_task_update(task_id, _record_to_domain(record))
 
 
 # ── 读取 ─────────────────────────────────────────────────────────────────
