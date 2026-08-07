@@ -10,16 +10,17 @@
 import os
 from contextlib import asynccontextmanager
 
-import windup_framework.db  # noqa: F401  组装时显式触发 DB engine/session 初始化
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from windup_framework.db import Base, engine
 
-from windup_app.server.orchestrator.executor import run_action_task, run_image_task
+# 模型导入：触发 Base.metadata 注册，确保 create_all 能发现所有表
+from windup_app.server.character.model import Character  # noqa: F401
+from windup_app.server.project.model import Project  # noqa: F401
+from windup_app.server.user.model import User  # noqa: F401
 from windup_app.web.api.auth import router as auth_router
-from windup_app.web.api.character import router as character_router
 from windup_app.web.api.generation import router as generation_router
 from windup_app.web.api.media import router as media_router
-from windup_app.web.api.project import router as project_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
 from windup_app.web.middleware.auth import AuthMiddleware
 from windup_app.web.middleware.ratelimit import RateLimitMiddleware
@@ -60,20 +61,14 @@ def print_banner() -> None:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    """应用启动时打印 banner,关闭时无特殊处理。"""
+    """应用启动时建表 + 打印 banner,关闭时无特殊处理。"""
+    Base.metadata.create_all(engine)
     print_banner()
     yield
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="windup", version="0.1.0", lifespan=_lifespan)
-
-    # 中间件（执行顺序：请求先进 RateLimit，再进 Auth，最后到路由）
-    app.add_middleware(RateLimitMiddleware)
-    app.add_middleware(AuthMiddleware)
-
-    # 路由
-    app.include_router(auth_router)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
@@ -82,15 +77,12 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.include_router(project_router)
-    app.include_router(character_router)
+    # 中间件（add_middleware 后加的先执行：请求先进 RateLimit → 再进 Auth → 最后到路由）
+    app.add_middleware(AuthMiddleware)
+    app.add_middleware(RateLimitMiddleware)
+    app.include_router(auth_router)
     app.include_router(media_router)
     app.include_router(generation_router)
-
-    # 生成后台调度器注入 app.state
-    app.state.run_action_task = run_action_task
-    app.state.run_image_task = run_image_task
-
     register_exception_handlers(app)
     return app
 
