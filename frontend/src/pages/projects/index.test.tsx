@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 
 import { AppRoutes } from '@/app'
+import { GuestAuthSession } from '@/test/auth-session'
 import { createProjectAssetsBackend } from '@/test/project-assets-backend'
 
 afterEach(() => {
@@ -23,9 +24,11 @@ describe('ProjectsPage', () => {
   it('renders backend Projects as the first browsing level', async () => {
     installBackend()
     const { container } = render(
-      <MemoryRouter initialEntries={['/projects']}>
-        <AppRoutes />
-      </MemoryRouter>,
+      <GuestAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </GuestAuthSession>,
     )
 
     expect(await screen.findByRole('heading', { name: '项目中心' })).toBeTruthy()
@@ -41,9 +44,11 @@ describe('ProjectsPage', () => {
   it('sends creation to the project create page and deletes through the Project API', async () => {
     const backend = installBackend()
     render(
-      <MemoryRouter initialEntries={['/projects']}>
-        <AppRoutes />
-      </MemoryRouter>,
+      <GuestAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </GuestAuthSession>,
     )
 
     expect(await screen.findAllByRole('link', { name: /打开项目/ })).toHaveLength(2)
@@ -70,9 +75,11 @@ describe('ProjectsPage', () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
     vi.stubGlobal('fetch', backend.fetch)
     render(
-      <MemoryRouter initialEntries={['/projects']}>
-        <AppRoutes />
-      </MemoryRouter>,
+      <GuestAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </GuestAuthSession>,
     )
 
     expect(await screen.findAllByRole('link', { name: /打开项目/ })).toHaveLength(12)
