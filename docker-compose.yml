@@ -12,6 +12,8 @@ services:
     image: redis:7-alpine
     container_name: windup-redis
     restart: unless-stopped
+    volumes:
+      - ${REDIS_DATA_DIR:-./data/redis}:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
