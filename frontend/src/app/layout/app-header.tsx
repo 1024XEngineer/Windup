@@ -132,16 +132,16 @@ export function AppHeader() {
             <Link
               to={accountEntry}
               aria-label="登录 / 注册"
-              className="inline-flex min-h-11 items-center rounded-[0.5625rem] bg-[#284331] px-2.5 text-[13px] font-semibold whitespace-nowrap text-white transition-colors hover:bg-[#1f3627] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#284331]"
+              className="inline-flex min-h-11 items-center rounded-[0.5625rem] border border-[#2d3b31]/14 bg-white/35 px-3 text-[13px] font-semibold whitespace-nowrap text-[#34483a] transition-colors hover:border-[#2d3b31]/22 hover:bg-[#edf2ed] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#284331]"
             >
               <span className="hidden sm:inline">登录 / 注册</span>
               <span className="sm:hidden">登录</span>
             </Link>
           ) : (
-            <>
+            <div className="flex min-w-0 items-center overflow-hidden rounded-[0.5625rem] border border-[#2d3b31]/14 bg-white/35">
               <span
                 title={session.state.user.email}
-                className="max-w-14 truncate px-1 text-xs font-semibold text-[#34483a] sm:max-w-28"
+                className="inline-flex min-h-11 max-w-16 items-center truncate px-3 text-xs font-semibold text-[#34483a] sm:max-w-28"
               >
                 {session.state.user.nickname || session.state.user.email}
               </span>
@@ -149,11 +149,11 @@ export function AppHeader() {
                 type="button"
                 onClick={signOut}
                 aria-label="退出登录"
-                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-[0.5625rem] px-2 text-xs font-semibold text-[#68736a] transition-colors hover:bg-[#e7eee8] hover:text-[#26372c] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#284331]"
+                className="inline-flex min-h-11 min-w-11 items-center justify-center border-l border-[#2d3b31]/12 px-2.5 text-xs font-semibold text-[#68736a] transition-colors hover:bg-[#dce9df] hover:text-[#26372c] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#284331]"
               >
                 退出
               </button>
-            </>
+            </div>
           )}
         </div>
       </div>
