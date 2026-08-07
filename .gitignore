@@ -30,5 +30,9 @@ output/
 .pytest_cache/
 .import_linter_cache/
 
+# 测试覆盖率
+.coverage
+htmlcov/
+
 # 本地数据库初始化脚本
 init.sql
