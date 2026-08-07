@@ -78,6 +78,7 @@ function AccountPanelDialog() {
   const emailInputRef = useRef<HTMLInputElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
   const navigationTimerRef = useRef<number | null>(null)
+  const dismissedRef = useRef(false)
   const titleId = useId()
   const descriptionId = useId()
   const emailId = useId()
@@ -124,12 +125,14 @@ function AccountPanelDialog() {
 
   useEffect(
     () => () => {
+      dismissedRef.current = true
       if (navigationTimerRef.current) window.clearTimeout(navigationTimerRef.current)
     },
     [],
   )
 
   function close() {
+    dismissedRef.current = true
     if (navigationTimerRef.current) window.clearTimeout(navigationTimerRef.current)
     const next = new URLSearchParams(searchParams)
     next.delete('account')
@@ -192,12 +195,13 @@ function AccountPanelDialog() {
     setSuccess(null)
     setIsSubmitting(true)
     try {
+      let successMessage: string
       if (mode === 'code') {
         await session.loginByCode({ email: normalizedEmail, code })
-        setSuccess('登录成功。如果这是你首次使用该邮箱，我们已为你创建账号。')
+        successMessage = '登录成功。如果这是你首次使用该邮箱，我们已为你创建账号。'
       } else if (mode === 'password') {
         await session.login({ email: normalizedEmail, password, code })
-        setSuccess('登录成功，正在继续。')
+        successMessage = '登录成功，正在继续。'
       } else {
         await session.register({
           email: normalizedEmail,
@@ -205,14 +209,17 @@ function AccountPanelDialog() {
           code,
           ...(nickname.trim() ? { nickname: nickname.trim() } : {}),
         })
-        setSuccess('账号已创建，正在继续。')
+        successMessage = '账号已创建，正在继续。'
       }
 
+      if (dismissedRef.current) return
+      setSuccess(successMessage)
       navigationTimerRef.current = window.setTimeout(
         () => navigate(returnTarget, { replace: true }),
         SUCCESS_NAVIGATION_DELAY_MS,
       )
     } catch (submitError) {
+      if (dismissedRef.current) return
       setError(errorMessage(submitError))
       setIsSubmitting(false)
     }
