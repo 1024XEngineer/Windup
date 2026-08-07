@@ -61,7 +61,7 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: ${POSTGRES_USER:-root}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin123}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-W1ndup@2026!Secure}
       POSTGRES_DB: ${POSTGRES_DB:-windup}
       # LLM 配置
       LLM_API_KEY: ${LLM_API_KEY}
