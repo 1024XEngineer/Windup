@@ -5,6 +5,7 @@ import {
   createApiClient,
   getApiAccessToken,
   registerApiAccessTokenProvider,
+  registerApiUnauthorizedRecovery,
 } from './index'
 
 afterEach(() => vi.unstubAllEnvs())
@@ -125,6 +126,128 @@ describe('createApiClient', () => {
     await client.request('/auth/me')
 
     expect(authorization).toBe('Bearer access-token')
+  })
+
+  it('recovers a valid HTTP 200 business 401 and replays once with the new token', async () => {
+    let accessToken = 'expired-token'
+    const authorizations: (string | null)[] = []
+    const unregister = registerApiUnauthorizedRecovery(async () => {
+      accessToken = 'renewed-token'
+      return true
+    })
+    const client = createApiClient({
+      baseUrl: 'https://api.windup.test',
+      getAccessToken: () => accessToken,
+      fetchFn: async (input, init) => {
+        authorizations.push(new Request(input, init).headers.get('authorization'))
+        const payload =
+          authorizations.length === 1
+            ? { code: 401, message: '登录状态已过期', data: null }
+            : { code: 200, message: 'success', data: { id: 7 } }
+        return new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      },
+    })
+
+    await expect(client.request('/resources/7')).resolves.toEqual({ id: 7 })
+    expect(authorizations).toEqual(['Bearer expired-token', 'Bearer renewed-token'])
+    unregister()
+  })
+
+  it('never recovers or replays the same request twice', async () => {
+    const recover = vi.fn(async () => true)
+    const unregister = registerApiUnauthorizedRecovery(recover)
+    const fetchFn = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ code: 401, message: '登录状态已过期', data: null }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+    const client = createApiClient({ baseUrl: 'https://api.windup.test', fetchFn })
+
+    await expect(client.request('/resources')).rejects.toMatchObject({
+      kind: 'business',
+      code: 401,
+    })
+    expect(recover).toHaveBeenCalledTimes(1)
+    expect(fetchFn).toHaveBeenCalledTimes(2)
+    unregister()
+  })
+
+  it('keeps the original 401 when recovery fails and lets clients opt out', async () => {
+    const recover = vi.fn(async () => {
+      throw new Error('refresh failed')
+    })
+    const unregister = registerApiUnauthorizedRecovery(recover)
+    const response = () =>
+      new Response(JSON.stringify({ code: 401, message: '原始登录错误', data: null }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    const recoveringClient = createApiClient({
+      baseUrl: 'https://api.windup.test',
+      fetchFn: async () => response(),
+    })
+    const authClient = createApiClient({
+      baseUrl: 'https://api.windup.test',
+      fetchFn: async () => response(),
+      recoverUnauthorized: false,
+    })
+
+    await expect(recoveringClient.request('/resources')).rejects.toMatchObject({
+      code: 401,
+      message: '原始登录错误',
+    })
+    await expect(authClient.request('/auth/refresh')).rejects.toMatchObject({
+      code: 401,
+      message: '原始登录错误',
+    })
+    expect(recover).toHaveBeenCalledTimes(1)
+    unregister()
+  })
+
+  it('does not recover a business 401 carried by a failed HTTP response', async () => {
+    const recover = vi.fn(async () => true)
+    const unregister = registerApiUnauthorizedRecovery(recover)
+    const client = createApiClient({
+      baseUrl: 'https://api.windup.test',
+      fetchFn: async () =>
+        new Response(JSON.stringify({ code: 401, message: 'unauthorized', data: null }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        }),
+    })
+
+    await expect(client.request('/resources')).rejects.toMatchObject({
+      kind: 'http',
+      status: 401,
+    })
+    expect(recover).not.toHaveBeenCalled()
+    unregister()
+  })
+
+  it('does not recover a business 401 carried by a non-200 successful HTTP response', async () => {
+    const recover = vi.fn(async () => true)
+    const unregister = registerApiUnauthorizedRecovery(recover)
+    const client = createApiClient({
+      baseUrl: 'https://api.windup.test',
+      fetchFn: async () =>
+        new Response(JSON.stringify({ code: 401, message: 'unauthorized', data: null }), {
+          status: 201,
+          headers: { 'content-type': 'application/json' },
+        }),
+    })
+
+    await expect(client.request('/resources')).rejects.toMatchObject({
+      kind: 'business',
+      code: 401,
+      status: 201,
+    })
+    expect(recover).not.toHaveBeenCalled()
+    unregister()
   })
 
   it('wraps a rejected fetch as a network ApiError', async () => {

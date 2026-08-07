@@ -25,6 +25,8 @@ export interface ApiClientOptions {
   fetchFn?: typeof fetch
   /** 只在请求发出时读取；token 的取得、保存与刷新由调用方负责。 */
   getAccessToken?: () => string | null | undefined
+  /** 认证端点关闭此项，避免 refresh 自身的 401 递归进入恢复流程。 */
+  recoverUnauthorized?: boolean
 }
 
 export type ApiAccessTokenProvider = NonNullable<ApiClientOptions['getAccessToken']>
@@ -46,6 +48,23 @@ export function registerApiAccessTokenProvider(provider: ApiAccessTokenProvider)
 /** 业务 API 实例统一传给 createApiClient 的惰性 token 读取边界。 */
 export function getApiAccessToken(): string | null | undefined {
   return accessTokenProviders.at(-1)?.()
+}
+
+export type ApiUnauthorizedRecovery = () => Promise<boolean>
+
+const unauthorizedRecoveryProviders: ApiUnauthorizedRecovery[] = []
+
+/** 注册会话层提供的 401 恢复函数；shared/api 不持有任何认证业务状态。 */
+export function registerApiUnauthorizedRecovery(recovery: ApiUnauthorizedRecovery): () => void {
+  unauthorizedRecoveryProviders.push(recovery)
+  return () => {
+    const index = unauthorizedRecoveryProviders.lastIndexOf(recovery)
+    if (index >= 0) unauthorizedRecoveryProviders.splice(index, 1)
+  }
+}
+
+function getApiUnauthorizedRecovery(): ApiUnauthorizedRecovery | undefined {
+  return unauthorizedRecoveryProviders.at(-1)
 }
 
 export type ApiErrorKind = 'business' | 'http' | 'invalid-response' | 'network'
@@ -181,6 +200,7 @@ export function createApiClient({
   baseUrl,
   fetchFn = globalThis.fetch,
   getAccessToken,
+  recoverUnauthorized = true,
 }: ApiClientOptions): ApiClient {
   const normalizedBaseUrl = resolveApiBaseUrl(baseUrl)
 
@@ -194,10 +214,43 @@ export function createApiClient({
     }
   }
 
+  function canReplay(options: ApiRequestOptions | undefined): boolean {
+    const body = options?.body
+    return !(typeof ReadableStream !== 'undefined' && body instanceof ReadableStream)
+  }
+
+  async function receiveEnvelope(
+    path: string,
+    options: ApiRequestOptions | undefined,
+    replayed = false,
+  ): Promise<{ response: Response; envelope: ApiEnvelope }> {
+    const response = await send(path, options)
+    const envelope = await readEnvelope(response)
+
+    const recovery = getApiUnauthorizedRecovery()
+    if (
+      !replayed &&
+      recoverUnauthorized &&
+      response.status === 200 &&
+      envelope.code === 401 &&
+      recovery &&
+      canReplay(options)
+    ) {
+      let recovered = false
+      try {
+        recovered = await recovery()
+      } catch {
+        // 恢复失败仍应向调用方交付原始 401，而不是泄漏 refresh 的错误。
+      }
+      if (recovered) return receiveEnvelope(path, options, true)
+    }
+
+    return { response, envelope }
+  }
+
   return {
     async request<T>(path: string, options?: ApiRequestOptions) {
-      const response = await send(path, options)
-      const envelope = await readEnvelope(response)
+      const { response, envelope } = await receiveEnvelope(path, options)
       assertSuccessfulEnvelope(response, envelope)
 
       return envelope.data as T
@@ -207,8 +260,7 @@ export function createApiClient({
      * 分页字段与 data 同级，不在 data 内再嵌套分页对象。
      */
     async requestList<T>(path: string, options?: ApiRequestOptions) {
-      const response = await send(path, options)
-      const envelope = await readEnvelope(response)
+      const { response, envelope } = await receiveEnvelope(path, options)
       assertSuccessfulEnvelope(response, envelope)
 
       if (
