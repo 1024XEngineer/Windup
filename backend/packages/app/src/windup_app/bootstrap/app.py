@@ -14,10 +14,8 @@ import windup_framework.db  # noqa: F401  组装时显式触发 DB engine/sessio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from windup_app.web.api.character import router as character_router
 from windup_app.web.api.generation import router as generation_router
 from windup_app.web.api.media import router as media_router
-from windup_app.web.api.project import router as project_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
 
 
@@ -63,8 +61,6 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.include_router(project_router)
-    app.include_router(character_router)
     app.include_router(media_router)
     app.include_router(generation_router)
     register_exception_handlers(app)
