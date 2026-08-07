@@ -10,6 +10,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from windup_common.enums.biz_code import BizCode
+from windup_common.exceptions import BizException
 from windup_common.result import Response as Resp
 
 from windup_app.server.user.service import decode_token
@@ -67,7 +68,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         token = auth_header[7:]  # 去掉 "Bearer " 前缀
 
         # 解码 + 验证
-        payload = decode_token(token)
+        try:
+            payload = decode_token(token)
+        except BizException as e:
+            return _biz_error(e.message, e.code)
+
         if payload.get("type") != "access":
             return _biz_error("token 类型错误", BizCode.UNAUTHORIZED)
 
