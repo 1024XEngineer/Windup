@@ -185,7 +185,7 @@ describe("createWorkflowController", () => {
 
     await vi.waitFor(() => {
       expect(controller.getWorkflow(run.id)?.nodes[2]).toMatchObject({
-        type: "template-candidate",
+        type: "action-first-frame",
         status: "active",
       });
     });

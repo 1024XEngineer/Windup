@@ -41,6 +41,7 @@ export interface PlaybackController {
   firstFrame(): void
   lastFrame(): void
   togglePlaying(): void
+  pause(): void
   toggleLoop(): void
 }
 
@@ -130,6 +131,10 @@ export function usePlaybackController(
     setState((current) => togglePlaying(current, actions))
   }, [actions])
 
+  const pause = useCallback(() => {
+    setState((current) => ({ ...current, playing: false }))
+  }, [])
+
   const chooseLoop = useCallback(() => {
     setState((current) => toggleLoop(current))
   }, [])
@@ -150,6 +155,7 @@ export function usePlaybackController(
     firstFrame: chooseFirstFrame,
     lastFrame: chooseLastFrame,
     togglePlaying: choosePlaying,
+    pause,
     toggleLoop: chooseLoop,
   }
 }

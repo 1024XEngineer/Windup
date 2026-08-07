@@ -32,6 +32,7 @@
 | 07 | media-upload | `feat/media-upload` | `entities/media` 适配器 + `shared/api/upload.ts` | Refs #109；文件就绪、未提交 |
 | 08 | generation-sse-adapter | `feat/generation-sse-adapter` | `entities/generation` 适配器 + `shared/api/stream.ts` | Refs #78；验证通过（lint/typecheck/test/build）、未提交 |
 | 09 | asset-library | — | `pages/asset-library/index.tsx` | 目录已建，worktree 待初始化 |
+| 12 | auth-session | `split/auth-session` | `entities/user`（index + api）+ `features/auth-session`（index + session-storage + 2 tests） | 已拆分到 chaifen/12-auth-session，未提交 |
 
 ### 待拆（剩余）
 
@@ -52,7 +53,7 @@
 
 ```
 01 → 02 → 03 → 04 → 05 → 06(history) → 07(media) → 08(generation) → 09(asset-library)
-→ publish-review → workflow-editor → projects → app-shell(收口)
+→ 12(auth-session) → publish-review → workflow-editor → projects → app-shell(收口)
 ```
 
 - 01-06 已完成；07/08 文件就绪、待提交；09 待初始化。
@@ -108,3 +109,10 @@
 - 清理中间产物：主工作树根目录 5 张截图、06 本地预览文件
   （`history-preview.html`/`preview.tsx`）、02/06 的 node_modules 与 dist。
 - 模块总表重写为实际状态；后续模块完成或推进时同步更新本表。
+
+### 2026-08-06 新增 12-auth-session
+
+- 从主工作树拆分登录与认证会话模块到 `chaifen/12-auth-session/`。
+- 包含 `entities/user`（类型定义 + 后端 API 适配器）和 `features/auth-session`（Provider/hook/ProtectedRoute/本地开发适配器/session-storage + 完整测试）。
+- 依赖 `shared/api`（chaifen/10-shared-api-client）。
+- 更新模块总表与执行顺序。

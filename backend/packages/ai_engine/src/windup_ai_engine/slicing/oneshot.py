@@ -112,14 +112,14 @@ def pick_oneshot(
     ``first_only`` 默认开:防 i2v 在 5s 内复读第二遍动作被一起抽进来。
     ``kind``:``"airborne"``(jump,按脚线回地判结束)或 ``"swing"``(attack/hit,按能量跌破判)。
     """
-    if len(frames) <= n:
-        return frames
+    if not frames or n <= 0:
+        return []
     start, end = find_motion_span(frames)
     if first_only:
         end = max(start + 1, first_action_end(frames, start, end, kind=kind))
     span = frames[start : end + 1]
-    if len(span) <= n:
-        return span
+    if n == 1:
+        return [span[0]]
     idx = [round(i * (len(span) - 1) / (n - 1)) for i in range(n)]
     return [span[i] for i in idx]
 

@@ -23,7 +23,7 @@ def find_period(frames: list[Image.Image], pmin: int | None = None, pmax: int | 
     """自相似求步态周期(帧数)。frame[i] 与 frame[i+p] 平均差最小的 p。"""
     n = len(frames)
     gs = _gray(frames)
-    pmin = pmin or max(4, n // 6)
+    pmin = pmin or (2 if n < 12 else max(4, n // 6))
     pmax = pmax or max(pmin + 1, n // 2)
     best_p, best_d = pmin, float("inf")
     for p in range(pmin, pmax + 1):
@@ -34,13 +34,19 @@ def find_period(frames: list[Image.Image], pmin: int | None = None, pmax: int | 
 
 
 def pick_cycle(frames: list[Image.Image], n: int) -> list[Image.Image]:
-    """从密集帧里抽正好一个步态周期的 N 帧(无缝 loop)。帧数不足则原样返回。"""
+    """从密集帧里抽正好一个步态周期的 N 帧(无缝 loop)。
+
+    源视频帧少于目标帧时按循环时间轴重复采样，仍兑现调用方请求的帧数。这里不
+    合成不存在的中间画面，只重复最接近的源帧，因此不会引入额外的角色形变。
+    """
     total = len(frames)
-    if total <= n:
-        return frames
+    if total == 0 or n <= 0:
+        return []
+    if total < 3:
+        return [frames[round(k * (total - 1) / max(1, n - 1))] for k in range(n)]
     gs = _gray(frames)
     p = find_period(frames)
     # 搜起点 i0:让 frame[i0] 与 frame[i0+p] 最像(相位闭合最好)→ 末帧回接首帧最平滑
     i0 = min(range(total - p), key=lambda i: float(np.abs(gs[i] - gs[i + p]).mean()))
-    idx = [(i0 + round(k * p / n)) % total for k in range(n)]
+    idx = [i0 + round(k * p / n) for k in range(n)]
     return [frames[i] for i in idx]

@@ -78,7 +78,7 @@ describe('adapter contract (real backend snapshots)', () => {
     expect(generation.id).toBe('71')
     expect(generation.projectId).toBe('37')
     expect(generation.status).toBe('completed')
-    expect(generation.type).toBe('complete_animation')
+    expect(generation.type).toBe('character_action')
   })
 
   it('project.list returns paged projects with sprite size', async () => {

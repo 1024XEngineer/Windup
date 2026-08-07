@@ -9,20 +9,34 @@ import type { WorkflowRun, WorkflowRunStore } from "@/entities";
 export function HistoryPage({ store }: { store: WorkflowRunStore }) {
   const { projectId } = useParams();
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    void store.list(projectId).then((items) => {
-      if (active) setRuns(items);
-    });
+    void store
+      .list(projectId)
+      .then((items) => {
+        if (active) setRuns(items);
+      })
+      .catch(() => {
+        if (active) setError("加载失败，请稍后重试");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
     return () => {
       active = false;
     };
   }, [projectId, store]);
 
-  const completedRuns = runs.filter((r) => r.status === "completed");
-  const activeRuns = runs.filter(
-    (r) => r.status === "active" || r.status === "interrupted",
+  const sortedRuns = [...runs].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+  const activeRuns = sortedRuns.filter((r) => r.status === "active");
+  const interruptedRuns = sortedRuns.filter((r) => r.status === "interrupted");
+  const completedRuns = sortedRuns.filter(
+    (r) => r.status === "completed" || r.status === "failed",
   );
 
   return (
@@ -35,7 +49,7 @@ export function HistoryPage({ store }: { store: WorkflowRunStore }) {
           历史记录
         </h1>
         <p className="mt-2 text-sm text-[#666b64]">
-          已完成和进行中的创作记录。
+          所有创作记录的执行状态。
         </p>
       </header>
 
@@ -44,6 +58,17 @@ export function HistoryPage({ store }: { store: WorkflowRunStore }) {
           <h2 className="mb-4 text-sm font-semibold text-[#1d1d1f]">进行中</h2>
           <div className="grid gap-3">
             {activeRuns.map((run) => (
+              <RunCard key={run.id} run={run} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {interruptedRuns.length > 0 && (
+        <div className="mb-8">
+          <h2 className="mb-4 text-sm font-semibold text-[#1d1d1f]">已中断</h2>
+          <div className="grid gap-3">
+            {interruptedRuns.map((run) => (
               <RunCard key={run.id} run={run} />
             ))}
           </div>
@@ -61,7 +86,13 @@ export function HistoryPage({ store }: { store: WorkflowRunStore }) {
         </div>
       )}
 
-      {runs.length === 0 && (
+      {error && (
+        <div className="rounded-xl border border-[#e2e3de] bg-[#fef7f6] p-4 text-sm text-[#8b332a]">
+          {error}
+        </div>
+      )}
+
+      {!loading && !error && runs.length === 0 && (
         <div className="rounded-2xl border border-dashed border-[#c9d0ca] bg-[#f3f5f1] p-12 text-center">
           <p className="text-sm text-[#687069]">还没有创作记录。</p>
           <Link
@@ -96,7 +127,9 @@ function RunCard({ run }: { run: WorkflowRun }) {
       ? "text-[#3d6b4a]"
       : run.status === "failed"
         ? "text-[#8b332a]"
-        : "text-[#687069]";
+        : run.status === "interrupted"
+          ? "text-[#8a6d3b]"
+          : "text-[#687069]";
 
   return (
     <Link

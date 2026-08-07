@@ -49,8 +49,8 @@ function createCompletedRun(): WorkflowRun {
     },
     {
       ...common,
-      id: "revision-1:template-candidate",
-      type: "template-candidate",
+      id: "revision-1:action-first-frame",
+      type: "action-first-frame",
       input: null,
       output: null,
     },

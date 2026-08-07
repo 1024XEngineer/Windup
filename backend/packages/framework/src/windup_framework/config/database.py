@@ -4,10 +4,22 @@
 """
 
 import os
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
+
+
+_BACKEND_ROOT = Path(__file__).resolve().parents[5]
+
+
+def resolve_sqlite_path(value: str) -> Path:
+    """把本地 SQLite 相对路径固定解释为 backend 目录下的路径。"""
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = _BACKEND_ROOT / path
+    return path.resolve()
 
 
 class DatabaseSettings(BaseSettings):
@@ -37,7 +49,7 @@ class DatabaseSettings(BaseSettings):
         """
         sqlite_path = os.getenv("SQLITE_PATH")
         if sqlite_path:
-            return f"sqlite:///{sqlite_path}"
+            return f"sqlite:///{resolve_sqlite_path(sqlite_path)}"
 
         return URL.create(
             drivername="postgresql+psycopg",

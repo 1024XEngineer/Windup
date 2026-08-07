@@ -96,7 +96,7 @@ describe("WorkflowRun first vertical slice", () => {
         },
       });
       expect(
-        completed?.nodes.find((node) => node.type === "template-candidate"),
+        completed?.nodes.find((node) => node.type === "action-first-frame"),
       ).toMatchObject({ status: "active" });
     });
   });

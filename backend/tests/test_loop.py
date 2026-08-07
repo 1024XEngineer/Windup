@@ -28,9 +28,16 @@ def test_pick_cycle_returns_n_frames():
     assert len(out) == 8
 
 
-def test_pick_cycle_passthrough_when_too_few():
+def test_pick_cycle_resamples_when_source_has_too_few_frames():
     frames = _periodic_frames(period=4, cycles=1)  # 4 帧 < 8
-    assert pick_cycle(frames, 8) is frames
+    out = pick_cycle(frames, 8)
+
+    assert len(out) == 8
+    import numpy as np
+
+    first = np.asarray(out[0].convert("L"), float)
+    last = np.asarray(out[-1].convert("L"), float)
+    assert np.abs(last - first).mean() == 0
 
 
 def test_pick_cycle_closes_the_loop():

@@ -1,7 +1,7 @@
 /**
  * WorkflowRun → Character 桥接层。
  * 从工作流节点中提取数据，组装为 Playtest 可消费的 Character 实体。
- * 前三个角色节点只读取一次，后续按 action-generation / review 成对读取全部动作。
+ * 前三个角色节点只读取一次，后续按 action-full-frame / review 成对读取全部动作。
  */
 import type {
   Action,
@@ -29,9 +29,6 @@ function getNode(
 function extractCharacterTemplateUrl(
   revision: WorkflowRevision,
 ): string | null {
-  const candidate = getNode(revision, "template-candidate");
-  const output = candidate?.output as { selectedImageUrl?: string } | null;
-  if (output?.selectedImageUrl) return output.selectedImageUrl;
   const template = getNode(revision, "character-template");
   const templateOutput = template?.output as { imageUrls?: string[] } | null;
   return templateOutput?.imageUrls?.[0] ?? null;
@@ -62,7 +59,7 @@ function extractDescription(revision: WorkflowRevision): string {
 function extractReviewedActions(revision: WorkflowRevision) {
   return revision.nodes.flatMap((node, index) => {
     const review = revision.nodes[index + 1];
-    return node.type === "action-generation" &&
+    return node.type === "action-full-frame" &&
       node.status === "passed" &&
       node.output &&
       review?.type === "review" &&

@@ -1,7 +1,7 @@
-import type { CharacterSetupStepInput } from '@/entities'
+import type { CharacterSetupNodeInput } from '@/entities'
 
 /** 填写角色资料并提交母版生成。 */
 export interface CharacterSetupProps {
   projectId: string
-  onSubmit(input: CharacterSetupStepInput): void
+  onSubmit(input: CharacterSetupNodeInput): void
 }

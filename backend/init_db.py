@@ -6,22 +6,22 @@
 
 import os
 
-# 设置 SQLite 路径
-os.environ["SQLITE_PATH"] = "./windup.db"
+from windup_framework.config.database import resolve_sqlite_path
 
-# 导入数据库相关模块
-from windup_framework.db.base import Base
-from windup_framework.db.session import engine
-
-# 导入所有模型，以便创建表
-from windup_app.server.character.model import Character  # noqa: F401
-from windup_app.server.generation.model import GenerationTaskRecord  # noqa: F401
-from windup_app.server.playtest_inspection.model import PlaytestInspection  # noqa: F401
-from windup_app.server.project.model import Project  # noqa: F401
-
+# 所有入口共用 framework 层的解析规则，避免从不同目录启动时创建同名空库。
+os.environ["SQLITE_PATH"] = str(resolve_sqlite_path(os.getenv("SQLITE_PATH", "windup.db")))
 
 def init_database():
     """初始化数据库，创建所有表。"""
+    from windup_framework.db.base import Base
+    from windup_framework.db.session import engine
+
+    # 注册所有 ORM 模型后，Base.metadata 才包含完整表结构。
+    from windup_app.server.character.model import Character  # noqa: F401
+    from windup_app.server.generation.model import GenerationTaskRecord  # noqa: F401
+    from windup_app.server.playtest_inspection.model import PlaytestInspection  # noqa: F401
+    from windup_app.server.project.model import Project  # noqa: F401
+
     print("正在初始化数据库...")
     Base.metadata.create_all(engine)
     print("数据库初始化完成！")

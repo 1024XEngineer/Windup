@@ -45,6 +45,25 @@ def test_pick_oneshot_returns_n_and_does_not_wrap():
     assert np.abs(first - last).mean() >= 0
 
 
+def test_pick_oneshot_resamples_short_motion_span_to_requested_frame_count():
+    """动作裁剪只剩少量源帧时，仍须兑现调用方请求的 32 帧契约。"""
+    frames = _jump_sequence()
+
+    out = pick_oneshot(frames, 32)
+
+    assert len(out) == 32
+    assert out[0] is not frames[0]
+    assert out[-1] is not frames[-1]
+
+
+def test_pick_oneshot_can_return_exactly_one_first_frame():
+    frames = _jump_sequence()
+
+    out = pick_oneshot(frames, 1)
+
+    assert out[0] is not frames[0]
+
+
 def test_foot_line_tracks_height():
     frames = _jump_sequence()
     y = foot_line_series(frames)

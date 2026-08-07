@@ -306,9 +306,8 @@ function WorkflowRunView({
           });
           await service.nextStep(runId);
         }
-        if (stepType === "template-candidate" && action === "confirm") {
-          const input = data as { selectedImageUrl: string };
-          await service.confirmCandidate(runId, input.selectedImageUrl);
+        if (stepType === "action-first-frame" && action === "confirm") {
+          await service.confirmFirstFrame(runId);
         }
         if (stepType === "review" && action === "approve") {
           const approved = await service.approveReview(runId);
@@ -391,10 +390,10 @@ function WorkflowRunView({
 function buildCompletedPlaytestPath(run: WorkflowRun): string | null {
   if (!run.characterId || !run.outfitId) return null;
   const actionStep = run.nodes.findLast(
-    (item) => item.type === "action-generation",
+    (item) => item.type === "action-full-frame",
   );
   const actionId =
-    actionStep?.type === "action-generation" && actionStep.output
+    actionStep?.type === "action-full-frame" && actionStep.output
       ? buildPublishedActionId(run.characterId, run.id, actionStep.id)
       : undefined;
   return buildPlaytestPath({

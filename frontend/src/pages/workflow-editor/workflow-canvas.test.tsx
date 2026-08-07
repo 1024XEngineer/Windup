@@ -41,8 +41,8 @@ function createCandidateRun(): WorkflowRun {
     },
     {
       ...common,
-      id: "revision-1:template-candidate",
-      type: "template-candidate",
+      id: "revision-1:action-first-frame",
+      type: "action-first-frame",
       status: "active",
       input: null,
       output: null,
@@ -110,7 +110,7 @@ describe("WorkflowCanvas candidate selection", () => {
     expect((confirm as HTMLButtonElement).disabled).toBe(false);
 
     fireEvent.click(confirm);
-    expect(onStepAction).toHaveBeenCalledWith("template-candidate", "confirm", {
+    expect(onStepAction).toHaveBeenCalledWith("action-first-frame", "confirm", {
       selectedImageUrl: "https://cdn.example.test/candidate-2.png",
     });
   });

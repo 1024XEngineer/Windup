@@ -87,7 +87,7 @@ describe("publishWorkflowRun with multiple actions", () => {
       {
         ...common,
         id: "candidate",
-        type: "template-candidate",
+        type: "action-first-frame",
         input: null,
         output: null,
       },

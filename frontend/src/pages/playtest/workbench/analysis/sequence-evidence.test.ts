@@ -275,7 +275,7 @@ describe('buildSequenceEvidence', () => {
     ])
   })
 
-  it('keeps an action-aware absolute movement ceiling when every step is large', () => {
+  it('keeps an action-aware absolute movement ceiling when every node is large', () => {
     // Catches an entire drifting sequence normalizing its own 100px jumps through the median.
     const evidence = buildSequenceEvidence(
       [ready(geometry({ x: 0 })), ready(geometry({ x: 100 })), ready(geometry({ x: 200 }))],

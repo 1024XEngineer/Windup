@@ -76,7 +76,9 @@ export function usePlaytestKeyboard(commands: PlaytestKeyboardCommands, enabled:
       if (key !== 'a' && key !== 'd') return
       if (!heldHorizontalKeys.current.delete(key)) return
       event.preventDefault()
-      if (heldHorizontalKeys.current.size === 0) commands.stopHorizontal()
+      if (heldHorizontalKeys.current.has('a')) commands.playLeft()
+      else if (heldHorizontalKeys.current.has('d')) commands.playRight()
+      else commands.stopHorizontal()
     }
 
     window.addEventListener('keydown', onKeyDown)

@@ -357,10 +357,10 @@ export function createCharacterTemplateTask({
       );
     }
     const candidateStep = run.nodes.find(
-      (item) => item.type === "template-candidate",
+      (item) => item.type === "action-first-frame",
     );
     if (!candidateStep)
-      throw new Error("WorkflowRun 缺少 template-candidate 节点");
+      throw new Error("WorkflowRun 缺少 action-first-frame 节点");
 
     const updated: WorkflowRun = {
       ...run,
@@ -376,7 +376,7 @@ export function createCharacterTemplateTask({
         }
         if (
           current.id === candidateStep.id &&
-          current.type === "template-candidate"
+          current.type === "action-first-frame"
         ) {
           return { ...current, status: "active" as const };
         }

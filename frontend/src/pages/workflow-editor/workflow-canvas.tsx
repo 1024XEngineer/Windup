@@ -19,8 +19,8 @@ interface WorkflowCanvasProps {
 const NODE_TITLES: Record<string, { eyebrow: string; title: string }> = {
   "character-setup": { eyebrow: "01 · SETUP", title: "角色设定" },
   "character-template": { eyebrow: "02 · GENERATE", title: "生成角色图" },
-  "template-candidate": { eyebrow: "03 · CONFIRM", title: "确认候选" },
-  "action-generation": { eyebrow: "04 · ANIMATE", title: "动作生成" },
+  "action-first-frame": { eyebrow: "03 · FIRST FRAME", title: "首帧生成" },
+  "action-full-frame": { eyebrow: "04 · FULL ANIMATION", title: "完整帧率生成" },
   review: { eyebrow: "05 · REVIEW", title: "审核" },
 };
 
@@ -60,7 +60,7 @@ function buildNodeHtml(
   const meta = {
     eyebrow: `${String(nodeIndex + 1).padStart(2, "0")} · ${baseMeta.eyebrow.split(" · ").at(-1)}`,
     title:
-      actionNumber && node.type === "action-generation"
+      actionNumber && node.type === "action-full-frame"
         ? `动作生成 ${actionNumber}`
         : actionNumber && node.type === "review"
           ? `动作 ${actionNumber} 审核`
@@ -145,7 +145,7 @@ function buildNodeHtml(
         }
         break;
 
-      case "template-candidate":
+      case "action-first-frame":
         if (isActive) {
           const templateNode = getCurrentRevision(run)?.nodes.find(
             (item) => item.type === "character-template",
@@ -178,7 +178,7 @@ function buildNodeHtml(
         }
         break;
 
-      case "action-generation":
+      case "action-full-frame":
         if (isActive) {
           bodyHtml = `
             <div class="node-status node-status--active"><span>动作生成</span><b>生成中…</b></div>
@@ -189,7 +189,7 @@ function buildNodeHtml(
           `;
         } else if (isPassed) {
           const frames =
-            node.type === "action-generation"
+            node.type === "action-full-frame"
               ? (node.output?.frames ?? [])
               : [];
           bodyHtml = `
@@ -309,7 +309,7 @@ export function WorkflowCanvas({
     const handleCandidateConfirm = () => {
       const selectedImageUrl = confirmCandidate?.dataset.candidateUrl;
       if (selectedImageUrl)
-        onStepAction?.("template-candidate", "confirm", { selectedImageUrl });
+        onStepAction?.("action-first-frame", "confirm", { selectedImageUrl });
     };
     confirmCandidate?.addEventListener("click", handleCandidateConfirm);
 

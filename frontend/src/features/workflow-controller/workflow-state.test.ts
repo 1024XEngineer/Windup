@@ -56,7 +56,7 @@ describe("workflow state transitions", () => {
     expect(run.nodes.map(({ type, status }) => ({ type, status }))).toEqual([
       { type: "character-setup", status: "active" },
       { type: "character-template", status: "locked" },
-      { type: "template-candidate", status: "locked" },
+      { type: "action-first-frame", status: "locked" },
       { type: "action-generation", status: "locked" },
       { type: "review", status: "locked" },
     ]);
@@ -79,7 +79,7 @@ describe("workflow state transitions", () => {
     expect(run.nodes.map(({ type, status }) => ({ type, status }))).toEqual([
       { type: "character-setup", status: "passed" },
       { type: "character-template", status: "passed" },
-      { type: "template-candidate", status: "passed" },
+      { type: "action-first-frame", status: "passed" },
       { type: "action-generation", status: "active" },
       { type: "review", status: "locked" },
     ]);

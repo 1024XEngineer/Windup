@@ -37,10 +37,7 @@ export interface WorkflowEditorService {
     actionDescription: string,
     signal?: AbortSignal,
   ): Promise<WorkflowRun>;
-  confirmCandidate(
-    runId: WorkflowRun["id"],
-    selectedImageUrl: string,
-  ): Promise<WorkflowRun>;
+  confirmFirstFrame(runId: WorkflowRun["id"]): Promise<WorkflowRun>;
   approveReview(runId: WorkflowRun["id"]): Promise<WorkflowRun>;
   interrupt(runId: WorkflowRun["id"]): Promise<WorkflowRun | null>;
   updateCharacterSetup(
@@ -130,8 +127,8 @@ export function createWorkflowEditorService({
       );
     },
 
-    async confirmCandidate(runId, selectedImageUrl) {
-      return controller.startActionFromTemplate(runId, selectedImageUrl);
+    async confirmFirstFrame(runId) {
+      return controller.confirmFirstFrame(runId);
     },
 
     async approveReview(runId) {
@@ -171,7 +168,7 @@ export const unavailableWorkflowEditorService: WorkflowEditorService = {
   async continueWithUploadedTemplate() {
     throw new Error(UNAVAILABLE_REASON);
   },
-  async confirmCandidate() {
+  async confirmFirstFrame() {
     throw new Error(UNAVAILABLE_REASON);
   },
   async approveReview() {

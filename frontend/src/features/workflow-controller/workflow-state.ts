@@ -77,14 +77,10 @@ function createInitialNodes(
         },
       }
     }
-    if (node.type === 'template-candidate') {
-      return {
-        ...node,
-        status: 'passed' as const,
-        output: { selectedImageUrl: input.characterTemplateUrl },
-      }
+    if (node.type === 'action-first-frame') {
+      return { ...node, status: 'passed' as const }
     }
-    if (node.type === 'action-generation') {
+    if (node.type === 'action-full-frame') {
       return { ...node, status: 'active' as const }
     }
     return node
@@ -177,14 +173,10 @@ export function acceptUploadedCharacterTemplateState(
           },
         }
       }
-      if (node.type === 'template-candidate') {
-        return {
-          ...node,
-          status: 'passed' as const,
-          output: { selectedImageUrl: normalizedUrl },
-        }
+      if (node.type === 'action-first-frame') {
+        return { ...node, status: 'passed' as const }
       }
-      if (node.type === 'action-generation') {
+      if (node.type === 'action-full-frame') {
         return { ...node, status: 'active' as const }
       }
       return node
@@ -237,23 +229,20 @@ export function advanceCharacterSetupState(
   }
 }
 
-export function confirmCandidateState(run: WorkflowRun, selectedImageUrl: string): WorkflowRun {
+export function confirmFirstFrameState(run: WorkflowRun): WorkflowRun {
   if (run.status !== 'active') throw new Error(`WorkflowRun 当前不可推进：${run.status}`)
-  const candidateNode = run.nodes.find((node) => node.type === 'template-candidate')
-  if (!candidateNode || candidateNode.status !== 'active') {
-    throw new Error('当前只能确认处于 active 状态的候选节点')
+  const firstFrameNode = run.nodes.find((node) => node.type === 'action-first-frame')
+  if (!firstFrameNode || firstFrameNode.status !== 'active') {
+    throw new Error('当前只能确认处于 active 状态的首帧节点')
   }
-
-  const nextIndex = WORKFLOW_NODE_ORDER.indexOf('template-candidate') + 1
-  const nextType = WORKFLOW_NODE_ORDER[nextIndex]
 
   return {
     ...run,
     nodes: run.nodes.map((node) => {
-      if (node.id === candidateNode.id && node.type === 'template-candidate') {
-        return { ...node, status: 'passed' as const, output: { selectedImageUrl } }
+      if (node.id === firstFrameNode.id && node.type === 'action-first-frame') {
+        return { ...node, status: 'passed' as const }
       }
-      if (nextType && node.type === nextType) {
+      if (node.type === 'action-full-frame') {
         return { ...node, status: 'active' as const }
       }
       return node
@@ -267,19 +256,19 @@ export function completeActionGenerationState(
 ): WorkflowRun {
   if (run.status !== 'active') throw new Error(`WorkflowRun 当前不可完成动作生成：${run.status}`)
   const actionNode = getActiveNode(run)
-  if (!actionNode || actionNode.type !== 'action-generation') {
+  if (
+    !actionNode ||
+    (actionNode.type !== 'action-first-frame' && actionNode.type !== 'action-full-frame')
+  ) {
     throw new Error('当前只能完成处于 active 状态的动作生成节点')
   }
 
   const failed = result !== null && typeof result === 'object' && 'error' in result
   const actionIndex = run.nodes.findIndex((node) => node.id === actionNode.id)
-  const reviewNode = run.nodes[actionIndex + 1]
-  if (!reviewNode || reviewNode.type !== 'review') {
-    throw new Error('动作生成节点后缺少配对的审核节点')
-  }
 
   const updated = replaceWorkflowNode(run, actionNode.id, (current) => {
-    if (current.type !== 'action-generation') return current
+    if (current.type !== 'action-first-frame' && current.type !== 'action-full-frame')
+      return current
     return {
       ...current,
       status: failed ? ('failed' as const) : ('passed' as const),
@@ -290,10 +279,12 @@ export function completeActionGenerationState(
     }
   })
 
+  // 找到下一个节点并激活
+  const nextNode = updated.nodes[actionIndex + 1]
   return {
     ...updated,
     nodes: updated.nodes.map((node) => {
-      if (failed || node.id !== reviewNode.id || node.type !== 'review') return node
+      if (failed || !nextNode || node.id !== nextNode.id) return node
       return { ...node, status: 'active' as const }
     }),
     status: failed ? ('failed' as const) : updated.status,
@@ -321,10 +312,10 @@ export function appendActionState(run: WorkflowRun): WorkflowRun {
   if (run.status !== 'completed') throw new Error('只能给已完成的 WorkflowRun 追加动作')
   if (!run.characterId || !run.outfitId) throw new Error('WorkflowRun 尚未绑定角色与造型')
 
-  const actionNumber = run.nodes.filter((node) => node.type === 'action-generation').length + 1
+  const actionNumber = run.nodes.filter((node) => node.type === 'action-full-frame').length + 1
   const actionNode = {
-    ...createInitialNode('action-generation', run.id, run.nodes.length, null),
-    id: `${run.id}:action-generation:${actionNumber}`,
+    ...createInitialNode('action-full-frame', run.id, run.nodes.length, null),
+    id: `${run.id}:action-full-frame:${actionNumber}`,
     status: 'active' as const,
   }
   const reviewNode = {
@@ -349,11 +340,16 @@ export function beginActionGenerationState(
 ): WorkflowRun {
   const activeRun = requireActiveWorkflow(run)
   const actionNode = getActiveNode(activeRun)
-  if (!actionNode || actionNode.type !== 'action-generation' || actionNode.taskId) {
+  if (
+    !actionNode ||
+    (actionNode.type !== 'action-first-frame' && actionNode.type !== 'action-full-frame') ||
+    actionNode.taskId
+  ) {
     throw new Error('当前动作生成节点不可重复提交')
   }
   return replaceWorkflowNode(activeRun, actionNode.id, (current) => {
-    if (current.type !== 'action-generation') return current
+    if (current.type !== 'action-first-frame' && current.type !== 'action-full-frame')
+      return current
     return { ...current, input, submissionId, error: null }
   })
 }
@@ -367,11 +363,15 @@ export function recordActionGenerationTaskState(
     throw new Error(`WorkflowRun 当前不可记录任务：${run.status}`)
   }
   const actionNode = getActiveNode(run)
-  if (!actionNode || actionNode.type !== 'action-generation') {
+  if (
+    !actionNode ||
+    (actionNode.type !== 'action-first-frame' && actionNode.type !== 'action-full-frame')
+  ) {
     throw new Error('当前只能为 active 状态的动作生成节点记录任务')
   }
   return replaceWorkflowNode(run, actionNode.id, (current) => {
-    if (current.type !== 'action-generation') return current
+    if (current.type !== 'action-first-frame' && current.type !== 'action-full-frame')
+      return current
     return { ...current, taskId, input: input ?? current.input, submissionId: null }
   })
 }
@@ -393,7 +393,7 @@ export function restartWorkflowRunState(
   const retainedNodeCount =
     restartIndex < 3
       ? WORKFLOW_NODE_ORDER.length
-      : restartNode.type === 'action-generation'
+      : restartNode.type === 'action-full-frame'
         ? restartIndex + 2
         : restartIndex + 1
 
@@ -454,11 +454,14 @@ function createInitialNode(
   if (type === 'character-template') {
     return { ...base, type, input: null, output: null }
   }
+  if (type === 'action-first-frame' || type === 'action-full-frame') {
+    return { ...base, type, input: null, output: null }
+  }
   return { ...base, type, input: null, output: null } as WorkflowNode
 }
 
 function createNodeId(runId: string, type: WorkflowNodeType, index: number): string {
   if (index < WORKFLOW_NODE_ORDER.length) return `${runId}:${type}`
-  const actionNumber = Math.floor((index - 3) / 2) + 1
+  const actionNumber = Math.floor((index - WORKFLOW_NODE_ORDER.length) / 2) + 1
   return `${runId}:${type}:${actionNumber}`
 }

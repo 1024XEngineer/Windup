@@ -30,7 +30,7 @@ export type {
 const STEP_LABELS: Record<WorkflowNodeType, string> = {
   "character-setup": "角色设定",
   "character-template": "角色图",
-  "template-candidate": "候选选择",
+  "action-first-frame": "候选选择",
   "action-generation": "动作生成",
   review: "审核",
 };

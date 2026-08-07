@@ -78,33 +78,41 @@ export interface CharacterTemplateWorkflowNode extends WorkflowNodeBase {
   output: CharacterImageOutput | null
 }
 
-export interface ActionGenerationWorkflowNode extends WorkflowNodeBase {
-  type: 'action-generation'
+/** 首帧生成节点：生成单帧角色动作候选。 */
+export interface ActionFirstFrameWorkflowNode extends WorkflowNodeBase {
+  type: 'action-first-frame'
   input: CharacterActionGenerationInput | null
-  /** Controller 验收通过的完整动画；实体只记录结果，不负责补帧或修复缺帧。 */
+  output: CharacterActionOutput | null
+}
+
+/** 完整帧率生成节点：基于首帧生成完整动画。 */
+export interface ActionFullFrameWorkflowNode extends WorkflowNodeBase {
+  type: 'action-full-frame'
+  input: CharacterActionGenerationInput | null
   output: CharacterActionOutput | null
 }
 
 type RemainingWorkflowNodeType = Exclude<
   WorkflowNodeType,
-  'character-setup' | 'character-template' | 'action-generation'
+  'character-setup' | 'character-template' | 'action-first-frame' | 'action-full-frame'
 >
 
 interface RemainingWorkflowNode extends WorkflowNodeBase {
   type: RemainingWorkflowNodeType
-  /** 候选确认与审核的具体输入输出在对应纵切中继续收窄。 */
+  /** 审核的具体输入输出在对应纵切中继续收窄。 */
   input: unknown
   output: unknown
 }
 
 /**
  * 执行线中的流程节点。
- * 前三个执行节点已冻结输入输出；后续进入对应纵切时再收窄。
+ * 前四个执行节点已冻结输入输出；后续进入对应纵切时再收窄。
  */
 export type WorkflowNode =
   | CharacterSetupWorkflowNode
   | CharacterTemplateWorkflowNode
-  | ActionGenerationWorkflowNode
+  | ActionFirstFrameWorkflowNode
+  | ActionFullFrameWorkflowNode
   | RemainingWorkflowNode
 
 /**

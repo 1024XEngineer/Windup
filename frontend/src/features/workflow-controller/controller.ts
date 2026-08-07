@@ -20,7 +20,7 @@ import {
   acceptUploadedCharacterTemplateState,
   approveReviewState,
   completeActionGenerationState,
-  confirmCandidateState,
+  confirmFirstFrameState,
   createWorkflowRunState,
   getActiveNode,
   interruptWorkflowRunState,
@@ -81,11 +81,8 @@ export interface WorkflowController {
   /** 只停止前端自动推进和任务订阅；后端当前没有取消任务能力。 */
   interrupt(runId: WorkflowRun["id"]): Promise<WorkflowRun>;
 
-  /** 确认候选选择，推进到下一个节点。 */
-  confirmCandidate(
-    runId: WorkflowRun["id"],
-    selectedImageUrl: string,
-  ): Promise<WorkflowRun>;
+  /** 确认首帧生成完成，推进到完整帧率生成。 */
+  confirmFirstFrame(runId: WorkflowRun["id"]): Promise<WorkflowRun>;
 
   /**
    * 采用已确认的角色母版，并统一完成 Character 落库、Run 绑定与动作任务提交。
@@ -97,7 +94,7 @@ export interface WorkflowController {
     actionDescription?: string,
   ): Promise<WorkflowRun>;
 
-  /** 动作生成完成后写回结果，标记 action-generation 为 passed。 */
+  /** 动作生成完成后写回结果，标记当前动作节点为 passed。 */
   completeActionGeneration(
     runId: WorkflowRun["id"],
     result: CharacterActionOutput | { error: string },
@@ -357,7 +354,7 @@ export function createWorkflowController({
     return load(runId).then((run) => {
       if (!run || run.status !== "active") return run;
       const node = getActiveNode(run);
-      return node?.type === "action-generation"
+      return node?.type === "action-first-frame" || node?.type === "action-full-frame"
         ? actionGenerationTask.resume(runId)
         : characterTemplateTask.resume(runId);
     });
@@ -374,13 +371,8 @@ export function createWorkflowController({
     return persist(interruptWorkflowRunState(latest));
   }
 
-  async function confirmCandidate(
-    runId: WorkflowRun["id"],
-    selectedImageUrl: string,
-  ): Promise<WorkflowRun> {
-    return persist(
-      confirmCandidateState(await requireWorkflow(runId), selectedImageUrl),
-    );
+  async function confirmFirstFrame(runId: WorkflowRun["id"]): Promise<WorkflowRun> {
+    return persist(confirmFirstFrameState(await requireWorkflow(runId)));
   }
 
   async function startActionFromTemplate(
@@ -444,7 +436,7 @@ export function createWorkflowController({
       }
       const ready =
         latestState === "candidate-active"
-          ? await persist(confirmCandidateState(latest, templateImageUrl))
+          ? await persist(confirmFirstFrameState(latest))
           : latest;
       const boundRun = await persist({
         ...ready,
@@ -477,7 +469,7 @@ export function createWorkflowController({
       if (bound && failedRun?.status === "active") {
         const activeNode = getActiveNode(failedRun);
         if (
-          activeNode?.type === "action-generation" &&
+          (activeNode?.type === "action-first-frame" || activeNode?.type === "action-full-frame") &&
           !activeNode.taskId &&
           !activeNode.submissionId
         ) {
@@ -601,7 +593,7 @@ export function createWorkflowController({
     updateCharacterSetup,
     acceptUploadedCharacterTemplate,
     nextStep,
-    confirmCandidate,
+    confirmFirstFrame,
     startActionFromTemplate,
     completeActionGeneration,
     startActionGeneration,
@@ -617,22 +609,21 @@ export function createWorkflowController({
 
 function getTemplateActionInputState(
   run: WorkflowRun,
-  templateImageUrl: string,
-): "candidate-active" | "uploaded-template" {
-  const candidate = run.nodes.find(
-    (node) => node.type === "template-candidate",
+  _templateImageUrl: string,
+): "first-frame-active" | "uploaded-template" {
+  const firstFrameNode = run.nodes.find(
+    (node) => node.type === "action-first-frame",
   );
   const activeNode = getActiveNode(run);
   if (
-    candidate?.status === "active" &&
-    activeNode?.type === "template-candidate"
+    firstFrameNode?.status === "active" &&
+    activeNode?.type === "action-first-frame"
   ) {
-    return "candidate-active";
+    return "first-frame-active";
   }
   if (
-    candidate?.status === "passed" &&
-    activeNode?.type === "action-generation" &&
-    hasSelectedTemplateUrl(candidate.output, templateImageUrl)
+    firstFrameNode?.status === "passed" &&
+    (activeNode?.type === "action-full-frame" || activeNode?.type === "review")
   ) {
     return "uploaded-template";
   }
