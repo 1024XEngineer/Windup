@@ -207,31 +207,26 @@ describe('AccountPanel', () => {
     expect(screen.getByTestId('location').textContent).toBe('/')
   })
 
-  it('submits password login with a login-purpose code and keeps recovery visibly unavailable', async () => {
+  it('submits password login without an email code and keeps recovery visibly unavailable', async () => {
     const { apis } = renderPanel()
     fireEvent.click(screen.getByRole('tab', { name: '密码登录' }))
     expect(screen.getByText('忘记密码')).toBeTruthy()
     expect(screen.getByText('暂未开放')).toBeTruthy()
+    expect(screen.queryByLabelText('验证码')).toBeNull()
+    expect(screen.queryByRole('button', { name: '发送验证码' })).toBeNull()
+    expect(screen.getByText('用邮箱和密码直接登录。')).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'reader@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password-123' } })
-    fireEvent.change(screen.getByLabelText('验证码'), { target: { value: '123456' } })
-    fireEvent.click(screen.getByRole('button', { name: '发送验证码' }))
-    await waitFor(() =>
-      expect(apis.sendCode).toHaveBeenCalledWith({
-        email: 'reader@example.com',
-        purpose: 'login',
-      }),
-    )
 
     fireEvent.submit(screen.getByRole('button', { name: '登录' }).closest('form')!)
     await waitFor(() =>
       expect(apis.login).toHaveBeenCalledWith({
         email: 'reader@example.com',
         password: 'password-123',
-        code: '123456',
       }),
     )
+    expect(apis.sendCode).not.toHaveBeenCalled()
   })
 
   it('validates registration fields and sends register-purpose codes', async () => {

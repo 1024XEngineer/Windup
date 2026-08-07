@@ -144,7 +144,6 @@ describe('AuthSessionProvider', () => {
           await session().login({
             email: 'reader@example.com',
             password: 'password-123',
-            code: '123456',
           })
         } else {
           await session().loginByCode({ email: 'reader@example.com', code: '123456' })
