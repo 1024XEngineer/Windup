@@ -38,7 +38,7 @@ describe('ProjectsPage', () => {
     expect(screen.queryByRole('link', { name: /查看角色/ })).toBeNull()
   })
 
-  it('keeps creation out of this module and deletes through the Project API', async () => {
+  it('sends creation to the project create page and deletes through the Project API', async () => {
     const backend = installBackend()
     render(
       <MemoryRouter initialEntries={['/projects']}>
@@ -47,8 +47,9 @@ describe('ProjectsPage', () => {
     )
 
     expect(await screen.findAllByRole('link', { name: /打开项目/ })).toHaveLength(2)
-    const createButton = screen.getByRole('button', { name: '新建项目' })
-    expect(createButton.hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('link', { name: '新建项目' }).getAttribute('href')).toBe(
+      '/projects/new',
+    )
     expect(screen.queryByRole('dialog', { name: '新建项目' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: '删除项目 空白海岸' }))

@@ -15,6 +15,8 @@
 
 `ProjectOut` 的 `user_id`、`workflow_id`、`project_name`、`character_perspective`、`directional_movement`、精灵宽高、画风、参考图和时间字段，均在 `entities/project` 内显式映射为 camelCase。PR #75 没有项目更新端点，因此前端不声明 `ProjectApis.update`。
 
+项目归属由后端从 access token 取：`ProjectCreate` 不含 `user_id`，`/projects` 各路由统一读 `request.state.current_user.id`，且 `/projects` 不在鉴权白名单里。因此 `CreateProjectInput` 没有 ownerId，请求体也不带 `user_id`——带了等于宣称调用方可以替别人建项目，那正是后端刚修掉的越权口子。`/projects/new` 的创建入口只看有没有 access token（`getApiAccessToken()`）；登录模块尚未接入时保持禁用并写明需要登录。
+
 后端枚举按下表映射：
 
 | 后端值 | `character_perspective` | `directional_movement` |
@@ -54,7 +56,6 @@ Outfit、Action、Frame 没有独立端点。`outfit.characterId` 与 `action.ou
 
 ## 二、本轮明确不实现
 
-- 新建项目流程：只保留禁用入口，后续单独实现。
 - Workflow Editor 与生成流程：不在 Projects / 资产库模块内创建弹窗或复制生成逻辑。
 - Action Template：后端没有模块、存储或 HTTP 接口，只保留带原因的禁用入口。
 - 导出：PR #75 没有导出接口；PR #97 是尚未接入资产页的前端打包实现，只保留带原因的禁用入口。

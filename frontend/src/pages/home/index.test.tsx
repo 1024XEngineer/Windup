@@ -18,7 +18,9 @@ describe('HomePage', () => {
     expect(screen.getByRole('heading', { name: /真正登场/ })).toBeTruthy()
     expect(screen.getByRole('link', { name: /快速开始/ }).getAttribute('href')).toBe('/quick-start')
     expect(screen.getByText('工作流画布')).toBeTruthy()
-    expect(screen.getByRole('link', { name: '创建新项目' }).getAttribute('href')).toBe('/projects')
+    expect(screen.getByRole('link', { name: '创建新项目' }).getAttribute('href')).toBe(
+      '/projects/new',
+    )
     expect(screen.getByRole('link', { name: '继续已有项目' }).getAttribute('href')).toBe(
       '/projects',
     )

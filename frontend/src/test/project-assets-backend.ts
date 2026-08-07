@@ -1,4 +1,20 @@
-const projectDtos = [
+/** 后端 ProjectOut 的形状；写死成显式类型，免得 fixture 的字面量把可空字段收窄。 */
+interface ProjectDto {
+  id: number
+  user_id: number
+  workflow_id: number | null
+  project_name: string
+  character_perspective: number
+  directional_movement: number
+  sprite_width: number
+  sprite_height: number
+  game_style: string | null
+  sprite_sample_url: string | null
+  create_at: string
+  update_at: string
+}
+
+const projectDtos: ProjectDto[] = [
   {
     id: 42,
     user_id: 7,
@@ -186,6 +202,41 @@ export function createProjectAssetsBackend({
       const pageSize = Number(url.searchParams.get('page_size') ?? 20)
       const start = (page - 1) * pageSize
       return listResponse(projects.slice(start, start + pageSize), page, pageSize, projects.length)
+    }
+
+    if (request.method === 'POST' && url.pathname === '/projects') {
+      const body = (await request.json()) as {
+        workflow_id?: number | null
+        project_name: string
+        character_perspective: number
+        directional_movement: number
+        sprite_width: number
+        sprite_height: number
+        game_style?: string | null
+        sprite_sample_url?: string | null
+      }
+      if (projects.some((item) => item.project_name === body.project_name)) {
+        return new Response(JSON.stringify({ code: 400, message: '项目名称已存在', data: null }), {
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      const created = {
+        id: 4_242,
+        // 后端从 access token 取归属，请求体里没有 user_id；这里跟 fixture 用同一个用户。
+        user_id: 7,
+        workflow_id: body.workflow_id ?? null,
+        project_name: body.project_name,
+        character_perspective: body.character_perspective,
+        directional_movement: body.directional_movement,
+        sprite_width: body.sprite_width,
+        sprite_height: body.sprite_height,
+        game_style: body.game_style ?? null,
+        sprite_sample_url: body.sprite_sample_url ?? null,
+        create_at: '2026-08-06T00:00:00Z',
+        update_at: '2026-08-06T00:00:00Z',
+      }
+      projects = [...projects, created]
+      return response(created)
     }
 
     if (url.pathname.startsWith('/projects/')) {

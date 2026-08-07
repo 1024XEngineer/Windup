@@ -6,6 +6,7 @@ import { HomePage } from '@/pages/home'
 import { NotFoundPage } from '@/pages/not-found'
 import { PlaytestPage } from '@/pages/playtest'
 import { ProjectDetailPage } from '@/pages/project-detail'
+import { ProjectCreatePage } from '@/pages/project-create'
 import { ProjectsPage } from '@/pages/projects'
 import { QuickStartPage } from '@/pages/quick-start'
 import { WorkflowEditorPage } from '@/pages/workflow-editor'
@@ -34,6 +35,7 @@ export function AppRoutes() {
         <Route path="/quick-start" element={<QuickStartPage />} />
         <Route path="/quick-start/:runId" element={<QuickStartPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/projects/new" element={<ProjectCreatePage />} />
         <Route path="/workflow-editor/:runId" element={<WorkflowEditorPage />} />
         <Route path="/workflow-editor/:runId/:stage" element={<WorkflowEditorPage />} />
         <Route path="/playtest/:characterId/:outfitId" element={<PlaytestPage />} />

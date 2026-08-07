@@ -104,7 +104,151 @@ body,
   .projects-dialog-backdrop,
   .projects-dialog-panel,
   .route-transition,
-  .action-reveal {
+  .action-reveal,
+  .project-pixel-mark i {
     animation: none;
   }
+}
+
+@keyframes project-pixel-field {
+  0%,
+  58%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0.84);
+  }
+
+  16% {
+    opacity: 0.96;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes project-pixel-frame {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(0.86);
+  }
+
+  38% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes project-pixel-handle {
+  0%,
+  24%,
+  100% {
+    transform: scale(0.82);
+  }
+
+  42%,
+  58% {
+    transform: scale(1.18);
+  }
+}
+
+@keyframes project-pixel-cursor {
+  0%,
+  14%,
+  100% {
+    opacity: 0.28;
+    transform: translate(-5px, -5px) scale(0.86);
+  }
+
+  38% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+/*
+  创建页左侧的装饰点阵。289 个格子共用四组动画，靠 animation-delay 错峰：
+  pixel-ring-N 是格子到中心的距离环，管底噪；pixel-phase-N 是 (x+y)%4，管实心笔画。
+  两组延迟都是负值，页面一进来就处在动画中段，不会先静止再启动。
+*/
+.project-pixel-mark {
+  display: grid;
+  grid-template-columns: repeat(17, 5px);
+  grid-template-rows: repeat(17, 5px);
+  gap: 8px;
+  place-content: center;
+  width: 248px;
+  height: 248px;
+}
+
+.project-pixel-mark i {
+  width: 5px;
+  height: 5px;
+  border-radius: 1px;
+  background: #bfc6bf;
+  opacity: 0.62;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 18%);
+  animation: project-pixel-field 4.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.project-pixel-mark .pixel-ring-1 {
+  animation-delay: -0.14s;
+}
+
+.project-pixel-mark .pixel-ring-2 {
+  animation-delay: -0.28s;
+}
+
+.project-pixel-mark .pixel-ring-3 {
+  animation-delay: -0.42s;
+}
+
+.project-pixel-mark .pixel-ring-4 {
+  animation-delay: -0.56s;
+}
+
+.project-pixel-mark .pixel-ring-5 {
+  animation-delay: -0.7s;
+}
+
+.project-pixel-mark .pixel-ring-6 {
+  animation-delay: -0.84s;
+}
+
+.project-pixel-mark .pixel-ring-7 {
+  animation-delay: -0.98s;
+}
+
+.project-pixel-mark .pixel-ring-8 {
+  animation-delay: -1.12s;
+}
+
+.project-pixel-mark i.is-active {
+  background: #202120;
+  opacity: 0.9;
+  box-shadow: none;
+  animation: project-pixel-frame 3.4s ease-in-out infinite;
+}
+
+.project-pixel-mark i.is-active.pixel-phase-1 {
+  animation-delay: -0.18s;
+}
+
+.project-pixel-mark i.is-active.pixel-phase-2 {
+  animation-delay: -0.36s;
+}
+
+.project-pixel-mark i.is-active.pixel-phase-3 {
+  animation-delay: -0.54s;
+}
+
+.project-pixel-mark i.is-handle {
+  background: #050505;
+  opacity: 1;
+  box-shadow: 0 0 0 4px rgb(17 18 17 / 9%);
+  animation: project-pixel-handle 3.8s ease-in-out infinite;
+}
+
+.project-pixel-mark i.is-cursor {
+  background: #090a09;
+  opacity: 1;
+  animation: project-pixel-cursor 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
 }
