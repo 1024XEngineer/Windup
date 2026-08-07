@@ -42,4 +42,20 @@ jobs:
         run: uv run lint-imports
 
       - name: Pytest
-        run: uv run pytest -q
+        run: uv run pytest -q --cov=packages --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=html:htmlcov
+
+      - name: Upload coverage HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: backend/htmlcov/
+          retention-days: 30
+
+      - name: Upload coverage XML for PR comment
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: backend/coverage.xml
+          retention-days: 1
