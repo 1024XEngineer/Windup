@@ -55,32 +55,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    env_file:
+      - .env
     environment:
-      # Redis（验证码 / refresh_token）
+      # 容器内部通信用 Docker 主机名，覆盖 .env 中的本地开发值
       REDIS_URL: redis://redis:6379/0
-      # 数据库连接（容器内部通信用 postgres 主机名，端口 5432）
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      POSTGRES_USER: ${POSTGRES_USER:-root}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-W1ndup@2026!Secure}
-      POSTGRES_DB: ${POSTGRES_DB:-windup}
-      # LLM 配置
-      LLM_API_KEY: ${LLM_API_KEY}
-      LLM_MODEL_ID: ${LLM_MODEL_ID:-doubao-seed-2.0-mini}
-      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.qnaigc.com/v1}
-      LLM_IMAGE_MODEL_ID: ${LLM_IMAGE_MODEL_ID:-gemini-3.0-pro-image-preview}
-      LLM_VIDEO_MODEL_ID: ${LLM_VIDEO_MODEL_ID}
-      # 搜索
-      SERPAPI_API_KEY: ${SERPAPI_API_KEY}
-      # 七牛云存储
-      QINIU_ACCESS_KEY: ${QINIU_ACCESS_KEY}
-      QINIU_SECRET_KEY: ${QINIU_SECRET_KEY}
-      QINIU_BUCKET_NAME: ${QINIU_BUCKET_NAME}
-      QINIU_BUCKET_DOMAIN: ${QINIU_BUCKET_DOMAIN}
-      QINIU_PRIVATE_SPACE: ${QINIU_PRIVATE_SPACE:-false}
-      # AI Provider
-      AI_BASE_URL: ${AI_BASE_URL:-https://api.qnaigc.com/v1}
-      AI_API_KEY: ${AI_API_KEY}
     ports:
       - "${WINDUP_PORT:-8000}:8000"
     networks:
