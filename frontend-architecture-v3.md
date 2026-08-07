@@ -1,6 +1,6 @@
 # Windup 前端架构
 
-本文记录当前前端的模块划分与依赖规则。2026-07-30 按当日评审意见重写：本阶段只提交模块边界与接口，实现进后续 PR。
+本文记录当前前端的模块划分与依赖规则。2026-07-30 按当日评审意见重写为只提交模块边界与接口；实现按模块拆成后续 PR 陆续落地，首页是第一个。
 
 ---
 
@@ -37,9 +37,11 @@ pages -> features -> entities -> shared
 | `pages` | 八个路由页面 |
 | `features` | 用户操作：角色设置、生成、审核、导出；以及流程推进 `workflow-controller` |
 | `entities` | 上表业务模块 |
-| `shared` | 无业务语义的形状，目前只有分页 |
+| `shared` | 无业务语义的分页形状、HTTP 传输与通用 UI |
 
 `app` 只做启动和路由，不构造服务、不向下注入。
+
+外壳套在哪些页面上也是路由决策：`AppShellRoute` 写在 `app.tsx` 的路由表里，谁在里面谁就有顶栏。首页、快速开始、Workflow Editor 与 Playtest 使用全局外壳；`/projects/:projectId/*` 是独立项目工作区，由 `ProjectDetailPage` 提供项目级导航，不重复套全局顶栏。外壳组件自身不读 pathname，不判断自己该不该出现；顶栏内部读 pathname 只为高亮当前项。外壳也不统一夹居中容器，宽度与留白由页面自己决定。
 
 ### 依赖规则
 
@@ -47,6 +49,8 @@ pages -> features -> entities -> shared
 2. 同层模块之间不互相导入。要共用就往下沉。
 3. 跨模块只从模块目录的 `index.ts` 进入；`entities` 统一从 `@/entities` 使用。
 4. `entities` 内部模块之间可以互相导入，对外仍是一个门。
+
+`shared/api` 只处理后端所有模块共用的传输契约：从环境读取 API 地址、附加调用方提供的 access token、解包统一响应、识别业务码并转换分页字段。登录模块通过 `registerApiAccessTokenProvider` 注册惰性读取函数，各业务 API 统一使用 `getApiAccessToken`；公共层只保存读取函数，不保存、刷新或解析 token。各 `XxxApis` 的路径、字段映射与实例仍跟随对应 `entities` 模块。
 
 ---
 
@@ -84,18 +88,18 @@ Controller 围绕同一份 WorkflowRun 提供推进、更新、重启和中断�
 
 ---
 
-## 5. 本次不包含
+## 5. 当前实现范围
 
-- 任何实现代码（真实请求、假数据、组件内部逻辑）
-- 测试文件
-- 图片上传模块（体量太小，本次不单独体现）
-- 穿戴道具相关（产品侧未设计）
-- 第三方登录
+- `ProjectApis` 与 `CharacterApis` 实现 PR #75 的 Project、Character HTTP 契约；snake_case 只存在于各实体模块内部的 DTO 映射。
+- 项目中心、项目工作区、角色资产库、角色详情按 `Project → Character → Outfit → Action → Frame` 层级读取真实接口。
+- 测试通过 HTTP 替身返回契约数据；本模块的生产代码不包含 Mock API、演示实体或 livedemo 资产。
 
-页面当前是占位外壳，只声明路由与模块边界。
+本轮不包含新建项目流程、Workflow Editor 实现、Action Template 后端能力、导出接线、图片上传与登录流程。穿戴道具不作为独立资产层暴露。
+
+首页仍不依赖 `entities` 与 `features`，两张入口卡片只做路由跳转。首屏三段制作路径是 `WORKFLOW_STEP_ORDER` 八步的粗粒度概括，改流程时要一并改。
 
 ---
 
 ## 6. 未与后端对齐的部分
 
-明细见 `frontend/API_CONTRACT.md`。
+PR #75 尚未合并，因此本实现要求先合并该后端 PR；契约明细与仍需后端处理的问题见 `frontend/API_CONTRACT.md`。

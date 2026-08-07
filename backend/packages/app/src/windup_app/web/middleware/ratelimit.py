@@ -6,12 +6,13 @@ Redis 不可用时优雅降级（跳过限流）。
 
 import logging
 
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
 from windup_common.enums.biz_code import BizCode
-from windup_common.exceptions import BizException
+from windup_common.result import Response as Resp
 
 logger = logging.getLogger("windup.ratelimit")
 
@@ -97,19 +98,28 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # 全局限流
         if not _check_rate(self.redis, RATELIMIT_API_KEY.format(ip=client_ip), GLOBAL_RATE, GLOBAL_WINDOW):
             logger.warning("[WINDUP] 全局限流触发 | ip=%s path=%s", client_ip, request.url.path)
-            raise BizException("请求过于频繁", code=BizCode.TOO_MANY_REQUESTS)
+            return JSONResponse(
+                status_code=200,
+                content=Resp.fail("请求过于频繁", code=BizCode.TOO_MANY_REQUESTS).model_dump(mode="json"),
+            )
 
         # 敏感接口额外限流
         if request.url.path in SENSITIVE_PATHS:
             if not _check_rate(self.redis, RATELIMIT_SENSITIVE_KEY.format(ip=client_ip), SENSITIVE_RATE, SENSITIVE_WINDOW):
                 logger.warning("[WINDUP] 敏感接口限流触发 | ip=%s path=%s", client_ip, request.url.path)
-                raise BizException("请求过于频繁，请稍后再试", code=BizCode.TOO_MANY_REQUESTS)
+                return JSONResponse(
+                    status_code=200,
+                    content=Resp.fail("请求过于频繁，请稍后再试", code=BizCode.TOO_MANY_REQUESTS).model_dump(mode="json"),
+                )
 
         # 用户级限流（已登录用户）
         user_id = getattr(getattr(request.state, "current_user", None), "id", None)
         if user_id is not None:
             if not _check_rate(self.redis, RATELIMIT_USER_KEY.format(user_id=user_id), USER_RATE, USER_WINDOW):
                 logger.warning("[WINDUP] 用户限流触发 | user_id=%s", user_id)
-                raise BizException("请求过于频繁", code=BizCode.TOO_MANY_REQUESTS)
+                return JSONResponse(
+                    status_code=200,
+                    content=Resp.fail("请求过于频繁", code=BizCode.TOO_MANY_REQUESTS).model_dump(mode="json"),
+                )
 
         return await call_next(request)

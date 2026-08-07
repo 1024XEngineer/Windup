@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -23,7 +23,6 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 class ProjectCreate(BaseModel):
     """创建项目请求。"""
 
-    user_id: int = Field(gt=0)
     workflow_id: int | None = None
     project_name: str = Field(min_length=1, max_length=20)
     character_perspective: int = Field(ge=1, le=3)
@@ -34,34 +33,46 @@ class ProjectCreate(BaseModel):
     sprite_sample_url: str | None = None
 
 
-class ProjectOut(ProjectCreate):
+class ProjectOut(BaseModel):
     """项目响应。"""
 
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    user_id: int
+    workflow_id: int | None
+    project_name: str
+    character_perspective: int
+    directional_movement: int
+    sprite_width: int
+    sprite_height: int
+    game_style: str | None
+    sprite_sample_url: str | None
     create_at: datetime
     update_at: datetime
 
 
 @router.post("", response_model=Response[ProjectOut])
 def create_project(
-    body: ProjectCreate, session: Session = Depends(get_session)
+    body: ProjectCreate,
+    request: Request,
+    session: Session = Depends(get_session),
 ) -> Response[ProjectOut]:
+    user_id = request.state.current_user.id
     if service.project_name_exists(
-        session, user_id=body.user_id, project_name=body.project_name
+        session, user_id=user_id, project_name=body.project_name
     ):
         logger.warning(
             "[WINDUP] 创建拒绝-名称重复 | user_id=%s project_name=%s",
-            body.user_id, body.project_name,
+            user_id, body.project_name,
         )
         raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST)
     try:
-        project = service.create_project(session, **body.model_dump())
+        project = service.create_project(session, user_id=user_id, **body.model_dump())
     except IntegrityError:
         logger.warning(
             "[WINDUP] 创建拒绝-并发冲突 | user_id=%s project_name=%s",
-            body.user_id, body.project_name,
+            user_id, body.project_name,
         )
         session.rollback()
         raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST) from None
@@ -70,11 +81,12 @@ def create_project(
 
 @router.get("", response_model=ListResponse[ProjectOut])
 def list_projects(
+    request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    user_id: int | None = Query(None, gt=0),
     session: Session = Depends(get_session),
 ) -> ListResponse[ProjectOut]:
+    user_id = request.state.current_user.id
     projects, total = service.list_projects(
         session, page=page, page_size=page_size, user_id=user_id
     )
@@ -88,18 +100,24 @@ def list_projects(
 
 @router.get("/{project_id}", response_model=Response[ProjectOut])
 def get_project(
-    project_id: int, session: Session = Depends(get_session)
+    project_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
 ) -> Response[ProjectOut]:
     project = service.get_project(session, project_id)
-    if project is None:
+    if project is None or project.user_id != request.state.current_user.id:
         raise BizException("项目不存在", code=BizCode.NOT_FOUND)
     return Response.success(ProjectOut.model_validate(project))
 
 
 @router.delete("/{project_id}", response_model=Response[None])
 def delete_project(
-    project_id: int, session: Session = Depends(get_session)
+    project_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
 ) -> Response[None]:
-    if not service.delete_project(session, project_id):
+    project = service.get_project(session, project_id)
+    if project is None or project.user_id != request.state.current_user.id:
         raise BizException("项目不存在", code=BizCode.NOT_FOUND)
+    service.delete_project(session, project_id)
     return Response.success(None, message="删除成功")
