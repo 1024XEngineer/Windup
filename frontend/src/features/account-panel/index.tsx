@@ -32,7 +32,7 @@ const modeCopy: Record<
   password: {
     tab: '密码登录',
     title: '登录 Windup',
-    description: '使用密码和邮箱验证码确认身份。',
+    description: '用邮箱和密码直接登录。',
     submit: '登录',
   },
   register: {
@@ -177,7 +177,7 @@ function AccountPanelDialog() {
     if (mode !== 'code' && (password.length < 8 || password.length > 128)) {
       return '密码需为 8–128 位'
     }
-    if (!CODE_PATTERN.test(code)) return '验证码需为 6 位数字'
+    if (mode !== 'password' && !CODE_PATTERN.test(code)) return '验证码需为 6 位数字'
     if (mode === 'register' && nickname.length > 50) return '昵称不能超过 50 个字符'
     return null
   }
@@ -200,7 +200,7 @@ function AccountPanelDialog() {
         await session.loginByCode({ email: normalizedEmail, code })
         successMessage = '登录成功。如果这是你首次使用该邮箱，我们已为你创建账号。'
       } else if (mode === 'password') {
-        await session.login({ email: normalizedEmail, password, code })
+        await session.login({ email: normalizedEmail, password })
         successMessage = '登录成功，正在继续。'
       } else {
         await session.register({
@@ -379,35 +379,37 @@ function AccountPanelDialog() {
             </div>
           )}
 
-          <div className="grid gap-1.5 text-sm font-semibold text-[#344039]">
-            <label htmlFor={codeId}>验证码</label>
-            <span className="flex items-stretch gap-2">
-              <input
-                id={codeId}
-                type="text"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={6}
-                value={code}
-                onChange={(event) => setCode(event.target.value)}
-                disabled={isSubmitting}
-                className={fieldClass}
-                placeholder="6 位数字"
-              />
-              <button
-                type="button"
-                onClick={() => void sendCode()}
-                disabled={isSendingCode || isSubmitting || cooldownSeconds > 0}
-                className="min-h-11 min-w-[7.25rem] rounded-xl border border-[#607067] bg-[#eef2ef] px-3 text-sm font-semibold text-[#34483a] transition-colors hover:bg-[#e1e8e3] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331] disabled:cursor-not-allowed disabled:border-[#bbc2bc] disabled:text-[#858d87]"
-              >
-                {isSendingCode
-                  ? '正在发送…'
-                  : cooldownSeconds > 0
-                    ? `${cooldownSeconds} 秒后重发`
-                    : '发送验证码'}
-              </button>
-            </span>
-          </div>
+          {mode !== 'password' && (
+            <div className="grid gap-1.5 text-sm font-semibold text-[#344039]">
+              <label htmlFor={codeId}>验证码</label>
+              <span className="flex items-stretch gap-2">
+                <input
+                  id={codeId}
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  value={code}
+                  onChange={(event) => setCode(event.target.value)}
+                  disabled={isSubmitting}
+                  className={fieldClass}
+                  placeholder="6 位数字"
+                />
+                <button
+                  type="button"
+                  onClick={() => void sendCode()}
+                  disabled={isSendingCode || isSubmitting || cooldownSeconds > 0}
+                  className="min-h-11 min-w-[7.25rem] rounded-xl border border-[#607067] bg-[#eef2ef] px-3 text-sm font-semibold text-[#34483a] transition-colors hover:bg-[#e1e8e3] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331] disabled:cursor-not-allowed disabled:border-[#bbc2bc] disabled:text-[#858d87]"
+                >
+                  {isSendingCode
+                    ? '正在发送…'
+                    : cooldownSeconds > 0
+                      ? `${cooldownSeconds} 秒后重发`
+                      : '发送验证码'}
+                </button>
+              </span>
+            </div>
+          )}
 
           {mode === 'code' && (
             <p className="rounded-xl border border-[#97a99b]/45 bg-[#edf3ee] px-3.5 py-3 text-sm leading-6 text-[#46564b]">

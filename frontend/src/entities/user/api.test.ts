@@ -55,7 +55,6 @@ describe('createUserApis', () => {
     await apis.login({
       email: 'reader@example.com',
       password: 'password-123',
-      code: '123456',
     })
     await apis.loginByCode({ email: 'reader@example.com', code: '123456' })
     await apis.refresh('refresh-token')
@@ -89,7 +88,6 @@ describe('createUserApis', () => {
           json: {
             email: 'reader@example.com',
             password: 'password-123',
-            code: '123456',
           },
         },
       ],

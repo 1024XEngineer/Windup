@@ -25,7 +25,8 @@ export interface UserApis {
     code: string
     nickname?: string
   }): Promise<AuthTokens>
-  login(input: { email: string; password: string; code: string }): Promise<AuthTokens>
+  /** 密码登录不带验证码；验证码只用于注册、免密登录与重设密码。 */
+  login(input: { email: string; password: string }): Promise<AuthTokens>
   loginByCode(input: { email: string; code: string }): Promise<AuthTokens>
   refresh(refreshToken: string): Promise<AuthTokens>
   logout(refreshToken: string): Promise<void>
