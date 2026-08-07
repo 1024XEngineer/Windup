@@ -39,6 +39,14 @@ def _cors_origins() -> list[str]:
             "http://localhost:3000", "http://127.0.0.1:3000"]
 
 
+def _cors_origin_regex() -> str | None:
+    """CORS 正则匹配的额外来源，WINDUP_CORS_ORIGIN_REGEX 覆盖。
+
+    默认允许所有 Vercel 预览域名。
+    """
+    return os.getenv("WINDUP_CORS_ORIGIN_REGEX", r"https://.*\.vercel\.app").strip() or None
+
+
 def print_banner() -> None:
     """启动时打印 banner(占位实现,后续替换为正式 ASCII banner)。"""
     print("windup 0.1.0 starting ...")
@@ -56,7 +64,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
-        allow_origin_regex=r"https://.*\.vercel\.app",
+        allow_origin_regex=_cors_origin_regex(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
