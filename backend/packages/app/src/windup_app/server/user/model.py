@@ -123,7 +123,6 @@ class LoginByPasswordInput:
 
     email: str
     password: str
-    code: str
 
 
 @dataclass
@@ -139,6 +138,22 @@ class ChangePasswordInput:
     """修改密码入参。"""
 
     old_password: str
+    new_password: str
+
+
+@dataclass
+class UpdateNicknameInput:
+    """修改昵称入参。"""
+
+    nickname: str
+
+
+@dataclass
+class ResetPasswordInput:
+    """重置密码入参。"""
+
+    email: str
+    code: str
     new_password: str
 
 

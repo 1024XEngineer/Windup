@@ -13,7 +13,7 @@ from windup_common.result import Response
 
 from windup_framework.db import get_session
 
-from windup_app.server.user.model import User, UserView
+from windup_app.server.user.model import ResetPasswordInput, UpdateNicknameInput, User, UserView
 from windup_app.server.user.service import service
 
 logger = logging.getLogger("windup.auth.api")
@@ -38,7 +38,6 @@ class LoginRequest(BaseModel):
 
     email: EmailStr
     password: str
-    code: str = Field(min_length=6, max_length=6, description="邮箱验证码")
 
 
 class SendCodeRequest(BaseModel):
@@ -65,6 +64,20 @@ class ChangePasswordRequest(BaseModel):
     """修改密码请求。"""
 
     old_password: str
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class UpdateNicknameRequest(BaseModel):
+    """修改昵称请求。"""
+
+    nickname: str = Field(min_length=1, max_length=50)
+
+
+class ResetPasswordRequest(BaseModel):
+    """重置密码请求（忘记密码场景）。"""
+
+    email: EmailStr
+    code: str = Field(min_length=6, max_length=6, description="reset_password 用途的验证码")
     new_password: str = Field(min_length=8, max_length=128)
 
 
@@ -118,7 +131,7 @@ def login(body: LoginRequest, session: Session = Depends(get_session)):
     """邮箱+密码+验证码登录。"""
     result = service.login_by_password_with_session(
         session,
-        type("LoginByPasswordInput", (), {"email": body.email, "password": body.password, "code": body.code})(),
+        type("LoginByPasswordInput", (), {"email": body.email, "password": body.password})(),
     )
     return Response.success(
         TokenResponse(
@@ -204,3 +217,32 @@ def change_password(body: ChangePasswordRequest, request: Request, session: Sess
         type("ChangePasswordInput", (), {"old_password": body.old_password, "new_password": body.new_password})(),
     )
     return Response.success(None, message="密码修改成功")
+
+
+@router.post("/reset-password", response_model=Response[None])
+def reset_password(body: ResetPasswordRequest, session: Session = Depends(get_session)):
+    """邮箱+验证码重置密码（忘记密码）。"""
+    service.reset_password_with_session(
+        session,
+        ResetPasswordInput(email=body.email, code=body.code, new_password=body.new_password),
+    )
+    return Response.success(None, message="密码重置成功")
+
+
+@router.patch("/profile", response_model=Response[UserOut])
+def update_nickname(body: UpdateNicknameRequest, request: Request, session: Session = Depends(get_session)):
+    """修改当前用户昵称。"""
+    current_user = request.state.current_user
+    user_view = service.update_nickname_with_session(
+        session, current_user.id, UpdateNicknameInput(nickname=body.nickname)
+    )
+    return Response.success(
+        UserOut(
+            id=user_view.id,
+            email=user_view.email,
+            nickname=user_view.nickname,
+            email_verified_at=user_view.email_verified_at.isoformat() if user_view.email_verified_at else None,
+            status=user_view.status,
+        ),
+        message="昵称修改成功",
+    )

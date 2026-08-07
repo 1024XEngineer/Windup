@@ -36,6 +36,7 @@ SENSITIVE_PATHS: set[str] = {
     "/auth/login",
     "/auth/send-code",
     "/auth/login-by-code",
+    "/auth/reset-password",
 }
 
 # -- Redis key 模板 ------------------------------------------------------

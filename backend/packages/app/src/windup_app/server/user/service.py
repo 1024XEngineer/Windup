@@ -30,6 +30,8 @@ from windup_app.server.user.model import (
     LoginByPasswordInput,
     LoginResult,
     RegisterInput,
+    ResetPasswordInput,
+    UpdateNicknameInput,
     User,
     UserStatus,
     UserView,
@@ -64,10 +66,15 @@ def _verify_password(password: str, hashed: str) -> bool:
 VERIFY_COOLDOWN_KEY = "verify:cooldown:{email}"
 VERIFY_CODE_KEY = "verify:{purpose}:{email}"
 REFRESH_TOKEN_KEY = "refresh:{token_hash}"
-RATELIMIT_SENSITIVE_KEY = "ratelimit:sensitive:{ip}"
+LOGIN_FAIL_KEY = "login:fail:{email}"
+LOGIN_LOCK_KEY = "login:lock:{email}"
 
 VERIFY_CODE_TTL = 300   # 5 分钟
 COOLDOWN_TTL = 60       # 60 秒
+
+LOGIN_FAIL_LIMIT = 5            # 连续错误密码上限
+LOGIN_FAIL_WINDOW = 15 * 60     # 失败计数窗口 15 分钟
+LOGIN_LOCK_DURATION = 15 * 60   # 锁定时长 15 分钟
 
 
 def _hash_token(token: str) -> str:
@@ -198,6 +205,29 @@ class SqlAlchemyUserService(UserService):
             refresh_token=refresh_token,
         )
 
+    # -- 登录限流 ----------------------------------------------------------
+
+    def _check_login_lock(self, email: str) -> None:
+        """检查账号是否因连续错误密码被锁定。"""
+        lock_key = LOGIN_LOCK_KEY.format(email=email)
+        if self.redis.get(lock_key):
+            raise BizException("邮箱或密码错误", code=BizCode.BAD_REQUEST)
+
+    def _record_login_failure(self, email: str) -> None:
+        """记录一次错误密码，达到上限时锁定账号。"""
+        fail_key = LOGIN_FAIL_KEY.format(email=email)
+        count = self.redis.incr(fail_key)
+        if count == 1:
+            self.redis.expire(fail_key, LOGIN_FAIL_WINDOW)
+        if count >= LOGIN_FAIL_LIMIT:
+            lock_key = LOGIN_LOCK_KEY.format(email=email)
+            self.redis.setex(lock_key, LOGIN_LOCK_DURATION, "1")
+
+    def _clear_login_failures(self, email: str) -> None:
+        """登录成功，清除失败计数和锁定。"""
+        self.redis.delete(LOGIN_FAIL_KEY.format(email=email))
+        self.redis.delete(LOGIN_LOCK_KEY.format(email=email))
+
     # -- 登录 ------------------------------------------------------------
 
     def login_by_password(self, input: LoginByPasswordInput) -> LoginResult:
@@ -206,19 +236,24 @@ class SqlAlchemyUserService(UserService):
     def login_by_password_with_session(
         self, session: Session, input: LoginByPasswordInput
     ) -> LoginResult:
-        """邮箱+密码+验证码登录（带 session）。"""
-        # 校验验证码
-        self._verify_code(input.email, input.code, "login")
+        """邮箱+密码登录（带 session）。"""
+        # 检查账号锁定
+        self._check_login_lock(input.email)
 
         user = session.scalar(select(User).where(User.email == input.email))
         if user is None:
+            self._record_login_failure(input.email)
             raise BizException("邮箱或密码错误", code=BizCode.BAD_REQUEST)
 
         if not _verify_password(input.password, user.password_hash):
+            self._record_login_failure(input.email)
             raise BizException("邮箱或密码错误", code=BizCode.BAD_REQUEST)
 
         if user.status == UserStatus.BANNED:
             raise BizException("账号已被封禁", code=BizCode.BAD_REQUEST)
+
+        # 登录成功，清除失败计数
+        self._clear_login_failures(input.email)
 
         # 更新最后登录时间
         user.last_login_at = datetime.now(timezone.utc)
@@ -394,6 +429,43 @@ class SqlAlchemyUserService(UserService):
         # 修改密码后撤销该用户所有 refresh_token
         self._revoke_all_user_tokens(user_id)
         logger.info("[WINDUP] 密码已修改 | user_id=%s", user_id)
+
+    def reset_password_with_session(
+        self, session: Session, input: ResetPasswordInput
+    ) -> None:
+        """邮箱+验证码重置密码（忘记密码场景）。"""
+        # 校验验证码（purpose 必须为 reset_password）
+        self._verify_code(input.email, input.code, "reset_password")
+
+        user = session.scalar(select(User).where(User.email == input.email))
+        if user is None:
+            raise BizException("用户不存在", code=BizCode.NOT_FOUND)
+
+        if user.status == UserStatus.BANNED:
+            raise BizException("账号已被封禁", code=BizCode.BAD_REQUEST)
+
+        user.password_hash = _hash_password(input.new_password)
+        session.flush()
+
+        # 重置密码后撤销该用户所有 refresh_token
+        self._revoke_all_user_tokens(user.id)
+        logger.info("[WINDUP] 密码已重置 | user_id=%s email=%s", user.id, user.email)
+
+    # -- 昵称 ------------------------------------------------------------
+
+    def update_nickname_with_session(
+        self, session: Session, user_id: int, input: UpdateNicknameInput
+    ) -> UserView:
+        """修改昵称（带 session）。"""
+        user = session.get(User, user_id)
+        if user is None:
+            raise BizException("用户不存在", code=BizCode.NOT_FOUND)
+
+        user.nickname = input.nickname
+        session.flush()
+
+        logger.info("[WINDUP] 昵称已修改 | user_id=%s", user_id)
+        return _to_view(user)
 
     # -- 查询 ------------------------------------------------------------
 
