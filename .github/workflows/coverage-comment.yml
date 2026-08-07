@@ -16,10 +16,23 @@ jobs:
     if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: Download coverage XML
+      - name: Download coverage and comment on PR
         uses: actions/github-script@v7
         with:
           script: |
+            const fs = require('fs');
+            const { execSync } = require('child_process');
+
+            // ── 1. 获取 PR number ──
+            // workflow_run 事件自带 pull_requests 数组（含 fork PR）
+            const prs = context.payload.workflow_run.pull_requests;
+            if (!prs || !prs.length) {
+              core.info('No pull_requests in workflow_run payload, skipping');
+              return;
+            }
+            const prNumber = prs[0].number;
+
+            // ── 2. 下载 coverage-xml artifact ──
             const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -36,50 +49,26 @@ jobs:
               artifact_id: artifact.id,
               archive_format: 'zip',
             });
-            const fs = require('fs');
             fs.writeFileSync('/tmp/coverage-xml.zip', Buffer.from(download.data));
 
-      - name: Unzip and parse coverage
-        id: coverage
-        run: |
-          unzip /tmp/coverage-xml.zip -d /tmp/coverage
-          LINE=$(sed -n 's/.*line-rate="\([0-9.]*\)".*/\1/p' /tmp/coverage/coverage.xml | head -1)
-          BRANCH=$(sed -n 's/.*branch-rate="\([0-9.]*\)".*/\1/p' /tmp/coverage/coverage.xml | head -1)
-          echo "line=$(echo "$LINE * 100" | bc | xargs printf '%.2f')" >> "$GITHUB_OUTPUT"
-          echo "branch=$(echo "$BRANCH * 100" | bc | xargs printf '%.2f')" >> "$GITHUB_OUTPUT"
+            // ── 3. 解析覆盖率 ──
+            execSync('unzip -o /tmp/coverage-xml.zip -d /tmp/coverage');
+            const xml = fs.readFileSync('/tmp/coverage/coverage.xml', 'utf8');
+            const lineRate = parseFloat(xml.match(/line-rate="([\d.]+)"/)?.[1] || '0');
+            const branchRate = parseFloat(xml.match(/branch-rate="([\d.]+)"/)?.[1] || '0');
+            const lineCov = (lineRate * 100).toFixed(2);
+            const branchCov = (branchRate * 100).toFixed(2);
 
-      - name: Comment coverage on PR
-        uses: actions/github-script@v7
-        env:
-          LINE_COV: ${{ steps.coverage.outputs.line }}
-          BRANCH_COV: ${{ steps.coverage.outputs.branch }}
-        with:
-          script: |
-            // 找到关联的 PR number
-            const prs = await github.rest.pulls.list({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              head: `${context.repo.owner}:${context.payload.workflow_run.head_branch}`,
-            });
-            if (!prs.data.length) {
-              core.info('No open PR found for this branch, skipping comment');
-              return;
-            }
-            const prNumber = prs.data[0].number;
-
-            const lineCov = process.env.LINE_COV || '0';
-            const branchCov = process.env.BRANCH_COV || '0';
-
+            // ── 4. 发表 / 更新 PR 评论 ──
             const body = [
-              '## 📊 Coverage Report',
+              '## Coverage Report',
               '',
               '| Metric | Coverage |',
               '|--------|----------|',
               `| Line Coverage | ${lineCov}% |`,
               `| Branch Coverage | ${branchCov}% |`,
               '',
-              `> 📁 HTML report available in [Artifacts](../actions/runs/${context.payload.workflow_run.id})`,
+              `> HTML report available in [Artifacts](../actions/runs/${context.payload.workflow_run.id})`,
               '>',
               '> Refs: #167',
             ].join('\n');
@@ -89,7 +78,7 @@ jobs:
               repo: context.repo.repo,
               issue_number: prNumber,
             });
-            const existing = comments.find(c => c.body.includes('## 📊 Coverage Report'));
+            const existing = comments.find(c => c.body.includes('## Coverage Report'));
 
             if (existing) {
               await github.rest.issues.updateComment({
