@@ -96,6 +96,46 @@ def test_missing_onnxruntime_raises_instead_of_guessing_background():
         builtins.__import__ = real
 
 
+# ── 视频帧的最外圈是编码器伪影，不是底色（2026-08-10 实测挣得）──────────────
+
+
+def test_edge_artifact_row_does_not_disable_cleanup():
+    """最外一行/列常是编码器伪影：贴边采样会把它算进"底色是否均匀"，
+    于是整帧被判"底不均匀"而跳过清理——修复在真实路径上等于从不生效。
+
+    实测 9 段真 i2v × 16 帧 = 144 帧，贴边采样时 26 帧（18%）因此误跳；
+    往里让 2px 后归零。
+    """
+    import numpy as np
+
+    from windup_framework.providers.matte import _flat_bg_penalty
+
+    bg = (222, 41, 124)
+    a = np.zeros((80, 80, 3), dtype=np.float32)
+    a[:, :] = bg
+    a[:, -1] = (0, 0, 0)          # 最右一列纯黑：典型的编码器边缘伪影
+    a[0, :] = (180, 30, 100)      # 最顶一行偏暗
+    p = _flat_bg_penalty(a)
+    assert p[40, 40] == 0.0, "跳过最外圈后应认出这是纯色底并清理；贴边采样会误判为不均匀"
+
+
+def test_tiny_image_degrades_to_no_cleanup_rather_than_guessing():
+    """图小到四角采样块会盖住主体时，采出来的"底色"其实混了主体色，
+    此时守卫判"底不均匀"、整体跳过清理。
+
+    这是**安全的退化方向**：清理只做减法，跳过等于少清一点；反过来若强行按
+    混了主体色的 key 去清，会把主体本身当背景抠掉——本项目宁可漏，不可误伤。
+    """
+    import numpy as np
+
+    from windup_framework.providers.matte import _flat_bg_penalty
+
+    a = np.zeros((20, 20, 3), dtype=np.float32)
+    a[:, :] = (0, 255, 0)
+    a[8:12, 8:12] = (200, 60, 60)     # 主体落在四角采样块的重叠区
+    assert (_flat_bg_penalty(a) == 1.0).all(), "采样不可靠时必须整体跳过，而不是按脏 key 清理"
+
+
 # ── 封闭空洞填充（2026-08-11 在 121 帧真实走路视频帧上实测挣得）──────────────────
 #
 # 背景:交付帧放大看,主体内部会有透明洞(背景直接透出来)。实测拆开成因:
