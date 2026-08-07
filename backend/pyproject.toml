@@ -14,6 +14,7 @@ windup-app = { workspace = true }
 dev = [
     "import-linter>=2.0",
     "pytest>=8.0",
+    "pytest-cov>=5.0",
     "ruff>=0.6",
 ]
 
@@ -40,3 +41,7 @@ name = "入口层不经 ai_engine 直连"
 type = "forbidden"
 source_modules = ["windup_app.web", "windup_app.worker"]
 forbidden_modules = ["windup_ai_engine"]
+
+# ── pytest 配置 ─────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+addopts = "--cov=packages --cov-report=term-missing"

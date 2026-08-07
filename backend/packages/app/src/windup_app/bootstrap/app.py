@@ -10,13 +10,20 @@
 import os
 from contextlib import asynccontextmanager
 
-import windup_framework.db  # noqa: F401  组装时显式触发 DB engine/session 初始化
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from windup_framework.db import Base, engine
 
+# 模型导入：触发 Base.metadata 注册，确保 create_all 能发现所有表
+from windup_app.server.character.model import Character  # noqa: F401
+from windup_app.server.project.model import Project  # noqa: F401
+from windup_app.server.user.model import User  # noqa: F401
+from windup_app.web.api.auth import router as auth_router
 from windup_app.web.api.generation import router as generation_router
 from windup_app.web.api.media import router as media_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
+from windup_app.web.middleware.auth import AuthMiddleware
+from windup_app.web.middleware.ratelimit import RateLimitMiddleware
 
 
 def _env_flag(name: str) -> bool:
@@ -54,7 +61,8 @@ def print_banner() -> None:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    """应用启动时打印 banner,关闭时无特殊处理。"""
+    """应用启动时建表 + 打印 banner,关闭时无特殊处理。"""
+    Base.metadata.create_all(engine)
     print_banner()
     yield
 
@@ -69,6 +77,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # 中间件（add_middleware 后加的先执行：请求先进 RateLimit → 再进 Auth → 最后到路由）
+    app.add_middleware(AuthMiddleware)
+    app.add_middleware(RateLimitMiddleware)
+    app.include_router(auth_router)
     app.include_router(media_router)
     app.include_router(generation_router)
     register_exception_handlers(app)
@@ -76,10 +88,7 @@ def create_app() -> FastAPI:
 
 
 def main() -> None:
-    """开发启动入口:用 uvicorn 跑 ``create_app``。
-
-    host/port/reload 可用 ``WINDUP_HOST`` / ``WINDUP_PORT`` / ``WINDUP_RELOAD`` 覆盖。
-    """
+    """开发启动入口:用 uvicorn 跑 ``create_app``。"""
     import uvicorn
 
     uvicorn.run(
@@ -91,6 +100,5 @@ def main() -> None:
     )
 
 
-
 if __name__ == "__main__":
-        main()
+    main()
