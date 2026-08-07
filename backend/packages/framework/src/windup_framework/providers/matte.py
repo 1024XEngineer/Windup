@@ -29,6 +29,39 @@ _STD = (0.229, 0.224, 0.225)
 _SIZE = (320, 320)
 
 
+# 只清理"几乎精确等于底色"的像素。阈值必须窄:2026-08-07 实测,一个铁锈橙毛
+# (222,130,70)的角色配玫红底(222,41,124),两者红通道完全相同、欧氏距离仅 104 ——
+# 宽阈值会把毛判成半透明并去"反解",越解越坏(先成橄榄绿再成亮绿)。橙毛 d≈117,
+# 阈值 38 完全碰不到它;而闭合空隙里的背景 d≈0,能干净移除。
+_KEY_KILL = 38.0    # d < 此值 → 判为纯背景
+_KEY_SOFT = 14.0    # 到 _KEY_KILL + _KEY_SOFT 之间线性过渡,避免硬边锯齿
+_BG_FLAT_STD = 8.0  # 四角色标准差上限;超过说明底不是纯色,不做任何清理
+
+
+def _flat_bg_penalty(rgb: np.ndarray) -> np.ndarray:
+    """底色清理系数(0=纯背景,1=主体),形状与图同宽高。
+
+    为什么需要它:u2netp 是显著性模型,对**闭合区域**天然失灵 —— 四足角色腿间的
+    背景是一块被主体围住的空隙,显著性把它当成主体内部,整块底色留在产物里
+    (2026-08-07 实测)。而母版底色是刻意生成的纯色,均匀度极高(实测四角标准差 1.0~1.2),
+    用它做一次窄阈值清理就能补上这个洞。
+
+    与"按颜色抠是死路"那条规则的边界:那条说的是**拿颜色当主体判据**(白底浅色角色
+    会被抠穿)。这里主体判据仍然是 u2netp,颜色只用来**做减法** —— 绝不新增主体像素,
+    最坏情况是少清理一点,不会抠穿角色。底色不够均匀时(std 超阈值)直接返回全 1,
+    等于不清理。
+    """
+    corners = np.concatenate([
+        rgb[:12, :12].reshape(-1, 3), rgb[:12, -12:].reshape(-1, 3),
+        rgb[-12:, :12].reshape(-1, 3), rgb[-12:, -12:].reshape(-1, 3),
+    ])
+    if float(corners.std(axis=0).max()) > _BG_FLAT_STD:
+        return np.ones(rgb.shape[:2], dtype=np.float32)   # 底不是纯色 → 不动
+    key = np.median(corners, axis=0).astype(np.float32)
+    d = np.linalg.norm(rgb - key, axis=2)
+    return np.clip((d - _KEY_KILL) / _KEY_SOFT, 0.0, 1.0).astype(np.float32)
+
+
 class OnnxU2NetMatteProvider(MatteProvider):
     """u2netp.onnx via onnxruntime。frame bytes → 抠好的 PNG(RGBA) bytes。"""
 
@@ -47,8 +80,14 @@ class OnnxU2NetMatteProvider(MatteProvider):
         if self._session is None:
             try:
                 import onnxruntime as ort  # 惰性:导入慢
-            except ImportError:
-                return None  # onnxruntime 不可用(如 macOS x86_64),走 Pillow 兜底
+            except ImportError as e:       # pragma: no cover - 取决于安装环境
+                # **不静默降级。** 这里曾在 ImportError 时回落到"取四角主色做 chroma-key",
+                # 有两个问题:①猜背景色 —— 白底母版四角就是白色,浅色角色(骨白/银甲)与背景
+                # 撞色会被抠穿;②静默 —— 开发机上看着能跑、输出其实是坏的,要到产物验收才发现。
+                raise RuntimeError(
+                    "onnxruntime 不可用，无法做主体抠图。请安装 onnxruntime"
+                    "（注意 <1.24 才有 macOS Intel 轮子）。"
+                ) from e
             self._session = ort.InferenceSession(
                 str(self._ensure_model()), providers=["CPUExecutionProvider"]
             )
@@ -73,31 +112,9 @@ class OnnxU2NetMatteProvider(MatteProvider):
 
     def cutout(self, frame: bytes) -> bytes:
         img = Image.open(io.BytesIO(frame)).convert("RGBA")
-        session = self._get_session()
-        if session is not None:
-            mask = self._predict_mask(img)
-        else:
-            mask = self._fallback_mask(img)
-        cut = Image.composite(img, Image.new("RGBA", img.size, (0, 0, 0, 0)), mask)
+        alpha = np.asarray(self._predict_mask(img), dtype=np.float32) / 255.0
+        alpha = alpha * _flat_bg_penalty(np.asarray(img.convert("RGB"), dtype=np.float32))
+        out = np.dstack([np.asarray(img.convert("RGB")), alpha * 255.0]).astype(np.uint8)
         buf = io.BytesIO()
-        cut.save(buf, "PNG")
+        Image.fromarray(out, "RGBA").save(buf, "PNG")
         return buf.getvalue()
-
-    @staticmethod
-    def _fallback_mask(img: Image.Image) -> Image.Image:
-        """Pillow 兜底:取四角主色做 chroma-key 式去背(精度远低于 u2netp,仅开发用)。"""
-        import numpy as np
-
-        ary = np.array(img.convert("RGB"))
-        # 取四角 8×8 采样主色
-        corners = np.concatenate([
-            ary[:8, :8].reshape(-1, 3),
-            ary[:8, -8:].reshape(-1, 3),
-            ary[-8:, :8].reshape(-1, 3),
-            ary[-8:, -8:].reshape(-1, 3),
-        ])
-        bg = corners.mean(axis=0)
-        diff = np.linalg.norm(ary.astype(float) - bg, axis=2)
-        # 阈值:距离 < 60 视为背景
-        mask = (diff > 60).astype(np.uint8) * 255
-        return Image.fromarray(mask, "L").resize(img.size, Image.LANCZOS)
