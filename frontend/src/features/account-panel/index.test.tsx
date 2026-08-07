@@ -275,13 +275,10 @@ describe('AppShell account panel host', () => {
   it('does not require an auth context while the panel is closed', () => {
     render(
       <MemoryRouter initialEntries={['/']}>
-        <AppShell>
-          <p>当前页面</p>
-        </AppShell>
+        <AccountPanel />
       </MemoryRouter>,
     )
 
-    expect(screen.getByText('当前页面')).toBeTruthy()
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 

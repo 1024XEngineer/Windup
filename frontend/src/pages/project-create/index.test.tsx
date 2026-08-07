@@ -4,14 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 
 import { AppRoutes } from '@/app'
-import { registerApiAccessTokenProvider } from '@/shared/api'
+import { AuthenticatedAuthSession, GuestAuthSession } from '@/test/auth-session'
 import { createProjectAssetsBackend } from '@/test/project-assets-backend'
-
-const revokeProviders: Array<() => void> = []
 
 afterEach(() => {
   cleanup()
-  while (revokeProviders.length) revokeProviders.pop()?.()
+  window.localStorage.clear()
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
 })
@@ -23,17 +21,17 @@ function installBackend() {
   return backend
 }
 
-/** 登录模块尚未落地，测试里用同一个 provider 边界冒充已签发的 access token。 */
-function signIn(accessToken = 'access-token-for-test') {
-  revokeProviders.push(registerApiAccessTokenProvider(() => accessToken))
-}
-
-function renderProjectCreate() {
-  return render(
-    <MemoryRouter initialEntries={['/projects/new']}>
-      <AppRoutes />
-    </MemoryRouter>,
+async function renderProjectCreate(authenticated = true) {
+  const Session = authenticated ? AuthenticatedAuthSession : GuestAuthSession
+  const result = render(
+    <Session>
+      <MemoryRouter initialEntries={['/projects/new']}>
+        <AppRoutes />
+      </MemoryRouter>
+    </Session>,
   )
+  if (authenticated) await screen.findByText('Reader')
+  return result
 }
 
 function creationRequests(backend: ReturnType<typeof createProjectAssetsBackend>) {
@@ -45,8 +43,7 @@ function creationRequests(backend: ReturnType<typeof createProjectAssetsBackend>
 describe('ProjectCreatePage', () => {
   it('按项目契约提交表单并进入创建出的项目', async () => {
     const backend = installBackend()
-    signIn()
-    renderProjectCreate()
+    await renderProjectCreate()
 
     fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '雾港来信' } })
     fireEvent.change(screen.getByLabelText('游戏视角'), { target: { value: 'top-down' } })
@@ -73,18 +70,19 @@ describe('ProjectCreatePage', () => {
 
   it('没有登录凭证时禁用创建并说明原因', async () => {
     const backend = installBackend()
-    renderProjectCreate()
+    await renderProjectCreate(false)
 
     const submit = await screen.findByRole('button', { name: '创建项目' })
     expect(submit.hasAttribute('disabled')).toBe(true)
-    expect(screen.getByText(/登录/)).toBeTruthy()
+    expect(
+      screen.getByText('创建项目需要先登录。登录模块尚未接入，创建入口暂时保持关闭。'),
+    ).toBeTruthy()
     expect(creationRequests(backend)).toHaveLength(0)
   })
 
   it('名称超过 20 字时在提交前拦下', async () => {
     const backend = installBackend()
-    signIn()
-    renderProjectCreate()
+    await renderProjectCreate()
 
     fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '雾'.repeat(21) } })
     fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
@@ -95,8 +93,7 @@ describe('ProjectCreatePage', () => {
 
   it('名称重复时保留已填内容并显示后端给出的原因', async () => {
     installBackend()
-    signIn()
-    renderProjectCreate()
+    await renderProjectCreate()
 
     fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '点灯人 · MVP' } })
     fireEvent.change(screen.getByLabelText('画风约束'), { target: { value: '低饱和像素绘本' } })
@@ -108,8 +105,7 @@ describe('ProjectCreatePage', () => {
 
   it('连续点击创建只发出一次请求', async () => {
     const backend = installBackend()
-    signIn()
-    renderProjectCreate()
+    await renderProjectCreate()
 
     fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '雾港来信' } })
     const submit = screen.getByRole('button', { name: '创建项目' })
@@ -121,8 +117,7 @@ describe('ProjectCreatePage', () => {
   })
   it('名称留空时在提交前拦下', async () => {
     const backend = installBackend()
-    signIn()
-    renderProjectCreate()
+    await renderProjectCreate()
 
     fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
 
@@ -132,8 +127,7 @@ describe('ProjectCreatePage', () => {
 
   it('精灵宽高越界时在提交前拦下', async () => {
     const backend = installBackend()
-    signIn()
-    renderProjectCreate()
+    await renderProjectCreate()
 
     fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '雾港来信' } })
     fireEvent.change(screen.getByLabelText('宽度（像素）'), { target: { value: '16' } })
@@ -148,8 +142,7 @@ describe('ProjectCreatePage', () => {
   it('传输失败时收敛成一句统一文案', async () => {
     installBackend()
     vi.stubGlobal('fetch', () => Promise.reject(new TypeError('offline')))
-    signIn()
-    renderProjectCreate()
+    await renderProjectCreate()
 
     fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '雾港来信' } })
     fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
@@ -159,8 +152,7 @@ describe('ProjectCreatePage', () => {
 
   it('改动任一字段后撤掉上一次的错误', async () => {
     installBackend()
-    signIn()
-    renderProjectCreate()
+    await renderProjectCreate()
 
     fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
     expect(await screen.findByRole('alert')).toBeTruthy()
@@ -171,8 +163,7 @@ describe('ProjectCreatePage', () => {
   })
   it('点尺寸预设后撤掉上一次的错误', async () => {
     installBackend()
-    signIn()
-    renderProjectCreate()
+    await renderProjectCreate()
 
     fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '雾港来信' } })
     fireEvent.change(screen.getByLabelText('宽度（像素）'), { target: { value: '16' } })
