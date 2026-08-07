@@ -28,12 +28,7 @@ export function HomePage() {
             </p>
           </div>
 
-          {/*
-            首屏用的三段式说法，是 entities/workflow-run 那八步 WORKFLOW_STEP_ORDER 的粗粒度概括：
-            确认角色 = character-setup + character-template，生成动作 = first-frame + complete-animation，
-            检查交付 = review + export；template-candidate 与 action-setup 是流程内部环节，首屏不提。
-            这份对应关系目前只写在这里，八步一变这段文案不会跟着变，改流程时要一并改。
-          */}
+          {/* 首屏用三段式概括 WorkflowRun 的卡片流程：确认角色 → 生成动作 → 检查交付。 */}
           <ol
             aria-label="角色制作路径"
             className="mt-12 grid grid-cols-3 border-y border-[#cfd1ca] py-4"
