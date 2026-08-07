@@ -46,12 +46,34 @@ RATELIMIT_SENSITIVE_KEY = "ratelimit:sensitive:{ip}"
 RATELIMIT_USER_KEY = "ratelimit:api:{user_id}"
 
 
+# 可信代理列表：只有这些来源的请求才信任 X-Forwarded-For
+TRUSTED_PROXIES: set[str] = {"127.0.0.1", "::1", "172.16.0.0/12"}
+
+
+def _is_trusted_proxy(host: str | None) -> bool:
+    """判断请求来源是否在可信代理列表中。"""
+    if not host:
+        return False
+    if host in TRUSTED_PROXIES:
+        return True
+    # Docker 网段 172.16.0.0/12
+    try:
+        parts = host.split(".")
+        if len(parts) == 4 and parts[0] == "172" and 16 <= int(parts[1]) <= 31:
+            return True
+    except (ValueError, IndexError):
+        pass
+    return False
+
+
 def _get_client_ip(request: Request) -> str:
-    """获取客户端 IP（优先 X-Forwarded-For）。"""
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    """获取客户端 IP，仅在可信代理后才信任 X-Forwarded-For。"""
+    client_host = request.client.host if request.client else None
+    if _is_trusted_proxy(client_host):
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    return client_host or "unknown"
 
 
 def _check_rate(redis_client, key: str, limit: int, window: int) -> bool:
