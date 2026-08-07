@@ -80,3 +80,46 @@ def test_gives_up_after_three_tries_and_reports_the_last_cause(monkeypatch):
 def test_incomplete_download_error_is_a_runtime_error():
     """调用方按 RuntimeError 兜底即可,不必单独 import 这个子类。"""
     assert issubclass(IncompleteDownloadError, RuntimeError)
+
+
+# ── 首帧字段按模型选 + 参考图被忽略要炸（2026-08-07 实测挣得）────────────────
+
+
+def test_kling_v3_uses_image_list_not_input_reference():
+    """Kling 用 image_list，Sora 用 input_reference。塞错字段的后果分两种：
+
+    老模型 failed（还能发现），而 kling-v3-omni **成功返回一段与母版无关的文生视频**
+    ——费用照付、status=completed、帧数正常，下游全部照常工作。
+    """
+    from windup_framework.providers.sufy import _needs_image_list
+
+    assert _needs_image_list("kling-v3-omni")
+    assert _needs_image_list("kling-v3")
+    assert _needs_image_list("kling-video-o1")
+    # v2 系列已实测可吃 input_reference，不改既有通路
+    assert not _needs_image_list("kling-v2-5-turbo")
+    assert not _needs_image_list("kling-v2-1")
+    assert not _needs_image_list("sora-2")
+
+
+def test_reference_ignored_is_detected_from_billing_description():
+    """网关按「无参考视频」计费 = 首帧被静默丢弃，必须炸而不是继续下载。"""
+    import pytest
+
+    from windup_framework.providers.sufy import (
+        ReferenceIgnoredError,
+        _assert_reference_registered,
+    )
+
+    with pytest.raises(ReferenceIgnoredError, match="静默忽略"):
+        _assert_reference_registered(
+            {"billing_type_description": "std x 无参考视频 x 无声"}, "kling-v3-omni"
+        )
+
+
+def test_reference_registered_passes_and_missing_field_does_not_block():
+    """正常带参考的计费口径放行；字段缺失时不拦（不同网关字段不一定存在）。"""
+    from windup_framework.providers.sufy import _assert_reference_registered
+
+    _assert_reference_registered({"billing_type_description": "std x 图生视频 x 无声"}, "m")
+    _assert_reference_registered({}, "m")

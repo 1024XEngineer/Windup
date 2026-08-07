@@ -18,9 +18,27 @@ from windup_framework.config.provider import AIProviderSettings, settings
 
 from .interfaces import ImageProvider, VideoProvider
 
-# 只有 kling-video-o1 走 image_list;v2 系列 / sora 走 input_reference(字段按模型选,塞错任务会 failed)。
-_IMAGE_LIST_MODELS = ("kling-video-o1",)
+# 首帧字段**按模型选**,不是按"本地图/公网 URL"选。厂商文档:Kling 用 image_list,
+# Sora 用 input_reference。塞错的后果分两种,后一种更危险:
+#   - 老模型(v2 系列):任务 queued 后在生成时 failed "model is not supported"。
+#     提交层不报错,必须轮询到 completed 才算验证过。
+#   - kling-v3-omni:**任务 completed,但参考图被静默忽略**,退化成纯文生视频。
+#     2026-08-07 实测:送一张插画风角色母版 + 侧走提示词,拿回一段写实路人走路的
+#     视频,费用照付、无任何异常。整条管线下游(抽帧/选帧/抠图/对齐)对此毫无察觉,
+#     产出 16 帧"看起来成功"的错角色成品。
+# 故:新增 kling 模型时必须查文档确认字段,并按下面的 _needs_image_list 归类。
+_IMAGE_LIST_MODELS = ("kling-video-o1", "kling-v3-omni", "kling-v3")
 DEFAULT_VIDEO_MODEL = "kling-v2-5-turbo"
+
+
+def _needs_image_list(model: str) -> bool:
+    """该模型的首帧是否走 ``image_list``(而非 ``input_reference``)。
+
+    显式白名单 + ``kling-v3`` 前缀兜底 —— 厂商文档写明 Kling 系用 image_list,但
+    v2-5-turbo / v2-1 已实测可吃 input_reference(2026-07-27 端到端到 completed),
+    为不破坏既有通路,仅对已确认的型号切换。
+    """
+    return model in _IMAGE_LIST_MODELS or model.startswith("kling-v3")
 
 
 def _first_frame_datauri(frame: bytes, size: str) -> str:
@@ -77,29 +95,55 @@ class SufyVideoProvider(VideoProvider):
             "seconds": str(seconds),
             "mode": self._mode,
         }
-        if self._model in _IMAGE_LIST_MODELS:
+        if _needs_image_list(self._model):
             b64 = _first_frame_datauri(first_frame, size).split(",", 1)[1]
-            body["image_list"] = [{"image": b64}]
+            body["image_list"] = [{"image": b64, "type": "first_frame"}]
         else:
             body["input_reference"] = _first_frame_datauri(first_frame, size)
 
         with self._client() as client:
             job = client.post("/videos", json=body).raise_for_status().json()
             jid = job.get("id")
+            _assert_reference_registered(job, self._model)
             url = None
             for _ in range(max(1, int(self._max_min * 60 // self._poll))):
                 time.sleep(self._poll)
                 st = client.get(f"/videos/{jid}").raise_for_status().json()
                 status = st.get("status")
                 if status == "completed":
+                    _assert_reference_registered(st, self._model)
                     vids = (st.get("task_result") or {}).get("videos") or []
                     url = vids[0].get("url") if vids else None
                     break
                 if status in ("failed", "cancelled"):
-                    raise RuntimeError(f"i2v 失败: {status}")
+                    raise RuntimeError(f"i2v 失败: {status} — {st.get('error')}")
             if not url:
                 raise RuntimeError("i2v 未取得视频 URL(超时或失败)")
             return _download(client, url)
+
+
+class ReferenceIgnoredError(RuntimeError):
+    """送了首帧,网关却按"无参考视频"计费 —— 参考图被静默丢弃。"""
+
+
+def _assert_reference_registered(payload: dict, model: str) -> None:
+    """确认网关**真的收下了**首帧,而不是当成纯文生视频跑。
+
+    为什么需要这道检查:i2v 塞错首帧字段时,老模型会 failed(还能发现),但
+    kling-v3-omni 会**成功返回**一段与母版毫无关系的文生视频 —— 费用照付、
+    status=completed、帧数正常,下游抽帧/抠图/对齐全部照常工作,产出一组
+    "看起来成功"的错角色成品(2026-08-07 实测,烧掉一单)。
+
+    网关在 ``billing_type_description`` 里明写计费口径,含"无参考视频"即表示
+    它按文生视频计费。这是目前唯一能在**下载视频之前**发现该问题的信号,
+    比事后对比画面便宜得多。字段缺失时不拦(不同网关字段不一定存在)。
+    """
+    desc = str(payload.get("billing_type_description") or "")
+    if "无参考视频" in desc:
+        raise ReferenceIgnoredError(
+            f"模型 {model} 按「{desc}」计费 —— 首帧被静默忽略,产出将与母版无关。"
+            "首帧字段按模型选:Kling 用 image_list,Sora 用 input_reference。"
+        )
 
 
 class IncompleteDownloadError(RuntimeError):
