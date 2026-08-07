@@ -32,7 +32,7 @@ services:
     ports:
       - "${POSTGRES_EXTERNAL_PORT:-7856}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ${POSTGRES_DATA_DIR:-./data/postgres}:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-root} -d ${POSTGRES_DB:-windup}"]
       interval: 10s
@@ -83,10 +83,6 @@ services:
       - "${WINDUP_PORT:-8000}:8000"
     networks:
       - windup-net
-
-volumes:
-  postgres_data:
-    driver: local
 
 networks:
   windup-net:

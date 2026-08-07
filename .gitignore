@@ -18,6 +18,9 @@ venv/
 .env
 .env.*
 
+# Docker 数据
+data/
+
 # 运行产物
 output/
 
