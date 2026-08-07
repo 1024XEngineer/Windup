@@ -176,6 +176,25 @@ describe('AccountPanel', () => {
     expect(screen.getByTestId('location').textContent).toBe('/projects?view=recent')
   })
 
+  it('does not navigate after the panel closes while a submission is pending', async () => {
+    vi.useFakeTimers()
+    const pending = deferred<AuthTokens>()
+    const apis = createApis()
+    apis.loginByCode.mockReturnValue(pending.promise)
+    renderPanel('/?account=login&returnTo=%2Fprojects', apis)
+    fillCodeLogin()
+
+    fireEvent.submit(screen.getByRole('button', { name: '登录' }).closest('form')!)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByTestId('location').textContent).toBe('/?returnTo=%2Fprojects')
+
+    await act(async () => pending.resolve(tokens()))
+    await act(async () => vi.advanceTimersByTimeAsync(900))
+
+    expect(screen.getByTestId('location').textContent).toBe('/?returnTo=%2Fprojects')
+  })
+
   it('falls back to the home page when returnTo is unsafe', async () => {
     vi.useFakeTimers()
     renderPanel('/?account=login&returnTo=%2F%2Fevil.example')
