@@ -2,12 +2,25 @@
 
 契约层：定义前端请求/响应的 Pydantic 模型，与 server 层解耦。
 实际逻辑由 server 层实现，本文件只做参数校验和格式转换。
+
+端点一览
+--------
+POST /generation/image                     提交角色图片生成任务
+POST /generation/action                    提交角色动作生成任务
+GET  /generation/tasks/{task_id}           查询任务状态
+GET  /generation/tasks/{task_id}/stream    SSE 订阅任务进度
 """
 
+from __future__ import annotations
+
+import asyncio
 import dataclasses
+import json
 import logging
+from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -16,7 +29,7 @@ from windup_common.exceptions import BizException
 from windup_common.result import Response
 from windup_framework.db import get_session
 
-from windup_app.server.generation.model import (
+from windup_app.server.orchestrator.model import (
     ActionType,
     GenerationTask,
 )
@@ -26,7 +39,48 @@ logger = logging.getLogger("windup.generation.api")
 router = APIRouter(prefix="/generation", tags=["generation"])
 
 
-# ── 请求模型 ─────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# EventBus（任务进度推送）
+# ══════════════════════════════════════════════════════════════════════════════
+
+# 心跳间隔(秒)
+_HEARTBEAT_TIMEOUT = 30.0
+
+# 终态事件
+_TERMINAL_EVENTS = {"completed", "failed"}
+
+
+class _EventBus:
+    """任务进度内存发布-订阅。"""
+
+    def __init__(self) -> None:
+        self._queues: dict[str, list[asyncio.Queue]] = defaultdict(list)
+
+    async def subscribe(self, task_id: int) -> asyncio.Queue:
+        queue: asyncio.Queue = asyncio.Queue()
+        self._queues[str(task_id)].append(queue)
+        return queue
+
+    async def unsubscribe(self, task_id: int, queue: asyncio.Queue) -> None:
+        key = str(task_id)
+        subs = self._queues.get(key)
+        if subs and queue in subs:
+            subs.remove(queue)
+            if not subs:
+                del self._queues[key]
+
+    def publish(self, task_id: int, event: str, data: dict) -> None:
+        for queue in self._queues.get(str(task_id), []):
+            queue.put_nowait((event, data))
+
+
+# 全局实例，挂到 app.state.event_bus
+event_bus = _EventBus()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 请求/响应模型
+# ══════════════════════════════════════════════════════════════════════════════
 
 
 class CharacterImageGenerateRequest(BaseModel):
@@ -53,9 +107,6 @@ class CharacterActionGenerateRequest(BaseModel):
     reference_video_url: str | None = None
     reference_image_urls: list[str] = Field(default_factory=list)
     num_frames: int = 16
-
-
-# ── 响应模型 ─────────────────────────────────────────────────────────────────
 
 
 class GenerationTaskOut(BaseModel):
@@ -90,7 +141,9 @@ def _task_to_out(task: GenerationTask) -> GenerationTaskOut:
     )
 
 
-# ── 端点 ─────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# 端点
+# ══════════════════════════════════════════════════════════════════════════════
 
 
 def _validate_project_size(session: Session, project_id: int | None, width: int, height: int) -> None:
@@ -141,3 +194,55 @@ def get_task(
     """查询生成任务状态与结果。"""
     # TODO: service.get_task
     raise BizException("接口待实现", code=BizCode.BAD_REQUEST)
+
+
+@router.get("/tasks/{task_id}/stream")
+async def stream_task(
+    task_id: int,
+    request: Request,
+    project_id: int = Query(..., gt=0),
+    session: Session = Depends(get_session),
+) -> StreamingResponse:
+    """SSE:实时推送任务进度与最终结果。
+
+    事件类型:
+      - ``progress``: 生成进度 (stage/current/total/note)
+      - ``completed``: 任务完成,携带最终结果
+      - ``failed``: 任务失败,携带错误信息
+
+    若客户端订阅时任务已处于终态,立即推送终态事件并关闭连接。
+    """
+    # TODO: 检查任务初始状态,若已终态立即推送
+    queue = await event_bus.subscribe(task_id)
+    logger.debug("SSE 订阅: task_id=%d", task_id)
+
+    async def _event_generator():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    logger.debug("SSE 客户端断开: task_id=%d", task_id)
+                    break
+                try:
+                    event, data = await asyncio.wait_for(
+                        queue.get(), timeout=_HEARTBEAT_TIMEOUT,
+                    )
+                    payload = json.dumps(data, ensure_ascii=False)
+                    yield f"event: {event}\ndata: {payload}\n\n"
+                    if event in _TERMINAL_EVENTS:
+                        logger.debug("SSE 终态: task_id=%d event=%s", task_id, event)
+                        break
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+        finally:
+            await event_bus.unsubscribe(task_id, queue)
+            logger.debug("SSE 取消订阅: task_id=%d", task_id)
+
+    return StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

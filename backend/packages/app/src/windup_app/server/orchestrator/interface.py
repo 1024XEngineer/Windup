@@ -22,7 +22,7 @@ API 层只依赖本模块定义的抽象。具体实现（AI 引擎调用、任�
 
 from abc import ABC, abstractmethod
 
-from windup_app.server.generation.model import (
+from windup_app.server.orchestrator.model import (
     CharacterActionInput,
     CharacterImageInput,
     GenerationTask,
