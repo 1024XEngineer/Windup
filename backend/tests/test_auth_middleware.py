@@ -3,16 +3,13 @@
 覆盖 token 过期 / 无效 / 缺失等场景，确保返回 HTTP 200 + 业务码 401。
 """
 
-import time
 from datetime import datetime, timezone
 
 import jwt
-import pytest
 
 from windup_app.server.user.service import (
     JWT_ALGORITHM,
     JWT_SECRET,
-    create_access_token,
 )
 
 
