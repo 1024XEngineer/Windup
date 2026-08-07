@@ -10,13 +10,10 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image
 
+from ._frames import SMALL as _SMALL
+from ._frames import gray as _gray
+
 __all__ = ["find_period", "pick_cycle"]
-
-_SMALL = 48  # 周期检测用的灰度小图边长
-
-
-def _gray(frames: list[Image.Image]) -> list[np.ndarray]:
-    return [np.asarray(f.convert("L").resize((_SMALL, _SMALL)), dtype=np.float32) for f in frames]
 
 
 def _deskew(gs: list[np.ndarray]) -> list[np.ndarray]:

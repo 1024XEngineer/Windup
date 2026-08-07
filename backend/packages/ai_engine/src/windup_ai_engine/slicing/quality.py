@@ -10,13 +10,9 @@ from __future__ import annotations
 
 import numpy as np
 
+from ._frames import gray as _gray
+
 __all__ = ["active_span", "blur_ratio", "dead_frame_mask", "frame_deltas"]
-
-_SMALL = 48
-
-
-def _gray(frames):
-    return [np.asarray(f.convert("L").resize((_SMALL, _SMALL)), dtype=np.float32) for f in frames]
 
 
 def frame_deltas(frames) -> np.ndarray:
