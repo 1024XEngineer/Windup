@@ -252,6 +252,53 @@ describe('AuthSessionProvider', () => {
     await expectState('guest:session-expired:')
   })
 
+  it('keeps the session it just obtained when the newer cross-tab token is rejected', async () => {
+    const rotation = deferred<AuthTokens>()
+    const apis = createApis()
+    apis.loginByCode.mockResolvedValue(tokens('original-refresh', 'original-access'))
+    apis.refresh.mockImplementation(async (refreshToken: string) => {
+      if (refreshToken === 'original-refresh') return rotation.promise
+      throw new Error(`refresh rejected for ${refreshToken}`)
+    })
+    renderSession(apis)
+    await expectState('guest::')
+    await act(async () => session().loginByCode({ email: 'reader@example.com', code: '123456' }))
+
+    const client = createApiClient({
+      baseUrl: 'https://api.windup.test',
+      getAccessToken: getApiAccessToken,
+      fetchFn: async (input, init) => {
+        const authorization = new Request(input, init).headers.get('authorization')
+        const payload =
+          authorization === 'Bearer rotated-access'
+            ? { code: 200, message: 'success', data: { ok: true } }
+            : { code: 401, message: '登录状态已过期', data: null }
+        return new Response(JSON.stringify(payload), { status: 200 })
+      },
+    })
+    const replayed = client.request('/resources')
+    await waitFor(() => expect(apis.refresh).toHaveBeenCalledWith('original-refresh'))
+
+    // 另一个标签页在本次续期途中写入了新的 refresh token，本页已登录，只吸收不重走认证。
+    await act(async () => {
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key: REFRESH_TOKEN_STORAGE_KEY,
+          newValue: 'revoked-refresh',
+          oldValue: 'original-refresh',
+        }),
+      )
+    })
+    await act(async () => rotation.resolve(tokens('rotated-refresh', 'rotated-access')))
+
+    await expect(replayed).resolves.toEqual({ ok: true })
+    // 更新的 token 只试一次，且失败不该牵连本次已经换到手的这套。
+    expect(apis.refresh.mock.calls.flat()).toEqual(['original-refresh', 'revoked-refresh'])
+    await expectState('authenticated::reader@example.com')
+    expect(getApiAccessToken()).toBe('rotated-access')
+    expect(window.localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY)).toBe('rotated-refresh')
+  })
+
   it('refreshes a JWT sixty seconds before expiry', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(2_000_000_000_000)

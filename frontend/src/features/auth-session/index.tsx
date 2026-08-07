@@ -121,33 +121,38 @@ export function AuthSessionProvider({ apis, children }: AuthSessionProviderProps
   /** 若旧 token 输掉跨标签轮换竞态，优先跟随胜出的 token，不能清掉新会话。 */
   const rotateLatestTokens = useCallback(
     async (attemptedToken: string, expectedGeneration: number): Promise<AuthTokens | null> => {
+      /** 记下本次已经换过的 token，避免把刚失败的那个当成没试过的又试一遍。 */
+      const attempted = new Set([attemptedToken])
+      const isCurrent = () => mountedRef.current && generationRef.current === expectedGeneration
+      const takeUntriedToken = (): string | null => {
+        const memoryToken = refreshTokenRef.current
+        if (memoryToken && !attempted.has(memoryToken)) return memoryToken
+        const storedToken = loadRefreshToken()
+        if (storedToken && !attempted.has(storedToken)) return storedToken
+        return null
+      }
+
       try {
         const tokens = await rotateTokens(attemptedToken)
-        if (!mountedRef.current || generationRef.current !== expectedGeneration) return null
-        const newerToken = refreshTokenRef.current
-        if (newerToken && newerToken !== attemptedToken) {
+        if (!isCurrent()) return null
+        const newerToken = takeUntriedToken()
+        if (!newerToken) return tokens
+        attempted.add(newerToken)
+        try {
           const newerTokens = await rotateTokens(newerToken)
-          return mountedRef.current && generationRef.current === expectedGeneration
-            ? newerTokens
-            : null
+          return isCurrent() ? newerTokens : null
+        } catch {
+          // 更新的 token 用不了，不代表本次换到手的这套也用不了，退回它而不是一起丢掉。
+          return isCurrent() ? tokens : null
         }
-        return tokens
       } catch (error) {
-        if (!mountedRef.current || generationRef.current !== expectedGeneration) return null
-        const memoryToken = refreshTokenRef.current
-        const storedToken = loadRefreshToken()
-        const newerToken =
-          memoryToken && memoryToken !== attemptedToken
-            ? memoryToken
-            : storedToken && storedToken !== attemptedToken
-              ? storedToken
-              : null
+        if (!isCurrent()) return null
+        const newerToken = takeUntriedToken()
         if (!newerToken) throw error
+        attempted.add(newerToken)
         refreshTokenRef.current = newerToken
         const newerTokens = await rotateTokens(newerToken)
-        return mountedRef.current && generationRef.current === expectedGeneration
-          ? newerTokens
-          : null
+        return isCurrent() ? newerTokens : null
       }
     },
     [rotateTokens],
