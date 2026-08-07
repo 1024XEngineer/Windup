@@ -1,0 +1,76 @@
+# ── Windup Docker Compose ─────────────────────────────────────────────
+# 使用方式:
+#   启动服务: docker compose up -d
+#   查看日志: docker compose logs -f [service]
+#   停止服务: docker compose down
+#   清理数据: docker compose down -v  (⚠️ 会删除数据库数据)
+#   重新构建: docker compose up -d --build
+
+services:
+  # ── Redis 缓存（验证码 / refresh_token） ──
+  redis:
+    image: redis:7-alpine
+    container_name: windup-redis
+    restart: unless-stopped
+    volumes:
+      - ${REDIS_DATA_DIR:-./data/redis}:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - windup-net
+
+  # ── PostgreSQL 数据库 ──
+  postgres:
+    image: postgres:16-alpine
+    container_name: windup-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-root}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-W1ndup@2026!Secure}
+      POSTGRES_DB: ${POSTGRES_DB:-windup}
+    ports:
+      - "${POSTGRES_EXTERNAL_PORT:-7856}:5432"
+    volumes:
+      - ${POSTGRES_DATA_DIR:-./data/postgres}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-root} -d ${POSTGRES_DB:-windup}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - windup-net
+
+  # ── 后端 API 服务 ──
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: windup-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # 容器内部通信用 Docker 主机名，覆盖 .env 中的本地开发值
+      REDIS_URL: redis://redis:6379/0
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+    ports:
+      - "${WINDUP_PORT:-8000}:8000"
+    networks:
+      - windup-net
+
+networks:
+  windup-net:
+    driver: bridge
+    # 宿主机链路 MTU 是 1480（eno1），compose 自建网络不会继承 daemon 的 mtu 设置，
+    # 默认仍是 1500 → 大包被丢，表现为 TLS 握手超时（七牛上传域名连不上、pip 下载卡死）。
+    driver_opts:
+      com.docker.network.driver.mtu: "1450"
