@@ -44,6 +44,7 @@ const NODE_LABELS: Readonly<Record<string, string>> = {
   'character-setup': '角色设定',
   'character-template': '角色母版',
   'action-first-frame': '动作首帧',
+  'action-generation-method': '资产生成方式',
   'action-full-frame': '完整动画',
   review: '动作审核',
 }

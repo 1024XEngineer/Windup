@@ -11,7 +11,7 @@ function node(
   id: string,
   status: 'locked' | 'active' | 'passed' | 'failed',
 ): WorkflowRun['nodes'][number] {
-  // #107 合并前 main 仍是两节点联合类型；JSON 水合模拟后端即将返回的五节点契约。
+  // #107 合并前 main 仍是两节点联合类型；JSON 水合模拟后端即将返回的六节点契约。
   return JSON.parse(
     JSON.stringify({
       id,
@@ -88,6 +88,25 @@ describe('HistoryPage', () => {
 
     expect((await screen.findByRole('alert')).textContent).toContain('历史接口暂不可用')
     expect(screen.queryByText('还没有创作记录')).toBeNull()
+  })
+
+  it('展示动作资产生成方式节点的人类可读名称', async () => {
+    const methodNode = JSON.parse(
+      JSON.stringify({
+        id: 'method-1',
+        type: 'action-generation-method',
+        status: 'active',
+        phase: 'selecting',
+        dependsOnNodeIds: [],
+        generations: [],
+        error: null,
+        method: null,
+      }),
+    ) as WorkflowRun['nodes'][number]
+
+    renderHistory(reader([run('route-run', 'project-1', [methodNode])]))
+
+    expect(await screen.findByText('资产生成方式')).toBeTruthy()
   })
 
   it('空列表说明仍在等待后端列表接口', async () => {
