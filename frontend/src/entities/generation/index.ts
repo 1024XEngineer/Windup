@@ -35,6 +35,9 @@ export interface CharacterTemplateGenerationInput extends GenerationInputBase {
   type: 'character_template'
   /** 已由手动输入或 Quick Start 整理好的角色提示词。 */
   prompt: string
+  /** 必须与 Project 的精灵尺寸一致，后端会在提交时校验。 */
+  spriteWidth: number
+  spriteHeight: number
 }
 
 /** 指定角色造型下的动作首帧生成；不能只绑定 Character。 */
