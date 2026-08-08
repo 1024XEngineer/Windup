@@ -39,6 +39,7 @@ export type {
   CompleteAnimationGenerationResult,
   FirstFrameGenerationInput,
   FirstFrameGenerationResult,
+  GeneratedFrame,
   GeneratedImage,
   Generation,
   GenerationApis,

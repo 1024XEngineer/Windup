@@ -57,6 +57,8 @@ export interface CreateWorkflowControllerOptions {
   createId?: () => string
   /** SSE 回调无法 await，异步保存错误通过此处交给装配层展示或记录。 */
   onAsyncError: (error: Error) => void
+  /** 每次后端确认保存后发布新快照，供 Quick Start 等外层界面投影进度。 */
+  onChange?: (workflow: WorkflowRun) => void
 }
 
 /**
@@ -128,6 +130,7 @@ export function createWorkflowController({
   generationApis,
   createId = createBrowserSafeId,
   onAsyncError,
+  onChange,
 }: CreateWorkflowControllerOptions): WorkflowController {
   let current = workflow ? structuredClone(workflow) : null
   let interrupted = false
@@ -170,6 +173,7 @@ export function createWorkflowController({
       // 只有后端确认保存后才替换内存快照；失败时页面不会看到“假成功”。
       const saved = await workflowRunApis.update(candidate)
       current = structuredClone(saved)
+      onChange?.(structuredClone(saved))
       return structuredClone(saved)
     })
   }
@@ -182,6 +186,7 @@ export function createWorkflowController({
         nodes: normalizeAvailability(input.nodes),
       })
       current = structuredClone(created)
+      onChange?.(structuredClone(created))
       return structuredClone(created)
     })
   }
@@ -333,6 +338,10 @@ export function createWorkflowController({
     return submitGeneration(nodeId, 'first_frame', (run, node) => {
       if (node.type !== 'action-first-frame') throw new Error('目标节点不是动作首帧')
       if (node.phase !== 'configuring') throw new Error('动作首帧节点当前不能生成')
+      const templateNode = findSingleDependencyNode(run, node, 'character-template')
+      if (!templateNode.selectedImageUrl) throw new Error('角色母版尚未确认')
+      // 该 URL 来自已校验的 Generation 结果，符合当前后端 reference_image_urls 契约。
+      const characterTemplateReference = templateNode.selectedImageUrl as MediaReference
       const input: FirstFrameGenerationInput = {
         type: 'first_frame',
         projectId: run.projectId,
@@ -340,7 +349,7 @@ export function createWorkflowController({
         outfitId: node.input.outfitId,
         actionType: node.input.type,
         prompt: node.input.prompt,
-        referenceMedia: options.referenceMedia,
+        referenceMedia: [...new Set([characterTemplateReference, ...options.referenceMedia])],
       }
       return input
     })

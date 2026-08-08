@@ -71,6 +71,11 @@ export interface GeneratedImage {
   url: string
 }
 
+/** 后端动作结果中的一帧；null 时由 Action.fps 提供等时长回退。 */
+export interface GeneratedFrame extends GeneratedImage {
+  durationMs: number | null
+}
+
 /** 结果按 type 分别定义，不共用一个 urls 数组。 */
 export interface CharacterTemplateGenerationResult {
   type: 'character_template'
@@ -82,10 +87,10 @@ export interface FirstFrameGenerationResult {
   image: GeneratedImage
 }
 
-/** 帧顺序由数组位置表达。 */
+/** 帧顺序由数组位置表达，同时保留后端逐帧时长。 */
 export interface CompleteAnimationGenerationResult {
   type: 'complete_animation'
-  frames: readonly GeneratedImage[]
+  frames: readonly GeneratedFrame[]
 }
 
 export type GenerationResult =

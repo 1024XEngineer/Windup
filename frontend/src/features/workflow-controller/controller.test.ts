@@ -239,6 +239,7 @@ function completedAnimationEvent(taskId = 'task-2'): GenerationEvent {
       type: 'complete_animation',
       frames: Array.from({ length: 32 }, (_, index) => ({
         url: `https://img/frame-${index}.png`,
+        durationMs: null,
       })),
     },
     error: null,
@@ -827,6 +828,7 @@ describe('WorkflowController', () => {
         type: 'first_frame',
         characterId: 'character-backend-1',
         outfitId: 'outfit-1',
+        referenceMedia: ['https://img/knight.png'],
       }),
     )
     expect(generation.apis.create).toHaveBeenNthCalledWith(
