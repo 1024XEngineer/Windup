@@ -14,6 +14,7 @@
 - 资产生成方式当前可选 `video-cropping` 与 `3d-to-2d`。3D 转 2D 后端接口未提供前只保存选择并明确阻止提交，不伪装成视频路线。
 - Quick Start 与 Workflow Editor 是两种独立界面，但推进同一张节点图，核心数据不区分 `ai/manual driver`。
 - 后端不提供 Revision 历史。重做时覆盖旧结果，并用 `nodeId + taskId` 防止旧请求串线。
+- 已发布 Action 被删除后，对应四节点分支以 `deletedAt` 标记并继续留在图中，生成输入、任务引用和审核历史不会被擦除；角色母版及其他并行动作不受影响。
 
 ## 前后端边界
 
@@ -28,4 +29,4 @@ HTTP 接口严格对应 `POST /workflow-runs`、`GET/PATCH/DELETE /workflow-runs
 - `constants.ts`：核心节点状态、类型和 phase。
 - `index.ts`：WorkflowRun、WorkflowNode 与 API 类型。
 - `api.ts`：后端 DTO 映射、节点图校验和 HTTP 适配。
-- `api.test.ts`：直接节点映射、边校验及并行 Action 数据测试。
+- `api.test.ts`：直接节点映射、边校验、删除标记及并行 Action 数据测试。

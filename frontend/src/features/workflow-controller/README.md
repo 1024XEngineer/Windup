@@ -19,6 +19,7 @@
 - 当前视频裁剪路线继续调用既有 Generation；3D 转 2D 选择会随 WorkflowRun 落库，但接口提供前明确阻止生成。
 - Generation 通过 `nodeId + taskId` 写回；节点重做后，旧任务的迟到结果会被丢弃。
 - WorkflowRun 只有在后端 `update` 成功后才替换内存快照，保存失败不会向页面假报成功。
+- `archiveAction()` 只标记已经完成并通过审核的 Action 四节点分支；它不删除 Character 资产，也不改动共享角色节点或其他 Action。
 - Generation 已创建但任务引用暂时保存失败时，本实例会保留待附加记录；重试同一命令或
   `resume()` 会复用原任务，不会再次创建和重复计费。
 - 中断只停止前端自动处理和 SSE。当前后端没有取消接口，因此不会伪装成已取消任务；
