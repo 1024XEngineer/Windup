@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type {
   ActionFirstFrameWorkflowNode,
   ActionFullFrameWorkflowNode,
+  ActionGenerationMethodWorkflowNode,
   CharacterSetupWorkflowNode,
   CharacterTemplateWorkflowNode,
   Generation,
@@ -84,9 +85,25 @@ function fullFrameNode(
     type: 'action-full-frame',
     status: 'locked',
     phase: 'ready',
+    dependsOnNodeIds: ['action-walk:generation-method'],
+    generations: [],
+    error: null,
+    ...overrides,
+  }
+}
+
+function generationMethodNode(
+  overrides: Partial<ActionGenerationMethodWorkflowNode> = {},
+): ActionGenerationMethodWorkflowNode {
+  return {
+    id: 'action-walk:generation-method',
+    type: 'action-generation-method',
+    status: 'locked',
+    phase: 'selecting',
     dependsOnNodeIds: ['action-walk'],
     generations: [],
     error: null,
+    method: null,
     ...overrides,
   }
 }
@@ -120,7 +137,7 @@ function completedCharacterNodes(): WorkflowNode[] {
 }
 
 function actionNodes(): WorkflowNode[] {
-  return [firstFrameNode(), fullFrameNode(), reviewNode()]
+  return [firstFrameNode(), generationMethodNode(), fullFrameNode(), reviewNode()]
 }
 
 function createRun(nodes: WorkflowNode[] = characterNodes()): WorkflowRun {
@@ -253,7 +270,7 @@ describe('WorkflowController', () => {
     ).rejects.toThrow('已经绑定')
   })
 
-  it('adds a complete first-frame, full-frame, and review chain for one Action', async () => {
+  it('adds a complete first-frame, method, full-frame, and review chain for one Action', async () => {
     const { controller } = createController(createRun(completedCharacterNodes()))
 
     const next = await controller.addAction({ nodeId: 'action-walk', input: actionInput() })
@@ -266,10 +283,17 @@ describe('WorkflowController', () => {
         dependsOnNodeIds: ['template-1'],
       },
       {
+        id: 'action-walk:generation-method',
+        type: 'action-generation-method',
+        status: 'locked',
+        dependsOnNodeIds: ['action-walk'],
+        method: null,
+      },
+      {
         id: 'action-walk:full-frame',
         type: 'action-full-frame',
         status: 'locked',
-        dependsOnNodeIds: ['action-walk'],
+        dependsOnNodeIds: ['action-walk:generation-method'],
       },
       {
         id: 'action-walk:review',
@@ -278,6 +302,31 @@ describe('WorkflowController', () => {
         dependsOnNodeIds: ['action-walk:full-frame'],
       },
     ])
+  })
+
+  it('保存 3D 转 2D 选择，但接口提供前不误走视频生成', async () => {
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: 'https://img/first.png',
+      }),
+      generationMethodNode({ status: 'active' }),
+      fullFrameNode(),
+      reviewNode(),
+    ])
+    const { controller, generation } = createController(run)
+
+    await controller.selectActionGenerationMethod('action-walk:generation-method', '3d-to-2d')
+
+    await expect(
+      controller.generateAnimation('action-walk:full-frame', {
+        characterId: 'character-backend-1',
+        referenceMedia: [],
+      }),
+    ).rejects.toThrow('3D 转 2D 接口尚未提供')
+    expect(generation.apis.create).not.toHaveBeenCalled()
   })
 
   it('角色母版通过后按显式边同时解锁多个 Action 首帧节点', async () => {
@@ -699,6 +748,11 @@ describe('WorkflowController', () => {
         phase: 'completed',
         selectedFirstFrameUrl: 'https://img/first.png',
       }),
+      generationMethodNode({
+        status: 'passed',
+        phase: 'completed',
+        method: 'video-cropping',
+      }),
       fullFrameNode({
         status: 'active',
         phase: 'generating',
@@ -734,13 +788,13 @@ describe('WorkflowController', () => {
     )
 
     await controller.approveAction('action-walk:review')
-    expect(controller.getWorkflow().nodes[4]).toMatchObject({
+    expect(controller.getWorkflow().nodes[5]).toMatchObject({
       status: 'passed',
       phase: 'completed',
     })
   })
 
-  it('一个 Action 依次使用独立的首帧、完整动画和审核节点', async () => {
+  it('一个 Action 依次使用独立的首帧、生成方式、完整动画和审核节点', async () => {
     const run = createRun([...completedCharacterNodes(), ...actionNodes()])
     const { controller, generation } = createController(run)
 
@@ -757,6 +811,7 @@ describe('WorkflowController', () => {
     })
     await flushAsyncWork()
     await controller.confirmActionFrame('action-walk', 'https://img/first.png')
+    await controller.selectActionGenerationMethod('action-walk:generation-method', 'video-cropping')
 
     await controller.generateAnimation('action-walk:full-frame', {
       characterId: 'character-backend-1',
@@ -788,6 +843,11 @@ describe('WorkflowController', () => {
         generations: [{ taskId: 'task-1', role: 'first_frame' }],
       },
       {
+        type: 'action-generation-method',
+        status: 'passed',
+        method: 'video-cropping',
+      },
+      {
         type: 'action-full-frame',
         status: 'passed',
         generations: [{ taskId: 'task-2', role: 'complete_animation' }],
@@ -804,6 +864,11 @@ describe('WorkflowController', () => {
         phase: 'completed',
         generations: [{ taskId: 'task-first-frame', role: 'first_frame' }],
         selectedFirstFrameUrl: 'https://img/first.png',
+      }),
+      generationMethodNode({
+        status: 'passed',
+        phase: 'completed',
+        method: 'video-cropping',
       }),
       fullFrameNode({
         status: 'active',
@@ -834,6 +899,6 @@ describe('WorkflowController', () => {
 
     expect(generation.apis.get).toHaveBeenCalledTimes(1)
     expect(generation.apis.get).toHaveBeenCalledWith('1', 'task-animation')
-    expect(controller.getWorkflow().nodes[3].phase).toBe('generating')
+    expect(controller.getWorkflow().nodes[4].phase).toBe('generating')
   })
 })

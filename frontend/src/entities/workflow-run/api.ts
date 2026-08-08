@@ -2,6 +2,7 @@ import { ApiError, createApiClient, getApiAccessToken } from '@/shared/api'
 import type {
   ActionFirstFrameWorkflowNode,
   ActionFullFrameWorkflowNode,
+  ActionGenerationMethodWorkflowNode,
   CharacterSetupWorkflowNode,
   CharacterTemplateWorkflowNode,
   ReviewWorkflowNode,
@@ -152,6 +153,18 @@ function isActionFullFrameNode(value: unknown): value is ActionFullFrameWorkflow
   )
 }
 
+function isActionGenerationMethodNode(value: unknown): value is ActionGenerationMethodWorkflowNode {
+  return (
+    isRecord(value) &&
+    value.type === 'action-generation-method' &&
+    hasValidCommonNodeFields(value) &&
+    ['selecting', 'completed'].includes(String(value.phase)) &&
+    hasOnlyGenerationRole(value, null) &&
+    (value.method === null || value.method === 'video-cropping' || value.method === '3d-to-2d') &&
+    (value.phase !== 'completed' || value.method !== null)
+  )
+}
+
 function isReviewNode(value: unknown): value is ReviewWorkflowNode {
   return (
     isRecord(value) &&
@@ -167,6 +180,7 @@ function isWorkflowNode(value: unknown): value is WorkflowNode {
     isCharacterSetupNode(value) ||
     isCharacterTemplateNode(value) ||
     isActionFirstFrameNode(value) ||
+    isActionGenerationMethodNode(value) ||
     isActionFullFrameNode(value) ||
     isReviewNode(value)
   )

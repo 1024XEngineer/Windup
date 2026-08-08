@@ -1,6 +1,8 @@
 import type {
   ActionFirstFrameWorkflowNode,
   ActionFullFrameWorkflowNode,
+  ActionGenerationMethod,
+  ActionGenerationMethodWorkflowNode,
   CharacterTemplateGenerationInput,
   CharacterSetupWorkflowNode,
   CharacterTemplateWorkflowNode,
@@ -83,6 +85,10 @@ export interface WorkflowController {
   confirmActionFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
     selectedFirstFrameUrl: string,
+  ): Promise<WorkflowRun>
+  selectActionGenerationMethod(
+    nodeId: ActionGenerationMethodWorkflowNode['id'],
+    method: ActionGenerationMethod,
   ): Promise<WorkflowRun>
   generateAnimation(
     nodeId: ActionFullFrameWorkflowNode['id'],
@@ -187,9 +193,10 @@ export function createWorkflowController({
   function addAction({ nodeId = createId(), dependsOnNodeIds, input }: AddActionInput) {
     ensureRunning()
     return persist((run) => {
+      const methodId = `${nodeId}:generation-method`
       const fullFrameId = `${nodeId}:full-frame`
       const reviewId = `${nodeId}:review`
-      const newIds = [nodeId, fullFrameId, reviewId]
+      const newIds = [nodeId, methodId, fullFrameId, reviewId]
       const duplicateId = newIds.find((id) => run.nodes.some((node) => node.id === id))
       if (duplicateId) throw new Error(`WorkflowNode 已存在：${duplicateId}`)
       const dependencies = dependsOnNodeIds
@@ -213,9 +220,19 @@ export function createWorkflowController({
         type: 'action-full-frame',
         status: 'locked',
         phase: 'ready',
+        dependsOnNodeIds: [methodId],
+        generations: [],
+        error: null,
+      }
+      const methodNode: ActionGenerationMethodWorkflowNode = {
+        id: methodId,
+        type: 'action-generation-method',
+        status: 'locked',
+        phase: 'selecting',
         dependsOnNodeIds: [firstFrameNode.id],
         generations: [],
         error: null,
+        method: null,
       }
       const reviewNode: ReviewWorkflowNode = {
         id: reviewId,
@@ -226,7 +243,10 @@ export function createWorkflowController({
         generations: [],
         error: null,
       }
-      return { ...run, nodes: [...run.nodes, firstFrameNode, fullFrameNode, reviewNode] }
+      return {
+        ...run,
+        nodes: [...run.nodes, firstFrameNode, methodNode, fullFrameNode, reviewNode],
+      }
     })
   }
 
@@ -350,6 +370,29 @@ export function createWorkflowController({
     )
   }
 
+  function selectActionGenerationMethod(
+    nodeId: ActionGenerationMethodWorkflowNode['id'],
+    method: ActionGenerationMethod,
+  ) {
+    ensureRunning()
+    if (method !== 'video-cropping' && method !== '3d-to-2d') {
+      return Promise.reject(new Error(`不支持的资产生成方式：${String(method)}`))
+    }
+    return persist((run) =>
+      updateNode(run, nodeId, (node) => {
+        if (node.type !== 'action-generation-method') {
+          throw new Error('目标节点不是资产生成方式')
+        }
+        if (node.status !== 'active' || node.phase !== 'selecting') {
+          throw new Error('资产生成方式节点当前不能选择')
+        }
+        return unlockReadyNodes(
+          replaceNode(run, { ...node, method, status: 'passed', phase: 'completed' }),
+        )
+      }),
+    )
+  }
+
   function generateAnimation(
     nodeId: ActionFullFrameWorkflowNode['id'],
     options: GenerateActionOptions,
@@ -358,7 +401,12 @@ export function createWorkflowController({
     return submitGeneration(nodeId, 'complete_animation', (run, node) => {
       if (node.type !== 'action-full-frame') throw new Error('目标节点不是完整动画')
       if (node.phase !== 'ready') throw new Error('完整动画节点当前不能生成')
-      const firstFrameNode = findSingleDependencyNode(run, node, 'action-first-frame')
+      const methodNode = findSingleDependencyNode(run, node, 'action-generation-method')
+      if (!methodNode.method) throw new Error('尚未选择资产生成方式')
+      if (methodNode.method === '3d-to-2d') {
+        throw new Error('3D 转 2D 接口尚未提供，暂时不能开始生成')
+      }
+      const firstFrameNode = findSingleDependencyNode(run, methodNode, 'action-first-frame')
       if (!firstFrameNode.selectedFirstFrameUrl) throw new Error('动作首帧尚未确认')
       const input: CompleteAnimationGenerationInput = {
         type: 'complete_animation',
@@ -713,6 +761,7 @@ export function createWorkflowController({
     confirmCharacter,
     generateActionFrame,
     confirmActionFrame,
+    selectActionGenerationMethod,
     generateAnimation,
     approveAction,
     resume,
@@ -893,6 +942,16 @@ function resetNode(node: WorkflowNode): WorkflowNode {
       generations: [],
       error: null,
       selectedFirstFrameUrl: null,
+    }
+  }
+  if (node.type === 'action-generation-method') {
+    return {
+      ...node,
+      status: 'locked',
+      phase: 'selecting',
+      method: null,
+      generations: [],
+      error: null,
     }
   }
   if (node.type === 'action-full-frame') {

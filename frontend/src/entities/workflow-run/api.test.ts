@@ -34,11 +34,21 @@ const nodes: WorkflowNode[] = [
     selectedFirstFrameUrl: 'https://cdn.windup.test/walk-first.png',
   },
   {
+    id: 'walk-generation-method',
+    type: 'action-generation-method',
+    status: 'passed',
+    phase: 'completed',
+    dependsOnNodeIds: ['walk-first-frame'],
+    generations: [],
+    error: null,
+    method: 'video-cropping',
+  },
+  {
     id: 'walk-full-frame',
     type: 'action-full-frame',
     status: 'active',
     phase: 'generating',
-    dependsOnNodeIds: ['walk-first-frame'],
+    dependsOnNodeIds: ['walk-generation-method'],
     generations: [{ taskId: '93', role: 'complete_animation' }],
     error: null,
   },
@@ -80,8 +90,8 @@ function jsonResponse(data: unknown) {
 }
 
 describe('workflowRunApis', () => {
-  it('hydrates the five visible workflow nodes with explicit dependency edges', async () => {
-    const fiveNodeDto = {
+  it('hydrates the six visible workflow nodes with explicit dependency edges', async () => {
+    const sixNodeDto = {
       ...workflowRunDto,
       nodes: [
         {
@@ -116,11 +126,21 @@ describe('workflowRunApis', () => {
           selectedFirstFrameUrl: 'https://img/walk-first.png',
         },
         {
+          id: 'generation-method-1',
+          type: 'action-generation-method',
+          status: 'passed',
+          phase: 'completed',
+          dependsOnNodeIds: ['first-frame-1'],
+          generations: [],
+          error: null,
+          method: 'video-cropping',
+        },
+        {
           id: 'full-frame-1',
           type: 'action-full-frame',
           status: 'passed',
           phase: 'completed',
-          dependsOnNodeIds: ['first-frame-1'],
+          dependsOnNodeIds: ['generation-method-1'],
           generations: [{ taskId: 'task-animation', role: 'complete_animation' }],
           error: null,
         },
@@ -135,14 +155,15 @@ describe('workflowRunApis', () => {
         },
       ],
     }
-    const apis = await loadWorkflowRunApis(async () => jsonResponse(fiveNodeDto))
+    const apis = await loadWorkflowRunApis(async () => jsonResponse(sixNodeDto))
 
     await expect(apis.get('17')).resolves.toMatchObject({
       nodes: [
         { type: 'character-setup', dependsOnNodeIds: [] },
         { type: 'character-template', dependsOnNodeIds: ['setup-1'] },
         { type: 'action-first-frame', dependsOnNodeIds: ['template-1'] },
-        { type: 'action-full-frame', dependsOnNodeIds: ['first-frame-1'] },
+        { type: 'action-generation-method', dependsOnNodeIds: ['first-frame-1'] },
+        { type: 'action-full-frame', dependsOnNodeIds: ['generation-method-1'] },
         { type: 'review', dependsOnNodeIds: ['full-frame-1'] },
       ],
     })

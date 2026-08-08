@@ -3,11 +3,12 @@
 /** 后端资源状态只表达是否被软删除，不等同于前端节点状态。 */
 export const WORKFLOW_RUN_STORAGE_STATUSES = ['active', 'soft_deleted'] as const
 
-/** WorkflowNode 与 Workflow Editor 中用户看到的五类卡片一一对应。 */
+/** WorkflowNode 与 Workflow Editor 中用户看到的六类卡片一一对应。 */
 export const WORKFLOW_NODE_TYPES = [
   'character-setup',
   'character-template',
   'action-first-frame',
+  'action-generation-method',
   'action-full-frame',
   'review',
 ] as const

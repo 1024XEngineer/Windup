@@ -15,6 +15,9 @@ export type WorkflowNodeStatus = (typeof WORKFLOW_NODE_STATUSES)[number]
 export type WorkflowNodePhase = (typeof WORKFLOW_NODE_PHASES)[number]
 export type WorkflowGenerationRole = (typeof WORKFLOW_GENERATION_ROLES)[number]
 
+/** 动作资产的生产路线；3D 转 2D 接口尚未提供，但选择必须随 WorkflowRun 落库。 */
+export type ActionGenerationMethod = 'video-cropping' | '3d-to-2d'
+
 /** 一个节点对后端 GenerationTask 的引用；节点可关联零个、一个或多个任务。 */
 export interface WorkflowGenerationRef {
   taskId: Generation['id']
@@ -70,6 +73,13 @@ export interface ActionFirstFrameWorkflowNode extends WorkflowNodeBase {
   selectedFirstFrameUrl: string | null
 }
 
+/** 首帧确认后选择完整动画的生产路线。 */
+export interface ActionGenerationMethodWorkflowNode extends WorkflowNodeBase {
+  type: 'action-generation-method'
+  phase: 'selecting' | 'completed'
+  method: ActionGenerationMethod | null
+}
+
 /** 基于已确认首帧生成完整动画。 */
 export interface ActionFullFrameWorkflowNode extends WorkflowNodeBase {
   type: 'action-full-frame'
@@ -87,6 +97,7 @@ export type WorkflowNode =
   | CharacterSetupWorkflowNode
   | CharacterTemplateWorkflowNode
   | ActionFirstFrameWorkflowNode
+  | ActionGenerationMethodWorkflowNode
   | ActionFullFrameWorkflowNode
   | ReviewWorkflowNode
 

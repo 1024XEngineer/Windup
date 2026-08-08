@@ -58,6 +58,8 @@ export { workflowRunApis } from './workflow-run'
 export type {
   ActionFirstFrameWorkflowNode,
   ActionFullFrameWorkflowNode,
+  ActionGenerationMethod,
+  ActionGenerationMethodWorkflowNode,
   CharacterSetupWorkflowNode,
   CharacterTemplateWorkflowNode,
   CreateWorkflowRunInput,
