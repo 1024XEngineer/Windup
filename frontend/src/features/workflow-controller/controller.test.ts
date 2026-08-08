@@ -1,10 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type {
-  CharacterWorkflowNode,
+  ActionFirstFrameWorkflowNode,
+  ActionFullFrameWorkflowNode,
+  CharacterSetupWorkflowNode,
+  CharacterTemplateWorkflowNode,
   Generation,
   GenerationApis,
   GenerationEvent,
+  ReviewWorkflowNode,
   WorkflowActionInput,
   WorkflowNode,
   WorkflowRun,
@@ -12,16 +16,33 @@ import type {
 } from '@/entities'
 import { createWorkflowController } from '.'
 
-function characterNode(overrides: Partial<CharacterWorkflowNode> = {}): CharacterWorkflowNode {
+function setupNode(
+  overrides: Partial<CharacterSetupWorkflowNode> = {},
+): CharacterSetupWorkflowNode {
   return {
-    id: 'character-1',
-    type: 'character',
+    id: 'setup-1',
+    type: 'character-setup',
     status: 'active',
-    phase: 'configuring_character',
+    phase: 'configuring',
     dependsOnNodeIds: [],
     generations: [],
     error: null,
     input: { prompt: '像素骑士', referenceMedia: [] },
+    ...overrides,
+  }
+}
+
+function templateNode(
+  overrides: Partial<CharacterTemplateWorkflowNode> = {},
+): CharacterTemplateWorkflowNode {
+  return {
+    id: 'template-1',
+    type: 'character-template',
+    status: 'locked',
+    phase: 'ready',
+    dependsOnNodeIds: ['setup-1'],
+    generations: [],
+    error: null,
     selectedImageUrl: null,
     ...overrides,
   }
@@ -38,7 +59,71 @@ function actionInput(overrides: Partial<WorkflowActionInput> = {}): WorkflowActi
   }
 }
 
-function createRun(nodes: WorkflowNode[] = [characterNode()]): WorkflowRun {
+function firstFrameNode(
+  overrides: Partial<ActionFirstFrameWorkflowNode> = {},
+): ActionFirstFrameWorkflowNode {
+  return {
+    id: 'action-walk',
+    type: 'action-first-frame',
+    status: 'active',
+    phase: 'configuring',
+    dependsOnNodeIds: ['template-1'],
+    generations: [],
+    error: null,
+    input: actionInput(),
+    selectedFirstFrameUrl: null,
+    ...overrides,
+  }
+}
+
+function fullFrameNode(
+  overrides: Partial<ActionFullFrameWorkflowNode> = {},
+): ActionFullFrameWorkflowNode {
+  return {
+    id: 'action-walk:full-frame',
+    type: 'action-full-frame',
+    status: 'locked',
+    phase: 'ready',
+    dependsOnNodeIds: ['action-walk'],
+    generations: [],
+    error: null,
+    ...overrides,
+  }
+}
+
+function reviewNode(overrides: Partial<ReviewWorkflowNode> = {}): ReviewWorkflowNode {
+  return {
+    id: 'action-walk:review',
+    type: 'review',
+    status: 'locked',
+    phase: 'reviewing',
+    dependsOnNodeIds: ['action-walk:full-frame'],
+    generations: [],
+    error: null,
+    ...overrides,
+  }
+}
+
+function characterNodes(): WorkflowNode[] {
+  return [setupNode(), templateNode()]
+}
+
+function completedCharacterNodes(): WorkflowNode[] {
+  return [
+    setupNode({ status: 'passed', phase: 'completed' }),
+    templateNode({
+      status: 'passed',
+      phase: 'completed',
+      selectedImageUrl: 'https://img/knight.png',
+    }),
+  ]
+}
+
+function actionNodes(): WorkflowNode[] {
+  return [firstFrameNode(), fullFrameNode(), reviewNode()]
+}
+
+function createRun(nodes: WorkflowNode[] = characterNodes()): WorkflowRun {
   return {
     id: 'run-1',
     projectId: '1',
@@ -128,6 +213,21 @@ function createController(run = createRun()) {
   return { controller, workflow, generation, asyncErrors }
 }
 
+function completedAnimationEvent(taskId = 'task-2'): GenerationEvent {
+  return {
+    taskId,
+    type: 'complete_animation',
+    status: 'completed',
+    result: {
+      type: 'complete_animation',
+      frames: Array.from({ length: 32 }, (_, index) => ({
+        url: `https://img/frame-${index}.png`,
+      })),
+    },
+    error: null,
+  }
+}
+
 async function flushAsyncWork() {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
@@ -142,65 +242,91 @@ describe('WorkflowController', () => {
       onAsyncError: vi.fn(),
     })
 
-    const created = await controller.create({ projectId: '1', nodes: [characterNode()] })
+    const created = await controller.create({ projectId: '1', nodes: characterNodes() })
 
     expect(controller.getWorkflow()).toEqual(created)
     await expect(
-      controller.create({ projectId: '2', nodes: [characterNode({ id: 'other' })] }),
+      controller.create({
+        projectId: '2',
+        nodes: [setupNode({ id: 'other-setup' }), templateNode({ id: 'other-template' })],
+      }),
     ).rejects.toThrow('已经绑定')
   })
 
-  it('角色通过后按显式依赖边同时解锁多个 Action', async () => {
-    const run = createRun([
-      characterNode({ phase: 'selecting_character' }),
+  it('adds a complete first-frame, full-frame, and review chain for one Action', async () => {
+    const { controller } = createController(createRun(completedCharacterNodes()))
+
+    const next = await controller.addAction({ nodeId: 'action-walk', input: actionInput() })
+
+    expect(next.nodes.slice(2)).toMatchObject([
       {
         id: 'action-walk',
-        type: 'action',
-        status: 'locked',
-        phase: 'configuring_action',
-        dependsOnNodeIds: ['character-1'],
-        generations: [],
-        error: null,
-        input: actionInput(),
-        selectedFirstFrameUrl: null,
+        type: 'action-first-frame',
+        status: 'active',
+        dependsOnNodeIds: ['template-1'],
       },
       {
-        id: 'action-jump',
-        type: 'action',
+        id: 'action-walk:full-frame',
+        type: 'action-full-frame',
         status: 'locked',
-        phase: 'configuring_action',
-        dependsOnNodeIds: ['character-1'],
-        generations: [],
-        error: null,
-        input: actionInput({ name: '跳跃', type: 'jump' }),
-        selectedFirstFrameUrl: null,
+        dependsOnNodeIds: ['action-walk'],
       },
+      {
+        id: 'action-walk:review',
+        type: 'review',
+        status: 'locked',
+        dependsOnNodeIds: ['action-walk:full-frame'],
+      },
+    ])
+  })
+
+  it('角色母版通过后按显式边同时解锁多个 Action 首帧节点', async () => {
+    const run = createRun([
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({ status: 'active', phase: 'selecting' }),
+      firstFrameNode({ id: 'action-walk', status: 'locked' }),
+      firstFrameNode({
+        id: 'action-jump',
+        status: 'locked',
+        input: actionInput({ name: '跳跃', type: 'jump' }),
+      }),
     ])
     const { controller } = createController(run)
 
-    const next = await controller.confirmCharacter('character-1', 'https://img/knight.png')
+    const next = await controller.confirmCharacter('template-1', 'https://img/knight.png')
 
     expect(next.nodes).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: 'character-1', status: 'passed', phase: 'completed' }),
+        expect.objectContaining({ id: 'template-1', status: 'passed', phase: 'completed' }),
         expect.objectContaining({ id: 'action-walk', status: 'active' }),
         expect.objectContaining({ id: 'action-jump', status: 'active' }),
       ]),
     )
   })
 
-  it('角色生成任务落库并从终态事件进入候选确认阶段', async () => {
+  it('提交角色设定后在母版节点记录任务并进入候选选择', async () => {
     const { controller, workflow, generation, asyncErrors } = createController()
 
-    await controller.generateCharacter('character-1', { spriteWidth: 64, spriteHeight: 64 })
+    await controller.generateCharacter('setup-1', { spriteWidth: 64, spriteHeight: 64 })
+
     expect(generation.apis.create).toHaveBeenCalledWith(
-      expect.objectContaining({ spriteWidth: 64, spriteHeight: 64 }),
+      expect.objectContaining({
+        type: 'character_template',
+        prompt: '像素骑士',
+        spriteWidth: 64,
+        spriteHeight: 64,
+      }),
     )
-    const inFlight = workflow.getSaved().nodes[0]
-    expect(inFlight).toMatchObject({
-      phase: 'generating_character_candidates',
-      generations: [{ taskId: 'task-1', role: 'character_candidates' }],
-    })
+    expect(workflow.getSaved().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'setup-1', status: 'passed', phase: 'completed' }),
+        expect.objectContaining({
+          id: 'template-1',
+          phase: 'generating',
+          generations: [{ taskId: 'task-1', role: 'character_template' }],
+        }),
+      ]),
+    )
 
     generation.emit({
       taskId: 'task-1',
@@ -214,12 +340,45 @@ describe('WorkflowController', () => {
     })
     await flushAsyncWork()
 
-    expect(controller.getWorkflow().nodes[0]).toMatchObject({
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+      type: 'character-template',
       status: 'active',
-      phase: 'selecting_character',
+      phase: 'selecting',
       error: null,
     })
     expect(asyncErrors).toEqual([])
+  })
+
+  it('角色设定已落库但生成请求失败后可以重试', async () => {
+    const { controller, generation } = createController()
+    vi.mocked(generation.apis.create).mockRejectedValueOnce(new Error('生成服务暂时不可用'))
+
+    await expect(
+      controller.generateCharacter('setup-1', { spriteWidth: 64, spriteHeight: 64 }),
+    ).rejects.toThrow('生成服务暂时不可用')
+    await expect(
+      controller.generateCharacter('setup-1', { spriteWidth: 64, spriteHeight: 64 }),
+    ).resolves.toMatchObject({
+      nodes: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'template-1',
+          phase: 'generating',
+          generations: [{ taskId: 'task-1', role: 'character_template' }],
+        }),
+      ]),
+    })
+  })
+
+  it('角色设定并发提交只创建一个母版生成任务', async () => {
+    const { controller, generation } = createController()
+    const options = { spriteWidth: 64, spriteHeight: 64 }
+
+    await Promise.all([
+      controller.generateCharacter('setup-1', options),
+      controller.generateCharacter('setup-1', options),
+    ])
+
+    expect(generation.apis.create).toHaveBeenCalledTimes(1)
   })
 
   it('SSE 与紧随其后的查询同时返回终态时只保存一次结果', async () => {
@@ -263,18 +422,15 @@ describe('WorkflowController', () => {
       onAsyncError: vi.fn(),
     })
 
-    await controller.generateCharacter('character-1', {
-      spriteWidth: 64,
-      spriteHeight: 64,
-    })
+    await controller.generateCharacter('setup-1', { spriteWidth: 64, spriteHeight: 64 })
 
-    expect(workflow.apis.update).toHaveBeenCalledTimes(2)
-    expect(controller.getWorkflow().nodes[0].phase).toBe('selecting_character')
+    expect(workflow.apis.update).toHaveBeenCalledTimes(3)
+    expect(controller.getWorkflow().nodes[1].phase).toBe('selecting')
   })
 
   it('中断后忽略迟到结果，恢复时查询终态再推进', async () => {
     const { controller, generation } = createController()
-    await controller.generateCharacter('character-1', { spriteWidth: 64, spriteHeight: 64 })
+    await controller.generateCharacter('setup-1', { spriteWidth: 64, spriteHeight: 64 })
     await controller.interrupt()
 
     generation.emit({
@@ -288,35 +444,27 @@ describe('WorkflowController', () => {
       error: null,
     })
     await flushAsyncWork()
-    expect(controller.getWorkflow().nodes[0].phase).toBe('generating_character_candidates')
+    expect(controller.getWorkflow().nodes[1].phase).toBe('generating')
 
     await controller.resume()
-    expect(controller.getWorkflow().nodes[0].phase).toBe('selecting_character')
+    expect(controller.getWorkflow().nodes[1].phase).toBe('selecting')
   })
 
-  it('从节点重做会清掉下游和旧 task，旧事件不能覆盖新执行线', async () => {
+  it('从母版节点重做会清空下游任务，旧事件不能覆盖新执行线', async () => {
     const run = createRun([
-      characterNode({
-        phase: 'generating_character_candidates',
-        generations: [{ taskId: 'task-old', role: 'character_candidates' }],
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({
+        status: 'active',
+        phase: 'generating',
+        generations: [{ taskId: 'task-old', role: 'character_template' }],
       }),
-      {
-        id: 'action-walk',
-        type: 'action',
-        status: 'locked',
-        phase: 'configuring_action',
-        dependsOnNodeIds: ['character-1'],
-        generations: [],
-        error: null,
-        input: actionInput(),
-        selectedFirstFrameUrl: null,
-      },
+      ...actionNodes().map((node) => ({ ...node, status: 'locked' as const })),
     ])
     const { controller } = createController(run)
 
-    await controller.restartFromNode('character-1')
+    await controller.restartFromNode('template-1')
     await controller.applyGenerationResult({
-      nodeId: 'character-1',
+      nodeId: 'template-1',
       taskId: 'task-old',
       generation: {
         id: 'task-old',
@@ -331,19 +479,27 @@ describe('WorkflowController', () => {
       },
     })
 
-    expect(controller.getWorkflow().nodes).toEqual([
-      expect.objectContaining({
-        id: 'character-1',
-        status: 'active',
-        phase: 'configuring_character',
-        generations: [],
-      }),
-      expect.objectContaining({ id: 'action-walk', status: 'locked', generations: [] }),
-    ])
+    expect(controller.getWorkflow().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'template-1',
+          status: 'active',
+          phase: 'ready',
+          generations: [],
+        }),
+        expect.objectContaining({ id: 'action-walk', status: 'locked', generations: [] }),
+        expect.objectContaining({
+          id: 'action-walk:full-frame',
+          status: 'locked',
+          generations: [],
+        }),
+      ]),
+    )
   })
 
   it('生成请求尚未返回时重做，旧任务不能挂回新执行线', async () => {
-    const workflow = createWorkflowApis()
+    const run = createRun([...completedCharacterNodes(), ...actionNodes()])
+    const workflow = createWorkflowApis(run)
     const pendingResolvers: Array<(generation: Generation) => void> = []
     const snapshots = new Map<string, Generation>()
     const createGeneration = vi.fn(
@@ -361,24 +517,95 @@ describe('WorkflowController', () => {
       subscribe: vi.fn(() => () => undefined),
     }
     const controller = createWorkflowController({
-      workflow: createRun(),
+      workflow: run,
       workflowRunApis: workflow.apis,
       generationApis,
       onAsyncError: vi.fn(),
     })
 
-    const oldSubmission = controller.generateCharacter('character-1', {
-      spriteWidth: 64,
-      spriteHeight: 64,
+    const oldSubmission = controller.generateActionFrame('action-walk', {
+      characterId: 'character-1',
+      referenceMedia: [],
     })
     await Promise.resolve()
-    await controller.restartFromNode('character-1')
+    await controller.restartFromNode('action-walk')
 
-    const newSubmission = controller.generateCharacter('character-1', {
+    const newSubmission = controller.generateActionFrame('action-walk', {
+      characterId: 'character-1',
+      referenceMedia: [],
+    })
+    await Promise.resolve()
+    expect(createGeneration).toHaveBeenCalledTimes(2)
+
+    pendingResolvers[0]?.({
+      id: 'task-old',
+      projectId: '1',
+      type: 'first_frame',
+      status: 'pending',
+      result: null,
+      error: null,
+    })
+    await oldSubmission
+    const sameNewSubmission = controller.generateActionFrame('action-walk', {
+      characterId: 'character-1',
+      referenceMedia: [],
+    })
+    expect(createGeneration).toHaveBeenCalledTimes(2)
+
+    pendingResolvers[1]?.({
+      id: 'task-new',
+      projectId: '1',
+      type: 'first_frame',
+      status: 'pending',
+      result: null,
+      error: null,
+    })
+    await Promise.all([newSubmission, sameNewSubmission])
+
+    expect(controller.getWorkflow().nodes[2].generations).toEqual([
+      { taskId: 'task-new', role: 'first_frame' },
+    ])
+  })
+
+  it('角色母版请求尚未返回时从设定重做，新提交不会复用旧命令', async () => {
+    const run = createRun()
+    const workflow = createWorkflowApis(run)
+    const pendingResolvers: Array<(generation: Generation) => void> = []
+    const snapshots = new Map<string, Generation>()
+    const createGeneration = vi.fn(
+      () =>
+        new Promise<Generation>((resolve) => {
+          pendingResolvers.push((generation) => {
+            snapshots.set(generation.id, generation)
+            resolve(generation)
+          })
+        }),
+    ) as unknown as GenerationApis['create']
+    const generationApis: GenerationApis = {
+      create: createGeneration,
+      get: vi.fn(async (_projectId, id) => structuredClone(snapshots.get(id)!)),
+      subscribe: vi.fn(() => () => undefined),
+    }
+    const controller = createWorkflowController({
+      workflow: run,
+      workflowRunApis: workflow.apis,
+      generationApis,
+      onAsyncError: vi.fn(),
+    })
+
+    const oldSubmission = controller.generateCharacter('setup-1', {
       spriteWidth: 64,
       spriteHeight: 64,
     })
-    await Promise.resolve()
+    await flushAsyncWork()
+    expect(createGeneration).toHaveBeenCalledTimes(1)
+
+    await controller.restartFromNode('setup-1')
+    const newSubmission = controller.generateCharacter('setup-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+    await flushAsyncWork()
     expect(createGeneration).toHaveBeenCalledTimes(2)
 
     pendingResolvers[0]?.({
@@ -390,12 +617,6 @@ describe('WorkflowController', () => {
       error: null,
     })
     await oldSubmission
-    const sameNewSubmission = controller.generateCharacter('character-1', {
-      spriteWidth: 64,
-      spriteHeight: 64,
-    })
-    expect(createGeneration).toHaveBeenCalledTimes(2)
-
     pendingResolvers[1]?.({
       id: 'task-new',
       projectId: '1',
@@ -404,126 +625,123 @@ describe('WorkflowController', () => {
       result: null,
       error: null,
     })
-    await Promise.all([newSubmission, sameNewSubmission])
+    await newSubmission
 
-    expect(controller.getWorkflow().nodes[0].generations).toEqual([
-      { taskId: 'task-new', role: 'character_candidates' },
-    ])
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+      id: 'template-1',
+      phase: 'generating',
+      generations: [{ taskId: 'task-new', role: 'character_template' }],
+    })
   })
 
   it('保存失败时不发布未落库的新状态', async () => {
-    const { controller, workflow } = createController(
-      createRun([characterNode({ phase: 'selecting_character' })]),
-    )
+    const run = createRun([
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({ status: 'active', phase: 'selecting' }),
+    ])
+    const { controller, workflow } = createController(run)
     vi.mocked(workflow.apis.update).mockRejectedValueOnce(new Error('后端保存失败'))
 
     await expect(
-      controller.confirmCharacter('character-1', 'https://img/knight.png'),
+      controller.confirmCharacter('template-1', 'https://img/knight.png'),
     ).rejects.toThrow('后端保存失败')
 
-    expect(controller.getWorkflow().nodes[0]).toMatchObject({
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
       status: 'active',
-      phase: 'selecting_character',
+      phase: 'selecting',
       selectedImageUrl: null,
     })
   })
 
   it('生成任务创建成功但引用保存失败时，重试复用同一个任务', async () => {
-    const { controller, workflow, generation } = createController()
+    const run = createRun([...completedCharacterNodes(), ...actionNodes()])
+    const { controller, workflow, generation } = createController(run)
     vi.mocked(workflow.apis.update).mockRejectedValueOnce(new Error('后端保存失败'))
 
     await expect(
-      controller.generateCharacter('character-1', { spriteWidth: 64, spriteHeight: 64 }),
+      controller.generateActionFrame('action-walk', {
+        characterId: 'character-1',
+        referenceMedia: [],
+      }),
     ).rejects.toThrow('后端保存失败')
-    expect(controller.getWorkflow().nodes[0].generations).toEqual([])
+    expect(controller.getWorkflow().nodes[2].generations).toEqual([])
 
-    await controller.generateCharacter('character-1', { spriteWidth: 64, spriteHeight: 64 })
+    await controller.generateActionFrame('action-walk', {
+      characterId: 'character-1',
+      referenceMedia: [],
+    })
 
     expect(generation.apis.create).toHaveBeenCalledTimes(1)
-    expect(controller.getWorkflow().nodes[0]).toMatchObject({
-      phase: 'generating_character_candidates',
-      generations: [{ taskId: 'task-1', role: 'character_candidates' }],
+    expect(controller.getWorkflow().nodes[2]).toMatchObject({
+      phase: 'generating',
+      generations: [{ taskId: 'task-1', role: 'first_frame' }],
     })
   })
 
   it('同一节点并发点击只创建一个生成任务', async () => {
-    const { controller, generation } = createController()
+    const run = createRun([...completedCharacterNodes(), ...actionNodes()])
+    const { controller, generation } = createController(run)
+    const options = { characterId: 'character-1', referenceMedia: [] }
 
     await Promise.all([
-      controller.generateCharacter('character-1', { spriteWidth: 64, spriteHeight: 64 }),
-      controller.generateCharacter('character-1', { spriteWidth: 64, spriteHeight: 64 }),
+      controller.generateActionFrame('action-walk', options),
+      controller.generateActionFrame('action-walk', options),
     ])
 
     expect(generation.apis.create).toHaveBeenCalledTimes(1)
   })
 
-  it('完整动画必须是 32 帧，通过审核后节点才完成', async () => {
-    const frames = Array.from({ length: 32 }, (_, index) => ({
-      url: `https://img/frame-${index}.png`,
-    }))
+  it('完整动画必须是 32 帧，完成后只解锁自己的审核节点', async () => {
     const run = createRun([
-      characterNode({
+      ...completedCharacterNodes(),
+      firstFrameNode({
         status: 'passed',
         phase: 'completed',
-        selectedImageUrl: 'https://img/knight.png',
-      }),
-      {
-        id: 'action-walk',
-        type: 'action',
-        status: 'active',
-        phase: 'generating_animation',
-        dependsOnNodeIds: ['character-1'],
-        generations: [{ taskId: 'task-animation', role: 'animation' }],
-        error: null,
-        input: actionInput(),
         selectedFirstFrameUrl: 'https://img/first.png',
-      },
+      }),
+      fullFrameNode({
+        status: 'active',
+        phase: 'generating',
+        generations: [{ taskId: 'task-animation', role: 'complete_animation' }],
+      }),
+      reviewNode(),
     ])
     const { controller } = createController(run)
 
     await controller.applyGenerationResult({
-      nodeId: 'action-walk',
+      nodeId: 'action-walk:full-frame',
       taskId: 'task-animation',
       generation: {
         id: 'task-animation',
         projectId: '1',
-        type: 'complete_animation',
-        status: 'completed',
-        result: { type: 'complete_animation', frames },
-        error: null,
+        ...completedAnimationEvent('task-animation'),
       },
     })
-    expect(controller.getWorkflow().nodes[1]).toMatchObject({
-      status: 'active',
-      phase: 'reviewing_animation',
-    })
 
-    await controller.approveAction('action-walk')
-    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+    expect(controller.getWorkflow().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'action-walk:full-frame',
+          status: 'passed',
+          phase: 'completed',
+        }),
+        expect.objectContaining({
+          id: 'action-walk:review',
+          status: 'active',
+          phase: 'reviewing',
+        }),
+      ]),
+    )
+
+    await controller.approveAction('action-walk:review')
+    expect(controller.getWorkflow().nodes[4]).toMatchObject({
       status: 'passed',
       phase: 'completed',
     })
   })
 
-  it('同一 Action 节点依次生成首帧和 32 帧动画', async () => {
-    const run = createRun([
-      characterNode({
-        status: 'passed',
-        phase: 'completed',
-        selectedImageUrl: 'https://img/knight.png',
-      }),
-      {
-        id: 'action-walk',
-        type: 'action',
-        status: 'active',
-        phase: 'configuring_action',
-        dependsOnNodeIds: ['character-1'],
-        generations: [],
-        error: null,
-        input: actionInput(),
-        selectedFirstFrameUrl: null,
-      },
-    ])
+  it('一个 Action 依次使用独立的首帧、完整动画和审核节点', async () => {
+    const run = createRun([...completedCharacterNodes(), ...actionNodes()])
     const { controller, generation } = createController(run)
 
     await controller.generateActionFrame('action-walk', {
@@ -540,24 +758,13 @@ describe('WorkflowController', () => {
     await flushAsyncWork()
     await controller.confirmActionFrame('action-walk', 'https://img/first.png')
 
-    await controller.generateAnimation('action-walk', {
+    await controller.generateAnimation('action-walk:full-frame', {
       characterId: 'character-backend-1',
       referenceMedia: [],
     })
-    generation.emit({
-      taskId: 'task-2',
-      type: 'complete_animation',
-      status: 'completed',
-      result: {
-        type: 'complete_animation',
-        frames: Array.from({ length: 32 }, (_, index) => ({
-          url: `https://img/frame-${index}.png`,
-        })),
-      },
-      error: null,
-    })
+    generation.emit(completedAnimationEvent())
     await flushAsyncWork()
-    await controller.approveAction('action-walk')
+    await controller.approveAction('action-walk:review')
 
     expect(generation.apis.create).toHaveBeenNthCalledWith(
       1,
@@ -574,37 +781,36 @@ describe('WorkflowController', () => {
         firstFrameUrl: 'https://img/first.png',
       }),
     )
-    expect(controller.getWorkflow().nodes[1]).toMatchObject({
-      status: 'passed',
-      phase: 'completed',
-      generations: [
-        { taskId: 'task-1', role: 'action_frame_candidates' },
-        { taskId: 'task-2', role: 'animation' },
-      ],
-    })
+    expect(controller.getWorkflow().nodes.slice(2)).toMatchObject([
+      {
+        type: 'action-first-frame',
+        status: 'passed',
+        generations: [{ taskId: 'task-1', role: 'first_frame' }],
+      },
+      {
+        type: 'action-full-frame',
+        status: 'passed',
+        generations: [{ taskId: 'task-2', role: 'complete_animation' }],
+      },
+      { type: 'review', status: 'passed' },
+    ])
   })
 
-  it('恢复动画阶段时不会让旧首帧任务把节点倒退', async () => {
+  it('恢复时只查询当前生成节点，不重复恢复已经通过的首帧任务', async () => {
     const run = createRun([
-      characterNode({
+      ...completedCharacterNodes(),
+      firstFrameNode({
         status: 'passed',
         phase: 'completed',
-        selectedImageUrl: 'https://img/knight.png',
-      }),
-      {
-        id: 'action-walk',
-        type: 'action',
-        status: 'active',
-        phase: 'generating_animation',
-        dependsOnNodeIds: ['character-1'],
-        generations: [
-          { taskId: 'task-first-frame', role: 'action_frame_candidates' },
-          { taskId: 'task-animation', role: 'animation' },
-        ],
-        error: null,
-        input: actionInput(),
+        generations: [{ taskId: 'task-first-frame', role: 'first_frame' }],
         selectedFirstFrameUrl: 'https://img/first.png',
-      },
+      }),
+      fullFrameNode({
+        status: 'active',
+        phase: 'generating',
+        generations: [{ taskId: 'task-animation', role: 'complete_animation' }],
+      }),
+      reviewNode(),
     ])
     const { controller, generation } = createController(run)
     generation.snapshots.set('task-first-frame', {
@@ -625,14 +831,9 @@ describe('WorkflowController', () => {
     })
 
     await controller.resume()
-    await controller.applyGenerationResult({
-      nodeId: 'action-walk',
-      taskId: 'task-first-frame',
-      generation: generation.snapshots.get('task-first-frame')!,
-    })
 
     expect(generation.apis.get).toHaveBeenCalledTimes(1)
     expect(generation.apis.get).toHaveBeenCalledWith('1', 'task-animation')
-    expect(controller.getWorkflow().nodes[1].phase).toBe('generating_animation')
+    expect(controller.getWorkflow().nodes[3].phase).toBe('generating')
   })
 })

@@ -1,7 +1,10 @@
 import { ApiError, createApiClient, getApiAccessToken } from '@/shared/api'
 import type {
-  ActionWorkflowNode,
-  CharacterWorkflowNode,
+  ActionFirstFrameWorkflowNode,
+  ActionFullFrameWorkflowNode,
+  CharacterSetupWorkflowNode,
+  CharacterTemplateWorkflowNode,
+  ReviewWorkflowNode,
   WorkflowNode,
   WorkflowRun,
   WorkflowRunApis,
@@ -57,70 +60,116 @@ function hasValidCommonNodeFields(value: Record<string, unknown>): boolean {
   ) {
     return false
   }
+  if (value.status === 'passed' ? value.phase !== 'completed' : value.phase === 'completed') {
+    return false
+  }
   return value.status === 'failed'
     ? typeof value.error === 'string' && value.error.trim().length > 0
     : value.error === null
 }
 
-function isCharacterNode(value: unknown): value is CharacterWorkflowNode {
-  if (!isRecord(value) || value.type !== 'character' || !hasValidCommonNodeFields(value)) {
-    return false
-  }
-  if (
-    ![
-      'configuring_character',
-      'generating_character_candidates',
-      'selecting_character',
-      'completed',
-    ].includes(String(value.phase)) ||
-    !isRecord(value.input)
-  ) {
-    return false
-  }
+function hasOnlyGenerationRole(value: Record<string, unknown>, role: string | null): boolean {
+  if (!Array.isArray(value.generations)) return false
+  if (role === null) return value.generations.length === 0
+  const refs = value.generations.filter(isRecord)
   return (
-    typeof value.input.prompt === 'string' &&
-    Array.isArray(value.input.referenceMedia) &&
-    value.input.referenceMedia.every((item) => typeof item === 'string') &&
+    refs.length === value.generations.length &&
+    refs.every((reference) => reference.role === role) &&
+    new Set(refs.map((reference) => reference.taskId)).size === refs.length
+  )
+}
+
+function hasValidCharacterInput(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  return (
+    typeof value.prompt === 'string' &&
+    Array.isArray(value.referenceMedia) &&
+    value.referenceMedia.every((item) => typeof item === 'string')
+  )
+}
+
+function hasValidActionInput(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  return (
+    typeof value.outfitId === 'string' &&
+    value.outfitId.length > 0 &&
+    typeof value.name === 'string' &&
+    value.name.length > 0 &&
+    typeof value.type === 'string' &&
+    value.type.length > 0 &&
+    isNullableString(value.prompt) &&
+    typeof value.fps === 'number' &&
+    Number.isFinite(value.fps) &&
+    value.fps > 0
+  )
+}
+
+function isCharacterSetupNode(value: unknown): value is CharacterSetupWorkflowNode {
+  return (
+    isRecord(value) &&
+    value.type === 'character-setup' &&
+    hasValidCommonNodeFields(value) &&
+    ['configuring', 'completed'].includes(String(value.phase)) &&
+    hasValidCharacterInput(value.input) &&
+    hasOnlyGenerationRole(value, null)
+  )
+}
+
+function isCharacterTemplateNode(value: unknown): value is CharacterTemplateWorkflowNode {
+  return (
+    isRecord(value) &&
+    value.type === 'character-template' &&
+    hasValidCommonNodeFields(value) &&
+    ['ready', 'generating', 'selecting', 'completed'].includes(String(value.phase)) &&
+    hasOnlyGenerationRole(value, 'character_template') &&
     isNullableString(value.selectedImageUrl) &&
     (value.phase !== 'completed' ||
       (typeof value.selectedImageUrl === 'string' && value.selectedImageUrl.length > 0))
   )
 }
 
-function isActionNode(value: unknown): value is ActionWorkflowNode {
-  if (!isRecord(value) || value.type !== 'action' || !hasValidCommonNodeFields(value)) return false
-  if (
-    ![
-      'configuring_action',
-      'generating_action_candidates',
-      'selecting_action_frame',
-      'generating_animation',
-      'reviewing_animation',
-      'completed',
-    ].includes(String(value.phase)) ||
-    !isRecord(value.input)
-  ) {
-    return false
-  }
+function isActionFirstFrameNode(value: unknown): value is ActionFirstFrameWorkflowNode {
   return (
-    typeof value.input.outfitId === 'string' &&
-    value.input.outfitId.length > 0 &&
-    typeof value.input.name === 'string' &&
-    value.input.name.length > 0 &&
-    typeof value.input.type === 'string' &&
-    value.input.type.length > 0 &&
-    isNullableString(value.input.prompt) &&
-    typeof value.input.fps === 'number' &&
-    Number.isFinite(value.input.fps) &&
-    value.input.fps > 0 &&
+    isRecord(value) &&
+    value.type === 'action-first-frame' &&
+    hasValidCommonNodeFields(value) &&
+    ['configuring', 'generating', 'selecting', 'completed'].includes(String(value.phase)) &&
+    hasValidActionInput(value.input) &&
+    hasOnlyGenerationRole(value, 'first_frame') &&
     isNullableString(value.selectedFirstFrameUrl) &&
     (value.phase !== 'completed' ||
       (typeof value.selectedFirstFrameUrl === 'string' && value.selectedFirstFrameUrl.length > 0))
   )
 }
 
+function isActionFullFrameNode(value: unknown): value is ActionFullFrameWorkflowNode {
+  return (
+    isRecord(value) &&
+    value.type === 'action-full-frame' &&
+    hasValidCommonNodeFields(value) &&
+    ['ready', 'generating', 'completed'].includes(String(value.phase)) &&
+    hasOnlyGenerationRole(value, 'complete_animation')
+  )
+}
+
+function isReviewNode(value: unknown): value is ReviewWorkflowNode {
+  return (
+    isRecord(value) &&
+    value.type === 'review' &&
+    hasValidCommonNodeFields(value) &&
+    ['reviewing', 'completed'].includes(String(value.phase)) &&
+    hasOnlyGenerationRole(value, null)
+  )
+}
+
 function isWorkflowNode(value: unknown): value is WorkflowNode {
-  return isCharacterNode(value) || isActionNode(value)
+  return (
+    isCharacterSetupNode(value) ||
+    isCharacterTemplateNode(value) ||
+    isActionFirstFrameNode(value) ||
+    isActionFullFrameNode(value) ||
+    isReviewNode(value)
+  )
 }
 
 function isAcyclicNodeGraph(nodes: readonly WorkflowNode[]): boolean {

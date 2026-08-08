@@ -15,6 +15,7 @@
 
 - `entities/workflow-run` 定义纯数据和异步 CRUD，不包含推进方法。
 - Controller 根据 `dependsOnNodeIds` 解锁节点，允许同一依赖下的多个 Action 并行。
+- 新增 Action 一次创建首帧、完整动画和审核三节点，不会遗漏首帧或用数组位置猜关系。
 - Generation 通过 `nodeId + taskId` 写回；节点重做后，旧任务的迟到结果会被丢弃。
 - WorkflowRun 只有在后端 `update` 成功后才替换内存快照，保存失败不会向页面假报成功。
 - Generation 已创建但任务引用暂时保存失败时，本实例会保留待附加记录；重试同一命令或

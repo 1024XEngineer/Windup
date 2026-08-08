@@ -40,10 +40,17 @@ export interface WorkflowCharacterInput {
   referenceMedia: readonly MediaReference[]
 }
 
-/** 角色节点内部完成资料填写、候选图生成和候选确认。 */
-export interface CharacterWorkflowNode extends WorkflowNodeBase {
-  type: 'character'
+/** 角色资料卡片；只保存用户输入，不承担图片生成。 */
+export interface CharacterSetupWorkflowNode extends WorkflowNodeBase {
+  type: 'character-setup'
+  phase: 'configuring' | 'completed'
   input: WorkflowCharacterInput
+}
+
+/** 角色母版卡片；生成候选图并保存用户最终确认的母版。 */
+export interface CharacterTemplateWorkflowNode extends WorkflowNodeBase {
+  type: 'character-template'
+  phase: 'ready' | 'generating' | 'selecting' | 'completed'
   selectedImageUrl: string | null
 }
 
@@ -55,15 +62,33 @@ export interface WorkflowActionInput {
   fps: number
 }
 
-/** 一个 Action 对应一个节点；共同依赖同一节点的多个 Action 可以并行。 */
-export interface ActionWorkflowNode extends WorkflowNodeBase {
-  type: 'action'
+/** Action 的首帧卡片；每个 Action 都必须有一份独立输入和确认结果。 */
+export interface ActionFirstFrameWorkflowNode extends WorkflowNodeBase {
+  type: 'action-first-frame'
+  phase: 'configuring' | 'generating' | 'selecting' | 'completed'
   input: WorkflowActionInput
   selectedFirstFrameUrl: string | null
 }
 
+/** 基于已确认首帧生成完整动画。 */
+export interface ActionFullFrameWorkflowNode extends WorkflowNodeBase {
+  type: 'action-full-frame'
+  phase: 'ready' | 'generating' | 'completed'
+}
+
+/** 只负责核验完整动画；审核通过不等于下载或导出。 */
+export interface ReviewWorkflowNode extends WorkflowNodeBase {
+  type: 'review'
+  phase: 'reviewing' | 'completed'
+}
+
 /** 工作流图中的真实节点。前端和后端统一使用 node，不再保留 step 或假 root。 */
-export type WorkflowNode = CharacterWorkflowNode | ActionWorkflowNode
+export type WorkflowNode =
+  | CharacterSetupWorkflowNode
+  | CharacterTemplateWorkflowNode
+  | ActionFirstFrameWorkflowNode
+  | ActionFullFrameWorkflowNode
+  | ReviewWorkflowNode
 
 /**
  * 一次制作流程的持久化容器。Quick Start 与 Workflow Editor 只是不同界面；

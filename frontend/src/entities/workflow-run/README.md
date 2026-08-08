@@ -6,9 +6,11 @@
 
 - 前后端统一使用 `WorkflowNode`。原先前端的 Step 与后端的 Node 是同一概念，已经合并。
 - `WorkflowRun.nodes` 直接保存真实节点，不再使用 `root.steps` 或人为包装的根节点。
-- 一个节点与 Workflow Editor 中一张卡片一一对应；生成与选择是节点内部 phase，不拆成额外节点。
+- 五类节点与 Workflow Editor 的五类卡片一一对应：角色设定、角色母版、动作首帧、完整动画和审核。
+- “提交中、生成中、选择中”仍是节点内部 phase，不再拆成 Step 或额外任务节点。
 - 节点通过 `dependsOnNodeIds` 保存直接前置依赖，因此边会与节点一起落库，不再依赖数组顺序猜测连线。
-- 多个 Action 节点可以依赖同一个角色节点；前置节点通过后即可并行，不互相阻塞。
+- 每个 Action 使用 `action-first-frame -> action-full-frame -> review` 三节点链；多条链共同依赖
+  `character-template`，角色母版通过后即可并行，不互相阻塞。
 - Quick Start 与 Workflow Editor 是两种独立界面，但推进同一张节点图，核心数据不区分 `ai/manual driver`。
 - 后端不提供 Revision 历史。重做时覆盖旧结果，并用 `nodeId + taskId` 防止旧请求串线。
 

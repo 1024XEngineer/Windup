@@ -56,9 +56,12 @@ export type { MediaReference } from './media'
 /* 工作流 —— 前端管理节点，后端只持久化完整 nodes 文档 */
 export { workflowRunApis } from './workflow-run'
 export type {
-  ActionWorkflowNode,
-  CharacterWorkflowNode,
+  ActionFirstFrameWorkflowNode,
+  ActionFullFrameWorkflowNode,
+  CharacterSetupWorkflowNode,
+  CharacterTemplateWorkflowNode,
   CreateWorkflowRunInput,
+  ReviewWorkflowNode,
   WorkflowActionInput,
   WorkflowCharacterInput,
   WorkflowGenerationRef,
