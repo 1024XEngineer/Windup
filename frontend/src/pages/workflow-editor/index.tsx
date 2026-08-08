@@ -5,79 +5,71 @@
  *
  * 运行数据只来自 WorkflowEditorService，不在页面里伪造第二套流程状态。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useParams } from 'react-router'
 
-import type { WorkflowRun } from "@/entities";
-import {
-  buildPlaytestPath,
-  buildPublishedActionId,
-  canPublishToPlaytest,
-} from "@/features/publish";
-import { NodeCanvasController } from "./node-canvas";
-import { WorkflowCanvas } from "./workflow-canvas";
+import type { WorkflowRun } from '@/entities'
+import { buildPlaytestPath, buildPublishedActionId, canPublishToPlaytest } from '@/features/publish'
+import { NodeCanvasController } from './node-canvas'
+import { WorkflowCanvas } from './workflow-canvas'
 import {
   unavailableWorkflowEditorService,
   type WorkflowEditorService,
   type ProjectSetupInput,
-} from "./service";
-import "./workflow-editor.css";
+} from './service'
+import './workflow-editor.css'
 
 export type {
   CreateWorkflowEditorServiceOptions,
   PrepareWorkflowProject,
   WorkflowEditorService,
-} from "./service";
+} from './service'
 
 export interface WorkflowEditorPageProps {
-  service?: WorkflowEditorService;
+  service?: WorkflowEditorService
 }
 
 export function WorkflowEditorPage({
   service = unavailableWorkflowEditorService,
 }: WorkflowEditorPageProps) {
-  const { runId, nodeId } = useParams();
-  if (!runId) return <WorkflowSetupView service={service} />;
-  return <WorkflowRunView service={service} runId={runId} nodeId={nodeId} />;
+  const { runId, nodeId } = useParams()
+  if (!runId) return <WorkflowSetupView service={service} />
+  return <WorkflowRunView service={service} runId={runId} nodeId={nodeId} />
 }
 
 /** /workflow-editor — 直接进入项目配置表单 */
 function WorkflowSetupView({ service }: { service: WorkflowEditorService }) {
-  const navigate = useNavigate();
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const unavailableReason = service.unavailableReason;
+  const navigate = useNavigate()
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const unavailableReason = service.unavailableReason
 
   const handleSubmit = useCallback(
     async (input: ProjectSetupInput) => {
-      if (submitting) return;
-      setSubmitting(true);
-      setError(null);
+      if (submitting) return
+      setSubmitting(true)
+      setError(null)
       try {
         if (unavailableReason) {
-          throw new Error(unavailableReason);
+          throw new Error(unavailableReason)
         }
-        const run = await service.createRun(input);
-        navigate(`/workflow-editor/${encodeURIComponent(run.id)}`);
+        const run = await service.createRun(input)
+        navigate(`/workflow-editor/${encodeURIComponent(run.id)}`)
       } catch (cause) {
-        setError(
-          cause instanceof Error ? cause.message : "创建失败，请稍后重试",
-        );
+        setError(cause instanceof Error ? cause.message : '创建失败，请稍后重试')
       } finally {
-        setSubmitting(false);
+        setSubmitting(false)
       }
     },
     [service, submitting, unavailableReason, navigate],
-  );
+  )
 
   return (
     <div className="workflow-app">
       <StudioBar />
       <div className="production-canvas-workspace">
         <ProjectSetupInner onSubmit={handleSubmit} />
-        {unavailableReason && (
-          <p className="setup-notice">{unavailableReason}</p>
-        )}
+        {unavailableReason && <p className="setup-notice">{unavailableReason}</p>}
         {error && (
           <p role="alert" className="setup-error">
             {error}
@@ -86,30 +78,26 @@ function WorkflowSetupView({ service }: { service: WorkflowEditorService }) {
         {submitting && <p className="setup-loading">正在创建项目…</p>}
       </div>
     </div>
-  );
+  )
 }
 
 /** 项目配置表单 */
-function ProjectSetupInner({
-  onSubmit,
-}: {
-  onSubmit: (input: ProjectSetupInput) => void;
-}) {
+function ProjectSetupInner({ onSubmit }: { onSubmit: (input: ProjectSetupInput) => void }) {
   const [form, setForm] = useState<ProjectSetupInput>({
-    projectName: "",
-    view: "side",
-    directions: "1",
-    canvasSize: "256",
-    style: "",
-  });
+    projectName: '',
+    view: 'side',
+    directions: '1',
+    canvasSize: '256',
+    style: '',
+  })
 
   return (
     <section className="project-setup">
       <form
         className="project-setup__form"
         onSubmit={(e) => {
-          e.preventDefault();
-          onSubmit(form);
+          e.preventDefault()
+          onSubmit(form)
         }}
       >
         <header className="project-setup__form-head project-setup__wide">
@@ -129,10 +117,7 @@ function ProjectSetupInner({
 
         <label>
           <span>游戏视角</span>
-          <select
-            value={form.view}
-            onChange={(e) => setForm({ ...form, view: e.target.value })}
-          >
+          <select value={form.view} onChange={(e) => setForm({ ...form, view: e.target.value })}>
             <option value="side">横版侧视</option>
             <option value="topdown">俯视</option>
             <option value="isometric">2.5D</option>
@@ -181,7 +166,7 @@ function ProjectSetupInner({
         </footer>
       </form>
     </section>
-  );
+  )
 }
 
 /** /workflow-editor/:runId — 工作流进度（节点画布） */
@@ -190,141 +175,136 @@ function WorkflowRunView({
   runId,
   nodeId,
 }: {
-  service: WorkflowEditorService;
-  runId: string;
-  nodeId?: string;
+  service: WorkflowEditorService
+  runId: string
+  nodeId?: string
 }) {
-  const navigate = useNavigate();
-  const [run, setRun] = useState<WorkflowRun | null>(() =>
-    service.getWorkflow(runId),
-  );
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [completionMessage, setCompletionMessage] = useState<string | null>(
-    null,
-  );
-  const controller = useMemo(() => new NodeCanvasController(), []);
-  const uploadedTemplateAbortRef = useRef<AbortController | null>(null);
+  const navigate = useNavigate()
+  const [run, setRun] = useState<WorkflowRun | null>(() => service.peekWorkflow(runId))
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [completionMessage, setCompletionMessage] = useState<string | null>(null)
+  const controller = useMemo(() => new NodeCanvasController(), [])
+  const uploadedTemplateAbortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     const unsubscribe = service.subscribe(runId, (updated) => {
-      setRun(updated);
-    });
+      setRun(updated)
+    })
     void service
       .resume(runId)
       .then((restored) => {
-        setRun(restored);
-        setActionError(null);
+        setRun(restored)
+        setActionError(null)
       })
       .catch((cause) => {
-        setActionError(
-          cause instanceof Error ? cause.message : "恢复工作流失败，请稍后重试",
-        );
-      });
-    return () => unsubscribe();
-  }, [runId, service]);
+        setActionError(cause instanceof Error ? cause.message : '恢复工作流失败，请稍后重试')
+      })
+    return () => unsubscribe()
+  }, [runId, service])
 
   useEffect(() => {
     return () => {
-      uploadedTemplateAbortRef.current?.abort();
-      uploadedTemplateAbortRef.current = null;
-    };
-  }, [runId]);
+      uploadedTemplateAbortRef.current?.abort()
+      uploadedTemplateAbortRef.current = null
+    }
+  }, [runId])
 
   // 节点聚焦
   useEffect(() => {
-    if (!controller.surface || !run) return;
+    if (!controller.surface || !run) return
     const focusedStep =
       run.nodes.find((node) => node.id === nodeId || node.type === nodeId) ??
-      run.nodes.find((node) => node.status === "active");
-    if (!focusedStep) return;
+      run.nodes.find((node) => node.status === 'active')
+    if (!focusedStep) return
 
     const node = controller.surface.querySelector(
       `[data-node-id="${focusedStep.id}"]`,
-    ) as HTMLElement | null;
-    if (!node || !controller.viewport) return;
+    ) as HTMLElement | null
+    if (!node || !controller.viewport) return
 
-    const x = parseFloat(node.style.left) || Number(node.dataset.x) || 0;
-    const y = parseFloat(node.style.top) || Number(node.dataset.y) || 0;
-    const nodeWidth = node.offsetWidth || 324;
-    const nodeHeight = node.offsetHeight || 180;
-    const centeredTop = Math.max(
-      72,
-      (controller.viewport.clientHeight - nodeHeight) / 2,
-    );
-    controller.scale = 1;
-    controller.pan.x = Math.round(
-      controller.viewport.clientWidth / 2 - (x + nodeWidth / 2),
-    );
-    controller.pan.y = Math.round(centeredTop - y);
-    controller.applyTransform();
-    controller.renderWires();
-  }, [controller, run, nodeId]);
+    const x = parseFloat(node.style.left) || Number(node.dataset.x) || 0
+    const y = parseFloat(node.style.top) || Number(node.dataset.y) || 0
+    const nodeWidth = node.offsetWidth || 324
+    const nodeHeight = node.offsetHeight || 180
+    const centeredTop = Math.max(72, (controller.viewport.clientHeight - nodeHeight) / 2)
+    controller.scale = 1
+    controller.pan.x = Math.round(controller.viewport.clientWidth / 2 - (x + nodeWidth / 2))
+    controller.pan.y = Math.round(centeredTop - y)
+    controller.applyTransform()
+    controller.renderWires()
+  }, [controller, run, nodeId])
 
   const handleStepAction = useCallback(
     async (stepType: string, action: string, data?: unknown) => {
       try {
-        setActionError(null);
-        if (stepType === "character-setup" && action === "submit") {
-          const input = data as { description: string; file?: File };
+        setActionError(null)
+        const actionNodeId =
+          typeof data === 'object' && data !== null && 'nodeId' in data
+            ? String(data.nodeId)
+            : undefined
+        if (stepType === 'character-setup' && action === 'submit') {
+          const input = data as { description: string; file?: File }
           if (input.file) {
-            uploadedTemplateAbortRef.current?.abort();
-            const abortController = new AbortController();
-            uploadedTemplateAbortRef.current = abortController;
+            uploadedTemplateAbortRef.current?.abort()
+            const abortController = new AbortController()
+            uploadedTemplateAbortRef.current = abortController
             try {
               const uploaded = await service.continueWithUploadedTemplate(
                 runId,
                 input.file,
                 input.description,
                 abortController.signal,
-              );
-              setRun(uploaded);
+              )
+              setRun(uploaded)
             } catch (cause) {
               const isAborted =
                 abortController.signal.aborted ||
-                (cause instanceof Error && cause.name === "AbortError");
-              if (
-                !isAborted &&
-                uploadedTemplateAbortRef.current === abortController
-              ) {
-                console.error("Node action failed:", cause);
-                setActionError(
-                  cause instanceof Error
-                    ? cause.message
-                    : "操作失败，请稍后重试",
-                );
+                (cause instanceof Error && cause.name === 'AbortError')
+              if (!isAborted && uploadedTemplateAbortRef.current === abortController) {
+                console.error('Node action failed:', cause)
+                setActionError(cause instanceof Error ? cause.message : '操作失败，请稍后重试')
               }
             } finally {
               if (uploadedTemplateAbortRef.current === abortController) {
-                uploadedTemplateAbortRef.current = null;
+                uploadedTemplateAbortRef.current = null
               }
             }
-            return;
+            return
           }
           await service.updateCharacterSetup(runId, {
             description: input.description,
             referenceMedia: [],
-          });
-          await service.nextStep(runId);
+          })
+          await service.nextStep(runId)
         }
-        if (stepType === "action-first-frame" && action === "confirm") {
-          await service.confirmFirstFrame(runId);
+        if (stepType === 'action-first-frame' && action === 'confirm') {
+          const selectedImageUrl =
+            typeof data === 'object' && data !== null && 'selectedImageUrl' in data
+              ? String(data.selectedImageUrl)
+              : ''
+          if (!selectedImageUrl) throw new Error('请先选择角色母版候选')
+          await service.confirmCandidate(runId, selectedImageUrl, undefined, actionNodeId)
         }
-        if (stepType === "review" && action === "approve") {
-          const approved = await service.approveReview(runId);
-          setRun(approved);
-          setCompletionMessage(
-            "审核已通过，结果已保留。请选择是否导入 Playtest。",
-          );
+        if (stepType === 'action-generation-method' && action === 'select') {
+          const method =
+            typeof data === 'object' && data !== null && 'method' in data ? data.method : null
+          if (method !== 'video-cropping' && method !== '3d-to-2d') {
+            throw new Error('请选择有效的动作生成路线')
+          }
+          await service.selectActionGenerationMethod(runId, method, actionNodeId)
+        }
+        if (stepType === 'review' && action === 'approve') {
+          const approved = await service.approveReview(runId, actionNodeId)
+          setRun(approved)
+          setCompletionMessage('审核已通过，结果已保留。请选择是否导入 Playtest。')
         }
       } catch (cause) {
-        console.error("Node action failed:", cause);
-        setActionError(
-          cause instanceof Error ? cause.message : "操作失败，请稍后重试",
-        );
+        console.error('Node action failed:', cause)
+        setActionError(cause instanceof Error ? cause.message : '操作失败，请稍后重试')
       }
     },
     [service, runId],
-  );
+  )
 
   if (!run) {
     return (
@@ -334,12 +314,10 @@ function WorkflowRunView({
           <section className="error-view">
             <p className="overline">WORKFLOW EDITOR / RECOVERY</p>
             <h1>无法恢复这次创作</h1>
-            <p role="alert">
-              {actionError || `没有找到运行记录 ${runId}`}
-            </p>
+            <p role="alert">{actionError || `没有找到运行记录 ${runId}`}</p>
             <button
               type="button"
-              onClick={() => navigate("/workflow-editor")}
+              onClick={() => navigate('/workflow-editor')}
               className="button button--primary"
             >
               返回项目配置
@@ -347,20 +325,15 @@ function WorkflowRunView({
           </section>
         </div>
       </div>
-    );
+    )
   }
 
-  const playtestPath = buildCompletedPlaytestPath(run);
-  const showCompletionActions =
-    canPublishToPlaytest(run) && playtestPath !== null;
+  const playtestPath = buildCompletedPlaytestPath(run)
+  const showCompletionActions = canPublishToPlaytest(run) && playtestPath !== null
 
   return (
     <div className="workflow-app">
-      <StudioBar
-        runId={run.id}
-        status={run.status}
-        onReset={() => navigate("/workflow-editor")}
-      />
+      <StudioBar runId={run.id} status={run.status} onReset={() => navigate('/workflow-editor')} />
       <div className="production-canvas-workspace">
         <WorkflowCanvas
           controller={controller}
@@ -372,9 +345,7 @@ function WorkflowRunView({
           <WorkflowCompletionActions
             message={completionMessage}
             onOpenPlaytest={() => navigate(playtestPath)}
-            onStay={() =>
-              setCompletionMessage("结果已保留，你可以稍后再导入 Playtest。")
-            }
+            onStay={() => setCompletionMessage('结果已保留，你可以稍后再导入 Playtest。')}
           />
         ) : null}
         {actionError ? (
@@ -384,23 +355,33 @@ function WorkflowRunView({
         ) : null}
       </div>
     </div>
-  );
+  )
 }
 
 function buildCompletedPlaytestPath(run: WorkflowRun): string | null {
-  if (!run.characterId || !run.outfitId) return null;
+  if (!run.characterId || !run.outfitId) return null
   const actionStep = run.nodes.findLast(
-    (item) => item.type === "action-full-frame",
-  );
+    (item) =>
+      item.type === 'action-full-frame' &&
+      !item.deletedAt &&
+      Boolean(item.output) &&
+      run.nodes.some(
+        (review) =>
+          review.type === 'review' &&
+          !review.deletedAt &&
+          review.status === 'passed' &&
+          review.dependsOnNodeIds.includes(item.id),
+      ),
+  )
   const actionId =
-    actionStep?.type === "action-full-frame" && actionStep.output
+    actionStep?.type === 'action-full-frame' && actionStep.output
       ? buildPublishedActionId(run.characterId, run.id, actionStep.id)
-      : undefined;
+      : undefined
   return buildPlaytestPath({
     characterId: run.characterId,
     outfitId: run.outfitId,
     actionId,
-  });
+  })
 }
 
 function WorkflowCompletionActions({
@@ -408,9 +389,9 @@ function WorkflowCompletionActions({
   onOpenPlaytest,
   onStay,
 }: {
-  message: string | null;
-  onOpenPlaytest(): void;
-  onStay(): void;
+  message: string | null
+  onOpenPlaytest(): void
+  onStay(): void
 }) {
   return (
     <aside className="workflow-completion" aria-label="工作流完成选项">
@@ -421,28 +402,17 @@ function WorkflowCompletionActions({
           <h2>创作结果已准备好</h2>
         </div>
       </header>
-      <p>
-        结果不会自动跳转。你可以现在导入 Playtest 检查动画，也可以先留在工作流。
-      </p>
+      <p>结果不会自动跳转。你可以现在导入 Playtest 检查动画，也可以先留在工作流。</p>
       <div className="workflow-completion__actions">
-        <button
-          type="button"
-          className="workflow-completion__primary"
-          onClick={onOpenPlaytest}
-        >
+        <button type="button" className="workflow-completion__primary" onClick={onOpenPlaytest}>
           导入 Playtest
         </button>
-        <button
-          type="button"
-          className="workflow-completion__secondary"
-          onClick={onStay}
-        >
+        <button type="button" className="workflow-completion__secondary" onClick={onStay}>
           留在工作流
         </button>
       </div>
       <p className="workflow-completion__export-note">
-        需要下载 PNG、Sprite Sheet 或动画 JSON 时，请在 Playtest
-        完成质量检查后打开“资产导出”。
+        需要下载 PNG、Sprite Sheet 或动画 JSON 时，请在 Playtest 完成质量检查后打开“资产导出”。
       </p>
       {message ? (
         <p className="workflow-completion__message" role="status">
@@ -450,7 +420,7 @@ function WorkflowCompletionActions({
         </p>
       ) : null}
     </aside>
-  );
+  )
 }
 
 /** 共享 Studio Bar */
@@ -459,9 +429,9 @@ function StudioBar({
   status,
   onReset,
 }: {
-  runId?: string;
-  status?: string;
-  onReset?: () => void;
+  runId?: string
+  status?: string
+  onReset?: () => void
 }) {
   return (
     <header className="studio-bar">
@@ -471,15 +441,15 @@ function StudioBar({
           <b>Windup</b>
         </a>
         <span className="studio-bar__project">
-          <b>{runId ? `运行 ${runId.slice(0, 8)}` : "节点工作流"}</b>
+          <b>{runId ? `运行 ${runId.slice(0, 8)}` : '节点工作流'}</b>
           <small>
-            {status === "active"
-              ? "进行中"
-              : status === "completed"
-                ? "已完成"
-                : status === "failed"
-                  ? "失败"
-                  : "选择素材来源并逐步确认"}
+            {status === 'active'
+              ? '进行中'
+              : status === 'completed'
+                ? '已完成'
+                : status === 'failed'
+                  ? '失败'
+                  : '选择素材来源并逐步确认'}
           </small>
         </span>
       </div>
@@ -500,5 +470,5 @@ function StudioBar({
         </div>
       </div>
     </header>
-  );
+  )
 }

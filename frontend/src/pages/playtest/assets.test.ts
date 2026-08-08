@@ -22,7 +22,6 @@ const playableCharacter: Character = {
           id: 'idle',
           outfitId: 'outfit-1',
           name: 'Idle',
-          kind: 'preset',
           type: 'idle',
           fps: 8,
           keyFrameIndex: 0,

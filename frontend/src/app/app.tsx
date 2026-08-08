@@ -33,6 +33,7 @@ import { WorkflowEditorPage } from '@/pages/workflow-editor'
 import { AppShell } from './layout'
 import { createAutoPrepareProject, createQuickStartService } from '@/pages/quick-start/service'
 import { createWorkflowEditorService } from '@/pages/workflow-editor/service'
+import { request } from '@/shared/api'
 
 const PlaytestDemoPage = import.meta.env.DEV
   ? lazy(() =>
@@ -65,7 +66,11 @@ export function AppRoutes({ userApis }: { userApis?: UserApis } = {}) {
     const inspectionApis = createPlaytestInspectionApis()
     const generationApis = createGenerationApis()
     const mediaApis = createMediaApis()
-    const store = createWorkflowRunStore()
+    const store = createWorkflowRunStore({
+      api: {
+        fetch: (input, init) => request(typeof input === 'string' ? input : input.url, init),
+      },
+    })
     const controller = createWorkflowController({ store, generationApis, characterApis })
     const quickStart = createQuickStartService({
       controller,
@@ -102,6 +107,10 @@ export function AppRoutes({ userApis }: { userApis?: UserApis } = {}) {
       projects: projectApis,
       characters: characterApis,
       inspections: inspectionApis,
+      deleteAsset: (characterId: string, outfitId: string) =>
+        controller.deleteOutfitAsset(characterId, outfitId),
+      deleteAction: (characterId: string, outfitId: string, actionId: string) =>
+        controller.deletePublishedAction(characterId, outfitId, actionId),
     }
     return {
       userApis: sharedUserApis,

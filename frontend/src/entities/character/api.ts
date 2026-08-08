@@ -78,7 +78,6 @@ function toAction(raw: BackendAction, outfitId: string): Action {
     name: raw.name,
     expectedFrameCount: raw.frame_count,
     loop: raw.loop,
-    kind: 'custom', // 后端不区分 preset/custom
     type: toActionType(raw.type),
     fps: raw.fps,
     keyFrameIndex: null, // 后端不提供关键帧索引

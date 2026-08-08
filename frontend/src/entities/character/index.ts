@@ -2,8 +2,6 @@
  * 动作「如何被定义」的来源维度：preset 复用预设定义，custom 由用户自定义。
  * 它与动作做什么的 ActionType 相互独立，例如 custom + walk 和 preset + custom 都是合法组合。
  */
-export type ActionKind = 'preset' | 'custom'
-
 /**
  * 动作「做什么」的业务语义维度；custom 表示不属于当前内置语义枚举。
  * 它不表示定义来源：custom 来源仍可描述 walk，preset 来源也可承载 custom 业务语义。
@@ -69,8 +67,7 @@ export interface Action {
   /** 是否在播放到末帧后从首帧继续；整树更新时必须原样保存。 */
   loop?: boolean
   /** 定义来源方式；与 type 正交，不用于推断动作业务语义。 */
-  kind: ActionKind
-  /** 动作业务语义；与 kind 的 preset/custom 来源维度相互独立。 */
+  /** 动作业务语义；后端不额外区分 preset/custom 来源。 */
   type: ActionType
   /**
    * 每秒播放帧数。仅当某帧 durationMs 为 null 时用于等时长回退；

@@ -14,6 +14,10 @@ export interface PlaytestPageApis {
     Partial<Pick<CharacterApis, 'update' | 'remove'>>
   projects?: Pick<ProjectApis, 'get' | 'list'>
   inspections?: Pick<PlaytestInspectionApis, 'get' | 'save'>
+  /** 删除必须经过工作流命令，避免 Character 已删但 WorkflowRun 仍显示可发布。 */
+  deleteAsset?(characterId: string, outfitId: string): Promise<Character | null>
+  /** 删除 Action 时保留其 WorkflowRun 分支，并标记为已删除。 */
+  deleteAction?(characterId: string, outfitId: string, actionId: string): Promise<Character>
 }
 
 export interface PlaytestPageProps {
@@ -175,18 +179,9 @@ export function PlaytestPage({ apis }: PlaytestPageProps) {
   }
 
   async function deleteAsset(asset: PlaytestAssetOption) {
-    if (!apis?.characters.remove || !apis.characters.update) {
-      throw new Error('角色删除接口尚未配置')
-    }
-    const source = await apis.characters.get(asset.characterId)
-    const saved =
-      source.outfits.length === 1
-        ? (await apis.characters.remove(source.id), null)
-        : await apis.characters.update({
-            ...source,
-            outfits: source.outfits.filter((outfit) => outfit.id !== asset.outfitId),
-          })
-    const nextCharacters = replaceCharacter(saved, source.id)
+    if (!apis?.deleteAsset) throw new Error('资产删除命令尚未配置')
+    const saved = await apis.deleteAsset(asset.characterId, asset.outfitId)
+    const nextCharacters = replaceCharacter(saved, asset.characterId)
     const nextAsset = buildAssetOptions(nextCharacters)[0]
     navigate(
       nextAsset
@@ -216,17 +211,10 @@ export function PlaytestPage({ apis }: PlaytestPageProps) {
   }
 
   async function deleteAction(actionId: string) {
-    if (!apis?.characters.update) throw new Error('角色更新接口尚未配置')
-    const source = await apis.characters.get(data.character!.id)
-    const saved = await apis.characters.update({
-      ...source,
-      outfits: source.outfits.map((outfit) =>
-        outfit.id === outfitId
-          ? { ...outfit, actions: outfit.actions.filter((action) => action.id !== actionId) }
-          : outfit,
-      ),
-    })
-    const nextCharacters = replaceCharacter(saved, source.id)
+    if (!apis?.deleteAction) throw new Error('动作删除命令尚未配置')
+    const characterId = data.character!.id
+    const saved = await apis.deleteAction(characterId, outfitId ?? '', actionId)
+    const nextCharacters = replaceCharacter(saved, characterId)
     const savedPlayable = toPlayableCharacter(saved)
     const remainingOutfit = savedPlayable?.outfits.find((outfit) => outfit.id === outfitId)
     const nextAction = remainingOutfit?.actions[0]

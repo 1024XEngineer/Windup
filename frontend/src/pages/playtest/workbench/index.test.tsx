@@ -1,88 +1,78 @@
 /** @vitest-environment jsdom */
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { Character } from "@/entities/character";
-import type { PlaytestInspectionApis } from "@/entities/playtest-inspection";
+import type { Character } from '@/entities/character'
+import type { PlaytestInspectionApis } from '@/entities/playtest-inspection'
 
-import type { FrameGeometryResult } from "./analysis/sequence-evidence";
-import { PlaytestWorkbench } from "./index";
+import type { FrameGeometryResult } from './analysis/sequence-evidence'
+import { PlaytestWorkbench } from './index'
 
-const readImageGeometry = vi.hoisted(() => vi.fn());
-vi.mock("./analysis/image-geometry", () => ({ readImageGeometry }));
+const readImageGeometry = vi.hoisted(() => vi.fn())
+vi.mock('./analysis/image-geometry', () => ({ readImageGeometry }))
 
 const character: Character = {
-  id: "character-1",
-  projectId: "project-1",
-  createdAt: "2026-07-30T00:00:00.000Z",
-  updatedAt: "2026-07-30T00:00:00.000Z",
+  id: 'character-1',
+  projectId: 'project-1',
+  createdAt: '2026-07-30T00:00:00.000Z',
+  updatedAt: '2026-07-30T00:00:00.000Z',
   outfits: [
     {
-      id: "outfit-1",
-      characterId: "character-1",
-      name: "Explorer",
+      id: 'outfit-1',
+      characterId: 'character-1',
+      name: 'Explorer',
       candidateCharacterTemplates: [],
-      characterTemplateUrl: "https://cdn.example.test/aster.png",
-      baseFrames: [{ imageUrl: "https://cdn.example.test/base.png" }],
+      characterTemplateUrl: 'https://cdn.example.test/aster.png',
+      baseFrames: [{ imageUrl: 'https://cdn.example.test/base.png' }],
       actions: [
         {
-          id: "walk",
-          outfitId: "outfit-1",
-          name: "Walk",
+          id: 'walk',
+          outfitId: 'outfit-1',
+          name: 'Walk',
           expectedFrameCount: 2,
-          kind: "preset",
-          type: "walk",
+          type: 'walk',
           fps: 8,
           keyFrameIndex: 0,
           frames: [
             {
-              imageUrl: "https://cdn.example.test/walk-01.png",
+              imageUrl: 'https://cdn.example.test/walk-01.png',
               durationMs: 125,
               rootMotion: { dx: 2, dy: 0 },
             },
             {
-              imageUrl: "https://cdn.example.test/walk-02.png",
+              imageUrl: 'https://cdn.example.test/walk-02.png',
               durationMs: 125,
               rootMotion: { dx: 4, dy: 0 },
             },
           ],
         },
         {
-          id: "jump",
-          outfitId: "outfit-1",
-          name: "Jump",
+          id: 'jump',
+          outfitId: 'outfit-1',
+          name: 'Jump',
           expectedFrameCount: 1,
-          kind: "preset",
-          type: "jump",
+          type: 'jump',
           fps: 8,
           keyFrameIndex: 0,
           frames: [
             {
-              imageUrl: "https://cdn.example.test/jump-01.png",
+              imageUrl: 'https://cdn.example.test/jump-01.png',
               durationMs: 125,
               rootMotion: { dx: 0, dy: 3 },
             },
           ],
         },
         {
-          id: "crouch",
-          outfitId: "outfit-1",
-          name: "Crouch",
+          id: 'crouch',
+          outfitId: 'outfit-1',
+          name: 'Crouch',
           expectedFrameCount: 1,
-          kind: "custom",
-          type: "custom",
+          type: 'custom',
           fps: 8,
           keyFrameIndex: 0,
           frames: [
             {
-              imageUrl: "https://cdn.example.test/crouch-01.png",
+              imageUrl: 'https://cdn.example.test/crouch-01.png',
               durationMs: 125,
               rootMotion: null,
             },
@@ -91,11 +81,11 @@ const character: Character = {
       ],
     },
   ],
-};
+}
 
 function measuredGeometry(imageUrl: string): FrameGeometryResult {
   return {
-    status: "ready",
+    status: 'ready',
     geometry: {
       width: 256,
       height: 256,
@@ -107,231 +97,195 @@ function measuredGeometry(imageUrl: string): FrameGeometryResult {
         width: 96,
         height: 207,
       },
-      centroid: { x: imageUrl.includes("02") ? 129 : 128, y: 130 },
+      centroid: { x: imageUrl.includes('02') ? 129 : 128, y: 130 },
       footY: 236,
       subjectHeight: 207,
       opaquePixels: 13_000,
       coverageRatio: 0.2,
     },
-  };
+  }
 }
 
 beforeEach(() => {
-  readImageGeometry.mockImplementation(async (imageUrl: string) =>
-    measuredGeometry(imageUrl),
-  );
-});
+  readImageGeometry.mockImplementation(async (imageUrl: string) => measuredGeometry(imageUrl))
+})
 
 afterEach(() => {
-  cleanup();
-  vi.clearAllMocks();
-});
+  cleanup()
+  vi.clearAllMocks()
+})
 
-describe("PlaytestWorkbench on the PR #70 character contract", () => {
-  it("renders confirmed asset actions through one synthetic default direction", async () => {
-    render(<PlaytestWorkbench character={character} outfitId="outfit-1" />);
+describe('PlaytestWorkbench on the PR #70 character contract', () => {
+  it('renders confirmed asset actions through one synthetic default direction', async () => {
+    render(<PlaytestWorkbench character={character} outfitId="outfit-1" />)
 
-    expect(
-      screen.getByRole("heading", { name: "character-1 · Explorer" }),
-    ).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Walk/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Jump/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Crouch/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "default" })).toBeTruthy();
-    expect(screen.queryByText("只读预览，不写入角色、动作或帧")).toBeNull();
-    await waitFor(() => expect(readImageGeometry).toHaveBeenCalled());
-  });
+    expect(screen.getByRole('heading', { name: 'character-1 · Explorer' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Walk/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Jump/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Crouch/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'default' })).toBeTruthy()
+    expect(screen.queryByText('只读预览，不写入角色、动作或帧')).toBeNull()
+    await waitFor(() => expect(readImageGeometry).toHaveBeenCalled())
+  })
 
-  it("keeps playback controls and the shared current frame in sync", () => {
-    render(<PlaytestWorkbench character={character} outfitId="outfit-1" />);
+  it('keeps playback controls and the shared current frame in sync', () => {
+    render(<PlaytestWorkbench character={character} outfitId="outfit-1" />)
 
-    expect(screen.getByText("01 / 02")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "下一帧" }));
-    expect(screen.getByText("02 / 02")).toBeTruthy();
+    expect(screen.getByText('01 / 02')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '下一帧' }))
+    expect(screen.getByText('02 / 02')).toBeTruthy()
 
-    const timeline = screen.getByRole("region", { name: "逐帧时间线" });
-    fireEvent.click(within(timeline).getByRole("button", { name: "第 1 帧" }));
-    expect(screen.getByText("01 / 02")).toBeTruthy();
-  });
+    const timeline = screen.getByRole('region', { name: '逐帧时间线' })
+    fireEvent.click(within(timeline).getByRole('button', { name: '第 1 帧' }))
+    expect(screen.getByText('01 / 02')).toBeTruthy()
+  })
 
-  it("maps A/D to walk facing, W to jump, and custom Crouch to S", () => {
-    render(<PlaytestWorkbench character={character} outfitId="outfit-1" />);
+  it('maps A/D to walk facing, W to jump, and custom Crouch to S', () => {
+    render(<PlaytestWorkbench character={character} outfitId="outfit-1" />)
 
-    fireEvent.keyDown(window, { key: "d" });
-    expect(
-      screen.getByRole("button", { name: /Walk/ }).getAttribute("aria-pressed"),
-    ).toBe("true");
-    fireEvent.keyUp(window, { key: "d" });
+    fireEvent.keyDown(window, { key: 'd' })
+    expect(screen.getByRole('button', { name: /Walk/ }).getAttribute('aria-pressed')).toBe('true')
+    fireEvent.keyUp(window, { key: 'd' })
 
-    fireEvent.keyDown(window, { key: "w" });
-    expect(
-      screen.getByRole("button", { name: /Jump/ }).getAttribute("aria-pressed"),
-    ).toBe("true");
+    fireEvent.keyDown(window, { key: 'w' })
+    expect(screen.getByRole('button', { name: /Jump/ }).getAttribute('aria-pressed')).toBe('true')
 
-    fireEvent.keyDown(window, { key: "s" });
-    expect(
-      screen
-        .getByRole("button", { name: /Crouch/ })
-        .getAttribute("aria-pressed"),
-    ).toBe("true");
-  });
+    fireEvent.keyDown(window, { key: 's' })
+    expect(screen.getByRole('button', { name: /Crouch/ }).getAttribute('aria-pressed')).toBe('true')
+  })
 
-  it("loads and saves the current action inspection through the Playtest API", async () => {
-    const inspections: Pick<PlaytestInspectionApis, "get" | "save"> = {
+  it('loads and saves the current action inspection through the Playtest API', async () => {
+    const inspections: Pick<PlaytestInspectionApis, 'get' | 'save'> = {
       get: vi.fn().mockResolvedValue(null),
       save: vi.fn().mockImplementation(async (input) => ({
-        id: "inspection-1",
+        id: 'inspection-1',
         ...input,
-        createdAt: "2026-08-03T00:00:00.000Z",
-        updatedAt: "2026-08-03T00:00:00.000Z",
+        createdAt: '2026-08-03T00:00:00.000Z',
+        updatedAt: '2026-08-03T00:00:00.000Z',
       })),
-    };
+    }
     render(
-      <PlaytestWorkbench
-        character={character}
-        outfitId="outfit-1"
-        inspectionApis={inspections}
-      />,
-    );
+      <PlaytestWorkbench character={character} outfitId="outfit-1" inspectionApis={inspections} />,
+    )
 
     await waitFor(() =>
       expect(inspections.get).toHaveBeenCalledWith({
-        characterId: "character-1",
-        outfitId: "outfit-1",
-        actionId: "walk",
+        characterId: 'character-1',
+        outfitId: 'outfit-1',
+        actionId: 'walk',
       }),
-    );
+    )
 
-    fireEvent.click(screen.getByRole("button", { name: "打开检查工具" }));
-    fireEvent.click(screen.getByRole("button", { name: "发现问题" }));
+    fireEvent.click(screen.getByRole('button', { name: '打开检查工具' }))
+    fireEvent.click(screen.getByRole('button', { name: '发现问题' }))
     await waitFor(() =>
       expect(inspections.save).toHaveBeenCalledWith({
-        characterId: "character-1",
-        outfitId: "outfit-1",
-        actionId: "walk",
-        status: "issues_found",
+        characterId: 'character-1',
+        outfitId: 'outfit-1',
+        actionId: 'walk',
+        status: 'issues_found',
       }),
-    );
-    const acceptance = screen.getByRole("region", { name: "核验状态" });
-    expect(within(acceptance).getAllByText("发现问题")).toHaveLength(2);
-    expect(
-      within(acceptance).getByText("已保存到 Playtest 核验记录"),
-    ).toBeTruthy();
-  });
+    )
+    const acceptance = screen.getByRole('region', { name: '核验状态' })
+    expect(within(acceptance).getAllByText('发现问题')).toHaveLength(2)
+    expect(within(acceptance).getByText('已保存到 Playtest 核验记录')).toBeTruthy()
+  })
 
-  it("does not allow a failed image to be recorded as passed", async () => {
-    const inspections: Pick<PlaytestInspectionApis, "get" | "save"> = {
+  it('does not allow a failed image to be recorded as passed', async () => {
+    const inspections: Pick<PlaytestInspectionApis, 'get' | 'save'> = {
       get: vi.fn().mockResolvedValue(null),
       save: vi.fn(),
-    };
+    }
     render(
-      <PlaytestWorkbench
-        character={character}
-        outfitId="outfit-1"
-        inspectionApis={inspections}
-      />,
-    );
+      <PlaytestWorkbench character={character} outfitId="outfit-1" inspectionApis={inspections} />,
+    )
 
-    fireEvent.error(screen.getByRole("img", { name: "角色动画预览" }));
-    fireEvent.click(screen.getByRole("button", { name: "打开检查工具" }));
+    fireEvent.error(screen.getByRole('img', { name: '角色动画预览' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开检查工具' }))
 
     await waitFor(() =>
-      expect(
-        (screen.getByRole("button", { name: "发现问题" }) as HTMLButtonElement)
-          .disabled,
-      ).toBe(false),
-    );
-    expect(
-      (screen.getByRole("button", { name: "核验通过" }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
-  });
+      expect((screen.getByRole('button', { name: '发现问题' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    )
+    expect((screen.getByRole('button', { name: '核验通过' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    )
+  })
 
-  it("checks every action before enabling export and blocks a failed unseen action", async () => {
+  it('checks every action before enabling export and blocks a failed unseen action', async () => {
     readImageGeometry.mockImplementation(async (imageUrl: string) =>
-      imageUrl.includes("jump")
-        ? { status: "unavailable", reason: "图片加载失败" }
+      imageUrl.includes('jump')
+        ? { status: 'unavailable', reason: '图片加载失败' }
         : measuredGeometry(imageUrl),
-    );
-    render(<PlaytestWorkbench character={character} outfitId="outfit-1" />);
+    )
+    render(<PlaytestWorkbench character={character} outfitId="outfit-1" />)
 
-    fireEvent.click(screen.getByRole("button", { name: "打开检查工具" }));
-    fireEvent.click(screen.getByRole("tab", { name: "资产导出" }));
+    fireEvent.click(screen.getByRole('button', { name: '打开检查工具' }))
+    fireEvent.click(screen.getByRole('tab', { name: '资产导出' }))
 
     await waitFor(() =>
       expect(
-        readImageGeometry.mock.calls.some(([imageUrl]) =>
-          String(imageUrl).includes("jump-01"),
-        ),
+        readImageGeometry.mock.calls.some(([imageUrl]) => String(imageUrl).includes('jump-01')),
       ).toBe(true),
-    );
+    )
     expect(
       (
-        screen.getByRole("button", {
-          name: "导出游戏资产包",
+        screen.getByRole('button', {
+          name: '导出游戏资产包',
         }) as HTMLButtonElement
       ).disabled,
-    ).toBe(true);
-  });
+    ).toBe(true)
+  })
 
-  it("blocks export when the backend-declared frame count is larger than the received frames", async () => {
+  it('blocks export when the backend-declared frame count is larger than the received frames', async () => {
     const incompleteCharacter: Character = {
       ...character,
       outfits: character.outfits.map((outfit) => ({
         ...outfit,
         actions: outfit.actions.map((action) =>
-          action.id === "walk"
+          action.id === 'walk'
             ? { ...action, expectedFrameCount: action.frames.length + 1 }
             : action,
         ),
       })),
-    };
+    }
+    render(<PlaytestWorkbench character={incompleteCharacter} outfitId="outfit-1" />)
+
+    fireEvent.click(screen.getByRole('button', { name: '打开检查工具' }))
+    fireEvent.click(screen.getByRole('tab', { name: '资产导出' }))
+
+    const exportButton = await screen.findByRole('button', {
+      name: '导出游戏资产包',
+    })
+    expect((exportButton as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('reports a missing outfit instead of falling back to another asset', () => {
+    render(<PlaytestWorkbench character={character} outfitId="missing" />)
+
+    expect(screen.getByText('找不到指定造型，无法构造只读预览。')).toBeTruthy()
+  })
+
+  it('keeps inspect, audit, and export in the same workbench', async () => {
+    render(<PlaytestWorkbench character={character} outfitId="outfit-1" />)
+
+    expect(screen.queryByRole('tab', { name: '帧检查' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '打开检查工具' }))
+    expect(screen.getByRole('tab', { name: '帧检查' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('tab', { name: '问题记录' }))
+    expect(screen.getByRole('tabpanel', { name: '问题记录' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('tab', { name: '资产导出' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '导出游戏资产包' })).toBeTruthy())
+  })
+
+  it('delegates adding an action for the current character', () => {
+    const onAddAction = vi.fn()
     render(
-      <PlaytestWorkbench character={incompleteCharacter} outfitId="outfit-1" />,
-    );
+      <PlaytestWorkbench character={character} outfitId="outfit-1" onAddAction={onAddAction} />,
+    )
 
-    fireEvent.click(screen.getByRole("button", { name: "打开检查工具" }));
-    fireEvent.click(screen.getByRole("tab", { name: "资产导出" }));
-
-    const exportButton = await screen.findByRole("button", {
-      name: "导出游戏资产包",
-    });
-    expect((exportButton as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it("reports a missing outfit instead of falling back to another asset", () => {
-    render(<PlaytestWorkbench character={character} outfitId="missing" />);
-
-    expect(screen.getByText("找不到指定造型，无法构造只读预览。")).toBeTruthy();
-  });
-
-  it("keeps inspect, audit, and export in the same workbench", async () => {
-    render(<PlaytestWorkbench character={character} outfitId="outfit-1" />);
-
-    expect(screen.queryByRole("tab", { name: "帧检查" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "打开检查工具" }));
-    expect(screen.getByRole("tab", { name: "帧检查" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("tab", { name: "问题记录" }));
-    expect(screen.getByRole("tabpanel", { name: "问题记录" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("tab", { name: "资产导出" }));
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "导出游戏资产包" }),
-      ).toBeTruthy(),
-    );
-  });
-
-  it("delegates adding an action for the current character", () => {
-    const onAddAction = vi.fn();
-    render(
-      <PlaytestWorkbench
-        character={character}
-        outfitId="outfit-1"
-        onAddAction={onAddAction}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "添加动作" }));
-    expect(onAddAction).toHaveBeenCalledTimes(1);
-  });
-});
+    fireEvent.click(screen.getByRole('button', { name: '添加动作' }))
+    expect(onAddAction).toHaveBeenCalledTimes(1)
+  })
+})

@@ -1,105 +1,90 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type ChangeEvent,
-  type FormEvent,
-} from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 
 import {
   type CharacterTemplateWorkflowNode,
-  type WorkflowRevision,
   type WorkflowRun,
   type WorkflowNode,
   type WorkflowNodeType,
-} from "@/entities";
-import { buildPlaytestPath, buildPublishedActionId } from "@/features/publish";
-import {
-  unavailableQuickStartService,
-  type QuickStartService,
-} from "./service";
+} from '@/entities'
+import { buildPlaytestPath, buildPublishedActionId } from '@/features/publish'
+import { unavailableQuickStartService, type QuickStartService } from './service'
 
 export type {
   CreateQuickStartServiceOptions,
   PrepareQuickStartProject,
   QuickStartService,
-} from "./service";
+} from './service'
 
 const STEP_LABELS: Record<WorkflowNodeType, string> = {
-  "character-setup": "角色设定",
-  "character-template": "角色图",
-  "action-first-frame": "候选选择",
-  "action-generation": "动作生成",
-  review: "审核",
-};
+  'character-setup': '角色设定',
+  'character-template': '角色图',
+  'action-first-frame': '候选选择',
+  'action-generation-method': '生成路线',
+  'action-full-frame': '动作生成',
+  review: '审核',
+}
 
 const EXAMPLES = [
   {
-    label: "像素守夜人",
-    prompt: "一位提着风灯、披深色斗篷的像素守夜人",
+    label: '像素守夜人',
+    prompt: '一位提着风灯、披深色斗篷的像素守夜人',
   },
   {
-    label: "轻装信使",
-    prompt: "轻装信使，侧视像素风，轮廓清晰，动作轻快",
+    label: '轻装信使',
+    prompt: '轻装信使，侧视像素风，轮廓清晰，动作轻快',
   },
-] as const;
+] as const
 
 export interface QuickStartPageProps {
   /**
    * 页面测试与后续生产组合可以注入同一份服务实例。
    * 默认实现明确不可用，直到真实 Project / Character / Generation 实现到位。
    */
-  service?: QuickStartService;
+  service?: QuickStartService
 }
 
 /** Quick Start 独立完成 AI 入口；它不跳转 Workflow Editor。 */
-export function QuickStartPage({
-  service = unavailableQuickStartService,
-}: QuickStartPageProps) {
-  const { runId } = useParams();
-  const [searchParams] = useSearchParams();
-  const characterId = searchParams.get("characterId");
-  const outfitId = searchParams.get("outfitId");
+export function QuickStartPage({ service = unavailableQuickStartService }: QuickStartPageProps) {
+  const { runId } = useParams()
+  const [searchParams] = useSearchParams()
+  const characterId = searchParams.get('characterId')
+  const outfitId = searchParams.get('outfitId')
 
   return runId ? (
     <QuickStartRun service={service} runId={runId} />
   ) : characterId && outfitId ? (
-    <QuickStartActionInput
-      service={service}
-      target={{ characterId, outfitId }}
-    />
+    <QuickStartActionInput service={service} target={{ characterId, outfitId }} />
   ) : (
     <QuickStartInput service={service} />
-  );
+  )
 }
 
 function QuickStartActionInput({
   service,
   target,
 }: {
-  service: QuickStartService;
-  target: { characterId: string; outfitId: string };
+  service: QuickStartService
+  target: { characterId: string; outfitId: string }
 }) {
-  const navigate = useNavigate();
-  const [description, setDescription] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const navigate = useNavigate()
+  const [description, setDescription] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const prompt = description.trim();
-    if (!prompt || submitting || service.unavailableReason) return;
-    setSubmitting(true);
-    setError(null);
+    event.preventDefault()
+    const prompt = description.trim()
+    if (!prompt || submitting || service.unavailableReason) return
+    setSubmitting(true)
+    setError(null)
     try {
-      const run = await service.startAction(target, prompt);
-      navigate(`/quick-start/${encodeURIComponent(run.id)}`);
+      const run = await service.startAction(target, prompt)
+      navigate(`/quick-start/${encodeURIComponent(run.id)}`)
     } catch (cause) {
-      setError(errorMessage(cause, "创建动作失败，请稍后重试"));
+      setError(errorMessage(cause, '创建动作失败，请稍后重试'))
     } finally {
-      setSubmitting(false);
+      setSubmitting(false)
     }
   }
 
@@ -112,13 +97,10 @@ function QuickStartActionInput({
         ← 返回当前 Playtest
       </Link>
       <div className="mx-auto mt-14 max-w-2xl">
-        <p className="font-mono text-[10px] font-bold text-[#687069]">
-          ADD ACTION
-        </p>
+        <p className="font-mono text-[10px] font-bold text-[#687069]">ADD ACTION</p>
         <h1 className="mt-3 font-serif text-4xl">给当前角色增加动作</h1>
         <p className="mt-3 text-sm text-[#687069]">
-          新动作会追加到角色 {target.characterId}{" "}
-          的当前造型，不会新建角色或覆盖已有动作。
+          新动作会追加到角色 {target.characterId} 的当前造型，不会新建角色或覆盖已有动作。
         </p>
         <form onSubmit={submit} className="mt-8 space-y-4">
           <label className="block text-xs font-semibold text-[#4f5b52]">
@@ -137,59 +119,54 @@ function QuickStartActionInput({
           ) : null}
           <button
             type="submit"
-            disabled={
-              !description.trim() ||
-              submitting ||
-              Boolean(service.unavailableReason)
-            }
+            disabled={!description.trim() || submitting || Boolean(service.unavailableReason)}
             className="min-h-11 rounded-lg bg-[#35583f] px-5 text-sm font-semibold text-white disabled:opacity-50"
           >
-            {submitting ? "正在开始生成…" : "开始生成新动作"}
+            {submitting ? '正在开始生成…' : '开始生成新动作'}
           </button>
         </form>
       </div>
     </section>
-  );
+  )
 }
 
 function QuickStartInput({ service }: { service: QuickStartService }) {
-  const navigate = useNavigate();
-  const [prompt, setPrompt] = useState("");
-  const [templateFile, setTemplateFile] = useState<File | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
-  const submitAbortController = useRef<AbortController | null>(null);
-  const unavailableReason = service.unavailableReason;
+  const navigate = useNavigate()
+  const [prompt, setPrompt] = useState('')
+  const [templateFile, setTemplateFile] = useState<File | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
+  const submitAbortController = useRef<AbortController | null>(null)
+  const unavailableReason = service.unavailableReason
 
   useEffect(
     () => () => {
-      submitAbortController.current?.abort();
+      submitAbortController.current?.abort()
     },
     [],
-  );
+  )
 
   function selectTemplateFile(event: ChangeEvent<HTMLInputElement>) {
-    const selected = event.target.files?.[0] ?? null;
-    setTemplateFile(selected);
-    setError(null);
+    const selected = event.target.files?.[0] ?? null
+    setTemplateFile(selected)
+    setError(null)
   }
 
   function removeTemplateFile() {
-    setTemplateFile(null);
-    if (fileInput.current) fileInput.current.value = "";
+    setTemplateFile(null)
+    if (fileInput.current) fileInput.current.value = ''
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const normalizedPrompt = prompt.trim();
-    if ((!normalizedPrompt && !templateFile) || submitting || unavailableReason)
-      return;
+    event.preventDefault()
+    const normalizedPrompt = prompt.trim()
+    if ((!normalizedPrompt && !templateFile) || submitting || unavailableReason) return
 
-    const abortController = new AbortController();
-    submitAbortController.current = abortController;
-    setSubmitting(true);
-    setError(null);
+    const abortController = new AbortController()
+    submitAbortController.current = abortController
+    setSubmitting(true)
+    setError(null)
     try {
       const run = templateFile
         ? await service.startWithUploadedTemplate(
@@ -197,16 +174,16 @@ function QuickStartInput({ service }: { service: QuickStartService }) {
             normalizedPrompt,
             abortController.signal,
           )
-        : await service.start(normalizedPrompt);
-      navigate(`/quick-start/${encodeURIComponent(run.id)}`);
+        : await service.start(normalizedPrompt)
+      navigate(`/quick-start/${encodeURIComponent(run.id)}`)
     } catch (cause) {
       if (!abortController.signal.aborted) {
-        setError(errorMessage(cause, "创建失败，请稍后重试"));
+        setError(errorMessage(cause, '创建失败，请稍后重试'))
       }
     } finally {
       if (submitAbortController.current === abortController) {
-        submitAbortController.current = null;
-        if (!abortController.signal.aborted) setSubmitting(false);
+        submitAbortController.current = null
+        if (!abortController.signal.aborted) setSubmitting(false)
       }
     }
   }
@@ -238,9 +215,7 @@ function QuickStartInput({ service }: { service: QuickStartService }) {
             onClick={() => setPrompt(EXAMPLES[0].prompt)}
             className="group flex min-h-24 w-full items-center gap-4 rounded-full border border-[#c4cbc5] bg-[#f7f8f4] px-7 text-left shadow-[0_18px_45px_rgba(31,43,35,0.09)] transition hover:-translate-y-0.5 hover:border-[#8fa092] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#35583f] motion-reduce:transform-none"
           >
-            <span className="shrink-0 text-sm font-semibold text-[#747973]">
-              你可能想做：
-            </span>
+            <span className="shrink-0 text-sm font-semibold text-[#747973]">你可能想做：</span>
             <strong className="text-base font-semibold text-[#35583f] sm:text-xl">
               {EXAMPLES[0].prompt}
             </strong>
@@ -251,18 +226,18 @@ function QuickStartInput({ service }: { service: QuickStartService }) {
             aria-hidden="true"
           >
             {Array.from({ length: 49 }, (_, index) => {
-              const row = Math.floor(index / 7);
-              const column = index % 7;
+              const row = Math.floor(index / 7)
+              const column = index % 7
               const active =
                 (row === 1 && column >= 2 && column <= 4) ||
                 (row >= 2 && row <= 4 && column >= 1 && column <= 5) ||
-                (row === 5 && (column === 2 || column === 4));
+                (row === 5 && (column === 2 || column === 4))
               return (
                 <i
                   key={index}
-                  className={`rounded-[2px] ${active ? "bg-[#35583f]" : "bg-[#d9ded8]"}`}
+                  className={`rounded-[2px] ${active ? 'bg-[#35583f]' : 'bg-[#d9ded8]'}`}
                 />
-              );
+              )
             })}
           </div>
         </div>
@@ -295,8 +270,8 @@ function QuickStartInput({ service }: { service: QuickStartService }) {
                 rows={2}
                 placeholder={
                   templateFile
-                    ? "例如：挥手打招呼、提灯前行（可留空生成待机动作）"
-                    : "描述你想生成的角色、身份特征和视觉风格…"
+                    ? '例如：挥手打招呼、提灯前行（可留空生成待机动作）'
+                    : '描述你想生成的角色、身份特征和视觉风格…'
                 }
                 className="min-h-16 w-full resize-none border-0 bg-transparent px-2 py-1 text-[15px] leading-relaxed text-[#1d251f] outline-none placeholder:text-[#7a817b]"
               />
@@ -305,14 +280,12 @@ function QuickStartInput({ service }: { service: QuickStartService }) {
                   文字创建
                 </b>
                 {templateFile
-                  ? "动作描述（可选）：留空生成待机动作"
-                  : "角色图生成后仍需人工选择候选"}
+                  ? '动作描述（可选）：留空生成待机动作'
+                  : '角色图生成后仍需人工选择候选'}
               </span>
               {templateFile ? (
                 <span className="flex flex-wrap items-center gap-2 px-2 text-[11px] text-[#515a53]">
-                  <b className="max-w-full truncate font-medium">
-                    {templateFile.name}
-                  </b>
+                  <b className="max-w-full truncate font-medium">{templateFile.name}</b>
                   <button
                     type="button"
                     onClick={removeTemplateFile}
@@ -338,18 +311,16 @@ function QuickStartInput({ service }: { service: QuickStartService }) {
                 onClick={() => fileInput.current?.click()}
                 className="min-h-9 rounded-xl border border-[#aeb8b0] bg-[#eef1ed] px-4 text-xs font-semibold text-[#515a53] transition hover:border-[#8fa092] hover:text-[#35583f]"
               >
-                {templateFile ? "更换图片" : "上传角色母版"}
+                {templateFile ? '更换图片' : '上传角色母版'}
               </button>
               <button
                 type="submit"
                 disabled={
-                  (!prompt.trim() && !templateFile) ||
-                  submitting ||
-                  Boolean(unavailableReason)
+                  (!prompt.trim() && !templateFile) || submitting || Boolean(unavailableReason)
                 }
                 className="min-h-14 rounded-[1rem] bg-[#35583f] px-5 text-sm font-bold text-[#f3f6f2] transition hover:bg-[#456c51] disabled:cursor-not-allowed disabled:opacity-45"
               >
-                {submitting ? "正在创建…" : "开始生成"}
+                {submitting ? '正在创建…' : '开始生成'}
               </button>
             </div>
           </form>
@@ -370,104 +341,83 @@ function QuickStartInput({ service }: { service: QuickStartService }) {
         </div>
       </div>
     </section>
-  );
+  )
 }
 
-function QuickStartRun({
-  service,
-  runId,
-}: {
-  service: QuickStartService;
-  runId: string;
-}) {
-  const navigate = useNavigate();
-  const [run, setRun] = useState<WorkflowRun | null>(() =>
-    service.getWorkflow(runId),
-  );
-  const [error, setError] = useState<string | null>(null);
-  const [selectedCandidate, setSelectedCandidate] = useState<string | null>(
-    null,
-  );
-  const [actionDescription, setActionDescription] = useState("");
-  const [publishing, setPublishing] = useState(false);
-  const [confirmingCandidate, setConfirmingCandidate] = useState(false);
-  const automaticPublishAttempt = useRef<string | null>(null);
+function QuickStartRun({ service, runId }: { service: QuickStartService; runId: string }) {
+  const navigate = useNavigate()
+  const [run, setRun] = useState<WorkflowRun | null>(() => service.peekWorkflow(runId))
+  const [error, setError] = useState<string | null>(null)
+  const [selectedCandidate, setSelectedCandidate] = useState<string | null>(null)
+  const [actionDescription, setActionDescription] = useState('')
+  const [publishing, setPublishing] = useState(false)
+  const [confirmingCandidate, setConfirmingCandidate] = useState(false)
+  const automaticPublishAttempt = useRef<string | null>(null)
 
   useEffect(() => {
-    let active = true;
+    let active = true
     const unsubscribe = service.subscribe(runId, (updated) => {
       if (active) {
-        setRun(updated);
-        setError(null);
+        setRun(updated)
+        setError(null)
       }
-    });
+    })
     void service
       .resume(runId)
       .then((restored) => {
-        if (!active) return;
-        setRun(restored);
-        setError(restored ? null : service.unavailableReason);
+        if (!active) return
+        setRun(restored)
+        setError(restored ? null : service.unavailableReason)
       })
       .catch((cause) => {
-        if (active) setError(errorMessage(cause, "恢复生成任务失败"));
-      });
+        if (active) setError(errorMessage(cause, '恢复生成任务失败'))
+      })
 
     // 兜底轮询：异步动作生成完成后 store subscription 可能漏掉，每 3s 刷新一次
     const pollTimer = setInterval(() => {
-      if (!active) return;
-      const latest = service.getWorkflow(runId);
-      if (latest) setRun(latest);
-    }, 3000);
+      if (!active) return
+      const latest = service.peekWorkflow(runId)
+      if (latest) setRun(latest)
+    }, 3000)
 
     return () => {
-      active = false;
-      unsubscribe();
-      clearInterval(pollTimer);
-    };
-  }, [runId, service]);
+      active = false
+      unsubscribe()
+      clearInterval(pollTimer)
+    }
+  }, [runId, service])
 
   const publishToPlaytest = useCallback(async () => {
-    if (publishing) return;
-    setPublishing(true);
-    setError(null);
+    if (publishing) return
+    setPublishing(true)
+    setError(null)
     try {
-      const approved = await service.approveReview(runId);
-      setRun(approved);
+      const approved = await service.approveReview(runId)
+      setRun(approved)
       // 内存 Map / 持久化引用缺失时（旧运行记录），从后端按项目反查。
-      const info =
-        service.getCharacterInfo(runId) ??
-        (await service.resolveCharacterInfo(runId));
-      if (!info) throw new Error("动作已生成，但没有找到对应的角色资产");
-      const approvedAction = latestActionStep(approved);
+      const info = service.getCharacterInfo(runId) ?? (await service.resolveCharacterInfo(runId))
+      if (!info) throw new Error('动作已生成，但没有找到对应的角色资产')
+      const approvedAction = latestActionStep(approved)
       const actionId =
-        approvedAction?.type === "action-generation" && approvedAction.output
-          ? buildPublishedActionId(
-              info.characterId,
-              approved.id,
-              approvedAction.id,
-            )
-          : undefined;
-      navigate(buildPlaytestPath({ ...info, actionId }));
+        approvedAction?.type === 'action-full-frame' && approvedAction.output
+          ? buildPublishedActionId(info.characterId, approved.id, approvedAction.id)
+          : undefined
+      navigate(buildPlaytestPath({ ...info, actionId }))
     } catch (cause) {
-      setError(errorMessage(cause, "导入 Playtest 失败"));
+      setError(errorMessage(cause, '导入 Playtest 失败'))
     } finally {
-      setPublishing(false);
+      setPublishing(false)
     }
-  }, [navigate, publishing, runId, service]);
+  }, [navigate, publishing, runId, service])
 
   useEffect(() => {
-    const publishKey = run ? automaticPublishKey(run) : null;
-    if (
-      publishKey === null ||
-      publishing ||
-      automaticPublishAttempt.current === publishKey
-    )
-      return;
+    const publishKey = run ? automaticPublishKey(run) : null
+    if (publishKey === null || publishing || automaticPublishAttempt.current === publishKey) return
 
     // 每个版本只自动尝试一次；失败后由页面保留的重试按钮交给用户明确触发。
-    automaticPublishAttempt.current = publishKey;
-    void publishToPlaytest();
-  }, [publishToPlaytest, publishing, run]);
+    automaticPublishAttempt.current = publishKey
+    void publishToPlaytest()
+  }, [publishToPlaytest, publishing, run])
 
   if (!run) {
     return (
@@ -476,84 +426,71 @@ function QuickStartRun({
           QUICK START / RECOVERY
         </p>
         <h1 className="mt-4 font-serif text-4xl">无法恢复这次创作</h1>
-        <p
-          role="alert"
-          className="mt-4 max-w-xl text-sm leading-7 text-[#687069]"
-        >
+        <p role="alert" className="mt-4 max-w-xl text-sm leading-7 text-[#687069]">
           {error || `没有找到运行记录 ${runId}`}
         </p>
         <button
           type="button"
-          onClick={() => navigate("/quick-start")}
+          onClick={() => navigate('/quick-start')}
           className="mt-8 rounded-xl bg-[#35583f] px-5 py-3 text-sm font-semibold text-white"
         >
           返回快速开始
         </button>
       </section>
-    );
+    )
   }
 
-  const revision = currentRevision(run);
-  const status = describeRun(run, revision);
+  const revision = run
+  const status = describeRun(run, revision)
   const templateNode = revision.nodes.find(
-    (n): n is CharacterTemplateWorkflowNode =>
-      n.type === "character-template",
-  );
-  const candidates = templateNode?.output?.imageUrls ?? [];
-  const passedCount = revision.nodes.filter(
-    (node) => node.status === "passed",
-  ).length;
+    (n): n is CharacterTemplateWorkflowNode => n.type === 'character-template',
+  )
+  const candidates = templateNode?.output?.imageUrls ?? []
+  const passedCount = revision.nodes.filter((node) => node.status === 'passed').length
 
-  const actionStep = latestActionStep(revision);
+  const actionStep = latestActionStep(revision)
   const actionFrames =
-    actionStep?.type === "action-generation" && actionStep.status === "passed"
+    actionStep?.type === 'action-full-frame' && actionStep.status === 'passed'
       ? (actionStep.output?.frames ?? [])
-      : [];
-  const reviewStep = actionStep
-    ? pairedReviewStep(revision, actionStep.id)
-    : null;
+      : []
+  const reviewStep = actionStep ? pairedReviewStep(revision, actionStep.id) : null
   const canPublish =
-    actionFrames.length > 0 &&
-    (reviewStep?.status === "active" || reviewStep?.status === "passed");
-  const isActionActive = actionStep?.status === "active";
-  const isActionFailed = actionStep?.status === "failed";
+    actionFrames.length > 0 && (reviewStep?.status === 'active' || reviewStep?.status === 'passed')
+  const isActionActive = actionStep?.status === 'active'
+  const isActionFailed = actionStep?.status === 'failed'
 
   async function interrupt() {
     try {
-      const interrupted = await service.interrupt(runId);
-      if (interrupted) setRun(interrupted);
+      const interrupted = await service.interrupt(runId)
+      if (interrupted) setRun(interrupted)
     } catch (cause) {
-      setError(errorMessage(cause, "中断自动制作失败"));
+      setError(errorMessage(cause, '中断自动制作失败'))
     }
   }
 
   async function confirmSelection() {
-    if (!selectedCandidate || confirmingCandidate) return;
-    setConfirmingCandidate(true);
-    setError(null);
+    if (!selectedCandidate || confirmingCandidate) return
+    setConfirmingCandidate(true)
+    setError(null)
     try {
-      const updated = await service.confirmCandidate(
-        runId,
-        selectedCandidate,
-        actionDescription,
-      );
-      setRun(updated);
-      setSelectedCandidate(null);
-      setActionDescription("");
+      const updated = await service.confirmCandidate(runId, selectedCandidate, actionDescription)
+      setRun(updated)
+      setSelectedCandidate(null)
+      setActionDescription('')
     } catch (cause) {
-      setError(errorMessage(cause, "确认选择失败"));
+      setError(errorMessage(cause, '确认选择失败'))
     } finally {
-      setConfirmingCandidate(false);
+      setConfirmingCandidate(false)
     }
   }
 
   async function regenerate() {
-    if (!run?.prompt) return;
+    if (!run?.prompt) return
     try {
-      const newRun = await service.start(run.prompt);
-      navigate(`/quick-start/${encodeURIComponent(newRun.id)}`);
+      const newRun = await service.start(run.prompt)
+      navigate(`/quick-start/${encodeURIComponent(newRun.id)}`)
     } catch (cause) {
-      setError(errorMessage(cause, "重新生成失败"));
+      setError(errorMessage(cause, '重新生成失败'))
     }
   }
 
@@ -567,7 +504,7 @@ function QuickStartRun({
               QUICK START / RUN {run.id}
             </p>
             <h1 className="mt-2 font-serif text-3xl tracking-[-0.03em] sm:text-4xl">
-              {run.prompt || "未命名角色创作"}
+              {run.prompt || '未命名角色创作'}
             </h1>
           </div>
           <div
@@ -576,9 +513,7 @@ function QuickStartRun({
           >
             <i
               className={`h-2.5 w-2.5 rounded-full ${
-                run.status === "active"
-                  ? "animate-pulse bg-[#4f7b5b]"
-                  : "bg-[#8c938d]"
+                run.status === 'active' ? 'animate-pulse bg-[#4f7b5b]' : 'bg-[#8c938d]'
               } motion-reduce:animate-none`}
               aria-hidden="true"
             />
@@ -620,9 +555,7 @@ function QuickStartRun({
               <div className="grid place-items-center gap-5 text-center">
                 <b className="text-base text-[#8b332a]">动作生成失败</b>
                 <small className="max-w-md leading-6 text-[#687069]">
-                  {typeof actionStep?.error === "string"
-                    ? actionStep.error
-                    : "动作生成失败"}
+                  {typeof actionStep?.error === 'string' ? actionStep.error : '动作生成失败'}
                 </small>
               </div>
             ) : candidates.length ? (
@@ -635,8 +568,8 @@ function QuickStartRun({
                       onClick={() => setSelectedCandidate(candidateUrl)}
                       className={`overflow-hidden rounded-xl border-2 p-2 text-left transition ${
                         selectedCandidate === candidateUrl
-                          ? "border-[#35583f] bg-[#d5e5d8]"
-                          : "border-[#c7cec8] bg-[#e7ebe6] hover:border-[#8fa092]"
+                          ? 'border-[#35583f] bg-[#d5e5d8]'
+                          : 'border-[#c7cec8] bg-[#e7ebe6] hover:border-[#8fa092]'
                       }`}
                     >
                       <img
@@ -645,25 +578,20 @@ function QuickStartRun({
                         className="aspect-square w-full object-contain [image-rendering:pixelated]"
                       />
                       <p className="mt-2 font-mono text-[9px] tracking-[0.1em] text-[#687069]">
-                        CANDIDATE {String(index + 1).padStart(2, "0")}
+                        CANDIDATE {String(index + 1).padStart(2, '0')}
                       </p>
                     </button>
                   ))}
                 </div>
                 <div className="mx-auto flex w-full max-w-xl flex-col gap-3">
-                  <label
-                    className="grid gap-1.5"
-                    htmlFor="quick-start-action-description"
-                  >
+                  <label className="grid gap-1.5" htmlFor="quick-start-action-description">
                     <span className="text-[11px] font-semibold text-[#515a53]">
                       动作描述（可选，留空生成待机动作）
                     </span>
                     <input
                       id="quick-start-action-description"
                       value={actionDescription}
-                      onChange={(event) =>
-                        setActionDescription(event.target.value)
-                      }
+                      onChange={(event) => setActionDescription(event.target.value)}
                       placeholder="例如：在画板上画画、挥舞灯笼、扫地…"
                       className="rounded-xl border border-[#c7cec8] bg-white px-4 py-2.5 text-sm text-[#1d251f] outline-none placeholder:text-[#7a817b] focus:border-[#8fa092]"
                     />
@@ -683,9 +611,7 @@ function QuickStartRun({
                         disabled={confirmingCandidate}
                         className="rounded-xl bg-[#35583f] px-6 py-3 text-sm font-bold text-white transition hover:bg-[#456c51]"
                       >
-                        {confirmingCandidate
-                          ? "正在提交…"
-                          : "确认选择，继续下一步"}
+                        {confirmingCandidate ? '正在提交…' : '确认选择，继续下一步'}
                       </button>
                     ) : null}
                   </div>
@@ -697,9 +623,7 @@ function QuickStartRun({
                   <i className="h-12 w-12 animate-pulse rounded-full border border-[#819184] bg-[#d5ddd6] shadow-[0_0_0_16px_rgba(53,88,63,0.05)] motion-reduce:animate-none" />
                 </div>
                 <span>
-                  <b className="block text-base text-[#354039]">
-                    {status.title}
-                  </b>
+                  <b className="block text-base text-[#354039]">{status.title}</b>
                   <small className="mt-2 block max-w-md leading-6 text-[#687069]">
                     {status.description}
                   </small>
@@ -722,30 +646,26 @@ function QuickStartRun({
                 <li
                   key={node.id}
                   className={`grid grid-cols-[28px_1fr_auto] items-center gap-3 rounded-lg border px-3 py-2 ${
-                    node.status === "active"
-                      ? "border-[#91a394] bg-[#e4ebe2]"
-                      : "border-[#d5dad5] bg-[#f0f2ef]"
+                    node.status === 'active'
+                      ? 'border-[#91a394] bg-[#e4ebe2]'
+                      : 'border-[#d5dad5] bg-[#f0f2ef]'
                   }`}
                 >
                   <i
                     className={`grid h-7 w-7 place-items-center rounded-full text-[9px] not-italic ${
-                      node.status === "passed"
-                        ? "bg-[#35583f] text-white"
-                        : node.status === "active"
-                          ? "border border-[#6f8874] text-[#35583f]"
-                          : "border border-[#d0d6d1] text-[#8b918c]"
+                      node.status === 'passed'
+                        ? 'bg-[#35583f] text-white'
+                        : node.status === 'active'
+                          ? 'border border-[#6f8874] text-[#35583f]'
+                          : 'border border-[#d0d6d1] text-[#8b918c]'
                     }`}
                   >
-                    {node.status === "passed"
-                      ? "✓"
-                      : String(index + 1).padStart(2, "0")}
+                    {node.status === 'passed' ? '✓' : String(index + 1).padStart(2, '0')}
                   </i>
                   <span className="text-xs font-semibold text-[#515a53]">
                     {STEP_LABELS[node.type]}
                   </span>
-                  <small className="text-[9px] text-[#7a817b]">
-                    {nodeStatusLabel(node)}
-                  </small>
+                  <small className="text-[9px] text-[#7a817b]">{nodeStatusLabel(node)}</small>
                 </li>
               ))}
             </ol>
@@ -758,12 +678,10 @@ function QuickStartRun({
               <small className="font-mono text-[8px] tracking-[0.12em] text-[#747973]">
                 {passedCount} / {revision.nodes.length} STEPS PASSED
               </small>
-              <b className="mt-1 block text-sm text-[#354039]">
-                {status.title}
-              </b>
+              <b className="mt-1 block text-sm text-[#354039]">{status.title}</b>
             </span>
             <div className="flex flex-wrap gap-2">
-              {run.status === "active" ? (
+              {run.status === 'active' ? (
                 <button
                   type="button"
                   onClick={() => void interrupt()}
@@ -779,15 +697,13 @@ function QuickStartRun({
                   disabled={publishing}
                   className="rounded-lg bg-[#2a5284] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#3668a0] disabled:cursor-wait disabled:opacity-60"
                 >
-                  {publishing ? "正在自动导入…" : "重新导入 Playtest"}
+                  {publishing ? '正在自动导入…' : '重新导入 Playtest'}
                 </button>
               ) : null}
-              {candidates.length ||
-              run.status === "failed" ||
-              run.status === "interrupted" ? (
+              {candidates.length || run.status === 'failed' || run.status === 'interrupted' ? (
                 <button
                   type="button"
-                  onClick={() => navigate("/quick-start")}
+                  onClick={() => navigate('/quick-start')}
                   className="rounded-xl bg-[#35583f] px-4 py-2 text-xs font-semibold text-white"
                 >
                   新建一次创作
@@ -808,7 +724,7 @@ function QuickStartRun({
         </footer>
       </div>
     </section>
-  );
+  )
 }
 
 function AmbientGrid() {
@@ -818,136 +734,122 @@ function AmbientGrid() {
       aria-hidden="true"
       style={{
         backgroundImage:
-          "linear-gradient(rgba(53, 88, 63, 0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(53, 88, 63, 0.045) 1px, transparent 1px)",
-        backgroundSize: "32px 32px",
-        maskImage: "linear-gradient(to bottom, black, transparent 84%)",
+          'linear-gradient(rgba(53, 88, 63, 0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(53, 88, 63, 0.045) 1px, transparent 1px)',
+        backgroundSize: '32px 32px',
+        maskImage: 'linear-gradient(to bottom, black, transparent 84%)',
       }}
     />
-  );
+  )
 }
 
-function currentRevision(run: WorkflowRun): WorkflowRevision {
-  return run;
-}
-
-function describeRun(run: WorkflowRun, revision: WorkflowRevision) {
-  const failedStep = revision.nodes.find((node) => node.status === "failed");
-  if (run.status === "failed") {
+function describeRun(run: WorkflowRun, workflow: WorkflowRun) {
+  const failedStep = workflow.nodes.find((node) => node.status === 'failed' && !node.deletedAt)
+  if (run.status === 'failed') {
     return {
-      title: "生成失败",
-      description: "这次失败已保存在当前运行记录中，不会自动创建第二次任务。",
-      error: failedStep?.error || "角色图生成失败",
-    };
+      title: '生成失败',
+      description: '这次失败已保存在当前运行记录中，不会自动创建第二次任务。',
+      error: failedStep?.error || '角色图生成失败',
+    }
   }
-  if (run.status === "interrupted") {
+  if (run.status === 'interrupted') {
     return {
-      title: "自动制作已中断",
-      description: "运行记录与已经返回的结果仍然保留。",
+      title: '自动制作已中断',
+      description: '运行记录与已经返回的结果仍然保留。',
       error: null,
-    };
+    }
   }
 
-  const actionStep = latestActionStep(revision);
-  if (actionStep?.status === "active") {
+  const actionStep = latestActionStep(workflow)
+  if (actionStep?.status === 'active') {
     return {
-      title: "正在生成动作",
-      description: "角色图已确认，正在生成动作帧…",
+      title: '正在生成动作',
+      description: '角色图已确认，正在生成动作帧…',
       error: null,
-    };
+    }
   }
-  if (actionStep?.status === "passed") {
+  if (actionStep?.status === 'passed') {
     return {
-      title: "动作生成完成",
-      description: "动作帧已回传，正在自动写入并载入 Playtest 工作台。",
+      title: '动作生成完成',
+      description: '动作帧已回传，正在自动写入并载入 Playtest 工作台。',
       error: null,
-    };
+    }
   }
-  if (actionStep?.status === "failed") {
+  if (actionStep?.status === 'failed') {
     return {
-      title: "动作生成失败",
-      description:
-        typeof actionStep.error === "string"
-          ? actionStep.error
-          : "动作生成失败",
-      error:
-        typeof actionStep.error === "string"
-          ? actionStep.error
-          : "动作生成失败",
-    };
+      title: '动作生成失败',
+      description: typeof actionStep.error === 'string' ? actionStep.error : '动作生成失败',
+      error: typeof actionStep.error === 'string' ? actionStep.error : '动作生成失败',
+    }
   }
 
-  const templateNode = revision.nodes.find(
-    (n): n is CharacterTemplateWorkflowNode =>
-      n.type === "character-template",
-  );
+  const templateNode = workflow.nodes.find(
+    (n): n is CharacterTemplateWorkflowNode => n.type === 'character-template',
+  )
   if (templateNode?.output?.imageUrls.length) {
     return {
-      title: "角色图已生成",
-      description: "候选结果已到达。下一步需要人工选择，不会自动写入正式资产。",
+      title: '角色图已生成',
+      description: '候选结果已到达。下一步需要人工选择，不会自动写入正式资产。',
       error: null,
-    };
+    }
   }
-  if (templateNode?.status === "active") {
+  if (templateNode?.status === 'active') {
     return {
-      title: templateNode.taskId ? "正在生成角色图" : "正在创建生成任务",
+      title: templateNode.taskId ? '正在生成角色图' : '正在创建生成任务',
       description: templateNode.taskId
-        ? "任务 ID 已保存，刷新页面后仍可恢复同一次生成。"
-        : "正在等待生成服务返回可追踪的任务 ID。",
+        ? '任务 ID 已保存，刷新页面后仍可恢复同一次生成。'
+        : '正在等待生成服务返回可追踪的任务 ID。',
       error: null,
-    };
+    }
   }
 
   return {
-    title: "正在理解角色设定",
-    description: "正在把创作指令整理成角色资料。",
+    title: '正在理解角色设定',
+    description: '正在把创作指令整理成角色资料。',
     error: null,
-  };
+  }
 }
 
 /** 只有完整动作和可审核状态同时具备时，才允许自动发布当前版本。 */
 function automaticPublishKey(run: WorkflowRun): string | null {
-  const revision = run;
-  const actionStep = latestActionStep(revision);
-  const reviewStep = actionStep
-    ? pairedReviewStep(revision, actionStep.id)
-    : null;
+  const revision = run
+  const actionStep = latestActionStep(revision)
+  const reviewStep = actionStep ? pairedReviewStep(revision, actionStep.id) : null
   const hasFrames =
-    actionStep?.type === "action-generation" &&
-    actionStep.status === "passed" &&
-    Boolean(actionStep.output?.frames.length);
-  const reviewReady =
-    reviewStep?.status === "active" || reviewStep?.status === "passed";
+    actionStep?.type === 'action-full-frame' &&
+    actionStep.status === 'passed' &&
+    Boolean(actionStep.output?.frames.length)
+  const reviewReady = reviewStep?.status === 'active' || reviewStep?.status === 'passed'
 
   return hasFrames && reviewReady && revision && actionStep
     ? `${run.id}:${revision.id}:${actionStep.id}`
-    : null;
+    : null
 }
 
-/** 返回当前 Revision 最后追加的动作；旧动作只保留作历史结果，不参与当前交互。 */
-function latestActionStep(revision: WorkflowRevision) {
+/** 返回当前 Run 最后追加且未删除的动作；旧动作只保留作历史结果。 */
+function latestActionStep(workflow: WorkflowRun) {
   return (
-    revision.nodes.findLast((node) => node.type === "action-generation") ?? null
-  );
+    workflow.nodes.findLast((node) => node.type === 'action-full-frame' && !node.deletedAt) ?? null
+  )
 }
 
-/** 动作与紧随其后的审核组成一对，不能用“第一个 review”代替。 */
-function pairedReviewStep(revision: WorkflowRevision, actionStepId: string) {
-  const actionIndex = revision.nodes.findIndex(
-    (node) => node.id === actionStepId,
-  );
-  const review = revision.nodes[actionIndex + 1];
-  return review?.type === "review" ? review : null;
+/** 动作与依赖它的审核组成一对；数组顺序不属于工作流图契约。 */
+function pairedReviewStep(workflow: WorkflowRun, actionStepId: string) {
+  return (
+    workflow.nodes.find(
+      (node) =>
+        node.type === 'review' && !node.deletedAt && node.dependsOnNodeIds.includes(actionStepId),
+    ) ?? null
+  )
 }
 
 function nodeStatusLabel(node: WorkflowNode) {
-  if (node.status === "passed") return "完成";
-  if (node.status === "active") return "当前";
-  if (node.status === "failed") return "失败";
-  return "等待";
+  if (node.deletedAt) return '已删除'
+  if (node.status === 'passed') return '完成'
+  if (node.status === 'active') return '当前'
+  if (node.status === 'failed') return '失败'
+  return '等待'
 }
 
 function errorMessage(cause: unknown, fallback: string) {
-  return cause instanceof Error && cause.message.trim()
-    ? cause.message.trim()
-    : fallback;
+  return cause instanceof Error && cause.message.trim() ? cause.message.trim() : fallback
 }

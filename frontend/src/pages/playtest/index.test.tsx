@@ -26,7 +26,6 @@ const character: Character = {
           id: 'idle',
           outfitId: 'outfit-1',
           name: 'Idle',
-          kind: 'preset',
           type: 'idle',
           fps: 8,
           keyFrameIndex: 0,
@@ -261,26 +260,42 @@ describe('PlaytestPage', () => {
     expect(update.mock.calls[1]?.[0].outfits[0]?.actions[0]?.name).toBe('Breathe')
   })
 
-  it('删除动作和最后一个造型时分别调用更新与角色删除接口', async () => {
+  it('删除动作和造型时统一调用会同步 WorkflowRun 的业务命令', async () => {
     const update = vi.fn(async (input: Character) => input)
     const remove = vi.fn(async () => undefined)
     const get = vi.fn().mockResolvedValue(character)
     const listByProject = vi.fn().mockResolvedValue([character])
+    const deleteAction = vi.fn(async () => ({
+      ...character,
+      outfits: character.outfits.map((outfit) => ({ ...outfit, actions: [] })),
+    }))
+    const deleteAsset = vi.fn(async () => null)
 
     const { unmount } = renderPage({
       characters: { get, listByProject, update, remove },
+      deleteAction,
+      deleteAsset,
     })
     await screen.findByRole('heading', { name: 'character-1 · Explorer' })
     fireEvent.click(screen.getByRole('button', { name: '删除动作 Idle' }))
     fireEvent.click(screen.getByRole('button', { name: '确认删除' }))
-    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
-    expect(update.mock.calls[0]?.[0].outfits[0]?.actions).toHaveLength(0)
+    await waitFor(() =>
+      expect(deleteAction).toHaveBeenCalledExactlyOnceWith('character-1', 'outfit-1', 'idle'),
+    )
+    expect(update).not.toHaveBeenCalled()
 
     unmount()
-    renderPage({ characters: { get, listByProject, update, remove } })
+    renderPage({
+      characters: { get, listByProject, update, remove },
+      deleteAction,
+      deleteAsset,
+    })
     await screen.findByRole('heading', { name: 'character-1 · Explorer' })
     fireEvent.click(screen.getByRole('button', { name: '删除资产 Explorer' }))
     fireEvent.click(screen.getByRole('button', { name: '确认删除' }))
-    await waitFor(() => expect(remove).toHaveBeenCalledExactlyOnceWith('character-1'))
+    await waitFor(() =>
+      expect(deleteAsset).toHaveBeenCalledExactlyOnceWith('character-1', 'outfit-1'),
+    )
+    expect(remove).not.toHaveBeenCalled()
   })
 })

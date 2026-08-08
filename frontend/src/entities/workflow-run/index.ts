@@ -45,6 +45,8 @@ interface WorkflowNodeBase {
   /** 只用于编排和页面定位，不作为业务 ID 发送给后端。 */
   id: string
   status: WorkflowNodeStatus
+  /** 本节点的直接前置节点 ID；工作流边随节点一起落库，不靠数组位置猜测。 */
+  dependsOnNodeIds: string[]
   /**
    * 本节点已提交、结果尚未写回 output 的生成任务 ID；没有在途任务时为 null。
    * 任务本身不认识节点，反向关联不存在。
@@ -57,6 +59,11 @@ interface WorkflowNodeBase {
   submissionId: string | null
   /** 节点失败后供页面解释原因；未失败时必须为 null。 */
   error: string | null
+  /**
+   * 对应资产从 Character 中删除的时间。删除只隐藏资产，不擦除生成输入、输出和审核记录；
+   * 旧快照没有该字段时按未删除处理。
+   */
+  deletedAt?: string | null
 }
 
 /** 角色资料节点保存的输入；参考媒体为空表示仅使用文字描述。 */
@@ -85,6 +92,15 @@ export interface ActionFirstFrameWorkflowNode extends WorkflowNodeBase {
   output: CharacterActionOutput | null
 }
 
+/** 动作资产的生产路线；3D 转 2D 目前只留入口，现阶段真实调用视频裁剪。 */
+export type ActionGenerationMethod = 'video-cropping' | '3d-to-2d'
+
+export interface ActionGenerationMethodWorkflowNode extends WorkflowNodeBase {
+  type: 'action-generation-method'
+  input: { method: ActionGenerationMethod } | null
+  output: null
+}
+
 /** 完整帧率生成节点：基于首帧生成完整动画。 */
 export interface ActionFullFrameWorkflowNode extends WorkflowNodeBase {
   type: 'action-full-frame'
@@ -94,7 +110,11 @@ export interface ActionFullFrameWorkflowNode extends WorkflowNodeBase {
 
 type RemainingWorkflowNodeType = Exclude<
   WorkflowNodeType,
-  'character-setup' | 'character-template' | 'action-first-frame' | 'action-full-frame'
+  | 'character-setup'
+  | 'character-template'
+  | 'action-first-frame'
+  | 'action-generation-method'
+  | 'action-full-frame'
 >
 
 interface RemainingWorkflowNode extends WorkflowNodeBase {
@@ -112,6 +132,7 @@ export type WorkflowNode =
   | CharacterSetupWorkflowNode
   | CharacterTemplateWorkflowNode
   | ActionFirstFrameWorkflowNode
+  | ActionGenerationMethodWorkflowNode
   | ActionFullFrameWorkflowNode
   | RemainingWorkflowNode
 
@@ -133,8 +154,8 @@ export interface WorkflowRun {
   purpose: WorkflowRunPurpose
   status: WorkflowRunStatus
   /**
-   * 当前执行线中的节点。前三个节点串行推进，之后可随时追加 action-generation / review
-   * 成对节点。多个 action-generation 可并发——互不阻塞。数组位置是节点顺序的唯一来源。
+   * 当前执行线中的真实图节点。标准六节点串行推进，后续动作分支可继续追加；
+   * 节点关系由 dependsOnNodeIds 明确保存，数组只保留稳定展示顺序。
    */
   nodes: WorkflowNode[]
   generationStatus: GenerationStatus
@@ -143,11 +164,6 @@ export interface WorkflowRun {
   prompt: string | null
   createdAt: string
 }
-
-/**
- * @deprecated WorkflowRevision 已合并到 WorkflowRun，直接用 WorkflowRun。
- */
-export type WorkflowRevision = WorkflowRun
 
 /** 创建 WorkflowRun 的共享字段。 */
 interface CreateWorkflowRunInputBase {

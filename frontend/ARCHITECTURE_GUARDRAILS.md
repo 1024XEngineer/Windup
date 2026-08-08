@@ -12,7 +12,7 @@ app -> pages -> features -> entities -> shared
 - `pages` 负责一个路由场景，不定义后端 DTO 或第二套业务状态。
 - `features` 负责可复用的用户行为，例如审核、发布和下载包。
 - `features` 不依赖 `pages` 内部类型；需要共享的只读模型由 Feature 自己声明结构边界。
-- `workflow-controller` 是创作运行、步骤推进、Revision 和异步结果写回的唯一入口。
+- `workflow-controller` 是创作运行、节点推进和异步结果写回的唯一入口。
 - `entities` 保存领域类型、实体 API 契约及其 DTO 转换。
 - `shared` 只保存通用 HTTP、分页、UI、Hook 和工具，不能理解 Windup 业务词汇。
 

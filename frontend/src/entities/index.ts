@@ -22,7 +22,6 @@ export type {
 /* 角色 —— 资产本体；造型、动作、帧都在这棵树里 */
 export type {
   Action,
-  ActionKind,
   ActionType,
   BaseFrame,
   Character,
@@ -73,6 +72,8 @@ export type {
 export { createWorkflowRunStore, WORKFLOW_NODE_ORDER } from './workflow-run'
 export type {
   CharacterSetupNodeInput,
+  ActionGenerationMethod,
+  ActionGenerationMethodWorkflowNode,
   CharacterSetupWorkflowNode,
   CharacterTemplateWorkflowNode,
   ActionFirstFrameWorkflowNode,
@@ -87,6 +88,5 @@ export type {
   WorkflowRunStore,
   WorkflowRunPurpose,
   WorkflowRunStatus,
-  WorkflowRevision,
   CreateWorkflowRunStoreOptions,
 } from './workflow-run'

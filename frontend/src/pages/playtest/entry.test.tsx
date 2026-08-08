@@ -39,7 +39,6 @@ const character: Character = {
           id: '25-custom',
           outfitId: 'outfit-25-default',
           name: '挥舞灯笼',
-          kind: 'custom',
           type: 'custom',
           fps: 8,
           keyFrameIndex: 0,

@@ -221,21 +221,6 @@ export class NodeCanvasController {
       if (!output || !input) return
       this.appendWire(this.portPoint(output), this.portPoint(input), 'node-wire is-connected')
     })
-
-    // DOM 顺序就是当前 Revision 的真实节点顺序。按相邻节点连线后，新增动作对
-    // 会自然接在旧审核之后，不再依赖只能描述固定五步的类型白名单。
-    const nodes = Array.from(this.surface?.querySelectorAll('[data-node-id]') ?? [])
-    nodes.forEach((node, index) => {
-      const el = node as HTMLElement
-      const output = el.querySelector(
-        '[data-port="output"][data-enabled="true"]',
-      ) as HTMLElement | null
-      if (!output) return
-      const next = nodes[index + 1] as HTMLElement | undefined
-      const input = next?.querySelector('[data-port="input"]') as HTMLElement | null
-      if (!input) return
-      this.appendWire(this.portPoint(output), this.portPoint(input), 'node-wire is-suggested')
-    })
   }
 
   appendWire(start: { x: number; y: number }, end: { x: number; y: number }, className: string) {

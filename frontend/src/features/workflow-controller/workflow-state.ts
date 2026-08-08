@@ -4,6 +4,7 @@ import {
   type CharacterImageGenerationInput,
   type CharacterActionGenerationInput,
   type CharacterActionOutput,
+  type ActionGenerationMethod,
   type CreateWorkflowRunInput,
   type MediaReference,
   type WorkflowRun,
@@ -51,9 +52,14 @@ function createInitialNodes(
   runId: string,
   prompt: string | null,
 ): WorkflowNode[] {
-  const nodes = WORKFLOW_NODE_ORDER.map((type, index) =>
-    createInitialNode(type, runId, index, prompt),
-  )
+  const nodes = WORKFLOW_NODE_ORDER.map((type, index) => {
+    const node = createInitialNode(type, runId, index, prompt)
+    return {
+      ...node,
+      dependsOnNodeIds:
+        index === 0 ? [] : [createNodeId(runId, WORKFLOW_NODE_ORDER[index - 1]!, index - 1)],
+    } as WorkflowNode
+  })
   if (input.purpose === 'create_character') return nodes
 
   return nodes.map((node) => {
@@ -78,21 +84,18 @@ function createInitialNodes(
       }
     }
     if (node.type === 'action-first-frame') {
-      return { ...node, status: 'passed' as const }
-    }
-    if (node.type === 'action-full-frame') {
       return { ...node, status: 'active' as const }
     }
     return node
   })
 }
 
-export function getCurrentRevision(run: WorkflowRun): WorkflowRun {
-  return run
-}
-
-export function getActiveNode(run: WorkflowRun): WorkflowNode | null {
-  return run.nodes.find((node) => node.status === 'active') ?? null
+export function getActiveNode(run: WorkflowRun, nodeId?: WorkflowNode['id']): WorkflowNode | null {
+  return (
+    run.nodes.find(
+      (node) => node.status === 'active' && !node.deletedAt && (!nodeId || node.id === nodeId),
+    ) ?? null
+  )
 }
 
 export function requireActiveWorkflow(run: WorkflowRun): WorkflowRun {
@@ -174,9 +177,6 @@ export function acceptUploadedCharacterTemplateState(
         }
       }
       if (node.type === 'action-first-frame') {
-        return { ...node, status: 'passed' as const }
-      }
-      if (node.type === 'action-full-frame') {
         return { ...node, status: 'active' as const }
       }
       return node
@@ -229,9 +229,12 @@ export function advanceCharacterSetupState(
   }
 }
 
-export function confirmFirstFrameState(run: WorkflowRun): WorkflowRun {
+export function confirmFirstFrameState(
+  run: WorkflowRun,
+  firstFrameNodeId?: WorkflowNode['id'],
+): WorkflowRun {
   if (run.status !== 'active') throw new Error(`WorkflowRun 当前不可推进：${run.status}`)
-  const firstFrameNode = run.nodes.find((node) => node.type === 'action-first-frame')
+  const firstFrameNode = getActiveNode(run, firstFrameNodeId)
   if (!firstFrameNode || firstFrameNode.status !== 'active') {
     throw new Error('当前只能确认处于 active 状态的首帧节点')
   }
@@ -242,7 +245,35 @@ export function confirmFirstFrameState(run: WorkflowRun): WorkflowRun {
       if (node.id === firstFrameNode.id && node.type === 'action-first-frame') {
         return { ...node, status: 'passed' as const }
       }
-      if (node.type === 'action-full-frame') {
+      if (
+        node.type === 'action-generation-method' &&
+        node.dependsOnNodeIds.includes(firstFrameNode.id)
+      ) {
+        return { ...node, status: 'active' as const }
+      }
+      return node
+    }),
+  }
+}
+
+export function selectActionGenerationMethodState(
+  run: WorkflowRun,
+  method: ActionGenerationMethod,
+  methodNodeId?: WorkflowNode['id'],
+): WorkflowRun {
+  const activeRun = requireActiveWorkflow(run)
+  const methodNode = getActiveNode(activeRun, methodNodeId)
+  if (!methodNode || methodNode.type !== 'action-generation-method') {
+    throw new Error('当前只能选择处于 active 状态的动作生成路线')
+  }
+
+  return {
+    ...activeRun,
+    nodes: activeRun.nodes.map((node) => {
+      if (node.id === methodNode.id && node.type === 'action-generation-method') {
+        return { ...node, status: 'passed' as const, input: { method }, error: null }
+      }
+      if (node.type === 'action-full-frame' && node.dependsOnNodeIds.includes(methodNode.id)) {
         return { ...node, status: 'active' as const }
       }
       return node
@@ -253,9 +284,10 @@ export function confirmFirstFrameState(run: WorkflowRun): WorkflowRun {
 export function completeActionGenerationState(
   run: WorkflowRun,
   result: CharacterActionOutput | { error: string },
+  actionNodeId?: WorkflowNode['id'],
 ): WorkflowRun {
   if (run.status !== 'active') throw new Error(`WorkflowRun 当前不可完成动作生成：${run.status}`)
-  const actionNode = getActiveNode(run)
+  const actionNode = getActiveNode(run, actionNodeId)
   if (
     !actionNode ||
     (actionNode.type !== 'action-first-frame' && actionNode.type !== 'action-full-frame')
@@ -264,8 +296,6 @@ export function completeActionGenerationState(
   }
 
   const failed = result !== null && typeof result === 'object' && 'error' in result
-  const actionIndex = run.nodes.findIndex((node) => node.id === actionNode.id)
-
   const updated = replaceWorkflowNode(run, actionNode.id, (current) => {
     if (current.type !== 'action-first-frame' && current.type !== 'action-full-frame')
       return current
@@ -279,8 +309,8 @@ export function completeActionGenerationState(
     }
   })
 
-  // 找到下一个节点并激活
-  const nextNode = updated.nodes[actionIndex + 1]
+  // 只激活依赖当前节点的直接后继，不能用数组相邻关系猜测并行分支。
+  const nextNode = updated.nodes.find((node) => node.dependsOnNodeIds.includes(actionNode.id))
   return {
     ...updated,
     nodes: updated.nodes.map((node) => {
@@ -292,36 +322,62 @@ export function completeActionGenerationState(
   }
 }
 
-export function approveReviewState(run: WorkflowRun): WorkflowRun {
+export function approveReviewState(
+  run: WorkflowRun,
+  reviewNodeId?: WorkflowNode['id'],
+): WorkflowRun {
   if (run.status !== 'active') throw new Error(`WorkflowRun 当前不可审核：${run.status}`)
-  const reviewNode = getActiveNode(run)
+  const reviewNode = getActiveNode(run, reviewNodeId)
   if (!reviewNode || reviewNode.type !== 'review') {
     throw new Error('当前只能通过处于 active 状态的审核节点')
   }
 
+  const nodes = run.nodes.map((node) =>
+    node.id === reviewNode.id ? { ...node, status: 'passed' as const, error: null } : node,
+  )
   return {
     ...run,
-    status: 'completed',
-    nodes: run.nodes.map((node) =>
-      node.id === reviewNode.id ? { ...node, status: 'passed' as const, error: null } : node,
-    ),
+    status: nodes.some((node) => node.status === 'active' && !node.deletedAt)
+      ? 'active'
+      : 'completed',
+    nodes,
   }
 }
 
 export function appendActionState(run: WorkflowRun): WorkflowRun {
-  if (run.status !== 'completed') throw new Error('只能给已完成的 WorkflowRun 追加动作')
+  if (run.status !== 'active' && run.status !== 'completed') {
+    throw new Error(`WorkflowRun 当前不可追加动作：${run.status}`)
+  }
   if (!run.characterId || !run.outfitId) throw new Error('WorkflowRun 尚未绑定角色与造型')
 
   const actionNumber = run.nodes.filter((node) => node.type === 'action-full-frame').length + 1
-  const actionNode = {
-    ...createInitialNode('action-full-frame', run.id, run.nodes.length, null),
-    id: `${run.id}:action-full-frame:${actionNumber}`,
+  const templateNode = run.nodes.find((node) => node.type === 'character-template')
+  if (!templateNode || templateNode.status !== 'passed') {
+    throw new Error('角色母版尚未完成，不能追加动作')
+  }
+  const firstFrameNode = {
+    ...createInitialNode('action-first-frame', run.id, run.nodes.length, null),
+    id: `${run.id}:action-first-frame:${actionNumber}`,
     status: 'active' as const,
+    dependsOnNodeIds: [templateNode.id],
+  }
+  const methodNode = {
+    ...createInitialNode('action-generation-method', run.id, run.nodes.length + 1, null),
+    id: `${run.id}:action-generation-method:${actionNumber}`,
+    status: 'locked' as const,
+    dependsOnNodeIds: [firstFrameNode.id],
+  }
+  const actionNode = {
+    ...createInitialNode('action-full-frame', run.id, run.nodes.length + 2, null),
+    id: `${run.id}:action-full-frame:${actionNumber}`,
+    status: 'locked' as const,
+    dependsOnNodeIds: [methodNode.id],
   }
   const reviewNode = {
-    ...createInitialNode('review', run.id, run.nodes.length + 1, null),
+    ...createInitialNode('review', run.id, run.nodes.length + 3, null),
     id: `${run.id}:review:${actionNumber}`,
     status: 'locked' as const,
+    dependsOnNodeIds: [actionNode.id],
   }
 
   return {
@@ -329,7 +385,46 @@ export function appendActionState(run: WorkflowRun): WorkflowRun {
     status: 'active',
     generationStatus: 'not_started',
     exportStatus: 'not_exported',
-    nodes: [...run.nodes, actionNode, reviewNode],
+    nodes: [...run.nodes, firstFrameNode, methodNode, actionNode, reviewNode],
+  }
+}
+
+/** 标记一个已发布 Action 的整条生成分支已删除，同时保留生成与审核历史。 */
+export function markActionDeletedState(
+  run: WorkflowRun,
+  actionNodeId: WorkflowNode['id'],
+  deletedAt: string,
+): WorkflowRun {
+  const actionNode = run.nodes.find(
+    (node) => node.id === actionNodeId && node.type === 'action-full-frame',
+  )
+  if (!actionNode) throw new Error('WorkflowRun 中没有找到对应的动作节点')
+
+  const branchIds = new Set<string>([actionNode.id])
+  let frontier = [...actionNode.dependsOnNodeIds]
+  while (frontier.length > 0) {
+    const nodeId = frontier.shift()!
+    const node = run.nodes.find((candidate) => candidate.id === nodeId)
+    if (!node || node.type === 'character-template' || node.type === 'character-setup') continue
+    if (branchIds.has(node.id)) continue
+    branchIds.add(node.id)
+    frontier.push(...node.dependsOnNodeIds)
+  }
+  for (const node of run.nodes) {
+    if (node.type === 'review' && node.dependsOnNodeIds.includes(actionNode.id)) {
+      branchIds.add(node.id)
+    }
+  }
+
+  const nodes = run.nodes.map((node) =>
+    branchIds.has(node.id) ? { ...node, deletedAt } : node,
+  ) as WorkflowNode[]
+  return {
+    ...run,
+    nodes,
+    status: nodes.some((node) => node.status === 'active' && !node.deletedAt)
+      ? 'active'
+      : 'completed',
   }
 }
 
@@ -337,9 +432,10 @@ export function beginActionGenerationState(
   run: WorkflowRun,
   input: CharacterActionGenerationInput,
   submissionId: string,
+  actionNodeId?: WorkflowNode['id'],
 ): WorkflowRun {
   const activeRun = requireActiveWorkflow(run)
-  const actionNode = getActiveNode(activeRun)
+  const actionNode = getActiveNode(activeRun, actionNodeId)
   if (
     !actionNode ||
     (actionNode.type !== 'action-first-frame' && actionNode.type !== 'action-full-frame') ||
@@ -358,11 +454,12 @@ export function recordActionGenerationTaskState(
   run: WorkflowRun,
   taskId: string,
   input?: CharacterActionGenerationInput,
+  actionNodeId?: WorkflowNode['id'],
 ): WorkflowRun {
   if (run.status !== 'active' && run.status !== 'interrupted') {
     throw new Error(`WorkflowRun 当前不可记录任务：${run.status}`)
   }
-  const actionNode = getActiveNode(run)
+  const actionNode = getActiveNode(run, actionNodeId)
   if (
     !actionNode ||
     (actionNode.type !== 'action-first-frame' && actionNode.type !== 'action-full-frame')
@@ -399,10 +496,23 @@ export function restartWorkflowRunState(
 
   const nodes = run.nodes.slice(0, retainedNodeCount).map((node, index) => {
     if (index < restartIndex) {
-      return { ...structuredClone(node), status: 'passed' as const, taskId: null, submissionId: null, error: null }
+      return {
+        ...structuredClone(node),
+        status: 'passed' as const,
+        taskId: null,
+        submissionId: null,
+        error: null,
+      }
     }
     if (index === restartIndex) {
-      return { ...structuredClone(node), status: 'active' as const, taskId: null, submissionId: null, error: null, output: null } as WorkflowNode
+      return {
+        ...structuredClone(node),
+        status: 'active' as const,
+        taskId: null,
+        submissionId: null,
+        error: null,
+        output: null,
+      } as WorkflowNode
     }
     return lockFreshNode(node.type, run.id, index, run.prompt)
   })
@@ -438,9 +548,11 @@ function createInitialNode(
   const base = {
     id: createNodeId(runId, type, index),
     status,
+    dependsOnNodeIds: [] as string[],
     taskId: null,
     submissionId: null,
     error: null,
+    deletedAt: null,
   }
 
   if (type === 'character-setup') {
@@ -455,6 +567,9 @@ function createInitialNode(
     return { ...base, type, input: null, output: null }
   }
   if (type === 'action-first-frame' || type === 'action-full-frame') {
+    return { ...base, type, input: null, output: null }
+  }
+  if (type === 'action-generation-method') {
     return { ...base, type, input: null, output: null }
   }
   return { ...base, type, input: null, output: null } as WorkflowNode
