@@ -827,6 +827,7 @@ describe('WorkflowController', () => {
         type: 'first_frame',
         characterId: 'character-backend-1',
         outfitId: 'outfit-1',
+        referenceMedia: ['https://img/knight.png'],
       }),
     )
     expect(generation.apis.create).toHaveBeenNthCalledWith(
