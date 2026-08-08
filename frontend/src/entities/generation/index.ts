@@ -35,6 +35,9 @@ export interface CharacterTemplateGenerationInput extends GenerationInputBase {
   type: 'character_template'
   /** 已由手动输入或 Quick Start 整理好的角色提示词。 */
   prompt: string
+  /** 必须与 Project 的精灵尺寸一致，后端会在提交时校验。 */
+  spriteWidth: number
+  spriteHeight: number
 }
 
 /** 指定角色造型下的动作首帧生成；不能只绑定 Character。 */
@@ -68,6 +71,11 @@ export interface GeneratedImage {
   url: string
 }
 
+/** 后端动作结果中的一帧；null 时由 Action.fps 提供等时长回退。 */
+export interface GeneratedFrame extends GeneratedImage {
+  durationMs: number | null
+}
+
 /** 结果按 type 分别定义，不共用一个 urls 数组。 */
 export interface CharacterTemplateGenerationResult {
   type: 'character_template'
@@ -79,10 +87,10 @@ export interface FirstFrameGenerationResult {
   image: GeneratedImage
 }
 
-/** 帧顺序由数组位置表达。 */
+/** 帧顺序由数组位置表达，同时保留后端逐帧时长。 */
 export interface CompleteAnimationGenerationResult {
   type: 'complete_animation'
-  frames: readonly GeneratedImage[]
+  frames: readonly GeneratedFrame[]
 }
 
 export type GenerationResult =
