@@ -1,4 +1,9 @@
-import type { EventStreamSubscriber } from '@/shared/api/stream'
+import { getApiAccessToken, recoverApiUnauthorized } from '@/shared/api'
+import {
+  createEventStreamSubscriber,
+  EventStreamError,
+  type EventStreamSubscriber,
+} from '@/shared/api/stream'
 
 import type {
   CompleteAnimationGenerationInput,
@@ -21,12 +26,73 @@ export interface GenerationTransport {
   stream: EventStreamSubscriber
 }
 
+export interface AuthenticatedGenerationTransportOptions {
+  fetchFn?: typeof fetch
+  getAccessToken?: () => string | null | undefined
+  recoverUnauthorized?: () => Promise<boolean>
+  reconnectDelayMs?: number
+}
+
 export interface GenerationApiConfig {
   /** API 前缀；空字符串表示同源。 */
   baseUrl?: string
   /** 当前用户由认证宿主提供，适配器不猜测也不写死身份。 */
   userId: string | number
   transport: GenerationTransport
+  /** SSE 路由尚未部署时，查询任务状态的间隔；测试可设为 0。 */
+  pollIntervalMs?: number
+}
+
+async function responseIsUnauthorized(response: Response): Promise<boolean> {
+  if (response.status === 401) return true
+  if (!response.headers.get('content-type')?.includes('application/json')) return false
+  try {
+    const body = (await response.clone().json()) as unknown
+    return isRecord(body) && body.code === 401
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Generation 需要读取原始响应并保持 SSE 长连接，不能直接套用会解包 JSON 的 ApiClient。
+ * 这个传输器仍复用全局 token 与 401 恢复边界，避免生成模块另存一套登录态。
+ */
+export function createAuthenticatedGenerationTransport(
+  options: AuthenticatedGenerationTransportOptions = {},
+): GenerationTransport {
+  const fetchFn = options.fetchFn ?? globalThis.fetch
+  const getAccessToken = options.getAccessToken ?? getApiAccessToken
+  const recoverUnauthorized = options.recoverUnauthorized ?? recoverApiUnauthorized
+
+  return {
+    async request(url, init) {
+      let replayed = false
+      while (true) {
+        const headers = new Headers(init?.headers)
+        const accessToken = getAccessToken()
+        if (accessToken && !headers.has('authorization')) {
+          headers.set('authorization', `Bearer ${accessToken}`)
+        }
+        const response = await fetchFn(url, {
+          ...init,
+          headers,
+          credentials: init?.credentials ?? 'include',
+        })
+        if (!replayed && (await responseIsUnauthorized(response))) {
+          replayed = true
+          if (await recoverUnauthorized()) continue
+        }
+        return response
+      }
+    },
+    stream: createEventStreamSubscriber({
+      fetchFn,
+      getAccessToken,
+      recoverUnauthorized,
+      reconnectDelayMs: options.reconnectDelayMs,
+    }),
+  }
 }
 
 interface ResponseEnvelope {
@@ -225,13 +291,12 @@ function mapActionResult(
     }
     return {
       index,
-      image: { url: nonEmptyString(frame.image_url, '动作帧 image_url') },
+      url: nonEmptyString(frame.image_url, '动作帧 image_url'),
+      durationMs: frame.duration_ms as number | null,
     }
   })
 
-  const orderedFrames = frames
-    .sort((left, right) => left.index - right.index)
-    .map(({ image }) => image)
+  const orderedFrames = frames.sort((left, right) => left.index - right.index)
   const expectedFrameCount = expectation.type === 'first_frame' ? 1 : 32
   if (orderedFrames.length !== expectedFrameCount) {
     throw new GenerationApiError(
@@ -245,9 +310,12 @@ function mapActionResult(
     }
   }
   if (expectation.type === 'first_frame') {
-    return { type: 'first_frame', image: orderedFrames[0]! }
+    return { type: 'first_frame', image: { url: orderedFrames[0]!.url } }
   }
-  return { type: 'complete_animation', frames: orderedFrames }
+  return {
+    type: 'complete_animation',
+    frames: orderedFrames.map(({ url, durationMs }) => ({ url, durationMs })),
+  }
 }
 
 function mapResult(
@@ -407,6 +475,7 @@ function mapEvent(
 export function createGenerationApis(config: GenerationApiConfig): GenerationApis {
   const userId = inputPositiveInteger(config.userId, 'userId')
   const { request, stream } = config.transport
+  const pollIntervalMs = config.pollIntervalMs ?? 1_000
 
   async function post<TType extends GenerationType>(
     path: '/generation/image' | '/generation/action',
@@ -422,6 +491,16 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
     return mapTask(await readData(response), projectId, userId, expectation) as Generation<TType>
   }
 
+  async function getTask(projectId: string, id: string): Promise<Generation> {
+    const numericProjectId = inputPositiveInteger(projectId, 'projectId')
+    const numericTaskId = inputPositiveInteger(id, 'taskId')
+    const response = await request(
+      endpoint(config.baseUrl, `/generation/tasks/${numericTaskId}?project_id=${numericProjectId}`),
+      { method: 'GET' },
+    )
+    return mapTask(await readData(response), numericProjectId, userId, undefined, numericTaskId)
+  }
+
   return {
     async create<T extends GenerationInput>(input: T): Promise<Generation<T['type']>> {
       const projectId = inputPositiveInteger(input.projectId, 'projectId')
@@ -435,7 +514,6 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
           projectId,
           { type: input.type, actionType: input.actionType },
           {
-            user_id: userId,
             project_id: projectId,
             character_id: inputPositiveInteger(input.characterId, 'characterId'),
             action_type: input.actionType,
@@ -453,7 +531,6 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
         projectId,
         { type: input.type },
         {
-          user_id: userId,
           project_id: projectId,
           reference_image_url: input.referenceMedia[0] ? String(input.referenceMedia[0]) : null,
           prompt: input.prompt ?? '',
@@ -466,18 +543,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
       )
     },
 
-    async get(projectId: string, id: string): Promise<Generation> {
-      const numericProjectId = inputPositiveInteger(projectId, 'projectId')
-      const numericTaskId = inputPositiveInteger(id, 'taskId')
-      const response = await request(
-        endpoint(
-          config.baseUrl,
-          `/generation/tasks/${numericTaskId}?project_id=${numericProjectId}`,
-        ),
-        { method: 'GET' },
-      )
-      return mapTask(await readData(response), numericProjectId, userId, undefined, numericTaskId)
-    },
+    get: getTask,
 
     subscribe(
       projectId: string,
@@ -487,7 +553,11 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
     ): () => void {
       const numericProjectId = inputPositiveInteger(projectId, 'projectId')
       const numericTaskId = inputPositiveInteger(id, 'taskId')
-      return stream(
+      let active = true
+      let polling = false
+      let timer: ReturnType<typeof setTimeout> | null = null
+      let wakePoll: (() => void) | null = null
+      const stopStream = stream(
         endpoint(
           config.baseUrl,
           `/generation/tasks/${numericTaskId}/stream?project_id=${numericProjectId}`,
@@ -499,9 +569,54 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
             onEvent(event)
             return event.status === 'completed' || event.status === 'failed'
           },
-          onError,
+          onError(error) {
+            if (error instanceof EventStreamError && error.status === 404) {
+              polling = true
+              void poll()
+              return
+            }
+            onError(error)
+          },
         },
       )
+
+      async function poll(): Promise<void> {
+        while (active && polling) {
+          try {
+            const generation = await getTask(String(numericProjectId), String(numericTaskId))
+            const event: GenerationEvent = {
+              taskId: generation.id,
+              type: generation.type,
+              status: generation.status,
+              result: generation.result,
+              error: generation.error,
+            }
+            onEvent(event)
+            if (event.status === 'completed' || event.status === 'failed') return
+          } catch (error) {
+            if (active) onError(error instanceof Error ? error : new Error(String(error)))
+            return
+          }
+          await new Promise<void>((resolve) => {
+            wakePoll = resolve
+            timer = setTimeout(() => {
+              wakePoll = null
+              resolve()
+            }, pollIntervalMs)
+          })
+          timer = null
+        }
+      }
+
+      return () => {
+        if (!active) return
+        active = false
+        polling = false
+        if (timer !== null) clearTimeout(timer)
+        wakePoll?.()
+        wakePoll = null
+        stopStream()
+      }
     },
   }
 }

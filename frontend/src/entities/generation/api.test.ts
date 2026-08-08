@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createGenerationApis, GenerationApiError } from '@/entities'
+import {
+  createAuthenticatedGenerationTransport,
+  createGenerationApis,
+  GenerationApiError,
+} from '@/entities'
+import { EventStreamError } from '@/shared/api/stream'
 
 import type { MediaReference } from '../media'
 
@@ -71,7 +76,6 @@ describe('createGenerationApis', () => {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          user_id: 7,
           project_id: 42,
           reference_image_url: 'https://cdn.test/reference.png',
           prompt: 'pixel hero',
@@ -127,7 +131,6 @@ describe('createGenerationApis', () => {
 
     expect(request.mock.calls[0]?.[0]).toBe('/generation/action')
     expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({
-      user_id: 7,
       project_id: 42,
       character_id: 5,
       action_type: 'idle',
@@ -175,7 +178,6 @@ describe('createGenerationApis', () => {
 
     expect(request.mock.calls[0]?.[0]).toBe('/api/generation/action')
     expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({
-      user_id: 7,
       project_id: 42,
       character_id: 5,
       action_type: 'walk',
@@ -188,6 +190,7 @@ describe('createGenerationApis', () => {
       type: 'complete_animation',
       frames: Array.from({ length: 32 }, (_, index) => ({
         url: `https://cdn.test/frame-${index + 1}.png`,
+        durationMs: index % 2 === 0 ? 100 : null,
       })),
     })
   })
@@ -267,6 +270,7 @@ describe('createGenerationApis', () => {
         type: 'complete_animation',
         frames: Array.from({ length: 32 }, (_, index) => ({
           url: `https://cdn.test/frame-${index + 1}.png`,
+          durationMs: index % 2 === 0 ? 100 : null,
         })),
       },
       error: null,
@@ -274,6 +278,41 @@ describe('createGenerationApis', () => {
 
     unsubscribe()
     expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('后端尚未提供 SSE 路由时退回任务查询，仍能交付终态', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(
+        success(taskData({ status: 'running', result: null, error_message: null })),
+      )
+      .mockResolvedValueOnce(success(taskData()))
+    const stream = vi.fn((_url, options) => {
+      queueMicrotask(() =>
+        options.onError(new EventStreamError('SSE 请求失败（HTTP 404）', false, undefined, 404)),
+      )
+      return vi.fn()
+    })
+    const apis = createGenerationApis({
+      userId: 7,
+      pollIntervalMs: 0,
+      transport: { request, stream },
+    })
+    const onEvent = vi.fn()
+    const onError = vi.fn()
+
+    apis.subscribe('42', '91', onEvent, onError)
+
+    await vi.waitFor(() =>
+      expect(onEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskId: '91',
+          status: 'completed',
+        }),
+      ),
+    )
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(onError).not.toHaveBeenCalled()
   })
 
   it('拒绝 completed 任务返回错误动作类型', async () => {
@@ -322,5 +361,46 @@ describe('createGenerationApis', () => {
 
     await expect(apis.get('42', '91')).rejects.toThrow('完整动画结果必须包含 32 帧')
     await expect(apis.get('42', '91')).rejects.toThrow('completed 任务不应携带 error_message')
+  })
+})
+
+describe('createAuthenticatedGenerationTransport', () => {
+  it('为普通请求携带 token，并在业务 401 后刷新和重放一次', async () => {
+    const requests: Request[] = []
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(async (input, init) => {
+        requests.push(new Request(input, init))
+        return new Response(JSON.stringify({ code: 401, message: 'expired', data: null }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      })
+      .mockImplementationOnce(async (input, init) => {
+        requests.push(new Request(input, init))
+        return success(taskData({ status: 'pending', result: null }))
+      })
+    const getAccessToken = vi
+      .fn<() => string>()
+      .mockReturnValueOnce('expired-token')
+      .mockReturnValueOnce('refreshed-token')
+    const recoverUnauthorized = vi.fn(async () => true)
+    const transport = createAuthenticatedGenerationTransport({
+      fetchFn,
+      getAccessToken,
+      recoverUnauthorized,
+    })
+
+    const response = await transport.request('https://api.test/generation/image', {
+      method: 'POST',
+      body: '{}',
+    })
+
+    expect(response.ok).toBe(true)
+    expect(recoverUnauthorized).toHaveBeenCalledOnce()
+    expect(requests.map((request) => request.headers.get('authorization'))).toEqual([
+      'Bearer expired-token',
+      'Bearer refreshed-token',
+    ])
   })
 })

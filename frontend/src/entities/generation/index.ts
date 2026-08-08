@@ -84,6 +84,11 @@ export interface GeneratedImage {
   url: string
 }
 
+/** 后端动作结果中的一帧；null 时由 Action.fps 提供等时长回退。 */
+export interface GeneratedFrame extends GeneratedImage {
+  durationMs: number | null
+}
+
 /** 结果按 type 分别定义，不共用一个 urls 数组。 */
 export interface CharacterTemplateGenerationResult {
   type: 'character_template'
@@ -95,10 +100,10 @@ export interface FirstFrameGenerationResult {
   image: GeneratedImage
 }
 
-/** 帧顺序由数组位置表达。 */
+/** 帧顺序由数组位置表达，同时保留后端逐帧时长。 */
 export interface CompleteAnimationGenerationResult {
   type: 'complete_animation'
-  frames: readonly GeneratedImage[]
+  frames: readonly GeneratedFrame[]
 }
 
 export type GenerationResult =
@@ -117,8 +122,8 @@ export type GenerationResultFor<T extends GenerationInput> =
  * 一次生成任务的完整快照，创建、查询和断线恢复都用它。
  * 它是服务端的资源，不是一次「调用能力」——前端创建它，然后订阅或轮询它的状态。
  *
- * TType 在调用边界已知时保留精确类型；查询和订阅必须传入工作流已知的前端阶段，
- * 因为后端 task_type 比前端阶段更粗，不能只靠 DTO 猜测首帧还是完整动画。
+ * TType 在调用边界已知时保留精确类型；查询和订阅根据持久化 input_payload
+ * 还原首帧或完整动画阶段，因为后端 task_type 比前端阶段更粗。
  * 完成不代表工作流节点已通过，节点状态由 WorkflowNode 自己判定。
  */
 export interface Generation<TType extends GenerationType = GenerationType> {
@@ -166,5 +171,13 @@ export interface GenerationApis {
   ): () => void
 }
 
-export { createGenerationApis, GenerationApiError } from './api'
-export type { GenerationApiConfig, GenerationTransport } from './api'
+export {
+  createAuthenticatedGenerationTransport,
+  createGenerationApis,
+  GenerationApiError,
+} from './api'
+export type {
+  AuthenticatedGenerationTransportOptions,
+  GenerationApiConfig,
+  GenerationTransport,
+} from './api'

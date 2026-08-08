@@ -32,7 +32,11 @@ export { characterApis } from './character'
 export type { ActionTemplate, ActionTemplateApis } from './action-template'
 
 /* 生成 —— 业务数据，不是「调用生成能力」；后端的 task 就是它，不另立实体 */
-export { createGenerationApis, GenerationApiError } from './generation'
+export {
+  createAuthenticatedGenerationTransport,
+  createGenerationApis,
+  GenerationApiError,
+} from './generation'
 export type {
   CharacterTemplateGenerationInput,
   CharacterTemplateGenerationResult,
@@ -40,6 +44,7 @@ export type {
   CompleteAnimationGenerationResult,
   FirstFrameGenerationInput,
   FirstFrameGenerationResult,
+  GeneratedFrame,
   GeneratedImage,
   Generation,
   GenerationApis,
@@ -50,6 +55,7 @@ export type {
   GenerationResultFor,
   GenerationType,
   GenerationApiConfig,
+  AuthenticatedGenerationTransportOptions,
   GenerationTransport,
   TaskStatus,
 } from './generation'

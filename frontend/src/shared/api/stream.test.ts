@@ -1,108 +1,167 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { subscribeToEventStream, type EventSourceFactory, type EventSourceLike } from './stream'
+import { createEventStreamSubscriber } from './stream'
 
-class FakeEventSource implements EventSourceLike {
-  readonly listeners = new Map<string, Set<(event: Event) => void>>()
-  readonly close = vi.fn()
-  onerror: ((event: Event) => void) | null = null
-
-  addEventListener(type: string, listener: (event: Event) => void): void {
-    const listeners = this.listeners.get(type) ?? new Set()
-    listeners.add(listener)
-    this.listeners.set(type, listeners)
-  }
-
-  removeEventListener(type: string, listener: (event: Event) => void): void {
-    this.listeners.get(type)?.delete(listener)
-  }
-
-  emit(type: string, data: string): void {
-    for (const listener of this.listeners.get(type) ?? []) {
-      listener({ data } as MessageEvent<string>)
-    }
-  }
-
-  disconnect(): void {
-    this.onerror?.(new Event('error'))
-  }
+function eventStreamResponse(data: string, event = 'task_update'): Response {
+  return new Response(`event: ${event}\ndata: ${data}\n\n`, {
+    headers: { 'content-type': 'text/event-stream' },
+  })
 }
 
-function setup() {
-  const source = new FakeEventSource()
-  const factory = vi.fn<EventSourceFactory>(() => source)
-  return { source, factory }
-}
+describe('createEventStreamSubscriber', () => {
+  it('使用 Bearer Token 建立 SSE 连接并在终态后停止', async () => {
+    let request: Request | undefined
+    const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      request = new Request(input, init)
+      return eventStreamResponse('{"status":"completed"}')
+    })
+    const subscriber = createEventStreamSubscriber({
+      fetchFn,
+      getAccessToken: () => 'access-token',
+    })
 
-describe('subscribeToEventStream', () => {
-  it('取消后关闭连接并忽略后续事件', () => {
-    const { source, factory } = setup()
-    const onEvent = vi.fn(() => false)
-    const unsubscribe = subscribeToEventStream(
-      '/generation/tasks/91/stream?project_id=42',
-      { eventName: 'task_update', onEvent, onError: vi.fn() },
-      factory,
-    )
-
-    unsubscribe()
-    source.emit('task_update', '{"status":"running"}')
-
-    expect(source.close).toHaveBeenCalledOnce()
-    expect(onEvent).not.toHaveBeenCalled()
-  })
-
-  it('收到终态关闭信号后关闭连接且只交付一次', () => {
-    const { source, factory } = setup()
-    const onEvent = vi.fn(() => true)
-    subscribeToEventStream(
-      '/generation/tasks/91/stream?project_id=42',
-      { eventName: 'task_update', onEvent, onError: vi.fn() },
-      factory,
-    )
-
-    source.emit('task_update', '{"status":"completed"}')
-    source.emit('task_update', '{"status":"completed"}')
-
-    expect(onEvent).toHaveBeenCalledOnce()
-    expect(source.close).toHaveBeenCalledOnce()
-  })
-
-  it('事件解析失败时报告错误并关闭连接', () => {
-    const { source, factory } = setup()
-    const onError = vi.fn()
-    subscribeToEventStream(
-      '/generation/tasks/91/stream?project_id=42',
-      {
+    await new Promise<void>((resolve, reject) => {
+      subscriber('https://api.test/generation/tasks/91/stream?project_id=42', {
         eventName: 'task_update',
-        onEvent: () => {
-          throw new Error('invalid task DTO')
+        onEvent(data) {
+          expect(data).toBe('{"status":"completed"}')
+          resolve()
+          return true
+        },
+        onError: reject,
+      })
+    })
+
+    expect(request?.headers.get('accept')).toBe('text/event-stream')
+    expect(request?.headers.get('authorization')).toBe('Bearer access-token')
+    expect(fetchFn).toHaveBeenCalledOnce()
+  })
+
+  it('HTTP 401 时刷新会话并用新 token 重连一次', async () => {
+    const requests: Request[] = []
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(async (input, init) => {
+        requests.push(new Request(input, init))
+        return new Response(null, { status: 401 })
+      })
+      .mockImplementationOnce(async (input, init) => {
+        requests.push(new Request(input, init))
+        return eventStreamResponse('{"status":"completed"}')
+      })
+    const getAccessToken = vi
+      .fn<() => string>()
+      .mockReturnValueOnce('expired-token')
+      .mockReturnValueOnce('refreshed-token')
+    const recoverUnauthorized = vi.fn(async () => true)
+    const subscriber = createEventStreamSubscriber({
+      fetchFn,
+      getAccessToken,
+      recoverUnauthorized,
+      reconnectDelayMs: 0,
+    })
+
+    await new Promise<void>((resolve, reject) => {
+      subscriber('https://api.test/generation/tasks/91/stream', {
+        eventName: 'task_update',
+        onEvent() {
+          resolve()
+          return true
+        },
+        onError: reject,
+      })
+    })
+
+    expect(recoverUnauthorized).toHaveBeenCalledOnce()
+    expect(requests.map((request) => request.headers.get('authorization'))).toEqual([
+      'Bearer expired-token',
+      'Bearer refreshed-token',
+    ])
+  })
+
+  it('网络中断后重连，并为新连接重新读取 access token', async () => {
+    const getAccessToken = vi
+      .fn<() => string>()
+      .mockReturnValueOnce('first-token')
+      .mockReturnValueOnce('second-token')
+    const requests: Request[] = []
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError('connection reset'))
+      .mockImplementationOnce(async () => eventStreamResponse('{"status":"failed"}'))
+    const onError = vi.fn()
+    const subscriber = createEventStreamSubscriber({
+      fetchFn: async (input, init) => {
+        requests.push(new Request(input, init))
+        return fetchFn(input, init)
+      },
+      getAccessToken,
+      reconnectDelayMs: 0,
+    })
+
+    await new Promise<void>((resolve) => {
+      subscriber('https://api.test/generation/tasks/91/stream', {
+        eventName: 'task_update',
+        onEvent() {
+          resolve()
+          return true
         },
         onError,
-      },
-      factory,
+      })
+    })
+
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'SSE 连接中断，正在自动重连' }),
     )
-
-    source.emit('task_update', '{}')
-
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'invalid task DTO' }))
-    expect(source.close).toHaveBeenCalledOnce()
+    expect(requests.map((request) => request.headers.get('authorization'))).toEqual([
+      'Bearer first-token',
+      'Bearer second-token',
+    ])
   })
 
-  it('断线时报告错误并保留 EventSource 的自动重连能力', () => {
-    const { source, factory } = setup()
-    const onEvent = vi.fn(() => false)
+  it('取消订阅会中止正在进行的请求', async () => {
+    let signal: AbortSignal | undefined
+    const subscriber = createEventStreamSubscriber({
+      async fetchFn(_input, init) {
+        signal = init?.signal as AbortSignal
+        return new Promise<Response>(() => undefined)
+      },
+      getAccessToken: () => undefined,
+    })
+
+    const unsubscribe = subscriber('https://api.test/generation/tasks/91/stream', {
+      eventName: 'task_update',
+      onEvent: () => false,
+      onError: vi.fn(),
+    })
+    await vi.waitFor(() => expect(signal).toBeDefined())
+    unsubscribe()
+
+    expect(signal?.aborted).toBe(true)
+  })
+
+  it('业务事件解析失败时报告错误且不重连', async () => {
+    const fetchFn = vi.fn(async () => eventStreamResponse('{}'))
     const onError = vi.fn()
-    subscribeToEventStream(
-      '/generation/tasks/91/stream?project_id=42',
-      { eventName: 'task_update', onEvent, onError },
-      factory,
+    const subscriber = createEventStreamSubscriber({
+      fetchFn,
+      getAccessToken: () => undefined,
+      reconnectDelayMs: 0,
+    })
+
+    subscriber('https://api.test/generation/tasks/91/stream', {
+      eventName: 'task_update',
+      onEvent() {
+        throw new Error('invalid task DTO')
+      },
+      onError,
+    })
+
+    await vi.waitFor(() =>
+      expect(onError).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'invalid task DTO' }),
+      ),
     )
-
-    source.disconnect()
-    source.emit('task_update', '{"status":"running"}')
-
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'SSE 连接中断' }))
-    expect(source.close).not.toHaveBeenCalled()
-    expect(onEvent).toHaveBeenCalledOnce()
+    expect(fetchFn).toHaveBeenCalledOnce()
   })
 })
