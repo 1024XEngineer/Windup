@@ -1,118 +1,107 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
-import type {
-  WorkflowRevision,
-  WorkflowRun,
-  WorkflowRunStatus,
-  WorkflowStepStatus,
-  WorkflowStepType,
-} from '@/entities'
+import type { WorkflowNode, WorkflowRun } from '@/entities'
 
 /**
- * History 面向 Controller 定义自己的最小只读接口，而不依赖 Controller 的具体实现文件。
- * 正式 WorkflowController 只要提供查询和订阅能力，就可以直接作为这个参数传入。
- * 页面拿不到生成、确认、审核等命令，因此从类型层面守住“历史页面不改业务”的边界。
+ * 当前后端尚未提供 WorkflowRun 列表接口，因此页面只声明读取边界，不伪造实现。
+ * 接口就绪后由 App 装配真实 reader；页面不依赖单 Run 的 WorkflowController。
  */
-export interface HistoryController {
-  /** 读取指定项目当前保存的全部任务快照。 */
-  listWorkflows(projectId: string): readonly WorkflowRun[]
-
-  /** 监听任务集合变化；返回值用于页面卸载时取消监听。 */
-  subscribeAll(listener: (runs: readonly WorkflowRun[]) => void): () => void
+export interface WorkflowHistoryReader {
+  listByProject(projectId: string): Promise<readonly WorkflowRun[]>
 }
 
 export interface HistoryPageProps {
-  controller: HistoryController
+  reader: WorkflowHistoryReader
 }
 
+type DerivedRunState = 'active' | 'failed' | 'completed'
+
 const RUN_SECTIONS: ReadonlyArray<{
-  status: WorkflowRunStatus
+  state: DerivedRunState
   title: string
-  emptyLabel: string
 }> = [
-  { status: 'active', title: '进行中', emptyLabel: '没有正在进行的任务' },
-  { status: 'interrupted', title: '已中断', emptyLabel: '没有已中断的任务' },
-  { status: 'failed', title: '失败', emptyLabel: '没有失败任务' },
-  { status: 'completed', title: '已完成', emptyLabel: '没有已完成任务' },
+  { state: 'active', title: '进行中' },
+  { state: 'failed', title: '失败' },
+  { state: 'completed', title: '已完成' },
 ]
 
-const RUN_STATUS_LABELS: Readonly<Record<WorkflowRunStatus, string>> = {
+const RUN_STATUS_LABELS: Readonly<Record<DerivedRunState, string>> = {
   active: '进行中',
-  interrupted: '已中断',
   failed: '失败',
   completed: '已完成',
 }
 
-const RUN_STATUS_STYLES: Readonly<Record<WorkflowRunStatus, string>> = {
+const RUN_STATUS_STYLES: Readonly<Record<DerivedRunState, string>> = {
   active: 'border-sky-200 bg-sky-50 text-sky-800',
-  interrupted: 'border-amber-200 bg-amber-50 text-amber-900',
   failed: 'border-rose-200 bg-rose-50 text-rose-800',
   completed: 'border-emerald-200 bg-emerald-50 text-emerald-800',
 }
 
-const STEP_STATUS_LABELS: Readonly<Record<WorkflowStepStatus, string>> = {
-  locked: '未解锁',
-  available: '可开始',
+const NODE_LABELS: Readonly<Record<string, string>> = {
+  character: '角色制作',
+  action: '动作制作',
+  'character-setup': '角色设定',
+  'character-template': '角色母版',
+  'action-first-frame': '动作首帧',
+  'action-full-frame': '完整动画',
+  review: '动作审核',
+}
+
+const NODE_STATUS_LABELS: Readonly<Record<WorkflowNode['status'], string>> = {
+  locked: '等待上游',
   active: '进行中',
-  passed: '已通过',
+  passed: '已完成',
   failed: '失败',
 }
 
-const STEP_LABELS: Readonly<Record<WorkflowStepType, string>> = {
-  'character-setup': '角色设定',
-  'character-template': '角色候选生成',
-  'template-candidate': '确认角色候选',
-  'action-setup': '动作设定',
-  'first-frame': '动作首帧生成',
-  'complete-animation': '完整动画生成',
-  review: '动作审核',
-  export: '写入角色资产',
-}
-
-/**
- * 项目历史页展示 WorkflowRun 与其 Revision，不展示 Character 资产或 Playtest 结论。
- * Run 是一次用户任务；Revision 是该任务内部的重做版本，两者不能拍平成同一级列表。
- */
-export function HistoryPage({ controller }: HistoryPageProps) {
+/** 只读展示 WorkflowRun 当前节点图；不恢复旧 Revision、Step 或 driver 概念。 */
+export function HistoryPage({ reader }: HistoryPageProps) {
   const { projectId = '' } = useParams()
   const [runs, setRuns] = useState<WorkflowRun[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+
     if (!projectId) {
       setRuns([])
       setError('路由缺少项目 ID，无法读取历史记录')
       setLoading(false)
-      return
+      return () => {
+        cancelled = true
+      }
     }
 
-    /**
-     * listWorkflows 可以直接按项目读取；subscribeAll 返回全局变化，回调里必须再次过滤。
-     * 这样即使其他项目同时产生任务，也不会把记录混进当前页面。
-     */
-    const applyProjectRuns = (items: readonly WorkflowRun[]) => {
-      setRuns(sortRuns(items.filter((run) => run.projectId === projectId)))
-      setError(null)
-      setLoading(false)
-    }
+    void reader.listByProject(projectId).then(
+      (items) => {
+        if (cancelled) return
+        setRuns(
+          items.filter((run) => run.projectId === projectId).map((run) => structuredClone(run)),
+        )
+        setLoading(false)
+      },
+      (cause: unknown) => {
+        if (cancelled) return
+        setRuns([])
+        setError(cause instanceof Error ? cause.message : '历史记录加载失败')
+        setLoading(false)
+      },
+    )
 
-    try {
-      applyProjectRuns(controller.listWorkflows(projectId))
-      return controller.subscribeAll(applyProjectRuns)
-    } catch (cause) {
-      setRuns([])
-      setError(cause instanceof Error ? cause.message : '历史记录加载失败')
-      setLoading(false)
+    return () => {
+      cancelled = true
     }
-  }, [controller, projectId])
+  }, [projectId, reader])
 
   const groupedRuns = useMemo(
     () =>
       RUN_SECTIONS.map((section) => ({
         ...section,
-        runs: runs.filter((run) => run.status === section.status),
+        runs: runs.filter((run) => deriveRunState(run) === section.state),
       })),
     [runs],
   )
@@ -126,7 +115,7 @@ export function HistoryPage({ controller }: HistoryPageProps) {
             <h1 id="history-title" className="text-3xl font-semibold text-slate-950">
               创作历史
             </h1>
-            <p className="mt-2 text-sm text-slate-600">查看任务进度、重做版本与每一步结果。</p>
+            <p className="mt-2 text-sm text-slate-600">查看每条工作流当前保存的节点进度。</p>
           </div>
           <Link
             to={`/workflow-editor?projectId=${encodeURIComponent(projectId)}`}
@@ -151,18 +140,16 @@ export function HistoryPage({ controller }: HistoryPageProps) {
       ) : runs.length === 0 ? (
         <div className="mt-8 border border-dashed border-slate-300 p-10 text-center">
           <h2 className="text-base font-semibold text-slate-900">还没有创作记录</h2>
-          <p className="mt-2 text-sm text-slate-600">
-            创建角色或生成动作后，任务会按项目出现在这里。
-          </p>
+          <p className="mt-2 text-sm text-slate-600">后端提供列表接口后，项目记录会显示在这里。</p>
         </div>
       ) : (
         <div className="mt-8 space-y-10">
           {groupedRuns.map((section) =>
             section.runs.length > 0 ? (
-              <section key={section.status} aria-labelledby={`history-${section.status}`}>
+              <section key={section.state} aria-labelledby={`history-${section.state}`}>
                 <div className="mb-3 flex items-center gap-2">
                   <h2
-                    id={`history-${section.status}`}
+                    id={`history-${section.state}`}
                     className="text-sm font-semibold text-slate-900"
                   >
                     {section.title}
@@ -184,174 +171,51 @@ export function HistoryPage({ controller }: HistoryPageProps) {
 }
 
 function RunCard({ run }: { run: WorkflowRun }) {
-  const revision = run.revisions.find((item) => item.id === run.currentRevisionId)
-  const latestRevisionAt = latestRevisionTime(run)
-  const purposeLabel = run.purpose === 'create_character' ? '创建角色' : '生成动作'
-  const title = run.prompt?.trim() || `${purposeLabel}任务 ${shortId(run.id)}`
-  const passedCount = revision?.steps.filter((step) => step.status === 'passed').length ?? 0
-  const totalCount = revision?.steps.length ?? 0
-  const canContinue = run.status === 'active' || run.status === 'interrupted'
-  const target = canContinue
-    ? continuationPath(run)
-    : `/workflow-editor/${encodeURIComponent(run.id)}`
+  const state = deriveRunState(run)
+  const passedCount = run.nodes.filter((node) => node.status === 'passed').length
 
   return (
     <article data-testid="history-run" className="border border-slate-200 bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-slate-500">{purposeLabel}</span>
-            <span
-              className={`border px-2 py-0.5 text-xs font-medium ${RUN_STATUS_STYLES[run.status]}`}
-            >
-              {RUN_STATUS_LABELS[run.status]}
-            </span>
-          </div>
-          <h3 className="mt-2 break-words text-base font-semibold text-slate-950">{title}</h3>
+        <div>
+          <span className={`border px-2 py-0.5 text-xs font-medium ${RUN_STATUS_STYLES[state]}`}>
+            {RUN_STATUS_LABELS[state]}
+          </span>
+          <h3 className="mt-2 text-base font-semibold text-slate-950">工作流 {shortId(run.id)}</h3>
           <p className="mt-1 text-xs text-slate-500">
-            Run {shortId(run.id)} · 最近版本于{' '}
-            <time dateTime={latestRevisionAt}>{formatTime(latestRevisionAt)}</time>
+            版本 {run.version} · 节点 {passedCount} / {run.nodes.length}
           </p>
         </div>
         <Link
-          to={target}
+          to={`/workflow-editor/${encodeURIComponent(run.id)}`}
           className="border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-800 hover:border-slate-500"
         >
-          {canContinue ? '继续任务' : '查看记录'}
+          {state === 'completed' ? '查看记录' : '继续任务'}
         </Link>
       </div>
 
-      {revision === undefined ? (
-        <p
-          role="alert"
-          className="mt-4 border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800"
-        >
-          当前版本 {run.currentRevisionId} 不存在，这条记录需要修复后才能继续。
-        </p>
-      ) : (
-        <>
-          <div className="mt-4 grid gap-3 border-y border-slate-100 py-4 text-xs sm:grid-cols-3">
-            <p>
-              <span className="text-slate-500">当前版本</span>
-              <strong className="ml-2 text-slate-900">{shortId(revision.id)}</strong>
-            </p>
-            <p>
-              <span className="text-slate-500">步骤进度</span>
-              <strong className="ml-2 text-slate-900">
-                {passedCount} / {totalCount}
-              </strong>
-            </p>
-            <p>
-              <span className="text-slate-500">重做版本</span>
-              <strong className="ml-2 text-slate-900">{run.revisions.length}</strong>
-            </p>
-          </div>
-          <RevisionHistory revisions={run.revisions} currentRevisionId={run.currentRevisionId} />
-        </>
-      )}
+      <ol className="mt-4 grid gap-2 sm:grid-cols-2">
+        {run.nodes.map((node) => (
+          <li
+            key={node.id}
+            className="flex items-center justify-between gap-3 bg-slate-50 px-3 py-2 text-xs"
+          >
+            <span className="text-slate-800">{NODE_LABELS[node.type] ?? node.type}</span>
+            <span className="text-slate-500">{NODE_STATUS_LABELS[node.status]}</span>
+          </li>
+        ))}
+      </ol>
     </article>
   )
 }
 
-/**
- * 自动创作与手动画布只是同一 WorkflowRun 的两种操作界面。
- * History 不负责恢复流程，但必须把用户送回创建该 Run 的界面，否则 Quick Start
- * 创建的任务会丢失原来的简化交互语境。
- */
-function continuationPath(run: WorkflowRun): string {
-  const runId = encodeURIComponent(run.id)
-  return run.driver === 'ai' ? `/quick-start/${runId}` : `/workflow-editor/${runId}`
-}
-
-function RevisionHistory({
-  revisions,
-  currentRevisionId,
-}: {
-  revisions: readonly WorkflowRevision[]
-  currentRevisionId: string
-}) {
-  return (
-    <details className="mt-4">
-      <summary className="cursor-pointer text-xs font-semibold text-slate-700">
-        查看 {revisions.length} 个版本
-      </summary>
-      <div className="mt-3 space-y-3">
-        {revisions.map((revision, revisionIndex) => (
-          <section
-            key={revision.id}
-            className="bg-slate-50 p-4"
-            aria-label={`版本 ${revisionIndex + 1}`}
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h4 className="text-xs font-semibold text-slate-900">
-                版本 {revisionIndex + 1} · {shortId(revision.id)}
-                {revision.id === currentRevisionId ? '（当前）' : ''}
-              </h4>
-              <span className="text-xs text-slate-500">{revision.status}</span>
-            </div>
-            <p className="mt-2 text-xs text-slate-500">
-              {revision.basedOnRevisionId === null
-                ? '首次执行'
-                : `基于版本 ${shortId(revision.basedOnRevisionId)}，从 ${revision.restartStepId ? stepLabel(revision.restartStepId) : '未记录步骤'} 重开`}
-            </p>
-            <ol className="mt-3 grid gap-2 sm:grid-cols-2">
-              {revision.steps.map((step) => (
-                <li
-                  key={step.id}
-                  className="flex items-center justify-between gap-3 bg-white px-3 py-2 text-xs"
-                >
-                  <span className="text-slate-800">{STEP_LABELS[step.type]}</span>
-                  <span className="text-slate-500">{STEP_STATUS_LABELS[step.status]}</span>
-                </li>
-              ))}
-            </ol>
-          </section>
-        ))}
-      </div>
-    </details>
-  )
-}
-
-function sortRuns(runs: readonly WorkflowRun[]): WorkflowRun[] {
-  return [...runs].sort(
-    (left, right) => timestamp(latestRevisionTime(right)) - timestamp(latestRevisionTime(left)),
-  )
-}
-
-/**
- * main 中的 WorkflowRun 本身没有更新时间，Revision 的创建时间才是可靠的活动时间。
- * 取最新 Revision 可以正确反映首次执行和重做，同时不在页面层伪造 Entity 字段。
- */
-function latestRevisionTime(run: WorkflowRun): string {
-  return run.revisions.reduce(
-    (latest, revision) =>
-      timestamp(revision.createdAt) > timestamp(latest) ? revision.createdAt : latest,
-    '',
-  )
-}
-
-function timestamp(value: string): number {
-  const parsed = Date.parse(value)
-  return Number.isFinite(parsed) ? parsed : 0
-}
-
-function formatTime(value: string): string {
-  const parsed = new Date(value)
-  if (!Number.isFinite(parsed.getTime())) return '时间未知'
-  return new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(parsed)
+function deriveRunState(run: WorkflowRun): DerivedRunState {
+  if (run.nodes.some((node) => node.status === 'failed')) return 'failed'
+  if (run.nodes.length > 0 && run.nodes.every((node) => node.status === 'passed'))
+    return 'completed'
+  return 'active'
 }
 
 function shortId(value: string): string {
   return value.length > 8 ? value.slice(0, 8) : value
-}
-
-/** 水合失败的旧记录可能带未知步骤名；历史页应原样展示，而不是因此崩溃。 */
-function stepLabel(value: string): string {
-  return Object.hasOwn(STEP_LABELS, value) ? STEP_LABELS[value as WorkflowStepType] : value
 }

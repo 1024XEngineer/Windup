@@ -1,94 +1,44 @@
 /** @vitest-environment jsdom */
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router'
 
-import type { WorkflowRevision, WorkflowRun } from '@/entities'
-import type { HistoryController } from './index'
+import type { WorkflowRun } from '@/entities'
+import type { WorkflowHistoryReader } from './index'
 import { HistoryPage } from './index'
 
-const NOW = '2026-08-04T10:00:00.000Z'
-
-function revision(id: string, options: Partial<WorkflowRevision> = {}): WorkflowRevision {
-  return {
-    id,
-    basedOnRevisionId: null,
-    restartStepId: null,
-    status: 'active',
-    steps: [
-      {
-        id: `${id}-setup`,
-        type: 'character-setup',
-        status: 'passed',
-        input: null,
-        output: null,
-        taskId: null,
-        referenceStepIds: [],
-      },
-      {
-        id: `${id}-template`,
-        type: 'character-template',
-        status: 'active',
-        input: null,
-        output: null,
-        taskId: 'generation-1',
-        referenceStepIds: [],
-      },
-    ],
-    generationStatus: 'in_progress',
-    exportStatus: 'not_exported',
-    createdAt: NOW,
-    ...options,
-  }
-}
-
-type RunOptions = Partial<WorkflowRun> & { revisionCreatedAt?: string }
-
-function run(id: string, options: RunOptions = {}): WorkflowRun {
-  const { revisionCreatedAt = NOW, ...overrides } = options
-  const current = revision(`${id}-revision`, { createdAt: revisionCreatedAt })
-  const base: WorkflowRun = {
-    id,
-    projectId: 'project-1',
-    purpose: 'create_character',
-    driver: 'manual',
-    status: 'active',
-    currentRevisionId: current.id,
-    revisions: [current],
-    prompt: `任务 ${id}`,
-    characterId: null,
-    outfitId: null,
-  }
-  return { ...base, ...overrides }
-}
-
-function controller(initial: WorkflowRun[] = []): HistoryController & {
-  emit(items: WorkflowRun[]): void
-  unsubscribe: ReturnType<typeof vi.fn>
-} {
-  let listener: ((runs: WorkflowRun[]) => void) | null = null
-  const unsubscribe = vi.fn()
-  return {
-    listWorkflows: vi.fn(() => initial),
-    subscribeAll: vi.fn((nextListener) => {
-      listener = nextListener
-      return unsubscribe
+function node(
+  id: string,
+  status: 'locked' | 'active' | 'passed' | 'failed',
+): WorkflowRun['nodes'][number] {
+  // #107 合并前 main 仍是两节点联合类型；JSON 水合模拟后端即将返回的五节点契约。
+  return JSON.parse(
+    JSON.stringify({
+      id,
+      type: 'character-setup',
+      status,
+      phase: status === 'passed' ? 'completed' : 'configuring',
+      dependsOnNodeIds: [],
+      generations: [],
+      error: status === 'failed' ? '生成失败' : null,
+      input: { prompt: '像素骑士', referenceMedia: [] },
     }),
-    emit(items) {
-      listener?.(items)
-    },
-    unsubscribe,
-  }
+  ) as WorkflowRun['nodes'][number]
 }
 
-function renderHistory(testController: HistoryController, path = '/projects/project-1/history') {
+function run(id: string, projectId: string, nodes: WorkflowRun['nodes']): WorkflowRun {
+  return { id, projectId, version: 3, storageStatus: 'active', nodes }
+}
+
+function reader(items: WorkflowRun[] = []): WorkflowHistoryReader {
+  return { listByProject: vi.fn(async () => items) }
+}
+
+function renderHistory(source: WorkflowHistoryReader, path = '/projects/project-1/history') {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route
-          path="/projects/:projectId/history"
-          element={<HistoryPage controller={testController} />}
-        />
+        <Route path="/projects/:projectId/history" element={<HistoryPage reader={source} />} />
       </Routes>
     </MemoryRouter>,
   )
@@ -97,113 +47,52 @@ function renderHistory(testController: HistoryController, path = '/projects/proj
 afterEach(cleanup)
 
 describe('HistoryPage', () => {
-  it('只展示当前项目，并按最近 Revision 时间从新到旧排列', () => {
-    const older = run('older-run', { revisionCreatedAt: '2026-08-03T10:00:00.000Z' })
-    const newer = run('newer-run', { revisionCreatedAt: '2026-08-04T11:00:00.000Z' })
-    const anotherProject = run('foreign-run', { projectId: 'project-2' })
-    const testController = controller([older, anotherProject, newer])
+  it('只展示当前项目，并直接读取 WorkflowRun 节点图', async () => {
+    const source = reader([
+      run('active-run', 'project-1', [node('setup', 'active')]),
+      run('foreign-run', 'project-2', [node('setup', 'passed')]),
+    ])
 
-    renderHistory(testController)
+    renderHistory(source)
 
-    const cards = screen.getAllByTestId('history-run')
-    expect(cards).toHaveLength(2)
-    expect(within(cards[0]!).getByText('任务 newer-run')).toBeTruthy()
-    expect(within(cards[1]!).getByText('任务 older-run')).toBeTruthy()
-    expect(screen.queryByText('任务 foreign-run')).toBeNull()
-    expect(testController.listWorkflows).toHaveBeenCalledWith('project-1')
+    const card = await screen.findByTestId('history-run')
+    expect(within(card).getByText('工作流 active-r')).toBeTruthy()
+    expect(screen.queryByText('工作流 foreign-')).toBeNull()
+    expect(source.listByProject).toHaveBeenCalledWith('project-1')
   })
 
-  it('区分四种 Run 状态，并为活动与终态提供不同操作文案', () => {
+  it('从节点状态派生进行中、失败和完成，不引入 Run 状态字段', async () => {
     renderHistory(
-      controller([
-        run('active-run'),
-        run('paused-run', { status: 'interrupted' }),
-        run('failed-run', { status: 'failed' }),
-        run('done-run', { status: 'completed' }),
+      reader([
+        run('active-run', 'project-1', [node('setup', 'active')]),
+        run('failed-run', 'project-1', [node('setup', 'failed')]),
+        run('done-run', 'project-1', [node('setup', 'passed')]),
       ]),
     )
 
-    expect(screen.getByRole('heading', { name: '进行中' })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: '已中断' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '进行中' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '失败' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '已完成' })).toBeTruthy()
     expect(screen.getAllByRole('link', { name: '继续任务' })).toHaveLength(2)
-    expect(screen.getAllByRole('link', { name: '查看记录' })).toHaveLength(2)
+    expect(screen.getByRole('link', { name: '查看记录' })).toBeTruthy()
   })
 
-  it('继续任务时回到创建该 Run 的交互界面', () => {
-    renderHistory(
-      controller([
-        run('ai-run', { driver: 'ai' }),
-        run('manual-run', { driver: 'manual', status: 'interrupted' }),
-      ]),
-    )
+  it('读取失败时展示错误，不伪装为空历史', async () => {
+    const source: WorkflowHistoryReader = {
+      listByProject: vi.fn(async () => {
+        throw new Error('历史接口暂不可用')
+      }),
+    }
 
-    const aiCard = screen.getByText('任务 ai-run').closest('article')
-    const manualCard = screen.getByText('任务 manual-run').closest('article')
-    expect(aiCard).not.toBeNull()
-    expect(manualCard).not.toBeNull()
-    expect(within(aiCard!).getByRole('link', { name: '继续任务' }).getAttribute('href')).toBe(
-      '/quick-start/ai-run',
-    )
-    expect(within(manualCard!).getByRole('link', { name: '继续任务' }).getAttribute('href')).toBe(
-      '/workflow-editor/manual-run',
-    )
-  })
+    renderHistory(source)
 
-  it('展开 Run 后展示 Revision 来源与步骤状态', () => {
-    const first = revision('revision-1', { status: 'abandoned' })
-    const second = revision('revision-2', {
-      basedOnRevisionId: first.id,
-      restartStepId: 'character-template',
-      status: 'active',
-    })
-    const item = run('restarted-run', {
-      currentRevisionId: second.id,
-      revisions: [first, second],
-    })
-
-    renderHistory(controller([item]))
-    fireEvent.click(screen.getByText('查看 2 个版本'))
-
-    expect(screen.getByText('首次执行')).toBeTruthy()
-    expect(screen.getByText('基于版本 revision，从 角色候选生成 重开')).toBeTruthy()
-    expect(screen.getAllByText('角色设定')).toHaveLength(2)
-    expect(screen.getAllByText('已通过')).toHaveLength(2)
-  })
-
-  it('响应全局订阅但继续按项目过滤，并在卸载时取消订阅', () => {
-    const testController = controller([])
-    const view = renderHistory(testController)
-    expect(screen.getByText('还没有创作记录')).toBeTruthy()
-
-    act(() => {
-      testController.emit([run('arrived-run'), run('foreign-run', { projectId: 'project-2' })])
-    })
-    expect(screen.getByText('任务 arrived-run')).toBeTruthy()
-    expect(screen.queryByText('任务 foreign-run')).toBeNull()
-
-    view.unmount()
-    expect(testController.unsubscribe).toHaveBeenCalledTimes(1)
-  })
-
-  it('无效 currentRevisionId 不会让页面崩溃，而是标出待修复记录', () => {
-    renderHistory(controller([run('broken-run', { currentRevisionId: 'missing-revision' })]))
-
-    expect(
-      screen.getByText('当前版本 missing-revision 不存在，这条记录需要修复后才能继续。'),
-    ).toBeTruthy()
-  })
-
-  it('读取失败时展示原始错误，不伪造空历史', () => {
-    const testController = controller([])
-    vi.mocked(testController.listWorkflows).mockImplementation(() => {
-      throw new Error('历史服务暂不可用')
-    })
-
-    renderHistory(testController)
-
-    expect(screen.getByRole('alert').textContent).toContain('历史服务暂不可用')
+    expect((await screen.findByRole('alert')).textContent).toContain('历史接口暂不可用')
     expect(screen.queryByText('还没有创作记录')).toBeNull()
+  })
+
+  it('空列表说明仍在等待后端列表接口', async () => {
+    renderHistory(reader())
+    expect(await screen.findByText('还没有创作记录')).toBeTruthy()
+    expect(screen.getByText('后端提供列表接口后，项目记录会显示在这里。')).toBeTruthy()
   })
 })
