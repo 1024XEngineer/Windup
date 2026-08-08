@@ -106,11 +106,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function isAbortError(value: unknown): value is Error {
+  return value instanceof Error && value.name === 'AbortError'
+}
+
 async function readEnvelope(response: Response): Promise<ApiEnvelope> {
   let value: unknown
   try {
     value = await response.json()
   } catch (cause) {
+    if (isAbortError(cause)) throw cause
     throw new ApiError(response.ok ? '后端响应格式无效' : 'HTTP 请求失败', {
       kind: response.ok ? 'invalid-response' : 'http',
       status: response.status,
@@ -210,6 +215,7 @@ export function createApiClient({
     try {
       return await fetchFn(url, init)
     } catch (cause) {
+      if (isAbortError(cause)) throw cause
       throw new ApiError('网络请求失败', { kind: 'network', cause })
     }
   }

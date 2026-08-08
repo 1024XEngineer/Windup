@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createMediaApis } from '@/entities'
+import { registerApiAccessTokenProvider, registerApiUnauthorizedRecovery } from '@/shared/api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -8,6 +9,69 @@ afterEach(() => {
 })
 
 describe('MediaApis.upload', () => {
+  it('使用当前登录令牌上传受保护的媒体资源', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8000')
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        url: 'https://cdn.example.com/media/reference.png',
+        object_key: 'media/general/reference.png',
+        filename: 'reference.png',
+        content_type: 'image/png',
+        size: 4,
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const unregister = registerApiAccessTokenProvider(() => 'current-access-token')
+
+    try {
+      await createMediaApis().upload(imageFile())
+    } finally {
+      unregister()
+    }
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(new Headers(init.headers).get('authorization')).toBe('Bearer current-access-token')
+  })
+
+  it('登录令牌过期时刷新令牌并重放同一次上传', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8000')
+    let accessToken = 'expired-token'
+    const authorizations: (string | null)[] = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      authorizations.push(new Request(input, init).headers.get('authorization'))
+      if (authorizations.length === 1) {
+        return new Response(JSON.stringify({ code: 401, message: '登录状态已过期', data: null }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return jsonResponse({
+        url: 'https://cdn.example.com/media/reference.png',
+        object_key: 'media/general/reference.png',
+        filename: 'reference.png',
+        content_type: 'image/png',
+        size: 4,
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const unregisterToken = registerApiAccessTokenProvider(() => accessToken)
+    const unregisterRecovery = registerApiUnauthorizedRecovery(async () => {
+      accessToken = 'renewed-token'
+      return true
+    })
+
+    try {
+      await expect(createMediaApis().upload(imageFile())).resolves.toBe(
+        'https://cdn.example.com/media/reference.png',
+      )
+    } finally {
+      unregisterRecovery()
+      unregisterToken()
+    }
+
+    expect(authorizations).toEqual(['Bearer expired-token', 'Bearer renewed-token'])
+  })
+
   it('把图片和默认查询分类交给后端，并返回经过校验的媒体引用', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8000')
     const fetchMock = vi.fn().mockResolvedValue(
@@ -76,8 +140,7 @@ describe('MediaApis.upload', () => {
     vi.stubEnv('VITE_API_BASE_URL', '')
 
     await expect(createMediaApis().upload(imageFile())).rejects.toMatchObject({
-      name: 'UploadConfigurationError',
-      message: '媒体上传不可用：请配置 VITE_API_BASE_URL',
+      message: 'VITE_API_BASE_URL 未配置',
     })
     expect(fetchMock).not.toHaveBeenCalled()
   })
@@ -95,14 +158,15 @@ describe('MediaApis.upload', () => {
     )
 
     await expect(createMediaApis().upload(imageFile())).rejects.toMatchObject({
-      name: 'UploadRequestError',
+      name: 'ApiError',
+      kind: 'business',
       status: 200,
       code: 400,
       message: '仅支持图片文件',
     })
   })
 
-  it('保留非成功 HTTP 响应的状态和后端错误信息', async () => {
+  it('把非成功 HTTP 响应归类为传输错误', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8000')
     vi.stubGlobal(
       'fetch',
@@ -115,10 +179,10 @@ describe('MediaApis.upload', () => {
     )
 
     await expect(createMediaApis().upload(imageFile())).rejects.toMatchObject({
-      name: 'UploadRequestError',
+      name: 'ApiError',
+      kind: 'http',
       status: 503,
-      code: 503,
-      message: '对象存储暂不可用',
+      code: null,
     })
   })
 
@@ -134,9 +198,11 @@ describe('MediaApis.upload', () => {
       ),
     )
 
-    await expect(createMediaApis().upload(imageFile())).rejects.toThrow(
-      '上传响应格式错误，无法解析 JSON',
-    )
+    await expect(createMediaApis().upload(imageFile())).rejects.toMatchObject({
+      name: 'ApiError',
+      kind: 'invalid-response',
+      status: 200,
+    })
   })
 
   it.each([
