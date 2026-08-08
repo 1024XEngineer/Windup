@@ -22,7 +22,6 @@ export interface GenericExportAction {
     rows: number
     cell: { w: number; h: number }
   }
-  preview: string
 }
 
 export interface GenericExportMetadata {
@@ -33,7 +32,7 @@ export interface GenericExportMetadata {
   source: {
     workflow_run_id: string
     generation_ids: readonly string[]
-  }
+  } | null
 }
 
 function fail(field: string, reason: string): never {
@@ -63,17 +62,15 @@ export function validateExportPackageModel(model: ExportPackageModel): void {
   requireText('outfit.name', model.outfitName)
   requirePositiveInteger('canvas.w', model.canvas.width)
   requirePositiveInteger('canvas.h', model.canvas.height)
-  requireText('source.workflow_run_id', model.source.workflowRunId)
-
-  if (model.source.generationIds.length === 0) {
-    fail('source.generation_ids', '至少需要一条生成记录')
+  if (model.source !== null) {
+    requireText('source.workflow_run_id', model.source.workflowRunId)
+    const generationIds = new Set<string>()
+    model.source.generationIds.forEach((id, index) => {
+      requireText(`source.generation_ids[${index}]`, id)
+      if (generationIds.has(id)) fail(`source.generation_ids[${index}]`, '生成记录不能重复')
+      generationIds.add(id)
+    })
   }
-  const generationIds = new Set<string>()
-  model.source.generationIds.forEach((id, index) => {
-    requireText(`source.generation_ids[${index}]`, id)
-    if (generationIds.has(id)) fail(`source.generation_ids[${index}]`, '生成记录不能重复')
-    generationIds.add(id)
-  })
 
   if (model.actions.length === 0) fail('actions', '至少需要一个动作')
   model.actions.forEach((action, actionIndex) => {

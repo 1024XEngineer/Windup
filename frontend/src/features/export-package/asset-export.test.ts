@@ -130,7 +130,6 @@ describe('asset export', () => {
       exportName: 'Walk-Forward-south',
       framesFolder: 'frames/Walk-Forward-south',
       atlasFile: 'atlas/Walk-Forward-south.png',
-      previewFile: 'preview/Walk-Forward-south.gif',
       columns: 8,
       rows: 2,
     })
@@ -138,7 +137,7 @@ describe('asset export', () => {
     expect(plan[0]?.frames[8]?.filename).toBe('Walk-Forward-south_008.png')
   })
 
-  it('生成通用目录、透明 PNG、图集、GIF、README、Schema 和可校验的 meta.json', async () => {
+  it('生成通用目录、透明 PNG、图集、README、Schema 和可校验的动画 meta.json', async () => {
     const phases: string[] = []
     const result = await exportGameAssets(model, {
       runtime: runtime(),
@@ -154,7 +153,6 @@ describe('asset export', () => {
     expect(names).toContain(`${root}/schema.json`)
     expect(names).toContain(`${root}/README.md`)
     expect(names).toContain(`${root}/atlas/Walk-Forward-south.png`)
-    expect(names).toContain(`${root}/preview/Walk-Forward-south.gif`)
     expect(names.filter((name) => name.includes('/frames/'))).toHaveLength(9)
 
     const meta = JSON.parse(new TextDecoder().decode(entries.get(`${root}/meta.json`)))
@@ -175,9 +173,7 @@ describe('asset export', () => {
       foot_y: 36,
       atlas: { cols: 8, rows: 2, cell: { w: 32, h: 40 } },
     })
-    expect(
-      new TextDecoder().decode(entries.get(`${root}/preview/Walk-Forward-south.gif`)).slice(0, 6),
-    ).toBe('GIF89a')
+    expect(names.some((name) => name.endsWith('.gif'))).toBe(false)
   })
 
   it('声明帧数与实际帧数不一致时，在读取图片前拒绝导出', async () => {

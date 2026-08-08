@@ -1,6 +1,6 @@
 import type { ActionType } from '@/entities'
 
-/** Playtest 根据逐帧图像计算出的可选位移数据，不要求后端 Character.Frame 提供。 */
+/** Playtest 可根据逐帧图像计算位移；导出模型不要求后端 Character.Frame 持有该字段。 */
 export interface ExportRootMotion {
   dx: number
   dy: number
@@ -64,6 +64,7 @@ export interface ExportPackageModel {
     height: number
   }
   /** 生成链路引用，用于从导出物追溯到 WorkflowRun 与生成任务。 */
-  source: ExportSourceReference
+  /** 独立 Playtest 入口可能没有 WorkflowRun/Generation 追溯信息。 */
+  source: ExportSourceReference | null
   actions: readonly ExportAction[]
 }

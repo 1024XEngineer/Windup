@@ -72,7 +72,7 @@ export function ExportPanel({
       <header>
         <p className="text-[10px] font-semibold tracking-[0.18em] text-slate-400">GAME ASSETS</p>
         <h2 className="mt-1 text-sm font-semibold text-slate-900">资产导出</h2>
-        <p className="mt-1 text-[11px] text-slate-500">透明 PNG、图集、GIF 与通用元数据</p>
+        <p className="mt-1 text-[11px] text-slate-500">逐帧透明 PNG、Sprite Sheet 与动画 JSON</p>
       </header>
 
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-xs">

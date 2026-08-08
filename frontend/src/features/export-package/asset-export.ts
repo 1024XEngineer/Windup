@@ -1,5 +1,3 @@
-import { GIFEncoder, applyPalette, quantize } from 'gifenc'
-
 import {
   EXPORT_PACKAGE_JSON_SCHEMA_TEXT,
   EXPORT_PACKAGE_SCHEMA_VERSION,
@@ -41,7 +39,6 @@ export interface PlannedSequence {
   exportName: string
   framesFolder: string
   atlasFile: string
-  previewFile: string
   columns: number
   rows: number
   frames: readonly PlannedFrame[]
@@ -59,7 +56,7 @@ export interface AssetExportTargetContext {
   plan: readonly PlannedSequence[]
 }
 
-/** 新引擎只实现 target，不应修改通用 meta.json、frames、atlas 与 preview。 */
+/** 新引擎只实现 target，不应修改通用 meta.json、frames 与 atlas。 */
 export interface AssetExportTarget {
   id: string
   createFiles(context: AssetExportTargetContext): Promise<readonly AssetExportTargetFile[]>
@@ -130,7 +127,6 @@ export function createAssetExportPlan(model: ExportPackageModel): readonly Plann
           exportName,
           framesFolder: `frames/${exportName}`,
           atlasFile: `atlas/${exportName}.png`,
-          previewFile: `preview/${exportName}.gif`,
           columns,
           rows: Math.ceil(sequence.frames.length / columns),
           frames: sequence.frames.map((currentFrame, index) => {
@@ -310,38 +306,6 @@ async function renderAtlas(
   return canvasPng(canvas)
 }
 
-function renderGif(
-  loaded: LoadedSequence,
-  model: ExportPackageModel,
-  runtime: AssetExportRuntime,
-): Blob {
-  const canvas = runtime.createCanvas(model.canvas.width, model.canvas.height)
-  const context = context2d(canvas, loaded.item.previewFile)
-  const gif = GIFEncoder()
-
-  loaded.frames.forEach((frame) => {
-    context.clearRect(0, 0, canvas.width, canvas.height)
-    context.drawImage(frame.decoded.source, 0, 0)
-    const rgba = context.getImageData(0, 0, canvas.width, canvas.height).data
-    const palette = quantize(rgba, 256, { format: 'rgba4444', oneBitAlpha: true })
-    const indexed = applyPalette(rgba, palette, 'rgba4444')
-    const transparentIndex = palette.findIndex((color) => color[3] === 0)
-    gif.writeFrame(indexed, canvas.width, canvas.height, {
-      palette,
-      delay: frame.frame.durationMs,
-      repeat: loaded.item.sequence.loop ? 0 : -1,
-      transparent: transparentIndex >= 0,
-      transparentIndex: Math.max(0, transparentIndex),
-      dispose: 2,
-    })
-  })
-  gif.finish()
-  const output = gif.bytes()
-  const buffer = new ArrayBuffer(output.length)
-  new Uint8Array(buffer).set(output)
-  return new Blob([buffer], { type: 'image/gif' })
-}
-
 function createMetadata(
   model: ExportPackageModel,
   plan: readonly PlannedSequence[],
@@ -363,12 +327,14 @@ function createMetadata(
         rows: item.rows,
         cell: { w: model.canvas.width, h: model.canvas.height },
       },
-      preview: item.previewFile,
     })),
-    source: {
-      workflow_run_id: model.source.workflowRunId,
-      generation_ids: [...model.source.generationIds],
-    },
+    source:
+      model.source === null
+        ? null
+        : {
+            workflow_run_id: model.source.workflowRunId,
+            generation_ids: [...model.source.generationIds],
+          },
   }
 }
 
@@ -382,7 +348,6 @@ function createReadme(model: ExportPackageModel): string {
 - \`meta.json\`: 动作、帧率、循环、画布、锚点、脚底线、图集与生成记录。
 - \`frames/<action>/\`: 连续编号的透明 PNG 原始帧。
 - \`atlas/<action>.png\`: 按 \`meta.json\` 中 cols、rows 和 cell 切分的图集。
-- \`preview/<action>.gif\`: 动作预览。
 - \`schema.json\`: 校验 \`meta.json\` 的 JSON Schema。
 - \`targets/<target>/\`: 可选引擎适配器产生的原生文件。
 
@@ -530,10 +495,6 @@ export async function exportGameAssets(
       entries.push({
         name: `${root}/${current.item.atlasFile}`,
         data: await bytes(await renderAtlas(current, model, runtime)),
-      })
-      entries.push({
-        name: `${root}/${current.item.previewFile}`,
-        data: await bytes(renderGif(current, model, runtime)),
       })
     }
 

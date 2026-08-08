@@ -8,7 +8,7 @@
 2. `validateExportPackageModel` 检查角色、画布、生成记录、帧数、质量状态、锚点和脚底线。
 3. `createAssetExportPlan` 为每个动作方向生成稳定目录与三位连续帧名。
 4. `exportGameAssets` 读取透明 PNG，并检查图片尺寸是否与统一画布一致。
-5. 浏览器生成图集和 GIF，最后写入 `meta.json`、`schema.json`、README 与 ZIP。
+5. 浏览器生成 Sprite Sheet，最后写入动画 `meta.json`、`schema.json`、README 与 ZIP。
 6. 可选 target 只在 `targets/<target-id>/` 下追加引擎文件，不修改通用层。
 
 ## 导出结构
@@ -18,7 +18,6 @@ Aster-character-1/
   meta.json
   schema.json
   README.md
-  preview/Walk-south.gif
   frames/Walk-south/Walk-south_000.png
   atlas/Walk-south.png
   targets/<target-id>/...
@@ -45,4 +44,4 @@ npm run lint
 npm run build
 ```
 
-测试覆盖 Schema 校验、连续命名、GIF/图集输出、缺帧失败、质量门禁、图片释放和空 target 扩展。
+测试覆盖 Schema 校验、连续命名、图集输出、缺帧失败、质量门禁、图片释放和空 target 扩展。
