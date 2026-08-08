@@ -20,7 +20,7 @@ export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed'
  * 生成对应的三个前端可见异步步骤。
  * 它是前端工作流粒度，不等于后端 task_type——后端只有 character_image 与
  * character_action 两种：character_template 落在 character_image，动作首帧和完整动画
- * 都落在 character_action，只是请求帧数分别为 1 和 16。
+ * 都落在 character_action，只是请求帧数分别为 1 和 32。
  * 完整动画内部可含视频生成、截帧和多次图像处理，但对前端仍是一次 Generation。
  */
 export type GenerationType = 'character_template' | 'first_frame' | 'complete_animation'
@@ -40,17 +40,14 @@ interface GenerationInputBase {
   referenceMedia: readonly MediaReference[]
 }
 
-/** 图片生成请求的实际画布尺寸，必须与所属项目的精灵尺寸合同一致。 */
-export interface GenerationImageSize {
-  width: number
-  height: number
-}
-
 /** 角色母版候选生成；当前合同固定请求 4 个候选，不向调用方暴露可变数量。 */
 export interface CharacterTemplateGenerationInput extends GenerationInputBase {
   type: 'character_template'
   /** 已由手动输入或 Quick Start 整理好的角色提示词。 */
   prompt: string
+  /** 必须与 Project 的精灵尺寸一致，由上层用例明确传入。 */
+  spriteWidth: number
+  spriteHeight: number
 }
 
 /** 指定角色造型下的动作首帧生成；当前合同固定 1 张，且不能只绑定 Character。 */
@@ -65,7 +62,7 @@ export interface FirstFrameGenerationInput extends GenerationInputBase {
 
 /**
  * 以已确认首帧为起点生成完整动画。
- * 后端支持 num_frames，但当前输入没有 frameCount；适配器暂按后端默认值提交 16。
+ * 产品合同固定生成 32 帧；适配器不再沿用后端旧默认值 16。
  */
 export interface CompleteAnimationGenerationInput extends GenerationInputBase {
   type: 'complete_animation'
@@ -137,15 +134,14 @@ export interface Generation<TType extends GenerationType = GenerationType> {
 }
 
 /**
- * 一条状态变更事件。
- * 不含 projectId：后端事件 payload 只有 task_id、task_type、status，
- * 以及完成时的 result 和失败时的 error_message。
+ * 一条状态变更事件。后端 SSE 推送完整任务对象并使用 id；适配器校验后将 id
+ * 转成 taskId，避免传输字段名泄漏到 Controller。
  */
 export interface GenerationEvent<TType extends GenerationType = GenerationType> extends Omit<
   Generation<TType>,
   'id' | 'projectId'
 > {
-  /** 对应 Generation.id，字段名沿用后端事件里的 task_id。 */
+  /** 对应后端事件的 id，也对应 Generation.id。 */
   taskId: Generation['id']
 }
 
@@ -157,21 +153,16 @@ export interface GenerationApis {
    * 按所属项目和任务 ID 读取最新快照。
    * projectId 不能从 id 推导，后端查询接口要求两者同时传入。
    */
-  get<TType extends GenerationType>(
-    projectId: Generation['projectId'],
-    id: Generation['id'],
-    expectation: Extract<GenerationExpectation, { type: TType }>,
-  ): Promise<Generation<TType>>
+  get(projectId: Generation['projectId'], id: Generation['id']): Promise<Generation>
   /**
    * 订阅 task_update，终态由传输层自动关闭；返回的函数供页面离开时主动取消。
    * 传输错误与非法 DTO 通过 onError 上报，不伪造成业务 failed 状态。
    */
-  subscribe<TType extends GenerationType>(
+  subscribe(
     projectId: Generation['projectId'],
     id: Generation['id'],
-    expectation: Extract<GenerationExpectation, { type: TType }>,
-    onEvent: (event: GenerationEvent<TType>) => void,
-    onError: (error: Error) => void,
+    onEvent: (event: GenerationEvent) => void,
+    onError?: (error: Error) => void,
   ): () => void
 }
 

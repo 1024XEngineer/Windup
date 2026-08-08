@@ -46,7 +46,6 @@ export type {
   GenerationEvent,
   GenerationExpectation,
   GenerationInput,
-  GenerationImageSize,
   GenerationResult,
   GenerationResultFor,
   GenerationType,

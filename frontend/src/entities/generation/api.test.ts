@@ -5,7 +5,6 @@ import { createGenerationApis, GenerationApiError } from '@/entities'
 import type { MediaReference } from '../media'
 
 const reference = (url: string) => url as MediaReference
-const resolveImageSize = vi.fn(async () => ({ width: 64, height: 96 }))
 
 function success(data: unknown): Response {
   return new Response(JSON.stringify({ code: 200, message: 'success', data }), {
@@ -55,7 +54,6 @@ describe('createGenerationApis', () => {
       baseUrl: 'https://api.test/',
       userId: '7',
       transport: { request, stream },
-      resolveImageSize,
     })
 
     const generation = await apis.create({
@@ -63,6 +61,8 @@ describe('createGenerationApis', () => {
       projectId: '42',
       referenceMedia: [reference('https://cdn.test/reference.png')],
       prompt: 'pixel hero',
+      spriteWidth: 64,
+      spriteHeight: 96,
     })
 
     expect(request).toHaveBeenCalledWith(
@@ -91,7 +91,6 @@ describe('createGenerationApis', () => {
         { url: 'https://cdn.test/candidate-4.png' },
       ],
     })
-    expect(resolveImageSize).toHaveBeenCalledWith('42')
   })
 
   it('通过动作生成接口固定请求并映射一帧动作首帧', async () => {
@@ -114,7 +113,6 @@ describe('createGenerationApis', () => {
       baseUrl: '',
       userId: 7,
       transport: { request, stream: vi.fn(() => vi.fn()) },
-      resolveImageSize,
     })
 
     const generation = await apis.create({
@@ -144,16 +142,16 @@ describe('createGenerationApis', () => {
     })
   })
 
-  it('以首帧请求完整动画并按后端 index 排序，当前合同固定为十六帧', async () => {
+  it('以首帧请求完整动画并按后端 index 排序，当前合同固定为三十二帧', async () => {
     const request = vi.fn(async (_url: string, _init?: RequestInit) =>
       success(
         taskData({
           task_type: 'character_action',
-          input_payload: { num_frames: 16, action_type: 'walk' },
+          input_payload: { num_frames: 32, action_type: 'walk' },
           result: {
             type: 'character_action',
             action_type: 'walk',
-            frames: actionFrames(16),
+            frames: actionFrames(32),
           },
         }),
       ),
@@ -162,7 +160,6 @@ describe('createGenerationApis', () => {
       baseUrl: '/api',
       userId: 7,
       transport: { request, stream: vi.fn(() => vi.fn()) },
-      resolveImageSize,
     })
 
     const generation = await apis.create({
@@ -185,11 +182,11 @@ describe('createGenerationApis', () => {
       custom_prompt: 'move forward',
       reference_video_url: null,
       reference_image_urls: ['https://cdn.test/frame-1.png', 'https://cdn.test/extra.png'],
-      num_frames: 16,
+      num_frames: 32,
     })
     expect(generation.result).toEqual({
       type: 'complete_animation',
-      frames: Array.from({ length: 16 }, (_, index) => ({
+      frames: Array.from({ length: 32 }, (_, index) => ({
         url: `https://cdn.test/frame-${index + 1}.png`,
       })),
     })
@@ -200,15 +197,10 @@ describe('createGenerationApis', () => {
     const apis = createGenerationApis({
       userId: 7,
       transport: { request, stream: vi.fn(() => vi.fn()) },
-      resolveImageSize,
     })
 
-    await expect(apis.get('42', '91', { type: 'character_template' })).rejects.toBeInstanceOf(
-      GenerationApiError,
-    )
-    await expect(apis.get('42', '91', { type: 'character_template' })).rejects.toThrow(
-      '生成任务状态无效',
-    )
+    await expect(apis.get('42', '91')).rejects.toBeInstanceOf(GenerationApiError)
+    await expect(apis.get('42', '91')).rejects.toThrow('生成任务状态无效')
   })
 
   it('拒绝结果字段不完整的 completed DTO', async () => {
@@ -218,12 +210,9 @@ describe('createGenerationApis', () => {
     const apis = createGenerationApis({
       userId: 7,
       transport: { request, stream: vi.fn(() => vi.fn()) },
-      resolveImageSize,
     })
 
-    await expect(apis.get('42', '91', { type: 'character_template' })).rejects.toThrow(
-      '角色图片结果 image_urls 无效',
-    )
+    await expect(apis.get('42', '91')).rejects.toThrow('角色图片结果 image_urls 无效')
   })
 
   it('订阅 task_update，映射终态并把终态关闭信号交给流传输层', () => {
@@ -245,27 +234,23 @@ describe('createGenerationApis', () => {
       baseUrl: 'https://api.test',
       userId: 7,
       transport: { request: vi.fn(), stream },
-      resolveImageSize,
     })
     const onEvent = vi.fn()
     const onError = vi.fn()
 
-    const unsubscribe = apis.subscribe(
-      '42',
-      '91',
-      { type: 'complete_animation', actionType: 'walk' },
-      onEvent,
-      onError,
-    )
+    const unsubscribe = apis.subscribe('42', '91', onEvent, onError)
     const isTerminal = streamOptions?.onEvent(
       JSON.stringify({
-        task_id: 91,
+        id: 91,
+        user_id: 7,
+        project_id: 42,
         task_type: 'character_action',
         status: 'completed',
+        input_payload: { num_frames: 32, action_type: 'walk' },
         result: {
           type: 'character_action',
           action_type: 'walk',
-          frames: actionFrames(16),
+          frames: actionFrames(32),
         },
         error_message: null,
       }),
@@ -280,7 +265,7 @@ describe('createGenerationApis', () => {
       status: 'completed',
       result: {
         type: 'complete_animation',
-        frames: Array.from({ length: 16 }, (_, index) => ({
+        frames: Array.from({ length: 32 }, (_, index) => ({
           url: `https://cdn.test/frame-${index + 1}.png`,
         })),
       },
@@ -296,11 +281,11 @@ describe('createGenerationApis', () => {
       success(
         taskData({
           task_type: 'character_action',
-          input_payload: { num_frames: 16, action_type: 'walk' },
+          input_payload: { num_frames: 32, action_type: 'walk' },
           result: {
             type: 'character_action',
             action_type: 'attack',
-            frames: actionFrames(16),
+            frames: actionFrames(32),
           },
         }),
       ),
@@ -308,22 +293,19 @@ describe('createGenerationApis', () => {
     const apis = createGenerationApis({
       userId: 7,
       transport: { request, stream: vi.fn(() => vi.fn()) },
-      resolveImageSize,
     })
 
-    await expect(
-      apis.get('42', '91', { type: 'complete_animation', actionType: 'walk' }),
-    ).rejects.toThrow('动作结果类型 attack 与请求的 walk 不一致')
+    await expect(apis.get('42', '91')).rejects.toThrow('动作结果类型 attack 与请求的 walk 不一致')
   })
 
-  it('拒绝不足十六帧以及非失败状态携带错误', async () => {
+  it('拒绝不足三十二帧以及非失败状态携带错误', async () => {
     const request = vi
       .fn()
       .mockResolvedValueOnce(
         success(
           taskData({
             task_type: 'character_action',
-            input_payload: { num_frames: 16, action_type: 'walk' },
+            input_payload: { num_frames: 32, action_type: 'walk' },
             result: {
               type: 'character_action',
               action_type: 'walk',
@@ -336,14 +318,9 @@ describe('createGenerationApis', () => {
     const apis = createGenerationApis({
       userId: 7,
       transport: { request, stream: vi.fn(() => vi.fn()) },
-      resolveImageSize,
     })
 
-    await expect(
-      apis.get('42', '91', { type: 'complete_animation', actionType: 'walk' }),
-    ).rejects.toThrow('完整动画结果必须包含 16 帧')
-    await expect(apis.get('42', '91', { type: 'character_template' })).rejects.toThrow(
-      'completed 任务不应携带 error_message',
-    )
+    await expect(apis.get('42', '91')).rejects.toThrow('完整动画结果必须包含 32 帧')
+    await expect(apis.get('42', '91')).rejects.toThrow('completed 任务不应携带 error_message')
   })
 })
