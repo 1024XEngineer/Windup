@@ -238,6 +238,22 @@ describe('workflowRunApis', () => {
     })
   })
 
+  it('rejects an empty deletion marker instead of treating it as archived history', async () => {
+    const apis = await loadWorkflowRunApis(async () =>
+      jsonResponse({
+        ...workflowRunDto,
+        nodes: nodes.map((node) =>
+          node.id === 'walk-full-frame' ? { ...node, deletedAt: '' } : node,
+        ),
+      }),
+    )
+
+    await expect(apis.get('17')).rejects.toMatchObject({
+      name: 'ApiError',
+      kind: 'invalid-response',
+    })
+  })
+
   it('rejects a dependency that points outside the persisted graph', async () => {
     const apis = await loadWorkflowRunApis(async () =>
       jsonResponse({

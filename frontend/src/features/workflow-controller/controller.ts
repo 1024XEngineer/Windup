@@ -55,6 +55,7 @@ export interface CreateWorkflowControllerOptions {
   workflowRunApis: WorkflowRunApis
   generationApis: GenerationApis
   createId?: () => string
+  now?: () => string
   /** SSE 回调无法 await，异步保存错误通过此处交给装配层展示或记录。 */
   onAsyncError: (error: Error) => void
 }
@@ -95,6 +96,8 @@ export interface WorkflowController {
     options: GenerateActionOptions,
   ): Promise<WorkflowRun>
   approveAction(nodeId: ReviewWorkflowNode['id']): Promise<WorkflowRun>
+  /** 已发布 Action 删除后，保留其四节点历史并标记为已删除。 */
+  archiveAction(nodeId: ActionFullFrameWorkflowNode['id']): Promise<WorkflowRun>
 
   /** 刷新恢复时查询已记录的 Generation，再恢复 SSE。 */
   resume(): Promise<WorkflowRun>
@@ -127,6 +130,7 @@ export function createWorkflowController({
   workflowRunApis,
   generationApis,
   createId = createBrowserSafeId,
+  now = () => new Date().toISOString(),
   onAsyncError,
 }: CreateWorkflowControllerOptions): WorkflowController {
   let current = workflow ? structuredClone(workflow) : null
@@ -439,6 +443,31 @@ export function createWorkflowController({
         )
       }),
     )
+  }
+
+  function archiveAction(nodeId: ActionFullFrameWorkflowNode['id']) {
+    ensureRunning()
+    return persist((run) => {
+      const fullFrameNode = findNode(run, nodeId)
+      if (fullFrameNode.type !== 'action-full-frame' || fullFrameNode.status !== 'passed') {
+        throw new Error('只能归档已完成的动作资产')
+      }
+      const reviewNodes = run.nodes.filter(
+        (node) => node.type === 'review' && node.dependsOnNodeIds.includes(fullFrameNode.id),
+      )
+      if (reviewNodes.length === 0 || reviewNodes.some((node) => node.status !== 'passed')) {
+        throw new Error('动作尚未通过审核，不能标记为已删除')
+      }
+
+      const branchIds = collectActionBranchIds(run.nodes, fullFrameNode.id)
+      const deletedAt = now()
+      return {
+        ...run,
+        nodes: run.nodes.map((node) =>
+          branchIds.has(node.id) ? { ...node, deletedAt } : node,
+        ) as WorkflowNode[],
+      }
+    })
   }
 
   function submitGeneration(
@@ -768,6 +797,7 @@ export function createWorkflowController({
     selectActionGenerationMethod,
     generateAnimation,
     approveAction,
+    archiveAction,
     resume,
     interrupt,
     restartFromNode,
@@ -775,6 +805,42 @@ export function createWorkflowController({
     getGeneration,
     dispose,
   }
+}
+
+function collectActionBranchIds(
+  nodes: readonly WorkflowNode[],
+  fullFrameNodeId: ActionFullFrameWorkflowNode['id'],
+) {
+  const branchIds = new Set<WorkflowNode['id']>([fullFrameNodeId])
+  const frontier = [fullFrameNodeId]
+  while (frontier.length > 0) {
+    const currentId = frontier.shift()!
+    const current = nodes.find((node) => node.id === currentId)
+    if (!current) continue
+
+    for (const dependencyId of current.dependsOnNodeIds) {
+      const dependency = nodes.find((node) => node.id === dependencyId)
+      if (
+        dependency &&
+        dependency.type !== 'character-setup' &&
+        dependency.type !== 'character-template' &&
+        !branchIds.has(dependency.id)
+      ) {
+        branchIds.add(dependency.id)
+        frontier.push(dependency.id)
+      }
+    }
+    for (const dependent of nodes) {
+      if (
+        dependent.type === 'review' &&
+        dependent.dependsOnNodeIds.includes(currentId) &&
+        !branchIds.has(dependent.id)
+      ) {
+        branchIds.add(dependent.id)
+      }
+    }
+  }
+  return branchIds
 }
 
 function updateNode(
