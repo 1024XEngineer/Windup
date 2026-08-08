@@ -1,4 +1,10 @@
-import type { ActionType, Frame } from '@/entities'
+import type { ActionType } from '@/entities'
+
+/** Playtest 根据逐帧图像计算出的可选位移数据，不要求后端 Character.Frame 提供。 */
+export interface ExportRootMotion {
+  dx: number
+  dy: number
+}
 
 /**
  * 导出模块只读取这份模型，不直接读取 Playtest 页面状态。
@@ -7,7 +13,7 @@ import type { ActionType, Frame } from '@/entities'
 export interface ExportFrame {
   imageUrl: string
   durationMs: number
-  rootMotion: Frame['rootMotion']
+  rootMotion: ExportRootMotion | null
   keyFrame: boolean
 }
 
