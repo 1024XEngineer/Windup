@@ -36,6 +36,11 @@ interface WorkflowNodeBase {
   dependsOnNodeIds: string[]
   generations: WorkflowGenerationRef[]
   error: string | null
+  /**
+   * 已发布资产被用户删除的时间。节点仍保留生成输入、任务引用与审核历史；
+   * 旧数据没有该字段时视为未删除。
+   */
+  deletedAt?: string | null
 }
 
 export interface WorkflowCharacterInput {

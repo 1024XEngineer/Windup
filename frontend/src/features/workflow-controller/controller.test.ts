@@ -225,6 +225,7 @@ function createController(run = createRun()) {
     workflowRunApis: workflow.apis,
     generationApis: generation.apis,
     createId: () => 'action-created',
+    now: () => '2026-08-09T00:00:00.000Z',
     onAsyncError: (error) => asyncErrors.push(error),
   })
   return { controller, workflow, generation, asyncErrors }
@@ -303,6 +304,56 @@ describe('WorkflowController', () => {
         dependsOnNodeIds: ['action-walk:full-frame'],
       },
     ])
+  })
+
+  it('归档已发布 Action 时只标记对应四节点分支并保留其他节点', async () => {
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({ status: 'passed', phase: 'completed', selectedFirstFrameUrl: 'walk.png' }),
+      generationMethodNode({ status: 'passed', phase: 'completed', method: 'video-cropping' }),
+      fullFrameNode({ status: 'passed', phase: 'completed' }),
+      reviewNode({ status: 'passed', phase: 'completed' }),
+      firstFrameNode({
+        id: 'action-jump',
+        status: 'passed',
+        phase: 'completed',
+        input: actionInput({ name: '跳跃', type: 'jump' }),
+        selectedFirstFrameUrl: 'jump.png',
+      }),
+      generationMethodNode({
+        id: 'action-jump:generation-method',
+        status: 'passed',
+        phase: 'completed',
+        dependsOnNodeIds: ['action-jump'],
+        method: 'video-cropping',
+      }),
+      fullFrameNode({
+        id: 'action-jump:full-frame',
+        status: 'passed',
+        phase: 'completed',
+        dependsOnNodeIds: ['action-jump:generation-method'],
+      }),
+      reviewNode({
+        id: 'action-jump:review',
+        status: 'passed',
+        phase: 'completed',
+        dependsOnNodeIds: ['action-jump:full-frame'],
+      }),
+    ])
+    const { controller, workflow } = createController(run)
+
+    const archived = await controller.archiveAction('action-walk:full-frame')
+
+    expect(archived.nodes.filter((node) => node.deletedAt).map((node) => node.id)).toEqual([
+      'action-walk',
+      'action-walk:generation-method',
+      'action-walk:full-frame',
+      'action-walk:review',
+    ])
+    expect(archived.nodes.find((node) => node.id === 'setup-1')?.deletedAt).toBeUndefined()
+    expect(archived.nodes.find((node) => node.id === 'template-1')?.deletedAt).toBeUndefined()
+    expect(archived.nodes.find((node) => node.id === 'action-jump')?.deletedAt).toBeUndefined()
+    expect(workflow.getSaved()).toEqual(archived)
   })
 
   it('保存 3D 转 2D 选择，但接口提供前不误走视频生成', async () => {

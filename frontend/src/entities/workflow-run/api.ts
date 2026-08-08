@@ -57,7 +57,12 @@ function hasValidCommonNodeFields(value: Record<string, unknown>): boolean {
     new Set(value.dependsOnNodeIds).size !== value.dependsOnNodeIds.length ||
     !Array.isArray(value.generations) ||
     !value.generations.every(isGenerationRef) ||
-    !isNullableString(value.error)
+    !isNullableString(value.error) ||
+    !(
+      value.deletedAt === undefined ||
+      value.deletedAt === null ||
+      (typeof value.deletedAt === 'string' && value.deletedAt.trim().length > 0)
+    )
   ) {
     return false
   }
