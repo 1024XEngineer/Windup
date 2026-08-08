@@ -111,20 +111,10 @@ export function HistoryPage({ reader }: HistoryPageProps) {
     <section className="mx-auto w-full max-w-5xl px-6 py-8" aria-labelledby="history-title">
       <header className="border-b border-slate-200 pb-6">
         <p className="text-xs font-semibold text-slate-500">HISTORY</p>
-        <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 id="history-title" className="text-3xl font-semibold text-slate-950">
-              创作历史
-            </h1>
-            <p className="mt-2 text-sm text-slate-600">查看每条工作流当前保存的节点进度。</p>
-          </div>
-          <Link
-            to={`/workflow-editor?projectId=${encodeURIComponent(projectId)}`}
-            className="bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-          >
-            新建创作任务
-          </Link>
-        </div>
+        <h1 id="history-title" className="mt-2 text-3xl font-semibold text-slate-950">
+          创作历史
+        </h1>
+        <p className="mt-2 text-sm text-slate-600">查看每条工作流当前保存的节点进度。</p>
       </header>
 
       {loading ? (
@@ -141,7 +131,9 @@ export function HistoryPage({ reader }: HistoryPageProps) {
       ) : runs.length === 0 ? (
         <div className="mt-8 border border-dashed border-slate-300 p-10 text-center">
           <h2 className="text-base font-semibold text-slate-900">还没有创作记录</h2>
-          <p className="mt-2 text-sm text-slate-600">后端提供列表接口后，项目记录会显示在这里。</p>
+          <p className="mt-2 text-sm text-slate-600">
+            History 暂未接入产品入口；后端列表接口确定后再启用。
+          </p>
         </div>
       ) : (
         <div className="mt-8 space-y-10">

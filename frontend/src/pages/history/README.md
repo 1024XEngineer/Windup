@@ -1,6 +1,7 @@
 # History 页面模块
 
-History 只读展示项目下已经保存的 `WorkflowRun` 及其当前节点图。
+History 只读展示项目下已经保存的 `WorkflowRun` 及其当前节点图。当前阶段只保留模块骨架，
+不注册 App 路由，也不在项目导航中提供入口。
 
 ## 当前模型
 
@@ -8,12 +9,14 @@ History 只读展示项目下已经保存的 `WorkflowRun` 及其当前节点图
 - 页面不再使用已经删除的 Revision、Step、driver、purpose 或本地 Store。
 - 进行中、失败、完成由节点状态派生，不向 `WorkflowRun` 增加重复状态字段。
 - Quick Start 与 Workflow Editor 共用同一份 Run；当前模型不保存入口来源，因此历史页统一进入 Workflow Editor。
+- 页面不提供“新建创作任务”入口；创建工作流必须先由正式用例取得真实 `runId`，再进入
+  `/workflow-editor/:runId`。
 
 ## 后端缺口
 
 后端当前只有单条 WorkflowRun 的创建、读取、更新和删除接口，没有按 Project 列表查询。
 因此本页面只声明异步 `WorkflowHistoryReader.listByProject(projectId)` 边界，不提供假数据、
-localStorage 降级或伪造 HTTP 路径。正式列表接口落地后由 App 装配真实实现。
+localStorage 降级或伪造 HTTP 路径。正式列表接口落地后由 App 装配真实实现，再注册路由和导航入口。
 
 ## 模块边界
 

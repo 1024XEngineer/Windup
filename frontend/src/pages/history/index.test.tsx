@@ -112,6 +112,7 @@ describe('HistoryPage', () => {
   it('空列表说明仍在等待后端列表接口', async () => {
     renderHistory(reader())
     expect(await screen.findByText('还没有创作记录')).toBeTruthy()
-    expect(screen.getByText('后端提供列表接口后，项目记录会显示在这里。')).toBeTruthy()
+    expect(screen.getByText('History 暂未接入产品入口；后端列表接口确定后再启用。')).toBeTruthy()
+    expect(screen.queryByRole('link', { name: '新建创作任务' })).toBeNull()
   })
 })
