@@ -67,6 +67,17 @@ function getApiUnauthorizedRecovery(): ApiUnauthorizedRecovery | undefined {
   return unauthorizedRecoveryProviders.at(-1)
 }
 
+/** 供需要原始 Response 或流式响应的适配器复用同一套会话恢复能力。 */
+export async function recoverApiUnauthorized(): Promise<boolean> {
+  const recovery = getApiUnauthorizedRecovery()
+  if (!recovery) return false
+  try {
+    return await recovery()
+  } catch {
+    return false
+  }
+}
+
 export type ApiErrorKind = 'business' | 'http' | 'invalid-response' | 'network'
 
 /** 后端业务错误与传输错误统一进入这一种前端错误。 */
@@ -227,21 +238,14 @@ export function createApiClient({
     const response = await send(path, options)
     const envelope = await readEnvelope(response)
 
-    const recovery = getApiUnauthorizedRecovery()
     if (
       !replayed &&
       recoverUnauthorized &&
       response.status === 200 &&
       envelope.code === 401 &&
-      recovery &&
       canReplay(options)
     ) {
-      let recovered = false
-      try {
-        recovered = await recovery()
-      } catch {
-        // 恢复失败仍应向调用方交付原始 401，而不是泄漏 refresh 的错误。
-      }
+      const recovered = await recoverApiUnauthorized()
       if (recovered) return receiveEnvelope(path, options, true)
     }
 

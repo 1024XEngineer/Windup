@@ -19,10 +19,20 @@ export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed'
 /**
  * 生成对应的三个前端可见异步步骤。
  * 它是前端工作流粒度，不等于后端 task_type——后端只有 character_image 与
- * character_action 两种，character_template 和 first_frame 都落在 character_image 上。
+ * character_action 两种：character_template 落在 character_image，动作首帧和完整动画
+ * 都落在 character_action，只是请求帧数分别为 1 和 32。
  * 完整动画内部可含视频生成、截帧和多次图像处理，但对前端仍是一次 Generation。
  */
 export type GenerationType = 'character_template' | 'first_frame' | 'complete_animation'
+
+/**
+ * 恢复任务时由 WorkflowRun 提供的已知上下文。动作阶段必须带上动作语义，
+ * 这样适配器才能拒绝“请求 walk、后端却返回 attack”这类串任务结果。
+ */
+export type GenerationExpectation =
+  | { type: 'character_template' }
+  | { type: 'first_frame'; actionType: ActionType }
+  | { type: 'complete_animation'; actionType: ActionType }
 
 interface GenerationInputBase {
   projectId: string
@@ -30,14 +40,17 @@ interface GenerationInputBase {
   referenceMedia: readonly MediaReference[]
 }
 
-/** 角色母版候选生成。 */
+/** 角色母版候选生成；当前合同固定请求 4 个候选，不向调用方暴露可变数量。 */
 export interface CharacterTemplateGenerationInput extends GenerationInputBase {
   type: 'character_template'
   /** 已由手动输入或 Quick Start 整理好的角色提示词。 */
   prompt: string
+  /** 必须与 Project 的精灵尺寸一致，由上层用例明确传入。 */
+  spriteWidth: number
+  spriteHeight: number
 }
 
-/** 指定角色造型下的动作首帧生成；不能只绑定 Character。 */
+/** 指定角色造型下的动作首帧生成；当前合同固定 1 张，且不能只绑定 Character。 */
 export interface FirstFrameGenerationInput extends GenerationInputBase {
   type: 'first_frame'
   characterId: string
@@ -47,7 +60,10 @@ export interface FirstFrameGenerationInput extends GenerationInputBase {
   prompt: string | null
 }
 
-/** 以已确认首帧为起点生成完整动画。 */
+/**
+ * 以已确认首帧为起点生成完整动画。
+ * 产品合同固定生成 32 帧；适配器不再沿用后端旧默认值 16。
+ */
 export interface CompleteAnimationGenerationInput extends GenerationInputBase {
   type: 'complete_animation'
   characterId: string
@@ -68,6 +84,11 @@ export interface GeneratedImage {
   url: string
 }
 
+/** 后端动作结果中的一帧；null 时由 Action.fps 提供等时长回退。 */
+export interface GeneratedFrame extends GeneratedImage {
+  durationMs: number | null
+}
+
 /** 结果按 type 分别定义，不共用一个 urls 数组。 */
 export interface CharacterTemplateGenerationResult {
   type: 'character_template'
@@ -79,10 +100,10 @@ export interface FirstFrameGenerationResult {
   image: GeneratedImage
 }
 
-/** 帧顺序由数组位置表达。 */
+/** 帧顺序由数组位置表达，同时保留后端逐帧时长。 */
 export interface CompleteAnimationGenerationResult {
   type: 'complete_animation'
-  frames: readonly GeneratedImage[]
+  frames: readonly GeneratedFrame[]
 }
 
 export type GenerationResult =
@@ -101,7 +122,8 @@ export type GenerationResultFor<T extends GenerationInput> =
  * 一次生成任务的完整快照，创建、查询和断线恢复都用它。
  * 它是服务端的资源，不是一次「调用能力」——前端创建它，然后订阅或轮询它的状态。
  *
- * TType 在调用边界已知时保留精确类型；按 ID 恢复时用默认值，等运行时解析后再收窄。
+ * TType 在调用边界已知时保留精确类型；查询和订阅根据持久化 input_payload
+ * 还原首帧或完整动画阶段，因为后端 task_type 比前端阶段更粗。
  * 完成不代表工作流节点已通过，节点状态由 WorkflowNode 自己判定。
  */
 export interface Generation<TType extends GenerationType = GenerationType> {
@@ -117,15 +139,14 @@ export interface Generation<TType extends GenerationType = GenerationType> {
 }
 
 /**
- * 一条状态变更事件。
- * 不含 projectId：后端事件 payload 只有 task_id、task_type、status，
- * 以及完成时的 result 和失败时的 error_message。
+ * 一条状态变更事件。后端 SSE 推送完整任务对象并使用 id；适配器校验后将 id
+ * 转成 taskId，避免传输字段名泄漏到 Controller。
  */
 export interface GenerationEvent<TType extends GenerationType = GenerationType> extends Omit<
   Generation<TType>,
   'id' | 'projectId'
 > {
-  /** 对应 Generation.id，字段名沿用后端事件里的 task_id。 */
+  /** 对应后端事件的 id，也对应 Generation.id。 */
   taskId: Generation['id']
 }
 
@@ -138,10 +159,25 @@ export interface GenerationApis {
    * projectId 不能从 id 推导，后端查询接口要求两者同时传入。
    */
   get(projectId: Generation['projectId'], id: Generation['id']): Promise<Generation>
-  /** 订阅状态变化，返回取消订阅函数。 */
+  /**
+   * 订阅 task_update，终态由传输层自动关闭；返回的函数供页面离开时主动取消。
+   * 传输错误与非法 DTO 通过 onError 上报，不伪造成业务 failed 状态。
+   */
   subscribe(
     projectId: Generation['projectId'],
     id: Generation['id'],
     onEvent: (event: GenerationEvent) => void,
+    onError?: (error: Error) => void,
   ): () => void
 }
+
+export {
+  createAuthenticatedGenerationTransport,
+  createGenerationApis,
+  GenerationApiError,
+} from './api'
+export type {
+  AuthenticatedGenerationTransportOptions,
+  GenerationApiConfig,
+  GenerationTransport,
+} from './api'

@@ -1,0 +1,622 @@
+import { getApiAccessToken, recoverApiUnauthorized } from '@/shared/api'
+import {
+  createEventStreamSubscriber,
+  EventStreamError,
+  type EventStreamSubscriber,
+} from '@/shared/api/stream'
+
+import type {
+  CompleteAnimationGenerationInput,
+  GeneratedImage,
+  Generation,
+  GenerationApis,
+  GenerationEvent,
+  GenerationExpectation,
+  GenerationInput,
+  GenerationResult,
+  GenerationType,
+  TaskStatus,
+} from '.'
+
+type RequestFunction = (url: string, init?: RequestInit) => Promise<Response>
+
+/** Generation 适配器需要的全部网络能力，由宿主统一注入。 */
+export interface GenerationTransport {
+  request: RequestFunction
+  stream: EventStreamSubscriber
+}
+
+export interface AuthenticatedGenerationTransportOptions {
+  fetchFn?: typeof fetch
+  getAccessToken?: () => string | null | undefined
+  recoverUnauthorized?: () => Promise<boolean>
+  reconnectDelayMs?: number
+}
+
+export interface GenerationApiConfig {
+  /** API 前缀；空字符串表示同源。 */
+  baseUrl?: string
+  /** 当前用户由认证宿主提供，适配器不猜测也不写死身份。 */
+  userId: string | number
+  transport: GenerationTransport
+  /** SSE 路由尚未部署时，查询任务状态的间隔；测试可设为 0。 */
+  pollIntervalMs?: number
+}
+
+async function responseIsUnauthorized(response: Response): Promise<boolean> {
+  if (response.status === 401) return true
+  if (!response.headers.get('content-type')?.includes('application/json')) return false
+  try {
+    const body = (await response.clone().json()) as unknown
+    return isRecord(body) && body.code === 401
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Generation 需要读取原始响应并保持 SSE 长连接，不能直接套用会解包 JSON 的 ApiClient。
+ * 这个传输器仍复用全局 token 与 401 恢复边界，避免生成模块另存一套登录态。
+ */
+export function createAuthenticatedGenerationTransport(
+  options: AuthenticatedGenerationTransportOptions = {},
+): GenerationTransport {
+  const fetchFn = options.fetchFn ?? globalThis.fetch
+  const getAccessToken = options.getAccessToken ?? getApiAccessToken
+  const recoverUnauthorized = options.recoverUnauthorized ?? recoverApiUnauthorized
+
+  return {
+    async request(url, init) {
+      let replayed = false
+      while (true) {
+        const headers = new Headers(init?.headers)
+        const accessToken = getAccessToken()
+        if (accessToken && !headers.has('authorization')) {
+          headers.set('authorization', `Bearer ${accessToken}`)
+        }
+        const response = await fetchFn(url, {
+          ...init,
+          headers,
+          credentials: init?.credentials ?? 'include',
+        })
+        if (!replayed && (await responseIsUnauthorized(response))) {
+          replayed = true
+          if (await recoverUnauthorized()) continue
+        }
+        return response
+      }
+    },
+    stream: createEventStreamSubscriber({
+      fetchFn,
+      getAccessToken,
+      recoverUnauthorized,
+      reconnectDelayMs: options.reconnectDelayMs,
+    }),
+  }
+}
+
+interface ResponseEnvelope {
+  code: unknown
+  message: unknown
+  data: unknown
+}
+
+interface GenerationTaskDto {
+  id: number
+  userId: number
+  projectId: number
+  taskType: BackendGenerationType
+  status: TaskStatus
+  inputPayload: Record<string, unknown> | null
+  result: Record<string, unknown> | null
+  errorMessage: string | null
+}
+
+type BackendGenerationType = 'character_image' | 'character_action'
+
+const TASK_STATUSES = new Set<TaskStatus>(['pending', 'running', 'completed', 'failed'])
+export class GenerationApiError extends Error {
+  readonly code: number
+
+  constructor(message: string, code = 0, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'GenerationApiError'
+    this.code = code
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function inputPositiveInteger(value: string | number, field: string): number {
+  const parsed = typeof value === 'number' ? value : Number(value)
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new GenerationApiError(`${field} 必须是正整数`)
+  }
+  return parsed
+}
+
+function dtoPositiveInteger(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
+    throw new GenerationApiError(`生成任务 ${field} 无效`, 200)
+  }
+  return value as number
+}
+
+function dtoNullableRecord(value: unknown, field: string): Record<string, unknown> | null {
+  if (value === null) return null
+  if (!isRecord(value)) throw new GenerationApiError(`生成任务 ${field} 无效`, 200)
+  return value
+}
+
+function dtoNullableString(value: unknown, field: string): string | null {
+  if (value === null) return null
+  if (typeof value !== 'string') throw new GenerationApiError(`生成任务 ${field} 无效`, 200)
+  return value
+}
+
+function backendTaskType(value: unknown): BackendGenerationType {
+  if (value !== 'character_image' && value !== 'character_action') {
+    throw new GenerationApiError('生成任务 task_type 无效', 200)
+  }
+  return value
+}
+
+function taskStatus(value: unknown): TaskStatus {
+  if (typeof value !== 'string' || !TASK_STATUSES.has(value as TaskStatus)) {
+    throw new GenerationApiError('生成任务状态无效', 200)
+  }
+  return value as TaskStatus
+}
+
+function endpoint(baseUrl: string | undefined, path: string): string {
+  return `${(baseUrl ?? '').replace(/\/$/u, '')}${path}`
+}
+
+async function readData(response: Response): Promise<unknown> {
+  let raw: unknown
+  try {
+    raw = await response.json()
+  } catch (error) {
+    throw new GenerationApiError(
+      `生成接口返回了无法解析的响应（HTTP ${response.status}）`,
+      response.status,
+      { cause: error },
+    )
+  }
+  if (!isRecord(raw)) {
+    throw new GenerationApiError('生成接口响应不是对象', response.status)
+  }
+
+  const envelope: ResponseEnvelope = {
+    code: raw.code,
+    message: raw.message,
+    data: raw.data,
+  }
+  if (typeof envelope.code !== 'number') {
+    throw new GenerationApiError('生成接口响应缺少有效的 code', response.status)
+  }
+  const message =
+    typeof envelope.message === 'string' ? envelope.message : `HTTP ${response.status}`
+  if (!response.ok || envelope.code !== 200) {
+    throw new GenerationApiError(message, envelope.code)
+  }
+  if (envelope.data === null || envelope.data === undefined) {
+    throw new GenerationApiError('生成接口成功响应缺少 data', envelope.code)
+  }
+  return envelope.data
+}
+
+/** 完整查询 DTO 的每个字段都在网络边界校验，不把脏数据带入实体。 */
+function parseTaskDto(value: unknown): GenerationTaskDto {
+  if (!isRecord(value)) throw new GenerationApiError('生成任务响应不是对象', 200)
+  const inputPayload = dtoNullableRecord(value.input_payload, 'input_payload')
+  return {
+    id: dtoPositiveInteger(value.id, 'id'),
+    userId: dtoPositiveInteger(value.user_id, 'user_id'),
+    projectId: dtoPositiveInteger(value.project_id, 'project_id'),
+    taskType: backendTaskType(value.task_type),
+    status: taskStatus(value.status),
+    inputPayload,
+    result: dtoNullableRecord(value.result, 'result'),
+    errorMessage: dtoNullableString(value.error_message, 'error_message'),
+  }
+}
+
+function expectedBackendType(type: GenerationType): BackendGenerationType {
+  return type === 'character_template' ? 'character_image' : 'character_action'
+}
+
+function nonEmptyString(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new GenerationApiError(`${field} 无效`, 200)
+  }
+  return value
+}
+
+function mapImageResult(result: Record<string, unknown>): GenerationResult {
+  if (result.type !== 'character_image') {
+    throw new GenerationApiError('角色图片结果 type 无效', 200)
+  }
+  if (
+    !Array.isArray(result.image_urls) ||
+    result.image_urls.length === 0 ||
+    result.image_urls.some((url) => typeof url !== 'string' || url.trim() === '')
+  ) {
+    throw new GenerationApiError('角色图片结果 image_urls 无效', 200)
+  }
+  const images = result.image_urls.map((url): GeneratedImage => ({ url: url as string }))
+
+  if (images.length !== 4) {
+    throw new GenerationApiError('角色母版结果必须包含 4 个候选', 200)
+  }
+  return { type: 'character_template', images }
+}
+
+function mapActionResult(
+  result: Record<string, unknown>,
+  expectation: Extract<GenerationExpectation, { type: 'first_frame' | 'complete_animation' }>,
+): GenerationResult {
+  if (result.type !== 'character_action') {
+    throw new GenerationApiError('完整动画结果 type 无效', 200)
+  }
+  if (typeof result.action_type !== 'string' || result.action_type.trim() === '') {
+    throw new GenerationApiError('完整动画结果 action_type 无效', 200)
+  }
+  if (result.action_type !== expectation.actionType) {
+    throw new GenerationApiError(
+      `动作结果类型 ${result.action_type} 与请求的 ${expectation.actionType} 不一致`,
+      200,
+    )
+  }
+  if (!Array.isArray(result.frames) || result.frames.length === 0) {
+    throw new GenerationApiError('完整动画结果 frames 无效', 200)
+  }
+
+  const indexes = new Set<number>()
+  const frames = result.frames.map((frame) => {
+    if (!isRecord(frame)) throw new GenerationApiError('动作帧不是对象', 200)
+    if (!Number.isSafeInteger(frame.index) || (frame.index as number) < 0) {
+      throw new GenerationApiError('动作帧 index 无效', 200)
+    }
+    const index = frame.index as number
+    if (indexes.has(index)) throw new GenerationApiError('动作帧 index 重复', 200)
+    indexes.add(index)
+    if (
+      frame.duration_ms !== null &&
+      (!Number.isFinite(frame.duration_ms) || (frame.duration_ms as number) < 0)
+    ) {
+      throw new GenerationApiError('动作帧 duration_ms 无效', 200)
+    }
+    return {
+      index,
+      url: nonEmptyString(frame.image_url, '动作帧 image_url'),
+      durationMs: frame.duration_ms as number | null,
+    }
+  })
+
+  const orderedFrames = frames.sort((left, right) => left.index - right.index)
+  const expectedFrameCount = expectation.type === 'first_frame' ? 1 : 32
+  if (orderedFrames.length !== expectedFrameCount) {
+    throw new GenerationApiError(
+      `${expectation.type === 'first_frame' ? '动作首帧' : '完整动画'}结果必须包含 ${expectedFrameCount} 帧`,
+      200,
+    )
+  }
+  for (let index = 0; index < expectedFrameCount; index += 1) {
+    if (!indexes.has(index)) {
+      throw new GenerationApiError('动作帧 index 必须从 0 开始连续排列', 200)
+    }
+  }
+  if (expectation.type === 'first_frame') {
+    return { type: 'first_frame', image: { url: orderedFrames[0]!.url } }
+  }
+  return {
+    type: 'complete_animation',
+    frames: orderedFrames.map(({ url, durationMs }) => ({ url, durationMs })),
+  }
+}
+
+function mapResult(
+  result: Record<string, unknown> | null,
+  status: TaskStatus,
+  expectation: GenerationExpectation,
+): GenerationResult | null {
+  if (status !== 'completed') {
+    if (result !== null) {
+      throw new GenerationApiError('非完成任务不应携带 result', 200)
+    }
+    return null
+  }
+  if (result === null) throw new GenerationApiError('完成任务缺少 result', 200)
+  return expectation.type === 'character_template'
+    ? mapImageResult(result)
+    : mapActionResult(result, expectation)
+}
+
+function validateStatusError(status: TaskStatus, error: string | null): void {
+  if (status === 'failed') {
+    if (error === null || error.trim() === '') {
+      throw new GenerationApiError('失败任务缺少 error_message', 200)
+    }
+    return
+  }
+  if (error !== null) {
+    throw new GenerationApiError(`${status} 任务不应携带 error_message`, 200)
+  }
+}
+
+function validateInputPayload(
+  inputPayload: Record<string, unknown> | null,
+  expectation: GenerationExpectation,
+): void {
+  if (inputPayload === null) {
+    throw new GenerationApiError('生成任务缺少 input_payload', 200)
+  }
+  if (expectation.type === 'character_template') {
+    if (inputPayload.num_images !== 4) {
+      throw new GenerationApiError('角色母版任务 input_payload.num_images 必须为 4', 200)
+    }
+    return
+  }
+  const expectedFrameCount = expectation.type === 'first_frame' ? 1 : 32
+  if (inputPayload.num_frames !== expectedFrameCount) {
+    throw new GenerationApiError(
+      `动作任务 input_payload.num_frames 必须为 ${expectedFrameCount}`,
+      200,
+    )
+  }
+  if (inputPayload.action_type !== expectation.actionType) {
+    throw new GenerationApiError('动作任务 input_payload.action_type 与请求不一致', 200)
+  }
+}
+
+function validateTaskIdentity(
+  dto: GenerationTaskDto,
+  expectedProjectId: number,
+  expectedUserId: number,
+  expectation: GenerationExpectation,
+  expectedTaskId?: number,
+): void {
+  if (dto.projectId !== expectedProjectId) {
+    throw new GenerationApiError(`生成任务未归属请求中的项目 ${expectedProjectId}`, 200)
+  }
+  if (dto.userId !== expectedUserId) {
+    throw new GenerationApiError('生成任务未归属当前用户', 200)
+  }
+  if (expectedTaskId !== undefined && dto.id !== expectedTaskId) {
+    throw new GenerationApiError(`生成任务 ID 与请求的 ${expectedTaskId} 不一致`, 200)
+  }
+  if (dto.taskType !== expectedBackendType(expectation.type)) {
+    throw new GenerationApiError(`生成任务类型与 ${expectation.type} 不匹配`, 200)
+  }
+  validateStatusError(dto.status, dto.errorMessage)
+  validateInputPayload(dto.inputPayload, expectation)
+}
+
+function deriveExpectation(dto: GenerationTaskDto): GenerationExpectation {
+  if (dto.inputPayload === null) {
+    throw new GenerationApiError('生成任务缺少 input_payload', 200)
+  }
+  if (dto.taskType === 'character_image') return { type: 'character_template' }
+
+  const actionType = nonEmptyString(dto.inputPayload.action_type, '动作任务 action_type')
+  if (dto.inputPayload.num_frames === 1) return { type: 'first_frame', actionType }
+  if (dto.inputPayload.num_frames === 32) return { type: 'complete_animation', actionType }
+  throw new GenerationApiError('动作任务 input_payload.num_frames 必须为 1 或 32', 200)
+}
+
+function sameExpectation(left: GenerationExpectation, right: GenerationExpectation): boolean {
+  if (left.type !== right.type) return false
+  if (left.type === 'character_template' || right.type === 'character_template') return true
+  return left.actionType === right.actionType
+}
+
+function mapTask(
+  value: unknown,
+  expectedProjectId: number,
+  expectedUserId: number,
+  expectedExpectation?: GenerationExpectation,
+  expectedTaskId?: number,
+): Generation {
+  const dto = parseTaskDto(value)
+  const expectation = deriveExpectation(dto)
+  if (expectedExpectation && !sameExpectation(expectation, expectedExpectation)) {
+    throw new GenerationApiError(`生成任务类型与 ${expectedExpectation.type} 不匹配`, 200)
+  }
+  validateTaskIdentity(dto, expectedProjectId, expectedUserId, expectation, expectedTaskId)
+  return {
+    id: String(dto.id),
+    projectId: String(dto.projectId),
+    type: expectation.type,
+    status: dto.status,
+    result: mapResult(dto.result, dto.status, expectation),
+    error: dto.errorMessage,
+  }
+}
+
+function references(input: CompleteAnimationGenerationInput): string[] {
+  return [input.firstFrameUrl, ...input.referenceMedia.map(String)].filter(
+    (url, index, all) => url.trim() !== '' && all.indexOf(url) === index,
+  )
+}
+
+function parseEventData(data: string): unknown {
+  try {
+    return JSON.parse(data) as unknown
+  } catch (error) {
+    throw new GenerationApiError('task_update 不是有效 JSON', 200, { cause: error })
+  }
+}
+
+function mapEvent(
+  value: unknown,
+  expectedProjectId: number,
+  expectedUserId: number,
+  expectedTaskId: number,
+): GenerationEvent {
+  const generation = mapTask(value, expectedProjectId, expectedUserId, undefined, expectedTaskId)
+  return {
+    taskId: generation.id,
+    type: generation.type,
+    status: generation.status,
+    result: generation.result,
+    error: generation.error,
+  }
+}
+
+/**
+ * 创建 Generation 实体适配器。
+ *
+ * `userId` 与 HTTP/SSE transport 都由宿主注入，因此模块既不持有登录态，也不直接
+ * 依赖 fetch/EventSource。三个前端阶段在这里收口为后端的两类 GenerationTask。
+ */
+export function createGenerationApis(config: GenerationApiConfig): GenerationApis {
+  const userId = inputPositiveInteger(config.userId, 'userId')
+  const { request, stream } = config.transport
+  const pollIntervalMs = config.pollIntervalMs ?? 1_000
+
+  async function post<TType extends GenerationType>(
+    path: '/generation/image' | '/generation/action',
+    projectId: number,
+    expectation: Extract<GenerationExpectation, { type: TType }>,
+    body: Record<string, unknown>,
+  ): Promise<Generation<TType>> {
+    const response = await request(endpoint(config.baseUrl, path), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    return mapTask(await readData(response), projectId, userId, expectation) as Generation<TType>
+  }
+
+  async function getTask(projectId: string, id: string): Promise<Generation> {
+    const numericProjectId = inputPositiveInteger(projectId, 'projectId')
+    const numericTaskId = inputPositiveInteger(id, 'taskId')
+    const response = await request(
+      endpoint(config.baseUrl, `/generation/tasks/${numericTaskId}?project_id=${numericProjectId}`),
+      { method: 'GET' },
+    )
+    return mapTask(await readData(response), numericProjectId, userId, undefined, numericTaskId)
+  }
+
+  return {
+    async create<T extends GenerationInput>(input: T): Promise<Generation<T['type']>> {
+      const projectId = inputPositiveInteger(input.projectId, 'projectId')
+      if (input.type !== 'character_template') {
+        const referenceImageUrls =
+          input.type === 'complete_animation'
+            ? references(input)
+            : input.referenceMedia.map(String).filter((url) => url.trim() !== '')
+        return post(
+          '/generation/action',
+          projectId,
+          { type: input.type, actionType: input.actionType },
+          {
+            project_id: projectId,
+            character_id: inputPositiveInteger(input.characterId, 'characterId'),
+            action_type: input.actionType,
+            custom_prompt: input.prompt,
+            reference_video_url: null,
+            reference_image_urls: referenceImageUrls,
+            // 首帧是一帧动作任务；完整动画按产品合同固定生成 32 帧。
+            num_frames: input.type === 'first_frame' ? 1 : 32,
+          },
+        )
+      }
+
+      return post(
+        '/generation/image',
+        projectId,
+        { type: input.type },
+        {
+          project_id: projectId,
+          reference_image_url: input.referenceMedia[0] ? String(input.referenceMedia[0]) : null,
+          prompt: input.prompt ?? '',
+          negative_prompt: '',
+          width: inputPositiveInteger(input.spriteWidth, 'spriteWidth'),
+          height: inputPositiveInteger(input.spriteHeight, 'spriteHeight'),
+          // 只有角色母版走图片接口，并且固定生成四个候选。
+          num_images: 4,
+        },
+      )
+    },
+
+    get: getTask,
+
+    subscribe(
+      projectId: string,
+      id: string,
+      onEvent: (event: GenerationEvent) => void,
+      onError = () => undefined,
+    ): () => void {
+      const numericProjectId = inputPositiveInteger(projectId, 'projectId')
+      const numericTaskId = inputPositiveInteger(id, 'taskId')
+      let active = true
+      let polling = false
+      let timer: ReturnType<typeof setTimeout> | null = null
+      let wakePoll: (() => void) | null = null
+      const stopStream = stream(
+        endpoint(
+          config.baseUrl,
+          `/generation/tasks/${numericTaskId}/stream?project_id=${numericProjectId}`,
+        ),
+        {
+          eventName: 'task_update',
+          onEvent(data) {
+            const event = mapEvent(parseEventData(data), numericProjectId, userId, numericTaskId)
+            onEvent(event)
+            return event.status === 'completed' || event.status === 'failed'
+          },
+          onError(error) {
+            if (error instanceof EventStreamError && error.status === 404) {
+              polling = true
+              void poll()
+              return
+            }
+            onError(error)
+          },
+        },
+      )
+
+      async function poll(): Promise<void> {
+        while (active && polling) {
+          try {
+            const generation = await getTask(String(numericProjectId), String(numericTaskId))
+            const event: GenerationEvent = {
+              taskId: generation.id,
+              type: generation.type,
+              status: generation.status,
+              result: generation.result,
+              error: generation.error,
+            }
+            onEvent(event)
+            if (event.status === 'completed' || event.status === 'failed') return
+          } catch (error) {
+            if (active) onError(error instanceof Error ? error : new Error(String(error)))
+            return
+          }
+          await new Promise<void>((resolve) => {
+            wakePoll = resolve
+            timer = setTimeout(() => {
+              wakePoll = null
+              resolve()
+            }, pollIntervalMs)
+          })
+          timer = null
+        }
+      }
+
+      return () => {
+        if (!active) return
+        active = false
+        polling = false
+        if (timer !== null) clearTimeout(timer)
+        wakePoll?.()
+        wakePoll = null
+        stopStream()
+      }
+    },
+  }
+}
