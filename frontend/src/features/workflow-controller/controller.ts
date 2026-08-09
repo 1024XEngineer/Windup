@@ -32,7 +32,7 @@ export interface AddActionInput {
   input: WorkflowActionInput
 }
 
-export interface GenerateCharacterOptions {
+export interface GenerateCharacterTemplateOptions {
   spriteWidth: number
   spriteHeight: number
 }
@@ -71,19 +71,19 @@ export interface WorkflowController {
   getWorkflow(): WorkflowRun
 
   addAction(input: AddActionInput): Promise<WorkflowRun>
-  generateCharacter(
+  generateCharacterTemplate(
     nodeId: CharacterSetupWorkflowNode['id'],
-    options: GenerateCharacterOptions,
+    options: GenerateCharacterTemplateOptions,
   ): Promise<WorkflowRun>
-  confirmCharacter(
+  confirmCharacterTemplate(
     nodeId: CharacterTemplateWorkflowNode['id'],
     selectedImageUrl: string,
   ): Promise<WorkflowRun>
-  generateActionFrame(
+  generateFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
     options: GenerateActionOptions,
   ): Promise<WorkflowRun>
-  confirmActionFrame(
+  confirmFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
     selectedFirstFrameUrl: string,
   ): Promise<WorkflowRun>
@@ -91,11 +91,11 @@ export interface WorkflowController {
     nodeId: ActionGenerationMethodWorkflowNode['id'],
     method: ActionGenerationMethod,
   ): Promise<WorkflowRun>
-  generateAnimation(
+  generateCompleteAnimation(
     nodeId: ActionFullFrameWorkflowNode['id'],
     options: GenerateActionOptions,
   ): Promise<WorkflowRun>
-  approveAction(nodeId: ReviewWorkflowNode['id']): Promise<WorkflowRun>
+  approveReview(nodeId: ReviewWorkflowNode['id']): Promise<WorkflowRun>
   /** 已发布 Action 删除后，保留其四节点历史并标记为已删除。 */
   archiveAction(nodeId: ActionFullFrameWorkflowNode['id']): Promise<WorkflowRun>
 
@@ -197,8 +197,8 @@ export function createWorkflowController({
   function addAction({ nodeId = createId(), dependsOnNodeIds, input }: AddActionInput) {
     ensureRunning()
     return persist((run) => {
-      const methodId = `${nodeId}:generation-method`
-      const fullFrameId = `${nodeId}:full-frame`
+      const methodId = `${nodeId}:action-generation-method`
+      const fullFrameId = `${nodeId}:action-full-frame`
       const reviewId = `${nodeId}:review`
       const newIds = [nodeId, methodId, fullFrameId, reviewId]
       const duplicateId = newIds.find((id) => run.nodes.some((node) => node.id === id))
@@ -208,6 +208,12 @@ export function createWorkflowController({
         : run.nodes.filter((node) => node.type === 'character-template').map((node) => node.id)
       if (dependencies.length === 0) throw new Error('新增 Action 前必须存在角色母版节点')
       assertDependenciesExist(run.nodes, dependencies)
+      if (
+        dependencies.length !== 1 ||
+        findNode(run, dependencies[0]!).type !== 'character-template'
+      ) {
+        throw new Error('Action 首帧必须且只能依赖一个角色母版节点')
+      }
       const firstFrameNode: ActionFirstFrameWorkflowNode = {
         id: nodeId,
         type: 'action-first-frame',
@@ -254,9 +260,9 @@ export function createWorkflowController({
     })
   }
 
-  function generateCharacter(
+  function generateCharacterTemplate(
     nodeId: CharacterSetupWorkflowNode['id'],
-    options: GenerateCharacterOptions,
+    options: GenerateCharacterTemplateOptions,
   ): Promise<WorkflowRun> {
     ensurePositiveInteger(options.spriteWidth, 'spriteWidth')
     ensurePositiveInteger(options.spriteHeight, 'spriteHeight')
@@ -273,7 +279,7 @@ export function createWorkflowController({
 
   async function performCharacterGeneration(
     nodeId: CharacterSetupWorkflowNode['id'],
-    options: GenerateCharacterOptions,
+    options: GenerateCharacterTemplateOptions,
   ): Promise<WorkflowRun> {
     const before = requireWorkflow()
     const setupBefore = findNode(before, nodeId)
@@ -308,7 +314,10 @@ export function createWorkflowController({
     })
   }
 
-  function confirmCharacter(nodeId: CharacterTemplateWorkflowNode['id'], selectedImageUrl: string) {
+  function confirmCharacterTemplate(
+    nodeId: CharacterTemplateWorkflowNode['id'],
+    selectedImageUrl: string,
+  ) {
     ensureRunning()
     const imageUrl = nonEmpty(selectedImageUrl, 'selectedImageUrl')
     return persist((run) =>
@@ -329,7 +338,7 @@ export function createWorkflowController({
     )
   }
 
-  function generateActionFrame(
+  function generateFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
     options: GenerateActionOptions,
   ) {
@@ -354,7 +363,7 @@ export function createWorkflowController({
     })
   }
 
-  function confirmActionFrame(
+  function confirmFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
     selectedFirstFrameUrl: string,
   ) {
@@ -384,15 +393,15 @@ export function createWorkflowController({
   ) {
     ensureRunning()
     if (method !== 'video-cropping' && method !== '3d-to-2d') {
-      return Promise.reject(new Error(`不支持的资产生成方式：${String(method)}`))
+      return Promise.reject(new Error(`不支持的动作生成方式：${String(method)}`))
     }
     return persist((run) =>
       updateNode(run, nodeId, (node) => {
         if (node.type !== 'action-generation-method') {
-          throw new Error('目标节点不是资产生成方式')
+          throw new Error('目标节点不是动作生成方式')
         }
         if (node.status !== 'active' || node.phase !== 'selecting') {
-          throw new Error('资产生成方式节点当前不能选择')
+          throw new Error('动作生成方式节点当前不能选择')
         }
         return unlockReadyNodes(
           replaceNode(run, { ...node, method, status: 'passed', phase: 'completed' }),
@@ -401,7 +410,7 @@ export function createWorkflowController({
     )
   }
 
-  function generateAnimation(
+  function generateCompleteAnimation(
     nodeId: ActionFullFrameWorkflowNode['id'],
     options: GenerateActionOptions,
   ) {
@@ -410,7 +419,7 @@ export function createWorkflowController({
       if (node.type !== 'action-full-frame') throw new Error('目标节点不是完整动画')
       if (node.phase !== 'ready') throw new Error('完整动画节点当前不能生成')
       const methodNode = findSingleDependencyNode(run, node, 'action-generation-method')
-      if (!methodNode.method) throw new Error('尚未选择资产生成方式')
+      if (!methodNode.method) throw new Error('尚未选择动作生成方式')
       if (methodNode.method === '3d-to-2d') {
         throw new Error('3D 转 2D 接口尚未提供，暂时不能开始生成')
       }
@@ -430,7 +439,7 @@ export function createWorkflowController({
     })
   }
 
-  function approveAction(nodeId: ReviewWorkflowNode['id']) {
+  function approveReview(nodeId: ReviewWorkflowNode['id']) {
     ensureRunning()
     return persist((run) =>
       updateNode(run, nodeId, (node) => {
@@ -730,8 +739,15 @@ export function createWorkflowController({
 
   async function restartFromNode(nodeId: WorkflowNode['id']): Promise<WorkflowRun> {
     const before = requireWorkflow()
-    findNode(before, nodeId)
+    const restartNode = findNode(before, nodeId)
+    if (restartNode.deletedAt) throw new Error('已归档节点不能重新执行')
     const affectedIds = collectDescendantIds(before.nodes, nodeId)
+    const affectedCharacterSetupIds = before.nodes
+      .filter(
+        (node): node is CharacterTemplateWorkflowNode =>
+          node.type === 'character-template' && affectedIds.has(node.id),
+      )
+      .flatMap((node) => node.dependsOnNodeIds)
 
     const restarted = await persist((run) => {
       const resetNodes = run.nodes.map((node) =>
@@ -749,6 +765,7 @@ export function createWorkflowController({
         if (key.startsWith(`${affectedId}:`)) unattachedGenerations.delete(key)
       }
     }
+    for (const setupNodeId of affectedCharacterSetupIds) characterCommands.delete(setupNodeId)
     // 不依赖重做前快照里的 taskId：引用保存与重做交错时，订阅可能刚刚才建立。
     for (const [key, subscription] of subscriptions) {
       if (affectedIds.has(subscription.nodeId)) stopSubscription(key)
@@ -790,13 +807,13 @@ export function createWorkflowController({
     create,
     getWorkflow,
     addAction,
-    generateCharacter,
-    confirmCharacter,
-    generateActionFrame,
-    confirmActionFrame,
+    generateCharacterTemplate,
+    confirmCharacterTemplate,
+    generateFirstFrame,
+    confirmFirstFrame,
     selectActionGenerationMethod,
-    generateAnimation,
-    approveAction,
+    generateCompleteAnimation,
+    approveReview,
     archiveAction,
     resume,
     interrupt,

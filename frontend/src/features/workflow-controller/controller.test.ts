@@ -81,11 +81,11 @@ function fullFrameNode(
   overrides: Partial<ActionFullFrameWorkflowNode> = {},
 ): ActionFullFrameWorkflowNode {
   return {
-    id: 'action-walk:full-frame',
+    id: 'action-walk:action-full-frame',
     type: 'action-full-frame',
     status: 'locked',
     phase: 'ready',
-    dependsOnNodeIds: ['action-walk:generation-method'],
+    dependsOnNodeIds: ['action-walk:action-generation-method'],
     generations: [],
     error: null,
     ...overrides,
@@ -96,7 +96,7 @@ function generationMethodNode(
   overrides: Partial<ActionGenerationMethodWorkflowNode> = {},
 ): ActionGenerationMethodWorkflowNode {
   return {
-    id: 'action-walk:generation-method',
+    id: 'action-walk:action-generation-method',
     type: 'action-generation-method',
     status: 'locked',
     phase: 'selecting',
@@ -114,7 +114,7 @@ function reviewNode(overrides: Partial<ReviewWorkflowNode> = {}): ReviewWorkflow
     type: 'review',
     status: 'locked',
     phase: 'reviewing',
-    dependsOnNodeIds: ['action-walk:full-frame'],
+    dependsOnNodeIds: ['action-walk:action-full-frame'],
     generations: [],
     error: null,
     ...overrides,
@@ -284,25 +284,37 @@ describe('WorkflowController', () => {
         dependsOnNodeIds: ['template-1'],
       },
       {
-        id: 'action-walk:generation-method',
+        id: 'action-walk:action-generation-method',
         type: 'action-generation-method',
         status: 'locked',
         dependsOnNodeIds: ['action-walk'],
         method: null,
       },
       {
-        id: 'action-walk:full-frame',
+        id: 'action-walk:action-full-frame',
         type: 'action-full-frame',
         status: 'locked',
-        dependsOnNodeIds: ['action-walk:generation-method'],
+        dependsOnNodeIds: ['action-walk:action-generation-method'],
       },
       {
         id: 'action-walk:review',
         type: 'review',
         status: 'locked',
-        dependsOnNodeIds: ['action-walk:full-frame'],
+        dependsOnNodeIds: ['action-walk:action-full-frame'],
       },
     ])
+  })
+
+  it('新增 Action 只能依赖一个角色母版节点', async () => {
+    const { controller } = createController(createRun(completedCharacterNodes()))
+
+    await expect(
+      controller.addAction({
+        nodeId: 'action-invalid',
+        dependsOnNodeIds: ['setup-1'],
+        input: actionInput(),
+      }),
+    ).rejects.toThrow('必须且只能依赖一个角色母版节点')
   })
 
   it('归档已发布 Action 时只标记对应四节点分支并保留其他节点', async () => {
@@ -320,33 +332,33 @@ describe('WorkflowController', () => {
         selectedFirstFrameUrl: 'jump.png',
       }),
       generationMethodNode({
-        id: 'action-jump:generation-method',
+        id: 'action-jump:action-generation-method',
         status: 'passed',
         phase: 'completed',
         dependsOnNodeIds: ['action-jump'],
         method: 'video-cropping',
       }),
       fullFrameNode({
-        id: 'action-jump:full-frame',
+        id: 'action-jump:action-full-frame',
         status: 'passed',
         phase: 'completed',
-        dependsOnNodeIds: ['action-jump:generation-method'],
+        dependsOnNodeIds: ['action-jump:action-generation-method'],
       }),
       reviewNode({
         id: 'action-jump:review',
         status: 'passed',
         phase: 'completed',
-        dependsOnNodeIds: ['action-jump:full-frame'],
+        dependsOnNodeIds: ['action-jump:action-full-frame'],
       }),
     ])
     const { controller, workflow } = createController(run)
 
-    const archived = await controller.archiveAction('action-walk:full-frame')
+    const archived = await controller.archiveAction('action-walk:action-full-frame')
 
     expect(archived.nodes.filter((node) => node.deletedAt).map((node) => node.id)).toEqual([
       'action-walk',
-      'action-walk:generation-method',
-      'action-walk:full-frame',
+      'action-walk:action-generation-method',
+      'action-walk:action-full-frame',
       'action-walk:review',
     ])
     expect(archived.nodes.find((node) => node.id === 'setup-1')?.deletedAt).toBeUndefined()
@@ -369,10 +381,13 @@ describe('WorkflowController', () => {
     ])
     const { controller, generation } = createController(run)
 
-    await controller.selectActionGenerationMethod('action-walk:generation-method', '3d-to-2d')
+    await controller.selectActionGenerationMethod(
+      'action-walk:action-generation-method',
+      '3d-to-2d',
+    )
 
     await expect(
-      controller.generateAnimation('action-walk:full-frame', {
+      controller.generateCompleteAnimation('action-walk:action-full-frame', {
         characterId: 'character-backend-1',
         referenceMedia: [],
       }),
@@ -393,7 +408,7 @@ describe('WorkflowController', () => {
     ])
     const { controller } = createController(run)
 
-    const next = await controller.confirmCharacter('template-1', 'https://img/knight.png')
+    const next = await controller.confirmCharacterTemplate('template-1', 'https://img/knight.png')
 
     expect(next.nodes).toEqual(
       expect.arrayContaining([
@@ -407,7 +422,7 @@ describe('WorkflowController', () => {
   it('提交角色设定后在母版节点记录任务并进入候选选择', async () => {
     const { controller, workflow, generation, asyncErrors } = createController()
 
-    await controller.generateCharacter('setup-1', { spriteWidth: 64, spriteHeight: 64 })
+    await controller.generateCharacterTemplate('setup-1', { spriteWidth: 64, spriteHeight: 64 })
 
     expect(generation.apis.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -454,10 +469,10 @@ describe('WorkflowController', () => {
     vi.mocked(generation.apis.create).mockRejectedValueOnce(new Error('生成服务暂时不可用'))
 
     await expect(
-      controller.generateCharacter('setup-1', { spriteWidth: 64, spriteHeight: 64 }),
+      controller.generateCharacterTemplate('setup-1', { spriteWidth: 64, spriteHeight: 64 }),
     ).rejects.toThrow('生成服务暂时不可用')
     await expect(
-      controller.generateCharacter('setup-1', { spriteWidth: 64, spriteHeight: 64 }),
+      controller.generateCharacterTemplate('setup-1', { spriteWidth: 64, spriteHeight: 64 }),
     ).resolves.toMatchObject({
       nodes: expect.arrayContaining([
         expect.objectContaining({
@@ -474,8 +489,8 @@ describe('WorkflowController', () => {
     const options = { spriteWidth: 64, spriteHeight: 64 }
 
     await Promise.all([
-      controller.generateCharacter('setup-1', options),
-      controller.generateCharacter('setup-1', options),
+      controller.generateCharacterTemplate('setup-1', options),
+      controller.generateCharacterTemplate('setup-1', options),
     ])
 
     expect(generation.apis.create).toHaveBeenCalledTimes(1)
@@ -522,7 +537,7 @@ describe('WorkflowController', () => {
       onAsyncError: vi.fn(),
     })
 
-    await controller.generateCharacter('setup-1', { spriteWidth: 64, spriteHeight: 64 })
+    await controller.generateCharacterTemplate('setup-1', { spriteWidth: 64, spriteHeight: 64 })
 
     expect(workflow.apis.update).toHaveBeenCalledTimes(3)
     expect(controller.getWorkflow().nodes[1].phase).toBe('selecting')
@@ -530,7 +545,7 @@ describe('WorkflowController', () => {
 
   it('中断后忽略迟到结果，恢复时查询终态再推进', async () => {
     const { controller, generation } = createController()
-    await controller.generateCharacter('setup-1', { spriteWidth: 64, spriteHeight: 64 })
+    await controller.generateCharacterTemplate('setup-1', { spriteWidth: 64, spriteHeight: 64 })
     await controller.interrupt()
 
     generation.emit({
@@ -589,9 +604,78 @@ describe('WorkflowController', () => {
         }),
         expect.objectContaining({ id: 'action-walk', status: 'locked', generations: [] }),
         expect.objectContaining({
-          id: 'action-walk:full-frame',
+          id: 'action-walk:action-full-frame',
           status: 'locked',
           generations: [],
+        }),
+      ]),
+    )
+  })
+
+  it('重做一个 Action 只重置它的后代并保留显式边和其他并行 Action', async () => {
+    const jumpNodes: WorkflowNode[] = [
+      firstFrameNode({
+        id: 'action-jump',
+        status: 'active',
+        phase: 'generating',
+        generations: [{ taskId: 'task-jump', role: 'first_frame' }],
+        input: actionInput({ name: '跳跃', type: 'jump' }),
+      }),
+      generationMethodNode({
+        id: 'action-jump:action-generation-method',
+        dependsOnNodeIds: ['action-jump'],
+      }),
+      fullFrameNode({
+        id: 'action-jump:action-full-frame',
+        dependsOnNodeIds: ['action-jump:action-generation-method'],
+      }),
+      reviewNode({
+        id: 'action-jump:review',
+        dependsOnNodeIds: ['action-jump:action-full-frame'],
+      }),
+    ]
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: 'walk.png',
+      }),
+      generationMethodNode({ status: 'passed', phase: 'completed', method: 'video-cropping' }),
+      fullFrameNode({
+        status: 'active',
+        phase: 'generating',
+        generations: [{ taskId: 'task-walk', role: 'complete_animation' }],
+      }),
+      reviewNode(),
+      ...jumpNodes,
+    ])
+    const { controller } = createController(run)
+
+    const restarted = await controller.restartFromNode('action-walk:action-generation-method')
+
+    expect(restarted.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'action-walk:action-generation-method',
+          status: 'active',
+          dependsOnNodeIds: ['action-walk'],
+        }),
+        expect.objectContaining({
+          id: 'action-walk:action-full-frame',
+          status: 'locked',
+          dependsOnNodeIds: ['action-walk:action-generation-method'],
+        }),
+        expect.objectContaining({
+          id: 'action-walk:review',
+          status: 'locked',
+          dependsOnNodeIds: ['action-walk:action-full-frame'],
+        }),
+        expect.objectContaining({
+          id: 'action-jump',
+          status: 'active',
+          phase: 'generating',
+          generations: [{ taskId: 'task-jump', role: 'first_frame' }],
         }),
       ]),
     )
@@ -623,14 +707,14 @@ describe('WorkflowController', () => {
       onAsyncError: vi.fn(),
     })
 
-    const oldSubmission = controller.generateActionFrame('action-walk', {
+    const oldSubmission = controller.generateFirstFrame('action-walk', {
       characterId: 'character-1',
       referenceMedia: [],
     })
     await Promise.resolve()
     await controller.restartFromNode('action-walk')
 
-    const newSubmission = controller.generateActionFrame('action-walk', {
+    const newSubmission = controller.generateFirstFrame('action-walk', {
       characterId: 'character-1',
       referenceMedia: [],
     })
@@ -646,7 +730,7 @@ describe('WorkflowController', () => {
       error: null,
     })
     await oldSubmission
-    const sameNewSubmission = controller.generateActionFrame('action-walk', {
+    const sameNewSubmission = controller.generateFirstFrame('action-walk', {
       characterId: 'character-1',
       referenceMedia: [],
     })
@@ -667,7 +751,10 @@ describe('WorkflowController', () => {
     ])
   })
 
-  it('角色母版请求尚未返回时从设定重做，新提交不会复用旧命令', async () => {
+  it.each([
+    ['角色设定', 'setup-1'],
+    ['角色母版', 'template-1'],
+  ])('角色母版请求尚未返回时从%s node 重做，新提交不会复用旧命令', async (_label, nodeId) => {
     const run = createRun()
     const workflow = createWorkflowApis(run)
     const pendingResolvers: Array<(generation: Generation) => void> = []
@@ -693,19 +780,20 @@ describe('WorkflowController', () => {
       onAsyncError: vi.fn(),
     })
 
-    const oldSubmission = controller.generateCharacter('setup-1', {
+    const oldSubmission = controller.generateCharacterTemplate('setup-1', {
       spriteWidth: 64,
       spriteHeight: 64,
     })
     await flushAsyncWork()
     expect(createGeneration).toHaveBeenCalledTimes(1)
 
-    await controller.restartFromNode('setup-1')
-    const newSubmission = controller.generateCharacter('setup-1', {
+    await controller.restartFromNode(nodeId)
+    const newSubmission = controller.generateCharacterTemplate('setup-1', {
       spriteWidth: 64,
       spriteHeight: 64,
     })
     await flushAsyncWork()
+
     expect(createGeneration).toHaveBeenCalledTimes(2)
 
     pendingResolvers[0]?.({
@@ -734,6 +822,22 @@ describe('WorkflowController', () => {
     })
   })
 
+  it('已归档 Action 的历史节点不能被重做为活动节点', async () => {
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({ status: 'passed', phase: 'completed', selectedFirstFrameUrl: 'walk.png' }),
+      generationMethodNode({ status: 'passed', phase: 'completed', method: 'video-cropping' }),
+      fullFrameNode({ status: 'passed', phase: 'completed' }),
+      reviewNode({ status: 'passed', phase: 'completed' }),
+    ])
+    const { controller } = createController(run)
+    await controller.archiveAction('action-walk:action-full-frame')
+
+    await expect(controller.restartFromNode('action-walk')).rejects.toThrow(
+      '已归档节点不能重新执行',
+    )
+  })
+
   it('保存失败时不发布未落库的新状态', async () => {
     const run = createRun([
       setupNode({ status: 'passed', phase: 'completed' }),
@@ -743,7 +847,7 @@ describe('WorkflowController', () => {
     vi.mocked(workflow.apis.update).mockRejectedValueOnce(new Error('后端保存失败'))
 
     await expect(
-      controller.confirmCharacter('template-1', 'https://img/knight.png'),
+      controller.confirmCharacterTemplate('template-1', 'https://img/knight.png'),
     ).rejects.toThrow('后端保存失败')
 
     expect(controller.getWorkflow().nodes[1]).toMatchObject({
@@ -759,14 +863,14 @@ describe('WorkflowController', () => {
     vi.mocked(workflow.apis.update).mockRejectedValueOnce(new Error('后端保存失败'))
 
     await expect(
-      controller.generateActionFrame('action-walk', {
+      controller.generateFirstFrame('action-walk', {
         characterId: 'character-1',
         referenceMedia: [],
       }),
     ).rejects.toThrow('后端保存失败')
     expect(controller.getWorkflow().nodes[2].generations).toEqual([])
 
-    await controller.generateActionFrame('action-walk', {
+    await controller.generateFirstFrame('action-walk', {
       characterId: 'character-1',
       referenceMedia: [],
     })
@@ -784,8 +888,8 @@ describe('WorkflowController', () => {
     const options = { characterId: 'character-1', referenceMedia: [] }
 
     await Promise.all([
-      controller.generateActionFrame('action-walk', options),
-      controller.generateActionFrame('action-walk', options),
+      controller.generateFirstFrame('action-walk', options),
+      controller.generateFirstFrame('action-walk', options),
     ])
 
     expect(generation.apis.create).toHaveBeenCalledTimes(1)
@@ -814,7 +918,7 @@ describe('WorkflowController', () => {
     const { controller } = createController(run)
 
     await controller.applyGenerationResult({
-      nodeId: 'action-walk:full-frame',
+      nodeId: 'action-walk:action-full-frame',
       taskId: 'task-animation',
       generation: {
         id: 'task-animation',
@@ -826,7 +930,7 @@ describe('WorkflowController', () => {
     expect(controller.getWorkflow().nodes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: 'action-walk:full-frame',
+          id: 'action-walk:action-full-frame',
           status: 'passed',
           phase: 'completed',
         }),
@@ -838,18 +942,67 @@ describe('WorkflowController', () => {
       ]),
     )
 
-    await controller.approveAction('action-walk:review')
+    await controller.approveReview('action-walk:review')
     expect(controller.getWorkflow().nodes[5]).toMatchObject({
       status: 'passed',
       phase: 'completed',
     })
   })
 
+  it('一个并行 Action 失败不会阻止另一个 Action 接收生成结果', async () => {
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        phase: 'generating',
+        generations: [{ taskId: 'task-walk', role: 'first_frame' }],
+      }),
+      firstFrameNode({
+        id: 'action-jump',
+        phase: 'generating',
+        generations: [{ taskId: 'task-jump', role: 'first_frame' }],
+        input: actionInput({ name: '跳跃', type: 'jump' }),
+      }),
+    ])
+    const { controller } = createController(run)
+
+    await controller.applyGenerationResult({
+      nodeId: 'action-walk',
+      taskId: 'task-walk',
+      generation: {
+        id: 'task-walk',
+        projectId: '1',
+        type: 'first_frame',
+        status: 'failed',
+        result: null,
+        error: '行走首帧失败',
+      },
+    })
+    await controller.applyGenerationResult({
+      nodeId: 'action-jump',
+      taskId: 'task-jump',
+      generation: {
+        id: 'task-jump',
+        projectId: '1',
+        type: 'first_frame',
+        status: 'completed',
+        result: { type: 'first_frame', image: { url: 'jump.png' } },
+        error: null,
+      },
+    })
+
+    expect(controller.getWorkflow().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'action-walk', status: 'failed' }),
+        expect.objectContaining({ id: 'action-jump', status: 'active', phase: 'selecting' }),
+      ]),
+    )
+  })
+
   it('一个 Action 依次使用独立的首帧、生成方式、完整动画和审核节点', async () => {
     const run = createRun([...completedCharacterNodes(), ...actionNodes()])
     const { controller, generation } = createController(run)
 
-    await controller.generateActionFrame('action-walk', {
+    await controller.generateFirstFrame('action-walk', {
       characterId: 'character-backend-1',
       referenceMedia: [],
     })
@@ -861,16 +1014,19 @@ describe('WorkflowController', () => {
       error: null,
     })
     await flushAsyncWork()
-    await controller.confirmActionFrame('action-walk', 'https://img/first.png')
-    await controller.selectActionGenerationMethod('action-walk:generation-method', 'video-cropping')
+    await controller.confirmFirstFrame('action-walk', 'https://img/first.png')
+    await controller.selectActionGenerationMethod(
+      'action-walk:action-generation-method',
+      'video-cropping',
+    )
 
-    await controller.generateAnimation('action-walk:full-frame', {
+    await controller.generateCompleteAnimation('action-walk:action-full-frame', {
       characterId: 'character-backend-1',
       referenceMedia: [],
     })
     generation.emit(completedAnimationEvent())
     await flushAsyncWork()
-    await controller.approveAction('action-walk:review')
+    await controller.approveReview('action-walk:review')
 
     expect(generation.apis.create).toHaveBeenNthCalledWith(
       1,

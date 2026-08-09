@@ -4,6 +4,6 @@ export type {
   ApplyGenerationResultInput,
   CreateWorkflowControllerOptions,
   GenerateActionOptions,
-  GenerateCharacterOptions,
+  GenerateCharacterTemplateOptions,
   WorkflowController,
 } from './controller'
