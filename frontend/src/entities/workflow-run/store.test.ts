@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { WorkflowRun } from './index'
-import { createWorkflowRunStore } from './store'
+import { createWorkflowRunStore, WorkflowRunConflictError } from './store'
 
 /** 后端响应包装：Response<T> { code, message, data: T } */
 function wrapResponse<T>(data: T) {
@@ -31,6 +31,7 @@ function createMockApi() {
   // 后端内部使用前端 string ID 索引（保持简单）；
   // 响应时仍返回整数 ID，由被测 _fromBackend 转换回 string。
   const runs = new Map<string, WorkflowRun>()
+  const versions = new Map<string, number>()
   let nextNumericId = 1
 
   const fetch = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
@@ -55,12 +56,13 @@ function createMockApi() {
         createdAt: new Date().toISOString(),
       }
       runs.set(runId, run)
+      versions.set(runId, 1)
       return wrapResponse({
         id: nextNumericId++,
         project_id: body.project_id,
         nodes: packNodes(run),
         status: 'active',
-        version: 1,
+        version: versions.get(runId) ?? 1,
       })
     }
 
@@ -72,7 +74,7 @@ function createMockApi() {
           project_id: Number(run.projectId.split('-')[1] ?? run.projectId),
           nodes: packNodes(run),
           status: 'active',
-          version: 1,
+          version: versions.get(rid) ?? 1,
         })),
       )
     }
@@ -94,7 +96,7 @@ function createMockApi() {
           project_id: Number(run.projectId.split('-')[1] ?? run.projectId),
           nodes: packNodes(run),
           status: 'active',
-          version: 1,
+          version: versions.get(rid) ?? 1,
         }))
       return wrapResponse(all)
     }
@@ -110,7 +112,7 @@ function createMockApi() {
         project_id: Number(run.projectId.split('-')[1] ?? run.projectId),
         nodes: packNodes(run),
         status: 'active',
-        version: 1,
+        version: versions.get(runId) ?? 1,
       })
     }
 
@@ -148,12 +150,14 @@ function createMockApi() {
         createdAt: (metadata.createdAt as string) ?? existing.createdAt,
       }
       runs.set(runId, updated)
+      const nextVersion = (versions.get(runId) ?? 1) + 1
+      versions.set(runId, nextVersion)
       return wrapResponse({
         id: Number(numericId),
         project_id: Number(updated.projectId.split('-')[1] ?? updated.projectId),
         nodes: packNodes(updated),
         status: 'active',
-        version: 1,
+        version: nextVersion,
       })
     }
 
@@ -277,6 +281,37 @@ describe('createWorkflowRunStore', () => {
 
     const reloaded = await store.get(created.id)
     expect(reloaded?.status).toBe('completed')
+  })
+
+  it('sends the cached server version and advances it after each successful save', async () => {
+    const api = createMockApi()
+    const store = createWorkflowRunStore({ api })
+    const created = await store.create({ projectId: '1', purpose: 'create_character' })
+
+    await store.save(created)
+    created.prompt = 'second save'
+    await store.save(created)
+
+    const versions = api.fetch.mock.calls
+      .filter(([, init]) => init?.method === 'PATCH')
+      .map(([, init]) => JSON.parse(String(init?.body)).expected_version)
+    expect(versions).toEqual([1, 2])
+  })
+
+  it('turns a stale server version into an explicit workflow conflict', async () => {
+    const conflict = Object.assign(new Error('Conflict'), { status: 409 })
+    const api = createMockApi()
+    const store = createWorkflowRunStore({
+      api: {
+        fetch: vi.fn(async (input, init) => {
+          if (init?.method === 'PATCH') throw conflict
+          return api.fetch(input, init)
+        }),
+      },
+    })
+    const created = await store.create({ projectId: '1', purpose: 'create_character' })
+
+    await expect(store.save(created)).rejects.toBeInstanceOf(WorkflowRunConflictError)
   })
 
   it('removes a run through the persistence contract', async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { registerApiAccessTokenProvider } from '@/shared/api'
+import { registerApiAccessTokenProvider, registerApiUnauthorizedRecovery } from '@/shared/api'
 import { createUserApis } from './api'
 
 describe('user API adapter', () => {
@@ -95,11 +95,7 @@ describe('user API adapter', () => {
         body: JSON.stringify({ refresh_token: 'refresh' }),
       }),
     )
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      7,
-      'https://api.example.test/auth/me',
-      expect.any(Object),
-    )
+    expect(fetchMock.mock.calls[6]?.[0]).toBe('https://api.example.test/auth/me')
     expect(fetchMock).toHaveBeenNthCalledWith(
       8,
       'https://api.example.test/auth/change-password',
@@ -180,6 +176,29 @@ describe('user API adapter', () => {
       kind: 'invalid-response',
       data: invalidTokens,
     })
+  })
+
+  it('does not recursively invoke session recovery when an auth endpoint returns 401', async () => {
+    const recover = vi.fn(async () => true)
+    const unregister = registerApiUnauthorizedRecovery(recover)
+    const apis = createUserApis({
+      baseUrl: 'https://api.example.test',
+      fetchFn: async () =>
+        new Response(JSON.stringify({ code: 401, message: 'refresh expired', data: null }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    })
+
+    try {
+      await expect(apis.refresh('expired-refresh')).rejects.toMatchObject({
+        kind: 'business',
+        code: 401,
+      })
+    } finally {
+      unregister()
+    }
+    expect(recover).not.toHaveBeenCalled()
   })
 })
 

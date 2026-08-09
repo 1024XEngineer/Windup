@@ -4,6 +4,7 @@ import { Link, Outlet, useLocation, useParams } from 'react-router'
 import {
   CHARACTER_PERSPECTIVE,
   DIRECTIONAL_MOVEMENT,
+  isPublishedCharacter,
   type CharacterApis,
   type Project,
   type ProjectApis,
@@ -42,11 +43,9 @@ export function ProjectDetailPage({
         if (active) setError('这个项目不存在或暂时无法读取')
       },
     )
-    const countPromise = characterApis.listPageByProject
-      ? characterApis
-          .listPageByProject(projectId, { page: 1, pageSize: 1 })
-          .then((page) => page.total)
-      : characterApis.listByProject(projectId).then((items) => items.length)
+    const countPromise = characterApis
+      .listByProject(projectId)
+      .then((items) => items.filter(isPublishedCharacter).length)
     void countPromise.then(
       (count) => {
         if (active) setCharacterCount(count)

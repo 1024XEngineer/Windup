@@ -24,9 +24,14 @@
 真实图节点直接写入后端 `nodes` 数组，运行级元数据暂附在首个真实节点的保留字段中，不制造
 额外根节点；读取时兼容早期的 `root + nodes` 快照。
 
-App 已装配 `POST/GET/PATCH/DELETE /workflow-runs` 的真实 HTTP Store。后端没有按 Character
-直接查询的接口时，Store 通过列表接口在客户端筛选；内存实现只供测试和显式过渡场景使用。
-服务端返回的节点会在进入页面前校验完整形状，残缺快照不会延迟到渲染阶段才报错。
+App 已装配 `POST/GET/PATCH/DELETE /workflow-runs` 的真实 HTTP Store，但截至 2026-08-09，
+这些后端处理函数仍未实现，列表和按 Character 查询路由也不存在。Store 已保留
+`list/getByCharacter` 契约，未来可以通过后端列表结果在客户端筛选；当前不能把该路径描述为
+可联通。内存实现只供测试和显式过渡场景使用。
+
+HTTP Store 会缓存服务端 `version`，后续保存携带 `expected_version`，并把 `409` 转成
+`WorkflowRunConflictError`。真正防止覆盖仍要求后端在数据库中原子校验并递增版本。服务端
+返回的节点会在进入页面前校验完整形状，残缺快照不会延迟到渲染阶段才报错。
 
 ## 文件
 

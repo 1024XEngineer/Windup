@@ -5,6 +5,7 @@ import {
   createApiClient,
   getApiAccessToken,
   registerApiAccessTokenProvider,
+  registerApiUnauthorizedRecovery,
 } from './index'
 
 afterEach(() => vi.unstubAllEnvs())
@@ -127,6 +128,37 @@ describe('createApiClient', () => {
     expect(authorization).toBe('Bearer access-token')
   })
 
+  it('refreshes a business 401 once and replays with the renewed token', async () => {
+    let token = 'expired-token'
+    const authorizations: (string | null)[] = []
+    const unregister = registerApiUnauthorizedRecovery(async () => {
+      token = 'renewed-token'
+      return true
+    })
+    const client = createApiClient({
+      baseUrl: 'https://api.windup.test',
+      getAccessToken: () => token,
+      fetchFn: async (input, init) => {
+        authorizations.push(new Request(input, init).headers.get('authorization'))
+        return new Response(
+          JSON.stringify(
+            authorizations.length === 1
+              ? { code: 401, message: 'expired', data: null }
+              : { code: 200, message: 'success', data: { id: 7 } },
+          ),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      },
+    })
+
+    try {
+      await expect(client.request('/resources/7')).resolves.toEqual({ id: 7 })
+    } finally {
+      unregister()
+    }
+    expect(authorizations).toEqual(['Bearer expired-token', 'Bearer renewed-token'])
+  })
+
   it('wraps a rejected fetch as a network ApiError', async () => {
     const connectionError = new TypeError('Failed to fetch')
     const client = createApiClient({
@@ -144,6 +176,16 @@ describe('createApiClient', () => {
       message: '网络请求失败',
       cause: connectionError,
     })
+  })
+
+  it('preserves AbortError so callers can distinguish cancellation', async () => {
+    const abortError = new DOMException('This operation was aborted', 'AbortError')
+    const client = createApiClient({
+      baseUrl: 'https://api.windup.test',
+      fetchFn: async () => Promise.reject(abortError),
+    })
+
+    await expect(client.request('/media/upload')).rejects.toBe(abortError)
   })
 
   it('rejects a successful HTTP response that does not match the backend envelope', async () => {

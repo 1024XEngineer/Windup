@@ -1,5 +1,10 @@
 # Windup 前端架构
 
+> **历史文档，停止作为实现依据。** 当前架构以
+> `frontend/ARCHITECTURE_GUARDRAILS.md`、`frontend/MODULES.md` 和
+> `frontend/API_CONTRACT.md` 为准。本文仅保留早期设计背景，其中的 Step、Task、
+> 本地 WorkflowRun 和页面数量等描述可能已经过时。
+
 本文记录当前前端的模块划分、依赖规则和已经落地的首个工作流纵切。
 
 ---

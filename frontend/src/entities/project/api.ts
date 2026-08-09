@@ -60,7 +60,6 @@ function toPositiveId(value: string | undefined, fallback: number, field: string
 
 function toCreatePayload(input: CreateProjectInput) {
   return {
-    user_id: toPositiveId(input.ownerId, 1, 'ownerId'),
     workflow_id:
       input.workflowId === undefined || input.workflowId === null
         ? (input.workflowId ?? null)
@@ -83,7 +82,6 @@ export function createProjectApis(): ProjectApis {
       const params = new URLSearchParams()
       if (query?.page) params.set('page', String(query.page))
       if (query?.pageSize) params.set('page_size', String(query.pageSize))
-      if (query?.ownerId) params.set('user_id', String(toPositiveId(query.ownerId, 1, 'ownerId')))
       const qs = params.toString()
       const result = await getPage<BackendProject>(`/projects${qs ? `?${qs}` : ''}`)
       return { ...result, items: result.items.map(toProject) }

@@ -70,10 +70,9 @@ export interface CharacterActionOutput {
 
 export type GenerationResult = CharacterImageOutput | CharacterActionOutput
 
-export type GenerationResultFor<T extends GenerationInput> =
-  T extends CharacterImageGenerationInput
-    ? CharacterImageOutput
-    : CharacterActionOutput
+export type GenerationResultFor<T extends GenerationInput> = T extends CharacterImageGenerationInput
+  ? CharacterImageOutput
+  : CharacterActionOutput
 
 /**
  * 一次生成任务的完整快照。
@@ -93,9 +92,11 @@ export interface Generation<TType extends GenerationType = GenerationType> {
 }
 
 /** 后端任务状态变化映射成同一份 Generation 快照。 */
-export interface GenerationEvent<TType extends GenerationType = GenerationType>
-  extends Omit<Generation<TType>, 'id' | 'projectId'> {
-  /** 字段名对应后端事件中的 task_id，但语义上仍是 Generation.id。 */
+export interface GenerationEvent<TType extends GenerationType = GenerationType> extends Omit<
+  Generation<TType>,
+  'id' | 'projectId'
+> {
+  /** 兼容后端事件中的 task_id/id，并统一映射为前端 Generation.id。 */
   taskId: Generation['id']
 }
 

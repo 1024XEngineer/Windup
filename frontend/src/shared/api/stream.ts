@@ -1,89 +1,195 @@
-/**
- * 业务无关的 SSE 订阅边界。
- *
- * 上层只处理字符串 payload、终态判断和错误回调，不接触 EventSource 实例。
- * 浏览器断线后由 EventSource 按协议自动重连；显式取消、终态或非法消息才会关闭连接。
- */
-
-export interface EventSourceLike {
-  onerror: ((event: Event) => void) | null
-  addEventListener(type: string, listener: (event: Event) => void): void
-  removeEventListener(type: string, listener: (event: Event) => void): void
-  close(): void
-}
-
-export type EventSourceFactory = (url: string) => EventSourceLike
+/** 业务无关的、可鉴权的 SSE 订阅边界。 */
 
 export interface EventStreamOptions {
   /** 只监听业务指定的命名事件，例如 task_update。 */
   eventName: string
   /** 返回 true 表示 payload 是终态，传输层随后关闭连接。 */
   onEvent(data: string): boolean
-  /** 包含连接中断、非法消息和业务解析器抛出的错误。 */
+  /** 包含连接中断、非法响应和业务解析器抛出的错误。 */
   onError(error: Error): void
 }
 
 export type EventStreamSubscriber = (url: string, options: EventStreamOptions) => () => void
 
+export interface EventStreamSubscriberConfig {
+  fetchFn?: typeof fetch
+  /** 每次连接前重新读取，支持刷新后的 token。 */
+  getAccessToken: () => string | null | undefined
+  /** HTTP 401 时由认证会话尝试刷新；成功后只重放本次连接。 */
+  recoverUnauthorized?: () => Promise<boolean>
+  reconnectDelayMs?: number
+}
+
 export class EventStreamError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
+  readonly retryable: boolean
+  readonly status: number | null
+
+  constructor(
+    message: string,
+    retryable = false,
+    options?: ErrorOptions,
+    status: number | null = null,
+  ) {
     super(message, options)
     this.name = 'EventStreamError'
+    this.retryable = retryable
+    this.status = status
   }
 }
 
-const createBrowserEventSource: EventSourceFactory = (url) => new EventSource(url)
+interface SseRecord {
+  event: string
+  data: string
+}
 
 function asError(value: unknown): Error {
   return value instanceof Error ? value : new EventStreamError('SSE 事件处理失败')
 }
 
-/**
- * 建立命名 SSE 事件订阅并返回幂等取消函数。
- *
- * `error` 事件通常表示临时断线。此处只通知上层而不主动 close，让浏览器原生
- * EventSource 继续使用服务端 retry 配置重连，避免退回业务轮询。
- */
-export function subscribeToEventStream(
-  url: string,
-  options: EventStreamOptions,
-  eventSourceFactory: EventSourceFactory = createBrowserEventSource,
-): () => void {
-  let active = true
-  let source: EventSourceLike | null = null
+function connectionError(cause?: unknown): EventStreamError {
+  return new EventStreamError('SSE 连接中断，正在自动重连', true, { cause })
+}
 
-  const stop = () => {
-    if (!active) return
-    active = false
-    if (source === null) return
-    source.removeEventListener(options.eventName, handleEvent)
-    source.onerror = null
-    source.close()
+function parseRecord(block: string): SseRecord | null {
+  let event = 'message'
+  const data: string[] = []
+  for (const line of block.split(/\r?\n/u)) {
+    if (line.startsWith(':')) continue
+    const separator = line.indexOf(':')
+    const field = separator < 0 ? line : line.slice(0, separator)
+    const rawValue = separator < 0 ? '' : line.slice(separator + 1)
+    const value = rawValue.startsWith(' ') ? rawValue.slice(1) : rawValue
+    if (field === 'event') event = value
+    if (field === 'data') data.push(value)
   }
+  return data.length === 0 ? null : { event, data: data.join('\n') }
+}
 
-  const handleEvent = (event: Event) => {
-    if (!active) return
-    try {
-      if (!('data' in event) || typeof event.data !== 'string') {
-        throw new EventStreamError('SSE 事件缺少字符串 data')
-      }
-      if (options.onEvent(event.data)) stop()
-    } catch (error) {
-      stop()
-      options.onError(asError(error))
-    }
+async function readEventStream(response: Response, options: EventStreamOptions): Promise<boolean> {
+  if (!response.body) throw new EventStreamError('SSE 响应缺少消息流')
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  const deliver = async (block: string): Promise<boolean> => {
+    const record = parseRecord(block)
+    if (record?.event !== options.eventName) return false
+    if (!options.onEvent(record.data)) return false
+    await reader.cancel()
+    return true
   }
 
   try {
-    source = eventSourceFactory(url)
-    source.addEventListener(options.eventName, handleEvent)
-    source.onerror = () => {
-      if (active) options.onError(new EventStreamError('SSE 连接中断'))
+    while (true) {
+      let chunk: ReadableStreamReadResult<Uint8Array>
+      try {
+        chunk = await reader.read()
+      } catch (cause) {
+        throw connectionError(cause)
+      }
+      const { done, value } = chunk
+      buffer += decoder.decode(value, { stream: !done })
+      let boundary = /\r?\n\r?\n/u.exec(buffer)
+      while (boundary) {
+        const block = buffer.slice(0, boundary.index)
+        buffer = buffer.slice(boundary.index + boundary[0].length)
+        if (await deliver(block)) return true
+        boundary = /\r?\n\r?\n/u.exec(buffer)
+      }
+      if (!done) continue
+      return buffer.length > 0 ? deliver(buffer) : false
     }
-  } catch (error) {
-    stop()
-    options.onError(new EventStreamError('SSE 连接建立失败', { cause: error }))
+  } catch (cause) {
+    try {
+      await reader.cancel(cause)
+    } catch {
+      // 取消失败不能覆盖真正的协议或业务错误。
+    }
+    throw cause
+  } finally {
+    reader.releaseLock()
   }
+}
 
-  return stop
+function waitForReconnect(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (delayMs <= 0 || signal.aborted) return Promise.resolve()
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', finish)
+      resolve()
+    }
+    const timer = setTimeout(finish, delayMs)
+    signal.addEventListener('abort', finish, { once: true })
+  })
+}
+
+/**
+ * 使用 fetch 流建立 SSE。浏览器原生 EventSource 不能设置 Authorization，
+ * 因此不能用于当前受保护的任务订阅接口。
+ */
+export function createEventStreamSubscriber(
+  config: EventStreamSubscriberConfig,
+): EventStreamSubscriber {
+  const fetchFn = config.fetchFn ?? globalThis.fetch
+  const reconnectDelayMs = config.reconnectDelayMs ?? 1_000
+
+  return (url, options) => {
+    const controller = new AbortController()
+    let attemptedUnauthorizedRecovery = false
+
+    const run = async () => {
+      while (!controller.signal.aborted) {
+        try {
+          const headers = new Headers({ Accept: 'text/event-stream' })
+          const accessToken = config.getAccessToken()
+          if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
+          let response: Response
+          try {
+            response = await fetchFn(url, {
+              method: 'GET',
+              headers,
+              credentials: 'include',
+              signal: controller.signal,
+            })
+          } catch (cause) {
+            throw connectionError(cause)
+          }
+
+          if (
+            response.status === 401 &&
+            !attemptedUnauthorizedRecovery &&
+            config.recoverUnauthorized
+          ) {
+            attemptedUnauthorizedRecovery = true
+            if (await config.recoverUnauthorized()) continue
+          }
+          if (!response.ok) {
+            throw new EventStreamError(
+              `SSE 请求失败（HTTP ${response.status}）`,
+              false,
+              undefined,
+              response.status,
+            )
+          }
+          if (!response.headers.get('content-type')?.includes('text/event-stream')) {
+            throw new EventStreamError('SSE 响应类型无效')
+          }
+          attemptedUnauthorizedRecovery = false
+          const terminal = await readEventStream(response, options)
+          if (terminal || controller.signal.aborted) return
+          throw connectionError()
+        } catch (cause) {
+          if (controller.signal.aborted) return
+          const error = asError(cause)
+          options.onError(error)
+          if (!(error instanceof EventStreamError) || !error.retryable) return
+          await waitForReconnect(reconnectDelayMs, controller.signal)
+        }
+      }
+    }
+
+    void run()
+    return () => controller.abort()
+  }
 }

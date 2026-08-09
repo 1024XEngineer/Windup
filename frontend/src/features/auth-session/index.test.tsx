@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AuthTokens, User, UserApis } from '@/entities/user'
-import { getApiAccessToken } from '@/shared/api'
+import { getApiAccessToken, recoverApiUnauthorized } from '@/shared/api'
 import {
   AuthSessionProvider,
   ProtectedRoute,
@@ -87,6 +87,22 @@ describe('AuthSessionProvider', () => {
     expect(getApiAccessToken()).toBe('login-access')
     expect(window.localStorage.length).toBe(1)
     expect(window.localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY)).toBe('login-refresh')
+  })
+
+  it('lets protected APIs recover a 401 through the current refresh token', async () => {
+    const apis = createApis({ login: vi.fn(async () => tokens('old-access', 'refresh-1')) })
+    vi.mocked(apis.refresh).mockResolvedValue(tokens('new-access', 'refresh-2'))
+    renderProvider(apis)
+    await waitFor(() => expect(session?.state.status).toBe('guest'))
+    await act(async () => {
+      await session?.login({ email: 'ada@example.test', password: 'password1', code: '123456' })
+    })
+
+    await expect(recoverApiUnauthorized()).resolves.toBe(true)
+
+    expect(apis.refresh).toHaveBeenCalledWith('refresh-1')
+    expect(getApiAccessToken()).toBe('new-access')
+    expect(window.localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY)).toBe('refresh-2')
   })
 
   it('unregisters its in-memory access token provider when unmounted', async () => {

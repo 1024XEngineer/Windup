@@ -19,7 +19,8 @@
 
 ## 依赖
 
-- 浏览器原生 `File`、`FormData`、`fetch` 和 `AbortSignal`。
+- 浏览器原生 `File`、`FormData` 和 `AbortSignal`，请求复用 `shared/api` 的统一客户端。
+- 上传与普通业务请求共用 Bearer Token、一次 401 会话恢复、错误分类和取消语义，不再维护第二套上传 HTTP 实现。
 - 必须配置 `VITE_API_BASE_URL`。缺失时上传会明确报错，不会退回访问者本机的 `127.0.0.1`。
 - 后端 `POST /media/upload` 以及后端配置的对象存储。没有可用后端或对象存储时，上传应真实失败。
 

@@ -3,7 +3,7 @@ import type { Paged, PageQuery } from '@/shared/pagination'
 /** Project 前端领域形状；字段只表达当前页面需要，不对应任何已确认后端 DTO。 */
 export interface Project {
   id: string
-  /** Project 所属用户 ID；认证来源尚未冻结。 */
+  /** 后端从认证身份确定的 Project 所属用户 ID。 */
   ownerId: string
   /** 后端关联的工作流 ID；旧数据或尚未关联时为 null。 */
   workflowId?: string | null
@@ -29,8 +29,6 @@ export interface Project {
 
 /** 新建项目的入参。 */
 export interface CreateProjectInput {
-  /** 认证模块接入前可省略，由组合层使用当前开发用户。 */
-  ownerId?: string
   workflowId?: string | null
   name: string
   perspective: CharacterPerspective
@@ -40,9 +38,7 @@ export interface CreateProjectInput {
   sampleImageUrl?: string | null
 }
 
-export interface ProjectPageQuery extends PageQuery {
-  ownerId?: string
-}
+export type ProjectPageQuery = PageQuery
 
 /** 前端使用的游戏视角枚举；后端映射尚未冻结。 */
 export type CharacterPerspective = 'side' | 'top-down' | 'isometric'

@@ -74,6 +74,8 @@ export function createUserApis(options: CreateUserApisOptions = {}): UserApis {
     createApiClient({
       ...clientOptions,
       getAccessToken: clientOptions.getAccessToken ?? getApiAccessToken,
+      // 认证端点本身失败时不能再次触发 refresh，否则会形成递归恢复。
+      recoverUnauthorized: false,
     })
 
   return {

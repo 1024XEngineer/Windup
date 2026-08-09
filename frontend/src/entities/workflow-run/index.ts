@@ -194,5 +194,5 @@ export type CreateWorkflowRunInput = CreateWorkflowRunInputBase &
       }
   )
 
-export { createWorkflowRunStore } from './store'
+export { createWorkflowRunStore, WorkflowRunConflictError } from './store'
 export type { CreateWorkflowRunStoreOptions, WorkflowRunStore } from './store'

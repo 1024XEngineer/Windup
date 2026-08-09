@@ -39,6 +39,14 @@ export interface CreateWorkflowRunStoreOptions {
   api?: { fetch(input: RequestInfo, init?: RequestInit): Promise<unknown> }
 }
 
+/** 服务端拒绝过期版本时抛出，页面可以提示用户刷新后重试。 */
+export class WorkflowRunConflictError extends Error {
+  constructor(options?: { cause?: unknown }) {
+    super('工作流已被其他页面更新，请刷新后重试', options)
+    this.name = 'WorkflowRunConflictError'
+  }
+}
+
 // ── 序列化 ─────────────────────────────────────────────────────────────────
 
 /** 后端 WorkflowRun 响应形状（nodes JSONB 透传）。 */
@@ -339,6 +347,12 @@ function isNotFoundError(cause: unknown): boolean {
   return typeof cause === 'object' && cause !== null && 'status' in cause && cause.status === 404
 }
 
+function isConflictError(cause: unknown): boolean {
+  if (typeof cause !== 'object' || cause === null) return false
+  const error = cause as { status?: unknown; code?: unknown }
+  return error.status === 409 || error.code === 409
+}
+
 /**
  * 创建 WorkflowRunStore。
  * 传入 api 时走 HTTP 持久化（对齐后端 /workflow-runs 接口），
@@ -350,6 +364,13 @@ export function createWorkflowRunStore(
   const api = options.api
   if (!api) return createInMemoryStore()
   const metadataCache = new Map<WorkflowRun['id'], StoredRunMetadata>()
+  const versionCache = new Map<WorkflowRun['id'], number>()
+
+  function rememberVersion(backend: BackendWorkflowRun): void {
+    if (Number.isInteger(backend.version) && backend.version > 0) {
+      versionCache.set(String(backend.id), backend.version)
+    }
+  }
 
   /** 后端通用响应包装：Response<T> { code, message, data: T } */
   function _unwrap<T>(response: unknown): T {
@@ -369,6 +390,7 @@ export function createWorkflowRunStore(
         }),
       })
       const backend = _unwrap(response) as BackendWorkflowRun
+      rememberVersion(backend)
       const metadata: StoredRunMetadata = {
         characterId: 'characterId' in input ? (input.characterId ?? null) : null,
         outfitId: 'outfitId' in input ? (input.outfitId ?? null) : null,
@@ -388,6 +410,7 @@ export function createWorkflowRunStore(
       try {
         const response = await api.fetch(`/workflow-runs/${runId}`)
         const backend = _unwrap(response) as BackendWorkflowRun
+        rememberVersion(backend)
         const run = fromBackend(backend, metadataCache.get(String(backend.id)))
         metadataCache.set(run.id, toRunMetadata(run))
         return run
@@ -401,9 +424,10 @@ export function createWorkflowRunStore(
       try {
         // 后端无 characterId 查询参数，先全量拉取再客户端过滤。
         const runs = await api.fetch('/workflow-runs')
-        const all = (_unwrap(runs) as BackendWorkflowRun[]).map((backend) =>
-          fromBackend(backend, metadataCache.get(String(backend.id))),
-        )
+        const all = (_unwrap(runs) as BackendWorkflowRun[]).map((backend) => {
+          rememberVersion(backend)
+          return fromBackend(backend, metadataCache.get(String(backend.id)))
+        })
         return all.find((r) => r.characterId === characterId) ?? null
       } catch (cause) {
         if (isNotFoundError(cause)) return null
@@ -415,24 +439,35 @@ export function createWorkflowRunStore(
       const query = projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
       const response = await api.fetch(`/workflow-runs${query}`)
       const items = _unwrap(response) as BackendWorkflowRun[]
-      return items.map((backend) => fromBackend(backend, metadataCache.get(String(backend.id))))
+      return items.map((backend) => {
+        rememberVersion(backend)
+        return fromBackend(backend, metadataCache.get(String(backend.id)))
+      })
     },
 
     async save(run) {
-      await api.fetch(`/workflow-runs/${run.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nodes: toStoredNodes(run),
-          status: 'active',
-        }),
-      })
+      try {
+        const response = await api.fetch(`/workflow-runs/${run.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            nodes: toStoredNodes(run),
+            status: 'active',
+            expected_version: versionCache.get(run.id),
+          }),
+        })
+        rememberVersion(_unwrap(response) as BackendWorkflowRun)
+      } catch (cause) {
+        if (isConflictError(cause)) throw new WorkflowRunConflictError({ cause })
+        throw cause
+      }
       metadataCache.set(run.id, toRunMetadata(run))
     },
 
     async remove(runId) {
       await api.fetch(`/workflow-runs/${runId}`, { method: 'DELETE' })
       metadataCache.delete(runId)
+      versionCache.delete(runId)
     },
   }
 }

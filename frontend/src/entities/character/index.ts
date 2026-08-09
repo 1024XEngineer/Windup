@@ -132,6 +132,16 @@ export interface Character {
   updatedAt: string
 }
 
+/**
+ * 当前后端没有草稿/已发布字段，因此以至少一条包含真实帧的动作作为发布判定。
+ * 后端补充显式状态后，只需要替换这一处规则。
+ */
+export function isPublishedCharacter(character: Character): boolean {
+  return character.outfits.some((outfit) =>
+    outfit.actions.some((action) => action.frames.length > 0),
+  )
+}
+
 /** 创建角色并发起母版生成所需的入参。 */
 export interface CreateCharacterInput {
   projectId: string

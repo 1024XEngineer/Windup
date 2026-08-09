@@ -25,6 +25,8 @@ export interface ApiClientOptions {
   fetchFn?: typeof fetch
   /** 只在请求发出时读取；token 的取得、保存与刷新由调用方负责。 */
   getAccessToken?: () => string | null | undefined
+  /** 认证端点关闭此项，避免 refresh 自身的 401 再次触发 refresh。 */
+  recoverUnauthorized?: boolean
 }
 
 export type ApiAccessTokenProvider = NonNullable<ApiClientOptions['getAccessToken']>
@@ -46,6 +48,30 @@ export function registerApiAccessTokenProvider(provider: ApiAccessTokenProvider)
 /** 业务 API 实例统一传给 createApiClient 的惰性 token 读取边界。 */
 export function getApiAccessToken(): string | null | undefined {
   return accessTokenProviders.at(-1)?.()
+}
+
+export type ApiUnauthorizedRecovery = () => Promise<boolean>
+
+const unauthorizedRecoveryProviders: ApiUnauthorizedRecovery[] = []
+
+/** 注册会话层提供的 401 恢复函数；请求层不直接持有认证状态。 */
+export function registerApiUnauthorizedRecovery(recovery: ApiUnauthorizedRecovery): () => void {
+  unauthorizedRecoveryProviders.push(recovery)
+  return () => {
+    const index = unauthorizedRecoveryProviders.lastIndexOf(recovery)
+    if (index >= 0) unauthorizedRecoveryProviders.splice(index, 1)
+  }
+}
+
+/** 流式适配器也复用同一个恢复边界。 */
+export async function recoverApiUnauthorized(): Promise<boolean> {
+  const recovery = unauthorizedRecoveryProviders.at(-1)
+  if (!recovery) return false
+  try {
+    return await recovery()
+  } catch {
+    return false
+  }
 }
 
 export type ApiErrorKind = 'business' | 'http' | 'invalid-response' | 'network'
@@ -87,11 +113,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function isAbortError(value: unknown): value is Error {
+  return value instanceof Error && value.name === 'AbortError'
+}
+
 async function readEnvelope(response: Response): Promise<ApiEnvelope> {
   let value: unknown
   try {
     value = await response.json()
   } catch (cause) {
+    if (isAbortError(cause)) throw cause
     throw new ApiError(response.ok ? '后端响应格式无效' : 'HTTP 请求失败', {
       kind: response.ok ? 'invalid-response' : 'http',
       status: response.status,
@@ -157,6 +188,8 @@ function buildRequestInit(
   options: ApiRequestOptions | undefined,
   accessToken: string | null | undefined,
 ): RequestInit | undefined {
+  // 始终返回 RequestInit，便于所有调用点统一检查请求；空 Headers 不会触发 CORS 预检。
+  if (!options && !accessToken) return { headers: new Headers() }
   const { json, query: _query, headers: inputHeaders, ...init } = options ?? {}
   const headers = new Headers(inputHeaders)
   if (accessToken && !headers.has('authorization')) {
@@ -179,6 +212,7 @@ export function createApiClient({
   baseUrl,
   fetchFn = globalThis.fetch,
   getAccessToken,
+  recoverUnauthorized = true,
 }: ApiClientOptions): ApiClient {
   const normalizedBaseUrl = resolveApiBaseUrl(baseUrl)
 
@@ -188,22 +222,53 @@ export function createApiClient({
     try {
       return await fetchFn(url, init)
     } catch (cause) {
+      if (isAbortError(cause)) throw cause
       throw new ApiError('网络请求失败', { kind: 'network', cause })
     }
   }
 
+  function canReplay(options: ApiRequestOptions | undefined): boolean {
+    const body = options?.body
+    return !(typeof ReadableStream !== 'undefined' && body instanceof ReadableStream)
+  }
+
+  async function receiveEnvelope(
+    path: string,
+    options: ApiRequestOptions | undefined,
+    replayed = false,
+  ): Promise<{ response: Response; envelope: ApiEnvelope | null }> {
+    const response = await send(path, options)
+    if (response.status === 204) return { response, envelope: null }
+    const envelope = await readEnvelope(response)
+    if (
+      !replayed &&
+      recoverUnauthorized &&
+      response.status === 200 &&
+      envelope.code === 401 &&
+      canReplay(options) &&
+      (await recoverApiUnauthorized())
+    ) {
+      return receiveEnvelope(path, options, true)
+    }
+    return { response, envelope }
+  }
+
   return {
     async request<T>(path: string, options?: ApiRequestOptions) {
-      const response = await send(path, options)
-      if (response.status === 204) return undefined as T
-      const envelope = await readEnvelope(response)
+      const { response, envelope } = await receiveEnvelope(path, options)
+      if (!envelope) return undefined as T
       assertSuccessfulEnvelope(response, envelope)
 
       return envelope.data as T
     },
     async requestList<T>(path: string, options?: ApiRequestOptions) {
-      const response = await send(path, options)
-      const envelope = await readEnvelope(response)
+      const { response, envelope } = await receiveEnvelope(path, options)
+      if (!envelope) {
+        throw new ApiError('后端列表响应格式无效', {
+          kind: 'invalid-response',
+          status: response.status,
+        })
+      }
       assertSuccessfulEnvelope(response, envelope)
 
       if (

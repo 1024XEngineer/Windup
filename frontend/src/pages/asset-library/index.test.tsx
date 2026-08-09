@@ -18,15 +18,15 @@ function renderRoute(route: string) {
 }
 
 describe('AssetLibraryPage', () => {
-  it('renders only backend Character assets and their nested counts', async () => {
+  it('hides draft characters until they contain a published action', async () => {
     renderRoute('/projects/42/assets')
 
     expect(await screen.findByRole('heading', { name: '角色' })).toBeTruthy()
-    expect(await screen.findAllByRole('link', { name: /查看角色/ })).toHaveLength(2)
+    expect(await screen.findAllByRole('link', { name: /查看角色/ })).toHaveLength(1)
     expect(screen.getByText('轻装信使')).toBeTruthy()
-    expect(screen.getByText('待定角色')).toBeTruthy()
-    expect(screen.getByText('暂无造型预览')).toBeTruthy()
-    expect(screen.getAllByText('1 套造型')).toHaveLength(2)
+    expect(screen.queryByText('待定角色')).toBeNull()
+    expect(screen.queryByText('暂无造型预览')).toBeNull()
+    expect(screen.getAllByText('1 套造型')).toHaveLength(1)
     expect(screen.getByText('2 个动作')).toBeTruthy()
     expect(screen.queryByRole('searchbox')).toBeNull()
     expect(screen.queryByRole('button', { name: '导出全部角色资产' })).toBeNull()
@@ -41,8 +41,8 @@ describe('AssetLibraryPage', () => {
     expect(screen.queryByRole('link', { name: /查看角色/ })).toBeNull()
   })
 
-  it('navigates every backend Character page instead of truncating after the first page', async () => {
-    const backend = createProjectAssetsBackend({ characterCount: 25 })
+  it('paginates all published characters after removing drafts', async () => {
+    const backend = createProjectAssetsBackend({ characterCount: 26 })
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
     vi.stubGlobal('fetch', backend.fetch)
     renderAuthenticatedAppRoute('/projects/42/assets')
@@ -55,7 +55,7 @@ describe('AssetLibraryPage', () => {
     })
     expect(
       backend.requests.some((request) =>
-        request.url.includes('/characters?project_id=42&page=2&page_size=24'),
+        request.url.includes('/characters?project_id=42&page=1&page_size=100'),
       ),
     ).toBe(true)
   })

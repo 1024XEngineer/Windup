@@ -12,11 +12,11 @@
 
 ## 3. Creation Workflow
 
-Quick Start 隐藏步骤自动推进，Workflow Editor 显式展示步骤；两者必须共享 `features/workflow-controller` 与 `entities/workflow-run`，不能各自维护节点状态。
+Quick Start 隐藏节点并自动推进，Workflow Editor 显式展示节点；两者必须共享 `features/workflow-controller` 与 `entities/workflow-run`，不能各自维护节点状态。标准主链为角色设定、角色母版、动作首帧、生成方式选择、完整动作、审核六类节点，节点边统一存入 `dependsOnNodeIds`。
 
 ## 4. Generation Execution
 
-`entities/generation` 统一表示异步生成任务，负责创建、查询和订阅。项目中不再存在重复的 `Task` 实体。Controller 负责把 Generation 结果写回正确的 WorkflowStep。
+`entities/generation` 统一表示异步生成任务，负责创建、查询和订阅。项目中不再存在重复的 `Task` 实体。Controller 负责把 Generation 结果写回正确的 WorkflowNode。
 
 ## 5. Review And Publishing
 

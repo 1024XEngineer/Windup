@@ -12,7 +12,7 @@ import {
 import { Navigate, useLocation } from 'react-router'
 
 import type { AuthTokens, User, UserApis } from '@/entities/user'
-import { registerApiAccessTokenProvider } from '@/shared/api'
+import { registerApiAccessTokenProvider, registerApiUnauthorizedRecovery } from '@/shared/api'
 import { clearRefreshToken, loadRefreshToken, saveRefreshToken } from './session-storage'
 
 export type AuthSessionState =
@@ -166,6 +166,7 @@ export function AuthSessionProvider({ apis, children }: AuthSessionProviderProps
   const refreshTokenRef = useRef<string | null>(null)
   const sessionGenerationRef = useRef(0)
   const refreshInFlightRef = useRef<RefreshInFlight | null>(null)
+  const recoveryInFlightRef = useRef<Promise<boolean> | null>(null)
   const bootstrapPromiseRef = useRef<Promise<BootstrapResult | null | undefined> | null>(null)
   const bootstrapGenerationRef = useRef<number | null>(null)
 
@@ -211,7 +212,33 @@ export function AuthSessionProvider({ apis, children }: AuthSessionProviderProps
     [apis],
   )
 
+  const recoverUnauthorized = useCallback((): Promise<boolean> => {
+    if (recoveryInFlightRef.current) return recoveryInFlightRef.current
+    const refreshToken = refreshTokenRef.current
+    if (!refreshToken) return Promise.resolve(false)
+    const generation = sessionGenerationRef.current
+
+    const recovery = rotateTokens(refreshToken).then(
+      (tokens) => {
+        if (sessionGenerationRef.current !== generation) return false
+        applyTokens(tokens)
+        return true
+      },
+      () => {
+        if (sessionGenerationRef.current === generation) clearSession()
+        return false
+      },
+    )
+    recoveryInFlightRef.current = recovery
+    const release = () => {
+      if (recoveryInFlightRef.current === recovery) recoveryInFlightRef.current = null
+    }
+    void recovery.then(release, release)
+    return recovery
+  }, [applyTokens, clearSession, rotateTokens])
+
   useEffect(() => registerApiAccessTokenProvider(() => accessTokenRef.current), [])
+  useEffect(() => registerApiUnauthorizedRecovery(recoverUnauthorized), [recoverUnauthorized])
 
   useEffect(() => {
     let active = true

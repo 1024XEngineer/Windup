@@ -6,6 +6,7 @@ export type {
   ExportFrame,
   ExportPackageModel,
   ExportQualityStatus,
+  ExportRootMotion,
   ExportSequence,
   ExportSourceReference,
 } from './model'

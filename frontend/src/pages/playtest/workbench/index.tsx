@@ -1,58 +1,55 @@
-import { useMemo, useReducer, useState, type KeyboardEvent } from "react";
+import { useMemo, useReducer, useState, type KeyboardEvent } from 'react'
 
-import type { Character } from "@/entities/character";
-import type { PlaytestInspectionApis } from "@/entities/playtest-inspection";
-import type { CanvasBaseline } from "./analysis/quality-policy";
+import type { Character } from '@/entities/character'
+import type { PlaytestInspectionApis } from '@/entities/playtest-inspection'
+import type { CanvasBaseline } from './analysis/quality-policy'
 
-import { ActionSelector, type PlaytestAssetOption } from "./action-selector";
-import { Acceptance } from "./acceptance";
-import { useFrameReviewEvidence } from "./analysis/use-frame-review-evidence";
+import { ActionSelector, type PlaytestAssetOption } from './action-selector'
+import { Acceptance } from './acceptance'
+import { useFrameReviewEvidence } from './analysis/use-frame-review-evidence'
 import {
   previewSequenceKey,
   usePreviewQualityEvidence,
-} from "./analysis/use-preview-quality-evidence";
-import { AnimationStage } from "./animation-stage";
-import { AuditPanel } from "./audit/audit-panel";
-import { reduceAuditSession } from "./audit/audit-session";
-import { FrameTimeline } from "./frame-timeline";
-import {
-  ExportPanel,
-  type ExportPackageModel,
-} from "@/features/export-package";
-import { Inspector } from "./inspector";
-import { createPreviewModel } from "./model/create-preview-model";
-import type { PreviewAction } from "./model/types";
-import { PlaybackControls } from "./playback-controls";
-import { usePlaybackController } from "./playback/use-playback-controller";
-import { useStageMotion } from "./stage-motion";
-import { StatusPanel } from "./status-panel";
-import { usePlaytestKeyboard } from "./use-playtest-keyboard";
-import { usePlaytestInspection } from "./use-playtest-inspection";
+} from './analysis/use-preview-quality-evidence'
+import { AnimationStage } from './animation-stage'
+import { AuditPanel } from './audit/audit-panel'
+import { reduceAuditSession } from './audit/audit-session'
+import { FrameTimeline } from './frame-timeline'
+import { ExportPanel, type ExportPackageModel } from '@/features/export-package'
+import { Inspector } from './inspector'
+import { createPreviewModel } from './model/create-preview-model'
+import type { PreviewAction } from './model/types'
+import { PlaybackControls } from './playback-controls'
+import { usePlaybackController } from './playback/use-playback-controller'
+import { useStageMotion } from './stage-motion'
+import { StatusPanel } from './status-panel'
+import { usePlaytestKeyboard } from './use-playtest-keyboard'
+import { usePlaytestInspection } from './use-playtest-inspection'
 
 export interface PlaytestWorkbenchProps {
-  character: Character;
-  outfitId: string;
-  assetOptions?: readonly PlaytestAssetOption[];
-  expectedCanvas?: CanvasBaseline | null;
-  inspectionApis?: Pick<PlaytestInspectionApis, "get" | "save">;
-  initialActionId?: string | null;
-  onSelectAsset?(asset: PlaytestAssetOption): void;
-  onAddAction?(): void;
-  onRenameAsset?(asset: PlaytestAssetOption, name: string): Promise<void>;
-  onDeleteAsset?(asset: PlaytestAssetOption): Promise<void>;
-  onRenameAction?(actionId: string, name: string): Promise<void>;
-  onDeleteAction?(actionId: string): Promise<void>;
+  character: Character
+  outfitId: string
+  assetOptions?: readonly PlaytestAssetOption[]
+  expectedCanvas?: CanvasBaseline | null
+  inspectionApis?: Pick<PlaytestInspectionApis, 'get' | 'save'>
+  initialActionId?: string | null
+  onSelectAsset?(asset: PlaytestAssetOption): void
+  onAddAction?(): void
+  onRenameAsset?(asset: PlaytestAssetOption, name: string): Promise<void>
+  onDeleteAsset?(asset: PlaytestAssetOption): Promise<void>
+  onRenameAction?(actionId: string, name: string): Promise<void>
+  onDeleteAction?(actionId: string): Promise<void>
 }
 
-export type { PlaytestAssetOption } from "./action-selector";
+export type { PlaytestAssetOption } from './action-selector'
 
-const EMPTY_PREVIEW_ACTIONS: readonly PreviewAction[] = [];
+const EMPTY_PREVIEW_ACTIONS: readonly PreviewAction[] = []
 const RIGHT_PANELS = [
-  ["inspect", "帧检查"],
-  ["audit", "问题记录"],
-  ["export", "资产导出"],
-] as const;
-type RightPanel = (typeof RIGHT_PANELS)[number][0];
+  ['inspect', '帧检查'],
+  ['audit', '问题记录'],
+  ['export', '资产导出'],
+] as const
+type RightPanel = (typeof RIGHT_PANELS)[number][0]
 
 export function PlaytestWorkbench({
   character,
@@ -68,16 +65,13 @@ export function PlaytestWorkbench({
   onRenameAction,
   onDeleteAction,
 }: PlaytestWorkbenchProps) {
-  const [frameAvailable, setFrameAvailable] = useState(false);
+  const [frameAvailable, setFrameAvailable] = useState(false)
   const previewResult = useMemo(
     () => createPreviewModel(character, outfitId),
     [character, outfitId],
-  );
-  const preview = previewResult.ok ? previewResult.model : null;
-  const playback = usePlaybackController(
-    preview?.actions ?? EMPTY_PREVIEW_ACTIONS,
-    initialActionId,
-  );
+  )
+  const preview = previewResult.ok ? previewResult.model : null
+  const playback = usePlaybackController(preview?.actions ?? EMPTY_PREVIEW_ACTIONS, initialActionId)
   const {
     firstFrame,
     lastFrame,
@@ -88,43 +82,40 @@ export function PlaytestWorkbench({
     playActionType,
     toggleLoop,
     togglePlaying,
-  } = playback;
-  const isPlaying = playback.state.playing;
+  } = playback
+  const isPlaying = playback.state.playing
   const stageMotion = useStageMotion({
     frame: playback.frame,
     playing: isPlaying,
     frameTick: playback.frameTick,
     resetKey: `${character.id}:${outfitId}`,
-  });
-  const { setMirrored } = stageMotion;
+  })
+  const { setMirrored } = stageMotion
   const jumpAvailable =
     preview?.actions.some(
       (action) =>
-        action.type === "jump" &&
-        action.sequences.some((sequence) => sequence.frames.length > 0),
-    ) ?? false;
+        action.type === 'jump' && action.sequences.some((sequence) => sequence.frames.length > 0),
+    ) ?? false
   const crouchAvailable =
     preview?.actions.some(
       (action) =>
-        action.type === "crouch" &&
-        action.sequences.some((sequence) => sequence.frames.length > 0),
-    ) ?? false;
+        action.type === 'crouch' && action.sequences.some((sequence) => sequence.frames.length > 0),
+    ) ?? false
   const idleAvailable =
     preview?.actions.some(
       (action) =>
-        action.type === "idle" &&
-        action.sequences.some((sequence) => sequence.frames.length > 0),
-    ) ?? false;
+        action.type === 'idle' && action.sequences.some((sequence) => sequence.frames.length > 0),
+    ) ?? false
   const reviewEvidence = useFrameReviewEvidence(
     playback.sequence,
     playback.action?.type ?? null,
     undefined,
     expectedCanvas,
-  );
+  )
   const exportEvidence = usePreviewQualityEvidence(
     preview?.actions ?? EMPTY_PREVIEW_ACTIONS,
     expectedCanvas,
-  );
+  )
   const inspectionTarget = useMemo(
     () =>
       playback.action === null
@@ -135,50 +126,46 @@ export function PlaytestWorkbench({
             actionId: playback.action.id,
           },
     [character.id, outfitId, playback.action],
-  );
-  const inspection = usePlaytestInspection(inspectionApis, inspectionTarget);
-  const [activeRightPanel, setActiveRightPanel] =
-    useState<RightPanel>("inspect");
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const [manualIssues, dispatchAudit] = useReducer(reduceAuditSession, []);
+  )
+  const inspection = usePlaytestInspection(inspectionApis, inspectionTarget)
+  const [activeRightPanel, setActiveRightPanel] = useState<RightPanel>('inspect')
+  const [toolsOpen, setToolsOpen] = useState(false)
+  const [manualIssues, dispatchAudit] = useReducer(reduceAuditSession, [])
 
-  const frameCount = playback.sequence?.frames.length ?? 0;
+  const frameCount = playback.sequence?.frames.length ?? 0
   const automaticFindings =
-    reviewEvidence.status === "ready" ? reviewEvidence.evidence.findings : [];
+    reviewEvidence.status === 'ready' ? reviewEvidence.evidence.findings : []
   const automaticErrorCount = automaticFindings.filter(
-    (finding) => finding.severity === "error",
-  ).length;
-  const qualityIssueCount = automaticErrorCount + manualIssues.length;
+    (finding) => finding.severity === 'error',
+  ).length
+  const qualityIssueCount = automaticErrorCount + manualIssues.length
   const exportResult = useMemo<{
-    model: ExportPackageModel | null;
-    blockerCount: number;
-    unavailableReason: string | null;
+    model: ExportPackageModel | null
+    blockerCount: number
+    unavailableReason: string | null
   }>(() => {
-    if (preview === null)
-      return { model: null, blockerCount: 0, unavailableReason: null };
-    if (exportEvidence.status !== "ready") {
+    if (preview === null) return { model: null, blockerCount: 0, unavailableReason: null }
+    if (exportEvidence.status !== 'ready') {
       return {
         model: null,
         blockerCount: 0,
-        unavailableReason: "正在检查全部动作，完成前不会放行导出。",
-      };
+        unavailableReason: '正在检查全部动作，完成前不会放行导出。',
+      }
     }
     if (
       preview.actions.some((action) =>
-        action.sequences.some(
-          (sequence) => sequence.expectedFrameCount == null,
-        ),
+        action.sequences.some((sequence) => sequence.expectedFrameCount == null),
       )
     ) {
       return {
         model: null,
         blockerCount: 0,
-        unavailableReason: "缺少后端声明的完整帧数，无法确认动作是否缺帧。",
-      };
+        unavailableReason: '缺少后端声明的完整帧数，无法确认动作是否缺帧。',
+      }
     }
 
-    const canvas = expectedCanvas ?? { width: 256, height: 256 };
-    let failedSequenceCount = 0;
+    const canvas = expectedCanvas ?? { width: 256, height: 256 }
+    let failedSequenceCount = 0
     const model: ExportPackageModel = {
       ...preview,
       canvas,
@@ -188,85 +175,80 @@ export function PlaytestWorkbench({
         sequences: action.sequences.map((sequence) => {
           const evidence = exportEvidence.evidenceBySequence.get(
             previewSequenceKey(action, sequence),
-          );
+          )
           const failed =
             evidence === undefined ||
-            evidence.findings.some((finding) => finding.severity === "error") ||
-            sequence.frames.length !== sequence.expectedFrameCount;
-          if (failed) failedSequenceCount += 1;
+            evidence.findings.some((finding) => finding.severity === 'error') ||
+            sequence.frames.length !== sequence.expectedFrameCount
+          if (failed) failedSequenceCount += 1
           return {
             ...sequence,
             expectedFrameCount: sequence.expectedFrameCount!,
             loop: action.loop ?? false,
             anchor: { x: 0.5, y: 1 },
             footY: canvas.height,
-            qualityStatus: failed ? ("failed" as const) : ("passed" as const),
-          };
+            qualityStatus: failed ? ('failed' as const) : ('passed' as const),
+          }
         }),
       })),
-    };
+    }
     return {
       model,
       blockerCount: failedSequenceCount + manualIssues.length,
       unavailableReason: null,
-    };
-  }, [expectedCanvas, exportEvidence, manualIssues.length, preview]);
+    }
+  }, [expectedCanvas, exportEvidence, manualIssues.length, preview])
 
-  const movePanelFocus = (
-    event: KeyboardEvent<HTMLButtonElement>,
-    current: RightPanel,
-  ) => {
-    const currentIndex = RIGHT_PANELS.findIndex(([value]) => value === current);
-    let nextIndex: number | null = null;
-    if (event.key === "ArrowRight")
-      nextIndex = (currentIndex + 1) % RIGHT_PANELS.length;
-    else if (event.key === "ArrowLeft")
-      nextIndex =
-        (currentIndex - 1 + RIGHT_PANELS.length) % RIGHT_PANELS.length;
-    else if (event.key === "Home") nextIndex = 0;
-    else if (event.key === "End") nextIndex = RIGHT_PANELS.length - 1;
-    if (nextIndex === null) return;
+  const movePanelFocus = (event: KeyboardEvent<HTMLButtonElement>, current: RightPanel) => {
+    const currentIndex = RIGHT_PANELS.findIndex(([value]) => value === current)
+    let nextIndex: number | null = null
+    if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % RIGHT_PANELS.length
+    else if (event.key === 'ArrowLeft')
+      nextIndex = (currentIndex - 1 + RIGHT_PANELS.length) % RIGHT_PANELS.length
+    else if (event.key === 'Home') nextIndex = 0
+    else if (event.key === 'End') nextIndex = RIGHT_PANELS.length - 1
+    if (nextIndex === null) return
 
-    event.preventDefault();
-    const nextPanel = RIGHT_PANELS[nextIndex]?.[0];
-    if (nextPanel === undefined) return;
-    setActiveRightPanel(nextPanel);
-    document.getElementById(`playtest-tool-tab-${nextPanel}`)?.focus();
-  };
+    event.preventDefault()
+    const nextPanel = RIGHT_PANELS[nextIndex]?.[0]
+    if (nextPanel === undefined) return
+    setActiveRightPanel(nextPanel)
+    document.getElementById(`playtest-tool-tab-${nextPanel}`)?.focus()
+  }
 
   const keyboardCommands = useMemo(
     () => ({
       togglePlaying,
       previousFrame: () => {
-        if (isPlaying) togglePlaying();
-        previousFrame();
+        if (isPlaying) togglePlaying()
+        previousFrame()
       },
       nextFrame: () => {
-        if (isPlaying) togglePlaying();
-        nextFrame();
+        if (isPlaying) togglePlaying()
+        nextFrame()
       },
       firstFrame,
       lastFrame,
       toggleLoop,
       playLeft: () => {
-        setMirrored(true);
-        continueActionType("walk");
+        setMirrored(true)
+        continueActionType('walk')
       },
       playRight: () => {
-        setMirrored(false);
-        continueActionType("walk");
+        setMirrored(false)
+        continueActionType('walk')
       },
       stopHorizontal: () => {
-        if (idleAvailable) playActionType("idle");
-        else pause();
+        if (idleAvailable) playActionType('idle')
+        else pause()
       },
       playJump: () => {
-        if (!jumpAvailable) return;
-        playActionType("jump");
+        if (!jumpAvailable) return
+        playActionType('jump')
       },
       playCrouch: () => {
-        if (!crouchAvailable) return;
-        playActionType("crouch");
+        if (!crouchAvailable) return
+        playActionType('crouch')
       },
     }),
     [
@@ -285,8 +267,8 @@ export function PlaytestWorkbench({
       crouchAvailable,
       idleAvailable,
     ],
-  );
-  usePlaytestKeyboard(keyboardCommands, preview !== null);
+  )
+  usePlaytestKeyboard(keyboardCommands, preview !== null)
 
   if (preview === null) {
     return (
@@ -295,10 +277,10 @@ export function PlaytestWorkbench({
           找不到指定造型，无法构造只读预览。
         </StatusPanel>
       </main>
-    );
+    )
   }
 
-  const selectedAssetKey = `${character.id}:${outfitId}`;
+  const selectedAssetKey = `${character.id}:${outfitId}`
   const availableAssets =
     assetOptions.length > 0
       ? assetOptions
@@ -310,15 +292,13 @@ export function PlaytestWorkbench({
             name: preview.outfitName,
             actionCount: preview.actions.length,
           },
-        ];
+        ]
   const selectedAsset =
-    availableAssets.find((asset) => asset.key === selectedAssetKey) ??
-    availableAssets[0] ??
-    null;
+    availableAssets.find((asset) => asset.key === selectedAssetKey) ?? availableAssets[0] ?? null
   const workspaceTitle =
     selectedAsset && selectedAsset.name !== preview.outfitName
       ? `${selectedAsset.name} · ${preview.outfitName}`
-      : `${preview.characterName} · ${preview.outfitName}`;
+      : `${preview.characterName} · ${preview.outfitName}`
 
   return (
     <main
@@ -327,24 +307,20 @@ export function PlaytestWorkbench({
     >
       <header className="flex min-h-14 flex-wrap items-center justify-between gap-3 border-b border-[#d3d8d4] pb-3">
         <div className="min-w-0">
-          <p className="font-mono text-[9px] font-semibold text-[#79817b]">
-            PLAYTEST
-          </p>
-          <h1 className="mt-1 truncate text-lg font-semibold">
-            {workspaceTitle}
-          </h1>
+          <p className="font-mono text-[9px] font-semibold text-[#79817b]">PLAYTEST</p>
+          <h1 className="mt-1 truncate text-lg font-semibold">{workspaceTitle}</h1>
         </div>
         <div className="flex items-center gap-3">
           <button
             type="button"
-            aria-label={toolsOpen ? "关闭检查工具" : "打开检查工具"}
+            aria-label={toolsOpen ? '关闭检查工具' : '打开检查工具'}
             aria-expanded={toolsOpen}
             aria-controls="playtest-tools"
             onClick={() => setToolsOpen((open) => !open)}
             className={`inline-flex min-h-9 items-center gap-2 rounded-md border px-3 text-xs font-semibold transition-colors ${
               toolsOpen
-                ? "border-[#35583f] bg-[#35583f] text-white"
-                : "border-[#aeb7b0] bg-white text-[#35583f] hover:border-[#718278]"
+                ? 'border-[#35583f] bg-[#35583f] text-white'
+                : 'border-[#aeb7b0] bg-white text-[#35583f] hover:border-[#718278]'
             }`}
           >
             检查
@@ -358,7 +334,7 @@ export function PlaytestWorkbench({
       </header>
       <div
         className={`grid items-stretch gap-3 lg:min-h-[680px] lg:grid-cols-[260px_minmax(0,1fr)] ${
-          toolsOpen ? "xl:grid-cols-[260px_minmax(0,1fr)_320px]" : ""
+          toolsOpen ? 'xl:grid-cols-[260px_minmax(0,1fr)_320px]' : ''
         }`}
       >
         <nav
@@ -379,10 +355,7 @@ export function PlaytestWorkbench({
             onDeleteAction={onDeleteAction}
           />
         </nav>
-        <section
-          aria-label="预览工作台"
-          className="flex min-h-0 min-w-0 flex-col gap-2"
-        >
+        <section aria-label="预览工作台" className="flex min-h-0 min-w-0 flex-col gap-2">
           <div className="relative min-h-[360px] flex-1 lg:min-h-[480px]">
             <AnimationStage
               currentFrame={playback.frame}
@@ -405,8 +378,8 @@ export function PlaytestWorkbench({
                 onClick={() => setMirrored(!stageMotion.mirrored)}
                 className={`grid h-8 w-8 place-items-center rounded text-base transition-colors ${
                   stageMotion.mirrored
-                    ? "bg-[#35583f] text-white"
-                    : "text-[#59635b] hover:bg-[#e7ebe7]"
+                    ? 'bg-[#35583f] text-white'
+                    : 'text-[#59635b] hover:bg-[#e7ebe7]'
                 }`}
                 title="翻转水平方向 (F)"
               >
@@ -421,8 +394,8 @@ export function PlaytestWorkbench({
                   onClick={() => playback.selectDirection(sequence.direction)}
                   className={`min-h-8 rounded px-2 text-[10px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                     sequence.direction === playback.state.direction
-                      ? "bg-[#252a27] text-white"
-                      : "text-[#59635b] hover:bg-[#e7ebe7]"
+                      ? 'bg-[#252a27] text-white'
+                      : 'text-[#59635b] hover:bg-[#e7ebe7]'
                   }`}
                 >
                   {sequence.direction}
@@ -488,8 +461,8 @@ export function PlaytestWorkbench({
                   onKeyDown={(event) => movePanelFocus(event, value)}
                   className={`rounded px-2 py-2 text-[10px] font-semibold ${
                     activeRightPanel === value
-                      ? "bg-white text-[#26372c] shadow-sm"
-                      : "text-[#667068] hover:text-[#26372c]"
+                      ? 'bg-white text-[#26372c] shadow-sm'
+                      : 'text-[#667068] hover:text-[#26372c]'
                   }`}
                 >
                   {label}
@@ -500,7 +473,7 @@ export function PlaytestWorkbench({
               id="playtest-tool-panel-inspect"
               role="tabpanel"
               aria-labelledby="playtest-tool-tab-inspect"
-              hidden={activeRightPanel !== "inspect"}
+              hidden={activeRightPanel !== 'inspect'}
               className="min-h-0 flex-1 overflow-y-auto"
             >
               <Inspector
@@ -515,7 +488,7 @@ export function PlaytestWorkbench({
               id="playtest-tool-panel-audit"
               role="tabpanel"
               aria-labelledby="playtest-tool-tab-audit"
-              hidden={activeRightPanel !== "audit"}
+              hidden={activeRightPanel !== 'audit'}
               className="min-h-0 flex-1 overflow-y-auto"
             >
               <AuditPanel
@@ -526,18 +499,18 @@ export function PlaytestWorkbench({
                 frame={playback.frame}
                 automaticFindings={automaticFindings}
                 issues={manualIssues}
-                onAdd={(issue) => dispatchAudit({ type: "add", issue })}
+                onAdd={(issue) => dispatchAudit({ type: 'add', issue })}
                 onUpdate={(id, category, note) =>
-                  dispatchAudit({ type: "update", id, category, note })
+                  dispatchAudit({ type: 'update', id, category, note })
                 }
-                onRemove={(id) => dispatchAudit({ type: "remove", id })}
+                onRemove={(id) => dispatchAudit({ type: 'remove', id })}
               />
             </div>
             <div
               id="playtest-tool-panel-export"
               role="tabpanel"
               aria-labelledby="playtest-tool-tab-export"
-              hidden={activeRightPanel !== "export"}
+              hidden={activeRightPanel !== 'export'}
               className="min-h-0 flex-1 overflow-y-auto"
             >
               {exportResult.model ? (
@@ -547,7 +520,7 @@ export function PlaytestWorkbench({
                 />
               ) : (
                 <p className="rounded-lg border border-dashed border-slate-300 p-4 text-xs text-slate-600">
-                  {exportResult.unavailableReason ?? "暂时不能生成资产包。"}
+                  {exportResult.unavailableReason ?? '暂时不能生成资产包。'}
                 </p>
               )}
             </div>
@@ -564,5 +537,5 @@ export function PlaytestWorkbench({
         ) : null}
       </div>
     </main>
-  );
+  )
 }

@@ -20,6 +20,7 @@ export type {
 } from './project'
 
 /* 角色 —— 资产本体；造型、动作、帧都在这棵树里 */
+export { isPublishedCharacter } from './character'
 export type {
   Action,
   ActionType,
@@ -69,7 +70,11 @@ export type {
 } from './playtest-inspection'
 
 /* 工作流 —— 节点与运行状态都由前端管理 */
-export { createWorkflowRunStore, WORKFLOW_NODE_ORDER } from './workflow-run'
+export {
+  createWorkflowRunStore,
+  WorkflowRunConflictError,
+  WORKFLOW_NODE_ORDER,
+} from './workflow-run'
 export type {
   CharacterSetupNodeInput,
   ActionGenerationMethod,

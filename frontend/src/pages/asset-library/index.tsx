@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
-import type { Character, CharacterApis } from '@/entities'
+import { isPublishedCharacter, type Character, type CharacterApis } from '@/entities'
 import type { Paged } from '@/shared/pagination'
 import { Pagination } from '@/shared/ui'
 
@@ -28,17 +28,18 @@ export function AssetLibraryPage({ apis }: { apis: CharacterApis }) {
 
     setCharactersPage(null)
     setError(null)
-    const pagePromise = apis.listPageByProject
-      ? apis.listPageByProject(projectId, {
-          page: pageNumber,
-          pageSize: CHARACTER_PAGE_SIZE,
-        })
-      : apis.listByProject(projectId).then((items) => ({
-          items,
-          total: items.length,
-          page: 1,
-          pageSize: items.length || CHARACTER_PAGE_SIZE,
-        }))
+    // 后端还没有草稿/已发布筛选字段。先完整读取项目角色再在前端分页，
+    // 避免草稿占用服务端分页位置，导致后续已发布资产永远无法显示。
+    const pagePromise = apis.listByProject(projectId).then((items) => {
+      const published = items.filter(isPublishedCharacter)
+      const start = (pageNumber - 1) * CHARACTER_PAGE_SIZE
+      return {
+        items: published.slice(start, start + CHARACTER_PAGE_SIZE),
+        total: published.length,
+        page: pageNumber,
+        pageSize: CHARACTER_PAGE_SIZE,
+      }
+    })
     void pagePromise.then(
       (page) => {
         if (active) setCharactersPage(page)

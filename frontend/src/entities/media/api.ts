@@ -1,4 +1,4 @@
-import { upload as uploadRequest } from '@/shared/api/upload'
+import { createApiClient, getApiAccessToken } from '@/shared/api'
 
 import type { MediaApis, MediaCategory, MediaReference } from '.'
 
@@ -38,9 +38,12 @@ export function createMediaApis(): MediaApis {
       const formData = new FormData()
       formData.append('file', file)
 
-      // main 的 FastAPI 路由只把 file 声明为 File；category 未声明 Form，因此属于查询参数。
-      const query = new URLSearchParams({ category })
-      const result = await uploadRequest<unknown>(`/media/upload?${query}`, formData, signal)
+      // 复用统一客户端，让 multipart 上传共享登录令牌、401 恢复和取消语义。
+      // 不手动设置 Content-Type，浏览器会为 FormData 自动附加 boundary。
+      const result = await createApiClient({ getAccessToken: getApiAccessToken }).request<unknown>(
+        '/media/upload',
+        { method: 'POST', body: formData, signal, query: { category } },
+      )
       return parseMediaReference(result)
     },
   }

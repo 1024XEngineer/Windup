@@ -2,17 +2,17 @@
 
 ## 1. 当前实现状态
 
-当前生成任务已经具备异步任务模型，但**尚未实现 SSE 接口**：
+当前生成任务已经具备异步任务模型和 SSE 接口：
 
 - 后端支持提交角色图、提交动作和查询任务快照。
 - 后台线程执行 AI 生成、上传图片并更新任务状态。
-- 前端 `GenerationApis.subscribe()` 每 2 秒调用一次查询接口，属于轮询。
-- `GET /generation/tasks/{task_id}/stream` 目前不存在。
+- 后端已实现 `GET /generation/tasks/{task_id}/stream`，连接后先发送当前快照，终态后关闭。
+- 前端 `GenerationApis.subscribe()` 使用带 Bearer Token 的 fetch 流；只有流接口返回 HTTP 404 时才退回任务查询。
 
-因此，下文将“当前已经可用的接口”和“需要实现的 SSE 接口”分开描述。
+下文描述当前已经落地的生成、查询与订阅合同。
 
 ## 2. 生成制作全流程
--+-++++++++++++++++++++++++
+
 ```mermaid
 sequenceDiagram
     participant UI as Quick Start / Workflow Editor
@@ -121,7 +121,7 @@ Base URL：`http://127.0.0.1:8000`
 
 任务状态只有：`pending`、`running`、`completed`、`failed`。当前模型没有百分比 `progress` 字段。
 
-## 4. 需要新增的 SSE 接口
+## 4. 已实现的 SSE 接口
 
 ### 4.1 订阅任务状态
 
@@ -168,18 +168,18 @@ data: {"task_id":71,"project_id":37,"task_type":"character_action","status":"fai
 
 事件字段：
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `task_id` | int | 生成任务 ID |
-| `project_id` | int | 所属项目 ID |
-| `task_type` | string | `character_image` 或 `character_action` |
-| `status` | string | 四种任务状态之一 |
-| `result` | object/null | 仅完成时存在 |
-| `error_message` | string/null | 仅失败时存在 |
+| 字段            | 类型        | 说明                                    |
+| --------------- | ----------- | --------------------------------------- |
+| `task_id`       | int         | 生成任务 ID                             |
+| `project_id`    | int         | 所属项目 ID                             |
+| `task_type`     | string      | `character_image` 或 `character_action` |
+| `status`        | string      | 四种任务状态之一                        |
+| `result`        | object/null | 仅完成时存在                            |
+| `error_message` | string/null | 仅失败时存在                            |
 
-### 4.3 心跳事件
+### 4.3 心跳事件（尚未实现）
 
-服务端每 15 秒发送一次心跳，避免代理关闭空闲连接：
+当前实现每秒检查任务快照，但没有单独心跳事件。若部署代理会关闭空闲连接，可后续增加：
 
 ```text
 event: ping
@@ -193,7 +193,7 @@ data: {}
 
 1. 建立流之前校验 `project_id + task_id`，不存在返回业务码 404。
 2. 建立连接后立即查询数据库并推送当前快照。
-3. 只在状态或结果变化时推送 `task_update`，不重复发送同一快照。
+3. 只在状态、更新时间或错误变化时推送 `task_update`，不重复发送同一快照。
 4. `completed` 或 `failed` 推送后关闭连接。
 5. 客户端断开时释放监听资源，但不停止 GenerationTask。
 6. 客户端重连时不依赖内存中的旧连接，重新读取数据库最新状态。
@@ -207,31 +207,36 @@ data: {}
 
 ```ts
 interface GenerationApis {
-  create(input: GenerationInput): Promise<Generation>
-  get(projectId: string, taskId: string): Promise<Generation>
+  create(input: GenerationInput): Promise<Generation>;
+  get(projectId: string, taskId: string): Promise<Generation>;
   subscribe(
     projectId: string,
     taskId: string,
     onEvent: (event: GenerationEvent) => void,
-  ): () => void
+  ): () => void;
 }
 ```
 
-只替换 `subscribe()` 的传输实现：
+`subscribe()` 使用可设置请求头的 fetch 流实现；浏览器原生 `EventSource` 不能设置
+`Authorization`，不得用于受保护接口：
 
 ```ts
-const source = new EventSource(
-  `/generation/tasks/${taskId}/stream?project_id=${encodeURIComponent(projectId)}`,
-)
-
-source.addEventListener('task_update', (message) => {
-  onEvent(JSON.parse(message.data))
-})
-
-return () => source.close()
+const subscribe = createEventStreamSubscriber({
+  getAccessToken,
+  recoverUnauthorized,
+});
+return subscribe(streamUrl, {
+  eventName: "task_update",
+  onEvent(data) {
+    const event = parseTaskUpdate(data);
+    onEvent(event);
+    return event.status === "completed" || event.status === "failed";
+  },
+  onError,
+});
 ```
 
-Workflow Controller 继续消费统一的 `GenerationEvent`，不应知道底层使用 SSE 还是轮询。页面刷新后先调用 `get()` 读取任务最新快照；若仍是 `pending/running`，再恢复 SSE 订阅。
+Workflow Controller 继续消费统一的 `GenerationEvent`，不感知底层使用 SSE 还是 404 查询兜底。页面刷新后按节点保存的 taskId 恢复订阅；SSE 建连后会立即回放当前任务快照。
 
 ## 7. 模块责任边界
 

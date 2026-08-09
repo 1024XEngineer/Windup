@@ -51,7 +51,7 @@ describe('projectApis', () => {
       )
     })
 
-    await expect(projectApis.list({ page: 2, pageSize: 10, ownerId: '7' })).resolves.toEqual({
+    await expect(projectApis.list({ page: 2, pageSize: 10 })).resolves.toEqual({
       items: [
         {
           id: '42',
@@ -71,7 +71,7 @@ describe('projectApis', () => {
       page: 2,
       pageSize: 10,
     })
-    expect(request?.url).toBe('https://api.windup.test/projects?page=2&page_size=10&user_id=7')
+    expect(request?.url).toBe('https://api.windup.test/projects?page=2&page_size=10')
   })
 
   it('serializes CreateProjectInput to the backend request body', async () => {
@@ -82,7 +82,6 @@ describe('projectApis', () => {
     })
 
     await projectApis.create({
-      ownerId: '7',
       workflowId: '9',
       name: '点灯人',
       perspective: 'isometric',
@@ -94,7 +93,6 @@ describe('projectApis', () => {
 
     expect(request?.method).toBe('POST')
     await expect(request?.json()).resolves.toEqual({
-      user_id: 7,
       workflow_id: 9,
       project_name: '点灯人',
       character_perspective: 3,
