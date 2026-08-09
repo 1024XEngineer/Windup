@@ -26,7 +26,7 @@ export type {
   Frame,
   Outfit,
 } from './character'
-export { characterApis } from './character'
+export { characterApis, isPublishedCharacter, loadAllCharactersByProject } from './character'
 
 /* 动作模板 —— 能跨角色复用的配方 */
 export type { ActionTemplate, ActionTemplateApis } from './action-template'

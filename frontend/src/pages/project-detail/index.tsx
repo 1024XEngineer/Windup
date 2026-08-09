@@ -5,6 +5,8 @@ import {
   CHARACTER_PERSPECTIVE,
   DIRECTIONAL_MOVEMENT,
   characterApis,
+  isPublishedCharacter,
+  loadAllCharactersByProject,
   projectApis,
   type Project,
 } from '@/entities'
@@ -30,7 +32,7 @@ export function ProjectDetailPage() {
     setError(null)
     void Promise.allSettled([
       projectApis.get(projectId),
-      characterApis.listByProject(projectId, { page: 1, pageSize: 1 }),
+      loadAllCharactersByProject(characterApis, projectId),
     ]).then(([projectResult, characterResult]) => {
       if (!active) return
       if (projectResult.status === 'rejected') {
@@ -40,7 +42,7 @@ export function ProjectDetailPage() {
 
       setProject(projectResult.value)
       if (characterResult.status === 'fulfilled') {
-        setCharacterCount(characterResult.value.total)
+        setCharacterCount(characterResult.value.filter(isPublishedCharacter).length)
       }
     })
 

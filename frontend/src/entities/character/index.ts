@@ -47,6 +47,16 @@ export interface Character {
   outfits: Outfit[]
 }
 
+/**
+ * 当前后端没有草稿/已发布字段，因此以至少一条包含真实帧的动作作为发布判定。
+ * 后端补充显式发布状态后，只需要替换这一处规则。
+ */
+export function isPublishedCharacter(character: Character): boolean {
+  return character.outfits.some((outfit) =>
+    outfit.actions.some((action) => action.frames.length > 0),
+  )
+}
+
 /** 创建 Character 记录的字段；生成流程由 Workflow Editor 负责。 */
 export interface CreateCharacterInput {
   projectId: string
@@ -65,6 +75,29 @@ export interface CharacterApis {
   create(input: CreateCharacterInput): Promise<Character>
   update(character: Character): Promise<Character>
   remove(id: Character['id']): Promise<void>
+}
+
+/**
+ * 读取项目下的完整 Character 列表。需要先完整读取再筛选发布状态，避免草稿占用
+ * 服务端分页位置，导致后续已经发布的资产在前端永远不可见。
+ */
+export async function loadAllCharactersByProject(
+  apis: Pick<CharacterApis, 'listByProject'>,
+  projectId: string,
+  pageSize = 100,
+): Promise<Character[]> {
+  const firstPage = await apis.listByProject(projectId, { page: 1, pageSize })
+  const characters = [...firstPage.items]
+  if (firstPage.pageSize <= 0) return characters
+
+  let page = firstPage.page + 1
+  while (characters.length < firstPage.total) {
+    const nextPage = await apis.listByProject(projectId, { page, pageSize })
+    if (nextPage.items.length === 0) break
+    characters.push(...nextPage.items)
+    page += 1
+  }
+  return characters
 }
 
 interface CharacterFrameDto {

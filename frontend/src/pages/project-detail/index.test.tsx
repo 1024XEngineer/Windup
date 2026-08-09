@@ -32,7 +32,9 @@ describe('ProjectDetailPage', () => {
     expect(screen.getByRole('link', { name: '返回项目中心' }).getAttribute('href')).toBe(
       '/projects',
     )
-    expect(screen.getByRole('link', { name: /角色/ }).getAttribute('aria-current')).toBe('page')
+    expect((await screen.findByRole('link', { name: '角色1' })).getAttribute('aria-current')).toBe(
+      'page',
+    )
     expect(screen.getByRole('button', { name: '动作模板' }).hasAttribute('disabled')).toBe(true)
     expect(screen.queryByText('穿戴')).toBeNull()
     expect(await screen.findByRole('heading', { name: '轻装信使' })).toBeTruthy()

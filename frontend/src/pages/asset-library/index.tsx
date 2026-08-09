@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
-import { characterApis, type Character } from '@/entities'
+import {
+  characterApis,
+  isPublishedCharacter,
+  loadAllCharactersByProject,
+  type Character,
+} from '@/entities'
 import type { Paged } from '@/shared/pagination'
 import { Pagination } from '@/shared/ui'
 
@@ -28,19 +33,25 @@ export function AssetLibraryPage() {
 
     setCharactersPage(null)
     setError(null)
-    void characterApis
-      .listByProject(projectId, {
-        page: pageNumber,
-        pageSize: CHARACTER_PAGE_SIZE,
-      })
-      .then(
-        (page) => {
-          if (active) setCharactersPage(page)
-        },
-        () => {
-          if (active) setError('资产库暂时无法读取')
-        },
-      )
+    void loadAllCharactersByProject(characterApis, projectId).then(
+      (items) => {
+        if (!active) return
+        const published = items.filter(isPublishedCharacter)
+        const total = published.length
+        const lastPage = Math.max(1, Math.ceil(total / CHARACTER_PAGE_SIZE))
+        const currentPage = Math.min(pageNumber, lastPage)
+        const start = (currentPage - 1) * CHARACTER_PAGE_SIZE
+        setCharactersPage({
+          items: published.slice(start, start + CHARACTER_PAGE_SIZE),
+          total,
+          page: currentPage,
+          pageSize: CHARACTER_PAGE_SIZE,
+        })
+      },
+      () => {
+        if (active) setError('资产库暂时无法读取')
+      },
+    )
     return () => {
       active = false
     }
