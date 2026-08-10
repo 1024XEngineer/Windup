@@ -113,8 +113,11 @@ class GeneratedAction:
     """
 
     frames: list[bytes] = field(default_factory=list)   # RGBA PNG,按播放序
+    # 播放时序的**唯一**真相源。曾另有一个 fps 字段抄自入参,与本字段互相矛盾:
+    # fps=20 宣称 50ms/帧,而 walk 这里给的是 125ms/帧 —— 同一段素材两个播放速度,
+    # 取哪个看消费方心情(2026-08-10 机器审 P2)。逐帧 ms 严格更能表达(关键帧定格),
+    # 所以删 fps 保 durations;真要单一帧率,由消费方从本字段算。
     durations: list[int] = field(default_factory=list)  # 逐帧时长(ms),与 frames 等长
-    fps: int = 10
     # 无默认值、且 kw_only 让它能排在有默认值的字段之后:**不给"没测"留缺省**。
     # 给个 None 缺省的话,漏测与"测出来没问题"在调用方看来一模一样,而这个出参的
     # 全部意义就是把这两者分开。
