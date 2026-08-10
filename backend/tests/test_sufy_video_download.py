@@ -328,3 +328,32 @@ def test_image_client_retries_connection_failures():
         assert client._transport._pool._retries == _CONNECT_RETRIES
     finally:
         client.close()
+
+
+def test_request_path_comes_from_config_not_a_literal():
+    """路径用配置里的 chat_completions_path —— 它此前零消费方,正是今天在删的那类字段。"""
+
+    seen: dict = {}
+
+    def h(request):
+        import httpx
+        seen["path"] = request.url.path
+        return httpx.Response(200, json=_img_payload(_big_b64()))
+
+    p = _image_provider(h)
+    p._cfg = p._cfg.model_copy(update={"chat_completions_path": "/v9/custom-chat"})
+    p.gen_image("x", [])
+    assert seen["path"].endswith("/v9/custom-chat"), seen["path"]
+
+
+@pytest.mark.parametrize("code", [400, 404])
+def test_model_missing_from_the_gateway_catalogue_says_so(code):
+    """同一把 key 下不同网关的模型目录不一样(实测:一个 73 个模型零图像模型、
+    另一个 134 个含默认模型)。配错 AI_BASE_URL 时错误必须指向配置,不能只是裸 404。
+    """
+    def h(request):
+        import httpx
+        return httpx.Response(code, text='{"error":{"message":"model not found"}}')
+
+    with pytest.raises(RuntimeError, match=r"/models"):
+        _image_provider(h).gen_image("x", [])

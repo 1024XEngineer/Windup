@@ -689,6 +689,24 @@ class SufyImageProvider(ImageProvider):
             transport=httpx.HTTPTransport(retries=_CONNECT_RETRIES),
         )
 
+    def _post(self, client: httpx.Client, body: dict) -> dict:
+        """发一次请求。把"网关没有这个模型"翻译成能照着修的错误。
+
+        为什么值得专门处理:同一把 key 下不同网关的模型目录**不一样**。实测
+        ``GET /v1/models``:一个网关 73 个模型、一个图像模型都没有;另一个 134 个、
+        含本模块默认的那个(2026-08-10)。配错 ``AI_BASE_URL`` 时原始报错只是一条
+        404,读的人无从知道该去改配置还是改模型名。
+        """
+        resp = client.post(self._cfg.chat_completions_path, json=body)
+        if resp.status_code in (400, 404):
+            raise RuntimeError(
+                f"网关 {self._cfg.normalized_base_url} 拒绝了模型 {self._model!r}"
+                f"(HTTP {resp.status_code})。先确认该网关的目录里有它:"
+                f"GET {self._cfg.normalized_base_url}/models —— 不同网关目录不同,"
+                f"同一把 key 也是。原始响应:{resp.text[:200]}"
+            )
+        return resp.raise_for_status().json()
+
     def gen_image(self, prompt: str, refs: list[bytes]) -> bytes:
         """提示词 + 参考图 → 一张 PNG bytes。拿不到有效图就抛,不返回空 bytes。
 
@@ -707,9 +725,7 @@ class SufyImageProvider(ImageProvider):
         last = ""
         with self._client() as client:
             for attempt in range(1, _IMAGE_TRIES + 1):
-                payload = client.post(
-                    "/chat/completions", json=body,
-                ).raise_for_status().json()
+                payload = self._post(client, body)
                 found = _DATA_URI.search(json.dumps(payload))
                 if found:
                     data = base64.b64decode(found.group(1))
