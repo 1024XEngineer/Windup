@@ -1,10 +1,12 @@
 """一次性动作抽帧(裁动作区间 / 跳跃状态切段)测试 —— 纯 CV,无需联网。"""
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from windup_ai_engine.slicing import (
     find_motion_span,
+    first_action_end,
     foot_line_series,
     pick_oneshot,
     split_jump_phases,
@@ -66,3 +68,110 @@ def test_split_jump_phases_covers_all_frames_in_order():
 
 def test_split_jump_phases_short_input_is_safe():
     assert split_jump_phases([_figure_at(50)] * 3)
+
+
+# ── 入参边界 ────────────────────────────────────────────────────────────────
+# 契约:返回长度恒等于 n;凡是给不出 n 帧的入参一律报错,绝不静默少给。
+
+
+def _bar_at(x: int, w: int = 8, size: int = 64) -> Image.Image:
+    """横向位移的方块,用来造挥击序列。位移刻意都 < 条宽 → 像素差与位移成正比、不饱和。"""
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    arr = np.asarray(img).copy()
+    arr[20:50, x : x + w] = (200, 60, 60, 255)
+    return Image.fromarray(arr, "RGBA")
+
+
+def _swing_sequence() -> list[Image.Image]:
+    """合成挥击:静止 → 加速横扫(最快的一跳是 16→22)→ 收势 → 静止。"""
+    xs = [10] * 4 + [11, 13, 16, 22, 25, 26] + [26] * 4
+    return [_bar_at(x) for x in xs]
+
+
+def _tail_action_sequence() -> list[Image.Image]:
+    """动作贴在尾部(视频在半空结束,没有静止收尾)—— 区间放宽时右边无处可长,
+    必须把缺口退回左边,否则窗口不足 n 帧、只能靠重复帧凑数。"""
+    ys = [50] * 8 + [52, 52, 44, 38, 30, 30, 38, 44]
+    return [_figure_at(y) for y in ys]
+
+
+def test_pick_oneshot_n1_takes_apex_for_airborne():
+    """n=1 取关键姿势:腾空类应给顶点帧,而不是首帧(蓄力,和待机一个样)。"""
+    frames = _jump_sequence()
+    apex = int(np.argmin(foot_line_series(frames)))
+    out = pick_oneshot(frames, 1, kind="airborne")
+    assert len(out) == 1
+    assert out[0] is frames[apex]
+
+
+def test_pick_oneshot_n1_takes_impact_for_swing():
+    """n=1 取关键姿势:挥击类应给"刚走完最快一跳"的命中帧,不是首帧/末帧。"""
+    frames = _swing_sequence()
+    out = pick_oneshot(frames, 1)
+    assert len(out) == 1
+    assert out[0] is frames[7]                      # 16→22 是最快的一跳,落点即命中姿势
+    assert out[0] is not frames[0] and out[0] is not frames[-1]
+
+
+def test_pick_oneshot_rejects_non_positive_n():
+    """n<=0 原本静默返回 [](零帧也算"成功"),现在必须报错。"""
+    frames = _jump_sequence()
+    for n in (0, -1):
+        with pytest.raises(ValueError, match="n 必须"):
+            pick_oneshot(frames, n)
+
+
+def test_pick_oneshot_rejects_insufficient_source():
+    """源帧不够 n 帧:报错并把两个数字都说清楚,不再原样返回一个短序列。"""
+    frames = _jump_sequence()
+    with pytest.raises(ValueError, match=r"源帧不足.*19.*14"):
+        pick_oneshot(frames, len(frames) + 5)
+    with pytest.raises(ValueError, match="源帧不足"):
+        pick_oneshot([], 4)
+    with pytest.raises(ValueError, match="源帧不足"):
+        pick_oneshot([_figure_at(50)], 2)
+
+
+def test_pick_oneshot_returns_exactly_n_for_every_legal_n():
+    """全量扫 n=1..len(frames):长度必须恒等于 n。
+
+    修前 pick_oneshot(jump14, 12) 只回 9 帧 —— 动作区间被裁到 9 帧后直接原样返回,
+    而下游 frame_durations 按实际长度现算时长,帧数与时长自洽,谁都看不出少了 3 帧。
+    """
+    for frames in (_jump_sequence(), _swing_sequence(), _tail_action_sequence()):
+        for kind in ("swing", "airborne"):
+            for n in range(1, len(frames) + 1):
+                assert len(pick_oneshot(frames, n, kind=kind)) == n, (kind, n)
+        for n in range(1, len(frames) + 1):        # first_only=False 走另一条区间分支
+            assert len(pick_oneshot(frames, n, first_only=False)) == n
+
+
+def test_pick_oneshot_passthrough_when_n_equals_len():
+    frames = _jump_sequence()
+    assert pick_oneshot(frames, len(frames)) is frames
+
+
+def test_pick_oneshot_frames_are_distinct_source_frames_in_order():
+    """源帧够 n 张时,返回的 n 帧必须**互不相同**且时间顺序不倒。
+
+    长度对但夹着重复帧,是另一种"看起来成功"的错结果:时长表照样自洽,播出来是卡顿。
+    动作贴尾部的序列是这条的关键用例 —— 区间往右长不动,缺口只能退回左边补。
+    """
+    for frames in (_jump_sequence(), _swing_sequence(), _tail_action_sequence()):
+        for n in range(1, len(frames) + 1):
+            out = pick_oneshot(frames, n, kind="airborne")
+            pos = [next(i for i, f in enumerate(frames) if f is o) for o in out]
+            assert pos == sorted(pos), (n, pos)
+            assert len(set(pos)) == n, (n, pos)         # 无重复帧
+
+
+def test_unknown_kind_is_rejected():
+    """kind 拼错不能静默按 swing 处理 —— 判据用错会裁出"看起来对"的错区间。"""
+    frames = _jump_sequence()
+    with pytest.raises(ValueError, match="kind"):
+        pick_oneshot(frames, 6, kind="airbourne")
+    with pytest.raises(ValueError, match="kind"):
+        # first_only=False 不走 first_action_end,得靠 pick_oneshot 自己那道校验
+        pick_oneshot(frames, 6, kind="airbourne", first_only=False)
+    with pytest.raises(ValueError, match="kind"):
+        first_action_end(frames, 0, 1, kind="airbourne")   # 短区间(早返回)也要拦住

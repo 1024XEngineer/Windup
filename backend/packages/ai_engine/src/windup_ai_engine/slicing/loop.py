@@ -81,7 +81,7 @@ def _offsets(P: int, n: int) -> list[int]:
 
 
 def pick_cycle(frames: list[Image.Image], n: int) -> list[Image.Image]:
-    """从密集帧里抽正好一个步态周期的 N 帧(无缝 loop)。帧数不足则原样返回。
+    """从密集帧里抽正好一个步态周期的 N 帧(无缝 loop)。返回长度恒等于 ``n``。
 
     周期检测的三个坑(实测 5 段真 i2v 视频):
     1. d(p) 会被"角色整体平移 + 画质漂移"抬成单调上升 —— 直接取 argmin 会滑到搜索窗边界
@@ -100,10 +100,26 @@ def pick_cycle(frames: list[Image.Image], n: int) -> list[Image.Image]:
     候选评分里的 ``a < 0.5 * scale`` 已经排掉"几乎不动"的窗口,够用。
     quality 留作诊断/报告用,不进选帧。
     """
+    # n<=0 没有合法语义(要 0 帧的动画不存在),且两条出路都是坏的(2026-08-10 实测):
+    # 检出周期时 `_offsets(P, 0)` 交出空 offsets,一路走到 `M[idx[-1], idx[0]]` 抛 IndexError;
+    # 测不到周期时(单调曲线)直接静默返回 [] —— 后者更危险,故在入口显式拒绝。
+    # (机器审说这里除零并不准确:`range(n)` 为空,`k*P/n` 根本没被求值。)
+    if n <= 0:
+        raise ValueError(f"n 必须 >= 1,收到 {n}")
     total = len(frames)
-    if total <= n:
+    if total < n:
+        # 源帧不够就报错,不再原样返回:长度不足且不报错,下游 frame_durations 按实际长度现算,
+        # 帧数与时长表自洽,server 看不出异常,用户拿到的是一段没走完的循环。
+        raise ValueError(f"源帧不足:请求 {n} 帧,只有 {total} 帧")
+    if total == n:
         return frames
     M = _dmat(_deskew(_gray(frames)))
+    if n == 1:
+        # 单帧"循环"没有接缝也没有相位,下面整套周期/接缝机制全部失效(实测 n=1 时窗口内相邻差
+        # 是空均值 = nan,`a < 0.5*scale` 与接缝评分双双被 nan 短路,靠比较运算的意外结果才
+        # 返回 frames[0])。显式取 medoid:与全片平均姿态最近的一帧 = 循环停留最久的相位,
+        # 比 frames[0](i2v 的首帧是母版静立姿,单看读不出"在走")更能代表这个循环。
+        return [frames[int(np.argmin(M.mean(1)))]]
     adj = np.array([M[i, i + 1] for i in range(total - 1)])
     scale = float(np.median(adj))
 
