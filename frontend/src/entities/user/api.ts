@@ -134,6 +134,15 @@ export function createUserApis(options: CreateUserApisOptions = {}): UserApis {
       return toUser(await apiClient.request<UserDto>('/auth/me'))
     },
 
+    async updateNickname(nickname) {
+      return toUser(
+        await apiClient.request<UserDto>('/auth/profile', {
+          method: 'PATCH',
+          json: { nickname },
+        }),
+      )
+    },
+
     async changePassword(input) {
       await apiClient.request<null>('/auth/change-password', {
         method: 'POST',
@@ -159,5 +168,6 @@ export const userApis: UserApis = {
   refresh: (refreshToken) => getDefaultApis().refresh(refreshToken),
   logout: (refreshToken) => getDefaultApis().logout(refreshToken),
   me: () => getDefaultApis().me(),
+  updateNickname: (nickname) => getDefaultApis().updateNickname(nickname),
   changePassword: (input) => getDefaultApis().changePassword(input),
 }
