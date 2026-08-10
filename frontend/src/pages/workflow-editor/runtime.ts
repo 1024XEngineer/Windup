@@ -4,9 +4,11 @@ import type {
   GenerationApis,
   Project,
   ProjectApis,
+  ReviewWorkflowNode,
   WorkflowRunApis,
 } from '@/entities'
 import { characterApis, projectApis, workflowRunApis } from '@/entities'
+import { createCharacterAssetPublisher } from '@/features/export'
 import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
 
 export interface WorkflowEditorSession {
@@ -14,6 +16,8 @@ export interface WorkflowEditorSession {
   project: Project
   /** 后端用 workflow_run_id 建立的唯一角色；尚未产出正式角色时为 null。 */
   character: Character | null
+  /** 先幂等发布动作资产，再把审核节点标记为通过。 */
+  approveAndPublishReview(reviewNodeId: ReviewWorkflowNode['id']): Promise<void>
   subscribeErrors(listener: (error: Error) => void): () => void
   dispose(): void
 }
@@ -22,7 +26,7 @@ export interface RealWorkflowEditorDependencies {
   workflowRunApis: WorkflowRunApis
   generationApis: GenerationApis
   projectApis: Pick<ProjectApis, 'get'>
-  characterApis: Pick<CharacterApis, 'listByProject'>
+  characterApis: Pick<CharacterApis, 'listByProject' | 'update'>
   onAsyncError(error: Error): void
 }
 
@@ -35,10 +39,11 @@ export async function createRealWorkflowEditorSession(
   dependencies: RealWorkflowEditorDependencies,
 ): Promise<WorkflowEditorSession> {
   const workflow = await dependencies.workflowRunApis.get(runId)
-  const [project, character] = await Promise.all([
+  const [project, loadedCharacter] = await Promise.all([
     dependencies.projectApis.get(workflow.projectId),
     loadWorkflowCharacter(dependencies.characterApis, workflow.projectId, workflow.id),
   ])
+  let currentCharacter = loadedCharacter
   const errorListeners = new Set<(error: Error) => void>()
   const reportAsyncError = (error: Error) => {
     try {
@@ -60,11 +65,34 @@ export async function createRealWorkflowEditorSession(
     generationApis: dependencies.generationApis,
     onAsyncError: reportAsyncError,
   })
+  const publisher = createCharacterAssetPublisher(dependencies.characterApis)
 
   return {
     controller,
     project,
-    character,
+    get character() {
+      return currentCharacter
+    },
+    async approveAndPublishReview(reviewNodeId) {
+      if (!currentCharacter) throw new Error('当前 WorkflowRun 尚未关联 Character')
+      const currentWorkflow = controller.getWorkflow()
+      const reviewNode = currentWorkflow.nodes.find((node) => node.id === reviewNodeId)
+      if (!reviewNode || reviewNode.type !== 'review') throw new Error('目标节点不是动作审核')
+      if (reviewNode.dependsOnNodeIds.length !== 1) {
+        throw new Error(`${reviewNode.id} 必须且只能依赖一个完整动画节点`)
+      }
+      const fullFrameNodeId = reviewNode.dependsOnNodeIds[0]!
+      const generation = await controller.getGeneration(fullFrameNodeId, 'complete_animation')
+      if (!generation) throw new Error('完整动画生成结果不存在')
+
+      currentCharacter = await publisher.publishReviewedAction({
+        character: currentCharacter,
+        workflow: currentWorkflow,
+        reviewNodeId,
+        generation,
+      })
+      await controller.approveReview(reviewNodeId)
+    },
     subscribeErrors(listener) {
       errorListeners.add(listener)
       return () => errorListeners.delete(listener)

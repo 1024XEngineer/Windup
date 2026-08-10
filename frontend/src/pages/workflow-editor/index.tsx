@@ -186,6 +186,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
         ? projectCanvas({
             run,
             controller: session.controller,
+            approveAndPublishReview: session.approveAndPublishReview,
             project: session.project,
             character: session.character,
             generations,
@@ -330,6 +331,7 @@ function FitViewOnChange({ signature }: { signature: string }) {
 interface ProjectionInput {
   run: WorkflowRun
   controller: WorkflowController
+  approveAndPublishReview(reviewNodeId: ReviewWorkflowNode['id']): Promise<void>
   project: Project
   character: Character | null
   generations: Record<string, Generation | null>
@@ -840,7 +842,7 @@ function ReviewContent({ node, input }: { node: ReviewWorkflowNode; input: Proje
         type="button"
         disabled={Boolean(input.busy)}
         onClick={() =>
-          input.runCommand('approve-review', () => getController(input).approveReview(node.id))
+          input.runCommand('approve-review', () => input.approveAndPublishReview(node.id))
         }
       >
         审核通过
