@@ -88,6 +88,11 @@ function hasOnlyGenerationRole(value: Record<string, unknown>, role: string | nu
 function hasValidCharacterInput(value: unknown): boolean {
   if (!isRecord(value)) return false
   return (
+    (value.name === undefined ||
+      value.name === null ||
+      (typeof value.name === 'string' &&
+        value.name.trim().length > 0 &&
+        value.name.length <= 20)) &&
     typeof value.prompt === 'string' &&
     Array.isArray(value.referenceMedia) &&
     value.referenceMedia.every((item) => typeof item === 'string')
