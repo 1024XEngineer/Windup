@@ -322,4 +322,20 @@ describe('workflowRunApis', () => {
       kind: 'invalid-response',
     })
   })
+
+  it('rejects a passed node whose phase is not completed', async () => {
+    const passedCharacterStillConfiguring = {
+      ...nodes[0],
+      status: 'passed' as const,
+      phase: 'configuring' as const,
+    }
+    const apis = await loadWorkflowRunApis(async () =>
+      jsonResponse({ ...workflowRunDto, nodes: [passedCharacterStillConfiguring] }),
+    )
+
+    await expect(apis.get('17')).rejects.toMatchObject({
+      name: 'ApiError',
+      kind: 'invalid-response',
+    })
+  })
 })

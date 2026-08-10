@@ -11,6 +11,24 @@
 两者界面和交互不同，但不会各自维护另一套工作流状态机。Controller 本身也不保存
 `driver`，因为“由谁点击”不改变节点图的业务规则。
 
+## 页面读取方式
+
+页面只有一个持续更新渠道：先用 `getWorkflow()` 取得首屏快照，再用 `subscribe()` 接收
+后续保存和 SSE 写回。生成、确认、重做等方法是命令，只返回 `Promise<void>`；它们不再
+额外返回另一份 `WorkflowRun`，因此页面不会在“命令返回值”和“Controller 当前状态”之间
+做选择。
+
+```tsx
+const [workflow, setWorkflow] = useState(() => controller.getWorkflow())
+
+useEffect(() => controller.subscribe(setWorkflow), [controller])
+
+async function generateCharacter() {
+  await controller.generateCharacterTemplate(setupNodeId, { spriteWidth: 64, spriteHeight: 64 })
+  // 生成中和 SSE 终态都会由 subscribe 更新 workflow。
+}
+```
+
 ## 边界
 
 - `entities/workflow-run` 定义纯数据和异步 CRUD，不包含推进方法。

@@ -251,6 +251,47 @@ async function flushAsyncWork() {
 }
 
 describe('WorkflowController', () => {
+  it('页面通过订阅接收命令保存和 SSE 写回后的同一份 WorkflowRun', async () => {
+    const { controller, generation } = createController()
+    let renderedWorkflow = controller.getWorkflow()
+    const unsubscribe = controller.subscribe((workflow) => {
+      renderedWorkflow = workflow
+    })
+
+    await controller.generateCharacterTemplate('setup-1', { spriteWidth: 64, spriteHeight: 64 })
+
+    expect(renderedWorkflow.nodes[1]).toMatchObject({
+      type: 'character-template',
+      phase: 'generating',
+    })
+
+    generation.emit({
+      taskId: 'task-1',
+      type: 'character_template',
+      status: 'completed',
+      result: {
+        type: 'character_template',
+        images: [{ url: 'https://img/knight.png' }],
+      },
+      error: null,
+    })
+    await flushAsyncWork()
+
+    expect(renderedWorkflow.nodes[1]).toMatchObject({
+      type: 'character-template',
+      phase: 'selecting',
+    })
+    unsubscribe()
+  })
+
+  it('修改命令不再返回第二份 WorkflowRun', async () => {
+    const { controller } = createController(createRun(completedCharacterNodes()))
+
+    await expect(
+      controller.addAction({ nodeId: 'action-walk', input: actionInput() }),
+    ).resolves.toBeUndefined()
+  })
+
   it('一个实例只绑定一条 WorkflowRun，创建后不能换成另一条', async () => {
     const workflow = createWorkflowApis()
     const generation = createGenerationHarness()
@@ -260,9 +301,9 @@ describe('WorkflowController', () => {
       onAsyncError: vi.fn(),
     })
 
-    const created = await controller.create({ projectId: '1', nodes: characterNodes() })
+    await controller.create({ projectId: '1', nodes: characterNodes() })
 
-    expect(controller.getWorkflow()).toEqual(created)
+    expect(controller.getWorkflow()).toMatchObject({ id: 'run-1', projectId: '1' })
     await expect(
       controller.create({
         projectId: '2',
@@ -274,9 +315,9 @@ describe('WorkflowController', () => {
   it('adds a complete first-frame, method, full-frame, and review chain for one Action', async () => {
     const { controller } = createController(createRun(completedCharacterNodes()))
 
-    const next = await controller.addAction({ nodeId: 'action-walk', input: actionInput() })
+    await controller.addAction({ nodeId: 'action-walk', input: actionInput() })
 
-    expect(next.nodes.slice(2)).toMatchObject([
+    expect(controller.getWorkflow().nodes.slice(2)).toMatchObject([
       {
         id: 'action-walk',
         type: 'action-first-frame',
@@ -353,7 +394,8 @@ describe('WorkflowController', () => {
     ])
     const { controller, workflow } = createController(run)
 
-    const archived = await controller.archiveAction('action-walk:action-full-frame')
+    await controller.archiveAction('action-walk:action-full-frame')
+    const archived = controller.getWorkflow()
 
     expect(archived.nodes.filter((node) => node.deletedAt).map((node) => node.id)).toEqual([
       'action-walk',
@@ -408,9 +450,9 @@ describe('WorkflowController', () => {
     ])
     const { controller } = createController(run)
 
-    const next = await controller.confirmCharacterTemplate('template-1', 'https://img/knight.png')
+    await controller.confirmCharacterTemplate('template-1', 'https://img/knight.png')
 
-    expect(next.nodes).toEqual(
+    expect(controller.getWorkflow().nodes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: 'template-1', status: 'passed', phase: 'completed' }),
         expect.objectContaining({ id: 'action-walk', status: 'active' }),
@@ -471,9 +513,8 @@ describe('WorkflowController', () => {
     await expect(
       controller.generateCharacterTemplate('setup-1', { spriteWidth: 64, spriteHeight: 64 }),
     ).rejects.toThrow('生成服务暂时不可用')
-    await expect(
-      controller.generateCharacterTemplate('setup-1', { spriteWidth: 64, spriteHeight: 64 }),
-    ).resolves.toMatchObject({
+    await controller.generateCharacterTemplate('setup-1', { spriteWidth: 64, spriteHeight: 64 })
+    expect(controller.getWorkflow()).toMatchObject({
       nodes: expect.arrayContaining([
         expect.objectContaining({
           id: 'template-1',
@@ -652,9 +693,9 @@ describe('WorkflowController', () => {
     ])
     const { controller } = createController(run)
 
-    const restarted = await controller.restartFromNode('action-walk:action-generation-method')
+    await controller.restartFromNode('action-walk:action-generation-method')
 
-    expect(restarted.nodes).toEqual(
+    expect(controller.getWorkflow().nodes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: 'action-walk:action-generation-method',

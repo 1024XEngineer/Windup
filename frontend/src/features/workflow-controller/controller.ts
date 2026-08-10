@@ -67,44 +67,46 @@ export interface CreateWorkflowControllerOptions {
  * 调用、后者等待用户逐步点击。Controller 不识别入口，也不保存第二份流程模型。
  */
 export interface WorkflowController {
-  create(input: CreateWorkflowRunInput): Promise<WorkflowRun>
+  create(input: CreateWorkflowRunInput): Promise<void>
+  /** 页面首次读取当前快照；后续变化统一通过 subscribe 接收。 */
   getWorkflow(): WorkflowRun
+  subscribe(listener: (workflow: WorkflowRun) => void): () => void
 
-  addAction(input: AddActionInput): Promise<WorkflowRun>
+  addAction(input: AddActionInput): Promise<void>
   generateCharacterTemplate(
     nodeId: CharacterSetupWorkflowNode['id'],
     options: GenerateCharacterTemplateOptions,
-  ): Promise<WorkflowRun>
+  ): Promise<void>
   confirmCharacterTemplate(
     nodeId: CharacterTemplateWorkflowNode['id'],
     selectedImageUrl: string,
-  ): Promise<WorkflowRun>
+  ): Promise<void>
   generateFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
     options: GenerateActionOptions,
-  ): Promise<WorkflowRun>
+  ): Promise<void>
   confirmFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
     selectedFirstFrameUrl: string,
-  ): Promise<WorkflowRun>
+  ): Promise<void>
   selectActionGenerationMethod(
     nodeId: ActionGenerationMethodWorkflowNode['id'],
     method: ActionGenerationMethod,
-  ): Promise<WorkflowRun>
+  ): Promise<void>
   generateCompleteAnimation(
     nodeId: ActionFullFrameWorkflowNode['id'],
     options: GenerateActionOptions,
-  ): Promise<WorkflowRun>
-  approveReview(nodeId: ReviewWorkflowNode['id']): Promise<WorkflowRun>
+  ): Promise<void>
+  approveReview(nodeId: ReviewWorkflowNode['id']): Promise<void>
   /** 已发布 Action 删除后，保留其四节点历史并标记为已删除。 */
-  archiveAction(nodeId: ActionFullFrameWorkflowNode['id']): Promise<WorkflowRun>
+  archiveAction(nodeId: ActionFullFrameWorkflowNode['id']): Promise<void>
 
   /** 刷新恢复时查询已记录的 Generation，再恢复 SSE。 */
-  resume(): Promise<WorkflowRun>
+  resume(): Promise<void>
   /** 停止本实例的自动处理；后端没有 cancel，所以不会伪装成取消了服务端任务。 */
-  interrupt(): Promise<WorkflowRun>
-  restartFromNode(nodeId: WorkflowNode['id']): Promise<WorkflowRun>
-  applyGenerationResult(input: ApplyGenerationResultInput): Promise<WorkflowRun>
+  interrupt(): Promise<void>
+  restartFromNode(nodeId: WorkflowNode['id']): Promise<void>
+  applyGenerationResult(input: ApplyGenerationResultInput): Promise<void>
   getGeneration(
     nodeId: WorkflowNode['id'],
     role: WorkflowGenerationRole,
@@ -142,6 +144,7 @@ export function createWorkflowController({
   const nodeEpochs = new Map<WorkflowNode['id'], number>()
   const unattachedGenerations = new Map<string, PendingGenerationAttachment>()
   const settlements = new Map<string, Promise<WorkflowRun>>()
+  const listeners = new Set<(workflow: WorkflowRun) => void>()
 
   function requireWorkflow(): WorkflowRun {
     if (!current) throw new Error('WorkflowController 尚未绑定 WorkflowRun')
@@ -150,6 +153,22 @@ export function createWorkflowController({
 
   function snapshot(): WorkflowRun {
     return structuredClone(requireWorkflow())
+  }
+
+  function notifyListeners() {
+    for (const listener of listeners) {
+      try {
+        listener(snapshot())
+      } catch (cause) {
+        onAsyncError(asError(cause))
+      }
+    }
+  }
+
+  function subscribe(listener: (workflow: WorkflowRun) => void) {
+    listeners.add(listener)
+    listener(snapshot())
+    return () => listeners.delete(listener)
   }
 
   function ensureRunning() {
@@ -174,6 +193,7 @@ export function createWorkflowController({
       // 只有后端确认保存后才替换内存快照；失败时页面不会看到“假成功”。
       const saved = await workflowRunApis.update(candidate)
       current = structuredClone(saved)
+      notifyListeners()
       return structuredClone(saved)
     })
   }
@@ -186,6 +206,7 @@ export function createWorkflowController({
         nodes: normalizeAvailability(input.nodes),
       })
       current = structuredClone(created)
+      notifyListeners()
       return structuredClone(created)
     })
   }
@@ -797,6 +818,7 @@ export function createWorkflowController({
   function dispose() {
     interrupted = true
     stopAllSubscriptions()
+    listeners.clear()
   }
 
   function nodeEpoch(nodeId: WorkflowNode['id']) {
@@ -804,23 +826,32 @@ export function createWorkflowController({
   }
 
   return {
-    create,
+    create: asCommand(create),
     getWorkflow,
-    addAction,
-    generateCharacterTemplate,
-    confirmCharacterTemplate,
-    generateFirstFrame,
-    confirmFirstFrame,
-    selectActionGenerationMethod,
-    generateCompleteAnimation,
-    approveReview,
-    archiveAction,
-    resume,
-    interrupt,
-    restartFromNode,
-    applyGenerationResult,
+    subscribe,
+    addAction: asCommand(addAction),
+    generateCharacterTemplate: asCommand(generateCharacterTemplate),
+    confirmCharacterTemplate: asCommand(confirmCharacterTemplate),
+    generateFirstFrame: asCommand(generateFirstFrame),
+    confirmFirstFrame: asCommand(confirmFirstFrame),
+    selectActionGenerationMethod: asCommand(selectActionGenerationMethod),
+    generateCompleteAnimation: asCommand(generateCompleteAnimation),
+    approveReview: asCommand(approveReview),
+    archiveAction: asCommand(archiveAction),
+    resume: asCommand(resume),
+    interrupt: asCommand(interrupt),
+    restartFromNode: asCommand(restartFromNode),
+    applyGenerationResult: asCommand(applyGenerationResult),
     getGeneration,
     dispose,
+  }
+}
+
+function asCommand<TArgs extends unknown[]>(
+  operation: (...args: TArgs) => Promise<WorkflowRun>,
+): (...args: TArgs) => Promise<void> {
+  return async (...args) => {
+    await operation(...args)
   }
 }
 
