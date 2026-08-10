@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -15,6 +15,7 @@ from windup_framework.db import get_session
 from windup_app.server.character.model import Character, CharacterData
 from windup_app.server.character.service import service as character_service
 from windup_app.server.media.service import service as media_service
+from windup_app.server.project.model import Project
 
 logger = logging.getLogger("windup.character.api")
 
@@ -88,13 +89,46 @@ def _extract_object_keys(character: Character) -> list[str]:
     return keys
 
 
+# ── 归属校验 ─────────────────────────────────────────────────────────────────
+
+
+def _get_project_or_raise(
+    session: Session, project_id: int, user_id: int,
+) -> Project:
+    """校验项目存在且属于当前用户，否则抛 BizException。"""
+    project = session.get(Project, project_id)
+    if project is None or project.user_id != user_id:
+        raise BizException("项目不存在", code=BizCode.NOT_FOUND)
+    return project
+
+
+def _get_character_with_auth(
+    session: Session, character_id: int, user_id: int,
+) -> Character:
+    """获取角色并校验其所属项目属于当前用户。
+
+    无论角色不存在还是无权访问,统一返回"角色不存在",避免信息泄露。
+    """
+    character = character_service.get_character(session, character_id)
+    if character is None:
+        raise BizException("角色不存在", code=BizCode.NOT_FOUND)
+    project = session.get(Project, character.project_id)
+    if project is None or project.user_id != user_id:
+        raise BizException("角色不存在", code=BizCode.NOT_FOUND)
+    return character
+
+
 # ── 端点 ─────────────────────────────────────────────────────────────────────
 
 
 @router.post("", response_model=Response[CharacterOut])
 def create_character(
-    body: CharacterCreate, session: Session = Depends(get_session),
+    body: CharacterCreate,
+    request: Request,
+    session: Session = Depends(get_session),
 ) -> Response[CharacterOut]:
+    user_id = request.state.current_user.id
+    _get_project_or_raise(session, body.project_id, user_id)
     character = character_service.create_character(
         session,
         project_id=body.project_id,
@@ -109,10 +143,13 @@ def create_character(
 @router.get("", response_model=ListResponse[CharacterOut])
 def list_characters(
     project_id: int = Query(..., gt=0),
+    request: Request = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     session: Session = Depends(get_session),
 ) -> ListResponse[CharacterOut]:
+    user_id = request.state.current_user.id
+    _get_project_or_raise(session, project_id, user_id)
     items, total = character_service.list_characters(
         session, project_id=project_id, page=page, page_size=page_size,
     )
@@ -126,11 +163,12 @@ def list_characters(
 
 @router.get("/{character_id}", response_model=Response[CharacterOut])
 def get_character(
-    character_id: int, session: Session = Depends(get_session),
+    character_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
 ) -> Response[CharacterOut]:
-    character = character_service.get_character(session, character_id)
-    if character is None:
-        raise BizException("角色不存在", code=BizCode.NOT_FOUND)
+    user_id = request.state.current_user.id
+    character = _get_character_with_auth(session, character_id, user_id)
     return Response.success(CharacterOut.model_validate(character))
 
 
@@ -138,8 +176,11 @@ def get_character(
 def update_character(
     character_id: int,
     body: CharacterUpdate,
+    request: Request,
     session: Session = Depends(get_session),
 ) -> Response[CharacterOut]:
+    user_id = request.state.current_user.id
+    _get_character_with_auth(session, character_id, user_id)
     fields = body.model_dump(exclude_unset=True)
     character = character_service.update_character(session, character_id, **fields)
     if character is None:
@@ -149,11 +190,12 @@ def update_character(
 
 @router.delete("/{character_id}", response_model=Response[None])
 def delete_character(
-    character_id: int, session: Session = Depends(get_session),
+    character_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
 ) -> Response[None]:
-    character = character_service.get_character(session, character_id)
-    if character is None:
-        raise BizException("角色不存在", code=BizCode.NOT_FOUND)
+    user_id = request.state.current_user.id
+    character = _get_character_with_auth(session, character_id, user_id)
 
     # 先提取对象 key,再删 DB 记录
     object_keys = _extract_object_keys(character)
