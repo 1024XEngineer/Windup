@@ -879,6 +879,102 @@ describe('WorkflowController', () => {
     )
   })
 
+  it.each([
+    ['角色设定', 'setup-1'],
+    ['角色母版', 'template-1'],
+  ])('从共享%s节点重做时完整保留已归档 Action 历史', async (_label, nodeId) => {
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        generations: [{ taskId: 'task-first-frame', role: 'first_frame' }],
+        selectedFirstFrameUrl: 'walk.png',
+      }),
+      generationMethodNode({ status: 'passed', phase: 'completed', method: 'video-cropping' }),
+      fullFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        generations: [{ taskId: 'task-animation', role: 'complete_animation' }],
+      }),
+      reviewNode({ status: 'passed', phase: 'completed' }),
+    ])
+    const { controller } = createController(run)
+    await controller.archiveAction('action-walk:action-full-frame')
+    const archivedBefore = controller
+      .getWorkflow()
+      .nodes.filter((node) => node.deletedAt)
+      .map((node) => structuredClone(node))
+
+    await controller.restartFromNode(nodeId)
+
+    expect(controller.getWorkflow().nodes.filter((node) => node.deletedAt)).toEqual(archivedBefore)
+  })
+
+  it('归档节点即使状态异常变为 active 也不能再次提交生成任务', async () => {
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'active',
+        deletedAt: '2026-08-09T00:00:00.000Z',
+      }),
+    ])
+    const { controller, generation } = createController(run)
+
+    await expect(
+      controller.generateFirstFrame('action-walk', {
+        characterId: 'character-1',
+        referenceMedia: [],
+      }),
+    ).rejects.toThrow('已归档节点不能执行')
+    expect(generation.apis.create).not.toHaveBeenCalled()
+  })
+
+  it('创建或恢复节点可用性时不会激活已归档节点', async () => {
+    const workflow = createWorkflowApis(createRun([]))
+    const generation = createGenerationHarness()
+    const controller = createWorkflowController({
+      workflowRunApis: workflow.apis,
+      generationApis: generation.apis,
+      onAsyncError: vi.fn(),
+    })
+
+    await controller.create({
+      projectId: '1',
+      nodes: [
+        ...completedCharacterNodes(),
+        firstFrameNode({
+          status: 'locked',
+          deletedAt: '2026-08-09T00:00:00.000Z',
+        }),
+      ],
+    })
+
+    expect(controller.getWorkflow().nodes[2]).toMatchObject({
+      status: 'locked',
+      deletedAt: '2026-08-09T00:00:00.000Z',
+    })
+  })
+
+  it('上游节点完成并解锁下游时跳过已归档节点', async () => {
+    const run = createRun([
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({ status: 'active', phase: 'selecting' }),
+      firstFrameNode({
+        status: 'locked',
+        deletedAt: '2026-08-09T00:00:00.000Z',
+      }),
+    ])
+    const { controller } = createController(run)
+
+    await controller.confirmCharacterTemplate('template-1', 'https://img/knight.png')
+
+    expect(controller.getWorkflow().nodes[2]).toMatchObject({
+      status: 'locked',
+      deletedAt: '2026-08-09T00:00:00.000Z',
+    })
+  })
+
   it('保存失败时不发布未落库的新状态', async () => {
     const run = createRun([
       setupNode({ status: 'passed', phase: 'completed' }),

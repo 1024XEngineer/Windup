@@ -670,6 +670,7 @@ export function createWorkflowController({
     return persist((run) => {
       if (generation.id !== taskId || generation.projectId !== run.projectId) return run
       const node = findNode(run, nodeId)
+      if (node.deletedAt) return run
       const reference = node.generations.find((item) => item.taskId === taskId)
       if (!reference || node.status !== 'active') return run
       // 每种生成任务只属于一种节点；旧任务不能推进另一张卡片。
@@ -742,7 +743,7 @@ export function createWorkflowController({
     }
     const run = requireWorkflow()
     const tasks = run.nodes.flatMap((node) => {
-      if (node.status !== 'active' || !isGeneratingPhase(node)) return []
+      if (node.deletedAt || node.status !== 'active' || !isGeneratingPhase(node)) return []
       const role = generationRoleForNode(node)
       if (!role) return []
       const reference = node.generations.find((item) => item.role === role)
@@ -896,7 +897,9 @@ function updateNode(
   nodeId: WorkflowNode['id'],
   update: (node: WorkflowNode) => WorkflowRun,
 ) {
-  return update(findNode(run, nodeId))
+  const node = findNode(run, nodeId)
+  if (node.deletedAt) throw new Error('已归档节点不能执行')
+  return update(node)
 }
 
 function findNode(run: WorkflowRun, nodeId: WorkflowNode['id']): WorkflowNode {
@@ -920,6 +923,7 @@ function unlockReadyNodes(run: WorkflowRun): WorkflowRun {
   return {
     ...run,
     nodes: run.nodes.map((node) =>
+      !node.deletedAt &&
       node.status === 'locked' &&
       node.dependsOnNodeIds.every((dependencyId) => isPassed(run.nodes, dependencyId))
         ? { ...node, status: 'active' }
@@ -930,6 +934,7 @@ function unlockReadyNodes(run: WorkflowRun): WorkflowRun {
 
 function normalizeAvailability(nodes: readonly WorkflowNode[]): WorkflowNode[] {
   return nodes.map((node) => {
+    if (node.deletedAt) return structuredClone(node)
     if (node.status === 'passed' || node.status === 'failed') return structuredClone(node)
     const available = node.dependsOnNodeIds.every((dependencyId) => isPassed(nodes, dependencyId))
     return { ...structuredClone(node), status: available ? 'active' : 'locked' }
@@ -948,6 +953,7 @@ function assertDependenciesExist(nodes: readonly WorkflowNode[], dependencyIds: 
 }
 
 function assertNodeCanRun(run: WorkflowRun, node: WorkflowNode) {
+  if (node.deletedAt) throw new Error('已归档节点不能执行')
   if (node.status !== 'active') throw new Error('目标节点当前不可执行')
   if (!node.dependsOnNodeIds.every((id) => isPassed(run.nodes, id))) {
     throw new Error('目标节点的前置依赖尚未完成')
@@ -1022,7 +1028,7 @@ function collectDescendantIds(nodes: readonly WorkflowNode[], rootId: string) {
   while (changed) {
     changed = false
     for (const node of nodes) {
-      if (affected.has(node.id)) continue
+      if (node.deletedAt || affected.has(node.id)) continue
       if (node.dependsOnNodeIds.some((id) => affected.has(id))) {
         affected.add(node.id)
         changed = true
