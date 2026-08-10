@@ -37,6 +37,10 @@ const productNavigation: ProductNavigationItem[] = [
 
 /** 左侧标牌上的第二行，随所在区域变化，让用户知道自己在哪一片。 */
 function getWorkspaceLabel(pathname: string): { title: string; detail: string } {
+  if (pathname.startsWith('/account')) {
+    return { title: '账号中心', detail: '资料与登录安全' }
+  }
+
   if (pathname.startsWith('/projects') || pathname.startsWith('/playtest')) {
     return { title: '项目资产', detail: '角色、造型与动作' }
   }
@@ -139,12 +143,15 @@ export function AppHeader() {
             </Link>
           ) : (
             <div className="flex min-w-0 items-center overflow-hidden rounded-[0.5625rem] border border-[#2d3b31]/14 bg-white/35">
-              <span
+              <Link
+                to="/account"
+                aria-label="打开账号中心"
+                aria-current={pathname.startsWith('/account') ? 'page' : undefined}
                 title={session.state.user.email}
-                className="inline-flex min-h-11 max-w-16 items-center truncate px-3 text-xs font-semibold text-[#34483a] sm:max-w-28"
+                className="inline-flex min-h-11 max-w-16 items-center truncate px-3 text-xs font-semibold text-[#34483a] transition-colors hover:bg-[#dce9df] hover:text-[#26372c] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#284331] sm:max-w-28"
               >
                 {session.state.user.nickname || session.state.user.email}
-              </span>
+              </Link>
               <button
                 type="button"
                 onClick={signOut}
