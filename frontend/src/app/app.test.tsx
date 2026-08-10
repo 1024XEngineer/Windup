@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MemoryRouter, useLocation } from 'react-router'
 
@@ -119,6 +119,45 @@ describe('AppRoutes authentication boundary', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('登录状态已过期，请重新登录。')
     expect(screen.getByRole('link', { name: '重新登录' }).getAttribute('href')).toBe(
       '/?account=login&returnTo=%2F',
+    )
+  })
+
+  it('reuses the protected return path after the expired-session panel is closed and reopened', async () => {
+    const expiredApis: UserApis = {
+      sendCode: async () => undefined,
+      register: async () => Promise.reject(new Error('not used')),
+      login: async () => Promise.reject(new Error('not used')),
+      loginByCode: async () => Promise.reject(new Error('not used')),
+      refresh: async () => Promise.reject(new Error('refresh token expired')),
+      logout: async () => undefined,
+      me: async () => Promise.reject(new Error('not used')),
+      changePassword: async () => Promise.reject(new Error('not used')),
+    }
+    window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, 'expired-refresh-token')
+
+    render(
+      <AuthSessionProvider apis={expiredApis}>
+        <MemoryRouter initialEntries={['/quick-start?draft=1#setup']}>
+          <AppRoutes />
+          <LocationProbe />
+        </MemoryRouter>
+      </AuthSessionProvider>,
+    )
+
+    expect(await screen.findByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/?returnTo=%2Fquick-start%3Fdraft%3D1%23setup',
+      ),
+    )
+
+    fireEvent.click(screen.getByRole('link', { name: '重新登录' }))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/?account=login&returnTo=%2Fquick-start%3Fdraft%3D1%23setup',
+      ),
     )
   })
 })
