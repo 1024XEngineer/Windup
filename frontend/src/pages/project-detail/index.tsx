@@ -77,7 +77,7 @@ export function ProjectDetailPage() {
   }
 
   return (
-    <div className="grid h-screen gap-3 overflow-hidden bg-[#f7f8f5] p-3 md:grid-cols-[13rem_minmax(0,1fr)] xl:grid-cols-[14rem_minmax(0,1fr)]">
+    <div className="grid min-h-screen gap-3 bg-[#f7f8f5] p-3 md:h-screen md:grid-cols-[13rem_minmax(0,1fr)] md:overflow-hidden xl:grid-cols-[14rem_minmax(0,1fr)]">
       <aside className="flex min-h-0 flex-col overflow-hidden rounded-[1.35rem] border border-[#d9ddd6] bg-[#fbfbf8] text-[#222520]">
         <div className="border-b border-[#dfe2dc] px-4 py-4">
           <Link
