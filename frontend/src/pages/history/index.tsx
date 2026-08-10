@@ -4,8 +4,8 @@ import { Link, useParams } from 'react-router'
 import type { WorkflowNode, WorkflowRun } from '@/entities'
 
 /**
- * 当前后端尚未提供 WorkflowRun 列表接口，因此页面只声明读取边界，不伪造实现。
- * 接口就绪后由 App 装配真实 reader；页面不依赖单 Run 的 WorkflowController。
+ * 后端 PR #176 已提供按项目分页查询 WorkflowRun 的接口；本模块仍只依赖读取边界。
+ * 待 WorkflowRunStore 合并并由 App 装配后再开放入口，页面不依赖单 Run 的 Controller。
  */
 export interface WorkflowHistoryReader {
   listByProject(projectId: string): Promise<readonly WorkflowRun[]>

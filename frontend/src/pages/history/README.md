@@ -12,11 +12,11 @@ History 只读展示项目下已经保存的 `WorkflowRun` 及其当前节点图
 - 页面不提供“新建创作任务”入口；创建工作流必须先由正式用例取得真实 `runId`，再进入
   `/workflow-editor/:runId`。
 
-## 后端缺口
+## 接入状态
 
-后端当前只有单条 WorkflowRun 的创建、读取、更新和删除接口，没有按 Project 列表查询。
-因此本页面只声明异步 `WorkflowHistoryReader.listByProject(projectId)` 边界，不提供假数据、
-localStorage 降级或伪造 HTTP 路径。正式列表接口落地后由 App 装配真实实现，再注册路由和导航入口。
+后端 PR #176 已提供按 Project 分页查询 WorkflowRun 的接口。本页面继续只声明异步
+`WorkflowHistoryReader.listByProject(projectId)` 边界，不提供假数据或 localStorage 降级。
+待 WorkflowRunStore 的真实适配器合并并由 App 装配后，再注册路由和导航入口。
 
 ## 模块边界
 
