@@ -212,4 +212,44 @@ describe('createUserApis', () => {
     expect(recover).not.toHaveBeenCalled()
     unregister()
   })
+
+  it.each([
+    ['current-user', (apis: ReturnType<typeof createUserApis>) => apis.me(), tokenResponse.user],
+    [
+      'nickname-update',
+      (apis: ReturnType<typeof createUserApis>) => apis.updateNickname('New Reader'),
+      tokenResponse.user,
+    ],
+    [
+      'password-change',
+      (apis: ReturnType<typeof createUserApis>) =>
+        apis.changePassword({
+          oldPassword: 'password-123',
+          newPassword: 'new-password-123',
+        }),
+      null,
+    ],
+  ])('recovers and replays protected %s requests', async (_label, invoke, data) => {
+    const recover = vi.fn(async () => true)
+    const unregister = registerApiUnauthorizedRecovery(recover)
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: 401, message: 'access token expired', data: null }), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: 200, message: 'ok', data }), { status: 200 }),
+      )
+    const apis = createUserApis({ baseUrl: 'https://api.windup.test', fetchFn })
+
+    try {
+      await invoke(apis)
+      expect(recover).toHaveBeenCalledTimes(1)
+      expect(fetchFn).toHaveBeenCalledTimes(2)
+    } finally {
+      unregister()
+    }
+  })
 })
