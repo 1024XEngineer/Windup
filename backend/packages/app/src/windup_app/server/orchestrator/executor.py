@@ -88,8 +88,12 @@ def _load_constraints(session: Session, project_id: int | None) -> ProjectConstr
     )
 
 
-def _fit_to(png: bytes, w: int, h: int) -> bytes:
-    """把帧等比缩放进 w×h(透明补边),落实项目 sprite 尺寸约束。"""
+def _fit_to(png: bytes, w: int, h: int, *, smooth: bool = False) -> bytes:
+    """把图等比缩放进 w×h(透明补边),落实尺寸约束。
+
+    ``smooth`` 决定重采样:序列帧是像素画,必须 NEAREST(插值会把硬边糊成灰边、
+    并引入调色板外的颜色);全彩角色母版反过来,NEAREST 缩图会明显锯齿,用 LANCZOS。
+    """
     import io
 
     from PIL import Image
@@ -98,7 +102,7 @@ def _fit_to(png: bytes, w: int, h: int) -> bytes:
     if im.size == (w, h):
         return png
     fitted = im.copy()
-    fitted.thumbnail((w, h), Image.NEAREST)
+    fitted.thumbnail((w, h), Image.LANCZOS if smooth else Image.NEAREST)
     canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     canvas.alpha_composite(fitted, ((w - fitted.width) // 2, (h - fitted.height) // 2))
     buf = io.BytesIO()
@@ -377,7 +381,10 @@ class ImageTaskExecutor:
         urls: list[str] = []
         for _ in range(max(1, input.num_images)):
             img = image_gen.gen_image(prompt, refs)
-            urls.append(upload(img))
+            # 请求里的 width/height 此前被丢掉:入口收下并校验过它们(_validate_project_size),
+            # 而 ImageProvider.gen_image 没有尺寸参数,模型出多大就返多大 —— 又一个"接了不
+            # 履约"的字段(2026-08-10 对抗复查发现)。模型本身不吃宽高,所以在这里落实。
+            urls.append(upload(_fit_to(img, input.width, input.height, smooth=True)))
         return urls
 
     def _get_image(self):

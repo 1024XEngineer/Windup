@@ -234,3 +234,68 @@ def test_num_frames_is_bounded():
         CharacterActionGenerateRequest(character_id=1, action_type="walk", num_frames=0)
     ok = CharacterActionGenerateRequest(character_id=1, action_type="walk", num_frames=16)
     assert ok.num_frames == 16
+
+
+# ── ⑥ 请求里的尺寸必须真的生效（2026-08-10 对抗复查）────────────────────────
+
+
+def _png(w: int, h: int) -> bytes:
+    """带细节的图。纯色图在 NEAREST 与 LANCZOS 下产出完全相同,拿它验重采样是无效仪器
+    (2026-08-10 第一版就是这么写的,测试立刻变红)。这里用 8px 棋盘格。"""
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    y, x = np.mgrid[0:h, 0:w]
+    checker = (((x // 8) + (y // 8)) % 2 * 255).astype("uint8")
+    arr = np.dstack([checker, 255 - checker, checker, np.full((h, w), 255, "uint8")])
+    buf = io.BytesIO()
+    Image.fromarray(arr, "RGBA").save(buf, "PNG")
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize(("want_w", "want_h"), [(512, 512), (256, 384), (1024, 1024)])
+def test_requested_image_size_is_actually_applied(want_w, want_h):
+    """入口收下 width/height 并校验过，但 ImageProvider.gen_image 没有尺寸参数。
+
+    此前模型出多大就返多大：调用方要 512×512、拿到 1024×1024，而请求被接受了 ——
+    又一个"接了不履约"的字段。本用例锁住"要多大就得多大"。
+    """
+    import io
+
+    from PIL import Image
+
+    from windup_app.server.orchestrator.executor import ImageTaskExecutor
+    from windup_app.server.orchestrator.model import CharacterImageInput
+
+    class _Gen:
+        def gen_image(self, prompt, refs):
+            return _png(1024, 1024)          # 模型固定出 1024²
+
+    got: list[bytes] = []
+    ex = ImageTaskExecutor(image=_Gen(), upload=lambda b: (got.append(b), "u")[1])
+    ex._produce_image(
+        CharacterImageInput(prompt="knight", width=want_w, height=want_h, num_images=1),
+        _constraints(),
+    )
+    assert Image.open(io.BytesIO(got[0])).size == (want_w, want_h)
+
+
+def test_sprite_frames_and_master_use_different_resampling():
+    """序列帧是像素画,必须 NEAREST;全彩母版用 NEAREST 缩图会明显锯齿。
+
+    只断言两条路径产出不同 —— 同一张图两种重采样若字节相同,说明 smooth 参数没接上。
+    """
+    from windup_app.server.orchestrator.executor import _fit_to
+
+    src = _png(1024, 1024)
+    assert _fit_to(src, 256, 256, smooth=False) != _fit_to(src, 256, 256, smooth=True)
+
+
+def _constraints():
+    """最小项目约束(本文件只关心尺寸这条链路)。"""
+    from windup_app.server.orchestrator.executor import _load_constraints  # noqa: F401
+    from windup_app.server.orchestrator.executor import ProjectConstraints
+
+    return ProjectConstraints()
