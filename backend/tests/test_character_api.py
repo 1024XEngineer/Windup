@@ -16,6 +16,7 @@ def _payload(project_id: int, **overrides):
     """构造合法的创建角色请求体。"""
     base = {
         "project_id": project_id,
+        "workflow_run_id": 1,
         "name": "勇者",
         "description": "主角",
     }

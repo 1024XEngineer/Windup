@@ -29,6 +29,7 @@ class CharacterCreate(BaseModel):
     """创建角色请求。"""
 
     project_id: int = Field(gt=0)
+    workflow_run_id: int = Field(gt=0)
     name: str | None = Field(default=None, max_length=20)
     description: str | None = None
     reference_image_url: str | None = None
@@ -51,6 +52,7 @@ class CharacterOut(BaseModel):
 
     id: int
     project_id: int
+    workflow_run_id: int
     name: str | None = None
     description: str | None = None
     reference_image_url: str | None = None
@@ -132,6 +134,7 @@ def create_character(
     character = character_service.create_character(
         session,
         project_id=body.project_id,
+        workflow_run_id=body.workflow_run_id,
         name=body.name,
         description=body.description,
         reference_image_url=body.reference_image_url,
