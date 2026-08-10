@@ -270,6 +270,10 @@ def test_end_to_end_hits_the_right_paths(monkeypatch):
     assert first_poll.url.path == "/queue/fal-ai/kling-video/requests/req-1/status"
     assert second_poll.url.path == first_poll.url.path
     assert str(download.url) == VIDEO_URL
+    # 成品 URL 在 CDN 域名下(gw.invalid → cdn.invalid),这一跳不能带 API key。
+    # 端到端这一层单独断言:_download 的单测再全,也管不住调用方哪天又把凭证塞回来。
+    assert "authorization" not in download.headers, "API key 被发给了 CDN(PR #179 P1)"
+    assert download.url.host != submit.url.host
 
 
 def test_first_frame_is_padded_then_uploaded_and_enters_the_body_as_a_url(monkeypatch):

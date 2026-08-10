@@ -133,6 +133,54 @@ class IncompleteDownloadError(RuntimeError):
     """视频下载到的字节数与 ``Content-Length`` 不符。"""
 
 
+class UnsafeDownloadUrlError(RuntimeError):
+    """成品 URL 的协议不是 http(s) —— 不下载。
+
+    这个 URL 来自网关响应,是外部输入。直接丢给 httpx 去 GET 一个 ``file://`` / ``data:``
+    只会在重试三次之后报一个跟协议无关的传输错,不如在这里就说清是地址不对。
+    """
+
+
+def _same_origin(url: httpx.URL, other: httpx.URL) -> bool:
+    """同源判定(scheme + host + 端口,默认端口按 scheme 补齐)。
+
+    语义对齐 httpx 自己在跨源重定向时摘凭证用的 ``Client._redirect_headers``;
+    没直接 import 它的私有 ``_same_origin``,免得被上游改名。
+
+    "默认端口补齐"这一步在 httpx 0.28 下其实判不出新差别(它已把 ``:443`` / ``:80``
+    归一化成 ``port is None``,2026-08-10 变异测试确认单独拆掉这行无用例失败)。留着的理由
+    是与 httpx 保持同一套判据:一旦上游不再归一化,少了它 ``https://gw`` 与 ``https://gw:443``
+    就成了跨源,会把该带的凭证摘掉、把同源下载打成 401。
+    """
+    default = {"http": 80, "https": 443}
+    return (
+        url.scheme == other.scheme
+        and url.host == other.host
+        and (url.port or default.get(url.scheme)) == (other.port or default.get(other.scheme))
+    )
+
+
+def _download_request(client: httpx.Client, url: str) -> httpx.Request:
+    """构造成品下载请求;目标不在网关同源时,把 client 级凭证摘掉。
+
+    为什么必须摘(2026-08-10 机器审提出):成品 URL 是**网关响应里的绝对地址**,正常情况
+    指向 CDN 域名,异常情况可以是网关返回的任意地址。而 httpx 只在跨源**重定向**时才自动
+    摘 Authorization,对这种一开始就跨源的直连请求,client 级 headers 会原样带过去 ——
+    于是 ``Authorization: Bearer/Key <api_key>`` 被发给了那个域名,等于把 API key 交出去。
+
+    同源时保留凭证:网关也可能签发自己域名下的下载链接,那条路径摘了头就是 401。
+    所以按目标地址判定,不是一律摘、也不是一律留。
+    """
+    request = client.build_request("GET", url)
+    if request.url.scheme not in ("http", "https"):
+        raise UnsafeDownloadUrlError(f"成品 URL 必须是 http(s),收到 {str(request.url)!r}")
+    if not _same_origin(request.url, client.base_url):
+        # 只摘目标域名不该看到的:Proxy-Authorization 是给代理的,与目标是否同源无关,别动它。
+        request.headers.pop("Authorization", None)
+        request.headers.pop("Cookie", None)
+    return request
+
+
 def _download(client: httpx.Client, url: str, tries: int = 3) -> bytes:
     """下载已生成好的视频,带重试 + 长度校验。
 
@@ -149,11 +197,17 @@ def _download(client: httpx.Client, url: str, tries: int = 3) -> bytes:
     长度校验是因为截断不一定抛异常:服务端提前关流而客户端已收到部分 body 时,
     ``.content`` 可能直接返回短 bytes,那样坏视频会一路流到出帧环节才暴露,
     在那里看起来像"解码失败",很难回溯到这里。``Content-Length`` 缺失(分块传输)时跳过校验。
+
+    凭证处理见 :func:`_download_request`。请求在进循环之前就构造好:地址不合法要在
+    发出任何一次请求之前炸,而不是重试三次之后。
     """
+    request = _download_request(client, url)
     last: Exception | None = None
     for attempt in range(tries):
         try:
-            response = client.get(url)
+            # send 不会再合并 client 级 headers(build_request 时已合并过),
+            # 所以上面摘掉的 Authorization 不会被重新加回来。
+            response = client.send(request)
             response.raise_for_status()
             body = response.content
             expected = response.headers.get("content-length")
@@ -487,8 +541,10 @@ class FalQueueVideoProvider(VideoProvider):
             url = _await_fal_video_url(
                 client, self._endpoint, request_id, self._poll, self._max_min
             )
-            # 成品 URL 是网关签发的下载链接,用同一个 client 取:这条下载路径(带鉴权头、
-            # 带重试与长度校验)是 2026-08-05 实测挣来的,不为"看起来更干净"去动它。
+            # 重试与长度校验是 2026-08-05 实测挣来的,不为"看起来更干净"去动它。
+            # 但凭证不跟着走:成品 URL 多是 CDN 绝对地址,跨源时 _download 会摘掉
+            # Authorization(见 _download_request —— 原来那句"用同一个 client 带鉴权头取"
+            # 就是 2026-08-10 机器审报的 key 泄漏)。
             return _download(client, url)
 
     def _upload(self, first_frame: bytes, size: str) -> str:

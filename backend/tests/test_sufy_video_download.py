@@ -1,19 +1,39 @@
-"""视频成品下载的重试与完整性校验(不联网:用 httpx MockTransport)。
+"""视频成品下载的凭证边界、重试与完整性校验(不联网:用 httpx MockTransport)。
 
-回归对象是 2026-08-05 实测两次连续复现的一类失败:视频已生成、费用已产生,
-却因为读 body 时断了一次连接就整单丢弃。见 ``providers.sufy._download`` 的 docstring。
+两个回归对象:
+
+1. 2026-08-05 实测两次连续复现:视频已生成、费用已产生,却因为读 body 时断了一次连接
+   就整单丢弃。见 ``providers.sufy._download`` 的 docstring。
+2. 2026-08-10 机器审(PR #179 P1):成品 URL 是网关返回的绝对地址,复用带 Authorization
+   的 client 去下载 = 把 API key 发给了 CDN(或网关返回的任意地址)。
+   见 ``providers.sufy._download_request`` 的 docstring。
 """
 
 import httpx
 import pytest
 
-from windup_framework.providers.sufy import IncompleteDownloadError, _download
+from windup_framework.providers.sufy import (
+    IncompleteDownloadError,
+    UnsafeDownloadUrlError,
+    _download,
+)
 
 VIDEO = b"\x00\x01mp4-bytes" * 64
+GATEWAY = "https://gw.invalid/v1"
 
 
 def _client(handler) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def _authed_client(handler, base_url: str = GATEWAY) -> httpx.Client:
+    """带凭证的网关 client —— provider 真正持有的就是这种(Authorization + cookie jar)。"""
+    return httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url=base_url,
+        headers={"Authorization": "Key secret-api-key"},
+        cookies={"session": "s3cr3t"},
+    )
 
 
 def test_retries_after_peer_closed_connection(monkeypatch):
@@ -80,3 +100,109 @@ def test_gives_up_after_three_tries_and_reports_the_last_cause(monkeypatch):
 def test_incomplete_download_error_is_a_runtime_error():
     """调用方按 RuntimeError 兜底即可,不必单独 import 这个子类。"""
     assert issubclass(IncompleteDownloadError, RuntimeError)
+
+
+# ── 凭证边界:成品 URL 是网关给的外部地址,不能带着 API key 去取 ──────────────
+
+
+def test_cross_origin_download_does_not_leak_the_api_key(monkeypatch):
+    """跨源下载必须摘掉 client 级凭证。
+
+    这是 PR #179 P1 的直接回归:httpx 只在跨源**重定向**时自动摘 Authorization,
+    对一开始就跨源的直连请求会原样带上 —— 于是 CDN 域名收到了 API key。
+    """
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
+    seen: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["authorization"] = request.headers.get("authorization")
+        seen["cookie"] = request.headers.get("cookie")
+        return httpx.Response(200, content=VIDEO)
+
+    with _authed_client(handler) as client:
+        assert _download(client, "https://cdn.invalid/out.mp4") == VIDEO
+
+    assert seen["authorization"] is None, "API key 被发给了 CDN"
+    assert seen["cookie"] is None, "会话 cookie 被发给了 CDN"
+
+
+def test_same_origin_download_keeps_the_gateway_credential(monkeypatch):
+    """同源(网关自己签发的下载链接)必须保留凭证,否则那条路径就是 401。
+
+    一律摘头会把这个功能弄坏,所以判据是目标地址,不是"下载一律不带凭证"。
+    """
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("authorization"))
+        return httpx.Response(200, content=VIDEO)
+
+    with _authed_client(handler) as client:
+        # 第二个地址显式写出默认端口 443。httpx 0.28 会把默认端口归一化掉(URL.port -> None),
+        # 所以这条今天走不到"补默认端口"那行;留着是钉住这个前提 —— httpx 哪天不再归一化,
+        # 少了默认端口补齐就会把它误判成跨源、把凭证摘掉,这条会先叫。
+        assert _download(client, "https://gw.invalid/files/out.mp4") == VIDEO
+        assert _download(client, "https://gw.invalid:443/files/out.mp4") == VIDEO
+
+    assert seen == ["Key secret-api-key", "Key secret-api-key"]
+
+
+def test_downgrade_to_plain_http_is_treated_as_cross_origin(monkeypatch):
+    """同 host 但 scheme 从 https 掉到 http —— 也要摘凭证。
+
+    默认端口被 httpx 归一化成 None,host 又相同,所以同源判定里**少比一个 scheme**
+    就会把它当自己人,于是 API key 走明文 HTTP 发出去。httpx 自己在重定向那侧也是
+    单独处理 http/https 的(``_is_https_redirect``),方向只允许 http→https,不允许反过来。
+    """
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
+    seen: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["authorization"] = request.headers.get("authorization")
+        return httpx.Response(200, content=VIDEO)
+
+    with _authed_client(handler) as client:
+        assert _download(client, "http://gw.invalid/files/out.mp4") == VIDEO
+    assert seen["authorization"] is None, "API key 走明文 HTTP 发了出去"
+
+    # 再来一格显式非默认端口:两边端口都是 8443,"补默认端口"那行判不出差别,
+    # 只有 scheme 比较能拦住。少了这一格,scheme 比较会显得可以删(实际不行)。
+    with _authed_client(handler, base_url="https://gw.invalid:8443/v1") as client:
+        assert _download(client, "http://gw.invalid:8443/files/out.mp4") == VIDEO
+    assert seen["authorization"] is None, "非默认端口上的 https->http 降级没拦住"
+
+
+def test_relative_result_path_stays_authenticated(monkeypatch):
+    """网关返回相对路径时,它解析到网关自己身上,凭证照带。"""
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
+    seen: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["authorization"] = request.headers.get("authorization")
+        return httpx.Response(200, content=VIDEO)
+
+    with _authed_client(handler) as client:
+        assert _download(client, "files/out.mp4") == VIDEO
+
+    assert seen["url"] == "https://gw.invalid/v1/files/out.mp4"
+    assert seen["authorization"] == "Key secret-api-key"
+
+
+def test_non_http_result_url_is_refused_before_any_request_goes_out(monkeypatch):
+    """协议不是 http(s) 就不发请求 —— 地址不对要立刻炸,不是重试三次后报传输错。
+
+    注意 httpx 的边界:只有**带 host** 的绝对地址才保留原 scheme(``ftp://cdn/...``);
+    ``file:///etc/passwd`` 这种没有 host 的会被 httpx 当相对地址并入 base_url,
+    结果是一个打到网关的 404,不经过这个分支。
+    """
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"不该发出任何请求: {request.url}")
+
+    for url in ("ftp://cdn.invalid/out.mp4", "file://cdn.invalid/out.mp4"):
+        with _authed_client(handler) as client:
+            with pytest.raises(UnsafeDownloadUrlError, match="http"):
+                _download(client, url)
