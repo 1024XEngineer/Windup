@@ -312,6 +312,40 @@ describe('WorkflowController', () => {
     ).rejects.toThrow('已经绑定')
   })
 
+  it('保存归一化后的角色名称且不修改角色提示词', async () => {
+    const { controller, workflow } = createController()
+
+    await controller.setCharacterName('setup-1', '  雾港旅人  ')
+
+    expect(workflow.getSaved().nodes[0]).toMatchObject({
+      type: 'character-setup',
+      input: {
+        name: '雾港旅人',
+        prompt: '像素骑士',
+        referenceMedia: [],
+      },
+    })
+  })
+
+  it('纯空白角色名称按未填写保存', async () => {
+    const { controller } = createController()
+
+    await controller.setCharacterName('setup-1', '   ')
+
+    expect(controller.getWorkflow().nodes[0]).toMatchObject({
+      type: 'character-setup',
+      input: { name: null },
+    })
+  })
+
+  it('拒绝超过 20 个字符的角色名称', async () => {
+    const { controller } = createController()
+
+    await expect(controller.setCharacterName('setup-1', 'x'.repeat(21))).rejects.toThrow(
+      '角色名称不能超过 20 个字符',
+    )
+  })
+
   it('adds a complete first-frame, method, full-frame, and review chain for one Action', async () => {
     const { controller } = createController(createRun(completedCharacterNodes()))
 
