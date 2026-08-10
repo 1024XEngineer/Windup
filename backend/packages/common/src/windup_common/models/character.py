@@ -31,7 +31,17 @@ def _without(data: dict[str, Any], key: str) -> dict[str, Any]:
 
 
 class ActionType(str, Enum):
-    """动作类型 —— 决定走哪条生成 strategy(见 ai_engine.strategy.ROUTE_MATRIX)。"""
+    """动作类型 —— 决定走哪条生成 strategy(见 ai_engine.strategy.ROUTE_MATRIX)。
+
+    **本枚举是"引擎能生成的动作",不是"API 能接收的动作",两者刻意分离。** 入口侧的
+    ``windup_app.server.orchestrator.model.ActionType`` 另有 ``custom``,且少 run /
+    jump / hit;跨越两者靠编排层的显式适配函数 ``_to_engine_action``,它对引擎没有路线
+    的类型抛带原因的错误,而不是让请求走到一半失败。
+
+    为什么不直接把 ``custom`` 加进来:``ROUTE_MATRIX`` 没有它的分流,加了成员等于接收
+    一个我们无法履约的请求——与 :class:`GenRoute` docstring 里那条是同一原则。API 入口
+    的枚举保持不变,所以对既有调用方的兼容性不受影响。
+    """
 
     IDLE = "idle"
     WALK = "walk"
@@ -80,18 +90,6 @@ class CharacterView(str, Enum):
     ISOMETRIC = "isometric"  # perspective=3 2.5D
 
 
-class LoopMode(str, Enum):
-    """出帧的循环模式(**生成侧**,不是播放器那个 loop 开关)。
-
-    与持久化的 ``character_data.actions[].loop``(bool,是否循环播放)不是同一件事:
-    这里决定的是帧序列怎么排——linear 按时间顺序、pingpong 往返省一半帧、none 不成环。
-    """
-
-    NONE = "none"
-    LINEAR = "linear"
-    PINGPONG = "pingpong"
-
-
 class Stylize(str, Enum):
     """风格化模式。
 
@@ -132,22 +130,25 @@ class CharacterCard(BaseModel):
 
 
 class ActionSpec(BaseModel):
-    """动作规格 —— 帧数 / 帧率 / 循环模式 / 逐帧姿势 / 风格化 / 朝向。"""
+    """动作规格 —— 帧数 / 逐帧姿势 / 风格化 / 朝向。
+
+    **播放时序的唯一真相源是出参的 ``durations``(逐帧 ms),不是入参的帧率。**
+    这里曾有 ``fps`` 与 ``loop`` 两个字段,都已删除,理由与 :class:`GenRoute`
+    docstring 里那条一致——没有实现的取值等于死代码,它让调用方以为该能力存在:
+
+    - ``fps``:零写入方(编排层构造 ActionSpec 时从不传),而 ``postprocess.
+      frame_durations`` 按动作查表、**根本不看它**。留着的后果是 ``fps=20`` 宣称
+      50ms/帧、walk 实际返回 125ms/帧,两个字段描述同一段素材的不同播放速度。
+    - ``loop``:零消费方。闭环行为写死在 ``slicing.pick_cycle`` 里——循环类动作
+      一律抽单周期闭环,传 ``pingpong`` / ``none`` 不改变任何产出。调用方可以为一段
+      往返动画付费、拿到一段线性循环,正是本项目最忌讳的"静默成功"。
+
+    真要支持 pingpong,连同 ``pick_cycle`` 的分支、出参的时序契约一起加回。
+    """
 
     model_config = _STRICT
 
     action: ActionType
-    # fps 只被抄进 GeneratedAction.fps 交给播放侧;逐帧时长另有来源(postprocess.
-    # frame_durations 按动作查表,**不看 fps**)。gt=0 是因为 0 对播放侧是除零/静止,
-    # 没有任何合法语义 —— 取值域写进约束,别让它靠"没人会传 0"活着。
-    fps: int = Field(default=10, gt=0)
-
-    # 循环模式。**注意:ai_engine 当前零消费方**(2026-08-08 复核:`grep 'action\.loop'`
-    # 零命中)。实际闭环行为写死在 slicing.pick_cycle 里——循环类动作一律抽单周期闭环
-    # (≈LINEAR),与本字段无关;传 PINGPONG / NONE 今天不会改变任何产出。保留字段是因为
-    # 它语义明确、无竞争真相源(与已删的 palette 不同),但**调用方别指望它生效**;
-    # 真要支持时连同 pick_cycle 的分支一起加,并在此删掉这段注释。
-    loop: LoopMode = LoopMode.LINEAR
 
     # 出帧数。**显式字段,不再由 len(poses) 推导**:视频路线根本不读 poses(见
     # strategy.concrete.VideoFrameStrategy),推导意味着"想要 16 帧就得先编 16 条用不上的

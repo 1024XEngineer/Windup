@@ -6,7 +6,6 @@ from windup_common.models.character import (
     CharacterView,
     Facing,
     GenRoute,
-    LoopMode,
     Stylize,
 )
 
@@ -15,7 +14,6 @@ __all__ = [
     "GenRoute",
     "Facing",
     "CharacterView",
-    "LoopMode",
     "Stylize",
     "DEFAULT_N_FRAMES",
     "CharacterCard",
