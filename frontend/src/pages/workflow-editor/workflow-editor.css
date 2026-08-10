@@ -205,16 +205,36 @@
   gap: 17px;
 }
 
-.workflow-card__saved-input {
+.workflow-card__field {
   display: grid;
   gap: 7px;
 }
 
-.workflow-card__saved-input > span,
-.workflow-card__saved-input > small {
+.workflow-card__field > span,
+.workflow-card__field > small {
   color: #626b64;
   font-size: 9px;
   font-weight: 750;
+}
+
+.workflow-card__field textarea {
+  width: 100%;
+  min-height: 84px;
+  padding: 10px 12px;
+  resize: vertical;
+  border: 1px solid var(--editor-line);
+  border-radius: 8px;
+  color: var(--editor-ink);
+  background: #fbfcfb;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.workflow-card__field textarea:focus {
+  border-color: #69866f;
+  outline: 2px solid rgb(105 134 111 / 18%);
+  outline-offset: 1px;
 }
 
 .workflow-card button {

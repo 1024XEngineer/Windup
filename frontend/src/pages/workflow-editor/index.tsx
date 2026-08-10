@@ -416,25 +416,38 @@ function CharacterSetupContent({
   node: CharacterSetupWorkflowNode
   input: ProjectionInput
 }) {
+  const [prompt, setPrompt] = useState(node.input.prompt)
+  useEffect(() => setPrompt(node.input.prompt), [node.id, node.input.prompt])
+
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.status === 'passed') return <p className="workflow-card__summary">角色描述已确认</p>
   return (
     <div className="workflow-card__stack nodrag nopan nowheel">
-      <div className="workflow-card__saved-input">
+      <label className="workflow-card__field">
         <span>角色描述</span>
-        <p>{node.input.prompt || '未提供角色描述'}</p>
+        <textarea
+          aria-label="角色描述"
+          rows={4}
+          value={prompt}
+          disabled={Boolean(input.busy)}
+          onChange={(event) => setPrompt(event.target.value)}
+        />
         {node.input.referenceMedia.length > 0 ? (
           <small>已关联 {node.input.referenceMedia.length} 个参考媒体</small>
         ) : null}
-      </div>
+      </label>
       <button
         type="button"
-        disabled={Boolean(input.busy) || !node.input.prompt.trim()}
+        disabled={Boolean(input.busy) || !prompt.trim()}
         onClick={() =>
           input.runCommand('character-template', () =>
             getController(input).generateCharacterTemplate(node.id, {
               spriteWidth: input.project.spriteSize.width,
               spriteHeight: input.project.spriteSize.height,
+              input: {
+                prompt,
+                referenceMedia: node.input.referenceMedia,
+              },
             }),
           )
         }
