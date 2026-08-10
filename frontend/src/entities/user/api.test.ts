@@ -41,6 +41,7 @@ describe('createUserApis', () => {
       .mockResolvedValueOnce(tokenResponse)
       .mockResolvedValueOnce(tokenResponse)
       .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(tokenResponse.user)
       .mockResolvedValueOnce(null)
 
     const apis = createUserApis({ client })
@@ -59,6 +60,7 @@ describe('createUserApis', () => {
     await apis.loginByCode({ email: 'reader@example.com', code: '123456' })
     await apis.refresh('refresh-token')
     await apis.logout('refresh-token')
+    await apis.updateNickname('New Reader')
     await apis.changePassword({ oldPassword: 'password-123', newPassword: 'new-password-123' })
 
     expect(request.mock.calls).toEqual([
@@ -100,6 +102,7 @@ describe('createUserApis', () => {
       ],
       ['/auth/refresh', { method: 'POST', json: { refresh_token: 'refresh-token' } }],
       ['/auth/logout', { method: 'POST', json: { refresh_token: 'refresh-token' } }],
+      ['/auth/profile', { method: 'PATCH', json: { nickname: 'New Reader' } }],
       [
         '/auth/change-password',
         {
@@ -108,6 +111,22 @@ describe('createUserApis', () => {
         },
       ],
     ])
+  })
+
+  it('maps the updated profile response back to the user model', async () => {
+    request.mockResolvedValue({
+      ...tokenResponse.user,
+      nickname: 'New Reader',
+    })
+    const apis = createUserApis({ client })
+
+    await expect(apis.updateNickname('New Reader')).resolves.toEqual({
+      id: '7',
+      email: 'reader@example.com',
+      nickname: 'New Reader',
+      emailVerifiedAt: '2026-08-07T01:02:03Z',
+      statusCode: 37,
+    })
   })
 
   it('maps token and current-user payloads while preserving an unknown numeric status', async () => {
