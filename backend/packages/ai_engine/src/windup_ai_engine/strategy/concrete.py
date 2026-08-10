@@ -27,14 +27,7 @@ from windup_ai_engine.prompt import (
     build_jump_prompt,
     build_walk_prompt,
 )
-from windup_ai_engine.strategy.base import DerivationStrategy
-
-
-
-
-# 循环类动作走"步态周期抽单周期闭环";一次性动作**不能闭环**(首尾姿态不同,强行闭环
-# 会把落地帧接回蓄力帧=抽搐),改走"裁动作区间 + 区间内均匀取"。
-CYCLIC_ACTIONS = frozenset({ActionType.IDLE, ActionType.WALK, ActionType.RUN})
+from windup_ai_engine.strategy.base import CYCLIC_ACTIONS, DerivationStrategy
 
 
 class VideoFrameStrategy(DerivationStrategy):
