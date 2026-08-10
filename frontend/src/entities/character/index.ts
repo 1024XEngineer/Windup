@@ -38,6 +38,8 @@ export interface Outfit {
 export interface Character {
   id: string
   projectId: string
+  /** 角色由哪一条制作流程产出；Workflow Editor 以它落实单画布单角色。 */
+  workflowRunId: string
   name: string | null
   description: string | null
   referenceImageUrl: string | null
@@ -50,6 +52,7 @@ export interface Character {
 /** 创建 Character 记录的字段；生成流程由 Workflow Editor 负责。 */
 export interface CreateCharacterInput {
   projectId: string
+  workflowRunId: string
   name?: string | null
   description?: string | null
   referenceImageUrl?: string | null
@@ -99,6 +102,7 @@ interface CharacterDataDto {
 interface CharacterDto {
   id: number
   project_id: number
+  workflow_run_id: number
   name: string | null
   description: string | null
   reference_image_url: string | null
@@ -149,6 +153,7 @@ function mapCharacter(dto: CharacterDto): Character {
   return {
     id: characterId,
     projectId: String(dto.project_id),
+    workflowRunId: String(dto.workflow_run_id),
     name: dto.name,
     description: dto.description,
     referenceImageUrl: dto.reference_image_url,
@@ -215,6 +220,7 @@ export const characterApis: CharacterApis = {
       method: 'POST',
       json: {
         project_id: toBackendId(input.projectId, 'projectId'),
+        workflow_run_id: toBackendId(input.workflowRunId, 'workflowRunId'),
         name: input.name,
         description: input.description,
         reference_image_url: input.referenceImageUrl,
