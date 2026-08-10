@@ -83,15 +83,25 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(defaultSessionLoader).toHaveBeenCalledWith('42')
   })
 
-  it('只展示 WorkflowRun 已保存的角色提示词，不伪造未入主仓库契约的编辑字段', async () => {
-    defaultSessionLoader.mockResolvedValue(createSession())
+  it('在角色设定卡片提交描述后由 Controller 持久化并固定输入', async () => {
+    const session = createSession()
+    defaultSessionLoader.mockResolvedValue(session)
 
     renderEditor('/workflow-editor/42')
 
-    expect(await screen.findByText('短发少年冒险家')).toBeTruthy()
+    const promptInput = await screen.findByRole('textbox', { name: '角色描述' })
     expect(screen.queryByRole('textbox', { name: /角色名称/ })).toBeNull()
-    expect(screen.queryByRole('textbox', { name: /角色描述/ })).toBeNull()
-    expect(screen.getByRole('button', { name: '生成角色候选' })).toBeTruthy()
+    fireEvent.change(promptInput, { target: { value: '戴红围巾的短发少年冒险家' } })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色候选' }))
+
+    await waitFor(() =>
+      expect(session.controller.getWorkflow().nodes[0]).toMatchObject({
+        status: 'passed',
+        phase: 'completed',
+        input: { prompt: '戴红围巾的短发少年冒险家', referenceMedia: [] },
+      }),
+    )
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: '角色描述' })).toBeNull())
   })
 
   it('真实 Generation 尚未实现时展示接口错误，不回退到演示候选', async () => {
