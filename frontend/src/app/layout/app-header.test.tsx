@@ -28,6 +28,7 @@ function createApis(): UserApis & Record<keyof UserApis, ReturnType<typeof vi.fn
     refresh: vi.fn(async () => tokens()),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => user),
+    updateNickname: vi.fn(async () => user),
     changePassword: vi.fn(async () => undefined),
   }
 }
@@ -104,5 +105,16 @@ describe('AppHeader', () => {
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/'))
     expect(await screen.findByRole('link', { name: '登录 / 注册' })).toBeTruthy()
     expect(apis.logout).toHaveBeenCalledWith('rotated-refresh-token')
+  })
+
+  it('让登录用户从 Header 的账号信息进入账号中心', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    renderHeader('/account')
+
+    const account = await screen.findByRole('link', { name: '打开账号中心' })
+    expect(account.getAttribute('href')).toBe('/account')
+    expect(account.getAttribute('aria-current')).toBe('page')
+    expect(account.textContent).toContain('Reader')
+    expect(screen.getByText('资料与登录安全')).toBeTruthy()
   })
 })
