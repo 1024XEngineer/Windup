@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { type ReactNode } from 'react'
+import { StrictMode, type ReactNode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
@@ -174,6 +174,29 @@ describe('AccountPanel', () => {
 
     await act(async () => vi.advanceTimersByTimeAsync(900))
     expect(screen.getByTestId('location').textContent).toBe('/projects?view=recent')
+  })
+
+  it('completes safe return navigation under the production StrictMode lifecycle', async () => {
+    vi.useFakeTimers()
+    const apis = createApis()
+    render(
+      <StrictMode>
+        <AuthSessionProvider apis={apis}>
+          <MemoryRouter initialEntries={['/?account=login&returnTo=%2Fprojects']}>
+            <AccountPanel />
+            <LocationProbe />
+          </MemoryRouter>
+        </AuthSessionProvider>
+      </StrictMode>,
+    )
+    fillCodeLogin()
+
+    fireEvent.submit(screen.getByRole('button', { name: '登录' }).closest('form')!)
+    await act(async () => Promise.resolve())
+
+    expect(screen.getByText(/登录成功/)).toBeTruthy()
+    await act(async () => vi.advanceTimersByTimeAsync(900))
+    expect(screen.getByTestId('location').textContent).toBe('/projects')
   })
 
   it('does not navigate after the panel closes while a submission is pending', async () => {
