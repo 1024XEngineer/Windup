@@ -9,19 +9,19 @@ afterEach(() => {
 })
 
 describe('MediaApis.upload', () => {
-  it('使用当前登录令牌上传受保护的媒体资源', async () => {
+  it('uses the current access token for protected uploads', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8000')
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({
         url: 'https://cdn.example.com/media/reference.png',
-        object_key: 'media/general/reference.png',
+        object_key: 'media/reference.png',
         filename: 'reference.png',
         content_type: 'image/png',
         size: 4,
       }),
     )
     vi.stubGlobal('fetch', fetchMock)
-    const unregister = registerApiAccessTokenProvider(() => 'current-access-token')
+    const unregister = registerApiAccessTokenProvider(() => 'access-token')
 
     try {
       await createMediaApis().upload(imageFile())
@@ -30,7 +30,7 @@ describe('MediaApis.upload', () => {
     }
 
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit
-    expect(new Headers(init.headers).get('authorization')).toBe('Bearer current-access-token')
+    expect(new Headers(init.headers).get('authorization')).toBe('Bearer access-token')
   })
 
   it('登录令牌过期时刷新令牌并重放同一次上传', async () => {
@@ -71,7 +71,6 @@ describe('MediaApis.upload', () => {
 
     expect(authorizations).toEqual(['Bearer expired-token', 'Bearer renewed-token'])
   })
-
   it('把图片和默认查询分类交给后端，并返回经过校验的媒体引用', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8000')
     const fetchMock = vi.fn().mockResolvedValue(
@@ -166,7 +165,7 @@ describe('MediaApis.upload', () => {
     })
   })
 
-  it('把非成功 HTTP 响应归类为传输错误', async () => {
+  it('保留非成功 HTTP 响应的状态和后端错误信息', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8000')
     vi.stubGlobal(
       'fetch',
@@ -202,6 +201,7 @@ describe('MediaApis.upload', () => {
       name: 'ApiError',
       kind: 'invalid-response',
       status: 200,
+      message: '后端响应格式无效',
     })
   })
 

@@ -51,7 +51,7 @@ export type {
 } from './generation'
 
 /* 媒体上传 —— 页面只依赖公开工厂与不透明引用，不处理 multipart 协议。 */
-export { createMediaApis, MediaContractError } from './media'
+export { createMediaApis } from './media/api'
 export type { MediaApis, MediaCategory, MediaReference } from './media'
 
 /* 工作流 —— 前端管理节点，后端只持久化完整 nodes 文档 */

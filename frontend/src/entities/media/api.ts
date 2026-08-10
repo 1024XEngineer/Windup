@@ -38,17 +38,11 @@ export function createMediaApis(): MediaApis {
       const formData = new FormData()
       formData.append('file', file)
 
-      // 复用统一客户端，确保 multipart 请求与其他业务请求共享认证和 401 恢复。
-      // 不设置 Content-Type，浏览器会为当前 FormData 自动补上 boundary。
+      // 复用统一客户端，让 multipart 上传共享登录令牌、401 恢复和取消语义。
+      // 不手动设置 Content-Type，浏览器会为 FormData 自动附加 boundary。
       const result = await createApiClient({ getAccessToken: getApiAccessToken }).request<unknown>(
         '/media/upload',
-        {
-          method: 'POST',
-          body: formData,
-          signal,
-          // main 的 FastAPI 路由只把 file 声明为 File；category 属于查询参数。
-          query: { category },
-        },
+        { method: 'POST', body: formData, signal, query: { category } },
       )
       return parseMediaReference(result)
     },
