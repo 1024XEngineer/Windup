@@ -229,24 +229,27 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
   })
 
-  it('审核按钮通过会话发布资产，不直接把 WorkflowRun 标记为通过', async () => {
-    const approveAndPublishReview = vi.fn(async () => undefined)
+  it('发布成功但审核保存失败时仍显式刷新 Character', async () => {
+    const publishReviewedAction = vi.fn(async () => characterFixture())
     const session = createSession(reviewingActionWorkflow(), {
-      character: characterFixture(),
+      character: { ...characterFixture(), outfits: [] },
       generationApis: generationApisFixture({
         get: vi.fn().mockResolvedValue(completeAnimationGeneration()),
       }),
-      approveAndPublishReview,
+      publishReviewedAction,
     })
+    vi.spyOn(session.controller, 'approveReview').mockRejectedValue(new Error('审核保存失败'))
     defaultSessionLoader.mockResolvedValue(session)
     renderEditor('/workflow-editor/42')
 
     fireEvent.click(await screen.findByRole('button', { name: '审核通过' }))
 
-    await waitFor(() => expect(approveAndPublishReview).toHaveBeenCalledWith('action-walk:review'))
-    expect(
-      session.controller.getWorkflow().nodes.find((node) => node.id === 'action-walk:review'),
-    ).toMatchObject({ status: 'active', phase: 'reviewing' })
+    expect((await screen.findByRole('alert')).textContent).toContain('审核保存失败')
+    expect(publishReviewedAction).toHaveBeenCalledWith('action-walk:review')
+    fireEvent.click(screen.getByRole('button', { name: '添加动作分支' }))
+    expect((screen.getByRole('button', { name: '生成动作 ›' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    )
   })
 
   it('失败节点可以从当前节点重做', async () => {
@@ -426,7 +429,7 @@ function renderEditor(path: string) {
 interface SessionFixtureOptions {
   character?: Character | null
   generationApis?: GenerationApis
-  approveAndPublishReview?(reviewNodeId: string): Promise<void>
+  publishReviewedAction?(reviewNodeId: string): Promise<Character>
 }
 
 function createSession(
@@ -459,8 +462,8 @@ function createSession(
     controller,
     project: projectFixture(),
     character: options.character ?? null,
-    approveAndPublishReview:
-      options.approveAndPublishReview ?? ((reviewNodeId) => controller.approveReview(reviewNodeId)),
+    publishReviewedAction:
+      options.publishReviewedAction ?? (() => Promise.reject(new Error('资产发布未装配'))),
     subscribeErrors: () => () => undefined,
     dispose: () => controller.dispose(),
   }
@@ -680,7 +683,7 @@ function createGenerationRaceSession(
     controller,
     project: projectFixture(),
     character: null,
-    approveAndPublishReview: vi.fn(async () => undefined),
+    publishReviewedAction: vi.fn(async () => Promise.reject(new Error('资产发布未装配'))),
     subscribeErrors: () => () => undefined,
     dispose: () => controller.dispose(),
   }
@@ -734,7 +737,7 @@ function createRestartSelectionSession(): {
       controller,
       project: projectFixture(),
       character: null,
-      approveAndPublishReview: vi.fn(async () => undefined),
+      publishReviewedAction: vi.fn(async () => Promise.reject(new Error('资产发布未装配'))),
       subscribeErrors: () => () => undefined,
       dispose: () => controller.dispose(),
     },

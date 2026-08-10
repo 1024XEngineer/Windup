@@ -36,8 +36,8 @@ describe('Character asset publisher', () => {
 
     expect(updates).toHaveLength(1)
     expect(published).toMatchObject({
-      description: '戴红围巾的像素骑士',
-      referenceImageUrl: 'https://assets.windup.test/master.png',
+      description: '人工维护的角色描述',
+      referenceImageUrl: 'https://assets.windup.test/current-master.png',
     })
     expect(published.outfits[0]).toMatchObject({
       id: 'outfit-default',
@@ -126,8 +126,8 @@ function characterFixture(): Character {
     projectId: '42',
     workflowRunId: '120',
     name: '骑士',
-    description: null,
-    referenceImageUrl: null,
+    description: '人工维护的角色描述',
+    referenceImageUrl: 'https://assets.windup.test/current-master.png',
     dataVersion: 1,
     status: 1,
     outfits: [

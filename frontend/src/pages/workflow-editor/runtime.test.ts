@@ -146,7 +146,7 @@ describe('createRealWorkflowEditorSession', () => {
     expect(pageError).toHaveBeenCalledWith(expect.objectContaining({ message: '异步保存回调失败' }))
   })
 
-  it('先发布 Character 动作资产，再把审核节点标记为通过', async () => {
+  it('发布 Character 动作资产后由调用方单独推进审核节点', async () => {
     const events: string[] = []
     const workflow = reviewingWorkflowFixture()
     const session = await createRealWorkflowEditorSession('42', {
@@ -180,14 +180,19 @@ describe('createRealWorkflowEditorSession', () => {
       onAsyncError: vi.fn(),
     })
 
-    await (
-      session as unknown as { approveAndPublishReview(reviewNodeId: string): Promise<void> }
-    ).approveAndPublishReview('action-walk:review')
+    const published = await session.publishReviewedAction('action-walk:review')
 
-    expect(events).toEqual(['publish', 'approve'])
-    expect(session.character?.outfits[0]?.actions).toEqual([
+    expect(events).toEqual(['publish'])
+    expect(published.outfits[0]?.actions).toEqual([
       expect.objectContaining({ id: 'action-walk', frameCount: 2 }),
     ])
+    expect(
+      session.controller.getWorkflow().nodes.find((node) => node.id === 'action-walk:review'),
+    ).toMatchObject({ status: 'active', phase: 'reviewing' })
+
+    await session.controller.approveReview('action-walk:review')
+
+    expect(events).toEqual(['publish', 'approve'])
     expect(
       session.controller.getWorkflow().nodes.find((node) => node.id === 'action-walk:review'),
     ).toMatchObject({ status: 'passed', phase: 'completed' })
