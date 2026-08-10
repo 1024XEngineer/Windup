@@ -18,20 +18,18 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from windup_app.server.workflow_run.model import (
-    RunStatus,
-    WorkflowRun,
-)
+from sqlalchemy.orm import Session
+
+from windup_app.server.workflow_run.model import RunStatus, WorkflowRun
 
 
 class WorkflowRunService(ABC):
     """执行记录用例的抽象边界。"""
 
-    # -- 执行记录 CRUD --------------------------------------------------------
-
     @abstractmethod
     def create_run(
         self,
+        session: Session,
         *,
         project_id: int,
         nodes: list | None = None,
@@ -42,22 +40,35 @@ class WorkflowRunService(ABC):
         """
 
     @abstractmethod
-    def get_run(self, run_id: int) -> WorkflowRun | None:
+    def get_run(self, session: Session, run_id: int) -> WorkflowRun | None:
         """获取执行记录详情（含 nodes JSONB）。"""
+
+    @abstractmethod
+    def list_runs(
+        self,
+        session: Session,
+        *,
+        project_id: int,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[WorkflowRun], int]:
+        """分页查询项目下的执行记录，返回 (当前页数据, 总数)。"""
 
     @abstractmethod
     def update_run(
         self,
+        session: Session,
         run_id: int,
         *,
         nodes: list | None = None,
         status: RunStatus | None = None,
-    ) -> WorkflowRun:
-        """全量更新执行记录。
+    ) -> WorkflowRun | None:
+        """更新执行记录。
 
         前端维护节点树后，通过此接口全量写回。
+        返回更新后的记录；不存在时返回 None。
         """
 
     @abstractmethod
-    def delete_run(self, run_id: int) -> None:
-        """软删除执行记录。"""
+    def delete_run(self, session: Session, run_id: int) -> bool:
+        """软删除执行记录。返回是否找到。"""
