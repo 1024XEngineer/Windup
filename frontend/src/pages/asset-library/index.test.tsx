@@ -58,15 +58,16 @@ describe('AssetLibraryPage', () => {
     )
 
     expect(await screen.findAllByRole('link', { name: /查看角色/ })).toHaveLength(24)
+    const requestsBeforePaging = backend.requests.filter((request) =>
+      request.url.includes('/characters?project_id=42'),
+    ).length
     fireEvent.click(screen.getByRole('button', { name: '下一页' }))
 
     await waitFor(() => {
       expect(screen.getAllByRole('link', { name: /查看角色/ })).toHaveLength(1)
     })
     expect(
-      backend.requests.some((request) =>
-        request.url.includes('/characters?project_id=42&page=1&page_size=100'),
-      ),
-    ).toBe(true)
+      backend.requests.filter((request) => request.url.includes('/characters?project_id=42')),
+    ).toHaveLength(requestsBeforePaging)
   })
 })

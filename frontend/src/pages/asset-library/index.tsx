@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
 import {
@@ -19,7 +19,7 @@ function characterName(character: Character) {
 export function AssetLibraryPage() {
   const { projectId } = useParams()
   const [pageNumber, setPageNumber] = useState(1)
-  const [charactersPage, setCharactersPage] = useState<Paged<Character> | null>(null)
+  const [characters, setCharacters] = useState<Character[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -31,22 +31,13 @@ export function AssetLibraryPage() {
       }
     }
 
-    setCharactersPage(null)
+    setPageNumber(1)
+    setCharacters(null)
     setError(null)
     void loadAllCharactersByProject(characterApis, projectId).then(
       (items) => {
         if (!active) return
-        const published = items.filter(isPublishedCharacter)
-        const total = published.length
-        const lastPage = Math.max(1, Math.ceil(total / CHARACTER_PAGE_SIZE))
-        const currentPage = Math.min(pageNumber, lastPage)
-        const start = (currentPage - 1) * CHARACTER_PAGE_SIZE
-        setCharactersPage({
-          items: published.slice(start, start + CHARACTER_PAGE_SIZE),
-          total,
-          page: currentPage,
-          pageSize: CHARACTER_PAGE_SIZE,
-        })
+        setCharacters(items.filter(isPublishedCharacter))
       },
       () => {
         if (active) setError('资产库暂时无法读取')
@@ -55,7 +46,21 @@ export function AssetLibraryPage() {
     return () => {
       active = false
     }
-  }, [pageNumber, projectId])
+  }, [projectId])
+
+  const charactersPage = useMemo<Paged<Character> | null>(() => {
+    if (characters === null) return null
+    const total = characters.length
+    const lastPage = Math.max(1, Math.ceil(total / CHARACTER_PAGE_SIZE))
+    const currentPage = Math.min(pageNumber, lastPage)
+    const start = (currentPage - 1) * CHARACTER_PAGE_SIZE
+    return {
+      items: characters.slice(start, start + CHARACTER_PAGE_SIZE),
+      total,
+      page: currentPage,
+      pageSize: CHARACTER_PAGE_SIZE,
+    }
+  }, [characters, pageNumber])
 
   return (
     <section aria-labelledby="asset-library-title" className="min-h-full min-w-0">

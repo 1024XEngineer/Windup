@@ -29,22 +29,22 @@ export function ProjectDetailPage() {
     }
 
     setProject(null)
+    setCharacterCount(0)
     setError(null)
-    void Promise.allSettled([
-      projectApis.get(projectId),
-      loadAllCharactersByProject(characterApis, projectId),
-    ]).then(([projectResult, characterResult]) => {
-      if (!active) return
-      if (projectResult.status === 'rejected') {
-        setError('这个项目不存在或暂时无法读取')
-        return
-      }
-
-      setProject(projectResult.value)
-      if (characterResult.status === 'fulfilled') {
-        setCharacterCount(characterResult.value.filter(isPublishedCharacter).length)
-      }
-    })
+    void projectApis.get(projectId).then(
+      (nextProject) => {
+        if (active) setProject(nextProject)
+      },
+      () => {
+        if (active) setError('这个项目不存在或暂时无法读取')
+      },
+    )
+    void loadAllCharactersByProject(characterApis, projectId).then(
+      (characters) => {
+        if (active) setCharacterCount(characters.filter(isPublishedCharacter).length)
+      },
+      () => undefined,
+    )
 
     return () => {
       active = false

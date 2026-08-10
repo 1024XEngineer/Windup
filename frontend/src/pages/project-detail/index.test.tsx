@@ -62,4 +62,25 @@ describe('ProjectDetailPage', () => {
     expect(screen.queryByRole('alert')).toBeNull()
     expect(await screen.findByRole('heading', { name: '轻装信使' })).toBeTruthy()
   })
+
+  it('renders the Project workspace without waiting for the character count request', async () => {
+    const backend = createProjectAssetsBackend()
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      if (request.url.includes('/characters?project_id=42')) {
+        return new Promise<Response>(() => undefined)
+      }
+      return backend.fetch(input, init)
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/42/assets']}>
+        <AppRoutes />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('heading', { name: '点灯人 · MVP' })).toBeTruthy()
+    expect(screen.getByText('64 × 64')).toBeTruthy()
+  })
 })
