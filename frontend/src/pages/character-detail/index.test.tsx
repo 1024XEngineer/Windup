@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 
 import { AppRoutes } from '@/app'
+import { AuthenticatedAuthSession } from '@/test/auth-session'
 import { createProjectAssetsBackend } from '@/test/project-assets-backend'
 
 afterEach(() => {
@@ -17,9 +18,11 @@ function renderCharacter(characterId: string) {
   vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
   vi.stubGlobal('fetch', backend.fetch)
   return render(
-    <MemoryRouter initialEntries={[`/projects/42/assets/${characterId}`]}>
-      <AppRoutes />
-    </MemoryRouter>,
+    <AuthenticatedAuthSession>
+      <MemoryRouter initialEntries={[`/projects/42/assets/${characterId}`]}>
+        <AppRoutes />
+      </MemoryRouter>
+    </AuthenticatedAuthSession>,
   )
 }
 

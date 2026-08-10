@@ -123,13 +123,14 @@ function AccountPanelDialog() {
     }
   }, [])
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // StrictMode 会用一次 setup → cleanup → setup 检查副作用；第二次 setup 代表组件仍然存活。
+    dismissedRef.current = false
+    return () => {
       dismissedRef.current = true
       if (navigationTimerRef.current) window.clearTimeout(navigationTimerRef.current)
-    },
-    [],
-  )
+    }
+  }, [])
 
   function close() {
     dismissedRef.current = true

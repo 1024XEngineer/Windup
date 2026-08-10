@@ -10,6 +10,7 @@ import { ProjectCreatePage } from '@/pages/project-create'
 import { ProjectsPage } from '@/pages/projects'
 import { QuickStartPage } from '@/pages/quick-start'
 import { WorkflowEditorPage } from '@/pages/workflow-editor'
+import { ProtectedRoute } from '@/features/auth-guard'
 import { AppShellRoute } from './layout'
 
 /**
@@ -32,19 +33,23 @@ export function AppRoutes() {
     <Routes>
       <Route element={<AppShellRoute />}>
         <Route path="/" element={<HomePage />} />
-        <Route path="/quick-start" element={<QuickStartPage />} />
-        <Route path="/quick-start/:runId" element={<QuickStartPage />} />
-        <Route path="/projects" element={<ProjectsPage />} />
-        <Route path="/projects/new" element={<ProjectCreatePage />} />
-        <Route path="/workflow-editor/:runId" element={<WorkflowEditorPage />} />
-        <Route path="/workflow-editor/:runId/:stage" element={<WorkflowEditorPage />} />
-        <Route path="/playtest/:characterId/:outfitId" element={<PlaytestPage />} />
+        <Route element={<ProtectedRoute />}>
+          <Route path="/quick-start" element={<QuickStartPage />} />
+          <Route path="/quick-start/:runId" element={<QuickStartPage />} />
+          <Route path="/projects" element={<ProjectsPage />} />
+          <Route path="/projects/new" element={<ProjectCreatePage />} />
+          <Route path="/workflow-editor/:runId" element={<WorkflowEditorPage />} />
+          <Route path="/workflow-editor/:runId/:stage" element={<WorkflowEditorPage />} />
+          <Route path="/playtest/:characterId/:outfitId" element={<PlaytestPage />} />
+        </Route>
         <Route path="*" element={<NotFoundPage />} />
       </Route>
-      <Route path="/projects/:projectId" element={<ProjectDetailPage />}>
-        <Route index element={<Navigate replace to="assets" />} />
-        <Route path="assets" element={<AssetLibraryPage />} />
-        <Route path="assets/:characterId" element={<CharacterDetailPage />} />
+      <Route element={<ProtectedRoute />}>
+        <Route path="/projects/:projectId" element={<ProjectDetailPage />}>
+          <Route index element={<Navigate replace to="assets" />} />
+          <Route path="assets" element={<AssetLibraryPage />} />
+          <Route path="assets/:characterId" element={<CharacterDetailPage />} />
+        </Route>
       </Route>
     </Routes>
   )

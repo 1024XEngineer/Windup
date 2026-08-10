@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 
 import { AppRoutes } from '@/app'
+import { AuthenticatedAuthSession } from '@/test/auth-session'
 import { createProjectAssetsBackend } from '@/test/project-assets-backend'
 
 afterEach(() => {
@@ -17,9 +18,11 @@ function renderRoute(route: string) {
   vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
   vi.stubGlobal('fetch', backend.fetch)
   return render(
-    <MemoryRouter initialEntries={[route]}>
-      <AppRoutes />
-    </MemoryRouter>,
+    <AuthenticatedAuthSession>
+      <MemoryRouter initialEntries={[route]}>
+        <AppRoutes />
+      </MemoryRouter>
+    </AuthenticatedAuthSession>,
   )
 }
 
@@ -52,9 +55,11 @@ describe('AssetLibraryPage', () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
     vi.stubGlobal('fetch', backend.fetch)
     render(
-      <MemoryRouter initialEntries={['/projects/42/assets']}>
-        <AppRoutes />
-      </MemoryRouter>,
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects/42/assets']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
     )
 
     expect(await screen.findAllByRole('link', { name: /查看角色/ })).toHaveLength(24)
