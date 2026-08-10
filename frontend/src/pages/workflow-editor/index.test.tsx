@@ -229,6 +229,26 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
   })
 
+  it('审核按钮通过会话发布资产，不直接把 WorkflowRun 标记为通过', async () => {
+    const approveAndPublishReview = vi.fn(async () => undefined)
+    const session = createSession(reviewingActionWorkflow(), {
+      character: characterFixture(),
+      generationApis: generationApisFixture({
+        get: vi.fn().mockResolvedValue(completeAnimationGeneration()),
+      }),
+      approveAndPublishReview,
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '审核通过' }))
+
+    await waitFor(() => expect(approveAndPublishReview).toHaveBeenCalledWith('action-walk:review'))
+    expect(
+      session.controller.getWorkflow().nodes.find((node) => node.id === 'action-walk:review'),
+    ).toMatchObject({ status: 'active', phase: 'reviewing' })
+  })
+
   it('失败节点可以从当前节点重做', async () => {
     const session = createSession(failedTemplateWorkflow())
     defaultSessionLoader.mockResolvedValue(session)
@@ -406,6 +426,7 @@ function renderEditor(path: string) {
 interface SessionFixtureOptions {
   character?: Character | null
   generationApis?: GenerationApis
+  approveAndPublishReview?(reviewNodeId: string): Promise<void>
 }
 
 function createSession(
@@ -438,6 +459,8 @@ function createSession(
     controller,
     project: projectFixture(),
     character: options.character ?? null,
+    approveAndPublishReview:
+      options.approveAndPublishReview ?? ((reviewNodeId) => controller.approveReview(reviewNodeId)),
     subscribeErrors: () => () => undefined,
     dispose: () => controller.dispose(),
   }
@@ -527,6 +550,59 @@ function completedTemplateWorkflow(id: string): WorkflowRun {
   }
 }
 
+function reviewingActionWorkflow(): WorkflowRun {
+  const workflow = completedTemplateWorkflow('42')
+  workflow.version = 7
+  workflow.nodes.push(
+    {
+      id: 'action-walk',
+      type: 'action-first-frame',
+      status: 'passed',
+      phase: 'completed',
+      dependsOnNodeIds: ['character-template'],
+      generations: [],
+      error: null,
+      input: {
+        outfitId: 'day',
+        name: '行走',
+        type: 'walk',
+        prompt: null,
+        fps: 12,
+      },
+      selectedFirstFrameUrl: 'https://assets.windup.test/walk-01.png',
+    },
+    {
+      id: 'action-walk:method',
+      type: 'action-generation-method',
+      status: 'passed',
+      phase: 'completed',
+      dependsOnNodeIds: ['action-walk'],
+      generations: [],
+      error: null,
+      method: 'video-cropping',
+    },
+    {
+      id: 'action-walk:full-frame',
+      type: 'action-full-frame',
+      status: 'passed',
+      phase: 'completed',
+      dependsOnNodeIds: ['action-walk:method'],
+      generations: [{ taskId: 'generation-walk', role: 'complete_animation' }],
+      error: null,
+    },
+    {
+      id: 'action-walk:review',
+      type: 'review',
+      status: 'active',
+      phase: 'reviewing',
+      dependsOnNodeIds: ['action-walk:full-frame'],
+      generations: [],
+      error: null,
+    },
+  )
+  return workflow
+}
+
 function failedTemplateWorkflow(): WorkflowRun {
   const workflow = completedTemplateWorkflow('42')
   workflow.nodes[1] = {
@@ -604,6 +680,7 @@ function createGenerationRaceSession(
     controller,
     project: projectFixture(),
     character: null,
+    approveAndPublishReview: vi.fn(async () => undefined),
     subscribeErrors: () => () => undefined,
     dispose: () => controller.dispose(),
   }
@@ -657,6 +734,7 @@ function createRestartSelectionSession(): {
       controller,
       project: projectFixture(),
       character: null,
+      approveAndPublishReview: vi.fn(async () => undefined),
       subscribeErrors: () => () => undefined,
       dispose: () => controller.dispose(),
     },
@@ -673,6 +751,23 @@ function characterGeneration(label: string): Generation {
     result: {
       type: 'character_template',
       images: [{ url: `https://assets.windup.test/${label}.png` }],
+    },
+    error: null,
+  }
+}
+
+function completeAnimationGeneration(): Generation<'complete_animation'> {
+  return {
+    id: 'generation-walk',
+    projectId: '1',
+    type: 'complete_animation',
+    status: 'completed',
+    result: {
+      type: 'complete_animation',
+      frames: [
+        { url: 'https://assets.windup.test/walk-01.png' },
+        { url: 'https://assets.windup.test/walk-02.png' },
+      ],
     },
     error: null,
   }

@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { Character, GenerationApis, Project, WorkflowRun, WorkflowRunApis } from '@/entities'
+import type {
+  Character,
+  Generation,
+  GenerationApis,
+  Project,
+  WorkflowRun,
+  WorkflowRunApis,
+} from '@/entities'
 import { createRealWorkflowEditorSession, createUnavailableGenerationApis } from './runtime'
 
 describe('createRealWorkflowEditorSession', () => {
@@ -36,6 +43,7 @@ describe('createRealWorkflowEditorSession', () => {
           page: 2,
           pageSize: 100,
         }),
+      update: vi.fn(),
     }
 
     const session = await createRealWorkflowEditorSession('42', {
@@ -72,6 +80,7 @@ describe('createRealWorkflowEditorSession', () => {
         page: 1,
         pageSize: 100,
       }),
+      update: vi.fn(),
     }
 
     await expect(
@@ -117,6 +126,7 @@ describe('createRealWorkflowEditorSession', () => {
           page: 1,
           pageSize: 100,
         }),
+        update: vi.fn(),
       },
       onAsyncError,
     })
@@ -134,6 +144,53 @@ describe('createRealWorkflowEditorSession', () => {
       expect.objectContaining({ message: '异步保存回调失败' }),
     )
     expect(pageError).toHaveBeenCalledWith(expect.objectContaining({ message: '异步保存回调失败' }))
+  })
+
+  it('先发布 Character 动作资产，再把审核节点标记为通过', async () => {
+    const events: string[] = []
+    const workflow = reviewingWorkflowFixture()
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(workflow),
+        update: vi.fn(async (run) => {
+          events.push('approve')
+          return { ...structuredClone(run), version: run.version + 1 }
+        }),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn().mockResolvedValue(completeAnimationFixture()),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({
+          items: [characterWithOutfitFixture()],
+          total: 1,
+          page: 1,
+          pageSize: 100,
+        }),
+        update: vi.fn(async (character) => {
+          events.push('publish')
+          return structuredClone(character)
+        }),
+      },
+      onAsyncError: vi.fn(),
+    })
+
+    await (
+      session as unknown as { approveAndPublishReview(reviewNodeId: string): Promise<void> }
+    ).approveAndPublishReview('action-walk:review')
+
+    expect(events).toEqual(['publish', 'approve'])
+    expect(session.character?.outfits[0]?.actions).toEqual([
+      expect.objectContaining({ id: 'action-walk', frameCount: 2 }),
+    ])
+    expect(
+      session.controller.getWorkflow().nodes.find((node) => node.id === 'action-walk:review'),
+    ).toMatchObject({ status: 'passed', phase: 'completed' })
   })
 })
 
@@ -197,6 +254,115 @@ function characterFixture(): Character {
     dataVersion: 1,
     status: 1,
     outfits: [],
+  }
+}
+
+function characterWithOutfitFixture(): Character {
+  return {
+    ...characterFixture(),
+    outfits: [
+      {
+        id: 'outfit-default',
+        characterId: '9',
+        name: '常态造型',
+        description: null,
+        previewUrl: null,
+        actions: [],
+      },
+    ],
+  }
+}
+
+function reviewingWorkflowFixture(): WorkflowRun {
+  return {
+    id: '42',
+    projectId: '1',
+    version: 7,
+    storageStatus: 'active',
+    nodes: [
+      {
+        id: 'setup',
+        type: 'character-setup',
+        status: 'passed',
+        phase: 'completed',
+        dependsOnNodeIds: [],
+        generations: [],
+        error: null,
+        input: { prompt: '冒险家', referenceMedia: [] },
+      },
+      {
+        id: 'template',
+        type: 'character-template',
+        status: 'passed',
+        phase: 'completed',
+        dependsOnNodeIds: ['setup'],
+        generations: [],
+        error: null,
+        selectedImageUrl: 'https://assets.windup.test/master.png',
+      },
+      {
+        id: 'action-walk',
+        type: 'action-first-frame',
+        status: 'passed',
+        phase: 'completed',
+        dependsOnNodeIds: ['template'],
+        generations: [],
+        error: null,
+        input: {
+          outfitId: 'outfit-default',
+          name: '行走',
+          type: 'walk',
+          prompt: null,
+          fps: 12,
+        },
+        selectedFirstFrameUrl: 'https://assets.windup.test/walk-01.png',
+      },
+      {
+        id: 'action-walk:method',
+        type: 'action-generation-method',
+        status: 'passed',
+        phase: 'completed',
+        dependsOnNodeIds: ['action-walk'],
+        generations: [],
+        error: null,
+        method: 'video-cropping',
+      },
+      {
+        id: 'action-walk:full-frame',
+        type: 'action-full-frame',
+        status: 'passed',
+        phase: 'completed',
+        dependsOnNodeIds: ['action-walk:method'],
+        generations: [{ taskId: 'generation-walk', role: 'complete_animation' }],
+        error: null,
+      },
+      {
+        id: 'action-walk:review',
+        type: 'review',
+        status: 'active',
+        phase: 'reviewing',
+        dependsOnNodeIds: ['action-walk:full-frame'],
+        generations: [],
+        error: null,
+      },
+    ],
+  }
+}
+
+function completeAnimationFixture(): Generation<'complete_animation'> {
+  return {
+    id: 'generation-walk',
+    projectId: '1',
+    type: 'complete_animation',
+    status: 'completed',
+    error: null,
+    result: {
+      type: 'complete_animation',
+      frames: [
+        { url: 'https://assets.windup.test/walk-01.png' },
+        { url: 'https://assets.windup.test/walk-02.png' },
+      ],
+    },
   }
 }
 
