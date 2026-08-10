@@ -15,6 +15,7 @@ import type {
   MediaReference,
   ReviewWorkflowNode,
   WorkflowActionInput,
+  WorkflowCharacterInput,
   WorkflowGenerationRef,
   WorkflowGenerationRole,
   WorkflowNode,
@@ -35,6 +36,8 @@ export interface AddActionInput {
 export interface GenerateCharacterTemplateOptions {
   spriteWidth: number
   spriteHeight: number
+  /** 手动编辑器提交时覆盖 configuring 节点的初始输入；节点通过后不再改写。 */
+  input?: WorkflowCharacterInput
 }
 
 export interface GenerateActionOptions {
@@ -315,8 +318,20 @@ export function createWorkflowController({
             if (setupNode.status !== 'active' || setupNode.phase !== 'configuring') {
               throw new Error('角色设定节点当前不能提交')
             }
+            const input = options.input
+              ? {
+                  prompt: nonEmpty(options.input.prompt, '角色描述'),
+                  referenceMedia: [...options.input.referenceMedia],
+                }
+              : setupNode.input
             return unlockReadyNodes(
-              replaceNode(run, { ...setupNode, status: 'passed', phase: 'completed', error: null }),
+              replaceNode(run, {
+                ...setupNode,
+                input,
+                status: 'passed',
+                phase: 'completed',
+                error: null,
+              }),
             )
           })
     const templateNode = findSingleDependentNode(advanced, nodeId, 'character-template')
@@ -329,7 +344,8 @@ export function createWorkflowController({
         projectId: run.projectId,
         prompt: setupNode.input.prompt,
         referenceMedia: setupNode.input.referenceMedia,
-        ...options,
+        spriteWidth: options.spriteWidth,
+        spriteHeight: options.spriteHeight,
       }
       return input
     })
