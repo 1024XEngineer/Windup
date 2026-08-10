@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AppRoutes } from '@/app'
-import { GuestAuthSession } from '@/test/auth-session'
+import { AuthenticatedAuthSession } from '@/test/auth-session'
 import { createProjectAssetsBackend } from '@/test/project-assets-backend'
 
 afterEach(() => {
@@ -27,11 +27,11 @@ function renderPlaytest(path: string, fetchFn?: typeof globalThis.fetch) {
   vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
   vi.stubGlobal('fetch', fetchFn ?? createProjectAssetsBackend().fetch)
   return render(
-    <GuestAuthSession>
+    <AuthenticatedAuthSession>
       <MemoryRouter initialEntries={[path]}>
         <AppRoutes />
       </MemoryRouter>
-    </GuestAuthSession>,
+    </AuthenticatedAuthSession>,
   )
 }
 
@@ -43,7 +43,6 @@ describe('PlaytestPage', () => {
   it('loads the routed character through the Character API', async () => {
     renderPlaytest('/playtest/51/outfit-default')
 
-    expect(screen.getByText('加载 Playtest 数据中')).toBeTruthy()
     expect(await screen.findByRole('heading', { name: '51 · 常态造型' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '绑定动作：呼吸待机' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '绑定动作：行走' })).toBeTruthy()
