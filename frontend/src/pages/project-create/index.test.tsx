@@ -68,15 +68,12 @@ describe('ProjectCreatePage', () => {
     expect(Object.hasOwn(body, 'user_id')).toBe(false)
   })
 
-  it('没有登录凭证时禁用创建并说明原因', async () => {
+  it('没有登录凭证时先进入登录面板，不挂载创建页面', async () => {
     const backend = installBackend()
     await renderProjectCreate(false)
 
-    const submit = await screen.findByRole('button', { name: '创建项目' })
-    expect(submit.hasAttribute('disabled')).toBe(true)
-    expect(
-      screen.getByText('创建项目需要先登录。登录模块尚未接入，创建入口暂时保持关闭。'),
-    ).toBeTruthy()
+    expect(await screen.findByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '创建项目' })).toBeNull()
     expect(creationRequests(backend)).toHaveLength(0)
   })
 
