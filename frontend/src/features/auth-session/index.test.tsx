@@ -47,6 +47,7 @@ function createApis(): UserApis & Record<keyof UserApis, ReturnType<typeof vi.fn
     refresh: vi.fn(async () => tokens()),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => user),
+    updateNickname: vi.fn(async () => user),
     changePassword: vi.fn(async () => undefined),
   }
 }
@@ -56,11 +57,16 @@ let currentSession: AuthSessionValue | null = null
 function SessionProbe() {
   currentSession = useAuthSession()
   return (
-    <output data-testid="session">
-      {currentSession.state.status}:
-      {currentSession.state.status === 'guest' ? currentSession.state.reason : ''}:
-      {currentSession.state.status === 'authenticated' ? currentSession.state.user.email : ''}
-    </output>
+    <>
+      <output data-testid="session">
+        {currentSession.state.status}:
+        {currentSession.state.status === 'guest' ? currentSession.state.reason : ''}:
+        {currentSession.state.status === 'authenticated' ? currentSession.state.user.email : ''}
+      </output>
+      <span data-testid="session-nickname">
+        {currentSession.state.status === 'authenticated' ? currentSession.state.user.nickname : ''}
+      </span>
+    </>
   )
 }
 
@@ -192,6 +198,56 @@ describe('AuthSessionProvider', () => {
     await expectState('guest:password-changed:')
     expect(getApiAccessToken()).toBeNull()
     expect(window.localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY)).toBeNull()
+  })
+
+  it('refreshes the current user from the backend and synchronizes session consumers', async () => {
+    const apis = createApis()
+    apis.me.mockResolvedValue({ ...user, nickname: 'Fresh Reader' })
+    renderSession(apis)
+    await expectState('guest::')
+    await act(async () => session().loginByCode({ email: 'reader@example.com', code: '123456' }))
+
+    await act(async () => session().refreshCurrentUser())
+
+    expect(apis.me).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('[data-testid="session-nickname"]')?.textContent).toBe(
+      'Fresh Reader',
+    )
+  })
+
+  it('updates the nickname and synchronizes the returned user into the session', async () => {
+    const apis = createApis()
+    apis.updateNickname.mockResolvedValue({ ...user, nickname: 'New Reader' })
+    renderSession(apis)
+    await expectState('guest::')
+    await act(async () => session().loginByCode({ email: 'reader@example.com', code: '123456' }))
+
+    await act(async () => session().updateNickname('New Reader'))
+
+    expect(apis.updateNickname).toHaveBeenCalledWith('New Reader')
+    expect(document.querySelector('[data-testid="session-nickname"]')?.textContent).toBe(
+      'New Reader',
+    )
+  })
+
+  it('does not restore profile state when a pending profile request loses to logout', async () => {
+    const profile = deferred<typeof user>()
+    const apis = createApis()
+    apis.me.mockReturnValue(profile.promise)
+    renderSession(apis)
+    await expectState('guest::')
+    await act(async () => session().loginByCode({ email: 'reader@example.com', code: '123456' }))
+
+    let refreshPromise!: ReturnType<UserApis['me']>
+    act(() => {
+      refreshPromise = session().refreshCurrentUser()
+    })
+    const rejectedRefresh = expect(refreshPromise).rejects.toThrow('登录状态已变更')
+    await act(async () => session().logout())
+    await act(async () => profile.resolve({ ...user, nickname: 'Stale Reader' }))
+
+    await rejectedRefresh
+    await expectState('guest:logged-out:')
   })
 
   it('deduplicates concurrent 401 recovery and lets both requests replay with the rotated token', async () => {

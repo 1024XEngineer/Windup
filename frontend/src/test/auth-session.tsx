@@ -29,6 +29,7 @@ export function createAuthenticatedTestApis(): UserApis {
     refresh: async () => tokens(),
     logout: async () => undefined,
     me: async () => testUser,
+    updateNickname: async () => testUser,
     changePassword: async () => undefined,
   }
 }
@@ -41,6 +42,7 @@ const guestApis: UserApis = {
   refresh: async () => Promise.reject(new Error('guest test session has no refresh token')),
   logout: async () => undefined,
   me: async () => Promise.reject(new Error('guest test session has no current user')),
+  updateNickname: async () => Promise.reject(new Error('guest test session cannot update profile')),
   changePassword: async () =>
     Promise.reject(new Error('guest test session cannot change password')),
 }
