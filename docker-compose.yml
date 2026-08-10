@@ -67,6 +67,27 @@ services:
     networks:
       - windup-net
 
+  # ── 前端静态站点（nginx 兼 /api 反代） ──
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # 构建期烘进产物的后端地址，运行期改不动，所以放在 build.args 而非
+        # environment。默认相对路径 → 与页面同源 → 不产生跨域，后端不必配来源白名单。
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+    container_name: windup-frontend
+    restart: unless-stopped
+    depends_on:
+      # 只等 backend 起来，不等它 healthy：后端异常时前端静态页仍应打得开，
+      # 否则排障时连页面都看不到。容器内 nginx 是按请求解析 backend 的，
+      # 先起后起都不影响反代。
+      - backend
+    ports:
+      - "${WINDUP_WEB_PORT:-8080}:80"
+    networks:
+      - windup-net
+
 networks:
   windup-net:
     driver: bridge
