@@ -15,6 +15,9 @@ export type WorkflowNodeStatus = (typeof WORKFLOW_NODE_STATUSES)[number]
 export type WorkflowNodePhase = (typeof WORKFLOW_NODE_PHASES)[number]
 export type WorkflowGenerationRole = (typeof WORKFLOW_GENERATION_ROLES)[number]
 
+/** 动作资产的生产路线；3D 转 2D 接口尚未提供，但选择必须随 WorkflowRun 落库。 */
+export type ActionGenerationMethod = 'video-cropping' | '3d-to-2d'
+
 /** 一个节点对后端 GenerationTask 的引用；节点可关联零个、一个或多个任务。 */
 export interface WorkflowGenerationRef {
   taskId: Generation['id']
@@ -33,6 +36,11 @@ interface WorkflowNodeBase {
   dependsOnNodeIds: string[]
   generations: WorkflowGenerationRef[]
   error: string | null
+  /**
+   * 已发布资产被用户删除的时间。节点仍保留生成输入、任务引用与审核历史；
+   * 旧数据没有该字段时视为未删除。
+   */
+  deletedAt?: string | null
 }
 
 export interface WorkflowCharacterInput {
@@ -40,10 +48,17 @@ export interface WorkflowCharacterInput {
   referenceMedia: readonly MediaReference[]
 }
 
-/** 角色节点内部完成资料填写、候选图生成和候选确认。 */
-export interface CharacterWorkflowNode extends WorkflowNodeBase {
-  type: 'character'
+/** 角色资料卡片；只保存用户输入，不承担图片生成。 */
+export interface CharacterSetupWorkflowNode extends WorkflowNodeBase {
+  type: 'character-setup'
+  phase: 'configuring' | 'completed'
   input: WorkflowCharacterInput
+}
+
+/** 角色母版卡片；生成候选图并保存用户最终确认的母版。 */
+export interface CharacterTemplateWorkflowNode extends WorkflowNodeBase {
+  type: 'character-template'
+  phase: 'ready' | 'generating' | 'selecting' | 'completed'
   selectedImageUrl: string | null
 }
 
@@ -55,15 +70,41 @@ export interface WorkflowActionInput {
   fps: number
 }
 
-/** 一个 Action 对应一个节点；共同依赖同一节点的多个 Action 可以并行。 */
-export interface ActionWorkflowNode extends WorkflowNodeBase {
-  type: 'action'
+/** Action 的首帧卡片；每个 Action 都必须有一份独立输入和确认结果。 */
+export interface ActionFirstFrameWorkflowNode extends WorkflowNodeBase {
+  type: 'action-first-frame'
+  phase: 'configuring' | 'generating' | 'selecting' | 'completed'
   input: WorkflowActionInput
   selectedFirstFrameUrl: string | null
 }
 
+/** 首帧确认后选择完整动画的生产路线。 */
+export interface ActionGenerationMethodWorkflowNode extends WorkflowNodeBase {
+  type: 'action-generation-method'
+  phase: 'selecting' | 'completed'
+  method: ActionGenerationMethod | null
+}
+
+/** 基于已确认首帧生成完整动画。 */
+export interface ActionFullFrameWorkflowNode extends WorkflowNodeBase {
+  type: 'action-full-frame'
+  phase: 'ready' | 'generating' | 'completed'
+}
+
+/** 只负责核验完整动画；审核通过不等于下载或导出。 */
+export interface ReviewWorkflowNode extends WorkflowNodeBase {
+  type: 'review'
+  phase: 'reviewing' | 'completed'
+}
+
 /** 工作流图中的真实节点。前端和后端统一使用 node，不再保留 step 或假 root。 */
-export type WorkflowNode = CharacterWorkflowNode | ActionWorkflowNode
+export type WorkflowNode =
+  | CharacterSetupWorkflowNode
+  | CharacterTemplateWorkflowNode
+  | ActionFirstFrameWorkflowNode
+  | ActionGenerationMethodWorkflowNode
+  | ActionFullFrameWorkflowNode
+  | ReviewWorkflowNode
 
 /**
  * 一次制作流程的持久化容器。Quick Start 与 Workflow Editor 只是不同界面；

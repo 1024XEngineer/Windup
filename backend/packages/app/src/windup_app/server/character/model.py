@@ -35,7 +35,7 @@
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
-from sqlalchemy import BigInteger, DateTime, Integer, JSON, SmallInteger, Text
+from sqlalchemy import BigInteger, DateTime, Integer, JSON, SmallInteger, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -60,7 +60,9 @@ class Character(Base):
 
     project_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
-    workflow_run_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    workflow_run_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    name: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 

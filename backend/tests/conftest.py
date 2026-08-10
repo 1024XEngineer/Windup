@@ -101,3 +101,29 @@ def auth_client(engine):
 
     yield client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def auth_client_b(engine):
+    """另一个用户的认证 TestClient（user_id=2），用于跨用户权限测试。"""
+    session_local = sessionmaker(bind=engine, expire_on_commit=False)
+
+    def override_get_session():
+        session = session_local()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    app = create_app()
+    app.dependency_overrides[get_session] = override_get_session
+
+    token = create_access_token(2, "other@example.com")
+    client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
+
+    yield client
+    app.dependency_overrides.clear()
