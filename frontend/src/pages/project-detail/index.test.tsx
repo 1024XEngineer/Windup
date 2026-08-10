@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, useLocation } from 'react-router'
 
 import { AppRoutes } from '@/app'
+import { AuthenticatedAuthSession } from '@/test/auth-session'
 import { createProjectAssetsBackend } from '@/test/project-assets-backend'
 
 afterEach(() => {
@@ -19,9 +20,11 @@ describe('ProjectDetailPage', () => {
     vi.stubGlobal('fetch', backend.fetch)
 
     const { container } = render(
-      <MemoryRouter initialEntries={['/projects/42/assets/51']}>
-        <AppRoutes />
-      </MemoryRouter>,
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects/42/assets/51']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
     )
 
     expect(await screen.findByRole('heading', { name: '点灯人 · MVP' })).toBeTruthy()
@@ -51,13 +54,44 @@ describe('ProjectDetailPage', () => {
     })
 
     render(
-      <MemoryRouter initialEntries={['/projects/42/assets/51']}>
-        <AppRoutes />
-      </MemoryRouter>,
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects/42/assets/51']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
     )
 
     expect(await screen.findByRole('heading', { name: '点灯人 · MVP' })).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
     expect(await screen.findByRole('heading', { name: '轻装信使' })).toBeTruthy()
   })
+
+  it('shows the current account in the workspace and returns home after logout', async () => {
+    const backend = createProjectAssetsBackend()
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', backend.fetch)
+
+    render(
+      <MemoryRouter initialEntries={['/projects/42/assets']}>
+        <AuthenticatedAuthSession>
+          <AppRoutes />
+        </AuthenticatedAuthSession>
+        <LocationProbe />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('heading', { name: '点灯人 · MVP' })).toBeTruthy()
+    const account = screen.getByLabelText('当前账号')
+    expect(account.textContent).toContain('Reader')
+    expect(account.textContent).toContain('reader@example.com')
+
+    fireEvent.click(screen.getByRole('button', { name: '退出登录' }))
+
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/'))
+  })
 })
+
+function LocationProbe() {
+  const location = useLocation()
+  return <output data-testid="location">{location.pathname}</output>
+}
