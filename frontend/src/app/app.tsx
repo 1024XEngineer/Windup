@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
 
 import { AssetLibraryPage } from '@/pages/asset-library'
+import { AccountPage } from '@/pages/account'
 import { CharacterDetailPage } from '@/pages/character-detail'
 import { HomePage } from '@/pages/home'
 import { NotFoundPage } from '@/pages/not-found'
@@ -34,6 +35,7 @@ export function AppRoutes() {
       <Route element={<AppShellRoute />}>
         <Route path="/" element={<HomePage />} />
         <Route element={<ProtectedRoute />}>
+          <Route path="/account" element={<AccountPage />} />
           <Route path="/quick-start" element={<QuickStartPage />} />
           <Route path="/quick-start/:runId" element={<QuickStartPage />} />
           <Route path="/projects" element={<ProjectsPage />} />

@@ -40,6 +40,7 @@ function createApis(): UserApis & Record<keyof UserApis, ReturnType<typeof vi.fn
     refresh: vi.fn(async () => tokens()),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => user),
+    updateNickname: vi.fn(async () => user),
     changePassword: vi.fn(async () => undefined),
   }
 }

@@ -86,6 +86,8 @@ function AccountPanelDialog() {
   const passwordId = useId()
   const codeId = useId()
   const copy = modeCopy[mode]
+  const passwordChanged =
+    session.state.status === 'guest' && session.state.reason === 'password-changed'
   const normalizedEmail = email.trim()
   const cooldownSeconds = Math.max(
     0,
@@ -322,7 +324,20 @@ function AccountPanelDialog() {
           ))}
         </div>
 
-        <form className="mt-5 grid gap-4" onSubmit={submit} noValidate>
+        {passwordChanged && (
+          <p
+            role="status"
+            className="mt-5 rounded-xl border border-[#78927e]/40 bg-[#eef5ef] px-3.5 py-3 text-sm leading-6 text-[#34533c]"
+          >
+            密码修改成功，请重新登录
+          </p>
+        )}
+
+        <form
+          className={`${passwordChanged ? 'mt-4' : 'mt-5'} grid gap-4`}
+          onSubmit={submit}
+          noValidate
+        >
           <label htmlFor={emailId} className="grid gap-1.5 text-sm font-semibold text-[#344039]">
             邮箱
             <input

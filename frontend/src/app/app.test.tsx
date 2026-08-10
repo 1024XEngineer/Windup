@@ -56,6 +56,24 @@ describe('AppRoutes authentication boundary', () => {
     expect(screen.queryByRole('heading', { name: '快速开始' })).toBeNull()
   })
 
+  it('protects direct account-center visits and returns there after login', async () => {
+    render(
+      <GuestAuthSession>
+        <MemoryRouter initialEntries={['/account']}>
+          <AppRoutes />
+          <LocationProbe />
+        </MemoryRouter>
+      </GuestAuthSession>,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/?account=login&returnTo=%2Faccount',
+      ),
+    )
+    expect(screen.queryByRole('heading', { name: '账号中心' })).toBeNull()
+  })
+
   it('waits for session restoration before mounting a protected page', async () => {
     let resolveRefresh!: (tokens: AuthTokens) => void
     const refresh = new Promise<AuthTokens>((resolve) => {
@@ -104,6 +122,7 @@ describe('AppRoutes authentication boundary', () => {
       refresh: async () => Promise.reject(new Error('refresh token expired')),
       logout: async () => undefined,
       me: async () => Promise.reject(new Error('not used')),
+      updateNickname: async () => Promise.reject(new Error('not used')),
       changePassword: async () => Promise.reject(new Error('not used')),
     }
     window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, 'expired-refresh-token')
@@ -131,6 +150,7 @@ describe('AppRoutes authentication boundary', () => {
       refresh: async () => Promise.reject(new Error('refresh token expired')),
       logout: async () => undefined,
       me: async () => Promise.reject(new Error('not used')),
+      updateNickname: async () => Promise.reject(new Error('not used')),
       changePassword: async () => Promise.reject(new Error('not used')),
     }
     window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, 'expired-refresh-token')
