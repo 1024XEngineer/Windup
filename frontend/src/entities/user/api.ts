@@ -74,17 +74,21 @@ function toAuthTokens(value: unknown): AuthTokens {
 
 export function createUserApis(options: CreateUserApisOptions = {}): UserApis {
   const { client, ...clientOptions } = options
-  const apiClient =
+  const sharedClientOptions = {
+    ...clientOptions,
+    getAccessToken: clientOptions.getAccessToken ?? getApiAccessToken,
+  }
+  const authClient =
     client ??
     createApiClient({
-      ...clientOptions,
-      getAccessToken: clientOptions.getAccessToken ?? getApiAccessToken,
+      ...sharedClientOptions,
       recoverUnauthorized: false,
     })
+  const protectedClient = client ?? createApiClient(sharedClientOptions)
 
   return {
     async sendCode(input) {
-      await apiClient.request<null>('/auth/send-code', { method: 'POST', json: input })
+      await authClient.request<null>('/auth/send-code', { method: 'POST', json: input })
     },
 
     async register(input) {
@@ -95,19 +99,19 @@ export function createUserApis(options: CreateUserApisOptions = {}): UserApis {
         ...(input.nickname ? { nickname: input.nickname } : {}),
       }
       return toAuthTokens(
-        await apiClient.request<AuthTokensDto>('/auth/register', { method: 'POST', json }),
+        await authClient.request<AuthTokensDto>('/auth/register', { method: 'POST', json }),
       )
     },
 
     async login(input) {
       return toAuthTokens(
-        await apiClient.request<AuthTokensDto>('/auth/login', { method: 'POST', json: input }),
+        await authClient.request<AuthTokensDto>('/auth/login', { method: 'POST', json: input }),
       )
     },
 
     async loginByCode(input) {
       return toAuthTokens(
-        await apiClient.request<AuthTokensDto>('/auth/login-by-code', {
+        await authClient.request<AuthTokensDto>('/auth/login-by-code', {
           method: 'POST',
           json: input,
         }),
@@ -116,7 +120,7 @@ export function createUserApis(options: CreateUserApisOptions = {}): UserApis {
 
     async refresh(refreshToken) {
       return toAuthTokens(
-        await apiClient.request<AuthTokensDto>('/auth/refresh', {
+        await authClient.request<AuthTokensDto>('/auth/refresh', {
           method: 'POST',
           json: { refresh_token: refreshToken },
         }),
@@ -124,19 +128,19 @@ export function createUserApis(options: CreateUserApisOptions = {}): UserApis {
     },
 
     async logout(refreshToken) {
-      await apiClient.request<null>('/auth/logout', {
+      await authClient.request<null>('/auth/logout', {
         method: 'POST',
         json: { refresh_token: refreshToken },
       })
     },
 
     async me() {
-      return toUser(await apiClient.request<UserDto>('/auth/me'))
+      return toUser(await protectedClient.request<UserDto>('/auth/me'))
     },
 
     async updateNickname(nickname) {
       return toUser(
-        await apiClient.request<UserDto>('/auth/profile', {
+        await protectedClient.request<UserDto>('/auth/profile', {
           method: 'PATCH',
           json: { nickname },
         }),
@@ -144,7 +148,7 @@ export function createUserApis(options: CreateUserApisOptions = {}): UserApis {
     },
 
     async changePassword(input) {
-      await apiClient.request<null>('/auth/change-password', {
+      await protectedClient.request<null>('/auth/change-password', {
         method: 'POST',
         json: { old_password: input.oldPassword, new_password: input.newPassword },
       })
