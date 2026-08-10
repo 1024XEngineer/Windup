@@ -15,6 +15,7 @@ from windup_app.bootstrap.app import create_app
 from windup_app.server.character.model import Character
 from windup_app.server.project.model import Project
 from windup_app.server.user.model import User
+from windup_app.server.workflow_run.model import WorkflowRun
 from windup_app.server.user.service import create_access_token
 from windup_framework.db import Base, get_session
 
@@ -32,7 +33,7 @@ def _make_engine():
 def engine():
     """建好 ``windup_project`` 和 ``windup_user`` 表的内存 engine。"""
     engine = _make_engine()
-    Base.metadata.create_all(engine, tables=[Project.__table__, User.__table__, Character.__table__])
+    Base.metadata.create_all(engine, tables=[Project.__table__, User.__table__, Character.__table__, WorkflowRun.__table__])
     yield engine
     engine.dispose()
 
@@ -97,6 +98,32 @@ def auth_client(engine):
 
     # 生成测试用 token
     token = create_access_token(1, "test@example.com")
+    client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
+
+    yield client
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def auth_client_b(engine):
+    """另一个用户的认证 TestClient（user_id=2），用于跨用户权限测试。"""
+    session_local = sessionmaker(bind=engine, expire_on_commit=False)
+
+    def override_get_session():
+        session = session_local()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    app = create_app()
+    app.dependency_overrides[get_session] = override_get_session
+
+    token = create_access_token(2, "other@example.com")
     client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
 
     yield client

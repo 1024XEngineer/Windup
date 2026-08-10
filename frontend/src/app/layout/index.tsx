@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Outlet } from 'react-router'
 
 import { AccountPanel } from '@/features/account-panel'
+import { SessionExpiredNotice } from '@/features/auth-guard'
 import { AppHeader } from './app-header'
 
 /** 跨页面常驻导航属于应用外壳，由 app 层统一承载。 */
@@ -23,6 +24,7 @@ export function AppShell({ children }: AppShellProps) {
       */}
       <main className="w-full">{children}</main>
       <AccountPanel />
+      <SessionExpiredNotice />
     </div>
   )
 }

@@ -168,7 +168,7 @@ describe('AuthSessionProvider', () => {
     act(() => {
       logoutPromise = session().logout()
     })
-    await expectState('guest::')
+    await expectState('guest:logged-out:')
     expect(getApiAccessToken()).toBeNull()
     expect(window.localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY)).toBeNull()
     expect(apis.logout).toHaveBeenCalledWith('refresh-token')
@@ -176,7 +176,7 @@ describe('AuthSessionProvider', () => {
     const rejectedLogout = expect(logoutPromise).rejects.toThrow('network unavailable')
     await act(async () => logout.reject(new Error('network unavailable')))
     await rejectedLogout
-    await expectState('guest::')
+    await expectState('guest:logged-out:')
   })
 
   it('clears the session with a password-changed reason after changing the password', async () => {

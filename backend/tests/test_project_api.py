@@ -5,15 +5,10 @@
 ``timestamp`` 默认省略)与 400/404 业务码路径。
 """
 
-import pytest
-
-pytestmark = pytest.mark.skip(reason="project router 未实现，待后续补全")
-
 
 def _payload(**overrides):
     """构造合法的创建请求体(对齐 ``ProjectCreate``)。"""
     base = {
-        "user_id": 10001,
         "project_name": "像素游戏",
         "character_perspective": 1,
         "directional_movement": 2,
@@ -92,18 +87,17 @@ def test_list_empty(auth_client):
     assert body["page_size"] == 20
 
 
-def test_list_paginates_and_filters(auth_client):
+def test_list_paginates(auth_client):
     for i in range(3):
-        auth_client.post("/projects", json=_payload(user_id=10001, project_name=f"a{i}"))
-    auth_client.post("/projects", json=_payload(user_id=20002, project_name="other"))
+        auth_client.post("/projects", json=_payload(project_name=f"a{i}"))
 
-    resp = auth_client.get("/projects", params={"page": 1, "page_size": 2, "user_id": 10001})
+    resp = auth_client.get("/projects", params={"page": 1, "page_size": 2})
 
     body = resp.json()
     assert body["total"] == 3
     assert len(body["data"]) == 2
     assert [item["project_name"] for item in body["data"]] == ["a2", "a1"]
-    assert all(item["user_id"] == 10001 for item in body["data"])
+    assert all(item["user_id"] == 1 for item in body["data"])
 
 
 # -- DELETE /projects/{id} ---------------------------------------------------

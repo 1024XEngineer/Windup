@@ -10,11 +10,13 @@ import {
   projectApis,
   type Project,
 } from '@/entities'
+import { useAuthSession } from '@/features/auth-session'
 
 /** 项目常驻工作区；子路由负责具体资产内容。 */
 export function ProjectDetailPage() {
   const { projectId } = useParams()
   const location = useLocation()
+  const session = useAuthSession()
   const [project, setProject] = useState<Project | null>(null)
   const [characterCount, setCharacterCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -70,8 +72,12 @@ export function ProjectDetailPage() {
     ['画风', project.gameStyle ?? '尚未设定'],
   ]
 
+  function signOut() {
+    void session.logout().catch(() => undefined)
+  }
+
   return (
-    <div className="grid h-screen gap-3 overflow-hidden bg-[#f7f8f5] p-3 md:grid-cols-[13rem_minmax(0,1fr)] xl:grid-cols-[14rem_minmax(0,1fr)]">
+    <div className="grid min-h-screen gap-3 bg-[#f7f8f5] p-3 md:h-screen md:grid-cols-[13rem_minmax(0,1fr)] md:overflow-hidden xl:grid-cols-[14rem_minmax(0,1fr)]">
       <aside className="flex min-h-0 flex-col overflow-hidden rounded-[1.35rem] border border-[#d9ddd6] bg-[#fbfbf8] text-[#222520]">
         <div className="border-b border-[#dfe2dc] px-4 py-4">
           <Link
@@ -126,6 +132,26 @@ export function ProjectDetailPage() {
             ))}
           </dl>
         </div>
+
+        {session.state.status === 'authenticated' ? (
+          <div aria-label="当前账号" className="mt-auto border-t border-[#e3e6e0] p-3">
+            <div className="min-w-0 px-2 py-1">
+              <p className="truncate text-xs font-semibold text-[#343a34]">
+                {session.state.user.nickname || session.state.user.email}
+              </p>
+              <p className="mt-0.5 truncate text-[0.68rem] text-[#7a8279]">
+                {session.state.user.email}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={signOut}
+              className="mt-2 inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-[#cfd5cc] px-3 text-xs font-semibold text-[#59635a] transition-colors hover:bg-[#edf1eb] hover:text-[#26372c] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#284331]"
+            >
+              退出登录
+            </button>
+          </div>
+        ) : null}
       </aside>
 
       <div className="min-w-0 overflow-y-auto">

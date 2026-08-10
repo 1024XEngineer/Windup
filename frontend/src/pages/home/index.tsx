@@ -80,12 +80,6 @@ export function HomePage() {
                 actionLabel="写下角色设定"
                 tone="dark"
               />
-              {/*
-                画布入口必须先确定角色挂在哪个项目下，所以动作条悬停后分成新建与继续两条。
-                新建直达创建页；继续先落项目中心选项目，等项目级 WorkflowRun 历史页面就位后
-                再指到那里。两条都还进不了 /workflow-editor/:runId——建 workflow run 需要
-                WorkflowController，它目前只有接口没有实现。
-              */}
               <HomeChoiceCard
                 to="/projects"
                 eyebrow="NODE CANVAS"
