@@ -16,8 +16,8 @@ export interface WorkflowEditorSession {
   project: Project
   /** 后端用 workflow_run_id 建立的唯一角色；尚未产出正式角色时为 null。 */
   character: Character | null
-  /** 先幂等发布动作资产，再把审核节点标记为通过。 */
-  approveAndPublishReview(reviewNodeId: ReviewWorkflowNode['id']): Promise<void>
+  /** 幂等发布动作资产；审核节点仍由页面随后通过 Controller 推进。 */
+  publishReviewedAction(reviewNodeId: ReviewWorkflowNode['id']): Promise<Character>
   subscribeErrors(listener: (error: Error) => void): () => void
   dispose(): void
 }
@@ -70,10 +70,8 @@ export async function createRealWorkflowEditorSession(
   return {
     controller,
     project,
-    get character() {
-      return currentCharacter
-    },
-    async approveAndPublishReview(reviewNodeId) {
+    character: loadedCharacter,
+    async publishReviewedAction(reviewNodeId) {
       if (!currentCharacter) throw new Error('当前 WorkflowRun 尚未关联 Character')
       const currentWorkflow = controller.getWorkflow()
       const reviewNode = currentWorkflow.nodes.find((node) => node.id === reviewNodeId)
@@ -91,7 +89,7 @@ export async function createRealWorkflowEditorSession(
         reviewNodeId,
         generation,
       })
-      await controller.approveReview(reviewNodeId)
+      return currentCharacter
     },
     subscribeErrors(listener) {
       errorListeners.add(listener)

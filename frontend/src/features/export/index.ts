@@ -7,13 +7,6 @@ import type {
   WorkflowRun,
 } from '@/entities'
 
-/** 把确认后的造型与动作导出到资产库。 */
-export interface ExportProps {
-  runId: string
-  characterId: string
-  outfitId: string
-}
-
 export interface PublishReviewedActionInput {
   character: Character
   workflow: WorkflowRun
@@ -63,7 +56,6 @@ export function createCharacterAssetPublisher(
       const methodNode = findSingleDependency(workflow, fullFrameNode, 'action-generation-method')
       const firstFrameNode = findSingleDependency(workflow, methodNode, 'action-first-frame')
       const templateNode = findSingleDependency(workflow, firstFrameNode, 'character-template')
-      const setupNode = findSingleDependency(workflow, templateNode, 'character-setup')
       if (!templateNode.selectedImageUrl) throw new Error('角色母版尚未确认')
 
       const outfitIndex = character.outfits.findIndex(
@@ -95,8 +87,6 @@ export function createCharacterAssetPublisher(
       outfits[outfitIndex] = { ...targetOutfit, actions }
       return characterApis.update({
         ...character,
-        description: setupNode.input.prompt,
-        referenceImageUrl: templateNode.selectedImageUrl,
         outfits,
       })
     },

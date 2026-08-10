@@ -56,6 +56,7 @@ const nodeTypes = { 'workflow-card': WorkflowCard }
 export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}) {
   const { runId } = useParams<{ runId: string }>()
   const [session, setSession] = useState<WorkflowEditorSession | null>(null)
+  const [character, setCharacter] = useState<Character | null>(null)
   const [run, setRun] = useState<WorkflowRun | null>(null)
   const [generations, setGenerations] = useState<Record<string, Generation | null>>({})
   const [selectedImages, setSelectedImages] = useState<Record<string, string>>({})
@@ -120,6 +121,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
     sessionEpochRef.current = sessionEpoch
     generationReadEpochRef.current += 1
     setSession(null)
+    setCharacter(null)
     setRun(null)
     setGenerations({})
     setSelectedImages({})
@@ -147,6 +149,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
         }
         loaded = nextSession
         setSession(nextSession)
+        setCharacter(nextSession.character)
         unsubscribeErrors = nextSession.subscribeErrors((nextError) => {
           if (active && sessionEpochRef.current === sessionEpoch) {
             setError(errorMessage(nextError, '工作流异步处理失败'))
@@ -186,9 +189,9 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
         ? projectCanvas({
             run,
             controller: session.controller,
-            approveAndPublishReview: session.approveAndPublishReview,
+            publishReviewedAction: session.publishReviewedAction,
             project: session.project,
-            character: session.character,
+            character,
             generations,
             selectedImages,
             actionMenuOpen,
@@ -200,6 +203,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
             setActionMenuOpen,
             setActionMenuLevel,
             setSelectedOutfitId,
+            setCharacter,
             runCommand,
           })
         : { nodes: [] as WorkflowCardNode[], edges: [] as Edge[] },
@@ -207,6 +211,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
       actionMenuOpen,
       actionMenuLevel,
       busy,
+      character,
       generations,
       run,
       runCommand,
@@ -331,7 +336,7 @@ function FitViewOnChange({ signature }: { signature: string }) {
 interface ProjectionInput {
   run: WorkflowRun
   controller: WorkflowController
-  approveAndPublishReview(reviewNodeId: ReviewWorkflowNode['id']): Promise<void>
+  publishReviewedAction(reviewNodeId: ReviewWorkflowNode['id']): Promise<Character>
   project: Project
   character: Character | null
   generations: Record<string, Generation | null>
@@ -345,6 +350,7 @@ interface ProjectionInput {
   setActionMenuOpen(open: boolean): void
   setActionMenuLevel(level: ActionMenuLevel): void
   setSelectedOutfitId(outfitId: string | null): void
+  setCharacter(character: Character): void
   runCommand(name: string, command: () => Promise<void>): void
 }
 
@@ -842,7 +848,11 @@ function ReviewContent({ node, input }: { node: ReviewWorkflowNode; input: Proje
         type="button"
         disabled={Boolean(input.busy)}
         onClick={() =>
-          input.runCommand('approve-review', () => input.approveAndPublishReview(node.id))
+          input.runCommand('approve-review', async () => {
+            const character = await input.publishReviewedAction(node.id)
+            input.setCharacter(character)
+            await getController(input).approveReview(node.id)
+          })
         }
       >
         审核通过
