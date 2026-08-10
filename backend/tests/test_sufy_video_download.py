@@ -206,3 +206,125 @@ def test_non_http_result_url_is_refused_before_any_request_goes_out(monkeypatch)
         with _authed_client(handler) as client:
             with pytest.raises(UnsafeDownloadUrlError, match="http"):
                 _download(client, url)
+
+
+# ── 文生图 provider（2026-08-10 实现；此前 gen_image 必抛错而端点可达）──────────
+
+
+def _img_payload(b64: str) -> dict:
+    """模型把图放在 message.content 里，不同网关包裹层级不同。"""
+    return {"choices": [{"message": {"content": f"data:image/png;base64,{b64}"}}]}
+
+
+def _big_b64(n: int = 6000) -> str:
+    import base64
+    return base64.b64encode(b"\x89PNG" + b"\x00" * n).decode()
+
+
+def _image_provider(handler):
+    import httpx
+
+    from windup_framework.config.provider import AIProviderSettings
+    from windup_framework.providers.sufy import SufyImageProvider
+
+    p = SufyImageProvider(
+        config=AIProviderSettings(base_url="https://gw.example.com/v1", api_key="k"),
+    )
+    client = httpx.Client(
+        base_url="https://gw.example.com/v1",
+        headers={"Authorization": "Bearer k"},
+        transport=httpx.MockTransport(handler),
+    )
+    p._client = lambda: client
+    return p
+
+
+def test_gen_image_returns_the_decoded_png():
+    """端点可达而 provider 必抛错 = 每个图像任务稳定 FAILED。实现后必须真能出图。"""
+    def h(request):
+        import httpx
+        return httpx.Response(200, json=_img_payload(_big_b64()))
+
+    data = _image_provider(h).gen_image("a knight", [])
+    assert data.startswith(b"\x89PNG") and len(data) > 5000
+
+
+def test_reference_images_are_sent_as_data_uris():
+    """参考图走 content 数组里的 image_url，不是 multipart、不是单独字段。"""
+    import json as _json
+
+    seen: dict = {}
+
+    def h(request):
+        import httpx
+        seen["body"] = _json.loads(request.content)
+        return httpx.Response(200, json=_img_payload(_big_b64()))
+
+    _image_provider(h).gen_image("x", [b"\x89PNGref"])
+    content = seen["body"]["messages"][0]["content"]
+    kinds = [c["type"] for c in content]
+    assert kinds == ["text", "image_url"]
+    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_response_without_an_image_is_retried_then_raises():
+    """模型偶发返回一条不含图的正常响应。重试后仍拿不到必须抛，不能返回空 bytes——
+    上游会把返回值直接上传对象存储并写进任务结果，0 字节的"成功"就是用户看到的裂图。"""
+    import pytest
+
+    calls = {"n": 0}
+
+    def h(request):
+        import httpx
+        calls["n"] += 1
+        return httpx.Response(200, json={"choices": [{"message": {"content": "抱歉"}}]})
+
+    with pytest.raises(RuntimeError, match="未取得有效图"):
+        _image_provider(h).gen_image("x", [])
+    assert calls["n"] == 3, "应重试到上限而不是一次就放弃"
+
+
+def test_undersized_image_is_rejected_not_returned():
+    """响应里可能带一个几十字节的占位串，当图存下去就是打不开的文件。"""
+    import base64
+
+    import pytest
+
+    tiny = base64.b64encode(b"\x89PNG" + b"\x00" * 200).decode()
+
+    def h(request):
+        import httpx
+        return httpx.Response(200, json=_img_payload(tiny))
+
+    with pytest.raises(RuntimeError, match="字节"):
+        _image_provider(h).gen_image("x", [])
+
+
+def test_first_successful_attempt_stops_retrying():
+    calls = {"n": 0}
+
+    def h(request):
+        import httpx
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(200, json={"choices": [{"message": {"content": "空"}}]})
+        return httpx.Response(200, json=_img_payload(_big_b64()))
+
+    assert _image_provider(h).gen_image("x", [])
+    assert calls["n"] == 2
+
+
+def test_image_client_retries_connection_failures():
+    """本机走代理时建连抖动常见；已跑通的管线实现靠一层网络重试扛住。
+
+    只断言"配了连接重试"这个结构 —— 真去模拟 SSL 握手失败需要一个假 TCP 端点，
+    那验的是 httpx 而不是我们的代码。
+    """
+    from windup_framework.providers.sufy import _CONNECT_RETRIES, SufyImageProvider
+
+    assert _CONNECT_RETRIES >= 1
+    client = SufyImageProvider()._client()
+    try:
+        assert client._transport._pool._retries == _CONNECT_RETRIES
+    finally:
+        client.close()

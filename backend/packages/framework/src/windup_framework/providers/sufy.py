@@ -27,6 +27,9 @@ from __future__ import annotations
 
 import base64
 import io
+import json
+import logging
+import re
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -36,6 +39,8 @@ import httpx
 from windup_framework.config.provider import AIProviderSettings, settings
 
 from .interfaces import FirstFrameUploader, ImageProvider, VideoProvider
+
+logger = logging.getLogger("windup.providers.sufy")
 
 # 只有 kling-video-o1 走 image_list;v2 系列 / sora 走 input_reference(字段按模型选,塞错任务会 failed)。
 _IMAGE_LIST_MODELS = ("kling-video-o1",)
@@ -638,14 +643,80 @@ def _fal_result_url(client: httpx.Client, endpoint: FalI2VEndpoint, request_id: 
     return str(url)
 
 
-class SufyImageProvider(ImageProvider):
-    """图像 provider(gemini-flash-image)。逐帧图生图路线(hit/idle)待开发。
+DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image"
 
-    见 #53 / PerFrameStrategy:per-frame 路线不在"视频优先"首个竖线内,此处留真接口、
-    未接 HTTP,避免 ship 一个假装能跑的桩。walk 主链不经此 provider。
+# "调用成功但没返回有效图"的重试次数。与 _download 的网络重试是两码事:那个治连接断,
+# 这个治模型返回了一条不含图的正常响应(实测偶发)。也是为什么下面要判 base64 长度 ——
+# 返回里可能带一个几十字节的占位串,当图存下去就是一个打不开的文件。
+_IMAGE_TRIES = 3
+_MIN_IMAGE_BYTES = 5000
+_CONNECT_RETRIES = 3
+
+# 从响应里捞 data URI。模型把图放在 message.content 里,而不同网关的包裹层级不一样
+# (有的 content 是字符串、有的是 parts 数组),故对整个响应 JSON 做一次正则,
+# 不去猜层级 —— 猜错的代价是"调用成功、费用已产生、但我们说没图"。
+_DATA_URI = re.compile(r"data:image/[^;]+;base64,([A-Za-z0-9+/=]{100,})")
+
+
+class SufyImageProvider(ImageProvider):
+    """文生图 / 图生图 provider(OpenAI 兼容的 ``/chat/completions`` 面)。
+
+    调用形状与 i2v 那两个 provider 完全不同:图像走 chat 接口、参考图以 data URI 塞进
+    ``content`` 数组,没有提交-轮询-下载三段式。
+
+    2026-08-10 修:此前 ``gen_image`` 直接抛 NotImplementedError,而
+    ``POST /generation/image`` 端点是可达的、``ImageTaskExecutor`` 又默认实例化本类 ——
+    于是每个图像任务都稳定走到 FAILED。端点看着可用、实际必失败,正是本仓最忌讳的形态
+    (机器审逮到)。实现取自管线仓已跑通的通路(同日用它出过三张角色母版)。
     """
 
-    def gen_image(self, prompt: str, refs: list[bytes]) -> bytes:
-        raise NotImplementedError(
-            "逐帧图生图 provider 待开发(见 #53 / PerFrameStrategy);walk 视频主链不用它"
+    def __init__(
+        self,
+        config: AIProviderSettings = settings,
+        model: str = DEFAULT_IMAGE_MODEL,
+    ) -> None:
+        self._cfg = config
+        self._model = model
+
+    def _client(self) -> httpx.Client:
+        return httpx.Client(
+            base_url=self._cfg.normalized_base_url,
+            headers={"Authorization": f"Bearer {self._cfg.api_key}"},
+            timeout=self._cfg.timeout,
+            # retries 只覆盖建连阶段的失败(SSL 握手、连接被重置)。本机走代理时这类抖动
+            # 常见,已跑通的管线实现正是靠一层网络重试扛住的;不加会在人家能恢复的地方
+            # 放弃。它不重试读超时与 5xx —— 那两种请求可能已达上游,重发会重复计费。
+            transport=httpx.HTTPTransport(retries=_CONNECT_RETRIES),
         )
+
+    def gen_image(self, prompt: str, refs: list[bytes]) -> bytes:
+        """提示词 + 参考图 → 一张 PNG bytes。拿不到有效图就抛,不返回空 bytes。
+
+        为什么不返回空 bytes 兜底:上游 ``ImageTaskExecutor`` 会把返回值直接上传对象存储
+        并写进任务结果,一个 0 字节的"成功"会变成用户看到的一张裂图。
+        """
+        content: list[dict] = [{"type": "text", "text": prompt}]
+        for raw in refs:
+            b64 = base64.b64encode(raw).decode()
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{b64}"},
+            })
+        body = {"model": self._model, "messages": [{"role": "user", "content": content}]}
+
+        last = ""
+        with self._client() as client:
+            for attempt in range(1, _IMAGE_TRIES + 1):
+                payload = client.post(
+                    "/chat/completions", json=body,
+                ).raise_for_status().json()
+                found = _DATA_URI.search(json.dumps(payload))
+                if found:
+                    data = base64.b64decode(found.group(1))
+                    if len(data) >= _MIN_IMAGE_BYTES:
+                        return data
+                    last = f"图只有 {len(data)} 字节(下限 {_MIN_IMAGE_BYTES})"
+                else:
+                    last = "响应里没有 data URI"
+                logger.warning("文生图第 %d/%d 次没拿到有效图:%s", attempt, _IMAGE_TRIES, last)
+        raise RuntimeError(f"文生图 {_IMAGE_TRIES} 次均未取得有效图:{last}")
