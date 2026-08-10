@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, Outlet, useLocation, useNavigate, useParams } from 'react-router'
+import { Link, Outlet, useLocation, useParams } from 'react-router'
 
 import {
   CHARACTER_PERSPECTIVE,
@@ -14,7 +14,6 @@ import { useAuthSession } from '@/features/auth-session'
 export function ProjectDetailPage() {
   const { projectId } = useParams()
   const location = useLocation()
-  const navigate = useNavigate()
   const session = useAuthSession()
   const [project, setProject] = useState<Project | null>(null)
   const [characterCount, setCharacterCount] = useState(0)
@@ -72,8 +71,7 @@ export function ProjectDetailPage() {
   ]
 
   function signOut() {
-    const returnHome = () => navigate('/', { replace: true })
-    void session.logout().then(returnHome, returnHome)
+    void session.logout().catch(() => undefined)
   }
 
   return (

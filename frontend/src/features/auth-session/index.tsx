@@ -19,7 +19,7 @@ import {
   saveRefreshToken,
 } from './session-storage'
 
-export type AuthGuestReason = null | 'session-expired' | 'password-changed'
+export type AuthGuestReason = null | 'logged-out' | 'session-expired' | 'password-changed'
 
 export type AuthSessionState =
   | { status: 'booting'; user: null }
@@ -324,7 +324,7 @@ export function AuthSessionProvider({ apis, children }: AuthSessionProviderProps
   )
   const logout = useCallback(async () => {
     const refreshToken = refreshTokenRef.current
-    clearSession(null)
+    clearSession('logged-out')
     if (refreshToken) await apis.logout(refreshToken)
   }, [apis, clearSession])
 

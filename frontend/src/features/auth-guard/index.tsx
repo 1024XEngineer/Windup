@@ -1,6 +1,7 @@
 import { Link, Navigate, Outlet, useLocation } from 'react-router'
 
 import { useAuthSession } from '@/features/auth-session'
+import { sanitizeInternalPath } from '@/shared/navigation'
 
 /**
  * 受保护路由只消费会话三态，不读取 token，也不触发业务请求。
@@ -12,6 +13,7 @@ export function ProtectedRoute() {
 
   if (session.state.status === 'booting') return null
   if (session.state.status === 'authenticated') return <Outlet />
+  if (session.state.reason === 'logged-out') return <Navigate replace to="/" />
 
   const accountSearch = new URLSearchParams({
     account: 'login',
@@ -29,9 +31,11 @@ export function SessionExpiredNotice() {
 
   const currentSearch = new URLSearchParams(search)
   const accountPanelOpen = currentSearch.get('account') === 'login'
+  const returnTarget =
+    sanitizeInternalPath(currentSearch.get('returnTo')) ?? `${pathname}${search}${hash}`
   const accountSearch = new URLSearchParams({
     account: 'login',
-    returnTo: `${pathname}${search}${hash}`,
+    returnTo: returnTarget,
   })
 
   return (
