@@ -6,9 +6,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
+
+from sqlalchemy import BigInteger, DateTime, Integer, JSON, String
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
+
+from windup_framework.db import Base
 
 
 # -- 枚举 ----------------------------------------------------------------
@@ -21,19 +26,42 @@ class RunStatus(StrEnum):
     SOFT_DELETED = "soft_deleted"
 
 
-# -- 执行记录 -------------------------------------------------------------
+# -- ORM -----------------------------------------------------------------
 
 
-@dataclass
-class WorkflowRun:
-    """执行记录——前端维护的节点树的持久化容器。
+class WorkflowRun(Base):
+    """执行记录表——前端维护的节点树的持久化容器。
 
     后端不校验 nodes 内部结构，仅做全量读写。
     """
 
-    id: int | None = None
-    project_id: int = 0
-    nodes: list = field(default_factory=list)   # 节点树（前端自定义结构，后端不校验）
-    status: RunStatus = RunStatus.ACTIVE
-    version: int = 1
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    __tablename__ = "windup_workflow_run"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    project_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    # 节点树（前端自定义结构，后端不校验）；Postgres 上 JSONB，SQLite 上 JSON。
+    nodes: Mapped[list] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=False,
+        default=list,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=RunStatus.ACTIVE.value,
+    )
+
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
