@@ -4,7 +4,8 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
 import { AssetLibraryPage } from '@/pages/asset-library'
 import { AccountPage } from '@/pages/account'
 import { CharacterDetailPage } from '@/pages/character-detail'
-import { HomePage } from '@/pages/home'
+import { WorkspaceHomePage } from '@/pages/home'
+import { LandingPage } from '@/pages/landing'
 import { NotFoundPage } from '@/pages/not-found'
 import { PlaytestEntryPage, PlaytestPage } from '@/pages/playtest'
 import { ProjectDetailPage } from '@/pages/project-detail'
@@ -12,7 +13,7 @@ import { ProjectCreatePage } from '@/pages/project-create'
 import { ProjectsPage } from '@/pages/projects'
 import { QuickStartPage } from '@/pages/quick-start'
 import { ProtectedRoute } from '@/features/auth-guard'
-import { AppShellRoute } from './layout'
+import { AppShellRoute, MarketingShellRoute } from './layout'
 
 const WorkflowEditorPage = lazy(() =>
   import('@/pages/workflow-editor').then(({ WorkflowEditorPage: Page }) => ({ default: Page })),
@@ -21,8 +22,8 @@ const WorkflowEditorPage = lazy(() =>
 /**
  * 路由表与全局外壳。
  * 页面自己获取所需数据，不再由 app 层构造服务后逐层传入。
- * 外壳的边界画在这张表上：首页与流程页使用全局顶栏；项目工作区使用自己的
- * 项目导航，不重复套全局外壳。
+ * 外壳的边界画在这张表上：公开宣传页与登录产品使用不同外壳；
+ * 项目工作区继续使用自己的项目导航，不重复套产品顶栏。
  */
 export function App() {
   return (
@@ -44,9 +45,13 @@ function LazyWorkflowEditorPage() {
 export function AppRoutes() {
   return (
     <Routes>
-      <Route element={<AppShellRoute />}>
-        <Route path="/" element={<HomePage />} />
-        <Route element={<ProtectedRoute />}>
+      <Route element={<MarketingShellRoute />}>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="*" element={<NotFoundPage />} />
+      </Route>
+      <Route element={<ProtectedRoute />}>
+        <Route element={<AppShellRoute />}>
+          <Route path="/workspace" element={<WorkspaceHomePage />} />
           <Route path="/account" element={<AccountPage />} />
           <Route path="/quick-start" element={<QuickStartPage />} />
           <Route path="/quick-start/:runId" element={<QuickStartPage />} />
@@ -57,9 +62,6 @@ export function AppRoutes() {
           <Route path="/playtest" element={<PlaytestEntryPage />} />
           <Route path="/playtest/:characterId/:outfitId" element={<PlaytestPage />} />
         </Route>
-        <Route path="*" element={<NotFoundPage />} />
-      </Route>
-      <Route element={<ProtectedRoute />}>
         <Route path="/projects/:projectId" element={<ProjectDetailPage />}>
           <Route index element={<Navigate replace to="assets" />} />
           <Route path="assets" element={<AssetLibraryPage />} />
