@@ -20,9 +20,10 @@ describe('createRealWorkflowEditorSession', () => {
     }
     const { session } = await createCharacterTemplateSession({ mediaApis })
     const file = new File(['pixels'], 'reference.png', { type: 'image/png' })
+    const controller = new AbortController()
 
-    await expect(session.uploadReferenceImage(file)).resolves.toBe(uploaded)
-    expect(mediaApis.upload).toHaveBeenCalledWith(file, 'reference-image')
+    await expect(session.uploadReferenceImage(file, controller.signal)).resolves.toBe(uploaded)
+    expect(mediaApis.upload).toHaveBeenCalledWith(file, 'reference-image', controller.signal)
   })
 
   it('只用主仓库公开接口恢复 WorkflowRun 并装配 Controller', async () => {

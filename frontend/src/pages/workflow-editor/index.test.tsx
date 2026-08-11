@@ -161,6 +161,33 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     })
   })
 
+  it('页面卸载时取消在途参考图上传并忽略迟到结果', async () => {
+    const pendingUpload = deferred<MediaReference>()
+    let uploadSignal: AbortSignal | undefined
+    const session = createSession(workflowFixture(), {
+      uploadReferenceImage: vi.fn((_file: File, signal?: AbortSignal) => {
+        uploadSignal = signal
+        return pendingUpload.promise
+      }),
+    })
+    const updateCharacterSetup = vi.spyOn(session.controller, 'updateCharacterSetup')
+    defaultSessionLoader.mockResolvedValue(session)
+    const view = renderEditor('/workflow-editor/42')
+
+    const file = new File(['pixels'], 'slow.png', { type: 'image/png' })
+    fireEvent.change(await screen.findByLabelText('角色参考图'), { target: { files: [file] } })
+    await waitFor(() => expect(uploadSignal).toBeDefined())
+
+    view.unmount()
+    expect(uploadSignal?.aborted).toBe(true)
+
+    await act(async () => {
+      pendingUpload.resolve('late-reference' as MediaReference)
+      await pendingUpload.promise
+    })
+    expect(updateCharacterSetup).not.toHaveBeenCalled()
+  })
+
   it('真实 Generation 尚未实现时展示接口错误，不回退到演示候选', async () => {
     defaultSessionLoader.mockResolvedValue(createSession())
     renderEditor('/workflow-editor/42')
