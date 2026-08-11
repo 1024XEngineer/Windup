@@ -231,10 +231,10 @@ function QuickStartInput({
   }
 
   return (
-    <section className="relative min-h-[640px] overflow-hidden rounded-[2rem] border border-[#c9d0ca] bg-[#dfe3df] text-[#171817] shadow-[0_26px_80px_rgba(31,43,35,0.10)]">
+    <section className="relative min-h-screen overflow-hidden border border-[#c9d0ca] bg-[#dfe3df] text-[#171817] shadow-[0_26px_80px_rgba(31,43,35,0.10)]">
       <AmbientGrid />
 
-      <div className="relative z-10 grid min-h-[640px] grid-rows-[auto_1fr_auto] p-5 sm:p-8">
+      <div className="relative z-10 grid min-h-screen grid-rows-[auto_1fr_auto] p-5 sm:p-8">
         <header className="flex items-start justify-between gap-6">
           <div>
             <p className="font-mono text-[10px] font-bold tracking-[0.16em] text-[#687069]">
@@ -617,9 +617,9 @@ function QuickStartRun({
   }
 
   return (
-    <section className="relative min-h-[640px] overflow-hidden rounded-[2rem] border border-[#c9d0ca] bg-[#e3e7e2] text-[#171817] shadow-[0_26px_80px_rgba(31,43,35,0.10)]">
+    <section className="relative min-h-screen overflow-hidden border border-[#c9d0ca] bg-[#e3e7e2] text-[#171817] shadow-[0_26px_80px_rgba(31,43,35,0.10)]">
       <AmbientGrid />
-      <div className="relative z-10 grid min-h-[640px] grid-rows-[auto_1fr_auto] gap-6 p-5 sm:p-8">
+      <div className="relative z-10 grid min-h-screen grid-rows-[auto_1fr_auto] gap-6 p-5 sm:p-8">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="font-mono text-[10px] font-bold tracking-[0.16em] text-[#687069]">
