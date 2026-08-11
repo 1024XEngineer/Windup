@@ -26,6 +26,7 @@ import {
   type Generation,
   type Project,
   type ReviewWorkflowNode,
+  type WorkflowGenerationRole,
   type WorkflowNode,
   type WorkflowRun,
 } from '@/entities'
@@ -47,6 +48,31 @@ type WorkflowCardData = {
 type WorkflowCardNode = Node<WorkflowCardData, 'workflow-card'>
 type ActionMenuLevel = 'root' | 'outfits' | 'actions'
 
+/**
+ * 菜单里的预设动作。label 只用于展示，name 是落进 WorkflowRun 的动作名——
+ * 两者分开写，改菜单文案不会连带改掉已经落库的数据。
+ */
+const ACTION_PRESETS = [
+  {
+    type: 'idle',
+    label: 'Idle 待机',
+    name: '待机',
+    prompt: '平稳呼吸，重心轻微起伏',
+  },
+  { type: 'walk', label: 'Walk 行走', name: '行走', prompt: '轻快地向前行走' },
+  {
+    type: 'attack',
+    label: 'Attack 攻击',
+    name: '攻击',
+    prompt: '蓄力后向前攻击并回到准备姿态',
+  },
+] as const
+
+const ACTION_PRESET_HINT = '预设动作 · 逐帧生成'
+
+/** 角色设定与身份母版为所有动作分支共用，归在这条虚拟分支下。 */
+const SHARED_BRANCH = 'shared'
+
 const nodeTypes = { 'workflow-card': WorkflowCard }
 
 /**
@@ -63,63 +89,66 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
   const [actionMenuOpen, setActionMenuOpen] = useState(false)
   const [actionMenuLevel, setActionMenuLevel] = useState<ActionMenuLevel>('root')
   const [selectedOutfitId, setSelectedOutfitId] = useState<string | null>(null)
-  const [busy, setBusy] = useState<string | null>(null)
+  /** 正在执行命令的分支。必须是集合：并行分支各自持锁，后起的不能顶掉先起的。 */
+  const [busyBranches, setBusyBranches] = useState<ReadonlySet<string>>(() => new Set())
   const [error, setError] = useState<string | null>(null)
   const [resumeError, setResumeError] = useState<string | null>(null)
   const [generationReadError, setGenerationReadError] = useState<string | null>(null)
   const [canvasNodes, setCanvasNodes] = useState<WorkflowCardNode[]>([])
-  const sessionEpochRef = useRef(0)
-  const generationReadEpochRef = useRef(0)
+  /** 当前会话的有效期。换 WorkflowRun 就 abort，所有异步回调只认这一个信号。 */
+  const sessionAbortRef = useRef<AbortController | null>(null)
+  /** 最近一次生成结果读取。同一会话内被新的读取顶掉时 abort，避免旧结果盖住新结果。 */
+  const latestReadAbortRef = useRef<AbortController | null>(null)
 
   const requestGenerations = useCallback(
-    (targetSession: WorkflowEditorSession, targetRun: WorkflowRun, sessionEpoch: number) => {
-      const readEpoch = generationReadEpochRef.current + 1
-      generationReadEpochRef.current = readEpoch
+    (targetSession: WorkflowEditorSession, targetRun: WorkflowRun, sessionSignal: AbortSignal) => {
+      latestReadAbortRef.current?.abort()
+      const readAbort = new AbortController()
+      latestReadAbortRef.current = readAbort
+      const outdated = () => sessionSignal.aborted || readAbort.signal.aborted
       void readGenerations(targetSession.controller, targetRun)
         .then((results) => {
-          if (
-            sessionEpochRef.current === sessionEpoch &&
-            generationReadEpochRef.current === readEpoch
-          ) {
-            setGenerations(results)
-            setGenerationReadError(null)
-          }
+          if (outdated()) return
+          setGenerations(results)
+          setGenerationReadError(null)
         })
         .catch((cause: unknown) => {
-          if (
-            sessionEpochRef.current === sessionEpoch &&
-            generationReadEpochRef.current === readEpoch
-          ) {
-            setGenerationReadError(errorMessage(cause, '读取生成结果失败'))
-          }
+          if (outdated()) return
+          setGenerationReadError(errorMessage(cause, '读取生成结果失败'))
         })
     },
     [],
   )
 
   const runCommand = useCallback(
-    (name: string, command: () => Promise<void>) => {
-      if (busy) return
-      const commandEpoch = sessionEpochRef.current
-      setBusy(name)
+    (branchKey: string, command: () => Promise<void>) => {
+      // 同一分支内互斥，防重复提交；别的分支照常能操作，也不会被这条命令解锁。
+      if (busyBranches.has(branchKey)) return
+      const sessionSignal = sessionAbortRef.current?.signal
+      setBusyBranches((current) => new Set(current).add(branchKey))
       setError(null)
       void command()
         .catch((cause: unknown) => {
-          if (sessionEpochRef.current === commandEpoch) {
-            setError(errorMessage(cause, '工作流命令执行失败'))
-          }
+          if (sessionSignal?.aborted) return
+          setError(errorMessage(cause, '工作流命令执行失败'))
         })
         .finally(() => {
-          if (sessionEpochRef.current === commandEpoch) setBusy(null)
+          if (sessionSignal?.aborted) return
+          setBusyBranches((current) => {
+            if (!current.has(branchKey)) return current
+            const next = new Set(current)
+            next.delete(branchKey)
+            return next
+          })
         })
     },
-    [busy],
+    [busyBranches],
   )
 
   useEffect(() => {
-    const sessionEpoch = sessionEpochRef.current + 1
-    sessionEpochRef.current = sessionEpoch
-    generationReadEpochRef.current += 1
+    const sessionAbort = new AbortController()
+    sessionAbortRef.current = sessionAbort
+    latestReadAbortRef.current?.abort()
     setSession(null)
     setCharacter(null)
     setRun(null)
@@ -128,22 +157,22 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
     setActionMenuOpen(false)
     setActionMenuLevel('root')
     setSelectedOutfitId(null)
-    setBusy(null)
+    setBusyBranches(new Set())
     setError(null)
     setResumeError(null)
     setGenerationReadError(null)
     setCanvasNodes([])
     if (!runId) return
 
-    let active = true
     let loaded: WorkflowEditorSession | null = null
     let unsubscribe: () => void = () => undefined
     let unsubscribeErrors: () => void = () => undefined
-    const loader = loadSession ?? defaultSessionLoader
+    const loader = loadSession ?? createDefaultRealWorkflowEditorSession
+    const signal = sessionAbort.signal
 
     void loader(runId)
       .then(async (nextSession) => {
-        if (!active || sessionEpochRef.current !== sessionEpoch) {
+        if (signal.aborted) {
           nextSession.dispose()
           return
         }
@@ -151,32 +180,29 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
         setSession(nextSession)
         setCharacter(nextSession.character)
         unsubscribeErrors = nextSession.subscribeErrors((nextError) => {
-          if (active && sessionEpochRef.current === sessionEpoch) {
-            setError(errorMessage(nextError, '工作流异步处理失败'))
-          }
+          if (signal.aborted) return
+          setError(errorMessage(nextError, '工作流异步处理失败'))
         })
         unsubscribe = nextSession.controller.subscribe((nextRun) => {
-          if (!active || sessionEpochRef.current !== sessionEpoch) return
+          if (signal.aborted) return
           setRun(nextRun)
-          requestGenerations(nextSession, nextRun, sessionEpoch)
+          requestGenerations(nextSession, nextRun, signal)
         })
         try {
           await nextSession.controller.resume()
         } catch (cause: unknown) {
-          if (active && sessionEpochRef.current === sessionEpoch) {
-            setResumeError(errorMessage(cause, '恢复 WorkflowRun 失败'))
-          }
+          if (signal.aborted) return
+          setResumeError(errorMessage(cause, '恢复 WorkflowRun 失败'))
         }
       })
       .catch((cause: unknown) => {
-        if (active && sessionEpochRef.current === sessionEpoch) {
-          setError(errorMessage(cause, '恢复 WorkflowRun 失败'))
-        }
+        if (signal.aborted) return
+        setError(errorMessage(cause, '恢复 WorkflowRun 失败'))
       })
 
     return () => {
-      active = false
-      generationReadEpochRef.current += 1
+      sessionAbort.abort()
+      latestReadAbortRef.current?.abort()
       unsubscribe()
       unsubscribeErrors()
       loaded?.dispose()
@@ -197,7 +223,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
             actionMenuOpen,
             actionMenuLevel,
             selectedOutfitId,
-            busy,
+            busyBranches,
             resumeBlocked: Boolean(resumeError),
             setSelectedImages,
             setActionMenuOpen,
@@ -210,7 +236,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
     [
       actionMenuOpen,
       actionMenuLevel,
-      busy,
+      busyBranches,
       character,
       generations,
       run,
@@ -269,27 +295,43 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
   const visibleError = error ?? resumeError ?? generationReadError
 
   return (
-    <main className="workflow-editor-shell">
-      <aside className="workflow-editor-project" aria-label="当前项目">
+    <div className="workflow-editor-shell fixed inset-0 z-30 overflow-hidden bg-[var(--editor-paper)] text-[var(--editor-ink)]">
+      <aside
+        className="pointer-events-none absolute bottom-[18px] left-[18px] z-15 grid min-w-[250px] max-w-[min(380px,calc(100vw-112px))] gap-1 rounded-[10px] border border-[rgb(36_49_39_/_12%)] bg-[rgb(249_250_247_/_90%)] px-[15px] py-3 shadow-[0_8px_24px_rgb(31_40_33_/_9%)] backdrop-blur-[14px]"
+        aria-label="当前项目"
+      >
         <div>
-          <p>PROJECT</p>
-          <h1>{session.project.name}</h1>
+          <p className="m-0 mb-[5px] text-[8px] font-extrabold tracking-[0.12em] text-[#7b827b]">
+            PROJECT
+          </p>
+          <h1 className="m-0 text-sm font-bold text-[#29342c]">{session.project.name}</h1>
         </div>
-        <p className="workflow-editor-project__constraints">{constraints.join(' · ')}</p>
-        <div className="workflow-editor-contract">
-          <span className="is-real">真实 WorkflowRun 接口</span>
-          <small>
+        <p className="m-0 overflow-hidden text-ellipsis whitespace-nowrap text-[9px] leading-[1.5] text-[#777f78]">
+          {constraints.join(' · ')}
+        </p>
+        <div className="mt-1 flex items-center justify-between gap-3">
+          <span className="rounded-full border border-[rgb(61_83_67_/_12%)] bg-[rgb(255_255_255_/_72%)] px-[7px] py-[3px] text-[8px] font-bold text-[var(--editor-ink)]">
+            真实 WorkflowRun 接口
+          </span>
+          <small className="font-mono text-[8px] font-bold text-[var(--editor-muted)]">
             Run {run.id} · v{run.version}
           </small>
         </div>
       </aside>
       {visibleError ? (
-        <div className="workflow-editor-error" role="alert">
+        <div
+          className="absolute left-1/2 top-[150px] z-10 flex -translate-x-1/2 items-center gap-3 border border-[#b66e62] bg-[#f7e9e5] px-[14px] py-2.5 text-xs text-[#7b3027]"
+          role="alert"
+        >
           <span>{visibleError}</span>
           {!error && !resumeError && generationReadError ? (
             <button
               type="button"
-              onClick={() => requestGenerations(session, run, sessionEpochRef.current)}
+              className="rounded-md border border-current bg-transparent px-2 py-[5px] font-bold text-inherit"
+              onClick={() => {
+                const signal = sessionAbortRef.current?.signal
+                if (signal) requestGenerations(session, run, signal)
+              }}
             >
               重试读取生成结果
             </button>
@@ -312,19 +354,26 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
           minZoom={0.3}
           maxZoom={1.2}
         >
-          <FitViewOnChange
-            signature={`${run.version}:${actionMenuOpen}:${Object.keys(generations).join(',')}:${canvasNodes.length}`}
-          />
+          <FitViewOnNodeSetChange nodeIds={canvasNodes.map((node) => node.id)} />
           <Controls position="bottom-right" showInteractive={false} />
         </ReactFlow>
       </section>
-    </main>
+    </div>
   )
 }
 
-function FitViewOnChange({ signature }: { signature: string }) {
+/**
+ * 只有画布上的节点增减时才重新取景，让新长出来的分支进入视野。
+ * 节点内容变化（生成结果到达、状态推进、版本号增加）一律不动视角——
+ * 用户拖过、缩放过的位置是他自己选的，命令执行不该把它拽回全景。
+ *
+ * 延迟一帧再取景：新节点要等 React Flow 量完尺寸，立刻调会按旧尺寸算错取景框。
+ */
+function FitViewOnNodeSetChange({ nodeIds }: { nodeIds: string[] }) {
   const { fitView } = useReactFlow()
+  const signature = nodeIds.join(',')
   useEffect(() => {
+    if (!signature) return
     const timer = window.setTimeout(() => {
       void fitView({ padding: 0.14, maxZoom: 0.82, duration: 180 })
     }, 32)
@@ -344,23 +393,32 @@ interface ProjectionInput {
   actionMenuOpen: boolean
   actionMenuLevel: ActionMenuLevel
   selectedOutfitId: string | null
-  busy: string | null
+  busyBranches: ReadonlySet<string>
   resumeBlocked: boolean
   setSelectedImages: React.Dispatch<React.SetStateAction<Record<string, string>>>
   setActionMenuOpen(open: boolean): void
   setActionMenuLevel(level: ActionMenuLevel): void
   setSelectedOutfitId(outfitId: string | null): void
   setCharacter(character: Character): void
-  runCommand(name: string, command: () => Promise<void>): void
+  runCommand(branchKey: string, command: () => Promise<void>): void
 }
 
-function projectCanvas(input: ProjectionInput): { nodes: WorkflowCardNode[]; edges: Edge[] } {
+/** 卡片自己所属的分支；命令与禁用判断都以它为准。 */
+function branchKeyOf(node: WorkflowNode, input: ProjectionInput): string {
+  return branchKeyFor(node, new Map(input.run.nodes.map((candidate) => [candidate.id, candidate])))
+}
+
+function projectCanvas(input: ProjectionInput): {
+  nodes: WorkflowCardNode[]
+  edges: Edge[]
+} {
   const activeNodes = input.run.nodes.filter((node) => !node.deletedAt)
   const actionRootIds = activeNodes
     .filter((node) => node.type === 'action-first-frame')
     .map((node) => node.id)
+  const nodesById = new Map(activeNodes.map((node) => [node.id, node]))
   const nodes = activeNodes.map((node) =>
-    toCanvasNode(node, branchIndexFor(node, activeNodes, actionRootIds), input),
+    toCanvasNode(node, branchIndexFor(branchKeyFor(node, nodesById), actionRootIds), input),
   )
   const edges: Edge[] = activeNodes.flatMap((node) => {
     const confirmed = node.status === 'passed'
@@ -370,14 +428,7 @@ function projectCanvas(input: ProjectionInput): { nodes: WorkflowCardNode[]; edg
       target: node.id,
       selectable: false,
       deletable: false,
-      type: 'default',
-      animated: false,
-      className: confirmed ? undefined : 'workflow-edge--flowing',
-      style: {
-        stroke: confirmed ? '#69866f' : 'rgba(72, 101, 80, 0.42)',
-        strokeWidth: 3,
-        strokeDasharray: confirmed ? undefined : '9 8',
-      },
+      className: confirmed ? 'workflow-edge--confirmed' : 'workflow-edge--flowing',
     }))
   })
 
@@ -398,8 +449,8 @@ function toCanvasNode(
     dragHandle: '.workflow-card__handle',
     deletable: false,
     data: {
-      eyebrow: eyebrowFor(node.type),
-      title: titleFor(node.type),
+      eyebrow: CARD_LABELS[node.type].eyebrow,
+      title: CARD_LABELS[node.type].title,
       status: node.status,
       content: contentFor(node, input),
     },
@@ -424,6 +475,8 @@ function CharacterSetupContent({
   node: CharacterSetupWorkflowNode
   input: ProjectionInput
 }) {
+  const branchKey = branchKeyOf(node, input)
+  const branchBusy = input.busyBranches.has(branchKey)
   const [prompt, setPrompt] = useState(node.input.prompt)
   useEffect(() => setPrompt(node.input.prompt), [node.id, node.input.prompt])
 
@@ -431,25 +484,28 @@ function CharacterSetupContent({
   if (node.status === 'passed') return <p className="workflow-card__summary">角色描述已确认</p>
   return (
     <div className="workflow-card__stack nodrag nopan nowheel">
-      <label className="workflow-card__field">
-        <span>角色描述</span>
+      <label className="grid gap-[7px]">
+        <span className="text-[9px] font-[750] text-[#626b64]">角色描述</span>
         <textarea
           aria-label="角色描述"
           rows={4}
+          className="min-h-[84px] w-full resize-y rounded-lg border border-[var(--editor-line)] bg-[#fbfcfb] px-3 py-2.5 font-[inherit] text-[11px] leading-[1.55] text-[var(--editor-ink)] focus:border-[#69866f] focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-[rgb(105_134_111_/_18%)]"
           value={prompt}
-          disabled={Boolean(input.busy)}
+          disabled={branchBusy}
           onChange={(event) => setPrompt(event.target.value)}
         />
         {node.input.referenceMedia.length > 0 ? (
-          <small>已关联 {node.input.referenceMedia.length} 个参考媒体</small>
+          <small className="text-[9px] font-[750] text-[#626b64]">
+            已关联 {node.input.referenceMedia.length} 个参考媒体
+          </small>
         ) : null}
       </label>
       <button
         type="button"
-        disabled={Boolean(input.busy) || !prompt.trim()}
+        disabled={branchBusy || !prompt.trim()}
         onClick={() =>
-          input.runCommand('character-template', () =>
-            getController(input).generateCharacterTemplate(node.id, {
+          input.runCommand(branchKey, () =>
+            input.controller.generateCharacterTemplate(node.id, {
               spriteWidth: input.project.spriteSize.width,
               spriteHeight: input.project.spriteSize.height,
               input: {
@@ -473,6 +529,8 @@ function CharacterTemplateContent({
   node: CharacterTemplateWorkflowNode
   input: ProjectionInput
 }) {
+  const branchKey = branchKeyOf(node, input)
+  const branchBusy = input.busyBranches.has(branchKey)
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.phase === 'ready' && node.status === 'active') {
     const setupNode = findDependency(input.run, node, 'character-setup')
@@ -480,11 +538,11 @@ function CharacterTemplateContent({
       <button
         type="button"
         className="nodrag nopan nowheel"
-        disabled={!setupNode || Boolean(input.busy)}
+        disabled={!setupNode || branchBusy}
         onClick={() => {
           if (!setupNode) return
-          input.runCommand('character-template', () =>
-            getController(input).generateCharacterTemplate(setupNode.id, {
+          input.runCommand(branchKey, () =>
+            input.controller.generateCharacterTemplate(setupNode.id, {
               spriteWidth: input.project.spriteSize.width,
               spriteHeight: input.project.spriteSize.height,
             }),
@@ -496,21 +554,25 @@ function CharacterTemplateContent({
     )
   }
   if (node.phase === 'selecting') {
-    const result = input.generations[node.id]?.result
+    const result = input.generations[generationKey(node.id, 'character_template')]?.result
     const images = result?.type === 'character_template' ? result.images : []
     const selectedImageUrl =
       images.find((image) => image.url === input.selectedImages[node.id])?.url ?? null
     return (
       <div className="workflow-card__stack nodrag nopan nowheel">
-        <div className="workflow-candidate-grid">
+        <div className="grid grid-cols-2 gap-[7px]">
           {images.map((image, index) => (
             <button
               type="button"
               key={image.url}
+              className="workflow-first-frame"
               aria-label={`选择角色候选 ${index + 1}`}
               aria-pressed={selectedImageUrl === image.url}
               onClick={() =>
-                input.setSelectedImages((selected) => ({ ...selected, [node.id]: image.url }))
+                input.setSelectedImages((selected) => ({
+                  ...selected,
+                  [node.id]: image.url,
+                }))
               }
             >
               <img src={image.url} alt={`角色候选 ${index + 1}`} />
@@ -519,10 +581,10 @@ function CharacterTemplateContent({
         </div>
         <button
           type="button"
-          disabled={!selectedImageUrl || Boolean(input.busy)}
+          disabled={!selectedImageUrl || branchBusy}
           onClick={() =>
-            input.runCommand('confirm-template', () =>
-              getController(input).confirmCharacterTemplate(node.id, selectedImageUrl!),
+            input.runCommand(branchKey, () =>
+              input.controller.confirmCharacterTemplate(node.id, selectedImageUrl!),
             )
           }
         >
@@ -535,10 +597,10 @@ function CharacterTemplateContent({
     return (
       <div className="workflow-card__stack nodrag nopan nowheel">
         <img className="workflow-master-image" src={node.selectedImageUrl} alt="已确认身份母版" />
-        <span className="workflow-lock">身份已锁定</span>
+        <span className="text-center text-[11px] text-[var(--editor-muted)]">身份已锁定</span>
         <button
           type="button"
-          className="workflow-card__plus"
+          className="absolute -bottom-4 -right-4 z-8 grid h-8 min-h-8 w-8 place-items-center rounded-full border border-[var(--editor-ink)] bg-white p-0 text-[15px] leading-none text-[var(--editor-ink)] shadow-[var(--editor-shadow)] hover:bg-[var(--editor-ink)] hover:text-white"
           aria-label="添加动作分支"
           onClick={() => {
             input.setActionMenuLevel('root')
@@ -549,7 +611,7 @@ function CharacterTemplateContent({
           ＋
         </button>
         {input.actionMenuOpen ? (
-          <div className="workflow-card__plus-menu">
+          <div className="absolute left-[calc(100%+24px)] top-[calc(100%-16px)] z-7 flex min-w-[190px] flex-col overflow-hidden rounded-xl border border-[var(--editor-line)] bg-white shadow-[var(--editor-shadow)]">
             <ActionMenu input={input} templateNodeId={node.id} />
           </div>
         ) : null}
@@ -562,33 +624,15 @@ function CharacterTemplateContent({
 function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templateNodeId: string }) {
   const outfits = input.character?.outfits ?? []
   const selectedOutfit = outfits.find((outfit) => outfit.id === input.selectedOutfitId) ?? null
-  const presets = [
-    {
-      type: 'idle',
-      name: 'Idle 待机',
-      hint: '预设动作 · 逐帧生成',
-      prompt: '平稳呼吸，重心轻微起伏',
-    },
-    {
-      type: 'walk',
-      name: 'Walk 行走',
-      hint: '预设动作 · 逐帧生成',
-      prompt: '轻快地向前行走',
-    },
-    {
-      type: 'attack',
-      name: 'Attack 攻击',
-      hint: '预设动作 · 逐帧生成',
-      prompt: '蓄力后向前攻击并回到准备姿态',
-    },
-  ] as const
+  // 菜单挂在身份母版上，新增分支属于共享区的操作。
+  const branchBusy = input.busyBranches.has(SHARED_BRANCH)
 
   if (input.actionMenuLevel === 'root') {
     return (
       <div className="workflow-action-menu">
         <button
           type="button"
-          disabled={outfits.length === 0 || Boolean(input.busy)}
+          disabled={outfits.length === 0 || branchBusy}
           onClick={() => {
             if (outfits.length === 1) {
               input.setSelectedOutfitId(outfits[0]!.id)
@@ -644,19 +688,19 @@ function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templat
       >
         ← 生成动作
       </button>
-      {presets.map((preset) => (
+      {ACTION_PRESETS.map((preset) => (
         <button
           type="button"
           key={preset.type}
-          disabled={!selectedOutfit || Boolean(input.busy)}
+          disabled={!selectedOutfit || branchBusy}
           onClick={() => {
             if (!selectedOutfit) return
-            input.runCommand('add-action', () =>
-              getController(input).addAction({
+            input.runCommand(SHARED_BRANCH, () =>
+              input.controller.addAction({
                 dependsOnNodeIds: [templateNodeId],
                 input: {
                   outfitId: selectedOutfit.id,
-                  name: preset.name.replace(/^[A-Za-z]+\s+/, ''),
+                  name: preset.name,
                   type: preset.type,
                   prompt: preset.prompt,
                   fps: 12,
@@ -668,8 +712,8 @@ function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templat
             input.setSelectedOutfitId(null)
           }}
         >
-          <b>{preset.name}</b>
-          <small>{preset.hint}</small>
+          <b>{preset.label}</b>
+          <small>{ACTION_PRESET_HINT}</small>
         </button>
       ))}
       <button type="button" disabled title="当前页面尚未提供动作描述输入">
@@ -687,11 +731,13 @@ function FirstFrameContent({
   node: ActionFirstFrameWorkflowNode
   input: ProjectionInput
 }) {
-  const result = input.generations[node.id]?.result
+  const branchKey = branchKeyOf(node, input)
+  const branchBusy = input.busyBranches.has(branchKey)
+  const result = input.generations[generationKey(node.id, 'first_frame')]?.result
   const image = result?.type === 'first_frame' ? result.image : null
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.phase === 'configuring') {
-    const character = findCharacterForOutfit(input.character, node.input.outfitId)
+    const character = characterOwningOutfit(input.character, node.input.outfitId)
     return (
       <div className="workflow-card__stack nodrag nopan nowheel">
         <p>
@@ -700,11 +746,11 @@ function FirstFrameContent({
         <p>{node.input.prompt ?? '无额外动作描述'}</p>
         <button
           type="button"
-          disabled={!character || Boolean(input.busy)}
+          disabled={!character || branchBusy}
           onClick={() => {
             if (!character) return
-            input.runCommand('first-frame', () =>
-              getController(input).generateFirstFrame(node.id, {
+            input.runCommand(branchKey, () =>
+              input.controller.generateFirstFrame(node.id, {
                 characterId: character.id,
                 referenceMedia: [],
               }),
@@ -726,17 +772,20 @@ function FirstFrameContent({
           aria-label="选择动作首帧"
           aria-pressed={selectedImageUrl === image.url}
           onClick={() =>
-            input.setSelectedImages((selected) => ({ ...selected, [node.id]: image.url }))
+            input.setSelectedImages((selected) => ({
+              ...selected,
+              [node.id]: image.url,
+            }))
           }
         >
           <img src={image.url} alt="动作首帧候选" />
         </button>
         <button
           type="button"
-          disabled={!selectedImageUrl || Boolean(input.busy)}
+          disabled={!selectedImageUrl || branchBusy}
           onClick={() =>
-            input.runCommand('confirm-first-frame', () =>
-              getController(input).confirmFirstFrame(node.id, selectedImageUrl!),
+            input.runCommand(branchKey, () =>
+              input.controller.confirmFirstFrame(node.id, selectedImageUrl!),
             )
           }
         >
@@ -764,6 +813,8 @@ function MethodContent({
   node: ActionGenerationMethodWorkflowNode
   input: ProjectionInput
 }) {
+  const branchKey = branchKeyOf(node, input)
+  const branchBusy = input.busyBranches.has(branchKey)
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.phase === 'completed') return <p className="workflow-card__summary">视频裁剪</p>
   if (node.status !== 'active') return <StatusText node={node} input={input} />
@@ -771,10 +822,10 @@ function MethodContent({
     <div className="workflow-card__stack nodrag nopan nowheel">
       <button
         type="button"
-        disabled={Boolean(input.busy)}
+        disabled={branchBusy}
         onClick={() =>
-          input.runCommand('select-method', () =>
-            getController(input).selectActionGenerationMethod(node.id, 'video-cropping'),
+          input.runCommand(branchKey, () =>
+            input.controller.selectActionGenerationMethod(node.id, 'video-cropping'),
           )
         }
       >
@@ -794,27 +845,29 @@ function AnimationContent({
   node: ActionFullFrameWorkflowNode
   input: ProjectionInput
 }) {
-  const result = input.generations[node.id]?.result
+  const branchKey = branchKeyOf(node, input)
+  const branchBusy = input.busyBranches.has(branchKey)
+  const result = input.generations[generationKey(node.id, 'complete_animation')]?.result
   const frames = result?.type === 'complete_animation' ? result.frames : []
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.phase === 'ready' && node.status === 'active') {
-    const firstFrame = findDependency(input.run, node, 'action-generation-method')
-    const actionNode = firstFrame
-      ? findDependency(input.run, firstFrame, 'action-first-frame')
+    // 依赖链是 首帧 → 生产方式 → 完整动画，所以要往上翻两层才拿得到首帧的造型。
+    const methodNode = findDependency(input.run, node, 'action-generation-method')
+    const firstFrameNode = methodNode
+      ? findDependency(input.run, methodNode, 'action-first-frame')
       : null
-    const character =
-      actionNode?.type === 'action-first-frame'
-        ? findCharacterForOutfit(input.character, actionNode.input.outfitId)
-        : null
+    const character = firstFrameNode
+      ? characterOwningOutfit(input.character, firstFrameNode.input.outfitId)
+      : null
     return (
       <button
         type="button"
         className="nodrag nopan nowheel"
-        disabled={!character || Boolean(input.busy)}
+        disabled={!character || branchBusy}
         onClick={() => {
           if (!character) return
-          input.runCommand('complete-animation', () =>
-            getController(input).generateCompleteAnimation(node.id, {
+          input.runCommand(branchKey, () =>
+            input.controller.generateCompleteAnimation(node.id, {
               characterId: character.id,
               referenceMedia: [],
             }),
@@ -827,9 +880,14 @@ function AnimationContent({
   }
   if (node.phase === 'completed' && frames.length) {
     return (
-      <div className="workflow-frame-strip nodrag nopan nowheel">
+      <div className="nodrag nopan nowheel grid max-h-40 grid-cols-8 gap-[3px] overflow-auto">
         {frames.map((frame, index) => (
-          <img key={`${frame.url}-${index}`} src={frame.url} alt={`动画帧 ${index + 1}`} />
+          <img
+            key={`${frame.url}-${index}`}
+            className="block aspect-square w-full rounded border border-[var(--editor-line)] object-cover"
+            src={frame.url}
+            alt={`动画帧 ${index + 1}`}
+          />
         ))}
       </div>
     )
@@ -838,6 +896,8 @@ function AnimationContent({
 }
 
 function ReviewContent({ node, input }: { node: ReviewWorkflowNode; input: ProjectionInput }) {
+  const branchKey = branchKeyOf(node, input)
+  const branchBusy = input.busyBranches.has(branchKey)
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.phase === 'completed') return <p className="workflow-card__summary">审核已通过</p>
   if (node.status !== 'active') return <StatusText node={node} input={input} />
@@ -846,12 +906,12 @@ function ReviewContent({ node, input }: { node: ReviewWorkflowNode; input: Proje
       <p>确认完整动画后完成本动作审核。</p>
       <button
         type="button"
-        disabled={Boolean(input.busy)}
+        disabled={branchBusy}
         onClick={() =>
-          input.runCommand('approve-review', async () => {
+          input.runCommand(branchKey, async () => {
             const character = await input.publishReviewedAction(node.id)
             input.setCharacter(character)
-            await getController(input).approveReview(node.id)
+            await input.controller.approveReview(node.id)
           })
         }
       >
@@ -864,30 +924,20 @@ function ReviewContent({ node, input }: { node: ReviewWorkflowNode; input: Proje
 function WorkflowCard({ data }: NodeProps<WorkflowCardNode>) {
   return (
     <article className={`workflow-card is-${data.status}`}>
-      <Handle
-        type="target"
-        position={Position.Left}
-        isConnectable={false}
-        isConnectableStart={false}
-        isConnectableEnd={false}
-      />
+      <Handle type="target" position={Position.Left} isConnectable={false} />
       <header className="workflow-card__handle">
         <span>{data.eyebrow}</span>
         <strong>{data.title}</strong>
       </header>
       <div className="workflow-card__body">{data.content}</div>
-      <Handle
-        type="source"
-        position={Position.Right}
-        isConnectable={false}
-        isConnectableStart={false}
-        isConnectableEnd={false}
-      />
+      <Handle type="source" position={Position.Right} isConnectable={false} />
     </article>
   )
 }
 
 function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInput }) {
+  const branchKey = branchKeyOf(node, input)
+  const branchBusy = input.busyBranches.has(branchKey)
   const resumeBlocked =
     input.resumeBlocked && node.status === 'active' && node.phase === 'generating'
   if (node.status === 'failed' || resumeBlocked) {
@@ -898,10 +948,10 @@ function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInpu
         </p>
         <button
           type="button"
-          disabled={Boolean(input.busy)}
+          disabled={branchBusy}
           onClick={() => {
             input.setSelectedImages({})
-            input.runCommand('restart-node', () => getController(input).restartFromNode(node.id))
+            input.runCommand(branchKey, () => input.controller.restartFromNode(node.id))
           }}
         >
           从此节点重做
@@ -916,12 +966,22 @@ function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInpu
 
 function EditorBoundary({ message }: { message: string }) {
   return (
-    <main className="workflow-editor-boundary">
-      <p>MANUAL WORKFLOW</p>
-      <h1>工作流编辑器</h1>
-      <span>{message}</span>
-    </main>
+    <div className="grid min-h-screen place-content-center gap-2 bg-[#dfe3df] text-center">
+      <p className="m-0 text-[10px] font-extrabold tracking-[0.16em] text-[#737378]">
+        MANUAL WORKFLOW
+      </p>
+      <h1 className="m-0 text-3xl font-semibold">工作流编辑器</h1>
+      <span className="m-0 text-[13px] text-[#737378]">{message}</span>
+    </div>
   )
+}
+
+/**
+ * 一个节点可以同时挂多个角色的生成任务，所以字典的键必须带上角色，
+ * 只用节点 ID 会让后读到的那条静默覆盖前一条。已删节点不再读取。
+ */
+function generationKey(nodeId: WorkflowNode['id'], role: WorkflowGenerationRole) {
+  return `${nodeId}:${role}`
 }
 
 async function readGenerations(
@@ -929,38 +989,41 @@ async function readGenerations(
   run: WorkflowRun,
 ): Promise<Record<string, Generation | null>> {
   const entries = await Promise.all(
-    run.nodes.flatMap((node) =>
-      node.generations.map(
-        async (reference) =>
-          [node.id, await controller.getGeneration(node.id, reference.role)] as const,
+    run.nodes
+      .filter((node) => !node.deletedAt)
+      .flatMap((node) =>
+        node.generations.map(
+          async (reference) =>
+            [
+              generationKey(node.id, reference.role),
+              await controller.getGeneration(node.id, reference.role),
+            ] as const,
+        ),
       ),
-    ),
   )
   return Object.fromEntries(entries)
 }
 
-function getController(input: ProjectionInput): WorkflowController {
-  return input.controller
-}
-
-function branchIndexFor(
-  node: WorkflowNode,
-  nodes: WorkflowNode[],
-  actionRootIds: string[],
-): number {
-  const nodesById = new Map(nodes.map((candidate) => [candidate.id, candidate]))
+/**
+ * 节点属于哪条动作分支：顺着依赖往上爬到本分支的首帧节点，用它的 ID 当分支标识。
+ * 角色设定与身份母版为所有分支共用，爬不到首帧，归到 SHARED_BRANCH。
+ */
+function branchKeyFor(node: WorkflowNode, nodesById: ReadonlyMap<string, WorkflowNode>): string {
   let current: WorkflowNode | undefined = node
   const visited = new Set<string>()
   while (current && !visited.has(current.id)) {
     visited.add(current.id)
-    if (current.type === 'action-first-frame') {
-      return Math.max(0, actionRootIds.indexOf(current.id))
-    }
+    if (current.type === 'action-first-frame') return current.id
     current = current.dependsOnNodeIds
       .map((dependencyId) => nodesById.get(dependencyId))
       .find((dependency) => dependency?.type !== 'character-template')
   }
-  return 0
+  return SHARED_BRANCH
+}
+
+/** 分支在画布上排第几行。共享节点与找不到根的节点都落在第 0 行。 */
+function branchIndexFor(branchKey: string, actionRootIds: string[]): number {
+  return Math.max(0, actionRootIds.indexOf(branchKey))
 }
 
 function positionFor(type: WorkflowNode['type'], branchIndex: number) {
@@ -979,29 +1042,21 @@ function positionFor(type: WorkflowNode['type'], branchIndex: number) {
   }
 }
 
-function titleFor(type: WorkflowNode['type']) {
-  return {
-    'character-setup': '角色设定',
-    'character-template': '身份母版',
-    'action-first-frame': '动作首帧',
-    'action-generation-method': '生产方式',
-    'action-full-frame': '完整动画',
-    review: '动画审核',
-  }[type]
+/** 卡片抬头文案。序号是流程顺序，与 positionFor 的横向排布一致。 */
+const CARD_LABELS: Record<WorkflowNode['type'], { eyebrow: string; title: string }> = {
+  'character-setup': { eyebrow: '01 · ORIGIN', title: '角色设定' },
+  'character-template': { eyebrow: '02 · MASTER', title: '身份母版' },
+  'action-first-frame': { eyebrow: '03 · FIRST FRAME', title: '动作首帧' },
+  'action-generation-method': { eyebrow: '04 · METHOD', title: '生产方式' },
+  'action-full-frame': { eyebrow: '05 · ANIMATION', title: '完整动画' },
+  review: { eyebrow: '06 · REVIEW', title: '动画审核' },
 }
 
-function eyebrowFor(type: WorkflowNode['type']) {
-  return {
-    'character-setup': '01 · ORIGIN',
-    'character-template': '02 · MASTER',
-    'action-first-frame': '03 · FIRST FRAME',
-    'action-generation-method': '04 · METHOD',
-    'action-full-frame': '05 · ANIMATION',
-    review: '06 · REVIEW',
-  }[type]
-}
-
-function findCharacterForOutfit(character: Character | null, outfitId: string) {
+/**
+ * 造型属于当前角色时返回该角色，否则返回 null。
+ * 一条 WorkflowRun 只绑定一个角色，所以这里不是查找，是归属校验。
+ */
+function characterOwningOutfit(character: Character | null, outfitId: string) {
   return character?.outfits.some((outfit) => outfit.id === outfitId) ? character : null
 }
 
@@ -1013,10 +1068,6 @@ function findDependency<T extends WorkflowNode['type']>(
   const dependencies = run.nodes.filter((candidate) => node.dependsOnNodeIds.includes(candidate.id))
   const match = dependencies.find((candidate) => candidate.type === type)
   return (match as Extract<WorkflowNode, { type: T }> | undefined) ?? null
-}
-
-async function defaultSessionLoader(runId: string) {
-  return createDefaultRealWorkflowEditorSession(runId)
 }
 
 function errorMessage(cause: unknown, fallback: string) {

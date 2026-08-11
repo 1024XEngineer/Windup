@@ -6,6 +6,7 @@ import { Link, MemoryRouter, Route, Routes } from 'react-router'
 
 import type {
   Character,
+  CharacterTemplateWorkflowNode,
   Generation,
   GenerationApis,
   Project,
@@ -16,9 +17,10 @@ import { createWorkflowController, type WorkflowController } from '@/features/wo
 import { WorkflowEditorPage } from './index'
 import type { WorkflowEditorSession } from './runtime'
 
-const { defaultSessionLoader, flowProps } = vi.hoisted(() => ({
+const { defaultSessionLoader, flowProps, fitView } = vi.hoisted(() => ({
   defaultSessionLoader: vi.fn(),
   flowProps: { current: null as Record<string, unknown> | null },
+  fitView: vi.fn(),
 }))
 
 vi.mock('./runtime', async (importOriginal) => {
@@ -48,7 +50,7 @@ vi.mock('@xyflow/react', async (importOriginal) => {
         </div>
       )
     },
-    useReactFlow: () => ({ fitView: vi.fn() }),
+    useReactFlow: () => ({ fitView }),
   }
 })
 
@@ -67,6 +69,7 @@ interface TestFlowProps extends Record<string, unknown> {
 
 beforeEach(() => {
   defaultSessionLoader.mockReset()
+  fitView.mockClear()
   flowProps.current = null
   window.history.replaceState({}, '', '/')
 })
@@ -222,7 +225,8 @@ describe('WorkflowEditorPage real runtime boundary', () => {
         expect.arrayContaining([
           expect.objectContaining({
             type: 'action-first-frame',
-            input: expect.objectContaining({ outfitId: 'night', type: 'attack' }),
+            // 落库的动作名是中文短名，不含菜单里的英文前缀。
+            input: expect.objectContaining({ outfitId: 'night', type: 'attack', name: '攻击' }),
           }),
         ]),
       ),
@@ -250,6 +254,145 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect((screen.getByRole('button', { name: '生成动作 ›' }) as HTMLButtonElement).disabled).toBe(
       false,
     )
+  })
+
+  it('同一节点挂多个生成任务时按角色分别读取，后写入的不覆盖前一个', async () => {
+    const workflow = selectingTemplateWorkflow(3, 'template-task')
+    workflow.nodes[1] = {
+      ...(workflow.nodes[1] as CharacterTemplateWorkflowNode),
+      generations: [
+        { taskId: 'template-task', role: 'character_template' },
+        { taskId: 'animation-task', role: 'complete_animation' },
+      ],
+    }
+    defaultSessionLoader.mockResolvedValue(
+      createSession(workflow, {
+        generationApis: generationApisFixture({
+          get: vi.fn(async (_projectId: string, taskId: string) =>
+            taskId === 'template-task'
+              ? characterGeneration('template')
+              : completeAnimationGeneration(),
+          ) as GenerationApis['get'],
+        }),
+      }),
+    )
+
+    renderEditor('/workflow-editor/42')
+
+    expect((await screen.findByRole('img', { name: '角色候选 1' })).getAttribute('src')).toContain(
+      '/template.png',
+    )
+  })
+
+  it('已删除的节点不再读取生成结果', async () => {
+    const workflow = selectingTemplateWorkflow(3, 'template-task')
+    workflow.nodes[1] = {
+      ...(workflow.nodes[1] as CharacterTemplateWorkflowNode),
+      deletedAt: '2026-08-11T00:00:00.000Z',
+    }
+    const get = vi.fn(async () => characterGeneration('template'))
+    defaultSessionLoader.mockResolvedValue(
+      createSession(workflow, {
+        generationApis: generationApisFixture({ get: get as GenerationApis['get'] }),
+      }),
+    )
+
+    renderEditor('/workflow-editor/42')
+    await waitFor(() => expect(latestFlowProps().nodes).toHaveLength(1))
+
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  it('WorkflowRun 推进但节点集合不变时不重置画布视角', async () => {
+    const controlled = createRestartSelectionSession()
+    defaultSessionLoader.mockResolvedValue(controlled.session)
+    renderEditor('/workflow-editor/42')
+    await waitFor(() => expect(latestFlowProps().nodes).toHaveLength(2))
+    await waitFor(() => expect(fitView).toHaveBeenCalled())
+
+    const afterFirstFit = fitView.mock.calls.length
+    act(() => controlled.emit(selectingTemplateWorkflow(9, 'another-task')))
+    await new Promise((resolve) => setTimeout(resolve, 80))
+
+    expect(fitView.mock.calls.length).toBe(afterFirstFit)
+  })
+
+  it('新增动作分支后重新取景，让新节点进入视野', async () => {
+    const controlled = createRestartSelectionSession()
+    defaultSessionLoader.mockResolvedValue(controlled.session)
+    renderEditor('/workflow-editor/42')
+    await waitFor(() => expect(latestFlowProps().nodes).toHaveLength(2))
+    await waitFor(() => expect(fitView).toHaveBeenCalled())
+
+    const afterFirstFit = fitView.mock.calls.length
+    act(() => controlled.emit(reviewingActionWorkflow()))
+    await waitFor(() => expect(fitView.mock.calls.length).toBeGreaterThan(afterFirstFit))
+  })
+
+  it('一条动作分支执行命令时不阻塞其他分支的操作', async () => {
+    const pendingPublish = deferred<Character>()
+    defaultSessionLoader.mockResolvedValue(
+      createSession(reviewingActionWorkflow(), {
+        character: characterFixture(),
+        publishReviewedAction: () => pendingPublish.promise,
+      }),
+    )
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '审核通过' }))
+    expect((screen.getByRole('button', { name: '审核通过' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '添加动作分支' }))
+    expect((screen.getByRole('button', { name: '生成动作 ›' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    )
+
+    await act(async () => {
+      pendingPublish.resolve(characterFixture())
+      await pendingPublish.promise
+    })
+  })
+
+  it('两条分支同时执行命令时，先起的那条不会因为后起的而解锁', async () => {
+    // 并行分支各自持锁：B 开始执行不能把 A 的锁顶掉，否则 A 的按钮会重新可点，
+    // 用户再点一次就是对同一个动作重复发布 + 重复审核。
+    const pendingA = deferred<Character>()
+    const pendingB = deferred<Character>()
+    const publishReviewedAction = vi.fn((reviewNodeId: string) =>
+      reviewNodeId === 'action-a:review' ? pendingA.promise : pendingB.promise,
+    )
+    defaultSessionLoader.mockResolvedValue(
+      createSession(reviewingActionWorkflow('action-a', 'action-b'), {
+        character: characterFixture(),
+        publishReviewedAction,
+      }),
+    )
+    renderEditor('/workflow-editor/42')
+
+    const approveButtons = await screen.findAllByRole('button', { name: '审核通过' })
+    expect(approveButtons).toHaveLength(2)
+    const [approveA, approveB] = approveButtons as [HTMLButtonElement, HTMLButtonElement]
+
+    fireEvent.click(approveA)
+    expect(approveA.disabled).toBe(true)
+
+    fireEvent.click(approveB)
+    await waitFor(() => expect(publishReviewedAction).toHaveBeenCalledTimes(2))
+
+    // A 的请求仍未返回，它必须还锁着。
+    expect(approveA.disabled).toBe(true)
+    expect(approveB.disabled).toBe(true)
+
+    fireEvent.click(approveA)
+    expect(publishReviewedAction).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      pendingA.resolve(characterFixture())
+      pendingB.resolve(characterFixture())
+      await Promise.all([pendingA.promise, pendingB.promise])
+    })
   })
 
   it('失败节点可以从当前节点重做', async () => {
@@ -388,14 +531,10 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(latestFlowProps().edges).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          type: 'default',
-          animated: false,
+          selectable: false,
+          deletable: false,
+          // 未确认的连线画成流动虚线，样式由 workflow-edge--flowing 承担。
           className: 'workflow-edge--flowing',
-          style: expect.objectContaining({
-            stroke: 'rgba(72, 101, 80, 0.42)',
-            strokeWidth: 3,
-            strokeDasharray: '9 8',
-          }),
         }),
       ]),
     )
@@ -553,56 +692,58 @@ function completedTemplateWorkflow(id: string): WorkflowRun {
   }
 }
 
-function reviewingActionWorkflow(): WorkflowRun {
+function reviewingActionWorkflow(...actionIds: string[]): WorkflowRun {
   const workflow = completedTemplateWorkflow('42')
   workflow.version = 7
-  workflow.nodes.push(
-    {
-      id: 'action-walk',
-      type: 'action-first-frame',
-      status: 'passed',
-      phase: 'completed',
-      dependsOnNodeIds: ['character-template'],
-      generations: [],
-      error: null,
-      input: {
-        outfitId: 'day',
-        name: '行走',
-        type: 'walk',
-        prompt: null,
-        fps: 12,
+  for (const actionId of actionIds.length > 0 ? actionIds : ['action-walk']) {
+    workflow.nodes.push(
+      {
+        id: actionId,
+        type: 'action-first-frame',
+        status: 'passed',
+        phase: 'completed',
+        dependsOnNodeIds: ['character-template'],
+        generations: [],
+        error: null,
+        input: {
+          outfitId: 'day',
+          name: '行走',
+          type: 'walk',
+          prompt: null,
+          fps: 12,
+        },
+        selectedFirstFrameUrl: 'https://assets.windup.test/walk-01.png',
       },
-      selectedFirstFrameUrl: 'https://assets.windup.test/walk-01.png',
-    },
-    {
-      id: 'action-walk:method',
-      type: 'action-generation-method',
-      status: 'passed',
-      phase: 'completed',
-      dependsOnNodeIds: ['action-walk'],
-      generations: [],
-      error: null,
-      method: 'video-cropping',
-    },
-    {
-      id: 'action-walk:full-frame',
-      type: 'action-full-frame',
-      status: 'passed',
-      phase: 'completed',
-      dependsOnNodeIds: ['action-walk:method'],
-      generations: [{ taskId: 'generation-walk', role: 'complete_animation' }],
-      error: null,
-    },
-    {
-      id: 'action-walk:review',
-      type: 'review',
-      status: 'active',
-      phase: 'reviewing',
-      dependsOnNodeIds: ['action-walk:full-frame'],
-      generations: [],
-      error: null,
-    },
-  )
+      {
+        id: `${actionId}:method`,
+        type: 'action-generation-method',
+        status: 'passed',
+        phase: 'completed',
+        dependsOnNodeIds: [actionId],
+        generations: [],
+        error: null,
+        method: 'video-cropping',
+      },
+      {
+        id: `${actionId}:full-frame`,
+        type: 'action-full-frame',
+        status: 'passed',
+        phase: 'completed',
+        dependsOnNodeIds: [`${actionId}:method`],
+        generations: [{ taskId: `generation-${actionId}`, role: 'complete_animation' }],
+        error: null,
+      },
+      {
+        id: `${actionId}:review`,
+        type: 'review',
+        status: 'active',
+        phase: 'reviewing',
+        dependsOnNodeIds: [`${actionId}:full-frame`],
+        generations: [],
+        error: null,
+      },
+    )
+  }
   return workflow
 }
 
