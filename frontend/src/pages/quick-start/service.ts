@@ -5,6 +5,7 @@ import {
   projectApis,
   workflowRunApis,
   type Action,
+  type Character,
   type CharacterApis,
   type GenerationApis,
   type MediaReference,
@@ -283,8 +284,17 @@ export function createQuickStartService({
     const run = controller.getWorkflow()
     const firstFrame = latestActionFirstFrame(run)
     if (!firstFrame || firstFrame.type !== 'action-first-frame') return null
-    const page = await characterApis.listByProject(run.projectId)
-    const matches = page.items.filter((character) => character.workflowRunId === run.id)
+    const matches: Character[] = []
+    let page = 1
+    let pageSize: number | undefined
+    while (true) {
+      const result = await characterApis.listByProject(run.projectId, { page, pageSize })
+      matches.push(...result.items.filter((character) => character.workflowRunId === run.id))
+      if (matches.length > 1) return null
+      if (result.items.length === 0 || page * result.pageSize >= result.total) break
+      page += 1
+      pageSize = result.pageSize
+    }
     if (matches.length !== 1) return null
     const character = matches[0]!
     const outfit = character.outfits.find((item) => item.id === firstFrame.input.outfitId)
