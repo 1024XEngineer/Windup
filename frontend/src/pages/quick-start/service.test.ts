@@ -510,6 +510,11 @@ describe('createQuickStartService', () => {
         expect.objectContaining({ type: 'action-first-frame', phase: 'generating' }),
       ]),
     )
+    const listener = vi.fn()
+    const stop = service.subscribe(candidateRun.id, listener)
+    await Promise.resolve()
+    stop()
+    await service.interrupt(candidateRun.id)
 
     const recoveryService = createQuickStartService({
       workflowRunApis: createWorkflowRunApis([candidateRun]),
@@ -522,6 +527,82 @@ describe('createQuickStartService', () => {
       characterId: 'character-restore',
       outfitId: character.outfits[0]!.id,
     })
+  })
+
+  it('deduplicates candidate confirmation while creating and binding its character asset', async () => {
+    const tasks = new Map<string, Awaited<ReturnType<GenerationApis['create']>>>()
+    let sequence = 0
+    const generationApis: GenerationApis = {
+      create: vi.fn(async (input) => {
+        const id = `candidate-task-${++sequence}`
+        const task =
+          input.type === 'character_template'
+            ? {
+                id,
+                projectId: input.projectId,
+                type: 'character_template' as const,
+                status: 'completed' as const,
+                result: {
+                  type: 'character_template' as const,
+                  images: [{ url: 'candidate.png' }],
+                },
+                error: null,
+              }
+            : {
+                id,
+                projectId: input.projectId,
+                type: input.type,
+                status: 'pending' as const,
+                result: null,
+                error: null,
+              }
+        tasks.set(id, task)
+        return task
+      }),
+      get: vi.fn(async (_projectId, id) => tasks.get(id)!),
+      subscribe: vi.fn(() => () => undefined),
+    }
+    let character: Character = {
+      id: 'candidate-character',
+      projectId: 'project-1',
+      workflowRunId: 'run-1',
+      name: '候选角色',
+      description: '像素骑士',
+      referenceImageUrl: 'candidate.png',
+      dataVersion: 1,
+      status: 1,
+      outfits: [],
+    }
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis(),
+      generationApis,
+      characterApis: {
+        create: vi.fn(async () => structuredClone(character)),
+        update: vi.fn(async (next: Character) => {
+          character = structuredClone(next)
+          return structuredClone(character)
+        }),
+        get: vi.fn(async () => structuredClone(character)),
+        listByProject: vi.fn(),
+        remove: vi.fn(),
+      } as unknown as CharacterApis,
+      prepareProject: vi.fn(async () => ({
+        id: 'project-1',
+        spriteSize: { width: 256, height: 256 },
+      })),
+    })
+    const started = await service.start('像素骑士')
+    await vi.waitFor(async () => {
+      await expect(service.getTemplateCandidates(started.id)).resolves.toEqual(['candidate.png'])
+    })
+
+    const first = service.confirmCandidate(started.id, 'candidate.png', '挥手')
+    const duplicate = service.confirmCandidate(started.id, 'candidate.png', '挥手')
+    expect(duplicate).toBe(first)
+    await first
+
+    expect(character.outfits).toHaveLength(1)
+    expect(service.getCharacterInfo(started.id)?.characterId).toBe('candidate-character')
   })
 
   it('creates a fresh run when an existing character has no workflow history', async () => {
