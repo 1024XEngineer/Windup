@@ -37,6 +37,93 @@ _KEY_KILL = 38.0    # d < 此值 → 判为纯背景
 _KEY_SOFT = 14.0    # 到 _KEY_KILL + _KEY_SOFT 之间线性过渡,避免硬边锯齿
 _BG_FLAT_STD = 8.0  # 四角色标准差上限;超过说明底不是纯色,不做任何清理
 
+# 空洞填充用。_HOLE_ALPHA:低于此 alpha 才算"透明",参与空洞判定。
+# _HOLE_BG_TOL:到底色的距离低于此值 → 判为"确实是底色"。取值依据(2026-08-11 实测,
+# 1280×720 真实视频帧):纯背景区域的色距 p99.9≈6.5、最大 11.1(视频压缩噪点);
+# 而被误杀的浅肤色像素连通域中位色距 ≥17.1。14 落在这条 1.5 倍间隙里。
+_HOLE_ALPHA = 0.03
+_HOLE_BG_TOL = 14.0
+
+
+def _bg_key(rgb: np.ndarray) -> np.ndarray | None:
+    """四角取样估底色 key;底不够均匀(std 超阈值)时返回 None = 不做任何基于底色的判断。
+
+    抽成独立函数是为了让"底色是什么"只有一个真相源 —— 键控清理(``_flat_bg_penalty``)
+    和空洞填充(``_fill_enclosed_holes``)必须按同一个 key 判断,否则一个把某块当背景
+    清掉、另一个又把它当主体填回来,互相打架。
+    """
+    corners = np.concatenate([
+        rgb[:12, :12].reshape(-1, 3), rgb[:12, -12:].reshape(-1, 3),
+        rgb[-12:, :12].reshape(-1, 3), rgb[-12:, -12:].reshape(-1, 3),
+    ])
+    if float(corners.std(axis=0).max()) > _BG_FLAT_STD:
+        return None
+    return np.median(corners, axis=0).astype(np.float32)
+
+
+def _spread(seed: np.ndarray, region: np.ndarray) -> np.ndarray:
+    """在 ``region`` 内从 ``seed`` 出发做 4-邻接连通扩散,返回可达集合。
+
+    为什么不写逐像素 BFS:交付前的帧是 1280×720(约 92 万像素),纯 Python BFS 要几十秒,
+    抠图是逐帧调用的,扛不住。这里按**行/列游程**传播 —— 一个 pass 就能把可达性推过
+    整条连续游程(距离不限),而不是每 pass 只推进一个像素,真实角色轮廓几个 pass 收敛。
+
+    同一行里被非 region 像素隔断的两段游程,``cumsum(~region)`` 必然取到不同的 id,
+    因此可以用 ``bincount`` 一次算出"每条游程里有没有种子"。
+    """
+    reach = seed & region
+    while True:
+        before = int(reach.sum())
+        for transposed in (False, True):
+            reg = region.T if transposed else region
+            rch = reach.T if transposed else reach
+            rows, cols = reg.shape
+            run = np.cumsum(~reg, axis=1)
+            keys = run + np.arange(rows)[:, None] * (cols + 1)
+            hit = np.bincount(keys[rch], minlength=rows * (cols + 1)) > 0
+            new = reg & hit[keys]
+            reach = new.T if transposed else new
+        if int(reach.sum()) == before:
+            return reach
+
+
+def _fill_enclosed_holes(alpha: np.ndarray, rgb: np.ndarray) -> np.ndarray:
+    """把"被主体围住、且整块都不是底色"的透明连通域填回主体(alpha=1)。
+
+    要解决的问题:u2netp 判错或键控误杀会在主体内部留下透明洞,放大看是背景直接透出来。
+
+    **为什么只判"不与边界连通"不够 —— 会把两腿之间填实。** 直觉上腿间空隙从下方通到
+    画面底边,所以"从边界出发的连通域"就能保护它。2026-08-11 在真实走路帧上实测:
+    **不成立**。迈步相里两只靴子在下方交叠,把腿间空隙彻底封死 —— 它就是一块不与边界
+    连通的背景域(实测 src_017 有 530 像素、归档 frame_03 有 129 像素),只按连通性判,
+    这一整块会被填成主体,两条腿直接焊在一起。
+
+    所以判据是**连通性 + 颜色**两条一起:一个透明连通域只要"碰到画面边界"或者"里面
+    存在任何一个确实是底色的像素",就不是洞。腿间空隙整块就是底色(实测中位色距 6.2,
+    远低于 _HOLE_BG_TOL),必然被这条否决;而被误杀的主体像素(实测中位色距 ≥17.1)
+    不含底色像素,才会被填。两条否决合成一次扩散:种子 = 边界上的透明像素 ∪ 底色像素。
+
+    与 ``_flat_bg_penalty`` 的分工:那个函数按颜色**做减法**(把闭合空隙里的底色清掉),
+    这个函数按颜色**决定不加回来** —— 同一个 key、同一个方向,不会互相拆台。
+    """
+    key = _bg_key(rgb)
+    if key is None:
+        return alpha                      # 底不是纯色 → 无从判断哪块是真空隙,一律不填
+    transparent = alpha < _HOLE_ALPHA
+    if not transparent.any():
+        return alpha
+    border = np.zeros_like(transparent)
+    border[0, :] = border[-1, :] = True
+    border[:, 0] = border[:, -1] = True
+    is_bg_color = np.linalg.norm(rgb - key, axis=2) < _HOLE_BG_TOL
+    seed = transparent & (border | is_bg_color)
+    holes = transparent & ~_spread(seed, transparent)
+    if not holes.any():
+        return alpha
+    out = alpha.copy()
+    out[holes] = 1.0
+    return out
+
 
 def _flat_bg_penalty(rgb: np.ndarray) -> np.ndarray:
     """底色清理系数(0=纯背景,1=主体),形状与图同宽高。
@@ -51,13 +138,9 @@ def _flat_bg_penalty(rgb: np.ndarray) -> np.ndarray:
     最坏情况是少清理一点,不会抠穿角色。底色不够均匀时(std 超阈值)直接返回全 1,
     等于不清理。
     """
-    corners = np.concatenate([
-        rgb[:12, :12].reshape(-1, 3), rgb[:12, -12:].reshape(-1, 3),
-        rgb[-12:, :12].reshape(-1, 3), rgb[-12:, -12:].reshape(-1, 3),
-    ])
-    if float(corners.std(axis=0).max()) > _BG_FLAT_STD:
+    key = _bg_key(rgb)
+    if key is None:
         return np.ones(rgb.shape[:2], dtype=np.float32)   # 底不是纯色 → 不动
-    key = np.median(corners, axis=0).astype(np.float32)
     d = np.linalg.norm(rgb - key, axis=2)
     return np.clip((d - _KEY_KILL) / _KEY_SOFT, 0.0, 1.0).astype(np.float32)
 
@@ -112,8 +195,10 @@ class OnnxU2NetMatteProvider(MatteProvider):
 
     def cutout(self, frame: bytes) -> bytes:
         img = Image.open(io.BytesIO(frame)).convert("RGBA")
+        rgb = np.asarray(img.convert("RGB"), dtype=np.float32)
         alpha = np.asarray(self._predict_mask(img), dtype=np.float32) / 255.0
-        alpha = alpha * _flat_bg_penalty(np.asarray(img.convert("RGB"), dtype=np.float32))
+        alpha = alpha * _flat_bg_penalty(rgb)
+        alpha = _fill_enclosed_holes(alpha, rgb)
         out = np.dstack([np.asarray(img.convert("RGB")), alpha * 255.0]).astype(np.uint8)
         buf = io.BytesIO()
         Image.fromarray(out, "RGBA").save(buf, "PNG")

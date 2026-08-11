@@ -94,3 +94,221 @@ def test_missing_onnxruntime_raises_instead_of_guessing_background():
             OnnxU2NetMatteProvider()._get_session()
     finally:
         builtins.__import__ = real
+
+
+# ── 封闭空洞填充（2026-08-11 在 121 帧真实走路视频帧上实测挣得）──────────────────
+#
+# 背景:交付帧放大看,主体内部会有透明洞(背景直接透出来)。实测拆开成因:
+#   · u2netp 自身在主体内部造的洞:8 帧抽样里 6 帧为 0 —— 不是主要成因;
+#   · 键控误杀:_flat_bg_penalty 每帧杀掉 820~2346 个 u2netp 判为主体的像素 ——
+#     浅肤色 (243,221,200) 到灰底 (219,219,220) 的欧氏距离只有 31.3,窄于 _KEY_KILL=38。
+# 这些被误杀的像素被主体围住,正是"封闭空洞",填回来即修复。
+#
+# 但**只按"不与画面边界连通"判定会把两腿之间填实**:迈步相里两只靴子在下方交叠,
+# 把腿间空隙彻底封死。实测 121 帧中 80 帧存在这种封闭的底色空隙,共 25173 像素;
+# 朴素版(只判连通性)把这 25173 像素全部填成主体(最惨单帧 3172 像素,两腿焊死),
+# 加了颜色守卫后填掉 0 像素。下面的用例把这条守住。
+
+
+def _walk_frame(*, gap_closed: bool, hole: bool = False, eroded_leg: bool = False):
+    """造一帧"迈步相":灰底 + 躯干 + 两条腿 + 腿间底色空隙。
+
+    ``gap_closed=True`` 时靴子在下方交叠、把腿间空隙封死(实测 80/121 帧是这形状)。
+    颜色取实测值:底 (219,219,220)、浅肤 (243,221,200)(两者距离 31.3,窄于 _KEY_KILL)。
+    返回 (rgb float32, alpha float32)。
+    """
+    import numpy as np
+
+    bg, skin, cloth = (219, 219, 220), (243, 221, 200), (110, 130, 100)
+    h, w = 64, 64
+    rgb = np.full((h, w, 3), bg, dtype=np.float32)
+    alpha = np.zeros((h, w), dtype=np.float32)
+
+    def paint(y0, y1, x0, x1, color):
+        rgb[y0:y1, x0:x1] = color
+        alpha[y0:y1, x0:x1] = 1.0
+
+    paint(8, 32, 20, 44, cloth)          # 躯干
+    paint(32, 52, 20, 28, skin)          # 后腿
+    paint(32, 52, 36, 44, skin)          # 前腿
+    if gap_closed:
+        paint(52, 58, 20, 44, cloth)     # 靴子交叠 → 腿间空隙被封死
+    else:
+        paint(52, 58, 20, 28, cloth)     # 两只靴子分开 → 空隙通到画面底边
+        paint(52, 58, 36, 44, cloth)
+    if hole:
+        alpha[14:20, 28:36] = 0.0        # 躯干内部的洞:颜色还是衣服色
+    if eroded_leg:
+        alpha[36:46, 22:26] = 0.0        # 腿内部被键控误杀的一条:颜色是浅肤色
+    return rgb, alpha
+
+
+def _gap_slice():
+    """腿间空隙区域(rgb 一直是底色,alpha 一直应为 0)。"""
+    return (slice(32, 52), slice(28, 36))
+
+
+def test_enclosed_hole_in_subject_is_filled():
+    """被主体围住、颜色不是底色的透明块 = 洞,填成主体。"""
+    from windup_framework.providers.matte import _fill_enclosed_holes
+
+    rgb, alpha = _walk_frame(gap_closed=True, hole=True)
+    out = _fill_enclosed_holes(alpha, rgb)
+    assert (out[14:20, 28:36] == 1.0).all(), "躯干内部的洞必须被填成主体"
+
+
+def test_keyed_out_skin_inside_leg_is_filled():
+    """被 _flat_bg_penalty 误杀的浅肤色(实测每帧 820~2346 px)要能填回来。"""
+    from windup_framework.providers.matte import _fill_enclosed_holes
+
+    rgb, alpha = _walk_frame(gap_closed=True, eroded_leg=True)
+    out = _fill_enclosed_holes(alpha, rgb)
+    assert (out[36:46, 22:26] == 1.0).all(), "浅肤色距底色 31.3,不是底色,必须填回主体"
+
+
+def test_closed_leg_gap_is_never_filled():
+    """**核心回归**:靴子交叠把腿间空隙封死时,它照样不能被填 —— 否则两腿焊在一起。
+
+    实测:只判"不与边界连通"的朴素版在这里会把整块空隙填掉(121 帧共 25173 px)。
+    """
+    from windup_framework.providers.matte import _fill_enclosed_holes
+
+    rgb, alpha = _walk_frame(gap_closed=True)
+    ys, xs = _gap_slice()
+    assert (alpha[ys, xs] == 0.0).all(), "前提:空隙本来是透明的"
+    out = _fill_enclosed_holes(alpha, rgb)
+    assert (out[ys, xs] == 0.0).all(), "腿间空隙整块是底色,一个像素都不能填"
+
+
+def test_open_leg_gap_is_never_filled():
+    """空隙通到画面底边时同样不能填 —— 这条也钉死"绝不能按行/按列填"。
+
+    按行填会看到"这一行左右都是主体"就把中间填上,正是这里要拦的。
+    """
+    from windup_framework.providers.matte import _fill_enclosed_holes
+
+    rgb, alpha = _walk_frame(gap_closed=False)
+    ys, xs = _gap_slice()
+    out = _fill_enclosed_holes(alpha, rgb)
+    assert (out[ys, xs] == 0.0).all(), "与边界连通的空隙不是洞"
+    assert (out == alpha).all(), "没有洞的帧必须逐像素不变"
+
+
+def test_border_touching_transparent_area_is_never_filled():
+    """贴着画幅边缘的透明区域不是洞 —— 哪怕它的颜色一点也不像底色。
+
+    真实场景:i2v 出的帧经常把角色下半身裁出画,两腿之间是一条暗投影(不是干净底色),
+    这条投影只从画幅下沿通向画外,左右被两条腿封死。只靠"颜色像不像底色"判断会把
+    它当成洞、填成主体(两腿又焊上了),所以"从边界出发"这条种子必须保留。
+    """
+    from windup_framework.providers.matte import _fill_enclosed_holes
+
+    rgb, alpha = _walk_frame(gap_closed=False)
+    for x0, x1 in ((20, 28), (36, 44)):          # 两条腿一直延到画幅下沿
+        rgb[52:64, x0:x1] = (110, 130, 100)
+        alpha[52:64, x0:x1] = 1.0
+    rgb[32:64, 28:36] = (60, 55, 50)             # 腿间暗投影:远离底色
+    alpha[32:64, 28:36] = 0.0                    # 只从下沿通向画外,左右被腿封死
+
+    out = _fill_enclosed_holes(alpha, rgb)
+    assert (out[32:64, 28:36] == 0.0).all(), "连到画幅边界的透明区域一律不是洞"
+
+
+def test_frame_without_holes_is_pixel_identical():
+    """没有洞 → 逐像素不变(防回归硬指标)。"""
+    import numpy as np
+
+    from windup_framework.providers.matte import _fill_enclosed_holes
+
+    rgb, alpha = _walk_frame(gap_closed=True)
+    out = _fill_enclosed_holes(alpha, rgb)
+    assert np.array_equal(out, alpha)
+
+
+def test_fill_only_adds_alpha_never_removes():
+    """只做加法:alpha 绝不被改小,改动值只能是 1.0 —— 填洞不该顺手抠掉别的。"""
+    from windup_framework.providers.matte import _fill_enclosed_holes
+
+    rgb, alpha = _walk_frame(gap_closed=True, hole=True, eroded_leg=True)
+    out = _fill_enclosed_holes(alpha, rgb)
+    assert (out >= alpha).all()
+    assert (out[out != alpha] == 1.0).all()
+
+
+def test_non_flat_background_disables_fill_entirely():
+    """底色不均匀 → 无从判断哪块是真空隙,一律不填(与键控清理同一条纪律)。"""
+    import numpy as np
+
+    from windup_framework.providers.matte import _fill_enclosed_holes
+
+    rgb, alpha = _walk_frame(gap_closed=True, hole=True)
+    rng = np.random.default_rng(0)
+    noisy = rng.uniform(0, 255, rgb.shape).astype(np.float32)
+    out = _fill_enclosed_holes(alpha, noisy)
+    assert np.array_equal(out, alpha), "底不是纯色时必须整帧不动"
+
+
+def test_bg_key_returns_none_when_background_is_not_flat():
+    """底色真相源:不均匀时返回 None,键控与填洞都据此停手。"""
+    import numpy as np
+
+    from windup_framework.providers.matte import _bg_key
+
+    rng = np.random.default_rng(1)
+    assert _bg_key(rng.uniform(0, 255, (40, 40, 3)).astype(np.float32)) is None
+    assert _bg_key(np.full((40, 40, 3), 219, dtype=np.float32)) is not None
+
+
+def test_spread_is_four_connected_not_scanline():
+    """扩散必须是真 4-邻接连通:L 形走廊要能拐弯走通,断开的孤岛不能被沾到。
+
+    只做行传播(或只做列传播)都会让 L 形的另一条臂走不通,这条用例把两个方向都钉死。
+    """
+    import numpy as np
+
+    from windup_framework.providers.matte import _spread
+
+    region = np.zeros((20, 20), dtype=bool)
+    region[2, 2:18] = True        # 横臂
+    region[2:18, 17] = True       # 竖臂(拐弯)
+    island = (15, 3)
+    region[island] = True         # 孤岛:与走廊不连通
+    seed = np.zeros_like(region)
+    seed[2, 2] = True
+
+    reach = _spread(seed, region)
+    assert reach[2, 17], "横臂尽头要走通(需要行传播)"
+    assert reach[17, 17], "竖臂尽头要走通(需要列传播)"
+    assert not reach[island], "不连通的孤岛绝不能被标记为可达"
+
+
+def test_spread_matches_bruteforce_bfs_on_random_masks():
+    """与逐像素 BFS 逐点等价 —— 向量化只是为了快,不能改语义。"""
+    from collections import deque
+
+    import numpy as np
+
+    from windup_framework.providers.matte import _spread
+
+    def bfs(seed, region):
+        h, w = region.shape
+        out = np.zeros_like(region)
+        q = deque()
+        for y, x in zip(*np.nonzero(seed & region), strict=True):
+            out[y, x] = True
+            q.append((y, x))
+        while q:
+            cy, cx = q.popleft()
+            for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                ny, nx = cy + dy, cx + dx
+                if 0 <= ny < h and 0 <= nx < w and region[ny, nx] and not out[ny, nx]:
+                    out[ny, nx] = True
+                    q.append((ny, nx))
+        return out
+
+    rng = np.random.default_rng(7)
+    for _ in range(25):
+        h, w = int(rng.integers(3, 30)), int(rng.integers(3, 30))
+        region = rng.random((h, w)) < rng.uniform(0.3, 0.9)
+        seed = rng.random((h, w)) < 0.05
+        assert (_spread(seed, region) == bfs(seed, region)).all()
