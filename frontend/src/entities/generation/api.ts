@@ -24,7 +24,7 @@ export interface GenerationTransport {
 export interface GenerationApiConfig {
   /** API 前缀；空字符串表示同源。 */
   baseUrl?: string
-  /** 当前用户由认证宿主提供，适配器不猜测也不写死身份。 */
+  /** 仅用于校验响应归属；请求授权统一由 transport 携带的 token 决定。 */
   userId: string | number
   transport: GenerationTransport
   /** SSE 路由不存在时，任务查询兜底的间隔。 */
@@ -472,8 +472,8 @@ function mapEvent<TType extends GenerationType>(
 /**
  * 创建 Generation 实体适配器。
  *
- * `userId` 与 HTTP/SSE transport 都由宿主注入，因此模块既不持有登录态，也不直接
- * 依赖具体 fetch/SSE 实现。三个前端阶段在这里收口为后端的两类 GenerationTask。
+ * HTTP/SSE transport 由宿主注入并统一携带 token；`userId` 仅核对响应归属，不会
+ * 写入请求或参与后端授权。三个前端阶段在这里收口为后端的两类 GenerationTask。
  */
 export function createGenerationApis(config: GenerationApiConfig): GenerationApis {
   const userId = inputPositiveInteger(config.userId, 'userId')
