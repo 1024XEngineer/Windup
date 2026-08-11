@@ -551,10 +551,10 @@ export function createQuickStartService({
         type: firstFrame.input.type,
         fps: firstFrame.input.fps,
         frameCount: generation.result.frames.length,
-        frames: generation.result.frames.map((frame, index) => ({
-          index,
+        frames: generation.result.frames.map((frame) => ({
+          index: frame.index,
           imageUrl: frame.url,
-          durationMs: null,
+          durationMs: frame.durationMs,
         })),
       }
       await characterApis.update({
@@ -603,10 +603,10 @@ export function createQuickStartService({
       const generation = await controller.getGeneration(fullFrame.id, 'complete_animation')
       return generation?.type === 'complete_animation' &&
         generation.result?.type === 'complete_animation'
-        ? generation.result.frames.map((frame, index) => ({
-            index,
+        ? generation.result.frames.map((frame) => ({
+            index: frame.index,
             imageUrl: frame.url,
-            durationMs: null,
+            durationMs: frame.durationMs,
           }))
         : []
     },
