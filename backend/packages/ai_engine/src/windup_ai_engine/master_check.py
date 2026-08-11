@@ -38,7 +38,7 @@ from windup_ai_engine.ports import MasterRejectCode, MasterRejected
 from windup_ai_engine.postprocess.pack import FILL_H, FILL_W
 
 __all__ = ["MIN_SUBJECT_AREA_RATIO", "MIN_SUBJECT_SIDE", "REJECT_ASPECT",
-           "MasterFacts", "check_master"]
+           "MasterFacts", "check_master", "reject_aspect_for"]
 
 # 主体宽高比上限。**由交付画布的几何推出,不是拍的**:align_bottom_center 按高定标
 # (cell*FILL_H);主体 w/h 超过 FILL_W/FILL_H(≈1.55)后宽度兜底接管,交付主体高度
@@ -48,6 +48,26 @@ __all__ = ["MIN_SUBJECT_AREA_RATIO", "MIN_SUBJECT_SIDE", "REJECT_ASPECT",
 # 的狐狸母版丢 27px、w/h=2.0 只剩 79.9% 内容 —— 那还在兜底能救的区间内(交付变矮),
 # 3.1 以上则是"硬缩到没法看"。与其硬缩出一个能落库的错产物,不如在花钱前退回去。
 REJECT_ASPECT = 2 * FILL_W / FILL_H
+
+
+def reject_aspect_for(canvas: tuple[int, int] | None) -> float:
+    """给定交付画布下的实际比例上限。方形画布(或不指定)即 :data:`REJECT_ASPECT`。
+
+    上面那条推导默认画布是方形 —— ``FILL_W`` 与 ``FILL_H`` 是同一条边长的两个比例。
+    画布可以非方之后这个前提就不成立了:宽度兜底是 ``cw*FILL_W/主体宽``、高度目标是
+    ``ch*FILL_H/主体高``,同一条推导做下来是
+
+        R = 2 * (cw/ch) * FILL_W / FILL_H = REJECT_ASPECT * (cw/ch)
+
+    即窄高画布(cw<ch)能容纳的主体更扁不了、阈值要按比例收紧。不跟着收的后果是
+    **预检按方形判、出帧按非方出**:一个刚好过检的主体在 384×512 画布上交付占高只有
+    0.2324,而阈值本意保证的下限是 0.31(实测,见 REJECT_ASPECT 的推导)——正是这条
+    阈值存在的意义被悄悄架空。
+    """
+    if canvas is None:
+        return REJECT_ASPECT
+    cw, ch = canvas
+    return REJECT_ASPECT * (cw / ch)
 
 # 主体包围盒的最短边下限。下游 align_bottom_center 会把包围盒裁出来、NEAREST 放大到
 # cell*FILL_H≈159px;8px 放大 20 倍是色块不是角色。更要紧的是:这么小的一块,四角
@@ -96,11 +116,15 @@ def _decode(master: bytes) -> Image.Image:
         ) from exc
 
 
-def check_master(master: bytes) -> MasterFacts:
+def check_master(master: bytes, canvas: tuple[int, int] | None = None) -> MasterFacts:
     """母版可生成性预检。通过返回量到的形态,不通过抛 :class:`MasterRejected`。
 
     只看母版本身,不看 ``ActionSpec``:三条判据都是"下游画布装不装得下 / 有没有东西可
     动",与动作类型无关。动作相关的母版要求(侧向 / 蓄力姿态)本层判不了,见模块 docstring。
+
+    ``canvas``:交付画布 ``(宽, 高)``。只影响比例上限 —— 见 :func:`reject_aspect_for`。
+    不给即按方形判(与加这个入参之前完全一致)。**必须与出帧用的是同一个 canvas**,
+    否则就成了"预检按一套几何判、出帧按另一套出"。
     """
     img = _decode(master)
     w, h = img.size
@@ -130,10 +154,11 @@ def check_master(master: bytes) -> MasterFacts:
             f"主体只占画幅 {facts.subject_area_ratio:.4%}"
             f"(下限 {MIN_SUBJECT_AREA_RATIO:.1%}),像散落的噪点而不是角色",
         )
-    if facts.subject_ratio > REJECT_ASPECT:
+    limit = reject_aspect_for(canvas)
+    if facts.subject_ratio > limit:
         raise MasterRejected(
             MasterRejectCode.ASPECT_TOO_WIDE,
-            f"主体 w/h={facts.subject_ratio:.2f} 超过 {REJECT_ASPECT:.2f};"
-            "下游是方形画布,再宽只能把角色硬缩成一条,请换一张主体没这么扁的母版",
+            f"主体 w/h={facts.subject_ratio:.2f} 超过 {limit:.2f};"
+            "下游画布装不下,再宽只能把角色硬缩成一条,请换一张主体没这么扁的母版",
         )
     return facts

@@ -18,6 +18,7 @@ from windup_ai_engine.master_check import (
     MIN_SUBJECT_SIDE,
     REJECT_ASPECT,
     check_master,
+    reject_aspect_for,
 )
 from windup_ai_engine.ports import ActionQuality, MasterRejectCode, MasterRejected
 from windup_ai_engine.slicing import dead_frame_indices, loop_seam, motion_scale
@@ -113,6 +114,64 @@ def test_reject_aspect_is_derived_from_canvas_geometry_not_hardcoded():
     """阈值必须跟着画布几何走。把 pack.py 的 FILL_W/FILL_H 改了而这里不动，
     预检就会放行一批下游装不下的母版——那正是"看起来成功"的来源。"""
     assert REJECT_ASPECT == pytest.approx(2 * FILL_W / FILL_H)
+
+
+# ── 非方形交付画布下的比例上限(2026-08-11 挣得)────────────────────────────
+#
+# REJECT_ASPECT 的推导默认画布是方形(FILL_W / FILL_H 是同一条边长的两个比例)。
+# 交付画布可以非方之后前提不再成立:同一条推导做下来是 REJECT_ASPECT*(cw/ch)。
+# 不跟着收的后果是预检按方形判、出帧按非方出 —— 一个刚好过检的主体在 384×512
+# 画布上交付占高只有 0.2324,而这条阈值本意保证的下限是 FILL_H/2=0.31(实测)。
+
+
+def test_reject_aspect_for_square_canvas_is_unchanged():
+    """方形画布(以及不指定)必须与原来完全一致 —— 默认行为不变。"""
+    assert reject_aspect_for(None) == REJECT_ASPECT
+    for c in (128, 256, 512, 1024):
+        assert abs(reject_aspect_for((c, c)) - REJECT_ASPECT) < 1e-12
+
+
+def test_reject_aspect_for_narrow_canvas_tightens_proportionally():
+    """窄高画布容得下的主体更窄,阈值按 cw/ch 收紧;宽扁画布反之放宽。"""
+    assert reject_aspect_for((384, 512)) < REJECT_ASPECT
+    assert reject_aspect_for((512, 384)) > REJECT_ASPECT
+    assert abs(reject_aspect_for((384, 512)) - REJECT_ASPECT * 384 / 512) < 1e-12
+
+
+def test_threshold_delivers_exactly_half_target_height_on_any_canvas():
+    """**预检几何与出帧几何是同一套**的直接证据。
+
+    阈值的定义就是交付主体高退化到目标高度的一半。拿真实出帧验证:处在各自比例
+    上限的主体,在任何形状的画布上交付占高都必须落在 FILL_H/2 附近(差的是取整)。
+    """
+    import numpy as np
+
+    from windup_ai_engine.postprocess.pack import align_bottom_center
+
+    for cw, ch in ((256, 256), (512, 512), (384, 512), (512, 384), (128, 192)):
+        limit = reject_aspect_for((cw, ch))
+        base_h, src_w = 200, 3000        # 源画幅给足,别让主体被源边界裁掉
+        blob_w = int(base_h * limit)
+        img = Image.new("RGBA", (src_w, 600), (0, 0, 0, 0))
+        img.paste((200, 60, 60, 255), (100, 100, 100 + blob_w, 100 + base_h))
+        out = align_bottom_center([img], cell=cw, cell_h=ch, ref_height=float(base_h))
+        ys, _ = np.nonzero(np.asarray(out[0])[:, :, 3] > 128)
+        ratio = (int(ys.max()) - int(ys.min()) + 1) / ch
+        assert abs(ratio - FILL_H / 2) < 0.01, (
+            f"{cw}×{ch}: 阈值处交付占高 {ratio:.4f},应为 {FILL_H / 2}"
+        )
+
+
+def test_check_master_uses_the_canvas_it_is_given():
+    """同一张母版:方形画布放行,窄高画布上超限 → 必须被拒。"""
+    ratio = (REJECT_ASPECT + reject_aspect_for((384, 512))) / 2   # 夹在两个阈值中间
+    bw = int(60 * ratio)
+    png = _png(bw + 80, 200, blob=((10, 60, 10 + bw, 120), (200, 60, 60, 255)))
+
+    check_master(png, canvas=(512, 512))        # 方形:放行
+    with pytest.raises(MasterRejected) as e:
+        check_master(png, canvas=(384, 512))    # 窄高:同一张图装不下
+    assert e.value.code is MasterRejectCode.ASPECT_TOO_WIDE
 
 
 def test_rejection_carries_machine_readable_code_not_just_a_message():
