@@ -661,13 +661,16 @@ export function createRealQuickStartService({
   })
 }
 
-function generationRequest(url: string, init?: RequestInit): Promise<Response> {
-  const headers = new Headers(init?.headers)
-  const accessToken = getApiAccessToken()
-  if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
-  return fetch(`${resolveApiBaseUrl()}${url}`, { ...init, headers, credentials: 'include' })
+export function createAuthenticatedGenerationRequest(fetchFn: typeof fetch = fetch) {
+  return (url: string, init?: RequestInit): Promise<Response> => {
+    const headers = new Headers(init?.headers)
+    const accessToken = getApiAccessToken()
+    if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
+    return fetchFn(`${resolveApiBaseUrl()}${url}`, { ...init, headers, credentials: 'include' })
+  }
 }
 
+const generationRequest = createAuthenticatedGenerationRequest()
 const generationStream = createEventStreamSubscriber({
   getAccessToken: getApiAccessToken,
   recoverUnauthorized: recoverApiUnauthorized,

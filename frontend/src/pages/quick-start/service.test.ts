@@ -11,12 +11,14 @@ import type {
 } from '@/entities'
 import {
   createAutoPrepareProject,
+  createAuthenticatedGenerationRequest,
   createQuickStartService,
   createRealQuickStartService,
   type QuickStartFrame,
   type QuickStartMediaApis,
   type QuickStartService,
 } from './service'
+import { registerApiAccessTokenProvider } from '@/shared/api'
 
 type QuickStartServiceWithFirstFrame = QuickStartService & {
   getFirstFrameCandidates(runId: string): Promise<readonly QuickStartFrame[]>
@@ -213,6 +215,25 @@ function actionRun(firstFramePending = false): WorkflowRun {
 }
 
 describe('createQuickStartService', () => {
+  it('sends generation requests to the API with the current bearer token', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test/')
+    const unregister = registerApiAccessTokenProvider(() => 'quick-start-token')
+    const fetchFn = vi.fn(
+      async (_url: string | URL | Request, _init?: RequestInit) => new Response(),
+    )
+
+    await createAuthenticatedGenerationRequest(fetchFn as typeof fetch)('/generation/image', {
+      method: 'POST',
+    })
+
+    const [url, init] = fetchFn.mock.calls[0]!
+    expect(url).toBe('https://api.windup.test/generation/image')
+    expect(new Headers(init?.headers).get('authorization')).toBe('Bearer quick-start-token')
+    expect(init?.credentials).toBe('include')
+    unregister()
+    vi.unstubAllEnvs()
+  })
+
   it('rejects empty input and does not fabricate missing workflow data', async () => {
     const service = createQuickStartService({
       workflowRunApis: createWorkflowRunApis(),
