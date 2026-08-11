@@ -110,6 +110,27 @@ def _fit_to(png: bytes, w: int, h: int, *, smooth: bool = False) -> bytes:
     return buf.getvalue()
 
 
+def _require_size(png: bytes, w: int, h: int) -> bytes:
+    """核对引擎交付帧确实是项目要的尺寸,不对就报错 —— **不做静默补救**。
+
+    这里以前是 ``_fit_to``:尺寸对不上就缩放补边。看着稳,实际是把"引擎没按尺寸出帧"
+    这件事悄悄抹平,代价是脚线对齐被破坏(见 ``_produce_action`` 的说明)。尺寸现在由
+    引擎按 ``canvas`` 负责,对不上说明生成侧出了问题,该让它响,而不是交付一批对齐
+    坏掉的帧 —— 那正是本仓最忌讳的"看起来成功的错产物"。
+    """
+    import io
+
+    from PIL import Image
+
+    size = Image.open(io.BytesIO(png)).size
+    if size != (w, h):
+        raise ValueError(
+            f"引擎交付帧尺寸 {size[0]}×{size[1]} 与项目约束 {w}×{h} 不一致;"
+            "生成侧未按 canvas 出帧,不做静默缩放补救。"
+        )
+    return png
+
+
 class _LogProgress:
     """进度上报占位:MVP 无 SSE,记日志即可。"""
 
@@ -185,11 +206,18 @@ class ActionTaskExecutor:
     # -- 内部 --------------------------------------------------------------
 
     def _produce_action(self, input: CharacterActionInput, cons: ProjectConstraints) -> dict:
-        """母版 → ai_engine 出帧 → 按项目尺寸切帧 → 逐帧上传 → 组结果 dict。
+        """母版 → ai_engine 按项目尺寸出帧 → 逐帧上传 → 组结果 dict。
 
         项目约束落实:``facing`` 随视角、``stylize`` 随画风(像素游戏→像素化)、
         输出帧尺寸随 ``sprite_w×sprite_h``。方向数(directions)MVP 先出主方向,
         四向/八向为扩展(需多次生成或镜像)。
+
+        **尺寸是传给引擎的,不是拿到帧再缩的。** 这里曾对每帧再做一次
+        ``_fit_to(png, sprite_w, sprite_h)``:引擎恒出 256,项目要 512 就等于二次
+        重采样。而 ``_fit_to`` 用 ``Image.thumbnail`` —— 它**只缩不放**,放大方向
+        根本不放大,只是把 256 的帧原尺寸居中贴进 512 画布,于是引擎刚对齐好的脚线
+        0.92 被挪到 0.709(2026-08-11 实测),角色不站在地上、跨动作对齐一并失效。
+        现在把 ``canvas`` 交给引擎,它一次就出到项目尺寸,那一步整个不存在了。
         """
         if cons.directions > 1:
             logger.info("项目要求 %s 方向,MVP 先出主方向(多方向待扩展)", cons.directions)
@@ -206,12 +234,14 @@ class ActionTaskExecutor:
             stylize=cons.stylize,
         )
         progress: ProgressPort = _LogProgress()
-        generated = self._get_generator().generate(card, action, master, progress)
+        generated = self._get_generator().generate(
+            card, action, master, progress, canvas=(cons.sprite_w, cons.sprite_h)
+        )
 
         upload = self._upload or self._upload_frame
         frames = [
             {"index": i,
-             "image_url": upload(_fit_to(png, cons.sprite_w, cons.sprite_h)),
+             "image_url": upload(_require_size(png, cons.sprite_w, cons.sprite_h)),
              "duration_ms": dur}
             for i, (png, dur) in enumerate(zip(generated.frames, generated.durations))
         ]
