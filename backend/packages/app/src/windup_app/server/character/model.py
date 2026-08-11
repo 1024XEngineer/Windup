@@ -35,7 +35,16 @@
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
-from sqlalchemy import BigInteger, DateTime, Integer, JSON, SmallInteger, String, Text
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Integer,
+    JSON,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -49,6 +58,9 @@ class Character(Base):
     """角色资产表。"""
 
     __tablename__ = "windup_character"
+    __table_args__ = (
+        UniqueConstraint("workflow_run_id", name="uq_windup_character_workflow_run"),
+    )
 
     # Postgres 上 BigInteger 自增;variant 到 Integer 让 SQLite(测试库)走
     # INTEGER PRIMARY KEY 自增。

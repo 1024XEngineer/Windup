@@ -33,6 +33,14 @@ class CharacterService(ABC):
         """按 ID 查询角色。"""
 
     @abstractmethod
+    def get_character_by_workflow_run(
+        self,
+        session: Session,
+        workflow_run_id: int,
+    ) -> Character | None:
+        """按 WorkflowRun ID 查询唯一角色。"""
+
+    @abstractmethod
     def list_characters(
         self, session: Session, *, project_id: int, page: int, page_size: int,
     ) -> tuple[list[Character], int]:
