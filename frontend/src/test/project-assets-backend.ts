@@ -49,6 +49,7 @@ const characterDtos = [
   {
     id: 51,
     project_id: 42,
+    workflow_run_id: 501,
     name: '轻装信使',
     description: '负责远途投递的年轻信使',
     reference_image_url: 'https://cdn.windup.test/messenger-reference.png',
@@ -115,6 +116,7 @@ const characterDtos = [
   {
     id: 52,
     project_id: 42,
+    workflow_run_id: 502,
     name: '待定角色',
     description: null,
     reference_image_url: null,

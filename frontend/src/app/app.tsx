@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
 
 import { AssetLibraryPage } from '@/pages/asset-library'
@@ -10,9 +11,12 @@ import { ProjectDetailPage } from '@/pages/project-detail'
 import { ProjectCreatePage } from '@/pages/project-create'
 import { ProjectsPage } from '@/pages/projects'
 import { QuickStartPage } from '@/pages/quick-start'
-import { WorkflowEditorPage } from '@/pages/workflow-editor'
 import { ProtectedRoute } from '@/features/auth-guard'
 import { AppShellRoute } from './layout'
+
+const WorkflowEditorPage = lazy(() =>
+  import('@/pages/workflow-editor').then(({ WorkflowEditorPage: Page }) => ({ default: Page })),
+)
 
 /**
  * 路由表与全局外壳。
@@ -28,6 +32,14 @@ export function App() {
   )
 }
 
+function LazyWorkflowEditorPage() {
+  return (
+    <Suspense fallback={<div aria-label="正在加载工作流编辑器" />}>
+      <WorkflowEditorPage />
+    </Suspense>
+  )
+}
+
 /** 路由声明独立导出，测试用 MemoryRouter 验证直达地址。 */
 export function AppRoutes() {
   return (
@@ -40,8 +52,8 @@ export function AppRoutes() {
           <Route path="/quick-start/:runId" element={<QuickStartPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/new" element={<ProjectCreatePage />} />
-          <Route path="/workflow-editor/:runId" element={<WorkflowEditorPage />} />
-          <Route path="/workflow-editor/:runId/:stage" element={<WorkflowEditorPage />} />
+          <Route path="/workflow-editor/:runId" element={<LazyWorkflowEditorPage />} />
+          <Route path="/workflow-editor/:runId/:stage" element={<LazyWorkflowEditorPage />} />
           <Route path="/playtest/:characterId/:outfitId" element={<PlaytestPage />} />
         </Route>
         <Route path="*" element={<NotFoundPage />} />

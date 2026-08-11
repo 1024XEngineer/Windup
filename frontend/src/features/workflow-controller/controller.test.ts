@@ -498,16 +498,20 @@ describe('WorkflowController', () => {
   it('提交角色设定后在母版节点记录任务并进入候选选择', async () => {
     const { controller, workflow, generation, asyncErrors } = createController()
 
-    await controller.generateCharacterTemplate('setup-1', { spriteWidth: 64, spriteHeight: 64 })
+    await controller.generateCharacterTemplate('setup-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      input: { prompt: '戴红围巾的像素骑士', referenceMedia: [] },
+    })
 
-    expect(generation.apis.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'character_template',
-        prompt: '像素骑士',
-        spriteWidth: 64,
-        spriteHeight: 64,
-      }),
-    )
+    expect(generation.apis.create).toHaveBeenCalledWith({
+      type: 'character_template',
+      projectId: '1',
+      prompt: '戴红围巾的像素骑士',
+      referenceMedia: [],
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
     expect(workflow.getSaved().nodes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: 'setup-1', status: 'passed', phase: 'completed' }),
