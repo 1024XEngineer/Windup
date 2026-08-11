@@ -149,6 +149,20 @@ function renderAt(path: string, service: QuickStartEntryService) {
 }
 
 describe('QuickStartPage', () => {
+  it('keeps the entry and run canvases at least viewport height', async () => {
+    const entry = renderAt('/quick-start', serviceFor(null))
+    expect(
+      entry.getByRole('heading', { name: /用一句角色设定/u }).closest('section')?.className,
+    ).toContain('min-h-screen')
+
+    entry.unmount()
+    const run = workflow(setupAndTemplate())
+    const runView = renderAt('/quick-start/run-1', serviceFor(run))
+    expect(
+      (await runView.findByRole('heading', { name: '像素骑士' })).closest('section')?.className,
+    ).toContain('min-h-screen')
+  })
+
   it('keeps the natural-language creation entry visible when no run is selected', () => {
     render(
       <MemoryRouter>
