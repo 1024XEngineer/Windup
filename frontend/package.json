@@ -11,6 +11,7 @@
     "format:check": "oxfmt --check",
     "preview": "vite preview",
     "test": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --passWithNoTests --coverage",
     "typecheck": "tsc -b"
   },
   "dependencies": {
