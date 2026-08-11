@@ -33,44 +33,43 @@ export interface QuickStartMediaApis {
   upload(file: File, category: 'reference-image', signal?: AbortSignal): Promise<MediaReference>
 }
 
-export interface QuickStartService {
+export interface QuickStartSession {
+  readonly runId: WorkflowRun['id']
+  getWorkflow(): WorkflowRun
+  subscribe(listener: (run: WorkflowRun) => void): () => void
+  resume(): Promise<WorkflowRun>
+  interrupt(): Promise<WorkflowRun>
+  dispose(): void
+  continueWithUploadedTemplate(
+    file: File,
+    actionDescription: string,
+    signal?: AbortSignal,
+  ): Promise<WorkflowRun>
+  confirmCandidate(selectedImageUrl: string, actionDescription?: string): Promise<WorkflowRun>
+  /** 读取当前 Action 首帧生成任务的候选帧。 */
+  getFirstFrameCandidates(): Promise<readonly QuickStartFrame[]>
+  /** 确认首帧后，Quick Start 自动选择已接入的生成路线并提交完整动画。 */
+  confirmFirstFrame(selectedImageUrl: string): Promise<WorkflowRun>
+  approveReview(): Promise<WorkflowRun>
+  getCharacterInfo(): { characterId: string; outfitId: string } | null
+  resolveCharacterInfo(): Promise<{ characterId: string; outfitId: string } | null>
+  getTemplateCandidates(): Promise<readonly string[]>
+  getActionFrames(): Promise<readonly QuickStartFrame[]>
+}
+
+export interface QuickStartEntryService {
   readonly unavailableReason: string | null
-  start(prompt: string): Promise<WorkflowRun>
+  start(prompt: string): Promise<QuickStartSession>
   startWithUploadedTemplate(
     file: File,
     actionDescription: string,
     signal?: AbortSignal,
-  ): Promise<WorkflowRun>
-  continueWithUploadedTemplate(
-    runId: WorkflowRun['id'],
-    file: File,
-    actionDescription: string,
-    signal?: AbortSignal,
-  ): Promise<WorkflowRun>
+  ): Promise<QuickStartSession>
   startAction(
     target: { characterId: string; outfitId: string },
     actionDescription: string,
-  ): Promise<WorkflowRun>
-  peekWorkflow(runId: WorkflowRun['id']): WorkflowRun | null
-  subscribe(runId: WorkflowRun['id'], listener: (run: WorkflowRun) => void): () => void
-  resume(runId: WorkflowRun['id']): Promise<WorkflowRun | null>
-  interrupt(runId: WorkflowRun['id']): Promise<WorkflowRun | null>
-  confirmCandidate(
-    runId: WorkflowRun['id'],
-    selectedImageUrl: string,
-    actionDescription?: string,
-  ): Promise<WorkflowRun>
-  /** 读取当前 Action 首帧生成任务的候选帧。 */
-  getFirstFrameCandidates(runId: WorkflowRun['id']): Promise<readonly QuickStartFrame[]>
-  /** 确认首帧后，Quick Start 自动选择已接入的生成路线并提交完整动画。 */
-  confirmFirstFrame(runId: WorkflowRun['id'], selectedImageUrl: string): Promise<WorkflowRun>
-  approveReview(runId: WorkflowRun['id']): Promise<WorkflowRun>
-  getCharacterInfo(runId: WorkflowRun['id']): { characterId: string; outfitId: string } | null
-  resolveCharacterInfo(
-    runId: WorkflowRun['id'],
-  ): Promise<{ characterId: string; outfitId: string } | null>
-  getTemplateCandidates(runId: WorkflowRun['id']): Promise<readonly string[]>
-  getActionFrames(runId: WorkflowRun['id']): Promise<readonly QuickStartFrame[]>
+  ): Promise<QuickStartSession>
+  open(runId: WorkflowRun['id']): Promise<QuickStartSession>
 }
 
 export interface CreateQuickStartServiceOptions {
@@ -93,39 +92,9 @@ export function createQuickStartService({
   characterApis,
   mediaApis,
   onAsyncError = (error) => console.error('[quick-start] 异步工作流错误', error),
-}: CreateQuickStartServiceOptions): QuickStartService {
-  const controllers = new Map<WorkflowRun['id'], WorkflowController>()
-  const loading = new Map<WorkflowRun['id'], Promise<WorkflowController>>()
-  const autoAdvancers = new Map<WorkflowRun['id'], () => void>()
-  /** 服务层也去重，不能只依赖页面禁用按钮防止重复确认候选。 */
-  const candidateCommands = new Map<WorkflowRun['id'], Promise<WorkflowRun>>()
-
+}: CreateQuickStartServiceOptions): QuickStartEntryService {
   function createController(workflow?: WorkflowRun): WorkflowController {
     return createWorkflowController({ workflow, workflowRunApis, generationApis, onAsyncError })
-  }
-
-  async function getController(runId: WorkflowRun['id']): Promise<WorkflowController> {
-    const cached = controllers.get(runId)
-    if (cached) return cached
-    const pending = loading.get(runId)
-    if (pending) return pending
-
-    const request = workflowRunApis
-      .get(runId)
-      .then((workflow) => {
-        const controller = createController(workflow)
-        controllers.set(workflow.id, controller)
-        return controller
-      })
-      .finally(() => loading.delete(runId))
-    loading.set(runId, request)
-    return request
-  }
-
-  function remember(controller: WorkflowController): WorkflowRun {
-    const workflow = controller.getWorkflow()
-    controllers.set(workflow.id, controller)
-    return workflow
   }
 
   function setupNode(run: WorkflowRun) {
@@ -223,7 +192,6 @@ export function createQuickStartService({
   async function createRun(projectId: string, nodes: WorkflowNode[]): Promise<WorkflowController> {
     const controller = createController()
     await controller.create({ projectId, nodes })
-    remember(controller)
     return controller
   }
 
@@ -244,7 +212,6 @@ export function createQuickStartService({
       throw new Error('新增动作后没有找到首帧节点')
     }
     await controller.generateFirstFrame(firstFrame.id, { characterId, referenceMedia: [] })
-    ensureAutomaticActionAdvance(run.id)
   }
 
   async function persistCharacterTemplate(
@@ -300,19 +267,16 @@ export function createQuickStartService({
     return { characterId: character.id, outfitId }
   }
 
-  function getCharacterInfoForRun(runId: WorkflowRun['id']) {
-    const run = controllers.get(runId)?.getWorkflow()
-    if (!run) return null
+  function getCharacterInfo(controller: WorkflowController) {
+    const run = controller.getWorkflow()
     const characterId = setupNode(run).input.characterId
     const firstFrame = latestActionFirstFrame(run)
     if (!characterId || !firstFrame || firstFrame.type !== 'action-first-frame') return null
     return { characterId, outfitId: firstFrame.input.outfitId }
   }
 
-  function ensureAutomaticActionAdvance(runId: WorkflowRun['id']) {
-    if (autoAdvancers.has(runId)) return
+  function startAutomaticActionAdvance(controller: WorkflowController): () => void {
     let advancing = false
-    let stop: () => void = () => undefined
 
     const advance = (run: WorkflowRun) => {
       if (advancing) return
@@ -341,32 +305,193 @@ export function createQuickStartService({
       if (!fullFrame || fullFrame.type !== 'action-full-frame') return
 
       advancing = true
-      void getController(run.id)
-        .then(async (controller) => {
-          await controller.selectActionGenerationMethod(method.id, 'video-cropping')
-          await controller.generateCompleteAnimation(fullFrame.id, {
-            characterId,
-            referenceMedia: [],
-          })
+      void (async () => {
+        await controller.selectActionGenerationMethod(method.id, 'video-cropping')
+        await controller.generateCompleteAnimation(fullFrame.id, {
+          characterId,
+          referenceMedia: [],
         })
+      })()
         .catch(onAsyncError)
         .finally(() => {
           advancing = false
-          const latest = controllers.get(run.id)?.getWorkflow()
-          if (latest) advance(latest)
+          advance(controller.getWorkflow())
         })
     }
 
-    void getController(runId)
-      .then((controller) => {
-        stop = controller.subscribe(advance)
-        advance(controller.getWorkflow())
-      })
-      .catch(onAsyncError)
-    autoAdvancers.set(runId, () => {
-      stop()
-      autoAdvancers.delete(runId)
-    })
+    const stop = controller.subscribe(advance)
+    advance(controller.getWorkflow())
+    return stop
+  }
+
+  function createSession(controller: WorkflowController): QuickStartSession {
+    let stopAutomaticAdvance: (() => void) | null = null
+    let candidateCommand: Promise<WorkflowRun> | null = null
+    let disposed = false
+
+    const ensureAutomaticAdvance = () => {
+      stopAutomaticAdvance ??= startAutomaticActionAdvance(controller)
+    }
+
+    return {
+      runId: controller.getWorkflow().id,
+      getWorkflow: () => controller.getWorkflow(),
+      subscribe: (listener) => controller.subscribe(listener),
+      async resume() {
+        disposed = false
+        await controller.resume()
+        if (!disposed) ensureAutomaticAdvance()
+        return controller.getWorkflow()
+      },
+      async interrupt() {
+        await controller.interrupt()
+        stopAutomaticAdvance?.()
+        stopAutomaticAdvance = null
+        return controller.getWorkflow()
+      },
+      dispose() {
+        disposed = true
+        stopAutomaticAdvance?.()
+        stopAutomaticAdvance = null
+        controller.dispose()
+      },
+      async continueWithUploadedTemplate(file, actionDescription, signal) {
+        if (!mediaApis) throw new Error('媒体上传服务尚未配置，不能使用角色母版')
+        const run = controller.getWorkflow()
+        const template = templateNode(run)
+        if (template.status !== 'active' || template.phase !== 'selecting') {
+          throw new Error('当前角色母版节点不能直接替换图片，请先从角色母版节点重做')
+        }
+        const templateReference = await mediaApis.upload(file, 'reference-image', signal)
+        await controller.confirmCharacterTemplate(template.id, templateReference)
+        const target = await persistCharacterTemplate(controller, templateReference)
+        await prepareAction(controller, target.characterId, target.outfitId, actionDescription)
+        ensureAutomaticAdvance()
+        return controller.getWorkflow()
+      },
+      confirmCandidate(selectedImageUrl, actionDescription) {
+        if (candidateCommand) return candidateCommand
+        const command = (async () => {
+          const template = templateNode(controller.getWorkflow())
+          await controller.confirmCharacterTemplate(template.id, selectedImageUrl)
+          const target = await persistCharacterTemplate(controller, selectedImageUrl)
+          await prepareAction(
+            controller,
+            target.characterId,
+            target.outfitId,
+            actionDescription ?? '',
+          )
+          ensureAutomaticAdvance()
+          return controller.getWorkflow()
+        })().finally(() => {
+          if (candidateCommand === command) candidateCommand = null
+        })
+        candidateCommand = command
+        return command
+      },
+      async getFirstFrameCandidates() {
+        const firstFrame = latestActionFirstFrame(controller.getWorkflow())
+        if (!firstFrame || firstFrame.type !== 'action-first-frame') return []
+        const generation = await controller.getGeneration(firstFrame.id, 'first_frame')
+        return generation?.type === 'first_frame' && generation.result?.type === 'first_frame'
+          ? [{ index: 0, imageUrl: generation.result.image.url, durationMs: null }]
+          : []
+      },
+      async confirmFirstFrame(selectedImageUrl) {
+        const firstFrame = latestActionFirstFrame(controller.getWorkflow())
+        if (!firstFrame || firstFrame.type !== 'action-first-frame') {
+          throw new Error('当前运行没有可确认的动作首帧')
+        }
+        await controller.confirmFirstFrame(firstFrame.id, selectedImageUrl)
+        ensureAutomaticAdvance()
+        return controller.getWorkflow()
+      },
+      async approveReview() {
+        if (!characterApis) throw new Error('角色服务尚未配置，不能导入 Playtest')
+        const run = controller.getWorkflow()
+        const fullFrame = latestFullFrame(run)
+        if (!fullFrame || fullFrame.type !== 'action-full-frame') {
+          throw new Error('没有可审核的完整动画')
+        }
+        const review = findReview(run, fullFrame.id)
+        if (!review) throw new Error('完整动画没有关联审核节点')
+        await controller.approveReview(review.id)
+
+        const generation = await controller.getGeneration(fullFrame.id, 'complete_animation')
+        if (
+          !generation ||
+          generation.status !== 'completed' ||
+          generation.type !== 'complete_animation' ||
+          generation.result?.type !== 'complete_animation'
+        ) {
+          throw new Error('完整动画结果尚未就绪')
+        }
+        const info = getCharacterInfo(controller)
+        if (!info) throw new Error('WorkflowRun 缺少角色或造型绑定')
+        const firstFrame = latestActionFirstFrame(controller.getWorkflow())
+        if (!firstFrame || firstFrame.type !== 'action-first-frame') {
+          throw new Error('完整动画缺少动作定义')
+        }
+        const character = await characterApis.get(info.characterId)
+        const action: Action = {
+          id: fullFrame.id,
+          outfitId: info.outfitId,
+          name: firstFrame.input.name,
+          loop: true,
+          type: firstFrame.input.type,
+          fps: firstFrame.input.fps,
+          frameCount: generation.result.frames.length,
+          frames: generation.result.frames.map((frame) => ({
+            index: frame.index,
+            imageUrl: frame.url,
+            durationMs: frame.durationMs,
+          })),
+        }
+        await characterApis.update({
+          ...character,
+          outfits: character.outfits.map((outfit) =>
+            outfit.id === info.outfitId
+              ? {
+                  ...outfit,
+                  actions: [...outfit.actions.filter((item) => item.id !== action.id), action],
+                }
+              : outfit,
+          ),
+        })
+        return controller.getWorkflow()
+      },
+      getCharacterInfo: () => getCharacterInfo(controller),
+      async resolveCharacterInfo() {
+        const direct = getCharacterInfo(controller)
+        if (direct) return direct
+        if (!characterApis) return null
+        const page = await characterApis.listByProject(controller.getWorkflow().projectId)
+        const character = page.items.at(-1)
+        const outfit = character?.outfits.at(0)
+        return character && outfit ? { characterId: character.id, outfitId: outfit.id } : null
+      },
+      async getTemplateCandidates() {
+        const template = templateNode(controller.getWorkflow())
+        const generation = await controller.getGeneration(template.id, 'character_template')
+        return generation?.type === 'character_template' &&
+          generation.result?.type === 'character_template'
+          ? generation.result.images.map((image) => image.url)
+          : []
+      },
+      async getActionFrames() {
+        const fullFrame = latestFullFrame(controller.getWorkflow())
+        if (!fullFrame || fullFrame.type !== 'action-full-frame') return []
+        const generation = await controller.getGeneration(fullFrame.id, 'complete_animation')
+        return generation?.type === 'complete_animation' &&
+          generation.result?.type === 'complete_animation'
+          ? generation.result.frames.map((frame) => ({
+              index: frame.index,
+              imageUrl: frame.url,
+              durationMs: frame.durationMs,
+            }))
+          : []
+      },
+    }
   }
 
   async function appendActionForCharacter(
@@ -387,7 +512,7 @@ export function createQuickStartService({
     })
     const existing = listed.items.find((run) => setupNode(run).input.characterId === character.id)
     const controller = existing
-      ? await getController(existing.id)
+      ? createController(existing)
       : await createRun(
           character.projectId,
           existingCharacterNodes(
@@ -397,7 +522,7 @@ export function createQuickStartService({
           ),
         )
     await prepareAction(controller, character.id, outfit.id, actionDescription)
-    return controller.getWorkflow()
+    return createSession(controller)
   }
 
   return {
@@ -412,7 +537,7 @@ export function createQuickStartService({
         spriteWidth: project.spriteSize.width,
         spriteHeight: project.spriteSize.height,
       })
-      return controller.getWorkflow()
+      return createSession(controller)
     },
 
     async startWithUploadedTemplate(file, actionDescription, signal) {
@@ -429,193 +554,13 @@ export function createQuickStartService({
       await controller.acceptUploadedCharacterTemplate('character-setup', templateReference)
       const target = await persistCharacterTemplate(controller, templateReference)
       await prepareAction(controller, target.characterId, target.outfitId, actionDescription)
-      return controller.getWorkflow()
-    },
-
-    async continueWithUploadedTemplate(runId, file, actionDescription, signal) {
-      if (!mediaApis) throw new Error('媒体上传服务尚未配置，不能使用角色母版')
-      const controller = await getController(runId)
-      const run = controller.getWorkflow()
-      const template = templateNode(run)
-      if (template.status !== 'active' || template.phase !== 'selecting') {
-        throw new Error('当前角色母版节点不能直接替换图片，请先从角色母版节点重做')
-      }
-      const templateReference = await mediaApis.upload(file, 'reference-image', signal)
-      await controller.confirmCharacterTemplate(template.id, templateReference)
-      const target = await persistCharacterTemplate(controller, templateReference)
-      await prepareAction(controller, target.characterId, target.outfitId, actionDescription)
-      return controller.getWorkflow()
+      return createSession(controller)
     },
 
     startAction: appendActionForCharacter,
 
-    peekWorkflow(runId) {
-      return controllers.get(runId)?.getWorkflow() ?? null
-    },
-
-    subscribe(runId, listener) {
-      let stopped = false
-      let unsubscribe: () => void = () => undefined
-      void getController(runId)
-        .then((controller) => {
-          if (!stopped) unsubscribe = controller.subscribe(listener)
-        })
-        .catch(onAsyncError)
-      return () => {
-        stopped = true
-        unsubscribe()
-      }
-    },
-
-    async resume(runId) {
-      const controller = await getController(runId)
-      await controller.resume()
-      ensureAutomaticActionAdvance(runId)
-      return controller.getWorkflow()
-    },
-
-    async interrupt(runId) {
-      const controller = await getController(runId)
-      await controller.interrupt()
-      autoAdvancers.get(runId)?.()
-      return controller.getWorkflow()
-    },
-
-    confirmCandidate(runId, selectedImageUrl, actionDescription) {
-      const active = candidateCommands.get(runId)
-      if (active) return active
-      const command = (async () => {
-        const controller = await getController(runId)
-        const template = templateNode(controller.getWorkflow())
-        await controller.confirmCharacterTemplate(template.id, selectedImageUrl)
-        const target = await persistCharacterTemplate(controller, selectedImageUrl)
-        await prepareAction(
-          controller,
-          target.characterId,
-          target.outfitId,
-          actionDescription ?? '',
-        )
-        return controller.getWorkflow()
-      })().finally(() => {
-        if (candidateCommands.get(runId) === command) candidateCommands.delete(runId)
-      })
-      candidateCommands.set(runId, command)
-      return command
-    },
-
-    async getFirstFrameCandidates(runId) {
-      const controller = await getController(runId)
-      const firstFrame = latestActionFirstFrame(controller.getWorkflow())
-      if (!firstFrame || firstFrame.type !== 'action-first-frame') return []
-      const generation = await controller.getGeneration(firstFrame.id, 'first_frame')
-      return generation?.type === 'first_frame' && generation.result?.type === 'first_frame'
-        ? [{ index: 0, imageUrl: generation.result.image.url, durationMs: null }]
-        : []
-    },
-
-    async confirmFirstFrame(runId, selectedImageUrl) {
-      const controller = await getController(runId)
-      const firstFrame = latestActionFirstFrame(controller.getWorkflow())
-      if (!firstFrame || firstFrame.type !== 'action-first-frame') {
-        throw new Error('当前运行没有可确认的动作首帧')
-      }
-      await controller.confirmFirstFrame(firstFrame.id, selectedImageUrl)
-      ensureAutomaticActionAdvance(runId)
-      return controller.getWorkflow()
-    },
-
-    async approveReview(runId) {
-      if (!characterApis) throw new Error('角色服务尚未配置，不能导入 Playtest')
-      const controller = await getController(runId)
-      const run = controller.getWorkflow()
-      const fullFrame = latestFullFrame(run)
-      if (!fullFrame || fullFrame.type !== 'action-full-frame')
-        throw new Error('没有可审核的完整动画')
-      const review = findReview(run, fullFrame.id)
-      if (!review) throw new Error('完整动画没有关联审核节点')
-      await controller.approveReview(review.id)
-
-      const generation = await controller.getGeneration(fullFrame.id, 'complete_animation')
-      if (
-        !generation ||
-        generation.status !== 'completed' ||
-        generation.type !== 'complete_animation' ||
-        generation.result?.type !== 'complete_animation'
-      ) {
-        throw new Error('完整动画结果尚未就绪')
-      }
-      const info = getCharacterInfoForRun(runId)
-      if (!info) throw new Error('WorkflowRun 缺少角色或造型绑定')
-      const firstFrame = latestActionFirstFrame(controller.getWorkflow())
-      if (!firstFrame || firstFrame.type !== 'action-first-frame')
-        throw new Error('完整动画缺少动作定义')
-      const character = await characterApis.get(info.characterId)
-      const action: Action = {
-        id: fullFrame.id,
-        outfitId: info.outfitId,
-        name: firstFrame.input.name,
-        loop: true,
-        type: firstFrame.input.type,
-        fps: firstFrame.input.fps,
-        frameCount: generation.result.frames.length,
-        frames: generation.result.frames.map((frame) => ({
-          index: frame.index,
-          imageUrl: frame.url,
-          durationMs: frame.durationMs,
-        })),
-      }
-      await characterApis.update({
-        ...character,
-        outfits: character.outfits.map((outfit) =>
-          outfit.id === info.outfitId
-            ? {
-                ...outfit,
-                actions: [...outfit.actions.filter((item) => item.id !== action.id), action],
-              }
-            : outfit,
-        ),
-      })
-      return controller.getWorkflow()
-    },
-
-    getCharacterInfo(runId) {
-      return getCharacterInfoForRun(runId)
-    },
-
-    async resolveCharacterInfo(runId) {
-      const controller = await getController(runId)
-      const direct = getCharacterInfoForRun(runId)
-      if (direct) return direct
-      if (!characterApis) return null
-      const page = await characterApis.listByProject(controller.getWorkflow().projectId)
-      const character = page.items.at(-1)
-      const outfit = character?.outfits.at(0)
-      return character && outfit ? { characterId: character.id, outfitId: outfit.id } : null
-    },
-
-    async getTemplateCandidates(runId) {
-      const controller = await getController(runId)
-      const template = templateNode(controller.getWorkflow())
-      const generation = await controller.getGeneration(template.id, 'character_template')
-      return generation?.type === 'character_template' &&
-        generation.result?.type === 'character_template'
-        ? generation.result.images.map((image) => image.url)
-        : []
-    },
-
-    async getActionFrames(runId) {
-      const controller = await getController(runId)
-      const fullFrame = latestFullFrame(controller.getWorkflow())
-      if (!fullFrame || fullFrame.type !== 'action-full-frame') return []
-      const generation = await controller.getGeneration(fullFrame.id, 'complete_animation')
-      return generation?.type === 'complete_animation' &&
-        generation.result?.type === 'complete_animation'
-        ? generation.result.frames.map((frame) => ({
-            index: frame.index,
-            imageUrl: frame.url,
-            durationMs: frame.durationMs,
-          }))
-        : []
+    async open(runId) {
+      return createSession(createController(await workflowRunApis.get(runId)))
     },
   }
 }
@@ -650,7 +595,7 @@ export function createRealQuickStartService({
   mediaApis,
   workflowRunApis,
   onAsyncError,
-}: CreateRealQuickStartServiceOptions): QuickStartService {
+}: CreateRealQuickStartServiceOptions): QuickStartEntryService {
   return createQuickStartService({
     workflowRunApis,
     generationApis,

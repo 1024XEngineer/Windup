@@ -1,8 +1,9 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { StrictMode } from 'react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { QuickStartService } from './service'
+import type { QuickStartEntryService, QuickStartSession } from './service'
 import type { WorkflowRun } from '@/entities'
 import { QuickStartPage } from './index'
 
@@ -97,31 +98,41 @@ function actionWorkflow(
   ])
 }
 
-function serviceFor(run: WorkflowRun | null, overrides: Partial<QuickStartService> = {}) {
-  const service: QuickStartService = {
+type QuickStartMock = QuickStartEntryService & QuickStartSession
+
+function serviceFor(run: WorkflowRun | null, overrides: Partial<QuickStartMock> = {}) {
+  const fallbackRun = run ?? workflow(setupAndTemplate(), 'run-new')
+  const service: QuickStartMock = {
     unavailableReason: null,
-    start: vi.fn(async () => workflow(setupAndTemplate(), 'run-new')),
-    startWithUploadedTemplate: vi.fn(async () => workflow(setupAndTemplate(), 'run-upload')),
+    runId: fallbackRun.id,
+    start: vi.fn(async () => service),
+    startWithUploadedTemplate: vi.fn(async () => service),
+    open: vi.fn(async () => {
+      if (!run) throw new Error('not found')
+      return service
+    }),
     continueWithUploadedTemplate: vi.fn(async () => run!),
-    startAction: vi.fn(async () => workflow(setupAndTemplate(), 'run-action')),
-    peekWorkflow: vi.fn(() => run),
+    startAction: vi.fn(async () => service),
+    getWorkflow: vi.fn(() => fallbackRun),
     subscribe: vi.fn(() => () => undefined),
-    resume: vi.fn(async () => run),
-    interrupt: vi.fn(async () => run),
-    confirmCandidate: vi.fn(async () => run!),
+    resume: vi.fn(async () => fallbackRun),
+    interrupt: vi.fn(async () => fallbackRun),
+    dispose: vi.fn(),
+    confirmCandidate: vi.fn(async () => fallbackRun),
     getFirstFrameCandidates: vi.fn(async () => []),
-    confirmFirstFrame: vi.fn(async () => run!),
-    approveReview: vi.fn(async () => run!),
+    confirmFirstFrame: vi.fn(async () => fallbackRun),
+    approveReview: vi.fn(async () => fallbackRun),
     getCharacterInfo: vi.fn(() => ({ characterId: 'character-1', outfitId: 'outfit-1' })),
     resolveCharacterInfo: vi.fn(async () => ({ characterId: 'character-1', outfitId: 'outfit-1' })),
     getTemplateCandidates: vi.fn(async () => []),
     getActionFrames: vi.fn(async () => []),
     ...overrides,
   }
+  Object.assign(service, overrides)
   return service
 }
 
-function renderAt(path: string, service: QuickStartService) {
+function renderAt(path: string, service: QuickStartEntryService) {
   function PlaytestLocation() {
     const location = useLocation()
     return <h1>{`${location.pathname}${location.search}`}</h1>
@@ -176,6 +187,7 @@ describe('QuickStartPage', () => {
     await waitFor(() =>
       expect(service.start).toHaveBeenCalledWith(expect.stringContaining('像素守夜人')),
     )
+    expect(service.open).not.toHaveBeenCalled()
 
     view.unmount()
     renderAt('/quick-start', service)
@@ -191,6 +203,27 @@ describe('QuickStartPage', () => {
         expect.any(AbortSignal),
       ),
     )
+  })
+
+  it('hands the created session to the run page under the production StrictMode lifecycle', async () => {
+    const service = serviceFor(null)
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/quick-start']}>
+          <Routes>
+            <Route path="/quick-start" element={<QuickStartPage service={service} />} />
+            <Route path="/quick-start/:runId" element={<QuickStartPage service={service} />} />
+          </Routes>
+        </MemoryRouter>
+      </StrictMode>,
+    )
+
+    fireEvent.change(screen.getByLabelText('创作指令'), { target: { value: '像素骑士' } })
+    fireEvent.click(screen.getByRole('button', { name: '开始生成' }))
+
+    await waitFor(() => expect(service.resume).toHaveBeenCalled())
+    expect(service.open).not.toHaveBeenCalled()
+    expect(service.dispose).toHaveBeenCalled()
   })
 
   it('shows entry errors and supports removing an uploaded template', async () => {
@@ -237,33 +270,17 @@ describe('QuickStartPage', () => {
     expect(screen.getByRole('heading', { name: /用一句角色设定/u })).toBeTruthy()
   })
 
-  it('hydrates a recoverable run and accepts its next subscription update', async () => {
+  it('opens a recoverable run once and accepts its session update', async () => {
     const run = workflow(setupAndTemplate())
-    const peekWorkflow = vi
-      .fn<() => WorkflowRun | null>()
-      .mockReturnValueOnce(null)
-      .mockReturnValue(run)
-    const service = serviceFor(null, {
-      peekWorkflow,
-      resume: vi.fn(async () => run),
-      subscribe: vi.fn((_runId, listener) => {
+    const service = serviceFor(run, {
+      subscribe: vi.fn((listener) => {
         listener(run)
         return () => undefined
       }),
     })
     renderAt('/quick-start/run-1', service)
-    await waitFor(() => expect(service.resume).toHaveBeenCalledWith('run-1'))
-    expect(peekWorkflow).toHaveBeenCalled()
-  })
-
-  it('polls the service for a missed workflow update', async () => {
-    vi.useFakeTimers()
-    const run = workflow(setupAndTemplate())
-    const peekWorkflow = vi.fn(() => run)
-    renderAt('/quick-start/run-1', serviceFor(run, { peekWorkflow }))
-    await act(async () => vi.advanceTimersByTimeAsync(3_000))
-    expect(peekWorkflow).toHaveBeenCalledTimes(2)
-    vi.useRealTimers()
+    await waitFor(() => expect(service.open).toHaveBeenCalledWith('run-1'))
+    expect(service.resume).toHaveBeenCalledWith()
   })
 
   it('selects, confirms, and regenerates a character candidate', async () => {
@@ -278,7 +295,6 @@ describe('QuickStartPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '确认选择，继续下一步' }))
     await waitFor(() =>
       expect(service.confirmCandidate).toHaveBeenCalledWith(
-        'run-1',
         'https://example.test/candidate.png',
         '挥手',
       ),
@@ -298,10 +314,7 @@ describe('QuickStartPage', () => {
     fireEvent.click(await screen.findByRole('img', { name: '动作首帧候选 1' }))
     fireEvent.click(screen.getByRole('button', { name: '确认首帧，生成完整动作' }))
     await waitFor(() =>
-      expect(service.confirmFirstFrame).toHaveBeenCalledWith(
-        'run-1',
-        'https://example.test/first.png',
-      ),
+      expect(service.confirmFirstFrame).toHaveBeenCalledWith('https://example.test/first.png'),
     )
   })
 
@@ -336,7 +349,7 @@ describe('QuickStartPage', () => {
         name: '/playtest/character-1/outfit-1?actionId=action-full',
       }),
     ).toBeTruthy()
-    expect(service.approveReview).toHaveBeenCalledWith('run-1')
+    expect(service.approveReview).toHaveBeenCalledWith()
   })
 
   it('keeps a completed run recoverable when its character binding is missing', async () => {

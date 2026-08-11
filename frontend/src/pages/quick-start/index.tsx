@@ -16,12 +16,18 @@ import {
   type WorkflowNode,
   type WorkflowNodeType,
 } from '@/entities'
-import { quickStartService, type QuickStartFrame, type QuickStartService } from './service'
+import {
+  quickStartService,
+  type QuickStartEntryService,
+  type QuickStartFrame,
+  type QuickStartSession,
+} from './service'
 
 export type {
   CreateQuickStartServiceOptions,
   PrepareQuickStartProject,
-  QuickStartService,
+  QuickStartEntryService,
+  QuickStartSession,
 } from './service'
 
 const STEP_LABELS: Record<WorkflowNodeType, string> = {
@@ -54,7 +60,7 @@ export interface QuickStartPageProps {
    * 页面测试与外层组合可以注入同一份服务实例。
    * 未注入时，Quick Start 自己装配真实实体接口，避免 app 层承担流程细节。
    */
-  service?: QuickStartService
+  service?: QuickStartEntryService
 }
 
 /** Quick Start 独立完成 AI 入口；它不跳转 Workflow Editor。 */
@@ -64,24 +70,36 @@ export function QuickStartPage({ service }: QuickStartPageProps) {
   const activeService = useMemo(() => {
     return service ?? quickStartService
   }, [service])
+  const [createdSession, setCreatedSession] = useState<QuickStartSession | null>(null)
   const characterId = searchParams.get('characterId')
   const outfitId = searchParams.get('outfitId')
 
   return runId ? (
-    <QuickStartRun service={activeService} runId={runId} />
+    <QuickStartRun
+      service={activeService}
+      runId={runId}
+      initialSession={createdSession?.runId === runId ? createdSession : null}
+      onSessionCreated={setCreatedSession}
+    />
   ) : characterId && outfitId ? (
-    <QuickStartActionInput service={activeService} target={{ characterId, outfitId }} />
+    <QuickStartActionInput
+      service={activeService}
+      target={{ characterId, outfitId }}
+      onSessionCreated={setCreatedSession}
+    />
   ) : (
-    <QuickStartInput service={activeService} />
+    <QuickStartInput service={activeService} onSessionCreated={setCreatedSession} />
   )
 }
 
 function QuickStartActionInput({
   service,
   target,
+  onSessionCreated,
 }: {
-  service: QuickStartService
+  service: QuickStartEntryService
   target: { characterId: string; outfitId: string }
+  onSessionCreated: (session: QuickStartSession) => void
 }) {
   const navigate = useNavigate()
   const [description, setDescription] = useState('')
@@ -95,8 +113,9 @@ function QuickStartActionInput({
     setSubmitting(true)
     setError(null)
     try {
-      const run = await service.startAction(target, prompt)
-      navigate(`/quick-start/${encodeURIComponent(run.id)}`)
+      const session = await service.startAction(target, prompt)
+      onSessionCreated(session)
+      navigate(`/quick-start/${encodeURIComponent(session.runId)}`)
     } catch (cause) {
       setError(errorMessage(cause, '创建动作失败，请稍后重试'))
     } finally {
@@ -146,7 +165,13 @@ function QuickStartActionInput({
   )
 }
 
-function QuickStartInput({ service }: { service: QuickStartService }) {
+function QuickStartInput({
+  service,
+  onSessionCreated,
+}: {
+  service: QuickStartEntryService
+  onSessionCreated: (session: QuickStartSession) => void
+}) {
   const navigate = useNavigate()
   const [prompt, setPrompt] = useState('')
   const [templateFile, setTemplateFile] = useState<File | null>(null)
@@ -184,14 +209,15 @@ function QuickStartInput({ service }: { service: QuickStartService }) {
     setSubmitting(true)
     setError(null)
     try {
-      const run = templateFile
+      const session = templateFile
         ? await service.startWithUploadedTemplate(
             templateFile,
             normalizedPrompt,
             abortController.signal,
           )
         : await service.start(normalizedPrompt)
-      navigate(`/quick-start/${encodeURIComponent(run.id)}`)
+      onSessionCreated(session)
+      navigate(`/quick-start/${encodeURIComponent(session.runId)}`)
     } catch (cause) {
       if (!abortController.signal.aborted) {
         setError(errorMessage(cause, '创建失败，请稍后重试'))
@@ -360,9 +386,21 @@ function QuickStartInput({ service }: { service: QuickStartService }) {
   )
 }
 
-function QuickStartRun({ service, runId }: { service: QuickStartService; runId: string }) {
+function QuickStartRun({
+  service,
+  runId,
+  initialSession,
+  onSessionCreated,
+}: {
+  service: QuickStartEntryService
+  runId: string
+  initialSession: QuickStartSession | null
+  onSessionCreated: (session: QuickStartSession) => void
+}) {
   const navigate = useNavigate()
-  const [run, setRun] = useState<WorkflowRun | null>(() => service.peekWorkflow(runId))
+  const [session, setSession] = useState<QuickStartSession | null>(null)
+  const [run, setRun] = useState<WorkflowRun | null>(null)
+  const [restoring, setRestoring] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedCandidate, setSelectedCandidate] = useState<string | null>(null)
   const [selectedFirstFrame, setSelectedFirstFrame] = useState<string | null>(null)
@@ -377,39 +415,48 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
 
   useEffect(() => {
     let active = true
-    const unsubscribe = service.subscribe(runId, (updated) => {
+    let currentSession: QuickStartSession | null = null
+    let unsubscribe: () => void = () => undefined
+    setRestoring(true)
+    setSession(null)
+    setRun(null)
+
+    void (async () => {
+      const nextSession = initialSession ?? (await service.open(runId))
+      if (!active) {
+        nextSession.dispose()
+        return
+      }
+      currentSession = nextSession
+      setSession(nextSession)
+      setRun(nextSession.getWorkflow())
+      unsubscribe = nextSession.subscribe((updated) => {
+        if (active) {
+          setRun(updated)
+          setError(null)
+        }
+      })
+      setRun(await nextSession.resume())
       if (active) {
-        setRun(updated)
         setError(null)
+        setRestoring(false)
+      }
+    })().catch((cause) => {
+      if (active) {
+        setError(errorMessage(cause, '恢复生成任务失败'))
+        setRestoring(false)
       }
     })
-    void service
-      .resume(runId)
-      .then((restored) => {
-        if (!active) return
-        setRun(restored)
-        setError(restored ? null : service.unavailableReason)
-      })
-      .catch((cause) => {
-        if (active) setError(errorMessage(cause, '恢复生成任务失败'))
-      })
-
-    // 兜底轮询：异步动作生成完成后 store subscription 可能漏掉，每 3s 刷新一次
-    const pollTimer = setInterval(() => {
-      if (!active) return
-      const latest = service.peekWorkflow(runId)
-      if (latest) setRun(latest)
-    }, 3000)
 
     return () => {
       active = false
       unsubscribe()
-      clearInterval(pollTimer)
+      currentSession?.dispose()
     }
-  }, [runId, service])
+  }, [initialSession, runId, service])
 
   useEffect(() => {
-    if (!run) {
+    if (!run || !session) {
       setCandidates([])
       setFirstFrameCandidates([])
       setActionFrames([])
@@ -417,9 +464,9 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
     }
     let active = true
     void Promise.all([
-      service.getTemplateCandidates(run.id),
-      service.getFirstFrameCandidates(run.id),
-      service.getActionFrames(run.id),
+      session.getTemplateCandidates(),
+      session.getFirstFrameCandidates(),
+      session.getActionFrames(),
     ])
       .then(([nextCandidates, nextFirstFrameCandidates, nextFrames]) => {
         if (!active) return
@@ -433,17 +480,16 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
     return () => {
       active = false
     }
-  }, [run, service])
+  }, [run, session])
 
   const publishToPlaytest = useCallback(async () => {
-    if (publishing) return
+    if (publishing || !session) return
     setPublishing(true)
     setError(null)
     try {
-      const approved = await service.approveReview(runId)
+      const approved = await session.approveReview()
       setRun(approved)
-      // 内存 Map / 持久化引用缺失时（旧运行记录），从后端按项目反查。
-      const info = service.getCharacterInfo(runId) ?? (await service.resolveCharacterInfo(runId))
+      const info = session.getCharacterInfo() ?? (await session.resolveCharacterInfo())
       if (!info) throw new Error('动作已生成，但没有找到对应的角色资产')
       const approvedAction = latestActionStep(approved)
       const actionId = approvedAction?.type === 'action-full-frame' ? approvedAction.id : undefined
@@ -453,7 +499,7 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
     } finally {
       setPublishing(false)
     }
-  }, [navigate, publishing, runId, service])
+  }, [navigate, publishing, session])
 
   useEffect(() => {
     const publishKey = run ? automaticPublishKey(run) : null
@@ -470,17 +516,25 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
         <p className="font-mono text-[10px] font-bold tracking-[0.16em] text-[#687069]">
           QUICK START / RECOVERY
         </p>
-        <h1 className="mt-4 font-serif text-4xl">无法恢复这次创作</h1>
-        <p role="alert" className="mt-4 max-w-xl text-sm leading-7 text-[#687069]">
-          {error || `没有找到运行记录 ${runId}`}
-        </p>
-        <button
-          type="button"
-          onClick={() => navigate('/quick-start')}
-          className="mt-8 rounded-xl bg-[#35583f] px-5 py-3 text-sm font-semibold text-white"
-        >
-          返回快速开始
-        </button>
+        <h1 className="mt-4 font-serif text-4xl">
+          {restoring ? '正在恢复这次创作' : '无法恢复这次创作'}
+        </h1>
+        {restoring ? (
+          <p className="mt-4 max-w-xl text-sm leading-7 text-[#687069]">正在读取工作流状态…</p>
+        ) : (
+          <>
+            <p role="alert" className="mt-4 max-w-xl text-sm leading-7 text-[#687069]">
+              {error || `没有找到运行记录 ${runId}`}
+            </p>
+            <button
+              type="button"
+              onClick={() => navigate('/quick-start')}
+              className="mt-8 rounded-xl bg-[#35583f] px-5 py-3 text-sm font-semibold text-white"
+            >
+              返回快速开始
+            </button>
+          </>
+        )}
       </section>
     )
   }
@@ -509,8 +563,8 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
 
   async function interrupt() {
     try {
-      const interrupted = await service.interrupt(runId)
-      if (interrupted) setRun(interrupted)
+      if (!session) return
+      setRun(await session.interrupt())
     } catch (cause) {
       setError(errorMessage(cause, '中断自动制作失败'))
     }
@@ -521,7 +575,8 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
     setConfirmingCandidate(true)
     setError(null)
     try {
-      const updated = await service.confirmCandidate(runId, selectedCandidate, actionDescription)
+      if (!session) return
+      const updated = await session.confirmCandidate(selectedCandidate, actionDescription)
       setRun(updated)
       setSelectedCandidate(null)
       setActionDescription('')
@@ -537,7 +592,8 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
     setConfirmingFirstFrame(true)
     setError(null)
     try {
-      const updated = await service.confirmFirstFrame(runId, selectedFirstFrame)
+      if (!session) return
+      const updated = await session.confirmFirstFrame(selectedFirstFrame)
       setRun(updated)
       setSelectedFirstFrame(null)
     } catch (cause) {
@@ -552,8 +608,9 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
     const prompt = workflowPrompt(run)
     if (!prompt) return
     try {
-      const newRun = await service.start(prompt)
-      navigate(`/quick-start/${encodeURIComponent(newRun.id)}`)
+      const newSession = await service.start(prompt)
+      onSessionCreated(newSession)
+      navigate(`/quick-start/${encodeURIComponent(newSession.runId)}`)
     } catch (cause) {
       setError(errorMessage(cause, '重新生成失败'))
     }

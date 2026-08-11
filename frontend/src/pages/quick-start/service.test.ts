@@ -14,16 +14,9 @@ import {
   createAuthenticatedGenerationRequest,
   createQuickStartService,
   createRealQuickStartService,
-  type QuickStartFrame,
   type QuickStartMediaApis,
-  type QuickStartService,
 } from './service'
 import { registerApiAccessTokenProvider } from '@/shared/api'
-
-type QuickStartServiceWithFirstFrame = QuickStartService & {
-  getFirstFrameCandidates(runId: string): Promise<readonly QuickStartFrame[]>
-  confirmFirstFrame(runId: string, selectedImageUrl: string): Promise<WorkflowRun>
-}
 
 function createWorkflowRunApis(initialRuns: readonly WorkflowRun[] = []): WorkflowRunApis {
   let version = 0
@@ -246,9 +239,7 @@ describe('createQuickStartService', () => {
     })
 
     await expect(service.start('   ')).rejects.toThrow('请先描述')
-    expect(service.peekWorkflow('missing')).toBeNull()
-    expect(service.getCharacterInfo('missing')).toBeNull()
-    await expect(service.getFirstFrameCandidates('missing')).rejects.toThrow('not found')
+    await expect(service.open('missing')).rejects.toThrow('not found')
   })
 
   it('creates a bounded default project name and returns the persisted sprite size', async () => {
@@ -303,7 +294,8 @@ describe('createQuickStartService', () => {
       prepareProject: async () => ({ id: 'project-1', spriteSize: { width: 256, height: 256 } }),
     })
 
-    const run = await service.start('像素骑士')
+    const session = await service.start('像素骑士')
+    const run = session.getWorkflow()
 
     expect(run.nodes).toEqual(
       expect.arrayContaining([
@@ -344,7 +336,8 @@ describe('createQuickStartService', () => {
     })
     const file = new File(['pixels'], 'hero.png', { type: 'image/png' })
 
-    const firstRun = await service.startWithUploadedTemplate(file, '挥手')
+    const firstSession = await service.startWithUploadedTemplate(file, '挥手')
+    const firstRun = firstSession.getWorkflow()
 
     expect(mediaApis.upload).toHaveBeenCalledWith(file, 'reference-image', undefined)
     expect(characterApis.create).toHaveBeenCalledWith(
@@ -361,16 +354,17 @@ describe('createQuickStartService', () => {
         expect.objectContaining({ type: 'action-first-frame', phase: 'generating' }),
       ]),
     )
-    expect(service.getCharacterInfo(firstRun.id)).toEqual({
+    expect(firstSession.getCharacterInfo()).toEqual({
       characterId: 'character-1',
       outfitId: savedCharacter.outfits[0]!.id,
     })
 
-    const secondRun = await service.startAction(
+    const secondSession = await service.startAction(
       { characterId: 'character-1', outfitId: savedCharacter.outfits[0]!.id },
       '跳跃',
     )
-    expect(secondRun.id).toBe(firstRun.id)
+    const secondRun = secondSession.getWorkflow()
+    expect(secondSession.runId).toBe(firstSession.runId)
     expect(secondRun.nodes.filter((node) => node.type === 'action-first-frame')).toHaveLength(2)
     expect(generationApis.create).toHaveBeenCalledTimes(2)
   })
@@ -422,21 +416,25 @@ describe('createQuickStartService', () => {
       () => character,
       (value) => (character = value),
     )
+    const workflowRunApis = createWorkflowRunApis([run])
+    const getRun = vi.spyOn(workflowRunApis, 'get')
     const service = createQuickStartService({
-      workflowRunApis: createWorkflowRunApis([run]),
+      workflowRunApis,
       generationApis,
       characterApis,
       prepareProject: vi.fn(),
     })
 
-    await service.resume(run.id)
-    await expect(service.getTemplateCandidates(run.id)).resolves.toEqual(['template.png'])
-    await expect(service.getActionFrames(run.id)).resolves.toEqual([
+    const session = await service.open(run.id)
+    await session.resume()
+    await expect(session.getTemplateCandidates()).resolves.toEqual(['template.png'])
+    await expect(session.getActionFrames()).resolves.toEqual([
       { index: 7, imageUrl: 'frame-7.png', durationMs: 83 },
       { index: 9, imageUrl: 'frame-9.png', durationMs: null },
     ])
-    await service.approveReview(run.id)
+    await session.approveReview()
 
+    expect(getRun).toHaveBeenCalledTimes(1)
     expect(character.outfits[0]!.actions[0]!.frames).toEqual([
       { index: 7, imageUrl: 'frame-7.png', durationMs: 83 },
       { index: 9, imageUrl: 'frame-9.png', durationMs: null },
@@ -470,8 +468,8 @@ describe('createQuickStartService', () => {
       prepareProject: vi.fn(),
     })
 
-    const continued = await service.continueWithUploadedTemplate(
-      candidateRun.id,
+    const session = await service.open(candidateRun.id)
+    const continued = await session.continueWithUploadedTemplate(
       new File(['replacement'], 'replacement.png', { type: 'image/png' }),
       '',
     )
@@ -484,10 +482,10 @@ describe('createQuickStartService', () => {
       ]),
     )
     const listener = vi.fn()
-    const stop = service.subscribe(candidateRun.id, listener)
+    const stop = session.subscribe(listener)
     await Promise.resolve()
     stop()
-    await service.interrupt(candidateRun.id)
+    await session.interrupt()
 
     const recoveryService = createQuickStartService({
       workflowRunApis: createWorkflowRunApis([candidateRun]),
@@ -495,8 +493,9 @@ describe('createQuickStartService', () => {
       characterApis,
       prepareProject: vi.fn(),
     })
-    await recoveryService.resume(candidateRun.id)
-    await expect(recoveryService.resolveCharacterInfo(candidateRun.id)).resolves.toEqual({
+    const recoverySession = await recoveryService.open(candidateRun.id)
+    await recoverySession.resume()
+    await expect(recoverySession.resolveCharacterInfo()).resolves.toEqual({
       characterId: 'character-restore',
       outfitId: character.outfits[0]!.id,
     })
@@ -566,16 +565,16 @@ describe('createQuickStartService', () => {
     })
     const started = await service.start('像素骑士')
     await vi.waitFor(async () => {
-      await expect(service.getTemplateCandidates(started.id)).resolves.toEqual(['candidate.png'])
+      await expect(started.getTemplateCandidates()).resolves.toEqual(['candidate.png'])
     })
 
-    const first = service.confirmCandidate(started.id, 'candidate.png', '挥手')
-    const duplicate = service.confirmCandidate(started.id, 'candidate.png', '挥手')
+    const first = started.confirmCandidate('candidate.png', '挥手')
+    const duplicate = started.confirmCandidate('candidate.png', '挥手')
     expect(duplicate).toBe(first)
     await first
 
     expect(character.outfits).toHaveLength(1)
-    expect(service.getCharacterInfo(started.id)?.characterId).toBe('candidate-character')
+    expect(started.getCharacterInfo()?.characterId).toBe('candidate-character')
   })
 
   it('creates a fresh run when an existing character has no workflow history', async () => {
@@ -609,10 +608,11 @@ describe('createQuickStartService', () => {
       prepareProject: vi.fn(),
     })
 
-    const run = await service.startAction(
+    const session = await service.startAction(
       { characterId: character.id, outfitId: 'outfit-existing' },
       '',
     )
+    const run = session.getWorkflow()
     expect(run.nodes[0]).toMatchObject({
       type: 'character-setup',
       input: { characterId: character.id, prompt: '' },
@@ -674,9 +674,6 @@ describe('createQuickStartService', () => {
     })
     const file = new File([], 'hero.png')
     await expect(bare.startWithUploadedTemplate(file, '')).rejects.toThrow('媒体上传服务尚未配置')
-    await expect(bare.continueWithUploadedTemplate('run', file, '')).rejects.toThrow(
-      '媒体上传服务尚未配置',
-    )
     await expect(
       bare.startAction({ characterId: 'character', outfitId: 'outfit' }, 'walk'),
     ).rejects.toThrow('角色服务尚未配置')
@@ -752,12 +749,13 @@ describe('createQuickStartService', () => {
       workflowRunApis: createWorkflowRunApis([run]),
       generationApis,
       prepareProject: async () => ({ id: 'project-1', spriteSize: { width: 256, height: 256 } }),
-    }) as QuickStartServiceWithFirstFrame
+    })
+    const session = await service.open('run-1')
 
-    await expect(service.getFirstFrameCandidates('run-1')).resolves.toEqual([
+    await expect(session.getFirstFrameCandidates()).resolves.toEqual([
       { index: 0, imageUrl: firstFrameUrl, durationMs: null },
     ])
-    await service.confirmFirstFrame('run-1', firstFrameUrl)
+    await session.confirmFirstFrame(firstFrameUrl)
 
     await vi.waitFor(() => {
       expect(generationApis.create).toHaveBeenCalledWith(
