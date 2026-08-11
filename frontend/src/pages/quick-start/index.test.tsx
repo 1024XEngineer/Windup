@@ -159,6 +159,8 @@ describe('QuickStartPage', () => {
     expect(screen.getByRole('heading', { name: /用一句角色设定/u })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /像素守夜人/u }))
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toContain('像素守夜人')
+    fireEvent.click(screen.getByRole('button', { name: '轻装信使' }))
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toContain('轻装信使')
   })
 
   it('shows first-frame confirmation instead of stale character candidates after a template is confirmed', async () => {
@@ -192,6 +194,7 @@ describe('QuickStartPage', () => {
     view.unmount()
     renderAt('/quick-start', service)
     const file = new File(['pixels'], 'hero.png', { type: 'image/png' })
+    fireEvent.click(screen.getByRole('button', { name: '上传角色母版' }))
     fireEvent.change(screen.getByLabelText('上传角色母版'), { target: { files: [file] } })
     expect(screen.getByText('hero.png')).toBeTruthy()
     fireEvent.change(screen.getByLabelText('创作指令'), { target: { value: '挥手' } })

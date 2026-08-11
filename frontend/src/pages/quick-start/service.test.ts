@@ -432,6 +432,8 @@ describe('createQuickStartService', () => {
       { index: 7, imageUrl: 'frame-7.png', durationMs: 83 },
       { index: 9, imageUrl: 'frame-9.png', durationMs: null },
     ])
+    session.dispose()
+    await session.resume()
     await session.approveReview()
 
     expect(getRun).toHaveBeenCalledTimes(1)
@@ -499,6 +501,50 @@ describe('createQuickStartService', () => {
       characterId: 'character-restore',
       outfitId: character.outfits[0]!.id,
     })
+  })
+
+  it('reuses the character already bound to a run when replacing its template', async () => {
+    const run: WorkflowRun = {
+      id: 'run-existing-character',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes('character-existing', null),
+    }
+    const character = characterFixture({
+      id: 'character-existing',
+      workflowRunId: run.id,
+      outfits: [
+        {
+          id: 'outfit-existing',
+          characterId: 'character-existing',
+          name: '默认造型',
+          description: null,
+          previewUrl: 'replacement.png',
+          actions: [],
+        },
+      ],
+    })
+    const characterApis = mutableCharacterApis(
+      () => character,
+      () => undefined,
+    )
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis: pendingGenerationApis(),
+      characterApis,
+      mediaApis: { upload: vi.fn(async () => 'replacement.png' as MediaReference) },
+      prepareProject: vi.fn(),
+    })
+
+    const session = await service.open(run.id)
+    await session.continueWithUploadedTemplate(new File(['replacement'], 'replacement.png'), '')
+
+    expect(session.getCharacterInfo()).toEqual({
+      characterId: character.id,
+      outfitId: 'outfit-existing',
+    })
+    expect(characterApis.create).not.toHaveBeenCalled()
   })
 
   it('deduplicates candidate confirmation while creating and binding its character asset', async () => {
