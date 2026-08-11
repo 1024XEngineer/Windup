@@ -442,7 +442,7 @@ interface ProjectionInput {
     nodeId: CharacterTemplateWorkflowNode['id'],
     selectedImageUrl: string,
   ): Promise<Character>
-  uploadReferenceImage(file: File): Promise<MediaReference>
+  uploadReferenceImage(file: File, signal?: AbortSignal): Promise<MediaReference>
   publishReviewedAction(reviewNodeId: ReviewWorkflowNode['id']): Promise<Character>
   project: Project
   character: Character | null
@@ -538,26 +538,34 @@ function CharacterSetupContent({
   const [prompt, setPrompt] = useState(node.input.prompt)
   const [uploadingReference, setUploadingReference] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const uploadAbortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     setPrompt(node.input.prompt)
   }, [node.id, node.input.prompt])
+  useEffect(() => () => uploadAbortRef.current?.abort(), [])
 
   function uploadReferenceImage(file: File) {
+    const uploadAbort = new AbortController()
+    uploadAbortRef.current = uploadAbort
     setUploadingReference(true)
     setUploadError(null)
     void input
-      .uploadReferenceImage(file)
-      .then((reference) =>
-        input.controller.updateCharacterSetup(node.id, {
+      .uploadReferenceImage(file, uploadAbort.signal)
+      .then((reference) => {
+        if (uploadAbort.signal.aborted) return
+        return input.controller.updateCharacterSetup(node.id, {
           prompt,
           referenceMedia: [reference],
-        }),
-      )
+        })
+      })
       .catch((cause: unknown) => {
+        if (uploadAbort.signal.aborted) return
         setUploadError(errorMessage(cause, '上传参考图失败'))
       })
       .finally(() => {
+        if (uploadAbort.signal.aborted) return
+        uploadAbortRef.current = null
         setUploadingReference(false)
       })
   }
