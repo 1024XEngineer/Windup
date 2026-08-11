@@ -1,14 +1,21 @@
-import type {
-  Action,
-  CharacterApis,
-  GenerationApis,
-  MediaReference,
-  Project,
-  ProjectApis,
-  WorkflowNode,
-  WorkflowRun,
-  WorkflowRunApis,
+import {
+  characterApis,
+  createGenerationApis,
+  createMediaApis,
+  projectApis,
+  workflowRunApis,
+  type Action,
+  type CharacterApis,
+  type GenerationApis,
+  type MediaReference,
+  type Project,
+  type ProjectApis,
+  type WorkflowNode,
+  type WorkflowRun,
+  type WorkflowRunApis,
 } from '@/entities'
+import { getApiAccessToken, recoverApiUnauthorized, resolveApiBaseUrl } from '@/shared/api'
+import { createEventStreamSubscriber } from '@/shared/api/stream'
 import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
 
 /** 页面不直接拼接后端字段；只负责准备项目约束。 */
@@ -613,60 +620,6 @@ export function createQuickStartService({
   }
 }
 
-const UNAVAILABLE_REASON = '项目与生成服务尚未配置，暂时无法开始新的创作'
-
-export const unavailableQuickStartService: QuickStartService = {
-  unavailableReason: UNAVAILABLE_REASON,
-  async start() {
-    throw new Error(UNAVAILABLE_REASON)
-  },
-  async startWithUploadedTemplate() {
-    throw new Error(UNAVAILABLE_REASON)
-  },
-  async continueWithUploadedTemplate() {
-    throw new Error(UNAVAILABLE_REASON)
-  },
-  async startAction() {
-    throw new Error(UNAVAILABLE_REASON)
-  },
-  peekWorkflow() {
-    return null
-  },
-  subscribe() {
-    return () => undefined
-  },
-  async resume() {
-    return null
-  },
-  async interrupt() {
-    return null
-  },
-  async confirmCandidate() {
-    throw new Error(UNAVAILABLE_REASON)
-  },
-  async getFirstFrameCandidates() {
-    return []
-  },
-  async confirmFirstFrame() {
-    throw new Error(UNAVAILABLE_REASON)
-  },
-  async approveReview() {
-    throw new Error(UNAVAILABLE_REASON)
-  },
-  getCharacterInfo() {
-    return null
-  },
-  async resolveCharacterInfo() {
-    return null
-  },
-  async getTemplateCandidates() {
-    return []
-  },
-  async getActionFrames() {
-    return []
-  },
-}
-
 export function createAutoPrepareProject(projectApis: ProjectApis): PrepareQuickStartProject {
   return async (prompt) => {
     const base = prompt.length > 16 ? `${prompt.slice(0, 16)}…` : prompt
@@ -707,3 +660,30 @@ export function createRealQuickStartService({
     onAsyncError,
   })
 }
+
+function generationRequest(url: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers)
+  const accessToken = getApiAccessToken()
+  if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
+  return fetch(url, { ...init, headers, credentials: 'include' })
+}
+
+const generationApis = createGenerationApis({
+  baseUrl: resolveApiBaseUrl(),
+  transport: {
+    request: generationRequest,
+    stream: createEventStreamSubscriber({
+      getAccessToken: getApiAccessToken,
+      recoverUnauthorized: recoverApiUnauthorized,
+    }),
+  },
+})
+
+/** Quick Start 的生产实例；身份仅由会话 token 提供。 */
+export const quickStartService = createRealQuickStartService({
+  projectApis,
+  characterApis,
+  generationApis,
+  mediaApis: createMediaApis(),
+  workflowRunApis,
+})

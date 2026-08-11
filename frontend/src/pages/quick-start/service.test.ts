@@ -13,7 +13,6 @@ import {
   createAutoPrepareProject,
   createQuickStartService,
   createRealQuickStartService,
-  unavailableQuickStartService,
   type QuickStartFrame,
   type QuickStartMediaApis,
   type QuickStartService,
@@ -59,8 +58,162 @@ function createWorkflowRunApis(initialRuns: readonly WorkflowRun[] = []): Workfl
   }
 }
 
+function pendingGenerationApis(): GenerationApis {
+  const types = new Map<string, Awaited<ReturnType<GenerationApis['create']>>['type']>()
+  let sequence = 0
+  return {
+    create: vi.fn(async (input) => {
+      const id = `task-${++sequence}`
+      types.set(id, input.type)
+      return {
+        id,
+        projectId: input.projectId,
+        type: input.type,
+        status: 'pending' as const,
+        result: null,
+        error: null,
+      }
+    }),
+    get: vi.fn(async (projectId, id) => ({
+      id,
+      projectId,
+      type: types.get(id) ?? 'first_frame',
+      status: 'pending' as const,
+      result: null,
+      error: null,
+    })),
+    subscribe: vi.fn(() => () => undefined),
+  }
+}
+
+function characterFixture(overrides: Partial<Character> = {}): Character {
+  return {
+    id: 'character-1',
+    projectId: 'project-1',
+    workflowRunId: 'run-1',
+    name: '像素骑士',
+    description: null,
+    referenceImageUrl: 'template.png',
+    dataVersion: 1,
+    status: 1,
+    outfits: [],
+    ...overrides,
+  }
+}
+
+function mutableCharacterApis(
+  read: () => Character,
+  write: (value: Character) => void,
+): CharacterApis {
+  return {
+    get: vi.fn(async () => structuredClone(read())),
+    listByProject: vi.fn(async () => ({
+      items: [structuredClone(read())],
+      total: 1,
+      page: 1,
+      pageSize: 20,
+    })),
+    create: vi.fn(async () => structuredClone(read())),
+    update: vi.fn(async (value) => {
+      write(structuredClone(value))
+      return structuredClone(read())
+    }),
+    remove: vi.fn(async () => undefined),
+  }
+}
+
+function setupNodes(
+  characterId: string | null = 'character-1',
+  selectedImageUrl: string | null = 'template.png',
+): WorkflowRun['nodes'] {
+  return [
+    {
+      id: 'character-setup',
+      type: 'character-setup',
+      status: 'passed',
+      phase: 'completed',
+      dependsOnNodeIds: [],
+      generations: [],
+      error: null,
+      input: { ...(characterId ? { characterId } : {}), prompt: '像素骑士', referenceMedia: [] },
+    },
+    {
+      id: 'character-template',
+      type: 'character-template',
+      status: selectedImageUrl ? 'passed' : 'active',
+      phase: selectedImageUrl ? 'completed' : 'selecting',
+      dependsOnNodeIds: ['character-setup'],
+      generations: [{ taskId: 'task-template', role: 'character_template' }],
+      error: null,
+      selectedImageUrl,
+    },
+  ]
+}
+
+function actionRun(firstFramePending = false): WorkflowRun {
+  const firstId = firstFramePending ? 'action-walk' : 'action-first'
+  const fullId = firstFramePending ? `${firstId}:action-full-frame` : 'action-full'
+  return {
+    id: firstFramePending ? 'run-1' : 'run-complete',
+    projectId: 'project-1',
+    version: 1,
+    storageStatus: 'active',
+    nodes: [
+      ...setupNodes(
+        'character-1',
+        firstFramePending ? 'https://example.test/template.png' : 'template.png',
+      ),
+      {
+        id: firstId,
+        type: 'action-first-frame',
+        status: firstFramePending ? 'active' : 'passed',
+        phase: firstFramePending ? 'selecting' : 'completed',
+        dependsOnNodeIds: ['character-template'],
+        generations: firstFramePending ? [{ taskId: 'task-first-frame', role: 'first_frame' }] : [],
+        error: null,
+        input: { outfitId: 'outfit-1', name: '挥手', type: 'custom', prompt: '挥手', fps: 12 },
+        selectedFirstFrameUrl: firstFramePending ? null : 'first.png',
+      },
+      ...(firstFramePending
+        ? ([
+            {
+              id: `${firstId}:action-generation-method`,
+              type: 'action-generation-method',
+              status: 'locked',
+              phase: 'selecting',
+              dependsOnNodeIds: [firstId],
+              generations: [],
+              error: null,
+              method: null,
+            },
+          ] as WorkflowRun['nodes'])
+        : []),
+      {
+        id: fullId,
+        type: 'action-full-frame',
+        status: firstFramePending ? 'locked' : 'passed',
+        phase: firstFramePending ? 'ready' : 'completed',
+        dependsOnNodeIds: [firstFramePending ? `${firstId}:action-generation-method` : firstId],
+        generations: firstFramePending
+          ? []
+          : [{ taskId: 'task-animation', role: 'complete_animation' }],
+        error: null,
+      },
+      {
+        id: firstFramePending ? `${firstId}:review` : 'review',
+        type: 'review',
+        status: firstFramePending ? 'locked' : 'active',
+        phase: 'reviewing',
+        dependsOnNodeIds: [fullId],
+        generations: [],
+        error: null,
+      },
+    ],
+  }
+}
+
 describe('createQuickStartService', () => {
-  it('rejects empty input and exposes only unavailable fallbacks without fabricating data', async () => {
+  it('rejects empty input and does not fabricate missing workflow data', async () => {
     const service = createQuickStartService({
       workflowRunApis: createWorkflowRunApis(),
       generationApis: {
@@ -75,34 +228,6 @@ describe('createQuickStartService', () => {
     expect(service.peekWorkflow('missing')).toBeNull()
     expect(service.getCharacterInfo('missing')).toBeNull()
     await expect(service.getFirstFrameCandidates('missing')).rejects.toThrow('not found')
-
-    expect(unavailableQuickStartService.peekWorkflow('run')).toBeNull()
-    expect(unavailableQuickStartService.subscribe('run', vi.fn())()).toBeUndefined()
-    await expect(unavailableQuickStartService.resume('run')).resolves.toBeNull()
-    await expect(unavailableQuickStartService.interrupt('run')).resolves.toBeNull()
-    await expect(unavailableQuickStartService.getFirstFrameCandidates('run')).resolves.toEqual([])
-    await expect(unavailableQuickStartService.getTemplateCandidates('run')).resolves.toEqual([])
-    await expect(unavailableQuickStartService.getActionFrames('run')).resolves.toEqual([])
-    expect(unavailableQuickStartService.getCharacterInfo('run')).toBeNull()
-    await expect(unavailableQuickStartService.resolveCharacterInfo('run')).resolves.toBeNull()
-    for (const request of [
-      unavailableQuickStartService.start('hero'),
-      unavailableQuickStartService.startWithUploadedTemplate(new File([], 'hero.png'), ''),
-      unavailableQuickStartService.continueWithUploadedTemplate(
-        'run',
-        new File([], 'hero.png'),
-        '',
-      ),
-      unavailableQuickStartService.startAction(
-        { characterId: 'character', outfitId: 'outfit' },
-        'walk',
-      ),
-      unavailableQuickStartService.confirmCandidate('run', 'candidate'),
-      unavailableQuickStartService.confirmFirstFrame('run', 'frame'),
-      unavailableQuickStartService.approveReview('run'),
-    ]) {
-      await expect(request).rejects.toThrow(unavailableQuickStartService.unavailableReason!)
-    }
   })
 
   it('creates a bounded default project name and returns the persisted sprite size', async () => {
@@ -175,57 +300,15 @@ describe('createQuickStartService', () => {
   })
 
   it('uploads a template, persists the character tree, and appends another action to it', async () => {
-    let taskSequence = 0
-    const taskTypes = new Map<string, 'first_frame' | 'complete_animation' | 'character_template'>()
-    const generationApis: GenerationApis = {
-      create: vi.fn(async (input) => {
-        const id = `task-${++taskSequence}`
-        taskTypes.set(id, input.type)
-        return {
-          id,
-          projectId: input.projectId,
-          type: input.type,
-          status: 'pending' as const,
-          result: null,
-          error: null,
-        }
-      }),
-      get: vi.fn(async (projectId, id) => ({
-        id,
-        projectId,
-        type: taskTypes.get(id)!,
-        status: 'pending' as const,
-        result: null,
-        error: null,
-      })),
-      subscribe: vi.fn(() => () => undefined),
-    }
-    let savedCharacter: Character = {
-      id: 'character-1',
-      projectId: 'project-1',
-      workflowRunId: 'run-1',
-      name: '像素骑士',
+    const generationApis = pendingGenerationApis()
+    let savedCharacter = characterFixture({
       description: '挥手',
       referenceImageUrl: 'https://example.test/template.png',
-      dataVersion: 1,
-      status: 1,
-      outfits: [],
-    }
-    const characterApis: CharacterApis = {
-      get: vi.fn(async () => structuredClone(savedCharacter)),
-      listByProject: vi.fn(async () => ({
-        items: [structuredClone(savedCharacter)],
-        total: 1,
-        page: 1,
-        pageSize: 20,
-      })),
-      create: vi.fn(async () => structuredClone(savedCharacter)),
-      update: vi.fn(async (character) => {
-        savedCharacter = structuredClone(character)
-        return structuredClone(savedCharacter)
-      }),
-      remove: vi.fn(async () => undefined),
-    }
+    })
+    const characterApis = mutableCharacterApis(
+      () => savedCharacter,
+      (value) => (savedCharacter = value),
+    )
     const mediaApis: QuickStartMediaApis = {
       upload: vi.fn(async () => 'https://example.test/template.png' as MediaReference),
     }
@@ -272,63 +355,7 @@ describe('createQuickStartService', () => {
   })
 
   it('preserves backend frame metadata while approving and importing a completed action', async () => {
-    const run: WorkflowRun = {
-      id: 'run-complete',
-      projectId: 'project-1',
-      version: 1,
-      storageStatus: 'active',
-      nodes: [
-        {
-          id: 'character-setup',
-          type: 'character-setup',
-          status: 'passed',
-          phase: 'completed',
-          dependsOnNodeIds: [],
-          generations: [],
-          error: null,
-          input: { characterId: 'character-1', prompt: '像素骑士', referenceMedia: [] },
-        },
-        {
-          id: 'character-template',
-          type: 'character-template',
-          status: 'passed',
-          phase: 'completed',
-          dependsOnNodeIds: ['character-setup'],
-          generations: [{ taskId: 'task-template', role: 'character_template' }],
-          error: null,
-          selectedImageUrl: 'template.png',
-        },
-        {
-          id: 'action-first',
-          type: 'action-first-frame',
-          status: 'passed',
-          phase: 'completed',
-          dependsOnNodeIds: ['character-template'],
-          generations: [],
-          error: null,
-          input: { outfitId: 'outfit-1', name: '挥手', type: 'custom', prompt: '挥手', fps: 12 },
-          selectedFirstFrameUrl: 'first.png',
-        },
-        {
-          id: 'action-full',
-          type: 'action-full-frame',
-          status: 'passed',
-          phase: 'completed',
-          dependsOnNodeIds: ['action-first'],
-          generations: [{ taskId: 'task-animation', role: 'complete_animation' }],
-          error: null,
-        },
-        {
-          id: 'review',
-          type: 'review',
-          status: 'active',
-          phase: 'reviewing',
-          dependsOnNodeIds: ['action-full'],
-          generations: [],
-          error: null,
-        },
-      ],
-    }
+    const run = actionRun()
     const frames = [
       { index: 7, url: 'frame-7.png', durationMs: 83 },
       { index: 9, url: 'frame-9.png', durationMs: null },
@@ -357,15 +384,8 @@ describe('createQuickStartService', () => {
       }),
       subscribe: vi.fn(() => () => undefined),
     }
-    let character: Character = {
-      id: 'character-1',
-      projectId: 'project-1',
+    let character = characterFixture({
       workflowRunId: run.id,
-      name: '像素骑士',
-      description: null,
-      referenceImageUrl: 'template.png',
-      dataVersion: 1,
-      status: 1,
       outfits: [
         {
           id: 'outfit-1',
@@ -376,17 +396,11 @@ describe('createQuickStartService', () => {
           actions: [],
         },
       ],
-    }
-    const characterApis = {
-      get: vi.fn(async () => structuredClone(character)),
-      update: vi.fn(async (next: Character) => {
-        character = structuredClone(next)
-        return structuredClone(character)
-      }),
-      listByProject: vi.fn(async () => ({ items: [character], total: 1, page: 1, pageSize: 20 })),
-      create: vi.fn(),
-      remove: vi.fn(),
-    } as unknown as CharacterApis
+    })
+    const characterApis = mutableCharacterApis(
+      () => character,
+      (value) => (character = value),
+    )
     const service = createQuickStartService({
       workflowRunApis: createWorkflowRunApis([run]),
       generationApis,
@@ -414,80 +428,18 @@ describe('createQuickStartService', () => {
       projectId: 'project-1',
       version: 1,
       storageStatus: 'active',
-      nodes: [
-        {
-          id: 'character-setup',
-          type: 'character-setup',
-          status: 'passed',
-          phase: 'completed',
-          dependsOnNodeIds: [],
-          generations: [],
-          error: null,
-          input: { prompt: '像素骑士', referenceMedia: [] },
-        },
-        {
-          id: 'character-template',
-          type: 'character-template',
-          status: 'active',
-          phase: 'selecting',
-          dependsOnNodeIds: ['character-setup'],
-          generations: [{ taskId: 'template-task', role: 'character_template' }],
-          error: null,
-          selectedImageUrl: null,
-        },
-      ],
+      nodes: setupNodes(null, null),
     }
-    const taskTypes = new Map<string, 'first_frame' | 'complete_animation' | 'character_template'>()
-    let taskId = 0
-    const generationApis: GenerationApis = {
-      create: vi.fn(async (input) => {
-        const id = `continued-task-${++taskId}`
-        taskTypes.set(id, input.type)
-        return {
-          id,
-          projectId: input.projectId,
-          type: input.type,
-          status: 'pending' as const,
-          result: null,
-          error: null,
-        }
-      }),
-      get: vi.fn(async (projectId, id) => ({
-        id,
-        projectId,
-        type: taskTypes.get(id) ?? 'character_template',
-        status: 'pending' as const,
-        result: null,
-        error: null,
-      })),
-      subscribe: vi.fn(() => () => undefined),
-    }
-    let character: Character = {
+    const generationApis = pendingGenerationApis()
+    let character = characterFixture({
       id: 'character-restore',
-      projectId: 'project-1',
       workflowRunId: candidateRun.id,
-      name: '像素骑士',
-      description: null,
       referenceImageUrl: 'replacement.png',
-      dataVersion: 1,
-      status: 1,
-      outfits: [],
-    }
-    const characterApis: CharacterApis = {
-      get: vi.fn(async () => structuredClone(character)),
-      listByProject: vi.fn(async () => ({
-        items: [structuredClone(character)],
-        total: 1,
-        page: 1,
-        pageSize: 20,
-      })),
-      create: vi.fn(async () => structuredClone(character)),
-      update: vi.fn(async (next) => {
-        character = structuredClone(next)
-        return structuredClone(character)
-      }),
-      remove: vi.fn(async () => undefined),
-    }
+    })
+    const characterApis = mutableCharacterApis(
+      () => character,
+      (value) => (character = value),
+    )
     const workflowRunApis = createWorkflowRunApis([candidateRun])
     const service = createQuickStartService({
       workflowRunApis,
@@ -606,15 +558,11 @@ describe('createQuickStartService', () => {
   })
 
   it('creates a fresh run when an existing character has no workflow history', async () => {
-    const character: Character = {
+    const character = characterFixture({
       id: 'character-existing',
-      projectId: 'project-1',
       workflowRunId: 'old-run',
       name: '老角色',
-      description: null,
       referenceImageUrl: 'existing.png',
-      dataVersion: 1,
-      status: 1,
       outfits: [
         {
           id: 'outfit-existing',
@@ -625,26 +573,8 @@ describe('createQuickStartService', () => {
           actions: [],
         },
       ],
-    }
-    const generationApis: GenerationApis = {
-      create: vi.fn(async (input) => ({
-        id: 'new-first-frame-task',
-        projectId: input.projectId,
-        type: input.type,
-        status: 'pending' as const,
-        result: null,
-        error: null,
-      })),
-      get: vi.fn(async (projectId, id) => ({
-        id,
-        projectId,
-        type: 'first_frame' as const,
-        status: 'pending' as const,
-        result: null,
-        error: null,
-      })),
-      subscribe: vi.fn(() => () => undefined),
-    }
+    })
+    const generationApis = pendingGenerationApis()
     const service = createQuickStartService({
       workflowRunApis: createWorkflowRunApis(),
       generationApis,
@@ -672,17 +602,11 @@ describe('createQuickStartService', () => {
   })
 
   it('rolls back an orphan character when binding its uploaded template fails', async () => {
-    const character: Character = {
+    const character = characterFixture({
       id: 'orphan-character',
-      projectId: 'project-1',
-      workflowRunId: 'run-1',
       name: '孤立角色',
-      description: null,
       referenceImageUrl: 'orphan.png',
-      dataVersion: 1,
-      status: 1,
-      outfits: [],
-    }
+    })
     const remove = vi.fn(async () => Promise.reject('rollback failed'))
     const onAsyncError = vi.fn()
     const service = createQuickStartService({
@@ -736,17 +660,12 @@ describe('createQuickStartService', () => {
       bare.startAction({ characterId: 'character', outfitId: 'outfit' }, 'walk'),
     ).rejects.toThrow('角色服务尚未配置')
 
-    const character: Character = {
+    const character = characterFixture({
       id: 'character',
-      projectId: 'project-1',
       workflowRunId: 'run',
       name: null,
-      description: null,
       referenceImageUrl: null,
-      dataVersion: 1,
-      status: 1,
-      outfits: [],
-    }
+    })
     const noOutfit = createQuickStartService({
       workflowRunApis: createWorkflowRunApis(),
       generationApis,
@@ -807,79 +726,7 @@ describe('createQuickStartService', () => {
       }),
       subscribe: vi.fn(() => () => undefined),
     }
-    const run: WorkflowRun = {
-      id: 'run-1',
-      projectId: 'project-1',
-      version: 1,
-      storageStatus: 'active',
-      nodes: [
-        {
-          id: 'character-setup',
-          type: 'character-setup',
-          status: 'passed',
-          phase: 'completed',
-          dependsOnNodeIds: [],
-          generations: [],
-          error: null,
-          input: { characterId: 'character-1', prompt: '像素骑士', referenceMedia: [] },
-        },
-        {
-          id: 'character-template',
-          type: 'character-template',
-          status: 'passed',
-          phase: 'completed',
-          dependsOnNodeIds: ['character-setup'],
-          generations: [{ taskId: 'task-template', role: 'character_template' }],
-          error: null,
-          selectedImageUrl: 'https://example.test/template.png',
-        },
-        {
-          id: 'action-walk',
-          type: 'action-first-frame',
-          status: 'active',
-          phase: 'selecting',
-          dependsOnNodeIds: ['character-template'],
-          generations: [{ taskId: 'task-first-frame', role: 'first_frame' }],
-          error: null,
-          input: {
-            outfitId: 'outfit-1',
-            name: '行走',
-            type: 'custom',
-            prompt: '向右行走',
-            fps: 12,
-          },
-          selectedFirstFrameUrl: null,
-        },
-        {
-          id: 'action-walk:action-generation-method',
-          type: 'action-generation-method',
-          status: 'locked',
-          phase: 'selecting',
-          dependsOnNodeIds: ['action-walk'],
-          generations: [],
-          error: null,
-          method: null,
-        },
-        {
-          id: 'action-walk:action-full-frame',
-          type: 'action-full-frame',
-          status: 'locked',
-          phase: 'ready',
-          dependsOnNodeIds: ['action-walk:action-generation-method'],
-          generations: [],
-          error: null,
-        },
-        {
-          id: 'action-walk:review',
-          type: 'review',
-          status: 'locked',
-          phase: 'reviewing',
-          dependsOnNodeIds: ['action-walk:action-full-frame'],
-          generations: [],
-          error: null,
-        },
-      ],
-    }
+    const run = actionRun(true)
     const service = createQuickStartService({
       workflowRunApis: createWorkflowRunApis([run]),
       generationApis,

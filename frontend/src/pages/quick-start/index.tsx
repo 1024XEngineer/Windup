@@ -16,12 +16,7 @@ import {
   type WorkflowNode,
   type WorkflowNodeType,
 } from '@/entities'
-import { buildPlaytestPath, buildPublishedActionId } from '@/features/publish'
-import {
-  unavailableQuickStartService,
-  type QuickStartFrame,
-  type QuickStartService,
-} from './service'
+import { quickStartService, type QuickStartFrame, type QuickStartService } from './service'
 
 export type {
   CreateQuickStartServiceOptions,
@@ -49,6 +44,11 @@ const EXAMPLES = [
   },
 ] as const
 
+function playtestPath(characterId: string, outfitId: string, actionId?: string): string {
+  const path = `/playtest/${encodeURIComponent(characterId)}/${encodeURIComponent(outfitId)}`
+  return actionId ? `${path}?${new URLSearchParams({ actionId })}` : path
+}
+
 export interface QuickStartPageProps {
   /**
    * 页面测试与外层组合可以注入同一份服务实例。
@@ -62,7 +62,7 @@ export function QuickStartPage({ service }: QuickStartPageProps) {
   const { runId } = useParams()
   const [searchParams] = useSearchParams()
   const activeService = useMemo(() => {
-    return service ?? unavailableQuickStartService
+    return service ?? quickStartService
   }, [service])
   const characterId = searchParams.get('characterId')
   const outfitId = searchParams.get('outfitId')
@@ -107,7 +107,7 @@ function QuickStartActionInput({
   return (
     <section className="min-h-[560px] border border-[#c9d0ca] bg-[#dfe3df] p-6 text-[#171817] sm:p-10">
       <Link
-        to={buildPlaytestPath(target)}
+        to={playtestPath(target.characterId, target.outfitId)}
         className="text-xs font-semibold text-[#59635b] hover:text-[#2f4e38]"
       >
         ← 返回当前 Playtest
@@ -446,11 +446,8 @@ function QuickStartRun({ service, runId }: { service: QuickStartService; runId: 
       const info = service.getCharacterInfo(runId) ?? (await service.resolveCharacterInfo(runId))
       if (!info) throw new Error('动作已生成，但没有找到对应的角色资产')
       const approvedAction = latestActionStep(approved)
-      const actionId =
-        approvedAction?.type === 'action-full-frame'
-          ? buildPublishedActionId(info.characterId, approved.id, approvedAction.id)
-          : undefined
-      navigate(buildPlaytestPath({ ...info, actionId }))
+      const actionId = approvedAction?.type === 'action-full-frame' ? approvedAction.id : undefined
+      navigate(playtestPath(info.characterId, info.outfitId, actionId))
     } catch (cause) {
       setError(errorMessage(cause, '导入 Playtest 失败'))
     } finally {

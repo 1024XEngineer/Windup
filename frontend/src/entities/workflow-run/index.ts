@@ -121,7 +121,7 @@ export type WorkflowNode =
 export interface WorkflowRun {
   id: string
   projectId: string
-  /** 后端更新序号；当前仅随 PATCH 递增，不承担并发冲突检测。 */
+  /** 后端乐观版本号，每次 PATCH 后使用响应中的新值。 */
   version: number
   /** 后端资源状态，仅表示正常或软删除。 */
   storageStatus: WorkflowRunStorageStatus
@@ -144,10 +144,3 @@ export interface WorkflowRunApis {
 }
 
 export { workflowRunApis } from './api'
-export {
-  WORKFLOW_GENERATION_ROLES,
-  WORKFLOW_NODE_PHASES,
-  WORKFLOW_NODE_STATUSES,
-  WORKFLOW_NODE_TYPES,
-  WORKFLOW_RUN_STORAGE_STATUSES,
-} from './constants'
