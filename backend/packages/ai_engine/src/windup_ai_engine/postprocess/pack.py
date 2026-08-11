@@ -19,6 +19,7 @@ def align_bottom_center(
     fill_w: float = 0.96,
     preserve_lift: bool = False,
     ref_height: float | None = None,
+    cell_h: int | None = None,
 ) -> list[Image.Image]:
     """按脚线对齐到统一画布,消除逐帧画布漂移(Issue #21)。
 
@@ -36,8 +37,26 @@ def align_bottom_center(
 
     ``preserve_lift``:腾空位移**默认不烘进像素**(业界:位移交引擎 root motion)。仅在要把
     位移画进序列帧时才开;开启后以序列里最低的脚线为地面基准,保留每帧相对地面的抬升量。
+
+    ``cell``/``cell_h``:交付画布的宽与高,``cell_h=None`` 即方形 ``cell×cell``(默认,
+    行为与加这个参数之前逐像素相同)。**要能出非方形画布,是为了让引擎一次就出到项目
+    要的 sprite 尺寸、不必在上层再缩一次。** 上层那次二次缩放不是"糊一点"那么简单:
+    它用 ``Image.thumbnail`` 补边,而 thumbnail **只缩不放** —— 项目要 512 时 256 的帧
+    根本不会被放大,而是原尺寸居中贴进 512 画布,于是这里刚对齐好的脚线(0.92)被挪到
+    0.709(2026-08-11 实测),角色不站在地上了,跨动作对齐也一起失效。
+
+    几何按"比例"而不是"像素"表达(``foot_line``/``fill_h``/``fill_w`` 都是比例),所以
+    换画布尺寸不改变构图,母版入口预检(``master_check.REJECT_ASPECT`` = 2*FILL_W/FILL_H)
+    与出帧仍共用同一套几何 —— 那条阈值里没有 cell,本来就与画布像素尺寸无关。
     """
     import numpy as np
+
+    cw = cell
+    ch = cell if cell_h is None else cell_h
+    if cw < 1 or ch < 1:
+        # 不静默出一张 0×0:PIL 允许建 0 边长的图,后面 alpha_composite 也不报错,
+        # 错产物要到落库/前端才暴露。
+        raise ValueError(f"交付画布尺寸必须为正,收到 cell={cell} cell_h={cell_h}")
 
     boxes: list[tuple[int, int, int, int] | None] = []
     for f in frames:
@@ -49,39 +68,39 @@ def align_bottom_center(
         )
     heights = [b[3] - b[1] for b in boxes if b]
     if not heights:
-        return [Image.new("RGBA", (cell, cell), (0, 0, 0, 0)) for _ in frames]
+        return [Image.new("RGBA", (cw, ch), (0, 0, 0, 0)) for _ in frames]
     # 腾空模式:以最低脚线(数值最大 = 站在地上)为地面基准,保留每帧的抬升量
     ground = max(b[3] for b in boxes if b) if preserve_lift else 0
     # 定标要把抬升量算进去,否则跳到最高时头顶会顶出画布被切掉
     if preserve_lift:
         need = max((ground - b[3]) + (b[3] - b[1]) for b in boxes if b)
-        scale = (cell * fill_h) / max(1, need)
+        scale = (ch * fill_h) / max(1, need)
     elif ref_height:
-        scale = (cell * fill_h) / ref_height     # 参考姿态定标(跨动作一致)
+        scale = (ch * fill_h) / ref_height       # 参考姿态定标(跨动作一致)
     else:
-        scale = (cell * fill_h) / max(heights)   # 回退:本序列最高帧
+        scale = (ch * fill_h) / max(heights)     # 回退:本序列最高帧
 
     # 宽度兜底:上面三条分支**只按高度定标** —— 这是"主体是纵向长条"的人形先验。
-    # 横向长条主体(四足兽/坐骑/龙)按同一系数缩放后宽度超过 cell,会被下面的
+    # 横向长条主体(四足兽/坐骑/龙)按同一系数缩放后宽度超过画布宽,会被下面的
     # alpha_composite 以负 dest **静默切掉**左右(PIL 不报错,直接丢像素)。
     # 裁切悬崖 = 主体 w/h > 1/fill_h ≈ 1.61。实测(2026-08-05):狐狸母版 w/h=1.78
     # 丢 27px(鼻尖+尾尖);w/h=2.0 只剩 79.9% 内容;狼/马常见 2.0-2.5 → 丢 19%-35% 体宽。
     # 人形 w/h≈0.3-1.1 时该约束**恒不生效**,故人形产物逐像素不变。
     widths = [b[2] - b[0] for b in boxes if b]
-    scale = min(scale, (cell * fill_w) / max(1, max(widths)))
+    scale = min(scale, (cw * fill_w) / max(1, max(widths)))
 
     out = []
     for f, box in zip(frames, boxes):
         if box is None:
-            out.append(Image.new("RGBA", (cell, cell), (0, 0, 0, 0)))
+            out.append(Image.new("RGBA", (cw, ch), (0, 0, 0, 0)))
             continue
         crop = f.crop(box)
         w = max(1, round(crop.width * scale))
         h = max(1, round(crop.height * scale))
         crop = crop.resize((w, h), Image.NEAREST)
         lift = round((ground - box[3]) * scale) if preserve_lift else 0
-        canvas = Image.new("RGBA", (cell, cell), (0, 0, 0, 0))
-        canvas.alpha_composite(crop, (cell // 2 - w // 2, int(cell * foot_line) - h - lift))
+        canvas = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+        canvas.alpha_composite(crop, (cw // 2 - w // 2, int(ch * foot_line) - h - lift))
         out.append(canvas)
     return out
 
