@@ -24,8 +24,6 @@ export interface GenerationTransport {
 export interface GenerationApiConfig {
   /** API 前缀；空字符串表示同源。 */
   baseUrl?: string
-  /** 仅用于校验响应归属；请求授权统一由 transport 携带的 token 决定。 */
-  userId: string | number
   transport: GenerationTransport
   /** SSE 路由不存在时，任务查询兜底的间隔。 */
   pollIntervalMs?: number
@@ -39,7 +37,6 @@ interface ResponseEnvelope {
 
 interface GenerationTaskDto {
   id: number
-  userId: number
   projectId: number
   taskType: BackendGenerationType
   status: TaskStatus
@@ -152,7 +149,6 @@ function parseTaskDto(value: unknown): GenerationTaskDto {
   const inputPayload = dtoNullableRecord(value.input_payload, 'input_payload')
   return {
     id: dtoPositiveInteger(value.id, 'id'),
-    userId: dtoPositiveInteger(value.user_id, 'user_id'),
     projectId: dtoPositiveInteger(value.project_id, 'project_id'),
     taskType: backendTaskType(value.task_type),
     status: taskStatus(value.status),
@@ -331,15 +327,11 @@ function inferExpectation(dto: GenerationTaskDto): GenerationExpectation {
 function validateTaskIdentity(
   dto: GenerationTaskDto,
   expectedProjectId: number,
-  expectedUserId: number,
   expectation: GenerationExpectation,
   expectedTaskId?: number,
 ): void {
   if (dto.projectId !== expectedProjectId) {
     throw new GenerationApiError(`生成任务未归属请求中的项目 ${expectedProjectId}`, 200)
-  }
-  if (dto.userId !== expectedUserId) {
-    throw new GenerationApiError('生成任务未归属当前用户', 200)
   }
   if (expectedTaskId !== undefined && dto.id !== expectedTaskId) {
     throw new GenerationApiError(`生成任务 ID 与请求的 ${expectedTaskId} 不一致`, 200)
@@ -354,13 +346,12 @@ function validateTaskIdentity(
 function mapTask(
   value: unknown,
   expectedProjectId: number,
-  expectedUserId: number,
   expectation?: GenerationExpectation,
   expectedTaskId?: number,
 ): Generation {
   const dto = parseTaskDto(value)
   const resolvedExpectation = expectation ?? inferExpectation(dto)
-  validateTaskIdentity(dto, expectedProjectId, expectedUserId, resolvedExpectation, expectedTaskId)
+  validateTaskIdentity(dto, expectedProjectId, resolvedExpectation, expectedTaskId)
   return {
     id: String(dto.id),
     projectId: String(dto.projectId),
@@ -425,7 +416,6 @@ function waitForPoll(delayMs: number, signal: AbortSignal): Promise<void> {
 function mapEvent<TType extends GenerationType>(
   value: unknown,
   expectedProjectId: number,
-  expectedUserId: number,
   expectedTaskId: number,
   expectation: Extract<GenerationExpectation, { type: TType }>,
   eventName: string,
@@ -443,12 +433,6 @@ function mapEvent<TType extends GenerationType>(
     dtoPositiveInteger(value.project_id, 'project_id') !== expectedProjectId
   ) {
     throw new GenerationApiError('task_update 不属于当前项目', 200)
-  }
-  if (
-    value.user_id !== undefined &&
-    dtoPositiveInteger(value.user_id, 'user_id') !== expectedUserId
-  ) {
-    throw new GenerationApiError('task_update 不属于当前用户', 200)
   }
   if (value.input_payload !== undefined) {
     validateInputPayload(dtoNullableRecord(value.input_payload, 'input_payload'), expectation)
@@ -472,11 +456,10 @@ function mapEvent<TType extends GenerationType>(
 /**
  * 创建 Generation 实体适配器。
  *
- * HTTP/SSE transport 由宿主注入并统一携带 token；`userId` 仅核对响应归属，不会
- * 写入请求或参与后端授权。三个前端阶段在这里收口为后端的两类 GenerationTask。
+ * HTTP/SSE transport 由宿主注入并统一携带 token。三个前端阶段在这里收口为
+ * 后端的两类 GenerationTask，用户身份不进入适配器契约。
  */
 export function createGenerationApis(config: GenerationApiConfig): GenerationApis {
-  const userId = inputPositiveInteger(config.userId, 'userId')
   const { request, stream } = config.transport
   const pollIntervalMs = config.pollIntervalMs ?? 1_000
   if (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 0) {
@@ -495,7 +478,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     })
-    return mapTask(await readData(response), projectId, userId, expectation) as Generation<TType>
+    return mapTask(await readData(response), projectId, expectation) as Generation<TType>
   }
 
   const apis: GenerationApis = {
@@ -555,7 +538,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
       )
       const raw = await readData(response)
       const resolvedExpectation = expectation ?? inferExpectation(parseTaskDto(raw))
-      const generation = mapTask(raw, numericProjectId, userId, resolvedExpectation, numericTaskId)
+      const generation = mapTask(raw, numericProjectId, resolvedExpectation, numericTaskId)
       expectations.set(generation.id, resolvedExpectation)
       return generation
     },
@@ -622,7 +605,6 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
             const event = mapEvent(
               parseEventData(data),
               numericProjectId,
-              userId,
               numericTaskId,
               expectation,
               eventName,

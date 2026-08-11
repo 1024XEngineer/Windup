@@ -1001,7 +1001,6 @@ function deferred<T>(): Deferred<T> {
 function projectFixture(): Project {
   return {
     id: '1',
-    ownerId: '7',
     workflowId: null,
     name: '正式项目',
     perspective: 'side',

@@ -126,7 +126,6 @@ class GenerationTaskOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    user_id: int
     project_id: int | None = None
     task_type: str
     status: str
@@ -142,7 +141,6 @@ def _task_to_out(task: GenerationTask) -> GenerationTaskOut:
         result_dict = dataclasses.asdict(task.result)
     return GenerationTaskOut(
         id=task.id,
-        user_id=task.user_id,
         project_id=task.project_id,
         task_type=task.task_type.value,
         status=task.status.value,

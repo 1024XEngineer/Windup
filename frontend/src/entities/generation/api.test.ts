@@ -17,7 +17,6 @@ function success(data: unknown): Response {
 function taskData(overrides: Record<string, unknown> = {}) {
   return {
     id: 91,
-    user_id: 7,
     project_id: 42,
     task_type: 'character_image',
     status: 'completed',
@@ -53,7 +52,6 @@ describe('createGenerationApis', () => {
     const stream = vi.fn(() => vi.fn())
     const apis = createGenerationApis({
       baseUrl: 'https://api.test/',
-      userId: '7',
       transport: { request, stream },
     })
 
@@ -115,7 +113,6 @@ describe('createGenerationApis', () => {
     )
     const apis = createGenerationApis({
       baseUrl: '',
-      userId: 7,
       transport: { request, stream: vi.fn(() => vi.fn()) },
     })
 
@@ -161,7 +158,6 @@ describe('createGenerationApis', () => {
     )
     const apis = createGenerationApis({
       baseUrl: '/api',
-      userId: 7,
       transport: { request, stream: vi.fn(() => vi.fn()) },
     })
 
@@ -199,7 +195,6 @@ describe('createGenerationApis', () => {
   it('拒绝未知任务状态而不是默认为 pending', async () => {
     const request = vi.fn(async () => success(taskData({ status: 'queued' })))
     const apis = createGenerationApis({
-      userId: 7,
       transport: { request, stream: vi.fn(() => vi.fn()) },
     })
 
@@ -216,7 +211,6 @@ describe('createGenerationApis', () => {
       success(taskData({ result: { type: 'character_image', image_urls: [null] } })),
     )
     const apis = createGenerationApis({
-      userId: 7,
       transport: { request, stream: vi.fn(() => vi.fn()) },
     })
 
@@ -236,7 +230,6 @@ describe('createGenerationApis', () => {
     })
     const apis = createGenerationApis({
       baseUrl: 'https://api.test',
-      userId: 7,
       transport: { request: vi.fn(), stream },
     })
     const onEvent = vi.fn()
@@ -252,7 +245,6 @@ describe('createGenerationApis', () => {
     const isTerminal = streamOptions?.onEvent(
       JSON.stringify({
         id: 91,
-        user_id: 7,
         project_id: 42,
         task_type: 'character_action',
         status: 'completed',
@@ -305,7 +297,6 @@ describe('createGenerationApis', () => {
       return vi.fn()
     })
     const apis = createGenerationApis({
-      userId: 7,
       transport: { request: vi.fn(async () => success(task)), stream },
     })
 
@@ -339,7 +330,6 @@ describe('createGenerationApis', () => {
       ),
     )
     const apis = createGenerationApis({
-      userId: 7,
       transport: { request, stream: vi.fn(() => vi.fn()) },
     })
 
@@ -366,7 +356,6 @@ describe('createGenerationApis', () => {
       )
       .mockResolvedValueOnce(success(taskData({ error_message: 'provider failed' })))
     const apis = createGenerationApis({
-      userId: 7,
       transport: { request, stream: vi.fn(() => vi.fn()) },
     })
 
@@ -404,7 +393,6 @@ describe('createGenerationApis', () => {
     ['非 JSON 响应', new Response('not-json', { status: 502 }), '无法解析的响应'],
   ])('拒绝%s', async (_label, response, message) => {
     const apis = createGenerationApis({
-      userId: 7,
       transport: {
         request: vi.fn(async () => response),
         stream: vi.fn(() => vi.fn()),
@@ -418,7 +406,6 @@ describe('createGenerationApis', () => {
     ['任务 id', { id: 0 }, '生成任务 id 无效'],
     ['任务类型', { task_type: 'video' }, '生成任务 task_type 无效'],
     ['项目归属', { project_id: 43 }, '生成任务未归属请求中的项目 42'],
-    ['用户归属', { user_id: 8 }, '生成任务未归属当前用户'],
     ['请求任务 id', { id: 92 }, '生成任务 ID 与请求的 91 不一致'],
     ['输入对象', { input_payload: [] }, '生成任务 input_payload 无效'],
     ['结果对象', { result: [] }, '生成任务 result 无效'],
@@ -433,7 +420,6 @@ describe('createGenerationApis', () => {
     ['完成结果', { result: null }, '完成任务缺少 result'],
   ])('校验%s', async (_label, overrides, message) => {
     const apis = createGenerationApis({
-      userId: 7,
       transport: {
         request: vi.fn(async () => success(taskData(overrides))),
         stream: vi.fn(() => vi.fn()),
@@ -509,7 +495,6 @@ describe('createGenerationApis', () => {
     ],
   ])('拒绝%s', async (_label, result, message) => {
     const apis = createGenerationApis({
-      userId: 7,
       transport: {
         request: vi.fn(async () =>
           success(
@@ -544,7 +529,6 @@ describe('createGenerationApis', () => {
       )
       .mockResolvedValueOnce(success(taskData({ status: 'failed', result: null })))
     const apis = createGenerationApis({
-      userId: 7,
       transport: { request, stream: vi.fn(() => vi.fn()) },
     })
 
@@ -564,7 +548,6 @@ describe('createGenerationApis', () => {
   it('拒绝无缓存阶段的简写订阅并转发显式订阅错误', () => {
     let onStreamError: ((error: Error) => void) | undefined
     const apis = createGenerationApis({
-      userId: 7,
       transport: {
         request: vi.fn(),
         stream: vi.fn((_url, options) => {
@@ -584,7 +567,6 @@ describe('createGenerationApis', () => {
 
   it('校验调用参数、原始响应和任务类型边界', async () => {
     const apis = createGenerationApis({
-      userId: 7,
       transport: {
         request: vi
           .fn()
@@ -630,7 +612,6 @@ describe('createGenerationApis', () => {
         ),
       )
     const apis = createGenerationApis({
-      userId: 7,
       transport: { request, stream: vi.fn(() => vi.fn()) },
     })
 
@@ -649,11 +630,9 @@ describe('createGenerationApis', () => {
       'task_update 类型与 character_template 不匹配',
     ],
     [JSON.stringify({ ...taskData(), project_id: 43 }), 'task_update 不属于当前项目'],
-    [JSON.stringify({ ...taskData(), user_id: 8 }), 'task_update 不属于当前用户'],
   ])('拒绝非法订阅事件', (payload, message) => {
     let onStreamEvent: ((data: string) => boolean) | undefined
     const apis = createGenerationApis({
-      userId: 7,
       transport: {
         request: vi.fn(),
         stream: vi.fn((_url, options) => {
@@ -671,7 +650,6 @@ describe('createGenerationApis', () => {
     let onStreamEvent: ((data: string, eventName?: string) => boolean) | undefined
     const onEvent = vi.fn()
     const apis = createGenerationApis({
-      userId: 7,
       transport: {
         request: vi.fn(),
         stream: vi.fn((_url, options) => {
@@ -713,7 +691,6 @@ describe('createGenerationApis', () => {
   it('拒绝同时存在但不一致的 task_id 与 id', () => {
     let onStreamEvent: ((data: string, eventName?: string) => boolean) | undefined
     const apis = createGenerationApis({
-      userId: 7,
       transport: {
         request: vi.fn(),
         stream: vi.fn((_url, options) => {
@@ -733,7 +710,6 @@ describe('createGenerationApis', () => {
     let onStreamEvent: ((data: string, eventName?: string) => boolean) | undefined
     const onEvent = vi.fn()
     const apis = createGenerationApis({
-      userId: 7,
       transport: {
         request: vi.fn(),
         stream: vi.fn((_url, options) => {
@@ -764,7 +740,6 @@ describe('createGenerationApis', () => {
       .mockResolvedValueOnce(success(taskData()))
     const onEvent = vi.fn()
     const apis = createGenerationApis({
-      userId: 7,
       pollIntervalMs: 1,
       transport: {
         request,

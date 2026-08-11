@@ -2,7 +2,7 @@
 
 import asyncio
 
-from windup_app.web.api.generation import _EventBus
+from windup_app.web.api.generation import GenerationTaskOut, _EventBus
 
 
 def _create_project(auth_client, name: str = "生成项目") -> dict:
@@ -143,3 +143,7 @@ def test_event_bus_isolates_same_task_id_between_projects():
         assert second_queue.empty()
 
     asyncio.run(scenario())
+
+
+def test_generation_response_contract_does_not_expose_user_id():
+    assert "user_id" not in GenerationTaskOut.model_fields

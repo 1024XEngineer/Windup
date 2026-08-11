@@ -30,6 +30,7 @@ def test_create_success(auth_client):
     assert body["code"] == 200
     assert body["message"] == "创建成功"
     assert body["data"]["id"] is not None
+    assert "user_id" not in body["data"]
     assert body["data"]["project_name"] == "新建"
     assert body["data"]["create_at"]
     assert "timestamp" not in body
@@ -57,7 +58,9 @@ def test_create_validation_error_returns_400(auth_client):
 
 
 def test_get_success(auth_client):
-    created = auth_client.post("/projects", json=_payload(project_name="详情")).json()["data"]
+    created = auth_client.post("/projects", json=_payload(project_name="详情")).json()[
+        "data"
+    ]
     resp = auth_client.get(f"/projects/{created['id']}")
 
     assert resp.json()["code"] == 200
@@ -97,14 +100,16 @@ def test_list_paginates(auth_client):
     assert body["total"] == 3
     assert len(body["data"]) == 2
     assert [item["project_name"] for item in body["data"]] == ["a2", "a1"]
-    assert all(item["user_id"] == 1 for item in body["data"])
+    assert all("user_id" not in item for item in body["data"])
 
 
 # -- DELETE /projects/{id} ---------------------------------------------------
 
 
 def test_delete_success(auth_client):
-    created = auth_client.post("/projects", json=_payload(project_name="删除")).json()["data"]
+    created = auth_client.post("/projects", json=_payload(project_name="删除")).json()[
+        "data"
+    ]
     resp = auth_client.delete(f"/projects/{created['id']}")
 
     body = resp.json()
