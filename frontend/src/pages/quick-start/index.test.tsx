@@ -290,6 +290,8 @@ describe('QuickStartPage', () => {
     const run = workflow(setupAndTemplate())
     const service = serviceFor(run, {
       getTemplateCandidates: vi.fn(async () => ['https://example.test/candidate.png']),
+      confirmCandidate: vi.fn(async () => Promise.reject(new Error('候选确认失败'))),
+      start: vi.fn(async () => Promise.reject(new Error('重新生成失败'))),
     })
     renderAt('/quick-start/run-1', service)
     const candidate = await screen.findByRole('img', { name: '角色图候选 1' })
@@ -302,8 +304,12 @@ describe('QuickStartPage', () => {
         '挥手',
       ),
     )
+    expect((await screen.findByRole('alert')).textContent).toContain('候选确认失败')
     fireEvent.click(screen.getByRole('button', { name: '重新生成' }))
     await waitFor(() => expect(service.start).toHaveBeenCalledWith('像素骑士'))
+    expect((await screen.findByRole('alert')).textContent).toContain('重新生成失败')
+    fireEvent.click(screen.getByRole('button', { name: '新建一次创作' }))
+    expect(screen.getByRole('heading', { name: /用一句角色设定/u })).toBeTruthy()
   })
 
   it('confirms a generated first frame before starting the full animation', async () => {
@@ -312,6 +318,7 @@ describe('QuickStartPage', () => {
       getFirstFrameCandidates: vi.fn(async () => [
         { index: 4, imageUrl: 'https://example.test/first.png', durationMs: 80 },
       ]),
+      confirmFirstFrame: vi.fn(async () => Promise.reject(new Error('首帧确认失败'))),
     })
     renderAt('/quick-start/run-1', service)
     fireEvent.click(await screen.findByRole('img', { name: '动作首帧候选 1' }))
@@ -319,6 +326,7 @@ describe('QuickStartPage', () => {
     await waitFor(() =>
       expect(service.confirmFirstFrame).toHaveBeenCalledWith('https://example.test/first.png'),
     )
+    expect((await screen.findByRole('alert')).textContent).toContain('首帧确认失败')
   })
 
   it('renders generating and failed states for both first-frame and full animation tasks', async () => {
@@ -363,9 +371,14 @@ describe('QuickStartPage', () => {
       ),
       getCharacterInfo: vi.fn(() => null),
       resolveCharacterInfo: vi.fn(async () => null),
+      getActionFrames: vi.fn(async () => [
+        { index: 0, imageUrl: 'https://example.test/frame.png', durationMs: 80 },
+      ]),
     })
     renderAt('/quick-start/run-1', service)
     expect((await screen.findByRole('alert')).textContent).toContain('没有找到对应的角色资产')
+    fireEvent.click(screen.getByRole('button', { name: '重新导入 Playtest' }))
+    await waitFor(() => expect(service.approveReview).toHaveBeenCalledTimes(2))
   })
 
   it('interrupts an active run and surfaces interruption failures', async () => {

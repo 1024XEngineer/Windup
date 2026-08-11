@@ -787,6 +787,29 @@ describe('createQuickStartService', () => {
     await expect(
       noOutfit.startAction({ characterId: 'character', outfitId: 'missing' }, 'walk'),
     ).rejects.toThrow('当前造型没有可用于生成动作的角色母版')
+
+    const staticRun: WorkflowRun = {
+      id: 'run-static',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(),
+    }
+    const staticService = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([staticRun]),
+      generationApis,
+      prepareProject: vi.fn(),
+      characterApis: {} as CharacterApis,
+      mediaApis: { upload: vi.fn() },
+    })
+    const staticSession = await staticService.open(staticRun.id)
+    await expect(staticSession.continueWithUploadedTemplate(file, '')).rejects.toThrow(
+      '当前角色母版节点不能直接替换图片',
+    )
+    await expect(staticSession.confirmFirstFrame('first.png')).rejects.toThrow(
+      '当前运行没有可确认的动作首帧',
+    )
+    await expect(staticSession.approveReview()).rejects.toThrow('没有可审核的完整动画')
   })
 
   it('assembles the real service from entity APIs', () => {
