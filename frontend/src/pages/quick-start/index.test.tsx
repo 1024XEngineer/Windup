@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -254,6 +254,16 @@ describe('QuickStartPage', () => {
     renderAt('/quick-start/run-1', service)
     await waitFor(() => expect(service.resume).toHaveBeenCalledWith('run-1'))
     expect(peekWorkflow).toHaveBeenCalled()
+  })
+
+  it('polls the service for a missed workflow update', async () => {
+    vi.useFakeTimers()
+    const run = workflow(setupAndTemplate())
+    const peekWorkflow = vi.fn(() => run)
+    renderAt('/quick-start/run-1', serviceFor(run, { peekWorkflow }))
+    await act(async () => vi.advanceTimersByTimeAsync(3_000))
+    expect(peekWorkflow).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
   })
 
   it('selects, confirms, and regenerates a character candidate', async () => {
