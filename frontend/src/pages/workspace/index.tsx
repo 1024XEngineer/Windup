@@ -469,9 +469,7 @@ function EntranceCardContent({
         <span
           aria-hidden="true"
           className={`grid h-8 w-8 shrink-0 place-items-center text-lg transition-colors ${
-            selected
-              ? 'text-[#284331]'
-              : 'text-[#7b847d] group-hover:text-[#284331]'
+            selected ? 'text-[#284331]' : 'text-[#7b847d] group-hover:text-[#284331]'
           }`}
         >
           {selected ? '✓' : '↗'}
@@ -514,9 +512,7 @@ function SelectableEntranceCard({
       aria-pressed={selected}
       onClick={onClick}
       className={`${entranceCardClass} ${
-        selected
-          ? 'bg-white/42'
-          : 'bg-transparent hover:bg-white/28'
+        selected ? 'bg-white/42' : 'bg-transparent hover:bg-white/28'
       }`}
     >
       <EntranceCardContent
