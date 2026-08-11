@@ -146,6 +146,8 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
   const sessionAbortRef = useRef<AbortController | null>(null)
   /** 最近一次生成结果读取。同一会话内被新的读取顶掉时 abort，避免旧结果盖住新结果。 */
   const latestReadAbortRef = useRef<AbortController | null>(null)
+  /** 已到终态的生成结果，按 taskId 记住，避免每次推进都重拉一遍。 */
+  const settledGenerationsRef = useRef(new Map<Generation['id'], Generation>())
 
   const requestGenerations = useCallback(
     (targetSession: WorkflowEditorSession, targetRun: WorkflowRun, sessionSignal: AbortSignal) => {
@@ -153,7 +155,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
       const readAbort = new AbortController()
       latestReadAbortRef.current = readAbort
       const outdated = () => sessionSignal.aborted || readAbort.signal.aborted
-      void readGenerations(targetSession.controller, targetRun)
+      void readGenerations(targetSession.controller, targetRun, settledGenerationsRef.current)
         .then((results) => {
           if (outdated()) return
           setGenerations(results)
@@ -196,6 +198,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
     const sessionAbort = new AbortController()
     sessionAbortRef.current = sessionAbort
     latestReadAbortRef.current?.abort()
+    settledGenerationsRef.current = new Map()
     setSession(null)
     setCharacter(null)
     setRun(null)
@@ -1048,21 +1051,29 @@ function generationKey(nodeId: WorkflowNode['id'], role: WorkflowGenerationRole)
   return `${nodeId}:${role}`
 }
 
+/**
+ * 读取节点的生成结果。WorkflowRun 每推进一步都会 emit，而已经到终态的任务不会再变，
+ * 所以按 taskId 记住它们；只有还在跑的任务才值得重新问后端。
+ */
 async function readGenerations(
   controller: WorkflowController,
   run: WorkflowRun,
+  settled: Map<Generation['id'], Generation>,
 ): Promise<Record<string, Generation | null>> {
   const entries = await Promise.all(
     run.nodes
       .filter((node) => !node.deletedAt)
       .flatMap((node) =>
-        node.generations.map(
-          async (reference) =>
-            [
-              generationKey(node.id, reference.role),
-              await controller.getGeneration(node.id, reference.role),
-            ] as const,
-        ),
+        node.generations.map(async (reference) => {
+          const key = generationKey(node.id, reference.role)
+          const cached = settled.get(reference.taskId)
+          if (cached) return [key, cached] as const
+          const generation = await controller.getGeneration(node.id, reference.role)
+          if (generation && (generation.status === 'completed' || generation.status === 'failed')) {
+            settled.set(generation.id, generation)
+          }
+          return [key, generation] as const
+        }),
       ),
   )
   return Object.fromEntries(entries)

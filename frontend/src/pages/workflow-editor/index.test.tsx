@@ -395,6 +395,38 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     })
   })
 
+  it('已经到终态的生成结果只读取一次，后续推进复用缓存', async () => {
+    // WorkflowRun 每推进一步都会 emit，若每次都重拉全部结果，一条多分支的流程
+    // 点一次按钮就是十几个 GET。终态结果不会再变，没有重读的理由。
+    const controlled = createRestartSelectionSession()
+    defaultSessionLoader.mockResolvedValue(controlled.session)
+    renderEditor('/workflow-editor/42')
+
+    await waitFor(() => expect(screen.getByRole('img', { name: '角色候选 1' })).toBeTruthy())
+    const reads = controlled.session.controller.getGeneration as ReturnType<typeof vi.fn>
+    const afterFirstRead = reads.mock.calls.length
+    expect(afterFirstRead).toBeGreaterThan(0)
+
+    act(() => controlled.emit(selectingTemplateWorkflow(7, 'old-task')))
+    act(() => controlled.emit(selectingTemplateWorkflow(8, 'old-task')))
+    await waitFor(() => expect(latestFlowProps().nodes).toHaveLength(2))
+
+    expect(reads.mock.calls.length).toBe(afterFirstRead)
+  })
+
+  it('未到终态的生成任务每次推进都重新读取', async () => {
+    const controlled = createRestartSelectionSession({ status: 'running' })
+    defaultSessionLoader.mockResolvedValue(controlled.session)
+    renderEditor('/workflow-editor/42')
+
+    const reads = controlled.session.controller.getGeneration as ReturnType<typeof vi.fn>
+    await waitFor(() => expect(reads.mock.calls.length).toBeGreaterThan(0))
+    const afterFirstRead = reads.mock.calls.length
+
+    act(() => controlled.emit(selectingTemplateWorkflow(7, 'old-task')))
+    await waitFor(() => expect(reads.mock.calls.length).toBeGreaterThan(afterFirstRead))
+  })
+
   it('失败节点可以从当前节点重做', async () => {
     const session = createSession(failedTemplateWorkflow())
     defaultSessionLoader.mockResolvedValue(session)
@@ -830,7 +862,7 @@ function createGenerationRaceSession(
   }
 }
 
-function createRestartSelectionSession(): {
+function createRestartSelectionSession(options: { status?: Generation['status'] } = {}): {
   session: WorkflowEditorSession
   emit(workflow: WorkflowRun): void
 } {
@@ -852,7 +884,9 @@ function createRestartSelectionSession(): {
     resume: vi.fn(async () => undefined),
     getGeneration: vi.fn(async () => {
       const taskId = current.nodes[1]?.generations[0]?.taskId
-      return taskId ? characterGeneration(taskId.startsWith('new') ? 'new' : 'old') : null
+      if (!taskId) return null
+      const generation = characterGeneration(taskId.startsWith('new') ? 'new' : 'old')
+      return options.status ? { ...generation, status: options.status } : generation
     }),
     restartFromNode: vi.fn(async () => {
       const ready = completedTemplateWorkflow('42')
