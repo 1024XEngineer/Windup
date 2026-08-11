@@ -2,13 +2,15 @@ import type {
   Character,
   CharacterApis,
   GenerationApis,
+  MediaApis,
+  MediaReference,
   Project,
   ProjectApis,
   CharacterTemplateWorkflowNode,
   ReviewWorkflowNode,
   WorkflowRunApis,
 } from '@/entities'
-import { characterApis, projectApis, workflowRunApis } from '@/entities'
+import { characterApis, createMediaApis, projectApis, workflowRunApis } from '@/entities'
 import { createCharacterAssetPublisher } from '@/features/export'
 import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
 
@@ -22,6 +24,8 @@ export interface WorkflowEditorSession {
     nodeId: CharacterTemplateWorkflowNode['id'],
     selectedImageUrl: string,
   ): Promise<Character>
+  /** 上传角色生成约束图；页面不接触 multipart 协议或用途枚举。 */
+  uploadReferenceImage(file: File): Promise<MediaReference>
   /** 幂等发布动作资产；审核节点仍由页面随后通过 Controller 推进。 */
   publishReviewedAction(reviewNodeId: ReviewWorkflowNode['id']): Promise<Character>
   subscribeErrors(listener: (error: Error) => void): () => void
@@ -31,6 +35,7 @@ export interface WorkflowEditorSession {
 export interface RealWorkflowEditorDependencies {
   workflowRunApis: WorkflowRunApis
   generationApis: GenerationApis
+  mediaApis: Pick<MediaApis, 'upload'>
   projectApis: Pick<ProjectApis, 'get'>
   characterApis: Pick<CharacterApis, 'listByProject' | 'create' | 'update'>
   onAsyncError(error: Error): void
@@ -77,6 +82,9 @@ export async function createRealWorkflowEditorSession(
     controller,
     project,
     character: loadedCharacter,
+    uploadReferenceImage(file) {
+      return dependencies.mediaApis.upload(file, 'reference-image')
+    },
     async confirmCharacterTemplate(nodeId, selectedImageUrl) {
       const imageUrl = selectedImageUrl.trim()
       if (!imageUrl) throw new Error('必须选择角色母版')
@@ -166,6 +174,7 @@ export function createDefaultRealWorkflowEditorSession(
   return createRealWorkflowEditorSession(runId, {
     workflowRunApis,
     generationApis: createUnavailableGenerationApis(),
+    mediaApis: createMediaApis(),
     projectApis,
     characterApis,
     onAsyncError: () => undefined,

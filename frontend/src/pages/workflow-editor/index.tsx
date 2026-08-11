@@ -24,6 +24,7 @@ import {
   type CharacterSetupWorkflowNode,
   type CharacterTemplateWorkflowNode,
   type Generation,
+  type MediaReference,
   type Project,
   type ReviewWorkflowNode,
   type WorkflowGenerationRole,
@@ -266,6 +267,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
             run,
             controller: session.controller,
             confirmCharacterTemplate: session.confirmCharacterTemplate,
+            uploadReferenceImage: session.uploadReferenceImage,
             publishReviewedAction: session.publishReviewedAction,
             project: session.project,
             character,
@@ -440,6 +442,7 @@ interface ProjectionInput {
     nodeId: CharacterTemplateWorkflowNode['id'],
     selectedImageUrl: string,
   ): Promise<Character>
+  uploadReferenceImage(file: File): Promise<MediaReference>
   publishReviewedAction(reviewNodeId: ReviewWorkflowNode['id']): Promise<Character>
   project: Project
   character: Character | null
@@ -533,7 +536,31 @@ function CharacterSetupContent({
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
   const [prompt, setPrompt] = useState(node.input.prompt)
-  useEffect(() => setPrompt(node.input.prompt), [node.id, node.input.prompt])
+  const [uploadingReference, setUploadingReference] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setPrompt(node.input.prompt)
+  }, [node.id, node.input.prompt])
+
+  function uploadReferenceImage(file: File) {
+    setUploadingReference(true)
+    setUploadError(null)
+    void input
+      .uploadReferenceImage(file)
+      .then((reference) =>
+        input.controller.updateCharacterSetup(node.id, {
+          prompt,
+          referenceMedia: [reference],
+        }),
+      )
+      .catch((cause: unknown) => {
+        setUploadError(errorMessage(cause, '上传参考图失败'))
+      })
+      .finally(() => {
+        setUploadingReference(false)
+      })
+  }
 
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.status === 'passed') return <p className={CARD_SUMMARY}>角色描述已确认</p>
@@ -546,7 +573,7 @@ function CharacterSetupContent({
           rows={4}
           className="min-h-[84px] w-full resize-y rounded-lg border border-[var(--editor-line)] bg-[#fbfcfb] px-3 py-2.5 font-[inherit] text-[11px] leading-[1.55] text-[var(--editor-ink)] focus:border-[#69866f] focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-[rgb(105_134_111_/_18%)]"
           value={prompt}
-          disabled={branchBusy}
+          disabled={branchBusy || uploadingReference}
           onChange={(event) => setPrompt(event.target.value)}
         />
         {node.input.referenceMedia.length > 0 ? (
@@ -555,10 +582,38 @@ function CharacterSetupContent({
           </small>
         ) : null}
       </label>
+      <div className="grid gap-[7px]">
+        <span className="text-[9px] font-[750] text-[#626b64]">角色参考图（选填）</span>
+        <input
+          type="file"
+          accept="image/*"
+          aria-label="角色参考图"
+          className="block w-full rounded-lg border border-[var(--editor-line)] bg-[#f6f7f6] text-[10px] text-[var(--editor-muted)] file:mr-3 file:border-0 file:border-r file:border-[var(--editor-line)] file:bg-transparent file:px-3 file:py-2 file:text-[10px] file:font-[700] file:text-[var(--editor-ink)]"
+          disabled={branchBusy || uploadingReference}
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0]
+            event.currentTarget.value = ''
+            if (file) uploadReferenceImage(file)
+          }}
+        />
+        {uploadingReference ? (
+          <small role="status" className="text-[9px] font-[750] text-[#626b64]">
+            正在上传参考图…
+          </small>
+        ) : null}
+        {uploadError ? (
+          <p
+            role="alert"
+            className="m-0 rounded-lg border border-[#c98e82] bg-[#f7e9e5] px-2.5 py-2 text-[9px] leading-[1.5] text-[#7b3027]"
+          >
+            {uploadError}
+          </p>
+        ) : null}
+      </div>
       <button
         type="button"
         className={CARD_BUTTON}
-        disabled={branchBusy || !prompt.trim()}
+        disabled={branchBusy || uploadingReference || !prompt.trim()}
         onClick={() =>
           input.runCommand(branchKey, () =>
             input.controller.generateCharacterTemplate(node.id, {
