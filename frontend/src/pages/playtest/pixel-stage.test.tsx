@@ -12,17 +12,56 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('PlaytestPixelStage', () => {
   it('renders the moving scene as one persistent dot-matrix canvas', () => {
-    render(<PlaytestPixelStage />)
+    const context = {
+      globalAlpha: 1,
+      fillStyle: '',
+      beginPath: vi.fn(),
+      arc: vi.fn(),
+      fill: vi.fn(),
+      fillRect: vi.fn(),
+      save: vi.fn(),
+      translate: vi.fn(),
+      scale: vi.fn(),
+      restore: vi.fn(),
+      setTransform: vi.fn(),
+    }
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(
+      context as unknown as CanvasRenderingContext2D,
+    )
+    vi.stubGlobal('matchMedia', () => ({ matches: false }))
+
+    const frames: FrameRequestCallback[] = []
+    let nextFrameId = 0
+    const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      frames.push(callback)
+      nextFrameId += 1
+      return nextFrameId
+    })
+    const cancelAnimationFrame = vi.fn()
+    vi.stubGlobal('requestAnimationFrame', requestAnimationFrame)
+    vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrame)
+
+    const { unmount } = render(<PlaytestPixelStage />)
+
+    frames.shift()?.(360)
+    frames.shift()?.(2916)
 
     const stage = screen.getByTestId('playtest-pixel-stage')
     const canvas = screen.getByTestId('playtest-dot-canvas')
     expect(stage.getAttribute('aria-hidden')).toBe('true')
     expect(canvas.tagName).toBe('CANVAS')
     expect(stage.querySelector('svg')).toBeNull()
+    expect(context.fillRect).toHaveBeenCalledTimes(3)
+    expect(context.arc.mock.calls.length).toBeGreaterThan(500)
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(3)
+
+    unmount()
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(3)
   })
 
   it('aligns the obstacle crossing with the jump and closes the runner loop without a seam', () => {
