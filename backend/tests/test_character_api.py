@@ -58,6 +58,21 @@ def test_create_name_roundtrip(auth_client):
     assert resp.json()["data"]["name"] == "小精灵"
 
 
+def test_create_same_workflow_run_returns_existing_character(auth_client):
+    project = _create_project(auth_client)
+    payload = _payload(project["id"], workflow_run_id=42)
+
+    first = auth_client.post("/characters", json=payload).json()
+    second = auth_client.post("/characters", json=payload).json()
+    listed = auth_client.get("/characters", params={"project_id": project["id"]}).json()
+
+    assert first["code"] == 200
+    assert second["code"] == 200
+    assert second["data"]["id"] == first["data"]["id"]
+    assert listed["total"] == 1
+    assert [character["id"] for character in listed["data"]] == [first["data"]["id"]]
+
+
 # -- 跨用户权限校验 -------------------------------------------------------------
 
 
@@ -68,6 +83,24 @@ def test_create_under_other_users_project_returns_404(auth_client, auth_client_b
 
     assert resp.json()["code"] == 404
     assert resp.json()["message"] == "项目不存在"
+
+
+def test_create_same_workflow_run_under_another_project_returns_404(
+    auth_client, auth_client_b,
+):
+    project_a = _create_project(auth_client, "用户 A 项目")
+    project_b = _create_project(auth_client_b, "用户 B 项目")
+    created = auth_client.post(
+        "/characters", json=_payload(project_a["id"], workflow_run_id=42),
+    ).json()["data"]
+
+    resp = auth_client_b.post(
+        "/characters", json=_payload(project_b["id"], workflow_run_id=42),
+    )
+
+    assert resp.json()["code"] == 404
+    assert resp.json()["data"] is None
+    assert auth_client.get(f"/characters/{created['id']}").json()["code"] == 200
 
 
 def test_list_other_users_project_characters_returns_404(auth_client, auth_client_b):

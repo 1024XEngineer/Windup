@@ -117,6 +117,35 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(screen.queryByRole('button', { name: /选择角色候选/ })).toBeNull()
   })
 
+  it('确认身份母版后采用会话创建的 Character 继续动作流程', async () => {
+    const session = createSession(selectingTemplateWorkflow(3, 'character-task'), {
+      generationApis: generationApisFixture({
+        get: vi.fn().mockResolvedValue(characterGeneration('character')),
+      }),
+    })
+    const confirmCharacterTemplate = vi.fn(async (nodeId: string, imageUrl: string) => {
+      await session.controller.confirmCharacterTemplate(nodeId, imageUrl)
+      return characterFixture()
+    })
+    session.confirmCharacterTemplate = confirmCharacterTemplate
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '选择角色候选 1' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认身份母版' }))
+
+    await waitFor(() =>
+      expect(confirmCharacterTemplate).toHaveBeenCalledWith(
+        'character-template',
+        'https://assets.windup.test/character.png',
+      ),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: '添加动作分支' }))
+    expect((screen.getByRole('button', { name: '生成动作 ›' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    )
+  })
+
   it('切换 WorkflowRun 时清空上一条任务的临时动作菜单', async () => {
     defaultSessionLoader
       .mockResolvedValueOnce(createSession(completedTemplateWorkflow('42')))
@@ -633,6 +662,10 @@ function createSession(
     controller,
     project: projectFixture(),
     character: options.character ?? null,
+    confirmCharacterTemplate: async (nodeId, selectedImageUrl) => {
+      await controller.confirmCharacterTemplate(nodeId, selectedImageUrl)
+      return options.character ?? characterFixture()
+    },
     publishReviewedAction:
       options.publishReviewedAction ?? (() => Promise.reject(new Error('资产发布未装配'))),
     subscribeErrors: () => () => undefined,
@@ -856,6 +889,7 @@ function createGenerationRaceSession(
     controller,
     project: projectFixture(),
     character: null,
+    confirmCharacterTemplate: vi.fn(async () => characterFixture()),
     publishReviewedAction: vi.fn(async () => Promise.reject(new Error('资产发布未装配'))),
     subscribeErrors: () => () => undefined,
     dispose: () => controller.dispose(),
@@ -912,6 +946,7 @@ function createRestartSelectionSession(options: { status?: Generation['status'] 
       controller,
       project: projectFixture(),
       character: null,
+      confirmCharacterTemplate: vi.fn(async () => characterFixture()),
       publishReviewedAction: vi.fn(async () => Promise.reject(new Error('资产发布未装配'))),
       subscribeErrors: () => () => undefined,
       dispose: () => controller.dispose(),

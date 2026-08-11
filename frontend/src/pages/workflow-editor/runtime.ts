@@ -4,6 +4,7 @@ import type {
   GenerationApis,
   Project,
   ProjectApis,
+  CharacterTemplateWorkflowNode,
   ReviewWorkflowNode,
   WorkflowRunApis,
 } from '@/entities'
@@ -16,6 +17,11 @@ export interface WorkflowEditorSession {
   project: Project
   /** 后端用 workflow_run_id 建立的唯一角色；尚未产出正式角色时为 null。 */
   character: Character | null
+  /** 确认身份母版，并在首次确认时创建可继续生成动作的 Character。 */
+  confirmCharacterTemplate(
+    nodeId: CharacterTemplateWorkflowNode['id'],
+    selectedImageUrl: string,
+  ): Promise<Character>
   /** 幂等发布动作资产；审核节点仍由页面随后通过 Controller 推进。 */
   publishReviewedAction(reviewNodeId: ReviewWorkflowNode['id']): Promise<Character>
   subscribeErrors(listener: (error: Error) => void): () => void
@@ -26,7 +32,7 @@ export interface RealWorkflowEditorDependencies {
   workflowRunApis: WorkflowRunApis
   generationApis: GenerationApis
   projectApis: Pick<ProjectApis, 'get'>
-  characterApis: Pick<CharacterApis, 'listByProject' | 'update'>
+  characterApis: Pick<CharacterApis, 'listByProject' | 'create' | 'update'>
   onAsyncError(error: Error): void
 }
 
@@ -71,6 +77,54 @@ export async function createRealWorkflowEditorSession(
     controller,
     project,
     character: loadedCharacter,
+    async confirmCharacterTemplate(nodeId, selectedImageUrl) {
+      const imageUrl = selectedImageUrl.trim()
+      if (!imageUrl) throw new Error('必须选择角色母版')
+      const currentWorkflow = controller.getWorkflow()
+      const templateNode = currentWorkflow.nodes.find((node) => node.id === nodeId)
+      if (
+        !templateNode ||
+        templateNode.type !== 'character-template' ||
+        templateNode.status !== 'active' ||
+        templateNode.phase !== 'selecting'
+      ) {
+        throw new Error('角色母版节点当前不能确认')
+      }
+      const setupNode = currentWorkflow.nodes.find(
+        (node) =>
+          templateNode.dependsOnNodeIds.includes(node.id) && node.type === 'character-setup',
+      )
+      if (!setupNode || setupNode.type !== 'character-setup') {
+        throw new Error('角色母版缺少角色设定')
+      }
+
+      if (!currentCharacter) {
+        currentCharacter = await dependencies.characterApis.create({
+          projectId: currentWorkflow.projectId,
+          workflowRunId: currentWorkflow.id,
+          description: setupNode.input.prompt,
+          referenceImageUrl: imageUrl,
+        })
+      }
+      if (currentCharacter.outfits.length === 0) {
+        currentCharacter = await dependencies.characterApis.update({
+          ...currentCharacter,
+          outfits: [
+            {
+              id: 'outfit-default',
+              characterId: currentCharacter.id,
+              name: '常态造型',
+              description: null,
+              previewUrl: imageUrl,
+              actions: [],
+            },
+          ],
+        })
+      }
+
+      await controller.confirmCharacterTemplate(nodeId, imageUrl)
+      return currentCharacter
+    },
     async publishReviewedAction(reviewNodeId) {
       if (!currentCharacter) throw new Error('当前 WorkflowRun 尚未关联 Character')
       const currentWorkflow = controller.getWorkflow()
