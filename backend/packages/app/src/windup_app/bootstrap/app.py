@@ -73,6 +73,9 @@ async def _lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="windup", version="0.1.0", lifespan=_lifespan)
+    # 中间件（add_middleware 后加的先执行：请求先进 CORS → 再进 RateLimit → 再进 Auth → 最后到路由）
+    app.add_middleware(AuthMiddleware)
+    app.add_middleware(RateLimitMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
@@ -81,9 +84,6 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    # 中间件（add_middleware 后加的先执行：请求先进 RateLimit → 再进 Auth → 最后到路由）
-    app.add_middleware(AuthMiddleware)
-    app.add_middleware(RateLimitMiddleware)
     app.include_router(auth_router)
     app.include_router(project_router)
     app.include_router(character_router)
