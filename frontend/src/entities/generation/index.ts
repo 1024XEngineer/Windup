@@ -24,6 +24,11 @@ export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed'
  */
 export type GenerationType = 'character_template' | 'first_frame' | 'complete_animation'
 
+export type GenerationExpectation =
+  | { type: 'character_template' }
+  | { type: 'first_frame'; actionType: ActionType }
+  | { type: 'complete_animation'; actionType: ActionType }
+
 interface GenerationInputBase {
   projectId: string
   /** 可选参考媒体；没有参考图时传空数组。 */
@@ -141,10 +146,25 @@ export interface GenerationApis {
    * projectId 不能从 id 推导，后端查询接口要求两者同时传入。
    */
   get(projectId: Generation['projectId'], id: Generation['id']): Promise<Generation>
+  get<TType extends GenerationType>(
+    projectId: Generation['projectId'],
+    id: Generation['id'],
+    expectation: Extract<GenerationExpectation, { type: TType }>,
+  ): Promise<Generation<TType>>
   /** 订阅状态变化，返回取消订阅函数。 */
   subscribe(
     projectId: Generation['projectId'],
     id: Generation['id'],
     onEvent: (event: GenerationEvent) => void,
   ): () => void
+  subscribe<TType extends GenerationType>(
+    projectId: Generation['projectId'],
+    id: Generation['id'],
+    expectation: Extract<GenerationExpectation, { type: TType }>,
+    onEvent: (event: GenerationEvent<TType>) => void,
+    onError: (error: Error) => void,
+  ): () => void
 }
+
+export { createGenerationApis, GenerationApiError } from './api'
+export type { GenerationApiConfig, GenerationTransport } from './api'
