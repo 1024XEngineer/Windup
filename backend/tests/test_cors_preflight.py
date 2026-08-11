@@ -9,8 +9,6 @@
 import os
 from unittest import mock
 
-import pytest
-
 
 class TestCORSPreflight:
     """CORS 预检请求测试。"""
