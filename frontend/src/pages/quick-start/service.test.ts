@@ -549,6 +549,53 @@ describe('createQuickStartService', () => {
     await expect(recoverySession.resolveCharacterInfo()).resolves.toBeNull()
   })
 
+  it('restores character info when the bound character is on a later project page', async () => {
+    const run = actionRun()
+    const setup = run.nodes.find((node) => node.type === 'character-setup')
+    if (!setup || setup.type !== 'character-setup') throw new Error('missing setup')
+    delete setup.input.characterId
+    const character = characterFixture({
+      workflowRunId: run.id,
+      outfits: [
+        {
+          id: 'outfit-1',
+          characterId: 'character-1',
+          name: '默认造型',
+          description: null,
+          previewUrl: 'template.png',
+          actions: [],
+        },
+      ],
+    })
+    const characterApis = mutableCharacterApis(
+      () => character,
+      () => undefined,
+    )
+    characterApis.listByProject = vi.fn(async (_projectId, query = {}) =>
+      query.page === 2
+        ? { items: [structuredClone(character)], total: 21, page: 2, pageSize: 20 }
+        : {
+            items: [characterFixture({ id: 'unrelated-character', workflowRunId: 'another-run' })],
+            total: 21,
+            page: 1,
+            pageSize: 20,
+          },
+    )
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis: pendingGenerationApis(),
+      characterApis,
+      prepareProject: vi.fn(),
+    })
+
+    const session = await service.open(run.id)
+
+    await expect(session.resolveCharacterInfo()).resolves.toEqual({
+      characterId: character.id,
+      outfitId: 'outfit-1',
+    })
+  })
+
   it('reuses the character already bound to a run when replacing its template', async () => {
     const run: WorkflowRun = {
       id: 'run-existing-character',
