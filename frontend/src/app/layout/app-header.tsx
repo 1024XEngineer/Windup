@@ -9,12 +9,7 @@ interface ProductNavigationItem {
   isActive: (pathname: string) => boolean
 }
 
-/**
- * 三个入口对应三种去处：回首页、看已有资产、做新东西。
- * 07-31 定稿版还有一个 Playtest 项，这里没有搬——本仓库的预览路由是
- * /playtest/:characterId/:outfitId，没有角色和造型就构造不出可用地址，
- * 顶栏给不出一个恒定的链接。等预览有了落地入口再加回来。
- */
+/** 四个入口对应四种去处：回首页、看资产、做新东西、核验已完成的造型。 */
 const productNavigation: ProductNavigationItem[] = [
   {
     to: '/',
@@ -32,6 +27,11 @@ const productNavigation: ProductNavigationItem[] = [
     label: '创作',
     isActive: (pathname) =>
       pathname.startsWith('/quick-start') || pathname.startsWith('/workflow-editor'),
+  },
+  {
+    to: '/playtest',
+    label: 'PlayTest',
+    isActive: (pathname) => pathname.startsWith('/playtest'),
   },
 ]
 
@@ -111,8 +111,8 @@ export function AppHeader() {
               >
                 {item.compactLabel ? (
                   <>
-                    <span className="hidden sm:inline">{item.label}</span>
-                    <span className="sm:hidden">{item.compactLabel}</span>
+                    <span className="hidden md:inline">{item.label}</span>
+                    <span className="md:hidden">{item.compactLabel}</span>
                   </>
                 ) : (
                   item.label

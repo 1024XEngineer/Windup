@@ -69,13 +69,13 @@ afterEach(() => {
 })
 
 describe('AppHeader', () => {
-  it('保留三个产品入口，并将工作流路由归入创作', () => {
+  it('提供 PlayTest 入口，并将工作流路由归入创作', () => {
     renderHeader('/workflow-editor/run-1')
 
     expect(screen.getByRole('link', { name: '返回 Windup 首页' }).getAttribute('href')).toBe('/')
     expect(screen.getByRole('link', { name: '项目资产' }).getAttribute('href')).toBe('/projects')
     expect(screen.getByRole('link', { name: '创作' }).getAttribute('aria-current')).toBe('page')
-    expect(screen.queryByRole('link', { name: 'Playtest' })).toBeNull()
+    expect(screen.getByRole('link', { name: 'PlayTest' }).getAttribute('href')).toBe('/playtest')
   })
 
   it('在首页只高亮首页一项', () => {
@@ -84,6 +84,17 @@ describe('AppHeader', () => {
     expect(screen.getByRole('link', { name: '首页' }).getAttribute('aria-current')).toBe('page')
     expect(screen.getByRole('link', { name: '项目资产' }).getAttribute('aria-current')).toBeNull()
     expect(screen.getByRole('link', { name: '创作' }).getAttribute('aria-current')).toBeNull()
+    expect(screen.getByRole('link', { name: 'PlayTest' }).getAttribute('aria-current')).toBeNull()
+  })
+
+  it('在资产选择页和具体试玩台高亮 PlayTest 入口', () => {
+    const { unmount } = renderHeader('/playtest')
+
+    expect(screen.getByRole('link', { name: 'PlayTest' }).getAttribute('aria-current')).toBe('page')
+
+    unmount()
+    renderHeader('/playtest/51/outfit-default')
+    expect(screen.getByRole('link', { name: 'PlayTest' }).getAttribute('aria-current')).toBe('page')
   })
 
   it('为访客提供可发现的登录入口并保留完整站内回跳地址', async () => {
