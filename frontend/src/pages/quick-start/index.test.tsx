@@ -146,6 +146,8 @@ describe('QuickStartPage', () => {
     )
 
     expect(screen.getByRole('heading', { name: /用一句角色设定/u })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /像素守夜人/u }))
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toContain('像素守夜人')
   })
 
   it('shows first-frame confirmation instead of stale character candidates after a template is confirmed', async () => {
@@ -235,6 +237,25 @@ describe('QuickStartPage', () => {
     expect(screen.getByRole('heading', { name: /用一句角色设定/u })).toBeTruthy()
   })
 
+  it('hydrates a recoverable run and accepts its next subscription update', async () => {
+    const run = workflow(setupAndTemplate())
+    const peekWorkflow = vi
+      .fn<() => WorkflowRun | null>()
+      .mockReturnValueOnce(null)
+      .mockReturnValue(run)
+    const service = serviceFor(null, {
+      peekWorkflow,
+      resume: vi.fn(async () => run),
+      subscribe: vi.fn((_runId, listener) => {
+        listener(run)
+        return () => undefined
+      }),
+    })
+    renderAt('/quick-start/run-1', service)
+    await waitFor(() => expect(service.resume).toHaveBeenCalledWith('run-1'))
+    expect(peekWorkflow).toHaveBeenCalled()
+  })
+
   it('selects, confirms, and regenerates a character candidate', async () => {
     const run = workflow(setupAndTemplate())
     const service = serviceFor(run, {
@@ -306,6 +327,19 @@ describe('QuickStartPage', () => {
       }),
     ).toBeTruthy()
     expect(service.approveReview).toHaveBeenCalledWith('run-1')
+  })
+
+  it('keeps a completed run recoverable when its character binding is missing', async () => {
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'active' })
+    const service = serviceFor(run, {
+      approveReview: vi.fn(async () =>
+        actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' }),
+      ),
+      getCharacterInfo: vi.fn(() => null),
+      resolveCharacterInfo: vi.fn(async () => null),
+    })
+    renderAt('/quick-start/run-1', service)
+    expect((await screen.findByRole('alert')).textContent).toContain('没有找到对应的角色资产')
   })
 
   it('interrupts an active run and surfaces interruption failures', async () => {
