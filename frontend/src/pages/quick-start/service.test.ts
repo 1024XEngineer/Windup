@@ -434,9 +434,19 @@ describe('createQuickStartService', () => {
     ])
     session.dispose()
     await session.resume()
+    vi.mocked(characterApis.update).mockRejectedValueOnce(new Error('asset write failed'))
+    await expect(session.approveReview()).rejects.toThrow('asset write failed')
+    expect(session.getWorkflow().nodes.find((node) => node.type === 'review')?.status).toBe(
+      'active',
+    )
+    await session.approveReview()
     await session.approveReview()
 
     expect(getRun).toHaveBeenCalledTimes(1)
+    expect(characterApis.update).toHaveBeenCalledTimes(3)
+    expect(session.getWorkflow().nodes.find((node) => node.type === 'review')?.status).toBe(
+      'passed',
+    )
     expect(character.outfits[0]!.actions[0]!.frames).toEqual([
       { index: 7, imageUrl: 'frame-7.png', durationMs: 83 },
       { index: 9, imageUrl: 'frame-9.png', durationMs: null },
@@ -461,6 +471,28 @@ describe('createQuickStartService', () => {
       () => character,
       (value) => (character = value),
     )
+    characterApis.listByProject = vi.fn(async () => ({
+      items: [
+        structuredClone(character),
+        characterFixture({
+          id: 'unrelated-character',
+          workflowRunId: 'another-run',
+          outfits: [
+            {
+              id: 'unrelated-outfit',
+              characterId: 'unrelated-character',
+              name: '其他造型',
+              description: null,
+              previewUrl: 'unrelated.png',
+              actions: [],
+            },
+          ],
+        }),
+      ],
+      total: 2,
+      page: 1,
+      pageSize: 20,
+    }))
     const workflowRunApis = createWorkflowRunApis([candidateRun])
     const service = createQuickStartService({
       workflowRunApis,
@@ -489,18 +521,32 @@ describe('createQuickStartService', () => {
     stop()
     await session.interrupt()
 
+    const recoveryRun = structuredClone(continued)
+    const recoverySetup = recoveryRun.nodes.find((node) => node.type === 'character-setup')
+    if (!recoverySetup || recoverySetup.type !== 'character-setup') throw new Error('missing setup')
+    delete recoverySetup.input.characterId
     const recoveryService = createQuickStartService({
-      workflowRunApis: createWorkflowRunApis([candidateRun]),
+      workflowRunApis: createWorkflowRunApis([recoveryRun]),
       generationApis,
       characterApis,
       prepareProject: vi.fn(),
     })
-    const recoverySession = await recoveryService.open(candidateRun.id)
+    const recoverySession = await recoveryService.open(recoveryRun.id)
     await recoverySession.resume()
     await expect(recoverySession.resolveCharacterInfo()).resolves.toEqual({
       characterId: 'character-restore',
       outfitId: character.outfits[0]!.id,
     })
+    vi.mocked(characterApis.listByProject).mockResolvedValueOnce({
+      items: [
+        structuredClone(character),
+        characterFixture({ id: 'duplicate-character', workflowRunId: recoveryRun.id }),
+      ],
+      total: 2,
+      page: 1,
+      pageSize: 20,
+    })
+    await expect(recoverySession.resolveCharacterInfo()).resolves.toBeNull()
   })
 
   it('reuses the character already bound to a run when replacing its template', async () => {

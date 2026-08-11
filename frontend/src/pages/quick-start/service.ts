@@ -275,6 +275,22 @@ export function createQuickStartService({
     return { characterId, outfitId: firstFrame.input.outfitId }
   }
 
+  async function resolveCharacterInfo(controller: WorkflowController) {
+    const direct = getCharacterInfo(controller)
+    if (direct) return direct
+    if (!characterApis) return null
+
+    const run = controller.getWorkflow()
+    const firstFrame = latestActionFirstFrame(run)
+    if (!firstFrame || firstFrame.type !== 'action-first-frame') return null
+    const page = await characterApis.listByProject(run.projectId)
+    const matches = page.items.filter((character) => character.workflowRunId === run.id)
+    if (matches.length !== 1) return null
+    const character = matches[0]!
+    const outfit = character.outfits.find((item) => item.id === firstFrame.input.outfitId)
+    return outfit ? { characterId: character.id, outfitId: outfit.id } : null
+  }
+
   function startAutomaticActionAdvance(controller: WorkflowController): () => void {
     let advancing = false
 
@@ -415,7 +431,9 @@ export function createQuickStartService({
         }
         const review = findReview(run, fullFrame.id)
         if (!review) throw new Error('完整动画没有关联审核节点')
-        await controller.approveReview(review.id)
+        if (review.status !== 'active' && review.status !== 'passed') {
+          throw new Error('完整动画当前不能通过审核')
+        }
 
         const generation = await controller.getGeneration(fullFrame.id, 'complete_animation')
         if (
@@ -426,13 +444,16 @@ export function createQuickStartService({
         ) {
           throw new Error('完整动画结果尚未就绪')
         }
-        const info = getCharacterInfo(controller)
+        const info = await resolveCharacterInfo(controller)
         if (!info) throw new Error('WorkflowRun 缺少角色或造型绑定')
         const firstFrame = latestActionFirstFrame(controller.getWorkflow())
         if (!firstFrame || firstFrame.type !== 'action-first-frame') {
           throw new Error('完整动画缺少动作定义')
         }
         const character = await characterApis.get(info.characterId)
+        if (!character.outfits.some((outfit) => outfit.id === info.outfitId)) {
+          throw new Error('角色资产中没有与当前动作绑定的造型')
+        }
         const action: Action = {
           id: fullFrame.id,
           outfitId: info.outfitId,
@@ -458,18 +479,11 @@ export function createQuickStartService({
               : outfit,
           ),
         })
+        if (review.status === 'active') await controller.approveReview(review.id)
         return controller.getWorkflow()
       },
       getCharacterInfo: () => getCharacterInfo(controller),
-      async resolveCharacterInfo() {
-        const direct = getCharacterInfo(controller)
-        if (direct) return direct
-        if (!characterApis) return null
-        const page = await characterApis.listByProject(controller.getWorkflow().projectId)
-        const character = page.items.at(-1)
-        const outfit = character?.outfits.at(0)
-        return character && outfit ? { characterId: character.id, outfitId: outfit.id } : null
-      },
+      resolveCharacterInfo: () => resolveCharacterInfo(controller),
       async getTemplateCandidates() {
         const template = templateNode(controller.getWorkflow())
         const generation = await controller.getGeneration(template.id, 'character_template')
