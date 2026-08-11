@@ -210,6 +210,54 @@ describe('createRealWorkflowEditorSession', () => {
     ).toMatchObject({ status: 'passed', phase: 'completed' })
   })
 
+  it('拒绝用空图片确认身份母版', async () => {
+    const { session, create } = await createCharacterTemplateSession()
+
+    await expect(session.confirmCharacterTemplate('template', '   ')).rejects.toThrow(
+      '必须选择角色母版',
+    )
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('拒绝确认当前不可选择的身份母版节点', async () => {
+    const { session, create } = await createCharacterTemplateSession()
+
+    await expect(
+      session.confirmCharacterTemplate('missing', 'https://assets.windup.test/master.png'),
+    ).rejects.toThrow('角色母版节点当前不能确认')
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('拒绝确认缺少角色设定依赖的身份母版', async () => {
+    const workflow = selectingCharacterTemplateWorkflowFixture()
+    workflow.nodes = workflow.nodes.filter((node) => node.type !== 'character-setup')
+    const { session, create } = await createCharacterTemplateSession({ workflow })
+
+    await expect(
+      session.confirmCharacterTemplate('template', 'https://assets.windup.test/master.png'),
+    ).rejects.toThrow('角色母版缺少角色设定')
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('已有 Character 和造型时只推进身份母版节点', async () => {
+    const existing = characterWithOutfitFixture()
+    const { session, create, update } = await createCharacterTemplateSession({
+      characters: [existing],
+    })
+
+    const character = await session.confirmCharacterTemplate(
+      'template',
+      'https://assets.windup.test/master.png',
+    )
+
+    expect(character).toEqual(existing)
+    expect(create).not.toHaveBeenCalled()
+    expect(update).not.toHaveBeenCalled()
+    expect(
+      session.controller.getWorkflow().nodes.find((node) => node.id === 'template'),
+    ).toMatchObject({ status: 'passed', phase: 'completed' })
+  })
+
   it('发布 Character 动作资产后由调用方单独推进审核节点', async () => {
     const events: string[] = []
     const workflow = reviewingWorkflowFixture()
@@ -275,6 +323,44 @@ describe('createUnavailableGenerationApis', () => {
     expect(() => apis.subscribe('1', '9', vi.fn())).not.toThrow()
   })
 })
+
+async function createCharacterTemplateSession(
+  options: {
+    workflow?: WorkflowRun
+    characters?: Character[]
+  } = {},
+) {
+  const workflow = options.workflow ?? selectingCharacterTemplateWorkflowFixture()
+  const characters = options.characters ?? []
+  const create = vi.fn().mockResolvedValue(characterFixture())
+  const update = vi.fn(async (character: Character) => structuredClone(character))
+  const session = await createRealWorkflowEditorSession('42', {
+    workflowRunApis: {
+      create: vi.fn(),
+      get: vi.fn().mockResolvedValue(workflow),
+      update: vi.fn(async (run) => ({ ...structuredClone(run), version: run.version + 1 })),
+      remove: vi.fn(),
+    },
+    generationApis: {
+      create: vi.fn() as GenerationApis['create'],
+      get: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+    },
+    projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+    characterApis: {
+      listByProject: vi.fn().mockResolvedValue({
+        items: characters,
+        total: characters.length,
+        page: 1,
+        pageSize: 100,
+      }),
+      create,
+      update,
+    },
+    onAsyncError: vi.fn(),
+  })
+  return { session, create, update }
+}
 
 function workflowFixture(): WorkflowRun {
   return {
