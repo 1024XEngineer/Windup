@@ -1,7 +1,6 @@
 import type { ActionType } from '../character'
 import type { Generation } from '../generation'
 import type { MediaReference } from '../media'
-import type { Paged, PageQuery } from '@/shared/pagination'
 import {
   WORKFLOW_GENERATION_ROLES,
   WORKFLOW_NODE_PHASES,
@@ -47,11 +46,6 @@ interface WorkflowNodeBase {
 export interface WorkflowCharacterInput {
   /** 用户填写或后端提取的最终角色名称；旧数据可以没有该字段。 */
   name?: string | null
-  /**
-   * 当前节点图所属的 Character。后端只原样持久化 nodes，因此前端用它在项目列表中定位角色的唯一 Run。
-   * 旧 Run 可能没有该字段；读取方必须兼容未绑定状态。
-   */
-  characterId?: string | null
   prompt: string
   referenceMedia: readonly MediaReference[]
 }
@@ -136,8 +130,6 @@ export interface CreateWorkflowRunInput {
 
 export interface WorkflowRunApis {
   create(input: CreateWorkflowRunInput): Promise<WorkflowRun>
-  /** 后端只返回未软删除的运行记录。 */
-  listByProject?(projectId: string, query?: PageQuery): Promise<Paged<WorkflowRun>>
   get(id: WorkflowRun['id']): Promise<WorkflowRun>
   update(run: WorkflowRun): Promise<WorkflowRun>
   remove(id: WorkflowRun['id']): Promise<void>
