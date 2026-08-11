@@ -12,6 +12,7 @@ import type {
 import {
   createAutoPrepareProject,
   createQuickStartService,
+  createRealQuickStartService,
   unavailableQuickStartService,
   type QuickStartFrame,
   type QuickStartMediaApis,
@@ -405,6 +406,288 @@ describe('createQuickStartService', () => {
       { index: 7, imageUrl: 'frame-7.png', durationMs: 83 },
       { index: 9, imageUrl: 'frame-9.png', durationMs: null },
     ])
+  })
+
+  it('continues from an uploaded replacement and restores missing character info from project assets', async () => {
+    const candidateRun: WorkflowRun = {
+      id: 'run-candidate',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: [
+        {
+          id: 'character-setup',
+          type: 'character-setup',
+          status: 'passed',
+          phase: 'completed',
+          dependsOnNodeIds: [],
+          generations: [],
+          error: null,
+          input: { prompt: '像素骑士', referenceMedia: [] },
+        },
+        {
+          id: 'character-template',
+          type: 'character-template',
+          status: 'active',
+          phase: 'selecting',
+          dependsOnNodeIds: ['character-setup'],
+          generations: [{ taskId: 'template-task', role: 'character_template' }],
+          error: null,
+          selectedImageUrl: null,
+        },
+      ],
+    }
+    const taskTypes = new Map<string, 'first_frame' | 'complete_animation' | 'character_template'>()
+    let taskId = 0
+    const generationApis: GenerationApis = {
+      create: vi.fn(async (input) => {
+        const id = `continued-task-${++taskId}`
+        taskTypes.set(id, input.type)
+        return {
+          id,
+          projectId: input.projectId,
+          type: input.type,
+          status: 'pending' as const,
+          result: null,
+          error: null,
+        }
+      }),
+      get: vi.fn(async (projectId, id) => ({
+        id,
+        projectId,
+        type: taskTypes.get(id) ?? 'character_template',
+        status: 'pending' as const,
+        result: null,
+        error: null,
+      })),
+      subscribe: vi.fn(() => () => undefined),
+    }
+    let character: Character = {
+      id: 'character-restore',
+      projectId: 'project-1',
+      workflowRunId: candidateRun.id,
+      name: '像素骑士',
+      description: null,
+      referenceImageUrl: 'replacement.png',
+      dataVersion: 1,
+      status: 1,
+      outfits: [],
+    }
+    const characterApis: CharacterApis = {
+      get: vi.fn(async () => structuredClone(character)),
+      listByProject: vi.fn(async () => ({
+        items: [structuredClone(character)],
+        total: 1,
+        page: 1,
+        pageSize: 20,
+      })),
+      create: vi.fn(async () => structuredClone(character)),
+      update: vi.fn(async (next) => {
+        character = structuredClone(next)
+        return structuredClone(character)
+      }),
+      remove: vi.fn(async () => undefined),
+    }
+    const workflowRunApis = createWorkflowRunApis([candidateRun])
+    const service = createQuickStartService({
+      workflowRunApis,
+      generationApis,
+      characterApis,
+      mediaApis: { upload: vi.fn(async () => 'replacement.png' as MediaReference) },
+      prepareProject: vi.fn(),
+    })
+
+    const continued = await service.continueWithUploadedTemplate(
+      candidateRun.id,
+      new File(['replacement'], 'replacement.png', { type: 'image/png' }),
+      '',
+    )
+    expect(continued.nodes.find((node) => node.type === 'character-setup')).toMatchObject({
+      input: { characterId: 'character-restore' },
+    })
+    expect(continued.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'action-first-frame', phase: 'generating' }),
+      ]),
+    )
+
+    const recoveryService = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([candidateRun]),
+      generationApis,
+      characterApis,
+      prepareProject: vi.fn(),
+    })
+    await recoveryService.resume(candidateRun.id)
+    await expect(recoveryService.resolveCharacterInfo(candidateRun.id)).resolves.toEqual({
+      characterId: 'character-restore',
+      outfitId: character.outfits[0]!.id,
+    })
+  })
+
+  it('creates a fresh run when an existing character has no workflow history', async () => {
+    const character: Character = {
+      id: 'character-existing',
+      projectId: 'project-1',
+      workflowRunId: 'old-run',
+      name: '老角色',
+      description: null,
+      referenceImageUrl: 'existing.png',
+      dataVersion: 1,
+      status: 1,
+      outfits: [
+        {
+          id: 'outfit-existing',
+          characterId: 'character-existing',
+          name: '默认造型',
+          description: null,
+          previewUrl: 'existing.png',
+          actions: [],
+        },
+      ],
+    }
+    const generationApis: GenerationApis = {
+      create: vi.fn(async (input) => ({
+        id: 'new-first-frame-task',
+        projectId: input.projectId,
+        type: input.type,
+        status: 'pending' as const,
+        result: null,
+        error: null,
+      })),
+      get: vi.fn(async (projectId, id) => ({
+        id,
+        projectId,
+        type: 'first_frame' as const,
+        status: 'pending' as const,
+        result: null,
+        error: null,
+      })),
+      subscribe: vi.fn(() => () => undefined),
+    }
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis(),
+      generationApis,
+      characterApis: {
+        get: vi.fn(async () => character),
+        listByProject: vi.fn(async () => ({ items: [character], total: 1, page: 1, pageSize: 20 })),
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      } as unknown as CharacterApis,
+      prepareProject: vi.fn(),
+    })
+
+    const run = await service.startAction(
+      { characterId: character.id, outfitId: 'outfit-existing' },
+      '',
+    )
+    expect(run.nodes[0]).toMatchObject({
+      type: 'character-setup',
+      input: { characterId: character.id, prompt: '' },
+    })
+    expect(run.nodes.find((node) => node.type === 'action-first-frame')).toMatchObject({
+      input: { name: '待机', type: 'idle', prompt: null },
+    })
+  })
+
+  it('rolls back an orphan character when binding its uploaded template fails', async () => {
+    const character: Character = {
+      id: 'orphan-character',
+      projectId: 'project-1',
+      workflowRunId: 'run-1',
+      name: '孤立角色',
+      description: null,
+      referenceImageUrl: 'orphan.png',
+      dataVersion: 1,
+      status: 1,
+      outfits: [],
+    }
+    const remove = vi.fn(async () => Promise.reject('rollback failed'))
+    const onAsyncError = vi.fn()
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis(),
+      generationApis: {
+        create: vi.fn(),
+        get: vi.fn(),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      characterApis: {
+        create: vi.fn(async () => character),
+        update: vi.fn(async () => Promise.reject(new Error('save failed'))),
+        remove,
+        get: vi.fn(),
+        listByProject: vi.fn(),
+      } as unknown as CharacterApis,
+      mediaApis: { upload: vi.fn(async () => 'orphan.png' as MediaReference) },
+      prepareProject: vi.fn(async () => ({
+        id: 'project-1',
+        spriteSize: { width: 256, height: 256 },
+      })),
+      onAsyncError,
+    })
+
+    await expect(
+      service.startWithUploadedTemplate(new File(['orphan'], 'orphan.png'), ''),
+    ).rejects.toThrow('save failed')
+    expect(remove).toHaveBeenCalledWith('orphan-character')
+    expect(onAsyncError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: '创建角色后的回滚失败' }),
+    )
+  })
+
+  it('reports unavailable dependencies and invalid asset targets explicitly', async () => {
+    const generationApis: GenerationApis = {
+      create: vi.fn(),
+      get: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+    }
+    const bare = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis(),
+      generationApis,
+      prepareProject: vi.fn(),
+    })
+    const file = new File([], 'hero.png')
+    await expect(bare.startWithUploadedTemplate(file, '')).rejects.toThrow('媒体上传服务尚未配置')
+    await expect(bare.continueWithUploadedTemplate('run', file, '')).rejects.toThrow(
+      '媒体上传服务尚未配置',
+    )
+    await expect(
+      bare.startAction({ characterId: 'character', outfitId: 'outfit' }, 'walk'),
+    ).rejects.toThrow('角色服务尚未配置')
+
+    const character: Character = {
+      id: 'character',
+      projectId: 'project-1',
+      workflowRunId: 'run',
+      name: null,
+      description: null,
+      referenceImageUrl: null,
+      dataVersion: 1,
+      status: 1,
+      outfits: [],
+    }
+    const noOutfit = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis(),
+      generationApis,
+      prepareProject: vi.fn(),
+      characterApis: {
+        get: vi.fn(async () => character),
+      } as unknown as CharacterApis,
+    })
+    await expect(
+      noOutfit.startAction({ characterId: 'character', outfitId: 'missing' }, 'walk'),
+    ).rejects.toThrow('当前造型没有可用于生成动作的角色母版')
+  })
+
+  it('assembles the real service from entity APIs', () => {
+    const service = createRealQuickStartService({
+      projectApis: { create: vi.fn() } as unknown as ProjectApis,
+      characterApis: {} as CharacterApis,
+      generationApis: {} as GenerationApis,
+      mediaApis: {} as QuickStartMediaApis,
+      workflowRunApis: {} as WorkflowRunApis,
+    })
+    expect(service.unavailableReason).toBeNull()
   })
 
   it('confirms the action first frame and automatically starts a 32-frame animation', async () => {
