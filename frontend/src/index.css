@@ -136,7 +136,7 @@ body,
   .account-dialog-backdrop,
   .account-dialog-panel,
   .project-pixel-mark i {
-    animation: none;
+    animation: none !important;
   }
 }
 
