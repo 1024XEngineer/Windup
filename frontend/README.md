@@ -21,6 +21,22 @@ npm run build          # 构建
 
 CI 按上面顺序全跑一遍。
 
+## 容器构建与宿主机部署
+
+服务器由宿主机 nginx 提供静态资源并反代 `/api`。前端容器只构建产物：
+
+```bash
+cp .env.example .env
+sudo mkdir -p /var/www/react-windup
+docker compose up -d --build frontend
+```
+
+构建命令会清空专用站点目录 `/var/www/react-windup`，再把文件直接写入宿主机；完成后容器正常退出，没有端口映射，也不常驻。宿主机 nginx 的站点根目录需指向该目录，并负责 SPA 回退与 `/api` 反代。之后每次更新仍执行上面的 Compose 命令，nginx 会直接读取新产物。
+
+`VITE_API_BASE_URL` 是构建期变量，`vite build` 时就烘进产物，运行期给容器注环境变量无效。默认取 `/api` 走宿主机反代；确实要指向外部后端时，构建时传 `--build-arg VITE_API_BASE_URL=https://…`，同时后端得配 `WINDUP_CORS_ORIGINS`。
+
+Vercel 部署路径不受影响，`vercel.json` 照旧。
+
 ## 结构
 
 `ProjectApis` 与 `CharacterApis` 负责业务 DTO 映射。项目中心、项目工作区、资产库与角色详情已接入 PR #75 的真实接口；测试数据只存在于测试环境的 HTTP 替身中。
