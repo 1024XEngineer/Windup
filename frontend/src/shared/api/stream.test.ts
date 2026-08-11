@@ -164,4 +164,94 @@ describe('createEventStreamSubscriber', () => {
     )
     expect(fetchFn).toHaveBeenCalledOnce()
   })
+
+  it.each([
+    [new Response(null, { status: 503 }), 'SSE 请求失败（HTTP 503）'],
+    [new Response('plain text'), 'SSE 响应类型无效'],
+    [
+      new Response(null, { headers: { 'content-type': 'text/event-stream' } }),
+      'SSE 响应缺少消息流',
+    ],
+  ])('报告不可恢复的响应协议错误', async (response, message) => {
+    const onError = vi.fn()
+    const subscriber = createEventStreamSubscriber({
+      fetchFn: vi.fn(async () => response),
+      getAccessToken: () => null,
+    })
+
+    subscriber('https://api.test/stream', {
+      eventName: 'task_update',
+      onEvent: () => false,
+      onError,
+    })
+
+    await vi.waitFor(() =>
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message })),
+    )
+  })
+
+  it('刷新失败后报告 401，且不会重复刷新', async () => {
+    const recoverUnauthorized = vi.fn(async () => false)
+    const onError = vi.fn()
+    const subscriber = createEventStreamSubscriber({
+      fetchFn: vi.fn(async () => new Response(null, { status: 401 })),
+      getAccessToken: () => 'expired',
+      recoverUnauthorized,
+    })
+
+    subscriber('https://api.test/stream', {
+      eventName: 'task_update',
+      onEvent: () => false,
+      onError,
+    })
+
+    await vi.waitFor(() => expect(onError).toHaveBeenCalled())
+    expect(recoverUnauthorized).toHaveBeenCalledOnce()
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ status: 401 }))
+  })
+
+  it('忽略注释和其他事件，并在流结束后重连', async () => {
+    const encoder = new TextEncoder()
+    const first = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(': keepalive\r\nevent: progress\r\ndata: 10\r\n\r\n'))
+          controller.enqueue(encoder.encode('event: task_update\ndata: {"status":'))
+          controller.enqueue(encoder.encode('"running"}\n\n'))
+          controller.close()
+        },
+      }),
+      { headers: { 'content-type': 'text/event-stream; charset=utf-8' } },
+    )
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(eventStreamResponse('{"status":"completed"}'))
+    const onEvent = vi.fn((data: string) => data.includes('completed'))
+    const onError = vi.fn()
+    const subscriber = createEventStreamSubscriber({
+      fetchFn,
+      getAccessToken: () => null,
+      reconnectDelayMs: 0,
+    })
+
+    await new Promise<void>((resolve) => {
+      subscriber('https://api.test/stream', {
+        eventName: 'task_update',
+        onEvent(data) {
+          const terminal = onEvent(data)
+          if (terminal) resolve()
+          return terminal
+        },
+        onError,
+      })
+    })
+
+    expect(onEvent).toHaveBeenNthCalledWith(1, '{"status":"running"}')
+    expect(onEvent).toHaveBeenNthCalledWith(2, '{"status":"completed"}')
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'SSE 连接中断，正在自动重连' }),
+    )
+    expect(fetchFn).toHaveBeenCalledTimes(2)
+  })
 })
