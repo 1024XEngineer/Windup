@@ -239,7 +239,9 @@ function completedAnimationEvent(taskId = 'task-2'): GenerationEvent {
     result: {
       type: 'complete_animation',
       frames: Array.from({ length: 32 }, (_, index) => ({
+        index,
         url: `https://img/frame-${index}.png`,
+        durationMs: index % 2 === 0 ? 100 : null,
       })),
     },
     error: null,

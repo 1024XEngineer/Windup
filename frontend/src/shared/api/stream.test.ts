@@ -254,4 +254,26 @@ describe('createEventStreamSubscriber', () => {
     )
     expect(fetchFn).toHaveBeenCalledTimes(2)
   })
+
+  it('把匹配到的实际事件名交给业务解析器', async () => {
+    const onEvent = vi.fn((_data: string, _eventName: string) => true)
+    const subscriber = createEventStreamSubscriber({
+      fetchFn: vi.fn(async () => eventStreamResponse('{"task_id":91}', 'completed')),
+      getAccessToken: () => null,
+    })
+
+    await new Promise<void>((resolve, reject) => {
+      subscriber('https://api.test/stream', {
+        eventName: ['task_update', 'progress', 'completed', 'failed'],
+        onEvent(data, eventName) {
+          onEvent(data, eventName)
+          resolve()
+          return true
+        },
+        onError: reject,
+      })
+    })
+
+    expect(onEvent).toHaveBeenCalledWith('{"task_id":91}', 'completed')
+  })
 })

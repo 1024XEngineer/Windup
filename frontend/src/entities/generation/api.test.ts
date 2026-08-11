@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { createGenerationApis, GenerationApiError } from '@/entities'
+import { EventStreamError, type EventStreamOptions } from '@/shared/api/stream'
 
 import type { MediaReference } from '../media'
 
@@ -188,6 +189,7 @@ describe('createGenerationApis', () => {
     expect(generation.result).toEqual({
       type: 'complete_animation',
       frames: Array.from({ length: 32 }, (_, index) => ({
+        index,
         url: `https://cdn.test/frame-${index + 1}.png`,
         durationMs: index % 2 === 0 ? 100 : null,
       })),
@@ -225,13 +227,7 @@ describe('createGenerationApis', () => {
 
   it('订阅 task_update，映射终态并把终态关闭信号交给流传输层', () => {
     let subscribedUrl = ''
-    let streamOptions:
-      | {
-          eventName: string
-          onEvent(data: string): boolean
-          onError(error: Error): void
-        }
-      | undefined
+    let streamOptions: EventStreamOptions | undefined
     const cancel = vi.fn()
     const stream = vi.fn((url: string, options: NonNullable<typeof streamOptions>) => {
       subscribedUrl = url
@@ -268,10 +264,11 @@ describe('createGenerationApis', () => {
         },
         error_message: null,
       }),
+      'task_update',
     )
 
     expect(subscribedUrl).toBe('https://api.test/generation/tasks/91/stream?project_id=42')
-    expect(streamOptions?.eventName).toBe('task_update')
+    expect(streamOptions?.eventName).toEqual(['task_update', 'progress', 'completed', 'failed'])
     expect(isTerminal).toBe(true)
     expect(onEvent).toHaveBeenCalledWith({
       taskId: '91',
@@ -280,6 +277,7 @@ describe('createGenerationApis', () => {
       result: {
         type: 'complete_animation',
         frames: Array.from({ length: 32 }, (_, index) => ({
+          index,
           url: `https://cdn.test/frame-${index + 1}.png`,
           durationMs: index % 2 === 0 ? 100 : null,
         })),
@@ -292,13 +290,7 @@ describe('createGenerationApis', () => {
   })
 
   it('从查询结果推断前端阶段，并允许现有三参数订阅继续使用', async () => {
-    let streamOptions:
-      | {
-          eventName: string
-          onEvent(data: string): boolean
-          onError(error: Error): void
-        }
-      | undefined
+    let streamOptions: EventStreamOptions | undefined
     const task = taskData({
       task_type: 'character_action',
       input_payload: { num_frames: 32, action_type: 'walk' },
@@ -320,7 +312,7 @@ describe('createGenerationApis', () => {
     const generation = await apis.get('42', '91')
     const onEvent = vi.fn()
     apis.subscribe('42', '91', onEvent)
-    streamOptions?.onEvent(JSON.stringify(task))
+    streamOptions?.onEvent(JSON.stringify(task), 'task_update')
 
     expect(generation.type).toBe('complete_animation')
     expect(onEvent).toHaveBeenCalledWith(
@@ -673,5 +665,127 @@ describe('createGenerationApis', () => {
     apis.subscribe('42', '91', { type: 'character_template' }, vi.fn(), vi.fn())
 
     expect(() => onStreamEvent?.(payload)).toThrow(message)
+  })
+
+  it('接受只含 task_id 的精简终态事件并保留动作帧元数据', () => {
+    let onStreamEvent: ((data: string, eventName?: string) => boolean) | undefined
+    const onEvent = vi.fn()
+    const apis = createGenerationApis({
+      userId: 7,
+      transport: {
+        request: vi.fn(),
+        stream: vi.fn((_url, options) => {
+          onStreamEvent = options.onEvent
+          return vi.fn()
+        }),
+      },
+    })
+    apis.subscribe('42', '91', { type: 'complete_animation', actionType: 'walk' }, onEvent, vi.fn())
+
+    const terminal = onStreamEvent?.(
+      JSON.stringify({
+        task_id: 91,
+        task_type: 'character_action',
+        status: 'completed',
+        result: {
+          type: 'character_action',
+          action_type: 'walk',
+          frames: actionFrames(32),
+        },
+      }),
+      'task_update',
+    )
+
+    expect(terminal).toBe(true)
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: '91',
+        status: 'completed',
+        result: expect.objectContaining({
+          frames: expect.arrayContaining([
+            { index: 0, url: 'https://cdn.test/frame-1.png', durationMs: 100 },
+          ]),
+        }),
+      }),
+    )
+  })
+
+  it('拒绝同时存在但不一致的 task_id 与 id', () => {
+    let onStreamEvent: ((data: string, eventName?: string) => boolean) | undefined
+    const apis = createGenerationApis({
+      userId: 7,
+      transport: {
+        request: vi.fn(),
+        stream: vi.fn((_url, options) => {
+          onStreamEvent = options.onEvent
+          return vi.fn()
+        }),
+      },
+    })
+    apis.subscribe('42', '91', { type: 'character_template' }, vi.fn(), vi.fn())
+
+    expect(() =>
+      onStreamEvent?.(JSON.stringify({ ...taskData(), task_id: 91, id: 92 }), 'task_update'),
+    ).toThrow('task_update 的 task_id 与 id 不一致')
+  })
+
+  it('根据 completed 事件名补全精简 payload 的终态', () => {
+    let onStreamEvent: ((data: string, eventName?: string) => boolean) | undefined
+    const onEvent = vi.fn()
+    const apis = createGenerationApis({
+      userId: 7,
+      transport: {
+        request: vi.fn(),
+        stream: vi.fn((_url, options) => {
+          onStreamEvent = options.onEvent
+          return vi.fn()
+        }),
+      },
+    })
+    apis.subscribe('42', '91', { type: 'character_template' }, onEvent, vi.fn())
+
+    expect(
+      onStreamEvent?.(
+        JSON.stringify({
+          task_id: 91,
+          task_type: 'character_image',
+          result: taskData().result,
+        }),
+        'completed',
+      ),
+    ).toBe(true)
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }))
+  })
+
+  it('SSE 路由缺失时轮询任务查询直到终态', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(success(taskData({ status: 'running', result: null })))
+      .mockResolvedValueOnce(success(taskData()))
+    const onEvent = vi.fn()
+    const apis = createGenerationApis({
+      userId: 7,
+      pollIntervalMs: 1,
+      transport: {
+        request,
+        stream: vi.fn((_url, options) => {
+          queueMicrotask(() =>
+            options.onError(
+              new EventStreamError('SSE 请求失败（HTTP 404）', false, undefined, 404),
+            ),
+          )
+          return vi.fn()
+        }),
+      },
+    })
+
+    apis.subscribe('42', '91', { type: 'character_template' }, onEvent, vi.fn())
+
+    await vi.waitFor(() =>
+      expect(onEvent).toHaveBeenLastCalledWith(
+        expect.objectContaining({ taskId: '91', status: 'completed' }),
+      ),
+    )
+    expect(request).toHaveBeenCalledTimes(2)
   })
 })

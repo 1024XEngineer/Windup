@@ -1,10 +1,10 @@
 /** 业务无关的、可鉴权的 SSE 订阅边界。 */
 
 export interface EventStreamOptions {
-  /** 只监听业务指定的命名事件，例如 task_update。 */
-  eventName: string
+  /** 只监听业务指定的命名事件，例如 task_update 或 completed。 */
+  eventName: string | readonly string[]
   /** 返回 true 表示 payload 是终态，传输层随后关闭连接。 */
-  onEvent(data: string): boolean
+  onEvent(data: string, eventName: string): boolean
   /** 包含连接中断、非法响应和业务解析器抛出的错误。 */
   onError(error: Error): void
 }
@@ -73,8 +73,13 @@ async function readEventStream(response: Response, options: EventStreamOptions):
 
   const deliver = async (block: string): Promise<boolean> => {
     const record = parseRecord(block)
-    if (record?.event !== options.eventName) return false
-    if (!options.onEvent(record.data)) return false
+    if (!record) return false
+    const matches =
+      typeof options.eventName === 'string'
+        ? record.event === options.eventName
+        : options.eventName.includes(record.event)
+    if (!matches) return false
+    if (!options.onEvent(record.data, record.event)) return false
     await reader.cancel()
     return true
   }

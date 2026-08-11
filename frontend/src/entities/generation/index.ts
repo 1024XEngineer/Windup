@@ -76,6 +76,12 @@ export interface GeneratedImage {
   url: string
 }
 
+/** 后端动作帧字段完整映射，不能用数组位置覆盖服务端 index。 */
+export interface GeneratedFrame extends GeneratedImage {
+  index: number
+  durationMs: number | null
+}
+
 /** 结果按 type 分别定义，不共用一个 urls 数组。 */
 export interface CharacterTemplateGenerationResult {
   type: 'character_template'
@@ -87,10 +93,9 @@ export interface FirstFrameGenerationResult {
   image: GeneratedImage
 }
 
-/** 帧顺序由数组位置表达。 */
 export interface CompleteAnimationGenerationResult {
   type: 'complete_animation'
-  frames: readonly GeneratedImage[]
+  frames: readonly GeneratedFrame[]
 }
 
 export type GenerationResult =

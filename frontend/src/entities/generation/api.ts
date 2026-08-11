@@ -1,4 +1,4 @@
-import type { EventStreamSubscriber } from '@/shared/api/stream'
+import { EventStreamError, type EventStreamSubscriber } from '@/shared/api/stream'
 
 import type {
   CompleteAnimationGenerationInput,
@@ -27,6 +27,8 @@ export interface GenerationApiConfig {
   /** 当前用户由认证宿主提供，适配器不猜测也不写死身份。 */
   userId: string | number
   transport: GenerationTransport
+  /** SSE 路由不存在时，任务查询兜底的间隔。 */
+  pollIntervalMs?: number
 }
 
 interface ResponseEnvelope {
@@ -250,7 +252,7 @@ function mapActionResult(
   }
   return {
     type: 'complete_animation',
-    frames: orderedFrames.map(({ url, durationMs }) => ({ url, durationMs })),
+    frames: orderedFrames,
   }
 }
 
@@ -383,33 +385,80 @@ function parseEventData(data: string): unknown {
   }
 }
 
+function eventTaskId(value: Record<string, unknown>): number {
+  const taskId = value.task_id === undefined ? null : dtoPositiveInteger(value.task_id, 'task_id')
+  const id = value.id === undefined ? null : dtoPositiveInteger(value.id, 'id')
+  if (taskId !== null && id !== null && taskId !== id) {
+    throw new GenerationApiError('task_update 的 task_id 与 id 不一致', 200)
+  }
+  if (taskId === null && id === null) return dtoPositiveInteger(undefined, 'task_id')
+  return taskId ?? id!
+}
+
+function eventStatus(value: Record<string, unknown>, eventName: string): TaskStatus {
+  const impliedStatus =
+    eventName === 'completed' ? 'completed' : eventName === 'failed' ? 'failed' : null
+  if (value.status === undefined) {
+    if (impliedStatus) return impliedStatus
+    if (eventName === 'progress') return 'running'
+  }
+  const status = taskStatus(value.status)
+  if (impliedStatus && status !== impliedStatus) {
+    throw new GenerationApiError(`SSE ${eventName} 事件与 status=${status} 不一致`, 200)
+  }
+  return status
+}
+
+function waitForPoll(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (delayMs <= 0 || signal.aborted) return Promise.resolve()
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', finish)
+      resolve()
+    }
+    const timer = setTimeout(finish, delayMs)
+    signal.addEventListener('abort', finish, { once: true })
+  })
+}
+
 function mapEvent<TType extends GenerationType>(
   value: unknown,
   expectedProjectId: number,
   expectedUserId: number,
   expectedTaskId: number,
   expectation: Extract<GenerationExpectation, { type: TType }>,
+  eventName: string,
 ): GenerationEvent<TType> {
   if (!isRecord(value)) throw new GenerationApiError('task_update 不是对象', 200)
-  // 后端 PR #34 推送完整 GenerationTask，标识字段是数字 id；前端统一转为字符串 taskId。
-  const taskId = dtoPositiveInteger(value.id, 'id')
+  const taskId = eventTaskId(value)
   if (taskId !== expectedTaskId) {
     throw new GenerationApiError(`task_update ID 与订阅的 ${expectedTaskId} 不一致`, 200)
   }
   if (backendTaskType(value.task_type) !== expectedBackendType(expectation.type)) {
     throw new GenerationApiError(`task_update 类型与 ${expectation.type} 不匹配`, 200)
   }
-  if (dtoPositiveInteger(value.project_id, 'project_id') !== expectedProjectId) {
+  if (
+    value.project_id !== undefined &&
+    dtoPositiveInteger(value.project_id, 'project_id') !== expectedProjectId
+  ) {
     throw new GenerationApiError('task_update 不属于当前项目', 200)
   }
-  if (dtoPositiveInteger(value.user_id, 'user_id') !== expectedUserId) {
+  if (
+    value.user_id !== undefined &&
+    dtoPositiveInteger(value.user_id, 'user_id') !== expectedUserId
+  ) {
     throw new GenerationApiError('task_update 不属于当前用户', 200)
   }
-  const inputPayload = dtoNullableRecord(value.input_payload, 'input_payload')
-  validateInputPayload(inputPayload, expectation)
-  const status = taskStatus(value.status)
-  const result = dtoNullableRecord(value.result, 'result')
-  const error = dtoNullableString(value.error_message, 'error_message')
+  if (value.input_payload !== undefined) {
+    validateInputPayload(dtoNullableRecord(value.input_payload, 'input_payload'), expectation)
+  }
+  const status = eventStatus(value, eventName)
+  const result = value.result === undefined ? null : dtoNullableRecord(value.result, 'result')
+  const error =
+    value.error_message === undefined
+      ? null
+      : dtoNullableString(value.error_message, 'error_message')
   validateStatusError(status, error)
   return {
     taskId: String(taskId),
@@ -429,6 +478,10 @@ function mapEvent<TType extends GenerationType>(
 export function createGenerationApis(config: GenerationApiConfig): GenerationApis {
   const userId = inputPositiveInteger(config.userId, 'userId')
   const { request, stream } = config.transport
+  const pollIntervalMs = config.pollIntervalMs ?? 1_000
+  if (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 0) {
+    throw new GenerationApiError('pollIntervalMs 必须是非负数')
+  }
   const expectations = new Map<string, GenerationExpectation>()
 
   async function post<TType extends GenerationType>(
@@ -529,27 +582,71 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
         typeof expectationOrOnEvent === 'function'
           ? () => undefined
           : (maybeOnError ?? (() => undefined))
-      return stream(
+      const pollingController = new AbortController()
+      let polling = false
+      let stopStream: () => void = () => undefined
+
+      const pollUntilTerminal = async () => {
+        if (polling) return
+        polling = true
+        while (!pollingController.signal.aborted) {
+          try {
+            const generation = await apis.get(projectId, id, expectation)
+            if (pollingController.signal.aborted) return
+            onEvent({
+              taskId: generation.id,
+              type: generation.type,
+              status: generation.status,
+              result: generation.result,
+              error: generation.error,
+            } as GenerationEvent)
+            if (generation.status === 'completed' || generation.status === 'failed') return
+          } catch (cause) {
+            if (!pollingController.signal.aborted) {
+              onError(cause instanceof Error ? cause : new GenerationApiError('任务轮询失败'))
+            }
+            return
+          }
+          await waitForPoll(pollIntervalMs, pollingController.signal)
+        }
+      }
+
+      stopStream = stream(
         endpoint(
           config.baseUrl,
           `/generation/tasks/${numericTaskId}/stream?project_id=${numericProjectId}`,
         ),
         {
-          eventName: 'task_update',
-          onEvent(data) {
+          eventName: ['task_update', 'progress', 'completed', 'failed'],
+          onEvent(data, eventName) {
             const event = mapEvent(
               parseEventData(data),
               numericProjectId,
               userId,
               numericTaskId,
               expectation,
+              eventName,
             )
             onEvent(event as GenerationEvent)
             return event.status === 'completed' || event.status === 'failed'
           },
-          onError,
+          onError(error) {
+            if (
+              error instanceof EventStreamError &&
+              (error.status === 404 || error.status === 405 || error.status === 501)
+            ) {
+              stopStream()
+              void pollUntilTerminal()
+              return
+            }
+            onError(error)
+          },
         },
       )
+      return () => {
+        stopStream()
+        pollingController.abort()
+      }
     },
   }
 
