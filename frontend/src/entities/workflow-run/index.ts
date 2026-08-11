@@ -44,6 +44,8 @@ interface WorkflowNodeBase {
 }
 
 export interface WorkflowCharacterInput {
+  /** 用户填写或后端提取的最终角色名称；旧数据可以没有该字段。 */
+  name?: string | null
   prompt: string
   referenceMedia: readonly MediaReference[]
 }

@@ -238,6 +238,24 @@ describe('workflowRunApis', () => {
     })
   })
 
+  it('拒绝超过 20 个字符的角色名称', async () => {
+    const apis = await loadWorkflowRunApis(async () =>
+      jsonResponse({
+        ...workflowRunDto,
+        nodes: nodes.map((node) =>
+          node.type === 'character-setup'
+            ? { ...node, input: { ...node.input, name: 'x'.repeat(21) } }
+            : node,
+        ),
+      }),
+    )
+
+    await expect(apis.get('17')).rejects.toMatchObject({
+      name: 'ApiError',
+      kind: 'invalid-response',
+    })
+  })
+
   it('rejects an empty deletion marker instead of treating it as archived history', async () => {
     const apis = await loadWorkflowRunApis(async () =>
       jsonResponse({

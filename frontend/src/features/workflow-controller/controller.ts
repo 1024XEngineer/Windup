@@ -72,6 +72,7 @@ export interface WorkflowController {
   getWorkflow(): WorkflowRun
   subscribe(listener: (workflow: WorkflowRun) => void): () => void
 
+  setCharacterName(nodeId: CharacterSetupWorkflowNode['id'], name: string | null): Promise<void>
   addAction(input: AddActionInput): Promise<void>
   generateCharacterTemplate(
     nodeId: CharacterSetupWorkflowNode['id'],
@@ -213,6 +214,27 @@ export function createWorkflowController({
 
   function getWorkflow() {
     return snapshot()
+  }
+
+  function setCharacterName(
+    nodeId: CharacterSetupWorkflowNode['id'],
+    name: string | null,
+  ): Promise<WorkflowRun> {
+    ensureRunning()
+    const normalizedName = name?.trim() || null
+    if (normalizedName && normalizedName.length > 20) {
+      throw new Error('角色名称不能超过 20 个字符')
+    }
+    return persist((run) =>
+      updateNode(run, nodeId, (node) => {
+        if (node.type !== 'character-setup') throw new Error('目标节点不是角色设定')
+        if (node.input.name === normalizedName) return run
+        return replaceNode(run, {
+          ...node,
+          input: { ...node.input, name: normalizedName },
+        })
+      }),
+    )
   }
 
   function addAction({ nodeId = createId(), dependsOnNodeIds, input }: AddActionInput) {
@@ -830,6 +852,7 @@ export function createWorkflowController({
     create: asCommand(create),
     getWorkflow,
     subscribe,
+    setCharacterName: asCommand(setCharacterName),
     addAction: asCommand(addAction),
     generateCharacterTemplate: asCommand(generateCharacterTemplate),
     confirmCharacterTemplate: asCommand(confirmCharacterTemplate),
