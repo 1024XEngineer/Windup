@@ -265,6 +265,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
         ? projectCanvas({
             run,
             controller: session.controller,
+            confirmCharacterTemplate: session.confirmCharacterTemplate,
             publishReviewedAction: session.publishReviewedAction,
             project: session.project,
             character,
@@ -435,6 +436,10 @@ function FitViewOnNodeSetChange({ nodeIds }: { nodeIds: string[] }) {
 interface ProjectionInput {
   run: WorkflowRun
   controller: WorkflowController
+  confirmCharacterTemplate(
+    nodeId: CharacterTemplateWorkflowNode['id'],
+    selectedImageUrl: string,
+  ): Promise<Character>
   publishReviewedAction(reviewNodeId: ReviewWorkflowNode['id']): Promise<Character>
   project: Project
   character: Character | null
@@ -635,9 +640,10 @@ function CharacterTemplateContent({
           className={CARD_BUTTON}
           disabled={!selectedImageUrl || branchBusy}
           onClick={() =>
-            input.runCommand(branchKey, () =>
-              input.controller.confirmCharacterTemplate(node.id, selectedImageUrl!),
-            )
+            input.runCommand(branchKey, async () => {
+              const character = await input.confirmCharacterTemplate(node.id, selectedImageUrl!)
+              input.setCharacter(character)
+            })
           }
         >
           确认身份母版

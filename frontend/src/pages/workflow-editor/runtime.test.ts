@@ -43,6 +43,7 @@ describe('createRealWorkflowEditorSession', () => {
           page: 2,
           pageSize: 100,
         }),
+      create: vi.fn(),
       update: vi.fn(),
     }
 
@@ -80,6 +81,7 @@ describe('createRealWorkflowEditorSession', () => {
         page: 1,
         pageSize: 100,
       }),
+      create: vi.fn(),
       update: vi.fn(),
     }
 
@@ -126,6 +128,7 @@ describe('createRealWorkflowEditorSession', () => {
           page: 1,
           pageSize: 100,
         }),
+        create: vi.fn(),
         update: vi.fn(),
       },
       onAsyncError,
@@ -144,6 +147,67 @@ describe('createRealWorkflowEditorSession', () => {
       expect.objectContaining({ message: '异步保存回调失败' }),
     )
     expect(pageError).toHaveBeenCalledWith(expect.objectContaining({ message: '异步保存回调失败' }))
+  })
+
+  it('确认身份母版时为尚未绑定角色的 WorkflowRun 创建 Character 和默认造型', async () => {
+    const workflow = selectingCharacterTemplateWorkflowFixture()
+    const create = vi.fn().mockResolvedValue(characterFixture())
+    const update = vi.fn(async (character: Character) => structuredClone(character))
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(workflow),
+        update: vi.fn(async (run) => ({ ...structuredClone(run), version: run.version + 1 })),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn(),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({
+          items: [],
+          total: 0,
+          page: 1,
+          pageSize: 100,
+        }),
+        create,
+        update,
+      },
+      onAsyncError: vi.fn(),
+    })
+
+    const character = await session.confirmCharacterTemplate(
+      'template',
+      'https://assets.windup.test/master.png',
+    )
+
+    expect(create).toHaveBeenCalledWith({
+      projectId: '1',
+      workflowRunId: '42',
+      description: '冒险家',
+      referenceImageUrl: 'https://assets.windup.test/master.png',
+    })
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: '9',
+        outfits: [
+          expect.objectContaining({
+            id: 'outfit-default',
+            characterId: '9',
+            name: '常态造型',
+            previewUrl: 'https://assets.windup.test/master.png',
+            actions: [],
+          }),
+        ],
+      }),
+    )
+    expect(character.outfits).toHaveLength(1)
+    expect(
+      session.controller.getWorkflow().nodes.find((node) => node.id === 'template'),
+    ).toMatchObject({ status: 'passed', phase: 'completed' })
   })
 
   it('发布 Character 动作资产后由调用方单独推进审核节点', async () => {
@@ -172,6 +236,7 @@ describe('createRealWorkflowEditorSession', () => {
           page: 1,
           pageSize: 100,
         }),
+        create: vi.fn(),
         update: vi.fn(async (character) => {
           events.push('publish')
           return structuredClone(character)
@@ -273,6 +338,37 @@ function characterWithOutfitFixture(): Character {
         description: null,
         previewUrl: null,
         actions: [],
+      },
+    ],
+  }
+}
+
+function selectingCharacterTemplateWorkflowFixture(): WorkflowRun {
+  return {
+    id: '42',
+    projectId: '1',
+    version: 4,
+    storageStatus: 'active',
+    nodes: [
+      {
+        id: 'setup',
+        type: 'character-setup',
+        status: 'passed',
+        phase: 'completed',
+        dependsOnNodeIds: [],
+        generations: [],
+        error: null,
+        input: { prompt: '冒险家', referenceMedia: [] },
+      },
+      {
+        id: 'template',
+        type: 'character-template',
+        status: 'active',
+        phase: 'selecting',
+        dependsOnNodeIds: ['setup'],
+        generations: [{ taskId: 'character-task', role: 'character_template' }],
+        error: null,
+        selectedImageUrl: null,
       },
     ],
   }
