@@ -71,10 +71,10 @@ export function createCharacterAssetPublisher(
         loop: firstFrameNode.input.type === 'idle' || firstFrameNode.input.type === 'walk',
         fps: firstFrameNode.input.fps,
         frameCount: generation.result.frames.length,
-        frames: generation.result.frames.map((frame, index) => ({
-          index,
+        frames: generation.result.frames.map((frame) => ({
+          index: frame.index,
           imageUrl: frame.url,
-          durationMs: null,
+          durationMs: frame.durationMs,
         })),
       }
       const targetOutfit = character.outfits[outfitIndex]!

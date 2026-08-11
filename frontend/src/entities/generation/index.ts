@@ -24,6 +24,11 @@ export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed'
  */
 export type GenerationType = 'character_template' | 'first_frame' | 'complete_animation'
 
+export type GenerationExpectation =
+  | { type: 'character_template' }
+  | { type: 'first_frame'; actionType: ActionType }
+  | { type: 'complete_animation'; actionType: ActionType }
+
 interface GenerationInputBase {
   projectId: string
   /** 可选参考媒体；没有参考图时传空数组。 */
@@ -71,6 +76,12 @@ export interface GeneratedImage {
   url: string
 }
 
+/** 后端动作帧字段完整映射，不能用数组位置覆盖服务端 index。 */
+export interface GeneratedFrame extends GeneratedImage {
+  index: number
+  durationMs: number | null
+}
+
 /** 结果按 type 分别定义，不共用一个 urls 数组。 */
 export interface CharacterTemplateGenerationResult {
   type: 'character_template'
@@ -82,10 +93,9 @@ export interface FirstFrameGenerationResult {
   image: GeneratedImage
 }
 
-/** 帧顺序由数组位置表达。 */
 export interface CompleteAnimationGenerationResult {
   type: 'complete_animation'
-  frames: readonly GeneratedImage[]
+  frames: readonly GeneratedFrame[]
 }
 
 export type GenerationResult =
@@ -141,10 +151,25 @@ export interface GenerationApis {
    * projectId 不能从 id 推导，后端查询接口要求两者同时传入。
    */
   get(projectId: Generation['projectId'], id: Generation['id']): Promise<Generation>
+  get<TType extends GenerationType>(
+    projectId: Generation['projectId'],
+    id: Generation['id'],
+    expectation: Extract<GenerationExpectation, { type: TType }>,
+  ): Promise<Generation<TType>>
   /** 订阅状态变化，返回取消订阅函数。 */
   subscribe(
     projectId: Generation['projectId'],
     id: Generation['id'],
     onEvent: (event: GenerationEvent) => void,
   ): () => void
+  subscribe<TType extends GenerationType>(
+    projectId: Generation['projectId'],
+    id: Generation['id'],
+    expectation: Extract<GenerationExpectation, { type: TType }>,
+    onEvent: (event: GenerationEvent<TType>) => void,
+    onError: (error: Error) => void,
+  ): () => void
 }
+
+export { createGenerationApis, GenerationApiError } from './api'
+export type { GenerationApiConfig, GenerationTransport } from './api'

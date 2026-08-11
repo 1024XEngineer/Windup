@@ -32,6 +32,7 @@ export { characterApis } from './character'
 export type { ActionTemplate, ActionTemplateApis } from './action-template'
 
 /* 生成 —— 业务数据，不是「调用生成能力」 */
+export { createGenerationApis, GenerationApiError } from './generation/api'
 export type {
   CharacterTemplateGenerationInput,
   CharacterTemplateGenerationResult,
@@ -43,12 +44,14 @@ export type {
   Generation,
   GenerationApis,
   GenerationEvent,
+  GenerationExpectation,
   GenerationInput,
   GenerationResult,
   GenerationResultFor,
   GenerationType,
   TaskStatus,
 } from './generation'
+export type { GenerationApiConfig, GenerationTransport } from './generation/api'
 
 /* 媒体上传 —— 页面只依赖公开工厂与不透明引用，不处理 multipart 协议。 */
 export { createMediaApis } from './media/api'

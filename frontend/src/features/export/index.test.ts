@@ -54,8 +54,8 @@ describe('Character asset publisher', () => {
         fps: 12,
         frameCount: 2,
         frames: [
-          { index: 0, imageUrl: 'https://assets.windup.test/walk-01.png', durationMs: null },
-          { index: 1, imageUrl: 'https://assets.windup.test/walk-02.png', durationMs: null },
+          { index: 0, imageUrl: 'https://assets.windup.test/walk-01.png', durationMs: 125 },
+          { index: 1, imageUrl: 'https://assets.windup.test/walk-02.png', durationMs: 80 },
         ],
       },
     ])
@@ -246,8 +246,8 @@ function completeAnimationFixture(): Generation<'complete_animation'> {
     result: {
       type: 'complete_animation',
       frames: [
-        { url: 'https://assets.windup.test/walk-01.png' },
-        { url: 'https://assets.windup.test/walk-02.png' },
+        { index: 0, url: 'https://assets.windup.test/walk-01.png', durationMs: 125 },
+        { index: 1, url: 'https://assets.windup.test/walk-02.png', durationMs: 80 },
       ],
     },
   }

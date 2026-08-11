@@ -39,7 +39,6 @@ class ProjectOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    user_id: int
     workflow_id: int | None
     project_name: str
     character_perspective: int
@@ -64,7 +63,8 @@ def create_project(
     ):
         logger.warning(
             "[WINDUP] 创建拒绝-名称重复 | user_id=%s project_name=%s",
-            user_id, body.project_name,
+            user_id,
+            body.project_name,
         )
         raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST)
     try:
@@ -72,7 +72,8 @@ def create_project(
     except IntegrityError:
         logger.warning(
             "[WINDUP] 创建拒绝-并发冲突 | user_id=%s project_name=%s",
-            user_id, body.project_name,
+            user_id,
+            body.project_name,
         )
         session.rollback()
         raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST) from None

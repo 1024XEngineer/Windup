@@ -1,7 +1,6 @@
 /** 后端 ProjectOut 的形状；写死成显式类型，免得 fixture 的字面量把可空字段收窄。 */
 interface ProjectDto {
   id: number
-  user_id: number
   workflow_id: number | null
   project_name: string
   character_perspective: number
@@ -17,7 +16,6 @@ interface ProjectDto {
 const projectDtos: ProjectDto[] = [
   {
     id: 42,
-    user_id: 7,
     workflow_id: null,
     project_name: '点灯人 · MVP',
     character_perspective: 1,
@@ -31,7 +29,6 @@ const projectDtos: ProjectDto[] = [
   },
   {
     id: 99,
-    user_id: 7,
     workflow_id: null,
     project_name: '空白海岸',
     character_perspective: 2,
@@ -224,8 +221,6 @@ export function createProjectAssetsBackend({
       }
       const created = {
         id: 4_242,
-        // 后端从 access token 取归属，请求体里没有 user_id；这里跟 fixture 用同一个用户。
-        user_id: 7,
         workflow_id: body.workflow_id ?? null,
         project_name: body.project_name,
         character_perspective: body.character_perspective,

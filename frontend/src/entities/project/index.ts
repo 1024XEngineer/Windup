@@ -4,7 +4,6 @@ import type { Paged, PageQuery } from '@/shared/pagination'
 /** Project 前端领域形状；字段名由本模块显式映射后端 ProjectOut。 */
 export interface Project {
   id: string
-  ownerId: string
   workflowId: string | null
   name: string
   perspective: CharacterPerspective
@@ -18,8 +17,7 @@ export interface Project {
 
 /**
  * 后端创建 Project 需要的完整字段。
- * 这里没有 ownerId：归属由后端从 access token 里取（`ProjectCreate` 不含 user_id），
- * 请求体再带一个用户 ID 就等于宣称调用方可以替别人建项目。
+ * 项目归属由后端从 access token 读取，不进入前端请求契约。
  */
 export interface CreateProjectInput {
   workflowId?: string | null
@@ -31,10 +29,7 @@ export interface CreateProjectInput {
   sampleImageUrl?: string | null
 }
 
-export interface ProjectPageQuery extends PageQuery {
-  /** 对应后端 user_id；后端按登录用户强制隔离前保持可选。 */
-  ownerId?: string
-}
+export type ProjectPageQuery = PageQuery
 
 /** 后端 character_perspective: 1 横版 / 2 俯视 / 3 2.5D。 */
 export type CharacterPerspective = 'side' | 'top-down' | 'isometric'
@@ -64,7 +59,6 @@ export interface ProjectApis {
 
 interface ProjectDto {
   id: number
-  user_id: number
   workflow_id: number | null
   project_name: string
   character_perspective: number
@@ -119,7 +113,6 @@ function toBackendId(value: string, field: string): number {
 function mapProject(dto: ProjectDto): Project {
   return {
     id: String(dto.id),
-    ownerId: String(dto.user_id),
     workflowId: dto.workflow_id === null ? null : String(dto.workflow_id),
     name: dto.project_name,
     perspective: mapEnumValue(
@@ -150,7 +143,6 @@ export const projectApis: ProjectApis = {
       query: {
         page: query.page,
         page_size: query.pageSize,
-        user_id: query.ownerId ? toBackendId(query.ownerId, 'ownerId') : undefined,
       },
     })
     return { ...result, items: result.items.map(mapProject) }

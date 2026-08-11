@@ -978,8 +978,8 @@ function completeAnimationGeneration(): Generation<'complete_animation'> {
     result: {
       type: 'complete_animation',
       frames: [
-        { url: 'https://assets.windup.test/walk-01.png' },
-        { url: 'https://assets.windup.test/walk-02.png' },
+        { index: 0, url: 'https://assets.windup.test/walk-01.png', durationMs: 100 },
+        { index: 1, url: 'https://assets.windup.test/walk-02.png', durationMs: null },
       ],
     },
     error: null,
@@ -1036,7 +1036,6 @@ function deferred<T>(): Deferred<T> {
 function projectFixture(): Project {
   return {
     id: '1',
-    ownerId: '7',
     workflowId: null,
     name: '正式项目',
     perspective: 'side',
