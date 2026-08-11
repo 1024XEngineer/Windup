@@ -73,6 +73,53 @@ const ACTION_PRESET_HINT = '预设动作 · 逐帧生成'
 /** 角色设定与身份母版为所有动作分支共用，归在这条虚拟分支下。 */
 const SHARED_BRANCH = 'shared'
 
+/*
+  卡片内部复用三次以上的样式串。原来靠 .workflow-card button 这类后代选择器统一施加，
+  搬成工具类后写在这里，好处是能看见哪些元素共用同一套外观，而不是被选择器隐式波及。
+  nodrag/nopan/nowheel 是 React Flow 的约定类：让卡片内的交互不被画布手势吞掉。
+*/
+const CARD_STACK = 'grid gap-[17px] nodrag nopan nowheel'
+
+const CARD_BUTTON =
+  'min-h-[42px] rounded-lg border border-[#34533d] bg-[#34533d] px-3 py-[9px] text-[11px] ' +
+  'font-[750] text-[#edf4ee] enabled:hover:border-[#263f2e] enabled:hover:bg-[#263f2e] ' +
+  'aria-pressed:border-[#263f2e] aria-pressed:bg-[#263f2e] disabled:cursor-not-allowed ' +
+  'disabled:border-[#e2e5e1] disabled:bg-[#e2e5e1] disabled:text-[#969d97]'
+
+/** 缩略图按钮：沿用卡片按钮的尺寸约定，但换成浅底，让图片自己当主角。 */
+const THUMB_BUTTON =
+  'min-h-[42px] rounded-lg border border-[var(--editor-line)] bg-[#fbfcfb] p-1 ' +
+  'aria-pressed:border-[var(--editor-ink)] aria-pressed:bg-white ' +
+  'aria-pressed:shadow-[0_0_0_2px_rgb(31_35_41_/_12%)] disabled:cursor-not-allowed'
+
+const THUMB_IMAGE = 'block aspect-square w-full rounded-lg object-cover'
+
+/** 已确认的母版/首帧：像素资产按原样放大，不做平滑。 */
+const MASTER_IMAGE =
+  'block aspect-square w-full rounded-xl border border-[var(--editor-line)] bg-[#f6f7f6] ' +
+  'object-cover [image-rendering:pixelated]'
+
+const CARD_SUMMARY =
+  'm-0 rounded-[10px] border border-[var(--editor-line)] bg-[#f6f7f6] px-3 py-2.5 ' +
+  'text-[11px] leading-[1.6] text-[var(--editor-muted)]'
+
+const CARD_TEXT = 'm-0 text-[11px] leading-[1.6] text-[var(--editor-muted)]'
+
+/** 加号菜单里的条目：撑满菜单宽度的两行文字，跟卡片主按钮完全不同。 */
+const MENU_ITEM =
+  'flex min-h-0 cursor-pointer flex-col gap-0.5 border-0 px-3 py-[9px] text-left ' +
+  'text-[var(--editor-ink)] not-first:border-t not-first:border-t-[rgb(31_35_41_/_6%)] ' +
+  'enabled:hover:bg-[#f2f4f2] disabled:cursor-not-allowed disabled:opacity-45'
+
+/**
+ * 菜单里的头一条：返回上一级，或 root 层的主入口。比其余条目弱一档，
+ * 原样式靠 :first-child 选择器实现，这里改成显式挂类，位置换了也不会失灵。
+ */
+const MENU_ITEM_LEAD = 'font-medium text-[var(--editor-muted)]'
+
+const MENU_ITEM_TITLE = 'text-xs font-semibold'
+const MENU_ITEM_HINT = 'text-[10px] text-[var(--editor-muted)]'
+
 const nodeTypes = { 'workflow-card': WorkflowCard }
 
 /**
@@ -338,7 +385,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
           ) : null}
         </div>
       ) : null}
-      <section className="workflow-editor-canvas" aria-label="WorkflowRun 画布">
+      <section className="workflow-editor-canvas absolute inset-0" aria-label="WorkflowRun 画布">
         <ReactFlow<WorkflowCardNode>
           nodes={canvasNodes}
           edges={projected.edges}
@@ -481,9 +528,9 @@ function CharacterSetupContent({
   useEffect(() => setPrompt(node.input.prompt), [node.id, node.input.prompt])
 
   if (node.status === 'failed') return <StatusText node={node} input={input} />
-  if (node.status === 'passed') return <p className="workflow-card__summary">角色描述已确认</p>
+  if (node.status === 'passed') return <p className={CARD_SUMMARY}>角色描述已确认</p>
   return (
-    <div className="workflow-card__stack nodrag nopan nowheel">
+    <div className={CARD_STACK}>
       <label className="grid gap-[7px]">
         <span className="text-[9px] font-[750] text-[#626b64]">角色描述</span>
         <textarea
@@ -502,6 +549,7 @@ function CharacterSetupContent({
       </label>
       <button
         type="button"
+        className={CARD_BUTTON}
         disabled={branchBusy || !prompt.trim()}
         onClick={() =>
           input.runCommand(branchKey, () =>
@@ -537,7 +585,7 @@ function CharacterTemplateContent({
     return (
       <button
         type="button"
-        className="nodrag nopan nowheel"
+        className={`${CARD_BUTTON} nodrag nopan nowheel`}
         disabled={!setupNode || branchBusy}
         onClick={() => {
           if (!setupNode) return
@@ -559,13 +607,13 @@ function CharacterTemplateContent({
     const selectedImageUrl =
       images.find((image) => image.url === input.selectedImages[node.id])?.url ?? null
     return (
-      <div className="workflow-card__stack nodrag nopan nowheel">
+      <div className={CARD_STACK}>
         <div className="grid grid-cols-2 gap-[7px]">
           {images.map((image, index) => (
             <button
               type="button"
               key={image.url}
-              className="workflow-first-frame"
+              className={THUMB_BUTTON}
               aria-label={`选择角色候选 ${index + 1}`}
               aria-pressed={selectedImageUrl === image.url}
               onClick={() =>
@@ -575,12 +623,13 @@ function CharacterTemplateContent({
                 }))
               }
             >
-              <img src={image.url} alt={`角色候选 ${index + 1}`} />
+              <img className={THUMB_IMAGE} src={image.url} alt={`角色候选 ${index + 1}`} />
             </button>
           ))}
         </div>
         <button
           type="button"
+          className={CARD_BUTTON}
           disabled={!selectedImageUrl || branchBusy}
           onClick={() =>
             input.runCommand(branchKey, () =>
@@ -595,8 +644,8 @@ function CharacterTemplateContent({
   }
   if (node.status === 'passed' && node.selectedImageUrl) {
     return (
-      <div className="workflow-card__stack nodrag nopan nowheel">
-        <img className="workflow-master-image" src={node.selectedImageUrl} alt="已确认身份母版" />
+      <div className={CARD_STACK}>
+        <img className={MASTER_IMAGE} src={node.selectedImageUrl} alt="已确认身份母版" />
         <span className="text-center text-[11px] text-[var(--editor-muted)]">身份已锁定</span>
         <button
           type="button"
@@ -629,9 +678,10 @@ function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templat
 
   if (input.actionMenuLevel === 'root') {
     return (
-      <div className="workflow-action-menu">
+      <div className="contents">
         <button
           type="button"
+          className={`${MENU_ITEM} ${MENU_ITEM_LEAD}`}
           disabled={outfits.length === 0 || branchBusy}
           onClick={() => {
             if (outfits.length === 1) {
@@ -642,15 +692,15 @@ function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templat
             input.setActionMenuLevel('outfits')
           }}
         >
-          <b>生成动作 ›</b>
+          <b className={MENU_ITEM_TITLE}>生成动作 ›</b>
         </button>
-        <button type="button" disabled>
-          <b>生成静态资产</b>
-          <small>本期不做，需单独提案</small>
+        <button type="button" className={MENU_ITEM} disabled>
+          <b className={MENU_ITEM_TITLE}>生成静态资产</b>
+          <small className={MENU_ITEM_HINT}>本期不做，需单独提案</small>
         </button>
-        <button type="button" disabled>
-          <b>导出</b>
-          <small>完成审核后打包动作</small>
+        <button type="button" className={MENU_ITEM} disabled>
+          <b className={MENU_ITEM_TITLE}>导出</b>
+          <small className={MENU_ITEM_HINT}>完成审核后打包动作</small>
         </button>
       </div>
     )
@@ -658,22 +708,27 @@ function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templat
 
   if (input.actionMenuLevel === 'outfits') {
     return (
-      <div className="workflow-action-menu">
-        <button type="button" onClick={() => input.setActionMenuLevel('root')}>
+      <div className="contents">
+        <button
+          type="button"
+          className={`${MENU_ITEM} ${MENU_ITEM_LEAD}`}
+          onClick={() => input.setActionMenuLevel('root')}
+        >
           ← 选择造型
         </button>
         {outfits.map((outfit) => (
           <button
             type="button"
             key={outfit.id}
+            className={MENU_ITEM}
             aria-label={`选择造型 ${outfit.name}`}
             onClick={() => {
               input.setSelectedOutfitId(outfit.id)
               input.setActionMenuLevel('actions')
             }}
           >
-            <b>{outfit.name}</b>
-            <small>{outfit.description ?? '使用此造型生成动作'}</small>
+            <b className={MENU_ITEM_TITLE}>{outfit.name}</b>
+            <small className={MENU_ITEM_HINT}>{outfit.description ?? '使用此造型生成动作'}</small>
           </button>
         ))}
       </div>
@@ -681,9 +736,10 @@ function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templat
   }
 
   return (
-    <div className="workflow-action-menu">
+    <div className="contents">
       <button
         type="button"
+        className={`${MENU_ITEM} ${MENU_ITEM_LEAD}`}
         onClick={() => input.setActionMenuLevel(outfits.length > 1 ? 'outfits' : 'root')}
       >
         ← 生成动作
@@ -692,6 +748,7 @@ function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templat
         <button
           type="button"
           key={preset.type}
+          className={MENU_ITEM}
           disabled={!selectedOutfit || branchBusy}
           onClick={() => {
             if (!selectedOutfit) return
@@ -712,13 +769,13 @@ function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templat
             input.setSelectedOutfitId(null)
           }}
         >
-          <b>{preset.label}</b>
-          <small>{ACTION_PRESET_HINT}</small>
+          <b className={MENU_ITEM_TITLE}>{preset.label}</b>
+          <small className={MENU_ITEM_HINT}>{ACTION_PRESET_HINT}</small>
         </button>
       ))}
-      <button type="button" disabled title="当前页面尚未提供动作描述输入">
-        <b>自定义动作</b>
-        <small>描述输入尚未开放</small>
+      <button type="button" className={MENU_ITEM} disabled title="当前页面尚未提供动作描述输入">
+        <b className={MENU_ITEM_TITLE}>自定义动作</b>
+        <small className={MENU_ITEM_HINT}>描述输入尚未开放</small>
       </button>
     </div>
   )
@@ -739,13 +796,14 @@ function FirstFrameContent({
   if (node.phase === 'configuring') {
     const character = characterOwningOutfit(input.character, node.input.outfitId)
     return (
-      <div className="workflow-card__stack nodrag nopan nowheel">
-        <p>
+      <div className={CARD_STACK}>
+        <p className={CARD_TEXT}>
           {node.input.name} · {node.input.fps} FPS
         </p>
-        <p>{node.input.prompt ?? '无额外动作描述'}</p>
+        <p className={CARD_TEXT}>{node.input.prompt ?? '无额外动作描述'}</p>
         <button
           type="button"
+          className={CARD_BUTTON}
           disabled={!character || branchBusy}
           onClick={() => {
             if (!character) return
@@ -765,10 +823,10 @@ function FirstFrameContent({
   if (node.phase === 'selecting' && image) {
     const selectedImageUrl = input.selectedImages[node.id] === image.url ? image.url : null
     return (
-      <div className="workflow-card__stack nodrag nopan nowheel">
+      <div className={CARD_STACK}>
         <button
           type="button"
-          className="workflow-first-frame"
+          className={THUMB_BUTTON}
           aria-label="选择动作首帧"
           aria-pressed={selectedImageUrl === image.url}
           onClick={() =>
@@ -778,10 +836,11 @@ function FirstFrameContent({
             }))
           }
         >
-          <img src={image.url} alt="动作首帧候选" />
+          <img className={THUMB_IMAGE} src={image.url} alt="动作首帧候选" />
         </button>
         <button
           type="button"
+          className={CARD_BUTTON}
           disabled={!selectedImageUrl || branchBusy}
           onClick={() =>
             input.runCommand(branchKey, () =>
@@ -795,13 +854,7 @@ function FirstFrameContent({
     )
   }
   if (node.phase === 'completed' && node.selectedFirstFrameUrl) {
-    return (
-      <img
-        className="workflow-master-image"
-        src={node.selectedFirstFrameUrl}
-        alt="已确认动作首帧"
-      />
-    )
+    return <img className={MASTER_IMAGE} src={node.selectedFirstFrameUrl} alt="已确认动作首帧" />
   }
   return <StatusText node={node} input={input} />
 }
@@ -816,12 +869,13 @@ function MethodContent({
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
   if (node.status === 'failed') return <StatusText node={node} input={input} />
-  if (node.phase === 'completed') return <p className="workflow-card__summary">视频裁剪</p>
+  if (node.phase === 'completed') return <p className={CARD_SUMMARY}>视频裁剪</p>
   if (node.status !== 'active') return <StatusText node={node} input={input} />
   return (
-    <div className="workflow-card__stack nodrag nopan nowheel">
+    <div className={CARD_STACK}>
       <button
         type="button"
+        className={CARD_BUTTON}
         disabled={branchBusy}
         onClick={() =>
           input.runCommand(branchKey, () =>
@@ -831,7 +885,7 @@ function MethodContent({
       >
         视频裁剪
       </button>
-      <button type="button" disabled title="后端接口尚未提供">
+      <button type="button" className={CARD_BUTTON} disabled title="后端接口尚未提供">
         3D 转 2D · 尚未开放
       </button>
     </div>
@@ -862,7 +916,7 @@ function AnimationContent({
     return (
       <button
         type="button"
-        className="nodrag nopan nowheel"
+        className={`${CARD_BUTTON} nodrag nopan nowheel`}
         disabled={!character || branchBusy}
         onClick={() => {
           if (!character) return
@@ -899,13 +953,14 @@ function ReviewContent({ node, input }: { node: ReviewWorkflowNode; input: Proje
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
   if (node.status === 'failed') return <StatusText node={node} input={input} />
-  if (node.phase === 'completed') return <p className="workflow-card__summary">审核已通过</p>
+  if (node.phase === 'completed') return <p className={CARD_SUMMARY}>审核已通过</p>
   if (node.status !== 'active') return <StatusText node={node} input={input} />
   return (
-    <div className="workflow-card__stack nodrag nopan nowheel">
-      <p>确认完整动画后完成本动作审核。</p>
+    <div className={CARD_STACK}>
+      <p className={CARD_TEXT}>确认完整动画后完成本动作审核。</p>
       <button
         type="button"
+        className={CARD_BUTTON}
         disabled={branchBusy}
         onClick={() =>
           input.runCommand(branchKey, async () => {
@@ -923,13 +978,21 @@ function ReviewContent({ node, input }: { node: ReviewWorkflowNode; input: Proje
 
 function WorkflowCard({ data }: NodeProps<WorkflowCardNode>) {
   return (
-    <article className={`workflow-card is-${data.status}`}>
+    <article
+      className={[
+        'w-[368px] overflow-visible rounded-xl border border-[var(--editor-line)] bg-[rgba(249,250,247,0.98)] shadow-[var(--editor-shadow)]',
+        data.status === 'failed' ? 'border-dashed' : 'border-solid',
+        data.status === 'locked' ? 'opacity-45' : '',
+      ].join(' ')}
+    >
       <Handle type="target" position={Position.Left} isConnectable={false} />
-      <header className="workflow-card__handle">
-        <span>{data.eyebrow}</span>
-        <strong>{data.title}</strong>
+      <header className="workflow-card__handle grid min-h-[62px] cursor-grab select-none content-center gap-0.5 rounded-t-[11px] bg-[#26352b] px-[18px] py-3 text-[#f2f5f1] active:cursor-grabbing">
+        <span className="text-[8px] font-extrabold tracking-[0.12em] text-[#aebcb1]">
+          {data.eyebrow}
+        </span>
+        <strong className="text-sm font-bold">{data.title}</strong>
       </header>
-      <div className="workflow-card__body">{data.content}</div>
+      <div className="rounded-b-[11px] bg-[rgba(249,250,247,0.98)] p-[21px]">{data.content}</div>
       <Handle type="source" position={Position.Right} isConnectable={false} />
     </article>
   )
@@ -942,12 +1005,13 @@ function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInpu
     input.resumeBlocked && node.status === 'active' && node.phase === 'generating'
   if (node.status === 'failed' || resumeBlocked) {
     return (
-      <div className="workflow-card__stack nodrag nopan nowheel">
-        <p className="workflow-card__summary">
+      <div className={CARD_STACK}>
+        <p className={CARD_SUMMARY}>
           {node.status === 'failed' ? (node.error ?? '生成失败') : '生成任务恢复失败'}
         </p>
         <button
           type="button"
+          className={CARD_BUTTON}
           disabled={branchBusy}
           onClick={() => {
             input.setSelectedImages({})
@@ -961,7 +1025,7 @@ function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInpu
   }
   const label =
     node.status === 'locked' ? '等待上游节点' : node.phase === 'generating' ? '生成中…' : '处理中…'
-  return <p className="workflow-card__summary">{label}</p>
+  return <p className={CARD_SUMMARY}>{label}</p>
 }
 
 function EditorBoundary({ message }: { message: string }) {

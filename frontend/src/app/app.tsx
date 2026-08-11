@@ -33,7 +33,7 @@ export function App() {
 
 function LazyWorkflowEditorPage() {
   return (
-    <Suspense fallback={<main aria-label="正在加载工作流编辑器" />}>
+    <Suspense fallback={<div aria-label="正在加载工作流编辑器" />}>
       <WorkflowEditorPage />
     </Suspense>
   )
