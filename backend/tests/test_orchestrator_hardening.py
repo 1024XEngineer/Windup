@@ -1,4 +1,10 @@
-"""编排层的五处加固（2026-08-10 机器审逮到，逐条锁死）。
+"""编排层的加固用例。
+
+EventBus 的键是 ``(project_id, task_id)``（主线 #110：同一 task_id 在不同项目下互不
+串流）。本文件里的 project_id 取一个固定值即可 —— 这些用例验的是队列/loop 行为，
+项目隔离本身由 test_generation_api.py 的专用用例覆盖。
+
+原始标题：编排层的五处加固（2026-08-10 机器审逮到，逐条锁死）。
 
 共同点：全部在**测试全绿的情况下**存在——注入桩的测试走不到真实装配路径，
 mock 的 EventBus 不涉及跨线程，请求模型的上界靠"没人会填大数"活着。
@@ -108,12 +114,15 @@ def test_terminal_states_publish_terminal_event_names(status, expected, monkeypa
     sent: list[str] = []
 
     class _Bus:
-        def publish(self, task_id, event, data):
+        def publish(self, project_id, task_id, event, data):
             sent.append(event)
 
     monkeypatch.setattr(R, "_event_bus", _Bus())
+    # 必须带 project_id：EventBus 按 (project_id, task_id) 索引，_publish_task_update
+    # 对 project_id 为空的任务会记 warning 并早退（发到没人听的键上等于静默失败）。
     R._publish_task_update(1, GenerationTask(
-        id=1, user_id=1, task_type=GenerationType.CHARACTER_ACTION, status=status,
+        id=1, user_id=1, project_id=42,
+        task_type=GenerationType.CHARACTER_ACTION, status=status,
     ))
     assert sent == [expected]
 
@@ -134,20 +143,28 @@ def test_publish_from_another_thread_delivers():
     诚实说明本用例的强度：它只证明跨线程发布**能到达**订阅者，**证不出**
     call_soon_threadsafe 是必需的 —— 实测在这个单队列场景里，裸 put_nowait
     跨线程也能被 get() 取到（CPython 的 Queue.get 在有元素时走快路径、不等唤醒）。
-    去掉 call_soon_threadsafe 本用例照样绿（2026-08-10 变异测试逮到）。
 
     call_soon_threadsafe 仍然要留：asyncio.Queue 的文档明说它不是线程安全的，
     上面那个"能取到"是实现细节而非保证——多个 waiter、队列非空判定与唤醒之间
     的竞态都可能让它失效。真正的保证由下一条用例（订阅记录 loop）间接锁住。
+
+    先等发布线程真的调完再取（用一个 future 同步），否则测的是"抢跑运气"而不是投递：
+    publish 走的是跨 loop 分支，marshal 回来要等 loop 一次迭代。
     """
     bus = _EventBus()
 
     async def scenario():
-        queue = await bus.subscribe(7)
-        threading.Thread(
-            target=bus.publish, args=(7, "completed", {"id": 7}), daemon=True,
-        ).start()
-        return await asyncio.wait_for(queue.get(), timeout=2.0)
+        queue = await bus.subscribe(42, 7)
+        loop = asyncio.get_running_loop()
+        published = loop.create_future()
+
+        def publish_from_thread():
+            bus.publish(42, 7, "completed", {"id": 7})
+            loop.call_soon_threadsafe(published.set_result, None)
+
+        threading.Thread(target=publish_from_thread, daemon=True).start()
+        await asyncio.wait_for(published, timeout=3.0)
+        return await asyncio.wait_for(queue.get(), timeout=3.0)
 
     event, data = asyncio.run(scenario())
     assert event == "completed" and data["id"] == 7
@@ -163,8 +180,8 @@ def test_subscription_records_its_owning_loop():
     bus = _EventBus()
 
     async def scenario():
-        q = await bus.subscribe(11)
-        subs = bus._queues["11"]
+        q = await bus.subscribe(42, 11)
+        subs = bus._queues[(42, 11)]
         assert len(subs) == 1
         queue, loop = subs[0]
         assert queue is q
@@ -180,13 +197,13 @@ def test_publish_to_a_closed_loop_is_dropped_not_raised():
     bus = _EventBus()
 
     async def sub():
-        return await bus.subscribe(9)
+        return await bus.subscribe(42, 9)
 
     loop = asyncio.new_event_loop()
     queue = loop.run_until_complete(sub())
     loop.close()
     assert queue is not None
-    bus.publish(9, "completed", {"id": 9})     # 不应抛
+    bus.publish(42, 9, "completed", {"id": 9})     # 不应抛
 
 
 def test_unsubscribe_removes_only_that_queue():
@@ -194,10 +211,10 @@ def test_unsubscribe_removes_only_that_queue():
     bus = _EventBus()
 
     async def scenario():
-        q1 = await bus.subscribe(3)
-        q2 = await bus.subscribe(3)
-        await bus.unsubscribe(3, q1)
-        bus.publish(3, "task_update", {"n": 1})
+        q1 = await bus.subscribe(42, 3)
+        q2 = await bus.subscribe(42, 3)
+        await bus.unsubscribe(42, 3, q1)
+        bus.publish(42, 3, "task_update", {"n": 1})
         got = await asyncio.wait_for(q2.get(), timeout=2.0)
         assert got[1]["n"] == 1
         assert q1.empty()
@@ -213,26 +230,26 @@ def test_num_images_is_bounded_at_the_contract_layer():
     绕过按请求计的限流，把成本拉到无上限。
     """
     with pytest.raises(ValueError):
-        CharacterImageGenerateRequest(prompt="x", num_images=10_000)
+        CharacterImageGenerateRequest(project_id=42, prompt="x", num_images=10_000)
     with pytest.raises(ValueError):
-        CharacterImageGenerateRequest(prompt="x", num_images=0)
-    assert CharacterImageGenerateRequest(prompt="x", num_images=2).num_images == 2
+        CharacterImageGenerateRequest(project_id=42, prompt="x", num_images=0)
+    assert CharacterImageGenerateRequest(project_id=42, prompt="x", num_images=2).num_images == 2
 
 
 def test_image_dimensions_are_bounded():
     with pytest.raises(ValueError):
-        CharacterImageGenerateRequest(prompt="x", width=100_000)
+        CharacterImageGenerateRequest(project_id=42, prompt="x", width=100_000)
     with pytest.raises(ValueError):
-        CharacterImageGenerateRequest(prompt="x", height=1)
+        CharacterImageGenerateRequest(project_id=42, prompt="x", height=1)
 
 
 def test_num_frames_is_bounded():
     """帧数决定抽帧与逐帧抠图的工作量。"""
     with pytest.raises(ValueError):
-        CharacterActionGenerateRequest(character_id=1, action_type="walk", num_frames=100_000)
+        CharacterActionGenerateRequest(project_id=42, character_id=1, action_type="walk", num_frames=100_000)
     with pytest.raises(ValueError):
-        CharacterActionGenerateRequest(character_id=1, action_type="walk", num_frames=0)
-    ok = CharacterActionGenerateRequest(character_id=1, action_type="walk", num_frames=16)
+        CharacterActionGenerateRequest(project_id=42, character_id=1, action_type="walk", num_frames=0)
+    ok = CharacterActionGenerateRequest(project_id=42, character_id=1, action_type="walk", num_frames=16)
     assert ok.num_frames == 16
 
 

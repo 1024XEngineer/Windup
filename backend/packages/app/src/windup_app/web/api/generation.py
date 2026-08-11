@@ -106,7 +106,18 @@ class _EventBus:
         ``get()`` 上,直到下一次同 loop 内的操作偶然把它带起来。故订阅时记下所属 loop,
         发布时经 ``call_soon_threadsafe`` 回到那个 loop 上再入队。
         """
+        try:
+            here = asyncio.get_running_loop()
+        except RuntimeError:
+            here = None                       # 从没有 loop 的线程调(executor daemon thread)
+
         for queue, loop in list(self._queues.get((project_id, task_id), [])):
+            if loop is here:
+                # 同一个 loop 内:直接入队。**不能一律走 call_soon_threadsafe** —— 那是
+                # 异步调度,要等 loop 下一次迭代才真入队,于是"publish 完立刻 get_nowait"
+                # 会拿到空队列(主线 #110 的隔离用例正是这么写的)。
+                queue.put_nowait((event, data))
+                continue
             try:
                 loop.call_soon_threadsafe(queue.put_nowait, (event, data))
             except RuntimeError:
