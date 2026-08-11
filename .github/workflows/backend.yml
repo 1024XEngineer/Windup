@@ -42,15 +42,7 @@ jobs:
         run: uv run lint-imports
 
       - name: Pytest
-        run: uv run pytest -q --cov=packages --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=html:htmlcov
-
-      - name: Upload coverage HTML report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: backend/htmlcov/
-          retention-days: 30
+        run: uv run pytest -q --cov=packages --cov-report=term-missing --cov-report=xml:coverage.xml
 
       - name: Upload coverage to Codecov
         if: always()

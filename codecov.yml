@@ -13,3 +13,6 @@ comment:
     backend:
       paths:
         - backend/
+    frontend:
+      paths:
+        - frontend/
