@@ -370,7 +370,6 @@ def _cfg(**kw):
 
 @pytest.mark.parametrize(("cls_name", "field", "value"), [
     ("SufyVideoProvider", "video_model", "kling-v9-test"),
-    ("FalQueueVideoProvider", "fal_video_model", "veo3.1"),
     ("SufyImageProvider", "image_model", "gemini-9-flash-image"),
 ])
 def test_each_provider_reads_its_own_model_field(cls_name, field, value):
@@ -382,10 +381,7 @@ def test_each_provider_reads_its_own_model_field(cls_name, field, value):
     import windup_framework.providers.sufy as S
 
     cls = getattr(S, cls_name)
-    kwargs = {"config": _cfg(**{field: value})}
-    if cls_name == "FalQueueVideoProvider":
-        kwargs["uploader"] = _StubUploader()
-    assert cls(**kwargs)._model == value
+    assert cls(config=_cfg(**{field: value}))._model == value
 
 
 def test_explicit_model_argument_still_wins_over_config():
@@ -399,6 +395,8 @@ def test_explicit_model_argument_still_wins_over_config():
 def test_request_shape_is_not_configurable():
     """**只有型号可配，请求形状不可配。**
 
+    （FAL 队列面已随「从未真实调用过」一并移除，故这里只剩两个型号字段。）
+
     哪个模型吃 image_list、FAL 队列路径长什么样，是该模型的 API 事实而非运行参数。
     放进配置会把"填错了会怎样"从部署期推到运行期：字段塞错不会立刻报错，任务照常
     queued，直到生成阶段才 failed，而费用可能已经产生（2026-07-29 实测）。
@@ -410,11 +408,4 @@ def test_request_shape_is_not_configurable():
     fields = set(AIProviderSettings.model_fields)
     for banned in ("image_list_models", "fal_endpoints", "first_frame_field"):
         assert banned not in fields, f"{banned} 不该进配置，见本用例 docstring"
-    assert {"video_model", "image_model", "fal_video_model"} <= fields
-
-
-class _StubUploader:
-    """FalQueueVideoProvider 的必需构造参数（无默认值，见 FirstFrameUploader）。"""
-
-    def upload(self, frame: bytes, content_type: str) -> str:
-        return "https://cdn.example.com/first.jpg"
+    assert {"video_model", "image_model"} <= fields

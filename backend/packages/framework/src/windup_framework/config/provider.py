@@ -24,7 +24,7 @@ class AIProviderSettings(BaseSettings):
     # ── 各能力用哪个模型 ──────────────────────────────────────────────────
     # 分成三个字段而不是共用上面那个 ``model``:三条能力同时在用不同模型,共用一个
     # 字段意味着换其中一个就把另外两个也换了。默认值即当前实测在用的型号,
-    # 部署侧可用 AI_VIDEO_MODEL / AI_IMAGE_MODEL / AI_FAL_VIDEO_MODEL 覆盖。
+    # 部署侧可用 AI_VIDEO_MODEL / AI_IMAGE_MODEL 覆盖。
     #
     # **只有型号可配,请求形状不可配**:哪个模型吃 image_list、哪个吃
     # input_reference、FAL 队列路径长什么样,都是该模型的 API 事实而非运行参数,
@@ -33,7 +33,6 @@ class AIProviderSettings(BaseSettings):
     # 而费用可能已经产生(2026-07-29 实测)。
     video_model: str = "kling-v2-5-turbo"
     image_model: str = "gemini-2.5-flash-image"
-    fal_video_model: str = "kling-v2-5-turbo"
 
     @property
     def normalized_base_url(self) -> str:

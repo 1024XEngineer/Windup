@@ -1,27 +1,24 @@
 """Provider 接口的 SUFY / qnaigc(Modelink 网关)同步实现。
 
-网关上挂着**两套互不兼容的视频接口面**,本模块两条都实现、并存不替换:
+本模块实现三个 provider:视频(i2v)、图像(文生图 / 图生图)、以及它们共用的下载与首帧
+处理。抠图另在 :mod:`.matte`。
 
-1. OpenAI 风格(:class:`SufyVideoProvider`)——首帧走 base64 dataURI::
+视频走 OpenAI 风格面(:class:`SufyVideoProvider`),首帧是 base64 dataURI::
 
-     POST /v1/videos {model, prompt, size, seconds, mode, input_reference}
-     轮询 GET /v1/videos/{id} → status==completed → task_result.videos[0].url → 下载 mp4
+    POST /v1/videos {model, prompt, size, seconds, mode, input_reference}
+    轮询 GET /v1/videos/{id} → status==completed → task_result.videos[0].url → 下载 mp4
 
-   2026-07-27 对 kling-v2-5-turbo 端到端实测到 completed。留着是因为没有实测证据说它
-   坏了,sora 系可能仍只在这一面。
+2026-07-27 对 kling-v2-5-turbo 端到端实测到 completed。
 
-2. FAL 队列(:class:`FalQueueVideoProvider`)——首帧走**公网 URL**::
+图像走 OpenAI 兼容的 ``/chat/completions``(:class:`SufyImageProvider`),参考图以 data URI
+塞进 ``content`` 数组 —— 与视频的提交-轮询-下载三段式完全不同的调用形状。
 
-     POST /queue/{厂商}/{型号}/[{mode}/]image-to-video {..., image_url|start_image_url}
-     轮询 GET /queue/{家族}/requests/{request_id}/status → COMPLETED → result.video.url
+**网关上还有另一套 FAL 队列面**(veo / seedance / vidu 只在那一面)。曾实现过,但因为
+从未被真实调用过而移除,见本文件中段那条注释里记下的两个实测事实。
 
-   2026-08-07 拉网关 OpenAPI spec 逐个核对:平台现有 69 个 POST 视频端点,其中 22 个
-   图生视频**全部**在这一面,全部要 URL 形态的首帧字段,没有一个吃 dataURI。
-
-两面鉴权也不同(spec 明写):FAL 面 ``Authorization: Key {api_key}``,OpenAI 面 ``Bearer``。
-
-key / base_url 由 ``AIProviderSettings`` 注入,provider 内不读 env。
-重依赖(PIL)惰性导入,保证模块导入零成本。
+型号与 key / base_url 均由 ``AIProviderSettings`` 注入,provider 内不读 env;哪个模型吃
+什么请求字段属该模型的 API 事实,写在代码里而不是配置里(填错只会在生成阶段才 failed,
+而费用可能已产生)。重依赖(PIL)惰性导入,保证模块导入零成本。
 """
 from __future__ import annotations
 
@@ -31,14 +28,12 @@ import json
 import logging
 import re
 import time
-from collections.abc import Mapping
-from dataclasses import dataclass, field
 
 import httpx
 
 from windup_framework.config.provider import AIProviderSettings, settings
 
-from .interfaces import FirstFrameUploader, ImageProvider, VideoProvider
+from .interfaces import ImageProvider, VideoProvider
 
 logger = logging.getLogger("windup.providers.sufy")
 
@@ -248,401 +243,18 @@ def _download(client: httpx.Client, url: str, tries: int = 3) -> bytes:
 #     其余各家的档位枚举各不相同。
 
 
-class UnknownVideoModelError(RuntimeError):
-    """模型不在端点表里 —— 不猜路径,直接拒。
-
-    猜错的代价不对称:猜出一条不存在的路径只是 404(便宜),猜出一条**存在但语义不同**
-    的路径(如把 image-to-video 猜成 reference-to-video)会正常出片、正常计费,
-    产出却与预期不符。故这里只认表,不做前缀匹配、不做拼接兜底。
-    """
-
-
-class UnsupportedVideoOptionError(RuntimeError):
-    """该模型不支持这个 mode / 时长 / 画幅 —— 提交前就拒,别等网关 400。"""
-
-
-class FirstFrameNotPublicError(RuntimeError):
-    """uploader 没给出 http(s) URL —— 首帧供应商取不到。"""
-
-
-class VideoJobFailedError(RuntimeError):
-    """FAL 任务失败。
-
-    含一种伪装成功:spec 明写「任务失败时后端也返回 COMPLETED,通过 detail 字段区分」。
-    只看 status 会把失败当成功,然后在"取不到视频 URL"处报一个莫名其妙的错。
-    """
-
-
-class VideoJobTimeoutError(RuntimeError):
-    """轮询预算耗尽仍未出片(任务可能还在跑,费用可能已产生)。"""
-
-
-@dataclass(frozen=True)
-class FalI2VEndpoint:
-    """一个模型在 FAL 队列面上的调用形状。字段全部取自网关 OpenAPI spec。"""
-
-    submit_path: str  # 含 {mode} 则该模型必须给 mode
-    image_field: str  # image_url / start_image_url
-    queue_base: str  # 轮询与取结果的前缀,与 submit_path 不同
-    seconds: frozenset[int]  # 允许的时长
-    modes: frozenset[str] = frozenset()  # 空 = 路径里没有 {mode}
-    duration_style: str = "str"  # str -> "5" | str_s -> "8s" | int -> 5
-    resolution_field: str | None = None  # None = 该模型没有分辨率档位,画幅跟随首帧
-    resolutions: Mapping[int, str] = field(default_factory=dict)  # 首帧高度 → 档位枚举
-    audio_field: str | None = None  # 有则显式关掉:序列帧不要声音,别平白多花钱
-
-
-_KLING_QUEUE = "/queue/fal-ai/kling-video"
-_KLING_3_SECONDS = frozenset(range(3, 16))
-
-# 键是**本仓自己的模型名**(与 ``AIProviderSettings.model`` 对齐)。FAL 面的 body 里
-# 没有 model 字段 —— 型号是路径的一部分,这也是"必须查表"的根本原因。
-FAL_I2V_ENDPOINTS: Mapping[str, FalI2VEndpoint] = {
-    "kling-v3-omni": FalI2VEndpoint(
-        submit_path=f"{_KLING_QUEUE}/o3/{{mode}}/image-to-video",
-        image_field="image_url",
-        queue_base=_KLING_QUEUE,
-        seconds=_KLING_3_SECONDS,
-        modes=frozenset({"standard", "std", "pro", "4k"}),
-        audio_field="generate_audio",
-    ),
-    "kling-v3": FalI2VEndpoint(
-        submit_path=f"{_KLING_QUEUE}/v3/{{mode}}/image-to-video",
-        image_field="start_image_url",  # 与同族 o3 的 image_url 不同,别顺手写成一样
-        queue_base=_KLING_QUEUE,
-        seconds=_KLING_3_SECONDS,
-        modes=frozenset({"standard", "std", "pro", "4k"}),
-        audio_field="generate_audio",  # spec 默认 true
-    ),
-    "kling-v3-turbo": FalI2VEndpoint(
-        submit_path=f"{_KLING_QUEUE}/v3/turbo/{{mode}}/image-to-video",
-        image_field="image_url",
-        queue_base=_KLING_QUEUE,
-        seconds=_KLING_3_SECONDS,
-        modes=frozenset({"standard", "pro"}),  # 注意没有 "std"
-    ),
-    "kling-v2-6": FalI2VEndpoint(
-        submit_path=f"{_KLING_QUEUE}/v2.6/{{mode}}/image-to-video",
-        image_field="start_image_url",
-        queue_base=_KLING_QUEUE,
-        seconds=frozenset({5, 10}),
-        modes=frozenset({"pro"}),  # 只有 pro
-        audio_field="generate_audio",  # spec 默认 true
-    ),
-    "kling-v2-5-turbo": FalI2VEndpoint(
-        submit_path=f"{_KLING_QUEUE}/v2.5-turbo/{{mode}}/image-to-video",
-        image_field="image_url",
-        queue_base=_KLING_QUEUE,
-        seconds=frozenset({5, 10}),
-        modes=frozenset({"standard", "std", "pro"}),
-    ),
-    "kling-video-o1": FalI2VEndpoint(
-        submit_path=f"{_KLING_QUEUE}/o1/{{mode}}/image-to-video",
-        image_field="start_image_url",
-        queue_base=_KLING_QUEUE,
-        seconds=frozenset(range(3, 11)),
-        modes=frozenset({"standard", "std", "pro"}),
-    ),
-    "veo3.1": FalI2VEndpoint(
-        submit_path="/queue/fal-ai/veo3.1/image-to-video",
-        image_field="image_url",
-        queue_base="/queue/fal-ai/veo3.1",
-        seconds=frozenset({4, 6, 8}),
-        duration_style="str_s",  # 只有 veo 带 "s" 后缀
-        resolution_field="resolution",
-        resolutions={720: "720p", 1080: "1080p", 2160: "4k"},
-        audio_field="generate_audio",  # spec 默认 true
-    ),
-    "seedance-2.0": FalI2VEndpoint(
-        submit_path="/queue/bytedance/seedance-2.0/image-to-video",
-        image_field="image_url",
-        queue_base="/queue/bytedance/seedance-2.0",
-        seconds=frozenset(range(4, 16)),
-        resolution_field="resolution",
-        resolutions={480: "480p", 720: "720p", 1080: "1080p", 2160: "4k"},
-        audio_field="generate_audio",
-    ),
-    "minimax-h3": FalI2VEndpoint(
-        submit_path="/queue/minimax/h3/image-to-video",
-        image_field="image_url",
-        queue_base="/queue/minimax/h3",
-        seconds=frozenset(range(5, 16)),
-        duration_style="int",
-        resolution_field="resolution",
-        # 只有 768P / 2K 两档。720 高的首帧没有对应档位,此时**报错而不是就近选 768P**:
-        # 悄悄换档 = 出片尺寸与调用方要的不一致,而序列帧下游是按尺寸对齐的。
-        resolutions={768: "768P"},
-    ),
-    "vidu-q3-pro": FalI2VEndpoint(
-        submit_path="/queue/fal-ai/vidu/q3/image-to-video/pro",
-        image_field="image_url",
-        queue_base="/queue/fal-ai/vidu",  # 家族级前缀,不含 q3/pro
-        seconds=frozenset(range(1, 17)),
-        duration_style="int",
-        resolution_field="resolution",
-        resolutions={540: "540p", 720: "720p", 1080: "1080p"},
-        audio_field="audio",  # q3 默认 true
-    ),
-}
-
-DEFAULT_FAL_VIDEO_MODEL = "kling-v2-5-turbo"
-
-
-def fal_endpoint(model: str) -> FalI2VEndpoint:
-    """查表取端点定义;查不到就炸,绝不猜。"""
-    try:
-        return FAL_I2V_ENDPOINTS[model]
-    except KeyError:
-        known = ", ".join(sorted(FAL_I2V_ENDPOINTS))
-        raise UnknownVideoModelError(
-            f"模型 {model!r} 不在 FAL 图生视频端点表里。已登记: {known}。"
-            "新增模型请去网关 OpenAPI spec 抄提交路径 / 首帧字段名 / 轮询前缀三项后登记,不要拼路径。"
-        ) from None
-
-
-def fal_submit_path(model: str, mode: str) -> str:
-    """拼出提交路径(唯一允许的"拼接"就是把表里的 {mode} 填上)。"""
-    endpoint = fal_endpoint(model)
-    if not endpoint.modes:
-        return endpoint.submit_path
-    if mode not in endpoint.modes:
-        raise UnsupportedVideoOptionError(
-            f"模型 {model} 不支持 mode={mode!r},可选: {sorted(endpoint.modes)}"
-        )
-    return endpoint.submit_path.format(mode=mode)
-
-
-def assert_i2v_options(model: str, seconds: int, size: str) -> None:
-    """把"这个模型收不收这些参数"验完。纯计算,故可在**上传首帧之前**先调。"""
-    endpoint = fal_endpoint(model)
-    if seconds not in endpoint.seconds:
-        raise UnsupportedVideoOptionError(
-            f"模型 {model} 不支持 {seconds} 秒,可选: {sorted(endpoint.seconds)}"
-        )
-    if endpoint.resolution_field:
-        _fal_resolution(model, endpoint, size)
-
-
-def fal_i2v_body(model: str, prompt: str, image_url: str, seconds: int, size: str) -> dict:
-    """按模型形态组装请求体。任何一项不被该模型支持都当场炸,不做就近替换。"""
-    assert_i2v_options(model, seconds, size)
-    endpoint = fal_endpoint(model)
-    # 10 个端点的时长字段都叫 duration,只是取值形态不同。
-    body: dict = {
-        endpoint.image_field: image_url,
-        "prompt": prompt,
-        "duration": _fal_duration(model, endpoint, seconds),
-    }
-    if endpoint.resolution_field:
-        body[endpoint.resolution_field] = _fal_resolution(model, endpoint, size)
-    if endpoint.audio_field:
-        # 序列帧不要声音:多数端点默认 true,不显式关掉等于白付音轨的钱和时间。
-        body[endpoint.audio_field] = False
-    return body
-
-
-def _fal_duration(model: str, endpoint: FalI2VEndpoint, seconds: int) -> str | int:
-    if endpoint.duration_style == "int":
-        return int(seconds)
-    if endpoint.duration_style == "str_s":
-        return f"{seconds}s"
-    if endpoint.duration_style == "str":
-        return str(seconds)
-    raise UnsupportedVideoOptionError(
-        f"模型 {model} 的 duration_style 登记有误: {endpoint.duration_style!r}"
-    )
-
-
-def _fal_resolution(model: str, endpoint: FalI2VEndpoint, size: str) -> str:
-    try:
-        height = int(size.split("x")[1])
-    except (IndexError, ValueError):
-        raise UnsupportedVideoOptionError(f"size 形如 1280x720,收到 {size!r}") from None
-    try:
-        return endpoint.resolutions[height]
-    except KeyError:
-        raise UnsupportedVideoOptionError(
-            f"模型 {model} 没有 {size} 对应的分辨率档位,支持的高度: {sorted(endpoint.resolutions)}"
-        ) from None
-
-
-def _api_root(base_url: str) -> str:
-    """把 OpenAI 兼容面的 base_url 退回网关根。
-
-    配置里的 ``AI_BASE_URL`` 指向 OpenAI 面(``.../v1``),而 FAL 的 ``/queue/...`` 与
-    ``/v1/...`` 是**平级**的(spec 的 servers 就是裸域名)。直接拿 base_url 拼会得到
-    ``/v1/queue/...`` → 404。
-    """
-    root = base_url.rstrip("/")
-    return root[: -len("/v1")] if root.endswith("/v1") else root
-
-
-class PreUploadedFirstFrame(FirstFrameUploader):
-    """首帧已经在公网上时的零成本 uploader(不传任何东西,直接返回该 URL)。
-
-    典型场景:server 侧的母版本来就存在 ``Character.reference_image_url``,重新上传一份
-    纯属浪费。
-
-    **代价写在这里,别踩**:走这条路等于跳过 :func:`_fit_first_frame` 的补边,
-    ``i2v(size=...)`` 对 kling 系就失效了(kling 没有分辨率字段,成片画幅跟随首帧)。
-    要控制成片画幅,请给一个真正会上传 bytes 的 uploader。
-    """
-
-    def __init__(self, url: str) -> None:
-        if not url.startswith(("http://", "https://")):
-            raise FirstFrameNotPublicError(f"首帧 URL 必须是 http(s),收到 {url!r}")
-        self._url = url
-
-    def upload(self, frame: bytes, content_type: str) -> str:
-        """两个入参是 port 契约的一部分,本实现用不上(图已经在公网)。"""
-        return self._url
-
-
-class FalQueueVideoProvider(VideoProvider):
-    """FAL 队列面的 i2v。首帧 bytes → 经 uploader 换成公网 URL → 队列任务 → mp4 bytes。
-
-    与 :class:`SufyVideoProvider` 并存:那条是 OpenAI 风格 ``/v1/videos``(首帧走
-    dataURI),两套接口面在网关上同时存在,路径 / 鉴权 / 首帧形态全都不同。
-
-    ``uploader`` 是**必填**且无默认值 —— 构造不出一个"没有上传能力的 FAL provider",
-    免得跑到线上才发现首帧送不出去(那时任务已经提交、钱已经花了)。
-    """
-
-    def __init__(
-        self,
-        uploader: FirstFrameUploader,
-        config: AIProviderSettings = settings,
-        model: str | None = None,
-        mode: str = "std",
-        poll_interval: float = 15.0,
-        max_min: int = 30,
-    ) -> None:
-        # 先把型号定下来再校验:``model=None`` 表示"用配置里的",此时拿 None 去查端点表
-        # 会报"模型 None 不在表里",把一个正常的默认路径变成构造期崩溃。
-        self._model = model or config.fal_video_model
-        # 构造即校验:未知模型 / 不支持的 mode 在**花钱之前**就炸掉。
-        self._path = fal_submit_path(self._model, mode)
-        self._endpoint = fal_endpoint(self._model)
-        self._uploader = uploader
-        self._cfg = config
-        self._mode = mode
-        self._poll = poll_interval
-        self._max_min = max_min
-
-    def _client(self) -> httpx.Client:
-        return httpx.Client(
-            base_url=_api_root(self._cfg.normalized_base_url),
-            # FAL 面是 ``Key``,不是 ``Bearer``(spec 的 securitySchemes 里两套并列写明)。
-            headers={"Authorization": f"Key {self._cfg.api_key}"},
-            timeout=self._cfg.timeout,
-        )
-
-    def i2v(
-        self, first_frame: bytes, prompt: str, seconds: int = 5, size: str = "1280x720"
-    ) -> bytes:
-        # 先验参数再上传:上传首帧通常要花钱/占带宽,不该为一个必然被拒的请求先传图。
-        assert_i2v_options(self._model, seconds, size)
-        body = fal_i2v_body(self._model, prompt, self._upload(first_frame, size), seconds, size)
-        with self._client() as client:
-            request_id = _fal_submit(client, self._path, body)
-            url = _await_fal_video_url(
-                client, self._endpoint, request_id, self._poll, self._max_min
-            )
-            # 重试与长度校验是 2026-08-05 实测挣来的,不为"看起来更干净"去动它。
-            # 但凭证不跟着走:成品 URL 多是 CDN 绝对地址,跨源时 _download 会摘掉
-            # Authorization(见 _download_request —— 原来那句"用同一个 client 带鉴权头取"
-            # 就是 2026-08-10 机器审报的 key 泄漏)。
-            return _download(client, url)
-
-    def _upload(self, first_frame: bytes, size: str) -> str:
-        url = self._uploader.upload(_fit_first_frame(first_frame, size), "image/jpeg")
-        if not isinstance(url, str) or not url.startswith(("http://", "https://")):
-            # dataURI / 本地路径在这一面必然产不出正确结果:要么被网关 400,要么更糟 ——
-            # 被当成"没有首帧"跑成文生视频,照样计费。宁可在提交前炸。
-            raise FirstFrameNotPublicError(
-                f"uploader 必须返回 http(s) 公网 URL(供应商服务器要能取到),收到 {url!r}"
-            )
-        return url
-
-
-def _fal_submit(client: httpx.Client, path: str, body: dict) -> str:
-    """提交任务,拿 request_id。被拒时把网关的 detail.msg 带出来(否则只剩一个 400)。"""
-    try:
-        payload = client.post(path, json=body).raise_for_status().json()
-    except httpx.HTTPStatusError as exc:
-        raise VideoJobFailedError(
-            f"i2v 提交被拒(HTTP {exc.response.status_code},POST {path}): {_fal_error_text(exc.response)}"
-        ) from exc
-    request_id = payload.get("request_id")
-    if not request_id:
-        raise VideoJobFailedError(f"i2v 提交返回里没有 request_id: {payload}")
-    return str(request_id)
-
-
-def _fal_error_text(response: httpx.Response) -> str:
-    try:
-        detail = response.json().get("detail")
-    except ValueError:
-        return response.text[:200]
-    if isinstance(detail, dict):
-        return str(detail.get("msg") or detail)
-    return str(detail)
-
-
-def _await_fal_video_url(
-    client: httpx.Client,
-    endpoint: FalI2VEndpoint,
-    request_id: str,
-    poll_interval: float,
-    max_min: int,
-) -> str:
-    """轮询到出片,返回成品视频 URL。任何非成功终态都抛错,绝不返回空。
-
-    三处踩点:
-      - 进行中的状态是 HTTP 202,``raise_for_status`` 不会拦,得看 status 字段。
-      - spec 明写「任务失败时后端也返回 COMPLETED,通过 detail 字段区分成功/失败」,
-        所以 COMPLETED 还要再看 detail —— 只认 status 会把失败当成功。
-      - 认不出的 status 一律当失败,不要 continue:那会一直转到超时,把一个"协议变了"
-        的问题伪装成"生成太慢"。
-    """
-    status_path = f"{endpoint.queue_base}/requests/{request_id}/status"
-    for _ in range(max(1, int(max_min * 60 // poll_interval))):
-        time.sleep(poll_interval)
-        state = client.get(status_path).raise_for_status().json()
-        status = str(state.get("status") or "")
-        if status in ("IN_QUEUE", "IN_PROGRESS"):
-            continue
-        if status == "FAILED":
-            raise VideoJobFailedError(f"i2v 任务失败({request_id}): {state.get('detail')}")
-        if status != "COMPLETED":
-            raise VideoJobFailedError(f"i2v 任务返回未知状态 {status!r}({request_id}): {state}")
-        if state.get("detail"):
-            raise VideoJobFailedError(
-                f"i2v 任务 COMPLETED 但带 detail = 实为失败({request_id}): {state.get('detail')}"
-            )
-        url = ((state.get("result") or {}).get("video") or {}).get("url")
-        return url if url else _fal_result_url(client, endpoint, request_id)
-    raise VideoJobTimeoutError(
-        f"i2v 轮询 {max_min} 分钟仍未出片({request_id});任务可能仍在跑,费用可能已产生"
-    )
-
-
-def _fal_result_url(client: httpx.Client, endpoint: FalI2VEndpoint, request_id: str) -> str:
-    """COMPLETED 但状态响应里没带 URL 时,按 fal 协议再取一次结果。
-
-    不是兜底降级,是协议本身就有的第二步(提交响应里的 ``response_url`` 指的就是它):
-    各家 status 响应是否内联 result 并不一致。此时**视频已生成、费用已产生**,
-    为少一次 GET 而丢掉整单不划算。取不到才炸。
-    """
-    path = f"{endpoint.queue_base}/requests/{request_id}"
-    try:
-        payload = client.get(path).raise_for_status().json()
-    except httpx.HTTPError as exc:
-        raise VideoJobFailedError(f"i2v 已完成但取结果失败({request_id}): {exc}") from exc
-    url = (payload.get("video") or {}).get("url")
-    if not url:
-        raise VideoJobFailedError(f"i2v 已完成但结果里没有视频 URL({request_id}): {payload}")
-    return str(url)
+# ── FAL 队列面（veo / seedance / vidu）已移除 ────────────────────────────────
+#
+# 曾有一整套 FalQueueVideoProvider + FirstFrameUploader + 端点映射表（412 行、28 条
+# 测试）。删掉的理由与 GenRoute 只列有实现的路线是同一条：**它从未被真实调用过**
+# —— app / ai_engine 里零引用，产品链路走不到，而"代码在仓里"会让人以为该能力已具备。
+#
+# 真要接 veo / seedance 时连同一次真实调用一起加回。届时的两个已知事实（实测挣得，
+# 别再摸索一遍）：
+#   1. FAL 面只吃**公网 URL**，不吃 base64；塞 base64 会 status=queued 之后在生成阶段
+#      才 failed，费用可能已经产生。
+#   2. 鉴权头是 `Authorization: Key <k>`，不是 `Bearer`；路径与 /v1 平级，不是它的子路径。
+# 归档实测记录见项目参考资料（图生视频 API 实测文档）。
 
 
 DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image"
