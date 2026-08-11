@@ -81,13 +81,13 @@ class SufyVideoProvider(VideoProvider):
     def __init__(
         self,
         config: AIProviderSettings = settings,
-        model: str = DEFAULT_VIDEO_MODEL,
+        model: str | None = None,
         mode: str = "std",
         poll_interval: float = 60.0,
         max_min: int = 30,
     ) -> None:
         self._cfg = config
-        self._model = model
+        self._model = model or config.video_model
         self._mode = mode
         self._poll = poll_interval
         self._max_min = max_min
@@ -512,17 +512,19 @@ class FalQueueVideoProvider(VideoProvider):
         self,
         uploader: FirstFrameUploader,
         config: AIProviderSettings = settings,
-        model: str = DEFAULT_FAL_VIDEO_MODEL,
+        model: str | None = None,
         mode: str = "std",
         poll_interval: float = 15.0,
         max_min: int = 30,
     ) -> None:
+        # 先把型号定下来再校验:``model=None`` 表示"用配置里的",此时拿 None 去查端点表
+        # 会报"模型 None 不在表里",把一个正常的默认路径变成构造期崩溃。
+        self._model = model or config.fal_video_model
         # 构造即校验:未知模型 / 不支持的 mode 在**花钱之前**就炸掉。
-        self._path = fal_submit_path(model, mode)
-        self._endpoint = fal_endpoint(model)
+        self._path = fal_submit_path(self._model, mode)
+        self._endpoint = fal_endpoint(self._model)
         self._uploader = uploader
         self._cfg = config
-        self._model = model
         self._mode = mode
         self._poll = poll_interval
         self._max_min = max_min
@@ -673,10 +675,10 @@ class SufyImageProvider(ImageProvider):
     def __init__(
         self,
         config: AIProviderSettings = settings,
-        model: str = DEFAULT_IMAGE_MODEL,
+        model: str | None = None,
     ) -> None:
         self._cfg = config
-        self._model = model
+        self._model = model or config.image_model
 
     def _client(self) -> httpx.Client:
         return httpx.Client(
