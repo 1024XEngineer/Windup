@@ -56,6 +56,24 @@ describe('AppRoutes authentication boundary', () => {
     expect(screen.queryByRole('heading', { name: '快速开始' })).toBeNull()
   })
 
+  it('redirects a guest from the PlayTest entry and preserves that return path', async () => {
+    render(
+      <GuestAuthSession>
+        <MemoryRouter initialEntries={['/playtest']}>
+          <AppRoutes />
+          <LocationProbe />
+        </MemoryRouter>
+      </GuestAuthSession>,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/?account=login&returnTo=%2Fplaytest',
+      ),
+    )
+    expect(screen.queryByRole('heading', { name: '选择可试玩资产' })).toBeNull()
+  })
+
   it('protects direct account-center visits and returns there after login', async () => {
     render(
       <GuestAuthSession>
