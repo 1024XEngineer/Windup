@@ -665,17 +665,17 @@ function generationRequest(url: string, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers)
   const accessToken = getApiAccessToken()
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
-  return fetch(url, { ...init, headers, credentials: 'include' })
+  return fetch(`${resolveApiBaseUrl()}${url}`, { ...init, headers, credentials: 'include' })
 }
 
+const generationStream = createEventStreamSubscriber({
+  getAccessToken: getApiAccessToken,
+  recoverUnauthorized: recoverApiUnauthorized,
+})
 const generationApis = createGenerationApis({
-  baseUrl: resolveApiBaseUrl(),
   transport: {
     request: generationRequest,
-    stream: createEventStreamSubscriber({
-      getAccessToken: getApiAccessToken,
-      recoverUnauthorized: recoverApiUnauthorized,
-    }),
+    stream: (url, options) => generationStream(`${resolveApiBaseUrl()}${url}`, options),
   },
 })
 
