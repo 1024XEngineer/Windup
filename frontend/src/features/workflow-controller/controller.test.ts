@@ -253,6 +253,52 @@ async function flushAsyncWork() {
 }
 
 describe('WorkflowController', () => {
+  it('绑定角色后拒绝把同一条 WorkflowRun 改绑到另一角色', async () => {
+    const { controller } = createController()
+
+    await controller.bindCharacter('setup-1', 'character-1')
+
+    expect(controller.getWorkflow().nodes[0]).toMatchObject({
+      type: 'character-setup',
+      input: { characterId: 'character-1' },
+    })
+    await expect(controller.bindCharacter('setup-1', 'character-2')).rejects.toThrow(
+      'WorkflowRun 已绑定到另一角色，不能改绑',
+    )
+  })
+
+  it('只在角色设定节点仍处于配置阶段时更新提示词和参考媒体', async () => {
+    const { controller } = createController()
+
+    await controller.updateCharacterSetup('setup-1', {
+      prompt: '披着红色斗篷的像素骑士',
+      referenceMedia: ['https://img/reference.png' as never],
+    })
+
+    expect(controller.getWorkflow().nodes[0]).toMatchObject({
+      input: {
+        prompt: '披着红色斗篷的像素骑士',
+        referenceMedia: ['https://img/reference.png'],
+      },
+    })
+  })
+
+  it('接受上传母版时完成角色设定和母版节点', async () => {
+    const { controller } = createController()
+
+    await controller.acceptUploadedCharacterTemplate('setup-1', 'https://img/uploaded-template.png')
+
+    expect(controller.getWorkflow().nodes).toMatchObject([
+      { type: 'character-setup', status: 'passed', phase: 'completed' },
+      {
+        type: 'character-template',
+        status: 'passed',
+        phase: 'completed',
+        selectedImageUrl: 'https://img/uploaded-template.png',
+      },
+    ])
+  })
+
   it('页面通过订阅接收命令保存和 SSE 写回后的同一份 WorkflowRun', async () => {
     const { controller, generation } = createController()
     let renderedWorkflow = controller.getWorkflow()
