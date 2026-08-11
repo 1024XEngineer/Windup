@@ -52,10 +52,11 @@ jobs:
           path: backend/htmlcov/
           retention-days: 30
 
-      - name: Upload coverage XML for PR comment
+      - name: Upload coverage to Codecov
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: codecov/codecov-action@v5
         with:
-          name: coverage-xml
-          path: backend/coverage.xml
-          retention-days: 1
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: backend/coverage.xml
+          flags: backend
+          fail_ci_if_error: false
