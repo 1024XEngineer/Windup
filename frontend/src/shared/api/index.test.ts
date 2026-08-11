@@ -4,7 +4,6 @@ import {
   ApiError,
   createApiClient,
   getApiAccessToken,
-  recoverApiUnauthorized,
   registerApiAccessTokenProvider,
   registerApiUnauthorizedRecovery,
 } from './index'
@@ -12,16 +11,6 @@ import {
 afterEach(() => vi.unstubAllEnvs())
 
 describe('createApiClient', () => {
-  it('exposes registered unauthorized recovery without leaking failures', async () => {
-    expect(await recoverApiUnauthorized()).toBe(false)
-    const unregister = registerApiUnauthorizedRecovery(async () => true)
-    expect(await recoverApiUnauthorized()).toBe(true)
-    unregister()
-    const unregisterFailure = registerApiUnauthorizedRecovery(async () => Promise.reject('nope'))
-    expect(await recoverApiUnauthorized()).toBe(false)
-    unregisterFailure()
-  })
-
   it('reads the latest registered token provider and restores the previous provider', () => {
     const unregisterFirst = registerApiAccessTokenProvider(() => 'first-token')
     const unregisterSecond = registerApiAccessTokenProvider(() => 'second-token')

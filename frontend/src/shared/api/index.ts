@@ -67,17 +67,6 @@ function getApiUnauthorizedRecovery(): ApiUnauthorizedRecovery | undefined {
   return unauthorizedRecoveryProviders.at(-1)
 }
 
-/** 供不能使用 ApiClient 的流式或原始响应适配器复用会话恢复。 */
-export async function recoverApiUnauthorized(): Promise<boolean> {
-  const recovery = getApiUnauthorizedRecovery()
-  if (!recovery) return false
-  try {
-    return await recovery()
-  } catch {
-    return false
-  }
-}
-
 export type ApiErrorKind = 'business' | 'http' | 'invalid-response' | 'network'
 
 /** 后端业务错误与传输错误统一进入这一种前端错误。 */
