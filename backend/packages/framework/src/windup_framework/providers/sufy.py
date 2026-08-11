@@ -81,6 +81,11 @@ class SufyVideoProvider(VideoProvider):
         poll_interval: float = 60.0,
         max_min: int = 30,
     ) -> None:
+        # 轮询间隔必须 > 0:下面用 `max_min * 60 // poll` 算预算次数,传 0 直接除零
+        # (2026-08-11 补 i2v 主流程测试时逮到)。0 的语义本身也不成立 —— 那是忙等,
+        # 会把网关打满。测试要跑快就把 time.sleep 打桩掉,别把间隔设成 0。
+        if poll_interval <= 0:
+            raise ValueError(f"poll_interval 必须为正数,收到 {poll_interval}")
         self._cfg = config
         self._model = model or config.video_model
         self._mode = mode

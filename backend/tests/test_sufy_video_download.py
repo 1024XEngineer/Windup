@@ -9,6 +9,8 @@
    见 ``providers.sufy._download_request`` 的 docstring。
 """
 
+import json
+
 import httpx
 import pytest
 
@@ -409,3 +411,186 @@ def test_request_shape_is_not_configurable():
     for banned in ("image_list_models", "fal_endpoints", "first_frame_field"):
         assert banned not in fields, f"{banned} 不该进配置，见本用例 docstring"
     assert {"video_model", "image_model"} <= fields
+
+
+# ── i2v 主流程（付费路径，此前零覆盖）─────────────────────────────────────────
+
+
+def _jpeg_first_frame(w: int = 200, h: int = 300) -> bytes:
+    """一张竖长的图，用来验首帧被按目标画布补边而不是拉伸。"""
+    import io as _io
+
+    from PIL import Image as _Image
+
+    buf = _io.BytesIO()
+    _Image.new("RGB", (w, h), (40, 80, 160)).save(buf, "PNG")
+    return buf.getvalue()
+
+
+@pytest.fixture(autouse=True)
+def _no_sleep(monkeypatch):
+    """轮询里的 time.sleep 打桩 —— 用例不该真等。"""
+    import windup_framework.providers.sufy as _S
+
+    monkeypatch.setattr(_S.time, "sleep", lambda *_: None)
+
+
+def _video_provider(handler, **kw):
+    import httpx as _httpx
+
+    from windup_framework.config.provider import AIProviderSettings
+    from windup_framework.providers.sufy import SufyVideoProvider
+
+    p = SufyVideoProvider(
+        config=AIProviderSettings(base_url="https://gw.example.com/v1", api_key="k"),
+        # 轮询预算 = max_min * 60 // poll。poll 取大值让预算只有几次，
+        # 再把 time.sleep 打桩掉，用例就既快又不空转（第一版 poll=0.001 配
+        # max_min=1 会真轮询 6 万次，单文件跑了 96 秒）。
+        poll_interval=30.0,
+        **kw,
+    )
+    client = _httpx.Client(
+        base_url="https://gw.example.com/v1",
+        headers={"Authorization": "Bearer k"},
+        transport=_httpx.MockTransport(handler),
+    )
+    p._client = lambda: client
+    return p
+
+
+def _i2v_handler(seen: dict, *, statuses=("completed",), video=b"MP4DATA" * 200):
+    """提交 → 轮询 → 下载 三段式的假网关。"""
+    import httpx as _httpx
+
+    calls = {"n": 0}
+
+    def h(request):
+        path = request.url.path
+        if request.method == "POST" and path.endswith("/videos"):
+            seen["body"] = json.loads(request.content)
+            return _httpx.Response(200, json={"id": "job-1"})
+        if request.method == "GET" and "/videos/" in path:
+            i = min(calls["n"], len(statuses) - 1)
+            calls["n"] += 1
+            st = statuses[i]
+            if st == "completed":
+                return _httpx.Response(200, json={
+                    "status": "completed",
+                    "task_result": {"videos": [{"url": "https://gw.example.com/out.mp4"}]},
+                })
+            return _httpx.Response(200, json={"status": st, "error": "boom"})
+        seen["download_headers"] = dict(request.headers)
+        return _httpx.Response(200, content=video,
+                               headers={"Content-Length": str(len(video))})
+
+    return h
+
+
+def test_i2v_submits_polls_and_downloads():
+    """一条完整的付费路径：提交拿 job id → 轮询到 completed → 下载 mp4。"""
+    seen: dict = {}
+    data = _video_provider(_i2v_handler(seen)).i2v(_jpeg_first_frame(), "walk right")
+    assert data.startswith(b"MP4DATA")
+    body = seen["body"]
+    assert body["prompt"] == "walk right"
+    assert body["seconds"] == "5" and isinstance(body["seconds"], str), "seconds 必须是字符串"
+    assert body["mode"] == "std"
+
+
+def test_first_frame_goes_as_a_jpeg_data_uri():
+    """PNG base64 会让任务 status=failed（VENDOR_FAILED，2026-07-22 实测，33s fail-fast）。
+    首帧必须转 JPEG —— 这条错在提交后才报，本地看不出来。
+    """
+    seen: dict = {}
+    _video_provider(_i2v_handler(seen)).i2v(_jpeg_first_frame(), "x")
+    uri = seen["body"]["input_reference"]
+    assert uri.startswith("data:image/jpeg;base64,"), uri[:40]
+
+    import base64 as _b64
+    import io as _io
+
+    from PIL import Image as _Image
+
+    im = _Image.open(_io.BytesIO(_b64.b64decode(uri.split(",", 1)[1])))
+    assert im.format == "JPEG"
+
+
+def test_first_frame_is_padded_to_the_target_canvas_not_stretched():
+    """按目标画布补边、不拉伸：拉伸会让角色比例变形，而母版比例是角色一致性的一部分。"""
+    import base64 as _b64
+    import io as _io
+
+    from PIL import Image as _Image
+
+    # 源图放一个偏心的亮块：拉伸会把它拉宽，补边会保持它的宽高比。
+    # 只看"对称两点颜色相同"是无效判据 —— 纯色图拉伸后照样相同
+    # （2026-08-11 变异测试逮到第一版正是如此，M3 存活）。
+    buf = _io.BytesIO()
+    src = _Image.new("RGB", (200, 300), (40, 80, 160))
+    src.paste((250, 250, 250), (80, 100, 120, 140))      # 40x40 的方块
+    src.save(buf, "PNG")
+
+    seen: dict = {}
+    _video_provider(_i2v_handler(seen)).i2v(buf.getvalue(), "x", size="1280x720")
+    im = _Image.open(_io.BytesIO(_b64.b64decode(seen["body"]["input_reference"].split(",", 1)[1])))
+    assert im.size == (1280, 720), "首帧应铺满目标画布"
+
+    # 量那个方块在成品里的宽高比。补边：源 40x40 等比缩放后仍是 1:1。
+    # 拉伸：横向被拉 1280/200=6.4 倍、纵向 720/300=2.4 倍，比例变成 ~2.67:1。
+    import numpy as _np
+
+    a = _np.asarray(im.convert("L"))
+    ys, xs = _np.where(a > 200)
+    ratio = (xs.max() - xs.min() + 1) / (ys.max() - ys.min() + 1)
+    assert 0.8 < ratio < 1.25, f"方块宽高比 {ratio:.2f}，说明被拉伸了（补边应≈1.0）"
+
+
+@pytest.mark.parametrize("bad", ["failed", "cancelled"])
+def test_terminal_failure_raises_instead_of_polling_to_timeout(bad):
+    """网关报 failed/cancelled 要立刻抛，别把剩下的轮询次数耗完 —— 钱已经花了，
+    尽快把原因暴露给上层比多等几分钟有用。
+    """
+    with pytest.raises(RuntimeError, match=bad):
+        _video_provider(_i2v_handler({}, statuses=(bad,))).i2v(_jpeg_first_frame(), "x")
+
+
+def test_never_completing_job_raises_after_the_poll_budget():
+    """轮询预算用尽仍未 completed → 抛错，不返回空 bytes。
+
+    返回空 bytes 的话上游会把它当成一段视频送进抽帧，报"视频无可解码帧"，
+    真正的原因（超时）就被埋掉了。
+    """
+    p = _video_provider(_i2v_handler({}, statuses=("in_progress",)), max_min=1)  # 预算 2 次
+    with pytest.raises(RuntimeError, match="未取得视频 URL"):
+        p.i2v(_jpeg_first_frame(), "x")
+
+
+def test_image_list_models_use_a_different_first_frame_field():
+    """字段按模型选。塞错字段不会立刻报错 —— 任务 status=queued 正常返回，
+    直到生成阶段才 failed "model is not supported"，而费用可能已经产生
+    （2026-07-29 实测）。
+    """
+    from windup_framework.providers.sufy import _IMAGE_LIST_MODELS
+
+    seen: dict = {}
+    p = _video_provider(_i2v_handler(seen), model=_IMAGE_LIST_MODELS[0], mode="pro")
+    p.i2v(_jpeg_first_frame(), "x")
+    assert "image_list" in seen["body"] and "input_reference" not in seen["body"]
+    assert not seen["body"]["image_list"][0]["image"].startswith("data:"), \
+        "image_list 要裸 base64，不带 data URI 前缀"
+
+
+def test_non_positive_poll_interval_is_rejected_at_construction():
+    """轮询间隔 <= 0 在构造时就拒。
+
+    此前会活到 i2v 里 `max_min * 60 // poll` 那一步除零 —— 报 ZeroDivisionError，
+    读的人完全看不出是配错了参数（2026-08-11 补 i2v 主流程测试时逮到）。
+    0 的语义本身也不成立：那是忙等，会把网关打满。
+    """
+    from windup_framework.config.provider import AIProviderSettings
+    from windup_framework.providers.sufy import SufyVideoProvider
+
+    cfg = AIProviderSettings(base_url="https://gw.example.com/v1", api_key="k")
+    for bad in (0, -1, -0.5):
+        with pytest.raises(ValueError, match="poll_interval"):
+            SufyVideoProvider(config=cfg, poll_interval=bad)

@@ -312,3 +312,91 @@ def test_spread_matches_bruteforce_bfs_on_random_masks():
         region = rng.random((h, w)) < rng.uniform(0.3, 0.9)
         seed = rng.random((h, w)) < 0.05
         assert (_spread(seed, region) == bfs(seed, region)).all()
+
+
+# ── cutout 的装配顺序（不碰真模型）─────────────────────────────────────────
+#
+# 真实推理需要 4.7MB 的 onnx 权重，CI 里既下不到也不该下。但 cutout 本身的**装配顺序**
+# 是有语义的，可以用一个假 session 覆盖：
+#   预测 mask → 乘键控清理系数 → 填封闭空洞 → 合成 RGBA
+# 顺序错了会静默出错结果：先填洞再清理，会把刚填上的像素又清掉。
+
+
+class _FakeSession:
+    """假 onnxruntime session：返回一个中间为主体的 mask。"""
+
+    class _In:
+        name = "input"
+
+    def get_inputs(self):
+        return [self._In()]
+
+    def run(self, _out, feed):
+        import numpy as np
+
+        t = next(iter(feed.values()))
+        h, w = t.shape[2], t.shape[3]
+        m = np.zeros((1, 1, h, w), dtype="float32")
+        m[:, :, h // 4 : h * 3 // 4, w // 4 : w * 3 // 4] = 1.0
+        return [m]
+
+
+def _provider_with_fake_session(monkeypatch):
+    from windup_framework.providers.matte import OnnxU2NetMatteProvider
+
+    p = OnnxU2NetMatteProvider()
+    monkeypatch.setattr(p, "_get_session", lambda: _FakeSession())
+    return p
+
+
+def _png(w=64, h=64, color=(220, 220, 220)):
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), color).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_cutout_outputs_rgba_png_with_alpha(monkeypatch):
+    import io
+
+    from PIL import Image
+
+    out = _provider_with_fake_session(monkeypatch).cutout(_png())
+    im = Image.open(io.BytesIO(out))
+    assert im.format == "PNG" and im.mode == "RGBA"
+    assert im.size == (64, 64)
+
+
+def test_cutout_keeps_rgb_untouched(monkeypatch):
+    """抠图只动 alpha。改 RGB 会让后续像素化锁色板取到被改过的颜色。"""
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    src = _png(color=(31, 41, 59))
+    out = _provider_with_fake_session(monkeypatch).cutout(src)
+    a = np.asarray(Image.open(io.BytesIO(out)))
+    b = np.asarray(Image.open(io.BytesIO(src)).convert("RGB"))
+    assert np.array_equal(a[:, :, :3], b), "RGB 通道被改了"
+
+
+def test_cutout_applies_flat_bg_cleanup_before_filling_holes(monkeypatch):
+    """顺序：清理 → 填洞。反过来会把刚填上的像素又清掉，且不报错。
+
+    用调用顺序断言而不是像素结果 —— 结果层面两种顺序在简单图上可能相同，
+    那样的用例杀不掉顺序颠倒这个变异。
+    """
+    import windup_framework.providers.matte as M
+
+    order: list[str] = []
+    real_pen, real_fill = M._flat_bg_penalty, M._fill_enclosed_holes
+    monkeypatch.setattr(M, "_flat_bg_penalty",
+                        lambda rgb: (order.append("clean"), real_pen(rgb))[1])
+    monkeypatch.setattr(M, "_fill_enclosed_holes",
+                        lambda a, rgb: (order.append("fill"), real_fill(a, rgb))[1])
+    _provider_with_fake_session(monkeypatch).cutout(_png())
+    assert order == ["clean", "fill"], order
