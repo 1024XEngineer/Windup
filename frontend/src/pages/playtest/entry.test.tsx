@@ -64,4 +64,27 @@ describe('PlaytestEntryPage', () => {
     expect(await screen.findByText('可试玩资产暂时无法读取')).toBeTruthy()
     expect(screen.queryByText('还没有可试玩的角色')).toBeNull()
   })
+
+  it('loads every project and character page before presenting the asset count', async () => {
+    const backend = createProjectAssetsBackend({ projectCount: 101, characterCount: 101 })
+    renderEntryWith(backend.fetch)
+
+    expect(await screen.findByText('101 套造型已接入')).toBeTruthy()
+    expect(
+      backend.requests.some((request) => {
+        const url = new URL(request.url)
+        return url.pathname === '/projects' && url.searchParams.get('page') === '2'
+      }),
+    ).toBe(true)
+    expect(
+      backend.requests.some((request) => {
+        const url = new URL(request.url)
+        return (
+          url.pathname === '/characters' &&
+          url.searchParams.get('project_id') === '42' &&
+          url.searchParams.get('page') === '2'
+        )
+      }),
+    ).toBe(true)
+  })
 })
