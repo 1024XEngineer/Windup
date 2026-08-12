@@ -202,6 +202,14 @@ describe('WorkspacePage', () => {
     expect(screen.getByRole('complementary').className).toContain('max-md:hidden')
   })
 
+  it('does not claim projects are sorted by update time', async () => {
+    renderWorkspace()
+
+    await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
+    expect(screen.queryByText('按更新时间')).toBeNull()
+    expect(screen.getByText('项目列表')).toBeTruthy()
+  })
+
   it('omits entrance badges and decorative context-header chrome', () => {
     const { container } = renderWorkspace()
 
