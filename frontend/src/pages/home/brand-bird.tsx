@@ -55,7 +55,8 @@ export function HomeBrandBird() {
     const context = canvas.getContext('2d')
     if (!context) return
 
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)')
+    let reduceMotion = motionPreference.matches
     const image = new Image()
     image.decoding = 'async'
     image.src = '/windup-mark.svg'
@@ -125,6 +126,14 @@ export function HomeBrandBird() {
       animationFrame = window.requestAnimationFrame(animate)
     }
 
+    function handleMotionPreferenceChange(event: MediaQueryListEvent) {
+      reduceMotion = event.matches
+      window.cancelAnimationFrame(animationFrame)
+      animationFrame = 0
+      draw()
+      if (!reduceMotion && points.length) animationFrame = window.requestAnimationFrame(animate)
+    }
+
     function load() {
       points = sampleMark(image)
       draw()
@@ -134,12 +143,14 @@ export function HomeBrandBird() {
     const observer = new ResizeObserver(resize)
     observer.observe(canvas)
     image.addEventListener('load', load, { once: true })
+    motionPreference.addEventListener('change', handleMotionPreferenceChange)
     resize()
 
     return () => {
       window.cancelAnimationFrame(animationFrame)
       observer.disconnect()
       image.removeEventListener('load', load)
+      motionPreference.removeEventListener('change', handleMotionPreferenceChange)
     }
   }, [])
 
