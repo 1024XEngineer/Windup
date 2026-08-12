@@ -144,6 +144,12 @@ class CharacterGeneratorPort(Protocol):
             角色一致性靠它,不靠 card。** 进付费模型之前会先过一遍可生成性预检,
             见 Raises。
         progress: 进度回调。
+        canvas: 交付画布 ``(宽, 高)``,单位像素。``None`` = 引擎默认(256 方形)。
+            **给上层传项目 sprite 尺寸用的。** 不给的话引擎恒出 256,上层要缩到项目
+            尺寸就得再来一次重采样;而那一步用 ``Image.thumbnail``(只缩不放),放大
+            方向根本不放大、还会把脚线从 0.92 挪到 0.709(2026-08-11 实测),角色不
+            站在地上。让引擎一次出到目标尺寸,那次二次缩放就整个消掉。
+            画布几何按比例定义,故任何尺寸下构图不变、母版预检阈值同样有效。
 
     Raises:
         MasterRejected: 母版形态不可生成(见 :class:`MasterRejectCode`)。**在花钱
@@ -161,4 +167,5 @@ class CharacterGeneratorPort(Protocol):
         action: ActionSpec,
         master: bytes,
         progress: ProgressPort,
+        canvas: tuple[int, int] | None = None,
     ) -> GeneratedAction: ...

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from windup_common.models import ActionSpec, ActionType, CharacterCard, GenRoute
+from windup_common.models import ActionSpec, ActionType, CharacterCard, GenRoute, Stylize
 from windup_framework.providers import ImageProvider, MatteProvider, VideoProvider
 
 from windup_ai_engine._imgio import from_png as _img
@@ -61,8 +61,13 @@ class VideoFrameStrategy(DerivationStrategy):
         master: bytes,
         progress: ProgressPort,
     ) -> list[bytes]:
-        n = action.n_frames or 8
-        progress.step("derive", 0, 3, f"{action.action}: i2v 生成视频")
+        # 帧数直接读契约字段:缺省值已收进 ActionSpec(DEFAULT_N_FRAMES),不再由本层
+        # 用 `or 8` 兜底 —— 那等于把契约的缺省值写在实现里,换条 strategy 就换个默认值。
+        n = action.n_frames
+        # 进度文案里的枚举一律取 .value:Python 3.11+ 改了 str-mixin 枚举的 __format__,
+        # f"{action.action}" 现在给的是 "ActionType.WALK" 而不是 "walk"(3.12.13 实测),
+        # 而这串字会经 server 变成用户看到的 SSE 进度。
+        progress.step("derive", 0, 3, f"{action.action.value}: i2v 生成视频")
         # 母版按动作预处理:jump 要在顶部补空间,否则角色腾空时头顶顶出视频画面被裁
         framed = prepare_master(master, action.action.value)
         video = self._video.i2v(framed, self._build_prompt(action), seconds=5)
@@ -87,7 +92,7 @@ class VideoFrameStrategy(DerivationStrategy):
         # 风格化按需(见 ActionSpec.stylize):none=保留 i2v 画风(插画/伪 3D 角色);
         # pixel=像素化。原生像素角色**按母版规格**做:吸附母版像素网格 + 锁母版色板,
         # 顺带消掉首帧 JPG / H.264 在硬边留下的灰颗粒(实测:通用降采样+量化反而更糊)。
-        if action.stylize == "none":
+        if action.stylize is Stylize.NONE:
             progress.step("derive", 2, 3, "保留 i2v 画风(不像素化)")
             return [_png(im) for im in cut]
 

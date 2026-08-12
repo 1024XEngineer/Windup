@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+from windup_common.models import Facing
+
 __all__ = ["WALK_BODY_SIDE", "WALK_BODY_FRONT", "DEFAULT_GARMENT", "build_walk_prompt"]
 
 # 侧走(横版):整体向右推进 + 锁侧视。
@@ -38,19 +40,21 @@ DEFAULT_GARMENT = "the cape and tabard"
 
 
 def build_walk_prompt(
-    garment: str = DEFAULT_GARMENT, feet: str = "boot", facing: str = "side"
+    garment: str = DEFAULT_GARMENT, feet: str = "boot", facing: Facing | str = Facing.SIDE
 ) -> str:
     """按角色装备 + 母版朝向生成走路正文。
 
     Args:
         garment: 随步伐摆动的衣饰(如 "the cape and tabard" / "the red scarf and tabard")。
         feet: 落脚部件用词(如 "boot" / "bare bony foot"),替换机制句里的 boot。
-        facing: "side"(横版侧走,母版朝侧向)或 "front"(俯视/2.5D,母版朝观者)。
-            **必须与母版朝向一致**,否则模型会靠转身调和矛盾。
+        facing: :class:`Facing` 成员(或其等价字符串)。**必须与母版朝向一致**,
+            否则模型会靠转身调和矛盾。
     """
-    if facing not in ("side", "front"):
-        raise ValueError(f"facing 只能是 'side' 或 'front',收到 {facing!r}")
-    template = WALK_BODY_SIDE if facing == "side" else WALK_BODY_FRONT
+    # 注解不是运行期约束:build_* 是普通函数,传 "sidee" 仍进得来。这里显式过一遍
+    # Facing() 构造,非法值抛 ValueError —— 若改成 `if facing == Facing.SIDE else FRONT`
+    # 的二分,"sidee" 会静默落到 FRONT 模板,拿到一段正面走的视频却没有任何报错。
+    facing = Facing(facing)
+    template = WALK_BODY_SIDE if facing is Facing.SIDE else WALK_BODY_FRONT
     body = template.format(garment=garment)
     if feet != "boot":
         body = body.replace("boot", feet)

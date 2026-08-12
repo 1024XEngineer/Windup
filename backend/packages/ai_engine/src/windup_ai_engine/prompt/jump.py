@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from windup_common.models import Facing
+
 __all__ = ["JUMP_BODY_SIDE", "JUMP_BODY_FRONT", "JUMP_PHASES", "build_jump_prompt"]
 
 # 跳跃的五个状态(引擎侧按这个切段;顺序即时间顺序)。
@@ -45,18 +47,17 @@ DEFAULT_GARMENT = "the cape and tabard"
 
 
 def build_jump_prompt(
-    garment: str = DEFAULT_GARMENT, feet: str = "boot", facing: str = "side"
+    garment: str = DEFAULT_GARMENT, feet: str = "boot", facing: Facing | str = Facing.SIDE
 ) -> str:
     """按角色装备 + 母版朝向生成跳跃正文。
 
     Args:
         garment: 起跳时上飘的衣饰。
         feet: 落脚部件用词(替换 boot)。
-        facing: "side" 或 "front",**必须与母版朝向一致**。
+        facing: :class:`Facing` 成员(或其等价字符串),**必须与母版朝向一致**。
     """
-    if facing not in ("side", "front"):
-        raise ValueError(f"facing 只能是 'side' 或 'front',收到 {facing!r}")
-    template = JUMP_BODY_SIDE if facing == "side" else JUMP_BODY_FRONT
+    facing = Facing(facing)   # 非法值在此炸掉,别静默落到 FRONT 模板(理由见 walk.py 同处注释)
+    template = JUMP_BODY_SIDE if facing is Facing.SIDE else JUMP_BODY_FRONT
     body = template.format(garment=garment)
     if feet != "boot":
         body = body.replace("boot", feet)
