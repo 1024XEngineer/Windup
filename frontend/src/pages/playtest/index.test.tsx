@@ -99,4 +99,26 @@ describe('PlaytestPage', () => {
     expect(await screen.findByRole('heading', { name: '52 · 未命名造型' })).toBeTruthy()
     expect(screen.getByText('暂无可播放帧')).toBeTruthy()
   })
+
+  it('旧资产缺少角色母版时仍可试玩，但不显示无效导出入口', async () => {
+    const backend = createProjectAssetsBackend()
+    const fetchWithoutMaster: typeof globalThis.fetch = async (input, init) => {
+      const response = await backend.fetch(input, init)
+      if (new URL(new Request(input, init).url).pathname !== '/characters/51') return response
+      const body = (await response.json()) as {
+        data: {
+          reference_image_url: string | null
+          character_data: { outfits: Array<{ preview_url: string | null }> }
+        }
+      }
+      body.data.reference_image_url = null
+      body.data.character_data.outfits[0]!.preview_url = null
+      return new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } })
+    }
+
+    renderPlaytest('/playtest/51/outfit-default', fetchWithoutMaster)
+
+    expect(await screen.findByRole('heading', { name: '51 · 常态造型' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '导出Playtest 运行包' })).toBeNull()
+  })
 })

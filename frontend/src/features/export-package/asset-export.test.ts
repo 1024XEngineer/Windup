@@ -9,7 +9,7 @@ import {
   type AssetExportTarget,
 } from './asset-export'
 import { COCOS_TARGET_READINESS, toCocosAnchor } from './cocos-target'
-import { EXPORT_PACKAGE_JSON_SCHEMA_TEXT } from './contract'
+import { EXPORT_PACKAGE_JSON_SCHEMA_TEXT, validateExportPackageModel } from './contract'
 import type { ExportAction, ExportFrame, ExportPackageModel } from './model'
 
 function frame(index: number): ExportFrame {
@@ -120,6 +120,26 @@ function runtime(failingUrl: string | null = null): AssetExportRuntime {
 }
 
 describe('asset export', () => {
+  it('拒绝把不完整内容标记成更高导出阶段', () => {
+    const cases: Array<[ExportPackageModel, string]> = [
+      [{ ...model, stage: 'unknown' as ExportPackageModel['stage'] }, 'stage: 不是支持的导出阶段'],
+      [
+        { ...model, stage: 'first-frame', firstFrames: [], actions: [] },
+        'firstFrames: 首帧阶段至少需要一个已确认首帧',
+      ],
+      [{ ...model, stage: 'action-assets', actions: [] }, 'actions: 当前阶段至少需要一个完整动作'],
+      [{ ...model, stage: 'playtest', playtest: null }, 'playtest: Playtest 阶段必须包含运行配置'],
+      [
+        { ...model, stage: 'character', actions: [], playtest: { initialActionId: null } },
+        'playtest: 只有 Playtest 阶段可以包含运行配置',
+      ],
+    ]
+
+    for (const [candidate, message] of cases) {
+      expect(() => validateExportPackageModel(candidate)).toThrow(message)
+    }
+  })
+
   it('角色阶段只打包母版，后续阶段在同一根目录增量追加首帧和 Playtest 清单', async () => {
     const characterModel: ExportPackageModel = {
       ...model,

@@ -85,6 +85,17 @@ const run: WorkflowRun = {
 }
 
 describe('createProgressiveExportModel', () => {
+  it('拒绝把其它 WorkflowRun 的完成度拼到当前角色', () => {
+    expect(() =>
+      createProgressiveExportModel({
+        project,
+        character,
+        outfitId: 'outfit-1',
+        run: { ...run, id: 'other-run' },
+      }),
+    ).toThrow('WorkflowRun 与角色或项目不匹配')
+  })
+
   it('角色母版完成后即可构造不含动作的基础导出包', () => {
     const model = createProgressiveExportModel({
       project,
