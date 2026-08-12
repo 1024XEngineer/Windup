@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, Route, Routes, useParams } from 'react-router'
 
 import { AppRoutes } from '@/app'
+import { ProjectCreatePage } from '@/pages/project-create'
 import { AuthenticatedAuthSession, GuestAuthSession } from '@/test/auth-session'
 import { createProjectAssetsBackend } from '@/test/project-assets-backend'
 
@@ -40,7 +41,130 @@ function creationRequests(backend: ReturnType<typeof createProjectAssetsBackend>
   )
 }
 
+function workflowCreationRequests(backend: ReturnType<typeof createProjectAssetsBackend>) {
+  return backend.requests.filter(
+    (request) => request.method === 'POST' && new URL(request.url).pathname === '/workflow-runs',
+  )
+}
+
+function installWorkflowBackend(failWorkflowAttempts = 0) {
+  const backend = createProjectAssetsBackend()
+  const baseFetch = backend.fetch
+  let remainingFailures = failWorkflowAttempts
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init)
+    const url = new URL(request.url)
+    if (request.method !== 'POST' || url.pathname !== '/workflow-runs') {
+      return baseFetch(input, init)
+    }
+
+    backend.requests.push(request.clone())
+    if (remainingFailures > 0) {
+      remainingFailures -= 1
+      return new Response(
+        JSON.stringify({ code: 500, message: '工作流暂时无法创建', data: null }),
+        { headers: { 'content-type': 'application/json' } },
+      )
+    }
+    const body = (await request.json()) as { project_id: number; nodes: unknown[] }
+    return new Response(
+      JSON.stringify({
+        code: 200,
+        message: 'success',
+        data: {
+          id: 701,
+          project_id: body.project_id,
+          nodes: body.nodes,
+          status: 'active',
+          version: 1,
+        },
+      }),
+      { headers: { 'content-type': 'application/json' } },
+    )
+  }
+  vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+  vi.stubGlobal('fetch', fetch)
+  return backend
+}
+
+function WorkflowDestination() {
+  const { runId } = useParams()
+  return <h1>Workflow Editor {runId}</h1>
+}
+
+async function renderWorkflowProjectCreate() {
+  const result = render(
+    <AuthenticatedAuthSession>
+      <MemoryRouter initialEntries={['/projects/new?entry=workflow-editor']}>
+        <Routes>
+          <Route path="/projects/new" element={<ProjectCreatePage />} />
+          <Route path="/workflow-editor/:runId" element={<WorkflowDestination />} />
+        </Routes>
+      </MemoryRouter>
+    </AuthenticatedAuthSession>,
+  )
+  await screen.findByRole('button', { name: '创建项目' })
+  return result
+}
+
 describe('ProjectCreatePage', () => {
+  it('从工作流入口创建项目后创建正式 WorkflowRun 并进入画布', async () => {
+    const backend = installWorkflowBackend()
+    await renderWorkflowProjectCreate()
+
+    fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '雾港画布' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
+
+    expect(await screen.findByRole('heading', { name: 'Workflow Editor 701' })).toBeTruthy()
+    expect(creationRequests(backend)).toHaveLength(1)
+    const [workflowRequest] = workflowCreationRequests(backend)
+    expect(workflowRequest).toBeTruthy()
+    expect(await workflowRequest!.json()).toMatchObject({
+      project_id: 4242,
+      nodes: [
+        {
+          id: 'character-setup',
+          type: 'character-setup',
+          status: 'active',
+          phase: 'configuring',
+          dependsOnNodeIds: [],
+          input: { prompt: '', referenceMedia: [] },
+        },
+        {
+          id: 'character-template',
+          type: 'character-template',
+          status: 'locked',
+          phase: 'ready',
+          dependsOnNodeIds: ['character-setup'],
+        },
+      ],
+    })
+  })
+
+  it('WorkflowRun 创建失败后只重试工作流，不重复创建项目', async () => {
+    const backend = installWorkflowBackend(1)
+    await renderWorkflowProjectCreate()
+
+    fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '可重试画布' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
+
+    expect((await screen.findByRole('alert')).textContent).toBe('项目已创建，但工作流暂时无法创建')
+    expect(creationRequests(backend)).toHaveLength(1)
+    expect(workflowCreationRequests(backend)).toHaveLength(1)
+
+    const projectName = screen.getByLabelText('项目名称') as HTMLInputElement
+    const spriteWidth = screen.getByLabelText('宽度（像素）') as HTMLInputElement
+    expect(projectName.disabled).toBe(true)
+    expect(spriteWidth.disabled).toBe(true)
+    fireEvent.change(projectName, { target: { value: '' } })
+    fireEvent.change(spriteWidth, { target: { value: '16' } })
+    fireEvent.click(screen.getByRole('button', { name: '重试进入工作流' }))
+
+    expect(await screen.findByRole('heading', { name: 'Workflow Editor 701' })).toBeTruthy()
+    expect(creationRequests(backend)).toHaveLength(1)
+    expect(workflowCreationRequests(backend)).toHaveLength(2)
+  })
+
   it('按项目契约提交表单并进入创建出的项目', async () => {
     const backend = installBackend()
     await renderProjectCreate()

@@ -559,7 +559,7 @@ function WorkflowEntranceCard({
           aria-label="工作流画布入口"
         >
           <Link
-            to="/projects/new"
+            to="/projects/new?entry=workflow-editor"
             aria-label="创建新项目"
             className="workflow-card-action workflow-card-action-create group/action flex items-center justify-between text-left focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]"
           >

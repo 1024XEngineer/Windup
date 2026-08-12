@@ -237,7 +237,7 @@ describe('WorkspacePage', () => {
       '/quick-start',
     )
     expect(screen.getByRole('link', { name: '创建新项目' }).getAttribute('href')).toBe(
-      '/projects/new',
+      '/projects/new?entry=workflow-editor',
     )
     expect(screen.getByRole('button', { name: '继续已有工作流' })).toBeTruthy()
     expect(screen.getByRole('link', { name: '进入资产库' }).getAttribute('href')).toBe('/projects')

@@ -1,12 +1,15 @@
 import { useRef, useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
 
 import {
   CHARACTER_PERSPECTIVE,
   DIRECTIONAL_MOVEMENT,
   projectApis,
+  workflowRunApis,
   type CharacterPerspective,
   type DirectionalMovement,
+  type Project,
+  type WorkflowNode,
 } from '@/entities'
 import { ApiError, getApiAccessToken } from '@/shared/api'
 import { ProjectCreatePixelMark } from './pixel-mark'
@@ -37,6 +40,8 @@ const GAME_STYLE_MAX_LENGTH = 240
 /** 创建真实项目；首页画布入口与项目中心的新建按钮共用这一页。 */
 export function ProjectCreatePage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const opensWorkflowEditor = searchParams.get('entry') === 'workflow-editor'
   /**
    * 能不能建项目只取决于有没有登录：后端 `/projects` 不在鉴权白名单里，
    * 归属也从 access token 里取。登录模块尚未接入时没有人注册 provider，
@@ -52,6 +57,7 @@ export function ProjectCreatePage() {
   const [gameStyle, setGameStyle] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [createdProject, setCreatedProject] = useState<Project | null>(null)
   /** 同一批事件里 submitting 还是上一次 render 的值，按钮变灰之前的重复提交只能靠这个挡。 */
   const inFlight = useRef(false)
 
@@ -62,29 +68,47 @@ export function ProjectCreatePage() {
     const trimmedName = name.trim()
     const width = Number(spriteWidth)
     const height = Number(spriteHeight)
-    if (!trimmedName) return setError('请填写项目名称')
-    if (trimmedName.length > NAME_MAX_LENGTH)
-      return setError(`项目名称最多 ${NAME_MAX_LENGTH} 个字`)
-    if (![width, height].every(isLegalSpriteLength)) {
-      return setError(`精灵宽高需要是 ${SPRITE_MIN} 到 ${SPRITE_MAX} 之间的整数`)
+    if (createdProject === null) {
+      if (!trimmedName) return setError('请填写项目名称')
+      if (trimmedName.length > NAME_MAX_LENGTH)
+        return setError(`项目名称最多 ${NAME_MAX_LENGTH} 个字`)
+      if (![width, height].every(isLegalSpriteLength)) {
+        return setError(`精灵宽高需要是 ${SPRITE_MIN} 到 ${SPRITE_MAX} 之间的整数`)
+      }
     }
 
     inFlight.current = true
     setSubmitting(true)
     setError(null)
+    let project = createdProject
     try {
-      const project = await projectApis.create({
-        name: trimmedName,
-        perspective,
-        directionalMovement,
-        spriteSize: { width, height },
-        gameStyle: gameStyle.trim() || null,
-      })
+      if (project === null) {
+        project = await projectApis.create({
+          name: trimmedName,
+          perspective,
+          directionalMovement,
+          spriteSize: { width, height },
+          gameStyle: gameStyle.trim() || null,
+        })
+        if (opensWorkflowEditor) setCreatedProject(project)
+      }
+      if (opensWorkflowEditor) {
+        const workflow = await workflowRunApis.create({
+          projectId: project.id,
+          nodes: initialWorkflowNodes(),
+        })
+        navigate(`/workflow-editor/${encodeURIComponent(workflow.id)}`)
+        return
+      }
       navigate(`/projects/${project.id}`)
     } catch (cause) {
       // 业务错误（如重名）由后端给出具体原因，原样转达；传输错误对用户没有信息量，收敛成一句。
       setError(
-        cause instanceof ApiError && cause.kind === 'business' ? cause.message : '项目暂时无法创建',
+        opensWorkflowEditor && project !== null
+          ? '项目已创建，但工作流暂时无法创建'
+          : cause instanceof ApiError && cause.kind === 'business'
+            ? cause.message
+            : '项目暂时无法创建',
       )
       inFlight.current = false
       setSubmitting(false)
@@ -125,6 +149,7 @@ export function ProjectCreatePage() {
             <input
               id="project-name"
               value={name}
+              disabled={createdProject !== null}
               maxLength={NAME_MAX_LENGTH}
               placeholder="例如：雾港来信"
               onChange={(event) => setName(event.target.value)}
@@ -143,6 +168,7 @@ export function ProjectCreatePage() {
               <select
                 id="project-perspective"
                 value={perspective}
+                disabled={createdProject !== null}
                 onChange={(event) => setPerspective(event.target.value as CharacterPerspective)}
                 className="rounded-xl border border-[#d5d9d2] bg-[#f5f5f2] px-4 py-3 text-sm outline-none focus-visible:border-[#8f978d]"
               >
@@ -161,6 +187,7 @@ export function ProjectCreatePage() {
               <select
                 id="project-movement"
                 value={directionalMovement}
+                disabled={createdProject !== null}
                 onChange={(event) =>
                   setDirectionalMovement(event.target.value as DirectionalMovement)
                 }
@@ -182,6 +209,7 @@ export function ProjectCreatePage() {
                 <button
                   key={preset}
                   type="button"
+                  disabled={createdProject !== null}
                   onClick={() => {
                     setSpriteWidth(String(preset))
                     setSpriteHeight(String(preset))
@@ -207,6 +235,7 @@ export function ProjectCreatePage() {
                   min={SPRITE_MIN}
                   max={SPRITE_MAX}
                   value={spriteWidth}
+                  disabled={createdProject !== null}
                   onChange={(event) => setSpriteWidth(event.target.value)}
                   className="rounded-xl border border-[#d5d9d2] bg-[#f5f5f2] px-4 py-3 text-sm outline-none focus-visible:border-[#8f978d]"
                 />
@@ -222,6 +251,7 @@ export function ProjectCreatePage() {
                   min={SPRITE_MIN}
                   max={SPRITE_MAX}
                   value={spriteHeight}
+                  disabled={createdProject !== null}
                   onChange={(event) => setSpriteHeight(event.target.value)}
                   className="rounded-xl border border-[#d5d9d2] bg-[#f5f5f2] px-4 py-3 text-sm outline-none focus-visible:border-[#8f978d]"
                 />
@@ -237,6 +267,7 @@ export function ProjectCreatePage() {
               id="project-style"
               rows={3}
               value={gameStyle}
+              disabled={createdProject !== null}
               maxLength={GAME_STYLE_MAX_LENGTH}
               placeholder="例如：低饱和像素风、细长比例、深灰旅行服"
               onChange={(event) => setGameStyle(event.target.value)}
@@ -259,7 +290,11 @@ export function ProjectCreatePage() {
               className="max-w-sm text-[11px] leading-5 text-[#747973]"
             >
               {signedIn
-                ? '创建后进入该项目的资产工作区。'
+                ? opensWorkflowEditor
+                  ? createdProject
+                    ? '项目已经创建；重试只会继续创建工作流，不会重复创建项目。'
+                    : '创建项目和初始工作流后，直接进入工作流画布。'
+                  : '创建后进入该项目的资产工作区。'
                 : '创建项目需要先登录。登录模块尚未接入，创建入口暂时保持关闭。'}
             </small>
             <button
@@ -268,7 +303,13 @@ export function ProjectCreatePage() {
               aria-describedby="project-create-hint"
               className="rounded-full bg-[#252825] px-6 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#a4aaa2]"
             >
-              {submitting ? '正在创建…' : '创建项目'}
+              {submitting
+                ? createdProject
+                  ? '正在重试…'
+                  : '正在创建…'
+                : createdProject
+                  ? '重试进入工作流'
+                  : '创建项目'}
             </button>
           </footer>
         </form>
@@ -279,4 +320,30 @@ export function ProjectCreatePage() {
 
 function isLegalSpriteLength(value: number) {
   return Number.isSafeInteger(value) && value >= SPRITE_MIN && value <= SPRITE_MAX
+}
+
+/** 手动画布从角色设定开始，节点关系与 Workflow Editor 的正式入口契约一致。 */
+function initialWorkflowNodes(): WorkflowNode[] {
+  return [
+    {
+      id: 'character-setup',
+      type: 'character-setup',
+      status: 'active',
+      phase: 'configuring',
+      dependsOnNodeIds: [],
+      generations: [],
+      error: null,
+      input: { prompt: '', referenceMedia: [] },
+    },
+    {
+      id: 'character-template',
+      type: 'character-template',
+      status: 'locked',
+      phase: 'ready',
+      dependsOnNodeIds: ['character-setup'],
+      generations: [],
+      error: null,
+      selectedImageUrl: null,
+    },
+  ]
 }
