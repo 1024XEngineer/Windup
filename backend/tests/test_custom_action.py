@@ -232,7 +232,7 @@ def test_oneshot_says_once_and_holds_the_end_pose():
     """一次性动作不写"只做一次+终态保持"会在 5s 内复读第二次(实测)。"""
     p = build_custom_prompt("swings the right arm down", facing=Facing.SIDE, cyclic=False)
     assert "ONCE" in p
-    assert "holds that pose" in p
+    assert "holds the final pose" in p
 
 
 def test_empty_and_overlong_descriptions_are_rejected():
@@ -289,3 +289,42 @@ def test_generator_is_bucketed_by_video_model():
     b = ex._get_generator("veo3.1")
     assert a is not b, "两个模型拿到了同一个 generator"
     assert ex._get_generator("kling-v2-6") is a, "同一模型该复用"
+
+
+# ── ⑥ 骨架不得夹带姿态前提(游泳/潜水/飞行都不着地不直立)─────────────────────
+
+# "着地 / 直立 / 双足"这一类前提对 walk/idle/attack/jump 成立,对**任意动作**不成立。
+# 骨架里写了它们,遇到游泳就会与用户的动作直接矛盾,而文字与动作矛盾时模型会自己找辙调和
+# (实测:给正面母版喂侧走词,它靠转身调和图文矛盾)—— 出来是一团乱麻。
+_POSTURE_ASSUMPTIONS = (
+    "on the ground", "standing", "upright", "both feet", "feet stay",
+    "legs clearly", "upper body stays calm", "on the spot", "planted",
+)
+
+
+@pytest.mark.parametrize("cyclic", [True, False])
+@pytest.mark.parametrize("facing", [Facing.SIDE, Facing.FRONT])
+def test_scaffolding_carries_no_posture_assumptions(facing, cyclic):
+    """骨架只许断言对任何动作都成立的东西。
+
+    这条是 2026-08-12 用"这个角色需要游泳"当场问出来的:初版骨架写了"留在地面同一点"
+    "双脚可见""上半身保持平稳",四条全部与游泳矛盾;一次性尾句还断言动作结束要
+    "回到直立站姿",而潜水/倒地/坐下的终态都不是站着。
+    """
+    p = build_custom_prompt("swims forward with alternating overarm strokes",
+                            facing=facing, cyclic=cyclic).lower()
+    hits = [w for w in _POSTURE_ASSUMPTIONS if w in p]
+    assert not hits, f"骨架夹带了姿态前提: {hits}"
+
+
+def test_oneshot_tail_does_not_dictate_what_the_final_pose_is():
+    """只要求保持终态,不规定终态是什么 —— 潜水结束不该被掰回站姿。"""
+    p = build_custom_prompt("dives down head first", facing=Facing.SIDE, cyclic=False)
+    assert "holds the final pose" in p
+    assert "standing" not in p.lower() and "upright" not in p.lower()
+
+
+def test_cyclic_tail_still_keeps_the_character_in_place():
+    """去掉"在地面上"之后,**不整体位移**这条仍要在 —— 位移交引擎当 root motion。"""
+    p = build_custom_prompt("swims forward", facing=Facing.SIDE, cyclic=True).lower()
+    assert "same spot" in p

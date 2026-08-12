@@ -49,16 +49,23 @@ _KEEP_WHAT_IT_HAS = (
     "anything held in the hands stays in the same grip at the same angle"
 )
 
-# 循环类:强调可无缝首尾相接、身体不整体位移(位移交引擎当 root motion)。
+# 循环类:可无缝首尾相接 + 不整体位移(位移交引擎当 root motion)。
+#
+# **刻意不写"在地面上""双脚可见"。** 那是"着地 / 直立 / 双足"这一类动作的前提,不是所有
+# 动作的前提 —— 游泳、飞行、攀爬、躺卧都不成立。而文字与动作矛盾时模型会自己找辙调和
+# (实测:给正面母版喂侧走词,它靠转身来调和图文矛盾),于是"游泳"+"留在地面"必然出乱麻。
 _CYCLIC_TAIL = (
-    "The motion is one smooth repeating cycle that returns to the starting pose, "
-    "the character stays in the same spot on the ground, both feet stay clearly visible."
+    "The motion is one smooth repeating cycle that returns to its starting pose, "
+    "and the character stays centered in the same spot in frame."
 )
 
-# 一次性类:只做一次 + 终态保持(防复读)。
+# 一次性类:只做一次 + 终态保持(防 5s 内复读)。
+#
+# **刻意不写"回到直立站姿"。** 潜水、倒地、坐下的终态都不是站着;硬写会让模型在动作末尾
+# 把角色强行掰回站姿。只要求"保持最后那个姿态",不规定那是什么姿态。
 _ONESHOT_TAIL = (
     "The character performs this ONCE as one single committed motion, "
-    "then settles back into a calm upright standing pose and holds that pose, standing steady."
+    "then holds the final pose and stays still."
 )
 
 
@@ -96,7 +103,6 @@ def build_custom_prompt(
 
     # 顺序有讲究:先钉朝向(最强约束放最前),再给用户的动作内容,再补存在无关的保持句,
     # 最后是循环性尾句。与 walk/attack 那几套的句序一致。
-    return (
-        f"The character {lock}: {text}, {_KEEP_WHAT_IT_HAS}, "
-        f"the upper body stays calm and the legs clearly visible. {tail}"
-    )
+    # 刻意不再补"上半身平稳 / 双腿可见":那两句同样只对着地直立的动作成立 ——
+    # 游泳靠上肢划水,上身恰恰不能稳。骨架只保留对任何动作都成立的部分。
+    return f"The character {lock}: {text}, {_KEEP_WHAT_IT_HAS}. {tail}"
