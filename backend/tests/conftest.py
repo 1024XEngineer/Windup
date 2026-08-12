@@ -14,6 +14,7 @@ from sqlalchemy.pool import StaticPool
 from windup_app.bootstrap.app import create_app
 from windup_app.server.character.model import Character
 from windup_app.server.project.model import Project
+from windup_app.server.quota.model import CreditAccount, CreditTransaction
 from windup_app.server.user.model import User
 from windup_app.server.workflow_run.model import WorkflowRun
 from windup_app.server.user.service import create_access_token
@@ -33,7 +34,10 @@ def _make_engine():
 def engine():
     """建好 ``windup_project`` 和 ``windup_user`` 表的内存 engine。"""
     engine = _make_engine()
-    Base.metadata.create_all(engine, tables=[Project.__table__, User.__table__, Character.__table__, WorkflowRun.__table__])
+    Base.metadata.create_all(engine, tables=[
+        Project.__table__, User.__table__, Character.__table__, WorkflowRun.__table__,
+        CreditAccount.__table__, CreditTransaction.__table__,
+    ])
     yield engine
     engine.dispose()
 

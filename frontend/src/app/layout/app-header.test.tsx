@@ -72,14 +72,16 @@ describe('AppHeader', () => {
   it('提供 PlayTest 入口，并将工作流路由归入创作', () => {
     renderHeader('/workflow-editor/run-1')
 
-    expect(screen.getByRole('link', { name: '返回 Windup 首页' }).getAttribute('href')).toBe('/')
+    expect(screen.getByRole('link', { name: '返回 Windup 工作台' }).getAttribute('href')).toBe(
+      '/workspace',
+    )
     expect(screen.getByRole('link', { name: '项目资产' }).getAttribute('href')).toBe('/projects')
     expect(screen.getByRole('link', { name: '创作' }).getAttribute('aria-current')).toBe('page')
     expect(screen.getByRole('link', { name: 'PlayTest' }).getAttribute('href')).toBe('/playtest')
   })
 
-  it('在首页只高亮首页一项', () => {
-    renderHeader()
+  it('在工作台首页只高亮首页一项', () => {
+    renderHeader('/workspace')
 
     expect(screen.getByRole('link', { name: '首页' }).getAttribute('aria-current')).toBe('page')
     expect(screen.getByRole('link', { name: '项目资产' }).getAttribute('aria-current')).toBeNull()

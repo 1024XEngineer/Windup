@@ -37,6 +37,30 @@ _KEY_KILL = 38.0    # d < 此值 → 判为纯背景
 _KEY_SOFT = 14.0    # 到 _KEY_KILL + _KEY_SOFT 之间线性过渡,避免硬边锯齿
 _BG_FLAT_STD = 8.0  # 四角色标准差上限;超过说明底不是纯色,不做任何清理
 
+# 采样前先丢掉最外圈像素。视频帧的最外一两行/列常是**编码器边缘伪影**,不是底色:
+# 2026-08-10 实测 9 段真 i2v 视频 × 16 帧 = 144 帧,贴边采样时 26 帧(18%)判"底不均匀"
+# 而跳过清理,逐一查证全部由最外圈造成 —— 白底母版视频最右一列整列纯黑(std 50.4),
+# 待机视频最顶一行偏暗(std 8.4,恰好压线越过 8)。往里让 1 px 就降到 1.9、让 2 px 降到 1.88,
+# 144 帧零误跳;三张静态母版的取样中位色一个字节都没变(220/64/135、222/39/130、222/41/124)。
+# 取 2 是为容下 2 px 宽的边框;真正不均匀的底(噪声/渐变/拼色)让多少都照样超阈值,守卫不松。
+_EDGE_SKIP = 2
+_CORNER = 12        # 每个角的采样块边长
+
+
+def _corner_pixels(rgb: np.ndarray) -> np.ndarray:
+    """四角采样块(跳过最外圈 ``_EDGE_SKIP`` 像素)拼成的 (N, 3) 像素表。
+
+    图太小时(四角会互相重叠)不让,退回贴边取 —— 合成测试图和缩略图走这条路。
+    """
+    k = _CORNER
+    s = _EDGE_SKIP if min(rgb.shape[:2]) > 2 * (_EDGE_SKIP + k) else 0
+    r = rgb[s : rgb.shape[0] - s, s : rgb.shape[1] - s] if s else rgb
+    return np.concatenate([
+        r[:k, :k].reshape(-1, 3), r[:k, -k:].reshape(-1, 3),
+        r[-k:, :k].reshape(-1, 3), r[-k:, -k:].reshape(-1, 3),
+    ])
+
+
 # 空洞填充用。_HOLE_ALPHA:低于此 alpha 才算"透明",参与空洞判定。
 # _HOLE_BG_TOL:到底色的距离低于此值 → 判为"确实是底色"。取值依据(2026-08-11 实测,
 # 1280×720 真实视频帧):纯背景区域的色距 p99.9≈6.5、最大 11.1(视频压缩噪点);
@@ -50,12 +74,10 @@ def _bg_key(rgb: np.ndarray) -> np.ndarray | None:
 
     抽成独立函数是为了让"底色是什么"只有一个真相源 —— 键控清理(``_flat_bg_penalty``)
     和空洞填充(``_fill_enclosed_holes``)必须按同一个 key 判断,否则一个把某块当背景
-    清掉、另一个又把它当主体填回来,互相打架。
+    清掉、另一个又把它当主体填回来,互相打架。取样统一走 :func:`_corner_pixels`,
+    连"跳过最外圈编码器伪影"这条也只有一份实现。
     """
-    corners = np.concatenate([
-        rgb[:12, :12].reshape(-1, 3), rgb[:12, -12:].reshape(-1, 3),
-        rgb[-12:, :12].reshape(-1, 3), rgb[-12:, -12:].reshape(-1, 3),
-    ])
+    corners = _corner_pixels(rgb)          # 跳过编码器边缘伪影,见 _EDGE_SKIP
     if float(corners.std(axis=0).max()) > _BG_FLAT_STD:
         return None
     return np.median(corners, axis=0).astype(np.float32)
@@ -137,6 +159,12 @@ def _flat_bg_penalty(rgb: np.ndarray) -> np.ndarray:
     会被抠穿)。这里主体判据仍然是 u2netp,颜色只用来**做减法** —— 绝不新增主体像素,
     最坏情况是少清理一点,不会抠穿角色。底色不够均匀时(std 超阈值)直接返回全 1,
     等于不清理。
+
+    **逐帧独立采样是安全的**(2026-08-10 在真视频帧上验证):同一段视频里逐帧算出的 key 色
+    几乎不动(9 段 i2v 实测帧间位移 <= 1.73/255),故不需要跨帧共享一次采样。序列帧真正的
+    闪烁源是**守卫在序列中途翻转**(部分帧清、部分帧不清):待机那段 16 帧里前 6 帧清、后 10 帧
+    不清,主体面积逐帧变化 CV 从 0.0036 跳到 0.0197、第 6 帧单帧跳 4.25%。跳过最外圈后
+    守卫不再翻转,CV 回到 0.0028 —— 比完全不清理还稳(清理同时抹掉了会自己抖的底色描边)。
     """
     key = _bg_key(rgb)
     if key is None:

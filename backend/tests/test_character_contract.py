@@ -4,15 +4,23 @@
 朝向拼错、帧数字段名打错、规格自相矛盾。这些错误以前一路放行到 i2v 调用之后才在画面上显形，
 一次误判的成本 = 一次付费视频生成 + 人肉看片。
 
-本文件只测 DTO 自身,不 import 上层包 —— 契约包要能独立验证。配套的实现侧断言
-("prompt 模板真的按 facing 选对"、"strategy 真的按 n_frames 出帧")随各自的实现
-分片走,契约合法不代表实现读对了。
+契约本身的断言在 feat/character-domain-models 那一片,只测 DTO、不 import 上层包。
+本分片引入 prompt 模块,于是把**实现侧**的配套断言补在这里:类型注解不是运行期约束,
+``build_*(facing="sidee")`` 必须当场炸。契约合法不代表实现读对了。
 """
 from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
 
+from windup_ai_engine.prompt import (
+    WALK_BODY_FRONT,
+    WALK_BODY_SIDE,
+    build_attack_prompt,
+    build_idle_prompt,
+    build_jump_prompt,
+    build_walk_prompt,
+)
 from windup_common.models import (
     DEFAULT_N_FRAMES,
     ActionSpec,
@@ -88,6 +96,48 @@ def test_unknown_field_name_is_rejected_not_silently_dropped():
         ActionSpec(action=ActionType.WALK, n_frame=16)
     with pytest.raises(ValidationError):
         CharacterCard(name="n", desc="d", nmae="typo")
+
+
+# ── A1 实现侧:build_* 是普通函数，注解不构成运行期约束 ──────────────────────
+
+
+@pytest.mark.parametrize(
+    "build", [build_walk_prompt, build_jump_prompt, build_idle_prompt, build_attack_prompt]
+)
+def test_prompt_builders_reject_illegal_facing(build):
+    """直接调 build_*(facing="sidee") 仍要炸。
+
+    类型注解不是运行期约束。若把校验删成 ``SIDE if facing == Facing.SIDE else FRONT``
+    的二分，"sidee" 会静默落到 FRONT 模板 —— 正面走的提示词配侧面母版，
+    模型靠转身调和矛盾，而调用方什么错都收不到。
+    """
+    with pytest.raises(ValueError):
+        build(facing="sidee")
+
+
+@pytest.mark.parametrize(
+    "build", [build_walk_prompt, build_jump_prompt, build_idle_prompt, build_attack_prompt]
+)
+def test_prompt_builders_accept_enum_and_legal_string_alike(build):
+    assert build(facing=Facing.FRONT) == build(facing="front")
+    assert build(facing=Facing.SIDE) == build(facing="side")
+
+
+def test_walk_prompt_picks_the_template_that_matches_facing():
+    """选模板的方向不能反 —— 只验"不炸"验不出模板接反。"""
+    side = build_walk_prompt(facing=Facing.SIDE)
+    front = build_walk_prompt(facing=Facing.FRONT)
+    assert side != front
+    assert side == WALK_BODY_SIDE.format(garment="the cape and tabard")
+    assert front == WALK_BODY_FRONT.format(garment="the cape and tabard")
+    assert "SIDE VIEW facing right" in side and "SIDE VIEW facing right" not in front
+    assert "FACING THE VIEWER" in front and "FACING THE VIEWER" not in side
+
+
+@pytest.mark.parametrize("build", [build_jump_prompt, build_idle_prompt, build_attack_prompt])
+def test_other_builders_also_switch_body_by_facing(build):
+    assert build(facing=Facing.SIDE) != build(facing=Facing.FRONT)
+    assert "FACING THE VIEWER" in build(facing=Facing.FRONT)
 
 
 # ── A2 n_frames 是显式字段，不再由 len(poses) 推导 ──────────────────────────
