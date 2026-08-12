@@ -32,7 +32,11 @@ import {
   type WorkflowRun,
 } from '@/entities'
 import type { WorkflowController } from '@/features/workflow-controller'
-import { createProgressiveExportModel, ExportButton } from '@/features/export-package'
+import {
+  createProgressiveExportModel,
+  ExportButton,
+  type ExportPackageModel,
+} from '@/features/export-package'
 import { createDefaultRealWorkflowEditorSession, type WorkflowEditorSession } from './runtime'
 import './workflow-editor.css'
 
@@ -261,6 +265,31 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
     }
   }, [loadSession, requestGenerations, runId])
 
+  const exportModels = useMemo(() => {
+    const models = new Map<string, ExportPackageModel>()
+    if (!character || !run || !session) return models
+    const completedGenerations = Object.values(generations).filter(
+      (generation): generation is Generation => generation !== null,
+    )
+    for (const outfit of character.outfits) {
+      try {
+        models.set(
+          outfit.id,
+          createProgressiveExportModel({
+            project: session.project,
+            character,
+            outfitId: outfit.id,
+            run,
+            generations: completedGenerations,
+          }),
+        )
+      } catch {
+        // 造型未达到最低导出条件时不显示导出入口。
+      }
+    }
+    return models
+  }, [character, generations, run, session])
+
   const projected = useMemo(
     () =>
       run && session
@@ -273,6 +302,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
             project: session.project,
             character,
             generations,
+            exportModels,
             selectedImages,
             actionMenuOpen,
             actionMenuLevel,
@@ -292,6 +322,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
       actionMenuLevel,
       busyBranches,
       character,
+      exportModels,
       generations,
       run,
       runCommand,
@@ -448,6 +479,7 @@ interface ProjectionInput {
   project: Project
   character: Character | null
   generations: Record<string, Generation | null>
+  exportModels: ReadonlyMap<string, ExportPackageModel>
   selectedImages: Record<string, string>
   actionMenuOpen: boolean
   actionMenuLevel: ActionMenuLevel
@@ -462,23 +494,7 @@ interface ProjectionInput {
   runCommand(branchKey: string, command: () => Promise<void>): void
 }
 
-function NodeExportButton({ input, outfitId }: { input: ProjectionInput; outfitId: string }) {
-  const model = useMemo(() => {
-    if (!input.character) return null
-    try {
-      return createProgressiveExportModel({
-        project: input.project,
-        character: input.character,
-        outfitId,
-        run: input.run,
-        generations: Object.values(input.generations).filter(
-          (generation): generation is Generation => generation !== null,
-        ),
-      })
-    } catch {
-      return null
-    }
-  }, [input.character, input.generations, input.project, input.run, outfitId])
+function NodeExportButton({ model }: { model: ExportPackageModel | undefined }) {
   return model ? (
     <ExportButton model={model} className={`${CARD_BUTTON} nodrag nopan nowheel`} />
   ) : null
@@ -746,7 +762,7 @@ function CharacterTemplateContent({
       <div className={CARD_STACK}>
         <img className={MASTER_IMAGE} src={node.selectedImageUrl} alt="已确认身份母版" />
         <span className="text-center text-[11px] text-[var(--editor-muted)]">身份已锁定</span>
-        {outfit ? <NodeExportButton input={input} outfitId={outfit.id} /> : null}
+        {outfit ? <NodeExportButton model={input.exportModels.get(outfit.id)} /> : null}
         <button
           type="button"
           className="absolute -bottom-4 -right-4 z-8 grid h-8 min-h-8 w-8 place-items-center rounded-full border border-[var(--editor-ink)] bg-white p-0 text-[15px] leading-none text-[var(--editor-ink)] shadow-[var(--editor-shadow)] hover:bg-[var(--editor-ink)] hover:text-white"
@@ -957,7 +973,7 @@ function FirstFrameContent({
     return (
       <div className={CARD_STACK}>
         <img className={MASTER_IMAGE} src={node.selectedFirstFrameUrl} alt="已确认动作首帧" />
-        <NodeExportButton input={input} outfitId={node.input.outfitId} />
+        <NodeExportButton model={input.exportModels.get(node.input.outfitId)} />
       </div>
     )
   }
@@ -1055,7 +1071,7 @@ function AnimationContent({
           ))}
         </div>
         {firstFrameNode ? (
-          <NodeExportButton input={input} outfitId={firstFrameNode.input.outfitId} />
+          <NodeExportButton model={input.exportModels.get(firstFrameNode.input.outfitId)} />
         ) : null}
       </div>
     )
@@ -1077,7 +1093,7 @@ function ReviewContent({ node, input }: { node: ReviewWorkflowNode; input: Proje
       <div className={CARD_STACK}>
         <p className={CARD_SUMMARY}>审核已通过</p>
         {firstFrame ? (
-          <NodeExportButton input={input} outfitId={firstFrame.input.outfitId} />
+          <NodeExportButton model={input.exportModels.get(firstFrame.input.outfitId)} />
         ) : null}
       </div>
     )

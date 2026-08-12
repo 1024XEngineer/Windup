@@ -383,7 +383,7 @@ function createMetadata(
     })),
     actions: plan.map((item) => ({
       id: item.action.id,
-      name: item.exportName,
+      name: item.action.name,
       fps: item.action.fps,
       loop: item.sequence.loop,
       quality_status: item.sequence.qualityStatus,

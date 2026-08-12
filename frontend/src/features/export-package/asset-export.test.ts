@@ -255,7 +255,7 @@ describe('asset export', () => {
       source: { workflow_run_id: 'run-1', generation_ids: ['generation-1'] },
     })
     expect(meta.actions[0]).toMatchObject({
-      name: 'Walk-Forward-south',
+      name: 'Walk / Forward',
       fps: 10,
       loop: true,
       anchor: { x: 0.5, y: 0.9 },
