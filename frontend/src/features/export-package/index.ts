@@ -1,5 +1,6 @@
 /** 将预览台当前角色资产打包下载；与发布到资产库是两件事。 */
-export { ExportPanel } from './export-panel'
+export { ExportButton, ExportPanel } from './export-panel'
+export type { ExportButtonProps, ExportPanelProps } from './export-panel'
 export type {
   ExportAction,
   ExportAnchor,
@@ -8,9 +9,12 @@ export type {
   ExportQualityStatus,
   ExportSequence,
   ExportSourceReference,
+  ExportStage,
 } from './model'
 export { createCharacterExportModel } from './character-export'
 export type { CreateCharacterExportModelInput } from './character-export'
+export { createProgressiveExportModel } from './progressive-export'
+export type { CreateProgressiveExportModelInput } from './progressive-export'
 export {
   EXPORT_PACKAGE_JSON_SCHEMA_TEXT,
   EXPORT_PACKAGE_SCHEMA_VERSION,

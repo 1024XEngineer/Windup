@@ -32,6 +32,7 @@ import {
   type WorkflowRun,
 } from '@/entities'
 import type { WorkflowController } from '@/features/workflow-controller'
+import { createProgressiveExportModel, ExportButton } from '@/features/export-package'
 import { createDefaultRealWorkflowEditorSession, type WorkflowEditorSession } from './runtime'
 import './workflow-editor.css'
 
@@ -461,6 +462,24 @@ interface ProjectionInput {
   runCommand(branchKey: string, command: () => Promise<void>): void
 }
 
+function NodeExportButton({ input, outfitId }: { input: ProjectionInput; outfitId: string }) {
+  if (!input.character) return null
+  try {
+    const model = createProgressiveExportModel({
+      project: input.project,
+      character: input.character,
+      outfitId,
+      run: input.run,
+      generations: Object.values(input.generations).filter(
+        (generation): generation is Generation => generation !== null,
+      ),
+    })
+    return <ExportButton model={model} className={`${CARD_BUTTON} nodrag nopan nowheel`} />
+  } catch {
+    return null
+  }
+}
+
 /** 卡片自己所属的分支；命令与禁用判断都以它为准。 */
 function branchKeyOf(node: WorkflowNode, input: ProjectionInput): string {
   return branchKeyFor(node, new Map(input.run.nodes.map((candidate) => [candidate.id, candidate])))
@@ -715,10 +734,15 @@ function CharacterTemplateContent({
     )
   }
   if (node.status === 'passed' && node.selectedImageUrl) {
+    const outfit =
+      input.character?.outfits.find(
+        (candidate) => candidate.previewUrl === node.selectedImageUrl,
+      ) ?? input.character?.outfits[0]
     return (
       <div className={CARD_STACK}>
         <img className={MASTER_IMAGE} src={node.selectedImageUrl} alt="已确认身份母版" />
         <span className="text-center text-[11px] text-[var(--editor-muted)]">身份已锁定</span>
+        {outfit ? <NodeExportButton input={input} outfitId={outfit.id} /> : null}
         <button
           type="button"
           className="absolute -bottom-4 -right-4 z-8 grid h-8 min-h-8 w-8 place-items-center rounded-full border border-[var(--editor-ink)] bg-white p-0 text-[15px] leading-none text-[var(--editor-ink)] shadow-[var(--editor-shadow)] hover:bg-[var(--editor-ink)] hover:text-white"
@@ -926,7 +950,12 @@ function FirstFrameContent({
     )
   }
   if (node.phase === 'completed' && node.selectedFirstFrameUrl) {
-    return <img className={MASTER_IMAGE} src={node.selectedFirstFrameUrl} alt="已确认动作首帧" />
+    return (
+      <div className={CARD_STACK}>
+        <img className={MASTER_IMAGE} src={node.selectedFirstFrameUrl} alt="已确认动作首帧" />
+        <NodeExportButton input={input} outfitId={node.input.outfitId} />
+      </div>
+    )
   }
   return <StatusText node={node} input={input} />
 }
@@ -1005,16 +1034,25 @@ function AnimationContent({
     )
   }
   if (node.phase === 'completed' && frames.length) {
+    const methodNode = findDependency(input.run, node, 'action-generation-method')
+    const firstFrameNode = methodNode
+      ? findDependency(input.run, methodNode, 'action-first-frame')
+      : null
     return (
-      <div className="nodrag nopan nowheel grid max-h-40 grid-cols-8 gap-[3px] overflow-auto">
-        {frames.map((frame, index) => (
-          <img
-            key={`${frame.url}-${index}`}
-            className="block aspect-square w-full rounded border border-[var(--editor-line)] object-cover"
-            src={frame.url}
-            alt={`动画帧 ${index + 1}`}
-          />
-        ))}
+      <div className={CARD_STACK}>
+        <div className="nodrag nopan nowheel grid max-h-40 grid-cols-8 gap-[3px] overflow-auto">
+          {frames.map((frame, index) => (
+            <img
+              key={`${frame.url}-${index}`}
+              className="block aspect-square w-full rounded border border-[var(--editor-line)] object-cover"
+              src={frame.url}
+              alt={`动画帧 ${index + 1}`}
+            />
+          ))}
+        </div>
+        {firstFrameNode ? (
+          <NodeExportButton input={input} outfitId={firstFrameNode.input.outfitId} />
+        ) : null}
       </div>
     )
   }
@@ -1025,7 +1063,21 @@ function ReviewContent({ node, input }: { node: ReviewWorkflowNode; input: Proje
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
   if (node.status === 'failed') return <StatusText node={node} input={input} />
-  if (node.phase === 'completed') return <p className={CARD_SUMMARY}>审核已通过</p>
+  if (node.phase === 'completed') {
+    const fullFrame = findDependency(input.run, node, 'action-full-frame')
+    const method = fullFrame
+      ? findDependency(input.run, fullFrame, 'action-generation-method')
+      : null
+    const firstFrame = method ? findDependency(input.run, method, 'action-first-frame') : null
+    return (
+      <div className={CARD_STACK}>
+        <p className={CARD_SUMMARY}>审核已通过</p>
+        {firstFrame ? (
+          <NodeExportButton input={input} outfitId={firstFrame.input.outfitId} />
+        ) : null}
+      </div>
+    )
+  }
   if (node.status !== 'active') return <StatusText node={node} input={input} />
   return (
     <div className={CARD_STACK}>

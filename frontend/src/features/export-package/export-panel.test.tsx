@@ -6,12 +6,17 @@ import type { ExportPackageModel } from './model'
 import { ExportPanel } from './export-panel'
 
 const model = {
+  stage: 'action-assets',
   characterId: 'character-1',
   characterName: 'Aster',
+  characterImageUrl: '/master.png',
   outfitId: 'outfit-1',
   outfitName: 'Explorer',
   canvas: { width: 32, height: 40 },
   source: { workflowRunId: 'run-1', generationIds: ['generation-1'] },
+  firstFrames: [
+    { actionId: 'walk-abcdef12', name: 'Walk', type: 'walk', fps: 10, imageUrl: '/walk.png' },
+  ],
   actions: [
     {
       id: 'walk-abcdef12',
@@ -37,6 +42,7 @@ const model = {
       ],
     },
   ],
+  playtest: null,
 } satisfies ExportPackageModel
 
 afterEach(() => {
@@ -129,17 +135,28 @@ describe('ExportPanel', () => {
     expect(exporter).toHaveBeenCalledTimes(2)
   })
 
-  it('没有已确认动作时禁用导出', () => {
-    render(<ExportPanel model={{ ...model, actions: [] }} />)
+  it('只有角色母版、还没有动作时也允许导出基础包', async () => {
+    const exporter = vi.fn().mockResolvedValue({
+      blob: new Blob(['zip'], { type: 'application/zip' }),
+      filename: 'windup-character.zip',
+    })
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn(() => 'blob:character'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
 
-    expect(screen.getByText('没有可导出的已确认动作')).toBeTruthy()
-    expect(
-      (
-        screen.getByRole('button', {
-          name: '导出游戏资产包',
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true)
+    render(
+      <ExportPanel
+        model={{ ...model, stage: 'character', firstFrames: [], actions: [] }}
+        exporter={exporter}
+      />,
+    )
+
+    expect(screen.getByText('当前包含角色母版')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '导出游戏资产包' }))
+    await waitFor(() => expect(exporter).toHaveBeenCalledTimes(1))
   })
 
   it('导出器抛出非 Error 值时展示通用错误', async () => {

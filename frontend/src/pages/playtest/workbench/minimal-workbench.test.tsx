@@ -28,7 +28,7 @@ const character: Character = {
       characterId: '51',
       name: '常态造型',
       description: null,
-      previewUrl: null,
+      previewUrl: '/master.png',
       actions: [
         {
           id: IDLE_ACTION_ID,

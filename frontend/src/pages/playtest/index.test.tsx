@@ -46,6 +46,7 @@ describe('PlaytestPage', () => {
     expect(await screen.findByRole('heading', { name: '51 · 常态造型' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '绑定动作：呼吸待机' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '绑定动作：行走' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '导出Playtest 运行包' })).toBeTruthy()
   })
 
   it('plays frames in backend index order, not array order', async () => {

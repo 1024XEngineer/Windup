@@ -78,6 +78,12 @@ interface LoadedSequence {
   frames: readonly LoadedFrame[]
 }
 
+interface LoadedStaticAsset {
+  relativeFile: string
+  data: Uint8Array
+  decoded: DecodedFrame
+}
+
 interface ZipEntry {
   name: string
   data: Uint8Array
@@ -99,6 +105,10 @@ function packageRoot(model: ExportPackageModel): string {
   return [model.characterName, model.characterId, model.outfitName, model.outfitId]
     .map((value, index) => safeSegment(value, index % 2 === 0 ? 'asset' : 'id'))
     .join('-')
+}
+
+function firstFrameFile(actionId: string, name: string): string {
+  return `first-frames/${safeSegment(name, 'action')}-${idSuffix(actionId)}.png`
 }
 
 function uniqueActionName(
@@ -282,6 +292,53 @@ async function loadAllFrames(
   }))
 }
 
+async function loadStaticAssets(
+  model: ExportPackageModel,
+  runtime: AssetExportRuntime,
+): Promise<readonly LoadedStaticAsset[]> {
+  const planned = [
+    { relativeFile: 'character/master.png', imageUrl: model.characterImageUrl },
+    ...model.firstFrames.map((frame) => ({
+      relativeFile: firstFrameFile(frame.actionId, frame.name),
+      imageUrl: frame.imageUrl,
+    })),
+  ]
+  const cache = new Map<string, Promise<Blob>>()
+  const settled = await Promise.allSettled(
+    planned.map(async (asset) => {
+      const loaded = await loadFrame(
+        {
+          frame: { index: 0, imageUrl: asset.imageUrl, durationMs: 1 },
+          index: 0,
+          filename: asset.relativeFile.split('/').at(-1)!,
+          relativeFile: asset.relativeFile,
+        },
+        runtime,
+        cache,
+      )
+      if (
+        loaded.decoded.width !== model.canvas.width ||
+        loaded.decoded.height !== model.canvas.height
+      ) {
+        loaded.decoded.close()
+        throw new Error(
+          `${asset.relativeFile}: 画布应为 ${model.canvas.width}x${model.canvas.height}，实际为 ${loaded.decoded.width}x${loaded.decoded.height}`,
+        )
+      }
+      return { relativeFile: asset.relativeFile, data: loaded.data, decoded: loaded.decoded }
+    }),
+  )
+  const fulfilled = settled.flatMap((result) =>
+    result.status === 'fulfilled' ? [result.value] : [],
+  )
+  const failure = settled.find((result) => result.status === 'rejected')
+  if (failure?.status === 'rejected') {
+    fulfilled.forEach((asset) => asset.decoded.close())
+    throw failure.reason
+  }
+  return fulfilled
+}
+
 function context2d(canvas: HTMLCanvasElement, field: string): CanvasRenderingContext2D {
   const context = canvas.getContext('2d', { willReadFrequently: true })
   if (context === null) throw new Error(`${field}: 浏览器无法创建 2D 画布`)
@@ -313,12 +370,27 @@ function createMetadata(
 ): GenericExportMetadata {
   return {
     schema_version: EXPORT_PACKAGE_SCHEMA_VERSION,
-    character: { id: model.characterId, name: model.characterName },
+    stage: model.stage,
+    character: {
+      id: model.characterId,
+      name: model.characterName,
+      image: 'character/master.png',
+    },
+    outfit: { id: model.outfitId, name: model.outfitName },
     canvas: { w: model.canvas.width, h: model.canvas.height },
+    first_frames: model.firstFrames.map((frame) => ({
+      action_id: frame.actionId,
+      name: frame.name,
+      type: frame.type,
+      fps: frame.fps,
+      file: firstFrameFile(frame.actionId, frame.name),
+    })),
     actions: plan.map((item) => ({
+      id: item.action.id,
       name: item.exportName,
       fps: item.action.fps,
       loop: item.sequence.loop,
+      quality_status: item.sequence.qualityStatus,
       frames: item.frames.map((frame) => ({ index: frame.index, file: frame.filename })),
       anchor: { ...item.sequence.anchor },
       foot_y: item.sequence.footY,
@@ -336,6 +408,8 @@ function createMetadata(
             workflow_run_id: model.source.workflowRunId,
             generation_ids: [...model.source.generationIds],
           },
+    playtest:
+      model.playtest === null ? null : { initial_action_id: model.playtest.initialActionId },
   }
 }
 
@@ -483,12 +557,22 @@ export async function exportGameAssets(
   const metadata = createMetadata(model, plan)
 
   options.onPhase?.('collecting')
-  const loaded = await loadAllFrames(plan, model, runtime)
+  const staticAssets = await loadStaticAssets(model, runtime)
+  let loaded: readonly LoadedSequence[]
+  try {
+    loaded = await loadAllFrames(plan, model, runtime)
+  } catch (error) {
+    staticAssets.forEach((asset) => asset.decoded.close())
+    throw error
+  }
   const root = packageRoot(model)
   const entries: ZipEntry[] = []
 
   try {
     options.onPhase?.('rendering')
+    staticAssets.forEach((asset) => {
+      entries.push({ name: `${root}/${asset.relativeFile}`, data: asset.data })
+    })
     for (const current of loaded) {
       for (const frame of current.frames) {
         entries.push({ name: `${root}/${frame.relativeFile}`, data: frame.data })
@@ -507,6 +591,22 @@ export async function exportGameAssets(
       { name: `${root}/schema.json`, data: await bytes(EXPORT_PACKAGE_JSON_SCHEMA_TEXT) },
       { name: `${root}/README.md`, data: await bytes(createReadme(model)) },
     )
+    if (model.playtest !== null) {
+      entries.push({
+        name: `${root}/playtest.json`,
+        data: await bytes(
+          JSON.stringify(
+            {
+              schema_version: EXPORT_PACKAGE_SCHEMA_VERSION,
+              initial_action_id: model.playtest.initialActionId,
+              action_ids: model.actions.map((action) => action.id),
+            },
+            null,
+            2,
+          ),
+        ),
+      })
+    }
 
     for (const target of options.targets ?? []) {
       const targetId = safeSegment(target.id, 'target')
@@ -519,6 +619,7 @@ export async function exportGameAssets(
       }
     }
   } finally {
+    staticAssets.forEach((asset) => asset.decoded.close())
     loaded.forEach(({ frames }) => frames.forEach((frame) => frame.decoded.close()))
   }
 

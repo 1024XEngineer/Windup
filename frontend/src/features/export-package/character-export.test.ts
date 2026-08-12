@@ -23,7 +23,7 @@ const character: Character = {
   workflowRunId: '501',
   name: '轻装信使',
   description: null,
-  referenceImageUrl: null,
+  referenceImageUrl: '/master.png',
   dataVersion: 1,
   status: 1,
   outfits: [
@@ -32,7 +32,7 @@ const character: Character = {
       characterId: '51',
       name: '常态造型',
       description: null,
-      previewUrl: null,
+      previewUrl: '/master.png',
       actions: [
         {
           id: 'walk',
@@ -62,8 +62,10 @@ describe('createCharacterExportModel', () => {
     })
 
     expect(model).toMatchObject({
+      stage: 'action-assets',
       characterId: '51',
       characterName: '轻装信使',
+      characterImageUrl: '/master.png',
       outfitId: 'outfit-default',
       outfitName: '常态造型',
       canvas: { width: 64, height: 80 },
@@ -121,13 +123,13 @@ describe('createCharacterExportModel', () => {
       }),
     ).toThrow('角色与项目不匹配')
 
-    expect(() =>
+    expect(
       createCharacterExportModel({
         project,
         character: { ...character, name: '   ' },
         outfitId: 'outfit-default',
-      }),
-    ).toThrow('角色名称不能为空')
+      }).characterName,
+    ).toBe('未命名角色')
 
     expect(() =>
       createCharacterExportModel({

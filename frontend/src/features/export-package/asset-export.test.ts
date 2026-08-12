@@ -41,13 +41,19 @@ function action(frameCount = 9): ExportAction {
 }
 
 const model: ExportPackageModel = {
+  stage: 'action-assets',
   characterId: 'character-1',
   characterName: 'Aster',
+  characterImageUrl: '/master.png',
   outfitId: 'outfit-1',
   outfitName: 'Explorer',
   canvas: { width: 32, height: 40 },
   source: { workflowRunId: 'run-1', generationIds: ['generation-1'] },
+  firstFrames: [
+    { actionId: 'walk-abcdef12', name: 'Walk', type: 'walk', fps: 10, imageUrl: '/walk-0.png' },
+  ],
   actions: [action()],
+  playtest: null,
 }
 
 /** 构造足够让契约检查识别为 RGBA PNG 的文件头，解码由测试运行时接管。 */
@@ -114,6 +120,70 @@ function runtime(failingUrl: string | null = null): AssetExportRuntime {
 }
 
 describe('asset export', () => {
+  it('角色阶段只打包母版，后续阶段在同一根目录增量追加首帧和 Playtest 清单', async () => {
+    const characterModel: ExportPackageModel = {
+      ...model,
+      stage: 'character',
+      characterImageUrl: '/master.png',
+      firstFrames: [],
+      actions: [],
+      playtest: null,
+    }
+    const firstFrameModel: ExportPackageModel = {
+      ...characterModel,
+      stage: 'first-frame',
+      firstFrames: [
+        {
+          actionId: 'walk',
+          name: 'Walk',
+          type: 'walk',
+          fps: 10,
+          imageUrl: '/walk-first.png',
+        },
+      ],
+    }
+    const playtestModel: ExportPackageModel = {
+      ...firstFrameModel,
+      stage: 'playtest',
+      actions: model.actions,
+      playtest: { initialActionId: 'walk-abcdef12' },
+    }
+
+    const characterEntries = await readStoredZip(
+      (await exportGameAssets(characterModel, { runtime: runtime() })).blob,
+    )
+    const firstFrameEntries = await readStoredZip(
+      (await exportGameAssets(firstFrameModel, { runtime: runtime() })).blob,
+    )
+    const playtestEntries = await readStoredZip(
+      (await exportGameAssets(playtestModel, { runtime: runtime() })).blob,
+    )
+    const root = 'Aster-character-1-Explorer-outfit-1'
+
+    expect([...characterEntries.keys()]).toContain(`${root}/character/master.png`)
+    expect([...characterEntries.keys()].every((name) => firstFrameEntries.has(name))).toBe(true)
+    expect(firstFrameEntries.has(`${root}/first-frames/Walk-walk.png`)).toBe(true)
+    expect([...firstFrameEntries.keys()].every((name) => playtestEntries.has(name))).toBe(true)
+    expect(playtestEntries.has(`${root}/playtest.json`)).toBe(true)
+
+    const playtest = JSON.parse(
+      new TextDecoder().decode(playtestEntries.get(`${root}/playtest.json`)),
+    )
+    expect(playtest).toEqual({
+      schema_version: '1.1.0',
+      initial_action_id: 'walk-abcdef12',
+      action_ids: ['walk-abcdef12'],
+    })
+
+    const meta = JSON.parse(new TextDecoder().decode(playtestEntries.get(`${root}/meta.json`)))
+    expect(meta).toMatchObject({
+      stage: 'playtest',
+      character: { image: 'character/master.png' },
+      first_frames: [{ action_id: 'walk', file: 'first-frames/Walk-walk.png' }],
+      playtest: { initial_action_id: 'walk-abcdef12' },
+    })
+  })
+
   it('明确 Cocos 尚未就绪，并只落地已确认的锚点坐标转换', () => {
     expect(COCOS_TARGET_READINESS.ready).toBe(false)
     const anchor = toCocosAnchor({ x: 0.5, y: 0.9 })
@@ -159,7 +229,7 @@ describe('asset export', () => {
     const validate = new Ajv2020().compile(schema)
     expect(validate(meta), JSON.stringify(validate.errors)).toBe(true)
     expect(meta).toMatchObject({
-      schema_version: '1.0.0',
+      schema_version: '1.1.0',
       character: { id: 'character-1', name: 'Aster' },
       canvas: { w: 32, h: 40 },
       source: { workflow_run_id: 'run-1', generation_ids: ['generation-1'] },
@@ -250,6 +320,8 @@ describe('asset export', () => {
   it('质量状态未通过时禁止导出', async () => {
     const badModel: ExportPackageModel = {
       ...model,
+      stage: 'playtest',
+      playtest: { initialActionId: null },
       actions: [
         {
           ...action(),
@@ -304,7 +376,7 @@ describe('asset export', () => {
     }
 
     await expect(exportGameAssets(model, { runtime: testRuntime })).rejects.toThrow(
-      'frames/Walk-Forward-south/Walk-Forward-south_000.png: PNG 解码失败（corrupt image）',
+      'character/master.png: PNG 解码失败（corrupt image）',
     )
   })
 
@@ -327,7 +399,7 @@ describe('asset export', () => {
     await expect(exportGameAssets(model, { runtime: testRuntime })).rejects.toThrow(
       '画布应为 32x40，实际为 31x40',
     )
-    expect(closes).toHaveLength(9)
+    expect(closes).toHaveLength(2)
     expect(closes.every((close) => close.mock.calls.length === 1)).toBe(true)
   })
 
@@ -439,7 +511,7 @@ describe('asset export', () => {
     await expect(exportGameAssets(model, { runtime: failingRuntime })).rejects.toThrow(
       'atlas/Walk-Forward-south.png: 浏览器无法创建 2D 画布',
     )
-    expect(closes).toHaveLength(9)
+    expect(closes).toHaveLength(11)
     expect(closes.every((close) => close.mock.calls.length === 1)).toBe(true)
   })
 })

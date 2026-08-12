@@ -19,6 +19,12 @@ export interface ExportPanelProps {
   exporter?: AssetExporter
 }
 
+export interface ExportButtonProps {
+  model: ExportPackageModel
+  exporter?: AssetExporter
+  className?: string
+}
+
 type ExportState =
   | { status: 'idle' }
   | { status: 'working'; phase: AssetExportPhase }
@@ -32,15 +38,17 @@ const PHASE_LABELS: Readonly<Record<AssetExportPhase, string>> = {
   packing: '正在打包',
 }
 
+const STAGE_LABELS: Readonly<Record<ExportPackageModel['stage'], string>> = {
+  character: '角色母版',
+  'first-frame': '角色母版与动作首帧',
+  'action-assets': '完整动作资产',
+  playtest: 'Playtest 运行包',
+}
+
 const defaultExporter: AssetExporter = (model, onPhase) => exportGameAssets(model, { onPhase })
 
-export function ExportPanel({
-  model,
-  qualityIssueCount = 0,
-  exporter = defaultExporter,
-}: ExportPanelProps) {
+function useExportAction(model: ExportPackageModel, exporter: AssetExporter) {
   const [state, setState] = useState<ExportState>({ status: 'idle' })
-  const plan = createAssetExportPlan(model)
   const working = state.status === 'working'
 
   const startExport = async () => {
@@ -63,6 +71,17 @@ export function ExportPanel({
     }
   }
 
+  return { state, working, startExport }
+}
+
+export function ExportPanel({
+  model,
+  qualityIssueCount = 0,
+  exporter = defaultExporter,
+}: ExportPanelProps) {
+  const plan = createAssetExportPlan(model)
+  const { state, working, startExport } = useExportAction(model, exporter)
+
   return (
     <section
       aria-label="资产导出"
@@ -76,6 +95,10 @@ export function ExportPanel({
       </header>
 
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-xs">
+        <dt className="text-slate-500">当前阶段</dt>
+        <dd className="font-medium text-slate-900">{STAGE_LABELS[model.stage]}</dd>
+        <dt className="text-slate-500">已确认首帧</dt>
+        <dd className="font-medium text-slate-900">{model.firstFrames.length} 张</dd>
         <dt className="text-slate-500">动作方向</dt>
         <dd className="font-medium text-slate-900">{plan.length} 组</dd>
         <dt className="text-slate-500">逐帧原图</dt>
@@ -106,13 +129,39 @@ export function ExportPanel({
 
       <button
         type="button"
-        disabled={working || plan.length === 0 || qualityIssueCount > 0}
+        disabled={working || qualityIssueCount > 0}
         onClick={() => void startExport()}
         className="w-full rounded-lg bg-orange-500 px-3 py-2 text-xs font-semibold text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-40"
       >
         {state.status === 'failure' ? '重新导出' : '导出游戏资产包'}
       </button>
-      {plan.length === 0 ? <p className="text-xs text-slate-500">没有可导出的已确认动作</p> : null}
+      {plan.length === 0 ? <p className="text-xs text-slate-500">当前包含角色母版</p> : null}
     </section>
+  )
+}
+
+export function ExportButton({
+  model,
+  exporter = defaultExporter,
+  className = '',
+}: ExportButtonProps) {
+  const { state, working, startExport } = useExportAction(model, exporter)
+  const label =
+    state.status === 'working'
+      ? PHASE_LABELS[state.phase]
+      : state.status === 'failure'
+        ? '重新导出'
+        : `导出${STAGE_LABELS[model.stage]}`
+
+  return (
+    <button
+      type="button"
+      disabled={working}
+      title={state.status === 'failure' ? state.message : undefined}
+      onClick={() => void startExport()}
+      className={`rounded-lg border border-current px-3 py-2 text-xs font-semibold disabled:opacity-50 ${className}`}
+    >
+      {label}
+    </button>
   )
 }

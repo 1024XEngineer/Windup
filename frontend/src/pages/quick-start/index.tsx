@@ -16,6 +16,7 @@ import {
   type WorkflowNode,
   type WorkflowNodeType,
 } from '@/entities'
+import { ExportButton, type ExportPackageModel } from '@/features/export-package'
 import {
   quickStartService,
   type QuickStartEntryService,
@@ -408,6 +409,7 @@ function QuickStartRun({
   const [candidates, setCandidates] = useState<readonly string[]>([])
   const [firstFrameCandidates, setFirstFrameCandidates] = useState<readonly QuickStartFrame[]>([])
   const [actionFrames, setActionFrames] = useState<readonly QuickStartFrame[]>([])
+  const [exportModel, setExportModel] = useState<ExportPackageModel | null>(null)
   const [publishing, setPublishing] = useState(false)
   const [confirmingCandidate, setConfirmingCandidate] = useState(false)
   const [confirmingFirstFrame, setConfirmingFirstFrame] = useState(false)
@@ -460,6 +462,7 @@ function QuickStartRun({
       setCandidates([])
       setFirstFrameCandidates([])
       setActionFrames([])
+      setExportModel(null)
       return
     }
     let active = true
@@ -467,12 +470,14 @@ function QuickStartRun({
       session.getTemplateCandidates(),
       session.getFirstFrameCandidates(),
       session.getActionFrames(),
+      session.getExportModel(),
     ])
-      .then(([nextCandidates, nextFirstFrameCandidates, nextFrames]) => {
+      .then(([nextCandidates, nextFirstFrameCandidates, nextFrames, nextExportModel]) => {
         if (!active) return
         setCandidates(nextCandidates)
         setFirstFrameCandidates(nextFirstFrameCandidates)
         setActionFrames(nextFrames)
+        setExportModel(nextExportModel)
       })
       .catch((cause) => {
         if (active) setError(errorMessage(cause, '读取生成结果失败'))
@@ -629,22 +634,30 @@ function QuickStartRun({
               {workflowPrompt(run) || '未命名角色创作'}
             </h1>
           </div>
-          <div
-            className="flex items-center gap-3 rounded-xl border border-[#c4cbc5] bg-[#f7f8f4]/90 px-4 py-3"
-            aria-live="polite"
-          >
-            <i
-              className={`h-2.5 w-2.5 rounded-full ${
-                workflowIsActive(run) ? 'animate-pulse bg-[#4f7b5b]' : 'bg-[#8c938d]'
-              } motion-reduce:animate-none`}
-              aria-hidden="true"
-            />
-            <span>
-              <small className="block font-mono text-[8px] tracking-[0.12em] text-[#747973]">
-                CURRENT STATUS
-              </small>
-              <b className="text-sm text-[#35583f]">{status.title}</b>
-            </span>
+          <div className="flex items-center gap-3">
+            {exportModel ? (
+              <ExportButton
+                model={exportModel}
+                className="border-[#35583f] bg-[#35583f] text-white hover:bg-[#294a34]"
+              />
+            ) : null}
+            <div
+              className="flex items-center gap-3 rounded-xl border border-[#c4cbc5] bg-[#f7f8f4]/90 px-4 py-3"
+              aria-live="polite"
+            >
+              <i
+                className={`h-2.5 w-2.5 rounded-full ${
+                  workflowIsActive(run) ? 'animate-pulse bg-[#4f7b5b]' : 'bg-[#8c938d]'
+                } motion-reduce:animate-none`}
+                aria-hidden="true"
+              />
+              <span>
+                <small className="block font-mono text-[8px] tracking-[0.12em] text-[#747973]">
+                  CURRENT STATUS
+                </small>
+                <b className="text-sm text-[#35583f]">{status.title}</b>
+              </span>
+            </div>
           </div>
         </header>
 

@@ -17,6 +17,19 @@ export interface ExportAnchor {
 }
 
 export type ExportQualityStatus = 'passed' | 'pending' | 'failed'
+export type ExportStage = 'character' | 'first-frame' | 'action-assets' | 'playtest'
+
+export interface ExportFirstFrame {
+  actionId: string
+  name: string
+  type: ActionType | 'crouch'
+  fps: number
+  imageUrl: string
+}
+
+export interface ExportPlaytest {
+  initialActionId: string | null
+}
 
 export interface ExportSequence {
   direction: string
@@ -26,7 +39,7 @@ export interface ExportSequence {
   anchor: ExportAnchor
   /** 脚底线距离画布顶部的像素值。 */
   footY: number
-  /** 只有 passed 的动作序列可以进入正式导出包。 */
+  /** 生成完成可为 pending；进入 Playtest 运行包前必须是 passed。 */
   qualityStatus: ExportQualityStatus
   frames: readonly ExportFrame[]
 }
@@ -45,8 +58,10 @@ export interface ExportSourceReference {
 }
 
 export interface ExportPackageModel {
+  stage: ExportStage
   characterId: string
   characterName: string
+  characterImageUrl: string
   outfitId: string
   outfitName: string
   /** 同一导出包内所有帧必须使用相同画布尺寸。 */
@@ -57,5 +72,7 @@ export interface ExportPackageModel {
   /** 生成链路引用，用于从导出物追溯到 WorkflowRun 与生成任务。 */
   /** 独立 Playtest 入口可能没有 WorkflowRun/Generation 追溯信息。 */
   source: ExportSourceReference | null
+  firstFrames: readonly ExportFirstFrame[]
   actions: readonly ExportAction[]
+  playtest: ExportPlaytest | null
 }

@@ -1,7 +1,7 @@
 import exportSchemaText from './export-package.schema.json?raw'
 import type { ExportPackageModel } from './model'
 
-export const EXPORT_PACKAGE_SCHEMA_VERSION = '1.0.0'
+export const EXPORT_PACKAGE_SCHEMA_VERSION = '1.1.0'
 export const EXPORT_PACKAGE_JSON_SCHEMA_TEXT = exportSchemaText
 
 export interface GenericExportFrame {
@@ -10,9 +10,11 @@ export interface GenericExportFrame {
 }
 
 export interface GenericExportAction {
+  id: string
   name: string
   fps: number
   loop: boolean
+  quality_status: ExportPackageModel['actions'][number]['sequences'][number]['qualityStatus']
   frames: readonly GenericExportFrame[]
   anchor: { x: number; y: number }
   foot_y: number
@@ -26,9 +28,19 @@ export interface GenericExportAction {
 
 export interface GenericExportMetadata {
   schema_version: typeof EXPORT_PACKAGE_SCHEMA_VERSION
-  character: { id: string; name: string }
+  stage: ExportPackageModel['stage']
+  character: { id: string; name: string; image: string }
+  outfit: { id: string; name: string }
   canvas: { w: number; h: number }
+  first_frames: readonly {
+    action_id: string
+    name: string
+    type: string
+    fps: number
+    file: string
+  }[]
   actions: readonly GenericExportAction[]
+  playtest: { initial_action_id: string | null } | null
   source: {
     workflow_run_id: string
     generation_ids: readonly string[]
@@ -56,8 +68,12 @@ function requireUnitNumber(field: string, value: number): void {
  * 报错路径使用 meta.json 对应字段名，方便调用方直接定位坏数据。
  */
 export function validateExportPackageModel(model: ExportPackageModel): void {
+  if (!['character', 'first-frame', 'action-assets', 'playtest'].includes(model.stage)) {
+    fail('stage', '不是支持的导出阶段')
+  }
   requireText('character.id', model.characterId)
   requireText('character.name', model.characterName)
+  requireText('character.imageUrl', model.characterImageUrl)
   requireText('outfit.id', model.outfitId)
   requireText('outfit.name', model.outfitName)
   requirePositiveInteger('canvas.w', model.canvas.width)
@@ -72,7 +88,28 @@ export function validateExportPackageModel(model: ExportPackageModel): void {
     })
   }
 
-  if (model.actions.length === 0) fail('actions', '至少需要一个动作')
+  model.firstFrames.forEach((frame, index) => {
+    const field = `firstFrames[${index}]`
+    requireText(`${field}.actionId`, frame.actionId)
+    requireText(`${field}.name`, frame.name)
+    requirePositiveInteger(`${field}.fps`, frame.fps)
+    requireText(`${field}.imageUrl`, frame.imageUrl)
+  })
+  if (model.stage === 'first-frame' && model.firstFrames.length === 0) {
+    fail('firstFrames', '首帧阶段至少需要一个已确认首帧')
+  }
+  if (
+    (model.stage === 'action-assets' || model.stage === 'playtest') &&
+    model.actions.length === 0
+  ) {
+    fail('actions', '当前阶段至少需要一个完整动作')
+  }
+  if (model.stage === 'playtest' && model.playtest === null) {
+    fail('playtest', 'Playtest 阶段必须包含运行配置')
+  }
+  if (model.stage !== 'playtest' && model.playtest !== null) {
+    fail('playtest', '只有 Playtest 阶段可以包含运行配置')
+  }
   model.actions.forEach((action, actionIndex) => {
     const actionField = `actions[${actionIndex}]`
     requireText(`${actionField}.name`, action.name)
@@ -92,7 +129,7 @@ export function validateExportPackageModel(model: ExportPackageModel): void {
       ) {
         fail(`${sequenceField}.footY`, `必须是 0 到 ${model.canvas.height} 的整数像素值`)
       }
-      if (sequence.qualityStatus !== 'passed') {
+      if (model.stage === 'playtest' && sequence.qualityStatus !== 'passed') {
         fail(`${sequenceField}.qualityStatus`, '质量检测未通过，禁止导出')
       }
       if (sequence.frames.length !== sequence.expectedFrameCount) {
