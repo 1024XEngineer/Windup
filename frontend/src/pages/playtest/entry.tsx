@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 
 import { characterApis, projectApis, type Character, type Outfit, type Project } from '@/entities'
+import type { Paged } from '@/shared/pagination'
 import { PageContainer } from '@/shared/ui'
 
 import { PlaytestPixelStage } from './pixel-stage'
@@ -17,6 +18,18 @@ interface EntryState {
 }
 
 const initialState: EntryState = { groups: null, error: null }
+const ASSET_PAGE_SIZE = 100
+
+async function loadAllPages<T>(loadPage: (page: number) => Promise<Paged<T>>) {
+  const firstPage = await loadPage(1)
+  const pageCount = Math.ceil(firstPage.total / firstPage.pageSize)
+  if (pageCount <= 1) return firstPage.items
+
+  const remainingPages = await Promise.all(
+    Array.from({ length: pageCount - 1 }, (_, index) => loadPage(index + 2)),
+  )
+  return [firstPage, ...remainingPages].flatMap((page) => page.items)
+}
 
 function characterName(character: Character) {
   return character.name ?? '未命名角色'
@@ -38,14 +51,14 @@ export function PlaytestEntryPage() {
     let active = true
     setState(initialState)
 
-    void projectApis
-      .list({ page: 1, pageSize: 100 })
-      .then(async (projectsPage) =>
+    void loadAllPages((page) => projectApis.list({ page, pageSize: ASSET_PAGE_SIZE }))
+      .then(async (projects) =>
         Promise.all(
-          projectsPage.items.map(async (project) => ({
+          projects.map(async (project) => ({
             project,
-            characters: (await characterApis.listByProject(project.id, { page: 1, pageSize: 100 }))
-              .items,
+            characters: await loadAllPages((page) =>
+              characterApis.listByProject(project.id, { page, pageSize: ASSET_PAGE_SIZE }),
+            ),
           })),
         ),
       )
