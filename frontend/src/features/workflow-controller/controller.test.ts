@@ -239,7 +239,9 @@ function completedAnimationEvent(taskId = 'task-2'): GenerationEvent {
     result: {
       type: 'complete_animation',
       frames: Array.from({ length: 32 }, (_, index) => ({
+        index,
         url: `https://img/frame-${index}.png`,
+        durationMs: index % 2 === 0 ? 100 : null,
       })),
     },
     error: null,
@@ -251,6 +253,52 @@ async function flushAsyncWork() {
 }
 
 describe('WorkflowController', () => {
+  it('绑定角色后拒绝把同一条 WorkflowRun 改绑到另一角色', async () => {
+    const { controller } = createController()
+
+    await controller.bindCharacter('setup-1', 'character-1')
+
+    expect(controller.getWorkflow().nodes[0]).toMatchObject({
+      type: 'character-setup',
+      input: { characterId: 'character-1' },
+    })
+    await expect(controller.bindCharacter('setup-1', 'character-2')).rejects.toThrow(
+      'WorkflowRun 已绑定到另一角色，不能改绑',
+    )
+  })
+
+  it('只在角色设定节点仍处于配置阶段时更新提示词和参考媒体', async () => {
+    const { controller } = createController()
+
+    await controller.updateCharacterSetup('setup-1', {
+      prompt: '披着红色斗篷的像素骑士',
+      referenceMedia: ['https://img/reference.png' as never],
+    })
+
+    expect(controller.getWorkflow().nodes[0]).toMatchObject({
+      input: {
+        prompt: '披着红色斗篷的像素骑士',
+        referenceMedia: ['https://img/reference.png'],
+      },
+    })
+  })
+
+  it('接受上传母版时完成角色设定和母版节点', async () => {
+    const { controller } = createController()
+
+    await controller.acceptUploadedCharacterTemplate('setup-1', 'https://img/uploaded-template.png')
+
+    expect(controller.getWorkflow().nodes).toMatchObject([
+      { type: 'character-setup', status: 'passed', phase: 'completed' },
+      {
+        type: 'character-template',
+        status: 'passed',
+        phase: 'completed',
+        selectedImageUrl: 'https://img/uploaded-template.png',
+      },
+    ])
+  })
+
   it('页面通过订阅接收命令保存和 SSE 写回后的同一份 WorkflowRun', async () => {
     const { controller, generation } = createController()
     let renderedWorkflow = controller.getWorkflow()
@@ -310,6 +358,40 @@ describe('WorkflowController', () => {
         nodes: [setupNode({ id: 'other-setup' }), templateNode({ id: 'other-template' })],
       }),
     ).rejects.toThrow('已经绑定')
+  })
+
+  it('保存归一化后的角色名称且不修改角色提示词', async () => {
+    const { controller, workflow } = createController()
+
+    await controller.setCharacterName('setup-1', '  雾港旅人  ')
+
+    expect(workflow.getSaved().nodes[0]).toMatchObject({
+      type: 'character-setup',
+      input: {
+        name: '雾港旅人',
+        prompt: '像素骑士',
+        referenceMedia: [],
+      },
+    })
+  })
+
+  it('纯空白角色名称按未填写保存', async () => {
+    const { controller } = createController()
+
+    await controller.setCharacterName('setup-1', '   ')
+
+    expect(controller.getWorkflow().nodes[0]).toMatchObject({
+      type: 'character-setup',
+      input: { name: null },
+    })
+  })
+
+  it('拒绝超过 20 个字符的角色名称', async () => {
+    const { controller } = createController()
+
+    await expect(controller.setCharacterName('setup-1', 'x'.repeat(21))).rejects.toThrow(
+      '角色名称不能超过 20 个字符',
+    )
   })
 
   it('adds a complete first-frame, method, full-frame, and review chain for one Action', async () => {
@@ -464,16 +546,20 @@ describe('WorkflowController', () => {
   it('提交角色设定后在母版节点记录任务并进入候选选择', async () => {
     const { controller, workflow, generation, asyncErrors } = createController()
 
-    await controller.generateCharacterTemplate('setup-1', { spriteWidth: 64, spriteHeight: 64 })
+    await controller.generateCharacterTemplate('setup-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      input: { prompt: '戴红围巾的像素骑士', referenceMedia: [] },
+    })
 
-    expect(generation.apis.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'character_template',
-        prompt: '像素骑士',
-        spriteWidth: 64,
-        spriteHeight: 64,
-      }),
-    )
+    expect(generation.apis.create).toHaveBeenCalledWith({
+      type: 'character_template',
+      projectId: '1',
+      prompt: '戴红围巾的像素骑士',
+      referenceMedia: [],
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
     expect(workflow.getSaved().nodes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: 'setup-1', status: 'passed', phase: 'completed' }),

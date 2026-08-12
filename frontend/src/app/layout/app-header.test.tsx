@@ -28,6 +28,7 @@ function createApis(): UserApis & Record<keyof UserApis, ReturnType<typeof vi.fn
     refresh: vi.fn(async () => tokens()),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => user),
+    updateNickname: vi.fn(async () => user),
     changePassword: vi.fn(async () => undefined),
   }
 }
@@ -68,21 +69,34 @@ afterEach(() => {
 })
 
 describe('AppHeader', () => {
-  it('保留三个产品入口，并将工作流路由归入创作', () => {
+  it('提供 PlayTest 入口，并将工作流路由归入创作', () => {
     renderHeader('/workflow-editor/run-1')
 
-    expect(screen.getByRole('link', { name: '返回 Windup 首页' }).getAttribute('href')).toBe('/')
+    expect(screen.getByRole('link', { name: '返回 Windup 工作台' }).getAttribute('href')).toBe(
+      '/workspace',
+    )
     expect(screen.getByRole('link', { name: '项目资产' }).getAttribute('href')).toBe('/projects')
     expect(screen.getByRole('link', { name: '创作' }).getAttribute('aria-current')).toBe('page')
-    expect(screen.queryByRole('link', { name: 'Playtest' })).toBeNull()
+    expect(screen.getByRole('link', { name: 'PlayTest' }).getAttribute('href')).toBe('/playtest')
   })
 
-  it('在首页只高亮首页一项', () => {
-    renderHeader()
+  it('在工作台首页只高亮首页一项', () => {
+    renderHeader('/workspace')
 
     expect(screen.getByRole('link', { name: '首页' }).getAttribute('aria-current')).toBe('page')
     expect(screen.getByRole('link', { name: '项目资产' }).getAttribute('aria-current')).toBeNull()
     expect(screen.getByRole('link', { name: '创作' }).getAttribute('aria-current')).toBeNull()
+    expect(screen.getByRole('link', { name: 'PlayTest' }).getAttribute('aria-current')).toBeNull()
+  })
+
+  it('在资产选择页和具体试玩台高亮 PlayTest 入口', () => {
+    const { unmount } = renderHeader('/playtest')
+
+    expect(screen.getByRole('link', { name: 'PlayTest' }).getAttribute('aria-current')).toBe('page')
+
+    unmount()
+    renderHeader('/playtest/51/outfit-default')
+    expect(screen.getByRole('link', { name: 'PlayTest' }).getAttribute('aria-current')).toBe('page')
   })
 
   it('为访客提供可发现的登录入口并保留完整站内回跳地址', async () => {
@@ -104,5 +118,16 @@ describe('AppHeader', () => {
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/'))
     expect(await screen.findByRole('link', { name: '登录 / 注册' })).toBeTruthy()
     expect(apis.logout).toHaveBeenCalledWith('rotated-refresh-token')
+  })
+
+  it('让登录用户从 Header 的账号信息进入账号中心', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    renderHeader('/account')
+
+    const account = await screen.findByRole('link', { name: '打开账号中心' })
+    expect(account.getAttribute('href')).toBe('/account')
+    expect(account.getAttribute('aria-current')).toBe('page')
+    expect(account.textContent).toContain('Reader')
+    expect(screen.getByText('资料与登录安全')).toBeTruthy()
   })
 })

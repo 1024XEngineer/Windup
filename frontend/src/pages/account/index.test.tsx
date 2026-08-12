@@ -1,0 +1,180 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { MemoryRouter, useLocation } from 'react-router'
+
+import type { AuthTokens, User, UserApis } from '@/entities'
+import { AuthSessionProvider } from '@/features/auth-session'
+import { AppRoutes } from '@/app/app'
+
+const user: User = {
+  id: '7',
+  email: 'reader@example.com',
+  nickname: 'Reader',
+  emailVerifiedAt: '2026-08-07T01:02:03Z',
+  statusCode: 0,
+}
+
+function tokens(): AuthTokens {
+  return { accessToken: 'access-token', refreshToken: 'rotated-refresh-token', user }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+function createApis(): UserApis & Record<keyof UserApis, ReturnType<typeof vi.fn>> {
+  return {
+    sendCode: vi.fn(async () => undefined),
+    register: vi.fn(async () => tokens()),
+    login: vi.fn(async () => tokens()),
+    loginByCode: vi.fn(async () => tokens()),
+    refresh: vi.fn(async () => tokens()),
+    logout: vi.fn(async () => undefined),
+    me: vi.fn(async () => user),
+    updateNickname: vi.fn(async (nickname: string) => ({ ...user, nickname })),
+    changePassword: vi.fn(async () => undefined),
+  }
+}
+
+function LocationProbe() {
+  const location = useLocation()
+  return (
+    <output data-testid="location">{`${location.pathname}${location.search}${location.hash}`}</output>
+  )
+}
+
+function renderAccount(apis = createApis()) {
+  window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+  return {
+    apis,
+    ...render(
+      <AuthSessionProvider apis={apis}>
+        <MemoryRouter initialEntries={['/account']}>
+          <AppRoutes />
+          <LocationProbe />
+        </MemoryRouter>
+      </AuthSessionProvider>,
+    ),
+  }
+}
+
+afterEach(() => {
+  cleanup()
+  window.localStorage.clear()
+})
+
+describe('AccountPage', () => {
+  it('loads a fresh profile on entry and renders account facts', async () => {
+    const apis = createApis()
+    apis.me.mockResolvedValue({
+      ...user,
+      nickname: 'Fresh Reader',
+      emailVerifiedAt: '2026-08-09T08:30:00Z',
+    })
+
+    renderAccount(apis)
+
+    expect(await screen.findByRole('heading', { name: '账号中心' })).toBeTruthy()
+    await waitFor(() => expect(apis.me).toHaveBeenCalledTimes(1))
+    expect(screen.getByDisplayValue('Fresh Reader')).toBeTruthy()
+    expect(screen.getByText('reader@example.com')).toBeTruthy()
+    expect(document.querySelector('time')?.getAttribute('datetime')).toBe('2026-08-09T08:30:00Z')
+    expect(screen.getByRole('link', { name: '打开账号中心' }).textContent).toContain('Fresh Reader')
+  })
+
+  it('reports a profile refresh failure without claiming the data is synchronized', async () => {
+    const apis = createApis()
+    apis.me.mockRejectedValue(new Error('资料读取失败'))
+
+    renderAccount(apis)
+
+    expect(await screen.findByText('资料读取失败')).toBeTruthy()
+    expect(screen.getByText('资料同步失败')).toBeTruthy()
+    expect(screen.queryByText('资料已同步')).toBeNull()
+  })
+
+  it('updates the nickname and synchronizes the Header immediately', async () => {
+    const { apis } = renderAccount()
+    const nickname = await screen.findByLabelText('昵称')
+
+    fireEvent.change(nickname, { target: { value: 'New Reader' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存昵称' }))
+
+    await waitFor(() => expect(apis.updateNickname).toHaveBeenCalledWith('New Reader'))
+    expect(await screen.findByText('昵称已更新。')).toBeTruthy()
+    expect(screen.getByRole('link', { name: '打开账号中心' }).textContent).toContain('New Reader')
+  })
+
+  it('preserves the edited nickname when the backend rejects it', async () => {
+    const apis = createApis()
+    apis.updateNickname.mockRejectedValue(new Error('昵称已存在'))
+    renderAccount(apis)
+    const nickname = await screen.findByLabelText('昵称')
+
+    fireEvent.change(nickname, { target: { value: 'Taken Name' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存昵称' }))
+
+    expect(await screen.findByText('昵称已存在')).toBeTruthy()
+    expect((nickname as HTMLInputElement).value).toBe('Taken Name')
+  })
+
+  it('validates the new password locally and preserves both fields on backend error', async () => {
+    const apis = createApis()
+    apis.changePassword.mockRejectedValue(new Error('当前密码错误'))
+    renderAccount(apis)
+    const oldPassword = await screen.findByLabelText('当前密码')
+    const newPassword = screen.getByLabelText('新密码')
+
+    fireEvent.change(oldPassword, { target: { value: 'old-password' } })
+    fireEvent.change(newPassword, { target: { value: 'short' } })
+    fireEvent.click(screen.getByRole('button', { name: '修改密码' }))
+
+    expect(await screen.findByText('新密码需为 8–128 位')).toBeTruthy()
+    expect(apis.changePassword).not.toHaveBeenCalled()
+
+    fireEvent.change(newPassword, { target: { value: 'new-password-123' } })
+    fireEvent.click(screen.getByRole('button', { name: '修改密码' }))
+
+    expect(await screen.findByText('当前密码错误')).toBeTruthy()
+    expect((oldPassword as HTMLInputElement).value).toBe('old-password')
+    expect((newPassword as HTMLInputElement).value).toBe('new-password-123')
+  })
+
+  it('clears the session after changing the password and asks for login before returning', async () => {
+    renderAccount()
+    fireEvent.change(await screen.findByLabelText('当前密码'), {
+      target: { value: 'old-password' },
+    })
+    fireEvent.change(screen.getByLabelText('新密码'), {
+      target: { value: 'new-password-123' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '修改密码' }))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/?account=login&returnTo=%2Faccount',
+      ),
+    )
+    expect(await screen.findByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
+    expect(screen.getByText('密码修改成功，请重新登录')).toBeTruthy()
+  })
+
+  it('returns home immediately on logout without waiting for the remote request', async () => {
+    const logout = deferred<void>()
+    const apis = createApis()
+    apis.logout.mockReturnValue(logout.promise)
+    renderAccount(apis)
+
+    fireEvent.click(await screen.findByRole('button', { name: '退出当前账号' }))
+
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/'))
+    expect(apis.logout).toHaveBeenCalledWith('rotated-refresh-token')
+  })
+})

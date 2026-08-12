@@ -238,6 +238,24 @@ describe('workflowRunApis', () => {
     })
   })
 
+  it('拒绝超过 20 个字符的角色名称', async () => {
+    const apis = await loadWorkflowRunApis(async () =>
+      jsonResponse({
+        ...workflowRunDto,
+        nodes: nodes.map((node) =>
+          node.type === 'character-setup'
+            ? { ...node, input: { ...node.input, name: 'x'.repeat(21) } }
+            : node,
+        ),
+      }),
+    )
+
+    await expect(apis.get('17')).rejects.toMatchObject({
+      name: 'ApiError',
+      kind: 'invalid-response',
+    })
+  })
+
   it('rejects an empty deletion marker instead of treating it as archived history', async () => {
     const apis = await loadWorkflowRunApis(async () =>
       jsonResponse({
@@ -337,5 +355,54 @@ describe('workflowRunApis', () => {
       name: 'ApiError',
       kind: 'invalid-response',
     })
+  })
+
+  it('lists project runs and preserves the character binding', async () => {
+    let requestUrl = ''
+    const setupNode = nodes[0]
+    if (setupNode?.type !== 'character-setup') throw new Error('test fixture is invalid')
+    const listedRun = {
+      ...workflowRunDto,
+      nodes: [
+        {
+          ...setupNode,
+          input: { ...setupNode.input, characterId: 'character-7' },
+        },
+      ],
+    }
+    const apis = await loadWorkflowRunApis(async (input) => {
+      requestUrl = String(input)
+      return new Response(
+        JSON.stringify({
+          code: 200,
+          message: 'success',
+          data: [listedRun],
+          total: 1,
+          page: 2,
+          page_size: 10,
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      )
+    })
+
+    await expect(apis.listByProject('42', { page: 2, pageSize: 10 })).resolves.toMatchObject({
+      items: [
+        {
+          id: '17',
+          nodes: [
+            {
+              type: 'character-setup',
+              input: { characterId: 'character-7' },
+            },
+          ],
+        },
+      ],
+      total: 1,
+      page: 2,
+      pageSize: 10,
+    })
+    expect(requestUrl).toBe(
+      'https://api.windup.test/workflow-runs?project_id=42&page=2&page_size=10',
+    )
   })
 })

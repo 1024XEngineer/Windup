@@ -1,0 +1,15 @@
+# 构建上下文排除项：本地 node_modules 与 dist 加起来数百 MB，
+# 全量传给 daemon 会让每次构建白等一分钟，且容器内会重新装依赖、重新构建。
+node_modules
+dist
+dist-ssr
+
+# 本地环境变量文件不进镜像；后端地址由 Dockerfile 的 build arg 传入。
+.env
+.env.*
+
+.vercel
+.git
+.gitignore
+.DS_Store
+*.log

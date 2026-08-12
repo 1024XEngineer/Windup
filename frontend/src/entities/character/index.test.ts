@@ -10,6 +10,7 @@ import {
 const characterDto = {
   id: 51,
   project_id: 42,
+  workflow_run_id: 77,
   name: '轻装信使',
   description: null,
   reference_image_url: 'https://cdn.windup.test/reference.png',
@@ -119,6 +120,7 @@ describe('characterApis', () => {
         {
           id: '51',
           projectId: '42',
+          workflowRunId: '77',
           name: '轻装信使',
           description: null,
           referenceImageUrl: 'https://cdn.windup.test/reference.png',
@@ -173,6 +175,7 @@ describe('characterApis', () => {
 
     await characterApis.create({
       projectId: '42',
+      workflowRunId: '77',
       name: '轻装信使',
       description: '项目角色',
       referenceImageUrl: null,
@@ -181,6 +184,7 @@ describe('characterApis', () => {
     expect(request?.method).toBe('POST')
     await expect(request?.json()).resolves.toEqual({
       project_id: 42,
+      workflow_run_id: 77,
       name: '轻装信使',
       description: '项目角色',
       reference_image_url: null,

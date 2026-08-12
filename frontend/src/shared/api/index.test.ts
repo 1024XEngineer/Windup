@@ -4,6 +4,7 @@ import {
   ApiError,
   createApiClient,
   getApiAccessToken,
+  recoverApiUnauthorized,
   registerApiAccessTokenProvider,
   registerApiUnauthorizedRecovery,
 } from './index'
@@ -11,6 +12,16 @@ import {
 afterEach(() => vi.unstubAllEnvs())
 
 describe('createApiClient', () => {
+  it('exposes registered unauthorized recovery without leaking failures', async () => {
+    expect(await recoverApiUnauthorized()).toBe(false)
+    const unregister = registerApiUnauthorizedRecovery(async () => true)
+    expect(await recoverApiUnauthorized()).toBe(true)
+    unregister()
+    const unregisterFailure = registerApiUnauthorizedRecovery(async () => Promise.reject('nope'))
+    expect(await recoverApiUnauthorized()).toBe(false)
+    unregisterFailure()
+  })
+
   it('reads the latest registered token provider and restores the previous provider', () => {
     const unregisterFirst = registerApiAccessTokenProvider(() => 'first-token')
     const unregisterSecond = registerApiAccessTokenProvider(() => 'second-token')
@@ -267,6 +278,34 @@ describe('createApiClient', () => {
       message: '网络请求失败',
       cause: connectionError,
     })
+  })
+
+  it('保留调用方主动取消请求时的 AbortError', async () => {
+    const abortError = new DOMException('This operation was aborted', 'AbortError')
+    const client = createApiClient({
+      baseUrl: 'https://api.windup.test',
+      fetchFn: async () => Promise.reject(abortError),
+    })
+
+    await expect(
+      client.request('/media/upload', {
+        method: 'POST',
+        body: new FormData(),
+        signal: AbortSignal.abort(),
+      }),
+    ).rejects.toBe(abortError)
+  })
+
+  it('保留读取响应体期间发生的 AbortError', async () => {
+    const abortError = new DOMException('This operation was aborted', 'AbortError')
+    const response = new Response(null, { status: 200 })
+    vi.spyOn(response, 'json').mockRejectedValue(abortError)
+    const client = createApiClient({
+      baseUrl: 'https://api.windup.test',
+      fetchFn: async () => response,
+    })
+
+    await expect(client.request('/media/upload')).rejects.toBe(abortError)
   })
 
   it('rejects a successful HTTP response that does not match the backend envelope', async () => {

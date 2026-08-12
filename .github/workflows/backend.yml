@@ -42,4 +42,13 @@ jobs:
         run: uv run lint-imports
 
       - name: Pytest
-        run: uv run pytest -q
+        run: uv run pytest -q --cov=packages --cov-report=term-missing --cov-report=xml:coverage.xml
+
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: backend/coverage.xml
+          flags: backend
+          fail_ci_if_error: false

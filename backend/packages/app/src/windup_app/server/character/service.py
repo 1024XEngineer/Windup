@@ -27,6 +27,14 @@ class SqlAlchemyCharacterService(CharacterService):
     def get_character(self, session: Session, character_id: int) -> Character | None:
         return session.get(Character, character_id)
 
+    def get_character_by_workflow_run(
+        self,
+        session: Session,
+        workflow_run_id: int,
+    ) -> Character | None:
+        stmt = select(Character).where(Character.workflow_run_id == workflow_run_id)
+        return session.scalar(stmt)
+
     def list_characters(
         self, session: Session, *, project_id: int, page: int, page_size: int,
     ) -> tuple[list[Character], int]:

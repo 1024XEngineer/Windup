@@ -67,6 +67,17 @@ function getApiUnauthorizedRecovery(): ApiUnauthorizedRecovery | undefined {
   return unauthorizedRecoveryProviders.at(-1)
 }
 
+/** 供不能使用 ApiClient 的流式或原始响应适配器复用会话恢复。 */
+export async function recoverApiUnauthorized(): Promise<boolean> {
+  const recovery = getApiUnauthorizedRecovery()
+  if (!recovery) return false
+  try {
+    return await recovery()
+  } catch {
+    return false
+  }
+}
+
 export type ApiErrorKind = 'business' | 'http' | 'invalid-response' | 'network'
 
 /** 后端业务错误与传输错误统一进入这一种前端错误。 */
@@ -106,11 +117,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function isAbortError(value: unknown): value is Error {
+  return value instanceof Error && value.name === 'AbortError'
+}
+
 async function readEnvelope(response: Response): Promise<ApiEnvelope> {
   let value: unknown
   try {
     value = await response.json()
   } catch (cause) {
+    if (isAbortError(cause)) throw cause
     throw new ApiError(response.ok ? '后端响应格式无效' : 'HTTP 请求失败', {
       kind: response.ok ? 'invalid-response' : 'http',
       status: response.status,
@@ -210,6 +226,7 @@ export function createApiClient({
     try {
       return await fetchFn(url, init)
     } catch (cause) {
+      if (isAbortError(cause)) throw cause
       throw new ApiError('网络请求失败', { kind: 'network', cause })
     }
   }

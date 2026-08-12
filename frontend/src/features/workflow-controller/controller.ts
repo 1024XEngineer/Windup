@@ -15,6 +15,7 @@ import type {
   MediaReference,
   ReviewWorkflowNode,
   WorkflowActionInput,
+  WorkflowCharacterInput,
   WorkflowGenerationRef,
   WorkflowGenerationRole,
   WorkflowNode,
@@ -35,6 +36,8 @@ export interface AddActionInput {
 export interface GenerateCharacterTemplateOptions {
   spriteWidth: number
   spriteHeight: number
+  /** 手动编辑器提交时覆盖 configuring 节点的初始输入；节点通过后不再改写。 */
+  input?: WorkflowCharacterInput
 }
 
 export interface GenerateActionOptions {
@@ -72,10 +75,23 @@ export interface WorkflowController {
   getWorkflow(): WorkflowRun
   subscribe(listener: (workflow: WorkflowRun) => void): () => void
 
+  setCharacterName(nodeId: CharacterSetupWorkflowNode['id'], name: string | null): Promise<void>
   addAction(input: AddActionInput): Promise<void>
   generateCharacterTemplate(
     nodeId: CharacterSetupWorkflowNode['id'],
     options: GenerateCharacterTemplateOptions,
+  ): Promise<void>
+  /** 将已创建的 Character 绑定到入口节点；一条 Run 不允许改绑到另一角色。 */
+  bindCharacter(nodeId: CharacterSetupWorkflowNode['id'], characterId: string): Promise<void>
+  /** 仅在入口节点尚未提交时修改角色描述和参考媒体。 */
+  updateCharacterSetup(
+    nodeId: CharacterSetupWorkflowNode['id'],
+    input: Pick<WorkflowCharacterInput, 'prompt' | 'referenceMedia'>,
+  ): Promise<void>
+  /** 使用用户上传的角色母版，显式跳过角色候选图生成。 */
+  acceptUploadedCharacterTemplate(
+    nodeId: CharacterSetupWorkflowNode['id'],
+    selectedImageUrl: string,
   ): Promise<void>
   confirmCharacterTemplate(
     nodeId: CharacterTemplateWorkflowNode['id'],
@@ -215,6 +231,27 @@ export function createWorkflowController({
     return snapshot()
   }
 
+  function setCharacterName(
+    nodeId: CharacterSetupWorkflowNode['id'],
+    name: string | null,
+  ): Promise<WorkflowRun> {
+    ensureRunning()
+    const normalizedName = name?.trim() || null
+    if (normalizedName && normalizedName.length > 20) {
+      throw new Error('角色名称不能超过 20 个字符')
+    }
+    return persist((run) =>
+      updateNode(run, nodeId, (node) => {
+        if (node.type !== 'character-setup') throw new Error('目标节点不是角色设定')
+        if (node.input.name === normalizedName) return run
+        return replaceNode(run, {
+          ...node,
+          input: { ...node.input, name: normalizedName },
+        })
+      }),
+    )
+  }
+
   function addAction({ nodeId = createId(), dependsOnNodeIds, input }: AddActionInput) {
     ensureRunning()
     return persist((run) => {
@@ -315,8 +352,20 @@ export function createWorkflowController({
             if (setupNode.status !== 'active' || setupNode.phase !== 'configuring') {
               throw new Error('角色设定节点当前不能提交')
             }
+            const input = options.input
+              ? {
+                  prompt: nonEmpty(options.input.prompt, '角色描述'),
+                  referenceMedia: [...options.input.referenceMedia],
+                }
+              : setupNode.input
             return unlockReadyNodes(
-              replaceNode(run, { ...setupNode, status: 'passed', phase: 'completed', error: null }),
+              replaceNode(run, {
+                ...setupNode,
+                input,
+                status: 'passed',
+                phase: 'completed',
+                error: null,
+              }),
             )
           })
     const templateNode = findSingleDependentNode(advanced, nodeId, 'character-template')
@@ -329,7 +378,8 @@ export function createWorkflowController({
         projectId: run.projectId,
         prompt: setupNode.input.prompt,
         referenceMedia: setupNode.input.referenceMedia,
-        ...options,
+        spriteWidth: options.spriteWidth,
+        spriteHeight: options.spriteHeight,
       }
       return input
     })
@@ -357,6 +407,83 @@ export function createWorkflowController({
         })
       }),
     )
+  }
+
+  function bindCharacter(nodeId: CharacterSetupWorkflowNode['id'], characterId: string) {
+    ensureRunning()
+    const normalizedCharacterId = nonEmpty(characterId, 'characterId')
+    return persist((run) =>
+      updateNode(run, nodeId, (node) => {
+        if (node.type !== 'character-setup') throw new Error('目标节点不是角色设定')
+        if (node.input.characterId && node.input.characterId !== normalizedCharacterId) {
+          throw new Error('WorkflowRun 已绑定到另一角色，不能改绑')
+        }
+        return replaceNode(run, {
+          ...node,
+          input: { ...node.input, characterId: normalizedCharacterId },
+        })
+      }),
+    )
+  }
+
+  function updateCharacterSetup(
+    nodeId: CharacterSetupWorkflowNode['id'],
+    input: Pick<WorkflowCharacterInput, 'prompt' | 'referenceMedia'>,
+  ) {
+    ensureRunning()
+    const prompt = nonEmpty(input.prompt, 'prompt')
+    return persist((run) =>
+      updateNode(run, nodeId, (node) => {
+        if (node.type !== 'character-setup') throw new Error('目标节点不是角色设定')
+        if (node.status !== 'active' || node.phase !== 'configuring') {
+          throw new Error('角色设定节点当前不能修改')
+        }
+        return replaceNode(run, {
+          ...node,
+          input: {
+            ...node.input,
+            prompt,
+            referenceMedia: [...input.referenceMedia],
+          },
+        })
+      }),
+    )
+  }
+
+  function acceptUploadedCharacterTemplate(
+    nodeId: CharacterSetupWorkflowNode['id'],
+    selectedImageUrl: string,
+  ) {
+    ensureRunning()
+    const imageUrl = nonEmpty(selectedImageUrl, 'selectedImageUrl')
+    return persist((run) => {
+      const setupNode = findNode(run, nodeId)
+      if (setupNode.type !== 'character-setup') throw new Error('目标节点不是角色设定')
+      if (setupNode.status !== 'active' || setupNode.phase !== 'configuring') {
+        throw new Error('角色设定节点当前不能使用上传母版')
+      }
+      const templateNode = findSingleDependentNode(run, setupNode.id, 'character-template')
+      if (templateNode.status !== 'locked' || templateNode.phase !== 'ready') {
+        throw new Error('角色母版节点当前不能使用上传图片')
+      }
+      return unlockReadyNodes({
+        ...run,
+        nodes: run.nodes.map((node) => {
+          if (node.id === setupNode.id) {
+            return { ...setupNode, status: 'passed', phase: 'completed', error: null }
+          }
+          if (node.id === templateNode.id) {
+            return {
+              ...templateNode,
+              selectedImageUrl: imageUrl,
+              status: 'passed',
+              phase: 'completed',
+            }
+          }
+          return node
+        }),
+      })
+    })
   }
 
   function generateFirstFrame(
@@ -830,8 +957,12 @@ export function createWorkflowController({
     create: asCommand(create),
     getWorkflow,
     subscribe,
+    setCharacterName: asCommand(setCharacterName),
     addAction: asCommand(addAction),
     generateCharacterTemplate: asCommand(generateCharacterTemplate),
+    bindCharacter: asCommand(bindCharacter),
+    updateCharacterSetup: asCommand(updateCharacterSetup),
+    acceptUploadedCharacterTemplate: asCommand(acceptUploadedCharacterTemplate),
     confirmCharacterTemplate: asCommand(confirmCharacterTemplate),
     generateFirstFrame: asCommand(generateFirstFrame),
     confirmFirstFrame: asCommand(confirmFirstFrame),

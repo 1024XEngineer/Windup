@@ -6,6 +6,8 @@ import { ApiError } from '@/shared/api'
 
 import { PlaytestWorkbench } from './workbench'
 
+export { PlaytestEntryPage } from './entry'
+
 interface PageData {
   character: Character | null
   error: string | null

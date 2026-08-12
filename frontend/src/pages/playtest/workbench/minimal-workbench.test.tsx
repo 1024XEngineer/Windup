@@ -16,6 +16,7 @@ function frame(index: number, imageUrl: string) {
 const character: Character = {
   id: '51',
   projectId: '42',
+  workflowRunId: 'workflow-run-51',
   name: '轻装信使',
   description: null,
   referenceImageUrl: null,

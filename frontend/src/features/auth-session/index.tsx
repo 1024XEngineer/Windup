@@ -32,6 +32,8 @@ export interface AuthSessionValue {
   register(input: Parameters<UserApis['register']>[0]): Promise<AuthTokens>
   login(input: Parameters<UserApis['login']>[0]): Promise<AuthTokens>
   loginByCode(input: Parameters<UserApis['loginByCode']>[0]): Promise<AuthTokens>
+  refreshCurrentUser(): Promise<User>
+  updateNickname(nickname: string): Promise<User>
   changePassword(input: Parameters<UserApis['changePassword']>[0]): Promise<void>
   logout(): Promise<void>
 }
@@ -315,6 +317,35 @@ export function AuthSessionProvider({ apis, children }: AuthSessionProviderProps
     },
     [apis, startSession],
   )
+  const commitCurrentUser = useCallback(
+    (user: User, expectedGeneration: number): User => {
+      if (
+        !mountedRef.current ||
+        generationRef.current !== expectedGeneration ||
+        stateRef.current.status !== 'authenticated'
+      ) {
+        throw new Error('登录状态已变更')
+      }
+      updateState({ status: 'authenticated', user })
+      return user
+    },
+    [updateState],
+  )
+  const refreshCurrentUser = useCallback(async () => {
+    if (stateRef.current.status !== 'authenticated') throw new Error('请先登录')
+    const generation = generationRef.current
+    const user = await apis.me()
+    return commitCurrentUser(user, generation)
+  }, [apis, commitCurrentUser])
+  const updateNickname = useCallback(
+    async (nickname: string) => {
+      if (stateRef.current.status !== 'authenticated') throw new Error('请先登录')
+      const generation = generationRef.current
+      const user = await apis.updateNickname(nickname)
+      return commitCurrentUser(user, generation)
+    },
+    [apis, commitCurrentUser],
+  )
   const changePassword = useCallback(
     async (input: Parameters<UserApis['changePassword']>[0]) => {
       await apis.changePassword(input)
@@ -329,8 +360,28 @@ export function AuthSessionProvider({ apis, children }: AuthSessionProviderProps
   }, [apis, clearSession])
 
   const value = useMemo<AuthSessionValue>(
-    () => ({ state, sendCode, register, login, loginByCode, changePassword, logout }),
-    [changePassword, login, loginByCode, logout, register, sendCode, state],
+    () => ({
+      state,
+      sendCode,
+      register,
+      login,
+      loginByCode,
+      refreshCurrentUser,
+      updateNickname,
+      changePassword,
+      logout,
+    }),
+    [
+      changePassword,
+      login,
+      loginByCode,
+      logout,
+      refreshCurrentUser,
+      register,
+      sendCode,
+      state,
+      updateNickname,
+    ],
   )
 
   return <AuthSessionContext.Provider value={value}>{children}</AuthSessionContext.Provider>

@@ -88,6 +88,12 @@ function hasOnlyGenerationRole(value: Record<string, unknown>, role: string | nu
 function hasValidCharacterInput(value: unknown): boolean {
   if (!isRecord(value)) return false
   return (
+    (value.name === undefined ||
+      value.name === null ||
+      (typeof value.name === 'string' &&
+        value.name.trim().length > 0 &&
+        value.name.length <= 20)) &&
+    (value.characterId === undefined || isNullableString(value.characterId)) &&
     typeof value.prompt === 'string' &&
     Array.isArray(value.referenceMedia) &&
     value.referenceMedia.every((item) => typeof item === 'string')
@@ -267,8 +273,8 @@ function getApiClient() {
   return createApiClient({ getAccessToken: getApiAccessToken })
 }
 
-/** 精确对应后端已公开的 CRUD；不声明尚未提供的列表或按 Character 查询。 */
-export const workflowRunApis: WorkflowRunApis = {
+/** 精确对应后端已公开的 CRUD 与项目内分页列表；不声明尚未提供的按 Character 查询。 */
+export const workflowRunApis: WorkflowRunApis & Required<Pick<WorkflowRunApis, 'listByProject'>> = {
   async create(input) {
     return mapWorkflowRun(
       await getApiClient().request<WorkflowRunDto>('/workflow-runs', {
@@ -276,6 +282,16 @@ export const workflowRunApis: WorkflowRunApis = {
         json: { project_id: toBackendId(input.projectId, 'projectId'), nodes: input.nodes },
       }),
     )
+  },
+  async listByProject(projectId, query = {}) {
+    const result = await getApiClient().requestList<WorkflowRunDto>('/workflow-runs', {
+      query: {
+        project_id: toBackendId(projectId, 'projectId'),
+        page: query.page,
+        page_size: query.pageSize,
+      },
+    })
+    return { ...result, items: result.items.map(mapWorkflowRun) }
   },
   async get(id) {
     return mapWorkflowRun(

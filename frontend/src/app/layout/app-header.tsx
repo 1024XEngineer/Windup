@@ -9,17 +9,12 @@ interface ProductNavigationItem {
   isActive: (pathname: string) => boolean
 }
 
-/**
- * 三个入口对应三种去处：回首页、看已有资产、做新东西。
- * 07-31 定稿版还有一个 Playtest 项，这里没有搬——本仓库的预览路由是
- * /playtest/:characterId/:outfitId，没有角色和造型就构造不出可用地址，
- * 顶栏给不出一个恒定的链接。等预览有了落地入口再加回来。
- */
+/** 四个入口对应四种去处：回首页、看资产、做新东西、核验已完成的造型。 */
 const productNavigation: ProductNavigationItem[] = [
   {
-    to: '/',
+    to: '/workspace',
     label: '首页',
-    isActive: (pathname) => pathname === '/',
+    isActive: (pathname) => pathname === '/workspace',
   },
   {
     to: '/projects',
@@ -33,10 +28,19 @@ const productNavigation: ProductNavigationItem[] = [
     isActive: (pathname) =>
       pathname.startsWith('/quick-start') || pathname.startsWith('/workflow-editor'),
   },
+  {
+    to: '/playtest',
+    label: 'PlayTest',
+    isActive: (pathname) => pathname.startsWith('/playtest'),
+  },
 ]
 
 /** 左侧标牌上的第二行，随所在区域变化，让用户知道自己在哪一片。 */
 function getWorkspaceLabel(pathname: string): { title: string; detail: string } {
+  if (pathname.startsWith('/account')) {
+    return { title: '账号中心', detail: '资料与登录安全' }
+  }
+
   if (pathname.startsWith('/projects') || pathname.startsWith('/playtest')) {
     return { title: '项目资产', detail: '角色、造型与动作' }
   }
@@ -73,8 +77,8 @@ export function AppHeader() {
     <header className="pointer-events-none fixed inset-x-0 top-3.5 z-50 flex items-start justify-between gap-2 px-3 text-[#1c231e] sm:gap-4 sm:px-[18px]">
       <div className="pointer-events-auto flex min-h-[3.625rem] min-w-0 items-center gap-3 rounded-xl border border-[#171817]/14 bg-[#dfe3df] px-2.5 py-[7px] sm:min-w-[min(26rem,42vw)] sm:px-3.5">
         <Link
-          to="/"
-          aria-label="返回 Windup 首页"
+          to="/workspace"
+          aria-label="返回 Windup 工作台"
           className="flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-2 text-[#1c231e] focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331] sm:min-w-0 sm:justify-start md:border-r md:border-[#2d3b31]/12 md:pr-3"
         >
           <img src="/windup-mark.svg" alt="" className="h-[1.6875rem] w-[1.6875rem]" />
@@ -107,8 +111,8 @@ export function AppHeader() {
               >
                 {item.compactLabel ? (
                   <>
-                    <span className="hidden sm:inline">{item.label}</span>
-                    <span className="sm:hidden">{item.compactLabel}</span>
+                    <span className="hidden md:inline">{item.label}</span>
+                    <span className="md:hidden">{item.compactLabel}</span>
                   </>
                 ) : (
                   item.label
@@ -139,12 +143,15 @@ export function AppHeader() {
             </Link>
           ) : (
             <div className="flex min-w-0 items-center overflow-hidden rounded-[0.5625rem] border border-[#2d3b31]/14 bg-white/35">
-              <span
+              <Link
+                to="/account"
+                aria-label="打开账号中心"
+                aria-current={pathname.startsWith('/account') ? 'page' : undefined}
                 title={session.state.user.email}
-                className="inline-flex min-h-11 max-w-16 items-center truncate px-3 text-xs font-semibold text-[#34483a] sm:max-w-28"
+                className="inline-flex min-h-11 max-w-16 items-center truncate px-3 text-xs font-semibold text-[#34483a] transition-colors hover:bg-[#dce9df] hover:text-[#26372c] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#284331] sm:max-w-28"
               >
                 {session.state.user.nickname || session.state.user.email}
-              </span>
+              </Link>
               <button
                 type="button"
                 onClick={signOut}

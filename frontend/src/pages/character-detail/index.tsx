@@ -77,6 +77,7 @@ export function CharacterDetailPage() {
     character.outfits.find((outfit) => outfit.id === selectedOutfitId) ??
     character.outfits[0] ??
     null
+  const canPlaytest = selectedOutfit?.actions.some((action) => action.frames.length > 0) ?? false
 
   return (
     <section aria-labelledby="character-title" className="p-4 lg:px-6 lg:py-5">
@@ -114,7 +115,16 @@ export function CharacterDetailPage() {
               </select>
             </label>
           ) : null}
-          <div className="text-right">
+          <div className="flex flex-wrap justify-end gap-2">
+            {selectedOutfit && canPlaytest ? (
+              <Link
+                to={`/playtest/${character.id}/${selectedOutfit.id}`}
+                aria-label="试玩当前造型"
+                className="inline-flex min-h-9 items-center rounded-full bg-[#294433] px-4 text-xs font-semibold text-white transition-colors hover:bg-[#1f3828] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#294433]"
+              >
+                试玩当前造型
+              </Link>
+            ) : null}
             <button
               type="button"
               disabled
@@ -123,10 +133,10 @@ export function CharacterDetailPage() {
             >
               导出资产包
             </button>
-            <p className="mt-1 max-w-xs text-[0.62rem] text-[#858c84]">
-              导出能力待 PR #97 合并并完成资产字段接线
-            </p>
           </div>
+          <p className="max-w-xs text-right text-[0.62rem] text-[#858c84]">
+            导出能力待 PR #97 合并并完成资产字段接线
+          </p>
         </div>
       </div>
 

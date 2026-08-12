@@ -27,11 +27,13 @@ export type {
   Outfit,
 } from './character'
 export { characterApis, isPublishedCharacter, loadAllCharactersByProject } from './character'
+export { getOutfitPlayback } from './character/outfit-playback'
 
 /* 动作模板 —— 能跨角色复用的配方 */
 export type { ActionTemplate, ActionTemplateApis } from './action-template'
 
 /* 生成 —— 业务数据，不是「调用生成能力」 */
+export { createGenerationApis, GenerationApiError } from './generation/api'
 export type {
   CharacterTemplateGenerationInput,
   CharacterTemplateGenerationResult,
@@ -43,15 +45,18 @@ export type {
   Generation,
   GenerationApis,
   GenerationEvent,
+  GenerationExpectation,
   GenerationInput,
   GenerationResult,
   GenerationResultFor,
   GenerationType,
   TaskStatus,
 } from './generation'
+export type { GenerationApiConfig, GenerationTransport } from './generation/api'
 
-/* 媒体引用 —— 不承诺 URL 或后端 Media ID 的具体表示 */
-export type { MediaReference } from './media'
+/* 媒体上传 —— 页面只依赖公开工厂与不透明引用，不处理 multipart 协议。 */
+export { createMediaApis } from './media/api'
+export type { MediaApis, MediaCategory, MediaReference } from './media'
 
 /* 工作流 —— 前端管理节点，后端只持久化完整 nodes 文档 */
 export { workflowRunApis } from './workflow-run'

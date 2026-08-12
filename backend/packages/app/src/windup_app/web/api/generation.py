@@ -29,10 +29,12 @@ from windup_common.exceptions import BizException
 from windup_common.result import Response
 from windup_framework.db import get_session
 
+from windup_app.server.character.model import Character
 from windup_app.server.orchestrator.model import (
     ActionType,
     GenerationTask,
 )
+from windup_app.server.project.model import Project
 
 logger = logging.getLogger("windup.generation.api")
 
@@ -54,23 +56,34 @@ class _EventBus:
     """任务进度内存发布-订阅。"""
 
     def __init__(self) -> None:
-        self._queues: dict[str, list[asyncio.Queue]] = defaultdict(list)
+        self._queues: dict[tuple[int, int], list[asyncio.Queue]] = defaultdict(list)
 
-    async def subscribe(self, task_id: int) -> asyncio.Queue:
+    async def subscribe(self, project_id: int, task_id: int) -> asyncio.Queue:
         queue: asyncio.Queue = asyncio.Queue()
-        self._queues[str(task_id)].append(queue)
+        self._queues[(project_id, task_id)].append(queue)
         return queue
 
-    async def unsubscribe(self, task_id: int, queue: asyncio.Queue) -> None:
-        key = str(task_id)
+    async def unsubscribe(
+        self,
+        project_id: int,
+        task_id: int,
+        queue: asyncio.Queue,
+    ) -> None:
+        key = (project_id, task_id)
         subs = self._queues.get(key)
         if subs and queue in subs:
             subs.remove(queue)
             if not subs:
                 del self._queues[key]
 
-    def publish(self, task_id: int, event: str, data: dict) -> None:
-        for queue in self._queues.get(str(task_id), []):
+    def publish(
+        self,
+        project_id: int,
+        task_id: int,
+        event: str,
+        data: dict,
+    ) -> None:
+        for queue in self._queues.get((project_id, task_id), []):
             queue.put_nowait((event, data))
 
 
@@ -86,8 +99,7 @@ event_bus = _EventBus()
 class CharacterImageGenerateRequest(BaseModel):
     """提交角色图片生成任务。"""
 
-    user_id: int = Field(gt=0)
-    project_id: int | None = None
+    project_id: int = Field(gt=0)
     reference_image_url: str | None = None
     prompt: str = ""
     negative_prompt: str = ""
@@ -99,8 +111,7 @@ class CharacterImageGenerateRequest(BaseModel):
 class CharacterActionGenerateRequest(BaseModel):
     """提交角色动作生成任务。"""
 
-    user_id: int = Field(gt=0)
-    project_id: int | None = None
+    project_id: int = Field(gt=0)
     character_id: int = Field(gt=0)
     action_type: ActionType
     custom_prompt: str | None = None
@@ -115,7 +126,6 @@ class GenerationTaskOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    user_id: int
     project_id: int | None = None
     task_type: str
     status: str
@@ -131,7 +141,6 @@ def _task_to_out(task: GenerationTask) -> GenerationTaskOut:
         result_dict = dataclasses.asdict(task.result)
     return GenerationTaskOut(
         id=task.id,
-        user_id=task.user_id,
         project_id=task.project_id,
         task_type=task.task_type.value,
         status=task.status.value,
@@ -146,15 +155,32 @@ def _task_to_out(task: GenerationTask) -> GenerationTaskOut:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def _validate_project_size(session: Session, project_id: int | None, width: int, height: int) -> None:
-    """校验输入尺寸与项目约束是否一致;不一致则抛异常。"""
-    if project_id is None:
-        return
-    from windup_app.server.project.service import SqlAlchemyProjectService
+def _get_project_or_raise(
+    session: Session,
+    project_id: int,
+    user_id: int,
+) -> Project:
+    """校验项目存在且属于 token 对应用户。"""
+    project = session.get(Project, project_id)
+    if project is None or project.user_id != user_id:
+        raise BizException("项目不存在", code=BizCode.NOT_FOUND)
+    return project
 
-    project = SqlAlchemyProjectService().get_project(session, project_id)
-    if project is None:
-        return
+
+def _get_character_or_raise(
+    session: Session,
+    character_id: int,
+    project_id: int,
+) -> Character:
+    """校验角色存在且属于本次生成所指定的项目。"""
+    character = session.get(Character, character_id)
+    if character is None or character.project_id != project_id:
+        raise BizException("角色不存在", code=BizCode.NOT_FOUND)
+    return character
+
+
+def _validate_project_size(project: Project, width: int, height: int) -> None:
+    """校验输入尺寸与项目约束是否一致;不一致则抛异常。"""
     if width != project.sprite_width or height != project.sprite_height:
         raise BizException(
             f"输入尺寸 {width}×{height} 与项目约束 {project.sprite_width}×{project.sprite_height} 不一致",
@@ -169,7 +195,9 @@ def submit_image_generation(
     session: Session = Depends(get_session),
 ) -> Response[GenerationTaskOut]:
     """提交角色图片生成任务:建 PENDING 记录立即返回,实际图生图后台跑。"""
-    _validate_project_size(session, body.project_id, body.width, body.height)
+    user_id = request.state.current_user.id
+    project = _get_project_or_raise(session, body.project_id, user_id)
+    _validate_project_size(project, body.width, body.height)
     # TODO: service.create_image_task + background_tasks.add_task
     raise BizException("接口待实现", code=BizCode.BAD_REQUEST)
 
@@ -181,6 +209,9 @@ def submit_action_generation(
     session: Session = Depends(get_session),
 ) -> Response[GenerationTaskOut]:
     """提交角色动作生成任务:建 PENDING 记录立即返回,实际生成后台跑。"""
+    user_id = request.state.current_user.id
+    _get_project_or_raise(session, body.project_id, user_id)
+    _get_character_or_raise(session, body.character_id, body.project_id)
     # TODO: service.create_action_task + background_tasks.add_task
     raise BizException("接口待实现", code=BizCode.BAD_REQUEST)
 
@@ -189,10 +220,13 @@ def submit_action_generation(
 def get_task(
     task_id: int,
     project_id: int = Query(..., gt=0),
+    request: Request = None,
     session: Session = Depends(get_session),
 ) -> Response[GenerationTaskOut]:
     """查询生成任务状态与结果。"""
-    # TODO: service.get_task
+    user_id = request.state.current_user.id
+    _get_project_or_raise(session, project_id, user_id)
+    # TODO: service.get_task，并校验任务属于 project_id
     raise BizException("接口待实现", code=BizCode.BAD_REQUEST)
 
 
@@ -212,8 +246,10 @@ async def stream_task(
 
     若客户端订阅时任务已处于终态,立即推送终态事件并关闭连接。
     """
-    # TODO: 检查任务初始状态,若已终态立即推送
-    queue = await event_bus.subscribe(task_id)
+    user_id = request.state.current_user.id
+    _get_project_or_raise(session, project_id, user_id)
+    # TODO: 检查任务属于 project_id 及初始状态,若已终态立即推送
+    queue = await event_bus.subscribe(project_id, task_id)
     logger.debug("SSE 订阅: task_id=%d", task_id)
 
     async def _event_generator():
@@ -224,7 +260,8 @@ async def stream_task(
                     break
                 try:
                     event, data = await asyncio.wait_for(
-                        queue.get(), timeout=_HEARTBEAT_TIMEOUT,
+                        queue.get(),
+                        timeout=_HEARTBEAT_TIMEOUT,
                     )
                     payload = json.dumps(data, ensure_ascii=False)
                     yield f"event: {event}\ndata: {payload}\n\n"
@@ -234,7 +271,7 @@ async def stream_task(
                 except asyncio.TimeoutError:
                     yield ": heartbeat\n\n"
         finally:
-            await event_bus.unsubscribe(task_id, queue)
+            await event_bus.unsubscribe(project_id, task_id, queue)
             logger.debug("SSE 取消订阅: task_id=%d", task_id)
 
     return StreamingResponse(

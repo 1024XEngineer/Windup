@@ -17,6 +17,8 @@ from windup_framework.db import Base, engine
 # 模型导入：触发 Base.metadata 注册，确保 create_all 能发现所有表
 from windup_app.server.character.model import Character  # noqa: F401
 from windup_app.server.project.model import Project  # noqa: F401
+from windup_app.server.quota.model import CreditAccount, CreditTransaction  # noqa: F401
+# InviteCode, InviteRecord, TokenUsage 暂不实现
 from windup_app.server.user.model import User  # noqa: F401
 from windup_app.server.workflow_run.model import WorkflowRun  # noqa: F401
 from windup_app.web.api.auth import router as auth_router
@@ -24,6 +26,7 @@ from windup_app.web.api.character import router as character_router
 from windup_app.web.api.generation import router as generation_router
 from windup_app.web.api.media import router as media_router
 from windup_app.web.api.project import router as project_router
+from windup_app.web.api.quota import router as quota_router
 from windup_app.web.api.workflow_run import router as workflow_run_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
 from windup_app.web.middleware.auth import AuthMiddleware
@@ -73,6 +76,9 @@ async def _lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="windup", version="0.1.0", lifespan=_lifespan)
+    # 中间件（add_middleware 后加的先执行：请求先进 CORS → 再进 RateLimit → 再进 Auth → 最后到路由）
+    app.add_middleware(AuthMiddleware)
+    app.add_middleware(RateLimitMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
@@ -81,15 +87,13 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    # 中间件（add_middleware 后加的先执行：请求先进 RateLimit → 再进 Auth → 最后到路由）
-    app.add_middleware(AuthMiddleware)
-    app.add_middleware(RateLimitMiddleware)
     app.include_router(auth_router)
     app.include_router(project_router)
     app.include_router(character_router)
     app.include_router(workflow_run_router)
     app.include_router(media_router)
     app.include_router(generation_router)
+    app.include_router(quota_router)
     register_exception_handlers(app)
     return app
 

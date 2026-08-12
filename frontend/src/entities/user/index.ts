@@ -31,6 +31,7 @@ export interface UserApis {
   refresh(refreshToken: string): Promise<AuthTokens>
   logout(refreshToken: string): Promise<void>
   me(): Promise<User>
+  updateNickname(nickname: string): Promise<User>
   changePassword(input: { oldPassword: string; newPassword: string }): Promise<void>
 }
 

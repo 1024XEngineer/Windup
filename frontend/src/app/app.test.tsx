@@ -26,7 +26,7 @@ afterEach(() => {
 })
 
 describe('AppRoutes authentication boundary', () => {
-  it('keeps the home page available to guests', async () => {
+  it('keeps the public landing page available to guests', async () => {
     render(
       <GuestAuthSession>
         <MemoryRouter initialEntries={['/']}>
@@ -36,6 +36,56 @@ describe('AppRoutes authentication boundary', () => {
     )
 
     expect(await screen.findByRole('heading', { name: /让你的角色/ })).toBeTruthy()
+    expect(screen.getByRole('navigation', { name: '宣传页导航' })).toBeTruthy()
+    expect(screen.queryByRole('navigation', { name: '产品导航' })).toBeNull()
+  })
+
+  it('keeps authenticated users on the public landing page until they enter the workspace', async () => {
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(await screen.findByRole('navigation', { name: '宣传页导航' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '进入工作台' }).getAttribute('href')).toBe('/workspace')
+  })
+
+  it('protects the workspace home and preserves it as the login return path', async () => {
+    render(
+      <GuestAuthSession>
+        <MemoryRouter initialEntries={['/workspace']}>
+          <AppRoutes />
+          <LocationProbe />
+        </MemoryRouter>
+      </GuestAuthSession>,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/?account=login&returnTo=%2Fworkspace',
+      ),
+    )
+    expect(screen.queryByRole('heading', { name: '工作台' })).toBeNull()
+  })
+
+  it('serves the workspace from its dedicated protected route', async () => {
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/workspace']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(await screen.findByRole('heading', { name: '工作台' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: /让你的角色/ })).toBeNull()
+    expect(screen.getByRole('navigation', { name: '产品导航' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '返回 Windup 工作台' }).getAttribute('href')).toBe(
+      '/workspace',
+    )
   })
 
   it('redirects a guest before rendering a protected product page and preserves its return path', async () => {
@@ -53,7 +103,43 @@ describe('AppRoutes authentication boundary', () => {
         '/?account=login&returnTo=%2Fquick-start%3Fdraft%3D1%23setup',
       ),
     )
-    expect(screen.queryByRole('heading', { name: '快速开始' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: /开始一条可追踪的制作流程/ })).toBeNull()
+  })
+
+  it('redirects a guest from the PlayTest entry and preserves that return path', async () => {
+    render(
+      <GuestAuthSession>
+        <MemoryRouter initialEntries={['/playtest']}>
+          <AppRoutes />
+          <LocationProbe />
+        </MemoryRouter>
+      </GuestAuthSession>,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/?account=login&returnTo=%2Fplaytest',
+      ),
+    )
+    expect(screen.queryByRole('heading', { name: '选择可试玩资产' })).toBeNull()
+  })
+
+  it('protects direct account-center visits and returns there after login', async () => {
+    render(
+      <GuestAuthSession>
+        <MemoryRouter initialEntries={['/account']}>
+          <AppRoutes />
+          <LocationProbe />
+        </MemoryRouter>
+      </GuestAuthSession>,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/?account=login&returnTo=%2Faccount',
+      ),
+    )
+    expect(screen.queryByRole('heading', { name: '账号中心' })).toBeNull()
   })
 
   it('waits for session restoration before mounting a protected page', async () => {
@@ -74,13 +160,13 @@ describe('AppRoutes authentication boundary', () => {
       </AuthSessionProvider>,
     )
 
-    expect(screen.queryByRole('heading', { name: '快速开始' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: /开始一条可追踪的制作流程/ })).toBeNull()
     expect(screen.getByTestId('location').textContent).toBe('/quick-start')
 
     const restoredTokens = await baseApis.refresh('stored-refresh-token')
     await act(async () => resolveRefresh(restoredTokens))
 
-    expect(await screen.findByRole('heading', { name: '快速开始' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: /开始一条可追踪的制作流程/ })).toBeTruthy()
   })
 
   it('renders protected product pages for an authenticated session', async () => {
@@ -92,7 +178,7 @@ describe('AppRoutes authentication boundary', () => {
       </AuthenticatedAuthSession>,
     )
 
-    expect(await screen.findByRole('heading', { name: '快速开始' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: /开始一条可追踪的制作流程/ })).toBeTruthy()
   })
 
   it('tells the user when restoring the session fails instead of becoming a silent guest', async () => {
@@ -104,6 +190,7 @@ describe('AppRoutes authentication boundary', () => {
       refresh: async () => Promise.reject(new Error('refresh token expired')),
       logout: async () => undefined,
       me: async () => Promise.reject(new Error('not used')),
+      updateNickname: async () => Promise.reject(new Error('not used')),
       changePassword: async () => Promise.reject(new Error('not used')),
     }
     window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, 'expired-refresh-token')
@@ -116,7 +203,7 @@ describe('AppRoutes authentication boundary', () => {
       </AuthSessionProvider>,
     )
 
-    expect((await screen.findByRole('alert')).textContent).toContain('登录状态已过期，请重新登录。')
+    expect(await screen.findByText('登录状态已过期，请重新登录。')).toBeTruthy()
     expect(screen.getByRole('link', { name: '重新登录' }).getAttribute('href')).toBe(
       '/?account=login&returnTo=%2F',
     )
@@ -131,6 +218,7 @@ describe('AppRoutes authentication boundary', () => {
       refresh: async () => Promise.reject(new Error('refresh token expired')),
       logout: async () => undefined,
       me: async () => Promise.reject(new Error('not used')),
+      updateNickname: async () => Promise.reject(new Error('not used')),
       changePassword: async () => Promise.reject(new Error('not used')),
     }
     window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, 'expired-refresh-token')

@@ -47,12 +47,13 @@ Character
 
 前端只映射后端真实字段：
 
-- Character：`id`、`project_id`、`name`、`description`、`reference_image_url`、`character_data.version`、`status`
+- Character：`id`、`project_id`、`workflow_run_id`、`name`、`description`、`reference_image_url`、`character_data.version`、`status`
 - Outfit：`id`、`name`、`description`、`preview_url`、`actions`
 - Action：`id`、`type`、`name`、`loop`、`fps`、`frame_count`、`frames`
 - Frame：`index`、`image_url`、`duration_ms`
 
 Outfit、Action、Frame 没有独立端点。`outfit.characterId` 与 `action.outfitId` 仅由嵌套关系推导；修改任一子项时通过 `PATCH Character` 提交完整 `character_data`。
+创建 Character 时必须传入 `workflow_run_id`；编辑器也只读取与当前 WorkflowRun 绑定的角色，不能从同项目角色中按顺序猜测。
 
 ## 二、本轮明确不实现
 

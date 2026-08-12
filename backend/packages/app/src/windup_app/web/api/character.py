@@ -4,6 +4,7 @@ import logging
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
@@ -131,15 +132,24 @@ def create_character(
 ) -> Response[CharacterOut]:
     user_id = request.state.current_user.id
     _get_project_or_raise(session, body.project_id, user_id)
-    character = character_service.create_character(
-        session,
-        project_id=body.project_id,
-        workflow_run_id=body.workflow_run_id,
-        name=body.name,
-        description=body.description,
-        reference_image_url=body.reference_image_url,
-        character_data=body.character_data.model_dump(),
-    )
+    try:
+        character = character_service.create_character(
+            session,
+            project_id=body.project_id,
+            workflow_run_id=body.workflow_run_id,
+            name=body.name,
+            description=body.description,
+            reference_image_url=body.reference_image_url,
+            character_data=body.character_data.model_dump(),
+        )
+    except IntegrityError:
+        session.rollback()
+        character = character_service.get_character_by_workflow_run(
+            session,
+            body.workflow_run_id,
+        )
+        if character is None or character.project_id != body.project_id:
+            raise BizException("角色不存在", code=BizCode.NOT_FOUND) from None
     return Response.success(CharacterOut.model_validate(character), message="创建成功")
 
 
