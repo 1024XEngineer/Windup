@@ -4,6 +4,8 @@ import type {
   Character,
   Generation,
   GenerationApis,
+  MediaApis,
+  MediaReference,
   Project,
   WorkflowRun,
   WorkflowRunApis,
@@ -11,6 +13,19 @@ import type {
 import { createRealWorkflowEditorSession, createUnavailableGenerationApis } from './runtime'
 
 describe('createRealWorkflowEditorSession', () => {
+  it('通过公开 MediaApis 上传角色参考图并固定用途分类', async () => {
+    const uploaded = 'https://assets.windup.test/reference.png' as MediaReference
+    const mediaApis: Pick<MediaApis, 'upload'> = {
+      upload: vi.fn().mockResolvedValue(uploaded),
+    }
+    const { session } = await createCharacterTemplateSession({ mediaApis })
+    const file = new File(['pixels'], 'reference.png', { type: 'image/png' })
+    const controller = new AbortController()
+
+    await expect(session.uploadReferenceImage(file, controller.signal)).resolves.toBe(uploaded)
+    expect(mediaApis.upload).toHaveBeenCalledWith(file, 'reference-image', controller.signal)
+  })
+
   it('只用主仓库公开接口恢复 WorkflowRun 并装配 Controller', async () => {
     const workflow = workflowFixture()
     const project = projectFixture()
@@ -50,6 +65,7 @@ describe('createRealWorkflowEditorSession', () => {
     const session = await createRealWorkflowEditorSession('42', {
       workflowRunApis,
       generationApis,
+      mediaApis: { upload: vi.fn() },
       projectApis,
       characterApis,
       onAsyncError: vi.fn(),
@@ -98,6 +114,7 @@ describe('createRealWorkflowEditorSession', () => {
           get: vi.fn(),
           subscribe: vi.fn(() => () => undefined),
         },
+        mediaApis: { upload: vi.fn() },
         projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
         characterApis,
         onAsyncError: vi.fn(),
@@ -120,6 +137,7 @@ describe('createRealWorkflowEditorSession', () => {
         get: vi.fn(),
         subscribe: vi.fn(() => () => undefined),
       },
+      mediaApis: { upload: vi.fn() },
       projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
       characterApis: {
         listByProject: vi.fn().mockResolvedValue({
@@ -165,6 +183,7 @@ describe('createRealWorkflowEditorSession', () => {
         get: vi.fn(),
         subscribe: vi.fn(() => () => undefined),
       },
+      mediaApis: { upload: vi.fn() },
       projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
       characterApis: {
         listByProject: vi.fn().mockResolvedValue({
@@ -276,6 +295,7 @@ describe('createRealWorkflowEditorSession', () => {
         get: vi.fn().mockResolvedValue(completeAnimationFixture()),
         subscribe: vi.fn(() => () => undefined),
       },
+      mediaApis: { upload: vi.fn() },
       projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
       characterApis: {
         listByProject: vi.fn().mockResolvedValue({
@@ -328,6 +348,7 @@ async function createCharacterTemplateSession(
   options: {
     workflow?: WorkflowRun
     characters?: Character[]
+    mediaApis?: Pick<MediaApis, 'upload'>
   } = {},
 ) {
   const workflow = options.workflow ?? selectingCharacterTemplateWorkflowFixture()
@@ -357,6 +378,7 @@ async function createCharacterTemplateSession(
       create,
       update,
     },
+    mediaApis: options.mediaApis ?? { upload: vi.fn() },
     onAsyncError: vi.fn(),
   })
   return { session, create, update }

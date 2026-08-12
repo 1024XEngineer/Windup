@@ -9,6 +9,7 @@ import type {
   CharacterTemplateWorkflowNode,
   Generation,
   GenerationApis,
+  MediaReference,
   Project,
   WorkflowRun,
   WorkflowRunApis,
@@ -105,6 +106,86 @@ describe('WorkflowEditorPage real runtime boundary', () => {
       }),
     )
     await waitFor(() => expect(screen.queryByRole('textbox', { name: '角色描述' })).toBeNull())
+  })
+
+  it('上传角色参考图期间禁止生成，成功后写回 WorkflowRun', async () => {
+    const pendingUpload = deferred<MediaReference>()
+    const uploadReferenceImage = vi.fn(() => pendingUpload.promise)
+    const session = createSession(workflowFixture(), { uploadReferenceImage })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    const promptInput = await screen.findByRole('textbox', { name: '角色描述' })
+    fireEvent.change(promptInput, { target: { value: '戴红围巾的短发少年冒险家' } })
+    const file = new File(['pixels'], 'reference.png', { type: 'image/png' })
+    fireEvent.change(screen.getByLabelText('角色参考图'), { target: { files: [file] } })
+
+    expect(screen.getByText('正在上传参考图…')).toBeTruthy()
+    expect(
+      (screen.getByRole('button', { name: '生成角色候选' }) as HTMLButtonElement).disabled,
+    ).toBe(true)
+
+    await act(async () => {
+      pendingUpload.resolve('opaque-reference-1' as MediaReference)
+      await pendingUpload.promise
+    })
+
+    await waitFor(() =>
+      expect(session.controller.getWorkflow().nodes[0]).toMatchObject({
+        input: {
+          prompt: '戴红围巾的短发少年冒险家',
+          referenceMedia: ['opaque-reference-1'],
+        },
+      }),
+    )
+    expect(screen.getByText('已关联 1 个参考媒体')).toBeTruthy()
+    expect(
+      (screen.getByRole('button', { name: '生成角色候选' }) as HTMLButtonElement).disabled,
+    ).toBe(false)
+  })
+
+  it('上传失败时提示错误且不写入 WorkflowRun', async () => {
+    const uploadReferenceImage = vi.fn().mockRejectedValue(new Error('对象存储暂不可用'))
+    const session = createSession(workflowFixture(), { uploadReferenceImage })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    const file = new File(['pixels'], 'retry.png', { type: 'image/png' })
+    fireEvent.change(await screen.findByLabelText('角色参考图'), { target: { files: [file] } })
+
+    expect((await screen.findByRole('alert')).textContent).toContain('对象存储暂不可用')
+    expect(session.controller.getWorkflow().nodes[0]).toMatchObject({
+      status: 'active',
+      phase: 'configuring',
+      input: { referenceMedia: [] },
+    })
+  })
+
+  it('页面卸载时取消在途参考图上传并忽略迟到结果', async () => {
+    const pendingUpload = deferred<MediaReference>()
+    let uploadSignal: AbortSignal | undefined
+    const session = createSession(workflowFixture(), {
+      uploadReferenceImage: vi.fn((_file: File, signal?: AbortSignal) => {
+        uploadSignal = signal
+        return pendingUpload.promise
+      }),
+    })
+    const updateCharacterSetup = vi.spyOn(session.controller, 'updateCharacterSetup')
+    defaultSessionLoader.mockResolvedValue(session)
+    const view = renderEditor('/workflow-editor/42')
+
+    const file = new File(['pixels'], 'slow.png', { type: 'image/png' })
+    fireEvent.change(await screen.findByLabelText('角色参考图'), { target: { files: [file] } })
+    await waitFor(() => expect(uploadSignal).toBeDefined())
+
+    view.unmount()
+    expect(uploadSignal?.aborted).toBe(true)
+
+    await act(async () => {
+      pendingUpload.resolve('late-reference' as MediaReference)
+      await pendingUpload.promise
+    })
+    expect(updateCharacterSetup).not.toHaveBeenCalled()
   })
 
   it('真实 Generation 尚未实现时展示接口错误，不回退到演示候选', async () => {
@@ -629,6 +710,7 @@ function renderEditor(path: string) {
 interface SessionFixtureOptions {
   character?: Character | null
   generationApis?: GenerationApis
+  uploadReferenceImage?: WorkflowEditorSession['uploadReferenceImage']
   publishReviewedAction?(reviewNodeId: string): Promise<Character>
 }
 
@@ -662,6 +744,9 @@ function createSession(
     controller,
     project: projectFixture(),
     character: options.character ?? null,
+    uploadReferenceImage:
+      options.uploadReferenceImage ??
+      vi.fn(() => Promise.reject(new Error('媒体上传服务尚未装配'))),
     confirmCharacterTemplate: async (nodeId, selectedImageUrl) => {
       await controller.confirmCharacterTemplate(nodeId, selectedImageUrl)
       return options.character ?? characterFixture()
@@ -889,6 +974,7 @@ function createGenerationRaceSession(
     controller,
     project: projectFixture(),
     character: null,
+    uploadReferenceImage: vi.fn(() => Promise.reject(new Error('媒体上传服务尚未装配'))),
     confirmCharacterTemplate: vi.fn(async () => characterFixture()),
     publishReviewedAction: vi.fn(async () => Promise.reject(new Error('资产发布未装配'))),
     subscribeErrors: () => () => undefined,
@@ -946,6 +1032,7 @@ function createRestartSelectionSession(options: { status?: Generation['status'] 
       controller,
       project: projectFixture(),
       character: null,
+      uploadReferenceImage: vi.fn(() => Promise.reject(new Error('媒体上传服务尚未装配'))),
       confirmCharacterTemplate: vi.fn(async () => characterFixture()),
       publishReviewedAction: vi.fn(async () => Promise.reject(new Error('资产发布未装配'))),
       subscribeErrors: () => () => undefined,
