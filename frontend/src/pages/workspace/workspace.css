@@ -24,6 +24,67 @@
   transform: none;
 }
 
+.workflow-entrance-card {
+  isolation: isolate;
+}
+
+.workflow-card-copy {
+  transition:
+    opacity 160ms ease,
+    transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.workflow-card-actions {
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.workflow-card-action {
+  color: var(--workspace-ink);
+  background: transparent;
+  transition:
+    color 170ms ease,
+    transform 300ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.workflow-card-action-create {
+  transform: translateY(12px);
+}
+
+.workflow-card-action-continue {
+  transform: translateY(-12px);
+}
+
+.workflow-card-action:hover,
+.workflow-card-action:focus-visible {
+  color: var(--workspace-moss);
+}
+
+.workflow-entrance-card:hover .workflow-card-actions,
+.workflow-entrance-card:focus-within .workflow-card-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.workflow-entrance-card:hover .workflow-card-action,
+.workflow-entrance-card:focus-within .workflow-card-action {
+  transform: translateY(0);
+}
+
+.workflow-entrance-card:hover .workflow-card-copy,
+.workflow-entrance-card:focus-within .workflow-card-copy {
+  opacity: 0;
+  transform: translateY(-5px);
+}
+
+.workflow-entrance-card:hover .workspace-artwork-image,
+.workflow-entrance-card:focus-within .workspace-artwork-image {
+  filter: grayscale(0) saturate(0.96) contrast(1.02) brightness(1);
+  opacity: 1;
+}
+
 .workspace-artwork-stage {
   position: relative;
 }
@@ -88,6 +149,27 @@
 
   .workspace-artwork-image {
     transition: none;
+  }
+
+  .workflow-card-copy,
+  .workflow-card-actions,
+  .workflow-card-action {
+    transition: none;
+  }
+}
+
+@media (hover: none) {
+  .workflow-card-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .workflow-card-action {
+    transform: none;
+  }
+
+  .workflow-card-copy {
+    opacity: 0;
   }
 }
 

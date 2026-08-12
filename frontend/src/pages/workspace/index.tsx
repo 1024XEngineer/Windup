@@ -366,13 +366,9 @@ export function WorkspacePage() {
               title="快速开始"
               description="用自然语言建立角色、造型与动作的标准生产流程。"
             />
-            <SelectableEntranceCard
-              ariaLabel="选择工作流画布"
-              kind="workflow"
-              title="工作流画布"
-              description="从已有 WorkflowRun 继续节点生成与审核。"
+            <WorkflowEntranceCard
               selected={mode === 'workflow'}
-              onClick={() => selectMode('workflow')}
+              onContinue={() => selectMode('workflow')}
             />
             <DirectEntranceCard
               to="/projects"
@@ -522,6 +518,81 @@ function SelectableEntranceCard({
         selected={selected}
       />
     </button>
+  )
+}
+
+function WorkflowEntranceCard({
+  onContinue,
+  selected,
+}: {
+  onContinue: () => void
+  selected: boolean
+}) {
+  return (
+    <div
+      className={`${entranceCardClass} workflow-entrance-card group ${
+        selected ? 'bg-white/42' : 'bg-transparent'
+      }`}
+    >
+      <div className="relative min-h-0 flex-[1.35] overflow-hidden px-2 text-[#35583f]">
+        <WorkspaceEntranceVisual kind="workflow" selected={selected} />
+      </div>
+      <div className="relative h-[5.4rem] shrink-0 px-2 pb-3">
+        <div className="workflow-card-copy flex h-full items-end justify-between gap-3">
+          <div>
+            <h3 className="font-serif text-[clamp(1.05rem,2.2vw,1.5rem)] leading-tight font-medium tracking-[-0.035em] text-[#202721]">
+              工作流画布
+            </h3>
+            <p className="mt-1 text-[clamp(0.65rem,1.05vw,0.75rem)] leading-[1.55] text-[#687169]">
+              新建制作流程，或继续已有进度。
+            </p>
+          </div>
+          <span
+            aria-hidden="true"
+            className="grid h-8 w-8 shrink-0 place-items-center text-lg text-[#7b847d]"
+          >
+            {selected ? '✓' : '↗'}
+          </span>
+        </div>
+        <div
+          className="workflow-card-actions absolute inset-x-2 top-0 bottom-3 grid grid-rows-2"
+          aria-label="工作流画布入口"
+        >
+          <Link
+            to="/projects/new"
+            aria-label="创建新项目"
+            className="workflow-card-action workflow-card-action-create group/action flex items-center justify-between text-left focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]"
+          >
+            <strong className="font-serif text-[clamp(0.9rem,1.5vw,1.1rem)] font-medium tracking-[-0.025em] text-[#263028]">
+              创建新项目
+            </strong>
+            <span
+              aria-hidden="true"
+              className="text-sm text-[#667169] transition-transform group-hover/action:translate-x-0.5"
+            >
+              ↗
+            </span>
+          </Link>
+          <button
+            type="button"
+            aria-label="继续已有工作流"
+            aria-pressed={selected}
+            onClick={onContinue}
+            className="workflow-card-action workflow-card-action-continue group/action flex items-center justify-between text-left focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]"
+          >
+            <strong className="font-serif text-[clamp(0.9rem,1.5vw,1.1rem)] font-medium tracking-[-0.025em] text-[#263028]">
+              继续已有工作流
+            </strong>
+            <span
+              aria-hidden="true"
+              className="text-sm text-[#667169] transition-transform group-hover/action:translate-x-0.5"
+            >
+              →
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
