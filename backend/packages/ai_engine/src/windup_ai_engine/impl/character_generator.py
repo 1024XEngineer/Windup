@@ -34,7 +34,47 @@ from windup_ai_engine.strategy.base import (
     DerivationStrategy,
 )
 
+# ── 进度刻度:整条生产线只有一个 total ────────────────────────────────────────
+#
+# 这里曾经是两套刻度:本类按 i/4 报,而中间夹着的 strategy.derive 按 i/3 报到**同一个**
+# ProgressPort 上。消费方按 i/total 画进度条就会看到它倒退两次(25.0% → 0.0%、
+# 66.7% → 50.0%,2026-08-12 实跑确认)。一个量有两个真相源,取哪个看消费方心情——
+# 与本分片删掉 fps / loop / palette 是同一条理由。
+#
+# 现在:本类独占全局刻度,strategy 的子进度由 _BandProgress 线性映射进 derive 区间。
+# 刻度取 10 而不是 5,是为了给 derive 段留出中间刻度 —— 否则子进度只能全部落在同一格,
+# 虽不倒退但也不动。
+_TOTAL = 10
+_TICK_PRECHECK = 0
+_TICK_ROUTE = 1
+_DERIVE_FROM, _DERIVE_TO = 2, 7       # strategy 的 0..sub_total 映射到 [2, 7]
+_TICK_LASTMILE = 8
+_TICK_PACKAGE = 9
 
+
+class _BandProgress(ProgressPort):
+    """把子组件自报的 ``(i, sub_total)`` 线性映射进外层刻度的 ``[lo, hi]`` 区间。
+
+    为什么由适配器换算,而不是让 strategy 直接按全局刻度报:strategy 是可插拔件,
+    步数各路线不同(视频路线 3 步,逐帧路线未实现、步数必然不同),让它知道外层有几步
+    就把它钉死在 generator 当前的步骤布局上。也不要求 strategy **声明**自己有几步——
+    那又是一个"声明值 vs 实际值"的第二真相源,声明错了没人拦。
+
+    只读 strategy 每次调用时自报的 ``total``,故 strategy 侧零改动。
+    """
+
+    __slots__ = ("_inner", "_lo", "_hi")
+
+    def __init__(self, inner: ProgressPort, lo: int, hi: int) -> None:
+        self._inner = inner
+        self._lo = lo
+        self._hi = hi
+
+    def step(self, stage: str, i: int, total: int, note: str = "") -> None:
+        # total<=0 时按 0 处理:子组件报了个没法换算的刻度,不能因此炸掉一条已经花过钱的
+        # 生产线,退化成"停在区间起点"即可(仍然单调)。
+        frac = 0.0 if total <= 0 else min(1.0, max(0.0, i / total))
+        self._inner.step(stage, self._lo + int((self._hi - self._lo) * frac), _TOTAL, note)
 
 
 class CharacterGenerator(CharacterGeneratorPort):
@@ -58,14 +98,14 @@ class CharacterGenerator(CharacterGeneratorPort):
         # 预检与出帧必须用**同一个** canvas:比例上限是由交付画布几何推出来的,
         # 传一个、出另一个就等于预检按方形判、出帧按非方出(见 master_check)。
         facts = check_master(master, canvas)
-        progress.step("precheck", 0, 4, facts.note())
+        progress.step("precheck", _TICK_PRECHECK, _TOTAL, facts.note())
 
         # ② 选路线(架构决策矩阵)。装配表里没有 = 该路线未实现,在边界上炸,
         # 不要让"看着成功、内容是空"的结果流到 server 去落库。
         route = ROUTE_MATRIX[action.action]
         # .value 而不是枚举本身:Python 3.11+ 的 str-mixin 枚举 __format__ 会给出
         # "ActionType.WALK",这串字最终是用户看到的进度文案(3.12.13 实测)。
-        progress.step("route", 1, 4, f"{action.action.value} → {route.value}")
+        progress.step("route", _TICK_ROUTE, _TOTAL, f"{action.action.value} → {route.value}")
         strategy = self._by_route.get(route)
         if strategy is None:
             raise NotImplementedError(
@@ -74,7 +114,9 @@ class CharacterGenerator(CharacterGeneratorPort):
             )
 
         # ③ 生成帧(交给 strategy —— 串联)
-        frames = strategy.derive(card, action, master, progress)
+        frames = strategy.derive(
+            card, action, master, _BandProgress(progress, _DERIVE_FROM, _DERIVE_TO)
+        )
 
         # ③.5 帧数必须与契约相符。A2 把 n_frames 从 len(poses) 的推导值改成调用方直接声明的
         # 承诺,而抽帧那两个函数都会**静默少给**:slicing.pick_cycle / pick_oneshot 在
@@ -99,7 +141,7 @@ class CharacterGenerator(CharacterGeneratorPort):
 
         # ⑥ 出参:帧 + 逐帧时长 + 成色(上传 / 落库在 server 侧)
         progress.step(
-            "package", 3, 4,
+            "package", _TICK_PACKAGE, _TOTAL,
             f"{len(aligned)} 帧 + 逐帧时长(动量 {quality.motion_scale:.2f},"
             f"死帧 {len(quality.dead_frames)}/{len(aligned)})",
         )
@@ -144,7 +186,7 @@ class CharacterGenerator(CharacterGeneratorPort):
         原尺寸居中贴进 512 画布,于是这里刚对齐好的脚线 0.92 被挪到 0.709(2026-08-11
         实测),角色不站在地上、跨动作对齐也失效。在这里一次出到位就没有那一步了。
         """
-        progress.step("lastmile", 2, 4, "脚线对齐(原地)")
+        progress.step("lastmile", _TICK_LASTMILE, _TOTAL, "脚线对齐(原地)")
         # 空帧不再静默跳过:未实现的路线现在在 strategy / 装配表处就抛错(见 generate),
         # 走到这里还有空帧说明 provider 或抠图吐了坏数据,同样要炸而不是原样放行。
         if not frames:

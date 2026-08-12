@@ -10,6 +10,7 @@ import io
 from PIL import Image
 
 from windup_ai_engine.impl import CharacterGenerator
+from windup_ai_engine.impl.character_generator import _DERIVE_FROM, _DERIVE_TO
 from windup_ai_engine.ports import GeneratedAction
 from windup_ai_engine.postprocess.rootmotion import DEFAULT_FPS_MS
 from windup_ai_engine.strategy import (
@@ -288,6 +289,73 @@ def test_progress_notes_carry_enum_values_not_python_reprs():
     assert notes, "没收到任何进度上报"
     assert not any("ActionType." in n for n in notes), notes
     assert any("walk" in n for n in notes), notes
+
+
+class _SubSteppingStrategy(DerivationStrategy):
+    """按自己的刻度报 3 步 —— 与真实 VideoFrameStrategy 的上报形状一致。
+
+    ``_MockWalkStrategy`` 一步都不报,用它测不出跨层刻度问题:必须有个子组件真的
+    往同一个 ProgressPort 上报自己的 (i, total)。
+    """
+
+    route = GenRoute.VIDEO_I2V
+
+    def derive(self, card, action, master, progress) -> list[bytes]:
+        progress.step("derive", 0, 3, "i2v 生成视频")
+        progress.step("derive", 1, 3, "抽帧 + 抠图")
+        progress.step("derive", 2, 3, "风格化")
+        return [_tiny_png() for _ in range(action.n_frames)]
+
+
+def _run_and_collect_progress() -> list[tuple[str, int, int]]:
+    seen: list[tuple[str, int, int]] = []
+
+    class _SpyProgress:
+        def step(self, stage: str, i: int, total: int, note: str = "") -> None:
+            seen.append((stage, i, total))
+
+    CharacterGenerator({GenRoute.VIDEO_I2V: _SubSteppingStrategy()}).generate(
+        CharacterCard(name="t", desc="t"),
+        ActionSpec(action=ActionType.WALK, n_frames=4),
+        _tiny_png(), _SpyProgress(),
+    )
+    return seen
+
+
+def test_progress_reports_one_scale_end_to_end():
+    """整条生产线只能有一个 total。
+
+    修之前 generator 报 i/4、中间夹着的 strategy 报 i/3,两套刻度混在同一个
+    ProgressPort 上,消费方按 i/total 画条会看到 totals={3,4}。
+    """
+    totals = {t for _, _, t in _run_and_collect_progress()}
+    assert len(totals) == 1, f"同一次生成里出现了多个 total: {sorted(totals)}"
+
+
+def test_progress_never_goes_backwards():
+    """进度不许倒退 —— 这是 #181 评审实跑逮到的那个症状。
+
+    修之前实测倒退两次:route 25.0% → derive 0.0%、derive 66.7% → lastmile 50.0%。
+    """
+    seen = _run_and_collect_progress()
+    pcts = [i / t for _, i, t in seen]
+    back = [
+        (seen[k - 1], seen[k]) for k in range(1, len(pcts)) if pcts[k] < pcts[k - 1]
+    ]
+    assert not back, f"进度倒退 {len(back)} 次: {back}"
+
+
+def test_strategy_sub_progress_lands_inside_the_derive_band():
+    """子进度必须落在 derive 区间内,且区间内确实动了。
+
+    只断言"不倒退"是不够的:把 _BandProgress 换成"永远报区间起点"也能通过那一条,
+    进度条会在 derive 段整段卡住不动 —— 而 derive 是最慢的一段。
+    """
+    seen = _run_and_collect_progress()
+    derive = [i for stage, i, _ in seen if stage == "derive"]
+    assert derive, "没收到 derive 段的进度"
+    assert min(derive) >= _DERIVE_FROM and max(derive) <= _DERIVE_TO, derive
+    assert len(set(derive)) > 1, f"derive 段整段没动: {derive}"
 
 
 def test_generated_action_has_a_single_timing_source():
