@@ -72,4 +72,40 @@ describe('PlaytestPixelStage', () => {
 
     expect(getPlaytestSceneState(3600)).toEqual(getPlaytestSceneState(0))
   })
+
+  it('redraws the static frame after a reduced-motion resize clears the canvas', () => {
+    const context = {
+      globalAlpha: 1,
+      fillStyle: '',
+      beginPath: vi.fn(),
+      arc: vi.fn(),
+      fill: vi.fn(),
+      fillRect: vi.fn(),
+      save: vi.fn(),
+      translate: vi.fn(),
+      scale: vi.fn(),
+      restore: vi.fn(),
+      setTransform: vi.fn(),
+    }
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(
+      context as unknown as CanvasRenderingContext2D,
+    )
+    vi.stubGlobal('matchMedia', () => ({ matches: true }))
+
+    let resize: ResizeObserverCallback | undefined
+    class TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resize = callback
+      }
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', TestResizeObserver)
+
+    render(<PlaytestPixelStage />)
+    expect(context.fillRect).toHaveBeenCalledOnce()
+
+    resize?.([], {} as ResizeObserver)
+    expect(context.fillRect).toHaveBeenCalledTimes(2)
+  })
 })

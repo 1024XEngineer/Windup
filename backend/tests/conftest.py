@@ -16,6 +16,7 @@ from windup_app.server.character.model import Character
 from windup_app.server.project.model import Project
 from windup_app.server.quota.model import CreditAccount, CreditTransaction
 from windup_app.server.user.model import User
+from windup_app.server.orchestrator.model import GenerationTaskRecord
 from windup_app.server.workflow_run.model import WorkflowRun
 from windup_app.server.user.service import create_access_token
 from windup_framework.db import Base, get_session
@@ -37,6 +38,7 @@ def engine():
     Base.metadata.create_all(engine, tables=[
         Project.__table__, User.__table__, Character.__table__, WorkflowRun.__table__,
         CreditAccount.__table__, CreditTransaction.__table__,
+        GenerationTaskRecord.__table__,
     ])
     yield engine
     engine.dispose()

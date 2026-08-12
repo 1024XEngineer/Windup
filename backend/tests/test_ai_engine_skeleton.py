@@ -387,3 +387,100 @@ def test_genroute_only_lists_implemented_routes():
     assert {r.value for r in GenRoute} == {"video_i2v", "per_frame"}
     import windup_ai_engine.strategy as strat
     assert not hasattr(strat, "ProcIdleStrategy")
+
+
+# ── 交付画布尺寸(2026-08-11 挣得)────────────────────────────────────────────
+#
+# 引擎此前恒出 256 方形,项目的 sprite 尺寸由上层再缩一次。那一步用 Image.thumbnail
+# 补边,而 thumbnail **只缩不放**:项目要 512 时 256 的帧根本不会被放大,而是原尺寸
+# 居中贴进 512 画布,于是 align_bottom_center 刚对齐好的脚线 0.92 被挪到 0.709
+# (实测),角色不站在地上、跨动作对齐一并失效。故 canvas 直接传进引擎。
+
+
+def _delivered(png: bytes):
+    """返回 (画布尺寸, 主体高, 脚线比例)。"""
+    import numpy as np
+
+    im = Image.open(io.BytesIO(png)).convert("RGBA")
+    ys, _ = np.nonzero(np.asarray(im)[:, :, 3] > 128)
+    return im.size, int(ys.max() - ys.min() + 1), (int(ys.max()) + 1) / im.height
+
+
+def _run(canvas=None):
+    card = CharacterCard(name="rogue", desc="hooded ranger")
+    action = ActionSpec(action=ActionType.WALK, n_frames=4)
+    gen = _make_generator()
+    kw = {} if canvas is None else {"canvas": canvas}
+    return gen.generate(card, action, master=_tiny_png(), progress=_NullProgress(), **kw)
+
+
+def test_canvas_omitted_keeps_the_256_default_byte_for_byte():
+    """不传 canvas → 与加这个参数之前逐字节相同(默认行为不变)。"""
+    a = _run()
+    b = _run(canvas=(256, 256))
+    assert [f for f in a.frames] == [f for f in b.frames]
+    assert _delivered(a.frames[0])[0] == (256, 256)
+
+
+def test_canvas_512_doubles_delivered_subject_height():
+    """指定 512 时交付帧主体高度约翻倍 —— 这就是"成品放大看很糊"的正解。"""
+    small = _delivered(_run().frames[0])
+    big = _delivered(_run(canvas=(512, 512)).frames[0])
+    assert big[0] == (512, 512)
+    assert abs(big[1] / small[1] - 2.0) < 0.05, f"期望约翻倍,实际 {small[1]} → {big[1]}"
+
+
+def test_canvas_non_square_is_honoured_end_to_end():
+    """非方形项目尺寸也要一次出到位:高度几何只看画布高,不被画布宽带偏。
+
+    与同高的方形画布逐项比,而不是比一个算出来的期望值 —— 主体只有 60px 高,
+    定标系数 5.4 倍,ref_height 上 1px 的取整差会被放大成 5px,拿绝对值卡阈值
+    量的是取整噪声不是行为。
+    """
+    tall, height_t, foot_t = _delivered(_run(canvas=(384, 512)).frames[0])
+    square, height_s, foot_s = _delivered(_run(canvas=(512, 512)).frames[0])
+    assert tall == (384, 512) and square == (512, 512)
+    assert height_t == height_s, "画布高相同 → 主体高必须相同(高度几何不看宽)"
+    assert foot_t == foot_s
+    assert abs(foot_t - 0.92) <= 0.01
+
+
+def test_canvas_reaches_every_frame_not_just_the_first():
+    """整段每一帧都得是请求的画布 —— 半段没生效比不生效更难查。"""
+    out = _run(canvas=(320, 320))
+    assert {_delivered(f)[0] for f in out.frames} == {(320, 320)}
+
+
+def _wide_master(ratio: float) -> bytes:
+    """主体宽高比为 ratio 的母版(源画幅给足,别让主体被源边界裁掉)。"""
+    h = 60
+    img = Image.new("RGBA", (int(h * ratio) + 200, 200), (0, 0, 0, 0))
+    img.paste((200, 60, 60, 255), (20, 60, 20 + int(h * ratio), 60 + h))
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_precheck_and_output_share_the_same_canvas_geometry():
+    """入口预检必须按**出帧用的那个 canvas** 判,不能按方形判、按非方出。
+
+    比例上限是从交付画布几何推出来的(REJECT_ASPECT*(cw/ch))。取一个夹在
+    "方形阈值"与"384×512 阈值"之间的母版:方形画布下该放行,窄高画布下该拒。
+    两边不一致就说明预检和出帧用的不是同一套几何。
+    """
+    import pytest
+
+    from windup_ai_engine.master_check import REJECT_ASPECT, reject_aspect_for
+    from windup_ai_engine.ports import MasterRejectCode, MasterRejected
+
+    ratio = (REJECT_ASPECT + reject_aspect_for((384, 512))) / 2
+    master = _wide_master(ratio)
+    card = CharacterCard(name="wide", desc="wide creature")
+    action = ActionSpec(action=ActionType.WALK, n_frames=2)
+    gen = _make_generator()
+
+    gen.generate(card, action, master, _NullProgress(), canvas=(512, 512))   # 方形:放行
+
+    with pytest.raises(MasterRejected) as e:
+        gen.generate(card, action, master, _NullProgress(), canvas=(384, 512))
+    assert e.value.code is MasterRejectCode.ASPECT_TOO_WIDE

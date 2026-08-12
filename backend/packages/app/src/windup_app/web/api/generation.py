@@ -17,11 +17,13 @@ import asyncio
 import dataclasses
 import json
 import logging
+import threading
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
@@ -30,8 +32,12 @@ from windup_common.result import Response
 from windup_framework.db import get_session
 
 from windup_app.server.character.model import Character
+from windup_app.server.orchestrator import task_repo
+from windup_app.server.orchestrator.service import service as generation_service
 from windup_app.server.orchestrator.model import (
     ActionType,
+    CharacterActionInput,
+    CharacterImageInput,
     GenerationTask,
 )
 from windup_app.server.project.model import Project
@@ -53,14 +59,27 @@ _TERMINAL_EVENTS = {"completed", "failed"}
 
 
 class _EventBus:
-    """任务进度内存发布-订阅。"""
+    """任务进度内存发布-订阅。
+
+    **publish 会被后台线程调用**(executor 在 daemon thread 里跑,经 task_repo 触发),
+    而队列属于处理 SSE 请求的那个 event loop。``asyncio.Queue`` 不是线程安全的:
+    跨线程 ``put_nowait`` 能把元素放进去,但唤醒 waiter 用的是 loop 内部调度,
+    从别的线程调不会唤醒 —— 订阅者可能一直挂在 ``get()`` 上,直到下一次同 loop 内的
+    操作偶然把它带起来。故订阅时记下所属 loop,发布时经 ``call_soon_threadsafe``
+    回到那个 loop 上再入队(2026-08-10 机器审逮到)。
+    """
 
     def __init__(self) -> None:
-        self._queues: dict[tuple[int, int], list[asyncio.Queue]] = defaultdict(list)
+        # 键是 (project_id, task_id):同一个 task_id 在不同项目下互不串流(主线 #110)。
+        # 值是 (queue, 它所属的 loop):不同订阅者可能来自不同 loop(多 worker / 测试里的
+        # 临时 loop),不能只存一个全局 loop —— 见 publish 里的 call_soon_threadsafe。
+        self._queues: dict[
+            tuple[int, int], list[tuple[asyncio.Queue, asyncio.AbstractEventLoop]]
+        ] = defaultdict(list)
 
     async def subscribe(self, project_id: int, task_id: int) -> asyncio.Queue:
         queue: asyncio.Queue = asyncio.Queue()
-        self._queues[(project_id, task_id)].append(queue)
+        self._queues[(project_id, task_id)].append((queue, asyncio.get_running_loop()))
         return queue
 
     async def unsubscribe(
@@ -71,10 +90,11 @@ class _EventBus:
     ) -> None:
         key = (project_id, task_id)
         subs = self._queues.get(key)
-        if subs and queue in subs:
-            subs.remove(queue)
-            if not subs:
-                del self._queues[key]
+        if not subs:
+            return
+        self._queues[key] = [(q, lp) for q, lp in subs if q is not queue]
+        if not self._queues[key]:
+            del self._queues[key]
 
     def publish(
         self,
@@ -83,8 +103,32 @@ class _EventBus:
         event: str,
         data: dict,
     ) -> None:
-        for queue in self._queues.get((project_id, task_id), []):
-            queue.put_nowait((event, data))
+        """跨线程安全地投递。
+
+        executor 在 daemon thread 里跑,而队列属于处理 SSE 请求的那个 event loop。
+        ``asyncio.Queue`` 不是线程安全的:跨线程 ``put_nowait`` 能把元素放进去,但唤醒
+        waiter 用的是 loop 内部调度,从别的线程调不会唤醒 —— 订阅者可能一直挂在
+        ``get()`` 上,直到下一次同 loop 内的操作偶然把它带起来。故订阅时记下所属 loop,
+        发布时经 ``call_soon_threadsafe`` 回到那个 loop 上再入队。
+        """
+        try:
+            here = asyncio.get_running_loop()
+        except RuntimeError:
+            here = None                       # 从没有 loop 的线程调(executor daemon thread)
+
+        for queue, loop in list(self._queues.get((project_id, task_id), [])):
+            if loop is here:
+                # 同一个 loop 内:直接入队。**不能一律走 call_soon_threadsafe** —— 那是
+                # 异步调度,要等 loop 下一次迭代才真入队,于是"publish 完立刻 get_nowait"
+                # 会拿到空队列(主线 #110 的隔离用例正是这么写的)。
+                queue.put_nowait((event, data))
+                continue
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, (event, data))
+            except RuntimeError:
+                # loop 已关闭(客户端断连后请求 loop 结束)。丢弃即可 —— 没有订阅者在等
+                # 这条消息,而任务状态本身已落库,重连后靠 GET /tasks/{id} 取。
+                logger.debug("SSE loop 已关闭,丢弃事件 task_id=%d event=%s", task_id, event)
 
 
 # 全局实例，挂到 app.state.event_bus
@@ -99,25 +143,37 @@ event_bus = _EventBus()
 class CharacterImageGenerateRequest(BaseModel):
     """提交角色图片生成任务。"""
 
+    # project_id 必填,它是归属校验的依据(见 _get_project_or_raise)。
+    # 注:曾有 `user_id: int = Field(gt=0)`。归属者从 request.state.current_user 取,
+    # 请求体里那个字段既不被读、又让调用方以为自己能指定归属者 —— 填别人的 id 不报错
+    # 也不生效,正是本仓最忌讳的"看起来生效的错"。已删。
     project_id: int = Field(gt=0)
     reference_image_url: str | None = None
     prompt: str = ""
     negative_prompt: str = ""
-    width: int = 1024
-    height: int = 1024
-    num_images: int = 1
+    # 三个上界都直通付费调用,必须在契约层卡住:num_images 是 provider 调用次数的
+    # 循环上界,一个已认证请求填个大数就能绕过按请求计的限流、把成本拉到无上限
+    # (2026-08-10 机器审逮到)。宽高上界按当前 i2v 与像素化管线的实际处理范围取。
+    width: int = Field(default=1024, ge=64, le=2048)
+    height: int = Field(default=1024, ge=64, le=2048)
+    num_images: int = Field(default=1, ge=1, le=4)
 
 
 class CharacterActionGenerateRequest(BaseModel):
     """提交角色动作生成任务。"""
 
+    # project_id 必填,它是归属校验的依据(见 _get_project_or_raise)。
+    # 注:曾有 `user_id: int = Field(gt=0)`。归属者从 request.state.current_user 取,
+    # 请求体里那个字段既不被读、又让调用方以为自己能指定归属者 —— 填别人的 id 不报错
+    # 也不生效,正是本仓最忌讳的"看起来生效的错"。已删。
     project_id: int = Field(gt=0)
     character_id: int = Field(gt=0)
     action_type: ActionType
     custom_prompt: str | None = None
     reference_video_url: str | None = None
     reference_image_urls: list[str] = Field(default_factory=list)
-    num_frames: int = 16
+    # 同上:帧数决定抽帧与逐帧抠图的工作量,上界 64 已远超引擎能出的有效周期长度。
+    num_frames: int = Field(default=16, ge=1, le=64)
 
 
 class GenerationTaskOut(BaseModel):
@@ -188,6 +244,17 @@ def _validate_project_size(project: Project, width: int, height: int) -> None:
         )
 
 
+def _dispatch_after_commit(session: Session, target, *args) -> None:
+    """注册 after_commit 回调:session 提交成功后再启动后台线程。
+
+    解决竞态: create_task() 只 flush,session 在 handler 返回后才 commit。
+    若直接起线程,后台 session 可能读不到未提交的行,导致 update 静默跳过。
+    """
+    @event.listens_for(session, "after_commit", once=True)
+    def _after_commit(session):
+        threading.Thread(target=target, args=args, daemon=True).start()
+
+
 @router.post("/image", response_model=Response[GenerationTaskOut])
 def submit_image_generation(
     body: CharacterImageGenerateRequest,
@@ -198,8 +265,23 @@ def submit_image_generation(
     user_id = request.state.current_user.id
     project = _get_project_or_raise(session, body.project_id, user_id)
     _validate_project_size(project, body.width, body.height)
-    # TODO: service.create_image_task + background_tasks.add_task
-    raise BizException("接口待实现", code=BizCode.BAD_REQUEST)
+    input_data = CharacterImageInput(
+        reference_image_url=body.reference_image_url,
+        prompt=body.prompt,
+        negative_prompt=body.negative_prompt,
+        width=body.width,
+        height=body.height,
+        num_images=body.num_images,
+    )
+    task = generation_service.generate_character_image(
+        session, user_id=user_id, project_id=body.project_id, input=input_data,
+    )
+    # 后台线程要在 commit 之后再起:任务行未提交时线程用自己的 session 读不到它,
+    # update 会静默跳过,表现为任务永远停在 PENDING。
+    _dispatch_after_commit(
+        session, request.app.state.run_image_task, task.id, input_data, body.project_id,
+    )
+    return Response.success(_task_to_out(task), message="任务已提交")
 
 
 @router.post("/action", response_model=Response[GenerationTaskOut])
@@ -212,8 +294,21 @@ def submit_action_generation(
     user_id = request.state.current_user.id
     _get_project_or_raise(session, body.project_id, user_id)
     _get_character_or_raise(session, body.character_id, body.project_id)
-    # TODO: service.create_action_task + background_tasks.add_task
-    raise BizException("接口待实现", code=BizCode.BAD_REQUEST)
+    input_data = CharacterActionInput(
+        character_id=body.character_id,
+        action_type=body.action_type,
+        custom_prompt=body.custom_prompt,
+        reference_video_url=body.reference_video_url,
+        reference_image_urls=body.reference_image_urls,
+        num_frames=body.num_frames,
+    )
+    task = generation_service.generate_character_action(
+        session, user_id=user_id, project_id=body.project_id, input=input_data,
+    )
+    _dispatch_after_commit(
+        session, request.app.state.run_action_task, task.id, input_data, body.project_id,
+    )
+    return Response.success(_task_to_out(task), message="任务已提交")
 
 
 @router.get("/tasks/{task_id}", response_model=Response[GenerationTaskOut])
@@ -226,8 +321,12 @@ def get_task(
     """查询生成任务状态与结果。"""
     user_id = request.state.current_user.id
     _get_project_or_raise(session, project_id, user_id)
-    # TODO: service.get_task，并校验任务属于 project_id
-    raise BizException("接口待实现", code=BizCode.BAD_REQUEST)
+    task = task_repo.get_task(session, task_id)
+    if task is None or task.project_id != project_id:
+        # 归属两道,与 stream_task 同口径:只查项目不够,任意已认证用户拿自己的
+        # project_id 配上别人的 task_id 就能读到别人的产物 URL。
+        raise BizException("任务不存在", code=BizCode.NOT_FOUND)
+    return Response.success(_task_to_out(task))
 
 
 @router.get("/tasks/{task_id}/stream")
@@ -245,15 +344,33 @@ async def stream_task(
       - ``failed``: 任务失败,携带错误信息
 
     若客户端订阅时任务已处于终态,立即推送终态事件并关闭连接。
+
+    归属是**两道**(2026-08-11 补齐,此前是一行 TODO):项目要属于当前用户
+    (``_get_project_or_raise``),任务还要属于那个项目。只查项目不够 —— 任意已认证用户
+    拿自己的 project_id 配上别人的 task_id 就能订阅到别人的流,而事件体里带 result,
+    即最终帧的对象存储 URL。两道都必须在 ``subscribe`` **之前**:放之后的话越权请求仍会
+    在 EventBus 上挂一个订阅者(照样收事件、只是响应体被丢弃),订阅表还会因为没人
+    unsubscribe 而增长。
     """
     user_id = request.state.current_user.id
     _get_project_or_raise(session, project_id, user_id)
-    # TODO: 检查任务属于 project_id 及初始状态,若已终态立即推送
+    task = task_repo.get_task(session, task_id)
+    if task is None or task.project_id != project_id:
+        raise BizException("任务不存在", code=BizCode.NOT_FOUND)
+
+    # 终态快照要在订阅前读,订阅要紧跟其后 —— 两者之间若任务刚好终结,事件会丢。
+    # 反过来(先订阅后读)则会重复发一次终态,客户端拿到两条 completed。
+    terminal_event = task_repo.terminal_event_for(task)
+
     queue = await event_bus.subscribe(project_id, task_id)
-    logger.debug("SSE 订阅: task_id=%d", task_id)
+    logger.debug("SSE 订阅: task_id=%d project_id=%d", task_id, project_id)
 
     async def _event_generator():
         try:
+            if terminal_event is not None:
+                payload = json.dumps(task_repo.task_event_payload(task), ensure_ascii=False)
+                yield f"event: {terminal_event}\ndata: {payload}\n\n"
+                return
             while True:
                 if await request.is_disconnected():
                     logger.debug("SSE 客户端断开: task_id=%d", task_id)

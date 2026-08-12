@@ -255,6 +255,7 @@ export function PlaytestPixelStage() {
       canvas.width = Math.round(width * pixelRatio)
       canvas.height = Math.round(height * pixelRatio)
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0)
+      if (reducedMotion) render(0)
     }
 
     const render = (time: number) => {
@@ -265,7 +266,7 @@ export function PlaytestPixelStage() {
     }
 
     resize()
-    render(0)
+    if (!reducedMotion) render(0)
 
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resize)
     observer?.observe(canvas)

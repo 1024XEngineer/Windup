@@ -43,8 +43,12 @@ class CharacterService(ABC):
     @abstractmethod
     def list_characters(
         self, session: Session, *, project_id: int, page: int, page_size: int,
+        status: int | None = None,
     ) -> tuple[list[Character], int]:
-        """分页查询项目下的角色列表，返回 (当前页数据, 总数)。"""
+        """分页查询项目下的角色列表，返回 (当前页数据, 总数)。
+
+        ``status``: 可选，按发布状态过滤（0=草稿，1=已发布）。
+        """
 
     @abstractmethod
     def update_character(self, session: Session, character_id: int, **fields) -> Character | None:
