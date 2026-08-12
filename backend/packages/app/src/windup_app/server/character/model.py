@@ -48,6 +48,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from windup_common.enums.character import CharacterStatus
 from windup_framework.db import Base
 
 
@@ -88,7 +89,7 @@ class Character(Base):
     )
 
     status: Mapped[int] = mapped_column(
-        SmallInteger, nullable=False, default=1
+        SmallInteger, nullable=False, default=CharacterStatus.PUBLISHED
     )
 
     create_at: Mapped[datetime] = mapped_column(

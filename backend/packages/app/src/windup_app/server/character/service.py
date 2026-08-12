@@ -37,15 +37,20 @@ class SqlAlchemyCharacterService(CharacterService):
 
     def list_characters(
         self, session: Session, *, project_id: int, page: int, page_size: int,
+        status: int | None = None,
     ) -> tuple[list[Character], int]:
+        base_condition = Character.project_id == project_id
+        if status is not None:
+            base_condition = base_condition & (Character.status == status)
+
         count_stmt = (
             select(func.count())
             .select_from(Character)
-            .where(Character.project_id == project_id)
+            .where(base_condition)
         )
         stmt = (
             select(Character)
-            .where(Character.project_id == project_id)
+            .where(base_condition)
             .order_by(Character.id.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)

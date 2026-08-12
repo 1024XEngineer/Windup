@@ -24,6 +24,31 @@ def _payload(project_id: int, **overrides):
     return base
 
 
+def _payload_with_frames(project_id: int, **overrides):
+    """构造包含真实帧的创建角色请求体。"""
+    base = {
+        "project_id": project_id,
+        "workflow_run_id": 1,
+        "name": "有帧角色",
+        "description": "包含真实帧",
+        "character_data": {
+            "outfits": [{
+                "id": "outfit-1",
+                "name": "默认造型",
+                "actions": [{
+                    "id": "action-1",
+                    "type": "idle",
+                    "name": "待机",
+                    "frame_count": 1,
+                    "frames": [{"index": 0, "image_url": "https://example.com/frame.png"}],
+                }],
+            }],
+        },
+    }
+    base.update(overrides)
+    return base
+
+
 # -- POST /characters --------------------------------------------------------
 
 
@@ -153,3 +178,95 @@ def test_delete_other_users_character_returns_404(auth_client, auth_client_b):
 
     assert resp.json()["code"] == 404
     assert resp.json()["message"] == "角色不存在"
+
+
+# -- 角色发布状态过滤 ---------------------------------------------------------
+
+
+def test_create_character_without_frames_is_draft(auth_client):
+    """没有真实帧的角色应自动标记为草稿(status=0)。"""
+    project = _create_project(auth_client)
+    resp = auth_client.post("/characters", json=_payload(project["id"]))
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["status"] == 0
+
+
+def test_create_character_with_frames_is_published(auth_client):
+    """包含真实帧的角色应自动标记为已发布(status=1)。"""
+    project = _create_project(auth_client)
+    resp = auth_client.post("/characters", json=_payload_with_frames(project["id"]))
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["status"] == 1
+
+
+def test_list_characters_filter_by_status(auth_client):
+    """按 status 过滤角色列表。"""
+    project = _create_project(auth_client)
+    # 创建草稿角色
+    auth_client.post("/characters", json=_payload(project["id"], workflow_run_id=1))
+    # 创建已发布角色
+    auth_client.post("/characters", json=_payload_with_frames(project["id"], workflow_run_id=2))
+
+    # 查询已发布角色
+    resp = auth_client.get("/characters", params={"project_id": project["id"], "status": 1})
+    data = resp.json()
+    assert data["code"] == 200
+    assert data["total"] == 1
+    assert len(data["data"]) == 1
+    assert data["data"][0]["status"] == 1
+
+    # 查询草稿角色
+    resp = auth_client.get("/characters", params={"project_id": project["id"], "status": 0})
+    data = resp.json()
+    assert data["code"] == 200
+    assert data["total"] == 1
+    assert len(data["data"]) == 1
+    assert data["data"][0]["status"] == 0
+
+
+def test_list_characters_without_status_returns_all(auth_client):
+    """不传 status 参数时返回所有角色。"""
+    project = _create_project(auth_client)
+    auth_client.post("/characters", json=_payload(project["id"], workflow_run_id=1))
+    auth_client.post("/characters", json=_payload_with_frames(project["id"], workflow_run_id=2))
+
+    resp = auth_client.get("/characters", params={"project_id": project["id"]})
+    data = resp.json()
+    assert data["code"] == 200
+    assert data["total"] == 2
+    assert len(data["data"]) == 2
+
+
+def test_update_character_data_recalculates_status(auth_client):
+    """更新 character_data 后应自动重新计算 status。"""
+    project = _create_project(auth_client)
+    created = auth_client.post(
+        "/characters", json=_payload(project["id"]),
+    ).json()["data"]
+
+    # 初始为草稿
+    assert created["status"] == 0
+
+    # 更新为包含帧的数据
+    resp = auth_client.patch(
+        f"/characters/{created['id']}",
+        json={
+            "character_data": {
+                "outfits": [{
+                    "id": "outfit-1",
+                    "name": "默认造型",
+                    "actions": [{
+                        "id": "action-1",
+                        "type": "idle",
+                        "name": "待机",
+                        "frame_count": 1,
+                        "frames": [{"index": 0, "image_url": "https://example.com/frame.png"}],
+                    }],
+                }],
+            },
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["status"] == 1
