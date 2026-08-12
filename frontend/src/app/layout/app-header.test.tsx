@@ -72,6 +72,8 @@ describe('AppHeader', () => {
   it('提供 PlayTest 入口，并将工作流路由归入创作', () => {
     renderHeader('/workflow-editor/run-1')
 
+    expect(screen.getByRole('banner').getAttribute('data-surface')).toBe('frosted-bar')
+    expect(screen.getByRole('banner').getAttribute('data-motion')).toBeNull()
     expect(screen.getByRole('link', { name: '返回 Windup 工作台' }).getAttribute('href')).toBe(
       '/workspace',
     )
@@ -87,6 +89,46 @@ describe('AppHeader', () => {
     expect(screen.getByRole('link', { name: '项目资产' }).getAttribute('aria-current')).toBeNull()
     expect(screen.getByRole('link', { name: '创作' }).getAttribute('aria-current')).toBeNull()
     expect(screen.getByRole('link', { name: 'PlayTest' }).getAttribute('aria-current')).toBeNull()
+  })
+
+  it('切换页面后继续播放与品牌一致的文字波浪', () => {
+    renderHeader('/workspace')
+
+    const projects = screen.getByRole('link', { name: '项目资产' })
+    fireEvent.click(projects)
+
+    expect(projects.classList.contains('app-header-text-wave')).toBe(true)
+    expect(
+      screen
+        .getByRole('link', { name: '返回 Windup 工作台' })
+        .classList.contains('app-header-text-wave'),
+    ).toBe(false)
+    expect(screen.getByTestId('location').textContent).toBe('/projects')
+  })
+
+  it('品牌与首页分别播放文字波浪', () => {
+    renderHeader('/projects')
+
+    const brand = screen.getByRole('link', { name: '返回 Windup 工作台' })
+    const home = screen.getByRole('link', { name: '首页' })
+    fireEvent.click(brand)
+
+    expect(brand.classList.contains('app-header-text-wave')).toBe(true)
+    expect(home.classList.contains('app-header-text-wave')).toBe(false)
+  })
+
+  it('连续激活同一入口会重新开始文字波浪', () => {
+    renderHeader('/workspace')
+
+    const projects = screen.getByRole('link', { name: '项目资产' })
+    fireEvent.click(projects)
+    const firstGlyph = projects.querySelector('.app-header-wave-glyph')
+
+    fireEvent.click(projects)
+    const replayedGlyph = projects.querySelector('.app-header-wave-glyph')
+
+    expect(replayedGlyph).not.toBe(firstGlyph)
+    expect(projects.classList.contains('app-header-text-wave')).toBe(true)
   })
 
   it('在资产选择页和具体试玩台高亮 PlayTest 入口', () => {
@@ -112,7 +154,9 @@ describe('AppHeader', () => {
     window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
     const { apis } = renderHeader('/projects')
 
-    expect(await screen.findByText('Reader')).toBeTruthy()
+    const accountMenu = await screen.findByRole('button', { name: '打开账号菜单' })
+    expect(accountMenu.textContent).toContain('Reader')
+    fireEvent.click(accountMenu)
     fireEvent.click(screen.getByRole('button', { name: '退出登录' }))
 
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/'))
@@ -120,14 +164,104 @@ describe('AppHeader', () => {
     expect(apis.logout).toHaveBeenCalledWith('rotated-refresh-token')
   })
 
+  it('远端退出失败时仍清除本地会话并返回首页', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    const apis = createApis()
+    apis.logout.mockRejectedValue(new Error('退出请求失败'))
+    renderHeader('/projects', apis)
+
+    fireEvent.click(await screen.findByRole('button', { name: '打开账号菜单' }))
+    fireEvent.click(screen.getByRole('button', { name: '退出登录' }))
+
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/'))
+    expect(await screen.findByRole('link', { name: '登录 / 注册' })).toBeTruthy()
+  })
+
+  it('没有昵称时使用邮箱展示账号身份', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    const apis = createApis()
+    apis.refresh.mockResolvedValue({
+      ...tokens(),
+      user: { ...user, nickname: '' },
+    })
+    renderHeader('/workspace', apis)
+
+    const accountMenu = await screen.findByRole('button', { name: '打开账号菜单' })
+    expect(accountMenu.textContent).toContain('reader@example.com')
+    expect(accountMenu.textContent).toContain('r')
+  })
+
   it('让登录用户从 Header 的账号信息进入账号中心', async () => {
     window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
     renderHeader('/account')
 
-    const account = await screen.findByRole('link', { name: '打开账号中心' })
+    const accountMenu = await screen.findByRole('button', { name: '打开账号菜单' })
+    const menuSurface = screen.getByTestId('account-menu')
+    expect(menuSurface.getAttribute('data-state')).toBe('closed')
+    expect(menuSurface.getAttribute('aria-hidden')).toBe('true')
+    expect(screen.queryByRole('link', { name: '打开账号中心' })).toBeNull()
+
+    fireEvent.click(accountMenu)
+    expect(menuSurface.getAttribute('data-state')).toBe('open')
+    expect(menuSurface.getAttribute('data-motion')).toBe('scale-fade')
+    expect(menuSurface.getAttribute('aria-hidden')).toBeNull()
+    const account = screen.getByRole('link', { name: '打开账号中心' })
     expect(account.getAttribute('href')).toBe('/account')
     expect(account.getAttribute('aria-current')).toBe('page')
-    expect(account.textContent).toContain('Reader')
-    expect(screen.getByText('资料与登录安全')).toBeTruthy()
+    expect(accountMenu.textContent).toContain('Reader')
+    expect(screen.queryByText('资料与登录安全')).toBeNull()
+
+    fireEvent.click(account)
+    expect(menuSurface.getAttribute('data-state')).toBe('closing')
+    expect(screen.getByTestId('location').textContent).toBe('/account')
+    fireEvent.animationEnd(menuSurface)
+    await waitFor(() => expect(menuSurface.getAttribute('data-state')).toBe('closed'))
+
+    fireEvent.click(accountMenu)
+
+    fireEvent.click(accountMenu)
+    expect(menuSurface.getAttribute('data-state')).toBe('closing')
+    expect(menuSurface.getAttribute('aria-hidden')).toBe('true')
+    expect(menuSurface.classList.contains('app-header-account-menu-out')).toBe(true)
+    expect(menuSurface.classList.contains('invisible')).toBe(false)
+    expect(screen.queryByRole('link', { name: '打开账号中心' })).toBeNull()
+
+    await waitFor(() => expect(menuSurface.getAttribute('data-state')).toBe('closed'))
+    expect(menuSurface.classList.contains('invisible')).toBe(true)
+  })
+
+  it('使用贴顶毛玻璃栏承载品牌、产品导航与账号入口', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    renderHeader('/workspace')
+
+    const header = screen.getByRole('banner')
+    const navigation = screen.getByRole('navigation', { name: '产品导航' })
+    expect(header.getAttribute('data-layout')).toBe('unified')
+    expect(header.getAttribute('data-surface')).toBe('frosted-bar')
+    expect(header.className).toContain('inset-x-0')
+    expect(header.className).toContain('top-0')
+    expect(header.className).toContain('bg-transparent')
+    expect(header.className).toContain('backdrop-blur-xl')
+    expect(header.className).not.toContain('bg-[#f3f2ec]')
+    expect(header.className).not.toContain('rounded-[10px]')
+    expect(header.className).not.toContain('-translate-x-1/2')
+    expect(navigation.className).not.toContain('hidden')
+    expect(await screen.findByRole('button', { name: '打开账号菜单' })).toBeTruthy()
+    expect(screen.queryByText('角色资产工作台')).toBeNull()
+
+    const animatedEntries = [
+      screen.getByRole('link', { name: '返回 Windup 工作台' }),
+      screen.getByRole('link', { name: '首页' }),
+      screen.getByRole('link', { name: '项目资产' }),
+      screen.getByRole('link', { name: '创作' }),
+      screen.getByRole('link', { name: 'PlayTest' }),
+    ]
+    for (const entry of animatedEntries) {
+      expect(entry.getAttribute('data-motion')).toBe('text-wave')
+    }
+
+    expect(
+      screen.getByRole('link', { name: '项目资产' }).querySelectorAll('.app-header-wave-glyph'),
+    ).toHaveLength('项目资产项目'.length)
   })
 })
