@@ -49,9 +49,12 @@ describe('LandingPage', () => {
     expect(screen.getByRole('link', { name: '登录' }).getAttribute('href')).toBe(
       '/?account=login&returnTo=%2Fworkspace',
     )
-    // 顶栏、Hero、收尾各有一个「开始创作」，访客完成登录或注册后统一进入工作台。
+    expect(screen.getByRole('link', { name: '注册' }).getAttribute('href')).toBe(
+      '/?account=register&returnTo=%2Fworkspace',
+    )
+    // Header 只处理账号入口，Hero 与收尾负责把用户带进创作。
     const creationLinks = screen.getAllByRole('link', { name: '开始创作' })
-    expect(creationLinks).toHaveLength(3)
+    expect(creationLinks).toHaveLength(2)
     for (const link of creationLinks) {
       expect(link.getAttribute('href')).toBe('/?account=login&returnTo=%2Fworkspace')
     }
