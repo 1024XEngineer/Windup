@@ -3,10 +3,9 @@ import { Link, Outlet, useLocation, useParams } from 'react-router'
 
 import {
   CHARACTER_PERSPECTIVE,
+  CHARACTER_STATUS,
   DIRECTIONAL_MOVEMENT,
   characterApis,
-  isPublishedCharacter,
-  loadAllCharactersByProject,
   projectApis,
   type Project,
 } from '@/entities'
@@ -41,12 +40,14 @@ export function ProjectDetailPage() {
         if (active) setError('这个项目不存在或暂时无法读取')
       },
     )
-    void loadAllCharactersByProject(characterApis, projectId).then(
-      (characters) => {
-        if (active) setCharacterCount(characters.filter(isPublishedCharacter).length)
-      },
-      () => undefined,
-    )
+    void characterApis
+      .listByProject(projectId, { page: 1, pageSize: 1, status: CHARACTER_STATUS.PUBLISHED })
+      .then(
+        (page) => {
+          if (active) setCharacterCount(page.total)
+        },
+        () => undefined,
+      )
 
     return () => {
       active = false

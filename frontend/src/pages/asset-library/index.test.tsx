@@ -50,7 +50,7 @@ describe('AssetLibraryPage', () => {
     expect(screen.queryByRole('link', { name: /查看角色/ })).toBeNull()
   })
 
-  it('paginates all published characters after removing drafts', async () => {
+  it('requests each published Character page from the backend', async () => {
     const backend = createProjectAssetsBackend({ characterCount: 26 })
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
     vi.stubGlobal('fetch', backend.fetch)
@@ -71,8 +71,10 @@ describe('AssetLibraryPage', () => {
     await waitFor(() => {
       expect(screen.getAllByRole('link', { name: /查看角色/ })).toHaveLength(1)
     })
-    expect(
-      backend.requests.filter((request) => request.url.includes('/characters?project_id=42')),
-    ).toHaveLength(requestsBeforePaging)
+    const characterRequests = backend.requests.filter((request) =>
+      request.url.includes('/characters?project_id=42'),
+    )
+    expect(characterRequests).toHaveLength(requestsBeforePaging + 1)
+    expect(characterRequests.at(-1)?.url).toContain('page=2&page_size=24&status=1')
   })
 })

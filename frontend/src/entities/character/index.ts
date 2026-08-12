@@ -4,6 +4,13 @@ import type { Paged, PageQuery } from '@/shared/pagination'
 /** PR #75 将动作类型定义为字符串；已知类型之外的后端扩展也应原样保留。 */
 export type ActionType = string
 
+export const CHARACTER_STATUS = {
+  DRAFT: 0,
+  PUBLISHED: 1,
+} as const
+
+export type CharacterStatus = (typeof CHARACTER_STATUS)[keyof typeof CHARACTER_STATUS]
+
 export interface Frame {
   /** 使用后端显式返回的帧序号，不用数组下标替代。 */
   index: number
@@ -45,18 +52,8 @@ export interface Character {
   referenceImageUrl: string | null
   /** character_data.version，更新整棵资产树时必须原样带回。 */
   dataVersion: number
-  status: number
+  status: CharacterStatus
   outfits: Outfit[]
-}
-
-/**
- * 当前后端没有草稿/已发布字段，因此以至少一条包含真实帧的动作作为发布判定。
- * 后端补充显式发布状态后，只需要替换这一处规则。
- */
-export function isPublishedCharacter(character: Character): boolean {
-  return character.outfits.some((outfit) =>
-    outfit.actions.some((action) => action.frames.length > 0),
-  )
 }
 
 /** 创建 Character 记录的字段；生成流程由 Workflow Editor 负责。 */
@@ -74,33 +71,14 @@ export interface CreateCharacterInput {
  */
 export interface CharacterApis {
   get(id: Character['id']): Promise<Character>
-  listByProject(projectId: string, query?: PageQuery): Promise<Paged<Character>>
+  listByProject(projectId: string, query?: CharacterPageQuery): Promise<Paged<Character>>
   create(input: CreateCharacterInput): Promise<Character>
   update(character: Character): Promise<Character>
   remove(id: Character['id']): Promise<void>
 }
 
-/**
- * 读取项目下的完整 Character 列表。需要先完整读取再筛选发布状态，避免草稿占用
- * 服务端分页位置，导致后续已经发布的资产在前端永远不可见。
- */
-export async function loadAllCharactersByProject(
-  apis: Pick<CharacterApis, 'listByProject'>,
-  projectId: string,
-  pageSize = 100,
-): Promise<Character[]> {
-  const firstPage = await apis.listByProject(projectId, { page: 1, pageSize })
-  const characters = [...firstPage.items]
-  if (firstPage.pageSize <= 0) return characters
-
-  let page = firstPage.page + 1
-  while (characters.length < firstPage.total) {
-    const nextPage = await apis.listByProject(projectId, { page, pageSize })
-    if (nextPage.items.length === 0) break
-    characters.push(...nextPage.items)
-    page += 1
-  }
-  return characters
+export interface CharacterPageQuery extends PageQuery {
+  status?: CharacterStatus
 }
 
 interface CharacterFrameDto {
@@ -149,6 +127,11 @@ function toBackendId(value: string, field: string): number {
   throw new TypeError(`${field} 必须是正整数 ID`)
 }
 
+function mapCharacterStatus(status: number): CharacterStatus {
+  if (status === CHARACTER_STATUS.DRAFT || status === CHARACTER_STATUS.PUBLISHED) return status
+  throw new TypeError('Character.status 必须是 0 或 1')
+}
+
 function mapFrame(dto: CharacterFrameDto): Frame {
   return {
     index: dto.index,
@@ -191,7 +174,7 @@ function mapCharacter(dto: CharacterDto): Character {
     description: dto.description,
     referenceImageUrl: dto.reference_image_url,
     dataVersion: dto.character_data.version,
-    status: dto.status,
+    status: mapCharacterStatus(dto.status),
     outfits: dto.character_data.outfits.map((outfit) => mapOutfit(outfit, characterId)),
   }
 }
@@ -243,6 +226,7 @@ export const characterApis: CharacterApis = {
         project_id: toBackendId(projectId, 'projectId'),
         page: query.page,
         page_size: query.pageSize,
+        status: query.status,
       },
     })
     return { ...result, items: result.items.map(mapCharacter) }

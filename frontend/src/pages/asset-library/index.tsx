@@ -1,12 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
-import {
-  characterApis,
-  isPublishedCharacter,
-  loadAllCharactersByProject,
-  type Character,
-} from '@/entities'
+import { CHARACTER_STATUS, characterApis, type Character } from '@/entities'
 import type { Paged } from '@/shared/pagination'
 import { Pagination } from '@/shared/ui'
 
@@ -19,7 +14,7 @@ function characterName(character: Character) {
 export function AssetLibraryPage() {
   const { projectId } = useParams()
   const [pageNumber, setPageNumber] = useState(1)
-  const [characters, setCharacters] = useState<Character[] | null>(null)
+  const [charactersPage, setCharactersPage] = useState<Paged<Character> | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -31,36 +26,26 @@ export function AssetLibraryPage() {
       }
     }
 
-    setPageNumber(1)
-    setCharacters(null)
+    setCharactersPage(null)
     setError(null)
-    void loadAllCharactersByProject(characterApis, projectId).then(
-      (items) => {
-        if (!active) return
-        setCharacters(items.filter(isPublishedCharacter))
-      },
-      () => {
-        if (active) setError('资产库暂时无法读取')
-      },
-    )
+    void characterApis
+      .listByProject(projectId, {
+        page: pageNumber,
+        pageSize: CHARACTER_PAGE_SIZE,
+        status: CHARACTER_STATUS.PUBLISHED,
+      })
+      .then(
+        (page) => {
+          if (active) setCharactersPage(page)
+        },
+        () => {
+          if (active) setError('资产库暂时无法读取')
+        },
+      )
     return () => {
       active = false
     }
-  }, [projectId])
-
-  const charactersPage = useMemo<Paged<Character> | null>(() => {
-    if (characters === null) return null
-    const total = characters.length
-    const lastPage = Math.max(1, Math.ceil(total / CHARACTER_PAGE_SIZE))
-    const currentPage = Math.min(pageNumber, lastPage)
-    const start = (currentPage - 1) * CHARACTER_PAGE_SIZE
-    return {
-      items: characters.slice(start, start + CHARACTER_PAGE_SIZE),
-      total,
-      page: currentPage,
-      pageSize: CHARACTER_PAGE_SIZE,
-    }
-  }, [characters, pageNumber])
+  }, [pageNumber, projectId])
 
   return (
     <section aria-labelledby="asset-library-title" className="min-h-full min-w-0">

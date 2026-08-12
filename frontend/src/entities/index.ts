@@ -22,11 +22,13 @@ export type {
   ActionType,
   Character,
   CharacterApis,
+  CharacterPageQuery,
+  CharacterStatus,
   CreateCharacterInput,
   Frame,
   Outfit,
 } from './character'
-export { characterApis, isPublishedCharacter, loadAllCharactersByProject } from './character'
+export { CHARACTER_STATUS, characterApis } from './character'
 export { getOutfitPlayback } from './character/outfit-playback'
 
 /* 动作模板 —— 能跨角色复用的配方 */
