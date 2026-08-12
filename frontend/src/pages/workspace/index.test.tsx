@@ -221,7 +221,10 @@ describe('WorkspacePage', () => {
     expect(screen.getByRole('link', { name: '进入快速开始' }).getAttribute('href')).toBe(
       '/quick-start',
     )
-    expect(screen.getByRole('button', { name: '选择工作流画布' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '创建新项目' }).getAttribute('href')).toBe(
+      '/projects/new',
+    )
+    expect(screen.getByRole('button', { name: '继续已有工作流' })).toBeTruthy()
     expect(screen.getByRole('link', { name: '进入资产库' }).getAttribute('href')).toBe('/projects')
     expect(screen.getByRole('button', { name: '选择 Playtest' })).toBeTruthy()
 
@@ -250,7 +253,7 @@ describe('WorkspacePage', () => {
     renderWorkspace()
     await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
 
-    fireEvent.click(screen.getByRole('button', { name: '选择工作流画布' }))
+    fireEvent.click(screen.getByRole('button', { name: '继续已有工作流' }))
 
     expect(screen.getByRole('heading', { name: '选择工作流' })).toBeTruthy()
     expect(screen.queryByRole('link', { name: /打开工作流/ })).toBeNull()
@@ -268,7 +271,7 @@ describe('WorkspacePage', () => {
     const { releaseDeferred } = renderWorkspace({ defer: 'workflows' })
     await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
 
-    fireEvent.click(screen.getByRole('button', { name: '选择工作流画布' }))
+    fireEvent.click(screen.getByRole('button', { name: '继续已有工作流' }))
     fireEvent.click(screen.getByRole('button', { name: '选择项目 点灯人 · MVP' }))
     expect(screen.getByRole('status').textContent).toContain('正在读取工作流')
     releaseDeferred()
@@ -308,7 +311,7 @@ describe('WorkspacePage', () => {
     const { releaseDeferred } = renderWorkspace({ deferFirst: 'workflows' })
     await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
 
-    fireEvent.click(screen.getByRole('button', { name: '选择工作流画布' }))
+    fireEvent.click(screen.getByRole('button', { name: '继续已有工作流' }))
     fireEvent.click(screen.getByRole('button', { name: '选择项目 点灯人 · MVP' }))
     expect(screen.getByRole('status').textContent).toContain('正在读取工作流')
     fireEvent.click(screen.getByRole('button', { name: '重新选择项目' }))
@@ -352,7 +355,7 @@ describe('WorkspacePage', () => {
     renderWorkspace({ workflowRunCount: 0 })
     await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
 
-    fireEvent.click(screen.getByRole('button', { name: '选择工作流画布' }))
+    fireEvent.click(screen.getByRole('button', { name: '继续已有工作流' }))
     fireEvent.click(screen.getByRole('button', { name: '选择项目 点灯人 · MVP' }))
 
     expect(await screen.findByText('这个项目还没有工作流')).toBeTruthy()
@@ -366,7 +369,7 @@ describe('WorkspacePage', () => {
     renderWorkspace({ fail: 'workflows' })
     await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
 
-    fireEvent.click(screen.getByRole('button', { name: '选择工作流画布' }))
+    fireEvent.click(screen.getByRole('button', { name: '继续已有工作流' }))
     fireEvent.click(screen.getByRole('button', { name: '选择项目 点灯人 · MVP' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain('工作流暂时无法读取')
@@ -377,7 +380,7 @@ describe('WorkspacePage', () => {
     renderWorkspace({ failOnce: 'workflows' })
     await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
 
-    fireEvent.click(screen.getByRole('button', { name: '选择工作流画布' }))
+    fireEvent.click(screen.getByRole('button', { name: '继续已有工作流' }))
     fireEvent.click(screen.getByRole('button', { name: '选择项目 点灯人 · MVP' }))
     expect((await screen.findByRole('alert')).textContent).toContain('工作流暂时无法读取')
     fireEvent.click(screen.getByRole('button', { name: '重试读取工作流' }))
@@ -472,7 +475,7 @@ describe('WorkspacePage', () => {
     renderWorkspace({ projectCount: 5 })
     await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
 
-    fireEvent.click(screen.getByRole('button', { name: '选择工作流画布' }))
+    fireEvent.click(screen.getByRole('button', { name: '继续已有工作流' }))
 
     expect(screen.queryByRole('button', { name: '选择项目 分页项目 5' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '下一页' }))
@@ -483,7 +486,7 @@ describe('WorkspacePage', () => {
     renderWorkspace({ workflowRunCount: 5 })
     await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
 
-    fireEvent.click(screen.getByRole('button', { name: '选择工作流画布' }))
+    fireEvent.click(screen.getByRole('button', { name: '继续已有工作流' }))
     fireEvent.click(screen.getByRole('button', { name: '选择项目 点灯人 · MVP' }))
     await screen.findByRole('link', { name: '打开工作流 轻装信使' })
 
