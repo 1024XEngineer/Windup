@@ -10,7 +10,8 @@ import type {
   WorkflowRun,
   WorkflowRunApis,
 } from '@/entities'
-import { createRealWorkflowEditorSession, createUnavailableGenerationApis } from './runtime'
+import { characterApis, generationApis, projectApis, workflowRunApis } from '@/entities'
+import { createDefaultRealWorkflowEditorSession, createRealWorkflowEditorSession } from './runtime'
 
 describe('createRealWorkflowEditorSession', () => {
   it('通过公开 MediaApis 上传角色参考图并固定用途分类', async () => {
@@ -332,15 +333,47 @@ describe('createRealWorkflowEditorSession', () => {
   })
 })
 
-describe('createUnavailableGenerationApis', () => {
-  it('在 main 尚无 Generation HTTP 适配器时明确失败，不返回演示结果', async () => {
-    const apis = createUnavailableGenerationApis()
+describe('createDefaultRealWorkflowEditorSession', () => {
+  it('默认会话使用公共 Generation 生产适配器提交生成任务', async () => {
+    const workflow = readyCharacterTemplateWorkflowFixture()
+    vi.spyOn(workflowRunApis, 'get').mockResolvedValue(workflow)
+    vi.spyOn(workflowRunApis, 'update').mockImplementation(async (run) => ({
+      ...structuredClone(run),
+      version: run.version + 1,
+    }))
+    vi.spyOn(projectApis, 'get').mockResolvedValue(projectFixture())
+    vi.spyOn(characterApis, 'listByProject').mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 100,
+    })
+    const pendingGeneration = {
+      id: '91',
+      projectId: '1',
+      type: 'character_template' as const,
+      status: 'pending' as const,
+      result: null,
+      error: null,
+    }
+    const create = vi.spyOn(generationApis, 'create').mockResolvedValue(pendingGeneration)
+    vi.spyOn(generationApis, 'get').mockResolvedValue(pendingGeneration)
+    vi.spyOn(generationApis, 'subscribe').mockReturnValue(() => undefined)
 
-    await expect(apis.create(characterGenerationInput())).rejects.toThrow(
-      'GenerationApis 尚未接入真实后端',
+    const session = await createDefaultRealWorkflowEditorSession('42')
+    await session.controller.generateCharacterTemplate('setup', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'character_template',
+        projectId: '1',
+        prompt: '冒险家',
+      }),
     )
-    await expect(apis.get('1', '9')).rejects.toThrow('GenerationApis 尚未接入真实后端')
-    expect(() => apis.subscribe('1', '9', vi.fn())).not.toThrow()
+    vi.restoreAllMocks()
   })
 })
 
@@ -481,6 +514,23 @@ function selectingCharacterTemplateWorkflowFixture(): WorkflowRun {
   }
 }
 
+function readyCharacterTemplateWorkflowFixture(): WorkflowRun {
+  const workflow = selectingCharacterTemplateWorkflowFixture()
+  const template = workflow.nodes[1]!
+  return {
+    ...workflow,
+    nodes: [
+      workflow.nodes[0]!,
+      {
+        ...template,
+        status: 'active',
+        phase: 'ready',
+        generations: [],
+      },
+    ] as WorkflowRun['nodes'],
+  }
+}
+
 function reviewingWorkflowFixture(): WorkflowRun {
   return {
     id: '42',
@@ -571,16 +621,5 @@ function completeAnimationFixture(): Generation<'complete_animation'> {
         { index: 1, url: 'https://assets.windup.test/walk-02.png', durationMs: null },
       ],
     },
-  }
-}
-
-function characterGenerationInput() {
-  return {
-    type: 'character_template' as const,
-    projectId: '1',
-    prompt: '冒险家',
-    spriteWidth: 64,
-    spriteHeight: 64,
-    referenceMedia: [],
   }
 }

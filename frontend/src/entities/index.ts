@@ -33,7 +33,12 @@ export { getOutfitPlayback } from './character/outfit-playback'
 export type { ActionTemplate, ActionTemplateApis } from './action-template'
 
 /* 生成 —— 业务数据，不是「调用生成能力」 */
-export { createGenerationApis, GenerationApiError } from './generation/api'
+export {
+  createAuthenticatedGenerationApis,
+  createGenerationApis,
+  generationApis,
+  GenerationApiError,
+} from './generation/api'
 export type {
   CharacterTemplateGenerationInput,
   CharacterTemplateGenerationResult,

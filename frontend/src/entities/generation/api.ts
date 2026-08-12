@@ -1,4 +1,9 @@
-import { EventStreamError, type EventStreamSubscriber } from '@/shared/api/stream'
+import { getApiAccessToken, recoverApiUnauthorized, resolveApiBaseUrl } from '@/shared/api'
+import {
+  createEventStreamSubscriber,
+  EventStreamError,
+  type EventStreamSubscriber,
+} from '@/shared/api/stream'
 
 import type {
   CompleteAnimationGenerationInput,
@@ -634,3 +639,27 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
 
   return apis
 }
+
+/** 为浏览器宿主装配统一的 Token、API 前缀和 SSE 恢复策略。 */
+export function createAuthenticatedGenerationApis(fetchFn: typeof fetch = fetch): GenerationApis {
+  const request: RequestFunction = (url, init) => {
+    const headers = new Headers(init?.headers)
+    const accessToken = getApiAccessToken()
+    if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
+    return fetchFn(`${resolveApiBaseUrl()}${url}`, { ...init, headers, credentials: 'include' })
+  }
+  const stream = createEventStreamSubscriber({
+    fetchFn,
+    getAccessToken: getApiAccessToken,
+    recoverUnauthorized: recoverApiUnauthorized,
+  })
+  return createGenerationApis({
+    transport: {
+      request,
+      stream: (url, options) => stream(`${resolveApiBaseUrl()}${url}`, options),
+    },
+  })
+}
+
+/** 页面默认使用的生产 Generation 适配器。 */
+export const generationApis = createAuthenticatedGenerationApis()

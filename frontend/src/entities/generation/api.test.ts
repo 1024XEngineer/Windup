@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createGenerationApis, GenerationApiError } from '@/entities'
+import {
+  createAuthenticatedGenerationApis,
+  createGenerationApis,
+  GenerationApiError,
+} from '@/entities'
+import { registerApiAccessTokenProvider } from '@/shared/api'
 import { EventStreamError, type EventStreamOptions } from '@/shared/api/stream'
 
 import type { MediaReference } from '../media'
@@ -11,6 +16,13 @@ function success(data: unknown): Response {
   return new Response(JSON.stringify({ code: 200, message: 'success', data }), {
     status: 200,
     headers: { 'content-type': 'application/json' },
+  })
+}
+
+function eventStreamTask(data: unknown): Response {
+  return new Response(`event: completed\ndata: ${JSON.stringify(data)}\n\n`, {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream' },
   })
 }
 
@@ -47,6 +59,46 @@ function actionFrames(count: number) {
 }
 
 describe('createGenerationApis', () => {
+  it('生产适配器使用配置的 API 地址并携带当前会话 token', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test/')
+    const unregister = registerApiAccessTokenProvider(() => 'workflow-editor-token')
+    const fetchFn = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      if (new Headers(init?.headers).get('accept') === 'text/event-stream') {
+        return eventStreamTask(taskData())
+      }
+      return success(taskData())
+    })
+    const apis = createAuthenticatedGenerationApis(fetchFn as typeof fetch)
+
+    await apis.create({
+      type: 'character_template',
+      projectId: '42',
+      referenceMedia: [],
+      prompt: 'pixel hero',
+      spriteWidth: 64,
+      spriteHeight: 96,
+    })
+
+    const [url, init] = fetchFn.mock.calls[0]!
+    expect(url).toBe('https://api.windup.test/generation/image')
+    expect(new Headers(init?.headers).get('authorization')).toBe('Bearer workflow-editor-token')
+    expect(init?.credentials).toBe('include')
+
+    const onEvent = vi.fn()
+    const stop = apis.subscribe('42', '91', { type: 'character_template' }, onEvent, vi.fn())
+    await vi.waitFor(() =>
+      expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' })),
+    )
+    const [streamUrl, streamInit] = fetchFn.mock.calls[1]!
+    expect(streamUrl).toBe('https://api.windup.test/generation/tasks/91/stream?project_id=42')
+    expect(new Headers(streamInit?.headers).get('authorization')).toBe(
+      'Bearer workflow-editor-token',
+    )
+    stop()
+    unregister()
+    vi.unstubAllEnvs()
+  })
+
   it('固定请求并映射四张角色母版候选', async () => {
     const request = vi.fn(async (_url: string, _init?: RequestInit) => success(taskData()))
     const stream = vi.fn(() => vi.fn())
