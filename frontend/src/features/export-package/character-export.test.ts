@@ -55,7 +55,11 @@ const character: Character = {
 
 describe('createCharacterExportModel', () => {
   it('maps the current Project and Character contracts without losing frame indexes', () => {
-    const model = createCharacterExportModel({ project, character, outfitId: 'outfit-default' })
+    const model = createCharacterExportModel({
+      project,
+      character,
+      outfitId: 'outfit-default',
+    })
 
     expect(model).toMatchObject({
       characterId: '51',
@@ -100,7 +104,60 @@ describe('createCharacterExportModel', () => {
     }
 
     expect(() =>
-      createCharacterExportModel({ project, character: invalid, outfitId: 'outfit-default' }),
+      createCharacterExportModel({
+        project,
+        character: invalid,
+        outfitId: 'outfit-default',
+      }),
     ).toThrow('行走的帧序号必须从 0 连续排列')
+  })
+
+  it('rejects invalid project, character, outfit and timing relationships', () => {
+    expect(() =>
+      createCharacterExportModel({
+        project,
+        character: { ...character, projectId: 'other-project' },
+        outfitId: 'outfit-default',
+      }),
+    ).toThrow('角色与项目不匹配')
+
+    expect(() =>
+      createCharacterExportModel({
+        project,
+        character: { ...character, name: '   ' },
+        outfitId: 'outfit-default',
+      }),
+    ).toThrow('角色名称不能为空')
+
+    expect(() =>
+      createCharacterExportModel({
+        project,
+        character,
+        outfitId: 'missing-outfit',
+      }),
+    ).toThrow('导出造型不存在')
+
+    const invalidTiming: Character = {
+      ...character,
+      outfits: [
+        {
+          ...character.outfits[0]!,
+          actions: [
+            {
+              ...character.outfits[0]!.actions[0]!,
+              fps: 0,
+              frames: [{ index: 0, imageUrl: '/walk-01.png', durationMs: null }],
+            },
+          ],
+        },
+      ],
+    }
+    expect(() =>
+      createCharacterExportModel({
+        project,
+        character: invalidTiming,
+        outfitId: 'outfit-default',
+      }),
+    ).toThrow('行走缺少有效的帧时长和 FPS')
   })
 })

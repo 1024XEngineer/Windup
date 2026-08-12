@@ -50,7 +50,11 @@ describe('ExportPanel', () => {
 
     expect(screen.getByText('当前有 3 项质量问题，全部通过后才能导出')).toBeTruthy()
     expect(
-      (screen.getByRole('button', { name: '导出游戏资产包' }) as HTMLButtonElement).disabled,
+      (
+        screen.getByRole('button', {
+          name: '导出游戏资产包',
+        }) as HTMLButtonElement
+      ).disabled,
     ).toBe(true)
   })
 
@@ -71,8 +75,14 @@ describe('ExportPanel', () => {
     )
     const createObjectURL = vi.fn(() => 'blob:asset-package')
     const revokeObjectURL = vi.fn()
-    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
-    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: createObjectURL,
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: revokeObjectURL,
+    })
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
 
     render(<ExportPanel model={model} exporter={exporter} />)
@@ -105,7 +115,10 @@ describe('ExportPanel', () => {
       configurable: true,
       value: vi.fn(() => 'blob:retry'),
     })
-    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: vi.fn(),
+    })
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
 
     render(<ExportPanel model={model} exporter={exporter} />)
@@ -114,5 +127,27 @@ describe('ExportPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: '重新导出' }))
     await waitFor(() => expect(screen.getByText('下载完成')).toBeTruthy())
     expect(exporter).toHaveBeenCalledTimes(2)
+  })
+
+  it('没有已确认动作时禁用导出', () => {
+    render(<ExportPanel model={{ ...model, actions: [] }} />)
+
+    expect(screen.getByText('没有可导出的已确认动作')).toBeTruthy()
+    expect(
+      (
+        screen.getByRole('button', {
+          name: '导出游戏资产包',
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true)
+  })
+
+  it('导出器抛出非 Error 值时展示通用错误', async () => {
+    const exporter = vi.fn().mockRejectedValue('network unavailable')
+
+    render(<ExportPanel model={model} exporter={exporter} />)
+    fireEvent.click(screen.getByRole('button', { name: '导出游戏资产包' }))
+
+    await waitFor(() => expect(screen.getByText('导出失败：未知错误')).toBeTruthy())
   })
 })

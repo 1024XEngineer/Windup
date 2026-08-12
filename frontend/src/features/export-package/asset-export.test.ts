@@ -100,7 +100,9 @@ function runtime(failingUrl: string | null = null): AssetExportRuntime {
         value: () => ({
           clearRect: vi.fn(),
           drawImage: vi.fn(),
-          getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(width * height * 4) })),
+          getImageData: vi.fn(() => ({
+            data: new Uint8ClampedArray(width * height * 4),
+          })),
         }),
       })
       Object.defineProperty(canvas, 'toBlob', {
@@ -174,7 +176,11 @@ describe('asset export', () => {
   })
 
   it('把 Outfit 标识写入包名，避免同一 Character 的不同造型互相覆盖', async () => {
-    const otherOutfit = { ...model, outfitId: 'outfit-2', outfitName: 'Armored' }
+    const otherOutfit = {
+      ...model,
+      outfitId: 'outfit-2',
+      outfitName: 'Armored',
+    }
 
     const first = await exportGameAssets(model, { runtime: runtime() })
     const second = await exportGameAssets(otherOutfit, { runtime: runtime() })
@@ -257,6 +263,123 @@ describe('asset export', () => {
     )
   })
 
+  it('脚底线超出画布时在读取图片前拒绝导出', async () => {
+    const badModel: ExportPackageModel = {
+      ...model,
+      actions: [
+        {
+          ...action(),
+          sequences: [{ ...action().sequences[0]!, footY: 41 }],
+        },
+      ],
+    }
+    const testRuntime = runtime()
+
+    await expect(exportGameAssets(badModel, { runtime: testRuntime })).rejects.toThrow(
+      'actions[0].sequences[0].footY: 必须是 0 到 40 的整数像素值',
+    )
+    expect(testRuntime.fetchFrame).not.toHaveBeenCalled()
+  })
+
+  it('拒绝没有透明通道的 PNG', async () => {
+    const data = new Uint8Array(await rgbaPng().arrayBuffer())
+    data[25] = 2
+    const testRuntime: AssetExportRuntime = {
+      ...runtime(),
+      fetchFrame: vi.fn(async () => new Blob([data], { type: 'image/png' })),
+    }
+
+    await expect(exportGameAssets(model, { runtime: testRuntime })).rejects.toThrow(
+      'PNG 必须包含 Alpha 透明通道',
+    )
+    expect(testRuntime.decodeFrame).not.toHaveBeenCalled()
+  })
+
+  it('PNG 解码失败时带上具体帧路径', async () => {
+    const testRuntime: AssetExportRuntime = {
+      ...runtime(),
+      decodeFrame: vi.fn(async () => {
+        throw new Error('corrupt image')
+      }),
+    }
+
+    await expect(exportGameAssets(model, { runtime: testRuntime })).rejects.toThrow(
+      'frames/Walk-Forward-south/Walk-Forward-south_000.png: PNG 解码失败（corrupt image）',
+    )
+  })
+
+  it('任一帧尺寸与项目画布不一致时关闭图片并拒绝导出', async () => {
+    const closes: Array<ReturnType<typeof vi.fn>> = []
+    const testRuntime: AssetExportRuntime = {
+      ...runtime(),
+      decodeFrame: vi.fn(async () => {
+        const close = vi.fn()
+        closes.push(close)
+        return {
+          source: {} as CanvasImageSource,
+          width: 31,
+          height: 40,
+          close,
+        }
+      }),
+    }
+
+    await expect(exportGameAssets(model, { runtime: testRuntime })).rejects.toThrow(
+      '画布应为 32x40，实际为 31x40',
+    )
+    expect(closes).toHaveLength(9)
+    expect(closes.every((close) => close.mock.calls.length === 1)).toBe(true)
+  })
+
+  it('浏览器无法编码图集时释放图片并拒绝导出', async () => {
+    const testRuntime: AssetExportRuntime = {
+      ...runtime(),
+      createCanvas: vi.fn((width, height) => {
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        Object.defineProperty(canvas, 'getContext', {
+          value: () => ({
+            clearRect: vi.fn(),
+            drawImage: vi.fn(),
+          }),
+        })
+        Object.defineProperty(canvas, 'toBlob', {
+          value: (callback: BlobCallback) => callback(null),
+        })
+        return canvas
+      }),
+    }
+
+    await expect(exportGameAssets(model, { runtime: testRuntime })).rejects.toThrow(
+      'atlas: PNG 编码失败',
+    )
+  })
+
+  it('target 只能写入安全且不重复的相对路径', async () => {
+    const unsafeTarget: AssetExportTarget = {
+      id: 'unsafe',
+      createFiles: vi.fn(async () => [{ path: '../escape.json', data: '{}' }]),
+    }
+    await expect(
+      exportGameAssets(model, { runtime: runtime(), targets: [unsafeTarget] }),
+    ).rejects.toThrow('targets.unsafe.files[0].path: 必须是安全的相对路径')
+
+    const duplicateTarget: AssetExportTarget = {
+      id: 'duplicate',
+      createFiles: vi.fn(async () => [
+        { path: 'same.json', data: '{}' },
+        { path: 'same.json', data: new Uint8Array([1]) },
+      ]),
+    }
+    await expect(
+      exportGameAssets(model, {
+        runtime: runtime(),
+        targets: [duplicateTarget],
+      }),
+    ).rejects.toThrow('package.files: 文件路径重复')
+  })
+
   it('空 target 不改变通用层，新增 target 文件只进入自己的目录', async () => {
     const emptyTarget: AssetExportTarget = {
       id: 'empty',
@@ -265,13 +388,20 @@ describe('asset export', () => {
     const cocosProbe: AssetExportTarget = {
       id: 'cocos-probe',
       createFiles: vi.fn(async ({ metadata }) => [
-        { path: 'anchor-map.json', data: JSON.stringify({ source: metadata.actions[0]?.anchor }) },
+        {
+          path: 'anchor-map.json',
+          data: JSON.stringify({ source: metadata.actions[0]?.anchor }),
+        },
       ]),
     }
     const common = await readStoredZip((await exportGameAssets(model, { runtime: runtime() })).blob)
     const extended = await readStoredZip(
-      (await exportGameAssets(model, { runtime: runtime(), targets: [emptyTarget, cocosProbe] }))
-        .blob,
+      (
+        await exportGameAssets(model, {
+          runtime: runtime(),
+          targets: [emptyTarget, cocosProbe],
+        })
+      ).blob,
     )
     const targetPath = 'Aster-character-1-Explorer-outfit-1/targets/cocos-probe/anchor-map.json'
 
@@ -290,7 +420,12 @@ describe('asset export', () => {
       decodeFrame: vi.fn(async () => {
         const close = vi.fn()
         closes.push(close)
-        return { source: {} as CanvasImageSource, width: 32, height: 40, close }
+        return {
+          source: {} as CanvasImageSource,
+          width: 32,
+          height: 40,
+          close,
+        }
       }),
       createCanvas: vi.fn((width, height) => {
         const canvas = document.createElement('canvas')
