@@ -354,7 +354,7 @@ export function WorkspacePage() {
           </h1>
         </header>
 
-        <div className="workspace-layout grid min-h-0 flex-1 grid-cols-[minmax(0,1.12fr)_minmax(16rem,0.88fr)] gap-[clamp(1rem,3vw,3rem)]">
+        <div className="workspace-layout grid min-h-0 flex-1 grid-cols-1 gap-[clamp(1rem,3vw,3rem)] md:grid-cols-[minmax(0,1.12fr)_minmax(16rem,0.88fr)]">
           <section
             aria-label="工作入口"
             className="grid min-h-0 grid-cols-2 grid-rows-2 gap-x-[clamp(0.75rem,2vw,1.5rem)] gap-y-[clamp(0.25rem,1vh,0.75rem)]"
@@ -389,7 +389,7 @@ export function WorkspacePage() {
 
           <aside
             aria-labelledby="workspace-context-title"
-            className="flex min-h-0 flex-col overflow-hidden"
+            className="flex min-h-0 flex-col overflow-hidden max-md:hidden"
           >
             <header className="shrink-0 pb-3 sm:pb-4">
               <div>
