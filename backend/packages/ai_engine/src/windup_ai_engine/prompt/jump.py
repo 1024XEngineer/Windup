@@ -23,42 +23,36 @@ JUMP_PHASES = ("crouch", "rise", "apex", "fall", "land")
 
 JUMP_BODY_SIDE = (
     "The character performs ONE single jump in place, seen from the side facing right: "
-    "first the knees bend deep into a crouch and the arms drop back, then both boots push "
+    "first the knees bend deep into a crouch and the arms drop back, then both feet push "
     "off the ground and the whole body lifts straight upward a modest height with the legs "
-    "tucking up, the body reaches the top of the jump and hangs there for an instant with {garment} "
-    "floating upward, then the body falls back down with the legs reaching for the ground, "
-    "and both boots land together with the knees bending to absorb the impact, the weapon "
-    "stays held steady in a fixed grip the whole time. The character does this ONCE and "
+    "tucking up, the body reaches the top of the jump and hangs there for an instant with "
+    "whatever the character already wears floating upward, then the body falls back down "
+    "with the legs reaching for the ground, and both feet land together with the knees "
+    "bending to absorb the impact, anything held in the hands stays in the same grip at "
+    "the same angle the whole time. The character does this ONCE and "
     "then stays standing upright in the landing spot, staying centered in frame."
 )
 
 JUMP_BODY_FRONT = (
     "The character performs ONE single jump in place, facing the viewer: first the knees "
-    "bend deep into a crouch and the arms drop back, then both boots push off the ground "
+    "bend deep into a crouch and the arms drop back, then both feet push off the ground "
     "hard and the whole body launches straight upward with the knees tucking up toward the "
     "camera, the body reaches the top of the jump and hangs there for an instant with "
-    "{garment} floating upward, then the body falls back down with the legs reaching for "
-    "the ground, and both boots land together with the knees bending to absorb the impact, "
-    "the weapon stays held steady in a fixed grip the whole time. The character keeps "
+    "whatever the character already wears floating upward, then the body falls back down "
+    "with the legs reaching for the ground, and both feet land together with the knees "
+    "bending to absorb the impact, anything held in the hands stays in the same grip at "
+    "the same angle the whole time. The character keeps "
     "FACING THE VIEWER, does this ONCE and then stays standing upright, centered in frame."
 )
 
-DEFAULT_GARMENT = "the cape and tabard"
 
-
-def build_jump_prompt(
-    garment: str = DEFAULT_GARMENT, feet: str = "boot", facing: Facing | str = Facing.SIDE
-) -> str:
-    """按角色装备 + 母版朝向生成跳跃正文。
+def build_jump_prompt(facing: Facing | str = Facing.SIDE) -> str:
+    """按母版朝向生成跳跃正文。
 
     Args:
-        garment: 起跳时上飘的衣饰。
-        feet: 落脚部件用词(替换 boot)。
         facing: :class:`Facing` 成员(或其等价字符串),**必须与母版朝向一致**。
+
+    注:``garment`` / ``feet`` 两个装备参数随 #195 删除,理由见 :mod:`.walk` 同处。
     """
     facing = Facing(facing)   # 非法值在此炸掉,别静默落到 FRONT 模板(理由见 walk.py 同处注释)
-    template = JUMP_BODY_SIDE if facing is Facing.SIDE else JUMP_BODY_FRONT
-    body = template.format(garment=garment)
-    if feet != "boot":
-        body = body.replace("boot", feet)
-    return body
+    return JUMP_BODY_SIDE if facing is Facing.SIDE else JUMP_BODY_FRONT

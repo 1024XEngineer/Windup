@@ -3,9 +3,14 @@
 **核心规律(三次实测验证,写死为契约):母版姿态决定动作,提示词只能微调。**
   - walk:母版**朝侧向**才不转身;正面母版配侧走词 → 模型靠转身调和图文矛盾。
   - jump:母版**顶部留白**才不被视频画面裁掉。
-  - attack:必须给**极限蓄力母版**(武器已拉到身后腰际)。用站立母版时,即使提示词写死
-    "武器不过头顶 / 不转身 / 只做一次",模型仍会抡过头顶、转到背面、劈两次 —— 强动作
+  - attack:必须给**极限蓄力母版**(出手那只手已拉到身后腰际)。用站立母版时,即使提示词
+    写死"不过头顶 / 不转身 / 只做一次",模型仍会抡过头顶、转到背面、劈两次 —— 强动作
     先验压不住;换蓄力母版后模型只能"接着往前挥",没有再抡起的空间。
+
+**姿势描述里不写装备名词(#195)。** 这几段是拿去生成母版的提示词,写"the weapon"等于
+断言角色持械 —— 空手角色会被凭空塞一把武器,而母版是整条 i2v 链的身份来源,污染会一路
+带到所有动作。改为"出手的那只手 / 手里若有东西"这类存在无关的写法,几何约束(拉到腰际、
+不过肩)一条不少。同 :mod:`.prompt.walk`。
 
 
 实测教训:母版里角色居中、占 ~70% 画面高时,i2v 跳跃会让角色**头顶顶出视频画面上沿**
@@ -31,20 +36,20 @@ MASTER_POSES = {
     "walk": "",     # 中性站立即可,但必须朝侧向
     "run": "",
     "idle": "",
-    # jump:与 attack 同理——重甲带剑角色的"跳跃"强动作先验压不住(站立母版会让模型摆
-    # 造型、只举剑不腾空,实测)。给**极限蓄力半蹲母版**,模型只能"接着往上蹬"。顶部留白
+    # jump:与 attack 同理——强动作先验压不住(实测拿重甲带剑角色跑,站立母版会让模型摆
+    # 造型、只举剑不腾空)。给**极限蓄力半蹲母版**,模型只能"接着往上蹬"。顶部留白
     # 由 prepare_master(add_headroom)保证。
     "jump": (
         "deep crouch coiled to spring straight upward: the knees bent low and the hips sunk down, "
         "both arms drawn back behind the body, the weight loaded onto both legs at the very moment "
-        "before springing straight up, the weapon kept in a fixed grip; "
+        "before springing straight up, anything held in the hands kept in a fixed grip; "
         "leave generous empty space above the head"
     ),
     "attack": (
-        "extreme wind-up stance for a horizontal slash: the weapon drawn far BACK behind the body "
-        "at WAIST height, the torso twisted back and coiled, weight fully loaded on the back leg, "
-        "both arms low and pulled back, the weapon staying BELOW the shoulders; "
-        "leave generous empty space on the swing side"
+        "extreme wind-up stance for a horizontal strike: the striking hand drawn far BACK behind "
+        "the body at WAIST height, the torso twisted back and coiled, weight fully loaded on the "
+        "back leg, both arms low and pulled back, that hand and anything held in it staying BELOW "
+        "the shoulders; leave generous empty space on the swing side"
     ),
 }
 
