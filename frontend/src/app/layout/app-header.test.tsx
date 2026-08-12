@@ -164,6 +164,33 @@ describe('AppHeader', () => {
     expect(apis.logout).toHaveBeenCalledWith('rotated-refresh-token')
   })
 
+  it('远端退出失败时仍清除本地会话并返回首页', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    const apis = createApis()
+    apis.logout.mockRejectedValue(new Error('退出请求失败'))
+    renderHeader('/projects', apis)
+
+    fireEvent.click(await screen.findByRole('button', { name: '打开账号菜单' }))
+    fireEvent.click(screen.getByRole('button', { name: '退出登录' }))
+
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/'))
+    expect(await screen.findByRole('link', { name: '登录 / 注册' })).toBeTruthy()
+  })
+
+  it('没有昵称时使用邮箱展示账号身份', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    const apis = createApis()
+    apis.refresh.mockResolvedValue({
+      ...tokens(),
+      user: { ...user, nickname: '' },
+    })
+    renderHeader('/workspace', apis)
+
+    const accountMenu = await screen.findByRole('button', { name: '打开账号菜单' })
+    expect(accountMenu.textContent).toContain('reader@example.com')
+    expect(accountMenu.textContent).toContain('r')
+  })
+
   it('让登录用户从 Header 的账号信息进入账号中心', async () => {
     window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
     renderHeader('/account')
@@ -183,6 +210,14 @@ describe('AppHeader', () => {
     expect(account.getAttribute('aria-current')).toBe('page')
     expect(accountMenu.textContent).toContain('Reader')
     expect(screen.queryByText('资料与登录安全')).toBeNull()
+
+    fireEvent.click(account)
+    expect(menuSurface.getAttribute('data-state')).toBe('closing')
+    expect(screen.getByTestId('location').textContent).toBe('/account')
+    fireEvent.animationEnd(menuSurface)
+    await waitFor(() => expect(menuSurface.getAttribute('data-state')).toBe('closed'))
+
+    fireEvent.click(accountMenu)
 
     fireEvent.click(accountMenu)
     expect(menuSurface.getAttribute('data-state')).toBe('closing')
