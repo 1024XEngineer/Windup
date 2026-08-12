@@ -88,7 +88,7 @@ export function HomePage() {
                 description="打开工作流画布，逐个节点决定生成什么、留下哪一版。"
                 actionLabel="打开画布"
                 actions={[
-                  { to: '/projects/new', label: '创建新项目' },
+                  { to: '/projects/new?entry=workflow-editor', label: '创建新项目' },
                   { to: '/projects', label: '继续已有项目' },
                 ]}
               />
