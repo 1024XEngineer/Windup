@@ -17,11 +17,13 @@ import asyncio
 import dataclasses
 import json
 import logging
+import threading
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
@@ -31,8 +33,11 @@ from windup_framework.db import get_session
 
 from windup_app.server.character.model import Character
 from windup_app.server.orchestrator import task_repo
+from windup_app.server.orchestrator.service import service as generation_service
 from windup_app.server.orchestrator.model import (
     ActionType,
+    CharacterActionInput,
+    CharacterImageInput,
     GenerationTask,
 )
 from windup_app.server.project.model import Project
@@ -239,6 +244,17 @@ def _validate_project_size(project: Project, width: int, height: int) -> None:
         )
 
 
+def _dispatch_after_commit(session: Session, target, *args) -> None:
+    """注册 after_commit 回调:session 提交成功后再启动后台线程。
+
+    解决竞态: create_task() 只 flush,session 在 handler 返回后才 commit。
+    若直接起线程,后台 session 可能读不到未提交的行,导致 update 静默跳过。
+    """
+    @event.listens_for(session, "after_commit", once=True)
+    def _after_commit(session):
+        threading.Thread(target=target, args=args, daemon=True).start()
+
+
 @router.post("/image", response_model=Response[GenerationTaskOut])
 def submit_image_generation(
     body: CharacterImageGenerateRequest,
@@ -249,8 +265,23 @@ def submit_image_generation(
     user_id = request.state.current_user.id
     project = _get_project_or_raise(session, body.project_id, user_id)
     _validate_project_size(project, body.width, body.height)
-    # TODO: service.create_image_task + background_tasks.add_task
-    raise BizException("接口待实现", code=BizCode.BAD_REQUEST)
+    input_data = CharacterImageInput(
+        reference_image_url=body.reference_image_url,
+        prompt=body.prompt,
+        negative_prompt=body.negative_prompt,
+        width=body.width,
+        height=body.height,
+        num_images=body.num_images,
+    )
+    task = generation_service.generate_character_image(
+        session, user_id=user_id, project_id=body.project_id, input=input_data,
+    )
+    # 后台线程要在 commit 之后再起:任务行未提交时线程用自己的 session 读不到它,
+    # update 会静默跳过,表现为任务永远停在 PENDING。
+    _dispatch_after_commit(
+        session, request.app.state.run_image_task, task.id, input_data, body.project_id,
+    )
+    return Response.success(_task_to_out(task), message="任务已提交")
 
 
 @router.post("/action", response_model=Response[GenerationTaskOut])
@@ -263,8 +294,21 @@ def submit_action_generation(
     user_id = request.state.current_user.id
     _get_project_or_raise(session, body.project_id, user_id)
     _get_character_or_raise(session, body.character_id, body.project_id)
-    # TODO: service.create_action_task + background_tasks.add_task
-    raise BizException("接口待实现", code=BizCode.BAD_REQUEST)
+    input_data = CharacterActionInput(
+        character_id=body.character_id,
+        action_type=body.action_type,
+        custom_prompt=body.custom_prompt,
+        reference_video_url=body.reference_video_url,
+        reference_image_urls=body.reference_image_urls,
+        num_frames=body.num_frames,
+    )
+    task = generation_service.generate_character_action(
+        session, user_id=user_id, project_id=body.project_id, input=input_data,
+    )
+    _dispatch_after_commit(
+        session, request.app.state.run_action_task, task.id, input_data, body.project_id,
+    )
+    return Response.success(_task_to_out(task), message="任务已提交")
 
 
 @router.get("/tasks/{task_id}", response_model=Response[GenerationTaskOut])
@@ -277,8 +321,12 @@ def get_task(
     """查询生成任务状态与结果。"""
     user_id = request.state.current_user.id
     _get_project_or_raise(session, project_id, user_id)
-    # TODO: service.get_task，并校验任务属于 project_id
-    raise BizException("接口待实现", code=BizCode.BAD_REQUEST)
+    task = task_repo.get_task(session, task_id)
+    if task is None or task.project_id != project_id:
+        # 归属两道,与 stream_task 同口径:只查项目不够,任意已认证用户拿自己的
+        # project_id 配上别人的 task_id 就能读到别人的产物 URL。
+        raise BizException("任务不存在", code=BizCode.NOT_FOUND)
+    return Response.success(_task_to_out(task))
 
 
 @router.get("/tasks/{task_id}/stream")
