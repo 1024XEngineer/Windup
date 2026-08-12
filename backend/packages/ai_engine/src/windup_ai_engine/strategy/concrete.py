@@ -46,6 +46,17 @@ class VideoFrameStrategy(DerivationStrategy):
 
     def _build_prompt(self, action: ActionSpec) -> str:
         """按动作类型选提示词;朝向随 ActionSpec.facing。"""
+        if action.motion_prompt:
+            facing = (
+                "SIDE VIEW facing right"
+                if action.facing.value == "side"
+                else "FACING THE VIEWER"
+            )
+            return (
+                f"Perform exactly this motion: {action.motion_prompt}. {facing}. "
+                "One single committed motion, preserving the character's identity, proportions, "
+                "clothing, and colors. Keep the whole body visible and return to a stable pose."
+            )
         builders = {
             ActionType.JUMP: build_jump_prompt,
             ActionType.IDLE: build_idle_prompt,

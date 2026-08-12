@@ -112,6 +112,19 @@ def test_bytes_entry_point_streams_too(video, monkeypatch):
         assert len(extract_frames_bytes(f.read(), 4)) == 4
 
 
+def test_bundled_ffmpeg_is_used_when_pyav_cannot_decode(video, monkeypatch):
+    import imageio.v3 as iio
+    from imageio_ffmpeg import get_ffmpeg_exe
+
+    monkeypatch.setattr(iio, "improps", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no pyav")))
+    monkeypatch.setattr(iio, "imiter", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no pyav")))
+
+    frames = _extract_frames(video, 4)
+
+    assert get_ffmpeg_exe()
+    assert len(frames) == 4
+
+
 # ── 帧数元数据不可信时的兜底 ─────────────────────────────────────────────────
 
 

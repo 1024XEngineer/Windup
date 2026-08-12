@@ -142,6 +142,7 @@ class _SpyGenerator:
     def __init__(self, honour_canvas: bool = True) -> None:
         self.seen_facing: str | None = None
         self.seen_canvas: tuple[int, int] | None = None
+        self.seen_action = None
         self._honour = honour_canvas
 
     def generate(self, card, action, master, progress, canvas=None):
@@ -149,6 +150,7 @@ class _SpyGenerator:
 
         self.seen_facing = action.facing
         self.seen_canvas = canvas
+        self.seen_action = action
         size = canvas if (canvas and self._honour) else (256, 256)
         # 不传 fps:GeneratedAction 早已删掉该字段(播放时序的唯一真相源是 durations)。
         # 这个 spy 之前一直在传,构造直接 TypeError、任务被判 FAILED —— 而当时的用例
@@ -191,6 +193,31 @@ def test_project_perspective_constrains_facing(session_factory):
     executor.run_action_task(task_id, action_input, project_id)  # 带项目约束
 
     assert spy.seen_facing == "front", "项目 perspective 应约束生成朝向"
+
+
+def test_custom_action_reuses_oneshot_route_and_preserves_prompt(session_factory):
+    spy = _SpyGenerator()
+    executor = ActionTaskExecutor(
+        generator=spy,
+        upload=lambda _png: "https://cdn.example.com/f.png",
+        fetch_master=lambda _input: _tiny_png(),
+        session_factory=session_factory,
+    )
+    action_input = CharacterActionInput(
+        character_id=1,
+        action_type=ActionType.CUSTOM,
+        custom_prompt="wave hello with the right hand",
+        num_frames=2,
+    )
+    with session_factory() as s:
+        task = AiGenerationService().generate_character_action(s, user_id=1, input=action_input)
+        s.commit()
+        task_id = task.id
+
+    executor.run_action_task(task_id, action_input)
+
+    assert spy.seen_action.action.value == "custom"
+    assert spy.seen_action.motion_prompt == "wave hello with the right hand"
 
 
 def test_action_task_marks_failed_on_error(session_factory):

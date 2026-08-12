@@ -22,7 +22,7 @@ from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
@@ -174,6 +174,15 @@ class CharacterActionGenerateRequest(BaseModel):
     reference_image_urls: list[str] = Field(default_factory=list)
     # 同上:帧数决定抽帧与逐帧抠图的工作量,上界 64 已远超引擎能出的有效周期长度。
     num_frames: int = Field(default=16, ge=1, le=64)
+
+    @model_validator(mode="after")
+    def require_custom_prompt(self):
+        if self.action_type is ActionType.CUSTOM:
+            prompt = (self.custom_prompt or "").strip()
+            if not prompt:
+                raise ValueError("custom 动作必须提供 custom_prompt")
+            self.custom_prompt = prompt
+        return self
 
 
 class GenerationTaskOut(BaseModel):

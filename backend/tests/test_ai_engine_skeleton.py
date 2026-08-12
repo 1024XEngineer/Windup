@@ -62,6 +62,7 @@ def test_route_matrix_is_the_measured_contract():
     assert ROUTE_MATRIX[ActionType.WALK] is GenRoute.VIDEO_I2V
     assert ROUTE_MATRIX[ActionType.RUN] is GenRoute.VIDEO_I2V
     assert ROUTE_MATRIX[ActionType.ATTACK] is GenRoute.VIDEO_I2V
+    assert ROUTE_MATRIX[ActionType.CUSTOM] is GenRoute.VIDEO_I2V
     assert ROUTE_MATRIX[ActionType.JUMP] is GenRoute.VIDEO_I2V
     assert ROUTE_MATRIX[ActionType.HIT] is GenRoute.PER_FRAME
     assert ROUTE_MATRIX[ActionType.IDLE] is GenRoute.VIDEO_I2V
@@ -175,6 +176,31 @@ def test_video_strategy_prompt_follows_facing(monkeypatch):
         )
     assert "SIDE VIEW facing right" in seen[0]
     assert "FACING THE VIEWER" in seen[1]
+
+
+def test_video_strategy_uses_custom_motion_prompt(monkeypatch):
+    seen: list[str] = []
+
+    class _SpyVideo:
+        def i2v(self, first_frame, prompt, seconds=5, size="1280x720"):
+            seen.append(prompt)
+            return b"fake-mp4"
+
+    strat = _offline_video_strategy(monkeypatch, video=_SpyVideo())
+    strat.derive(
+        CharacterCard(name="hero", desc=""),
+        ActionSpec(
+            action=ActionType.ATTACK,
+            motion_prompt="wave hello with the right hand",
+            stylize=Stylize.NONE,
+            n_frames=4,
+        ),
+        master=_tiny_png(),
+        progress=_NullProgress(),
+    )
+
+    assert "wave hello with the right hand" in seen[0]
+    assert "SIDE VIEW facing right" in seen[0]
 
 
 def test_real_video_strategy_is_registered_for_video_route():

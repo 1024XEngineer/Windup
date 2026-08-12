@@ -49,6 +49,7 @@ class ActionType(str, Enum):
     JUMP = "jump"      # 一次性动作,且要按状态切段(见 postprocess.split_jump_phases)
     ATTACK = "attack"  # slash / thrust / dash 归此
     HIT = "hit"
+    CUSTOM = "custom"
 
 
 class GenRoute(str, Enum):
@@ -149,6 +150,8 @@ class ActionSpec(BaseModel):
     model_config = _STRICT
 
     action: ActionType
+    # 自由动作的视频运动描述。仅在调用方明确提供时覆盖固定动作模板。
+    motion_prompt: str | None = Field(default=None, min_length=1)
 
     # 出帧数。**显式字段,不再由 len(poses) 推导**:视频路线根本不读 poses(见
     # strategy.concrete.VideoFrameStrategy),推导意味着"想要 16 帧就得先编 16 条用不上的

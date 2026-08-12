@@ -369,6 +369,14 @@ describe('createQuickStartService', () => {
     expect(secondSession.runId).toBe(firstSession.runId)
     expect(secondRun.nodes.filter((node) => node.type === 'action-first-frame')).toHaveLength(2)
     expect(generationApis.create).toHaveBeenCalledTimes(2)
+    expect(generationApis.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ actionType: 'custom', prompt: '挥手' }),
+    )
+    expect(generationApis.create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ actionType: 'jump', prompt: '跳跃' }),
+    )
   })
 
   it('preserves backend frame metadata while approving and importing a completed action', async () => {
