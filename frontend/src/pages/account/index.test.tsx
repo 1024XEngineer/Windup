@@ -91,6 +91,21 @@ describe('AccountPage', () => {
     )
   })
 
+  it('falls back to the email name for an unverified profile without a nickname', async () => {
+    const apis = createApis()
+    apis.me.mockResolvedValue({
+      ...user,
+      nickname: null,
+      emailVerifiedAt: null,
+    })
+
+    renderAccount(apis)
+
+    expect(await screen.findByText('reader', { selector: 'p' })).toBeTruthy()
+    expect(screen.getByText('未验证')).toBeTruthy()
+    expect(screen.getByText('尚未验证')).toBeTruthy()
+  })
+
   it('uses focused settings navigation instead of showing every form at once', async () => {
     const { container } = renderAccount()
 
