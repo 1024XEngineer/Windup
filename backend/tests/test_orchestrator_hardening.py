@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import threading
 
+import httpx
 import pytest
 
 from windup_app.server.orchestrator._fetch import (
@@ -90,6 +91,92 @@ def test_prefix_match_is_not_fooled_by_a_lookalike_host(monkeypatch):
 def test_fetch_size_cap_is_bounded():
     """上限存在且是个有限的正数——无上限时一个指向大文件的 URL 就能吃光 worker 内存。"""
     assert 0 < MAX_FETCH_BYTES <= 64 * 1024 * 1024
+
+
+# 下面四条覆盖**真正下载那一段**。此前只测了"坏 URL 被拒",而放行之后的三条防线
+# (不跟重定向 / 声明超限 / 声明撒谎时边读边截)一行都没跑过 —— 而它们恰恰是
+# 白名单被绕过时唯一的兜底。用 MockTransport,不联网。
+
+
+def _install_mock_client(monkeypatch, handler):
+    """把 _fetch 模块里的 httpx.Client 换成走 MockTransport 的,并记录构造参数。"""
+    import windup_app.server.orchestrator._fetch as F
+
+    seen: dict = {}
+    real_client = httpx.Client          # 必须先抓真的:补丁装上后 httpx.Client 就是 factory 自己
+
+    def factory(*args, **kw):
+        seen.update(kw)
+        return real_client(
+            transport=httpx.MockTransport(handler),
+            follow_redirects=bool(kw.get("follow_redirects", False)),
+        )
+
+    monkeypatch.setattr(F.httpx, "Client", factory)
+    return seen
+
+
+def test_fetch_returns_body_for_own_url(monkeypatch):
+    import windup_app.server.orchestrator._fetch as F
+
+    monkeypatch.setattr(F.storage_settings, "bucket_domain", "https://cdn.example.com")
+    _install_mock_client(monkeypatch, lambda req: httpx.Response(200, content=b"PNGDATA"))
+    assert fetch_own_media("https://cdn.example.com/a.png") == b"PNGDATA"
+
+
+def test_fetch_does_not_follow_redirects(monkeypatch):
+    """自家域名返回 302 指向别处时**不许跟过去** —— 跟了白名单就等于没有。
+
+    这条是白名单最容易被绕开的方式:URL 本身完全合规,坏事发生在重定向之后。
+    """
+    import windup_app.server.orchestrator._fetch as F
+
+    monkeypatch.setattr(F.storage_settings, "bucket_domain", "https://cdn.example.com")
+    asked: list[str] = []
+
+    def handler(req):
+        asked.append(str(req.url))
+        if "cdn.example.com" in str(req.url):
+            return httpx.Response(302, headers={"location": "http://169.254.169.254/latest/meta-data/"})
+        return httpx.Response(200, content=b"SECRET")
+
+    seen = _install_mock_client(monkeypatch, handler)
+    # 断言具体异常类型,不用裸 Exception —— 那样连 RecursionError 都算"通过",
+    # 测试会因为错误的原因变绿(本条初版就栽在这)。
+    with pytest.raises(httpx.HTTPStatusError):          # 3xx 不是 success,raise_for_status 会抛
+        fetch_own_media("https://cdn.example.com/a.png")
+    assert seen.get("follow_redirects") is False, "构造 Client 时必须显式关掉重定向"
+    assert not any("169.254.169.254" in u for u in asked), f"跟着重定向打到了元数据服务: {asked}"
+
+
+def test_fetch_rejects_declared_oversize_before_reading_body(monkeypatch):
+    import windup_app.server.orchestrator._fetch as F
+
+    monkeypatch.setattr(F.storage_settings, "bucket_domain", "https://cdn.example.com")
+    too_big = str(MAX_FETCH_BYTES + 1)
+    _install_mock_client(
+        monkeypatch,
+        lambda req: httpx.Response(200, headers={"content-length": too_big}, content=b"x"),
+    )
+    with pytest.raises(FetchNotAllowed, match="超过上限"):
+        fetch_own_media("https://cdn.example.com/big.png")
+
+
+def test_fetch_rejects_when_content_length_lies(monkeypatch):
+    """Content-Length 可以缺失或撒谎,所以必须边读边计数。
+
+    只信 Content-Length 的话,声明 1 字节、实际吐 100MB 就能吃光 worker 内存。
+    """
+    import windup_app.server.orchestrator._fetch as F
+
+    monkeypatch.setattr(F.storage_settings, "bucket_domain", "https://cdn.example.com")
+    monkeypatch.setattr(F, "MAX_FETCH_BYTES", 1024)
+    _install_mock_client(
+        monkeypatch,
+        lambda req: httpx.Response(200, headers={"content-length": "1"}, content=b"x" * 4096),
+    )
+    with pytest.raises(FetchNotAllowed, match="超过上限"):
+        fetch_own_media("https://cdn.example.com/liar.png")
 
 
 # ── ③ 终态事件名必须与 SSE 契约一致 ──────────────────────────────────────
