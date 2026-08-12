@@ -10,6 +10,7 @@ import { useAuthSession } from '@/features/auth-session'
 import { usePrefersReducedMotion } from '@/shared/hooks'
 import { CapabilitiesRail } from './capabilities-rail'
 import { MarketingHeader } from './marketing-header'
+import './landing-motion.css'
 
 const creationEntry = `/?${new URLSearchParams({
   account: 'login',
@@ -80,9 +81,36 @@ const pipelineTradeoffs = [
 const primaryCta =
   'inline-flex min-h-12 items-center justify-center rounded-full bg-accent px-7 text-body font-medium whitespace-nowrap text-paper transition-colors duration-200 hover:bg-accent-deep focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent'
 
-/** Hero 各块的入场次序，交给 .landing-rise 换算成 delay。 */
-function riseOrder(order: number) {
-  return { '--rise-order': order } as CSSProperties
+const riseClassName =
+  'motion-safe:animate-[landing-rise_560ms_cubic-bezier(0.16,1,0.3,1)_both] motion-reduce:animate-none'
+
+const floatingCardClassName =
+  'absolute top-1/2 left-1/2 overflow-hidden rounded-xl border border-[#dedfda] bg-white shadow-[0_18px_48px_rgb(45_48_44/0.08)] origin-center will-change-[transform,opacity]'
+
+const capabilitySceneClassName =
+  'absolute inset-0 flex min-w-0 flex-col overflow-hidden rounded-[inherit] bg-white will-change-[opacity,transform]'
+
+const capabilityMediaNoteClassName =
+  'absolute bottom-5 left-5 text-[0.64rem] tracking-[0.01em] text-[#a1a39e]'
+
+const capabilityStoryVariables = {
+  '--asset-opacity': 0,
+  '--play-opacity': 0,
+  '--canvas-opacity': 0,
+  '--asset-scale': 0.975,
+  '--play-scale': 0.96,
+  '--canvas-scale': 0.96,
+  '--story-copy-y': 0,
+  '--story-copy-scale': 1,
+  '--story-stage-opacity': 0,
+  '--story-stage-y': '10vh',
+  '--story-stage-scale': 0.76,
+  '--story-cue-opacity': 1,
+} as CSSProperties
+
+/** Hero 各块共用一种入场动作，只通过延迟形成次序。 */
+function riseDelay(order: number) {
+  return { animationDelay: `${order * 90}ms` }
 }
 
 function clampProgress(value: number) {
@@ -100,23 +128,29 @@ function progressBetween(progress: number, start: number, end: number) {
 
 function AssetLibraryScene() {
   return (
-    <div className="landing-capability-scene landing-capability-scene-assets">
-      <p className="landing-capability-media-note">此处将展示 Windup 资产库的真实界面。</p>
+    <div
+      className={`${capabilitySceneClassName} [opacity:var(--asset-opacity)] [transform:scale(var(--asset-scale))] motion-reduce:opacity-100 motion-reduce:transform-none`}
+    >
+      <p className={capabilityMediaNoteClassName}>此处将展示 Windup 资产库的真实界面。</p>
     </div>
   )
 }
 
 function PlayTestScene() {
   return (
-    <div className="landing-capability-scene landing-capability-scene-playtest">
-      <p className="landing-capability-media-note">此处将展示 PlayTest 的真实运行画面。</p>
+    <div
+      className={`${capabilitySceneClassName} [opacity:var(--play-opacity)] [transform:scale(var(--play-scale))] motion-reduce:hidden`}
+    >
+      <p className={capabilityMediaNoteClassName}>此处将展示 PlayTest 的真实运行画面。</p>
     </div>
   )
 }
 
 function WorkflowCanvasScene() {
   return (
-    <div className="landing-capability-scene landing-capability-scene-workflow">
+    <div
+      className={`${capabilitySceneClassName} [opacity:var(--canvas-opacity)] [transform:scale(var(--canvas-scale))] motion-reduce:hidden`}
+    >
       <img
         src={workflowEditorDesktop}
         alt="Windup 工作流画布中的角色母版、动作首帧、生成与审核节点"
@@ -136,12 +170,7 @@ function CapabilityStory() {
     const story = storyRef.current
     if (!story) return
 
-    if (reduceMotion) {
-      story.dataset.reducedMotion = 'true'
-      return () => {
-        delete story.dataset.reducedMotion
-      }
-    }
+    if (reduceMotion) return
 
     const artifacts = Array.from(story.querySelectorAll<HTMLElement>('[data-floating-artifact]'))
     let animationFrame = 0
@@ -209,12 +238,26 @@ function CapabilityStory() {
   }, [reduceMotion])
 
   return (
-    <div ref={storyRef} className="landing-capability-journey">
-      <div className="landing-capability-sticky">
-        <header className="landing-capability-copy">
+    <div
+      ref={storyRef}
+      className="relative h-[calc(100vh_+_2500px)] motion-reduce:h-auto motion-reduce:min-h-[58rem]"
+      style={capabilityStoryVariables}
+    >
+      <div className="sticky top-[4.5rem] isolate h-[calc(100vh_-_4.5rem)] min-h-[43rem] overflow-hidden [background:radial-gradient(circle_at_16%_24%,rgb(201_207_194/0.38),transparent_24%),radial-gradient(circle_at_82%_78%,rgb(205_195_178/0.3),transparent_22%),var(--color-paper-sunken)] motion-reduce:relative motion-reduce:top-auto motion-reduce:h-[58rem]">
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 -z-10 opacity-[0.35] [background-image:radial-gradient(circle,rgb(82_92_82/0.22)_0.7px,transparent_0.8px)] [background-size:24px_24px] [mask-image:linear-gradient(to_bottom,transparent,black_18%,black_82%,transparent)]"
+        />
+
+        <header className="absolute top-[47%] left-1/2 z-[4] w-[min(90vw,64rem)] origin-center [transform:translate(-50%,-50%)_translateY(var(--story-copy-y))_scale(var(--story-copy-scale))] text-center will-change-transform motion-reduce:top-32 motion-reduce:[transform:translateX(-50%)]">
           <p className="font-mono text-meta text-ink-faint">A CHARACTER, THROUGH WINDUP</p>
           <h2 className="mt-5 text-display text-ink">角色不只被生成一次。</h2>
-          <div key={activeCapability.title} role="status" aria-live="polite" className="mt-5">
+          <div
+            key={activeCapability.title}
+            role="status"
+            aria-live="polite"
+            className="mt-5 min-h-30 motion-safe:animate-[capability-copy-in_280ms_cubic-bezier(0.16,1,0.3,1)_both]"
+          >
             <p className="font-serif text-subtitle text-ink">{activeCapability.statement}</p>
             <p className="mx-auto mt-2 max-w-[32rem] text-body text-ink-muted">
               {activeCapability.outcome}
@@ -222,61 +265,88 @@ function CapabilityStory() {
           </div>
         </header>
 
-        <div aria-hidden="true" className="landing-capability-artifacts">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-[2] motion-reduce:hidden"
+        >
           <article
             data-floating-artifact
             data-x="-39"
             data-y="-13"
             data-rotate="-4"
-            className="landing-floating-card h-36 w-52"
+            className={`${floatingCardClassName} h-36 w-52`}
           >
-            <p>角色档案素材待接入</p>
+            <p className="absolute bottom-[0.9rem] left-[0.9rem] text-[0.6rem] text-[#9b9e98]">
+              角色档案素材待接入
+            </p>
           </article>
           <article
             data-floating-artifact
             data-x="36"
             data-y="-20"
             data-rotate="3"
-            className="landing-floating-card h-40 w-44"
+            className={`${floatingCardClassName} h-40 w-44`}
           >
-            <p>角色母版素材待接入</p>
+            <p className="absolute bottom-[0.9rem] left-[0.9rem] text-[0.6rem] text-[#9b9e98]">
+              角色母版素材待接入
+            </p>
           </article>
           <article
             data-floating-artifact
             data-x="-28"
             data-y="29"
             data-rotate="2"
-            className="landing-floating-card h-28 w-72"
+            className={`${floatingCardClassName} h-28 w-72`}
           >
-            <p>动作序列素材待接入</p>
+            <p className="absolute bottom-[0.9rem] left-[0.9rem] text-[0.6rem] text-[#9b9e98]">
+              动作序列素材待接入
+            </p>
           </article>
           <article
             data-floating-artifact
             data-x="36"
             data-y="23"
             data-rotate="-3"
-            className="landing-floating-card h-32 w-56"
+            className={`${floatingCardClassName} h-32 w-56`}
           >
-            <p>PlayTest 画面待接入</p>
+            <p className="absolute bottom-[0.9rem] left-[0.9rem] text-[0.6rem] text-[#9b9e98]">
+              PlayTest 画面待接入
+            </p>
           </article>
         </div>
 
-        <div className="landing-capability-product-stage">
+        <div className="absolute top-[61%] left-1/2 z-[3] h-[min(50vh,32rem)] min-h-[27rem] w-[min(72vw,68rem)] origin-center overflow-hidden rounded-xl bg-white [opacity:var(--story-stage-opacity)] [transform:translate(-50%,-50%)_translateY(var(--story-stage-y))_scale(var(--story-stage-scale))] will-change-[transform,opacity] motion-reduce:opacity-100 motion-reduce:[transform:translate(-50%,-50%)]">
           <AssetLibraryScene />
           <PlayTestScene />
           <WorkflowCanvasScene />
         </div>
 
-        <ol className="landing-capability-progress" aria-label="角色经过 Windup 的三个阶段">
+        <ol
+          className="absolute right-12 bottom-8 left-12 z-[5] grid grid-cols-3 border-t border-[rgb(89_98_89/0.24)]"
+          aria-label="角色经过 Windup 的三个阶段"
+        >
           {productCapabilities.map((capability, index) => (
-            <li key={capability.title} data-active={index === activeIndex || undefined}>
-              <span>{String(index + 1).padStart(2, '0')}</span>
-              <strong>{capability.title}</strong>
+            <li
+              key={capability.title}
+              className={`relative flex gap-[0.7rem] pt-[0.8rem] text-[0.7rem] transition-colors duration-[180ms] ease-out ${
+                index === activeIndex ? 'text-[#273028]' : 'text-[#777e76]'
+              }`}
+            >
+              <span
+                aria-hidden="true"
+                className={`absolute -top-px inset-x-0 h-px origin-left bg-[#555b54] [transition:opacity_180ms_ease-out,transform_260ms_cubic-bezier(0.16,1,0.3,1)] ${
+                  index === activeIndex ? 'scale-x-100 opacity-100' : 'scale-x-0 opacity-0'
+                }`}
+              />
+              <span className="font-mono tracking-[0.08em]">
+                {String(index + 1).padStart(2, '0')}
+              </span>
+              <strong className="font-semibold">{capability.title}</strong>
             </li>
           ))}
         </ol>
 
-        <p className="landing-capability-scroll-cue font-mono text-meta text-ink-faint">
+        <p className="absolute bottom-[5.2rem] left-1/2 z-[5] -translate-x-1/2 [opacity:var(--story-cue-opacity)] font-mono text-meta text-ink-faint motion-reduce:hidden">
           SCROLL TO FOLLOW THE CHARACTER ↓
         </p>
       </div>
@@ -305,12 +375,18 @@ function StyleGenerationShowcase() {
     <section id="styles" className="border-b border-rule bg-paper px-12 py-32">
       <div className="mx-auto grid max-w-[82rem] grid-cols-[minmax(0,1.2fr)_minmax(21rem,0.72fr)] items-center gap-20">
         <figure
-          className="landing-style-showcase"
+          className="min-w-0"
           onMouseEnter={() => setIsPaused(true)}
           onMouseLeave={() => setIsPaused(false)}
         >
-          <div className="landing-style-stage" aria-label={`${activeItem.title}素材展示位`}>
-            <p key={activeItem.title} className="landing-style-placeholder-copy">
+          <div
+            className="relative aspect-[1.32] overflow-hidden rounded-xl bg-white"
+            aria-label={`${activeItem.title}素材展示位`}
+          >
+            <p
+              key={activeItem.title}
+              className="absolute bottom-5 left-5 text-[0.64rem] tracking-[0.01em] text-[#a1a39e] motion-safe:animate-[capability-copy-in_220ms_cubic-bezier(0,0,0.2,1)_both]"
+            >
               {activeItem.placeholder}
             </p>
           </div>
@@ -354,30 +430,63 @@ function GenerationPipeline() {
           </div>
         </div>
 
-        <div className="landing-pipeline-sheet mt-16">
-          <ol className="landing-pipeline-stages" aria-label="角色生成管线">
-            {pipelineStages.map(([number, title, detail]) => (
-              <li key={title}>
-                <span>{number}</span>
-                <strong>{title}</strong>
-                <small>{detail}</small>
+        <div className="mt-16 overflow-hidden rounded-xl bg-white">
+          <ol className="grid grid-cols-5" aria-label="角色生成管线">
+            {pipelineStages.map(([number, title, detail], index) => (
+              <li
+                key={title}
+                className={`min-h-[11.5rem] px-6 py-8 ${
+                  index === pipelineStages.length - 1 ? '' : 'border-r border-[#e5e5e1]'
+                }`}
+              >
+                <span className="font-mono text-[0.62rem] tracking-[0.1em] text-[#8a8d87]">
+                  {number}
+                </span>
+                <strong className="mt-[2.4rem] block text-[0.9rem] font-semibold text-[#242724]">
+                  {title}
+                </strong>
+                <small className="mt-[0.55rem] block text-[0.66rem] text-[#737771]">{detail}</small>
               </li>
             ))}
           </ol>
 
-          <div className="landing-pipeline-tradeoffs" role="table" aria-label="不同制作阶段的取舍">
-            <div role="row" className="landing-pipeline-tradeoffs-head">
-              <span role="columnheader">制作阶段</span>
-              <span role="columnheader">质量</span>
-              <span role="columnheader">效率</span>
-              <span role="columnheader">资源投入</span>
+          <div className="border-t border-[#dedfda]" role="table" aria-label="不同制作阶段的取舍">
+            <div role="row" className="grid grid-cols-[1.15fr_repeat(3,1fr)] bg-[#f7f7f5]">
+              {['制作阶段', '质量', '效率', '资源投入'].map((heading, index) => (
+                <span
+                  key={heading}
+                  role="columnheader"
+                  className={`min-h-[3.6rem] px-6 py-[1.15rem] font-mono text-[0.58rem] font-normal tracking-[0.08em] text-[#888b85] ${
+                    index === 3 ? '' : 'border-r border-[#ededeb]'
+                  }`}
+                >
+                  {heading}
+                </span>
+              ))}
             </div>
             {pipelineTradeoffs.map(([stage, quality, efficiency, cost]) => (
-              <div key={stage} role="row">
-                <strong role="cell">{stage}</strong>
-                <span role="cell">{quality}</span>
-                <span role="cell">{efficiency}</span>
-                <span role="cell">{cost}</span>
+              <div
+                key={stage}
+                role="row"
+                className="grid grid-cols-[1.15fr_repeat(3,1fr)] border-t border-[#ededeb]"
+              >
+                <strong
+                  role="cell"
+                  className="min-h-[3.6rem] border-r border-[#ededeb] px-6 py-[1.15rem] text-[0.7rem] font-semibold text-[#252825]"
+                >
+                  {stage}
+                </strong>
+                {[quality, efficiency, cost].map((value, index) => (
+                  <span
+                    key={value}
+                    role="cell"
+                    className={`min-h-[3.6rem] px-6 py-[1.15rem] text-[0.7rem] font-normal text-[#5f635d] ${
+                      index === 2 ? '' : 'border-r border-[#ededeb]'
+                    }`}
+                  >
+                    {value}
+                  </span>
+                ))}
               </div>
             ))}
           </div>
@@ -399,60 +508,64 @@ export function LandingPage() {
       <main>
         <section
           aria-label="Windup 首屏"
-          className="landing-hero relative isolate overflow-hidden border-b border-[#d8d6ce]"
+          className="relative isolate min-h-[calc(80dvh_-_4.5rem_+_min(40vw,_36rem))] overflow-hidden border-b border-[#d8d6ce] text-[#252520] [background:linear-gradient(180deg,rgb(247_246_240/0.82),rgb(237_239_231/0.92)),#f2f1ea]"
         >
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 -z-10 [background:radial-gradient(circle_at_14%_58%,rgb(199_207_193/0.34),transparent_25%),radial-gradient(circle_at_88%_22%,rgb(204_196_178/0.3),transparent_23%)]"
+          />
           <img
             src={gongbiBirdLeft}
             alt=""
             aria-hidden="true"
             data-testid="hero-bird-left"
-            className="landing-hero-bird landing-hero-bird-left"
+            className="pointer-events-none absolute top-[18.75rem] -left-24 z-[1] block h-auto w-[min(34vw,31rem)] rotate-[2deg] select-none"
           />
           <img
             src={gongbiBirdRight}
             alt=""
             aria-hidden="true"
             data-testid="hero-bird-right"
-            className="landing-hero-bird landing-hero-bird-right"
+            className="pointer-events-none absolute top-21 -right-[9.5rem] z-[1] block h-auto w-[min(32vw,29rem)] -rotate-[4deg] select-none"
           />
 
           <div className="relative z-10 mx-auto flex w-full max-w-[82rem] flex-col items-center px-12 pt-20 text-center">
             <p
-              className="landing-rise mx-auto w-full text-[0.875rem] leading-6 font-medium tracking-[0.04em] text-[#696861]"
-              style={riseOrder(0)}
+              className={`${riseClassName} mx-auto w-full text-[0.875rem] leading-6 font-medium tracking-[0.04em] text-[#696861]`}
+              style={riseDelay(0)}
             >
               从角色设定到可玩的 2D 动作资产
             </p>
             <h1
-              className="landing-hero-title landing-rise mx-auto mt-5 w-full text-[#23231f]"
-              style={riseOrder(1)}
+              className={`${riseClassName} mx-auto mt-5 w-full max-w-[11em] font-['Songti_SC','Noto_Serif_CJK_SC','STSong',Georgia,serif] text-[clamp(4rem,5.5vw,5.25rem)] leading-[1.12] font-semibold tracking-[-0.055em] text-[#23231f]`}
+              style={riseDelay(1)}
             >
-              <span>让你的角色，</span>
-              <span>真正登场。</span>
+              <span className="block">让你的角色，</span>
+              <span className="block">真正登场。</span>
             </h1>
             <p
-              className="landing-rise mx-auto mt-6 w-full max-w-[31rem] text-[1.0625rem] leading-8 text-[#5d5c56]"
-              style={riseOrder(2)}
+              className={`${riseClassName} mx-auto mt-6 w-full max-w-[31rem] text-[1.0625rem] leading-8 text-[#5d5c56]`}
+              style={riseDelay(2)}
             >
               用一条可审核的工作流，生成并管理保持一致的 2D 角色动作。
             </p>
             <Link
               to={startPath}
-              className="landing-rise mx-auto mt-8 inline-flex min-h-12 items-center justify-center rounded-lg bg-[#252520] px-7 text-[0.9375rem] font-medium whitespace-nowrap text-[#f7f5ee] transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-[#3a3b36] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#3a3b36] active:translate-y-px"
-              style={riseOrder(3)}
+              className={`${riseClassName} mx-auto mt-8 inline-flex min-h-12 items-center justify-center rounded-lg bg-[#252520] px-7 text-[0.9375rem] font-medium whitespace-nowrap text-[#f7f5ee] transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-[#3a3b36] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#3a3b36] active:translate-y-px`}
+              style={riseDelay(3)}
             >
               开始创作
             </Link>
           </div>
 
-          <figure className="landing-hero-editor absolute z-20 w-[80%] max-w-[72rem]">
+          <figure className="absolute top-[calc(80dvh_-_4.5rem)] left-1/2 z-20 w-[80%] max-w-[72rem] -translate-x-1/2 transform-gpu">
             <div className="aspect-[2/1] overflow-hidden rounded-2xl border border-[#c9c8c0] bg-[#f9f8f3] shadow-[0_30px_80px_rgba(53,58,49,0.18)]">
               <img
                 src={workflowEditorDesktop}
                 alt="Windup Workflow Editor 真实运行界面"
                 loading="eager"
                 fetchPriority="high"
-                className="block w-full"
+                className="block w-full origin-top -translate-y-31 scale-[1.04]"
               />
             </div>
           </figure>
@@ -490,12 +603,12 @@ export function LandingPage() {
             </div>
 
             <figure>
-              <div className="landing-shot aspect-[16/10] overflow-hidden rounded-xl border border-rule bg-paper-sunken">
+              <div className="aspect-[16/10] overflow-hidden rounded-xl border border-rule bg-paper-sunken">
                 <img
                   src={workflowEditorDesktop}
                   alt="Windup Workflow Editor 真实运行界面"
                   loading="lazy"
-                  className="block w-full"
+                  className="block w-full origin-[22%_46%] scale-[1.62]"
                 />
               </div>
               <figcaption className="mt-4 text-body text-ink-faint">

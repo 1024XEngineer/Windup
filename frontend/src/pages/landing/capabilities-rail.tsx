@@ -44,7 +44,7 @@ export function CapabilitiesRail() {
       const availableTravel = Math.max(track!.scrollWidth - viewport!.clientWidth, 0)
       const travel = Math.min(availableTravel, viewport!.clientWidth * 0.72)
 
-      track!.style.transform = `translate3d(${-travel * progress}px, 0, 0)`
+      track!.style.setProperty('--rail-x', `${-travel * progress}px`)
     }
 
     function scheduleUpdate() {
@@ -68,7 +68,7 @@ export function CapabilitiesRail() {
       ref={sectionRef}
       id="capabilities"
       aria-labelledby="capabilities-heading"
-      className="landing-capabilities-section relative overflow-hidden scroll-mt-28 border-b border-rule pt-28"
+      className="relative overflow-hidden scroll-mt-28 border-b border-rule pt-28"
     >
       <div className="mx-auto w-full max-w-[82rem] px-8 lg:px-12">
         <h2 id="capabilities-heading" className="max-w-[7.4em] text-display text-ink">
@@ -81,19 +81,19 @@ export function CapabilitiesRail() {
 
       <div
         ref={viewportRef}
-        className="landing-capabilities-viewport mt-14 overflow-hidden border-y border-rule bg-paper-sunken"
+        className="mt-14 overflow-hidden border-y border-rule bg-paper-sunken motion-reduce:snap-x motion-reduce:snap-mandatory motion-reduce:overflow-x-auto"
       >
         <div
           ref={trackRef}
           role="list"
           aria-label="产品能力横向滚动"
-          className="landing-capabilities-track flex w-max items-center px-[5vw] py-8 will-change-transform"
+          className="flex w-max items-center px-[5vw] py-8 [transform:translate3d(var(--rail-x,0px),0,0)] will-change-transform motion-reduce:transform-none"
         >
           {capabilities.map(({ statement, title }) => (
             <article
               key={title}
               role="listitem"
-              className="landing-capability-item group flex shrink-0 items-baseline gap-7 border-r border-rule px-14 first:pl-0 last:border-r-0"
+              className="group flex shrink-0 items-baseline gap-7 border-r border-rule px-14 first:pl-0 last:border-r-0 motion-reduce:snap-start"
             >
               <h3 className="font-mono text-meta whitespace-nowrap text-ink-faint transition-colors duration-200 group-hover:text-spark">
                 {title}
