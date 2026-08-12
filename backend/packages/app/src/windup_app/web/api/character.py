@@ -163,7 +163,7 @@ def list_characters(
     request: Request = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    status: int | None = Query(None, description="按发布状态过滤: 0=草稿, 1=已发布"),
+    status: int | None = Query(None, ge=0, le=1, description="按发布状态过滤: 0=草稿, 1=已发布"),
     session: Session = Depends(get_session),
 ) -> ListResponse[CharacterOut]:
     user_id = request.state.current_user.id
