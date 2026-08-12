@@ -195,6 +195,13 @@ describe('WorkspacePage', () => {
     expect(context?.className).not.toContain('shadow')
   })
 
+  it('keeps the four entrances usable on narrow screens', () => {
+    const { container } = renderWorkspace()
+
+    expect(container.querySelector('.workspace-layout')?.className).toContain('grid-cols-1')
+    expect(screen.getByRole('complementary').className).toContain('max-md:hidden')
+  })
+
   it('omits entrance badges and decorative context-header chrome', () => {
     const { container } = renderWorkspace()
 
