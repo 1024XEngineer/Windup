@@ -17,6 +17,28 @@ afterEach(() => {
 })
 
 describe('ProjectDetailPage', () => {
+  it('shows an error when the Project request fails', async () => {
+    const backend = createProjectAssetsBackend()
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      if (request.url.endsWith('/projects/42')) {
+        return Promise.reject(new Error('project endpoint unavailable'))
+      }
+      return backend.fetch(input, init)
+    })
+
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects/42/assets']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect((await screen.findByRole('alert')).textContent).toContain('这个项目不存在或暂时无法读取')
+  })
+
   it('keeps the Project workspace around a directly opened Character', async () => {
     const backend = createProjectAssetsBackend()
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
