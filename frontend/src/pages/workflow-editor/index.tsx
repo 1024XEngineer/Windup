@@ -362,10 +362,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
         <p className="m-0 overflow-hidden text-ellipsis whitespace-nowrap text-[9px] leading-[1.5] text-[#777f78]">
           {constraints.join(' · ')}
         </p>
-        <div className="mt-1 flex items-center justify-between gap-3">
-          <span className="rounded-full border border-[rgb(61_83_67_/_12%)] bg-[rgb(255_255_255_/_72%)] px-[7px] py-[3px] text-[8px] font-bold text-[var(--editor-ink)]">
-            真实 WorkflowRun 接口
-          </span>
+        <div className="mt-1 flex justify-end">
           <small className="font-mono text-[8px] font-bold text-[var(--editor-muted)]">
             Run {run.id} · v{run.version}
           </small>
