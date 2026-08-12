@@ -3,15 +3,15 @@ import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MemoryRouter } from 'react-router'
 
-import { HomePage } from './index'
+import { WorkspaceHomePage } from './index'
 
 afterEach(cleanup)
 
-describe('HomePage', () => {
+describe('WorkspaceHomePage', () => {
   it('按交互形态提供快速开始与工作流画布两个入口', () => {
     render(
       <MemoryRouter>
-        <HomePage />
+        <WorkspaceHomePage />
       </MemoryRouter>,
     )
 

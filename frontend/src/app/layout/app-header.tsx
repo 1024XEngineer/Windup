@@ -12,9 +12,9 @@ interface ProductNavigationItem {
 /** 四个入口对应四种去处：回首页、看资产、做新东西、核验已完成的造型。 */
 const productNavigation: ProductNavigationItem[] = [
   {
-    to: '/',
+    to: '/workspace',
     label: '首页',
-    isActive: (pathname) => pathname === '/',
+    isActive: (pathname) => pathname === '/workspace',
   },
   {
     to: '/projects',
@@ -77,8 +77,8 @@ export function AppHeader() {
     <header className="pointer-events-none fixed inset-x-0 top-3.5 z-50 flex items-start justify-between gap-2 px-3 text-[#1c231e] sm:gap-4 sm:px-[18px]">
       <div className="pointer-events-auto flex min-h-[3.625rem] min-w-0 items-center gap-3 rounded-xl border border-[#171817]/14 bg-[#dfe3df] px-2.5 py-[7px] sm:min-w-[min(26rem,42vw)] sm:px-3.5">
         <Link
-          to="/"
-          aria-label="返回 Windup 首页"
+          to="/workspace"
+          aria-label="返回 Windup 工作台"
           className="flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-2 text-[#1c231e] focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331] sm:min-w-0 sm:justify-start md:border-r md:border-[#2d3b31]/12 md:pr-3"
         >
           <img src="/windup-mark.svg" alt="" className="h-[1.6875rem] w-[1.6875rem]" />

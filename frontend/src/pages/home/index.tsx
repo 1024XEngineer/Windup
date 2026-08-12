@@ -1,8 +1,8 @@
 import { HomeChoiceCard } from './choice-card'
 import { HomeBrandBird } from './brand-bird'
 
-/** 根入口只负责提供两种制作入口，不持有工作流业务状态。 */
-export function HomePage() {
+/** 登录后的工作台入口页；公开宣传页由根路由独立承载。 */
+export function WorkspaceHomePage() {
   return (
     <div className="relative w-full overflow-hidden bg-[#e5e8e3] text-[#191b18]">
       <HomeBrandBird />

@@ -5,14 +5,12 @@ import { AccountPanel } from '@/features/account-panel'
 import { SessionExpiredNotice } from '@/features/auth-guard'
 import { AppHeader } from './app-header'
 
-/** 跨页面常驻导航属于应用外壳，由 app 层统一承载。 */
-
 export interface AppShellProps {
   /** 渲染在全局导航下方的当前路由页面。 */
   children: ReactNode
 }
 
-/** 全站外壳，全局导航常驻。 */
+/** 登录产品外壳；只服务工作台与受保护业务页。 */
 export function AppShell({ children }: AppShellProps) {
   return (
     <div className="min-h-screen bg-white text-slate-900">
@@ -29,6 +27,17 @@ export function AppShell({ children }: AppShellProps) {
   )
 }
 
+/** 公开页面外壳只提供认证面板与会话提醒，宣传导航由 LandingPage 自己组合。 */
+export function MarketingShell({ children }: AppShellProps) {
+  return (
+    <div className="min-h-[100dvh] bg-[#f6f8f3] text-[#1d2920]">
+      {children}
+      <AccountPanel />
+      <SessionExpiredNotice />
+    </div>
+  )
+}
+
 /**
  * 外壳的路由形态，套在一组子路由外面。
  * 哪些页面带外壳是路由决策，写在 app 的路由表里；外壳自身不读 pathname、不判断自己该不该出现。
@@ -38,5 +47,13 @@ export function AppShellRoute() {
     <AppShell>
       <Outlet />
     </AppShell>
+  )
+}
+
+export function MarketingShellRoute() {
+  return (
+    <MarketingShell>
+      <Outlet />
+    </MarketingShell>
   )
 }
