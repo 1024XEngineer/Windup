@@ -164,7 +164,7 @@ describe('AccountPage', () => {
     const apis = createApis()
     apis.updateNickname.mockRejectedValue(new Error('昵称已存在'))
     renderAccount(apis)
-    const nickname = await screen.findByLabelText('昵称')
+    const nickname = await screen.findByDisplayValue('Reader')
 
     fireEvent.change(nickname, { target: { value: 'Taken Name' } })
     fireEvent.click(screen.getByRole('button', { name: '保存昵称' }))
