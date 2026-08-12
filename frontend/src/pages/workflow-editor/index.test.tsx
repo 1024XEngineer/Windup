@@ -96,7 +96,9 @@ describe('WorkflowEditorPage real runtime boundary', () => {
 
     const promptInput = await screen.findByRole('textbox', { name: '角色描述' })
     expect(screen.queryByRole('textbox', { name: /角色名称/ })).toBeNull()
-    fireEvent.change(promptInput, { target: { value: '戴红围巾的短发少年冒险家' } })
+    await act(async () => {
+      fireEvent.change(promptInput, { target: { value: '戴红围巾的短发少年冒险家' } })
+    })
     fireEvent.click(screen.getByRole('button', { name: '生成角色候选' }))
 
     await waitFor(() =>
