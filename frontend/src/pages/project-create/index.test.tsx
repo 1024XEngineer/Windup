@@ -148,9 +148,7 @@ describe('ProjectCreatePage', () => {
     fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '可重试画布' } })
     fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
 
-    expect((await screen.findByRole('alert')).textContent).toBe(
-      '项目已创建，但工作流暂时无法创建',
-    )
+    expect((await screen.findByRole('alert')).textContent).toBe('项目已创建，但工作流暂时无法创建')
     expect(creationRequests(backend)).toHaveLength(1)
     expect(workflowCreationRequests(backend)).toHaveLength(1)
 
