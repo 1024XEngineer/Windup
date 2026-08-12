@@ -145,11 +145,19 @@ class _LogProgress:
 ALLOWED_VIDEO_MODELS: dict[str, str] = {
     # 现役、稳;本地首帧直接吃 JPG base64,不需要公网 URL。
     "kling-v2-5-turbo": "默认。稳,本地首帧即可",
-    # 台账实测步态最自然(放低武器迈大步),但更贵,且**只吃公网图 URL**(不吃 base64)。
-    "veo3.1": "步态最自然,但更贵且需公网图 URL",
     # 有 motion-control,对"自定义动作"可能最有价值,待实测。
+    # 与默认那个同属 kling 系列,同样走 OpenAI 风格 `POST /videos` + `input_reference`
+    # (实测 kling 六档都能这么建单),所以 SufyVideoProvider 直接支持。
     "kling-v2-6": "有 motion-control,自定义动作潜力最大",
 }
+
+# **veo3.1 刻意不在上面这张表里。** 它确实实测过步态最自然,但它只在 **Fal 队列协议**上
+# (`POST /queue/fal-ai/veo3.1/...`,鉴权 `Authorization: Key`,首帧只吃**公网 URL** 不吃
+# base64),而 `SufyVideoProvider` 走的是 OpenAI 风格 `POST /videos` + Bearer + base64
+# `input_reference`。把它列进可选值等于"看起来能选、点了必然产生一个用不了的付费任务" ——
+# 与本 PR 修的那个 custom(入口收下、引擎拒绝)是同一种病,不能一边修一边又造一个。
+# 要支持它得先实现 Fal 通路 + 首帧上传取公网 URL,那是另一个改动。
+# (FennoAI 评审逮到,2026-08-12。)
 
 
 def _resolve_video_model(name: str | None) -> str | None:
@@ -265,12 +273,20 @@ class ActionTaskExecutor:
         # 缺了会在构造 ActionSpec 时就炸(而不是等到付费调用之后)。
         extra: dict[str, object] = {}
         if engine_action is EngineActionType.CUSTOM:
-            if input.loop is None:
-                raise ValueError(
-                    "自定义动作必须显式给 loop(是否循环播放)。不猜 —— 猜错会把一次性动作"
-                    "强行首尾闭环,而帧数/时长/成色全部正常、没有任何一道会红"
-                )
-            extra = {"custom_action": input.custom_prompt or "", "cyclic": bool(input.loop)}
+            # loop 缺失时用**一次性**兜底,而不是抛错。
+            #
+            # 初版是抛错(理由:"不猜"),但 FennoAI 评审指出那会让 quick-start 换个死法而已 ——
+            # 前端 `entities/generation/api.ts` 至今只发 action_type + custom_prompt,
+            # 而 quick-start 一有描述就发 type=custom,于是每个请求都在这里 FAILED。
+            # 本 PR 的目的是把 quick-start 救活,不是换一条报错。
+            #
+            # **这不是"按描述猜"**(那才是被禁的:从"走/挥"这类词推循环性,信号不可靠)。
+            # 这是一条基于**失败代价不对称**的显式产品默认:
+            #   · 把一次性动作误当循环 → 末帧接回首帧,肉眼可见的抽搐,产物不可用;
+            #   · 把循环动作误当一次性 → 只是不无缝闭环,产物仍可用。
+            # 所以缺信息时倒向一次性。前端补上勾选框后由它决定(见同 PR 的前端改动)。
+            cyclic = False if input.loop is None else bool(input.loop)
+            extra = {"custom_action": input.custom_prompt or "", "cyclic": cyclic}
         action = ActionSpec(
             action=engine_action,
             poses=[""] * input.num_frames,

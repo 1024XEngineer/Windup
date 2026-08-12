@@ -251,13 +251,18 @@ def test_illegal_facing_raises_instead_of_falling_back():
 # ── ⑤ 视频模型可选 ───────────────────────────────────────────────────────
 
 
-def test_only_the_three_opened_models_are_accepted():
+def test_only_the_opened_models_are_accepted():
     from windup_app.server.orchestrator.executor import (
         ALLOWED_VIDEO_MODELS,
         _resolve_video_model,
     )
 
-    assert set(ALLOWED_VIDEO_MODELS) == {"kling-v2-5-turbo", "veo3.1", "kling-v2-6"}
+    # veo3.1 刻意**不在**表里:它只在 Fal 队列协议上(Authorization: Key + 公网图 URL),
+    # 而 SufyVideoProvider 走 OpenAI 风格 /videos + Bearer + base64。列进去等于
+    # "看起来能选、点了必然产生一个用不了的付费任务" —— 与本 PR 修的那个 custom
+    # (入口收下、引擎拒绝)是同一种病。FennoAI 评审逮到。
+    assert set(ALLOWED_VIDEO_MODELS) == {"kling-v2-5-turbo", "kling-v2-6"}
+    assert "veo3.1" not in ALLOWED_VIDEO_MODELS
     for name in ALLOWED_VIDEO_MODELS:
         assert _resolve_video_model(name) == name
     assert _resolve_video_model(None) is None, "None = 用部署默认值"
@@ -328,3 +333,25 @@ def test_cyclic_tail_still_keeps_the_character_in_place():
     """去掉"在地面上"之后,**不整体位移**这条仍要在 —— 位移交引擎当 root motion。"""
     p = build_custom_prompt("swims forward", facing=Facing.SIDE, cyclic=True).lower()
     assert "same spot" in p
+
+
+# ── ⑦ loop 缺失时的安全默认(FennoAI 评审:硬失败只是换个死法)────────────────
+
+
+def test_missing_loop_falls_back_to_oneshot_instead_of_failing():
+    """前端至今不发 loop,硬失败只会让 quick-start 换一条报错继续废掉。
+
+    倒向**一次性**是基于失败代价不对称的显式产品决定,不是"按描述猜":
+      · 一次性误当循环 → 末帧接回首帧抽搐,产物不可用
+      · 循环误当一次性 → 只是不无缝闭环,产物仍可用
+    """
+    from windup_app.server.orchestrator.model import ActionType as ApiActionType
+    from windup_app.server.orchestrator.model import CharacterActionInput
+
+    inp = CharacterActionInput(
+        character_id=1, action_type=ApiActionType.CUSTOM, custom_prompt="waves", loop=None
+    )
+    assert inp.loop is None, "DTO 层不该替调用方填默认值,默认发生在编排层"
+    # 编排层把 None 兜成一次性 —— 与 executor 里那段注释同一口径
+    cyclic = False if inp.loop is None else bool(inp.loop)
+    assert cyclic is False

@@ -506,6 +506,10 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
           character_id: inputPositiveInteger(input.characterId, 'characterId'),
           action_type: input.actionType,
           custom_prompt: input.prompt,
+          // 自定义动作的循环性必须由前端给：后端不从描述文字猜（"走/挥"这类词信号不可靠），
+          // 缺省时它按一次性兜底。非 custom 的动作后端有写死的表，传了会被拒，故只在
+          // custom 时发送。
+          ...(input.actionType === 'custom' ? { loop: input.loop ?? false } : {}),
           reference_video_url: null,
           reference_image_urls: referenceImageUrls,
           // 首帧是一帧动作任务；完整动画与当前工作流验收标准一致，为 32 帧。

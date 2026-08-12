@@ -53,6 +53,13 @@ export interface FirstFrameGenerationInput extends GenerationInputBase {
   actionType: ActionType
   /** 自定义动作或额外动作要求；没有时为 null。 */
   prompt: string | null
+  /**
+   * 这个动作是否循环播放。`actionType: 'custom'` 时后端据此决定抽帧走单周期闭环还是裁区间。
+   *
+   * 省略时后端按**一次性**兜底 —— 失败代价不对称：把一次性动作误当循环会让末帧接回首帧
+   * 抽搐、产物不可用；反之只是不无缝闭环、产物仍可用。所以能给就给。
+   */
+  loop?: boolean
 }
 
 /** 以已确认首帧为起点生成完整动画。 */
@@ -64,6 +71,13 @@ export interface CompleteAnimationGenerationInput extends GenerationInputBase {
   /** 已确认的生成首帧 URL。 */
   firstFrameUrl: string
   prompt: string | null
+  /**
+   * 这个动作是否循环播放。`actionType: 'custom'` 时后端据此决定抽帧走单周期闭环还是裁区间。
+   *
+   * 省略时后端按**一次性**兜底 —— 失败代价不对称：把一次性动作误当循环会让末帧接回首帧
+   * 抽搐、产物不可用；反之只是不无缝闭环、产物仍可用。所以能给就给。
+   */
+  loop?: boolean
 }
 
 export type GenerationInput =
