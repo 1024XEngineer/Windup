@@ -463,21 +463,25 @@ interface ProjectionInput {
 }
 
 function NodeExportButton({ input, outfitId }: { input: ProjectionInput; outfitId: string }) {
-  if (!input.character) return null
-  try {
-    const model = createProgressiveExportModel({
-      project: input.project,
-      character: input.character,
-      outfitId,
-      run: input.run,
-      generations: Object.values(input.generations).filter(
-        (generation): generation is Generation => generation !== null,
-      ),
-    })
-    return <ExportButton model={model} className={`${CARD_BUTTON} nodrag nopan nowheel`} />
-  } catch {
-    return null
-  }
+  const model = useMemo(() => {
+    if (!input.character) return null
+    try {
+      return createProgressiveExportModel({
+        project: input.project,
+        character: input.character,
+        outfitId,
+        run: input.run,
+        generations: Object.values(input.generations).filter(
+          (generation): generation is Generation => generation !== null,
+        ),
+      })
+    } catch {
+      return null
+    }
+  }, [input.character, input.generations, input.project, input.run, outfitId])
+  return model ? (
+    <ExportButton model={model} className={`${CARD_BUTTON} nodrag nopan nowheel`} />
+  ) : null
 }
 
 /** 卡片自己所属的分支；命令与禁用判断都以它为准。 */

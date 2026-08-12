@@ -17,7 +17,8 @@ export interface ExportAnchor {
 }
 
 export type ExportQualityStatus = 'passed' | 'pending' | 'failed'
-export type ExportStage = 'character' | 'first-frame' | 'action-assets' | 'playtest'
+export const EXPORT_STAGES = ['character', 'first-frame', 'action-assets', 'playtest'] as const
+export type ExportStage = (typeof EXPORT_STAGES)[number]
 
 export interface ExportFirstFrame {
   actionId: string

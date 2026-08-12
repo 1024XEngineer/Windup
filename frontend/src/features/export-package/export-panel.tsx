@@ -151,7 +151,9 @@ export function ExportButton({
       ? PHASE_LABELS[state.phase]
       : state.status === 'failure'
         ? '重新导出'
-        : `导出${STAGE_LABELS[model.stage]}`
+        : state.status === 'success'
+          ? '下载完成'
+          : `导出${STAGE_LABELS[model.stage]}`
 
   return (
     <button

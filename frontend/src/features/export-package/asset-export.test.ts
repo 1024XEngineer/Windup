@@ -504,6 +504,50 @@ describe('asset export', () => {
     expect(emptyTarget.createFiles).toHaveBeenCalledTimes(1)
   })
 
+  it('按动作序列释放解码图片，不同时持有整包所有帧', async () => {
+    const second = action()
+    const twoActionModel: ExportPackageModel = {
+      ...model,
+      actions: [
+        ...model.actions,
+        {
+          ...second,
+          id: 'run-abcdef12',
+          name: 'Run',
+          sequences: [
+            {
+              ...second.sequences[0]!,
+              frames: second.sequences[0]!.frames.map((item) => ({
+                ...item,
+                imageUrl: `/frames/run-${item.index}.png`,
+              })),
+            },
+          ],
+        },
+      ],
+    }
+    const testRuntime = runtime()
+    let openCount = 0
+    let peakOpenCount = 0
+    testRuntime.decodeFrame = vi.fn(async () => {
+      openCount += 1
+      peakOpenCount = Math.max(peakOpenCount, openCount)
+      return {
+        source: {} as CanvasImageSource,
+        width: 32,
+        height: 40,
+        close: vi.fn(() => {
+          openCount -= 1
+        }),
+      }
+    })
+
+    await exportGameAssets(twoActionModel, { runtime: testRuntime })
+
+    expect(peakOpenCount).toBeLessThanOrEqual(9)
+    expect(openCount).toBe(0)
+  })
+
   it('渲染失败时释放已经解码的全部图片', async () => {
     const baseRuntime = runtime()
     const closes: Array<ReturnType<typeof vi.fn>> = []

@@ -239,4 +239,77 @@ describe('createProgressiveExportModel', () => {
       frames: [{ index: 0, imageUrl: '/walk-0.png', durationMs: 100 }],
     })
   })
+
+  it('同名但不同 ID 的已发布与生成中动作不会互相覆盖', () => {
+    const withPublishedAction: Character = {
+      ...character,
+      outfits: [
+        {
+          ...character.outfits[0]!,
+          actions: [
+            {
+              id: 'published-walk',
+              outfitId: 'outfit-1',
+              name: '行走',
+              type: 'walk',
+              loop: true,
+              fps: 10,
+              frameCount: 1,
+              frames: [{ index: 0, imageUrl: '/published-walk.png', durationMs: 100 }],
+            },
+          ],
+        },
+      ],
+    }
+    const actionRun: WorkflowRun = {
+      ...run,
+      nodes: [
+        ...run.nodes,
+        {
+          id: 'walk-method',
+          type: 'action-generation-method',
+          status: 'passed',
+          phase: 'completed',
+          dependsOnNodeIds: ['walk-first'],
+          generations: [],
+          error: null,
+          method: 'video-cropping',
+        },
+        {
+          id: 'generated-walk',
+          type: 'action-full-frame',
+          status: 'passed',
+          phase: 'completed',
+          dependsOnNodeIds: ['walk-method'],
+          generations: [{ taskId: 'generation-full', role: 'complete_animation' }],
+          error: null,
+        },
+      ],
+    }
+    const generation = {
+      id: 'generation-full',
+      projectId: project.id,
+      type: 'complete_animation',
+      status: 'completed',
+      error: null,
+      result: {
+        type: 'complete_animation',
+        frames: [{ index: 0, url: '/generated-walk.png', durationMs: 100 }],
+      },
+    } satisfies Generation<'complete_animation'>
+
+    const model = createProgressiveExportModel({
+      project,
+      character: withPublishedAction,
+      outfitId: 'outfit-1',
+      run: actionRun,
+      generations: [generation],
+    })
+
+    expect(model.actions.map((action) => action.id)).toEqual(['published-walk', 'generated-walk'])
+    expect(model.firstFrames.map((frame) => frame.actionId)).toEqual([
+      'walk-first',
+      'published-walk',
+    ])
+  })
 })

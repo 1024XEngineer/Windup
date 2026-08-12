@@ -127,6 +127,15 @@ function generatedActions(
   outfitId: string,
 ): readonly ExportAction[] {
   if (!run) return []
+  const nodesById = new Map(run.nodes.map((node) => [node.id, node]))
+  const generationsById = new Map(generations.map((generation) => [generation.id, generation]))
+  const reviewByFullFrameId = new Map<string, (typeof run.nodes)[number]>()
+  for (const node of run.nodes) {
+    if (node.type !== 'review') continue
+    for (const dependencyId of node.dependsOnNodeIds) {
+      if (!reviewByFullFrameId.has(dependencyId)) reviewByFullFrameId.set(dependencyId, node)
+    }
+  }
   return run.nodes.flatMap((fullFrame): ExportAction[] => {
     if (
       fullFrame.type !== 'action-full-frame' ||
@@ -137,9 +146,7 @@ function generatedActions(
       return []
     }
     const reference = fullFrame.generations.find((item) => item.role === 'complete_animation')
-    const generation = reference
-      ? generations.find((item) => item.id === reference.taskId)
-      : undefined
+    const generation = reference ? generationsById.get(reference.taskId) : undefined
     if (
       !generation ||
       generation.status !== 'completed' ||
@@ -147,14 +154,13 @@ function generatedActions(
     ) {
       return []
     }
-    const method = run.nodes.find(
-      (node) =>
-        node.type === 'action-generation-method' && fullFrame.dependsOnNodeIds.includes(node.id),
-    )
+    const method = fullFrame.dependsOnNodeIds
+      .map((dependencyId) => nodesById.get(dependencyId))
+      .find((node) => node?.type === 'action-generation-method')
     const first = method
-      ? run.nodes.find(
-          (node) => node.type === 'action-first-frame' && method.dependsOnNodeIds.includes(node.id),
-        )
+      ? method.dependsOnNodeIds
+          .map((dependencyId) => nodesById.get(dependencyId))
+          .find((node) => node?.type === 'action-first-frame')
       : undefined
     if (!first || first.type !== 'action-first-frame' || first.input.outfitId !== outfitId)
       return []
@@ -168,9 +174,7 @@ function generatedActions(
             : Math.max(1, Math.round(1000 / first.input.fps))
         return { index: frame.index, imageUrl: frame.url, durationMs }
       })
-    const review = run.nodes.find(
-      (node) => node.type === 'review' && node.dependsOnNodeIds.includes(fullFrame.id),
-    )
+    const review = reviewByFullFrameId.get(fullFrame.id)
     return [
       {
         id: fullFrame.id,
@@ -195,10 +199,11 @@ function generatedActions(
 
 function mergeActions(published: readonly ExportAction[], generated: readonly ExportAction[]) {
   const result = [...published]
+  const actionIds = new Set(published.map((action) => action.id))
   for (const action of generated) {
-    if (!result.some((candidate) => candidate.id === action.id || candidate.name === action.name)) {
-      result.push(action)
-    }
+    if (actionIds.has(action.id)) continue
+    result.push(action)
+    actionIds.add(action.id)
   }
   return result
 }
@@ -208,11 +213,11 @@ function mergeFirstFrames(
   actionFrames: readonly ExportFirstFrame[],
 ) {
   const result = [...workflowFrames]
+  const actionIds = new Set(workflowFrames.map((frame) => frame.actionId))
   for (const frame of actionFrames) {
-    const existing = result.findIndex(
-      (candidate) => candidate.actionId === frame.actionId || candidate.name === frame.name,
-    )
-    if (existing === -1) result.push(frame)
+    if (actionIds.has(frame.actionId)) continue
+    result.push(frame)
+    actionIds.add(frame.actionId)
   }
   return result
 }

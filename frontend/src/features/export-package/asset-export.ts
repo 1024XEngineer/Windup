@@ -254,15 +254,14 @@ async function loadFrame(
   return { ...planned, data, decoded }
 }
 
-async function loadAllFrames(
-  plan: readonly PlannedSequence[],
+async function loadSequence(
+  item: PlannedSequence,
   model: ExportPackageModel,
   runtime: AssetExportRuntime,
-): Promise<readonly LoadedSequence[]> {
-  const cache = new Map<string, Promise<Blob>>()
-  const references = plan.flatMap((item) => item.frames.map((frame) => ({ item, frame })))
+  cache: Map<string, Promise<Blob>>,
+): Promise<LoadedSequence> {
   const settled = await Promise.allSettled(
-    references.map(async ({ item, frame }) => {
+    item.frames.map(async (frame) => {
       const loaded = await loadFrame(frame, runtime, cache)
       if (
         loaded.decoded.width !== model.canvas.width ||
@@ -273,7 +272,7 @@ async function loadAllFrames(
           `${frame.relativeFile}: 画布应为 ${model.canvas.width}x${model.canvas.height}，实际为 ${loaded.decoded.width}x${loaded.decoded.height}`,
         )
       }
-      return { item, loaded }
+      return loaded
     }),
   )
 
@@ -282,14 +281,11 @@ async function loadAllFrames(
   )
   const failure = settled.find((result) => result.status === 'rejected')
   if (failure?.status === 'rejected') {
-    fulfilled.forEach(({ loaded }) => loaded.decoded.close())
+    fulfilled.forEach((loaded) => loaded.decoded.close())
     throw failure.reason
   }
 
-  return plan.map((item) => ({
-    item,
-    frames: fulfilled.filter((result) => result.item === item).map((result) => result.loaded),
-  }))
+  return { item, frames: fulfilled }
 }
 
 async function loadStaticAssets(
@@ -541,9 +537,7 @@ function storedZip(entries: readonly ZipEntry[]): Blob {
   endView.setUint32(12, centralDirectory.length, true)
   endView.setUint32(16, localOffset, true)
   const output = concat([...localChunks, centralDirectory, end])
-  const buffer = new ArrayBuffer(output.length)
-  new Uint8Array(buffer).set(output)
-  return new Blob([buffer], { type: 'application/zip' })
+  return new Blob([output.buffer as ArrayBuffer], { type: 'application/zip' })
 }
 
 export async function exportGameAssets(
@@ -558,22 +552,18 @@ export async function exportGameAssets(
 
   options.onPhase?.('collecting')
   const staticAssets = await loadStaticAssets(model, runtime)
-  let loaded: readonly LoadedSequence[]
-  try {
-    loaded = await loadAllFrames(plan, model, runtime)
-  } catch (error) {
-    staticAssets.forEach((asset) => asset.decoded.close())
-    throw error
-  }
   const root = packageRoot(model)
   const entries: ZipEntry[] = []
+  staticAssets.forEach((asset) => {
+    entries.push({ name: `${root}/${asset.relativeFile}`, data: asset.data })
+    asset.decoded.close()
+  })
 
-  try {
-    options.onPhase?.('rendering')
-    staticAssets.forEach((asset) => {
-      entries.push({ name: `${root}/${asset.relativeFile}`, data: asset.data })
-    })
-    for (const current of loaded) {
+  options.onPhase?.('rendering')
+  const frameCache = new Map<string, Promise<Blob>>()
+  for (const item of plan) {
+    const current = await loadSequence(item, model, runtime, frameCache)
+    try {
       for (const frame of current.frames) {
         entries.push({ name: `${root}/${frame.relativeFile}`, data: frame.data })
       }
@@ -581,52 +571,52 @@ export async function exportGameAssets(
         name: `${root}/${current.item.atlasFile}`,
         data: await bytes(await renderAtlas(current, model, runtime)),
       })
+    } finally {
+      current.frames.forEach((frame) => frame.decoded.close())
     }
-
-    entries.push(
-      {
-        name: `${root}/meta.json`,
-        data: await bytes(JSON.stringify(metadata, null, 2)),
-      },
-      { name: `${root}/schema.json`, data: await bytes(EXPORT_PACKAGE_JSON_SCHEMA_TEXT) },
-      { name: `${root}/README.md`, data: await bytes(createReadme(model)) },
-    )
-    if (model.playtest !== null) {
-      entries.push({
-        name: `${root}/playtest.json`,
-        data: await bytes(
-          JSON.stringify(
-            {
-              schema_version: EXPORT_PACKAGE_SCHEMA_VERSION,
-              initial_action_id: model.playtest.initialActionId,
-              action_ids: model.actions.map((action) => action.id),
-            },
-            null,
-            2,
-          ),
-        ),
-      })
-    }
-
-    for (const target of options.targets ?? []) {
-      const targetId = safeSegment(target.id, 'target')
-      const files = await target.createFiles({ model, metadata, plan })
-      for (const [index, file] of files.entries()) {
-        entries.push({
-          name: `${root}/${safeTargetPath(targetId, file.path, index)}`,
-          data: await bytes(file.data),
-        })
-      }
-    }
-  } finally {
-    staticAssets.forEach((asset) => asset.decoded.close())
-    loaded.forEach(({ frames }) => frames.forEach((frame) => frame.decoded.close()))
   }
 
-  const duplicate = entries.find(
-    (entry, index) => entries.findIndex((item) => item.name === entry.name) !== index,
+  entries.push(
+    {
+      name: `${root}/meta.json`,
+      data: await bytes(JSON.stringify(metadata, null, 2)),
+    },
+    { name: `${root}/schema.json`, data: await bytes(EXPORT_PACKAGE_JSON_SCHEMA_TEXT) },
+    { name: `${root}/README.md`, data: await bytes(createReadme(model)) },
   )
-  if (duplicate !== undefined) throw new Error(`package.files: 文件路径重复：${duplicate.name}`)
+  if (model.playtest !== null) {
+    entries.push({
+      name: `${root}/playtest.json`,
+      data: await bytes(
+        JSON.stringify(
+          {
+            schema_version: EXPORT_PACKAGE_SCHEMA_VERSION,
+            initial_action_id: model.playtest.initialActionId,
+            action_ids: model.actions.map((action) => action.id),
+          },
+          null,
+          2,
+        ),
+      ),
+    })
+  }
+
+  for (const target of options.targets ?? []) {
+    const targetId = safeSegment(target.id, 'target')
+    const files = await target.createFiles({ model, metadata, plan })
+    for (const [index, file] of files.entries()) {
+      entries.push({
+        name: `${root}/${safeTargetPath(targetId, file.path, index)}`,
+        data: await bytes(file.data),
+      })
+    }
+  }
+
+  const entryNames = new Set<string>()
+  for (const entry of entries) {
+    if (entryNames.has(entry.name)) throw new Error(`package.files: 文件路径重复：${entry.name}`)
+    entryNames.add(entry.name)
+  }
 
   options.onPhase?.('packing')
   return {

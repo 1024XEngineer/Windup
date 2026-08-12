@@ -9,7 +9,7 @@
 3. `action-assets`：继续追加完整帧、逐帧时长、图集和质量状态；尚未审核时为 `pending`。
 4. `playtest`：只使用已发布动作，并追加 `playtest.json` 运行清单。
 
-四个阶段使用相同的 `characterId + outfitId` 包根目录。后阶段只追加内容，不另造导出格式。
+四个阶段使用相同的 `characterName + characterId + outfitName + outfitId` 包根目录。后阶段只追加内容，不另造导出格式。
 
 ## 数据怎么走
 
@@ -29,8 +29,8 @@ Aster-character-1-Explorer-outfit-1/
   meta.json
   schema.json
   README.md
-  frames/Walk-south/Walk-south_000.png
-  atlas/Walk-south.png
+  frames/Walk/Walk_000.png
+  atlas/Walk.png
   playtest.json
   targets/<target-id>/...
 ```
@@ -39,7 +39,7 @@ Aster-character-1-Explorer-outfit-1/
 
 ## 为什么缺一帧就全部失败
 
-`expectedFrameCount` 表示后端声明的完整帧数，不能用 `frames.length` 自己推算。两者不同、图片读取失败、PNG 无透明信息或尺寸不一致时，导出立即失败，不会用透明占位掩盖问题。`action-assets` 可保留 `pending` 质量状态供检查；`playtest` 只接受 `passed` 动作。
+已发布 Character 动作的 `expectedFrameCount` 来自后端声明，不能用 `frames.length` 自己推算；两者不同时导出立即失败。WorkflowRun 中尚未发布的生成结果没有独立的期望总帧数字段，因此当前只能校验帧序从 0 连续，不能识别生成服务在末尾少返回帧。所有阶段遇到图片读取失败、PNG 无透明信息或尺寸不一致都会失败，不会用透明占位掩盖问题。`action-assets` 可保留 `pending` 质量状态供检查；`playtest` 只接受 `passed` 动作。
 
 ## Cocos Creator 边界
 

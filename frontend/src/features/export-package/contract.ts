@@ -1,4 +1,5 @@
 import exportSchemaText from './export-package.schema.json?raw'
+import { EXPORT_STAGES } from './model'
 import type { ExportPackageModel } from './model'
 
 export const EXPORT_PACKAGE_SCHEMA_VERSION = '1.1.0'
@@ -68,7 +69,7 @@ function requireUnitNumber(field: string, value: number): void {
  * 报错路径使用 meta.json 对应字段名，方便调用方直接定位坏数据。
  */
 export function validateExportPackageModel(model: ExportPackageModel): void {
-  if (!['character', 'first-frame', 'action-assets', 'playtest'].includes(model.stage)) {
+  if (!EXPORT_STAGES.includes(model.stage)) {
     fail('stage', '不是支持的导出阶段')
   }
   requireText('character.id', model.characterId)

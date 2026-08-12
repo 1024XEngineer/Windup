@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ExportPackageModel } from './model'
-import { ExportPanel } from './export-panel'
+import { ExportButton, ExportPanel } from './export-panel'
 
 const model = {
   stage: 'action-assets',
@@ -166,5 +166,23 @@ describe('ExportPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: '导出游戏资产包' }))
 
     await waitFor(() => expect(screen.getByText('导出失败：未知错误')).toBeTruthy())
+  })
+
+  it('紧凑导出按钮完成下载后显示成功状态', async () => {
+    const exporter = vi.fn().mockResolvedValue({
+      blob: new Blob(['zip'], { type: 'application/zip' }),
+      filename: 'windup-character.zip',
+    })
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn(() => 'blob:compact-export'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+
+    render(<ExportButton model={model} exporter={exporter} />)
+    fireEvent.click(screen.getByRole('button', { name: '导出完整动作资产' }))
+
+    expect(await screen.findByRole('button', { name: '下载完成' })).toBeTruthy()
   })
 })
