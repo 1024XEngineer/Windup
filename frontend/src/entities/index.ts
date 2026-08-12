@@ -27,6 +27,7 @@ export type {
   Outfit,
 } from './character'
 export { characterApis } from './character'
+export { getOutfitPlayback } from './character/outfit-playback'
 
 /* 动作模板 —— 能跨角色复用的配方 */
 export type { ActionTemplate, ActionTemplateApis } from './action-template'

@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 
-import { characterApis, projectApis, type Character, type Outfit, type Project } from '@/entities'
+import {
+  characterApis,
+  getOutfitPlayback,
+  projectApis,
+  type Character,
+  type Outfit,
+  type Project,
+} from '@/entities'
 import type { Paged } from '@/shared/pagination'
 import { PageContainer } from '@/shared/ui'
 
@@ -33,11 +40,6 @@ async function loadAllPages<T>(loadPage: (page: number) => Promise<Paged<T>>) {
 
 function characterName(character: Character) {
   return character.name ?? '未命名角色'
-}
-
-function outfitPlayback(outfit: Outfit) {
-  const frameCount = outfit.actions.reduce((sum, action) => sum + action.frames.length, 0)
-  return { frameCount, playable: frameCount > 0 }
 }
 
 /**
@@ -163,7 +165,7 @@ export function PlaytestEntryPage() {
 }
 
 function OutfitCard({ character, outfit }: { character: Character; outfit: Outfit }) {
-  const { frameCount, playable } = outfitPlayback(outfit)
+  const { frameCount, playable } = getOutfitPlayback(outfit)
   const name = characterName(character)
   const content = (
     <article

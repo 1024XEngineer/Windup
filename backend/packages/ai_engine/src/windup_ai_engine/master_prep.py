@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import io
 
-import numpy as np
 from PIL import Image
+
+from windup_ai_engine._subject import bg_color as _bg_color
 
 __all__ = ["add_headroom", "prepare_master", "MASTER_POSES"]
 
@@ -46,13 +47,6 @@ MASTER_POSES = {
         "leave generous empty space on the swing side"
     ),
 }
-
-
-def _bg_color(img: Image.Image) -> tuple[int, int, int]:
-    """取四角中位色当背景色(母版通常是纯色底)。"""
-    rgb = np.asarray(img.convert("RGB"))
-    corners = np.stack([rgb[0, 0], rgb[0, -1], rgb[-1, 0], rgb[-1, -1]])
-    return tuple(int(v) for v in np.median(corners, axis=0))
 
 
 def add_headroom(master: bytes, ratio: float = 0.6) -> bytes:

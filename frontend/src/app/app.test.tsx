@@ -26,7 +26,7 @@ afterEach(() => {
 })
 
 describe('AppRoutes authentication boundary', () => {
-  it('keeps the home page available to guests', async () => {
+  it('keeps the public landing page available to guests', async () => {
     render(
       <GuestAuthSession>
         <MemoryRouter initialEntries={['/']}>
@@ -36,6 +36,56 @@ describe('AppRoutes authentication boundary', () => {
     )
 
     expect(await screen.findByRole('heading', { name: /让你的角色/ })).toBeTruthy()
+    expect(screen.getByRole('navigation', { name: '宣传页导航' })).toBeTruthy()
+    expect(screen.queryByRole('navigation', { name: '产品导航' })).toBeNull()
+  })
+
+  it('keeps authenticated users on the public landing page until they enter the workspace', async () => {
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(await screen.findByRole('navigation', { name: '宣传页导航' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '进入工作台' }).getAttribute('href')).toBe('/workspace')
+  })
+
+  it('protects the workspace home and preserves it as the login return path', async () => {
+    render(
+      <GuestAuthSession>
+        <MemoryRouter initialEntries={['/workspace']}>
+          <AppRoutes />
+          <LocationProbe />
+        </MemoryRouter>
+      </GuestAuthSession>,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/?account=login&returnTo=%2Fworkspace',
+      ),
+    )
+    expect(screen.queryByRole('heading', { name: '工作台' })).toBeNull()
+  })
+
+  it('serves the workspace from its dedicated protected route', async () => {
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/workspace']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(await screen.findByRole('heading', { name: '工作台' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: /让你的角色/ })).toBeNull()
+    expect(screen.getByRole('navigation', { name: '产品导航' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '返回 Windup 工作台' }).getAttribute('href')).toBe(
+      '/workspace',
+    )
   })
 
   it('redirects a guest before rendering a protected product page and preserves its return path', async () => {
@@ -153,7 +203,7 @@ describe('AppRoutes authentication boundary', () => {
       </AuthSessionProvider>,
     )
 
-    expect((await screen.findByRole('alert')).textContent).toContain('登录状态已过期，请重新登录。')
+    expect(await screen.findByText('登录状态已过期，请重新登录。')).toBeTruthy()
     expect(screen.getByRole('link', { name: '重新登录' }).getAttribute('href')).toBe(
       '/?account=login&returnTo=%2F',
     )
