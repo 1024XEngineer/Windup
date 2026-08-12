@@ -86,9 +86,10 @@ type GeneratableActionType = 'idle' | 'walk' | 'jump' | 'attack' | 'custom'
 
 function inferGeneratableActionType(description: string): GeneratableActionType {
   const normalized = description.trim().toLowerCase()
-  if (!normalized || /(待机|站立|呼吸|idle|stand|breathe)/u.test(normalized)) return 'idle'
-  if (/(跳|跃|jump|leap|hop)/u.test(normalized)) return 'jump'
-  if (/(走|步行|跑|冲刺|walk|run|sprint)/u.test(normalized)) return 'walk'
+  if (!normalized || /^(待机|站立|呼吸|idle|stand|breathe)$/u.test(normalized)) return 'idle'
+  if (/^(跳|跃|跳跃|jump|leap|hop)$/u.test(normalized)) return 'jump'
+  if (/^(走|步行|跑|跑步|冲刺|walk|run|sprint)$/u.test(normalized)) return 'walk'
+  if (/^(攻击|attack)$/u.test(normalized)) return 'attack'
   return 'custom'
 }
 
