@@ -1,4 +1,4 @@
-import { useEffect, useState, type AnimationEvent } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 
 import { useAuthSession } from '@/features/auth-session'
@@ -106,17 +106,6 @@ export function AppHeader() {
     setWave(({ playId }) => ({ entry, playId: playId + 1 }))
   }
 
-  function finishTextWave(entry: string, event: AnimationEvent<HTMLElement>) {
-    const glyph = event.target as HTMLElement
-    if (glyph.dataset.waveLast !== 'true') {
-      return
-    }
-
-    if (wave.entry === entry) {
-      setWave(({ playId }) => ({ entry: '', playId }))
-    }
-  }
-
   return (
     <header
       data-layout="unified"
@@ -129,7 +118,6 @@ export function AppHeader() {
           aria-label="返回 Windup 工作台"
           data-motion="text-wave"
           onClick={() => playTextWave('brand')}
-          onAnimationEnd={(event) => finishTextWave('brand', event)}
           className={`flex min-h-11 shrink-0 items-center gap-2.5 pr-1 text-[#1c231e] focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331] ${
             wave.entry === 'brand' ? 'app-header-text-wave' : ''
           }`}
@@ -155,7 +143,6 @@ export function AppHeader() {
                 aria-current={active ? 'page' : undefined}
                 data-motion="text-wave"
                 onClick={() => playTextWave(item.motionKey)}
-                onAnimationEnd={(event) => finishTextWave(item.motionKey, event)}
                 className={`relative inline-flex min-h-11 items-center px-1.5 text-[12px] font-medium whitespace-nowrap transition-colors after:absolute after:inset-x-1.5 after:bottom-0 after:h-[2px] after:origin-center after:bg-[#284331] after:transition-transform focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#284331] sm:px-3 sm:text-[13px] sm:after:inset-x-3 ${
                   active
                     ? 'text-[#243c2c] after:scale-x-100'
