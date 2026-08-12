@@ -86,7 +86,9 @@ describe('AccountPage', () => {
     expect(screen.getByDisplayValue('Fresh Reader')).toBeTruthy()
     expect(screen.getByText('reader@example.com')).toBeTruthy()
     expect(document.querySelector('time')?.getAttribute('datetime')).toBe('2026-08-09T08:30:00Z')
-    expect(screen.getByRole('link', { name: '打开账号中心' }).textContent).toContain('Fresh Reader')
+    expect(screen.getByRole('button', { name: '打开账号菜单' }).textContent).toContain(
+      'Fresh Reader',
+    )
   })
 
   it('reports a profile refresh failure without claiming the data is synchronized', async () => {
@@ -109,7 +111,7 @@ describe('AccountPage', () => {
 
     await waitFor(() => expect(apis.updateNickname).toHaveBeenCalledWith('New Reader'))
     expect(await screen.findByText('昵称已更新。')).toBeTruthy()
-    expect(screen.getByRole('link', { name: '打开账号中心' }).textContent).toContain('New Reader')
+    expect(screen.getByRole('button', { name: '打开账号菜单' }).textContent).toContain('New Reader')
   })
 
   it('preserves the edited nickname when the backend rejects it', async () => {
