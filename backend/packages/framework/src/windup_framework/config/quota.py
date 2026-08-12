@@ -27,9 +27,5 @@ class QuotaSettings(BaseSettings):
     generate_image_cost: int = 10           # 生成角色参考图
     generate_action_cost: int = 50          # 生成角色动作
 
-    # -- Token 汇率（JSON 字符串，运行时解析）-------------------------------
-    # 示例: '{"gpt-4o": 0.01, "gemini-2.5-flash": 0.005}'
-    token_rates_json: str = "{}"
-
 
 settings = QuotaSettings()
