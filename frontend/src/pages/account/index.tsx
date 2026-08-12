@@ -145,7 +145,9 @@ export function AccountPage() {
       >
         <header className="min-h-[clamp(9rem,16vw,12rem)]">
           <div>
-            <p className="font-mono text-[0.65rem] tracking-[0.12em] text-[#737b74] uppercase">Account</p>
+            <p className="font-mono text-[0.65rem] tracking-[0.12em] text-[#737b74] uppercase">
+              Account
+            </p>
             <div className="mt-2 flex items-center gap-[clamp(0.5rem,1.5vw,1.25rem)]">
               <h1 className="font-serif text-[clamp(2.15rem,4.5vw,4rem)] leading-none font-medium tracking-[-0.055em] text-[#1d251f]">
                 账号中心
@@ -174,13 +176,18 @@ export function AccountPage() {
           </div>
         </header>
 
-        <div data-account-layout="settings" className="grid gap-6 md:grid-cols-[14rem_minmax(0,1fr)] md:gap-[clamp(2rem,4vw,4.5rem)]">
+        <div
+          data-account-layout="settings"
+          className="grid gap-6 md:grid-cols-[14rem_minmax(0,1fr)] md:gap-[clamp(2rem,4vw,4.5rem)]"
+        >
           <aside className="flex flex-col">
             <nav aria-label="账号设置" className="grid gap-1 border-t border-[#d0d2cc] pt-4">
-              {([
-                ['profile', '个人资料'],
-                ['security', '登录安全'],
-              ] as const).map(([section, label]) => (
+              {(
+                [
+                  ['profile', '个人资料'],
+                  ['security', '登录安全'],
+                ] as const
+              ).map(([section, label]) => (
                 <button
                   key={section}
                   type="button"
@@ -210,7 +217,9 @@ export function AccountPage() {
             {activeSection === 'profile' ? (
               <div>
                 <header>
-                  <h2 className="text-xl font-semibold tracking-[-0.025em] text-[#29302a]">个人资料</h2>
+                  <h2 className="text-xl font-semibold tracking-[-0.025em] text-[#29302a]">
+                    个人资料
+                  </h2>
                   <p className="mt-1.5 text-sm text-[#747a74]">管理你的公开身份和账号邮箱。</p>
                 </header>
 
@@ -229,46 +238,134 @@ export function AccountPage() {
 
                 <form className="mt-5 grid gap-4" onSubmit={saveNickname} noValidate>
                   <div className="grid max-w-xl gap-1.5">
-                    <label htmlFor={nicknameId} className="text-sm font-medium text-[#414741]">昵称</label>
-                    <input id={nicknameId} type="text" autoComplete="nickname" value={nickname} maxLength={51} disabled={isProfileLoading || isSavingNickname} onChange={(event) => setNickname(event.target.value)} className={fieldClass} aria-describedby={`${nicknameId}-hint`} />
-                    <span id={`${nicknameId}-hint`} className="text-xs leading-5 text-[#7a7f79]">1–50 个字符，保存后同步显示在页面顶栏。</span>
+                    <label htmlFor={nicknameId} className="text-sm font-medium text-[#414741]">
+                      昵称
+                    </label>
+                    <input
+                      id={nicknameId}
+                      type="text"
+                      autoComplete="nickname"
+                      value={nickname}
+                      maxLength={51}
+                      disabled={isProfileLoading || isSavingNickname}
+                      onChange={(event) => setNickname(event.target.value)}
+                      className={fieldClass}
+                      aria-describedby={`${nicknameId}-hint`}
+                    />
+                    <span id={`${nicknameId}-hint`} className="text-xs leading-5 text-[#7a7f79]">
+                      1–50 个字符，保存后同步显示在页面顶栏。
+                    </span>
                   </div>
 
                   <dl className="grid max-w-xl gap-1 rounded-lg bg-[#eff0ec] px-4 py-3 text-sm sm:grid-cols-[8rem_1fr] sm:items-center">
                     <dt className="text-[#747a74]">邮箱验证时间</dt>
                     <dd className="text-[#414741]">
-                      {currentUser.emailVerifiedAt ? <time dateTime={currentUser.emailVerifiedAt}>{formatVerificationTime(currentUser.emailVerifiedAt)}</time> : '尚未验证'}
+                      {currentUser.emailVerifiedAt ? (
+                        <time dateTime={currentUser.emailVerifiedAt}>
+                          {formatVerificationTime(currentUser.emailVerifiedAt)}
+                        </time>
+                      ) : (
+                        '尚未验证'
+                      )}
                     </dd>
                   </dl>
 
-                  {profileError && <p role="alert" className="max-w-xl rounded-lg bg-[#f7ebe7] px-3 py-2.5 text-sm text-[#8a4338]">{profileError}</p>}
-                  {profileSuccess && <p role="status" className="max-w-xl rounded-lg bg-[#e9f0e9] px-3 py-2.5 text-sm text-[#31533b]">{profileSuccess}</p>}
+                  {profileError && (
+                    <p
+                      role="alert"
+                      className="max-w-xl rounded-lg bg-[#f7ebe7] px-3 py-2.5 text-sm text-[#8a4338]"
+                    >
+                      {profileError}
+                    </p>
+                  )}
+                  {profileSuccess && (
+                    <p
+                      role="status"
+                      className="max-w-xl rounded-lg bg-[#e9f0e9] px-3 py-2.5 text-sm text-[#31533b]"
+                    >
+                      {profileSuccess}
+                    </p>
+                  )}
 
                   <div className="flex max-w-xl flex-wrap items-center justify-between gap-4">
-                    <span className="text-xs text-[#7a7f79]">{isProfileLoading ? '正在同步最新资料…' : isProfileFresh ? '资料已同步' : '资料同步失败'}</span>
-                    <button type="submit" disabled={isProfileLoading || isSavingNickname} className={primaryButtonClass}>{isSavingNickname ? '正在保存…' : '保存昵称'}</button>
+                    <span className="text-xs text-[#7a7f79]">
+                      {isProfileLoading
+                        ? '正在同步最新资料…'
+                        : isProfileFresh
+                          ? '资料已同步'
+                          : '资料同步失败'}
+                    </span>
+                    <button
+                      type="submit"
+                      disabled={isProfileLoading || isSavingNickname}
+                      className={primaryButtonClass}
+                    >
+                      {isSavingNickname ? '正在保存…' : '保存昵称'}
+                    </button>
                   </div>
                 </form>
               </div>
             ) : (
               <div>
                 <header>
-                  <h2 className="text-xl font-semibold tracking-[-0.025em] text-[#29302a]">登录安全</h2>
-                  <p className="mt-1.5 text-sm leading-6 text-[#747a74]">修改密码后，当前会话会退出。</p>
+                  <h2 className="text-xl font-semibold tracking-[-0.025em] text-[#29302a]">
+                    登录安全
+                  </h2>
+                  <p className="mt-1.5 text-sm leading-6 text-[#747a74]">
+                    修改密码后，当前会话会退出。
+                  </p>
                 </header>
 
                 <form className="mt-5 grid max-w-xl gap-4" onSubmit={changePassword} noValidate>
-                  <label htmlFor={oldPasswordId} className="grid gap-1.5 text-sm font-medium text-[#414741]">
+                  <label
+                    htmlFor={oldPasswordId}
+                    className="grid gap-1.5 text-sm font-medium text-[#414741]"
+                  >
                     当前密码
-                    <input id={oldPasswordId} type="password" autoComplete="current-password" value={oldPassword} disabled={isChangingPassword} onChange={(event) => setOldPassword(event.target.value)} className={fieldClass} />
+                    <input
+                      id={oldPasswordId}
+                      type="password"
+                      autoComplete="current-password"
+                      value={oldPassword}
+                      disabled={isChangingPassword}
+                      onChange={(event) => setOldPassword(event.target.value)}
+                      className={fieldClass}
+                    />
                   </label>
                   <div className="grid gap-1.5 text-sm font-medium text-[#414741]">
                     <label htmlFor={newPasswordId}>新密码</label>
-                    <input id={newPasswordId} type="password" autoComplete="new-password" value={newPassword} disabled={isChangingPassword} onChange={(event) => setNewPassword(event.target.value)} className={fieldClass} aria-describedby={`${newPasswordId}-hint`} />
-                    <span id={`${newPasswordId}-hint`} className="text-xs font-normal text-[#7a7f79]">8–128 位</span>
+                    <input
+                      id={newPasswordId}
+                      type="password"
+                      autoComplete="new-password"
+                      value={newPassword}
+                      disabled={isChangingPassword}
+                      onChange={(event) => setNewPassword(event.target.value)}
+                      className={fieldClass}
+                      aria-describedby={`${newPasswordId}-hint`}
+                    />
+                    <span
+                      id={`${newPasswordId}-hint`}
+                      className="text-xs font-normal text-[#7a7f79]"
+                    >
+                      8–128 位
+                    </span>
                   </div>
-                  {passwordError && <p role="alert" className="rounded-lg bg-[#f7ebe7] px-3 py-2.5 text-sm text-[#8a4338]">{passwordError}</p>}
-                  <button type="submit" disabled={isChangingPassword} className={`${primaryButtonClass} justify-self-start`}>{isChangingPassword ? '正在修改…' : '修改密码'}</button>
+                  {passwordError && (
+                    <p
+                      role="alert"
+                      className="rounded-lg bg-[#f7ebe7] px-3 py-2.5 text-sm text-[#8a4338]"
+                    >
+                      {passwordError}
+                    </p>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={isChangingPassword}
+                    className={`${primaryButtonClass} justify-self-start`}
+                  >
+                    {isChangingPassword ? '正在修改…' : '修改密码'}
+                  </button>
                 </form>
               </div>
             )}

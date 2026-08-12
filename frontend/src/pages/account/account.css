@@ -8,12 +8,23 @@
 }
 
 @keyframes account-badge-shake {
-  0%, 100% { transform: rotate(-3deg); }
-  25% { transform: rotate(-11deg); }
-  55% { transform: rotate(6deg); }
-  78% { transform: rotate(-6deg); }
+  0%,
+  100% {
+    transform: rotate(-3deg);
+  }
+  25% {
+    transform: rotate(-11deg);
+  }
+  55% {
+    transform: rotate(6deg);
+  }
+  78% {
+    transform: rotate(-6deg);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .account-badge-shake { animation: none; }
+  .account-badge-shake {
+    animation: none;
+  }
 }
