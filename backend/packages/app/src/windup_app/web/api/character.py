@@ -202,6 +202,8 @@ def update_character(
     fields = body.model_dump(exclude_unset=True)
     # 如果更新了 character_data，自动推断 status
     if "character_data" in fields:
+        if fields["character_data"] is None:
+            raise BizException("character_data 不能为 null", code=BizCode.BAD_REQUEST)
         character_data = fields["character_data"]
         if isinstance(character_data, CharacterData):
             character_data = character_data.model_dump()

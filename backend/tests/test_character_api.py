@@ -270,3 +270,19 @@ def test_update_character_data_recalculates_status(auth_client):
     )
     assert resp.status_code == 200
     assert resp.json()["data"]["status"] == 1
+
+
+def test_update_character_with_null_character_data(auth_client):
+    """更新 character_data 为 null 时应返回 400 错误。"""
+    project = _create_project(auth_client)
+    created = auth_client.post(
+        "/characters", json=_payload_with_frames(project["id"]),
+    ).json()["data"]
+
+    # 更新 character_data 为 null
+    resp = auth_client.patch(
+        f"/characters/{created['id']}",
+        json={"character_data": None},
+    )
+    assert resp.json()["code"] == 400
+    assert resp.json()["message"] == "character_data 不能为 null"
