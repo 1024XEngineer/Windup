@@ -12,7 +12,8 @@ import numpy as np
 
 from ._frames import gray as _gray
 
-__all__ = ["active_span", "blur_ratio", "dead_frame_mask", "frame_deltas"]
+__all__ = ["active_span", "blur_ratio", "dead_frame_indices", "dead_frame_mask",
+           "frame_deltas", "loop_seam", "motion_scale"]
 
 
 def frame_deltas(frames) -> np.ndarray:
@@ -42,6 +43,49 @@ def dead_frame_mask(frames, ratio: float = 0.35, floor: float = 0.25) -> np.ndar
         if d[i] < floor * p75:
             m[i] = True
     return m
+
+
+def dead_frame_indices(frames) -> tuple[int, ...]:
+    """死帧下标。:func:`dead_frame_mask` 的出参形态转换 —— 掩码是算的时候好用的形态,
+    跨出 ai_engine 的契约(``ports.ActionQuality``)要的是"哪几帧",不该让调用方拿着
+    一个 numpy 掩码去自己 argwhere。"""
+    return tuple(int(i) for i in np.flatnonzero(dead_frame_mask(frames)))
+
+
+def motion_scale(frames) -> float:
+    """相邻帧平均差异的**绝对**尺度(48×48 灰度)。0.0 = 这些帧逐像素完全一样。
+
+    为什么与 :func:`dead_frame_mask` 并存、而不是从它推导:后者两条判据
+    (``d[i] < ratio*max(邻居)`` 与 ``d[i] < floor*p75``)**都是相对的**,整段完全
+    冻结时 d 全为 0,两条不等式变成 ``0 < 0``,一条都不成立 —— **一帧死帧都报不出**
+    (2026-08-09 用全同帧序列实测:12 帧全同,死帧数 0)。相对判据天生看不见"整体
+    没动",绝对尺度必须单独给一个。
+    """
+    d = frame_deltas(frames)
+    return float(d[1:].mean()) if len(d) > 1 else 0.0
+
+
+def loop_seam(frames) -> float | None:
+    """末帧接回首帧的跳幅 ÷ 相邻帧平均步长;整段静止(分母为 0)返回 ``None``。
+
+    与 :func:`.loop.pick_cycle` 选帧时的归一化接缝同式,但**测的对象不同**:pick_cycle
+    在抠图 / 像素化 / 脚线对齐**之前**的密集帧上打分,而用户看到的是这三步之后的帧,
+    这三步都会改动像素。要描述交付物就得在交付物上量。
+
+    不套 :func:`.loop._deskew`:交付帧已被 ``align_bottom_center`` 逐帧居中,整体平移
+    早消掉了,再按差分质心对一次只是引入第二套居中口径(两套口径不一致正是本仓反复
+    踩的那类静默分歧)。
+
+    分母为 0 时返回 None 而不是 0.0 —— 0.0 会被读成"完美闭环",而真相是"没有可比的
+    步长,这个数不可读"。
+    """
+    gs = _gray(frames)
+    if len(gs) < 2:
+        return None
+    step = float(np.mean([np.abs(gs[i + 1] - gs[i]).mean() for i in range(len(gs) - 1)]))
+    if step <= 0.0:
+        return None
+    return float(np.abs(gs[-1] - gs[0]).mean() / step)
 
 
 def active_span(frames, floor: float = 0.25, min_run: int = 3) -> tuple[int, int]:

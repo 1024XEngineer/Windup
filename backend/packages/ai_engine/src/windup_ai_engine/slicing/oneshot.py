@@ -16,6 +16,8 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image
 
+from windup_ai_engine._subject import subject_mask as _subject_mask
+
 __all__ = [
     "find_motion_span",
     "first_action_end",
@@ -191,19 +193,8 @@ def pick_oneshot(
 
 
 def _subject_rows(frame: Image.Image, alpha_thr: int = 128, bg_tol: int = 60) -> np.ndarray:
-    """主体所在的行下标。有真实 alpha 用 alpha;**全不透明帧**(原始视频帧)按四角背景色判。
-
-    必须兼容不透明帧:抽帧阶段拿到的是原始视频帧,还没抠图,只看 alpha 会把整幅当主体、
-    脚线恒定,导致腾空判据立刻误判"已落地"(实测踩过,跳跃被裁在起跳前)。
-    """
-    arr = np.asarray(frame.convert("RGBA"))
-    alpha = arr[:, :, 3]
-    if not alpha.min() > alpha_thr:
-        return np.where(alpha > alpha_thr)[0]
-    rgb = arr[:, :, :3].astype(np.int16)
-    corners = np.stack([rgb[0, 0], rgb[0, -1], rgb[-1, 0], rgb[-1, -1]])
-    bg = np.median(corners, axis=0)
-    return np.where(np.abs(rgb - bg).sum(axis=2) > bg_tol)[0]
+    """主体所在的行下标。判据本身在 :mod:`.._subject`(与母版预检共用同一个主体定义)。"""
+    return np.where(_subject_mask(frame, alpha_thr, bg_tol))[0]
 
 
 def foot_line_series(frames: list[Image.Image], alpha_thr: int = 128) -> np.ndarray:

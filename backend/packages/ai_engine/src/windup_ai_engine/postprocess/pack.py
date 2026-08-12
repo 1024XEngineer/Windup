@@ -8,15 +8,24 @@ from __future__ import annotations
 
 from PIL import Image
 
-__all__ = ["align_bottom_center", "sprite_sheet", "save_gif"]
+__all__ = ["CELL", "FILL_H", "FILL_W", "FOOT_LINE", "align_bottom_center",
+           "sprite_sheet", "save_gif"]
+
+# 交付画布的几何 —— 提成模块常量而不是只当默认参数,是因为**入口预检要按同一套几何
+# 判母版能不能装下**(见 master_check.REJECT_ASPECT)。抄一份数字过去就等于埋下
+# "改了这里、那边阈值不动"的静默分歧。
+CELL = 256          # 方形 cell 边长(交付序列帧的画布)
+FOOT_LINE = 0.92    # 脚线在画布中的高度比例
+FILL_H = 0.62       # 参考姿态占画布高的比例(留余量给举过头顶的动作)
+FILL_W = 0.96       # 主体占画布宽的上限(宽度兜底的天花板)
 
 
 def align_bottom_center(
     frames: list[Image.Image],
-    cell: int = 256,
-    foot_line: float = 0.92,
-    fill_h: float = 0.62,
-    fill_w: float = 0.96,
+    cell: int = CELL,
+    foot_line: float = FOOT_LINE,
+    fill_h: float = FILL_H,
+    fill_w: float = FILL_W,
     preserve_lift: bool = False,
     ref_height: float | None = None,
     cell_h: int | None = None,

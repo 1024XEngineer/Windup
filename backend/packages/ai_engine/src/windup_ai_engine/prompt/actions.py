@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+from windup_common.models import Facing
+
 __all__ = ["build_idle_prompt", "build_attack_prompt"]
 
 _IDLE_SIDE = (
@@ -56,10 +58,12 @@ DEFAULT_WEAPON = "the sword"
 DEFAULT_GARMENT = "the cape"
 
 
-def _build(side: str, front: str, weapon: str, garment: str, feet: str, facing: str) -> str:
-    if facing not in ("side", "front"):
-        raise ValueError(f"facing 只能是 'side' 或 'front',收到 {facing!r}")
-    body = (side if facing == "side" else front).format(weapon=weapon, garment=garment)
+def _build(
+    side: str, front: str, weapon: str, garment: str, feet: str, facing: Facing | str
+) -> str:
+    # 非法值在此炸掉,别静默落到 FRONT 模板(理由见 walk.py 同处注释)。
+    tpl = side if Facing(facing) is Facing.SIDE else front
+    body = tpl.format(weapon=weapon, garment=garment)
     return body.replace("boot", feet) if feet != "boot" else body
 
 
@@ -67,7 +71,7 @@ def build_idle_prompt(
     weapon: str = DEFAULT_WEAPON,
     garment: str = DEFAULT_GARMENT,
     feet: str = "boot",
-    facing: str = "side",
+    facing: Facing | str = Facing.SIDE,
 ) -> str:
     """待机正文(循环类)。``facing`` 须与母版朝向一致。"""
     return _build(_IDLE_SIDE, _IDLE_FRONT, weapon, garment, feet, facing)
@@ -77,7 +81,7 @@ def build_attack_prompt(
     weapon: str = DEFAULT_WEAPON,
     garment: str = DEFAULT_GARMENT,
     feet: str = "boot",
-    facing: str = "side",
+    facing: Facing | str = Facing.SIDE,
 ) -> str:
     """攻击正文(一次性类)。``facing`` 须与母版朝向一致。"""
     return _build(_ATTACK_SIDE, _ATTACK_FRONT, weapon, garment, feet, facing)
