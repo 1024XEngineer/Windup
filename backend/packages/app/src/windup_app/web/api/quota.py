@@ -17,7 +17,7 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from windup_common.result import ListResponse, Response

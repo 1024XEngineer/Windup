@@ -13,7 +13,7 @@ rollback，故本实现只 ``flush``（把变更发到当前事务、取回生�
 
 import logging
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
