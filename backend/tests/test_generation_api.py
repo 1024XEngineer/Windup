@@ -58,8 +58,10 @@ def test_image_generation_uses_token_user_without_body_user_id(auth_client):
         json=_image_payload(project["id"]),
     )
 
-    assert response.json()["code"] == 400
-    assert response.json()["message"] == "接口待实现"
+    # 端点已接上服务层（本 PR），故断言真实行为：任务建成、归属取自 token 而不是请求体。
+    body = response.json()
+    assert body["data"] is not None, body
+    assert body["data"]["status"] == "pending"
 
 
 def test_spoofed_body_user_id_cannot_access_other_users_project(
@@ -86,8 +88,10 @@ def test_action_generation_uses_token_user_without_body_user_id(auth_client):
         json=_action_payload(project["id"], character["id"]),
     )
 
-    assert response.json()["code"] == 400
-    assert response.json()["message"] == "接口待实现"
+    # 端点已接上服务层（本 PR），故断言真实行为：任务建成、归属取自 token 而不是请求体。
+    body = response.json()
+    assert body["data"] is not None, body
+    assert body["data"]["status"] == "pending"
 
 
 def test_action_character_must_belong_to_requested_project(auth_client):
@@ -147,3 +151,65 @@ def test_event_bus_isolates_same_task_id_between_projects():
 
 def test_generation_response_contract_does_not_expose_user_id():
     assert "user_id" not in GenerationTaskOut.model_fields
+
+
+# ── 端点必须真的接上服务层（2026-08-12 事故后补）──────────────────────────────
+#
+# 这三个端点曾在一次 rebase 里被换回 TODO 桩，CI 全绿、只有人工评审看出来。
+# 根因是没有任何测试断言"端点会落库"—— 桩返回 400、测试也断言 400，两边一致。
+
+
+def _submit_image(auth_client, project_id: int):
+    return auth_client.post("/generation/image", json=_image_payload(project_id)).json()
+
+
+def test_image_endpoint_actually_creates_a_task_row(auth_client):
+    """提交后必须有一条 PENDING 任务落库，而不是抛"接口待实现"。"""
+    project = _create_project(auth_client)
+    body = _submit_image(auth_client, project["id"])
+    assert body["data"] is not None, body
+    task_id = body["data"]["id"]
+
+    got = auth_client.get(f"/generation/tasks/{task_id}",
+                          params={"project_id": project["id"]}).json()
+    assert got["data"]["id"] == task_id
+    assert got["data"]["status"] == "pending"
+
+
+def test_action_endpoint_actually_creates_a_task_row(auth_client):
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+    body = auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"]),
+    ).json()
+    assert body["data"] is not None, body
+    assert body["data"]["status"] == "pending"
+
+
+def test_task_query_rejects_a_task_from_another_project(auth_client):
+    """归属两道：项目属于我 + 任务属于该项目。
+
+    只查项目不够 —— 任意已认证用户拿自己的 project_id 配上别人的 task_id
+    就能读到别人的产物 URL。用同一用户的两个项目复现，排除"项目校验挡住了"。
+    """
+    mine = _create_project(auth_client, "我的项目")
+    other = _create_project(auth_client, "另一个项目")
+    task_id = _submit_image(auth_client, other["id"])["data"]["id"]
+
+    got = auth_client.get(f"/generation/tasks/{task_id}",
+                          params={"project_id": mine["id"]}).json()
+    assert got["data"] is None, got
+
+
+def test_response_conversion_path_is_live(auth_client):
+    """_task_to_out 必须真的被调用。
+
+    它曾定义了没人调用 —— 那正是"整层没接上"的旁证之一。这里断言响应形状确实
+    来自它（含 status / task_type 等领域字段），而不是随便一个 dict。
+    """
+    project = _create_project(auth_client)
+    data = _submit_image(auth_client, project["id"])["data"]
+    for k in ("id", "status", "task_type"):
+        assert k in data, f"缺字段 {k}：{data}"
+    assert "user_id" not in data, "响应不该暴露 user_id"
