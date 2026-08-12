@@ -601,7 +601,7 @@ function ResumeProjects({ projects }: { projects: Project[] }) {
     <div>
       <div className="mb-2 flex min-h-9 items-center justify-between rounded-[0.625rem] bg-[#e5e5df] px-3 font-sans text-[0.65rem] font-medium tracking-[0.02em] text-[#677068]">
         <span>{projects.length} 个项目</span>
-        <span>按更新时间</span>
+        <span>项目列表</span>
       </div>
       <div className="grid gap-1">
         {projects.map((project) => (
