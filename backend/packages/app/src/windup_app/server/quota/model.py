@@ -107,85 +107,22 @@ class CreditTransaction(Base):
     )
 
 
-class InviteCode(Base):
-    """邀请码。"""
-
-    __tablename__ = "windup_invite_code"
-
-    id: Mapped[int] = mapped_column(
-        BigInteger().with_variant(Integer, "sqlite"),
-        primary_key=True,
-        autoincrement=True,
-    )
-    user_id: Mapped[int] = mapped_column(
-        BigInteger().with_variant(Integer, "sqlite"),
-        nullable=False,
-        index=True,
-    )
-    code: Mapped[str] = mapped_column(String(16), unique=True, nullable=False)
-    max_uses: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
-    used_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    create_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-    )
-
-
-class InviteRecord(Base):
-    """邀请记录。"""
-
-    __tablename__ = "windup_invite_record"
-
-    id: Mapped[int] = mapped_column(
-        BigInteger().with_variant(Integer, "sqlite"),
-        primary_key=True,
-        autoincrement=True,
-    )
-    inviter_id: Mapped[int] = mapped_column(
-        BigInteger().with_variant(Integer, "sqlite"),
-        nullable=False,
-    )
-    invitee_id: Mapped[int] = mapped_column(
-        BigInteger().with_variant(Integer, "sqlite"),
-        unique=True,
-        nullable=False,
-    )
-    code: Mapped[str] = mapped_column(String(16), nullable=False)
-    create_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-    )
-
-
-class TokenUsage(Base):
-    """Token 用量记录。"""
-
-    __tablename__ = "windup_token_usage"
-
-    id: Mapped[int] = mapped_column(
-        BigInteger().with_variant(Integer, "sqlite"),
-        primary_key=True,
-        autoincrement=True,
-    )
-    user_id: Mapped[int] = mapped_column(
-        BigInteger().with_variant(Integer, "sqlite"),
-        nullable=False,
-        index=True,
-    )
-    agent_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    model: Mapped[str] = mapped_column(String(64), nullable=False)
-    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    credit_deducted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    ref_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    create_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-    )
+# -- 以下 ORM 暂不实现（枚举 / 接口已预留）----------------------------------
+#
+# class InviteCode(Base):
+#     """邀请码。"""
+#     __tablename__ = "windup_invite_code"
+#     ...
+#
+# class InviteRecord(Base):
+#     """邀请记录。"""
+#     __tablename__ = "windup_invite_record"
+#     ...
+#
+# class TokenUsage(Base):
+#     """Token 用量记录。"""
+#     __tablename__ = "windup_token_usage"
+#     ...
 
 
 # -- 视图模型 ------------------------------------------------------------
@@ -219,13 +156,9 @@ class CreditTransactionView:
     create_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-@dataclass
-class InviteCodeView:
-    """邀请码视图。"""
-
-    id: int | None = None
-    user_id: int = 0
-    code: str = ""
-    max_uses: int = 10
-    used_count: int = 0
-    create_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+# -- 暂不实现 --
+#
+# @dataclass
+# class InviteCodeView:
+#     """邀请码视图。"""
+#     ...

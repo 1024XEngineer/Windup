@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 from windup_app.server.quota.model import (
     CreditAccountView,
     CreditTransactionView,
-    InviteCodeView,
 )
 
 
@@ -54,18 +53,13 @@ class QuotaService(ABC):
         :raises BizException: 冻结额度不足。
         """
 
-    # -- 后付费：原子扣减 --------------------------------------------------
-
-    @abstractmethod
-    def deduct_postpaid(
-        self, session: Session, user_id: int, amount: int, ref_id: str
-    ) -> None:
-        """后付费原子扣减（Agent token 等）。
-
-        使用 UPDATE ... WHERE balance >= :amount，数据库层面防负。
-
-        :raises BizException: 积分不足。
-        """
+    # -- 后付费：原子扣减（暂不实现，AGENT_TOKEN / POSTPAID 枚举已预留）------
+    #
+    # @abstractmethod
+    # def deduct_postpaid(
+    #     self, session: Session, user_id: int, amount: int, ref_id: str
+    # ) -> None:
+    #     """后付费原子扣减（Agent token 等）。"""
 
     # -- 入账（赠送 / 奖励 / 管理员调整）----------------------------------
 
@@ -84,18 +78,18 @@ class QuotaService(ABC):
         """分页查询积分流水，返回 (列表, 总数)。"""
 
     # -- 邀请码 -----------------------------------------------------------
-
-    @abstractmethod
-    def get_invite_code(self, session: Session, user_id: int) -> InviteCodeView | None:
-        """获取用户当前邀请码。"""
-
-    @abstractmethod
-    def generate_invite_code(self, session: Session, user_id: int) -> InviteCodeView:
-        """生成新邀请码（替换旧码）。"""
-
-    @abstractmethod
-    def redeem_invite_code(self, session: Session, user_id: int, code: str) -> None:
-        """兑换邀请码，双方各得积分。
-
-        :raises BizException: 邀请码无效 / 已达上限 / 已填过码。
-        """
+    # TODO 目前先不实现。
+    # @abstractmethod
+    # def get_invite_code(self, session: Session, user_id: int) -> InviteCodeView | None:
+    #     """获取用户当前邀请码。"""
+    #
+    # @abstractmethod
+    # def generate_invite_code(self, session: Session, user_id: int) -> InviteCodeView:
+    #     """生成新邀请码（替换旧码）。"""
+    #
+    # @abstractmethod
+    # def redeem_invite_code(self, session: Session, user_id: int, code: str) -> None:
+    #     """兑换邀请码，双方各得积分。
+    #
+    #     :raises BizException: 邀请码无效 / 已达上限 / 已填过码。
+    #     """
