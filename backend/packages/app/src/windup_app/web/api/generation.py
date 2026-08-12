@@ -174,6 +174,13 @@ class CharacterActionGenerateRequest(BaseModel):
     reference_image_urls: list[str] = Field(default_factory=list)
     # 同上:帧数决定抽帧与逐帧抠图的工作量,上界 64 已远超引擎能出的有效周期长度。
     num_frames: int = Field(default=16, ge=1, le=64)
+    # ── action_type=custom 才用到(#239)───────────────────────────────────
+    # 这个动作是否循环播放。**custom 时必填**;缺了在编排层报错,不猜(猜错会把一次性动作
+    # 强行首尾闭环,而帧数/时长/成色全部正常、没有任何一道会红)。
+    loop: bool | None = None
+    # 视频模型。None = 用部署默认(kling-v2-5-turbo)。取值域见
+    # orchestrator.executor.ALLOWED_VIDEO_MODELS;非法值在入口就报错,不到付费调用才失败。
+    video_model: str | None = None
 
     @model_validator(mode="after")
     def require_custom_prompt(self):
@@ -307,6 +314,8 @@ def submit_action_generation(
         character_id=body.character_id,
         action_type=body.action_type,
         custom_prompt=body.custom_prompt,
+        loop=body.loop,
+        video_model=body.video_model,
         reference_video_url=body.reference_video_url,
         reference_image_urls=body.reference_image_urls,
         num_frames=body.num_frames,

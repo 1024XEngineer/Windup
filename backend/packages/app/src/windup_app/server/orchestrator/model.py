@@ -70,6 +70,16 @@ class CharacterActionInput:
     reference_video_url: str | None = None
     reference_image_urls: list[str] = field(default_factory=list)
     num_frames: int = 16
+    # ── action_type=custom 才用到的两个(#239)──────────────────────────────
+    #
+    # 这个动作是否循环播放。**custom 时必填,不猜。** 按描述关键词猜("走/跑"→循环、
+    # "挥/劈"→一次性)猜错的后果是"挥手被强行首尾闭环":末帧接回首帧会抽搐,而帧数、
+    # 时长、成色全部正常,没有任何一道会红。前端已有动作名与描述表单,多一个勾选框成本很低。
+    loop: bool | None = None
+    # 视频模型。``None`` = 用部署配置的默认值(kling-v2-5-turbo)。
+    # 取值域见 executor.ALLOWED_VIDEO_MODELS —— 只开放三个,因为每个模型的入参形状不同
+    # (image_list / input_reference / Fal 队列),全开等于把三套协议适配塞进一个改动。
+    video_model: str | None = None
 
 
 # -- 出参（按任务类型细化，前端可直接回填 character 模块）------------------

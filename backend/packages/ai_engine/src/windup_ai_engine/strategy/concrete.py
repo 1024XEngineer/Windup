@@ -23,11 +23,12 @@ from windup_ai_engine.postprocess import master_pixel_spec, pixelate_frames
 from windup_ai_engine.slicing import extract_all_frames_bytes, pick_cycle, pick_oneshot
 from windup_ai_engine.prompt import (
     build_attack_prompt,
+    build_custom_prompt,
     build_idle_prompt,
     build_jump_prompt,
     build_walk_prompt,
 )
-from windup_ai_engine.strategy.base import CYCLIC_ACTIONS, DerivationStrategy
+from windup_ai_engine.strategy.base import DerivationStrategy, is_cyclic
 
 
 class VideoFrameStrategy(DerivationStrategy):
@@ -46,16 +47,14 @@ class VideoFrameStrategy(DerivationStrategy):
 
     def _build_prompt(self, action: ActionSpec) -> str:
         """按动作类型选提示词;朝向随 ActionSpec.facing。"""
-        if action.motion_prompt:
-            facing = (
-                "SIDE VIEW facing right"
-                if action.facing.value == "side"
-                else "FACING THE VIEWER"
-            )
-            return (
-                f"Perform exactly this motion: {action.motion_prompt}. {facing}. "
-                "One single committed motion, preserving the character's identity, proportions, "
-                "clothing, and colors. Keep the whole body visible and return to a stable pose."
+        # custom 单独一支:它的动作内容来自用户,只能由 build_custom_prompt 把那句话
+        # 嵌进机制骨架(朝向锁 / 正向措辞 / 装备存在无关 / 一次性的单次+终态保持)。
+        # 不能塞进下面那张表 —— 那张表里的 builder 只接 facing。
+        if action.action is ActionType.CUSTOM:
+            return build_custom_prompt(
+                action.custom_action or "",
+                facing=action.facing,
+                cyclic=bool(action.cyclic),
             )
         builders = {
             ActionType.JUMP: build_jump_prompt,
@@ -91,7 +90,7 @@ class VideoFrameStrategy(DerivationStrategy):
             _first = _img(self._matte.cutout(_png(dense[0])))
             _ys, _ = np.where(np.asarray(_first)[:, :, 3] > 128)
             ref_h = float(_ys.max() - _ys.min()) if len(_ys) else None
-        if action.action in CYCLIC_ACTIONS:
+        if is_cyclic(action):
             progress.step("derive", 1, 3, f"步态周期取 {n} 帧(无缝 loop)+ 抠图")
             picked = pick_cycle(dense, n)                   # 单周期闭环(#21)
         else:

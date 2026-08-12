@@ -139,10 +139,40 @@ class _LogProgress:
         logger.info("[gen] %s %s/%s %s", stage, i, total, note)
 
 
+# 本期开放的视频模型。**只三个**,因为每个模型的入参形状不同(image_list /
+# input_reference / Fal 队列 + `Authorization: Key`),全开等于把三套协议适配塞进一个改动。
+# 取舍写在这里而不是文档里,是为了让改这张表的人同时看到代价。Refs #239。
+ALLOWED_VIDEO_MODELS: dict[str, str] = {
+    # 现役、稳;本地首帧直接吃 JPG base64,不需要公网 URL。
+    "kling-v2-5-turbo": "默认。稳,本地首帧即可",
+    # 台账实测步态最自然(放低武器迈大步),但更贵,且**只吃公网图 URL**(不吃 base64)。
+    "veo3.1": "步态最自然,但更贵且需公网图 URL",
+    # 有 motion-control,对"自定义动作"可能最有价值,待实测。
+    "kling-v2-6": "有 motion-control,自定义动作潜力最大",
+}
+
+
+def _resolve_video_model(name: str | None) -> str | None:
+    """校验并返回视频模型名;``None`` 表示用部署默认值。
+
+    非法取值**在入口炸**,不等到付费调用才失败 —— 网关对没开通的模型返回的错误
+    长得像"模型不存在",排查时容易怀疑错方向(今天在 Tripo 上刚踩过同型的坑)。
+    """
+    if name is None:
+        return None
+    if name not in ALLOWED_VIDEO_MODELS:
+        raise ValueError(
+            f"视频模型 {name!r} 不在本期开放列表内。可选:"
+            + "；".join(f"{k}({v})" for k, v in ALLOWED_VIDEO_MODELS.items())
+        )
+    return name
+
+
 def _to_engine_action(t) -> EngineActionType:
     """generation.ActionType → 引擎 common.ActionType(按值映射)。
 
-    所有 API 动作类型都按值映射到引擎动作类型。
+    walk/idle/attack/**custom** 直通(custom 自 #239 起引擎已支持)。
+    引擎仍未覆盖的类型在此抛带原因的错误,而不是让请求走到一半失败。
     """
     try:
         return EngineActionType(t.value)
@@ -163,6 +193,8 @@ class ActionTaskExecutor:
         session_factory: Callable[[], Session] | None = None,
     ) -> None:
         self._generator = generator          # None → 懒加载真实装配
+        # 按视频模型名分桶的 generator 缓存(模型是 provider 的构造参数,不能事后换)
+        self._by_model: dict[str | None, CharacterGeneratorPort] = {}
         self._upload = upload                # None → 真实对象存储上传
         self._fetch_master = fetch_master    # None → 下载 reference_image_urls[0]
         self._fetch_constraints = fetch_constraints  # None → 查 project 全局约束
@@ -228,15 +260,26 @@ class ActionTaskExecutor:
         if cons.style:
             desc_parts.append(f"Art style: {cons.style}")
         card = CharacterCard(name=f"char-{input.character_id}", desc=" ".join(desc_parts))
+        engine_action = _to_engine_action(input.action_type)
+        # custom 的动作内容与循环性只能随请求给 —— 引擎侧对这两个字段有必填校验,
+        # 缺了会在构造 ActionSpec 时就炸(而不是等到付费调用之后)。
+        extra: dict[str, object] = {}
+        if engine_action is EngineActionType.CUSTOM:
+            if input.loop is None:
+                raise ValueError(
+                    "自定义动作必须显式给 loop(是否循环播放)。不猜 —— 猜错会把一次性动作"
+                    "强行首尾闭环,而帧数/时长/成色全部正常、没有任何一道会红"
+                )
+            extra = {"custom_action": input.custom_prompt or "", "cyclic": bool(input.loop)}
         action = ActionSpec(
-            action=_to_engine_action(input.action_type),
-            motion_prompt=input.custom_prompt if input.action_type is ActionType.CUSTOM else None,
+            action=engine_action,
             poses=[""] * input.num_frames,
             facing=cons.facing,
             stylize=cons.stylize,
+            **extra,
         )
         progress: ProgressPort = _LogProgress()
-        generated = self._get_generator().generate(
+        generated = self._get_generator(_resolve_video_model(input.video_model)).generate(
             card, action, master, progress, canvas=(cons.sprite_w, cons.sprite_h)
         )
 
@@ -249,9 +292,20 @@ class ActionTaskExecutor:
         ]
         return {"type": "character_action", "action_type": input.action_type.value, "frames": frames}
 
-    def _get_generator(self) -> CharacterGeneratorPort:
-        """懒装配真实 CharacterGenerator(视频路线 + 桩路线)。"""
-        if self._generator is None:
+    def _get_generator(self, video_model: str | None = None) -> CharacterGeneratorPort:
+        """懒装配真实 CharacterGenerator(视频路线 + 桩路线)。
+
+        ``video_model`` 非 None 时**另装一套**并按模型名缓存:视频 provider 的模型是构造
+        参数,不能在一个已装好的 generator 上换。不按模型分桶的话,第一个请求指定了
+        veo3.1 之后,后续所有请求都会沿用它 —— 那是"看起来指定了模型、实际用的是别人的"
+        这类静默错误。注入 generator(测试)时一律直接返回注入的那个,不受本参数影响。
+        """
+        if self._generator is not None:
+            return self._generator
+        cached = self._by_model.get(video_model)
+        if cached is not None:
+            return cached
+        if True:
             from windup_ai_engine.impl import CharacterGenerator
             from windup_ai_engine.strategy.concrete import (
                 PerFrameStrategy,
@@ -265,7 +319,7 @@ class ActionTaskExecutor:
             )
 
             matte = OnnxU2NetMatteProvider()
-            video = SufyVideoProvider()
+            video = SufyVideoProvider(model=video_model)
             image = SufyImageProvider()
             # 只装当前 GenRoute 真有的路线。曾多装一个 PROC_IDLE:该枚举值与
             # ProcIdleStrategy 都已随"程序化待机放弃"一起删除,而这行留着,于是**每个**
@@ -283,8 +337,9 @@ class ActionTaskExecutor:
                     f"GenRoute 新增了 {sorted(r.value for r in missing)} 但 executor 未装配;"
                     "补上或在此显式说明为何不装。"
                 )
-            self._generator = CharacterGenerator(strategies)
-        return self._generator
+            gen = CharacterGenerator(strategies)
+        self._by_model[video_model] = gen
+        return gen
 
     def _download_master(self, input: CharacterActionInput) -> bytes:
         if not input.reference_image_urls:

@@ -38,9 +38,13 @@ class ActionType(str, Enum):
     jump / hit;跨越两者靠编排层的显式适配函数 ``_to_engine_action``,它对引擎没有路线
     的类型抛带原因的错误,而不是让请求走到一半失败。
 
-    为什么不直接把 ``custom`` 加进来:``ROUTE_MATRIX`` 没有它的分流,加了成员等于接收
-    一个我们无法履约的请求——与 :class:`GenRoute` docstring 里那条是同一原则。API 入口
-    的枚举保持不变,所以对既有调用方的兼容性不受影响。
+    **2026-08-12 更新**:``custom`` 已随实现一起加入(#239)。此前不加它的理由是
+    "``ROUTE_MATRIX`` 没有它的分流,加了等于接收一个我们无法履约的请求" —— 那条理由
+    成立且仍然成立,所以这次是**先把履约能力做出来**(提示词构建 + 循环性显式声明 +
+    路线分流)才加的成员,不是提前留位。
+
+    入口枚举(``orchestrator.model.ActionType``)仍与本枚举分离:它少 run / hit,
+    跨越靠 ``_to_engine_action``。
     """
 
     IDLE = "idle"
@@ -49,6 +53,10 @@ class ActionType(str, Enum):
     JUMP = "jump"      # 一次性动作,且要按状态切段(见 postprocess.split_jump_phases)
     ATTACK = "attack"  # slash / thrust / dash 归此
     HIT = "hit"
+    # 用户自述动作。与上面几个的**结构性差异**:上面每个都自带一套写死的产线设定
+    # (提示词模板、循环性、所需母版姿态),而 custom 的这些只能由调用方随请求给出。
+    # 故 ``ActionSpec`` 对它多要两个字段(``custom_action`` / ``cyclic``),缺一个就报错 ——
+    # 见该类的校验器。Refs 1024XEngineer/Windup#239。
     CUSTOM = "custom"
 
 
@@ -150,8 +158,19 @@ class ActionSpec(BaseModel):
     model_config = _STRICT
 
     action: ActionType
-    # 自由动作的视频运动描述。仅在调用方明确提供时覆盖固定动作模板。
-    motion_prompt: str | None = Field(default=None, min_length=1)
+    # 注:#240 曾在这里加过一个 ``motion_prompt: str | None`` —— "自由动作的视频运动描述,
+    # 仅在调用方明确提供时覆盖固定动作模板"。**已删除**,换成下面的 custom_action / cyclic。
+    #
+    # 删它的理由不是重复,是它有个静默的洞:它没有校验器(``ActionSpec`` 当时只有
+    # ``_reconcile_n_frames_with_poses``),而 ``concrete._build_prompt`` 里
+    # ``if action.motion_prompt:`` 排在 builders 字典**之前** —— 于是把 motion_prompt 设在
+    # walk / jump / attack 上会**静默顶掉实测调过的模板**,而帧数、时长、成色全部正常,
+    # 没有任何一道会红。#240 的测试正是拿 ATTACK + motion_prompt 断言了这个行为。
+    #
+    # 另一半理由是它不承载循环性:循环类自定义动作(游泳、划船、爬梯)会落到
+    # ``pick_oneshot`` 被强行按一次性裁段,同样一道都不红。故改为
+    # ``custom_action`` + ``cyclic`` 两个字段并加双向校验(见本类的校验器)。
+    # Refs 1024XEngineer/Windup#239。
 
     # 出帧数。**显式字段,不再由 len(poses) 推导**:视频路线根本不读 poses(见
     # strategy.concrete.VideoFrameStrategy),推导意味着"想要 16 帧就得先编 16 条用不上的
@@ -170,6 +189,53 @@ class ActionSpec(BaseModel):
     palette_size: int = Field(default=32, ge=2)    # 色板色数(1 色的像素画不存在)
     # 生成提示词的朝向,**必须与母版朝向一致**(对应 Project.perspective)。
     facing: Facing = Facing.SIDE
+
+    # ── 仅 action=CUSTOM 用的两个字段(#239)────────────────────────────────
+    #
+    # 其余动作各自自带一套写死的产线设定(提示词模板、循环性、所需母版姿态),
+    # custom 没有 —— 只能由调用方随请求给出。缺任何一个都在构造时炸,见下面的校验器。
+
+    # 用户自述的动作内容。**只写"做什么动作"**,不复述角色外观:身份由母版承载,
+    # 身份描述再写一遍会和母版打架(见 ports.CharacterGeneratorPort)。
+    custom_action: str | None = None
+
+    # 这个动作是否循环播放。**必须显式给,不猜。**
+    #
+    # 为什么不按描述关键词猜("走/跑"→循环、"挥/劈"→一次性):猜错的后果是"挥手被强行
+    # 首尾闭环" —— 末帧接回首帧会抽搐,而帧数、时长、成色全部正常,没有任何一道会红。
+    # 那正是本仓反复吃过的静默错误。宁可要求调用方多传一个 bool。
+    #
+    # 名字刻意不叫 ``loop``:此前有个 ``loop`` 字段因零消费方被删(它的取值是
+    # pingpong/none 且不改变任何产出)。这个字段**有真实消费方** ——
+    # 它决定 slicing 走 pick_cycle 还是 pick_oneshot、以及出参要不要量 loop_seam。
+    cyclic: bool | None = None
+
+    @model_validator(mode="after")
+    def _custom_needs_its_own_settings(self) -> ActionSpec:
+        """custom 必须自带动作描述与循环性;非 custom 不该带这两个字段。
+
+        两个方向都卡:
+          - 缺 → 引擎无从构建提示词 / 无从决定抽帧方式,只能猜,而猜错是静默的;
+          - 多给 → 调用方以为能覆盖 walk 的循环性,实际被写死的表覆盖(又一个
+            "看起来生效实则被忽略")。
+        """
+        if self.action is ActionType.CUSTOM:
+            if not (self.custom_action or "").strip():
+                raise ValueError("action=custom 必须给 custom_action(动作描述),否则无从构建提示词")
+            if self.cyclic is None:
+                raise ValueError(
+                    "action=custom 必须显式给 cyclic(是否循环播放)。不猜 —— "
+                    "猜错会把一次性动作强行首尾闭环,而帧数/时长/成色全部正常、没有任何一道会红"
+                )
+        else:
+            if self.custom_action is not None:
+                raise ValueError(f"action={self.action.value} 不该带 custom_action;它的提示词由模板给")
+            if self.cyclic is not None:
+                raise ValueError(
+                    f"action={self.action.value} 不该带 cyclic;循环性由 CYCLIC_ACTIONS 写死,"
+                    "传了不会生效"
+                )
+        return self
 
     @model_validator(mode="before")
     @classmethod

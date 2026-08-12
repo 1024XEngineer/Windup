@@ -178,7 +178,14 @@ def test_video_strategy_prompt_follows_facing(monkeypatch):
     assert "FACING THE VIEWER" in seen[1]
 
 
-def test_video_strategy_uses_custom_motion_prompt(monkeypatch):
+def test_video_strategy_uses_custom_action_text(monkeypatch):
+    """自定义动作的描述要真的进提示词。
+
+    这条原先写成 ``ActionSpec(action=ATTACK, motion_prompt=...)`` 并断言它顶掉了 attack
+    模板 —— 那个行为已随 ``motion_prompt`` 一起删掉(见 ActionSpec 里的说明):它让
+    非 custom 动作能静默覆盖实测调过的模板,而没有任何一道会红。现在描述只能经
+    ``action=CUSTOM`` + ``custom_action`` 进来,契约层面就堵死了误用。
+    """
     seen: list[str] = []
 
     class _SpyVideo:
@@ -190,8 +197,9 @@ def test_video_strategy_uses_custom_motion_prompt(monkeypatch):
     strat.derive(
         CharacterCard(name="hero", desc=""),
         ActionSpec(
-            action=ActionType.ATTACK,
-            motion_prompt="wave hello with the right hand",
+            action=ActionType.CUSTOM,
+            custom_action="wave hello with the right hand",
+            cyclic=False,
             stylize=Stylize.NONE,
             n_frames=4,
         ),
