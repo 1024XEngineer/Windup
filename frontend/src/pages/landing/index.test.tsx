@@ -3,8 +3,9 @@ import { cleanup, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MemoryRouter } from 'react-router'
 
-import expectedBirdLeft from '@/assets/landing/birds/gongbi-tit-flight-up.png'
-import expectedBirdRight from '@/assets/landing/birds/gongbi-tit-flight-down.png'
+import expectedBirdLeft from '@/assets/landing/illustrations/gongbi-tit-flight-up.webp'
+import expectedBirdRight from '@/assets/landing/illustrations/gongbi-tit-flight-down.webp'
+import expectedWorkflowEditorDesktop from '@/assets/landing/screenshots/workflow-editor-runtime-desktop.jpg'
 import { AuthenticatedAuthSession, GuestAuthSession } from '@/test/auth-session'
 import { LandingPage } from './index'
 
@@ -102,9 +103,7 @@ describe('LandingPage', () => {
     })
     expect(screenshots).toHaveLength(2)
     for (const screenshot of screenshots) {
-      expect(screenshot.getAttribute('src')).toBe(
-        '/landing/workflow-editor-real-runtime-desktop.jpg',
-      )
+      expect(screenshot.getAttribute('src')).toBe(expectedWorkflowEditorDesktop)
     }
     expect(document.querySelector('source[srcset*="workflow-editor"]')).toBeNull()
   })

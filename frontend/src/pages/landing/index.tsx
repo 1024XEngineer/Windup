@@ -2,14 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { Link } from 'react-router'
 
-import gongbiBirdLeft from '@/assets/landing/birds/gongbi-tit-flight-up.png'
-import gongbiBirdRight from '@/assets/landing/birds/gongbi-tit-flight-down.png'
+import characterJourney from '@/assets/landing/illustrations/character-journey.webp'
+import gongbiBirdLeft from '@/assets/landing/illustrations/gongbi-tit-flight-up.webp'
+import gongbiBirdRight from '@/assets/landing/illustrations/gongbi-tit-flight-down.webp'
+import workflowEditorDesktop from '@/assets/landing/screenshots/workflow-editor-runtime-desktop.jpg'
 import { useAuthSession } from '@/features/auth-session'
 import { usePrefersReducedMotion } from '@/shared/hooks'
 import { CapabilitiesRail } from './capabilities-rail'
 import { MarketingHeader } from './marketing-header'
-
-const workflowEditorDesktop = '/landing/workflow-editor-real-runtime-desktop.jpg'
 
 const creationEntry = `/?${new URLSearchParams({
   account: 'login',
@@ -545,7 +545,7 @@ export function LandingPage() {
         */}
         <div className="relative isolate">
           <img
-            src="/landing/character-journey.png"
+            src={characterJourney}
             alt="同一批角色从线稿逐步走到成品，最后站进游戏场景里"
             loading="lazy"
             className="block aspect-[1536/571] w-full object-cover object-[center_49%]"
