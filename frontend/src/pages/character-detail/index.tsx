@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useOutletContext, useParams } from 'react-router'
 
-import { characterApis, type Action, type Character, type Outfit } from '@/entities'
+import { characterApis, type Action, type Character, type Outfit, type Project } from '@/entities'
+import { createCharacterExportModel, ExportPanel } from '@/features/export-package'
 
 const ACTION_TYPE_LABELS: Record<string, string> = {
   walk: '行走',
@@ -24,6 +25,7 @@ function characterName(character: Character) {
 
 export function CharacterDetailPage() {
   const { projectId, characterId } = useParams()
+  const project = useOutletContext<Project>()
   const [character, setCharacter] = useState<Character | null>(null)
   const [selectedOutfitId, setSelectedOutfitId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -125,18 +127,7 @@ export function CharacterDetailPage() {
                 试玩当前造型
               </Link>
             ) : null}
-            <button
-              type="button"
-              disabled
-              aria-label="导出资产包"
-              className="cursor-not-allowed rounded-full border border-[#cbd1c8] px-3 py-1.5 text-xs font-semibold text-[#858c84]"
-            >
-              导出资产包
-            </button>
           </div>
-          <p className="max-w-xs text-right text-[0.62rem] text-[#858c84]">
-            导出能力待 PR #97 合并并完成资产字段接线
-          </p>
         </div>
       </div>
 
@@ -149,10 +140,49 @@ export function CharacterDetailPage() {
           <div className="mt-3">
             <OutfitMaster character={character} outfit={selectedOutfit} />
           </div>
+          <CharacterExport project={project} character={character} outfit={selectedOutfit} />
           <ActionList key={selectedOutfit.id} character={character} outfit={selectedOutfit} />
         </>
       )}
     </section>
+  )
+}
+
+function CharacterExport({
+  project,
+  character,
+  outfit,
+}: {
+  project: Project
+  character: Character
+  outfit: Outfit
+}) {
+  const result = useMemo(() => {
+    try {
+      return {
+        model: createCharacterExportModel({ project, character, outfitId: outfit.id }),
+        error: null,
+      }
+    } catch (error) {
+      return {
+        model: null,
+        error: error instanceof Error ? error.message : '资产数据无效',
+      }
+    }
+  }, [character, outfit.id, project])
+
+  if (result.error !== null) {
+    return (
+      <p role="alert" className="mt-3 text-xs font-medium text-[#8a4934]">
+        导出不可用：{result.error}
+      </p>
+    )
+  }
+  if (result.model === null || result.model.actions.length === 0) return null
+  return (
+    <div className="mt-4 max-w-sm">
+      <ExportPanel model={result.model} />
+    </div>
   )
 }
 
