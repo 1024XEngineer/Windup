@@ -76,6 +76,11 @@ def cloud(monkeypatch):
     return install
 
 
+# 在 no_real_download 打桩之前抓住真函数。模块级赋值在导入期执行,早于任何 fixture,
+# 所以这是唯一能拿到未打桩实现的时机 —— 直接引用 T._download 拿到的是那个假实现。
+_REAL_DOWNLOAD = T._download
+
+
 @pytest.fixture(autouse=True)
 def no_real_download(monkeypatch):
     """产物下载也堵死:任何用例真去 GET 一个 URL 都算测试写漏了。"""
@@ -219,6 +224,24 @@ def test_wrong_format_artifact_is_refused_not_returned(cloud):
     with pytest.raises(ArtifactFormatError) as e:
         TencentModel3DProvider(CREDS, allow_spend=True).image_to_3d(b"\x89PNG", want="GLB")
     assert "FBX" in str(e.value) and "OBJ" in str(e.value)
+
+
+def test_billed_format_mismatch_hands_back_the_job_id(cloud):
+    """格式不符时**必须带出 JobId**。此时任务已 DONE、积分已经扣掉,拿不到 JobId 就
+    只能重新提交、重付一次 —— 这正是本模块提供 ``fetch(job_id)`` 要防的那个缺口。
+    绑骨路径一直带着 job_id,图生 3D 这条曾经漏了。
+    """
+    cloud(
+        SubmitHunyuanTo3DProJob=[{"JobId": "j-billed-42"}],
+        QueryHunyuanTo3DProJob=[{"Status": "DONE", "ResultFile3Ds": [
+            {"Type": "FBX", "Url": "https://x/m.fbx"},
+        ]}],
+    )
+    with pytest.raises(ArtifactFormatError) as e:
+        TencentModel3DProvider(CREDS, allow_spend=True).image_to_3d(b"\x89PNG", want="GLB")
+    msg = str(e.value)
+    assert "j-billed-42" in msg, f"错误里没有 JobId,已扣费的产物取不回来:{msg}"
+    assert "费用已产生" in msg
 
 
 def test_artifact_is_picked_by_type_not_by_position(cloud):
@@ -630,3 +653,83 @@ def test_cos_signature_carries_the_required_fields():
     sig = cos_sign(_creds(), "PUT", "/o.glb", "b.cos.ap-guangzhou.myqcloud.com")
     for field in ("q-sign-algorithm=sha1", "q-ak=AKIDtest", "q-header-list=host", "q-signature="):
         assert field in sig
+
+
+# ── 评审补强(#270 FennoAI)────────────────────────────────────────────────
+
+
+def test_non_https_artifact_url_is_refused_before_download():
+    """产物 URL 来自接口响应,不是我们拼的。urllib 会照单全收 file:// 与内网地址、
+    且默认跟随跳转 —— 上游被污染时,那些内容会被当作"模型 bytes"交到下游。
+
+    这里取**未打桩**的原函数:``no_real_download`` 是 autouse 的,直接调 ``T._download``
+    测到的是那个假实现,断言会空跑成绿的。
+    """
+    for bad in ("file:///etc/passwd", "http://169.254.169.254/latest/meta-data/"):
+        with pytest.raises(ValueError, match="不是 https"):
+            _REAL_DOWNLOAD(bad)
+
+
+def test_gateway_5xx_is_not_retried_for_submits(monkeypatch):
+    """5xx 意味着请求**可能已经到达后端**。提交类重发会重复扣积分,故默认不重试。"""
+    from windup_framework.providers.render3d import _tc3
+
+    calls = []
+
+    def _gateway_down(req, timeout=None):
+        calls.append(1)
+        raise _fake_http_error(502, "<html>bad gateway</html>")
+
+    monkeypatch.setattr(_tc3.urllib.request, "urlopen", _gateway_down)
+    monkeypatch.setattr(_tc3.time, "sleep", lambda *_: None)
+    with pytest.raises(Exception):
+        _tc3.call("Submit", {}, service="ai3d", version="v", creds=_creds())
+    assert len(calls) == 1, "提交类在 5xx 上重试了,会重复扣费"
+
+
+def test_gateway_5xx_is_retried_for_idempotent_calls(monkeypatch):
+    """查询/取件是幂等的,重试的代价只是一次重查。"""
+    from windup_framework.providers.render3d import _tc3
+
+    state = {"n": 0}
+
+    def _flaky(req, timeout=None):
+        state["n"] += 1
+        if state["n"] < 3:
+            raise _fake_http_error(503, "unavailable")
+        return _Resp('{"Response":{"Status":"DONE"}}')
+
+    monkeypatch.setattr(_tc3.urllib.request, "urlopen", _flaky)
+    monkeypatch.setattr(_tc3.time, "sleep", lambda *_: None)
+    out = _tc3.call("Query", {}, service="ai3d", version="v", creds=_creds(), idempotent=True)
+    assert out["Status"] == "DONE" and state["n"] == 3
+
+
+def test_throttling_is_retried_even_for_submits(monkeypatch):
+    """429 = 被网关挡下、后端没执行,重发不会重复扣费。"""
+    from windup_framework.providers.render3d import _tc3
+
+    state = {"n": 0}
+
+    def _throttled(req, timeout=None):
+        state["n"] += 1
+        if state["n"] == 1:
+            raise _fake_http_error(429, "throttled")
+        return _Resp('{"Response":{"JobId":"j-9"}}')
+
+    monkeypatch.setattr(_tc3.urllib.request, "urlopen", _throttled)
+    monkeypatch.setattr(_tc3.time, "sleep", lambda *_: None)
+    assert _tc3.call("Submit", {}, service="ai3d", version="v", creds=_creds())["JobId"] == "j-9"
+
+
+def test_env_file_values_tolerate_surrounding_quotes(tmp_path, monkeypatch):
+    """`KEY="AKID..."` 是常见 .env 写法;带引号的值只会换来一个看不懂的鉴权错。"""
+    from windup_framework.providers.render3d import _tc3
+
+    f = tmp_path / "tencent.env"
+    f.write_text('TENCENT_SECRET_ID="AKIDquoted"\nTENCENT_SECRET_KEY=\'skquoted\'\n')
+    monkeypatch.delenv("TENCENT_SECRET_ID", raising=False)
+    monkeypatch.delenv("TENCENT_SECRET_KEY", raising=False)
+    monkeypatch.setattr(_tc3, "ENVFILE", f)
+    c = _tc3.TencentCredentials.resolve()
+    assert c.secret_id == "AKIDquoted" and c.secret_key == "skquoted"

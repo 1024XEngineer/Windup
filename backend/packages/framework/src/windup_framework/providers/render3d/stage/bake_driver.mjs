@@ -67,8 +67,13 @@ try {
       if (!info) throw new Error(`__setup 拿不到片段 ${clip}`);
       const cov = await page.evaluate(() => window.__coverage());
       const dataUrl = await page.evaluate(() => window.__grab());
+      // 形状守卫:空画布时 toDataURL 会给出 "data:," 这类没有 base64 段的串,
+      // 切出来是空字符串,会写成一张 0 字节 PNG —— 而 _collect 只按文件存在与否
+      // 收帧,于是坏帧一路当成正常产物交付。覆盖率自检是第二道,这里先炸得更早更清楚。
+      const b64 = typeof dataUrl === 'string' ? dataUrl.split(',')[1] : '';
+      if (!b64) throw new Error(`${name}/f${i} 截图为空(dataURL=${String(dataUrl).slice(0, 32)})`);
       fs.writeFileSync(path.join(outDir, `f${String(i).padStart(2, '0')}.png`),
-                       Buffer.from(dataUrl.split(',')[1], 'base64'));
+                       Buffer.from(b64, 'base64'));
       times.push(info.t); covs.push(+cov.toFixed(5));
       if (cov < minCov) empties.push(`${name}/f${String(i).padStart(2, '0')} 覆盖率 ${cov.toFixed(5)}`);
     }

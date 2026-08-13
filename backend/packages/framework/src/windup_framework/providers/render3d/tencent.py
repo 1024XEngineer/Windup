@@ -23,6 +23,7 @@ import hashlib
 import logging
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Mapping
 
@@ -153,6 +154,11 @@ def _download(url: str, timeout: int = 600, tries: int = 3) -> bytes:
     坏模型会一路流到出帧环节才暴露,在那儿看起来像"绑骨坏了"。
     异常文本一律过 :func:`redact` —— 这些 URL 可能带签名。
     """
+    # 产物 URL 来自接口响应,不是我们拼的。限定 https 是因为 urllib 会照单全收
+    # file:// 与内网地址,并且默认跟随跳转 —— 上游若被污染,这里会把任意本地文件
+    # 或元数据端点的内容当作"模型 bytes"返回,而下游只做 magic 校验。
+    if urllib.parse.urlparse(url).scheme != "https":
+        raise ValueError(f"产物 URL 协议不是 https,拒绝下载:{redact(url)}")
     last: Exception | None = None
     for attempt in range(tries):
         try:
@@ -195,9 +201,10 @@ class TencentCosModelUploader(ModelUploader):
     def appid(self) -> str:
         if self._appid is None:
             r = _raise_for_error(call("GetUserAppId", {}, service="cam",
-                                      version="2019-01-16", creds=self._creds))
+                                      version="2019-01-16", creds=self._creds,
+                                      idempotent=True))
             if "AppId" not in r:
-                raise JobFailedError(f"取 AppId 失败: {r}")
+                raise JobFailedError(redact(f"取 AppId 失败: {r}"))
             self._appid = str(r["AppId"])
         return self._appid
 
@@ -210,7 +217,7 @@ class TencentCosModelUploader(ModelUploader):
     def ensure_bucket(self) -> None:
         code, body = cos_request(self._creds, "PUT", "/", self.host())
         if code not in (200, 409):                     # 409 = 已存在且属于你
-            raise JobFailedError(f"建桶失败 {code}: {body}")
+            raise JobFailedError(redact(f"建桶失败 {code}: {body}"))
 
     def upload(self, model: bytes, content_type: str) -> str:
         ext = self._EXT.get(content_type, "bin")
@@ -219,7 +226,7 @@ class TencentCosModelUploader(ModelUploader):
         self.ensure_bucket()
         code, body = cos_request(self._creds, "PUT", f"/{key}", host, data=model)
         if code != 200:
-            raise JobFailedError(f"上传失败 {code}: {body}")
+            raise JobFailedError(redact(f"上传失败 {code}: {body}"))
         return f"https://{host}/{key}?{cos_sign(self._creds, 'GET', f'/{key}', host, self._expire)}"
 
 
@@ -313,7 +320,7 @@ class TencentModel3DProvider:
             params["ResultFormat"] = want
         job = self._submit(params)
         files = self._wait(job)
-        picked, _ = _pick_artifact(files, want)
+        picked, _ = _pick_artifact(files, want, job_id=job)
         data = _download(str(picked["Url"]))
         _verify_magic(data, want)
         return data
@@ -322,13 +329,14 @@ class TencentModel3DProvider:
         r = _raise_for_error(call("SubmitHunyuanTo3DProJob", params, service=SERVICE,
                                   version=VERSION, creds=self._creds))
         if "JobId" not in r:
-            raise JobFailedError(f"提交图生 3D 没拿到 JobId: {r}")
+            raise JobFailedError(redact(f"提交图生 3D 没拿到 JobId: {r}"))
         return str(r["JobId"])
 
     def _wait(self, job_id: str) -> list:
         for _ in range(max(1, int(self._max_min * 60 // self._poll))):
             r = _raise_for_error(call("QueryHunyuanTo3DProJob", {"JobId": job_id},
-                                      service=SERVICE, version=VERSION, creds=self._creds))
+                                      service=SERVICE, version=VERSION, creds=self._creds,
+                                      idempotent=True))
             status = str(r.get("Status") or "")
             if status == "DONE":
                 files = r.get("ResultFile3Ds") or r.get("ResultFile3D") or []
@@ -337,12 +345,12 @@ class TencentModel3DProvider:
                     raise JobFailedError(f"图生 3D 完成但无产物(JobId={job_id})")
                 return files
             if status == "FAIL":
-                raise JobFailedError(
-                    f"图生 3D 失败(JobId={job_id}): {r.get('ErrorMessage') or r}")
+                raise JobFailedError(redact(
+                    f"图生 3D 失败(JobId={job_id}): {r.get('ErrorMessage') or r}"))
             if status.upper() not in _RUNNING:
-                raise JobFailedError(
+                raise JobFailedError(redact(
                     f"图生 3D 返回未知状态 {status!r}(JobId={job_id}): {r} —— "
-                    "任务可能仍在跑,拿这个 JobId 再查一次。")
+                    "任务可能仍在跑,拿这个 JobId 再查一次。"))
             time.sleep(self._poll)
         raise JobTimeoutError(
             f"图生 3D 轮询 {self._max_min} 分钟仍未出结果(JobId={job_id});积分可能已经扣了")
@@ -465,7 +473,8 @@ class TencentAutoRigProvider:
     def _wait(self, job_id: str) -> list:
         for _ in range(max(1, int(self._max_min * 60 // self._poll))):
             r = _raise_for_error(call("DescribeAutoRiggingJob", {"JobId": job_id},
-                                      service=SERVICE, version=VERSION, creds=self._creds))
+                                      service=SERVICE, version=VERSION, creds=self._creds,
+                                      idempotent=True))
             status = str(r.get("Status") or "")
             if status == "DONE":
                 files = r.get("ResultFile3Ds") or []
@@ -473,7 +482,7 @@ class TencentAutoRigProvider:
                     raise JobFailedError(f"绑骨完成但无产物(JobId={job_id})")
                 return files
             if status == "FAIL":
-                raise JobFailedError(f"绑骨失败(JobId={job_id}): {r.get('ErrorMessage') or r}")
+                raise JobFailedError(redact(f"绑骨失败(JobId={job_id}): {r.get('ErrorMessage') or r}"))
             if status.upper() not in _RUNNING:
                 raise JobFailedError(
                     f"绑骨返回未知状态 {status!r}(JobId={job_id}): {r} —— "

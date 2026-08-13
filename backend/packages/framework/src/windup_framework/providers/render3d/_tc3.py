@@ -69,7 +69,9 @@ class TencentCredentials:
             for line in ENVFILE.read_text().splitlines():
                 if "=" in line and not line.lstrip().startswith("#"):
                     k, v = line.split("=", 1)
-                    kv[k.strip()] = v.strip()
+                    # 去掉包裹引号:.env 里写 KEY="AKID..." 是常见写法,带引号的值
+                    # 会变成一个看不懂的鉴权错,而错在哪一层完全看不出来。
+                    kv[k.strip()] = v.strip().strip("\"'")
             sid = sid or kv.get("TENCENT_SECRET_ID", "")
             skey = skey or kv.get("TENCENT_SECRET_KEY", "")
         if not (sid and skey):
@@ -85,10 +87,13 @@ def _hmac(key: bytes, msg: str) -> bytes:
 
 
 def call(action: str, params: dict, *, service: str, version: str,
-         creds: TencentCredentials, retries: int = 3, timeout: int = 60) -> dict:
+         creds: TencentCredentials, retries: int = 3, timeout: int = 60,
+         idempotent: bool = False) -> dict:
     """调一个腾讯云接口,返回 ``Response`` 体(含 ``Error`` 时原样返回,由调用方判断)。
 
-    **只有网络/超时才重试**:业务错误重试没有意义,而提交类接口重发可能重复扣积分。
+    重试范围按"重发一次的代价"划,不按"看起来像不像临时故障"划:
+    网络/超时与 429 限流一律重试(请求没被执行);网关 5xx 只在 ``idempotent`` 时重试
+    —— 它意味着请求可能已经到达后端,提交类重发会重复扣积分。业务错误从不重试。
     """
     host = f"{service}.tencentcloudapi.com"
     payload = json.dumps(params, ensure_ascii=False)
@@ -128,7 +133,19 @@ def call(action: str, params: dict, *, service: str, version: str,
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return json.loads(r.read().decode()).get("Response", {})
-        except urllib.error.HTTPError as e:            # 业务错误,不重试
+        except urllib.error.HTTPError as e:
+            # 腾讯云的**业务**错误走 HTTP 200 + Response.Error,到不了这里;能到这里的
+            # 只有网关层的状态码。两者的安全性不同,不能一起处理:
+            #   429 限流 = 请求被网关挡下、后端没执行 → 重发安全,提交类也不会重复扣费。
+            #   5xx     = 请求**可能已经到达后端**并建了任务 → 提交类重发会重复扣积分,
+            #             只有幂等调用(查询 / 取件)才可以重试。
+            # 此前一律不重试,于是 5xx 的空响应经 `.get("Response", {})` 变成 {},
+            # 一路走到 `_raise_for_error({})` 返回 {},最后以"没拿到 JobId"的面目出现 ——
+            # 一次网关抖动被报成业务失败,排查方向整个跑偏。
+            if e.code == 429 or (idempotent and e.code >= 500):
+                last = e
+                time.sleep(2 + attempt * 2)
+                continue
             return json.loads(e.read().decode()).get("Response", {})
         except Exception as e:                          # 网络抖动才重试
             last = e

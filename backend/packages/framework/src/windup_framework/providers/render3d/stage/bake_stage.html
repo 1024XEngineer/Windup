@@ -37,7 +37,9 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 const Q = new URLSearchParams(location.search);
 const MODEL = Q.get('model');
 const MAT = Q.get('mat') || 'cel';
-const W = +(Q.get('w') || 1107), H = +(Q.get('h') || 924);
+// 兜底取 interfaces.RENDER_SIZE 的竖屏尺寸。provider always 传 w/h,所以这条只在
+// 手动开本页调试时生效 —— 留旧的横屏值会让调试看到的构图与产线不是一回事。
+const W = +(Q.get('w') || 1536), H = +(Q.get('h') || 2560);
 
 // 认识的材质取值 —— 每个都对应**真正不同**的渲染分支。不在表里的一律抛,不静默兜底。
 const MATERIALS = ['cel', 'lit', 'clay', 'toon', 'orig'];
