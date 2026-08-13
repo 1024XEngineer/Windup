@@ -66,13 +66,13 @@ export function CharacterDetailPage() {
     return (
       <p
         role="alert"
-        className="m-6 rounded-xl border border-[#d8c7bd] bg-[#fff8f2] p-5 text-sm text-[#7a3f2a]"
+        className="m-6 rounded-xl border border-app-danger-line bg-app-danger-soft p-5 text-sm text-app-danger"
       >
         {error}
       </p>
     )
   }
-  if (!character) return <p className="p-6 text-sm text-[#70766f]">正在读取角色资产…</p>
+  if (!character) return <p className="p-6 text-sm text-app-muted">正在读取角色资产…</p>
 
   const name = characterName(character)
   const selectedOutfit =
@@ -87,27 +87,27 @@ export function CharacterDetailPage() {
         <div>
           <Link
             to={`/projects/${projectId}/assets`}
-            className="text-xs font-semibold text-[#657066] underline decoration-[#b9c0b8] underline-offset-4 hover:text-[#263f2d]"
+            className="text-xs font-semibold text-app-muted underline decoration-app-line underline-offset-4 hover:text-app-accent"
           >
             返回资产库
           </Link>
           <h2
             id="character-title"
-            className="mt-2 text-2xl font-semibold tracking-[-0.035em] text-[#20241f]"
+            className="mt-2 text-2xl font-semibold tracking-[-0.035em] text-app-ink"
           >
             {name}
           </h2>
-          <p className="mt-1 text-xs text-[#6d736c]">选择动作卡片查看完整帧序列。</p>
+          <p className="mt-1 text-xs text-app-muted">选择动作卡片查看完整帧序列。</p>
         </div>
         <div className="flex flex-col items-end gap-2">
           {selectedOutfit ? (
-            <label className="flex items-center gap-2 text-xs font-medium text-[#697169]">
+            <label className="flex items-center gap-2 text-xs font-medium text-app-muted">
               <span>造型</span>
               <select
                 aria-label="选择造型"
                 value={selectedOutfit.id}
                 onChange={(event) => setSelectedOutfitId(event.target.value)}
-                className="rounded-full border border-[#ccd2ca] bg-white px-3 py-2 text-sm font-semibold text-[#2e382f] outline-none focus:border-[#748478]"
+                className="rounded-full border border-app-line bg-app-surface-raised px-3 py-2 text-sm font-semibold text-app-ink-soft outline-none focus:border-app-accent"
               >
                 {character.outfits.map((outfit) => (
                   <option key={outfit.id} value={outfit.id}>
@@ -122,7 +122,7 @@ export function CharacterDetailPage() {
               <Link
                 to={`/playtest/${character.id}/${selectedOutfit.id}`}
                 aria-label="在预览台打开当前造型"
-                className="inline-flex min-h-9 items-center rounded-full bg-[#294433] px-4 text-xs font-semibold text-white transition-colors hover:bg-[#1f3828] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#294433]"
+                className="inline-flex min-h-9 items-center rounded-full bg-app-accent px-4 text-xs font-semibold text-app-on-accent transition-colors hover:bg-app-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
               >
                 在预览台打开
               </Link>
@@ -132,8 +132,8 @@ export function CharacterDetailPage() {
       </div>
 
       {character.outfits.length === 0 || !selectedOutfit ? (
-        <div className="mt-6 rounded-[1.5rem] border border-dashed border-[#cbd0c8] bg-[#f8f8f4] p-7">
-          <h3 className="font-semibold text-[#252a25]">这个角色还没有造型</h3>
+        <div className="mt-6 rounded-[1.5rem] border border-dashed border-app-line bg-app-surface-raised p-7">
+          <h3 className="font-semibold text-app-ink">这个角色还没有造型</h3>
         </div>
       ) : (
         <>
@@ -173,7 +173,7 @@ function CharacterExport({
 
   if (result.error !== null) {
     return (
-      <p role="alert" className="mt-3 text-xs font-medium text-[#8a4934]">
+      <p role="alert" className="mt-3 text-xs font-medium text-app-danger">
         导出不可用：{result.error}
       </p>
     )
@@ -201,8 +201,8 @@ function OutfitMaster({ character, outfit }: { character: Character; outfit: Out
             className="h-full w-full object-contain [image-rendering:pixelated]"
           />
         ) : (
-          <div className="flex h-full items-center justify-center bg-[linear-gradient(135deg,#eceee7_25%,#f7f6f1_25%,#f7f6f1_50%,#eceee7_50%,#eceee7_75%,#f7f6f1_75%)] bg-[length:28px_28px]">
-            <span className="rounded-full border border-[#b7bdb4] bg-[#fbfaf6]/90 px-3 py-1 text-xs font-semibold text-[#5f685f]">
+          <div className="flex h-full items-center justify-center bg-[linear-gradient(135deg,var(--color-app-surface-muted)_25%,var(--color-app-surface)_25%,var(--color-app-surface)_50%,var(--color-app-surface-muted)_50%,var(--color-app-surface-muted)_75%,var(--color-app-surface)_75%)] bg-[length:28px_28px]">
+            <span className="rounded-full border border-app-line bg-app-surface-raised/90 px-3 py-1 text-xs font-semibold text-app-muted">
               暂无造型预览
             </span>
           </div>
@@ -211,14 +211,14 @@ function OutfitMaster({ character, outfit }: { character: Character; outfit: Out
       <div className="min-w-0 flex-1">
         <h3
           id="outfit-master-title"
-          className="text-lg font-semibold tracking-[-0.03em] text-[#222722]"
+          className="text-lg font-semibold tracking-[-0.03em] text-app-ink"
         >
           {outfit.name}
         </h3>
         {outfit.description ? (
-          <p className="mt-1 text-xs leading-5 text-[#6a716a]">{outfit.description}</p>
+          <p className="mt-1 text-xs leading-5 text-app-muted">{outfit.description}</p>
         ) : null}
-        <p className="mt-2 text-[0.7rem] font-medium text-[#687068]">
+        <p className="mt-2 text-[0.7rem] font-medium text-app-muted">
           {outfit.actions.length} 个动作
         </p>
       </div>
@@ -233,17 +233,17 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
   return (
     <section aria-labelledby="action-list-title" className="mt-3">
       <div className="flex items-end justify-between gap-4">
-        <h3 id="action-list-title" className="text-lg font-semibold text-[#252a25]">
+        <h3 id="action-list-title" className="text-lg font-semibold text-app-ink">
           动作与帧
         </h3>
         <div className="flex items-center gap-3">
-          <span className="text-[0.7rem] text-[#7c837b]">点击卡片展开完整帧</span>
+          <span className="text-[0.7rem] text-app-faint">点击卡片展开完整帧</span>
           <button
             type="button"
             aria-label="增加动作"
             disabled
             title="动作生成应进入 Workflow Editor"
-            className="cursor-not-allowed rounded-full border border-[#cbd1c8] px-3 py-1.5 text-xs font-semibold text-[#858c84]"
+            className="cursor-not-allowed rounded-full border border-app-line px-3 py-1.5 text-xs font-semibold text-app-faint"
           >
             ＋ 增加动作
           </button>
@@ -251,9 +251,9 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
       </div>
 
       {outfit.actions.length === 0 ? (
-        <div className="mt-4 rounded-[1.5rem] border border-dashed border-[#cbd0c8] bg-[#f8f8f4] p-7">
-          <h4 className="font-semibold text-[#252a25]">这个造型还没有动作</h4>
-          <p className="mt-2 text-sm leading-6 text-[#6d736c]">生成并保存动作后会显示在这里。</p>
+        <div className="mt-4 rounded-[1.5rem] border border-dashed border-app-line bg-app-surface-raised p-7">
+          <h4 className="font-semibold text-app-ink">这个造型还没有动作</h4>
+          <p className="mt-2 text-sm leading-6 text-app-muted">生成并保存动作后会显示在这里。</p>
         </div>
       ) : (
         <>
@@ -276,9 +276,9 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
                     aria-label={`${expanded ? '收起' : '展开'}${action.name}`}
                     aria-expanded={expanded}
                     onClick={() => setSelectedActionId(expanded ? null : action.id)}
-                    className={`block w-full overflow-hidden rounded-[1.4rem] border bg-white text-left transition duration-500 group-hover:-translate-y-2 ${expanded ? 'border-[#718876] ring-4 ring-[#dfe8df]' : 'border-[#cfd5cd]'}`}
+                    className={`block w-full overflow-hidden rounded-[1.4rem] border bg-app-surface-raised text-left transition duration-500 group-hover:-translate-y-2 ${expanded ? 'border-app-accent ring-4 ring-app-accent-soft' : 'border-app-line'}`}
                   >
-                    <div className="relative aspect-[16/10] overflow-hidden bg-[#eef1ec]">
+                    <div className="relative aspect-[16/10] overflow-hidden bg-app-surface-muted">
                       {previewFrame ? (
                         <img
                           src={previewFrame.imageUrl}
@@ -288,17 +288,17 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
                           className="h-full w-full object-contain p-2 [image-rendering:pixelated]"
                         />
                       ) : (
-                        <span className="grid h-full place-items-center text-xs text-[#687068]">
+                        <span className="grid h-full place-items-center text-xs text-app-muted">
                           暂无帧
                         </span>
                       )}
                     </div>
                     <div className="p-3">
                       <div className="flex items-center justify-between gap-3">
-                        <h4 className="font-semibold text-[#252b25]">{action.name}</h4>
-                        <span className="text-sm text-[#69756b]">{expanded ? '−' : '↗'}</span>
+                        <h4 className="font-semibold text-app-ink">{action.name}</h4>
+                        <span className="text-sm text-app-muted">{expanded ? '−' : '↗'}</span>
                       </div>
-                      <p className="mt-1 text-xs text-[#747b73]">
+                      <p className="mt-1 text-xs text-app-faint">
                         {actionTypeLabel(action.type)} · {action.fps} FPS · {action.frameCount} 帧 ·{' '}
                         {action.loop ? '循环' : '单次'}
                       </p>
@@ -312,17 +312,17 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
           {selectedAction ? (
             <section
               aria-label={`${selectedAction.name}完整帧序列`}
-              className="action-reveal overflow-hidden rounded-[1.35rem] border border-[#d6dbd4] bg-white p-4"
+              className="action-reveal overflow-hidden rounded-[1.35rem] border border-app-line bg-app-surface-raised p-4"
             >
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <h4 className="text-lg font-semibold text-[#242924]">{selectedAction.name}</h4>
-                    <span className="rounded-full bg-[#edf0ea] px-2.5 py-1 text-[0.68rem] font-semibold text-[#566258]">
+                    <h4 className="text-lg font-semibold text-app-ink">{selectedAction.name}</h4>
+                    <span className="rounded-full bg-app-surface-muted px-2.5 py-1 text-[0.68rem] font-semibold text-app-ink-soft">
                       {actionTypeLabel(selectedAction.type)}
                     </span>
                   </div>
-                  <p className="mt-2 text-xs text-[#747b73]">
+                  <p className="mt-2 text-xs text-app-faint">
                     {selectedAction.fps} FPS · {selectedAction.frameCount} 帧 ·{' '}
                     {selectedAction.loop ? '循环播放' : '单次播放'}
                   </p>
@@ -333,7 +333,7 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
                     aria-label={`重新生成${selectedAction.name}`}
                     disabled
                     title="需要原 WorkflowRun 的步骤上下文"
-                    className="cursor-not-allowed rounded-full border border-[#d8dcd5] px-3 py-1.5 text-xs font-semibold text-[#959b94]"
+                    className="cursor-not-allowed rounded-full border border-app-line px-3 py-1.5 text-xs font-semibold text-app-faint"
                   >
                     重新生成
                   </button>
@@ -342,21 +342,21 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
                     disabled
                     aria-label="保存为动作模板"
                     title="动作模板后端未提供"
-                    className="cursor-not-allowed rounded-full border border-[#d8dcd5] px-3 py-1.5 text-xs font-semibold text-[#959b94]"
+                    className="cursor-not-allowed rounded-full border border-app-line px-3 py-1.5 text-xs font-semibold text-app-faint"
                   >
                     保存为动作模板
                   </button>
                 </div>
               </div>
-              <p className="mt-2 text-[0.65rem] text-[#8a9088]">动作模板后端未提供</p>
-              <p className="mt-2 text-[0.68rem] font-medium text-[#687068]">
+              <p className="mt-2 text-[0.65rem] text-app-faint">动作模板后端未提供</p>
+              <p className="mt-2 text-[0.68rem] font-medium text-app-muted">
                 {characterName(character)} / {outfit.name} / {selectedAction.name}
               </p>
               <div className="mt-3 overflow-x-auto pb-1">
                 <ol className="flex min-w-max gap-2.5">
                   {orderedFrames(selectedAction).map((frame) => (
                     <li key={`${selectedAction.id}-${frame.index}`} className="w-20 shrink-0">
-                      <div className="overflow-hidden rounded-xl border border-[#dde0d9]">
+                      <div className="overflow-hidden rounded-xl border border-app-line">
                         <img
                           src={frame.imageUrl}
                           alt={`${selectedAction.name}第 ${frame.index + 1} 帧`}
@@ -365,7 +365,7 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
                           className="aspect-square w-full object-contain p-1 [image-rendering:pixelated]"
                         />
                       </div>
-                      <div className="mt-2 flex items-center justify-between gap-1 text-[0.65rem] text-[#7b827a]">
+                      <div className="mt-2 flex items-center justify-between gap-1 text-[0.65rem] text-app-faint">
                         <span>#{String(frame.index + 1).padStart(2, '0')}</span>
                         <span>
                           {frame.durationMs === null

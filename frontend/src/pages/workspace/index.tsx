@@ -349,7 +349,7 @@ export function WorkspacePage() {
     <div className="workspace-page h-svh overflow-hidden">
       <div className="workspace-shell mx-auto flex h-full w-full max-w-[1560px] flex-col px-4 sm:px-6 xl:px-8">
         <header className="mb-3 shrink-0 sm:mb-4">
-          <h1 className="font-serif text-[clamp(2.15rem,4.5vw,4rem)] leading-none font-medium tracking-[-0.055em] text-[#1d251f]">
+          <h1 className="font-serif text-[clamp(2.15rem,4.5vw,4rem)] leading-none font-medium tracking-[-0.055em] text-app-ink">
             工作台
           </h1>
         </header>
@@ -395,13 +395,13 @@ export function WorkspacePage() {
               <div>
                 <h2
                   id="workspace-context-title"
-                  className="font-sans text-[clamp(1.2rem,2.2vw,1.65rem)] leading-none font-semibold tracking-[-0.025em] text-[#202822]"
+                  className="font-sans text-[clamp(1.2rem,2.2vw,1.65rem)] leading-none font-semibold tracking-[-0.025em] text-app-ink"
                 >
                   {title}
                 </h2>
               </div>
               {mode === 'projects' ? null : (
-                <p className="mt-2 max-w-md text-xs leading-5 text-[#6f776f]">
+                <p className="mt-2 max-w-md text-xs leading-5 text-app-muted">
                   {contextDescription(mode)}
                 </p>
               )}
@@ -440,7 +440,7 @@ interface EntranceCardProps {
 }
 
 const entranceCardClass =
-  'workspace-entrance-card group relative flex h-full min-h-0 w-full flex-col overflow-hidden p-0 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]'
+  'workspace-entrance-card group relative flex h-full min-h-0 w-full flex-col overflow-hidden p-0 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent'
 
 function EntranceCardContent({
   description,
@@ -450,22 +450,22 @@ function EntranceCardContent({
 }: Omit<EntranceCardProps, 'ariaLabel'> & { selected?: boolean }) {
   return (
     <>
-      <div className="relative min-h-0 flex-[1.35] overflow-hidden px-2 text-[#35583f]">
+      <div className="relative min-h-0 flex-[1.35] overflow-hidden px-2 text-app-accent">
         <WorkspaceEntranceVisual kind={kind} selected={selected} />
       </div>
       <div className="flex shrink-0 items-end justify-between gap-3 px-2 pb-3">
         <div>
-          <h3 className="font-serif text-[clamp(1.05rem,2.2vw,1.5rem)] leading-tight font-medium tracking-[-0.035em] text-[#202721]">
+          <h3 className="font-serif text-[clamp(1.05rem,2.2vw,1.5rem)] leading-tight font-medium tracking-[-0.035em] text-app-ink">
             {title}
           </h3>
-          <p className="mt-1 max-w-xs text-[clamp(0.65rem,1.05vw,0.75rem)] leading-[1.55] text-[#687169]">
+          <p className="mt-1 max-w-xs text-[clamp(0.65rem,1.05vw,0.75rem)] leading-[1.55] text-app-muted">
             {description}
           </p>
         </div>
         <span
           aria-hidden="true"
           className={`grid h-8 w-8 shrink-0 place-items-center text-lg transition-colors ${
-            selected ? 'text-[#284331]' : 'text-[#7b847d] group-hover:text-[#284331]'
+            selected ? 'text-app-accent' : 'text-app-faint group-hover:text-app-accent'
           }`}
         >
           {selected ? '✓' : '↗'}
@@ -486,7 +486,7 @@ function DirectEntranceCard({
     <Link
       to={to}
       aria-label={ariaLabel}
-      className={`${entranceCardClass} bg-transparent hover:bg-white/28`}
+      className={`${entranceCardClass} bg-transparent hover:bg-app-surface-raised/28`}
     >
       <EntranceCardContent kind={kind} title={title} description={description} />
     </Link>
@@ -508,7 +508,7 @@ function SelectableEntranceCard({
       aria-pressed={selected}
       onClick={onClick}
       className={`${entranceCardClass} ${
-        selected ? 'bg-white/42' : 'bg-transparent hover:bg-white/28'
+        selected ? 'bg-app-surface-raised/42' : 'bg-transparent hover:bg-app-surface-raised/28'
       }`}
     >
       <EntranceCardContent
@@ -531,25 +531,25 @@ function WorkflowEntranceCard({
   return (
     <div
       className={`${entranceCardClass} workflow-entrance-card group ${
-        selected ? 'bg-white/42' : 'bg-transparent'
+        selected ? 'bg-app-surface-raised/42' : 'bg-transparent'
       }`}
     >
-      <div className="relative min-h-0 flex-[1.35] overflow-hidden px-2 text-[#35583f]">
+      <div className="relative min-h-0 flex-[1.35] overflow-hidden px-2 text-app-accent">
         <WorkspaceEntranceVisual kind="workflow" selected={selected} />
       </div>
       <div className="relative h-[5.4rem] shrink-0 px-2 pb-3">
         <div className="workflow-card-copy flex h-full items-end justify-between gap-3">
           <div>
-            <h3 className="font-serif text-[clamp(1.05rem,2.2vw,1.5rem)] leading-tight font-medium tracking-[-0.035em] text-[#202721]">
+            <h3 className="font-serif text-[clamp(1.05rem,2.2vw,1.5rem)] leading-tight font-medium tracking-[-0.035em] text-app-ink">
               工作流画布
             </h3>
-            <p className="mt-1 text-[clamp(0.65rem,1.05vw,0.75rem)] leading-[1.55] text-[#687169]">
+            <p className="mt-1 text-[clamp(0.65rem,1.05vw,0.75rem)] leading-[1.55] text-app-muted">
               新建制作流程，或继续已有进度。
             </p>
           </div>
           <span
             aria-hidden="true"
-            className="grid h-8 w-8 shrink-0 place-items-center text-lg text-[#7b847d]"
+            className="grid h-8 w-8 shrink-0 place-items-center text-lg text-app-faint"
           >
             {selected ? '✓' : '↗'}
           </span>
@@ -561,14 +561,14 @@ function WorkflowEntranceCard({
           <Link
             to="/projects/new?entry=workflow-editor"
             aria-label="创建新项目"
-            className="workflow-card-action workflow-card-action-create group/action flex items-center justify-between text-left focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]"
+            className="workflow-card-action workflow-card-action-create group/action flex items-center justify-between text-left focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
           >
-            <strong className="font-serif text-[clamp(0.9rem,1.5vw,1.1rem)] font-medium tracking-[-0.025em] text-[#263028]">
+            <strong className="font-serif text-[clamp(0.9rem,1.5vw,1.1rem)] font-medium tracking-[-0.025em] text-app-ink">
               创建新项目
             </strong>
             <span
               aria-hidden="true"
-              className="text-sm text-[#667169] transition-transform group-hover/action:translate-x-0.5"
+              className="text-sm text-app-muted transition-transform group-hover/action:translate-x-0.5"
             >
               ↗
             </span>
@@ -578,14 +578,14 @@ function WorkflowEntranceCard({
             aria-label="继续已有工作流"
             aria-pressed={selected}
             onClick={onContinue}
-            className="workflow-card-action workflow-card-action-continue group/action flex items-center justify-between text-left focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]"
+            className="workflow-card-action workflow-card-action-continue group/action flex items-center justify-between text-left focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
           >
-            <strong className="font-serif text-[clamp(0.9rem,1.5vw,1.1rem)] font-medium tracking-[-0.025em] text-[#263028]">
+            <strong className="font-serif text-[clamp(0.9rem,1.5vw,1.1rem)] font-medium tracking-[-0.025em] text-app-ink">
               继续已有工作流
             </strong>
             <span
               aria-hidden="true"
-              className="text-sm text-[#667169] transition-transform group-hover/action:translate-x-0.5"
+              className="text-sm text-app-muted transition-transform group-hover/action:translate-x-0.5"
             >
               →
             </span>
@@ -599,7 +599,7 @@ function WorkflowEntranceCard({
 function ResumeProjects({ projects }: { projects: Project[] }) {
   return (
     <div>
-      <div className="mb-2 flex min-h-9 items-center justify-between rounded-[0.625rem] bg-[#e5e5df] px-3 font-sans text-[0.65rem] font-medium tracking-[0.02em] text-[#677068]">
+      <div className="mb-2 flex min-h-9 items-center justify-between rounded-[0.625rem] bg-app-surface-muted px-3 font-sans text-[0.65rem] font-medium tracking-[0.02em] text-app-muted">
         <span>{projects.length} 个项目</span>
         <span>项目列表</span>
       </div>
@@ -609,19 +609,19 @@ function ResumeProjects({ projects }: { projects: Project[] }) {
             key={project.id}
             to={`/projects/${project.id}/assets`}
             aria-label={`打开项目 ${project.name}`}
-            className="group flex items-center justify-between gap-4 rounded-md px-3 py-3 font-sans transition-colors hover:bg-white/55 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]"
+            className="group flex items-center justify-between gap-4 rounded-md px-3 py-3 font-sans transition-colors hover:bg-app-surface-raised/55 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
           >
             <span className="min-w-0">
-              <strong className="block truncate text-[0.95rem] font-semibold tracking-[-0.015em] text-[#252d27]">
+              <strong className="block truncate text-[0.95rem] font-semibold tracking-[-0.015em] text-app-ink">
                 {project.name}
               </strong>
-              <span className="mt-0.5 block text-[0.68rem] text-[#778078]">
+              <span className="mt-0.5 block text-[0.68rem] text-app-faint">
                 {formatProjectDate(project.updatedAt)} 更新
               </span>
             </span>
             <span
               aria-hidden="true"
-              className="shrink-0 text-sm text-[#758178] group-hover:text-[#284331]"
+              className="shrink-0 text-sm text-app-faint group-hover:text-app-accent"
             >
               ↗
             </span>
@@ -641,7 +641,7 @@ interface ProjectSelectionProps {
 function ProjectSelection({ onPageChange, onSelect, projects }: ProjectSelectionProps) {
   return (
     <div>
-      <p className="mb-3 text-xs leading-5 text-[#6d766e]">选择这次工作的项目边界。</p>
+      <p className="mb-3 text-xs leading-5 text-app-muted">选择这次工作的项目边界。</p>
       <div className="grid gap-3 sm:grid-cols-2">
         {projects.items.map((project) => (
           <button
@@ -649,15 +649,15 @@ function ProjectSelection({ onPageChange, onSelect, projects }: ProjectSelection
             type="button"
             aria-label={`选择项目 ${project.name}`}
             onClick={() => onSelect(project)}
-            className="group min-h-24 rounded-[1.1rem] border border-[#d1d7d0] bg-white px-4 py-3 text-left transition hover:border-[#87988b] hover:bg-[#f4f7f3] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]"
+            className="group min-h-24 rounded-[1.1rem] border border-app-line bg-app-surface-raised px-4 py-3 text-left transition hover:border-app-line-strong hover:bg-app-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
           >
-            <span className="flex items-center justify-between gap-3 text-[0.62rem] text-[#7a827b]">
+            <span className="flex items-center justify-between gap-3 text-[0.62rem] text-app-faint">
               PROJECT · {project.id}
-              <span aria-hidden="true" className="text-sm group-hover:text-[#284331]">
+              <span aria-hidden="true" className="text-sm group-hover:text-app-accent">
                 →
               </span>
             </span>
-            <strong className="mt-4 block font-serif text-lg font-medium tracking-[-0.025em] text-[#263028]">
+            <strong className="mt-4 block font-serif text-lg font-medium tracking-[-0.025em] text-app-ink">
               {project.name}
             </strong>
           </button>
@@ -693,25 +693,25 @@ function WorkflowSelection({
               key={run.id}
               to={`/workflow-editor/${run.id}`}
               aria-label={`打开工作流 ${name}`}
-              className="group block rounded-[1.15rem] border border-[#d1d7d0] bg-white p-4 transition hover:border-[#87988b] hover:bg-[#fbfcf9] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]"
+              className="group block rounded-[1.15rem] border border-app-line bg-app-surface-raised p-4 transition hover:border-app-line-strong hover:bg-app-surface-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
             >
-              <span className="flex items-center justify-between gap-3 font-mono text-[0.6rem] font-semibold tracking-[0.08em] text-[#788179] uppercase">
+              <span className="flex items-center justify-between gap-3 font-mono text-[0.6rem] font-semibold tracking-[0.08em] text-app-faint uppercase">
                 WorkflowRun #{run.id}
-                <span aria-hidden="true" className="text-sm group-hover:text-[#284331]">
+                <span aria-hidden="true" className="text-sm group-hover:text-app-accent">
                   ↗
                 </span>
               </span>
-              <strong className="mt-2 block font-serif text-xl font-medium tracking-[-0.03em] text-[#253027]">
+              <strong className="mt-2 block font-serif text-xl font-medium tracking-[-0.03em] text-app-ink">
                 {name}
               </strong>
               <span className="mt-4 flex items-center gap-3">
-                <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#e2e6e1]">
+                <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-app-surface-muted">
                   <span
-                    className="block h-full rounded-full bg-[#35583f]"
+                    className="block h-full rounded-full bg-app-accent"
                     style={{ width: `${percentage}%` }}
                   />
                 </span>
-                <span className="shrink-0 text-[0.68rem] text-[#687169]">
+                <span className="shrink-0 text-[0.68rem] text-app-muted">
                   {completed} / {total} 节点完成
                 </span>
               </span>
@@ -740,7 +740,7 @@ function CharacterSelection({
 }) {
   return (
     <div>
-      <p className="mb-3 text-xs leading-5 text-[#6d766e]">选择要核验的角色。</p>
+      <p className="mb-3 text-xs leading-5 text-app-muted">选择要核验的角色。</p>
       <div className="grid gap-3 sm:grid-cols-2">
         {characters.items.map((character) => {
           const name = character.name ?? '未命名角色'
@@ -750,18 +750,18 @@ function CharacterSelection({
               type="button"
               aria-label={`选择角色 ${name}`}
               onClick={() => onSelect(character)}
-              className="group min-h-24 rounded-[1.1rem] border border-[#d1d7d0] bg-white px-4 py-3 text-left transition hover:border-[#87988b] hover:bg-[#f4f7f3] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]"
+              className="group min-h-24 rounded-[1.1rem] border border-app-line bg-app-surface-raised px-4 py-3 text-left transition hover:border-app-line-strong hover:bg-app-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
             >
-              <span className="flex items-center justify-between gap-3 text-[0.62rem] text-[#7a827b]">
+              <span className="flex items-center justify-between gap-3 text-[0.62rem] text-app-faint">
                 CHARACTER · {character.id}
-                <span aria-hidden="true" className="text-sm group-hover:text-[#284331]">
+                <span aria-hidden="true" className="text-sm group-hover:text-app-accent">
                   →
                 </span>
               </span>
-              <strong className="mt-3 block font-serif text-lg font-medium tracking-[-0.025em] text-[#263028]">
+              <strong className="mt-3 block font-serif text-lg font-medium tracking-[-0.025em] text-app-ink">
                 {name}
               </strong>
-              <span className="mt-1 block text-[0.68rem] text-[#778078]">
+              <span className="mt-1 block text-[0.68rem] text-app-faint">
                 {character.outfits.length} 套造型
               </span>
             </button>
@@ -793,7 +793,7 @@ function OutfitSelection({
 
   return (
     <div>
-      <p className="mb-3 text-xs leading-5 text-[#6d766e]">只有包含真实动作帧的造型可以进入。</p>
+      <p className="mb-3 text-xs leading-5 text-app-muted">只有包含真实动作帧的造型可以进入。</p>
       <div className="space-y-3">
         {outfits.map((outfit) => {
           const playback = getOutfitPlayback(outfit)
@@ -801,19 +801,19 @@ function OutfitSelection({
             <div
               className={`rounded-[1.1rem] border px-4 py-3 ${
                 playback.playable
-                  ? 'border-[#ced5cd] bg-white transition group-hover:border-[#819287] group-hover:bg-[#fbfcf9]'
-                  : 'border-[#d9ddd8] bg-[#f0f2ee] text-[#767d76]'
+                  ? 'border-app-line bg-app-surface-raised transition group-hover:border-app-line-strong group-hover:bg-app-surface-raised'
+                  : 'border-app-line bg-app-surface text-app-faint'
               }`}
             >
               <span className="flex items-center justify-between gap-3 text-[0.62rem]">
-                <span className="font-mono tracking-[0.08em] text-[#7a827b] uppercase">
+                <span className="font-mono tracking-[0.08em] text-app-faint uppercase">
                   Outfit · {outfit.id}
                 </span>
                 <span
                   className={`rounded-full border px-2 py-0.5 text-[0.58rem] font-semibold ${
                     playback.playable
-                      ? 'border-[#a8b9aa] bg-[#edf4ed] text-[#35583f]'
-                      : 'border-[#cdd2cc] bg-[#f4f5f1] text-[#777e77]'
+                      ? 'border-app-line-strong bg-app-accent-muted text-app-accent'
+                      : 'border-app-line bg-app-surface text-app-faint'
                   }`}
                 >
                   {playback.playable ? '可预览' : '待补帧'}
@@ -821,16 +821,16 @@ function OutfitSelection({
               </span>
               <span className="mt-2 flex items-end justify-between gap-3">
                 <span>
-                  <strong className="block font-serif text-lg font-medium tracking-[-0.025em] text-[#263028]">
+                  <strong className="block font-serif text-lg font-medium tracking-[-0.025em] text-app-ink">
                     {outfit.name}
                   </strong>
-                  <span className="mt-1 block text-[0.68rem] text-[#707970]">
+                  <span className="mt-1 block text-[0.68rem] text-app-muted">
                     {playback.playable
                       ? `${outfit.actions.length} 个动作 · ${playback.frameCount} 帧`
                       : '尚无可播放帧'}
                   </span>
                 </span>
-                <span aria-hidden="true" className="text-sm text-[#647067]">
+                <span aria-hidden="true" className="text-sm text-app-muted">
                   {playback.playable ? '↗' : '—'}
                 </span>
               </span>
@@ -842,7 +842,7 @@ function OutfitSelection({
               key={outfit.id}
               to={`/playtest/${character.id}/${outfit.id}`}
               aria-label={`预览 ${name} · ${outfit.name}`}
-              className="group block rounded-[1.1rem] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]"
+              className="group block rounded-[1.1rem] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
             >
               {card}
             </Link>
@@ -875,12 +875,12 @@ function SelectedContext({
   value: string
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-[#cbd3cb] bg-[#edf2ec] px-3.5 py-3">
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-app-line bg-app-accent-muted px-3.5 py-3">
       <span className="min-w-0">
-        <span className="block font-mono text-[0.56rem] font-semibold tracking-[0.12em] text-[#718075] uppercase">
+        <span className="block font-mono text-[0.56rem] font-semibold tracking-[0.12em] text-app-faint uppercase">
           已选{label}
         </span>
-        <strong className="mt-0.5 block truncate text-xs font-semibold text-[#324238]">
+        <strong className="mt-0.5 block truncate text-xs font-semibold text-app-ink-soft">
           {value}
         </strong>
       </span>
@@ -888,7 +888,7 @@ function SelectedContext({
         type="button"
         aria-label={actionLabel}
         onClick={onReset}
-        className="min-h-9 shrink-0 rounded-full border border-[#aab7ac] bg-[#f8faf7] px-3 text-[0.68rem] font-semibold text-[#4c5b50] transition hover:border-[#6f8574] hover:text-[#284331] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]"
+        className="min-h-9 shrink-0 rounded-full border border-app-line-strong bg-app-surface-raised px-3 text-[0.68rem] font-semibold text-app-ink-soft transition hover:border-app-line-strong hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
       >
         更换
       </button>
@@ -898,8 +898,11 @@ function SelectedContext({
 
 function LoadingState({ label }: { label: string }) {
   return (
-    <div role="status" className="rounded-[1.25rem] border border-[#d4dad3] bg-white p-5">
-      <p className="text-xs font-medium text-[#687169]">{label}</p>
+    <div
+      role="status"
+      className="rounded-[1.25rem] border border-app-line bg-app-surface-raised p-5"
+    >
+      <p className="text-xs font-medium text-app-muted">{label}</p>
       <div aria-hidden="true" className="mt-5 space-y-3">
         <span className="workspace-loading-line block h-3 w-2/3 rounded-full" />
         <span className="workspace-loading-line block h-3 w-full rounded-full" />
@@ -923,15 +926,18 @@ function ErrorState({
   title: string
 }) {
   return (
-    <div role="alert" className="rounded-[1.25rem] border border-[#d6c1b6] bg-[#fff8f3] p-5">
-      <p className="font-serif text-xl font-medium tracking-[-0.025em] text-[#6f3928]">{title}</p>
-      <p className="mt-2 text-xs leading-5 text-[#7a5548]">{description}</p>
+    <div
+      role="alert"
+      className="rounded-[1.25rem] border border-app-danger-line bg-app-danger-soft p-5"
+    >
+      <p className="font-serif text-xl font-medium tracking-[-0.025em] text-app-danger">{title}</p>
+      <p className="mt-2 text-xs leading-5 text-app-danger-muted">{description}</p>
       <div className="mt-5 flex flex-wrap gap-2.5">
         <button
           type="button"
           aria-label={retryLabel}
           onClick={onRetry}
-          className="inline-flex min-h-10 items-center rounded-full bg-[#6f3928] px-4 text-xs font-semibold text-white transition hover:bg-[#593022] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6f3928]"
+          className="inline-flex min-h-10 items-center rounded-full bg-app-danger px-4 text-xs font-semibold text-app-on-accent transition hover:bg-app-danger-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-danger"
         >
           重试
         </button>
@@ -951,11 +957,11 @@ function EmptyState({
   title: string
 }) {
   return (
-    <div className="rounded-[1.25rem] border border-dashed border-[#c3cbc3] bg-[#f4f6f2] p-5 sm:p-6">
-      <strong className="font-serif text-xl font-medium tracking-[-0.025em] text-[#303a32]">
+    <div className="rounded-[1.25rem] border border-dashed border-app-line bg-app-surface p-5 sm:p-6">
+      <strong className="font-serif text-xl font-medium tracking-[-0.025em] text-app-ink-soft">
         {title}
       </strong>
-      <p className="mt-2 max-w-md text-xs leading-5 text-[#6e776f]">{description}</p>
+      <p className="mt-2 max-w-md text-xs leading-5 text-app-muted">{description}</p>
       {children ? <div className="mt-5 flex flex-wrap gap-2.5">{children}</div> : null}
     </div>
   )
@@ -969,7 +975,7 @@ function ContextLink({ children, ...props }: Omit<React.ComponentProps<typeof Li
   return (
     <Link
       {...props}
-      className="inline-flex min-h-10 items-center rounded-full border border-[#c1c9c1] bg-[#fbfcf9] px-4 text-xs font-semibold text-[#536057] transition hover:border-[#809083] hover:text-[#284331] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]"
+      className="inline-flex min-h-10 items-center rounded-full border border-app-line bg-app-surface-raised px-4 text-xs font-semibold text-app-ink-soft transition hover:border-app-line-strong hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
     >
       {children}
     </Link>
@@ -983,7 +989,7 @@ function PrimaryContextLink({
   return (
     <Link
       {...props}
-      className="inline-flex min-h-10 items-center rounded-full bg-[#284331] px-4 text-xs font-semibold text-white transition hover:bg-[#1f3828] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]"
+      className="inline-flex min-h-10 items-center rounded-full bg-app-accent px-4 text-xs font-semibold text-app-on-accent transition hover:bg-app-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
     >
       {children}
     </Link>

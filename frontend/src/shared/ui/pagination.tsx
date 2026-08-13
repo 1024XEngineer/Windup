@@ -24,11 +24,11 @@ export function Pagination({
         aria-label="上一页"
         disabled={disabled || page <= 1}
         onClick={() => onPageChange(page - 1)}
-        className="rounded-full border border-[#cbd1c8] px-3 py-1.5 font-semibold text-[#4d564e] disabled:cursor-not-allowed disabled:opacity-40"
+        className="rounded-full border border-app-line px-3 py-1.5 font-semibold text-app-ink-soft disabled:cursor-not-allowed disabled:opacity-40"
       >
         上一页
       </button>
-      <span className="tabular-nums text-[#747b73]">
+      <span className="tabular-nums text-app-faint">
         第 {page} / {totalPages} 页 · 共 {total} 项
       </span>
       <button
@@ -36,7 +36,7 @@ export function Pagination({
         aria-label="下一页"
         disabled={disabled || page >= totalPages}
         onClick={() => onPageChange(page + 1)}
-        className="rounded-full border border-[#cbd1c8] px-3 py-1.5 font-semibold text-[#4d564e] disabled:cursor-not-allowed disabled:opacity-40"
+        className="rounded-full border border-app-line px-3 py-1.5 font-semibold text-app-ink-soft disabled:cursor-not-allowed disabled:opacity-40"
       >
         下一页
       </button>

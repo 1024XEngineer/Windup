@@ -13,7 +13,7 @@ export interface AppShellProps {
 /** 登录产品外壳；只服务工作台与受保护业务页。 */
 export function AppShell({ children }: AppShellProps) {
   return (
-    <div className="min-h-screen bg-white text-slate-900">
+    <div className="min-h-screen bg-app-canvas text-app-ink">
       <AppHeader />
       {/*
         外壳只管顶栏。页面自己决定宽度与留白，不在这里统一夹到屏幕中间，

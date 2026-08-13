@@ -58,13 +58,13 @@ export function ProjectDetailPage() {
     return (
       <p
         role="alert"
-        className="m-6 rounded-xl border border-[#d8c7bd] bg-[#fff8f2] p-5 text-sm text-[#7a3f2a]"
+        className="m-6 rounded-xl border border-app-danger-line bg-app-danger-soft p-5 text-sm text-app-danger"
       >
         {error}
       </p>
     )
   }
-  if (!project) return <p className="p-6 text-sm text-[#6f746d]">正在读取项目…</p>
+  if (!project) return <p className="bg-app-canvas p-6 text-sm text-app-muted">正在读取项目…</p>
 
   const constraints = [
     ['视角', CHARACTER_PERSPECTIVE[project.perspective]],
@@ -78,13 +78,13 @@ export function ProjectDetailPage() {
   }
 
   return (
-    <div className="grid min-h-screen gap-3 bg-[#f7f8f5] p-3 md:h-screen md:grid-cols-[13rem_minmax(0,1fr)] md:overflow-hidden xl:grid-cols-[14rem_minmax(0,1fr)]">
-      <aside className="flex min-h-0 flex-col overflow-hidden rounded-[1.35rem] border border-[#d9ddd6] bg-[#fbfbf8] text-[#222520]">
-        <div className="border-b border-[#dfe2dc] px-4 py-4">
+    <div className="grid min-h-screen gap-3 bg-app-canvas p-3 text-app-ink md:h-screen md:grid-cols-[13rem_minmax(0,1fr)] md:overflow-hidden xl:grid-cols-[14rem_minmax(0,1fr)]">
+      <aside className="flex min-h-0 flex-col overflow-hidden rounded-[1.35rem] border border-app-line bg-app-surface-raised text-app-ink">
+        <div className="border-b border-app-line px-4 py-4">
           <Link
             to="/projects"
             aria-label="返回项目中心"
-            className="text-xs font-medium text-[#687067] hover:text-[#242824]"
+            className="text-xs font-medium text-app-muted hover:text-app-accent"
           >
             ‹ 项目中心
           </Link>
@@ -92,24 +92,24 @@ export function ProjectDetailPage() {
         </div>
 
         <nav aria-label="资产分类" className="p-2.5">
-          <p className="px-2 pb-2 pt-1 text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-[#858c84]">
+          <p className="px-2 pb-2 pt-1 text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-app-faint">
             资产库
           </p>
           <div className="space-y-0.5">
             <Link
               to={`/projects/${project.id}/assets`}
               aria-current="page"
-              className="flex h-9 items-center justify-between rounded-xl bg-[#dfe7dd] px-2.5 text-sm font-semibold text-[#263f2d] transition"
+              className="flex h-9 items-center justify-between rounded-xl bg-app-accent-soft px-2.5 text-sm font-semibold text-app-accent transition"
             >
               <span>角色</span>
-              <span className="text-xs tabular-nums text-[#7d857d]">{characterCount}</span>
+              <span className="text-xs tabular-nums text-app-muted">{characterCount}</span>
             </Link>
             <button
               type="button"
               disabled
               aria-label="动作模板"
               title="动作模板后端能力不在本期范围"
-              className="flex h-9 w-full cursor-not-allowed items-center justify-between rounded-xl px-2.5 text-left text-sm text-[#858c84]"
+              className="flex h-9 w-full cursor-not-allowed items-center justify-between rounded-xl px-2.5 text-left text-sm text-app-faint"
             >
               <span>动作模板</span>
               <span className="text-[0.62rem] font-medium">后端未提供</span>
@@ -117,8 +117,8 @@ export function ProjectDetailPage() {
           </div>
         </nav>
 
-        <div className="mt-2 border-t border-[#e3e6e0] p-3">
-          <p className="px-2 pb-1 text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-[#858c84]">
+        <div className="mt-2 border-t border-app-line p-3">
+          <p className="px-2 pb-1 text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-app-faint">
             项目规格
           </p>
           <dl className="space-y-0.5">
@@ -127,27 +127,27 @@ export function ProjectDetailPage() {
                 key={label}
                 className="flex min-w-0 items-center justify-between gap-2 px-2 py-1.5 text-[0.7rem]"
               >
-                <dt className="text-[#858c84]">{label}</dt>
-                <dd className="truncate font-medium text-[#454b44]">{value}</dd>
+                <dt className="text-app-faint">{label}</dt>
+                <dd className="truncate font-medium text-app-ink-soft">{value}</dd>
               </div>
             ))}
           </dl>
         </div>
 
         {session.state.status === 'authenticated' ? (
-          <div aria-label="当前账号" className="mt-auto border-t border-[#e3e6e0] p-3">
+          <div aria-label="当前账号" className="mt-auto border-t border-app-line p-3">
             <div className="min-w-0 px-2 py-1">
-              <p className="truncate text-xs font-semibold text-[#343a34]">
+              <p className="truncate text-xs font-semibold text-app-ink-soft">
                 {session.state.user.nickname || session.state.user.email}
               </p>
-              <p className="mt-0.5 truncate text-[0.68rem] text-[#7a8279]">
+              <p className="mt-0.5 truncate text-[0.68rem] text-app-faint">
                 {session.state.user.email}
               </p>
             </div>
             <button
               type="button"
               onClick={signOut}
-              className="mt-2 inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-[#cfd5cc] px-3 text-xs font-semibold text-[#59635a] transition-colors hover:bg-[#edf1eb] hover:text-[#26372c] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#284331]"
+              className="mt-2 inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-app-line px-3 text-xs font-semibold text-app-muted transition-colors hover:bg-app-accent-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
             >
               退出登录
             </button>

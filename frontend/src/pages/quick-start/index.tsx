@@ -125,38 +125,38 @@ function QuickStartActionInput({
   }
 
   return (
-    <section className="min-h-[560px] border border-[#c9d0ca] bg-[#dfe3df] p-6 text-[#171817] sm:p-10">
+    <section className="min-h-[560px] border border-app-line bg-app-canvas p-6 text-app-ink sm:p-10">
       <Link
         to={playtestPath(target.characterId, target.outfitId)}
-        className="text-xs font-semibold text-[#59635b] hover:text-[#2f4e38]"
+        className="text-xs font-semibold text-app-muted hover:text-app-accent"
       >
         ← 返回当前预览台
       </Link>
       <div className="mx-auto mt-14 max-w-2xl">
-        <p className="font-mono text-[10px] font-bold text-[#687069]">ADD ACTION</p>
+        <p className="font-mono text-[10px] font-bold text-app-muted">ADD ACTION</p>
         <h1 className="mt-3 font-serif text-4xl">给当前角色增加动作</h1>
-        <p className="mt-3 text-sm text-[#687069]">
+        <p className="mt-3 text-sm text-app-muted">
           新动作会追加到角色 {target.characterId} 的当前造型，不会新建角色或覆盖已有动作。
         </p>
         <form onSubmit={submit} className="mt-8 space-y-4">
-          <label className="block text-xs font-semibold text-[#4f5b52]">
+          <label className="block text-xs font-semibold text-app-ink-soft">
             动作描述
             <textarea
               value={description}
               onChange={(event) => setDescription(event.target.value)}
               placeholder="例如：挥手打招呼、蹲下查看地面、举起画笔作画"
-              className="mt-2 min-h-32 w-full resize-y rounded-lg border border-[#aeb8b0] bg-white p-4 text-base outline-none focus:border-[#35583f]"
+              className="mt-2 min-h-32 w-full resize-y rounded-lg border border-app-line-strong bg-app-surface-raised p-4 text-base outline-none focus:border-app-accent"
             />
           </label>
           {error ? (
-            <p role="alert" className="text-sm text-[#983c32]">
+            <p role="alert" className="text-sm text-app-danger">
               {error}
             </p>
           ) : null}
           <button
             type="submit"
             disabled={!description.trim() || submitting || Boolean(service.unavailableReason)}
-            className="min-h-11 rounded-lg bg-[#35583f] px-5 text-sm font-semibold text-white disabled:opacity-50"
+            className="min-h-11 rounded-lg bg-app-accent px-5 text-sm font-semibold text-app-on-accent disabled:opacity-50"
           >
             {submitting ? '正在开始生成…' : '开始生成新动作'}
           </button>
@@ -232,13 +232,13 @@ function QuickStartInput({
   }
 
   return (
-    <section className="relative min-h-screen overflow-hidden border border-[#c9d0ca] bg-[#dfe3df] text-[#171817] shadow-[0_26px_80px_rgba(31,43,35,0.10)]">
+    <section className="relative min-h-screen overflow-hidden border border-app-line bg-app-canvas text-app-ink shadow-app-page">
       <AmbientGrid />
 
       <div className="relative z-10 grid min-h-screen grid-rows-[auto_1fr_auto] p-5 sm:p-8">
         <header className="flex items-start justify-between gap-6">
           <div>
-            <p className="font-mono text-[10px] font-bold tracking-[0.16em] text-[#687069]">
+            <p className="font-mono text-[10px] font-bold tracking-[0.16em] text-app-muted">
               QUICK START / CREATE CHARACTER
             </p>
             <h1 className="mt-3 max-w-3xl font-serif text-3xl leading-tight tracking-[-0.035em] sm:text-5xl">
@@ -247,7 +247,7 @@ function QuickStartInput({
               开始一条可追踪的制作流程。
             </h1>
           </div>
-          <span className="hidden rounded-full border border-[#bcc6be] bg-[#f3f5f1]/80 px-4 py-2 text-xs font-semibold text-[#35583f] sm:inline-flex">
+          <span className="hidden rounded-full border border-app-line-strong bg-app-surface/80 px-4 py-2 text-xs font-semibold text-app-accent sm:inline-flex">
             AI 快捷创作
           </span>
         </header>
@@ -256,16 +256,16 @@ function QuickStartInput({
           <button
             type="button"
             onClick={() => setPrompt(EXAMPLES[0].prompt)}
-            className="group flex min-h-24 w-full items-center gap-4 rounded-full border border-[#c4cbc5] bg-[#f7f8f4] px-7 text-left shadow-[0_18px_45px_rgba(31,43,35,0.09)] transition hover:-translate-y-0.5 hover:border-[#8fa092] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#35583f] motion-reduce:transform-none"
+            className="group flex min-h-24 w-full items-center gap-4 rounded-full border border-app-line bg-app-surface-raised px-7 text-left shadow-app-card transition hover:-translate-y-0.5 hover:border-app-line-strong focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-app-accent motion-reduce:transform-none"
           >
-            <span className="shrink-0 text-sm font-semibold text-[#747973]">你可能想做：</span>
-            <strong className="text-base font-semibold text-[#35583f] sm:text-xl">
+            <span className="shrink-0 text-sm font-semibold text-app-faint">你可能想做：</span>
+            <strong className="text-base font-semibold text-app-accent sm:text-xl">
               {EXAMPLES[0].prompt}
             </strong>
           </button>
 
           <div
-            className="mx-auto grid aspect-square w-44 grid-cols-7 gap-1 rounded-[1.4rem] border border-[#c4cbc5] bg-[#eef1ed] p-5 shadow-[0_18px_45px_rgba(31,43,35,0.08)]"
+            className="mx-auto grid aspect-square w-44 grid-cols-7 gap-1 rounded-[1.4rem] border border-app-line bg-app-surface p-5 shadow-app-card"
             aria-hidden="true"
           >
             {Array.from({ length: 49 }, (_, index) => {
@@ -278,7 +278,7 @@ function QuickStartInput({
               return (
                 <i
                   key={index}
-                  className={`rounded-[2px] ${active ? 'bg-[#35583f]' : 'bg-[#d9ded8]'}`}
+                  className={`rounded-[2px] ${active ? 'bg-app-accent' : 'bg-app-line'}`}
                 />
               )
             })}
@@ -292,7 +292,7 @@ function QuickStartInput({
                 key={example.label}
                 type="button"
                 onClick={() => setPrompt(example.prompt)}
-                className="rounded-full border border-[#c4cbc5] bg-[#f3f5f1] px-3 py-1.5 text-[11px] font-medium text-[#687069] hover:border-[#8fa092] hover:text-[#35583f]"
+                className="rounded-full border border-app-line bg-app-surface px-3 py-1.5 text-[11px] font-medium text-app-muted hover:border-app-line-strong hover:text-app-accent"
               >
                 {example.label}
               </button>
@@ -301,7 +301,7 @@ function QuickStartInput({
 
           <form
             onSubmit={(event) => void submit(event)}
-            className="grid gap-3 rounded-[1.4rem] border border-[#bdc7bf] bg-[#f7f8f4] p-4 shadow-[0_22px_60px_rgba(31,43,35,0.12)] sm:grid-cols-[1fr_auto]"
+            className="grid gap-3 rounded-[1.4rem] border border-app-line-strong bg-app-surface-raised p-4 shadow-app-panel sm:grid-cols-[1fr_auto]"
           >
             <label className="grid gap-2" htmlFor="quick-start-prompt">
               <span className="sr-only">创作指令</span>
@@ -316,10 +316,10 @@ function QuickStartInput({
                     ? '例如：挥手打招呼、提灯前行（可留空生成待机动作）'
                     : '描述你想生成的角色、身份特征和视觉风格…'
                 }
-                className="min-h-16 w-full resize-none border-0 bg-transparent px-2 py-1 text-[15px] leading-relaxed text-[#1d251f] outline-none placeholder:text-[#7a817b]"
+                className="min-h-16 w-full resize-none border-0 bg-transparent px-2 py-1 text-[15px] leading-relaxed text-app-ink outline-none placeholder:text-app-faint"
               />
-              <span className="flex flex-wrap items-center gap-2 px-2 text-[10px] text-[#747973]">
-                <b className="rounded-full border border-[#c9d0ca] bg-[#e7ebe5] px-2.5 py-1 font-medium text-[#515a53]">
+              <span className="flex flex-wrap items-center gap-2 px-2 text-[10px] text-app-faint">
+                <b className="rounded-full border border-app-line bg-app-surface-muted px-2.5 py-1 font-medium text-app-ink-soft">
                   文字创建
                 </b>
                 {templateFile
@@ -327,12 +327,12 @@ function QuickStartInput({
                   : '角色图生成后仍需人工选择候选'}
               </span>
               {templateFile ? (
-                <span className="flex flex-wrap items-center gap-2 px-2 text-[11px] text-[#515a53]">
+                <span className="flex flex-wrap items-center gap-2 px-2 text-[11px] text-app-ink-soft">
                   <b className="max-w-full truncate font-medium">{templateFile.name}</b>
                   <button
                     type="button"
                     onClick={removeTemplateFile}
-                    className="rounded-full border border-[#b9c3bb] px-2 py-0.5 text-[10px] hover:border-[#8fa092] hover:text-[#35583f]"
+                    className="rounded-full border border-app-line-strong px-2 py-0.5 text-[10px] hover:border-app-line-strong hover:text-app-accent"
                   >
                     移除图片
                   </button>
@@ -352,7 +352,7 @@ function QuickStartInput({
               <button
                 type="button"
                 onClick={() => fileInput.current?.click()}
-                className="min-h-9 rounded-xl border border-[#aeb8b0] bg-[#eef1ed] px-4 text-xs font-semibold text-[#515a53] transition hover:border-[#8fa092] hover:text-[#35583f]"
+                className="min-h-9 rounded-xl border border-app-line-strong bg-app-surface px-4 text-xs font-semibold text-app-ink-soft transition hover:border-app-line-strong hover:text-app-accent"
               >
                 {templateFile ? '更换图片' : '上传角色母版'}
               </button>
@@ -361,7 +361,7 @@ function QuickStartInput({
                 disabled={
                   (!prompt.trim() && !templateFile) || submitting || Boolean(unavailableReason)
                 }
-                className="min-h-14 rounded-[1rem] bg-[#35583f] px-5 text-sm font-bold text-[#f3f6f2] transition hover:bg-[#456c51] disabled:cursor-not-allowed disabled:opacity-45"
+                className="min-h-14 rounded-[1rem] bg-app-accent px-5 text-sm font-bold text-app-on-accent transition hover:bg-app-accent-hover disabled:cursor-not-allowed disabled:opacity-45"
               >
                 {submitting ? '正在创建…' : '开始生成'}
               </button>
@@ -369,14 +369,14 @@ function QuickStartInput({
           </form>
 
           {unavailableReason ? (
-            <p className="mt-3 rounded-xl border border-[#c7a967] bg-[#f4eddc] px-4 py-3 text-sm text-[#67552e]">
+            <p className="mt-3 rounded-xl border border-app-warning-line bg-app-warning-soft px-4 py-3 text-sm text-app-warning">
               {unavailableReason}
             </p>
           ) : null}
           {error ? (
             <p
               role="alert"
-              className="mt-3 rounded-xl bg-[#311b19] px-4 py-3 text-sm text-[#ffd3cc]"
+              className="mt-3 rounded-xl bg-app-danger px-4 py-3 text-sm text-app-danger-soft"
             >
               {error}
             </p>
@@ -517,24 +517,24 @@ function QuickStartRun({
 
   if (!run) {
     return (
-      <section className="min-h-[520px] rounded-[2rem] border border-[#c9d0ca] bg-[#e8ebe7] p-8 text-[#26302a]">
-        <p className="font-mono text-[10px] font-bold tracking-[0.16em] text-[#687069]">
+      <section className="min-h-[520px] rounded-[2rem] border border-app-line bg-app-canvas p-8 text-app-ink">
+        <p className="font-mono text-[10px] font-bold tracking-[0.16em] text-app-muted">
           QUICK START / RECOVERY
         </p>
         <h1 className="mt-4 font-serif text-4xl">
           {restoring ? '正在恢复这次创作' : '无法恢复这次创作'}
         </h1>
         {restoring ? (
-          <p className="mt-4 max-w-xl text-sm leading-7 text-[#687069]">正在读取工作流状态…</p>
+          <p className="mt-4 max-w-xl text-sm leading-7 text-app-muted">正在读取工作流状态…</p>
         ) : (
           <>
-            <p role="alert" className="mt-4 max-w-xl text-sm leading-7 text-[#687069]">
+            <p role="alert" className="mt-4 max-w-xl text-sm leading-7 text-app-muted">
               {error || `没有找到运行记录 ${runId}`}
             </p>
             <button
               type="button"
               onClick={() => navigate('/quick-start')}
-              className="mt-8 rounded-xl bg-[#35583f] px-5 py-3 text-sm font-semibold text-white"
+              className="mt-8 rounded-xl bg-app-accent px-5 py-3 text-sm font-semibold text-app-on-accent"
             >
               返回快速开始
             </button>
@@ -622,12 +622,12 @@ function QuickStartRun({
   }
 
   return (
-    <section className="relative min-h-screen overflow-hidden border border-[#c9d0ca] bg-[#e3e7e2] text-[#171817] shadow-[0_26px_80px_rgba(31,43,35,0.10)]">
+    <section className="relative min-h-screen overflow-hidden border border-app-line bg-app-canvas text-app-ink shadow-app-page">
       <AmbientGrid />
       <div className="relative z-10 grid min-h-screen grid-rows-[auto_1fr_auto] gap-6 p-5 sm:p-8">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="font-mono text-[10px] font-bold tracking-[0.16em] text-[#687069]">
+            <p className="font-mono text-[10px] font-bold tracking-[0.16em] text-app-muted">
               QUICK START / RUN {run.id}
             </p>
             <h1 className="mt-2 font-serif text-3xl tracking-[-0.03em] sm:text-4xl">
@@ -638,31 +638,31 @@ function QuickStartRun({
             {exportModel ? (
               <ExportButton
                 model={exportModel}
-                className="border-[#35583f] bg-[#35583f] text-white hover:bg-[#294a34]"
+                className="border-app-accent bg-app-accent text-app-on-accent hover:bg-app-accent-hover"
               />
             ) : null}
             <div
-              className="flex items-center gap-3 rounded-xl border border-[#c4cbc5] bg-[#f7f8f4]/90 px-4 py-3"
+              className="flex items-center gap-3 rounded-xl border border-app-line bg-app-surface-raised/90 px-4 py-3"
               aria-live="polite"
             >
               <i
                 className={`h-2.5 w-2.5 rounded-full ${
-                  workflowIsActive(run) ? 'animate-pulse bg-[#4f7b5b]' : 'bg-[#8c938d]'
+                  workflowIsActive(run) ? 'animate-pulse bg-app-accent' : 'bg-app-faint'
                 } motion-reduce:animate-none`}
                 aria-hidden="true"
               />
               <span>
-                <small className="block font-mono text-[8px] tracking-[0.12em] text-[#747973]">
+                <small className="block font-mono text-[8px] tracking-[0.12em] text-app-faint">
                   CURRENT STATUS
                 </small>
-                <b className="text-sm text-[#35583f]">{status.title}</b>
+                <b className="text-sm text-app-accent">{status.title}</b>
               </span>
             </div>
           </div>
         </header>
 
         <div className="grid min-h-0 gap-5 lg:grid-cols-[1.35fr_0.65fr]">
-          <section className="grid min-h-[340px] place-items-center overflow-hidden rounded-[1.4rem] border border-[#c4cbc5] bg-[#eef1ed]/90 p-5">
+          <section className="grid min-h-[340px] place-items-center overflow-hidden rounded-[1.4rem] border border-app-line bg-app-surface/90 p-5">
             {actionFrames.length > 0 ? (
               <div className="grid w-full grid-cols-4 gap-2 sm:grid-cols-8">
                 {actionFrames.map((frame, index) => (
@@ -672,34 +672,34 @@ function QuickStartRun({
                     alt={`动作第 ${index + 1} 帧`}
                     loading="lazy"
                     decoding="async"
-                    className="aspect-square w-full border border-[#c7cec8] bg-[#e7ebe6] object-contain [image-rendering:pixelated]"
+                    className="aspect-square w-full border border-app-line bg-app-surface-muted object-contain [image-rendering:pixelated]"
                   />
                 ))}
               </div>
             ) : isActionActive ? (
               <div className="grid place-items-center gap-5 text-center">
-                <div className="relative grid h-44 w-44 place-items-center rounded-[1.4rem] border border-dashed border-[#aeb9b0] bg-[#e5e9e4]">
-                  <i className="h-12 w-12 animate-pulse rounded-full border border-[#819184] bg-[#d5ddd6] shadow-[0_0_0_16px_rgba(53,88,63,0.05)] motion-reduce:animate-none" />
+                <div className="relative grid h-44 w-44 place-items-center rounded-[1.4rem] border border-dashed border-app-line-strong bg-app-surface-muted">
+                  <i className="h-12 w-12 animate-pulse rounded-full border border-app-line-strong bg-app-accent-soft shadow-app-pulse motion-reduce:animate-none" />
                 </div>
                 <span>
-                  <b className="block text-base text-[#354039]">正在生成动作</b>
-                  <small className="mt-2 block max-w-md leading-6 text-[#687069]">
+                  <b className="block text-base text-app-ink-soft">正在生成动作</b>
+                  <small className="mt-2 block max-w-md leading-6 text-app-muted">
                     正在生成动作帧，请稍候…
                   </small>
                 </span>
               </div>
             ) : isActionFailed ? (
               <div className="grid place-items-center gap-5 text-center">
-                <b className="text-base text-[#8b332a]">动作生成失败</b>
-                <small className="max-w-md leading-6 text-[#687069]">
+                <b className="text-base text-app-danger">动作生成失败</b>
+                <small className="max-w-md leading-6 text-app-muted">
                   {typeof actionStep?.error === 'string' ? actionStep.error : '动作生成失败'}
                 </small>
               </div>
             ) : isFirstFrameSelecting && firstFrameCandidates.length ? (
               <div className="grid w-full gap-4">
                 <div className="mx-auto max-w-xl text-center">
-                  <h2 className="text-lg font-semibold text-[#354039]">选择动作首帧</h2>
-                  <p className="mt-2 text-sm leading-6 text-[#687069]">
+                  <h2 className="text-lg font-semibold text-app-ink-soft">选择动作首帧</h2>
+                  <p className="mt-2 text-sm leading-6 text-app-muted">
                     确认首帧后，系统会自动使用视频裁剪路线生成 32 帧完整动作。
                   </p>
                 </div>
@@ -711,8 +711,8 @@ function QuickStartRun({
                       onClick={() => setSelectedFirstFrame(frame.imageUrl)}
                       className={`overflow-hidden rounded-xl border-2 p-2 text-left transition ${
                         selectedFirstFrame === frame.imageUrl
-                          ? 'border-[#35583f] bg-[#d5e5d8]'
-                          : 'border-[#c7cec8] bg-[#e7ebe6] hover:border-[#8fa092]'
+                          ? 'border-app-accent bg-app-accent-soft'
+                          : 'border-app-line bg-app-surface-muted hover:border-app-line-strong'
                       }`}
                     >
                       <img
@@ -723,7 +723,7 @@ function QuickStartRun({
                         fetchPriority={index === 0 ? 'high' : 'auto'}
                         className="aspect-square w-full object-contain [image-rendering:pixelated]"
                       />
-                      <p className="mt-2 font-mono text-[9px] tracking-[0.1em] text-[#687069]">
+                      <p className="mt-2 font-mono text-[9px] tracking-[0.1em] text-app-muted">
                         FIRST FRAME {String(index + 1).padStart(2, '0')}
                       </p>
                     </button>
@@ -734,7 +734,7 @@ function QuickStartRun({
                     type="button"
                     onClick={() => void confirmFirstFrame()}
                     disabled={!selectedFirstFrame || confirmingFirstFrame}
-                    className="rounded-xl bg-[#35583f] px-6 py-3 text-sm font-bold text-white transition hover:bg-[#456c51] disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-xl bg-app-accent px-6 py-3 text-sm font-bold text-app-on-accent transition hover:bg-app-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {confirmingFirstFrame ? '正在确认…' : '确认首帧，生成完整动作'}
                   </button>
@@ -742,20 +742,20 @@ function QuickStartRun({
               </div>
             ) : isFirstFrameGenerating ? (
               <div className="grid place-items-center gap-5 text-center">
-                <div className="relative grid h-44 w-44 place-items-center rounded-[1.4rem] border border-dashed border-[#aeb9b0] bg-[#e5e9e4]">
-                  <i className="h-12 w-12 animate-pulse rounded-full border border-[#819184] bg-[#d5ddd6] shadow-[0_0_0_16px_rgba(53,88,63,0.05)] motion-reduce:animate-none" />
+                <div className="relative grid h-44 w-44 place-items-center rounded-[1.4rem] border border-dashed border-app-line-strong bg-app-surface-muted">
+                  <i className="h-12 w-12 animate-pulse rounded-full border border-app-line-strong bg-app-accent-soft shadow-app-pulse motion-reduce:animate-none" />
                 </div>
                 <span>
-                  <b className="block text-base text-[#354039]">正在生成动作首帧</b>
-                  <small className="mt-2 block max-w-md leading-6 text-[#687069]">
+                  <b className="block text-base text-app-ink-soft">正在生成动作首帧</b>
+                  <small className="mt-2 block max-w-md leading-6 text-app-muted">
                     首帧就绪后，需要确认一次，再自动生成 32 帧完整动作。
                   </small>
                 </span>
               </div>
             ) : isFirstFrameFailed ? (
               <div className="grid place-items-center gap-5 text-center">
-                <b className="text-base text-[#8b332a]">动作首帧生成失败</b>
-                <small className="max-w-md leading-6 text-[#687069]">
+                <b className="text-base text-app-danger">动作首帧生成失败</b>
+                <small className="max-w-md leading-6 text-app-muted">
                   {typeof firstFrameStep?.error === 'string'
                     ? firstFrameStep.error
                     : '动作首帧生成失败'}
@@ -771,8 +771,8 @@ function QuickStartRun({
                       onClick={() => setSelectedCandidate(candidateUrl)}
                       className={`overflow-hidden rounded-xl border-2 p-2 text-left transition ${
                         selectedCandidate === candidateUrl
-                          ? 'border-[#35583f] bg-[#d5e5d8]'
-                          : 'border-[#c7cec8] bg-[#e7ebe6] hover:border-[#8fa092]'
+                          ? 'border-app-accent bg-app-accent-soft'
+                          : 'border-app-line bg-app-surface-muted hover:border-app-line-strong'
                       }`}
                     >
                       <img
@@ -783,7 +783,7 @@ function QuickStartRun({
                         fetchPriority={index === 0 ? 'high' : 'auto'}
                         className="aspect-square w-full object-contain [image-rendering:pixelated]"
                       />
-                      <p className="mt-2 font-mono text-[9px] tracking-[0.1em] text-[#687069]">
+                      <p className="mt-2 font-mono text-[9px] tracking-[0.1em] text-app-muted">
                         CANDIDATE {String(index + 1).padStart(2, '0')}
                       </p>
                     </button>
@@ -791,7 +791,7 @@ function QuickStartRun({
                 </div>
                 <div className="mx-auto flex w-full max-w-xl flex-col gap-3">
                   <label className="grid gap-1.5" htmlFor="quick-start-action-description">
-                    <span className="text-[11px] font-semibold text-[#515a53]">
+                    <span className="text-[11px] font-semibold text-app-ink-soft">
                       动作描述（可选，留空生成待机动作）
                     </span>
                     <input
@@ -799,14 +799,14 @@ function QuickStartRun({
                       value={actionDescription}
                       onChange={(event) => setActionDescription(event.target.value)}
                       placeholder="例如：在画板上画画、挥舞灯笼、扫地…"
-                      className="rounded-xl border border-[#c7cec8] bg-white px-4 py-2.5 text-sm text-[#1d251f] outline-none placeholder:text-[#7a817b] focus:border-[#8fa092]"
+                      className="rounded-xl border border-app-line bg-app-surface-raised px-4 py-2.5 text-sm text-app-ink outline-none placeholder:text-app-faint focus:border-app-line-strong"
                     />
                   </label>
                   <div className="flex justify-center gap-3">
                     <button
                       type="button"
                       onClick={() => void regenerate()}
-                      className="rounded-xl border border-[#aeb8b0] px-5 py-3 text-sm font-semibold text-[#515a53] transition hover:border-[#8fa092]"
+                      className="rounded-xl border border-app-line-strong px-5 py-3 text-sm font-semibold text-app-ink-soft transition hover:border-app-line-strong"
                     >
                       重新生成
                     </button>
@@ -815,7 +815,7 @@ function QuickStartRun({
                         type="button"
                         onClick={() => void confirmSelection()}
                         disabled={confirmingCandidate}
-                        className="rounded-xl bg-[#35583f] px-6 py-3 text-sm font-bold text-white transition hover:bg-[#456c51]"
+                        className="rounded-xl bg-app-accent px-6 py-3 text-sm font-bold text-app-on-accent transition hover:bg-app-accent-hover"
                       >
                         {confirmingCandidate ? '正在提交…' : '确认选择，继续下一步'}
                       </button>
@@ -825,12 +825,12 @@ function QuickStartRun({
               </div>
             ) : (
               <div className="grid place-items-center gap-5 text-center">
-                <div className="relative grid h-44 w-44 place-items-center rounded-[1.4rem] border border-dashed border-[#aeb9b0] bg-[#e5e9e4]">
-                  <i className="h-12 w-12 animate-pulse rounded-full border border-[#819184] bg-[#d5ddd6] shadow-[0_0_0_16px_rgba(53,88,63,0.05)] motion-reduce:animate-none" />
+                <div className="relative grid h-44 w-44 place-items-center rounded-[1.4rem] border border-dashed border-app-line-strong bg-app-surface-muted">
+                  <i className="h-12 w-12 animate-pulse rounded-full border border-app-line-strong bg-app-accent-soft shadow-app-pulse motion-reduce:animate-none" />
                 </div>
                 <span>
-                  <b className="block text-base text-[#354039]">{status.title}</b>
-                  <small className="mt-2 block max-w-md leading-6 text-[#687069]">
+                  <b className="block text-base text-app-ink-soft">{status.title}</b>
+                  <small className="mt-2 block max-w-md leading-6 text-app-muted">
                     {status.description}
                   </small>
                 </span>
@@ -838,12 +838,12 @@ function QuickStartRun({
             )}
           </section>
 
-          <aside className="rounded-[1.4rem] border border-[#c4cbc5] bg-[#f7f8f4]/95 p-5">
-            <p className="font-mono text-[9px] font-bold tracking-[0.13em] text-[#747973]">
+          <aside className="rounded-[1.4rem] border border-app-line bg-app-surface-raised/95 p-5">
+            <p className="font-mono text-[9px] font-bold tracking-[0.13em] text-app-faint">
               WORKFLOW RUN
             </p>
             <h2 className="mt-2 text-lg font-semibold">制作进度</h2>
-            <p className="mt-2 text-xs leading-6 text-[#687069]">
+            <p className="mt-2 text-xs leading-6 text-app-muted">
               Quick Start 隐藏节点操作，但每一步仍写入同一条 WorkflowRun。
             </p>
 
@@ -853,45 +853,45 @@ function QuickStartRun({
                   key={node.id}
                   className={`grid grid-cols-[28px_1fr_auto] items-center gap-3 rounded-lg border px-3 py-2 ${
                     node.status === 'active'
-                      ? 'border-[#91a394] bg-[#e4ebe2]'
-                      : 'border-[#d5dad5] bg-[#f0f2ef]'
+                      ? 'border-app-line-strong bg-app-accent-muted'
+                      : 'border-app-line bg-app-surface'
                   }`}
                 >
                   <i
                     className={`grid h-7 w-7 place-items-center rounded-full text-[9px] not-italic ${
                       node.status === 'passed'
-                        ? 'bg-[#35583f] text-white'
+                        ? 'bg-app-accent text-app-on-accent'
                         : node.status === 'active'
-                          ? 'border border-[#6f8874] text-[#35583f]'
-                          : 'border border-[#d0d6d1] text-[#8b918c]'
+                          ? 'border border-app-accent text-app-accent'
+                          : 'border border-app-line text-app-faint'
                     }`}
                   >
                     {node.status === 'passed' ? '✓' : String(index + 1).padStart(2, '0')}
                   </i>
-                  <span className="text-xs font-semibold text-[#515a53]">
+                  <span className="text-xs font-semibold text-app-ink-soft">
                     {STEP_LABELS[node.type]}
                   </span>
-                  <small className="text-[9px] text-[#7a817b]">{nodeStatusLabel(node)}</small>
+                  <small className="text-[9px] text-app-faint">{nodeStatusLabel(node)}</small>
                 </li>
               ))}
             </ol>
           </aside>
         </div>
 
-        <footer className="rounded-[1.3rem] border border-[#c4cbc5] bg-[#f7f8f4]/95 p-4 shadow-[0_18px_50px_rgba(31,43,35,0.10)]">
+        <footer className="rounded-[1.3rem] border border-app-line bg-app-surface-raised/95 p-4 shadow-app-card">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <span>
-              <small className="font-mono text-[8px] tracking-[0.12em] text-[#747973]">
+              <small className="font-mono text-[8px] tracking-[0.12em] text-app-faint">
                 {passedCount} / {revision.nodes.length} STEPS PASSED
               </small>
-              <b className="mt-1 block text-sm text-[#354039]">{status.title}</b>
+              <b className="mt-1 block text-sm text-app-ink-soft">{status.title}</b>
             </span>
             <div className="flex flex-wrap gap-2">
               {workflowIsActive(run) ? (
                 <button
                   type="button"
                   onClick={() => void interrupt()}
-                  className="rounded-xl border border-[#aeb8b0] px-4 py-2 text-xs font-semibold text-[#515a53]"
+                  className="rounded-xl border border-app-line-strong px-4 py-2 text-xs font-semibold text-app-ink-soft"
                 >
                   中断自动制作
                 </button>
@@ -901,7 +901,7 @@ function QuickStartRun({
                   type="button"
                   onClick={() => void publishToPlaytest()}
                   disabled={publishing}
-                  className="rounded-lg bg-[#2a5284] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#3668a0] disabled:cursor-wait disabled:opacity-60"
+                  className="rounded-lg bg-app-info px-4 py-2 text-xs font-bold text-app-on-accent transition hover:bg-app-info-hover disabled:cursor-wait disabled:opacity-60"
                 >
                   {publishing ? '正在自动导入…' : '重新导入预览台'}
                 </button>
@@ -910,7 +910,7 @@ function QuickStartRun({
                 <button
                   type="button"
                   onClick={() => navigate('/quick-start')}
-                  className="rounded-xl bg-[#35583f] px-4 py-2 text-xs font-semibold text-white"
+                  className="rounded-xl bg-app-accent px-4 py-2 text-xs font-semibold text-app-on-accent"
                 >
                   新建一次创作
                 </button>
@@ -918,12 +918,12 @@ function QuickStartRun({
             </div>
           </div>
           {error ? (
-            <p role="alert" className="mt-3 text-sm text-[#8b332a]">
+            <p role="alert" className="mt-3 text-sm text-app-danger">
               {error}
             </p>
           ) : null}
           {status.error ? (
-            <p role="alert" className="mt-3 text-sm text-[#8b332a]">
+            <p role="alert" className="mt-3 text-sm text-app-danger">
               {status.error}
             </p>
           ) : null}
@@ -940,7 +940,7 @@ function AmbientGrid() {
       aria-hidden="true"
       style={{
         backgroundImage:
-          'linear-gradient(rgba(53, 88, 63, 0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(53, 88, 63, 0.045) 1px, transparent 1px)',
+          'linear-gradient(color-mix(in srgb, var(--color-app-accent) 4.5%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--color-app-accent) 4.5%, transparent) 1px, transparent 1px)',
         backgroundSize: '32px 32px',
         maskImage: 'linear-gradient(to bottom, black, transparent 84%)',
       }}

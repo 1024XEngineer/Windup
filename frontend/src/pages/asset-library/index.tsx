@@ -59,7 +59,7 @@ export function AssetLibraryPage() {
             aria-label="新建角色"
             disabled
             title="角色生成应进入 Workflow Editor"
-            className="cursor-not-allowed rounded-full border border-[#cbd1c8] px-4 py-2 text-xs font-semibold text-[#858c84]"
+            className="cursor-not-allowed rounded-full border border-app-line px-4 py-2 text-xs font-semibold text-app-faint"
           >
             ＋ 新建角色
           </button>
@@ -67,12 +67,12 @@ export function AssetLibraryPage() {
         {error ? (
           <p
             role="alert"
-            className="mt-6 rounded-xl border border-[#d8c7bd] bg-[#fff8f2] p-5 text-sm text-[#7a3f2a]"
+            className="mt-6 rounded-xl border border-app-danger-line bg-app-danger-soft p-5 text-sm text-app-danger"
           >
             {error}
           </p>
         ) : charactersPage === null ? (
-          <p className="mt-8 text-sm text-[#70766f]">正在建立资产索引…</p>
+          <p className="mt-8 text-sm text-app-muted">正在建立资产索引…</p>
         ) : (
           <>
             <CharacterGrid projectId={projectId ?? ''} characters={charactersPage.items} />
@@ -103,9 +103,9 @@ function CharacterGrid({ projectId, characters }: { projectId: string; character
             key={character.id}
             to={`/projects/${projectId}/assets/${character.id}`}
             aria-label={`查看角色 ${name}`}
-            className="group overflow-hidden rounded-[1.25rem] border border-[#d7dbd4] bg-white transition hover:border-[#9ca79c]"
+            className="group overflow-hidden rounded-[1.25rem] border border-app-line bg-app-surface-raised transition hover:border-app-line-strong"
           >
-            <div className="relative aspect-[4/3] overflow-hidden bg-[#f0f2ed]">
+            <div className="relative aspect-[4/3] overflow-hidden bg-app-surface-muted">
               {outfit?.previewUrl ? (
                 <img
                   src={outfit.previewUrl}
@@ -116,8 +116,8 @@ function CharacterGrid({ projectId, characters }: { projectId: string; character
                   className="h-full w-full object-contain p-5 [image-rendering:pixelated] transition group-hover:scale-[1.025]"
                 />
               ) : (
-                <div className="grid h-full place-items-center bg-[linear-gradient(135deg,#eef0eb_25%,#f7f7f4_25%,#f7f7f4_50%,#eef0eb_50%,#eef0eb_75%,#f7f7f4_75%)] bg-[length:24px_24px]">
-                  <span className="rounded-full border border-[#d7dbd4] bg-white px-2.5 py-1 text-xs font-medium text-[#677068]">
+                <div className="grid h-full place-items-center bg-[linear-gradient(135deg,var(--color-app-surface-muted)_25%,var(--color-app-surface)_25%,var(--color-app-surface)_50%,var(--color-app-surface-muted)_50%,var(--color-app-surface-muted)_75%,var(--color-app-surface)_75%)] bg-[length:24px_24px]">
+                  <span className="rounded-full border border-app-line bg-app-surface-raised px-2.5 py-1 text-xs font-medium text-app-muted">
                     暂无造型预览
                   </span>
                 </div>
@@ -126,14 +126,14 @@ function CharacterGrid({ projectId, characters }: { projectId: string; character
             <div className="p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h3 className="font-semibold text-[#242a24]">{name}</h3>
-                  <p className="mt-1 text-xs text-[#767d75]">{outfit?.name ?? '尚未创建造型'}</p>
+                  <h3 className="font-semibold text-app-ink">{name}</h3>
+                  <p className="mt-1 text-xs text-app-faint">{outfit?.name ?? '尚未创建造型'}</p>
                 </div>
-                <span aria-hidden="true" className="text-[#899189]">
+                <span aria-hidden="true" className="text-app-faint">
                   ↗
                 </span>
               </div>
-              <div className="mt-4 flex gap-2 border-t border-[#ecefe9] pt-3 text-xs text-[#697169]">
+              <div className="mt-4 flex gap-2 border-t border-app-line pt-3 text-xs text-app-muted">
                 <span>{character.outfits.length} 套造型</span>
                 <span>·</span>
                 <span>{actionCount} 个动作</span>
@@ -148,9 +148,9 @@ function CharacterGrid({ projectId, characters }: { projectId: string; character
 
 function EmptyState() {
   return (
-    <div className="mt-5 rounded-[1.25rem] border border-dashed border-[#cbd1c8] bg-[#f8f9f6] p-7">
-      <h3 className="font-semibold text-[#252a25]">这个项目还没有角色</h3>
-      <p className="mt-2 text-sm text-[#6d736c]">角色会在创建工作流确认后进入这里。</p>
+    <div className="mt-5 rounded-[1.25rem] border border-dashed border-app-line bg-app-surface-raised p-7">
+      <h3 className="font-semibold text-app-ink">这个项目还没有角色</h3>
+      <p className="mt-2 text-sm text-app-muted">角色会在创建工作流确认后进入这里。</p>
     </div>
   )
 }
