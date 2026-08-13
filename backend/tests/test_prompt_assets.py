@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import pathlib
 import shutil
 import subprocess
 import zipfile
@@ -145,9 +146,14 @@ def test_markdown_assets_are_shipped_in_the_wheel(tmp_path):
     """
     if shutil.which("uv") is None:
         pytest.skip("本机没有 uv,构建不了 wheel")
+    # 按 __file__ 锚定,不用相对路径:``cwd="packages/ai_engine"`` 隐含假设 pytest 从
+    # backend/ 起跑,换个 rootdir(仓库根 / IDE 配的)就 NotADirectoryError,
+    # 而那时测试失败的原因与被测的东西毫无关系。本文件自己的主张就是别依赖这种假设。
+    pkg = pathlib.Path(__file__).resolve().parents[1] / "packages" / "ai_engine"
+    assert pkg.is_dir(), f"定位不到 ai_engine 包:{pkg}"
     r = subprocess.run(
         ["uv", "build", "--wheel", "--out-dir", str(tmp_path)],
-        cwd="packages/ai_engine", capture_output=True, text=True,
+        cwd=pkg, capture_output=True, text=True,
     )
     assert r.returncode == 0, f"wheel 构建失败:{r.stderr[-500:]}"
     wheels = sorted(tmp_path.glob("*.whl"))

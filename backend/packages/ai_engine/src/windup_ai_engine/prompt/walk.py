@@ -10,28 +10,27 @@ from windup_common.models import Facing
 
 from windup_ai_engine.prompt._md import load_section
 
-__all__ = ["WALK_BODY_SIDE", "WALK_BODY_FRONT", "build_walk_prompt"]
+__all__ = ["build_walk_prompt"]
 
 _DOC = "walk.md"
 
-# 只声明类型、不赋值:运行期仍由下面的 __getattr__ 现取(见其 docstring 里为什么不在
-# import 期读文件),而静态检查能看到这两个名字确实是本模块导出的。
-WALK_BODY_SIDE: str
-WALK_BODY_FRONT: str
-
-
-def __getattr__(name: str) -> str:
-    """``WALK_BODY_SIDE`` / ``WALK_BODY_FRONT`` 保持可导入(测试与外部引用在用)。
-
-    做成模块级 ``__getattr__`` 而不是 import 期常量:import 期读文件会让"md 没打进
-    wheel"表现成 import 崩溃,连带整个 ai_engine 起不来;而真正该报错的时机是**构建
-    提示词时**,那样错误信息能指出是哪个动作、哪一节。
-    """
-    if name == "WALK_BODY_SIDE":
-        return load_section(_DOC, "side")
-    if name == "WALK_BODY_FRONT":
-        return load_section(_DOC, "front")
-    raise AttributeError(name)
+# 注:这里曾有 ``WALK_BODY_SIDE`` / ``WALK_BODY_FRONT`` 两个常量,配一个模块级
+# ``__getattr__`` 现取,理由写的是"import 期读文件会让 md 缺失表现成 import 崩溃"。
+#
+# **那套机器不成立,已删(FennoAI 评审逮到)**:``prompt/__init__`` 里有
+# ``from .walk import WALK_BODY_FRONT, WALK_BODY_SIDE``,而这两个名字只有注解、从没赋值,
+# 于是这条 from-import 恰好经 ``__getattr__`` 触发 ``load_section`` —— md 照样在
+# **import 期**被读。实测:``import windup_ai_engine.prompt`` 期间读了 walk.md。
+# 也就是说那段 docstring 描述的保证从来没生效过,它只是看起来生效。
+#
+# 删掉之后策略反而统一了,而且不需要任何延迟加载机器:
+#   · ``build_*_prompt`` 是**函数**,天然调用时才读;
+#   · ``MASTER_POSES`` 是**模块级常量**,天然 import 期读 —— 见 master_prep 里的说明。
+# 两者缺失时都抛 PromptAssetError,方向一致。
+#
+# 那两个常量的唯一消费方是一条断言 ``build_walk_prompt("side") == WALK_BODY_SIDE``,
+# 而搬进 md 之后两边读的是同一份文件的同一节,必然相等 —— 循环论证,测不出东西。
+# 该测试已改成断言实质属性(朝向锁短语在不在对的那一条里)。
 
 
 def build_walk_prompt(facing: Facing | str = Facing.SIDE) -> str:
