@@ -28,29 +28,19 @@ import io
 from PIL import Image
 
 from windup_ai_engine._subject import bg_color as _bg_color
+from windup_ai_engine.prompt._md import load_section
 
 __all__ = ["add_headroom", "prepare_master", "MASTER_POSES"]
 
-# 各动作所需的母版姿态(生成专用母版时的姿势描述)。空=可直接用中性站立母版。
+# 各动作所需的母版姿态(生成专用母版时的姿势描述)。
+#
+# **正文与理由都在 ``prompt/prompts/master_poses.md``**(#233)。空值 = 该动作用中性站立
+# 母版即可,不需要专门生成 —— 这是全仓唯一允许"空提示词"的地方,故加载时显式放行;
+# 别把 ``allow_empty=True`` 抄到别的提示词上,那边空串会一路跑到付费调用、产出垃圾、
+# 任务还显示成功。
 MASTER_POSES = {
-    "walk": "",     # 中性站立即可,但必须朝侧向
-    "run": "",
-    "idle": "",
-    # jump:与 attack 同理——强动作先验压不住(实测拿重甲带剑角色跑,站立母版会让模型摆
-    # 造型、只举剑不腾空)。给**极限蓄力半蹲母版**,模型只能"接着往上蹬"。顶部留白
-    # 由 prepare_master(add_headroom)保证。
-    "jump": (
-        "deep crouch coiled to spring straight upward: the knees bent low and the hips sunk down, "
-        "both arms drawn back behind the body, the weight loaded onto both legs at the very moment "
-        "before springing straight up, anything held in the hands kept in a fixed grip; "
-        "leave generous empty space above the head"
-    ),
-    "attack": (
-        "extreme wind-up stance for a horizontal strike: the striking hand drawn far BACK behind "
-        "the body at WAIST height, the torso twisted back and coiled, weight fully loaded on the "
-        "back leg, both arms low and pulled back, that hand and anything held in it staying BELOW "
-        "the shoulders; leave generous empty space on the swing side"
-    ),
+    a: load_section("master_poses.md", a, allow_empty=True)
+    for a in ("walk", "run", "idle", "jump", "attack")
 }
 
 
