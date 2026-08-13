@@ -16,6 +16,7 @@ from windup_framework.db import Base, engine
 
 # 模型导入：触发 Base.metadata 注册，确保 create_all 能发现所有表
 from windup_app.server.character.model import Character  # noqa: F401
+from windup_app.server.orchestrator.dispatcher import GenerationDispatcher
 from windup_app.server.project.model import Project  # noqa: F401
 from windup_app.server.quota.model import CreditAccount, CreditTransaction  # noqa: F401
 # InviteCode, InviteRecord, TokenUsage 暂不实现
@@ -70,14 +71,23 @@ def print_banner() -> None:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    """应用启动时建表 + 打印 banner,关闭时无特殊处理。"""
+    """应用启动时建表，关闭时等待已排队的生成任务收敛。"""
     Base.metadata.create_all(engine)
     print_banner()
-    yield
+    try:
+        yield
+    finally:
+        app.state.generation_dispatcher.shutdown()
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="windup", version="0.1.0", lifespan=_lifespan)
+    app.state.generation_dispatcher = GenerationDispatcher()
+
+    @app.get("/health", include_in_schema=False)
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
     # 中间件（add_middleware 后加的先执行：请求先进 CORS → 再进 RateLimit → 再进 Auth → 最后到路由）
     app.add_middleware(AuthMiddleware)
     app.add_middleware(RateLimitMiddleware)

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -56,7 +56,9 @@ describe('PlaytestPage', () => {
     // 后端给的 walk 帧顺序是 index 2、0、1；照数组播会从 walk-03 起步。
     fireEvent.click(screen.getByRole('button', { name: '绑定动作：行走' }))
 
-    expect(stageFrameUrl()).toBe('https://cdn.windup.test/walk-01.png')
+    await waitFor(() => {
+      expect(stageFrameUrl()).toBe('https://cdn.windup.test/walk-01.png')
+    })
   })
 
   it('starts on the idle action when the route names none', async () => {

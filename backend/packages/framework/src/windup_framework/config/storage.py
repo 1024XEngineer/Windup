@@ -36,7 +36,9 @@ class StorageSettings(BaseSettings):
     def download_base(self) -> str:
         """返回浏览器可访问的下载域名。"""
         domain = self.bucket_domain.rstrip("/")
-        if domain and not domain.startswith(("http://", "https://")):
+        if domain.startswith("http://"):
+            raise ValueError("QINIU_BUCKET_DOMAIN 必须使用 HTTPS 下载域名")
+        if domain and not domain.startswith("https://"):
             domain = f"https://{domain}"
         hostname = (urlsplit(domain).hostname or "").lower()
         labels = hostname.split(".")
