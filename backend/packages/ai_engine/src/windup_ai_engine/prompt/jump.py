@@ -12,13 +12,8 @@ __all__ = ["JUMP_PHASES", "build_jump_prompt"]
 
 _DOC = "jump.md"
 
-# 跳跃的五个状态(引擎侧按这个切段;顺序即时间顺序)。
-# **留在 Python**:它是被代码索引的结构,不是送给模型的文本,搬进 md 只会多一层解析。
+# 顺序即时间顺序。
 JUMP_PHASES = ("crouch", "rise", "apex", "fall", "land")
-
-
-# 注:曾有 JUMP_BODY_SIDE / JUMP_BODY_FRONT 两个常量。随 #233 删除 —— 它们零消费方
-# (prompt/__init__ 从没导出过,全仓无引用),正文现在只经 build_jump_prompt 出去。
 
 
 def build_jump_prompt(facing: Facing | str = Facing.SIDE) -> str:
@@ -27,7 +22,5 @@ def build_jump_prompt(facing: Facing | str = Facing.SIDE) -> str:
     Args:
         facing: :class:`Facing` 成员(或其等价字符串),**必须与母版朝向一致**。
 
-    注:``garment`` / ``feet`` 两个装备参数随 #195 删除(零写入方),同 :mod:`.walk`。
     """
-    # 非法值在此炸掉,别静默落到 FRONT 模板(理由见 walk.py 同处注释)。
     return load_section(_DOC, Facing(facing).value)

@@ -84,11 +84,7 @@ def test_document_without_any_section_raises(tmp_path, monkeypatch):
 
 
 def test_section_without_a_code_fence_counts_as_empty(tmp_path, monkeypatch):
-    """节里只有散文、没有代码块 = 空节。
-
-    初版是"散文即正文",于是 `> ` 引用行要靠一条启发式剔掉。改成只认代码块之后那条
-    启发式整个不需要了：框外的一律不算数，无论它长什么样。
-    """
+    """只有散文、没有代码块 = 空节:框外的一律不算数。"""
     md = _inline(monkeypatch, tmp_path,
                  "## side\n\n> 这行是给人看的\n这段也是说明，没有代码块。\n")
     with pytest.raises(PromptAssetError, match="是空的"):
@@ -97,12 +93,7 @@ def test_section_without_a_code_fence_counts_as_empty(tmp_path, monkeypatch):
 
 
 def test_prose_outside_the_code_fence_is_not_part_of_the_prompt(tmp_path, monkeypatch):
-    """节里的散文一个字都不该进提示词 —— 只有代码块里的算数。
-
-    这条是评审提的"为何中英文混用"引出的结构约束（minorcell，#256）：搬进 md 之后，
-    说明文字与提示词字面量若是同级段落，就看不出哪段是数据。代码块把这个
-    区分还回来，而这条测试保证它不只是排版好看——框外的东西真的进不去。
-    """
+    """节外的散文一个字都不该进提示词。"""
     md = _inline(monkeypatch, tmp_path,
                  "## side\n\n这段中文是写给人看的理由，绝不能进提示词。\n\n"
                  "```text\nactual prompt text\n```\n\n后面这段也是说明。\n")
@@ -119,10 +110,7 @@ def test_two_code_fences_in_one_section_raise(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("doc", ["walk.md", "jump.md", "idle.md", "attack.md", "master_poses.md"])
 def test_every_shipped_document_keeps_prose_and_data_separated(doc: str):
-    """随包发的每一份 md：数据在框内，且框内不含中文。
-
-    提示词正文是送给模型的英文字面量；框外的说明文字进不去（见上一条）。
-    """
+    """随包发的每一份 md,框内不含中文。"""
     from windup_ai_engine.prompt._md import load_doc
 
     for section, text in load_doc(doc).items():
@@ -178,13 +166,7 @@ def test_only_master_poses_may_be_empty():
 
 
 def test_markdown_assets_are_shipped_in_the_wheel(tmp_path):
-    """从**构建出来的 wheel** 里读,而不是从源码树读。
-
-    这条是 #233 的验收之一,而且不是形式主义:源码树里能读到不代表装出来能读到,
-    "装出来读不到"正是本文件开头那个失败形态的触发条件(提示词变空串 → 付费调用照发)。
-    hatchling 目前默认收 packages 目录下的全部文件,所以 pyproject 不用额外配 —— 但
-    "默认行为"正是会被将来某次配置调整悄悄改掉的东西,故用测试钉住,而不是写句注释。
-    """
+    """从构建出来的 wheel 里读:源码树能读到不代表装出来能读到。"""
     if shutil.which("uv") is None:
         pytest.skip("本机没有 uv,构建不了 wheel")
     # 按 __file__ 锚定,不用相对路径:``cwd="packages/ai_engine"`` 隐含假设 pytest 从

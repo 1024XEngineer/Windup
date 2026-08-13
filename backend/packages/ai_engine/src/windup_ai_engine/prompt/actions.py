@@ -15,17 +15,12 @@ __all__ = ["build_idle_prompt", "build_attack_prompt"]
 def build_idle_prompt(facing: Facing | str = Facing.SIDE) -> str:
     """待机正文(循环类)。``facing`` 须与母版朝向一致。
 
-    注:``weapon`` / ``garment`` / ``feet`` 三个装备参数随 #195 删除,
-    同 :mod:`.walk`(零写入方)。
     """
-    # 非法值在此炸掉,别静默落到 front 模板(理由见 walk.py 同处注释)。
     return load_section("idle.md", Facing(facing).value)
 
 
 def build_attack_prompt(facing: Facing | str = Facing.SIDE) -> str:
     """攻击正文(一次性类)。``facing`` 须与母版朝向一致。
 
-    注:``weapon`` / ``garment`` / ``feet`` 三个装备参数随 #195 删除,
-    同 :mod:`.walk`(零写入方)。
     """
     return load_section("attack.md", Facing(facing).value)
