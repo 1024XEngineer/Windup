@@ -12,7 +12,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from windup_framework.config import validate_settings
 from windup_framework.db import Base, engine
 
 # 模型导入：触发 Base.metadata 注册，确保 create_all 能发现所有表
@@ -71,8 +70,7 @@ def print_banner() -> None:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    """应用启动时校验配置 → 建表 → 打印 banner,关闭时无特殊处理。"""
-    validate_settings()
+    """应用启动时建表 + 打印 banner,关闭时无特殊处理。"""
     Base.metadata.create_all(engine)
     print_banner()
     yield

@@ -44,7 +44,7 @@ logger = logging.getLogger("windup.user.service")
 
 # -- JWT 配置 -------------------------------------------------------------
 
-JWT_SECRET = jwt_settings.secret
+JWT_SECRET = jwt_settings.secret.get_secret_value()
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_SECONDS = 15 * 60        # 15 分钟
 REFRESH_TOKEN_EXPIRE_SECONDS = 7 * 24 * 3600  # 7 天
