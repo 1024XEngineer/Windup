@@ -24,15 +24,14 @@ ROUTE_MATRIX: dict[ActionType, GenRoute] = {
     ActionType.RUN: GenRoute.VIDEO_I2V,
     ActionType.JUMP: GenRoute.VIDEO_I2V,
     ActionType.ATTACK: GenRoute.VIDEO_I2V,
+    # 自定义动作(#239):用户自述的动作绝大多数带位移或连续姿态变化,而逐帧独立生成锁不住
+    # 跨帧连续性 —— 与 walk 走视频是同一条理由。
     ActionType.CUSTOM: GenRoute.VIDEO_I2V,
     ActionType.HIT: GenRoute.PER_FRAME,
     # idle 走 i2v(build_idle_prompt:躯干缓慢起伏呼吸)。
     # **2026-08-07 定案**:#53 原设计的 ¥0 程序化 Idle-B(局部网格呼吸)放弃 —— 做不出
     # 可用效果,idle 认这份 i2v 的钱。GenRoute.PROC_IDLE 与 ProcIdleStrategy 已一并移除。
     ActionType.IDLE: GenRoute.VIDEO_I2V,
-    # 自定义动作走视频路线(#239)。为什么不是逐帧:用户自述的动作绝大多数带位移或连续
-    # 姿态变化,而逐帧独立生成锁不住跨帧连续性 —— 与 walk 走视频是同一条理由。
-    ActionType.CUSTOM: GenRoute.VIDEO_I2V,
 }
 
 # 循环类动作:抽单步态周期闭环。一次性动作**不能闭环**(首尾姿态不同,强行闭环会把
