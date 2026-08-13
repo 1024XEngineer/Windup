@@ -239,6 +239,7 @@ describe('createQuickStartService', () => {
         subscribe: vi.fn(() => () => undefined),
       },
       prepareProject: vi.fn(),
+      projectApis: projectReader(),
     })
 
     await expect(service.start('   ')).rejects.toThrow('请先描述')
@@ -380,6 +381,7 @@ describe('createQuickStartService', () => {
       workflowRunApis: createWorkflowRunApis(),
       generationApis,
       prepareProject: async () => ({ id: 'project-1', spriteSize: { width: 256, height: 256 } }),
+      projectApis: projectReader(),
     })
 
     const session = await service.start('像素骑士')
@@ -420,6 +422,7 @@ describe('createQuickStartService', () => {
       characterApis,
       mediaApis,
       prepareProject: async () => ({ id: 'project-1', spriteSize: { width: 256, height: 256 } }),
+      projectApis: projectReader(),
       onAsyncError: vi.fn(),
     })
     const file = new File(['pixels'], 'hero.png', { type: 'image/png' })
@@ -541,6 +544,7 @@ describe('createQuickStartService', () => {
       generationApis,
       characterApis,
       prepareProject: vi.fn(),
+      projectApis: projectReader(),
     })
 
     const session = await service.open(run.id)
@@ -649,6 +653,7 @@ describe('createQuickStartService', () => {
       generationApis,
       characterApis,
       prepareProject: vi.fn(),
+      projectApis: projectReader(),
     })
     const recoverySession = await recoveryService.open(recoveryRun.id)
     await recoverySession.resume()
@@ -705,6 +710,7 @@ describe('createQuickStartService', () => {
       generationApis: pendingGenerationApis(),
       characterApis,
       prepareProject: vi.fn(),
+      projectApis: projectReader(),
     })
 
     const session = await service.open(run.id)
@@ -825,6 +831,7 @@ describe('createQuickStartService', () => {
         id: 'project-1',
         spriteSize: { width: 256, height: 256 },
       })),
+      projectApis: projectReader(),
     })
     const started = await service.start('像素骑士')
     await vi.waitFor(async () => {
@@ -917,6 +924,7 @@ describe('createQuickStartService', () => {
         id: 'project-1',
         spriteSize: { width: 256, height: 256 },
       })),
+      projectApis: projectReader(),
       onAsyncError,
     })
 
@@ -939,6 +947,7 @@ describe('createQuickStartService', () => {
       workflowRunApis: createWorkflowRunApis(),
       generationApis,
       prepareProject: vi.fn(),
+      projectApis: projectReader(),
     })
     const file = new File([], 'hero.png')
     await expect(bare.startWithUploadedTemplate(file, '')).rejects.toThrow('媒体上传服务尚未配置')
@@ -956,6 +965,7 @@ describe('createQuickStartService', () => {
       workflowRunApis: createWorkflowRunApis(),
       generationApis,
       prepareProject: vi.fn(),
+      projectApis: projectReader(),
       characterApis: {
         get: vi.fn(async () => character),
       } as unknown as CharacterApis,
@@ -975,6 +985,7 @@ describe('createQuickStartService', () => {
       workflowRunApis: createWorkflowRunApis([staticRun]),
       generationApis,
       prepareProject: vi.fn(),
+      projectApis: projectReader(),
       characterApis: {} as CharacterApis,
       mediaApis: { upload: vi.fn() },
     })
@@ -1044,6 +1055,7 @@ describe('createQuickStartService', () => {
       workflowRunApis: createWorkflowRunApis([run]),
       generationApis,
       prepareProject: async () => ({ id: 'project-1', spriteSize: { width: 256, height: 256 } }),
+      projectApis: projectReader(),
     })
     const session = await service.open('run-1')
 

@@ -83,7 +83,7 @@ export interface CreateQuickStartServiceOptions {
   generationApis: GenerationApis
   prepareProject: PrepareQuickStartProject
   /** 为已有项目继续生成动作时读取图片接口要求的精灵尺寸。 */
-  projectApis?: Pick<ProjectApis, 'get'>
+  projectApis: Pick<ProjectApis, 'get'>
   characterApis?: CharacterApis
   mediaApis?: QuickStartMediaApis
   onAsyncError?: (error: Error) => void
@@ -118,7 +118,6 @@ export function createQuickStartService({
   async function resolveProjectSpriteSize(projectId: Project['id']) {
     const cached = projectSpriteSizes.get(projectId)
     if (cached) return cached
-    if (!projectApis) throw new Error('项目读取服务尚未配置，不能生成动作首帧')
     const project = await projectApis.get(projectId)
     projectSpriteSizes.set(project.id, project.spriteSize)
     return project.spriteSize
@@ -555,7 +554,7 @@ export function createQuickStartService({
           : []
       },
       async getExportModel() {
-        if (!characterApis || !projectApis) return null
+        if (!characterApis) return null
         const info = getCharacterInfo(controller) ?? (await resolveCharacterInfo(controller))
         if (!info) return null
         const run = controller.getWorkflow()

@@ -23,6 +23,7 @@ import type {
   WorkflowRun,
   WorkflowRunApis,
 } from '@/entities'
+import { IMAGE_CANDIDATE_COUNT } from '@/entities'
 
 const COMPLETE_ANIMATION_FRAME_COUNT = 32
 
@@ -839,7 +840,7 @@ export function createWorkflowController({
         node.type !== 'character-template' ||
         generation.type !== 'character_template' ||
         generation.result?.type !== 'character_template' ||
-        generation.result.images.length !== 3
+        generation.result.images.length !== IMAGE_CANDIDATE_COUNT
       ) {
         return failNode(run, node, '角色候选图结果格式无效')
       }
@@ -851,7 +852,7 @@ export function createWorkflowController({
         node.type !== 'action-first-frame' ||
         generation.type !== 'first_frame' ||
         generation.result?.type !== 'first_frame' ||
-        generation.result.images.length !== 3 ||
+        generation.result.images.length !== IMAGE_CANDIDATE_COUNT ||
         generation.result.images.some((image) => !image.url)
       ) {
         return failNode(run, node, '动作首帧结果格式无效')

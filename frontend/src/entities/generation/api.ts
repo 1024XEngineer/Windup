@@ -172,7 +172,7 @@ function expectedBackendType(type: GenerationType): BackendGenerationType {
   return type === 'complete_animation' ? 'character_action' : 'character_image'
 }
 
-const IMAGE_CANDIDATE_COUNT = 3
+export const IMAGE_CANDIDATE_COUNT = 3
 
 function nonEmptyString(value: unknown, field: string): string {
   if (typeof value !== 'string' || value.trim() === '') {
