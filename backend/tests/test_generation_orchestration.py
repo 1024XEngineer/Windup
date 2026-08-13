@@ -217,7 +217,9 @@ def test_custom_action_reuses_oneshot_route_and_preserves_prompt(session_factory
     executor.run_action_task(task_id, action_input)
 
     assert spy.seen_action.action.value == "custom"
-    assert spy.seen_action.motion_prompt == "wave hello with the right hand"
+    assert spy.seen_action.custom_action == "wave hello with the right hand"
+    # loop 没给 → 兜成一次性(失败代价不对称,见 executor 里的说明),而不是抛错。
+    assert spy.seen_action.cyclic is False
 
 
 def test_action_task_marks_failed_on_error(session_factory):

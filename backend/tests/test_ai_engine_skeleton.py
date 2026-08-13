@@ -178,7 +178,8 @@ def test_video_strategy_prompt_follows_facing(monkeypatch):
     assert "FACING THE VIEWER" in seen[1]
 
 
-def test_video_strategy_uses_custom_motion_prompt(monkeypatch):
+def test_video_strategy_uses_custom_action_text(monkeypatch):
+    """自定义动作的描述要真的进提示词。"""
     seen: list[str] = []
 
     class _SpyVideo:
@@ -190,8 +191,9 @@ def test_video_strategy_uses_custom_motion_prompt(monkeypatch):
     strat.derive(
         CharacterCard(name="hero", desc=""),
         ActionSpec(
-            action=ActionType.ATTACK,
-            motion_prompt="wave hello with the right hand",
+            action=ActionType.CUSTOM,
+            custom_action="wave hello with the right hand",
+            cyclic=False,
             stylize=Stylize.NONE,
             n_frames=4,
         ),

@@ -24,6 +24,8 @@ ROUTE_MATRIX: dict[ActionType, GenRoute] = {
     ActionType.RUN: GenRoute.VIDEO_I2V,
     ActionType.JUMP: GenRoute.VIDEO_I2V,
     ActionType.ATTACK: GenRoute.VIDEO_I2V,
+    # 自定义动作(#239):用户自述的动作绝大多数带位移或连续姿态变化,而逐帧独立生成锁不住
+    # 跨帧连续性 —— 与 walk 走视频是同一条理由。
     ActionType.CUSTOM: GenRoute.VIDEO_I2V,
     ActionType.HIT: GenRoute.PER_FRAME,
     # idle 走 i2v(build_idle_prompt:躯干缓慢起伏呼吸)。
@@ -41,6 +43,21 @@ ROUTE_MATRIX: dict[ActionType, GenRoute] = {
 CYCLIC_ACTIONS: frozenset[ActionType] = frozenset(
     {ActionType.IDLE, ActionType.WALK, ActionType.RUN}
 )
+
+
+def is_cyclic(action: ActionSpec) -> bool:
+    """这次生成要不要按"单周期闭环"处理。
+
+    **不要直接判 `action.action in CYCLIC_ACTIONS`** —— 那张表只覆盖写死的那几个动作,
+    对 ``CUSTOM`` 恒为 False,于是用户勾了"循环播放"的自定义动作会被当成一次性,
+    抽帧不闭环、也不量 loop_seam。而这个错是静默的:帧数、时长、成色全部正常。
+
+    ``CUSTOM`` 的循环性由调用方在 ``ActionSpec.cyclic`` 显式声明(该字段对 custom
+    必填,见其校验器),所以这里不需要兜底默认值。
+    """
+    if action.action is ActionType.CUSTOM:
+        return bool(action.cyclic)
+    return action.action in CYCLIC_ACTIONS
 
 # 本矩阵的形状本身有个已知边界,记录在此以免后来者按错误前提扩展:
 # 它是「动作类型 → 路线」的一对一映射,隐含前提是"路线由动作的物理性质唯一决定"。

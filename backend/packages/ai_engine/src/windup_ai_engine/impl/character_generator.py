@@ -29,9 +29,9 @@ from windup_ai_engine.ports import (
 from windup_ai_engine.postprocess import align_bottom_center, frame_durations
 from windup_ai_engine.slicing import dead_frame_indices, loop_seam, motion_scale
 from windup_ai_engine.strategy.base import (
-    CYCLIC_ACTIONS,
     ROUTE_MATRIX,
     DerivationStrategy,
+    is_cyclic,
 )
 
 # ── 进度刻度:整条生产线只有一个 total ────────────────────────────────────────
@@ -164,7 +164,7 @@ class CharacterGenerator(CharacterGeneratorPort):
         return ActionQuality(
             motion_scale=motion_scale(frames),
             dead_frames=dead_frame_indices(frames),
-            loop_seam=loop_seam(frames) if action.action in CYCLIC_ACTIONS else None,
+            loop_seam=loop_seam(frames) if is_cyclic(action) else None,
         )
 
     def _lastmile(

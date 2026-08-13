@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -25,7 +26,6 @@ from windup_common.models import ActionSpec, ActionType as EngineActionType, Cha
 from windup_app.server.orchestrator import task_repo
 from windup_app.server.orchestrator._fetch import fetch_own_media
 from windup_app.server.orchestrator.model import (
-    ActionType,
     CharacterActionInput,
     CharacterImageInput,
     TaskStatus,
@@ -33,6 +33,7 @@ from windup_app.server.orchestrator.model import (
 
 if TYPE_CHECKING:
     from windup_ai_engine.ports import CharacterGeneratorPort, ProgressPort
+    from windup_framework.providers import ImageProvider, MatteProvider
 
 logger = logging.getLogger("windup.generation.executor")
 
@@ -139,10 +140,35 @@ class _LogProgress:
         logger.info("[gen] %s %s/%s %s", stage, i, total, note)
 
 
+# 白名单而不是放开任意模型名:每个模型的入参形状不同(image_list / input_reference /
+# Fal 队列 + `Authorization: Key`)。列进来却没适配它的协议,等于"看起来能选、点了必然
+# 产生一个用不了的付费任务"。只列 SufyVideoProvider 真能建单的。Refs #239。
+ALLOWED_VIDEO_MODELS: dict[str, str] = {
+    "kling-v2-5-turbo": "默认。稳,本地首帧即可",
+    "kling-v2-6": "有 motion-control",
+}
+
+
+def _resolve_video_model(name: str | None) -> str | None:
+    """校验并返回视频模型名;``None`` 表示用部署默认值。
+
+    非法取值在入口炸,不等到付费调用才失败。
+    """
+    if name is None:
+        return None
+    if name not in ALLOWED_VIDEO_MODELS:
+        raise ValueError(
+            f"视频模型 {name!r} 不在本期开放列表内。可选:"
+            + "；".join(f"{k}({v})" for k, v in ALLOWED_VIDEO_MODELS.items())
+        )
+    return name
+
+
 def _to_engine_action(t) -> EngineActionType:
     """generation.ActionType → 引擎 common.ActionType(按值映射)。
 
-    所有 API 动作类型都按值映射到引擎动作类型。
+    walk/idle/attack/**custom** 直通(custom 自 #239 起引擎已支持)。
+    引擎仍未覆盖的类型在此抛带原因的错误,而不是让请求走到一半失败。
     """
     try:
         return EngineActionType(t.value)
@@ -163,6 +189,15 @@ class ActionTaskExecutor:
         session_factory: Callable[[], Session] | None = None,
     ) -> None:
         self._generator = generator          # None → 懒加载真实装配
+        # 按视频模型名分桶的 generator 缓存(模型是 provider 的构造参数,不能事后换)
+        self._by_model: dict[str | None, CharacterGeneratorPort] = {}
+        # 抠图 / 图生图 provider 与视频模型无关,所有模型桶共用一份:每个抠图实例都会
+        # 各自惰性加载一份 ONNX 会话,按桶各建等于把同一个模型在进程里装多次。
+        self._matte: MatteProvider | None = None
+        self._image: ImageProvider | None = None
+        # 本执行器是进程级单例,而每个请求起一个线程跑 run_action_task,上面几个缓存
+        # 都是跨线程共用的可变状态。缺锁时并发首请求会各装一套(见 _get_generator)。
+        self._assembly_lock = threading.Lock()
         self._upload = upload                # None → 真实对象存储上传
         self._fetch_master = fetch_master    # None → 下载 reference_image_urls[0]
         self._fetch_constraints = fetch_constraints  # None → 查 project 全局约束
@@ -217,7 +252,7 @@ class ActionTaskExecutor:
         ``_fit_to(png, sprite_w, sprite_h)``:引擎恒出 256,项目要 512 就等于二次
         重采样。而 ``_fit_to`` 用 ``Image.thumbnail`` —— 它**只缩不放**,放大方向
         根本不放大,只是把 256 的帧原尺寸居中贴进 512 画布,于是引擎刚对齐好的脚线
-        0.92 被挪到 0.709(2026-08-11 实测),角色不站在地上、跨动作对齐一并失效。
+        0.92 被挪到 0.709,角色不站在地上、跨动作对齐一并失效。
         现在把 ``canvas`` 交给引擎,它一次就出到项目尺寸,那一步整个不存在了。
         """
         if cons.directions > 1:
@@ -228,15 +263,25 @@ class ActionTaskExecutor:
         if cons.style:
             desc_parts.append(f"Art style: {cons.style}")
         card = CharacterCard(name=f"char-{input.character_id}", desc=" ".join(desc_parts))
+        engine_action = _to_engine_action(input.action_type)
+        # custom 的动作内容与循环性是 ActionSpec 的必填字段。但 cyclic 由本层补上默认值,
+        # 所以 ActionSpec 里那道 `cyclic is None` 守卫拦不到走这条路径的请求 —— 它保的是
+        # 其他直接构造 ActionSpec 的调用方。
+        extra: dict[str, object] = {}
+        if engine_action is EngineActionType.CUSTOM:
+            # 缺 loop 时兜成一次性,依据是失败代价不对称:一次性误当循环会让末帧接回首帧
+            # 抽搐、产物不可用;反之只是不无缝闭环、仍可用。不从描述文字猜。
+            cyclic = False if input.loop is None else bool(input.loop)
+            extra = {"custom_action": input.custom_prompt or "", "cyclic": cyclic}
         action = ActionSpec(
-            action=_to_engine_action(input.action_type),
-            motion_prompt=input.custom_prompt if input.action_type is ActionType.CUSTOM else None,
+            action=engine_action,
             poses=[""] * input.num_frames,
             facing=cons.facing,
             stylize=cons.stylize,
+            **extra,
         )
         progress: ProgressPort = _LogProgress()
-        generated = self._get_generator().generate(
+        generated = self._get_generator(_resolve_video_model(input.video_model)).generate(
             card, action, master, progress, canvas=(cons.sprite_w, cons.sprite_h)
         )
 
@@ -249,42 +294,60 @@ class ActionTaskExecutor:
         ]
         return {"type": "character_action", "action_type": input.action_type.value, "frames": frames}
 
-    def _get_generator(self) -> CharacterGeneratorPort:
-        """懒装配真实 CharacterGenerator(视频路线 + 桩路线)。"""
-        if self._generator is None:
-            from windup_ai_engine.impl import CharacterGenerator
-            from windup_ai_engine.strategy.concrete import (
-                PerFrameStrategy,
-                VideoFrameStrategy,
-            )
-            from windup_common.models import GenRoute
-            from windup_framework.providers import (
-                OnnxU2NetMatteProvider,
-                SufyImageProvider,
-                SufyVideoProvider,
-            )
+    def _get_generator(self, video_model: str | None = None) -> CharacterGeneratorPort:
+        """懒装配 CharacterGenerator,按模型名分桶。
 
-            matte = OnnxU2NetMatteProvider()
-            video = SufyVideoProvider()
-            image = SufyImageProvider()
-            # 只装当前 GenRoute 真有的路线。曾多装一个 PROC_IDLE:该枚举值与
-            # ProcIdleStrategy 都已随"程序化待机放弃"一起删除,而这行留着,于是**每个**
-            # 动作任务都在 import 期 AttributeError —— 注入 generator 的测试走不到这条
-            # 装配路径,所以测试全绿而真实调用全崩(FennoAI 逮到,2026-08-10)。
-            # 加一条断言:将来 GenRoute 新增成员时,漏装会在这里立刻暴露,而不是等到
-            # 某个动作第一次被请求。
-            strategies = {
-                GenRoute.VIDEO_I2V: VideoFrameStrategy(video, matte),
-                GenRoute.PER_FRAME: PerFrameStrategy(image, matte),
-            }
-            missing = set(GenRoute) - set(strategies)
-            if missing:
-                raise RuntimeError(
-                    f"GenRoute 新增了 {sorted(r.value for r in missing)} 但 executor 未装配;"
-                    "补上或在此显式说明为何不装。"
-                )
-            self._generator = CharacterGenerator(strategies)
-        return self._generator
+        视频 provider 的模型是构造参数,不分桶的话第一个请求指定的模型会被后续所有请求
+        沿用,而调用方以为自己指定了。
+        """
+        if self._generator is not None:
+            return self._generator
+        # 命中缓存的快路径不进锁,否则每个请求都要在这里排一次队。只有装配新桶才上锁,
+        # 锁内重查一次:两个线程同时错过同一个桶时,后进来的那个要看见前一个的成果。
+        cached = self._by_model.get(video_model)
+        if cached is not None:
+            return cached
+        with self._assembly_lock:
+            cached = self._by_model.get(video_model)
+            if cached is None:
+                cached = self._assemble(video_model)
+                self._by_model[video_model] = cached
+            return cached
+
+    def _assemble(self, video_model: str | None) -> CharacterGeneratorPort:
+        """装一个模型桶。**调用方须持有 ``self._assembly_lock``**(会写共用 provider)。"""
+        from windup_ai_engine.impl import CharacterGenerator
+        from windup_ai_engine.strategy.concrete import (
+            PerFrameStrategy,
+            VideoFrameStrategy,
+        )
+        from windup_common.models import GenRoute
+        from windup_framework.providers import (
+            OnnxU2NetMatteProvider,
+            SufyImageProvider,
+            SufyVideoProvider,
+        )
+
+        if self._matte is None:
+            self._matte = OnnxU2NetMatteProvider()
+        if self._image is None:
+            self._image = SufyImageProvider()
+        # 只有它随模型变 —— 模型是构造参数,换模型必须换实例。
+        video = SufyVideoProvider(model=video_model)
+        # 装配表必须与 GenRoute 对齐。下面那条断言让漏装在装配时暴露,而不是等到某个
+        # 动作第一次被请求时才炸——注入 generator 的测试走不到这条装配路径,漏了会测试
+        # 全绿而真实调用全崩。
+        strategies = {
+            GenRoute.VIDEO_I2V: VideoFrameStrategy(video, self._matte),
+            GenRoute.PER_FRAME: PerFrameStrategy(self._image, self._matte),
+        }
+        missing = set(GenRoute) - set(strategies)
+        if missing:
+            raise RuntimeError(
+                f"GenRoute 新增了 {sorted(r.value for r in missing)} 但 executor 未装配;"
+                "补上或在此显式说明为何不装。"
+            )
+        return CharacterGenerator(strategies)
 
     def _download_master(self, input: CharacterActionInput) -> bytes:
         if not input.reference_image_urls:
@@ -415,7 +478,7 @@ class ImageTaskExecutor:
             img = image_gen.gen_image(prompt, refs)
             # 请求里的 width/height 此前被丢掉:入口收下并校验过它们(_validate_project_size),
             # 而 ImageProvider.gen_image 没有尺寸参数,模型出多大就返多大 —— 又一个"接了不
-            # 履约"的字段(2026-08-10 对抗复查发现)。模型本身不吃宽高,所以在这里落实。
+            # 履约"的字段。模型本身不吃宽高,所以在这里落实。
             urls.append(upload(_fit_to(img, input.width, input.height, smooth=True)))
         return urls
 

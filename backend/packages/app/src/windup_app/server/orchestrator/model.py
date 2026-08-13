@@ -70,6 +70,14 @@ class CharacterActionInput:
     reference_video_url: str | None = None
     reference_image_urls: list[str] = field(default_factory=list)
     num_frames: int = 16
+    # ── action_type=custom 才用到的两个(#239)──────────────────────────────
+    # 这个动作是否循环播放。``None`` 原样往下传,由编排层兜成一次性:本层替调用方填默认值
+    # 的话,"没给"和"明确给了 False"从这里起就再也分不开了。
+    loop: bool | None = None
+    # 视频模型。``None`` = 用部署配置的默认值(kling-v2-5-turbo)。
+    # 取值域见 executor.ALLOWED_VIDEO_MODELS —— 只开放两个,因为每个模型的入参形状不同
+    # (image_list / input_reference / Fal 队列),全开等于把三套协议适配塞进一个改动。
+    video_model: str | None = None
 
 
 # -- 出参（按任务类型细化，前端可直接回填 character 模块）------------------
