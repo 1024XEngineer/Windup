@@ -45,21 +45,15 @@ export interface CharacterTemplateGenerationInput extends GenerationInputBase {
   spriteHeight: number
 }
 
-/** 指定角色造型下的动作首帧生成；不能只绑定 Character。 */
+/** 基于已确认角色母版生成动作首帧候选图。 */
 export interface FirstFrameGenerationInput extends GenerationInputBase {
   type: 'first_frame'
-  characterId: string
-  outfitId: string
   actionType: ActionType
-  /** 自定义动作或额外动作要求；没有时为 null。 */
-  prompt: string | null
-  /**
-   * 这个动作是否循环播放。`actionType: 'custom'` 时后端据此决定抽帧走单周期闭环还是裁区间。
-   *
-   * 省略时后端按**一次性**兜底 —— 失败代价不对称：把一次性动作误当循环会让末帧接回首帧
-   * 抽搐、产物不可用；反之只是不无缝闭环、产物仍可用。所以能给就给。
-   */
-  loop?: boolean
+  /** 动作描述；没有额外描述时由 Controller 使用动作名称。 */
+  prompt: string
+  /** 必须与 Project 的精灵尺寸一致，后端会在提交时校验。 */
+  spriteWidth: number
+  spriteHeight: number
 }
 
 /** 以已确认首帧为起点生成完整动画。 */
@@ -104,7 +98,8 @@ export interface CharacterTemplateGenerationResult {
 
 export interface FirstFrameGenerationResult {
   type: 'first_frame'
-  image: GeneratedImage
+  /** 同一图片任务生成的三张动作首帧候选。 */
+  images: readonly GeneratedImage[]
 }
 
 export interface CompleteAnimationGenerationResult {

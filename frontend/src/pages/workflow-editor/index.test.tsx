@@ -353,6 +353,70 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
   })
 
+  it('展示三张动作首帧候选并确认用户选择的一张', async () => {
+    const workflow = reviewingActionWorkflow()
+    const firstFrame = workflow.nodes.find((node) => node.type === 'action-first-frame')
+    if (!firstFrame || firstFrame.type !== 'action-first-frame') throw new Error('missing frame')
+    firstFrame.status = 'active'
+    firstFrame.phase = 'selecting'
+    firstFrame.generations = [{ taskId: 'first-frame-task', role: 'first_frame' }]
+    firstFrame.selectedFirstFrameUrl = null
+    for (const node of workflow.nodes) {
+      if (node.type === 'action-generation-method') {
+        node.status = 'locked'
+        node.phase = 'selecting'
+        node.method = null
+      } else if (node.type === 'action-full-frame') {
+        node.status = 'locked'
+        node.phase = 'ready'
+        node.generations = []
+      } else if (node.type === 'review') {
+        node.status = 'locked'
+      }
+    }
+    const candidates = [
+      'https://assets.windup.test/first-1.png',
+      'https://assets.windup.test/first-2.png',
+      'https://assets.windup.test/first-3.png',
+    ]
+    const session = createSession(workflow, {
+      character: characterFixture(),
+      generationApis: generationApisFixture({
+        get: vi.fn(async () => ({
+          id: 'first-frame-task',
+          projectId: '1',
+          type: 'first_frame' as const,
+          status: 'completed' as const,
+          result: {
+            type: 'first_frame' as const,
+            images: candidates.map((url) => ({ url })),
+          },
+          error: null,
+        })) as GenerationApis['get'],
+      }),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    expect(await screen.findByRole('img', { name: '动作首帧候选 1' })).toBeTruthy()
+    expect(screen.getByRole('img', { name: '动作首帧候选 2' })).toBeTruthy()
+    expect(screen.getByRole('img', { name: '动作首帧候选 3' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '选择动作首帧 2' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认动作首帧' }))
+
+    await waitFor(() =>
+      expect(session.controller.getWorkflow().nodes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: firstFrame.id,
+            selectedFirstFrameUrl: candidates[1],
+            status: 'passed',
+          }),
+        ]),
+      ),
+    )
+  })
+
   it('发布成功但审核保存失败时仍显式刷新 Character', async () => {
     const publishReviewedAction = vi.fn(async () => characterFixture())
     const session = createSession(reviewingActionWorkflow(), {

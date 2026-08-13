@@ -40,6 +40,7 @@ export {
   createAuthenticatedGenerationApis,
   createGenerationApis,
   GenerationApiError,
+  IMAGE_CANDIDATE_COUNT,
 } from './generation/api'
 export type {
   CharacterTemplateGenerationInput,

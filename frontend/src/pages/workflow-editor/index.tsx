@@ -904,7 +904,7 @@ function FirstFrameContent({
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
   const result = input.generations[generationKey(node.id, 'first_frame')]?.result
-  const image = result?.type === 'first_frame' ? result.image : null
+  const images = result?.type === 'first_frame' ? result.images : []
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.phase === 'configuring') {
     const character = characterOwningOutfit(input.character, node.input.outfitId)
@@ -922,8 +922,8 @@ function FirstFrameContent({
             if (!character) return
             input.runCommand(branchKey, () =>
               input.controller.generateFirstFrame(node.id, {
-                characterId: character.id,
-                referenceMedia: [],
+                spriteWidth: input.project.spriteSize.width,
+                spriteHeight: input.project.spriteSize.height,
               }),
             )
           }}
@@ -933,24 +933,31 @@ function FirstFrameContent({
       </div>
     )
   }
-  if (node.phase === 'selecting' && image) {
-    const selectedImageUrl = input.selectedImages[node.id] === image.url ? image.url : null
+  if (node.phase === 'selecting' && images.length > 0) {
+    const selectedImageUrl = images.some((image) => image.url === input.selectedImages[node.id])
+      ? input.selectedImages[node.id]!
+      : null
     return (
       <div className={CARD_STACK}>
-        <button
-          type="button"
-          className={THUMB_BUTTON}
-          aria-label="选择动作首帧"
-          aria-pressed={selectedImageUrl === image.url}
-          onClick={() =>
-            input.setSelectedImages((selected) => ({
-              ...selected,
-              [node.id]: image.url,
-            }))
-          }
-        >
-          <img className={THUMB_IMAGE} src={image.url} alt="动作首帧候选" />
-        </button>
+        <div className="grid grid-cols-3 gap-2">
+          {images.map((image, index) => (
+            <button
+              key={image.url}
+              type="button"
+              className={THUMB_BUTTON}
+              aria-label={`选择动作首帧 ${index + 1}`}
+              aria-pressed={selectedImageUrl === image.url}
+              onClick={() =>
+                input.setSelectedImages((selected) => ({
+                  ...selected,
+                  [node.id]: image.url,
+                }))
+              }
+            >
+              <img className={THUMB_IMAGE} src={image.url} alt={`动作首帧候选 ${index + 1}`} />
+            </button>
+          ))}
+        </div>
         <button
           type="button"
           className={CARD_BUTTON}
