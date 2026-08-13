@@ -1,11 +1,12 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 
-import accountBadgeArtwork from '@/assets/account/illustrations/account-badge.png'
+import accountBadgeArtwork from '@/assets/account/illustrations/account-badge.webp'
 import type { User } from '@/entities'
 import { useAuthSession } from '@/features/auth-session'
 
 import './account.css'
 
+const MAX_NICKNAME_LENGTH = 50
 const fieldClass =
   'min-h-12 w-full rounded-[10px] border border-[#c7cbc5] bg-[#fbfbf8] px-3.5 text-base text-[#202720] outline-none transition-[border-color,box-shadow,background-color] placeholder:text-[#8a8f88] hover:border-[#adb4ac] focus:border-[#526b59] focus:bg-white focus:ring-3 focus:ring-[#526b59]/10 disabled:cursor-not-allowed disabled:bg-[#eff0ec] disabled:text-[#7a8079]'
 const primaryButtonClass =
@@ -85,7 +86,7 @@ export function AccountPage() {
       setProfileError('昵称不能为空')
       return
     }
-    if (normalizedNickname.length > 50) {
+    if (normalizedNickname.length > MAX_NICKNAME_LENGTH) {
       setProfileSuccess(null)
       setProfileError('昵称不能超过 50 个字符')
       return
@@ -132,6 +133,15 @@ export function AccountPage() {
     void logout().catch(() => undefined)
   }
 
+  function selectSection(section: 'profile' | 'security') {
+    setActiveSection(section)
+    setProfileError(null)
+    setProfileSuccess(null)
+    setPasswordError(null)
+    setOldPassword('')
+    setNewPassword('')
+  }
+
   if (!currentUser) return null
 
   const displayName = currentUser.nickname || currentUser.email.split('@')[0]
@@ -139,7 +149,7 @@ export function AccountPage() {
 
   return (
     <div data-account-page className="min-h-[100dvh] bg-[#f3f2ec] text-[#252b26]">
-      <main
+      <div
         data-account-shell
         className="mx-auto w-full max-w-[1560px] px-4 pt-[clamp(4.75rem,11vh,7rem)] pb-10 sm:px-6 xl:px-8"
       >
@@ -157,6 +167,7 @@ export function AccountPage() {
                 aria-label="摇一摇工牌"
                 onClick={(event) => {
                   event.currentTarget.classList.remove('account-badge-shake')
+                  // Force a reflow so rapid clicks can restart the one-shot CSS animation.
                   void event.currentTarget.offsetWidth
                   event.currentTarget.classList.add('account-badge-shake')
                 }}
@@ -191,7 +202,7 @@ export function AccountPage() {
                 <button
                   key={section}
                   type="button"
-                  onClick={() => setActiveSection(section)}
+                  onClick={() => selectSection(section)}
                   aria-current={activeSection === section ? 'page' : undefined}
                   className={`min-h-10 rounded-lg px-3 text-left text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331] ${
                     activeSection === section
@@ -246,14 +257,14 @@ export function AccountPage() {
                       type="text"
                       autoComplete="nickname"
                       value={nickname}
-                      maxLength={51}
+                      maxLength={MAX_NICKNAME_LENGTH + 1}
                       disabled={isProfileLoading || isSavingNickname}
                       onChange={(event) => setNickname(event.target.value)}
                       className={fieldClass}
                       aria-describedby={`${nicknameId}-hint`}
                     />
                     <span id={`${nicknameId}-hint`} className="text-xs leading-5 text-[#7a7f79]">
-                      1–50 个字符，保存后同步显示在页面顶栏。
+                      1–{MAX_NICKNAME_LENGTH} 个字符，保存后同步显示在页面顶栏。
                     </span>
                   </div>
 
@@ -371,7 +382,7 @@ export function AccountPage() {
             )}
           </section>
         </div>
-      </main>
+      </div>
     </div>
   )
 }

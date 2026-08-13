@@ -130,11 +130,23 @@ describe('AccountPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '登录安全' }))
     expect(screen.getByRole('heading', { name: '登录安全' })).toBeTruthy()
-    expect(screen.getByLabelText('当前密码')).toBeTruthy()
+    const oldPassword = screen.getByLabelText('当前密码')
+    const newPassword = screen.getByLabelText('新密码')
+    expect(oldPassword).toBeTruthy()
     expect(screen.queryByLabelText('昵称')).toBeNull()
+
+    fireEvent.change(oldPassword, { target: { value: 'old-password' } })
+    fireEvent.change(newPassword, { target: { value: 'short' } })
+    fireEvent.click(screen.getByRole('button', { name: '修改密码' }))
+    expect(await screen.findByText('新密码需为 8–128 位')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: '个人资料' }))
     expect(screen.getByLabelText('昵称')).toBeTruthy()
+    expect(screen.queryByText('新密码需为 8–128 位')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '登录安全' }))
+    expect((screen.getByLabelText('当前密码') as HTMLInputElement).value).toBe('')
+    expect((screen.getByLabelText('新密码') as HTMLInputElement).value).toBe('')
   })
 
   it('reports a profile refresh failure without claiming the data is synchronized', async () => {
