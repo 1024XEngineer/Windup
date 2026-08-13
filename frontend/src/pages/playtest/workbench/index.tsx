@@ -1,4 +1,4 @@
-import { useMemo, type PointerEvent } from 'react'
+import { useMemo, type PointerEvent, type ReactNode } from 'react'
 
 import type { Character } from '@/entities'
 
@@ -11,6 +11,7 @@ export interface PlaytestWorkbenchProps {
   readonly character: Character
   readonly outfitId: string
   readonly initialActionId?: string | null
+  readonly toolbar?: ReactNode
 }
 
 const directionLabels: Readonly<Record<Direction, string>> = {
@@ -22,6 +23,7 @@ export function PlaytestWorkbench({
   character,
   outfitId,
   initialActionId = null,
+  toolbar = null,
 }: PlaytestWorkbenchProps) {
   const result = useMemo(() => createPlaytestModel(character, outfitId), [character, outfitId])
 
@@ -35,14 +37,18 @@ export function PlaytestWorkbench({
     )
   }
 
-  return <PlaytestExperience model={result.model} initialActionId={initialActionId} />
+  return (
+    <PlaytestExperience model={result.model} toolbar={toolbar} initialActionId={initialActionId} />
+  )
 }
 
 function PlaytestExperience({
   model,
+  toolbar,
   initialActionId,
 }: {
   readonly model: PlaytestModel
+  readonly toolbar: ReactNode
   readonly initialActionId: string | null
 }) {
   const runtime = usePlaytestRuntime(model.actions, initialActionId)
@@ -76,7 +82,10 @@ function PlaytestExperience({
               {model.outfitName}
             </h1>
           </div>
-          <p className="text-xs text-[#666c67]">A / D 或方向键操控角色</p>
+          <div className="flex items-center gap-3">
+            <p className="text-xs text-[#666c67]">A / D 或方向键操控角色</p>
+            {toolbar}
+          </div>
         </header>
 
         {/*

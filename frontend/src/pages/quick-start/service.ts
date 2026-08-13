@@ -3,11 +3,13 @@ import {
   createGenerationApis,
   createMediaApis,
   projectApis,
+  ProjectNameConflictError,
   workflowRunApis,
   type Action,
   type Character,
   type CharacterApis,
   type GenerationApis,
+  type Generation,
   type MediaReference,
   type Project,
   type ProjectApis,
@@ -18,6 +20,7 @@ import {
 import { getApiAccessToken, recoverApiUnauthorized, resolveApiBaseUrl } from '@/shared/api'
 import { createEventStreamSubscriber } from '@/shared/api/stream'
 import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
+import { createProgressiveExportModel, type ExportPackageModel } from '@/features/export-package'
 
 /** 页面不直接拼接后端字段；只负责准备项目约束。 */
 export type PrepareQuickStartProject = (
@@ -56,6 +59,8 @@ export interface QuickStartSession {
   resolveCharacterInfo(): Promise<{ characterId: string; outfitId: string } | null>
   getTemplateCandidates(): Promise<readonly string[]>
   getActionFrames(): Promise<readonly QuickStartFrame[]>
+  /** 按当前 Run 完成度装配统一导出包；角色母版尚未确认时返回 null。 */
+  getExportModel(): Promise<ExportPackageModel | null>
 }
 
 export interface QuickStartEntryService {
@@ -77,6 +82,7 @@ export interface CreateQuickStartServiceOptions {
   workflowRunApis: WorkflowRunApis
   generationApis: GenerationApis
   prepareProject: PrepareQuickStartProject
+  projectApis?: Pick<ProjectApis, 'get'>
   characterApis?: CharacterApis
   mediaApis?: QuickStartMediaApis
   onAsyncError?: (error: Error) => void
@@ -101,6 +107,7 @@ export function createQuickStartService({
   workflowRunApis,
   generationApis,
   prepareProject,
+  projectApis: exportProjectApis,
   characterApis,
   mediaApis,
   onAsyncError = (error) => console.error('[quick-start] 异步工作流错误', error),
@@ -526,6 +533,30 @@ export function createQuickStartService({
             }))
           : []
       },
+      async getExportModel() {
+        if (!characterApis || !exportProjectApis) return null
+        const info = getCharacterInfo(controller) ?? (await resolveCharacterInfo(controller))
+        if (!info) return null
+        const run = controller.getWorkflow()
+        const [project, character] = await Promise.all([
+          exportProjectApis.get(run.projectId),
+          characterApis.get(info.characterId),
+        ])
+        const generations = await Promise.all(
+          run.nodes
+            .filter((node) => node.type === 'action-full-frame' && !node.deletedAt)
+            .map((node) => controller.getGeneration(node.id, 'complete_animation')),
+        )
+        return createProgressiveExportModel({
+          project,
+          character,
+          outfitId: info.outfitId,
+          run,
+          generations: generations.filter(
+            (generation): generation is Generation => generation !== null,
+          ),
+        })
+      },
     }
   }
 
@@ -602,23 +633,34 @@ export function createQuickStartService({
 
 export function createAutoPrepareProject(projectApis: ProjectApis): PrepareQuickStartProject {
   return async (prompt) => {
-    const timestamp = Date.now().toString(36).slice(-6).padStart(6, '0')
-    const nonce = Math.random().toString(36).slice(2, 5).padEnd(3, '0')
-    const suffix = `${timestamp}${nonce}`
-    const maxBaseLength = 20 - suffix.length - 1
-    const promptCharacters = Array.from(prompt)
-    const base =
-      promptCharacters.length > maxBaseLength
-        ? `${promptCharacters.slice(0, maxBaseLength - 1).join('')}…`
-        : promptCharacters.join('')
-    const name = `${base}-${suffix}`
-    const project = await projectApis.create({
-      name,
-      perspective: 'side',
-      directionalMovement: 'single',
-      spriteSize: { width: 256, height: 256 },
-    })
-    return { id: project.id, spriteSize: project.spriteSize }
+    const normalizedPrompt = prompt.trim().replace(/\s+/gu, ' ') || '未命名项目'
+    let lastConflict: unknown
+
+    for (let sequence = 1; sequence <= 5; sequence += 1) {
+      // 首次名称不预留编号空间；只有重名时才缩短前缀，为可读编号让出 20 字上限。
+      const suffix = sequence === 1 ? '' : ` ${sequence}`
+      const maxBaseLength = 20 - Array.from(suffix).length
+      const promptCharacters = Array.from(normalizedPrompt)
+      const base =
+        promptCharacters.length > maxBaseLength
+          ? `${promptCharacters.slice(0, maxBaseLength - 1).join('')}…`
+          : promptCharacters.join('')
+
+      try {
+        const project = await projectApis.create({
+          name: `${base}${suffix}`,
+          perspective: 'side',
+          directionalMovement: 'single',
+          spriteSize: { width: 256, height: 256 },
+        })
+        return { id: project.id, spriteSize: project.spriteSize }
+      } catch (error) {
+        if (!(error instanceof ProjectNameConflictError)) throw error
+        lastConflict = error
+      }
+    }
+
+    throw lastConflict
   }
 }
 
@@ -643,6 +685,7 @@ export function createRealQuickStartService({
     workflowRunApis,
     generationApis,
     prepareProject: createAutoPrepareProject(projectApis),
+    projectApis,
     characterApis,
     mediaApis,
     onAsyncError,

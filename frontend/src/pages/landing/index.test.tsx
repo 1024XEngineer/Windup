@@ -27,11 +27,18 @@ describe('LandingPage', () => {
     const hero = await screen.findByRole('region', { name: 'Windup 首屏' })
 
     expect(within(hero).getByRole('heading', { name: '让你的角色，真正登场。' })).toBeTruthy()
-    expect(within(hero).getByTestId('hero-bird-left').getAttribute('src')).toBe(expectedBirdLeft)
-    expect(within(hero).getByTestId('hero-bird-right').getAttribute('src')).toBe(expectedBirdRight)
-    expect(
-      within(hero).getByRole('img', { name: 'Windup Workflow Editor 真实运行界面' }),
-    ).toBeTruthy()
+    const birdLeft = within(hero).getByTestId('hero-bird-left')
+    const birdRight = within(hero).getByTestId('hero-bird-right')
+    const editor = within(hero).getByRole('img', {
+      name: 'Windup Workflow Editor 真实运行界面',
+    })
+    expect(birdLeft.getAttribute('src')).toBe(expectedBirdLeft)
+    expect(birdRight.getAttribute('src')).toBe(expectedBirdRight)
+    for (const image of [birdLeft, birdRight, editor]) {
+      expect(image.getAttribute('loading')).toBe('eager')
+      expect(image.getAttribute('decoding')).toBe('async')
+      expect(image.getAttribute('fetchpriority')).toBe('high')
+    }
     expect(within(hero).queryByTestId('landing-brand-bird')).toBeNull()
   })
 

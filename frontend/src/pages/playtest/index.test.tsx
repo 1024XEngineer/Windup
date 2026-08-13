@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -46,6 +46,7 @@ describe('PlaytestPage', () => {
     expect(await screen.findByRole('heading', { name: '51 · 常态造型' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '绑定动作：呼吸待机' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '绑定动作：行走' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '导出Playtest 运行包' })).toBeTruthy()
   })
 
   it('plays frames in backend index order, not array order', async () => {
@@ -55,7 +56,9 @@ describe('PlaytestPage', () => {
     // 后端给的 walk 帧顺序是 index 2、0、1；照数组播会从 walk-03 起步。
     fireEvent.click(screen.getByRole('button', { name: '绑定动作：行走' }))
 
-    expect(stageFrameUrl()).toBe('https://cdn.windup.test/walk-01.png')
+    await waitFor(() => {
+      expect(stageFrameUrl()).toBe('https://cdn.windup.test/walk-01.png')
+    })
   })
 
   it('starts on the idle action when the route names none', async () => {
@@ -97,5 +100,27 @@ describe('PlaytestPage', () => {
 
     expect(await screen.findByRole('heading', { name: '52 · 未命名造型' })).toBeTruthy()
     expect(screen.getByText('暂无可播放帧')).toBeTruthy()
+  })
+
+  it('旧资产缺少角色母版时仍可试玩，但不显示无效导出入口', async () => {
+    const backend = createProjectAssetsBackend()
+    const fetchWithoutMaster: typeof globalThis.fetch = async (input, init) => {
+      const response = await backend.fetch(input, init)
+      if (new URL(new Request(input, init).url).pathname !== '/characters/51') return response
+      const body = (await response.json()) as {
+        data: {
+          reference_image_url: string | null
+          character_data: { outfits: Array<{ preview_url: string | null }> }
+        }
+      }
+      body.data.reference_image_url = null
+      body.data.character_data.outfits[0]!.preview_url = null
+      return new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } })
+    }
+
+    renderPlaytest('/playtest/51/outfit-default', fetchWithoutMaster)
+
+    expect(await screen.findByRole('heading', { name: '51 · 常态造型' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '导出Playtest 运行包' })).toBeNull()
   })
 })

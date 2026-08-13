@@ -209,7 +209,13 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     })
     const confirmCharacterTemplate = vi.fn(async (nodeId: string, imageUrl: string) => {
       await session.controller.confirmCharacterTemplate(nodeId, imageUrl)
-      return characterFixture()
+      const character = characterFixture()
+      return {
+        ...character,
+        outfits: character.outfits.map((outfit, index) =>
+          index === 0 ? { ...outfit, previewUrl: imageUrl } : outfit,
+        ),
+      }
     })
     session.confirmCharacterTemplate = confirmCharacterTemplate
     defaultSessionLoader.mockResolvedValue(session)
@@ -224,6 +230,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
         'https://assets.windup.test/character.png',
       ),
     )
+    expect(await screen.findByRole('button', { name: '导出角色母版' })).toBeTruthy()
     fireEvent.click(await screen.findByRole('button', { name: '添加动作分支' }))
     expect((screen.getByRole('button', { name: '生成动作 ›' }) as HTMLButtonElement).disabled).toBe(
       false,

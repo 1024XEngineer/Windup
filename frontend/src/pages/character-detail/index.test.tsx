@@ -39,9 +39,23 @@ describe('CharacterDetailPage', () => {
     expect(screen.getByRole('img', { name: '行走帧预览' }).getAttribute('src')).toBe(
       'https://cdn.windup.test/walk-01.png',
     )
+    const master = screen.getByRole('img', { name: '轻装信使的常态造型预览' })
+    expect(master.getAttribute('loading')).toBe('eager')
+    expect(master.getAttribute('decoding')).toBe('async')
+    expect(master.getAttribute('fetchpriority')).toBe('high')
+    for (const preview of [
+      screen.getByRole('img', { name: '呼吸待机帧预览' }),
+      screen.getByRole('img', { name: '行走帧预览' }),
+    ]) {
+      expect(preview.getAttribute('loading')).toBe('lazy')
+      expect(preview.getAttribute('decoding')).toBe('async')
+    }
     expect(screen.queryByText('GIF')).toBeNull()
     expect(screen.getByRole('button', { name: '增加动作' }).hasAttribute('disabled')).toBe(true)
-    expect(screen.getByRole('button', { name: '导出资产包' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('button', { name: '导出游戏资产包' }).hasAttribute('disabled')).toBe(
+      false,
+    )
+    expect(screen.queryByText('导出能力待 PR #97 合并并完成资产字段接线')).toBeNull()
     expect(screen.getByRole('link', { name: '在预览台打开当前造型' }).getAttribute('href')).toBe(
       '/playtest/51/outfit-default',
     )
