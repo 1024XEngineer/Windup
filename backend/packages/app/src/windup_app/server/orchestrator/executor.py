@@ -138,32 +138,19 @@ class _LogProgress:
         logger.info("[gen] %s %s/%s %s", stage, i, total, note)
 
 
-# 本期开放的视频模型。**只两个**,因为每个模型的入参形状不同(image_list /
-# input_reference / Fal 队列 + `Authorization: Key`),全开等于把三套协议适配塞进一个改动。
-# 取舍写在这里而不是文档里,是为了让改这张表的人同时看到代价。Refs #239。
+# 白名单而不是放开任意模型名:每个模型的入参形状不同(image_list / input_reference /
+# Fal 队列 + `Authorization: Key`)。列进来却没适配它的协议,等于"看起来能选、点了必然
+# 产生一个用不了的付费任务"。只列 SufyVideoProvider 真能建单的。Refs #239。
 ALLOWED_VIDEO_MODELS: dict[str, str] = {
-    # 现役、稳;本地首帧直接吃 JPG base64,不需要公网 URL。
     "kling-v2-5-turbo": "默认。稳,本地首帧即可",
-    # 有 motion-control,对"自定义动作"可能最有价值,待实测。
-    # 与默认那个同属 kling 系列,同样走 OpenAI 风格 `POST /videos` + `input_reference`
-    # (实测 kling 六档都能这么建单),所以 SufyVideoProvider 直接支持。
-    "kling-v2-6": "有 motion-control,自定义动作潜力最大",
+    "kling-v2-6": "有 motion-control",
 }
-
-# **veo3.1 刻意不在上面这张表里。** 它确实实测过步态最自然,但它只在 **Fal 队列协议**上
-# (`POST /queue/fal-ai/veo3.1/...`,鉴权 `Authorization: Key`,首帧只吃**公网 URL** 不吃
-# base64),而 `SufyVideoProvider` 走的是 OpenAI 风格 `POST /videos` + Bearer + base64
-# `input_reference`。把它列进可选值等于"看起来能选、点了必然产生一个用不了的付费任务" ——
-# 与本 PR 修的那个 custom(入口收下、引擎拒绝)是同一种病,不能一边修一边又造一个。
-# 要支持它得先实现 Fal 通路 + 首帧上传取公网 URL,那是另一个改动。
-# (FennoAI 评审逮到,2026-08-12。)
 
 
 def _resolve_video_model(name: str | None) -> str | None:
     """校验并返回视频模型名;``None`` 表示用部署默认值。
 
-    非法取值**在入口炸**,不等到付费调用才失败 —— 网关对没开通的模型返回的错误
-    长得像"模型不存在",排查时容易怀疑错方向(今天在 Tripo 上刚踩过同型的坑)。
+    非法取值在入口炸,不等到付费调用才失败。
     """
     if name is None:
         return None
@@ -256,7 +243,7 @@ class ActionTaskExecutor:
         ``_fit_to(png, sprite_w, sprite_h)``:引擎恒出 256,项目要 512 就等于二次
         重采样。而 ``_fit_to`` 用 ``Image.thumbnail`` —— 它**只缩不放**,放大方向
         根本不放大,只是把 256 的帧原尺寸居中贴进 512 画布,于是引擎刚对齐好的脚线
-        0.92 被挪到 0.709(2026-08-11 实测),角色不站在地上、跨动作对齐一并失效。
+        0.92 被挪到 0.709,角色不站在地上、跨动作对齐一并失效。
         现在把 ``canvas`` 交给引擎,它一次就出到项目尺寸,那一步整个不存在了。
         """
         if cons.directions > 1:
@@ -272,18 +259,8 @@ class ActionTaskExecutor:
         # 缺了会在构造 ActionSpec 时就炸(而不是等到付费调用之后)。
         extra: dict[str, object] = {}
         if engine_action is EngineActionType.CUSTOM:
-            # loop 缺失时用**一次性**兜底,而不是抛错。
-            #
-            # 初版是抛错(理由:"不猜"),但 FennoAI 评审指出那会让 quick-start 换个死法而已 ——
-            # 前端 `entities/generation/api.ts` 至今只发 action_type + custom_prompt,
-            # 而 quick-start 一有描述就发 type=custom,于是每个请求都在这里 FAILED。
-            # 本 PR 的目的是把 quick-start 救活,不是换一条报错。
-            #
-            # **这不是"按描述猜"**(那才是被禁的:从"走/挥"这类词推循环性,信号不可靠)。
-            # 这是一条基于**失败代价不对称**的显式产品默认:
-            #   · 把一次性动作误当循环 → 末帧接回首帧,肉眼可见的抽搐,产物不可用;
-            #   · 把循环动作误当一次性 → 只是不无缝闭环,产物仍可用。
-            # 所以缺信息时倒向一次性。前端补上勾选框后由它决定(见同 PR 的前端改动)。
+            # 缺 loop 时兜成一次性,依据是失败代价不对称:一次性误当循环会让末帧接回首帧
+            # 抽搐、产物不可用;反之只是不无缝闭环、仍可用。不从描述文字猜。
             cyclic = False if input.loop is None else bool(input.loop)
             extra = {"custom_action": input.custom_prompt or "", "cyclic": cyclic}
         action = ActionSpec(
@@ -308,12 +285,10 @@ class ActionTaskExecutor:
         return {"type": "character_action", "action_type": input.action_type.value, "frames": frames}
 
     def _get_generator(self, video_model: str | None = None) -> CharacterGeneratorPort:
-        """懒装配真实 CharacterGenerator(视频路线 + 桩路线)。
+        """懒装配 CharacterGenerator,按模型名分桶。
 
-        ``video_model`` 非 None 时**另装一套**并按模型名缓存:视频 provider 的模型是构造
-        参数,不能在一个已装好的 generator 上换。不按模型分桶的话,第一个请求指定了
-        veo3.1 之后,后续所有请求都会沿用它 —— 那是"看起来指定了模型、实际用的是别人的"
-        这类静默错误。注入 generator(测试)时一律直接返回注入的那个,不受本参数影响。
+        视频 provider 的模型是构造参数,不分桶的话第一个请求指定的模型会被后续所有请求
+        沿用,而调用方以为自己指定了。
         """
         if self._generator is not None:
             return self._generator
@@ -335,12 +310,9 @@ class ActionTaskExecutor:
         matte = OnnxU2NetMatteProvider()
         video = SufyVideoProvider(model=video_model)
         image = SufyImageProvider()
-        # 只装当前 GenRoute 真有的路线。曾多装一个 PROC_IDLE:该枚举值与
-        # ProcIdleStrategy 都已随"程序化待机放弃"一起删除,而这行留着,于是**每个**
-        # 动作任务都在 import 期 AttributeError —— 注入 generator 的测试走不到这条
-        # 装配路径,所以测试全绿而真实调用全崩(FennoAI 逮到,2026-08-10)。
-        # 加一条断言:将来 GenRoute 新增成员时,漏装会在这里立刻暴露,而不是等到
-        # 某个动作第一次被请求。
+        # 装配表必须与 GenRoute 对齐。下面那条断言让漏装在装配时暴露,而不是等到某个
+        # 动作第一次被请求时才炸——注入 generator 的测试走不到这条装配路径,漏了会测试
+        # 全绿而真实调用全崩。
         strategies = {
             GenRoute.VIDEO_I2V: VideoFrameStrategy(video, matte),
             GenRoute.PER_FRAME: PerFrameStrategy(image, matte),
@@ -484,7 +456,7 @@ class ImageTaskExecutor:
             img = image_gen.gen_image(prompt, refs)
             # 请求里的 width/height 此前被丢掉:入口收下并校验过它们(_validate_project_size),
             # 而 ImageProvider.gen_image 没有尺寸参数,模型出多大就返多大 —— 又一个"接了不
-            # 履约"的字段(2026-08-10 对抗复查发现)。模型本身不吃宽高,所以在这里落实。
+            # 履约"的字段。模型本身不吃宽高,所以在这里落实。
             urls.append(upload(_fit_to(img, input.width, input.height, smooth=True)))
         return urls
 
