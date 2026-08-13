@@ -519,6 +519,9 @@ export function LandingPage() {
             alt=""
             aria-hidden="true"
             data-testid="hero-bird-left"
+            loading="eager"
+            decoding="async"
+            fetchPriority="high"
             className="pointer-events-none absolute top-[18.75rem] -left-24 z-[1] block h-auto w-[min(34vw,31rem)] rotate-[2deg] select-none"
           />
           <img
@@ -526,6 +529,9 @@ export function LandingPage() {
             alt=""
             aria-hidden="true"
             data-testid="hero-bird-right"
+            loading="eager"
+            decoding="async"
+            fetchPriority="high"
             className="pointer-events-none absolute top-21 -right-[9.5rem] z-[1] block h-auto w-[min(32vw,29rem)] -rotate-[4deg] select-none"
           />
 
@@ -564,6 +570,7 @@ export function LandingPage() {
                 src={workflowEditorDesktop}
                 alt="Windup Workflow Editor 真实运行界面"
                 loading="eager"
+                decoding="async"
                 fetchPriority="high"
                 className="block w-full origin-top -translate-y-31 scale-[1.04]"
               />
@@ -608,6 +615,7 @@ export function LandingPage() {
                   src={workflowEditorDesktop}
                   alt="Windup Workflow Editor 真实运行界面"
                   loading="lazy"
+                  decoding="async"
                   className="block w-full origin-[22%_46%] scale-[1.62]"
                 />
               </div>
@@ -661,6 +669,7 @@ export function LandingPage() {
             src={characterJourney}
             alt="同一批角色从线稿逐步走到成品，最后站进游戏场景里"
             loading="lazy"
+            decoding="async"
             className="block aspect-[1536/571] w-full object-cover object-[center_49%]"
           />
 

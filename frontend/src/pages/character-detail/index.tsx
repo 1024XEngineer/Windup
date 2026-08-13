@@ -165,6 +165,9 @@ function OutfitMaster({ character, outfit }: { character: Character; outfit: Out
           <img
             src={outfit.previewUrl}
             alt={`${name}的${outfit.name}预览`}
+            loading="eager"
+            decoding="async"
+            fetchPriority="high"
             className="h-full w-full object-contain [image-rendering:pixelated]"
           />
         ) : (
@@ -250,6 +253,8 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
                         <img
                           src={previewFrame.imageUrl}
                           alt={`${action.name}帧预览`}
+                          loading="lazy"
+                          decoding="async"
                           className="h-full w-full object-contain p-2 [image-rendering:pixelated]"
                         />
                       ) : (
@@ -325,6 +330,8 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
                         <img
                           src={frame.imageUrl}
                           alt={`${selectedAction.name}第 ${frame.index + 1} 帧`}
+                          loading="lazy"
+                          decoding="async"
                           className="aspect-square w-full object-contain p-1 [image-rendering:pixelated]"
                         />
                       </div>

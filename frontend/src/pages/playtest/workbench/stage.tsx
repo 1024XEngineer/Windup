@@ -70,6 +70,9 @@ export function PlaytestStage({ frame, x, facing, onBoundsChange }: PlaytestStag
           alt=""
           aria-hidden="true"
           draggable={false}
+          loading="eager"
+          decoding="async"
+          fetchPriority="high"
           onLoad={measureBounds}
           className="pointer-events-none absolute left-1/2 w-[clamp(150px,22vw,256px)] select-none object-contain [image-rendering:pixelated] drop-shadow-[0_14px_9px_rgba(27,25,20,0.18)] will-change-transform"
           style={{

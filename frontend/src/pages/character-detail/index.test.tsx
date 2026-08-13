@@ -39,6 +39,17 @@ describe('CharacterDetailPage', () => {
     expect(screen.getByRole('img', { name: '行走帧预览' }).getAttribute('src')).toBe(
       'https://cdn.windup.test/walk-01.png',
     )
+    const master = screen.getByRole('img', { name: '轻装信使的常态造型预览' })
+    expect(master.getAttribute('loading')).toBe('eager')
+    expect(master.getAttribute('decoding')).toBe('async')
+    expect(master.getAttribute('fetchpriority')).toBe('high')
+    for (const preview of [
+      screen.getByRole('img', { name: '呼吸待机帧预览' }),
+      screen.getByRole('img', { name: '行走帧预览' }),
+    ]) {
+      expect(preview.getAttribute('loading')).toBe('lazy')
+      expect(preview.getAttribute('decoding')).toBe('async')
+    }
     expect(screen.queryByText('GIF')).toBeNull()
     expect(screen.getByRole('button', { name: '增加动作' }).hasAttribute('disabled')).toBe(true)
     expect(screen.getByRole('button', { name: '导出资产包' }).hasAttribute('disabled')).toBe(true)
