@@ -175,8 +175,9 @@ class CharacterActionGenerateRequest(BaseModel):
     # 同上:帧数决定抽帧与逐帧抠图的工作量,上界 64 已远超引擎能出的有效周期长度。
     num_frames: int = Field(default=16, ge=1, le=64)
     # ── action_type=custom 才用到(#239)───────────────────────────────────
-    # 这个动作是否循环播放。**custom 时必填**;缺了在编排层报错,不猜(猜错会把一次性动作
-    # 强行首尾闭环,而帧数/时长/成色全部正常、没有任何一道会红)。
+    # 这个动作是否循环播放。不给则编排层兜成一次性,也不按描述文字猜 —— 两个方向的代价
+    # 不对称:一次性动作被当成循环会让末帧接回首帧抽搐、产物不可用,反之只是不无缝闭环、
+    # 仍可用。而且猜错是静默的,帧数/时长/成色全部正常、没有任何一道会红。
     loop: bool | None = None
     # 视频模型。None = 用部署默认(kling-v2-5-turbo)。取值域见
     # orchestrator.executor.ALLOWED_VIDEO_MODELS;非法值在入口就报错,不到付费调用才失败。

@@ -71,10 +71,8 @@ class CharacterActionInput:
     reference_image_urls: list[str] = field(default_factory=list)
     num_frames: int = 16
     # ── action_type=custom 才用到的两个(#239)──────────────────────────────
-    #
-    # 这个动作是否循环播放。**custom 时必填,不猜。** 按描述关键词猜("走/跑"→循环、
-    # "挥/劈"→一次性)猜错的后果是"挥手被强行首尾闭环":末帧接回首帧会抽搐,而帧数、
-    # 时长、成色全部正常,没有任何一道会红。前端已有动作名与描述表单,多一个勾选框成本很低。
+    # 这个动作是否循环播放。``None`` 原样往下传,由编排层兜成一次性:本层替调用方填默认值
+    # 的话,"没给"和"明确给了 False"从这里起就再也分不开了。
     loop: bool | None = None
     # 视频模型。``None`` = 用部署配置的默认值(kling-v2-5-turbo)。
     # 取值域见 executor.ALLOWED_VIDEO_MODELS —— 只开放两个,因为每个模型的入参形状不同
