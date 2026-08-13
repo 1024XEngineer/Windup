@@ -5,6 +5,13 @@ CI 友好。每个用例各自独立的 engine,互不污染。``Project`` 表按
 engine 上(不碰全局 Postgres engine)。
 """
 
+import os
+
+# CI 环境可能未配置真实凭据,在 import 触发 Settings 实例化前提供测试默认值。
+# setdefault 不覆盖已有的环境变量(本地 .env 或 CI secrets 优先生效)。
+os.environ.setdefault("JWT_SECRET", "test-secret-key-for-ci-only-32chars")
+os.environ.setdefault("POSTGRES_PASSWORD", "testpassword123")
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -20,6 +27,11 @@ from windup_app.server.orchestrator.model import GenerationTaskRecord
 from windup_app.server.workflow_run.model import WorkflowRun
 from windup_app.server.user.service import create_access_token
 from windup_framework.db import Base, get_session
+
+
+def _disable_generation_execution(app):
+    app.state.run_action_task = lambda *args: None
+    app.state.run_image_task = lambda *args: None
 
 
 def _make_engine():
@@ -75,8 +87,10 @@ def client(engine):
             session.close()
 
     app = create_app()
+    _disable_generation_execution(app)
     app.dependency_overrides[get_session] = override_get_session
     yield TestClient(app)
+    app.state.generation_dispatcher.shutdown()
     app.dependency_overrides.clear()
 
 
@@ -100,6 +114,7 @@ def auth_client(engine):
             session.close()
 
     app = create_app()
+    _disable_generation_execution(app)
     app.dependency_overrides[get_session] = override_get_session
 
     # 生成测试用 token
@@ -107,6 +122,7 @@ def auth_client(engine):
     client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
 
     yield client
+    app.state.generation_dispatcher.shutdown()
     app.dependency_overrides.clear()
 
 
@@ -127,10 +143,12 @@ def auth_client_b(engine):
             session.close()
 
     app = create_app()
+    _disable_generation_execution(app)
     app.dependency_overrides[get_session] = override_get_session
 
     token = create_access_token(2, "other@example.com")
     client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
 
     yield client
+    app.state.generation_dispatcher.shutdown()
     app.dependency_overrides.clear()

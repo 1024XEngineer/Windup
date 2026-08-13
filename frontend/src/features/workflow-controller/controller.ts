@@ -12,6 +12,7 @@ import type {
   Generation,
   GenerationApis,
   GenerationEvent,
+  GenerationExpectation,
   MediaReference,
   ReviewWorkflowNode,
   WorkflowActionInput,
@@ -22,6 +23,7 @@ import type {
   WorkflowRun,
   WorkflowRunApis,
 } from '@/entities'
+import { IMAGE_CANDIDATE_COUNT } from '@/entities'
 
 const COMPLETE_ANIMATION_FRAME_COUNT = 32
 
@@ -44,6 +46,11 @@ export interface GenerateActionOptions {
   characterId: string
   /** 由上传/媒体边界提供，Controller 不把展示 URL 冒充 MediaReference。 */
   referenceMedia: readonly MediaReference[]
+}
+
+export interface GenerateFirstFrameOptions {
+  spriteWidth: number
+  spriteHeight: number
 }
 
 export interface ApplyGenerationResultInput {
@@ -99,7 +106,7 @@ export interface WorkflowController {
   ): Promise<void>
   generateFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
-    options: GenerateActionOptions,
+    options: GenerateFirstFrameOptions,
   ): Promise<void>
   confirmFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
@@ -488,24 +495,23 @@ export function createWorkflowController({
 
   function generateFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
-    options: GenerateActionOptions,
+    options: GenerateFirstFrameOptions,
   ) {
-    const characterId = nonEmpty(options.characterId, 'characterId')
     return submitGeneration(nodeId, 'first_frame', (run, node) => {
       if (node.type !== 'action-first-frame') throw new Error('目标节点不是动作首帧')
       if (node.phase !== 'configuring') throw new Error('动作首帧节点当前不能生成')
       const templateNode = findSingleDependencyNode(run, node, 'character-template')
       if (!templateNode.selectedImageUrl) throw new Error('角色母版尚未确认')
-      // 该 URL 来自已校验的 Generation 结果，符合当前后端 reference_image_urls 契约。
+      // 该 URL 来自已确认的角色母版，是动作首帧图片任务唯一的参考图。
       const characterTemplateReference = templateNode.selectedImageUrl as MediaReference
       const input: FirstFrameGenerationInput = {
         type: 'first_frame',
         projectId: run.projectId,
-        characterId,
-        outfitId: node.input.outfitId,
         actionType: node.input.type,
-        prompt: node.input.prompt,
-        referenceMedia: [...new Set([characterTemplateReference, ...options.referenceMedia])],
+        prompt: node.input.prompt?.trim() || node.input.name,
+        spriteWidth: options.spriteWidth,
+        spriteHeight: options.spriteHeight,
+        referenceMedia: [characterTemplateReference],
       }
       return input
     })
@@ -728,14 +734,23 @@ export function createWorkflowController({
 
     subscriptions.set(key, { nodeId, taskId, stop: () => undefined })
     try {
-      const stop = generationApis.subscribe(requireWorkflow().projectId, taskId, (event) => {
-        if (event.taskId !== taskId || event.status === 'pending' || event.status === 'running') {
-          return
-        }
-        void settleGeneration(nodeId, taskId, event).catch((cause: unknown) => {
-          onAsyncError(asError(cause))
-        })
-      })
+      const run = requireWorkflow()
+      const expectation = generationExpectationForNode(run, findNode(run, nodeId))
+      if (!expectation) throw new Error(`${nodeId} 不是生成节点`)
+      const stop = generationApis.subscribe(
+        run.projectId,
+        taskId,
+        expectation,
+        (event) => {
+          if (event.taskId !== taskId || event.status === 'pending' || event.status === 'running') {
+            return
+          }
+          void settleGeneration(nodeId, taskId, event).catch((cause: unknown) => {
+            onAsyncError(asError(cause))
+          })
+        },
+        (error) => onAsyncError(error),
+      )
       const registered = subscriptions.get(key)
       if (registered) subscriptions.set(key, { ...registered, stop })
       else stop()
@@ -825,7 +840,7 @@ export function createWorkflowController({
         node.type !== 'character-template' ||
         generation.type !== 'character_template' ||
         generation.result?.type !== 'character_template' ||
-        generation.result.images.length === 0
+        generation.result.images.length !== IMAGE_CANDIDATE_COUNT
       ) {
         return failNode(run, node, '角色候选图结果格式无效')
       }
@@ -837,7 +852,8 @@ export function createWorkflowController({
         node.type !== 'action-first-frame' ||
         generation.type !== 'first_frame' ||
         generation.result?.type !== 'first_frame' ||
-        !generation.result.image.url
+        generation.result.images.length !== IMAGE_CANDIDATE_COUNT ||
+        generation.result.images.some((image) => !image.url)
       ) {
         return failNode(run, node, '动作首帧结果格式无效')
       }
@@ -925,8 +941,12 @@ export function createWorkflowController({
 
   async function getGeneration(nodeId: WorkflowNode['id'], role: WorkflowGenerationRole) {
     const run = requireWorkflow()
-    const reference = findNode(run, nodeId).generations.find((item) => item.role === role)
-    return reference ? generationApis.get(run.projectId, reference.taskId) : null
+    const node = findNode(run, nodeId)
+    const reference = node.generations.find((item) => item.role === role)
+    const expectation = generationExpectationForNode(run, node)
+    return reference && expectation
+      ? generationApis.get(run.projectId, reference.taskId, expectation)
+      : null
   }
 
   function stopSubscription(key: string) {
@@ -1095,6 +1115,22 @@ function generationRoleForNode(node: WorkflowNode): WorkflowGenerationRole | nul
   if (node.type === 'character-template') return 'character_template'
   if (node.type === 'action-first-frame') return 'first_frame'
   if (node.type === 'action-full-frame') return 'complete_animation'
+  return null
+}
+
+function generationExpectationForNode(
+  run: WorkflowRun,
+  node: WorkflowNode,
+): GenerationExpectation | null {
+  if (node.type === 'character-template') return { type: 'character_template' }
+  if (node.type === 'action-first-frame') {
+    return { type: 'first_frame', actionType: node.input.type }
+  }
+  if (node.type === 'action-full-frame') {
+    const methodNode = findSingleDependencyNode(run, node, 'action-generation-method')
+    const firstFrameNode = findSingleDependencyNode(run, methodNode, 'action-first-frame')
+    return { type: 'complete_animation', actionType: firstFrameNode.input.type }
+  }
   return null
 }
 

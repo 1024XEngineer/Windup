@@ -94,7 +94,7 @@ function CharacterGrid({ projectId, characters }: { projectId: string; character
 
   return (
     <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-4">
-      {characters.map((character) => {
+      {characters.map((character, index) => {
         const name = characterName(character)
         const outfit = character.outfits[0]
         const actionCount = character.outfits.reduce((sum, item) => sum + item.actions.length, 0)
@@ -110,6 +110,9 @@ function CharacterGrid({ projectId, characters }: { projectId: string; character
                 <img
                   src={outfit.previewUrl}
                   alt={`${name}的${outfit.name}预览`}
+                  loading={index < 4 ? 'eager' : 'lazy'}
+                  decoding="async"
+                  fetchPriority={index === 0 ? 'high' : 'auto'}
                   className="h-full w-full object-contain p-5 [image-rendering:pixelated] transition group-hover:scale-[1.025]"
                 />
               ) : (

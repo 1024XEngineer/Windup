@@ -120,26 +120,8 @@ describe('createGenerationApis', () => {
     })
   })
 
-  it('通过动作生成接口固定请求并映射一帧动作首帧', async () => {
-    const request = vi.fn(async (_url: string, _init?: RequestInit) =>
-      success(
-        taskData({
-          task_type: 'character_action',
-          input_payload: { num_frames: 1, action_type: 'idle' },
-          result: {
-            type: 'character_action',
-            action_type: 'idle',
-            frames: [
-              {
-                index: 0,
-                image_url: 'https://cdn.test/first-frame.png',
-                duration_ms: null,
-              },
-            ],
-          },
-        }),
-      ),
-    )
+  it('根据角色母版和动作提示词生成三张动作首帧候选', async () => {
+    const request = vi.fn(async (_url: string, _init?: RequestInit) => success(taskData()))
     const apis = createGenerationApis({
       baseUrl: '',
       transport: { request, stream: vi.fn(() => vi.fn()) },
@@ -148,27 +130,49 @@ describe('createGenerationApis', () => {
     const generation = await apis.create({
       type: 'first_frame',
       projectId: '42',
-      characterId: '5',
-      outfitId: 'default',
       actionType: 'idle',
       prompt: 'stand naturally',
       referenceMedia: [reference('https://cdn.test/template.png')],
+      spriteWidth: 64,
+      spriteHeight: 96,
     })
 
-    expect(request.mock.calls[0]?.[0]).toBe('/generation/action')
+    expect(request.mock.calls[0]?.[0]).toBe('/generation/image')
     expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({
       project_id: 42,
-      character_id: 5,
-      action_type: 'idle',
-      custom_prompt: 'stand naturally',
-      reference_video_url: null,
-      reference_image_urls: ['https://cdn.test/template.png'],
-      num_frames: 1,
+      reference_image_url: 'https://cdn.test/template.png',
+      prompt: 'stand naturally',
+      negative_prompt: '',
+      width: 64,
+      height: 96,
+      num_images: 3,
     })
     expect(generation.result).toEqual({
       type: 'first_frame',
-      image: { url: 'https://cdn.test/first-frame.png' },
+      images: [
+        { url: 'https://cdn.test/candidate-1.png' },
+        { url: 'https://cdn.test/candidate-2.png' },
+        { url: 'https://cdn.test/candidate-3.png' },
+      ],
     })
+  })
+
+  it('没有角色母版时拒绝创建动作首帧任务', async () => {
+    const apis = createGenerationApis({
+      transport: { request: vi.fn(), stream: vi.fn(() => vi.fn()) },
+    })
+
+    await expect(
+      apis.create({
+        type: 'first_frame',
+        projectId: '42',
+        actionType: 'walk',
+        prompt: 'walk',
+        referenceMedia: [],
+        spriteWidth: 64,
+        spriteHeight: 96,
+      }),
+    ).rejects.toThrow('动作首帧生成必须提供已确认的角色母版')
   })
 
   it('以首帧请求完整动画并按后端 index 排序，当前合同固定为三十二帧', async () => {
@@ -616,39 +620,57 @@ describe('createGenerationApis', () => {
     )
   })
 
-  it('推断动作首帧阶段，并拒绝无法推断的动作输入', async () => {
-    const firstFrame = taskData({
-      task_type: 'character_action',
-      input_payload: { num_frames: 1, action_type: 'idle' },
-      result: {
-        type: 'character_action',
-        action_type: 'idle',
-        frames: [{ index: 0, image_url: 'https://cdn.test/first.png', duration_ms: null }],
-      },
-    })
-    const request = vi
-      .fn()
-      .mockResolvedValueOnce(success(firstFrame))
-      .mockResolvedValueOnce(
-        success(taskData({ task_type: 'character_action', input_payload: null })),
-      )
-      .mockResolvedValueOnce(
-        success(
-          taskData({
-            task_type: 'character_action',
-            input_payload: { num_frames: 2, action_type: 'walk' },
-          }),
-        ),
-      )
+  it('按显式阶段恢复图片任务为三张动作首帧候选', async () => {
+    const request = vi.fn().mockResolvedValueOnce(success(taskData()))
     const apis = createGenerationApis({
       transport: { request, stream: vi.fn(() => vi.fn()) },
     })
 
-    await expect(apis.get('42', '91')).resolves.toMatchObject({ type: 'first_frame' })
-    await expect(apis.get('42', '91')).rejects.toThrow('动作任务缺少 input_payload')
-    await expect(apis.get('42', '91')).rejects.toThrow(
-      'input_payload.num_frames 无法映射到前端阶段',
-    )
+    await expect(
+      apis.get('42', '91', { type: 'first_frame', actionType: 'idle' }),
+    ).resolves.toMatchObject({
+      type: 'first_frame',
+      result: {
+        type: 'first_frame',
+        images: [
+          { url: 'https://cdn.test/candidate-1.png' },
+          { url: 'https://cdn.test/candidate-2.png' },
+          { url: 'https://cdn.test/candidate-3.png' },
+        ],
+      },
+    })
+  })
+
+  it('订阅图片任务时按首帧阶段映射三张候选', () => {
+    let streamOptions: EventStreamOptions | undefined
+    const onEvent = vi.fn()
+    const apis = createGenerationApis({
+      transport: {
+        request: vi.fn(),
+        stream: vi.fn((_url, options) => {
+          streamOptions = options
+          return vi.fn()
+        }),
+      },
+    })
+
+    apis.subscribe('42', '91', { type: 'first_frame', actionType: 'walk' }, onEvent, vi.fn())
+    streamOptions?.onEvent(JSON.stringify(taskData()), 'completed')
+
+    expect(onEvent).toHaveBeenCalledWith({
+      taskId: '91',
+      type: 'first_frame',
+      status: 'completed',
+      result: {
+        type: 'first_frame',
+        images: [
+          { url: 'https://cdn.test/candidate-1.png' },
+          { url: 'https://cdn.test/candidate-2.png' },
+          { url: 'https://cdn.test/candidate-3.png' },
+        ],
+      },
+      error: null,
+    })
   })
 
   it.each([

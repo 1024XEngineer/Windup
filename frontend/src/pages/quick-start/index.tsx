@@ -16,6 +16,7 @@ import {
   type WorkflowNode,
   type WorkflowNodeType,
 } from '@/entities'
+import { ExportButton, type ExportPackageModel } from '@/features/export-package'
 import {
   quickStartService,
   type QuickStartEntryService,
@@ -408,6 +409,7 @@ function QuickStartRun({
   const [candidates, setCandidates] = useState<readonly string[]>([])
   const [firstFrameCandidates, setFirstFrameCandidates] = useState<readonly QuickStartFrame[]>([])
   const [actionFrames, setActionFrames] = useState<readonly QuickStartFrame[]>([])
+  const [exportModel, setExportModel] = useState<ExportPackageModel | null>(null)
   const [publishing, setPublishing] = useState(false)
   const [confirmingCandidate, setConfirmingCandidate] = useState(false)
   const [confirmingFirstFrame, setConfirmingFirstFrame] = useState(false)
@@ -460,6 +462,7 @@ function QuickStartRun({
       setCandidates([])
       setFirstFrameCandidates([])
       setActionFrames([])
+      setExportModel(null)
       return
     }
     let active = true
@@ -467,12 +470,14 @@ function QuickStartRun({
       session.getTemplateCandidates(),
       session.getFirstFrameCandidates(),
       session.getActionFrames(),
+      session.getExportModel(),
     ])
-      .then(([nextCandidates, nextFirstFrameCandidates, nextFrames]) => {
+      .then(([nextCandidates, nextFirstFrameCandidates, nextFrames, nextExportModel]) => {
         if (!active) return
         setCandidates(nextCandidates)
         setFirstFrameCandidates(nextFirstFrameCandidates)
         setActionFrames(nextFrames)
+        setExportModel(nextExportModel)
       })
       .catch((cause) => {
         if (active) setError(errorMessage(cause, '读取生成结果失败'))
@@ -629,22 +634,30 @@ function QuickStartRun({
               {workflowPrompt(run) || '未命名角色创作'}
             </h1>
           </div>
-          <div
-            className="flex items-center gap-3 rounded-xl border border-app-line bg-app-surface-raised/90 px-4 py-3"
-            aria-live="polite"
-          >
-            <i
-              className={`h-2.5 w-2.5 rounded-full ${
-                workflowIsActive(run) ? 'animate-pulse bg-app-accent' : 'bg-app-faint'
-              } motion-reduce:animate-none`}
-              aria-hidden="true"
-            />
-            <span>
-              <small className="block font-mono text-[8px] tracking-[0.12em] text-app-faint">
-                CURRENT STATUS
-              </small>
-              <b className="text-sm text-app-accent">{status.title}</b>
-            </span>
+          <div className="flex items-center gap-3">
+            {exportModel ? (
+              <ExportButton
+                model={exportModel}
+                className="border-app-accent bg-app-accent text-app-on-accent hover:bg-app-accent-hover"
+              />
+            ) : null}
+            <div
+              className="flex items-center gap-3 rounded-xl border border-app-line bg-app-surface-raised/90 px-4 py-3"
+              aria-live="polite"
+            >
+              <i
+                className={`h-2.5 w-2.5 rounded-full ${
+                  workflowIsActive(run) ? 'animate-pulse bg-app-accent' : 'bg-app-faint'
+                } motion-reduce:animate-none`}
+                aria-hidden="true"
+              />
+              <span>
+                <small className="block font-mono text-[8px] tracking-[0.12em] text-app-faint">
+                  CURRENT STATUS
+                </small>
+                <b className="text-sm text-app-accent">{status.title}</b>
+              </span>
+            </div>
           </div>
         </header>
 
@@ -657,6 +670,8 @@ function QuickStartRun({
                     key={`${frame.imageUrl}:${index}`}
                     src={frame.imageUrl}
                     alt={`动作第 ${index + 1} 帧`}
+                    loading="lazy"
+                    decoding="async"
                     className="aspect-square w-full border border-app-line bg-app-surface-muted object-contain [image-rendering:pixelated]"
                   />
                 ))}
@@ -703,6 +718,9 @@ function QuickStartRun({
                       <img
                         src={frame.imageUrl}
                         alt={`动作首帧候选 ${index + 1}`}
+                        loading="eager"
+                        decoding="async"
+                        fetchPriority={index === 0 ? 'high' : 'auto'}
                         className="aspect-square w-full object-contain [image-rendering:pixelated]"
                       />
                       <p className="mt-2 font-mono text-[9px] tracking-[0.1em] text-app-muted">
@@ -760,6 +778,9 @@ function QuickStartRun({
                       <img
                         src={candidateUrl}
                         alt={`角色图候选 ${index + 1}`}
+                        loading="eager"
+                        decoding="async"
+                        fetchPriority={index === 0 ? 'high' : 'auto'}
                         className="aspect-square w-full object-contain [image-rendering:pixelated]"
                       />
                       <p className="mt-2 font-mono text-[9px] tracking-[0.1em] text-app-muted">

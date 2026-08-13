@@ -38,6 +38,7 @@ def mock_redis():
     redis_mock.get.return_value = None
     redis_mock.setex.return_value = True
     redis_mock.delete.return_value = True
+    redis_mock.eval.return_value = None  # Lua 脚本默认返回 None
     redis_mock.pipeline.return_value = MagicMock(
         execute=MagicMock(return_value=[True, True])
     )
@@ -136,6 +137,47 @@ def test_register_success(db_session, service, mock_email):
     assert result.access_token is not None
     assert result.refresh_token is not None
     assert result.user.email_verified_at is not None  # 注册即验证
+
+
+def test_register_creates_credit_account(db_session, service, mock_email):
+    """注册时应自动创建积分账户并赠送初始积分。"""
+    from sqlalchemy import select
+    from windup_app.server.quota.model import CreditAccount, CreditTransaction
+    from windup_common.enums.quota import CreditReason
+    from windup_framework.config.quota import settings as quota_settings
+
+    service._redis.get.return_value = "123456"
+
+    input_data = RegisterInput(
+        email="credit@example.com",
+        password="password123",
+        code="123456",
+    )
+
+    result = service.register_by_email_with_session(db_session, input_data)
+    user_id = result.user.id
+
+    # 验证积分账户已创建
+    account = db_session.scalar(
+        select(CreditAccount).where(CreditAccount.user_id == user_id)
+    )
+    assert account is not None
+    assert account.balance == quota_settings.register_gift_amount
+    assert account.frozen == 0
+    assert account.total_earned == quota_settings.register_gift_amount
+    assert account.total_spent == 0
+
+    # 验证赠送流水已记录
+    txn = db_session.scalar(
+        select(CreditTransaction).where(
+            CreditTransaction.user_id == user_id,
+            CreditTransaction.reason == CreditReason.REGISTER_GIFT,
+        )
+    )
+    assert txn is not None
+    assert txn.delta == quota_settings.register_gift_amount
+    assert txn.ref_id == f"register:{user_id}"
+    assert txn.balance_after == quota_settings.register_gift_amount
 
 
 def test_register_duplicate_email(db_session, service):
@@ -250,6 +292,38 @@ def test_login_by_code_new_user(db_session, service, mock_email):
     assert result.user.email_verified_at is not None
 
 
+def test_login_by_code_new_user_creates_credit_account(db_session, service, mock_email):
+    """验证码自动注册时应创建积分账户并赠送初始积分。"""
+    from sqlalchemy import select
+    from windup_app.server.quota.model import CreditAccount, CreditTransaction
+    from windup_common.enums.quota import CreditReason
+    from windup_framework.config.quota import settings as quota_settings
+
+    service._redis.get.return_value = "123456"
+
+    input_data = LoginByCodeInput(email="auto@example.com", code="123456")
+    result = service.login_by_code_with_session(db_session, input_data)
+    user_id = result.user.id
+
+    # 验证积分账户已创建
+    account = db_session.scalar(
+        select(CreditAccount).where(CreditAccount.user_id == user_id)
+    )
+    assert account is not None
+    assert account.balance == quota_settings.register_gift_amount
+    assert account.total_earned == quota_settings.register_gift_amount
+
+    # 验证赠送流水已记录
+    txn = db_session.scalar(
+        select(CreditTransaction).where(
+            CreditTransaction.user_id == user_id,
+            CreditTransaction.reason == CreditReason.REGISTER_GIFT,
+        )
+    )
+    assert txn is not None
+    assert txn.delta == quota_settings.register_gift_amount
+
+
 def test_login_by_code_existing_user(db_session, service, mock_email):
     # 先注册
     service._redis.get.return_value = "123456"
@@ -316,22 +390,39 @@ def test_refresh_tokens(service, mock_redis):
     # 先创建一个 refresh token
     token, jti = create_refresh_token(1, "test@example.com")
 
-    # Mock Redis 返回 user_id
-    mock_redis.get.return_value = "1"
+    # Mock Redis eval 返回 user_id（Lua 脚本成功）
+    mock_redis.eval.return_value = "1"
 
     result = service.refresh_tokens(token)
 
     assert result.access_token is not None
     assert result.refresh_token is not None
     assert result.user.id == 1
+    # 验证调用了 eval（Lua 脚本），而不是 get
+    mock_redis.eval.assert_called_once()
 
 
 def test_refresh_tokens_revoked(service, mock_redis):
     token, jti = create_refresh_token(1, "test@example.com")
 
-    # Mock Redis 返回 None（已撤销）
-    mock_redis.get.return_value = None
+    # Mock Redis eval 返回 None（Lua 脚本：旧 token 不存在）
+    mock_redis.eval.return_value = None
 
+    with pytest.raises(BizException, match="refresh token 已失效"):
+        service.refresh_tokens(token)
+
+
+def test_refresh_tokens_concurrent_reuse(service, mock_redis):
+    """并发重放：同一个 refresh token 第二次调用应失败。"""
+    token, jti = create_refresh_token(1, "test@example.com")
+
+    # 第一次调用成功
+    mock_redis.eval.return_value = "1"
+    result1 = service.refresh_tokens(token)
+    assert result1.access_token is not None
+
+    # 第二次调用（并发重放）失败
+    mock_redis.eval.return_value = None
     with pytest.raises(BizException, match="refresh token 已失效"):
         service.refresh_tokens(token)
 

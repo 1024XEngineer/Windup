@@ -209,7 +209,13 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     })
     const confirmCharacterTemplate = vi.fn(async (nodeId: string, imageUrl: string) => {
       await session.controller.confirmCharacterTemplate(nodeId, imageUrl)
-      return characterFixture()
+      const character = characterFixture()
+      return {
+        ...character,
+        outfits: character.outfits.map((outfit, index) =>
+          index === 0 ? { ...outfit, previewUrl: imageUrl } : outfit,
+        ),
+      }
     })
     session.confirmCharacterTemplate = confirmCharacterTemplate
     defaultSessionLoader.mockResolvedValue(session)
@@ -224,6 +230,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
         'https://assets.windup.test/character.png',
       ),
     )
+    expect(await screen.findByRole('button', { name: '导出角色母版' })).toBeTruthy()
     fireEvent.click(await screen.findByRole('button', { name: '添加动作分支' }))
     expect((screen.getByRole('button', { name: '生成动作 ›' }) as HTMLButtonElement).disabled).toBe(
       false,
@@ -340,6 +347,70 @@ describe('WorkflowEditorPage real runtime boundary', () => {
             type: 'action-first-frame',
             // 落库的动作名是中文短名，不含菜单里的英文前缀。
             input: expect.objectContaining({ outfitId: 'night', type: 'attack', name: '攻击' }),
+          }),
+        ]),
+      ),
+    )
+  })
+
+  it('展示三张动作首帧候选并确认用户选择的一张', async () => {
+    const workflow = reviewingActionWorkflow()
+    const firstFrame = workflow.nodes.find((node) => node.type === 'action-first-frame')
+    if (!firstFrame || firstFrame.type !== 'action-first-frame') throw new Error('missing frame')
+    firstFrame.status = 'active'
+    firstFrame.phase = 'selecting'
+    firstFrame.generations = [{ taskId: 'first-frame-task', role: 'first_frame' }]
+    firstFrame.selectedFirstFrameUrl = null
+    for (const node of workflow.nodes) {
+      if (node.type === 'action-generation-method') {
+        node.status = 'locked'
+        node.phase = 'selecting'
+        node.method = null
+      } else if (node.type === 'action-full-frame') {
+        node.status = 'locked'
+        node.phase = 'ready'
+        node.generations = []
+      } else if (node.type === 'review') {
+        node.status = 'locked'
+      }
+    }
+    const candidates = [
+      'https://assets.windup.test/first-1.png',
+      'https://assets.windup.test/first-2.png',
+      'https://assets.windup.test/first-3.png',
+    ]
+    const session = createSession(workflow, {
+      character: characterFixture(),
+      generationApis: generationApisFixture({
+        get: vi.fn(async () => ({
+          id: 'first-frame-task',
+          projectId: '1',
+          type: 'first_frame' as const,
+          status: 'completed' as const,
+          result: {
+            type: 'first_frame' as const,
+            images: candidates.map((url) => ({ url })),
+          },
+          error: null,
+        })) as GenerationApis['get'],
+      }),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    expect(await screen.findByRole('img', { name: '动作首帧候选 1' })).toBeTruthy()
+    expect(screen.getByRole('img', { name: '动作首帧候选 2' })).toBeTruthy()
+    expect(screen.getByRole('img', { name: '动作首帧候选 3' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '选择动作首帧 2' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认动作首帧' }))
+
+    await waitFor(() =>
+      expect(session.controller.getWorkflow().nodes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: firstFrame.id,
+            selectedFirstFrameUrl: candidates[1],
+            status: 'passed',
           }),
         ]),
       ),

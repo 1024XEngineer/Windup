@@ -16,6 +16,7 @@ import {
   createRealQuickStartService,
   type QuickStartMediaApis,
 } from './service'
+import { ProjectNameConflictError } from '@/entities'
 import { registerApiAccessTokenProvider } from '@/shared/api'
 
 function createWorkflowRunApis(initialRuns: readonly WorkflowRun[] = []): WorkflowRunApis {
@@ -79,6 +80,12 @@ function pendingGenerationApis(): GenerationApis {
     })),
     subscribe: vi.fn(() => () => undefined),
   }
+}
+
+function projectReader(spriteSize = { width: 256, height: 256 }) {
+  return {
+    get: vi.fn(async (id: string) => ({ id, spriteSize })),
+  } as unknown as Pick<ProjectApis, 'get'>
 }
 
 function characterFixture(overrides: Partial<Character> = {}): Character {
@@ -169,26 +176,22 @@ function actionRun(firstFramePending = false): WorkflowRun {
         input: { outfitId: 'outfit-1', name: '挥手', type: 'custom', prompt: '挥手', fps: 12 },
         selectedFirstFrameUrl: firstFramePending ? null : 'first.png',
       },
-      ...(firstFramePending
-        ? ([
-            {
-              id: `${firstId}:action-generation-method`,
-              type: 'action-generation-method',
-              status: 'locked',
-              phase: 'selecting',
-              dependsOnNodeIds: [firstId],
-              generations: [],
-              error: null,
-              method: null,
-            },
-          ] as WorkflowRun['nodes'])
-        : []),
+      {
+        id: `${firstId}:action-generation-method`,
+        type: 'action-generation-method',
+        status: firstFramePending ? 'locked' : 'passed',
+        phase: firstFramePending ? 'selecting' : 'completed',
+        dependsOnNodeIds: [firstId],
+        generations: [],
+        error: null,
+        method: firstFramePending ? null : 'video-cropping',
+      },
       {
         id: fullId,
         type: 'action-full-frame',
         status: firstFramePending ? 'locked' : 'passed',
         phase: firstFramePending ? 'ready' : 'completed',
-        dependsOnNodeIds: [firstFramePending ? `${firstId}:action-generation-method` : firstId],
+        dependsOnNodeIds: [`${firstId}:action-generation-method`],
         generations: firstFramePending
           ? []
           : [{ taskId: 'task-animation', role: 'complete_animation' }],
@@ -236,15 +239,14 @@ describe('createQuickStartService', () => {
         subscribe: vi.fn(() => () => undefined),
       },
       prepareProject: vi.fn(),
+      projectApis: projectReader(),
     })
 
     await expect(service.start('   ')).rejects.toThrow('请先描述')
     await expect(service.open('missing')).rejects.toThrow('not found')
   })
 
-  it('creates a bounded default project name and returns the persisted sprite size', async () => {
-    vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
-    vi.spyOn(Math, 'random').mockReturnValue(0.25)
+  it('creates a readable bounded project name without a hash suffix', async () => {
     const create = vi.fn(async (input) => ({
       id: 'project-1',
       ...input,
@@ -254,7 +256,7 @@ describe('createQuickStartService', () => {
     }))
     const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
 
-    await expect(prepare('一位名字特别长的像素角色设定用于验证截断')).resolves.toEqual({
+    await expect(prepare('  一位名字特别长的像素角色设定用于验证截断继续  ')).resolves.toEqual({
       id: 'project-1',
       spriteSize: { width: 256, height: 256 },
     })
@@ -262,12 +264,97 @@ describe('createQuickStartService', () => {
     expect(Array.from(createdName ?? '')).toHaveLength(20)
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: expect.stringMatching(/^一位名字特别长的像…-/u),
+        name: '一位名字特别长的像素角色设定用于验证截…',
         perspective: 'side',
         directionalMovement: 'single',
       }),
     )
-    vi.restoreAllMocks()
+  })
+
+  it('uses a readable number when the generated project name already exists', async () => {
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(new ProjectNameConflictError())
+      .mockResolvedValueOnce({
+        id: 'project-2',
+        name: '会挥剑的像素骑士 2',
+        spriteSize: { width: 256, height: 256 },
+      })
+    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
+
+    await expect(prepare('会挥剑的像素骑士')).resolves.toEqual({
+      id: 'project-2',
+      spriteSize: { width: 256, height: 256 },
+    })
+    expect(create).toHaveBeenNthCalledWith(1, expect.objectContaining({ name: '会挥剑的像素骑士' }))
+    expect(create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ name: '会挥剑的像素骑士 2' }),
+    )
+  })
+
+  it('uses a readable fallback for an empty project prompt', async () => {
+    const create = vi.fn(async (input) => ({
+      id: 'project-fallback',
+      ...input,
+      spriteSize: { width: 256, height: 256 },
+    }))
+    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
+
+    await prepare('   ')
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ name: '未命名项目' }))
+  })
+
+  it('does not retry project creation errors other than name conflicts', async () => {
+    const networkError = new Error('网络请求失败')
+    const create = vi.fn().mockRejectedValue(networkError)
+    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
+
+    await expect(prepare('像素骑士')).rejects.toBe(networkError)
+    expect(create).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not infer a project-name conflict from an arbitrary error message', async () => {
+    const unrelatedError = new Error('项目名称已存在')
+    const create = vi.fn().mockRejectedValue(unrelatedError)
+    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
+
+    await expect(prepare('像素骑士')).rejects.toBe(unrelatedError)
+    expect(create).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps long numbered project names readable within the backend limit', async () => {
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(new ProjectNameConflictError())
+      .mockResolvedValueOnce({
+        id: 'project-long-2',
+        name: '一位名字特别长的像素角色设定用于验… 2',
+        spriteSize: { width: 256, height: 256 },
+      })
+    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
+
+    await prepare('一位名字特别长的像素角色设定用于验证截断继续')
+
+    expect(create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ name: '一位名字特别长的像素角色设定用于验证截…' }),
+    )
+    expect(create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ name: '一位名字特别长的像素角色设定用于验… 2' }),
+    )
+    expect(Array.from(create.mock.calls[1]?.[0].name ?? '')).toHaveLength(20)
+  })
+
+  it('stops after five conflicting project names to avoid excessive write requests', async () => {
+    const conflict = new ProjectNameConflictError()
+    const create = vi.fn().mockRejectedValue(conflict)
+    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
+
+    await expect(prepare('像素骑士')).rejects.toBe(conflict)
+    expect(create).toHaveBeenCalledTimes(5)
   })
 
   it('creates one persisted node graph and starts the character image task', async () => {
@@ -294,6 +381,7 @@ describe('createQuickStartService', () => {
       workflowRunApis: createWorkflowRunApis(),
       generationApis,
       prepareProject: async () => ({ id: 'project-1', spriteSize: { width: 256, height: 256 } }),
+      projectApis: projectReader(),
     })
 
     const session = await service.start('像素骑士')
@@ -334,6 +422,7 @@ describe('createQuickStartService', () => {
       characterApis,
       mediaApis,
       prepareProject: async () => ({ id: 'project-1', spriteSize: { width: 256, height: 256 } }),
+      projectApis: projectReader(),
       onAsyncError: vi.fn(),
     })
     const file = new File(['pixels'], 'hero.png', { type: 'image/png' })
@@ -455,6 +544,7 @@ describe('createQuickStartService', () => {
       generationApis,
       characterApis,
       prepareProject: vi.fn(),
+      projectApis: projectReader(),
     })
 
     const session = await service.open(run.id)
@@ -530,6 +620,7 @@ describe('createQuickStartService', () => {
       workflowRunApis,
       generationApis,
       characterApis,
+      projectApis: projectReader(),
       mediaApis: { upload: vi.fn(async () => 'replacement.png' as MediaReference) },
       prepareProject: vi.fn(),
     })
@@ -562,6 +653,7 @@ describe('createQuickStartService', () => {
       generationApis,
       characterApis,
       prepareProject: vi.fn(),
+      projectApis: projectReader(),
     })
     const recoverySession = await recoveryService.open(recoveryRun.id)
     await recoverySession.resume()
@@ -618,6 +710,7 @@ describe('createQuickStartService', () => {
       generationApis: pendingGenerationApis(),
       characterApis,
       prepareProject: vi.fn(),
+      projectApis: projectReader(),
     })
 
     const session = await service.open(run.id)
@@ -658,6 +751,7 @@ describe('createQuickStartService', () => {
       workflowRunApis: createWorkflowRunApis([run]),
       generationApis: pendingGenerationApis(),
       characterApis,
+      projectApis: projectReader(),
       mediaApis: { upload: vi.fn(async () => 'replacement.png' as MediaReference) },
       prepareProject: vi.fn(),
     })
@@ -687,7 +781,11 @@ describe('createQuickStartService', () => {
                 status: 'completed' as const,
                 result: {
                   type: 'character_template' as const,
-                  images: [{ url: 'candidate.png' }],
+                  images: [
+                    { url: 'candidate.png' },
+                    { url: 'candidate-2.png' },
+                    { url: 'candidate-3.png' },
+                  ],
                 },
                 error: null,
               }
@@ -733,10 +831,15 @@ describe('createQuickStartService', () => {
         id: 'project-1',
         spriteSize: { width: 256, height: 256 },
       })),
+      projectApis: projectReader(),
     })
     const started = await service.start('像素骑士')
     await vi.waitFor(async () => {
-      await expect(started.getTemplateCandidates()).resolves.toEqual(['candidate.png'])
+      await expect(started.getTemplateCandidates()).resolves.toEqual([
+        'candidate.png',
+        'candidate-2.png',
+        'candidate-3.png',
+      ])
     })
 
     const first = started.confirmCandidate('candidate.png', '挥手')
@@ -776,6 +879,7 @@ describe('createQuickStartService', () => {
         update: vi.fn(),
         remove: vi.fn(),
       } as unknown as CharacterApis,
+      projectApis: projectReader(),
       prepareProject: vi.fn(),
     })
 
@@ -820,6 +924,7 @@ describe('createQuickStartService', () => {
         id: 'project-1',
         spriteSize: { width: 256, height: 256 },
       })),
+      projectApis: projectReader(),
       onAsyncError,
     })
 
@@ -842,6 +947,7 @@ describe('createQuickStartService', () => {
       workflowRunApis: createWorkflowRunApis(),
       generationApis,
       prepareProject: vi.fn(),
+      projectApis: projectReader(),
     })
     const file = new File([], 'hero.png')
     await expect(bare.startWithUploadedTemplate(file, '')).rejects.toThrow('媒体上传服务尚未配置')
@@ -859,6 +965,7 @@ describe('createQuickStartService', () => {
       workflowRunApis: createWorkflowRunApis(),
       generationApis,
       prepareProject: vi.fn(),
+      projectApis: projectReader(),
       characterApis: {
         get: vi.fn(async () => character),
       } as unknown as CharacterApis,
@@ -878,6 +985,7 @@ describe('createQuickStartService', () => {
       workflowRunApis: createWorkflowRunApis([staticRun]),
       generationApis,
       prepareProject: vi.fn(),
+      projectApis: projectReader(),
       characterApis: {} as CharacterApis,
       mediaApis: { upload: vi.fn() },
     })
@@ -903,7 +1011,11 @@ describe('createQuickStartService', () => {
   })
 
   it('confirms the action first frame and automatically starts a 32-frame animation', async () => {
-    const firstFrameUrl = 'https://example.test/first-frame.png'
+    const firstFrameUrls = [
+      'https://example.test/first-frame-1.png',
+      'https://example.test/first-frame-2.png',
+      'https://example.test/first-frame-3.png',
+    ]
     const generationApis: GenerationApis = {
       create: vi.fn(async () => ({
         id: 'task-animation',
@@ -931,7 +1043,7 @@ describe('createQuickStartService', () => {
           status: 'completed' as const,
           result: {
             type: 'first_frame' as const,
-            image: { url: firstFrameUrl },
+            images: firstFrameUrls.map((url) => ({ url })),
           },
           error: null,
         }
@@ -943,13 +1055,16 @@ describe('createQuickStartService', () => {
       workflowRunApis: createWorkflowRunApis([run]),
       generationApis,
       prepareProject: async () => ({ id: 'project-1', spriteSize: { width: 256, height: 256 } }),
+      projectApis: projectReader(),
     })
     const session = await service.open('run-1')
 
     await expect(session.getFirstFrameCandidates()).resolves.toEqual([
-      { index: 0, imageUrl: firstFrameUrl, durationMs: null },
+      { index: 0, imageUrl: firstFrameUrls[0], durationMs: null },
+      { index: 1, imageUrl: firstFrameUrls[1], durationMs: null },
+      { index: 2, imageUrl: firstFrameUrls[2], durationMs: null },
     ])
-    await session.confirmFirstFrame(firstFrameUrl)
+    await session.confirmFirstFrame(firstFrameUrls[1]!)
 
     await vi.waitFor(() => {
       expect(generationApis.create).toHaveBeenCalledWith(
@@ -957,7 +1072,7 @@ describe('createQuickStartService', () => {
           type: 'complete_animation',
           characterId: 'character-1',
           outfitId: 'outfit-1',
-          firstFrameUrl,
+          firstFrameUrl: firstFrameUrls[1],
         }),
       )
     })

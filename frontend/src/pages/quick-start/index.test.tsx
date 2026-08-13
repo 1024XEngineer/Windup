@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { QuickStartEntryService, QuickStartSession } from './service'
 import type { WorkflowRun } from '@/entities'
+import type { ExportPackageModel } from '@/features/export-package'
 import { QuickStartPage } from './index'
 
 afterEach(cleanup)
@@ -126,6 +127,7 @@ function serviceFor(run: WorkflowRun | null, overrides: Partial<QuickStartMock> 
     resolveCharacterInfo: vi.fn(async () => ({ characterId: 'character-1', outfitId: 'outfit-1' })),
     getTemplateCandidates: vi.fn(async () => []),
     getActionFrames: vi.fn(async () => []),
+    getExportModel: vi.fn(async () => null),
     ...overrides,
   }
   Object.assign(service, overrides)
@@ -149,6 +151,26 @@ function renderAt(path: string, service: QuickStartEntryService) {
 }
 
 describe('QuickStartPage', () => {
+  it('按当前 Run 完成度显示统一导出入口', async () => {
+    const run = workflow(setupAndTemplate({ selectedImageUrl: '/master.png' }))
+    const model: ExportPackageModel = {
+      stage: 'character',
+      characterId: 'character-1',
+      characterName: '像素骑士',
+      characterImageUrl: '/master.png',
+      outfitId: 'outfit-1',
+      outfitName: '默认造型',
+      canvas: { width: 32, height: 40 },
+      source: { workflowRunId: run.id, generationIds: [] },
+      firstFrames: [],
+      actions: [],
+      playtest: null,
+    }
+    renderAt('/quick-start/run-1', serviceFor(run, { getExportModel: vi.fn(async () => model) }))
+
+    expect(await screen.findByRole('button', { name: '导出角色母版' })).toBeTruthy()
+  })
+
   it('keeps the entry and run canvases at least viewport height', async () => {
     const entry = renderAt('/quick-start', serviceFor(null))
     expect(
@@ -190,7 +212,10 @@ describe('QuickStartPage', () => {
     await waitFor(() => {
       expect(view.getByRole('heading', { name: '选择动作首帧' })).toBeTruthy()
     })
-    expect(view.getByRole('img', { name: '动作首帧候选 1' })).toBeTruthy()
+    const firstFrame = view.getByRole('img', { name: '动作首帧候选 1' })
+    expect(firstFrame.getAttribute('loading')).toBe('eager')
+    expect(firstFrame.getAttribute('decoding')).toBe('async')
+    expect(firstFrame.getAttribute('fetchpriority')).toBe('high')
     expect(view.queryByRole('img', { name: '角色图候选 1' })).toBeNull()
   })
 

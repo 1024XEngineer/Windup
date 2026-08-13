@@ -161,7 +161,7 @@ export function ProjectDetailPage() {
           data-route-transition={location.pathname}
           className="route-transition min-h-full"
         >
-          <Outlet />
+          <Outlet context={project} />
         </div>
       </div>
     </div>

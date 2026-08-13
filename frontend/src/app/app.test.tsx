@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, useLocation } from 'react-router'
 
 import type { AuthTokens, UserApis } from '@/entities'
@@ -23,6 +23,7 @@ function LocationProbe() {
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
+  vi.useRealTimers()
 })
 
 describe('AppRoutes authentication boundary', () => {
@@ -233,19 +234,17 @@ describe('AppRoutes authentication boundary', () => {
     )
 
     expect(await screen.findByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
-    fireEvent.keyDown(document, { key: 'Escape' })
-    await waitFor(() =>
-      expect(screen.getByTestId('location').textContent).toBe(
-        '/?returnTo=%2Fquick-start%3Fdraft%3D1%23setup',
-      ),
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByRole('button', { name: '关闭账号面板' }))
+    await act(async () => vi.runOnlyPendingTimersAsync())
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/?returnTo=%2Fquick-start%3Fdraft%3D1%23setup',
     )
+    vi.useRealTimers()
 
     fireEvent.click(screen.getByRole('link', { name: '重新登录' }))
-
-    await waitFor(() =>
-      expect(screen.getByTestId('location').textContent).toBe(
-        '/?account=login&returnTo=%2Fquick-start%3Fdraft%3D1%23setup',
-      ),
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/?account=login&returnTo=%2Fquick-start%3Fdraft%3D1%23setup',
     )
   })
 })
