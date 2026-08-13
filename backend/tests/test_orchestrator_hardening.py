@@ -85,6 +85,45 @@ def test_media_upload_rejects_s3_endpoint_before_uploading(monkeypatch):
     put_data.assert_not_called()
 
 
+def test_media_upload_uses_validated_download_base(monkeypatch):
+    import qiniu
+    import windup_app.server.media.service as media_service_module
+
+    monkeypatch.setattr(
+        media_service_module.storage_settings,
+        "bucket_domain",
+        "cdn.example.com",
+    )
+    monkeypatch.setattr(
+        media_service_module.storage_settings,
+        "bucket_name",
+        "example-bucket",
+    )
+    auth = Mock()
+    auth.upload_token.return_value = "upload-token"
+    monkeypatch.setattr(qiniu, "Auth", Mock(return_value=auth))
+    response = Mock(status_code=200)
+    put_data = Mock(return_value=({"key": "uploaded"}, response))
+    monkeypatch.setattr(qiniu, "put_data", put_data)
+
+    metadata = MediaUploadInput(
+        filename="character.png",
+        content_type="image/png",
+        size=3,
+        category=MediaCategory.REFERENCE_IMAGE,
+    )
+    result = ObjectStorageMediaService().upload(b"png", metadata)
+
+    assert result.url == f"https://cdn.example.com/{result.object_key}"
+    auth.upload_token.assert_called_once_with("example-bucket", result.object_key)
+    put_data.assert_called_once_with(
+        "upload-token",
+        result.object_key,
+        b"png",
+        mime_type="image/png",
+    )
+
+
 # ── ① 真实装配路径不能引用已删除的路线 ────────────────────────────────────
 
 
