@@ -307,3 +307,86 @@ def test_bad_arguments_are_refused_before_any_work(kwargs, match):
     call.update(kwargs)
     with pytest.raises(ValueError, match=match):
         LocalSpriteRenderProvider().render(make_glb(), **call)
+
+
+# ── 出帧台失败路径(不起浏览器:替掉 subprocess.run) ──────────────────────────
+#
+# 这些分支的共同点是**出帧已经跑过、但产物不可信**。它们必须抛错而不是往下走:
+# 全透明帧 / 缺 meta 都能凑出一份"帧数对、无异常"的产物,而那正是本条线踩过的陷阱。
+
+
+def _provider(tmp_path):
+    """绕开 three.js 发现:这些用例测的是 node 子进程的返回,与 three 在不在无关。"""
+    (tmp_path / "three").mkdir(exist_ok=True)
+    return LocalSpriteRenderProvider(three_dir=tmp_path / "three")
+
+
+class _Proc:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def _run_render(monkeypatch, tmp_path, fake_run):
+    from windup_framework.providers.render3d import sprite as _sprite
+    monkeypatch.setattr(_sprite.subprocess, "run", fake_run)
+    return _provider(tmp_path).render(make_glb(), directions=4, frames=2)
+
+
+def test_missing_node_says_which_binary_failed(monkeypatch, tmp_path):
+    def _boom(*a, **k):
+        raise FileNotFoundError("node")
+    with pytest.raises(RenderStageError, match="起不来 node"):
+        _run_render(monkeypatch, tmp_path, _boom)
+
+
+def test_render_timeout_reports_the_budget(monkeypatch, tmp_path):
+    import subprocess as _sp
+
+    def _slow(*a, **k):
+        raise _sp.TimeoutExpired(cmd="node", timeout=900)
+    with pytest.raises(RenderStageError, match="出帧超时"):
+        _run_render(monkeypatch, tmp_path, _slow)
+
+
+def test_blank_frame_selftest_is_not_swallowed(monkeypatch, tmp_path):
+    """退出码 2 = 出帧台自己判定全透明。**不能当成功**——三帧 alpha 全 0 时
+    外层照样能打印"N 帧 时长…",没有任何告警,排查方向整个跑偏。"""
+    def _blank(*a, **k):
+        return _Proc(returncode=2, stderr="coverage 0.000 < 0.005")
+    with pytest.raises(RenderStageError, match="空帧自检"):
+        _run_render(monkeypatch, tmp_path, _blank)
+
+
+def test_generic_failure_surfaces_the_exit_code_and_output(monkeypatch, tmp_path):
+    def _fail(*a, **k):
+        return _Proc(returncode=7, stderr="WebGL context lost")
+    with pytest.raises(RenderStageError, match="退出码 7"):
+        _run_render(monkeypatch, tmp_path, _fail)
+
+
+def test_failure_without_stderr_falls_back_to_stdout(monkeypatch, tmp_path):
+    """错误信息两头都可能空;两头都不看的话报错就成了一句"失败了"。"""
+    def _fail(*a, **k):
+        return _Proc(returncode=1, stderr="", stdout="loader threw")
+    with pytest.raises(RenderStageError, match="loader threw"):
+        _run_render(monkeypatch, tmp_path, _fail)
+
+
+def test_success_without_meta_file_is_still_a_failure(monkeypatch, tmp_path):
+    """退出码 0 但没写 bake_meta.json —— "没崩" 不等于 "出了帧"。"""
+    def _ok(*a, **k):
+        return _Proc(returncode=0, stdout="done")
+    with pytest.raises(RenderStageError, match="bake_meta.json"):
+        _run_render(monkeypatch, tmp_path, _ok)
+
+
+def test_a_direction_with_no_frames_names_the_direction(monkeypatch, tmp_path):
+    """meta 写了、帧目录空。报出**是哪个朝向**缺帧,否则只能去翻临时目录。"""
+    import json as _json
+
+    def _ok_but_empty(*a, **k):
+        out = pathlib.Path(k["env"]["OUT"])
+        (out / "bake_meta.json").write_text(_json.dumps({"clip": "idle"}))
+        return _Proc(returncode=0)
+    with pytest.raises(RenderStageError, match="一帧都没出"):
+        _run_render(monkeypatch, tmp_path, _ok_but_empty)

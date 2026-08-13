@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import io
+
 import pytest
 
 from windup_framework.providers.render3d import (
@@ -510,3 +512,121 @@ def test_api_error_keeps_the_vendor_code():
     e = TencentApiError("ResourceInsufficient", "余额不足")
     assert e.code == "ResourceInsufficient"
     assert "余额不足" in str(e)
+
+
+# ── TC3 签名与重试(离线:替掉 urlopen) ────────────────────────────────────────
+
+
+def _fake_http_error(code, body):
+    import urllib.error
+    return urllib.error.HTTPError("https://x", code, "err", {}, io.BytesIO(body.encode()))
+
+
+class _Resp:
+    def __init__(self, body):
+        self._b = body.encode()
+        self.status = 200
+
+    def read(self):
+        return self._b
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _creds():
+    from windup_framework.providers.render3d._tc3 import TencentCredentials
+    return TencentCredentials("AKIDtest", "secrettest", "ap-guangzhou")
+
+
+def test_business_error_is_returned_not_retried(monkeypatch):
+    """HTTPError = 业务错误。**不能重试** —— 提交类接口重发会重复扣积分,
+    而这条线的每次提交都是真金白银。"""
+    from windup_framework.providers.render3d import _tc3
+
+    calls = []
+
+    def _one_shot(req, timeout=None):
+        calls.append(1)
+        raise _fake_http_error(400, '{"Response":{"Error":{"Code":"InvalidParameter"}}}')
+
+    monkeypatch.setattr(_tc3.urllib.request, "urlopen", _one_shot)
+    out = _tc3.call("Submit", {}, service="ai3d", version="2025-05-13", creds=_creds())
+    assert out["Error"]["Code"] == "InvalidParameter"
+    assert len(calls) == 1, "业务错误重试了,提交类接口会重复扣费"
+
+
+def test_network_error_retries_then_raises(monkeypatch):
+    from windup_framework.providers.render3d import _tc3
+
+    calls = []
+
+    def _flaky(req, timeout=None):
+        calls.append(1)
+        raise OSError("connection reset")
+
+    monkeypatch.setattr(_tc3.urllib.request, "urlopen", _flaky)
+    monkeypatch.setattr(_tc3.time, "sleep", lambda *_: None)
+    with pytest.raises(OSError):
+        _tc3.call("Q", {}, service="ai3d", version="v", creds=_creds(), retries=3)
+    assert len(calls) == 3
+
+
+def test_network_error_recovers_within_budget(monkeypatch):
+    from windup_framework.providers.render3d import _tc3
+
+    state = {"n": 0}
+
+    def _second_time_lucky(req, timeout=None):
+        state["n"] += 1
+        if state["n"] == 1:
+            raise OSError("reset")
+        return _Resp('{"Response":{"JobId":"j-1"}}')
+
+    monkeypatch.setattr(_tc3.urllib.request, "urlopen", _second_time_lucky)
+    monkeypatch.setattr(_tc3.time, "sleep", lambda *_: None)
+    assert _tc3.call("Q", {}, service="ai3d", version="v", creds=_creds())["JobId"] == "j-1"
+
+
+def test_signature_headers_are_well_formed(monkeypatch):
+    """签名错了只会得到一句 AuthFailure,查不出错在哪一段;这里把结构钉死。"""
+    from windup_framework.providers.render3d import _tc3
+
+    seen = {}
+
+    def _capture(req, timeout=None):
+        seen.update(req.headers)
+        seen["__data"] = req.data
+        return _Resp('{"Response":{}}')
+
+    monkeypatch.setattr(_tc3.urllib.request, "urlopen", _capture)
+    _tc3.call("TestAction", {"A": 1}, service="ai3d", version="2025-05-13", creds=_creds())
+    auth = seen["Authorization"]
+    assert auth.startswith("TC3-HMAC-SHA256 Credential=AKIDtest/")
+    assert "SignedHeaders=content-type;host;x-tc-action" in auth
+    assert "/ai3d/tc3_request" in auth
+    assert seen["X-tc-action"] == "TestAction"
+    assert seen["X-tc-region"] == "ap-guangzhou"
+
+
+def test_cos_request_returns_status_and_body_on_error(monkeypatch):
+    """COS 失败要**带回状态码和响应体**:绑骨只接受公网可拉取的 URL,
+    这一步失败时若只抛一句"上传失败",分不清是签名错还是桶策略错。"""
+    from windup_framework.providers.render3d import _tc3
+
+    monkeypatch.setattr(
+        _tc3.urllib.request, "urlopen",
+        lambda *a, **k: (_ for _ in ()).throw(_fake_http_error(403, "<Error>AccessDenied</Error>")))
+    code, body = _tc3.cos_request(_creds(), "PUT", "/o.glb", "b.cos.ap-guangzhou.myqcloud.com", b"x")
+    assert code == 403 and "AccessDenied" in body
+
+
+def test_cos_signature_carries_the_required_fields():
+    from windup_framework.providers.render3d._tc3 import cos_sign
+
+    sig = cos_sign(_creds(), "PUT", "/o.glb", "b.cos.ap-guangzhou.myqcloud.com")
+    for field in ("q-sign-algorithm=sha1", "q-ak=AKIDtest", "q-header-list=host", "q-signature="):
+        assert field in sig
