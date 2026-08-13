@@ -25,7 +25,6 @@ from windup_common.models import ActionSpec, ActionType as EngineActionType, Cha
 from windup_app.server.orchestrator import task_repo
 from windup_app.server.orchestrator._fetch import fetch_own_media
 from windup_app.server.orchestrator.model import (
-    ActionType,
     CharacterActionInput,
     CharacterImageInput,
     TaskStatus,
