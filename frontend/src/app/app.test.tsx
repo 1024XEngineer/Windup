@@ -235,11 +235,12 @@ describe('AppRoutes authentication boundary', () => {
 
     expect(await screen.findByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
     vi.useFakeTimers()
-    fireEvent.keyDown(document, { key: 'Escape' })
-    await act(async () => vi.advanceTimersByTimeAsync(520))
+    fireEvent.click(screen.getByRole('button', { name: '关闭账号面板' }))
+    await act(async () => vi.runOnlyPendingTimersAsync())
     expect(screen.getByTestId('location').textContent).toBe(
       '/?returnTo=%2Fquick-start%3Fdraft%3D1%23setup',
     )
+    vi.useRealTimers()
 
     fireEvent.click(screen.getByRole('link', { name: '重新登录' }))
     expect(screen.getByTestId('location').textContent).toBe(
