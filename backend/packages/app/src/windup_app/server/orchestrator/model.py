@@ -77,7 +77,7 @@ class CharacterActionInput:
     # 时长、成色全部正常,没有任何一道会红。前端已有动作名与描述表单,多一个勾选框成本很低。
     loop: bool | None = None
     # 视频模型。``None`` = 用部署配置的默认值(kling-v2-5-turbo)。
-    # 取值域见 executor.ALLOWED_VIDEO_MODELS —— 只开放三个,因为每个模型的入参形状不同
+    # 取值域见 executor.ALLOWED_VIDEO_MODELS —— 只开放两个,因为每个模型的入参形状不同
     # (image_list / input_reference / Fal 队列),全开等于把三套协议适配塞进一个改动。
     video_model: str | None = None
 

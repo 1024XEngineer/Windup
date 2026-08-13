@@ -139,7 +139,7 @@ class _LogProgress:
         logger.info("[gen] %s %s/%s %s", stage, i, total, note)
 
 
-# 本期开放的视频模型。**只三个**,因为每个模型的入参形状不同(image_list /
+# 本期开放的视频模型。**只两个**,因为每个模型的入参形状不同(image_list /
 # input_reference / Fal 队列 + `Authorization: Key`),全开等于把三套协议适配塞进一个改动。
 # 取舍写在这里而不是文档里,是为了让改这张表的人同时看到代价。Refs #239。
 ALLOWED_VIDEO_MODELS: dict[str, str] = {
@@ -321,39 +321,38 @@ class ActionTaskExecutor:
         cached = self._by_model.get(video_model)
         if cached is not None:
             return cached
-        if True:
-            from windup_ai_engine.impl import CharacterGenerator
-            from windup_ai_engine.strategy.concrete import (
-                PerFrameStrategy,
-                VideoFrameStrategy,
-            )
-            from windup_common.models import GenRoute
-            from windup_framework.providers import (
-                OnnxU2NetMatteProvider,
-                SufyImageProvider,
-                SufyVideoProvider,
-            )
+        from windup_ai_engine.impl import CharacterGenerator
+        from windup_ai_engine.strategy.concrete import (
+            PerFrameStrategy,
+            VideoFrameStrategy,
+        )
+        from windup_common.models import GenRoute
+        from windup_framework.providers import (
+            OnnxU2NetMatteProvider,
+            SufyImageProvider,
+            SufyVideoProvider,
+        )
 
-            matte = OnnxU2NetMatteProvider()
-            video = SufyVideoProvider(model=video_model)
-            image = SufyImageProvider()
-            # 只装当前 GenRoute 真有的路线。曾多装一个 PROC_IDLE:该枚举值与
-            # ProcIdleStrategy 都已随"程序化待机放弃"一起删除,而这行留着,于是**每个**
-            # 动作任务都在 import 期 AttributeError —— 注入 generator 的测试走不到这条
-            # 装配路径,所以测试全绿而真实调用全崩(FennoAI 逮到,2026-08-10)。
-            # 加一条断言:将来 GenRoute 新增成员时,漏装会在这里立刻暴露,而不是等到
-            # 某个动作第一次被请求。
-            strategies = {
-                GenRoute.VIDEO_I2V: VideoFrameStrategy(video, matte),
-                GenRoute.PER_FRAME: PerFrameStrategy(image, matte),
-            }
-            missing = set(GenRoute) - set(strategies)
-            if missing:
-                raise RuntimeError(
-                    f"GenRoute 新增了 {sorted(r.value for r in missing)} 但 executor 未装配;"
-                    "补上或在此显式说明为何不装。"
-                )
-            gen = CharacterGenerator(strategies)
+        matte = OnnxU2NetMatteProvider()
+        video = SufyVideoProvider(model=video_model)
+        image = SufyImageProvider()
+        # 只装当前 GenRoute 真有的路线。曾多装一个 PROC_IDLE:该枚举值与
+        # ProcIdleStrategy 都已随"程序化待机放弃"一起删除,而这行留着,于是**每个**
+        # 动作任务都在 import 期 AttributeError —— 注入 generator 的测试走不到这条
+        # 装配路径,所以测试全绿而真实调用全崩(FennoAI 逮到,2026-08-10)。
+        # 加一条断言:将来 GenRoute 新增成员时,漏装会在这里立刻暴露,而不是等到
+        # 某个动作第一次被请求。
+        strategies = {
+            GenRoute.VIDEO_I2V: VideoFrameStrategy(video, matte),
+            GenRoute.PER_FRAME: PerFrameStrategy(image, matte),
+        }
+        missing = set(GenRoute) - set(strategies)
+        if missing:
+            raise RuntimeError(
+                f"GenRoute 新增了 {sorted(r.value for r in missing)} 但 executor 未装配;"
+                "补上或在此显式说明为何不装。"
+            )
+        gen = CharacterGenerator(strategies)
         self._by_model[video_model] = gen
         return gen
 
