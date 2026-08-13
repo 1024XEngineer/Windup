@@ -241,7 +241,7 @@ describe('WorkspacePage', () => {
     )
     expect(screen.getByRole('button', { name: '继续已有工作流' })).toBeTruthy()
     expect(screen.getByRole('link', { name: '进入资产库' }).getAttribute('href')).toBe('/projects')
-    expect(screen.getByRole('button', { name: '选择 Playtest' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '选择预览台' })).toBeTruthy()
 
     expect(await screen.findByRole('heading', { name: '最近项目' })).toBeTruthy()
     expect(
@@ -297,16 +297,16 @@ describe('WorkspacePage', () => {
     renderWorkspace()
     await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
 
-    fireEvent.click(screen.getByRole('button', { name: '选择 Playtest' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择预览台' }))
 
-    expect(screen.getByRole('heading', { name: '选择可试玩造型' })).toBeTruthy()
-    expect(screen.queryByRole('link', { name: /^试玩 / })).toBeNull()
+    expect(screen.getByRole('heading', { name: '选择可预览造型' })).toBeTruthy()
+    expect(screen.queryByRole('link', { name: /^预览 / })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: '选择项目 点灯人 · MVP' }))
     fireEvent.click(await screen.findByRole('button', { name: '选择角色 轻装信使' }))
 
     expect(
-      (await screen.findByRole('link', { name: '试玩 轻装信使 · 常态造型' })).getAttribute('href'),
+      (await screen.findByRole('link', { name: '预览 轻装信使 · 常态造型' })).getAttribute('href'),
     ).toBe('/playtest/51/outfit-default')
     expect(screen.getByText('2 个动作 · 5 帧')).toBeTruthy()
   })
@@ -315,7 +315,7 @@ describe('WorkspacePage', () => {
     const { releaseDeferred } = renderWorkspace({ defer: 'characters' })
     await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
 
-    fireEvent.click(screen.getByRole('button', { name: '选择 Playtest' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择预览台' }))
     fireEvent.click(screen.getByRole('button', { name: '选择项目 点灯人 · MVP' }))
     expect(screen.getByRole('status').textContent).toContain('正在读取角色')
     releaseDeferred()
@@ -407,7 +407,7 @@ describe('WorkspacePage', () => {
     renderWorkspace({ characterCount: 0 })
     await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
 
-    fireEvent.click(screen.getByRole('button', { name: '选择 Playtest' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择预览台' }))
     fireEvent.click(screen.getByRole('button', { name: '选择项目 点灯人 · MVP' }))
 
     expect(await screen.findByText('这个项目还没有角色')).toBeTruthy()
@@ -420,7 +420,7 @@ describe('WorkspacePage', () => {
     renderWorkspace({ fail: 'characters' })
     await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
 
-    fireEvent.click(screen.getByRole('button', { name: '选择 Playtest' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择预览台' }))
     fireEvent.click(screen.getByRole('button', { name: '选择项目 点灯人 · MVP' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain('角色资产暂时无法读取')
@@ -431,7 +431,7 @@ describe('WorkspacePage', () => {
     renderWorkspace({ failOnce: 'characters' })
     await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
 
-    fireEvent.click(screen.getByRole('button', { name: '选择 Playtest' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择预览台' }))
     fireEvent.click(screen.getByRole('button', { name: '选择项目 点灯人 · MVP' }))
     expect((await screen.findByRole('alert')).textContent).toContain('角色资产暂时无法读取')
     fireEvent.click(screen.getByRole('button', { name: '重试读取角色' }))
@@ -443,7 +443,7 @@ describe('WorkspacePage', () => {
     renderWorkspace({ outfitCount: 0 })
     await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
 
-    fireEvent.click(screen.getByRole('button', { name: '选择 Playtest' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择预览台' }))
     fireEvent.click(screen.getByRole('button', { name: '选择项目 点灯人 · MVP' }))
     fireEvent.click(await screen.findByRole('button', { name: '选择角色 轻装信使' }))
 
@@ -457,16 +457,16 @@ describe('WorkspacePage', () => {
     renderWorkspace()
     await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
 
-    fireEvent.click(screen.getByRole('button', { name: '选择 Playtest' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择预览台' }))
     fireEvent.click(screen.getByRole('button', { name: '选择项目 点灯人 · MVP' }))
     fireEvent.click(await screen.findByRole('button', { name: '选择角色 待定角色' }))
 
     expect(await screen.findByText('尚无可播放帧')).toBeTruthy()
-    expect(screen.queryByRole('link', { name: /试玩 待定角色/ })).toBeNull()
+    expect(screen.queryByRole('link', { name: /预览 待定角色/ })).toBeNull()
     expect(screen.getByRole('link', { name: '查看当前项目资产' }).getAttribute('href')).toBe(
       '/projects/42/assets',
     )
-    expect(screen.getByRole('link', { name: '查看全部可试玩资产' }).getAttribute('href')).toBe(
+    expect(screen.getByRole('link', { name: '查看全部可预览资产' }).getAttribute('href')).toBe(
       '/playtest',
     )
   })
@@ -475,10 +475,10 @@ describe('WorkspacePage', () => {
     renderWorkspace()
     await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
 
-    fireEvent.click(screen.getByRole('button', { name: '选择 Playtest' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择预览台' }))
     fireEvent.click(screen.getByRole('button', { name: '选择项目 点灯人 · MVP' }))
     fireEvent.click(await screen.findByRole('button', { name: '选择角色 轻装信使' }))
-    await screen.findByRole('link', { name: '试玩 轻装信使 · 常态造型' })
+    await screen.findByRole('link', { name: '预览 轻装信使 · 常态造型' })
 
     fireEvent.click(screen.getByRole('button', { name: '重新选择角色' }))
     expect(await screen.findByRole('button', { name: '选择角色 轻装信使' })).toBeTruthy()
@@ -516,7 +516,7 @@ describe('WorkspacePage', () => {
     renderWorkspace({ characterCount: 5 })
     await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
 
-    fireEvent.click(screen.getByRole('button', { name: '选择 Playtest' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择预览台' }))
     fireEvent.click(screen.getByRole('button', { name: '选择项目 点灯人 · MVP' }))
     await screen.findByRole('button', { name: '选择角色 轻装信使' })
 
@@ -529,14 +529,14 @@ describe('WorkspacePage', () => {
     renderWorkspace({ outfitCount: 5 })
     await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
 
-    fireEvent.click(screen.getByRole('button', { name: '选择 Playtest' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择预览台' }))
     fireEvent.click(screen.getByRole('button', { name: '选择项目 点灯人 · MVP' }))
     fireEvent.click(await screen.findByRole('button', { name: '选择角色 轻装信使' }))
 
-    expect(screen.queryByRole('link', { name: '试玩 轻装信使 · 常态造型 5' })).toBeNull()
+    expect(screen.queryByRole('link', { name: '预览 轻装信使 · 常态造型 5' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '下一页' }))
     expect(
-      (await screen.findByRole('link', { name: '试玩 轻装信使 · 常态造型 5' })).getAttribute(
+      (await screen.findByRole('link', { name: '预览 轻装信使 · 常态造型 5' })).getAttribute(
         'href',
       ),
     ).toBe('/playtest/51/outfit-5')

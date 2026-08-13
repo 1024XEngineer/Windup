@@ -41,7 +41,7 @@ const productNavigation: ProductNavigationItem[] = [
   {
     motionKey: 'playtest',
     to: '/playtest',
-    label: 'PlayTest',
+    label: '预览台',
     isActive: (pathname) => pathname.startsWith('/playtest'),
   },
 ]

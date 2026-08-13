@@ -40,7 +40,7 @@ export function PlaytestStage({ frame, x, facing, onBoundsChange }: PlaytestStag
     <div
       ref={stageRef}
       role="region"
-      aria-label="试玩舞台"
+      aria-label="预览舞台"
       className="relative h-full min-h-[520px] overflow-hidden rounded-[1.8rem] border border-black/5 bg-[#eee] shadow-[0_24px_70px_rgba(22,29,25,0.12)]"
       style={{
         backgroundImage:

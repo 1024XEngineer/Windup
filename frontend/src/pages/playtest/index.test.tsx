@@ -36,7 +36,7 @@ function renderPlaytest(path: string, fetchFn?: typeof globalThis.fetch) {
 }
 
 function stageFrameUrl() {
-  return screen.getByRole('region', { name: '试玩舞台' }).querySelector('img')?.getAttribute('src')
+  return screen.getByRole('region', { name: '预览舞台' }).querySelector('img')?.getAttribute('src')
 }
 
 describe('PlaytestPage', () => {
@@ -75,7 +75,7 @@ describe('PlaytestPage', () => {
   it('reports a missing outfit instead of falling back to another one', async () => {
     renderPlaytest('/playtest/51/outfit-missing')
 
-    expect(await screen.findByText('找不到指定造型，无法进入试玩。')).toBeTruthy()
+    expect(await screen.findByText('找不到指定造型，无法进入预览台。')).toBeTruthy()
   })
 
   it('maps the business not-found code to a stable message', async () => {

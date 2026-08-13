@@ -101,7 +101,7 @@ describe('AppHeader', () => {
     expect(screen.getByTestId('location').textContent).toBe('/projects')
   })
 
-  it('提供 PlayTest 入口，并将工作流路由归入创作', () => {
+  it('提供预览台入口，并将工作流路由归入创作', () => {
     renderHeader('/workflow-editor/run-1')
 
     expect(screen.getByRole('banner').getAttribute('data-surface')).toBe('frosted-bar')
@@ -111,7 +111,7 @@ describe('AppHeader', () => {
     )
     expect(screen.getByRole('link', { name: '项目资产' }).getAttribute('href')).toBe('/projects')
     expect(screen.getByRole('link', { name: '创作' }).getAttribute('aria-current')).toBe('page')
-    expect(screen.getByRole('link', { name: 'PlayTest' }).getAttribute('href')).toBe('/playtest')
+    expect(screen.getByRole('link', { name: '预览台' }).getAttribute('href')).toBe('/playtest')
   })
 
   it('在工作台首页只高亮首页一项', () => {
@@ -120,7 +120,7 @@ describe('AppHeader', () => {
     expect(screen.getByRole('link', { name: '首页' }).getAttribute('aria-current')).toBe('page')
     expect(screen.getByRole('link', { name: '项目资产' }).getAttribute('aria-current')).toBeNull()
     expect(screen.getByRole('link', { name: '创作' }).getAttribute('aria-current')).toBeNull()
-    expect(screen.getByRole('link', { name: 'PlayTest' }).getAttribute('aria-current')).toBeNull()
+    expect(screen.getByRole('link', { name: '预览台' }).getAttribute('aria-current')).toBeNull()
   })
 
   it('切换页面后继续播放与品牌一致的文字波浪', () => {
@@ -163,14 +163,14 @@ describe('AppHeader', () => {
     expect(projects.classList.contains('app-header-text-wave')).toBe(true)
   })
 
-  it('在资产选择页和具体试玩台高亮 PlayTest 入口', () => {
+  it('在资产选择页和具体预览台高亮预览台入口', () => {
     const { unmount } = renderHeader('/playtest')
 
-    expect(screen.getByRole('link', { name: 'PlayTest' }).getAttribute('aria-current')).toBe('page')
+    expect(screen.getByRole('link', { name: '预览台' }).getAttribute('aria-current')).toBe('page')
 
     unmount()
     renderHeader('/playtest/51/outfit-default')
-    expect(screen.getByRole('link', { name: 'PlayTest' }).getAttribute('aria-current')).toBe('page')
+    expect(screen.getByRole('link', { name: '预览台' }).getAttribute('aria-current')).toBe('page')
   })
 
   it('为访客提供可发现的登录入口并保留完整站内回跳地址', async () => {
@@ -286,7 +286,7 @@ describe('AppHeader', () => {
       screen.getByRole('link', { name: '首页' }),
       screen.getByRole('link', { name: '项目资产' }),
       screen.getByRole('link', { name: '创作' }),
-      screen.getByRole('link', { name: 'PlayTest' }),
+      screen.getByRole('link', { name: '预览台' }),
     ]
     for (const entry of animatedEntries) {
       expect(entry.getAttribute('data-motion')).toBe('text-wave')

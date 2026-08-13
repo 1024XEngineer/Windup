@@ -15,7 +15,7 @@ function renderStage(x: number) {
       onBoundsChange={() => undefined}
     />,
   )
-  return screen.getByRole('region', { name: '试玩舞台' }).querySelector('img')
+  return screen.getByRole('region', { name: '预览舞台' }).querySelector('img')
 }
 
 describe('PlaytestStage', () => {

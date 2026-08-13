@@ -44,7 +44,7 @@ function characterName(character: Character) {
 
 /**
  * Playtest 的全局入口只负责定位已落入 Character 资产树的 Outfit。
- * 它不生成测试数据；具体操控仍交给带 characterId 与 outfitId 的试玩台。
+ * 它不生成测试数据；具体操控仍交给带 characterId 与 outfitId 的预览台。
  */
 export function PlaytestEntryPage() {
   const [state, setState] = useState<EntryState>(initialState)
@@ -69,7 +69,7 @@ export function PlaytestEntryPage() {
           if (active) setState({ groups, error: null })
         },
         () => {
-          if (active) setState({ groups: [], error: '可试玩资产暂时无法读取' })
+          if (active) setState({ groups: [], error: '可预览资产暂时无法读取' })
         },
       )
 
@@ -98,7 +98,7 @@ export function PlaytestEntryPage() {
                 id="playtest-entry-title"
                 className="font-serif text-4xl font-medium tracking-[-0.045em] text-[#1f211e]"
               >
-                选择可试玩资产
+                选择可预览资产
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-[#696e67]">
                 选择一套已有造型，检查动作衔接、移动反馈和实际播放效果。
@@ -116,7 +116,7 @@ export function PlaytestEntryPage() {
         {state.error ? (
           <ErrorState />
         ) : state.groups === null ? (
-          <p className="mt-8 text-sm text-[#70766f]">正在整理可试玩资产…</p>
+          <p className="mt-8 text-sm text-[#70766f]">正在整理可预览资产…</p>
         ) : outfitCount === 0 ? (
           <EmptyState />
         ) : (
@@ -200,7 +200,7 @@ function OutfitCard({ character, outfit }: { character: Character; outfit: Outfi
               : 'border-[#cdd2cc] bg-[#f4f5f1]/95 text-[#7a817a]'
           }`}
         >
-          {playable ? '可试玩' : '待补帧'}
+          {playable ? '可预览' : '待补帧'}
         </span>
       </div>
       <div className="p-4">
@@ -225,7 +225,7 @@ function OutfitCard({ character, outfit }: { character: Character; outfit: Outfi
   return (
     <Link
       to={`/playtest/${character.id}/${outfit.id}`}
-      aria-label={`试玩 ${name} · ${outfit.name}`}
+      aria-label={`预览 ${name} · ${outfit.name}`}
       className="block rounded-[1.4rem] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#294433]"
     >
       {content}
@@ -237,7 +237,7 @@ function EmptyState() {
   return (
     <div className="mt-7 rounded-[1.5rem] border border-dashed border-[#c9cec6] bg-[#f7f8f4] p-7 sm:p-9">
       <h2 className="font-serif text-2xl font-medium tracking-[-0.03em] text-[#252a25]">
-        还没有可试玩的角色
+        还没有可预览的角色
       </h2>
       <p className="mt-2 max-w-xl text-sm leading-6 text-[#6d736c]">
         完成角色与动作制作后，可以在这里检查移动和动画效果。
@@ -263,7 +263,7 @@ function EmptyState() {
 function ErrorState() {
   return (
     <div className="mt-7 rounded-[1.5rem] border border-[#d8c7bd] bg-[#fff8f2] p-7">
-      <h2 className="font-semibold text-[#6f3928]">可试玩资产暂时无法读取</h2>
+      <h2 className="font-semibold text-[#6f3928]">可预览资产暂时无法读取</h2>
       <p className="mt-2 text-sm text-[#7a5548]">稍后刷新页面，或先回项目资产检查角色数据。</p>
       <Link
         to="/projects"

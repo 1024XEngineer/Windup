@@ -25,7 +25,7 @@ function isNotFoundError(error: unknown): boolean {
 }
 
 /**
- * 核验台：用角色造型里已经确认的动作帧真实操控角色。
+ * 预览台：用角色造型里已经确认的动作帧真实操控角色。
  * 页面只读 Character，不写回资产树，也不参与生成与审核。
  * 读不到角色时直接报错，不退回任何内置数据。
  */
@@ -60,10 +60,10 @@ export function PlaytestPage() {
   }, [characterId])
 
   if (characterId === undefined || outfitId === undefined)
-    return <PlaytestPageMessage>Playtest 路由参数不完整</PlaytestPageMessage>
+    return <PlaytestPageMessage>预览台路由参数不完整</PlaytestPageMessage>
   if (data.error !== null) return <PlaytestPageMessage>{data.error}</PlaytestPageMessage>
   if (data.loading || data.character === null)
-    return <PlaytestPageMessage>加载 Playtest 数据中</PlaytestPageMessage>
+    return <PlaytestPageMessage>正在加载预览台数据</PlaytestPageMessage>
 
   return (
     <PlaytestWorkbench
@@ -76,7 +76,7 @@ export function PlaytestPage() {
 
 function PlaytestPageMessage({ children }: { children: string }) {
   return (
-    <main aria-label="Playtest" className="grid min-h-screen place-items-center bg-[#dfe3df] p-6">
+    <main aria-label="预览台" className="grid min-h-screen place-items-center bg-[#dfe3df] p-6">
       <p className="text-sm font-medium text-[#3d443f]">{children}</p>
     </main>
   )
