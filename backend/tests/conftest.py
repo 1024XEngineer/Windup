@@ -29,6 +29,20 @@ from windup_app.server.user.service import create_access_token
 from windup_framework.db import Base, get_session
 
 
+@pytest.fixture(autouse=True)
+def _disable_ratelimit_for_tests():
+    """默认禁用限流中间件，避免测试间互相干扰。
+
+    需要测试限流逻辑的用例应自行使用 fake_redis fixture 覆盖。
+    """
+    import windup_app.web.middleware.ratelimit as mod
+
+    mod._reset_redis_state()
+    mod._redis_available = False
+    yield
+    mod._reset_redis_state()
+
+
 def _disable_generation_execution(app):
     app.state.run_action_task = lambda *args: None
     app.state.run_image_task = lambda *args: None

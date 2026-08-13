@@ -14,10 +14,11 @@ from windup_common.result import ListResponse, Response
 from windup_framework.db import get_session
 
 from windup_app.server.project.service import service
+from windup_app.web.middleware.ratelimit import rate_limit_dep
 
 logger = logging.getLogger("windup.project.api")
 
-router = APIRouter(prefix="/projects", tags=["projects"])
+router = APIRouter(prefix="/projects", tags=["projects"], dependencies=[Depends(rate_limit_dep)])
 
 
 class ProjectCreate(BaseModel):

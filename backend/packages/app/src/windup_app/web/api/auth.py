@@ -15,6 +15,7 @@ from windup_framework.db import get_session
 
 from windup_app.server.user.model import ResetPasswordInput, UpdateNicknameInput, User, UserView
 from windup_app.server.user.service import service
+from windup_app.web.middleware.ratelimit import _get_client_ip, record_auth_failure
 
 logger = logging.getLogger("windup.auth.api")
 
@@ -127,12 +128,17 @@ def register(body: RegisterRequest, session: Session = Depends(get_session)):
 
 
 @router.post("/login", response_model=Response[TokenResponse])
-def login(body: LoginRequest, session: Session = Depends(get_session)):
-    """邮箱+密码+验证码登录。"""
-    result = service.login_by_password_with_session(
-        session,
-        type("LoginByPasswordInput", (), {"email": body.email, "password": body.password})(),
-    )
+def login(body: LoginRequest, request: Request, session: Session = Depends(get_session)):
+    """邮箱+密码登录。"""
+    try:
+        result = service.login_by_password_with_session(
+            session,
+            type("LoginByPasswordInput", (), {"email": body.email, "password": body.password})(),
+        )
+    except Exception:
+        # 登录失败，计入 IP 级失败桶（成功不消耗额度）
+        record_auth_failure("login", _get_client_ip(request))
+        raise
     return Response.success(
         TokenResponse(
             access_token=result.access_token,

@@ -30,10 +30,11 @@ from windup_framework.db import get_session
 from windup_app.server.project.model import Project
 from windup_app.server.workflow_run.model import RunStatus
 from windup_app.server.workflow_run.service import service
+from windup_app.web.middleware.ratelimit import rate_limit_dep
 
 logger = logging.getLogger("windup.workflow_run.api")
 
-router = APIRouter(prefix="/workflow-runs", tags=["workflow-run"])
+router = APIRouter(prefix="/workflow-runs", tags=["workflow-run"], dependencies=[Depends(rate_limit_dep)])
 
 
 # ── 请求 / 响应模型 ─────────────────────────────────────────────────────────

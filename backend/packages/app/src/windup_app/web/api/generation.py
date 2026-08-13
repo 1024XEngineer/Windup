@@ -41,10 +41,11 @@ from windup_app.server.orchestrator.model import (
     GenerationTask,
 )
 from windup_app.server.project.model import Project
+from windup_app.web.middleware.ratelimit import rate_limit_dep
 
 logger = logging.getLogger("windup.generation.api")
 
-router = APIRouter(prefix="/generation", tags=["generation"])
+router = APIRouter(prefix="/generation", tags=["generation"], dependencies=[Depends(rate_limit_dep)])
 
 
 # ══════════════════════════════════════════════════════════════════════════════

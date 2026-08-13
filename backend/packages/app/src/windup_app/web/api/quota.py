@@ -24,10 +24,11 @@ from windup_common.result import ListResponse, Response
 from windup_framework.db import get_session
 
 from windup_app.server.quota.service import service
+from windup_app.web.middleware.ratelimit import rate_limit_dep
 
 logger = logging.getLogger("windup.quota.api")
 
-router = APIRouter(prefix="/quota", tags=["quota"])
+router = APIRouter(prefix="/quota", tags=["quota"], dependencies=[Depends(rate_limit_dep)])
 
 
 # -- 响应模型 --------------------------------------------------------------

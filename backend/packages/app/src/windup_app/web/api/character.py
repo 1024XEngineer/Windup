@@ -18,10 +18,11 @@ from windup_app.server.character.model import Character, CharacterData
 from windup_app.server.character.service import service as character_service
 from windup_app.server.media.service import service as media_service
 from windup_app.server.project.model import Project
+from windup_app.web.middleware.ratelimit import rate_limit_dep
 
 logger = logging.getLogger("windup.character.api")
 
-router = APIRouter(prefix="/characters", tags=["characters"])
+router = APIRouter(prefix="/characters", tags=["characters"], dependencies=[Depends(rate_limit_dep)])
 
 
 # ── 请求 / 响应模型 ─────────────────────────────────────────────────────────

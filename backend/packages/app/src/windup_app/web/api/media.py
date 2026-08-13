@@ -1,6 +1,6 @@
 """媒体文件上传 API。"""
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, Depends, File, UploadFile
 
 from windup_common.enums.biz_code import BizCode
 from windup_common.exceptions import BizException
@@ -8,8 +8,9 @@ from windup_common.result import Response
 
 from windup_app.server.media.model import MediaCategory, MediaUploadInput, MediaUploadResult
 from windup_app.server.media.service import service
+from windup_app.web.middleware.ratelimit import rate_limit_dep
 
-router = APIRouter(prefix="/media", tags=["media"])
+router = APIRouter(prefix="/media", tags=["media"], dependencies=[Depends(rate_limit_dep)])
 
 
 @router.post("/upload", response_model=Response[MediaUploadResult])

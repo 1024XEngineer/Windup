@@ -33,7 +33,7 @@ from windup_app.web.api.quota import router as quota_router
 from windup_app.web.api.workflow_run import router as workflow_run_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
 from windup_app.web.middleware.auth import AuthMiddleware
-from windup_app.web.middleware.ratelimit import RateLimitMiddleware
+from windup_app.web.middleware.ratelimit import AuthRateLimitMiddleware
 
 
 def _env_flag(name: str) -> bool:
@@ -88,9 +88,9 @@ def create_app() -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    # 中间件（add_middleware 后加的先执行：请求先进 CORS → 再进 RateLimit → 再进 Auth → 最后到路由）
+    # 中间件（add_middleware 后加的先执行：请求先进 CORS → 再进 AuthRateLimit(Phase1) → 再进 Auth → 最后到路由）
     app.add_middleware(AuthMiddleware)
-    app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(AuthRateLimitMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
