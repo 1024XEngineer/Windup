@@ -457,6 +457,86 @@ def test_request_path_comes_from_config_not_a_literal():
     assert seen["path"].endswith("/v9/custom-chat"), seen["path"]
 
 
+@pytest.mark.parametrize("code", [521, 522, 523])
+def test_unreached_upstream_is_retried_then_succeeds(monkeypatch, code):
+    """521/522/523 止步于 TCP 层，请求没到源站也就没计费，重发安全。"""
+    calls = {"n": 0}
+
+    def h(request):
+        import httpx
+        calls["n"] += 1
+        if calls["n"] < 3:
+            return httpx.Response(code, text="Connection timed out")
+        return httpx.Response(200, json=_img_payload(_big_b64()))
+
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
+
+    assert _image_provider(h).gen_image("x", [])
+    assert calls["n"] == 3, "必须真的重发，而不是靠外层出图循环碰运气"
+
+
+@pytest.mark.parametrize("code", [520, 524, 500, 502, 503])
+def test_upstream_that_may_have_billed_is_never_retried(monkeypatch, code):
+    """524 是"连上了但源站 100 秒没答完"、520 是源站自己出错 —— 请求都已到达，
+    重发就是为同一张图付两次钱。这条单独钉住，防止后来者把 5xx 一刀切成可重试。
+    """
+    import httpx
+
+    calls = {"n": 0}
+
+    def h(request):
+        calls["n"] += 1
+        return httpx.Response(code, text="upstream error")
+
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        _image_provider(h).gen_image("x", [])
+    assert calls["n"] == 1, f"HTTP {code} 不得重发"
+
+
+def test_persistent_unreached_upstream_reports_tries_and_status(monkeypatch):
+    """报错要说清重试了几次、最后一次是什么码，别只留一句裸 HTTPStatusError。"""
+    from windup_framework.providers.sufy import _POST_TRIES
+
+    calls = {"n": 0}
+
+    def h(request):
+        import httpx
+        calls["n"] += 1
+        return httpx.Response(522, text="Connection timed out")
+
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
+
+    with pytest.raises(RuntimeError, match=r"522.*已重试 3 次"):
+        _image_provider(h).gen_image("x", [])
+    assert calls["n"] == _POST_TRIES
+
+
+def test_unreached_upstream_backoff_is_capped(monkeypatch):
+    """上游挂掉时不该把一个图像任务堵成长时间阻塞。"""
+    from windup_framework.providers.sufy import _MAX_RETRY_WAIT
+
+    sleeps: list[float] = []
+
+    def h(request):
+        import httpx
+        return httpx.Response(522, headers={"Retry-After": "9999"})
+
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", sleeps.append)
+
+    with pytest.raises(RuntimeError, match="522"):
+        _image_provider(h).gen_image("x", [])
+    assert sleeps and max(sleeps) <= _MAX_RETRY_WAIT
+
+
+def test_retryable_set_excludes_the_codes_that_may_have_billed():
+    """常量本身也钉一道:改集合的人不必先读懂 _post 才发现自己开了重复计费的洞。"""
+    from windup_framework.providers.sufy import _UNREACHED_UPSTREAM_STATUS
+
+    assert _UNREACHED_UPSTREAM_STATUS == {521, 522, 523}
+
+
 @pytest.mark.parametrize("code", [400, 404])
 def test_model_missing_from_the_gateway_catalogue_says_so(code):
     """同一把 key 下不同网关的模型目录不一样(实测:一个 73 个模型零图像模型、

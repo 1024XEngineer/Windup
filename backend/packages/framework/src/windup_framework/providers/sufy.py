@@ -273,9 +273,17 @@ DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image"
 _IMAGE_TRIES = 3
 _MIN_IMAGE_BYTES = 5000
 _CONNECT_RETRIES = 3
-_RATE_LIMIT_TRIES = 3
-_MAX_RATE_LIMIT_WAIT = 30.0
+_POST_TRIES = 3
+_MAX_RETRY_WAIT = 30.0
 _IMAGE_TIMEOUT_MULTIPLIER = 1.5
+
+# Cloudflare 52x 里唯一能确定"请求根本没到源站"的三个:521 源站拒绝连接、
+# 522 CF 与源站建连超时、523 源站不可达。三者都止步于 TCP 层,上游不可能已经开始生成,
+# 所以重发不会重复扣费 —— 这是它们可以重试、而其余 5xx 一律不可以的唯一理由。
+#
+# **520 与 524 不属于这一组,不要加进来**:它们意味着连接已经建立、请求可能已在源站
+# 处理中(524 就是"源站 100 秒没答完"),重发一次就是为同一张图付两次钱。
+_UNREACHED_UPSTREAM_STATUS = frozenset({521, 522, 523})
 
 
 def _utc_now() -> datetime:
@@ -295,7 +303,20 @@ def _retry_after_seconds(value: str) -> float | None:
         delay = (retry_at.astimezone(timezone.utc) - _utc_now()).total_seconds()
     if not math.isfinite(delay):
         return None
-    return min(max(delay, 0.0), _MAX_RATE_LIMIT_WAIT)
+    return min(max(delay, 0.0), _MAX_RETRY_WAIT)
+
+
+def _retry_exhausted_message(status: int, tries: int) -> str:
+    """带上状态码与次数,否则排障的人只知道"失败了",不知道是限流还是网关连不上上游。"""
+    if status == 429:
+        return (
+            f"图像服务请求过于频繁(HTTP {status})，已重试 {tries} 次；"
+            "请稍后重试或检查服务商额度"
+        )
+    return (
+        f"图像网关未能连上上游(HTTP {status})，已重试 {tries} 次；"
+        "该请求未到达模型服务、未产生费用，可稍后重试"
+    )
 
 
 # 从响应里捞 data URI。模型把图放在 message.content 里,而不同网关的包裹层级不一样
@@ -336,30 +357,29 @@ class SufyImageProvider(ImageProvider):
         )
 
     def _post(self, client: httpx.Client, body: dict) -> dict:
-        """发送请求，有限重试未被网关接收的 429。
+        """发送请求，只重试确定没被上游收下的失败(429 与 ``_UNREACHED_UPSTREAM_STATUS``)。
 
-        为什么值得专门处理:同一把 key 下不同网关的模型目录**不一样**。实测
+        为什么把 400 / 404 单独挑出来说:同一把 key 下不同网关的模型目录**不一样**。实测
         ``GET /v1/models``:一个网关 73 个模型、一个图像模型都没有;另一个 134 个、
         含本模块默认的那个(2026-08-10)。配错 ``AI_BASE_URL`` 时原始报错只是一条
         404,读的人无从知道该去改配置还是改模型名。
         """
-        for attempt in range(1, _RATE_LIMIT_TRIES + 1):
+        for attempt in range(1, _POST_TRIES + 1):
             resp = client.post(self._cfg.chat_completions_path, json=body)
-            if resp.status_code != 429:
+            code = resp.status_code
+            if code != 429 and code not in _UNREACHED_UPSTREAM_STATUS:
                 break
-            if attempt == _RATE_LIMIT_TRIES:
-                raise RuntimeError(
-                    f"图像服务请求过于频繁(HTTP 429)，已重试 {_RATE_LIMIT_TRIES} 次；"
-                    "请稍后重试或检查服务商额度"
-                )
-            retry_after = resp.headers.get("Retry-After", "")
-            delay = _retry_after_seconds(retry_after)
+            if attempt == _POST_TRIES:
+                raise RuntimeError(_retry_exhausted_message(code, _POST_TRIES))
+            delay = _retry_after_seconds(resp.headers.get("Retry-After", ""))
             if delay is None:
-                delay = float(2**attempt)
+                # 上限同样兜住指数退避:上游挂掉时不该把一个图像任务堵成长时间阻塞。
+                delay = min(float(2**attempt), _MAX_RETRY_WAIT)
             logger.warning(
-                "图像服务返回 429，第 %d/%d 次请求，%.2f 秒后重试",
+                "图像服务返回 %d，第 %d/%d 次请求，%.2f 秒后重试",
+                code,
                 attempt,
-                _RATE_LIMIT_TRIES,
+                _POST_TRIES,
                 delay,
             )
             time.sleep(delay)
