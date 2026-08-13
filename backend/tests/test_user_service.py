@@ -38,6 +38,7 @@ def mock_redis():
     redis_mock.get.return_value = None
     redis_mock.setex.return_value = True
     redis_mock.delete.return_value = True
+    redis_mock.eval.return_value = None  # Lua 脚本默认返回 None
     redis_mock.pipeline.return_value = MagicMock(
         execute=MagicMock(return_value=[True, True])
     )
@@ -316,22 +317,39 @@ def test_refresh_tokens(service, mock_redis):
     # 先创建一个 refresh token
     token, jti = create_refresh_token(1, "test@example.com")
 
-    # Mock Redis 返回 user_id
-    mock_redis.get.return_value = "1"
+    # Mock Redis eval 返回 user_id（Lua 脚本成功）
+    mock_redis.eval.return_value = "1"
 
     result = service.refresh_tokens(token)
 
     assert result.access_token is not None
     assert result.refresh_token is not None
     assert result.user.id == 1
+    # 验证调用了 eval（Lua 脚本），而不是 get
+    mock_redis.eval.assert_called_once()
 
 
 def test_refresh_tokens_revoked(service, mock_redis):
     token, jti = create_refresh_token(1, "test@example.com")
 
-    # Mock Redis 返回 None（已撤销）
-    mock_redis.get.return_value = None
+    # Mock Redis eval 返回 None（Lua 脚本：旧 token 不存在）
+    mock_redis.eval.return_value = None
 
+    with pytest.raises(BizException, match="refresh token 已失效"):
+        service.refresh_tokens(token)
+
+
+def test_refresh_tokens_concurrent_reuse(service, mock_redis):
+    """并发重放：同一个 refresh token 第二次调用应失败。"""
+    token, jti = create_refresh_token(1, "test@example.com")
+
+    # 第一次调用成功
+    mock_redis.eval.return_value = "1"
+    result1 = service.refresh_tokens(token)
+    assert result1.access_token is not None
+
+    # 第二次调用（并发重放）失败
+    mock_redis.eval.return_value = None
     with pytest.raises(BizException, match="refresh token 已失效"):
         service.refresh_tokens(token)
 

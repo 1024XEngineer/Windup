@@ -9,7 +9,7 @@ rollback，故本实现只 ``flush``（把变更发到当前事务、取回生�
 
 import hashlib
 import logging
-import random
+import secrets
 import string
 import uuid
 from datetime import datetime, timezone
@@ -83,8 +83,8 @@ def _hash_token(token: str) -> str:
 
 
 def _generate_code() -> str:
-    """生成 6 位数字验证码。"""
-    return "".join(random.choices(string.digits, k=6))
+    """生成 6 位数字验证码（密码学安全）。"""
+    return "".join(secrets.choice(string.digits) for _ in range(6))
 
 
 # -- User → UserView 转换 ------------------------------------------------
@@ -372,6 +372,24 @@ class SqlAlchemyUserService(UserService):
             email=payload.get("email", ""),
         )
 
+    # -- Lua: 原子 检查-删除-存储 refresh token --------------------------------
+    # KEYS[1] = old_token_key, KEYS[2] = new_token_key
+    # ARGV[1] = ttl, ARGV[2] = user_id
+    # 返回: user_id (成功) 或 nil (旧 token 不存在/已被消费)
+    _ROTATE_TOKEN_SCRIPT = """
+    local old_key = KEYS[1]
+    local new_key = KEYS[2]
+    local ttl     = tonumber(ARGV[1])
+    local user_id = ARGV[2]
+    local cur = redis.call('GET', old_key)
+    if cur == false then
+        return nil
+    end
+    redis.call('DEL', old_key)
+    redis.call('SETEX', new_key, ttl, user_id)
+    return cur
+    """
+
     def refresh_tokens(self, refresh_token: str) -> LoginResult:
         """刷新 token。"""
         payload = decode_token(refresh_token)
@@ -382,23 +400,31 @@ class SqlAlchemyUserService(UserService):
         if not jti:
             raise BizException("token 无效", code=BizCode.UNAUTHORIZED)
 
+        # user_id 来自已验签的 JWT，可信
+        user_id = int(payload["sub"])
+        email = payload.get("email", "")
+
+        # 签发新 token
+        new_access = create_access_token(user_id, email)
+        new_refresh, new_jti = create_refresh_token(user_id, email)
+
+        # Lua 原子操作：GET old → 存在则 DEL old + SETEX new → 返回 user_id
         token_hash = _hash_token(jti)
-        redis_key = REFRESH_TOKEN_KEY.format(token_hash=token_hash)
-        user_id_str = self.redis.get(redis_key)
+        old_redis_key = REFRESH_TOKEN_KEY.format(token_hash=token_hash)
+        new_token_hash = _hash_token(new_jti)
+        new_redis_key = REFRESH_TOKEN_KEY.format(token_hash=new_token_hash)
+
+        user_id_str = self.redis.eval(
+            self._ROTATE_TOKEN_SCRIPT,
+            2,
+            old_redis_key,
+            new_redis_key,
+            REFRESH_TOKEN_EXPIRE_SECONDS,
+            str(user_id),
+        )
 
         if user_id_str is None:
             raise BizException("refresh token 已失效", code=BizCode.UNAUTHORIZED)
-
-        user_id = int(user_id_str)
-
-        # 撤销旧 token
-        self.redis.delete(redis_key)
-
-        # 签发新 token（需要 email，从旧 token payload 取）
-        email = payload.get("email", "")
-        new_access = create_access_token(user_id, email)
-        new_refresh, new_jti = create_refresh_token(user_id, email)
-        self._store_refresh_token(new_jti, user_id)
 
         logger.info("[WINDUP] token 已刷新 | user_id=%s", user_id)
         return LoginResult(
