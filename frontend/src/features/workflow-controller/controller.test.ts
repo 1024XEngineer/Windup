@@ -195,10 +195,12 @@ function createGenerationHarness() {
       if (!generation) throw new Error(`Generation 不存在：${id}`)
       return structuredClone(generation)
     }),
-    subscribe: vi.fn((_projectId, id, onEvent) => {
-      listeners.set(id, onEvent)
+    subscribe: vi.fn((_projectId, id, expectationOrOnEvent, onEvent) => {
+      const listener = typeof expectationOrOnEvent === 'function' ? expectationOrOnEvent : onEvent
+      if (!listener) throw new Error('缺少 Generation 事件处理器')
+      listeners.set(id, listener)
       return () => listeners.delete(id)
-    }),
+    }) as unknown as GenerationApis['subscribe'],
   }
 
   function emit(event: GenerationEvent) {
@@ -319,7 +321,11 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'character_template',
-        images: [{ url: 'https://img/knight.png' }],
+        images: [
+          { url: 'https://img/knight-1.png' },
+          { url: 'https://img/knight-2.png' },
+          { url: 'https://img/knight-3.png' },
+        ],
       },
       error: null,
     })
@@ -577,7 +583,11 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'character_template',
-        images: [{ url: 'https://img/knight.png' }],
+        images: [
+          { url: 'https://img/knight-1.png' },
+          { url: 'https://img/knight-2.png' },
+          { url: 'https://img/knight-3.png' },
+        ],
       },
       error: null,
     })
@@ -631,7 +641,11 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'character_template',
-        images: [{ url: 'https://img/knight.png' }],
+        images: [
+          { url: 'https://img/knight-1.png' },
+          { url: 'https://img/knight-2.png' },
+          { url: 'https://img/knight-3.png' },
+        ],
       },
       error: null,
     }
@@ -652,10 +666,10 @@ describe('WorkflowController', () => {
         result: terminalEvent.result,
         error: terminalEvent.error,
       })),
-      subscribe: vi.fn((_projectId, _taskId, onEvent) => {
+      subscribe: vi.fn((_projectId, _taskId, _expectation, onEvent) => {
         onEvent(terminalEvent)
         return () => undefined
-      }),
+      }) as unknown as GenerationApis['subscribe'],
     }
     const controller = createWorkflowController({
       workflow: createRun(),
@@ -681,7 +695,11 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'character_template',
-        images: [{ url: 'https://img/knight.png' }],
+        images: [
+          { url: 'https://img/knight-1.png' },
+          { url: 'https://img/knight-2.png' },
+          { url: 'https://img/knight-3.png' },
+        ],
       },
       error: null,
     })
@@ -715,7 +733,11 @@ describe('WorkflowController', () => {
         status: 'completed',
         result: {
           type: 'character_template',
-          images: [{ url: 'https://img/stale.png' }],
+          images: [
+            { url: 'https://img/stale-1.png' },
+            { url: 'https://img/stale-2.png' },
+            { url: 'https://img/stale-3.png' },
+          ],
         },
         error: null,
       },
@@ -835,15 +857,15 @@ describe('WorkflowController', () => {
     })
 
     const oldSubmission = controller.generateFirstFrame('action-walk', {
-      characterId: 'character-1',
-      referenceMedia: [],
+      spriteWidth: 64,
+      spriteHeight: 96,
     })
     await Promise.resolve()
     await controller.restartFromNode('action-walk')
 
     const newSubmission = controller.generateFirstFrame('action-walk', {
-      characterId: 'character-1',
-      referenceMedia: [],
+      spriteWidth: 64,
+      spriteHeight: 96,
     })
     await Promise.resolve()
     expect(createGeneration).toHaveBeenCalledTimes(2)
@@ -858,8 +880,8 @@ describe('WorkflowController', () => {
     })
     await oldSubmission
     const sameNewSubmission = controller.generateFirstFrame('action-walk', {
-      characterId: 'character-1',
-      referenceMedia: [],
+      spriteWidth: 64,
+      spriteHeight: 96,
     })
     expect(createGeneration).toHaveBeenCalledTimes(2)
 
@@ -1009,8 +1031,8 @@ describe('WorkflowController', () => {
 
     await expect(
       controller.generateFirstFrame('action-walk', {
-        characterId: 'character-1',
-        referenceMedia: [],
+        spriteWidth: 64,
+        spriteHeight: 96,
       }),
     ).rejects.toThrow('已归档节点不能执行')
     expect(generation.apis.create).not.toHaveBeenCalled()
@@ -1087,15 +1109,15 @@ describe('WorkflowController', () => {
 
     await expect(
       controller.generateFirstFrame('action-walk', {
-        characterId: 'character-1',
-        referenceMedia: [],
+        spriteWidth: 64,
+        spriteHeight: 96,
       }),
     ).rejects.toThrow('后端保存失败')
     expect(controller.getWorkflow().nodes[2].generations).toEqual([])
 
     await controller.generateFirstFrame('action-walk', {
-      characterId: 'character-1',
-      referenceMedia: [],
+      spriteWidth: 64,
+      spriteHeight: 96,
     })
 
     expect(generation.apis.create).toHaveBeenCalledTimes(1)
@@ -1108,7 +1130,7 @@ describe('WorkflowController', () => {
   it('同一节点并发点击只创建一个生成任务', async () => {
     const run = createRun([...completedCharacterNodes(), ...actionNodes()])
     const { controller, generation } = createController(run)
-    const options = { characterId: 'character-1', referenceMedia: [] }
+    const options = { spriteWidth: 64, spriteHeight: 96 }
 
     await Promise.all([
       controller.generateFirstFrame('action-walk', options),
@@ -1208,7 +1230,10 @@ describe('WorkflowController', () => {
         projectId: '1',
         type: 'first_frame',
         status: 'completed',
-        result: { type: 'first_frame', image: { url: 'jump.png' } },
+        result: {
+          type: 'first_frame',
+          images: [{ url: 'jump-1.png' }, { url: 'jump-2.png' }, { url: 'jump-3.png' }],
+        },
         error: null,
       },
     })
@@ -1226,14 +1251,21 @@ describe('WorkflowController', () => {
     const { controller, generation } = createController(run)
 
     await controller.generateFirstFrame('action-walk', {
-      characterId: 'character-backend-1',
-      referenceMedia: [],
+      spriteWidth: 64,
+      spriteHeight: 96,
     })
     generation.emit({
       taskId: 'task-1',
       type: 'first_frame',
       status: 'completed',
-      result: { type: 'first_frame', image: { url: 'https://img/first.png' } },
+      result: {
+        type: 'first_frame',
+        images: [
+          { url: 'https://img/first.png' },
+          { url: 'https://img/first-2.png' },
+          { url: 'https://img/first-3.png' },
+        ],
+      },
       error: null,
     })
     await flushAsyncWork()
@@ -1251,15 +1283,15 @@ describe('WorkflowController', () => {
     await flushAsyncWork()
     await controller.approveReview('action-walk:review')
 
-    expect(generation.apis.create).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        type: 'first_frame',
-        characterId: 'character-backend-1',
-        outfitId: 'outfit-1',
-        referenceMedia: ['https://img/knight.png'],
-      }),
-    )
+    expect(generation.apis.create).toHaveBeenNthCalledWith(1, {
+      type: 'first_frame',
+      projectId: '1',
+      actionType: 'walk',
+      prompt: '行走',
+      spriteWidth: 64,
+      spriteHeight: 96,
+      referenceMedia: ['https://img/knight.png'],
+    })
     expect(generation.apis.create).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
@@ -1314,7 +1346,14 @@ describe('WorkflowController', () => {
       projectId: '1',
       type: 'first_frame',
       status: 'completed',
-      result: { type: 'first_frame', image: { url: 'https://img/first.png' } },
+      result: {
+        type: 'first_frame',
+        images: [
+          { url: 'https://img/first.png' },
+          { url: 'https://img/first-2.png' },
+          { url: 'https://img/first-3.png' },
+        ],
+      },
       error: null,
     })
     generation.snapshots.set('task-animation', {

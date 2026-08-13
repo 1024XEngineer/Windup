@@ -77,6 +77,8 @@ export interface CreateQuickStartServiceOptions {
   workflowRunApis: WorkflowRunApis
   generationApis: GenerationApis
   prepareProject: PrepareQuickStartProject
+  /** 为已有项目继续生成动作时读取图片接口要求的精灵尺寸。 */
+  projectApis?: Pick<ProjectApis, 'get'>
   characterApis?: CharacterApis
   mediaApis?: QuickStartMediaApis
   onAsyncError?: (error: Error) => void
@@ -101,10 +103,22 @@ export function createQuickStartService({
   workflowRunApis,
   generationApis,
   prepareProject,
+  projectApis: projectReader,
   characterApis,
   mediaApis,
   onAsyncError = (error) => console.error('[quick-start] 异步工作流错误', error),
 }: CreateQuickStartServiceOptions): QuickStartEntryService {
+  const projectSpriteSizes = new Map<Project['id'], Project['spriteSize']>()
+
+  async function resolveProjectSpriteSize(projectId: Project['id']) {
+    const cached = projectSpriteSizes.get(projectId)
+    if (cached) return cached
+    if (!projectReader) throw new Error('项目读取服务尚未配置，不能生成动作首帧')
+    const project = await projectReader.get(projectId)
+    projectSpriteSizes.set(project.id, project.spriteSize)
+    return project.spriteSize
+  }
+
   function createController(workflow?: WorkflowRun): WorkflowController {
     return createWorkflowController({ workflow, workflowRunApis, generationApis, onAsyncError })
   }
@@ -209,9 +223,9 @@ export function createQuickStartService({
 
   async function prepareAction(
     controller: WorkflowController,
-    characterId: string,
     outfitId: string,
     actionDescription: string,
+    spriteSize: Project['spriteSize'],
   ) {
     const name = actionDescription.trim() || '待机'
     const type = inferGeneratableActionType(actionDescription)
@@ -223,7 +237,10 @@ export function createQuickStartService({
     if (!firstFrame || firstFrame.type !== 'action-first-frame') {
       throw new Error('新增动作后没有找到首帧节点')
     }
-    await controller.generateFirstFrame(firstFrame.id, { characterId, referenceMedia: [] })
+    await controller.generateFirstFrame(firstFrame.id, {
+      spriteWidth: spriteSize.width,
+      spriteHeight: spriteSize.height,
+    })
   }
 
   async function persistCharacterTemplate(
@@ -361,7 +378,10 @@ export function createQuickStartService({
     return stop
   }
 
-  function createSession(controller: WorkflowController): QuickStartSession {
+  function createSession(
+    controller: WorkflowController,
+    knownSpriteSize?: Project['spriteSize'],
+  ): QuickStartSession {
     let stopAutomaticAdvance: (() => void) | null = null
     let candidateCommand: Promise<WorkflowRun> | null = null
     let disposed = false
@@ -402,7 +422,9 @@ export function createQuickStartService({
         const templateReference = await mediaApis.upload(file, 'reference-image', signal)
         await controller.confirmCharacterTemplate(template.id, templateReference)
         const target = await persistCharacterTemplate(controller, templateReference)
-        await prepareAction(controller, target.characterId, target.outfitId, actionDescription)
+        const spriteSize =
+          knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
+        await prepareAction(controller, target.outfitId, actionDescription, spriteSize)
         ensureAutomaticAdvance()
         return controller.getWorkflow()
       },
@@ -412,12 +434,9 @@ export function createQuickStartService({
           const template = templateNode(controller.getWorkflow())
           await controller.confirmCharacterTemplate(template.id, selectedImageUrl)
           const target = await persistCharacterTemplate(controller, selectedImageUrl)
-          await prepareAction(
-            controller,
-            target.characterId,
-            target.outfitId,
-            actionDescription ?? '',
-          )
+          const spriteSize =
+            knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
+          await prepareAction(controller, target.outfitId, actionDescription ?? '', spriteSize)
           ensureAutomaticAdvance()
           return controller.getWorkflow()
         })().finally(() => {
@@ -431,7 +450,11 @@ export function createQuickStartService({
         if (!firstFrame || firstFrame.type !== 'action-first-frame') return []
         const generation = await controller.getGeneration(firstFrame.id, 'first_frame')
         return generation?.type === 'first_frame' && generation.result?.type === 'first_frame'
-          ? [{ index: 0, imageUrl: generation.result.image.url, durationMs: null }]
+          ? generation.result.images.map((image, index) => ({
+              index,
+              imageUrl: image.url,
+              durationMs: null,
+            }))
           : []
       },
       async confirmFirstFrame(selectedImageUrl) {
@@ -556,8 +579,9 @@ export function createQuickStartService({
             character.description ?? actionDescription,
           ),
         )
-    await prepareAction(controller, character.id, outfit.id, actionDescription)
-    return createSession(controller)
+    const spriteSize = await resolveProjectSpriteSize(character.projectId)
+    await prepareAction(controller, outfit.id, actionDescription, spriteSize)
+    return createSession(controller, spriteSize)
   }
 
   return {
@@ -567,12 +591,13 @@ export function createQuickStartService({
       const normalizedPrompt = prompt.trim()
       if (!normalizedPrompt) throw new Error('请先描述想要创建的角色')
       const project = await prepareProject(normalizedPrompt)
+      projectSpriteSizes.set(project.id, project.spriteSize)
       const controller = await createRun(project.id, workflowNodes(normalizedPrompt))
       await controller.generateCharacterTemplate('character-setup', {
         spriteWidth: project.spriteSize.width,
         spriteHeight: project.spriteSize.height,
       })
-      return createSession(controller)
+      return createSession(controller, project.spriteSize)
     },
 
     async startWithUploadedTemplate(file, actionDescription, signal) {
@@ -580,6 +605,7 @@ export function createQuickStartService({
       const prompt = actionDescription.trim() || file.name.trim()
       if (!prompt) throw new Error('请提供动作描述或有效的图片文件')
       const project = await prepareProject(prompt)
+      projectSpriteSizes.set(project.id, project.spriteSize)
       const templateReference = await mediaApis.upload(file, 'reference-image', signal)
       const controller = await createRun(project.id, workflowNodes(prompt, [templateReference]))
       await controller.updateCharacterSetup('character-setup', {
@@ -588,14 +614,15 @@ export function createQuickStartService({
       })
       await controller.acceptUploadedCharacterTemplate('character-setup', templateReference)
       const target = await persistCharacterTemplate(controller, templateReference)
-      await prepareAction(controller, target.characterId, target.outfitId, actionDescription)
-      return createSession(controller)
+      await prepareAction(controller, target.outfitId, actionDescription, project.spriteSize)
+      return createSession(controller, project.spriteSize)
     },
 
     startAction: appendActionForCharacter,
 
     async open(runId) {
-      return createSession(createController(await workflowRunApis.get(runId)))
+      const run = await workflowRunApis.get(runId)
+      return createSession(createController(run), projectSpriteSizes.get(run.projectId))
     },
   }
 }
@@ -643,6 +670,7 @@ export function createRealQuickStartService({
     workflowRunApis,
     generationApis,
     prepareProject: createAutoPrepareProject(projectApis),
+    projectApis,
     characterApis,
     mediaApis,
     onAsyncError,

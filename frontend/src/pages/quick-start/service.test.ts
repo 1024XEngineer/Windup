@@ -81,6 +81,12 @@ function pendingGenerationApis(): GenerationApis {
   }
 }
 
+function projectReader(spriteSize = { width: 256, height: 256 }) {
+  return {
+    get: vi.fn(async (id: string) => ({ id, spriteSize })),
+  } as unknown as Pick<ProjectApis, 'get'>
+}
+
 function characterFixture(overrides: Partial<Character> = {}): Character {
   return {
     id: 'character-1',
@@ -169,26 +175,22 @@ function actionRun(firstFramePending = false): WorkflowRun {
         input: { outfitId: 'outfit-1', name: '挥手', type: 'custom', prompt: '挥手', fps: 12 },
         selectedFirstFrameUrl: firstFramePending ? null : 'first.png',
       },
-      ...(firstFramePending
-        ? ([
-            {
-              id: `${firstId}:action-generation-method`,
-              type: 'action-generation-method',
-              status: 'locked',
-              phase: 'selecting',
-              dependsOnNodeIds: [firstId],
-              generations: [],
-              error: null,
-              method: null,
-            },
-          ] as WorkflowRun['nodes'])
-        : []),
+      {
+        id: `${firstId}:action-generation-method`,
+        type: 'action-generation-method',
+        status: firstFramePending ? 'locked' : 'passed',
+        phase: firstFramePending ? 'selecting' : 'completed',
+        dependsOnNodeIds: [firstId],
+        generations: [],
+        error: null,
+        method: firstFramePending ? null : 'video-cropping',
+      },
       {
         id: fullId,
         type: 'action-full-frame',
         status: firstFramePending ? 'locked' : 'passed',
         phase: firstFramePending ? 'ready' : 'completed',
-        dependsOnNodeIds: [firstFramePending ? `${firstId}:action-generation-method` : firstId],
+        dependsOnNodeIds: [`${firstId}:action-generation-method`],
         generations: firstFramePending
           ? []
           : [{ taskId: 'task-animation', role: 'complete_animation' }],
@@ -530,6 +532,7 @@ describe('createQuickStartService', () => {
       workflowRunApis,
       generationApis,
       characterApis,
+      projectApis: projectReader(),
       mediaApis: { upload: vi.fn(async () => 'replacement.png' as MediaReference) },
       prepareProject: vi.fn(),
     })
@@ -658,6 +661,7 @@ describe('createQuickStartService', () => {
       workflowRunApis: createWorkflowRunApis([run]),
       generationApis: pendingGenerationApis(),
       characterApis,
+      projectApis: projectReader(),
       mediaApis: { upload: vi.fn(async () => 'replacement.png' as MediaReference) },
       prepareProject: vi.fn(),
     })
@@ -687,7 +691,11 @@ describe('createQuickStartService', () => {
                 status: 'completed' as const,
                 result: {
                   type: 'character_template' as const,
-                  images: [{ url: 'candidate.png' }],
+                  images: [
+                    { url: 'candidate.png' },
+                    { url: 'candidate-2.png' },
+                    { url: 'candidate-3.png' },
+                  ],
                 },
                 error: null,
               }
@@ -736,7 +744,11 @@ describe('createQuickStartService', () => {
     })
     const started = await service.start('像素骑士')
     await vi.waitFor(async () => {
-      await expect(started.getTemplateCandidates()).resolves.toEqual(['candidate.png'])
+      await expect(started.getTemplateCandidates()).resolves.toEqual([
+        'candidate.png',
+        'candidate-2.png',
+        'candidate-3.png',
+      ])
     })
 
     const first = started.confirmCandidate('candidate.png', '挥手')
@@ -776,6 +788,7 @@ describe('createQuickStartService', () => {
         update: vi.fn(),
         remove: vi.fn(),
       } as unknown as CharacterApis,
+      projectApis: projectReader(),
       prepareProject: vi.fn(),
     })
 
@@ -903,7 +916,11 @@ describe('createQuickStartService', () => {
   })
 
   it('confirms the action first frame and automatically starts a 32-frame animation', async () => {
-    const firstFrameUrl = 'https://example.test/first-frame.png'
+    const firstFrameUrls = [
+      'https://example.test/first-frame-1.png',
+      'https://example.test/first-frame-2.png',
+      'https://example.test/first-frame-3.png',
+    ]
     const generationApis: GenerationApis = {
       create: vi.fn(async () => ({
         id: 'task-animation',
@@ -931,7 +948,7 @@ describe('createQuickStartService', () => {
           status: 'completed' as const,
           result: {
             type: 'first_frame' as const,
-            image: { url: firstFrameUrl },
+            images: firstFrameUrls.map((url) => ({ url })),
           },
           error: null,
         }
@@ -947,9 +964,11 @@ describe('createQuickStartService', () => {
     const session = await service.open('run-1')
 
     await expect(session.getFirstFrameCandidates()).resolves.toEqual([
-      { index: 0, imageUrl: firstFrameUrl, durationMs: null },
+      { index: 0, imageUrl: firstFrameUrls[0], durationMs: null },
+      { index: 1, imageUrl: firstFrameUrls[1], durationMs: null },
+      { index: 2, imageUrl: firstFrameUrls[2], durationMs: null },
     ])
-    await session.confirmFirstFrame(firstFrameUrl)
+    await session.confirmFirstFrame(firstFrameUrls[1]!)
 
     await vi.waitFor(() => {
       expect(generationApis.create).toHaveBeenCalledWith(
@@ -957,7 +976,7 @@ describe('createQuickStartService', () => {
           type: 'complete_animation',
           characterId: 'character-1',
           outfitId: 'outfit-1',
-          firstFrameUrl,
+          firstFrameUrl: firstFrameUrls[1],
         }),
       )
     })
