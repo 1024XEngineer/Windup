@@ -6,7 +6,11 @@ MatteProvider（#20）。本模块把对齐后的帧拼成交付物。
 
 from __future__ import annotations
 
+import logging
+
 from PIL import Image
+
+_logger = logging.getLogger(__name__)
 
 __all__ = ["CELL", "CORE_THICKNESS", "FILL_H", "FILL_W", "FOOT_LINE",
            "align_bottom_center", "core_span", "sprite_sheet", "save_gif"]
@@ -19,7 +23,7 @@ FOOT_LINE = 0.92    # 脚线在画布中的高度比例
 FILL_H = 0.62       # 参考姿态占画布高的比例(留余量给举过头顶的动作)
 FILL_W = 0.96       # 主体占画布宽的上限(宽度兜底的天花板)
 
-# "厚"的门槛:某行/列的主体像素数达到该帧最厚行/列的这个比例,才算本体的一部分。
+# "厚"的门槛:某行/列的主体像素数达到该帧行/列宽度**中位数**的这个比例,才算本体。
 # 0.25 之下是延展物(尾巴、翅膀、披风、举起的武器)—— 它们细,本体厚。
 CORE_THICKNESS = 0.25
 
@@ -40,9 +44,20 @@ def core_span(frame: Image.Image, thickness: float = CORE_THICKNESS) -> tuple[fl
     rows, cols = m.sum(1), m.sum(0)
     if not rows.any():
         return None
-    r = np.flatnonzero(rows >= rows.max() * thickness)
-    c = np.flatnonzero(cols >= cols.max() * thickness)
-    return float(r.max() - r.min()), float(c.max() - c.min())
+
+    # 行与列的门槛基准不同,因为延展物对两者的污染方向是**相反的**。以一条横展的翅膀为例:
+    #   · 它是全图最宽的那**一行** → 行方向若以 max 为基准,门槛被抬到身体之上,身体每行
+    #     都判成"细的",量出的本体高只剩 9px(真值 69)。故行用**中位数**:它反映"大部分行
+    #     有多宽",不被少数极端行带偏。
+    #   · 它又让**大量列**只有 10px 高 → 列方向若以中位数为基准,中位数被压到 10、门槛低到
+    #     2,翅膀整条算进本体,量出的本体宽 209px(真值 49)。故列用 **max**。
+    # 判据不对称是数据形态决定的,不是漏了统一。
+    def span(counts: np.ndarray, base: float) -> float:
+        keep = np.flatnonzero(counts >= base * thickness)
+        return float(keep.max() - keep.min())
+
+    nz_rows = rows[rows > 0]
+    return (span(rows, float(np.median(nz_rows))), span(cols, float(cols.max())))
 
 
 def align_bottom_center(
@@ -118,13 +133,39 @@ def align_bottom_center(
     else:
         scale = (ch * fill_h) / max(heights)     # 回退:本序列最高帧
 
-    # 宽度兜底:上面几条分支只按高度定标,横向长条主体(四足 / 坐骑 / 龙)按同一系数缩放后
-    # 会超出画布宽,被下面的 alpha_composite 以负 dest **静默切掉**左右(PIL 不报错)。
+    # 宽度上限。两个目标本身是冲突的 —— 延展物越宽,"整帧不越界"就把角色压得越小,
+    # 而那恰恰是本函数要消除的忽大忽小。所以不做全局取舍,按**溢出量**分档:
     #
-    # 这里同样量**本体**宽:拿包围盒宽会让展开的翅膀 / 甩开的长尾把整只角色压小 ——
-    # 实测鸟展翅时包围盒宽是本体的 3.8 倍,本体因此缩到 26%。
-    widths = [s[1] for s in spans] or [b[2] - b[0] for b in boxes if b]
-    scale = min(scale, (cw * fill_w) / max(1.0, max(widths)))
+    # 溢出比 = 整帧宽 / 本体宽。它可量,也正好区分开三种情况:
+    #   ≤ 1 + EXTREMITY_SLACK  贴身延展物(人形无披风、龙收翼)。整帧本来就装得下,
+    #                          直接按本体定标,两个目标不冲突。
+    #   中间档                  延展物明显但不夸张。让整帧装进画布 —— 此时压缩幅度有限,
+    #                          尺寸偏差还在可接受范围,不值得为它丢像素。
+    #   > EXTREMITY_CLIP_AT    延展物远大于本体(展翅、大甩尾)。**保尺寸一致**,让翅尖
+    #                          溢出被裁 —— 再压下去角色本体会小到另一个动作的一半,
+    #                          那比翅尖缺一点严重得多。
+    #
+    # 关键是最后这档**不静默**:裁掉多少写进日志,让"丢了像素"可见而不是靠人看图发现。
+    core_w = [s[1] for s in spans] or [b[2] - b[0] for b in boxes if b]
+    full_w = [b[2] - b[0] for b in boxes if b]
+    max_core, max_full = max(1.0, max(core_w)), max(1.0, max(full_w))
+    scale = min(scale, (cw * fill_w) / max_core)
+
+    # 整帧装不下时**不为它压缩角色**,让延展物溢出被裁。
+    #
+    # 这两个目标本身冲突:延展物越宽,"装进画布"就把角色压得越小,而那正是本函数要消除的
+    # 忽大忽小。选保尺寸,因为后果不对称 —— 压缩会让同一只角色在两个动作里差到 4 成
+    # (实测龙张翼 59%、鸟展翅 59%),而溢出只丢掉翅尖尾尖那几列像素。
+    #
+    # 试过折中("压缩量小于某个下限时就压"),**没有中间档**:实测 fit/scale 从 1.042 直接
+    # 跳到 0.961,跨过了任何合理的窗口。一个永不成立的分支比没有分支更坏。
+    #
+    # 关键是**不静默**:裁掉多少写进日志,让丢像素可见,而不是靠人看图发现。
+    if max_full * scale > cw:
+        _logger.info(
+            "保尺寸一致而不压缩:整帧需 %.0fpx、画布 %dpx,两侧各溢出约 %.0fpx",
+            max_full * scale, cw, (max_full * scale - cw) / 2,
+        )
 
     out = []
     for f, box in zip(frames, boxes):

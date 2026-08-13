@@ -218,3 +218,29 @@ def test_core_span_returns_none_for_empty_frame():
     from windup_ai_engine.postprocess.pack import core_span
 
     assert core_span(Image.new("RGBA", (32, 32), (0, 0, 0, 0))) is None
+
+
+def test_size_is_kept_even_when_extremities_overflow():
+    """延展物装不进画布时保尺寸,不为它压缩角色。
+
+    两个目标冲突,后果不对称:压缩会让同一角色在两个动作间差到 4 成,溢出只丢翅尖那几列。
+    """
+
+    base = _delivered_body_height(_body(256, 50, 70))
+    for wing in (20, 50, 80):
+        src = _body(256, 50, 70, (("wing", wing, False),))
+        got = _delivered_body_height(src)
+        assert abs(got - base) / base <= 0.02, (
+            f"翅展 {wing}px 时本体高 {got:.0f}px vs 基准 {base:.0f}px —— "
+            "为装进画布压缩了角色")
+
+
+def test_clipping_is_logged_not_silent(caplog):
+    """选择让延展物溢出时必须上报 —— 丢像素不能靠人看图发现。"""
+    import logging
+
+    src = _body(256, 50, 70, (("wing", 80, False),))
+    with caplog.at_level(logging.INFO, logger="windup_ai_engine.postprocess.pack"):
+        align_bottom_center(src, cell=256, cell_h=256)
+    assert any("溢出" in r.message for r in caplog.records), \
+        f"裁切没有上报，日志：{[r.message for r in caplog.records]}"
