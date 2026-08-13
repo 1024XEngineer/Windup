@@ -22,6 +22,11 @@ from windup_app.server.user.service import create_access_token
 from windup_framework.db import Base, get_session
 
 
+def _disable_generation_execution(app):
+    app.state.run_action_task = lambda *args: None
+    app.state.run_image_task = lambda *args: None
+
+
 def _make_engine():
     """单连接内存 SQLite;``check_same_thread=False`` 让 TestClient 线程可共用。"""
     return create_engine(
@@ -75,8 +80,10 @@ def client(engine):
             session.close()
 
     app = create_app()
+    _disable_generation_execution(app)
     app.dependency_overrides[get_session] = override_get_session
     yield TestClient(app)
+    app.state.generation_dispatcher.shutdown()
     app.dependency_overrides.clear()
 
 
@@ -100,6 +107,7 @@ def auth_client(engine):
             session.close()
 
     app = create_app()
+    _disable_generation_execution(app)
     app.dependency_overrides[get_session] = override_get_session
 
     # 生成测试用 token
@@ -107,6 +115,7 @@ def auth_client(engine):
     client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
 
     yield client
+    app.state.generation_dispatcher.shutdown()
     app.dependency_overrides.clear()
 
 
@@ -127,10 +136,12 @@ def auth_client_b(engine):
             session.close()
 
     app = create_app()
+    _disable_generation_execution(app)
     app.dependency_overrides[get_session] = override_get_session
 
     token = create_access_token(2, "other@example.com")
     client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
 
     yield client
+    app.state.generation_dispatcher.shutdown()
     app.dependency_overrides.clear()
