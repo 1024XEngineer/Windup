@@ -91,6 +91,64 @@ describe('AccountPage', () => {
     )
   })
 
+  it('falls back to the email name for an unverified profile without a nickname', async () => {
+    const apis = createApis()
+    apis.me.mockResolvedValue({
+      ...user,
+      nickname: null,
+      emailVerifiedAt: null,
+    })
+
+    renderAccount(apis)
+
+    expect(await screen.findByText('reader', { selector: 'p' })).toBeTruthy()
+    expect(screen.getByText('未验证')).toBeTruthy()
+    expect(screen.getByText('尚未验证')).toBeTruthy()
+  })
+
+  it('uses focused settings navigation instead of showing every form at once', async () => {
+    const { container } = renderAccount()
+
+    expect(await screen.findByRole('heading', { name: '账号中心' })).toBeTruthy()
+    const page = container.querySelector('[data-account-page]')
+    expect(page?.className).toContain('bg-[#f3f2ec]')
+    const shell = container.querySelector('[data-account-shell]')
+    expect(shell?.className).toContain('max-w-[1560px]')
+    expect(screen.getByRole('heading', { name: '账号中心' }).className).toContain(
+      'text-[clamp(2.15rem,4.5vw,4rem)]',
+    )
+    expect(container.querySelector('[data-account-layout="settings"]')).toBeTruthy()
+    const pixelMark = screen.getByTestId('account-pixel-mark')
+    expect(pixelMark.getAttribute('alt')).toBe('')
+    expect(pixelMark.getAttribute('aria-hidden')).toBe('true')
+    const badgeButton = screen.getByRole('button', { name: '摇一摇工牌' })
+    fireEvent.click(badgeButton)
+    expect(badgeButton.className).toContain('account-badge-shake')
+    expect(screen.getByRole('navigation', { name: '账号设置' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '个人资料' })).toBeTruthy()
+    expect(screen.queryByLabelText('当前密码')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '登录安全' }))
+    expect(screen.getByRole('heading', { name: '登录安全' })).toBeTruthy()
+    const oldPassword = screen.getByLabelText('当前密码')
+    const newPassword = screen.getByLabelText('新密码')
+    expect(oldPassword).toBeTruthy()
+    expect(screen.queryByLabelText('昵称')).toBeNull()
+
+    fireEvent.change(oldPassword, { target: { value: 'old-password' } })
+    fireEvent.change(newPassword, { target: { value: 'short' } })
+    fireEvent.click(screen.getByRole('button', { name: '修改密码' }))
+    expect(await screen.findByText('新密码需为 8–128 位')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '个人资料' }))
+    expect(screen.getByLabelText('昵称')).toBeTruthy()
+    expect(screen.queryByText('新密码需为 8–128 位')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '登录安全' }))
+    expect((screen.getByLabelText('当前密码') as HTMLInputElement).value).toBe('')
+    expect((screen.getByLabelText('新密码') as HTMLInputElement).value).toBe('')
+  })
+
   it('reports a profile refresh failure without claiming the data is synchronized', async () => {
     const apis = createApis()
     apis.me.mockRejectedValue(new Error('资料读取失败'))
@@ -118,7 +176,7 @@ describe('AccountPage', () => {
     const apis = createApis()
     apis.updateNickname.mockRejectedValue(new Error('昵称已存在'))
     renderAccount(apis)
-    const nickname = await screen.findByLabelText('昵称')
+    const nickname = await screen.findByDisplayValue('Reader')
 
     fireEvent.change(nickname, { target: { value: 'Taken Name' } })
     fireEvent.click(screen.getByRole('button', { name: '保存昵称' }))
@@ -131,6 +189,7 @@ describe('AccountPage', () => {
     const apis = createApis()
     apis.changePassword.mockRejectedValue(new Error('当前密码错误'))
     renderAccount(apis)
+    fireEvent.click(await screen.findByRole('button', { name: '登录安全' }))
     const oldPassword = await screen.findByLabelText('当前密码')
     const newPassword = screen.getByLabelText('新密码')
 
@@ -151,6 +210,7 @@ describe('AccountPage', () => {
 
   it('clears the session after changing the password and asks for login before returning', async () => {
     renderAccount()
+    fireEvent.click(await screen.findByRole('button', { name: '登录安全' }))
     fireEvent.change(await screen.findByLabelText('当前密码'), {
       target: { value: 'old-password' },
     })

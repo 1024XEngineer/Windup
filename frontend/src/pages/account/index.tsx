@@ -1,13 +1,12 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 
+import accountBadgeArtwork from '@/assets/account/illustrations/account-badge.webp'
 import type { User } from '@/entities'
 import { useAuthSession } from '@/features/auth-session'
-import { PageContainer } from '@/shared/ui'
 
-const fieldClass =
-  'min-h-11 w-full rounded-xl border border-[#98a39b] bg-white px-3.5 text-base text-[#1c231e] outline-none transition-[border-color,box-shadow] placeholder:text-[#8a948c] focus:border-[#284331] focus:ring-2 focus:ring-[#284331]/18 disabled:cursor-not-allowed disabled:bg-[#f1f3f1]'
-const primaryButtonClass =
-  'inline-flex min-h-11 items-center justify-center rounded-xl bg-[#284331] px-4 text-sm font-semibold text-white shadow-[0_8px_20px_rgba(40,67,49,0.14)] transition-[background-color,transform] hover:bg-[#1f3627] active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331] disabled:cursor-not-allowed disabled:bg-[#77857b] disabled:shadow-none'
+import './account.css'
+
+const MAX_NICKNAME_LENGTH = 50
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '操作失败，请稍后重试'
@@ -46,6 +45,7 @@ export function AccountPage() {
   const [newPassword, setNewPassword] = useState('')
   const [isChangingPassword, setIsChangingPassword] = useState(false)
   const [passwordError, setPasswordError] = useState<string | null>(null)
+  const [activeSection, setActiveSection] = useState<'profile' | 'security'>('profile')
   const nicknameId = useId()
   const oldPasswordId = useId()
   const newPasswordId = useId()
@@ -82,7 +82,7 @@ export function AccountPage() {
       setProfileError('昵称不能为空')
       return
     }
-    if (normalizedNickname.length > 50) {
+    if (normalizedNickname.length > MAX_NICKNAME_LENGTH) {
       setProfileSuccess(null)
       setProfileError('昵称不能超过 50 个字符')
       return
@@ -129,180 +129,256 @@ export function AccountPage() {
     void logout().catch(() => undefined)
   }
 
+  function selectSection(section: 'profile' | 'security') {
+    setActiveSection(section)
+    setProfileError(null)
+    setProfileSuccess(null)
+    setPasswordError(null)
+    setOldPassword('')
+    setNewPassword('')
+  }
+
   if (!currentUser) return null
 
+  const displayName = currentUser.nickname || currentUser.email.split('@')[0]
+  const initial = Array.from(displayName)[0]?.toUpperCase() ?? 'W'
+
   return (
-    <PageContainer>
-      <section className="mx-auto max-w-5xl text-[#1c231e]">
-        <header className="border-b border-[#284331]/14 pb-7">
-          <p className="text-[11px] font-bold tracking-[0.16em] text-[#617064] uppercase">
-            Windup account
-          </p>
-          <h1 className="mt-2 font-serif text-3xl leading-tight font-semibold sm:text-4xl">
-            账号中心
-          </h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-[#68736a]">
-            查看账号资料，更新 Windup 中显示的称呼，或管理登录密码。
-          </p>
-        </header>
-
-        <div className="mt-7 grid items-start gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(19rem,0.85fr)]">
-          <section className="overflow-hidden rounded-2xl border border-[#284331]/16 bg-[#f8faf8] shadow-[0_14px_38px_rgba(24,40,29,0.07)]">
-            <div className="grid gap-5 border-b border-[#284331]/12 bg-[#e9efea] px-5 py-5 sm:grid-cols-[1fr_auto] sm:items-center sm:px-6">
-              <div>
-                <p className="text-xs font-semibold text-[#617064]">当前账号</p>
-                <p className="mt-1 break-all font-mono text-sm font-semibold text-[#284331]">
-                  {currentUser.email}
-                </p>
-              </div>
-              <div className="justify-self-start rounded-full border border-[#56725d]/25 bg-[#f5faf6] px-3 py-1.5 text-xs font-semibold text-[#3d6047] sm:justify-self-end">
-                {currentUser.emailVerifiedAt ? '邮箱已验证' : '邮箱未验证'}
-              </div>
-            </div>
-
-            <div className="grid gap-6 px-5 py-6 sm:px-6">
-              <dl className="grid gap-2 rounded-xl border border-[#284331]/10 bg-white/70 p-4 text-sm sm:grid-cols-[8rem_1fr] sm:items-center">
-                <dt className="font-semibold text-[#617064]">邮箱验证时间</dt>
-                <dd className="text-[#344039]">
-                  {currentUser.emailVerifiedAt ? (
-                    <time dateTime={currentUser.emailVerifiedAt}>
-                      {formatVerificationTime(currentUser.emailVerifiedAt)}
-                    </time>
-                  ) : (
-                    '尚未验证'
-                  )}
-                </dd>
-              </dl>
-
-              <form className="grid gap-4" onSubmit={saveNickname} noValidate>
-                <div className="grid gap-1.5">
-                  <label htmlFor={nicknameId} className="text-sm font-semibold text-[#344039]">
-                    昵称
-                  </label>
-                  <input
-                    id={nicknameId}
-                    type="text"
-                    autoComplete="nickname"
-                    value={nickname}
-                    maxLength={51}
-                    disabled={isProfileLoading || isSavingNickname}
-                    onChange={(event) => setNickname(event.target.value)}
-                    className={fieldClass}
-                    aria-describedby={`${nicknameId}-hint`}
-                  />
-                  <span id={`${nicknameId}-hint`} className="text-xs text-[#778078]">
-                    1–50 个字符；保存后会同步显示在页面顶栏。
-                  </span>
-                </div>
-
-                {profileError && (
-                  <p
-                    role="alert"
-                    className="rounded-xl bg-[#fff5f3] px-3.5 py-3 text-sm text-[#8a3932]"
-                  >
-                    {profileError}
-                  </p>
-                )}
-                {profileSuccess && (
-                  <p
-                    role="status"
-                    className="rounded-xl bg-[#eef5ef] px-3.5 py-3 text-sm text-[#34533c]"
-                  >
-                    {profileSuccess}
-                  </p>
-                )}
-
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <span className="text-xs text-[#778078]">
-                    {isProfileLoading
-                      ? '正在同步最新资料…'
-                      : isProfileFresh
-                        ? '资料已同步'
-                        : '资料同步失败'}
-                  </span>
-                  <button
-                    type="submit"
-                    disabled={isProfileLoading || isSavingNickname}
-                    className={primaryButtonClass}
-                  >
-                    {isSavingNickname ? '正在保存…' : '保存昵称'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </section>
-
-          <div className="grid gap-6">
-            <section className="rounded-2xl border border-[#284331]/16 bg-[#f8faf8] p-5 shadow-[0_14px_38px_rgba(24,40,29,0.07)] sm:p-6">
-              <h2 className="font-serif text-xl font-semibold">登录安全</h2>
-              <p className="mt-2 text-sm leading-6 text-[#68736a]">
-                修改后当前会话会立即退出，需要使用新密码重新登录。
-              </p>
-
-              <form className="mt-5 grid gap-4" onSubmit={changePassword} noValidate>
-                <label
-                  htmlFor={oldPasswordId}
-                  className="grid gap-1.5 text-sm font-semibold text-[#344039]"
-                >
-                  当前密码
-                  <input
-                    id={oldPasswordId}
-                    type="password"
-                    autoComplete="current-password"
-                    value={oldPassword}
-                    disabled={isChangingPassword}
-                    onChange={(event) => setOldPassword(event.target.value)}
-                    className={fieldClass}
-                  />
-                </label>
-                <div className="grid gap-1.5 text-sm font-semibold text-[#344039]">
-                  <label htmlFor={newPasswordId}>新密码</label>
-                  <input
-                    id={newPasswordId}
-                    type="password"
-                    autoComplete="new-password"
-                    value={newPassword}
-                    disabled={isChangingPassword}
-                    onChange={(event) => setNewPassword(event.target.value)}
-                    className={fieldClass}
-                    aria-describedby={`${newPasswordId}-hint`}
-                  />
-                  <span id={`${newPasswordId}-hint`} className="text-xs font-normal text-[#778078]">
-                    8–128 位
-                  </span>
-                </div>
-
-                {passwordError && (
-                  <p
-                    role="alert"
-                    className="rounded-xl bg-[#fff5f3] px-3.5 py-3 text-sm text-[#8a3932]"
-                  >
-                    {passwordError}
-                  </p>
-                )}
-
-                <button type="submit" disabled={isChangingPassword} className={primaryButtonClass}>
-                  {isChangingPassword ? '正在修改…' : '修改密码'}
-                </button>
-              </form>
-            </section>
-
-            <section className="rounded-2xl border border-[#8a5a4d]/20 bg-[#fff9f6] p-5 sm:p-6">
-              <h2 className="text-sm font-semibold text-[#613e35]">退出登录</h2>
-              <p className="mt-2 text-sm leading-6 text-[#7a5b53]">
-                退出只影响当前浏览器中的 Windup 会话。
-              </p>
+    <div data-account-page className="min-h-[100dvh] bg-[#f3f2ec] text-[#252b26]">
+      <div
+        data-account-shell
+        className="mx-auto w-full max-w-[1560px] px-4 pt-[clamp(4.75rem,11vh,7rem)] pb-10 sm:px-6 xl:px-8"
+      >
+        <header className="min-h-[clamp(9rem,16vw,12rem)]">
+          <div>
+            <p className="font-mono text-[0.65rem] tracking-[0.12em] text-[#737b74] uppercase">
+              Account
+            </p>
+            <div className="mt-2 flex items-center gap-[clamp(0.5rem,1.5vw,1.25rem)]">
+              <h1 className="font-serif text-[clamp(2.15rem,4.5vw,4rem)] leading-none font-medium tracking-[-0.055em] text-[#1d251f]">
+                账号中心
+              </h1>
               <button
                 type="button"
-                onClick={signOut}
-                className="mt-4 inline-flex min-h-11 items-center justify-center rounded-xl border border-[#8a5a4d]/35 px-4 text-sm font-semibold text-[#7b4035] transition-colors hover:bg-[#f5e8e3] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7b4035]"
+                aria-label="摇一摇工牌"
+                onClick={(event) => {
+                  event.currentTarget.classList.remove('account-badge-shake')
+                  // Force a reflow so rapid clicks can restart the one-shot CSS animation.
+                  void event.currentTarget.offsetWidth
+                  event.currentTarget.classList.add('account-badge-shake')
+                }}
+                className="account-badge-button h-[clamp(11rem,19vw,14rem)] w-[clamp(7.5rem,13vw,10rem)] shrink-0 cursor-pointer border-0 bg-transparent p-0 focus-visible:rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]"
               >
-                退出当前账号
+                <img
+                  data-testid="account-pixel-mark"
+                  src={accountBadgeArtwork}
+                  alt=""
+                  aria-hidden="true"
+                  draggable="false"
+                  className="h-full w-full object-contain"
+                  style={{ imageRendering: 'pixelated' }}
+                />
               </button>
-            </section>
+            </div>
           </div>
+        </header>
+
+        <div
+          data-account-layout="settings"
+          className="grid gap-6 md:grid-cols-[14rem_minmax(0,1fr)] md:gap-[clamp(2rem,4vw,4.5rem)]"
+        >
+          <aside className="flex flex-col">
+            <nav aria-label="账号设置" className="grid gap-1 border-t border-[#d0d2cc] pt-4">
+              {(
+                [
+                  ['profile', '个人资料'],
+                  ['security', '登录安全'],
+                ] as const
+              ).map(([section, label]) => (
+                <button
+                  key={section}
+                  type="button"
+                  onClick={() => selectSection(section)}
+                  aria-current={activeSection === section ? 'page' : undefined}
+                  className={`min-h-10 rounded-lg px-3 text-left text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331] ${
+                    activeSection === section
+                      ? 'bg-[#dde2db] font-semibold text-[#284331]'
+                      : 'text-[#687069] hover:bg-[#e9ebe6] hover:text-[#303832]'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </nav>
+
+            <button
+              type="button"
+              onClick={signOut}
+              className="mt-5 min-h-10 rounded-lg px-3 text-left text-sm text-[#865046] transition-colors hover:bg-[#f0e7e3] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#8a4338]"
+            >
+              退出当前账号
+            </button>
+          </aside>
+
+          <section className="min-w-0 rounded-[1.1rem] border border-[#d1d7d0] bg-white p-6 sm:p-7">
+            {activeSection === 'profile' ? (
+              <div>
+                <header>
+                  <h2 className="text-xl font-semibold tracking-[-0.025em] text-[#29302a]">
+                    个人资料
+                  </h2>
+                  <p className="mt-1.5 text-sm text-[#747a74]">管理你的公开身份和账号邮箱。</p>
+                </header>
+
+                <div className="mt-5 flex items-center gap-4 border-b border-[#d9dad5] pb-5">
+                  <span className="grid size-14 shrink-0 place-items-center rounded-full bg-[#dce1da] font-serif text-2xl text-[#284331]">
+                    {initial}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate text-base font-semibold text-[#29302a]">{displayName}</p>
+                    <p className="mt-1 truncate text-sm text-[#717670]">{currentUser.email}</p>
+                  </div>
+                  <span className="ml-auto rounded-full bg-[#e5ede5] px-2.5 py-1 text-xs font-medium text-[#31533b]">
+                    {currentUser.emailVerifiedAt ? '已验证' : '未验证'}
+                  </span>
+                </div>
+
+                <form className="mt-5 grid gap-4" onSubmit={saveNickname} noValidate>
+                  <div className="grid max-w-xl gap-1.5">
+                    <label htmlFor={nicknameId} className="text-sm font-medium text-[#414741]">
+                      昵称
+                    </label>
+                    <input
+                      id={nicknameId}
+                      type="text"
+                      autoComplete="nickname"
+                      value={nickname}
+                      maxLength={MAX_NICKNAME_LENGTH + 1}
+                      disabled={isProfileLoading || isSavingNickname}
+                      onChange={(event) => setNickname(event.target.value)}
+                      className="account-field"
+                      aria-describedby={`${nicknameId}-hint`}
+                    />
+                    <span id={`${nicknameId}-hint`} className="text-xs leading-5 text-[#7a7f79]">
+                      1–{MAX_NICKNAME_LENGTH} 个字符，保存后同步显示在页面顶栏。
+                    </span>
+                  </div>
+
+                  <dl className="grid max-w-xl gap-1 rounded-lg bg-[#eff0ec] px-4 py-3 text-sm sm:grid-cols-[8rem_1fr] sm:items-center">
+                    <dt className="text-[#747a74]">邮箱验证时间</dt>
+                    <dd className="text-[#414741]">
+                      {currentUser.emailVerifiedAt ? (
+                        <time dateTime={currentUser.emailVerifiedAt}>
+                          {formatVerificationTime(currentUser.emailVerifiedAt)}
+                        </time>
+                      ) : (
+                        '尚未验证'
+                      )}
+                    </dd>
+                  </dl>
+
+                  {profileError && (
+                    <p
+                      role="alert"
+                      className="max-w-xl rounded-lg bg-[#f7ebe7] px-3 py-2.5 text-sm text-[#8a4338]"
+                    >
+                      {profileError}
+                    </p>
+                  )}
+                  {profileSuccess && (
+                    <p
+                      role="status"
+                      className="max-w-xl rounded-lg bg-[#e9f0e9] px-3 py-2.5 text-sm text-[#31533b]"
+                    >
+                      {profileSuccess}
+                    </p>
+                  )}
+
+                  <div className="flex max-w-xl flex-wrap items-center justify-between gap-4">
+                    <span className="text-xs text-[#7a7f79]">
+                      {isProfileLoading
+                        ? '正在同步最新资料…'
+                        : isProfileFresh
+                          ? '资料已同步'
+                          : '资料同步失败'}
+                    </span>
+                    <button
+                      type="submit"
+                      disabled={isProfileLoading || isSavingNickname}
+                      className="account-primary-button"
+                    >
+                      {isSavingNickname ? '正在保存…' : '保存昵称'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            ) : (
+              <div>
+                <header>
+                  <h2 className="text-xl font-semibold tracking-[-0.025em] text-[#29302a]">
+                    登录安全
+                  </h2>
+                  <p className="mt-1.5 text-sm leading-6 text-[#747a74]">
+                    修改密码后，当前会话会退出。
+                  </p>
+                </header>
+
+                <form className="mt-5 grid max-w-xl gap-4" onSubmit={changePassword} noValidate>
+                  <label
+                    htmlFor={oldPasswordId}
+                    className="grid gap-1.5 text-sm font-medium text-[#414741]"
+                  >
+                    当前密码
+                    <input
+                      id={oldPasswordId}
+                      type="password"
+                      autoComplete="current-password"
+                      value={oldPassword}
+                      disabled={isChangingPassword}
+                      onChange={(event) => setOldPassword(event.target.value)}
+                      className="account-field"
+                    />
+                  </label>
+                  <div className="grid gap-1.5 text-sm font-medium text-[#414741]">
+                    <label htmlFor={newPasswordId}>新密码</label>
+                    <input
+                      id={newPasswordId}
+                      type="password"
+                      autoComplete="new-password"
+                      value={newPassword}
+                      disabled={isChangingPassword}
+                      onChange={(event) => setNewPassword(event.target.value)}
+                      className="account-field"
+                      aria-describedby={`${newPasswordId}-hint`}
+                    />
+                    <span
+                      id={`${newPasswordId}-hint`}
+                      className="text-xs font-normal text-[#7a7f79]"
+                    >
+                      8–128 位
+                    </span>
+                  </div>
+                  {passwordError && (
+                    <p
+                      role="alert"
+                      className="rounded-lg bg-[#f7ebe7] px-3 py-2.5 text-sm text-[#8a4338]"
+                    >
+                      {passwordError}
+                    </p>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={isChangingPassword}
+                    className="account-primary-button justify-self-start"
+                  >
+                    {isChangingPassword ? '正在修改…' : '修改密码'}
+                  </button>
+                </form>
+              </div>
+            )}
+          </section>
         </div>
-      </section>
-    </PageContainer>
+      </div>
+    </div>
   )
 }
