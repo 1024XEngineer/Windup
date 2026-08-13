@@ -1,4 +1,14 @@
-import { EventStreamError, type EventStreamSubscriber } from '@/shared/api/stream'
+import {
+  createApiClient,
+  getApiAccessToken,
+  recoverApiUnauthorized,
+  resolveApiBaseUrl,
+} from '@/shared/api'
+import {
+  createEventStreamSubscriber,
+  EventStreamError,
+  type EventStreamSubscriber,
+} from '@/shared/api/stream'
 
 import type {
   CompleteAnimationGenerationInput,
@@ -641,4 +651,29 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
   }
 
   return apis
+}
+
+/** 为浏览器宿主装配统一的 API 前缀、会话恢复与 SSE 鉴权。 */
+export function createAuthenticatedGenerationApis(
+  fetchFn: typeof fetch = globalThis.fetch,
+): GenerationApis {
+  const client = createApiClient({ fetchFn, getAccessToken: getApiAccessToken })
+  const stream = createEventStreamSubscriber({
+    fetchFn,
+    getAccessToken: getApiAccessToken,
+    recoverUnauthorized: recoverApiUnauthorized,
+  })
+
+  return createGenerationApis({
+    transport: {
+      async request(url, init) {
+        const data = await client.request<unknown>(url, { ...init, credentials: 'include' })
+        return new Response(JSON.stringify({ code: 200, message: 'success', data }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      },
+      stream: (url, options) => stream(`${resolveApiBaseUrl()}${url}`, options),
+    },
+  })
 }

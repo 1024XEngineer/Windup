@@ -10,7 +10,13 @@ import type {
   ReviewWorkflowNode,
   WorkflowRunApis,
 } from '@/entities'
-import { characterApis, createMediaApis, projectApis, workflowRunApis } from '@/entities'
+import {
+  characterApis,
+  createAuthenticatedGenerationApis,
+  createMediaApis,
+  projectApis,
+  workflowRunApis,
+} from '@/entities'
 import { createCharacterAssetPublisher } from '@/features/export'
 import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
 
@@ -164,32 +170,18 @@ export async function createRealWorkflowEditorSession(
   }
 }
 
-/**
- * main 已提供真实 WorkflowRun、Project 与 Character 适配器；Generation 只有公开接口，
- * 尚无可合入的 HTTP 实现。这里明确拒绝生成，避免用演示数据污染正式 WorkflowRun。
- */
+/** 使用生产 Generation 适配器恢复并推进单条 WorkflowRun。 */
 export function createDefaultRealWorkflowEditorSession(
   runId: string,
 ): Promise<WorkflowEditorSession> {
   return createRealWorkflowEditorSession(runId, {
     workflowRunApis,
-    generationApis: createUnavailableGenerationApis(),
+    generationApis: createAuthenticatedGenerationApis(),
     mediaApis: createMediaApis(),
     projectApis,
     characterApis,
     onAsyncError: () => undefined,
   })
-}
-
-export function createUnavailableGenerationApis(): GenerationApis {
-  const unavailable = () =>
-    Promise.reject(new Error('GenerationApis 尚未接入真实后端，不能执行或恢复生成任务'))
-
-  return {
-    create: unavailable as GenerationApis['create'],
-    get: unavailable,
-    subscribe: () => () => undefined,
-  }
 }
 
 async function loadWorkflowCharacter(
