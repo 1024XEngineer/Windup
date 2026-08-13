@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
-import { characterApis, type Character } from '@/entities'
+import { CHARACTER_STATUS, characterApis, type Character } from '@/entities'
 import type { Paged } from '@/shared/pagination'
 import { Pagination } from '@/shared/ui'
 
@@ -32,6 +32,7 @@ export function AssetLibraryPage() {
       .listByProject(projectId, {
         page: pageNumber,
         pageSize: CHARACTER_PAGE_SIZE,
+        status: CHARACTER_STATUS.PUBLISHED,
       })
       .then(
         (page) => {
