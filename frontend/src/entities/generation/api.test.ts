@@ -53,7 +53,7 @@ describe('createGenerationApis', () => {
   it('生产适配器把 SSE 订阅接到配置的 API 地址', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
     const fetchFn = vi.fn(
-      async () =>
+      async (_input: string | URL | Request, _init?: RequestInit) =>
         new Response(
           `event: failed\ndata: ${JSON.stringify({
             ...taskData({ status: 'failed', result: null, error_message: 'provider unavailable' }),
