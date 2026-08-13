@@ -17,8 +17,6 @@ from pydantic import ValidationError
 
 from windup_ai_engine.master_prep import MASTER_POSES
 from windup_ai_engine.prompt import (
-    WALK_BODY_FRONT,
-    WALK_BODY_SIDE,
     build_attack_prompt,
     build_idle_prompt,
     build_jump_prompt,
@@ -132,8 +130,9 @@ def test_walk_prompt_picks_the_template_that_matches_facing():
     side = build_walk_prompt(facing=Facing.SIDE)
     front = build_walk_prompt(facing=Facing.FRONT)
     assert side != front
-    assert side == WALK_BODY_SIDE
-    assert front == WALK_BODY_FRONT
+    # 不再断言 side == WALK_BODY_SIDE:那两个常量随 #233 删了,而且提示词搬进 md 之后
+    # 那条断言是循环论证(两边读同一份文件的同一节,必然相等)。要测的是**方向没接反**,
+    # 那就直接查朝向锁短语落在哪一条里。
     assert "SIDE VIEW facing right" in side and "SIDE VIEW facing right" not in front
     assert "FACING THE VIEWER" in front and "FACING THE VIEWER" not in side
 
