@@ -390,3 +390,21 @@ def test_a_direction_with_no_frames_names_the_direction(monkeypatch, tmp_path):
         return _Proc(returncode=0)
     with pytest.raises(RenderStageError, match="一帧都没出"):
         _run_render(monkeypatch, tmp_path, _ok_but_empty)
+
+
+def test_driver_uses_bundled_chromium_not_branded_chrome():
+    """出帧台不得要求品牌版 Chrome。
+
+    ``channel: 'chrome'`` 在装了 Chrome 的开发机上能跑,在容器镜像里起不来
+    (playwright 只带 chromium),于是整个渲帧段无法部署。也不接受"先试 chrome
+    再退回 chromium"的链:出帧结果依赖具体浏览器,静默换一个等于同一份模型在
+    不同机器上出不同的帧。
+    """
+    from windup_framework.providers.render3d.sprite import STAGE_DIR
+
+    # 只看代码行:注释里提到 channel 是在解释为什么不用它。
+    code = [ln for ln in (STAGE_DIR / "bake_driver.mjs").read_text(encoding="utf-8").splitlines()
+            if not ln.lstrip().startswith(("//", "*", "/*"))]
+    launch = [ln for ln in code if "chromium.launch" in ln]
+    assert launch, "找不到浏览器启动这一行,断言会空跑成绿的"
+    assert "channel" not in "".join(launch), f"指定了浏览器 channel,容器里会起不来:{launch}"

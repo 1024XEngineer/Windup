@@ -27,7 +27,11 @@ const dirs = JSON.parse(DIRS);
 const n = +N;
 const minCov = +MIN_COVERAGE;
 
-const browser = await pw.chromium.launch({ channel: 'chrome' });
+// 用 playwright 自带的 chromium,不指定 channel:'chrome'。品牌版 Chrome 要另外装,
+// 容器镜像里没有,于是渲帧段在任何容器里都起不来(实测报 "Chromium distribution
+// 'chrome' is not found")。也不做"先试 chrome 再退回"的链 —— 出帧结果依赖具体
+// 浏览器,静默换一个等于同一份模型在不同机器上出不同的帧。
+const browser = await pw.chromium.launch();
 const page = await browser.newPage({ viewport: { width: 400, height: 300 } });
 const errs = [];
 page.on('pageerror', e => errs.push(String(e.message)));
