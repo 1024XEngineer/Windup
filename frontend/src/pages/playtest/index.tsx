@@ -76,7 +76,10 @@ export function PlaytestPage() {
 
 function PlaytestPageMessage({ children }: { children: string }) {
   return (
-    <main aria-label="预览台" className="grid min-h-screen place-items-center bg-app-surface-strong p-6">
+    <main
+      aria-label="预览台"
+      className="grid min-h-screen place-items-center bg-app-surface-strong p-6"
+    >
       <p className="text-sm font-medium text-app-ink-soft">{children}</p>
     </main>
   )

@@ -235,7 +235,9 @@ export function AccountPage() {
                     {initial}
                   </span>
                   <div className="min-w-0">
-                    <p className="truncate text-base font-semibold text-app-ink-soft">{displayName}</p>
+                    <p className="truncate text-base font-semibold text-app-ink-soft">
+                      {displayName}
+                    </p>
                     <p className="mt-1 truncate text-sm text-app-muted">{currentUser.email}</p>
                   </div>
                   <span className="ml-auto rounded-full bg-app-accent-soft px-2.5 py-1 text-xs font-medium text-app-accent">

@@ -898,7 +898,10 @@ function SelectedContext({
 
 function LoadingState({ label }: { label: string }) {
   return (
-    <div role="status" className="rounded-[1.25rem] border border-app-line bg-app-surface-raised p-5">
+    <div
+      role="status"
+      className="rounded-[1.25rem] border border-app-line bg-app-surface-raised p-5"
+    >
       <p className="text-xs font-medium text-app-muted">{label}</p>
       <div aria-hidden="true" className="mt-5 space-y-3">
         <span className="workspace-loading-line block h-3 w-2/3 rounded-full" />
@@ -923,7 +926,10 @@ function ErrorState({
   title: string
 }) {
   return (
-    <div role="alert" className="rounded-[1.25rem] border border-app-danger-line bg-app-danger-soft p-5">
+    <div
+      role="alert"
+      className="rounded-[1.25rem] border border-app-danger-line bg-app-danger-soft p-5"
+    >
       <p className="font-serif text-xl font-medium tracking-[-0.025em] text-app-danger">{title}</p>
       <p className="mt-2 text-xs leading-5 text-app-danger-muted">{description}</p>
       <div className="mt-5 flex flex-wrap gap-2.5">

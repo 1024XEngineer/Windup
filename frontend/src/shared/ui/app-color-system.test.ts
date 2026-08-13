@@ -59,9 +59,7 @@ describe('product color system', () => {
       expect(content, `${path} declares or consumes a page-owned palette`).not.toMatch(
         /--(?:editor|account)-/,
       )
-      expect(content, `${path} bypasses the product palette`).not.toMatch(
-        builtInPaletteUtility,
-      )
+      expect(content, `${path} bypasses the product palette`).not.toMatch(builtInPaletteUtility)
     }
   })
 
@@ -71,9 +69,7 @@ describe('product color system', () => {
       '../../pages/project-create/index.tsx',
       '../../pages/project-detail/index.tsx',
     ]) {
-      expect(source(path), `${path} does not consume the shared canvas`).toContain(
-        'bg-app-canvas',
-      )
+      expect(source(path), `${path} does not consume the shared canvas`).toContain('bg-app-canvas')
     }
   })
 })

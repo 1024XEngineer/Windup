@@ -264,7 +264,9 @@ function ErrorState() {
   return (
     <div className="mt-7 rounded-[1.5rem] border border-app-danger-line bg-app-danger-soft p-7">
       <h2 className="font-semibold text-app-danger">可预览资产暂时无法读取</h2>
-      <p className="mt-2 text-sm text-app-danger-muted">稍后刷新页面，或先回项目资产检查角色数据。</p>
+      <p className="mt-2 text-sm text-app-danger-muted">
+        稍后刷新页面，或先回项目资产检查角色数据。
+      </p>
       <Link
         to="/projects"
         className="mt-5 inline-flex min-h-10 items-center rounded-full border border-app-danger-line px-5 text-sm font-semibold text-app-danger"

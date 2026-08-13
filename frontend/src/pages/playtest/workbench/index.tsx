@@ -27,7 +27,10 @@ export function PlaytestWorkbench({
 
   if (!result.ok) {
     return (
-      <main aria-label="预览台" className="grid min-h-screen place-items-center bg-app-surface-strong p-6">
+      <main
+        aria-label="预览台"
+        className="grid min-h-screen place-items-center bg-app-surface-strong p-6"
+      >
         <p className="rounded-full border border-app-line bg-app-surface px-5 py-3 text-sm text-app-ink-soft">
           找不到指定造型，无法进入预览台。
         </p>
@@ -110,7 +113,9 @@ function PlaytestExperience({
                     aria-pressed={selected}
                     onClick={() => runtime.selectAction(action.id)}
                     className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-xs font-medium transition-colors ${
-                      selected ? 'bg-app-accent text-app-on-accent' : 'text-app-ink-soft hover:bg-app-surface-muted'
+                      selected
+                        ? 'bg-app-accent text-app-on-accent'
+                        : 'text-app-ink-soft hover:bg-app-surface-muted'
                     }`}
                   >
                     <span>{action.name}</span>

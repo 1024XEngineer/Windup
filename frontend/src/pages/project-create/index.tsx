@@ -162,7 +162,10 @@ export function ProjectCreatePage() {
 
           <div className="grid gap-5 sm:grid-cols-2">
             <div className="grid gap-2">
-              <label className="text-xs font-semibold text-app-ink-soft" htmlFor="project-perspective">
+              <label
+                className="text-xs font-semibold text-app-ink-soft"
+                htmlFor="project-perspective"
+              >
                 游戏视角
               </label>
               <select
