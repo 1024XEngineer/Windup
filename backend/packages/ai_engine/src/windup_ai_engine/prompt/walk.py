@@ -1,8 +1,7 @@
 """走路 i2v 提示词(视频路线)。
 
-**正文与实测理由都在 ``prompts/walk.md``**(#233)。本模块只留加载与按 facing 分流 ——
-那几条理由(为什么只写正向词、为什么朝向必须与母版一致、装备名词为什么不能进模板 #195)
-是拿钱和时间换来的记录,和它们解释的正文放在一起才不会失散。
+提示词正文在 ``prompts/walk.md``(#233),本模块只留加载与按 facing 分流。
+措辞经过校准,**逐字改动前先查内部实验记录**。
 """
 from __future__ import annotations
 
@@ -20,7 +19,7 @@ _DOC = "walk.md"
 # **那套机器不成立,已删(FennoAI 评审逮到)**:``prompt/__init__`` 里有
 # ``from .walk import WALK_BODY_FRONT, WALK_BODY_SIDE``,而这两个名字只有注解、从没赋值,
 # 于是这条 from-import 恰好经 ``__getattr__`` 触发 ``load_section`` —— md 照样在
-# **import 期**被读。实测:``import windup_ai_engine.prompt`` 期间读了 walk.md。
+# **import 期**被读:``import windup_ai_engine.prompt`` 会连带读进 walk.md。
 # 也就是说那段 docstring 描述的保证从来没生效过,它只是看起来生效。
 #
 # 删掉之后策略反而统一了,而且不需要任何延迟加载机器:
@@ -40,9 +39,8 @@ def build_walk_prompt(facing: Facing | str = Facing.SIDE) -> str:
         facing: :class:`Facing` 成员(或其等价字符串)。**必须与母版朝向一致**,
             否则模型会靠转身调和矛盾。
 
-    注:曾有 ``garment`` / ``feet`` 两个装备参数(默认 "the cape and tabard" / "boot")。
-    2026-08-12 随 #195 删除 —— 零写入方(``strategy.concrete._build_prompt`` 只传
-    ``facing``),于是每个角色都拿那个持剑披风原型的默认值。要按角色定制装备文字得先有
+    注:曾有 ``garment`` / ``feet`` 两个装备参数,随 #195 删除 —— 零写入方
+    (``strategy.concrete._build_prompt`` 只传 ``facing``)。要按角色定制装备文字得先有
     地方存"这个角色穿什么拿什么",那是角色卡契约的事;在这里留一个没人传的参数,只会
     让人以为该能力已经存在。
     """

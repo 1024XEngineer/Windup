@@ -1,6 +1,6 @@
 """跳跃 i2v 提示词(一次性动作,非循环)。
 
-**正文与实测理由都在 ``prompts/jump.md``**(#233)。本模块只留状态表、加载与分流。
+提示词正文在 ``prompts/jump.md``(#233)。本模块只留状态表、加载与分流。
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def build_jump_prompt(facing: Facing | str = Facing.SIDE) -> str:
     Args:
         facing: :class:`Facing` 成员(或其等价字符串),**必须与母版朝向一致**。
 
-    注:``garment`` / ``feet`` 两个装备参数随 #195 删除,理由见 ``prompts/walk.md``。
+    注:``garment`` / ``feet`` 两个装备参数随 #195 删除(零写入方),同 :mod:`.walk`。
     """
     # 非法值在此炸掉,别静默落到 FRONT 模板(理由见 walk.py 同处注释)。
     return load_section(_DOC, Facing(facing).value)

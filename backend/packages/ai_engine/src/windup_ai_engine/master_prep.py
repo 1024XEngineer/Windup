@@ -34,7 +34,7 @@ __all__ = ["add_headroom", "prepare_master", "MASTER_POSES"]
 
 # 各动作所需的母版姿态(生成专用母版时的姿势描述)。
 #
-# **正文与理由都在 ``prompt/prompts/master_poses.md``**(#233)。空值 = 该动作用中性站立
+# **正文在 ``prompt/prompts/master_poses.md``**(#233)。空值 = 该动作用中性站立
 # 母版即可,不需要专门生成 —— 这是全仓唯一允许"空提示词"的地方,故加载时显式放行;
 # 别把 ``allow_empty=True`` 抄到别的提示词上,那边空串会一路跑到付费调用、产出垃圾、
 # 任务还显示成功。
@@ -45,7 +45,7 @@ __all__ = ["add_headroom", "prepare_master", "MASTER_POSES"]
 # 这些 md 是包内资产,缺了意味着安装坏了(没打进 wheel),而这条管线的核心功能就是产出
 # 提示词 —— 带着坏安装起起来、等到某个付费任务跑到一半再炸,比 import 期炸差得多。
 # 两边方向一致(缺失即抛 PromptAssetError,绝不返回空串),只是抛的时机随形态不同。
-# 本 PR 里曾有一套 ``__getattr__`` 试图让常量也延迟到调用时读,实测那套机器没生效
+# 本 PR 里曾有一套 ``__getattr__`` 试图让常量也延迟到调用时读,验证下来没生效
 # (eager re-export 抵消了它),已删 —— 见 prompt/walk.py 里的说明。
 MASTER_POSES = {
     a: load_section("master_poses.md", a, allow_empty=True)

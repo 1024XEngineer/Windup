@@ -100,7 +100,7 @@ def test_prose_outside_the_code_fence_is_not_part_of_the_prompt(tmp_path, monkey
     """节里的散文一个字都不该进提示词 —— 只有代码块里的算数。
 
     这条是评审提的"为何中英文混用"引出的结构约束（minorcell，#256）：搬进 md 之后，
-    中文实测理由与英文提示词字面量在页面上是同级段落，看不出哪段是数据。代码块把这个
+    说明文字与提示词字面量若是同级段落，就看不出哪段是数据。代码块把这个
     区分还回来，而这条测试保证它不只是排版好看——框外的东西真的进不去。
     """
     md = _inline(monkeypatch, tmp_path,
@@ -119,10 +119,9 @@ def test_two_code_fences_in_one_section_raise(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("doc", ["walk.md", "jump.md", "idle.md", "attack.md", "master_poses.md"])
 def test_every_shipped_document_keeps_prose_and_data_separated(doc: str):
-    """随包发的每一份 md：说明在框外、数据在框内，且框内不含中文。
+    """随包发的每一份 md：数据在框内，且框内不含中文。
 
-    提示词正文必须是英文（送给 i2v 模型的，措辞是实测调过的，逐字不能动）；理由必须能用
-    中文写（给组内人读）。两者混在同一段落里就是评审看到的那个样子。
+    提示词正文是送给模型的英文字面量；框外的说明文字进不去（见上一条）。
     """
     from windup_ai_engine.prompt._md import load_doc
 
@@ -143,11 +142,12 @@ def test_every_action_document_has_both_facings(action: str, facing: str):
 
 @pytest.mark.parametrize("action", sorted(BUILDERS))
 def test_prose_before_the_sections_never_leaks_into_the_prompt(action: str):
-    """节外的实测理由是写给人看的,一个字都不该混进送去生成的文本。"""
+    """节外的说明是写给人看的,一个字都不该混进送去生成的文本。"""
     for facing in ("side", "front"):
         text = BUILDERS[action](facing)
         assert "#" not in text, f"{action}.{facing} 混进了 markdown 标题"
-        assert "实测" not in text and "母版" not in text, f"{action}.{facing} 混进了中文理由"
+        assert not any("\u4e00" <= c <= "\u9fff" for c in text), \
+            f"{action}.{facing} 混进了中文说明"
 
 
 def test_illegal_facing_raises_instead_of_falling_back_to_front():
