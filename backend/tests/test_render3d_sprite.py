@@ -5,10 +5,14 @@
 """
 from __future__ import annotations
 
+import pathlib
+
 import numpy as np
 import pytest
 from PIL import Image
 import io
+
+from render3d_helpers import make_glb
 
 from windup_framework.providers.render3d import (
     DIRECTIONS_4,
@@ -241,3 +245,65 @@ def test_unknown_clip_name_lists_what_exists(rigged_fbx):
         pytest.skip("本机找不到 three.js")
     with pytest.raises(RenderStageError, match="没有片段"):
         p.render(rigged_fbx, clip="Walking", directions=4, frames=1, size=(256, 320))
+
+
+# ── 依赖发现:纯本地路径逻辑,不需要真的出帧 ─────────────────────────────────
+
+
+def test_three_discovery_survives_unstat_able_paths(monkeypatch, tmp_path):
+    """向上搜 node_modules 会走到 /,那里有些合成入口对 stat 直接报错。
+
+    问不出来必须当成"没有",否则整条发现逻辑连同所有依赖它的用例一起崩。
+    """
+    from windup_framework.providers.render3d import sprite
+
+    class _Boom(pathlib.Path):
+        def is_dir(self):
+            raise OSError(22, "Invalid argument")
+
+    monkeypatch.delenv("WINDUP_THREE_DIR", raising=False)
+    assert sprite._is_dir(_Boom(tmp_path)) is False
+
+
+def test_explicit_three_dir_wins_over_search(monkeypatch, tmp_path):
+    """显式指定就不再搜 —— 搜索是兜底,不该覆盖调用方的明确意图。"""
+    from windup_framework.providers.render3d import sprite
+
+    monkeypatch.setenv("WINDUP_THREE_DIR", str(tmp_path / "my-three"))
+    assert sprite._discover_three() == tmp_path / "my-three"
+
+
+def test_missing_three_reports_how_to_fix():
+    """找不到 three 要说清怎么办,不能只抛一句 None。"""
+    from windup_framework.providers.render3d import (
+        LocalSpriteRenderProvider,
+        RenderStageError,
+    )
+
+    p = LocalSpriteRenderProvider(three_dir=None)
+    p._three = None
+    with pytest.raises(RenderStageError, match="three"):
+        p.render(make_glb(), directions=4, frames=4)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"directions": 3}, "朝向数"),
+        ({"directions": 0}, "朝向数"),
+        ({"material": "studio"}, "未知材质"),
+        ({"frames": 0}, "帧数"),
+    ],
+)
+def test_bad_arguments_are_refused_before_any_work(kwargs, match):
+    """认不出的取值当场抛。
+
+    材质那条尤其重要:有兜底分支的话拼错的名字会静默落到同一处,"换材质做对照"
+    实际没换,而据此得出的结论不作数。
+    """
+    from windup_framework.providers.render3d import LocalSpriteRenderProvider
+
+    call = {"directions": 4, "frames": 4, "material": "cel"}
+    call.update(kwargs)
+    with pytest.raises(ValueError, match=match):
+        LocalSpriteRenderProvider().render(make_glb(), **call)

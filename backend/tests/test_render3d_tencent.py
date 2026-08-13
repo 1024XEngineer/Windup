@@ -447,3 +447,66 @@ def test_every_extra_view_is_size_checked_before_paying():
         p.build_params(ok, {"back": oversize})
     with pytest.raises(ValueError, match="master"):
         p.build_params(oversize, {"back": ok})
+
+
+# ── 凭证与签名:纯计算、不联网,而且都是安全相关 ─────────────────────────────
+
+
+def test_credentials_never_leak_into_repr():
+    """凭证的 repr 不许带出密钥 —— provider 出错时 traceback 常常带上构造参数。"""
+    from windup_framework.providers.render3d import TencentCredentials
+
+    c = TencentCredentials("AKID_secret_id", "super_secret_key")
+    assert "super_secret_key" not in repr(c)
+    assert "AKID_secret_id" not in repr(c)
+
+
+def test_credentials_resolve_prefers_env_then_file(tmp_path, monkeypatch):
+    from windup_framework.providers.render3d import TencentCredentials
+    from windup_framework.providers.render3d import _tc3
+
+    monkeypatch.setenv("TENCENT_SECRET_ID", "env_id")
+    monkeypatch.setenv("TENCENT_SECRET_KEY", "env_key")
+    c = TencentCredentials.resolve()
+    assert (c.secret_id, c.secret_key) == ("env_id", "env_key")
+
+    monkeypatch.delenv("TENCENT_SECRET_ID")
+    monkeypatch.delenv("TENCENT_SECRET_KEY")
+    envfile = tmp_path / "tencent.env"
+    envfile.write_text("# 注释行\nTENCENT_SECRET_ID=file_id\nTENCENT_SECRET_KEY=file_key\n")
+    monkeypatch.setattr(_tc3, "ENVFILE", envfile)
+    c = TencentCredentials.resolve()
+    assert (c.secret_id, c.secret_key) == ("file_id", "file_key")
+
+
+def test_missing_credentials_say_what_to_set(tmp_path, monkeypatch):
+    """两处都没有就抛,不静默用空串 —— 空串会得到一个看不懂的鉴权错。"""
+    from windup_framework.providers.render3d import TencentCredentials
+    from windup_framework.providers.render3d import _tc3
+
+    monkeypatch.delenv("TENCENT_SECRET_ID", raising=False)
+    monkeypatch.delenv("TENCENT_SECRET_KEY", raising=False)
+    monkeypatch.setattr(_tc3, "ENVFILE", tmp_path / "nope.env")
+    with pytest.raises(RuntimeError, match="TENCENT_SECRET_ID"):
+        TencentCredentials.resolve()
+
+
+def test_redact_hides_signature_and_key_query_params():
+    """日志/异常里回显 URL 时,预签名参数必须被抹掉。"""
+    from windup_framework.providers.render3d import redact
+
+    url = ("https://b.cos.example.com/m.glb?q-sign-algorithm=sha1"
+           "&q-ak=AKIDxxxx&q-signature=deadbeefcafe&q-key-time=1&x=ok")
+    out = redact(url)
+    assert "deadbeefcafe" not in out
+    assert "AKIDxxxx" not in out
+    assert "x=ok" in out, "不该把无关参数也抹掉"
+
+
+def test_api_error_keeps_the_vendor_code():
+    """错误码要原样带出去 —— 上层按它区分"积分不足"与"接口坏了"。"""
+    from windup_framework.providers.render3d import TencentApiError
+
+    e = TencentApiError("ResourceInsufficient", "余额不足")
+    assert e.code == "ResourceInsufficient"
+    assert "余额不足" in str(e)
