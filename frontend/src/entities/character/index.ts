@@ -7,9 +7,13 @@ export type ActionType = string
 export const CHARACTER_STATUS = {
   DRAFT: 0,
   PUBLISHED: 1,
+  UNKNOWN: 'unknown',
 } as const
 
-export type CharacterStatus = (typeof CHARACTER_STATUS)[keyof typeof CHARACTER_STATUS]
+export type CharacterPublicationStatus =
+  | typeof CHARACTER_STATUS.DRAFT
+  | typeof CHARACTER_STATUS.PUBLISHED
+export type CharacterStatus = CharacterPublicationStatus | typeof CHARACTER_STATUS.UNKNOWN
 
 export interface Frame {
   /** 使用后端显式返回的帧序号，不用数组下标替代。 */
@@ -78,7 +82,7 @@ export interface CharacterApis {
 }
 
 export interface CharacterPageQuery extends PageQuery {
-  status?: CharacterStatus
+  status?: CharacterPublicationStatus
 }
 
 interface CharacterFrameDto {
@@ -129,7 +133,7 @@ function toBackendId(value: string, field: string): number {
 
 function mapCharacterStatus(status: number): CharacterStatus {
   if (status === CHARACTER_STATUS.DRAFT || status === CHARACTER_STATUS.PUBLISHED) return status
-  throw new TypeError('Character.status 必须是 0 或 1')
+  return CHARACTER_STATUS.UNKNOWN
 }
 
 function mapFrame(dto: CharacterFrameDto): Frame {

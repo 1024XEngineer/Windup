@@ -23,6 +23,7 @@ export type {
   Character,
   CharacterApis,
   CharacterPageQuery,
+  CharacterPublicationStatus,
   CharacterStatus,
   CreateCharacterInput,
   Frame,

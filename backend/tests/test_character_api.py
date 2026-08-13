@@ -1,5 +1,8 @@
 """角色 CRUD API 集成测试。"""
 
+from windup_app.server.character.model import Character
+from windup_common.enums.character import CharacterStatus
+
 
 def _create_project(auth_client, name: str = "默认项目") -> dict:
     """创建一个项目并返回响应 data。"""
@@ -47,6 +50,15 @@ def _payload_with_frames(project_id: int, **overrides):
     }
     base.update(overrides)
     return base
+
+
+def test_character_model_defaults_to_draft(db_session):
+    """非 API 写入也不得把尚无真实动作帧的角色默认为已发布。"""
+    character = Character(project_id=1, workflow_run_id=999, character_data={})
+    db_session.add(character)
+    db_session.flush()
+
+    assert character.status == CharacterStatus.DRAFT
 
 
 # -- POST /characters --------------------------------------------------------

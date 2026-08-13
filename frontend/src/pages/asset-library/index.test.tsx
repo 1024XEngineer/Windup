@@ -27,7 +27,7 @@ function renderRoute(route: string) {
 }
 
 describe('AssetLibraryPage', () => {
-  it('hides draft characters until they contain a published action', async () => {
+  it('hides draft characters from the published asset list', async () => {
     renderRoute('/projects/42/assets')
 
     expect(await screen.findByRole('heading', { name: '角色' })).toBeTruthy()
