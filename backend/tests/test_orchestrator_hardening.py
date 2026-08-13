@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from unittest.mock import Mock
 
 import httpx
 import pytest
 
+from windup_app.server.media.model import MediaUploadInput
+from windup_app.server.media.service import ObjectStorageMediaService
 from windup_app.server.orchestrator._fetch import (
     MAX_FETCH_BYTES,
     FetchNotAllowed,
@@ -29,6 +32,7 @@ from windup_app.web.api.generation import (
     CharacterImageGenerateRequest,
     _EventBus,
 )
+from windup_common.enums.media import MediaCategory
 from windup_framework.config.storage import StorageSettings
 
 
@@ -55,6 +59,30 @@ def test_storage_download_base_accepts_documented_bare_domain(configured, expect
 def test_storage_download_base_rejects_qiniu_s3_api_endpoint(configured):
     with pytest.raises(ValueError, match="S3 API"):
         StorageSettings(bucket_domain=configured).download_base
+
+
+def test_media_upload_rejects_s3_endpoint_before_uploading(monkeypatch):
+    import qiniu
+    import windup_app.server.media.service as media_service_module
+
+    monkeypatch.setattr(
+        media_service_module.storage_settings,
+        "bucket_domain",
+        "https://example-bucket.s3.cn-east-1.qiniucs.com",
+    )
+    put_data = Mock()
+    monkeypatch.setattr(qiniu, "put_data", put_data)
+
+    metadata = MediaUploadInput(
+        filename="character.png",
+        content_type="image/png",
+        size=3,
+        category=MediaCategory.REFERENCE_IMAGE,
+    )
+    with pytest.raises(ValueError, match="S3 API"):
+        ObjectStorageMediaService().upload(b"png", metadata)
+
+    put_data.assert_not_called()
 
 
 # ── ① 真实装配路径不能引用已删除的路线 ────────────────────────────────────

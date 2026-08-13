@@ -22,6 +22,7 @@ class ObjectStorageMediaService(MediaService):
         data: bytes,
         metadata: MediaUploadInput,
     ) -> MediaUploadResult:
+        download_base = storage_settings.download_base
         suffix = _file_suffix(metadata.filename)
         object_key = f"media/{metadata.category}/{uuid4().hex}{suffix}"
 
@@ -39,7 +40,7 @@ class ObjectStorageMediaService(MediaService):
             msg = f"七牛上传失败: status={resp.status_code}, body={resp.text}"
             raise RuntimeError(msg)
 
-        url = f"{storage_settings.download_base}/{object_key}"
+        url = f"{download_base}/{object_key}"
         return MediaUploadResult(
             url=url,
             object_key=object_key,
