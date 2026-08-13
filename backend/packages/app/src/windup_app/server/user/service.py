@@ -21,8 +21,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
+from windup_common.enums.quota import CreditReason
 from windup_common.exceptions import BizException
+from windup_framework.config.quota import settings as quota_settings
 
+from windup_app.server.quota.model import CreditAccount, CreditTransaction
 from windup_app.server.user.interface import UserService
 from windup_app.server.user.model import (
     ChangePasswordInput,
@@ -193,6 +196,9 @@ class SqlAlchemyUserService(UserService):
         session.add(user)
         session.flush()
 
+        # 注册送积分
+        self._create_credit_account(session, user.id)
+
         # 注册即登录，签发 token
         access_token = create_access_token(user.id, user.email)
         refresh_token, jti = create_refresh_token(user.id, user.email)
@@ -319,6 +325,8 @@ class SqlAlchemyUserService(UserService):
             user = User(email=input.email, email_verified_at=datetime.now(timezone.utc))
             session.add(user)
             session.flush()
+            # 自动注册送积分
+            self._create_credit_account(session, user.id)
             logger.info("[WINDUP] 验证码自动注册 | user_id=%s email=%s", user.id, user.email)
         else:
             if user.status == UserStatus.BANNED:
@@ -485,6 +493,34 @@ class SqlAlchemyUserService(UserService):
         return _to_view(user) if user else None
 
     # -- 内部方法 --------------------------------------------------------
+
+    def _create_credit_account(self, session: Session, user_id: int) -> None:
+        """注册时创建积分账户并赠送初始积分。"""
+        account = CreditAccount(
+            user_id=user_id,
+            balance=quota_settings.register_gift_amount,
+            frozen=0,
+            total_earned=quota_settings.register_gift_amount,
+            total_spent=0,
+        )
+        session.add(account)
+        session.flush()
+
+        txn = CreditTransaction(
+            user_id=user_id,
+            delta=quota_settings.register_gift_amount,
+            reason=CreditReason.REGISTER_GIFT,
+            billing_mode=0,  # PREPAID
+            ref_id=f"register:{user_id}",
+            balance_after=quota_settings.register_gift_amount,
+        )
+        session.add(txn)
+        session.flush()
+
+        logger.info(
+            "[WINDUP] 注册送积分 | user_id=%s amount=%s",
+            user_id, quota_settings.register_gift_amount,
+        )
 
     def _store_refresh_token(self, jti: str, user_id: int) -> None:
         """将 refresh_token 存入 Redis。"""
