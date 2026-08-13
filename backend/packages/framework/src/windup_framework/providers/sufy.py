@@ -23,9 +23,12 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import io
 import json
 import logging
+import math
 import re
 import time
 
@@ -273,6 +276,27 @@ _CONNECT_RETRIES = 3
 _RATE_LIMIT_TRIES = 3
 _MAX_RATE_LIMIT_WAIT = 30.0
 
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _retry_after_seconds(value: str) -> float | None:
+    try:
+        delay = float(value)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=timezone.utc)
+        delay = (retry_at.astimezone(timezone.utc) - _utc_now()).total_seconds()
+    if not math.isfinite(delay):
+        return None
+    return min(max(delay, 0.0), _MAX_RATE_LIMIT_WAIT)
+
+
 # 从响应里捞 data URI。模型把图放在 message.content 里,而不同网关的包裹层级不一样
 # (有的 content 是字符串、有的是 parts 数组),故对整个响应 JSON 做一次正则,
 # 不去猜层级 —— 猜错的代价是"调用成功、费用已产生、但我们说没图"。
@@ -328,11 +352,9 @@ class SufyImageProvider(ImageProvider):
                     "请稍后重试或检查服务商额度"
                 )
             retry_after = resp.headers.get("Retry-After", "")
-            try:
-                delay = float(retry_after)
-            except ValueError:
+            delay = _retry_after_seconds(retry_after)
+            if delay is None:
                 delay = float(2**attempt)
-            delay = min(max(delay, 0.0), _MAX_RATE_LIMIT_WAIT)
             logger.warning(
                 "图像服务返回 429，第 %d/%d 次请求，%.2f 秒后重试",
                 attempt,
