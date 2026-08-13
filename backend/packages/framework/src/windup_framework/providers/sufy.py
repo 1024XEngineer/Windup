@@ -277,13 +277,28 @@ _POST_TRIES = 3
 _MAX_RETRY_WAIT = 30.0
 _IMAGE_TIMEOUT_MULTIPLIER = 1.5
 
-# Cloudflare 52x 里唯一能确定"请求根本没到源站"的三个:521 源站拒绝连接、
-# 522 CF 与源站建连超时、523 源站不可达。三者都止步于 TCP 层,上游不可能已经开始生成,
-# 所以重发不会重复扣费 —— 这是它们可以重试、而其余 5xx 一律不可以的唯一理由。
+# 521 源站拒绝连接、522 建连超时、523 源站不可达:三者都止步于 TCP 层,上游不可能已经
+# 开始生成,所以重发不会重复扣费。
 #
-# **520 与 524 不属于这一组,不要加进来**:它们意味着连接已经建立、请求可能已在源站
-# 处理中(524 就是"源站 100 秒没答完"),重发一次就是为同一张图付两次钱。
-_UNREACHED_UPSTREAM_STATUS = frozenset({521, 522, 523})
+# **但这层含义是 Cloudflare 私有的,不是这三个数字的普遍含义** —— ``AI_BASE_URL`` 可指向
+# 任意 OpenAI 兼容网关,它或它前面的代理完全可以在把请求转发给上游之后返回同样的数字。
+# 所以判据是"码 + 来源"两者皆需,见 :func:`_from_cloudflare_edge`。
+#
+# **520 与 524 即使来自 Cloudflare 也不在此列**:连接已建立、请求可能正在源站处理中
+# (524 就是"源站 100 秒没答完"),重发一次就是为同一张图付两次钱。
+_CLOUDFLARE_UNREACHED_STATUS = frozenset({521, 522, 523})
+
+
+def _from_cloudflare_edge(response: httpx.Response) -> bool:
+    """响应是否由 Cloudflare 边缘自己生成 —— 52x 的"未达上游"只在这个前提下成立。
+
+    单看 ``cf-ray`` 不够:中继可以把上游的响应头原样拷进自己的错误响应,那时请求已经到过
+    上游,得靠 ``server: cloudflare`` 把这种中继排掉。两个信号缺一即判否 —— 错重试一次要
+    多付一张图的钱,错放弃只损失一次本可自动恢复的失败。
+    """
+    return bool(response.headers.get("cf-ray")) and (
+        response.headers.get("server", "").strip().lower().startswith("cloudflare")
+    )
 
 
 def _utc_now() -> datetime:
@@ -357,7 +372,7 @@ class SufyImageProvider(ImageProvider):
         )
 
     def _post(self, client: httpx.Client, body: dict) -> dict:
-        """发送请求，只重试确定没被上游收下的失败(429 与 ``_UNREACHED_UPSTREAM_STATUS``)。
+        """发送请求，只重试确定没被上游收下的失败(429，以及 Cloudflare 自己发的 52x)。
 
         为什么把 400 / 404 单独挑出来说:同一把 key 下不同网关的模型目录**不一样**。实测
         ``GET /v1/models``:一个网关 73 个模型、一个图像模型都没有;另一个 134 个、
@@ -367,7 +382,10 @@ class SufyImageProvider(ImageProvider):
         for attempt in range(1, _POST_TRIES + 1):
             resp = client.post(self._cfg.chat_completions_path, json=body)
             code = resp.status_code
-            if code != 429 and code not in _UNREACHED_UPSTREAM_STATUS:
+            retryable = code == 429 or (
+                code in _CLOUDFLARE_UNREACHED_STATUS and _from_cloudflare_edge(resp)
+            )
+            if not retryable:
                 break
             if attempt == _POST_TRIES:
                 raise RuntimeError(_retry_exhausted_message(code, _POST_TRIES))
