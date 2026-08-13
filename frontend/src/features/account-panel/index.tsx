@@ -262,6 +262,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
   const copyRestTimerRef = useRef<number | null>(null)
   const exitTimerRef = useRef<number | null>(null)
   const dismissedRef = useRef(false)
+  const closeRef = useRef<() => void>(() => undefined)
   const titleId = useId()
   const descriptionId = useId()
   const emailId = useId()
@@ -362,6 +363,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
       setSearchParams(next, { replace: true })
     })
   }
+  closeRef.current = close
 
   function selectMode(nextMode: LoginMode) {
     if (nextMode === mode) return
@@ -505,14 +507,13 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
     }
   }
 
-  function onDocumentKeyDown(event: globalThis.KeyboardEvent) {
-    if (event.key === 'Escape') close()
-  }
-
   useEffect(() => {
+    function onDocumentKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === 'Escape') closeRef.current()
+    }
     document.addEventListener('keydown', onDocumentKeyDown)
     return () => document.removeEventListener('keydown', onDocumentKeyDown)
-  })
+  }, [])
 
   function trapFocus(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.key !== 'Tab') return
@@ -707,8 +708,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
                 />
               )}
 
-              {((isRegister && registerStep === 1) ||
-                (!isRegister && mode === 'password')) && (
+              {((isRegister && registerStep === 1) || (!isRegister && mode === 'password')) && (
                 <AuthField
                   id={passwordId}
                   label="密码"
@@ -785,13 +785,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
               )}
             </div>
 
-            {isRegister ? (
-              <div className="auth-register-feedback" aria-live="polite">
-                {feedback}
-              </div>
-            ) : (
-              feedback
-            )}
+            {isRegister ? <div className="auth-register-feedback">{feedback}</div> : feedback}
 
             <button
               type="submit"

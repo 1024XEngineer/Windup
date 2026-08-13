@@ -113,6 +113,7 @@ describe('AccountPanel', () => {
     expect(screen.queryByLabelText('密码')).toBeNull()
     expect(screen.queryByLabelText('昵称（选填）')).toBeNull()
     expect(screen.queryByLabelText('验证码')).toBeNull()
+    expect(screen.getByTestId('register-fields').querySelector('[aria-live]')).toBeNull()
     expect(screen.getByRole('button', { name: '继续' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '登录' })).toBeTruthy()
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('邮箱')))
