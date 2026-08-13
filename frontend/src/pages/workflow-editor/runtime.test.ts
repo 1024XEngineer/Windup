@@ -10,7 +10,8 @@ import type {
   WorkflowRun,
   WorkflowRunApis,
 } from '@/entities'
-import { createRealWorkflowEditorSession, createUnavailableGenerationApis } from './runtime'
+import { registerApiAccessTokenProvider, registerApiUnauthorizedRecovery } from '@/shared/api'
+import { createDefaultRealWorkflowEditorSession, createRealWorkflowEditorSession } from './runtime'
 
 describe('createRealWorkflowEditorSession', () => {
   it('通过公开 MediaApis 上传角色参考图并固定用途分类', async () => {
@@ -332,15 +333,90 @@ describe('createRealWorkflowEditorSession', () => {
   })
 })
 
-describe('createUnavailableGenerationApis', () => {
-  it('在 main 尚无 Generation HTTP 适配器时明确失败，不返回演示结果', async () => {
-    const apis = createUnavailableGenerationApis()
+describe('createDefaultRealWorkflowEditorSession', () => {
+  it('使用真实 Generation 接口恢复任务，并在业务 401 后携带新 token 重放一次', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    let accessToken = 'expired-token'
+    const unregisterToken = registerApiAccessTokenProvider(() => accessToken)
+    const recover = vi.fn(async () => {
+      accessToken = 'refreshed-token'
+      return true
+    })
+    const unregisterRecovery = registerApiUnauthorizedRecovery(recover)
+    const generationTokens: Array<string | null> = []
+    const workflow = selectingCharacterTemplateWorkflowFixture()
+    workflow.nodes[1]!.generations = [{ taskId: '91', role: 'character_template' }]
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url === 'https://api.windup.test/workflow-runs/42') {
+        return apiSuccess({
+          id: 42,
+          project_id: 1,
+          nodes: workflow.nodes,
+          status: 'active',
+          version: 4,
+        })
+      }
+      if (url === 'https://api.windup.test/projects/1') {
+        return apiSuccess({
+          id: 1,
+          workflow_id: null,
+          project_name: '正式项目',
+          character_perspective: 1,
+          directional_movement: 1,
+          sprite_width: 64,
+          sprite_height: 64,
+          game_style: null,
+          sprite_sample_url: null,
+          create_at: '2026-08-10T00:00:00.000Z',
+          update_at: '2026-08-10T00:00:00.000Z',
+        })
+      }
+      if (url === 'https://api.windup.test/characters?project_id=1&page=1&page_size=100') {
+        return apiSuccess([], { total: 0, page: 1, page_size: 100 })
+      }
+      if (url === 'https://api.windup.test/generation/tasks/91?project_id=1') {
+        generationTokens.push(new Headers(init?.headers).get('authorization'))
+        if (generationTokens.length === 1) {
+          return new Response(
+            JSON.stringify({ code: 401, message: 'access token expired', data: null }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        return apiSuccess({
+          id: 91,
+          project_id: 1,
+          task_type: 'character_image',
+          status: 'failed',
+          input_payload: { num_images: 3 },
+          result: null,
+          error_message: 'provider unavailable',
+        })
+      }
+      throw new Error(`意外请求：${url}`)
+    })
 
-    await expect(apis.create(characterGenerationInput())).rejects.toThrow(
-      'GenerationApis 尚未接入真实后端',
-    )
-    await expect(apis.get('1', '9')).rejects.toThrow('GenerationApis 尚未接入真实后端')
-    expect(() => apis.subscribe('1', '9', vi.fn())).not.toThrow()
+    try {
+      const session = await createDefaultRealWorkflowEditorSession('42')
+
+      await expect(
+        session.controller.getGeneration('template', 'character_template'),
+      ).resolves.toMatchObject({
+        id: '91',
+        projectId: '1',
+        type: 'character_template',
+        status: 'failed',
+        error: 'provider unavailable',
+      })
+      expect(recover).toHaveBeenCalledOnce()
+      expect(generationTokens).toEqual(['Bearer expired-token', 'Bearer refreshed-token'])
+      session.dispose()
+    } finally {
+      fetchSpy.mockRestore()
+      unregisterRecovery()
+      unregisterToken()
+      vi.unstubAllEnvs()
+    }
   })
 })
 
@@ -574,13 +650,9 @@ function completeAnimationFixture(): Generation<'complete_animation'> {
   }
 }
 
-function characterGenerationInput() {
-  return {
-    type: 'character_template' as const,
-    projectId: '1',
-    prompt: '冒险家',
-    spriteWidth: 64,
-    spriteHeight: 64,
-    referenceMedia: [],
-  }
+function apiSuccess(data: unknown, extra: Record<string, unknown> = {}) {
+  return new Response(JSON.stringify({ code: 200, message: 'success', data, ...extra }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  })
 }
