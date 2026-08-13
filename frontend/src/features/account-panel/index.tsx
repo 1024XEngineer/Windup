@@ -5,8 +5,11 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ComponentPropsWithoutRef,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  type Ref,
 } from 'react'
 import {
   ArrowLeft,
@@ -86,6 +89,8 @@ const loginMotionCopy = [
 ] as const
 
 const REGISTER_STEP_COUNT = 4
+const AUTH_ICON_PROPS = { weight: 'light' as const }
+const AUTH_FIELD_CLASS = 'auth-screen-field w-full outline-none disabled:cursor-not-allowed'
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '操作失败，请稍后重试'
@@ -151,6 +156,71 @@ function KineticCopy({
         </span>
       ))}
     </div>
+  )
+}
+
+type AuthFieldProps = Omit<ComponentPropsWithoutRef<'input'>, 'onChange'> & {
+  label: string
+  icon: Icon
+  onValueChange: (value: string) => void
+  variant?: 'field' | 'password' | 'code'
+  action?: ReactNode
+  inputRef?: Ref<HTMLInputElement>
+}
+
+function AuthField({
+  id,
+  label,
+  icon: FieldIcon,
+  onValueChange,
+  variant = 'field',
+  action,
+  inputRef,
+  ...inputProps
+}: AuthFieldProps) {
+  const Shell = variant === 'password' ? 'div' : 'span'
+  const variantClass =
+    variant === 'password'
+      ? 'auth-password-field'
+      : variant === 'code'
+        ? 'auth-screen-code-field'
+        : ''
+
+  return (
+    <div className="auth-screen-label grid gap-2 text-sm font-semibold">
+      <label htmlFor={id} className="sr-only">
+        {label}
+      </label>
+      <Shell className={`auth-register-field-shell ${variantClass}`}>
+        <FieldIcon {...AUTH_ICON_PROPS} />
+        <input
+          ref={inputRef}
+          id={id}
+          onChange={(event) => onValueChange(event.target.value)}
+          className={AUTH_FIELD_CLASS}
+          {...inputProps}
+        />
+        {action}
+      </Shell>
+    </div>
+  )
+}
+
+function PasswordVisibilityButton({ visible, onClick }: { visible: boolean; onClick: () => void }) {
+  const VisibilityIcon = visible ? EyeClosed : Eye
+  return (
+    <button
+      type="button"
+      className="auth-password-visibility"
+      onClick={onClick}
+      aria-label={visible ? '隐藏密码' : '显示密码'}
+    >
+      <VisibilityIcon
+        key={visible ? 'closed' : 'open'}
+        className="auth-visibility-glyph"
+        {...AUTH_ICON_PROPS}
+      />
+    </button>
   )
 }
 
@@ -461,15 +531,13 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
     }
   }
 
-  const fieldClass =
-    'auth-screen-field min-h-12 w-full px-4 text-base outline-none disabled:cursor-not-allowed'
   const tabClass = 'auth-screen-tab min-h-11 flex-1 px-2 text-sm font-semibold'
   const submitLabel = isRegister ? '创建账号' : loginModeCopy[mode].submit
   const RegisterFieldIcon: Icon = [EnvelopeSimple, Keyhole, UserCircle, SealCheck][registerStep]
-  const iconProps = { weight: 'light' as const }
   const registerCopy = registrationStepCopy[registerStep]
   const titleCopy = isRegister ? registerCopy.title : loginWelcomeCopy.title
   const descriptionCopy = isRegister ? registerCopy.description : loginWelcomeCopy.description
+  const dialogLabel = isRegister ? '创建 Windup 账号' : '登录 Windup'
   const submitContent = isSubmitting
     ? '正在处理…'
     : isSendingCode
@@ -477,45 +545,76 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
       : isRegister && registerStep < REGISTER_STEP_COUNT - 1
         ? '继续'
         : submitLabel
+  const feedback = (
+    <>
+      {error && (
+        <p role="alert" className="auth-screen-toast auth-screen-toast-error">
+          {error}
+        </p>
+      )}
+      {success && (
+        <p role="status" className="auth-screen-toast auth-screen-toast-success">
+          {success}
+        </p>
+      )}
+    </>
+  )
 
   return (
     <div
-      className={`auth-screen auth-screen-animated fixed inset-0 z-[70] overflow-y-auto text-[#1c231e] ${
+      className={`auth-screen auth-screen-animated fixed inset-0 z-[70] overflow-y-auto ${
         isExiting ? 'auth-screen-exiting' : ''
-      } ${isRegister ? 'auth-register-screen' : 'auth-login-screen'}`}
+      } ${isRegister ? 'auth-register-screen' : ''}`}
     >
-      <div className="auth-screen-brand" aria-label="Windup">
-        <img src="/windup-mark.svg" alt="" />
-        <strong>Windup</strong>
-      </div>
-
-      <button
-        type="button"
-        onClick={close}
-        disabled={isExiting}
-        aria-label="关闭账号面板"
-        className="auth-screen-close"
+      <div
+        className="auth-screen-brand fixed z-[2] flex items-center gap-[0.7rem]"
+        aria-label="Windup"
       >
-        <X {...iconProps} />
-      </button>
+        <img src="/windup-mark.svg" alt="" className="size-[1.65rem]" />
+        <strong className="font-serif text-2xl leading-none tracking-[-0.025em]">Windup</strong>
+      </div>
 
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-labelledby={titleId}
+        aria-label={dialogLabel}
         aria-describedby={descriptionId}
         onKeyDown={trapFocus}
-        className="auth-screen-dialog auth-register-dialog-centered mx-auto grid w-full px-5 sm:px-0"
+        className="auth-screen-dialog relative z-[1] mx-auto grid min-h-[100dvh] w-full max-w-[34rem] place-content-center px-5 pt-[5.5rem] pb-[5.5rem] sm:px-0"
       >
-        <div className="auth-register-content">
-          <figure className="auth-messenger-bird auth-messenger-bird-back" aria-hidden="true">
-            <img src={messengerPigeon} alt="" />
+        <button
+          type="button"
+          onClick={close}
+          disabled={isExiting}
+          aria-label="关闭账号面板"
+          className="auth-screen-close fixed z-[3] grid size-11 place-items-center rounded-full border border-transparent text-2xl leading-none text-[#777770]"
+        >
+          <X {...AUTH_ICON_PROPS} />
+        </button>
+
+        <div className="auth-register-content relative z-[2] w-full">
+          <figure
+            className="auth-messenger-bird auth-messenger-bird-back pointer-events-none absolute z-[1] m-0 origin-[68%_56%]"
+            aria-hidden="true"
+          >
+            <img
+              src={messengerPigeon}
+              alt=""
+              className="block h-auto w-full saturate-[0.8] contrast-[0.99]"
+            />
           </figure>
-          <figure className="auth-messenger-bird auth-messenger-bird-front" aria-hidden="true">
-            <img src={messengerPigeon} alt="" />
+          <figure
+            className="auth-messenger-bird auth-messenger-bird-front pointer-events-none absolute z-[4] m-0 origin-[68%_56%] [clip-path:polygon(56%_31%,100%_31%,100%_100%,59%_100%,52%_65%)]"
+            aria-hidden="true"
+          >
+            <img
+              src={messengerPigeon}
+              alt=""
+              className="block h-auto w-full saturate-[0.8] contrast-[0.99]"
+            />
           </figure>
-          <div className="auth-screen-intro text-center">
+          <div className="auth-screen-intro relative z-[3] text-center">
             <KineticTitle
               id={titleId}
               text={titleCopy}
@@ -525,7 +624,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
               {descriptionCopy}
             </p>
             {shouldShowMotionCopy && (
-              <div className="auth-register-description mx-auto mt-3 max-w-[30rem]">
+              <div className="auth-register-description mx-auto mt-3">
                 <KineticCopy
                   lines={activeMotionCopy}
                   copyKey={`${entry}-${registerStep}-${copyIndex}`}
@@ -554,9 +653,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
                   role="tab"
                   aria-selected={mode === itemMode}
                   onClick={() => selectMode(itemMode)}
-                  className={`${tabClass} ${
-                    mode === itemMode ? 'auth-screen-tab-active' : 'auth-screen-tab-inactive'
-                  }`}
+                  className={`${tabClass} ${mode === itemMode ? 'auth-screen-tab-active' : ''}`}
                 >
                   {loginModeCopy[itemMode].tab}
                 </button>
@@ -573,9 +670,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
 
           <form
             data-testid={isRegister ? 'register-fields' : undefined}
-            className={`${passwordChanged ? 'mt-4' : 'mt-6'} grid gap-5 ${
-              isRegister ? 'auth-register-fields' : 'auth-register-fields auth-login-fields'
-            }`}
+            className={`auth-register-fields ${isRegister ? '' : 'auth-login-fields'}`}
             onSubmit={submit}
             noValidate
           >
@@ -586,7 +681,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
                 onClick={returnToPreviousRegistrationStep}
                 aria-label="返回上一步"
               >
-                <ArrowLeft {...iconProps} />
+                <ArrowLeft {...AUTH_ICON_PROPS} />
               </button>
             )}
 
@@ -597,163 +692,90 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
               className={`auth-motion-stage auth-motion-stage-${motionDirection}`}
             >
               {(!isRegister || registerStep === 0) && (
-                <label
-                  htmlFor={emailId}
-                  className="auth-screen-label grid gap-2 text-sm font-semibold"
-                >
-                  <span className="sr-only">邮箱</span>
-                  <span className="auth-register-field-shell">
-                    {isRegister ? (
-                      <RegisterFieldIcon {...iconProps} />
-                    ) : (
-                      <EnvelopeSimple {...iconProps} />
-                    )}
-                    <input
-                      id={emailId}
-                      ref={emailInputRef}
-                      type="email"
-                      autoComplete="email"
-                      required
-                      value={email}
-                      onChange={(event) => setEmail(event.target.value)}
-                      disabled={isSubmitting || isSendingCode}
-                      className={fieldClass}
-                      placeholder="邮箱地址"
-                    />
-                  </span>
-                </label>
+                <AuthField
+                  id={emailId}
+                  label="邮箱"
+                  icon={isRegister ? RegisterFieldIcon : EnvelopeSimple}
+                  type="email"
+                  autoComplete="email"
+                  required
+                  value={email}
+                  onValueChange={setEmail}
+                  inputRef={emailInputRef}
+                  disabled={isSubmitting || isSendingCode}
+                  placeholder="邮箱地址"
+                />
               )}
 
-              {isRegister && registerStep === 1 && (
-                <div className="auth-screen-label grid gap-2 text-sm font-semibold">
-                  <label htmlFor={passwordId} className="sr-only">
-                    密码
-                  </label>
-                  <div className="auth-password-field auth-register-field-shell">
-                    <RegisterFieldIcon {...iconProps} />
-                    <input
-                      id={passwordId}
-                      type={showPassword ? 'text' : 'password'}
-                      autoComplete="new-password"
-                      value={password}
-                      onChange={(event) => setPassword(event.target.value)}
-                      disabled={isSubmitting}
-                      className={fieldClass}
-                      placeholder="创建密码"
-                    />
-                    <button
-                      type="button"
-                      className="auth-password-visibility"
+              {((isRegister && registerStep === 1) ||
+                (!isRegister && mode === 'password')) && (
+                <AuthField
+                  id={passwordId}
+                  label="密码"
+                  icon={isRegister ? RegisterFieldIcon : Keyhole}
+                  value={password}
+                  autoComplete={isRegister ? 'new-password' : 'current-password'}
+                  placeholder={isRegister ? '创建密码' : '密码'}
+                  disabled={isSubmitting}
+                  type={showPassword ? 'text' : 'password'}
+                  variant="password"
+                  onValueChange={setPassword}
+                  action={
+                    <PasswordVisibilityButton
+                      visible={showPassword}
                       onClick={() => setShowPassword((visible) => !visible)}
-                      aria-label={showPassword ? '隐藏密码' : '显示密码'}
-                    >
-                      {showPassword ? (
-                        <EyeClosed key="closed" className="auth-visibility-glyph" {...iconProps} />
-                      ) : (
-                        <Eye key="open" className="auth-visibility-glyph" {...iconProps} />
-                      )}
-                    </button>
-                  </div>
-                </div>
+                    />
+                  }
+                />
               )}
 
               {isRegister && registerStep === 2 && (
-                <div className="auth-screen-label grid gap-2 text-sm font-semibold">
-                  <label htmlFor={nicknameId} className="sr-only">
-                    昵称（选填）
-                  </label>
-                  <span className="auth-register-field-shell">
-                    <RegisterFieldIcon {...iconProps} />
-                    <input
-                      id={nicknameId}
-                      type="text"
-                      autoComplete="nickname"
-                      maxLength={51}
-                      value={nickname}
-                      onChange={(event) => setNickname(event.target.value)}
-                      disabled={isSubmitting}
-                      className={fieldClass}
-                      placeholder="昵称（可以稍后填写）"
-                    />
-                  </span>
-                </div>
-              )}
-
-              {!isRegister && mode === 'password' && (
-                <div className="auth-screen-label grid gap-2 text-sm font-semibold">
-                  <label htmlFor={passwordId} className="sr-only">
-                    密码
-                  </label>
-                  <div className="auth-password-field auth-register-field-shell">
-                    <Keyhole {...iconProps} />
-                    <input
-                      id={passwordId}
-                      type={showPassword ? 'text' : 'password'}
-                      autoComplete="current-password"
-                      value={password}
-                      onChange={(event) => setPassword(event.target.value)}
-                      disabled={isSubmitting}
-                      className={fieldClass}
-                      placeholder="密码"
-                    />
-                    <button
-                      type="button"
-                      className="auth-password-visibility"
-                      onClick={() => setShowPassword((visible) => !visible)}
-                      aria-label={showPassword ? '隐藏密码' : '显示密码'}
-                    >
-                      {showPassword ? (
-                        <EyeClosed key="closed" className="auth-visibility-glyph" {...iconProps} />
-                      ) : (
-                        <Eye key="open" className="auth-visibility-glyph" {...iconProps} />
-                      )}
-                    </button>
-                  </div>
-                </div>
+                <AuthField
+                  id={nicknameId}
+                  label="昵称（选填）"
+                  icon={RegisterFieldIcon}
+                  autoComplete="nickname"
+                  maxLength={51}
+                  value={nickname}
+                  onValueChange={setNickname}
+                  disabled={isSubmitting}
+                  placeholder="昵称（可以稍后填写）"
+                />
               )}
 
               {((isRegister && registerStep === 3) || (!isRegister && mode === 'code')) && (
-                <div className="auth-screen-label grid gap-2 text-sm font-semibold">
-                  <label htmlFor={codeId} className="sr-only">
-                    验证码
-                  </label>
-                  <span className="auth-screen-code-field auth-register-field-shell">
-                    {isRegister ? (
-                      <RegisterFieldIcon {...iconProps} />
-                    ) : (
-                      <SealCheck {...iconProps} />
-                    )}
-                    <input
-                      id={codeId}
-                      type="text"
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      maxLength={6}
-                      value={code}
-                      onChange={(event) => setCode(event.target.value)}
-                      disabled={isSubmitting}
-                      className={fieldClass}
-                      placeholder={isRegister ? '6 位验证码' : '6 位数字'}
-                    />
+                <AuthField
+                  id={codeId}
+                  label="验证码"
+                  icon={isRegister ? RegisterFieldIcon : SealCheck}
+                  value={code}
+                  placeholder={isRegister ? '6 位验证码' : '6 位数字'}
+                  disabled={isSubmitting}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  variant="code"
+                  onValueChange={setCode}
+                  action={
                     <button
                       type="button"
                       onClick={() => void sendCode()}
                       disabled={isSendingCode || isSubmitting || cooldownSeconds > 0}
                       aria-label={isRegister ? '重新发送验证码' : undefined}
-                      className="auth-screen-code-action min-h-12 min-w-[7.25rem] px-3 text-sm font-semibold disabled:cursor-not-allowed"
+                      className="auth-screen-code-action disabled:cursor-not-allowed"
                     >
                       {isSendingCode ? (
                         '正在发送…'
                       ) : cooldownSeconds > 0 ? (
                         `${cooldownSeconds}s`
                       ) : isRegister ? (
-                        <ArrowsClockwise {...iconProps} />
+                        <ArrowsClockwise {...AUTH_ICON_PROPS} />
                       ) : (
                         '发送验证码'
                       )}
                     </button>
-                  </span>
-                </div>
+                  }
+                />
               )}
 
               {!isRegister && mode === 'code' && (
@@ -765,36 +787,16 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
 
             {isRegister ? (
               <div className="auth-register-feedback" aria-live="polite">
-                {error && (
-                  <p role="alert" className="auth-screen-toast auth-screen-toast-error">
-                    {error}
-                  </p>
-                )}
-                {success && (
-                  <p role="status" className="auth-screen-toast auth-screen-toast-success">
-                    {success}
-                  </p>
-                )}
+                {feedback}
               </div>
             ) : (
-              <>
-                {error && (
-                  <p role="alert" className="auth-screen-toast auth-screen-toast-error">
-                    {error}
-                  </p>
-                )}
-                {success && (
-                  <p role="status" className="auth-screen-toast auth-screen-toast-success">
-                    {success}
-                  </p>
-                )}
-              </>
+              feedback
             )}
 
             <button
               type="submit"
               disabled={isSubmitting || isSendingCode}
-              className="auth-screen-submit auth-register-submit mt-1 min-h-14 px-4 text-base font-semibold text-white disabled:cursor-not-allowed"
+              className="auth-screen-submit px-4 text-white disabled:cursor-not-allowed"
             >
               <span key={submitContent} className="auth-submit-label">
                 {Array.from(submitContent).map((character, index) => (

@@ -1,8 +1,11 @@
 .auth-screen {
-  --auth-ink: #1b1b19;
-  --auth-muted: #74746e;
-  --auth-line: #d9d8d1;
-  --auth-paper: #f3f2ec;
+  --auth-ink: #282721;
+  --auth-muted: #6f6d65;
+  --auth-line: #cfcdc4;
+  --auth-paper: #f4f1e9;
+  --auth-control-surface: #fbfaf6;
+  --auth-control-surface-focus: #fff;
+  --auth-description: #68665f;
   --auth-motion-fast: 120ms;
   --auth-motion-default: 220ms;
   --auth-motion-slow: 360ms;
@@ -46,55 +49,19 @@
   animation: auth-bird-exit 400ms 55ms cubic-bezier(0.55, 0, 1, 0.45) both;
 }
 
-.auth-register-screen,
-.auth-login-screen {
-  --auth-ink: #282721;
-  --auth-muted: #6f6d65;
-  --auth-line: #cfcdc4;
-  --auth-paper: #f4f1e9;
-}
-
 .auth-screen-brand {
-  position: fixed;
-  z-index: 2;
   top: clamp(1.5rem, 3.5vw, 2.75rem);
   left: clamp(1.5rem, 4vw, 4.5rem);
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
   animation: auth-brand-enter 440ms 70ms var(--auth-ease-enter) both;
-}
-
-.auth-screen-brand img {
-  width: 1.65rem;
-  height: 1.65rem;
 }
 
 .auth-screen-brand:hover img {
   animation: auth-brand-mark-nod 460ms var(--auth-ease-enter);
 }
 
-.auth-screen-brand strong {
-  font-family: ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif;
-  font-size: 1.5rem;
-  line-height: 1;
-  letter-spacing: -0.025em;
-}
-
 .auth-screen-close {
-  position: fixed;
-  z-index: 3;
   top: clamp(1.1rem, 3vw, 2rem);
   right: clamp(1.1rem, 3vw, 2.75rem);
-  display: grid;
-  width: 2.75rem;
-  height: 2.75rem;
-  place-items: center;
-  border: 1px solid transparent;
-  border-radius: 50%;
-  color: #777770;
-  font-size: 1.5rem;
-  line-height: 1;
   transition:
     border-color var(--auth-motion-fast) var(--auth-ease-enter),
     background-color var(--auth-motion-fast) var(--auth-ease-enter),
@@ -114,39 +81,18 @@
   transform: rotate(0) scale(0.9);
 }
 
-.auth-register-screen .auth-screen-close svg,
-.auth-login-screen .auth-screen-close svg {
+.auth-screen-close svg {
   width: 1.125rem;
   height: 1.125rem;
   stroke-width: 1.6;
 }
 
 .auth-messenger-bird {
-  position: absolute;
   top: -5.25rem;
   left: -15rem;
   width: 22rem;
-  margin: 0;
-  pointer-events: none;
   opacity: 1;
-  transform-origin: 68% 56%;
   animation: auth-bird-arrive 760ms 140ms var(--auth-ease-enter) both;
-}
-
-.auth-messenger-bird-back {
-  z-index: 1;
-}
-
-.auth-messenger-bird-front {
-  z-index: 4;
-  clip-path: polygon(56% 31%, 100% 31%, 100% 100%, 59% 100%, 52% 65%);
-}
-
-.auth-messenger-bird img {
-  display: block;
-  width: 100%;
-  height: auto;
-  filter: saturate(0.8) contrast(0.99);
 }
 
 .auth-screen-close:focus-visible,
@@ -160,51 +106,24 @@
   outline-offset: 3px;
 }
 
-.auth-screen-dialog {
-  position: relative;
-  z-index: 1;
-  min-height: 100dvh;
-  place-content: center;
-  padding-top: 5.5rem;
-  padding-bottom: 5.5rem;
-}
-
-.auth-register-dialog-centered {
-  max-width: 34rem;
-}
-
 .auth-register-content {
-  position: relative;
-  z-index: 2;
-  width: 100%;
   animation: auth-content-enter 460ms 60ms var(--auth-ease-enter) both;
 }
 
 .auth-screen-intro {
-  position: relative;
-  z-index: 3;
   animation: auth-intro-enter 480ms 100ms var(--auth-ease-enter) both;
 }
 
-.auth-register-fields,
 .auth-screen-tabs,
 .auth-screen-entry-switch {
   position: relative;
   z-index: 2;
 }
 
-.auth-register-fields {
-  z-index: 5;
-}
-
 .auth-register-title {
   font-family: 'Songti SC', 'Noto Serif CJK SC', STSong, Georgia, serif;
   margin: 0;
   overflow: hidden;
-}
-
-.auth-register-screen .auth-register-title,
-.auth-login-screen .auth-register-title {
   font-size: clamp(2.75rem, 5vw, 3.25rem);
   line-height: 1.14;
   font-weight: 500;
@@ -236,7 +155,7 @@
   position: relative;
   z-index: 2;
   max-width: none;
-  color: #68665f;
+  color: var(--auth-description);
   font-size: 1.0625rem;
   line-height: 1.55;
   letter-spacing: -0.01em;
@@ -247,7 +166,7 @@
   position: relative;
   z-index: 2;
   min-height: 1.7rem;
-  color: #68665f;
+  color: var(--auth-description);
   font-size: 1rem;
   line-height: 1.7;
   letter-spacing: -0.01em;
@@ -291,6 +210,7 @@
 
 .auth-register-fields {
   position: relative;
+  z-index: 5;
   display: flex;
   min-height: 11.5rem;
   flex-direction: column;
@@ -301,8 +221,6 @@
 
 .auth-login-fields {
   min-height: 0;
-  gap: 0.75rem;
-  margin-top: 2rem;
 }
 
 .auth-motion-stage {
@@ -329,8 +247,7 @@
   font-weight: 500;
 }
 
-.auth-register-field-shell,
-.auth-password-field {
+.auth-register-field-shell {
   position: relative;
   display: grid;
   min-height: 4.25rem;
@@ -339,7 +256,7 @@
   overflow: hidden;
   border: 1px solid #c8c6bc;
   border-radius: 0.625rem;
-  background: #fbfaf6;
+  background: var(--auth-control-surface);
   transform: translateZ(0);
   transition:
     border-color var(--auth-motion-default) var(--auth-ease-enter),
@@ -348,17 +265,14 @@
     transform var(--auth-motion-default) var(--auth-ease-enter);
 }
 
-.auth-register-field-shell:focus-within,
-.auth-password-field:focus-within {
+.auth-register-field-shell:focus-within {
   border-color: #3c3b35;
   box-shadow: 0 0 0 3px rgb(40 39 33 / 7%);
-  background: #fff;
+  background: var(--auth-control-surface-focus);
   transform: translateY(-2px);
 }
 
 .auth-register-field-shell > svg {
-  position: static;
-  z-index: auto;
   align-self: center;
   justify-self: center;
   width: 1.25rem;
@@ -377,12 +291,12 @@
   transform: scale(1.08) rotate(-3deg);
 }
 
-.auth-register-field-shell .auth-screen-field,
-.auth-password-field .auth-screen-field {
+.auth-register-field-shell .auth-screen-field {
   min-height: 4.25rem;
   border: 0;
   border-radius: 0;
   padding-left: 1.25rem;
+  padding-right: 1rem;
   background: transparent;
 }
 
@@ -395,18 +309,15 @@
 }
 
 .auth-password-field button {
-  position: static;
   display: grid;
   width: 2.75rem;
   height: 2.75rem;
   place-self: center;
   place-items: center;
   color: #6c6961;
-  transform: none;
   transition:
     color var(--auth-motion-fast) var(--auth-ease-enter),
-    transform var(--auth-motion-fast) var(--auth-ease-enter),
-    background-color var(--auth-motion-fast) var(--auth-ease-enter);
+    transform var(--auth-motion-fast) var(--auth-ease-enter);
 }
 
 .auth-password-field button:hover {
@@ -493,7 +404,6 @@
 }
 
 .auth-screen-tabs {
-  position: relative;
   border-bottom: 1px solid var(--auth-line);
   animation: auth-tabs-enter 400ms 220ms var(--auth-ease-enter) both;
 }
@@ -538,69 +448,25 @@
   transform: translateX(100%);
 }
 
-.auth-screen-label {
-  color: #30302d;
-}
-
 .auth-screen-field {
-  border: 1px solid var(--auth-line);
-  border-radius: 0.625rem;
-  color: var(--auth-ink);
-  background: #fff;
-  box-shadow: 0 1px 0 rgb(255 255 255 / 80%) inset;
-  transition:
-    border-color 150ms ease,
-    box-shadow 150ms ease,
-    background-color var(--auth-motion-default) var(--auth-ease-enter);
-}
-
-.auth-screen-field::placeholder {
-  color: #9a9a94;
-}
-
-.auth-screen-field:focus {
-  border-color: #3a3a36;
-  box-shadow: 0 0 0 2px rgb(27 27 25 / 7%);
-}
-
-.auth-screen-field:disabled {
-  color: #777770;
-  background: #ecebe6;
-}
-
-.auth-register-screen .auth-screen-field,
-.auth-login-screen .auth-screen-field {
   min-height: 4.25rem;
-  border-color: transparent;
+  border: 0;
   border-radius: 0;
   color: #2b2a25;
-  background: #fbfaf6;
+  background: var(--auth-control-surface);
   box-shadow: none;
   font-size: 0.9375rem;
   font-weight: 400;
+  transition: background-color var(--auth-motion-default) var(--auth-ease-enter);
 }
 
-.auth-register-screen .auth-screen-field::placeholder,
-.auth-login-screen .auth-screen-field::placeholder {
+.auth-screen-field::placeholder {
   color: #7b7971;
   opacity: 1;
 }
 
-.auth-register-screen .auth-screen-field:focus,
-.auth-login-screen .auth-screen-field:focus {
-  border-color: transparent;
-  background: #fff;
-  box-shadow: none;
-}
-
-.auth-screen-code-field {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.5rem;
-}
-
-.auth-register-field-shell.auth-screen-code-field > svg {
-  align-self: center;
+.auth-screen-field:focus {
+  background: var(--auth-control-surface-focus);
 }
 
 .auth-register-field-shell.auth-screen-code-field {
@@ -609,10 +475,18 @@
 }
 
 .auth-screen-code-action {
-  border: 1px solid var(--auth-line);
-  border-radius: 0.625rem;
-  color: #30302d;
-  background: #fff;
+  display: grid;
+  min-width: 3.5rem;
+  min-height: 4.25rem;
+  place-items: center;
+  padding-inline: 0.75rem;
+  border: 0;
+  border-left: 1px solid #d8d5cb;
+  border-radius: 0;
+  color: #45433d;
+  background: var(--auth-control-surface);
+  font-size: 0.8125rem;
+  font-weight: 500;
   transition:
     border-color var(--auth-motion-fast) var(--auth-ease-enter),
     background-color var(--auth-motion-fast) var(--auth-ease-enter),
@@ -621,7 +495,6 @@
 }
 
 .auth-screen-code-action:hover:not(:disabled) {
-  border-color: #aaa9a2;
   background: #f9f9f6;
   transform: translateY(-1px);
 }
@@ -630,44 +503,23 @@
   transform: translateY(1px) scale(0.97);
 }
 
-.auth-screen-code-action:disabled {
-  color: #999992;
-  background: #ecebe6;
-}
-
-.auth-register-screen .auth-screen-code-action,
-.auth-login-screen .auth-screen-code-action {
-  display: grid;
-  min-width: 3.5rem;
-  min-height: 4.25rem;
-  place-items: center;
-  border: 0;
-  border-left: 1px solid #d8d5cb;
-  border-radius: 0;
-  color: #45433d;
-  background: #fbfaf6;
-  font-size: 0.8125rem;
-  font-weight: 500;
-}
-
-.auth-register-screen .auth-screen-code-action svg,
-.auth-login-screen .auth-screen-code-action svg {
+.auth-screen-code-action svg {
   width: 1rem;
   height: 1rem;
   stroke-width: 1.35;
   transition: transform var(--auth-motion-default) var(--auth-ease-enter);
 }
 
-.auth-register-screen .auth-screen-code-action:hover:not(:disabled) svg,
-.auth-login-screen .auth-screen-code-action:hover:not(:disabled) svg {
+.auth-screen-code-action:hover:not(:disabled) svg {
   transform: rotate(-18deg);
 }
 
 .auth-screen-entry-switch button {
   flex-shrink: 0;
-  color: #373733;
-  font-weight: 600;
+  color: #34332e;
+  font-weight: 500;
   text-decoration: underline;
+  text-decoration-thickness: 1px;
   text-underline-offset: 0.18em;
   transition:
     color var(--auth-motion-fast) var(--auth-ease-enter),
@@ -678,10 +530,13 @@
 .auth-screen-submit {
   position: relative;
   overflow: hidden;
-  border: 1px solid #1b1b19;
-  border-radius: 0.625rem;
-  background: #1b1b19;
-  box-shadow: none;
+  min-height: 3.75rem;
+  margin-top: 0;
+  border: 1px solid #282721;
+  border-radius: 0.375rem;
+  background: #282721;
+  font-size: 0.9375rem;
+  font-weight: 500;
   transition:
     background-color var(--auth-motion-fast) var(--auth-ease-enter),
     transform var(--auth-motion-fast) var(--auth-ease-enter),
@@ -689,41 +544,11 @@
 }
 
 .auth-screen-submit:hover:not(:disabled) {
-  background: #30302d;
-  box-shadow: none;
+  background: #393832;
   transform: translateY(-1px);
 }
 
 .auth-screen-submit:active:not(:disabled) {
-  transform: translateY(0) scale(0.985);
-}
-
-.auth-screen-submit:disabled {
-  border-color: #aaa9a3;
-  background: #aaa9a3;
-  box-shadow: none;
-}
-
-.auth-register-fields .auth-register-submit,
-.auth-login-fields .auth-register-submit {
-  min-height: 3.75rem;
-  margin-top: 0;
-  border-radius: 0.375rem;
-  border-color: #282721;
-  background: #282721;
-  box-shadow: none;
-  font-size: 0.9375rem;
-  font-weight: 500;
-}
-
-.auth-register-fields .auth-register-submit:hover:not(:disabled),
-.auth-login-fields .auth-register-submit:hover:not(:disabled) {
-  background: #393832;
-  box-shadow: none;
-}
-
-.auth-register-fields .auth-register-submit:active:not(:disabled),
-.auth-login-fields .auth-register-submit:active:not(:disabled) {
   transform: translateY(0) scale(0.985);
 }
 
@@ -742,18 +567,10 @@
   animation-delay: calc(var(--auth-character-index) * 26ms);
 }
 
-.auth-register-screen .auth-screen-entry-switch,
-.auth-login-screen .auth-screen-entry-switch {
+.auth-screen-entry-switch {
   margin-top: 1.5rem;
   color: #747169;
   font-size: 0.875rem;
-}
-
-.auth-register-screen .auth-screen-entry-switch button,
-.auth-login-screen .auth-screen-entry-switch button {
-  color: #34332e;
-  font-weight: 500;
-  text-decoration-thickness: 1px;
 }
 
 .auth-screen-entry-switch button:hover {
@@ -1074,20 +891,8 @@
     left: 1.25rem;
   }
 
-  .auth-screen-code-field {
-    grid-template-columns: 1fr auto;
-  }
-
-  .auth-register-dialog-centered {
-    max-width: 34rem;
-  }
-
   .auth-register-screen .auth-register-title {
     font-size: 2.375rem;
-  }
-
-  .auth-register-description {
-    white-space: normal;
   }
 
   .auth-register-back {
@@ -1147,7 +952,6 @@
 
   .auth-screen-brand:hover img,
   .auth-register-field-shell:focus-within,
-  .auth-password-field:focus-within,
   .auth-register-field-shell:focus-within > svg,
   .auth-screen-close:hover,
   .auth-screen-close:active,
@@ -1176,7 +980,6 @@
   .auth-screen-code-action,
   .auth-screen-submit,
   .auth-register-field-shell,
-  .auth-password-field,
   .auth-register-field-shell > svg,
   .auth-password-field button,
   .auth-screen-entry-switch button {
