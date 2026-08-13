@@ -244,6 +244,21 @@ def _image_provider(handler):
     return p
 
 
+def test_image_provider_extends_request_timeout_by_half():
+    from windup_framework.config.provider import AIProviderSettings
+    from windup_framework.providers.sufy import SufyImageProvider
+
+    provider = SufyImageProvider(
+        config=AIProviderSettings(base_url="https://gw.example.com/v1", api_key="k", timeout=20),
+    )
+
+    with provider._client() as client:
+        assert client.timeout.connect == 30
+        assert client.timeout.read == 30
+        assert client.timeout.write == 30
+        assert client.timeout.pool == 30
+
+
 def test_gen_image_returns_the_decoded_png():
     """端点可达而 provider 必抛错 = 每个图像任务稳定 FAILED。实现后必须真能出图。"""
     def h(request):

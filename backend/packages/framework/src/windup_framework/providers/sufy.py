@@ -275,6 +275,7 @@ _MIN_IMAGE_BYTES = 5000
 _CONNECT_RETRIES = 3
 _RATE_LIMIT_TRIES = 3
 _MAX_RATE_LIMIT_WAIT = 30.0
+_IMAGE_TIMEOUT_MULTIPLIER = 1.5
 
 
 def _utc_now() -> datetime:
@@ -327,7 +328,7 @@ class SufyImageProvider(ImageProvider):
         return httpx.Client(
             base_url=self._cfg.normalized_base_url,
             headers={"Authorization": f"Bearer {self._cfg.api_key}"},
-            timeout=self._cfg.timeout,
+            timeout=self._cfg.timeout * _IMAGE_TIMEOUT_MULTIPLIER,
             # retries 只覆盖建连阶段的失败(SSL 握手、连接被重置)。本机走代理时这类抖动
             # 常见,已跑通的管线实现正是靠一层网络重试扛住的;不加会在人家能恢复的地方
             # 放弃。它不重试读超时与 5xx —— 那两种请求可能已达上游,重发会重复计费。
