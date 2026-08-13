@@ -289,6 +289,37 @@ describe('createQuickStartService', () => {
     )
   })
 
+  it('uses a readable fallback for an empty project prompt', async () => {
+    const create = vi.fn(async (input) => ({
+      id: 'project-fallback',
+      ...input,
+      spriteSize: { width: 256, height: 256 },
+    }))
+    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
+
+    await prepare('   ')
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ name: '未命名项目' }))
+  })
+
+  it('does not retry project creation errors other than name conflicts', async () => {
+    const networkError = new Error('网络请求失败')
+    const create = vi.fn().mockRejectedValue(networkError)
+    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
+
+    await expect(prepare('像素骑士')).rejects.toBe(networkError)
+    expect(create).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops retrying after exhausting the readable project name sequence', async () => {
+    const conflict = new Error('项目名称已存在')
+    const create = vi.fn().mockRejectedValue(conflict)
+    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
+
+    await expect(prepare('像素骑士')).rejects.toBe(conflict)
+    expect(create).toHaveBeenCalledTimes(100)
+  })
+
   it('creates one persisted node graph and starts the character image task', async () => {
     const generationApis: GenerationApis = {
       create: vi.fn(async () => ({
