@@ -439,7 +439,7 @@ export function createQuickStartService({
         return controller.getWorkflow()
       },
       async approveReview() {
-        if (!characterApis) throw new Error('角色服务尚未配置，不能导入 Playtest')
+        if (!characterApis) throw new Error('角色服务尚未配置，不能导入预览台')
         const run = controller.getWorkflow()
         const fullFrame = latestFullFrame(run)
         if (!fullFrame || fullFrame.type !== 'action-full-frame') {
@@ -621,8 +621,16 @@ export function createQuickStartService({
 
 export function createAutoPrepareProject(projectApis: ProjectApis): PrepareQuickStartProject {
   return async (prompt) => {
-    const base = prompt.length > 16 ? `${prompt.slice(0, 16)}…` : prompt
-    const name = `${base}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+    const timestamp = Date.now().toString(36).slice(-6).padStart(6, '0')
+    const nonce = Math.random().toString(36).slice(2, 5).padEnd(3, '0')
+    const suffix = `${timestamp}${nonce}`
+    const maxBaseLength = 20 - suffix.length - 1
+    const promptCharacters = Array.from(prompt)
+    const base =
+      promptCharacters.length > maxBaseLength
+        ? `${promptCharacters.slice(0, maxBaseLength - 1).join('')}…`
+        : promptCharacters.join('')
+    const name = `${base}-${suffix}`
     const project = await projectApis.create({
       name,
       perspective: 'side',

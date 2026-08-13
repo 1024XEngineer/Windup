@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
+from windup_common.enums.character import CharacterStatus
 from windup_common.exceptions import BizException
 from windup_common.result import ListResponse, Response
 from windup_framework.config.storage import settings as storage_settings
@@ -132,6 +133,8 @@ def create_character(
 ) -> Response[CharacterOut]:
     user_id = request.state.current_user.id
     _get_project_or_raise(session, body.project_id, user_id)
+    character_data = body.character_data.model_dump()
+    status = CharacterStatus.from_character_data(character_data)
     try:
         character = character_service.create_character(
             session,
@@ -140,7 +143,8 @@ def create_character(
             name=body.name,
             description=body.description,
             reference_image_url=body.reference_image_url,
-            character_data=body.character_data.model_dump(),
+            character_data=character_data,
+            status=status,
         )
     except IntegrityError:
         session.rollback()
@@ -159,12 +163,13 @@ def list_characters(
     request: Request = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    status: int | None = Query(None, ge=0, le=1, description="按发布状态过滤: 0=草稿, 1=已发布"),
     session: Session = Depends(get_session),
 ) -> ListResponse[CharacterOut]:
     user_id = request.state.current_user.id
     _get_project_or_raise(session, project_id, user_id)
     items, total = character_service.list_characters(
-        session, project_id=project_id, page=page, page_size=page_size,
+        session, project_id=project_id, page=page, page_size=page_size, status=status,
     )
     return ListResponse.success(
         [CharacterOut.model_validate(c) for c in items],
@@ -195,6 +200,14 @@ def update_character(
     user_id = request.state.current_user.id
     _get_character_with_auth(session, character_id, user_id)
     fields = body.model_dump(exclude_unset=True)
+    # 如果更新了 character_data，自动推断 status
+    if "character_data" in fields:
+        if fields["character_data"] is None:
+            raise BizException("character_data 不能为 null", code=BizCode.BAD_REQUEST)
+        character_data = fields["character_data"]
+        if isinstance(character_data, CharacterData):
+            character_data = character_data.model_dump()
+        fields["status"] = CharacterStatus.from_character_data(character_data)
     character = character_service.update_character(session, character_id, **fields)
     if character is None:
         raise BizException("角色不存在", code=BizCode.NOT_FOUND)

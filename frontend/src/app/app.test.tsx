@@ -68,10 +68,10 @@ describe('AppRoutes authentication boundary', () => {
         '/?account=login&returnTo=%2Fworkspace',
       ),
     )
-    expect(screen.queryByText('选择一个起点')).toBeNull()
+    expect(screen.queryByRole('heading', { name: '工作台' })).toBeNull()
   })
 
-  it('renders the workspace home inside the product shell for an authenticated user', async () => {
+  it('serves the workspace from its dedicated protected route', async () => {
     render(
       <AuthenticatedAuthSession>
         <MemoryRouter initialEntries={['/workspace']}>
@@ -80,7 +80,8 @@ describe('AppRoutes authentication boundary', () => {
       </AuthenticatedAuthSession>,
     )
 
-    expect(await screen.findByText('选择一个起点')).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '工作台' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: /让你的角色/ })).toBeNull()
     expect(screen.getByRole('navigation', { name: '产品导航' })).toBeTruthy()
     expect(screen.getByRole('link', { name: '返回 Windup 工作台' }).getAttribute('href')).toBe(
       '/workspace',
@@ -120,7 +121,7 @@ describe('AppRoutes authentication boundary', () => {
         '/?account=login&returnTo=%2Fplaytest',
       ),
     )
-    expect(screen.queryByRole('heading', { name: '选择可试玩资产' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: '选择可预览资产' })).toBeNull()
   })
 
   it('protects direct account-center visits and returns there after login', async () => {
@@ -202,7 +203,7 @@ describe('AppRoutes authentication boundary', () => {
       </AuthSessionProvider>,
     )
 
-    expect((await screen.findByRole('alert')).textContent).toContain('登录状态已过期，请重新登录。')
+    expect(await screen.findByText('登录状态已过期，请重新登录。')).toBeTruthy()
     expect(screen.getByRole('link', { name: '重新登录' }).getAttribute('href')).toBe(
       '/?account=login&returnTo=%2F',
     )

@@ -121,10 +121,10 @@ export function CharacterDetailPage() {
             {selectedOutfit && canPlaytest ? (
               <Link
                 to={`/playtest/${character.id}/${selectedOutfit.id}`}
-                aria-label="试玩当前造型"
+                aria-label="在预览台打开当前造型"
                 className="inline-flex min-h-9 items-center rounded-full bg-[#294433] px-4 text-xs font-semibold text-white transition-colors hover:bg-[#1f3828] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#294433]"
               >
-                试玩当前造型
+                在预览台打开
               </Link>
             ) : null}
           </div>

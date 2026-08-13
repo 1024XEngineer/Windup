@@ -45,7 +45,7 @@ describe('CharacterDetailPage', () => {
       false,
     )
     expect(screen.queryByText('导出能力待 PR #97 合并并完成资产字段接线')).toBeNull()
-    expect(screen.getByRole('link', { name: '试玩当前造型' }).getAttribute('href')).toBe(
+    expect(screen.getByRole('link', { name: '在预览台打开当前造型' }).getAttribute('href')).toBe(
       '/playtest/51/outfit-default',
     )
   })
@@ -75,6 +75,6 @@ describe('CharacterDetailPage', () => {
     expect(await screen.findByRole('heading', { name: '待定角色' })).toBeTruthy()
     expect(screen.getByRole('combobox', { name: '选择造型' })).toBeTruthy()
     expect(screen.getByText('这个造型还没有动作')).toBeTruthy()
-    expect(screen.queryByRole('link', { name: '试玩当前造型' })).toBeNull()
+    expect(screen.queryByRole('link', { name: '在预览台打开当前造型' })).toBeNull()
   })
 })

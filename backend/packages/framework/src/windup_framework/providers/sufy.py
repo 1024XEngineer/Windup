@@ -23,9 +23,12 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import io
 import json
 import logging
+import math
 import re
 import time
 
@@ -270,6 +273,30 @@ DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image"
 _IMAGE_TRIES = 3
 _MIN_IMAGE_BYTES = 5000
 _CONNECT_RETRIES = 3
+_RATE_LIMIT_TRIES = 3
+_MAX_RATE_LIMIT_WAIT = 30.0
+_IMAGE_TIMEOUT_MULTIPLIER = 1.5
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _retry_after_seconds(value: str) -> float | None:
+    try:
+        delay = float(value)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=timezone.utc)
+        delay = (retry_at.astimezone(timezone.utc) - _utc_now()).total_seconds()
+    if not math.isfinite(delay):
+        return None
+    return min(max(delay, 0.0), _MAX_RATE_LIMIT_WAIT)
+
 
 # 从响应里捞 data URI。模型把图放在 message.content 里,而不同网关的包裹层级不一样
 # (有的 content 是字符串、有的是 parts 数组),故对整个响应 JSON 做一次正则,
@@ -301,7 +328,7 @@ class SufyImageProvider(ImageProvider):
         return httpx.Client(
             base_url=self._cfg.normalized_base_url,
             headers={"Authorization": f"Bearer {self._cfg.api_key}"},
-            timeout=self._cfg.timeout,
+            timeout=self._cfg.timeout * _IMAGE_TIMEOUT_MULTIPLIER,
             # retries 只覆盖建连阶段的失败(SSL 握手、连接被重置)。本机走代理时这类抖动
             # 常见,已跑通的管线实现正是靠一层网络重试扛住的;不加会在人家能恢复的地方
             # 放弃。它不重试读超时与 5xx —— 那两种请求可能已达上游,重发会重复计费。
@@ -309,14 +336,33 @@ class SufyImageProvider(ImageProvider):
         )
 
     def _post(self, client: httpx.Client, body: dict) -> dict:
-        """发一次请求。把"网关没有这个模型"翻译成能照着修的错误。
+        """发送请求，有限重试未被网关接收的 429。
 
         为什么值得专门处理:同一把 key 下不同网关的模型目录**不一样**。实测
         ``GET /v1/models``:一个网关 73 个模型、一个图像模型都没有;另一个 134 个、
         含本模块默认的那个(2026-08-10)。配错 ``AI_BASE_URL`` 时原始报错只是一条
         404,读的人无从知道该去改配置还是改模型名。
         """
-        resp = client.post(self._cfg.chat_completions_path, json=body)
+        for attempt in range(1, _RATE_LIMIT_TRIES + 1):
+            resp = client.post(self._cfg.chat_completions_path, json=body)
+            if resp.status_code != 429:
+                break
+            if attempt == _RATE_LIMIT_TRIES:
+                raise RuntimeError(
+                    f"图像服务请求过于频繁(HTTP 429)，已重试 {_RATE_LIMIT_TRIES} 次；"
+                    "请稍后重试或检查服务商额度"
+                )
+            retry_after = resp.headers.get("Retry-After", "")
+            delay = _retry_after_seconds(retry_after)
+            if delay is None:
+                delay = float(2**attempt)
+            logger.warning(
+                "图像服务返回 429，第 %d/%d 次请求，%.2f 秒后重试",
+                attempt,
+                _RATE_LIMIT_TRIES,
+                delay,
+            )
+            time.sleep(delay)
         if resp.status_code in (400, 404):
             raise RuntimeError(
                 f"网关 {self._cfg.normalized_base_url} 拒绝了模型 {self._model!r}"

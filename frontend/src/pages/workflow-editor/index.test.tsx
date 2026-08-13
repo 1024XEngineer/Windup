@@ -83,7 +83,8 @@ describe('WorkflowEditorPage real runtime boundary', () => {
 
     renderEditor('/workflow-editor/42')
 
-    expect(await screen.findByText('真实 WorkflowRun 接口')).toBeTruthy()
+    expect(await screen.findByLabelText('当前项目')).toBeTruthy()
+    expect(screen.queryByText('真实 WorkflowRun 接口')).toBeNull()
     expect(defaultSessionLoader).toHaveBeenCalledWith('42')
   })
 
@@ -95,7 +96,9 @@ describe('WorkflowEditorPage real runtime boundary', () => {
 
     const promptInput = await screen.findByRole('textbox', { name: '角色描述' })
     expect(screen.queryByRole('textbox', { name: /角色名称/ })).toBeNull()
-    fireEvent.change(promptInput, { target: { value: '戴红围巾的短发少年冒险家' } })
+    await act(async () => {
+      fireEvent.change(promptInput, { target: { value: '戴红围巾的短发少年冒险家' } })
+    })
     fireEvent.click(screen.getByRole('button', { name: '生成角色候选' }))
 
     await waitFor(() =>
@@ -649,7 +652,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     })
     defaultSessionLoader.mockResolvedValue(session)
     renderEditor('/workflow-editor/42')
-    await screen.findByText('真实 WorkflowRun 接口')
+    await screen.findByLabelText('当前项目')
 
     act(() => reportError?.(new Error('异步保存失败')))
 

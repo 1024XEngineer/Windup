@@ -129,7 +129,7 @@ const characterDtos = [
         },
       ],
     },
-    status: 1,
+    status: 0,
   },
 ]
 
@@ -251,7 +251,11 @@ export function createProjectAssetsBackend({
       const projectId = Number(url.searchParams.get('project_id'))
       const page = Number(url.searchParams.get('page') ?? 1)
       const pageSize = Number(url.searchParams.get('page_size') ?? 20)
-      const projectCharacters = characters.filter((item) => item.project_id === projectId)
+      const status = url.searchParams.get('status')
+      const projectCharacters = characters.filter(
+        (item) =>
+          item.project_id === projectId && (status === null || item.status === Number(status)),
+      )
       const start = (page - 1) * pageSize
       return listResponse(
         projectCharacters.slice(start, start + pageSize),

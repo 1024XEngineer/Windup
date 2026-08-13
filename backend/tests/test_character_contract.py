@@ -10,9 +10,12 @@
 """
 from __future__ import annotations
 
+import inspect
+
 import pytest
 from pydantic import ValidationError
 
+from windup_ai_engine.master_prep import MASTER_POSES
 from windup_ai_engine.prompt import (
     WALK_BODY_FRONT,
     WALK_BODY_SIDE,
@@ -21,6 +24,7 @@ from windup_ai_engine.prompt import (
     build_jump_prompt,
     build_walk_prompt,
 )
+from windup_ai_engine.strategy.concrete import VideoFrameStrategy
 from windup_common.models import (
     DEFAULT_N_FRAMES,
     ActionSpec,
@@ -128,8 +132,8 @@ def test_walk_prompt_picks_the_template_that_matches_facing():
     side = build_walk_prompt(facing=Facing.SIDE)
     front = build_walk_prompt(facing=Facing.FRONT)
     assert side != front
-    assert side == WALK_BODY_SIDE.format(garment="the cape and tabard")
-    assert front == WALK_BODY_FRONT.format(garment="the cape and tabard")
+    assert side == WALK_BODY_SIDE
+    assert front == WALK_BODY_FRONT
     assert "SIDE VIEW facing right" in side and "SIDE VIEW facing right" not in front
     assert "FACING THE VIEWER" in front and "FACING THE VIEWER" not in side
 
@@ -138,6 +142,65 @@ def test_walk_prompt_picks_the_template_that_matches_facing():
 def test_other_builders_also_switch_body_by_facing(build):
     assert build(facing=Facing.SIDE) != build(facing=Facing.FRONT)
     assert "FACING THE VIEWER" in build(facing=Facing.FRONT)
+
+
+# ── A1.5 提示词只描述动作，不断言角色装备（#195）────────────────────────────
+
+# 装备名词一旦进模板就是在断言该物件存在：母版没有斗篷，模型会为了满足文字凭空长一件，
+# 母版真有的特征反被挤掉（2026-08-11 拿一个完全无布料的刚性角色实跑复现）。
+# 这里连"角色确实持剑"的情形也一并禁掉——身份由母版承载，模板是所有角色共用的。
+_EQUIPMENT_NOUNS = (
+    "cape", "tabard", "cloak", "robe", "scarf",
+    "sword", "blade", "weapon", "shield", "axe", "spear",
+    "boot", "armor", "armour", "helmet", "gauntlet",
+)
+
+
+def _named_equipment(text: str) -> list[str]:
+    low = text.lower()
+    return [w for w in _EQUIPMENT_NOUNS if w in low]
+
+
+@pytest.mark.parametrize(
+    "build", [build_walk_prompt, build_jump_prompt, build_idle_prompt, build_attack_prompt]
+)
+@pytest.mark.parametrize("facing", [Facing.SIDE, Facing.FRONT])
+def test_prompt_names_no_equipment(build, facing):
+    """任一动作 × 任一朝向的正文里都不许出现装备名词。
+
+    这条是 #195 的回归闸。**光验"参数能传"验不出这个 bug** —— 原先 garment/weapon
+    确实是参数、确实能传，但零写入方，于是每个角色都吃到那个持剑披风原型的默认值。
+    """
+    named = _named_equipment(build(facing=facing))
+    assert not named, f"{build.__name__}({facing}) 断言了装备: {named}"
+
+
+def test_master_poses_name_no_equipment():
+    """母版姿势描述同样不许写装备 —— 母版是整条 i2v 链的身份来源，污染会传到所有动作。"""
+    for action, pose in MASTER_POSES.items():
+        named = _named_equipment(pose)
+        assert not named, f"MASTER_POSES[{action!r}] 断言了装备: {named}"
+
+
+@pytest.mark.parametrize(
+    "build", [build_walk_prompt, build_jump_prompt, build_idle_prompt, build_attack_prompt]
+)
+def test_prompt_builders_expose_facing_only(build):
+    """签名里只剩 facing。
+
+    锁的是 #195 的**根因**而不只是症状：装备参数一旦以"有默认值的可选参数"形态存在，
+    而调用侧（``strategy.concrete._build_prompt``）只传 facing，默认值就成了全体角色的
+    实际取值。要按角色定制装备文字，得先有地方存它，那是角色卡契约的事；在这里留一个
+    没人传的参数，只会让人以为该能力已经存在。
+    """
+    assert list(inspect.signature(build).parameters) == ["facing"]
+
+
+def test_strategy_passes_only_facing_into_prompt_builders():
+    """派生层确实只按朝向选模板，没有第二条把角色装备塞进提示词的通路。"""
+    src = inspect.getsource(VideoFrameStrategy._build_prompt)
+    for kw in ("garment", "weapon", "feet"):
+        assert kw not in src, f"_build_prompt 又开始传 {kw} 了"
 
 
 # ── A2 n_frames 是显式字段，不再由 len(poses) 推导 ──────────────────────────

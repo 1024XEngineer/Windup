@@ -10,7 +10,7 @@ const capabilities = [
   },
   {
     statement: '让他真正走起来，再决定下一步。',
-    title: 'PlayTest',
+    title: '预览台',
   },
   {
     statement: '同一个角色，在每一个动作里仍然是他自己。',
@@ -75,7 +75,7 @@ export function CapabilitiesRail() {
           角色做出来，还要留下来、跑起来。
         </h2>
         <p className="mt-6 max-w-[28em] text-lead text-ink-muted">
-          资产库保存角色的全部来路，PlayTest 检验动作真正的样子，工作流画布让质量不靠一次碰运气。
+          资产库保存角色的全部来路，预览台检验动作真正的样子，工作流画布让质量不靠一次碰运气。
         </p>
       </div>
 

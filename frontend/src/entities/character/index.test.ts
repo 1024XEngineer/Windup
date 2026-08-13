@@ -62,7 +62,23 @@ function jsonResponse(data: unknown) {
 }
 
 describe('characterApis', () => {
-  it('maps the paged Character tree and its project query', async () => {
+  it('maps an explicit draft publication status', async () => {
+    const characterApis = await loadCharacterApis(async () =>
+      jsonResponse({ ...characterDto, status: 0 }),
+    )
+
+    await expect(characterApis.get('51')).resolves.toMatchObject({ status: 0 })
+  })
+
+  it('preserves the Character page when the backend adds an unknown publication status', async () => {
+    const characterApis = await loadCharacterApis(async () =>
+      jsonResponse({ ...characterDto, status: 2 }),
+    )
+
+    await expect(characterApis.get('51')).resolves.toMatchObject({ status: 'unknown' })
+  })
+
+  it('maps the paged Character tree and sends the publication status query', async () => {
     let requestUrl = ''
     const characterApis = await loadCharacterApis(async (input) => {
       requestUrl = String(input)
@@ -79,9 +95,11 @@ describe('characterApis', () => {
       )
     })
 
-    const page = await characterApis.listByProject('42', { page: 1, pageSize: 20 })
+    const page = await characterApis.listByProject('42', { page: 1, pageSize: 20, status: 1 })
 
-    expect(requestUrl).toBe('https://api.windup.test/characters?project_id=42&page=1&page_size=20')
+    expect(requestUrl).toBe(
+      'https://api.windup.test/characters?project_id=42&page=1&page_size=20&status=1',
+    )
     expect(page).toEqual({
       items: [
         {

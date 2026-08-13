@@ -17,6 +17,28 @@ afterEach(() => {
 })
 
 describe('ProjectDetailPage', () => {
+  it('shows an error when the Project request fails', async () => {
+    const backend = createProjectAssetsBackend()
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      if (request.url.endsWith('/projects/42')) {
+        return Promise.reject(new Error('project endpoint unavailable'))
+      }
+      return backend.fetch(input, init)
+    })
+
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects/42/assets']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect((await screen.findByRole('alert')).textContent).toContain('这个项目不存在或暂时无法读取')
+  })
+
   it('keeps the Project workspace around a directly opened Character', async () => {
     const backend = createProjectAssetsBackend()
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
@@ -38,7 +60,9 @@ describe('ProjectDetailPage', () => {
     expect(screen.getByRole('link', { name: '返回项目中心' }).getAttribute('href')).toBe(
       '/projects',
     )
-    expect(screen.getByRole('link', { name: /角色/ }).getAttribute('aria-current')).toBe('page')
+    expect((await screen.findByRole('link', { name: '角色1' })).getAttribute('aria-current')).toBe(
+      'page',
+    )
     expect(screen.getByRole('button', { name: '动作模板' }).hasAttribute('disabled')).toBe(true)
     expect(screen.queryByText('穿戴')).toBeNull()
     expect(await screen.findByRole('heading', { name: '轻装信使' })).toBeTruthy()
@@ -67,6 +91,29 @@ describe('ProjectDetailPage', () => {
     expect(await screen.findByRole('heading', { name: '点灯人 · MVP' })).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
     expect(await screen.findByRole('heading', { name: '轻装信使' })).toBeTruthy()
+  })
+
+  it('renders the Project workspace without waiting for the character count request', async () => {
+    const backend = createProjectAssetsBackend()
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      if (request.url.includes('/characters?project_id=42')) {
+        return new Promise<Response>(() => undefined)
+      }
+      return backend.fetch(input, init)
+    })
+
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects/42/assets']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(await screen.findByRole('heading', { name: '点灯人 · MVP' })).toBeTruthy()
+    expect(screen.getByText('64 × 64')).toBeTruthy()
   })
 
   it('shows the current account in the workspace and returns home after logout', async () => {

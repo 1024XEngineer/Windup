@@ -4,7 +4,6 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
 import { AssetLibraryPage } from '@/pages/asset-library'
 import { AccountPage } from '@/pages/account'
 import { CharacterDetailPage } from '@/pages/character-detail'
-import { WorkspaceHomePage } from '@/pages/home'
 import { LandingPage } from '@/pages/landing'
 import { NotFoundPage } from '@/pages/not-found'
 import { PlaytestEntryPage } from '@/pages/playtest'
@@ -13,6 +12,7 @@ import { ProjectDetailPage } from '@/pages/project-detail'
 import { ProjectCreatePage } from '@/pages/project-create'
 import { ProjectsPage } from '@/pages/projects'
 import { QuickStartPage } from '@/pages/quick-start'
+import { WorkspacePage } from '@/pages/workspace'
 import { ProtectedRoute } from '@/features/auth-guard'
 import { AppShellRoute, MarketingShellRoute } from './layout'
 
@@ -52,7 +52,7 @@ export function AppRoutes() {
       </Route>
       <Route element={<ProtectedRoute />}>
         <Route element={<AppShellRoute />}>
-          <Route path="/workspace" element={<WorkspaceHomePage />} />
+          <Route path="/workspace" element={<WorkspacePage />} />
           <Route path="/account" element={<AccountPage />} />
           <Route path="/quick-start" element={<QuickStartPage />} />
           <Route path="/quick-start/:runId" element={<QuickStartPage />} />

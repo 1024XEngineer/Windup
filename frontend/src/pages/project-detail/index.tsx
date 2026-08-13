@@ -3,6 +3,7 @@ import { Link, Outlet, useLocation, useParams } from 'react-router'
 
 import {
   CHARACTER_PERSPECTIVE,
+  CHARACTER_STATUS,
   DIRECTIONAL_MOVEMENT,
   characterApis,
   projectApis,
@@ -29,22 +30,24 @@ export function ProjectDetailPage() {
     }
 
     setProject(null)
+    setCharacterCount(0)
     setError(null)
-    void Promise.allSettled([
-      projectApis.get(projectId),
-      characterApis.listByProject(projectId, { page: 1, pageSize: 1 }),
-    ]).then(([projectResult, characterResult]) => {
-      if (!active) return
-      if (projectResult.status === 'rejected') {
-        setError('这个项目不存在或暂时无法读取')
-        return
-      }
-
-      setProject(projectResult.value)
-      if (characterResult.status === 'fulfilled') {
-        setCharacterCount(characterResult.value.total)
-      }
-    })
+    void projectApis.get(projectId).then(
+      (nextProject) => {
+        if (active) setProject(nextProject)
+      },
+      () => {
+        if (active) setError('这个项目不存在或暂时无法读取')
+      },
+    )
+    void characterApis
+      .listByProject(projectId, { page: 1, pageSize: 1, status: CHARACTER_STATUS.PUBLISHED })
+      .then(
+        (page) => {
+          if (active) setCharacterCount(page.total)
+        },
+        () => undefined,
+      )
 
     return () => {
       active = false

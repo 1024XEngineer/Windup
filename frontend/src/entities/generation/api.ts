@@ -162,6 +162,8 @@ function expectedBackendType(type: GenerationType): BackendGenerationType {
   return type === 'character_template' ? 'character_image' : 'character_action'
 }
 
+const CHARACTER_TEMPLATE_CANDIDATE_COUNT = 3
+
 function nonEmptyString(value: unknown, field: string): string {
   if (typeof value !== 'string' || value.trim() === '') {
     throw new GenerationApiError(`${field} 无效`, 200)
@@ -182,8 +184,11 @@ function mapImageResult(result: Record<string, unknown>): GenerationResult {
   }
   const images = result.image_urls.map((url): GeneratedImage => ({ url: url as string }))
 
-  if (images.length !== 4) {
-    throw new GenerationApiError('角色母版结果必须包含 4 个候选', 200)
+  if (images.length !== CHARACTER_TEMPLATE_CANDIDATE_COUNT) {
+    throw new GenerationApiError(
+      `角色母版结果必须包含 ${CHARACTER_TEMPLATE_CANDIDATE_COUNT} 个候选`,
+      200,
+    )
   }
   return { type: 'character_template', images }
 }
@@ -289,8 +294,11 @@ function validateInputPayload(
     throw new GenerationApiError('生成任务缺少 input_payload', 200)
   }
   if (expectation.type === 'character_template') {
-    if (inputPayload.num_images !== 4) {
-      throw new GenerationApiError('角色母版任务 input_payload.num_images 必须为 4', 200)
+    if (inputPayload.num_images !== CHARACTER_TEMPLATE_CANDIDATE_COUNT) {
+      throw new GenerationApiError(
+        `角色母版任务 input_payload.num_images 必须为 ${CHARACTER_TEMPLATE_CANDIDATE_COUNT}`,
+        200,
+      )
     }
     return
   }
@@ -515,8 +523,8 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
         negative_prompt: '',
         width: inputPositiveInteger(input.spriteWidth, 'spriteWidth'),
         height: inputPositiveInteger(input.spriteHeight, 'spriteHeight'),
-        // 只有角色母版走图片接口，并且固定生成四个候选。
-        num_images: 4,
+        // 只有角色母版走图片接口；三张候选控制单次任务的供应商调用压力。
+        num_images: CHARACTER_TEMPLATE_CANDIDATE_COUNT,
       })
       expectations.set(generation.id, expectation)
       return generation as Generation<T['type']>

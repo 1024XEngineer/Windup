@@ -258,9 +258,11 @@ describe('createQuickStartService', () => {
       id: 'project-1',
       spriteSize: { width: 256, height: 256 },
     })
+    const createdName = create.mock.calls[0]?.[0].name
+    expect(Array.from(createdName ?? '')).toHaveLength(20)
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: expect.stringMatching(/^一位名字特别长的像素角色设定用于…-/u),
+        name: expect.stringMatching(/^一位名字特别长的像…-/u),
         perspective: 'side',
         directionalMovement: 'single',
       }),

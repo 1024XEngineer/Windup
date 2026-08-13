@@ -4,6 +4,17 @@ import type { Paged, PageQuery } from '@/shared/pagination'
 /** PR #75 将动作类型定义为字符串；已知类型之外的后端扩展也应原样保留。 */
 export type ActionType = string
 
+export const CHARACTER_STATUS = {
+  DRAFT: 0,
+  PUBLISHED: 1,
+  UNKNOWN: 'unknown',
+} as const
+
+export type CharacterPublicationStatus =
+  | typeof CHARACTER_STATUS.DRAFT
+  | typeof CHARACTER_STATUS.PUBLISHED
+export type CharacterStatus = CharacterPublicationStatus | typeof CHARACTER_STATUS.UNKNOWN
+
 export interface Frame {
   /** 使用后端显式返回的帧序号，不用数组下标替代。 */
   index: number
@@ -45,7 +56,7 @@ export interface Character {
   referenceImageUrl: string | null
   /** character_data.version，更新整棵资产树时必须原样带回。 */
   dataVersion: number
-  status: number
+  status: CharacterStatus
   outfits: Outfit[]
 }
 
@@ -64,10 +75,14 @@ export interface CreateCharacterInput {
  */
 export interface CharacterApis {
   get(id: Character['id']): Promise<Character>
-  listByProject(projectId: string, query?: PageQuery): Promise<Paged<Character>>
+  listByProject(projectId: string, query?: CharacterPageQuery): Promise<Paged<Character>>
   create(input: CreateCharacterInput): Promise<Character>
   update(character: Character): Promise<Character>
   remove(id: Character['id']): Promise<void>
+}
+
+export interface CharacterPageQuery extends PageQuery {
+  status?: CharacterPublicationStatus
 }
 
 interface CharacterFrameDto {
@@ -116,6 +131,11 @@ function toBackendId(value: string, field: string): number {
   throw new TypeError(`${field} 必须是正整数 ID`)
 }
 
+function mapCharacterStatus(status: number): CharacterStatus {
+  if (status === CHARACTER_STATUS.DRAFT || status === CHARACTER_STATUS.PUBLISHED) return status
+  return CHARACTER_STATUS.UNKNOWN
+}
+
 function mapFrame(dto: CharacterFrameDto): Frame {
   return {
     index: dto.index,
@@ -158,7 +178,7 @@ function mapCharacter(dto: CharacterDto): Character {
     description: dto.description,
     referenceImageUrl: dto.reference_image_url,
     dataVersion: dto.character_data.version,
-    status: dto.status,
+    status: mapCharacterStatus(dto.status),
     outfits: dto.character_data.outfits.map((outfit) => mapOutfit(outfit, characterId)),
   }
 }
@@ -210,6 +230,7 @@ export const characterApis: CharacterApis = {
         project_id: toBackendId(projectId, 'projectId'),
         page: query.page,
         page_size: query.pageSize,
+        status: query.status,
       },
     })
     return { ...result, items: result.items.map(mapCharacter) }

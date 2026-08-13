@@ -130,7 +130,7 @@ function QuickStartActionInput({
         to={playtestPath(target.characterId, target.outfitId)}
         className="text-xs font-semibold text-[#59635b] hover:text-[#2f4e38]"
       >
-        ← 返回当前 Playtest
+        ← 返回当前预览台
       </Link>
       <div className="mx-auto mt-14 max-w-2xl">
         <p className="font-mono text-[10px] font-bold text-[#687069]">ADD ACTION</p>
@@ -500,7 +500,7 @@ function QuickStartRun({
       const actionId = approvedAction?.type === 'action-full-frame' ? approvedAction.id : undefined
       navigate(playtestPath(info.characterId, info.outfitId, actionId))
     } catch (cause) {
-      setError(errorMessage(cause, '导入 Playtest 失败'))
+      setError(errorMessage(cause, '导入预览台失败'))
     } finally {
       setPublishing(false)
     }
@@ -895,7 +895,7 @@ function QuickStartRun({
                   disabled={publishing}
                   className="rounded-lg bg-[#2a5284] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#3668a0] disabled:cursor-wait disabled:opacity-60"
                 >
-                  {publishing ? '正在自动导入…' : '重新导入 Playtest'}
+                  {publishing ? '正在自动导入…' : '重新导入预览台'}
                 </button>
               ) : null}
               {candidates.length || workflowHasFailure(run) ? (
@@ -961,7 +961,7 @@ function describeRun(_run: WorkflowRun, workflow: WorkflowRun) {
   if (actionStep?.status === 'passed') {
     return {
       title: '动作生成完成',
-      description: '动作帧已回传，正在自动写入并载入 Playtest 工作台。',
+      description: '动作帧已回传，正在自动写入并载入预览台。',
       error: null,
     }
   }

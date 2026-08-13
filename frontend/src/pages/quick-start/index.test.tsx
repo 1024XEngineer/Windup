@@ -413,7 +413,7 @@ describe('QuickStartPage', () => {
     })
     renderAt('/quick-start/run-1', service)
     expect((await screen.findByRole('alert')).textContent).toContain('没有找到对应的角色资产')
-    fireEvent.click(screen.getByRole('button', { name: '重新导入 Playtest' }))
+    fireEvent.click(screen.getByRole('button', { name: '重新导入预览台' }))
     await waitFor(() => expect(service.approveReview).toHaveBeenCalledTimes(2))
   })
 

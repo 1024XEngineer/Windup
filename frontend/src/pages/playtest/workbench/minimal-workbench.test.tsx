@@ -77,7 +77,7 @@ describe('PlaytestWorkbench minimal control path', () => {
   it('shows one stage, the bound actions, and direct character controls', () => {
     renderWorkbench()
 
-    expect(screen.getByRole('region', { name: '试玩舞台' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: '预览舞台' })).toBeTruthy()
     expect(screen.getByRole('group', { name: '角色操控' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '绑定动作：待机' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '绑定动作：行走' })).toBeTruthy()

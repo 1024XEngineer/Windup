@@ -7,6 +7,88 @@ body,
   height: 100%;
 }
 
+@keyframes app-header-glyph-wave {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  30% {
+    transform: translate3d(-0.5px, -4px, 0) rotate(-2deg);
+  }
+  58% {
+    transform: translate3d(0.6px, 1px, 0) rotate(1.25deg);
+  }
+  78% {
+    transform: translate3d(-0.2px, -0.75px, 0) rotate(-0.4deg);
+  }
+}
+
+.app-header-text-wave .app-header-wave-glyph {
+  transform-origin: center 80%;
+  animation: app-header-glyph-wave 380ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
+}
+
+@keyframes app-header-account-menu-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -8px, 0) scale(0.82);
+  }
+  56% {
+    opacity: 1;
+    transform: translate3d(0, 1.5px, 0) scale(1.025);
+  }
+  78% {
+    transform: translate3d(0, -0.5px, 0) scale(0.996);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+.app-header-account-menu-in,
+.app-header-account-menu-out {
+  backface-visibility: hidden;
+  will-change: opacity, transform;
+}
+
+.app-header-account-menu-in {
+  animation: app-header-account-menu-in 340ms cubic-bezier(0.22, 0.8, 0.25, 1) both;
+}
+
+@keyframes app-header-account-menu-out {
+  0% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  38% {
+    opacity: 1;
+    transform: translate3d(0, 1px, 0) scale(1.015);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, -8px, 0) scale(0.82);
+  }
+}
+
+.app-header-account-menu-out {
+  animation: app-header-account-menu-out 260ms cubic-bezier(0.55, 0, 1, 0.45) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-header-text-wave .app-header-wave-glyph {
+    animation: none;
+  }
+
+  .app-header-account-menu-in {
+    animation: none;
+  }
+
+  .app-header-account-menu-out {
+    animation: app-header-account-menu-out 0.01ms both;
+  }
+}
+
 /*
  * 宣传页设计令牌。
  *

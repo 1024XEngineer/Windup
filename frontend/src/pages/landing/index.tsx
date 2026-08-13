@@ -28,7 +28,7 @@ const productCapabilities = [
     outcome:
       '选择已经完成的角色与造型，就能在浏览器里切换动作、控制移动，亲手感受播放节奏与动作衔接。这里读取的不是演示动画，而是项目里真实保存的动作帧。',
     statement: '让他真正走起来，再决定下一步。',
-    title: 'PlayTest',
+    title: '预览台',
   },
   {
     outcome:
@@ -42,7 +42,7 @@ const assetLevels = [
   ['Project', '项目约束', '题材、画风、视角与精灵尺寸'],
   ['Character', '角色身份', '稳定的人物特征与参考基准'],
   ['Outfit', '角色造型', '一套穿戴与对应角色母版'],
-  ['Action', '动作资产', '可审核、可试玩、可继续扩展的帧序列'],
+  ['Action', '动作资产', '可审核、可预览、可继续扩展的帧序列'],
 ] as const
 
 const styleShowcaseItems = [
@@ -141,7 +141,7 @@ function PlayTestScene() {
     <div
       className={`${capabilitySceneClassName} [opacity:var(--play-opacity)] [transform:scale(var(--play-scale))] motion-reduce:hidden`}
     >
-      <p className={capabilityMediaNoteClassName}>此处将展示 PlayTest 的真实运行画面。</p>
+      <p className={capabilityMediaNoteClassName}>此处将展示预览台的真实运行画面。</p>
     </div>
   )
 }
@@ -310,7 +310,7 @@ function CapabilityStory() {
             className={`${floatingCardClassName} h-32 w-56`}
           >
             <p className="absolute bottom-[0.9rem] left-[0.9rem] text-[0.6rem] text-[#9b9e98]">
-              PlayTest 画面待接入
+              预览台画面待接入
             </p>
           </article>
         </div>
