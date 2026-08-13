@@ -270,6 +270,8 @@ DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image"
 _IMAGE_TRIES = 3
 _MIN_IMAGE_BYTES = 5000
 _CONNECT_RETRIES = 3
+_RATE_LIMIT_TRIES = 3
+_MAX_RATE_LIMIT_WAIT = 30.0
 
 # 从响应里捞 data URI。模型把图放在 message.content 里,而不同网关的包裹层级不一样
 # (有的 content 是字符串、有的是 parts 数组),故对整个响应 JSON 做一次正则,
@@ -309,14 +311,35 @@ class SufyImageProvider(ImageProvider):
         )
 
     def _post(self, client: httpx.Client, body: dict) -> dict:
-        """发一次请求。把"网关没有这个模型"翻译成能照着修的错误。
+        """发送请求，有限重试未被网关接收的 429。
 
         为什么值得专门处理:同一把 key 下不同网关的模型目录**不一样**。实测
         ``GET /v1/models``:一个网关 73 个模型、一个图像模型都没有;另一个 134 个、
         含本模块默认的那个(2026-08-10)。配错 ``AI_BASE_URL`` 时原始报错只是一条
         404,读的人无从知道该去改配置还是改模型名。
         """
-        resp = client.post(self._cfg.chat_completions_path, json=body)
+        for attempt in range(1, _RATE_LIMIT_TRIES + 1):
+            resp = client.post(self._cfg.chat_completions_path, json=body)
+            if resp.status_code != 429:
+                break
+            if attempt == _RATE_LIMIT_TRIES:
+                raise RuntimeError(
+                    f"图像服务请求过于频繁(HTTP 429)，已重试 {_RATE_LIMIT_TRIES} 次；"
+                    "请稍后重试或检查服务商额度"
+                )
+            retry_after = resp.headers.get("Retry-After", "")
+            try:
+                delay = float(retry_after)
+            except ValueError:
+                delay = float(2**attempt)
+            delay = min(max(delay, 0.0), _MAX_RATE_LIMIT_WAIT)
+            logger.warning(
+                "图像服务返回 429，第 %d/%d 次请求，%.2f 秒后重试",
+                attempt,
+                _RATE_LIMIT_TRIES,
+                delay,
+            )
+            time.sleep(delay)
         if resp.status_code in (400, 404):
             raise RuntimeError(
                 f"网关 {self._cfg.normalized_base_url} 拒绝了模型 {self._model!r}"

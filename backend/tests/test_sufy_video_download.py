@@ -332,6 +332,59 @@ def test_image_client_retries_connection_failures():
         client.close()
 
 
+def test_image_rate_limit_is_retried_after_retry_after(monkeypatch):
+    """429 表示请求未被网关接收，按 Retry-After 退避后应继续当前图片任务。"""
+    calls = {"n": 0}
+    sleeps: list[float] = []
+
+    def h(request):
+        import httpx
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "0.25"})
+        return httpx.Response(200, json=_img_payload(_big_b64()))
+
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", sleeps.append)
+
+    assert _image_provider(h).gen_image("x", [])
+    assert calls["n"] == 2
+    assert sleeps == [0.25]
+
+
+def test_image_rate_limit_exhaustion_has_actionable_error(monkeypatch):
+    """持续 429 不能泄漏 httpx 异常，也不能无限重试。"""
+    calls = {"n": 0}
+
+    def h(request):
+        import httpx
+        calls["n"] += 1
+        return httpx.Response(429, text='{"error":{"message":"quota exceeded"}}')
+
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
+
+    with pytest.raises(RuntimeError, match="稍后重试或检查服务商额度"):
+        _image_provider(h).gen_image("x", [])
+    assert calls["n"] == 3
+
+
+@pytest.mark.parametrize(("retry_after", "expected"), [("invalid", 2.0), ("300", 30.0)])
+def test_image_rate_limit_wait_has_fallback_and_cap(monkeypatch, retry_after, expected):
+    calls = {"n": 0}
+    sleeps: list[float] = []
+
+    def h(request):
+        import httpx
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": retry_after})
+        return httpx.Response(200, json=_img_payload(_big_b64()))
+
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", sleeps.append)
+
+    assert _image_provider(h).gen_image("x", [])
+    assert sleeps == [expected]
+
+
 def test_request_path_comes_from_config_not_a_literal():
     """路径用配置里的 chat_completions_path —— 它此前零消费方,正是今天在删的那类字段。"""
 
