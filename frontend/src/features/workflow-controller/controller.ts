@@ -756,7 +756,7 @@ export function createWorkflowController({
       else stop()
 
       // 先订阅再查询，关闭“GET 看到运行中，订阅前任务已结束”的丢事件窗口。
-      const latest = await generationApis.get(requireWorkflow().projectId, taskId)
+      const latest = await generationApis.get(requireWorkflow().projectId, taskId, expectation)
       if (latest.status === 'completed' || latest.status === 'failed') {
         await settleGeneration(nodeId, taskId, latest)
       }

@@ -883,6 +883,52 @@ describe('WorkflowController', () => {
     expect(controller.getWorkflow().nodes[1].phase).toBe('selecting')
   })
 
+  it('首帧订阅后的补偿查询沿用节点的图片结果预期', async () => {
+    const run = createRun([...completedCharacterNodes(), ...actionNodes()])
+    const workflow = createWorkflowApis(run)
+    const terminalGeneration: Generation = {
+      id: 'task-terminal',
+      projectId: '1',
+      type: 'first_frame',
+      status: 'completed',
+      result: {
+        type: 'first_frame',
+        images: [
+          { url: 'https://img/walk-1.png' },
+          { url: 'https://img/walk-2.png' },
+          { url: 'https://img/walk-3.png' },
+        ],
+      },
+      error: null,
+    }
+    const generationApis: GenerationApis = {
+      create: vi.fn(async () => ({
+        ...terminalGeneration,
+        status: 'pending',
+        result: null,
+      })) as GenerationApis['create'],
+      get: vi.fn(async () => terminalGeneration),
+      subscribe: vi.fn(() => () => undefined) as GenerationApis['subscribe'],
+    }
+    const controller = createWorkflowController({
+      workflow: run,
+      workflowRunApis: workflow.apis,
+      generationApis,
+      onAsyncError: vi.fn(),
+    })
+
+    await controller.generateFirstFrame('action-walk', { spriteWidth: 64, spriteHeight: 96 })
+
+    expect(generationApis.get).toHaveBeenCalledWith('1', 'task-terminal', {
+      type: 'first_frame',
+      actionType: 'walk',
+    })
+    expect(controller.getWorkflow().nodes[2]).toMatchObject({
+      status: 'active',
+      phase: 'selecting',
+    })
+  })
+
   it('从母版节点重做会清空下游任务，旧事件不能覆盖新执行线', async () => {
     const run = createRun([
       setupNode({ status: 'passed', phase: 'completed' }),
@@ -1585,7 +1631,10 @@ describe('WorkflowController', () => {
     await controller.resume()
 
     expect(generation.apis.get).toHaveBeenCalledTimes(1)
-    expect(generation.apis.get).toHaveBeenCalledWith('1', 'task-animation')
+    expect(generation.apis.get).toHaveBeenCalledWith('1', 'task-animation', {
+      type: 'complete_animation',
+      actionType: 'walk',
+    })
     expect(controller.getWorkflow().nodes[4].phase).toBe('generating')
   })
 })
