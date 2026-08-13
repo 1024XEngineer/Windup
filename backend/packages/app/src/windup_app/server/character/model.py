@@ -14,6 +14,7 @@
             ├── id                str: 造型稳定 ID
             ├── name              str: 造型名称
             ├── preview_url       str | None: 造型预览图
+            ├── model_3d_url      str | None: 该造型的绑骨 3D 模型（三渲二路线的开关）
             └── actions[]         list[CharacterAction]: 动作列表
                 ├── id            str: 动作稳定 ID
                 ├── type          "idle" | "walk" | "attack" | "custom"
@@ -136,6 +137,17 @@ class CharacterOutfit(BaseModel):
     name: str = Field(..., description="造型名称")
     description: str | None = Field(default=None, description="造型描述")
     preview_url: str | None = Field(default=None, description="造型预览图 URL")
+    # 该造型的**绑骨 3D 模型**存储 URL;``None`` = 还没建。三渲二路线的开关就是它:
+    # server 读到有值就调 CharacterGeneratorPort.generate_rendered,读到 None 就走 i2v。
+    #
+    # 挂在造型一级而非角色一级(#121):外观挂在造型上(每个造型自带 preview_url),
+    # 角色级只有一张参考图,同一角色的不同造型共用不了一个 3D 模型。
+    #
+    # 建这份资产是**每造型一次性**的按次计费(图生 3D + 绑骨),不在动作生成的请求
+    # 路径上 —— 见 orchestrator.render3d_assets.Render3DAssetBuilder。
+    model_3d_url: str | None = Field(
+        default=None, description="该造型的绑骨 3D 模型 URL;None = 未建,三渲二不可用"
+    )
     actions: list[CharacterAction] = Field(default_factory=list, description="该造型下的动作列表")
 
 

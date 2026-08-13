@@ -68,6 +68,11 @@ class GenRoute(str, Enum):
 
     VIDEO_I2V = "video_i2v"   # 步态位移动作:图生视频(连贯交替腿)
     PER_FRAME = "per_frame"   # 离散姿势:逐帧图生图(单帧可编辑)
+    # 三渲二:母版 → 图生 3D → 自动绑骨 → 套预设动作 → 渲 2D 序列帧。与上面两条有个
+    # **结构性差异**:前两条由动作的物理性质唯一决定,这一条还取决于"该造型有没有 3D
+    # 资产"。所以它**不进 ROUTE_MATRIX** —— 由 server 读 DB 后直接调
+    # ``CharacterGeneratorPort.generate_rendered``(#122)。
+    RENDER_3D = "render_3d"
 
 
 class Facing(str, Enum):
@@ -213,6 +218,9 @@ class ActionSpec(BaseModel):
                     "传了不会生效"
                 )
         return self
+    # 这里**没有** ``route`` 字段:路线选择整个在 server —— 走不走三渲二取决于"这个造型
+    # 有没有 3D 资产",那份数据在 DB 里,server 读完直接调 ``generate_rendered``。
+    # 加一个零消费方的字段等于留一个"填了看起来会生效、实际没人读"的入参。
 
     @model_validator(mode="before")
     @classmethod

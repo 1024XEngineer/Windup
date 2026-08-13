@@ -63,13 +63,21 @@ class ActionQuality:
     一段**每帧都一样**的 walk 和一段步态干净的 walk,帧数、时长、fps 完全相同,
     调用方分辨不出 —— 本仓吃过四次的正是这类"看起来成功的错结果"。
 
-    三个字段各自不可由其他两个推导(下面逐条说明必要性)。刻意**没有**的字段:
+    四个字段各自不可由其余推导(下面逐条说明必要性)。刻意**没有**的字段:
       - 糊帧率(``slicing.quality.blur_ratio``):2026-08-05 实测 6 段真 i2v
         **没有一帧糊帧**,加进来是个恒等于 1 的常数,上层拿它做不了任何决定。
         真出现糊帧再加,那时才有阈值可依。
       - 抽帧降级原因(``slicing.pick_cycle`` 的三条退化路径):见该函数 docstring 里
         记的缺口。降级**对交付物的后果**由 ``loop_seam`` 直接测得,而"降级的原因"
         今天没有任何调用方会据此改变行为,故不塞进出参。
+    """
+
+    limbs: dict[str, float] = field(default_factory=dict, kw_only=True)
+    """分区动量(``slicing.quality.limb_motion``):``{区名: 占比}`` + 最静区名 ``still``。
+
+    补 ``motion_scale`` / ``dead_frames`` 的共同盲区 —— 那两个看的是**整幅**,而
+    "腿在迈、手臂僵成柱子"整幅指标完全正常。某个该动的区占比接近 0 = 那块网格没被
+    骨骼驱动(多半是自动绑骨漏认了肢体),别交付。
     """
 
     motion_scale: float
@@ -136,8 +144,7 @@ class CharacterGeneratorPort(Protocol):
             在 ai_engine 下零命中(2026-08-08 复核)。这不是遗漏:i2v 的角色身份完全由
             ``master`` 这张母版图像承载,身份描述再写一遍反而会和母版打架。本参数是给
             未实现路线预留的入参:逐帧图生图(#53)要靠 ``name`` / ``desc`` 在每帧提示词里
-            锁一致性,渲染出帧(#81 #122)要靠 ``master_ref`` / ``version`` 定位 3D 资产。
-            **调用方不要指望改 card 能影响视频路线的产出。**
+            锁一致性。**调用方不要指望改 card 能影响视频路线的产出。**
         action: 动作规格(类型 / 帧数 / 风格化 / 朝向)。视频路线的实际入参在这里:
             ``action``、``n_frames``、``facing``、``stylize`` 等。
         master: 定妆母版图 bytes(server 从 reference_image_url 取)。**视频路线的
@@ -169,3 +176,25 @@ class CharacterGeneratorPort(Protocol):
         progress: ProgressPort,
         canvas: tuple[int, int] | None = None,
     ) -> GeneratedAction: ...
+
+    def generate_rendered(
+        self,
+        card: CharacterCard,
+        action: ActionSpec,
+        rigged_model: bytes,
+        progress: ProgressPort,
+        canvas: tuple[int, int] | None = None,
+    ) -> GeneratedAction:
+        """三渲二:拿**已绑骨的 3D 模型**套预设动作、渲成 2D 序列帧。
+
+        与 :meth:`generate` 并列而不另立 port —— server 调 ai_engine 只该有一个入口。
+        **调哪个由 server 决定,引擎不选**:判据"该造型有没有 3D 资产"只有 DB 知道
+        (``character_data.outfits[].model_3d_url``),故本方法不提供"能不能用"的预查询。
+        ``rigged_model`` 传 bytes 不传 URL —— ai_engine 只吃 bytes、不碰存储;取模型与
+        **建**模型那笔按次计费都在 server 侧,不在这条出帧路径上。
+
+        Raises:
+            NotImplementedError: 没注入 ``GenRoute.RENDER_3D`` 的 strategy。
+            ValueError: 模型渲不出请求朝向 / 产出帧数对不上契约。
+        """
+        ...
