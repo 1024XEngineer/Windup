@@ -20,14 +20,13 @@ function taskData(overrides: Record<string, unknown> = {}) {
     project_id: 42,
     task_type: 'character_image',
     status: 'completed',
-    input_payload: { num_images: 4 },
+    input_payload: { num_images: 3 },
     result: {
       type: 'character_image',
       image_urls: [
         'https://cdn.test/candidate-1.png',
         'https://cdn.test/candidate-2.png',
         'https://cdn.test/candidate-3.png',
-        'https://cdn.test/candidate-4.png',
       ],
     },
     error_message: null,
@@ -47,7 +46,7 @@ function actionFrames(count: number) {
 }
 
 describe('createGenerationApis', () => {
-  it('固定请求并映射四张角色母版候选', async () => {
+  it('固定请求并映射三张角色母版候选', async () => {
     const request = vi.fn(async (_url: string, _init?: RequestInit) => success(taskData()))
     const stream = vi.fn(() => vi.fn())
     const apis = createGenerationApis({
@@ -76,7 +75,7 @@ describe('createGenerationApis', () => {
           negative_prompt: '',
           width: 64,
           height: 96,
-          num_images: 4,
+          num_images: 3,
         }),
       }),
     )
@@ -86,7 +85,6 @@ describe('createGenerationApis', () => {
         { url: 'https://cdn.test/candidate-1.png' },
         { url: 'https://cdn.test/candidate-2.png' },
         { url: 'https://cdn.test/candidate-3.png' },
-        { url: 'https://cdn.test/candidate-4.png' },
       ],
     })
   })
@@ -410,13 +408,13 @@ describe('createGenerationApis', () => {
     ['输入对象', { input_payload: [] }, '生成任务 input_payload 无效'],
     ['结果对象', { result: [] }, '生成任务 result 无效'],
     ['错误字段', { error_message: 1 }, '生成任务 error_message 无效'],
-    ['任务输入', { input_payload: { num_images: 3 } }, 'num_images 必须为 4'],
+    ['任务输入', { input_payload: { num_images: 4 } }, 'num_images 必须为 3'],
     [
       '图片结果类型',
-      { result: { type: 'video', image_urls: ['a', 'b', 'c', 'd'] } },
+      { result: { type: 'video', image_urls: ['a', 'b', 'c'] } },
       '角色图片结果 type 无效',
     ],
-    ['图片数量', { result: { type: 'character_image', image_urls: ['a'] } }, '必须包含 4 个候选'],
+    ['图片数量', { result: { type: 'character_image', image_urls: ['a'] } }, '必须包含 3 个候选'],
     ['完成结果', { result: null }, '完成任务缺少 result'],
   ])('校验%s', async (_label, overrides, message) => {
     const apis = createGenerationApis({

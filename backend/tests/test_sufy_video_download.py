@@ -9,6 +9,7 @@
    见 ``providers.sufy._download_request`` 的 docstring。
 """
 
+from datetime import datetime, timezone
 import json
 
 import httpx
@@ -18,6 +19,8 @@ from windup_framework.providers.sufy import (
     IncompleteDownloadError,
     UnsafeDownloadUrlError,
     _download,
+    _retry_after_seconds,
+    _utc_now,
 )
 
 VIDEO = b"\x00\x01mp4-bytes" * 64
@@ -241,6 +244,21 @@ def _image_provider(handler):
     return p
 
 
+def test_image_provider_extends_request_timeout_by_half():
+    from windup_framework.config.provider import AIProviderSettings
+    from windup_framework.providers.sufy import SufyImageProvider
+
+    provider = SufyImageProvider(
+        config=AIProviderSettings(base_url="https://gw.example.com/v1", api_key="k", timeout=20),
+    )
+
+    with provider._client() as client:
+        assert client.timeout.connect == 30
+        assert client.timeout.read == 30
+        assert client.timeout.write == 30
+        assert client.timeout.pool == 30
+
+
 def test_gen_image_returns_the_decoded_png():
     """端点可达而 provider 必抛错 = 每个图像任务稳定 FAILED。实现后必须真能出图。"""
     def h(request):
@@ -330,6 +348,97 @@ def test_image_client_retries_connection_failures():
         assert client._transport._pool._retries == _CONNECT_RETRIES
     finally:
         client.close()
+
+
+def test_image_rate_limit_is_retried_after_retry_after(monkeypatch):
+    """429 表示请求未被网关接收，按 Retry-After 退避后应继续当前图片任务。"""
+    calls = {"n": 0}
+    sleeps: list[float] = []
+
+    def h(request):
+        import httpx
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "0.25"})
+        return httpx.Response(200, json=_img_payload(_big_b64()))
+
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", sleeps.append)
+
+    assert _image_provider(h).gen_image("x", [])
+    assert calls["n"] == 2
+    assert sleeps == [0.25]
+
+
+def test_image_rate_limit_exhaustion_has_actionable_error(monkeypatch):
+    """持续 429 不能泄漏 httpx 异常，也不能无限重试。"""
+    calls = {"n": 0}
+
+    def h(request):
+        import httpx
+        calls["n"] += 1
+        return httpx.Response(429, text='{"error":{"message":"quota exceeded"}}')
+
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
+
+    with pytest.raises(RuntimeError, match="稍后重试或检查服务商额度"):
+        _image_provider(h).gen_image("x", [])
+    assert calls["n"] == 3
+
+
+@pytest.mark.parametrize(
+    ("retry_after", "expected"), [("invalid", 2.0), ("NaN", 2.0), ("300", 30.0)]
+)
+def test_image_rate_limit_wait_has_fallback_and_cap(monkeypatch, retry_after, expected):
+    calls = {"n": 0}
+    sleeps: list[float] = []
+
+    def h(request):
+        import httpx
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": retry_after})
+        return httpx.Response(200, json=_img_payload(_big_b64()))
+
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", sleeps.append)
+
+    assert _image_provider(h).gen_image("x", [])
+    assert sleeps == [expected]
+
+
+def test_image_rate_limit_accepts_http_date(monkeypatch):
+    calls = {"n": 0}
+    sleeps: list[float] = []
+
+    def h(request):
+        import httpx
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(
+                429, headers={"Retry-After": "Thu, 13 Aug 2026 03:00:10 GMT"}
+            )
+        return httpx.Response(200, json=_img_payload(_big_b64()))
+
+    monkeypatch.setattr(
+        "windup_framework.providers.sufy._utc_now",
+        lambda: datetime(2026, 8, 13, 3, 0, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", sleeps.append)
+
+    assert _image_provider(h).gen_image("x", [])
+    assert sleeps == [10.0]
+
+
+def test_retry_after_clock_is_utc():
+    assert _utc_now().tzinfo is timezone.utc
+
+
+def test_retry_after_accepts_date_without_timezone(monkeypatch):
+    monkeypatch.setattr(
+        "windup_framework.providers.sufy._utc_now",
+        lambda: datetime(2026, 8, 13, 3, 0, tzinfo=timezone.utc),
+    )
+
+    assert _retry_after_seconds("Thu, 13 Aug 2026 03:00:10") == 10.0
 
 
 def test_request_path_comes_from_config_not_a_literal():
