@@ -80,6 +80,7 @@ function fillCodeLogin(email = 'reader@example.com', code = '123456') {
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
+  vi.unstubAllGlobals()
   vi.useRealTimers()
 })
 
@@ -135,6 +136,42 @@ describe('AccountPanel', () => {
     expect(screen.getByTestId('location').textContent).toBe('/?returnTo=%2Fprojects&source=header')
   })
 
+  it('keeps keyboard focus inside the dialog in both tab directions', () => {
+    renderPanel('/?account=login')
+
+    const dialog = screen.getByRole('dialog', { name: '登录 Windup' })
+    const closeButton = screen.getByRole('button', { name: '关闭账号面板' })
+    const entrySwitch = screen.getByRole('button', { name: '创建账号' })
+
+    entrySwitch.focus()
+    fireEvent.keyDown(entrySwitch, { key: 'Tab' })
+    expect(document.activeElement).toBe(closeButton)
+
+    closeButton.focus()
+    fireEvent.keyDown(closeButton, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(entrySwitch)
+    expect(dialog.contains(document.activeElement)).toBe(true)
+  })
+
+  it('lets rotating copy leave before replacing it with the next message', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('matchMedia', () => ({ matches: false }))
+    const { container } = renderPanel('/?account=login')
+    const copy = () => container.querySelector<HTMLElement>('[data-copy-phase]')
+
+    expect(copy()?.dataset.copyPhase).toBe('entering')
+    await act(async () => vi.advanceTimersByTimeAsync(760))
+    expect(copy()?.dataset.copyPhase).toBe('resting')
+
+    await act(async () => vi.advanceTimersByTimeAsync(3_440))
+    expect(copy()?.dataset.copyPhase).toBe('exiting')
+    expect(screen.getByText('继续搭建，')).toBeTruthy()
+
+    await act(async () => vi.advanceTimersByTimeAsync(460))
+    expect(copy()?.dataset.copyPhase).toBe('entering')
+    expect(screen.getByText('你的角色还在这里，')).toBeTruthy()
+  })
+
   it('sends login codes and keeps the cooldown with the receiving email', async () => {
     const { apis } = renderPanel()
     fireEvent.change(screen.getByLabelText('邮箱'), {
@@ -151,6 +188,39 @@ describe('AccountPanel', () => {
     expect(screen.getByRole('button', { name: '60s' }).hasAttribute('disabled')).toBe(true)
 
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'new@example.com' } })
+    expect(screen.getByRole('button', { name: '发送验证码' }).hasAttribute('disabled')).toBe(false)
+  })
+
+  it('re-enables code delivery after its cooldown expires', async () => {
+    vi.useFakeTimers()
+    renderPanel()
+    fireEvent.change(screen.getByLabelText('邮箱'), {
+      target: { value: 'reader@example.com' },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '发送验证码' }))
+    await act(async () => Promise.resolve())
+    expect(screen.getByRole('button', { name: '60s' }).hasAttribute('disabled')).toBe(true)
+
+    await act(async () => vi.advanceTimersByTimeAsync(60_000))
+    expect(screen.getByRole('button', { name: '发送验证码' }).hasAttribute('disabled')).toBe(false)
+  })
+
+  it('reports invalid email and delivery failures without advancing', async () => {
+    const apis = createApis()
+    apis.sendCode.mockRejectedValueOnce(new Error('邮件服务暂时不可用'))
+    renderPanel('/?account=login', apis)
+
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'invalid' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送验证码' }))
+    expect((await screen.findByRole('alert')).textContent).toContain('请输入有效邮箱地址')
+    expect(apis.sendCode).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('邮箱'), {
+      target: { value: 'reader@example.com' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送验证码' }))
+    expect((await screen.findByRole('alert')).textContent).toContain('邮件服务暂时不可用')
     expect(screen.getByRole('button', { name: '发送验证码' }).hasAttribute('disabled')).toBe(false)
   })
 
@@ -276,6 +346,38 @@ describe('AccountPanel', () => {
       }),
     )
     expect(apis.sendCode).not.toHaveBeenCalled()
+  })
+
+  it('preserves registration input when showing a password and returning a step', async () => {
+    renderPanel('/?account=register')
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'new@example.com' } })
+    fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
+
+    const password = await screen.findByLabelText('密码')
+    expect(password.getAttribute('type')).toBe('password')
+    fireEvent.click(screen.getByRole('button', { name: '显示密码' }))
+    expect(password.getAttribute('type')).toBe('text')
+
+    fireEvent.click(screen.getByRole('button', { name: '返回上一步' }))
+    expect(((await screen.findByLabelText('邮箱')) as HTMLInputElement).value).toBe(
+      'new@example.com',
+    )
+    expect(screen.getByTestId('auth-motion-stage').dataset.motionDirection).toBe('backward')
+  })
+
+  it('switches account entry only after the current panel exits', async () => {
+    vi.useFakeTimers()
+    renderPanel('/?account=login&returnTo=%2Fworkspace')
+
+    fireEvent.click(screen.getByRole('button', { name: '创建账号' }))
+    expect(screen.getByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe('/?account=login&returnTo=%2Fworkspace')
+
+    await act(async () => vi.advanceTimersByTimeAsync(520))
+    expect(screen.getByRole('dialog', { name: '创建 Windup 账号' })).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/?account=register&returnTo=%2Fworkspace',
+    )
   })
 
   it('validates each registration step and reuses the existing register API contract', async () => {
