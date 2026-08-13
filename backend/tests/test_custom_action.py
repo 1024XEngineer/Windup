@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import io
+import threading
+import time
 
 import pytest
 from PIL import Image
@@ -259,6 +261,56 @@ def test_generator_is_bucketed_by_video_model():
     b = ex._get_generator("veo3.1")
     assert a is not b, "两个模型拿到了同一个 generator"
     assert ex._get_generator("kling-v2-6") is a, "同一模型该复用"
+
+
+def test_concurrent_first_requests_build_one_shared_provider_set(monkeypatch):
+    """并发首请求只装一份共用 provider。
+
+    执行器是进程级单例、每个请求起一个线程,check-and-insert 不加锁时每个线程都会各装
+    一套;而每个抠图实例会各自惰性加载一份 ONNX 会话,重复的代价落在内存与加载耗时上。
+    """
+    from windup_framework import providers
+
+    from windup_app.server.orchestrator.executor import ActionTaskExecutor
+
+    built: list[str] = []
+    tally = threading.Lock()
+
+    def _counting(name: str):
+        def _factory(*_args, **_kwargs):
+            with tally:
+                built.append(name)
+            time.sleep(0.02)  # 放大 check-and-insert 的窗口:不加锁时必然重复装配
+            return object()
+        return _factory
+
+    monkeypatch.setattr(providers, "OnnxU2NetMatteProvider", _counting("matte"))
+    monkeypatch.setattr(providers, "SufyImageProvider", _counting("image"))
+    monkeypatch.setattr(providers, "SufyVideoProvider", _counting("video"))
+
+    ex = ActionTaskExecutor()
+    models = ["kling-v2-5-turbo", "kling-v2-6"] * 3
+    start = threading.Barrier(len(models))
+    got: dict[int, object] = {}
+
+    def _ask(i: int) -> None:
+        start.wait(timeout=5)
+        gen = ex._get_generator(models[i])
+        with tally:
+            got[i] = gen
+
+    threads = [threading.Thread(target=_ask, args=(i,)) for i in range(len(models))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert not any(t.is_alive() for t in threads), "有线程没跑完,装配路径可能卡在锁上"
+    assert built.count("matte") == 1, f"抠图 provider 装了 {built.count('matte')} 次,该只装一次"
+    assert built.count("image") == 1, f"图生图 provider 装了 {built.count('image')} 次"
+    assert built.count("video") == 2, "视频 provider 随模型变,两个模型该各一份"
+    for i, model in enumerate(models):
+        assert got[i] is ex._by_model[model], "同一模型的并发请求该拿到同一个 generator"
 
 
 # ── ⑥ 骨架不得夹带姿态前提(游泳/潜水/飞行都不着地不直立)─────────────────────
