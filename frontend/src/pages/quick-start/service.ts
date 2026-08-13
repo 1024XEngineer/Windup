@@ -3,6 +3,7 @@ import {
   createGenerationApis,
   createMediaApis,
   projectApis,
+  ProjectNameConflictError,
   workflowRunApis,
   type Action,
   type Character,
@@ -605,7 +606,8 @@ export function createAutoPrepareProject(projectApis: ProjectApis): PrepareQuick
     const normalizedPrompt = prompt.trim().replace(/\s+/gu, ' ') || '未命名项目'
     let lastConflict: unknown
 
-    for (let sequence = 1; sequence <= 100; sequence += 1) {
+    for (let sequence = 1; sequence <= 5; sequence += 1) {
+      // 首次名称不预留编号空间；只有重名时才缩短前缀，为可读编号让出 20 字上限。
       const suffix = sequence === 1 ? '' : ` ${sequence}`
       const maxBaseLength = 20 - Array.from(suffix).length
       const promptCharacters = Array.from(normalizedPrompt)
@@ -623,7 +625,7 @@ export function createAutoPrepareProject(projectApis: ProjectApis): PrepareQuick
         })
         return { id: project.id, spriteSize: project.spriteSize }
       } catch (error) {
-        if (!(error instanceof Error) || error.message !== '项目名称已存在') throw error
+        if (!(error instanceof ProjectNameConflictError)) throw error
         lastConflict = error
       }
     }

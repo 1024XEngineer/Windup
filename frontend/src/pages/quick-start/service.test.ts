@@ -16,6 +16,7 @@ import {
   createRealQuickStartService,
   type QuickStartMediaApis,
 } from './service'
+import { ProjectNameConflictError } from '@/entities'
 import { registerApiAccessTokenProvider } from '@/shared/api'
 
 function createWorkflowRunApis(initialRuns: readonly WorkflowRun[] = []): WorkflowRunApis {
@@ -270,7 +271,7 @@ describe('createQuickStartService', () => {
   it('uses a readable number when the generated project name already exists', async () => {
     const create = vi
       .fn()
-      .mockRejectedValueOnce(new Error('项目名称已存在'))
+      .mockRejectedValueOnce(new ProjectNameConflictError())
       .mockResolvedValueOnce({
         id: 'project-2',
         name: '会挥剑的像素骑士 2',
@@ -311,13 +312,46 @@ describe('createQuickStartService', () => {
     expect(create).toHaveBeenCalledTimes(1)
   })
 
-  it('stops retrying after exhausting the readable project name sequence', async () => {
-    const conflict = new Error('项目名称已存在')
+  it('does not infer a project-name conflict from an arbitrary error message', async () => {
+    const unrelatedError = new Error('项目名称已存在')
+    const create = vi.fn().mockRejectedValue(unrelatedError)
+    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
+
+    await expect(prepare('像素骑士')).rejects.toBe(unrelatedError)
+    expect(create).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps long numbered project names readable within the backend limit', async () => {
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(new ProjectNameConflictError())
+      .mockResolvedValueOnce({
+        id: 'project-long-2',
+        name: '一位名字特别长的像素角色设定用于验… 2',
+        spriteSize: { width: 256, height: 256 },
+      })
+    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
+
+    await prepare('一位名字特别长的像素角色设定用于验证截断继续')
+
+    expect(create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ name: '一位名字特别长的像素角色设定用于验证截…' }),
+    )
+    expect(create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ name: '一位名字特别长的像素角色设定用于验… 2' }),
+    )
+    expect(Array.from(create.mock.calls[1]?.[0].name ?? '')).toHaveLength(20)
+  })
+
+  it('stops after five conflicting project names to avoid excessive write requests', async () => {
+    const conflict = new ProjectNameConflictError()
     const create = vi.fn().mockRejectedValue(conflict)
     const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
 
     await expect(prepare('像素骑士')).rejects.toBe(conflict)
-    expect(create).toHaveBeenCalledTimes(100)
+    expect(create).toHaveBeenCalledTimes(5)
   })
 
   it('creates one persisted node graph and starts the character image task', async () => {

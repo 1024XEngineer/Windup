@@ -31,6 +31,18 @@ export interface CreateProjectInput {
 
 export type ProjectPageQuery = PageQuery
 
+/** 项目名称违反后端的用户内唯一约束。 */
+export class ProjectNameConflictError extends ApiError {
+  constructor(options?: { cause?: unknown }) {
+    super('项目名称已存在', {
+      kind: 'business',
+      code: 400,
+      cause: options?.cause,
+    })
+    this.name = 'ProjectNameConflictError'
+  }
+}
+
 /** 后端 character_perspective: 1 横版 / 2 俯视 / 3 2.5D。 */
 export type CharacterPerspective = 'side' | 'top-down' | 'isometric'
 
@@ -155,25 +167,39 @@ export const projectApis: ProjectApis = {
   },
 
   async create(input) {
-    const dto = await getApiClient().request<ProjectDto>('/projects', {
-      method: 'POST',
-      json: {
-        workflow_id:
-          input.workflowId === undefined
-            ? undefined
-            : input.workflowId === null
-              ? null
-              : toBackendId(input.workflowId, 'workflowId'),
-        project_name: input.name,
-        character_perspective: perspectiveToDto[input.perspective],
-        directional_movement: movementToDto[input.directionalMovement],
-        sprite_width: input.spriteSize.width,
-        sprite_height: input.spriteSize.height,
-        game_style: input.gameStyle,
-        sprite_sample_url: input.sampleImageUrl,
-      },
-    })
-    return mapProject(dto)
+    try {
+      const dto = await getApiClient().request<ProjectDto>('/projects', {
+        method: 'POST',
+        json: {
+          workflow_id:
+            input.workflowId === undefined
+              ? undefined
+              : input.workflowId === null
+                ? null
+                : toBackendId(input.workflowId, 'workflowId'),
+          project_name: input.name,
+          character_perspective: perspectiveToDto[input.perspective],
+          directional_movement: movementToDto[input.directionalMovement],
+          sprite_width: input.spriteSize.width,
+          sprite_height: input.spriteSize.height,
+          game_style: input.gameStyle,
+          sprite_sample_url: input.sampleImageUrl,
+        },
+      })
+      return mapProject(dto)
+    } catch (error) {
+      // 后端目前只返回通用 BAD_REQUEST；中文 message 是项目重名的唯一可辨识契约。
+      // 文案映射仅留在 HTTP 适配器，业务用例只依赖稳定的前端错误类型。
+      if (
+        error instanceof ApiError &&
+        error.kind === 'business' &&
+        error.code === 400 &&
+        error.message === '项目名称已存在'
+      ) {
+        throw new ProjectNameConflictError({ cause: error })
+      }
+      throw error
+    }
   },
 
   async remove(id) {
