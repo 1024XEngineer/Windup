@@ -5,7 +5,7 @@ export { createUserApis, userApis } from './user'
 export type { AuthTokens, CreateUserApisOptions, SendCodePurpose, User, UserApis } from './user'
 
 /* 项目 —— 全局约束：视角、朝向、精灵尺寸、画风 */
-export { CHARACTER_PERSPECTIVE, DIRECTIONAL_MOVEMENT } from './project'
+export { CHARACTER_PERSPECTIVE, DIRECTIONAL_MOVEMENT, ProjectNameConflictError } from './project'
 export { projectApis } from './project'
 export type {
   CharacterPerspective,
