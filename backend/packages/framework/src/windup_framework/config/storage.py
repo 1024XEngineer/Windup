@@ -4,6 +4,8 @@
 本地开发需在 ``.env`` 填入 AccessKey / SecretKey / Bucket / 绑定域名。
 """
 
+from urllib.parse import urlsplit
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,10 +34,19 @@ class StorageSettings(BaseSettings):
 
     @property
     def download_base(self) -> str:
-        """下载 URL 基础域名,去掉末尾 ``/``,客户端拼接 key 即可。"""
+        """返回浏览器可访问的下载域名。"""
         domain = self.bucket_domain.rstrip("/")
         if domain and not domain.startswith(("http://", "https://")):
             domain = f"https://{domain}"
+        hostname = (urlsplit(domain).hostname or "").lower()
+        labels = hostname.split(".")
+        if hostname.endswith(".qiniucs.com") and any(
+            label == "s3" or label.startswith("s3-") for label in labels
+        ):
+            raise ValueError(
+                "QINIU_BUCKET_DOMAIN 不能使用七牛 S3 API 端点；"
+                "请填写 Bucket 绑定的 HTTPS Kodo/CDN 下载域名"
+            )
         return domain
 
 

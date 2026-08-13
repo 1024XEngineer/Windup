@@ -44,6 +44,19 @@ def test_storage_download_base_accepts_documented_bare_domain(configured, expect
     assert StorageSettings(bucket_domain=configured).download_base == expected
 
 
+@pytest.mark.parametrize(
+    "configured",
+    [
+        "example-bucket.s3.cn-east-1.qiniucs.com",
+        "https://example-bucket.s3.cn-east-1.qiniucs.com",
+        "https://s3-cn-east-1.qiniucs.com/example-bucket",
+    ],
+)
+def test_storage_download_base_rejects_qiniu_s3_api_endpoint(configured):
+    with pytest.raises(ValueError, match="S3 API"):
+        StorageSettings(bucket_domain=configured).download_base
+
+
 # ── ① 真实装配路径不能引用已删除的路线 ────────────────────────────────────
 
 
