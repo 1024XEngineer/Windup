@@ -82,6 +82,17 @@ export interface CreateQuickStartServiceOptions {
   onAsyncError?: (error: Error) => void
 }
 
+type GeneratableActionType = 'idle' | 'walk' | 'jump' | 'attack' | 'custom'
+
+function inferGeneratableActionType(description: string): GeneratableActionType {
+  const normalized = description.trim().toLowerCase()
+  if (!normalized || /^(待机|站立|呼吸|idle|stand|breathe)$/u.test(normalized)) return 'idle'
+  if (/^(跳|跃|跳跃|jump|leap|hop)$/u.test(normalized)) return 'jump'
+  if (/^(走|步行|跑|跑步|冲刺|walk|run|sprint)$/u.test(normalized)) return 'walk'
+  if (/^(攻击|attack)$/u.test(normalized)) return 'attack'
+  return 'custom'
+}
+
 /**
  * Quick Start 与 Workflow Editor 都推进同一份节点图；这里仅把自然语言输入翻译为连续命令。
  * Controller 按 run 实例化，避免一个全局内存对象误把两个角色的流程混在一起。
@@ -203,7 +214,7 @@ export function createQuickStartService({
     actionDescription: string,
   ) {
     const name = actionDescription.trim() || '待机'
-    const type = actionDescription.trim() ? 'custom' : 'idle'
+    const type = inferGeneratableActionType(actionDescription)
     await controller.addAction({
       input: { outfitId, name, type, prompt: actionDescription.trim() || null, fps: 12 },
     })

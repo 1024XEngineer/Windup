@@ -29,6 +29,19 @@ from windup_app.web.api.generation import (
     CharacterImageGenerateRequest,
     _EventBus,
 )
+from windup_framework.config.storage import StorageSettings
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        ("cdn.example.com", "https://cdn.example.com"),
+        ("https://cdn.example.com/", "https://cdn.example.com"),
+        ("", ""),
+    ],
+)
+def test_storage_download_base_accepts_documented_bare_domain(configured, expected):
+    assert StorageSettings(bucket_domain=configured).download_base == expected
 
 
 # ── ① 真实装配路径不能引用已删除的路线 ────────────────────────────────────
@@ -338,6 +351,24 @@ def test_num_frames_is_bounded():
         CharacterActionGenerateRequest(project_id=42, character_id=1, action_type="walk", num_frames=0)
     ok = CharacterActionGenerateRequest(project_id=42, character_id=1, action_type="walk", num_frames=16)
     assert ok.num_frames == 16
+
+
+def test_custom_action_requires_a_non_empty_prompt():
+    for prompt in (None, "", "   "):
+        with pytest.raises(ValueError):
+            CharacterActionGenerateRequest(
+                project_id=42,
+                character_id=1,
+                action_type="custom",
+                custom_prompt=prompt,
+            )
+    request = CharacterActionGenerateRequest(
+        project_id=42,
+        character_id=1,
+        action_type="custom",
+        custom_prompt="  wave hello  ",
+    )
+    assert request.custom_prompt == "wave hello"
 
 
 # ── ⑥ 请求里的尺寸必须真的生效（2026-08-10 对抗复查）────────────────────────

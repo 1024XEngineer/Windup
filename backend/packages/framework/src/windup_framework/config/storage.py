@@ -33,7 +33,10 @@ class StorageSettings(BaseSettings):
     @property
     def download_base(self) -> str:
         """下载 URL 基础域名,去掉末尾 ``/``,客户端拼接 key 即可。"""
-        return self.bucket_domain.rstrip("/")
+        domain = self.bucket_domain.rstrip("/")
+        if domain and not domain.startswith(("http://", "https://")):
+            domain = f"https://{domain}"
+        return domain
 
 
 settings = StorageSettings()

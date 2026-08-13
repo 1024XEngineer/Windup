@@ -24,6 +24,7 @@ ROUTE_MATRIX: dict[ActionType, GenRoute] = {
     ActionType.RUN: GenRoute.VIDEO_I2V,
     ActionType.JUMP: GenRoute.VIDEO_I2V,
     ActionType.ATTACK: GenRoute.VIDEO_I2V,
+    ActionType.CUSTOM: GenRoute.VIDEO_I2V,
     ActionType.HIT: GenRoute.PER_FRAME,
     # idle 走 i2v(build_idle_prompt:躯干缓慢起伏呼吸)。
     # **2026-08-07 定案**:#53 原设计的 ¥0 程序化 Idle-B(局部网格呼吸)放弃 —— 做不出

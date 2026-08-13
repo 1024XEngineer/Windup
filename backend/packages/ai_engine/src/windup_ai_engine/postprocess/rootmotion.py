@@ -27,6 +27,7 @@ DEFAULT_FPS_MS = {
     "jump": 110,
     "attack": 90,
     "hit": 90,
+    "custom": 90,
 }
 
 

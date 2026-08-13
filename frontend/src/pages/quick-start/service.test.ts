@@ -365,10 +365,40 @@ describe('createQuickStartService', () => {
       { characterId: 'character-1', outfitId: savedCharacter.outfits[0]!.id },
       '跳跃',
     )
-    const secondRun = secondSession.getWorkflow()
+    const target = { characterId: 'character-1', outfitId: savedCharacter.outfits[0]!.id }
+    await service.startAction(target, '跑步')
+    await service.startAction(target, '攻击')
+    await service.startAction(target, '站立挥手')
+    const finalSession = await service.startAction(target, '跑步攻击')
+    const finalRun = finalSession.getWorkflow()
     expect(secondSession.runId).toBe(firstSession.runId)
-    expect(secondRun.nodes.filter((node) => node.type === 'action-first-frame')).toHaveLength(2)
-    expect(generationApis.create).toHaveBeenCalledTimes(2)
+    expect(finalSession.runId).toBe(firstSession.runId)
+    expect(finalRun.nodes.filter((node) => node.type === 'action-first-frame')).toHaveLength(6)
+    expect(generationApis.create).toHaveBeenCalledTimes(6)
+    expect(generationApis.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ actionType: 'custom', prompt: '挥手' }),
+    )
+    expect(generationApis.create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ actionType: 'jump', prompt: '跳跃' }),
+    )
+    expect(generationApis.create).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ actionType: 'walk', prompt: '跑步' }),
+    )
+    expect(generationApis.create).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({ actionType: 'attack', prompt: '攻击' }),
+    )
+    expect(generationApis.create).toHaveBeenNthCalledWith(
+      5,
+      expect.objectContaining({ actionType: 'custom', prompt: '站立挥手' }),
+    )
+    expect(generationApis.create).toHaveBeenNthCalledWith(
+      6,
+      expect.objectContaining({ actionType: 'custom', prompt: '跑步攻击' }),
+    )
   })
 
   it('preserves backend frame metadata while approving and importing a completed action', async () => {

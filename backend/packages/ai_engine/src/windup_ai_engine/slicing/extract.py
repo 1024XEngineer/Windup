@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+from pathlib import Path
 
 from PIL import Image
 
@@ -21,18 +22,18 @@ __all__ = ["extract_frames_bytes", "extract_all_frames_bytes"]
 
 def extract_frames_bytes(video: bytes, n: int) -> list[Image.Image]:
     """从视频 bytes 均匀抽 ``n`` 帧（供后端 strategy 用，provider 返回的是 bytes）。"""
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=True) as f:
-        f.write(video)
-        f.flush()
-        return _extract_frames(f.name, n)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "source.mp4"
+        path.write_bytes(video)
+        return _extract_frames(str(path), n)
 
 
 def extract_all_frames_bytes(video: bytes, cap: int = 150) -> list[Image.Image]:
     """抽视频全部帧（至多 ``cap``，均匀降采样），供周期检测用。"""
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=True) as f:
-        f.write(video)
-        f.flush()
-        return _extract_frames(f.name, cap)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "source.mp4"
+        path.write_bytes(video)
+        return _extract_frames(str(path), cap)
 
 
 def _uniform_indices(total: int, n: int) -> list[int]:
@@ -90,10 +91,11 @@ def _extract_frames(video_path: str, n: int) -> list[Image.Image]:
 
     import glob
     import subprocess
+    from imageio_ffmpeg import get_ffmpeg_exe
 
     with tempfile.TemporaryDirectory() as tmp:
         subprocess.run(
-            ["ffmpeg", "-y", "-i", video_path, "-vsync", "0",
+            [get_ffmpeg_exe(), "-y", "-i", video_path, "-vsync", "0",
              os.path.join(tmp, "f_%04d.png")],
             capture_output=True, check=True,
         )

@@ -25,6 +25,7 @@ from windup_common.models import ActionSpec, ActionType as EngineActionType, Cha
 from windup_app.server.orchestrator import task_repo
 from windup_app.server.orchestrator._fetch import fetch_own_media
 from windup_app.server.orchestrator.model import (
+    ActionType,
     CharacterActionInput,
     CharacterImageInput,
     TaskStatus,
@@ -141,7 +142,7 @@ class _LogProgress:
 def _to_engine_action(t) -> EngineActionType:
     """generation.ActionType → 引擎 common.ActionType(按值映射)。
 
-    walk/idle/attack 直通;custom 等引擎未覆盖的类型暂不支持视频路线。
+    所有 API 动作类型都按值映射到引擎动作类型。
     """
     try:
         return EngineActionType(t.value)
@@ -229,6 +230,7 @@ class ActionTaskExecutor:
         card = CharacterCard(name=f"char-{input.character_id}", desc=" ".join(desc_parts))
         action = ActionSpec(
             action=_to_engine_action(input.action_type),
+            motion_prompt=input.custom_prompt if input.action_type is ActionType.CUSTOM else None,
             poses=[""] * input.num_frames,
             facing=cons.facing,
             stylize=cons.stylize,
