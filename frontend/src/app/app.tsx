@@ -6,7 +6,8 @@ import { AccountPage } from '@/pages/account'
 import { CharacterDetailPage } from '@/pages/character-detail'
 import { LandingPage } from '@/pages/landing'
 import { NotFoundPage } from '@/pages/not-found'
-import { PlaytestEntryPage, PlaytestPage } from '@/pages/playtest'
+import { PlaytestEntryPage } from '@/pages/playtest'
+import { PlaytestExportPage } from './playtest-export-page'
 import { ProjectDetailPage } from '@/pages/project-detail'
 import { ProjectCreatePage } from '@/pages/project-create'
 import { ProjectsPage } from '@/pages/projects'
@@ -60,7 +61,7 @@ export function AppRoutes() {
           <Route path="/workflow-editor/:runId" element={<LazyWorkflowEditorPage />} />
           <Route path="/workflow-editor/:runId/:stage" element={<LazyWorkflowEditorPage />} />
           <Route path="/playtest" element={<PlaytestEntryPage />} />
-          <Route path="/playtest/:characterId/:outfitId" element={<PlaytestPage />} />
+          <Route path="/playtest/:characterId/:outfitId" element={<PlaytestExportPage />} />
         </Route>
         <Route path="/projects/:projectId" element={<ProjectDetailPage />}>
           <Route index element={<Navigate replace to="assets" />} />

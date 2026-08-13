@@ -8,6 +8,7 @@ import {
   type Character,
   type CharacterApis,
   type GenerationApis,
+  type Generation,
   type MediaReference,
   type Project,
   type ProjectApis,
@@ -18,6 +19,7 @@ import {
 import { getApiAccessToken, recoverApiUnauthorized, resolveApiBaseUrl } from '@/shared/api'
 import { createEventStreamSubscriber } from '@/shared/api/stream'
 import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
+import { createProgressiveExportModel, type ExportPackageModel } from '@/features/export-package'
 
 /** 页面不直接拼接后端字段；只负责准备项目约束。 */
 export type PrepareQuickStartProject = (
@@ -56,6 +58,8 @@ export interface QuickStartSession {
   resolveCharacterInfo(): Promise<{ characterId: string; outfitId: string } | null>
   getTemplateCandidates(): Promise<readonly string[]>
   getActionFrames(): Promise<readonly QuickStartFrame[]>
+  /** 按当前 Run 完成度装配统一导出包；角色母版尚未确认时返回 null。 */
+  getExportModel(): Promise<ExportPackageModel | null>
 }
 
 export interface QuickStartEntryService {
@@ -77,6 +81,7 @@ export interface CreateQuickStartServiceOptions {
   workflowRunApis: WorkflowRunApis
   generationApis: GenerationApis
   prepareProject: PrepareQuickStartProject
+  projectApis?: Pick<ProjectApis, 'get'>
   characterApis?: CharacterApis
   mediaApis?: QuickStartMediaApis
   onAsyncError?: (error: Error) => void
@@ -101,6 +106,7 @@ export function createQuickStartService({
   workflowRunApis,
   generationApis,
   prepareProject,
+  projectApis: exportProjectApis,
   characterApis,
   mediaApis,
   onAsyncError = (error) => console.error('[quick-start] 异步工作流错误', error),
@@ -526,6 +532,30 @@ export function createQuickStartService({
             }))
           : []
       },
+      async getExportModel() {
+        if (!characterApis || !exportProjectApis) return null
+        const info = getCharacterInfo(controller) ?? (await resolveCharacterInfo(controller))
+        if (!info) return null
+        const run = controller.getWorkflow()
+        const [project, character] = await Promise.all([
+          exportProjectApis.get(run.projectId),
+          characterApis.get(info.characterId),
+        ])
+        const generations = await Promise.all(
+          run.nodes
+            .filter((node) => node.type === 'action-full-frame' && !node.deletedAt)
+            .map((node) => controller.getGeneration(node.id, 'complete_animation')),
+        )
+        return createProgressiveExportModel({
+          project,
+          character,
+          outfitId: info.outfitId,
+          run,
+          generations: generations.filter(
+            (generation): generation is Generation => generation !== null,
+          ),
+        })
+      },
     }
   }
 
@@ -643,6 +673,7 @@ export function createRealQuickStartService({
     workflowRunApis,
     generationApis,
     prepareProject: createAutoPrepareProject(projectApis),
+    projectApis,
     characterApis,
     mediaApis,
     onAsyncError,

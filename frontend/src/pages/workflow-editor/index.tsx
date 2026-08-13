@@ -32,6 +32,11 @@ import {
   type WorkflowRun,
 } from '@/entities'
 import type { WorkflowController } from '@/features/workflow-controller'
+import {
+  createProgressiveExportModel,
+  ExportButton,
+  type ExportPackageModel,
+} from '@/features/export-package'
 import { createDefaultRealWorkflowEditorSession, type WorkflowEditorSession } from './runtime'
 import './workflow-editor.css'
 
@@ -260,6 +265,31 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
     }
   }, [loadSession, requestGenerations, runId])
 
+  const exportModels = useMemo(() => {
+    const models = new Map<string, ExportPackageModel>()
+    if (!character || !run || !session) return models
+    const completedGenerations = Object.values(generations).filter(
+      (generation): generation is Generation => generation !== null,
+    )
+    for (const outfit of character.outfits) {
+      try {
+        models.set(
+          outfit.id,
+          createProgressiveExportModel({
+            project: session.project,
+            character,
+            outfitId: outfit.id,
+            run,
+            generations: completedGenerations,
+          }),
+        )
+      } catch {
+        // 造型未达到最低导出条件时不显示导出入口。
+      }
+    }
+    return models
+  }, [character, generations, run, session])
+
   const projected = useMemo(
     () =>
       run && session
@@ -272,6 +302,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
             project: session.project,
             character,
             generations,
+            exportModels,
             selectedImages,
             actionMenuOpen,
             actionMenuLevel,
@@ -291,6 +322,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
       actionMenuLevel,
       busyBranches,
       character,
+      exportModels,
       generations,
       run,
       runCommand,
@@ -444,6 +476,7 @@ interface ProjectionInput {
   project: Project
   character: Character | null
   generations: Record<string, Generation | null>
+  exportModels: ReadonlyMap<string, ExportPackageModel>
   selectedImages: Record<string, string>
   actionMenuOpen: boolean
   actionMenuLevel: ActionMenuLevel
@@ -456,6 +489,12 @@ interface ProjectionInput {
   setSelectedOutfitId(outfitId: string | null): void
   setCharacter(character: Character): void
   runCommand(branchKey: string, command: () => Promise<void>): void
+}
+
+function NodeExportButton({ model }: { model: ExportPackageModel | undefined }) {
+  return model ? (
+    <ExportButton model={model} className={`${CARD_BUTTON} nodrag nopan nowheel`} />
+  ) : null
 }
 
 /** 卡片自己所属的分支；命令与禁用判断都以它为准。 */
@@ -712,10 +751,15 @@ function CharacterTemplateContent({
     )
   }
   if (node.status === 'passed' && node.selectedImageUrl) {
+    const outfit =
+      input.character?.outfits.find(
+        (candidate) => candidate.previewUrl === node.selectedImageUrl,
+      ) ?? input.character?.outfits[0]
     return (
       <div className={CARD_STACK}>
         <img className={MASTER_IMAGE} src={node.selectedImageUrl} alt="已确认身份母版" />
         <span className="text-center text-[11px] text-[var(--editor-muted)]">身份已锁定</span>
+        {outfit ? <NodeExportButton model={input.exportModels.get(outfit.id)} /> : null}
         <button
           type="button"
           className="absolute -bottom-4 -right-4 z-8 grid h-8 min-h-8 w-8 place-items-center rounded-full border border-[var(--editor-ink)] bg-white p-0 text-[15px] leading-none text-[var(--editor-ink)] shadow-[var(--editor-shadow)] hover:bg-[var(--editor-ink)] hover:text-white"
@@ -923,7 +967,12 @@ function FirstFrameContent({
     )
   }
   if (node.phase === 'completed' && node.selectedFirstFrameUrl) {
-    return <img className={MASTER_IMAGE} src={node.selectedFirstFrameUrl} alt="已确认动作首帧" />
+    return (
+      <div className={CARD_STACK}>
+        <img className={MASTER_IMAGE} src={node.selectedFirstFrameUrl} alt="已确认动作首帧" />
+        <NodeExportButton model={input.exportModels.get(node.input.outfitId)} />
+      </div>
+    )
   }
   return <StatusText node={node} input={input} />
 }
@@ -1002,16 +1051,25 @@ function AnimationContent({
     )
   }
   if (node.phase === 'completed' && frames.length) {
+    const methodNode = findDependency(input.run, node, 'action-generation-method')
+    const firstFrameNode = methodNode
+      ? findDependency(input.run, methodNode, 'action-first-frame')
+      : null
     return (
-      <div className="nodrag nopan nowheel grid max-h-40 grid-cols-8 gap-[3px] overflow-auto">
-        {frames.map((frame, index) => (
-          <img
-            key={`${frame.url}-${index}`}
-            className="block aspect-square w-full rounded border border-[var(--editor-line)] object-cover"
-            src={frame.url}
-            alt={`动画帧 ${index + 1}`}
-          />
-        ))}
+      <div className={CARD_STACK}>
+        <div className="nodrag nopan nowheel grid max-h-40 grid-cols-8 gap-[3px] overflow-auto">
+          {frames.map((frame, index) => (
+            <img
+              key={`${frame.url}-${index}`}
+              className="block aspect-square w-full rounded border border-[var(--editor-line)] object-cover"
+              src={frame.url}
+              alt={`动画帧 ${index + 1}`}
+            />
+          ))}
+        </div>
+        {firstFrameNode ? (
+          <NodeExportButton model={input.exportModels.get(firstFrameNode.input.outfitId)} />
+        ) : null}
       </div>
     )
   }
@@ -1022,7 +1080,21 @@ function ReviewContent({ node, input }: { node: ReviewWorkflowNode; input: Proje
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
   if (node.status === 'failed') return <StatusText node={node} input={input} />
-  if (node.phase === 'completed') return <p className={CARD_SUMMARY}>审核已通过</p>
+  if (node.phase === 'completed') {
+    const fullFrame = findDependency(input.run, node, 'action-full-frame')
+    const method = fullFrame
+      ? findDependency(input.run, fullFrame, 'action-generation-method')
+      : null
+    const firstFrame = method ? findDependency(input.run, method, 'action-first-frame') : null
+    return (
+      <div className={CARD_STACK}>
+        <p className={CARD_SUMMARY}>审核已通过</p>
+        {firstFrame ? (
+          <NodeExportButton model={input.exportModels.get(firstFrame.input.outfitId)} />
+        ) : null}
+      </div>
+    )
+  }
   if (node.status !== 'active') return <StatusText node={node} input={input} />
   return (
     <div className={CARD_STACK}>
