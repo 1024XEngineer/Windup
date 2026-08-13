@@ -434,6 +434,40 @@ describe('WorkflowController', () => {
     })
   })
 
+  it('按完整动画节点解析动作生成期望', async () => {
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: 'first.png',
+      }),
+      generationMethodNode({ status: 'passed', phase: 'completed', method: 'video-cropping' }),
+      fullFrameNode({
+        status: 'active',
+        phase: 'generating',
+        generations: [{ taskId: 'task-animation', role: 'complete_animation' }],
+      }),
+    ])
+    const { controller, generation } = createController(run)
+    generation.snapshots.set('task-animation', {
+      id: 'task-animation',
+      projectId: '1',
+      type: 'complete_animation',
+      status: 'running',
+      result: null,
+      error: null,
+    })
+
+    await expect(
+      controller.getGeneration('action-walk:action-full-frame', 'complete_animation'),
+    ).resolves.toMatchObject({ id: 'task-animation' })
+    expect(generation.apis.get).toHaveBeenCalledWith('1', 'task-animation', {
+      type: 'complete_animation',
+      actionType: 'walk',
+    })
+  })
+
   it('修改命令不再返回第二份 WorkflowRun', async () => {
     const { controller } = createController(createRun(completedCharacterNodes()))
 
