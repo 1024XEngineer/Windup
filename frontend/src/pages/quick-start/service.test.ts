@@ -242,9 +242,7 @@ describe('createQuickStartService', () => {
     await expect(service.open('missing')).rejects.toThrow('not found')
   })
 
-  it('creates a bounded default project name and returns the persisted sprite size', async () => {
-    vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
-    vi.spyOn(Math, 'random').mockReturnValue(0.25)
+  it('creates a readable bounded project name without a hash suffix', async () => {
     const create = vi.fn(async (input) => ({
       id: 'project-1',
       ...input,
@@ -254,7 +252,7 @@ describe('createQuickStartService', () => {
     }))
     const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
 
-    await expect(prepare('一位名字特别长的像素角色设定用于验证截断')).resolves.toEqual({
+    await expect(prepare('  一位名字特别长的像素角色设定用于验证截断继续  ')).resolves.toEqual({
       id: 'project-1',
       spriteSize: { width: 256, height: 256 },
     })
@@ -262,12 +260,33 @@ describe('createQuickStartService', () => {
     expect(Array.from(createdName ?? '')).toHaveLength(20)
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: expect.stringMatching(/^一位名字特别长的像…-/u),
+        name: '一位名字特别长的像素角色设定用于验证截…',
         perspective: 'side',
         directionalMovement: 'single',
       }),
     )
-    vi.restoreAllMocks()
+  })
+
+  it('uses a readable number when the generated project name already exists', async () => {
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('项目名称已存在'))
+      .mockResolvedValueOnce({
+        id: 'project-2',
+        name: '会挥剑的像素骑士 2',
+        spriteSize: { width: 256, height: 256 },
+      })
+    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
+
+    await expect(prepare('会挥剑的像素骑士')).resolves.toEqual({
+      id: 'project-2',
+      spriteSize: { width: 256, height: 256 },
+    })
+    expect(create).toHaveBeenNthCalledWith(1, expect.objectContaining({ name: '会挥剑的像素骑士' }))
+    expect(create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ name: '会挥剑的像素骑士 2' }),
+    )
   })
 
   it('creates one persisted node graph and starts the character image task', async () => {

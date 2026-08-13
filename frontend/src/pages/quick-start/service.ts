@@ -602,23 +602,33 @@ export function createQuickStartService({
 
 export function createAutoPrepareProject(projectApis: ProjectApis): PrepareQuickStartProject {
   return async (prompt) => {
-    const timestamp = Date.now().toString(36).slice(-6).padStart(6, '0')
-    const nonce = Math.random().toString(36).slice(2, 5).padEnd(3, '0')
-    const suffix = `${timestamp}${nonce}`
-    const maxBaseLength = 20 - suffix.length - 1
-    const promptCharacters = Array.from(prompt)
-    const base =
-      promptCharacters.length > maxBaseLength
-        ? `${promptCharacters.slice(0, maxBaseLength - 1).join('')}…`
-        : promptCharacters.join('')
-    const name = `${base}-${suffix}`
-    const project = await projectApis.create({
-      name,
-      perspective: 'side',
-      directionalMovement: 'single',
-      spriteSize: { width: 256, height: 256 },
-    })
-    return { id: project.id, spriteSize: project.spriteSize }
+    const normalizedPrompt = prompt.trim().replace(/\s+/gu, ' ') || '未命名项目'
+    let lastConflict: unknown
+
+    for (let sequence = 1; sequence <= 100; sequence += 1) {
+      const suffix = sequence === 1 ? '' : ` ${sequence}`
+      const maxBaseLength = 20 - Array.from(suffix).length
+      const promptCharacters = Array.from(normalizedPrompt)
+      const base =
+        promptCharacters.length > maxBaseLength
+          ? `${promptCharacters.slice(0, maxBaseLength - 1).join('')}…`
+          : promptCharacters.join('')
+
+      try {
+        const project = await projectApis.create({
+          name: `${base}${suffix}`,
+          perspective: 'side',
+          directionalMovement: 'single',
+          spriteSize: { width: 256, height: 256 },
+        })
+        return { id: project.id, spriteSize: project.spriteSize }
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== '项目名称已存在') throw error
+        lastConflict = error
+      }
+    }
+
+    throw lastConflict
   }
 }
 
