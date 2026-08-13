@@ -109,6 +109,18 @@ def _check_rate(redis_client, key: str, limit: int, window: int) -> bool:
         return True
 
 
+def _check_login_failures(redis_client, key: str) -> bool:
+    """读取登录失败计数，返回 True 表示允许通过（不递增计数）。"""
+    try:
+        current = redis_client.get(key)
+        if current is None:
+            return True
+        return int(current) < LOGIN_FAIL_RATE
+    except Exception:
+        logger.warning("[WINDUP] Redis 不可用，跳过限流检查 | key=%s", key)
+        return True
+
+
 def _too_many_requests_response(msg: str = "请求过于频繁") -> JSONResponse:
     """构造限流拒绝响应。"""
     return JSONResponse(
@@ -154,7 +166,7 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
     """Phase 1：认证端点 IP 级限流中间件（鉴权前执行）。
 
     - 认证端点各自独立 IP 桶
-    - /auth/login 不在此处计数（由路由层 record_auth_failure 处理）
+    - /auth/login 中间件不写入桶（由路由层失败时写入），但会读取已有计数做拦截
     - 非认证端点全局 IP 桶仅对匿名请求生效
     """
 
@@ -177,9 +189,16 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
                 )
                 return _too_many_requests_response("请求过于频繁，请稍后再试")
 
-        # /auth/login：中间件不计数，由路由层失败时调用 record_auth_failure
+        # /auth/login：中间件不写入桶（失败时由路由层 record_auth_failure 写入），
+        # 但读取已有失败计数，超过上限时拦截后续请求。
         elif path == "/auth/login":
-            pass
+            key = RATELIMIT_AUTH_KEY.format(endpoint="login", ip=client_ip)
+            if not _check_login_failures(redis, key):
+                logger.warning(
+                    "[WINDUP] 认证限流触发 | type=auth_login_failures ip=%s",
+                    client_ip,
+                )
+                return _too_many_requests_response("请求过于频繁，请稍后再试")
 
         # 非认证端点：全局 IP 桶仅对匿名请求生效
         else:

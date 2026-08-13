@@ -218,16 +218,46 @@ class TestAuthRateLimitMiddleware:
             resp = _run(middleware.dispatch(req, call_next))
             assert resp == mock_response
 
-    def test_login_passes_through_middleware(self, fake_redis):
-        """/auth/login 在中间件中不计数，始终通过。"""
+    def test_login_passes_when_no_failures(self, fake_redis):
+        """/auth/login 无失败记录时放行。"""
         middleware = AuthRateLimitMiddleware(MagicMock())
         mock_response = MagicMock()
         call_next = AsyncMock(return_value=mock_response)
 
-        for i in range(20):
+        for i in range(5):
             req = self._make_request("/auth/login")
             resp = _run(middleware.dispatch(req, call_next))
             assert resp == mock_response
+
+    def test_login_blocked_after_failures(self, fake_redis):
+        """/auth/login 失败达上限后，中间件拦截后续请求。"""
+        middleware = AuthRateLimitMiddleware(MagicMock())
+        mock_response = MagicMock()
+        call_next = AsyncMock(return_value=mock_response)
+
+        # 模拟 10 次登录失败（由路由层 record_auth_failure 写入）
+        for i in range(10):
+            record_auth_failure("login", "1.2.3.4")
+
+        # 第 11 次登录请求被中间件拦截
+        req = self._make_request("/auth/login")
+        resp = _run(middleware.dispatch(req, call_next))
+        assert resp.status_code == 200
+        call_next.assert_not_called()
+
+    def test_login_not_counted_by_middleware(self, fake_redis):
+        """/auth/login 中间件不写入桶，仅路由层失败时写入。"""
+        middleware = AuthRateLimitMiddleware(MagicMock())
+        mock_response = MagicMock()
+        call_next = AsyncMock(return_value=mock_response)
+
+        # 10 次登录请求（全部通过中间件）
+        for i in range(10):
+            req = self._make_request("/auth/login")
+            _run(middleware.dispatch(req, call_next))
+
+        # 桶中无计数（中间件未写入）
+        assert fake_redis.get("ratelimit:auth:login:1.2.3.4") is None
 
     def test_global_bucket_only_for_anonymous(self, fake_redis):
         """非认证端点全局桶仅对匿名请求生效。"""
