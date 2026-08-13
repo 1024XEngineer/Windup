@@ -9,7 +9,7 @@ rollback，故本实现只 ``flush``（把变更发到当前事务、取回生�
 
 import hashlib
 import logging
-import random
+import secrets
 import string
 import uuid
 from datetime import datetime, timezone
@@ -21,8 +21,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
+from windup_common.enums.quota import CreditReason
 from windup_common.exceptions import BizException
+from windup_framework.config.quota import settings as quota_settings
 
+from windup_app.server.quota.model import CreditAccount, CreditTransaction
 from windup_app.server.user.interface import UserService
 from windup_app.server.user.model import (
     ChangePasswordInput,
@@ -44,7 +47,7 @@ logger = logging.getLogger("windup.user.service")
 
 # -- JWT 配置 -------------------------------------------------------------
 
-JWT_SECRET = jwt_settings.secret
+JWT_SECRET = jwt_settings.secret.get_secret_value()
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_SECONDS = 15 * 60        # 15 分钟
 REFRESH_TOKEN_EXPIRE_SECONDS = 7 * 24 * 3600  # 7 天
@@ -83,8 +86,8 @@ def _hash_token(token: str) -> str:
 
 
 def _generate_code() -> str:
-    """生成 6 位数字验证码。"""
-    return "".join(random.choices(string.digits, k=6))
+    """生成 6 位数字验证码（密码学安全）。"""
+    return "".join(secrets.choice(string.digits) for _ in range(6))
 
 
 # -- User → UserView 转换 ------------------------------------------------
@@ -192,6 +195,9 @@ class SqlAlchemyUserService(UserService):
         )
         session.add(user)
         session.flush()
+
+        # 注册送积分
+        self._create_credit_account(session, user.id)
 
         # 注册即登录，签发 token
         access_token = create_access_token(user.id, user.email)
@@ -319,6 +325,8 @@ class SqlAlchemyUserService(UserService):
             user = User(email=input.email, email_verified_at=datetime.now(timezone.utc))
             session.add(user)
             session.flush()
+            # 自动注册送积分
+            self._create_credit_account(session, user.id)
             logger.info("[WINDUP] 验证码自动注册 | user_id=%s email=%s", user.id, user.email)
         else:
             if user.status == UserStatus.BANNED:
@@ -372,6 +380,24 @@ class SqlAlchemyUserService(UserService):
             email=payload.get("email", ""),
         )
 
+    # -- Lua: 原子 检查-删除-存储 refresh token --------------------------------
+    # KEYS[1] = old_token_key, KEYS[2] = new_token_key
+    # ARGV[1] = ttl, ARGV[2] = user_id
+    # 返回: user_id (成功) 或 nil (旧 token 不存在/已被消费)
+    _ROTATE_TOKEN_SCRIPT = """
+    local old_key = KEYS[1]
+    local new_key = KEYS[2]
+    local ttl     = tonumber(ARGV[1])
+    local user_id = ARGV[2]
+    local cur = redis.call('GET', old_key)
+    if cur == false then
+        return nil
+    end
+    redis.call('DEL', old_key)
+    redis.call('SETEX', new_key, ttl, user_id)
+    return cur
+    """
+
     def refresh_tokens(self, refresh_token: str) -> LoginResult:
         """刷新 token。"""
         payload = decode_token(refresh_token)
@@ -382,23 +408,31 @@ class SqlAlchemyUserService(UserService):
         if not jti:
             raise BizException("token 无效", code=BizCode.UNAUTHORIZED)
 
+        # user_id 来自已验签的 JWT，可信
+        user_id = int(payload["sub"])
+        email = payload.get("email", "")
+
+        # 签发新 token
+        new_access = create_access_token(user_id, email)
+        new_refresh, new_jti = create_refresh_token(user_id, email)
+
+        # Lua 原子操作：GET old → 存在则 DEL old + SETEX new → 返回 user_id
         token_hash = _hash_token(jti)
-        redis_key = REFRESH_TOKEN_KEY.format(token_hash=token_hash)
-        user_id_str = self.redis.get(redis_key)
+        old_redis_key = REFRESH_TOKEN_KEY.format(token_hash=token_hash)
+        new_token_hash = _hash_token(new_jti)
+        new_redis_key = REFRESH_TOKEN_KEY.format(token_hash=new_token_hash)
+
+        user_id_str = self.redis.eval(
+            self._ROTATE_TOKEN_SCRIPT,
+            2,
+            old_redis_key,
+            new_redis_key,
+            REFRESH_TOKEN_EXPIRE_SECONDS,
+            str(user_id),
+        )
 
         if user_id_str is None:
             raise BizException("refresh token 已失效", code=BizCode.UNAUTHORIZED)
-
-        user_id = int(user_id_str)
-
-        # 撤销旧 token
-        self.redis.delete(redis_key)
-
-        # 签发新 token（需要 email，从旧 token payload 取）
-        email = payload.get("email", "")
-        new_access = create_access_token(user_id, email)
-        new_refresh, new_jti = create_refresh_token(user_id, email)
-        self._store_refresh_token(new_jti, user_id)
 
         logger.info("[WINDUP] token 已刷新 | user_id=%s", user_id)
         return LoginResult(
@@ -485,6 +519,34 @@ class SqlAlchemyUserService(UserService):
         return _to_view(user) if user else None
 
     # -- 内部方法 --------------------------------------------------------
+
+    def _create_credit_account(self, session: Session, user_id: int) -> None:
+        """注册时创建积分账户并赠送初始积分。"""
+        account = CreditAccount(
+            user_id=user_id,
+            balance=quota_settings.register_gift_amount,
+            frozen=0,
+            total_earned=quota_settings.register_gift_amount,
+            total_spent=0,
+        )
+        session.add(account)
+        session.flush()
+
+        txn = CreditTransaction(
+            user_id=user_id,
+            delta=quota_settings.register_gift_amount,
+            reason=CreditReason.REGISTER_GIFT,
+            billing_mode=0,  # PREPAID
+            ref_id=f"register:{user_id}",
+            balance_after=quota_settings.register_gift_amount,
+        )
+        session.add(txn)
+        session.flush()
+
+        logger.info(
+            "[WINDUP] 注册送积分 | user_id=%s amount=%s",
+            user_id, quota_settings.register_gift_amount,
+        )
 
     def _store_refresh_token(self, jti: str, user_id: int) -> None:
         """将 refresh_token 存入 Redis。"""

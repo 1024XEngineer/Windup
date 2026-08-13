@@ -33,15 +33,25 @@ function keyDirection(key: string): Direction | null {
 
 export function preloadActionFrames(
   actions: readonly PlaytestAction[],
+  preferredActionId: string | null,
   createImage?: () => HTMLImageElement,
 ): readonly HTMLImageElement[] {
   const imageFactory = createImage ?? (typeof Image === 'undefined' ? null : () => new Image())
   if (imageFactory === null) return []
 
-  return [
-    ...new Set(actions.flatMap((action) => action.frames.map((frame) => frame.imageUrl))),
-  ].map((imageUrl) => {
+  const preferredAction = actions.find((action) => action.id === preferredActionId)
+  const orderedActions = preferredAction
+    ? [preferredAction, ...actions.filter((action) => action.id !== preferredAction.id)]
+    : actions
+  const preferredUrls = new Set(preferredAction?.frames.map((frame) => frame.imageUrl) ?? [])
+  const imageUrls = [
+    ...new Set(orderedActions.flatMap((action) => action.frames.map((frame) => frame.imageUrl))),
+  ]
+
+  return imageUrls.map((imageUrl) => {
     const image = imageFactory()
+    image.decoding = 'async'
+    image.fetchPriority = preferredUrls.has(imageUrl) ? 'high' : 'low'
     image.src = imageUrl
     if (typeof image.decode === 'function') void image.decode().catch(() => undefined)
     return image
@@ -57,6 +67,10 @@ export function usePlaytestRuntime(
   const boundsRef = useRef<StageBounds>(INITIAL_BOUNDS)
   const activeInputsRef = useRef(new Map<string, Direction>())
   const preloadedImagesRef = useRef<readonly HTMLImageElement[]>([])
+  const initialRuntimeActionId = useMemo(
+    () => createRuntime(actions, initialActionId).actionId,
+    [actions, initialActionId],
+  )
 
   useEffect(() => {
     actionsRef.current = actions
@@ -65,11 +79,11 @@ export function usePlaytestRuntime(
   }, [actions, initialActionId])
 
   useEffect(() => {
-    preloadedImagesRef.current = preloadActionFrames(actions)
+    preloadedImagesRef.current = preloadActionFrames(actions, initialRuntimeActionId)
     return () => {
       preloadedImagesRef.current = []
     }
-  }, [actions])
+  }, [actions, initialRuntimeActionId])
 
   useEffect(() => {
     if (typeof requestAnimationFrame !== 'function') return

@@ -23,7 +23,7 @@ afterEach(() => {
 async function loadProjectApis(fetchFn: typeof fetch) {
   vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
   vi.stubGlobal('fetch', fetchFn)
-  return (await import('./index')).projectApis
+  return import('./index')
 }
 
 function jsonResponse(data: unknown) {
@@ -35,7 +35,7 @@ function jsonResponse(data: unknown) {
 describe('projectApis', () => {
   it('maps the paged Project response and pagination query', async () => {
     let request: Request | undefined
-    const projectApis = await loadProjectApis(async (input, init) => {
+    const { projectApis } = await loadProjectApis(async (input, init) => {
       request = new Request(input, init)
       return new Response(
         JSON.stringify({
@@ -74,7 +74,7 @@ describe('projectApis', () => {
 
   it('serializes CreateProjectInput to the backend request body', async () => {
     let request: Request | undefined
-    const projectApis = await loadProjectApis(async (input, init) => {
+    const { projectApis } = await loadProjectApis(async (input, init) => {
       request = new Request(input, init)
       return jsonResponse(projectDto)
     })
@@ -105,7 +105,7 @@ describe('projectApis', () => {
 
   it('requests one Project by its backend resource path', async () => {
     let requestUrl = ''
-    const projectApis = await loadProjectApis(async (input) => {
+    const { projectApis } = await loadProjectApis(async (input) => {
       requestUrl = String(input)
       return jsonResponse(projectDto)
     })
@@ -117,7 +117,7 @@ describe('projectApis', () => {
 
   it('uses the access-token provider registered at the shared HTTP boundary', async () => {
     let authorization: string | null = null
-    const projectApis = await loadProjectApis(async (input, init) => {
+    const { projectApis } = await loadProjectApis(async (input, init) => {
       authorization = new Request(input, init).headers.get('authorization')
       return jsonResponse(projectDto)
     })
@@ -132,7 +132,7 @@ describe('projectApis', () => {
 
   it('deletes one Project through the backend resource path', async () => {
     let request: Request | undefined
-    const projectApis = await loadProjectApis(async (input, init) => {
+    const { projectApis } = await loadProjectApis(async (input, init) => {
       request = new Request(input, init)
       return jsonResponse(null)
     })
@@ -140,5 +140,23 @@ describe('projectApis', () => {
     await expect(projectApis.remove('42')).resolves.toBeUndefined()
     expect(request?.url).toBe('https://api.windup.test/projects/42')
     expect(request?.method).toBe('DELETE')
+  })
+
+  it('maps the backend project-name conflict contract to a stable domain error', async () => {
+    const { ProjectNameConflictError, projectApis } = await loadProjectApis(
+      async () =>
+        new Response(JSON.stringify({ code: 400, message: '项目名称已存在', data: null }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+
+    await expect(
+      projectApis.create({
+        name: '点灯人',
+        perspective: 'side',
+        directionalMovement: 'single',
+        spriteSize: { width: 256, height: 256 },
+      }),
+    ).rejects.toBeInstanceOf(ProjectNameConflictError)
   })
 })
