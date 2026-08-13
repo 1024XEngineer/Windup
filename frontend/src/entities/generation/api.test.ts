@@ -157,6 +157,24 @@ describe('createGenerationApis', () => {
     })
   })
 
+  it('没有角色母版时拒绝创建动作首帧任务', async () => {
+    const apis = createGenerationApis({
+      transport: { request: vi.fn(), stream: vi.fn(() => vi.fn()) },
+    })
+
+    await expect(
+      apis.create({
+        type: 'first_frame',
+        projectId: '42',
+        actionType: 'walk',
+        prompt: 'walk',
+        referenceMedia: [],
+        spriteWidth: 64,
+        spriteHeight: 96,
+      }),
+    ).rejects.toThrow('动作首帧生成必须提供已确认的角色母版')
+  })
+
   it('以首帧请求完整动画并按后端 index 排序，当前合同固定为三十二帧', async () => {
     const request = vi.fn(async (_url: string, _init?: RequestInit) =>
       success(
