@@ -27,6 +27,7 @@ import { useNavigate, useSearchParams } from 'react-router'
 
 import { useAuthSession } from '@/features/auth-session'
 import { sanitizeInternalPath } from '@/shared/navigation'
+import { KineticCopy, type KineticCopyPhase } from '@/shared/ui'
 import messengerPigeon from '@/assets/auth/illustrations/messenger-pigeon.webp'
 
 import './account-panel.css'
@@ -34,7 +35,6 @@ import './account-panel.css'
 type AccountEntry = 'login' | 'register'
 type LoginMode = 'code' | 'password'
 type MotionDirection = 'forward' | 'backward'
-type CopyPhase = 'entering' | 'resting' | 'exiting'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const CODE_PATTERN = /^\d{6}$/
@@ -129,36 +129,6 @@ function KineticTitle({ id, text, emphasis }: { id: string; text: string; emphas
   )
 }
 
-function KineticCopy({
-  lines,
-  copyKey,
-  phase,
-}: {
-  lines: readonly [string, string]
-  copyKey: string
-  phase: CopyPhase
-}) {
-  return (
-    <div
-      key={copyKey}
-      data-copy-phase={phase}
-      className={`auth-copy-cycle auth-copy-cycle-${phase}`}
-      aria-hidden="true"
-    >
-      {lines.map((line, index) => (
-        <span key={line} className="auth-copy-line">
-          <span
-            className="auth-copy-line-inner"
-            style={{ '--auth-line-index': index } as CSSProperties}
-          >
-            {line}
-          </span>
-        </span>
-      ))}
-    </div>
-  )
-}
-
 type AuthFieldProps = Omit<ComponentPropsWithoutRef<'input'>, 'onChange'> & {
   label: string
   icon: Icon
@@ -247,7 +217,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
   const [registerStep, setRegisterStep] = useState(0)
   const [motionDirection, setMotionDirection] = useState<MotionDirection>('forward')
   const [copyIndex, setCopyIndex] = useState(0)
-  const [copyPhase, setCopyPhase] = useState<CopyPhase>('entering')
+  const [copyPhase, setCopyPhase] = useState<KineticCopyPhase>('entering')
   const [isExiting, setIsExiting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
