@@ -232,7 +232,7 @@ describe('AppRoutes authentication boundary', () => {
       </AuthSessionProvider>,
     )
 
-    expect(await screen.findByRole('dialog', { name: '欢迎回来。' })).toBeTruthy()
+    expect(await screen.findByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
     fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() =>
       expect(screen.getByTestId('location').textContent).toBe(

@@ -196,7 +196,7 @@ describe('ProjectCreatePage', () => {
     const backend = installBackend()
     await renderProjectCreate(false)
 
-    expect(await screen.findByRole('dialog', { name: '欢迎回来。' })).toBeTruthy()
+    expect(await screen.findByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: '创建项目' })).toBeNull()
     expect(creationRequests(backend)).toHaveLength(0)
   })

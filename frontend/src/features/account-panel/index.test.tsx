@@ -91,7 +91,8 @@ describe('AccountPanel', () => {
 
     renderPanel('/?account=login')
 
-    expect(screen.getByRole('dialog', { name: '欢迎回来。' })).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '欢迎回来。' })).toBeTruthy()
     expect(screen.getByText('未注册的邮箱将在验证后自动创建账号。')).toBeTruthy()
     expect(screen.queryByRole('tab', { name: '注册' })).toBeNull()
     expect(screen.getByRole('button', { name: '创建账号' })).toBeTruthy()
@@ -101,8 +102,9 @@ describe('AccountPanel', () => {
   it('opens registration as a centered, progressive form', async () => {
     renderPanel('/?account=register&returnTo=%2Fworkspace')
 
-    const dialog = screen.getByRole('dialog', { name: '欢迎来到 Windup' })
-    expect(dialog.className).toContain('auth-register-dialog-centered')
+    const dialog = screen.getByRole('dialog', { name: '创建 Windup 账号' })
+    expect(screen.getByRole('heading', { name: '欢迎来到 Windup' })).toBeTruthy()
+    expect(dialog.className).toContain('max-w-[34rem]')
     expect(screen.getByText('从一个角色开始，')).toBeTruthy()
     expect(screen.queryByText('继续搭建，')).toBeNull()
     expect(screen.getByTestId('register-fields').className).toContain('auth-register-fields')
@@ -114,6 +116,13 @@ describe('AccountPanel', () => {
     expect(screen.getByRole('button', { name: '继续' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '登录' })).toBeTruthy()
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('邮箱')))
+  })
+
+  it('keeps the close control inside the dialog focus boundary', () => {
+    renderPanel('/?account=login')
+
+    const dialog = screen.getByRole('dialog', { name: '登录 Windup' })
+    expect(dialog.contains(screen.getByRole('button', { name: '关闭账号面板' }))).toBe(true)
   })
 
   it('closes on Escape without discarding unrelated query state', async () => {
@@ -273,7 +282,8 @@ describe('AccountPanel', () => {
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'new@example.com' } })
 
     fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
-    expect(screen.getByRole('dialog', { name: '为账号加一道保护' })).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: '创建 Windup 账号' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '为账号加一道保护' })).toBeTruthy()
     expect(await screen.findByLabelText('密码')).toBeTruthy()
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'short' } })
 
@@ -283,7 +293,8 @@ describe('AccountPanel', () => {
 
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password-123' } })
     fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
-    expect(screen.getByRole('dialog', { name: '留下你的称呼' })).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: '创建 Windup 账号' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '留下你的称呼' })).toBeTruthy()
     expect(await screen.findByLabelText('昵称（选填）')).toBeTruthy()
     fireEvent.change(screen.getByLabelText('昵称（选填）'), {
       target: { value: 'N'.repeat(51) },
@@ -300,7 +311,8 @@ describe('AccountPanel', () => {
         purpose: 'register',
       }),
     )
-    expect(screen.getByRole('dialog', { name: '确认你的邮箱' })).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: '创建 Windup 账号' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '确认你的邮箱' })).toBeTruthy()
     expect(await screen.findByLabelText('验证码')).toBeTruthy()
     fireEvent.change(screen.getByLabelText('验证码'), { target: { value: '123456' } })
     fireEvent.submit(screen.getByRole('button', { name: '创建账号' }).closest('form')!)
@@ -339,6 +351,6 @@ describe('AppShell account panel host', () => {
     )
 
     expect(screen.getByText('当前页面')).toBeTruthy()
-    expect(screen.getByRole('dialog', { name: '欢迎回来。' })).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
   })
 })
