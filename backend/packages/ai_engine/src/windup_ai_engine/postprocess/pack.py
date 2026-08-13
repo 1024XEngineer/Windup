@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from PIL import Image
 
-__all__ = ["CELL", "FILL_H", "FILL_W", "FOOT_LINE", "align_bottom_center",
-           "sprite_sheet", "save_gif"]
+__all__ = ["CELL", "CORE_THICKNESS", "FILL_H", "FILL_W", "FOOT_LINE",
+           "align_bottom_center", "core_span", "sprite_sheet", "save_gif"]
 
 # 交付画布的几何 —— 提成模块常量而不是只当默认参数,是因为**入口预检要按同一套几何
 # 判母版能不能装下**(见 master_check.REJECT_ASPECT)。抄一份数字过去就等于埋下
@@ -18,6 +18,31 @@ CELL = 256          # 方形 cell 边长(交付序列帧的画布)
 FOOT_LINE = 0.92    # 脚线在画布中的高度比例
 FILL_H = 0.62       # 参考姿态占画布高的比例(留余量给举过头顶的动作)
 FILL_W = 0.96       # 主体占画布宽的上限(宽度兜底的天花板)
+
+# "厚"的门槛:某行/列的主体像素数达到该帧最厚行/列的这个比例,才算本体的一部分。
+# 0.25 之下是延展物(尾巴、翅膀、披风、举起的武器)—— 它们细,本体厚。
+CORE_THICKNESS = 0.25
+
+
+def core_span(frame: Image.Image, thickness: float = CORE_THICKNESS) -> tuple[float, float] | None:
+    """本体的 (高, 宽),单位=该帧像素。空帧返回 ``None``。
+
+    **不能拿整体包围盒当"角色多大"** —— 包围盒被任何延展物撑大,而延展物的幅度随动作变,
+    于是同一个角色在不同动作里定标出不同尺寸。实测偏差最大到 45%(龙张翼 55.3%、
+    鸟展翅 57.0%、人形举武器 68.4%)。
+
+    判据只认厚薄、不认语义:尾巴、翅膀、武器、披风、触手、长发,只要比本体薄就自动排除。
+    所以它不带任何体形先验,四足 / 鸟 / 龙 / 人形共用一套。
+    """
+    import numpy as np
+
+    m = np.asarray(frame)[:, :, 3] > 128
+    rows, cols = m.sum(1), m.sum(0)
+    if not rows.any():
+        return None
+    r = np.flatnonzero(rows >= rows.max() * thickness)
+    c = np.flatnonzero(cols >= cols.max() * thickness)
+    return float(r.max() - r.min()), float(c.max() - c.min())
 
 
 def align_bottom_center(
@@ -78,6 +103,8 @@ def align_bottom_center(
     heights = [b[3] - b[1] for b in boxes if b]
     if not heights:
         return [Image.new("RGBA", (cw, ch), (0, 0, 0, 0)) for _ in frames]
+    # 定标一律按**本体**跨度,不按包围盒:后者被延展物撑大,而延展物幅度随动作变。
+    spans = [s for s in (core_span(f) for f in frames) if s is not None]
     # 腾空模式:以最低脚线(数值最大 = 站在地上)为地面基准,保留每帧的抬升量
     ground = max(b[3] for b in boxes if b) if preserve_lift else 0
     # 定标要把抬升量算进去,否则跳到最高时头顶会顶出画布被切掉
@@ -86,17 +113,18 @@ def align_bottom_center(
         scale = (ch * fill_h) / max(1, need)
     elif ref_height:
         scale = (ch * fill_h) / ref_height       # 参考姿态定标(跨动作一致)
+    elif spans:
+        scale = (ch * fill_h) / max(1.0, float(np.median([s[0] for s in spans])))
     else:
         scale = (ch * fill_h) / max(heights)     # 回退:本序列最高帧
 
-    # 宽度兜底:上面三条分支**只按高度定标** —— 这是"主体是纵向长条"的人形先验。
-    # 横向长条主体(四足兽/坐骑/龙)按同一系数缩放后宽度超过画布宽,会被下面的
-    # alpha_composite 以负 dest **静默切掉**左右(PIL 不报错,直接丢像素)。
-    # 裁切悬崖 = 主体 w/h > 1/fill_h ≈ 1.61。实测(2026-08-05):狐狸母版 w/h=1.78
-    # 丢 27px(鼻尖+尾尖);w/h=2.0 只剩 79.9% 内容;狼/马常见 2.0-2.5 → 丢 19%-35% 体宽。
-    # 人形 w/h≈0.3-1.1 时该约束**恒不生效**,故人形产物逐像素不变。
-    widths = [b[2] - b[0] for b in boxes if b]
-    scale = min(scale, (cw * fill_w) / max(1, max(widths)))
+    # 宽度兜底:上面几条分支只按高度定标,横向长条主体(四足 / 坐骑 / 龙)按同一系数缩放后
+    # 会超出画布宽,被下面的 alpha_composite 以负 dest **静默切掉**左右(PIL 不报错)。
+    #
+    # 这里同样量**本体**宽:拿包围盒宽会让展开的翅膀 / 甩开的长尾把整只角色压小 ——
+    # 实测鸟展翅时包围盒宽是本体的 3.8 倍,本体因此缩到 26%。
+    widths = [s[1] for s in spans] or [b[2] - b[0] for b in boxes if b]
+    scale = min(scale, (cw * fill_w) / max(1.0, max(widths)))
 
     out = []
     for f, box in zip(frames, boxes):
