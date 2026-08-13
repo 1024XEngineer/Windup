@@ -273,9 +273,32 @@ DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image"
 _IMAGE_TRIES = 3
 _MIN_IMAGE_BYTES = 5000
 _CONNECT_RETRIES = 3
-_RATE_LIMIT_TRIES = 3
-_MAX_RATE_LIMIT_WAIT = 30.0
+_POST_TRIES = 3
+_MAX_RETRY_WAIT = 30.0
 _IMAGE_TIMEOUT_MULTIPLIER = 1.5
+
+# 521 源站拒绝连接、522 建连超时、523 源站不可达:三者都止步于 TCP 层,上游不可能已经
+# 开始生成,所以重发不会重复扣费。
+#
+# **但这层含义是 Cloudflare 私有的,不是这三个数字的普遍含义** —— ``AI_BASE_URL`` 可指向
+# 任意 OpenAI 兼容网关,它或它前面的代理完全可以在把请求转发给上游之后返回同样的数字。
+# 所以判据是"码 + 来源"两者皆需,见 :func:`_from_cloudflare_edge`。
+#
+# **520 与 524 即使来自 Cloudflare 也不在此列**:连接已建立、请求可能正在源站处理中
+# (524 就是"源站 100 秒没答完"),重发一次就是为同一张图付两次钱。
+_CLOUDFLARE_UNREACHED_STATUS = frozenset({521, 522, 523})
+
+
+def _from_cloudflare_edge(response: httpx.Response) -> bool:
+    """响应是否由 Cloudflare 边缘自己生成 —— 52x 的"未达上游"只在这个前提下成立。
+
+    单看 ``cf-ray`` 不够:中继可以把上游的响应头原样拷进自己的错误响应,那时请求已经到过
+    上游,得靠 ``server: cloudflare`` 把这种中继排掉。两个信号缺一即判否 —— 错重试一次要
+    多付一张图的钱,错放弃只损失一次本可自动恢复的失败。
+    """
+    return bool(response.headers.get("cf-ray")) and (
+        response.headers.get("server", "").strip().lower().startswith("cloudflare")
+    )
 
 
 def _utc_now() -> datetime:
@@ -295,7 +318,20 @@ def _retry_after_seconds(value: str) -> float | None:
         delay = (retry_at.astimezone(timezone.utc) - _utc_now()).total_seconds()
     if not math.isfinite(delay):
         return None
-    return min(max(delay, 0.0), _MAX_RATE_LIMIT_WAIT)
+    return min(max(delay, 0.0), _MAX_RETRY_WAIT)
+
+
+def _retry_exhausted_message(status: int, tries: int) -> str:
+    """带上状态码与次数,否则排障的人只知道"失败了",不知道是限流还是网关连不上上游。"""
+    if status == 429:
+        return (
+            f"图像服务请求过于频繁(HTTP {status})，已重试 {tries} 次；"
+            "请稍后重试或检查服务商额度"
+        )
+    return (
+        f"图像网关未能连上上游(HTTP {status})，已重试 {tries} 次；"
+        "该请求未到达模型服务、未产生费用，可稍后重试"
+    )
 
 
 # 从响应里捞 data URI。模型把图放在 message.content 里,而不同网关的包裹层级不一样
@@ -336,30 +372,32 @@ class SufyImageProvider(ImageProvider):
         )
 
     def _post(self, client: httpx.Client, body: dict) -> dict:
-        """发送请求，有限重试未被网关接收的 429。
+        """发送请求，只重试确定没被上游收下的失败(429，以及 Cloudflare 自己发的 52x)。
 
-        为什么值得专门处理:同一把 key 下不同网关的模型目录**不一样**。实测
+        为什么把 400 / 404 单独挑出来说:同一把 key 下不同网关的模型目录**不一样**。实测
         ``GET /v1/models``:一个网关 73 个模型、一个图像模型都没有;另一个 134 个、
         含本模块默认的那个(2026-08-10)。配错 ``AI_BASE_URL`` 时原始报错只是一条
         404,读的人无从知道该去改配置还是改模型名。
         """
-        for attempt in range(1, _RATE_LIMIT_TRIES + 1):
+        for attempt in range(1, _POST_TRIES + 1):
             resp = client.post(self._cfg.chat_completions_path, json=body)
-            if resp.status_code != 429:
+            code = resp.status_code
+            retryable = code == 429 or (
+                code in _CLOUDFLARE_UNREACHED_STATUS and _from_cloudflare_edge(resp)
+            )
+            if not retryable:
                 break
-            if attempt == _RATE_LIMIT_TRIES:
-                raise RuntimeError(
-                    f"图像服务请求过于频繁(HTTP 429)，已重试 {_RATE_LIMIT_TRIES} 次；"
-                    "请稍后重试或检查服务商额度"
-                )
-            retry_after = resp.headers.get("Retry-After", "")
-            delay = _retry_after_seconds(retry_after)
+            if attempt == _POST_TRIES:
+                raise RuntimeError(_retry_exhausted_message(code, _POST_TRIES))
+            delay = _retry_after_seconds(resp.headers.get("Retry-After", ""))
             if delay is None:
-                delay = float(2**attempt)
+                # 上限同样兜住指数退避:上游挂掉时不该把一个图像任务堵成长时间阻塞。
+                delay = min(float(2**attempt), _MAX_RETRY_WAIT)
             logger.warning(
-                "图像服务返回 429，第 %d/%d 次请求，%.2f 秒后重试",
+                "图像服务返回 %d，第 %d/%d 次请求，%.2f 秒后重试",
+                code,
                 attempt,
-                _RATE_LIMIT_TRIES,
+                _POST_TRIES,
                 delay,
             )
             time.sleep(delay)
