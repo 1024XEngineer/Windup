@@ -365,6 +365,7 @@ class ActionTaskExecutor:
         strategies = {
             GenRoute.VIDEO_I2V: VideoFrameStrategy(video, self._matte),
             GenRoute.PER_FRAME: PerFrameStrategy(self._image, self._matte),
+            GenRoute.RENDER_3D: self._build_render3d(),
         }
         missing = set(GenRoute) - set(strategies)
         if missing:
@@ -376,19 +377,33 @@ class ActionTaskExecutor:
 
     @staticmethod
     def _build_render3d():
-        """装三渲二的**渲帧**那一段。纯本地(node + playwright + three.js),零 API 成本。
+        """三渲二的**渲帧**那一段。纯本地(node + playwright + three.js),零 API 成本。
 
-        函数内 import:出帧台那套依赖只有这条路线用得着,在模块顶层要齐会让本来走 i2v
-        的任务也因为它没装好而起不来。
+        真被请求时才 import 出帧台那套依赖:它只有这条路线用得着,装配期就要齐会让本来
+        走 i2v 的任务也因为它没配好而起不来。
 
         **图生 3D 与绑骨那两段不在这里** —— 它们按次计费、每造型一次性,由
         ``render3d_assets.Render3DAssetBuilder`` 在请求路径之外做(带一道人工确认停点),
         产物 URL 落在 ``outfits[].model_3d_url`` 上。捆进来就等于一个 web 请求能顺手扣钱。
         """
-        from windup_ai_engine.strategy.concrete import RenderFrameStrategy
-        from windup_framework.providers.render3d import LocalSpriteRenderProvider
+        from windup_ai_engine.strategy.base import DerivationStrategy
+        from windup_common.models import GenRoute
 
-        return RenderFrameStrategy(LocalSpriteRenderProvider())
+        class _LazyRenderStrategy(DerivationStrategy):
+            route = GenRoute.RENDER_3D
+
+            def __init__(self) -> None:
+                self._inner: DerivationStrategy | None = None
+
+            def derive(self, card, action, source, progress):
+                if self._inner is None:
+                    from windup_ai_engine.strategy.concrete import RenderFrameStrategy
+                    from windup_framework.providers.render3d import LocalSpriteRenderProvider
+
+                    self._inner = RenderFrameStrategy(LocalSpriteRenderProvider())
+                return self._inner.derive(card, action, source, progress)
+
+        return _LazyRenderStrategy()
 
     def _download_model3d(self, url: str) -> bytes:
         """取该造型的绑骨 3D 模型。走 ``fetch_own_media`` —— 与母版同一条受限通路
