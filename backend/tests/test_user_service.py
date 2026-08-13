@@ -139,6 +139,47 @@ def test_register_success(db_session, service, mock_email):
     assert result.user.email_verified_at is not None  # 注册即验证
 
 
+def test_register_creates_credit_account(db_session, service, mock_email):
+    """注册时应自动创建积分账户并赠送初始积分。"""
+    from sqlalchemy import select
+    from windup_app.server.quota.model import CreditAccount, CreditTransaction
+    from windup_common.enums.quota import CreditReason
+    from windup_framework.config.quota import settings as quota_settings
+
+    service._redis.get.return_value = "123456"
+
+    input_data = RegisterInput(
+        email="credit@example.com",
+        password="password123",
+        code="123456",
+    )
+
+    result = service.register_by_email_with_session(db_session, input_data)
+    user_id = result.user.id
+
+    # 验证积分账户已创建
+    account = db_session.scalar(
+        select(CreditAccount).where(CreditAccount.user_id == user_id)
+    )
+    assert account is not None
+    assert account.balance == quota_settings.register_gift_amount
+    assert account.frozen == 0
+    assert account.total_earned == quota_settings.register_gift_amount
+    assert account.total_spent == 0
+
+    # 验证赠送流水已记录
+    txn = db_session.scalar(
+        select(CreditTransaction).where(
+            CreditTransaction.user_id == user_id,
+            CreditTransaction.reason == CreditReason.REGISTER_GIFT,
+        )
+    )
+    assert txn is not None
+    assert txn.delta == quota_settings.register_gift_amount
+    assert txn.ref_id == f"register:{user_id}"
+    assert txn.balance_after == quota_settings.register_gift_amount
+
+
 def test_register_duplicate_email(db_session, service):
     # 先注册一个用户
     service._redis.get.return_value = "123456"
@@ -249,6 +290,38 @@ def test_login_by_code_new_user(db_session, service, mock_email):
 
     assert result.user.email == "code@example.com"
     assert result.user.email_verified_at is not None
+
+
+def test_login_by_code_new_user_creates_credit_account(db_session, service, mock_email):
+    """验证码自动注册时应创建积分账户并赠送初始积分。"""
+    from sqlalchemy import select
+    from windup_app.server.quota.model import CreditAccount, CreditTransaction
+    from windup_common.enums.quota import CreditReason
+    from windup_framework.config.quota import settings as quota_settings
+
+    service._redis.get.return_value = "123456"
+
+    input_data = LoginByCodeInput(email="auto@example.com", code="123456")
+    result = service.login_by_code_with_session(db_session, input_data)
+    user_id = result.user.id
+
+    # 验证积分账户已创建
+    account = db_session.scalar(
+        select(CreditAccount).where(CreditAccount.user_id == user_id)
+    )
+    assert account is not None
+    assert account.balance == quota_settings.register_gift_amount
+    assert account.total_earned == quota_settings.register_gift_amount
+
+    # 验证赠送流水已记录
+    txn = db_session.scalar(
+        select(CreditTransaction).where(
+            CreditTransaction.user_id == user_id,
+            CreditTransaction.reason == CreditReason.REGISTER_GIFT,
+        )
+    )
+    assert txn is not None
+    assert txn.delta == quota_settings.register_gift_amount
 
 
 def test_login_by_code_existing_user(db_session, service, mock_email):
