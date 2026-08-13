@@ -28,6 +28,16 @@ _PKG = "windup_ai_engine.prompt.prompts"
 # 不是给人读的标题;允许空格就会出现 "## side " 这种查不到的节。
 _HEADING = re.compile(r"^##[ \t]+(\S+)[ \t]*$", re.MULTILINE)
 
+# 提示词正文**必须**在围栏代码块里。
+#
+# 为什么不让它就是节下的散文(初版就是那样,评审第一眼就问"为何中英文混用"):搬进 md
+# 之后,"给人读的实测理由"(中文)与"原样送给模型的字面量"(英文)在页面上是同级段落,
+# 看不出哪段是数据。在 Python 里这两者本来靠语法分得清 —— docstring vs 字符串字面量。
+# 代码块把这个区分还回来:框里是数据、框外是说明,渲染出来也是等宽字体、不会被当散文读。
+#
+# 附带好处:折行规则从"猜哪些行算正文"退化成"框里的都算",不再需要启发式。
+_FENCE = re.compile(r"^```[^\n]*\n(.*?)^```", re.S | re.M)
+
 
 class PromptAssetError(RuntimeError):
     """提示词资产读不出来。**不是可以兜底的情形** —— 见模块 docstring。"""
@@ -54,25 +64,35 @@ def load_doc(name: str) -> dict[str, str]:
     if not marks:
         raise PromptAssetError(
             f"提示词资产 {name} 里一个 `## <节名>` 都没有。期望结构:文件开头是该动作的"
-            "实测理由(散文),其后每个朝向一节,如 `## side` / `## front`。"
+            "实测理由(散文,中文,给人读),其后每个朝向一节如 `## side` / `## front`,"
+            "每节下用一个 ```text 代码块装原样送给模型的提示词正文(英文)。"
         )
     out: dict[str, str] = {}
     for i, m in enumerate(marks):
         end = marks[i + 1].start() if i + 1 < len(marks) else len(raw)
-        out[m.group(1)] = _flatten(raw[m.end():end])
+        out[m.group(1)] = _fenced(raw[m.end():end], name, m.group(1))
     return out
 
 
-def _flatten(block: str) -> str:
-    """把一节的正文压成送给模型的那一行。
+def _fenced(block: str, doc: str, section: str) -> str:
+    """取这一节代码块里的正文,压成送给模型的那一行。
 
-    md 里为了可读按句子换行,而提示词是一整段散文;直接带着换行送出去,与实测通过的那版
-    就不是同一个字符串了。规则:去掉注释行(`> ` 引用块留给写理由用)、空行分段、
-    段内换行折成空格,段与段之间用一个空格接上。
+    **只认代码块**,节里的散文一概不进返回值:那是写给人看的实测理由,一个字都不该混进
+    付费调用的入参。没有代码块 = 空节,由 ``load_section`` 按 ``allow_empty`` 定夺
+    (只有 ``master_poses`` 的"用中性站立母版即可"是合法的空)。
+
+    折行:md 里为了可读按句子换行,而提示词是一整段散文;直接带着换行送出去,与实测通过
+    的那版就不是同一个字符串了。故框内各行折成空格连成一行。
     """
-    lines = [ln.strip() for ln in block.splitlines()]
-    kept = [ln for ln in lines if ln and not ln.startswith(">")]
-    return " ".join(kept)
+    fences = _FENCE.findall(block)
+    if not fences:
+        return ""
+    if len(fences) > 1:
+        raise PromptAssetError(
+            f"{doc} 的 `## {section}` 节里有 {len(fences)} 个代码块。一节只能有一个 —— "
+            "多个就得定「哪个才算正文」的规则,而那正是第二真相源的开头。"
+        )
+    return " ".join(ln.strip() for ln in fences[0].splitlines() if ln.strip())
 
 
 def load_section(name: str, section: str, *, allow_empty: bool = False) -> str:

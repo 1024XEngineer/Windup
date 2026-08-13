@@ -64,7 +64,7 @@ def _inline(monkeypatch, tmp_path, text: str):
 def test_empty_section_raises_instead_of_returning_an_empty_prompt(tmp_path, monkeypatch):
     """空节 → 抛错。这是本文件存在的首要理由:空提示词会照常发出付费调用。"""
     md = _inline(monkeypatch, tmp_path,
-                 "# 理由写在这\n\n## side\n\n## front\n\nreal text here\n")
+                 "# 理由写在这\n\n## side\n\n## front\n\n```text\nreal text here\n```\n")
     with pytest.raises(PromptAssetError, match="是空的"):
         md.load_section("inline.md", "side")
     assert md.load_section("inline.md", "front") == "real text here"
@@ -83,11 +83,52 @@ def test_document_without_any_section_raises(tmp_path, monkeypatch):
         md.load_doc("inline.md")
 
 
-def test_rationale_quote_lines_are_not_part_of_the_prompt(tmp_path, monkeypatch):
-    """`> ` 引用行是留给写理由的,不进正文。"""
+def test_section_without_a_code_fence_counts_as_empty(tmp_path, monkeypatch):
+    """节里只有散文、没有代码块 = 空节。
+
+    初版是"散文即正文",于是 `> ` 引用行要靠一条启发式剔掉。改成只认代码块之后那条
+    启发式整个不需要了：框外的一律不算数，无论它长什么样。
+    """
     md = _inline(monkeypatch, tmp_path,
-                 "## side\n\n> 这行是给人看的\nactual prompt text\n")
+                 "## side\n\n> 这行是给人看的\n这段也是说明，没有代码块。\n")
+    with pytest.raises(PromptAssetError, match="是空的"):
+        md.load_section("inline.md", "side")
+    assert md.load_section("inline.md", "side", allow_empty=True) == ""
+
+
+def test_prose_outside_the_code_fence_is_not_part_of_the_prompt(tmp_path, monkeypatch):
+    """节里的散文一个字都不该进提示词 —— 只有代码块里的算数。
+
+    这条是评审提的"为何中英文混用"引出的结构约束（minorcell，#256）：搬进 md 之后，
+    中文实测理由与英文提示词字面量在页面上是同级段落，看不出哪段是数据。代码块把这个
+    区分还回来，而这条测试保证它不只是排版好看——框外的东西真的进不去。
+    """
+    md = _inline(monkeypatch, tmp_path,
+                 "## side\n\n这段中文是写给人看的理由，绝不能进提示词。\n\n"
+                 "```text\nactual prompt text\n```\n\n后面这段也是说明。\n")
     assert md.load_section("inline.md", "side") == "actual prompt text"
+
+
+def test_two_code_fences_in_one_section_raise(tmp_path, monkeypatch):
+    """一节两个代码块要炸：否则就得定"哪个才算正文"的规则，那是第二真相源的开头。"""
+    md = _inline(monkeypatch, tmp_path,
+                 "## side\n\n```text\nfirst\n```\n\n```text\nsecond\n```\n")
+    with pytest.raises(PromptAssetError, match="个代码块"):
+        md.load_section("inline.md", "side")
+
+
+@pytest.mark.parametrize("doc", ["walk.md", "jump.md", "idle.md", "attack.md", "master_poses.md"])
+def test_every_shipped_document_keeps_prose_and_data_separated(doc: str):
+    """随包发的每一份 md：说明在框外、数据在框内，且框内不含中文。
+
+    提示词正文必须是英文（送给 i2v 模型的，措辞是实测调过的，逐字不能动）；理由必须能用
+    中文写（给组内人读）。两者混在同一段落里就是评审看到的那个样子。
+    """
+    from windup_ai_engine.prompt._md import load_doc
+
+    for section, text in load_doc(doc).items():
+        assert not any("\u4e00" <= c <= "\u9fff" for c in text), \
+            f"{doc} 的 `## {section}` 提示词正文里混进了中文：{text[:60]!r}"
 
 
 # ── ② 每个动作的每个朝向都真的有内容 ─────────────────────────────────────
