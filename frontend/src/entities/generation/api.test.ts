@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createGenerationApis, GenerationApiError } from '@/entities'
+import {
+  createAuthenticatedGenerationApis,
+  createGenerationApis,
+  GenerationApiError,
+} from '@/entities'
 import { EventStreamError, type EventStreamOptions } from '@/shared/api/stream'
 
 import type { MediaReference } from '../media'
@@ -46,6 +50,33 @@ function actionFrames(count: number) {
 }
 
 describe('createGenerationApis', () => {
+  it('生产适配器把 SSE 订阅接到配置的 API 地址', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    const fetchFn = vi.fn(
+      async () =>
+        new Response(
+          `event: failed\ndata: ${JSON.stringify({
+            ...taskData({ status: 'failed', result: null, error_message: 'provider unavailable' }),
+          })}\n\n`,
+          { headers: { 'content-type': 'text/event-stream' } },
+        ),
+    )
+    const apis = createAuthenticatedGenerationApis(fetchFn as typeof fetch)
+    const onEvent = vi.fn()
+
+    const stop = apis.subscribe('42', '91', { type: 'character_template' }, onEvent, vi.fn())
+
+    try {
+      await vi.waitFor(() => expect(onEvent).toHaveBeenCalled())
+      expect(String(fetchFn.mock.calls[0]?.[0])).toBe(
+        'https://api.windup.test/generation/tasks/91/stream?project_id=42',
+      )
+    } finally {
+      stop()
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('固定请求并映射三张角色母版候选', async () => {
     const request = vi.fn(async (_url: string, _init?: RequestInit) => success(taskData()))
     const stream = vi.fn(() => vi.fn())
