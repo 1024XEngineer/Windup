@@ -109,6 +109,46 @@ body,
   --color-spark: #555b54;
 
   /*
+   * 登录后产品界面的共享色彩语义。页面只选择角色，不选择具体色值：这样工作台、
+   * 项目资产、创作与预览台共享同一层级，错误/警告/信息仍保留各自含义。
+   */
+  --color-app-canvas: #f3f2ec;
+  --color-app-surface: #f7f8f4;
+  --color-app-surface-raised: #ffffff;
+  --color-app-surface-muted: #e7eae5;
+  --color-app-surface-strong: #dfe3df;
+  --color-app-ink: #1d251f;
+  --color-app-ink-soft: #303a32;
+  --color-app-muted: #687169;
+  --color-app-faint: #778078;
+  --color-app-line: #cbd1ca;
+  --color-app-line-strong: #8fa092;
+  --color-app-accent: #284331;
+  --color-app-accent-hover: #1f3828;
+  --color-app-accent-soft: #dce9df;
+  --color-app-accent-muted: #edf2ec;
+  --color-app-on-accent: #f7f8f4;
+  --color-app-danger: #6f3928;
+  --color-app-danger-hover: #593022;
+  --color-app-danger-muted: #7a5548;
+  --color-app-danger-line: #d6c1b6;
+  --color-app-danger-soft: #fff8f3;
+  --color-app-warning: #67552e;
+  --color-app-warning-line: #c7a967;
+  --color-app-warning-soft: #f4eddc;
+  --color-app-info: #2a5284;
+  --color-app-info-hover: #3668a0;
+
+  --shadow-app-card: 0 18px 45px rgb(29 37 31 / 9%);
+  --shadow-app-panel: 0 22px 60px rgb(29 37 31 / 12%);
+  --shadow-app-page: 0 26px 80px rgb(29 37 31 / 10%);
+  --shadow-app-header: inset 0 1px 0 rgb(255 255 255 / 55%);
+  --shadow-app-menu: 0 8px 24px rgb(29 37 31 / 10%);
+  --shadow-app-stage-panel: 0 12px 32px rgb(29 37 31 / 18%);
+  --shadow-app-float: 0 16px 40px rgb(29 37 31 / 24%);
+  --shadow-app-pulse: 0 0 0 16px rgb(40 67 49 / 5%);
+
+  /*
    * 字阶按约 1.3 递进，display 与 body 之间留了 title / subtitle / lead 三档，
    * 补上原先 100px 直接跳到 14px 的断层。
    *
@@ -336,9 +376,9 @@ body,
   width: 5px;
   height: 5px;
   border-radius: 1px;
-  background: #bfc6bf;
+  background: var(--color-app-line);
   opacity: 0.62;
-  box-shadow: 0 0 0 1px rgb(255 255 255 / 18%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-app-surface-raised) 18%, transparent);
   animation: project-pixel-field 4.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
@@ -375,7 +415,7 @@ body,
 }
 
 .project-pixel-mark i.is-active {
-  background: #202120;
+  background: var(--color-app-ink-soft);
   opacity: 0.9;
   box-shadow: none;
   animation: project-pixel-frame 3.4s ease-in-out infinite;
@@ -394,14 +434,14 @@ body,
 }
 
 .project-pixel-mark i.is-handle {
-  background: #050505;
+  background: var(--color-app-ink);
   opacity: 1;
-  box-shadow: 0 0 0 4px rgb(17 18 17 / 9%);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-app-ink) 9%, transparent);
   animation: project-pixel-handle 3.8s ease-in-out infinite;
 }
 
 .project-pixel-mark i.is-cursor {
-  background: #090a09;
+  background: var(--color-app-accent);
   opacity: 1;
   animation: project-pixel-cursor 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
 }

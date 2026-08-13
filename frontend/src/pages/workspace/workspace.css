@@ -1,12 +1,6 @@
 .workspace-page {
-  --workspace-ink: #1d251f;
-  --workspace-muted: #687169;
-  --workspace-paper: #f7f8f4;
-  --workspace-canvas: #e7eae5;
-  --workspace-line: #cbd1ca;
-  --workspace-moss: #284331;
-  color: var(--workspace-ink);
-  background: #f3f2ec;
+  color: var(--color-app-ink);
+  background: var(--color-app-canvas);
 }
 
 .workspace-shell {
@@ -42,7 +36,7 @@
 }
 
 .workflow-card-action {
-  color: var(--workspace-ink);
+  color: var(--color-app-ink);
   background: transparent;
   transition:
     color 170ms ease,
@@ -59,7 +53,7 @@
 
 .workflow-card-action:hover,
 .workflow-card-action:focus-visible {
-  color: var(--workspace-moss);
+  color: var(--color-app-accent);
 }
 
 .workflow-entrance-card:hover .workflow-card-actions,
@@ -113,7 +107,12 @@
 }
 
 .workspace-loading-line {
-  background-image: linear-gradient(90deg, #e7eae5 20%, #f2f4ef 50%, #e7eae5 80%);
+  background-image: linear-gradient(
+    90deg,
+    var(--color-app-surface-muted) 20%,
+    var(--color-app-surface) 50%,
+    var(--color-app-surface-muted) 80%
+  );
   background-size: 220% 100%;
   animation: workspace-loading 1.2s ease-in-out infinite;
 }

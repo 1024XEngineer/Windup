@@ -63,23 +63,23 @@ export function ProjectsPage() {
       <section aria-labelledby="projects-title">
         <header
           data-projects-intro
-          className="projects-intro flex flex-col gap-4 border-b border-[#d8dbd4] pb-6 sm:flex-row sm:items-end sm:justify-between"
+          className="projects-intro flex flex-col gap-4 border-b border-app-line pb-6 sm:flex-row sm:items-end sm:justify-between"
         >
           <div>
             <h1
               id="projects-title"
-              className="font-serif text-4xl font-medium tracking-[-0.045em] text-[#1f211e]"
+              className="font-serif text-4xl font-medium tracking-[-0.045em] text-app-ink"
             >
               项目中心
             </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-[#696e67]">
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-app-muted">
               项目隔离角色资产与生成规格；先选项目，再管理其资产。
             </p>
           </div>
           <Link
             to="/projects/new"
             aria-label="新建项目"
-            className="rounded-full border border-[#cbd1c8] px-5 py-2.5 text-sm font-semibold text-[#3a403a] transition hover:border-[#9da59b] hover:bg-white"
+            className="rounded-full border border-app-line px-5 py-2.5 text-sm font-semibold text-app-ink-soft transition hover:border-app-line-strong hover:bg-app-surface-raised"
           >
             ＋ 新建项目
           </Link>
@@ -88,16 +88,16 @@ export function ProjectsPage() {
         {error ? (
           <p
             role="alert"
-            className="mt-6 rounded-2xl border border-[#d8c7bd] bg-[#fff8f2] p-5 text-sm text-[#7a3f2a]"
+            className="mt-6 rounded-2xl border border-app-danger-line bg-app-danger-soft p-5 text-sm text-app-danger"
           >
             {error}
           </p>
         ) : projectsPage === null ? (
-          <p className="mt-6 text-sm text-[#70766f]">正在读取项目…</p>
+          <p className="mt-6 text-sm text-app-muted">正在读取项目…</p>
         ) : projectsPage.total === 0 ? (
-          <div className="mt-6 rounded-2xl border border-dashed border-[#c9cec6] p-7">
-            <h2 className="font-semibold text-[#252a25]">还没有项目</h2>
-            <p className="mt-2 text-sm text-[#6d736c]">
+          <div className="mt-6 rounded-2xl border border-dashed border-app-line p-7">
+            <h2 className="font-semibold text-app-ink">还没有项目</h2>
+            <p className="mt-2 text-sm text-app-muted">
               从右上角新建一个项目，之后它会显示在这里。
             </p>
           </div>
@@ -153,35 +153,35 @@ function ProjectCard({
     <article
       data-project-card
       style={{ '--project-card-order': motionOrder } as CSSProperties}
-      className="projects-card-enter relative min-h-64 rounded-[1.5rem] border border-[#d8dbd4] bg-[#f4f5f1] transition duration-300 ease-out hover:-translate-y-0.5 hover:border-[#9da59b] hover:bg-white"
+      className="projects-card-enter relative min-h-64 rounded-[1.5rem] border border-app-line bg-app-surface transition duration-300 ease-out hover:-translate-y-0.5 hover:border-app-line-strong hover:bg-app-surface-raised"
     >
       <Link
         to={`/projects/${project.id}/assets`}
         aria-label={`打开项目 ${project.name}`}
-        className="flex h-full min-h-64 flex-col p-6 pr-14 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#252825]"
+        className="flex h-full min-h-64 flex-col p-6 pr-14 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-ink"
       >
         <div className="mt-auto pt-10">
-          <h2 className="font-serif text-2xl font-medium tracking-[-0.035em] text-[#222520]">
+          <h2 className="font-serif text-2xl font-medium tracking-[-0.035em] text-app-ink">
             {project.name}
           </h2>
-          <p className="mt-2 text-xs text-[#747b73]">更新于 {updatedAt}</p>
-          <dl className="mt-4 grid grid-cols-2 gap-x-5 gap-y-3 border-t border-[#dfe1dc] pt-4 text-xs">
+          <p className="mt-2 text-xs text-app-faint">更新于 {updatedAt}</p>
+          <dl className="mt-4 grid grid-cols-2 gap-x-5 gap-y-3 border-t border-app-line pt-4 text-xs">
             <div>
-              <dt className="text-[#898e87]">视角 / 朝向</dt>
-              <dd className="mt-1 font-medium text-[#41473f]">
+              <dt className="text-app-faint">视角 / 朝向</dt>
+              <dd className="mt-1 font-medium text-app-ink-soft">
                 {CHARACTER_PERSPECTIVE[project.perspective]} ·{' '}
                 {DIRECTIONAL_MOVEMENT[project.directionalMovement]}
               </dd>
             </div>
             <div>
-              <dt className="text-[#898e87]">精灵尺寸</dt>
-              <dd className="mt-1 font-medium text-[#41473f]">
+              <dt className="text-app-faint">精灵尺寸</dt>
+              <dd className="mt-1 font-medium text-app-ink-soft">
                 {project.spriteSize.width} × {project.spriteSize.height}
               </dd>
             </div>
             <div className="col-span-2">
-              <dt className="text-[#898e87]">画风约束</dt>
-              <dd className="mt-1 truncate font-medium text-[#41473f]">
+              <dt className="text-app-faint">画风约束</dt>
+              <dd className="mt-1 truncate font-medium text-app-ink-soft">
                 {project.gameStyle ?? '尚未设定'}
               </dd>
             </div>
@@ -192,7 +192,7 @@ function ProjectCard({
         type="button"
         aria-label={`删除项目 ${project.name}`}
         onClick={onDelete}
-        className="absolute right-4 top-4 rounded-full px-2 py-1 text-sm text-[#7a8179] hover:bg-[#eceee9] hover:text-[#7a3f2a]"
+        className="absolute right-4 top-4 rounded-full px-2 py-1 text-sm text-app-faint hover:bg-app-surface hover:text-app-danger"
       >
         ⋯
       </button>
@@ -212,15 +212,15 @@ function DeleteProjectDialog({
   onConfirm: () => Promise<void>
 }) {
   return (
-    <div className="projects-dialog-backdrop fixed inset-0 z-50 grid place-items-center bg-[#1f241f]/20 p-4 backdrop-blur-sm">
+    <div className="projects-dialog-backdrop fixed inset-0 z-50 grid place-items-center bg-app-ink/20 p-4 backdrop-blur-sm">
       <section
         role="dialog"
         aria-modal="true"
         aria-label="删除项目"
-        className="projects-dialog-panel w-full max-w-md rounded-[1.5rem] border border-[#d9d5cf] bg-white p-6"
+        className="projects-dialog-panel w-full max-w-md rounded-[1.5rem] border border-app-line bg-app-surface-raised p-6"
       >
-        <h2 className="text-lg font-semibold text-[#292b27]">删除“{project.name}”？</h2>
-        <p className="mt-2 text-sm leading-6 text-[#6f716c]">
+        <h2 className="text-lg font-semibold text-app-ink">删除“{project.name}”？</h2>
+        <p className="mt-2 text-sm leading-6 text-app-muted">
           删除后无法恢复这条项目记录。请先确认项目下资产已经妥善处理。
         </p>
         <div className="mt-6 flex justify-end gap-2">
@@ -228,7 +228,7 @@ function DeleteProjectDialog({
             type="button"
             disabled={pending}
             onClick={onClose}
-            className="rounded-full border border-[#cfd4cc] px-4 py-2 text-sm disabled:opacity-50"
+            className="rounded-full border border-app-line px-4 py-2 text-sm disabled:opacity-50"
           >
             取消
           </button>
@@ -237,7 +237,7 @@ function DeleteProjectDialog({
             aria-label="确认删除项目"
             disabled={pending}
             onClick={() => void onConfirm()}
-            className="rounded-full bg-[#7a3f2a] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            className="rounded-full bg-app-danger px-4 py-2 text-sm font-semibold text-app-on-accent disabled:opacity-50"
           >
             {pending ? '正在删除…' : '删除项目'}
           </button>

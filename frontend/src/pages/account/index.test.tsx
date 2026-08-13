@@ -111,7 +111,7 @@ describe('AccountPage', () => {
 
     expect(await screen.findByRole('heading', { name: '账号中心' })).toBeTruthy()
     const page = container.querySelector('[data-account-page]')
-    expect(page?.className).toContain('bg-[#f3f2ec]')
+    expect(page?.className).toContain('bg-app-canvas')
     const shell = container.querySelector('[data-account-shell]')
     expect(shell?.className).toContain('max-w-[1560px]')
     expect(screen.getByRole('heading', { name: '账号中心' }).className).toContain(

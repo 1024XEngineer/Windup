@@ -36,7 +36,7 @@ export function PageBackButton() {
       aria-label="返回上一页"
       title="返回上一页"
       onClick={goBack}
-      className="inline-grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[#25342a]/12 bg-white/35 text-[#34483a] transition-[background-color,color,transform] duration-150 hover:bg-white/75 hover:text-[#1f3326] active:translate-y-px active:scale-[0.96] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331] motion-reduce:transform-none"
+      className="inline-grid h-9 w-9 shrink-0 place-items-center rounded-md border border-app-accent/12 bg-app-surface-raised/35 text-app-ink-soft transition-[background-color,color,transform] duration-150 hover:bg-app-surface-raised/75 hover:text-app-accent-hover active:translate-y-px active:scale-[0.96] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent motion-reduce:transform-none"
     >
       <span aria-hidden="true" className="text-[1.2rem] leading-none">
         ←
