@@ -164,7 +164,7 @@ describe('AccountPage', () => {
         '/?account=login&returnTo=%2Faccount',
       ),
     )
-    expect(await screen.findByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
+    expect(await screen.findByRole('dialog', { name: '欢迎回来。' })).toBeTruthy()
     expect(screen.getByText('密码修改成功，请重新登录')).toBeTruthy()
   })
 
