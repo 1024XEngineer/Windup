@@ -212,7 +212,10 @@ describe('QuickStartPage', () => {
     await waitFor(() => {
       expect(view.getByRole('heading', { name: '选择动作首帧' })).toBeTruthy()
     })
-    expect(view.getByRole('img', { name: '动作首帧候选 1' })).toBeTruthy()
+    const firstFrame = view.getByRole('img', { name: '动作首帧候选 1' })
+    expect(firstFrame.getAttribute('loading')).toBe('eager')
+    expect(firstFrame.getAttribute('decoding')).toBe('async')
+    expect(firstFrame.getAttribute('fetchpriority')).toBe('high')
     expect(view.queryByRole('img', { name: '角色图候选 1' })).toBeNull()
   })
 

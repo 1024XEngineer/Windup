@@ -670,6 +670,8 @@ function QuickStartRun({
                     key={`${frame.imageUrl}:${index}`}
                     src={frame.imageUrl}
                     alt={`动作第 ${index + 1} 帧`}
+                    loading="lazy"
+                    decoding="async"
                     className="aspect-square w-full border border-[#c7cec8] bg-[#e7ebe6] object-contain [image-rendering:pixelated]"
                   />
                 ))}
@@ -716,6 +718,9 @@ function QuickStartRun({
                       <img
                         src={frame.imageUrl}
                         alt={`动作首帧候选 ${index + 1}`}
+                        loading="eager"
+                        decoding="async"
+                        fetchPriority={index === 0 ? 'high' : 'auto'}
                         className="aspect-square w-full object-contain [image-rendering:pixelated]"
                       />
                       <p className="mt-2 font-mono text-[9px] tracking-[0.1em] text-[#687069]">
@@ -773,6 +778,9 @@ function QuickStartRun({
                       <img
                         src={candidateUrl}
                         alt={`角色图候选 ${index + 1}`}
+                        loading="eager"
+                        decoding="async"
+                        fetchPriority={index === 0 ? 'high' : 'auto'}
                         className="aspect-square w-full object-contain [image-rendering:pixelated]"
                       />
                       <p className="mt-2 font-mono text-[9px] tracking-[0.1em] text-[#687069]">
