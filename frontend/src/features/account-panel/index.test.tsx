@@ -80,20 +80,51 @@ function fillCodeLogin(email = 'reader@example.com', code = '123456') {
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
+  vi.unstubAllGlobals()
   vi.useRealTimers()
 })
 
 describe('AccountPanel', () => {
-  it('opens only for the exact account=login query and focuses the email field', async () => {
-    const hidden = renderPanel('/?account=register')
+  it('opens only for a supported account entry and focuses email', async () => {
+    const hidden = renderPanel('/?account=profile')
     expect(screen.queryByRole('dialog')).toBeNull()
     hidden.unmount()
 
     renderPanel('/?account=login')
 
     expect(screen.getByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '欢迎回来。' })).toBeTruthy()
     expect(screen.getByText('未注册的邮箱将在验证后自动创建账号。')).toBeTruthy()
+    expect(screen.queryByRole('tab', { name: '注册' })).toBeNull()
+    expect(screen.getByRole('button', { name: '创建账号' })).toBeTruthy()
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('邮箱')))
+  })
+
+  it('opens registration as a centered, progressive form', async () => {
+    renderPanel('/?account=register&returnTo=%2Fworkspace')
+
+    const dialog = screen.getByRole('dialog', { name: '创建 Windup 账号' })
+    expect(screen.getByRole('heading', { name: '欢迎来到 Windup' })).toBeTruthy()
+    expect(dialog.className).toContain('max-w-[34rem]')
+    expect(screen.getByText('从一个角色开始，')).toBeTruthy()
+    expect(screen.queryByText('继续搭建，')).toBeNull()
+    expect(screen.getByTestId('register-fields').className).toContain('auth-register-fields')
+    expect(screen.queryByRole('tablist', { name: '账号操作' })).toBeNull()
+    expect(screen.getByLabelText('邮箱')).toBeTruthy()
+    expect(screen.queryByLabelText('密码')).toBeNull()
+    expect(screen.queryByLabelText('昵称（选填）')).toBeNull()
+    expect(screen.queryByLabelText('验证码')).toBeNull()
+    expect(screen.getByTestId('register-fields').querySelector('[aria-live]')).toBeNull()
+    expect(screen.getByRole('button', { name: '继续' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '登录' })).toBeTruthy()
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('邮箱')))
+  })
+
+  it('keeps the close control inside the dialog focus boundary', () => {
+    renderPanel('/?account=login')
+
+    const dialog = screen.getByRole('dialog', { name: '登录 Windup' })
+    expect(dialog.contains(screen.getByRole('button', { name: '关闭账号面板' }))).toBe(true)
   })
 
   it('closes on Escape without discarding unrelated query state', async () => {
@@ -105,7 +136,43 @@ describe('AccountPanel', () => {
     expect(screen.getByTestId('location').textContent).toBe('/?returnTo=%2Fprojects&source=header')
   })
 
-  it('sends login codes and keeps the cooldown with the receiving email across modes', async () => {
+  it('keeps keyboard focus inside the dialog in both tab directions', () => {
+    renderPanel('/?account=login')
+
+    const dialog = screen.getByRole('dialog', { name: '登录 Windup' })
+    const closeButton = screen.getByRole('button', { name: '关闭账号面板' })
+    const entrySwitch = screen.getByRole('button', { name: '创建账号' })
+
+    entrySwitch.focus()
+    fireEvent.keyDown(entrySwitch, { key: 'Tab' })
+    expect(document.activeElement).toBe(closeButton)
+
+    closeButton.focus()
+    fireEvent.keyDown(closeButton, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(entrySwitch)
+    expect(dialog.contains(document.activeElement)).toBe(true)
+  })
+
+  it('lets rotating copy leave before replacing it with the next message', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('matchMedia', () => ({ matches: false }))
+    const { container } = renderPanel('/?account=login')
+    const copy = () => container.querySelector<HTMLElement>('[data-copy-phase]')
+
+    expect(copy()?.dataset.copyPhase).toBe('entering')
+    await act(async () => vi.advanceTimersByTimeAsync(760))
+    expect(copy()?.dataset.copyPhase).toBe('resting')
+
+    await act(async () => vi.advanceTimersByTimeAsync(3_440))
+    expect(copy()?.dataset.copyPhase).toBe('exiting')
+    expect(screen.getByText('继续搭建，')).toBeTruthy()
+
+    await act(async () => vi.advanceTimersByTimeAsync(460))
+    expect(copy()?.dataset.copyPhase).toBe('entering')
+    expect(screen.getByText('你的角色还在这里，')).toBeTruthy()
+  })
+
+  it('sends login codes and keeps the cooldown with the receiving email', async () => {
     const { apis } = renderPanel()
     fireEvent.change(screen.getByLabelText('邮箱'), {
       target: { value: 'reader@example.com' },
@@ -118,12 +185,42 @@ describe('AccountPanel', () => {
         purpose: 'login',
       }),
     )
-    expect(screen.getByRole('button', { name: '60 秒后重发' }).hasAttribute('disabled')).toBe(true)
-
-    fireEvent.click(screen.getByRole('tab', { name: '注册' }))
-    expect(screen.getByRole('button', { name: '60 秒后重发' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('button', { name: '60s' }).hasAttribute('disabled')).toBe(true)
 
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'new@example.com' } })
+    expect(screen.getByRole('button', { name: '发送验证码' }).hasAttribute('disabled')).toBe(false)
+  })
+
+  it('re-enables code delivery after its cooldown expires', async () => {
+    vi.useFakeTimers()
+    renderPanel()
+    fireEvent.change(screen.getByLabelText('邮箱'), {
+      target: { value: 'reader@example.com' },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '发送验证码' }))
+    await act(async () => Promise.resolve())
+    expect(screen.getByRole('button', { name: '60s' }).hasAttribute('disabled')).toBe(true)
+
+    await act(async () => vi.advanceTimersByTimeAsync(60_000))
+    expect(screen.getByRole('button', { name: '发送验证码' }).hasAttribute('disabled')).toBe(false)
+  })
+
+  it('reports invalid email and delivery failures without advancing', async () => {
+    const apis = createApis()
+    apis.sendCode.mockRejectedValueOnce(new Error('邮件服务暂时不可用'))
+    renderPanel('/?account=login', apis)
+
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'invalid' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送验证码' }))
+    expect((await screen.findByRole('alert')).textContent).toContain('请输入有效邮箱地址')
+    expect(apis.sendCode).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('邮箱'), {
+      target: { value: 'reader@example.com' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送验证码' }))
+    expect((await screen.findByRole('alert')).textContent).toContain('邮件服务暂时不可用')
     expect(screen.getByRole('button', { name: '发送验证码' }).hasAttribute('disabled')).toBe(false)
   })
 
@@ -210,6 +307,7 @@ describe('AccountPanel', () => {
 
     fireEvent.submit(screen.getByRole('button', { name: '登录' }).closest('form')!)
     fireEvent.keyDown(document, { key: 'Escape' })
+    await act(async () => vi.advanceTimersByTimeAsync(520))
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(screen.getByTestId('location').textContent).toBe('/?returnTo=%2Fprojects')
 
@@ -234,11 +332,8 @@ describe('AccountPanel', () => {
   it('submits password login without an email code and keeps recovery visibly unavailable', async () => {
     const { apis } = renderPanel()
     fireEvent.click(screen.getByRole('tab', { name: '密码登录' }))
-    expect(screen.getByText('忘记密码')).toBeTruthy()
-    expect(screen.getByText('暂未开放')).toBeTruthy()
     expect(screen.queryByLabelText('验证码')).toBeNull()
     expect(screen.queryByRole('button', { name: '发送验证码' })).toBeNull()
-    expect(screen.getByText('用邮箱和密码直接登录。')).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'reader@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password-123' } })
@@ -253,38 +348,83 @@ describe('AccountPanel', () => {
     expect(apis.sendCode).not.toHaveBeenCalled()
   })
 
-  it('validates registration fields and sends register-purpose codes', async () => {
-    const { apis } = renderPanel()
-    fireEvent.click(screen.getByRole('tab', { name: '注册' }))
+  it('preserves registration input when showing a password and returning a step', async () => {
+    renderPanel('/?account=register')
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'new@example.com' } })
-    fireEvent.change(screen.getByLabelText('昵称（选填）'), {
-      target: { value: 'N'.repeat(51) },
-    })
-    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'short' } })
-    fireEvent.change(screen.getByLabelText('验证码'), { target: { value: '123456' } })
+    fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
 
-    fireEvent.submit(screen.getByRole('button', { name: '创建账号' }).closest('form')!)
+    const password = await screen.findByLabelText('密码')
+    expect(password.getAttribute('type')).toBe('password')
+    fireEvent.click(screen.getByRole('button', { name: '显示密码' }))
+    expect(password.getAttribute('type')).toBe('text')
+
+    fireEvent.click(screen.getByRole('button', { name: '返回上一步' }))
+    expect(((await screen.findByLabelText('邮箱')) as HTMLInputElement).value).toBe(
+      'new@example.com',
+    )
+    expect(screen.getByTestId('auth-motion-stage').dataset.motionDirection).toBe('backward')
+  })
+
+  it('switches account entry only after the current panel exits', async () => {
+    vi.useFakeTimers()
+    renderPanel('/?account=login&returnTo=%2Fworkspace')
+
+    fireEvent.click(screen.getByRole('button', { name: '创建账号' }))
+    expect(screen.getByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe('/?account=login&returnTo=%2Fworkspace')
+
+    await act(async () => vi.advanceTimersByTimeAsync(520))
+    expect(screen.getByRole('dialog', { name: '创建 Windup 账号' })).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/?account=register&returnTo=%2Fworkspace',
+    )
+  })
+
+  it('validates each registration step and reuses the existing register API contract', async () => {
+    const { apis } = renderPanel('/?account=register&returnTo=%2Fworkspace')
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'new@example.com' } })
+
+    fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
+    expect(screen.getByRole('dialog', { name: '创建 Windup 账号' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '为账号加一道保护' })).toBeTruthy()
+    expect(await screen.findByLabelText('密码')).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'short' } })
+
+    fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
     expect((await screen.findByRole('alert')).textContent).toContain('密码需为 8–128 位')
     expect(apis.register).not.toHaveBeenCalled()
 
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password-123' } })
-    fireEvent.submit(screen.getByRole('button', { name: '创建账号' }).closest('form')!)
+    fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
+    expect(screen.getByRole('dialog', { name: '创建 Windup 账号' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '留下你的称呼' })).toBeTruthy()
+    expect(await screen.findByLabelText('昵称（选填）')).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('昵称（选填）'), {
+      target: { value: 'N'.repeat(51) },
+    })
+
+    fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
     expect((await screen.findByRole('alert')).textContent).toContain('昵称不能超过 50 个字符')
 
-    fireEvent.change(screen.getByLabelText('昵称（选填）'), { target: { value: '' } })
-    fireEvent.click(screen.getByRole('button', { name: '发送验证码' }))
+    fireEvent.change(screen.getByLabelText('昵称（选填）'), { target: { value: '新用户' } })
+    fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
     await waitFor(() =>
       expect(apis.sendCode).toHaveBeenCalledWith({
         email: 'new@example.com',
         purpose: 'register',
       }),
     )
+    expect(screen.getByRole('dialog', { name: '创建 Windup 账号' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '确认你的邮箱' })).toBeTruthy()
+    expect(await screen.findByLabelText('验证码')).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('验证码'), { target: { value: '123456' } })
     fireEvent.submit(screen.getByRole('button', { name: '创建账号' }).closest('form')!)
     await waitFor(() =>
       expect(apis.register).toHaveBeenCalledWith({
         email: 'new@example.com',
         password: 'password-123',
         code: '123456',
+        nickname: '新用户',
       }),
     )
   })
