@@ -377,6 +377,49 @@ describe('WorkflowController', () => {
     })
   })
 
+  it('订阅终态落库失败时上报异步错误', async () => {
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        phase: 'generating',
+        generations: [{ taskId: 'task-first-frame', role: 'first_frame' }],
+      }),
+      ...actionNodes().slice(1),
+    ])
+    const { controller, workflow, generation, asyncErrors } = createController(run)
+    generation.snapshots.set('task-first-frame', {
+      id: 'task-first-frame',
+      projectId: '1',
+      type: 'first_frame',
+      status: 'running',
+      result: null,
+      error: null,
+    })
+    let onEvent: ((event: GenerationEvent) => void) | undefined
+    vi.mocked(generation.apis.subscribe).mockImplementation(
+      (_projectId, _taskId, _expectation, listener) => {
+        onEvent = listener
+        return () => undefined
+      },
+    )
+
+    await controller.resume()
+    vi.mocked(workflow.apis.update).mockRejectedValueOnce(new Error('save failed'))
+    onEvent?.({
+      taskId: 'task-first-frame',
+      type: 'first_frame',
+      status: 'completed',
+      result: {
+        type: 'first_frame',
+        images: [{ url: 'first.png' }, { url: 'second.png' }, { url: 'third.png' }],
+      },
+      error: null,
+    })
+    await flushAsyncWork()
+
+    expect(asyncErrors).toEqual([new Error('save failed')])
+  })
+
   it('按节点角色恢复生成快照', async () => {
     const run = createRun([
       ...completedCharacterNodes(),
