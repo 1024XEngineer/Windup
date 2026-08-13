@@ -121,7 +121,7 @@ describe('AppRoutes authentication boundary', () => {
         '/?account=login&returnTo=%2Fplaytest',
       ),
     )
-    expect(screen.queryByRole('heading', { name: '选择可试玩资产' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: '选择可预览资产' })).toBeNull()
   })
 
   it('protects direct account-center visits and returns there after login', async () => {

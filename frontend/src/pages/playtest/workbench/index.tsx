@@ -27,9 +27,9 @@ export function PlaytestWorkbench({
 
   if (!result.ok) {
     return (
-      <main aria-label="Playtest" className="grid min-h-screen place-items-center bg-[#dfe3df] p-6">
+      <main aria-label="预览台" className="grid min-h-screen place-items-center bg-[#dfe3df] p-6">
         <p className="rounded-full border border-[#c6ccc6] bg-[#f4f3ed] px-5 py-3 text-sm text-[#555b56]">
-          找不到指定造型，无法进入试玩。
+          找不到指定造型，无法进入预览台。
         </p>
       </main>
     )
@@ -60,14 +60,14 @@ function PlaytestExperience({
   // 顶栏悬浮不占布局高度，满幅页面自己让出避让空间；pt-24 与 PageContainer 同源，改顶栏尺寸时一起改。
   return (
     <main
-      aria-label="Playtest"
+      aria-label="预览台"
       className="flex h-screen flex-col bg-[#dfe3df] px-3 pb-4 pt-24 text-[#171817] sm:px-5 sm:pb-5"
     >
       <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-4">
         <header className="flex flex-wrap items-end justify-between gap-3 px-1">
           <div>
             <p className="font-mono text-[10px] font-semibold tracking-[0.2em] text-[#747973]">
-              PLAYTEST
+              预览台
             </p>
             <h1
               aria-label={`${model.characterId} · ${model.outfitName}`}

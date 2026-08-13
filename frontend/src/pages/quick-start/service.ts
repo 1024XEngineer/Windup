@@ -433,7 +433,7 @@ export function createQuickStartService({
         return controller.getWorkflow()
       },
       async approveReview() {
-        if (!characterApis) throw new Error('角色服务尚未配置，不能导入 Playtest')
+        if (!characterApis) throw new Error('角色服务尚未配置，不能导入预览台')
         const run = controller.getWorkflow()
         const fullFrame = latestFullFrame(run)
         if (!fullFrame || fullFrame.type !== 'action-full-frame') {

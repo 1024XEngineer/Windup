@@ -40,12 +40,15 @@ function LocationProbe() {
   )
 }
 
-function renderHeader(entry = '/', apis = createApis()) {
+function renderHeader(entry = '/', apis = createApis(), previousEntry?: string) {
   return {
     apis,
     ...render(
       <AuthSessionProvider apis={apis}>
-        <MemoryRouter initialEntries={[entry]}>
+        <MemoryRouter
+          initialEntries={previousEntry ? [previousEntry, entry] : [entry]}
+          initialIndex={previousEntry ? 1 : 0}
+        >
           <Routes>
             <Route
               path="*"
@@ -66,10 +69,39 @@ function renderHeader(entry = '/', apis = createApis()) {
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
+  window.history.replaceState({ idx: 0 }, '')
 })
 
 describe('AppHeader', () => {
-  it('提供 PlayTest 入口，并将工作流路由归入创作', () => {
+  it.each([
+    ['/quick-start/run-42', '/quick-start'],
+    ['/playtest/7/outfit-8', '/playtest'],
+    ['/projects/new', '/projects'],
+    ['/workflow-editor/run-42', '/workspace'],
+    ['/workspace', '/'],
+    ['/account', '/workspace'],
+  ])('直接打开 %s 时按页面层级返回 %s', (entry, expected) => {
+    window.history.replaceState({ idx: 0 }, '')
+    renderHeader(entry)
+
+    const back = screen.getByRole('button', { name: '返回上一页' })
+    expect(back.getAttribute('title')).toBe('返回上一页')
+    expect(back.className).toContain('h-9')
+    expect(back.className).toContain('w-9')
+
+    fireEvent.click(back)
+    expect(screen.getByTestId('location').textContent).toBe(expected)
+  })
+
+  it('存在站内浏览历史时返回真实上一页', () => {
+    window.history.replaceState({ idx: 1 }, '')
+    renderHeader('/quick-start', createApis(), '/projects')
+
+    fireEvent.click(screen.getByRole('button', { name: '返回上一页' }))
+    expect(screen.getByTestId('location').textContent).toBe('/projects')
+  })
+
+  it('提供预览台入口，并将工作流路由归入创作', () => {
     renderHeader('/workflow-editor/run-1')
 
     expect(screen.getByRole('banner').getAttribute('data-surface')).toBe('frosted-bar')
@@ -79,7 +111,7 @@ describe('AppHeader', () => {
     )
     expect(screen.getByRole('link', { name: '项目资产' }).getAttribute('href')).toBe('/projects')
     expect(screen.getByRole('link', { name: '创作' }).getAttribute('aria-current')).toBe('page')
-    expect(screen.getByRole('link', { name: 'PlayTest' }).getAttribute('href')).toBe('/playtest')
+    expect(screen.getByRole('link', { name: '预览台' }).getAttribute('href')).toBe('/playtest')
   })
 
   it('在工作台首页只高亮首页一项', () => {
@@ -88,7 +120,7 @@ describe('AppHeader', () => {
     expect(screen.getByRole('link', { name: '首页' }).getAttribute('aria-current')).toBe('page')
     expect(screen.getByRole('link', { name: '项目资产' }).getAttribute('aria-current')).toBeNull()
     expect(screen.getByRole('link', { name: '创作' }).getAttribute('aria-current')).toBeNull()
-    expect(screen.getByRole('link', { name: 'PlayTest' }).getAttribute('aria-current')).toBeNull()
+    expect(screen.getByRole('link', { name: '预览台' }).getAttribute('aria-current')).toBeNull()
   })
 
   it('切换页面后继续播放与品牌一致的文字波浪', () => {
@@ -131,14 +163,14 @@ describe('AppHeader', () => {
     expect(projects.classList.contains('app-header-text-wave')).toBe(true)
   })
 
-  it('在资产选择页和具体试玩台高亮 PlayTest 入口', () => {
+  it('在资产选择页和具体预览台高亮预览台入口', () => {
     const { unmount } = renderHeader('/playtest')
 
-    expect(screen.getByRole('link', { name: 'PlayTest' }).getAttribute('aria-current')).toBe('page')
+    expect(screen.getByRole('link', { name: '预览台' }).getAttribute('aria-current')).toBe('page')
 
     unmount()
     renderHeader('/playtest/51/outfit-default')
-    expect(screen.getByRole('link', { name: 'PlayTest' }).getAttribute('aria-current')).toBe('page')
+    expect(screen.getByRole('link', { name: '预览台' }).getAttribute('aria-current')).toBe('page')
   })
 
   it('为访客提供可发现的登录入口并保留完整站内回跳地址', async () => {
@@ -254,7 +286,7 @@ describe('AppHeader', () => {
       screen.getByRole('link', { name: '首页' }),
       screen.getByRole('link', { name: '项目资产' }),
       screen.getByRole('link', { name: '创作' }),
-      screen.getByRole('link', { name: 'PlayTest' }),
+      screen.getByRole('link', { name: '预览台' }),
     ]
     for (const entry of animatedEntries) {
       expect(entry.getAttribute('data-motion')).toBe('text-wave')

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 
 import { useAuthSession } from '@/features/auth-session'
+import { PageBackButton } from './page-back-button'
 
 interface ProductNavigationItem {
   motionKey: string
@@ -40,7 +41,7 @@ const productNavigation: ProductNavigationItem[] = [
   {
     motionKey: 'playtest',
     to: '/playtest',
-    label: 'PlayTest',
+    label: '预览台',
     isActive: (pathname) => pathname.startsWith('/playtest'),
   },
 ]
@@ -113,20 +114,23 @@ export function AppHeader() {
       className="fixed inset-x-0 top-0 z-50 border-b border-[#1c231e]/10 bg-transparent text-[#1c231e] shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] backdrop-blur-xl"
     >
       <div className="relative mx-auto grid min-h-14 w-full max-w-[90rem] grid-cols-[auto_1fr_auto] items-center gap-4 px-4 sm:px-6 lg:px-8">
-        <Link
-          to="/workspace"
-          aria-label="返回 Windup 工作台"
-          data-motion="text-wave"
-          onClick={() => playTextWave('brand')}
-          className={`flex min-h-11 shrink-0 items-center gap-2.5 pr-1 text-[#1c231e] focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331] ${
-            wave.entry === 'brand' ? 'app-header-text-wave' : ''
-          }`}
-        >
-          <img src="/windup-mark.svg" alt="" className="h-7 w-7" />
-          <strong className="hidden font-serif text-[1.0625rem] leading-none sm:inline">
-            <WaveText playId={wave.entry === 'brand' ? wave.playId : 0} text="Windup" />
-          </strong>
-        </Link>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <PageBackButton />
+          <Link
+            to="/workspace"
+            aria-label="返回 Windup 工作台"
+            data-motion="text-wave"
+            onClick={() => playTextWave('brand')}
+            className={`flex min-h-11 shrink-0 items-center gap-2.5 pr-1 text-[#1c231e] focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331] max-[360px]:hidden ${
+              wave.entry === 'brand' ? 'app-header-text-wave' : ''
+            }`}
+          >
+            <img src="/windup-mark.svg" alt="" className="h-7 w-7" />
+            <strong className="hidden font-serif text-[1.0625rem] leading-none sm:inline">
+              <WaveText playId={wave.entry === 'brand' ? wave.playId : 0} text="Windup" />
+            </strong>
+          </Link>
+        </div>
 
         <nav
           aria-label="产品导航"

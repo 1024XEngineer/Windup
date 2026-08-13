@@ -39,10 +39,10 @@ describe('PlaytestEntryPage', () => {
   it('links playable outfits to their concrete Playtest route', async () => {
     renderEntry()
 
-    expect(await screen.findByRole('heading', { name: '选择可试玩资产' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '选择可预览资产' })).toBeTruthy()
     expect(screen.getByTestId('playtest-pixel-stage').getAttribute('aria-hidden')).toBe('true')
     expect(
-      (await screen.findByRole('link', { name: '试玩 轻装信使 · 常态造型' })).getAttribute('href'),
+      (await screen.findByRole('link', { name: '预览 轻装信使 · 常态造型' })).getAttribute('href'),
     ).toBe('/playtest/51/outfit-default')
     expect(screen.getByText('2 个动作 · 5 帧')).toBeTruthy()
     expect(screen.getByText('尚无可播放帧')).toBeTruthy()
@@ -51,7 +51,7 @@ describe('PlaytestEntryPage', () => {
   it('directs an empty account back to character creation', async () => {
     renderEntry(0)
 
-    expect(await screen.findByText('还没有可试玩的角色')).toBeTruthy()
+    expect(await screen.findByText('还没有可预览的角色')).toBeTruthy()
     expect(screen.getByRole('link', { name: '开始创作' }).getAttribute('href')).toBe('/quick-start')
     expect(screen.getByRole('link', { name: '查看项目资产' }).getAttribute('href')).toBe(
       '/projects',
@@ -61,8 +61,8 @@ describe('PlaytestEntryPage', () => {
   it('keeps a failed asset request distinct from an empty account', async () => {
     renderEntryWith(() => Promise.reject(new TypeError('network unavailable')))
 
-    expect(await screen.findByText('可试玩资产暂时无法读取')).toBeTruthy()
-    expect(screen.queryByText('还没有可试玩的角色')).toBeNull()
+    expect(await screen.findByText('可预览资产暂时无法读取')).toBeTruthy()
+    expect(screen.queryByText('还没有可预览的角色')).toBeNull()
   })
 
   it('loads every project and character page before presenting the asset count', async () => {

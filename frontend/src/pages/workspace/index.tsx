@@ -40,13 +40,13 @@ function workflowProgress(run: WorkflowRun) {
 
 function contextTitle(mode: WorkspaceMode) {
   if (mode === 'workflow') return '选择工作流'
-  if (mode === 'playtest') return '选择可试玩造型'
+  if (mode === 'playtest') return '选择可预览造型'
   return '最近项目'
 }
 
 function contextDescription(mode: WorkspaceMode) {
   if (mode === 'workflow') return '先定位项目，再继续一条真实的制作流程。'
-  if (mode === 'playtest') return '按项目、角色和造型逐层定位可试玩资产。'
+  if (mode === 'playtest') return '按项目、角色和造型逐层定位可预览资产。'
   return '从最近更新的真实项目回到角色资产与制作现场。'
 }
 
@@ -192,7 +192,7 @@ export function WorkspacePage() {
     contextContent = (
       <EmptyState
         title="还没有项目"
-        description="先建立一个项目，角色、工作流和可试玩造型才会有归属。"
+        description="先建立一个项目，角色、工作流和可预览造型才会有归属。"
       >
         <PrimaryContextLink to="/projects/new" aria-label="新建项目">
           新建项目
@@ -267,8 +267,8 @@ export function WorkspacePage() {
             onSelect={choosePlaytestProject}
           />
           <ContextFooter>
-            <ContextLink to="/playtest" aria-label="查看全部可试玩资产">
-              查看全部可试玩资产
+            <ContextLink to="/playtest" aria-label="查看全部可预览资产">
+              查看全部可预览资产
             </ContextLink>
           </ContextFooter>
         </div>
@@ -292,7 +292,7 @@ export function WorkspacePage() {
           ) : characters.total === 0 ? (
             <EmptyState
               title="这个项目还没有角色"
-              description="先在项目里完成角色与动作制作，再进入 Playtest。"
+              description="先在项目里完成角色与动作制作，再进入预览台。"
             />
           ) : selectedCharacter === null ? (
             <CharacterSelection
@@ -317,7 +317,7 @@ export function WorkspacePage() {
               {selectedCharacter.outfits.length === 0 ? (
                 <EmptyState
                   title="这个角色还没有造型"
-                  description="先回项目资产完成造型与动作制作，再进入 Playtest。"
+                  description="先回项目资产完成造型与动作制作，再进入预览台。"
                 />
               ) : (
                 <OutfitSelection
@@ -335,8 +335,8 @@ export function WorkspacePage() {
             >
               查看项目资产
             </ContextLink>
-            <ContextLink to="/playtest" aria-label="查看全部可试玩资产">
-              查看全部可试玩资产
+            <ContextLink to="/playtest" aria-label="查看全部可预览资产">
+              查看全部可预览资产
             </ContextLink>
           </ContextFooter>
         </div>
@@ -378,9 +378,9 @@ export function WorkspacePage() {
               description="按项目整理角色、造型、动作与逐帧资产。"
             />
             <SelectableEntranceCard
-              ariaLabel="选择 Playtest"
+              ariaLabel="选择预览台"
               kind="playtest"
-              title="Playtest"
+              title="预览台"
               description="选择已有造型，核验移动与动画播放。"
               selected={mode === 'playtest'}
               onClick={() => selectMode('playtest')}
@@ -816,7 +816,7 @@ function OutfitSelection({
                       : 'border-[#cdd2cc] bg-[#f4f5f1] text-[#777e77]'
                   }`}
                 >
-                  {playback.playable ? '可试玩' : '待补帧'}
+                  {playback.playable ? '可预览' : '待补帧'}
                 </span>
               </span>
               <span className="mt-2 flex items-end justify-between gap-3">
@@ -841,7 +841,7 @@ function OutfitSelection({
             <Link
               key={outfit.id}
               to={`/playtest/${character.id}/${outfit.id}`}
-              aria-label={`试玩 ${name} · ${outfit.name}`}
+              aria-label={`预览 ${name} · ${outfit.name}`}
               className="group block rounded-[1.1rem] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]"
             >
               {card}
