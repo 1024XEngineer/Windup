@@ -102,6 +102,13 @@ def _raise_for_error(response: Mapping) -> Mapping:
     raise TencentApiError(code or "UnknownError", msg)
 
 
+def _check_image_size(data: bytes, which: str) -> None:
+    if len(data) > MAX_IMAGE_BYTES:
+        raise ValueError(
+            f"{which} 图 {len(data) / 10**6:.1f}MB,超过 ImageBase64 上限 "
+            f"{MAX_IMAGE_BYTES / 10**6:.0f}MB")
+
+
 def _pick_artifact(files: list, want: str, *, strict: bool = True,
                    job_id: str = "") -> tuple[Mapping, str]:
     """按格式挑产物,返回 ``(产物, 它真实的格式)``。**绝不退回 files[0]**。
@@ -265,10 +272,10 @@ class TencentModel3DProvider:
         多视图重建质量明显优于单图,代价 +10 积分,**硬前提是各视图必须是同一个角色、
         同一姿势、同一尺度** —— 侧/背视要以正面母版做参考图 i2i 出,各自文生等于送了三个人进去。
         """
-        if len(master) > MAX_IMAGE_BYTES:
-            raise ValueError(
-                f"母版 {len(master) / 10**6:.1f}MB,超过 ImageBase64 上限 "
-                f"{MAX_IMAGE_BYTES / 10**6:.0f}MB")
+        # 每张图都要查,不只是 master:超限的侧/背视同样会让整单被拒,而那时钱已经花了。
+        _check_image_size(master, "master")
+        for view, raw in (extra_views or {}).items():
+            _check_image_size(raw, view)
         params: dict = {
             "ImageBase64": base64.b64encode(master).decode(),
             "GenerateType": self._type,

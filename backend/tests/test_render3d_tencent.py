@@ -434,3 +434,16 @@ def test_cos_uploader_surfaces_upload_failure(monkeypatch):
                         (200, "") if uri == "/" else (403, "AccessDenied"))
     with pytest.raises(JobFailedError, match="403"):
         up.upload(GLB, "model/gltf-binary")
+
+
+def test_every_extra_view_is_size_checked_before_paying():
+    """超限的侧/背视要在提交前炸:走到接口才被拒的话钱已经花了。"""
+    from windup_framework.providers.render3d.tencent import MAX_IMAGE_BYTES
+
+    p = TencentModel3DProvider(CREDS, allow_spend=True)
+    ok, oversize = b"\x89PNG" + b"x", b"\x89PNG" + b"x" * MAX_IMAGE_BYTES
+    p.build_params(ok, {"back": ok})                       # 都不超限:不该抛
+    with pytest.raises(ValueError, match="back"):
+        p.build_params(ok, {"back": oversize})
+    with pytest.raises(ValueError, match="master"):
+        p.build_params(oversize, {"back": ok})

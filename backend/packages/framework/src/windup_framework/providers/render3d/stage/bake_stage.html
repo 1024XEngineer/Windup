@@ -95,26 +95,34 @@ const toonRamp = (() => {
   ['#4a4a52', '#9a9aa6', '#f2f2f6'].forEach((col, i) => { g.fillStyle = col; g.fillRect(i, 0, 1, 1); });
   const t = new THREE.CanvasTexture(c); t.minFilter = t.magFilter = THREE.NearestFilter; return t;
 })();
-if (MAT !== 'orig') {
-  model.traverse(o => {
-    if (!o.isMesh && !o.isSkinnedMesh) return;
-    const src = Array.isArray(o.material) ? o.material[0] : o.material;
-    if (!src) return;
-    // side 必须继承源材质:图生3D + 减面的网格普遍带 doubleSided,重建材质时丢掉它
-    // 等于开了背面剔除,该画背面的三角形被丢弃 —— 减面后一个三角形只有约 1 个像素,
-    // 于是表现为满身单像素白斑(2026-08-04 实测:1514 → 148 个白斑,实体像素 +3.4%)。
-    const side = src.side ?? THREE.FrontSide;
-    const map = src.map || null;
-    const color = src.color ? src.color.clone() : new THREE.Color(0xcccccc);
-    // **每个取值一个显式分支,没有兜底分支** —— 这是仪器陷阱的结构性修法:
-    // 管线那份的末项是 fall-through,于是 cel / studio / 任何拼错的名字都落到同一处,
-    // "换材质做对照"实际没换。这里认不出就抛,让"静默别名"在结构上不可能存在。
-    o.material =
+// 每个取值一个显式分支、没有兜底分支:有兜底的话拼错的名字会静默落到同一处,
+// "换材质做对照"就成了实际没换,而得出的结论不作数。
+function rebuildMaterial(src) {
+  // side 必须继承源材质:图生 3D + 减面的网格普遍带 doubleSided,丢掉等于开背面剔除,
+  // 而减面后一个三角形只有约一个像素,表现为满身单像素白斑。
+  const side = src.side ?? THREE.FrontSide;
+  const map = src.map || null;
+  const color = src.color ? src.color.clone() : new THREE.Color(0xcccccc);
+  return (
       MAT === 'cel'  ? new THREE.MeshBasicMaterial({ map, color: map ? new THREE.Color(0xffffff) : color, side })
     : MAT === 'lit'  ? new THREE.MeshStandardMaterial({ map, color: 0xffffff, roughness: 0.68, metalness: 0.15, side })
     : MAT === 'clay' ? new THREE.MeshStandardMaterial({ color: 0xb9bec4, roughness: 0.62, metalness: 0.0, side })
     : MAT === 'toon' ? new THREE.MeshToonMaterial({ map, color, gradientMap: toonRamp, side })
-    : (() => { throw new Error(`材质 ${MAT} 在表里但没有对应分支 —— 别静默兜底`); })();
+    : (() => { throw new Error(`材质 ${MAT} 在表里但没有对应分支 —— 别静默兜底`); })()
+  );
+}
+
+if (MAT !== 'orig') {
+  model.traverse(o => {
+    if (!o.isMesh && !o.isSkinnedMesh) return;
+    // 逐个材质组替换,不能只拿 material[0] 再赋给整个网格:一个 mesh 可以有多个材质组
+    // (皮肤 / 头发 / 眼睛 / 衣服),那样做会让所有组都用第一个组的贴图渲染 ——
+    // 外观整个变了,而帧数、覆盖率、成色一道都不会红。
+    if (Array.isArray(o.material)) {
+      o.material = o.material.map(m => (m ? rebuildMaterial(m) : m));
+    } else if (o.material) {
+      o.material = rebuildMaterial(o.material);
+    }
   });
 }
 
