@@ -7,10 +7,6 @@ import { useAuthSession } from '@/features/auth-session'
 import './account.css'
 
 const MAX_NICKNAME_LENGTH = 50
-const fieldClass =
-  'min-h-12 w-full rounded-[10px] border border-[#c7cbc5] bg-[#fbfbf8] px-3.5 text-base text-[#202720] outline-none transition-[border-color,box-shadow,background-color] placeholder:text-[#8a8f88] hover:border-[#adb4ac] focus:border-[#526b59] focus:bg-white focus:ring-3 focus:ring-[#526b59]/10 disabled:cursor-not-allowed disabled:bg-[#eff0ec] disabled:text-[#7a8079]'
-const primaryButtonClass =
-  'inline-flex min-h-11 items-center justify-center rounded-lg bg-[#284331] px-4 text-sm font-semibold text-[#f7f6f0] transition-colors hover:bg-[#1f3627] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331] disabled:cursor-not-allowed disabled:bg-[#8a8f89]'
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '操作失败，请稍后重试'
@@ -260,7 +256,7 @@ export function AccountPage() {
                       maxLength={MAX_NICKNAME_LENGTH + 1}
                       disabled={isProfileLoading || isSavingNickname}
                       onChange={(event) => setNickname(event.target.value)}
-                      className={fieldClass}
+                      className="account-field"
                       aria-describedby={`${nicknameId}-hint`}
                     />
                     <span id={`${nicknameId}-hint`} className="text-xs leading-5 text-[#7a7f79]">
@@ -309,7 +305,7 @@ export function AccountPage() {
                     <button
                       type="submit"
                       disabled={isProfileLoading || isSavingNickname}
-                      className={primaryButtonClass}
+                      className="account-primary-button"
                     >
                       {isSavingNickname ? '正在保存…' : '保存昵称'}
                     </button>
@@ -340,7 +336,7 @@ export function AccountPage() {
                       value={oldPassword}
                       disabled={isChangingPassword}
                       onChange={(event) => setOldPassword(event.target.value)}
-                      className={fieldClass}
+                      className="account-field"
                     />
                   </label>
                   <div className="grid gap-1.5 text-sm font-medium text-[#414741]">
@@ -352,7 +348,7 @@ export function AccountPage() {
                       value={newPassword}
                       disabled={isChangingPassword}
                       onChange={(event) => setNewPassword(event.target.value)}
-                      className={fieldClass}
+                      className="account-field"
                       aria-describedby={`${newPasswordId}-hint`}
                     />
                     <span
@@ -373,7 +369,7 @@ export function AccountPage() {
                   <button
                     type="submit"
                     disabled={isChangingPassword}
-                    className={`${primaryButtonClass} justify-self-start`}
+                    className="account-primary-button justify-self-start"
                   >
                     {isChangingPassword ? '正在修改…' : '修改密码'}
                   </button>
