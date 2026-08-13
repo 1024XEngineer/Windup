@@ -481,16 +481,16 @@ def test_unreached_upstream_is_retried_then_succeeds(monkeypatch, code):
 
 @pytest.mark.parametrize("headers", [
     pytest.param({}, id="no-signal"),
-    # 中继把上游的响应头原样拷了过来 —— 带着 cf-ray，可请求已经到过上游
+    pytest.param({"server": "APISIX"}, id="apisix"),
     pytest.param({"cf-ray": "8f2b1c4d5e6a7890-SJC", "server": "nginx"}, id="relayed-cf-ray"),
-    pytest.param({"server": "cloudflare"}, id="no-cf-ray"),
 ])
 @pytest.mark.parametrize("code", [521, 522, 523])
-def test_52x_without_a_cloudflare_signature_is_never_retried(monkeypatch, code, headers):
-    """52x 的"未达上游"是 Cloudflare 私有含义，任何网关都能在转发给上游之后返回同样的数字。
+def test_52x_is_retried_whatever_the_edge_looks_like(monkeypatch, code, headers):
+    """判据只看码。
 
-    所以来源存疑时按"可能已计费"处理：错重试一次要多付一张图的钱，错放弃只损失一次
-    本可自动恢复的失败。
+    这三个码是 Cloudflare 私有扩展、常规服务端不发,语义都是"边缘没连上源站",
+    重发不会重复计费。此前还要求响应带 Cloudflare 特征头,结果真实网关(实测
+    ``server: APISIX``)一次都没命中,整条重试成了死代码。Refs 1024XEngineer/Windup#296。
     """
     import httpx
 
@@ -498,92 +498,53 @@ def test_52x_without_a_cloudflare_signature_is_never_retried(monkeypatch, code, 
 
     def h(request):
         calls["n"] += 1
-        return httpx.Response(code, headers=headers, text="Connection timed out")
+        if calls["n"] <= 2:
+            return httpx.Response(code, headers=headers, text="Connection timed out")
+        return httpx.Response(200, json=_img_payload(_big_b64()))
 
     monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
-
-    with pytest.raises(httpx.HTTPStatusError):
-        _image_provider(h).gen_image("x", [])
-    assert calls["n"] == 1, f"HTTP {code} 来源存疑，不得重发"
+    assert _image_provider(h).gen_image("x", []).startswith(b"\x89PNG")
+    assert calls["n"] == 3
 
 
-@pytest.mark.parametrize("code", [520, 524, 500, 502, 503])
-def test_upstream_that_may_have_billed_is_never_retried(monkeypatch, code):
-    """524 是"连上了但源站 100 秒没答完"、520 是源站自己出错 —— 请求都已到达，
-    重发就是为同一张图付两次钱。带上 Cloudflare 来源头，钉的才是"码"这一维。
-    """
-    import httpx
-
-    calls = {"n": 0}
-
-    def h(request):
-        calls["n"] += 1
-        return httpx.Response(code, headers=_CF_EDGE, text="upstream error")
-
-    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
-
-    with pytest.raises(httpx.HTTPStatusError):
-        _image_provider(h).gen_image("x", [])
-    assert calls["n"] == 1, f"HTTP {code} 不得重发"
-
-
-def test_persistent_unreached_upstream_reports_tries_and_status(monkeypatch):
-    """报错要说清重试了几次、最后一次是什么码，别只留一句裸 HTTPStatusError。"""
-    from windup_framework.providers.sufy import _POST_TRIES
-
-    calls = {"n": 0}
-
-    def h(request):
-        import httpx
-        calls["n"] += 1
-        return httpx.Response(522, headers=_CF_EDGE, text="Connection timed out")
-
-    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
-
-    with pytest.raises(RuntimeError, match=r"522.*已重试 3 次"):
-        _image_provider(h).gen_image("x", [])
-    assert calls["n"] == _POST_TRIES
-
-
-def test_unreached_upstream_backoff_is_capped(monkeypatch):
-    """上游挂掉时不该把一个图像任务堵成长时间阻塞。"""
-    from windup_framework.providers.sufy import _MAX_RETRY_WAIT
-
-    sleeps: list[float] = []
-
-    def h(request):
-        import httpx
-        return httpx.Response(522, headers={**_CF_EDGE, "Retry-After": "9999"})
-
-    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", sleeps.append)
-
-    with pytest.raises(RuntimeError, match="522"):
-        _image_provider(h).gen_image("x", [])
-    assert sleeps and max(sleeps) <= _MAX_RETRY_WAIT
-
-
-def test_retryable_set_excludes_the_codes_that_may_have_billed():
-    """常量本身也钉一道:改集合的人不必先读懂 _post 才发现自己开了重复计费的洞。"""
-    from windup_framework.providers.sufy import _CLOUDFLARE_UNREACHED_STATUS
-
-    assert _CLOUDFLARE_UNREACHED_STATUS == {521, 522, 523}
-
-
-@pytest.mark.parametrize(("headers", "expected"), [
-    ({"cf-ray": "8f2b1c4d5e6a7890-SJC", "server": "cloudflare"}, True),
-    ({"CF-Ray": "8f2b1c4d5e6a7890-SJC", "Server": "Cloudflare"}, True),
-    ({"cf-ray": "8f2b1c4d5e6a7890-SJC", "server": "cloudflare-nginx"}, True),
-    ({"cf-ray": "", "server": "cloudflare"}, False),
-    ({"cf-ray": "8f2b1c4d5e6a7890-SJC", "server": "nginx"}, False),
-    ({"cf-ray": "8f2b1c4d5e6a7890-SJC"}, False),
-    ({"server": "cloudflare"}, False),
-    ({}, False),
+@pytest.mark.parametrize("headers", [
+    {"cf-ray": "8f2b1c4d5e6a7890-SJC", "server": "cloudflare"},
+    {"server": "APISIX"},                       # 实测线上网关就是这个
+    {},                                          # 什么头都没有
 ])
-def test_cloudflare_origin_needs_both_signals(headers, expected):
-    """判据是"两个信号皆需"，不是"沾上 cloudflare 字样就算"。"""
-    from windup_framework.providers.sufy import _from_cloudflare_edge
+def test_522_retries_regardless_of_response_headers(headers):
+    """521/522/523 只看码。
 
-    assert _from_cloudflare_edge(httpx.Response(522, headers=headers)) is expected
+    这三个是 Cloudflare 私有扩展码,常规服务端不会发出,收到即意味着边缘没连上源站。
+    此前额外要求响应同时带 ``cf-ray`` 与 ``server: cloudflare``,结果整条重试在真实
+    链路上一次都没触发 —— 线上只留下 httpx 原文,连一条重试 warning 都没有。
+    Refs 1024XEngineer/Windup#296。
+    """
+    seen = {"n": 0}
+
+    def h(request):
+        seen["n"] += 1
+        if seen["n"] <= 2:
+            return httpx.Response(522, headers=headers, text="edge cannot reach origin")
+        return httpx.Response(200, json=_img_payload(_big_b64()))
+
+    data = _image_provider(h).gen_image("x", [])
+    assert data.startswith(b"\x89PNG")          # 重试之后真的出图了
+    assert seen["n"] == 3
+
+
+@pytest.mark.parametrize("code", [520, 524])
+def test_ambiguous_52x_is_never_retried(code):
+    """520 / 524 连接已建立、请求可能正在源站处理中,重发就是为同一张图付两次钱。"""
+    seen = {"n": 0}
+
+    def h(request):
+        seen["n"] += 1
+        return httpx.Response(code, headers={"server": "cloudflare"}, text="ambiguous")
+
+    with pytest.raises(Exception):
+        _image_provider(h).gen_image("x", [])
+    assert seen["n"] == 1, f"HTTP {code} 被重试了,会重复计费"
 
 
 @pytest.mark.parametrize("code", [400, 404])

@@ -278,27 +278,28 @@ _MAX_RETRY_WAIT = 30.0
 _IMAGE_TIMEOUT_MULTIPLIER = 1.5
 
 # 521 源站拒绝连接、522 建连超时、523 源站不可达:三者都止步于 TCP 层,上游不可能已经
-# 开始生成,所以重发不会重复扣费。
+# 开始生成,所以重发不会重复扣费。这三个码是 Cloudflare 私有扩展,常规服务端不会发出,
+# 收到它本身就是"经过了 Cloudflare 且它没连上源站"的信号。
 #
-# **但这层含义是 Cloudflare 私有的,不是这三个数字的普遍含义** —— ``AI_BASE_URL`` 可指向
-# 任意 OpenAI 兼容网关,它或它前面的代理完全可以在把请求转发给上游之后返回同样的数字。
-# 所以判据是"码 + 来源"两者皆需,见 :func:`_from_cloudflare_edge`。
+# 判据**只看码,不再叠加响应头**。曾经额外要求响应同时带 ``cf-ray`` 与
+# ``server: cloudflare``,本意是排掉"中继把上游的头拷进自己的错误响应"这种情形;
+# 代价是整条重试在真实链路上一次都没触发过 —— 线上留下的是 httpx 原文而不是本模块
+# 重试耗尽的文案,且没有任何一条重试 warning。防的是一个假想的边缘情形,失掉的是
+# 这个功能本身。Refs 1024XEngineer/Windup#296。
 #
-# **520 与 524 即使来自 Cloudflare 也不在此列**:连接已建立、请求可能正在源站处理中
-# (524 就是"源站 100 秒没答完"),重发一次就是为同一张图付两次钱。
+# **520 与 524 仍然排除**:连接已建立、请求可能正在源站处理中(524 就是"源站 100 秒
+# 没答完"),重发一次就是为同一张图付两次钱。这条才是真正要守的边界。
 _CLOUDFLARE_UNREACHED_STATUS = frozenset({521, 522, 523})
 
+# 判否时记进日志的响应头。判据依赖响应特征却不留痕,线上失败就只能靠猜复盘 ——
+# 上一版正是因此查不出"重试为什么没触发",只能事后去线上量响应头。
+_DIAGNOSTIC_HEADERS = ("server", "cf-ray", "via", "x-served-by", "retry-after")
 
-def _from_cloudflare_edge(response: httpx.Response) -> bool:
-    """响应是否由 Cloudflare 边缘自己生成 —— 52x 的"未达上游"只在这个前提下成立。
 
-    单看 ``cf-ray`` 不够:中继可以把上游的响应头原样拷进自己的错误响应,那时请求已经到过
-    上游,得靠 ``server: cloudflare`` 把这种中继排掉。两个信号缺一即判否 —— 错重试一次要
-    多付一张图的钱,错放弃只损失一次本可自动恢复的失败。
-    """
-    return bool(response.headers.get("cf-ray")) and (
-        response.headers.get("server", "").strip().lower().startswith("cloudflare")
-    )
+def _edge_fingerprint(response: httpx.Response) -> str:
+    """把判定用得上的响应头拼成一行,给日志和异常文本用。"""
+    seen = {k: response.headers.get(k) for k in _DIAGNOSTIC_HEADERS}
+    return " ".join(f"{k}={v}" for k, v in seen.items() if v) or "无可辨识的边缘响应头"
 
 
 def _utc_now() -> datetime:
@@ -382,10 +383,15 @@ class SufyImageProvider(ImageProvider):
         for attempt in range(1, _POST_TRIES + 1):
             resp = client.post(self._cfg.chat_completions_path, json=body)
             code = resp.status_code
-            retryable = code == 429 or (
-                code in _CLOUDFLARE_UNREACHED_STATUS and _from_cloudflare_edge(resp)
-            )
+            retryable = code == 429 or code in _CLOUDFLARE_UNREACHED_STATUS
             if not retryable:
+                # 5xx 但不在可重试之列(如 520 / 524):记下边缘指纹。这类失败是要
+                # 人来判断的,而判断的前提是知道响应从哪来。
+                if code >= 500:
+                    logger.warning(
+                        "图像服务返回 %d,不重试(可能已到达上游,重发会重复计费);%s",
+                        code, _edge_fingerprint(resp),
+                    )
                 break
             if attempt == _POST_TRIES:
                 raise RuntimeError(_retry_exhausted_message(code, _POST_TRIES))
@@ -394,11 +400,12 @@ class SufyImageProvider(ImageProvider):
                 # 上限同样兜住指数退避:上游挂掉时不该把一个图像任务堵成长时间阻塞。
                 delay = min(float(2**attempt), _MAX_RETRY_WAIT)
             logger.warning(
-                "图像服务返回 %d，第 %d/%d 次请求，%.2f 秒后重试",
+                "图像服务返回 %d，第 %d/%d 次请求，%.2f 秒后重试;%s",
                 code,
                 attempt,
                 _POST_TRIES,
                 delay,
+                _edge_fingerprint(resp),
             )
             time.sleep(delay)
         if resp.status_code in (400, 404):
