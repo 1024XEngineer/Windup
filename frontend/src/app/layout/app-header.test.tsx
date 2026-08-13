@@ -40,12 +40,15 @@ function LocationProbe() {
   )
 }
 
-function renderHeader(entry = '/', apis = createApis()) {
+function renderHeader(entry = '/', apis = createApis(), previousEntry?: string) {
   return {
     apis,
     ...render(
       <AuthSessionProvider apis={apis}>
-        <MemoryRouter initialEntries={[entry]}>
+        <MemoryRouter
+          initialEntries={previousEntry ? [previousEntry, entry] : [entry]}
+          initialIndex={previousEntry ? 1 : 0}
+        >
           <Routes>
             <Route
               path="*"
@@ -66,9 +69,38 @@ function renderHeader(entry = '/', apis = createApis()) {
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
+  window.history.replaceState({ idx: 0 }, '')
 })
 
 describe('AppHeader', () => {
+  it.each([
+    ['/quick-start/run-42', '/quick-start'],
+    ['/playtest/7/outfit-8', '/playtest'],
+    ['/projects/new', '/projects'],
+    ['/workflow-editor/run-42', '/workspace'],
+    ['/workspace', '/'],
+    ['/account', '/workspace'],
+  ])('直接打开 %s 时按页面层级返回 %s', (entry, expected) => {
+    window.history.replaceState({ idx: 0 }, '')
+    renderHeader(entry)
+
+    const back = screen.getByRole('button', { name: '返回上一页' })
+    expect(back.getAttribute('title')).toBe('返回上一页')
+    expect(back.className).toContain('h-9')
+    expect(back.className).toContain('w-9')
+
+    fireEvent.click(back)
+    expect(screen.getByTestId('location').textContent).toBe(expected)
+  })
+
+  it('存在站内浏览历史时返回真实上一页', () => {
+    window.history.replaceState({ idx: 1 }, '')
+    renderHeader('/quick-start', createApis(), '/projects')
+
+    fireEvent.click(screen.getByRole('button', { name: '返回上一页' }))
+    expect(screen.getByTestId('location').textContent).toBe('/projects')
+  })
+
   it('提供 PlayTest 入口，并将工作流路由归入创作', () => {
     renderHeader('/workflow-editor/run-1')
 
