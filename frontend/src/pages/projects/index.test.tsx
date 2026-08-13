@@ -22,8 +22,8 @@ function installBackend() {
 
 describe('ProjectsPage', () => {
   it('renders backend Projects as the first browsing level', async () => {
-    installBackend()
-    const { container } = render(
+    const backend = installBackend()
+    render(
       <AuthenticatedAuthSession>
         <MemoryRouter initialEntries={['/projects']}>
           <AppRoutes />
@@ -32,13 +32,51 @@ describe('ProjectsPage', () => {
     )
 
     expect(await screen.findByRole('heading', { name: '项目中心' })).toBeTruthy()
+    const createLink = await screen.findByRole('link', { name: '新建项目' })
+    const artwork = createLink.querySelector('img')
+    expect(artwork).toBeTruthy()
+    if (!artwork) throw new Error('新建项目入口缺少资产装饰图')
+    expect(artwork.getAttribute('src')).toContain('asset-library.png')
+    expect(artwork.getAttribute('aria-hidden')).toBe('true')
+    expect(screen.queryByText('新的资产空间')).toBeNull()
+    expect(screen.queryByText('按最近更新排列')).toBeNull()
+    expect(screen.getAllByRole('link', { name: '新建项目' })).toHaveLength(1)
+    expect(createLink.getAttribute('href')).toBe('/projects/new')
     expect(await screen.findAllByRole('link', { name: /打开项目/ })).toHaveLength(2)
-    expect(screen.getByRole('link', { name: '打开项目 点灯人 · MVP' }).getAttribute('href')).toBe(
-      '/projects/42/assets',
+    const previewProject = screen.getByRole('link', { name: '打开项目 点灯人 · MVP' })
+    expect(previewProject.getAttribute('href')).toBe('/projects/42/assets')
+    expect(screen.getByRole('heading', { name: '最近项目 · 02' })).toBeTruthy()
+    expect(previewProject.querySelector('img')?.getAttribute('src')).toBe(
+      'https://cdn.windup.test/messenger-outfit.png',
     )
-    expect(screen.getByText('低饱和像素绘本')).toBeTruthy()
-    expect(container.querySelectorAll('[data-project-card]')).toHaveLength(2)
+    const emptyProject = screen.getByRole('link', { name: '打开项目 空白海岸' })
+    expect(emptyProject.querySelector('img')).toBeNull()
+    expect(emptyProject.textContent).toContain('等待第一份角色资产')
+    expect(previewProject.textContent).toContain('08/04')
+    expect(screen.queryByText('项目名称')).toBeNull()
+    expect(screen.queryByText('视角 / 朝向')).toBeNull()
     expect(screen.queryByRole('link', { name: /查看角色/ })).toBeNull()
+    expect(
+      backend.requests.every((request) =>
+        ['/projects', '/characters'].includes(new URL(request.url).pathname),
+      ),
+    ).toBe(true)
+    expect(
+      backend.requests.filter((request) => new URL(request.url).pathname === '/projects'),
+    ).toHaveLength(1)
+    const previewRequests = backend.requests.filter(
+      (request) => new URL(request.url).pathname === '/characters',
+    )
+    expect(previewRequests).toHaveLength(2)
+    expect(
+      previewRequests.map((request) => new URL(request.url).searchParams.get('project_id')),
+    ).toEqual(['42', '99'])
+    expect(
+      previewRequests.every((request) => {
+        const query = new URL(request.url).searchParams
+        return query.get('page') === '1' && query.get('page_size') === '1'
+      }),
+    ).toBe(true)
   })
 
   it('sends creation to the project create page and deletes through the Project API', async () => {
