@@ -52,16 +52,15 @@ export function PlaytestEntryPage() {
     let active = true
     setState(initialState)
 
-    void loadAllPages((page) => projectApis.list({ page, pageSize: ASSET_PAGE_SIZE }))
-      .then(async (projects) =>
-        Promise.all(
-          projects.map(async (project) => ({
-            project,
-            characters: await loadAllPages((page) =>
-              characterApis.listByProject(project.id, { page, pageSize: ASSET_PAGE_SIZE }),
-            ),
-          })),
-        ),
+    void Promise.all([
+      loadAllPages((page) => projectApis.list({ page, pageSize: ASSET_PAGE_SIZE })),
+      loadAllPages((page) => characterApis.list({ page, pageSize: ASSET_PAGE_SIZE })),
+    ])
+      .then(([projects, characters]) =>
+        projects.map((project) => ({
+          project,
+          characters: characters.filter((character) => character.projectId === project.id),
+        })),
       )
       .then(
         (groups) => {

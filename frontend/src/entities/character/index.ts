@@ -75,6 +75,7 @@ export interface CreateCharacterInput {
  */
 export interface CharacterApis {
   get(id: Character['id']): Promise<Character>
+  list(query?: CharacterPageQuery): Promise<Paged<Character>>
   listByProject(projectId: string, query?: CharacterPageQuery): Promise<Paged<Character>>
   create(input: CreateCharacterInput): Promise<Character>
   update(character: Character): Promise<Character>
@@ -222,6 +223,17 @@ export const characterApis: CharacterApis = {
     return mapCharacter(
       await getApiClient().request<CharacterDto>(`/characters/${encodeURIComponent(id)}`),
     )
+  },
+
+  async list(query = {}) {
+    const result = await getApiClient().requestList<CharacterDto>('/characters', {
+      query: {
+        page: query.page,
+        page_size: query.pageSize,
+        status: query.status,
+      },
+    })
+    return { ...result, items: result.items.map(mapCharacter) }
   },
 
   async listByProject(projectId, query = {}) {
