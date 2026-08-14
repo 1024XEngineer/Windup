@@ -771,9 +771,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
               )}
 
               {!isRegister && mode === 'code' && (
-                <p className="auth-screen-helper text-xs leading-5">
-                  内测期间仅支持已有账号登录。
-                </p>
+                <p className="auth-screen-helper text-xs leading-5">内测期间仅支持已有账号登录。</p>
               )}
             </div>
 
