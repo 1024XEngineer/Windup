@@ -4,11 +4,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 
 import { AppRoutes } from '@/app'
+import { characterApis } from '@/entities'
 import { AuthenticatedAuthSession } from '@/test/auth-session'
 import { createProjectAssetsBackend } from '@/test/project-assets-backend'
 
 afterEach(() => {
   cleanup()
+  vi.restoreAllMocks()
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
 })
@@ -106,6 +108,52 @@ describe('ProjectsPage', () => {
         (request) => request.method === 'DELETE' && request.url.endsWith('/projects/99'),
       ),
     ).toBe(true)
+  })
+
+  it('falls back through character preview sources without blocking the gallery', async () => {
+    const backend = createProjectAssetsBackend({ projectCount: 3 })
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', backend.fetch)
+    const character = await characterApis.get('51')
+    vi.spyOn(characterApis, 'listByProject').mockImplementation(async (projectId) => {
+      if (Number(projectId) === 1002) throw new Error('preview unavailable')
+      return {
+        items: [
+          {
+            ...character,
+            referenceImageUrl: Number(projectId) === 42 ? character.referenceImageUrl : null,
+            outfits: character.outfits.map((outfit) => ({ ...outfit, previewUrl: null })),
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 1,
+      }
+    })
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(await screen.findAllByRole('link', { name: /打开项目/ })).toHaveLength(3)
+    await waitFor(() => {
+      expect(
+        screen
+          .getByRole('link', { name: '打开项目 点灯人 · MVP' })
+          .querySelector('img')
+          ?.getAttribute('src'),
+      ).toBe('https://cdn.windup.test/messenger-reference.png')
+      expect(
+        screen
+          .getByRole('link', { name: '打开项目 空白海岸' })
+          .querySelector('img')
+          ?.getAttribute('src'),
+      ).toBe('https://cdn.windup.test/idle-01.png')
+      expect(screen.getByText('等待第一份角色资产')).toBeTruthy()
+    })
   })
 
   it('navigates every backend Project page instead of truncating after the first page', async () => {
