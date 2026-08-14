@@ -388,7 +388,7 @@ function QuickStartInput({
         <div data-layout="quick-start-composer" className="mx-auto w-full max-w-3xl self-end">
           <form
             onSubmit={(event) => void submit(event)}
-            className="grid items-center gap-1.5 rounded-xl border border-app-line-strong bg-app-surface-raised p-1.5 shadow-app-panel transition-shadow focus-within:border-app-accent focus-within:shadow-[0_18px_48px_rgb(29_37_31/14%)] sm:grid-cols-[1fr_auto_auto]"
+            className="grid items-center gap-1.5 rounded-xl border border-app-line-strong bg-app-surface-raised p-1.5 shadow-app-panel transition-shadow focus-within:border-app-accent sm:grid-cols-[1fr_auto_auto]"
           >
             <label className="min-w-0" htmlFor="quick-start-prompt">
               <span className="sr-only">创作指令</span>
@@ -1261,7 +1261,7 @@ function QuickStartRun({
           </div>
           <form
             onSubmit={continueConversation}
-            className="grid grid-cols-[1fr_auto] items-center gap-1.5 rounded-2xl border border-app-line-strong bg-app-surface-raised/96 p-1.5 shadow-[0_14px_42px_rgb(29_37_31/14%)] backdrop-blur-xl transition focus-within:border-app-accent"
+            className="grid grid-cols-[1fr_auto] items-center gap-1.5 rounded-2xl border border-app-line-strong bg-app-surface-raised/96 p-1.5 shadow-app-panel backdrop-blur-xl transition focus-within:border-app-accent"
           >
             <label htmlFor="quick-start-continuation" className="min-w-0">
               <span className="sr-only">继续描述你的想法</span>
