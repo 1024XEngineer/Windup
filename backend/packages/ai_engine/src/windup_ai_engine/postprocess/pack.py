@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 
+import numpy as np
 from PIL import Image
 
 _logger = logging.getLogger(__name__)
@@ -58,6 +59,39 @@ def core_span(frame: Image.Image, thickness: float = CORE_THICKNESS) -> tuple[fl
 
     nz_rows = rows[rows > 0]
     return (span(rows, float(np.median(nz_rows))), span(cols, float(cols.max())))
+
+
+# 单调漂移的判定门槛(整段首尾相对变化)。低于它的不动 —— 真实身高起伏实测约 4%,
+# 把那也当漂移消掉,就成了原设计担心的"蹲下的帧被放大"。
+DRIFT_MIN_RATIO = 0.08
+
+
+def scale_drift(spans: list[float]) -> tuple[list[float], float]:
+    """把逐帧本体高里的**单调趋势**分离出来,返回(逐帧补偿系数, 首尾相对变化)。
+
+    存在的理由是整段共用一个缩放系数会原样保留 i2v 的推镜:实测线上两段真实产出,
+    本体高从 137→165(+20%)与 70→158(+127%),几乎无回落。统一缩放对整段乘同一个数,
+    趋势不受影响,于是角色在一个动作内单调变大。
+
+    只除趋势、不逐帧归一:后者会把走路自然的身高起伏(约 4%)一起压平,蹲下的帧被放大、
+    伸展的帧被缩小 —— 那正是本模块最初拒绝逐帧归一的原因。对本体高做一次线性拟合,
+    补偿拟合值、保留残差,两个目标就不再冲突(实测修后趋势归零,残差 1.5%–6.7%)。
+
+    返回的系数以 1.0 为中心(除以均值),所以整段的**平均**尺寸不变,跨动作口径不受影响。
+    """
+    n = len(spans)
+    if n < 4:
+        return [1.0] * n, 0.0
+    x = np.arange(n, dtype=float)
+    a = np.asarray(spans, dtype=float)
+    k, b = np.polyfit(x, a, 1)
+    trend = k * x + b
+    if trend.min() <= 0:                      # 拟合出非正值:数据不适合线性描述,不动
+        return [1.0] * n, 0.0
+    ratio = float(trend[-1] / trend[0] - 1.0)
+    if abs(ratio) < DRIFT_MIN_RATIO:
+        return [1.0] * n, ratio
+    return (trend / trend.mean()).tolist(), ratio
 
 
 def align_bottom_center(
@@ -161,6 +195,18 @@ def align_bottom_center(
     # 跳到 0.961,跨过了任何合理的窗口。一个永不成立的分支比没有分支更坏。
     #
     # 关键是**不静默**:裁掉多少写进日志,让丢像素可见,而不是靠人看图发现。
+    # 逐帧补偿单调漂移。整段共用的 scale 只决定平均尺寸,趋势项由这里除掉;
+    # 补偿系数以 1.0 为中心,故平均尺寸与跨动作口径都不变。
+    per_frame = [1.0] * len(frames)
+    if spans and len(spans) == len(frames):
+        comp, ratio = scale_drift([sp[0] for sp in spans])
+        if any(c != 1.0 for c in comp):
+            per_frame = [1.0 / c for c in comp]
+            _logger.info(
+                "整段尺度单调漂移 %.1f%%(i2v 推镜),已逐帧补偿;补偿区间 %.3f–%.3f",
+                ratio * 100, min(per_frame), max(per_frame),
+            )
+
     if max_full * scale > cw:
         _logger.info(
             "保尺寸一致而不压缩:整帧需 %.0fpx、画布 %dpx,两侧各溢出约 %.0fpx",
@@ -168,15 +214,16 @@ def align_bottom_center(
         )
 
     out = []
-    for f, box in zip(frames, boxes):
+    for idx, (f, box) in enumerate(zip(frames, boxes)):
         if box is None:
             out.append(Image.new("RGBA", (cw, ch), (0, 0, 0, 0)))
             continue
         crop = f.crop(box)
-        w = max(1, round(crop.width * scale))
-        h = max(1, round(crop.height * scale))
+        fs = scale * per_frame[idx]
+        w = max(1, round(crop.width * fs))
+        h = max(1, round(crop.height * fs))
         crop = crop.resize((w, h), Image.NEAREST)
-        lift = round((ground - box[3]) * scale) if preserve_lift else 0
+        lift = round((ground - box[3]) * fs) if preserve_lift else 0
         canvas = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
         canvas.alpha_composite(crop, (cw // 2 - w // 2, int(ch * foot_line) - h - lift))
         out.append(canvas)

@@ -244,3 +244,90 @@ def test_clipping_is_logged_not_silent(caplog):
         align_bottom_center(src, cell=256, cell_h=256)
     assert any("溢出" in r.message for r in caplog.records), \
         f"裁切没有上报，日志：{[r.message for r in caplog.records]}"
+
+
+# ── 一段动作内的单调漂移(#307)──────────────────────────────────────────────
+#
+# 线上真实产出实测:walk 的本体高 137→165(+20%)、custom 70→158(+127%),几乎无回落。
+# 整段共用一个缩放系数只决定平均尺寸,趋势原样保留,于是角色在一个动作内单调变大。
+
+
+# 任务 94(walk,32 帧)的逐帧本体高,直接取自线上产物。
+_REAL_WALK_SPANS = [
+    132, 133, 136, 139, 141, 142, 139, 138, 141, 146, 146, 148, 146, 145, 149, 155,
+    155, 153, 151, 154, 157, 161, 160, 161, 159, 160, 162, 170, 169, 167, 168, 168,
+]
+
+
+def test_monotonic_drift_is_removed_on_real_data():
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    comp, ratio = scale_drift(_REAL_WALK_SPANS)
+    assert ratio > 0.15, "这段真实数据本身就有 20% 漂移,判不出来说明门槛错了"
+    fixed = np.asarray(_REAL_WALK_SPANS, float) / np.asarray(comp)
+    head, tail = fixed[:8].mean(), fixed[-8:].mean()
+    assert abs(tail / head - 1) < 0.03, f"补偿后首尾仍差 {(tail/head-1)*100:.1f}%"
+
+
+def test_natural_bob_is_preserved_not_flattened():
+    """只除趋势、不逐帧归一 —— 走路自然的身高起伏必须留着。
+
+    逐帧归一会把蹲下的帧放大、伸展的帧缩小,那正是本模块最初拒绝它的原因。
+    """
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    comp, _ = scale_drift(_REAL_WALK_SPANS)
+    fixed = np.asarray(_REAL_WALK_SPANS, float) / np.asarray(comp)
+    spread = fixed.std() / fixed.mean()
+    assert spread > 0.005, "起伏被压平了,退化成逐帧归一"
+    assert spread < 0.10, f"残差 {spread*100:.1f}% 过大,趋势没除干净"
+
+
+def test_steady_sequence_is_left_alone():
+    """没有漂移就不该动。真实身高起伏约 4%,把那当漂移消掉是过度矫正。"""
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    steady = [100, 104, 98, 102, 101, 99, 103, 100] * 4
+    comp, ratio = scale_drift(steady)
+    assert abs(ratio) < 0.08
+    assert all(c == 1.0 for c in comp)
+
+
+def test_average_size_is_unchanged_so_cross_action_scale_still_holds():
+    """补偿系数以 1.0 为中心:整段平均尺寸不变,#280 的跨动作口径不受影响。"""
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    comp, _ = scale_drift(_REAL_WALK_SPANS)
+    assert abs(float(np.mean(comp)) - 1.0) < 0.01
+
+
+def test_too_few_frames_are_left_alone():
+    """三帧拟合不出可信趋势,拟合了反而制造漂移。"""
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    comp, ratio = scale_drift([100, 130, 160])
+    assert comp == [1.0, 1.0, 1.0] and ratio == 0.0
+
+
+def test_align_actually_applies_the_compensation():
+    """钉的是"补偿真的接上了",不是"函数算得对"。
+
+    只测 ``scale_drift`` 的话,把 ``align_bottom_center`` 里那一行乘法删掉,用例照样全绿
+    （变异测试逮到过）—— 那正是本仓最忌讳的"看起来成功的错结果"。
+    """
+    from windup_ai_engine.postprocess.pack import align_bottom_center, core_span
+
+    def body(h: int) -> Image.Image:
+        a = np.zeros((256, 256, 4), np.uint8)
+        w = max(2, h // 3)
+        a[200 - h:200, 128 - w // 2:128 + w // 2, 3] = 255
+        return Image.fromarray(a)
+
+    # 单调放大:60 → 140,与线上观测到的形状一致
+    src = [body(int(round(v))) for v in np.linspace(60, 140, 16)]
+    out = align_bottom_center(src, cell=256)
+    got = [core_span(f)[0] for f in out]
+    head, tail = float(np.mean(got[:4])), float(np.mean(got[-4:]))
+    assert abs(tail / head - 1) < 0.08, (
+        f"出帧后仍在单调变大:首 {head:.0f} → 尾 {tail:.0f}({(tail/head-1)*100:+.0f}%)"
+    )
