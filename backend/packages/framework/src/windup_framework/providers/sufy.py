@@ -345,11 +345,11 @@ def _retry_exhausted_message(status: int, tries: int, fingerprint: str) -> str:
     """这条文本常常是线上唯一留下的失败记录,少一样就得靠猜是限流、还是哪一跳断的。"""
     if status == 429:
         return (
-            f"图像服务请求过于频繁(HTTP {status})，已重试 {tries} 次；"
+            f"图像服务请求过于频繁(HTTP {status})，连发 {tries} 次均被限流；"
             f"请稍后重试或检查服务商额度；{fingerprint}"
         )
     return (
-        f"图像网关未能连上上游(HTTP {status})，已重发 {tries} 次；"
+        f"图像网关未能连上上游(HTTP {status})，已重发 {tries} 次仍未通；"
         f"再重发有重复计费风险，故停止；{fingerprint}"
     )
 

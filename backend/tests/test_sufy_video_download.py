@@ -551,7 +551,7 @@ def test_rate_limit_exhaustion_also_reports_the_fingerprint(monkeypatch):
 
     monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
 
-    with pytest.raises(RuntimeError, match=r"过于频繁.*已重试 3 次.*server=APISIX"):
+    with pytest.raises(RuntimeError, match=r"过于频繁.*连发 3 次.*server=APISIX"):
         _image_provider(h).gen_image("x", [])
     assert calls["n"] == _POST_TRIES
 
