@@ -66,7 +66,7 @@ def core_span(frame: Image.Image, thickness: float = CORE_THICKNESS) -> tuple[fl
 DRIFT_MIN_RATIO = 0.08
 
 
-def scale_drift(spans: list[float]) -> tuple[list[float], float]:
+def scale_drift(spans: list[float | None]) -> tuple[list[float], float]:
     """把逐帧本体高里的**单调趋势**分离出来,返回(逐帧补偿系数, 首尾相对变化)。
 
     存在的理由是整段共用一个缩放系数会原样保留 i2v 的推镜:实测线上两段真实产出,
@@ -77,13 +77,18 @@ def scale_drift(spans: list[float]) -> tuple[list[float], float]:
     伸展的帧被缩小 —— 那正是本模块最初拒绝逐帧归一的原因。对本体高做一次线性拟合,
     补偿拟合值、保留残差,两个目标就不再冲突(实测修后趋势归零,残差 1.5%–6.7%)。
 
+    ``None`` = 空帧(量不到本体):不参与拟合、系数取 1.0,其余帧照常补偿。
+
     返回的系数以 1.0 为中心(除以均值),所以整段的**平均**尺寸不变,跨动作口径不受影响。
     """
     n = len(spans)
-    if n < 4:
+    # 自变量用**真实帧号**而不是压缩后的序号:主要是系数必须落回对应的帧,否则空洞之后
+    # 整体错位一帧;顺带也不让空洞压短趋势的时间轴(32 帧缺 1 实测斜率差 3.7%,
+    # 落到逐帧系数上 <0.3%)。
+    x = np.array([i for i, s in enumerate(spans) if s is not None], dtype=float)
+    a = np.array([s for s in spans if s is not None], dtype=float)
+    if len(a) < 4:                            # 观测不足:三点拟不出可信趋势,拟合反而制造漂移
         return [1.0] * n, 0.0
-    x = np.arange(n, dtype=float)
-    a = np.asarray(spans, dtype=float)
     k, b = np.polyfit(x, a, 1)
     trend = k * x + b
     if trend.min() <= 0:                      # 拟合出非正值:数据不适合线性描述,不动
@@ -91,7 +96,10 @@ def scale_drift(spans: list[float]) -> tuple[list[float], float]:
     ratio = float(trend[-1] / trend[0] - 1.0)
     if abs(ratio) < DRIFT_MIN_RATIO:
         return [1.0] * n, ratio
-    return (trend / trend.mean()).tolist(), ratio
+    comp = [1.0] * n
+    for i, c in zip(x.astype(int), trend / trend.mean(), strict=True):
+        comp[i] = float(c)
+    return comp, ratio
 
 
 def align_bottom_center(
@@ -153,7 +161,9 @@ def align_bottom_center(
     if not heights:
         return [Image.new("RGBA", (cw, ch), (0, 0, 0, 0)) for _ in frames]
     # 定标一律按**本体**跨度,不按包围盒:后者被延展物撑大,而延展物幅度随动作变。
-    spans = [s for s in (core_span(f) for f in frames) if s is not None]
+    # 逐帧补偿要按帧号索引系数,故先留一份与 frames 等长、空帧为 None 的原始表。
+    core_spans = [core_span(f) for f in frames]
+    spans = [s for s in core_spans if s is not None]
     # 腾空模式:以最低脚线(数值最大 = 站在地上)为地面基准,保留每帧的抬升量
     ground = max(b[3] for b in boxes if b) if preserve_lift else 0
     # 定标要把抬升量算进去,否则跳到最高时头顶会顶出画布被切掉
@@ -195,17 +205,18 @@ def align_bottom_center(
     # 跳到 0.961,跨过了任何合理的窗口。一个永不成立的分支比没有分支更坏。
     #
     # 关键是**不静默**:裁掉多少写进日志,让丢像素可见,而不是靠人看图发现。
+
     # 逐帧补偿单调漂移。整段共用的 scale 只决定平均尺寸,趋势项由这里除掉;
     # 补偿系数以 1.0 为中心,故平均尺寸与跨动作口径都不变。
+    # 空帧照常传给 scale_drift(它按帧号拟合、空位给 1.0)—— 少一个观测不该让整段不补。
     per_frame = [1.0] * len(frames)
-    if spans and len(spans) == len(frames):
-        comp, ratio = scale_drift([sp[0] for sp in spans])
-        if any(c != 1.0 for c in comp):
-            per_frame = [1.0 / c for c in comp]
-            _logger.info(
-                "整段尺度单调漂移 %.1f%%(i2v 推镜),已逐帧补偿;补偿区间 %.3f–%.3f",
-                ratio * 100, min(per_frame), max(per_frame),
-            )
+    comp, ratio = scale_drift([s[0] if s is not None else None for s in core_spans])
+    if any(c != 1.0 for c in comp):
+        per_frame = [1.0 / c for c in comp]
+        _logger.info(
+            "整段尺度单调漂移 %.1f%%(i2v 推镜),已逐帧补偿;补偿区间 %.3f–%.3f",
+            ratio * 100, min(per_frame), max(per_frame),
+        )
 
     if max_full * scale > cw:
         _logger.info(

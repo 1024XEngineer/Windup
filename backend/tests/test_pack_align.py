@@ -309,6 +309,56 @@ def test_too_few_frames_are_left_alone():
     assert comp == [1.0, 1.0, 1.0] and ratio == 0.0
 
 
+def _drifting_bodies(n=16, lo=60, hi=140):
+    """本体高从 lo 单调涨到 hi 的合成序列,形状与线上观测到的推镜一致。"""
+    def body(h: int) -> Image.Image:
+        a = np.zeros((256, 256, 4), np.uint8)
+        w = max(2, h // 3)
+        a[200 - h:200, 128 - w // 2:128 + w // 2, 3] = 255
+        return Image.fromarray(a)
+
+    return [body(int(round(v))) for v in np.linspace(lo, hi, n)]
+
+
+def test_drift_is_still_compensated_when_a_frame_is_empty():
+    """中间夹一帧全透明,其余帧的漂移照样要补掉。
+
+    空帧只是**缺一个观测**。整段跳过补偿会让其余帧静默留着漂移 —— 本 PR 要修的问题
+    原样回来,且无声无息。
+    """
+    from windup_ai_engine.postprocess.pack import align_bottom_center, core_span
+
+    src = _drifting_bodies()
+    src[8] = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+
+    out = align_bottom_center(src, cell=256)
+    assert core_span(out[8]) is None, "空帧必须原样透明输出"
+
+    got = [core_span(f)[0] for i, f in enumerate(out) if i != 8]
+    head, tail = float(np.mean(got[:4])), float(np.mean(got[-4:]))
+    assert abs(tail / head - 1) < 0.08, (
+        f"有空帧时补偿被整段跳过,出帧仍在单调变大:首 {head:.0f} → 尾 {tail:.0f}"
+        f"({(tail/head-1)*100:+.0f}%)"
+    )
+
+
+def test_empty_frames_do_not_shift_the_trend_timeline():
+    """空帧不参与拟合,系数取 1.0,其余帧的系数与它不在时一致。"""
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    full = _REAL_WALK_SPANS
+    holed = list(full)
+    holed[8] = None
+
+    ref, _ = scale_drift(full)
+    comp, ratio = scale_drift(holed)
+    assert ratio > 0.15, "少一个观测不该让 20% 的漂移判不出来"
+    assert comp[8] == 1.0, "空帧的系数应为 1.0"
+    for i, (c, r) in enumerate(zip(comp, ref, strict=True)):
+        if i != 8:
+            assert abs(c - r) < 0.01, f"第 {i} 帧系数被空洞带偏: {c:.3f} vs {r:.3f}"
+
+
 def test_align_actually_applies_the_compensation():
     """钉的是"补偿真的接上了",不是"函数算得对"。
 
@@ -317,15 +367,7 @@ def test_align_actually_applies_the_compensation():
     """
     from windup_ai_engine.postprocess.pack import align_bottom_center, core_span
 
-    def body(h: int) -> Image.Image:
-        a = np.zeros((256, 256, 4), np.uint8)
-        w = max(2, h // 3)
-        a[200 - h:200, 128 - w // 2:128 + w // 2, 3] = 255
-        return Image.fromarray(a)
-
-    # 单调放大:60 → 140,与线上观测到的形状一致
-    src = [body(int(round(v))) for v in np.linspace(60, 140, 16)]
-    out = align_bottom_center(src, cell=256)
+    out = align_bottom_center(_drifting_bodies(), cell=256)
     got = [core_span(f)[0] for f in out]
     head, tail = float(np.mean(got[:4])), float(np.mean(got[-4:]))
     assert abs(tail / head - 1) < 0.08, (
