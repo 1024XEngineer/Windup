@@ -151,6 +151,29 @@ describe('characterApis', () => {
     })
   })
 
+  it('lists current-user Characters without a per-project query', async () => {
+    let requestUrl = ''
+    const characterApis = await loadCharacterApis(async (input) => {
+      requestUrl = String(input)
+      return new Response(
+        JSON.stringify({
+          code: 200,
+          message: 'success',
+          data: [characterDto],
+          total: 1,
+          page: 2,
+          page_size: 100,
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      )
+    })
+
+    const page = await characterApis.list({ page: 2, pageSize: 100 })
+
+    expect(requestUrl).toBe('https://api.windup.test/characters?page=2&page_size=100')
+    expect(page.items[0]?.projectId).toBe('42')
+  })
+
   it('serializes CreateCharacterInput without inventing generated assets', async () => {
     let request: Request | undefined
     const characterApis = await loadCharacterApis(async (input, init) => {
