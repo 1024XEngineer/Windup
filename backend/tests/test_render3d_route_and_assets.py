@@ -275,7 +275,9 @@ def test_web_layer_reads_the_outfit_model_url_into_the_task_input(auth_client, m
     captured: list[CharacterActionInput] = []
     monkeypatch.setattr(
         gen_api, "_dispatch_after_commit",
-        lambda session, target, task_id, input_data, project_id: captured.append(input_data),
+        # 位置参数随 _dispatch_after_commit 的签名走;这里只关心 input_data,
+        # 用 *args 收下其余,免得签名一变桩就报 TypeError。
+        lambda *args: captured.append(next(a for a in args if isinstance(a, CharacterActionInput))),
     )
     resp = auth_client.post("/generation/action", json={
         "project_id": project["id"], "character_id": character["id"],
@@ -308,7 +310,9 @@ def test_web_layer_does_not_guess_an_outfit_when_none_is_given(auth_client, monk
     captured: list[CharacterActionInput] = []
     monkeypatch.setattr(
         gen_api, "_dispatch_after_commit",
-        lambda session, target, task_id, input_data, project_id: captured.append(input_data),
+        # 位置参数随 _dispatch_after_commit 的签名走;这里只关心 input_data,
+        # 用 *args 收下其余,免得签名一变桩就报 TypeError。
+        lambda *args: captured.append(next(a for a in args if isinstance(a, CharacterActionInput))),
     )
     auth_client.post("/generation/action", json={
         "project_id": project["id"], "character_id": character["id"],
