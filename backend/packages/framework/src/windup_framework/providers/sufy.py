@@ -273,31 +273,50 @@ DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image"
 _IMAGE_TRIES = 3
 _MIN_IMAGE_BYTES = 5000
 _CONNECT_RETRIES = 3
-_POST_TRIES = 3
 _MAX_RETRY_WAIT = 30.0
 _IMAGE_TIMEOUT_MULTIPLIER = 1.5
 
-# 521 源站拒绝连接、522 建连超时、523 源站不可达:三者都止步于 TCP 层,上游不可能已经
-# 开始生成,所以重发不会重复扣费。这三个码是 Cloudflare 私有扩展,常规服务端不会发出,
-# 收到它本身就是"经过了 Cloudflare 且它没连上源站"的信号。
+# 429 是被限流拒收、必然没计费,所以按次数放开重试。它与 _IMAGE_TRIES 会叠乘,单次
+# gen_image 的最坏情况因此是:_IMAGE_TRIES × _POST_TRIES = 9 次请求,退避最多睡
+# 6 × _MAX_RETRY_WAIT = 180 秒,加上每次请求自身 timeout × _IMAGE_TIMEOUT_MULTIPLIER。
+_POST_TRIES = 3
+
+# 521 源站拒绝连接、523 源站不可达都止步于 TCP 层;522 按 Cloudflare 自己的定义含两种
+# 情形 —— 握手没收到 SYN+ACK,以及连接已建立但源站未及时确认请求,后者请求已经写到源站。
+# 所以"重发不会重复计费"是大概率而非保证,重发次数因此要受 _UNREACHED_RESENDS 约束。
 #
-# 判据**只看码,不再叠加响应头**。曾经额外要求响应同时带 ``cf-ray`` 与
-# ``server: cloudflare``,本意是排掉"中继把上游的头拷进自己的错误响应"这种情形;
-# 代价是整条重试在真实链路上一次都没触发过 —— 线上留下的是 httpx 原文而不是本模块
-# 重试耗尽的文案,且没有任何一条重试 warning。防的是一个假想的边缘情形,失掉的是
-# 这个功能本身。Refs 1024XEngineer/Windup#296。
+# 判据只看码、不看响应头:``AI_BASE_URL`` 后面挂的是哪家网关不可知,靠 ``cf-ray`` +
+# ``server: cloudflare`` 认 Cloudflare 会把真实链路上的 52x 全判否(实测网关自报
+# ``server: APISIX``),整条重试等于不存在。
 #
-# **520 与 524 仍然排除**:连接已建立、请求可能正在源站处理中(524 就是"源站 100 秒
-# 没答完"),重发一次就是为同一张图付两次钱。这条才是真正要守的边界。
+# 520 与 524 不在此列:连接已建立、请求可能正在源站处理中(524 就是"源站 100 秒没答完"),
+# 重发一次就是为同一张图付两次钱。
 _CLOUDFLARE_UNREACHED_STATUS = frozenset({521, 522, 523})
 
-# 判否时记进日志的响应头。判据依赖响应特征却不留痕,线上失败就只能靠猜复盘 ——
-# 上一版正是因此查不出"重试为什么没触发",只能事后去线上量响应头。
+# 一次 gen_image 内允许把 52x 重发几次。只按码判就无法排除"网关转发给上游之后才回 52x",
+# 与其赌它不存在,不如把最坏情况封成一个小常数:最多多付两张图,且不随上面两层循环叠乘。
+_UNREACHED_RESENDS = 2
+
 _DIAGNOSTIC_HEADERS = ("server", "cf-ray", "via", "x-served-by", "retry-after")
 
 
+class _ResendBudget:
+    """跨 _post 的多次调用共享:叠乘的是循环次数,可重复计费的次数不该跟着叠乘。"""
+
+    def __init__(self) -> None:
+        self._left = _UNREACHED_RESENDS
+        self.spent = 0
+
+    def take(self) -> bool:
+        if self._left <= 0:
+            return False
+        self._left -= 1
+        self.spent += 1
+        return True
+
+
 def _edge_fingerprint(response: httpx.Response) -> str:
-    """把判定用得上的响应头拼成一行,给日志和异常文本用。"""
+    """52x 出自链路上哪一跳,只能从这几个头看 —— 不记下来,线上就只剩一个状态码可复盘。"""
     seen = {k: response.headers.get(k) for k in _DIAGNOSTIC_HEADERS}
     return " ".join(f"{k}={v}" for k, v in seen.items() if v) or "无可辨识的边缘响应头"
 
@@ -322,16 +341,16 @@ def _retry_after_seconds(value: str) -> float | None:
     return min(max(delay, 0.0), _MAX_RETRY_WAIT)
 
 
-def _retry_exhausted_message(status: int, tries: int) -> str:
-    """带上状态码与次数,否则排障的人只知道"失败了",不知道是限流还是网关连不上上游。"""
+def _retry_exhausted_message(status: int, tries: int, fingerprint: str) -> str:
+    """这条文本常常是线上唯一留下的失败记录,少一样就得靠猜是限流、还是哪一跳断的。"""
     if status == 429:
         return (
             f"图像服务请求过于频繁(HTTP {status})，已重试 {tries} 次；"
-            "请稍后重试或检查服务商额度"
+            f"请稍后重试或检查服务商额度；{fingerprint}"
         )
     return (
-        f"图像网关未能连上上游(HTTP {status})，已重试 {tries} 次；"
-        "该请求未到达模型服务、未产生费用，可稍后重试"
+        f"图像网关未能连上上游(HTTP {status})，已重发 {tries} 次；"
+        f"再重发有重复计费风险，故停止；{fingerprint}"
     )
 
 
@@ -372,8 +391,8 @@ class SufyImageProvider(ImageProvider):
             transport=httpx.HTTPTransport(retries=_CONNECT_RETRIES),
         )
 
-    def _post(self, client: httpx.Client, body: dict) -> dict:
-        """发送请求，只重试确定没被上游收下的失败(429，以及 Cloudflare 自己发的 52x)。
+    def _post(self, client: httpx.Client, body: dict, resends: _ResendBudget) -> dict:
+        """发送请求，只重试大概率没被上游收下的失败(429 与 521/522/523)。
 
         为什么把 400 / 404 单独挑出来说:同一把 key 下不同网关的模型目录**不一样**。实测
         ``GET /v1/models``:一个网关 73 个模型、一个图像模型都没有;另一个 134 个、
@@ -383,18 +402,20 @@ class SufyImageProvider(ImageProvider):
         for attempt in range(1, _POST_TRIES + 1):
             resp = client.post(self._cfg.chat_completions_path, json=body)
             code = resp.status_code
+            edge = _edge_fingerprint(resp)
+            if code in _CLOUDFLARE_UNREACHED_STATUS and not resends.take():
+                raise RuntimeError(_retry_exhausted_message(code, resends.spent, edge))
             retryable = code == 429 or code in _CLOUDFLARE_UNREACHED_STATUS
             if not retryable:
-                # 5xx 但不在可重试之列(如 520 / 524):记下边缘指纹。这类失败是要
-                # 人来判断的,而判断的前提是知道响应从哪来。
+                # 5xx 一律留指纹:要不要人工重发,取决于失败落在链路的哪一跳。
                 if code >= 500:
                     logger.warning(
-                        "图像服务返回 %d,不重试(可能已到达上游,重发会重复计费);%s",
-                        code, _edge_fingerprint(resp),
+                        "图像服务返回 %d,不重发(无法排除请求已到达上游并计费);%s",
+                        code, edge,
                     )
                 break
             if attempt == _POST_TRIES:
-                raise RuntimeError(_retry_exhausted_message(code, _POST_TRIES))
+                raise RuntimeError(_retry_exhausted_message(code, _POST_TRIES, edge))
             delay = _retry_after_seconds(resp.headers.get("Retry-After", ""))
             if delay is None:
                 # 上限同样兜住指数退避:上游挂掉时不该把一个图像任务堵成长时间阻塞。
@@ -405,7 +426,7 @@ class SufyImageProvider(ImageProvider):
                 attempt,
                 _POST_TRIES,
                 delay,
-                _edge_fingerprint(resp),
+                edge,
             )
             time.sleep(delay)
         if resp.status_code in (400, 404):
@@ -433,9 +454,11 @@ class SufyImageProvider(ImageProvider):
         body = {"model": self._model, "messages": [{"role": "user", "content": content}]}
 
         last = ""
+        # 预算建在循环外:同一张图的多次尝试共用一份"可能已计费"的额度。
+        resends = _ResendBudget()
         with self._client() as client:
             for attempt in range(1, _IMAGE_TRIES + 1):
-                payload = self._post(client, body)
+                payload = self._post(client, body, resends)
                 found = _DATA_URI.search(json.dumps(payload))
                 if found:
                     data = base64.b64decode(found.group(1))
