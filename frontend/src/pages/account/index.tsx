@@ -1,10 +1,11 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useReducer, useRef, useState, type FormEvent } from 'react'
 
 import accountBadgeArtwork from '@/assets/account/illustrations/account-badge.webp'
 import type { User } from '@/entities'
 import { useAuthSession } from '@/features/auth-session'
 
 import './account.css'
+import { createProfileState, initialSecurityState, profileReducer, securityReducer } from './state'
 
 const MAX_NICKNAME_LENGTH = 50
 
@@ -35,16 +36,12 @@ export function AccountPage() {
   } = session
   const currentUser = session.state.status === 'authenticated' ? session.state.user : null
   const profileRequestRef = useRef<Promise<User> | null>(null)
-  const [nickname, setNickname] = useState(currentUser?.nickname ?? '')
-  const [isProfileLoading, setIsProfileLoading] = useState(true)
-  const [isProfileFresh, setIsProfileFresh] = useState(false)
-  const [isSavingNickname, setIsSavingNickname] = useState(false)
-  const [profileError, setProfileError] = useState<string | null>(null)
-  const [profileSuccess, setProfileSuccess] = useState<string | null>(null)
-  const [oldPassword, setOldPassword] = useState('')
-  const [newPassword, setNewPassword] = useState('')
-  const [isChangingPassword, setIsChangingPassword] = useState(false)
-  const [passwordError, setPasswordError] = useState<string | null>(null)
+  const [profile, dispatchProfile] = useReducer(
+    profileReducer,
+    currentUser?.nickname ?? '',
+    createProfileState,
+  )
+  const [security, dispatchSecurity] = useReducer(securityReducer, initialSecurityState)
   const [activeSection, setActiveSection] = useState<'profile' | 'security'>('profile')
   const nicknameId = useId()
   const oldPasswordId = useId()
@@ -56,16 +53,11 @@ export function AccountPage() {
     void profileRequestRef.current.then(
       (user) => {
         if (!active) return
-        setNickname(user.nickname ?? '')
-        setIsProfileFresh(true)
-        setProfileError(null)
-        setIsProfileLoading(false)
+        dispatchProfile({ type: 'refreshSucceeded', nickname: user.nickname ?? '' })
       },
       (error) => {
         if (!active) return
-        setIsProfileFresh(false)
-        setProfileError(errorMessage(error))
-        setIsProfileLoading(false)
+        dispatchProfile({ type: 'refreshFailed', error: errorMessage(error) })
       },
     )
     return () => {
@@ -75,53 +67,46 @@ export function AccountPage() {
 
   async function saveNickname(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (isSavingNickname) return
-    const normalizedNickname = nickname.trim()
+    if (profile.isSaving) return
+    const normalizedNickname = profile.nickname.trim()
     if (!normalizedNickname) {
-      setProfileSuccess(null)
-      setProfileError('昵称不能为空')
+      dispatchProfile({ type: 'validationFailed', error: '昵称不能为空' })
       return
     }
     if (normalizedNickname.length > MAX_NICKNAME_LENGTH) {
-      setProfileSuccess(null)
-      setProfileError('昵称不能超过 50 个字符')
+      dispatchProfile({ type: 'validationFailed', error: '昵称不能超过 50 个字符' })
       return
     }
 
-    setProfileError(null)
-    setProfileSuccess(null)
-    setIsSavingNickname(true)
+    dispatchProfile({ type: 'saveStarted' })
     try {
       const user = await updateNickname(normalizedNickname)
-      setNickname(user.nickname ?? '')
-      setIsProfileFresh(true)
-      setProfileSuccess('昵称已更新。')
+      dispatchProfile({ type: 'saveSucceeded', nickname: user.nickname ?? '' })
     } catch (error) {
-      setProfileError(errorMessage(error))
-    } finally {
-      setIsSavingNickname(false)
+      dispatchProfile({ type: 'saveFailed', error: errorMessage(error) })
     }
   }
 
   async function changePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (isChangingPassword) return
-    if (!oldPassword) {
-      setPasswordError('请输入当前密码')
+    if (security.isChanging) return
+    if (!security.oldPassword) {
+      dispatchSecurity({ type: 'validationFailed', error: '请输入当前密码' })
       return
     }
-    if (newPassword.length < 8 || newPassword.length > 128) {
-      setPasswordError('新密码需为 8–128 位')
+    if (security.newPassword.length < 8 || security.newPassword.length > 128) {
+      dispatchSecurity({ type: 'validationFailed', error: '新密码需为 8–128 位' })
       return
     }
 
-    setPasswordError(null)
-    setIsChangingPassword(true)
+    dispatchSecurity({ type: 'changeStarted' })
     try {
-      await changeSessionPassword({ oldPassword, newPassword })
+      await changeSessionPassword({
+        oldPassword: security.oldPassword,
+        newPassword: security.newPassword,
+      })
     } catch (error) {
-      setPasswordError(errorMessage(error))
-      setIsChangingPassword(false)
+      dispatchSecurity({ type: 'changeFailed', error: errorMessage(error) })
     }
   }
 
@@ -131,11 +116,8 @@ export function AccountPage() {
 
   function selectSection(section: 'profile' | 'security') {
     setActiveSection(section)
-    setProfileError(null)
-    setProfileSuccess(null)
-    setPasswordError(null)
-    setOldPassword('')
-    setNewPassword('')
+    dispatchProfile({ type: 'sectionChanged' })
+    dispatchSecurity({ type: 'sectionChanged' })
   }
 
   if (!currentUser) return null
@@ -254,10 +236,12 @@ export function AccountPage() {
                       id={nicknameId}
                       type="text"
                       autoComplete="nickname"
-                      value={nickname}
+                      value={profile.nickname}
                       maxLength={MAX_NICKNAME_LENGTH + 1}
-                      disabled={isProfileLoading || isSavingNickname}
-                      onChange={(event) => setNickname(event.target.value)}
+                      disabled={profile.isLoading || profile.isSaving}
+                      onChange={(event) =>
+                        dispatchProfile({ type: 'nicknameChanged', nickname: event.target.value })
+                      }
                       className="account-field"
                       aria-describedby={`${nicknameId}-hint`}
                     />
@@ -279,37 +263,37 @@ export function AccountPage() {
                     </dd>
                   </dl>
 
-                  {profileError && (
+                  {profile.error && (
                     <p
                       role="alert"
                       className="max-w-xl rounded-lg bg-app-danger-soft px-3 py-2.5 text-sm text-app-danger"
                     >
-                      {profileError}
+                      {profile.error}
                     </p>
                   )}
-                  {profileSuccess && (
+                  {profile.success && (
                     <p
                       role="status"
                       className="max-w-xl rounded-lg bg-app-accent-muted px-3 py-2.5 text-sm text-app-accent"
                     >
-                      {profileSuccess}
+                      {profile.success}
                     </p>
                   )}
 
                   <div className="flex max-w-xl flex-wrap items-center justify-between gap-4">
                     <span className="text-xs text-app-faint">
-                      {isProfileLoading
+                      {profile.isLoading
                         ? '正在同步最新资料…'
-                        : isProfileFresh
+                        : profile.isFresh
                           ? '资料已同步'
                           : '资料同步失败'}
                     </span>
                     <button
                       type="submit"
-                      disabled={isProfileLoading || isSavingNickname}
+                      disabled={profile.isLoading || profile.isSaving}
                       className="account-primary-button"
                     >
-                      {isSavingNickname ? '正在保存…' : '保存昵称'}
+                      {profile.isSaving ? '正在保存…' : '保存昵称'}
                     </button>
                   </div>
                 </form>
@@ -335,9 +319,14 @@ export function AccountPage() {
                       id={oldPasswordId}
                       type="password"
                       autoComplete="current-password"
-                      value={oldPassword}
-                      disabled={isChangingPassword}
-                      onChange={(event) => setOldPassword(event.target.value)}
+                      value={security.oldPassword}
+                      disabled={security.isChanging}
+                      onChange={(event) =>
+                        dispatchSecurity({
+                          type: 'oldPasswordChanged',
+                          password: event.target.value,
+                        })
+                      }
                       className="account-field"
                     />
                   </label>
@@ -347,9 +336,14 @@ export function AccountPage() {
                       id={newPasswordId}
                       type="password"
                       autoComplete="new-password"
-                      value={newPassword}
-                      disabled={isChangingPassword}
-                      onChange={(event) => setNewPassword(event.target.value)}
+                      value={security.newPassword}
+                      disabled={security.isChanging}
+                      onChange={(event) =>
+                        dispatchSecurity({
+                          type: 'newPasswordChanged',
+                          password: event.target.value,
+                        })
+                      }
                       className="account-field"
                       aria-describedby={`${newPasswordId}-hint`}
                     />
@@ -360,20 +354,20 @@ export function AccountPage() {
                       8–128 位
                     </span>
                   </div>
-                  {passwordError && (
+                  {security.error && (
                     <p
                       role="alert"
                       className="rounded-lg bg-app-danger-soft px-3 py-2.5 text-sm text-app-danger"
                     >
-                      {passwordError}
+                      {security.error}
                     </p>
                   )}
                   <button
                     type="submit"
-                    disabled={isChangingPassword}
+                    disabled={security.isChanging}
                     className="account-primary-button justify-self-start"
                   >
-                    {isChangingPassword ? '正在修改…' : '修改密码'}
+                    {security.isChanging ? '正在修改…' : '修改密码'}
                   </button>
                 </form>
               </div>
