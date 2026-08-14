@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from windup_app.server.character.interface import CharacterService
 from windup_app.server.character.model import Character
+from windup_app.server.project.model import Project
 
 
 class SqlAlchemyCharacterService(CharacterService):
@@ -36,18 +37,19 @@ class SqlAlchemyCharacterService(CharacterService):
         return session.scalar(stmt)
 
     def list_characters(
-        self, session: Session, *, project_id: int, page: int, page_size: int,
+        self,
+        session: Session,
+        *,
+        project_id: int,
+        page: int,
+        page_size: int,
         status: int | None = None,
     ) -> tuple[list[Character], int]:
         base_condition = Character.project_id == project_id
         if status is not None:
             base_condition = base_condition & (Character.status == status)
 
-        count_stmt = (
-            select(func.count())
-            .select_from(Character)
-            .where(base_condition)
-        )
+        count_stmt = select(func.count()).select_from(Character).where(base_condition)
         stmt = (
             select(Character)
             .where(base_condition)
@@ -59,8 +61,43 @@ class SqlAlchemyCharacterService(CharacterService):
         items = list(session.scalars(stmt))
         return items, total
 
+    def list_characters_for_user(
+        self,
+        session: Session,
+        *,
+        user_id: int,
+        page: int,
+        page_size: int,
+        status: int | None = None,
+    ) -> tuple[list[Character], int]:
+        base_condition = Project.user_id == user_id
+        if status is not None:
+            base_condition = base_condition & (Character.status == status)
+
+        owned_characters = Character.project_id == Project.id
+        count_stmt = (
+            select(func.count())
+            .select_from(Character)
+            .join(Project, owned_characters)
+            .where(base_condition)
+        )
+        stmt = (
+            select(Character)
+            .join(Project, owned_characters)
+            .where(base_condition)
+            .order_by(Character.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        total = session.scalar(count_stmt) or 0
+        items = list(session.scalars(stmt))
+        return items, total
+
     def update_character(
-        self, session: Session, character_id: int, **fields,
+        self,
+        session: Session,
+        character_id: int,
+        **fields,
     ) -> Character | None:
         character = session.get(Character, character_id)
         if character is None:
