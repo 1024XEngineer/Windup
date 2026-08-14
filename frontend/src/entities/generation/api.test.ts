@@ -225,6 +225,52 @@ describe('createGenerationApis', () => {
     })
   })
 
+  it('自定义动作缺描述时不发请求，错误说清该填什么', async () => {
+    const request = vi.fn(async (_url: string, _init?: RequestInit) => success(taskData()))
+    const apis = createGenerationApis({
+      baseUrl: '/api',
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    for (const prompt of ['', '   ', null]) {
+      await expect(
+        apis.create({
+          type: 'complete_animation',
+          projectId: '42',
+          characterId: '5',
+          outfitId: 'default',
+          actionType: 'custom',
+          firstFrameUrl: 'https://cdn.test/frame-1.png',
+          prompt,
+          referenceMedia: [],
+        }),
+      ).rejects.toThrow('自定义动作必须填写动作描述')
+    }
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('没有母版时不提交动作生成，并指向定妆', async () => {
+    const request = vi.fn(async (_url: string, _init?: RequestInit) => success(taskData()))
+    const apis = createGenerationApis({
+      baseUrl: '/api',
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    await expect(
+      apis.create({
+        type: 'complete_animation',
+        projectId: '42',
+        characterId: '5',
+        outfitId: 'default',
+        actionType: 'walk',
+        firstFrameUrl: '   ',
+        prompt: null,
+        referenceMedia: [],
+      }),
+    ).rejects.toThrow('请先完成定妆')
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it('拒绝未知任务状态而不是默认为 pending', async () => {
     const request = vi.fn(async () => success(taskData({ status: 'queued' })))
     const apis = createGenerationApis({
