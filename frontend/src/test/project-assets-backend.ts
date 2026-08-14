@@ -257,13 +257,14 @@ export function createProjectAssetsBackend({
     }
 
     if (request.method === 'GET' && url.pathname === '/characters') {
-      const projectId = Number(url.searchParams.get('project_id'))
+      const projectId = url.searchParams.get('project_id')
       const page = Number(url.searchParams.get('page') ?? 1)
       const pageSize = Number(url.searchParams.get('page_size') ?? 20)
       const status = url.searchParams.get('status')
       const projectCharacters = characters.filter(
         (item) =>
-          item.project_id === projectId && (status === null || item.status === Number(status)),
+          (projectId === null || item.project_id === Number(projectId)) &&
+          (status === null || item.status === Number(status)),
       )
       const start = (page - 1) * pageSize
       return listResponse(

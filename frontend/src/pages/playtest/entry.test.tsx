@@ -83,7 +83,7 @@ describe('PlaytestEntryPage', () => {
     expect(screen.queryByText('还没有可预览的角色')).toBeNull()
   })
 
-  it('loads every project and character page before presenting the asset count', async () => {
+  it('loads every project and character page without per-project requests', async () => {
     const backend = createProjectAssetsBackend({ projectCount: 101, characterCount: 101 })
     renderEntryWith(backend.fetch)
 
@@ -94,15 +94,16 @@ describe('PlaytestEntryPage', () => {
         return url.pathname === '/projects' && url.searchParams.get('page') === '2'
       }),
     ).toBe(true)
+    const characterRequests = backend.requests.filter(
+      (request) => new URL(request.url).pathname === '/characters',
+    )
     expect(
-      backend.requests.some((request) => {
-        const url = new URL(request.url)
-        return (
-          url.pathname === '/characters' &&
-          url.searchParams.get('project_id') === '42' &&
-          url.searchParams.get('page') === '2'
-        )
-      }),
+      characterRequests.map((request) => new URL(request.url).searchParams.get('page')),
+    ).toEqual(['1', '2'])
+    expect(
+      characterRequests.every(
+        (request) => new URL(request.url).searchParams.get('project_id') === null,
+      ),
     ).toBe(true)
   })
 })
