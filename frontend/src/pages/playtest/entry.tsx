@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router'
 
 import {
@@ -10,9 +10,7 @@ import {
   type Project,
 } from '@/entities'
 import type { Paged } from '@/shared/pagination'
-import { PageContainer } from '@/shared/ui'
-
-import { PlaytestPixelStage } from './pixel-stage'
+import { EditorialEntryCard, PageContainer } from '@/shared/ui'
 
 interface ProjectCharacters {
   project: Project
@@ -48,6 +46,7 @@ function characterName(character: Character) {
  */
 export function PlaytestEntryPage() {
   const [state, setState] = useState<EntryState>(initialState)
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
@@ -78,39 +77,38 @@ export function PlaytestEntryPage() {
     }
   }, [])
 
-  const outfitCount =
-    state.groups?.reduce(
-      (total, group) =>
-        total + group.characters.reduce((sum, character) => sum + character.outfits.length, 0),
-      0,
-    ) ?? 0
+  const outfits = useMemo(
+    () =>
+      state.groups?.flatMap(({ project, characters }) =>
+        characters.flatMap((character) =>
+          character.outfits.map((outfit) => ({ project, character, outfit })),
+        ),
+      ) ?? [],
+    [state.groups],
+  )
+  const visibleOutfits = selectedProjectId
+    ? outfits.filter(({ project }) => project.id === selectedProjectId)
+    : outfits
+  const outfitCount = outfits.length
 
   return (
     <PageContainer>
       <section aria-labelledby="playtest-entry-title">
-        <header className="relative overflow-hidden border-b border-app-line bg-[linear-gradient(105deg,var(--color-app-surface-raised)_0%,var(--color-app-surface-raised)_54%,var(--color-app-surface)_100%)] pb-7 md:min-h-64 md:px-2 md:py-7">
-          <div className="relative z-10 max-w-xl">
-            <p className="font-mono text-[0.68rem] font-semibold tracking-[0.2em] text-app-faint uppercase">
-              Character field test
+        <header className="flex flex-col gap-4 border-b border-app-line pb-6 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1
+              id="playtest-entry-title"
+              className="font-serif text-4xl font-medium tracking-[-0.045em] text-app-ink"
+            >
+              预览台
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-app-muted">
+              从已有造型进入操控测试，检查动作衔接、移动反馈和实际播放效果。
             </p>
-            <div className="mt-3">
-              <h1
-                id="playtest-entry-title"
-                className="font-serif text-4xl font-medium tracking-[-0.045em] text-app-ink"
-              >
-                选择可预览资产
-              </h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-app-muted">
-                选择一套已有造型，检查动作衔接、移动反馈和实际播放效果。
-              </p>
-            </div>
-            <div className="mt-5 flex items-center gap-3 font-mono text-[0.68rem] text-app-faint">
-              <span className="inline-block h-1.5 w-1.5 bg-app-accent" />
-              <span>{state.groups !== null ? `${outfitCount} 套造型已接入` : '正在接入资产'}</span>
-            </div>
           </div>
-
-          <PlaytestPixelStage />
+          <p className="shrink-0 pb-0.5 font-mono text-[0.68rem] text-app-faint">
+            {state.groups !== null ? `${outfitCount} 套造型已接入` : '正在接入资产'}
+          </p>
         </header>
 
         {state.error ? (
@@ -120,43 +118,59 @@ export function PlaytestEntryPage() {
         ) : outfitCount === 0 ? (
           <EmptyState />
         ) : (
-          <div className="mt-7 space-y-8">
-            {state.groups.map((group) => {
-              const charactersWithOutfits = group.characters.filter(
-                (character) => character.outfits.length > 0,
-              )
-              if (charactersWithOutfits.length === 0) return null
+          <div className="mt-5">
+            <div
+              className="flex flex-wrap items-center gap-2 border-b border-app-line pb-4"
+              aria-label="按项目筛选"
+            >
+              <button
+                type="button"
+                aria-label="筛选全部项目"
+                aria-pressed={selectedProjectId === null}
+                onClick={() => setSelectedProjectId(null)}
+                className={`min-h-9 rounded-full border px-4 text-xs font-medium transition ${
+                  selectedProjectId === null
+                    ? 'border-app-accent bg-app-accent text-app-on-accent'
+                    : 'border-app-line bg-app-surface text-app-muted hover:border-app-line-strong hover:text-app-ink'
+                }`}
+              >
+                全部
+              </button>
+              {state.groups.map(({ project }) => (
+                <button
+                  key={project.id}
+                  type="button"
+                  aria-label={`筛选项目 ${project.name}`}
+                  aria-pressed={selectedProjectId === project.id}
+                  onClick={() => setSelectedProjectId(project.id)}
+                  className={`min-h-9 rounded-full border px-4 text-xs font-medium transition ${
+                    selectedProjectId === project.id
+                      ? 'border-app-accent bg-app-accent text-app-on-accent'
+                      : 'border-app-line bg-app-surface text-app-muted hover:border-app-line-strong hover:text-app-ink'
+                  }`}
+                >
+                  {project.name}
+                </button>
+              ))}
+            </div>
 
-              return (
-                <section key={group.project.id} aria-labelledby={`project-${group.project.id}`}>
-                  <div className="flex items-center justify-between gap-4">
-                    <h2
-                      id={`project-${group.project.id}`}
-                      className="text-sm font-semibold text-app-ink-soft"
-                    >
-                      {group.project.name}
-                    </h2>
-                    <Link
-                      to={`/projects/${group.project.id}/assets`}
-                      className="text-xs font-medium text-app-muted underline decoration-app-line underline-offset-4 hover:text-app-accent"
-                    >
-                      查看项目资产
-                    </Link>
-                  </div>
-                  <div className="mt-3 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                    {charactersWithOutfits.flatMap((character) =>
-                      character.outfits.map((outfit) => (
-                        <OutfitCard
-                          key={`${character.id}:${outfit.id}`}
-                          character={character}
-                          outfit={outfit}
-                        />
-                      )),
-                    )}
-                  </div>
-                </section>
-              )
-            })}
+            {visibleOutfits.length === 0 ? (
+              <div className="py-16 text-center">
+                <p className="font-serif text-2xl text-app-ink">这个项目还没有可预览造型</p>
+                <p className="mt-2 text-sm text-app-muted">可以先去项目资产确认角色和造型。</p>
+              </div>
+            ) : (
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {visibleOutfits.map(({ project, character, outfit }) => (
+                  <OutfitCard
+                    key={`${character.id}:${outfit.id}`}
+                    project={project}
+                    character={character}
+                    outfit={outfit}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </section>
@@ -164,12 +178,22 @@ export function PlaytestEntryPage() {
   )
 }
 
-function OutfitCard({ character, outfit }: { character: Character; outfit: Outfit }) {
+function OutfitCard({
+  project,
+  character,
+  outfit,
+}: {
+  project: Project
+  character: Character
+  outfit: Outfit
+}) {
   const { frameCount, playable } = getOutfitPlayback(outfit)
   const name = characterName(character)
+  const playableActions = outfit.actions.filter((action) => action.frames.length > 0)
+  const actionSummary = playableActions.map((action) => action.name).join(' · ')
   const content = (
     <article
-      className={`group overflow-hidden rounded-[1.4rem] border bg-app-surface ${
+      className={`group overflow-hidden rounded-[1.5rem] border bg-app-surface ${
         playable
           ? 'border-app-line transition duration-300 hover:-translate-y-0.5 hover:border-app-line-strong hover:bg-app-surface-raised'
           : 'border-app-line text-app-faint'
@@ -203,19 +227,31 @@ function OutfitCard({ character, outfit }: { character: Character; outfit: Outfi
           {playable ? '可预览' : '待补帧'}
         </span>
       </div>
-      <div className="p-4">
-        <p className="text-xs text-app-faint">{name}</p>
+      <div className="p-5">
+        <p className="text-xs text-app-faint">{project.name}</p>
         <div className="mt-1 flex items-start justify-between gap-3">
-          <h3 className="font-serif text-xl font-medium tracking-[-0.03em] text-app-ink">
-            {outfit.name}
-          </h3>
+          <div>
+            <h3 className="font-serif text-xl font-medium tracking-[-0.03em] text-app-ink">
+              {name}
+            </h3>
+            <p className="mt-1 text-xs font-medium text-app-muted">{outfit.name}</p>
+          </div>
           <span aria-hidden="true" className="text-app-faint">
             {playable ? '↗' : '—'}
           </span>
         </div>
-        <p className="mt-4 border-t border-app-line pt-3 text-xs text-app-muted">
-          {playable ? `${outfit.actions.length} 个动作 · ${frameCount} 帧` : '尚无可播放帧'}
-        </p>
+        <div className="mt-4 border-t border-app-line pt-3 text-xs">
+          {playable ? (
+            <>
+              <p className="truncate text-app-ink-soft">{actionSummary}</p>
+              <p className="mt-1.5 text-app-faint">
+                {playableActions.length} 个动作 · {frameCount} 帧
+              </p>
+            </>
+          ) : (
+            <p className="text-app-faint">尚无可播放帧</p>
+          )}
+        </div>
       </div>
     </article>
   )
@@ -226,7 +262,7 @@ function OutfitCard({ character, outfit }: { character: Character; outfit: Outfi
     <Link
       to={`/playtest/${character.id}/${outfit.id}`}
       aria-label={`预览 ${name} · ${outfit.name}`}
-      className="block rounded-[1.4rem] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
+      className="block rounded-[1.5rem] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
     >
       {content}
     </Link>
@@ -235,23 +271,19 @@ function OutfitCard({ character, outfit }: { character: Character; outfit: Outfi
 
 function EmptyState() {
   return (
-    <div className="mt-7 rounded-[1.5rem] border border-dashed border-app-line bg-app-surface-raised p-7 sm:p-9">
-      <h2 className="font-serif text-2xl font-medium tracking-[-0.03em] text-app-ink">
-        还没有可预览的角色
-      </h2>
-      <p className="mt-2 max-w-xl text-sm leading-6 text-app-muted">
-        完成角色与动作制作后，可以在这里检查移动和动画效果。
-      </p>
-      <div className="mt-6 flex flex-wrap gap-3">
-        <Link
-          to="/quick-start"
-          className="inline-flex min-h-10 items-center rounded-full bg-app-accent px-5 text-sm font-semibold text-app-on-accent hover:bg-app-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
-        >
-          开始创作
-        </Link>
+    <div className="mt-5">
+      <EditorialEntryCard
+        to="/quick-start"
+        ariaLabel="开始创作"
+        artwork="playtest"
+        title="还没有可预览的角色"
+        description="完成角色与动作制作后，可以在这里检查移动和动画效果。"
+        action="开始创作"
+      />
+      <div className="mt-3 flex justify-end">
         <Link
           to="/projects"
-          className="inline-flex min-h-10 items-center rounded-full border border-app-line px-5 text-sm font-semibold text-app-ink-soft hover:border-app-line-strong hover:bg-app-surface-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
+          className="text-xs font-medium text-app-muted underline decoration-app-line underline-offset-4 hover:text-app-accent"
         >
           查看项目资产
         </Link>
