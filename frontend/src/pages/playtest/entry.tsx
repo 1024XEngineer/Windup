@@ -88,24 +88,24 @@ export function PlaytestEntryPage() {
   return (
     <PageContainer>
       <section aria-labelledby="playtest-entry-title">
-        <header className="relative overflow-hidden border-b border-[#d8dbd4] bg-[linear-gradient(105deg,#fff_0%,#fff_54%,#f1f4ef_100%)] pb-7 md:min-h-64 md:px-2 md:py-7">
+        <header className="relative overflow-hidden border-b border-app-line bg-[linear-gradient(105deg,var(--color-app-surface-raised)_0%,var(--color-app-surface-raised)_54%,var(--color-app-surface)_100%)] pb-7 md:min-h-64 md:px-2 md:py-7">
           <div className="relative z-10 max-w-xl">
-            <p className="font-mono text-[0.68rem] font-semibold tracking-[0.2em] text-[#778078] uppercase">
+            <p className="font-mono text-[0.68rem] font-semibold tracking-[0.2em] text-app-faint uppercase">
               Character field test
             </p>
             <div className="mt-3">
               <h1
                 id="playtest-entry-title"
-                className="font-serif text-4xl font-medium tracking-[-0.045em] text-[#1f211e]"
+                className="font-serif text-4xl font-medium tracking-[-0.045em] text-app-ink"
               >
                 选择可预览资产
               </h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-[#696e67]">
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-app-muted">
                 选择一套已有造型，检查动作衔接、移动反馈和实际播放效果。
               </p>
             </div>
-            <div className="mt-5 flex items-center gap-3 font-mono text-[0.68rem] text-[#747c74]">
-              <span className="inline-block h-1.5 w-1.5 bg-[#294433]" />
+            <div className="mt-5 flex items-center gap-3 font-mono text-[0.68rem] text-app-faint">
+              <span className="inline-block h-1.5 w-1.5 bg-app-accent" />
               <span>{state.groups !== null ? `${outfitCount} 套造型已接入` : '正在接入资产'}</span>
             </div>
           </div>
@@ -116,7 +116,7 @@ export function PlaytestEntryPage() {
         {state.error ? (
           <ErrorState />
         ) : state.groups === null ? (
-          <p className="mt-8 text-sm text-[#70766f]">正在整理可预览资产…</p>
+          <p className="mt-8 text-sm text-app-muted">正在整理可预览资产…</p>
         ) : outfitCount === 0 ? (
           <EmptyState />
         ) : (
@@ -132,13 +132,13 @@ export function PlaytestEntryPage() {
                   <div className="flex items-center justify-between gap-4">
                     <h2
                       id={`project-${group.project.id}`}
-                      className="text-sm font-semibold text-[#343a34]"
+                      className="text-sm font-semibold text-app-ink-soft"
                     >
                       {group.project.name}
                     </h2>
                     <Link
                       to={`/projects/${group.project.id}/assets`}
-                      className="text-xs font-medium text-[#687268] underline decoration-[#b8c0b8] underline-offset-4 hover:text-[#294433]"
+                      className="text-xs font-medium text-app-muted underline decoration-app-line underline-offset-4 hover:text-app-accent"
                     >
                       查看项目资产
                     </Link>
@@ -169,13 +169,13 @@ function OutfitCard({ character, outfit }: { character: Character; outfit: Outfi
   const name = characterName(character)
   const content = (
     <article
-      className={`group overflow-hidden rounded-[1.4rem] border bg-[#f4f5f1] ${
+      className={`group overflow-hidden rounded-[1.4rem] border bg-app-surface ${
         playable
-          ? 'border-[#d3d8d1] transition duration-300 hover:-translate-y-0.5 hover:border-[#88988b] hover:bg-white'
-          : 'border-[#dfe2dc] text-[#7b827b]'
+          ? 'border-app-line transition duration-300 hover:-translate-y-0.5 hover:border-app-line-strong hover:bg-app-surface-raised'
+          : 'border-app-line text-app-faint'
       }`}
     >
-      <div className="relative aspect-[16/9] overflow-hidden border-b border-[#dde1da] bg-[#e8ece7]">
+      <div className="relative aspect-[16/9] overflow-hidden border-b border-app-line bg-app-surface-muted">
         {outfit.previewUrl ? (
           <img
             src={outfit.previewUrl}
@@ -187,8 +187,8 @@ function OutfitCard({ character, outfit }: { character: Character; outfit: Outfi
             }`}
           />
         ) : (
-          <div className="grid h-full place-items-center bg-[linear-gradient(135deg,#e3e7e1_25%,#f1f2ee_25%,#f1f2ee_50%,#e3e7e1_50%,#e3e7e1_75%,#f1f2ee_75%)] bg-[length:24px_24px]">
-            <span className="rounded-full border border-[#c9cec7] bg-[#f8f9f6]/90 px-3 py-1 text-xs font-medium text-[#707870]">
+          <div className="grid h-full place-items-center bg-[linear-gradient(135deg,var(--color-app-surface-muted)_25%,var(--color-app-surface)_25%,var(--color-app-surface)_50%,var(--color-app-surface-muted)_50%,var(--color-app-surface-muted)_75%,var(--color-app-surface)_75%)] bg-[length:24px_24px]">
+            <span className="rounded-full border border-app-line bg-app-surface-raised/90 px-3 py-1 text-xs font-medium text-app-muted">
               暂无造型预览
             </span>
           </div>
@@ -196,24 +196,24 @@ function OutfitCard({ character, outfit }: { character: Character; outfit: Outfi
         <span
           className={`absolute right-3 top-3 rounded-full border px-2.5 py-1 text-[0.65rem] font-semibold ${
             playable
-              ? 'border-[#9eafa1] bg-[#edf3ed]/95 text-[#294433]'
-              : 'border-[#cdd2cc] bg-[#f4f5f1]/95 text-[#7a817a]'
+              ? 'border-app-line-strong bg-app-accent-muted/95 text-app-accent'
+              : 'border-app-line bg-app-surface/95 text-app-faint'
           }`}
         >
           {playable ? '可预览' : '待补帧'}
         </span>
       </div>
       <div className="p-4">
-        <p className="text-xs text-[#747b73]">{name}</p>
+        <p className="text-xs text-app-faint">{name}</p>
         <div className="mt-1 flex items-start justify-between gap-3">
-          <h3 className="font-serif text-xl font-medium tracking-[-0.03em] text-[#252925]">
+          <h3 className="font-serif text-xl font-medium tracking-[-0.03em] text-app-ink">
             {outfit.name}
           </h3>
-          <span aria-hidden="true" className="text-[#7a877d]">
+          <span aria-hidden="true" className="text-app-faint">
             {playable ? '↗' : '—'}
           </span>
         </div>
-        <p className="mt-4 border-t border-[#dfe2dc] pt-3 text-xs text-[#687168]">
+        <p className="mt-4 border-t border-app-line pt-3 text-xs text-app-muted">
           {playable ? `${outfit.actions.length} 个动作 · ${frameCount} 帧` : '尚无可播放帧'}
         </p>
       </div>
@@ -226,7 +226,7 @@ function OutfitCard({ character, outfit }: { character: Character; outfit: Outfi
     <Link
       to={`/playtest/${character.id}/${outfit.id}`}
       aria-label={`预览 ${name} · ${outfit.name}`}
-      className="block rounded-[1.4rem] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#294433]"
+      className="block rounded-[1.4rem] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
     >
       {content}
     </Link>
@@ -235,23 +235,23 @@ function OutfitCard({ character, outfit }: { character: Character; outfit: Outfi
 
 function EmptyState() {
   return (
-    <div className="mt-7 rounded-[1.5rem] border border-dashed border-[#c9cec6] bg-[#f7f8f4] p-7 sm:p-9">
-      <h2 className="font-serif text-2xl font-medium tracking-[-0.03em] text-[#252a25]">
+    <div className="mt-7 rounded-[1.5rem] border border-dashed border-app-line bg-app-surface-raised p-7 sm:p-9">
+      <h2 className="font-serif text-2xl font-medium tracking-[-0.03em] text-app-ink">
         还没有可预览的角色
       </h2>
-      <p className="mt-2 max-w-xl text-sm leading-6 text-[#6d736c]">
+      <p className="mt-2 max-w-xl text-sm leading-6 text-app-muted">
         完成角色与动作制作后，可以在这里检查移动和动画效果。
       </p>
       <div className="mt-6 flex flex-wrap gap-3">
         <Link
           to="/quick-start"
-          className="inline-flex min-h-10 items-center rounded-full bg-[#294433] px-5 text-sm font-semibold text-white hover:bg-[#1f3828] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#294433]"
+          className="inline-flex min-h-10 items-center rounded-full bg-app-accent px-5 text-sm font-semibold text-app-on-accent hover:bg-app-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
         >
           开始创作
         </Link>
         <Link
           to="/projects"
-          className="inline-flex min-h-10 items-center rounded-full border border-[#c7cec6] px-5 text-sm font-semibold text-[#465047] hover:border-[#939f95] hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#294433]"
+          className="inline-flex min-h-10 items-center rounded-full border border-app-line px-5 text-sm font-semibold text-app-ink-soft hover:border-app-line-strong hover:bg-app-surface-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
         >
           查看项目资产
         </Link>
@@ -262,12 +262,14 @@ function EmptyState() {
 
 function ErrorState() {
   return (
-    <div className="mt-7 rounded-[1.5rem] border border-[#d8c7bd] bg-[#fff8f2] p-7">
-      <h2 className="font-semibold text-[#6f3928]">可预览资产暂时无法读取</h2>
-      <p className="mt-2 text-sm text-[#7a5548]">稍后刷新页面，或先回项目资产检查角色数据。</p>
+    <div className="mt-7 rounded-[1.5rem] border border-app-danger-line bg-app-danger-soft p-7">
+      <h2 className="font-semibold text-app-danger">可预览资产暂时无法读取</h2>
+      <p className="mt-2 text-sm text-app-danger-muted">
+        稍后刷新页面，或先回项目资产检查角色数据。
+      </p>
       <Link
         to="/projects"
-        className="mt-5 inline-flex min-h-10 items-center rounded-full border border-[#c9a99b] px-5 text-sm font-semibold text-[#6f3928]"
+        className="mt-5 inline-flex min-h-10 items-center rounded-full border border-app-danger-line px-5 text-sm font-semibold text-app-danger"
       >
         查看项目资产
       </Link>

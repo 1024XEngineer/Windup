@@ -144,18 +144,18 @@ export function AccountPage() {
   const initial = Array.from(displayName)[0]?.toUpperCase() ?? 'W'
 
   return (
-    <div data-account-page className="min-h-[100dvh] bg-[#f3f2ec] text-[#252b26]">
+    <div data-account-page className="min-h-[100dvh] bg-app-canvas text-app-ink">
       <div
         data-account-shell
         className="mx-auto w-full max-w-[1560px] px-4 pt-[clamp(4.75rem,11vh,7rem)] pb-10 sm:px-6 xl:px-8"
       >
         <header className="min-h-[clamp(9rem,16vw,12rem)]">
           <div>
-            <p className="font-mono text-[0.65rem] tracking-[0.12em] text-[#737b74] uppercase">
+            <p className="font-mono text-[0.65rem] tracking-[0.12em] text-app-faint uppercase">
               Account
             </p>
             <div className="mt-2 flex items-center gap-[clamp(0.5rem,1.5vw,1.25rem)]">
-              <h1 className="font-serif text-[clamp(2.15rem,4.5vw,4rem)] leading-none font-medium tracking-[-0.055em] text-[#1d251f]">
+              <h1 className="font-serif text-[clamp(2.15rem,4.5vw,4rem)] leading-none font-medium tracking-[-0.055em] text-app-ink">
                 账号中心
               </h1>
               <button
@@ -167,7 +167,7 @@ export function AccountPage() {
                   void event.currentTarget.offsetWidth
                   event.currentTarget.classList.add('account-badge-shake')
                 }}
-                className="account-badge-button h-[clamp(11rem,19vw,14rem)] w-[clamp(7.5rem,13vw,10rem)] shrink-0 cursor-pointer border-0 bg-transparent p-0 focus-visible:rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]"
+                className="account-badge-button h-[clamp(11rem,19vw,14rem)] w-[clamp(7.5rem,13vw,10rem)] shrink-0 cursor-pointer border-0 bg-transparent p-0 focus-visible:rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
               >
                 <img
                   data-testid="account-pixel-mark"
@@ -188,7 +188,7 @@ export function AccountPage() {
           className="grid gap-6 md:grid-cols-[14rem_minmax(0,1fr)] md:gap-[clamp(2rem,4vw,4.5rem)]"
         >
           <aside className="flex flex-col">
-            <nav aria-label="账号设置" className="grid gap-1 border-t border-[#d0d2cc] pt-4">
+            <nav aria-label="账号设置" className="grid gap-1 border-t border-app-line pt-4">
               {(
                 [
                   ['profile', '个人资料'],
@@ -200,10 +200,10 @@ export function AccountPage() {
                   type="button"
                   onClick={() => selectSection(section)}
                   aria-current={activeSection === section ? 'page' : undefined}
-                  className={`min-h-10 rounded-lg px-3 text-left text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331] ${
+                  className={`min-h-10 rounded-lg px-3 text-left text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent ${
                     activeSection === section
-                      ? 'bg-[#dde2db] font-semibold text-[#284331]'
-                      : 'text-[#687069] hover:bg-[#e9ebe6] hover:text-[#303832]'
+                      ? 'bg-app-accent-soft font-semibold text-app-accent'
+                      : 'text-app-muted hover:bg-app-accent-muted hover:text-app-ink-soft'
                   }`}
                 >
                   {label}
@@ -214,38 +214,40 @@ export function AccountPage() {
             <button
               type="button"
               onClick={signOut}
-              className="mt-5 min-h-10 rounded-lg px-3 text-left text-sm text-[#865046] transition-colors hover:bg-[#f0e7e3] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#8a4338]"
+              className="mt-5 min-h-10 rounded-lg px-3 text-left text-sm text-app-danger transition-colors hover:bg-app-danger-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-danger"
             >
               退出当前账号
             </button>
           </aside>
 
-          <section className="min-w-0 rounded-[1.1rem] border border-[#d1d7d0] bg-white p-6 sm:p-7">
+          <section className="min-w-0 rounded-[1.1rem] border border-app-line bg-app-surface-raised p-6 sm:p-7">
             {activeSection === 'profile' ? (
               <div>
                 <header>
-                  <h2 className="text-xl font-semibold tracking-[-0.025em] text-[#29302a]">
+                  <h2 className="text-xl font-semibold tracking-[-0.025em] text-app-ink-soft">
                     个人资料
                   </h2>
-                  <p className="mt-1.5 text-sm text-[#747a74]">管理你的公开身份和账号邮箱。</p>
+                  <p className="mt-1.5 text-sm text-app-muted">管理你的公开身份和账号邮箱。</p>
                 </header>
 
-                <div className="mt-5 flex items-center gap-4 border-b border-[#d9dad5] pb-5">
-                  <span className="grid size-14 shrink-0 place-items-center rounded-full bg-[#dce1da] font-serif text-2xl text-[#284331]">
+                <div className="mt-5 flex items-center gap-4 border-b border-app-line pb-5">
+                  <span className="grid size-14 shrink-0 place-items-center rounded-full bg-app-accent-soft font-serif text-2xl text-app-accent">
                     {initial}
                   </span>
                   <div className="min-w-0">
-                    <p className="truncate text-base font-semibold text-[#29302a]">{displayName}</p>
-                    <p className="mt-1 truncate text-sm text-[#717670]">{currentUser.email}</p>
+                    <p className="truncate text-base font-semibold text-app-ink-soft">
+                      {displayName}
+                    </p>
+                    <p className="mt-1 truncate text-sm text-app-muted">{currentUser.email}</p>
                   </div>
-                  <span className="ml-auto rounded-full bg-[#e5ede5] px-2.5 py-1 text-xs font-medium text-[#31533b]">
+                  <span className="ml-auto rounded-full bg-app-accent-soft px-2.5 py-1 text-xs font-medium text-app-accent">
                     {currentUser.emailVerifiedAt ? '已验证' : '未验证'}
                   </span>
                 </div>
 
                 <form className="mt-5 grid gap-4" onSubmit={saveNickname} noValidate>
                   <div className="grid max-w-xl gap-1.5">
-                    <label htmlFor={nicknameId} className="text-sm font-medium text-[#414741]">
+                    <label htmlFor={nicknameId} className="text-sm font-medium text-app-ink-soft">
                       昵称
                     </label>
                     <input
@@ -259,14 +261,14 @@ export function AccountPage() {
                       className="account-field"
                       aria-describedby={`${nicknameId}-hint`}
                     />
-                    <span id={`${nicknameId}-hint`} className="text-xs leading-5 text-[#7a7f79]">
+                    <span id={`${nicknameId}-hint`} className="text-xs leading-5 text-app-faint">
                       1–{MAX_NICKNAME_LENGTH} 个字符，保存后同步显示在页面顶栏。
                     </span>
                   </div>
 
-                  <dl className="grid max-w-xl gap-1 rounded-lg bg-[#eff0ec] px-4 py-3 text-sm sm:grid-cols-[8rem_1fr] sm:items-center">
-                    <dt className="text-[#747a74]">邮箱验证时间</dt>
-                    <dd className="text-[#414741]">
+                  <dl className="grid max-w-xl gap-1 rounded-lg bg-app-surface-muted px-4 py-3 text-sm sm:grid-cols-[8rem_1fr] sm:items-center">
+                    <dt className="text-app-muted">邮箱验证时间</dt>
+                    <dd className="text-app-ink-soft">
                       {currentUser.emailVerifiedAt ? (
                         <time dateTime={currentUser.emailVerifiedAt}>
                           {formatVerificationTime(currentUser.emailVerifiedAt)}
@@ -280,7 +282,7 @@ export function AccountPage() {
                   {profileError && (
                     <p
                       role="alert"
-                      className="max-w-xl rounded-lg bg-[#f7ebe7] px-3 py-2.5 text-sm text-[#8a4338]"
+                      className="max-w-xl rounded-lg bg-app-danger-soft px-3 py-2.5 text-sm text-app-danger"
                     >
                       {profileError}
                     </p>
@@ -288,14 +290,14 @@ export function AccountPage() {
                   {profileSuccess && (
                     <p
                       role="status"
-                      className="max-w-xl rounded-lg bg-[#e9f0e9] px-3 py-2.5 text-sm text-[#31533b]"
+                      className="max-w-xl rounded-lg bg-app-accent-muted px-3 py-2.5 text-sm text-app-accent"
                     >
                       {profileSuccess}
                     </p>
                   )}
 
                   <div className="flex max-w-xl flex-wrap items-center justify-between gap-4">
-                    <span className="text-xs text-[#7a7f79]">
+                    <span className="text-xs text-app-faint">
                       {isProfileLoading
                         ? '正在同步最新资料…'
                         : isProfileFresh
@@ -315,10 +317,10 @@ export function AccountPage() {
             ) : (
               <div>
                 <header>
-                  <h2 className="text-xl font-semibold tracking-[-0.025em] text-[#29302a]">
+                  <h2 className="text-xl font-semibold tracking-[-0.025em] text-app-ink-soft">
                     登录安全
                   </h2>
-                  <p className="mt-1.5 text-sm leading-6 text-[#747a74]">
+                  <p className="mt-1.5 text-sm leading-6 text-app-muted">
                     修改密码后，当前会话会退出。
                   </p>
                 </header>
@@ -326,7 +328,7 @@ export function AccountPage() {
                 <form className="mt-5 grid max-w-xl gap-4" onSubmit={changePassword} noValidate>
                   <label
                     htmlFor={oldPasswordId}
-                    className="grid gap-1.5 text-sm font-medium text-[#414741]"
+                    className="grid gap-1.5 text-sm font-medium text-app-ink-soft"
                   >
                     当前密码
                     <input
@@ -339,7 +341,7 @@ export function AccountPage() {
                       className="account-field"
                     />
                   </label>
-                  <div className="grid gap-1.5 text-sm font-medium text-[#414741]">
+                  <div className="grid gap-1.5 text-sm font-medium text-app-ink-soft">
                     <label htmlFor={newPasswordId}>新密码</label>
                     <input
                       id={newPasswordId}
@@ -353,7 +355,7 @@ export function AccountPage() {
                     />
                     <span
                       id={`${newPasswordId}-hint`}
-                      className="text-xs font-normal text-[#7a7f79]"
+                      className="text-xs font-normal text-app-faint"
                     >
                       8–128 位
                     </span>
@@ -361,7 +363,7 @@ export function AccountPage() {
                   {passwordError && (
                     <p
                       role="alert"
-                      className="rounded-lg bg-[#f7ebe7] px-3 py-2.5 text-sm text-[#8a4338]"
+                      className="rounded-lg bg-app-danger-soft px-3 py-2.5 text-sm text-app-danger"
                     >
                       {passwordError}
                     </p>

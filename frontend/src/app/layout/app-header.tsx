@@ -111,7 +111,7 @@ export function AppHeader() {
     <header
       data-layout="unified"
       data-surface="frosted-bar"
-      className="fixed inset-x-0 top-0 z-50 border-b border-[#1c231e]/10 bg-transparent text-[#1c231e] shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] backdrop-blur-xl"
+      className="fixed inset-x-0 top-0 z-50 border-b border-app-ink/10 bg-transparent text-app-ink shadow-app-header backdrop-blur-xl"
     >
       <div className="relative mx-auto grid min-h-14 w-full max-w-[90rem] grid-cols-[auto_1fr_auto] items-center gap-4 px-4 sm:px-6 lg:px-8">
         <div className="flex min-w-0 items-center gap-1.5">
@@ -121,7 +121,7 @@ export function AppHeader() {
             aria-label="返回 Windup 工作台"
             data-motion="text-wave"
             onClick={() => playTextWave('brand')}
-            className={`flex min-h-11 shrink-0 items-center gap-2.5 pr-1 text-[#1c231e] focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331] max-[360px]:hidden ${
+            className={`flex min-h-11 shrink-0 items-center gap-2.5 pr-1 text-app-ink focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent max-[360px]:hidden ${
               wave.entry === 'brand' ? 'app-header-text-wave' : ''
             }`}
           >
@@ -147,10 +147,10 @@ export function AppHeader() {
                 aria-current={active ? 'page' : undefined}
                 data-motion="text-wave"
                 onClick={() => playTextWave(item.motionKey)}
-                className={`relative inline-flex min-h-11 items-center px-1.5 text-[12px] font-medium whitespace-nowrap transition-colors after:absolute after:inset-x-1.5 after:bottom-0 after:h-[2px] after:origin-center after:bg-[#284331] after:transition-transform focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#284331] sm:px-3 sm:text-[13px] sm:after:inset-x-3 ${
+                className={`relative inline-flex min-h-11 items-center px-1.5 text-[12px] font-medium whitespace-nowrap transition-colors after:absolute after:inset-x-1.5 after:bottom-0 after:h-[2px] after:origin-center after:bg-app-accent after:transition-transform focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent sm:px-3 sm:text-[13px] sm:after:inset-x-3 ${
                   active
-                    ? 'text-[#243c2c] after:scale-x-100'
-                    : 'text-[#667068] after:scale-x-0 hover:text-[#26372c]'
+                    ? 'text-app-accent after:scale-x-100'
+                    : 'text-app-muted after:scale-x-0 hover:text-app-accent'
                 } ${wave.entry === item.motionKey ? 'app-header-text-wave' : ''}`}
               >
                 {item.compactLabel ? (
@@ -183,7 +183,7 @@ export function AppHeader() {
           {session.state.status === 'booting' ? (
             <span
               aria-label="正在恢复登录状态"
-              className="inline-grid min-h-11 min-w-11 place-items-center text-sm text-[#778078]"
+              className="inline-grid min-h-11 min-w-11 place-items-center text-sm text-app-faint"
             >
               …
             </span>
@@ -191,7 +191,7 @@ export function AppHeader() {
             <Link
               to={accountEntry}
               aria-label="登录 / 注册"
-              className="inline-flex min-h-10 items-center rounded-lg border border-[#2d3b31]/14 bg-white/45 px-3 text-[13px] font-medium whitespace-nowrap text-[#34483a] transition-colors hover:bg-white/75 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331]"
+              className="inline-flex min-h-10 items-center rounded-lg border border-app-ink/14 bg-app-surface-raised/45 px-3 text-[13px] font-medium whitespace-nowrap text-app-ink-soft transition-colors hover:bg-app-surface-raised/75 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
             >
               <span className="hidden sm:inline">登录 / 注册</span>
               <span className="sm:hidden">登录</span>
@@ -204,12 +204,12 @@ export function AppHeader() {
                 aria-expanded={accountMenuOpen}
                 title={session.state.user.email}
                 onClick={toggleAccountMenu}
-                className={`inline-flex min-h-10 max-w-24 items-center gap-2 rounded-lg px-2.5 text-xs font-medium text-[#3e4941] transition-[color,background-color,transform] duration-150 ease-out hover:bg-[#e5e8e3] hover:text-[#26372c] active:translate-y-px active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331] motion-reduce:transform-none sm:max-w-36 ${
-                  accountMenuOpen ? 'bg-[#e5e8e3] text-[#26372c]' : ''
+                className={`inline-flex min-h-10 max-w-24 items-center gap-2 rounded-lg px-2.5 text-xs font-medium text-app-ink-soft transition-[color,background-color,transform] duration-150 ease-out hover:bg-app-accent-muted hover:text-app-accent active:translate-y-px active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent motion-reduce:transform-none sm:max-w-36 ${
+                  accountMenuOpen ? 'bg-app-accent-muted text-app-accent' : ''
                 }`}
               >
                 <span
-                  className={`grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#dfe5df] font-serif text-[11px] text-[#284331] transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none ${
+                  className={`grid h-7 w-7 shrink-0 place-items-center rounded-full bg-app-accent-muted font-serif text-[11px] text-app-accent transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none ${
                     accountMenuOpen ? 'scale-110' : 'scale-100'
                   }`}
                 >
@@ -220,7 +220,7 @@ export function AppHeader() {
                 </span>
                 <span
                   aria-hidden="true"
-                  className={`text-[10px] text-[#7b847d] transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none ${
+                  className={`text-[10px] text-app-faint transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none ${
                     accountMenuOpen ? 'rotate-180' : 'rotate-0'
                   }`}
                 >
@@ -235,7 +235,7 @@ export function AppHeader() {
                 aria-hidden={accountMenuOpen ? undefined : true}
                 inert={!accountMenuOpen}
                 onAnimationEnd={finishAccountMenuMotion}
-                className={`absolute top-[calc(100%+0.5rem)] right-0 grid min-w-44 origin-top-right overflow-hidden rounded-lg border border-[#1c231e]/12 bg-[#f8f7f2] p-1.5 shadow-[0_8px_24px_rgba(28,35,30,0.10)] ${
+                className={`absolute top-[calc(100%+0.5rem)] right-0 grid min-w-44 origin-top-right overflow-hidden rounded-lg border border-app-ink/12 bg-app-surface-raised p-1.5 shadow-app-menu ${
                   accountMenuState === 'open'
                     ? 'visible app-header-account-menu-in'
                     : accountMenuState === 'closing'
@@ -248,7 +248,7 @@ export function AppHeader() {
                   aria-label="打开账号中心"
                   aria-current={pathname.startsWith('/account') ? 'page' : undefined}
                   onClick={() => setAccountMenuState('closing')}
-                  className="flex min-h-10 items-center rounded-md px-3 text-[13px] text-[#3f4942] transition-colors hover:bg-[#e8ebe7] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#284331]"
+                  className="flex min-h-10 items-center rounded-md px-3 text-[13px] text-app-ink-soft transition-colors hover:bg-app-accent-muted focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-app-accent"
                 >
                   账号中心
                 </Link>
@@ -256,7 +256,7 @@ export function AppHeader() {
                   type="button"
                   onClick={signOut}
                   aria-label="退出登录"
-                  className="flex min-h-10 items-center rounded-md px-3 text-left text-[13px] text-[#707871] transition-colors hover:bg-[#e8ebe7] hover:text-[#26372c] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#284331]"
+                  className="flex min-h-10 items-center rounded-md px-3 text-left text-[13px] text-app-muted transition-colors hover:bg-app-accent-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-app-accent"
                 >
                   退出登录
                 </button>

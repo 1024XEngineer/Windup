@@ -3,11 +3,13 @@ import {
   createGenerationApis,
   createMediaApis,
   projectApis,
+  ProjectNameConflictError,
   workflowRunApis,
   type Action,
   type Character,
   type CharacterApis,
   type GenerationApis,
+  type Generation,
   type MediaReference,
   type Project,
   type ProjectApis,
@@ -18,6 +20,7 @@ import {
 import { getApiAccessToken, recoverApiUnauthorized, resolveApiBaseUrl } from '@/shared/api'
 import { createEventStreamSubscriber } from '@/shared/api/stream'
 import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
+import { createProgressiveExportModel, type ExportPackageModel } from '@/features/export-package'
 
 /** 页面不直接拼接后端字段；只负责准备项目约束。 */
 export type PrepareQuickStartProject = (
@@ -56,6 +59,8 @@ export interface QuickStartSession {
   resolveCharacterInfo(): Promise<{ characterId: string; outfitId: string } | null>
   getTemplateCandidates(): Promise<readonly string[]>
   getActionFrames(): Promise<readonly QuickStartFrame[]>
+  /** 按当前 Run 完成度装配统一导出包；角色母版尚未确认时返回 null。 */
+  getExportModel(): Promise<ExportPackageModel | null>
 }
 
 export interface QuickStartEntryService {
@@ -77,6 +82,8 @@ export interface CreateQuickStartServiceOptions {
   workflowRunApis: WorkflowRunApis
   generationApis: GenerationApis
   prepareProject: PrepareQuickStartProject
+  /** 为已有项目继续生成动作时读取图片接口要求的精灵尺寸。 */
+  projectApis: Pick<ProjectApis, 'get'>
   characterApis?: CharacterApis
   mediaApis?: QuickStartMediaApis
   onAsyncError?: (error: Error) => void
@@ -101,10 +108,21 @@ export function createQuickStartService({
   workflowRunApis,
   generationApis,
   prepareProject,
+  projectApis,
   characterApis,
   mediaApis,
   onAsyncError = (error) => console.error('[quick-start] 异步工作流错误', error),
 }: CreateQuickStartServiceOptions): QuickStartEntryService {
+  const projectSpriteSizes = new Map<Project['id'], Project['spriteSize']>()
+
+  async function resolveProjectSpriteSize(projectId: Project['id']) {
+    const cached = projectSpriteSizes.get(projectId)
+    if (cached) return cached
+    const project = await projectApis.get(projectId)
+    projectSpriteSizes.set(project.id, project.spriteSize)
+    return project.spriteSize
+  }
+
   function createController(workflow?: WorkflowRun): WorkflowController {
     return createWorkflowController({ workflow, workflowRunApis, generationApis, onAsyncError })
   }
@@ -209,9 +227,9 @@ export function createQuickStartService({
 
   async function prepareAction(
     controller: WorkflowController,
-    characterId: string,
     outfitId: string,
     actionDescription: string,
+    spriteSize: Project['spriteSize'],
   ) {
     const name = actionDescription.trim() || '待机'
     const type = inferGeneratableActionType(actionDescription)
@@ -223,7 +241,10 @@ export function createQuickStartService({
     if (!firstFrame || firstFrame.type !== 'action-first-frame') {
       throw new Error('新增动作后没有找到首帧节点')
     }
-    await controller.generateFirstFrame(firstFrame.id, { characterId, referenceMedia: [] })
+    await controller.generateFirstFrame(firstFrame.id, {
+      spriteWidth: spriteSize.width,
+      spriteHeight: spriteSize.height,
+    })
   }
 
   async function persistCharacterTemplate(
@@ -361,7 +382,10 @@ export function createQuickStartService({
     return stop
   }
 
-  function createSession(controller: WorkflowController): QuickStartSession {
+  function createSession(
+    controller: WorkflowController,
+    knownSpriteSize?: Project['spriteSize'],
+  ): QuickStartSession {
     let stopAutomaticAdvance: (() => void) | null = null
     let candidateCommand: Promise<WorkflowRun> | null = null
     let disposed = false
@@ -402,7 +426,9 @@ export function createQuickStartService({
         const templateReference = await mediaApis.upload(file, 'reference-image', signal)
         await controller.confirmCharacterTemplate(template.id, templateReference)
         const target = await persistCharacterTemplate(controller, templateReference)
-        await prepareAction(controller, target.characterId, target.outfitId, actionDescription)
+        const spriteSize =
+          knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
+        await prepareAction(controller, target.outfitId, actionDescription, spriteSize)
         ensureAutomaticAdvance()
         return controller.getWorkflow()
       },
@@ -412,12 +438,9 @@ export function createQuickStartService({
           const template = templateNode(controller.getWorkflow())
           await controller.confirmCharacterTemplate(template.id, selectedImageUrl)
           const target = await persistCharacterTemplate(controller, selectedImageUrl)
-          await prepareAction(
-            controller,
-            target.characterId,
-            target.outfitId,
-            actionDescription ?? '',
-          )
+          const spriteSize =
+            knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
+          await prepareAction(controller, target.outfitId, actionDescription ?? '', spriteSize)
           ensureAutomaticAdvance()
           return controller.getWorkflow()
         })().finally(() => {
@@ -431,7 +454,11 @@ export function createQuickStartService({
         if (!firstFrame || firstFrame.type !== 'action-first-frame') return []
         const generation = await controller.getGeneration(firstFrame.id, 'first_frame')
         return generation?.type === 'first_frame' && generation.result?.type === 'first_frame'
-          ? [{ index: 0, imageUrl: generation.result.image.url, durationMs: null }]
+          ? generation.result.images.map((image, index) => ({
+              index,
+              imageUrl: image.url,
+              durationMs: null,
+            }))
           : []
       },
       async confirmFirstFrame(selectedImageUrl) {
@@ -526,6 +553,30 @@ export function createQuickStartService({
             }))
           : []
       },
+      async getExportModel() {
+        if (!characterApis) return null
+        const info = getCharacterInfo(controller) ?? (await resolveCharacterInfo(controller))
+        if (!info) return null
+        const run = controller.getWorkflow()
+        const [project, character] = await Promise.all([
+          projectApis.get(run.projectId),
+          characterApis.get(info.characterId),
+        ])
+        const generations = await Promise.all(
+          run.nodes
+            .filter((node) => node.type === 'action-full-frame' && !node.deletedAt)
+            .map((node) => controller.getGeneration(node.id, 'complete_animation')),
+        )
+        return createProgressiveExportModel({
+          project,
+          character,
+          outfitId: info.outfitId,
+          run,
+          generations: generations.filter(
+            (generation): generation is Generation => generation !== null,
+          ),
+        })
+      },
     }
   }
 
@@ -556,8 +607,9 @@ export function createQuickStartService({
             character.description ?? actionDescription,
           ),
         )
-    await prepareAction(controller, character.id, outfit.id, actionDescription)
-    return createSession(controller)
+    const spriteSize = await resolveProjectSpriteSize(character.projectId)
+    await prepareAction(controller, outfit.id, actionDescription, spriteSize)
+    return createSession(controller, spriteSize)
   }
 
   return {
@@ -567,12 +619,13 @@ export function createQuickStartService({
       const normalizedPrompt = prompt.trim()
       if (!normalizedPrompt) throw new Error('请先描述想要创建的角色')
       const project = await prepareProject(normalizedPrompt)
+      projectSpriteSizes.set(project.id, project.spriteSize)
       const controller = await createRun(project.id, workflowNodes(normalizedPrompt))
       await controller.generateCharacterTemplate('character-setup', {
         spriteWidth: project.spriteSize.width,
         spriteHeight: project.spriteSize.height,
       })
-      return createSession(controller)
+      return createSession(controller, project.spriteSize)
     },
 
     async startWithUploadedTemplate(file, actionDescription, signal) {
@@ -580,6 +633,7 @@ export function createQuickStartService({
       const prompt = actionDescription.trim() || file.name.trim()
       if (!prompt) throw new Error('请提供动作描述或有效的图片文件')
       const project = await prepareProject(prompt)
+      projectSpriteSizes.set(project.id, project.spriteSize)
       const templateReference = await mediaApis.upload(file, 'reference-image', signal)
       const controller = await createRun(project.id, workflowNodes(prompt, [templateReference]))
       await controller.updateCharacterSetup('character-setup', {
@@ -588,37 +642,49 @@ export function createQuickStartService({
       })
       await controller.acceptUploadedCharacterTemplate('character-setup', templateReference)
       const target = await persistCharacterTemplate(controller, templateReference)
-      await prepareAction(controller, target.characterId, target.outfitId, actionDescription)
-      return createSession(controller)
+      await prepareAction(controller, target.outfitId, actionDescription, project.spriteSize)
+      return createSession(controller, project.spriteSize)
     },
 
     startAction: appendActionForCharacter,
 
     async open(runId) {
-      return createSession(createController(await workflowRunApis.get(runId)))
+      const run = await workflowRunApis.get(runId)
+      return createSession(createController(run), projectSpriteSizes.get(run.projectId))
     },
   }
 }
 
 export function createAutoPrepareProject(projectApis: ProjectApis): PrepareQuickStartProject {
   return async (prompt) => {
-    const timestamp = Date.now().toString(36).slice(-6).padStart(6, '0')
-    const nonce = Math.random().toString(36).slice(2, 5).padEnd(3, '0')
-    const suffix = `${timestamp}${nonce}`
-    const maxBaseLength = 20 - suffix.length - 1
-    const promptCharacters = Array.from(prompt)
-    const base =
-      promptCharacters.length > maxBaseLength
-        ? `${promptCharacters.slice(0, maxBaseLength - 1).join('')}…`
-        : promptCharacters.join('')
-    const name = `${base}-${suffix}`
-    const project = await projectApis.create({
-      name,
-      perspective: 'side',
-      directionalMovement: 'single',
-      spriteSize: { width: 256, height: 256 },
-    })
-    return { id: project.id, spriteSize: project.spriteSize }
+    const normalizedPrompt = prompt.trim().replace(/\s+/gu, ' ') || '未命名项目'
+    let lastConflict: unknown
+
+    for (let sequence = 1; sequence <= 5; sequence += 1) {
+      // 首次名称不预留编号空间；只有重名时才缩短前缀，为可读编号让出 20 字上限。
+      const suffix = sequence === 1 ? '' : ` ${sequence}`
+      const maxBaseLength = 20 - Array.from(suffix).length
+      const promptCharacters = Array.from(normalizedPrompt)
+      const base =
+        promptCharacters.length > maxBaseLength
+          ? `${promptCharacters.slice(0, maxBaseLength - 1).join('')}…`
+          : promptCharacters.join('')
+
+      try {
+        const project = await projectApis.create({
+          name: `${base}${suffix}`,
+          perspective: 'side',
+          directionalMovement: 'single',
+          spriteSize: { width: 256, height: 256 },
+        })
+        return { id: project.id, spriteSize: project.spriteSize }
+      } catch (error) {
+        if (!(error instanceof ProjectNameConflictError)) throw error
+        lastConflict = error
+      }
+    }
+
+    throw lastConflict
   }
 }
 
@@ -643,6 +709,7 @@ export function createRealQuickStartService({
     workflowRunApis,
     generationApis,
     prepareProject: createAutoPrepareProject(projectApis),
+    projectApis,
     characterApis,
     mediaApis,
     onAsyncError,

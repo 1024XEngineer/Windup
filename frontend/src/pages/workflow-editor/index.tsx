@@ -32,6 +32,11 @@ import {
   type WorkflowRun,
 } from '@/entities'
 import type { WorkflowController } from '@/features/workflow-controller'
+import {
+  createProgressiveExportModel,
+  ExportButton,
+  type ExportPackageModel,
+} from '@/features/export-package'
 import { createDefaultRealWorkflowEditorSession, type WorkflowEditorSession } from './runtime'
 import './workflow-editor.css'
 
@@ -82,44 +87,44 @@ const SHARED_BRANCH = 'shared'
 const CARD_STACK = 'grid gap-[17px] nodrag nopan nowheel'
 
 const CARD_BUTTON =
-  'min-h-[42px] rounded-lg border border-[#34533d] bg-[#34533d] px-3 py-[9px] text-[11px] ' +
-  'font-[750] text-[#edf4ee] enabled:hover:border-[#263f2e] enabled:hover:bg-[#263f2e] ' +
-  'aria-pressed:border-[#263f2e] aria-pressed:bg-[#263f2e] disabled:cursor-not-allowed ' +
-  'disabled:border-[#e2e5e1] disabled:bg-[#e2e5e1] disabled:text-[#969d97]'
+  'min-h-[42px] rounded-lg border border-app-accent bg-app-accent px-3 py-[9px] text-[11px] ' +
+  'font-[750] text-app-on-accent enabled:hover:border-app-accent-hover enabled:hover:bg-app-accent-hover ' +
+  'aria-pressed:border-app-accent-hover aria-pressed:bg-app-accent-hover disabled:cursor-not-allowed ' +
+  'disabled:border-app-line disabled:bg-app-surface-muted disabled:text-app-faint'
 
 /** 缩略图按钮：沿用卡片按钮的尺寸约定，但换成浅底，让图片自己当主角。 */
 const THUMB_BUTTON =
-  'min-h-[42px] rounded-lg border border-[var(--editor-line)] bg-[#fbfcfb] p-1 ' +
-  'aria-pressed:border-[var(--editor-ink)] aria-pressed:bg-white ' +
-  'aria-pressed:shadow-[0_0_0_2px_rgb(31_35_41_/_12%)] disabled:cursor-not-allowed'
+  'min-h-[42px] rounded-lg border border-[var(--color-app-line)] bg-app-surface-raised p-1 ' +
+  'aria-pressed:border-[var(--color-app-ink)] aria-pressed:bg-app-surface-raised ' +
+  'aria-pressed:shadow-app-pulse disabled:cursor-not-allowed'
 
 const THUMB_IMAGE = 'block aspect-square w-full rounded-lg object-cover'
 
 /** 已确认的母版/首帧：像素资产按原样放大，不做平滑。 */
 const MASTER_IMAGE =
-  'block aspect-square w-full rounded-xl border border-[var(--editor-line)] bg-[#f6f7f6] ' +
+  'block aspect-square w-full rounded-xl border border-[var(--color-app-line)] bg-app-surface ' +
   'object-cover [image-rendering:pixelated]'
 
 const CARD_SUMMARY =
-  'm-0 rounded-[10px] border border-[var(--editor-line)] bg-[#f6f7f6] px-3 py-2.5 ' +
-  'text-[11px] leading-[1.6] text-[var(--editor-muted)]'
+  'm-0 rounded-[10px] border border-[var(--color-app-line)] bg-app-surface px-3 py-2.5 ' +
+  'text-[11px] leading-[1.6] text-[var(--color-app-muted)]'
 
-const CARD_TEXT = 'm-0 text-[11px] leading-[1.6] text-[var(--editor-muted)]'
+const CARD_TEXT = 'm-0 text-[11px] leading-[1.6] text-[var(--color-app-muted)]'
 
 /** 加号菜单里的条目：撑满菜单宽度的两行文字，跟卡片主按钮完全不同。 */
 const MENU_ITEM =
   'flex min-h-0 cursor-pointer flex-col gap-0.5 border-0 px-3 py-[9px] text-left ' +
-  'text-[var(--editor-ink)] not-first:border-t not-first:border-t-[rgb(31_35_41_/_6%)] ' +
-  'enabled:hover:bg-[#f2f4f2] disabled:cursor-not-allowed disabled:opacity-45'
+  'text-[var(--color-app-ink)] not-first:border-t not-first:border-t-app-line ' +
+  'enabled:hover:bg-app-accent-muted disabled:cursor-not-allowed disabled:opacity-45'
 
 /**
  * 菜单里的头一条：返回上一级，或 root 层的主入口。比其余条目弱一档，
  * 原样式靠 :first-child 选择器实现，这里改成显式挂类，位置换了也不会失灵。
  */
-const MENU_ITEM_LEAD = 'font-medium text-[var(--editor-muted)]'
+const MENU_ITEM_LEAD = 'font-medium text-[var(--color-app-muted)]'
 
 const MENU_ITEM_TITLE = 'text-xs font-semibold'
-const MENU_ITEM_HINT = 'text-[10px] text-[var(--editor-muted)]'
+const MENU_ITEM_HINT = 'text-[10px] text-[var(--color-app-muted)]'
 
 const nodeTypes = { 'workflow-card': WorkflowCard }
 
@@ -260,6 +265,31 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
     }
   }, [loadSession, requestGenerations, runId])
 
+  const exportModels = useMemo(() => {
+    const models = new Map<string, ExportPackageModel>()
+    if (!character || !run || !session) return models
+    const completedGenerations = Object.values(generations).filter(
+      (generation): generation is Generation => generation !== null,
+    )
+    for (const outfit of character.outfits) {
+      try {
+        models.set(
+          outfit.id,
+          createProgressiveExportModel({
+            project: session.project,
+            character,
+            outfitId: outfit.id,
+            run,
+            generations: completedGenerations,
+          }),
+        )
+      } catch {
+        // 造型未达到最低导出条件时不显示导出入口。
+      }
+    }
+    return models
+  }, [character, generations, run, session])
+
   const projected = useMemo(
     () =>
       run && session
@@ -272,6 +302,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
             project: session.project,
             character,
             generations,
+            exportModels,
             selectedImages,
             actionMenuOpen,
             actionMenuLevel,
@@ -291,6 +322,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
       actionMenuLevel,
       busyBranches,
       character,
+      exportModels,
       generations,
       run,
       runCommand,
@@ -348,29 +380,29 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
   const visibleError = error ?? resumeError ?? generationReadError
 
   return (
-    <div className="workflow-editor-shell fixed inset-0 z-30 overflow-hidden bg-[var(--editor-paper)] text-[var(--editor-ink)]">
+    <div className="workflow-editor-shell fixed inset-0 z-30 overflow-hidden bg-[var(--color-app-canvas)] text-[var(--color-app-ink)]">
       <aside
-        className="pointer-events-none absolute bottom-[18px] left-[18px] z-15 grid min-w-[250px] max-w-[min(380px,calc(100vw-112px))] gap-1 rounded-[10px] border border-[rgb(36_49_39_/_12%)] bg-[rgb(249_250_247_/_90%)] px-[15px] py-3 shadow-[0_8px_24px_rgb(31_40_33_/_9%)] backdrop-blur-[14px]"
+        className="pointer-events-none absolute bottom-[18px] left-[18px] z-15 grid min-w-[250px] max-w-[min(380px,calc(100vw-112px))] gap-1 rounded-[10px] border border-app-line bg-app-surface-raised/90 px-[15px] py-3 shadow-app-menu backdrop-blur-[14px]"
         aria-label="当前项目"
       >
         <div>
-          <p className="m-0 mb-[5px] text-[8px] font-extrabold tracking-[0.12em] text-[#7b827b]">
+          <p className="m-0 mb-[5px] text-[8px] font-extrabold tracking-[0.12em] text-app-faint">
             PROJECT
           </p>
-          <h1 className="m-0 text-sm font-bold text-[#29342c]">{session.project.name}</h1>
+          <h1 className="m-0 text-sm font-bold text-app-ink-soft">{session.project.name}</h1>
         </div>
-        <p className="m-0 overflow-hidden text-ellipsis whitespace-nowrap text-[9px] leading-[1.5] text-[#777f78]">
+        <p className="m-0 overflow-hidden text-ellipsis whitespace-nowrap text-[9px] leading-[1.5] text-app-faint">
           {constraints.join(' · ')}
         </p>
         <div className="mt-1 flex justify-end">
-          <small className="font-mono text-[8px] font-bold text-[var(--editor-muted)]">
+          <small className="font-mono text-[8px] font-bold text-[var(--color-app-muted)]">
             Run {run.id} · v{run.version}
           </small>
         </div>
       </aside>
       {visibleError ? (
         <div
-          className="absolute left-1/2 top-[150px] z-10 flex -translate-x-1/2 items-center gap-3 border border-[#b66e62] bg-[#f7e9e5] px-[14px] py-2.5 text-xs text-[#7b3027]"
+          className="absolute left-1/2 top-[150px] z-10 flex -translate-x-1/2 items-center gap-3 border border-app-danger-line bg-app-danger-soft px-[14px] py-2.5 text-xs text-app-danger"
           role="alert"
         >
           <span>{visibleError}</span>
@@ -444,6 +476,7 @@ interface ProjectionInput {
   project: Project
   character: Character | null
   generations: Record<string, Generation | null>
+  exportModels: ReadonlyMap<string, ExportPackageModel>
   selectedImages: Record<string, string>
   actionMenuOpen: boolean
   actionMenuLevel: ActionMenuLevel
@@ -456,6 +489,12 @@ interface ProjectionInput {
   setSelectedOutfitId(outfitId: string | null): void
   setCharacter(character: Character): void
   runCommand(branchKey: string, command: () => Promise<void>): void
+}
+
+function NodeExportButton({ model }: { model: ExportPackageModel | undefined }) {
+  return model ? (
+    <ExportButton model={model} className={`${CARD_BUTTON} nodrag nopan nowheel`} />
+  ) : null
 }
 
 /** 卡片自己所属的分支；命令与禁用判断都以它为准。 */
@@ -572,28 +611,28 @@ function CharacterSetupContent({
   return (
     <div className={CARD_STACK}>
       <label className="grid gap-[7px]">
-        <span className="text-[9px] font-[750] text-[#626b64]">角色描述</span>
+        <span className="text-[9px] font-[750] text-app-muted">角色描述</span>
         <textarea
           aria-label="角色描述"
           rows={4}
-          className="min-h-[84px] w-full resize-y rounded-lg border border-[var(--editor-line)] bg-[#fbfcfb] px-3 py-2.5 font-[inherit] text-[11px] leading-[1.55] text-[var(--editor-ink)] focus:border-[#69866f] focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-[rgb(105_134_111_/_18%)]"
+          className="min-h-[84px] w-full resize-y rounded-lg border border-[var(--color-app-line)] bg-app-surface-raised px-3 py-2.5 font-[inherit] text-[11px] leading-[1.55] text-[var(--color-app-ink)] focus:border-app-accent focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-app-accent-soft"
           value={prompt}
           disabled={branchBusy || uploadingReference}
           onChange={(event) => setPrompt(event.target.value)}
         />
         {node.input.referenceMedia.length > 0 ? (
-          <small className="text-[9px] font-[750] text-[#626b64]">
+          <small className="text-[9px] font-[750] text-app-muted">
             已关联 {node.input.referenceMedia.length} 个参考媒体
           </small>
         ) : null}
       </label>
       <div className="grid gap-[7px]">
-        <span className="text-[9px] font-[750] text-[#626b64]">角色参考图（选填）</span>
+        <span className="text-[9px] font-[750] text-app-muted">角色参考图（选填）</span>
         <input
           type="file"
           accept="image/*"
           aria-label="角色参考图"
-          className="block w-full rounded-lg border border-[var(--editor-line)] bg-[#f6f7f6] text-[10px] text-[var(--editor-muted)] file:mr-3 file:border-0 file:border-r file:border-[var(--editor-line)] file:bg-transparent file:px-3 file:py-2 file:text-[10px] file:font-[700] file:text-[var(--editor-ink)]"
+          className="block w-full rounded-lg border border-[var(--color-app-line)] bg-app-surface text-[10px] text-[var(--color-app-muted)] file:mr-3 file:border-0 file:border-r file:border-[var(--color-app-line)] file:bg-transparent file:px-3 file:py-2 file:text-[10px] file:font-[700] file:text-[var(--color-app-ink)]"
           disabled={branchBusy || uploadingReference}
           onChange={(event) => {
             const file = event.currentTarget.files?.[0]
@@ -602,14 +641,14 @@ function CharacterSetupContent({
           }}
         />
         {uploadingReference ? (
-          <small role="status" className="text-[9px] font-[750] text-[#626b64]">
+          <small role="status" className="text-[9px] font-[750] text-app-muted">
             正在上传参考图…
           </small>
         ) : null}
         {uploadError ? (
           <p
             role="alert"
-            className="m-0 rounded-lg border border-[#c98e82] bg-[#f7e9e5] px-2.5 py-2 text-[9px] leading-[1.5] text-[#7b3027]"
+            className="m-0 rounded-lg border border-app-danger-line bg-app-danger-soft px-2.5 py-2 text-[9px] leading-[1.5] text-app-danger"
           >
             {uploadError}
           </p>
@@ -712,13 +751,18 @@ function CharacterTemplateContent({
     )
   }
   if (node.status === 'passed' && node.selectedImageUrl) {
+    const outfit =
+      input.character?.outfits.find(
+        (candidate) => candidate.previewUrl === node.selectedImageUrl,
+      ) ?? input.character?.outfits[0]
     return (
       <div className={CARD_STACK}>
         <img className={MASTER_IMAGE} src={node.selectedImageUrl} alt="已确认身份母版" />
-        <span className="text-center text-[11px] text-[var(--editor-muted)]">身份已锁定</span>
+        <span className="text-center text-[11px] text-[var(--color-app-muted)]">身份已锁定</span>
+        {outfit ? <NodeExportButton model={input.exportModels.get(outfit.id)} /> : null}
         <button
           type="button"
-          className="absolute -bottom-4 -right-4 z-8 grid h-8 min-h-8 w-8 place-items-center rounded-full border border-[var(--editor-ink)] bg-white p-0 text-[15px] leading-none text-[var(--editor-ink)] shadow-[var(--editor-shadow)] hover:bg-[var(--editor-ink)] hover:text-white"
+          className="absolute -bottom-4 -right-4 z-8 grid h-8 min-h-8 w-8 place-items-center rounded-full border border-[var(--color-app-ink)] bg-app-surface-raised p-0 text-[15px] leading-none text-[var(--color-app-ink)] shadow-[var(--shadow-app-panel)] hover:bg-[var(--color-app-ink)] hover:text-app-on-accent"
           aria-label="添加动作分支"
           onClick={() => {
             input.setActionMenuLevel('root')
@@ -729,7 +773,7 @@ function CharacterTemplateContent({
           ＋
         </button>
         {input.actionMenuOpen ? (
-          <div className="absolute left-[calc(100%+24px)] top-[calc(100%-16px)] z-7 flex min-w-[190px] flex-col overflow-hidden rounded-xl border border-[var(--editor-line)] bg-white shadow-[var(--editor-shadow)]">
+          <div className="absolute left-[calc(100%+24px)] top-[calc(100%-16px)] z-7 flex min-w-[190px] flex-col overflow-hidden rounded-xl border border-[var(--color-app-line)] bg-app-surface-raised shadow-[var(--shadow-app-panel)]">
             <ActionMenu input={input} templateNodeId={node.id} />
           </div>
         ) : null}
@@ -860,7 +904,7 @@ function FirstFrameContent({
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
   const result = input.generations[generationKey(node.id, 'first_frame')]?.result
-  const image = result?.type === 'first_frame' ? result.image : null
+  const images = result?.type === 'first_frame' ? result.images : []
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.phase === 'configuring') {
     const character = characterOwningOutfit(input.character, node.input.outfitId)
@@ -878,8 +922,8 @@ function FirstFrameContent({
             if (!character) return
             input.runCommand(branchKey, () =>
               input.controller.generateFirstFrame(node.id, {
-                characterId: character.id,
-                referenceMedia: [],
+                spriteWidth: input.project.spriteSize.width,
+                spriteHeight: input.project.spriteSize.height,
               }),
             )
           }}
@@ -889,24 +933,31 @@ function FirstFrameContent({
       </div>
     )
   }
-  if (node.phase === 'selecting' && image) {
-    const selectedImageUrl = input.selectedImages[node.id] === image.url ? image.url : null
+  if (node.phase === 'selecting' && images.length > 0) {
+    const selectedImageUrl = images.some((image) => image.url === input.selectedImages[node.id])
+      ? input.selectedImages[node.id]!
+      : null
     return (
       <div className={CARD_STACK}>
-        <button
-          type="button"
-          className={THUMB_BUTTON}
-          aria-label="选择动作首帧"
-          aria-pressed={selectedImageUrl === image.url}
-          onClick={() =>
-            input.setSelectedImages((selected) => ({
-              ...selected,
-              [node.id]: image.url,
-            }))
-          }
-        >
-          <img className={THUMB_IMAGE} src={image.url} alt="动作首帧候选" />
-        </button>
+        <div className="grid grid-cols-3 gap-2">
+          {images.map((image, index) => (
+            <button
+              key={image.url}
+              type="button"
+              className={THUMB_BUTTON}
+              aria-label={`选择动作首帧 ${index + 1}`}
+              aria-pressed={selectedImageUrl === image.url}
+              onClick={() =>
+                input.setSelectedImages((selected) => ({
+                  ...selected,
+                  [node.id]: image.url,
+                }))
+              }
+            >
+              <img className={THUMB_IMAGE} src={image.url} alt={`动作首帧候选 ${index + 1}`} />
+            </button>
+          ))}
+        </div>
         <button
           type="button"
           className={CARD_BUTTON}
@@ -923,7 +974,12 @@ function FirstFrameContent({
     )
   }
   if (node.phase === 'completed' && node.selectedFirstFrameUrl) {
-    return <img className={MASTER_IMAGE} src={node.selectedFirstFrameUrl} alt="已确认动作首帧" />
+    return (
+      <div className={CARD_STACK}>
+        <img className={MASTER_IMAGE} src={node.selectedFirstFrameUrl} alt="已确认动作首帧" />
+        <NodeExportButton model={input.exportModels.get(node.input.outfitId)} />
+      </div>
+    )
   }
   return <StatusText node={node} input={input} />
 }
@@ -1002,16 +1058,25 @@ function AnimationContent({
     )
   }
   if (node.phase === 'completed' && frames.length) {
+    const methodNode = findDependency(input.run, node, 'action-generation-method')
+    const firstFrameNode = methodNode
+      ? findDependency(input.run, methodNode, 'action-first-frame')
+      : null
     return (
-      <div className="nodrag nopan nowheel grid max-h-40 grid-cols-8 gap-[3px] overflow-auto">
-        {frames.map((frame, index) => (
-          <img
-            key={`${frame.url}-${index}`}
-            className="block aspect-square w-full rounded border border-[var(--editor-line)] object-cover"
-            src={frame.url}
-            alt={`动画帧 ${index + 1}`}
-          />
-        ))}
+      <div className={CARD_STACK}>
+        <div className="nodrag nopan nowheel grid max-h-40 grid-cols-8 gap-[3px] overflow-auto">
+          {frames.map((frame, index) => (
+            <img
+              key={`${frame.url}-${index}`}
+              className="block aspect-square w-full rounded border border-[var(--color-app-line)] object-cover"
+              src={frame.url}
+              alt={`动画帧 ${index + 1}`}
+            />
+          ))}
+        </div>
+        {firstFrameNode ? (
+          <NodeExportButton model={input.exportModels.get(firstFrameNode.input.outfitId)} />
+        ) : null}
       </div>
     )
   }
@@ -1022,7 +1087,21 @@ function ReviewContent({ node, input }: { node: ReviewWorkflowNode; input: Proje
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
   if (node.status === 'failed') return <StatusText node={node} input={input} />
-  if (node.phase === 'completed') return <p className={CARD_SUMMARY}>审核已通过</p>
+  if (node.phase === 'completed') {
+    const fullFrame = findDependency(input.run, node, 'action-full-frame')
+    const method = fullFrame
+      ? findDependency(input.run, fullFrame, 'action-generation-method')
+      : null
+    const firstFrame = method ? findDependency(input.run, method, 'action-first-frame') : null
+    return (
+      <div className={CARD_STACK}>
+        <p className={CARD_SUMMARY}>审核已通过</p>
+        {firstFrame ? (
+          <NodeExportButton model={input.exportModels.get(firstFrame.input.outfitId)} />
+        ) : null}
+      </div>
+    )
+  }
   if (node.status !== 'active') return <StatusText node={node} input={input} />
   return (
     <div className={CARD_STACK}>
@@ -1049,19 +1128,19 @@ function WorkflowCard({ data }: NodeProps<WorkflowCardNode>) {
   return (
     <article
       className={[
-        'w-[368px] overflow-visible rounded-xl border border-[var(--editor-line)] bg-[rgba(249,250,247,0.98)] shadow-[var(--editor-shadow)]',
+        'w-[368px] overflow-visible rounded-xl border border-[var(--color-app-line)] bg-app-surface-raised/98 shadow-[var(--shadow-app-panel)]',
         data.status === 'failed' ? 'border-dashed' : 'border-solid',
         data.status === 'locked' ? 'opacity-45' : '',
       ].join(' ')}
     >
       <Handle type="target" position={Position.Left} isConnectable={false} />
-      <header className="workflow-card__handle grid min-h-[62px] cursor-grab select-none content-center gap-0.5 rounded-t-[11px] bg-[#26352b] px-[18px] py-3 text-[#f2f5f1] active:cursor-grabbing">
-        <span className="text-[8px] font-extrabold tracking-[0.12em] text-[#aebcb1]">
+      <header className="workflow-card__handle grid min-h-[62px] cursor-grab select-none content-center gap-0.5 rounded-t-[11px] bg-app-accent px-[18px] py-3 text-app-on-accent active:cursor-grabbing">
+        <span className="text-[8px] font-extrabold tracking-[0.12em] text-app-line">
           {data.eyebrow}
         </span>
         <strong className="text-sm font-bold">{data.title}</strong>
       </header>
-      <div className="rounded-b-[11px] bg-[rgba(249,250,247,0.98)] p-[21px]">{data.content}</div>
+      <div className="rounded-b-[11px] bg-app-surface-raised/98 p-[21px]">{data.content}</div>
       <Handle type="source" position={Position.Right} isConnectable={false} />
     </article>
   )
@@ -1099,12 +1178,12 @@ function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInpu
 
 function EditorBoundary({ message }: { message: string }) {
   return (
-    <div className="grid min-h-screen place-content-center gap-2 bg-[#dfe3df] text-center">
-      <p className="m-0 text-[10px] font-extrabold tracking-[0.16em] text-[#737378]">
+    <div className="grid min-h-screen place-content-center gap-2 bg-app-canvas text-center">
+      <p className="m-0 text-[10px] font-extrabold tracking-[0.16em] text-app-muted">
         MANUAL WORKFLOW
       </p>
       <h1 className="m-0 text-3xl font-semibold">工作流编辑器</h1>
-      <span className="m-0 text-[13px] text-[#737378]">{message}</span>
+      <span className="m-0 text-[13px] text-app-muted">{message}</span>
     </div>
   )
 }

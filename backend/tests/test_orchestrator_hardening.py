@@ -36,6 +36,49 @@ from windup_common.enums.media import MediaCategory
 from windup_framework.config.storage import StorageSettings
 
 
+def test_generation_dispatcher_serializes_provider_work():
+    from windup_app.server.orchestrator.dispatcher import GenerationDispatcher
+
+    dispatcher = GenerationDispatcher()
+    first_started = threading.Event()
+    release_first = threading.Event()
+    second_started = threading.Event()
+
+    def first_task():
+        first_started.set()
+        release_first.wait(timeout=5)
+
+    def second_task():
+        second_started.set()
+
+    try:
+        dispatcher.submit(first_task)
+        assert first_started.wait(timeout=3)
+
+        dispatcher.submit(second_task)
+        assert not second_started.wait(timeout=0.1)
+
+        release_first.set()
+        assert second_started.wait(timeout=3)
+    finally:
+        release_first.set()
+        dispatcher.shutdown()
+
+
+def test_generation_dispatch_starts_only_after_commit(db_session):
+    from windup_app.web.api.generation import _dispatch_after_commit
+
+    dispatcher = Mock()
+    target = Mock()
+
+    _dispatch_after_commit(db_session, dispatcher, target, 7, "payload")
+    dispatcher.submit.assert_not_called()
+
+    db_session.commit()
+
+    dispatcher.submit.assert_called_once_with(target, 7, "payload")
+
+
 @pytest.mark.parametrize(
     ("configured", "expected"),
     [
@@ -61,6 +104,11 @@ def test_storage_download_base_rejects_qiniu_s3_api_endpoint(configured):
         StorageSettings(bucket_domain=configured).download_base
 
 
+def test_storage_download_base_rejects_plain_http():
+    with pytest.raises(ValueError, match="HTTPS"):
+        StorageSettings(bucket_domain="http://cdn.example.com").download_base
+
+
 def test_media_upload_rejects_s3_endpoint_before_uploading(monkeypatch):
     import qiniu
     import windup_app.server.media.service as media_service_module
@@ -80,6 +128,30 @@ def test_media_upload_rejects_s3_endpoint_before_uploading(monkeypatch):
         category=MediaCategory.REFERENCE_IMAGE,
     )
     with pytest.raises(ValueError, match="S3 API"):
+        ObjectStorageMediaService().upload(b"png", metadata)
+
+    put_data.assert_not_called()
+
+
+def test_media_upload_rejects_plain_http_before_uploading(monkeypatch):
+    import qiniu
+    import windup_app.server.media.service as media_service_module
+
+    monkeypatch.setattr(
+        media_service_module.storage_settings,
+        "bucket_domain",
+        "http://cdn.example.com",
+    )
+    put_data = Mock()
+    monkeypatch.setattr(qiniu, "put_data", put_data)
+
+    metadata = MediaUploadInput(
+        filename="character.png",
+        content_type="image/png",
+        size=3,
+        category=MediaCategory.REFERENCE_IMAGE,
+    )
+    with pytest.raises(ValueError, match="HTTPS"):
         ObjectStorageMediaService().upload(b"png", metadata)
 
     put_data.assert_not_called()
@@ -324,7 +396,7 @@ def test_every_terminal_event_name_is_recognised_by_the_stream():
 
 
 def test_publish_from_another_thread_delivers():
-    """executor 在 daemon thread 里跑，队列属于处理 SSE 请求的那个 loop。
+    """executor 在独立工作线程里跑，队列属于处理 SSE 请求的那个 loop。
 
     诚实说明本用例的强度：它只证明跨线程发布**能到达**订阅者，**证不出**
     call_soon_threadsafe 是必需的 —— 实测在这个单队列场景里，裸 put_nowait

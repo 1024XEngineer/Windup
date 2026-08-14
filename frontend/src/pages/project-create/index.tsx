@@ -16,14 +16,14 @@ import { ProjectCreatePixelMark } from './pixel-mark'
 
 /**
  * 项目名称上限跟随 main 上 `windup_project.project_name` 的 `String(20)`。
- * 尚未合入的两个后端 PR 在这里不一致（#75 限 20、#126 放宽到 64），取更严的一边，
+ * 尚未合入的两个后端 PR 在这里不一致（PR 75 限 20、PR 126 放宽到 64），取更严的一边，
  * 哪条先落地都能提交成功；放宽是加法，反过来会立刻退回重名与截断。
  */
 const NAME_MAX_LENGTH = 20
 
 /**
  * 精灵宽高的合法区间。写在前端是因为 main 的后端还没有 `/projects` 路由，
- * 取值依据是 issue #141 的产品规则（与未合入的 #75 / #126 请求校验一致）。
+ * 取值依据是 Issue 141 的产品规则（与未合入的 PR 75 / PR 126 请求校验一致）。
  */
 const SPRITE_MIN = 32
 const SPRITE_MAX = 2048
@@ -116,16 +116,16 @@ export function ProjectCreatePage() {
   }
 
   return (
-    <div className="grid min-h-[calc(100vh-4rem)] w-full bg-[#e5e8e3] text-[#191b18] lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+    <div className="grid min-h-[calc(100vh-4rem)] w-full bg-app-canvas text-app-ink lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
       <aside className="hidden place-content-center justify-items-center gap-8 px-10 pb-16 pt-24 lg:grid">
         <ProjectCreatePixelMark />
-        <p className="max-w-72 text-center text-xs leading-6 text-[#747973]">
+        <p className="max-w-72 text-center text-xs leading-6 text-app-muted">
           项目决定角色资产的视角、朝向与精灵尺寸。这些约束建立之后会跟着项目下的每一个角色。
         </p>
       </aside>
 
       {/* pt-24 与 PageContainer 同源：给 fixed 顶栏（top-3.5 加最小高 3.625rem）让位，改顶栏尺寸时一起改。 */}
-      <section className="bg-white/70 px-6 pb-12 pt-24 sm:px-12 lg:px-16 lg:pb-20 lg:pt-28">
+      <section className="bg-app-surface-raised/70 px-6 pb-12 pt-24 sm:px-12 lg:px-16 lg:pb-20 lg:pt-28">
         <form
           noValidate
           onSubmit={submit}
@@ -133,17 +133,17 @@ export function ProjectCreatePage() {
           className="mx-auto grid max-w-2xl gap-7"
         >
           <header>
-            <p className="font-mono text-[10px] font-semibold tracking-[0.18em] text-[#8b9089]">
+            <p className="font-mono text-[10px] font-semibold tracking-[0.18em] text-app-faint">
               PROJECT SETUP
             </p>
             <h1 className="mt-3 font-serif text-4xl font-medium tracking-[-0.045em]">新建项目</h1>
-            <p className="mt-3 text-sm leading-6 text-[#666b64]">
+            <p className="mt-3 text-sm leading-6 text-app-muted">
               只确定项目级的题材与规格；角色和动作在项目内再逐个创建。
             </p>
           </header>
 
           <div className="grid gap-2">
-            <label className="text-xs font-semibold text-[#41473f]" htmlFor="project-name">
+            <label className="text-xs font-semibold text-app-ink-soft" htmlFor="project-name">
               项目名称
             </label>
             <input
@@ -153,16 +153,19 @@ export function ProjectCreatePage() {
               maxLength={NAME_MAX_LENGTH}
               placeholder="例如：雾港来信"
               onChange={(event) => setName(event.target.value)}
-              className="rounded-xl border border-[#d5d9d2] bg-[#f5f5f2] px-4 py-3 text-sm outline-none focus-visible:border-[#8f978d]"
+              className="rounded-xl border border-app-line bg-app-surface px-4 py-3 text-sm outline-none focus-visible:border-app-accent"
             />
-            <small className="text-[10px] text-[#8b9089]">
+            <small className="text-[10px] text-app-faint">
               最多 {NAME_MAX_LENGTH} 个字，同一账号下不能重名。
             </small>
           </div>
 
           <div className="grid gap-5 sm:grid-cols-2">
             <div className="grid gap-2">
-              <label className="text-xs font-semibold text-[#41473f]" htmlFor="project-perspective">
+              <label
+                className="text-xs font-semibold text-app-ink-soft"
+                htmlFor="project-perspective"
+              >
                 游戏视角
               </label>
               <select
@@ -170,7 +173,7 @@ export function ProjectCreatePage() {
                 value={perspective}
                 disabled={createdProject !== null}
                 onChange={(event) => setPerspective(event.target.value as CharacterPerspective)}
-                className="rounded-xl border border-[#d5d9d2] bg-[#f5f5f2] px-4 py-3 text-sm outline-none focus-visible:border-[#8f978d]"
+                className="rounded-xl border border-app-line bg-app-surface px-4 py-3 text-sm outline-none focus-visible:border-app-accent"
               >
                 {Object.entries(CHARACTER_PERSPECTIVE).map(([value, label]) => (
                   <option key={value} value={value}>
@@ -181,7 +184,7 @@ export function ProjectCreatePage() {
             </div>
 
             <div className="grid gap-2">
-              <label className="text-xs font-semibold text-[#41473f]" htmlFor="project-movement">
+              <label className="text-xs font-semibold text-app-ink-soft" htmlFor="project-movement">
                 朝向
               </label>
               <select
@@ -191,7 +194,7 @@ export function ProjectCreatePage() {
                 onChange={(event) =>
                   setDirectionalMovement(event.target.value as DirectionalMovement)
                 }
-                className="rounded-xl border border-[#d5d9d2] bg-[#f5f5f2] px-4 py-3 text-sm outline-none focus-visible:border-[#8f978d]"
+                className="rounded-xl border border-app-line bg-app-surface px-4 py-3 text-sm outline-none focus-visible:border-app-accent"
               >
                 {Object.entries(DIRECTIONAL_MOVEMENT).map(([value, label]) => (
                   <option key={value} value={value}>
@@ -203,7 +206,7 @@ export function ProjectCreatePage() {
           </div>
 
           <fieldset className="grid gap-3">
-            <legend className="text-xs font-semibold text-[#41473f]">精灵尺寸</legend>
+            <legend className="text-xs font-semibold text-app-ink-soft">精灵尺寸</legend>
             <div className="flex flex-wrap gap-2">
               {SPRITE_PRESETS.map((preset) => (
                 <button
@@ -217,7 +220,7 @@ export function ProjectCreatePage() {
                     setError(null)
                   }}
                   aria-pressed={spriteWidth === String(preset) && spriteHeight === String(preset)}
-                  className="rounded-full border border-[#d5d9d2] px-4 py-1.5 text-xs text-[#41473f] aria-pressed:border-[#252825] aria-pressed:bg-[#252825] aria-pressed:text-white"
+                  className="rounded-full border border-app-line px-4 py-1.5 text-xs text-app-ink-soft aria-pressed:border-app-accent aria-pressed:bg-app-accent aria-pressed:text-app-on-accent"
                 >
                   {preset} × {preset}
                 </button>
@@ -225,7 +228,7 @@ export function ProjectCreatePage() {
             </div>
             <div className="grid gap-5 sm:grid-cols-2">
               <div className="grid gap-2">
-                <label className="text-[10px] text-[#8b9089]" htmlFor="project-sprite-width">
+                <label className="text-[10px] text-app-faint" htmlFor="project-sprite-width">
                   宽度（像素）
                 </label>
                 <input
@@ -237,11 +240,11 @@ export function ProjectCreatePage() {
                   value={spriteWidth}
                   disabled={createdProject !== null}
                   onChange={(event) => setSpriteWidth(event.target.value)}
-                  className="rounded-xl border border-[#d5d9d2] bg-[#f5f5f2] px-4 py-3 text-sm outline-none focus-visible:border-[#8f978d]"
+                  className="rounded-xl border border-app-line bg-app-surface px-4 py-3 text-sm outline-none focus-visible:border-app-accent"
                 />
               </div>
               <div className="grid gap-2">
-                <label className="text-[10px] text-[#8b9089]" htmlFor="project-sprite-height">
+                <label className="text-[10px] text-app-faint" htmlFor="project-sprite-height">
                   高度（像素）
                 </label>
                 <input
@@ -253,14 +256,14 @@ export function ProjectCreatePage() {
                   value={spriteHeight}
                   disabled={createdProject !== null}
                   onChange={(event) => setSpriteHeight(event.target.value)}
-                  className="rounded-xl border border-[#d5d9d2] bg-[#f5f5f2] px-4 py-3 text-sm outline-none focus-visible:border-[#8f978d]"
+                  className="rounded-xl border border-app-line bg-app-surface px-4 py-3 text-sm outline-none focus-visible:border-app-accent"
                 />
               </div>
             </div>
           </fieldset>
 
           <div className="grid gap-2">
-            <label className="text-xs font-semibold text-[#41473f]" htmlFor="project-style">
+            <label className="text-xs font-semibold text-app-ink-soft" htmlFor="project-style">
               画风约束
             </label>
             <textarea
@@ -271,23 +274,23 @@ export function ProjectCreatePage() {
               maxLength={GAME_STYLE_MAX_LENGTH}
               placeholder="例如：低饱和像素风、细长比例、深灰旅行服"
               onChange={(event) => setGameStyle(event.target.value)}
-              className="resize-none rounded-xl border border-[#d5d9d2] bg-[#f5f5f2] px-4 py-3 text-sm outline-none focus-visible:border-[#8f978d]"
+              className="resize-none rounded-xl border border-app-line bg-app-surface px-4 py-3 text-sm outline-none focus-visible:border-app-accent"
             />
           </div>
 
           {error ? (
             <p
               role="alert"
-              className="rounded-xl border border-[#d8c7bd] bg-[#fff8f2] px-4 py-3 text-sm text-[#7a3f2a]"
+              className="rounded-xl border border-app-danger-line bg-app-danger-soft px-4 py-3 text-sm text-app-danger"
             >
               {error}
             </p>
           ) : null}
 
-          <footer className="flex flex-wrap items-center justify-between gap-4 border-t border-[#d8dbd4] pt-6">
+          <footer className="flex flex-wrap items-center justify-between gap-4 border-t border-app-line pt-6">
             <small
               id="project-create-hint"
-              className="max-w-sm text-[11px] leading-5 text-[#747973]"
+              className="max-w-sm text-[11px] leading-5 text-app-muted"
             >
               {signedIn
                 ? opensWorkflowEditor
@@ -301,7 +304,7 @@ export function ProjectCreatePage() {
               type="submit"
               disabled={submitting || !signedIn}
               aria-describedby="project-create-hint"
-              className="rounded-full bg-[#252825] px-6 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#a4aaa2]"
+              className="rounded-full bg-app-accent px-6 py-3 text-sm font-semibold text-app-on-accent hover:bg-app-accent-hover disabled:cursor-not-allowed disabled:bg-app-line-strong"
             >
               {submitting
                 ? createdProject

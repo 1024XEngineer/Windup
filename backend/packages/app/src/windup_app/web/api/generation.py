@@ -17,7 +17,6 @@ import asyncio
 import dataclasses
 import json
 import logging
-import threading
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -33,6 +32,7 @@ from windup_framework.db import get_session
 
 from windup_app.server.character.model import Character, CharacterData
 from windup_app.server.orchestrator import task_repo
+from windup_app.server.orchestrator.dispatcher import GenerationDispatcher
 from windup_app.server.orchestrator.service import service as generation_service
 from windup_app.server.orchestrator.model import (
     ActionType,
@@ -61,7 +61,7 @@ _TERMINAL_EVENTS = {"completed", "failed"}
 class _EventBus:
     """任务进度内存发布-订阅。
 
-    **publish 会被后台线程调用**(executor 在 daemon thread 里跑,经 task_repo 触发),
+    **publish 会被后台线程调用**(executor 在生成工作线程里跑,经 task_repo 触发),
     而队列属于处理 SSE 请求的那个 event loop。``asyncio.Queue`` 不是线程安全的:
     跨线程 ``put_nowait`` 能把元素放进去,但唤醒 waiter 用的是 loop 内部调度,
     从别的线程调不会唤醒 —— 订阅者可能一直挂在 ``get()`` 上,直到下一次同 loop 内的
@@ -105,7 +105,7 @@ class _EventBus:
     ) -> None:
         """跨线程安全地投递。
 
-        executor 在 daemon thread 里跑,而队列属于处理 SSE 请求的那个 event loop。
+        executor 在生成工作线程里跑,而队列属于处理 SSE 请求的那个 event loop。
         ``asyncio.Queue`` 不是线程安全的:跨线程 ``put_nowait`` 能把元素放进去,但唤醒
         waiter 用的是 loop 内部调度,从别的线程调不会唤醒 —— 订阅者可能一直挂在
         ``get()`` 上,直到下一次同 loop 内的操作偶然把它带起来。故订阅时记下所属 loop,
@@ -114,7 +114,7 @@ class _EventBus:
         try:
             here = asyncio.get_running_loop()
         except RuntimeError:
-            here = None                       # 从没有 loop 的线程调(executor daemon thread)
+            here = None                       # 从没有 loop 的生成工作线程调用
 
         for queue, loop in list(self._queues.get((project_id, task_id), [])):
             if loop is here:
@@ -288,15 +288,20 @@ def _validate_project_size(project: Project, width: int, height: int) -> None:
         )
 
 
-def _dispatch_after_commit(session: Session, target, *args) -> None:
-    """注册 after_commit 回调:session 提交成功后再启动后台线程。
+def _dispatch_after_commit(
+    session: Session,
+    dispatcher: GenerationDispatcher,
+    target,
+    *args,
+) -> None:
+    """注册 after_commit 回调:session 提交成功后再排入生成队列。
 
     解决竞态: create_task() 只 flush,session 在 handler 返回后才 commit。
-    若直接起线程,后台 session 可能读不到未提交的行,导致 update 静默跳过。
+    若直接排队,后台 session 可能读不到未提交的行,导致 update 静默跳过。
     """
     @event.listens_for(session, "after_commit", once=True)
     def _after_commit(session):
-        threading.Thread(target=target, args=args, daemon=True).start()
+        dispatcher.submit(target, *args)
 
 
 @router.post("/image", response_model=Response[GenerationTaskOut])
@@ -320,10 +325,15 @@ def submit_image_generation(
     task = generation_service.generate_character_image(
         session, user_id=user_id, project_id=body.project_id, input=input_data,
     )
-    # 后台线程要在 commit 之后再起:任务行未提交时线程用自己的 session 读不到它,
+    # 生成任务要在 commit 之后再入队:任务行未提交时工作线程用自己的 session 读不到它,
     # update 会静默跳过,表现为任务永远停在 PENDING。
     _dispatch_after_commit(
-        session, request.app.state.run_image_task, task.id, input_data, body.project_id,
+        session,
+        request.app.state.generation_dispatcher,
+        request.app.state.run_image_task,
+        task.id,
+        input_data,
+        body.project_id,
     )
     return Response.success(_task_to_out(task), message="任务已提交")
 
@@ -356,7 +366,12 @@ def submit_action_generation(
         session, user_id=user_id, project_id=body.project_id, input=input_data,
     )
     _dispatch_after_commit(
-        session, request.app.state.run_action_task, task.id, input_data, body.project_id,
+        session,
+        request.app.state.generation_dispatcher,
+        request.app.state.run_action_task,
+        task.id,
+        input_data,
+        body.project_id,
     )
     return Response.success(_task_to_out(task), message="任务已提交")
 
