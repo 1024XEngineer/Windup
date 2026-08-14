@@ -109,6 +109,12 @@ function mutableCharacterApis(
 ): CharacterApis {
   return {
     get: vi.fn(async () => structuredClone(read())),
+    list: vi.fn(async () => ({
+      items: [structuredClone(read())],
+      total: 1,
+      page: 1,
+      pageSize: 20,
+    })),
     listByProject: vi.fn(async () => ({
       items: [structuredClone(read())],
       total: 1,
