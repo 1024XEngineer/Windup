@@ -32,7 +32,7 @@ describe('CharacterDetailPage', () => {
 
     expect(await screen.findByRole('heading', { name: '轻装信使' })).toBeTruthy()
     expect(screen.getByRole('combobox', { name: '选择造型' })).toBeTruthy()
-    expect(screen.getAllByRole('article', { name: /动作/ })).toHaveLength(2)
+    expect(screen.getAllByRole('article', { name: /动作/ })).toHaveLength(3)
     expect(screen.getByRole('img', { name: '呼吸待机帧预览' }).getAttribute('src')).toBe(
       'https://cdn.windup.test/idle-01.png',
     )

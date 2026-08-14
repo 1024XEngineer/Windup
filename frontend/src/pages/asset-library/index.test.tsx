@@ -40,7 +40,7 @@ describe('AssetLibraryPage', () => {
     expect(preview.getAttribute('decoding')).toBe('async')
     expect(preview.getAttribute('fetchpriority')).toBe('high')
     expect(screen.getAllByText('1 套造型')).toHaveLength(1)
-    expect(screen.getByText('2 个动作')).toBeTruthy()
+    expect(screen.getByText('3 个动作')).toBeTruthy()
     expect(screen.queryByRole('searchbox')).toBeNull()
     expect(screen.queryByRole('button', { name: '导出全部角色资产' })).toBeNull()
   })
