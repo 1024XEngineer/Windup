@@ -35,6 +35,7 @@ describe('ProjectsPage', () => {
 
     expect(await screen.findByRole('heading', { name: '项目中心' })).toBeTruthy()
     const createLink = await screen.findByRole('link', { name: '新建项目' })
+    expect(createLink.getAttribute('data-ui')).toBe('editorial-entry-card')
     const artwork = createLink.querySelector('img')
     expect(artwork).toBeTruthy()
     if (!artwork) throw new Error('新建项目入口缺少资产装饰图')
