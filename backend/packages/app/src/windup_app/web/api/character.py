@@ -76,19 +76,19 @@ def _extract_object_keys(character: Character) -> list[str]:
     # 参考图
     url = character.reference_image_url
     if url and url.startswith(prefix):
-        keys.append(url[len(prefix) :])
+        keys.append(url[len(prefix):])
 
     # character_data 内的 URL
     data = character.character_data or {}
     for outfit in data.get("outfits", []):
         url = outfit.get("preview_url")
         if url and url.startswith(prefix):
-            keys.append(url[len(prefix) :])
+            keys.append(url[len(prefix):])
         for action in outfit.get("actions", []):
             for frame in action.get("frames", []):
                 url = frame.get("image_url")
                 if url and url.startswith(prefix):
-                    keys.append(url[len(prefix) :])
+                    keys.append(url[len(prefix):])
 
     return keys
 
