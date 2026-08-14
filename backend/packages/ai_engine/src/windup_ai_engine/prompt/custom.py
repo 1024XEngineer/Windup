@@ -9,9 +9,19 @@ from __future__ import annotations
 
 from windup_common.models import Facing
 
+<<<<<<< HEAD
 from windup_ai_engine.prompt._framing import with_framing
 
 __all__ = ["build_custom_prompt", "MAX_ACTION_CHARS"]
+=======
+__all__ = [
+    "build_custom_prompt",
+    "build_custom_body",
+    "CYCLIC_TAIL",
+    "ONESHOT_TAIL",
+    "MAX_ACTION_CHARS",
+]
+>>>>>>> 60bcf14 (feat(prompt): 用户描述先过措辞门禁与适配器)
 
 # 不是接口限制,是产品判断:描述越长越容易夹带角色外观,而外观由母版承载,写两遍会打架。
 MAX_ACTION_CHARS = 200
@@ -35,14 +45,32 @@ _KEEP_WHAT_IT_HAS = (
 
 # 两条尾句都刻意不写"在地面上 / 双脚可见 / 回到直立站姿"——那些是着地直立类动作的前提,
 # 游泳、飞行、攀爬、倒地都不成立,而文字与动作矛盾时模型会自己找辙调和。
-_CYCLIC_TAIL = (
+# 两条尾句公开:循环性是**请求**的属性(ActionSpec.cyclic),不是文本的属性,所以任何
+# 只拿到文本的组件(如 prompt.adapter)都不该替调用方选一条 —— 猜错是静默的。
+CYCLIC_TAIL = (
     "The motion is one smooth repeating cycle that returns to its starting pose, "
     "and the character stays centered in the same spot in frame."
 )
-_ONESHOT_TAIL = (
+ONESHOT_TAIL = (
     "The character performs this ONCE as one single committed motion, "
     "then holds the final pose and stays still."
 )
+
+
+def build_custom_body(action: str, *, facing: Facing | str = Facing.SIDE) -> str:
+    """朝向锁 + 用户那句话 + 装备存在无关句,**不含**循环性尾句。
+
+    Raises:
+        ValueError: 理由同 :func:`build_custom_prompt`。
+    """
+    text = (action or "").strip()
+    if not text:
+        raise ValueError("自定义动作的描述不能为空")
+    if len(text) > MAX_ACTION_CHARS:
+        raise ValueError(f"自定义动作描述 {len(text)} 字,超过上限 {MAX_ACTION_CHARS}")
+    lock = _FACING_LOCK[Facing(facing)]      # 非法朝向要炸,不静默落到某一支
+    # 朝向放最前:最强的约束先钉。
+    return f"The character {lock}: {text}, {_KEEP_WHAT_IT_HAS}."
 
 
 def build_custom_prompt(
@@ -62,6 +90,7 @@ def build_custom_prompt(
         ValueError: 描述为空或超长。空描述不兜底默认动作——那会付一次 i2v 的钱拿到一段
             站着不动的视频,而帧数时长全对、看不出描述丢了。
     """
+<<<<<<< HEAD
     text = (action or "").strip()
     if not text:
         raise ValueError("自定义动作的描述不能为空")
@@ -71,3 +100,7 @@ def build_custom_prompt(
     tail = _CYCLIC_TAIL if cyclic else _ONESHOT_TAIL
     # 朝向放最前:最强的约束先钉。
     return with_framing(f"The character {lock}: {text}, {_KEEP_WHAT_IT_HAS}. {tail}")
+=======
+    tail = CYCLIC_TAIL if cyclic else ONESHOT_TAIL
+    return f"{build_custom_body(action, facing=facing)} {tail}"
+>>>>>>> 60bcf14 (feat(prompt): 用户描述先过措辞门禁与适配器)
