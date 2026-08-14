@@ -6,6 +6,7 @@ engine 上(不碰全局 Postgres engine)。
 """
 
 import os
+import pathlib
 
 # CI 环境可能未配置真实凭据,在 import 触发 Settings 实例化前提供测试默认值。
 # setdefault 不覆盖已有的环境变量(本地 .env 或 CI secrets 优先生效)。
@@ -152,3 +153,31 @@ def auth_client_b(engine):
     yield client
     app.state.generation_dispatcher.shutdown()
     app.dependency_overrides.clear()
+
+
+# ── 三渲二 provider 的 fixture(随 provider3d 一起迁入)──────────────────
+#
+# 集成用例要真模型(减面 GLB / 已绑骨 FBX)。这些产物是跑过付费链路才有的、体积几十 MB,
+# 不进仓;用 WINDUP_RENDER3D_ARTIFACTS 指向它们所在目录即可跑全套(实测 82/82 全过)。
+# 不指就按仓内默认路径找,找不到**显式 skip 并打印缺哪个文件** —— 不静默当通过。
+# 合成 GLB 的构造器在 tests/render3d_helpers.py(真实产物只有几个,覆盖不到边界)。
+_ARTIFACTS = pathlib.Path(
+    os.getenv("WINDUP_RENDER3D_ARTIFACTS")
+    or pathlib.Path(__file__).resolve().parents[2] / "characters" / "oc_v4"
+)
+RIGGED_FBX = _ARTIFACTS / "rigged_despill.fbx"
+DECIMATED_GLB = _ARTIFACTS / "model_std_draw15k.glb"
+
+
+@pytest.fixture(scope="session")
+def rigged_fbx() -> bytes:
+    if not RIGGED_FBX.exists():
+        pytest.skip(f"缺已绑骨产物 {RIGGED_FBX}")
+    return RIGGED_FBX.read_bytes()
+
+
+@pytest.fixture(scope="session")
+def decimated_glb() -> bytes:
+    if not DECIMATED_GLB.exists():
+        pytest.skip(f"缺减面产物 {DECIMATED_GLB}")
+    return DECIMATED_GLB.read_bytes()

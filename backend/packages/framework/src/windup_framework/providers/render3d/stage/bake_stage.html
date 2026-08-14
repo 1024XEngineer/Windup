@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>绑骨模型 → 多朝向序列帧(出帧台)</title>
+<style>html,body{margin:0;background:transparent}canvas{display:block}</style>
+</head>
+<body>
+<script type="importmap">
+{ "imports": { "three": "/three/build/three.module.js",
+               "three/addons/": "/three/examples/jsm/" } }
+</script>
+<script type="module">
+/**
+ * SpriteRenderProvider 的出帧台。由 bake_driver.mjs 无头驱动,只对外暴露 window.__* 钩子。
+ *
+ * 这份是从管线的 anim2sprite.html **蒸馏**出来的:去掉了 charparts / autoskin / socketprobe
+ * (管线私有资产,搬进产品仓带不走),四条硬约束一条不动 —— 它们都是拿教训换的:
+ *
+ *  1. **出帧走 WebGL 缓冲,不走页面截图**。页面合成会把 canvas 的透明底换成 body 背景色,
+ *     于是 alpha 全 255、掩码量到整张画布,四条门禁全"PASS"全是假的。
+ *  2. **取样用 mixer.setTime(t),不靠实时播放**。同一帧两次跑必须一致。
+ *  3. **构图一次算定、跨所有片段与所有朝向固定**。逐帧重算包围盒会让序列帧对不齐,
+ *     还会把角色高度的正常起伏误当成漂移。
+ *  4. **不在 3D 里锁地**。位移渲完在图像空间量;3D 里锁地会把作者位移吞掉
+ *     (实测:hip 设成常量后 12 帧输出 md5 完全一致 —— 也就是位移信息没了)。
+ *
+ * 另外两条本台子自己的规矩:
+ *  - **材质取值严格校验**:认不出的 mat 直接抛。管线那份把 cel / studio 之类静默落到同一个
+ *    分支,于是"换材质做对照"等于没换,结论不作数(仪器陷阱,踩过)。
+ *  - **构图的横向跨度取 max(X, Z)**:多朝向是转相机不是转模型,若按单一水平轴定构图,
+ *    转到 90° 时取景就变了,各朝向的精灵对不齐。
+ */
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const Q = new URLSearchParams(location.search);
+const MODEL = Q.get('model');
+const MAT = Q.get('mat') || 'cel';
+// 兜底取 interfaces.RENDER_SIZE 的竖屏尺寸。provider always 传 w/h,所以这条只在
+// 手动开本页调试时生效 —— 留旧的横屏值会让调试看到的构图与产线不是一回事。
+const W = +(Q.get('w') || 1536), H = +(Q.get('h') || 2560);
+
+// 认识的材质取值 —— 每个都对应**真正不同**的渲染分支。不在表里的一律抛,不静默兜底。
+const MATERIALS = ['cel', 'lit', 'clay', 'toon', 'orig'];
+if (!MATERIALS.includes(MAT)) throw new Error(`未知材质 ${MAT};只认 ${MATERIALS.join(' / ')}`);
+
+const scene = new THREE.Scene();
+// AA 关掉:像素精灵要硬边。开 AA 实测留下上万个半透明柔边像素,过不了硬边门禁。
+const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);              // 固定 1,免得 devicePixelRatio 让不同机器出不同尺寸
+renderer.setSize(W, H);
+renderer.setClearColor(0x000000, 0);
+document.body.appendChild(renderer.domElement);
+
+// cel 是零光照平涂(完全确定性,灯位变化不改颜色),不需要灯;其余需要。
+if (MAT !== 'cel') {
+  const lights = new THREE.Group();
+  lights.add(new THREE.DirectionalLight(0xfff4e0, 2.2).translateX(1.2).translateY(1.6).translateZ(1.0),
+             new THREE.DirectionalLight(0xc8dcff, 0.6).translateX(-1.3).translateY(0.4).translateZ(0.8),
+             new THREE.AmbientLight(0xffffff, 0.35));
+  scene.add(lights);
+}
+const root = new THREE.Group(); scene.add(root);
+
+/** 按扩展名选加载器,统一成 {scene, animations}。绑骨产物可能是 FBX(GLTFLoader 吃不下)。 */
+async function loadModel(url) {
+  if (/\.fbx(\?|$)/i.test(url)) {
+    const { FBXLoader } = await import('three/addons/loaders/FBXLoader.js');
+    const obj = await new FBXLoader().loadAsync(url);
+    return { scene: obj, animations: obj.animations || [], loader: 'fbx' };
+  }
+  const g = await new GLTFLoader().loadAsync(url);
+  return { scene: g.scene, animations: g.animations || [], loader: 'gltf' };
+}
+const asset = await loadModel(MODEL);
+const model = asset.scene;
+root.add(model);
+
+// ── 归一化:总高缩到 1.0、脚底落在 y=0(1.0 = 角色总高,与 root_motion 的单位一致) ──
+model.updateMatrixWorld(true);
+let bb = new THREE.Box3().setFromObject(model);
+const rawH = bb.max.y - bb.min.y;
+const s = 1.0 / rawH;
+model.scale.setScalar(s);
+model.updateMatrixWorld(true);
+bb = new THREE.Box3().setFromObject(model);
+model.position.y -= bb.min.y;
+model.position.x -= (bb.max.x + bb.min.x) / 2;
+model.position.z -= (bb.max.z + bb.min.z) / 2;
+model.updateMatrixWorld(true);
+
+// ── 材质 ────────────────────────────────────────────────────────────────────
+const toonRamp = (() => {
+  const c = document.createElement('canvas'); c.width = 3; c.height = 1;
+  const g = c.getContext('2d');
+  ['#4a4a52', '#9a9aa6', '#f2f2f6'].forEach((col, i) => { g.fillStyle = col; g.fillRect(i, 0, 1, 1); });
+  const t = new THREE.CanvasTexture(c); t.minFilter = t.magFilter = THREE.NearestFilter; return t;
+})();
+// 每个取值一个显式分支、没有兜底分支:有兜底的话拼错的名字会静默落到同一处,
+// "换材质做对照"就成了实际没换,而得出的结论不作数。
+function rebuildMaterial(src) {
+  // side 必须继承源材质:图生 3D + 减面的网格普遍带 doubleSided,丢掉等于开背面剔除,
+  // 而减面后一个三角形只有约一个像素,表现为满身单像素白斑。
+  const side = src.side ?? THREE.FrontSide;
+  const map = src.map || null;
+  const color = src.color ? src.color.clone() : new THREE.Color(0xcccccc);
+  return (
+      MAT === 'cel'  ? new THREE.MeshBasicMaterial({ map, color: map ? new THREE.Color(0xffffff) : color, side })
+    : MAT === 'lit'  ? new THREE.MeshStandardMaterial({ map, color: 0xffffff, roughness: 0.68, metalness: 0.15, side })
+    : MAT === 'clay' ? new THREE.MeshStandardMaterial({ color: 0xb9bec4, roughness: 0.62, metalness: 0.0, side })
+    : MAT === 'toon' ? new THREE.MeshToonMaterial({ map, color, gradientMap: toonRamp, side })
+    : (() => { throw new Error(`材质 ${MAT} 在表里但没有对应分支 —— 别静默兜底`); })()
+  );
+}
+
+if (MAT !== 'orig') {
+  model.traverse(o => {
+    if (!o.isMesh && !o.isSkinnedMesh) return;
+    // 逐个材质组替换,不能只拿 material[0] 再赋给整个网格:一个 mesh 可以有多个材质组
+    // (皮肤 / 头发 / 眼睛 / 衣服),那样做会让所有组都用第一个组的贴图渲染 ——
+    // 外观整个变了,而帧数、覆盖率、成色一道都不会红。
+    if (Array.isArray(o.material)) {
+      o.material = o.material.map(m => (m ? rebuildMaterial(m) : m));
+    } else if (o.material) {
+      o.material = rebuildMaterial(o.material);
+    }
+  });
+}
+
+// ── In-Place:把根骨的水平位移【抽出来】,不是丢掉 ────────────────────────────
+// 留着它有两个后果:① 构图会把整条行进路径纳进来,角色被缩成一小点;② 序列帧里角色在
+// 画布上平移,引擎侧没法用。我们的口径是帧原地不动、位移单独走 root_motion 轨。
+// 竖直分量保留 —— 重心起伏是姿态的一部分,不是位移。
+function topBoneName(m) {
+  let top = null;
+  m.traverse(o => { if (o.isBone && !top && !(o.parent && o.parent.isBone)) top = o.name; });
+  return top;
+}
+const ROOT_BONE = topBoneName(model);
+const rootMotion = {};
+function extractRootXZ(clip, boneName) {
+  // 只认根骨自己的位置轨。认宽了会把子骨(如 Spine)的位移也剥掉,那是姿态不是位移。
+  const tr = clip.tracks.find(t => t.name === `${boneName}.position`);
+  if (!tr) return;
+  const v = tr.values, x0 = v[0], z0 = v[2], disp = [];
+  for (let i = 0; i < v.length; i += 3) {
+    disp.push([+((v[i] - x0) * s).toFixed(5), +((v[i + 2] - z0) * s).toFixed(5)]);
+    v[i] = x0; v[i + 2] = z0;              // 就地压平,mixer 之后读到的就是原地版
+  }
+  const span = Math.hypot(disp.at(-1)[0], disp.at(-1)[1]);
+  rootMotion[clip.name] = { unit: '1.0 = 角色总高', times: [...tr.times], disp, total_span: +span.toFixed(4) };
+}
+if (ROOT_BONE) for (const c of asset.animations) extractRootXZ(c, ROOT_BONE);
+
+// ── 动画:确定性取样 ────────────────────────────────────────────────────────
+const mixer = new THREE.AnimationMixer(model);
+const clips = {};
+for (const c of asset.animations) clips[c.name] = c;
+let current = null;
+function useClip(name) {
+  const c = clips[name]; if (!c) return false;
+  mixer.stopAllAction();
+  current = mixer.clipAction(c); current.reset().play();
+  return true;
+}
+/** 摆到 clip 的第 i/n 个取样点。不含尾点:循环动画首尾重复会多一张卡顿帧。 */
+function sample(i, n) {
+  if (!current) return 0;
+  const t = (i / n) * current.getClip().duration;
+  mixer.setTime(0); mixer.setTime(t);      // 先归零再定位,避免累积误差
+  model.updateMatrixWorld(true);
+  return t;
+}
+
+// ── 相机:构图一次算定,跨所有片段、所有朝向固定 ────────────────────────────
+// 【踩过的坑】不能用 Box3.setFromObject 量 SkinnedMesh 的动画包围盒:蒙皮变形在 GPU 上做,
+// CPU 侧的几何顶点【从来不动】,量出来永远是绑定姿态的盒子(症状:含跳跃在内的五个动作
+// 量出来高度全是 1.0、横宽全一样,于是跳跃腾空时头切出画面)。改成量【骨骼世界位置】
+// 再加一圈余量补网格厚度。
+function unionBox(nPerClip = 24) {
+  const box = new THREE.Box3();
+  const bones = [];
+  model.traverse(o => { if (o.isBone) bones.push(o); });
+  const v = new THREE.Vector3();
+  // 无动画时直接量绑定姿态。少了这一支，下面的循环一次都不执行，box 保持空 ——
+  // 空 Box3 的 min/max 是 ±Infinity，cy 算出 NaN，相机位置变 NaN，渲出全透明帧而不报错。
+  if (!Object.keys(clips).length) {
+    box.expandByObject(model);
+    return box;
+  }
+  for (const name of Object.keys(clips)) {
+    useClip(name);
+    for (let i = 0; i < nPerClip; i++) {
+      sample(i, nPerClip);
+      if (bones.length) for (const b of bones) box.expandByPoint(v.setFromMatrixPosition(b.matrixWorld));
+      else box.expandByObject(model);
+    }
+  }
+  if (bones.length) box.expandByScalar(0.10);   // 骨骼是线,网格有厚度
+  return box;
+}
+const UB = unionBox();
+if (!isFinite(UB.min.y) || !isFinite(UB.max.y)) {
+  throw new Error('构图包围盒是空的 —— 相机会被算成 NaN 并渲出全透明帧');
+}
+const pad = 0.08;
+const spanY = (UB.max.y - UB.min.y) + pad * 2;
+// 横向取 max(X, Z):多朝向是转相机不是转模型,按单一水平轴定构图的话,转到 90° 时
+// 投影宽度换成了另一条轴,取景跟着变 —— 各朝向的精灵就对不齐了。
+const spanH = Math.max(UB.max.x - UB.min.x, UB.max.z - UB.min.z) + pad * 2;
+const ORTHO_H = +(Q.get('orthoh') || 0) || Math.max(spanY, spanH * (H / W), 1.2);
+
+let CAM_YAW = 0;
+const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, -20, 20);
+function placeCam() {
+  // 基准视角 side2:相机在 −X,屏幕右 = 前进轴 +Z,角色天然朝右(对齐 faces="right")。
+  // 不用"把精灵水平镜像"代替 —— 角色左右不对称(单侧腕带),镜像会把不对称细节翻到另一边。
+  let v = [-1, 0, 0];
+  if (CAM_YAW) {
+    const r = CAM_YAW * Math.PI / 180, c = Math.cos(r), s2 = Math.sin(r);
+    v = [v[0] * c + v[2] * s2, v[1], -v[0] * s2 + v[2] * c];
+  }
+  const n = Math.hypot(...v), d = 4;
+  const cy = (UB.max.y + UB.min.y) / 2;
+  cam.position.set(v[0] / n * d, cy + v[1] / n * d, v[2] / n * d);
+  cam.lookAt(0, cy, 0);
+  const a = W / H;
+  cam.top = ORTHO_H / 2; cam.bottom = -ORTHO_H / 2;
+  cam.left = -ORTHO_H * a / 2; cam.right = ORTHO_H * a / 2;
+  cam.updateProjectionMatrix();
+}
+placeCam();
+
+// ── 对外接口(driver 用) ───────────────────────────────────────────────────
+window.__clips = () => Object.fromEntries(Object.entries(clips).map(([k, c]) => [k, +c.duration.toFixed(4)]));
+window.__rootMotion = () => rootMotion;
+window.__rigInfo = () => ({
+  loader: asset.loader, rootBone: ROOT_BONE, rawH: +rawH.toFixed(4), scale: +s.toFixed(6),
+  orthoH: +ORTHO_H.toFixed(4), material: MAT,
+  bones: (() => { let n = 0; model.traverse(o => { if (o.isBone) n++; }); return n; })(),
+  boneNames: (() => { const a = []; model.traverse(o => { if (o.isBone) a.push(o.name); }); return a; })(),
+  skinned: (() => { let n = 0; model.traverse(o => { if (o.isSkinnedMesh) n++; }); return n; })(),
+  verts: (() => { let n = 0; model.traverse(o => { if (o.isMesh || o.isSkinnedMesh) n += o.geometry.attributes.position.count; }); return n; })(),
+});
+window.__setCamYaw = (deg) => { CAM_YAW = +deg; placeCam(); return CAM_YAW; };
+window.__setup = (name, i, n) => {
+  if (!useClip(name)) return null;
+  const t = sample(i, n);
+  renderer.render(scene, cam);
+  return { clip: name, i, n, t: +t.toFixed(4), duration: +current.getClip().duration.toFixed(4) };
+};
+window.__grab = () => { renderer.render(scene, cam); return renderer.domElement.toDataURL('image/png'); };
+/**
+ * 本帧非透明像素占比(0–1)。给 driver 做空帧自检:台子会在角色出画 / 片段选错时
+ * 静默产出全透明帧,而外面照样打印"N 帧 时长…"。不让空白冒充成功。
+ */
+window.__coverage = () => {
+  renderer.render(scene, cam);
+  const src = renderer.domElement;
+  const w = 128, h = Math.max(1, Math.round(src.height / src.width * 128));
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d'); ctx.clearRect(0, 0, w, h); ctx.drawImage(src, 0, 0, w, h);
+  const d = ctx.getImageData(0, 0, w, h).data;
+  let n = 0;
+  for (let i = 3; i < d.length; i += 4) if (d[i] > 8) n++;
+  return n / (w * h);
+};
+window.__ready = true;
+</script>
+</body>
+</html>
