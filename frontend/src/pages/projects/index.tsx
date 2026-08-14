@@ -1,10 +1,9 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router'
 
-import assetLibraryArtwork from '@/assets/workspace/asset-library.png'
 import { characterApis, projectApis, type Character, type Project } from '@/entities'
 import type { Paged } from '@/shared/pagination'
-import { Pagination } from '@/shared/ui'
+import { EditorialEntryCard, Pagination } from '@/shared/ui'
 
 const PROJECT_PAGE_SIZE = 12
 
@@ -165,38 +164,14 @@ function previewFromCharacter(character: Character | undefined): string | null {
 
 function ProjectCreateCard() {
   return (
-    <Link
+    <EditorialEntryCard
       to="/projects/new"
-      aria-label="新建项目"
-      className="group relative block min-h-[13.5rem] overflow-hidden rounded-[1.5rem] border border-app-line bg-transparent p-6 transition duration-300 ease-out hover:-translate-y-0.5 hover:border-app-line-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-ink"
-    >
-      <div className="relative z-10 flex h-full max-w-[18rem] flex-col">
-        <h2 className="font-serif text-[clamp(1.7rem,3vw,2.5rem)] leading-none font-medium tracking-[-0.045em] text-app-ink">
-          新建一个项目
-        </h2>
-        <p className="mt-3 text-sm leading-6 text-app-muted">
-          建立角色资产与生成规格的独立生产空间。
-        </p>
-        <span className="mt-auto inline-flex items-center gap-2 text-sm font-semibold text-app-ink-soft transition-colors group-hover:text-app-accent">
-          开始建立 <span aria-hidden="true">→</span>
-        </span>
-      </div>
-      <div className="pointer-events-none absolute -right-3 top-1/2 hidden h-[13.5rem] w-[17rem] -translate-y-1/2 overflow-hidden sm:block">
-        <img
-          data-testid="projects-asset-artwork"
-          src={assetLibraryArtwork}
-          alt=""
-          aria-hidden="true"
-          draggable="false"
-          className="absolute h-[17.875rem] w-[17.875rem] max-w-none translate-x-8 rotate-[5deg] object-contain opacity-65 saturate-[0.48] transition duration-500 ease-out group-hover:translate-x-7 group-hover:rotate-[4deg] group-hover:scale-[1.015] group-hover:opacity-75"
-          style={{
-            imageRendering: 'pixelated',
-            left: '-0.75rem',
-            top: '-2.2rem',
-          }}
-        />
-      </div>
-    </Link>
+      ariaLabel="新建项目"
+      artwork="asset-library"
+      title="新建一个项目"
+      description="建立角色资产与生成规格的独立生产空间。"
+      action="开始建立"
+    />
   )
 }
 

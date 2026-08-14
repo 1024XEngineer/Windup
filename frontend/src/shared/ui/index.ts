@@ -1,3 +1,5 @@
+export { EditorialEntryCard } from './editorial-entry-card'
+export type { EditorialEntryArtwork, EditorialEntryCardProps } from './editorial-entry-card'
 export { PageContainer } from './page-container'
 export type { PageContainerProps } from './page-container'
 export { Pagination } from './pagination'
