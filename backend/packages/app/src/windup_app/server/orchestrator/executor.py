@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import threading
 from collections.abc import Callable
@@ -331,7 +332,15 @@ class ActionTaskExecutor:
              "duration_ms": dur}
             for i, (png, dur) in enumerate(zip(generated.frames, generated.durations))
         ]
-        return {"type": "character_action", "action_type": input.action_type.value, "frames": frames}
+        # quality / prompt_version 只落库记账,不在此处据成色改判决:交付/重试是产品
+        # 决策,该由读这本账的下游按阈值决定,任务状态仍只反映"生成流程是否跑完"。
+        return {
+            "type": "character_action",
+            "action_type": input.action_type.value,
+            "frames": frames,
+            "quality": dataclasses.asdict(generated.quality),
+            "prompt_version": generated.prompt_version,
+        }
 
     def _get_generator(self, video_model: str | None = None) -> CharacterGeneratorPort:
         """懒装配 CharacterGenerator,按模型名分桶。

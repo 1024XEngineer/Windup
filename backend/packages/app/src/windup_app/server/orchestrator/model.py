@@ -121,11 +121,17 @@ class CharacterActionOutput:
     前端拿到后写入 ``character_data.outfits[].actions[]``：
     ``action_type`` → ``CharacterAction.type``，
     ``frames`` → ``CharacterAction.frames[]``。
+
+    ``quality`` / ``prompt_version`` 是引擎产出成色的账本(``ai_engine.ports.ActionQuality``
+    的原样转录 + 提示词版本),不参与前端回填、只落库供后续对比——本层不据此判成败,
+    见 executor 里"只记账不判决"的说明。
     """
 
     type: str = "character_action"
     action_type: str = ""
     frames: list[CharacterActionFrame] = field(default_factory=list)
+    quality: dict | None = None
+    prompt_version: str | None = None
 
 
 # -- 任务记录 ------------------------------------------------------------
