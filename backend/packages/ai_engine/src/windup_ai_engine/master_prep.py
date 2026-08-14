@@ -3,9 +3,11 @@
 **核心规律(三次实测验证,写死为契约):母版姿态决定动作,提示词只能微调。**
   - walk:母版**朝侧向**才不转身;正面母版配侧走词 → 模型靠转身调和图文矛盾。
   - jump:母版**顶部留白**才不被视频画面裁掉。
-  - attack:必须给**极限蓄力母版**(出手那只手已拉到身后腰际)。用站立母版时,即使提示词
+  - attack:必须给**极限蓄力母版**(发力那一侧已拉到待发位)。用站立母版时,即使提示词
     写死"不过头顶 / 不转身 / 只做一次",模型仍会抡过头顶、转到背面、劈两次 —— 强动作
-    先验压不住;换蓄力母版后模型只能"接着往前挥",没有再抡起的空间。
+    先验压不住;换蓄力母版后模型只能"接着往前发力",没有再抡起的空间。
+    蓄力姿态按运动拓扑分四支(见 :data:`ATTACK_MASTER_POSES`):同一张横挥蓄力母版
+    喂给直刺 / 远程 / 前扑,模型会先把收好的那一侧重新抡起来再做。
 
 **姿势描述里不写装备名词(#195)。** 这几段是拿去生成母版的提示词,写"the weapon"等于
 断言角色持械 —— 空手角色会被凭空塞一把武器,而母版是整条 i2v 链的身份来源,污染会一路
@@ -27,16 +29,26 @@ import io
 
 from PIL import Image
 
+from windup_common.models import AttackArchetype
+
 from windup_ai_engine._subject import bg_color as _bg_color
 from windup_ai_engine.prompt._md import load_section
 
-__all__ = ["add_headroom", "prepare_master", "MASTER_POSES"]
+__all__ = ["add_headroom", "prepare_master", "MASTER_POSES", "ATTACK_MASTER_POSES"]
 
 # 空值 = 该动作用中性站立母版即可。这是唯一允许空提示词的地方,故显式放行 ——
 # 别处的空串会一路跑到付费调用。
 MASTER_POSES = {
     a: load_section("master_poses.md", a, allow_empty=True)
-    for a in ("walk", "run", "idle", "jump", "attack")
+    for a in ("walk", "run", "idle", "jump")
+}
+
+# attack 按运动拓扑取母版姿态:四支的起手姿态互不兼容(横挥蓄力母版跑不出直刺),
+# 而"母版姿态决定动作"对 attack 最狠 —— 见本模块开头。这里不放行空值:
+# 四支都必须有自己的蓄力姿态,缺一支就该炸,不能退回中性站立。
+ATTACK_MASTER_POSES = {
+    arch: load_section("master_poses.md", f"attack.{arch.value}")
+    for arch in AttackArchetype
 }
 
 

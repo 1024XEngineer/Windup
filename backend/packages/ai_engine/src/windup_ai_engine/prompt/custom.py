@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from windup_common.models import Facing
 
+from windup_ai_engine.prompt._framing import with_framing
+
 __all__ = ["build_custom_prompt", "MAX_ACTION_CHARS"]
 
 # 不是接口限制,是产品判断:描述越长越容易夹带角色外观,而外观由母版承载,写两遍会打架。
@@ -68,4 +70,4 @@ def build_custom_prompt(
     lock = _FACING_LOCK[Facing(facing)]      # 非法朝向要炸,不静默落到某一支
     tail = _CYCLIC_TAIL if cyclic else _ONESHOT_TAIL
     # 朝向放最前:最强的约束先钉。
-    return f"The character {lock}: {text}, {_KEEP_WHAT_IT_HAS}. {tail}"
+    return with_framing(f"The character {lock}: {text}, {_KEEP_WHAT_IT_HAS}. {tail}")

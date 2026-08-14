@@ -58,6 +58,19 @@ class ActionType(str, Enum):
     CUSTOM = "custom"
 
 
+class AttackArchetype(str, Enum):
+    """攻击的运动拓扑 —— 决定 ``prompts/attack.md`` 取哪一节(取值即节名前缀)。
+
+    按"身体怎么发力"分而不按装备形状分:提示词里的形状先验(宽面、弧线)等于断言角色
+    手握一件有宽面的长条物,喂空手 / 法杖 / 四足角色时模型会凭空补出那件东西来调和矛盾。
+    """
+
+    SWEEP = "sweep"      # 长条持物:横挥 / 下劈
+    THRUST = "thrust"    # 短持物或空手:直出 / 戳刺
+    PROJECT = "project"  # 远程:身体前压、送到位、终态保持
+    LUNGE = "lunge"      # 非双足:整体前扑,头部 / 前肢领先
+
+
 class GenRoute(str, Enum):
     """生成路线 —— 实测挣得的分流依据(见 ai_engine.strategy 层 docstring)。
 
@@ -190,6 +203,19 @@ class ActionSpec(BaseModel):
     # 而帧数、时长、成色全正常。名字不叫 loop 是因为它有真实消费方——决定 slicing 走
     # pick_cycle 还是 pick_oneshot、出参要不要量 loop_seam。
     cyclic: bool | None = None
+
+    # 攻击走哪一支运动拓扑。``None`` = 不指定,由 ``build_attack_prompt`` 的默认值决定 ——
+    # 这里不给默认值,否则同一个缺省被两处各写一份,改一处另一处静默不动。
+    archetype: AttackArchetype | None = None
+
+    @model_validator(mode="after")
+    def _archetype_belongs_to_attack_only(self) -> ActionSpec:
+        """非攻击动作带 archetype 要炸:它只被攻击提示词消费,传了不会生效。"""
+        if self.action is not ActionType.ATTACK and self.archetype is not None:
+            raise ValueError(
+                f"action={self.action.value} 不该带 archetype;它只决定攻击提示词取哪一支,传了不会生效"
+            )
+        return self
 
     @model_validator(mode="after")
     def _custom_needs_its_own_settings(self) -> ActionSpec:
