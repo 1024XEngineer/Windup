@@ -6,13 +6,16 @@ from windup_common.enums.character import CharacterStatus
 
 def _create_project(auth_client, name: str = "默认项目") -> dict:
     """创建一个项目并返回响应 data。"""
-    return auth_client.post("/projects", json={
-        "project_name": name,
-        "character_perspective": 1,
-        "directional_movement": 2,
-        "sprite_width": 64,
-        "sprite_height": 64,
-    }).json()["data"]
+    return auth_client.post(
+        "/projects",
+        json={
+            "project_name": name,
+            "character_perspective": 1,
+            "directional_movement": 2,
+            "sprite_width": 64,
+            "sprite_height": 64,
+        },
+    ).json()["data"]
 
 
 def _payload(project_id: int, **overrides):
@@ -35,17 +38,26 @@ def _payload_with_frames(project_id: int, **overrides):
         "name": "有帧角色",
         "description": "包含真实帧",
         "character_data": {
-            "outfits": [{
-                "id": "outfit-1",
-                "name": "默认造型",
-                "actions": [{
-                    "id": "action-1",
-                    "type": "idle",
-                    "name": "待机",
-                    "frame_count": 1,
-                    "frames": [{"index": 0, "image_url": "https://example.com/frame.png"}],
-                }],
-            }],
+            "outfits": [
+                {
+                    "id": "outfit-1",
+                    "name": "默认造型",
+                    "actions": [
+                        {
+                            "id": "action-1",
+                            "type": "idle",
+                            "name": "待机",
+                            "frame_count": 1,
+                            "frames": [
+                                {
+                                    "index": 0,
+                                    "image_url": "https://example.com/frame.png",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
         },
     }
     base.update(overrides)
@@ -88,7 +100,8 @@ def test_create_name_roundtrip(auth_client):
     """名称持久化后可通过 GET 读回。"""
     project = _create_project(auth_client)
     created = auth_client.post(
-        "/characters", json=_payload(project["id"], name="小精灵"),
+        "/characters",
+        json=_payload(project["id"], name="小精灵"),
     ).json()["data"]
 
     resp = auth_client.get(f"/characters/{created['id']}")
@@ -123,16 +136,19 @@ def test_create_under_other_users_project_returns_404(auth_client, auth_client_b
 
 
 def test_create_same_workflow_run_under_another_project_returns_404(
-    auth_client, auth_client_b,
+    auth_client,
+    auth_client_b,
 ):
     project_a = _create_project(auth_client, "用户 A 项目")
     project_b = _create_project(auth_client_b, "用户 B 项目")
     created = auth_client.post(
-        "/characters", json=_payload(project_a["id"], workflow_run_id=42),
+        "/characters",
+        json=_payload(project_a["id"], workflow_run_id=42),
     ).json()["data"]
 
     resp = auth_client_b.post(
-        "/characters", json=_payload(project_b["id"], workflow_run_id=42),
+        "/characters",
+        json=_payload(project_b["id"], workflow_run_id=42),
     )
 
     assert resp.json()["code"] == 404
@@ -155,7 +171,8 @@ def test_get_other_users_character_returns_404(auth_client, auth_client_b):
     """用户 B 不能查看用户 A 的角色。"""
     project = _create_project(auth_client)
     created = auth_client.post(
-        "/characters", json=_payload(project["id"]),
+        "/characters",
+        json=_payload(project["id"]),
     ).json()["data"]
 
     resp = auth_client_b.get(f"/characters/{created['id']}")
@@ -168,11 +185,13 @@ def test_update_other_users_character_returns_404(auth_client, auth_client_b):
     """用户 B 不能修改用户 A 的角色。"""
     project = _create_project(auth_client)
     created = auth_client.post(
-        "/characters", json=_payload(project["id"]),
+        "/characters",
+        json=_payload(project["id"]),
     ).json()["data"]
 
     resp = auth_client_b.patch(
-        f"/characters/{created['id']}", json={"name": "黑化"},
+        f"/characters/{created['id']}",
+        json={"name": "黑化"},
     )
 
     assert resp.json()["code"] == 404
@@ -183,7 +202,8 @@ def test_delete_other_users_character_returns_404(auth_client, auth_client_b):
     """用户 B 不能删除用户 A 的角色。"""
     project = _create_project(auth_client)
     created = auth_client.post(
-        "/characters", json=_payload(project["id"]),
+        "/characters",
+        json=_payload(project["id"]),
     ).json()["data"]
 
     resp = auth_client_b.delete(f"/characters/{created['id']}")
@@ -219,10 +239,14 @@ def test_list_characters_filter_by_status(auth_client):
     # 创建草稿角色
     auth_client.post("/characters", json=_payload(project["id"], workflow_run_id=1))
     # 创建已发布角色
-    auth_client.post("/characters", json=_payload_with_frames(project["id"], workflow_run_id=2))
+    auth_client.post(
+        "/characters", json=_payload_with_frames(project["id"], workflow_run_id=2)
+    )
 
     # 查询已发布角色
-    resp = auth_client.get("/characters", params={"project_id": project["id"], "status": 1})
+    resp = auth_client.get(
+        "/characters", params={"project_id": project["id"], "status": 1}
+    )
     data = resp.json()
     assert data["code"] == 200
     assert data["total"] == 1
@@ -230,7 +254,9 @@ def test_list_characters_filter_by_status(auth_client):
     assert data["data"][0]["status"] == 1
 
     # 查询草稿角色
-    resp = auth_client.get("/characters", params={"project_id": project["id"], "status": 0})
+    resp = auth_client.get(
+        "/characters", params={"project_id": project["id"], "status": 0}
+    )
     data = resp.json()
     assert data["code"] == 200
     assert data["total"] == 1
@@ -242,7 +268,9 @@ def test_list_characters_without_status_returns_all(auth_client):
     """不传 status 参数时返回所有角色。"""
     project = _create_project(auth_client)
     auth_client.post("/characters", json=_payload(project["id"], workflow_run_id=1))
-    auth_client.post("/characters", json=_payload_with_frames(project["id"], workflow_run_id=2))
+    auth_client.post(
+        "/characters", json=_payload_with_frames(project["id"], workflow_run_id=2)
+    )
 
     resp = auth_client.get("/characters", params={"project_id": project["id"]})
     data = resp.json()
@@ -251,11 +279,53 @@ def test_list_characters_without_status_returns_all(auth_client):
     assert len(data["data"]) == 2
 
 
+def test_list_characters_without_project_returns_only_current_users_projects(
+    auth_client,
+    auth_client_b,
+):
+    """跨项目列表必须完整分页，同时保持用户归属边界。"""
+    project_a1 = _create_project(auth_client, "用户 A 项目一")
+    project_a2 = _create_project(auth_client, "用户 A 项目二")
+    project_b = _create_project(auth_client_b, "用户 B 项目")
+    created_a1 = auth_client.post(
+        "/characters",
+        json=_payload(project_a1["id"], workflow_run_id=101, name="角色一"),
+    ).json()["data"]
+    created_a2 = auth_client.post(
+        "/characters",
+        json=_payload_with_frames(project_a2["id"], workflow_run_id=102, name="角色二"),
+    ).json()["data"]
+    auth_client_b.post(
+        "/characters",
+        json=_payload(project_b["id"], workflow_run_id=201, name="他人角色"),
+    )
+
+    first = auth_client.get("/characters", params={"page": 1, "page_size": 1}).json()
+    second = auth_client.get("/characters", params={"page": 2, "page_size": 1}).json()
+
+    assert first["code"] == 200
+    assert first["total"] == 2
+    assert second["total"] == 2
+    assert [first["data"][0]["id"], second["data"][0]["id"]] == [
+        created_a2["id"],
+        created_a1["id"],
+    ]
+    assert {first["data"][0]["project_id"], second["data"][0]["project_id"]} == {
+        project_a1["id"],
+        project_a2["id"],
+    }
+
+    published = auth_client.get("/characters", params={"status": 1}).json()
+    assert published["total"] == 1
+    assert [item["id"] for item in published["data"]] == [created_a2["id"]]
+
+
 def test_update_character_data_recalculates_status(auth_client):
     """更新 character_data 后应自动重新计算 status。"""
     project = _create_project(auth_client)
     created = auth_client.post(
-        "/characters", json=_payload(project["id"]),
+        "/characters",
+        json=_payload(project["id"]),
     ).json()["data"]
 
     # 初始为草稿
@@ -266,17 +336,26 @@ def test_update_character_data_recalculates_status(auth_client):
         f"/characters/{created['id']}",
         json={
             "character_data": {
-                "outfits": [{
-                    "id": "outfit-1",
-                    "name": "默认造型",
-                    "actions": [{
-                        "id": "action-1",
-                        "type": "idle",
-                        "name": "待机",
-                        "frame_count": 1,
-                        "frames": [{"index": 0, "image_url": "https://example.com/frame.png"}],
-                    }],
-                }],
+                "outfits": [
+                    {
+                        "id": "outfit-1",
+                        "name": "默认造型",
+                        "actions": [
+                            {
+                                "id": "action-1",
+                                "type": "idle",
+                                "name": "待机",
+                                "frame_count": 1,
+                                "frames": [
+                                    {
+                                        "index": 0,
+                                        "image_url": "https://example.com/frame.png",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
             },
         },
     )
@@ -288,7 +367,8 @@ def test_update_character_with_null_character_data(auth_client):
     """更新 character_data 为 null 时应返回 400 错误。"""
     project = _create_project(auth_client)
     created = auth_client.post(
-        "/characters", json=_payload_with_frames(project["id"]),
+        "/characters",
+        json=_payload_with_frames(project["id"]),
     ).json()["data"]
 
     # 更新 character_data 为 null
