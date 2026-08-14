@@ -827,7 +827,7 @@ function OutfitSelection({
                   </strong>
                   <span className="mt-1 block text-[0.68rem] text-app-muted">
                     {playback.playable
-                      ? `${outfit.actions.length} 个动作 · ${playback.frameCount} 帧`
+                      ? `${outfit.actions.filter((action) => action.frames.length > 0).length} 个动作 · ${playback.frameCount} 帧`
                       : '尚无可播放帧'}
                   </span>
                 </span>
