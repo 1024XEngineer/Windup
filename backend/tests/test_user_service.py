@@ -282,46 +282,29 @@ def test_login_banned_user(db_session, service, mock_email):
 # -- 验证码登录测试 ------------------------------------------------------
 
 
-def test_login_by_code_new_user(db_session, service, mock_email):
-    service._redis.get.return_value = "123456"
-
-    input_data = LoginByCodeInput(email="code@example.com", code="123456")
-    result = service.login_by_code_with_session(db_session, input_data)
-
-    assert result.user.email == "code@example.com"
-    assert result.user.email_verified_at is not None
-
-
-def test_login_by_code_new_user_creates_credit_account(db_session, service, mock_email):
-    """验证码自动注册时应创建积分账户并赠送初始积分。"""
+def test_login_by_code_unknown_email_does_not_create_user(db_session, service, mock_email):
+    """内测关闭公开注册后，验证码登录不得自动建号。"""
     from sqlalchemy import select
-    from windup_app.server.quota.model import CreditAccount, CreditTransaction
-    from windup_common.enums.quota import CreditReason
-    from windup_framework.config.quota import settings as quota_settings
 
     service._redis.get.return_value = "123456"
+    input_data = LoginByCodeInput(email="code@example.com", code="123456")
 
-    input_data = LoginByCodeInput(email="auto@example.com", code="123456")
-    result = service.login_by_code_with_session(db_session, input_data)
-    user_id = result.user.id
+    with pytest.raises(BizException, match="账号不存在") as exc:
+        service.login_by_code_with_session(db_session, input_data)
 
-    # 验证积分账户已创建
-    account = db_session.scalar(
-        select(CreditAccount).where(CreditAccount.user_id == user_id)
-    )
-    assert account is not None
-    assert account.balance == quota_settings.register_gift_amount
-    assert account.total_earned == quota_settings.register_gift_amount
+    from windup_common.enums.biz_code import BizCode
 
-    # 验证赠送流水已记录
-    txn = db_session.scalar(
-        select(CreditTransaction).where(
-            CreditTransaction.user_id == user_id,
-            CreditTransaction.reason == CreditReason.REGISTER_GIFT,
-        )
-    )
-    assert txn is not None
-    assert txn.delta == quota_settings.register_gift_amount
+    assert exc.value.code == BizCode.NOT_FOUND
+    assert db_session.scalar(select(User).where(User.email == "code@example.com")) is None
+
+
+def test_send_verification_code_rejects_register_purpose(service, mock_email):
+    service._redis.get.return_value = None
+
+    with pytest.raises(BizException, match="内测期间暂不开放注册"):
+        service.send_verification_code("new@example.com", "register")
+
+    mock_email.send_verification_code.assert_not_called()
 
 
 def test_login_by_code_existing_user(db_session, service, mock_email):
