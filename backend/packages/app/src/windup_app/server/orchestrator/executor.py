@@ -22,8 +22,9 @@ from typing import TYPE_CHECKING
 from sqlalchemy.orm import Session
 
 from windup_common.models import ActionSpec, ActionType as EngineActionType, CharacterCard
+from windup_framework.config.quality_gate import settings as gate_settings
 
-from windup_app.server.orchestrator import billing, task_repo
+from windup_app.server.orchestrator import billing, quality_gate, task_repo
 from windup_app.server.orchestrator._fetch import fetch_own_media
 from windup_app.server.orchestrator.model import (
     CharacterActionInput,
@@ -32,7 +33,7 @@ from windup_app.server.orchestrator.model import (
 )
 
 if TYPE_CHECKING:
-    from windup_ai_engine.ports import CharacterGeneratorPort, ProgressPort
+    from windup_ai_engine.ports import CharacterGeneratorPort, JudgePort, ProgressPort
     from windup_framework.providers import ImageProvider, MatteProvider
 
 logger = logging.getLogger("windup.generation.executor")
@@ -194,6 +195,7 @@ class ActionTaskExecutor:
         self,
         *,
         generator: CharacterGeneratorPort | None = None,
+        judge: JudgePort | None = None,
         upload: Callable[[bytes], str] | None = None,
         fetch_master: Callable[[CharacterActionInput], bytes] | None = None,
         fetch_model3d: Callable[[str], bytes] | None = None,
@@ -207,6 +209,9 @@ class ActionTaskExecutor:
         # 各自惰性加载一份 ONNX 会话,按桶各建等于把同一个模型在进程里装多次。
         self._matte: MatteProvider | None = None
         self._image: ImageProvider | None = None
+        # 判官同样与视频模型无关,故不分桶。缺省 None 时**不建**实例:建了就意味着每个
+        # 任务多一次付费调用,那要由 QUALITY_GATE_ENABLED 显式打开,见 _get_judge。
+        self._judge: JudgePort | None = judge
         # 本执行器是进程级单例,而每个请求起一个线程跑 run_action_task,上面几个缓存
         # 都是跨线程共用的可变状态。缺锁时并发首请求会各装一套(见 _get_generator)。
         self._assembly_lock = threading.Lock()
@@ -325,13 +330,37 @@ class ActionTaskExecutor:
             )
 
         upload = self._upload or self._upload_frame
+        checked = [_require_size(png, cons.sprite_w, cons.sprite_h) for png in generated.frames]
         frames = [
-            {"index": i,
-             "image_url": upload(_require_size(png, cons.sprite_w, cons.sprite_h)),
-             "duration_ms": dur}
-            for i, (png, dur) in enumerate(zip(generated.frames, generated.durations))
+            {"index": i, "image_url": upload(png), "duration_ms": dur}
+            for i, (png, dur) in enumerate(zip(checked, generated.durations))
         ]
-        return {"type": "character_action", "action_type": input.action_type.value, "frames": frames}
+        result = {
+            "type": "character_action",
+            "action_type": input.action_type.value,
+            "frames": frames,
+        }
+        decision = quality_gate.review(
+            self._get_judge(), checked, master, input.action_type.value
+        )
+        if decision is not None:
+            result["judge"] = decision.as_payload()
+            if decision.blocked:
+                # 帧已经生成、已经上传,钱早就花完了。拦在这里的意义只剩"不把坏产物当成
+                # 交付物交出去";这也正是拦截档默认关着的原因。
+                raise quality_gate.QualityBlocked(decision.problems)
+        return result
+
+    def _get_judge(self) -> JudgePort | None:
+        """闸口启用时懒建判官;未启用返回 ``None``,一次调用都不发。"""
+        if self._judge is not None or not gate_settings.enabled:
+            return self._judge
+        with self._assembly_lock:
+            if self._judge is None:
+                from windup_framework.providers import SufyJudgeProvider
+
+                self._judge = SufyJudgeProvider()
+            return self._judge
 
     def _get_generator(self, video_model: str | None = None) -> CharacterGeneratorPort:
         """懒装配 CharacterGenerator,按模型名分桶。

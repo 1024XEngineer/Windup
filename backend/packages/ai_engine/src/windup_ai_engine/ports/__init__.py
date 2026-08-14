@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
-from windup_common.models import ActionSpec, CharacterCard
+from windup_common.models import ActionSpec, CharacterCard, JudgeVerdict
 
 
 # ---- server 实现、注入给 ai_engine 的进度回调 port ----
@@ -150,6 +150,21 @@ class GeneratedAction:
     # 给个 None 缺省的话,漏测与"测出来没问题"在调用方看来一模一样,而这个出参的
     # 全部意义就是把这两者分开。
     quality: ActionQuality = field(kw_only=True)
+
+
+# ---- 出门那道闸的仪器:判官(server 注入实现,framework 层有一个)----
+# 与 ``ActionQuality`` 分工不同:那三个数由本地像素算出来,零成本、量的是帧**之间**的
+# 关系;判官量的是一帧画面**里**有什么,要花一次付费调用,且本地算不出来 —— 像素统计
+# 分不出"两个角色"和"一个角色 + 一件道具"。
+@runtime_checkable
+class JudgePort(Protocol):
+    """交付帧 + 母版 → 四个可数读数(:class:`JudgeVerdict`)。
+
+    读不出结论必须抛错,不得兜底成"通过":静默放行会让"没判"与"判了没问题"在下游
+    长得一样。``master`` 必填 —— "有没有母版里没有的物体"离开母版无从回答。
+    """
+
+    def judge(self, frame: bytes, master: bytes, action: str) -> JudgeVerdict: ...
 
 
 # ---- ai_engine 暴露给 server(server 调用的唯一入口)----
