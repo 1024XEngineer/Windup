@@ -13,12 +13,20 @@ from sqlalchemy.orm import Session
 
 from windup_app.server.character.interface import CharacterService
 from windup_app.server.character.model import Character
+from windup_app.server.character.naming import CharacterNamer, resolve_character_name
 
 
 class SqlAlchemyCharacterService(CharacterService):
     """基于 SQLAlchemy session 的角色 CRUD 实现。"""
 
+    def __init__(self, namer: CharacterNamer | None = None) -> None:
+        self._namer = namer
+
     def create_character(self, session: Session, **fields) -> Character:
+        fields = dict(fields)
+        name = fields.get("name")
+        namer = None if (name or "").strip() else self._namer
+        fields["name"] = resolve_character_name(name, fields.get("description"), namer)
         character = Character(**fields)
         session.add(character)
         session.flush()

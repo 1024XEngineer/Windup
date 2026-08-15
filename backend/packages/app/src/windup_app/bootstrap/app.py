@@ -15,7 +15,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from windup_framework.db import Base, engine
 
 # 模型导入：触发 Base.metadata 注册，确保 create_all 能发现所有表
+from windup_ai_engine.impl.character_namer import LangChainCharacterNamer
 from windup_app.server.character.model import Character  # noqa: F401
+from windup_app.server.character.service import service as character_service
 from windup_app.server.orchestrator.dispatcher import GenerationDispatcher
 from windup_app.server.project.model import Project  # noqa: F401
 from windup_app.server.quota.model import CreditAccount, CreditTransaction  # noqa: F401
@@ -83,6 +85,10 @@ async def _lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="windup", version="0.1.0", lifespan=_lifespan)
     app.state.generation_dispatcher = GenerationDispatcher()
+    # 起名器在 composition root 注入,避免 web→character.service 碰到 ai_engine。
+    # 测试若已注入假 namer，不要覆盖。
+    if character_service._namer is None:
+        character_service._namer = LangChainCharacterNamer()
 
     @app.get("/health", include_in_schema=False)
     def health() -> dict[str, str]:
