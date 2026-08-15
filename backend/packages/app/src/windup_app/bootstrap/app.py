@@ -86,6 +86,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="windup", version="0.1.0", lifespan=_lifespan)
     app.state.generation_dispatcher = GenerationDispatcher()
     # 起名器在 composition root 注入,避免 web→character.service 碰到 ai_engine。
+    # LangChainCharacterNamer 构造期不创建 ChatOpenAI；缺 AI_API_KEY 时应用仍能启动。
     # 测试若已注入假 namer，不要覆盖。
     if character_service._namer is None:
         character_service._namer = LangChainCharacterNamer()

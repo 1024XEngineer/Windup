@@ -24,8 +24,17 @@ class SqlAlchemyCharacterService(CharacterService):
 
     def create_character(self, session: Session, **fields) -> Character:
         fields = dict(fields)
+        workflow_run_id = fields.get("workflow_run_id")
+        existing = (
+            self.get_character_by_workflow_run(session, workflow_run_id)
+            if workflow_run_id is not None
+            else None
+        )
+        if existing is not None and existing.project_id == fields.get("project_id"):
+            return existing
         name = fields.get("name")
-        namer = None if (name or "").strip() else self._namer
+        # 已有同 workflow_run（含跨项目冲突）不再打 LLM，插入交给唯一约束。
+        namer = None if (name or "").strip() or existing is not None else self._namer
         fields["name"] = resolve_character_name(name, fields.get("description"), namer)
         character = Character(**fields)
         session.add(character)

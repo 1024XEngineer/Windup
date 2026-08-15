@@ -1,5 +1,7 @@
 """角色名称解析：用户输入优先，空名称才走 LLM / 兜底。"""
 
+import pytest
+
 from windup_app.server.character.naming import FALLBACK_NAME, resolve_character_name
 
 
@@ -57,6 +59,63 @@ def test_empty_name_and_description_use_fallback():
 def test_empty_namer_result_falls_back_to_description():
     namer = _FakeNamer("   ")
     assert resolve_character_name(None, "银发法师", namer) == "银发法师"
+
+
+def test_service_create_skips_namer_when_workflow_run_exists(db_session):
+    from windup_app.server.character.service import SqlAlchemyCharacterService
+
+    namer = _FakeNamer("第一次")
+    service = SqlAlchemyCharacterService(namer=namer)
+    first = service.create_character(
+        db_session,
+        project_id=1,
+        workflow_run_id=77,
+        name=None,
+        description="红发少年",
+        character_data={},
+    )
+    namer.result = "第二次"
+    second = service.create_character(
+        db_session,
+        project_id=1,
+        workflow_run_id=77,
+        name=None,
+        description="红发少年",
+        character_data={},
+    )
+
+    assert second.id == first.id
+    assert second.name == "第一次"
+    assert namer.calls == ["红发少年"]
+
+
+def test_service_create_skips_namer_on_cross_project_workflow_run(db_session):
+    from sqlalchemy.exc import IntegrityError
+
+    from windup_app.server.character.service import SqlAlchemyCharacterService
+
+    namer = _FakeNamer("第一次")
+    service = SqlAlchemyCharacterService(namer=namer)
+    service.create_character(
+        db_session,
+        project_id=1,
+        workflow_run_id=88,
+        name=None,
+        description="红发少年",
+        character_data={},
+    )
+
+    with pytest.raises(IntegrityError):
+        service.create_character(
+            db_session,
+            project_id=2,
+            workflow_run_id=88,
+            name=None,
+            description="另一段描述",
+            character_data={},
+        )
+
+    assert namer.calls == ["红发少年"]
 
 
 def test_service_create_uses_namer_when_name_missing(db_session):
