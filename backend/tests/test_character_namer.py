@@ -30,3 +30,9 @@ def test_namer_truncates_to_20_chars():
     chat = _FakeChat("风" * 25)
     namer = LangChainCharacterNamer(chat_model=chat)
     assert namer.name_from_description("一段描述") == "风" * 20
+
+
+def test_namer_construction_does_not_touch_chat_provider():
+    """装配应用时不能因为没有 AI_API_KEY 就炸。"""
+    namer = LangChainCharacterNamer()
+    assert namer._model is None

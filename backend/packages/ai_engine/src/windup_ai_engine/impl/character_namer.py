@@ -25,10 +25,16 @@ class LangChainCharacterNamer:
     """``CharacterNamerPort`` 的 LangChain 实现。"""
 
     def __init__(self, chat_model: Any | None = None) -> None:
-        self._model = chat_model if chat_model is not None else create_chat_model()
+        # 装配期不创建 ChatOpenAI：CI / 本地无 AI_API_KEY 时 create_app 仍能起来。
+        self._model = chat_model
+
+    def _chat_model(self) -> Any:
+        if self._model is None:
+            self._model = create_chat_model()
+        return self._model
 
     def name_from_description(self, description: str) -> str:
-        result = self._model.invoke(
+        result = self._chat_model().invoke(
             [
                 SystemMessage(content=_SYSTEM_PROMPT),
                 HumanMessage(content=description),
