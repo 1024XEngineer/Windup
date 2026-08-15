@@ -7,6 +7,11 @@ const loginEntry = `/?${new URLSearchParams({
   returnTo: '/workspace',
 })}`
 
+const registerEntry = `/?${new URLSearchParams({
+  account: 'register',
+  returnTo: '/workspace',
+})}`
+
 const sections = [
   ['#capabilities', '产品能力'],
   ['#workflow', '制作流程'],
@@ -68,9 +73,15 @@ export function MarketingHeader() {
             <>
               <Link
                 to={loginEntry}
-                className="inline-flex min-h-11 items-center rounded-lg bg-[#252520] px-5 text-body font-medium whitespace-nowrap text-[#f7f5ee] transition-colors duration-200 hover:bg-[#3a3b36] focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-[#3a3b36]"
+                className="inline-flex min-h-11 items-center text-body font-medium whitespace-nowrap text-[#65645e] transition-colors duration-200 hover:text-[#252520] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#3a3b36]"
               >
                 登录
+              </Link>
+              <Link
+                to={registerEntry}
+                className="inline-flex min-h-11 items-center rounded-lg bg-[#252520] px-5 text-body font-medium whitespace-nowrap text-[#f7f5ee] transition-colors duration-200 hover:bg-[#3a3b36] focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-[#3a3b36]"
+              >
+                注册
               </Link>
             </>
           )}

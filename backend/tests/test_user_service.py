@@ -307,6 +307,41 @@ def test_send_verification_code_rejects_register_purpose(service, mock_email):
     mock_email.send_verification_code.assert_not_called()
 
 
+def test_login_by_code_banned_user(db_session, service, mock_email):
+    from sqlalchemy import select
+
+    service._redis.get.return_value = "123456"
+    service.register_by_email_with_session(
+        db_session,
+        RegisterInput(email="banned-code@example.com", password="pass123", code="123456"),
+    )
+    user = db_session.scalar(select(User).where(User.email == "banned-code@example.com"))
+    user.status = UserStatus.BANNED
+    db_session.flush()
+
+    service._redis.get.return_value = "654321"
+    with pytest.raises(BizException, match="账号已被封禁"):
+        service.login_by_code_with_session(
+            db_session,
+            LoginByCodeInput(email="banned-code@example.com", code="654321"),
+        )
+
+
+def test_login_by_code_marks_unverified_email(db_session, service):
+    user = User(email="unverified@example.com", password_hash=_hash_password("pass123"))
+    db_session.add(user)
+    db_session.flush()
+
+    service._redis.get.return_value = "123456"
+    result = service.login_by_code_with_session(
+        db_session,
+        LoginByCodeInput(email="unverified@example.com", code="123456"),
+    )
+
+    assert result.user.email == "unverified@example.com"
+    assert result.user.email_verified_at is not None
+
+
 def test_login_by_code_existing_user(db_session, service, mock_email):
     # 先注册
     service._redis.get.return_value = "123456"
