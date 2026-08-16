@@ -37,3 +37,4 @@ class AdapterResult:
     expected_bytes: int | None = None
     provider_usage: object | None = None
     job_status: str | None = None
+    retry_after_s: float | None = None

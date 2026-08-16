@@ -15,6 +15,7 @@ import json
 import httpx
 import pytest
 
+from windup_common.enums.model import ModelErrorType
 from windup_framework.gateway.classify import _utc_now, retry_after_seconds
 from windup_framework.providers.sufy import (
     IncompleteDownloadError,
@@ -262,6 +263,22 @@ def test_image_provider_extends_request_timeout_by_half():
         assert client.timeout.pool == 30
 
 
+def test_submit_image_returns_png_on_200():
+    r = _image_provider(lambda req: httpx.Response(200, json=_img_payload(_big_b64()))).submit_image("x", [], "gemini-2.5-flash-image")
+    assert r.ok and r.body.startswith(b"\x89PNG")
+
+
+def test_submit_image_sends_the_model_argument():
+    seen: dict = {}
+
+    def h(request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=_img_payload(_big_b64()))
+
+    _image_provider(h).submit_image("x", [], "gemini-override")
+    assert seen["body"]["model"] == "gemini-override"
+
+
 def test_gen_image_returns_the_decoded_png():
     """端点可达而 provider 必抛错 = 每个图像任务稳定 FAILED。实现后必须真能出图。"""
     def h(request):
@@ -290,11 +307,8 @@ def test_reference_images_are_sent_as_data_uris():
     assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
 
 
-def test_response_without_an_image_is_retried_then_raises():
-    """模型偶发返回一条不含图的正常响应。重试后仍拿不到必须抛，不能返回空 bytes——
-    上游会把返回值直接上传对象存储并写进任务结果，0 字节的"成功"就是用户看到的裂图。"""
-    import pytest
-
+def test_response_without_an_image_is_invalid_response():
+    """2xx 但没有图 → INVALID_RESPONSE，一次 POST，不在 adapter 内连打。"""
     calls = {"n": 0}
 
     def h(request):
@@ -302,39 +316,46 @@ def test_response_without_an_image_is_retried_then_raises():
         calls["n"] += 1
         return httpx.Response(200, json={"choices": [{"message": {"content": "抱歉"}}]})
 
+    r = _image_provider(h).submit_image("x", [], "gemini-2.5-flash-image")
+    assert calls["n"] == 1
+    assert not r.ok
+    assert r.error_type is ModelErrorType.INVALID_RESPONSE
+
     with pytest.raises(RuntimeError, match="未取得有效图"):
         _image_provider(h).gen_image("x", [])
-    assert calls["n"] == 3, "应重试到上限而不是一次就放弃"
 
 
 def test_undersized_image_is_rejected_not_returned():
     """响应里可能带一个几十字节的占位串，当图存下去就是打不开的文件。"""
     import base64
 
-    import pytest
-
     tiny = base64.b64encode(b"\x89PNG" + b"\x00" * 200).decode()
-
-    def h(request):
-        import httpx
-        return httpx.Response(200, json=_img_payload(tiny))
-
-    with pytest.raises(RuntimeError, match="字节"):
-        _image_provider(h).gen_image("x", [])
-
-
-def test_first_successful_attempt_stops_retrying():
     calls = {"n": 0}
 
     def h(request):
         import httpx
         calls["n"] += 1
-        if calls["n"] == 1:
-            return httpx.Response(200, json={"choices": [{"message": {"content": "空"}}]})
+        return httpx.Response(200, json=_img_payload(tiny))
+
+    r = _image_provider(h).submit_image("x", [], "gemini-2.5-flash-image")
+    assert calls["n"] == 1
+    assert not r.ok
+    assert r.error_type is ModelErrorType.INVALID_RESPONSE
+
+    with pytest.raises(RuntimeError, match="字节"):
+        _image_provider(h).gen_image("x", [])
+
+
+def test_first_successful_attempt_is_one_post():
+    calls = {"n": 0}
+
+    def h(request):
+        import httpx
+        calls["n"] += 1
         return httpx.Response(200, json=_img_payload(_big_b64()))
 
     assert _image_provider(h).gen_image("x", [])
-    assert calls["n"] == 2
+    assert calls["n"] == 1
 
 
 def test_image_client_retries_connection_failures():
@@ -353,27 +374,25 @@ def test_image_client_retries_connection_failures():
         client.close()
 
 
-def test_image_rate_limit_is_retried_after_retry_after(monkeypatch):
-    """429 表示请求未被网关接收，按 Retry-After 退避后应继续当前图片任务。"""
+def test_image_rate_limit_is_retried_after_retry_after():
+    """429 → RATE_LIMIT，解析 Retry-After 进 result；adapter 不 sleep（Gateway 才 sleep）。"""
     calls = {"n": 0}
-    sleeps: list[float] = []
 
     def h(request):
         import httpx
         calls["n"] += 1
-        if calls["n"] == 1:
-            return httpx.Response(429, headers={"Retry-After": "0.25"})
-        return httpx.Response(200, json=_img_payload(_big_b64()))
+        return httpx.Response(429, headers={"Retry-After": "0.25"})
 
-    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", sleeps.append)
+    r = _image_provider(h).submit_image("x", [], "gemini-2.5-flash-image")
+    assert calls["n"] == 1
+    assert r.error_type is ModelErrorType.RATE_LIMIT
+    assert r.retry_after_s == 0.25
+    assert not r.ok
+    assert r.maybe_billed is False
 
-    assert _image_provider(h).gen_image("x", [])
-    assert calls["n"] == 2
-    assert sleeps == [0.25]
 
-
-def test_image_rate_limit_exhaustion_has_actionable_error(monkeypatch):
-    """持续 429 不能泄漏 httpx 异常，也不能无限重试。"""
+def test_image_rate_limit_exhaustion_has_actionable_error():
+    """持续 429 不能泄漏 httpx 异常；adapter 一次一枪，重试留给 Gateway。"""
     calls = {"n": 0}
 
     def h(request):
@@ -381,54 +400,44 @@ def test_image_rate_limit_exhaustion_has_actionable_error(monkeypatch):
         calls["n"] += 1
         return httpx.Response(429, text='{"error":{"message":"quota exceeded"}}')
 
-    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
-
-    with pytest.raises(RuntimeError, match="稍后重试或检查服务商额度"):
-        _image_provider(h).gen_image("x", [])
-    assert calls["n"] == 3
+    r = _image_provider(h).submit_image("x", [], "gemini-2.5-flash-image")
+    assert calls["n"] == 1
+    assert r.error_type is ModelErrorType.RATE_LIMIT
+    assert not r.ok
 
 
 @pytest.mark.parametrize(
-    ("retry_after", "expected"), [("invalid", 2.0), ("NaN", 2.0), ("300", 30.0)]
+    ("retry_after", "expected"), [("invalid", None), ("NaN", None), ("300", 30.0)]
 )
-def test_image_rate_limit_wait_has_fallback_and_cap(monkeypatch, retry_after, expected):
-    calls = {"n": 0}
-    sleeps: list[float] = []
-
+def test_image_rate_limit_wait_has_fallback_and_cap(retry_after, expected):
     def h(request):
         import httpx
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return httpx.Response(429, headers={"Retry-After": retry_after})
-        return httpx.Response(200, json=_img_payload(_big_b64()))
+        return httpx.Response(429, headers={"Retry-After": retry_after})
 
-    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", sleeps.append)
-
-    assert _image_provider(h).gen_image("x", [])
-    assert sleeps == [expected]
+    r = _image_provider(h).submit_image("x", [], "gemini-2.5-flash-image")
+    assert r.error_type is ModelErrorType.RATE_LIMIT
+    assert r.retry_after_s == expected
 
 
 def test_image_rate_limit_accepts_http_date(monkeypatch):
     calls = {"n": 0}
-    sleeps: list[float] = []
 
     def h(request):
         import httpx
         calls["n"] += 1
-        if calls["n"] == 1:
-            return httpx.Response(
-                429, headers={"Retry-After": "Thu, 13 Aug 2026 03:00:10 GMT"}
-            )
-        return httpx.Response(200, json=_img_payload(_big_b64()))
+        return httpx.Response(
+            429, headers={"Retry-After": "Thu, 13 Aug 2026 03:00:10 GMT"}
+        )
 
     monkeypatch.setattr(
         "windup_framework.gateway.classify._utc_now",
         lambda: datetime(2026, 8, 13, 3, 0, tzinfo=timezone.utc),
     )
-    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", sleeps.append)
 
-    assert _image_provider(h).gen_image("x", [])
-    assert sleeps == [10.0]
+    r = _image_provider(h).submit_image("x", [], "gemini-2.5-flash-image")
+    assert calls["n"] == 1
+    assert r.error_type is ModelErrorType.RATE_LIMIT
+    assert r.retry_after_s == 10.0
 
 
 def test_retry_after_clock_is_utc():
@@ -467,21 +476,22 @@ def test_request_path_comes_from_config_not_a_literal():
     pytest.param({"cf-ray": "8f2b1c4d5e6a7890-SJC", "server": "nginx"}, id="relayed-cf-ray"),
 ])
 @pytest.mark.parametrize("code", [521, 522, 523])
-def test_52x_is_retried_whatever_the_edge_looks_like(monkeypatch, code, headers):
+def test_52x_is_classified_unreached_in_one_call(code, headers):
     """判据只看码:``AI_BASE_URL`` 后面挂哪家网关不可知,靠响应头认 Cloudflare 会把真实
-    链路上的 52x 全判否(实测网关自报 ``server: APISIX``),整条重试等于不存在。
+    链路上的 52x 全判否(实测网关自报 ``server: APISIX``)。adapter 一次 POST 分类即可。
     """
     calls = {"n": 0}
 
     def h(request):
         calls["n"] += 1
-        if calls["n"] <= 2:
-            return httpx.Response(code, headers=headers, text="Connection timed out")
-        return httpx.Response(200, json=_img_payload(_big_b64()))
+        return httpx.Response(code, headers=headers, text="Connection timed out")
 
-    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
-    assert _image_provider(h).gen_image("x", []).startswith(b"\x89PNG")
-    assert calls["n"] == 3, "必须真的重发，而不是靠外层出图循环碰运气"
+    r = _image_provider(h).submit_image("x", [], "gemini-2.5-flash-image")
+    assert calls["n"] == 1
+    assert r.error_type is ModelErrorType.UNREACHED
+    assert not r.ok
+    assert r.http_status == code
+    assert r.maybe_billed is False
 
 
 @pytest.mark.parametrize("code", [520, 524])
@@ -493,103 +503,74 @@ def test_ambiguous_52x_is_never_retried(code):
         seen["n"] += 1
         return httpx.Response(code, headers={"server": "cloudflare"}, text="ambiguous")
 
-    with pytest.raises(httpx.HTTPStatusError):
-        _image_provider(h).gen_image("x", [])
+    r = _image_provider(h).submit_image("x", [], "gemini-2.5-flash-image")
     assert seen["n"] == 1, f"HTTP {code} 被重试了,会重复计费"
+    assert r.error_type is ModelErrorType.MAYBE_BILLED
+    assert r.maybe_billed is True
+    assert not r.ok
 
 
-def test_retryable_set_excludes_the_codes_that_may_have_billed():
-    """常量本身也钉一道:改集合的人不必先读懂 _post 才发现自己开了重复计费的洞。"""
-    from windup_framework.providers.sufy import _CLOUDFLARE_UNREACHED_STATUS
-
-    assert _CLOUDFLARE_UNREACHED_STATUS == {521, 522, 523}
-
-
-def test_unreached_resends_are_capped_across_the_whole_gen_image(monkeypatch):
-    """52x 的"没到上游"是大概率不是保证(CF 的 522 含"连上了但源站没及时确认"),
-    所以可重复计费的重发次数按整次 gen_image 封顶,不跟着内外两层循环叠乘。
-    """
-    from windup_framework.providers.sufy import _UNREACHED_RESENDS
-
+def test_unreached_resends_are_capped_across_the_whole_gen_image():
+    """adapter 不再连打 52x；一次 POST + UNREACHED，重发次数由 Gateway 封顶。"""
     calls = {"n": 0}
 
     def h(request):
         calls["n"] += 1
-        if calls["n"] % 2:
-            return httpx.Response(522, headers={"server": "APISIX"}, text="timed out")
-        return httpx.Response(200, json={"choices": [{"message": {"content": "无图"}}]})
+        return httpx.Response(522, headers={"server": "APISIX"}, text="timed out")
 
-    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
-
-    with pytest.raises(RuntimeError, match=r"已重发 2 次"):
-        _image_provider(h).gen_image("x", [])
-    # 预算若按 _post 调用各算一份,外层三轮就会重发 3 次而不是 2 次。
-    assert calls["n"] == 2 * _UNREACHED_RESENDS + 1
+    r = _image_provider(h).submit_image("x", [], "gemini-2.5-flash-image")
+    assert calls["n"] == 1
+    assert r.error_type is ModelErrorType.UNREACHED
 
 
-def test_exhausted_retries_report_the_edge_fingerprint(monkeypatch):
-    """三次全 52x 正是最需要复盘的场景,而它唯一留下的就是这条异常文本。"""
+def test_exhausted_retries_report_the_edge_fingerprint():
+    """52x 复盘靠边缘指纹，不再依赖「已重发 N 次」异常文本。"""
     def h(request):
         return httpx.Response(522, headers={"server": "APISIX", "cf-ray": "8f2b-SJC"})
 
-    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
+    r = _image_provider(h).submit_image("x", [], "gemini-2.5-flash-image")
+    assert r.error_type is ModelErrorType.UNREACHED
+    assert "server=APISIX" in r.edge_fingerprint
+    assert "cf-ray=8f2b-SJC" in r.edge_fingerprint
 
-    with pytest.raises(RuntimeError, match=r"522.*已重发 2 次.*server=APISIX"):
-        _image_provider(h).gen_image("x", [])
 
-
-def test_rate_limit_exhaustion_also_reports_the_fingerprint(monkeypatch):
-    """限流与"网关连不上上游"要能一眼分开 —— 两者的处置完全不同。"""
-    from windup_framework.providers.sufy import _POST_TRIES
-
+def test_rate_limit_exhaustion_also_reports_the_fingerprint():
+    """限流与「网关连不上上游」要能一眼分开。"""
     calls = {"n": 0}
 
     def h(request):
         calls["n"] += 1
         return httpx.Response(429, headers={"server": "APISIX"}, text="slow down")
 
-    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
+    r = _image_provider(h).submit_image("x", [], "gemini-2.5-flash-image")
+    assert calls["n"] == 1
+    assert r.error_type is ModelErrorType.RATE_LIMIT
+    assert "server=APISIX" in r.edge_fingerprint
 
-    with pytest.raises(RuntimeError, match=r"过于频繁.*连发 3 次.*server=APISIX"):
-        _image_provider(h).gen_image("x", [])
-    assert calls["n"] == _POST_TRIES
 
-
-def test_unreached_backoff_is_capped(monkeypatch):
-    """上游挂掉时不该把一个图像任务堵成长时间阻塞。"""
-    from windup_framework.providers.sufy import _MAX_RETRY_WAIT
-
-    sleeps: list[float] = []
+def test_unreached_backoff_is_capped():
+    """Retry-After 过大时解析结果仍封顶，adapter 不 sleep。"""
+    from windup_framework.gateway.classify import _MAX_RETRY_WAIT
 
     def h(request):
         return httpx.Response(522, headers={**_CF_EDGE, "Retry-After": "9999"})
 
-    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", sleeps.append)
-
-    with pytest.raises(RuntimeError, match="522"):
-        _image_provider(h).gen_image("x", [])
-    assert sleeps and max(sleeps) <= _MAX_RETRY_WAIT
+    r = _image_provider(h).submit_image("x", [], "gemini-2.5-flash-image")
+    assert r.error_type is ModelErrorType.UNREACHED
+    assert r.retry_after_s == _MAX_RETRY_WAIT
 
 
-def test_worst_case_request_count_and_wait_are_bounded(monkeypatch):
-    """内外两层重试会叠乘,最坏情况必须是个说得出的数,而不是"看情况"。"""
-    from windup_framework.providers.sufy import _IMAGE_TRIES, _MAX_RETRY_WAIT, _POST_TRIES
-
+def test_worst_case_request_count_and_wait_are_bounded():
+    """adapter 一次一枪，最坏情况就是 1 次 POST。"""
     calls = {"n": 0}
-    sleeps: list[float] = []
 
     def h(request):
         calls["n"] += 1
-        if calls["n"] % _POST_TRIES:
-            return httpx.Response(429, text="slow down")
-        return httpx.Response(200, json={"choices": [{"message": {"content": "无图"}}]})
+        return httpx.Response(429, text="slow down")
 
-    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", sleeps.append)
-
-    with pytest.raises(RuntimeError, match="均未取得有效图"):
-        _image_provider(h).gen_image("x", [])
-    assert calls["n"] == _IMAGE_TRIES * _POST_TRIES == 9
-    assert sum(sleeps) <= _IMAGE_TRIES * (_POST_TRIES - 1) * _MAX_RETRY_WAIT
+    r = _image_provider(h).submit_image("x", [], "gemini-2.5-flash-image")
+    assert calls["n"] == 1
+    assert r.error_type is ModelErrorType.RATE_LIMIT
 
 
 @pytest.mark.parametrize("code", [400, 404])
@@ -600,6 +581,12 @@ def test_model_missing_from_the_gateway_catalogue_says_so(code):
     def h(request):
         import httpx
         return httpx.Response(code, text='{"error":{"message":"model not found"}}')
+
+    r = _image_provider(h).submit_image("x", [], "gemini-2.5-flash-image")
+    assert r.error_type is ModelErrorType.UNKNOWN
+    assert "/models" in r.edge_fingerprint
+    assert r.http_status == code
+    assert not r.ok
 
     with pytest.raises(RuntimeError, match=r"/models"):
         _image_provider(h).gen_image("x", [])
