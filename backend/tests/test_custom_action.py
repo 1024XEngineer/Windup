@@ -228,19 +228,12 @@ def test_illegal_facing_raises_instead_of_falling_back():
 
 
 def test_only_the_opened_models_are_accepted():
-    from windup_app.server.orchestrator.executor import (
-        ALLOWED_VIDEO_MODELS,
-        _resolve_video_model,
-    )
+    from windup_framework.config.provider import AIProviderSettings
+    from windup_framework.gateway.registry import ModelRegistry
+    from windup_framework.gateway.types import Scene
 
-    # veo3.1 不在表里:它走 Fal 队列协议(Authorization: Key + 公网图 URL),而
-    # SufyVideoProvider 走 OpenAI 风格 /videos + Bearer + base64。列进去 = 看起来能选、
-    # 点了必然产生一个用不了的付费任务。
-    assert set(ALLOWED_VIDEO_MODELS) == {"kling-v2-5-turbo", "kling-v2-6"}
-    assert "veo3.1" not in ALLOWED_VIDEO_MODELS
-    for name in ALLOWED_VIDEO_MODELS:
-        assert _resolve_video_model(name) == name
-    assert _resolve_video_model(None) is None, "None = 用部署默认值"
+    r = ModelRegistry.from_settings(AIProviderSettings(video_fallbacks="kling-v2-6"))
+    assert set(r.chain(Scene.CHARACTER_ACTION)) == {"kling-v2-5-turbo", "kling-v2-6"}
 
 
 def test_unknown_model_fails_at_entry_not_at_the_paid_call():
@@ -252,23 +245,21 @@ def test_unknown_model_fails_at_entry_not_at_the_paid_call():
     assert "kling-v2-5-turbo" in str(e.value), "报错要带上可选值,否则调用方无从改"
 
 
-def test_generator_is_bucketed_by_video_model():
-    """按模型分桶,否则第一个请求指定 veo3.1 之后所有请求都沿用它。"""
+def test_start_from_model_reuses_one_generator():
     from windup_app.server.orchestrator.executor import ActionTaskExecutor
 
     ex = ActionTaskExecutor()
-    a = ex._get_generator("kling-v2-6")
-    b = ex._get_generator("veo3.1")
-    assert a is not b, "两个模型拿到了同一个 generator"
-    assert ex._get_generator("kling-v2-6") is a, "同一模型该复用"
+    assert ex._get_generator() is ex._get_generator()
 
 
 def test_concurrent_first_requests_build_one_shared_provider_set(monkeypatch):
-    """并发首请求只装一份共用 provider。
+    """并发首请求只装一份共用 Gateway / matte。
 
     执行器是进程级单例、每个请求起一个线程,check-and-insert 不加锁时每个线程都会各装
     一套;而每个抠图实例会各自惰性加载一份 ONNX 会话,重复的代价落在内存与加载耗时上。
+    选哪个 kling 是 Gateway 的事,不同 video_model 仍共用同一个 generator。
     """
+    import windup_framework.gateway as gateway
     from windup_framework import providers
 
     from windup_app.server.orchestrator.executor import ActionTaskExecutor
@@ -285,8 +276,8 @@ def test_concurrent_first_requests_build_one_shared_provider_set(monkeypatch):
         return _factory
 
     monkeypatch.setattr(providers, "OnnxU2NetMatteProvider", _counting("matte"))
-    monkeypatch.setattr(providers, "SufyImageProvider", _counting("image"))
-    monkeypatch.setattr(providers, "SufyVideoProvider", _counting("video"))
+    monkeypatch.setattr(gateway, "build_image_gateway", _counting("image"))
+    monkeypatch.setattr(gateway, "build_video_gateway", _counting("video"))
 
     ex = ActionTaskExecutor()
     models = ["kling-v2-5-turbo", "kling-v2-6"] * 3
@@ -295,7 +286,7 @@ def test_concurrent_first_requests_build_one_shared_provider_set(monkeypatch):
 
     def _ask(i: int) -> None:
         start.wait(timeout=5)
-        gen = ex._get_generator(models[i])
+        gen = ex._get_generator()
         with tally:
             got[i] = gen
 
@@ -307,10 +298,11 @@ def test_concurrent_first_requests_build_one_shared_provider_set(monkeypatch):
 
     assert not any(t.is_alive() for t in threads), "有线程没跑完,装配路径可能卡在锁上"
     assert built.count("matte") == 1, f"抠图 provider 装了 {built.count('matte')} 次,该只装一次"
-    assert built.count("image") == 1, f"图生图 provider 装了 {built.count('image')} 次"
-    assert built.count("video") == 2, "视频 provider 随模型变,两个模型该各一份"
-    for i, model in enumerate(models):
-        assert got[i] is ex._by_model[model], "同一模型的并发请求该拿到同一个 generator"
+    assert built.count("image") == 1, f"图生图 Gateway 装了 {built.count('image')} 次"
+    assert built.count("video") == 1, f"视频 Gateway 装了 {built.count('video')} 次,该只装一次"
+    gens = {got[i] for i in range(len(models))}
+    assert len(gens) == 1, "不同 video_model 的并发请求该拿到同一个 generator"
+    assert next(iter(gens)) is ex._get_generator()
 
 
 # ── ⑥ 骨架不得夹带姿态前提(游泳/潜水/飞行都不着地不直立)─────────────────────

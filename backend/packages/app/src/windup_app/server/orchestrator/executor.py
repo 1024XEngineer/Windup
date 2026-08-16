@@ -22,6 +22,9 @@ from typing import TYPE_CHECKING
 from sqlalchemy.orm import Session
 
 from windup_common.models import ActionSpec, ActionType as EngineActionType, CharacterCard
+from windup_framework.gateway import bind_call_context
+from windup_framework.gateway.registry import ModelRegistry
+from windup_framework.gateway.types import Scene
 
 from windup_app.server.orchestrator import task_repo
 from windup_app.server.orchestrator._fetch import fetch_own_media
@@ -140,27 +143,17 @@ class _LogProgress:
         logger.info("[gen] %s %s/%s %s", stage, i, total, note)
 
 
-# 白名单而不是放开任意模型名:每个模型的入参形状不同(image_list / input_reference /
-# Fal 队列 + `Authorization: Key`)。列进来却没适配它的协议,等于"看起来能选、点了必然
-# 产生一个用不了的付费任务"。只列 SufyVideoProvider 真能建单的。Refs #239。
-ALLOWED_VIDEO_MODELS: dict[str, str] = {
-    "kling-v2-5-turbo": "默认。稳,本地首帧即可",
-    "kling-v2-6": "有 motion-control",
-}
-
-
 def _resolve_video_model(name: str | None) -> str | None:
     """校验并返回视频模型名;``None`` 表示用部署默认值。
 
+    只允许是 CHARACTER_ACTION 链上的一员,含义是「这次从它开始试」。
     非法取值在入口炸,不等到付费调用才失败。
     """
     if name is None:
         return None
-    if name not in ALLOWED_VIDEO_MODELS:
-        raise ValueError(
-            f"视频模型 {name!r} 不在本期开放列表内。可选:"
-            + "；".join(f"{k}({v})" for k, v in ALLOWED_VIDEO_MODELS.items())
-        )
+    chain = ModelRegistry.from_settings().chain(Scene.CHARACTER_ACTION)
+    if name not in chain:
+        raise ValueError(f"视频模型 {name!r} 不在本期开放列表内。可选:" + "；".join(chain))
     return name
 
 
@@ -188,11 +181,9 @@ class ActionTaskExecutor:
         fetch_constraints: Callable[[Session, int | None], ProjectConstraints] | None = None,
         session_factory: Callable[[], Session] | None = None,
     ) -> None:
-        self._generator = generator          # None → 懒加载真实装配
-        # 按视频模型名分桶的 generator 缓存(模型是 provider 的构造参数,不能事后换)
-        self._by_model: dict[str | None, CharacterGeneratorPort] = {}
-        # 抠图 / 图生图 provider 与视频模型无关,所有模型桶共用一份:每个抠图实例都会
-        # 各自惰性加载一份 ONNX 会话,按桶各建等于把同一个模型在进程里装多次。
+        self._generator = generator          # None → 懒加载真实装配(一套共享 Gateway)
+        # 抠图 / 图生图与视频 Gateway 无关型号分桶:选哪个 kling 是 Gateway 读
+        # start_from_model 的事。每个抠图实例都会惰性加载一份 ONNX 会话,只装一次。
         self._matte: MatteProvider | None = None
         self._image: ImageProvider | None = None
         # 本执行器是进程级单例,而每个请求起一个线程跑 run_action_task,上面几个缓存
@@ -216,14 +207,21 @@ class ActionTaskExecutor:
         先从 ``project`` 取全局约束(朝向/画风/尺寸/方向)再调 ai_engine。``session``
         缺省时自开一个(后台场景);测试可传入自己的 session。
         """
+        request_id = f"act-{task_id}"
         own = session is None
         session = session or self._make_session()
+        reset = None
         try:
             task_repo.update_status(session, task_id, TaskStatus.RUNNING)
             if own:
                 session.commit()
 
             cons = (self._fetch_constraints or _load_constraints)(session, project_id)
+            reset = bind_call_context(
+                request_id=request_id,
+                task_id=str(task_id),
+                start_from_model=_resolve_video_model(input.video_model),
+            )
             result = self._produce_action(input, cons)
             task_repo.update_result(session, task_id, _ACTION_RESULT, result)
             if own:
@@ -231,11 +229,14 @@ class ActionTaskExecutor:
         except Exception as exc:  # noqa: BLE001 —— 兜底任何生成/上传/网络异常
             logger.exception("动作任务 %s 失败", task_id)
             task_repo.update_status(
-                session, task_id, TaskStatus.FAILED, error_message=str(exc),
+                session, task_id, TaskStatus.FAILED,
+                error_message=f"{exc}; request_id={request_id}",
             )
             if own:
                 session.commit()
         finally:
+            if reset is not None:
+                reset()
             if own:
                 session.close()
 
@@ -281,7 +282,7 @@ class ActionTaskExecutor:
             **extra,
         )
         progress: ProgressPort = _LogProgress()
-        generated = self._get_generator(_resolve_video_model(input.video_model)).generate(
+        generated = self._get_generator().generate(
             card, action, master, progress, canvas=(cons.sprite_w, cons.sprite_h)
         )
 
@@ -294,46 +295,37 @@ class ActionTaskExecutor:
         ]
         return {"type": "character_action", "action_type": input.action_type.value, "frames": frames}
 
-    def _get_generator(self, video_model: str | None = None) -> CharacterGeneratorPort:
-        """懒装配 CharacterGenerator,按模型名分桶。
+    def _get_generator(self) -> CharacterGeneratorPort:
+        """懒装配一套共享 CharacterGenerator(ImageGateway + VideoGateway + matte)。
 
-        视频 provider 的模型是构造参数,不分桶的话第一个请求指定的模型会被后续所有请求
-        沿用,而调用方以为自己指定了。
+        选哪个 kling 不在装配时定,由 bind_call_context 的 start_from_model 交给 Gateway。
         """
         if self._generator is not None:
             return self._generator
-        # 命中缓存的快路径不进锁,否则每个请求都要在这里排一次队。只有装配新桶才上锁,
-        # 锁内重查一次:两个线程同时错过同一个桶时,后进来的那个要看见前一个的成果。
-        cached = self._by_model.get(video_model)
-        if cached is not None:
-            return cached
+        # 命中缓存的快路径不进锁,否则每个请求都要在这里排一次队。只有首次装配才上锁,
+        # 锁内重查一次:两个线程同时错过时,后进来的那个要看见前一个的成果。
         with self._assembly_lock:
-            cached = self._by_model.get(video_model)
-            if cached is None:
-                cached = self._assemble(video_model)
-                self._by_model[video_model] = cached
-            return cached
+            if self._generator is None:
+                self._generator = self._assemble()
+            return self._generator
 
-    def _assemble(self, video_model: str | None) -> CharacterGeneratorPort:
-        """装一个模型桶。**调用方须持有 ``self._assembly_lock``**(会写共用 provider)。"""
+    def _assemble(self) -> CharacterGeneratorPort:
+        """装一套共享 Gateway。**调用方须持有 ``self._assembly_lock``**。"""
         from windup_ai_engine.impl import CharacterGenerator
         from windup_ai_engine.strategy.concrete import (
             PerFrameStrategy,
             VideoFrameStrategy,
         )
         from windup_common.models import GenRoute
-        from windup_framework.providers import (
-            OnnxU2NetMatteProvider,
-            SufyImageProvider,
-            SufyVideoProvider,
-        )
+        from windup_framework.gateway import build_image_gateway, build_video_gateway
+        from windup_framework.gateway.image import _CIRCUIT
+        from windup_framework.providers import OnnxU2NetMatteProvider
 
         if self._matte is None:
             self._matte = OnnxU2NetMatteProvider()
         if self._image is None:
-            self._image = SufyImageProvider()
-        # 只有它随模型变 —— 模型是构造参数,换模型必须换实例。
-        video = SufyVideoProvider(model=video_model)
+            self._image = build_image_gateway(circuit=_CIRCUIT)
+        video = build_video_gateway(circuit=_CIRCUIT)
         # 装配表必须与 GenRoute 对齐。下面那条断言让漏装在装配时暴露,而不是等到某个
         # 动作第一次被请求时才炸——注入 generator 的测试走不到这条装配路径,漏了会测试
         # 全绿而真实调用全崩。
@@ -385,7 +377,7 @@ class ImageTaskExecutor:
     def __init__(
         self,
         *,
-        image=None,                                      # None → 懒加载 SufyImageProvider
+        image=None,                                      # None → 懒加载 ImageGateway
         upload: Callable[[bytes], str] | None = None,    # None → 真实对象存储上传
         fetch_ref: Callable[[str], bytes] | None = None, # None → 下载 reference_image_url
         session_factory: Callable[[], Session] | None = None,
@@ -403,13 +395,19 @@ class ImageTaskExecutor:
         *,
         session: Session | None = None,
     ) -> None:
+        request_id = f"img-{task_id}"
         own = session is None
         session = session or self._make_session()
+        reset = None
         try:
             task_repo.update_status(session, task_id, TaskStatus.RUNNING)
             if own:
                 session.commit()
             cons = _load_constraints(session, project_id)   # 角色图也受项目约束
+            reset = bind_call_context(
+                request_id=request_id,
+                task_id=str(task_id),
+            )
             urls = self._produce_image(input, cons)
             task_repo.update_result(session, task_id, _IMAGE_RESULT, {
                 "type": "character_image",
@@ -419,10 +417,15 @@ class ImageTaskExecutor:
                 session.commit()
         except Exception as exc:  # noqa: BLE001 —— 兜底
             logger.exception("图片任务 %s 失败", task_id)
-            task_repo.update_status(session, task_id, TaskStatus.FAILED, error_message=str(exc))
+            task_repo.update_status(
+                session, task_id, TaskStatus.FAILED,
+                error_message=f"{exc}; request_id={request_id}",
+            )
             if own:
                 session.commit()
         finally:
+            if reset is not None:
+                reset()
             if own:
                 session.close()
 
@@ -484,9 +487,9 @@ class ImageTaskExecutor:
 
     def _get_image(self):
         if self._image is None:
-            from windup_framework.providers import SufyImageProvider
+            from windup_framework.gateway import build_image_gateway
 
-            self._image = SufyImageProvider()
+            self._image = build_image_gateway()
         return self._image
 
     def _download(self, url: str) -> bytes:

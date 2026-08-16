@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from windup_framework.config.provider import AIProviderSettings
+from windup_framework.config.provider import AIProviderSettings, settings as default_settings
 from windup_framework.gateway.types import Family, Scene
 
 FAMILIES: dict[str, Family] = {
@@ -25,7 +25,8 @@ class ModelRegistry:
         self._chains = chains
 
     @classmethod
-    def from_settings(cls, cfg: AIProviderSettings) -> ModelRegistry:
+    def from_settings(cls, cfg: AIProviderSettings | None = None) -> ModelRegistry:
+        cfg = default_settings if cfg is None else cfg
         chains = {
             Scene.CHARACTER_IMAGE: (cfg.image_model, *_parse_fallbacks(cfg.image_fallbacks)),
             Scene.CHARACTER_ACTION: (cfg.video_model, *_parse_fallbacks(cfg.video_fallbacks)),
