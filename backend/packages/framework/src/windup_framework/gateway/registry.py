@@ -5,6 +5,7 @@ from windup_framework.gateway.types import Family, Scene
 
 FAMILIES: dict[str, Family] = {
     "gemini-2.5-flash-image": Family.IMAGE_CHAT_DATA_URI,
+    "gemini-2.5-flash-image-alt": Family.IMAGE_CHAT_DATA_URI,  # test double; not a production default
     "kling-v2-5-turbo": Family.VIDEO_INPUT_REFERENCE,
     "kling-v2-6": Family.VIDEO_INPUT_REFERENCE,
     "kling-video-o1": Family.VIDEO_IMAGE_LIST,  # 登记但不允许进 chain

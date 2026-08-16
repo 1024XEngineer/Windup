@@ -27,3 +27,12 @@ def test_rejects_unknown_model():
 def test_empty_fallbacks_ok():
     r = ModelRegistry.from_settings(_cfg(image_fallbacks="", video_fallbacks=""))
     assert r.chain(Scene.CHARACTER_ACTION) == ("kling-v2-5-turbo",)
+
+
+def test_image_alt_can_be_fallback():
+    r = ModelRegistry.from_settings(_cfg(image_fallbacks="gemini-2.5-flash-image-alt"))
+    assert r.chain(Scene.CHARACTER_IMAGE) == (
+        "gemini-2.5-flash-image",
+        "gemini-2.5-flash-image-alt",
+    )
+    assert r.family_of("gemini-2.5-flash-image-alt") is Family.IMAGE_CHAT_DATA_URI
