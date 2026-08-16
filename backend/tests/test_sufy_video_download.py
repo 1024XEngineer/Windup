@@ -655,6 +655,8 @@ def test_request_shape_is_not_configurable():
     for banned in ("image_list_models", "fal_endpoints", "first_frame_field"):
         assert banned not in fields, f"{banned} 不该进配置，见本用例 docstring"
     assert {"video_model", "image_model"} <= fields
+    assert {"image_fallbacks", "video_fallbacks", "image_unit_cost",
+            "video_unit_cost_per_second", "price_version"} <= fields
 
 
 # ── i2v 主流程（付费路径，此前零覆盖）─────────────────────────────────────────

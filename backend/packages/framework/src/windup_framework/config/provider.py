@@ -1,5 +1,6 @@
 """AI Provider 配置。"""
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,6 +34,19 @@ class AIProviderSettings(BaseSettings):
     # 而费用可能已经产生(2026-07-29 实测)。
     video_model: str = "kling-v2-5-turbo"
     image_model: str = "gemini-2.5-flash-image"
+
+    image_fallbacks: str = ""
+    video_fallbacks: str = ""
+    image_unit_cost: float | None = None
+    video_unit_cost_per_second: float | None = None
+    price_version: str = "2026-08-16"
+
+    @field_validator("image_unit_cost", "video_unit_cost_per_second", mode="before")
+    @classmethod
+    def _empty_cost_is_none(cls, v):
+        if v == "" or v is None:
+            return None
+        return v
 
     @property
     def normalized_base_url(self) -> str:
