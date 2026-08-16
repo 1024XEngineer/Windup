@@ -70,6 +70,31 @@ def _first_frame_datauri(frame: bytes, size: str) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(_fit_first_frame(frame, size)).decode()
 
 
+def _video_http_error(resp: httpx.Response, *, job_id: str | None = None) -> AdapterResult:
+    error_type = classify_http(resp.status_code)
+    retry_after_header = resp.headers.get("Retry-After")
+    retry_after_s = (
+        _retry_after_seconds(retry_after_header) if retry_after_header else None
+    )
+    return AdapterResult(
+        ok=False,
+        error_type=error_type,
+        http_status=resp.status_code,
+        maybe_billed=job_id is not None or error_type is ModelErrorType.MAYBE_BILLED,
+        edge_fingerprint=_edge_fingerprint(resp),
+        retry_after_s=retry_after_s,
+        job_id=job_id,
+    )
+
+
+def _poll_get(client: httpx.Client, job_id: str) -> httpx.Response:
+    """轮询 GET;522/525(及同档未达上游码)该次再试 1 次,不新开单。"""
+    resp = client.get(f"/videos/{job_id}")
+    if resp.status_code in (521, 522, 523, 525):
+        resp = client.get(f"/videos/{job_id}")
+    return resp
+
+
 class SufyVideoProvider(VideoProvider):
     """kling i2v(默认 v2-5-turbo)。首帧 + 动作 prompt → mp4 bytes。"""
 
@@ -99,39 +124,142 @@ class SufyVideoProvider(VideoProvider):
             timeout=self._cfg.timeout,
         )
 
-    def i2v(
-        self, first_frame: bytes, prompt: str, seconds: int = 5, size: str = "1280x720"
-    ) -> bytes:
+    def submit_video(
+        self,
+        first_frame: bytes,
+        prompt: str,
+        seconds: int,
+        size: str,
+        model: str,
+    ) -> AdapterResult:
+        """一次 POST 建单。成功: ok=True, job_id, body=b"", maybe_billed=True。"""
         body: dict = {
-            "model": self._model,
+            "model": model,
             "prompt": prompt,
             "size": size,
             "seconds": str(seconds),
             "mode": self._mode,
         }
-        if self._model in _IMAGE_LIST_MODELS:
+        if model in _IMAGE_LIST_MODELS:
             b64 = _first_frame_datauri(first_frame, size).split(",", 1)[1]
             body["image_list"] = [{"image": b64}]
         else:
             body["input_reference"] = _first_frame_datauri(first_frame, size)
 
         with self._client() as client:
-            job = client.post("/videos", json=body).raise_for_status().json()
-            jid = job.get("id")
+            resp = client.post("/videos", json=body)
+
+        if 200 <= resp.status_code < 300:
+            try:
+                payload = resp.json()
+            except ValueError:
+                return AdapterResult(
+                    ok=False,
+                    error_type=ModelErrorType.INVALID_RESPONSE,
+                    http_status=resp.status_code,
+                    edge_fingerprint="响应不是 JSON",
+                )
+            jid = payload.get("id")
+            if not jid:
+                return AdapterResult(
+                    ok=False,
+                    error_type=ModelErrorType.INVALID_RESPONSE,
+                    http_status=resp.status_code,
+                    edge_fingerprint="响应没有 job id",
+                )
+            return AdapterResult(
+                ok=True,
+                job_id=str(jid),
+                body=b"",
+                maybe_billed=True,
+                http_status=resp.status_code,
+            )
+        return _video_http_error(resp)
+
+    def follow_job(self, job_id: str) -> AdapterResult:
+        """轮询已建单据 + 下载。poll GET 522/525 该次再试 1 次,不新开单。"""
+        with self._client() as client:
             url = None
+            last_status: str | None = None
             for _ in range(max(1, int(self._max_min * 60 // self._poll))):
                 time.sleep(self._poll)
-                st = client.get(f"/videos/{jid}").raise_for_status().json()
-                status = st.get("status")
-                if status == "completed":
+                resp = _poll_get(client, job_id)
+                if not (200 <= resp.status_code < 300):
+                    return _video_http_error(resp, job_id=job_id)
+                try:
+                    st = resp.json()
+                except ValueError:
+                    return AdapterResult(
+                        ok=False,
+                        error_type=ModelErrorType.INVALID_RESPONSE,
+                        http_status=resp.status_code,
+                        job_id=job_id,
+                        maybe_billed=True,
+                        edge_fingerprint="轮询响应不是 JSON",
+                    )
+                last_status = st.get("status")
+                if last_status == "completed":
                     vids = (st.get("task_result") or {}).get("videos") or []
                     url = vids[0].get("url") if vids else None
                     break
-                if status in ("failed", "cancelled"):
-                    raise RuntimeError(f"i2v 失败: {status} — {st.get('error')}")
+                if last_status in ("failed", "cancelled"):
+                    return AdapterResult(
+                        ok=False,
+                        error_type=ModelErrorType.UPSTREAM_FAILED,
+                        job_id=job_id,
+                        maybe_billed=True,
+                        job_status=last_status,
+                        edge_fingerprint=str(st.get("error") or ""),
+                    )
             if not url:
-                raise RuntimeError("i2v 未取得视频 URL(超时或失败)")
-            return _download(client, url)
+                return AdapterResult(
+                    ok=False,
+                    error_type=ModelErrorType.TIMEOUT,
+                    job_id=job_id,
+                    maybe_billed=True,
+                    job_status=last_status or "timeout",
+                )
+            try:
+                body = _download(client, url)
+            except RuntimeError as exc:
+                return AdapterResult(
+                    ok=False,
+                    error_type=ModelErrorType.MAYBE_BILLED,
+                    job_id=job_id,
+                    maybe_billed=True,
+                    job_status="completed",
+                    edge_fingerprint=str(exc),
+                )
+            return AdapterResult(
+                ok=True,
+                body=body,
+                job_id=job_id,
+                maybe_billed=True,
+                job_status="completed",
+            )
+
+    def i2v(
+        self, first_frame: bytes, prompt: str, seconds: int = 5, size: str = "1280x720"
+    ) -> bytes:
+        submitted = self.submit_video(first_frame, prompt, seconds, size, self._model)
+        if not submitted.ok or not submitted.job_id:
+            raise RuntimeError(
+                f"i2v 建单失败(HTTP {submitted.http_status} {submitted.error_type}): "
+                f"{submitted.edge_fingerprint}"
+            )
+        followed = self.follow_job(submitted.job_id)
+        if followed.ok:
+            return followed.body
+        if followed.error_type is ModelErrorType.TIMEOUT:
+            raise RuntimeError("i2v 未取得视频 URL(超时或失败)")
+        if followed.error_type is ModelErrorType.UPSTREAM_FAILED:
+            raise RuntimeError(
+                f"i2v 失败: {followed.job_status} — {followed.edge_fingerprint}"
+            )
+        raise RuntimeError(
+            f"i2v 失败(HTTP {followed.http_status} {followed.error_type}): "
+            f"{followed.edge_fingerprint}"
+        )
 
 
 class IncompleteDownloadError(RuntimeError):

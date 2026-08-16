@@ -682,12 +682,15 @@ def _video_provider(handler, **kw):
         poll_interval=30.0,
         **kw,
     )
-    client = _httpx.Client(
-        base_url="https://gw.example.com/v1",
-        headers={"Authorization": "Bearer k"},
-        transport=_httpx.MockTransport(handler),
-    )
-    p._client = lambda: client
+    # submit_video 与 follow_job 各自 with _client()，必须每次返回新 client，
+    # 否则建单结束就会把同一实例 close 掉，跟单 GET 打到已关闭的连接。
+    def make_client():
+        return _httpx.Client(
+            base_url="https://gw.example.com/v1",
+            headers={"Authorization": "Bearer k"},
+            transport=_httpx.MockTransport(handler),
+        )
+    p._client = make_client
     return p
 
 
