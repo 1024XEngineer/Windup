@@ -38,3 +38,6 @@ class AdapterResult:
     provider_usage: object | None = None
     job_status: str | None = None
     retry_after_s: float | None = None
+    poll_ms: int | None = None
+    download_ms: int | None = None
+    poll_count: int | None = None

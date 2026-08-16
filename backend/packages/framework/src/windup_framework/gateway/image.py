@@ -83,6 +83,8 @@ class ImageGateway:
         for i, model in enumerate(models):
             attempt_index = start_i + i
             if self._circuit.is_open("model:" + model):
+                fallback_used = True
+                fallback_reason = "skip"
                 self._emit(
                     request_id=request_id,
                     ctx=ctx,
@@ -107,6 +109,8 @@ class ImageGateway:
                 )
             elif fallback_reason == "429":
                 route_reason = "fallback_after_429"
+            elif fallback_reason == "skip":
+                route_reason = "skip_circuit_open"
             else:
                 route_reason = "fallback_after_upstream_fail"
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -91,6 +92,8 @@ class VideoGateway:
         for i, model in enumerate(models):
             attempt_index = start_i + i
             if self._circuit.is_open("model:" + model):
+                fallback_used = True
+                fallback_reason = "skip"
                 self._emit(
                     request_id=request_id,
                     ctx=ctx,
@@ -115,6 +118,8 @@ class VideoGateway:
                 )
             elif fallback_reason == "429":
                 route_reason = "fallback_after_429"
+            elif fallback_reason == "skip":
+                route_reason = "skip_circuit_open"
             else:
                 route_reason = "fallback_after_upstream_fail"
 
@@ -124,37 +129,23 @@ class VideoGateway:
             while True:
                 attempt_t0 = time.monotonic()
                 started_at = _utc_now()
+                submit_ms: int | None = None
                 if bound_job_id is None:
+                    submit_t0 = time.monotonic()
                     result = self._adapter.submit_video(
                         first_frame, prompt, seconds, size, model
                     )
+                    submit_ms = int((time.monotonic() - submit_t0) * 1000)
                     if result.ok and result.job_id:
                         bound_job_id = result.job_id
                         result = self._adapter.follow_job(bound_job_id)
                     elif result.ok:
-                        ended_at = _utc_now()
-                        attempt_latency_ms = int((time.monotonic() - attempt_t0) * 1000)
-                        last_http_status = result.http_status
-                        self._emit_result(
-                            request_id=request_id,
-                            ctx=ctx,
-                            model=model,
-                            host=host,
-                            attempt_index=attempt_index,
-                            retry_count=retry_count,
-                            route_reason=route_reason,
-                            result=result,
-                            input_hash=input_hash,
-                            total_latency_ms=total_ms(),
-                            fallback_used=fallback_used,
-                            started_at=started_at,
-                            ended_at=ended_at,
-                            attempt_latency_ms=attempt_latency_ms,
-                            resend_spent=resend_spent,
-                            seconds=seconds,
-                            outcome="fallback_success" if fallback_used else "success",
+                        result = replace(
+                            result,
+                            ok=False,
+                            error_type=ModelErrorType.INVALID_RESPONSE,
+                            body=b"",
                         )
-                        return result.body
                 else:
                     result = self._adapter.follow_job(bound_job_id)
 
@@ -180,6 +171,7 @@ class VideoGateway:
                         resend_spent=resend_spent,
                         seconds=seconds,
                         outcome="fallback_success" if fallback_used else "success",
+                        submit_ms=submit_ms,
                     )
                     return result.body
 
@@ -219,6 +211,7 @@ class VideoGateway:
                     outcome="failed",
                     circuit_scope=circuit_scope,
                     error_type=error_type,
+                    submit_ms=submit_ms,
                 )
                 if step is NextStep.RETRY_SAME:
                     if error_type is ModelErrorType.RATE_LIMIT:
@@ -236,6 +229,11 @@ class VideoGateway:
                     if (
                         bound_job_id is not None
                         and error_type is not ModelErrorType.UPSTREAM_FAILED
+                    ):
+                        fail(last_http_status)
+                    if (
+                        bound_job_id is None
+                        and error_type is not ModelErrorType.RATE_LIMIT
                     ):
                         fail(last_http_status)
                     fallback_used = True
@@ -270,6 +268,7 @@ class VideoGateway:
         outcome: str,
         circuit_scope: str | None = None,
         error_type: ModelErrorType | None = None,
+        submit_ms: int | None = None,
     ) -> None:
         billed = result.ok or result.maybe_billed
         cost = estimate_cost(
@@ -313,6 +312,10 @@ class VideoGateway:
             job_id=result.job_id,
             job_status=result.job_status,
             retry_after_ms=retry_after_ms,
+            submit_ms=submit_ms,
+            poll_ms=result.poll_ms,
+            download_ms=result.download_ms,
+            poll_count=result.poll_count,
         )
 
     def _emit(
@@ -346,6 +349,10 @@ class VideoGateway:
         job_id: str | None = None,
         job_status: str | None = None,
         retry_after_ms: int | None = None,
+        submit_ms: int | None = None,
+        poll_ms: int | None = None,
+        download_ms: int | None = None,
+        poll_count: int | None = None,
     ) -> None:
         family = None
         if model:
@@ -375,10 +382,10 @@ class VideoGateway:
                 ended_at=ended_at or _utc_now(),
                 attempt_latency_ms=attempt_latency_ms,
                 total_latency_ms=total_latency_ms,
-                submit_ms=None,
-                poll_ms=None,
-                download_ms=None,
-                poll_count=None,
+                submit_ms=submit_ms,
+                poll_ms=poll_ms,
+                download_ms=download_ms,
+                poll_count=poll_count,
                 retry_after_ms=retry_after_ms,
                 resend_spent=resend_spent,
                 output_bytes=output_bytes,

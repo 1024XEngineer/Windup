@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 
@@ -14,15 +15,18 @@ class CircuitBreaker:
         self._cooldown_s = cooldown_s
         self._monotonic = monotonic or time.monotonic
         self._open_until: dict[str, float] = {}
+        self._lock = threading.Lock()
 
     def is_open(self, key: str) -> bool:
-        until = self._open_until.get(key)
-        if until is None:
-            return False
-        if self._monotonic() >= until:
-            del self._open_until[key]
-            return False
-        return True
+        with self._lock:
+            until = self._open_until.get(key)
+            if until is None:
+                return False
+            if self._monotonic() >= until:
+                self._open_until.pop(key, None)
+                return False
+            return True
 
     def open(self, key: str) -> None:
-        self._open_until[key] = self._monotonic() + self._cooldown_s
+        with self._lock:
+            self._open_until[key] = self._monotonic() + self._cooldown_s

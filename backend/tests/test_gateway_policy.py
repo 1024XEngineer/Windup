@@ -1,3 +1,6 @@
+import threading
+import time
+
 from windup_common.enums.model import ModelErrorType
 from windup_framework.gateway.circuit import CircuitBreaker
 from windup_framework.gateway.policy import decide
@@ -47,3 +50,34 @@ def test_circuit_opens_and_cools_down(monkeypatch):
     assert br.is_open("aggregator")
     clock["t"] = 60.0
     assert not br.is_open("aggregator")
+
+
+def test_circuit_expiry_is_thread_safe():
+    clock = {"t": 0.0}
+
+    def now() -> float:
+        time.sleep(0.002)
+        return clock["t"]
+
+    br = CircuitBreaker(cooldown_s=60, monotonic=now)
+    errors: list[BaseException] = []
+
+    def expire_once(barrier: threading.Barrier) -> None:
+        try:
+            barrier.wait()
+            br.is_open("k")
+        except BaseException as exc:
+            errors.append(exc)
+
+    clock["t"] = 0.0
+    br.open("k")
+    clock["t"] = 60.0
+    n = 8
+    barrier = threading.Barrier(n)
+    threads = [threading.Thread(target=expire_once, args=(barrier,)) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert not br.is_open("k")

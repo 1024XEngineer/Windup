@@ -1,3 +1,4 @@
+import json
 import logging
 
 import pytest
@@ -99,3 +100,27 @@ def test_success_trace_has_latency_and_null_cost_by_default(caplog):
     gw.gen_image("p", [])
     assert "total_latency_ms" in caplog.text
     assert '"cost": null' in caplog.text or '"cost":null' in caplog.text
+
+
+def test_skip_open_model_circuit_sets_fallback_used(caplog):
+    caplog.set_level(logging.INFO, logger="windup.gateway")
+    ad = FakeImageAdapter({
+        "gemini-2.5-flash-image": [PNG],
+        "gemini-2.5-flash-image-alt": [PNG],
+    })
+    br = CircuitBreaker(cooldown_s=60)
+    br.open("model:gemini-2.5-flash-image")
+    gw = _make_gw(ad, image_fallbacks="gemini-2.5-flash-image-alt", circuit=br)
+    assert gw.gen_image("p", []).startswith(b"\x89PNG")
+    assert ad.calls == ["gemini-2.5-flash-image-alt"]
+    records = [json.loads(r.message) for r in caplog.records if r.name == "windup.gateway"]
+    success = [r for r in records if r.get("outcome") in ("success", "fallback_success")]
+    assert success, caplog.text
+    line = success[-1]
+    assert line["fallback_used"] is True
+    assert line["outcome"] == "fallback_success"
+    assert line["route_reason"] == "skip_circuit_open"
+    assert not any(
+        r.get("outcome") == "success" and r.get("fallback_used") is False
+        for r in records
+    )

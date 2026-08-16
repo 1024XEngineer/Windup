@@ -27,6 +27,7 @@ import io
 import json
 import re
 import time
+from dataclasses import replace
 
 import httpx
 
@@ -178,24 +179,40 @@ class SufyVideoProvider(VideoProvider):
 
     def follow_job(self, job_id: str) -> AdapterResult:
         """轮询已建单据 + 下载。poll GET 522/525 该次再试 1 次,不新开单。"""
+        poll_t0 = time.monotonic()
+        poll_count = 0
+
+        def with_poll(
+            result: AdapterResult, *, download_ms: int | None = None
+        ) -> AdapterResult:
+            return replace(
+                result,
+                poll_ms=int((time.monotonic() - poll_t0) * 1000),
+                poll_count=poll_count,
+                download_ms=download_ms,
+            )
+
         with self._client() as client:
             url = None
             last_status: str | None = None
             for _ in range(max(1, int(self._max_min * 60 // self._poll))):
                 time.sleep(self._poll)
                 resp = _poll_get(client, job_id)
+                poll_count += 1
                 if not (200 <= resp.status_code < 300):
-                    return _video_http_error(resp, job_id=job_id)
+                    return with_poll(_video_http_error(resp, job_id=job_id))
                 try:
                     st = resp.json()
                 except ValueError:
-                    return AdapterResult(
-                        ok=False,
-                        error_type=ModelErrorType.INVALID_RESPONSE,
-                        http_status=resp.status_code,
-                        job_id=job_id,
-                        maybe_billed=True,
-                        edge_fingerprint="轮询响应不是 JSON",
+                    return with_poll(
+                        AdapterResult(
+                            ok=False,
+                            error_type=ModelErrorType.INVALID_RESPONSE,
+                            http_status=resp.status_code,
+                            job_id=job_id,
+                            maybe_billed=True,
+                            edge_fingerprint="轮询响应不是 JSON",
+                        )
                     )
                 last_status = st.get("status")
                 if last_status == "completed":
@@ -203,39 +220,57 @@ class SufyVideoProvider(VideoProvider):
                     url = vids[0].get("url") if vids else None
                     break
                 if last_status in ("failed", "cancelled"):
-                    return AdapterResult(
+                    return with_poll(
+                        AdapterResult(
+                            ok=False,
+                            error_type=ModelErrorType.UPSTREAM_FAILED,
+                            job_id=job_id,
+                            maybe_billed=True,
+                            job_status=last_status,
+                            edge_fingerprint=str(st.get("error") or ""),
+                        )
+                    )
+            poll_ms = int((time.monotonic() - poll_t0) * 1000)
+            if not url:
+                return replace(
+                    AdapterResult(
                         ok=False,
-                        error_type=ModelErrorType.UPSTREAM_FAILED,
+                        error_type=ModelErrorType.TIMEOUT,
                         job_id=job_id,
                         maybe_billed=True,
-                        job_status=last_status,
-                        edge_fingerprint=str(st.get("error") or ""),
-                    )
-            if not url:
-                return AdapterResult(
-                    ok=False,
-                    error_type=ModelErrorType.TIMEOUT,
-                    job_id=job_id,
-                    maybe_billed=True,
-                    job_status=last_status or "timeout",
+                        job_status=last_status or "timeout",
+                    ),
+                    poll_ms=poll_ms,
+                    poll_count=poll_count,
                 )
             try:
+                download_t0 = time.monotonic()
                 body = _download(client, url)
+                download_ms = int((time.monotonic() - download_t0) * 1000)
             except RuntimeError as exc:
-                return AdapterResult(
-                    ok=False,
-                    error_type=ModelErrorType.MAYBE_BILLED,
+                return replace(
+                    AdapterResult(
+                        ok=False,
+                        error_type=ModelErrorType.MAYBE_BILLED,
+                        job_id=job_id,
+                        maybe_billed=True,
+                        job_status="completed",
+                        edge_fingerprint=str(exc),
+                    ),
+                    poll_ms=poll_ms,
+                    poll_count=poll_count,
+                )
+            return replace(
+                AdapterResult(
+                    ok=True,
+                    body=body,
                     job_id=job_id,
                     maybe_billed=True,
                     job_status="completed",
-                    edge_fingerprint=str(exc),
-                )
-            return AdapterResult(
-                ok=True,
-                body=body,
-                job_id=job_id,
-                maybe_billed=True,
-                job_status="completed",
+                ),
+                poll_ms=poll_ms,
+                poll_count=poll_count,
+                download_ms=download_ms,
             )
 
     def i2v(

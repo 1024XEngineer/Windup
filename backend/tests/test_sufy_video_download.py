@@ -722,6 +722,15 @@ def _i2v_handler(seen: dict, *, statuses=("completed",), video=b"MP4DATA" * 200)
     return h
 
 
+def test_follow_job_records_poll_and_download_timings():
+    p = _video_provider(_i2v_handler({}, statuses=("in_progress", "completed")))
+    result = p.follow_job("job-1")
+    assert result.ok
+    assert result.poll_count == 2
+    assert isinstance(result.poll_ms, int)
+    assert isinstance(result.download_ms, int)
+
+
 def test_i2v_submits_polls_and_downloads():
     """一条完整的付费路径：提交拿 job id → 轮询到 completed → 下载 mp4。"""
     seen: dict = {}
