@@ -15,12 +15,11 @@ import json
 import httpx
 import pytest
 
+from windup_framework.gateway.classify import _utc_now, retry_after_seconds
 from windup_framework.providers.sufy import (
     IncompleteDownloadError,
     UnsafeDownloadUrlError,
     _download,
-    _retry_after_seconds,
-    _utc_now,
 )
 
 VIDEO = b"\x00\x01mp4-bytes" * 64
@@ -423,7 +422,7 @@ def test_image_rate_limit_accepts_http_date(monkeypatch):
         return httpx.Response(200, json=_img_payload(_big_b64()))
 
     monkeypatch.setattr(
-        "windup_framework.providers.sufy._utc_now",
+        "windup_framework.gateway.classify._utc_now",
         lambda: datetime(2026, 8, 13, 3, 0, tzinfo=timezone.utc),
     )
     monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", sleeps.append)
@@ -438,11 +437,11 @@ def test_retry_after_clock_is_utc():
 
 def test_retry_after_accepts_date_without_timezone(monkeypatch):
     monkeypatch.setattr(
-        "windup_framework.providers.sufy._utc_now",
+        "windup_framework.gateway.classify._utc_now",
         lambda: datetime(2026, 8, 13, 3, 0, tzinfo=timezone.utc),
     )
 
-    assert _retry_after_seconds("Thu, 13 Aug 2026 03:00:10") == 10.0
+    assert retry_after_seconds("Thu, 13 Aug 2026 03:00:10") == 10.0
 
 
 def test_request_path_comes_from_config_not_a_literal():

@@ -1,0 +1,39 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+
+from windup_common.enums.model import ModelErrorType
+
+
+class Scene(str, Enum):
+    CHARACTER_IMAGE = "character_image"
+    CHARACTER_ACTION = "character_action"
+
+
+class Family(str, Enum):
+    IMAGE_CHAT_DATA_URI = "image.chat_data_uri"
+    VIDEO_INPUT_REFERENCE = "video.input_reference"
+    VIDEO_IMAGE_LIST = "video.image_list"
+
+
+class NextStep(str, Enum):
+    RETRY_SAME = "retry_same"
+    FALLBACK = "fallback"
+    FAIL = "fail"
+    OPEN_AGGREGATOR = "open_aggregator"
+
+
+@dataclass(frozen=True)
+class AdapterResult:
+    ok: bool
+    body: bytes = b""
+    job_id: str | None = None
+    error_type: ModelErrorType | None = None
+    http_status: int | None = None
+    maybe_billed: bool = False
+    edge_fingerprint: str = ""
+    output_bytes: int = 0
+    expected_bytes: int | None = None
+    provider_usage: object | None = None
+    job_status: str | None = None

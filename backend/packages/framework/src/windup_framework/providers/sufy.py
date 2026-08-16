@@ -23,18 +23,16 @@
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 import io
 import json
 import logging
-import math
 import re
 import time
 
 import httpx
 
 from windup_framework.config.provider import AIProviderSettings, settings
+from windup_framework.gateway.classify import _MAX_RETRY_WAIT, retry_after_seconds as _retry_after_seconds
 
 from .interfaces import ImageProvider, VideoProvider
 
@@ -273,7 +271,6 @@ DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image"
 _IMAGE_TRIES = 3
 _MIN_IMAGE_BYTES = 5000
 _CONNECT_RETRIES = 3
-_MAX_RETRY_WAIT = 30.0
 _IMAGE_TIMEOUT_MULTIPLIER = 1.5
 
 # 429 是被限流拒收、必然没计费,所以按次数放开重试。它与 _IMAGE_TRIES 会叠乘,单次
@@ -319,26 +316,6 @@ def _edge_fingerprint(response: httpx.Response) -> str:
     """52x 出自链路上哪一跳,只能从这几个头看 —— 不记下来,线上就只剩一个状态码可复盘。"""
     seen = {k: response.headers.get(k) for k in _DIAGNOSTIC_HEADERS}
     return " ".join(f"{k}={v}" for k, v in seen.items() if v) or "无可辨识的边缘响应头"
-
-
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _retry_after_seconds(value: str) -> float | None:
-    try:
-        delay = float(value)
-    except ValueError:
-        try:
-            retry_at = parsedate_to_datetime(value)
-        except (TypeError, ValueError, OverflowError):
-            return None
-        if retry_at.tzinfo is None:
-            retry_at = retry_at.replace(tzinfo=timezone.utc)
-        delay = (retry_at.astimezone(timezone.utc) - _utc_now()).total_seconds()
-    if not math.isfinite(delay):
-        return None
-    return min(max(delay, 0.0), _MAX_RETRY_WAIT)
 
 
 def _retry_exhausted_message(status: int, tries: int, fingerprint: str) -> str:
