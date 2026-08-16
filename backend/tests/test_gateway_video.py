@@ -74,3 +74,28 @@ def test_timeout_does_not_submit_fallback():
         _video_gw(ad).i2v(b"frame", "walk")
     assert ad.submit_models == ["kling-v2-5-turbo"]
     assert ad.followed == ["j1"]
+
+
+@pytest.mark.parametrize(
+    "error_type",
+    [ModelErrorType.RATE_LIMIT, ModelErrorType.INVALID_RESPONSE],
+)
+def test_follow_fallback_without_upstream_fail_does_not_open_second_job(error_type):
+    follow_result = AdapterResult(
+        ok=False,
+        error_type=error_type,
+        job_id="j1",
+        retry_after_s=0,
+        maybe_billed=True,
+    )
+    ad = FakeVideoAdapter(
+        submits={
+            "kling-v2-5-turbo": [AdapterResult(ok=True, job_id="j1", maybe_billed=True)],
+            "kling-v2-6": [AdapterResult(ok=True, job_id="j2", maybe_billed=True)],
+        },
+        follows={"j1": follow_result},
+    )
+    with pytest.raises(RuntimeError, match=error_type.value):
+        _video_gw(ad).i2v(b"frame", "walk")
+    assert ad.submit_models == ["kling-v2-5-turbo"]
+    assert ad.followed == ["j1", "j1", "j1"]

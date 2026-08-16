@@ -233,6 +233,11 @@ class VideoGateway:
                         resend_spent = 1
                     continue
                 if step is NextStep.FALLBACK:
+                    if (
+                        bound_job_id is not None
+                        and error_type is not ModelErrorType.UPSTREAM_FAILED
+                    ):
+                        fail(last_http_status)
                     fallback_used = True
                     fallback_reason = (
                         "429" if error_type is ModelErrorType.RATE_LIMIT else "upstream"
