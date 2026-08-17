@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, useLocation } from 'react-router'
 
+import { quotaApis } from '@/entities'
 import type { AuthTokens, User, UserApis } from '@/entities'
 import { AuthSessionProvider } from '@/features/auth-session'
 import { AppRoutes } from '@/app/app'
@@ -68,6 +69,7 @@ function renderAccount(apis = createApis()) {
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
+  vi.restoreAllMocks()
 })
 
 describe('AccountPage', () => {
@@ -147,6 +149,44 @@ describe('AccountPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '登录安全' }))
     expect((screen.getByLabelText('当前密码') as HTMLInputElement).value).toBe('')
     expect((screen.getByLabelText('新密码') as HTMLInputElement).value).toBe('')
+  })
+
+  it('在账号中心展示积分汇总、流水与未知原因码', async () => {
+    vi.spyOn(quotaApis, 'getBalance').mockResolvedValue({
+      id: '11',
+      userId: '7',
+      balance: 90,
+      frozen: 10,
+      totalEarned: 150,
+      totalSpent: 50,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+    vi.spyOn(quotaApis, 'listTransactions').mockResolvedValue({
+      items: [
+        {
+          id: '21',
+          userId: '7',
+          delta: -12,
+          reason: 99,
+          billingMode: 0,
+          refId: 'generation-42',
+          balanceAfter: 78,
+          createdAt: '2026-08-17T02:03:04Z',
+        },
+      ],
+      total: 1,
+      page: 1,
+      pageSize: 20,
+    })
+
+    renderAccount()
+    fireEvent.click(await screen.findByRole('button', { name: '积分账户' }))
+
+    expect(await screen.findByRole('heading', { name: '积分账户' })).toBeTruthy()
+    expect(await screen.findByText('90')).toBeTruthy()
+    expect(screen.getByText('积分变动（原因码 99）')).toBeTruthy()
+    expect(screen.getByText('-12')).toBeTruthy()
   })
 
   it('reports a profile refresh failure without claiming the data is synchronized', async () => {
