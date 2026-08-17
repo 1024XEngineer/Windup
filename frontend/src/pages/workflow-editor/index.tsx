@@ -141,6 +141,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
   const [run, setRun] = useState<WorkflowRun | null>(null)
   const [generations, setGenerations] = useState<Record<string, Generation | null>>({})
   const [selectedImages, setSelectedImages] = useState<Record<string, string>>({})
+  const [setupPromptDrafts, setSetupPromptDrafts] = useState<Record<string, string>>({})
   const [actionMenuOpen, setActionMenuOpen] = useState(false)
   const [actionMenuLevel, setActionMenuLevel] = useState<ActionMenuLevel>('root')
   const [selectedOutfitId, setSelectedOutfitId] = useState<string | null>(null)
@@ -227,6 +228,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
     setRun(null)
     setGenerations({})
     setSelectedImages({})
+    setSetupPromptDrafts({})
     setActionMenuOpen(false)
     setActionMenuLevel('root')
     setSelectedOutfitId(null)
@@ -328,12 +330,14 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
             generations,
             exportModels,
             selectedImages,
+            setupPromptDrafts,
             actionMenuOpen,
             actionMenuLevel,
             selectedOutfitId,
             busyBranches,
             resumeBlocked: Boolean(resumeError),
             setSelectedImages,
+            setSetupPromptDrafts,
             setActionMenuOpen,
             setActionMenuLevel,
             setSelectedOutfitId,
@@ -352,6 +356,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
       runCommand,
       resumeError,
       selectedImages,
+      setupPromptDrafts,
       selectedOutfitId,
       session,
     ],
@@ -511,12 +516,14 @@ interface ProjectionInput {
   generations: Record<string, Generation | null>
   exportModels: ReadonlyMap<string, ExportPackageModel>
   selectedImages: Record<string, string>
+  setupPromptDrafts: Record<string, string>
   actionMenuOpen: boolean
   actionMenuLevel: ActionMenuLevel
   selectedOutfitId: string | null
   busyBranches: ReadonlySet<string>
   resumeBlocked: boolean
   setSelectedImages: React.Dispatch<React.SetStateAction<Record<string, string>>>
+  setSetupPromptDrafts: React.Dispatch<React.SetStateAction<Record<string, string>>>
   setActionMenuOpen(open: boolean): void
   setActionMenuLevel(level: ActionMenuLevel): void
   setSelectedOutfitId(outfitId: string | null): void
@@ -604,14 +611,11 @@ function CharacterSetupContent({
 }) {
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
-  const [prompt, setPrompt] = useState(node.input.prompt)
+  const prompt = input.setupPromptDrafts[node.id] ?? node.input.prompt
   const [uploadingReference, setUploadingReference] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const uploadAbortRef = useRef<AbortController | null>(null)
 
-  useEffect(() => {
-    setPrompt(node.input.prompt)
-  }, [node.id, node.input.prompt])
   useEffect(() => () => uploadAbortRef.current?.abort(), [])
 
   function uploadReferenceImage(file: File) {
@@ -651,7 +655,10 @@ function CharacterSetupContent({
           className="min-h-[84px] w-full resize-y rounded-lg border border-[var(--color-app-line)] bg-app-surface-raised px-3 py-2.5 font-[inherit] text-[11px] leading-[1.55] text-[var(--color-app-ink)] focus:border-app-accent focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-app-accent-soft"
           value={prompt}
           disabled={branchBusy || uploadingReference}
-          onChange={(event) => setPrompt(event.target.value)}
+          onChange={(event) => {
+            const value = event.target.value
+            input.setSetupPromptDrafts((drafts) => ({ ...drafts, [node.id]: value }))
+          }}
         />
         {node.input.referenceMedia.length > 0 ? (
           <small className="text-[9px] font-[750] text-app-muted">
