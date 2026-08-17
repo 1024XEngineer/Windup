@@ -311,12 +311,13 @@ export function createQuickStartService({
     const run = controller.getWorkflow()
     const setup = setupNode(run)
     const existingCharacterId = setup.input.characterId
+    // 不传 name：后端按 description 生成并统一裁到 20 字。前端自己截会撞
+    // CharacterCreate.name 的 20 字上限，也让后端的自动起名永远走不到。
     const character = existingCharacterId
       ? await characterApis.get(existingCharacterId)
       : await characterApis.create({
           projectId: run.projectId,
           workflowRunId: run.id,
-          name: setup.input.prompt.trim().slice(0, 32) || '未命名角色',
           description: setup.input.prompt,
           referenceImageUrl: selectedImageUrl,
         })
