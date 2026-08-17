@@ -60,12 +60,15 @@ class WorkflowRunService(ABC):
         session: Session,
         run_id: int,
         *,
+        expected_version: int,
         nodes: list | None = None,
         status: RunStatus | None = None,
     ) -> WorkflowRun | None:
         """更新执行记录。
 
         前端维护节点树后，通过此接口全量写回。
+        ``expected_version`` 必须等于库中当前版本，否则乐观锁冲突。
+        无字段变更时不递增 version。
         返回更新后的记录；不存在时返回 None。
         """
 

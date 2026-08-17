@@ -8,8 +8,11 @@ SQLAlchemy session 落库。无状态：``session`` 由调用方按请求传入�
 rollback，故本实现只 ``flush``（把变更发到当前事务、取回生成的主键），不 commit。
 """
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
+
+from windup_common.enums.biz_code import BizCode
+from windup_common.exceptions import BizException
 
 from windup_app.server.workflow_run.interface import WorkflowRunService
 from windup_app.server.workflow_run.model import RunStatus, WorkflowRun
@@ -72,18 +75,38 @@ class SqlAlchemyWorkflowRunService(WorkflowRunService):
         session: Session,
         run_id: int,
         *,
+        expected_version: int,
         nodes: list | None = None,
         status: RunStatus | None = None,
     ) -> WorkflowRun | None:
         run = session.get(WorkflowRun, run_id)
         if run is None:
             return None
-        if nodes is not None:
-            run.nodes = nodes
-        if status is not None:
-            run.status = status.value
-        run.version += 1
-        session.flush()
+
+        new_nodes = run.nodes if nodes is None else nodes
+        new_status = run.status if status is None else status.value
+        if new_nodes == run.nodes and new_status == run.status:
+            return run
+
+        result = session.execute(
+            update(WorkflowRun)
+            .where(
+                WorkflowRun.id == run_id,
+                WorkflowRun.version == expected_version,
+            )
+            .values(
+                nodes=new_nodes,
+                status=new_status,
+                version=expected_version + 1,
+            )
+            .execution_options(synchronize_session="fetch")
+        )
+        if result.rowcount == 0:
+            raise BizException(
+                "执行记录版本冲突，请刷新后重试",
+                code=BizCode.CONFLICT,
+            )
+        session.refresh(run)
         return run
 
     def delete_run(self, session: Session, run_id: int) -> bool:
