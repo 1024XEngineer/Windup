@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router'
 
 import assetLibraryArtwork from '@/assets/workspace/asset-library.png'
@@ -7,12 +7,26 @@ import type { Paged } from '@/shared/pagination'
 import { Pagination } from '@/shared/ui'
 
 const PROJECT_PAGE_SIZE = 12
+const PROJECT_PREVIEW_CHARACTER_LIMIT = 6
+const PROJECT_PREVIEW_REQUEST_CONCURRENCY = 2
+
+interface ProjectPreviewRequest {
+  projectId: string
+  state: 'queued' | 'active'
+  cancelled: boolean
+  promise: Promise<string | null>
+  resolve: (preview: string | null) => void
+}
 
 /** 项目中心；项目是角色资产与生成规格的隔离边界。 */
 export function ProjectsPage() {
   const [pageNumber, setPageNumber] = useState(1)
   const [projectsPage, setProjectsPage] = useState<Paged<Project> | null>(null)
   const [projectPreviews, setProjectPreviews] = useState<Record<string, string | null>>({})
+  const projectPreviewCache = useRef(new Map<string, string | null>())
+  const projectPreviewRequests = useRef(new Map<string, ProjectPreviewRequest>())
+  const projectPreviewQueue = useRef<ProjectPreviewRequest[]>([])
+  const activeProjectPreviewRequests = useRef(0)
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -41,18 +55,21 @@ export function ProjectsPage() {
         active = false
       }
 
-    setProjectPreviews(
-      Object.fromEntries(projectsPage.items.map((project) => [project.id, project.sampleImageUrl])),
+    const previews = Object.fromEntries(
+      projectsPage.items.map((project) => [
+        project.id,
+        project.sampleImageUrl ?? projectPreviewCache.current.get(project.id) ?? null,
+      ]),
     )
-    const projectsWithoutPreview = projectsPage.items.filter((project) => !project.sampleImageUrl)
+    setProjectPreviews(previews)
+    const projectsWithoutPreview = projectsPage.items.filter(
+      (project) => !project.sampleImageUrl && !projectPreviewCache.current.has(project.id),
+    )
+    const requestedProjectIds = new Set(projectsWithoutPreview.map((project) => project.id))
     void Promise.all(
       projectsWithoutPreview.map(async (project) => {
-        try {
-          const page = await characterApis.listByProject(project.id, { page: 1, pageSize: 1 })
-          return [project.id, previewFromCharacter(page.items[0])] as const
-        } catch {
-          return [project.id, null] as const
-        }
+        const preview = await loadProjectPreview(project.id)
+        return [project.id, preview] as const
       }),
     ).then((entries) => {
       if (active) setProjectPreviews((current) => ({ ...current, ...Object.fromEntries(entries) }))
@@ -60,14 +77,86 @@ export function ProjectsPage() {
 
     return () => {
       active = false
+      cancelQueuedProjectPreviews(requestedProjectIds)
     }
   }, [projectsPage])
+
+  function loadProjectPreview(projectId: string): Promise<string | null> {
+    if (projectPreviewCache.current.has(projectId)) {
+      return Promise.resolve(projectPreviewCache.current.get(projectId) ?? null)
+    }
+    const currentRequest = projectPreviewRequests.current.get(projectId)
+    if (currentRequest) return currentRequest.promise
+
+    let resolvePreview: (preview: string | null) => void = () => undefined
+    const promise = new Promise<string | null>((resolve) => {
+      resolvePreview = resolve
+    })
+    const request: ProjectPreviewRequest = {
+      projectId,
+      state: 'queued',
+      cancelled: false,
+      promise,
+      resolve: resolvePreview,
+    }
+    projectPreviewRequests.current.set(projectId, request)
+    projectPreviewQueue.current.push(request)
+    processProjectPreviewQueue()
+    return promise
+  }
+
+  function processProjectPreviewQueue() {
+    while (
+      activeProjectPreviewRequests.current < PROJECT_PREVIEW_REQUEST_CONCURRENCY &&
+      projectPreviewQueue.current.length > 0
+    ) {
+      const request = projectPreviewQueue.current.shift()
+      if (!request || request.cancelled) continue
+      request.state = 'active'
+      activeProjectPreviewRequests.current += 1
+      void (async () => {
+        let preview: string | null = null
+        let succeeded = false
+        try {
+          const page = await characterApis.listByProject(request.projectId, {
+            page: 1,
+            pageSize: PROJECT_PREVIEW_CHARACTER_LIMIT,
+          })
+          preview = previewFromCharacters(page.items)
+          succeeded = true
+        } catch {
+          preview = null
+        } finally {
+          if (succeeded) projectPreviewCache.current.set(request.projectId, preview)
+          request.resolve(preview)
+          if (projectPreviewRequests.current.get(request.projectId) === request) {
+            projectPreviewRequests.current.delete(request.projectId)
+          }
+          activeProjectPreviewRequests.current -= 1
+          processProjectPreviewQueue()
+        }
+      })()
+    }
+  }
+
+  function cancelQueuedProjectPreviews(projectIds: Set<string>) {
+    projectPreviewQueue.current = projectPreviewQueue.current.filter((request) => {
+      if (!projectIds.has(request.projectId) || request.state !== 'queued') return true
+      request.cancelled = true
+      request.resolve(null)
+      if (projectPreviewRequests.current.get(request.projectId) === request) {
+        projectPreviewRequests.current.delete(request.projectId)
+      }
+      return false
+    })
+  }
 
   async function deleteProject(project: Project) {
     setDeleting(true)
     setError(null)
     try {
       await projectApis.remove(project.id)
+      projectPreviewCache.current.delete(project.id)
       if (projectsPage?.items.length === 1 && projectsPage.page > 1) {
         setPageNumber(projectsPage.page - 1)
       } else {
@@ -159,6 +248,14 @@ function previewFromCharacter(character: Character | undefined): string | null {
       const frame = action.frames.find((item) => item.imageUrl)
       if (frame) return frame.imageUrl
     }
+  }
+  return null
+}
+
+function previewFromCharacters(characters: Character[]): string | null {
+  for (const character of characters) {
+    const preview = previewFromCharacter(character)
+    if (preview) return preview
   }
   return null
 }

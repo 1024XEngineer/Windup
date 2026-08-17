@@ -48,12 +48,14 @@ describe('ProjectsPage', () => {
     const previewProject = screen.getByRole('link', { name: '打开项目 点灯人 · MVP' })
     expect(previewProject.getAttribute('href')).toBe('/projects/42/assets')
     expect(screen.getByRole('heading', { name: '最近项目 · 02' })).toBeTruthy()
-    expect(previewProject.querySelector('img')?.getAttribute('src')).toBe(
-      'https://cdn.windup.test/messenger-outfit.png',
-    )
     const emptyProject = screen.getByRole('link', { name: '打开项目 空白海岸' })
-    expect(emptyProject.querySelector('img')).toBeNull()
-    expect(emptyProject.textContent).toContain('等待第一份角色资产')
+    await waitFor(() => {
+      expect(previewProject.querySelector('img')?.getAttribute('src')).toBe(
+        'https://cdn.windup.test/messenger-outfit.png',
+      )
+      expect(emptyProject.querySelector('img')).toBeNull()
+      expect(emptyProject.textContent).toContain('等待第一份角色资产')
+    })
     expect(previewProject.textContent).toContain('08/04')
     expect(screen.queryByText('项目名称')).toBeNull()
     expect(screen.queryByText('视角 / 朝向')).toBeNull()
@@ -76,7 +78,7 @@ describe('ProjectsPage', () => {
     expect(
       previewRequests.every((request) => {
         const query = new URL(request.url).searchParams
-        return query.get('page') === '1' && query.get('page_size') === '1'
+        return query.get('page') === '1' && query.get('page_size') === '6'
       }),
     ).toBe(true)
   })
@@ -117,8 +119,18 @@ describe('ProjectsPage', () => {
     const character = await characterApis.get('51')
     vi.spyOn(characterApis, 'listByProject').mockImplementation(async (projectId) => {
       if (Number(projectId) === 1002) throw new Error('preview unavailable')
+      const emptyCharacter = {
+        ...character,
+        referenceImageUrl: null,
+        outfits: character.outfits.map((outfit) => ({
+          ...outfit,
+          previewUrl: null,
+          actions: outfit.actions.map((action) => ({ ...action, frames: [] })),
+        })),
+      }
       return {
         items: [
+          emptyCharacter,
           {
             ...character,
             referenceImageUrl: Number(projectId) === 42 ? character.referenceImageUrl : null,
@@ -127,7 +139,7 @@ describe('ProjectsPage', () => {
         ],
         total: 1,
         page: 1,
-        pageSize: 1,
+        pageSize: 6,
       }
     })
     render(
@@ -154,6 +166,93 @@ describe('ProjectsPage', () => {
       ).toBe('https://cdn.windup.test/idle-01.png')
       expect(screen.getByText('等待第一份角色资产')).toBeTruthy()
     })
+  })
+
+  it('limits preview request concurrency', async () => {
+    const backend = createProjectAssetsBackend({ projectCount: 5 })
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', backend.fetch)
+    let activeRequests = 0
+    let maxActiveRequests = 0
+    let releaseRequests: (() => void) | undefined
+    const requestGate = new Promise<void>((resolve) => {
+      releaseRequests = resolve
+    })
+    const listSpy = vi.spyOn(characterApis, 'listByProject').mockImplementation(async () => {
+      activeRequests += 1
+      maxActiveRequests = Math.max(maxActiveRequests, activeRequests)
+      await requestGate
+      activeRequests -= 1
+      return { items: [], total: 0, page: 1, pageSize: 6 }
+    })
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(2))
+    expect(maxActiveRequests).toBe(2)
+    releaseRequests?.()
+    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(5))
+    expect(maxActiveRequests).toBe(2)
+    expect(listSpy.mock.calls.every(([, query]) => query?.page === 1 && query.pageSize === 6)).toBe(
+      true,
+    )
+  })
+
+  it('shares concurrency across pages, deduplicates active requests, and reuses cached previews', async () => {
+    const backend = createProjectAssetsBackend({ projectCount: 13 })
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', backend.fetch)
+    let activeRequests = 0
+    let maxActiveRequests = 0
+    let releaseRequests: (() => void) | undefined
+    const requestGate = new Promise<void>((resolve) => {
+      releaseRequests = resolve
+    })
+    const listSpy = vi.spyOn(characterApis, 'listByProject').mockImplementation(async () => {
+      activeRequests += 1
+      maxActiveRequests = Math.max(maxActiveRequests, activeRequests)
+      await requestGate
+      activeRequests -= 1
+      return { items: [], total: 0, page: 1, pageSize: 6 }
+    })
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(2))
+    fireEvent.click(screen.getByRole('button', { name: '下一页' }))
+    await waitFor(() => {
+      expect(screen.getAllByRole('link', { name: /打开项目/ })).toHaveLength(1)
+    })
+    expect(listSpy).toHaveBeenCalledTimes(2)
+    fireEvent.click(screen.getByRole('button', { name: '上一页' }))
+    await waitFor(() => {
+      expect(screen.getAllByRole('link', { name: /打开项目/ })).toHaveLength(12)
+    })
+    expect(listSpy).toHaveBeenCalledTimes(2)
+    expect(new Set(listSpy.mock.calls.map(([projectId]) => projectId)).size).toBe(2)
+
+    releaseRequests?.()
+    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(12))
+    expect(maxActiveRequests).toBe(2)
+    fireEvent.click(screen.getByRole('button', { name: '下一页' }))
+    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(13))
+    fireEvent.click(screen.getByRole('button', { name: '上一页' }))
+    await waitFor(() => {
+      expect(screen.getAllByRole('link', { name: /打开项目/ })).toHaveLength(12)
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(listSpy).toHaveBeenCalledTimes(13)
+    expect(maxActiveRequests).toBe(2)
   })
 
   it('navigates every backend Project page instead of truncating after the first page', async () => {
