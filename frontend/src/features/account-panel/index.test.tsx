@@ -94,13 +94,31 @@ describe('AccountPanel', () => {
 
     expect(screen.getByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '欢迎回来。' })).toBeTruthy()
-    expect(screen.getByText('未注册的邮箱将在验证后自动创建账号。')).toBeTruthy()
+    expect(screen.queryByText('未注册的邮箱将在验证后自动创建账号。')).toBeNull()
+    expect(screen.getByText('内测期间仅支持已有账号登录。')).toBeTruthy()
     expect(screen.queryByRole('tab', { name: '注册' })).toBeNull()
-    expect(screen.getByRole('button', { name: '创建账号' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '创建账号' })).toBeNull()
+    expect(screen.getByRole('link', { name: 'GitHub Issues' }).getAttribute('href')).toBe(
+      'https://github.com/1024XEngineer/Windup/issues',
+    )
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('邮箱')))
   })
 
-  it('opens registration as a centered, progressive form', async () => {
+  it('opens a closed-registration URL as login and never starts signup', async () => {
+    const { apis } = renderPanel('/?account=register&returnTo=%2Fworkspace')
+
+    expect(screen.getByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '欢迎回来。' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '创建账号' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '继续' })).toBeNull()
+    expect(screen.getByRole('button', { name: '登录' })).toBeTruthy()
+    expect(screen.getByText(/内测期间暂不开放注册/)).toBeTruthy()
+    expect(apis.register).not.toHaveBeenCalled()
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('邮箱')))
+  })
+
+  // 内测关闭公开注册。重新开放时取消 skip，并恢复 AccountPanel 的 register 入口。
+  it.skip('opens registration as a centered, progressive form', async () => {
     renderPanel('/?account=register&returnTo=%2Fworkspace')
 
     const dialog = screen.getByRole('dialog', { name: '创建 Windup 账号' })
@@ -141,15 +159,15 @@ describe('AccountPanel', () => {
 
     const dialog = screen.getByRole('dialog', { name: '登录 Windup' })
     const closeButton = screen.getByRole('button', { name: '关闭账号面板' })
-    const entrySwitch = screen.getByRole('button', { name: '创建账号' })
+    const requestAccess = screen.getByRole('link', { name: 'GitHub Issues' })
 
-    entrySwitch.focus()
-    fireEvent.keyDown(entrySwitch, { key: 'Tab' })
+    requestAccess.focus()
+    fireEvent.keyDown(requestAccess, { key: 'Tab' })
     expect(document.activeElement).toBe(closeButton)
 
     closeButton.focus()
     fireEvent.keyDown(closeButton, { key: 'Tab', shiftKey: true })
-    expect(document.activeElement).toBe(entrySwitch)
+    expect(document.activeElement).toBe(requestAccess)
     expect(dialog.contains(document.activeElement)).toBe(true)
   })
 
@@ -266,9 +284,7 @@ describe('AccountPanel', () => {
       email: 'reader@example.com',
       code: '123456',
     })
-    expect(
-      screen.getByText('登录成功。如果这是你首次使用该邮箱，我们已为你创建账号。').textContent,
-    ).toContain('登录成功。如果这是你首次使用该邮箱，我们已为你创建账号。')
+    expect(screen.getByText('登录成功，正在继续。').textContent).toContain('登录成功，正在继续。')
 
     await act(async () => vi.advanceTimersByTimeAsync(900))
     expect(screen.getByTestId('location').textContent).toBe('/projects?view=recent')
@@ -348,7 +364,19 @@ describe('AccountPanel', () => {
     expect(apis.sendCode).not.toHaveBeenCalled()
   })
 
-  it('preserves registration input when showing a password and returning a step', async () => {
+  it('does not expose a signup switch from the login panel', async () => {
+    vi.useFakeTimers()
+    renderPanel('/?account=login&returnTo=%2Fworkspace')
+
+    expect(screen.queryByRole('button', { name: '创建账号' })).toBeNull()
+    expect(screen.getByTestId('location').textContent).toBe('/?account=login&returnTo=%2Fworkspace')
+
+    await act(async () => vi.advanceTimersByTimeAsync(520))
+    expect(screen.getByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe('/?account=login&returnTo=%2Fworkspace')
+  })
+
+  it.skip('preserves registration input when showing a password and returning a step', async () => {
     renderPanel('/?account=register')
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'new@example.com' } })
     fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
@@ -365,7 +393,7 @@ describe('AccountPanel', () => {
     expect(screen.getByTestId('auth-motion-stage').dataset.motionDirection).toBe('backward')
   })
 
-  it('switches account entry only after the current panel exits', async () => {
+  it.skip('switches account entry only after the current panel exits', async () => {
     vi.useFakeTimers()
     renderPanel('/?account=login&returnTo=%2Fworkspace')
 
@@ -380,7 +408,7 @@ describe('AccountPanel', () => {
     )
   })
 
-  it('validates each registration step and reuses the existing register API contract', async () => {
+  it.skip('validates each registration step and reuses the existing register API contract', async () => {
     const { apis } = renderPanel('/?account=register&returnTo=%2Fworkspace')
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'new@example.com' } })
 

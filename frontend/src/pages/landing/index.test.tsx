@@ -56,9 +56,15 @@ describe('LandingPage', () => {
     expect(screen.getByRole('link', { name: '登录' }).getAttribute('href')).toBe(
       '/?account=login&returnTo=%2Fworkspace',
     )
-    expect(screen.getByRole('link', { name: '注册' }).getAttribute('href')).toBe(
-      '/?account=register&returnTo=%2Fworkspace',
-    )
+    expect((screen.getByRole('button', { name: '注册' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.queryByRole('link', { name: '注册' })).toBeNull()
+    expect(
+      screen.getByRole('link', { name: '内测暂不开放，联系团队申请' }).getAttribute('href'),
+    ).toBe('https://github.com/1024XEngineer/Windup/issues')
+    // 重新开放注册时恢复：
+    // expect(screen.getByRole('link', { name: '注册' }).getAttribute('href')).toBe(
+    //   '/?account=register&returnTo=%2Fworkspace',
+    // )
     // Header 只处理账号入口，Hero 与收尾负责把用户带进创作。
     const creationLinks = screen.getAllByRole('link', { name: '开始创作' })
     expect(creationLinks).toHaveLength(2)

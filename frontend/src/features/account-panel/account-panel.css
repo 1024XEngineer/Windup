@@ -99,6 +99,7 @@
 .auth-screen-tab:focus-visible,
 .auth-screen-code-action:focus-visible,
 .auth-screen-submit:focus-visible,
+.auth-screen-entry-switch a:focus-visible,
 .auth-screen-entry-switch button:focus-visible,
 .auth-password-field button:focus-visible,
 .auth-register-back:focus-visible {
@@ -514,6 +515,7 @@
   transform: rotate(-18deg);
 }
 
+.auth-screen-entry-switch a,
 .auth-screen-entry-switch button {
   flex-shrink: 0;
   color: #34332e;
@@ -573,6 +575,7 @@
   font-size: 0.875rem;
 }
 
+.auth-screen-entry-switch a:hover,
 .auth-screen-entry-switch button:hover {
   color: #000;
   text-underline-offset: 0.3em;
@@ -965,6 +968,7 @@
   .auth-screen-code-action:active:not(:disabled),
   .auth-screen-submit:hover:not(:disabled),
   .auth-screen-submit:active:not(:disabled),
+  .auth-screen-entry-switch a:hover,
   .auth-screen-entry-switch button:hover {
     animation: none;
     transform: none;
@@ -982,6 +986,7 @@
   .auth-register-field-shell,
   .auth-register-field-shell > svg,
   .auth-password-field button,
+  .auth-screen-entry-switch a,
   .auth-screen-entry-switch button {
     transition: none;
   }
