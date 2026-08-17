@@ -388,6 +388,52 @@ describe('createRealWorkflowEditorSession', () => {
     expect(session.controller.getWorkflow().nodes).toEqual(workflow.nodes)
   })
 
+  it('身份母版冲突且角色回滚失败时上报恢复错误', async () => {
+    const existing = characterFixture()
+    const workflow = selectingCharacterTemplateWorkflowFixture()
+    const rollbackError = new Error('角色资产恢复失败')
+    const onAsyncError = vi.fn()
+    let updateCount = 0
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(workflow),
+        update: vi.fn().mockRejectedValue(new WorkflowRunConflictError('执行记录版本冲突')),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn(),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({
+          items: [existing],
+          total: 1,
+          page: 1,
+          pageSize: 100,
+        }),
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(existing),
+        update: vi.fn(async (character) => {
+          updateCount += 1
+          if (updateCount > 1) throw rollbackError
+          return { ...structuredClone(character), dataVersion: character.dataVersion + 1 }
+        }),
+        remove: vi.fn(),
+      },
+      onAsyncError,
+    })
+
+    await expect(
+      session.confirmCharacterTemplate('template', 'https://assets.windup.test/master.png'),
+    ).rejects.toBeInstanceOf(WorkflowRunConflictError)
+
+    expect(onAsyncError).toHaveBeenCalledWith(rollbackError)
+  })
+
   it('发布 Character 动作资产并在同一会话内推进审核节点', async () => {
     const events: string[] = []
     const workflow = reviewingWorkflowFixture()
@@ -586,6 +632,17 @@ describe('createRealWorkflowEditorSession', () => {
 
   it('动作资产发布后 Run 冲突时恢复修改前的 Character', async () => {
     const original = characterWithOutfitFixture()
+    const originalAction = {
+      id: 'action-walk',
+      outfitId: 'outfit-default',
+      name: '原行走动作',
+      type: 'walk' as const,
+      loop: true,
+      fps: 8,
+      frameCount: 0,
+      frames: [],
+    }
+    original.outfits[0]!.actions = [originalAction]
     const updates: Character[] = []
     let published: Character | null = null
     const unrelatedAction = {
@@ -647,10 +704,62 @@ describe('createRealWorkflowEditorSession', () => {
     expect(updates).toHaveLength(3)
     expect(updates[0]!.outfits[0]!.actions).toHaveLength(1)
     expect(updates[1]).toMatchObject({ dataVersion: 2, outfits: original.outfits })
-    expect(updates[2]!.outfits[0]!.actions).toEqual([unrelatedAction])
+    expect(updates[2]!.outfits[0]!.actions).toHaveLength(2)
+    expect(updates[2]!.outfits[0]!.actions).toEqual(
+      expect.arrayContaining([unrelatedAction, originalAction]),
+    )
     expect(
       session.controller.getWorkflow().nodes.find((node) => node.id === 'action-walk:review'),
     ).toMatchObject({ status: 'active', phase: 'reviewing' })
+  })
+
+  it('审核冲突且动作资产无法回滚时保留发布结果并上报错误', async () => {
+    const workflow = reviewingWorkflowFixture()
+    const original = characterWithOutfitFixture()
+    const rollbackError = new Error('动作资产恢复失败')
+    const onAsyncError = vi.fn()
+    let published: Character | null = null
+    let updateCount = 0
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(workflow),
+        update: vi.fn().mockRejectedValue(new WorkflowRunConflictError('执行记录版本冲突')),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn().mockResolvedValue(completeAnimationFixture()),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({
+          items: [original],
+          total: 1,
+          page: 1,
+          pageSize: 100,
+        }),
+        create: vi.fn(),
+        get: vi.fn(async () => structuredClone(published ?? original)),
+        update: vi.fn(async (character) => {
+          updateCount += 1
+          if (updateCount > 1) throw rollbackError
+          const saved = { ...structuredClone(character), dataVersion: character.dataVersion + 1 }
+          published = saved
+          return structuredClone(saved)
+        }),
+        remove: vi.fn(),
+      },
+      onAsyncError,
+    })
+
+    await expect(session.publishReviewedAction('action-walk:review')).rejects.toBeInstanceOf(
+      WorkflowRunConflictError,
+    )
+
+    expect(onAsyncError).toHaveBeenCalledWith(rollbackError)
   })
 })
 

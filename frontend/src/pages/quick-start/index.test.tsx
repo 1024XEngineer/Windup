@@ -982,6 +982,33 @@ describe('QuickStartPage', () => {
     )
   })
 
+  it('does not auto-save a completed action after the session reports a conflict', async () => {
+    const run = workflow(setupAndTemplate())
+    const completed = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'active' })
+    let reportError: ((error: Error) => void) | null = null
+    let reportRun: ((run: WorkflowRun) => void) | null = null
+    const service = serviceFor(run, {
+      subscribeErrors: vi.fn((listener) => {
+        reportError = listener
+        return () => undefined
+      }),
+      subscribe: vi.fn((listener) => {
+        reportRun = listener
+        return () => undefined
+      }),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    await waitFor(() => expect(service.subscribeErrors).toHaveBeenCalledOnce())
+    act(() => {
+      reportError?.(new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试'))
+      reportRun?.(completed)
+    })
+
+    expect(await screen.findByRole('link', { name: '加载最新版本' })).toBeTruthy()
+    await waitFor(() => expect(service.approveReview).not.toHaveBeenCalled())
+  })
+
   it('ignores an old session resume result after navigating to another run', async () => {
     const oldRun = workflow(setupAndTemplate(), 'run-old')
     const newNodes = setupAndTemplate()
@@ -1027,6 +1054,65 @@ describe('QuickStartPage', () => {
     })
     expect(screen.getByText('新角色')).toBeTruthy()
     expect(screen.queryByText('像素骑士')).toBeNull()
+  })
+
+  it('disposes a regenerated session that resolves after navigating to another run', async () => {
+    const oldRun = workflow(setupAndTemplate(), 'run-old')
+    const newNodes = setupAndTemplate()
+    const newSetup = newNodes[0]
+    if (newSetup?.type !== 'character-setup') throw new Error('测试工作流缺少角色设定节点')
+    newSetup.input.prompt = '当前新运行'
+    const newRun = workflow(newNodes, 'run-new')
+    const regeneratedRun = workflow(setupAndTemplate(), 'run-regenerated')
+    const regeneratedSession = serviceFor(regeneratedRun)
+    let resolveRegeneration: ((session: QuickStartSession) => void) | null = null
+    const pendingRegeneration = new Promise<QuickStartSession>((resolve) => {
+      resolveRegeneration = resolve
+    })
+    const oldSession = serviceFor(oldRun, {
+      getTemplateCandidates: vi.fn(async () => ['https://example.test/candidate.png']),
+    })
+    const newSession = serviceFor(newRun)
+    const entryService = serviceFor(null, {
+      start: vi.fn(() => pendingRegeneration),
+      open: vi.fn(async (id) => (id === oldRun.id ? oldSession : newSession)),
+    })
+
+    function Controls() {
+      const navigate = useNavigate()
+      const location = useLocation()
+      return (
+        <>
+          <button type="button" onClick={() => navigate(`/quick-start/${newRun.id}`)}>
+            切换当前运行
+          </button>
+          <output aria-label="当前位置">{location.pathname}</output>
+        </>
+      )
+    }
+
+    render(
+      <MemoryRouter initialEntries={[`/quick-start/${oldRun.id}`]}>
+        <Controls />
+        <Routes>
+          <Route path="/quick-start/:runId" element={<QuickStartPage service={entryService} />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: '重新生成' }))
+    await waitFor(() => expect(entryService.start).toHaveBeenCalledWith('像素骑士'))
+    fireEvent.click(screen.getByRole('button', { name: '切换当前运行' }))
+    expect(await screen.findByText('当前新运行')).toBeTruthy()
+
+    await act(async () => {
+      resolveRegeneration?.(regeneratedSession)
+      await pendingRegeneration
+    })
+    expect(screen.getByRole('status', { name: '当前位置' }).textContent).toBe(
+      '/quick-start/run-new',
+    )
+    expect(regeneratedSession.dispose).toHaveBeenCalledOnce()
   })
 
   it('keeps the original regenerate and new-creation controls reachable', async () => {
