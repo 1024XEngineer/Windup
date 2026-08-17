@@ -1,0 +1,176 @@
+.kinetic-copy-cycle {
+  display: grid;
+  place-items: center;
+}
+
+.quick-start-agent-copy {
+  place-items: start;
+  text-align: left;
+}
+
+.quick-start-agent-copy .kinetic-copy-line-inner-prefixed {
+  justify-content: flex-start;
+}
+
+.kinetic-copy-line {
+  display: block;
+  overflow: hidden;
+  min-height: 1.55em;
+}
+
+.kinetic-copy-line-inner {
+  display: block;
+  opacity: 0;
+  letter-spacing: 0.075em;
+  transform: translate3d(0, 120%, 0);
+  animation: kinetic-copy-line-enter 620ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: calc(210ms + var(--kinetic-copy-line-index) * 90ms);
+  backface-visibility: hidden;
+  will-change: opacity, transform, letter-spacing;
+}
+
+.kinetic-copy-line-inner-prefixed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kinetic-copy-cycle-resting .kinetic-copy-line-inner {
+  opacity: 1;
+  letter-spacing: -0.01em;
+  transform: translate3d(0, 0, 0);
+  animation: none;
+}
+
+.kinetic-copy-cycle-exiting .kinetic-copy-line-inner {
+  opacity: 1;
+  letter-spacing: -0.01em;
+  transform: translate3d(0, 0, 0);
+  animation: kinetic-copy-line-exit 400ms cubic-bezier(0.55, 0, 1, 0.45) forwards;
+  animation-delay: calc(var(--kinetic-copy-line-reverse-index) * 55ms);
+}
+
+.kinetic-copy-prefix {
+  display: inline-block;
+}
+
+.kinetic-copy-character {
+  display: inline-block;
+}
+
+.kinetic-copy-cycle-entering[data-copy-motion-mode='characters'] .kinetic-copy-line-inner {
+  opacity: 1;
+  letter-spacing: -0.01em;
+  transform: translate3d(0, 0, 0);
+  animation: none;
+}
+
+.kinetic-copy-cycle-entering[data-copy-motion-mode='characters'] .kinetic-copy-prefix {
+  opacity: 0;
+  transform: translate3d(0, 0.38em, 0);
+  filter: blur(4px);
+  animation: kinetic-copy-character-enter 520ms cubic-bezier(0.16, 1, 0.3, 1) 90ms forwards;
+}
+
+.kinetic-copy-cycle-entering[data-copy-motion-mode='characters'] .kinetic-copy-character {
+  opacity: 0;
+  transform: translate3d(0, 0.42em, 0);
+  filter: blur(4px);
+  animation: kinetic-copy-character-enter 520ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: calc(100ms + min(var(--kinetic-copy-character-index) * 24ms, 340ms));
+  will-change: opacity, transform, filter;
+}
+
+.kinetic-copy-cycle-exiting[data-copy-motion-mode='characters'] .kinetic-copy-line-inner {
+  opacity: 1;
+  letter-spacing: -0.01em;
+  transform: translate3d(0, -0.16em, 0);
+  animation: none;
+  transition: transform 420ms cubic-bezier(0.55, 0, 1, 0.45);
+}
+
+.kinetic-copy-cycle-exiting[data-copy-motion-mode='characters'] .kinetic-copy-prefix {
+  opacity: 1;
+  animation: kinetic-copy-character-exit 300ms cubic-bezier(0.55, 0, 1, 0.45) 140ms forwards;
+}
+
+.kinetic-copy-cycle-exiting[data-copy-motion-mode='characters'] .kinetic-copy-character {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+  filter: blur(0);
+  animation: kinetic-copy-character-exit 300ms cubic-bezier(0.55, 0, 1, 0.45) forwards;
+  animation-delay: calc(min(var(--kinetic-copy-character-reverse-index) * 10ms, 140ms));
+  will-change: opacity, transform, filter;
+}
+
+@keyframes kinetic-copy-line-enter {
+  0% {
+    opacity: 0;
+    letter-spacing: 0.075em;
+    transform: translate3d(0, 120%, 0);
+  }
+  100% {
+    opacity: 1;
+    letter-spacing: -0.01em;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes kinetic-copy-line-exit {
+  0% {
+    opacity: 1;
+    letter-spacing: -0.01em;
+    transform: translate3d(0, 0, 0);
+  }
+  46% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    letter-spacing: 0.045em;
+    transform: translate3d(0, -118%, 0);
+  }
+}
+
+@keyframes kinetic-copy-character-enter {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0.42em, 0);
+    filter: blur(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+    filter: blur(0);
+  }
+}
+
+@keyframes kinetic-copy-character-exit {
+  0% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, -0.42em, 0);
+    filter: blur(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kinetic-copy-line-inner {
+    opacity: 1;
+    letter-spacing: -0.01em;
+    transform: none;
+    animation: none;
+  }
+
+  .kinetic-copy-prefix,
+  .kinetic-copy-character {
+    opacity: 1;
+    transform: none;
+    filter: none;
+    animation: none;
+  }
+}

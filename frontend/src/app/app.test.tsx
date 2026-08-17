@@ -89,7 +89,7 @@ describe('AppRoutes authentication boundary', () => {
     )
   })
 
-  it('redirects a guest before rendering a protected product page and preserves its return path', async () => {
+  it('redirects a guest before rendering Quick Start and preserves its return path', async () => {
     render(
       <GuestAuthSession>
         <MemoryRouter initialEntries={['/quick-start?draft=1#setup']}>
@@ -104,7 +104,7 @@ describe('AppRoutes authentication boundary', () => {
         '/?account=login&returnTo=%2Fquick-start%3Fdraft%3D1%23setup',
       ),
     )
-    expect(screen.queryByRole('heading', { name: /开始一条可追踪的制作流程/ })).toBeNull()
+    expect(screen.queryByRole('heading', { name: '想做一个什么角色？' })).toBeNull()
   })
 
   it('redirects a guest from the PlayTest entry and preserves that return path', async () => {
@@ -161,13 +161,13 @@ describe('AppRoutes authentication boundary', () => {
       </AuthSessionProvider>,
     )
 
-    expect(screen.queryByRole('heading', { name: /开始一条可追踪的制作流程/ })).toBeNull()
+    expect(screen.queryByRole('heading', { name: '想做一个什么角色？' })).toBeNull()
     expect(screen.getByTestId('location').textContent).toBe('/quick-start')
 
     const restoredTokens = await baseApis.refresh('stored-refresh-token')
     await act(async () => resolveRefresh(restoredTokens))
 
-    expect(await screen.findByRole('heading', { name: /开始一条可追踪的制作流程/ })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '想做一个什么角色？' })).toBeTruthy()
   })
 
   it('renders protected product pages for an authenticated session', async () => {
@@ -179,7 +179,7 @@ describe('AppRoutes authentication boundary', () => {
       </AuthenticatedAuthSession>,
     )
 
-    expect(await screen.findByRole('heading', { name: /开始一条可追踪的制作流程/ })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '想做一个什么角色？' })).toBeTruthy()
   })
 
   it('tells the user when restoring the session fails instead of becoming a silent guest', async () => {
