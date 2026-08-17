@@ -138,7 +138,7 @@ describe('InviteSection', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '复制邀请链接' }))
 
-    expect((await screen.findByRole('alert')).textContent).toContain('复制失败，请手动选中内容复制')
+    expect((await screen.findByRole('alert')).textContent).toContain('复制失败，请重试')
   })
 
   it('在提交前拦截无效邀请码', async () => {

@@ -65,7 +65,7 @@ export function InviteSection({ apis = defaultQuotaApis }: { apis?: QuotaApis })
       await navigator.clipboard.writeText(value)
       setNotice(successMessage)
     } catch {
-      setActionError('复制失败，请手动选中内容复制')
+      setActionError('复制失败，请重试')
     }
   }
 

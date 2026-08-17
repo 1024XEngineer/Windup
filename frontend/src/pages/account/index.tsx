@@ -1,4 +1,5 @@
 import { useEffect, useId, useReducer, useRef, useState, type FormEvent } from 'react'
+import { useSearchParams } from 'react-router'
 
 import accountBadgeArtwork from '@/assets/account/illustrations/account-badge.webp'
 import type { User } from '@/entities'
@@ -144,6 +145,8 @@ function QuotaSection() {
 
 /** 账号页以 /auth/me 为事实来源；会话层负责把刷新和编辑结果同步给 Header。 */
 export function AccountPage() {
+  const [searchParams] = useSearchParams()
+  const requestedSection = searchParams.get('section')
   const session = useAuthSession()
   const {
     changePassword: changeSessionPassword,
@@ -160,7 +163,7 @@ export function AccountPage() {
   )
   const [security, dispatchSecurity] = useReducer(securityReducer, initialSecurityState)
   const [activeSection, setActiveSection] = useState<'profile' | 'security' | 'quota' | 'invite'>(
-    'profile',
+    requestedSection === 'invite' ? 'invite' : 'profile',
   )
   const nicknameId = useId()
   const oldPasswordId = useId()
@@ -183,6 +186,10 @@ export function AccountPage() {
       active = false
     }
   }, [refreshCurrentUser])
+
+  useEffect(() => {
+    if (requestedSection === 'invite') selectSection('invite')
+  }, [requestedSection])
 
   async function saveNickname(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
