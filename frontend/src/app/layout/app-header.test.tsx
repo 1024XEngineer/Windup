@@ -44,8 +44,14 @@ const creditAccount: CreditAccount = {
   updatedAt: '2026-08-17T01:02:03Z',
 }
 
-function createQuotaMock(): QuotaApis & { getBalance: ReturnType<typeof vi.fn> } {
-  return { getBalance: vi.fn(async () => creditAccount) }
+function createQuotaMock(): QuotaApis & {
+  getBalance: ReturnType<typeof vi.fn>
+  listTransactions: ReturnType<typeof vi.fn>
+} {
+  return {
+    getBalance: vi.fn(async () => creditAccount),
+    listTransactions: vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 20 })),
+  }
 }
 
 function LocationProbe() {
@@ -296,7 +302,7 @@ describe('AppHeader', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: '打开账号菜单' }))
 
-    expect(quota.getBalance).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(quota.getBalance).toHaveBeenCalledTimes(1))
     expect(screen.getByText('可用积分')).toBeTruthy()
     expect(screen.getByText('查询中…')).toBeTruthy()
 

@@ -1,6 +1,11 @@
-import type { CreditAccount, QuotaApis } from '.'
+import type {
+  CreditAccount,
+  CreditTransaction,
+  QuotaApis,
+  QuotaTransactionPageQuery,
+} from './types'
 
-import { ApiError, createApiClient, getApiAccessToken } from '@/shared/api'
+import { createApiClient, getApiAccessToken } from '@/shared/api'
 import type { ApiClient, ApiClientOptions } from '@/shared/api'
 
 interface CreditAccountDto {
@@ -14,44 +19,22 @@ interface CreditAccountDto {
   update_at: string
 }
 
+interface CreditTransactionDto {
+  id: number
+  user_id: number
+  delta: number
+  reason: number
+  billing_mode: number
+  ref_id: string | null
+  balance_after: number
+  create_at: string
+}
+
 export interface CreateQuotaApisOptions extends ApiClientOptions {
   client?: ApiClient
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function isPositiveInteger(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) > 0
-}
-
-function isNonNegativeInteger(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 0
-}
-
-function invalidResponse(data: unknown): never {
-  throw new ApiError('积分账户响应格式无效', { kind: 'invalid-response', data })
-}
-
-function toCreditAccount(value: unknown): CreditAccount {
-  if (
-    !isRecord(value) ||
-    !isPositiveInteger(value.id) ||
-    !isPositiveInteger(value.user_id) ||
-    !isNonNegativeInteger(value.balance) ||
-    !isNonNegativeInteger(value.frozen) ||
-    !isNonNegativeInteger(value.total_earned) ||
-    !isNonNegativeInteger(value.total_spent) ||
-    typeof value.create_at !== 'string' ||
-    value.create_at.length === 0 ||
-    typeof value.update_at !== 'string' ||
-    value.update_at.length === 0
-  ) {
-    return invalidResponse(value)
-  }
-
-  const dto = value as unknown as CreditAccountDto
+function toCreditAccount(dto: CreditAccountDto): CreditAccount {
   return {
     id: String(dto.id),
     userId: String(dto.user_id),
@@ -61,6 +44,19 @@ function toCreditAccount(value: unknown): CreditAccount {
     totalSpent: dto.total_spent,
     createdAt: dto.create_at,
     updatedAt: dto.update_at,
+  }
+}
+
+function toCreditTransaction(dto: CreditTransactionDto): CreditTransaction {
+  return {
+    id: String(dto.id),
+    userId: String(dto.user_id),
+    delta: dto.delta,
+    reason: dto.reason,
+    billingMode: dto.billing_mode,
+    refId: dto.ref_id,
+    balanceAfter: dto.balance_after,
+    createdAt: dto.create_at,
   }
 }
 
@@ -77,6 +73,15 @@ export function createQuotaApis(options: CreateQuotaApisOptions = {}): QuotaApis
     async getBalance() {
       return toCreditAccount(await protectedClient.request<CreditAccountDto>('/quota/balance'))
     },
+    async listTransactions(query: QuotaTransactionPageQuery = {}) {
+      const result = await protectedClient.requestList<CreditTransactionDto>(
+        '/quota/transactions',
+        {
+          query: { page: query.page, page_size: query.pageSize },
+        },
+      )
+      return { ...result, items: result.items.map(toCreditTransaction) }
+    },
   }
 }
 
@@ -90,4 +95,5 @@ function getDefaultApis(): QuotaApis {
 /** 默认适配器延迟初始化，避免仅导入 entities 时强制要求 API 地址。 */
 export const quotaApis: QuotaApis = {
   getBalance: () => getDefaultApis().getBalance(),
+  listTransactions: (query) => getDefaultApis().listTransactions(query),
 }

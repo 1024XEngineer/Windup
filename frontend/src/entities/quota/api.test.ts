@@ -17,13 +17,15 @@ const accountResponse = {
 
 describe('createQuotaApis', () => {
   let request: ReturnType<typeof vi.fn>
+  let requestList: ReturnType<typeof vi.fn>
   let client: ApiClient
 
   beforeEach(() => {
     request = vi.fn()
+    requestList = vi.fn()
     client = {
       request: request as unknown as ApiClient['request'],
-      requestList: vi.fn() as unknown as ApiClient['requestList'],
+      requestList: requestList as unknown as ApiClient['requestList'],
     }
   })
 
@@ -43,13 +45,46 @@ describe('createQuotaApis', () => {
     expect(request).toHaveBeenCalledWith('/quota/balance')
   })
 
-  it('拒绝缺字段或负数积分的响应', async () => {
-    request.mockResolvedValue({ ...accountResponse, balance: -1 })
+  it('分页读取积分流水并保留后端原因码', async () => {
+    requestList.mockResolvedValue({
+      items: [
+        {
+          id: 21,
+          user_id: 7,
+          delta: -12,
+          reason: 8,
+          billing_mode: 0,
+          ref_id: 'generation-42',
+          balance_after: 78,
+          create_at: '2026-08-17T02:03:04Z',
+        },
+      ],
+      total: 41,
+      page: 2,
+      pageSize: 20,
+    })
 
-    await expect(createQuotaApis({ client }).getBalance()).rejects.toMatchObject({
-      name: 'ApiError',
-      kind: 'invalid-response',
-      message: '积分账户响应格式无效',
+    await expect(
+      createQuotaApis({ client }).listTransactions({ page: 2, pageSize: 20 }),
+    ).resolves.toEqual({
+      items: [
+        {
+          id: '21',
+          userId: '7',
+          delta: -12,
+          reason: 8,
+          billingMode: 0,
+          refId: 'generation-42',
+          balanceAfter: 78,
+          createdAt: '2026-08-17T02:03:04Z',
+        },
+      ],
+      total: 41,
+      page: 2,
+      pageSize: 20,
+    })
+    expect(requestList).toHaveBeenCalledWith('/quota/transactions', {
+      query: { page: 2, page_size: 20 },
     })
   })
 

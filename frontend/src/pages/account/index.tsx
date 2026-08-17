@@ -3,6 +3,13 @@ import { useEffect, useId, useReducer, useRef, useState, type FormEvent } from '
 import accountBadgeArtwork from '@/assets/account/illustrations/account-badge.webp'
 import type { User } from '@/entities'
 import { useAuthSession } from '@/features/auth-session'
+import {
+  formatCreditDateTime,
+  getCreditReasonLabel,
+  useQuotaBalance,
+  useQuotaTransactions,
+} from '@/features/quota'
+import { Pagination } from '@/shared/ui'
 
 import './account.css'
 import { createProfileState, initialSecurityState, profileReducer, securityReducer } from './state'
@@ -25,6 +32,115 @@ function formatVerificationTime(value: string): string {
   }).format(date)
 }
 
+function formatCredits(value: number): string {
+  return value.toLocaleString('zh-CN')
+}
+
+function QuotaSection() {
+  const balance = useQuotaBalance(true)
+  const transactions = useQuotaTransactions(true)
+  const account = balance.status === 'ready' ? balance.account : null
+  const summaryRows: Array<[string, string]> = [
+    ['可用积分', account ? formatCredits(account.balance) : '—'],
+    ['冻结积分', account ? formatCredits(account.frozen) : '—'],
+    ['累计获得', account ? formatCredits(account.totalEarned) : '—'],
+    ['累计使用', account ? formatCredits(account.totalSpent) : '—'],
+  ]
+
+  return (
+    <div>
+      <header>
+        <h2 className="text-xl font-semibold tracking-[-0.025em] text-app-ink-soft">积分账户</h2>
+        <p className="mt-1.5 text-sm text-app-muted">查看当前余额与最近的积分变动记录。</p>
+      </header>
+
+      <dl className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {summaryRows.map(([label, value]) => (
+          <div
+            key={label}
+            className="rounded-xl border border-app-line bg-app-surface-muted px-4 py-3"
+          >
+            <dt className="text-xs text-app-faint">{label}</dt>
+            <dd className="mt-1 font-mono text-2xl font-semibold text-app-ink">{value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      {balance.status === 'loading' && (
+        <p role="status" className="mt-3 text-sm text-app-muted">
+          正在加载积分余额…
+        </p>
+      )}
+      {balance.status === 'error' && (
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg bg-app-danger-soft px-3 py-2.5 text-sm text-app-danger">
+          <p role="alert">{balance.error}</p>
+          <button type="button" onClick={balance.reload} className="font-semibold underline">
+            重新加载
+          </button>
+        </div>
+      )}
+
+      <section className="mt-7" aria-labelledby="credit-transactions-title">
+        <div className="flex items-center justify-between gap-4">
+          <h3 id="credit-transactions-title" className="text-sm font-semibold text-app-ink-soft">
+            积分流水
+          </h3>
+          {transactions.status === 'ready' && (
+            <span className="text-xs text-app-faint">共 {transactions.total} 条</span>
+          )}
+        </div>
+
+        {transactions.status === 'loading' ? (
+          <p role="status" className="mt-3 text-sm text-app-muted">
+            正在加载积分流水…
+          </p>
+        ) : transactions.status === 'error' ? (
+          <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg bg-app-danger-soft px-3 py-2.5 text-sm text-app-danger">
+            <p role="alert">{transactions.error}</p>
+            <button type="button" onClick={transactions.reload} className="font-semibold underline">
+              重新加载
+            </button>
+          </div>
+        ) : transactions.status === 'ready' && transactions.transactions.length === 0 ? (
+          <p className="mt-3 text-sm text-app-muted">还没有积分流水。</p>
+        ) : transactions.status === 'ready' ? (
+          <ul className="mt-3 divide-y divide-app-line overflow-hidden rounded-xl border border-app-line bg-app-surface-muted">
+            {transactions.transactions.map((transaction) => (
+              <li key={transaction.id} className="flex items-center gap-4 px-4 py-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-app-ink-soft">
+                    {getCreditReasonLabel(transaction.reason)}
+                  </p>
+                  <p className="mt-0.5 text-xs text-app-faint">
+                    {formatCreditDateTime(transaction.createdAt)} · 余额{' '}
+                    {formatCredits(transaction.balanceAfter)}
+                  </p>
+                </div>
+                <span
+                  className={`shrink-0 font-mono text-sm font-semibold ${
+                    transaction.delta >= 0 ? 'text-app-accent' : 'text-app-danger'
+                  }`}
+                >
+                  {transaction.delta > 0 ? '+' : ''}
+                  {formatCredits(transaction.delta)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        <Pagination
+          page={transactions.page}
+          pageSize={transactions.pageSize}
+          total={transactions.total}
+          disabled={transactions.status === 'loading'}
+          onPageChange={transactions.loadPage}
+        />
+      </section>
+    </div>
+  )
+}
+
 /** 账号页以 /auth/me 为事实来源；会话层负责把刷新和编辑结果同步给 Header。 */
 export function AccountPage() {
   const session = useAuthSession()
@@ -42,7 +158,7 @@ export function AccountPage() {
     createProfileState,
   )
   const [security, dispatchSecurity] = useReducer(securityReducer, initialSecurityState)
-  const [activeSection, setActiveSection] = useState<'profile' | 'security'>('profile')
+  const [activeSection, setActiveSection] = useState<'profile' | 'security' | 'quota'>('profile')
   const nicknameId = useId()
   const oldPasswordId = useId()
   const newPasswordId = useId()
@@ -114,7 +230,7 @@ export function AccountPage() {
     void logout().catch(() => undefined)
   }
 
-  function selectSection(section: 'profile' | 'security') {
+  function selectSection(section: 'profile' | 'security' | 'quota') {
     setActiveSection(section)
     dispatchProfile({ type: 'sectionChanged' })
     dispatchSecurity({ type: 'sectionChanged' })
@@ -175,6 +291,7 @@ export function AccountPage() {
                 [
                   ['profile', '个人资料'],
                   ['security', '登录安全'],
+                  ['quota', '积分账户'],
                 ] as const
               ).map(([section, label]) => (
                 <button
@@ -298,7 +415,7 @@ export function AccountPage() {
                   </div>
                 </form>
               </div>
-            ) : (
+            ) : activeSection === 'security' ? (
               <div>
                 <header>
                   <h2 className="text-xl font-semibold tracking-[-0.025em] text-app-ink-soft">
@@ -371,6 +488,8 @@ export function AccountPage() {
                   </button>
                 </form>
               </div>
+            ) : (
+              <QuotaSection />
             )}
           </section>
         </div>
