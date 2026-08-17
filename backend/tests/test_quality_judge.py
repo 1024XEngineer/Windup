@@ -15,6 +15,7 @@ import httpx
 import pytest
 from PIL import Image
 
+from conftest import seed_credit_account
 from windup_ai_engine.ports import JudgePort
 from windup_app.server.orchestrator import quality_gate
 from windup_common.models import JudgeVerdict
@@ -406,7 +407,9 @@ def _blank_png(w: int, h: int) -> bytes:
     return buf.getvalue()
 
 
-def _run_task(session_factory, judge, gate_enabled: bool, enforce: bool, monkeypatch):
+def _run_task(
+    session_factory, judge, gate_enabled: bool, enforce: bool, monkeypatch, action_input=None
+):
     from windup_app.server.orchestrator.executor import ActionTaskExecutor
     from windup_app.server.orchestrator.model import ActionType, CharacterActionInput
     from windup_app.server.orchestrator.service import AiGenerationService
@@ -422,11 +425,14 @@ def _run_task(session_factory, judge, gate_enabled: bool, enforce: bool, monkeyp
         fetch_master=lambda _input: b"master-bytes",
         session_factory=session_factory,
     )
-    action_input = CharacterActionInput(
-        character_id=1, action_type=ActionType.WALK, num_frames=2,
-    )
+    if action_input is None:
+        action_input = CharacterActionInput(
+            character_id=1, action_type=ActionType.WALK, num_frames=2,
+        )
     service = AiGenerationService()
     with session_factory() as s:
+        # #351 起任务终态要结清预付费,没有积分账户会在 _settle_credit 那步炸。
+        seed_credit_account(s, 1)
         task_id = service.generate_character_action(s, user_id=1, input=action_input).id
         s.commit()
     executor.run_action_task(task_id, action_input)
@@ -463,3 +469,47 @@ def test_enforce_fails_the_task(session_factory, monkeypatch):
 
     assert task.status is TaskStatus.FAILED
     assert quality_gate.PROBLEM_CLIPPED in task.error_message
+
+
+def test_custom_action_sends_the_description_not_the_enum(session_factory, monkeypatch):
+    """判官收到的必须是用户那句描述,不是枚举值 "custom"。
+
+    传枚举值等于问判官"这帧是不是 custom":拦截档下所有自定义动作都会被误判成不匹配,
+    shadow 期的自定义读数也全是噪声。
+    """
+    from windup_app.server.orchestrator.model import ActionType, CharacterActionInput
+
+    judge = _StubJudge(_verdict())
+    _run_task(
+        session_factory, judge, True, False, monkeypatch,
+        action_input=CharacterActionInput(
+            character_id=1, action_type=ActionType.CUSTOM, num_frames=2,
+            custom_prompt="  向观众挥手打招呼  ",
+        ),
+    )
+
+    assert judge.calls, "闸口开着就该判一次"
+    assert judge.calls[0][2] == "向观众挥手打招呼", "描述要送到判官,且两端空白已剥掉"
+
+
+def test_builtin_action_still_sends_the_enum_label(session_factory, monkeypatch):
+    """内置动作没有 custom_prompt,仍送枚举值 —— 别为了修 custom 把这条也改了。"""
+    judge = _StubJudge(_verdict())
+    _run_task(session_factory, judge, True, False, monkeypatch)
+
+    assert judge.calls[0][2] == "walk"
+
+
+def test_blank_custom_description_falls_back_to_the_enum():
+    """空描述退回枚举值,而不是把空串送给判官 —— 空串会让判官去判"这帧是不是空"。
+
+    直接测函数而不走整条任务:空 ``custom_prompt`` 在 ``ActionSpec`` 那一步就被校验拦掉,
+    整条链路根本走不到判官。这个分支是防御性的,拿假路径去测等于什么都没测。
+    """
+    from windup_app.server.orchestrator.executor import _judged_action
+    from windup_app.server.orchestrator.model import ActionType, CharacterActionInput
+
+    blank = CharacterActionInput(
+        character_id=1, action_type=ActionType.CUSTOM, num_frames=2, custom_prompt="   ",
+    )
+    assert _judged_action(blank) == "custom"

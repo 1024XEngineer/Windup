@@ -27,6 +27,7 @@ from windup_framework.config.quality_gate import settings as gate_settings
 from windup_app.server.orchestrator import billing, quality_gate, task_repo
 from windup_app.server.orchestrator._fetch import fetch_own_media
 from windup_app.server.orchestrator.model import (
+    ActionType,
     CharacterActionInput,
     CharacterImageInput,
     TaskStatus,
@@ -174,6 +175,19 @@ def _resolve_video_model(name: str | None) -> str | None:
             + "；".join(f"{k}({v})" for k, v in ALLOWED_VIDEO_MODELS.items())
         )
     return name
+
+
+def _judged_action(input: CharacterActionInput) -> str:
+    """判官要判的是"这帧是不是这个动作",而 custom 的动作内容在 ``custom_prompt`` 里。
+
+    传枚举值 ``"custom"`` 等于问"这帧是不是 custom",判官无从判断:拦截档开启时会把
+    所有自定义动作误判成不匹配,shadow 期的自定义读数也全是噪声。
+    """
+    if input.action_type is ActionType.CUSTOM:
+        prompt = (input.custom_prompt or "").strip()
+        if prompt:
+            return prompt
+    return input.action_type.value
 
 
 def _to_engine_action(t) -> EngineActionType:
@@ -341,7 +355,7 @@ class ActionTaskExecutor:
             "frames": frames,
         }
         decision = quality_gate.review(
-            self._get_judge(), checked, master, input.action_type.value
+            self._get_judge(), checked, master, _judged_action(input)
         )
         if decision is not None:
             result["judge"] = decision.as_payload()
