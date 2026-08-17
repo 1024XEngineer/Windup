@@ -81,7 +81,7 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
   const [accountMenuState, setAccountMenuState] = useState<AccountMenuState>('closed')
   const accountMenuOpen = accountMenuState === 'open'
   const creditBalance = useQuotaBalance(
-    accountMenuOpen && session.state.status === 'authenticated',
+    accountMenuState !== 'closed' && session.state.status === 'authenticated',
     quotaApis,
   )
   const [wave, setWave] = useState({ entry: '', playId: 0 })

@@ -309,6 +309,9 @@ describe('AppHeader', () => {
     resolveBalance(creditAccount)
     expect(await screen.findByText('90')).toBeTruthy()
     expect(screen.getByText('积分')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '打开账号菜单' }))
+    expect(screen.getByText('90')).toBeTruthy()
   })
 
   it('积分查询失败时保留账号菜单的其他操作', async () => {
