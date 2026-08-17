@@ -1,3 +1,5 @@
+export { KineticCopy } from './kinetic-copy'
+export type { KineticCopyPhase, KineticCopyProps } from './kinetic-copy'
 export { PageContainer } from './page-container'
 export type { PageContainerProps } from './page-container'
 export { Pagination } from './pagination'

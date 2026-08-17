@@ -280,6 +280,9 @@ class SqlAlchemyUserService(UserService):
 
     def send_verification_code(self, email: str, purpose: str) -> None:
         """发送邮箱验证码。"""
+        if purpose == "register":
+            raise BizException("内测期间暂不开放注册", code=BizCode.BAD_REQUEST)
+
         # 频率限制
         cooldown_key = VERIFY_COOLDOWN_KEY.format(email=email)
         if self.redis.get(cooldown_key):
@@ -315,25 +318,17 @@ class SqlAlchemyUserService(UserService):
     def login_by_code_with_session(
         self, session: Session, input: LoginByCodeInput
     ) -> LoginResult:
-        """邮箱+验证码登录，无账号自动注册（带 session）。"""
+        """邮箱+验证码登录（带 session）。内测期间不自动建号。"""
         # 校验验证码
         self._verify_code(input.email, input.code, "login")
 
-        # 查找或创建用户
         user = session.scalar(select(User).where(User.email == input.email))
         if user is None:
-            user = User(email=input.email, email_verified_at=datetime.now(timezone.utc))
-            session.add(user)
-            session.flush()
-            # 自动注册送积分
-            self._create_credit_account(session, user.id)
-            logger.info("[WINDUP] 验证码自动注册 | user_id=%s email=%s", user.id, user.email)
-        else:
-            if user.status == UserStatus.BANNED:
-                raise BizException("账号已被封禁", code=BizCode.BAD_REQUEST)
-            # 标记邮箱已验证
-            if user.email_verified_at is None:
-                user.email_verified_at = datetime.now(timezone.utc)
+            raise BizException("账号不存在", code=BizCode.NOT_FOUND)
+        if user.status == UserStatus.BANNED:
+            raise BizException("账号已被封禁", code=BizCode.BAD_REQUEST)
+        if user.email_verified_at is None:
+            user.email_verified_at = datetime.now(timezone.utc)
 
         user.last_login_at = datetime.now(timezone.utc)
         session.flush()

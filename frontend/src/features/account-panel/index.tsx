@@ -27,6 +27,7 @@ import { useNavigate, useSearchParams } from 'react-router'
 
 import { useAuthSession } from '@/features/auth-session'
 import { sanitizeInternalPath } from '@/shared/navigation'
+import { KineticCopy, type KineticCopyPhase } from '@/shared/ui'
 import messengerPigeon from '@/assets/auth/illustrations/messenger-pigeon.webp'
 
 import './account-panel.css'
@@ -34,7 +35,6 @@ import './account-panel.css'
 type AccountEntry = 'login' | 'register'
 type LoginMode = 'code' | 'password'
 type MotionDirection = 'forward' | 'backward'
-type CopyPhase = 'entering' | 'resting' | 'exiting'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const CODE_PATTERN = /^\d{6}$/
@@ -91,6 +91,7 @@ const loginMotionCopy = [
 const REGISTER_STEP_COUNT = 4
 const AUTH_ICON_PROPS = { weight: 'light' as const }
 const AUTH_FIELD_CLASS = 'auth-screen-field w-full outline-none disabled:cursor-not-allowed'
+const ACCESS_REQUEST_URL = 'https://github.com/1024XEngineer/Windup/issues'
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '操作失败，请稍后重试'
@@ -126,36 +127,6 @@ function KineticTitle({ id, text, emphasis }: { id: string; text: string; emphas
         ))}
       </span>
     </h2>
-  )
-}
-
-function KineticCopy({
-  lines,
-  copyKey,
-  phase,
-}: {
-  lines: readonly [string, string]
-  copyKey: string
-  phase: CopyPhase
-}) {
-  return (
-    <div
-      key={copyKey}
-      data-copy-phase={phase}
-      className={`auth-copy-cycle auth-copy-cycle-${phase}`}
-      aria-hidden="true"
-    >
-      {lines.map((line, index) => (
-        <span key={line} className="auth-copy-line">
-          <span
-            className="auth-copy-line-inner"
-            style={{ '--auth-line-index': index } as CSSProperties}
-          >
-            {line}
-          </span>
-        </span>
-      ))}
-    </div>
   )
 }
 
@@ -230,7 +201,9 @@ export function AccountPanel() {
   const entry = searchParams.get('account')
   if (entry !== 'login' && entry !== 'register') return null
 
-  return <AccountPanelDialog key={entry} entry={entry} />
+  // 内测期间关闭公开注册。重新开放时改回：
+  // return <AccountPanelDialog key={entry} entry={entry} />
+  return <AccountPanelDialog key="login" entry="login" />
 }
 
 /** 只有面板真正打开时才读取会话，关闭状态不把认证 Context 强加给应用外壳。 */
@@ -247,7 +220,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
   const [registerStep, setRegisterStep] = useState(0)
   const [motionDirection, setMotionDirection] = useState<MotionDirection>('forward')
   const [copyIndex, setCopyIndex] = useState(0)
-  const [copyPhase, setCopyPhase] = useState<CopyPhase>('entering')
+  const [copyPhase, setCopyPhase] = useState<KineticCopyPhase>('entering')
   const [isExiting, setIsExiting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
@@ -374,6 +347,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
     window.requestAnimationFrame(() => emailInputRef.current?.focus())
   }
 
+  /*
   function switchEntry(nextEntry: AccountEntry) {
     leaveWithAnimation(() => {
       const next = new URLSearchParams(searchParams)
@@ -381,6 +355,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
       setSearchParams(next, { replace: true })
     })
   }
+  */
 
   async function sendCode(): Promise<boolean> {
     if (isSendingCode || cooldownSeconds > 0) return false
@@ -488,7 +463,9 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
         successMessage = '账号已创建，正在继续。'
       } else if (mode === 'code') {
         await session.loginByCode({ email: normalizedEmail, code })
-        successMessage = '登录成功。如果这是你首次使用该邮箱，我们已为你创建账号。'
+        // 内测不自动建号。重新开放注册时改回：
+        // successMessage = '登录成功。如果这是你首次使用该邮箱，我们已为你创建账号。'
+        successMessage = '登录成功，正在继续。'
       } else {
         await session.login({ email: normalizedEmail, password })
         successMessage = '登录成功，正在继续。'
@@ -518,7 +495,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
   function trapFocus(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.key !== 'Tab') return
     const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
     )
     if (!focusable?.length) return
     const first = focusable[0]
@@ -780,7 +757,8 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
 
               {!isRegister && mode === 'code' && (
                 <p className="auth-screen-helper text-xs leading-5">
-                  未注册的邮箱将在验证后自动创建账号。
+                  {/* 未注册的邮箱将在验证后自动创建账号。 */}
+                  内测期间仅支持已有账号登录。
                 </p>
               )}
             </div>
@@ -806,11 +784,20 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
             </button>
           </form>
 
+          {/*
           <p className="auth-screen-entry-switch mt-7 text-center text-sm">
             {isRegister ? '已有账号？' : '还没有账号？'}{' '}
             <button type="button" onClick={() => switchEntry(isRegister ? 'login' : 'register')}>
               {isRegister ? '登录' : '创建账号'}
             </button>
+          </p>
+          */}
+          <p className="auth-screen-entry-switch mt-7 text-center text-sm">
+            内测期间暂不开放注册。如需开通，请通过{' '}
+            <a href={ACCESS_REQUEST_URL} target="_blank" rel="noreferrer">
+              GitHub Issues
+            </a>{' '}
+            联系团队申请。
           </p>
         </div>
       </div>

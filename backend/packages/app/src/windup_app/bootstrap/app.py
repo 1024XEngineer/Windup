@@ -15,7 +15,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from windup_framework.db import Base, engine
 
 # 模型导入：触发 Base.metadata 注册，确保 create_all 能发现所有表
+from windup_ai_engine.impl.character_namer import LangChainCharacterNamer
 from windup_app.server.character.model import Character  # noqa: F401
+from windup_app.server.character.service import service as character_service
 from windup_app.server.orchestrator.dispatcher import GenerationDispatcher
 from windup_app.server.project.model import Project  # noqa: F401
 from windup_app.server.quota.model import CreditAccount, CreditTransaction  # noqa: F401
@@ -33,7 +35,6 @@ from windup_app.web.api.quota import router as quota_router
 from windup_app.web.api.workflow_run import router as workflow_run_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
 from windup_app.web.middleware.auth import AuthMiddleware
-from windup_app.web.middleware.ratelimit import RateLimitMiddleware
 
 
 def _env_flag(name: str) -> bool:
@@ -47,7 +48,7 @@ def _cors_origins() -> list[str]:
 
     不配这个中间件的话，浏览器会把前端的**所有**请求拦在预检那一步
     （OPTIONS 返回 405、响应无 access-control-* 头），后端日志里连请求都看不到。
-    默认值覆盖本地 dev server 与 Vercel 预览域名。
+    默认值仅覆盖本地 dev server；远程来源必须显式配置。
     """
     raw = os.getenv("WINDUP_CORS_ORIGINS", "").strip()
     if raw:
@@ -59,9 +60,9 @@ def _cors_origins() -> list[str]:
 def _cors_origin_regex() -> str | None:
     """CORS 正则匹配的额外来源，WINDUP_CORS_ORIGIN_REGEX 覆盖。
 
-    默认允许所有 Vercel 预览域名。
+    默认不允许正则来源，避免信任任意第三方托管子域名。
     """
-    return os.getenv("WINDUP_CORS_ORIGIN_REGEX", r"https://.*\.vercel\.app").strip() or None
+    return os.getenv("WINDUP_CORS_ORIGIN_REGEX", "").strip() or None
 
 
 def print_banner() -> None:
@@ -83,14 +84,18 @@ async def _lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="windup", version="0.1.0", lifespan=_lifespan)
     app.state.generation_dispatcher = GenerationDispatcher()
+    # 起名器在 composition root 注入,避免 web→character.service 碰到 ai_engine。
+    # LangChainCharacterNamer 构造期不创建 ChatOpenAI；缺 AI_API_KEY 时应用仍能启动。
+    # 测试若已注入假 namer，不要覆盖。
+    if character_service._namer is None:
+        character_service._namer = LangChainCharacterNamer()
 
     @app.get("/health", include_in_schema=False)
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    # 中间件（add_middleware 后加的先执行：请求先进 CORS → 再进 RateLimit → 再进 Auth → 最后到路由）
+    # 中间件（add_middleware 后加的先执行：请求先进 CORS → 再进 Auth → 最后到路由）
     app.add_middleware(AuthMiddleware)
-    app.add_middleware(RateLimitMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),

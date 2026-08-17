@@ -198,3 +198,10 @@ class CharacterGeneratorPort(Protocol):
             ValueError: 模型渲不出请求朝向 / 产出帧数对不上契约。
         """
         ...
+
+
+@runtime_checkable
+class CharacterNamerPort(Protocol):
+    """根据角色描述生成短名称。不是 Agent，只是一次 LLM 调用。"""
+
+    def name_from_description(self, description: str) -> str: ...

@@ -111,19 +111,15 @@ class UserOut(BaseModel):
 
 @router.post("/register", response_model=Response[TokenResponse])
 def register(body: RegisterRequest, session: Session = Depends(get_session)):
-    """邮箱+验证码+密码注册，注册即登录。"""
-    result = service.register_by_email_with_session(
-        session,
-        type("RegisterInput", (), {"email": body.email, "password": body.password, "code": body.code, "nickname": body.nickname})(),
-    )
-    return Response.success(
-        TokenResponse(
-            access_token=result.access_token,
-            refresh_token=result.refresh_token,
-            user=result.user,
-        ),
-        message="注册成功",
-    )
+    """邮箱+验证码+密码注册。
+
+    内测期间关闭公开注册，路由与请求模型保留以便以后重新开放。
+    """
+    from windup_common.enums.biz_code import BizCode
+    from windup_common.exceptions import BizException
+
+    del body, session
+    raise BizException("内测期间暂不开放注册", code=BizCode.BAD_REQUEST)
 
 
 @router.post("/login", response_model=Response[TokenResponse])
@@ -152,7 +148,7 @@ def send_code(body: SendCodeRequest):
 
 @router.post("/login-by-code", response_model=Response[TokenResponse])
 def login_by_code(body: LoginByCodeRequest, session: Session = Depends(get_session)):
-    """验证码登录，无账号自动注册。"""
+    """验证码登录。内测期间不自动注册。"""
     result = service.login_by_code_with_session(
         session,
         type("LoginByCodeInput", (), {"email": body.email, "code": body.code})(),

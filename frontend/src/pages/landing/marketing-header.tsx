@@ -7,10 +7,14 @@ const loginEntry = `/?${new URLSearchParams({
   returnTo: '/workspace',
 })}`
 
+// 内测关闭公开注册。重新开放时恢复 registerEntry 与下方注册链接。
+const ACCESS_REQUEST_URL = 'https://github.com/1024XEngineer/Windup/issues'
+/*
 const registerEntry = `/?${new URLSearchParams({
   account: 'register',
   returnTo: '/workspace',
 })}`
+*/
 
 const sections = [
   ['#capabilities', '产品能力'],
@@ -77,12 +81,32 @@ export function MarketingHeader() {
               >
                 登录
               </Link>
+              {/*
               <Link
                 to={registerEntry}
                 className="inline-flex min-h-11 items-center rounded-lg bg-[#252520] px-5 text-body font-medium whitespace-nowrap text-[#f7f5ee] transition-colors duration-200 hover:bg-[#3a3b36] focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-[#3a3b36]"
               >
                 注册
               </Link>
+              */}
+              <span className="flex flex-col items-end gap-1">
+                <button
+                  type="button"
+                  disabled
+                  title="内测期间暂不开放注册，请通过 GitHub Issues 联系团队申请开通"
+                  className="inline-flex min-h-11 cursor-not-allowed items-center rounded-lg bg-[#252520]/45 px-5 text-body font-medium whitespace-nowrap text-[#f7f5ee]/70"
+                >
+                  注册
+                </button>
+                <a
+                  href={ACCESS_REQUEST_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="max-w-[11.5rem] text-right text-[11px] leading-4 text-[#74736d] underline decoration-[#d2d0c7] underline-offset-2 transition-colors hover:text-[#252520] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#3a3b36]"
+                >
+                  内测暂不开放，联系团队申请
+                </a>
+              </span>
             </>
           )}
         </div>

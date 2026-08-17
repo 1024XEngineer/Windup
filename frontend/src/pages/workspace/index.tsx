@@ -352,6 +352,7 @@ export function WorkspacePage() {
           <h1 className="font-serif text-[clamp(2.15rem,4.5vw,4rem)] leading-none font-medium tracking-[-0.055em] text-app-ink">
             工作台
           </h1>
+          <p className="mt-2 text-sm leading-6 text-app-muted">从这里开始，去任何地方</p>
         </header>
 
         <div className="workspace-layout grid min-h-0 flex-1 grid-cols-1 gap-[clamp(1rem,3vw,3rem)] md:grid-cols-[minmax(0,1.12fr)_minmax(16rem,0.88fr)]">
