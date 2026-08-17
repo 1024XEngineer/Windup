@@ -20,6 +20,10 @@
 
 <p align="center"><strong>Windup 已上线并开放注册。</strong></p>
 
+<p align="center">
+  <img src=".github/assets/readme/character-journey.webp" width="100%" alt="Windup 角色从线稿、母版到游戏资产的生成旅程">
+</p>
+
 Windup 面向缺少美术产能的个人开发者和小型团队，把角色构思、动作生成、逐帧审核、试玩与引擎导出收进同一条生产链。用户从文字描述或参考图出发，最终得到可以持续补充动作、修正缺陷和重新导出的角色资产。
 
 ## 当前能力 / What You Can Do
