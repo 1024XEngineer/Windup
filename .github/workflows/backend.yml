@@ -38,6 +38,11 @@ jobs:
       - name: Ruff
         run: uv run ruff check .
 
+      - name: OpenAPI contract drift
+        run: |
+          uv run python -m scripts.export_openapi
+          git diff --exit-code -- ../openapi.json
+
       - name: Import-linter (分层契约)
         run: uv run lint-imports
 
