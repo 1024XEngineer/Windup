@@ -103,7 +103,7 @@ Windup/
 
 - [Windup 产品策划案](https://github.com/1024XEngineer/Windup/issues/37)
 - [核心流程与工作流](https://github.com/1024XEngineer/Windup/issues/25)
-- [前后端 API 契约差异](frontend/API_CONTRACT.md)
+- [OpenAPI 接口契约](openapi.json)
 
 ## 参与贡献 / Contributing
 

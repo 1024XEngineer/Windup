@@ -68,9 +68,11 @@ def test_action_spec_restricted_fields_reject_typos(field, bad, good, member):
     assert getattr(ActionSpec(action=ActionType.WALK, **{field: good}), field) is member
 
 
-def test_character_view_rejects_typos_and_matches_frontend_contract():
-    """view 的取值与前端契约（frontend/API_CONTRACT.md：1 side / 2 top-down / 3 isometric）
-    逐字一致，免得将来做 int↔str 映射时出现 topdown / top_down / top-down 三种写法。
+def test_character_view_rejects_typos_and_matches_perspective_mapping():
+    """view 固定映射 perspective：1 side / 2 top-down / 3 isometric。
+
+    字符串必须逐字一致，免得将来做 int↔str 映射时出现
+    topdown / top_down / top-down 三种写法。
     """
     assert {v.value for v in CharacterView} == {"side", "top-down", "isometric"}
     with pytest.raises(ValidationError):
