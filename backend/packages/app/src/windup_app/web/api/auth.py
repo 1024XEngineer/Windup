@@ -125,7 +125,7 @@ def register(body: RegisterRequest, session: Session = Depends(get_session)):
 @router.post("/login", response_model=Response[TokenResponse])
 def login(body: LoginRequest, session: Session = Depends(get_session)):
     """邮箱+密码+验证码登录。"""
-    result = service.login_by_password_with_session(
+    result = service.login_by_password(
         session,
         type("LoginByPasswordInput", (), {"email": body.email, "password": body.password})(),
     )
@@ -149,7 +149,7 @@ def send_code(body: SendCodeRequest):
 @router.post("/login-by-code", response_model=Response[TokenResponse])
 def login_by_code(body: LoginByCodeRequest, session: Session = Depends(get_session)):
     """验证码登录。内测期间不自动注册。"""
-    result = service.login_by_code_with_session(
+    result = service.login_by_code(
         session,
         type("LoginByCodeInput", (), {"email": body.email, "code": body.code})(),
     )
@@ -207,7 +207,7 @@ def get_me(request: Request, session: Session = Depends(get_session)):
 def change_password(body: ChangePasswordRequest, request: Request, session: Session = Depends(get_session)):
     """修改密码。"""
     current_user = request.state.current_user
-    service.change_password_with_session(
+    service.change_password(
         session,
         current_user.id,
         type("ChangePasswordInput", (), {"old_password": body.old_password, "new_password": body.new_password})(),
@@ -218,7 +218,7 @@ def change_password(body: ChangePasswordRequest, request: Request, session: Sess
 @router.post("/reset-password", response_model=Response[None])
 def reset_password(body: ResetPasswordRequest, session: Session = Depends(get_session)):
     """邮箱+验证码重置密码（忘记密码）。"""
-    service.reset_password_with_session(
+    service.reset_password(
         session,
         ResetPasswordInput(email=body.email, code=body.code, new_password=body.new_password),
     )
@@ -229,7 +229,7 @@ def reset_password(body: ResetPasswordRequest, session: Session = Depends(get_se
 def update_nickname(body: UpdateNicknameRequest, request: Request, session: Session = Depends(get_session)):
     """修改当前用户昵称。"""
     current_user = request.state.current_user
-    user_view = service.update_nickname_with_session(
+    user_view = service.update_nickname(
         session, current_user.id, UpdateNicknameInput(nickname=body.nickname)
     )
     return Response.success(
