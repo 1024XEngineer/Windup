@@ -138,12 +138,52 @@ def test_register_success(db_session, service, mock_email):
         invite_code="AB23CD45",
     )
 
-    result = service.register_by_email_with_session(db_session, input_data)
+    result = service.register_by_email(db_session, input_data)
 
     assert result.user.email == "new@example.com"
     assert result.access_token is not None
     assert result.refresh_token is not None
     assert result.user.email_verified_at is not None  # 注册即验证
+
+
+def test_public_methods_accept_session(db_session, service, mock_email):
+    """公开接口走 session-per-call，不再抛 NotImplementedError。"""
+    service._redis.get.return_value = "123456"
+    registered = service.register_by_email(
+        db_session,
+        RegisterInput(
+            email="public@example.com",
+            password="password123",
+            code="123456",
+            invite_code="AB23CD45",
+        ),
+    )
+
+    by_id = service.get_by_id(db_session, registered.user.id)
+    by_email = service.get_by_email(db_session, "public@example.com")
+    assert by_id is not None
+    assert by_email is not None
+    assert by_id.email == by_email.email == "public@example.com"
+
+    service._redis.get.return_value = None  # 未锁定
+    login = service.login_by_password(
+        db_session,
+        LoginByPasswordInput(email="public@example.com", password="password123"),
+    )
+    assert login.user.id == registered.user.id
+
+    service.change_password(
+        db_session,
+        registered.user.id,
+        ChangePasswordInput(old_password="password123", new_password="newpass123"),
+    )
+
+    service._redis.get.return_value = "654321"
+    code_login = service.login_by_code(
+        db_session,
+        LoginByCodeInput(email="public@example.com", code="654321"),
+    )
+    assert code_login.user.id == registered.user.id
 
 
 def test_register_creates_credit_account(db_session, service, mock_email):
@@ -162,7 +202,7 @@ def test_register_creates_credit_account(db_session, service, mock_email):
         invite_code="AB23CD45",
     )
 
-    result = service.register_by_email_with_session(db_session, input_data)
+    result = service.register_by_email(db_session, input_data)
     user_id = result.user.id
     expected = quota_settings.register_gift_amount + quota_settings.invite_reward_amount
 
@@ -198,11 +238,11 @@ def test_register_duplicate_email(db_session, service):
         code="123456",
         invite_code="AB23CD45",
     )
-    service.register_by_email_with_session(db_session, input_data)
+    service.register_by_email(db_session, input_data)
 
     # 尝试重复注册
     with pytest.raises(BizException, match="邮箱已注册"):
-        service.register_by_email_with_session(db_session, input_data)
+        service.register_by_email(db_session, input_data)
 
 
 def test_register_wrong_code(db_session, service):
@@ -216,7 +256,7 @@ def test_register_wrong_code(db_session, service):
     )
 
     with pytest.raises(BizException, match="验证码错误"):
-        service.register_by_email_with_session(db_session, input_data)
+        service.register_by_email(db_session, input_data)
 
 
 def test_register_expired_code(db_session, service):
@@ -230,7 +270,7 @@ def test_register_expired_code(db_session, service):
     )
 
     with pytest.raises(BizException, match="验证码已过期"):
-        service.register_by_email_with_session(db_session, input_data)
+        service.register_by_email(db_session, input_data)
 
 
 # -- 登录测试 ------------------------------------------------------------
@@ -245,12 +285,12 @@ def test_login_success(db_session, service, mock_email):
         code="123456",
         invite_code="AB23CD45",
     )
-    service.register_by_email_with_session(db_session, register_input)
+    service.register_by_email(db_session, register_input)
 
     # 登录（不需要验证码）
     service._redis.get.return_value = None  # 未锁定
     login_input = LoginByPasswordInput(email="login@example.com", password="pass123")
-    result = service.login_by_password_with_session(db_session, login_input)
+    result = service.login_by_password(db_session, login_input)
 
     assert result.user.email == "login@example.com"
     assert result.access_token is not None
@@ -265,7 +305,7 @@ def test_login_wrong_password(db_session, service, mock_email):
         code="123456",
         invite_code="AB23CD45",
     )
-    service.register_by_email_with_session(db_session, register_input)
+    service.register_by_email(db_session, register_input)
 
     # 密码错误
     service._redis.get.return_value = None  # 未锁定
@@ -273,7 +313,7 @@ def test_login_wrong_password(db_session, service, mock_email):
     login_input = LoginByPasswordInput(email="login@example.com", password="wrong")
 
     with pytest.raises(BizException, match="邮箱或密码错误"):
-        service.login_by_password_with_session(db_session, login_input)
+        service.login_by_password(db_session, login_input)
 
 
 def test_login_nonexistent_user(db_session, service):
@@ -282,7 +322,7 @@ def test_login_nonexistent_user(db_session, service):
     login_input = LoginByPasswordInput(email="no@example.com", password="pass123")
 
     with pytest.raises(BizException, match="邮箱或密码错误"):
-        service.login_by_password_with_session(db_session, login_input)
+        service.login_by_password(db_session, login_input)
 
 
 def test_login_banned_user(db_session, service, mock_email):
@@ -294,7 +334,7 @@ def test_login_banned_user(db_session, service, mock_email):
         code="123456",
         invite_code="AB23CD45",
     )
-    service.register_by_email_with_session(db_session, register_input)
+    service.register_by_email(db_session, register_input)
 
     # 封禁用户
     from sqlalchemy import select
@@ -308,7 +348,7 @@ def test_login_banned_user(db_session, service, mock_email):
     login_input = LoginByPasswordInput(email="banned@example.com", password="pass123")
 
     with pytest.raises(BizException, match="账号已被封禁"):
-        service.login_by_password_with_session(db_session, login_input)
+        service.login_by_password(db_session, login_input)
 
 
 # -- 验证码登录测试 ------------------------------------------------------
@@ -324,7 +364,7 @@ def test_login_by_code_unknown_email_does_not_create_user(
     input_data = LoginByCodeInput(email="code@example.com", code="123456")
 
     with pytest.raises(BizException, match="账号不存在") as exc:
-        service.login_by_code_with_session(db_session, input_data)
+        service.login_by_code(db_session, input_data)
 
     from windup_common.enums.biz_code import BizCode
 
@@ -346,7 +386,7 @@ def test_login_by_code_banned_user(db_session, service, mock_email):
     from sqlalchemy import select
 
     service._redis.get.return_value = "123456"
-    service.register_by_email_with_session(
+    service.register_by_email(
         db_session,
         RegisterInput(
             email="banned-code@example.com",
@@ -363,7 +403,7 @@ def test_login_by_code_banned_user(db_session, service, mock_email):
 
     service._redis.get.return_value = "654321"
     with pytest.raises(BizException, match="账号已被封禁"):
-        service.login_by_code_with_session(
+        service.login_by_code(
             db_session,
             LoginByCodeInput(email="banned-code@example.com", code="654321"),
         )
@@ -375,7 +415,7 @@ def test_login_by_code_marks_unverified_email(db_session, service):
     db_session.flush()
 
     service._redis.get.return_value = "123456"
-    result = service.login_by_code_with_session(
+    result = service.login_by_code(
         db_session,
         LoginByCodeInput(email="unverified@example.com", code="123456"),
     )
@@ -393,12 +433,12 @@ def test_login_by_code_existing_user(db_session, service, mock_email):
         code="123456",
         invite_code="AB23CD45",
     )
-    service.register_by_email_with_session(db_session, register_input)
+    service.register_by_email(db_session, register_input)
 
     # 验证码登录
     service._redis.get.return_value = "654321"
     input_data = LoginByCodeInput(email="exist@example.com", code="654321")
-    result = service.login_by_code_with_session(db_session, input_data)
+    result = service.login_by_code(db_session, input_data)
 
     assert result.user.email == "exist@example.com"
 
@@ -409,7 +449,7 @@ def test_login_by_code_wrong_code(db_session, service):
     input_data = LoginByCodeInput(email="code@example.com", code="999999")
 
     with pytest.raises(BizException, match="验证码错误"):
-        service.login_by_code_with_session(db_session, input_data)
+        service.login_by_code(db_session, input_data)
 
 
 # -- 发送验证码测试 ------------------------------------------------------
@@ -504,20 +544,20 @@ def test_change_password(db_session, service, mock_email):
         code="123456",
         invite_code="AB23CD45",
     )
-    result = service.register_by_email_with_session(db_session, register_input)
+    result = service.register_by_email(db_session, register_input)
 
     # 修改密码
     change_input = ChangePasswordInput(
         old_password="oldpass123", new_password="newpass123"
     )
-    service.change_password_with_session(db_session, result.user.id, change_input)
+    service.change_password(db_session, result.user.id, change_input)
 
     # 用新密码登录
     service._redis.get.return_value = None
     login_input = LoginByPasswordInput(
         email="change@example.com", password="newpass123"
     )
-    login_result = service.login_by_password_with_session(db_session, login_input)
+    login_result = service.login_by_password(db_session, login_input)
 
     assert login_result.user.email == "change@example.com"
 
@@ -531,13 +571,13 @@ def test_change_password_wrong_old(db_session, service, mock_email):
         code="123456",
         invite_code="AB23CD45",
     )
-    result = service.register_by_email_with_session(db_session, register_input)
+    result = service.register_by_email(db_session, register_input)
 
     # 旧密码错误
     change_input = ChangePasswordInput(old_password="wrong", new_password="newpass123")
 
     with pytest.raises(BizException, match="旧密码错误"):
-        service.change_password_with_session(db_session, result.user.id, change_input)
+        service.change_password(db_session, result.user.id, change_input)
 
 
 # -- 昵称修改测试 --------------------------------------------------------
@@ -553,12 +593,10 @@ def test_update_nickname(db_session, service, mock_email):
         nickname="旧昵称",
         invite_code="AB23CD45",
     )
-    result = service.register_by_email_with_session(db_session, register_input)
+    result = service.register_by_email(db_session, register_input)
 
     update_input = UpdateNicknameInput(nickname="新昵称")
-    user_view = service.update_nickname_with_session(
-        db_session, result.user.id, update_input
-    )
+    user_view = service.update_nickname(db_session, result.user.id, update_input)
 
     assert user_view.nickname == "新昵称"
     assert user_view.id == result.user.id
@@ -573,13 +611,11 @@ def test_update_nickname_max_length(db_session, service, mock_email):
         code="123456",
         invite_code="AB23CD45",
     )
-    result = service.register_by_email_with_session(db_session, register_input)
+    result = service.register_by_email(db_session, register_input)
 
     long_nickname = "a" * 50
     update_input = UpdateNicknameInput(nickname=long_nickname)
-    user_view = service.update_nickname_with_session(
-        db_session, result.user.id, update_input
-    )
+    user_view = service.update_nickname(db_session, result.user.id, update_input)
 
     assert user_view.nickname == long_nickname
 
@@ -589,7 +625,7 @@ def test_update_nickname_user_not_found(db_session, service):
     update_input = UpdateNicknameInput(nickname="test")
 
     with pytest.raises(BizException, match="用户不存在"):
-        service.update_nickname_with_session(db_session, 999999, update_input)
+        service.update_nickname(db_session, 999999, update_input)
 
 
 # -- 重置密码测试 --------------------------------------------------------
@@ -605,19 +641,19 @@ def test_reset_password(db_session, service, mock_email):
         code="123456",
         invite_code="AB23CD45",
     )
-    service.register_by_email_with_session(db_session, register_input)
+    service.register_by_email(db_session, register_input)
 
     # 重置密码（验证码 purpose 为 reset_password）
     service._redis.get.return_value = "654321"
     reset_input = ResetPasswordInput(
         email="reset@example.com", code="654321", new_password="newpass123"
     )
-    service.reset_password_with_session(db_session, reset_input)
+    service.reset_password(db_session, reset_input)
 
     # 用新密码登录
     service._redis.get.return_value = None
     login_input = LoginByPasswordInput(email="reset@example.com", password="newpass123")
-    login_result = service.login_by_password_with_session(db_session, login_input)
+    login_result = service.login_by_password(db_session, login_input)
 
     assert login_result.user.email == "reset@example.com"
 
@@ -631,7 +667,7 @@ def test_reset_password_wrong_code(db_session, service, mock_email):
         code="123456",
         invite_code="AB23CD45",
     )
-    service.register_by_email_with_session(db_session, register_input)
+    service.register_by_email(db_session, register_input)
 
     # 验证码错误
     service._redis.get.return_value = None  # 验证码过期
@@ -640,7 +676,7 @@ def test_reset_password_wrong_code(db_session, service, mock_email):
     )
 
     with pytest.raises(BizException, match="验证码已过期"):
-        service.reset_password_with_session(db_session, reset_input)
+        service.reset_password(db_session, reset_input)
 
 
 def test_reset_password_user_not_found(db_session, service):
@@ -651,7 +687,7 @@ def test_reset_password_user_not_found(db_session, service):
     )
 
     with pytest.raises(BizException, match="用户不存在"):
-        service.reset_password_with_session(db_session, reset_input)
+        service.reset_password(db_session, reset_input)
 
 
 # -- 登录限流测试 --------------------------------------------------------
@@ -667,14 +703,14 @@ def test_login_account_locked(db_session, service, mock_email):
         code="123456",
         invite_code="AB23CD45",
     )
-    service.register_by_email_with_session(db_session, register_input)
+    service.register_by_email(db_session, register_input)
 
     # 模拟账号锁定
     service._redis.get.return_value = "1"  # lock key 存在
     login_input = LoginByPasswordInput(email="lock@example.com", password="pass123")
 
     with pytest.raises(BizException, match="邮箱或密码错误"):
-        service.login_by_password_with_session(db_session, login_input)
+        service.login_by_password(db_session, login_input)
 
 
 def test_login_failure_records_count(service, mock_redis):

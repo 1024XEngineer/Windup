@@ -38,6 +38,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import (
     BigInteger,
     DateTime,
+    ForeignKey,
     Integer,
     JSON,
     SmallInteger,
@@ -71,7 +72,15 @@ class Character(Base):
         autoincrement=True,
     )
 
-    project_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    project_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "windup_project.id",
+            ondelete="RESTRICT",
+            name="fk_windup_character_project_id",
+        ),
+        nullable=False,
+    )
 
     workflow_run_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
 

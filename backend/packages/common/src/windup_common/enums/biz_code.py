@@ -22,6 +22,7 @@ class BizCode(int, Enum):
     BAD_REQUEST = 400          # 请求参数校验失败
     UNAUTHORIZED = 401         # 未登录 / token 无效
     NOT_FOUND = 404            # 资源不存在
+    CONFLICT = 409             # 乐观锁 / 资源版本冲突
     TOO_MANY_REQUESTS = 429    # 请求过于频繁
     INTERNAL_ERROR = 500       # 服务器内部错误 / 兜底
     MODEL_UNAVAILABLE = 503    # 模型服务不可用

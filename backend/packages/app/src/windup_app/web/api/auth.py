@@ -121,7 +121,7 @@ class UserOut(BaseModel):
 @router.post("/register", response_model=Response[TokenResponse])
 def register(body: RegisterRequest, session: Session = Depends(get_session)):
     """邮箱+验证码+密码注册。须填写有效邀请码。"""
-    result = service.register_by_email_with_session(
+    result = service.register_by_email(
         session,
         RegisterInput(
             email=body.email,
@@ -144,7 +144,7 @@ def register(body: RegisterRequest, session: Session = Depends(get_session)):
 @router.post("/login", response_model=Response[TokenResponse])
 def login(body: LoginRequest, session: Session = Depends(get_session)):
     """邮箱+密码+验证码登录。"""
-    result = service.login_by_password_with_session(
+    result = service.login_by_password(
         session,
         type(
             "LoginByPasswordInput", (), {"email": body.email, "password": body.password}
@@ -170,7 +170,7 @@ def send_code(body: SendCodeRequest):
 @router.post("/login-by-code", response_model=Response[TokenResponse])
 def login_by_code(body: LoginByCodeRequest, session: Session = Depends(get_session)):
     """验证码登录。未知邮箱不自动建号。"""
-    result = service.login_by_code_with_session(
+    result = service.login_by_code(
         session,
         type("LoginByCodeInput", (), {"email": body.email, "code": body.code})(),
     )
@@ -235,7 +235,7 @@ def change_password(
 ):
     """修改密码。"""
     current_user = request.state.current_user
-    service.change_password_with_session(
+    service.change_password(
         session,
         current_user.id,
         type(
@@ -250,7 +250,7 @@ def change_password(
 @router.post("/reset-password", response_model=Response[None])
 def reset_password(body: ResetPasswordRequest, session: Session = Depends(get_session)):
     """邮箱+验证码重置密码（忘记密码）。"""
-    service.reset_password_with_session(
+    service.reset_password(
         session,
         ResetPasswordInput(
             email=body.email, code=body.code, new_password=body.new_password
@@ -267,7 +267,7 @@ def update_nickname(
 ):
     """修改当前用户昵称。"""
     current_user = request.state.current_user
-    user_view = service.update_nickname_with_session(
+    user_view = service.update_nickname(
         session, current_user.id, UpdateNicknameInput(nickname=body.nickname)
     )
     return Response.success(

@@ -36,16 +36,35 @@ def handle_request_validation_error(
 ) -> JSONResponse:
     """请求参数校验失败(FastAPI 默认 422)-> ``code=BizCode.BAD_REQUEST``,data 带校验明细。
 
+    ``message`` 取第一条校验错误的原文而不是一句笼统的"请求参数校验失败":前端展示的是
+    ``message``,把原因只放进 ``data`` 等于用户永远看不到——实测用户看到的是读不懂的
+    "请求参数校验失败",而真正的原因("custom 动作必须提供 custom_prompt")就在 data 里躺着。
+
     ``exc.errors()`` 的 ``ctx`` 可能含不可 JSON 序列化的对象(如 ``ValueError``),
     过一道 ``jsonable_encoder`` 保险。
     """
+    detail = jsonable_encoder(exc.errors())
     return _jsonify(
         Response.fail(
-            "请求参数校验失败",
+            _first_validation_message(detail),
             code=BizCode.BAD_REQUEST,
-            data=jsonable_encoder(exc.errors()),
+            data=detail,
         )
     )
+
+
+# pydantic 把自定义 ValueError 的原文前缀成 "Value error, xxx",对用户是噪声。
+_VALUE_ERROR_PREFIX = "Value error, "
+
+
+def _first_validation_message(errors: object) -> str:
+    """取第一条校验错误的可读原文;取不到就退回笼统文案(总比抛在处理器里强)。"""
+    if isinstance(errors, list):
+        for e in errors:
+            msg = (e or {}).get("msg") if isinstance(e, dict) else None
+            if isinstance(msg, str) and msg:
+                return msg.removeprefix(_VALUE_ERROR_PREFIX)
+    return "请求参数校验失败"
 
 
 def handle_http_exception(request: Request, exc: HTTPException) -> JSONResponse:

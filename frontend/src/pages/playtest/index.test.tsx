@@ -53,12 +53,19 @@ describe('PlaytestPage', () => {
     renderPlaytest('/playtest/51/outfit-default')
 
     expect(await screen.findByRole('heading', { name: '51 · 常态造型' })).toBeTruthy()
+    const walkButton = await screen.findByRole('button', { name: '绑定动作：行走' })
     // 后端给的 walk 帧顺序是 index 2、0、1；照数组播会从 walk-03 起步。
-    fireEvent.click(screen.getByRole('button', { name: '绑定动作：行走' }))
+    fireEvent.click(walkButton)
 
-    await waitFor(() => {
-      expect(stageFrameUrl()).toBe('https://cdn.windup.test/walk-01.png')
-    })
+    // 先等绑定态（aria-pressed），再读舞台帧。覆盖率下 waitFor 默认 1s 会把重试耗在整页 HTML 上，
+    // 点了行走却仍断言到 idle-01，Frontend CI 就会红。
+    await waitFor(
+      () => {
+        expect(walkButton.getAttribute('aria-pressed')).toBe('true')
+        expect(stageFrameUrl()).toBe('https://cdn.windup.test/walk-01.png')
+      },
+      { timeout: 4000 },
+    )
   })
 
   it('starts on the idle action when the route names none', async () => {

@@ -16,7 +16,12 @@ export type {
 } from './quota'
 
 /* 项目 —— 全局约束：视角、朝向、精灵尺寸、画风 */
-export { CHARACTER_PERSPECTIVE, DIRECTIONAL_MOVEMENT, ProjectNameConflictError } from './project'
+export {
+  CHARACTER_PERSPECTIVE,
+  DIRECTIONAL_MOVEMENT,
+  ProjectHasCharactersError,
+  ProjectNameConflictError,
+} from './project'
 export { projectApis } from './project'
 export type {
   CharacterPerspective,

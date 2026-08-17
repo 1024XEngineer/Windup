@@ -180,6 +180,17 @@ def get_task_by_user(
     return _record_to_domain(record)
 
 
+def list_by_status(
+    session: Session, statuses: tuple[TaskStatus, ...],
+) -> list[GenerationTask]:
+    """按状态列出任务（启动对账用）。"""
+    values = [status.value for status in statuses]
+    rows = session.scalars(
+        select(GenerationTaskRecord).where(GenerationTaskRecord.status.in_(values))
+    ).all()
+    return [_record_to_domain(record) for record in rows]
+
+
 # ── 转换 ─────────────────────────────────────────────────────────────────
 
 

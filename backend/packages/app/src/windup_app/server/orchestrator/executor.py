@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from windup_common.models import ActionSpec, ActionType as EngineActionType, CharacterCard
 
-from windup_app.server.orchestrator import task_repo
+from windup_app.server.orchestrator import billing, task_repo
 from windup_app.server.orchestrator._fetch import fetch_own_media
 from windup_app.server.orchestrator.model import (
     CharacterActionInput,
@@ -38,6 +38,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger("windup.generation.executor")
 
 _ACTION_RESULT = "character_action"  # task_repo._deserialize_result 按此标签反序列化
+
+
+def _settle_credit(session: Session, task_id: int, *, success: bool) -> None:
+    """任务终态时结清预付费：成功扣减，失败解冻。"""
+    task = task_repo.get_task(session, task_id)
+    if task is None or task.id is None:
+        return
+    if success:
+        billing.capture_for_task(session, user_id=task.user_id, task_id=task.id)
+    else:
+        billing.release_for_task(session, user_id=task.user_id, task_id=task.id)
 
 # ── 项目全局约束(Project 表)→ 统合喂给生成逻辑 ─────────────────────────
 # character_perspective 游戏视角:1=横版(侧视) 2=俯视 3=2.5D → 生成朝向/视角
@@ -226,13 +237,16 @@ class ActionTaskExecutor:
             cons = (self._fetch_constraints or _load_constraints)(session, project_id)
             result = self._produce_action(input, cons)
             task_repo.update_result(session, task_id, _ACTION_RESULT, result)
+            _settle_credit(session, task_id, success=True)
             if own:
                 session.commit()
         except Exception as exc:  # noqa: BLE001 —— 兜底任何生成/上传/网络异常
             logger.exception("动作任务 %s 失败", task_id)
+            session.rollback()
             task_repo.update_status(
                 session, task_id, TaskStatus.FAILED, error_message=str(exc),
             )
+            _settle_credit(session, task_id, success=False)
             if own:
                 session.commit()
         finally:
@@ -415,11 +429,14 @@ class ImageTaskExecutor:
                 "type": "character_image",
                 "image_urls": urls,
             })
+            _settle_credit(session, task_id, success=True)
             if own:
                 session.commit()
         except Exception as exc:  # noqa: BLE001 —— 兜底
             logger.exception("图片任务 %s 失败", task_id)
+            session.rollback()
             task_repo.update_status(session, task_id, TaskStatus.FAILED, error_message=str(exc))
+            _settle_credit(session, task_id, success=False)
             if own:
                 session.commit()
         finally:

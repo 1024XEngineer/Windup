@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from windup_framework.db.base import Base
 from windup_app.server.project.model import Project  # 注册 windup_project 表(create_all 用)
+from windup_app.server.quota.model import CreditAccount
 from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
@@ -27,6 +28,7 @@ from windup_app.server.orchestrator.service import AiGenerationService
 from windup_ai_engine.impl import CharacterGenerator
 from windup_ai_engine.strategy.concrete import VideoFrameStrategy
 from windup_common.models import GenRoute
+from windup_framework.config.quota import settings as quota_settings
 
 
 def _tiny_png(shift: int = 0) -> bytes:
@@ -58,7 +60,17 @@ def session_factory():
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine)
+    factory = sessionmaker(bind=engine)
+    with factory() as session:
+        session.add(CreditAccount(
+            user_id=1,
+            balance=quota_settings.register_gift_amount,
+            frozen=0,
+            total_earned=quota_settings.register_gift_amount,
+            total_spent=0,
+        ))
+        session.commit()
+    return factory
 
 
 def _real_offline_generator(monkeypatch) -> CharacterGenerator:

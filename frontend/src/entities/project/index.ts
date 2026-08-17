@@ -43,6 +43,18 @@ export class ProjectNameConflictError extends ApiError {
   }
 }
 
+/** 项目下仍挂载角色，后端拒绝删除。 */
+export class ProjectHasCharactersError extends ApiError {
+  constructor(options?: { cause?: unknown }) {
+    super('项目下仍有角色，无法删除', {
+      kind: 'business',
+      code: 400,
+      cause: options?.cause,
+    })
+    this.name = 'ProjectHasCharactersError'
+  }
+}
+
 /** 后端 character_perspective: 1 横版 / 2 俯视 / 3 2.5D。 */
 export type CharacterPerspective = 'side' | 'top-down' | 'isometric'
 
@@ -203,8 +215,20 @@ export const projectApis: ProjectApis = {
   },
 
   async remove(id) {
-    await getApiClient().request<null>(`/projects/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    })
+    try {
+      await getApiClient().request<null>(`/projects/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      })
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        error.kind === 'business' &&
+        error.code === 400 &&
+        error.message === '项目下仍有角色，无法删除'
+      ) {
+        throw new ProjectHasCharactersError({ cause: error })
+      }
+      throw error
+    }
   },
 }
