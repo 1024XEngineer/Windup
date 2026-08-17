@@ -39,7 +39,7 @@ function formatCredits(value: number): string {
 
 const INVITE_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{4,16}$/i
 
-function InviteSection() {
+function InviteSection({ onCreditsChanged }: { onCreditsChanged(): void }) {
   const redeemId = useId()
   const [invite, setInvite] = useState<InviteCode | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -98,6 +98,7 @@ function InviteSection() {
       await quotaApis.redeemInviteCode(normalized)
       setRedeemCode('')
       setSuccess('邀请码填写成功')
+      onCreditsChanged()
     } catch (error) {
       setActionError(errorMessage(error))
     } finally {
@@ -209,7 +210,12 @@ function QuotaSection() {
         ))}
       </dl>
 
-      <InviteSection />
+      <InviteSection
+        onCreditsChanged={() => {
+          balance.reload()
+          transactions.reload()
+        }}
+      />
 
       {balance.status === 'loading' && (
         <p role="status" className="mt-3 text-sm text-app-muted">

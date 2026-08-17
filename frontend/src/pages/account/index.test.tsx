@@ -266,6 +266,76 @@ describe('AccountPage', () => {
     expect(await screen.findByText('邀请码填写成功')).toBeTruthy()
   })
 
+  it('兑换成功后刷新积分余额与流水', async () => {
+    const getBalance = vi
+      .spyOn(quotaApis, 'getBalance')
+      .mockResolvedValueOnce({
+        id: '11',
+        userId: '7',
+        balance: 90,
+        frozen: 10,
+        totalEarned: 150,
+        totalSpent: 50,
+        createdAt: '2026-08-12T01:02:03Z',
+        updatedAt: '2026-08-17T01:02:03Z',
+      })
+      .mockResolvedValue({
+        id: '11',
+        userId: '7',
+        balance: 140,
+        frozen: 10,
+        totalEarned: 200,
+        totalSpent: 50,
+        createdAt: '2026-08-12T01:02:03Z',
+        updatedAt: '2026-08-17T03:00:00Z',
+      })
+    const listTransactions = vi
+      .spyOn(quotaApis, 'listTransactions')
+      .mockResolvedValueOnce({
+        items: [],
+        total: 0,
+        page: 1,
+        pageSize: 20,
+      })
+      .mockResolvedValue({
+        items: [
+          {
+            id: '22',
+            userId: '7',
+            delta: 50,
+            reason: 2,
+            billingMode: 0,
+            refId: 'invite:7:invitee',
+            balanceAfter: 140,
+            createdAt: '2026-08-17T03:00:00Z',
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 20,
+      })
+    vi.spyOn(quotaApis, 'getInviteCode').mockResolvedValue({
+      code: 'AB23CD45',
+      usedCount: 0,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+    vi.spyOn(quotaApis, 'redeemInviteCode').mockResolvedValue(undefined)
+
+    renderAccount()
+    fireEvent.click(await screen.findByRole('button', { name: '积分账户' }))
+    expect(await screen.findByText('90')).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('填写邀请码'), { target: { value: 'MN67PQ89' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认填写' }))
+
+    expect(await screen.findByText('邀请码填写成功')).toBeTruthy()
+    await waitFor(() => expect(getBalance).toHaveBeenCalledTimes(2))
+    expect(listTransactions).toHaveBeenCalledTimes(2)
+    expect(await screen.findByText('140')).toBeTruthy()
+    expect(screen.getByText('邀请奖励')).toBeTruthy()
+  })
+
   it('展示邀请码加载失败', async () => {
     mockQuotaReads()
     vi.spyOn(quotaApis, 'getInviteCode').mockRejectedValue(new Error('邀请码服务不可用'))
