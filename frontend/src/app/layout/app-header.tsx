@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 
+import { quotaApis as defaultQuotaApis } from '@/entities'
+import type { QuotaApis } from '@/entities'
 import { useAuthSession } from '@/features/auth-session'
 import { PageBackButton } from './page-back-button'
 
@@ -13,6 +15,14 @@ interface ProductNavigationItem {
 }
 
 type AccountMenuState = 'closed' | 'open' | 'closing'
+type CreditBalanceState =
+  | { status: 'idle' | 'loading'; balance: null }
+  | { status: 'loaded'; balance: number }
+  | { status: 'error'; balance: null }
+
+export interface AppHeaderProps {
+  quotaApis?: QuotaApis
+}
 
 const accountMenuExitDurationMs = 260
 
@@ -67,12 +77,16 @@ function WaveText({ playId, text }: { playId: number; text: string }) {
  * 跨页面顶栏知道产品路由，因此属于 app 外壳，不下沉到 shared/ui。
  * 品牌、主导航和账号共用一个平面，避免三个功能层被误读成彼此独立的卡片。
  */
-export function AppHeader() {
+export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {}) {
   const { pathname, search, hash } = useLocation()
   const navigate = useNavigate()
   const session = useAuthSession()
   const [accountMenuState, setAccountMenuState] = useState<AccountMenuState>('closed')
   const accountMenuOpen = accountMenuState === 'open'
+  const [creditBalance, setCreditBalance] = useState<CreditBalanceState>({
+    status: 'idle',
+    balance: null,
+  })
   const [wave, setWave] = useState({ entry: '', playId: 0 })
   const accountEntry = `/?${new URLSearchParams({
     account: 'login',
@@ -87,6 +101,24 @@ export function AppHeader() {
     const timer = window.setTimeout(() => setAccountMenuState('closed'), accountMenuExitDurationMs)
     return () => window.clearTimeout(timer)
   }, [accountMenuState])
+
+  useEffect(() => {
+    if (!accountMenuOpen || session.state.status !== 'authenticated') return
+
+    let active = true
+    setCreditBalance({ status: 'loading', balance: null })
+    void quotaApis.getBalance().then(
+      (account) => {
+        if (active) setCreditBalance({ status: 'loaded', balance: account.balance })
+      },
+      () => {
+        if (active) setCreditBalance({ status: 'error', balance: null })
+      },
+    )
+    return () => {
+      active = false
+    }
+  }, [accountMenuOpen, quotaApis, session.state.status])
 
   function signOut() {
     const returnHome = () => navigate('/', { replace: true })
@@ -243,6 +275,30 @@ export function AppHeader() {
                       : 'invisible pointer-events-none -translate-y-2 scale-[0.82] opacity-0'
                 }`}
               >
+                <div
+                  aria-label="积分余额"
+                  className="flex min-h-11 items-center justify-between gap-4 border-b border-app-ink/10 px-3 pb-1 text-[13px]"
+                >
+                  <span className="text-app-muted">可用积分</span>
+                  <output aria-live="polite" className="font-mono font-semibold text-app-accent">
+                    {creditBalance.status === 'loaded' ? (
+                      <>
+                        {creditBalance.balance}
+                        <span className="ml-1 font-sans text-[11px] font-normal text-app-faint">
+                          积分
+                        </span>
+                      </>
+                    ) : creditBalance.status === 'error' ? (
+                      <span className="font-sans text-[12px] font-normal text-app-faint">
+                        积分暂不可用
+                      </span>
+                    ) : (
+                      <span className="font-sans text-[12px] font-normal text-app-faint">
+                        查询中…
+                      </span>
+                    )}
+                  </output>
+                </div>
                 <Link
                   to="/account"
                   aria-label="打开账号中心"

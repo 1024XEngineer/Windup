@@ -4,6 +4,10 @@
 export { createUserApis, userApis } from './user'
 export type { AuthTokens, CreateUserApisOptions, SendCodePurpose, User, UserApis } from './user'
 
+/* 积分 —— 读取当前用户的可用余额与账本汇总 */
+export { createQuotaApis, quotaApis } from './quota'
+export type { CreateQuotaApisOptions, CreditAccount, QuotaApis } from './quota'
+
 /* 项目 —— 全局约束：视角、朝向、精灵尺寸、画风 */
 export { CHARACTER_PERSPECTIVE, DIRECTIONAL_MOVEMENT, ProjectNameConflictError } from './project'
 export { projectApis } from './project'
