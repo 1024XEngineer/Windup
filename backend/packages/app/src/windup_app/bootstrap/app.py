@@ -46,7 +46,7 @@ def _cors_origins() -> list[str]:
 
     不配这个中间件的话，浏览器会把前端的**所有**请求拦在预检那一步
     （OPTIONS 返回 405、响应无 access-control-* 头），后端日志里连请求都看不到。
-    默认值覆盖本地 dev server 与 Vercel 预览域名。
+    默认值仅覆盖本地 dev server；远程来源必须显式配置。
     """
     raw = os.getenv("WINDUP_CORS_ORIGINS", "").strip()
     if raw:
@@ -58,9 +58,9 @@ def _cors_origins() -> list[str]:
 def _cors_origin_regex() -> str | None:
     """CORS 正则匹配的额外来源，WINDUP_CORS_ORIGIN_REGEX 覆盖。
 
-    默认允许所有 Vercel 预览域名。
+    默认不允许正则来源，避免信任任意第三方托管子域名。
     """
-    return os.getenv("WINDUP_CORS_ORIGIN_REGEX", r"https://.*\.vercel\.app").strip() or None
+    return os.getenv("WINDUP_CORS_ORIGIN_REGEX", "").strip() or None
 
 
 def print_banner() -> None:
