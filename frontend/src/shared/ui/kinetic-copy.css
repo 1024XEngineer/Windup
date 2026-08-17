@@ -14,7 +14,8 @@
   opacity: 0;
   letter-spacing: 0.075em;
   transform: translate3d(0, 120%, 0);
-  animation: auth-copy-line-enter 620ms var(--auth-ease-enter) forwards;
+  animation: auth-copy-line-enter 620ms var(--auth-ease-enter, cubic-bezier(0.16, 1, 0.3, 1))
+    forwards;
   animation-delay: calc(210ms + var(--auth-line-index) * 90ms);
 }
 
