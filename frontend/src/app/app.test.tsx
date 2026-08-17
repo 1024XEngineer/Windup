@@ -24,6 +24,7 @@ afterEach(() => {
   cleanup()
   window.localStorage.clear()
   vi.useRealTimers()
+  vi.restoreAllMocks()
 })
 
 describe('AppRoutes authentication boundary', () => {

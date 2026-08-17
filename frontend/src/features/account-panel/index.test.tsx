@@ -98,9 +98,7 @@ describe('AccountPanel', () => {
     expect(screen.getByText('内测期间仅支持已有账号登录。')).toBeTruthy()
     expect(screen.queryByRole('tab', { name: '注册' })).toBeNull()
     expect(screen.queryByRole('button', { name: '创建账号' })).toBeNull()
-    expect(screen.getByRole('link', { name: 'GitHub Issues' }).getAttribute('href')).toBe(
-      'https://github.com/1024XEngineer/Windup/issues',
-    )
+    expect(screen.getByText('注册仅通过邀请链接开放。')).toBeTruthy()
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('邮箱')))
   })
 
@@ -112,14 +110,13 @@ describe('AccountPanel', () => {
     expect(screen.queryByRole('button', { name: '创建账号' })).toBeNull()
     expect(screen.queryByRole('button', { name: '继续' })).toBeNull()
     expect(screen.getByRole('button', { name: '登录' })).toBeTruthy()
-    expect(screen.getByText(/内测期间暂不开放注册/)).toBeTruthy()
+    expect(screen.getByText('注册仅通过邀请链接开放。')).toBeTruthy()
     expect(apis.register).not.toHaveBeenCalled()
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('邮箱')))
   })
 
-  // 内测关闭公开注册。重新开放时取消 skip，并恢复 AccountPanel 的 register 入口。
-  it.skip('opens registration as a centered, progressive form', async () => {
-    renderPanel('/?account=register&returnTo=%2Fworkspace')
+  it('only opens invitation registration from a valid invite link', async () => {
+    renderPanel('/?account=register&invite=ab23cd45&returnTo=%2Fworkspace')
 
     const dialog = screen.getByRole('dialog', { name: '创建 Windup 账号' })
     expect(screen.getByRole('heading', { name: '欢迎来到 Windup' })).toBeTruthy()
@@ -128,13 +125,13 @@ describe('AccountPanel', () => {
     expect(screen.queryByText('继续搭建，')).toBeNull()
     expect(screen.getByTestId('register-fields').className).toContain('auth-register-fields')
     expect(screen.queryByRole('tablist', { name: '账号操作' })).toBeNull()
+    expect(screen.queryByLabelText('邀请码')).toBeNull()
     expect(screen.getByLabelText('邮箱')).toBeTruthy()
     expect(screen.queryByLabelText('密码')).toBeNull()
     expect(screen.queryByLabelText('昵称（选填）')).toBeNull()
     expect(screen.queryByLabelText('验证码')).toBeNull()
     expect(screen.getByTestId('register-fields').querySelector('[aria-live]')).toBeNull()
     expect(screen.getByRole('button', { name: '继续' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '登录' })).toBeTruthy()
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('邮箱')))
   })
 
@@ -159,15 +156,15 @@ describe('AccountPanel', () => {
 
     const dialog = screen.getByRole('dialog', { name: '登录 Windup' })
     const closeButton = screen.getByRole('button', { name: '关闭账号面板' })
-    const requestAccess = screen.getByRole('link', { name: 'GitHub Issues' })
+    const submitButton = screen.getByRole('button', { name: '登录' })
 
-    requestAccess.focus()
-    fireEvent.keyDown(requestAccess, { key: 'Tab' })
+    submitButton.focus()
+    fireEvent.keyDown(submitButton, { key: 'Tab' })
     expect(document.activeElement).toBe(closeButton)
 
     closeButton.focus()
     fireEvent.keyDown(closeButton, { key: 'Tab', shiftKey: true })
-    expect(document.activeElement).toBe(requestAccess)
+    expect(document.activeElement).toBe(submitButton)
     expect(dialog.contains(document.activeElement)).toBe(true)
   })
 
@@ -376,8 +373,8 @@ describe('AccountPanel', () => {
     expect(screen.getByTestId('location').textContent).toBe('/?account=login&returnTo=%2Fworkspace')
   })
 
-  it.skip('preserves registration input when showing a password and returning a step', async () => {
-    renderPanel('/?account=register')
+  it('preserves registration input when showing a password and returning a step', async () => {
+    renderPanel('/?account=register&invite=AB23CD45')
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'new@example.com' } })
     fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
 
@@ -408,8 +405,9 @@ describe('AccountPanel', () => {
     )
   })
 
-  it.skip('validates each registration step and reuses the existing register API contract', async () => {
-    const { apis } = renderPanel('/?account=register&returnTo=%2Fworkspace')
+  it('submits the invite link code without rendering an invite field', async () => {
+    const { apis } = renderPanel('/?account=register&invite=ab23cd45&returnTo=%2Fworkspace')
+    expect(screen.queryByLabelText('邀请码')).toBeNull()
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'new@example.com' } })
 
     fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
@@ -452,6 +450,7 @@ describe('AccountPanel', () => {
         email: 'new@example.com',
         password: 'password-123',
         code: '123456',
+        inviteCode: 'AB23CD45',
         nickname: '新用户',
       }),
     )

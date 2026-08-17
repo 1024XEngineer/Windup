@@ -45,12 +45,24 @@ const creditAccount: CreditAccount = {
 }
 
 function createQuotaMock(): QuotaApis & {
-  getBalance: ReturnType<typeof vi.fn>
-  listTransactions: ReturnType<typeof vi.fn>
+  [K in keyof QuotaApis]: ReturnType<typeof vi.fn>
 } {
   return {
     getBalance: vi.fn(async () => creditAccount),
     listTransactions: vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 20 })),
+    getInviteCode: vi.fn(async () => ({
+      code: 'AB23CD45',
+      usedCount: 0,
+      createdAt: '2026-08-17T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })),
+    generateInviteCode: vi.fn(async () => ({
+      code: 'XY89KL23',
+      usedCount: 0,
+      createdAt: '2026-08-17T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })),
+    redeemInviteCode: vi.fn(async () => undefined),
   }
 }
 
@@ -96,6 +108,7 @@ function renderHeader(
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
+  window.sessionStorage.clear()
   window.history.replaceState({ idx: 0 }, '')
 })
 
@@ -221,6 +234,16 @@ describe('AppHeader', () => {
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/'))
     expect(await screen.findByRole('link', { name: '登录' })).toBeTruthy()
     expect(apis.logout).toHaveBeenCalledWith('rotated-refresh-token')
+  })
+
+  it('登录工作台后显示一次邀请奖励提示，打开账号菜单时收起', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    renderHeader('/workspace')
+
+    expect(await screen.findByRole('status', { name: '邀请奖励提示' })).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: '打开账号菜单' }))
+
+    expect(screen.queryByRole('status', { name: '邀请奖励提示' })).toBeNull()
   })
 
   it('远端退出失败时仍清除本地会话并返回首页', async () => {

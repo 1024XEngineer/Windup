@@ -1,6 +1,7 @@
 import type {
   CreditAccount,
   CreditTransaction,
+  InviteCode,
   QuotaApis,
   QuotaTransactionPageQuery,
 } from './types'
@@ -28,6 +29,13 @@ interface CreditTransactionDto {
   ref_id: string | null
   balance_after: number
   create_at: string
+}
+
+interface InviteCodeDto {
+  code: string
+  used_count: number
+  create_at: string
+  update_at: string
 }
 
 export interface CreateQuotaApisOptions extends ApiClientOptions {
@@ -60,6 +68,15 @@ function toCreditTransaction(dto: CreditTransactionDto): CreditTransaction {
   }
 }
 
+function toInviteCode(dto: InviteCodeDto): InviteCode {
+  return {
+    code: dto.code,
+    usedCount: dto.used_count,
+    createdAt: dto.create_at,
+    updatedAt: dto.update_at,
+  }
+}
+
 export function createQuotaApis(options: CreateQuotaApisOptions = {}): QuotaApis {
   const { client, ...clientOptions } = options
   const protectedClient =
@@ -82,6 +99,20 @@ export function createQuotaApis(options: CreateQuotaApisOptions = {}): QuotaApis
       )
       return { ...result, items: result.items.map(toCreditTransaction) }
     },
+    async getInviteCode() {
+      return toInviteCode(await protectedClient.request<InviteCodeDto>('/quota/invite/code'))
+    },
+    async generateInviteCode() {
+      return toInviteCode(
+        await protectedClient.request<InviteCodeDto>('/quota/invite/generate', { method: 'POST' }),
+      )
+    },
+    async redeemInviteCode(code: string) {
+      await protectedClient.request<null>('/quota/invite/redeem', {
+        method: 'POST',
+        json: { code },
+      })
+    },
   }
 }
 
@@ -96,4 +127,7 @@ function getDefaultApis(): QuotaApis {
 export const quotaApis: QuotaApis = {
   getBalance: () => getDefaultApis().getBalance(),
   listTransactions: (query) => getDefaultApis().listTransactions(query),
+  getInviteCode: () => getDefaultApis().getInviteCode(),
+  generateInviteCode: () => getDefaultApis().generateInviteCode(),
+  redeemInviteCode: (code) => getDefaultApis().redeemInviteCode(code),
 }

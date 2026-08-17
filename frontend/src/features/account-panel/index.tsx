@@ -38,6 +38,7 @@ type MotionDirection = 'forward' | 'backward'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const CODE_PATTERN = /^\d{6}$/
+const INVITE_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{4,16}$/i
 const SUCCESS_NAVIGATION_DELAY_MS = 900
 const AUTH_EXIT_DURATION_MS = 520
 
@@ -91,7 +92,6 @@ const loginMotionCopy = [
 const REGISTER_STEP_COUNT = 4
 const AUTH_ICON_PROPS = { weight: 'light' as const }
 const AUTH_FIELD_CLASS = 'auth-screen-field w-full outline-none disabled:cursor-not-allowed'
-const ACCESS_REQUEST_URL = 'https://github.com/1024XEngineer/Windup/issues'
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '操作失败，请稍后重试'
@@ -198,16 +198,30 @@ function PasswordVisibilityButton({ visible, onClick }: { visible: boolean; onCl
 /** 查询参数驱动的认证入口，不创建独立登录页面。 */
 export function AccountPanel() {
   const [searchParams] = useSearchParams()
-  const entry = searchParams.get('account')
-  if (entry !== 'login' && entry !== 'register') return null
+  const requestedEntry = searchParams.get('account')
+  if (requestedEntry !== 'login' && requestedEntry !== 'register') return null
 
-  // 内测期间关闭公开注册。重新开放时改回：
-  // return <AccountPanelDialog key={entry} entry={entry} />
-  return <AccountPanelDialog key="login" entry="login" />
+  const inviteCode = searchParams.get('invite')?.trim().toUpperCase() ?? ''
+  const entry: AccountEntry =
+    requestedEntry === 'register' && INVITE_CODE_PATTERN.test(inviteCode) ? 'register' : 'login'
+
+  return (
+    <AccountPanelDialog
+      key={`${entry}:${inviteCode}`}
+      entry={entry}
+      inviteCode={entry === 'register' ? inviteCode : null}
+    />
+  )
 }
 
 /** 只有面板真正打开时才读取会话，关闭状态不把认证 Context 强加给应用外壳。 */
-function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
+function AccountPanelDialog({
+  entry,
+  inviteCode,
+}: {
+  entry: AccountEntry
+  inviteCode: string | null
+}) {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const session = useAuthSession()
@@ -333,6 +347,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
     leaveWithAnimation(() => {
       const next = new URLSearchParams(searchParams)
       next.delete('account')
+      next.delete('invite')
       setSearchParams(next, { replace: true })
     })
   }
@@ -454,10 +469,12 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
     try {
       let successMessage: string
       if (isRegister) {
+        if (!inviteCode) throw new Error('邀请链接无效')
         await session.register({
           email: normalizedEmail,
           password,
           code,
+          inviteCode,
           ...(nickname.trim() ? { nickname: nickname.trim() } : {}),
         })
         successMessage = '账号已创建，正在继续。'
@@ -793,11 +810,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
           </p>
           */}
           <p className="auth-screen-entry-switch mt-7 text-center text-sm">
-            内测期间暂不开放注册。如需开通，请通过{' '}
-            <a href={ACCESS_REQUEST_URL} target="_blank" rel="noreferrer">
-              GitHub Issues
-            </a>{' '}
-            联系团队申请。
+            {isRegister ? '邀请码已由邀请链接带入，无需填写。' : '注册仅通过邀请链接开放。'}
           </p>
         </div>
       </div>

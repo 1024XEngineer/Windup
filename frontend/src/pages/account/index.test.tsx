@@ -189,6 +189,37 @@ describe('AccountPage', () => {
     expect(screen.getByText('-12')).toBeTruthy()
   })
 
+  it('在账号中心直接管理邀请奖励', async () => {
+    vi.spyOn(quotaApis, 'getBalance').mockResolvedValue({
+      id: '11',
+      userId: '7',
+      balance: 90,
+      frozen: 10,
+      totalEarned: 150,
+      totalSpent: 50,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+    vi.spyOn(quotaApis, 'listTransactions').mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 20,
+    })
+    vi.spyOn(quotaApis, 'getInviteCode').mockResolvedValue({
+      code: 'AB23CD45',
+      usedCount: 2,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+
+    renderAccount()
+    fireEvent.click(await screen.findByRole('button', { name: '邀请奖励' }))
+
+    expect(await screen.findByRole('heading', { name: '邀请奖励' })).toBeTruthy()
+    expect(await screen.findByText('AB23CD45')).toBeTruthy()
+  })
+
   it('reports a profile refresh failure without claiming the data is synchronized', async () => {
     const apis = createApis()
     apis.me.mockRejectedValue(new Error('资料读取失败'))

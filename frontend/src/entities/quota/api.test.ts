@@ -88,6 +88,46 @@ describe('createQuotaApis', () => {
     })
   })
 
+  it('读取并映射当前用户的邀请码', async () => {
+    request.mockResolvedValue({
+      code: 'AB23CD45',
+      used_count: 3,
+      create_at: '2026-08-12T01:02:03Z',
+      update_at: '2026-08-17T01:02:03Z',
+    })
+
+    await expect(createQuotaApis({ client }).getInviteCode()).resolves.toEqual({
+      code: 'AB23CD45',
+      usedCount: 3,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+    expect(request).toHaveBeenCalledWith('/quota/invite/code')
+  })
+
+  it('轮换邀请码并提交补填请求', async () => {
+    request
+      .mockResolvedValueOnce({
+        code: 'XY89KL23',
+        used_count: 3,
+        create_at: '2026-08-12T01:02:03Z',
+        update_at: '2026-08-17T03:00:00Z',
+      })
+      .mockResolvedValueOnce(null)
+
+    const apis = createQuotaApis({ client })
+    await expect(apis.generateInviteCode()).resolves.toMatchObject({
+      code: 'XY89KL23',
+      usedCount: 3,
+    })
+    await expect(apis.redeemInviteCode('AB23CD45')).resolves.toBeUndefined()
+    expect(request).toHaveBeenNthCalledWith(1, '/quota/invite/generate', { method: 'POST' })
+    expect(request).toHaveBeenNthCalledWith(2, '/quota/invite/redeem', {
+      method: 'POST',
+      json: { code: 'AB23CD45' },
+    })
+  })
+
   it('默认适配器读取环境地址并携带当前登录凭证', async () => {
     vi.resetModules()
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

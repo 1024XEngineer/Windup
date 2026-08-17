@@ -23,8 +23,7 @@ const account: CreditAccount = {
 }
 
 function createQuotaApis(): QuotaApis & {
-  getBalance: ReturnType<typeof vi.fn>
-  listTransactions: ReturnType<typeof vi.fn>
+  [K in keyof QuotaApis]: ReturnType<typeof vi.fn>
 } {
   return {
     getBalance: vi.fn(async () => account),
@@ -45,6 +44,19 @@ function createQuotaApis(): QuotaApis & {
       page,
       pageSize,
     })),
+    getInviteCode: vi.fn(async () => ({
+      code: 'AB23CD45',
+      usedCount: 0,
+      createdAt: '2026-08-17T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })),
+    generateInviteCode: vi.fn(async () => ({
+      code: 'XY89KL23',
+      usedCount: 0,
+      createdAt: '2026-08-17T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })),
+    redeemInviteCode: vi.fn(async () => undefined),
   }
 }
 
