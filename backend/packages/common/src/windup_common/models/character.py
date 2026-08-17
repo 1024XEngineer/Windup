@@ -88,8 +88,8 @@ class Facing(str, Enum):
 class CharacterView(str, Enum):
     """角色美术视角 —— 与 ``Project.character_perspective``(1/2/3)一一对应。
 
-    字符串取值与前端契约(frontend/API_CONTRACT.md 的映射表)逐字一致,
-    免得将来做 int ↔ str 映射时再造一套别名(如 topdown / top_down / top-down 三写)。
+    映射固定为 1→side、2→top-down、3→isometric。字符串取值必须逐字一致,
+    免得调用方再造一套别名(如 topdown / top_down / top-down 三写)。
     """
 
     SIDE = "side"            # perspective=1 横版

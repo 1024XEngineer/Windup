@@ -47,4 +47,5 @@ Vercel 部署路径不受影响，`vercel.json` 照旧。
 
 运行项目前需要配置 `VITE_API_BASE_URL`。Bearer token 由登录模块取得后，通过 `registerApiAccessTokenProvider` 注册读取函数；业务请求统一从该边界读取。本轮不定义 token 的保存方式。
 
-与后端尚未对齐的接口见 `API_CONTRACT.md`。
+前后端接口契约以仓库根目录自动生成的 `openapi.json` 为准，也可在本地后端的
+FastAPI `/docs` 页面中查看。
