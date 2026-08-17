@@ -106,7 +106,7 @@ def _get_project_or_raise(
     return project
 
 
-def _get_character_with_auth(
+def get_character_with_auth(
     session: Session, character_id: int, user_id: int,
 ) -> Character:
     """获取角色并校验其所属项目属于当前用户。
@@ -186,7 +186,7 @@ def get_character(
     session: Session = Depends(get_session),
 ) -> Response[CharacterOut]:
     user_id = request.state.current_user.id
-    character = _get_character_with_auth(session, character_id, user_id)
+    character = get_character_with_auth(session, character_id, user_id)
     return Response.success(CharacterOut.model_validate(character))
 
 
@@ -198,7 +198,7 @@ def update_character(
     session: Session = Depends(get_session),
 ) -> Response[CharacterOut]:
     user_id = request.state.current_user.id
-    _get_character_with_auth(session, character_id, user_id)
+    get_character_with_auth(session, character_id, user_id)
     fields = body.model_dump(exclude_unset=True)
     # 如果更新了 character_data，自动推断 status
     if "character_data" in fields:
@@ -221,7 +221,7 @@ def delete_character(
     session: Session = Depends(get_session),
 ) -> Response[None]:
     user_id = request.state.current_user.id
-    character = _get_character_with_auth(session, character_id, user_id)
+    character = get_character_with_auth(session, character_id, user_id)
 
     # 先提取对象 key,再删 DB 记录
     object_keys = _extract_object_keys(character)

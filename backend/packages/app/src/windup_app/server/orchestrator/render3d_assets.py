@@ -39,9 +39,15 @@ from __future__ import annotations
 import hashlib
 import logging
 import pathlib
+from enum import Enum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from windup_ai_engine.ports import ProgressPort
+from windup_framework.providers.render3d.tencent import (
+    CREDIT_PRICE_CNY,
+    CREDITS,
+    RIG_CREDITS,
+)
 
 if TYPE_CHECKING:
     from windup_framework.providers.render3d import (
@@ -52,17 +58,46 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ① 出了模型但还没绑骨的产物,存在同一个 store 里的这个键前缀下。**别在别处再写一遍
+# 字面量** —— 待审模型"在哪"这件事有两个说法时,放行与展示会指向不同的文件。
+RAW_KEY_PREFIX = "raw:"
+
+# 两段的报价。**不在这里抄数字**,从计费实现取 —— 抄一份过去,供应商调价时两处会分叉,
+# 而分叉的那一份正是给用户看的成本提示(告知了错的价钱比不告知更糟)。
+# ``CREDITS["Normal"]`` 是本管线用的生成模式(非 PBR、单视图),与 ``TencentModel3DProvider``
+# 的默认档一致。
+MODEL3D_CREDITS = CREDITS["Normal"]
+AUTORIG_CREDITS = RIG_CREDITS
+BUILD_CREDITS = MODEL3D_CREDITS + AUTORIG_CREDITS
+BUILD_CNY = round(BUILD_CREDITS * CREDIT_PRICE_CNY, 2)
+
+
+class Render3DAssetState(str, Enum):
+    """一个造型的 3D 资产处在哪一步。**状态由落点推出来,不单独存一份** ——
+    存第二份就有第二个真相,而这两者不同步时用户看到的是"已就绪"、渲帧拿到的是空。
+    """
+
+    ABSENT = "absent"                    # 什么都没有,点"建"会开始花钱
+    AWAITING_REVIEW = "awaiting_review"  # ① 已出模型,卡在人工确认闸上
+    READY = "ready"                      # ② 已绑骨,渲帧可直接用
+
+
 @runtime_checkable
 class CharacterAssetStore(Protocol):
     """角色级派生资产(绑好骨的 3D 模型)的落点。
 
-    只有两个动作,且**必须是跨进程持久的** —— 进程内缓存等于每次重启都重付一遍
-    ①②,而那正是本文件开头那笔一个数量级的差价。
+    **必须是跨进程持久的** —— 进程内缓存等于每次重启都重付一遍 ①②,而那正是本文件
+    开头那笔一个数量级的差价。
     """
 
     def get(self, key: str) -> bytes | None: ...
 
     def put(self, key: str, data: bytes) -> None: ...
+
+    def delete(self, key: str) -> None:
+        """删掉一份产物。给"模型不合格、重新生成"用 —— 不删的话下次调用会把同一个坏
+        模型再交一遍给人审,重生成的入口就成了死键。"""
+        ...
 
 
 class LocalDirAssetStore(CharacterAssetStore):
@@ -93,6 +128,18 @@ class LocalDirAssetStore(CharacterAssetStore):
         tmp = p.with_suffix(".part")
         tmp.write_bytes(data)
         tmp.replace(p)
+
+    def delete(self, key: str) -> None:
+        self._path(key).unlink(missing_ok=True)
+
+
+class SpendNotAuthorized(ValueError):
+    """要花钱建资产,但本部署没打开花钱开关。
+
+    单拎一个类型是给上层用的:它与"造型 id 缺失""母版拉不到"这些同样抛 ValueError 的
+    输入问题修法完全不同(前者改部署配置,后者改请求),压成一种就只能靠比对消息文本
+    分支 —— 而消息会改。继承 ValueError 让既有的 ``pytest.raises(ValueError)`` 仍然成立。
+    """
 
 
 class ModelAwaitingReview(RuntimeError):
@@ -129,6 +176,16 @@ class ModelReviewGate(Protocol):
         """人是否已点头。**不得自动变 True** —— 那就等于这道闸不存在。"""
         ...
 
+    def approve(self, key: str) -> None:
+        """人看过并点头。**只允许由人的显式操作触达**(CLI、或前端那个"通过"按钮),
+        管线自身任何一条路径都不得调它 —— 会自己点头的闸就是没有闸。"""
+        ...
+
+    def discard(self, key: str) -> None:
+        """人看过并否掉:丢弃待审模型。混元的模型改不动,不合格只能重生成,
+        所以否掉必须真的把它删了 —— 留着的话下次调用会把同一个坏模型再交一遍。"""
+        ...
+
 
 class LocalDirModelReview(ModelReviewGate):
     """落本地目录 + 一个批准标记文件。
@@ -157,8 +214,15 @@ class LocalDirModelReview(ModelReviewGate):
         return self._stem(key).with_suffix(".approved").is_file()
 
     def approve(self, key: str) -> None:
-        """人看过之后放行(给 CLI / 运维用;管线自己**不会**调这个)。"""
+        """人看过之后放行(给 CLI / 运维 / 前端那个"通过"按钮用;管线自己**不会**调这个)。"""
         self._stem(key).with_suffix(".approved").write_text("ok", encoding="utf-8")
+
+    def discard(self, key: str) -> None:
+        """否掉待审模型。连批准标记一起删:留着标记而删了模型,下次生成出来的新模型
+        会被这枚旧标记直接放行,人一眼都没看到就进了绑骨。"""
+        stem = self._stem(key)
+        for path in self._root.glob(f"{stem.name}.*"):
+            path.unlink(missing_ok=True)
 
 
 class Render3DAssetBuilder:
@@ -182,6 +246,12 @@ class Render3DAssetBuilder:
         self._review = review
         self._may_build_assets = may_build_assets
 
+    @property
+    def may_build_assets(self) -> bool:
+        """本实例获准花钱建资产没有。给上层**在起后台任务之前**问 —— 起了再失败的话,
+        用户看到的是"建到一半炸了",而事实是这台机器根本没打算建。"""
+        return self._may_build_assets
+
     def get(self, outfit_key: str) -> bytes | None:
         """已就绪的绑骨模型;``None`` = 还没有。**不花钱、无副作用。**
 
@@ -189,6 +259,31 @@ class Render3DAssetBuilder:
         (#122:判据由 server 出,不挂在引擎的 port 上)。
         """
         return self._store.get(outfit_key) if outfit_key else None
+
+    def state(self, outfit_key: str) -> Render3DAssetState:
+        """该造型走到哪一步了。**不花钱、无副作用**,给状态查询端点用。"""
+        if outfit_key and self._store.get(outfit_key) is not None:
+            return Render3DAssetState.READY
+        if outfit_key and self._store.get(f"{RAW_KEY_PREFIX}{outfit_key}") is not None:
+            return Render3DAssetState.AWAITING_REVIEW
+        return Render3DAssetState.ABSENT
+
+    def approve(self, outfit_key: str) -> None:
+        """人点头放行。**本类不会自己调它** —— 调用点只有面向人的入口(端点 / CLI)。
+
+        放行本身不绑骨:绑骨是下一次 :meth:`ensure` 的事,那里才有母版和进度回调。
+        """
+        self._review.approve(outfit_key)
+
+    def discard(self, outfit_key: str) -> None:
+        """人否掉待审模型:删待审件,回到 ``ABSENT``,下次 :meth:`ensure` 重新生成。
+
+        **注意这一步的代价**:重新生成要再付一次图生 3D 的 20 积分。之所以还是删,
+        是因为混元的模型改不动(生成即最终),留着一个不合格的模型只有两种下场 ——
+        要么被误放行进绑骨(再赔 10 积分和之后所有出帧),要么永远卡在闸上。
+        """
+        self._store.delete(f"{RAW_KEY_PREFIX}{outfit_key}")
+        self._review.discard(outfit_key)
 
     def ensure(self, outfit_key: str, master: bytes, progress: ProgressPort) -> bytes:
         """取该造型的绑骨模型;没有且获准时才现建。
@@ -206,9 +301,10 @@ class Render3DAssetBuilder:
         if rigged_bytes is not None:
             return rigged_bytes
         if not self._may_build_assets:
-            raise ValueError(
-                f"造型 {outfit_key!r} 的 3D 资产未就绪,而本实例未获准建(建一次约 ¥3.60:"
-                "图生 3D 20 积分 + 绑骨 10 积分)。要现建请显式授权花钱,"
+            raise SpendNotAuthorized(
+                f"造型 {outfit_key!r} 的 3D 资产未就绪,而本实例未获准建(建一次 "
+                f"{BUILD_CREDITS} 积分,约 ¥{BUILD_CNY}:图生 3D {MODEL3D_CREDITS} + "
+                f"绑骨 {AUTORIG_CREDITS})。要现建请显式授权花钱,"
                 "或先把资产备好,或改走 video_i2v。"
             )
         return self._build(outfit_key, master, progress)
@@ -220,7 +316,7 @@ class Render3DAssetBuilder:
         中间那道人工确认是硬停点,原因见 :class:`ModelReviewGate`:模型不可事后修改,
         坏模型只能重生成,所以要在**花绑骨的钱之前**让人看一眼。
         """
-        raw_key = f"raw:{key}"
+        raw_key = f"{RAW_KEY_PREFIX}{key}"
 
         # 图生 3D 的产物单独存一份。**这不是冗余** —— 待审期间会有第二次、第三次调用走到
         # 这里,若不存,每次都要重付一遍图生 3D 的钱,而停点的本意恰恰是省钱。
