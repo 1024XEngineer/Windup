@@ -475,7 +475,7 @@ def test_get_costs_nothing(tmp_path):
 
 
 def test_default_posture_refuses_to_build_assets(tmp_path):
-    """默认不授权花钱:一个 web 请求不该顺手扣 ¥3.60。"""
+    """默认不授权花钱:一个 web 请求不该顺手触发按次计费。"""
     builder, m, r = _builder(tmp_path, may_build=False)
     with pytest.raises(ValueError, match="未获准建"):
         builder.ensure(OUTFIT, _png(), _NullProgress())

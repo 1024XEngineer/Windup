@@ -4,8 +4,8 @@
 
   ① 按次计费的触发点只有一个,且成本恒在返回里 —— 用户不可能在不知情时触发;
   ② 人工确认闸不点头就不绑骨。这道闸一旦能自动放行,一个坏模型会连带浪费绑骨的
-     10 积分和之后所有出帧,而人要看完一整套序列帧才发现锅在最上游;
-  ③ 母版没过预检就不许花钱建 —— 母版 ¥0.29、模型 ¥2.40,错要在便宜的地方纠。
+     绑骨那笔计费和之后所有出帧,而人要看完一整套序列帧才发现锅在最上游;
+  ③ 母版没过预检就不许花钱建 —— 重出母版比重建模型便宜一个量级,错要在便宜的地方纠。
 """
 from __future__ import annotations
 
@@ -292,7 +292,7 @@ def test_ready_asset_writes_the_url_back_onto_the_outfit(api, engine):
 
 
 def test_unusable_master_is_refused_before_any_paid_call(api, render3d):
-    """空白母版 → 拒绝建。母版 ¥0.29、模型 ¥2.40,错要在便宜的地方纠。"""
+    """空白母版 → 拒绝建。重出母版比重建模型便宜一个量级,错要在便宜的地方纠。"""
     blank = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
     buf = io.BytesIO()
     blank.save(buf, "PNG")

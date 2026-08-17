@@ -161,7 +161,7 @@ class ModelReviewGate(Protocol):
 
     为什么这一道非要有:混元生成的 3D 模型**没法事后好好修改**,等于"生成即最终" ——
     拓扑、绑点、配件都在生成那一步定死。所以模型不合格时唯一的补救是重新生成,而不是
-    修它。若管线一口气从图生 3D 冲到绑骨+出帧,一个坏模型会连带浪费掉绑骨的 10 积分和
+    修它。若管线一口气从图生 3D 冲到绑骨+出帧,一个坏模型会连带浪费掉绑骨那笔计费和
     后面所有出帧,人还要看完一整套序列帧才发现问题出在最上游那一步。
 
     把停点放在图生 3D **之后、绑骨之前**,是因为这里是信息最全而花费最少的位置:
@@ -278,9 +278,9 @@ class Render3DAssetBuilder:
     def discard(self, outfit_key: str) -> None:
         """人否掉待审模型:删待审件,回到 ``ABSENT``,下次 :meth:`ensure` 重新生成。
 
-        **注意这一步的代价**:重新生成要再付一次图生 3D 的 20 积分。之所以还是删,
+        **注意这一步的代价**:重新生成要再付一次图生 3D。之所以还是删,
         是因为混元的模型改不动(生成即最终),留着一个不合格的模型只有两种下场 ——
-        要么被误放行进绑骨(再赔 10 积分和之后所有出帧),要么永远卡在闸上。
+        要么被误放行进绑骨(再赔一次绑骨计费和之后所有出帧),要么永远卡在闸上。
         """
         self._store.delete(f"{RAW_KEY_PREFIX}{outfit_key}")
         self._review.discard(outfit_key)
@@ -288,7 +288,7 @@ class Render3DAssetBuilder:
     def ensure(self, outfit_key: str, master: bytes, progress: ProgressPort) -> bytes:
         """取该造型的绑骨模型;没有且获准时才现建。
 
-        建一次约 ¥3.60(图生 3D 20 积分 + 绑骨 10 积分 × ¥0.12),**每造型一次性**。
+        建一次的计费 = 图生 3D + 绑骨,取值见本模块顶部常量,**每造型一次性**。
         ``may_build_assets=False``(默认)时不建 —— 一个 web 请求不该顺手扣这笔钱,
         那正是"无人值守烧钱"。要放开就显式设 ``WINDUP_RENDER3D_ALLOW_SPEND``。
         """
@@ -339,7 +339,7 @@ class Render3DAssetBuilder:
                 "不合格则删掉待审模型重新生成 —— 混元的模型改不动,只能重生成",
             )
 
-        progress.step("assets", 1, 2, "模型已确认,自动绑骨(按次计费,10 积分)")
+        progress.step("assets", 1, 2, "模型已确认,自动绑骨(按次计费)")
         rigged: RiggedModel = self._autorig.rig(model, want="GLB")
 
         # 存的是**绑骨后**的产物:它是渲帧真正要的那个,存中间的 model 等于下次还得再绑一次。
