@@ -196,16 +196,49 @@ class TestCORSPreflightWithCustomOrigins:
             )
             assert "access-control-allow-origin" not in resp.headers
 
-    def test_vercel_preview_domain_allowed(self, client):
-        """Vercel 预览域名应被正则匹配允许。"""
-        vercel_origin = "https://my-app-abc123.vercel.app"
+    def test_vercel_preview_domain_not_allowed_by_default(self):
+        """默认不应信任任意 Vercel 预览域名。"""
+        with mock.patch.dict(os.environ):
+            os.environ.pop("WINDUP_CORS_ORIGIN_REGEX", None)
 
-        resp = client.options(
-            "/auth/login",
-            headers={
-                "Origin": vercel_origin,
-                "Access-Control-Request-Method": "POST",
-            },
+            from windup_app.bootstrap.app import create_app
+            from fastapi.testclient import TestClient
+
+            test_client = TestClient(create_app())
+            resp = test_client.options(
+                "/auth/login",
+                headers={
+                    "Origin": "https://evil.vercel.app",
+                    "Access-Control-Request-Method": "POST",
+                },
+            )
+
+        assert "access-control-allow-origin" not in resp.headers
+
+    def test_project_scoped_vercel_regex_allowed(self):
+        """部署方可显式允许自己项目的 Vercel 预览域名。"""
+        regex = r"https://windup-.*\.vercel\.app"
+        with mock.patch.dict(os.environ, {"WINDUP_CORS_ORIGIN_REGEX": regex}):
+            from windup_app.bootstrap.app import create_app
+            from fastapi.testclient import TestClient
+
+            test_client = TestClient(create_app())
+            allowed_resp = test_client.options(
+                "/auth/login",
+                headers={
+                    "Origin": "https://windup-feature-123.vercel.app",
+                    "Access-Control-Request-Method": "POST",
+                },
+            )
+            rejected_resp = test_client.options(
+                "/auth/login",
+                headers={
+                    "Origin": "https://evil.vercel.app",
+                    "Access-Control-Request-Method": "POST",
+                },
+            )
+
+        assert allowed_resp.headers.get("access-control-allow-origin") == (
+            "https://windup-feature-123.vercel.app"
         )
-        assert resp.status_code == 200
-        assert resp.headers.get("access-control-allow-origin") == vercel_origin
+        assert "access-control-allow-origin" not in rejected_resp.headers
