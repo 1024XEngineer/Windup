@@ -2,7 +2,13 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router'
 
 import assetLibraryArtwork from '@/assets/workspace/asset-library.png'
-import { characterApis, projectApis, ProjectHasCharactersError, type Character, type Project } from '@/entities'
+import {
+  characterApis,
+  projectApis,
+  ProjectHasCharactersError,
+  type Character,
+  type Project,
+} from '@/entities'
 import type { Paged } from '@/shared/pagination'
 import { Pagination } from '@/shared/ui'
 
@@ -172,9 +178,7 @@ export function ProjectsPage() {
       }
       setDeleteTarget(null)
     } catch (error) {
-      setError(
-        error instanceof ProjectHasCharactersError ? error.message : '项目暂时无法删除',
-      )
+      setError(error instanceof ProjectHasCharactersError ? error.message : '项目暂时无法删除')
       setDeleteTarget(null)
     } finally {
       setDeleting(false)
