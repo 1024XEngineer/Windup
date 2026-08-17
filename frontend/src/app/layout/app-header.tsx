@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router'
 
 import { quotaApis as defaultQuotaApis } from '@/entities'
 import type { QuotaApis } from '@/entities'
-import { useAuthSession } from '@/features/auth-session'
+import { AUTH_SESSION_STORAGE_PREFIX, useAuthSession } from '@/features/auth-session'
 import { useQuotaBalance } from '@/features/quota'
 import { PageBackButton } from './page-back-button'
 
@@ -22,7 +22,7 @@ export interface AppHeaderProps {
 }
 
 const accountMenuExitDurationMs = 260
-const inviteHintStorageKey = 'windup.invite-hint-seen.v5'
+const inviteHintStorageKey = `${AUTH_SESSION_STORAGE_PREFIX}invite-hint-seen.v1`
 
 /** 四个入口对应四种去处：回首页、看资产、做新东西、核验已完成的造型。 */
 const productNavigation: ProductNavigationItem[] = [
@@ -102,10 +102,6 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
   }, [accountMenuState])
 
   useEffect(() => {
-    if (session.state.status === 'guest') {
-      window.sessionStorage.removeItem(inviteHintStorageKey)
-    }
-
     if (pathname !== '/workspace' || session.state.status !== 'authenticated') {
       setInviteHintVisible(false)
       return

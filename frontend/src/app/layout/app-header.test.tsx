@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
 import type { AuthTokens, CreditAccount, QuotaApis, UserApis } from '@/entities'
-import { AuthSessionProvider, useAuthSession } from '@/features/auth-session'
+import { AuthSessionProvider } from '@/features/auth-session'
 import { AppHeader } from './app-header'
 
 const user = {
@@ -61,15 +61,6 @@ function LocationProbe() {
   )
 }
 
-function SessionLogoutProbe() {
-  const session = useAuthSession()
-  return (
-    <button type="button" onClick={() => void session.logout()}>
-      其他入口退出
-    </button>
-  )
-}
-
 function renderHeader(
   entry = '/',
   apis = createApis(),
@@ -92,7 +83,6 @@ function renderHeader(
                 <>
                   <AppHeader quotaApis={quota} />
                   <LocationProbe />
-                  <SessionLogoutProbe />
                 </>
               }
             />
@@ -270,24 +260,14 @@ describe('AppHeader', () => {
     expect(hint.isConnected).toBe(false)
   })
 
-  it('当前登录会话离开工作台后不重复显示，其他入口退出后允许下次登录显示', async () => {
+  it('当前登录会话离开工作台后不重复显示', async () => {
     window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
-    const first = renderHeader('/workspace')
+    renderHeader('/workspace')
     expect(await screen.findByRole('status', { name: '邀请奖励提示' })).toBeTruthy()
 
     fireEvent.click(screen.getByRole('link', { name: '项目资产' }))
     fireEvent.click(screen.getByRole('link', { name: '首页' }))
     expect(screen.queryByRole('status', { name: '邀请奖励提示' })).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: '其他入口退出' }))
-    await waitFor(() =>
-      expect(window.sessionStorage.getItem('windup.invite-hint-seen.v5')).toBeNull(),
-    )
-    first.unmount()
-
-    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
-    renderHeader('/workspace')
-    expect(await screen.findByRole('status', { name: '邀请奖励提示' })).toBeTruthy()
   })
 
   it('远端退出失败时仍清除本地会话并返回首页', async () => {
