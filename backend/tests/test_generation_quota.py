@@ -6,11 +6,14 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from windup_framework.db.base import Base
-from windup_app.server.orchestrator.executor import ActionTaskExecutor
+from windup_app.server.orchestrator import billing
+from windup_app.server.orchestrator.executor import ActionTaskExecutor, ImageTaskExecutor
 from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
+    CharacterImageInput,
     GenerationTaskRecord,
+    GenerationType,
     TaskStatus,
 )
 from windup_app.server.orchestrator.service import AiGenerationService
@@ -344,3 +347,248 @@ def test_recover_fails_and_unfreezes_running_orphans(session_factory):
         assert account.frozen == 0
         assert account.balance == quota_settings.register_gift_amount
         assert CreditReason.REFUND in _reasons(session, 1)
+
+
+def test_prepaid_cost_by_task_type():
+    assert billing.prepaid_cost(GenerationType.CHARACTER_IMAGE) == quota_settings.generate_image_cost
+    assert billing.prepaid_cost(GenerationType.CHARACTER_ACTION) == quota_settings.generate_action_cost
+    with pytest.raises(ValueError, match="未知生成类型"):
+        billing.prepaid_cost("not-a-type")  # type: ignore[arg-type]
+
+
+def test_frozen_amount_missing_raises(session_factory):
+    with session_factory() as session:
+        with pytest.raises(BizException, match="找不到该任务的冻结流水"):
+            billing.frozen_amount_for_task(session, 999)
+
+
+def test_has_open_freeze_false_without_frozen_txn(session_factory):
+    with session_factory() as session:
+        assert billing.has_open_freeze(session, 1) is False
+
+
+def test_has_open_freeze_false_after_capture_or_release(session_factory):
+    with session_factory() as session:
+        _seed_account(session, 1)
+        session.commit()
+    service = AiGenerationService()
+    image_input = CharacterImageInput(prompt="x", width=64, height=64)
+    with session_factory() as session:
+        captured = service.generate_character_image(session, user_id=1, input=image_input)
+        billing.capture_for_task(session, user_id=1, task_id=captured.id)
+        released = service.generate_character_image(session, user_id=1, input=image_input)
+        billing.release_for_task(session, user_id=1, task_id=released.id)
+        session.commit()
+        assert billing.has_open_freeze(session, captured.id) is False
+        assert billing.has_open_freeze(session, released.id) is False
+
+
+def test_image_success_captures_reserved_credit(session_factory):
+    with session_factory() as session:
+        _seed_account(session, 1)
+        session.commit()
+
+    executor = ImageTaskExecutor(
+        upload=lambda _png: "https://cdn.example.com/img.png",
+        session_factory=session_factory,
+    )
+    executor._produce_image = lambda _input, _cons: ["https://cdn.example.com/img.png"]
+    image_input = CharacterImageInput(prompt="勇者", width=64, height=64)
+    with session_factory() as session:
+        task = AiGenerationService().generate_character_image(
+            session, user_id=1, input=image_input,
+        )
+        session.commit()
+        task_id = task.id
+
+    executor.run_image_task(task_id, image_input)
+
+    with session_factory() as session:
+        done = AiGenerationService().get_task(session, project_id=1, task_id=task_id)
+        account = _account(session, 1)
+        assert done.status is TaskStatus.COMPLETED
+        assert account.frozen == 0
+        assert account.total_spent == quota_settings.generate_image_cost
+        assert CreditReason.CAPTURED in _reasons(session, 1)
+
+
+def test_image_failure_releases_reserved_credit(session_factory):
+    with session_factory() as session:
+        _seed_account(session, 1)
+        session.commit()
+
+    executor = ImageTaskExecutor(session_factory=session_factory)
+
+    def _boom(_input, _cons):
+        raise RuntimeError("出图失败")
+
+    executor._produce_image = _boom
+    image_input = CharacterImageInput(prompt="勇者", width=64, height=64)
+    with session_factory() as session:
+        task = AiGenerationService().generate_character_image(
+            session, user_id=1, input=image_input,
+        )
+        session.commit()
+        task_id = task.id
+
+    executor.run_image_task(task_id, image_input)
+
+    with session_factory() as session:
+        done = AiGenerationService().get_task(session, project_id=1, task_id=task_id)
+        account = _account(session, 1)
+        assert done.status is TaskStatus.FAILED
+        assert account.frozen == 0
+        assert account.balance == quota_settings.register_gift_amount
+
+
+def test_recover_skips_pending_without_open_freeze(session_factory):
+    from windup_app.server.orchestrator import task_repo
+    from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
+
+    queued: list = []
+
+    class _Dispatcher:
+        def submit(self, target, *args):
+            queued.append((target, args))
+
+    with session_factory() as session:
+        task_repo.create_task(
+            session, user_id=1, project_id=1,
+            task_type=GenerationType.CHARACTER_IMAGE,
+            input_payload={"prompt": "x"},
+        )
+        session.commit()
+
+    with session_factory() as session:
+        recover_orphaned_generation_tasks(
+            session,
+            dispatcher=_Dispatcher(),
+            run_image_task=lambda *a: None,
+            run_action_task=lambda *a: None,
+        )
+
+    assert queued == []
+
+
+def test_recover_requeues_pending_image_tasks(session_factory):
+    from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
+
+    queued: list[tuple] = []
+
+    class _Dispatcher:
+        def submit(self, target, *args):
+            queued.append((target, args))
+
+    with session_factory() as session:
+        _seed_account(session, 1)
+        session.commit()
+
+    image_input = CharacterImageInput(prompt="勇者", width=64, height=64)
+    with session_factory() as session:
+        task = AiGenerationService().generate_character_image(
+            session, user_id=1, project_id=3, input=image_input,
+        )
+        session.commit()
+        task_id = task.id
+
+    def _run_image(*_args):
+        raise AssertionError("只入队")
+
+    with session_factory() as session:
+        recover_orphaned_generation_tasks(
+            session,
+            dispatcher=_Dispatcher(),
+            run_image_task=_run_image,
+            run_action_task=lambda *a: None,
+        )
+
+    assert len(queued) == 1
+    target, args = queued[0]
+    assert target is _run_image
+    assert args[0] == task_id
+    assert args[1].prompt == "勇者"
+    assert args[2] == 3
+
+
+def test_recover_unfreezes_when_requeue_fails(session_factory):
+    from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
+
+    class _BoomDispatcher:
+        def submit(self, *_args, **_kwargs):
+            raise RuntimeError("队列不可用")
+
+    with session_factory() as session:
+        _seed_account(session, 1)
+        session.commit()
+
+    with session_factory() as session:
+        task = AiGenerationService().generate_character_action(
+            session, user_id=1,
+            input=CharacterActionInput(character_id=1, action_type=ActionType.WALK, num_frames=2),
+        )
+        session.commit()
+        task_id = task.id
+
+    with session_factory() as session:
+        recover_orphaned_generation_tasks(
+            session,
+            dispatcher=_BoomDispatcher(),
+            run_image_task=lambda *a: None,
+            run_action_task=lambda *a: None,
+        )
+        session.commit()
+
+    with session_factory() as session:
+        done = AiGenerationService().get_task(session, project_id=1, task_id=task_id)
+        account = _account(session, 1)
+        assert done.status is TaskStatus.FAILED
+        assert account.frozen == 0
+        assert account.balance == quota_settings.register_gift_amount
+
+
+def test_recover_unfreezes_unknown_task_type(session_factory, monkeypatch):
+    from windup_app.server.orchestrator import task_repo
+    from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
+
+    queued: list = []
+
+    class _Dispatcher:
+        def submit(self, target, *args):
+            queued.append((target, args))
+
+    with session_factory() as session:
+        _seed_account(session, 1)
+        session.commit()
+
+    with session_factory() as session:
+        task = AiGenerationService().generate_character_action(
+            session, user_id=1,
+            input=CharacterActionInput(character_id=1, action_type=ActionType.WALK, num_frames=2),
+        )
+        session.commit()
+        task_id = task.id
+
+    original = task_repo.list_by_status
+
+    def _unknown_type(session, statuses):
+        tasks = original(session, statuses)
+        for item in tasks:
+            item.task_type = "future_kind"  # type: ignore[assignment]
+        return tasks
+
+    monkeypatch.setattr(task_repo, "list_by_status", _unknown_type)
+
+    with session_factory() as session:
+        recover_orphaned_generation_tasks(
+            session,
+            dispatcher=_Dispatcher(),
+            run_image_task=lambda *a: None,
+            run_action_task=lambda *a: None,
+        )
+        session.commit()
+
+    assert queued == []
+    with session_factory() as session:
+        done = AiGenerationService().get_task(session, project_id=1, task_id=task_id)
+        assert done.status is TaskStatus.FAILED
+        assert _account(session, 1).frozen == 0
