@@ -132,16 +132,32 @@ describe('createQuotaApis', () => {
     vi.resetModules()
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const url = String(input)
-      const body = url.includes('/quota/transactions')
-        ? {
-            code: 200,
-            message: 'ok',
-            data: [],
-            total: 0,
-            page: 1,
-            page_size: 20,
-          }
-        : { code: 200, message: 'ok', data: accountResponse }
+      let body: unknown
+      if (url.includes('/quota/transactions')) {
+        body = {
+          code: 200,
+          message: 'ok',
+          data: [],
+          total: 0,
+          page: 1,
+          page_size: 20,
+        }
+      } else if (url.includes('/quota/invite/redeem')) {
+        body = { code: 200, message: 'ok', data: null }
+      } else if (url.includes('/quota/invite/')) {
+        body = {
+          code: 200,
+          message: 'ok',
+          data: {
+            code: 'AB23CD45',
+            used_count: 3,
+            create_at: '2026-08-12T01:02:03Z',
+            update_at: '2026-08-17T01:02:03Z',
+          },
+        }
+      } else {
+        body = { code: 200, message: 'ok', data: accountResponse }
+      }
       return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))
     })
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
@@ -158,6 +174,9 @@ describe('createQuotaApis', () => {
         items: [],
         total: 0,
       })
+      await expect(quotaApis.getInviteCode()).resolves.toMatchObject({ code: 'AB23CD45' })
+      await expect(quotaApis.generateInviteCode()).resolves.toMatchObject({ code: 'AB23CD45' })
+      await expect(quotaApis.redeemInviteCode('AB23CD45')).resolves.toBeUndefined()
       expect(fetchFn).toHaveBeenCalledWith(
         'https://api.windup.test/quota/balance',
         expect.objectContaining({
@@ -169,6 +188,9 @@ describe('createQuotaApis', () => {
       expect(fetchFn.mock.calls[1]?.[0]).toBe(
         'https://api.windup.test/quota/transactions?page=1&page_size=20',
       )
+      expect(fetchFn.mock.calls[2]?.[0]).toBe('https://api.windup.test/quota/invite/code')
+      expect(fetchFn.mock.calls[3]?.[0]).toBe('https://api.windup.test/quota/invite/generate')
+      expect(fetchFn.mock.calls[4]?.[0]).toBe('https://api.windup.test/quota/invite/redeem')
     } finally {
       unregister()
       vi.unstubAllGlobals()
