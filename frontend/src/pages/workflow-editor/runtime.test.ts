@@ -265,6 +265,44 @@ describe('createRealWorkflowEditorSession', () => {
     )
   })
 
+  it('无法回读 Run 确认保存结果时保留可幂等 Character', async () => {
+    const workflow = selectingCharacterTemplateWorkflowFixture()
+    const reconcileError = new Error('WorkflowRun 回读失败')
+    const getRun = vi.fn().mockResolvedValueOnce(workflow).mockRejectedValue(reconcileError)
+    const remove = vi.fn()
+    const onAsyncError = vi.fn()
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: getRun,
+        update: vi.fn().mockRejectedValue(new WorkflowRunConflictError('执行记录版本冲突')),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn(),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 100 }),
+        create: vi.fn().mockResolvedValue(characterFixture()),
+        get: vi.fn(),
+        update: vi.fn(async (character) => structuredClone(character)),
+        remove,
+      },
+      onAsyncError,
+    })
+
+    await expect(
+      session.confirmCharacterTemplate('template', 'https://assets.windup.test/master.png'),
+    ).rejects.toBeInstanceOf(WorkflowRunConflictError)
+
+    expect(remove).not.toHaveBeenCalled()
+    expect(onAsyncError).toHaveBeenCalledWith(reconcileError)
+  })
+
   it('拒绝确认当前不可选择的身份母版节点', async () => {
     const { session, create } = await createCharacterTemplateSession()
 
@@ -397,6 +435,43 @@ describe('createRealWorkflowEditorSession', () => {
     expect(
       session.controller.getWorkflow().nodes.find((node) => node.id === 'action-walk:review'),
     ).toMatchObject({ status: 'passed', phase: 'completed' })
+  })
+
+  it('拒绝发布缺少动作首帧依赖的完整动画', async () => {
+    const workflow = reviewingWorkflowFixture()
+    workflow.nodes = workflow.nodes.filter((node) => node.type !== 'action-first-frame')
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(workflow),
+        update: vi.fn(),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn(),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({
+          items: [characterWithOutfitFixture()],
+          total: 1,
+          page: 1,
+          pageSize: 100,
+        }),
+        create: vi.fn(),
+        get: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      },
+      onAsyncError: vi.fn(),
+    })
+
+    await expect(session.publishReviewedAction('action-walk:review')).rejects.toThrow(
+      '完整动画缺少动作首帧节点',
+    )
   })
 
   it('审核 Run 已落库但响应丢失时保留已发布的动作资产', async () => {

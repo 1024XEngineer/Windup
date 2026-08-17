@@ -239,6 +239,25 @@ describe('workflowRunApis', () => {
     })
   })
 
+  it('preserves non-conflict API errors from an update', async () => {
+    const apis = await loadWorkflowRunApis(
+      async () =>
+        new Response(JSON.stringify({ code: 500, message: '保存失败', data: null }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+
+    await expect(
+      apis.update({
+        id: '17',
+        projectId: '42',
+        version: 3,
+        storageStatus: 'active',
+        nodes,
+      }),
+    ).rejects.toMatchObject({ name: 'ApiError', code: 500, message: '保存失败' })
+  })
+
   it('soft deletes through the backend DELETE endpoint', async () => {
     let request: Request | undefined
     const apis = await loadWorkflowRunApis(async (input, init) => {

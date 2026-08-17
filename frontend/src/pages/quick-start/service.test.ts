@@ -979,6 +979,55 @@ describe('createQuickStartService', () => {
     expect((await workflowRunApis.get(run.id)).nodes).toEqual(run.nodes)
   })
 
+  it.each([
+    { reconcileCause: new Error('WorkflowRun 回读失败'), reportedMessage: 'WorkflowRun 回读失败' },
+    { reconcileCause: '回读失败', reportedMessage: 'WorkflowRun 保存结果对账失败' },
+  ])(
+    '无法回读 Run 确认保存结果时保留可幂等 Character',
+    async ({ reconcileCause, reportedMessage }) => {
+      const run: WorkflowRun = {
+        id: 'run-template-reconcile-failed',
+        projectId: 'project-1',
+        version: 1,
+        storageStatus: 'active',
+        nodes: setupNodes(null, null),
+      }
+      const storedApis = createWorkflowRunApis([run])
+      const workflowRunApis: WorkflowRunApis = {
+        ...storedApis,
+        get: vi
+          .fn()
+          .mockImplementationOnce((id: string) => storedApis.get(id))
+          .mockRejectedValue(reconcileCause),
+        update: vi.fn().mockRejectedValue(new WorkflowRunConflictError('执行记录版本冲突')),
+      }
+      let character = characterFixture({ workflowRunId: run.id })
+      const characterApis = mutableCharacterApis(
+        () => character,
+        (value) => (character = value),
+      )
+      const onAsyncError = vi.fn()
+      const service = createQuickStartService({
+        workflowRunApis,
+        generationApis: pendingGenerationApis(),
+        characterApis,
+        prepareProject: vi.fn(),
+        projectApis: projectReader(),
+        onAsyncError,
+      })
+      const session = await service.open(run.id)
+
+      await expect(session.confirmCandidate('candidate.png', '挥手')).rejects.toBeInstanceOf(
+        WorkflowRunConflictError,
+      )
+
+      expect(characterApis.remove).not.toHaveBeenCalled()
+      expect(onAsyncError).toHaveBeenCalledWith(
+        expect.objectContaining({ message: reportedMessage }),
+      )
+    },
+  )
+
   it('creates a fresh run when an existing character has no workflow history', async () => {
     const character = characterFixture({
       id: 'character-existing',
