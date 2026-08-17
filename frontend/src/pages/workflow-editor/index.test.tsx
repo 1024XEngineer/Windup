@@ -89,6 +89,14 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(defaultSessionLoader).toHaveBeenCalledWith('42')
   })
 
+  it('会话加载失败时展示恢复错误', async () => {
+    defaultSessionLoader.mockRejectedValue(new Error('WorkflowRun 加载失败'))
+
+    renderEditor('/workflow-editor/42')
+
+    expect(await screen.findByText('WorkflowRun 加载失败')).toBeTruthy()
+  })
+
   it('在角色设定卡片提交描述后由 Controller 持久化并固定输入', async () => {
     const session = createSession()
     defaultSessionLoader.mockResolvedValue(session)
@@ -235,6 +243,17 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(screen.getByRole('link', { name: '加载最新版本' }).getAttribute('href')).toBe(
       '/workflow-editor/42',
     )
+  })
+
+  it('恢复后台任务的一般错误保留在恢复提示中', async () => {
+    const session = createSession()
+    vi.spyOn(session.controller, 'resume').mockRejectedValue(new Error('后台任务恢复失败'))
+    defaultSessionLoader.mockResolvedValue(session)
+
+    renderEditor('/workflow-editor/42')
+
+    expect(await screen.findByText('后台任务恢复失败')).toBeTruthy()
+    expect(screen.queryByRole('link', { name: '加载最新版本' })).toBeNull()
   })
 
   it('确认身份母版后采用会话创建的 Character 继续动作流程', async () => {

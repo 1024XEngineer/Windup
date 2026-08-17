@@ -1386,10 +1386,24 @@ describe('WorkflowController', () => {
     ])
     const { controller, workflow } = createController(run)
     const update = vi.mocked(workflow.apis.update)
+    const get = vi.mocked(workflow.apis.get)
     const persist = update.getMockImplementation()!
+    const read = get.getMockImplementation()!
     update.mockImplementationOnce(async (candidate) => {
       await persist(candidate)
       throw new WorkflowRunConflictError('执行记录版本冲突')
+    })
+    get.mockImplementationOnce(async (id) => {
+      const reverseObjectKeys = (value: unknown): unknown => {
+        if (Array.isArray(value)) return value.map(reverseObjectKeys)
+        if (value === null || typeof value !== 'object') return value
+        return Object.fromEntries(
+          Object.entries(value)
+            .reverse()
+            .map(([key, item]) => [key, reverseObjectKeys(item)]),
+        )
+      }
+      return reverseObjectKeys(await read(id)) as WorkflowRun
     })
 
     await controller.confirmCharacterTemplate('template-1', 'https://img/knight.png', 'character-1')

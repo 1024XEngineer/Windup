@@ -1025,7 +1025,18 @@ function hasSamePersistedState(expected: WorkflowRun, actual: WorkflowRun) {
     expected.id === actual.id &&
     expected.projectId === actual.projectId &&
     expected.storageStatus === actual.storageStatus &&
-    JSON.stringify(expected.nodes) === JSON.stringify(actual.nodes)
+    JSON.stringify(canonicalizeJson(expected.nodes)) ===
+      JSON.stringify(canonicalizeJson(actual.nodes))
+  )
+}
+
+function canonicalizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeJson)
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, canonicalizeJson(item)]),
   )
 }
 

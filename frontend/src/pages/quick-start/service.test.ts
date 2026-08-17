@@ -945,7 +945,58 @@ describe('createQuickStartService', () => {
     )
   })
 
-  it('母版确认冲突且最新 Run 未落库时删除孤儿 Character', async () => {
+  it('并发复用同一 Character 时沿用已有母版造型，不重复追加默认造型', async () => {
+    const run: WorkflowRun = {
+      id: 'run-shared-character',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(null, null),
+    }
+    const workflowRunApis = createWorkflowRunApis([run])
+    const realUpdate = workflowRunApis.update.bind(workflowRunApis)
+    vi.spyOn(workflowRunApis, 'update').mockImplementationOnce(async (nextRun) => {
+      await realUpdate(nextRun)
+      throw new WorkflowRunConflictError('执行记录版本冲突')
+    })
+    let character = characterFixture({
+      workflowRunId: run.id,
+      referenceImageUrl: 'candidate.png',
+      outfits: [
+        {
+          id: 'outfit-from-other-client',
+          characterId: 'character-1',
+          name: '默认造型',
+          description: null,
+          previewUrl: 'candidate.png',
+          actions: [],
+        },
+      ],
+    })
+    const characterApis = mutableCharacterApis(
+      () => character,
+      (value) => (character = value),
+    )
+    const service = createQuickStartService({
+      workflowRunApis,
+      generationApis: pendingGenerationApis(),
+      characterApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+    })
+    const session = await service.open(run.id)
+
+    await session.confirmCandidate('candidate.png', '挥手')
+
+    expect(character.outfits).toEqual([
+      expect.objectContaining({
+        id: 'outfit-from-other-client',
+        previewUrl: 'candidate.png',
+      }),
+    ])
+  })
+
+  it('母版确认冲突时不在获得 WorkflowRun 修改权前改写 Character', async () => {
     const run: WorkflowRun = {
       id: 'run-template-conflict',
       projectId: 'project-1',
@@ -975,58 +1026,72 @@ describe('createQuickStartService', () => {
       WorkflowRunConflictError,
     )
 
-    expect(characterApis.remove).toHaveBeenCalledWith(character.id)
+    expect(characterApis.remove).not.toHaveBeenCalled()
+    expect(character.outfits).toEqual([])
+    expect(characterApis.update).not.toHaveBeenCalled()
     expect((await workflowRunApis.get(run.id)).nodes).toEqual(run.nodes)
   })
 
-  it.each([
-    { reconcileCause: new Error('WorkflowRun 回读失败'), reportedMessage: 'WorkflowRun 回读失败' },
-    { reconcileCause: '回读失败', reportedMessage: 'WorkflowRun 保存结果对账失败' },
-  ])(
-    '无法回读 Run 确认保存结果时保留可幂等 Character',
-    async ({ reconcileCause, reportedMessage }) => {
-      const run: WorkflowRun = {
-        id: 'run-template-reconcile-failed',
-        projectId: 'project-1',
-        version: 1,
-        storageStatus: 'active',
-        nodes: setupNodes(null, null),
-      }
-      const storedApis = createWorkflowRunApis([run])
-      const workflowRunApis: WorkflowRunApis = {
-        ...storedApis,
-        get: vi
-          .fn()
-          .mockImplementationOnce((id: string) => storedApis.get(id))
-          .mockRejectedValue(reconcileCause),
-        update: vi.fn().mockRejectedValue(new WorkflowRunConflictError('执行记录版本冲突')),
-      }
-      let character = characterFixture({ workflowRunId: run.id })
-      const characterApis = mutableCharacterApis(
-        () => character,
-        (value) => (character = value),
-      )
-      const onAsyncError = vi.fn()
-      const service = createQuickStartService({
+  it('不同候选图并发确认时只让 WorkflowRun 乐观锁胜者写入 Character', async () => {
+    const run: WorkflowRun = {
+      id: 'run-competing-templates',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(null, null),
+    }
+    let stored = structuredClone(run)
+    const workflowRunApis: WorkflowRunApis = {
+      create: vi.fn(),
+      listByProject: vi.fn(),
+      get: vi.fn(async () => structuredClone(stored)),
+      update: vi.fn(async (next) => {
+        if (next.version !== stored.version) {
+          throw new WorkflowRunConflictError('执行记录版本冲突')
+        }
+        stored = { ...structuredClone(next), version: stored.version + 1 }
+        return structuredClone(stored)
+      }),
+      remove: vi.fn(),
+    }
+    let character = characterFixture({
+      workflowRunId: run.id,
+      referenceImageUrl: null,
+      outfits: [],
+    })
+    const characterApis = mutableCharacterApis(
+      () => character,
+      (value) => (character = value),
+    )
+    const createService = () =>
+      createQuickStartService({
         workflowRunApis,
         generationApis: pendingGenerationApis(),
         characterApis,
         prepareProject: vi.fn(),
         projectApis: projectReader(),
-        onAsyncError,
       })
-      const session = await service.open(run.id)
+    const [sessionA, sessionB] = await Promise.all([
+      createService().open(run.id),
+      createService().open(run.id),
+    ])
 
-      await expect(session.confirmCandidate('candidate.png', '挥手')).rejects.toBeInstanceOf(
-        WorkflowRunConflictError,
-      )
+    const results = await Promise.allSettled([
+      sessionA.confirmCandidate('candidate-a.png', '挥手'),
+      sessionB.confirmCandidate('candidate-b.png', '挥手'),
+    ])
 
-      expect(characterApis.remove).not.toHaveBeenCalled()
-      expect(onAsyncError).toHaveBeenCalledWith(
-        expect.objectContaining({ message: reportedMessage }),
-      )
-    },
-  )
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1)
+    const selectedImageUrl = stored.nodes.find(
+      (node) => node.type === 'character-template',
+    )?.selectedImageUrl
+    expect(character.referenceImageUrl).toBe(selectedImageUrl)
+    expect(character.outfits).toEqual([
+      expect.objectContaining({ id: 'outfit-default', previewUrl: selectedImageUrl }),
+    ])
+    expect(characterApis.update).toHaveBeenCalledOnce()
+  })
 
   it('creates a fresh run when an existing character has no workflow history', async () => {
     const character = characterFixture({
@@ -1074,16 +1139,17 @@ describe('createQuickStartService', () => {
     })
   })
 
-  it('rolls back an orphan character when binding its uploaded template fails', async () => {
+  it('Character 写入失败时重新打开已确认的母版节点', async () => {
     const character = characterFixture({
       id: 'orphan-character',
       name: '孤立角色',
       referenceImageUrl: 'orphan.png',
     })
-    const remove = vi.fn(async () => Promise.reject('rollback failed'))
-    const onAsyncError = vi.fn()
+    const workflowRunApis = createWorkflowRunApis()
+    const update = vi.fn(async () => Promise.reject(new Error('角色写入失败')))
+    const remove = vi.fn()
     const service = createQuickStartService({
-      workflowRunApis: createWorkflowRunApis(),
+      workflowRunApis,
       generationApis: {
         create: vi.fn(),
         get: vi.fn(),
@@ -1091,9 +1157,9 @@ describe('createQuickStartService', () => {
       },
       characterApis: {
         create: vi.fn(async () => character),
-        update: vi.fn(async () => Promise.reject(new Error('save failed'))),
+        update,
         remove,
-        get: vi.fn(),
+        get: vi.fn(async () => structuredClone(character)),
         listByProject: vi.fn(),
       } as unknown as CharacterApis,
       mediaApis: { upload: vi.fn(async () => 'orphan.png' as MediaReference) },
@@ -1102,16 +1168,18 @@ describe('createQuickStartService', () => {
         spriteSize: { width: 256, height: 256 },
       })),
       projectApis: projectReader(),
-      onAsyncError,
     })
 
     await expect(
       service.startWithUploadedTemplate(new File(['orphan'], 'orphan.png'), ''),
-    ).rejects.toThrow('save failed')
-    expect(remove).toHaveBeenCalledWith('orphan-character')
-    expect(onAsyncError).toHaveBeenCalledWith(
-      expect.objectContaining({ message: '创建角色后的回滚失败' }),
-    )
+    ).rejects.toThrow('角色写入失败')
+    expect(remove).not.toHaveBeenCalled()
+    const latest = await workflowRunApis.get('run-1')
+    expect(latest.nodes.find((node) => node.type === 'character-template')).toMatchObject({
+      status: 'active',
+      phase: 'ready',
+      selectedImageUrl: null,
+    })
   })
 
   it('reports unavailable dependencies and invalid asset targets explicitly', async () => {

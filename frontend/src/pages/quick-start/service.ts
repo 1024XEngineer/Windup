@@ -141,20 +141,6 @@ export function createQuickStartService({
     }
   }
 
-  function hasPersistedCharacterTemplate(
-    latest: WorkflowRun,
-    imageUrl: string,
-    characterId: Character['id'],
-  ) {
-    const latestSetup = setupNode(latest)
-    const latestTemplate = templateNode(latest)
-    return (
-      latestSetup.input.characterId === characterId &&
-      latestTemplate.status === 'passed' &&
-      latestTemplate.selectedImageUrl === imageUrl
-    )
-  }
-
   async function resolveProjectSpriteSize(projectId: Project['id']) {
     const cached = projectSpriteSizes.get(projectId)
     if (cached) return cached
@@ -320,63 +306,66 @@ export function createQuickStartService({
       setupId: CharacterSetupWorkflowNode['id'],
       characterId: Character['id'],
     ) => Promise<void>,
-    isRunPersisted: (latest: WorkflowRun, characterId: Character['id']) => boolean,
   ): Promise<{ characterId: string; outfitId: string }> {
     if (!characterApis) throw new Error('角色服务尚未配置，不能确认角色母版')
     const run = controller.getWorkflow()
     const setup = setupNode(run)
     const existingCharacterId = setup.input.characterId
-    if (existingCharacterId) {
-      const existing = await characterApis.get(existingCharacterId)
-      const outfit = existing.outfits.find((item) => item.previewUrl === selectedImageUrl)
-      if (!outfit) throw new Error('已绑定角色中没有与当前母版对应的造型')
-      await persistRun(setup.id, existing.id)
-      return { characterId: existing.id, outfitId: outfit.id }
-    }
+    const character = existingCharacterId
+      ? await characterApis.get(existingCharacterId)
+      : await characterApis.create({
+          projectId: run.projectId,
+          workflowRunId: run.id,
+          name: setup.input.prompt.trim().slice(0, 32) || '未命名角色',
+          description: setup.input.prompt,
+          referenceImageUrl: selectedImageUrl,
+        })
 
-    const character = await characterApis.create({
-      projectId: run.projectId,
-      workflowRunId: run.id,
-      name: setup.input.prompt.trim().slice(0, 32) || '未命名角色',
-      description: setup.input.prompt,
-      referenceImageUrl: selectedImageUrl,
-    })
-    const outfitId = `outfit-${Date.now().toString(36)}`
-    let runSaveAttempted = false
-    try {
-      await characterApis.update({
-        ...character,
-        outfits: [
-          ...character.outfits,
-          {
-            id: outfitId,
-            characterId: character.id,
-            name: '默认造型',
-            description: null,
-            previewUrl: selectedImageUrl,
-            actions: [],
-          },
-        ],
-      })
-      runSaveAttempted = true
-      await persistRun(setup.id, character.id)
-    } catch (cause) {
-      const shouldRollback =
-        !runSaveAttempted ||
-        (await shouldRollbackWorkflowChange(run.id, (latest) =>
-          isRunPersisted(latest, character.id),
-        ))
-      if (shouldRollback) {
+    // 先用 WorkflowRun 的 version 确定候选图胜者，失败的客户端不得改写共用 Character。
+    await persistRun(setup.id, character.id)
+    const existingOutfit = character.outfits.find(
+      (item) => item.previewUrl === selectedImageUrl || item.id === 'outfit-default',
+    )
+    const outfitId = existingOutfit?.id ?? 'outfit-default'
+    const characterMatchesSelection =
+      character.referenceImageUrl === selectedImageUrl &&
+      existingOutfit?.previewUrl === selectedImageUrl
+    if (!characterMatchesSelection) {
+      try {
+        await characterApis.update({
+          ...character,
+          referenceImageUrl: selectedImageUrl,
+          outfits: existingOutfit
+            ? character.outfits.map((item) =>
+                item.id === existingOutfit.id ? { ...item, previewUrl: selectedImageUrl } : item,
+              )
+            : [
+                ...character.outfits,
+                {
+                  id: outfitId,
+                  characterId: character.id,
+                  name: '默认造型',
+                  description: null,
+                  previewUrl: selectedImageUrl,
+                  actions: [],
+                },
+              ],
+        })
+      } catch (cause) {
         try {
-          await characterApis.remove(character.id)
-        } catch (rollbackCause) {
+          await controller.restartFromNode(templateNode(controller.getWorkflow()).id)
+        } catch (reopenCause) {
           onAsyncError(
-            rollbackCause instanceof Error ? rollbackCause : new Error('创建角色后的回滚失败'),
+            reopenCause instanceof Error
+              ? reopenCause
+              : new Error('角色母版资产写入失败后重新打开节点失败'),
           )
         }
+        throw cause
       }
-      throw cause
     }
+    // Character 后端暂无版本条件更新；失败时保留可重试的幂等资产，
+    // 不做 GET→整棵 PATCH 回滚，避免覆盖其他客户端新增的动作或造型。
     return { characterId: character.id, outfitId }
   }
 
@@ -529,8 +518,6 @@ export function createQuickStartService({
           templateReference,
           (_setupId, characterId) =>
             controller.confirmCharacterTemplate(template.id, templateReference, characterId),
-          (latest, characterId) =>
-            hasPersistedCharacterTemplate(latest, templateReference, characterId),
         )
         const spriteSize =
           knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
@@ -547,8 +534,6 @@ export function createQuickStartService({
             selectedImageUrl,
             (_setupId, characterId) =>
               controller.confirmCharacterTemplate(template.id, selectedImageUrl, characterId),
-            (latest, characterId) =>
-              hasPersistedCharacterTemplate(latest, selectedImageUrl, characterId),
           )
           const spriteSize =
             knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
@@ -798,8 +783,6 @@ export function createQuickStartService({
         templateReference,
         (setupId, characterId) =>
           controller.acceptUploadedCharacterTemplate(setupId, templateReference, characterId),
-        (latest, characterId) =>
-          hasPersistedCharacterTemplate(latest, templateReference, characterId),
       )
       await prepareAction(controller, target.outfitId, actionDescription, project.spriteSize)
       return createSession(controller, project.spriteSize)
