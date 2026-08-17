@@ -4,7 +4,12 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { CreditAccount, QuotaApis } from '@/entities'
 
-import { useQuotaBalance, useQuotaTransactions } from '.'
+import {
+  formatCreditDateTime,
+  getCreditReasonLabel,
+  useQuotaBalance,
+  useQuotaTransactions,
+} from '.'
 
 const account: CreditAccount = {
   id: '11',
@@ -87,6 +92,35 @@ describe('quota queries', () => {
       expect(apis.listTransactions).toHaveBeenLastCalledWith({ page: 2, pageSize: 20 }),
     )
     await waitFor(() => expect(result.current.page).toBe(2))
+  })
+
+  it('禁用时不读取流水', () => {
+    const apis = createQuotaApis()
+    const { result } = renderHook(() => useQuotaTransactions(false, apis))
+
+    expect(result.current).toMatchObject({ status: 'idle', transactions: [], page: 1 })
+    expect(apis.listTransactions).not.toHaveBeenCalled()
+  })
+
+  it('流水失败后允许重新加载', async () => {
+    const apis = createQuotaApis()
+    apis.listTransactions
+      .mockRejectedValueOnce(new Error('流水服务不可用'))
+      .mockResolvedValueOnce({ items: [], total: 0, page: 1, pageSize: 20 })
+    const { result } = renderHook(() => useQuotaTransactions(true, apis))
+
+    await waitFor(() => expect(result.current.status).toBe('error'))
+    expect(result.current.error).toBe('流水服务不可用')
+
+    act(() => result.current.reload())
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+    expect(apis.listTransactions).toHaveBeenCalledTimes(2)
+  })
+
+  it('为已知和未知原因码提供文案，并处理无效时间', () => {
+    expect(getCreditReasonLabel(4)).toBe('生成角色动作')
+    expect(getCreditReasonLabel(99)).toBe('积分变动（原因码 99）')
+    expect(formatCreditDateTime('not-a-date')).toBe('时间未知')
   })
 
   it('组件卸载后忽略迟到的余额结果', async () => {

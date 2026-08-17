@@ -90,13 +90,20 @@ describe('createQuotaApis', () => {
 
   it('默认适配器读取环境地址并携带当前登录凭证', async () => {
     vi.resetModules()
-    const fetchFn = vi.fn<typeof fetch>(async () =>
-      Promise.resolve(
-        new Response(JSON.stringify({ code: 200, message: 'ok', data: accountResponse }), {
-          status: 200,
-        }),
-      ),
-    )
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+      const body = url.includes('/quota/transactions')
+        ? {
+            code: 200,
+            message: 'ok',
+            data: [],
+            total: 0,
+            page: 1,
+            page_size: 20,
+          }
+        : { code: 200, message: 'ok', data: accountResponse }
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))
+    })
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
     vi.stubGlobal('fetch', fetchFn)
     const [{ registerApiAccessTokenProvider }, { quotaApis }] = await Promise.all([
@@ -107,6 +114,10 @@ describe('createQuotaApis', () => {
 
     try {
       await expect(quotaApis.getBalance()).resolves.toMatchObject({ balance: 90 })
+      await expect(quotaApis.listTransactions({ page: 1, pageSize: 20 })).resolves.toMatchObject({
+        items: [],
+        total: 0,
+      })
       expect(fetchFn).toHaveBeenCalledWith(
         'https://api.windup.test/quota/balance',
         expect.objectContaining({
@@ -115,6 +126,9 @@ describe('createQuotaApis', () => {
       )
       const request = fetchFn.mock.calls[0]?.[1]
       expect(new Headers(request?.headers).get('authorization')).toBe('Bearer access-token')
+      expect(fetchFn.mock.calls[1]?.[0]).toBe(
+        'https://api.windup.test/quota/transactions?page=1&page_size=20',
+      )
     } finally {
       unregister()
       vi.unstubAllGlobals()
