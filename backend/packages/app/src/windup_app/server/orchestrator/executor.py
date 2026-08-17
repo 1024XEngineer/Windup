@@ -46,13 +46,9 @@ def _settle_credit(session: Session, task_id: int, *, success: bool) -> None:
     if task is None or task.id is None:
         return
     if success:
-        billing.capture_for_task(
-            session, user_id=task.user_id, task_id=task.id, task_type=task.task_type,
-        )
+        billing.capture_for_task(session, user_id=task.user_id, task_id=task.id)
     else:
-        billing.release_for_task(
-            session, user_id=task.user_id, task_id=task.id, task_type=task.task_type,
-        )
+        billing.release_for_task(session, user_id=task.user_id, task_id=task.id)
 
 # ── 项目全局约束(Project 表)→ 统合喂给生成逻辑 ─────────────────────────
 # character_perspective 游戏视角:1=横版(侧视) 2=俯视 3=2.5D → 生成朝向/视角
