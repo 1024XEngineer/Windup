@@ -46,7 +46,7 @@ class UserService(ABC):
 
     @abstractmethod
     def login_by_code(self, input: LoginByCodeInput) -> LoginResult:
-        """邮箱+验证码登录。内测期间不自动建号。
+        """邮箱+验证码登录。未知邮箱不自动建号。
 
         :raises windup_common.exceptions.BizException: 验证码错误 / 已过期 / 账号不存在 / 账号已封禁。
         """

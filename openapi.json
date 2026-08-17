@@ -720,6 +720,37 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "InviteCodeOut": {
+        "description": "邀请码响应。",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "create_at": {
+            "format": "date-time",
+            "title": "Create At",
+            "type": "string"
+          },
+          "update_at": {
+            "format": "date-time",
+            "title": "Update At",
+            "type": "string"
+          },
+          "used_count": {
+            "title": "Used Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "code",
+          "used_count",
+          "create_at",
+          "update_at"
+        ],
+        "title": "InviteCodeOut",
+        "type": "object"
+      },
       "ListResponse_CharacterOut_": {
         "properties": {
           "code": {
@@ -1213,6 +1244,22 @@
         "title": "ProjectOut",
         "type": "object"
       },
+      "RedeemRequest": {
+        "description": "兑换邀请码请求。",
+        "properties": {
+          "code": {
+            "maxLength": 16,
+            "minLength": 4,
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "RedeemRequest",
+        "type": "object"
+      },
       "RefreshRequest": {
         "description": "刷新 token 请求。",
         "properties": {
@@ -1242,6 +1289,13 @@
             "title": "Email",
             "type": "string"
           },
+          "invite_code": {
+            "description": "邀请码",
+            "maxLength": 16,
+            "minLength": 4,
+            "title": "Invite Code",
+            "type": "string"
+          },
           "nickname": {
             "anyOf": [
               {
@@ -1264,7 +1318,8 @@
         "required": [
           "email",
           "password",
-          "code"
+          "code",
+          "invite_code"
         ],
         "title": "RegisterRequest",
         "type": "object"
@@ -1423,6 +1478,48 @@
           }
         },
         "title": "Response[GenerationTaskOut]",
+        "type": "object"
+      },
+      "Response_InviteCodeOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InviteCodeOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "业务数据"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          }
+        },
+        "title": "Response[InviteCodeOut]",
         "type": "object"
       },
       "Response_MediaUploadResult_": {
@@ -2086,7 +2183,7 @@
     },
     "/auth/login-by-code": {
       "post": {
-        "description": "验证码登录。内测期间不自动注册。",
+        "description": "验证码登录。未知邮箱不自动建号。",
         "operationId": "login_by_code_auth_login_by_code_post",
         "requestBody": {
           "content": {
@@ -2276,7 +2373,7 @@
     },
     "/auth/register": {
       "post": {
-        "description": "邮箱+验证码+密码注册。\n\n内测期间关闭公开注册，路由与请求模型保留以便以后重新开放。",
+        "description": "邮箱+验证码+密码注册。须填写有效邀请码。",
         "operationId": "register_auth_register_post",
         "requestBody": {
           "content": {
@@ -3092,6 +3189,92 @@
           }
         },
         "summary": "Get Balance",
+        "tags": [
+          "quota"
+        ]
+      }
+    },
+    "/quota/invite/code": {
+      "get": {
+        "description": "获取当前用户邀请码；没有则生成。",
+        "operationId": "get_invite_code_quota_invite_code_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_InviteCodeOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Invite Code",
+        "tags": [
+          "quota"
+        ]
+      }
+    },
+    "/quota/invite/generate": {
+      "post": {
+        "description": "生成或轮换当前用户邀请码。",
+        "operationId": "generate_invite_code_quota_invite_generate_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_InviteCodeOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Generate Invite Code",
+        "tags": [
+          "quota"
+        ]
+      }
+    },
+    "/quota/invite/redeem": {
+      "post": {
+        "description": "已登录用户补填邀请码，双方发放邀请奖励。每人限一次。",
+        "operationId": "redeem_invite_code_quota_invite_redeem_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedeemRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_NoneType_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Redeem Invite Code",
         "tags": [
           "quota"
         ]

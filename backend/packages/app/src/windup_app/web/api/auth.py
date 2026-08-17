@@ -13,7 +13,13 @@ from windup_common.result import Response
 
 from windup_framework.db import get_session
 
-from windup_app.server.user.model import ResetPasswordInput, UpdateNicknameInput, User, UserView
+from windup_app.server.user.model import (
+    RegisterInput,
+    ResetPasswordInput,
+    UpdateNicknameInput,
+    User,
+    UserView,
+)
 from windup_app.server.user.service import service
 
 logger = logging.getLogger("windup.auth.api")
@@ -31,6 +37,7 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     code: str = Field(min_length=6, max_length=6, description="邮箱验证码")
     nickname: str | None = Field(default=None, max_length=50)
+    invite_code: str = Field(min_length=4, max_length=16, description="邀请码")
 
 
 class LoginRequest(BaseModel):
@@ -77,7 +84,9 @@ class ResetPasswordRequest(BaseModel):
     """重置密码请求（忘记密码场景）。"""
 
     email: EmailStr
-    code: str = Field(min_length=6, max_length=6, description="reset_password 用途的验证码")
+    code: str = Field(
+        min_length=6, max_length=6, description="reset_password 用途的验证码"
+    )
     new_password: str = Field(min_length=8, max_length=128)
 
 
@@ -111,15 +120,25 @@ class UserOut(BaseModel):
 
 @router.post("/register", response_model=Response[TokenResponse])
 def register(body: RegisterRequest, session: Session = Depends(get_session)):
-    """邮箱+验证码+密码注册。
-
-    内测期间关闭公开注册，路由与请求模型保留以便以后重新开放。
-    """
-    from windup_common.enums.biz_code import BizCode
-    from windup_common.exceptions import BizException
-
-    del body, session
-    raise BizException("内测期间暂不开放注册", code=BizCode.BAD_REQUEST)
+    """邮箱+验证码+密码注册。须填写有效邀请码。"""
+    result = service.register_by_email_with_session(
+        session,
+        RegisterInput(
+            email=body.email,
+            password=body.password,
+            code=body.code,
+            nickname=body.nickname,
+            invite_code=body.invite_code,
+        ),
+    )
+    return Response.success(
+        TokenResponse(
+            access_token=result.access_token,
+            refresh_token=result.refresh_token,
+            user=result.user,
+        ),
+        message="注册成功",
+    )
 
 
 @router.post("/login", response_model=Response[TokenResponse])
@@ -127,7 +146,9 @@ def login(body: LoginRequest, session: Session = Depends(get_session)):
     """邮箱+密码+验证码登录。"""
     result = service.login_by_password_with_session(
         session,
-        type("LoginByPasswordInput", (), {"email": body.email, "password": body.password})(),
+        type(
+            "LoginByPasswordInput", (), {"email": body.email, "password": body.password}
+        )(),
     )
     return Response.success(
         TokenResponse(
@@ -148,7 +169,7 @@ def send_code(body: SendCodeRequest):
 
 @router.post("/login-by-code", response_model=Response[TokenResponse])
 def login_by_code(body: LoginByCodeRequest, session: Session = Depends(get_session)):
-    """验证码登录。内测期间不自动注册。"""
+    """验证码登录。未知邮箱不自动建号。"""
     result = service.login_by_code_with_session(
         session,
         type("LoginByCodeInput", (), {"email": body.email, "code": body.code})(),
@@ -191,26 +212,37 @@ def get_me(request: Request, session: Session = Depends(get_session)):
     if user is None:
         from windup_common.enums.biz_code import BizCode
         from windup_common.exceptions import BizException
+
         raise BizException("用户不存在", code=BizCode.NOT_FOUND)
     return Response.success(
         UserOut(
             id=user.id,
             email=user.email,
             nickname=user.nickname,
-            email_verified_at=user.email_verified_at.isoformat() if user.email_verified_at else None,
+            email_verified_at=user.email_verified_at.isoformat()
+            if user.email_verified_at
+            else None,
             status=user.status,
         )
     )
 
 
 @router.post("/change-password", response_model=Response[None])
-def change_password(body: ChangePasswordRequest, request: Request, session: Session = Depends(get_session)):
+def change_password(
+    body: ChangePasswordRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+):
     """修改密码。"""
     current_user = request.state.current_user
     service.change_password_with_session(
         session,
         current_user.id,
-        type("ChangePasswordInput", (), {"old_password": body.old_password, "new_password": body.new_password})(),
+        type(
+            "ChangePasswordInput",
+            (),
+            {"old_password": body.old_password, "new_password": body.new_password},
+        )(),
     )
     return Response.success(None, message="密码修改成功")
 
@@ -220,13 +252,19 @@ def reset_password(body: ResetPasswordRequest, session: Session = Depends(get_se
     """邮箱+验证码重置密码（忘记密码）。"""
     service.reset_password_with_session(
         session,
-        ResetPasswordInput(email=body.email, code=body.code, new_password=body.new_password),
+        ResetPasswordInput(
+            email=body.email, code=body.code, new_password=body.new_password
+        ),
     )
     return Response.success(None, message="密码重置成功")
 
 
 @router.patch("/profile", response_model=Response[UserOut])
-def update_nickname(body: UpdateNicknameRequest, request: Request, session: Session = Depends(get_session)):
+def update_nickname(
+    body: UpdateNicknameRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+):
     """修改当前用户昵称。"""
     current_user = request.state.current_user
     user_view = service.update_nickname_with_session(
@@ -237,7 +275,9 @@ def update_nickname(body: UpdateNicknameRequest, request: Request, session: Sess
             id=user_view.id,
             email=user_view.email,
             nickname=user_view.nickname,
-            email_verified_at=user_view.email_verified_at.isoformat() if user_view.email_verified_at else None,
+            email_verified_at=user_view.email_verified_at.isoformat()
+            if user_view.email_verified_at
+            else None,
             status=user_view.status,
         ),
         message="昵称修改成功",

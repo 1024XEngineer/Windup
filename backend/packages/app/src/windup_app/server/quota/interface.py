@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from windup_app.server.quota.model import (
     CreditAccountView,
     CreditTransactionView,
+    InviteCodeView,
 )
 
 
@@ -35,7 +36,12 @@ class QuotaService(ABC):
 
     @abstractmethod
     def capture_credit(
-        self, session: Session, user_id: int, actual_amount: int, ref_id: str, frozen_amount: int
+        self,
+        session: Session,
+        user_id: int,
+        actual_amount: int,
+        ref_id: str,
+        frozen_amount: int,
     ) -> None:
         """预付费扣减：冻结转消耗。
 
@@ -65,7 +71,12 @@ class QuotaService(ABC):
 
     @abstractmethod
     def credit(
-        self, session: Session, user_id: int, amount: int, reason: int, ref_id: str | None = None
+        self,
+        session: Session,
+        user_id: int,
+        amount: int,
+        reason: int,
+        ref_id: str | None = None,
     ) -> None:
         """入账：增加可用余额与累计获得。"""
 
@@ -78,18 +89,18 @@ class QuotaService(ABC):
         """分页查询积分流水，返回 (列表, 总数)。"""
 
     # -- 邀请码 -----------------------------------------------------------
-    # TODO 目前先不实现。
-    # @abstractmethod
-    # def get_invite_code(self, session: Session, user_id: int) -> InviteCodeView | None:
-    #     """获取用户当前邀请码。"""
-    #
-    # @abstractmethod
-    # def generate_invite_code(self, session: Session, user_id: int) -> InviteCodeView:
-    #     """生成新邀请码（替换旧码）。"""
-    #
-    # @abstractmethod
-    # def redeem_invite_code(self, session: Session, user_id: int, code: str) -> None:
-    #     """兑换邀请码，双方各得积分。
-    #
-    #     :raises BizException: 邀请码无效 / 已达上限 / 已填过码。
-    #     """
+
+    @abstractmethod
+    def get_invite_code(self, session: Session, user_id: int) -> InviteCodeView:
+        """获取用户当前邀请码；没有则生成。"""
+
+    @abstractmethod
+    def generate_invite_code(self, session: Session, user_id: int) -> InviteCodeView:
+        """生成新邀请码（替换旧码）。"""
+
+    @abstractmethod
+    def redeem_invite_code(self, session: Session, user_id: int, code: str) -> None:
+        """兑换邀请码，双方各得积分。
+
+        :raises BizException: 邀请码无效 / 已填过码 / 不能填自己的码。
+        """

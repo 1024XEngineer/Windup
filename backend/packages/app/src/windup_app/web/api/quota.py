@@ -4,11 +4,9 @@
 --------
 GET  /quota/balance          查询积分余额
 GET  /quota/transactions     查询积分流水（分页）
-
-暂不实现：
-POST /quota/invite/redeem    兑换邀请码
 GET  /quota/invite/code      获取我的邀请码
 POST /quota/invite/generate  生成新邀请码
+POST /quota/invite/redeem    兑换邀请码
 """
 
 from __future__ import annotations
@@ -17,7 +15,7 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from windup_common.result import ListResponse, Response
@@ -63,15 +61,19 @@ class CreditTransactionOut(BaseModel):
     create_at: datetime
 
 
-# -- 暂不实现 ----------------------------------------------------------------
-#
-# class InviteCodeOut(BaseModel):
-#     """邀请码响应。"""
-#     ...
-#
-# class RedeemRequest(BaseModel):
-#     """兑换邀请码请求。"""
-#     ...
+class InviteCodeOut(BaseModel):
+    """邀请码响应。"""
+
+    code: str
+    used_count: int
+    create_at: datetime
+    update_at: datetime
+
+
+class RedeemRequest(BaseModel):
+    """兑换邀请码请求。"""
+
+    code: str = Field(min_length=4, max_length=16)
 
 
 # -- 端点 ----------------------------------------------------------------
@@ -102,7 +104,9 @@ def list_transactions(
 ) -> ListResponse[CreditTransactionOut]:
     """查询积分流水（分页）。"""
     user_id = request.state.current_user.id
-    txns, total = service.list_transactions(session, user_id, page=page, page_size=page_size)
+    txns, total = service.list_transactions(
+        session, user_id, page=page, page_size=page_size
+    )
     return ListResponse.success(
         [CreditTransactionOut.model_validate(t) for t in txns],
         total=total,
@@ -111,13 +115,47 @@ def list_transactions(
     )
 
 
-# -- 邀请码端点（暂不实现）--------------------------------------------------
-#
-# @router.get("/invite/code")
-# def get_invite_code(...): ...
-#
-# @router.post("/invite/generate")
-# def generate_invite_code(...): ...
-#
-# @router.post("/invite/redeem")
-# def redeem_invite_code(...): ...
+@router.get("/invite/code", response_model=Response[InviteCodeOut])
+def get_invite_code(
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[InviteCodeOut]:
+    """获取当前用户邀请码；没有则生成。"""
+    view = service.get_invite_code(session, request.state.current_user.id)
+    return Response.success(
+        InviteCodeOut(
+            code=view.code,
+            used_count=view.used_count,
+            create_at=view.create_at,
+            update_at=view.update_at,
+        )
+    )
+
+
+@router.post("/invite/generate", response_model=Response[InviteCodeOut])
+def generate_invite_code(
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[InviteCodeOut]:
+    """生成或轮换当前用户邀请码。"""
+    view = service.generate_invite_code(session, request.state.current_user.id)
+    return Response.success(
+        InviteCodeOut(
+            code=view.code,
+            used_count=view.used_count,
+            create_at=view.create_at,
+            update_at=view.update_at,
+        ),
+        message="邀请码已更新",
+    )
+
+
+@router.post("/invite/redeem", response_model=Response[None])
+def redeem_invite_code(
+    body: RedeemRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[None]:
+    """已登录用户补填邀请码，双方发放邀请奖励。每人限一次。"""
+    service.redeem_invite_code(session, request.state.current_user.id, body.code)
+    return Response.success(None, message="邀请码填写成功")

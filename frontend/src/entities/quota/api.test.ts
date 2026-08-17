@@ -88,6 +88,46 @@ describe('createQuotaApis', () => {
     })
   })
 
+  it('读取并映射当前用户邀请码', async () => {
+    request.mockResolvedValue({
+      code: 'AB23CD45',
+      used_count: 3,
+      create_at: '2026-08-12T01:02:03Z',
+      update_at: '2026-08-17T01:02:03Z',
+    })
+
+    await expect(createQuotaApis({ client }).getInviteCode()).resolves.toEqual({
+      code: 'AB23CD45',
+      usedCount: 3,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+    expect(request).toHaveBeenCalledWith('/quota/invite/code')
+  })
+
+  it('轮换邀请码并提交兑换请求', async () => {
+    request
+      .mockResolvedValueOnce({
+        code: 'XY89KL23',
+        used_count: 0,
+        create_at: '2026-08-17T03:00:00Z',
+        update_at: '2026-08-17T03:00:00Z',
+      })
+      .mockResolvedValueOnce(null)
+
+    const apis = createQuotaApis({ client })
+    await expect(apis.generateInviteCode()).resolves.toMatchObject({
+      code: 'XY89KL23',
+      usedCount: 0,
+    })
+    await expect(apis.redeemInviteCode('ab23cd45')).resolves.toBeUndefined()
+    expect(request).toHaveBeenNthCalledWith(1, '/quota/invite/generate', { method: 'POST' })
+    expect(request).toHaveBeenNthCalledWith(2, '/quota/invite/redeem', {
+      method: 'POST',
+      json: { code: 'ab23cd45' },
+    })
+  })
+
   it('默认适配器读取环境地址并携带当前登录凭证', async () => {
     vi.resetModules()
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -101,7 +141,18 @@ describe('createQuotaApis', () => {
             page: 1,
             page_size: 20,
           }
-        : { code: 200, message: 'ok', data: accountResponse }
+        : url.includes('/quota/invite')
+          ? {
+              code: 200,
+              message: 'ok',
+              data: {
+                code: 'AB23CD45',
+                used_count: 0,
+                create_at: '2026-08-12T01:02:03Z',
+                update_at: '2026-08-17T01:02:03Z',
+              },
+            }
+          : { code: 200, message: 'ok', data: accountResponse }
       return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))
     })
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
@@ -118,6 +169,7 @@ describe('createQuotaApis', () => {
         items: [],
         total: 0,
       })
+      await expect(quotaApis.getInviteCode()).resolves.toMatchObject({ code: 'AB23CD45' })
       expect(fetchFn).toHaveBeenCalledWith(
         'https://api.windup.test/quota/balance',
         expect.objectContaining({

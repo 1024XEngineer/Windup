@@ -145,6 +145,7 @@ describe('AuthSessionProvider', () => {
             email: 'reader@example.com',
             password: 'password-123',
             code: '123456',
+            inviteCode: 'AB23CD45',
           })
         } else if (method === 'login') {
           await session().login({

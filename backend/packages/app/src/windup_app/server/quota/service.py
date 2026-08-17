@@ -12,6 +12,7 @@ rollback，故本实现只 ``flush``（把变更发到当前事务、取回生�
 """
 
 import logging
+import secrets
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -26,9 +27,34 @@ from windup_app.server.quota.model import (
     CreditAccountView,
     CreditTransaction,
     CreditTransactionView,
+    InviteCode,
+    InviteCodeView,
+    InviteRecord,
 )
+from windup_app.server.user.model import User
+from windup_framework.config.quota import settings as quota_settings
 
 logger = logging.getLogger("windup.quota.service")
+
+_INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+_INVITE_CODE_LENGTH = 8
+
+
+def normalize_invite_code(code: str) -> str:
+    return code.strip().upper()
+
+
+def _new_invite_code() -> str:
+    return "".join(secrets.choice(_INVITE_ALPHABET) for _ in range(_INVITE_CODE_LENGTH))
+
+
+def _to_invite_view(row: InviteCode) -> InviteCodeView:
+    return InviteCodeView(
+        code=row.code,
+        used_count=row.used_count,
+        create_at=row.create_at,
+        update_at=row.update_at,
+    )
 
 
 def _to_account_view(account: CreditAccount) -> CreditAccountView:
@@ -120,17 +146,30 @@ class SqlAlchemyQuotaService(QuotaService):
         session.flush()
 
         self._write_txn(
-            session, user_id, -amount, CreditReason.FROZEN,
-            BillingMode.PREPAID, account.balance, ref_id,
+            session,
+            user_id,
+            -amount,
+            CreditReason.FROZEN,
+            BillingMode.PREPAID,
+            account.balance,
+            ref_id,
         )
 
         logger.info(
             "[WINDUP] 积分冻结 | user_id=%s amount=%s ref_id=%s balance=%s",
-            user_id, amount, ref_id, account.balance,
+            user_id,
+            amount,
+            ref_id,
+            account.balance,
         )
 
     def capture_credit(
-        self, session: Session, user_id: int, actual_amount: int, ref_id: str, frozen_amount: int
+        self,
+        session: Session,
+        user_id: int,
+        actual_amount: int,
+        ref_id: str,
+        frozen_amount: int,
     ) -> None:
         """预付费扣减：frozen -= frozen_amount, total_spent += actual_amount。
 
@@ -158,20 +197,34 @@ class SqlAlchemyQuotaService(QuotaService):
 
         # 写扣减流水
         self._write_txn(
-            session, user_id, -actual_amount, CreditReason.CAPTURED,
-            BillingMode.PREPAID, account.balance, ref_id,
+            session,
+            user_id,
+            -actual_amount,
+            CreditReason.CAPTURED,
+            BillingMode.PREPAID,
+            account.balance,
+            ref_id,
         )
 
         # 有差额退回时写退款流水（用不同 reason 区分，ref_id 加后缀去重）
         if refund > 0:
             self._write_txn(
-                session, user_id, refund, CreditReason.REFUND,
-                BillingMode.PREPAID, account.balance, f"{ref_id}:refund",
+                session,
+                user_id,
+                refund,
+                CreditReason.REFUND,
+                BillingMode.PREPAID,
+                account.balance,
+                f"{ref_id}:refund",
             )
 
         logger.info(
             "[WINDUP] 积分扣减 | user_id=%s actual=%s frozen=%s refund=%s balance=%s",
-            user_id, actual_amount, frozen_amount, refund, account.balance,
+            user_id,
+            actual_amount,
+            frozen_amount,
+            refund,
+            account.balance,
         )
 
     def release_credit(
@@ -191,13 +244,21 @@ class SqlAlchemyQuotaService(QuotaService):
         session.flush()
 
         self._write_txn(
-            session, user_id, amount, CreditReason.REFUND,
-            BillingMode.PREPAID, account.balance, f"{ref_id}:release",
+            session,
+            user_id,
+            amount,
+            CreditReason.REFUND,
+            BillingMode.PREPAID,
+            account.balance,
+            f"{ref_id}:release",
         )
 
         logger.info(
             "[WINDUP] 积分解冻 | user_id=%s amount=%s ref_id=%s balance=%s",
-            user_id, amount, ref_id, account.balance,
+            user_id,
+            amount,
+            ref_id,
+            account.balance,
         )
 
     # -- 后付费：原子扣减（暂不实现，AGENT_TOKEN / POSTPAID 枚举已预留）------
@@ -211,7 +272,12 @@ class SqlAlchemyQuotaService(QuotaService):
     # -- 入账（赠送 / 奖励 / 管理员调整）----------------------------------
 
     def credit(
-        self, session: Session, user_id: int, amount: int, reason: int, ref_id: str | None = None
+        self,
+        session: Session,
+        user_id: int,
+        amount: int,
+        reason: int,
+        ref_id: str | None = None,
     ) -> None:
         """入账：balance += amount, total_earned += amount。"""
         if amount <= 0:
@@ -223,13 +289,21 @@ class SqlAlchemyQuotaService(QuotaService):
         session.flush()
 
         self._write_txn(
-            session, user_id, amount, reason,
-            BillingMode.PREPAID, account.balance, ref_id,
+            session,
+            user_id,
+            amount,
+            reason,
+            BillingMode.PREPAID,
+            account.balance,
+            ref_id,
         )
 
         logger.info(
             "[WINDUP] 积分入账 | user_id=%s amount=%s reason=%s balance=%s",
-            user_id, amount, reason, account.balance,
+            user_id,
+            amount,
+            reason,
+            account.balance,
         )
 
     # -- 流水查询 ---------------------------------------------------------
@@ -254,8 +328,93 @@ class SqlAlchemyQuotaService(QuotaService):
 
         return [_to_txn_view(r) for r in rows], total or 0
 
-    # -- 邀请码（暂不实现）-------------------------------------------------
-    # TODO: get_invite_code / generate_invite_code / redeem_invite_code
+    # -- 邀请码 -----------------------------------------------------------
+
+    def get_invite_code(self, session: Session, user_id: int) -> InviteCodeView:
+        row = session.scalar(select(InviteCode).where(InviteCode.user_id == user_id))
+        if row is not None:
+            return _to_invite_view(row)
+        return self.generate_invite_code(session, user_id)
+
+    def generate_invite_code(self, session: Session, user_id: int) -> InviteCodeView:
+        if session.get(User, user_id) is None:
+            raise BizException("用户不存在", code=BizCode.NOT_FOUND)
+
+        row = session.scalar(select(InviteCode).where(InviteCode.user_id == user_id))
+        if row is None:
+            row = InviteCode(
+                user_id=user_id, code=self._allocate_invite_code(session), used_count=0
+            )
+            session.add(row)
+        else:
+            row.code = self._allocate_invite_code(session, exclude_id=row.id)
+        session.flush()
+        logger.info("[WINDUP] 生成邀请码 | user_id=%s code=%s", user_id, row.code)
+        return _to_invite_view(row)
+
+    def _allocate_invite_code(
+        self, session: Session, exclude_id: int | None = None
+    ) -> str:
+        for _ in range(16):
+            code = _new_invite_code()
+            query = select(InviteCode.id).where(InviteCode.code == code)
+            if exclude_id is not None:
+                query = query.where(InviteCode.id != exclude_id)
+            if session.scalar(query) is None:
+                return code
+        raise BizException("邀请码生成失败，请稍后重试", code=BizCode.BAD_REQUEST)
+
+    def redeem_invite_code(self, session: Session, user_id: int, code: str) -> None:
+        normalized = normalize_invite_code(code)
+        if not normalized:
+            raise BizException("邀请码无效", code=BizCode.BAD_REQUEST)
+
+        existing = session.scalar(
+            select(InviteRecord.id).where(InviteRecord.invitee_id == user_id)
+        )
+        if existing is not None:
+            raise BizException("已填写过邀请码", code=BizCode.BAD_REQUEST)
+
+        invite = session.scalar(
+            select(InviteCode).where(InviteCode.code == normalized).with_for_update()
+        )
+        if invite is None:
+            raise BizException("邀请码无效", code=BizCode.BAD_REQUEST)
+        if invite.user_id == user_id:
+            raise BizException("不能填写自己的邀请码", code=BizCode.BAD_REQUEST)
+        if session.get(User, user_id) is None:
+            raise BizException("用户不存在", code=BizCode.NOT_FOUND)
+
+        record = InviteRecord(
+            inviter_id=invite.user_id,
+            invitee_id=user_id,
+            code=normalized,
+        )
+        session.add(record)
+        invite.used_count += 1
+        session.flush()
+
+        reward = quota_settings.invite_reward_amount
+        self.credit(
+            session,
+            invite.user_id,
+            reward,
+            int(CreditReason.INVITE_REWARD),
+            f"invite:{user_id}:inviter",
+        )
+        self.credit(
+            session,
+            user_id,
+            reward,
+            int(CreditReason.INVITE_REWARD),
+            f"invite:{user_id}:invitee",
+        )
+        logger.info(
+            "[WINDUP] 兑换邀请码 | invitee=%s inviter=%s code=%s",
+            user_id,
+            invite.user_id,
+            normalized,
+        )
 
 
 service = SqlAlchemyQuotaService()

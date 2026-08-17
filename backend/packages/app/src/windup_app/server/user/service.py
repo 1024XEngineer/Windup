@@ -25,7 +25,7 @@ from windup_common.enums.quota import CreditReason
 from windup_common.exceptions import BizException
 from windup_framework.config.quota import settings as quota_settings
 
-from windup_app.server.quota.model import CreditAccount, CreditTransaction
+from windup_app.server.quota.model import CreditAccount, CreditTransaction, InviteCode
 from windup_app.server.user.interface import UserService
 from windup_app.server.user.model import (
     ChangePasswordInput,
@@ -49,7 +49,7 @@ logger = logging.getLogger("windup.user.service")
 
 JWT_SECRET = jwt_settings.secret.get_secret_value()
 JWT_ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_SECONDS = 15 * 60        # 15 分钟
+ACCESS_TOKEN_EXPIRE_SECONDS = 15 * 60  # 15 分钟
 REFRESH_TOKEN_EXPIRE_SECONDS = 7 * 24 * 3600  # 7 天
 
 # -- 密码哈希 -------------------------------------------------------------
@@ -64,6 +64,7 @@ def _verify_password(password: str, hashed: str) -> bool:
     """验证密码。"""
     return bcrypt.checkpw(password.encode(), hashed.encode())
 
+
 # -- Redis key 前缀 -------------------------------------------------------
 
 VERIFY_COOLDOWN_KEY = "verify:cooldown:{email}"
@@ -72,12 +73,12 @@ REFRESH_TOKEN_KEY = "refresh:{token_hash}"
 LOGIN_FAIL_KEY = "login:fail:{email}"
 LOGIN_LOCK_KEY = "login:lock:{email}"
 
-VERIFY_CODE_TTL = 300   # 5 分钟
-COOLDOWN_TTL = 60       # 60 秒
+VERIFY_CODE_TTL = 300  # 5 分钟
+COOLDOWN_TTL = 60  # 60 秒
 
-LOGIN_FAIL_LIMIT = 5            # 连续错误密码上限
-LOGIN_FAIL_WINDOW = 15 * 60     # 失败计数窗口 15 分钟
-LOGIN_LOCK_DURATION = 15 * 60   # 锁定时长 15 分钟
+LOGIN_FAIL_LIMIT = 5  # 连续错误密码上限
+LOGIN_FAIL_WINDOW = 15 * 60  # 失败计数窗口 15 分钟
+LOGIN_LOCK_DURATION = 15 * 60  # 锁定时长 15 分钟
 
 
 def _hash_token(token: str) -> str:
@@ -176,8 +177,22 @@ class SqlAlchemyUserService(UserService):
     def register_by_email_with_session(
         self, session: Session, input: RegisterInput
     ) -> LoginResult:
-        """邮箱+验证码+密码注册（带 session）。"""
-        # 校验验证码
+        """邮箱+验证码+密码注册（带 session）。须填写有效邀请码。"""
+        from windup_app.server.quota.service import (
+            normalize_invite_code,
+            service as quota_service,
+        )
+
+        invite_code = normalize_invite_code(input.invite_code)
+        if not invite_code:
+            raise BizException("请填写邀请码", code=BizCode.BAD_REQUEST)
+
+        invite_exists = session.scalar(
+            select(InviteCode.id).where(InviteCode.code == invite_code).limit(1)
+        )
+        if invite_exists is None:
+            raise BizException("邀请码无效", code=BizCode.BAD_REQUEST)
+
         self._verify_code(input.email, input.code, "register")
 
         # 检查邮箱唯一
@@ -191,13 +206,16 @@ class SqlAlchemyUserService(UserService):
             email=input.email,
             password_hash=_hash_password(input.password),
             nickname=input.nickname,
-            email_verified_at=datetime.now(timezone.utc),  # 注册即验证（已通过验证码校验）
+            email_verified_at=datetime.now(
+                timezone.utc
+            ),  # 注册即验证（已通过验证码校验）
         )
         session.add(user)
         session.flush()
 
         # 注册送积分
         self._create_credit_account(session, user.id)
+        quota_service.redeem_invite_code(session, user.id, invite_code)
 
         # 注册即登录，签发 token
         access_token = create_access_token(user.id, user.email)
@@ -280,13 +298,12 @@ class SqlAlchemyUserService(UserService):
 
     def send_verification_code(self, email: str, purpose: str) -> None:
         """发送邮箱验证码。"""
-        if purpose == "register":
-            raise BizException("内测期间暂不开放注册", code=BizCode.BAD_REQUEST)
-
         # 频率限制
         cooldown_key = VERIFY_COOLDOWN_KEY.format(email=email)
         if self.redis.get(cooldown_key):
-            raise BizException("发送过于频繁，请稍后再试", code=BizCode.TOO_MANY_REQUESTS)
+            raise BizException(
+                "发送过于频繁，请稍后再试", code=BizCode.TOO_MANY_REQUESTS
+            )
 
         code = _generate_code()
         code_key = VERIFY_CODE_KEY.format(purpose=purpose, email=email)
@@ -318,7 +335,7 @@ class SqlAlchemyUserService(UserService):
     def login_by_code_with_session(
         self, session: Session, input: LoginByCodeInput
     ) -> LoginResult:
-        """邮箱+验证码登录（带 session）。内测期间不自动建号。"""
+        """邮箱+验证码登录（带 session）。未知邮箱不自动建号。"""
         # 校验验证码
         self._verify_code(input.email, input.code, "login")
 
@@ -509,7 +526,9 @@ class SqlAlchemyUserService(UserService):
         user = session.get(User, user_id)
         return _to_view(user) if user else None
 
-    def get_by_email_with_session(self, session: Session, email: str) -> UserView | None:
+    def get_by_email_with_session(
+        self, session: Session, email: str
+    ) -> UserView | None:
         user = session.scalar(select(User).where(User.email == email))
         return _to_view(user) if user else None
 
@@ -540,7 +559,8 @@ class SqlAlchemyUserService(UserService):
 
         logger.info(
             "[WINDUP] 注册送积分 | user_id=%s amount=%s",
-            user_id, quota_settings.register_gift_amount,
+            user_id,
+            quota_settings.register_gift_amount,
         )
 
     def _store_refresh_token(self, jti: str, user_id: int) -> None:

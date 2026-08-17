@@ -17,7 +17,14 @@ ORM 模型
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, DateTime, Integer, SmallInteger, String, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Integer,
+    SmallInteger,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from windup_framework.db import Base
@@ -107,18 +114,64 @@ class CreditTransaction(Base):
     )
 
 
-# -- 以下 ORM 暂不实现（枚举 / 接口已预留）----------------------------------
-#
-# class InviteCode(Base):
-#     """邀请码。"""
-#     __tablename__ = "windup_invite_code"
-#     ...
-#
-# class InviteRecord(Base):
-#     """邀请记录。"""
-#     __tablename__ = "windup_invite_record"
-#     ...
-#
+class InviteCode(Base):
+    """用户当前邀请码。每人一行，轮换时覆盖 code。"""
+
+    __tablename__ = "windup_invite_code"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        unique=True,
+        nullable=False,
+    )
+    code: Mapped[str] = mapped_column(String(16), unique=True, nullable=False)
+    used_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    create_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    update_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class InviteRecord(Base):
+    """一次成功的邀请关系。被邀请人只能出现一次。"""
+
+    __tablename__ = "windup_invite_record"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    inviter_id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        nullable=False,
+        index=True,
+    )
+    invitee_id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        unique=True,
+        nullable=False,
+    )
+    code: Mapped[str] = mapped_column(String(16), nullable=False)
+    create_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
 # class TokenUsage(Base):
 #     """Token 用量记录。"""
 #     __tablename__ = "windup_token_usage"
@@ -156,9 +209,11 @@ class CreditTransactionView:
     create_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-# -- 暂不实现 --
-#
-# @dataclass
-# class InviteCodeView:
-#     """邀请码视图。"""
-#     ...
+@dataclass
+class InviteCodeView:
+    """邀请码视图。"""
+
+    code: str
+    used_count: int = 0
+    create_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    update_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

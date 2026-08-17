@@ -179,6 +179,12 @@ describe('AccountPage', () => {
       page: 1,
       pageSize: 20,
     })
+    vi.spyOn(quotaApis, 'getInviteCode').mockResolvedValue({
+      code: 'AB23CD45',
+      usedCount: 0,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
 
     renderAccount()
     fireEvent.click(await screen.findByRole('button', { name: '积分账户' }))
@@ -187,6 +193,58 @@ describe('AccountPage', () => {
     expect(await screen.findByText('90')).toBeTruthy()
     expect(screen.getByText('积分变动（原因码 99）')).toBeTruthy()
     expect(screen.getByText('-12')).toBeTruthy()
+  })
+
+  it('在积分账户展示邀请码，并允许重新生成与补填', async () => {
+    vi.spyOn(quotaApis, 'getBalance').mockResolvedValue({
+      id: '11',
+      userId: '7',
+      balance: 90,
+      frozen: 10,
+      totalEarned: 150,
+      totalSpent: 50,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+    vi.spyOn(quotaApis, 'listTransactions').mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 20,
+    })
+    vi.spyOn(quotaApis, 'getInviteCode').mockResolvedValue({
+      code: 'AB23CD45',
+      usedCount: 2,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+    vi.spyOn(quotaApis, 'generateInviteCode').mockResolvedValue({
+      code: 'XY89KL23',
+      usedCount: 0,
+      createdAt: '2026-08-17T03:00:00Z',
+      updatedAt: '2026-08-17T03:00:00Z',
+    })
+    const redeem = vi.spyOn(quotaApis, 'redeemInviteCode').mockResolvedValue(undefined)
+
+    renderAccount()
+    fireEvent.click(await screen.findByRole('button', { name: '积分账户' }))
+
+    expect(await screen.findByText('AB23CD45')).toBeTruthy()
+    expect(screen.getByText('已邀请 2 人')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '重新生成' }))
+    expect(await screen.findByText('XY89KL23')).toBeTruthy()
+    expect(await screen.findByText('邀请码已更新')).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('填写邀请码'), { target: { value: 'nope' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认填写' }))
+    expect(await screen.findByText('请填写有效邀请码')).toBeTruthy()
+    expect(redeem).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('填写邀请码'), { target: { value: 'mn67pq89' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认填写' }))
+    await waitFor(() => expect(redeem).toHaveBeenCalledWith('MN67PQ89'))
+    expect(await screen.findByText('邀请码填写成功')).toBeTruthy()
   })
 
   it('reports a profile refresh failure without claiming the data is synchronized', async () => {
