@@ -96,6 +96,7 @@ function renderHeader(
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
+  window.sessionStorage.clear()
   window.history.replaceState({ idx: 0 }, '')
 })
 
@@ -221,6 +222,16 @@ describe('AppHeader', () => {
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/'))
     expect(await screen.findByRole('link', { name: '登录' })).toBeTruthy()
     expect(apis.logout).toHaveBeenCalledWith('rotated-refresh-token')
+  })
+
+  it('登录工作台后显示一次邀请奖励提示，打开账号菜单时收起', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    renderHeader('/workspace')
+
+    expect(await screen.findByRole('status', { name: '邀请奖励提示' })).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: '打开账号菜单' }))
+
+    expect(screen.queryByRole('status', { name: '邀请奖励提示' })).toBeNull()
   })
 
   it('远端退出失败时仍清除本地会话并返回首页', async () => {

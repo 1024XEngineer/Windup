@@ -22,6 +22,7 @@ export interface AppHeaderProps {
 }
 
 const accountMenuExitDurationMs = 260
+const inviteHintStorageKey = 'windup.invite-hint-seen.v5'
 
 /** 四个入口对应四种去处：回首页、看资产、做新东西、核验已完成的造型。 */
 const productNavigation: ProductNavigationItem[] = [
@@ -79,6 +80,7 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
   const navigate = useNavigate()
   const session = useAuthSession()
   const [accountMenuState, setAccountMenuState] = useState<AccountMenuState>('closed')
+  const [inviteHintVisible, setInviteHintVisible] = useState(false)
   const accountMenuOpen = accountMenuState === 'open'
   const creditBalance = useQuotaBalance(
     accountMenuState !== 'closed' && session.state.status === 'authenticated',
@@ -99,13 +101,38 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
     return () => window.clearTimeout(timer)
   }, [accountMenuState])
 
+  useEffect(() => {
+    if (pathname !== '/workspace' || session.state.status !== 'authenticated') {
+      setInviteHintVisible(false)
+      return
+    }
+
+    if (window.sessionStorage.getItem(inviteHintStorageKey) !== '1') {
+      setInviteHintVisible(true)
+    }
+
+    const timer = window.setTimeout(() => {
+      window.sessionStorage.setItem(inviteHintStorageKey, '1')
+      setInviteHintVisible(false)
+    }, 15_000)
+
+    return () => window.clearTimeout(timer)
+  }, [pathname, session.state.status])
+
   function signOut() {
+    window.sessionStorage.removeItem(inviteHintStorageKey)
     const returnHome = () => navigate('/', { replace: true })
     void session.logout().then(returnHome, returnHome)
   }
 
   function toggleAccountMenu() {
+    dismissInviteHint()
     setAccountMenuState((state) => (state === 'open' ? 'closing' : 'open'))
+  }
+
+  function dismissInviteHint() {
+    window.sessionStorage.setItem(inviteHintStorageKey, '1')
+    setInviteHintVisible(false)
   }
 
   function finishAccountMenuMotion() {
@@ -210,6 +237,36 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
             </Link>
           ) : (
             <>
+              {inviteHintVisible ? (
+                <div
+                  role="status"
+                  aria-label="邀请奖励提示"
+                  className="absolute top-[calc(100%+0.7rem)] right-0 z-10 w-[min(15rem,calc(100vw-2rem))] rounded-lg border border-app-ink/12 bg-app-surface-raised px-3.5 py-3 text-left shadow-app-menu before:absolute before:-top-1.5 before:right-5 before:h-3 before:w-3 before:rotate-45 before:border-l before:border-t before:border-app-ink/12 before:bg-app-surface-raised"
+                >
+                  <div className="relative flex items-start gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium leading-5 text-app-ink-soft">
+                        邀请好友，双方各得 200 积分
+                      </p>
+                      <Link
+                        to="/account"
+                        onClick={dismissInviteHint}
+                        className="mt-1 inline-flex text-[12px] text-app-muted underline decoration-app-ink/20 underline-offset-2 transition-colors hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
+                      >
+                        去看看邀请奖励
+                      </Link>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="关闭邀请奖励提示"
+                      onClick={dismissInviteHint}
+                      className="-mr-1 -mt-1 grid h-6 w-6 shrink-0 place-items-center rounded-md text-sm leading-none text-app-faint transition-colors hover:bg-app-ink/5 hover:text-app-ink-soft focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <button
                 type="button"
                 aria-label="打开账号菜单"
