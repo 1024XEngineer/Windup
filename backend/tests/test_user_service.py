@@ -273,6 +273,19 @@ def test_register_expired_code(db_session, service):
         service.register_by_email(db_session, input_data)
 
 
+def test_register_blank_invite_code(db_session, service):
+    service._redis.get.return_value = "123456"
+    input_data = RegisterInput(
+        email="blank-invite@example.com",
+        password="password123",
+        code="123456",
+        invite_code="   ",
+    )
+
+    with pytest.raises(BizException, match="请填写邀请码"):
+        service.register_by_email(db_session, input_data)
+
+
 # -- 登录测试 ------------------------------------------------------------
 
 

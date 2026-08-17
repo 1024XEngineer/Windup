@@ -170,6 +170,8 @@ describe('createQuotaApis', () => {
         total: 0,
       })
       await expect(quotaApis.getInviteCode()).resolves.toMatchObject({ code: 'AB23CD45' })
+      await expect(quotaApis.generateInviteCode()).resolves.toMatchObject({ code: 'AB23CD45' })
+      await expect(quotaApis.redeemInviteCode('AB23CD45')).resolves.toBeUndefined()
       expect(fetchFn).toHaveBeenCalledWith(
         'https://api.windup.test/quota/balance',
         expect.objectContaining({

@@ -573,3 +573,69 @@ class TestInviteCode:
         quota_service.redeem_invite_code(db_session, guest.id, view.code)
         with pytest.raises(BizException, match="已填写过邀请码"):
             quota_service.redeem_invite_code(db_session, guest.id, view.code)
+
+    def test_generate_invite_code_rejects_missing_user(self, db_session, quota_service):
+        from windup_common.exceptions import BizException
+
+        with pytest.raises(BizException, match="用户不存在"):
+            quota_service.generate_invite_code(db_session, 999999)
+
+    def test_allocate_invite_code_gives_up_on_collision(
+        self, db_session, quota_service, monkeypatch
+    ):
+        from windup_app.server.quota import service as quota_mod
+        from windup_app.server.user.model import User
+        from windup_common.exceptions import BizException
+
+        taken = User(email="taken@example.com", password_hash="x")
+        host = User(email="alloc@example.com", password_hash="x")
+        db_session.add_all([taken, host])
+        db_session.flush()
+        occupied = quota_service.generate_invite_code(db_session, taken.id)
+        monkeypatch.setattr(quota_mod, "_new_invite_code", lambda: occupied.code)
+
+        with pytest.raises(BizException, match="邀请码生成失败"):
+            quota_service.generate_invite_code(db_session, host.id)
+
+    def test_redeem_rejects_blank_or_unknown_code(self, db_session, quota_service):
+        from windup_app.server.user.model import User
+        from windup_common.exceptions import BizException
+
+        guest = User(email="blank@example.com", password_hash="x")
+        db_session.add(guest)
+        db_session.flush()
+        _gift_account(db_session, guest.id)
+
+        with pytest.raises(BizException, match="邀请码无效"):
+            quota_service.redeem_invite_code(db_session, guest.id, "   ")
+        with pytest.raises(BizException, match="邀请码无效"):
+            quota_service.redeem_invite_code(db_session, guest.id, "NOPE1234")
+
+    def test_redeem_rejects_missing_invitee(self, db_session, quota_service):
+        from windup_app.server.user.model import User
+        from windup_common.exceptions import BizException
+
+        host = User(email="orphan-host@example.com", password_hash="x")
+        db_session.add(host)
+        db_session.flush()
+        _gift_account(db_session, host.id)
+        view = quota_service.generate_invite_code(db_session, host.id)
+
+        with pytest.raises(BizException, match="用户不存在"):
+            quota_service.redeem_invite_code(db_session, 999999, view.code)
+
+    def test_redeem_invite_code_endpoint(self, auth_quota_client, db_session):
+        from windup_app.server.user.model import User
+
+        host = User(email="api-host@example.com", password_hash="x")
+        db_session.add(host)
+        db_session.flush()
+        _gift_account(db_session, host.id)
+        view = SqlAlchemyQuotaService().generate_invite_code(db_session, host.id)
+        db_session.commit()
+
+        resp = auth_quota_client.post("/quota/invite/redeem", json={"code": view.code})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["code"] == 200
+        assert body["message"] == "邀请码填写成功"

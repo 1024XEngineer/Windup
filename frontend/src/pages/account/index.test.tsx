@@ -30,6 +30,25 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
+function mockQuotaReads() {
+  vi.spyOn(quotaApis, 'getBalance').mockResolvedValue({
+    id: '11',
+    userId: '7',
+    balance: 90,
+    frozen: 10,
+    totalEarned: 150,
+    totalSpent: 50,
+    createdAt: '2026-08-12T01:02:03Z',
+    updatedAt: '2026-08-17T01:02:03Z',
+  })
+  vi.spyOn(quotaApis, 'listTransactions').mockResolvedValue({
+    items: [],
+    total: 0,
+    page: 1,
+    pageSize: 20,
+  })
+}
+
 function createApis(): UserApis & Record<keyof UserApis, ReturnType<typeof vi.fn>> {
   return {
     sendCode: vi.fn(async () => undefined),
@@ -245,6 +264,64 @@ describe('AccountPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '确认填写' }))
     await waitFor(() => expect(redeem).toHaveBeenCalledWith('MN67PQ89'))
     expect(await screen.findByText('邀请码填写成功')).toBeTruthy()
+  })
+
+  it('展示邀请码加载失败', async () => {
+    mockQuotaReads()
+    vi.spyOn(quotaApis, 'getInviteCode').mockRejectedValue(new Error('邀请码服务不可用'))
+
+    renderAccount()
+    fireEvent.click(await screen.findByRole('button', { name: '积分账户' }))
+
+    expect(await screen.findByText('邀请码服务不可用')).toBeTruthy()
+    expect(screen.queryByText('正在加载邀请码…')).toBeNull()
+    expect(screen.queryByRole('button', { name: '重新生成' })).toBeNull()
+  })
+
+  it('重新生成或兑换失败时提示错误', async () => {
+    mockQuotaReads()
+    vi.spyOn(quotaApis, 'getInviteCode').mockResolvedValue({
+      code: 'AB23CD45',
+      usedCount: 0,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+    vi.spyOn(quotaApis, 'generateInviteCode').mockRejectedValue(new Error('邀请码已用尽'))
+    vi.spyOn(quotaApis, 'redeemInviteCode').mockRejectedValue('兑换被拒绝')
+
+    renderAccount()
+    fireEvent.click(await screen.findByRole('button', { name: '积分账户' }))
+    expect(await screen.findByText('AB23CD45')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '重新生成' }))
+    expect(await screen.findByText('邀请码已用尽')).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('填写邀请码'), { target: { value: 'MN67PQ89' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认填写' }))
+    expect(await screen.findByText('操作失败，请稍后重试')).toBeTruthy()
+  })
+
+  it('邀请码加载中忽略卸载后的迟到结果', async () => {
+    mockQuotaReads()
+    const pending = deferred<{
+      code: string
+      usedCount: number
+      createdAt: string
+      updatedAt: string
+    }>()
+    vi.spyOn(quotaApis, 'getInviteCode').mockReturnValue(pending.promise)
+
+    const { unmount } = renderAccount()
+    fireEvent.click(await screen.findByRole('button', { name: '积分账户' }))
+    expect(await screen.findByText('正在加载邀请码…')).toBeTruthy()
+    unmount()
+    pending.resolve({
+      code: 'AB23CD45',
+      usedCount: 0,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+    await Promise.resolve()
   })
 
   it('reports a profile refresh failure without claiming the data is synchronized', async () => {
