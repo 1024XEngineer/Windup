@@ -7,12 +7,13 @@
 ``main`` 是开发启动入口:``python -m windup_app`` 或 ``windup`` 命令。
 """
 
+import logging
 import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from windup_framework.db import Base, engine
+from windup_framework.db import Base, engine, SessionLocal
 
 # 模型导入：触发 Base.metadata 注册，确保 create_all 能发现所有表
 from windup_ai_engine.impl.character_namer import LangChainCharacterNamer
@@ -75,10 +76,31 @@ async def _lifespan(app: FastAPI):
     """应用启动时建表，关闭时等待已排队的生成任务收敛。"""
     Base.metadata.create_all(engine)
     print_banner()
+    _recover_orphaned_generation(app)
     try:
         yield
     finally:
         app.state.generation_dispatcher.shutdown()
+
+
+def _recover_orphaned_generation(app: FastAPI) -> None:
+    """启动时把仍冻结的 PENDING 任务重新入队，RUNNING 孤儿失败并解冻。"""
+    from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
+
+    session = SessionLocal()
+    try:
+        recover_orphaned_generation_tasks(
+            session,
+            dispatcher=app.state.generation_dispatcher,
+            run_image_task=app.state.run_image_task,
+            run_action_task=app.state.run_action_task,
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
+        logging.getLogger("windup.bootstrap").exception("生成任务对账失败")
+    finally:
+        session.close()
 
 
 def create_app() -> FastAPI:

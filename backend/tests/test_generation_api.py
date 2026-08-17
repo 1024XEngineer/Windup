@@ -2,7 +2,21 @@
 
 import asyncio
 
+import pytest
+from sqlalchemy.orm import sessionmaker
+
 from windup_app.web.api.generation import GenerationTaskOut, _EventBus
+
+from conftest import seed_credit_account
+
+
+@pytest.fixture(autouse=True)
+def _gift_credits(engine):
+    """提交生成任务会冻结积分，本文件用例都预置注册赠送账户。"""
+    with sessionmaker(bind=engine)() as session:
+        seed_credit_account(session, 1)
+        seed_credit_account(session, 2)
+        session.commit()
 
 
 def _create_project(auth_client, name: str = "生成项目") -> dict:
