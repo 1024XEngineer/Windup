@@ -41,6 +41,7 @@ export interface QuickStartSession {
   readonly runId: WorkflowRun['id']
   getWorkflow(): WorkflowRun
   subscribe(listener: (run: WorkflowRun) => void): () => void
+  subscribeErrors(listener: (error: Error) => void): () => void
   resume(): Promise<WorkflowRun>
   interrupt(): Promise<WorkflowRun>
   dispose(): void
@@ -114,6 +115,13 @@ export function createQuickStartService({
   onAsyncError = (error) => console.error('[quick-start] 异步工作流错误', error),
 }: CreateQuickStartServiceOptions): QuickStartEntryService {
   const projectSpriteSizes = new Map<Project['id'], Project['spriteSize']>()
+  const controllerErrorChannels = new WeakMap<
+    WorkflowController,
+    {
+      listeners: Set<(error: Error) => void>
+      report(error: Error): void
+    }
+  >()
 
   async function resolveProjectSpriteSize(projectId: Project['id']) {
     const cached = projectSpriteSizes.get(projectId)
@@ -124,7 +132,33 @@ export function createQuickStartService({
   }
 
   function createController(workflow?: WorkflowRun): WorkflowController {
-    return createWorkflowController({ workflow, workflowRunApis, generationApis, onAsyncError })
+    const listeners = new Set<(error: Error) => void>()
+    const report = (error: Error) => {
+      try {
+        onAsyncError(error)
+      } catch (reportError) {
+        console.error('[quick-start] 异步错误上报器执行失败', reportError, error)
+      }
+      for (const listener of listeners) {
+        try {
+          listener(error)
+        } catch (listenerError) {
+          console.error('[quick-start] 页面错误订阅者执行失败', listenerError, error)
+        }
+      }
+    }
+    const controller = createWorkflowController({
+      workflow,
+      workflowRunApis,
+      generationApis,
+      onAsyncError: report,
+    })
+    controllerErrorChannels.set(controller, { listeners, report })
+    return controller
+  }
+
+  function reportControllerError(controller: WorkflowController, error: Error) {
+    controllerErrorChannels.get(controller)?.report(error)
   }
 
   function setupNode(run: WorkflowRun) {
@@ -335,9 +369,10 @@ export function createQuickStartService({
 
   function startAutomaticActionAdvance(controller: WorkflowController): () => void {
     let advancing = false
+    let stopped = false
 
     const advance = (run: WorkflowRun) => {
-      if (advancing) return
+      if (advancing || stopped) return
       const method = run.nodes.find(
         (node) =>
           node.type === 'action-generation-method' && !node.deletedAt && node.status === 'active',
@@ -369,17 +404,29 @@ export function createQuickStartService({
           characterId,
           referenceMedia: [],
         })
-      })()
-        .catch(onAsyncError)
-        .finally(() => {
+      })().then(
+        () => {
           advancing = false
-          advance(controller.getWorkflow())
-        })
+          if (!stopped) advance(controller.getWorkflow())
+        },
+        (cause: unknown) => {
+          advancing = false
+          if (stopped) return
+          stopped = true
+          reportControllerError(
+            controller,
+            cause instanceof Error ? cause : new Error('Quick Start 自动推进失败'),
+          )
+        },
+      )
     }
 
     const stop = controller.subscribe(advance)
     advance(controller.getWorkflow())
-    return stop
+    return () => {
+      stopped = true
+      stop()
+    }
   }
 
   function createSession(
@@ -398,6 +445,12 @@ export function createQuickStartService({
       runId: controller.getWorkflow().id,
       getWorkflow: () => controller.getWorkflow(),
       subscribe: (listener) => controller.subscribe(listener),
+      subscribeErrors(listener) {
+        const listeners = controllerErrorChannels.get(controller)?.listeners
+        if (!listeners) return () => undefined
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
       async resume() {
         disposed = false
         await controller.resume()
@@ -414,6 +467,7 @@ export function createQuickStartService({
         disposed = true
         stopAutomaticAdvance?.()
         stopAutomaticAdvance = null
+        controllerErrorChannels.get(controller)?.listeners.clear()
         controller.dispose()
       },
       async continueWithUploadedTemplate(file, actionDescription, signal) {

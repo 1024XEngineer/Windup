@@ -16,7 +16,7 @@ import {
   createRealQuickStartService,
   type QuickStartMediaApis,
 } from './service'
-import { ProjectNameConflictError } from '@/entities'
+import { ProjectNameConflictError, WorkflowRunConflictError } from '@/entities'
 import { registerApiAccessTokenProvider } from '@/shared/api'
 
 function createWorkflowRunApis(initialRuns: readonly WorkflowRun[] = []): WorkflowRunApis {
@@ -1076,5 +1076,83 @@ describe('createQuickStartService', () => {
         }),
       )
     })
+  })
+
+  it('向会话订阅者报告自动推进中的乐观锁冲突', async () => {
+    const run = actionRun(true)
+    const storedApis = createWorkflowRunApis([run])
+    let methodAttempts = 0
+    const workflowRunApis: WorkflowRunApis = {
+      ...storedApis,
+      update: vi.fn(async (nextRun: WorkflowRun) => {
+        const method = nextRun.nodes.find((node) => node.type === 'action-generation-method')
+        if (method?.type === 'action-generation-method' && method.method === 'video-cropping') {
+          methodAttempts += 1
+          throw new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试')
+        }
+        return storedApis.update(nextRun)
+      }),
+    }
+    const service = createQuickStartService({
+      workflowRunApis,
+      generationApis: pendingGenerationApis(),
+      prepareProject: async () => ({ id: 'project-1', spriteSize: { width: 256, height: 256 } }),
+      projectApis: projectReader(),
+    })
+    const session = await service.open(run.id)
+    const errors: Error[] = []
+    const unsubscribe = session.subscribeErrors((error) => errors.push(error))
+
+    await session.confirmFirstFrame('https://example.test/first-frame-2.png')
+
+    await vi.waitFor(() => expect(errors).toEqual([expect.any(WorkflowRunConflictError)]))
+    await session.interrupt()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(methodAttempts).toBe(1)
+    unsubscribe()
+  })
+
+  it('会话销毁后不再报告尚未结束的自动推进错误', async () => {
+    const run = actionRun(true)
+    const storedApis = createWorkflowRunApis([run])
+    const advanceControl: { reject?: (error: Error) => void } = {}
+    let markAdvanceStarted: (() => void) | null = null
+    const advanceStarted = new Promise<void>((resolve) => {
+      markAdvanceStarted = resolve
+    })
+    const workflowRunApis: WorkflowRunApis = {
+      ...storedApis,
+      update: vi.fn(async (nextRun: WorkflowRun) => {
+        const method = nextRun.nodes.find((node) => node.type === 'action-generation-method')
+        if (method?.type === 'action-generation-method' && method.method === 'video-cropping') {
+          markAdvanceStarted?.()
+          return new Promise<WorkflowRun>((_resolve, reject) => {
+            advanceControl.reject = reject
+          })
+        }
+        return storedApis.update(nextRun)
+      }),
+    }
+    const onAsyncError = vi.fn()
+    const service = createQuickStartService({
+      workflowRunApis,
+      generationApis: pendingGenerationApis(),
+      prepareProject: async () => ({ id: 'project-1', spriteSize: { width: 256, height: 256 } }),
+      projectApis: projectReader(),
+      onAsyncError,
+    })
+    const session = await service.open(run.id)
+    const pageError = vi.fn()
+    session.subscribeErrors(pageError)
+
+    await session.confirmFirstFrame('https://example.test/first-frame-2.png')
+    await advanceStarted
+    session.dispose()
+    if (!advanceControl.reject) throw new Error('自动推进请求没有启动')
+    advanceControl.reject(new Error('旧会话保存失败'))
+    await Promise.resolve()
+
+    expect(onAsyncError).not.toHaveBeenCalled()
+    expect(pageError).not.toHaveBeenCalled()
   })
 })

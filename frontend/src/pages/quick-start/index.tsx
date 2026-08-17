@@ -7,7 +7,7 @@ import {
   type ChangeEvent,
   type FormEvent,
 } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 
 import {
   type ActionFirstFrameWorkflowNode,
@@ -15,6 +15,7 @@ import {
   type WorkflowRun,
   type WorkflowNode,
   type WorkflowNodeType,
+  WorkflowRunConflictError,
 } from '@/entities'
 import { ExportButton, type ExportPackageModel } from '@/features/export-package'
 import {
@@ -72,15 +73,20 @@ export function QuickStartPage({ service }: QuickStartPageProps) {
     return service ?? quickStartService
   }, [service])
   const [createdSession, setCreatedSession] = useState<QuickStartSession | null>(null)
+  const consumeCreatedSession = useCallback((consumed: QuickStartSession) => {
+    setCreatedSession((current) => (current === consumed ? null : current))
+  }, [])
   const characterId = searchParams.get('characterId')
   const outfitId = searchParams.get('outfitId')
 
   return runId ? (
     <QuickStartRun
+      key={runId}
       service={activeService}
       runId={runId}
       initialSession={createdSession?.runId === runId ? createdSession : null}
       onSessionCreated={setCreatedSession}
+      onInitialSessionConsumed={consumeCreatedSession}
     />
   ) : characterId && outfitId ? (
     <QuickStartActionInput
@@ -392,17 +398,21 @@ function QuickStartRun({
   runId,
   initialSession,
   onSessionCreated,
+  onInitialSessionConsumed,
 }: {
   service: QuickStartEntryService
   runId: string
   initialSession: QuickStartSession | null
   onSessionCreated: (session: QuickStartSession) => void
+  onInitialSessionConsumed: (session: QuickStartSession) => void
 }) {
   const navigate = useNavigate()
+  const location = useLocation()
   const [session, setSession] = useState<QuickStartSession | null>(null)
   const [run, setRun] = useState<WorkflowRun | null>(null)
   const [restoring, setRestoring] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [workflowConflict, setWorkflowConflict] = useState(false)
   const [selectedCandidate, setSelectedCandidate] = useState<string | null>(null)
   const [selectedFirstFrame, setSelectedFirstFrame] = useState<string | null>(null)
   const [actionDescription, setActionDescription] = useState('')
@@ -414,38 +424,75 @@ function QuickStartRun({
   const [confirmingCandidate, setConfirmingCandidate] = useState(false)
   const [confirmingFirstFrame, setConfirmingFirstFrame] = useState(false)
   const automaticPublishAttempt = useRef<string | null>(null)
+  const workflowConflictRef = useRef(false)
+  const initialSessionRef = useRef(initialSession)
+  const activeSessionRef = useRef<QuickStartSession | null>(null)
+  const mountedRef = useRef(true)
+  const reportWorkflowError = useCallback((cause: unknown, fallback: string) => {
+    const presented = presentWorkflowError(cause, fallback)
+    if (workflowConflictRef.current && !presented.conflict) return
+    workflowConflictRef.current ||= presented.conflict
+    setError(presented.message)
+    setWorkflowConflict(workflowConflictRef.current)
+  }, [])
+  const clearWorkflowError = useCallback(() => {
+    if (workflowConflictRef.current) return
+    setError(null)
+    setWorkflowConflict(false)
+  }, [])
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      activeSessionRef.current = null
+    }
+  }, [])
 
   useEffect(() => {
     let active = true
     let currentSession: QuickStartSession | null = null
     let unsubscribe: () => void = () => undefined
+    let unsubscribeErrors: () => void = () => undefined
     setRestoring(true)
     setSession(null)
     setRun(null)
+    workflowConflictRef.current = false
+    setError(null)
+    setWorkflowConflict(false)
 
     void (async () => {
-      const nextSession = initialSession ?? (await service.open(runId))
+      const providedSession = initialSessionRef.current
+      initialSessionRef.current = null
+      const nextSession = providedSession ?? (await service.open(runId))
       if (!active) {
         nextSession.dispose()
         return
       }
       currentSession = nextSession
+      activeSessionRef.current = nextSession
+      if (providedSession) onInitialSessionConsumed(providedSession)
       setSession(nextSession)
       setRun(nextSession.getWorkflow())
+      unsubscribeErrors = nextSession.subscribeErrors((nextError) => {
+        if (!active) return
+        reportWorkflowError(nextError, '自动生成流程失败')
+      })
       unsubscribe = nextSession.subscribe((updated) => {
         if (active) {
           setRun(updated)
-          setError(null)
+          clearWorkflowError()
         }
       })
-      setRun(await nextSession.resume())
+      const resumed = await nextSession.resume()
       if (active) {
-        setError(null)
+        setRun(resumed)
+        clearWorkflowError()
         setRestoring(false)
       }
     })().catch((cause) => {
       if (active) {
-        setError(errorMessage(cause, '恢复生成任务失败'))
+        reportWorkflowError(cause, '恢复生成任务失败')
         setRestoring(false)
       }
     })
@@ -453,9 +500,11 @@ function QuickStartRun({
     return () => {
       active = false
       unsubscribe()
+      unsubscribeErrors()
+      if (activeSessionRef.current === currentSession) activeSessionRef.current = null
       currentSession?.dispose()
     }
-  }, [initialSession, runId, service])
+  }, [clearWorkflowError, onInitialSessionConsumed, reportWorkflowError, runId, service])
 
   useEffect(() => {
     if (!run || !session) {
@@ -480,31 +529,46 @@ function QuickStartRun({
         setExportModel(nextExportModel)
       })
       .catch((cause) => {
-        if (active) setError(errorMessage(cause, '读取生成结果失败'))
+        if (active) {
+          reportWorkflowError(cause, '读取生成结果失败')
+        }
       })
     return () => {
       active = false
     }
-  }, [run, session])
+  }, [reportWorkflowError, run, session])
 
   const publishToPlaytest = useCallback(async () => {
-    if (publishing || !session) return
+    const targetSession = session
+    if (
+      workflowConflictRef.current ||
+      publishing ||
+      !targetSession ||
+      activeSessionRef.current !== targetSession
+    )
+      return
     setPublishing(true)
-    setError(null)
+    clearWorkflowError()
     try {
-      const approved = await session.approveReview()
+      const approved = await targetSession.approveReview()
+      if (!mountedRef.current || activeSessionRef.current !== targetSession) return
       setRun(approved)
-      const info = session.getCharacterInfo() ?? (await session.resolveCharacterInfo())
+      let info = targetSession.getCharacterInfo()
+      if (!info) {
+        info = await targetSession.resolveCharacterInfo()
+        if (!mountedRef.current || activeSessionRef.current !== targetSession) return
+      }
       if (!info) throw new Error('动作已生成，但没有找到对应的角色资产')
       const approvedAction = latestActionStep(approved)
       const actionId = approvedAction?.type === 'action-full-frame' ? approvedAction.id : undefined
       navigate(playtestPath(info.characterId, info.outfitId, actionId))
     } catch (cause) {
-      setError(errorMessage(cause, '导入预览台失败'))
+      if (!mountedRef.current || activeSessionRef.current !== targetSession) return
+      reportWorkflowError(cause, '导入预览台失败')
     } finally {
-      setPublishing(false)
+      if (mountedRef.current && activeSessionRef.current === targetSession) setPublishing(false)
     }
-  }, [navigate, publishing, session])
+  }, [clearWorkflowError, navigate, publishing, reportWorkflowError, session])
 
   useEffect(() => {
     const publishKey = run ? automaticPublishKey(run) : null
@@ -568,17 +632,17 @@ function QuickStartRun({
 
   async function interrupt() {
     try {
-      if (!session) return
+      if (workflowConflictRef.current || !session) return
       setRun(await session.interrupt())
     } catch (cause) {
-      setError(errorMessage(cause, '中断自动制作失败'))
+      reportWorkflowError(cause, '中断自动制作失败')
     }
   }
 
   async function confirmSelection() {
-    if (!selectedCandidate || confirmingCandidate) return
+    if (workflowConflictRef.current || !selectedCandidate || confirmingCandidate) return
     setConfirmingCandidate(true)
-    setError(null)
+    clearWorkflowError()
     try {
       if (!session) return
       const updated = await session.confirmCandidate(selectedCandidate, actionDescription)
@@ -586,38 +650,44 @@ function QuickStartRun({
       setSelectedCandidate(null)
       setActionDescription('')
     } catch (cause) {
-      setError(errorMessage(cause, '确认选择失败'))
+      reportWorkflowError(cause, '确认选择失败')
     } finally {
       setConfirmingCandidate(false)
     }
   }
 
   async function confirmFirstFrame() {
-    if (!selectedFirstFrame || confirmingFirstFrame) return
+    if (workflowConflictRef.current || !selectedFirstFrame || confirmingFirstFrame) return
     setConfirmingFirstFrame(true)
-    setError(null)
+    clearWorkflowError()
     try {
       if (!session) return
       const updated = await session.confirmFirstFrame(selectedFirstFrame)
       setRun(updated)
       setSelectedFirstFrame(null)
     } catch (cause) {
-      setError(errorMessage(cause, '确认动作首帧失败'))
+      reportWorkflowError(cause, '确认动作首帧失败')
     } finally {
       setConfirmingFirstFrame(false)
     }
   }
 
   async function regenerate() {
-    if (!run) return
+    const targetSession = session
+    if (!run || !targetSession || activeSessionRef.current !== targetSession) return
     const prompt = workflowPrompt(run)
     if (!prompt) return
     try {
       const newSession = await service.start(prompt)
+      if (!mountedRef.current || activeSessionRef.current !== targetSession) {
+        newSession.dispose()
+        return
+      }
       onSessionCreated(newSession)
       navigate(`/quick-start/${encodeURIComponent(newSession.runId)}`)
     } catch (cause) {
-      setError(errorMessage(cause, '重新生成失败'))
+      if (!mountedRef.current || activeSessionRef.current !== targetSession) return
+      reportWorkflowError(cause, '重新生成失败')
     }
   }
 
@@ -733,7 +803,7 @@ function QuickStartRun({
                   <button
                     type="button"
                     onClick={() => void confirmFirstFrame()}
-                    disabled={!selectedFirstFrame || confirmingFirstFrame}
+                    disabled={!selectedFirstFrame || confirmingFirstFrame || workflowConflict}
                     className="rounded-xl bg-app-accent px-6 py-3 text-sm font-bold text-app-on-accent transition hover:bg-app-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {confirmingFirstFrame ? '正在确认…' : '确认首帧，生成完整动作'}
@@ -814,7 +884,7 @@ function QuickStartRun({
                       <button
                         type="button"
                         onClick={() => void confirmSelection()}
-                        disabled={confirmingCandidate}
+                        disabled={confirmingCandidate || workflowConflict}
                         className="rounded-xl bg-app-accent px-6 py-3 text-sm font-bold text-app-on-accent transition hover:bg-app-accent-hover"
                       >
                         {confirmingCandidate ? '正在提交…' : '确认选择，继续下一步'}
@@ -891,6 +961,7 @@ function QuickStartRun({
                 <button
                   type="button"
                   onClick={() => void interrupt()}
+                  disabled={workflowConflict}
                   className="rounded-xl border border-app-line-strong px-4 py-2 text-xs font-semibold text-app-ink-soft"
                 >
                   中断自动制作
@@ -900,7 +971,7 @@ function QuickStartRun({
                 <button
                   type="button"
                   onClick={() => void publishToPlaytest()}
-                  disabled={publishing}
+                  disabled={publishing || workflowConflict}
                   className="rounded-lg bg-app-info px-4 py-2 text-xs font-bold text-app-on-accent transition hover:bg-app-info-hover disabled:cursor-wait disabled:opacity-60"
                 >
                   {publishing ? '正在自动导入…' : '重新导入预览台'}
@@ -918,9 +989,21 @@ function QuickStartRun({
             </div>
           </div>
           {error ? (
-            <p role="alert" className="mt-3 text-sm text-app-danger">
-              {error}
-            </p>
+            <div
+              role="alert"
+              className="mt-3 flex flex-wrap items-center gap-3 text-sm text-app-danger"
+            >
+              <span>{error}</span>
+              {workflowConflict ? (
+                <Link
+                  reloadDocument
+                  to={`${location.pathname}${location.search}${location.hash}`}
+                  className="rounded-lg border border-current px-3 py-1.5 text-xs font-bold text-inherit"
+                >
+                  加载最新版本
+                </Link>
+              ) : null}
+            </div>
           ) : null}
           {status.error ? (
             <p role="alert" className="mt-3 text-sm text-app-danger">
@@ -1081,4 +1164,14 @@ function nodeStatusLabel(node: WorkflowNode) {
 
 function errorMessage(cause: unknown, fallback: string) {
   return cause instanceof Error && cause.message.trim() ? cause.message.trim() : fallback
+}
+
+function presentWorkflowError(cause: unknown, fallback: string) {
+  if (cause instanceof WorkflowRunConflictError) {
+    return {
+      message: '工作流已在其他位置更新，请加载最新版本后继续。',
+      conflict: true,
+    }
+  }
+  return { message: errorMessage(cause, fallback), conflict: false }
 }

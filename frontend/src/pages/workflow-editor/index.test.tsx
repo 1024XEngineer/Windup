@@ -4,15 +4,16 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Link, MemoryRouter, Route, Routes } from 'react-router'
 
-import type {
-  Character,
-  CharacterTemplateWorkflowNode,
-  Generation,
-  GenerationApis,
-  MediaReference,
-  Project,
-  WorkflowRun,
-  WorkflowRunApis,
+import {
+  WorkflowRunConflictError,
+  type Character,
+  type CharacterTemplateWorkflowNode,
+  type Generation,
+  type GenerationApis,
+  type MediaReference,
+  type Project,
+  type WorkflowRun,
+  type WorkflowRunApis,
 } from '@/entities'
 import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
 import { WorkflowEditorPage } from './index'
@@ -199,6 +200,41 @@ describe('WorkflowEditorPage real runtime boundary', () => {
 
     expect((await screen.findByRole('alert')).textContent).toContain('Generation 后端尚未实现')
     expect(screen.queryByRole('button', { name: /选择角色候选/ })).toBeNull()
+  })
+
+  it('保存发生乐观锁冲突时提示加载当前 WorkflowRun 的最新版本', async () => {
+    const session = createSession(workflowFixture(), {
+      workflowRunApis: {
+        update: vi.fn(async () => {
+          throw new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试')
+        }),
+      },
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '生成角色候选' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('工作流已在其他位置更新，请加载最新版本后继续。')
+    expect(screen.getByRole('link', { name: '加载最新版本' }).getAttribute('href')).toBe(
+      '/workflow-editor/42',
+    )
+  })
+
+  it('恢复后台任务时发生乐观锁冲突也提示加载最新版本', async () => {
+    const session = createSession()
+    vi.spyOn(session.controller, 'resume').mockRejectedValue(
+      new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试'),
+    )
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('工作流已在其他位置更新，请加载最新版本后继续。')
+    expect(screen.getByRole('link', { name: '加载最新版本' }).getAttribute('href')).toBe(
+      '/workflow-editor/42',
+    )
   })
 
   it('确认身份母版后采用会话创建的 Character 继续动作流程', async () => {
@@ -723,6 +759,31 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(screen.getByRole('alert').textContent).toContain('异步保存失败')
   })
 
+  it('异步冲突出现后不被后续普通命令错误清除', async () => {
+    let reportError: ((error: Error) => void) | null = null
+    const create = vi.fn(() => Promise.reject(new Error('Generation 后端尚未实现')))
+    const session = createSession(workflowFixture(), {
+      generationApis: generationApisFixture({ create: create as GenerationApis['create'] }),
+    })
+    session.subscribeErrors = vi.fn((listener) => {
+      reportError = listener
+      return () => undefined
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+    await screen.findByLabelText('当前项目')
+
+    act(() => reportError?.(new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试')))
+    expect(screen.getByRole('link', { name: '加载最新版本' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '生成角色候选' }))
+    expect(create).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert').textContent).toContain(
+      '工作流已在其他位置更新，请加载最新版本后继续。',
+    )
+    expect(screen.getByRole('link', { name: '加载最新版本' })).toBeTruthy()
+  })
+
   it('把 React Flow 限定为系统节点的拖动画布，不允许自由连线、重连或删除', async () => {
     defaultSessionLoader.mockResolvedValue(createSession())
     renderEditor('/workflow-editor/42')
@@ -784,6 +845,7 @@ function renderEditor(path: string) {
 interface SessionFixtureOptions {
   character?: Character | null
   generationApis?: GenerationApis
+  workflowRunApis?: Partial<WorkflowRunApis>
   uploadReferenceImage?: WorkflowEditorSession['uploadReferenceImage']
   publishReviewedAction?(reviewNodeId: string): Promise<Character>
 }
@@ -805,6 +867,7 @@ function createSession(
       return structuredClone(workflow)
     },
     async remove() {},
+    ...options.workflowRunApis,
   }
   const generationApis = options.generationApis ?? generationApisFixture()
   const controller = createWorkflowController({

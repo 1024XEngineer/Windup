@@ -12,7 +12,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { useParams } from 'react-router'
+import { Link, useLocation, useParams } from 'react-router'
 
 import {
   CHARACTER_PERSPECTIVE,
@@ -30,6 +30,7 @@ import {
   type WorkflowGenerationRole,
   type WorkflowNode,
   type WorkflowRun,
+  WorkflowRunConflictError,
 } from '@/entities'
 import type { WorkflowController } from '@/features/workflow-controller'
 import {
@@ -134,6 +135,7 @@ const nodeTypes = { 'workflow-card': WorkflowCard }
  */
 export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}) {
   const { runId } = useParams<{ runId: string }>()
+  const location = useLocation()
   const [session, setSession] = useState<WorkflowEditorSession | null>(null)
   const [character, setCharacter] = useState<Character | null>(null)
   const [run, setRun] = useState<WorkflowRun | null>(null)
@@ -145,15 +147,30 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
   /** 正在执行命令的分支。必须是集合：并行分支各自持锁，后起的不能顶掉先起的。 */
   const [busyBranches, setBusyBranches] = useState<ReadonlySet<string>>(() => new Set())
   const [error, setError] = useState<string | null>(null)
+  const [workflowConflict, setWorkflowConflict] = useState(false)
   const [resumeError, setResumeError] = useState<string | null>(null)
   const [generationReadError, setGenerationReadError] = useState<string | null>(null)
   const [canvasNodes, setCanvasNodes] = useState<WorkflowCardNode[]>([])
   /** 当前会话的有效期。换 WorkflowRun 就 abort，所有异步回调只认这一个信号。 */
   const sessionAbortRef = useRef<AbortController | null>(null)
+  const workflowConflictRef = useRef(false)
   /** 最近一次生成结果读取。同一会话内被新的读取顶掉时 abort，避免旧结果盖住新结果。 */
   const latestReadAbortRef = useRef<AbortController | null>(null)
   /** 已到终态的生成结果，按 taskId 记住，避免每次推进都重拉一遍。 */
   const settledGenerationsRef = useRef(new Map<Generation['id'], Generation>())
+  const reportWorkflowError = useCallback((cause: unknown, fallback: string) => {
+    const presented = presentWorkflowError(cause, fallback)
+    if (workflowConflictRef.current && !presented.conflict) return
+    workflowConflictRef.current ||= presented.conflict
+    if (presented.conflict) setResumeError(null)
+    setError(presented.message)
+    setWorkflowConflict(workflowConflictRef.current)
+  }, [])
+  const clearWorkflowError = useCallback(() => {
+    if (workflowConflictRef.current) return
+    setError(null)
+    setWorkflowConflict(false)
+  }, [])
 
   const requestGenerations = useCallback(
     (targetSession: WorkflowEditorSession, targetRun: WorkflowRun, sessionSignal: AbortSignal) => {
@@ -178,14 +195,14 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
   const runCommand = useCallback(
     (branchKey: string, command: () => Promise<void>) => {
       // 同一分支内互斥，防重复提交；别的分支照常能操作，也不会被这条命令解锁。
-      if (busyBranches.has(branchKey)) return
+      if (workflowConflictRef.current || busyBranches.has(branchKey)) return
       const sessionSignal = sessionAbortRef.current?.signal
       setBusyBranches((current) => new Set(current).add(branchKey))
-      setError(null)
+      clearWorkflowError()
       void command()
         .catch((cause: unknown) => {
           if (sessionSignal?.aborted) return
-          setError(errorMessage(cause, '工作流命令执行失败'))
+          reportWorkflowError(cause, '工作流命令执行失败')
         })
         .finally(() => {
           if (sessionSignal?.aborted) return
@@ -197,7 +214,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
           })
         })
     },
-    [busyBranches],
+    [busyBranches, clearWorkflowError, reportWorkflowError],
   )
 
   useEffect(() => {
@@ -214,7 +231,9 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
     setActionMenuLevel('root')
     setSelectedOutfitId(null)
     setBusyBranches(new Set())
+    workflowConflictRef.current = false
     setError(null)
+    setWorkflowConflict(false)
     setResumeError(null)
     setGenerationReadError(null)
     setCanvasNodes([])
@@ -237,7 +256,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
         setCharacter(nextSession.character)
         unsubscribeErrors = nextSession.subscribeErrors((nextError) => {
           if (signal.aborted) return
-          setError(errorMessage(nextError, '工作流异步处理失败'))
+          reportWorkflowError(nextError, '工作流异步处理失败')
         })
         unsubscribe = nextSession.controller.subscribe((nextRun) => {
           if (signal.aborted) return
@@ -248,12 +267,17 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
           await nextSession.controller.resume()
         } catch (cause: unknown) {
           if (signal.aborted) return
-          setResumeError(errorMessage(cause, '恢复 WorkflowRun 失败'))
+          const presented = presentWorkflowError(cause, '恢复 WorkflowRun 失败')
+          if (presented.conflict) {
+            reportWorkflowError(cause, '恢复 WorkflowRun 失败')
+          } else if (!workflowConflictRef.current) {
+            setResumeError(presented.message)
+          }
         }
       })
       .catch((cause: unknown) => {
         if (signal.aborted) return
-        setError(errorMessage(cause, '恢复 WorkflowRun 失败'))
+        reportWorkflowError(cause, '恢复 WorkflowRun 失败')
       })
 
     return () => {
@@ -263,7 +287,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
       unsubscribeErrors()
       loaded?.dispose()
     }
-  }, [loadSession, requestGenerations, runId])
+  }, [loadSession, reportWorkflowError, requestGenerations, runId])
 
   const exportModels = useMemo(() => {
     const models = new Map<string, ExportPackageModel>()
@@ -406,6 +430,15 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
           role="alert"
         >
           <span>{visibleError}</span>
+          {workflowConflict ? (
+            <Link
+              reloadDocument
+              to={`${location.pathname}${location.search}${location.hash}`}
+              className="rounded-md border border-current bg-transparent px-2 py-[5px] font-bold text-inherit"
+            >
+              加载最新版本
+            </Link>
+          ) : null}
           {!error && !resumeError && generationReadError ? (
             <button
               type="button"
@@ -1292,4 +1325,14 @@ function findDependency<T extends WorkflowNode['type']>(
 
 function errorMessage(cause: unknown, fallback: string) {
   return cause instanceof Error && cause.message ? cause.message : fallback
+}
+
+function presentWorkflowError(cause: unknown, fallback: string) {
+  if (cause instanceof WorkflowRunConflictError) {
+    return {
+      message: '工作流已在其他位置更新，请加载最新版本后继续。',
+      conflict: true,
+    }
+  }
+  return { message: errorMessage(cause, fallback), conflict: false }
 }
