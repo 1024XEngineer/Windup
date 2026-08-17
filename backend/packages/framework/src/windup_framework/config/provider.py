@@ -22,15 +22,16 @@ class AIProviderSettings(BaseSettings):
     chat_completions_path: str = "/chat/completions"
 
     # ── 各能力用哪个模型 ──────────────────────────────────────────────────
-    # 分成三个字段而不是共用上面那个 ``model``:三条能力同时在用不同模型,共用一个
+    # 分成字段而不是共用上面那个 ``model``:各能力同时在用不同模型,共用一个
     # 字段意味着换其中一个就把另外两个也换了。默认值即当前实测在用的型号,
-    # 部署侧可用 AI_VIDEO_MODEL / AI_IMAGE_MODEL 覆盖。
+    # 部署侧可用 AI_CHAT_MODEL / AI_VIDEO_MODEL / AI_IMAGE_MODEL 覆盖。
     #
     # **只有型号可配,请求形状不可配**:哪个模型吃 image_list、哪个吃
     # input_reference、FAL 队列路径长什么样,都是该模型的 API 事实而非运行参数,
     # 写在 providers.sufy 的映射表里。放进配置会把"填错了会怎样"从部署期推到
     # 运行期 —— 字段塞错不会立刻报错,任务照常 queued,直到生成阶段才 failed,
     # 而费用可能已经产生(2026-07-29 实测)。
+    chat_model: str = "gpt-4o-mini"
     video_model: str = "kling-v2-5-turbo"
     image_model: str = "gemini-2.5-flash-image"
 

@@ -1,7 +1,25 @@
 """角色 CRUD API 集成测试。"""
 
+import pytest
+
 from windup_app.server.character.model import Character
+from windup_app.server.character.service import service as character_service
 from windup_common.enums.character import CharacterStatus
+
+
+class _FakeNamer:
+    def name_from_description(self, description: str) -> str:
+        return f"名:{description}"[:20]
+
+
+@pytest.fixture(autouse=True)
+def _inject_fake_character_namer():
+    original = character_service._namer
+    character_service._namer = _FakeNamer()
+    try:
+        yield
+    finally:
+        character_service._namer = original
 
 
 def _create_project(auth_client, name: str = "默认项目") -> dict:
@@ -81,7 +99,7 @@ def test_create_without_name(auth_client):
     resp = auth_client.post("/characters", json=_payload(project["id"], name=None))
 
     assert resp.json()["code"] == 200
-    assert resp.json()["data"]["name"] is None
+    assert resp.json()["data"]["name"] == "名:主角"
 
 
 def test_create_name_roundtrip(auth_client):

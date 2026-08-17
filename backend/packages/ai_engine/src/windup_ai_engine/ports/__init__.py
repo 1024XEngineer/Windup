@@ -169,3 +169,10 @@ class CharacterGeneratorPort(Protocol):
         progress: ProgressPort,
         canvas: tuple[int, int] | None = None,
     ) -> GeneratedAction: ...
+
+
+@runtime_checkable
+class CharacterNamerPort(Protocol):
+    """根据角色描述生成短名称。不是 Agent，只是一次 LLM 调用。"""
+
+    def name_from_description(self, description: str) -> str: ...
