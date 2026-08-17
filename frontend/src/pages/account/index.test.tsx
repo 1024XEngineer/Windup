@@ -162,7 +162,8 @@ describe('AccountPage', () => {
 
   it('updates the nickname and synchronizes the Header immediately', async () => {
     const { apis } = renderAccount()
-    const nickname = await screen.findByLabelText('昵称')
+    expect(await screen.findByText('资料已同步')).toBeTruthy()
+    const nickname = screen.getByLabelText('昵称')
 
     fireEvent.change(nickname, { target: { value: 'New Reader' } })
     fireEvent.click(screen.getByRole('button', { name: '保存昵称' }))
@@ -176,7 +177,8 @@ describe('AccountPage', () => {
     const apis = createApis()
     apis.updateNickname.mockRejectedValue(new Error('昵称已存在'))
     renderAccount(apis)
-    const nickname = await screen.findByDisplayValue('Reader')
+    expect(await screen.findByText('资料已同步')).toBeTruthy()
+    const nickname = screen.getByDisplayValue('Reader')
 
     fireEvent.change(nickname, { target: { value: 'Taken Name' } })
     fireEvent.click(screen.getByRole('button', { name: '保存昵称' }))
