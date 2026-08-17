@@ -1,8 +1,10 @@
 import { useEffect, useId, useReducer, useRef, useState, type FormEvent } from 'react'
 
 import accountBadgeArtwork from '@/assets/account/illustrations/account-badge.webp'
+import { CREDIT_REASON_LABELS } from '@/entities'
 import type { User } from '@/entities'
 import { useAuthSession } from '@/features/auth-session'
+import { formatCreditDateTime, useQuotaBalance, useQuotaTransactions } from '@/features/quota'
 
 import './account.css'
 import { createProfileState, initialSecurityState, profileReducer, securityReducer } from './state'
@@ -25,7 +27,125 @@ function formatVerificationTime(value: string): string {
   }).format(date)
 }
 
-/** 账号页以 /auth/me 为事实来源；会话层负责把刷新和编辑结果同步给 Header。 */
+function formatCredits(value: number): string {
+  return value.toLocaleString('zh-CN')
+}
+
+/** 积分页签：余额概览 + 最近流水。独立组件挂载即查询，切走再切回会刷新数据。 */
+function QuotaSection() {
+  const balance = useQuotaBalance(true)
+  const transactions = useQuotaTransactions(true)
+  const account = balance.account
+  const totalPages = Math.max(1, Math.ceil(transactions.total / transactions.pageSize))
+
+  const summaryRows: Array<[string, string]> = [
+    ['当前余额', account ? formatCredits(account.balance) : balance.status === 'error' ? '—' : '…'],
+    ['冻结中', account ? formatCredits(account.frozen) : '…'],
+    ['累计获得', account ? formatCredits(account.totalEarned) : '…'],
+    ['累计消耗', account ? formatCredits(account.totalSpent) : '…'],
+  ]
+
+  return (
+    <div>
+      <header>
+        <h2 className="text-xl font-semibold tracking-[-0.025em] text-app-ink-soft">积分</h2>
+        <p className="mt-1.5 text-sm text-app-muted">查看你的积分余额与使用流水。</p>
+      </header>
+
+      <dl className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {summaryRows.map(([label, value]) => (
+          <div
+            key={label}
+            className="rounded-xl border border-app-line bg-app-surface-muted px-4 py-3"
+          >
+            <dt className="text-xs text-app-faint">{label}</dt>
+            <dd className="mt-1 font-mono text-2xl font-semibold text-app-ink">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      {balance.status === 'error' && (
+        <p
+          role="alert"
+          className="mt-3 rounded-lg bg-app-danger-soft px-3 py-2.5 text-sm text-app-danger"
+        >
+          {balance.error}
+        </p>
+      )}
+
+      <div className="mt-6">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-app-ink-soft">最近流水</h3>
+          {transactions.status === 'ready' && (
+            <span className="text-xs text-app-faint">共 {transactions.total} 条</span>
+          )}
+        </div>
+
+        {transactions.status === 'loading' ? (
+          <p className="mt-3 text-sm text-app-muted">正在加载流水…</p>
+        ) : transactions.status === 'error' ? (
+          <p
+            role="alert"
+            className="mt-3 rounded-lg bg-app-danger-soft px-3 py-2.5 text-sm text-app-danger"
+          >
+            {transactions.error}
+          </p>
+        ) : transactions.transactions.length === 0 ? (
+          <p className="mt-3 text-sm text-app-muted">还没有积分流水。</p>
+        ) : (
+          <ul className="mt-3 divide-y divide-app-line overflow-hidden rounded-xl border border-app-line bg-app-surface-muted">
+            {transactions.transactions.map((transaction) => (
+              <li key={transaction.id} className="flex items-center gap-4 px-4 py-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-app-ink-soft">
+                    {CREDIT_REASON_LABELS[transaction.reason]}
+                  </p>
+                  <p className="mt-0.5 text-xs text-app-faint">
+                    {formatCreditDateTime(transaction.createdAt)} · 余额{' '}
+                    {formatCredits(transaction.balanceAfter)}
+                  </p>
+                </div>
+                <span
+                  className={`shrink-0 font-mono text-sm font-semibold ${
+                    transaction.delta >= 0 ? 'text-app-accent' : 'text-app-danger'
+                  }`}
+                >
+                  {transaction.delta > 0 ? '+' : ''}
+                  {formatCredits(transaction.delta)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {totalPages > 1 && (
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              disabled={transactions.page <= 1}
+              onClick={() => transactions.loadPage(transactions.page - 1)}
+              className="rounded-md border border-app-line px-3 py-1.5 text-xs font-medium text-app-ink-soft transition-colors hover:bg-app-accent-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:text-app-faint"
+            >
+              上一页
+            </button>
+            <span className="text-xs text-app-faint">
+              {transactions.page} / {totalPages}
+            </span>
+            <button
+              type="button"
+              disabled={transactions.page >= totalPages}
+              onClick={() => transactions.loadPage(transactions.page + 1)}
+              className="rounded-md border border-app-line px-3 py-1.5 text-xs font-medium text-app-ink-soft transition-colors hover:bg-app-accent-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:text-app-faint"
+            >
+              下一页
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** 账号中心页以 /auth/me 为事实来源；会话层负责把刷新和编辑结果同步给 Header。 */
 export function AccountPage() {
   const session = useAuthSession()
   const {
@@ -42,7 +162,7 @@ export function AccountPage() {
     createProfileState,
   )
   const [security, dispatchSecurity] = useReducer(securityReducer, initialSecurityState)
-  const [activeSection, setActiveSection] = useState<'profile' | 'security'>('profile')
+  const [activeSection, setActiveSection] = useState<'profile' | 'security' | 'quota'>('profile')
   const nicknameId = useId()
   const oldPasswordId = useId()
   const newPasswordId = useId()
@@ -114,7 +234,7 @@ export function AccountPage() {
     void logout().catch(() => undefined)
   }
 
-  function selectSection(section: 'profile' | 'security') {
+  function selectSection(section: 'profile' | 'security' | 'quota') {
     setActiveSection(section)
     dispatchProfile({ type: 'sectionChanged' })
     dispatchSecurity({ type: 'sectionChanged' })
@@ -175,6 +295,7 @@ export function AccountPage() {
                 [
                   ['profile', '个人资料'],
                   ['security', '登录安全'],
+                  ['quota', '积分'],
                 ] as const
               ).map(([section, label]) => (
                 <button
@@ -298,7 +419,7 @@ export function AccountPage() {
                   </div>
                 </form>
               </div>
-            ) : (
+            ) : activeSection === 'security' ? (
               <div>
                 <header>
                   <h2 className="text-xl font-semibold tracking-[-0.025em] text-app-ink-soft">
@@ -371,6 +492,8 @@ export function AccountPage() {
                   </button>
                 </form>
               </div>
+            ) : (
+              <QuotaSection />
             )}
           </section>
         </div>

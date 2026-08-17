@@ -66,6 +66,19 @@ export type { GenerationApiConfig, GenerationTransport } from './generation/api'
 export { createMediaApis } from './media/api'
 export type { MediaApis, MediaCategory, MediaReference } from './media'
 
+/* 积分 —— 账户余额与流水查询 */
+export { createQuotaApis, quotaApis } from './quota'
+export type {
+  BillingMode,
+  CreateQuotaApisOptions,
+  CreditAccount,
+  CreditReason,
+  CreditTransaction,
+  QuotaApis,
+  QuotaTransactionPageQuery,
+} from './quota'
+export { BILLING_MODE_LABELS, CREDIT_REASON_LABELS } from './quota'
+
 /* 工作流 —— 前端管理节点，后端只持久化完整 nodes 文档 */
 export { workflowRunApis } from './workflow-run'
 export type {

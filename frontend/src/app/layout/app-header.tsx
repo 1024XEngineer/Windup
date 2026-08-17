@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 
 import { useAuthSession } from '@/features/auth-session'
+import { useQuotaBalance } from '@/features/quota'
 import { PageBackButton } from './page-back-button'
 
 interface ProductNavigationItem {
@@ -60,6 +61,35 @@ function WaveText({ playId, text }: { playId: number; text: string }) {
         </span>
       ))}
     </span>
+  )
+}
+
+/**
+ * 账号菜单里的积分余额。挂载点本身已限定在登录态分支，因此始终 enabled。
+ * 只展示余额这一条轻量信息，流水明细交给账号中心页。
+ */
+function QuotaBalanceRow() {
+  const { status, account, error } = useQuotaBalance(true)
+  return (
+    <div
+      aria-label="积分余额"
+      className="mb-1 grid min-h-10 items-center rounded-md border-b border-app-ink/8 px-3 py-2"
+    >
+      <span className="text-[11px] leading-4 text-app-faint">积分余额</span>
+      {status === 'loading' ? (
+        <span className="text-[13px] leading-5 text-app-muted">正在查询…</span>
+      ) : status === 'error' ? (
+        <span className="text-[12px] leading-5 text-app-danger" title={error ?? undefined}>
+          加载失败
+        </span>
+      ) : account ? (
+        <span className="font-mono text-[15px] leading-6 font-semibold text-app-ink">
+          {account.balance.toLocaleString('zh-CN')}
+        </span>
+      ) : (
+        <span className="text-[13px] leading-5 text-app-muted">—</span>
+      )}
+    </div>
   )
 }
 
@@ -243,6 +273,7 @@ export function AppHeader() {
                       : 'invisible pointer-events-none -translate-y-2 scale-[0.82] opacity-0'
                 }`}
               >
+                <QuotaBalanceRow />
                 <Link
                   to="/account"
                   aria-label="打开账号中心"

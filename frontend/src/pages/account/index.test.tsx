@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, useLocation } from 'react-router'
 
-import type { AuthTokens, User, UserApis } from '@/entities'
+import type { AuthTokens, CreditAccount, CreditTransaction, User, UserApis } from '@/entities'
+import { quotaApis } from '@/entities'
 import { AuthSessionProvider } from '@/features/auth-session'
 import { AppRoutes } from '@/app/app'
 
@@ -13,6 +14,28 @@ const user: User = {
   nickname: 'Reader',
   emailVerifiedAt: '2026-08-07T01:02:03Z',
   statusCode: 0,
+}
+
+const quotaAccount: CreditAccount = {
+  id: '1',
+  userId: '7',
+  balance: 128,
+  frozen: 10,
+  totalEarned: 200,
+  totalSpent: 72,
+  createdAt: '2026-08-01T01:02:03Z',
+  updatedAt: '2026-08-07T01:02:03Z',
+}
+
+const quotaTransaction: CreditTransaction = {
+  id: '11',
+  userId: '7',
+  delta: -12,
+  reason: 'captured',
+  billingMode: 'prepaid',
+  refId: 'gen-42',
+  balanceAfter: 116,
+  createdAt: '2026-08-07T01:02:03Z',
 }
 
 function tokens(): AuthTokens {
@@ -68,6 +91,17 @@ function renderAccount(apis = createApis()) {
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
+  vi.restoreAllMocks()
+})
+
+beforeEach(() => {
+  vi.spyOn(quotaApis, 'getBalance').mockResolvedValue(quotaAccount)
+  vi.spyOn(quotaApis, 'listTransactions').mockResolvedValue({
+    items: [quotaTransaction],
+    total: 1,
+    page: 1,
+    pageSize: 20,
+  })
 })
 
 describe('AccountPage', () => {
@@ -238,5 +272,37 @@ describe('AccountPage', () => {
 
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/'))
     expect(apis.logout).toHaveBeenCalledWith('rotated-refresh-token')
+  })
+
+  it('在积分页签展示余额概览与最近流水', async () => {
+    renderAccount()
+    fireEvent.click(await screen.findByRole('button', { name: '积分' }))
+
+    expect(await screen.findByRole('heading', { name: '积分' })).toBeTruthy()
+    await waitFor(() => expect(quotaApis.getBalance).toHaveBeenCalled())
+    expect(quotaApis.listTransactions).toHaveBeenCalledWith({ page: 1, pageSize: 20 })
+
+    expect(screen.getByText('当前余额')).toBeTruthy()
+    // Header 的积分行与积分页签概览都会展示余额，这里允许出现多次。
+    expect(screen.getAllByText('128').length).toBeGreaterThan(0)
+    expect(screen.getByText('冻结中')).toBeTruthy()
+    expect(screen.getByText('累计获得')).toBeTruthy()
+    expect(screen.getByText('累计消耗')).toBeTruthy()
+
+    expect(await screen.findByText('扣减')).toBeTruthy()
+    expect(screen.getByText('共 1 条')).toBeTruthy()
+    expect(screen.getByText('-12')).toBeTruthy()
+  })
+
+  it('积分查询失败时展示可读错误而不是崩溃', async () => {
+    // Header 的积分行会先消费一次查询，因此用持续拒绝而不是 Once，
+    // 保证切到积分页签时也能拿到失败结果。
+    vi.spyOn(quotaApis, 'getBalance').mockRejectedValue(new Error('积分服务不可用'))
+    vi.spyOn(quotaApis, 'listTransactions').mockRejectedValueOnce(new Error('流水读取失败'))
+    renderAccount()
+    fireEvent.click(await screen.findByRole('button', { name: '积分' }))
+
+    expect(await screen.findByText('积分服务不可用')).toBeTruthy()
+    expect(await screen.findByText('流水读取失败')).toBeTruthy()
   })
 })

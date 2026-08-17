@@ -1,11 +1,23 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
-import type { AuthTokens, UserApis } from '@/entities'
+import type { AuthTokens, CreditAccount, UserApis } from '@/entities'
+import { quotaApis } from '@/entities'
 import { AuthSessionProvider } from '@/features/auth-session'
 import { AppHeader } from './app-header'
+
+const quotaAccount: CreditAccount = {
+  id: '1',
+  userId: '7',
+  balance: 128,
+  frozen: 10,
+  totalEarned: 200,
+  totalSpent: 72,
+  createdAt: '2026-08-01T01:02:03Z',
+  updatedAt: '2026-08-07T01:02:03Z',
+}
 
 const user = {
   id: '7',
@@ -70,6 +82,11 @@ afterEach(() => {
   cleanup()
   window.localStorage.clear()
   window.history.replaceState({ idx: 0 }, '')
+  vi.restoreAllMocks()
+})
+
+beforeEach(() => {
+  vi.spyOn(quotaApis, 'getBalance').mockResolvedValue(quotaAccount)
 })
 
 describe('AppHeader', () => {
@@ -295,5 +312,31 @@ describe('AppHeader', () => {
     expect(
       screen.getByRole('link', { name: '项目资产' }).querySelectorAll('.app-header-wave-glyph'),
     ).toHaveLength('项目资产项目'.length)
+  })
+
+  it('在账号菜单里展示当前积分余额', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    renderHeader('/workspace')
+
+    const accountMenu = await screen.findByRole('button', { name: '打开账号菜单' })
+    await waitFor(() => expect(quotaApis.getBalance).toHaveBeenCalled())
+
+    fireEvent.click(accountMenu)
+    const balance = screen.getByLabelText('积分余额')
+    expect(balance.textContent).toContain('128')
+
+    fireEvent.click(screen.getByRole('button', { name: '退出登录' }))
+    await waitFor(() => expect(screen.queryByLabelText('积分余额')).toBeNull())
+  })
+
+  it('积分余额查询失败时在菜单里给出可读反馈', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    vi.spyOn(quotaApis, 'getBalance').mockRejectedValueOnce(new Error('积分服务不可用'))
+    renderHeader('/workspace')
+
+    const accountMenu = await screen.findByRole('button', { name: '打开账号菜单' })
+    fireEvent.click(accountMenu)
+
+    await waitFor(() => expect(screen.getByLabelText('积分余额').textContent).toContain('加载失败'))
   })
 })
