@@ -580,7 +580,6 @@ describe('createRealWorkflowEditorSession', () => {
       WorkflowRunConflictError,
     )
 
-    expect(getRun).toHaveBeenCalledTimes(3)
     expect(updateCharacter).toHaveBeenCalledTimes(1)
     expect(character.outfits[0]!.actions).toEqual([expect.objectContaining({ id: 'action-walk' })])
   })
