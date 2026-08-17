@@ -401,6 +401,34 @@ describe('QuickStartPage', () => {
     )
   })
 
+  it('冲突后即使流程进入可发布状态也不自动发布', async () => {
+    const run = workflow(setupAndTemplate())
+    const publishableRun = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'active' })
+    let reportError: ((error: Error) => void) | null = null
+    let reportRun: ((run: WorkflowRun) => void) | null = null
+    const service = serviceFor(run) as QuickStartMock & {
+      subscribeErrors(listener: (error: Error) => void): () => void
+    }
+    service.subscribeErrors = vi.fn((listener) => {
+      reportError = listener
+      return () => undefined
+    })
+    service.subscribe = vi.fn((listener) => {
+      reportRun = listener
+      return () => undefined
+    })
+    renderAt('/quick-start/run-1', service)
+
+    await waitFor(() => expect(service.subscribeErrors).toHaveBeenCalledOnce())
+    act(() => {
+      reportError?.(new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试'))
+      reportRun?.(publishableRun)
+    })
+
+    expect(await screen.findByRole('link', { name: '加载最新版本' })).toBeTruthy()
+    await waitFor(() => expect(service.approveReview).not.toHaveBeenCalled())
+  })
+
   it('发生冲突后持续保留刷新入口，不被后续普通错误覆盖', async () => {
     const run = workflow(setupAndTemplate())
     const service = serviceFor(run, {
@@ -493,6 +521,62 @@ describe('QuickStartPage', () => {
       await oldResume
     })
     expect(screen.getByRole('heading', { name: '新角色' })).toBeTruthy()
+  })
+
+  it('切换 Run 后忽略旧会话迟到的错误与读取失败', async () => {
+    const oldRun = workflow(setupAndTemplate(), 'run-old')
+    const newNodes = setupAndTemplate()
+    const newSetup = newNodes[0]
+    if (newSetup?.type !== 'character-setup') throw new Error('测试工作流缺少角色设定节点')
+    newSetup.input.prompt = '新运行不受旧错误影响'
+    const newRun = workflow(newNodes, 'run-new')
+    let reportOldError: ((error: Error) => void) | null = null
+    let rejectOldRead: ((error: Error) => void) | null = null
+    const oldRead = new Promise<string[]>((_resolve, reject) => {
+      rejectOldRead = reject
+    })
+    const oldSession = serviceFor(oldRun, {
+      getTemplateCandidates: vi.fn(() => oldRead),
+      subscribeErrors: vi.fn((listener) => {
+        reportOldError = listener
+        return () => undefined
+      }),
+    })
+    const newSession = serviceFor(newRun)
+    const entryService = serviceFor(null, {
+      open: vi.fn(async (id) => (id === oldRun.id ? oldSession : newSession)),
+    })
+
+    function RunSwitcher() {
+      const navigate = useNavigate()
+      return (
+        <button type="button" onClick={() => navigate(`/quick-start/${newRun.id}`)}>
+          切换运行
+        </button>
+      )
+    }
+
+    render(
+      <MemoryRouter initialEntries={[`/quick-start/${oldRun.id}`]}>
+        <RunSwitcher />
+        <Routes>
+          <Route path="/quick-start/:runId" element={<QuickStartPage service={entryService} />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => expect(oldSession.getTemplateCandidates).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: '切换运行' }))
+    expect(await screen.findByRole('heading', { name: '新运行不受旧错误影响' })).toBeTruthy()
+
+    await act(async () => {
+      reportOldError?.(new Error('旧会话错误'))
+      rejectOldRead?.(new Error('旧会话读取失败'))
+      await oldRead.catch(() => undefined)
+    })
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByRole('heading', { name: '新运行不受旧错误影响' })).toBeTruthy()
   })
 
   it('切换 Run 后旧会话完成自动发布也不会跳走', async () => {

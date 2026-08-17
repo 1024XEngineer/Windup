@@ -8,6 +8,7 @@ import {
   type Action,
   type Character,
   type CharacterApis,
+  type CharacterSetupWorkflowNode,
   type GenerationApis,
   type Generation,
   type MediaReference,
@@ -122,6 +123,37 @@ export function createQuickStartService({
       report(error: Error): void
     }
   >()
+
+  async function shouldRollbackWorkflowChange(
+    runId: WorkflowRun['id'],
+    isPersisted: (latest: WorkflowRun) => boolean,
+  ) {
+    try {
+      return !isPersisted(await workflowRunApis.get(runId))
+    } catch (reconcileCause) {
+      onAsyncError(
+        reconcileCause instanceof Error
+          ? reconcileCause
+          : new Error('WorkflowRun 保存结果对账失败'),
+      )
+      // 无法确认 PATCH 是否落库时保留幂等资产，避免删掉已被 Run 引用的数据。
+      return false
+    }
+  }
+
+  function hasPersistedCharacterTemplate(
+    latest: WorkflowRun,
+    imageUrl: string,
+    characterId: Character['id'],
+  ) {
+    const latestSetup = setupNode(latest)
+    const latestTemplate = templateNode(latest)
+    return (
+      latestSetup.input.characterId === characterId &&
+      latestTemplate.status === 'passed' &&
+      latestTemplate.selectedImageUrl === imageUrl
+    )
+  }
 
   async function resolveProjectSpriteSize(projectId: Project['id']) {
     const cached = projectSpriteSizes.get(projectId)
@@ -284,6 +316,11 @@ export function createQuickStartService({
   async function persistCharacterTemplate(
     controller: WorkflowController,
     selectedImageUrl: string,
+    persistRun: (
+      setupId: CharacterSetupWorkflowNode['id'],
+      characterId: Character['id'],
+    ) => Promise<void>,
+    isRunPersisted: (latest: WorkflowRun, characterId: Character['id']) => boolean,
   ): Promise<{ characterId: string; outfitId: string }> {
     if (!characterApis) throw new Error('角色服务尚未配置，不能确认角色母版')
     const run = controller.getWorkflow()
@@ -293,6 +330,7 @@ export function createQuickStartService({
       const existing = await characterApis.get(existingCharacterId)
       const outfit = existing.outfits.find((item) => item.previewUrl === selectedImageUrl)
       if (!outfit) throw new Error('已绑定角色中没有与当前母版对应的造型')
+      await persistRun(setup.id, existing.id)
       return { characterId: existing.id, outfitId: outfit.id }
     }
 
@@ -304,6 +342,7 @@ export function createQuickStartService({
       referenceImageUrl: selectedImageUrl,
     })
     const outfitId = `outfit-${Date.now().toString(36)}`
+    let runSaveAttempted = false
     try {
       await characterApis.update({
         ...character,
@@ -319,15 +358,22 @@ export function createQuickStartService({
           },
         ],
       })
-      await controller.bindCharacter(setup.id, character.id)
+      runSaveAttempted = true
+      await persistRun(setup.id, character.id)
     } catch (cause) {
-      // Character 与 Run 的绑定没有服务端事务；后续两步失败时尽力清掉刚建的孤儿角色。
-      try {
-        await characterApis.remove(character.id)
-      } catch (rollbackCause) {
-        onAsyncError(
-          rollbackCause instanceof Error ? rollbackCause : new Error('创建角色后的回滚失败'),
-        )
+      const shouldRollback =
+        !runSaveAttempted ||
+        (await shouldRollbackWorkflowChange(run.id, (latest) =>
+          isRunPersisted(latest, character.id),
+        ))
+      if (shouldRollback) {
+        try {
+          await characterApis.remove(character.id)
+        } catch (rollbackCause) {
+          onAsyncError(
+            rollbackCause instanceof Error ? rollbackCause : new Error('创建角色后的回滚失败'),
+          )
+        }
       }
       throw cause
     }
@@ -478,8 +524,14 @@ export function createQuickStartService({
           throw new Error('当前角色母版节点不能直接替换图片，请先从角色母版节点重做')
         }
         const templateReference = await mediaApis.upload(file, 'reference-image', signal)
-        await controller.confirmCharacterTemplate(template.id, templateReference)
-        const target = await persistCharacterTemplate(controller, templateReference)
+        const target = await persistCharacterTemplate(
+          controller,
+          templateReference,
+          (_setupId, characterId) =>
+            controller.confirmCharacterTemplate(template.id, templateReference, characterId),
+          (latest, characterId) =>
+            hasPersistedCharacterTemplate(latest, templateReference, characterId),
+        )
         const spriteSize =
           knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
         await prepareAction(controller, target.outfitId, actionDescription, spriteSize)
@@ -490,8 +542,14 @@ export function createQuickStartService({
         if (candidateCommand) return candidateCommand
         const command = (async () => {
           const template = templateNode(controller.getWorkflow())
-          await controller.confirmCharacterTemplate(template.id, selectedImageUrl)
-          const target = await persistCharacterTemplate(controller, selectedImageUrl)
+          const target = await persistCharacterTemplate(
+            controller,
+            selectedImageUrl,
+            (_setupId, characterId) =>
+              controller.confirmCharacterTemplate(template.id, selectedImageUrl, characterId),
+            (latest, characterId) =>
+              hasPersistedCharacterTemplate(latest, selectedImageUrl, characterId),
+          )
           const spriteSize =
             knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
           await prepareAction(controller, target.outfitId, actionDescription ?? '', spriteSize)
@@ -570,7 +628,7 @@ export function createQuickStartService({
             durationMs: frame.durationMs,
           })),
         }
-        await characterApis.update({
+        const publishedCharacter = await characterApis.update({
           ...character,
           outfits: character.outfits.map((outfit) =>
             outfit.id === info.outfitId
@@ -581,7 +639,48 @@ export function createQuickStartService({
               : outfit,
           ),
         })
-        if (review.status === 'active') await controller.approveReview(review.id)
+        if (review.status === 'active') {
+          try {
+            await controller.approveReview(review.id)
+          } catch (cause) {
+            const shouldRollback = await shouldRollbackWorkflowChange(
+              run.id,
+              (latest) => findReview(latest, fullFrame.id)?.status === 'passed',
+            )
+            if (shouldRollback) {
+              try {
+                await characterApis.update({
+                  ...character,
+                  dataVersion: publishedCharacter.dataVersion,
+                })
+              } catch {
+                try {
+                  const latestCharacter = await characterApis.get(character.id)
+                  const originalAction = character.outfits
+                    .flatMap((outfit) => outfit.actions)
+                    .find((item) => item.id === action.id)
+                  await characterApis.update({
+                    ...latestCharacter,
+                    outfits: latestCharacter.outfits.map((outfit) => ({
+                      ...outfit,
+                      actions: [
+                        ...outfit.actions.filter((item) => item.id !== action.id),
+                        ...(originalAction?.outfitId === outfit.id ? [originalAction] : []),
+                      ],
+                    })),
+                  })
+                } catch (rollbackCause) {
+                  onAsyncError(
+                    rollbackCause instanceof Error
+                      ? rollbackCause
+                      : new Error('审核冲突后恢复角色资产失败'),
+                  )
+                }
+              }
+            }
+            throw cause
+          }
+        }
         return controller.getWorkflow()
       },
       getCharacterInfo: () => getCharacterInfo(controller),
@@ -694,8 +793,14 @@ export function createQuickStartService({
         prompt,
         referenceMedia: [templateReference],
       })
-      await controller.acceptUploadedCharacterTemplate('character-setup', templateReference)
-      const target = await persistCharacterTemplate(controller, templateReference)
+      const target = await persistCharacterTemplate(
+        controller,
+        templateReference,
+        (setupId, characterId) =>
+          controller.acceptUploadedCharacterTemplate(setupId, templateReference, characterId),
+        (latest, characterId) =>
+          hasPersistedCharacterTemplate(latest, templateReference, characterId),
+      )
       await prepareAction(controller, target.outfitId, actionDescription, project.spriteSize)
       return createSession(controller, project.spriteSize)
     },

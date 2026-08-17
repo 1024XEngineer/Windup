@@ -416,6 +416,17 @@ describe('createQuickStartService', () => {
       upload: vi.fn(async () => 'https://example.test/template.png' as MediaReference),
     }
     const workflowRunApis = createWorkflowRunApis()
+    const persistRun = workflowRunApis.update.bind(workflowRunApis)
+    let droppedTemplateResponse = false
+    vi.spyOn(workflowRunApis, 'update').mockImplementation(async (nextRun) => {
+      const saved = await persistRun(nextRun)
+      const template = saved.nodes.find((node) => node.type === 'character-template')
+      if (!droppedTemplateResponse && template?.status === 'passed') {
+        droppedTemplateResponse = true
+        throw new Error('上传母版响应丢失')
+      }
+      return saved
+    })
     const service = createQuickStartService({
       workflowRunApis,
       generationApis,
@@ -538,6 +549,7 @@ describe('createQuickStartService', () => {
       (value) => (character = value),
     )
     const workflowRunApis = createWorkflowRunApis([run])
+    const updateRun = vi.spyOn(workflowRunApis, 'update')
     const getRun = vi.spyOn(workflowRunApis, 'get')
     const service = createQuickStartService({
       workflowRunApis,
@@ -561,11 +573,23 @@ describe('createQuickStartService', () => {
     expect(session.getWorkflow().nodes.find((node) => node.type === 'review')?.status).toBe(
       'active',
     )
+    updateRun.mockRejectedValueOnce(new WorkflowRunConflictError('执行记录版本冲突'))
+    vi.mocked(characterApis.update)
+      .mockImplementationOnce(async (value) => {
+        character = structuredClone(value)
+        return structuredClone(character)
+      })
+      .mockRejectedValueOnce(new Error('Character 版本冲突'))
+    await expect(session.approveReview()).rejects.toBeInstanceOf(WorkflowRunConflictError)
+    expect(character.outfits[0]!.actions).toEqual([])
+    expect(session.getWorkflow().nodes.find((node) => node.type === 'review')?.status).toBe(
+      'active',
+    )
     await session.approveReview()
     await session.approveReview()
 
-    expect(getRun).toHaveBeenCalledTimes(1)
-    expect(characterApis.update).toHaveBeenCalledTimes(3)
+    expect(getRun).toHaveBeenCalledTimes(3)
+    expect(characterApis.update).toHaveBeenCalledTimes(6)
     expect(session.getWorkflow().nodes.find((node) => node.type === 'review')?.status).toBe(
       'passed',
     )
@@ -814,8 +838,10 @@ describe('createQuickStartService', () => {
       status: 1,
       outfits: [],
     }
+    const workflowRunApis = createWorkflowRunApis()
+    const updateRun = vi.spyOn(workflowRunApis, 'update')
     const service = createQuickStartService({
-      workflowRunApis: createWorkflowRunApis(),
+      workflowRunApis,
       generationApis,
       characterApis: {
         create: vi.fn(async () => structuredClone(character)),
@@ -849,6 +875,108 @@ describe('createQuickStartService', () => {
 
     expect(character.outfits).toHaveLength(1)
     expect(started.getCharacterInfo()?.characterId).toBe('candidate-character')
+    const confirmationSave = updateRun.mock.calls
+      .map(([run]) => run)
+      .find(
+        (run) => run.nodes.find((node) => node.type === 'character-template')?.status === 'passed',
+      )
+    expect(confirmationSave?.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'character-setup',
+          input: expect.objectContaining({ characterId: 'candidate-character' }),
+        }),
+        expect.objectContaining({ type: 'character-template', status: 'passed' }),
+      ]),
+    )
+  })
+
+  it('Run 已落库但响应丢失时不删除已绑定的 Character', async () => {
+    const run: WorkflowRun = {
+      id: 'run-response-lost',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(null, null),
+    }
+    const workflowRunApis = createWorkflowRunApis([run])
+    const realUpdate = workflowRunApis.update.bind(workflowRunApis)
+    vi.spyOn(workflowRunApis, 'update').mockImplementation(async (nextRun) => {
+      const saved = await realUpdate(nextRun)
+      const template = saved.nodes.find((node) => node.type === 'character-template')
+      if (template?.status === 'passed') throw new Error('网络响应丢失')
+      return saved
+    })
+    let character = characterFixture({
+      workflowRunId: run.id,
+      referenceImageUrl: 'candidate.png',
+    })
+    const remove = vi.fn()
+    const characterApis = mutableCharacterApis(
+      () => character,
+      (value) => (character = value),
+    )
+    characterApis.remove = remove
+    const service = createQuickStartService({
+      workflowRunApis,
+      generationApis: pendingGenerationApis(),
+      characterApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+    })
+    const session = await service.open(run.id)
+
+    await expect(session.confirmCandidate('candidate.png', '挥手')).resolves.toMatchObject({
+      nodes: expect.arrayContaining([
+        expect.objectContaining({ type: 'action-first-frame', phase: 'generating' }),
+      ]),
+    })
+
+    expect(remove).not.toHaveBeenCalled()
+    const latest = await workflowRunApis.get(run.id)
+    expect(latest.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'character-setup',
+          input: expect.objectContaining({ characterId: character.id }),
+        }),
+        expect.objectContaining({ type: 'character-template', status: 'passed' }),
+      ]),
+    )
+  })
+
+  it('母版确认冲突且最新 Run 未落库时删除孤儿 Character', async () => {
+    const run: WorkflowRun = {
+      id: 'run-template-conflict',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(null, null),
+    }
+    const workflowRunApis = createWorkflowRunApis([run])
+    vi.spyOn(workflowRunApis, 'update').mockRejectedValue(
+      new WorkflowRunConflictError('执行记录版本冲突'),
+    )
+    let character = characterFixture({ workflowRunId: run.id })
+    const characterApis = mutableCharacterApis(
+      () => character,
+      (value) => (character = value),
+    )
+    const service = createQuickStartService({
+      workflowRunApis,
+      generationApis: pendingGenerationApis(),
+      characterApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+    })
+    const session = await service.open(run.id)
+
+    await expect(session.confirmCandidate('candidate.png', '挥手')).rejects.toBeInstanceOf(
+      WorkflowRunConflictError,
+    )
+
+    expect(characterApis.remove).toHaveBeenCalledWith(character.id)
+    expect((await workflowRunApis.get(run.id)).nodes).toEqual(run.nodes)
   })
 
   it('creates a fresh run when an existing character has no workflow history', async () => {
@@ -1110,6 +1238,48 @@ describe('createQuickStartService', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(methodAttempts).toBe(1)
     unsubscribe()
+  })
+
+  it('错误上报器和页面订阅者抛错时仍完成容错', async () => {
+    const run = actionRun(true)
+    const storedApis = createWorkflowRunApis([run])
+    const workflowRunApis: WorkflowRunApis = {
+      ...storedApis,
+      update: vi.fn(async (nextRun: WorkflowRun) => {
+        const method = nextRun.nodes.find((node) => node.type === 'action-generation-method')
+        if (method?.type === 'action-generation-method' && method.method === 'video-cropping') {
+          throw '非 Error 异常'
+        }
+        return storedApis.update(nextRun)
+      }),
+    }
+    const onAsyncError = vi.fn(() => {
+      throw new Error('上报器异常')
+    })
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    try {
+      const service = createQuickStartService({
+        workflowRunApis,
+        generationApis: pendingGenerationApis(),
+        prepareProject: async () => ({ id: 'project-1', spriteSize: { width: 256, height: 256 } }),
+        projectApis: projectReader(),
+        onAsyncError,
+      })
+      const session = await service.open(run.id)
+      session.subscribeErrors(() => {
+        throw new Error('页面订阅者异常')
+      })
+
+      await session.confirmFirstFrame('https://example.test/first-frame-2.png')
+
+      await vi.waitFor(() => expect(consoleError).toHaveBeenCalledTimes(2))
+      expect(onAsyncError).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Quick Start 自动推进失败' }),
+      )
+    } finally {
+      consoleError.mockRestore()
+    }
   })
 
   it('会话销毁后不再报告尚未结束的自动推进错误', async () => {

@@ -244,7 +244,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
       }),
     })
     const confirmCharacterTemplate = vi.fn(async (nodeId: string, imageUrl: string) => {
-      await session.controller.confirmCharacterTemplate(nodeId, imageUrl)
+      await session.controller.confirmCharacterTemplate(nodeId, imageUrl, 'character-1')
       const character = characterFixture()
       return {
         ...character,
@@ -453,8 +453,8 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
   })
 
-  it('发布成功但审核保存失败时仍显式刷新 Character', async () => {
-    const publishReviewedAction = vi.fn(async () => characterFixture())
+  it('发布与审核命令失败时显示错误并释放分支锁', async () => {
+    const publishReviewedAction = vi.fn(() => Promise.reject(new Error('审核保存失败')))
     const session = createSession(reviewingActionWorkflow(), {
       character: { ...characterFixture(), outfits: [] },
       generationApis: generationApisFixture({
@@ -462,7 +462,6 @@ describe('WorkflowEditorPage real runtime boundary', () => {
       }),
       publishReviewedAction,
     })
-    vi.spyOn(session.controller, 'approveReview').mockRejectedValue(new Error('审核保存失败'))
     defaultSessionLoader.mockResolvedValue(session)
     renderEditor('/workflow-editor/42')
 
@@ -470,9 +469,10 @@ describe('WorkflowEditorPage real runtime boundary', () => {
 
     expect((await screen.findByRole('alert')).textContent).toContain('审核保存失败')
     expect(publishReviewedAction).toHaveBeenCalledWith('action-walk:review')
-    fireEvent.click(screen.getByRole('button', { name: '添加动作分支' }))
-    expect((screen.getByRole('button', { name: '生成动作 ›' }) as HTMLButtonElement).disabled).toBe(
-      false,
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: '审核通过' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
     )
   })
 
@@ -784,6 +784,30 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(screen.getByRole('link', { name: '加载最新版本' })).toBeTruthy()
   })
 
+  it('异步冲突后收到工作流状态通知仍保留刷新入口', async () => {
+    let reportError: ((error: Error) => void) | null = null
+    let reportRun: ((run: WorkflowRun) => void) | null = null
+    const session = createSession()
+    const subscribe = session.controller.subscribe.bind(session.controller)
+    vi.spyOn(session.controller, 'subscribe').mockImplementation((listener) => {
+      reportRun = listener
+      return subscribe(listener)
+    })
+    session.subscribeErrors = vi.fn((listener) => {
+      reportError = listener
+      return () => undefined
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+    await screen.findByLabelText('当前项目')
+
+    act(() => reportError?.(new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试')))
+    expect(screen.getByRole('link', { name: '加载最新版本' })).toBeTruthy()
+
+    act(() => reportRun?.(session.controller.getWorkflow()))
+    expect(screen.getByRole('link', { name: '加载最新版本' })).toBeTruthy()
+  })
+
   it('把 React Flow 限定为系统节点的拖动画布，不允许自由连线、重连或删除', async () => {
     defaultSessionLoader.mockResolvedValue(createSession())
     renderEditor('/workflow-editor/42')
@@ -885,7 +909,7 @@ function createSession(
       options.uploadReferenceImage ??
       vi.fn(() => Promise.reject(new Error('媒体上传服务尚未装配'))),
     confirmCharacterTemplate: async (nodeId, selectedImageUrl) => {
-      await controller.confirmCharacterTemplate(nodeId, selectedImageUrl)
+      await controller.confirmCharacterTemplate(nodeId, selectedImageUrl, 'character-1')
       return options.character ?? characterFixture()
     },
     publishReviewedAction:

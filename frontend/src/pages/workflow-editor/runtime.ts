@@ -8,6 +8,7 @@ import type {
   ProjectApis,
   CharacterTemplateWorkflowNode,
   ReviewWorkflowNode,
+  WorkflowRun,
   WorkflowRunApis,
 } from '@/entities'
 import {
@@ -32,7 +33,7 @@ export interface WorkflowEditorSession {
   ): Promise<Character>
   /** 上传角色生成约束图；页面不接触 multipart 协议或用途枚举。 */
   uploadReferenceImage(file: File, signal?: AbortSignal): Promise<MediaReference>
-  /** 幂等发布动作资产；审核节点仍由页面随后通过 Controller 推进。 */
+  /** 幂等发布动作资产，并与审核节点的保存作为一个用户命令处理。 */
   publishReviewedAction(reviewNodeId: ReviewWorkflowNode['id']): Promise<Character>
   subscribeErrors(listener: (error: Error) => void): () => void
   dispose(): void
@@ -43,7 +44,7 @@ export interface RealWorkflowEditorDependencies {
   generationApis: GenerationApis
   mediaApis: Pick<MediaApis, 'upload'>
   projectApis: Pick<ProjectApis, 'get'>
-  characterApis: Pick<CharacterApis, 'listByProject' | 'create' | 'update'>
+  characterApis: Pick<CharacterApis, 'get' | 'listByProject' | 'create' | 'update' | 'remove'>
   onAsyncError(error: Error): void
 }
 
@@ -83,6 +84,48 @@ export async function createRealWorkflowEditorSession(
     onAsyncError: reportAsyncError,
   })
   const publisher = createCharacterAssetPublisher(dependencies.characterApis)
+  async function shouldRollbackWorkflowChange(isPersisted: (latest: WorkflowRun) => boolean) {
+    try {
+      return !isPersisted(await dependencies.workflowRunApis.get(workflow.id))
+    } catch (reconcileCause) {
+      reportAsyncError(
+        reconcileCause instanceof Error
+          ? reconcileCause
+          : new Error('WorkflowRun 保存结果对账失败'),
+      )
+      // 无法确认 PATCH 是否已落库时保留幂等资产，避免删掉已被 Run 引用的数据。
+      return false
+    }
+  }
+
+  async function restorePublishedAction(
+    original: Character,
+    published: Character,
+    actionId: string,
+  ) {
+    try {
+      return await dependencies.characterApis.update({
+        ...original,
+        dataVersion: published.dataVersion,
+      })
+    } catch {
+      // Character 又被并发更新时，在最新资产树上只恢复本命令触及的 Action。
+      const latest = await dependencies.characterApis.get(original.id)
+      const originalAction = original.outfits
+        .flatMap((outfit) => outfit.actions)
+        .find((action) => action.id === actionId)
+      return dependencies.characterApis.update({
+        ...latest,
+        outfits: latest.outfits.map((outfit) => ({
+          ...outfit,
+          actions: [
+            ...outfit.actions.filter((action) => action.id !== actionId),
+            ...(originalAction?.outfitId === outfit.id ? [originalAction] : []),
+          ],
+        })),
+      })
+    }
+  }
 
   return {
     controller,
@@ -112,32 +155,72 @@ export async function createRealWorkflowEditorSession(
         throw new Error('角色母版缺少角色设定')
       }
 
-      if (!currentCharacter) {
-        currentCharacter = await dependencies.characterApis.create({
-          projectId: currentWorkflow.projectId,
-          workflowRunId: currentWorkflow.id,
-          description: setupNode.input.prompt,
-          referenceImageUrl: imageUrl,
-        })
-      }
-      if (currentCharacter.outfits.length === 0) {
-        currentCharacter = await dependencies.characterApis.update({
-          ...currentCharacter,
-          outfits: [
-            {
-              id: 'outfit-default',
-              characterId: currentCharacter.id,
-              name: '常态造型',
-              description: null,
-              previewUrl: imageUrl,
-              actions: [],
-            },
-          ],
-        })
-      }
+      const originalCharacter = currentCharacter ? structuredClone(currentCharacter) : null
+      let nextCharacter = currentCharacter
+      let createdCharacter = false
+      let updatedExistingCharacter = false
+      try {
+        if (!nextCharacter) {
+          nextCharacter = await dependencies.characterApis.create({
+            projectId: currentWorkflow.projectId,
+            workflowRunId: currentWorkflow.id,
+            description: setupNode.input.prompt,
+            referenceImageUrl: imageUrl,
+          })
+          createdCharacter = true
+        }
+        if (nextCharacter.outfits.length === 0) {
+          nextCharacter = await dependencies.characterApis.update({
+            ...nextCharacter,
+            outfits: [
+              {
+                id: 'outfit-default',
+                characterId: nextCharacter.id,
+                name: '常态造型',
+                description: null,
+                previewUrl: imageUrl,
+                actions: [],
+              },
+            ],
+          })
+          updatedExistingCharacter = !createdCharacter
+        }
 
-      await controller.confirmCharacterTemplate(nodeId, imageUrl)
-      return currentCharacter
+        await controller.confirmCharacterTemplate(nodeId, imageUrl, nextCharacter.id)
+        currentCharacter = nextCharacter
+        return nextCharacter
+      } catch (cause) {
+        const shouldRollback = await shouldRollbackWorkflowChange((latest) => {
+          const latestTemplate = latest.nodes.find((node) => node.id === nodeId)
+          const latestSetup = latest.nodes.find((node) => node.id === setupNode.id)
+          return (
+            latestTemplate?.type === 'character-template' &&
+            latestTemplate.status === 'passed' &&
+            latestTemplate.selectedImageUrl === imageUrl &&
+            latestSetup?.type === 'character-setup' &&
+            latestSetup.input.characterId === nextCharacter?.id
+          )
+        })
+        if (shouldRollback) {
+          try {
+            if (createdCharacter && nextCharacter) {
+              await dependencies.characterApis.remove(nextCharacter.id)
+            } else if (updatedExistingCharacter && originalCharacter && nextCharacter) {
+              currentCharacter = await dependencies.characterApis.update({
+                ...originalCharacter,
+                dataVersion: nextCharacter.dataVersion,
+              })
+            }
+          } catch (rollbackCause) {
+            reportAsyncError(
+              rollbackCause instanceof Error
+                ? rollbackCause
+                : new Error('母版确认冲突后恢复角色资产失败'),
+            )
+          }
+        }
+        throw cause
+      }
     },
     async publishReviewedAction(reviewNodeId) {
       if (!currentCharacter) throw new Error('当前 WorkflowRun 尚未关联 Character')
@@ -148,16 +231,53 @@ export async function createRealWorkflowEditorSession(
         throw new Error(`${reviewNode.id} 必须且只能依赖一个完整动画节点`)
       }
       const fullFrameNodeId = reviewNode.dependsOnNodeIds[0]!
+      const fullFrameNode = currentWorkflow.nodes.find((node) => node.id === fullFrameNodeId)
+      const methodNode = currentWorkflow.nodes.find((node) =>
+        fullFrameNode?.dependsOnNodeIds.includes(node.id),
+      )
+      const firstFrameNode = currentWorkflow.nodes.find((node) =>
+        methodNode?.dependsOnNodeIds.includes(node.id),
+      )
+      if (!firstFrameNode || firstFrameNode.type !== 'action-first-frame') {
+        throw new Error('完整动画缺少动作首帧节点')
+      }
       const generation = await controller.getGeneration(fullFrameNodeId, 'complete_animation')
       if (!generation) throw new Error('完整动画生成结果不存在')
 
-      currentCharacter = await publisher.publishReviewedAction({
-        character: currentCharacter,
+      const originalCharacter = structuredClone(currentCharacter)
+      const publishedCharacter = await publisher.publishReviewedAction({
+        character: originalCharacter,
         workflow: currentWorkflow,
         reviewNodeId,
         generation,
       })
-      return currentCharacter
+      try {
+        await controller.approveReview(reviewNodeId)
+        currentCharacter = publishedCharacter
+        return publishedCharacter
+      } catch (cause) {
+        const shouldRollback = await shouldRollbackWorkflowChange((latest) => {
+          const latestReview = latest.nodes.find((node) => node.id === reviewNodeId)
+          return latestReview?.type === 'review' && latestReview.status === 'passed'
+        })
+        if (shouldRollback) {
+          try {
+            currentCharacter = await restorePublishedAction(
+              originalCharacter,
+              publishedCharacter,
+              firstFrameNode.id,
+            )
+          } catch (rollbackCause) {
+            currentCharacter = publishedCharacter
+            reportAsyncError(
+              rollbackCause instanceof Error
+                ? rollbackCause
+                : new Error('审核冲突后恢复角色资产失败'),
+            )
+          }
+        }
+        throw cause
+      }
     },
     subscribeErrors(listener) {
       errorListeners.add(listener)

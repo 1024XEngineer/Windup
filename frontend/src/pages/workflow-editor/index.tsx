@@ -1147,7 +1147,6 @@ function ReviewContent({ node, input }: { node: ReviewWorkflowNode; input: Proje
           input.runCommand(branchKey, async () => {
             const character = await input.publishReviewedAction(node.id)
             input.setCharacter(character)
-            await input.controller.approveReview(node.id)
           })
         }
       >
