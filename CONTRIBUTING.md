@@ -41,7 +41,6 @@ git checkout -b <分支名>
 - 每个 PR 关联对应 Issue,改动范围与 Issue 一致,不夹带无关改动。
 - main 开启了分支保护:必须走 PR、必须获得 approve、CI 必须通过,没有捷径。
 - PR 合并由 @nighca / @minorcell / @huyanxius 负责,提交后找其中一位即可。
-- 前端同学是后端 PR 的默认 reviewer 之一,重点核对契约是否符合前端预期。
 - **禁止把未经 review / 未合并的代码部署到生产环境。**
 
 ## 接口契约
