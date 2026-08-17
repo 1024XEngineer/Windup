@@ -102,17 +102,21 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
   }, [accountMenuState])
 
   useEffect(() => {
+    if (session.state.status === 'guest') {
+      window.sessionStorage.removeItem(inviteHintStorageKey)
+    }
+
     if (pathname !== '/workspace' || session.state.status !== 'authenticated') {
       setInviteHintVisible(false)
       return
     }
 
-    if (window.sessionStorage.getItem(inviteHintStorageKey) !== '1') {
-      setInviteHintVisible(true)
-    }
+    if (window.sessionStorage.getItem(inviteHintStorageKey) === '1') return
+
+    window.sessionStorage.setItem(inviteHintStorageKey, '1')
+    setInviteHintVisible(true)
 
     const timer = window.setTimeout(() => {
-      window.sessionStorage.setItem(inviteHintStorageKey, '1')
       setInviteHintVisible(false)
     }, 15_000)
 
@@ -249,7 +253,7 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
                         邀请好友，双方各得 200 积分
                       </p>
                       <Link
-                        to="/account"
+                        to="/account?section=invite"
                         onClick={dismissInviteHint}
                         className="mt-1 inline-flex text-[12px] text-app-muted underline decoration-app-ink/20 underline-offset-2 transition-colors hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
                       >
