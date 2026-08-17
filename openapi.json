@@ -1987,8 +1987,17 @@
             ],
             "description": "状态：active / soft_deleted",
             "title": "Status"
+          },
+          "version": {
+            "description": "客户端读到的当前版本号",
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
           }
         },
+        "required": [
+          "version"
+        ],
         "title": "WorkflowRunUpdate",
         "type": "object"
       }

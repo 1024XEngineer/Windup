@@ -8,7 +8,10 @@ import { WorkflowRunConflictError, type WorkflowRun } from '@/entities'
 import type { ExportPackageModel } from '@/features/export-package'
 import { QuickStartPage } from './index'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
 
 function workflow(nodes: WorkflowRun['nodes'], id = 'run-1'): WorkflowRun {
   return { id, projectId: 'project-1', version: 1, storageStatus: 'active', nodes }
@@ -145,14 +148,76 @@ function renderAt(path: string, service: QuickStartEntryService) {
       <Routes>
         <Route path="/quick-start" element={<QuickStartPage service={service} />} />
         <Route path="/quick-start/:runId" element={<QuickStartPage service={service} />} />
+        <Route path="/projects/:projectId/assets" element={<PlaytestLocation />} />
         <Route path="/playtest/:characterId/:outfitId" element={<PlaytestLocation />} />
       </Routes>
     </MemoryRouter>,
   )
 }
 
+function renderStateFixture(
+  state:
+    | 'template-generating'
+    | 'template-selecting'
+    | 'first-generating'
+    | 'first-selecting'
+    | 'action-generating'
+    | 'complete',
+) {
+  const candidateUrls = [
+    'https://example.test/character-1.png',
+    'https://example.test/character-2.png',
+    'https://example.test/character-3.png',
+  ]
+  const firstFrames = candidateUrls.map((_, index) => ({
+    index,
+    imageUrl: `https://example.test/first-${index + 1}.png`,
+    durationMs: 80,
+  }))
+  const actionFrames = Array.from({ length: 8 }, (_, index) => ({
+    index,
+    imageUrl: `https://example.test/action-${index + 1}.png`,
+    durationMs: 80,
+  }))
+
+  if (state === 'template-generating') {
+    return renderAt(
+      '/quick-start/run-1',
+      serviceFor(workflow(setupAndTemplate({ phase: 'generating' }))),
+    )
+  }
+  if (state === 'template-selecting') {
+    const run = workflow(setupAndTemplate())
+    return renderAt(
+      '/quick-start/run-1',
+      serviceFor(run, { getTemplateCandidates: vi.fn(async () => candidateUrls) }),
+    )
+  }
+  if (state === 'first-generating') {
+    return renderAt(
+      '/quick-start/run-1',
+      serviceFor(actionWorkflow({ firstStatus: 'active', firstPhase: 'generating' })),
+    )
+  }
+  if (state === 'first-selecting') {
+    const run = actionWorkflow({ firstStatus: 'active', firstPhase: 'selecting' })
+    return renderAt(
+      '/quick-start/run-1',
+      serviceFor(run, { getFirstFrameCandidates: vi.fn(async () => firstFrames) }),
+    )
+  }
+  if (state === 'action-generating') {
+    return renderAt('/quick-start/run-1', serviceFor(actionWorkflow({ fullStatus: 'active' })))
+  }
+  const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+  return renderAt(
+    '/quick-start/run-1',
+    serviceFor(run, { getActionFrames: vi.fn(async () => actionFrames) }),
+  )
+}
+
 describe('QuickStartPage', () => {
-  it('按当前 Run 完成度显示统一导出入口', async () => {
+  it('keeps the main export capability available in the conversation UI', async () => {
     const run = workflow(setupAndTemplate({ selectedImageUrl: '/master.png' }))
     const model: ExportPackageModel = {
       stage: 'character',
@@ -172,18 +237,507 @@ describe('QuickStartPage', () => {
     expect(await screen.findByRole('button', { name: '导出角色母版' })).toBeTruthy()
   })
 
+  it('reserves the fixed app header height before the creation entry', () => {
+    const entry = renderAt('/quick-start', serviceFor(null))
+    const entrySection = entry.getByLabelText('创作指令').closest('section')
+
+    expect(entrySection?.className).toContain('min-h-[100dvh]')
+    expect(entrySection?.className).toContain('pt-14')
+  })
+
+  it('uses a centered creation desk with style prompts before the composer', () => {
+    const entry = renderAt('/quick-start', serviceFor(null))
+    const entrySection = entry.getByLabelText('创作指令').closest('section')
+    const entryLayout = entrySection?.querySelector('[data-layout="quick-start-entry"]')
+    const composer = entrySection?.querySelector('[data-layout="quick-start-composer"]')
+    const starters = entrySection?.querySelector('[data-layout="quick-start-starters"]')
+
+    expect(entryLayout?.className).toContain('min-h-[calc(100dvh-3.5rem)]')
+    expect(entryLayout?.className).toContain('grid-rows-[1fr_auto]')
+    expect(composer?.className).toContain('max-w-3xl')
+    expect(composer?.querySelector('form')).toBeTruthy()
+    expect(composer?.querySelector('form')?.className).toContain('sm:grid-cols-[1fr_auto_auto]')
+    expect(starters).toBeTruthy()
+    expect(
+      Boolean(
+        starters &&
+        composer &&
+        starters.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true)
+  })
+
+  it('removes non-actionable explanatory copy from the creation workspace', () => {
+    renderAt('/quick-start', serviceFor(null))
+
+    expect(screen.queryByText('QUICK START / CREATE CHARACTER')).toBeNull()
+    expect(screen.queryByText(/用一句角色设定/u)).toBeNull()
+    expect(screen.queryByText('AI 快捷创作')).toBeNull()
+    expect(screen.queryByText('文字创建')).toBeNull()
+    expect(screen.queryByText('角色图生成后仍需人工选择候选')).toBeNull()
+  })
+
+  it('reuses the shared subtitle exit-before-enter timing in the original heading', () => {
+    vi.useFakeTimers()
+    const entry = renderAt('/quick-start', serviceFor(null))
+    const heading = screen.getByRole('heading', { name: '想做一个什么角色？' })
+    const cycle = () => entry.container.querySelector<HTMLElement>('[data-copy-phase]')
+
+    expect(entry.container.querySelector('[data-layout="quick-start-role-idea"]')).toBeNull()
+    expect(heading.textContent).toBe('想做一个什么角色？')
+
+    act(() => vi.advanceTimersByTime(2_399))
+    expect(heading.textContent).toBe('想做一个什么角色？')
+
+    act(() => vi.advanceTimersByTime(1))
+    expect(cycle()?.dataset.copyPhase).toBe('exiting')
+    expect(heading.textContent).toBe('想做一个什么角色？')
+
+    act(() => vi.advanceTimersByTime(460))
+    expect(cycle()?.dataset.copyPhase).toBe('entering')
+    expect(heading.textContent).toBe('试试银色卷发、戴星形单片眼镜的裁缝')
+
+    act(() => vi.advanceTimersByTime(4_200))
+    expect(heading.textContent).toContain('长着鹿角、披苔藓斗篷的邮差')
+
+    act(() => vi.advanceTimersByTime(4_200 * 7))
+    expect(heading.textContent).toBe('试试银色卷发、戴星形单片眼镜的裁缝')
+    expect(heading.textContent).not.toContain('想做一个什么角色？')
+  })
+
+  it('animates back to the persistent default heading while the user writes', () => {
+    vi.useFakeTimers()
+    const entry = renderAt('/quick-start', serviceFor(null))
+    const heading = screen.getByRole('heading', { name: '想做一个什么角色？' })
+    const cycle = () => entry.container.querySelector<HTMLElement>('[data-copy-phase]')
+
+    act(() => vi.advanceTimersByTime(3_400))
+    expect(heading.textContent).toContain('银色卷发、戴星形单片眼镜的裁缝')
+
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '戴银色面具的游侠' },
+    })
+    expect(cycle()?.dataset.copyMotionMode).toBe('characters')
+    expect(cycle()?.dataset.copyPhase).toBe('exiting')
+    expect(heading.textContent).toContain('银色卷发、戴星形单片眼镜的裁缝')
+
+    act(() => vi.advanceTimersByTime(460))
+    expect(cycle()?.dataset.copyPhase).toBe('entering')
+    expect(heading.textContent).toBe('用文字塑造你的角色……')
+
+    act(() => vi.advanceTimersByTime(10_000))
+    expect(heading.textContent).toBe('用文字塑造你的角色……')
+  })
+
+  it('keeps style prompt space stable while dissolving the cards once creation begins', () => {
+    const entry = renderAt('/quick-start', serviceFor(null))
+    const entrySection = entry.getByLabelText('创作指令').closest('section')
+    const starters = entrySection?.querySelector('[data-layout="quick-start-starters"]')
+
+    expect(screen.getByRole('heading', { name: '想做一个什么角色？' })).toBeTruthy()
+    expect(starters?.querySelectorAll('img')).toHaveLength(0)
+    expect(screen.getByRole('button', { name: /16-bit 日式 RPG/u })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /暗黑哥特像素/u })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /温暖手绘像素/u })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '像素守夜人' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '轻装信使' })).toBeTruthy()
+
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '戴银色面具的游侠' },
+    })
+    expect(entrySection?.querySelector('[data-layout="quick-start-starters"]')).toBe(starters)
+    expect(starters?.getAttribute('data-presence')).toBe('hidden')
+    expect(starters?.getAttribute('aria-hidden')).toBe('true')
+    expect(screen.queryByRole('button', { name: /暗黑哥特像素/u })).toBeNull()
+  })
+
+  it('keeps the original Quick Start prompt shortcuts functional', () => {
+    const view = renderAt('/quick-start', serviceFor(null))
+    fireEvent.click(screen.getByRole('button', { name: '像素守夜人' }))
+    expect((screen.getByRole('textbox', { name: '创作指令' }) as HTMLTextAreaElement).value).toBe(
+      '一位提着风灯、披深色斗篷的像素守夜人',
+    )
+
+    view.unmount()
+    renderAt('/quick-start', serviceFor(null))
+    fireEvent.click(screen.getByRole('button', { name: '轻装信使' }))
+    expect((screen.getByRole('textbox', { name: '创作指令' }) as HTMLTextAreaElement).value).toBe(
+      '轻装信使，侧视像素风，轮廓清晰，动作轻快',
+    )
+  })
+
   it('keeps the entry and run canvases at least viewport height', async () => {
     const entry = renderAt('/quick-start', serviceFor(null))
-    expect(
-      entry.getByRole('heading', { name: /用一句角色设定/u }).closest('section')?.className,
-    ).toContain('min-h-screen')
+    expect(entry.getByLabelText('创作指令').closest('section')?.className).toContain(
+      'min-h-[100dvh]',
+    )
 
     entry.unmount()
     const run = workflow(setupAndTemplate())
     const runView = renderAt('/quick-start/run-1', serviceFor(run))
+    expect((await runView.findByTestId('quick-start-run')).closest('section')?.className).toContain(
+      'min-h-screen',
+    )
+  })
+
+  it('continues the creation desk instead of switching to a workflow dashboard', async () => {
+    renderAt('/quick-start/run-1', serviceFor(workflow(setupAndTemplate())))
+
+    const runLayout = await screen.findByTestId('quick-start-run')
+    expect(runLayout.getAttribute('data-layout')).toBe('agent-shell')
+    expect(runLayout.querySelector('[data-layout="quick-start-scroll-region"]')).toBeTruthy()
+    expect(screen.getByTestId('quick-start-composer').getAttribute('data-position')).toBe(
+      'floating',
+    )
+    expect(runLayout.querySelector('aside')).toBeNull()
+    expect(screen.getByRole('textbox', { name: '继续描述你的想法' })).toBeTruthy()
+    expect(screen.queryByText(/QUICK START \/ RUN/u)).toBeNull()
+    expect(screen.queryByText('CURRENT STATUS')).toBeNull()
+    expect(screen.queryByText('WORKFLOW RUN')).toBeNull()
+    expect(screen.queryByText(/STEPS PASSED/u)).toBeNull()
+    expect(screen.getByRole('button', { name: '中断自动制作' })).toBeTruthy()
+  })
+
+  it('presents Agent replies as restrained product copy without display typography or avatars', async () => {
+    renderStateFixture('action-generating')
+
+    const transcript = await screen.findByTestId('quick-start-transcript')
+    const agentCopies = Array.from(transcript.querySelectorAll<HTMLElement>('[data-agent-copy]'))
+    const standaloneAvatar = Array.from(transcript.querySelectorAll('span')).find(
+      (element) => element.textContent === 'W',
+    )
+
+    expect(agentCopies.length).toBeGreaterThan(0)
     expect(
-      (await runView.findByRole('heading', { name: '像素骑士' })).closest('section')?.className,
-    ).toContain('min-h-screen')
+      agentCopies.every((copy) => {
+        return (
+          copy.className.includes('font-sans') && !copy.querySelector('[data-copy-motion-mode]')
+        )
+      }),
+    ).toBe(true)
+    expect(standaloneAvatar).toBeUndefined()
+  })
+
+  it('keeps one persistent Agent shell with a floating composer outside the scrolling transcript', async () => {
+    renderStateFixture('first-selecting')
+
+    const runLayout = await screen.findByTestId('quick-start-run')
+    const transcript = await screen.findByTestId('quick-start-transcript')
+    const composer = screen.getByTestId('quick-start-composer')
+    const scrollRegion = transcript.closest('[data-layout="quick-start-scroll-region"]')
+    const agentTurns = Array.from(transcript.querySelectorAll<HTMLElement>('[data-agent-turn]'))
+    const userTurns = Array.from(transcript.querySelectorAll<HTMLElement>('[data-user-turn]'))
+
+    expect(runLayout.getAttribute('data-layout')).toBe('agent-shell')
+    expect(scrollRegion).toBeTruthy()
+    expect(scrollRegion?.contains(composer)).toBe(false)
+    expect(composer.getAttribute('data-position')).toBe('floating')
+    expect(composer.className).toContain('absolute')
+    expect(agentTurns.length).toBeGreaterThanOrEqual(2)
+    expect(userTurns.length).toBeGreaterThanOrEqual(2)
+    expect(transcript.querySelector('[data-agent-identity]')).toBeNull()
+  })
+
+  it('keeps the composer shape stable while the Agent is working', async () => {
+    renderStateFixture('action-generating')
+
+    const composer = await screen.findByTestId('quick-start-composer')
+    const send = screen.getByRole('button', { name: '发送' })
+
+    expect(composer).toBeTruthy()
+    expect(send.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('scrolls only the transcript region when new Agent output arrives', async () => {
+    const scrollTo = vi.fn()
+    const scrollIntoView = vi.fn()
+    const previousScrollTo = HTMLElement.prototype.scrollTo
+    const previousScrollIntoView = HTMLElement.prototype.scrollIntoView
+    HTMLElement.prototype.scrollTo = scrollTo
+    HTMLElement.prototype.scrollIntoView = scrollIntoView
+
+    try {
+      renderStateFixture('template-selecting')
+      await screen.findAllByRole('button', { name: /选择角色方案/u })
+
+      expect(scrollTo).toHaveBeenCalled()
+      expect(scrollIntoView).not.toHaveBeenCalled()
+    } finally {
+      HTMLElement.prototype.scrollTo = previousScrollTo
+      HTMLElement.prototype.scrollIntoView = previousScrollIntoView
+    }
+  })
+
+  it('keeps each generated artifact inside the Agent turn that describes it', async () => {
+    renderStateFixture('template-selecting')
+
+    const transcript = await screen.findByTestId('quick-start-transcript')
+    await screen.findAllByRole('button', { name: /选择角色方案/u })
+    const roleTurn = transcript.querySelector<HTMLElement>('[data-agent-turn="character-template"]')
+    const choices = Array.from(roleTurn?.querySelectorAll('[data-asset-choice="true"]') ?? [])
+
+    expect(roleTurn).toBeTruthy()
+    expect(roleTurn?.querySelector('[data-agent-identity]')).toBeNull()
+    expect(roleTurn?.querySelector('[data-agent-copy]')).toBeTruthy()
+    expect(choices).toHaveLength(3)
+    expect(
+      Array.from(transcript.querySelectorAll('[data-asset-choice="true"]')).every((asset) =>
+        Boolean(asset.closest('[data-agent-turn]')),
+      ),
+    ).toBe(true)
+  })
+
+  it.each([
+    ['template-generating', '角色图生成画布'],
+    ['first-generating', '动作首帧生成画布'],
+    ['action-generating', '完整动作生成画布'],
+  ] as const)(
+    'reserves an animated dot-matrix canvas while %s is generating',
+    async (state, label) => {
+      renderStateFixture(state)
+
+      const canvas = await screen.findByRole('img', { name: label })
+      expect(canvas.getAttribute('data-generation-state')).toBe('generating')
+      expect(canvas.getAttribute('data-generation-motion')).toBe('continuous')
+      expect(canvas.querySelectorAll('[data-generation-dot]').length).toBeGreaterThan(20)
+      expect(canvas.querySelector('[data-generation-silhouette]')).toBeNull()
+    },
+  )
+
+  it.each([
+    [
+      workflow(setupAndTemplate({ phase: 'generating' })),
+      '角色生成进度',
+      ['勾勒角色轮廓', '给衣服配颜色', '把发型画清楚', '添上表情', '处理一下光影', '补齐画面细节'],
+    ],
+    [
+      actionWorkflow({ firstStatus: 'active', firstPhase: 'generating' }),
+      '动作首帧生成进度',
+      [
+        '摆好动作姿态',
+        '调整手脚位置',
+        '让重心自然一点',
+        '拉开姿态的区别',
+        '保持角色样子',
+        '补上动作细节',
+      ],
+    ],
+    [
+      actionWorkflow({ fullStatus: 'active' }),
+      '完整动作生成进度',
+      [
+        '把动作连起来',
+        '补上中间的变化',
+        '理顺每一帧的节奏',
+        '检查手脚的衔接',
+        '让起落自然一点',
+        '调整动作幅度',
+      ],
+    ],
+  ] as const)('cycles generation companionship copy for $label', async (run, label, messages) => {
+    vi.useFakeTimers()
+    const view = renderAt('/quick-start/run-1', serviceFor(run))
+
+    await act(async () => undefined)
+    const progress = screen.getByLabelText(label)
+    expect(progress.getAttribute('data-copy-motion-mode')).toBe('characters')
+    expect(progress.className).toContain('quick-start-generation-shimmer')
+    expect(progress.textContent).toBe(messages[0])
+    expect(progress.getAttribute('data-copy-phase')).toBe('entering')
+
+    await act(async () => vi.advanceTimersByTime(760))
+    expect(progress.getAttribute('data-copy-phase')).toBe('resting')
+
+    for (const [messageIndex, message] of messages.slice(1).entries()) {
+      const timeUntilNextMessage = messageIndex === 0 ? 7_239 : 7_999
+      await act(async () => vi.advanceTimersByTime(timeUntilNextMessage))
+      expect(progress.textContent).not.toBe(message)
+      await act(async () => vi.advanceTimersByTime(1))
+      expect(progress.textContent).toBe(message)
+    }
+
+    await act(async () => vi.advanceTimersByTime(8_000))
+    expect(progress.textContent).toBe(messages[0])
+
+    expect(
+      view.container.querySelector('[data-agent-turn][data-current-turn="true"] [data-agent-copy]'),
+    ).toBeNull()
+  })
+
+  it('keeps selection and completed replies static instead of cycling subtitles', async () => {
+    const selecting = renderStateFixture('template-selecting')
+    await screen.findAllByRole('button', { name: /选择角色方案/u })
+    expect(selecting.container.querySelector('[data-generation-progress]')).toBeNull()
+    selecting.unmount()
+
+    const complete = renderStateFixture('complete')
+    await screen.findByRole('img', { name: '完整动作预览' })
+    expect(complete.container.querySelector('[data-generation-progress]')).toBeNull()
+  })
+
+  it('reveals generated candidate frames with staggered motion', async () => {
+    renderStateFixture('template-selecting')
+
+    const cards = await screen.findAllByRole('button', { name: /选择角色方案/u })
+    expect(cards).toHaveLength(3)
+    expect(cards.every((card) => card.dataset.assetChoice === 'true')).toBe(true)
+    expect(cards.every((card) => card.querySelectorAll('[data-asset-frame]').length === 1)).toBe(
+      true,
+    )
+    expect(cards.every((card) => card.dataset.reveal === 'card')).toBe(true)
+    expect(cards.map((card) => card.style.getPropertyValue('--reveal-index'))).toEqual([
+      '0',
+      '1',
+      '2',
+    ])
+    expect(cards.every((card) => card.querySelector('img'))).toBeTruthy()
+  })
+
+  it('matches generated cards to the composer radius and keeps image surfaces free of labels', async () => {
+    renderStateFixture('template-selecting')
+
+    const cards = await screen.findAllByRole('button', { name: /选择角色方案/u })
+
+    expect(cards.every((card) => card.className.includes('rounded-2xl'))).toBe(true)
+    expect(cards.every((card) => card.textContent === '')).toBe(true)
+  })
+
+  it('presents three equal candidate frames without inventing a preferred result', async () => {
+    renderStateFixture('template-selecting')
+
+    const choices = await screen.findAllByRole('button', { name: /选择角色方案/u })
+    const resultLayout = choices[0]?.parentElement
+
+    expect(resultLayout?.getAttribute('data-layout')).toBe('agent-result-set')
+    expect(resultLayout?.className).toContain('grid-cols-3')
+    expect(choices.every((choice) => choice.getAttribute('data-result-priority') === null)).toBe(
+      true,
+    )
+    expect(choices.every((choice) => !choice.className.includes('row-span-2'))).toBe(true)
+  })
+
+  it.each([
+    ['template-generating', '角色图生成画布'],
+    ['first-selecting', '动作首帧候选 1'],
+    ['complete', '完整动作预览'],
+  ] as const)('keeps %s on the first-round asset frame grid', async (state, label) => {
+    const view = renderStateFixture(state)
+    const asset = await screen.findByRole('img', { name: label })
+    const frameGrid = asset.closest('[data-layout="agent-result-set"]')
+
+    expect(frameGrid?.className).toContain('max-w-2xl')
+    expect(frameGrid?.className).toContain('grid-cols-3')
+    view.unmount()
+  })
+
+  it('grows a short conversation from the persistent composer and distinguishes the current turn', async () => {
+    renderStateFixture('action-generating')
+
+    const transcript = await screen.findByTestId('quick-start-transcript')
+    const turns = Array.from(transcript.querySelectorAll<HTMLElement>('[data-agent-turn]'))
+
+    expect(transcript.className).toContain('min-h-full')
+    expect(transcript.className).toContain('content-end')
+    expect(turns.slice(0, -1).every((turn) => turn.dataset.currentTurn === 'false')).toBe(true)
+    expect(turns.at(-1)?.dataset.currentTurn).toBe('true')
+  })
+
+  it('hands the creation entry off to the generating canvas instead of hard-cutting routes', async () => {
+    vi.useFakeTimers()
+    const createdRun = workflow(setupAndTemplate({ phase: 'generating' }), 'run-created')
+    const service = serviceFor(null, {
+      runId: 'run-created',
+      getWorkflow: vi.fn(() => createdRun),
+      resume: vi.fn(async () => createdRun),
+    })
+    renderAt('/quick-start', service)
+
+    fireEvent.change(screen.getByLabelText('创作指令'), {
+      target: { value: '提着风灯的森林守夜人' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+    await act(async () => undefined)
+
+    const entry = screen.getByLabelText('创作指令').closest('[data-layout="quick-start-entry"]')
+    expect(entry?.getAttribute('data-transition')).toBe('leaving')
+    expect(
+      entry?.querySelector('[data-layout="quick-start-starters"]')?.getAttribute('data-presence'),
+    ).toBe('hidden')
+    expect(screen.queryByTestId('quick-start-transcript')).toBeNull()
+
+    await act(async () => vi.advanceTimersByTime(459))
+    expect(screen.queryByTestId('quick-start-transcript')).toBeNull()
+
+    await act(async () => vi.advanceTimersByTime(1))
+    expect(screen.getByRole('img', { name: '角色图生成画布' }).getAttribute('data-reveal')).toBe(
+      'generation-canvas',
+    )
+  })
+
+  it('keeps earlier turns visible while the agent conversation moves downward', async () => {
+    renderStateFixture('first-selecting')
+
+    await screen.findByLabelText(/已生成 3 个动作起始姿态。 选择一个起始姿态，随后生成完整动作。/u)
+    const transcript = await screen.findByTestId('quick-start-transcript')
+    const topLevelText = Array.from(transcript.children).map(
+      (element) =>
+        element.querySelector('[data-agent-copy] [aria-label]')?.getAttribute('aria-label') ??
+        element.textContent ??
+        '',
+    )
+    const roleTurnIndex = topLevelText.findIndex((text) => text.includes('角色方案已确认'))
+    const userActionIndex = topLevelText.findIndex((text) => text.includes('挥手'))
+    const firstFrameTurnIndex = topLevelText.findIndex((text) =>
+      text.includes('已生成 3 个动作起始姿态'),
+    )
+    expect(roleTurnIndex).toBeGreaterThanOrEqual(0)
+    expect(roleTurnIndex).toBeLessThan(userActionIndex)
+    expect(userActionIndex).toBeLessThan(firstFrameTurnIndex)
+    expect(screen.getByRole('img', { name: '已选择的角色' })).toBeTruthy()
+    expect(screen.getAllByRole('img', { name: /动作首帧候选/u })).toHaveLength(3)
+  })
+
+  it('keeps the candidate selected until the action description is sent', async () => {
+    vi.useFakeTimers()
+    const selectingRun = workflow(setupAndTemplate())
+    const nextRun = actionWorkflow({ firstStatus: 'active', firstPhase: 'generating' })
+    const service = serviceFor(selectingRun, {
+      getTemplateCandidates: vi.fn(async () => [
+        'https://example.test/character-1.png',
+        'https://example.test/character-2.png',
+        'https://example.test/character-3.png',
+      ]),
+      confirmCandidate: vi.fn(async () => nextRun),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    await act(async () => undefined)
+    const candidate = screen.getByRole('button', { name: /选择角色方案 2/u })
+    fireEvent.click(candidate)
+    await act(async () => undefined)
+
+    expect(candidate.getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('quick-start-transcript').textContent).not.toContain(
+      '你选择了角色方案 2',
+    )
+    expect(screen.getByPlaceholderText('描述这个角色接下来要做的动作…')).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: '确认选择，继续下一步' }).hasAttribute('disabled'),
+    ).toBe(false)
+
+    fireEvent.change(screen.getByLabelText('继续描述你的想法'), {
+      target: { value: '转身挥动风灯' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '确认选择，继续下一步' }))
+    await act(async () => undefined)
+
+    const transcript = screen.getByTestId('quick-start-transcript').textContent ?? ''
+    expect(transcript).not.toContain('你选择了')
+    expect(transcript).toContain('摆好动作姿态')
+    expect(service.confirmCandidate).toHaveBeenCalledWith(
+      'https://example.test/character-2.png',
+      '转身挥动风灯',
+    )
   })
 
   it('keeps the natural-language creation entry visible when no run is selected', () => {
@@ -193,11 +747,12 @@ describe('QuickStartPage', () => {
       </MemoryRouter>,
     )
 
-    expect(screen.getByRole('heading', { name: /用一句角色设定/u })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: /像素守夜人/u }))
-    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toContain('像素守夜人')
-    fireEvent.click(screen.getByRole('button', { name: '轻装信使' }))
-    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toContain('轻装信使')
+    expect(screen.getByRole('textbox', { name: '创作指令' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /16-bit 日式 RPG/u }))
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe(
+      '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色',
+    )
+    expect(screen.queryByRole('button', { name: /暗黑哥特像素/u })).toBeNull()
   })
 
   it('shows first-frame confirmation instead of stale character candidates after a template is confirmed', async () => {
@@ -210,9 +765,11 @@ describe('QuickStartPage', () => {
     })
     const view = renderAt('/quick-start/run-1', service)
 
-    await waitFor(() => {
-      expect(view.getByRole('heading', { name: '选择动作首帧' })).toBeTruthy()
-    })
+    await waitFor(() =>
+      expect(
+        view.container.querySelector('[data-agent-copy][aria-label^="已生成 3 个动作起始姿态"]'),
+      ).toBeTruthy(),
+    )
     const firstFrame = view.getByRole('img', { name: '动作首帧候选 1' })
     expect(firstFrame.getAttribute('loading')).toBe('eager')
     expect(firstFrame.getAttribute('decoding')).toBe('async')
@@ -224,21 +781,21 @@ describe('QuickStartPage', () => {
     const service = serviceFor(null)
     const view = renderAt('/quick-start', service)
 
-    fireEvent.click(screen.getByRole('button', { name: /像素守夜人/u }))
-    fireEvent.click(screen.getByRole('button', { name: '开始生成' }))
+    fireEvent.click(screen.getByRole('button', { name: /16-bit 日式 RPG/u }))
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
     await waitFor(() =>
-      expect(service.start).toHaveBeenCalledWith(expect.stringContaining('像素守夜人')),
+      expect(service.start).toHaveBeenCalledWith('16-bit 日式 RPG 像素风，清晰轮廓，明亮配色'),
     )
     expect(service.open).not.toHaveBeenCalled()
 
     view.unmount()
     renderAt('/quick-start', service)
     const file = new File(['pixels'], 'hero.png', { type: 'image/png' })
-    fireEvent.click(screen.getByRole('button', { name: '上传角色母版' }))
+    fireEvent.click(screen.getByRole('button', { name: '添加母版' }))
     fireEvent.change(screen.getByLabelText('上传角色母版'), { target: { files: [file] } })
     expect(screen.getByText('hero.png')).toBeTruthy()
     fireEvent.change(screen.getByLabelText('创作指令'), { target: { value: '挥手' } })
-    fireEvent.click(screen.getByRole('button', { name: '开始生成' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
     await waitFor(() =>
       expect(service.startWithUploadedTemplate).toHaveBeenCalledWith(
         file,
@@ -248,9 +805,9 @@ describe('QuickStartPage', () => {
     )
   })
 
-  it('consumes the created session once and reopens it after StrictMode disposes it', async () => {
+  it('hands the created session to the run page under the production StrictMode lifecycle', async () => {
     const service = serviceFor(null)
-    render(
+    const view = render(
       <StrictMode>
         <MemoryRouter initialEntries={['/quick-start']}>
           <Routes>
@@ -262,12 +819,14 @@ describe('QuickStartPage', () => {
     )
 
     fireEvent.change(screen.getByLabelText('创作指令'), { target: { value: '像素骑士' } })
-    fireEvent.click(screen.getByRole('button', { name: '开始生成' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
 
     await waitFor(() => expect(service.resume).toHaveBeenCalled())
-    expect(service.open).toHaveBeenCalledTimes(1)
-    expect(service.open).toHaveBeenCalledWith('run-new')
-    expect(service.dispose).toHaveBeenCalled()
+    expect(service.open).not.toHaveBeenCalled()
+    expect(service.dispose).not.toHaveBeenCalled()
+
+    view.unmount()
+    await waitFor(() => expect(service.dispose).toHaveBeenCalledOnce())
   })
 
   it('shows entry errors and supports removing an uploaded template', async () => {
@@ -280,8 +839,21 @@ describe('QuickStartPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '移除图片' }))
     expect(screen.queryByText('hero.png')).toBeNull()
     fireEvent.change(screen.getByLabelText('创作指令'), { target: { value: '骑士' } })
-    fireEvent.click(screen.getByRole('button', { name: '开始生成' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
     expect((await screen.findByRole('alert')).textContent).toContain('服务繁忙')
+  })
+
+  it('keeps the uploaded template controls in the single-line composer', () => {
+    renderAt('/quick-start', serviceFor(null))
+    const file = new File(['pixels'], 'hero.png', { type: 'image/png' })
+
+    fireEvent.change(screen.getByLabelText('上传角色母版'), { target: { files: [file] } })
+
+    const composer = screen.getByLabelText('创作指令').closest('form')
+    expect(screen.getByLabelText('创作指令').tagName).toBe('TEXTAREA')
+    expect(composer?.textContent).toContain('hero.png')
+    expect(screen.getByRole('button', { name: '移除图片' }).closest('form')).toBe(composer)
+    expect(composer?.querySelector('[data-layout="quick-start-attachment-row"]')).toBeNull()
   })
 
   it('adds an action to an existing character and reports submission errors', async () => {
@@ -311,7 +883,7 @@ describe('QuickStartPage', () => {
     renderAt('/quick-start/missing', service)
     expect(await screen.findByRole('heading', { name: '无法恢复这次创作' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '返回快速开始' }))
-    expect(screen.getByRole('heading', { name: /用一句角色设定/u })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: '创作指令' })).toBeTruthy()
   })
 
   it('opens a recoverable run once and accepts its session update', async () => {
@@ -327,7 +899,7 @@ describe('QuickStartPage', () => {
     expect(service.resume).toHaveBeenCalledWith()
   })
 
-  it('selects, confirms, and regenerates a character candidate', async () => {
+  it('selects a character first, then submits its action through the conversation composer', async () => {
     const run = workflow(setupAndTemplate())
     const service = serviceFor(run, {
       getTemplateCandidates: vi.fn(async () => ['https://example.test/candidate.png']),
@@ -337,7 +909,13 @@ describe('QuickStartPage', () => {
     renderAt('/quick-start/run-1', service)
     const candidate = await screen.findByRole('img', { name: '角色图候选 1' })
     fireEvent.click(candidate)
-    fireEvent.change(screen.getByLabelText(/动作描述/u), { target: { value: '挥手' } })
+
+    expect(service.confirmCandidate).not.toHaveBeenCalled()
+    expect(
+      screen.getByRole('button', { name: '选择角色方案 1' }).getAttribute('aria-pressed'),
+    ).toBe('true')
+
+    fireEvent.change(screen.getByLabelText('继续描述你的想法'), { target: { value: '挥手' } })
     fireEvent.click(screen.getByRole('button', { name: '确认选择，继续下一步' }))
     await waitFor(() =>
       expect(service.confirmCandidate).toHaveBeenCalledWith(
@@ -346,14 +924,10 @@ describe('QuickStartPage', () => {
       ),
     )
     expect((await screen.findByRole('alert')).textContent).toContain('候选确认失败')
-    fireEvent.click(screen.getByRole('button', { name: '重新生成' }))
-    await waitFor(() => expect(service.start).toHaveBeenCalledWith('像素骑士'))
-    expect((await screen.findByRole('alert')).textContent).toContain('重新生成失败')
-    fireEvent.click(screen.getByRole('button', { name: '新建一次创作' }))
-    expect(screen.getByRole('heading', { name: /用一句角色设定/u })).toBeTruthy()
+    expect(screen.getByTestId('quick-start-run')).toBeTruthy()
   })
 
-  it('保存发生乐观锁冲突时提示加载当前 WorkflowRun 的最新版本', async () => {
+  it('freezes the current conversation and offers a full reload after a version conflict', async () => {
     const run = workflow(setupAndTemplate())
     const service = serviceFor(run, {
       getTemplateCandidates: vi.fn(async () => ['https://example.test/candidate.png']),
@@ -361,7 +935,7 @@ describe('QuickStartPage', () => {
         throw new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试')
       }),
     })
-    renderAt('/quick-start/run-1', service)
+    renderAt('/quick-start/run-1?source=test#selection', service)
 
     fireEvent.click(await screen.findByRole('img', { name: '角色图候选 1' }))
     fireEvent.click(screen.getByRole('button', { name: '确认选择，继续下一步' }))
@@ -369,7 +943,7 @@ describe('QuickStartPage', () => {
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toContain('工作流已在其他位置更新，请加载最新版本后继续。')
     expect(screen.getByRole('link', { name: '加载最新版本' }).getAttribute('href')).toBe(
-      '/quick-start/run-1',
+      '/quick-start/run-1?source=test#selection',
     )
     const confirm = screen.getByRole('button', { name: '确认选择，继续下一步' })
     expect((confirm as HTMLButtonElement).disabled).toBe(true)
@@ -377,115 +951,47 @@ describe('QuickStartPage', () => {
     expect(service.confirmCandidate).toHaveBeenCalledTimes(1)
   })
 
-  it('自动推进发生乐观锁冲突时也提示加载最新版本', async () => {
+  it('keeps a reported conflict visible when an earlier result read fails later', async () => {
     const run = workflow(setupAndTemplate())
     let reportError: ((error: Error) => void) | null = null
-    const service = serviceFor(run) as QuickStartMock & {
-      subscribeErrors(listener: (error: Error) => void): () => void
-    }
-    service.subscribeErrors = vi.fn((listener) => {
-      reportError = listener
-      return () => undefined
+    let rejectRead: ((error: Error) => void) | null = null
+    const pendingRead = new Promise<readonly string[]>((_resolve, reject) => {
+      rejectRead = reject
     })
-    renderAt('/quick-start/run-1', service)
-
-    await waitFor(() => expect(service.subscribeErrors).toHaveBeenCalledOnce())
-    act(() => {
-      reportError?.(new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试'))
-    })
-
-    const alert = await screen.findByRole('alert')
-    expect(alert.textContent).toContain('工作流已在其他位置更新，请加载最新版本后继续。')
-    expect(screen.getByRole('link', { name: '加载最新版本' }).getAttribute('href')).toBe(
-      '/quick-start/run-1',
-    )
-  })
-
-  it('冲突后即使流程进入可发布状态也不自动发布', async () => {
-    const run = workflow(setupAndTemplate())
-    const publishableRun = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'active' })
-    let reportError: ((error: Error) => void) | null = null
-    let reportRun: ((run: WorkflowRun) => void) | null = null
-    const service = serviceFor(run) as QuickStartMock & {
-      subscribeErrors(listener: (error: Error) => void): () => void
-    }
-    service.subscribeErrors = vi.fn((listener) => {
-      reportError = listener
-      return () => undefined
-    })
-    service.subscribe = vi.fn((listener) => {
-      reportRun = listener
-      return () => undefined
-    })
-    renderAt('/quick-start/run-1', service)
-
-    await waitFor(() => expect(service.subscribeErrors).toHaveBeenCalledOnce())
-    act(() => {
-      reportError?.(new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试'))
-      reportRun?.(publishableRun)
-    })
-
-    expect(await screen.findByRole('link', { name: '加载最新版本' })).toBeTruthy()
-    await waitFor(() => expect(service.approveReview).not.toHaveBeenCalled())
-  })
-
-  it('发生冲突后持续保留刷新入口，不被后续普通错误覆盖', async () => {
-    const run = workflow(setupAndTemplate())
     const service = serviceFor(run, {
-      getTemplateCandidates: vi.fn(async () => ['https://example.test/candidate.png']),
-      confirmCandidate: vi.fn(async () => {
-        throw new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试')
-      }),
-      start: vi.fn(async () => {
-        throw new Error('重新生成失败')
+      getTemplateCandidates: vi.fn(() => pendingRead),
+      subscribeErrors: vi.fn((listener) => {
+        reportError = listener
+        return () => undefined
       }),
     })
     renderAt('/quick-start/run-1', service)
 
-    fireEvent.click(await screen.findByRole('img', { name: '角色图候选 1' }))
-    fireEvent.click(screen.getByRole('button', { name: '确认选择，继续下一步' }))
-    expect(await screen.findByRole('link', { name: '加载最新版本' })).toBeTruthy()
-
-    fireEvent.click(screen.getByRole('button', { name: '重新生成' }))
-    await waitFor(() => expect(service.start).toHaveBeenCalledWith('像素骑士'))
-    expect(screen.getByRole('alert').textContent).toContain(
-      '工作流已在其他位置更新，请加载最新版本后继续。',
-    )
-    expect(screen.getByRole('link', { name: '加载最新版本' })).toBeTruthy()
-  })
-
-  it('恢复期间收到冲突后不被随后成功返回的 resume 清除', async () => {
-    const run = workflow(setupAndTemplate())
-    let reportError: ((error: Error) => void) | null = null
-    const service = serviceFor(run) as QuickStartMock & {
-      subscribeErrors(listener: (error: Error) => void): () => void
-    }
-    service.subscribeErrors = vi.fn((listener) => {
-      reportError = listener
-      return () => undefined
-    })
-    service.resume = vi.fn(async () => {
+    await waitFor(() => expect(service.getTemplateCandidates).toHaveBeenCalled())
+    act(() => {
       reportError?.(new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试'))
-      return run
     })
-    renderAt('/quick-start/run-1', service)
-
     expect(await screen.findByRole('link', { name: '加载最新版本' })).toBeTruthy()
+
+    await act(async () => {
+      rejectRead?.(new Error('候选读取失败'))
+      await pendingRead.catch(() => undefined)
+    })
     expect(screen.getByRole('alert').textContent).toContain(
       '工作流已在其他位置更新，请加载最新版本后继续。',
     )
   })
 
-  it('切换 Run 后忽略旧会话延迟返回的恢复结果', async () => {
+  it('ignores an old session resume result after navigating to another run', async () => {
     const oldRun = workflow(setupAndTemplate(), 'run-old')
     const newNodes = setupAndTemplate()
-    const setup = newNodes[0]
-    if (setup?.type !== 'character-setup') throw new Error('测试工作流缺少角色设定节点')
-    setup.input.prompt = '新角色'
+    const newSetup = newNodes[0]
+    if (newSetup?.type !== 'character-setup') throw new Error('测试工作流缺少角色设定节点')
+    newSetup.input.prompt = '新角色'
     const newRun = workflow(newNodes, 'run-new')
-    const oldResumeControl: { resolve?: (run: WorkflowRun) => void } = {}
+    let resolveOldResume: ((run: WorkflowRun) => void) | null = null
     const oldResume = new Promise<WorkflowRun>((resolve) => {
-      oldResumeControl.resolve = resolve
+      resolveOldResume = resolve
     })
     const oldSession = serviceFor(oldRun, { resume: vi.fn(() => oldResume) })
     const newSession = serviceFor(newRun)
@@ -511,280 +1017,32 @@ describe('QuickStartPage', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByRole('heading', { name: '像素骑士' })).toBeTruthy()
+    expect(await screen.findByText('像素骑士')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '切换运行' }))
-    expect(await screen.findByRole('heading', { name: '新角色' })).toBeTruthy()
+    expect(await screen.findByText('新角色')).toBeTruthy()
 
     await act(async () => {
-      if (!oldResumeControl.resolve) throw new Error('旧会话恢复请求没有启动')
-      oldResumeControl.resolve(oldRun)
+      resolveOldResume?.(oldRun)
       await oldResume
     })
-    expect(screen.getByRole('heading', { name: '新角色' })).toBeTruthy()
+    expect(screen.getByText('新角色')).toBeTruthy()
+    expect(screen.queryByText('像素骑士')).toBeNull()
   })
 
-  it('切换 Run 后忽略旧会话迟到的错误与读取失败', async () => {
-    const oldRun = workflow(setupAndTemplate(), 'run-old')
-    const newNodes = setupAndTemplate()
-    const newSetup = newNodes[0]
-    if (newSetup?.type !== 'character-setup') throw new Error('测试工作流缺少角色设定节点')
-    newSetup.input.prompt = '新运行不受旧错误影响'
-    const newRun = workflow(newNodes, 'run-new')
-    let reportOldError: ((error: Error) => void) | null = null
-    let rejectOldRead: ((error: Error) => void) | null = null
-    const oldRead = new Promise<string[]>((_resolve, reject) => {
-      rejectOldRead = reject
-    })
-    const oldSession = serviceFor(oldRun, {
-      getTemplateCandidates: vi.fn(() => oldRead),
-      subscribeErrors: vi.fn((listener) => {
-        reportOldError = listener
-        return () => undefined
-      }),
-    })
-    const newSession = serviceFor(newRun)
-    const entryService = serviceFor(null, {
-      open: vi.fn(async (id) => (id === oldRun.id ? oldSession : newSession)),
-    })
-
-    function RunSwitcher() {
-      const navigate = useNavigate()
-      return (
-        <button type="button" onClick={() => navigate(`/quick-start/${newRun.id}`)}>
-          切换运行
-        </button>
-      )
-    }
-
-    render(
-      <MemoryRouter initialEntries={[`/quick-start/${oldRun.id}`]}>
-        <RunSwitcher />
-        <Routes>
-          <Route path="/quick-start/:runId" element={<QuickStartPage service={entryService} />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    await waitFor(() => expect(oldSession.getTemplateCandidates).toHaveBeenCalled())
-    fireEvent.click(screen.getByRole('button', { name: '切换运行' }))
-    expect(await screen.findByRole('heading', { name: '新运行不受旧错误影响' })).toBeTruthy()
-
-    await act(async () => {
-      reportOldError?.(new Error('旧会话错误'))
-      rejectOldRead?.(new Error('旧会话读取失败'))
-      await oldRead.catch(() => undefined)
-    })
-
-    expect(screen.queryByRole('alert')).toBeNull()
-    expect(screen.getByRole('heading', { name: '新运行不受旧错误影响' })).toBeTruthy()
-  })
-
-  it('切换 Run 后旧会话完成自动发布也不会跳走', async () => {
-    const oldRun = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'active' })
-    const newNodes = setupAndTemplate()
-    const setup = newNodes[0]
-    if (setup?.type !== 'character-setup') throw new Error('测试工作流缺少角色设定节点')
-    setup.input.prompt = '保留在新运行'
-    const newRun = workflow(newNodes, 'run-new')
-    const publishControl: { resolve?: (run: WorkflowRun) => void } = {}
-    const pendingPublish = new Promise<WorkflowRun>((resolve) => {
-      publishControl.resolve = resolve
-    })
-    const oldSession = serviceFor(oldRun, {
-      getActionFrames: vi.fn(async () => [
-        { index: 0, imageUrl: 'https://example.test/frame.png', durationMs: 80 },
-      ]),
-      approveReview: vi.fn(() => pendingPublish),
-    })
-    const newSession = serviceFor(newRun)
-    const entryService = serviceFor(null, {
-      open: vi.fn(async (id) => (id === oldRun.id ? oldSession : newSession)),
-    })
-
-    function Controls() {
-      const navigate = useNavigate()
-      const location = useLocation()
-      return (
-        <>
-          <button type="button" onClick={() => navigate(`/quick-start/${newRun.id}`)}>
-            切换到新运行
-          </button>
-          <output aria-label="当前位置">{location.pathname}</output>
-        </>
-      )
-    }
-
-    render(
-      <MemoryRouter initialEntries={[`/quick-start/${oldRun.id}`]}>
-        <Controls />
-        <Routes>
-          <Route path="/quick-start/:runId" element={<QuickStartPage service={entryService} />} />
-          <Route path="/playtest/:characterId/:outfitId" element={<h1>旧预览台</h1>} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    await waitFor(() => expect(oldSession.approveReview).toHaveBeenCalled())
-    fireEvent.click(screen.getByRole('button', { name: '切换到新运行' }))
-    expect(await screen.findByRole('heading', { name: '保留在新运行' })).toBeTruthy()
-
-    await act(async () => {
-      if (!publishControl.resolve) throw new Error('旧会话发布请求没有启动')
-      publishControl.resolve(oldRun)
-      await pendingPublish
-    })
-    expect(screen.getByRole('status', { name: '当前位置' }).textContent).toBe(
-      '/quick-start/run-new',
-    )
-  })
-
-  it('切换 Run 后旧会话完成重新生成也不会跳走', async () => {
-    const oldRun = workflow(setupAndTemplate(), 'run-old')
-    const newNodes = setupAndTemplate()
-    const newSetup = newNodes[0]
-    if (newSetup?.type !== 'character-setup') throw new Error('测试工作流缺少角色设定节点')
-    newSetup.input.prompt = '当前新运行'
-    const newRun = workflow(newNodes, 'run-new')
-    const regeneratedRun = workflow(setupAndTemplate(), 'run-regenerated')
-    const regeneratedSession = serviceFor(regeneratedRun)
-    const regenerateControl: { resolve?: (session: QuickStartSession) => void } = {}
-    const pendingRegenerate = new Promise<QuickStartSession>((resolve) => {
-      regenerateControl.resolve = resolve
-    })
-    const oldSession = serviceFor(oldRun, {
-      getTemplateCandidates: vi.fn(async () => ['https://example.test/candidate.png']),
-    })
-    const newSession = serviceFor(newRun)
-    const entryService = serviceFor(null, {
-      start: vi.fn(() => pendingRegenerate),
-      open: vi.fn(async (id) => (id === oldRun.id ? oldSession : newSession)),
-    })
-
-    function Controls() {
-      const navigate = useNavigate()
-      const location = useLocation()
-      return (
-        <>
-          <button type="button" onClick={() => navigate(`/quick-start/${newRun.id}`)}>
-            切换当前运行
-          </button>
-          <output aria-label="当前位置">{location.pathname}</output>
-        </>
-      )
-    }
-
-    render(
-      <MemoryRouter initialEntries={[`/quick-start/${oldRun.id}`]}>
-        <Controls />
-        <Routes>
-          <Route path="/quick-start/:runId" element={<QuickStartPage service={entryService} />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    fireEvent.click(await screen.findByRole('button', { name: '重新生成' }))
-    await waitFor(() => expect(entryService.start).toHaveBeenCalled())
-    fireEvent.click(screen.getByRole('button', { name: '切换当前运行' }))
-    expect(await screen.findByRole('heading', { name: '当前新运行' })).toBeTruthy()
-
-    await act(async () => {
-      if (!regenerateControl.resolve) throw new Error('旧会话重新生成请求没有启动')
-      regenerateControl.resolve(regeneratedSession)
-      await pendingRegenerate
-    })
-    expect(screen.getByRole('status', { name: '当前位置' }).textContent).toBe(
-      '/quick-start/run-new',
-    )
-  })
-
-  it('新建 Session 只交付一次，再次进入同一 Run 时重新读取后端', async () => {
-    const createdNodes = setupAndTemplate()
-    const createdSetup = createdNodes[0]
-    if (createdSetup?.type !== 'character-setup') throw new Error('测试工作流缺少角色设定节点')
-    createdSetup.input.prompt = '首次创建版本'
-    const createdRun = workflow(createdNodes, 'run-created')
-    const freshNodes = setupAndTemplate()
-    const freshSetup = freshNodes[0]
-    if (freshSetup?.type !== 'character-setup') throw new Error('测试工作流缺少角色设定节点')
-    freshSetup.input.prompt = '后端最新版本'
-    const freshRun = workflow(freshNodes, createdRun.id)
-    const otherRun = workflow(setupAndTemplate(), 'run-other')
-    const createdSession = serviceFor(createdRun)
-    const freshSession = serviceFor(freshRun)
-    const otherSession = serviceFor(otherRun)
-    const entryService = serviceFor(null, {
-      start: vi.fn(async () => createdSession),
-      open: vi.fn(async (id) => (id === createdRun.id ? freshSession : otherSession)),
-    })
-
-    function Controls() {
-      const navigate = useNavigate()
-      return (
-        <>
-          <button type="button" onClick={() => navigate(`/quick-start/${otherRun.id}`)}>
-            前往其他运行
-          </button>
-          <button type="button" onClick={() => navigate(`/quick-start/${createdRun.id}`)}>
-            返回已创建运行
-          </button>
-        </>
-      )
-    }
-
-    render(
-      <MemoryRouter initialEntries={['/quick-start']}>
-        <Controls />
-        <Routes>
-          <Route path="/quick-start" element={<QuickStartPage service={entryService} />} />
-          <Route path="/quick-start/:runId" element={<QuickStartPage service={entryService} />} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    fireEvent.change(screen.getByLabelText('创作指令'), { target: { value: '首次创建版本' } })
-    fireEvent.click(screen.getByRole('button', { name: '开始生成' }))
-    expect(await screen.findByRole('heading', { name: '首次创建版本' })).toBeTruthy()
-    expect(entryService.open).not.toHaveBeenCalledWith(createdRun.id)
-
-    fireEvent.click(screen.getByRole('button', { name: '前往其他运行' }))
-    await waitFor(() => expect(entryService.open).toHaveBeenCalledWith(otherRun.id))
-    fireEvent.click(screen.getByRole('button', { name: '返回已创建运行' }))
-
-    await waitFor(() => expect(entryService.open).toHaveBeenCalledWith(createdRun.id))
-    expect(await screen.findByRole('heading', { name: '后端最新版本' })).toBeTruthy()
-  })
-
-  it('冲突提示不被更早发起的生成结果读取失败覆盖', async () => {
+  it('keeps the original regenerate and new-creation controls reachable', async () => {
     const run = workflow(setupAndTemplate())
-    let reportError: ((error: Error) => void) | null = null
-    let rejectRead: ((error: Error) => void) | null = null
-    const pendingRead = new Promise<readonly string[]>((_resolve, reject) => {
-      rejectRead = reject
-    })
     const service = serviceFor(run, {
-      getTemplateCandidates: vi.fn(() => pendingRead),
-    }) as QuickStartMock & {
-      subscribeErrors(listener: (error: Error) => void): () => void
-    }
-    service.subscribeErrors = vi.fn((listener) => {
-      reportError = listener
-      return () => undefined
+      getTemplateCandidates: vi.fn(async () => ['https://example.test/candidate.png']),
+      start: vi.fn(async () => Promise.reject(new Error('重新生成失败'))),
     })
     renderAt('/quick-start/run-1', service)
 
-    await waitFor(() => expect(service.getTemplateCandidates).toHaveBeenCalled())
-    act(() => {
-      reportError?.(new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试'))
-    })
-    expect(await screen.findByRole('link', { name: '加载最新版本' })).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: '重新生成' }))
+    await waitFor(() => expect(service.start).toHaveBeenCalledWith('像素骑士'))
+    expect((await screen.findByRole('alert')).textContent).toContain('重新生成失败')
 
-    act(() => rejectRead?.(new Error('候选读取失败')))
-    await waitFor(() =>
-      expect(screen.getByRole('alert').textContent).toContain(
-        '工作流已在其他位置更新，请加载最新版本后继续。',
-      ),
-    )
-    expect(screen.getByRole('link', { name: '加载最新版本' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '新建一次创作' }))
+    expect(screen.getByRole('textbox', { name: '创作指令' })).toBeTruthy()
   })
 
   it('confirms a generated first frame before starting the full animation', async () => {
@@ -797,6 +1055,7 @@ describe('QuickStartPage', () => {
     })
     renderAt('/quick-start/run-1', service)
     fireEvent.click(await screen.findByRole('img', { name: '动作首帧候选 1' }))
+    expect(service.confirmFirstFrame).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '确认首帧，生成完整动作' }))
     await waitFor(() =>
       expect(service.confirmFirstFrame).toHaveBeenCalledWith('https://example.test/first.png'),
@@ -806,20 +1065,20 @@ describe('QuickStartPage', () => {
 
   it('renders generating and failed states for both first-frame and full animation tasks', async () => {
     const states = [
-      [actionWorkflow({ firstStatus: 'active', firstPhase: 'generating' }), '正在生成动作首帧'],
+      [actionWorkflow({ firstStatus: 'active', firstPhase: 'generating' }), '动作首帧生成进度'],
       [actionWorkflow({ firstStatus: 'failed', error: '首帧服务失败' }), '动作首帧生成失败'],
-      [actionWorkflow({ fullStatus: 'active' }), '正在生成动作'],
+      [actionWorkflow({ fullStatus: 'active' }), '完整动作生成进度'],
       [actionWorkflow({ fullStatus: 'failed', error: '动作服务失败' }), '动作生成失败'],
     ] as const
 
     for (const [run, label] of states) {
       const view = renderAt('/quick-start/run-1', serviceFor(run))
-      expect((await screen.findAllByText(label, { selector: 'b' })).length).toBeGreaterThan(0)
+      expect(await screen.findByLabelText(new RegExp(label, 'u'))).toBeTruthy()
       view.unmount()
     }
   })
 
-  it('automatically approves a completed animation and opens its Playtest action', async () => {
+  it('saves a completed animation without navigating and exposes both explicit destinations', async () => {
     const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'active' })
     const approved = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
     const service = serviceFor(run, {
@@ -829,21 +1088,51 @@ describe('QuickStartPage', () => {
         { index: 1, imageUrl: 'https://example.test/frame-1.png', durationMs: 80 },
       ]),
     })
-    renderAt('/quick-start/run-1', service)
+    const view = renderAt('/quick-start/run-1', service)
+    await waitFor(() => expect(service.approveReview).toHaveBeenCalledWith())
+    expect(screen.getByTestId('quick-start-run')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '跳转到资产工作台' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '跳转到 Play Test' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '跳转到资产工作台' }))
+    expect(await screen.findByRole('heading', { name: '/projects/project-1/assets' })).toBeTruthy()
+
+    view.unmount()
+    const approvedService = serviceFor(approved, {
+      getActionFrames: vi.fn(async () => [
+        { index: 0, imageUrl: 'https://example.test/frame-0.png', durationMs: 80 },
+      ]),
+    })
+    renderAt('/quick-start/run-1', approvedService)
+    fireEvent.click(await screen.findByRole('button', { name: '跳转到 Play Test' }))
     expect(
       await screen.findByRole('heading', {
         name: '/playtest/character-1/outfit-1?actionId=action-full',
       }),
     ).toBeTruthy()
-    expect(service.approveReview).toHaveBeenCalledWith()
   })
 
-  it('keeps a completed run recoverable when its character binding is missing', async () => {
+  it('keeps a completed run recoverable when saving fails', async () => {
     const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'active' })
+    const approved = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
     const service = serviceFor(run, {
-      approveReview: vi.fn(async () =>
-        actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' }),
-      ),
+      approveReview: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('保存失败'))
+        .mockResolvedValue(approved),
+      getActionFrames: vi.fn(async () => [
+        { index: 0, imageUrl: 'https://example.test/frame.png', durationMs: 80 },
+      ]),
+    })
+    renderAt('/quick-start/run-1', service)
+    expect((await screen.findByRole('alert')).textContent).toContain('保存失败')
+    fireEvent.click(screen.getByRole('button', { name: '重新保存' }))
+    await waitFor(() => expect(service.approveReview).toHaveBeenCalledTimes(2))
+  })
+
+  it('keeps the completed run open when Play Test cannot resolve the character binding', async () => {
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const service = serviceFor(run, {
       getCharacterInfo: vi.fn(() => null),
       resolveCharacterInfo: vi.fn(async () => null),
       getActionFrames: vi.fn(async () => [
@@ -851,18 +1140,19 @@ describe('QuickStartPage', () => {
       ]),
     })
     renderAt('/quick-start/run-1', service)
+    fireEvent.click(await screen.findByRole('button', { name: '跳转到 Play Test' }))
     expect((await screen.findByRole('alert')).textContent).toContain('没有找到对应的角色资产')
-    fireEvent.click(screen.getByRole('button', { name: '重新导入预览台' }))
-    await waitFor(() => expect(service.approveReview).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('quick-start-run')).toBeTruthy()
   })
 
-  it('interrupts an active run and surfaces interruption failures', async () => {
+  it('keeps the original workflow interruption control reachable in the conversation', async () => {
     const run = actionWorkflow({ fullStatus: 'active' })
     const service = serviceFor(run, {
       interrupt: vi.fn(async () => Promise.reject(new Error('无法中断'))),
     })
     renderAt('/quick-start/run-1', service)
     fireEvent.click(await screen.findByRole('button', { name: '中断自动制作' }))
+    await waitFor(() => expect(service.interrupt).toHaveBeenCalledWith())
     expect((await screen.findByRole('alert')).textContent).toContain('无法中断')
   })
 })

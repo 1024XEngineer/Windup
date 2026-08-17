@@ -52,6 +52,7 @@ class WorkflowRunCreate(BaseModel):
 class WorkflowRunUpdate(BaseModel):
     """全量更新执行记录。"""
 
+    version: int = Field(ge=1, description="客户端读到的当前版本号")
     nodes: list | None = Field(
         default=None,
         description="节点树（前端自定义结构，后端不校验）",
@@ -171,7 +172,13 @@ def update_run(
                 code=BizCode.BAD_REQUEST,
             ) from None
 
-    run = service.update_run(session, run_id, nodes=body.nodes, status=status)
+    run = service.update_run(
+        session,
+        run_id,
+        expected_version=body.version,
+        nodes=body.nodes,
+        status=status,
+    )
     return Response.success(WorkflowRunOut.model_validate(run), message="更新成功")
 
 
