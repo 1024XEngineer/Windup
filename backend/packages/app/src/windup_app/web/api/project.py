@@ -13,6 +13,7 @@ from windup_common.exceptions import BizException
 from windup_common.result import ListResponse, Response
 from windup_framework.db import get_session
 
+from windup_app.server.character.service import service as character_service
 from windup_app.server.project.service import service
 
 logger = logging.getLogger("windup.project.api")
@@ -117,8 +118,14 @@ def delete_project(
     request: Request,
     session: Session = Depends(get_session),
 ) -> Response[None]:
-    project = service.get_project(session, project_id)
+    project = service.get_project(session, project_id, for_update=True)
     if project is None or project.user_id != request.state.current_user.id:
         raise BizException("项目不存在", code=BizCode.NOT_FOUND)
-    service.delete_project(session, project_id)
+    if character_service.project_has_characters(session, project_id):
+        raise BizException("项目下仍有角色，无法删除", code=BizCode.BAD_REQUEST)
+    try:
+        service.delete_project(session, project_id)
+    except IntegrityError:
+        session.rollback()
+        raise BizException("项目下仍有角色，无法删除", code=BizCode.BAD_REQUEST) from None
     return Response.success(None, message="删除成功")

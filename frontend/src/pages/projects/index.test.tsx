@@ -112,6 +112,27 @@ describe('ProjectsPage', () => {
     ).toBe(true)
   })
 
+  it('keeps the project and shows why delete is blocked when characters remain', async () => {
+    installBackend()
+    const { ProjectHasCharactersError, projectApis } = await import('@/entities')
+    vi.spyOn(projectApis, 'remove').mockRejectedValue(new ProjectHasCharactersError())
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '删除项目 点灯人 · MVP' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认删除项目' }))
+
+    expect(await screen.findByText('项目下仍有角色，无法删除')).toBeTruthy()
+    expect(screen.queryByRole('dialog', { name: '删除项目' })).toBeNull()
+    expect(screen.getByRole('link', { name: '打开项目 点灯人 · MVP' })).toBeTruthy()
+  })
+
   it('falls back through character preview sources without blocking the gallery', async () => {
     const backend = createProjectAssetsBackend({ projectCount: 3 })
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')

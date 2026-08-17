@@ -72,7 +72,10 @@ def _payload_with_frames(project_id: int, **overrides):
 
 def test_character_model_defaults_to_draft(db_session):
     """非 API 写入也不得把尚无真实动作帧的角色默认为已发布。"""
-    character = Character(project_id=1, workflow_run_id=999, character_data={})
+    from conftest import insert_project
+
+    project = insert_project(db_session)
+    character = Character(project_id=project.id, workflow_run_id=999, character_data={})
     db_session.add(character)
     db_session.flush()
 

@@ -2,7 +2,13 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router'
 
 import assetLibraryArtwork from '@/assets/workspace/asset-library.png'
-import { characterApis, projectApis, type Character, type Project } from '@/entities'
+import {
+  characterApis,
+  projectApis,
+  ProjectHasCharactersError,
+  type Character,
+  type Project,
+} from '@/entities'
 import type { Paged } from '@/shared/pagination'
 import { Pagination } from '@/shared/ui'
 
@@ -171,8 +177,9 @@ export function ProjectsPage() {
         )
       }
       setDeleteTarget(null)
-    } catch {
-      setError('项目暂时无法删除')
+    } catch (error) {
+      setError(error instanceof ProjectHasCharactersError ? error.message : '项目暂时无法删除')
+      setDeleteTarget(null)
     } finally {
       setDeleting(false)
     }
@@ -200,9 +207,11 @@ export function ProjectsPage() {
           >
             {error}
           </p>
-        ) : projectsPage === null ? (
+        ) : null}
+        {projectsPage === null && !error ? (
           <p className="mt-6 text-sm text-app-muted">正在读取项目…</p>
-        ) : (
+        ) : null}
+        {projectsPage ? (
           <div className="mt-5">
             <ProjectCreateCard />
             {projectsPage.items.length > 0 ? (
@@ -214,7 +223,7 @@ export function ProjectsPage() {
               />
             ) : null}
           </div>
-        )}
+        ) : null}
         {projectsPage ? (
           <Pagination
             page={projectsPage.page}

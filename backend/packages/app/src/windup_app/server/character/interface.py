@@ -51,6 +51,10 @@ class CharacterService(ABC):
         """
 
     @abstractmethod
+    def project_has_characters(self, session: Session, project_id: int) -> bool:
+        """判断项目下是否仍挂载角色（草稿或已发布均算）。"""
+
+    @abstractmethod
     def update_character(self, session: Session, character_id: int, **fields) -> Character | None:
         """更新角色描述、参考图或 character_data 等字段。
 

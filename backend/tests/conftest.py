@@ -15,7 +15,7 @@ os.environ.setdefault("POSTGRES_PASSWORD", "testpassword123")
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -29,6 +29,23 @@ from windup_app.server.workflow_run.model import WorkflowRun
 from windup_app.server.user.service import create_access_token
 from windup_framework.config.quota import settings as quota_settings
 from windup_framework.db import Base, get_session
+
+
+def insert_project(session, **overrides) -> Project:
+    """写入一条合法项目，供需要 ``windup_character.project_id`` 外键的测试使用。"""
+    fields = {
+        "user_id": 1,
+        "project_name": "测试项目",
+        "character_perspective": 1,
+        "directional_movement": 2,
+        "sprite_width": 64,
+        "sprite_height": 64,
+    }
+    fields.update(overrides)
+    project = Project(**fields)
+    session.add(project)
+    session.flush()
+    return project
 
 
 def _disable_generation_execution(app):
@@ -53,11 +70,19 @@ def seed_credit_account(session, user_id: int, *, balance: int | None = None) ->
 
 def _make_engine():
     """单连接内存 SQLite;``check_same_thread=False`` 让 TestClient 线程可共用。"""
-    return create_engine(
+    engine = create_engine(
         "sqlite:///:memory:",
         poolclass=StaticPool,
         connect_args={"check_same_thread": False},
     )
+
+    @event.listens_for(engine, "connect")
+    def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    return engine
 
 
 @pytest.fixture()

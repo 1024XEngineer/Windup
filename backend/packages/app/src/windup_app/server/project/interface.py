@@ -31,8 +31,14 @@ class ProjectService(ABC):
         """判断用户下的项目名称是否已存在。"""
 
     @abstractmethod
-    def get_project(self, session: Session, project_id: int) -> Project | None:
-        """按 ID 查询项目。"""
+    def get_project(
+        self, session: Session, project_id: int, *, for_update: bool = False
+    ) -> Project | None:
+        """按 ID 查询项目。
+
+        ``for_update`` 为真时对项目行加 ``SELECT ... FOR UPDATE``，供角色创建与
+        项目删除互斥，避免检查与写入之间插入角色。
+        """
 
     @abstractmethod
     def list_projects(

@@ -76,6 +76,14 @@ class SqlAlchemyCharacterService(CharacterService):
         items = list(session.scalars(stmt))
         return items, total
 
+    def project_has_characters(self, session: Session, project_id: int) -> bool:
+        stmt = (
+            select(Character.id)
+            .where(Character.project_id == project_id)
+            .limit(1)
+        )
+        return session.scalar(stmt) is not None
+
     def update_character(
         self, session: Session, character_id: int, **fields,
     ) -> Character | None:
