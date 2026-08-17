@@ -18,7 +18,7 @@
   <a href="openapi.json">OpenAPI</a>
 </p>
 
-<p align="center"><strong>Windup 已上线并开放注册。</strong></p>
+<p align="center"><strong>Windup 已上线，现已开放注册。</strong></p>
 
 <p align="center">
   <img src=".github/assets/readme/character-journey.webp" width="100%" alt="Windup 角色从线稿、母版到游戏资产的生成旅程">
