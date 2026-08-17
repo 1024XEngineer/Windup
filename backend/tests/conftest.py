@@ -27,12 +27,28 @@ from windup_app.server.user.model import User
 from windup_app.server.orchestrator.model import GenerationTaskRecord
 from windup_app.server.workflow_run.model import WorkflowRun
 from windup_app.server.user.service import create_access_token
+from windup_framework.config.quota import settings as quota_settings
 from windup_framework.db import Base, get_session
 
 
 def _disable_generation_execution(app):
     app.state.run_action_task = lambda *args: None
     app.state.run_image_task = lambda *args: None
+
+
+def seed_credit_account(session, user_id: int, *, balance: int | None = None) -> CreditAccount:
+    """给测试用户补一张积分账户（注册赠送口径）。"""
+    gift = quota_settings.register_gift_amount
+    account = CreditAccount(
+        user_id=user_id,
+        balance=gift if balance is None else balance,
+        frozen=0,
+        total_earned=gift,
+        total_spent=0,
+    )
+    session.add(account)
+    session.flush()
+    return account
 
 
 def _make_engine():
