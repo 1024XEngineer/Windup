@@ -37,6 +37,26 @@ class MasterRejectCode(str, Enum):
     ASPECT_TOO_WIDE = "aspect_too_wide"      # 主体太扁,方形 cell 里只能压成一条
 
 
+class MasterWarningCode(str, Enum):
+    """母版**可疑但不足以拒**的形态 —— 判据本身是近似的,误拒的代价高于漏放。
+
+    与 :class:`MasterRejectCode` 的分工由**判据能不能证伪**决定,不由后果严重程度决定:
+    拒绝码那几条量到就是事实(解不开、没主体、比例超限);警告码这几条量到的是相关信号,
+    合法母版也可能命中(见 :mod:`windup_ai_engine.master_check` 各条的假阳性来源)。
+    """
+
+    LIMBS_FUSED = "limbs_fused"            # 下半身横切只有一段:双腿可能粘连
+    EXTRA_COMPONENT = "extra_component"    # 主体之外还有独立色块:可能是手持物/道具/标注
+
+
+@dataclass(frozen=True)
+class MasterWarning:
+    """一条警告。``code`` 给上层做分支,``detail`` 给人看。"""
+
+    code: MasterWarningCode
+    detail: str
+
+
 class MasterRejected(ValueError):
     """母版不具备可生成性,在**调用付费模型之前**拒绝。
 
