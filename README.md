@@ -8,7 +8,7 @@
   面向国产小游戏开发者的 2D 角色动态素材生成与资产工作台
 </p>
 
-<p align="center"><strong>交付的是资产，而不是图片。</strong></p>
+<p align="center"><strong>让你的角色，真正登场。</strong></p>
 
 <p align="center">
   <a href="https://windup.xin"><strong>在线使用</strong></a>
