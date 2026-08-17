@@ -82,6 +82,24 @@ function pendingGenerationApis(): GenerationApis {
   }
 }
 
+function completedAnimationGenerationApis(): GenerationApis {
+  return {
+    create: vi.fn(),
+    get: vi.fn(async (projectId, id) => ({
+      id,
+      projectId,
+      type: 'complete_animation' as const,
+      status: 'completed' as const,
+      result: {
+        type: 'complete_animation' as const,
+        frames: [{ index: 0, url: 'frame.png', durationMs: 80 }],
+      },
+      error: null,
+    })),
+    subscribe: vi.fn(() => () => undefined),
+  }
+}
+
 function projectReader(spriteSize = { width: 256, height: 256 }) {
   return {
     get: vi.fn(async (id: string) => ({ id, spriteSize })),
@@ -100,6 +118,38 @@ function characterFixture(overrides: Partial<Character> = {}): Character {
     status: 1,
     outfits: [],
     ...overrides,
+  }
+}
+
+function characterWithDefaultOutfit(
+  workflowRunId: string,
+  actions: Character['outfits'][number]['actions'] = [],
+): Character {
+  return characterFixture({
+    workflowRunId,
+    outfits: [
+      {
+        id: 'outfit-1',
+        characterId: 'character-1',
+        name: '默认造型',
+        description: null,
+        previewUrl: 'template.png',
+        actions,
+      },
+    ],
+  })
+}
+
+function priorAction(): Character['outfits'][number]['actions'][number] {
+  return {
+    id: 'action-full',
+    outfitId: 'outfit-1',
+    name: '旧动作',
+    type: 'custom',
+    loop: true,
+    fps: 12,
+    frameCount: 1,
+    frames: [{ index: 0, imageUrl: 'old-frame.png', durationMs: 80 }],
   }
 }
 
@@ -598,6 +648,136 @@ describe('createQuickStartService', () => {
       { index: 9, imageUrl: 'frame-9.png', durationMs: null },
     ])
   })
+
+  it.each([new Error('WorkflowRun 回读失败'), '回读失败'])(
+    '审核冲突后无法回读 Run 时保留幂等动作并上报对账错误',
+    async (reconcileCause) => {
+      const run = actionRun()
+      const storedApis = createWorkflowRunApis([run])
+      const realGet = storedApis.get.bind(storedApis)
+      vi.spyOn(storedApis, 'get')
+        .mockImplementationOnce(realGet)
+        .mockImplementationOnce(realGet)
+        .mockRejectedValueOnce(reconcileCause)
+      vi.spyOn(storedApis, 'update').mockRejectedValueOnce(
+        new WorkflowRunConflictError('执行记录版本冲突'),
+      )
+      let character = characterWithDefaultOutfit(run.id, [priorAction()])
+      const characterApis = mutableCharacterApis(
+        () => character,
+        (value) => (character = value),
+      )
+      const onAsyncError = vi.fn()
+      const session = await createQuickStartService({
+        workflowRunApis: storedApis,
+        generationApis: completedAnimationGenerationApis(),
+        characterApis,
+        prepareProject: vi.fn(),
+        projectApis: projectReader(),
+        onAsyncError,
+      }).open(run.id)
+
+      await expect(session.approveReview()).rejects.toBeInstanceOf(WorkflowRunConflictError)
+
+      expect(character.outfits[0]!.actions).toHaveLength(1)
+      expect(onAsyncError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message:
+            reconcileCause instanceof Error
+              ? reconcileCause.message
+              : 'WorkflowRun 保存结果对账失败',
+        }),
+      )
+    },
+  )
+
+  it.each([new Error('节点重新打开失败'), '节点重新打开失败'])(
+    'Character 写入失败且无法重新打开母版节点时上报错误',
+    async (reopenCause) => {
+      const workflowRunApis = createWorkflowRunApis()
+      const realUpdate = workflowRunApis.update.bind(workflowRunApis)
+      let updateRunCalls = 0
+      vi.spyOn(workflowRunApis, 'update').mockImplementation(async (next) => {
+        updateRunCalls += 1
+        if (updateRunCalls <= 2) return realUpdate(next)
+        throw reopenCause
+      })
+      const character = characterFixture({
+        id: 'character-write-failed',
+        referenceImageUrl: 'old.png',
+      })
+      const onAsyncError = vi.fn()
+      const service = createQuickStartService({
+        workflowRunApis,
+        generationApis: pendingGenerationApis(),
+        characterApis: {
+          get: vi.fn(async () => structuredClone(character)),
+          listByProject: vi.fn(),
+          create: vi.fn(async () => structuredClone(character)),
+          update: vi.fn(async () => Promise.reject(new Error('Character 写入失败'))),
+          remove: vi.fn(),
+        },
+        mediaApis: { upload: vi.fn(async () => 'candidate.png' as MediaReference) },
+        prepareProject: vi.fn(async () => ({
+          id: 'project-1',
+          spriteSize: { width: 256, height: 256 },
+        })),
+        projectApis: projectReader(),
+        onAsyncError,
+      })
+
+      await expect(
+        service.startWithUploadedTemplate(new File(['candidate'], 'candidate.png'), ''),
+      ).rejects.toThrow('Character 写入失败')
+      expect(onAsyncError).toHaveBeenCalledWith(
+        reopenCause instanceof Error
+          ? reopenCause
+          : expect.objectContaining({ message: '角色母版资产写入失败后重新打开节点失败' }),
+      )
+    },
+  )
+
+  it.each([new Error('动作恢复失败'), '动作恢复失败'])(
+    '审核冲突的两次动作恢复都失败时上报最终错误',
+    async (rollbackCause) => {
+      const run = actionRun()
+      const workflowRunApis = createWorkflowRunApis([run])
+      vi.spyOn(workflowRunApis, 'update').mockRejectedValueOnce(
+        new WorkflowRunConflictError('执行记录版本冲突'),
+      )
+      let character = characterWithDefaultOutfit(run.id, [priorAction()])
+      const update = vi.fn(async (value: Character) => {
+        if (update.mock.calls.length === 1) {
+          character = structuredClone(value)
+          return structuredClone(character)
+        }
+        return Promise.reject(rollbackCause)
+      })
+      const onAsyncError = vi.fn()
+      const session = await createQuickStartService({
+        workflowRunApis,
+        generationApis: completedAnimationGenerationApis(),
+        characterApis: {
+          get: vi.fn(async () => structuredClone(character)),
+          listByProject: vi.fn(),
+          create: vi.fn(),
+          update,
+          remove: vi.fn(),
+        },
+        prepareProject: vi.fn(),
+        projectApis: projectReader(),
+        onAsyncError,
+      }).open(run.id)
+
+      await expect(session.approveReview()).rejects.toBeInstanceOf(WorkflowRunConflictError)
+      expect(update).toHaveBeenCalledTimes(3)
+      expect(onAsyncError).toHaveBeenCalledWith(
+        rollbackCause instanceof Error
+          ? rollbackCause
+          : expect.objectContaining({ message: '审核冲突后恢复角色资产失败' }),
+      )
+    },
+  )
 
   it('continues from an uploaded replacement and restores missing character info from project assets', async () => {
     const candidateRun: WorkflowRun = {
