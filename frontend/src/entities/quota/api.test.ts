@@ -52,4 +52,39 @@ describe('createQuotaApis', () => {
       message: '积分账户响应格式无效',
     })
   })
+
+  it('默认适配器读取环境地址并携带当前登录凭证', async () => {
+    vi.resetModules()
+    const fetchFn = vi.fn<typeof fetch>(async () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ code: 200, message: 'ok', data: accountResponse }), {
+          status: 200,
+        }),
+      ),
+    )
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', fetchFn)
+    const [{ registerApiAccessTokenProvider }, { quotaApis }] = await Promise.all([
+      import('@/shared/api'),
+      import('./api'),
+    ])
+    const unregister = registerApiAccessTokenProvider(() => 'access-token')
+
+    try {
+      await expect(quotaApis.getBalance()).resolves.toMatchObject({ balance: 90 })
+      expect(fetchFn).toHaveBeenCalledWith(
+        'https://api.windup.test/quota/balance',
+        expect.objectContaining({
+          headers: expect.objectContaining({}),
+        }),
+      )
+      const request = fetchFn.mock.calls[0]?.[1]
+      expect(new Headers(request?.headers).get('authorization')).toBe('Bearer access-token')
+    } finally {
+      unregister()
+      vi.unstubAllGlobals()
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
+  })
 })
