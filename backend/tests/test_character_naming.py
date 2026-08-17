@@ -62,13 +62,15 @@ def test_empty_namer_result_falls_back_to_description():
 
 
 def test_service_create_skips_namer_when_workflow_run_exists(db_session):
+    from conftest import insert_project
     from windup_app.server.character.service import SqlAlchemyCharacterService
 
+    project = insert_project(db_session)
     namer = _FakeNamer("第一次")
     service = SqlAlchemyCharacterService(namer=namer)
     first = service.create_character(
         db_session,
-        project_id=1,
+        project_id=project.id,
         workflow_run_id=77,
         name=None,
         description="红发少年",
@@ -77,7 +79,7 @@ def test_service_create_skips_namer_when_workflow_run_exists(db_session):
     namer.result = "第二次"
     second = service.create_character(
         db_session,
-        project_id=1,
+        project_id=project.id,
         workflow_run_id=77,
         name=None,
         description="红发少年",
@@ -92,13 +94,16 @@ def test_service_create_skips_namer_when_workflow_run_exists(db_session):
 def test_service_create_skips_namer_on_cross_project_workflow_run(db_session):
     from sqlalchemy.exc import IntegrityError
 
+    from conftest import insert_project
     from windup_app.server.character.service import SqlAlchemyCharacterService
 
+    first_project = insert_project(db_session, project_name="项目一")
+    second_project = insert_project(db_session, project_name="项目二")
     namer = _FakeNamer("第一次")
     service = SqlAlchemyCharacterService(namer=namer)
     service.create_character(
         db_session,
-        project_id=1,
+        project_id=first_project.id,
         workflow_run_id=88,
         name=None,
         description="红发少年",
@@ -108,7 +113,7 @@ def test_service_create_skips_namer_on_cross_project_workflow_run(db_session):
     with pytest.raises(IntegrityError):
         service.create_character(
             db_session,
-            project_id=2,
+            project_id=second_project.id,
             workflow_run_id=88,
             name=None,
             description="另一段描述",
@@ -119,12 +124,14 @@ def test_service_create_skips_namer_on_cross_project_workflow_run(db_session):
 
 
 def test_service_create_uses_namer_when_name_missing(db_session):
+    from conftest import insert_project
     from windup_app.server.character.service import SqlAlchemyCharacterService
 
+    project = insert_project(db_session)
     service = SqlAlchemyCharacterService(namer=_FakeNamer("雾港少年"))
     character = service.create_character(
         db_session,
-        project_id=1,
+        project_id=project.id,
         workflow_run_id=901,
         name=None,
         description="红发少年站在雾港码头",

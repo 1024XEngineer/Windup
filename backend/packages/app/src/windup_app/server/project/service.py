@@ -32,8 +32,14 @@ class SqlAlchemyProjectService(ProjectService):
         )
         return session.scalar(stmt) is not None
 
-    def get_project(self, session: Session, project_id: int) -> Project | None:
-        return session.get(Project, project_id)
+    def get_project(
+        self, session: Session, project_id: int, *, for_update: bool = False
+    ) -> Project | None:
+        if not for_update:
+            return session.get(Project, project_id)
+        return session.scalar(
+            select(Project).where(Project.id == project_id).with_for_update()
+        )
 
     def list_projects(
         self, session: Session, *, page: int, page_size: int, user_id: int | None = None
