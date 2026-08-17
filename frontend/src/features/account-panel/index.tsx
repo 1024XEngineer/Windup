@@ -91,6 +91,7 @@ const loginMotionCopy = [
 const REGISTER_STEP_COUNT = 4
 const AUTH_ICON_PROPS = { weight: 'light' as const }
 const AUTH_FIELD_CLASS = 'auth-screen-field w-full outline-none disabled:cursor-not-allowed'
+const ACCESS_REQUEST_URL = 'https://github.com/1024XEngineer/Windup/issues'
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '操作失败，请稍后重试'
@@ -230,7 +231,7 @@ export function AccountPanel() {
   const entry = searchParams.get('account')
   if (entry !== 'login' && entry !== 'register') return null
 
-  return <AccountPanelDialog key={entry} entry={entry} />
+  return <AccountPanelDialog key="login" entry="login" />
 }
 
 /** 只有面板真正打开时才读取会话，关闭状态不把认证 Context 强加给应用外壳。 */
@@ -374,14 +375,6 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
     window.requestAnimationFrame(() => emailInputRef.current?.focus())
   }
 
-  function switchEntry(nextEntry: AccountEntry) {
-    leaveWithAnimation(() => {
-      const next = new URLSearchParams(searchParams)
-      next.set('account', nextEntry)
-      setSearchParams(next, { replace: true })
-    })
-  }
-
   async function sendCode(): Promise<boolean> {
     if (isSendingCode || cooldownSeconds > 0) return false
     if (!EMAIL_PATTERN.test(normalizedEmail)) {
@@ -488,7 +481,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
         successMessage = '账号已创建，正在继续。'
       } else if (mode === 'code') {
         await session.loginByCode({ email: normalizedEmail, code })
-        successMessage = '登录成功。如果这是你首次使用该邮箱，我们已为你创建账号。'
+        successMessage = '登录成功，正在继续。'
       } else {
         await session.login({ email: normalizedEmail, password })
         successMessage = '登录成功，正在继续。'
@@ -518,7 +511,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
   function trapFocus(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.key !== 'Tab') return
     const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
     )
     if (!focusable?.length) return
     const first = focusable[0]
@@ -779,9 +772,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
               )}
 
               {!isRegister && mode === 'code' && (
-                <p className="auth-screen-helper text-xs leading-5">
-                  未注册的邮箱将在验证后自动创建账号。
-                </p>
+                <p className="auth-screen-helper text-xs leading-5">内测期间仅支持已有账号登录。</p>
               )}
             </div>
 
@@ -807,10 +798,11 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
           </form>
 
           <p className="auth-screen-entry-switch mt-7 text-center text-sm">
-            {isRegister ? '已有账号？' : '还没有账号？'}{' '}
-            <button type="button" onClick={() => switchEntry(isRegister ? 'login' : 'register')}>
-              {isRegister ? '登录' : '创建账号'}
-            </button>
+            内测期间暂不开放注册。如需开通，请通过{' '}
+            <a href={ACCESS_REQUEST_URL} target="_blank" rel="noreferrer">
+              GitHub Issues
+            </a>{' '}
+            联系团队申请。
           </p>
         </div>
       </div>

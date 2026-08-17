@@ -176,7 +176,7 @@ describe('AppHeader', () => {
   it('为访客提供可发现的登录入口并保留完整站内回跳地址', async () => {
     renderHeader('/quick-start?mode=fast#brief')
 
-    const entry = await screen.findByRole('link', { name: '登录 / 注册' })
+    const entry = await screen.findByRole('link', { name: '登录' })
     expect(entry.getAttribute('href')).toBe(
       '/?account=login&returnTo=%2Fquick-start%3Fmode%3Dfast%23brief',
     )
@@ -192,7 +192,7 @@ describe('AppHeader', () => {
     fireEvent.click(screen.getByRole('button', { name: '退出登录' }))
 
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/'))
-    expect(await screen.findByRole('link', { name: '登录 / 注册' })).toBeTruthy()
+    expect(await screen.findByRole('link', { name: '登录' })).toBeTruthy()
     expect(apis.logout).toHaveBeenCalledWith('rotated-refresh-token')
   })
 
@@ -206,7 +206,7 @@ describe('AppHeader', () => {
     fireEvent.click(screen.getByRole('button', { name: '退出登录' }))
 
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/'))
-    expect(await screen.findByRole('link', { name: '登录 / 注册' })).toBeTruthy()
+    expect(await screen.findByRole('link', { name: '登录' })).toBeTruthy()
   })
 
   it('没有昵称时使用邮箱展示账号身份', async () => {
