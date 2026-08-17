@@ -237,6 +237,25 @@ def test_update_noop_does_not_increment_version(auth_client):
     assert resp.json()["data"]["version"] == created["version"]
 
 
+def test_update_noop_stale_version_returns_409(auth_client):
+    project = _create_project(auth_client)
+    created = auth_client.post(
+        "/workflow-runs", json=_payload(project["id"]),
+    ).json()["data"]
+
+    auth_client.patch(
+        f"/workflow-runs/{created['id']}",
+        json={"nodes": [{"id": "n1"}], "version": created["version"]},
+    )
+
+    resp = auth_client.patch(
+        f"/workflow-runs/{created['id']}", json={"version": created["version"]},
+    )
+
+    assert resp.json()["code"] == 409
+    assert "冲突" in resp.json()["message"]
+
+
 def test_update_stale_version_returns_409(auth_client):
     project = _create_project(auth_client)
     created = auth_client.post(
@@ -276,6 +295,26 @@ def test_delete_success(auth_client):
         "/workflow-runs", params={"project_id": project["id"]},
     )
     assert resp.json()["total"] == 0
+
+
+def test_patch_after_delete_does_not_restore_run(auth_client):
+    project = _create_project(auth_client)
+    created = auth_client.post(
+        "/workflow-runs", json=_payload(project["id"]),
+    ).json()["data"]
+
+    auth_client.delete(f"/workflow-runs/{created['id']}")
+
+    resp = auth_client.patch(
+        f"/workflow-runs/{created['id']}",
+        json={"nodes": [{"id": "n1"}], "version": created["version"]},
+    )
+
+    assert resp.json()["code"] == 409
+    got = auth_client.get(f"/workflow-runs/{created['id']}").json()["data"]
+    assert got["status"] == "soft_deleted"
+    assert got["nodes"] == []
+    assert got["version"] == created["version"] + 1
 
 
 def test_delete_not_found_returns_404(auth_client):

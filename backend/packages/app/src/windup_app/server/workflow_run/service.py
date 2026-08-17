@@ -18,6 +18,13 @@ from windup_app.server.workflow_run.interface import WorkflowRunService
 from windup_app.server.workflow_run.model import RunStatus, WorkflowRun
 
 
+def _version_conflict() -> None:
+    raise BizException(
+        "执行记录版本冲突，请刷新后重试",
+        code=BizCode.CONFLICT,
+    )
+
+
 class SqlAlchemyWorkflowRunService(WorkflowRunService):
     """基于 SQLAlchemy session 的执行记录 CRUD 实现。"""
 
@@ -83,29 +90,29 @@ class SqlAlchemyWorkflowRunService(WorkflowRunService):
         if run is None:
             return None
 
-        new_nodes = run.nodes if nodes is None else nodes
-        new_status = run.status if status is None else status.value
-        if new_nodes == run.nodes and new_status == run.status:
+        values: dict[str, object] = {}
+        if nodes is not None and nodes != run.nodes:
+            values["nodes"] = nodes
+        if status is not None and status.value != run.status:
+            values["status"] = status.value
+
+        if not values:
+            if run.version != expected_version:
+                _version_conflict()
             return run
 
+        values["version"] = expected_version + 1
         result = session.execute(
             update(WorkflowRun)
             .where(
                 WorkflowRun.id == run_id,
                 WorkflowRun.version == expected_version,
             )
-            .values(
-                nodes=new_nodes,
-                status=new_status,
-                version=expected_version + 1,
-            )
+            .values(**values)
             .execution_options(synchronize_session="fetch")
         )
         if result.rowcount == 0:
-            raise BizException(
-                "执行记录版本冲突，请刷新后重试",
-                code=BizCode.CONFLICT,
-            )
+            _version_conflict()
         session.refresh(run)
         return run
 
@@ -113,9 +120,18 @@ class SqlAlchemyWorkflowRunService(WorkflowRunService):
         run = session.get(WorkflowRun, run_id)
         if run is None:
             return False
-        run.status = RunStatus.SOFT_DELETED.value
-        session.flush()
-        return True
+        if run.status == RunStatus.SOFT_DELETED.value:
+            return True
+        result = session.execute(
+            update(WorkflowRun)
+            .where(WorkflowRun.id == run_id)
+            .values(
+                status=RunStatus.SOFT_DELETED.value,
+                version=WorkflowRun.version + 1,
+            )
+            .execution_options(synchronize_session="fetch")
+        )
+        return result.rowcount > 0
 
 
 service = SqlAlchemyWorkflowRunService()
