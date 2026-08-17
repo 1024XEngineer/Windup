@@ -47,6 +47,20 @@ _NEGATION = (
     "don't", "doesn't", "isn't", "aren't", "won't", "cannot",
     "不要", "不能", "不许", "禁止", "避免", "勿",
 )
+
+# 上面那张表只认完整短语,漏掉最常见的两种写法:中文"不+动词"("不转身")与英文 can't 一类
+# 缩写(含弯引号 ’,输入法默认给的就是它)。漏掉的代价与列出来的完全一样 —— 否定极性丢了,
+# 名词照样被 latch 进画面。
+#
+# 中文那条**不能只放一个"不"**:不错 / 不同 / 不少 / 不过 这些不是否定动作。故要求"不"后面
+# 跟一个动作字,并把常见的形容词/连词组合排除掉。
+_NEGATION_RE = (
+    r"不(?!错|同|少|过|再|得不|失|凡|妨|止|仅|但)[\u4e00-\u9fff]",
+    # 词干连 n 一起列:can't 是 can + 't,而 doesn't 是 doesn + 't —— n 的归属两者不同,
+    # 用一条 `\s*n?[’']t` 去套会漏掉 can't。
+    r"\b(?:can|won|don|doesn|didn|isn|aren|wasn|weren|hasn|haven|hadn"
+    r"|shouldn|wouldn|couldn|mustn|ain|needn|shan)[\u2019']t\b",
+)
 _HAZARD = (
     "dust", "dusty", "smoke", "smoky", "smoking", "spark", "sparks", "sparking",
     "debris", "flame", "flames", "flaming", "fire", "fires", "fiery",
@@ -93,23 +107,28 @@ _EQUIPMENT = (
 _ASCII_WORD = re.compile(r"^[a-z' ]+$")
 
 
-def _compile(terms: tuple[str, ...]) -> re.Pattern[str]:
+def _compile(terms: tuple[str, ...], extra: tuple[str, ...] = ()) -> re.Pattern[str]:
+    """词表按字面转义;``extra`` 里的是已写好的正则,原样并进去。
+
+    分开传而不是让词表自己带正则:字面词占绝大多数,让它们全都要自己转义,迟早有人漏。
+    """
     parts = [
         rf"\b{re.escape(t)}\b" if _ASCII_WORD.match(t) else re.escape(t)
         for t in terms
     ]
-    return re.compile("|".join(parts), re.IGNORECASE)
+    return re.compile("|".join(parts + list(extra)), re.IGNORECASE)
 
 
 _PATTERNS = {
     name: _compile(terms)
     for name, terms in (
-        ("negation", _NEGATION), ("hazard", _HAZARD), ("impact", _IMPACT),
+        ("hazard", _HAZARD), ("impact", _IMPACT),
         ("subthreshold", _SUBTHRESHOLD), ("prop", _PROP_ACTION),
         ("body", _BODY_ANCHOR), ("shape_prior", _SHAPE_PRIOR),
         ("equipment", _EQUIPMENT),
     )
 }
+_PATTERNS["negation"] = _compile(_NEGATION, _NEGATION_RE)
 
 
 def _hits(text: str, name: str) -> list[str]:

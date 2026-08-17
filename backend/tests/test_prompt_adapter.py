@@ -382,3 +382,52 @@ def test_fixed_actions_are_untouched_by_the_adapter(monkeypatch):
                  ActionSpec(action=ActionType.WALK, n_frames=8, stylize=Stylize.NONE),
                  _png(), _NullProgress())
     assert "One single character alone" not in video.prompts[0]
+
+
+# ── 否定式:常见写法必须命中,而形容词性的"不X"必须放行 ──────────────────────
+
+
+@pytest.mark.parametrize("text", [
+    "向前走，不转身",
+    "不许转身",
+    "can not turn around",
+    "he can't turn around",
+    "he can’t turn around",      # 弯引号,中文输入法默认给的就是它
+    "doesn't move the sword",
+    "won’t turn",
+])
+def test_negation_forms_are_caught(text: str):
+    assert any(i.category == "negation" for i in lint(text)), text
+
+
+@pytest.mark.parametrize("text", [
+    "不错的动作",
+    "角色不同方向行走",
+    "动作不过快",
+    "不少细节",
+    "不妨快一点",
+    "walk forward calmly",
+    "cant stop",                 # 没有撇号的不认,免得撞上其它词
+])
+def test_non_negation_phrases_are_not_flagged(text: str):
+    assert not any(i.category == "negation" for i in lint(text)), text
+
+
+# ── 非双足体型:中文"手"类措辞 ───────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("text", [
+    "举起左手", "抬手示意", "双手张开", "手掌朝前", "挥手致意", "举起手臂",
+])
+def test_chinese_hand_words_reject_on_non_biped(text: str):
+    with pytest.raises(PromptRejected) as e:
+        RuleBasedPromptAdapter().adapt(text, kind="i2v", stance=CharacterStance.QUADRUPED)
+    assert e.value.code is PromptRejectCode.STANCE_MISMATCH
+
+
+@pytest.mark.parametrize("text", [
+    "选手入场", "对手靠近", "身手灵活", "手段凌厉", "向前走两步",
+])
+def test_hand_lookalikes_are_not_rejected(text: str):
+    """"手"不当身体部位用时必须放行 —— 拒错了用户改不动。"""
+    RuleBasedPromptAdapter().adapt(text, kind="i2v", stance=CharacterStance.QUADRUPED)

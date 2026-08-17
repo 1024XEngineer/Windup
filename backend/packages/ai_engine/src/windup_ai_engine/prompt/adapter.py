@@ -14,6 +14,8 @@ framework 在 ai_engine 之下,framework 里的模块 import 不到本层的门�
 """
 from __future__ import annotations
 
+import re
+
 from windup_common.models import CharacterStance, Facing
 
 from windup_ai_engine.ports import AdaptedPrompt, PromptRejectCode, PromptRejected
@@ -37,6 +39,18 @@ _STAGE_MARKERS = (
     "然后", "接着", "紧接着", "之后", "再", "最后", "先", "收势",
 )
 _ARM_WORDS = ("arm", "arms", "elbow", "hand", "hands", "手臂", "胳膊", "手肘")
+
+# 上面漏掉最常用的写法:裸"手"。"举起左手"不命中 _ARM_WORDS,而英文 raise the left hand
+# 会被拒 —— 同一句话中英文两种结果。
+#
+# **不能直接把"手"加进上面那张表**:选手 / 对手 / 高手 / 新手 / 助手 / 手段 / 手法 /
+# 顺手 / 棘手 里的"手"都不是身体部位,加了会把合法描述拒掉,而拒错的代价是用户改不动。
+# 故只认"手"真的当部位用的那几种组合:方位或数量修饰、身体部位后缀、以及动作动词带它。
+_HAND_RE = re.compile(
+    r"(?:[左右双两单前后]手"
+    r"|手(?:掌|指|腕|背|心)"
+    r"|(?:举|抬|挥|伸|摆|张|握|收|放下|抱|拍)(?:起|开)?手)"
+)
 
 # 每个非双足体型自带一套可替换的部位说法:拒绝理由要给得出改法,"这个词不行"给不了。
 # 缺一支就是拒了却说不出改哪儿,故 :class:`CharacterStance` 加成员必须同时加这里。
@@ -102,6 +116,9 @@ class RuleBasedPromptAdapter:
 
         if stance is not CharacterStance.BIPED:
             hit = next((w for w in _ARM_WORDS if w in low), None)
+            if hit is None:
+                m = _HAND_RE.search(low)
+                hit = m.group(0) if m else None
             if hit:
                 blockers.append((
                     PromptRejectCode.STANCE_MISMATCH,
