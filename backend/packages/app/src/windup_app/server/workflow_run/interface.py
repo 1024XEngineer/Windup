@@ -60,15 +60,19 @@ class WorkflowRunService(ABC):
         session: Session,
         run_id: int,
         *,
+        expected_version: int,
         nodes: list | None = None,
         status: RunStatus | None = None,
     ) -> WorkflowRun | None:
         """更新执行记录。
 
         前端维护节点树后，通过此接口全量写回。
+        ``expected_version`` 必须等于库中当前版本，否则乐观锁冲突。
+        无字段变更时不递增 version，但仍校验版本。
+        只写入请求明确提供且确有变化的列。
         返回更新后的记录；不存在时返回 None。
         """
 
     @abstractmethod
     def delete_run(self, session: Session, run_id: int) -> bool:
-        """软删除执行记录。返回是否找到。"""
+        """软删除执行记录。命中时递增 version，与 PATCH 共用乐观锁。返回是否找到。"""

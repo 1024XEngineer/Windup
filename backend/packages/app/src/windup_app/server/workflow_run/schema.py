@@ -30,10 +30,12 @@ class WorkflowRunUpdateRequest(BaseModel):
     """全量更新执行记录。
 
     前端维护节点树后，通过此接口全量写回。
+    ``version`` 必须等于当前记录版本，否则乐观锁冲突。
     """
 
-    nodes: list = Field(
-        default_factory=list,
+    version: int = Field(ge=1, description="客户端读到的当前版本号")
+    nodes: list | None = Field(
+        default=None,
         description="节点树（前端自定义结构，后端不校验）",
     )
     status: str | None = Field(
@@ -51,4 +53,4 @@ class WorkflowRunOut(BaseModel):
     project_id: int
     nodes: list = Field(default_factory=list, description="节点树（前端自定义结构）")
     status: str = Field(description="active / soft_deleted")
-    version: int = Field(description="版本号，从 1 递增")
+    version: int = Field(description="乐观锁版本号，从 1 递增")
