@@ -2086,7 +2086,7 @@
     },
     "/auth/login-by-code": {
       "post": {
-        "description": "验证码登录，无账号自动注册。",
+        "description": "验证码登录。内测期间不自动注册。",
         "operationId": "login_by_code_auth_login_by_code_post",
         "requestBody": {
           "content": {
@@ -2276,7 +2276,7 @@
     },
     "/auth/register": {
       "post": {
-        "description": "邮箱+验证码+密码注册，注册即登录。",
+        "description": "邮箱+验证码+密码注册。\n\n内测期间关闭公开注册，路由与请求模型保留以便以后重新开放。",
         "operationId": "register_auth_register_post",
         "requestBody": {
           "content": {
