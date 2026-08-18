@@ -115,8 +115,8 @@ describe('AccountPanel', () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('邮箱')))
   })
 
-  it('only opens invitation registration from a valid invite link', async () => {
-    renderPanel('/?account=register&invite=ab23cd45&returnTo=%2Fworkspace')
+  it('delegates invite-link format validation to the backend', async () => {
+    renderPanel('/?account=register&invite=i0o1&returnTo=%2Fworkspace')
 
     const dialog = screen.getByRole('dialog', { name: '创建 Windup 账号' })
     expect(screen.getByRole('heading', { name: '欢迎来到 Windup' })).toBeTruthy()
@@ -239,14 +239,18 @@ describe('AccountPanel', () => {
     expect(screen.getByRole('button', { name: '发送验证码' }).hasAttribute('disabled')).toBe(false)
   })
 
-  it('validates a numeric six-character code before submitting', async () => {
+  it('delegates verification-code format validation to the backend', async () => {
     const { apis } = renderPanel()
     fillCodeLogin('reader@example.com', '12ab56')
 
     fireEvent.submit(screen.getByRole('button', { name: '登录' }).closest('form')!)
 
-    expect((await screen.findByRole('alert')).textContent).toContain('验证码需为 6 位数字')
-    expect(apis.loginByCode).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(apis.loginByCode).toHaveBeenCalledWith({
+        email: 'reader@example.com',
+        code: '12ab56',
+      }),
+    )
   })
 
   it('shows backend errors inline, preserves input, and prevents repeat submits', async () => {

@@ -141,15 +141,16 @@ describe('InviteSection', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('复制失败，请重试')
   })
 
-  it('在提交前拦截无效邀请码', async () => {
+  it('把标准化后的邀请码交给后端校验', async () => {
     const { apis } = renderInvite()
+    apis.redeemInviteCode.mockRejectedValue(new Error('邀请码无效'))
     expect(await screen.findByText('AB23CD45')).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText('补填邀请码'), { target: { value: 'I0O1' } })
     fireEvent.click(screen.getByRole('button', { name: '确认补填' }))
 
-    expect((await screen.findByRole('alert')).textContent).toContain('请填写有效邀请码')
-    expect(apis.redeemInviteCode).not.toHaveBeenCalled()
+    await waitFor(() => expect(apis.redeemInviteCode).toHaveBeenCalledWith('I0O1'))
+    expect((await screen.findByRole('alert')).textContent).toContain('邀请码无效')
   })
 
   it('补填失败时保留邀请码，便于用户修正或重试', async () => {
