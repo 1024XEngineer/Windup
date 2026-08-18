@@ -18,6 +18,14 @@
   <a href="openapi.json">OpenAPI</a>
 </p>
 
+<p align="center">
+  <a href="https://windup.xin"><img src="https://img.shields.io/website?url=https%3A%2F%2Fwindup.xin&amp;up_message=online&amp;down_message=offline&amp;label=deployment" alt="Deployment status"></a>
+  <a href="https://github.com/1024XEngineer/Windup/actions/workflows/frontend-ci.yml"><img src="https://github.com/1024XEngineer/Windup/actions/workflows/frontend-ci.yml/badge.svg?branch=main" alt="Frontend CI"></a>
+  <a href="https://github.com/1024XEngineer/Windup/actions/workflows/backend.yml"><img src="https://github.com/1024XEngineer/Windup/actions/workflows/backend.yml/badge.svg?branch=main" alt="Backend CI"></a>
+  <a href="https://codecov.io/gh/1024XEngineer/Windup"><img src="https://codecov.io/gh/1024XEngineer/Windup/graph/badge.svg?branch=main" alt="Test coverage"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/1024XEngineer/Windup" alt="License"></a>
+</p>
+
 <p align="center"><strong>Windup 已上线，现已开放注册。</strong></p>
 
 <p align="center">
