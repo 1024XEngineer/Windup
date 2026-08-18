@@ -15,6 +15,7 @@ import logging
 import secrets
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
@@ -46,6 +47,11 @@ def normalize_invite_code(code: str) -> str:
 
 def _new_invite_code() -> str:
     return "".join(secrets.choice(_INVITE_ALPHABET) for _ in range(_INVITE_CODE_LENGTH))
+
+
+def _is_invitee_unique_violation(exc: IntegrityError) -> bool:
+    text = f"{getattr(exc, 'orig', '')} {exc}".lower()
+    return "invitee" in text or "windup_invite_record" in text
 
 
 def _to_invite_view(row: InviteCode) -> InviteCodeView:
@@ -340,7 +346,9 @@ class SqlAlchemyQuotaService(QuotaService):
         if session.get(User, user_id) is None:
             raise BizException("用户不存在", code=BizCode.NOT_FOUND)
 
-        row = session.scalar(select(InviteCode).where(InviteCode.user_id == user_id))
+        row = session.scalar(
+            select(InviteCode).where(InviteCode.user_id == user_id).with_for_update()
+        )
         if row is None:
             row = InviteCode(
                 user_id=user_id, code=self._allocate_invite_code(session), used_count=0
@@ -392,7 +400,12 @@ class SqlAlchemyQuotaService(QuotaService):
         )
         session.add(record)
         invite.used_count += 1
-        session.flush()
+        try:
+            session.flush()
+        except IntegrityError as exc:
+            if _is_invitee_unique_violation(exc):
+                raise BizException("已填写过邀请码", code=BizCode.BAD_REQUEST) from exc
+            raise
 
         reward = quota_settings.invite_reward_amount
         self.credit(

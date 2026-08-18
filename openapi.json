@@ -3227,7 +3227,7 @@
     },
     "/quota/invite/generate": {
       "post": {
-        "description": "生成或轮换当前用户邀请码。",
+        "description": "生成或轮换当前用户邀请码。轮换后旧码立即失效。",
         "operationId": "generate_invite_code_quota_invite_generate_post",
         "responses": {
           "200": {

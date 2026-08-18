@@ -137,7 +137,7 @@ def generate_invite_code(
     request: Request,
     session: Session = Depends(get_session),
 ) -> Response[InviteCodeOut]:
-    """生成或轮换当前用户邀请码。"""
+    """生成或轮换当前用户邀请码。轮换后旧码立即失效。"""
     view = service.generate_invite_code(session, request.state.current_user.id)
     return Response.success(
         InviteCodeOut(

@@ -96,7 +96,7 @@ class QuotaService(ABC):
 
     @abstractmethod
     def generate_invite_code(self, session: Session, user_id: int) -> InviteCodeView:
-        """生成新邀请码（替换旧码）。"""
+        """生成新邀请码（替换旧码）。已有行会 FOR UPDATE，旧码立即失效。"""
 
     @abstractmethod
     def redeem_invite_code(self, session: Session, user_id: int, code: str) -> None:

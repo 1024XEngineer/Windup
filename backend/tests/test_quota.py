@@ -531,6 +531,64 @@ class TestInviteCode:
         assert second != first
         assert len(second) == 8
 
+    def test_generate_invite_code_locks_existing_row(
+        self, db_session, quota_service, monkeypatch
+    ):
+        from sqlalchemy.sql.selectable import Select
+        from windup_app.server.user.model import User
+
+        host = User(email="lock-host@example.com", password_hash="x")
+        db_session.add(host)
+        db_session.flush()
+        quota_service.generate_invite_code(db_session, host.id)
+
+        locked = []
+        original = Select.with_for_update
+
+        def tracking(self, *args, **kwargs):
+            locked.append(True)
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Select, "with_for_update", tracking)
+        quota_service.generate_invite_code(db_session, host.id)
+        assert locked, "轮换已有邀请码时应对该行加 FOR UPDATE"
+
+    def test_redeem_unique_violation_is_already_redeemed(
+        self, db_session, quota_service, monkeypatch
+    ):
+        """并发双兑时 unique(invitee_id) 应收敛为「已填写过邀请码」，而不是 500。"""
+        from sqlalchemy.exc import IntegrityError
+        from windup_app.server.user.model import User
+        from windup_common.exceptions import BizException
+
+        host = User(email="race-host@example.com", password_hash="x")
+        guest = User(email="race-guest@example.com", password_hash="x")
+        db_session.add_all([host, guest])
+        db_session.flush()
+        _gift_account(db_session, host.id)
+        _gift_account(db_session, guest.id)
+        view = quota_service.generate_invite_code(db_session, host.id)
+
+        from windup_app.server.quota.model import InviteRecord
+
+        orig_flush = db_session.flush
+
+        def boom(*_args, **_kwargs):
+            if any(isinstance(obj, InviteRecord) for obj in db_session.new):
+                raise IntegrityError(
+                    "INSERT",
+                    {},
+                    Exception(
+                        "UNIQUE constraint failed: windup_invite_record.invitee_id"
+                    ),
+                )
+            return orig_flush(*_args, **_kwargs)
+
+        monkeypatch.setattr(db_session, "flush", boom)
+
+        with pytest.raises(BizException, match="已填写过邀请码"):
+            quota_service.redeem_invite_code(db_session, guest.id, view.code)
+
     def test_redeem_invite_code_rewards_both_users(self, db_session, quota_service):
         from windup_app.server.user.model import User
 
