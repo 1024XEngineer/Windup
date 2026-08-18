@@ -1290,7 +1290,7 @@
             "type": "string"
           },
           "invite_code": {
-            "description": "邀请码",
+            "description": "邀请链接中的邀请码，注册时由前端从查询参数传入",
             "maxLength": 16,
             "minLength": 4,
             "title": "Invite Code",
@@ -2382,7 +2382,7 @@
     },
     "/auth/register": {
       "post": {
-        "description": "邮箱+验证码+密码注册。须填写有效邀请码。",
+        "description": "邮箱+验证码+密码注册。须在请求体携带邀请链接中的有效邀请码。",
         "operationId": "register_auth_register_post",
         "requestBody": {
           "content": {

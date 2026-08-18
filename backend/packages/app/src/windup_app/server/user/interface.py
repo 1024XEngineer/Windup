@@ -27,7 +27,7 @@ class UserService(ABC):
 
     @abstractmethod
     def register_by_email(self, session: Session, input: RegisterInput) -> LoginResult:
-        """邮箱+密码注册，须填写有效邀请码，注册成功即登录。
+        """邮箱+验证码+密码注册。请求体须带邀请链接中的有效邀请码。
 
         :raises windup_common.exceptions.BizException: 邮箱已注册 / 邀请码无效。
         """

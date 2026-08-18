@@ -12,6 +12,7 @@ rollback，故本实现只 ``flush``（把变更发到当前事务、取回生�
 """
 
 import logging
+import re
 import secrets
 
 from sqlalchemy import func, select
@@ -39,10 +40,19 @@ logger = logging.getLogger("windup.quota.service")
 
 _INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 _INVITE_CODE_LENGTH = 8
+_INVITE_CODE_RE = re.compile(rf"^[{re.escape(_INVITE_ALPHABET)}]{{4,16}}$")
 
 
 def normalize_invite_code(code: str) -> str:
     return code.strip().upper()
+
+
+def parse_invite_code(code: str) -> str:
+    """解析邀请链接/补填传入的邀请码，字符集与前端 INVITE_CODE_PATTERN 一致。"""
+    normalized = normalize_invite_code(code)
+    if _INVITE_CODE_RE.fullmatch(normalized) is None:
+        raise BizException("邀请码无效", code=BizCode.BAD_REQUEST)
+    return normalized
 
 
 def _new_invite_code() -> str:
@@ -373,9 +383,7 @@ class SqlAlchemyQuotaService(QuotaService):
         raise BizException("邀请码生成失败，请稍后重试", code=BizCode.BAD_REQUEST)
 
     def redeem_invite_code(self, session: Session, user_id: int, code: str) -> None:
-        normalized = normalize_invite_code(code)
-        if not normalized:
-            raise BizException("邀请码无效", code=BizCode.BAD_REQUEST)
+        normalized = parse_invite_code(code)
 
         existing = session.scalar(
             select(InviteRecord.id).where(InviteRecord.invitee_id == user_id)

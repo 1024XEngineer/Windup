@@ -1,4 +1,4 @@
-"""注册须填写有效邀请码；无邀请码不得建号。"""
+"""注册须携带邀请链接中的有效邀请码；无邀请码不得建号。"""
 
 from windup_common.enums.biz_code import BizCode
 

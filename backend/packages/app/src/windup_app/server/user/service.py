@@ -168,15 +168,13 @@ class SqlAlchemyUserService(UserService):
     # -- 注册 ------------------------------------------------------------
 
     def register_by_email(self, session: Session, input: RegisterInput) -> LoginResult:
-        """邮箱+验证码+密码注册。须填写有效邀请码。"""
+        """邮箱+验证码+密码注册。请求体须带邀请链接中的有效邀请码。"""
         from windup_app.server.quota.service import (
-            normalize_invite_code,
+            parse_invite_code,
             service as quota_service,
         )
 
-        invite_code = normalize_invite_code(input.invite_code)
-        if not invite_code:
-            raise BizException("请填写邀请码", code=BizCode.BAD_REQUEST)
+        invite_code = parse_invite_code(input.invite_code)
 
         invite_exists = session.scalar(
             select(InviteCode.id).where(InviteCode.code == invite_code).limit(1)

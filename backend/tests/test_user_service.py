@@ -282,7 +282,21 @@ def test_register_blank_invite_code(db_session, service):
         invite_code="   ",
     )
 
-    with pytest.raises(BizException, match="请填写邀请码"):
+    with pytest.raises(BizException, match="邀请码无效"):
+        service.register_by_email(db_session, input_data)
+
+
+def test_register_rejects_invite_code_outside_link_charset(db_session, service):
+    """前端邀请链接用 A-H/J-N/P-Z/2-9，含 I/O/0/1 的码不会进注册请求。"""
+    service._redis.get.return_value = "123456"
+    input_data = RegisterInput(
+        email="bad-charset@example.com",
+        password="password123",
+        code="123456",
+        invite_code="IIII",
+    )
+
+    with pytest.raises(BizException, match="邀请码无效"):
         service.register_by_email(db_session, input_data)
 
 

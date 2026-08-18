@@ -667,6 +667,8 @@ class TestInviteCode:
         with pytest.raises(BizException, match="邀请码无效"):
             quota_service.redeem_invite_code(db_session, guest.id, "   ")
         with pytest.raises(BizException, match="邀请码无效"):
+            quota_service.redeem_invite_code(db_session, guest.id, "IO01")
+        with pytest.raises(BizException, match="邀请码无效"):
             quota_service.redeem_invite_code(db_session, guest.id, "NOPE1234")
 
     def test_redeem_rejects_missing_invitee(self, db_session, quota_service):

@@ -37,7 +37,11 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     code: str = Field(min_length=6, max_length=6, description="邮箱验证码")
     nickname: str | None = Field(default=None, max_length=50)
-    invite_code: str = Field(min_length=4, max_length=16, description="邀请码")
+    invite_code: str = Field(
+        min_length=4,
+        max_length=16,
+        description="邀请链接中的邀请码，注册时由前端从查询参数传入",
+    )
 
 
 class LoginRequest(BaseModel):
@@ -120,7 +124,7 @@ class UserOut(BaseModel):
 
 @router.post("/register", response_model=Response[TokenResponse])
 def register(body: RegisterRequest, session: Session = Depends(get_session)):
-    """邮箱+验证码+密码注册。须填写有效邀请码。"""
+    """邮箱+验证码+密码注册。须在请求体携带邀请链接中的有效邀请码。"""
     result = service.register_by_email(
         session,
         RegisterInput(

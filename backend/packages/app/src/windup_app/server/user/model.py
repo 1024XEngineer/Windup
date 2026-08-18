@@ -114,8 +114,8 @@ class RegisterInput:
     email: str
     password: str
     code: str
+    invite_code: str
     nickname: str | None = None
-    invite_code: str = ""
 
 
 @dataclass
