@@ -93,11 +93,21 @@ describe('PlaytestEntryPage', () => {
       { ...preview(1), characterName: '', previewUrl: 'https://cdn.windup.test/outfit-1.png' },
       window.localStorage,
     )
+    rememberRecentPreview(
+      '7',
+      { ...preview(2), previewUrl: 'https://cdn.windup.test/outfit-2.png' },
+      window.localStorage,
+    )
 
     renderEntry()
 
-    expect(
-      (await screen.findByRole('img', { name: '未命名角色 · 造型 1预览图' })).getAttribute('src'),
-    ).toBe('https://cdn.windup.test/outfit-1.png')
+    const newestPreview = await screen.findByRole('img', { name: '角色 2 · 造型 2预览图' })
+    const olderPreview = screen.getByRole('img', { name: '未命名角色 · 造型 1预览图' })
+
+    expect(newestPreview.getAttribute('loading')).toBe('eager')
+    expect(newestPreview.getAttribute('fetchpriority')).toBe('high')
+    expect(olderPreview.getAttribute('src')).toBe('https://cdn.windup.test/outfit-1.png')
+    expect(olderPreview.getAttribute('loading')).toBe('lazy')
+    expect(olderPreview.getAttribute('fetchpriority')).toBe('auto')
   })
 })
