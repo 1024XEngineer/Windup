@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from windup_framework.mq.config import (
     EMAIL_HANDLER_RETRIES,
     GENERATION_PENDING_MAX_AGE_SECONDS,
+    GENERATION_RUNNING_STALE_SECONDS,
 )
 from windup_framework.sse.bridge import SSE_REDIS_CHANNEL
 
@@ -75,6 +76,7 @@ __all__ = [
     "GENERATION_STREAM",
     "GENERATION_GROUP",
     "GENERATION_PENDING_MAX_AGE_SECONDS",
+    "GENERATION_RUNNING_STALE_SECONDS",
     "MSG_TYPE_CHARACTER_ACTION",
     "MSG_TYPE_CHARACTER_IMAGE",
     "MSG_TYPE_VERIFICATION_CODE",

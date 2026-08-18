@@ -39,7 +39,6 @@ def test_lifespan_stops_sse_subscriber(monkeypatch):
     create_all = Mock()
     monkeypatch.setattr(app_module.Base.metadata, "create_all", create_all)
     monkeypatch.setattr(app_module, "relay_pending_messages", Mock())
-    monkeypatch.setattr(app_module, "_recover_orphaned_generation", Mock())
 
     subscriber = Mock()
     monkeypatch.setattr(app_module, "RedisTaskEventSubscriber", Mock(return_value=subscriber))

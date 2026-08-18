@@ -28,6 +28,7 @@ from windup_common.enums.biz_code import BizCode
 from windup_common.exceptions import BizException
 from windup_common.result import Response
 from windup_framework.db import get_session
+from windup_framework.mq.publisher import MqPublisher
 
 from windup_app.server.character.model import Character, CharacterData
 from windup_app.server.orchestrator import task_repo

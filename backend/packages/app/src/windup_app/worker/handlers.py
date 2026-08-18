@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import time
-import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -25,7 +24,6 @@ from windup_app.server.orchestrator.model import (
 from windup_app.server.user.service import VERIFY_CODE_KEY
 from windup_framework.db.redis import get_redis
 from windup_framework.db.session import SessionLocal
-from windup_framework.mq import repository as mq_repo
 from windup_framework.providers.email import email_provider
 
 logger = logging.getLogger("windup.worker.handlers")
@@ -142,8 +140,3 @@ def dispatch_handler(
         )
         return
     raise ValueError(f"未知消息类型: {msg_type}")
-
-
-def should_skip_message(session, message_id: uuid.UUID) -> bool:
-    row = mq_repo.get_by_id(session, message_id)
-    return row is not None and row.consume_status == "acked"

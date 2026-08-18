@@ -321,7 +321,10 @@ def test_recover_requeues_pending_tasks_with_open_freeze(session_factory):
 
 
 def test_recover_fails_and_unfreezes_running_orphans(session_factory):
+    from datetime import datetime, timedelta, timezone
+
     from windup_app.server.orchestrator import task_repo
+    from windup_app.server.orchestrator.model import GenerationTaskRecord
     from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
 
     with session_factory() as session:
@@ -335,6 +338,8 @@ def test_recover_fails_and_unfreezes_running_orphans(session_factory):
     with session_factory() as session:
         task = service.generate_character_action(session, user_id=1, input=action_input)
         task_repo.update_status(session, task.id, TaskStatus.RUNNING)
+        record = session.get(GenerationTaskRecord, task.id)
+        record.update_at = datetime.now(timezone.utc) - timedelta(hours=2)
         session.commit()
         task_id = task.id
 
@@ -342,6 +347,8 @@ def test_recover_fails_and_unfreezes_running_orphans(session_factory):
         recover_orphaned_generation_tasks(
             session,
             publisher=_tracking_publisher()[0],
+            fail_stale_running=True,
+            running_stale_seconds=60,
         )
         session.commit()
 

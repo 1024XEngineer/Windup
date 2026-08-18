@@ -259,11 +259,6 @@ def test_web_layer_reads_the_outfit_model_url_into_the_task_input(auth_client, d
     seed_credit_account(db_session, 1)
     db_session.commit()
 
-    # 提交动作生成会预冻结积分(#351),没有账户就在扣费那一步 404。
-    with sessionmaker(bind=engine)() as s:
-        seed_credit_account(s, 1)
-        s.commit()
-
     project = auth_client.post("/projects", json={
         "project_name": "三渲二", "character_perspective": 1, "directional_movement": 2,
         "sprite_width": 64, "sprite_height": 64,
@@ -301,11 +296,6 @@ def test_web_layer_does_not_guess_an_outfit_when_none_is_given(auth_client, db_s
 
     seed_credit_account(db_session, 1)
     db_session.commit()
-
-    # 提交动作生成会预冻结积分(#351),没有账户就在扣费那一步 404。
-    with sessionmaker(bind=engine)() as s:
-        seed_credit_account(s, 1)
-        s.commit()
 
     project = auth_client.post("/projects", json={
         "project_name": "三渲二", "character_perspective": 1, "directional_movement": 2,

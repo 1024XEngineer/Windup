@@ -1,19 +1,21 @@
 """进程重启后对账：有冻结、未终态的生成任务重新入队或失败解冻。
 
-调度载体为 Redis Stream + mq_message outbox。启动时扫描 PENDING/RUNNING
+调度载体为 Redis Stream + mq_message outbox。worker 启动时扫描 PENDING/RUNNING
 且仍有开放冻结的任务：
 
 - PENDING：通过 publisher 补投（dedupe_key 幂等，不插第二行）
-- RUNNING：视为执行中被打断，标 FAILED 并解冻（避免重复打上游）
+- RUNNING：仅当 update_at 超过 stale 阈值才视为孤儿并 FAILED + 解冻
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
 from windup_app.server.mq.catalog import (
+    GENERATION_RUNNING_STALE_SECONDS,
     GENERATION_STREAM,
     MSG_TYPE_CHARACTER_ACTION,
     MSG_TYPE_CHARACTER_IMAGE,
@@ -33,14 +35,24 @@ def recover_orphaned_generation_tasks(
     session: Session,
     *,
     publisher: MqPublisher,
+    fail_stale_running: bool = False,
+    running_stale_seconds: int = GENERATION_RUNNING_STALE_SECONDS,
 ) -> None:
     """扫描未结清冻结的开放任务并恢复。调用方负责 commit。"""
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(seconds=running_stale_seconds)
     for task in task_repo.list_by_status(
         session, (TaskStatus.PENDING, TaskStatus.RUNNING),
     ):
         if task.id is None or not billing.has_open_freeze(session, task.id):
             continue
         if task.status is TaskStatus.RUNNING:
+            if not fail_stale_running:
+                continue
+            updated = task.update_at
+            if updated is not None and updated.tzinfo is None:
+                updated = updated.replace(tzinfo=timezone.utc)
+            if updated is not None and updated >= stale_cutoff:
+                continue
             _fail_interrupted(session, task)
             continue
         _requeue_pending(session, publisher, task)
@@ -73,7 +85,14 @@ def _requeue_pending(
             session,
             stream=GENERATION_STREAM,
             msg_type=msg_type,
-            payload={"task_id": task.id, "task_type": task.task_type.value if hasattr(task.task_type, "value") else str(task.task_type)},
+            payload={
+                "task_id": task.id,
+                "task_type": (
+                    task.task_type.value
+                    if hasattr(task.task_type, "value")
+                    else str(task.task_type)
+                ),
+            },
             dedupe_key=f"generation:{task.id}",
         )
         publisher.register_after_commit(session, message_id)

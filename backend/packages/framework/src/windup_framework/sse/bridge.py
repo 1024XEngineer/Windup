@@ -16,6 +16,8 @@ SSE_REDIS_CHANNEL = os.getenv(
     "WINDUP_SSE_REDIS_CHANNEL",
     "windup:pubsub:generation-task-events",
 )
+_RECONNECT_BASE_SECONDS = 1.0
+_RECONNECT_MAX_SECONDS = 30.0
 
 
 class TaskEventPublisher(Protocol):
@@ -113,6 +115,25 @@ class RedisTaskEventSubscriber:
             self._thread = None
 
     def _run(self) -> None:
+        backoff = _RECONNECT_BASE_SECONDS
+        while not self._stop.is_set():
+            try:
+                self._listen_once()
+                backoff = _RECONNECT_BASE_SECONDS
+            except Exception:
+                if self._stop.is_set():
+                    break
+                logger.exception(
+                    "SSE Subscriber 连接中断，%.1fs 后重连 | channel=%s",
+                    backoff,
+                    self._channel,
+                )
+                if self._stop.wait(timeout=backoff):
+                    break
+                backoff = min(backoff * 2, _RECONNECT_MAX_SECONDS)
+        logger.info("SSE Subscriber 已停止")
+
+    def _listen_once(self) -> None:
         redis_client = get_redis()
         pubsub = redis_client.pubsub(ignore_subscribe_messages=True)
         pubsub.subscribe(self._channel)
@@ -120,7 +141,9 @@ class RedisTaskEventSubscriber:
         try:
             while not self._stop.is_set():
                 message = pubsub.get_message(timeout=1.0)
-                if not message or message.get("type") != "message":
+                if not message:
+                    continue
+                if message.get("type") != "message":
                     continue
                 raw = message.get("data")
                 if raw is None:
@@ -139,4 +162,3 @@ class RedisTaskEventSubscriber:
                     logger.exception("SSE Subscriber 解析消息失败")
         finally:
             pubsub.close()
-            logger.info("SSE Subscriber 已停止")

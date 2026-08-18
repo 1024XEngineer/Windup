@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import socket
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -18,13 +19,13 @@ from windup_app.server.mq.catalog import (
     generation_action_concurrency,
     generation_image_concurrency,
 )
-from windup_app.worker.handlers import dispatch_handler, should_skip_message
+from windup_app.worker.handlers import dispatch_handler
 from windup_framework.db.redis import get_redis
 from windup_framework.db.session import SessionLocal
 from windup_framework.mq import client as mq_client
-from windup_framework.mq.config import MAX_CONSUME_ATTEMPTS
+from windup_framework.mq.config import MAX_CONSUME_ATTEMPTS, PEL_CLAIM_INTERVAL_SECONDS
 from windup_framework.mq import repository as mq_repo
-from windup_framework.mq.publisher import MqPublisher
+from windup_framework.mq.repository import ConsumeClaimResult
 
 logger = logging.getLogger("windup.worker.consumer")
 
@@ -58,8 +59,8 @@ class StreamConsumer:
         )
         self._image_sem = threading.Semaphore(generation_image_concurrency())
         self._action_sem = threading.Semaphore(generation_action_concurrency())
-        self._in_flight = 0
-        self._in_flight_lock = threading.Lock()
+        self._claim_cursor = "0-0"
+        self._last_claim_at = 0.0
 
     def start(self) -> threading.Thread:
         thread = threading.Thread(
@@ -83,6 +84,11 @@ class StreamConsumer:
         self._claim_idle(redis_client)
 
         while not self._stop.is_set():
+            now = time.monotonic()
+            if now - self._last_claim_at >= PEL_CLAIM_INTERVAL_SECONDS:
+                self._claim_idle(redis_client)
+                self._last_claim_at = now
+
             try:
                 batches = mq_client.xreadgroup(
                     redis_client,
@@ -101,18 +107,24 @@ class StreamConsumer:
                     self._executor.submit(self._process_message, stream_id, fields)
 
     def _claim_idle(self, redis_client) -> None:
-        claimed = mq_client.claim_idle_messages(
-            redis_client,
-            self._config.stream,
-            self._config.group,
-            self._consumer_name,
-        )
-        for stream_id, fields in claimed:
-            self._executor.submit(self._process_message, stream_id, fields)
+        while not self._stop.is_set():
+            claimed, next_start = mq_client.claim_idle_messages(
+                redis_client,
+                self._config.stream,
+                self._config.group,
+                self._consumer_name,
+                start_id=self._claim_cursor,
+            )
+            self._claim_cursor = next_start
+            for stream_id, fields in claimed:
+                self._executor.submit(self._process_message, stream_id, fields)
+            if not claimed:
+                break
 
     def _process_message(self, stream_id: str, fields: dict[str, str]) -> None:
         redis_client = get_redis()
         semaphores: list[threading.Semaphore] = []
+        message_id: uuid.UUID | None = None
         try:
             envelope = mq_client.parse_envelope(fields)
             message_id = uuid.UUID(str(envelope["id"]))
@@ -126,20 +138,27 @@ class StreamConsumer:
 
             session = SessionLocal()
             try:
-                if should_skip_message(session, message_id):
-                    session.commit()
-                    mq_client.xack(
-                        redis_client,
-                        self._config.stream,
-                        self._config.group,
-                        stream_id,
-                    )
-                    return
-
-                mq_repo.increment_consume_attempts(session, message_id)
+                claim = mq_repo.try_claim_for_consume(session, message_id)
                 session.commit()
             finally:
                 session.close()
+
+            if claim is ConsumeClaimResult.ALREADY_DONE:
+                mq_client.xack(
+                    redis_client,
+                    self._config.stream,
+                    self._config.group,
+                    stream_id,
+                )
+                return
+            if claim is ConsumeClaimResult.IN_FLIGHT:
+                mq_client.xack(
+                    redis_client,
+                    self._config.stream,
+                    self._config.group,
+                    stream_id,
+                )
+                return
 
             dispatch_handler(
                 msg_type,
@@ -166,7 +185,7 @@ class StreamConsumer:
                 self._config.stream,
                 stream_id,
             )
-            self._handle_failure(stream_id, fields, exc)
+            self._handle_failure(stream_id, fields, exc, message_id)
         finally:
             for sem in semaphores:
                 sem.release()
@@ -183,39 +202,39 @@ class StreamConsumer:
         stream_id: str,
         fields: dict[str, str],
         exc: Exception,
+        message_id: uuid.UUID | None,
     ) -> None:
         redis_client = get_redis()
-        message_id: uuid.UUID | None = None
-        try:
-            envelope = mq_client.parse_envelope(fields)
-            message_id = uuid.UUID(str(envelope["id"]))
-        except Exception:
-            logger.exception("解析失败消息 envelope 出错")
+        if message_id is None:
+            try:
+                envelope = mq_client.parse_envelope(fields)
+                message_id = uuid.UUID(str(envelope["id"]))
+            except Exception:
+                logger.exception("解析失败消息 envelope 出错")
+                return
 
         session = SessionLocal()
         try:
-            if message_id is not None:
-                row = mq_repo.get_by_id(session, message_id)
-                if row is not None and row.consume_attempts >= MAX_CONSUME_ATTEMPTS:
-                    mq_repo.mark_consumed(session, message_id, "failed", error=str(exc))
-                    session.commit()
-                    mq_client.xack(
-                        redis_client,
-                        self._config.stream,
-                        self._config.group,
-                        stream_id,
-                    )
-                    return
+            row = mq_repo.get_by_id(session, message_id)
+            if row is not None and row.consume_attempts >= MAX_CONSUME_ATTEMPTS:
+                mq_repo.mark_consumed(session, message_id, "failed", error=str(exc))
+                session.commit()
+                mq_client.xack(
+                    redis_client,
+                    self._config.stream,
+                    self._config.group,
+                    stream_id,
+                )
+                return
+            mq_repo.release_processing_claim(session, message_id)
             session.commit()
         finally:
             session.close()
-
 
 def start_relay_loop(stop_event: threading.Event) -> threading.Thread:
     """周期性 relay pending 消息。"""
 
     def _run() -> None:
-        publisher = MqPublisher()
         while not stop_event.wait(timeout=30):
             try:
                 from windup_framework.mq.relay import relay_pending_messages

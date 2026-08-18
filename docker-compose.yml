@@ -86,6 +86,8 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
     command: ["python", "-m", "windup_app.worker"]
+    healthcheck:
+      disable: true
     networks:
       - windup-net
 

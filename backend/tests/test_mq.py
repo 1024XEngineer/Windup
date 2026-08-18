@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy.orm import sessionmaker
@@ -12,6 +12,7 @@ from windup_framework.db.base import Base
 from windup_framework.mq.model import MqMessage
 from windup_framework.mq.publisher import MqPublisher
 from windup_framework.mq import repository as mq_repo
+from windup_framework.mq.repository import ConsumeClaimResult
 
 
 @pytest.fixture()
@@ -78,3 +79,26 @@ def test_flush_to_stream_marks_published(mq_session, engine, monkeypatch):
         assert check.stream_id == "1734512345678-0"
     finally:
         verify.close()
+
+
+def test_try_claim_for_consume_is_exclusive(mq_session):
+    message_id = uuid.uuid4()
+    mq_repo.insert_pending(
+        mq_session,
+        message_id=message_id,
+        dedupe_key="generation:99",
+        stream="windup:stream:generation",
+        msg_type="character_image",
+        payload={"task_id": 99},
+    )
+    row = mq_session.get(MqMessage, message_id)
+    row.publish_status = "published"
+    mq_session.commit()
+
+    first = mq_repo.try_claim_for_consume(mq_session, message_id)
+    mq_session.commit()
+    second = mq_repo.try_claim_for_consume(mq_session, message_id)
+    mq_session.commit()
+
+    assert first is ConsumeClaimResult.CLAIMED
+    assert second is ConsumeClaimResult.IN_FLIGHT

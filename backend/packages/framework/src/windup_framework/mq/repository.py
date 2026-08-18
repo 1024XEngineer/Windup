@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
+import enum
 import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from windup_framework.mq.config import CONSUME_LEASE_SECONDS
 from windup_framework.mq.model import MqMessage
 
 _ERROR_MAX_LEN = 2048
+
+
+class ConsumeClaimResult(enum.Enum):
+    """消费认领结果。"""
+
+    ALREADY_DONE = "already_done"
+    IN_FLIGHT = "in_flight"
+    CLAIMED = "claimed"
 
 
 def _truncate_error(message: str | None) -> str | None:
@@ -97,6 +107,35 @@ def mark_publish_failed(
     session.flush()
 
 
+def try_claim_for_consume(
+    session: Session,
+    message_id: uuid.UUID,
+    *,
+    lease_seconds: int = CONSUME_LEASE_SECONDS,
+) -> ConsumeClaimResult:
+    """原子认领台账消息，避免重复 Stream 条目并发跑 handler。"""
+    row = session.get(MqMessage, message_id, with_for_update=True)
+    if row is None:
+        return ConsumeClaimResult.ALREADY_DONE
+
+    if row.consume_status in ("acked", "failed"):
+        return ConsumeClaimResult.ALREADY_DONE
+
+    now = datetime.now(timezone.utc)
+    if row.consume_status == "processing":
+        updated = row.updated_at
+        if updated is not None and updated.tzinfo is None:
+            updated = updated.replace(tzinfo=timezone.utc)
+        if updated is not None and (now - updated).total_seconds() < lease_seconds:
+            return ConsumeClaimResult.IN_FLIGHT
+
+    row.consume_status = "processing"
+    row.consume_attempts += 1
+    row.updated_at = now
+    session.flush()
+    return ConsumeClaimResult.CLAIMED
+
+
 def mark_consumed(
     session: Session,
     message_id: uuid.UUID,
@@ -115,10 +154,11 @@ def mark_consumed(
     session.flush()
 
 
-def increment_consume_attempts(session: Session, message_id: uuid.UUID) -> None:
+def release_processing_claim(session: Session, message_id: uuid.UUID) -> None:
+    """handler 失败且未达上限时释放 processing，便于 PEL 重试再次认领。"""
     row = session.get(MqMessage, message_id)
-    if row is None:
+    if row is None or row.consume_status != "processing":
         return
-    row.consume_attempts += 1
+    row.consume_status = None
     row.updated_at = datetime.now(timezone.utc)
     session.flush()

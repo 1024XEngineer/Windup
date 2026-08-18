@@ -1,4 +1,4 @@
-"""Worker composition root。"""
+"""Worker 进程装配入口（composition root）。"""
 
 from __future__ import annotations
 
@@ -7,8 +7,6 @@ import signal
 import threading
 import time
 
-from windup_ai_engine.impl.character_namer import LangChainCharacterNamer
-from windup_app.server.character.service import service as character_service
 from windup_app.server.mq.catalog import all_stream_specs, email_stream_spec, generation_stream_spec
 from windup_app.server.orchestrator import task_repo
 from windup_app.server.orchestrator.executor import run_action_task, run_image_task
@@ -24,16 +22,14 @@ from windup_framework.sse.bridge import RedisTaskEventBridge
 logger = logging.getLogger("windup.worker")
 
 
-def _setup_generation_callbacks() -> tuple:
-    if character_service._namer is None:
-        character_service._namer = LangChainCharacterNamer()
-    return run_image_task, run_action_task
-
-
 def _recover_on_start(publisher: MqPublisher) -> None:
     session = SessionLocal()
     try:
-        recover_orphaned_generation_tasks(session, publisher=publisher)
+        recover_orphaned_generation_tasks(
+            session,
+            publisher=publisher,
+            fail_stale_running=True,
+        )
         session.commit()
     except Exception:
         session.rollback()
@@ -47,7 +43,6 @@ def main() -> None:
     Base.metadata.create_all(engine)
 
     task_repo.bind_task_event_publisher(RedisTaskEventBridge())
-    run_image, run_action = _setup_generation_callbacks()
     publisher = MqPublisher()
 
     _recover_on_start(publisher)
@@ -63,20 +58,17 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
-    email_spec = email_stream_spec()
-    generation_spec = generation_stream_spec()
-
     consumers = [
         StreamConsumer(
-            email_spec,
-            run_image_task=run_image,
-            run_action_task=run_action,
+            email_stream_spec(),
+            run_image_task=run_image_task,
+            run_action_task=run_action_task,
             stop_event=stop_event,
         ),
         StreamConsumer(
-            generation_spec,
-            run_image_task=run_image,
-            run_action_task=run_action,
+            generation_stream_spec(),
+            run_image_task=run_image_task,
+            run_action_task=run_action_task,
             stop_event=stop_event,
         ),
     ]
@@ -113,3 +105,7 @@ def _pending_timeout_loop(stop_event: threading.Event) -> None:
             release_stale_pending_tasks()
         except Exception:
             logger.exception("PENDING 超时循环失败")
+
+
+if __name__ == "__main__":
+    main()

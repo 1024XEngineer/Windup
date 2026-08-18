@@ -8,7 +8,6 @@ from typing import Any
 
 import redis
 
-from windup_framework.db.redis import get_redis
 from windup_framework.mq.config import PEL_CLAIM_IDLE_MS, STREAM_MAXLEN
 
 logger = logging.getLogger("windup.mq.client")
@@ -75,23 +74,25 @@ def claim_idle_messages(
     *,
     min_idle_ms: int = PEL_CLAIM_IDLE_MS,
     count: int = 10,
-) -> list[tuple[str, dict[str, str]]]:
-    """认领 PEL 中超 idle 阈值的消息。"""
+    start_id: str = "0-0",
+) -> tuple[list[tuple[str, dict[str, str]]], str]:
+    """认领 PEL 中超 idle 阈值的消息，返回下一页 start id。"""
     try:
         result = redis_client.xautoclaim(
             stream,
             group,
             consumer,
             min_idle_time=min_idle_ms,
-            start_id="0-0",
+            start_id=start_id,
             count=count,
         )
     except redis.ResponseError:
-        return []
+        return [], start_id
     if not result or len(result) < 2:
-        return []
-    messages = result[1]
-    return [(msg_id, fields) for msg_id, fields in messages]
+        return [], start_id
+    next_start = str(result[0])
+    messages = [(msg_id, fields) for msg_id, fields in result[1]]
+    return messages, next_start
 
 
 def parse_envelope(fields: dict[str, str]) -> dict[str, Any]:
