@@ -732,6 +732,11 @@
             "title": "Create At",
             "type": "string"
           },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
           "update_at": {
             "format": "date-time",
             "title": "Update At",
@@ -740,11 +745,6 @@
           "used_count": {
             "title": "Used Count",
             "type": "integer"
-          },
-          "expires_at": {
-            "format": "date-time",
-            "title": "Expires At",
-            "type": "string"
           }
         },
         "required": [
