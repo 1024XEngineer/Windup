@@ -66,31 +66,21 @@ export type QuickStartAgentRuntimeEvent =
   | { type: 'completed' }
   | { type: 'failed'; error: string }
 
-interface WorkflowNodeContext {
-  id: string
-  type: WorkflowNode['type']
-  status: WorkflowNode['status']
-  phase: WorkflowNode['phase']
-  error: string | null
-}
+type QuickStartAllowedAction =
+  | 'select-character-template'
+  | 'select-action-first-frame'
+  | 'approve-review'
+  | 'retry-generation'
 
 export interface QuickStartWorkflowContext {
-  runId: string
-  projectId: string
-  version: number
-  characterPrompt: string | null
-  currentNode: WorkflowNodeContext | null
-  nodes: WorkflowNodeContext[]
-}
-
-function nodeContext(node: WorkflowNode): WorkflowNodeContext {
-  return {
-    id: node.id,
-    type: node.type,
-    status: node.status,
-    phase: node.phase,
-    error: node.error,
-  }
+  currentStage: WorkflowNode['type'] | null
+  currentStatus: WorkflowNode['status'] | null
+  currentPhase: WorkflowNode['phase'] | null
+  isGenerating: boolean
+  awaitingUserSelection: boolean
+  failed: boolean
+  allowedActions: QuickStartAllowedAction[]
+  error: string | null
 }
 
 /**
@@ -99,19 +89,30 @@ function nodeContext(node: WorkflowNode): WorkflowNodeContext {
  */
 export function getQuickStartWorkflowContext(run: WorkflowRun): QuickStartWorkflowContext {
   const nodes = run.nodes.filter((node) => !node.deletedAt)
-  const setup = nodes.find((node) => node.type === 'character-setup')
   const current =
     nodes.findLast((node) => node.status === 'active' || node.status === 'failed') ??
     nodes.at(-1) ??
     null
+  const allowedActions: QuickStartAllowedAction[] =
+    current?.status === 'failed'
+      ? ['retry-generation']
+      : current?.type === 'character-template' && current.phase === 'selecting'
+        ? ['select-character-template']
+        : current?.type === 'action-first-frame' && current.phase === 'selecting'
+          ? ['select-action-first-frame']
+          : current?.type === 'review' && current.status === 'active'
+            ? ['approve-review']
+            : []
 
   return {
-    runId: run.id,
-    projectId: run.projectId,
-    version: run.version,
-    characterPrompt: setup?.type === 'character-setup' ? setup.input.prompt : null,
-    currentNode: current ? nodeContext(current) : null,
-    nodes: nodes.map(nodeContext),
+    currentStage: current?.type ?? null,
+    currentStatus: current?.status ?? null,
+    currentPhase: current?.phase ?? null,
+    isGenerating: current?.phase === 'generating',
+    awaitingUserSelection: current?.phase === 'selecting',
+    failed: current?.status === 'failed',
+    allowedActions,
+    error: current?.error ?? null,
   }
 }
 
@@ -194,6 +195,8 @@ export async function runQuickStartAgentTurn({
         break
       }
 
+      if (!completed) throw new Error('Agent Transport 未发送完成事件')
+
       if (pendingFunctionCall) {
         messages.push({
           role: 'assistant',
@@ -216,7 +219,6 @@ export async function runQuickStartAgentTurn({
         continue
       }
 
-      if (!completed) throw new Error('Agent Transport 未发送完成事件')
       messages.push({ role: 'assistant', content: responseText })
       onEvent?.({ type: 'completed' })
       return { history: messages, assistantText }
