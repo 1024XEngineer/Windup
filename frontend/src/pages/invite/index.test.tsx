@@ -83,6 +83,21 @@ describe('InviteSection', () => {
     expect(screen.getByText('有效至 2026年9月16日')).toBeTruthy()
   })
 
+  it('邀请码有效期异常时使用安全提示', async () => {
+    const apis = createApis()
+    apis.getInviteCode.mockResolvedValue({
+      code: 'AB23CD45',
+      usedCount: 2,
+      expiresAt: 'not-a-date',
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+
+    renderInvite(apis)
+
+    expect(await screen.findByText('有效期未知')).toBeTruthy()
+  })
+
   it('复制邀请码与注册链接', async () => {
     renderInvite()
 
@@ -122,6 +137,28 @@ describe('InviteSection', () => {
     fireEvent.click(screen.getByRole('button', { name: '复制邀请链接' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain('复制失败，请重试')
+  })
+
+  it('复制失败时优先展示当前操作错误', async () => {
+    const apis = createApis()
+    apis.getBalance.mockRejectedValue(new Error('积分账户不可用'))
+    vi.mocked(navigator.clipboard.writeText).mockRejectedValue(new Error('clipboard unavailable'))
+    renderInvite(apis)
+    expect(await screen.findByText('AB23CD45')).toBeTruthy()
+    expect(await screen.findByText('积分账户不可用')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '复制邀请链接' }))
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('复制失败，请重试'))
+    expect(screen.queryByText('积分账户不可用')).toBeNull()
+  })
+
+  it('非标准接口错误使用通用提示', async () => {
+    const apis = createApis()
+    apis.getInviteCode.mockRejectedValue('invite unavailable')
+    renderInvite(apis)
+
+    expect((await screen.findByRole('alert')).textContent).toContain('操作失败，请稍后重试')
   })
 
   it('邀请信息加载失败后允许原地重试', async () => {
