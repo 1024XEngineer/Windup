@@ -37,8 +37,6 @@ type LoginMode = 'code' | 'password'
 type MotionDirection = 'forward' | 'backward'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-const CODE_PATTERN = /^\d{6}$/
-const INVITE_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{4,16}$/i
 const SUCCESS_NAVIGATION_DELAY_MS = 900
 const AUTH_EXIT_DURATION_MS = 520
 
@@ -202,8 +200,7 @@ export function AccountPanel() {
   if (requestedEntry !== 'login' && requestedEntry !== 'register') return null
 
   const inviteCode = searchParams.get('invite')?.trim().toUpperCase() ?? ''
-  const entry: AccountEntry =
-    requestedEntry === 'register' && INVITE_CODE_PATTERN.test(inviteCode) ? 'register' : 'login'
+  const entry: AccountEntry = requestedEntry === 'register' && inviteCode ? 'register' : 'login'
 
   return (
     <AccountPanelDialog
@@ -405,7 +402,6 @@ function AccountPanelDialog({
     if (mode === 'password' && (password.length < 8 || password.length > 128)) {
       return '密码需为 8–128 位'
     }
-    if (mode === 'code' && !CODE_PATTERN.test(code)) return '验证码需为 6 位数字'
     return null
   }
 
@@ -413,7 +409,6 @@ function AccountPanelDialog({
     if (!EMAIL_PATTERN.test(normalizedEmail)) return '请输入有效邮箱地址'
     if (password.length < 8 || password.length > 128) return '密码需为 8–128 位'
     if (nickname.length > 50) return '昵称不能超过 50 个字符'
-    if (!CODE_PATTERN.test(code)) return '验证码需为 6 位数字'
     return null
   }
 

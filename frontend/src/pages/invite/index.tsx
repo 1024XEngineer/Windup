@@ -6,7 +6,6 @@ import { quotaApis as defaultQuotaApis } from '@/entities'
 import type { InviteCode, QuotaApis } from '@/entities'
 import { useQuotaBalance } from '@/features/quota'
 
-const INVITE_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{4,16}$/i
 const ICON_PROPS = { size: 20, weight: 'regular' as const }
 
 function errorMessage(error: unknown): string {
@@ -73,11 +72,6 @@ export function InviteSection({ apis = defaultQuotaApis }: { apis?: QuotaApis })
     event.preventDefault()
     if (isRedeeming) return
     const normalized = redeemCode.trim().toUpperCase()
-    if (!INVITE_CODE_PATTERN.test(normalized)) {
-      setNotice(null)
-      setActionError('请填写有效邀请码')
-      return
-    }
 
     setIsRedeeming(true)
     setActionError(null)
