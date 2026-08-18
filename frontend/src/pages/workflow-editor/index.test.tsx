@@ -4,15 +4,16 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Link, MemoryRouter, Route, Routes } from 'react-router'
 
-import type {
-  Character,
-  CharacterTemplateWorkflowNode,
-  Generation,
-  GenerationApis,
-  MediaReference,
-  Project,
-  WorkflowRun,
-  WorkflowRunApis,
+import {
+  WorkflowRunConflictError,
+  type Character,
+  type CharacterTemplateWorkflowNode,
+  type Generation,
+  type GenerationApis,
+  type MediaReference,
+  type Project,
+  type WorkflowRun,
+  type WorkflowRunApis,
 } from '@/entities'
 import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
 import { WorkflowEditorPage } from './index'
@@ -86,6 +87,14 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(await screen.findByLabelText('当前项目')).toBeTruthy()
     expect(screen.queryByText('真实 WorkflowRun 接口')).toBeNull()
     expect(defaultSessionLoader).toHaveBeenCalledWith('42')
+  })
+
+  it('会话加载失败时展示恢复错误', async () => {
+    defaultSessionLoader.mockRejectedValue(new Error('WorkflowRun 加载失败'))
+
+    renderEditor('/workflow-editor/42')
+
+    expect(await screen.findByText('WorkflowRun 加载失败')).toBeTruthy()
   })
 
   it('在角色设定卡片提交描述后由 Controller 持久化并固定输入', async () => {
@@ -191,6 +200,22 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(updateCharacterSetup).not.toHaveBeenCalled()
   })
 
+  it('页面卸载后会释放迟到返回的 Workflow Editor 会话', async () => {
+    const pendingSession = deferred<WorkflowEditorSession>()
+    const session = createSession()
+    const dispose = vi.spyOn(session.controller, 'dispose')
+    defaultSessionLoader.mockReturnValue(pendingSession.promise)
+    const view = renderEditor('/workflow-editor/42')
+
+    view.unmount()
+    await act(async () => {
+      pendingSession.resolve(session)
+      await pendingSession.promise
+    })
+
+    expect(dispose).toHaveBeenCalledTimes(1)
+  })
+
   it('真实 Generation 尚未实现时展示接口错误，不回退到演示候选', async () => {
     defaultSessionLoader.mockResolvedValue(createSession())
     renderEditor('/workflow-editor/42')
@@ -201,6 +226,52 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(screen.queryByRole('button', { name: /选择角色候选/ })).toBeNull()
   })
 
+  it('保存发生乐观锁冲突时提示加载当前 WorkflowRun 的最新版本', async () => {
+    const session = createSession(workflowFixture(), {
+      workflowRunApis: {
+        update: vi.fn(async () => {
+          throw new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试')
+        }),
+      },
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '生成角色候选' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('工作流已在其他位置更新，请加载最新版本后继续。')
+    expect(screen.getByRole('link', { name: '加载最新版本' }).getAttribute('href')).toBe(
+      '/workflow-editor/42',
+    )
+  })
+
+  it('恢复后台任务时发生乐观锁冲突也提示加载最新版本', async () => {
+    const session = createSession()
+    vi.spyOn(session.controller, 'resume').mockRejectedValue(
+      new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试'),
+    )
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('工作流已在其他位置更新，请加载最新版本后继续。')
+    expect(screen.getByRole('link', { name: '加载最新版本' }).getAttribute('href')).toBe(
+      '/workflow-editor/42',
+    )
+  })
+
+  it('恢复后台任务的一般错误保留在恢复提示中', async () => {
+    const session = createSession()
+    vi.spyOn(session.controller, 'resume').mockRejectedValue(new Error('后台任务恢复失败'))
+    defaultSessionLoader.mockResolvedValue(session)
+
+    renderEditor('/workflow-editor/42')
+
+    expect(await screen.findByText('后台任务恢复失败')).toBeTruthy()
+    expect(screen.queryByRole('link', { name: '加载最新版本' })).toBeNull()
+  })
+
   it('确认身份母版后采用会话创建的 Character 继续动作流程', async () => {
     const session = createSession(selectingTemplateWorkflow(3, 'character-task'), {
       generationApis: generationApisFixture({
@@ -208,7 +279,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
       }),
     })
     const confirmCharacterTemplate = vi.fn(async (nodeId: string, imageUrl: string) => {
-      await session.controller.confirmCharacterTemplate(nodeId, imageUrl)
+      await session.controller.confirmCharacterTemplate(nodeId, imageUrl, 'character-1')
       const character = characterFixture()
       return {
         ...character,
@@ -417,8 +488,8 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
   })
 
-  it('发布成功但审核保存失败时仍显式刷新 Character', async () => {
-    const publishReviewedAction = vi.fn(async () => characterFixture())
+  it('发布与审核命令失败时显示错误并释放分支锁', async () => {
+    const publishReviewedAction = vi.fn(() => Promise.reject(new Error('审核保存失败')))
     const session = createSession(reviewingActionWorkflow(), {
       character: { ...characterFixture(), outfits: [] },
       generationApis: generationApisFixture({
@@ -426,7 +497,6 @@ describe('WorkflowEditorPage real runtime boundary', () => {
       }),
       publishReviewedAction,
     })
-    vi.spyOn(session.controller, 'approveReview').mockRejectedValue(new Error('审核保存失败'))
     defaultSessionLoader.mockResolvedValue(session)
     renderEditor('/workflow-editor/42')
 
@@ -434,9 +504,10 @@ describe('WorkflowEditorPage real runtime boundary', () => {
 
     expect((await screen.findByRole('alert')).textContent).toContain('审核保存失败')
     expect(publishReviewedAction).toHaveBeenCalledWith('action-walk:review')
-    fireEvent.click(screen.getByRole('button', { name: '添加动作分支' }))
-    expect((screen.getByRole('button', { name: '生成动作 ›' }) as HTMLButtonElement).disabled).toBe(
-      false,
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: '审核通过' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
     )
   })
 
@@ -723,6 +794,55 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(screen.getByRole('alert').textContent).toContain('异步保存失败')
   })
 
+  it('异步冲突出现后不被后续普通命令错误清除', async () => {
+    let reportError: ((error: Error) => void) | null = null
+    const create = vi.fn(() => Promise.reject(new Error('Generation 后端尚未实现')))
+    const session = createSession(workflowFixture(), {
+      generationApis: generationApisFixture({ create: create as GenerationApis['create'] }),
+    })
+    session.subscribeErrors = vi.fn((listener) => {
+      reportError = listener
+      return () => undefined
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+    await screen.findByLabelText('当前项目')
+
+    act(() => reportError?.(new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试')))
+    expect(screen.getByRole('link', { name: '加载最新版本' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '生成角色候选' }))
+    expect(create).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert').textContent).toContain(
+      '工作流已在其他位置更新，请加载最新版本后继续。',
+    )
+    expect(screen.getByRole('link', { name: '加载最新版本' })).toBeTruthy()
+  })
+
+  it('异步冲突后收到工作流状态通知仍保留刷新入口', async () => {
+    let reportError: ((error: Error) => void) | null = null
+    let reportRun: ((run: WorkflowRun) => void) | null = null
+    const session = createSession()
+    const subscribe = session.controller.subscribe.bind(session.controller)
+    vi.spyOn(session.controller, 'subscribe').mockImplementation((listener) => {
+      reportRun = listener
+      return subscribe(listener)
+    })
+    session.subscribeErrors = vi.fn((listener) => {
+      reportError = listener
+      return () => undefined
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+    await screen.findByLabelText('当前项目')
+
+    act(() => reportError?.(new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试')))
+    expect(screen.getByRole('link', { name: '加载最新版本' })).toBeTruthy()
+
+    act(() => reportRun?.(session.controller.getWorkflow()))
+    expect(screen.getByRole('link', { name: '加载最新版本' })).toBeTruthy()
+  })
+
   it('把 React Flow 限定为系统节点的拖动画布，不允许自由连线、重连或删除', async () => {
     defaultSessionLoader.mockResolvedValue(createSession())
     renderEditor('/workflow-editor/42')
@@ -784,6 +904,7 @@ function renderEditor(path: string) {
 interface SessionFixtureOptions {
   character?: Character | null
   generationApis?: GenerationApis
+  workflowRunApis?: Partial<WorkflowRunApis>
   uploadReferenceImage?: WorkflowEditorSession['uploadReferenceImage']
   publishReviewedAction?(reviewNodeId: string): Promise<Character>
 }
@@ -805,6 +926,7 @@ function createSession(
       return structuredClone(workflow)
     },
     async remove() {},
+    ...options.workflowRunApis,
   }
   const generationApis = options.generationApis ?? generationApisFixture()
   const controller = createWorkflowController({
@@ -822,7 +944,7 @@ function createSession(
       options.uploadReferenceImage ??
       vi.fn(() => Promise.reject(new Error('媒体上传服务尚未装配'))),
     confirmCharacterTemplate: async (nodeId, selectedImageUrl) => {
-      await controller.confirmCharacterTemplate(nodeId, selectedImageUrl)
+      await controller.confirmCharacterTemplate(nodeId, selectedImageUrl, 'character-1')
       return options.character ?? characterFixture()
     },
     publishReviewedAction:

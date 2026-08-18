@@ -16,7 +16,7 @@ import {
   createRealQuickStartService,
   type QuickStartMediaApis,
 } from './service'
-import { ProjectNameConflictError } from '@/entities'
+import { ProjectNameConflictError, WorkflowRunConflictError } from '@/entities'
 import { registerApiAccessTokenProvider } from '@/shared/api'
 
 function createWorkflowRunApis(initialRuns: readonly WorkflowRun[] = []): WorkflowRunApis {
@@ -82,6 +82,24 @@ function pendingGenerationApis(): GenerationApis {
   }
 }
 
+function completedAnimationGenerationApis(): GenerationApis {
+  return {
+    create: vi.fn(),
+    get: vi.fn(async (projectId, id) => ({
+      id,
+      projectId,
+      type: 'complete_animation' as const,
+      status: 'completed' as const,
+      result: {
+        type: 'complete_animation' as const,
+        frames: [{ index: 0, url: 'frame.png', durationMs: 80 }],
+      },
+      error: null,
+    })),
+    subscribe: vi.fn(() => () => undefined),
+  }
+}
+
 function projectReader(spriteSize = { width: 256, height: 256 }) {
   return {
     get: vi.fn(async (id: string) => ({ id, spriteSize })),
@@ -100,6 +118,38 @@ function characterFixture(overrides: Partial<Character> = {}): Character {
     status: 1,
     outfits: [],
     ...overrides,
+  }
+}
+
+function characterWithDefaultOutfit(
+  workflowRunId: string,
+  actions: Character['outfits'][number]['actions'] = [],
+): Character {
+  return characterFixture({
+    workflowRunId,
+    outfits: [
+      {
+        id: 'outfit-1',
+        characterId: 'character-1',
+        name: '默认造型',
+        description: null,
+        previewUrl: 'template.png',
+        actions,
+      },
+    ],
+  })
+}
+
+function priorAction(): Character['outfits'][number]['actions'][number] {
+  return {
+    id: 'action-full',
+    outfitId: 'outfit-1',
+    name: '旧动作',
+    type: 'custom',
+    loop: true,
+    fps: 12,
+    frameCount: 1,
+    frames: [{ index: 0, imageUrl: 'old-frame.png', durationMs: 80 }],
   }
 }
 
@@ -402,6 +452,38 @@ describe('createQuickStartService', () => {
     )
   })
 
+  it('creates the character without a name so the backend derives it from the description', async () => {
+    const longPrompt = '一位穿着红色斗篷的像素风格女骑士手持长剑站立'
+    let savedCharacter = characterFixture({
+      description: longPrompt,
+      referenceImageUrl: 'https://example.test/template.png',
+    })
+    const characterApis = mutableCharacterApis(
+      () => savedCharacter,
+      (value) => (savedCharacter = value),
+    )
+    // 名称由后端按描述生成。前端一旦自己填，就会撞上 CharacterCreate.name 的 20 字
+    // 上限——这里的提示词有 22 字，正是线上创角失败的那一类输入。
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis(),
+      generationApis: pendingGenerationApis(),
+      characterApis,
+      mediaApis: {
+        upload: vi.fn(async () => 'https://example.test/template.png' as MediaReference),
+      },
+      prepareProject: async () => ({ id: 'project-1', spriteSize: { width: 256, height: 256 } }),
+      projectApis: projectReader(),
+      onAsyncError: vi.fn(),
+    })
+
+    await service.startWithUploadedTemplate(
+      new File(['pixels'], 'hero.png', { type: 'image/png' }),
+      longPrompt,
+    )
+
+    expect(vi.mocked(characterApis.create).mock.calls[0]?.[0].name).toBeUndefined()
+  })
+
   it('uploads a template, persists the character tree, and appends another action to it', async () => {
     const generationApis = pendingGenerationApis()
     let savedCharacter = characterFixture({
@@ -416,6 +498,17 @@ describe('createQuickStartService', () => {
       upload: vi.fn(async () => 'https://example.test/template.png' as MediaReference),
     }
     const workflowRunApis = createWorkflowRunApis()
+    const persistRun = workflowRunApis.update.bind(workflowRunApis)
+    let droppedTemplateResponse = false
+    vi.spyOn(workflowRunApis, 'update').mockImplementation(async (nextRun) => {
+      const saved = await persistRun(nextRun)
+      const template = saved.nodes.find((node) => node.type === 'character-template')
+      if (!droppedTemplateResponse && template?.status === 'passed') {
+        droppedTemplateResponse = true
+        throw new Error('上传母版响应丢失')
+      }
+      return saved
+    })
     const service = createQuickStartService({
       workflowRunApis,
       generationApis,
@@ -538,6 +631,7 @@ describe('createQuickStartService', () => {
       (value) => (character = value),
     )
     const workflowRunApis = createWorkflowRunApis([run])
+    const updateRun = vi.spyOn(workflowRunApis, 'update')
     const getRun = vi.spyOn(workflowRunApis, 'get')
     const service = createQuickStartService({
       workflowRunApis,
@@ -561,11 +655,23 @@ describe('createQuickStartService', () => {
     expect(session.getWorkflow().nodes.find((node) => node.type === 'review')?.status).toBe(
       'active',
     )
+    updateRun.mockRejectedValueOnce(new WorkflowRunConflictError('执行记录版本冲突'))
+    vi.mocked(characterApis.update)
+      .mockImplementationOnce(async (value) => {
+        character = structuredClone(value)
+        return structuredClone(character)
+      })
+      .mockRejectedValueOnce(new Error('Character 版本冲突'))
+    await expect(session.approveReview()).rejects.toBeInstanceOf(WorkflowRunConflictError)
+    expect(character.outfits[0]!.actions).toEqual([])
+    expect(session.getWorkflow().nodes.find((node) => node.type === 'review')?.status).toBe(
+      'active',
+    )
     await session.approveReview()
     await session.approveReview()
 
-    expect(getRun).toHaveBeenCalledTimes(1)
-    expect(characterApis.update).toHaveBeenCalledTimes(3)
+    expect(getRun).toHaveBeenCalledTimes(3)
+    expect(characterApis.update).toHaveBeenCalledTimes(6)
     expect(session.getWorkflow().nodes.find((node) => node.type === 'review')?.status).toBe(
       'passed',
     )
@@ -574,6 +680,136 @@ describe('createQuickStartService', () => {
       { index: 9, imageUrl: 'frame-9.png', durationMs: null },
     ])
   })
+
+  it.each([new Error('WorkflowRun 回读失败'), '回读失败'])(
+    '审核冲突后无法回读 Run 时保留幂等动作并上报对账错误',
+    async (reconcileCause) => {
+      const run = actionRun()
+      const storedApis = createWorkflowRunApis([run])
+      const realGet = storedApis.get.bind(storedApis)
+      vi.spyOn(storedApis, 'get')
+        .mockImplementationOnce(realGet)
+        .mockImplementationOnce(realGet)
+        .mockRejectedValueOnce(reconcileCause)
+      vi.spyOn(storedApis, 'update').mockRejectedValueOnce(
+        new WorkflowRunConflictError('执行记录版本冲突'),
+      )
+      let character = characterWithDefaultOutfit(run.id, [priorAction()])
+      const characterApis = mutableCharacterApis(
+        () => character,
+        (value) => (character = value),
+      )
+      const onAsyncError = vi.fn()
+      const session = await createQuickStartService({
+        workflowRunApis: storedApis,
+        generationApis: completedAnimationGenerationApis(),
+        characterApis,
+        prepareProject: vi.fn(),
+        projectApis: projectReader(),
+        onAsyncError,
+      }).open(run.id)
+
+      await expect(session.approveReview()).rejects.toBeInstanceOf(WorkflowRunConflictError)
+
+      expect(character.outfits[0]!.actions).toHaveLength(1)
+      expect(onAsyncError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message:
+            reconcileCause instanceof Error
+              ? reconcileCause.message
+              : 'WorkflowRun 保存结果对账失败',
+        }),
+      )
+    },
+  )
+
+  it.each([new Error('节点重新打开失败'), '节点重新打开失败'])(
+    'Character 写入失败且无法重新打开母版节点时上报错误',
+    async (reopenCause) => {
+      const workflowRunApis = createWorkflowRunApis()
+      const realUpdate = workflowRunApis.update.bind(workflowRunApis)
+      let updateRunCalls = 0
+      vi.spyOn(workflowRunApis, 'update').mockImplementation(async (next) => {
+        updateRunCalls += 1
+        if (updateRunCalls <= 2) return realUpdate(next)
+        throw reopenCause
+      })
+      const character = characterFixture({
+        id: 'character-write-failed',
+        referenceImageUrl: 'old.png',
+      })
+      const onAsyncError = vi.fn()
+      const service = createQuickStartService({
+        workflowRunApis,
+        generationApis: pendingGenerationApis(),
+        characterApis: {
+          get: vi.fn(async () => structuredClone(character)),
+          listByProject: vi.fn(),
+          create: vi.fn(async () => structuredClone(character)),
+          update: vi.fn(async () => Promise.reject(new Error('Character 写入失败'))),
+          remove: vi.fn(),
+        },
+        mediaApis: { upload: vi.fn(async () => 'candidate.png' as MediaReference) },
+        prepareProject: vi.fn(async () => ({
+          id: 'project-1',
+          spriteSize: { width: 256, height: 256 },
+        })),
+        projectApis: projectReader(),
+        onAsyncError,
+      })
+
+      await expect(
+        service.startWithUploadedTemplate(new File(['candidate'], 'candidate.png'), ''),
+      ).rejects.toThrow('Character 写入失败')
+      expect(onAsyncError).toHaveBeenCalledWith(
+        reopenCause instanceof Error
+          ? reopenCause
+          : expect.objectContaining({ message: '角色母版资产写入失败后重新打开节点失败' }),
+      )
+    },
+  )
+
+  it.each([new Error('动作恢复失败'), '动作恢复失败'])(
+    '审核冲突的两次动作恢复都失败时上报最终错误',
+    async (rollbackCause) => {
+      const run = actionRun()
+      const workflowRunApis = createWorkflowRunApis([run])
+      vi.spyOn(workflowRunApis, 'update').mockRejectedValueOnce(
+        new WorkflowRunConflictError('执行记录版本冲突'),
+      )
+      let character = characterWithDefaultOutfit(run.id, [priorAction()])
+      const update = vi.fn(async (value: Character) => {
+        if (update.mock.calls.length === 1) {
+          character = structuredClone(value)
+          return structuredClone(character)
+        }
+        return Promise.reject(rollbackCause)
+      })
+      const onAsyncError = vi.fn()
+      const session = await createQuickStartService({
+        workflowRunApis,
+        generationApis: completedAnimationGenerationApis(),
+        characterApis: {
+          get: vi.fn(async () => structuredClone(character)),
+          listByProject: vi.fn(),
+          create: vi.fn(),
+          update,
+          remove: vi.fn(),
+        },
+        prepareProject: vi.fn(),
+        projectApis: projectReader(),
+        onAsyncError,
+      }).open(run.id)
+
+      await expect(session.approveReview()).rejects.toBeInstanceOf(WorkflowRunConflictError)
+      expect(update).toHaveBeenCalledTimes(3)
+      expect(onAsyncError).toHaveBeenCalledWith(
+        rollbackCause instanceof Error
+          ? rollbackCause
+          : expect.objectContaining({ message: '审核冲突后恢复角色资产失败' }),
+      )
+    },
+  )
 
   it('continues from an uploaded replacement and restores missing character info from project assets', async () => {
     const candidateRun: WorkflowRun = {
@@ -814,8 +1050,10 @@ describe('createQuickStartService', () => {
       status: 1,
       outfits: [],
     }
+    const workflowRunApis = createWorkflowRunApis()
+    const updateRun = vi.spyOn(workflowRunApis, 'update')
     const service = createQuickStartService({
-      workflowRunApis: createWorkflowRunApis(),
+      workflowRunApis,
       generationApis,
       characterApis: {
         create: vi.fn(async () => structuredClone(character)),
@@ -849,6 +1087,222 @@ describe('createQuickStartService', () => {
 
     expect(character.outfits).toHaveLength(1)
     expect(started.getCharacterInfo()?.characterId).toBe('candidate-character')
+    const confirmationSave = updateRun.mock.calls
+      .map(([run]) => run)
+      .find(
+        (run) => run.nodes.find((node) => node.type === 'character-template')?.status === 'passed',
+      )
+    expect(confirmationSave?.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'character-setup',
+          input: expect.objectContaining({ characterId: 'candidate-character' }),
+        }),
+        expect.objectContaining({ type: 'character-template', status: 'passed' }),
+      ]),
+    )
+  })
+
+  it('Run 已落库但响应丢失时不删除已绑定的 Character', async () => {
+    const run: WorkflowRun = {
+      id: 'run-response-lost',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(null, null),
+    }
+    const workflowRunApis = createWorkflowRunApis([run])
+    const realUpdate = workflowRunApis.update.bind(workflowRunApis)
+    vi.spyOn(workflowRunApis, 'update').mockImplementation(async (nextRun) => {
+      const saved = await realUpdate(nextRun)
+      const template = saved.nodes.find((node) => node.type === 'character-template')
+      if (template?.status === 'passed') throw new Error('网络响应丢失')
+      return saved
+    })
+    let character = characterFixture({
+      workflowRunId: run.id,
+      referenceImageUrl: 'candidate.png',
+    })
+    const remove = vi.fn()
+    const characterApis = mutableCharacterApis(
+      () => character,
+      (value) => (character = value),
+    )
+    characterApis.remove = remove
+    const service = createQuickStartService({
+      workflowRunApis,
+      generationApis: pendingGenerationApis(),
+      characterApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+    })
+    const session = await service.open(run.id)
+
+    await expect(session.confirmCandidate('candidate.png', '挥手')).resolves.toMatchObject({
+      nodes: expect.arrayContaining([
+        expect.objectContaining({ type: 'action-first-frame', phase: 'generating' }),
+      ]),
+    })
+
+    expect(remove).not.toHaveBeenCalled()
+    const latest = await workflowRunApis.get(run.id)
+    expect(latest.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'character-setup',
+          input: expect.objectContaining({ characterId: character.id }),
+        }),
+        expect.objectContaining({ type: 'character-template', status: 'passed' }),
+      ]),
+    )
+  })
+
+  it('并发复用同一 Character 时沿用已有母版造型，不重复追加默认造型', async () => {
+    const run: WorkflowRun = {
+      id: 'run-shared-character',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(null, null),
+    }
+    const workflowRunApis = createWorkflowRunApis([run])
+    const realUpdate = workflowRunApis.update.bind(workflowRunApis)
+    vi.spyOn(workflowRunApis, 'update').mockImplementationOnce(async (nextRun) => {
+      await realUpdate(nextRun)
+      throw new WorkflowRunConflictError('执行记录版本冲突')
+    })
+    let character = characterFixture({
+      workflowRunId: run.id,
+      referenceImageUrl: 'candidate.png',
+      outfits: [
+        {
+          id: 'outfit-from-other-client',
+          characterId: 'character-1',
+          name: '默认造型',
+          description: null,
+          previewUrl: 'candidate.png',
+          actions: [],
+        },
+      ],
+    })
+    const characterApis = mutableCharacterApis(
+      () => character,
+      (value) => (character = value),
+    )
+    const service = createQuickStartService({
+      workflowRunApis,
+      generationApis: pendingGenerationApis(),
+      characterApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+    })
+    const session = await service.open(run.id)
+
+    await session.confirmCandidate('candidate.png', '挥手')
+
+    expect(character.outfits).toEqual([
+      expect.objectContaining({
+        id: 'outfit-from-other-client',
+        previewUrl: 'candidate.png',
+      }),
+    ])
+  })
+
+  it('母版确认冲突时不在获得 WorkflowRun 修改权前改写 Character', async () => {
+    const run: WorkflowRun = {
+      id: 'run-template-conflict',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(null, null),
+    }
+    const workflowRunApis = createWorkflowRunApis([run])
+    vi.spyOn(workflowRunApis, 'update').mockRejectedValue(
+      new WorkflowRunConflictError('执行记录版本冲突'),
+    )
+    let character = characterFixture({ workflowRunId: run.id })
+    const characterApis = mutableCharacterApis(
+      () => character,
+      (value) => (character = value),
+    )
+    const service = createQuickStartService({
+      workflowRunApis,
+      generationApis: pendingGenerationApis(),
+      characterApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+    })
+    const session = await service.open(run.id)
+
+    await expect(session.confirmCandidate('candidate.png', '挥手')).rejects.toBeInstanceOf(
+      WorkflowRunConflictError,
+    )
+
+    expect(characterApis.remove).not.toHaveBeenCalled()
+    expect(character.outfits).toEqual([])
+    expect(characterApis.update).not.toHaveBeenCalled()
+    expect((await workflowRunApis.get(run.id)).nodes).toEqual(run.nodes)
+  })
+
+  it('不同候选图并发确认时只让 WorkflowRun 乐观锁胜者写入 Character', async () => {
+    const run: WorkflowRun = {
+      id: 'run-competing-templates',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(null, null),
+    }
+    let stored = structuredClone(run)
+    const workflowRunApis: WorkflowRunApis = {
+      create: vi.fn(),
+      listByProject: vi.fn(),
+      get: vi.fn(async () => structuredClone(stored)),
+      update: vi.fn(async (next) => {
+        if (next.version !== stored.version) {
+          throw new WorkflowRunConflictError('执行记录版本冲突')
+        }
+        stored = { ...structuredClone(next), version: stored.version + 1 }
+        return structuredClone(stored)
+      }),
+      remove: vi.fn(),
+    }
+    let character = characterFixture({
+      workflowRunId: run.id,
+      referenceImageUrl: null,
+      outfits: [],
+    })
+    const characterApis = mutableCharacterApis(
+      () => character,
+      (value) => (character = value),
+    )
+    const createService = () =>
+      createQuickStartService({
+        workflowRunApis,
+        generationApis: pendingGenerationApis(),
+        characterApis,
+        prepareProject: vi.fn(),
+        projectApis: projectReader(),
+      })
+    const [sessionA, sessionB] = await Promise.all([
+      createService().open(run.id),
+      createService().open(run.id),
+    ])
+
+    const results = await Promise.allSettled([
+      sessionA.confirmCandidate('candidate-a.png', '挥手'),
+      sessionB.confirmCandidate('candidate-b.png', '挥手'),
+    ])
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1)
+    const selectedImageUrl = stored.nodes.find(
+      (node) => node.type === 'character-template',
+    )?.selectedImageUrl
+    expect(character.referenceImageUrl).toBe(selectedImageUrl)
+    expect(character.outfits).toEqual([
+      expect.objectContaining({ id: 'outfit-default', previewUrl: selectedImageUrl }),
+    ])
+    expect(characterApis.update).toHaveBeenCalledOnce()
   })
 
   it('creates a fresh run when an existing character has no workflow history', async () => {
@@ -897,16 +1351,17 @@ describe('createQuickStartService', () => {
     })
   })
 
-  it('rolls back an orphan character when binding its uploaded template fails', async () => {
+  it('Character 写入失败时重新打开已确认的母版节点', async () => {
     const character = characterFixture({
       id: 'orphan-character',
       name: '孤立角色',
       referenceImageUrl: 'orphan.png',
     })
-    const remove = vi.fn(async () => Promise.reject('rollback failed'))
-    const onAsyncError = vi.fn()
+    const workflowRunApis = createWorkflowRunApis()
+    const update = vi.fn(async () => Promise.reject(new Error('角色写入失败')))
+    const remove = vi.fn()
     const service = createQuickStartService({
-      workflowRunApis: createWorkflowRunApis(),
+      workflowRunApis,
       generationApis: {
         create: vi.fn(),
         get: vi.fn(),
@@ -914,9 +1369,9 @@ describe('createQuickStartService', () => {
       },
       characterApis: {
         create: vi.fn(async () => character),
-        update: vi.fn(async () => Promise.reject(new Error('save failed'))),
+        update,
         remove,
-        get: vi.fn(),
+        get: vi.fn(async () => structuredClone(character)),
         listByProject: vi.fn(),
       } as unknown as CharacterApis,
       mediaApis: { upload: vi.fn(async () => 'orphan.png' as MediaReference) },
@@ -925,16 +1380,18 @@ describe('createQuickStartService', () => {
         spriteSize: { width: 256, height: 256 },
       })),
       projectApis: projectReader(),
-      onAsyncError,
     })
 
     await expect(
       service.startWithUploadedTemplate(new File(['orphan'], 'orphan.png'), ''),
-    ).rejects.toThrow('save failed')
-    expect(remove).toHaveBeenCalledWith('orphan-character')
-    expect(onAsyncError).toHaveBeenCalledWith(
-      expect.objectContaining({ message: '创建角色后的回滚失败' }),
-    )
+    ).rejects.toThrow('角色写入失败')
+    expect(remove).not.toHaveBeenCalled()
+    const latest = await workflowRunApis.get('run-1')
+    expect(latest.nodes.find((node) => node.type === 'character-template')).toMatchObject({
+      status: 'active',
+      phase: 'ready',
+      selectedImageUrl: null,
+    })
   })
 
   it('reports unavailable dependencies and invalid asset targets explicitly', async () => {
@@ -1076,5 +1533,125 @@ describe('createQuickStartService', () => {
         }),
       )
     })
+  })
+
+  it('向会话订阅者报告自动推进中的乐观锁冲突', async () => {
+    const run = actionRun(true)
+    const storedApis = createWorkflowRunApis([run])
+    let methodAttempts = 0
+    const workflowRunApis: WorkflowRunApis = {
+      ...storedApis,
+      update: vi.fn(async (nextRun: WorkflowRun) => {
+        const method = nextRun.nodes.find((node) => node.type === 'action-generation-method')
+        if (method?.type === 'action-generation-method' && method.method === 'video-cropping') {
+          methodAttempts += 1
+          throw new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试')
+        }
+        return storedApis.update(nextRun)
+      }),
+    }
+    const service = createQuickStartService({
+      workflowRunApis,
+      generationApis: pendingGenerationApis(),
+      prepareProject: async () => ({ id: 'project-1', spriteSize: { width: 256, height: 256 } }),
+      projectApis: projectReader(),
+    })
+    const session = await service.open(run.id)
+    const errors: Error[] = []
+    const unsubscribe = session.subscribeErrors((error) => errors.push(error))
+
+    await session.confirmFirstFrame('https://example.test/first-frame-2.png')
+
+    await vi.waitFor(() => expect(errors).toEqual([expect.any(WorkflowRunConflictError)]))
+    await session.interrupt()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(methodAttempts).toBe(1)
+    unsubscribe()
+  })
+
+  it('错误上报器和页面订阅者抛错时仍完成容错', async () => {
+    const run = actionRun(true)
+    const storedApis = createWorkflowRunApis([run])
+    const workflowRunApis: WorkflowRunApis = {
+      ...storedApis,
+      update: vi.fn(async (nextRun: WorkflowRun) => {
+        const method = nextRun.nodes.find((node) => node.type === 'action-generation-method')
+        if (method?.type === 'action-generation-method' && method.method === 'video-cropping') {
+          throw '非 Error 异常'
+        }
+        return storedApis.update(nextRun)
+      }),
+    }
+    const onAsyncError = vi.fn(() => {
+      throw new Error('上报器异常')
+    })
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    try {
+      const service = createQuickStartService({
+        workflowRunApis,
+        generationApis: pendingGenerationApis(),
+        prepareProject: async () => ({ id: 'project-1', spriteSize: { width: 256, height: 256 } }),
+        projectApis: projectReader(),
+        onAsyncError,
+      })
+      const session = await service.open(run.id)
+      session.subscribeErrors(() => {
+        throw new Error('页面订阅者异常')
+      })
+
+      await session.confirmFirstFrame('https://example.test/first-frame-2.png')
+
+      await vi.waitFor(() => expect(consoleError).toHaveBeenCalledTimes(2))
+      expect(onAsyncError).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Quick Start 自动推进失败' }),
+      )
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
+  it('会话销毁后不再报告尚未结束的自动推进错误', async () => {
+    const run = actionRun(true)
+    const storedApis = createWorkflowRunApis([run])
+    const advanceControl: { reject?: (error: Error) => void } = {}
+    let markAdvanceStarted: (() => void) | null = null
+    const advanceStarted = new Promise<void>((resolve) => {
+      markAdvanceStarted = resolve
+    })
+    const workflowRunApis: WorkflowRunApis = {
+      ...storedApis,
+      update: vi.fn(async (nextRun: WorkflowRun) => {
+        const method = nextRun.nodes.find((node) => node.type === 'action-generation-method')
+        if (method?.type === 'action-generation-method' && method.method === 'video-cropping') {
+          markAdvanceStarted?.()
+          return new Promise<WorkflowRun>((_resolve, reject) => {
+            advanceControl.reject = reject
+          })
+        }
+        return storedApis.update(nextRun)
+      }),
+    }
+    const onAsyncError = vi.fn()
+    const service = createQuickStartService({
+      workflowRunApis,
+      generationApis: pendingGenerationApis(),
+      prepareProject: async () => ({ id: 'project-1', spriteSize: { width: 256, height: 256 } }),
+      projectApis: projectReader(),
+      onAsyncError,
+    })
+    const session = await service.open(run.id)
+    const pageError = vi.fn()
+    session.subscribeErrors(pageError)
+
+    await session.confirmFirstFrame('https://example.test/first-frame-2.png')
+    await advanceStarted
+    session.dispose()
+    if (!advanceControl.reject) throw new Error('自动推进请求没有启动')
+    advanceControl.reject(new Error('旧会话保存失败'))
+    await Promise.resolve()
+
+    expect(onAsyncError).not.toHaveBeenCalled()
+    expect(pageError).not.toHaveBeenCalled()
   })
 })

@@ -121,7 +121,7 @@ export type WorkflowNode =
 export interface WorkflowRun {
   id: string
   projectId: string
-  /** 后端更新序号；当前仅随 PATCH 递增，不承担并发冲突检测。 */
+  /** 后端乐观锁版本；更新时原样回传，保存成功后使用响应中的新版本。 */
   version: number
   /** 后端资源状态，仅表示正常或软删除。 */
   storageStatus: WorkflowRunStorageStatus
@@ -143,4 +143,4 @@ export interface WorkflowRunApis {
   remove(id: WorkflowRun['id']): Promise<void>
 }
 
-export { workflowRunApis } from './api'
+export { WorkflowRunConflictError, workflowRunApis } from './api'

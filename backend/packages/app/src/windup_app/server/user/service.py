@@ -49,7 +49,7 @@ logger = logging.getLogger("windup.user.service")
 
 JWT_SECRET = jwt_settings.secret.get_secret_value()
 JWT_ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_SECONDS = 15 * 60        # 15 分钟
+ACCESS_TOKEN_EXPIRE_SECONDS = 15 * 60  # 15 分钟
 REFRESH_TOKEN_EXPIRE_SECONDS = 7 * 24 * 3600  # 7 天
 
 # -- 密码哈希 -------------------------------------------------------------
@@ -64,6 +64,7 @@ def _verify_password(password: str, hashed: str) -> bool:
     """验证密码。"""
     return bcrypt.checkpw(password.encode(), hashed.encode())
 
+
 # -- Redis key 前缀 -------------------------------------------------------
 
 VERIFY_COOLDOWN_KEY = "verify:cooldown:{email}"
@@ -72,12 +73,12 @@ REFRESH_TOKEN_KEY = "refresh:{token_hash}"
 LOGIN_FAIL_KEY = "login:fail:{email}"
 LOGIN_LOCK_KEY = "login:lock:{email}"
 
-VERIFY_CODE_TTL = 300   # 5 分钟
-COOLDOWN_TTL = 60       # 60 秒
+VERIFY_CODE_TTL = 300  # 5 分钟
+COOLDOWN_TTL = 60  # 60 秒
 
-LOGIN_FAIL_LIMIT = 5            # 连续错误密码上限
-LOGIN_FAIL_WINDOW = 15 * 60     # 失败计数窗口 15 分钟
-LOGIN_LOCK_DURATION = 15 * 60   # 锁定时长 15 分钟
+LOGIN_FAIL_LIMIT = 5  # 连续错误密码上限
+LOGIN_FAIL_WINDOW = 15 * 60  # 失败计数窗口 15 分钟
+LOGIN_LOCK_DURATION = 15 * 60  # 锁定时长 15 分钟
 
 
 def _hash_token(token: str) -> str:
@@ -166,11 +167,18 @@ class SqlAlchemyUserService(UserService):
 
     # -- 注册 ------------------------------------------------------------
 
-    def register_by_email(
-        self, session: Session, input: RegisterInput
-    ) -> LoginResult:
-        """邮箱+验证码+密码注册。"""
-        # 校验验证码
+    def register_by_email(self, session: Session, input: RegisterInput) -> LoginResult:
+        """邮箱+验证码+密码注册。邀请码选填。"""
+        from windup_app.server.quota.service import (
+            parse_invite_code,
+            service as quota_service,
+        )
+
+        raw_invite = (input.invite_code or "").strip()
+        invite_code = parse_invite_code(raw_invite) if raw_invite else None
+        if invite_code is not None:
+            quota_service.require_active_invite(session, invite_code)
+
         self._verify_code(input.email, input.code, "register")
 
         # 检查邮箱唯一
@@ -184,13 +192,17 @@ class SqlAlchemyUserService(UserService):
             email=input.email,
             password_hash=_hash_password(input.password),
             nickname=input.nickname,
-            email_verified_at=datetime.now(timezone.utc),  # 注册即验证（已通过验证码校验）
+            email_verified_at=datetime.now(
+                timezone.utc
+            ),  # 注册即验证（已通过验证码校验）
         )
         session.add(user)
         session.flush()
 
-        # 注册送积分
+        # 注册送积分；有邀请码再发双方邀请奖励
         self._create_credit_account(session, user.id)
+        if invite_code is not None:
+            quota_service.redeem_invite_code(session, user.id, invite_code)
 
         # 注册即登录，签发 token
         access_token = create_access_token(user.id, user.email)
@@ -270,13 +282,12 @@ class SqlAlchemyUserService(UserService):
 
     def send_verification_code(self, email: str, purpose: str) -> None:
         """发送邮箱验证码。"""
-        if purpose == "register":
-            raise BizException("内测期间暂不开放注册", code=BizCode.BAD_REQUEST)
-
         # 频率限制
         cooldown_key = VERIFY_COOLDOWN_KEY.format(email=email)
         if self.redis.get(cooldown_key):
-            raise BizException("发送过于频繁，请稍后再试", code=BizCode.TOO_MANY_REQUESTS)
+            raise BizException(
+                "发送过于频繁，请稍后再试", code=BizCode.TOO_MANY_REQUESTS
+            )
 
         code = _generate_code()
         code_key = VERIFY_CODE_KEY.format(purpose=purpose, email=email)
@@ -302,20 +313,26 @@ class SqlAlchemyUserService(UserService):
         # 验证通过，删除验证码
         self.redis.delete(code_key)
 
-    def login_by_code(
-        self, session: Session, input: LoginByCodeInput
-    ) -> LoginResult:
-        """邮箱+验证码登录。内测期间不自动建号。"""
+    def login_by_code(self, session: Session, input: LoginByCodeInput) -> LoginResult:
+        """邮箱+验证码登录。未知邮箱自动建号并赠送注册积分。"""
         # 校验验证码
         self._verify_code(input.email, input.code, "login")
 
         user = session.scalar(select(User).where(User.email == input.email))
         if user is None:
-            raise BizException("账号不存在", code=BizCode.NOT_FOUND)
-        if user.status == UserStatus.BANNED:
-            raise BizException("账号已被封禁", code=BizCode.BAD_REQUEST)
-        if user.email_verified_at is None:
-            user.email_verified_at = datetime.now(timezone.utc)
+            user = User(
+                email=input.email,
+                password_hash="",
+                email_verified_at=datetime.now(timezone.utc),
+            )
+            session.add(user)
+            session.flush()
+            self._create_credit_account(session, user.id)
+        else:
+            if user.status == UserStatus.BANNED:
+                raise BizException("账号已被封禁", code=BizCode.BAD_REQUEST)
+            if user.email_verified_at is None:
+                user.email_verified_at = datetime.now(timezone.utc)
 
         user.last_login_at = datetime.now(timezone.utc)
         session.flush()
@@ -443,9 +460,7 @@ class SqlAlchemyUserService(UserService):
         self._revoke_all_user_tokens(user_id)
         logger.info("[WINDUP] 密码已修改 | user_id=%s", user_id)
 
-    def reset_password(
-        self, session: Session, input: ResetPasswordInput
-    ) -> None:
+    def reset_password(self, session: Session, input: ResetPasswordInput) -> None:
         """邮箱+验证码重置密码（忘记密码场景）。"""
         # 校验验证码（purpose 必须为 reset_password）
         self._verify_code(input.email, input.code, "reset_password")
@@ -517,7 +532,8 @@ class SqlAlchemyUserService(UserService):
 
         logger.info(
             "[WINDUP] 注册送积分 | user_id=%s amount=%s",
-            user_id, quota_settings.register_gift_amount,
+            user_id,
+            quota_settings.register_gift_amount,
         )
 
     def _store_refresh_token(self, jti: str, user_id: int) -> None:

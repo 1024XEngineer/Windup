@@ -56,10 +56,15 @@ class VideoFrameStrategy(DerivationStrategy):
                 facing=action.facing,
                 cyclic=bool(action.cyclic),
             )
+        # attack 同样进不了那张表:它还要按运动拓扑选提示词分支。archetype 缺省时不在这里
+        # 兜一个默认值 —— 缺省只由 build_attack_prompt 定义一次,写两处会各自漂移。
+        if action.action is ActionType.ATTACK:
+            if action.archetype is None:
+                return build_attack_prompt(facing=action.facing)
+            return build_attack_prompt(facing=action.facing, archetype=action.archetype)
         builders = {
             ActionType.JUMP: build_jump_prompt,
             ActionType.IDLE: build_idle_prompt,
-            ActionType.ATTACK: build_attack_prompt,
         }
         build = builders.get(action.action, build_walk_prompt)
         return build(facing=action.facing)

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
@@ -108,6 +108,7 @@ function renderHeader(
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
+  window.sessionStorage.clear()
   window.history.replaceState({ idx: 0 }, '')
 })
 
@@ -233,6 +234,52 @@ describe('AppHeader', () => {
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/'))
     expect(await screen.findByRole('link', { name: '登录' })).toBeTruthy()
     expect(apis.logout).toHaveBeenCalledWith('rotated-refresh-token')
+  })
+
+  it('登录工作台后显示一次邀请奖励提示，打开账号菜单时收起', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    renderHeader('/workspace')
+
+    expect(await screen.findByRole('status', { name: '邀请奖励提示' })).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: '打开账号菜单' }))
+
+    expect(screen.queryByRole('status', { name: '邀请奖励提示' })).toBeNull()
+  })
+
+  it('邀请提示可以直达邀请奖励，并在关闭或十五秒后收起', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    const timeoutSpy = vi.spyOn(window, 'setTimeout')
+    renderHeader('/workspace')
+
+    const hint = await screen.findByRole('status', { name: '邀请奖励提示' })
+    expect(screen.getByRole('link', { name: '去看看邀请奖励' }).getAttribute('href')).toBe(
+      '/account?section=invite',
+    )
+    const timerCall = timeoutSpy.mock.calls.find(([, delay]) => delay === 15_000)
+    expect(timerCall).toBeTruthy()
+    const timerCallback = timerCall?.[0]
+    expect(typeof timerCallback).toBe('function')
+    act(() => {
+      if (typeof timerCallback === 'function') timerCallback()
+    })
+    expect(screen.queryByRole('status', { name: '邀请奖励提示' })).toBeNull()
+
+    window.sessionStorage.clear()
+    cleanup()
+    renderHeader('/workspace')
+    expect(await screen.findByRole('status', { name: '邀请奖励提示' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '关闭邀请奖励提示' }))
+    expect(hint.isConnected).toBe(false)
+  })
+
+  it('当前登录会话离开工作台后不重复显示', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    renderHeader('/workspace')
+    expect(await screen.findByRole('status', { name: '邀请奖励提示' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('link', { name: '项目资产' }))
+    fireEvent.click(screen.getByRole('link', { name: '首页' }))
+    expect(screen.queryByRole('status', { name: '邀请奖励提示' })).toBeNull()
   })
 
   it('远端退出失败时仍清除本地会话并返回首页', async () => {

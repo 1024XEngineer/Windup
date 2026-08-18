@@ -4,6 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from conftest import seed_invite_code
+
 from windup_app.server.user.model import User
 from windup_app.server.user.service import _hash_password, service
 
@@ -89,6 +91,62 @@ def test_reset_password_endpoint(auth_client, seeded_user, mock_user_redis):
     body = resp.json()
     assert body["code"] == 200
     assert body["message"] == "密码重置成功"
+
+
+def test_register_endpoint_success(client, db_session, mock_user_redis):
+    seed_invite_code(db_session)
+    db_session.commit()
+    mock_user_redis.get.return_value = "123456"
+
+    resp = client.post(
+        "/auth/register",
+        json={
+            "email": "invitee@example.com",
+            "password": "password123",
+            "code": "123456",
+            "invite_code": "AB23CD45",
+            "nickname": "受邀用户",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["code"] == 200
+    assert body["message"] == "注册成功"
+    assert body["data"]["user"]["email"] == "invitee@example.com"
+    assert body["data"]["access_token"]
+
+
+def test_register_endpoint_success_without_invite_code(client, mock_user_redis):
+    mock_user_redis.get.return_value = "123456"
+    resp = client.post(
+        "/auth/register",
+        json={
+            "email": "open@example.com",
+            "password": "password123",
+            "code": "123456",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["code"] == 200
+    assert body["data"]["user"]["email"] == "open@example.com"
+    assert body["data"]["access_token"]
+
+
+def test_login_by_code_endpoint_creates_unknown_email(client, db_session, mock_user_redis):
+    mock_user_redis.get.return_value = "123456"
+    resp = client.post(
+        "/auth/login-by-code",
+        json={"email": "fresh@example.com", "code": "123456"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["code"] == 200
+    assert body["data"]["user"]["email"] == "fresh@example.com"
+    assert (
+        db_session.query(User).filter(User.email == "fresh@example.com").one_or_none()
+        is not None
+    )
 
 
 def test_update_nickname_endpoint(auth_client, seeded_user, mock_user_redis):

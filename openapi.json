@@ -720,6 +720,43 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "InviteCodeOut": {
+        "description": "邀请码响应。",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "create_at": {
+            "format": "date-time",
+            "title": "Create At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "update_at": {
+            "format": "date-time",
+            "title": "Update At",
+            "type": "string"
+          },
+          "used_count": {
+            "title": "Used Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "code",
+          "used_count",
+          "expires_at",
+          "create_at",
+          "update_at"
+        ],
+        "title": "InviteCodeOut",
+        "type": "object"
+      },
       "ListResponse_CharacterOut_": {
         "properties": {
           "code": {
@@ -1242,6 +1279,19 @@
             "title": "Email",
             "type": "string"
           },
+          "invite_code": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "邀请链接中的邀请码，选填；有则发双方邀请奖励",
+            "title": "Invite Code"
+          },
           "nickname": {
             "anyOf": [
               {
@@ -1423,6 +1473,48 @@
           }
         },
         "title": "Response[GenerationTaskOut]",
+        "type": "object"
+      },
+      "Response_InviteCodeOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InviteCodeOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "业务数据"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          }
+        },
+        "title": "Response[InviteCodeOut]",
         "type": "object"
       },
       "Response_MediaUploadResult_": {
@@ -2095,7 +2187,7 @@
     },
     "/auth/login-by-code": {
       "post": {
-        "description": "验证码登录。内测期间不自动注册。",
+        "description": "验证码登录。未知邮箱自动建号并赠送注册积分。",
         "operationId": "login_by_code_auth_login_by_code_post",
         "requestBody": {
           "content": {
@@ -2285,7 +2377,7 @@
     },
     "/auth/register": {
       "post": {
-        "description": "邮箱+验证码+密码注册。\n\n内测期间关闭公开注册，路由与请求模型保留以便以后重新开放。",
+        "description": "邮箱+验证码+密码注册。邀请码选填。",
         "operationId": "register_auth_register_post",
         "requestBody": {
           "content": {
@@ -3101,6 +3193,50 @@
           }
         },
         "summary": "Get Balance",
+        "tags": [
+          "quota"
+        ]
+      }
+    },
+    "/quota/invite/code": {
+      "get": {
+        "description": "获取当前用户未过期邀请码；没有或已过期则签发新行。",
+        "operationId": "get_invite_code_quota_invite_code_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_InviteCodeOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Invite Code",
+        "tags": [
+          "quota"
+        ]
+      }
+    },
+    "/quota/invite/generate": {
+      "post": {
+        "description": "签发新邀请码。旧码立即过期，行保留。",
+        "operationId": "generate_invite_code_quota_invite_generate_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_InviteCodeOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Generate Invite Code",
         "tags": [
           "quota"
         ]

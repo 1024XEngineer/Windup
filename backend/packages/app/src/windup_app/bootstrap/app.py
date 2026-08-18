@@ -21,8 +21,7 @@ from windup_app.server.character.model import Character  # noqa: F401
 from windup_app.server.character.service import service as character_service
 from windup_app.server.orchestrator.dispatcher import GenerationDispatcher
 from windup_app.server.project.model import Project  # noqa: F401
-from windup_app.server.quota.model import CreditAccount, CreditTransaction  # noqa: F401
-# InviteCode, InviteRecord, TokenUsage 暂不实现
+from windup_app.server.quota.model import CreditAccount, CreditTransaction, InviteCode, InviteRecord  # noqa: F401
 from windup_app.server.user.model import User  # noqa: F401
 from windup_app.server.workflow_run.model import WorkflowRun  # noqa: F401
 from windup_app.web.api.auth import router as auth_router

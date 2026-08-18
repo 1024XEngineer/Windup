@@ -1,10 +1,10 @@
 import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { QuickStartEntryService, QuickStartSession } from './service'
-import type { WorkflowRun } from '@/entities'
+import { WorkflowRunConflictError, type WorkflowRun } from '@/entities'
 import type { ExportPackageModel } from '@/features/export-package'
 import { QuickStartPage } from './index'
 
@@ -119,6 +119,7 @@ function serviceFor(run: WorkflowRun | null, overrides: Partial<QuickStartMock> 
     startAction: vi.fn(async () => service),
     getWorkflow: vi.fn(() => fallbackRun),
     subscribe: vi.fn(() => () => undefined),
+    subscribeErrors: vi.fn(() => () => undefined),
     resume: vi.fn(async () => fallbackRun),
     interrupt: vi.fn(async () => fallbackRun),
     dispose: vi.fn(),
@@ -137,6 +138,16 @@ function serviceFor(run: WorkflowRun | null, overrides: Partial<QuickStartMock> 
   return service
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve
+    reject = nextReject
+  })
+  return { promise, resolve, reject }
+}
+
 function renderAt(path: string, service: QuickStartEntryService) {
   function PlaytestLocation() {
     const location = useLocation()
@@ -149,6 +160,34 @@ function renderAt(path: string, service: QuickStartEntryService) {
         <Route path="/quick-start/:runId" element={<QuickStartPage service={service} />} />
         <Route path="/projects/:projectId/assets" element={<PlaytestLocation />} />
         <Route path="/playtest/:characterId/:outfitId" element={<PlaytestLocation />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+function renderWithRunSwitcher(
+  service: QuickStartEntryService,
+  initialRunId: string,
+  nextRunId: string,
+) {
+  function Controls() {
+    const navigate = useNavigate()
+    const location = useLocation()
+    return (
+      <>
+        <button type="button" onClick={() => navigate(`/quick-start/${nextRunId}`)}>
+          切换当前运行
+        </button>
+        <output aria-label="当前位置">{location.pathname}</output>
+      </>
+    )
+  }
+
+  return render(
+    <MemoryRouter initialEntries={[`/quick-start/${initialRunId}`]}>
+      <Controls />
+      <Routes>
+        <Route path="/quick-start/:runId" element={<QuickStartPage service={service} />} />
       </Routes>
     </MemoryRouter>,
   )
@@ -338,8 +377,6 @@ describe('QuickStartPage', () => {
     expect(screen.getByRole('button', { name: /16-bit 日式 RPG/u })).toBeTruthy()
     expect(screen.getByRole('button', { name: /暗黑哥特像素/u })).toBeTruthy()
     expect(screen.getByRole('button', { name: /温暖手绘像素/u })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '像素守夜人' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '轻装信使' })).toBeTruthy()
 
     fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
       target: { value: '戴银色面具的游侠' },
@@ -350,18 +387,27 @@ describe('QuickStartPage', () => {
     expect(screen.queryByRole('button', { name: /暗黑哥特像素/u })).toBeNull()
   })
 
-  it('keeps the original Quick Start prompt shortcuts functional', () => {
-    const view = renderAt('/quick-start', serviceFor(null))
-    fireEvent.click(screen.getByRole('button', { name: '像素守夜人' }))
-    expect((screen.getByRole('textbox', { name: '创作指令' }) as HTMLTextAreaElement).value).toBe(
-      '一位提着风灯、披深色斗篷的像素守夜人',
-    )
-
-    view.unmount()
+  it('offers style prompts only, without the retired role-example shortcuts', () => {
     renderAt('/quick-start', serviceFor(null))
-    fireEvent.click(screen.getByRole('button', { name: '轻装信使' }))
-    expect((screen.getByRole('textbox', { name: '创作指令' }) as HTMLTextAreaElement).value).toBe(
-      '轻装信使，侧视像素风，轮廓清晰，动作轻快',
+
+    // 入口只保留三张风格卡：角色样例会让人误以为这些形象是现成资产。
+    expect(screen.queryByRole('button', { name: '像素守夜人' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '轻装信使' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /16-bit 日式 RPG/u }))
+    expect((screen.getByRole('textbox', { name: '创作指令' }) as HTMLInputElement).value).toBe(
+      '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色',
+    )
+  })
+
+  it('keeps the entry composer on a single line', () => {
+    renderAt('/quick-start', serviceFor(null))
+    const composer = screen.getByRole('textbox', { name: '创作指令' })
+
+    expect(composer.tagName).toBe('INPUT')
+    expect(composer.className).toContain('h-10')
+    expect(composer.closest('form')?.className).toContain(
+      'focus-within:shadow-[var(--shadow-app-composer-focus)]',
     )
   })
 
@@ -748,7 +794,7 @@ describe('QuickStartPage', () => {
 
     expect(screen.getByRole('textbox', { name: '创作指令' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /16-bit 日式 RPG/u }))
-    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe(
+    expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe(
       '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色',
     )
     expect(screen.queryByRole('button', { name: /暗黑哥特像素/u })).toBeNull()
@@ -806,7 +852,7 @@ describe('QuickStartPage', () => {
 
   it('hands the created session to the run page under the production StrictMode lifecycle', async () => {
     const service = serviceFor(null)
-    render(
+    const view = render(
       <StrictMode>
         <MemoryRouter initialEntries={['/quick-start']}>
           <Routes>
@@ -822,7 +868,10 @@ describe('QuickStartPage', () => {
 
     await waitFor(() => expect(service.resume).toHaveBeenCalled())
     expect(service.open).not.toHaveBeenCalled()
-    expect(service.dispose).toHaveBeenCalled()
+    expect(service.dispose).not.toHaveBeenCalled()
+
+    view.unmount()
+    await waitFor(() => expect(service.dispose).toHaveBeenCalledOnce())
   })
 
   it('shows entry errors and supports removing an uploaded template', async () => {
@@ -846,7 +895,7 @@ describe('QuickStartPage', () => {
     fireEvent.change(screen.getByLabelText('上传角色母版'), { target: { files: [file] } })
 
     const composer = screen.getByLabelText('创作指令').closest('form')
-    expect(screen.getByLabelText('创作指令').tagName).toBe('TEXTAREA')
+    expect(screen.getByLabelText('创作指令').tagName).toBe('INPUT')
     expect(composer?.textContent).toContain('hero.png')
     expect(screen.getByRole('button', { name: '移除图片' }).closest('form')).toBe(composer)
     expect(composer?.querySelector('[data-layout="quick-start-attachment-row"]')).toBeNull()
@@ -921,6 +970,304 @@ describe('QuickStartPage', () => {
     )
     expect((await screen.findByRole('alert')).textContent).toContain('候选确认失败')
     expect(screen.getByTestId('quick-start-run')).toBeTruthy()
+  })
+
+  it('freezes the current conversation and offers a full reload after a version conflict', async () => {
+    const run = workflow(setupAndTemplate())
+    const service = serviceFor(run, {
+      getTemplateCandidates: vi.fn(async () => ['https://example.test/candidate.png']),
+      confirmCandidate: vi.fn(async () => {
+        throw new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试')
+      }),
+    })
+    renderAt('/quick-start/run-1?source=test#selection', service)
+
+    fireEvent.click(await screen.findByRole('img', { name: '角色图候选 1' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认选择，继续下一步' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('工作流已在其他位置更新，请加载最新版本后继续。')
+    expect(screen.getByRole('link', { name: '加载最新版本' }).getAttribute('href')).toBe(
+      '/quick-start/run-1?source=test#selection',
+    )
+    const confirm = screen.getByRole('button', { name: '确认选择，继续下一步' })
+    expect((confirm as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(confirm)
+    expect(service.confirmCandidate).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a reported conflict visible when an earlier result read fails later', async () => {
+    const run = workflow(setupAndTemplate())
+    let reportError: ((error: Error) => void) | null = null
+    let rejectRead: ((error: Error) => void) | null = null
+    const pendingRead = new Promise<readonly string[]>((_resolve, reject) => {
+      rejectRead = reject
+    })
+    const service = serviceFor(run, {
+      getTemplateCandidates: vi.fn(() => pendingRead),
+      subscribeErrors: vi.fn((listener) => {
+        reportError = listener
+        return () => undefined
+      }),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    await waitFor(() => expect(service.getTemplateCandidates).toHaveBeenCalled())
+    act(() => {
+      reportError?.(new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试'))
+    })
+    expect(await screen.findByRole('link', { name: '加载最新版本' })).toBeTruthy()
+
+    await act(async () => {
+      rejectRead?.(new Error('候选读取失败'))
+      await pendingRead.catch(() => undefined)
+    })
+    expect(screen.getByRole('alert').textContent).toContain(
+      '工作流已在其他位置更新，请加载最新版本后继续。',
+    )
+  })
+
+  it('does not auto-save a completed action after the session reports a conflict', async () => {
+    const run = workflow(setupAndTemplate())
+    const completed = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'active' })
+    let reportError: ((error: Error) => void) | null = null
+    let reportRun: ((run: WorkflowRun) => void) | null = null
+    const service = serviceFor(run, {
+      subscribeErrors: vi.fn((listener) => {
+        reportError = listener
+        return () => undefined
+      }),
+      subscribe: vi.fn((listener) => {
+        reportRun = listener
+        return () => undefined
+      }),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    await waitFor(() => expect(service.subscribeErrors).toHaveBeenCalledOnce())
+    act(() => {
+      reportError?.(new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试'))
+      reportRun?.(completed)
+    })
+
+    expect(await screen.findByRole('link', { name: '加载最新版本' })).toBeTruthy()
+    await waitFor(() => expect(service.approveReview).not.toHaveBeenCalled())
+  })
+
+  it('ignores an old session resume result after navigating to another run', async () => {
+    const oldRun = workflow(setupAndTemplate(), 'run-old')
+    const newNodes = setupAndTemplate()
+    const newSetup = newNodes[0]
+    if (newSetup?.type !== 'character-setup') throw new Error('测试工作流缺少角色设定节点')
+    newSetup.input.prompt = '新角色'
+    const newRun = workflow(newNodes, 'run-new')
+    let resolveOldResume: ((run: WorkflowRun) => void) | null = null
+    const oldResume = new Promise<WorkflowRun>((resolve) => {
+      resolveOldResume = resolve
+    })
+    const oldSession = serviceFor(oldRun, { resume: vi.fn(() => oldResume) })
+    const newSession = serviceFor(newRun)
+    const entryService = serviceFor(null, {
+      open: vi.fn(async (id) => (id === oldRun.id ? oldSession : newSession)),
+    })
+
+    renderWithRunSwitcher(entryService, oldRun.id, newRun.id)
+
+    expect(await screen.findByText('像素骑士')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '切换当前运行' }))
+    expect(await screen.findByText('新角色')).toBeTruthy()
+
+    await act(async () => {
+      resolveOldResume?.(oldRun)
+      await oldResume
+    })
+    expect(screen.getByText('新角色')).toBeTruthy()
+    expect(screen.queryByText('像素骑士')).toBeNull()
+  })
+
+  it('ignores old session result reads and error events after switching runs', async () => {
+    const oldRun = workflow(setupAndTemplate(), 'run-old')
+    const newNodes = setupAndTemplate()
+    const newSetup = newNodes[0]
+    if (newSetup?.type !== 'character-setup') throw new Error('测试工作流缺少角色设定节点')
+    newSetup.input.prompt = '当前新运行'
+    const newRun = workflow(newNodes, 'run-new')
+    const oldRead = deferred<readonly string[]>()
+    let reportOldError: ((error: Error) => void) | null = null
+    const oldSession = serviceFor(oldRun, {
+      getTemplateCandidates: vi.fn(() => oldRead.promise),
+      subscribeErrors: vi.fn((listener) => {
+        reportOldError = listener
+        return () => undefined
+      }),
+    })
+    const newSession = serviceFor(newRun)
+    const entryService = serviceFor(null, {
+      open: vi.fn(async (id) => (id === oldRun.id ? oldSession : newSession)),
+    })
+
+    renderWithRunSwitcher(entryService, oldRun.id, newRun.id)
+
+    await waitFor(() => expect(oldSession.getTemplateCandidates).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: '切换当前运行' }))
+    expect(await screen.findByText('当前新运行')).toBeTruthy()
+
+    await act(async () => {
+      reportOldError?.(new Error('旧会话错误'))
+      oldRead.reject(new Error('旧候选读取失败'))
+      await oldRead.promise.catch(() => undefined)
+    })
+    expect(screen.queryByText(/旧会话错误|旧候选读取失败/u)).toBeNull()
+  })
+
+  it('ignores completed commands from the previous session after switching runs', async () => {
+    const oldRun = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    oldRun.id = 'run-old'
+    const newNodes = setupAndTemplate()
+    const newSetup = newNodes[0]
+    if (newSetup?.type !== 'character-setup') throw new Error('测试工作流缺少角色设定节点')
+    newSetup.input.prompt = '当前新运行'
+    const newRun = workflow(newNodes, 'run-new')
+    const playtest = deferred<{ characterId: string; outfitId: string } | null>()
+    const failedPlaytest = deferred<{ characterId: string; outfitId: string } | null>()
+    const oldSession = serviceFor(oldRun, {
+      getCharacterInfo: vi.fn(() => null),
+      resolveCharacterInfo: vi
+        .fn()
+        .mockImplementationOnce(() => playtest.promise)
+        .mockImplementationOnce(() => failedPlaytest.promise),
+      getActionFrames: vi.fn(async () => [
+        { index: 0, imageUrl: 'https://example.test/frame.png', durationMs: 80 },
+      ]),
+    })
+    const newSession = serviceFor(newRun)
+    const entryService = serviceFor(null, {
+      open: vi.fn(async (id) => (id === oldRun.id ? oldSession : newSession)),
+    })
+
+    renderWithRunSwitcher(entryService, oldRun.id, newRun.id)
+
+    fireEvent.click(await screen.findByRole('button', { name: '跳转到 Play Test' }))
+    fireEvent.click(screen.getByRole('button', { name: '跳转到 Play Test' }))
+    await waitFor(() => expect(oldSession.resolveCharacterInfo).toHaveBeenCalledTimes(2))
+    fireEvent.click(screen.getByRole('button', { name: '切换当前运行' }))
+    expect(await screen.findByText('当前新运行')).toBeTruthy()
+
+    await act(async () => {
+      playtest.resolve({ characterId: 'old-character', outfitId: 'old-outfit' })
+      failedPlaytest.reject(new Error('旧 Play Test 打开失败'))
+      await Promise.allSettled([playtest.promise, failedPlaytest.promise])
+    })
+    expect(screen.getByRole('status', { name: '当前位置' }).textContent).toBe(
+      '/quick-start/run-new',
+    )
+    expect(screen.queryByText('旧 Play Test 打开失败')).toBeNull()
+  })
+
+  it('ignores automatic publishing completed by the previous session after switching runs', async () => {
+    const oldRun = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'active' })
+    oldRun.id = 'run-old'
+    const newNodes = setupAndTemplate()
+    const newSetup = newNodes[0]
+    if (newSetup?.type !== 'character-setup') throw new Error('测试工作流缺少角色设定节点')
+    newSetup.input.prompt = '当前新运行'
+    const newRun = workflow(newNodes, 'run-new')
+    const publish = deferred<WorkflowRun>()
+    const oldSession = serviceFor(oldRun, {
+      approveReview: vi.fn(() => publish.promise),
+      getActionFrames: vi.fn(async () => [
+        { index: 0, imageUrl: 'https://example.test/frame.png', durationMs: 80 },
+      ]),
+    })
+    const newSession = serviceFor(newRun)
+    const entryService = serviceFor(null, {
+      open: vi.fn(async (id) => (id === oldRun.id ? oldSession : newSession)),
+    })
+
+    renderWithRunSwitcher(entryService, oldRun.id, newRun.id)
+
+    await waitFor(() => expect(oldSession.approveReview).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: '切换当前运行' }))
+    expect(await screen.findByText('当前新运行')).toBeTruthy()
+
+    await act(async () => {
+      publish.resolve(actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' }))
+      await publish.promise
+    })
+    expect(screen.getByText('当前新运行')).toBeTruthy()
+  })
+
+  it('disposes a regenerated session that resolves after navigating to another run', async () => {
+    const oldRun = workflow(setupAndTemplate(), 'run-old')
+    const newNodes = setupAndTemplate()
+    const newSetup = newNodes[0]
+    if (newSetup?.type !== 'character-setup') throw new Error('测试工作流缺少角色设定节点')
+    newSetup.input.prompt = '当前新运行'
+    const newRun = workflow(newNodes, 'run-new')
+    const regeneratedRun = workflow(setupAndTemplate(), 'run-regenerated')
+    const regeneratedSession = serviceFor(regeneratedRun)
+    let resolveRegeneration: ((session: QuickStartSession) => void) | null = null
+    const pendingRegeneration = new Promise<QuickStartSession>((resolve) => {
+      resolveRegeneration = resolve
+    })
+    const oldSession = serviceFor(oldRun, {
+      getTemplateCandidates: vi.fn(async () => ['https://example.test/candidate.png']),
+    })
+    const newSession = serviceFor(newRun)
+    const entryService = serviceFor(null, {
+      start: vi.fn(() => pendingRegeneration),
+      open: vi.fn(async (id) => (id === oldRun.id ? oldSession : newSession)),
+    })
+
+    renderWithRunSwitcher(entryService, oldRun.id, newRun.id)
+
+    fireEvent.click(await screen.findByRole('button', { name: '重新生成' }))
+    await waitFor(() => expect(entryService.start).toHaveBeenCalledWith('像素骑士'))
+    fireEvent.click(screen.getByRole('button', { name: '切换当前运行' }))
+    expect(await screen.findByText('当前新运行')).toBeTruthy()
+
+    await act(async () => {
+      resolveRegeneration?.(regeneratedSession)
+      await pendingRegeneration
+    })
+    expect(screen.getByRole('status', { name: '当前位置' }).textContent).toBe(
+      '/quick-start/run-new',
+    )
+    expect(regeneratedSession.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('ignores a regeneration error after navigating to another run', async () => {
+    const oldRun = workflow(setupAndTemplate(), 'run-old')
+    const newNodes = setupAndTemplate()
+    const newSetup = newNodes[0]
+    if (newSetup?.type !== 'character-setup') throw new Error('测试工作流缺少角色设定节点')
+    newSetup.input.prompt = '当前新运行'
+    const newRun = workflow(newNodes, 'run-new')
+    const regeneration = deferred<QuickStartSession>()
+    const oldSession = serviceFor(oldRun, {
+      getTemplateCandidates: vi.fn(async () => ['https://example.test/candidate.png']),
+    })
+    const newSession = serviceFor(newRun)
+    const entryService = serviceFor(null, {
+      start: vi.fn(() => regeneration.promise),
+      open: vi.fn(async (id) => (id === oldRun.id ? oldSession : newSession)),
+    })
+
+    renderWithRunSwitcher(entryService, oldRun.id, newRun.id)
+
+    fireEvent.click(await screen.findByRole('button', { name: '重新生成' }))
+    await waitFor(() => expect(entryService.start).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: '切换当前运行' }))
+    expect(await screen.findByText('当前新运行')).toBeTruthy()
+
+    await act(async () => {
+      regeneration.reject(new Error('旧重新生成失败'))
+      await regeneration.promise.catch(() => undefined)
+    })
+    expect(screen.getByRole('status', { name: '当前位置' }).textContent).toBe(
+      '/quick-start/run-new',
+    )
+    expect(screen.queryByText('旧重新生成失败')).toBeNull()
   })
 
   it('keeps the original regenerate and new-creation controls reachable', async () => {

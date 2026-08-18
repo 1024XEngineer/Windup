@@ -8,6 +8,7 @@ import {
   type Action,
   type Character,
   type CharacterApis,
+  type CharacterSetupWorkflowNode,
   type GenerationApis,
   type Generation,
   type MediaReference,
@@ -41,6 +42,7 @@ export interface QuickStartSession {
   readonly runId: WorkflowRun['id']
   getWorkflow(): WorkflowRun
   subscribe(listener: (run: WorkflowRun) => void): () => void
+  subscribeErrors(listener: (error: Error) => void): () => void
   resume(): Promise<WorkflowRun>
   interrupt(): Promise<WorkflowRun>
   dispose(): void
@@ -114,6 +116,30 @@ export function createQuickStartService({
   onAsyncError = (error) => console.error('[quick-start] 异步工作流错误', error),
 }: CreateQuickStartServiceOptions): QuickStartEntryService {
   const projectSpriteSizes = new Map<Project['id'], Project['spriteSize']>()
+  const controllerErrorChannels = new WeakMap<
+    WorkflowController,
+    {
+      listeners: Set<(error: Error) => void>
+      report(error: Error): void
+    }
+  >()
+
+  async function shouldRollbackWorkflowChange(
+    runId: WorkflowRun['id'],
+    isPersisted: (latest: WorkflowRun) => boolean,
+  ) {
+    try {
+      return !isPersisted(await workflowRunApis.get(runId))
+    } catch (reconcileCause) {
+      onAsyncError(
+        reconcileCause instanceof Error
+          ? reconcileCause
+          : new Error('WorkflowRun 保存结果对账失败'),
+      )
+      // 无法确认 PATCH 是否落库时保留幂等资产，避免删掉已被 Run 引用的数据。
+      return false
+    }
+  }
 
   async function resolveProjectSpriteSize(projectId: Project['id']) {
     const cached = projectSpriteSizes.get(projectId)
@@ -124,7 +150,33 @@ export function createQuickStartService({
   }
 
   function createController(workflow?: WorkflowRun): WorkflowController {
-    return createWorkflowController({ workflow, workflowRunApis, generationApis, onAsyncError })
+    const listeners = new Set<(error: Error) => void>()
+    const report = (error: Error) => {
+      try {
+        onAsyncError(error)
+      } catch (reportError) {
+        console.error('[quick-start] 异步错误上报器执行失败', reportError, error)
+      }
+      for (const listener of listeners) {
+        try {
+          listener(error)
+        } catch (listenerError) {
+          console.error('[quick-start] 页面错误订阅者执行失败', listenerError, error)
+        }
+      }
+    }
+    const controller = createWorkflowController({
+      workflow,
+      workflowRunApis,
+      generationApis,
+      onAsyncError: report,
+    })
+    controllerErrorChannels.set(controller, { listeners, report })
+    return controller
+  }
+
+  function reportControllerError(controller: WorkflowController, error: Error) {
+    controllerErrorChannels.get(controller)?.report(error)
   }
 
   function setupNode(run: WorkflowRun) {
@@ -250,53 +302,71 @@ export function createQuickStartService({
   async function persistCharacterTemplate(
     controller: WorkflowController,
     selectedImageUrl: string,
+    persistRun: (
+      setupId: CharacterSetupWorkflowNode['id'],
+      characterId: Character['id'],
+    ) => Promise<void>,
   ): Promise<{ characterId: string; outfitId: string }> {
     if (!characterApis) throw new Error('角色服务尚未配置，不能确认角色母版')
     const run = controller.getWorkflow()
     const setup = setupNode(run)
     const existingCharacterId = setup.input.characterId
-    if (existingCharacterId) {
-      const existing = await characterApis.get(existingCharacterId)
-      const outfit = existing.outfits.find((item) => item.previewUrl === selectedImageUrl)
-      if (!outfit) throw new Error('已绑定角色中没有与当前母版对应的造型')
-      return { characterId: existing.id, outfitId: outfit.id }
-    }
+    // 不传 name：后端按 description 生成并统一裁到 20 字。前端自己截会撞
+    // CharacterCreate.name 的 20 字上限，也让后端的自动起名永远走不到。
+    const character = existingCharacterId
+      ? await characterApis.get(existingCharacterId)
+      : await characterApis.create({
+          projectId: run.projectId,
+          workflowRunId: run.id,
+          description: setup.input.prompt,
+          referenceImageUrl: selectedImageUrl,
+        })
 
-    const character = await characterApis.create({
-      projectId: run.projectId,
-      workflowRunId: run.id,
-      name: setup.input.prompt.trim().slice(0, 32) || '未命名角色',
-      description: setup.input.prompt,
-      referenceImageUrl: selectedImageUrl,
-    })
-    const outfitId = `outfit-${Date.now().toString(36)}`
-    try {
-      await characterApis.update({
-        ...character,
-        outfits: [
-          ...character.outfits,
-          {
-            id: outfitId,
-            characterId: character.id,
-            name: '默认造型',
-            description: null,
-            previewUrl: selectedImageUrl,
-            actions: [],
-          },
-        ],
-      })
-      await controller.bindCharacter(setup.id, character.id)
-    } catch (cause) {
-      // Character 与 Run 的绑定没有服务端事务；后续两步失败时尽力清掉刚建的孤儿角色。
+    // 先用 WorkflowRun 的 version 确定候选图胜者，失败的客户端不得改写共用 Character。
+    await persistRun(setup.id, character.id)
+    const existingOutfit = character.outfits.find(
+      (item) => item.previewUrl === selectedImageUrl || item.id === 'outfit-default',
+    )
+    const outfitId = existingOutfit?.id ?? 'outfit-default'
+    const characterMatchesSelection =
+      character.referenceImageUrl === selectedImageUrl &&
+      existingOutfit?.previewUrl === selectedImageUrl
+    if (!characterMatchesSelection) {
       try {
-        await characterApis.remove(character.id)
-      } catch (rollbackCause) {
-        onAsyncError(
-          rollbackCause instanceof Error ? rollbackCause : new Error('创建角色后的回滚失败'),
-        )
+        await characterApis.update({
+          ...character,
+          referenceImageUrl: selectedImageUrl,
+          outfits: existingOutfit
+            ? character.outfits.map((item) =>
+                item.id === existingOutfit.id ? { ...item, previewUrl: selectedImageUrl } : item,
+              )
+            : [
+                ...character.outfits,
+                {
+                  id: outfitId,
+                  characterId: character.id,
+                  name: '默认造型',
+                  description: null,
+                  previewUrl: selectedImageUrl,
+                  actions: [],
+                },
+              ],
+        })
+      } catch (cause) {
+        try {
+          await controller.restartFromNode(templateNode(controller.getWorkflow()).id)
+        } catch (reopenCause) {
+          onAsyncError(
+            reopenCause instanceof Error
+              ? reopenCause
+              : new Error('角色母版资产写入失败后重新打开节点失败'),
+          )
+        }
+        throw cause
       }
-      throw cause
     }
+    // Character 后端暂无版本条件更新；失败时保留可重试的幂等资产，
+    // 不做 GET→整棵 PATCH 回滚，避免覆盖其他客户端新增的动作或造型。
     return { characterId: character.id, outfitId }
   }
 
@@ -335,9 +405,10 @@ export function createQuickStartService({
 
   function startAutomaticActionAdvance(controller: WorkflowController): () => void {
     let advancing = false
+    let stopped = false
 
     const advance = (run: WorkflowRun) => {
-      if (advancing) return
+      if (advancing || stopped) return
       const method = run.nodes.find(
         (node) =>
           node.type === 'action-generation-method' && !node.deletedAt && node.status === 'active',
@@ -369,17 +440,29 @@ export function createQuickStartService({
           characterId,
           referenceMedia: [],
         })
-      })()
-        .catch(onAsyncError)
-        .finally(() => {
+      })().then(
+        () => {
           advancing = false
-          advance(controller.getWorkflow())
-        })
+          if (!stopped) advance(controller.getWorkflow())
+        },
+        (cause: unknown) => {
+          advancing = false
+          if (stopped) return
+          stopped = true
+          reportControllerError(
+            controller,
+            cause instanceof Error ? cause : new Error('Quick Start 自动推进失败'),
+          )
+        },
+      )
     }
 
     const stop = controller.subscribe(advance)
     advance(controller.getWorkflow())
-    return stop
+    return () => {
+      stopped = true
+      stop()
+    }
   }
 
   function createSession(
@@ -398,6 +481,12 @@ export function createQuickStartService({
       runId: controller.getWorkflow().id,
       getWorkflow: () => controller.getWorkflow(),
       subscribe: (listener) => controller.subscribe(listener),
+      subscribeErrors(listener) {
+        const listeners = controllerErrorChannels.get(controller)?.listeners
+        if (!listeners) return () => undefined
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
       async resume() {
         disposed = false
         await controller.resume()
@@ -414,6 +503,7 @@ export function createQuickStartService({
         disposed = true
         stopAutomaticAdvance?.()
         stopAutomaticAdvance = null
+        controllerErrorChannels.get(controller)?.listeners.clear()
         controller.dispose()
       },
       async continueWithUploadedTemplate(file, actionDescription, signal) {
@@ -424,8 +514,12 @@ export function createQuickStartService({
           throw new Error('当前角色母版节点不能直接替换图片，请先从角色母版节点重做')
         }
         const templateReference = await mediaApis.upload(file, 'reference-image', signal)
-        await controller.confirmCharacterTemplate(template.id, templateReference)
-        const target = await persistCharacterTemplate(controller, templateReference)
+        const target = await persistCharacterTemplate(
+          controller,
+          templateReference,
+          (_setupId, characterId) =>
+            controller.confirmCharacterTemplate(template.id, templateReference, characterId),
+        )
         const spriteSize =
           knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
         await prepareAction(controller, target.outfitId, actionDescription, spriteSize)
@@ -436,8 +530,12 @@ export function createQuickStartService({
         if (candidateCommand) return candidateCommand
         const command = (async () => {
           const template = templateNode(controller.getWorkflow())
-          await controller.confirmCharacterTemplate(template.id, selectedImageUrl)
-          const target = await persistCharacterTemplate(controller, selectedImageUrl)
+          const target = await persistCharacterTemplate(
+            controller,
+            selectedImageUrl,
+            (_setupId, characterId) =>
+              controller.confirmCharacterTemplate(template.id, selectedImageUrl, characterId),
+          )
           const spriteSize =
             knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
           await prepareAction(controller, target.outfitId, actionDescription ?? '', spriteSize)
@@ -516,7 +614,7 @@ export function createQuickStartService({
             durationMs: frame.durationMs,
           })),
         }
-        await characterApis.update({
+        const publishedCharacter = await characterApis.update({
           ...character,
           outfits: character.outfits.map((outfit) =>
             outfit.id === info.outfitId
@@ -527,7 +625,48 @@ export function createQuickStartService({
               : outfit,
           ),
         })
-        if (review.status === 'active') await controller.approveReview(review.id)
+        if (review.status === 'active') {
+          try {
+            await controller.approveReview(review.id)
+          } catch (cause) {
+            const shouldRollback = await shouldRollbackWorkflowChange(
+              run.id,
+              (latest) => findReview(latest, fullFrame.id)?.status === 'passed',
+            )
+            if (shouldRollback) {
+              try {
+                await characterApis.update({
+                  ...character,
+                  dataVersion: publishedCharacter.dataVersion,
+                })
+              } catch {
+                try {
+                  const latestCharacter = await characterApis.get(character.id)
+                  const originalAction = character.outfits
+                    .flatMap((outfit) => outfit.actions)
+                    .find((item) => item.id === action.id)
+                  await characterApis.update({
+                    ...latestCharacter,
+                    outfits: latestCharacter.outfits.map((outfit) => ({
+                      ...outfit,
+                      actions: [
+                        ...outfit.actions.filter((item) => item.id !== action.id),
+                        ...(originalAction?.outfitId === outfit.id ? [originalAction] : []),
+                      ],
+                    })),
+                  })
+                } catch (rollbackCause) {
+                  onAsyncError(
+                    rollbackCause instanceof Error
+                      ? rollbackCause
+                      : new Error('审核冲突后恢复角色资产失败'),
+                  )
+                }
+              }
+            }
+            throw cause
+          }
+        }
         return controller.getWorkflow()
       },
       getCharacterInfo: () => getCharacterInfo(controller),
@@ -640,8 +779,12 @@ export function createQuickStartService({
         prompt,
         referenceMedia: [templateReference],
       })
-      await controller.acceptUploadedCharacterTemplate('character-setup', templateReference)
-      const target = await persistCharacterTemplate(controller, templateReference)
+      const target = await persistCharacterTemplate(
+        controller,
+        templateReference,
+        (setupId, characterId) =>
+          controller.acceptUploadedCharacterTemplate(setupId, templateReference, characterId),
+      )
       await prepareAction(controller, target.outfitId, actionDescription, project.spriteSize)
       return createSession(controller, project.spriteSize)
     },

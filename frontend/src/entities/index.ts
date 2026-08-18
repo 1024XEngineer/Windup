@@ -83,7 +83,7 @@ export { createMediaApis } from './media/api'
 export type { MediaApis, MediaCategory, MediaReference } from './media'
 
 /* 工作流 —— 前端管理节点，后端只持久化完整 nodes 文档 */
-export { workflowRunApis } from './workflow-run'
+export { WorkflowRunConflictError, workflowRunApis } from './workflow-run'
 export type {
   ActionFirstFrameWorkflowNode,
   ActionFullFrameWorkflowNode,

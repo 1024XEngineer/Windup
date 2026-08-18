@@ -15,7 +15,7 @@ import inspect
 import pytest
 from pydantic import ValidationError
 
-from windup_ai_engine.master_prep import MASTER_POSES
+from windup_ai_engine.master_prep import ATTACK_MASTER_POSES, MASTER_POSES
 from windup_ai_engine.prompt import (
     build_attack_prompt,
     build_idle_prompt,
@@ -27,6 +27,7 @@ from windup_common.models import (
     DEFAULT_N_FRAMES,
     ActionSpec,
     ActionType,
+    AttackArchetype,
     CharacterCard,
     CharacterView,
     Facing,
@@ -178,9 +179,10 @@ def test_prompt_names_no_equipment(build, facing):
 
 def test_master_poses_name_no_equipment():
     """母版姿势描述同样不许写装备 —— 母版是整条 i2v 链的身份来源，污染会传到所有动作。"""
-    for action, pose in MASTER_POSES.items():
+    poses = {**MASTER_POSES, **{a.value: t for a, t in ATTACK_MASTER_POSES.items()}}
+    for action, pose in poses.items():
         named = _named_equipment(pose)
-        assert not named, f"MASTER_POSES[{action!r}] 断言了装备: {named}"
+        assert not named, f"母版姿态 {action!r} 断言了装备: {named}"
 
 
 @pytest.mark.parametrize(
@@ -193,8 +195,21 @@ def test_prompt_builders_expose_facing_only(build):
     而调用侧（``strategy.concrete._build_prompt``）只传 facing，默认值就成了全体角色的
     实际取值。要按角色定制装备文字，得先有地方存它，那是角色卡契约的事；在这里留一个
     没人传的参数，只会让人以为该能力已经存在。
+
+    attack 多一个 ``archetype``：它选的是运动拓扑(身体怎么发力)、取值是枚举、且真有写入方
+    (``ActionSpec.archetype`` → ``_build_prompt``)，与"没人传的装备参数"不是一类。
     """
-    assert list(inspect.signature(build).parameters) == ["facing"]
+    allowed = ["facing", "archetype"] if build is build_attack_prompt else ["facing"]
+    assert list(inspect.signature(build).parameters) == allowed
+
+
+def test_attack_archetype_is_an_enum_not_free_text():
+    """拼错的拓扑要当场炸,不能静默落到某一支 —— 理由同 facing 用枚举。"""
+    p = inspect.signature(build_attack_prompt).parameters["archetype"]
+    assert p.kind is inspect.Parameter.KEYWORD_ONLY, "archetype 必须是关键字参数,免得与 facing 传串位"
+    assert p.default is AttackArchetype.THRUST
+    with pytest.raises(ValueError):
+        build_attack_prompt(facing=Facing.SIDE, archetype="swep")
 
 
 def test_strategy_passes_only_facing_into_prompt_builders():
