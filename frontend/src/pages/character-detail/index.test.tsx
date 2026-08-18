@@ -78,6 +78,11 @@ describe('CharacterDetailPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '关闭动作创建方式' }))
     expect(screen.queryByRole('dialog', { name: '选择动作创建方式' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '增加动作' }))
+    const dialog = screen.getByRole('dialog', { name: '选择动作创建方式' })
+    fireEvent.mouseDown(dialog.parentElement!)
+    expect(screen.queryByRole('dialog', { name: '选择动作创建方式' })).toBeNull()
   })
 
   it('keeps the chooser open and reports Workflow Editor creation failures', async () => {

@@ -181,6 +181,48 @@ describe('createRealWorkflowEditorSession', () => {
     expect(session.character).toEqual(character)
   })
 
+  it('拒绝把节点显式绑定的角色跨项目载入编辑器', async () => {
+    const workflow = {
+      ...workflowFixture(),
+      nodes: [
+        {
+          ...workflowFixture().nodes[0]!,
+          input: {
+            characterId: '9',
+            prompt: '冒险家',
+            referenceMedia: [],
+          },
+        },
+      ],
+    }
+
+    await expect(
+      createRealWorkflowEditorSession('42', {
+        workflowRunApis: {
+          create: vi.fn(),
+          get: vi.fn().mockResolvedValue(workflow),
+          update: vi.fn(),
+          remove: vi.fn(),
+        },
+        generationApis: {
+          create: vi.fn() as GenerationApis['create'],
+          get: vi.fn(),
+          subscribe: vi.fn(() => () => undefined),
+        },
+        mediaApis: { upload: vi.fn() },
+        projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+        characterApis: {
+          get: vi.fn().mockResolvedValue({ ...characterFixture(), projectId: 'other-project' }),
+          listByProject: vi.fn(),
+          create: vi.fn(),
+          update: vi.fn(),
+          remove: vi.fn(),
+        },
+        onAsyncError: vi.fn(),
+      }),
+    ).rejects.toThrow('角色 9 不属于 WorkflowRun 所在项目')
+  })
+
   it('把 Controller 异步错误同时交给装配层和页面订阅者', async () => {
     const onAsyncError = vi.fn()
     const workflow = workflowFixture()

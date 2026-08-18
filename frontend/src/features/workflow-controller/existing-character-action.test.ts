@@ -71,4 +71,27 @@ describe('createExistingCharacterActionRun', () => {
     ).rejects.toThrow('当前造型没有可用于生成动作的角色母版')
     expect(dependencies.workflowRunApis.create).not.toHaveBeenCalled()
   })
+
+  it.each([
+    [{ ...character, description: null }, '轻装信使'],
+    [{ ...character, name: null, description: null }, '现有角色'],
+  ])('keeps a usable identity prompt when description is absent', async (candidate, prompt) => {
+    const create = vi.fn(async (input) => ({
+      id: 'new-run',
+      projectId: input.projectId,
+      version: 1,
+      storageStatus: 'active' as const,
+      nodes: input.nodes,
+    }))
+
+    await createExistingCharacterActionRun(
+      { characterId: candidate.id, outfitId: 'outfit-default' },
+      {
+        characterApis: { get: vi.fn(async () => candidate) } as Pick<CharacterApis, 'get'>,
+        workflowRunApis: { create } as Pick<WorkflowRunApis, 'create'>,
+      },
+    )
+
+    expect(create.mock.calls[0]?.[0].nodes[0]).toMatchObject({ input: { prompt } })
+  })
 })
