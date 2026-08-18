@@ -8,6 +8,7 @@ import type {
   MediaReference,
   Project,
   ProjectApis,
+  CharacterSetupWorkflowNode,
   CharacterTemplateWorkflowNode,
   Render3DApis,
   ReviewWorkflowNode,
@@ -70,9 +71,16 @@ export async function createRealWorkflowEditorSession(
   dependencies: RealWorkflowEditorDependencies,
 ): Promise<WorkflowEditorSession> {
   const workflow = await dependencies.workflowRunApis.get(runId)
+  const setup = workflow.nodes.find(
+    (node): node is CharacterSetupWorkflowNode =>
+      node.type === 'character-setup' && !node.deletedAt,
+  )
+  const explicitCharacterId = setup?.input.characterId
   const [project, loadedCharacter] = await Promise.all([
     dependencies.projectApis.get(workflow.projectId),
-    loadWorkflowCharacter(dependencies.characterApis, workflow.projectId, workflow.id),
+    explicitCharacterId
+      ? loadExplicitCharacter(dependencies.characterApis, workflow.projectId, explicitCharacterId)
+      : loadWorkflowCharacter(dependencies.characterApis, workflow.projectId, workflow.id),
   ])
   let currentCharacter = loadedCharacter
   const errorListeners = new Set<(error: Error) => void>()
@@ -250,6 +258,18 @@ export function createDefaultRealWorkflowEditorSession(
  */
 export function loadDefaultActionPresets(signal?: AbortSignal): Promise<ActionPreset[]> {
   return actionPresetApis.list(signal)
+}
+
+async function loadExplicitCharacter(
+  apis: Pick<CharacterApis, 'get'>,
+  projectId: Project['id'],
+  characterId: Character['id'],
+): Promise<Character> {
+  const character = await apis.get(characterId)
+  if (character.projectId !== projectId) {
+    throw new Error(`角色 ${characterId} 不属于 WorkflowRun 所在项目`)
+  }
+  return character
 }
 
 async function loadWorkflowCharacter(

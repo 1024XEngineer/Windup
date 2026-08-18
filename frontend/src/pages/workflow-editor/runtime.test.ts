@@ -131,6 +131,56 @@ describe('createRealWorkflowEditorSession', () => {
     ).rejects.toThrow('WorkflowRun 42 关联了多个角色')
   })
 
+  it('新增动作 Run 按节点中的 characterId 恢复原角色', async () => {
+    const character = { ...characterFixture(), workflowRunId: 'original-run' }
+    const workflow = {
+      ...workflowFixture(),
+      id: 'new-action-run',
+      nodes: [
+        {
+          ...workflowFixture().nodes[0]!,
+          status: 'passed' as const,
+          phase: 'completed' as const,
+          input: {
+            characterId: character.id,
+            prompt: '冒险家',
+            referenceMedia: ['https://assets.windup.test/master.png' as MediaReference],
+          },
+        },
+      ],
+    }
+    const getCharacter = vi.fn().mockResolvedValue(character)
+    const listByProject = vi.fn()
+
+    const session = await createRealWorkflowEditorSession('new-action-run', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(workflow),
+        update: vi.fn(async (run) => ({ ...structuredClone(run), version: run.version + 1 })),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn(),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        get: getCharacter,
+        listByProject,
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      },
+      onAsyncError: vi.fn(),
+    })
+
+    expect(getCharacter).toHaveBeenCalledWith(character.id)
+    expect(listByProject).not.toHaveBeenCalled()
+    expect(session.character).toEqual(character)
+  })
+
   it('把 Controller 异步错误同时交给装配层和页面订阅者', async () => {
     const onAsyncError = vi.fn()
     const workflow = workflowFixture()

@@ -21,11 +21,12 @@ import { registerApiAccessTokenProvider } from '@/shared/api'
 
 function createWorkflowRunApis(initialRuns: readonly WorkflowRun[] = []): WorkflowRunApis {
   let version = 0
+  let runSequence = initialRuns.length
   const runs = new Map(initialRuns.map((run) => [run.id, structuredClone(run)]))
   return {
     async create(input) {
       const run: WorkflowRun = {
-        id: 'run-1',
+        id: `run-${++runSequence}`,
         projectId: input.projectId,
         version: ++version,
         storageStatus: 'active',
@@ -938,9 +939,10 @@ describe('createQuickStartService', () => {
     await service.startAction(target, '站立挥手')
     const finalSession = await service.startAction(target, '跑步攻击')
     const finalRun = finalSession.getWorkflow()
-    expect(secondSession.runId).toBe(firstSession.runId)
-    expect(finalSession.runId).toBe(firstSession.runId)
-    expect(finalRun.nodes.filter((node) => node.type === 'action-first-frame')).toHaveLength(6)
+    expect(secondSession.runId).not.toBe(firstSession.runId)
+    expect(finalSession.runId).not.toBe(firstSession.runId)
+    expect(finalSession.runId).not.toBe(secondSession.runId)
+    expect(finalRun.nodes.filter((node) => node.type === 'action-first-frame')).toHaveLength(1)
     expect(generationApis.create).toHaveBeenCalledTimes(6)
     expect(generationApis.create).toHaveBeenNthCalledWith(
       1,
@@ -2027,7 +2029,7 @@ describe('createQuickStartService', () => {
       type: 'character-setup',
       input: {
         characterId: character.id,
-        prompt: '',
+        prompt: '老角色',
         referenceMedia: ['existing.png', 'existing-north.png'],
       },
     })

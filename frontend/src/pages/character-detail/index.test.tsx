@@ -1,14 +1,16 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 
 import { AppRoutes } from '@/app'
+import { workflowRunApis } from '@/entities'
 import { AuthenticatedAuthSession } from '@/test/auth-session'
 import { createProjectAssetsBackend } from '@/test/project-assets-backend'
 
 afterEach(() => {
   cleanup()
+  vi.restoreAllMocks()
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
 })
@@ -51,7 +53,7 @@ describe('CharacterDetailPage', () => {
       expect(preview.getAttribute('decoding')).toBe('async')
     }
     expect(screen.queryByText('GIF')).toBeNull()
-    expect(screen.queryByRole('button', { name: '增加动作' })).toBeNull()
+    expect(screen.getByRole('button', { name: '增加动作' }).hasAttribute('disabled')).toBe(false)
     const exportEntry = screen.getByRole('button', { name: '导出资产包' })
     expect(exportEntry.className).toContain('rounded-full')
     expect(screen.queryByText('当前阶段')).toBeNull()
@@ -60,6 +62,69 @@ describe('CharacterDetailPage', () => {
     const playtestEntry = screen.getByRole('link', { name: '在预览台打开当前造型' })
     expect(playtestEntry.getAttribute('href')).toBe('/playtest/51/outfit-default')
     expect(playtestEntry.parentElement?.className).toContain('items-start')
+  })
+
+  it('lets the user choose Quick Start or Workflow Editor for the selected outfit', async () => {
+    renderCharacter('51')
+    await screen.findByRole('heading', { name: '轻装信使' })
+
+    fireEvent.click(screen.getByRole('button', { name: '增加动作' }))
+
+    expect(screen.getByRole('dialog', { name: '选择动作创建方式' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '使用 Quick Start' }).getAttribute('href')).toBe(
+      '/quick-start?characterId=51&outfitId=outfit-default',
+    )
+    expect(screen.getByRole('button', { name: '使用 Workflow Editor' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '关闭动作创建方式' }))
+    expect(screen.queryByRole('dialog', { name: '选择动作创建方式' })).toBeNull()
+  })
+
+  it('keeps the chooser open and reports Workflow Editor creation failures', async () => {
+    vi.spyOn(workflowRunApis, 'create').mockRejectedValue(new Error('工作流暂时不可用'))
+    renderCharacter('51')
+    await screen.findByRole('heading', { name: '轻装信使' })
+
+    fireEvent.click(screen.getByRole('button', { name: '增加动作' }))
+    fireEvent.click(screen.getByRole('button', { name: '使用 Workflow Editor' }))
+
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', '工作流暂时不可用')
+    expect(screen.getByRole('dialog', { name: '选择动作创建方式' })).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: '使用 Workflow Editor' }).hasAttribute('disabled'),
+    ).toBe(false)
+  })
+
+  it('creates an independent template-bound run before opening Workflow Editor', async () => {
+    const create = vi.spyOn(workflowRunApis, 'create').mockImplementation(async (input) => ({
+      id: 'new-action-run',
+      projectId: input.projectId,
+      version: 1,
+      storageStatus: 'active',
+      nodes: input.nodes,
+    }))
+    renderCharacter('51')
+    await screen.findByRole('heading', { name: '轻装信使' })
+
+    fireEvent.click(screen.getByRole('button', { name: '增加动作' }))
+    fireEvent.click(screen.getByRole('button', { name: '使用 Workflow Editor' }))
+
+    await waitFor(() => expect(create).toHaveBeenCalledOnce())
+    expect(create).toHaveBeenCalledWith({
+      projectId: '42',
+      nodes: expect.arrayContaining([
+        expect.objectContaining({
+          type: 'character-setup',
+          status: 'passed',
+          input: expect.objectContaining({ characterId: '51' }),
+        }),
+        expect.objectContaining({
+          type: 'character-template',
+          status: 'passed',
+          selectedImageUrl: 'https://cdn.windup.test/messenger-outfit.png',
+        }),
+      ]),
+    })
   })
 
   it('expands an Action into backend Frames sorted by index', async () => {
@@ -89,6 +154,9 @@ describe('CharacterDetailPage', () => {
     expect(screen.queryByRole('combobox', { name: '选择造型' })).toBeNull()
     expect(screen.getByText('这个造型还没有动作')).toBeTruthy()
     expect(screen.queryByRole('link', { name: '在预览台打开当前造型' })).toBeNull()
+    const addAction = screen.getByRole('button', { name: '增加动作' })
+    expect(addAction.hasAttribute('disabled')).toBe(true)
+    expect(addAction.getAttribute('title')).toBe('当前造型缺少角色母版')
   })
 
   it('renders a real empty state when the Character has no Outfit', async () => {
