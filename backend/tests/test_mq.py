@@ -143,6 +143,33 @@ def test_publish_now_commits_and_flushes(mq_session, engine, monkeypatch):
     assert row.stream_id == "1734512345678-0"
 
 
+def test_publish_now_succeeds_when_xadd_fails(mq_session, engine, monkeypatch):
+    """outbox commit 即受理：XADD 失败不抛，行留 pending 给 relay。"""
+    session_local = _patch_session_local(monkeypatch, engine)
+    redis_mock = MagicMock()
+    redis_mock.xadd.side_effect = redis.ConnectionError("redis down")
+    monkeypatch.setattr("windup_framework.mq.publisher.get_redis", lambda: redis_mock)
+
+    publisher = MqPublisher()
+    message_id = publisher.publish_now(
+        mq_session,
+        stream="windup:stream:email",
+        msg_type="verification_code",
+        payload={"email": "xadd-fail@x.com", "purpose": "login"},
+        dedupe_key="email:login:xadd-fail@x.com:1",
+    )
+
+    verify = session_local()
+    try:
+        row = verify.get(MqMessage, message_id)
+        assert row is not None
+        assert row.publish_status == "pending"
+        assert row.publish_attempts == 1
+        assert row.publish_error is not None
+    finally:
+        verify.close()
+
+
 def test_register_after_commit_flushes_on_commit(mq_session, engine, monkeypatch):
     _patch_session_local(monkeypatch, engine)
     _mock_redis_xadd(monkeypatch)

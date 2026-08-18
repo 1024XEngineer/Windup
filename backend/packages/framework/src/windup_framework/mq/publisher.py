@@ -61,7 +61,12 @@ class MqPublisher:
         payload: dict[str, Any],
         dedupe_key: str,
     ) -> uuid.UUID:
-        """短事务：insert + commit + XADD；失败则抛异常。"""
+        """短事务写入 outbox 并尽力 XADD。
+
+        契约：``enqueue`` + ``commit`` 成功即视为受理；随后 ``flush_to_stream``
+        失败只记 pending/publish_error，由 relay 补投，**不抛异常**。
+        仅 outbox 落库本身失败（如 DB 异常）才会向上抛错。
+        """
         message_id = self.enqueue(
             session,
             stream=stream,

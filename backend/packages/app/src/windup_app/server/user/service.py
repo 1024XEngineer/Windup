@@ -299,7 +299,8 @@ class SqlAlchemyUserService(UserService):
         pipe.setex(cooldown_key, COOLDOWN_TTL, "1")
         pipe.execute()
 
-        # 投递邮件到 MQ（SETEX 成功后才 publish；失败则接口失败）
+        # SETEX 成功后再写 outbox。受理口径：mq_message 落库成功即接口成功；
+        # 当场 XADD 失败不抬接口错误（行留 pending，由 relay 补投）。
         dedupe_key = f"email:{purpose}:{email}:{uuid.uuid4()}"
         publisher = MqPublisher()
         from windup_framework.db.session import SessionLocal
@@ -316,6 +317,8 @@ class SqlAlchemyUserService(UserService):
         except Exception as exc:
             logger.exception("[WINDUP] 验证码邮件入队失败 | email=%s purpose=%s", email, purpose)
             raise BizException("验证码发送失败，请稍后重试", code=BizCode.INTERNAL_ERROR) from exc
+        finally:
+            session.close()
 
         logger.info("[WINDUP] 验证码已入队 | email=%s purpose=%s", email, purpose)
 
