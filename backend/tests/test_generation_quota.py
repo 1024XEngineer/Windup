@@ -592,3 +592,94 @@ def test_recover_unfreezes_unknown_task_type(session_factory, monkeypatch):
         done = AiGenerationService().get_task(session, project_id=1, task_id=task_id)
         assert done.status is TaskStatus.FAILED
         assert _account(session, 1).frozen == 0
+
+
+# ── 没有冻结流水的开放任务也必须被恢复 ─────────────────────────────────────
+#
+# 线上攒下 3 条 running 了四五天、1 条同样久的 pending，它们都没有 FROZEN 流水
+# （136 条 completed 里 124 条也没有——多数任务早于计费接入）。用户那侧看到的是
+# 任务一直转圈：既没有终态，也没有错误信息。
+
+
+def _drop_freeze_rows(session: Session, task_id: int) -> None:
+    """把冻结流水抹掉，复刻线上那批任务的形状。"""
+    for txn in session.scalars(
+        select(CreditTransaction).where(
+            CreditTransaction.ref_id.like(f"task:{task_id}%")
+        )
+    ):
+        session.delete(txn)
+    session.flush()
+    assert not billing.has_open_freeze(session, task_id)
+
+
+def _open_task(session_factory, status: TaskStatus) -> int:
+    from windup_app.server.orchestrator import task_repo
+
+    with session_factory() as session:
+        _seed_account(session, 1)
+        session.commit()
+    service = AiGenerationService()
+    with session_factory() as session:
+        task = service.generate_character_action(
+            session, user_id=1, project_id=7,
+            input=CharacterActionInput(
+                character_id=1, action_type=ActionType.WALK, num_frames=2,
+            ),
+        )
+        if status is not TaskStatus.PENDING:
+            task_repo.update_status(session, task.id, status)
+        _drop_freeze_rows(session, task.id)
+        session.commit()
+        return task.id
+
+
+def test_running_orphan_without_freeze_still_reaches_a_terminal_status(session_factory):
+    from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
+
+    task_id = _open_task(session_factory, TaskStatus.RUNNING)
+
+    with session_factory() as session:
+        recover_orphaned_generation_tasks(
+            session,
+            dispatcher=type("D", (), {"submit": staticmethod(lambda *a, **k: None)})(),
+            run_image_task=lambda *a: None,
+            run_action_task=lambda *a: None,
+        )
+        session.commit()
+
+    with session_factory() as session:
+        done = AiGenerationService().get_task(session, project_id=7, task_id=task_id)
+        assert done.status is TaskStatus.FAILED, "无冻结的 running 任务被跳过了"
+        assert "中断" in (done.error_message or "")
+        # 没退过积分就不能说"已解冻"，否则用户会去查一笔不存在的账。
+        assert "解冻" not in (done.error_message or "")
+        assert "重新提交" in (done.error_message or "")
+        assert CreditReason.REFUND not in _reasons(session, 1)
+
+
+def test_pending_orphan_without_freeze_reaches_a_terminal_status_without_rerunning(
+    session_factory,
+):
+    """免费重跑与永久开放态之间选前者不可接受，所以只保证它不再停在 pending。"""
+    from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
+
+    task_id = _open_task(session_factory, TaskStatus.PENDING)
+    queued: list[tuple] = []
+
+    with session_factory() as session:
+        recover_orphaned_generation_tasks(
+            session,
+            dispatcher=type("D", (), {
+                "submit": staticmethod(lambda *a: queued.append(a)),
+            })(),
+            run_image_task=lambda *a: None,
+            run_action_task=lambda *a: None,
+        )
+        session.commit()
+
+    assert queued == [], "没有冻结的任务被重入队了，等于免费跑一次"
+    with session_factory() as session:
+        done = AiGenerationService().get_task(session, project_id=7, task_id=task_id)
+        assert done.status is TaskStatus.FAILED, "无冻结的 pending 任务还停在开放态"
+        assert "重新提交" in (done.error_message or "")

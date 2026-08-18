@@ -35,16 +35,36 @@ def recover_orphaned_generation_tasks(
     run_image_task: Callable[..., Any],
     run_action_task: Callable[..., Any],
 ) -> None:
-    """扫描未结清冻结的开放任务并恢复。调用方负责 commit。"""
+    """扫描开放任务并恢复。调用方负责 commit。
+
+    没有开放冻结的任务此前被整个跳过,于是线上攒下 3 条 running 了四五天的任务和 1 条
+    同样久的 pending —— 既没有终态也没有错误信息,用户那侧就是一直转圈。
+
+    但"跳过重入队"和"跳过标终态"两件事的代价不对等,所以只放开后者:重入队一个没有
+    冻结的任务等于让它免费跑一次,而让它永远停在开放态没有任何好处。
+    """
     for task in task_repo.list_by_status(
         session, (TaskStatus.PENDING, TaskStatus.RUNNING),
     ):
-        if task.id is None or not billing.has_open_freeze(session, task.id):
+        if task.id is None:
+            continue
+        if not billing.has_open_freeze(session, task.id):
+            _fail_unrecoverable(session, task)
             continue
         if task.status is TaskStatus.RUNNING:
             _fail_interrupted(session, task)
             continue
         _requeue_pending(session, dispatcher, run_image_task, run_action_task, task)
+
+
+def _fail_unrecoverable(session: Session, task: GenerationTask) -> None:
+    """没有冻结可退,也不重跑;只保证它不再停在开放态。"""
+    assert task.id is not None
+    task_repo.update_status(
+        session, task.id, TaskStatus.FAILED,
+        error_message="任务已中断，请重新提交",
+    )
+    logger.warning("无冻结的开放任务已置为失败 | task_id=%s %s", task.id, task.status)
 
 
 def _fail_interrupted(session: Session, task: GenerationTask) -> None:
