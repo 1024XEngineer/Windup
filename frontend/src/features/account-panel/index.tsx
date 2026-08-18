@@ -95,14 +95,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '操作失败，请稍后重试'
 }
 
-function emailKey(email: string): string {
-  return email.trim().toLowerCase()
-}
-
-function prefersReducedMotion(): boolean {
-  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-}
-
 function KineticTitle({ id, text, emphasis }: { id: string; text: string; emphasis?: string }) {
   const emphasisStart = emphasis ? text.indexOf(emphasis) : -1
   return (
@@ -200,7 +192,7 @@ export function AccountPanel() {
   if (requestedEntry !== 'login' && requestedEntry !== 'register') return null
 
   const inviteCode = searchParams.get('invite')?.trim().toUpperCase() ?? ''
-  const entry: AccountEntry = requestedEntry === 'register' && inviteCode ? 'register' : 'login'
+  const entry: AccountEntry = requestedEntry
 
   return (
     <AccountPanelDialog
@@ -262,7 +254,7 @@ function AccountPanelDialog({
   const normalizedEmail = email.trim()
   const cooldownSeconds = Math.max(
     0,
-    Math.ceil(((cooldowns.get(emailKey(email)) ?? 0) - now) / 1_000),
+    Math.ceil(((cooldowns.get(email.trim().toLowerCase()) ?? 0) - now) / 1_000),
   )
 
   const returnTarget = useMemo(
@@ -300,7 +292,7 @@ function AccountPanelDialog({
     setCopyIndex(0)
     setCopyPhase('entering')
     if (!shouldShowMotionCopy) return
-    if (prefersReducedMotion()) return
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
     copyRestTimerRef.current = window.setTimeout(() => setCopyPhase('resting'), 760)
     const timer = window.setInterval(() => {
       setCopyPhase('exiting')
@@ -336,7 +328,9 @@ function AccountPanelDialog({
     setCopyPhase('exiting')
     setIsExiting(true)
 
-    const duration = prefersReducedMotion() ? 0 : AUTH_EXIT_DURATION_MS
+    const duration = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      ? 0
+      : AUTH_EXIT_DURATION_MS
     exitTimerRef.current = window.setTimeout(action, duration)
   }
 
@@ -359,7 +353,6 @@ function AccountPanelDialog({
     window.requestAnimationFrame(() => emailInputRef.current?.focus())
   }
 
-  /*
   function switchEntry(nextEntry: AccountEntry) {
     leaveWithAnimation(() => {
       const next = new URLSearchParams(searchParams)
@@ -367,7 +360,6 @@ function AccountPanelDialog({
       setSearchParams(next, { replace: true })
     })
   }
-  */
 
   async function sendCode(): Promise<boolean> {
     if (isSendingCode || cooldownSeconds > 0) return false
@@ -386,7 +378,9 @@ function AccountPanelDialog({
       })
       const sentAt = Date.now()
       setNow(sentAt)
-      setCooldowns((previous) => new Map(previous).set(emailKey(normalizedEmail), sentAt + 60_000))
+      setCooldowns((previous) =>
+        new Map(previous).set(normalizedEmail.toLowerCase(), sentAt + 60_000),
+      )
       setSuccess('验证码已发送，请在 5 分钟内使用。')
       return true
     } catch (sendError) {
@@ -464,19 +458,16 @@ function AccountPanelDialog({
     try {
       let successMessage: string
       if (isRegister) {
-        if (!inviteCode) throw new Error('邀请链接无效')
         await session.register({
           email: normalizedEmail,
           password,
           code,
-          inviteCode,
+          ...(inviteCode ? { inviteCode } : {}),
           ...(nickname.trim() ? { nickname: nickname.trim() } : {}),
         })
         successMessage = '账号已创建，正在继续。'
       } else if (mode === 'code') {
         await session.loginByCode({ email: normalizedEmail, code })
-        // 内测不自动建号。重新开放注册时改回：
-        // successMessage = '登录成功。如果这是你首次使用该邮箱，我们已为你创建账号。'
         successMessage = '登录成功，正在继续。'
       } else {
         await session.login({ email: normalizedEmail, password })
@@ -769,8 +760,7 @@ function AccountPanelDialog({
 
               {!isRegister && mode === 'code' && (
                 <p className="auth-screen-helper text-xs leading-5">
-                  {/* 未注册的邮箱将在验证后自动创建账号。 */}
-                  内测期间仅支持已有账号登录。
+                  未注册的邮箱将在验证后自动创建账号，并获得 300 积分。
                 </p>
               )}
             </div>
@@ -796,17 +786,17 @@ function AccountPanelDialog({
             </button>
           </form>
 
-          {/*
           <p className="auth-screen-entry-switch mt-7 text-center text-sm">
             {isRegister ? '已有账号？' : '还没有账号？'}{' '}
             <button type="button" onClick={() => switchEntry(isRegister ? 'login' : 'register')}>
               {isRegister ? '登录' : '创建账号'}
             </button>
           </p>
-          */}
-          <p className="auth-screen-entry-switch mt-7 text-center text-sm">
-            {isRegister ? '邀请码已由邀请链接带入，无需填写。' : '注册仅通过邀请链接开放。'}
-          </p>
+          {isRegister && (
+            <p className="mt-2 text-center text-xs text-app-faint">
+              {inviteCode ? '邀请链接已带入，注册后共得 500 积分。' : '注册即赠 300 积分。'}
+            </p>
+          )}
         </div>
       </div>
     </div>

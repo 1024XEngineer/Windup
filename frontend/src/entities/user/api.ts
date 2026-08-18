@@ -96,7 +96,7 @@ export function createUserApis(options: CreateUserApisOptions = {}): UserApis {
         email: input.email,
         password: input.password,
         code: input.code,
-        invite_code: input.inviteCode,
+        ...(input.inviteCode ? { invite_code: input.inviteCode } : {}),
         ...(input.nickname ? { nickname: input.nickname } : {}),
       }
       return toAuthTokens(
