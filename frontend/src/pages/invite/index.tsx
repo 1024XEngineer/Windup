@@ -1,15 +1,24 @@
-import { useEffect, useId, useMemo, useState, type FormEvent } from 'react'
-import { Check, Copy } from '@phosphor-icons/react'
+import { useEffect, useMemo, useState } from 'react'
+import { Copy } from '@phosphor-icons/react'
 
 import inviteCharacterArtwork from '@/assets/account/illustrations/invite-character.webp'
 import { quotaApis as defaultQuotaApis } from '@/entities'
 import type { InviteCode, QuotaApis } from '@/entities'
 import { useQuotaBalance } from '@/features/quota'
 
-const ICON_PROPS = { size: 20, weight: 'regular' as const }
-
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '操作失败，请稍后重试'
+}
+
+function formatInviteExpiry(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '有效期未知'
+  return `有效至 ${new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'UTC',
+  }).format(date)}`
 }
 
 function invitationUrl(code: string): string {
@@ -22,7 +31,6 @@ function invitationUrl(code: string): string {
 }
 
 export function InviteSection({ apis = defaultQuotaApis }: { apis?: QuotaApis }) {
-  const redeemId = useId()
   const balance = useQuotaBalance(true, apis)
   const [invite, setInvite] = useState<InviteCode | null>(null)
   const [isInviteLoading, setIsInviteLoading] = useState(true)
@@ -30,8 +38,6 @@ export function InviteSection({ apis = defaultQuotaApis }: { apis?: QuotaApis })
   const [inviteRequestVersion, setInviteRequestVersion] = useState(0)
   const [notice, setNotice] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [redeemCode, setRedeemCode] = useState('')
-  const [isRedeeming, setIsRedeeming] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -68,39 +74,19 @@ export function InviteSection({ apis = defaultQuotaApis }: { apis?: QuotaApis })
     }
   }
 
-  async function redeemInvite(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (isRedeeming) return
-    const normalized = redeemCode.trim().toUpperCase()
-
-    setIsRedeeming(true)
-    setActionError(null)
-    setNotice(null)
-    try {
-      await apis.redeemInviteCode(normalized)
-      setRedeemCode('')
-      setNotice('邀请奖励已到账')
-      balance.reload()
-    } catch (error) {
-      setActionError(errorMessage(error))
-    } finally {
-      setIsRedeeming(false)
-    }
-  }
-
   return (
     <div data-invite-section>
       <header className="flex flex-wrap items-start justify-between gap-5 border-b border-app-line pb-5">
         <div className="max-w-2xl">
           <h2 className="text-xl font-semibold tracking-[-0.025em] text-app-ink-soft">邀请奖励</h2>
           <p className="mt-1.5 text-sm leading-6 text-app-muted">
-            每成功邀请 1 位好友，你和好友各得 200 积分；没有邀请人数上限，每位好友只能绑定一次。
+            好友注册共得 500 积分；你每日前 3 位各得 200 积分，之后好友仍可获得奖励。
           </p>
         </div>
 
         <dl className="flex items-center gap-5 text-right">
           <div>
-            <dt className="text-xs text-app-faint">成功邀请</dt>
+            <dt className="text-xs text-app-faint">当前码注册</dt>
             <dd className="mt-1 font-mono text-2xl font-semibold text-app-ink">
               {invite?.usedCount ?? '—'}
             </dd>
@@ -174,6 +160,9 @@ export function InviteSection({ apis = defaultQuotaApis }: { apis?: QuotaApis })
                     <Copy size={17} weight="regular" />
                     复制邀请链接
                   </button>
+                  <span className="text-xs text-app-faint">
+                    {formatInviteExpiry(invite.expiresAt)}
+                  </span>
                 </div>
               </div>
             ) : null}
@@ -189,43 +178,6 @@ export function InviteSection({ apis = defaultQuotaApis }: { apis?: QuotaApis })
             className="invite-character-artwork h-[17rem] w-[19rem] max-w-none object-contain object-bottom sm:h-[19rem] md:absolute md:-right-8 md:-bottom-8 md:h-[19rem] md:w-[19rem]"
             style={{ imageRendering: 'pixelated' }}
           />
-        </div>
-      </section>
-
-      <section className="mt-7 border-t border-app-line pt-6">
-        <div className="flex flex-wrap items-end justify-between gap-5">
-          <div>
-            <h3 className="text-lg font-semibold tracking-[-0.025em] text-app-ink-soft">
-              补填好友的邀请码
-            </h3>
-          </div>
-
-          <form
-            className="grid w-full gap-3 sm:max-w-xl sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"
-            onSubmit={redeemInvite}
-            noValidate
-          >
-            <label htmlFor={redeemId} className="sr-only">
-              补填邀请码
-            </label>
-            <input
-              id={redeemId}
-              value={redeemCode}
-              onChange={(event) => setRedeemCode(event.target.value)}
-              disabled={isRedeeming}
-              autoComplete="off"
-              className="min-h-11 w-full rounded-lg border border-app-line bg-app-surface-muted px-3.5 font-mono uppercase outline-none transition-[border-color,box-shadow] focus:border-app-accent focus:ring-2 focus:ring-app-accent/15"
-              placeholder="输入好友的邀请码"
-            />
-            <button
-              type="submit"
-              disabled={isRedeeming}
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-app-line bg-app-surface-raised px-4 text-sm font-semibold text-app-ink-soft hover:border-app-accent/30 hover:text-app-ink disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <Check {...ICON_PROPS} />
-              {isRedeeming ? '正在确认…' : '确认补填'}
-            </button>
-          </form>
         </div>
       </section>
 
