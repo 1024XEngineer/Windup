@@ -19,6 +19,11 @@ import {
   WorkflowRunConflictError,
 } from '@/entities'
 import { ExportButton, type ExportPackageModel } from '@/features/export-package'
+import {
+  runQuickStartAgentTurn,
+  type AgentTransport,
+  type AgentTransportMessage,
+} from './agent-runtime'
 import { KineticCopyCycle, type KineticCopyMessage } from './kinetic-copy-cycle'
 import {
   quickStartService,
@@ -34,6 +39,14 @@ export type {
   QuickStartEntryService,
   QuickStartSession,
 } from './service'
+export type {
+  AgentFunctionDefinition,
+  AgentTransport,
+  AgentTransportEvent,
+  AgentTransportMessage,
+  AgentTransportRequest,
+  QuickStartAgentRuntimeEvent,
+} from './agent-runtime'
 
 const STYLE_PROMPTS = [
   {
@@ -119,10 +132,12 @@ export interface QuickStartPageProps {
    * 未注入时，Quick Start 自己装配真实实体接口，避免 app 层承担流程细节。
    */
   service?: QuickStartEntryService
+  /** 未配置模型适配器时，完整保留原有确定性 Quick Start 行为。 */
+  agentTransport?: AgentTransport
 }
 
 /** Quick Start 独立完成 AI 入口；它不跳转 Workflow Editor。 */
-export function QuickStartPage({ service }: QuickStartPageProps) {
+export function QuickStartPage({ service, agentTransport }: QuickStartPageProps) {
   const { runId } = useParams()
   const [searchParams] = useSearchParams()
   const activeService = useMemo(() => {
@@ -138,6 +153,7 @@ export function QuickStartPage({ service }: QuickStartPageProps) {
     <QuickStartRun
       key={runId}
       service={activeService}
+      agentTransport={agentTransport}
       runId={runId}
       initialSession={createdSession?.runId === runId ? createdSession : null}
       onSessionCreated={setCreatedSession}
@@ -592,12 +608,14 @@ function GenerationCanvas({ label }: { label: string }) {
 
 function QuickStartRun({
   service,
+  agentTransport,
   runId,
   initialSession,
   onSessionCreated,
   onInitialSessionConsumed,
 }: {
   service: QuickStartEntryService
+  agentTransport?: AgentTransport
   runId: string
   initialSession: QuickStartSession | null
   onSessionCreated: (session: QuickStartSession) => void
@@ -620,6 +638,11 @@ function QuickStartRun({
   const [publishing, setPublishing] = useState(false)
   const [confirmingCandidate, setConfirmingCandidate] = useState(false)
   const [confirmingFirstFrame, setConfirmingFirstFrame] = useState(false)
+  const [agentTurns, setAgentTurns] = useState<
+    readonly { id: number; role: 'user' | 'assistant'; content: string }[]
+  >([])
+  const [agentBusy, setAgentBusy] = useState(false)
+  const [agentError, setAgentError] = useState<string | null>(null)
   const automaticPublishAttempt = useRef<string | null>(null)
   const transcriptScrollRegion = useRef<HTMLElement>(null)
   const workflowConflictRef = useRef(false)
@@ -630,6 +653,9 @@ function QuickStartRun({
     timer: ReturnType<typeof setTimeout>
   } | null>(null)
   const mountedRef = useRef(true)
+  const agentHistoryRef = useRef<readonly AgentTransportMessage[]>([])
+  const agentAbortController = useRef<AbortController | null>(null)
+  const agentTurnId = useRef(0)
   const reportWorkflowError = useCallback((cause: unknown, fallback: string) => {
     const presented = presentWorkflowError(cause, fallback)
     if (workflowConflictRef.current && !presented.conflict) return
@@ -648,6 +674,7 @@ function QuickStartRun({
     return () => {
       mountedRef.current = false
       activeSessionRef.current = null
+      agentAbortController.current?.abort()
     }
   }, [])
 
@@ -796,7 +823,7 @@ function QuickStartRun({
   useEffect(() => {
     const region = transcriptScrollRegion.current
     region?.scrollTo?.({ top: region.scrollHeight, behavior: 'smooth' })
-  }, [actionFrames, candidates, firstFrameCandidates, run])
+  }, [actionFrames, agentTurns, candidates, firstFrameCandidates, run])
 
   if (!run) {
     return (
@@ -933,6 +960,72 @@ function QuickStartRun({
     }
   }
 
+  async function sendAgentMessage() {
+    const targetSession = session
+    const prompt = actionDescription.trim()
+    if (
+      !agentTransport ||
+      !targetSession ||
+      !prompt ||
+      agentBusy ||
+      workflowConflictRef.current ||
+      activeSessionRef.current !== targetSession
+    )
+      return
+
+    const userTurnId = ++agentTurnId.current
+    const assistantTurnId = ++agentTurnId.current
+    const abortController = new AbortController()
+    agentAbortController.current = abortController
+    setActionDescription('')
+    setAgentError(null)
+    setAgentBusy(true)
+    setAgentTurns((current) => [...current, { id: userTurnId, role: 'user', content: prompt }])
+
+    try {
+      const result = await runQuickStartAgentTurn({
+        transport: agentTransport,
+        history: agentHistoryRef.current,
+        input: prompt,
+        getWorkflow: () => targetSession.getWorkflow(),
+        signal: abortController.signal,
+        onEvent(event) {
+          if (
+            !mountedRef.current ||
+            abortController.signal.aborted ||
+            activeSessionRef.current !== targetSession
+          )
+            return
+          if (event.type === 'text') {
+            setAgentTurns((current) => {
+              const existing = current.find((turn) => turn.id === assistantTurnId)
+              return existing
+                ? current.map((turn) =>
+                    turn.id === assistantTurnId
+                      ? { ...turn, content: turn.content + event.text }
+                      : turn,
+                  )
+                : [...current, { id: assistantTurnId, role: 'assistant', content: event.text }]
+            })
+          }
+          if (event.type === 'failed') setAgentError(event.error)
+        },
+      })
+      if (
+        mountedRef.current &&
+        !abortController.signal.aborted &&
+        activeSessionRef.current === targetSession
+      ) {
+        agentHistoryRef.current = result.history
+      }
+    } catch {
+      // runtime 已通过 failed 事件提供可展示错误；这里仅结束本轮提交状态。
+    } finally {
+      if (agentAbortController.current === abortController) agentAbortController.current = null
+      if (mountedRef.current && activeSessionRef.current === targetSession) setAgentBusy(false)
+    }
+  }
+
   function continueConversation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (workflowConflictRef.current) return
@@ -944,6 +1037,7 @@ function QuickStartRun({
       void confirmFirstFrame()
       return
     }
+    if (agentTransport) void sendAgentMessage()
   }
 
   const composerPlaceholder = isTemplateSelecting
@@ -954,15 +1048,22 @@ function QuickStartRun({
       ? selectedFirstFrame
         ? '按发送确认这张首帧…'
         : '先从上面选择一个动作首帧…'
-      : workflowHasFailure(run)
-        ? '这次未完成，可以新建一次创作…'
-        : canPublish
-          ? '确认保存后，还可以继续描述修改…'
-          : '制作中，完成后可以继续修改…'
+      : agentTransport
+        ? '继续描述你的想法…'
+        : workflowHasFailure(run)
+          ? '这次未完成，可以新建一次创作…'
+          : canPublish
+            ? '确认保存后，还可以继续描述修改…'
+            : '制作中，完成后可以继续修改…'
 
   const composerCanSubmit =
     (isTemplateSelecting && Boolean(selectedCandidate)) ||
-    (isFirstFrameSelecting && Boolean(selectedFirstFrame))
+    (isFirstFrameSelecting && Boolean(selectedFirstFrame)) ||
+    (Boolean(agentTransport) &&
+      !isTemplateSelecting &&
+      !isFirstFrameSelecting &&
+      !agentBusy &&
+      Boolean(actionDescription.trim()))
   const selectedTemplateUrl = templateStep?.selectedImageUrl
   const selectedFirstFrameUrl = firstFrameStep?.selectedFirstFrameUrl
   const requestedAction = firstFrameStep?.input.prompt || firstFrameStep?.input.name
@@ -1278,6 +1379,15 @@ function QuickStartRun({
                 </AgentTurn>
               </>
             ) : null}
+
+            {agentTurns.map((turn) =>
+              turn.role === 'user' ? (
+                <UserTurn key={turn.id}>{turn.content}</UserTurn>
+              ) : (
+                <AgentCopy key={turn.id} lines={[turn.content]} />
+              ),
+            )}
+            {agentError ? <AgentCopy tone="danger" lines={[agentError]} /> : null}
 
             {error ? (
               <div
