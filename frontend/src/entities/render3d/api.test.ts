@@ -122,3 +122,77 @@ describe('三渲二资产适配器', () => {
     ).rejects.toBeInstanceOf(Render3DContractError)
   })
 })
+
+describe('三渲二适配器的形状守卫', () => {
+  // 这些分支挡的是"后端换了形状但没人发现"。放行的话,坏值会一路流到界面上:
+  // 用户看到的是 NaN 积分或空白状态,而错误的来源在两层之外。
+  async function precheckWith(payload: unknown) {
+    const { client } = clientReturning(payload)
+    return createRender3DApis(client).precheckMaster('https://cdn.test/master.png', {
+      width: 64,
+      height: 64,
+    })
+  }
+
+  it('facts 不是对象时拒收', async () => {
+    await expect(precheckWith({ ...REPORT, facts: 'not-an-object' })).rejects.toBeInstanceOf(
+      Render3DContractError,
+    )
+  })
+
+  it('量出来的尺寸不是有限数字时拒收', async () => {
+    await expect(
+      precheckWith({ ...REPORT, facts: { ...REPORT.facts, width: 'wide' } }),
+    ).rejects.toBeInstanceOf(Render3DContractError)
+  })
+
+  it('limb_segments 不是数组时拒收', async () => {
+    await expect(
+      precheckWith({ ...REPORT, facts: { ...REPORT.facts, limb_segments: 3 } }),
+    ).rejects.toBeInstanceOf(Render3DContractError)
+  })
+
+  it('limb_segments 里混进非数字时拒收', async () => {
+    await expect(
+      precheckWith({ ...REPORT, facts: { ...REPORT.facts, limb_segments: [1, '2'] } }),
+    ).rejects.toBeInstanceOf(Render3DContractError)
+  })
+
+  it('warnings 不是数组时拒收', async () => {
+    await expect(precheckWith({ ...REPORT, warnings: 'none' })).rejects.toBeInstanceOf(
+      Render3DContractError,
+    )
+  })
+
+  it('警告缺 detail 时拒收——界面要拿它告诉用户具体哪里不合格', async () => {
+    await expect(
+      precheckWith({ ...REPORT, warnings: [{ code: 'limbs_fused' }] }),
+    ).rejects.toBeInstanceOf(Render3DContractError)
+  })
+
+  it('accepted 不是布尔值时拒收', async () => {
+    await expect(precheckWith({ ...REPORT, accepted: 'yes' })).rejects.toBeInstanceOf(
+      Render3DContractError,
+    )
+  })
+
+  it('facts 缺席时是合法的——预检被拒时后端不量形态', async () => {
+    const report = await precheckWith({
+      ...REPORT,
+      accepted: false,
+      reject_code: 'aspect_too_wide',
+      facts: null,
+    })
+    expect(report.facts).toBeNull()
+  })
+
+  it('认不出的拒绝码拒收——界面按码选文案，静默丢弃等于漏报', async () => {
+    await expect(
+      precheckWith({ ...REPORT, accepted: false, reject_code: 'no_such_reason' }),
+    ).rejects.toBeInstanceOf(Render3DContractError)
+  })
+
+  it('整个预检结果不是对象时拒收', async () => {
+    await expect(precheckWith(['报告'])).rejects.toBeInstanceOf(Render3DContractError)
+  })
+})
