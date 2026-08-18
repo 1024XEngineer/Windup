@@ -253,8 +253,8 @@ describe('AppHeader', () => {
     renderHeader('/workspace')
 
     const hint = await screen.findByRole('status', { name: '邀请奖励提示' })
-    expect(screen.getByText('每日前 3 位好友，你各得 200 积分')).toBeTruthy()
-    expect(screen.getByText('好友注册共得 500 积分')).toBeTruthy()
+    expect(screen.getByText('邀请成功，双方各得 200 积分')).toBeTruthy()
+    expect(screen.getByText('每日前 3 次邀请可得奖励')).toBeTruthy()
     expect(screen.getByRole('link', { name: '去看看邀请奖励' }).getAttribute('href')).toBe(
       '/account?section=invite',
     )
