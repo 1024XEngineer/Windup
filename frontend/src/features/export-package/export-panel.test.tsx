@@ -185,4 +185,11 @@ describe('ExportPanel', () => {
 
     expect(await screen.findByRole('button', { name: '下载完成' })).toBeTruthy()
   })
+
+  it('紧凑导出按钮支持资产页的直接导出文案与胶囊形态', () => {
+    render(<ExportButton model={model} idleLabel="导出资产包" pill />)
+
+    const button = screen.getByRole('button', { name: '导出资产包' })
+    expect(button.className).toContain('rounded-full')
+  })
 })
