@@ -122,7 +122,7 @@ function QuotaSection() {
           </label>
           <button
             type="submit"
-            className="min-h-9 rounded-lg bg-app-accent px-3 text-sm font-semibold text-white"
+            className="min-h-9 rounded-lg bg-app-accent px-3 text-sm font-semibold text-app-on-accent"
           >
             筛选
           </button>
