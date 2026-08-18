@@ -105,7 +105,7 @@ class QuotaService(ABC):
 
     @abstractmethod
     def redeem_invite_code(self, session: Session, user_id: int, code: str) -> None:
-        """注册时兑换邀请码，双方各得积分。不提供登录后补填。
+        """注册时兑换邀请码。被邀请人始终得邀请奖励；邀请人受每日人数上限。
 
         :raises BizException: 邀请码无效 / 已过期 / 已填过码 / 不能填自己的码。
         """

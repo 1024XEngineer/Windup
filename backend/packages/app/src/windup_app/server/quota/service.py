@@ -69,6 +69,15 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _utc_day_start(now: datetime | None = None) -> datetime:
+    current = now or _now()
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return current.astimezone(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+
+
 def _is_expired(expires_at: datetime) -> bool:
     exp = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)
     return exp <= _now()
@@ -424,6 +433,8 @@ class SqlAlchemyQuotaService(QuotaService):
         if existing is not None:
             raise BizException("已填写过邀请码", code=BizCode.BAD_REQUEST)
 
+        self._get_account_for_update(session, invite.user_id)
+
         record = InviteRecord(
             inviter_id=invite.user_id,
             invitee_id=user_id,
@@ -439,13 +450,29 @@ class SqlAlchemyQuotaService(QuotaService):
             raise
 
         reward = quota_settings.invite_reward_amount
-        self.credit(
-            session,
-            invite.user_id,
-            reward,
-            int(CreditReason.INVITE_REWARD),
-            f"invite:{user_id}:inviter",
-        )
+        today_count = session.scalar(
+            select(func.count())
+            .select_from(InviteRecord)
+            .where(
+                InviteRecord.inviter_id == invite.user_id,
+                InviteRecord.create_at >= _utc_day_start(),
+            )
+        ) or 0
+        if today_count <= quota_settings.invite_reward_daily_limit:
+            self.credit(
+                session,
+                invite.user_id,
+                reward,
+                int(CreditReason.INVITE_REWARD),
+                f"invite:{user_id}:inviter",
+            )
+        else:
+            logger.info(
+                "[WINDUP] 邀请人日限额已满，跳过邀请人奖励 | inviter=%s invitee=%s count=%s",
+                invite.user_id,
+                user_id,
+                today_count,
+            )
         self.credit(
             session,
             user_id,

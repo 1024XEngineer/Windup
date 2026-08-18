@@ -664,6 +664,84 @@ class TestInviteCode:
             == quota_settings.register_gift_amount + quota_settings.invite_reward_amount
         )
 
+    def test_inviter_daily_reward_stops_after_three_invites(
+        self, db_session, quota_service
+    ):
+        from windup_app.server.quota.model import InviteRecord
+        from windup_app.server.user.model import User
+
+        inviter = User(email="cap-host@example.com", password_hash="x")
+        db_session.add(inviter)
+        db_session.flush()
+        _gift_account(db_session, inviter.id)
+        view = quota_service.generate_invite_code(db_session, inviter.id)
+
+        guests = []
+        for i in range(4):
+            guest = User(email=f"cap-guest-{i}@example.com", password_hash="x")
+            db_session.add(guest)
+            db_session.flush()
+            _gift_account(db_session, guest.id)
+            quota_service.redeem_invite_code(db_session, guest.id, view.code)
+            guests.append(guest)
+
+        host = quota_service.get_account(db_session, inviter.id)
+        assert host.balance == quota_settings.register_gift_amount + (
+            quota_settings.invite_reward_amount * 3
+        )
+        assert (
+            db_session.scalar(
+                select(InviteRecord.id).where(
+                    InviteRecord.invitee_id == guests[3].id
+                )
+            )
+            is not None
+        )
+        fourth = quota_service.get_account(db_session, guests[3].id)
+        assert (
+            fourth.balance
+            == quota_settings.register_gift_amount + quota_settings.invite_reward_amount
+        )
+
+    def test_inviter_daily_reward_resets_next_utc_day(
+        self, db_session, quota_service
+    ):
+        from datetime import timedelta
+        from windup_app.server.quota.model import InviteRecord
+        from windup_app.server.quota.service import _now
+        from windup_app.server.user.model import User
+
+        inviter = User(email="nextday-host@example.com", password_hash="x")
+        db_session.add(inviter)
+        db_session.flush()
+        _gift_account(db_session, inviter.id)
+        view = quota_service.generate_invite_code(db_session, inviter.id)
+
+        for i in range(3):
+            guest = User(email=f"old-guest-{i}@example.com", password_hash="x")
+            db_session.add(guest)
+            db_session.flush()
+            _gift_account(db_session, guest.id)
+            quota_service.redeem_invite_code(db_session, guest.id, view.code)
+
+        yesterday = _now() - timedelta(days=1)
+        for row in db_session.scalars(
+            select(InviteRecord).where(InviteRecord.inviter_id == inviter.id)
+        ).all():
+            row.create_at = yesterday
+        db_session.flush()
+
+        today_guest = User(email="today-guest@example.com", password_hash="x")
+        db_session.add(today_guest)
+        db_session.flush()
+        _gift_account(db_session, today_guest.id)
+        quota_service.redeem_invite_code(db_session, today_guest.id, view.code)
+
+        host = quota_service.get_account(db_session, inviter.id)
+        assert host.balance == quota_settings.register_gift_amount + (
+            quota_settings.invite_reward_amount * 4
+        )
+
     def test_redeem_rejects_own_code_and_repeat(self, db_session, quota_service):
         from windup_app.server.user.model import User
         from windup_common.exceptions import BizException
