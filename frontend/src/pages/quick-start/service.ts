@@ -348,6 +348,7 @@ export function createQuickStartService({
                   name: '默认造型',
                   description: null,
                   previewUrl: selectedImageUrl,
+                  model3dUrl: null,
                   actions: [],
                 },
               ],

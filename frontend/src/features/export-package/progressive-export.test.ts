@@ -33,6 +33,7 @@ const character: Character = {
       name: '默认造型',
       description: null,
       previewUrl: '/master.png',
+      model3dUrl: null,
       actions: [],
     },
   ],

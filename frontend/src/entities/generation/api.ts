@@ -511,6 +511,9 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
           reference_video_url: null,
           reference_image_urls: referenceImageUrls,
           num_frames: 32,
+          // 后端据此查该造型的 model_3d_url 决定路线（三渲二 / i2v，#122）；不发就恒为
+          // None，路线永远选不中。
+          outfit_id: nonEmptyString(input.outfitId, 'outfitId'),
         })
         expectations.set(generation.id, expectation)
         return generation as Generation<T['type']>

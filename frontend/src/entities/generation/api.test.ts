@@ -214,6 +214,7 @@ describe('createGenerationApis', () => {
       reference_video_url: null,
       reference_image_urls: ['https://cdn.test/frame-1.png', 'https://cdn.test/extra.png'],
       num_frames: 32,
+      outfit_id: 'default',
     })
     expect(generation.result).toEqual({
       type: 'complete_animation',
