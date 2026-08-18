@@ -6,7 +6,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, ConfigDict, Field, EmailStr
+from pydantic import BaseModel, ConfigDict, Field, EmailStr, field_validator
 from sqlalchemy.orm import Session
 
 from windup_common.result import Response
@@ -37,11 +37,18 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     code: str = Field(min_length=6, max_length=6, description="邮箱验证码")
     nickname: str | None = Field(default=None, max_length=50)
-    invite_code: str = Field(
-        min_length=4,
+    invite_code: str | None = Field(
+        default=None,
         max_length=16,
-        description="邀请链接中的邀请码，注册时由前端从查询参数传入",
+        description="邀请链接中的邀请码，选填；有则发双方邀请奖励",
     )
+
+    @field_validator("invite_code", mode="before")
+    @classmethod
+    def blank_invite_code(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
 
 class LoginRequest(BaseModel):
@@ -124,7 +131,7 @@ class UserOut(BaseModel):
 
 @router.post("/register", response_model=Response[TokenResponse])
 def register(body: RegisterRequest, session: Session = Depends(get_session)):
-    """邮箱+验证码+密码注册。须在请求体携带邀请链接中的有效邀请码。"""
+    """邮箱+验证码+密码注册。邀请码选填。"""
     result = service.register_by_email(
         session,
         RegisterInput(
@@ -173,7 +180,7 @@ def send_code(body: SendCodeRequest):
 
 @router.post("/login-by-code", response_model=Response[TokenResponse])
 def login_by_code(body: LoginByCodeRequest, session: Session = Depends(get_session)):
-    """验证码登录。未知邮箱不自动建号。"""
+    """验证码登录。未知邮箱自动建号并赠送注册积分。"""
     result = service.login_by_code(
         session,
         type("LoginByCodeInput", (), {"email": body.email, "code": body.code})(),

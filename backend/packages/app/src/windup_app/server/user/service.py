@@ -168,19 +168,20 @@ class SqlAlchemyUserService(UserService):
     # -- 注册 ------------------------------------------------------------
 
     def register_by_email(self, session: Session, input: RegisterInput) -> LoginResult:
-        """邮箱+验证码+密码注册。请求体须带邀请链接中的有效邀请码。"""
+        """邮箱+验证码+密码注册。邀请码选填。"""
         from windup_app.server.quota.service import (
             parse_invite_code,
             service as quota_service,
         )
 
-        invite_code = parse_invite_code(input.invite_code)
-
-        invite_exists = session.scalar(
-            select(InviteCode.id).where(InviteCode.code == invite_code).limit(1)
-        )
-        if invite_exists is None:
-            raise BizException("邀请码无效", code=BizCode.BAD_REQUEST)
+        raw_invite = (input.invite_code or "").strip()
+        invite_code = parse_invite_code(raw_invite) if raw_invite else None
+        if invite_code is not None:
+            invite_exists = session.scalar(
+                select(InviteCode.id).where(InviteCode.code == invite_code).limit(1)
+            )
+            if invite_exists is None:
+                raise BizException("邀请码无效", code=BizCode.BAD_REQUEST)
 
         self._verify_code(input.email, input.code, "register")
 
@@ -202,9 +203,10 @@ class SqlAlchemyUserService(UserService):
         session.add(user)
         session.flush()
 
-        # 注册送积分
+        # 注册送积分；有邀请码再发双方邀请奖励
         self._create_credit_account(session, user.id)
-        quota_service.redeem_invite_code(session, user.id, invite_code)
+        if invite_code is not None:
+            quota_service.redeem_invite_code(session, user.id, invite_code)
 
         # 注册即登录，签发 token
         access_token = create_access_token(user.id, user.email)
@@ -316,17 +318,25 @@ class SqlAlchemyUserService(UserService):
         self.redis.delete(code_key)
 
     def login_by_code(self, session: Session, input: LoginByCodeInput) -> LoginResult:
-        """邮箱+验证码登录。未知邮箱不自动建号。"""
+        """邮箱+验证码登录。未知邮箱自动建号并赠送注册积分。"""
         # 校验验证码
         self._verify_code(input.email, input.code, "login")
 
         user = session.scalar(select(User).where(User.email == input.email))
         if user is None:
-            raise BizException("账号不存在", code=BizCode.NOT_FOUND)
-        if user.status == UserStatus.BANNED:
-            raise BizException("账号已被封禁", code=BizCode.BAD_REQUEST)
-        if user.email_verified_at is None:
-            user.email_verified_at = datetime.now(timezone.utc)
+            user = User(
+                email=input.email,
+                password_hash="",
+                email_verified_at=datetime.now(timezone.utc),
+            )
+            session.add(user)
+            session.flush()
+            self._create_credit_account(session, user.id)
+        else:
+            if user.status == UserStatus.BANNED:
+                raise BizException("账号已被封禁", code=BizCode.BAD_REQUEST)
+            if user.email_verified_at is None:
+                user.email_verified_at = datetime.now(timezone.utc)
 
         user.last_login_at = datetime.now(timezone.utc)
         session.flush()

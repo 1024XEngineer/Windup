@@ -273,7 +273,12 @@ def test_register_expired_code(db_session, service):
         service.register_by_email(db_session, input_data)
 
 
-def test_register_blank_invite_code(db_session, service):
+def test_register_blank_invite_code_only_gives_register_gift(db_session, service):
+    """未带邀请码时只发注册赠送，不挡注册。"""
+    from sqlalchemy import select
+    from windup_app.server.quota.model import CreditAccount
+    from windup_framework.config.quota import settings as quota_settings
+
     service._redis.get.return_value = "123456"
     input_data = RegisterInput(
         email="blank-invite@example.com",
@@ -282,8 +287,12 @@ def test_register_blank_invite_code(db_session, service):
         invite_code="   ",
     )
 
-    with pytest.raises(BizException, match="邀请码无效"):
-        service.register_by_email(db_session, input_data)
+    result = service.register_by_email(db_session, input_data)
+    account = db_session.scalar(
+        select(CreditAccount).where(CreditAccount.user_id == result.user.id)
+    )
+    assert account is not None
+    assert account.balance == quota_settings.register_gift_amount
 
 
 def test_register_rejects_invite_code_outside_link_charset(db_session, service):
@@ -381,24 +390,28 @@ def test_login_banned_user(db_session, service, mock_email):
 # -- 验证码登录测试 ------------------------------------------------------
 
 
-def test_login_by_code_unknown_email_does_not_create_user(
+def test_login_by_code_unknown_email_creates_user_and_gifts(
     db_session, service, mock_email
 ):
-    """内测关闭公开注册后，验证码登录不得自动建号。"""
+    """未知邮箱验证码登录自动建号，并只发注册赠送。"""
     from sqlalchemy import select
+    from windup_app.server.quota.model import CreditAccount
+    from windup_framework.config.quota import settings as quota_settings
 
     service._redis.get.return_value = "123456"
     input_data = LoginByCodeInput(email="code@example.com", code="123456")
 
-    with pytest.raises(BizException, match="账号不存在") as exc:
-        service.login_by_code(db_session, input_data)
+    result = service.login_by_code(db_session, input_data)
 
-    from windup_common.enums.biz_code import BizCode
-
-    assert exc.value.code == BizCode.NOT_FOUND
-    assert (
-        db_session.scalar(select(User).where(User.email == "code@example.com")) is None
+    user = db_session.scalar(select(User).where(User.email == "code@example.com"))
+    assert user is not None
+    assert result.user.id == user.id
+    assert result.user.email_verified_at is not None
+    account = db_session.scalar(
+        select(CreditAccount).where(CreditAccount.user_id == user.id)
     )
+    assert account is not None
+    assert account.balance == quota_settings.register_gift_amount
 
 
 def test_send_verification_code_allows_register_purpose(service, mock_email):

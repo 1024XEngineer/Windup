@@ -116,6 +116,39 @@ def test_register_endpoint_success(client, db_session, mock_user_redis):
     assert body["data"]["access_token"]
 
 
+def test_register_endpoint_success_without_invite_code(client, mock_user_redis):
+    mock_user_redis.get.return_value = "123456"
+    resp = client.post(
+        "/auth/register",
+        json={
+            "email": "open@example.com",
+            "password": "password123",
+            "code": "123456",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["code"] == 200
+    assert body["data"]["user"]["email"] == "open@example.com"
+    assert body["data"]["access_token"]
+
+
+def test_login_by_code_endpoint_creates_unknown_email(client, db_session, mock_user_redis):
+    mock_user_redis.get.return_value = "123456"
+    resp = client.post(
+        "/auth/login-by-code",
+        json={"email": "fresh@example.com", "code": "123456"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["code"] == 200
+    assert body["data"]["user"]["email"] == "fresh@example.com"
+    assert (
+        db_session.query(User).filter(User.email == "fresh@example.com").one_or_none()
+        is not None
+    )
+
+
 def test_update_nickname_endpoint(auth_client, seeded_user, mock_user_redis):
     resp = auth_client.patch("/auth/profile", json={"nickname": "新昵称"})
     assert resp.status_code == 200

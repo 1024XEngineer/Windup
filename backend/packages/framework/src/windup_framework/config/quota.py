@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class QuotaSettings(BaseSettings):
     """积分定价配置。
 
-    环境变量前缀 ``QUOTA_``，例如 ``QUOTA_REGISTER_GIFT_AMOUNT=100``。
+    环境变量前缀 ``QUOTA_``，例如 ``QUOTA_REGISTER_GIFT_AMOUNT=300``。
     """
 
     model_config = SettingsConfigDict(
@@ -20,7 +20,7 @@ class QuotaSettings(BaseSettings):
     )
 
     # -- 注册 / 邀请 -------------------------------------------------------
-    register_gift_amount: int = 100         # 注册赠送积分
+    register_gift_amount: int = 300         # 注册赠送积分
     invite_reward_amount: int = 200         # 邀请奖励（双方各得）
 
     # -- 生成任务 -----------------------------------------------------------

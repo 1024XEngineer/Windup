@@ -1290,11 +1290,17 @@
             "type": "string"
           },
           "invite_code": {
-            "description": "邀请链接中的邀请码，注册时由前端从查询参数传入",
-            "maxLength": 16,
-            "minLength": 4,
-            "title": "Invite Code",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "邀请链接中的邀请码，选填；有则发双方邀请奖励",
+            "title": "Invite Code"
           },
           "nickname": {
             "anyOf": [
@@ -1318,8 +1324,7 @@
         "required": [
           "email",
           "password",
-          "code",
-          "invite_code"
+          "code"
         ],
         "title": "RegisterRequest",
         "type": "object"
@@ -2192,7 +2197,7 @@
     },
     "/auth/login-by-code": {
       "post": {
-        "description": "验证码登录。未知邮箱不自动建号。",
+        "description": "验证码登录。未知邮箱自动建号并赠送注册积分。",
         "operationId": "login_by_code_auth_login_by_code_post",
         "requestBody": {
           "content": {
@@ -2382,7 +2387,7 @@
     },
     "/auth/register": {
       "post": {
-        "description": "邮箱+验证码+密码注册。须在请求体携带邀请链接中的有效邀请码。",
+        "description": "邮箱+验证码+密码注册。邀请码选填。",
         "operationId": "register_auth_register_post",
         "requestBody": {
           "content": {
