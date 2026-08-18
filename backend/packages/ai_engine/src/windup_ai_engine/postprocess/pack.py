@@ -314,10 +314,15 @@ def drifted_frames(
 
     feet: list[tuple[int, float]] = []
     cxs: list[tuple[int, float]] = []
+    empty: set[int] = set()
     for i, f in enumerate(frames):
         a = np.asarray(f)[:, :, 3]
         ys, xs = np.where(a > 128)
         if not len(ys):
+            # 整帧没有主体就是本函数要找的那种坏帧(抠图抠穿、生成漏了角色),不是
+            # "没测到"。它不进中位数、直接进结果,也不受下面那道观测数下限的约束 ——
+            # 一帧全透明这件事本身不需要参照就能判。
+            empty.add(i)
             continue
         feet.append((i, float(ys.max())))
         core = _core_columns(a > 128)
@@ -325,13 +330,13 @@ def drifted_frames(
             continue
         cxs.append((i, float(sum(core) / 2)))
     if len(feet) < 3:
-        return ()                        # 观测太少,中位数不成立
+        return tuple(sorted(empty))      # 观测太少,中位数不成立
 
     h = frames[0].size[1]
     w = frames[0].size[0]
     bad = _outliers(feet, foot_tol * h)
     bad |= _outliers(cxs, cx_tol * w)
-    return tuple(sorted(bad))
+    return tuple(sorted(bad | empty))
 
 
 def _core_columns(mask) -> tuple[int, int] | None:
@@ -377,10 +382,16 @@ def _outliers(obs: list[tuple[int, float]], tol: float) -> set[int]:
     # 首尾各取三帧的中位数比,单帧首尾正好是坏帧时会把整条判据带偏。
     head = float(np.median(y[:3]))
     tail = float(np.median(y[-3:]))
+    # 斜率的分母取这两个中位数**各自对应的帧位**,不取序列总长:三帧窗口的中位数落在窗口
+    # 中间那一帧上,拿总长当分母会把斜率算小。实测 16 帧每帧横移 13px 的线性序列,按总长
+    # 算出 11.27/帧,两端各剩 13px 残差、双双越过 12.03 的容差,匀速位移被误报成坏帧。
+    head_i = float(np.median(x[:3]))
+    tail_i = float(np.median(x[-3:]))
     # 无条件除趋势,不设"位移够大才除"的门槛:那个门槛会造一个悬崖 —— 实测一段打捞员
     # 走路净位移 24.0px、容差 24.1px,差 0.1 就不除趋势,于是首两帧被误报。周期序列首尾
     # 回到同一点、净位移≈0,减掉一条≈0 的直线是空操作,所以无条件除对它们无害。
-    y = y - np.linspace(0.0, tail - head, len(y))
+    if tail_i > head_i:
+        y = y - (tail - head) / (tail_i - head_i) * x
     med = float(np.median(y))
     return {int(i) for i, v in zip(x, y) if abs(v - med) > tol}
 

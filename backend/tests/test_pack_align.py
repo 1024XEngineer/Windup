@@ -520,3 +520,38 @@ def test_extension_swing_is_not_mistaken_for_a_shifted_pose():
     frames = [_figure(cx=128, foot=200) for _ in range(6)]
     frames += [_with_extension(cx=128, foot=200) for _ in range(6)]
     assert drifted_frames(frames) == ()
+
+
+def test_linear_translation_at_the_tolerance_edge_is_not_flagged():
+    """斜率的分母取中位数各自的帧位,不取序列总长。
+
+    256px 画布、16 帧、每帧横移 13px:按总长算斜率会得到 11.27/帧,两端各剩 13px 残差、
+    双双越过 12.03 的容差,于是匀速位移被误报成首末两帧坏。
+    """
+    from windup_ai_engine.postprocess.pack import drifted_frames
+
+    frames = [_figure(cx=30 + i * 13, foot=200) for i in range(16)]
+    assert drifted_frames(frames) == ()
+
+
+def test_a_frame_with_no_subject_at_all_is_flagged():
+    """全透明帧是抠图抠穿或生成漏了角色,正是本函数要找的那种坏帧。
+
+    它不进中位数(没有可量的锚点),所以必须单独并进结果 —— 静默跳过的话,一组正常帧里
+    插一张透明 PNG 会返回空元组,而 ``_lastmile`` 只拒空字节、合法的全透明 PNG 照样通过。
+    """
+    from windup_ai_engine.postprocess.pack import drifted_frames
+    from PIL import Image
+
+    frames = [_figure(foot=200) for _ in range(12)]
+    frames[4] = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+    assert 4 in drifted_frames(frames)
+
+
+def test_no_subject_is_reported_even_when_observations_are_too_few():
+    """观测不足时中位数不成立,但"这帧没有主体"不需要参照就能判。"""
+    from windup_ai_engine.postprocess.pack import drifted_frames
+    from PIL import Image
+
+    frames = [_figure(), Image.new("RGBA", (256, 256), (0, 0, 0, 0))]
+    assert drifted_frames(frames) == (1,)
