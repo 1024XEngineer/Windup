@@ -244,3 +244,188 @@ def test_clipping_is_logged_not_silent(caplog):
         align_bottom_center(src, cell=256, cell_h=256)
     assert any("溢出" in r.message for r in caplog.records), \
         f"裁切没有上报，日志：{[r.message for r in caplog.records]}"
+
+
+# ── 一段动作内的单调漂移(#307)──────────────────────────────────────────────
+#
+# 线上真实产出实测:walk 的本体高 137→165(+20%)、custom 70→158(+127%),几乎无回落。
+# 整段共用一个缩放系数只决定平均尺寸,趋势原样保留,于是角色在一个动作内单调变大。
+
+
+# 任务 94(walk,32 帧)的逐帧本体高,直接取自线上产物。
+_REAL_WALK_SPANS = [
+    132, 133, 136, 139, 141, 142, 139, 138, 141, 146, 146, 148, 146, 145, 149, 155,
+    155, 153, 151, 154, 157, 161, 160, 161, 159, 160, 162, 170, 169, 167, 168, 168,
+]
+
+
+def test_monotonic_drift_is_removed_on_real_data():
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    comp, ratio = scale_drift(_REAL_WALK_SPANS)
+    assert ratio > 0.15, "这段真实数据本身就有 20% 漂移,判不出来说明门槛错了"
+    fixed = np.asarray(_REAL_WALK_SPANS, float) / np.asarray(comp)
+    head, tail = fixed[:8].mean(), fixed[-8:].mean()
+    assert abs(tail / head - 1) < 0.03, f"补偿后首尾仍差 {(tail/head-1)*100:.1f}%"
+
+
+def test_natural_bob_is_preserved_not_flattened():
+    """只除趋势、不逐帧归一 —— 走路自然的身高起伏必须留着。
+
+    逐帧归一会把蹲下的帧放大、伸展的帧缩小,那正是本模块最初拒绝它的原因。
+    """
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    comp, _ = scale_drift(_REAL_WALK_SPANS)
+    fixed = np.asarray(_REAL_WALK_SPANS, float) / np.asarray(comp)
+    spread = fixed.std() / fixed.mean()
+    assert spread > 0.005, "起伏被压平了,退化成逐帧归一"
+    assert spread < 0.10, f"残差 {spread*100:.1f}% 过大,趋势没除干净"
+
+
+def test_steady_sequence_is_left_alone():
+    """没有漂移就不该动。真实身高起伏约 4%,把那当漂移消掉是过度矫正。"""
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    steady = [100, 104, 98, 102, 101, 99, 103, 100] * 4
+    comp, ratio = scale_drift(steady)
+    assert abs(ratio) < 0.08
+    assert all(c == 1.0 for c in comp)
+
+
+def test_average_size_is_unchanged_so_cross_action_scale_still_holds():
+    """补偿系数以 1.0 为中心:整段平均尺寸不变,#280 的跨动作口径不受影响。"""
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    comp, _ = scale_drift(_REAL_WALK_SPANS)
+    assert abs(float(np.mean(comp)) - 1.0) < 0.01
+
+
+def test_too_few_frames_are_left_alone():
+    """三帧拟合不出可信趋势,拟合了反而制造漂移。"""
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    comp, ratio = scale_drift([100, 130, 160])
+    assert comp == [1.0, 1.0, 1.0] and ratio == 0.0
+
+
+def _drifting_bodies(n=16, lo=60, hi=140):
+    """本体高从 lo 单调涨到 hi 的合成序列,形状与线上观测到的推镜一致。"""
+    def body(h: int) -> Image.Image:
+        a = np.zeros((256, 256, 4), np.uint8)
+        w = max(2, h // 3)
+        a[200 - h:200, 128 - w // 2:128 + w // 2, 3] = 255
+        return Image.fromarray(a)
+
+    return [body(int(round(v))) for v in np.linspace(lo, hi, n)]
+
+
+def test_drift_is_still_compensated_when_a_frame_is_empty():
+    """中间夹一帧全透明,其余帧的漂移照样要补掉。
+
+    空帧只是**缺一个观测**。整段跳过补偿会让其余帧静默留着漂移 —— 本 PR 要修的问题
+    原样回来,且无声无息。
+    """
+    from windup_ai_engine.postprocess.pack import align_bottom_center, core_span
+
+    src = _drifting_bodies()
+    src[8] = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+
+    out = align_bottom_center(src, cell=256)
+    assert core_span(out[8]) is None, "空帧必须原样透明输出"
+
+    got = [core_span(f)[0] for i, f in enumerate(out) if i != 8]
+    head, tail = float(np.mean(got[:4])), float(np.mean(got[-4:]))
+    assert abs(tail / head - 1) < 0.08, (
+        f"有空帧时补偿被整段跳过,出帧仍在单调变大:首 {head:.0f} → 尾 {tail:.0f}"
+        f"({(tail/head-1)*100:+.0f}%)"
+    )
+
+
+def test_empty_frames_do_not_shift_the_trend_timeline():
+    """空帧不参与拟合,系数取 1.0,其余帧的系数与它不在时一致。"""
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    full = _REAL_WALK_SPANS
+    holed = list(full)
+    holed[8] = None
+
+    ref, _ = scale_drift(full)
+    comp, ratio = scale_drift(holed)
+    assert ratio > 0.15, "少一个观测不该让 20% 的漂移判不出来"
+    assert comp[8] == 1.0, "空帧的系数应为 1.0"
+    for i, (c, r) in enumerate(zip(comp, ref, strict=True)):
+        if i != 8:
+            assert abs(c - r) < 0.01, f"第 {i} 帧系数被空洞带偏: {c:.3f} vs {r:.3f}"
+
+
+def test_align_actually_applies_the_compensation():
+    """钉的是"补偿真的接上了",不是"函数算得对"。
+
+    只测 ``scale_drift`` 的话,把 ``align_bottom_center`` 里那一行乘法删掉,用例照样全绿
+    （变异测试逮到过）—— 那正是本仓最忌讳的"看起来成功的错结果"。
+    """
+    from windup_ai_engine.postprocess.pack import align_bottom_center, core_span
+
+    out = align_bottom_center(_drifting_bodies(), cell=256)
+    got = [core_span(f)[0] for f in out]
+    head, tail = float(np.mean(got[:4])), float(np.mean(got[-4:]))
+    assert abs(tail / head - 1) < 0.08, (
+        f"出帧后仍在单调变大:首 {head:.0f} → 尾 {tail:.0f}({(tail/head-1)*100:+.0f}%)"
+    )
+
+
+# ── 推镜 vs 真实姿态:只有高宽一起变才算漂移 ────────────────────────────────
+
+
+def _spans_seq(heights, widths):
+    """构造 (高, 宽) 序列,喂给 scale_drift 的两个入参。"""
+    return list(heights), list(widths)
+
+
+def test_camera_zoom_is_compensated():
+    """高宽同比放大 = 推镜,照旧补偿。"""
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    n = 16
+    h = [60 + 40 * i / (n - 1) for i in range(n)]
+    w = [30 + 20 * i / (n - 1) for i in range(n)]     # 与高同比例
+    comp, ratio = scale_drift(h, w)
+    assert ratio > 0.5
+    assert any(c != 1.0 for c in comp), "等比放大是推镜,必须补偿"
+
+
+def test_pose_change_is_not_compensated():
+    """深蹲→起跳:高从 60 涨到 100 而宽不动,是真实姿态,不能补偿。
+
+    补偿它会把高度拉平的同时按同一系数缩宽,角色沿动作被压扁 —— 这正是本判据要挡的。
+    """
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    n = 16
+    h = [60 + 40 * i / (n - 1) for i in range(n)]
+    w = [30.0] * n                                    # 宽度不动
+    comp, ratio = scale_drift(h, w)
+    assert ratio > 0.5, "高度趋势确实存在,判据不是靠 ratio 门槛挡掉的"
+    assert all(c == 1.0 for c in comp), "宽度没跟着变,不该当推镜补偿"
+
+
+def test_opposite_trends_are_not_compensated():
+    """高涨宽缩 = 姿态在拉伸,不是推镜。"""
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    n = 16
+    h = [60 + 40 * i / (n - 1) for i in range(n)]
+    w = [40 - 10 * i / (n - 1) for i in range(n)]
+    comp, _ = scale_drift(h, w)
+    assert all(c == 1.0 for c in comp)
+
+
+def test_missing_widths_falls_back_to_old_behaviour():
+    """量不到宽度时退回旧行为,不因为少一个观测就整段不补。"""
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    n = 16
+    h = [60 + 40 * i / (n - 1) for i in range(n)]
+    comp, _ = scale_drift(h)                          # 不传 widths
+    assert any(c != 1.0 for c in comp)
