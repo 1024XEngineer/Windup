@@ -97,7 +97,7 @@ export function CharacterDetailPage() {
               {name}
             </h2>
           </div>
-          <div className="flex flex-wrap gap-2 sm:justify-end">
+          <div className="flex flex-wrap items-start gap-2 sm:justify-end">
             {selectedOutfit ? (
               <CharacterExport project={project} character={character} outfit={selectedOutfit} />
             ) : null}
