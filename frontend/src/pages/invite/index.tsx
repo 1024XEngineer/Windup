@@ -80,7 +80,7 @@ export function InviteSection({ apis = defaultQuotaApis }: { apis?: QuotaApis })
         <div className="max-w-2xl">
           <h2 className="text-xl font-semibold tracking-[-0.025em] text-app-ink-soft">邀请奖励</h2>
           <p className="mt-1.5 text-sm leading-6 text-app-muted">
-            好友注册共得 500 积分；你每日前 3 位各得 200 积分，之后好友仍可获得奖励。
+            邀请成功，双方各得 200 积分；每日前 3 次邀请可得奖励。
           </p>
         </div>
 
