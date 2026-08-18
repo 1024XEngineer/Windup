@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import io
 import logging
+import shutil
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -63,6 +65,26 @@ _BG_FLAT_STD = 8.0  # 四角色标准差上限;超过说明底不是纯色,不�
 # 取 2 是为容下 2 px 宽的边框;真正不均匀的底(噪声/渐变/拼色)让多少都照样超阈值,守卫不松。
 _EDGE_SKIP = 2
 _CORNER = 12        # 每个角的采样块边长
+
+
+def _download_atomic(url: str, dest: Path) -> None:
+    """下到同目录的临时文件,整个传完再原子改名。
+
+    直接写目标路径的话,176MB 传到一半断开会留下一个不完整文件,而之后每次都靠
+    ``exists()`` 判断"已经有了" —— 网络恢复了也不会重下,ONNX 会话建不起来,这台机器
+    就长期退回单模型,而单模型正是会把浅肤色角色抠穿的那条路。同目录是为了让 replace
+    落在同一文件系统上,跨设备改名不是原子的。
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=dest.parent, suffix=".part", delete=False) as tmp:
+        part = Path(tmp.name)
+    try:
+        with urllib.request.urlopen(url) as resp, part.open("wb") as out:
+            shutil.copyfileobj(resp, out)
+        part.replace(dest)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
 
 
 def _saliency(session, tensor: np.ndarray) -> np.ndarray:
@@ -241,8 +263,7 @@ class OnnxU2NetMatteProvider(MatteProvider):
 
     def _ensure_model(self) -> Path:
         if not self._model_path.exists():
-            self._model_path.parent.mkdir(parents=True, exist_ok=True)
-            urllib.request.urlretrieve(self._model_url, self._model_path)
+            _download_atomic(self._model_url, self._model_path)
         return self._model_path
 
     def _get_refine_session(self):
@@ -255,11 +276,16 @@ class OnnxU2NetMatteProvider(MatteProvider):
             if not self._refine_path.exists():
                 if not self._refine_url:
                     raise FileNotFoundError(self._refine_path)
-                self._refine_path.parent.mkdir(parents=True, exist_ok=True)
-                urllib.request.urlretrieve(self._refine_url, self._refine_path)
-            self._refine_session = ort.InferenceSession(
-                str(self._refine_path), providers=["CPUExecutionProvider"]
-            )
+                _download_atomic(self._refine_url, self._refine_path)
+            try:
+                self._refine_session = ort.InferenceSession(
+                    str(self._refine_path), providers=["CPUExecutionProvider"]
+                )
+            except Exception:
+                # 建会话失败说明这个文件本身不可用(上一次下载留下的残片、或版本不合)。
+                # 留着它会让之后每次都跳过重下,所以就地删掉。
+                self._refine_path.unlink(missing_ok=True)
+                raise
         except Exception:
             self._refine_failed = True
             logger.warning(

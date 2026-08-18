@@ -579,3 +579,41 @@ def test_a_missing_refine_model_degrades_to_one_model_and_says_so(caplog):
     n0 = len(caplog.records)
     assert prov._get_refine_session() is None
     assert len(caplog.records) == n0, "每帧都重试了一次取模型"
+
+
+def test_an_interrupted_download_leaves_no_cache_file(tmp_path, monkeypatch):
+    """传输中途断开不能留下不完整文件。
+
+    留了的话之后每次都靠 exists() 判断"已经有了"，网络恢复也不会重下，这台机器就长期
+    退回单模型 —— 而单模型正是会把浅肤色角色抠穿的那条路。
+    """
+    from windup_framework.providers import matte as M
+
+    dest = tmp_path / "sub" / "u2net.onnx"
+
+    class _Half:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, *_a): raise OSError("connection reset")
+
+    monkeypatch.setattr(M.urllib.request, "urlopen", lambda _u: _Half())
+    with pytest.raises(OSError):
+        M._download_atomic("https://example.invalid/m.onnx", dest)
+    assert not dest.exists(), "残片留在了缓存路径上"
+    assert list(dest.parent.glob("*.part")) == [], "临时文件没清掉"
+
+
+def test_an_unusable_cached_model_is_removed_so_the_next_run_can_redownload(
+    tmp_path, monkeypatch, caplog
+):
+    """已存在但建不起会话的文件要删掉，否则每次都跳过重下、永久降级。"""
+    from windup_framework.providers import matte as M
+
+    bad = tmp_path / "u2net.onnx"
+    bad.write_bytes(b"not-an-onnx")
+    prov = M.OnnxU2NetMatteProvider(
+        model_path="/nonexistent.onnx", refine_model_path=bad, refine_model_url=None,
+    )
+    with caplog.at_level("WARNING"):
+        assert prov._get_refine_session() is None
+    assert not bad.exists(), "坏文件留在缓存里，下次还会跳过重下"
