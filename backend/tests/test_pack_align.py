@@ -373,3 +373,59 @@ def test_align_actually_applies_the_compensation():
     assert abs(tail / head - 1) < 0.08, (
         f"出帧后仍在单调变大:首 {head:.0f} → 尾 {tail:.0f}({(tail/head-1)*100:+.0f}%)"
     )
+
+
+# ── 推镜 vs 真实姿态:只有高宽一起变才算漂移 ────────────────────────────────
+
+
+def _spans_seq(heights, widths):
+    """构造 (高, 宽) 序列,喂给 scale_drift 的两个入参。"""
+    return list(heights), list(widths)
+
+
+def test_camera_zoom_is_compensated():
+    """高宽同比放大 = 推镜,照旧补偿。"""
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    n = 16
+    h = [60 + 40 * i / (n - 1) for i in range(n)]
+    w = [30 + 20 * i / (n - 1) for i in range(n)]     # 与高同比例
+    comp, ratio = scale_drift(h, w)
+    assert ratio > 0.5
+    assert any(c != 1.0 for c in comp), "等比放大是推镜,必须补偿"
+
+
+def test_pose_change_is_not_compensated():
+    """深蹲→起跳:高从 60 涨到 100 而宽不动,是真实姿态,不能补偿。
+
+    补偿它会把高度拉平的同时按同一系数缩宽,角色沿动作被压扁 —— 这正是本判据要挡的。
+    """
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    n = 16
+    h = [60 + 40 * i / (n - 1) for i in range(n)]
+    w = [30.0] * n                                    # 宽度不动
+    comp, ratio = scale_drift(h, w)
+    assert ratio > 0.5, "高度趋势确实存在,判据不是靠 ratio 门槛挡掉的"
+    assert all(c == 1.0 for c in comp), "宽度没跟着变,不该当推镜补偿"
+
+
+def test_opposite_trends_are_not_compensated():
+    """高涨宽缩 = 姿态在拉伸,不是推镜。"""
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    n = 16
+    h = [60 + 40 * i / (n - 1) for i in range(n)]
+    w = [40 - 10 * i / (n - 1) for i in range(n)]
+    comp, _ = scale_drift(h, w)
+    assert all(c == 1.0 for c in comp)
+
+
+def test_missing_widths_falls_back_to_old_behaviour():
+    """量不到宽度时退回旧行为,不因为少一个观测就整段不补。"""
+    from windup_ai_engine.postprocess.pack import scale_drift
+
+    n = 16
+    h = [60 + 40 * i / (n - 1) for i in range(n)]
+    comp, _ = scale_drift(h)                          # 不传 widths
+    assert any(c != 1.0 for c in comp)

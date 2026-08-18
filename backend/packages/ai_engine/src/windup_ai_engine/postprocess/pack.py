@@ -65,8 +65,44 @@ def core_span(frame: Image.Image, thickness: float = CORE_THICKNESS) -> tuple[fl
 # 把那也当漂移消掉,就成了原设计担心的"蹲下的帧被放大"。
 DRIFT_MIN_RATIO = 0.08
 
+# 判定"这是推镜、不是姿态变化"的容差:推镜把整个角色等比放大,高与宽的首尾相对变化应当
+# 同号且同量级;真实姿态(深蹲→起跳)只改高、宽度基本不动。取 0.5 = 宽的变化至少要达到
+# 高的一半才认推镜 —— 门槛过严会漏掉带轻微形变的真推镜,过松会把 jump 判成漂移。
+DRIFT_WIDTH_AGREEMENT = 0.5
 
-def scale_drift(spans: list[float | None]) -> tuple[list[float], float]:
+
+def _trend_ratio(values: list[float | None]) -> float | None:
+    """逐帧序列的线性趋势首尾相对变化;观测不足或拟合出非正值返回 ``None``。"""
+    x = np.array([i for i, v in enumerate(values) if v is not None], dtype=float)
+    a = np.array([v for v in values if v is not None], dtype=float)
+    if len(a) < 4:
+        return None
+    k, b = np.polyfit(x, a, 1)
+    trend = k * x + b
+    if trend.min() <= 0:
+        return None
+    return float(trend[-1] / trend[0] - 1.0)
+
+
+def _looks_like_camera_zoom(
+    spans: list[float | None], widths: list[float | None], height_ratio: float
+) -> bool:
+    """高宽是否一起变 —— 区分推镜与真实姿态变化。
+
+    推镜等比放大整个角色,高与宽的趋势同号且同量级;深蹲→起跳只把高拉长,宽基本不动。
+    量不出宽度趋势时返回 True,退回旧行为:宁可补偿一次可疑的,也不因为量不到就整段不补。
+    """
+    width_ratio = _trend_ratio(widths)
+    if width_ratio is None:
+        return True
+    if width_ratio * height_ratio <= 0:            # 反号:一个变大一个变小,不是推镜
+        return False
+    return abs(width_ratio) >= abs(height_ratio) * DRIFT_WIDTH_AGREEMENT
+
+
+def scale_drift(
+    spans: list[float | None], widths: list[float | None] | None = None
+) -> tuple[list[float], float]:
     """把逐帧本体高里的**单调趋势**分离出来,返回(逐帧补偿系数, 首尾相对变化)。
 
     存在的理由是整段共用一个缩放系数会原样保留 i2v 的推镜:实测线上两段真实产出,
@@ -95,6 +131,10 @@ def scale_drift(spans: list[float | None]) -> tuple[list[float], float]:
         return [1.0] * n, 0.0
     ratio = float(trend[-1] / trend[0] - 1.0)
     if abs(ratio) < DRIFT_MIN_RATIO:
+        return [1.0] * n, ratio
+    if widths is not None and not _looks_like_camera_zoom(spans, widths, ratio):
+        # 高在变而宽没跟着变 = 真实姿态(深蹲→起跳),不是推镜。补偿它会把高度拉平、
+        # 同时把宽度按同一系数缩掉,姿态被压扁。
         return [1.0] * n, ratio
     comp = [1.0] * n
     for i, c in zip(x.astype(int), trend / trend.mean(), strict=True):
@@ -210,7 +250,10 @@ def align_bottom_center(
     # 补偿系数以 1.0 为中心,故平均尺寸与跨动作口径都不变。
     # 空帧照常传给 scale_drift(它按帧号拟合、空位给 1.0)—— 少一个观测不该让整段不补。
     per_frame = [1.0] * len(frames)
-    comp, ratio = scale_drift([s[0] if s is not None else None for s in core_spans])
+    comp, ratio = scale_drift(
+        [s[0] if s is not None else None for s in core_spans],
+        [s[1] if s is not None else None for s in core_spans],
+    )
     if any(c != 1.0 for c in comp):
         per_frame = [1.0 / c for c in comp]
         _logger.info(
