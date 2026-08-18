@@ -30,7 +30,7 @@ describe('AssetLibraryPage', () => {
   it('hides draft characters from the published asset list', async () => {
     renderRoute('/projects/42/assets')
 
-    expect(await screen.findByRole('heading', { name: '角色' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '点灯人 · MVP' })).toBeTruthy()
     expect(await screen.findAllByRole('link', { name: /查看角色/ })).toHaveLength(1)
     expect(screen.getByText('轻装信使')).toBeTruthy()
     expect(screen.queryByText('待定角色')).toBeNull()
@@ -49,8 +49,7 @@ describe('AssetLibraryPage', () => {
     renderRoute('/projects/99/assets')
 
     expect(await screen.findByText('这个项目还没有角色')).toBeTruthy()
-    const createButton = screen.getByRole('button', { name: '新建角色' })
-    expect(createButton.hasAttribute('disabled')).toBe(true)
+    expect(screen.queryByRole('button', { name: '新建角色' })).toBeNull()
     expect(screen.queryByRole('link', { name: /查看角色/ })).toBeNull()
   })
 
