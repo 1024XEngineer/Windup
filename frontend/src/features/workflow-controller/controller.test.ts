@@ -833,6 +833,27 @@ describe('WorkflowController', () => {
     expect(asyncErrors).toEqual([])
   })
 
+  it('角色母版重生成使用调用方提供的上一版图片作为参考', async () => {
+    const previousImage = 'https://img/knight-previous.png'
+    const { controller, generation } = createController(createRun(completedCharacterNodes()))
+
+    await controller.restartFromNode('template-1')
+    await controller.generateCharacterTemplate('setup-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      sourceImageUrl: previousImage,
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledWith({
+      type: 'character_template',
+      projectId: '1',
+      prompt: '像素骑士',
+      referenceMedia: [previousImage],
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+  })
+
   it('角色设定已落库但生成请求失败后可以重试', async () => {
     const { controller, generation } = createController()
     vi.mocked(generation.apis.create).mockRejectedValueOnce(new Error('生成服务暂时不可用'))
@@ -1635,6 +1656,39 @@ describe('WorkflowController', () => {
       },
       { type: 'review', status: 'passed' },
     ])
+  })
+
+  it('动作首帧重生成使用调用方提供的上一版图片作为参考', async () => {
+    const previousImage = 'https://img/first-frame-previous.png'
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: previousImage,
+      }),
+      generationMethodNode(),
+      fullFrameNode(),
+      reviewNode(),
+    ])
+    const { controller, generation } = createController(run)
+
+    await controller.restartFromNode('action-walk')
+    await controller.generateFirstFrame('action-walk', {
+      spriteWidth: 64,
+      spriteHeight: 96,
+      sourceImageUrl: previousImage,
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledWith({
+      type: 'first_frame',
+      projectId: '1',
+      actionType: 'walk',
+      prompt: '行走',
+      referenceMedia: [previousImage],
+      spriteWidth: 64,
+      spriteHeight: 96,
+    })
   })
 
   it('生成动作首帧时使用清理后的自定义提示词', async () => {
