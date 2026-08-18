@@ -20,6 +20,7 @@ import {
 } from '@/entities'
 import { createCharacterAssetPublisher } from '@/features/export'
 import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
+import { createCharacterTemplateConfirmer } from './character-template-confirmation'
 
 export interface WorkflowEditorSession {
   controller: WorkflowController
@@ -127,6 +128,17 @@ export async function createRealWorkflowEditorSession(
     }
   }
 
+  const confirmCharacterTemplate = createCharacterTemplateConfirmer({
+    controller,
+    characterApis: dependencies.characterApis,
+    getCurrentCharacter: () => currentCharacter,
+    setCurrentCharacter: (character) => {
+      currentCharacter = character
+    },
+    shouldRollbackWorkflowChange,
+    reportAsyncError,
+  })
+
   return {
     controller,
     project,
@@ -134,94 +146,7 @@ export async function createRealWorkflowEditorSession(
     uploadReferenceImage(file, signal) {
       return dependencies.mediaApis.upload(file, 'reference-image', signal)
     },
-    async confirmCharacterTemplate(nodeId, selectedImageUrl) {
-      const imageUrl = selectedImageUrl.trim()
-      if (!imageUrl) throw new Error('必须选择角色母版')
-      const currentWorkflow = controller.getWorkflow()
-      const templateNode = currentWorkflow.nodes.find((node) => node.id === nodeId)
-      if (
-        !templateNode ||
-        templateNode.type !== 'character-template' ||
-        templateNode.status !== 'active' ||
-        templateNode.phase !== 'selecting'
-      ) {
-        throw new Error('角色母版节点当前不能确认')
-      }
-      const setupNode = currentWorkflow.nodes.find(
-        (node) =>
-          templateNode.dependsOnNodeIds.includes(node.id) && node.type === 'character-setup',
-      )
-      if (!setupNode || setupNode.type !== 'character-setup') {
-        throw new Error('角色母版缺少角色设定')
-      }
-
-      const originalCharacter = currentCharacter ? structuredClone(currentCharacter) : null
-      let nextCharacter = currentCharacter
-      let createdCharacter = false
-      let updatedExistingCharacter = false
-      try {
-        if (!nextCharacter) {
-          nextCharacter = await dependencies.characterApis.create({
-            projectId: currentWorkflow.projectId,
-            workflowRunId: currentWorkflow.id,
-            description: setupNode.input.prompt,
-            referenceImageUrl: imageUrl,
-          })
-          createdCharacter = true
-        }
-        if (nextCharacter.outfits.length === 0) {
-          nextCharacter = await dependencies.characterApis.update({
-            ...nextCharacter,
-            outfits: [
-              {
-                id: 'outfit-default',
-                characterId: nextCharacter.id,
-                name: '常态造型',
-                description: null,
-                previewUrl: imageUrl,
-                actions: [],
-              },
-            ],
-          })
-          updatedExistingCharacter = !createdCharacter
-        }
-
-        await controller.confirmCharacterTemplate(nodeId, imageUrl, nextCharacter.id)
-        currentCharacter = nextCharacter
-        return nextCharacter
-      } catch (cause) {
-        const shouldRollback = await shouldRollbackWorkflowChange((latest) => {
-          const latestTemplate = latest.nodes.find((node) => node.id === nodeId)
-          const latestSetup = latest.nodes.find((node) => node.id === setupNode.id)
-          return (
-            latestTemplate?.type === 'character-template' &&
-            latestTemplate.status === 'passed' &&
-            latestTemplate.selectedImageUrl === imageUrl &&
-            latestSetup?.type === 'character-setup' &&
-            latestSetup.input.characterId === nextCharacter?.id
-          )
-        })
-        if (shouldRollback) {
-          try {
-            if (createdCharacter && nextCharacter) {
-              await dependencies.characterApis.remove(nextCharacter.id)
-            } else if (updatedExistingCharacter && originalCharacter && nextCharacter) {
-              currentCharacter = await dependencies.characterApis.update({
-                ...originalCharacter,
-                dataVersion: nextCharacter.dataVersion,
-              })
-            }
-          } catch (rollbackCause) {
-            reportAsyncError(
-              rollbackCause instanceof Error
-                ? rollbackCause
-                : new Error('母版确认冲突后恢复角色资产失败'),
-            )
-          }
-        }
-        throw cause
-      }
-    },
+    confirmCharacterTemplate,
     async publishReviewedAction(reviewNodeId) {
       if (!currentCharacter) throw new Error('当前 WorkflowRun 尚未关联 Character')
       const currentWorkflow = controller.getWorkflow()
