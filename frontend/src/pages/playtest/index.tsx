@@ -1,10 +1,18 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useParams, useSearchParams } from 'react-router'
 
-import { characterApis, projectApis, type Character, type Project } from '@/entities'
+import {
+  characterApis,
+  getOutfitPlayback,
+  projectApis,
+  type Character,
+  type Project,
+} from '@/entities'
 import { ApiError } from '@/shared/api'
+import { useAuthSession } from '@/features/auth-session'
 
 import { PlaytestWorkbench } from './workbench'
+import { rememberRecentPreview, removeRecentPreview } from './recent-previews'
 
 export { PlaytestEntryPage } from './entry'
 
@@ -34,6 +42,13 @@ function isNotFoundError(error: unknown): boolean {
   return error instanceof ApiError && (error.code === 404 || error.status === 404)
 }
 
+function isUnavailableAssetError(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    (error.code === 403 || error.code === 404 || error.status === 403 || error.status === 404)
+  )
+}
+
 /**
  * 预览台：用角色造型里已经确认的动作帧真实操控角色。
  * 页面只读 Character，不写回资产树，也不参与生成与审核。
@@ -42,8 +57,10 @@ function isNotFoundError(error: unknown): boolean {
 export function PlaytestPage({ renderToolbar }: PlaytestPageProps = {}) {
   const { characterId, outfitId } = useParams()
   const [searchParams] = useSearchParams()
+  const session = useAuthSession()
   const initialActionId = searchParams.get('actionId')
   const [data, setData] = useState<PageData>(initialPageData)
+  const userId = session.state.status === 'authenticated' ? session.state.user.id : null
 
   useEffect(() => {
     if (characterId === undefined) return
@@ -62,6 +79,9 @@ export function PlaytestPage({ renderToolbar }: PlaytestPageProps = {}) {
         },
         (error: unknown) => {
           if (!cancelled) {
+            if (userId && outfitId && isUnavailableAssetError(error)) {
+              removeRecentPreview(userId, characterId, outfitId)
+            }
             setData({
               ...initialPageData,
               error: isNotFoundError(error) ? '角色不存在' : '角色读取失败',
@@ -73,7 +93,28 @@ export function PlaytestPage({ renderToolbar }: PlaytestPageProps = {}) {
     return () => {
       cancelled = true
     }
-  }, [characterId])
+  }, [characterId, outfitId, userId])
+
+  useEffect(() => {
+    if (!userId || !characterId || !data.character || !data.project || data.error !== null) return
+
+    const outfit = data.character.outfits.find((candidate) => candidate.id === outfitId)
+    if (!outfit || !getOutfitPlayback(outfit).playable) {
+      removeRecentPreview(userId, characterId, outfitId ?? '')
+      return
+    }
+
+    rememberRecentPreview(userId, {
+      characterId,
+      outfitId: outfit.id,
+      characterName: data.character.name ?? '未命名角色',
+      outfitName: outfit.name,
+      projectId: data.character.projectId,
+      projectName: data.project.name,
+      previewUrl: outfit.previewUrl,
+      lastOpenedAt: Date.now(),
+    })
+  }, [characterId, data.character, data.error, data.project, outfitId, userId])
 
   if (characterId === undefined || outfitId === undefined)
     return <PlaytestPageMessage>预览台路由参数不完整</PlaytestPageMessage>
