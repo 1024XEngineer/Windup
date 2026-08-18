@@ -1,8 +1,47 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { REFRESH_TOKEN_STORAGE_KEY, createRefreshTokenStorage } from './session-storage'
+import {
+  AUTH_SESSION_STORAGE_PREFIX,
+  REFRESH_TOKEN_STORAGE_KEY,
+  clearAuthSessionScopedStorage,
+  createRefreshTokenStorage,
+} from './session-storage'
 
 describe('refresh token storage', () => {
+  it('clears only values owned by the current auth session namespace', () => {
+    const values = new Map([
+      [`${AUTH_SESSION_STORAGE_PREFIX}invite-hint-seen.v1`, '1'],
+      ['unrelated.preference', 'keep'],
+    ])
+    const storage = {
+      get length() {
+        return values.size
+      },
+      key: (index: number) => [...values.keys()][index] ?? null,
+      removeItem: vi.fn((key: string) => values.delete(key)),
+    }
+
+    clearAuthSessionScopedStorage(storage)
+
+    expect(storage.removeItem).toHaveBeenCalledWith(
+      `${AUTH_SESSION_STORAGE_PREFIX}invite-hint-seen.v1`,
+    )
+    expect(values.get('unrelated.preference')).toBe('keep')
+  })
+
+  it('does not let unavailable session storage block session teardown', () => {
+    expect(() => clearAuthSessionScopedStorage(null)).not.toThrow()
+    expect(() =>
+      clearAuthSessionScopedStorage({
+        length: 1,
+        key: () => {
+          throw new DOMException('Storage is disabled', 'SecurityError')
+        },
+        removeItem: vi.fn(),
+      }),
+    ).not.toThrow()
+  })
+
   it('persists only the refresh token under the contracted key', () => {
     const values = new Map<string, string>()
     const storage = {
