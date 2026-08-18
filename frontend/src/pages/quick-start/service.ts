@@ -93,6 +93,17 @@ export interface CreateQuickStartServiceOptions {
 
 type GeneratableActionType = 'idle' | 'walk' | 'jump' | 'attack' | 'custom'
 
+const PROJECT_NAME_MAX_LENGTH = 20
+const QUICK_START_PROJECT_NAME_ATTEMPTS = 100
+const ACTION_DISPLAY_NAME_MAX_LENGTH = 20
+
+function boundedDisplayName(value: string, maxLength: number): string {
+  const characters = Array.from(value)
+  return characters.length > maxLength
+    ? `${characters.slice(0, maxLength - 1).join('')}…`
+    : characters.join('')
+}
+
 function inferGeneratableActionType(description: string): GeneratableActionType {
   const normalized = description.trim().toLowerCase()
   if (!normalized || /^(待机|站立|呼吸|idle|stand|breathe)$/u.test(normalized)) return 'idle'
@@ -283,11 +294,10 @@ export function createQuickStartService({
     actionDescription: string,
     spriteSize: Project['spriteSize'],
   ) {
-    const name = actionDescription.trim() || '待机'
+    const prompt = actionDescription.trim()
+    const name = boundedDisplayName(prompt, ACTION_DISPLAY_NAME_MAX_LENGTH) || '待机'
     const type = inferGeneratableActionType(actionDescription)
-    await controller.addAction({
-      input: { outfitId, name, type, prompt: actionDescription.trim() || null, fps: 12 },
-    })
+    await controller.addAction({ input: { outfitId, name, type, prompt: prompt || null, fps: 12 } })
     const run = controller.getWorkflow()
     const firstFrame = latestActionFirstFrame(run)
     if (!firstFrame || firstFrame.type !== 'action-first-frame') {
@@ -803,15 +813,11 @@ export function createAutoPrepareProject(projectApis: ProjectApis): PrepareQuick
     const normalizedPrompt = prompt.trim().replace(/\s+/gu, ' ') || '未命名项目'
     let lastConflict: unknown
 
-    for (let sequence = 1; sequence <= 5; sequence += 1) {
+    for (let sequence = 1; sequence <= QUICK_START_PROJECT_NAME_ATTEMPTS; sequence += 1) {
       // 首次名称不预留编号空间；只有重名时才缩短前缀，为可读编号让出 20 字上限。
       const suffix = sequence === 1 ? '' : ` ${sequence}`
-      const maxBaseLength = 20 - Array.from(suffix).length
-      const promptCharacters = Array.from(normalizedPrompt)
-      const base =
-        promptCharacters.length > maxBaseLength
-          ? `${promptCharacters.slice(0, maxBaseLength - 1).join('')}…`
-          : promptCharacters.join('')
+      const maxBaseLength = PROJECT_NAME_MAX_LENGTH - Array.from(suffix).length
+      const base = boundedDisplayName(normalizedPrompt, maxBaseLength)
 
       try {
         const project = await projectApis.create({
