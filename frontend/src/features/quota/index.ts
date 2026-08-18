@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { quotaApis as defaultQuotaApis } from '@/entities'
-import type { CreditAccount, CreditTransaction, QuotaApis } from '@/entities'
+import type {
+  CreditAccount,
+  CreditTransaction,
+  QuotaApis,
+  QuotaTransactionFilters,
+  QuotaTransactionPageQuery,
+} from '@/entities'
 
 const TRANSACTIONS_PAGE_SIZE = 20
 
@@ -23,6 +29,8 @@ type TransactionsResult = {
 
 export type QuotaTransactionsState = TransactionsResult & {
   loadPage(page: number): void
+  setPageSize(pageSize: number): void
+  applyFilters(filters: QuotaTransactionFilters, pageSize?: number): void
   reload(): void
 }
 
@@ -83,7 +91,10 @@ export function useQuotaTransactions(
   apis: QuotaApis = defaultQuotaApis,
 ): QuotaTransactionsState {
   const [attempt, setAttempt] = useState(0)
-  const [requestedPage, setRequestedPage] = useState(1)
+  const [query, setQuery] = useState<QuotaTransactionPageQuery>({
+    page: 1,
+    pageSize: TRANSACTIONS_PAGE_SIZE,
+  })
   const [result, setResult] = useState<TransactionsResult>(initialTransactions)
 
   useEffect(() => {
@@ -95,7 +106,7 @@ export function useQuotaTransactions(
     let active = true
     setResult((current) => ({ ...current, status: 'loading', error: null }))
     void Promise.resolve()
-      .then(() => apis.listTransactions({ page: requestedPage, pageSize: TRANSACTIONS_PAGE_SIZE }))
+      .then(() => apis.listTransactions(query))
       .then(
         (page) => {
           if (!active) return
@@ -122,11 +133,26 @@ export function useQuotaTransactions(
     return () => {
       active = false
     }
-  }, [apis, attempt, enabled, requestedPage])
+  }, [apis, attempt, enabled, query])
 
-  const loadPage = useCallback((page: number) => setRequestedPage(Math.max(1, page)), [])
+  const loadPage = useCallback(
+    (page: number) => setQuery((current) => ({ ...current, page: Math.max(1, page) })),
+    [],
+  )
+  const setPageSize = useCallback(
+    (pageSize: number) =>
+      setQuery((current) => ({ ...current, page: 1, pageSize: Math.max(1, pageSize) })),
+    [],
+  )
+  const applyFilters = useCallback((filters: QuotaTransactionFilters, pageSize?: number) => {
+    setQuery((current) => ({
+      page: 1,
+      pageSize: pageSize ?? current.pageSize,
+      ...filters,
+    }))
+  }, [])
   const reload = useCallback(() => setAttempt((current) => current + 1), [])
-  return { ...result, loadPage, reload }
+  return { ...result, loadPage, setPageSize, applyFilters, reload }
 }
 
 const reasonLabels: Readonly<Record<number, string>> = {

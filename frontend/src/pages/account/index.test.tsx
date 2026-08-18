@@ -248,6 +248,52 @@ describe('AccountPage', () => {
     )
   })
 
+  it('按收支、原因和本地日期筛选流水并调整分页', async () => {
+    vi.spyOn(quotaApis, 'getBalance').mockResolvedValue({
+      id: '11',
+      userId: '7',
+      balance: 90,
+      frozen: 0,
+      totalEarned: 100,
+      totalSpent: 10,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+    const listTransactions = vi
+      .spyOn(quotaApis, 'listTransactions')
+      .mockImplementation(async ({ page = 1, pageSize = 20 } = {}) => ({
+        items: [],
+        total: 80,
+        page,
+        pageSize,
+      }))
+
+    renderAccount()
+    fireEvent.click(await screen.findByRole('button', { name: '积分账户' }))
+    await waitFor(() => expect(listTransactions).toHaveBeenCalled())
+
+    fireEvent.change(screen.getByLabelText('变动方向'), { target: { value: 'expense' } })
+    fireEvent.change(screen.getByLabelText('变动原因'), { target: { value: '3' } })
+    fireEvent.change(screen.getByLabelText('开始日期'), { target: { value: '2026-08-10' } })
+    fireEvent.change(screen.getByLabelText('结束日期'), { target: { value: '2026-08-12' } })
+    fireEvent.change(screen.getByLabelText('每页条数'), { target: { value: '50' } })
+    fireEvent.click(screen.getByRole('button', { name: '应用筛选' }))
+
+    await waitFor(() =>
+      expect(listTransactions).toHaveBeenLastCalledWith({
+        page: 1,
+        pageSize: 50,
+        direction: 'expense',
+        reason: 3,
+        createdFrom: new Date(2026, 7, 10).toISOString(),
+        createdBefore: new Date(2026, 7, 13).toISOString(),
+      }),
+    )
+    expect(screen.getByRole('button', { name: '第 1 页' }).getAttribute('aria-current')).toBe(
+      'page',
+    )
+  })
+
   it('reports a profile refresh failure without claiming the data is synchronized', async () => {
     const apis = createApis()
     apis.me.mockRejectedValue(new Error('资料读取失败'))

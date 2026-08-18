@@ -107,6 +107,41 @@ describe('quota queries', () => {
     await waitFor(() => expect(result.current.page).toBe(2))
   })
 
+  it('应用筛选或修改每页条数时回到第一页', async () => {
+    const apis = createQuotaApis()
+    const { result } = renderHook(() => useQuotaTransactions(true, apis))
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+
+    act(() => result.current.loadPage(3))
+    await waitFor(() => expect(result.current.page).toBe(3))
+
+    act(() =>
+      result.current.applyFilters({
+        direction: 'income',
+        reason: 5,
+        createdFrom: '2026-08-09T16:00:00.000Z',
+        createdBefore: '2026-08-12T16:00:00.000Z',
+      }),
+    )
+    await waitFor(() =>
+      expect(apis.listTransactions).toHaveBeenLastCalledWith({
+        page: 1,
+        pageSize: 20,
+        direction: 'income',
+        reason: 5,
+        createdFrom: '2026-08-09T16:00:00.000Z',
+        createdBefore: '2026-08-12T16:00:00.000Z',
+      }),
+    )
+
+    act(() => result.current.setPageSize(50))
+    await waitFor(() =>
+      expect(apis.listTransactions).toHaveBeenLastCalledWith(
+        expect.objectContaining({ page: 1, pageSize: 50 }),
+      ),
+    )
+  })
+
   it('禁用时不读取流水', () => {
     const apis = createQuotaApis()
     const { result } = renderHook(() => useQuotaTransactions(false, apis))
