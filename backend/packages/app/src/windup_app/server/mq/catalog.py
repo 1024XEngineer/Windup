@@ -58,11 +58,12 @@ def generation_stream_spec() -> StreamSpec:
 
 
 def generation_image_concurrency() -> int:
-    return _env_int("WINDUP_MQ_GENERATION_IMAGE_CONCURRENCY", 64)
+    # 默认对齐 .env.example 的 pool_size(5)+max_overflow(10)，长耗时 handler 会占连接。
+    return _env_int("WINDUP_MQ_GENERATION_IMAGE_CONCURRENCY", 6)
 
 
 def generation_action_concurrency() -> int:
-    return _env_int("WINDUP_MQ_GENERATION_ACTION_CONCURRENCY", 32)
+    return _env_int("WINDUP_MQ_GENERATION_ACTION_CONCURRENCY", 4)
 
 
 def all_stream_specs() -> tuple[StreamSpec, StreamSpec]:

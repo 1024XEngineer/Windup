@@ -28,6 +28,7 @@ from windup_common.enums.biz_code import BizCode
 from windup_common.exceptions import BizException
 from windup_common.result import Response
 from windup_framework.db import get_session
+from windup_framework.db.session import SessionLocal
 from windup_framework.mq.publisher import MqPublisher
 
 from windup_app.server.character.model import Character, CharacterData
@@ -60,6 +61,15 @@ _HEARTBEAT_TIMEOUT = 30.0
 
 # 终态事件
 _TERMINAL_EVENTS = {"completed", "failed"}
+
+
+def _poll_terminal_snapshot(task_id: int, project_id: int) -> tuple[str, dict] | None:
+    """SSE heartbeat 查库兜底：Pub/Sub 断线期间错过的终态由此补发。"""
+    session = SessionLocal()
+    try:
+        return task_repo.terminal_snapshot(session, task_id, project_id)
+    finally:
+        session.close()
 
 
 class _EventBus:
@@ -458,6 +468,21 @@ async def stream_task(
                         logger.debug("SSE 终态: task_id=%d event=%s", task_id, event)
                         break
                 except asyncio.TimeoutError:
+                    polled = await asyncio.to_thread(
+                        _poll_terminal_snapshot,
+                        task_id,
+                        project_id,
+                    )
+                    if polled is not None:
+                        event, data = polled
+                        payload = json.dumps(data, ensure_ascii=False)
+                        yield f"event: {event}\ndata: {payload}\n\n"
+                        logger.debug(
+                            "SSE heartbeat 查库命中终态: task_id=%d event=%s",
+                            task_id,
+                            event,
+                        )
+                        break
                     yield ": heartbeat\n\n"
         finally:
             await event_bus.unsubscribe(project_id, task_id, queue)

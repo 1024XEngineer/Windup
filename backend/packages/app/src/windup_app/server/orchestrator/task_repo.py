@@ -85,6 +85,21 @@ def terminal_event_for(task: GenerationTask) -> str | None:
     return _STATUS_EVENT.get(task.status.value)
 
 
+def terminal_snapshot(
+    session: Session,
+    task_id: int,
+    project_id: int,
+) -> tuple[str, dict] | None:
+    """若任务已终态，返回 (event, payload)；否则 None。供 SSE heartbeat 查库兜底。"""
+    task = get_task(session, task_id)
+    if task is None or task.project_id != project_id:
+        return None
+    event = terminal_event_for(task)
+    if event is None:
+        return None
+    return event, task_event_payload(task)
+
+
 def _publish_task_update(task_id: int, task: GenerationTask) -> None:
     """将完整 task 推送到 EventBus（若有订阅者）。
 

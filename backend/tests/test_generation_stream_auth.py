@@ -218,6 +218,27 @@ def test_non_terminal_status_is_not_mistaken_for_terminal(status):
     assert task_repo.terminal_event_for(task) is None
 
 
+def test_terminal_snapshot_returns_payload_for_completed_task(session):
+    """heartbeat 查库兜底：终态任务应能补发 completed 事件。"""
+    task_id = _make_task(
+        session,
+        user_id=1,
+        project_id=42,
+        status=TaskStatus.COMPLETED,
+    )
+    snap = task_repo.terminal_snapshot(session, task_id, project_id=42)
+    assert snap is not None
+    event, payload = snap
+    assert event == "completed"
+    assert payload["id"] == task_id
+    assert payload["status"] == TaskStatus.COMPLETED.value
+
+
+def test_terminal_snapshot_ignores_non_terminal(session):
+    task_id = _make_task(session, user_id=1, project_id=42, status=TaskStatus.RUNNING)
+    assert task_repo.terminal_snapshot(session, task_id, project_id=42) is None
+
+
 # ── ③ project_id 为空的任务发不出事件，要记 warning 而不是静默丢 ──────────────
 
 

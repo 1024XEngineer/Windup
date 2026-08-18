@@ -29,6 +29,12 @@ def test_generation_stream_spec_aggregates_pool_size():
     assert spec.group == GENERATION_GROUP
     assert spec.concurrency == generation_worker_pool_size()
     assert spec.concurrency == generation_image_concurrency() + generation_action_concurrency()
+    assert spec.concurrency <= 10
+
+
+def test_default_generation_concurrency_fits_default_pool():
+    """默认 handler 并发不应超过 .env.example 中的连接池容量 (5+10)。"""
+    assert generation_image_concurrency() + generation_action_concurrency() <= 15
 
 
 def test_all_stream_specs_returns_email_and_generation():

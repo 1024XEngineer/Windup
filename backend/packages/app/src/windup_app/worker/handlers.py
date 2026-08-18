@@ -29,6 +29,10 @@ from windup_framework.providers.email import email_provider
 logger = logging.getLogger("windup.worker.handlers")
 
 
+class HandlerDeferred(Exception):
+    """任务仍在执行中，消息应留 PEL 稍后重试，不可 ACK。"""
+
+
 def handle_verification_code(payload: dict[str, Any]) -> None:
     email = str(payload["email"])
     purpose = str(payload["purpose"])
@@ -103,8 +107,8 @@ def handle_generation(
             logger.info("任务已终态，跳过执行 | task_id=%d status=%s", task_id, task.status)
             return
         if task.status is TaskStatus.RUNNING:
-            logger.info("任务 RUNNING 中，跳过重复执行 | task_id=%d", task_id)
-            return
+            logger.info("任务 RUNNING 中，延后重试 | task_id=%d", task_id)
+            raise HandlerDeferred(f"task {task_id} still running")
         if not billing.has_open_freeze(session, task_id):
             logger.warning("任务无开放冻结，跳过 | task_id=%d", task_id)
             return

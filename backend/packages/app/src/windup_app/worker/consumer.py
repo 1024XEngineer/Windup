@@ -19,7 +19,7 @@ from windup_app.server.mq.catalog import (
     generation_action_concurrency,
     generation_image_concurrency,
 )
-from windup_app.worker.handlers import dispatch_handler
+from windup_app.worker.handlers import HandlerDeferred, dispatch_handler
 from windup_framework.db.redis import get_redis
 from windup_framework.db.session import SessionLocal
 from windup_framework.mq import client as mq_client
@@ -179,6 +179,14 @@ class StreamConsumer:
                 self._config.group,
                 stream_id,
             )
+        except HandlerDeferred:
+            logger.info(
+                "消息延后重试 | stream=%s stream_id=%s message_id=%s",
+                self._config.stream,
+                stream_id,
+                message_id,
+            )
+            self._defer_message(message_id)
         except Exception as exc:
             logger.exception(
                 "消息处理失败 | stream=%s stream_id=%s",
@@ -196,6 +204,17 @@ class StreamConsumer:
         if msg_type == MSG_TYPE_CHARACTER_ACTION:
             return self._action_sem
         return None
+
+    def _defer_message(self, message_id: uuid.UUID | None) -> None:
+        """释放 processing 认领但不 XACK，留 PEL 待 XAUTOCLAIM 重投。"""
+        if message_id is None:
+            return
+        session = SessionLocal()
+        try:
+            mq_repo.release_processing_claim(session, message_id)
+            session.commit()
+        finally:
+            session.close()
 
     def _handle_failure(
         self,

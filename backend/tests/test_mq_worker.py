@@ -28,6 +28,7 @@ from windup_app.server.orchestrator.service import AiGenerationService
 from windup_app.server.orchestrator.model import CharacterImageInput
 from windup_app.worker.consumer import ConsumerConfig, StreamConsumer, start_relay_loop
 from windup_app.worker.handlers import (
+    HandlerDeferred,
     dispatch_handler,
     handle_generation,
     handle_verification_code,
@@ -346,7 +347,7 @@ def test_handle_generation_skips_missing_task(engine, monkeypatch):
     run_image.assert_not_called()
 
 
-def test_handle_generation_skips_running_task(db_session, engine, monkeypatch):
+def test_handle_generation_defers_when_running(db_session, engine, monkeypatch):
     _patch_worker_session_local(monkeypatch, engine)
     seed_credit_account(db_session, 1)
     db_session.commit()
@@ -361,13 +362,12 @@ def test_handle_generation_skips_running_task(db_session, engine, monkeypatch):
     task_repo.update_status(db_session, task.id, TaskStatus.RUNNING)
     db_session.commit()
 
-    run_image = MagicMock()
-    handle_generation(
-        {"task_id": task.id, "task_type": GenerationType.CHARACTER_IMAGE.value},
-        run_image_task=run_image,
-        run_action_task=MagicMock(),
-    )
-    run_image.assert_not_called()
+    with pytest.raises(HandlerDeferred, match="still running"):
+        handle_generation(
+            {"task_id": task.id, "task_type": GenerationType.CHARACTER_IMAGE.value},
+            run_image_task=MagicMock(),
+            run_action_task=MagicMock(),
+        )
 
 
 def test_handle_generation_skips_without_open_freeze(db_session, engine, monkeypatch):
@@ -811,6 +811,61 @@ def test_consumer_skips_in_flight_message(engine, worker_session, monkeypatch):
 
     assert dispatched["count"] == 0
     redis_mock.xack.assert_called_once()
+
+
+def test_consumer_defers_running_task_without_ack(
+    engine,
+    worker_session,
+    db_session,
+    monkeypatch,
+):
+    _patch_worker_session_local(monkeypatch, engine)
+    seed_credit_account(db_session, 1)
+    db_session.commit()
+
+    service = AiGenerationService()
+    task = service.generate_character_image(
+        db_session,
+        user_id=1,
+        project_id=1,
+        input=CharacterImageInput(prompt="running"),
+    )
+    task_repo.update_status(db_session, task.id, TaskStatus.RUNNING)
+    db_session.commit()
+
+    message_id = uuid.uuid4()
+    mq_repo.insert_pending(
+        worker_session,
+        message_id=message_id,
+        dedupe_key=f"generation:running:{message_id}",
+        stream="windup:stream:generation",
+        msg_type=MSG_TYPE_CHARACTER_IMAGE,
+        payload={"task_id": task.id, "task_type": "character_image"},
+    )
+    mq_repo.mark_published(worker_session, message_id, "5-0")
+    worker_session.commit()
+
+    redis_mock = MagicMock()
+    monkeypatch.setattr("windup_app.worker.consumer.get_redis", lambda: redis_mock)
+
+    consumer = StreamConsumer(
+        ConsumerConfig(stream="windup:stream:generation", group="generation", concurrency=1),
+        run_image_task=MagicMock(),
+        run_action_task=MagicMock(),
+        stop_event=threading.Event(),
+    )
+    envelope = {
+        "v": 1,
+        "id": str(message_id),
+        "type": MSG_TYPE_CHARACTER_IMAGE,
+        "payload": {"task_id": task.id, "task_type": "character_image"},
+    }
+    consumer._process_message("5-0", {"data": json.dumps(envelope)})
+
+    redis_mock.xack.assert_not_called()
+    row = worker_session.get(MqMessage, message_id)
+    worker_session.refresh(row)
+    assert row.consume_status is None
 
 
 def test_consumer_acquires_generation_semaphore(engine, worker_session, monkeypatch):
