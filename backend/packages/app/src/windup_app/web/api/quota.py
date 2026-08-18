@@ -94,12 +94,19 @@ def list_transactions(
     request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    start_at: datetime | None = Query(None),
+    end_at: datetime | None = Query(None),
     session: Session = Depends(get_session),
 ) -> ListResponse[CreditTransactionOut]:
-    """查询积分流水（分页）。"""
+    """查询积分流水（支持创建时间范围和分页）。"""
     user_id = request.state.current_user.id
     txns, total = service.list_transactions(
-        session, user_id, page=page, page_size=page_size
+        session,
+        user_id,
+        page=page,
+        page_size=page_size,
+        start_at=start_at,
+        end_at=end_at,
     )
     return ListResponse.success(
         [CreditTransactionOut.model_validate(t) for t in txns],

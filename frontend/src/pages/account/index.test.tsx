@@ -162,7 +162,7 @@ describe('AccountPage', () => {
       createdAt: '2026-08-12T01:02:03Z',
       updatedAt: '2026-08-17T01:02:03Z',
     })
-    vi.spyOn(quotaApis, 'listTransactions').mockResolvedValue({
+    const listTransactions = vi.spyOn(quotaApis, 'listTransactions').mockResolvedValue({
       items: [
         {
           id: '21',
@@ -187,6 +187,23 @@ describe('AccountPage', () => {
     expect(await screen.findByText('90')).toBeTruthy()
     expect(screen.getByText('积分变动（原因码 99）')).toBeTruthy()
     expect(screen.getByText('-12')).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('开始日期'), { target: { value: '2026-08-10' } })
+    fireEvent.change(screen.getByLabelText('结束日期'), { target: { value: '2026-08-12' } })
+    fireEvent.click(screen.getByRole('button', { name: '筛选' }))
+    await waitFor(() =>
+      expect(listTransactions).toHaveBeenLastCalledWith({
+        page: 1,
+        pageSize: 20,
+        startDate: '2026-08-10',
+        endDate: '2026-08-12',
+      }),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '清除筛选' }))
+    await waitFor(() =>
+      expect(listTransactions).toHaveBeenLastCalledWith({ page: 1, pageSize: 20 }),
+    )
   })
 
   it('reports a profile refresh failure without claiming the data is synchronized', async () => {

@@ -39,6 +39,8 @@ function formatCredits(value: number): string {
 function QuotaSection() {
   const balance = useQuotaBalance(true)
   const transactions = useQuotaTransactions(true)
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
   const account = balance.status === 'ready' ? balance.account : null
   const summaryRows: Array<[string, string]> = [
     ['可用积分', account ? formatCredits(account.balance) : '—'],
@@ -89,6 +91,55 @@ function QuotaSection() {
             <span className="text-xs text-app-faint">共 {transactions.total} 条</span>
           )}
         </div>
+
+        <form
+          className="mt-3 flex flex-wrap items-end gap-3 rounded-xl border border-app-line bg-app-surface-muted p-3"
+          onSubmit={(event) => {
+            event.preventDefault()
+            transactions.setDateRange({
+              startDate: startDate || undefined,
+              endDate: endDate || undefined,
+            })
+          }}
+        >
+          <label className="grid gap-1 text-xs text-app-faint">
+            开始日期
+            <input
+              type="date"
+              value={startDate}
+              onChange={(event) => setStartDate(event.target.value)}
+              className="min-h-9 rounded-lg border border-app-line bg-app-surface px-2 text-sm text-app-ink-soft"
+            />
+          </label>
+          <label className="grid gap-1 text-xs text-app-faint">
+            结束日期
+            <input
+              type="date"
+              value={endDate}
+              onChange={(event) => setEndDate(event.target.value)}
+              className="min-h-9 rounded-lg border border-app-line bg-app-surface px-2 text-sm text-app-ink-soft"
+            />
+          </label>
+          <button
+            type="submit"
+            className="min-h-9 rounded-lg bg-app-accent px-3 text-sm font-semibold text-white"
+          >
+            筛选
+          </button>
+          {(startDate || endDate) && (
+            <button
+              type="button"
+              onClick={() => {
+                setStartDate('')
+                setEndDate('')
+                transactions.setDateRange({})
+              }}
+              className="min-h-9 rounded-lg px-3 text-sm font-semibold text-app-muted underline"
+            >
+              清除筛选
+            </button>
+          )}
+        </form>
 
         {transactions.status === 'loading' ? (
           <p role="status" className="mt-3 text-sm text-app-muted">

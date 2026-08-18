@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { quotaApis as defaultQuotaApis } from '@/entities'
-import type { CreditAccount, CreditTransaction, QuotaApis } from '@/entities'
+import type {
+  CreditAccount,
+  CreditTransaction,
+  QuotaApis,
+  QuotaTransactionPageQuery,
+} from '@/entities'
 
 const TRANSACTIONS_PAGE_SIZE = 20
 
@@ -23,6 +28,7 @@ type TransactionsResult = {
 
 export type QuotaTransactionsState = TransactionsResult & {
   loadPage(page: number): void
+  setDateRange(range: Pick<QuotaTransactionPageQuery, 'startDate' | 'endDate'>): void
   reload(): void
 }
 
@@ -84,6 +90,9 @@ export function useQuotaTransactions(
 ): QuotaTransactionsState {
   const [attempt, setAttempt] = useState(0)
   const [requestedPage, setRequestedPage] = useState(1)
+  const [dateRange, setDateRangeState] = useState<
+    Pick<QuotaTransactionPageQuery, 'startDate' | 'endDate'>
+  >({})
   const [result, setResult] = useState<TransactionsResult>(initialTransactions)
 
   useEffect(() => {
@@ -95,7 +104,13 @@ export function useQuotaTransactions(
     let active = true
     setResult((current) => ({ ...current, status: 'loading', error: null }))
     void Promise.resolve()
-      .then(() => apis.listTransactions({ page: requestedPage, pageSize: TRANSACTIONS_PAGE_SIZE }))
+      .then(() =>
+        apis.listTransactions({
+          page: requestedPage,
+          pageSize: TRANSACTIONS_PAGE_SIZE,
+          ...dateRange,
+        }),
+      )
       .then(
         (page) => {
           if (!active) return
@@ -122,11 +137,18 @@ export function useQuotaTransactions(
     return () => {
       active = false
     }
-  }, [apis, attempt, enabled, requestedPage])
+  }, [apis, attempt, dateRange, enabled, requestedPage])
 
   const loadPage = useCallback((page: number) => setRequestedPage(Math.max(1, page)), [])
+  const setDateRange = useCallback(
+    (range: Pick<QuotaTransactionPageQuery, 'startDate' | 'endDate'>) => {
+      setRequestedPage(1)
+      setDateRangeState(range)
+    },
+    [],
+  )
   const reload = useCallback(() => setAttempt((current) => current + 1), [])
-  return { ...result, loadPage, reload }
+  return { ...result, loadPage, setDateRange, reload }
 }
 
 const reasonLabels: Readonly<Record<number, string>> = {

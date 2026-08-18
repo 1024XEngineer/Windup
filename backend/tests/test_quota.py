@@ -5,6 +5,8 @@
 2. API 层：余额端点、流水端点、无账户时 404、分页参数
 """
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -474,6 +476,34 @@ class TestQuotaAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] == 5
+        assert len(data["data"]) == 2
+
+    def test_list_transactions_date_range_includes_end_boundary(
+        self, auth_quota_client, db_session, user_with_account
+    ):
+        uid = user_with_account.id
+        service = SqlAlchemyQuotaService()
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        for index, created_at in enumerate(
+            (now - timedelta(days=2), now - timedelta(days=1), now)
+        ):
+            service.credit(
+                db_session, uid, 10, CreditReason.ADMIN_ADJUST, f"api:date:{index}"
+            )
+            db_session.query(CreditTransaction).filter(
+                CreditTransaction.ref_id == f"api:date:{index}"
+            ).update({CreditTransaction.create_at: created_at})
+        db_session.commit()
+
+        start_at = (now - timedelta(days=1)).isoformat()
+        end_at = (now + timedelta(seconds=1)).isoformat()
+        resp = auth_quota_client.get(
+            "/quota/transactions", params={"start_at": start_at, "end_at": end_at}
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 2
         assert len(data["data"]) == 2
 
     def test_list_transactions_default_pagination(

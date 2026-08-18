@@ -3350,7 +3350,7 @@
     },
     "/quota/transactions": {
       "get": {
-        "description": "查询积分流水（分页）。",
+        "description": "查询积分流水（支持创建时间范围和分页）。",
         "operationId": "list_transactions_quota_transactions_get",
         "parameters": [
           {
@@ -3374,6 +3374,40 @@
               "minimum": 1,
               "title": "Page Size",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start_at",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start At"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end_at",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End At"
             }
           }
         ],

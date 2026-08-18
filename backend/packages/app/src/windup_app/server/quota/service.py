@@ -69,6 +69,12 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _utc_day_start(now: datetime | None = None) -> datetime:
     current = now or _now()
     if current.tzinfo is None:
@@ -345,18 +351,28 @@ class SqlAlchemyQuotaService(QuotaService):
     # -- 流水查询 ---------------------------------------------------------
 
     def list_transactions(
-        self, session: Session, user_id: int, page: int = 1, page_size: int = 20
+        self,
+        session: Session,
+        user_id: int,
+        page: int = 1,
+        page_size: int = 20,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
     ) -> tuple[list[CreditTransactionView], int]:
-        """分页查询积分流水。"""
+        """按创建时间范围分页查询积分流水；结束时间为排除边界。"""
+        filters = [CreditTransaction.user_id == user_id]
+        if start_at is not None:
+            filters.append(CreditTransaction.create_at >= _as_utc(start_at))
+        if end_at is not None:
+            filters.append(CreditTransaction.create_at < _as_utc(end_at))
+
         total = session.scalar(
-            select(func.count())
-            .select_from(CreditTransaction)
-            .where(CreditTransaction.user_id == user_id)
+            select(func.count()).select_from(CreditTransaction).where(*filters)
         )
 
         rows = session.scalars(
             select(CreditTransaction)
-            .where(CreditTransaction.user_id == user_id)
+            .where(*filters)
             .order_by(CreditTransaction.id.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)

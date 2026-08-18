@@ -94,6 +94,25 @@ describe('quota queries', () => {
     await waitFor(() => expect(result.current.page).toBe(2))
   })
 
+  it('日期范围变化后回到第 1 页并带上筛选条件', async () => {
+    const apis = createQuotaApis()
+    const { result } = renderHook(() => useQuotaTransactions(true, apis))
+
+    await waitFor(() => expect(apis.listTransactions).toHaveBeenCalledTimes(1))
+    act(() => result.current.loadPage(2))
+    await waitFor(() => expect(apis.listTransactions).toHaveBeenCalledTimes(2))
+
+    act(() => result.current.setDateRange({ startDate: '2026-08-10', endDate: '2026-08-12' }))
+    await waitFor(() => expect(apis.listTransactions).toHaveBeenCalledTimes(3))
+
+    expect(apis.listTransactions).toHaveBeenLastCalledWith({
+      page: 1,
+      pageSize: 20,
+      startDate: '2026-08-10',
+      endDate: '2026-08-12',
+    })
+  })
+
   it('禁用时不读取流水', () => {
     const apis = createQuotaApis()
     const { result } = renderHook(() => useQuotaTransactions(false, apis))

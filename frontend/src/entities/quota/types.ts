@@ -24,7 +24,12 @@ export interface CreditTransaction {
   createdAt: string
 }
 
-export type QuotaTransactionPageQuery = PageQuery
+export interface QuotaTransactionPageQuery extends PageQuery {
+  /** 用户本地日期，格式为 YYYY-MM-DD。 */
+  startDate?: string
+  /** 用户本地日期，格式为 YYYY-MM-DD。 */
+  endDate?: string
+}
 
 export interface QuotaApis {
   getBalance(): Promise<CreditAccount>

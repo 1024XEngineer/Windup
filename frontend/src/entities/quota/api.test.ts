@@ -88,6 +88,26 @@ describe('createQuotaApis', () => {
     })
   })
 
+  it('把用户本地日期转换为包含结束日的 UTC 时间范围', async () => {
+    requestList.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 })
+
+    await createQuotaApis({ client }).listTransactions({
+      page: 1,
+      pageSize: 20,
+      startDate: '2026-08-10',
+      endDate: '2026-08-12',
+    })
+
+    expect(requestList).toHaveBeenCalledWith('/quota/transactions', {
+      query: {
+        page: 1,
+        page_size: 20,
+        start_at: new Date('2026-08-10T00:00:00').toISOString(),
+        end_at: new Date('2026-08-13T00:00:00').toISOString(),
+      },
+    })
+  })
+
   it('默认适配器读取环境地址并携带当前登录凭证', async () => {
     vi.resetModules()
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

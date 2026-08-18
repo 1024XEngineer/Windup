@@ -60,6 +60,22 @@ function toCreditTransaction(dto: CreditTransactionDto): CreditTransaction {
   }
 }
 
+function localDateRangeQuery(query: QuotaTransactionPageQuery) {
+  const result: Record<string, string | number | undefined> = {
+    page: query.page,
+    page_size: query.pageSize,
+  }
+  if (query.startDate) {
+    result.start_at = new Date(`${query.startDate}T00:00:00`).toISOString()
+  }
+  if (query.endDate) {
+    const end = new Date(`${query.endDate}T00:00:00`)
+    end.setDate(end.getDate() + 1)
+    result.end_at = end.toISOString()
+  }
+  return result
+}
+
 export function createQuotaApis(options: CreateQuotaApisOptions = {}): QuotaApis {
   const { client, ...clientOptions } = options
   const protectedClient =
@@ -77,7 +93,7 @@ export function createQuotaApis(options: CreateQuotaApisOptions = {}): QuotaApis
       const result = await protectedClient.requestList<CreditTransactionDto>(
         '/quota/transactions',
         {
-          query: { page: query.page, page_size: query.pageSize },
+          query: localDateRangeQuery(query),
         },
       )
       return { ...result, items: result.items.map(toCreditTransaction) }
