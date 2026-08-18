@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { QuickStartEntryService, QuickStartSession } from './service'
 import { WorkflowRunConflictError, type WorkflowRun } from '@/entities'
 import type { ExportPackageModel } from '@/features/export-package'
+import type { AgentTransport, AgentTransportEvent } from './agent-runtime'
 import { QuickStartPage } from './index'
 
 afterEach(() => {
@@ -148,7 +149,7 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-function renderAt(path: string, service: QuickStartEntryService) {
+function renderAt(path: string, service: QuickStartEntryService, agentTransport?: AgentTransport) {
   function PlaytestLocation() {
     const location = useLocation()
     return <h1>{`${location.pathname}${location.search}`}</h1>
@@ -156,8 +157,14 @@ function renderAt(path: string, service: QuickStartEntryService) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/quick-start" element={<QuickStartPage service={service} />} />
-        <Route path="/quick-start/:runId" element={<QuickStartPage service={service} />} />
+        <Route
+          path="/quick-start"
+          element={<QuickStartPage service={service} agentTransport={agentTransport} />}
+        />
+        <Route
+          path="/quick-start/:runId"
+          element={<QuickStartPage service={service} agentTransport={agentTransport} />}
+        />
         <Route path="/projects/:projectId/assets" element={<PlaytestLocation />} />
         <Route path="/playtest/:characterId/:outfitId" element={<PlaytestLocation />} />
       </Routes>
@@ -169,6 +176,7 @@ function renderWithRunSwitcher(
   service: QuickStartEntryService,
   initialRunId: string,
   nextRunId: string,
+  agentTransport?: AgentTransport,
 ) {
   function Controls() {
     const navigate = useNavigate()
@@ -187,10 +195,17 @@ function renderWithRunSwitcher(
     <MemoryRouter initialEntries={[`/quick-start/${initialRunId}`]}>
       <Controls />
       <Routes>
-        <Route path="/quick-start/:runId" element={<QuickStartPage service={service} />} />
+        <Route
+          path="/quick-start/:runId"
+          element={<QuickStartPage service={service} agentTransport={agentTransport} />}
+        />
       </Routes>
     </MemoryRouter>,
   )
+}
+
+async function* agentEvents(...items: AgentTransportEvent[]): AsyncIterable<AgentTransportEvent> {
+  yield* items
 }
 
 function renderStateFixture(
@@ -685,6 +700,76 @@ describe('QuickStartPage', () => {
     expect(transcript.className).toContain('content-end')
     expect(turns.slice(0, -1).every((turn) => turn.dataset.currentTurn === 'false')).toBe(true)
     expect(turns.at(-1)?.dataset.currentTurn).toBe('true')
+  })
+
+  it('uses an injected Agent transport for free-form conversation without changing workflow state', async () => {
+    const run = actionWorkflow({ fullStatus: 'active' })
+    const service = serviceFor(run)
+    const transport: AgentTransport = {
+      stream: vi.fn(() =>
+        agentEvents(
+          { type: 'text', text: '我看到了。' },
+          { type: 'text', text: '当前正在生成完整动作。' },
+          { type: 'completed' },
+        ),
+      ),
+    }
+    renderAt('/quick-start/run-1', service, transport)
+
+    await screen.findByTestId('quick-start-transcript')
+    fireEvent.change(screen.getByLabelText('继续描述你的想法'), {
+      target: { value: '现在做到哪一步了？' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText('现在做到哪一步了？')).toBeTruthy()
+    expect(await screen.findByText('我看到了。当前正在生成完整动作。')).toBeTruthy()
+    expect(transport.stream).toHaveBeenCalledTimes(1)
+    expect(service.getWorkflow).toHaveBeenCalled()
+    expect(service.confirmCandidate).not.toHaveBeenCalled()
+    expect(service.confirmFirstFrame).not.toHaveBeenCalled()
+  })
+
+  it('drops temporary Agent messages when the selected run changes', async () => {
+    const run = actionWorkflow({ fullStatus: 'active' })
+    const service = serviceFor(run)
+    const transport: AgentTransport = {
+      stream: () =>
+        agentEvents({ type: 'text', text: '这条消息只属于 run-1。' }, { type: 'completed' }),
+    }
+    renderWithRunSwitcher(service, 'run-1', 'run-2', transport)
+
+    await screen.findByTestId('quick-start-transcript')
+    fireEvent.change(screen.getByLabelText('继续描述你的想法'), {
+      target: { value: '记住当前进度' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+    expect(await screen.findByText('这条消息只属于 run-1。')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '切换当前运行' }))
+    await waitFor(() =>
+      expect(screen.getByLabelText('当前位置').textContent).toBe('/quick-start/run-2'),
+    )
+    await screen.findByTestId('quick-start-transcript')
+    expect(screen.queryByText('记住当前进度')).toBeNull()
+    expect(screen.queryByText('这条消息只属于 run-1。')).toBeNull()
+  })
+
+  it('shows an Agent transport failure without replacing the workflow error channel', async () => {
+    const run = actionWorkflow({ fullStatus: 'active' })
+    const transport: AgentTransport = {
+      stream: () => agentEvents({ type: 'failed', error: '对话服务暂时不可用' }),
+    }
+    renderAt('/quick-start/run-1', serviceFor(run), transport)
+
+    await screen.findByTestId('quick-start-transcript')
+    fireEvent.change(screen.getByLabelText('继续描述你的想法'), {
+      target: { value: '帮我看一下' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByLabelText('对话服务暂时不可用')).toBeTruthy()
+    expect(screen.getByText('帮我看一下')).toBeTruthy()
   })
 
   it('hands the creation entry off to the generating canvas instead of hard-cutting routes', async () => {
