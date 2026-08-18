@@ -92,6 +92,7 @@ describe('createQuotaApis', () => {
     request.mockResolvedValue({
       code: 'AB23CD45',
       used_count: 3,
+      expires_at: '2026-09-11T01:02:03Z',
       create_at: '2026-08-12T01:02:03Z',
       update_at: '2026-08-17T01:02:03Z',
     })
@@ -99,33 +100,29 @@ describe('createQuotaApis', () => {
     await expect(createQuotaApis({ client }).getInviteCode()).resolves.toEqual({
       code: 'AB23CD45',
       usedCount: 3,
+      expiresAt: '2026-09-11T01:02:03Z',
       createdAt: '2026-08-12T01:02:03Z',
       updatedAt: '2026-08-17T01:02:03Z',
     })
     expect(request).toHaveBeenCalledWith('/quota/invite/code')
   })
 
-  it('轮换邀请码并提交补填请求', async () => {
-    request
-      .mockResolvedValueOnce({
-        code: 'XY89KL23',
-        used_count: 3,
-        create_at: '2026-08-12T01:02:03Z',
-        update_at: '2026-08-17T03:00:00Z',
-      })
-      .mockResolvedValueOnce(null)
+  it('轮换邀请码并映射新的有效期', async () => {
+    request.mockResolvedValueOnce({
+      code: 'XY89KL23',
+      used_count: 0,
+      expires_at: '2026-09-16T03:00:00Z',
+      create_at: '2026-08-17T03:00:00Z',
+      update_at: '2026-08-17T03:00:00Z',
+    })
 
     const apis = createQuotaApis({ client })
     await expect(apis.generateInviteCode()).resolves.toMatchObject({
       code: 'XY89KL23',
-      usedCount: 3,
+      usedCount: 0,
+      expiresAt: '2026-09-16T03:00:00Z',
     })
-    await expect(apis.redeemInviteCode('AB23CD45')).resolves.toBeUndefined()
     expect(request).toHaveBeenNthCalledWith(1, '/quota/invite/generate', { method: 'POST' })
-    expect(request).toHaveBeenNthCalledWith(2, '/quota/invite/redeem', {
-      method: 'POST',
-      json: { code: 'AB23CD45' },
-    })
   })
 
   it('默认适配器读取环境地址并携带当前登录凭证', async () => {
@@ -142,8 +139,6 @@ describe('createQuotaApis', () => {
           page: 1,
           page_size: 20,
         }
-      } else if (url.includes('/quota/invite/redeem')) {
-        body = { code: 200, message: 'ok', data: null }
       } else if (url.includes('/quota/invite/')) {
         body = {
           code: 200,
@@ -151,6 +146,7 @@ describe('createQuotaApis', () => {
           data: {
             code: 'AB23CD45',
             used_count: 3,
+            expires_at: '2026-09-11T01:02:03Z',
             create_at: '2026-08-12T01:02:03Z',
             update_at: '2026-08-17T01:02:03Z',
           },
@@ -176,7 +172,6 @@ describe('createQuotaApis', () => {
       })
       await expect(quotaApis.getInviteCode()).resolves.toMatchObject({ code: 'AB23CD45' })
       await expect(quotaApis.generateInviteCode()).resolves.toMatchObject({ code: 'AB23CD45' })
-      await expect(quotaApis.redeemInviteCode('AB23CD45')).resolves.toBeUndefined()
       expect(fetchFn).toHaveBeenCalledWith(
         'https://api.windup.test/quota/balance',
         expect.objectContaining({
@@ -190,7 +185,6 @@ describe('createQuotaApis', () => {
       )
       expect(fetchFn.mock.calls[2]?.[0]).toBe('https://api.windup.test/quota/invite/code')
       expect(fetchFn.mock.calls[3]?.[0]).toBe('https://api.windup.test/quota/invite/generate')
-      expect(fetchFn.mock.calls[4]?.[0]).toBe('https://api.windup.test/quota/invite/redeem')
     } finally {
       unregister()
       vi.unstubAllGlobals()

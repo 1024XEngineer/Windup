@@ -47,16 +47,17 @@ function createQuotaApis(): QuotaApis & {
     getInviteCode: vi.fn(async () => ({
       code: 'AB23CD45',
       usedCount: 0,
+      expiresAt: '2026-09-16T01:02:03Z',
       createdAt: '2026-08-17T01:02:03Z',
       updatedAt: '2026-08-17T01:02:03Z',
     })),
     generateInviteCode: vi.fn(async () => ({
       code: 'XY89KL23',
       usedCount: 0,
+      expiresAt: '2026-09-16T01:02:03Z',
       createdAt: '2026-08-17T01:02:03Z',
       updatedAt: '2026-08-17T01:02:03Z',
     })),
-    redeemInviteCode: vi.fn(async () => undefined),
   }
 }
 

@@ -209,6 +209,7 @@ describe('AccountPage', () => {
     vi.spyOn(quotaApis, 'getInviteCode').mockResolvedValue({
       code: 'AB23CD45',
       usedCount: 2,
+      expiresAt: '2026-09-16T01:02:03Z',
       createdAt: '2026-08-12T01:02:03Z',
       updatedAt: '2026-08-17T01:02:03Z',
     })
@@ -234,6 +235,7 @@ describe('AccountPage', () => {
     vi.spyOn(quotaApis, 'getInviteCode').mockResolvedValue({
       code: 'AB23CD45',
       usedCount: 2,
+      expiresAt: '2026-09-16T01:02:03Z',
       createdAt: '2026-08-12T01:02:03Z',
       updatedAt: '2026-08-17T01:02:03Z',
     })
