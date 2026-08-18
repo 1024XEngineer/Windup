@@ -16,7 +16,7 @@ function createContext() {
   }
 }
 
-test('marks a stale warning as resolved when the pull request closes an issue', async () => {
+test('marks every stale warning as resolved when the pull request closes an issue', async () => {
   const calls = []
   const github = {
     graphql: async () => ({
@@ -24,7 +24,11 @@ test('marks a stale warning as resolved when the pull request closes an issue', 
         pullRequest: { closingIssuesReferences: { totalCount: 1 } },
       },
     }),
-    paginate: async () => [{ id: 99, body: `${WARNING_MARKER}\nExisting warning` }],
+    paginate: async () => [
+      { id: 98, body: `${WARNING_MARKER}\nFirst warning` },
+      { id: 99, body: `${WARNING_MARKER}\nSecond warning` },
+      { id: 100, body: `${RESOLVED_WARNING_MARKER}\nResolved warning` },
+    ],
     rest: {
       issues: {
         listComments: () => {},
@@ -42,12 +46,20 @@ test('marks a stale warning as resolved when the pull request closes an issue', 
     core: { info: () => {}, warning: () => {} },
   })
 
-  assert.deepEqual(calls, [{
-    owner: 'owner',
-    repo: 'repo',
-    comment_id: 99,
-    body: `${RESOLVED_WARNING_MARKER}\n✅ 此 PR 已关联 issue，之前的提醒已自动标记为已解决。`,
-  }])
+  assert.deepEqual(calls, [
+    {
+      owner: 'owner',
+      repo: 'repo',
+      comment_id: 98,
+      body: `${RESOLVED_WARNING_MARKER}\n✅ 此 PR 已关联 issue，之前的提醒已自动标记为已解决。`,
+    },
+    {
+      owner: 'owner',
+      repo: 'repo',
+      comment_id: 99,
+      body: `${RESOLVED_WARNING_MARKER}\n✅ 此 PR 已关联 issue，之前的提醒已自动标记为已解决。`,
+    },
+  ])
 })
 
 test('warns and mentions the author when no issue is linked', async () => {
@@ -91,7 +103,7 @@ test('warns and mentions the author when no issue is linked', async () => {
     owner: 'owner',
     repo: 'repo',
     issue_number: 42,
-    body: `${WARNING_MARKER}\n⚠️ @octocat，此 PR 尚未关联 issue。请在 PR 描述中使用 \`Closes #123\` 等关闭关键字，或通过 Development 侧栏关联对应 issue。`,
+    body: `${WARNING_MARKER}\n⚠️ @octocat，此 PR 尚未关联 issue。请在 PR 描述中使用 \`Closes #123\` 等关闭关键字；更新描述后，此提醒将自动标记为已解决。`,
   })
 })
 

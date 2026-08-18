@@ -30,16 +30,18 @@ async function checkPullRequestIssue({ github, context, core }) {
   })
 
   if (result.repository.pullRequest.closingIssuesReferences.totalCount > 0) {
-    const warning = comments.find(isMissingIssueWarning)
+    const warnings = comments.filter(isMissingIssueWarning)
 
-    if (warning) {
-      await github.rest.issues.updateComment({
-        owner,
-        repo,
-        comment_id: warning.id,
-        body: `${RESOLVED_WARNING_MARKER}\n✅ 此 PR 已关联 issue，之前的提醒已自动标记为已解决。`,
-      })
-      core.info('Resolved stale missing-issue warning.')
+    if (warnings.length > 0) {
+      await Promise.all(warnings.map((warning) => (
+        github.rest.issues.updateComment({
+          owner,
+          repo,
+          comment_id: warning.id,
+          body: `${RESOLVED_WARNING_MARKER}\n✅ 此 PR 已关联 issue，之前的提醒已自动标记为已解决。`,
+        })
+      )))
+      core.info(`Resolved ${warnings.length} stale missing-issue warning(s).`)
     }
 
     core.info('Pull request is linked to an issue.')
@@ -55,7 +57,7 @@ async function checkPullRequestIssue({ github, context, core }) {
     owner,
     repo,
     issue_number: pullRequest.number,
-    body: `${WARNING_MARKER}\n⚠️ @${pullRequest.user.login}，此 PR 尚未关联 issue。请在 PR 描述中使用 \`Closes #123\` 等关闭关键字，或通过 Development 侧栏关联对应 issue。`,
+    body: `${WARNING_MARKER}\n⚠️ @${pullRequest.user.login}，此 PR 尚未关联 issue。请在 PR 描述中使用 \`Closes #123\` 等关闭关键字；更新描述后，此提醒将自动标记为已解决。`,
   })
 
   core.warning('Pull request is not linked to an issue; posted an author warning.')
