@@ -88,44 +88,21 @@ describe('Quick Start agent runtime', () => {
     const context = getQuickStartWorkflowContext(workflow())
 
     expect(context).toEqual({
-      runId: 'run-1',
-      projectId: 'project-1',
-      version: 4,
-      characterPrompt: '戴星形单片眼镜的像素裁缝',
-      currentNode: {
-        id: 'action-first',
-        type: 'action-first-frame',
-        status: 'active',
-        phase: 'selecting',
-        error: null,
-      },
-      nodes: [
-        {
-          id: 'character-setup',
-          type: 'character-setup',
-          status: 'passed',
-          phase: 'completed',
-          error: null,
-        },
-        {
-          id: 'character-template',
-          type: 'character-template',
-          status: 'passed',
-          phase: 'completed',
-          error: null,
-        },
-        {
-          id: 'action-first',
-          type: 'action-first-frame',
-          status: 'active',
-          phase: 'selecting',
-          error: null,
-        },
-      ],
+      currentStage: 'action-first-frame',
+      currentStatus: 'active',
+      currentPhase: 'selecting',
+      isGenerating: false,
+      awaitingUserSelection: true,
+      failed: false,
+      allowedActions: ['select-action-first-frame'],
+      error: null,
     })
     expect(JSON.stringify(context)).not.toContain('template-task')
     expect(JSON.stringify(context)).not.toContain('private-reference.png')
     expect(JSON.stringify(context)).not.toContain('deleted-action')
+    expect(JSON.stringify(context)).not.toContain('projectId')
+    expect(JSON.stringify(context)).not.toContain('characterPrompt')
+    expect(JSON.stringify(context)).not.toContain('nodes')
   })
 
   it('executes get_workflow_context and sends its tool result back before completing', async () => {
@@ -238,6 +215,32 @@ describe('Quick Start agent runtime', () => {
     ).rejects.toThrow('不支持 function：regenerate')
   })
 
+  it('rejects arguments for the read-only context function', async () => {
+    const getWorkflow = vi.fn(workflow)
+    const transport: AgentTransport = {
+      stream: () =>
+        events(
+          {
+            type: 'function-call',
+            callId: 'call-1',
+            name: 'get_workflow_context',
+            arguments: { includeNodes: true },
+          },
+          { type: 'completed' },
+        ),
+    }
+
+    await expect(
+      runQuickStartAgentTurn({
+        transport,
+        history: [],
+        input: '读取详细节点',
+        getWorkflow,
+      }),
+    ).rejects.toThrow('get_workflow_context 不接受参数')
+    expect(getWorkflow).not.toHaveBeenCalled()
+  })
+
   it('surfaces transport failures as a failed runtime event', async () => {
     const transport: AgentTransport = {
       stream: () => events({ type: 'failed', error: '模型暂时不可用' }),
@@ -282,5 +285,28 @@ describe('Quick Start agent runtime', () => {
     expect(result.assistantText).toBe('回答结束。')
     expect(stream).toHaveBeenCalledTimes(1)
     expect(getWorkflow).not.toHaveBeenCalled()
+  })
+
+  it('does not execute a function call when the transport stream ends early', async () => {
+    const getWorkflow = vi.fn(workflow)
+    const stream = vi.fn<AgentTransport['stream']>(() =>
+      events({
+        type: 'function-call',
+        callId: 'unfinished-call',
+        name: 'get_workflow_context',
+        arguments: {},
+      }),
+    )
+
+    await expect(
+      runQuickStartAgentTurn({
+        transport: { stream },
+        history: [],
+        input: '读取进度',
+        getWorkflow,
+      }),
+    ).rejects.toThrow('Agent Transport 未发送完成事件')
+    expect(getWorkflow).not.toHaveBeenCalled()
+    expect(stream).toHaveBeenCalledTimes(1)
   })
 })
