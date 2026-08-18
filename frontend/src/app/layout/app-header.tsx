@@ -287,14 +287,6 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
                 <span className="hidden truncate sm:inline">
                   {session.state.user.nickname || session.state.user.email}
                 </span>
-                <span
-                  aria-hidden="true"
-                  className={`text-[10px] text-app-faint transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none ${
-                    accountMenuOpen ? 'rotate-180' : 'rotate-0'
-                  }`}
-                >
-                  ↓
-                </span>
               </button>
 
               <div
