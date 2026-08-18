@@ -201,6 +201,28 @@ describe('createUserApis', () => {
     })
   })
 
+  it('omits the optional invite code from public registration', async () => {
+    request.mockResolvedValue(tokenResponse)
+    const apis = createUserApis({ client })
+
+    await apis.register({
+      email: 'reader@example.com',
+      password: 'password-123',
+      code: '123456',
+    })
+
+    expect(request).toHaveBeenCalledWith('/auth/register', {
+      method: 'POST',
+      json: {
+        email: 'reader@example.com',
+        password: 'password-123',
+        code: '123456',
+      },
+    })
+    const options = request.mock.calls[0]?.[1] as { json?: object } | undefined
+    expect(Object.hasOwn(options?.json ?? {}, 'invite_code')).toBe(false)
+  })
+
   it('disables global unauthorized recovery for authentication requests', async () => {
     const recover = vi.fn(async () => true)
     const unregister = registerApiUnauthorizedRecovery(recover)

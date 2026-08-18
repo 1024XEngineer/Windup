@@ -94,24 +94,19 @@ describe('AccountPanel', () => {
 
     expect(screen.getByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '欢迎回来。' })).toBeTruthy()
-    expect(screen.queryByText('未注册的邮箱将在验证后自动创建账号。')).toBeNull()
-    expect(screen.getByText('内测期间仅支持已有账号登录。')).toBeTruthy()
+    expect(screen.getByText(/未注册的邮箱将在验证后自动创建账号/)).toBeTruthy()
     expect(screen.queryByRole('tab', { name: '注册' })).toBeNull()
-    expect(screen.queryByRole('button', { name: '创建账号' })).toBeNull()
-    expect(screen.getByText('注册仅通过邀请链接开放。')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '创建账号' })).toBeTruthy()
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('邮箱')))
   })
 
-  it('opens a closed-registration URL as login and never starts signup', async () => {
-    const { apis } = renderPanel('/?account=register&returnTo=%2Fworkspace')
+  it('opens public registration without an invite code', async () => {
+    renderPanel('/?account=register&returnTo=%2Fworkspace')
 
-    expect(screen.getByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: '欢迎回来。' })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: '创建账号' })).toBeNull()
-    expect(screen.queryByRole('button', { name: '继续' })).toBeNull()
-    expect(screen.getByRole('button', { name: '登录' })).toBeTruthy()
-    expect(screen.getByText('注册仅通过邀请链接开放。')).toBeTruthy()
-    expect(apis.register).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: '创建 Windup 账号' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '欢迎来到 Windup' })).toBeTruthy()
+    expect(screen.queryByLabelText('邀请码')).toBeNull()
+    expect(screen.getByText('注册即赠 300 积分。')).toBeTruthy()
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('邮箱')))
   })
 
@@ -156,15 +151,15 @@ describe('AccountPanel', () => {
 
     const dialog = screen.getByRole('dialog', { name: '登录 Windup' })
     const closeButton = screen.getByRole('button', { name: '关闭账号面板' })
-    const submitButton = screen.getByRole('button', { name: '登录' })
+    const switchButton = screen.getByRole('button', { name: '创建账号' })
 
-    submitButton.focus()
-    fireEvent.keyDown(submitButton, { key: 'Tab' })
+    switchButton.focus()
+    fireEvent.keyDown(switchButton, { key: 'Tab' })
     expect(document.activeElement).toBe(closeButton)
 
     closeButton.focus()
     fireEvent.keyDown(closeButton, { key: 'Tab', shiftKey: true })
-    expect(document.activeElement).toBe(submitButton)
+    expect(document.activeElement).toBe(switchButton)
     expect(dialog.contains(document.activeElement)).toBe(true)
   })
 
@@ -365,16 +360,18 @@ describe('AccountPanel', () => {
     expect(apis.sendCode).not.toHaveBeenCalled()
   })
 
-  it('does not expose a signup switch from the login panel', async () => {
+  it('switches between login and public registration', async () => {
     vi.useFakeTimers()
     renderPanel('/?account=login&returnTo=%2Fworkspace')
 
-    expect(screen.queryByRole('button', { name: '创建账号' })).toBeNull()
-    expect(screen.getByTestId('location').textContent).toBe('/?account=login&returnTo=%2Fworkspace')
+    fireEvent.click(screen.getByRole('button', { name: '创建账号' }))
+    expect(screen.getByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
 
     await act(async () => vi.advanceTimersByTimeAsync(520))
-    expect(screen.getByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
-    expect(screen.getByTestId('location').textContent).toBe('/?account=login&returnTo=%2Fworkspace')
+    expect(screen.getByRole('dialog', { name: '创建 Windup 账号' })).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/?account=register&returnTo=%2Fworkspace',
+    )
   })
 
   it('preserves registration input when showing a password and returning a step', async () => {
@@ -394,23 +391,9 @@ describe('AccountPanel', () => {
     expect(screen.getByTestId('auth-motion-stage').dataset.motionDirection).toBe('backward')
   })
 
-  it.skip('switches account entry only after the current panel exits', async () => {
-    vi.useFakeTimers()
-    renderPanel('/?account=login&returnTo=%2Fworkspace')
-
-    fireEvent.click(screen.getByRole('button', { name: '创建账号' }))
-    expect(screen.getByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
-    expect(screen.getByTestId('location').textContent).toBe('/?account=login&returnTo=%2Fworkspace')
-
-    await act(async () => vi.advanceTimersByTimeAsync(520))
-    expect(screen.getByRole('dialog', { name: '创建 Windup 账号' })).toBeTruthy()
-    expect(screen.getByTestId('location').textContent).toBe(
-      '/?account=register&returnTo=%2Fworkspace',
-    )
-  })
-
-  it('submits the invite link code without rendering an invite field', async () => {
+  it('submits the invite link code and shows backend expiry errors inline', async () => {
     const { apis } = renderPanel('/?account=register&invite=ab23cd45&returnTo=%2Fworkspace')
+    apis.register.mockRejectedValue(new Error('邀请码已过期'))
     expect(screen.queryByLabelText('邀请码')).toBeNull()
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'new@example.com' } })
 
@@ -458,6 +441,7 @@ describe('AccountPanel', () => {
         nickname: '新用户',
       }),
     )
+    expect((await screen.findByRole('alert')).textContent).toContain('邀请码已过期')
   })
 })
 
