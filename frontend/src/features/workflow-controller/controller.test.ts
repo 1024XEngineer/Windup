@@ -1022,6 +1022,41 @@ describe('WorkflowController', () => {
     )
   })
 
+  it('角色母版挂载时发现节点已被其他任务占用则保留现有引用', async () => {
+    const { controller, workflow, generation } = createController(
+      createRun(completedCharacterNodes()),
+    )
+    const update = vi.mocked(workflow.apis.update)
+    const save = update.getMockImplementation()!
+    update.mockImplementationOnce(save).mockImplementationOnce(async (run) => {
+      const saved = await save(run)
+      return {
+        ...saved,
+        nodes: saved.nodes.map((node) =>
+          node.id === 'template-1'
+            ? { ...node, generations: [{ taskId: 'other-task', role: 'character_template' }] }
+            : node,
+        ),
+      }
+    })
+
+    await controller.regenerateCharacterTemplate('template-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      mode: 'regenerate',
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledTimes(1)
+    expect(controller.getWorkflow().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'template-1',
+          generations: [{ taskId: 'other-task', role: 'character_template' }],
+        }),
+      ]),
+    )
+  })
+
   it('角色设定已落库但生成请求失败后可以重试', async () => {
     const { controller, generation } = createController()
     vi.mocked(generation.apis.create).mockRejectedValueOnce(new Error('生成服务暂时不可用'))
