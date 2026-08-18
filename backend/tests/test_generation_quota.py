@@ -617,14 +617,10 @@ def test_running_orphan_without_freeze_still_reaches_a_terminal_status(session_f
     from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
 
     task_id = _open_task(session_factory, TaskStatus.RUNNING)
+    publisher, _enqueued = _tracking_publisher()
 
     with session_factory() as session:
-        recover_orphaned_generation_tasks(
-            session,
-            dispatcher=type("D", (), {"submit": staticmethod(lambda *a, **k: None)})(),
-            run_image_task=lambda *a: None,
-            run_action_task=lambda *a: None,
-        )
+        recover_orphaned_generation_tasks(session, publisher=publisher)
         session.commit()
 
     with session_factory() as session:
@@ -644,20 +640,13 @@ def test_pending_orphan_without_freeze_reaches_a_terminal_status_without_rerunni
     from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
 
     task_id = _open_task(session_factory, TaskStatus.PENDING)
-    queued: list[tuple] = []
+    publisher, enqueued = _tracking_publisher()
 
     with session_factory() as session:
-        recover_orphaned_generation_tasks(
-            session,
-            dispatcher=type("D", (), {
-                "submit": staticmethod(lambda *a: queued.append(a)),
-            })(),
-            run_image_task=lambda *a: None,
-            run_action_task=lambda *a: None,
-        )
+        recover_orphaned_generation_tasks(session, publisher=publisher)
         session.commit()
 
-    assert queued == [], "没有冻结的任务被重入队了，等于免费跑一次"
+    assert enqueued == [], "没有冻结的任务被重入队了，等于免费跑一次"
     with session_factory() as session:
         done = AiGenerationService().get_task(session, project_id=7, task_id=task_id)
         assert done.status is TaskStatus.FAILED, "无冻结的 pending 任务还停在开放态"
@@ -688,7 +677,5 @@ def test_a_row_without_an_id_is_skipped_instead_of_crashing_recovery(
     with session_factory() as session:
         recover_orphaned_generation_tasks(
             session,
-            dispatcher=type("D", (), {"submit": staticmethod(lambda *a, **k: None)})(),
-            run_image_task=lambda *a: None,
-            run_action_task=lambda *a: None,
+            publisher=_tracking_publisher()[0],
         )
