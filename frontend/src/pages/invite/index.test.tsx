@@ -78,8 +78,8 @@ describe('InviteSection', () => {
     expect(screen.getByText('2')).toBeTruthy()
     expect(screen.getByText('100')).toBeTruthy()
     expect(screen.getByText('当前码注册')).toBeTruthy()
-    expect(screen.getByText(/好友注册共得 500 积分/)).toBeTruthy()
-    expect(screen.getByText(/每日前 3 位各得 200 积分/)).toBeTruthy()
+    expect(screen.getByText(/邀请成功，双方各得 200 积分/)).toBeTruthy()
+    expect(screen.getByText(/每日前 3 次邀请可得奖励/)).toBeTruthy()
     expect(screen.getByText('有效至 2026年9月16日')).toBeTruthy()
   })
 
