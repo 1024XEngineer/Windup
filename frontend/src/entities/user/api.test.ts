@@ -52,6 +52,7 @@ describe('createUserApis', () => {
       password: 'password-123',
       code: '123456',
       nickname: 'Reader',
+      inviteCode: 'AB23CD45',
     })
     await apis.login({
       email: 'reader@example.com',
@@ -79,6 +80,7 @@ describe('createUserApis', () => {
             email: 'reader@example.com',
             password: 'password-123',
             code: '123456',
+            invite_code: 'AB23CD45',
             nickname: 'Reader',
           },
         },
@@ -185,6 +187,28 @@ describe('createUserApis', () => {
       password: 'password-123',
       code: '123456',
       nickname: '',
+      inviteCode: 'AB23CD45',
+    })
+
+    expect(request).toHaveBeenCalledWith('/auth/register', {
+      method: 'POST',
+      json: {
+        email: 'reader@example.com',
+        password: 'password-123',
+        code: '123456',
+        invite_code: 'AB23CD45',
+      },
+    })
+  })
+
+  it('omits the optional invite code from public registration', async () => {
+    request.mockResolvedValue(tokenResponse)
+    const apis = createUserApis({ client })
+
+    await apis.register({
+      email: 'reader@example.com',
+      password: 'password-123',
+      code: '123456',
     })
 
     expect(request).toHaveBeenCalledWith('/auth/register', {
@@ -195,6 +219,8 @@ describe('createUserApis', () => {
         code: '123456',
       },
     })
+    const options = request.mock.calls[0]?.[1] as { json?: object } | undefined
+    expect(Object.hasOwn(options?.json ?? {}, 'invite_code')).toBe(false)
   })
 
   it('disables global unauthorized recovery for authentication requests', async () => {

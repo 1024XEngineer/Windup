@@ -13,6 +13,7 @@ import type {
   GenerationApis,
   GenerationEvent,
   GenerationExpectation,
+  GeneratedImage,
   MediaReference,
   ReviewWorkflowNode,
   WorkflowActionInput,
@@ -38,6 +39,8 @@ export interface AddActionInput {
 export interface GenerateCharacterTemplateOptions {
   spriteWidth: number
   spriteHeight: number
+  /** 重生成时用上一版图片约束本次结果；不覆盖角色设定中的原始参考素材。 */
+  sourceImageUrl?: GeneratedImage['url']
   /** 手动编辑器提交时覆盖 configuring 节点的初始输入；节点通过后不再改写。 */
   input?: WorkflowCharacterInput
 }
@@ -51,6 +54,8 @@ export interface GenerateActionOptions {
 export interface GenerateFirstFrameOptions {
   spriteWidth: number
   spriteHeight: number
+  /** 重生成时用上一版首帧约束本次结果；不改写已确认的角色母版。 */
+  sourceImageUrl?: GeneratedImage['url']
 }
 
 export interface ApplyGenerationResultInput {
@@ -357,6 +362,7 @@ export function createWorkflowController({
     nodeId: CharacterSetupWorkflowNode['id'],
     options: GenerateCharacterTemplateOptions,
   ): Promise<WorkflowRun> {
+    const sourceImage = generatedImageReference(options.sourceImageUrl)
     const before = requireWorkflow()
     const setupBefore = findNode(before, nodeId)
     if (setupBefore.type !== 'character-setup') throw new Error('目标节点不是角色设定')
@@ -395,7 +401,7 @@ export function createWorkflowController({
         type: 'character_template',
         projectId: run.projectId,
         prompt: setupNode.input.prompt,
-        referenceMedia: setupNode.input.referenceMedia,
+        referenceMedia: sourceImage ? [sourceImage] : setupNode.input.referenceMedia,
         spriteWidth: options.spriteWidth,
         spriteHeight: options.spriteHeight,
       }
@@ -519,6 +525,7 @@ export function createWorkflowController({
     nodeId: ActionFirstFrameWorkflowNode['id'],
     options: GenerateFirstFrameOptions,
   ) {
+    const sourceImage = generatedImageReference(options.sourceImageUrl)
     return submitGeneration(nodeId, 'first_frame', (run, node) => {
       if (node.type !== 'action-first-frame') throw new Error('目标节点不是动作首帧')
       if (node.phase !== 'configuring') throw new Error('动作首帧节点当前不能生成')
@@ -533,7 +540,7 @@ export function createWorkflowController({
         prompt: node.input.prompt?.trim() || node.input.name,
         spriteWidth: options.spriteWidth,
         spriteHeight: options.spriteHeight,
-        referenceMedia: [characterTemplateReference],
+        referenceMedia: [sourceImage ?? characterTemplateReference],
       }
       return input
     })
@@ -1300,6 +1307,10 @@ function nonEmpty(value: string, field: string) {
   const normalized = value.trim()
   if (!normalized) throw new Error(`${field} 不能为空`)
   return normalized
+}
+
+function generatedImageReference(value: GeneratedImage['url'] | undefined) {
+  return value === undefined ? undefined : (nonEmpty(value, 'sourceImageUrl') as MediaReference)
 }
 
 function ensurePositiveInteger(value: number, field: string) {

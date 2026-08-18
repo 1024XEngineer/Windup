@@ -1,11 +1,22 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { Link, MemoryRouter } from 'react-router'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AppRoutes } from '@/app'
 import { AuthenticatedAuthSession } from '@/test/auth-session'
 import { createProjectAssetsBackend } from '@/test/project-assets-backend'
+
+import { readRecentPreviews, rememberRecentPreview } from './recent-previews'
+
+vi.mock('./recent-previews', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./recent-previews')>()
+  return { ...actual, getRecentPreviewOwnerId: () => '7' }
+})
+
+beforeEach(() => {
+  window.localStorage.clear()
+})
 
 afterEach(() => {
   cleanup()
@@ -22,13 +33,14 @@ function freezeAnimationFrame() {
   vi.stubGlobal('cancelAnimationFrame', () => undefined)
 }
 
-function renderPlaytest(path: string, fetchFn?: typeof globalThis.fetch) {
+function renderPlaytest(path: string, fetchFn?: typeof globalThis.fetch, switchTo?: string) {
   freezeAnimationFrame()
   vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
   vi.stubGlobal('fetch', fetchFn ?? createProjectAssetsBackend().fetch)
   return render(
     <AuthenticatedAuthSession>
       <MemoryRouter initialEntries={[path]}>
+        {switchTo ? <Link to={switchTo}>切换到另一条预览</Link> : null}
         <AppRoutes />
       </MemoryRouter>
     </AuthenticatedAuthSession>,
@@ -47,6 +59,13 @@ describe('PlaytestPage', () => {
     expect(screen.getByRole('button', { name: '绑定动作：呼吸待机' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '绑定动作：行走' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '导出Playtest 运行包' })).toBeTruthy()
+    await waitFor(() =>
+      expect(readRecentPreviews('7', window.localStorage)[0]).toMatchObject({
+        characterId: '51',
+        outfitId: 'outfit-default',
+        projectId: '42',
+      }),
+    )
   })
 
   it('plays frames in backend index order, not array order', async () => {
@@ -89,9 +108,24 @@ describe('PlaytestPage', () => {
   })
 
   it('maps the business not-found code to a stable message', async () => {
+    rememberRecentPreview(
+      '7',
+      {
+        characterId: '9999',
+        outfitId: 'outfit-default',
+        characterName: '已删除角色',
+        outfitName: '常态造型',
+        projectId: '42',
+        projectName: '点灯人 · MVP',
+        previewUrl: null,
+        lastOpenedAt: 1,
+      },
+      window.localStorage,
+    )
     renderPlaytest('/playtest/9999/outfit-default')
 
     expect(await screen.findByText('角色不存在')).toBeTruthy()
+    await waitFor(() => expect(readRecentPreviews('7', window.localStorage)).toEqual([]))
   })
 
   it('does not mislabel a transport failure as not found', async () => {
@@ -100,6 +134,34 @@ describe('PlaytestPage', () => {
     )
 
     expect(await screen.findByText('角色读取失败')).toBeTruthy()
+  })
+
+  it('keeps the previous recent record when the next routed character fails to load', async () => {
+    const backend = createProjectAssetsBackend()
+    const fetchWithFailedNextCharacter: typeof globalThis.fetch = (input, init) => {
+      const path = new URL(new Request(input, init).url).pathname
+      if (path === '/characters/52') return Promise.reject(new TypeError('network unavailable'))
+      return backend.fetch(input, init)
+    }
+
+    renderPlaytest(
+      '/playtest/51/outfit-default',
+      fetchWithFailedNextCharacter,
+      '/playtest/52/outfit-default',
+    )
+    expect(await screen.findByRole('heading', { name: '51 · 常态造型' })).toBeTruthy()
+    await waitFor(() =>
+      expect(readRecentPreviews('7', window.localStorage).map((item) => item.characterId)).toEqual([
+        '51',
+      ]),
+    )
+
+    fireEvent.click(screen.getByRole('link', { name: '切换到另一条预览' }))
+
+    expect(await screen.findByText('角色读取失败')).toBeTruthy()
+    expect(readRecentPreviews('7', window.localStorage).map((item) => item.characterId)).toEqual([
+      '51',
+    ])
   })
 
   it('shows an empty stage for an outfit whose actions have no frames', async () => {

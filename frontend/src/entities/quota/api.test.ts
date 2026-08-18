@@ -88,20 +88,72 @@ describe('createQuotaApis', () => {
     })
   })
 
+  it('读取并映射当前用户的邀请码', async () => {
+    request.mockResolvedValue({
+      code: 'AB23CD45',
+      used_count: 3,
+      expires_at: '2026-09-11T01:02:03Z',
+      create_at: '2026-08-12T01:02:03Z',
+      update_at: '2026-08-17T01:02:03Z',
+    })
+
+    await expect(createQuotaApis({ client }).getInviteCode()).resolves.toEqual({
+      code: 'AB23CD45',
+      usedCount: 3,
+      expiresAt: '2026-09-11T01:02:03Z',
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+    expect(request).toHaveBeenCalledWith('/quota/invite/code')
+  })
+
+  it('轮换邀请码并映射新的有效期', async () => {
+    request.mockResolvedValueOnce({
+      code: 'XY89KL23',
+      used_count: 0,
+      expires_at: '2026-09-16T03:00:00Z',
+      create_at: '2026-08-17T03:00:00Z',
+      update_at: '2026-08-17T03:00:00Z',
+    })
+
+    const apis = createQuotaApis({ client })
+    await expect(apis.generateInviteCode()).resolves.toMatchObject({
+      code: 'XY89KL23',
+      usedCount: 0,
+      expiresAt: '2026-09-16T03:00:00Z',
+    })
+    expect(request).toHaveBeenNthCalledWith(1, '/quota/invite/generate', { method: 'POST' })
+  })
+
   it('默认适配器读取环境地址并携带当前登录凭证', async () => {
     vi.resetModules()
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const url = String(input)
-      const body = url.includes('/quota/transactions')
-        ? {
-            code: 200,
-            message: 'ok',
-            data: [],
-            total: 0,
-            page: 1,
-            page_size: 20,
-          }
-        : { code: 200, message: 'ok', data: accountResponse }
+      let body: unknown
+      if (url.includes('/quota/transactions')) {
+        body = {
+          code: 200,
+          message: 'ok',
+          data: [],
+          total: 0,
+          page: 1,
+          page_size: 20,
+        }
+      } else if (url.includes('/quota/invite/')) {
+        body = {
+          code: 200,
+          message: 'ok',
+          data: {
+            code: 'AB23CD45',
+            used_count: 3,
+            expires_at: '2026-09-11T01:02:03Z',
+            create_at: '2026-08-12T01:02:03Z',
+            update_at: '2026-08-17T01:02:03Z',
+          },
+        }
+      } else {
+        body = { code: 200, message: 'ok', data: accountResponse }
+      }
       return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))
     })
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
@@ -118,6 +170,8 @@ describe('createQuotaApis', () => {
         items: [],
         total: 0,
       })
+      await expect(quotaApis.getInviteCode()).resolves.toMatchObject({ code: 'AB23CD45' })
+      await expect(quotaApis.generateInviteCode()).resolves.toMatchObject({ code: 'AB23CD45' })
       expect(fetchFn).toHaveBeenCalledWith(
         'https://api.windup.test/quota/balance',
         expect.objectContaining({
@@ -129,6 +183,8 @@ describe('createQuotaApis', () => {
       expect(fetchFn.mock.calls[1]?.[0]).toBe(
         'https://api.windup.test/quota/transactions?page=1&page_size=20',
       )
+      expect(fetchFn.mock.calls[2]?.[0]).toBe('https://api.windup.test/quota/invite/code')
+      expect(fetchFn.mock.calls[3]?.[0]).toBe('https://api.windup.test/quota/invite/generate')
     } finally {
       unregister()
       vi.unstubAllGlobals()

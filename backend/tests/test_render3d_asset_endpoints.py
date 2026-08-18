@@ -117,6 +117,9 @@ def api(auth_client, engine, render3d):
     session = sessionmaker(bind=engine)()
     session.add(Project(id=1, user_id=1, project_name="p", character_perspective=1,
                         directional_movement=1, sprite_width=64, sprite_height=64))
+    # 先落 project 再插 character:两者在同一 session 里时 SQLAlchemy 不保证插入顺序,
+    # 而 character.project_id 有真外键 —— 顺序反了就是 FOREIGN KEY constraint failed。
+    session.flush()
     session.add(Character(
         id=7, project_id=1, workflow_run_id=1, name="仙月",
         character_data={"version": 1, "outfits": [

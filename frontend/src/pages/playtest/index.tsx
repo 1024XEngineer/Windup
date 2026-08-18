@@ -1,10 +1,21 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useParams, useSearchParams } from 'react-router'
 
-import { characterApis, projectApis, type Character, type Project } from '@/entities'
+import {
+  characterApis,
+  getOutfitPlayback,
+  projectApis,
+  type Character,
+  type Project,
+} from '@/entities'
 import { ApiError } from '@/shared/api'
 
 import { PlaytestWorkbench } from './workbench'
+import {
+  getRecentPreviewOwnerId,
+  rememberRecentPreview,
+  removeRecentPreview,
+} from './recent-previews'
 
 export { PlaytestEntryPage } from './entry'
 
@@ -18,13 +29,20 @@ export interface PlaytestPageProps {
 }
 
 interface PageData {
+  loadedCharacterId: string | null
   character: Character | null
   project: Project | null
   error: string | null
   loading: boolean
 }
 
-const initialPageData: PageData = { character: null, project: null, error: null, loading: false }
+const initialPageData: PageData = {
+  loadedCharacterId: null,
+  character: null,
+  project: null,
+  error: null,
+  loading: false,
+}
 
 /**
  * 后端把「角色不存在」表达成 HTTP 200 里的业务码 404，真正的传输失败才落在 status 上。
@@ -32,6 +50,13 @@ const initialPageData: PageData = { character: null, project: null, error: null,
  */
 function isNotFoundError(error: unknown): boolean {
   return error instanceof ApiError && (error.code === 404 || error.status === 404)
+}
+
+function isUnavailableAssetError(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    (error.code === 403 || error.code === 404 || error.status === 403 || error.status === 404)
+  )
 }
 
 /**
@@ -42,6 +67,7 @@ function isNotFoundError(error: unknown): boolean {
 export function PlaytestPage({ renderToolbar }: PlaytestPageProps = {}) {
   const { characterId, outfitId } = useParams()
   const [searchParams] = useSearchParams()
+  const recentOwnerId = getRecentPreviewOwnerId()
   const initialActionId = searchParams.get('actionId')
   const [data, setData] = useState<PageData>(initialPageData)
 
@@ -58,10 +84,21 @@ export function PlaytestPage({ renderToolbar }: PlaytestPageProps = {}) {
       }))
       .then(
         ({ character, project }) => {
-          if (!cancelled) setData({ character, project, error: null, loading: false })
+          if (!cancelled) {
+            setData({
+              loadedCharacterId: characterId,
+              character,
+              project,
+              error: null,
+              loading: false,
+            })
+          }
         },
         (error: unknown) => {
           if (!cancelled) {
+            if (recentOwnerId && outfitId && isUnavailableAssetError(error)) {
+              removeRecentPreview(recentOwnerId, characterId, outfitId)
+            }
             setData({
               ...initialPageData,
               error: isNotFoundError(error) ? '角色不存在' : '角色读取失败',
@@ -73,7 +110,44 @@ export function PlaytestPage({ renderToolbar }: PlaytestPageProps = {}) {
     return () => {
       cancelled = true
     }
-  }, [characterId])
+  }, [characterId, outfitId, recentOwnerId])
+
+  useEffect(() => {
+    if (
+      !recentOwnerId ||
+      !characterId ||
+      data.loadedCharacterId !== characterId ||
+      !data.character ||
+      !data.project ||
+      data.error !== null
+    )
+      return
+
+    const outfit = data.character.outfits.find((candidate) => candidate.id === outfitId)
+    if (!outfit || !getOutfitPlayback(outfit).playable) {
+      removeRecentPreview(recentOwnerId, characterId, outfitId ?? '')
+      return
+    }
+
+    rememberRecentPreview(recentOwnerId, {
+      characterId,
+      outfitId: outfit.id,
+      characterName: data.character.name ?? '未命名角色',
+      outfitName: outfit.name,
+      projectId: data.character.projectId,
+      projectName: data.project.name,
+      previewUrl: outfit.previewUrl,
+      lastOpenedAt: Date.now(),
+    })
+  }, [
+    characterId,
+    data.character,
+    data.error,
+    data.loadedCharacterId,
+    data.project,
+    outfitId,
+    recentOwnerId,
+  ])
 
   if (characterId === undefined || outfitId === undefined)
     return <PlaytestPageMessage>预览台路由参数不完整</PlaytestPageMessage>

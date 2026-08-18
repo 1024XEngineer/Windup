@@ -94,32 +94,24 @@ describe('AccountPanel', () => {
 
     expect(screen.getByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '欢迎回来。' })).toBeTruthy()
-    expect(screen.queryByText('未注册的邮箱将在验证后自动创建账号。')).toBeNull()
-    expect(screen.getByText('内测期间仅支持已有账号登录。')).toBeTruthy()
+    expect(screen.getByText(/未注册的邮箱将在验证后自动创建账号/)).toBeTruthy()
     expect(screen.queryByRole('tab', { name: '注册' })).toBeNull()
-    expect(screen.queryByRole('button', { name: '创建账号' })).toBeNull()
-    expect(screen.getByRole('link', { name: 'GitHub Issues' }).getAttribute('href')).toBe(
-      'https://github.com/1024XEngineer/Windup/issues',
-    )
+    expect(screen.getByRole('button', { name: '创建账号' })).toBeTruthy()
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('邮箱')))
   })
 
-  it('opens a closed-registration URL as login and never starts signup', async () => {
-    const { apis } = renderPanel('/?account=register&returnTo=%2Fworkspace')
-
-    expect(screen.getByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: '欢迎回来。' })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: '创建账号' })).toBeNull()
-    expect(screen.queryByRole('button', { name: '继续' })).toBeNull()
-    expect(screen.getByRole('button', { name: '登录' })).toBeTruthy()
-    expect(screen.getByText(/内测期间暂不开放注册/)).toBeTruthy()
-    expect(apis.register).not.toHaveBeenCalled()
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('邮箱')))
-  })
-
-  // 内测关闭公开注册。重新开放时取消 skip，并恢复 AccountPanel 的 register 入口。
-  it.skip('opens registration as a centered, progressive form', async () => {
+  it('opens public registration without an invite code', async () => {
     renderPanel('/?account=register&returnTo=%2Fworkspace')
+
+    expect(screen.getByRole('dialog', { name: '创建 Windup 账号' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '欢迎来到 Windup' })).toBeTruthy()
+    expect(screen.queryByLabelText('邀请码')).toBeNull()
+    expect(screen.getByText('注册即赠 300 积分。')).toBeTruthy()
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('邮箱')))
+  })
+
+  it('delegates invite-link format validation to the backend', async () => {
+    renderPanel('/?account=register&invite=i0o1&returnTo=%2Fworkspace')
 
     const dialog = screen.getByRole('dialog', { name: '创建 Windup 账号' })
     expect(screen.getByRole('heading', { name: '欢迎来到 Windup' })).toBeTruthy()
@@ -128,13 +120,13 @@ describe('AccountPanel', () => {
     expect(screen.queryByText('继续搭建，')).toBeNull()
     expect(screen.getByTestId('register-fields').className).toContain('auth-register-fields')
     expect(screen.queryByRole('tablist', { name: '账号操作' })).toBeNull()
+    expect(screen.queryByLabelText('邀请码')).toBeNull()
     expect(screen.getByLabelText('邮箱')).toBeTruthy()
     expect(screen.queryByLabelText('密码')).toBeNull()
     expect(screen.queryByLabelText('昵称（选填）')).toBeNull()
     expect(screen.queryByLabelText('验证码')).toBeNull()
     expect(screen.getByTestId('register-fields').querySelector('[aria-live]')).toBeNull()
     expect(screen.getByRole('button', { name: '继续' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '登录' })).toBeTruthy()
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('邮箱')))
   })
 
@@ -154,20 +146,31 @@ describe('AccountPanel', () => {
     expect(screen.getByTestId('location').textContent).toBe('/?returnTo=%2Fprojects&source=header')
   })
 
+  it('closes immediately when reduced motion is requested', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('matchMedia', () => ({ matches: true }))
+    renderPanel('/?account=login')
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
   it('keeps keyboard focus inside the dialog in both tab directions', () => {
     renderPanel('/?account=login')
 
     const dialog = screen.getByRole('dialog', { name: '登录 Windup' })
     const closeButton = screen.getByRole('button', { name: '关闭账号面板' })
-    const requestAccess = screen.getByRole('link', { name: 'GitHub Issues' })
+    const switchButton = screen.getByRole('button', { name: '创建账号' })
 
-    requestAccess.focus()
-    fireEvent.keyDown(requestAccess, { key: 'Tab' })
+    switchButton.focus()
+    fireEvent.keyDown(switchButton, { key: 'Tab' })
     expect(document.activeElement).toBe(closeButton)
 
     closeButton.focus()
     fireEvent.keyDown(closeButton, { key: 'Tab', shiftKey: true })
-    expect(document.activeElement).toBe(requestAccess)
+    expect(document.activeElement).toBe(switchButton)
     expect(dialog.contains(document.activeElement)).toBe(true)
   })
 
@@ -242,14 +245,18 @@ describe('AccountPanel', () => {
     expect(screen.getByRole('button', { name: '发送验证码' }).hasAttribute('disabled')).toBe(false)
   })
 
-  it('validates a numeric six-character code before submitting', async () => {
+  it('delegates verification-code format validation to the backend', async () => {
     const { apis } = renderPanel()
     fillCodeLogin('reader@example.com', '12ab56')
 
     fireEvent.submit(screen.getByRole('button', { name: '登录' }).closest('form')!)
 
-    expect((await screen.findByRole('alert')).textContent).toContain('验证码需为 6 位数字')
-    expect(apis.loginByCode).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(apis.loginByCode).toHaveBeenCalledWith({
+        email: 'reader@example.com',
+        code: '12ab56',
+      }),
+    )
   })
 
   it('shows backend errors inline, preserves input, and prevents repeat submits', async () => {
@@ -364,20 +371,22 @@ describe('AccountPanel', () => {
     expect(apis.sendCode).not.toHaveBeenCalled()
   })
 
-  it('does not expose a signup switch from the login panel', async () => {
+  it('switches between login and public registration', async () => {
     vi.useFakeTimers()
     renderPanel('/?account=login&returnTo=%2Fworkspace')
 
-    expect(screen.queryByRole('button', { name: '创建账号' })).toBeNull()
-    expect(screen.getByTestId('location').textContent).toBe('/?account=login&returnTo=%2Fworkspace')
+    fireEvent.click(screen.getByRole('button', { name: '创建账号' }))
+    expect(screen.getByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
 
     await act(async () => vi.advanceTimersByTimeAsync(520))
-    expect(screen.getByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
-    expect(screen.getByTestId('location').textContent).toBe('/?account=login&returnTo=%2Fworkspace')
+    expect(screen.getByRole('dialog', { name: '创建 Windup 账号' })).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/?account=register&returnTo=%2Fworkspace',
+    )
   })
 
-  it.skip('preserves registration input when showing a password and returning a step', async () => {
-    renderPanel('/?account=register')
+  it('preserves registration input when showing a password and returning a step', async () => {
+    renderPanel('/?account=register&invite=AB23CD45')
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'new@example.com' } })
     fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
 
@@ -393,23 +402,10 @@ describe('AccountPanel', () => {
     expect(screen.getByTestId('auth-motion-stage').dataset.motionDirection).toBe('backward')
   })
 
-  it.skip('switches account entry only after the current panel exits', async () => {
-    vi.useFakeTimers()
-    renderPanel('/?account=login&returnTo=%2Fworkspace')
-
-    fireEvent.click(screen.getByRole('button', { name: '创建账号' }))
-    expect(screen.getByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
-    expect(screen.getByTestId('location').textContent).toBe('/?account=login&returnTo=%2Fworkspace')
-
-    await act(async () => vi.advanceTimersByTimeAsync(520))
-    expect(screen.getByRole('dialog', { name: '创建 Windup 账号' })).toBeTruthy()
-    expect(screen.getByTestId('location').textContent).toBe(
-      '/?account=register&returnTo=%2Fworkspace',
-    )
-  })
-
-  it.skip('validates each registration step and reuses the existing register API contract', async () => {
-    const { apis } = renderPanel('/?account=register&returnTo=%2Fworkspace')
+  it('submits the invite link code and shows backend expiry errors inline', async () => {
+    const { apis } = renderPanel('/?account=register&invite=ab23cd45&returnTo=%2Fworkspace')
+    apis.register.mockRejectedValue(new Error('邀请码已过期'))
+    expect(screen.queryByLabelText('邀请码')).toBeNull()
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'new@example.com' } })
 
     fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
@@ -452,7 +448,33 @@ describe('AccountPanel', () => {
         email: 'new@example.com',
         password: 'password-123',
         code: '123456',
+        inviteCode: 'AB23CD45',
         nickname: '新用户',
+      }),
+    )
+    expect((await screen.findByRole('alert')).textContent).toContain('邀请码已过期')
+  })
+
+  it('submits public registration without an invite code', async () => {
+    const { apis } = renderPanel('/?account=register&returnTo=%2Fworkspace')
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'direct@example.com' } })
+    fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
+
+    fireEvent.change(await screen.findByLabelText('密码'), {
+      target: { value: 'password-123' },
+    })
+    fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
+    await screen.findByLabelText('昵称（选填）')
+    fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
+
+    fireEvent.change(await screen.findByLabelText('验证码'), { target: { value: '123456' } })
+    fireEvent.submit(screen.getByRole('button', { name: '创建账号' }).closest('form')!)
+
+    await waitFor(() =>
+      expect(apis.register).toHaveBeenCalledWith({
+        email: 'direct@example.com',
+        password: 'password-123',
+        code: '123456',
       }),
     )
   })
