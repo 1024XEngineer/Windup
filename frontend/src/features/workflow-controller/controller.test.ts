@@ -854,6 +854,54 @@ describe('WorkflowController', () => {
     })
   })
 
+  it('角色母版微调由 Controller 读取上一版图片并组合临时描述', async () => {
+    const previousImage = 'https://img/knight.png'
+    const { controller, generation } = createController(createRun(completedCharacterNodes()))
+
+    await controller.regenerateCharacterTemplate('template-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      mode: 'refine',
+      adjustmentPrompt: '换成水彩风格',
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledWith({
+      type: 'character_template',
+      projectId: '1',
+      prompt: '像素骑士\n换成水彩风格',
+      referenceMedia: [previousImage],
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+    expect(controller.getWorkflow().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'setup-1',
+          input: expect.objectContaining({ prompt: '像素骑士' }),
+        }),
+      ]),
+    )
+  })
+
+  it('角色母版重新生成沿用原始输入且不携带上一版图片', async () => {
+    const { controller, generation } = createController(createRun(completedCharacterNodes()))
+
+    await controller.regenerateCharacterTemplate('template-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      mode: 'regenerate',
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledWith({
+      type: 'character_template',
+      projectId: '1',
+      prompt: '像素骑士',
+      referenceMedia: [],
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+  })
+
   it('角色设定已落库但生成请求失败后可以重试', async () => {
     const { controller, generation } = createController()
     vi.mocked(generation.apis.create).mockRejectedValueOnce(new Error('生成服务暂时不可用'))
@@ -1686,6 +1734,72 @@ describe('WorkflowController', () => {
       actionType: 'walk',
       prompt: '行走',
       referenceMedia: [previousImage],
+      spriteWidth: 64,
+      spriteHeight: 96,
+    })
+  })
+
+  it('动作首帧微调由 Controller 读取上一版图片并组合临时描述', async () => {
+    const previousImage = 'https://img/first-frame-previous.png'
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: previousImage,
+        input: actionInput({ prompt: '向前行走' }),
+      }),
+      generationMethodNode(),
+      fullFrameNode(),
+      reviewNode(),
+    ])
+    const { controller, generation } = createController(run)
+
+    await controller.regenerateFirstFrame('action-walk', {
+      spriteWidth: 64,
+      spriteHeight: 96,
+      mode: 'refine',
+      adjustmentPrompt: '抬高手臂',
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledWith({
+      type: 'first_frame',
+      projectId: '1',
+      actionType: 'walk',
+      prompt: '向前行走\n抬高手臂',
+      referenceMedia: [previousImage],
+      spriteWidth: 64,
+      spriteHeight: 96,
+    })
+  })
+
+  it('动作首帧重新生成沿用原始输入且不携带上一版图片', async () => {
+    const previousImage = 'https://img/first-frame-previous.png'
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: previousImage,
+      }),
+      generationMethodNode(),
+      fullFrameNode(),
+      reviewNode(),
+    ])
+    const { controller, generation } = createController(run)
+
+    await controller.regenerateFirstFrame('action-walk', {
+      spriteWidth: 64,
+      spriteHeight: 96,
+      mode: 'regenerate',
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledWith({
+      type: 'first_frame',
+      projectId: '1',
+      actionType: 'walk',
+      prompt: '行走',
+      referenceMedia: ['https://img/knight.png'],
       spriteWidth: 64,
       spriteHeight: 96,
     })
