@@ -1,0 +1,113 @@
+name: Release
+
+# 只在 main 上跑,且要等 CI 绿 —— 直接挂 push 会在测试未过时就发版,
+# 而 #334 第四节要求部署只认 Release,发一个坏 Release 等于把坏代码送上生产。
+on:
+  workflow_run:
+    workflows: ["Backend CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 版本号进位方式
+        required: false
+        default: auto
+        type: choice
+        options: [auto, patch, minor, major]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # workflow_run 会在 CI 失败时也触发,故必须自己判 conclusion。
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0        # 需要全部 tag 才能算出上一版和变更范围
+
+      - name: Decide next version
+        id: ver
+        env:
+          BUMP: ${{ inputs.bump || 'auto' }}
+        run: |
+          set -euo pipefail
+          last="$(git tag --list 'v*' --sort=-v:refname | head -1)"
+          if [ -z "$last" ]; then
+            echo "prev=" >> "$GITHUB_OUTPUT"
+            echo "next=v0.1.0" >> "$GITHUB_OUTPUT"
+            echo "range=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          IFS=. read -r maj min pat <<< "${last#v}"
+          subjects="$(git log "$last"..HEAD --pretty=%s)"
+          # 进位规则照 Conventional Commits:破坏性 → major,feat → minor,其余 → patch
+          kind=patch
+          grep -qE '^[a-z]+(\([^)]*\))?!:|BREAKING CHANGE' <<< "$subjects" && kind=major
+          [ "$kind" = patch ] && grep -qE '^feat(\([^)]*\))?:' <<< "$subjects" && kind=minor
+          [ "$BUMP" != auto ] && kind="$BUMP"
+          case "$kind" in
+            major) maj=$((maj+1)); min=0; pat=0 ;;
+            minor) min=$((min+1)); pat=0 ;;
+            patch) pat=$((pat+1)) ;;
+          esac
+          echo "prev=$last" >> "$GITHUB_OUTPUT"
+          echo "next=v$maj.$min.$pat" >> "$GITHUB_OUTPUT"
+          echo "range=$last..HEAD" >> "$GITHUB_OUTPUT"
+
+      - name: Skip when nothing new
+        id: gate
+        run: |
+          set -euo pipefail
+          if [ -n "${{ steps.ver.outputs.range }}" ] && \
+             [ -z "$(git log ${{ steps.ver.outputs.range }} --oneline)" ]; then
+            echo "有 tag 但无新提交,不发版"
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write release notes
+        if: steps.gate.outputs.go == 'true'
+        run: |
+          set -euo pipefail
+          {
+            echo "## 本次变更"
+            echo
+            for pair in "feat:功能" "fix:修复" "refactor:重构" "perf:性能" "docs:文档" "ci:构建与流水线"; do
+              t="${pair%%:*}"; label="${pair##*:}"
+              body="$(git log ${{ steps.ver.outputs.range }} --pretty='- %s' \
+                      | grep -E "^- $t(\([^)]*\))?!?:" || true)"
+              [ -n "$body" ] && { echo "### $label"; echo; echo "$body"; echo; }
+            done
+            echo "---"
+            echo
+            echo "部署以本 Release 的 tag 为准（#334 第四节）。"
+            [ -n "${{ steps.ver.outputs.prev }}" ] && \
+              echo "对比：${{ steps.ver.outputs.prev }}...${{ steps.ver.outputs.next }}"
+          } > notes.md
+          cat notes.md
+
+      - name: Tag and publish
+        if: steps.gate.outputs.go == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXT: ${{ steps.ver.outputs.next }}
+        run: |
+          set -euo pipefail
+          # 幂等:同名 tag 已存在就不再发,避免 workflow_run 重放造成重复 Release
+          if git rev-parse "$NEXT" >/dev/null 2>&1; then
+            echo "$NEXT 已存在,跳过"; exit 0
+          fi
+          git tag -a "$NEXT" -m "$NEXT"
+          git push origin "$NEXT"
+          gh release create "$NEXT" --title "$NEXT" --notes-file notes.md
