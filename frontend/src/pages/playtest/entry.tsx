@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 
 import playtestArtwork from '@/assets/workspace/playtest.png'
+import { AssetPreviewCard } from '@/shared/ui'
 
 import { getRecentPreviewOwnerId, readRecentPreviews, type RecentPreview } from './recent-previews'
 
@@ -67,46 +68,16 @@ function RecentPreviewGrid({ previews }: { previews: RecentPreview[] }) {
 function RecentPreviewCard({ preview, priority }: { preview: RecentPreview; priority: boolean }) {
   const label = `${preview.characterName || '未命名角色'} · ${preview.outfitName}`
   return (
-    <article className="group/tile relative min-w-0">
-      <Link
-        to={`/playtest/${preview.characterId}/${preview.outfitId}`}
-        aria-label={`继续预览 ${label}`}
-        className="block focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-ink"
-      >
-        <div className="relative aspect-[16/10] overflow-hidden rounded-[1.25rem] border border-app-line bg-app-surface-muted transition duration-300 group-hover/tile:-translate-y-0.5 group-hover/tile:border-app-line-strong">
-          {preview.previewUrl ? (
-            <img
-              src={preview.previewUrl}
-              alt={`${label}预览图`}
-              loading={priority ? 'eager' : 'lazy'}
-              decoding="async"
-              fetchPriority={priority ? 'high' : 'auto'}
-              className="h-full w-full object-contain p-6 [image-rendering:pixelated] transition-transform duration-500 group-hover/tile:scale-[1.025]"
-            />
-          ) : (
-            <div className="relative h-full overflow-hidden bg-app-surface-muted">
-              <div
-                aria-hidden="true"
-                className="absolute inset-0 opacity-55"
-                style={{
-                  backgroundImage:
-                    'linear-gradient(to right, var(--color-app-line) 1px, transparent 1px), linear-gradient(to bottom, var(--color-app-line) 1px, transparent 1px)',
-                  backgroundPosition: 'center center',
-                  backgroundSize: '24px 24px',
-                }}
-              />
-              <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-app-surface/85 px-2 py-1 font-mono text-[10px] tracking-[0.06em] text-app-faint backdrop-blur-sm">
-                暂无造型预览
-              </span>
-            </div>
-          )}
-        </div>
-        <div className="mt-3 flex min-w-0 items-baseline justify-between gap-4 px-0.5">
-          <h3 className="min-w-0 truncate text-sm font-semibold text-app-ink">{label}</h3>
-          <span className="shrink-0 truncate text-xs text-app-faint">{preview.projectName}</span>
-        </div>
-      </Link>
-    </article>
+    <AssetPreviewCard
+      to={`/playtest/${preview.characterId}/${preview.outfitId}`}
+      ariaLabel={`继续预览 ${label}`}
+      title={label}
+      subtitle=""
+      trailing={preview.projectName}
+      previewUrl={preview.previewUrl}
+      previewAlt={`${label}预览图`}
+      priority={priority}
+    />
   )
 }
 
