@@ -57,9 +57,9 @@ describe('CharacterDetailPage', () => {
     expect(screen.queryByText('当前阶段')).toBeNull()
     expect(screen.queryByRole('dialog', { name: '导出资产包' })).toBeNull()
     expect(screen.queryByText('导出能力待 PR #97 合并并完成资产字段接线')).toBeNull()
-    expect(screen.getByRole('link', { name: '在预览台打开当前造型' }).getAttribute('href')).toBe(
-      '/playtest/51/outfit-default',
-    )
+    const playtestEntry = screen.getByRole('link', { name: '在预览台打开当前造型' })
+    expect(playtestEntry.getAttribute('href')).toBe('/playtest/51/outfit-default')
+    expect(playtestEntry.parentElement?.className).toContain('items-start')
   })
 
   it('expands an Action into backend Frames sorted by index', async () => {
