@@ -43,7 +43,10 @@ def recover_orphaned_generation_tasks(
     for task in task_repo.list_by_status(
         session, (TaskStatus.PENDING, TaskStatus.RUNNING),
     ):
-        if task.id is None or not billing.has_open_freeze(session, task.id):
+        if task.id is None:
+            continue
+        if not billing.has_open_freeze(session, task.id):
+            _fail_unrecoverable(session, task)
             continue
         if task.status is TaskStatus.RUNNING:
             if not fail_stale_running:
@@ -56,6 +59,16 @@ def recover_orphaned_generation_tasks(
             _fail_interrupted(session, task)
             continue
         _requeue_pending(session, publisher, task)
+
+
+def _fail_unrecoverable(session: Session, task: GenerationTask) -> None:
+    """没有冻结可退,也不重跑;只保证它不再停在开放态。"""
+    assert task.id is not None
+    task_repo.update_status(
+        session, task.id, TaskStatus.FAILED,
+        error_message="任务已中断，请重新提交",
+    )
+    logger.warning("无冻结的开放任务已置为失败 | task_id=%s %s", task.id, task.status)
 
 
 def _fail_interrupted(session: Session, task: GenerationTask) -> None:

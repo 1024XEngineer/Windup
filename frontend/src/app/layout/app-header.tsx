@@ -245,10 +245,10 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
                   <div className="relative flex items-start gap-3">
                     <div className="min-w-0">
                       <p className="text-[13px] font-medium leading-5 text-app-ink-soft">
-                        每日前 3 位好友，你各得 200 积分
+                        邀请成功，双方各得 200 积分
                       </p>
                       <p className="mt-0.5 text-[11px] leading-4 text-app-faint">
-                        好友注册共得 500 积分
+                        每日前 3 次邀请可得奖励
                       </p>
                       <Link
                         to="/account?section=invite"
