@@ -41,6 +41,8 @@ export interface GenerateCharacterTemplateOptions {
   spriteHeight: number
   /** 重生成时用上一版图片约束本次结果；不覆盖角色设定中的原始参考素材。 */
   sourceImageUrl?: GeneratedImage['url']
+  /** 只影响本次请求的 prompt 覆盖值；不改写角色设定节点的原始输入。 */
+  prompt?: string
   /** 手动编辑器提交时覆盖 configuring 节点的初始输入；节点通过后不再改写。 */
   input?: WorkflowCharacterInput
 }
@@ -56,6 +58,18 @@ export interface GenerateFirstFrameOptions {
   spriteHeight: number
   /** 重生成时用上一版首帧约束本次结果；不改写已确认的角色母版。 */
   sourceImageUrl?: GeneratedImage['url']
+  /** 只影响本次请求的 prompt 覆盖值；不改写动作节点的原始输入。 */
+  prompt?: string
+}
+
+export type RegenerationMode = 'regenerate' | 'refine'
+
+export interface RegenerateImageOptions {
+  spriteWidth: number
+  spriteHeight: number
+  mode: RegenerationMode
+  /** 微调时追加到原始描述的临时说明；重新生成模式下不得提交。 */
+  adjustmentPrompt?: string
 }
 
 export interface ApplyGenerationResultInput {
@@ -93,6 +107,10 @@ export interface WorkflowController {
     nodeId: CharacterSetupWorkflowNode['id'],
     options: GenerateCharacterTemplateOptions,
   ): Promise<void>
+  regenerateCharacterTemplate(
+    nodeId: CharacterTemplateWorkflowNode['id'],
+    options: RegenerateImageOptions,
+  ): Promise<void>
   /** 仅在入口节点尚未提交时修改角色描述和参考媒体。 */
   updateCharacterSetup(
     nodeId: CharacterSetupWorkflowNode['id'],
@@ -112,6 +130,10 @@ export interface WorkflowController {
   generateFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
     options: GenerateFirstFrameOptions,
+  ): Promise<void>
+  regenerateFirstFrame(
+    nodeId: ActionFirstFrameWorkflowNode['id'],
+    options: RegenerateImageOptions,
   ): Promise<void>
   confirmFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
@@ -400,7 +422,10 @@ export function createWorkflowController({
       const input: CharacterTemplateGenerationInput = {
         type: 'character_template',
         projectId: run.projectId,
-        prompt: setupNode.input.prompt,
+        prompt:
+          options.prompt === undefined
+            ? setupNode.input.prompt
+            : nonEmpty(options.prompt, 'prompt'),
         referenceMedia: sourceImage ? [sourceImage] : setupNode.input.referenceMedia,
         spriteWidth: options.spriteWidth,
         spriteHeight: options.spriteHeight,
@@ -537,12 +562,72 @@ export function createWorkflowController({
         type: 'first_frame',
         projectId: run.projectId,
         actionType: node.input.type,
-        prompt: node.input.prompt?.trim() || node.input.name,
+        prompt:
+          options.prompt === undefined
+            ? node.input.prompt?.trim() || node.input.name
+            : nonEmpty(options.prompt, 'prompt'),
         spriteWidth: options.spriteWidth,
         spriteHeight: options.spriteHeight,
         referenceMedia: [sourceImage ?? characterTemplateReference],
       }
       return input
+    })
+  }
+
+  async function regenerateCharacterTemplate(
+    nodeId: CharacterTemplateWorkflowNode['id'],
+    options: RegenerateImageOptions,
+  ): Promise<WorkflowRun> {
+    ensurePositiveInteger(options.spriteWidth, 'spriteWidth')
+    ensurePositiveInteger(options.spriteHeight, 'spriteHeight')
+    const before = requireWorkflow()
+    const templateNode = findNode(before, nodeId)
+    if (templateNode.type !== 'character-template') throw new Error('目标节点不是角色母版')
+    if (
+      templateNode.status !== 'passed' ||
+      templateNode.phase !== 'completed' ||
+      !templateNode.selectedImageUrl
+    ) {
+      throw new Error('角色母版当前不能重新生成')
+    }
+    const setupNode = findSingleDependencyNode(before, templateNode, 'character-setup')
+    const prompt = adjustedPrompt(setupNode.input.prompt, options)
+    const sourceImageUrl = options.mode === 'refine' ? templateNode.selectedImageUrl : undefined
+    await restartFromNode(nodeId)
+    return generateCharacterTemplate(setupNode.id, {
+      spriteWidth: options.spriteWidth,
+      spriteHeight: options.spriteHeight,
+      sourceImageUrl,
+      prompt,
+    })
+  }
+
+  async function regenerateFirstFrame(
+    nodeId: ActionFirstFrameWorkflowNode['id'],
+    options: RegenerateImageOptions,
+  ): Promise<WorkflowRun> {
+    ensurePositiveInteger(options.spriteWidth, 'spriteWidth')
+    ensurePositiveInteger(options.spriteHeight, 'spriteHeight')
+    const before = requireWorkflow()
+    const firstFrameNode = findNode(before, nodeId)
+    if (firstFrameNode.type !== 'action-first-frame') throw new Error('目标节点不是动作首帧')
+    if (
+      firstFrameNode.status !== 'passed' ||
+      firstFrameNode.phase !== 'completed' ||
+      !firstFrameNode.selectedFirstFrameUrl
+    ) {
+      throw new Error('动作首帧当前不能重新生成')
+    }
+    const basePrompt = firstFrameNode.input.prompt?.trim() || firstFrameNode.input.name
+    const prompt = adjustedPrompt(basePrompt, options)
+    const sourceImageUrl =
+      options.mode === 'refine' ? firstFrameNode.selectedFirstFrameUrl : undefined
+    await restartFromNode(nodeId)
+    return generateFirstFrame(nodeId, {
+      spriteWidth: options.spriteWidth,
+      spriteHeight: options.spriteHeight,
+      sourceImageUrl,
+      prompt,
     })
   }
 
@@ -1009,10 +1094,12 @@ export function createWorkflowController({
     setCharacterName: asCommand(setCharacterName),
     addAction: asCommand(addAction),
     generateCharacterTemplate: asCommand(generateCharacterTemplate),
+    regenerateCharacterTemplate: asCommand(regenerateCharacterTemplate),
     updateCharacterSetup: asCommand(updateCharacterSetup),
     acceptUploadedCharacterTemplate: asCommand(acceptUploadedCharacterTemplate),
     confirmCharacterTemplate: asCommand(confirmCharacterTemplate),
     generateFirstFrame: asCommand(generateFirstFrame),
+    regenerateFirstFrame: asCommand(regenerateFirstFrame),
     confirmFirstFrame: asCommand(confirmFirstFrame),
     selectActionGenerationMethod: asCommand(selectActionGenerationMethod),
     generateCompleteAnimation: asCommand(generateCompleteAnimation),
@@ -1311,6 +1398,16 @@ function nonEmpty(value: string, field: string) {
 
 function generatedImageReference(value: GeneratedImage['url'] | undefined) {
   return value === undefined ? undefined : (nonEmpty(value, 'sourceImageUrl') as MediaReference)
+}
+
+function adjustedPrompt(basePrompt: string, options: RegenerateImageOptions) {
+  const base = nonEmpty(basePrompt, 'prompt')
+  if (options.mode === 'regenerate') {
+    if (options.adjustmentPrompt?.trim()) throw new Error('重新生成不能携带微调描述')
+    return base
+  }
+  if (options.mode !== 'refine') throw new Error('不支持的重新生成模式')
+  return `${base}\n${nonEmpty(options.adjustmentPrompt ?? '', 'adjustmentPrompt')}`
 }
 
 function ensurePositiveInteger(value: number, field: string) {
