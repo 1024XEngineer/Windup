@@ -143,6 +143,17 @@
             "title": "Num Frames",
             "type": "integer"
           },
+          "outfit_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outfit Id"
+          },
           "project_id": {
             "exclusiveMinimum": 0.0,
             "title": "Project Id",
@@ -452,6 +463,18 @@
             "description": "造型稳定 ID",
             "title": "Id",
             "type": "string"
+          },
+          "model_3d_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "该造型的绑骨 3D 模型 URL;None = 未建,三渲二不可用",
+            "title": "Model 3D Url"
           },
           "name": {
             "description": "造型名称",
@@ -1033,6 +1056,45 @@
           "password"
         ],
         "title": "LoginRequest",
+        "type": "object"
+      },
+      "MasterPrecheckRequest": {
+        "description": "要预检的母版。只收自家对象存储的 URL —— 服务端替调用方拉任意地址等于把服务器\n当跳板,见 ``orchestrator._fetch``。",
+        "properties": {
+          "canvas_height": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canvas Height"
+          },
+          "canvas_width": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canvas Width"
+          },
+          "image_url": {
+            "minLength": 1,
+            "title": "Image Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "image_url"
+        ],
+        "title": "MasterPrecheckRequest",
         "type": "object"
       },
       "MediaCategory": {
@@ -1761,6 +1823,50 @@
           }
         },
         "title": "Response[WorkflowRunOut]",
+        "type": "object"
+      },
+      "Response_dict_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "业务数据",
+            "title": "Data"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          }
+        },
+        "title": "Response[dict]",
         "type": "object"
       },
       "SendCodeRequest": {
@@ -3296,6 +3402,255 @@
         "summary": "List Transactions",
         "tags": [
           "quota"
+        ]
+      }
+    },
+    "/render3d/characters/{character_id}/outfits/{outfit_id}": {
+      "get": {
+        "operationId": "get_outfit_asset_render3d_characters__character_id__outfits__outfit_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "outfit_id",
+            "required": true,
+            "schema": {
+              "title": "Outfit Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_dict_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Outfit Asset",
+        "tags": [
+          "render3d"
+        ]
+      }
+    },
+    "/render3d/characters/{character_id}/outfits/{outfit_id}/approve": {
+      "post": {
+        "description": "人看过模型并点头 → 继续绑骨。**唯一的放行入口**,没有超时自动放行。",
+        "operationId": "approve_outfit_asset_render3d_characters__character_id__outfits__outfit_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "outfit_id",
+            "required": true,
+            "schema": {
+              "title": "Outfit Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_dict_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve Outfit Asset",
+        "tags": [
+          "render3d"
+        ]
+      }
+    },
+    "/render3d/characters/{character_id}/outfits/{outfit_id}/build": {
+      "post": {
+        "description": "启动图生 3D。**按次计费的触发点**,所以只认用户的显式请求,不在任何自动路径上。",
+        "operationId": "build_outfit_asset_render3d_characters__character_id__outfits__outfit_id__build_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "outfit_id",
+            "required": true,
+            "schema": {
+              "title": "Outfit Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_dict_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Build Outfit Asset",
+        "tags": [
+          "render3d"
+        ]
+      }
+    },
+    "/render3d/characters/{character_id}/outfits/{outfit_id}/discard": {
+      "post": {
+        "description": "模型不合格 → 丢弃重来。混元的模型改不动,这是唯一的补救。",
+        "operationId": "discard_outfit_asset_render3d_characters__character_id__outfits__outfit_id__discard_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "outfit_id",
+            "required": true,
+            "schema": {
+              "title": "Outfit Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_dict_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Discard Outfit Asset",
+        "tags": [
+          "render3d"
+        ]
+      }
+    },
+    "/render3d/master-precheck": {
+      "post": {
+        "description": "零成本母版预检。**不产生任何按次计费调用**,可以在确认闸上随便调。",
+        "operationId": "precheck_master_render3d_master_precheck_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MasterPrecheckRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_dict_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Precheck Master",
+        "tags": [
+          "render3d"
         ]
       }
     },

@@ -412,9 +412,12 @@ def test_genroute_only_lists_implemented_routes():
       - 未来路线（三渲二渲染出帧）**不提前留位**，契约需求记在 Issue，随实现一起加成员。
     枚举加成员是纯加法，不构成破坏性变更，所以"提前留位免得二次改形"不成立。
     """
-    assert {r.value for r in GenRoute} == {"video_i2v", "per_frame"}
+    assert {r.value for r in GenRoute} == {"video_i2v", "per_frame", "render_3d"}
     import windup_ai_engine.strategy as strat
     assert not hasattr(strat, "ProcIdleStrategy")
+    # render_3d 是随实现一起加的(RenderFrameStrategy + executor 装配),不是提前留位 ——
+    # 真实装配那条断言在 test_orchestrator_hardening 里。
+    assert hasattr(strat, "RenderFrameStrategy")
 
 
 # ── 交付画布尺寸(2026-08-11 挣得)────────────────────────────────────────────

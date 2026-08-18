@@ -13,7 +13,7 @@ import numpy as np
 from ._frames import gray as _gray
 
 __all__ = ["active_span", "blur_ratio", "dead_frame_indices", "dead_frame_mask",
-           "frame_deltas", "loop_seam", "motion_scale"]
+           "frame_deltas", "limb_motion", "loop_seam", "motion_scale"]
 
 
 def frame_deltas(frames) -> np.ndarray:
@@ -145,4 +145,48 @@ def blur_ratio(frames, ps: int = 32) -> np.ndarray:
             k = max(4, int(cand.sum() * .25))
             m = cand & (mv <= np.sort(mv[cand])[:k].max())
         out[i] = float(np.median(sharp[i][m] / np.maximum(ref[m], 1e-6)))
+    return out
+
+
+def limb_motion(frames, *, grid: tuple[int, int] = (3, 2)) -> dict[str, float]:
+    """按身体分区量动量,返回**各区占总动量的比例** + 最静区名 ``still``。
+
+    存在的理由是整幅平均逮不到"一部分肢体在动、另一部分冻着"::func:`motion_scale`
+    与 :func:`dead_frame_mask` 的判据都是相对的,整体在动时它们全绿,而"腿在迈、手臂
+    僵成柱子"正是**自动绑骨漏认肢体**的典型表现 —— 那块网格没有骨骼驱动,每帧同姿势。
+
+    只报占比、不给合格线:几何分区区分不了"该动没动"和"本来就不该动",那需要动作语义。
+    试过的两个汇总判据都不成立 —— ``max/min`` 的分母常落在本就不该动的静区,
+    ``max/median`` 在半数区冻结时中位数落到活跃那侧,恰在最该报警时比值 ≈ 1.0。
+    故**判决交给调用方**,与 :class:`ports.ActionQuality` 其余读数同一取向。
+
+    读法:6 区均匀分布时各占 ≈0.17;某区接近 0 且按动作语义**该动**,那块多半没被骨骼
+    驱动。分区按主体包围盒切(不是整幅画布),否则角色在画面里位置一变区就对不上。
+    """
+    from ._frames import alpha_stack as _masks
+
+    m = _masks(frames)
+    if m.shape[0] < 2:
+        return {"still": ""}
+    ys, xs = np.where(m.any(0))
+    if not len(ys):
+        return {"still": ""}
+    y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
+    rows, cols = grid
+    hs = np.linspace(y0, y1, rows + 1).astype(int)
+    ws = np.linspace(x0, x1, cols + 1).astype(int)
+    names_r = ("上", "中", "下")[:rows]
+    names_c = ("左", "右")[:cols] if cols == 2 else tuple(str(i) for i in range(cols))
+
+    raw: dict[str, float] = {}
+    for r in range(rows):
+        for c in range(cols):
+            blk = m[:, hs[r]:hs[r + 1], ws[c]:ws[c + 1]]
+            raw[f"{names_r[r]}{names_c[c]}"] = float(blk.std(0).sum())
+    total = sum(raw.values())
+    out: dict[str, float] = {k: round(v / total, 3) if total > 0 else 0.0
+                             for k, v in raw.items()}
+    # 在**只有分区**的字典上挑最静区,再把它写回去。反过来的话 `still` 会挑中自己写进去
+    # 的汇总键 —— 一个只在数据上体现、不会报错的错。
+    out["still"] = min(raw, key=lambda k: raw[k])
     return out

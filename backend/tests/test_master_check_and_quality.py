@@ -234,3 +234,61 @@ def test_quality_fields_are_independent():
     两者若能互推，这一组断言不可能同时成立。"""
     q = ActionQuality(motion_scale=0.0, dead_frames=(), loop_seam=None)
     assert q.motion_scale == 0.0 and q.dead_frames == () and q.loop_seam is None
+
+
+# ── 分区动量:整幅指标的盲区 ──────────────────────────────────────────────
+
+
+def test_limb_motion_catches_a_frozen_region_that_whole_frame_metrics_miss():
+    """一半肢体冻着、另一半在动 —— motion_scale 与死帧全部正常,只有分区动量看得见。
+
+    这是自动绑骨漏认一条肢体的典型产物:那块网格没有骨骼驱动,每帧同姿势。
+    """
+    from windup_ai_engine.slicing.quality import (
+        dead_frame_indices,
+        limb_motion,
+        motion_scale,
+    )
+
+    # 左半永远不变,右半逐帧移动
+    frames = []
+    for i in range(12):
+        im = Image.new("RGBA", (64, 96), (0, 0, 0, 0))
+        for y in range(20, 80):
+            for x in range(8, 24):                     # 左半:固定
+                im.putpixel((x, y), (200, 60, 60, 255))
+            for x in range(40 + (i % 4), 52 + (i % 4)):  # 右半:动
+                im.putpixel((x, y), (60, 60, 200, 255))
+        frames.append(im)
+
+    assert motion_scale(frames) > 0.5, "整幅指标应当认为这段在动"
+    assert len(dead_frame_indices(frames)) < len(frames) // 2, "整幅判据也不会报成死帧"
+
+    lm = limb_motion(frames)
+    left = [v for k, v in lm.items() if k.endswith("左") and isinstance(v, float)]
+    right = [v for k, v in lm.items() if k.endswith("右") and isinstance(v, float)]
+    assert max(left) < 0.02, f"冻结的左半占比应当接近 0,实际 {left}"
+    assert min(right) > 0.1, f"在动的右半占比应当显著为正,实际 {right}"
+    assert "左" in lm["still"], f"最静区应当在左半,实际 {lm['still']}"
+
+
+def test_limb_motion_summary_keys_are_not_mistaken_for_regions():
+    """``still`` 只能指向真实分区,不能挑中自己。
+
+    把汇总键写进字典后才算最小值的话,它(值通常比任何区都小)会被挑成"最静区",
+    报出一个不存在的区名 —— 一个只在数据上体现、不会报错的错。顺带钉住占比归一。
+    """
+    from windup_ai_engine.slicing.quality import limb_motion
+
+    frames = [Image.new("RGBA", (64, 96), (0, 0, 0, 0)) for _ in range(4)]
+    for i, im in enumerate(frames):
+        for y in range(20, 80):
+            for x in range(10 + i, 30 + i):
+                im.putpixel((x, y), (200, 60, 60, 255))
+    lm = limb_motion(frames)
+    assert lm["still"] != "still", f"still 挑中了汇总键:{lm['still']}"
+    assert lm["still"] in lm and isinstance(lm[lm["still"]], float)
+    shares = [v for k, v in lm.items() if k != "still"]
+    # 容差取舍入精度:各区各自 round 到 3 位,6 个区最多累积 6×0.0005 的误差。
+    # 不写 1e-6 —— 那样断言的是"没做舍入",而不是"归一化对了"。
+    assert abs(sum(shares) - 1.0) < 0.01, f"各区占比应当归一,实际和 {sum(shares)}"

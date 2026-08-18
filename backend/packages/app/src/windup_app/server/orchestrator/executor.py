@@ -196,6 +196,7 @@ class ActionTaskExecutor:
         generator: CharacterGeneratorPort | None = None,
         upload: Callable[[bytes], str] | None = None,
         fetch_master: Callable[[CharacterActionInput], bytes] | None = None,
+        fetch_model3d: Callable[[str], bytes] | None = None,
         fetch_constraints: Callable[[Session, int | None], ProjectConstraints] | None = None,
         session_factory: Callable[[], Session] | None = None,
     ) -> None:
@@ -211,6 +212,7 @@ class ActionTaskExecutor:
         self._assembly_lock = threading.Lock()
         self._upload = upload                # None → 真实对象存储上传
         self._fetch_master = fetch_master    # None → 下载 reference_image_urls[0]
+        self._fetch_model3d = fetch_model3d  # None → 下载 input.model_3d_url
         self._fetch_constraints = fetch_constraints  # None → 查 project 全局约束
         self._session_factory = session_factory  # None → SessionLocal
 
@@ -271,7 +273,6 @@ class ActionTaskExecutor:
         """
         if cons.directions > 1:
             logger.info("项目要求 %s 方向,MVP 先出主方向(多方向待扩展)", cons.directions)
-        master = (self._fetch_master or self._download_master)(input)
         # 视频 i2v 没有独立的 style reference 字段,风格约束走提示词文字
         desc_parts = [input.custom_prompt or ""]
         if cons.style:
@@ -295,9 +296,33 @@ class ActionTaskExecutor:
             **extra,
         )
         progress: ProgressPort = _LogProgress()
-        generated = self._get_generator(_resolve_video_model(input.video_model)).generate(
-            card, action, master, progress, canvas=(cons.sprite_w, cons.sprite_h)
-        )
+        canvas = (cons.sprite_w, cons.sprite_h)
+
+        # ── 路线选择:这一步是 server 的事,不是引擎的(#122)────────────────
+        #
+        # 判据就一条:这个造型有没有绑骨 3D 模型(character_data.outfits[].model_3d_url,
+        # 由 web 层读出来放进 input)。有 → 三渲二;没有 → 照旧 i2v。
+        #
+        # **不静默回退。** 拿到了 model_3d_url 却下载不下来 / 渲不出来,就报错,不改走
+        # i2v —— 两条路线的画风、成本、多朝向能力都不同,悄悄换一条等于让调用方拿着
+        # 错误的前提做后续决定,而帧数、时长、成色全都正常,没有任何一道会红。
+        model_url = (input.model_3d_url or "").strip()
+        if model_url:
+            rigged = (self._fetch_model3d or self._download_model3d)(model_url)
+            logger.info(
+                "[gen] 造型 %s 有 3D 资产(%d bytes),走三渲二",
+                input.outfit_id or "?", len(rigged),
+            )
+            generated = self._get_generator(
+                _resolve_video_model(input.video_model)).generate_rendered(
+                card, action, rigged, progress, canvas=canvas
+            )
+        else:
+            master = (self._fetch_master or self._download_master)(input)
+            generated = self._get_generator(
+                _resolve_video_model(input.video_model)).generate(
+                card, action, master, progress, canvas=canvas
+            )
 
         upload = self._upload or self._upload_frame
         frames = [
@@ -354,6 +379,7 @@ class ActionTaskExecutor:
         strategies = {
             GenRoute.VIDEO_I2V: VideoFrameStrategy(video, self._matte),
             GenRoute.PER_FRAME: PerFrameStrategy(self._image, self._matte),
+            GenRoute.RENDER_3D: self._build_render3d(),
         }
         missing = set(GenRoute) - set(strategies)
         if missing:
@@ -362,6 +388,43 @@ class ActionTaskExecutor:
                 "补上或在此显式说明为何不装。"
             )
         return CharacterGenerator(strategies)
+
+    @staticmethod
+    def _build_render3d():
+        """三渲二的**渲帧**那一段。纯本地(node + playwright + three.js),零 API 成本。
+
+        真被请求时才 import 出帧台那套依赖:它只有这条路线用得着,装配期就要齐会让本来
+        走 i2v 的任务也因为它没配好而起不来。
+
+        **图生 3D 与绑骨那两段不在这里** —— 它们按次计费、每造型一次性,由
+        ``render3d_assets.Render3DAssetBuilder`` 在请求路径之外做(带一道人工确认停点),
+        产物 URL 落在 ``outfits[].model_3d_url`` 上。捆进来就等于一个 web 请求能顺手扣钱。
+        """
+        from windup_ai_engine.strategy.base import DerivationStrategy
+        from windup_common.models import GenRoute
+
+        class _LazyRenderStrategy(DerivationStrategy):
+            route = GenRoute.RENDER_3D
+
+            def __init__(self) -> None:
+                self._inner: DerivationStrategy | None = None
+
+            def derive(self, card, action, source, progress):
+                if self._inner is None:
+                    from windup_ai_engine.strategy.concrete import RenderFrameStrategy
+                    from windup_framework.providers.render3d import LocalSpriteRenderProvider
+
+                    self._inner = RenderFrameStrategy(LocalSpriteRenderProvider())
+                return self._inner.derive(card, action, source, progress)
+
+        return _LazyRenderStrategy()
+
+    def _download_model3d(self, url: str) -> bytes:
+        """取该造型的绑骨 3D 模型。走 ``fetch_own_media`` —— 与母版同一条受限通路
+        (只允许本站对象存储的域名,防 SSRF)。模型动辄二三十 MB,但和母版一样是
+        **一次性下载、进内存、喂引擎**,不落 ai_engine 的存储(它只吃 bytes)。
+        """
+        return fetch_own_media(url)
 
     def _download_master(self, input: CharacterActionInput) -> bytes:
         if not input.reference_image_urls:

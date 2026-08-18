@@ -78,6 +78,16 @@ class CharacterActionInput:
     # 取值域见 executor.ALLOWED_VIDEO_MODELS —— 只开放两个,因为每个模型的入参形状不同
     # (image_list / input_reference / Fal 队列),全开等于把三套协议适配塞进一个改动。
     video_model: str | None = None
+    # ── 三渲二(#192)────────────────────────────────────────────────────
+    #
+    # 这次动作属于哪个造型。3D 资产挂在造型一级(#121),没有它就连"按造型定位资产"
+    # 都表达不出来。目前只被三渲二消费;推广成所有动作生成都按造型定位外观是 #253。
+    outfit_id: str | None = None
+    # 该造型的绑骨 3D 模型 URL。**有值 = 这次走三渲二**;None = 照旧走 video_i2v。
+    #
+    # 传 URL 而不是让编排层自己去查:与 reference_image_urls 同一口径 —— 取数在上层
+    # 做完,"这次选了哪条路线"在入参上就可见,不是埋在某个分支里的隐式判断。
+    model_3d_url: str | None = None
 
 
 # -- 出参（按任务类型细化，前端可直接回填 character 模块）------------------
