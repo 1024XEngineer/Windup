@@ -15,6 +15,7 @@ import type {
   WorkflowRun,
   WorkflowRunApis,
 } from '@/entities'
+import { WorkflowRunConflictError } from '@/entities'
 import { createWorkflowController } from '.'
 
 function setupNode(
@@ -255,20 +256,6 @@ async function flushAsyncWork() {
 }
 
 describe('WorkflowController', () => {
-  it('绑定角色后拒绝把同一条 WorkflowRun 改绑到另一角色', async () => {
-    const { controller } = createController()
-
-    await controller.bindCharacter('setup-1', 'character-1')
-
-    expect(controller.getWorkflow().nodes[0]).toMatchObject({
-      type: 'character-setup',
-      input: { characterId: 'character-1' },
-    })
-    await expect(controller.bindCharacter('setup-1', 'character-2')).rejects.toThrow(
-      'WorkflowRun 已绑定到另一角色，不能改绑',
-    )
-  })
-
   it('只在角色设定节点仍处于配置阶段时更新提示词和参考媒体', async () => {
     const { controller } = createController()
 
@@ -288,10 +275,19 @@ describe('WorkflowController', () => {
   it('接受上传母版时完成角色设定和母版节点', async () => {
     const { controller } = createController()
 
-    await controller.acceptUploadedCharacterTemplate('setup-1', 'https://img/uploaded-template.png')
+    await controller.acceptUploadedCharacterTemplate(
+      'setup-1',
+      'https://img/uploaded-template.png',
+      'character-1',
+    )
 
     expect(controller.getWorkflow().nodes).toMatchObject([
-      { type: 'character-setup', status: 'passed', phase: 'completed' },
+      {
+        type: 'character-setup',
+        status: 'passed',
+        phase: 'completed',
+        input: { characterId: 'character-1' },
+      },
       {
         type: 'character-template',
         status: 'passed',
@@ -299,6 +295,64 @@ describe('WorkflowController', () => {
         selectedImageUrl: 'https://img/uploaded-template.png',
       },
     ])
+  })
+
+  it('母版确认和上传都拒绝错误节点状态与角色改绑', async () => {
+    const { controller: lockedController } = createController()
+    await expect(
+      lockedController.confirmCharacterTemplate(
+        'template-1',
+        'https://img/knight.png',
+        'character-1',
+      ),
+    ).rejects.toThrow('角色母版节点当前不能确认候选图')
+    await expect(
+      lockedController.confirmCharacterTemplate(
+        'setup-1' as never,
+        'https://img/knight.png',
+        'character-1',
+      ),
+    ).rejects.toThrow('目标节点不是角色母版')
+
+    const boundRun = createRun([
+      setupNode({
+        status: 'passed',
+        phase: 'completed',
+        input: {
+          prompt: '像素骑士',
+          referenceMedia: [],
+          characterId: 'character-existing',
+        },
+      }),
+      templateNode({ status: 'active', phase: 'selecting' }),
+    ])
+    const { controller: boundController } = createController(boundRun)
+    await expect(
+      boundController.confirmCharacterTemplate(
+        'template-1',
+        'https://img/knight.png',
+        'character-other',
+      ),
+    ).rejects.toThrow('WorkflowRun 已绑定到另一角色，不能改绑')
+
+    const uploadRun = createRun([
+      setupNode({
+        input: {
+          prompt: '像素骑士',
+          referenceMedia: [],
+          characterId: 'character-existing',
+        },
+      }),
+      templateNode(),
+    ])
+    const { controller: uploadController } = createController(uploadRun)
+    await expect(
+      uploadController.acceptUploadedCharacterTemplate(
+        'setup-1',
+        'https://img/uploaded.png',
+        'character-other',
+      ),
+    ).rejects.toThrow('WorkflowRun 已绑定到另一角色，不能改绑')
   })
 
   it('页面通过订阅接收命令保存和 SSE 写回后的同一份 WorkflowRun', async () => {
@@ -711,10 +765,14 @@ describe('WorkflowController', () => {
     ])
     const { controller } = createController(run)
 
-    await controller.confirmCharacterTemplate('template-1', 'https://img/knight.png')
+    await controller.confirmCharacterTemplate('template-1', 'https://img/knight.png', 'character-1')
 
     expect(controller.getWorkflow().nodes).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          id: 'setup-1',
+          input: expect.objectContaining({ characterId: 'character-1' }),
+        }),
         expect.objectContaining({ id: 'template-1', status: 'passed', phase: 'completed' }),
         expect.objectContaining({ id: 'action-walk', status: 'active' }),
         expect.objectContaining({ id: 'action-jump', status: 'active' }),
@@ -1294,7 +1352,7 @@ describe('WorkflowController', () => {
     ])
     const { controller } = createController(run)
 
-    await controller.confirmCharacterTemplate('template-1', 'https://img/knight.png')
+    await controller.confirmCharacterTemplate('template-1', 'https://img/knight.png', 'character-1')
 
     expect(controller.getWorkflow().nodes[2]).toMatchObject({
       status: 'locked',
@@ -1311,13 +1369,54 @@ describe('WorkflowController', () => {
     vi.mocked(workflow.apis.update).mockRejectedValueOnce(new Error('后端保存失败'))
 
     await expect(
-      controller.confirmCharacterTemplate('template-1', 'https://img/knight.png'),
+      controller.confirmCharacterTemplate('template-1', 'https://img/knight.png', 'character-1'),
     ).rejects.toThrow('后端保存失败')
 
     expect(controller.getWorkflow().nodes[1]).toMatchObject({
       status: 'active',
       phase: 'selecting',
       selectedImageUrl: null,
+    })
+  })
+
+  it('PATCH 已落库但响应丢失时接纳回读快照并将命令视为成功', async () => {
+    const run = createRun([
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({ status: 'active', phase: 'selecting' }),
+    ])
+    const { controller, workflow } = createController(run)
+    const update = vi.mocked(workflow.apis.update)
+    const get = vi.mocked(workflow.apis.get)
+    const persist = update.getMockImplementation()!
+    const read = get.getMockImplementation()!
+    update.mockImplementationOnce(async (candidate) => {
+      await persist(candidate)
+      throw new WorkflowRunConflictError('执行记录版本冲突')
+    })
+    get.mockImplementationOnce(async (id) => {
+      const reverseObjectKeys = (value: unknown): unknown => {
+        if (Array.isArray(value)) return value.map(reverseObjectKeys)
+        if (value === null || typeof value !== 'object') return value
+        return Object.fromEntries(
+          Object.entries(value)
+            .reverse()
+            .map(([key, item]) => [key, reverseObjectKeys(item)]),
+        )
+      }
+      return reverseObjectKeys(await read(id)) as WorkflowRun
+    })
+
+    await controller.confirmCharacterTemplate('template-1', 'https://img/knight.png', 'character-1')
+
+    expect(controller.getWorkflow()).toMatchObject({
+      version: 2,
+      nodes: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'setup-1',
+          input: expect.objectContaining({ characterId: 'character-1' }),
+        }),
+        expect.objectContaining({ id: 'template-1', status: 'passed' }),
+      ]),
     })
   })
 

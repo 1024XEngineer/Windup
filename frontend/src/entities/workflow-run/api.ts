@@ -17,6 +17,14 @@ import {
   WORKFLOW_RUN_STORAGE_STATUSES,
 } from './constants'
 
+/** 当前 WorkflowRun 已被其他请求更新，调用方需要重新读取后再继续修改。 */
+export class WorkflowRunConflictError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'WorkflowRunConflictError'
+  }
+}
+
 interface WorkflowRunDto {
   id: number
   project_id: number
@@ -299,12 +307,22 @@ export const workflowRunApis: WorkflowRunApis & Required<Pick<WorkflowRunApis, '
     )
   },
   async update(run) {
-    return mapWorkflowRun(
-      await getApiClient().request<WorkflowRunDto>(`/workflow-runs/${encodeURIComponent(run.id)}`, {
-        method: 'PATCH',
-        json: { nodes: run.nodes, status: run.storageStatus },
-      }),
-    )
+    try {
+      return mapWorkflowRun(
+        await getApiClient().request<WorkflowRunDto>(
+          `/workflow-runs/${encodeURIComponent(run.id)}`,
+          {
+            method: 'PATCH',
+            json: { nodes: run.nodes, status: run.storageStatus, version: run.version },
+          },
+        ),
+      )
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.kind === 'business' && cause.code === 409) {
+        throw new WorkflowRunConflictError(cause.message, { cause })
+      }
+      throw cause
+    }
   },
   async remove(id) {
     await getApiClient().request<null>(`/workflow-runs/${encodeURIComponent(id)}`, {

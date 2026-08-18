@@ -88,8 +88,6 @@ export interface WorkflowController {
     nodeId: CharacterSetupWorkflowNode['id'],
     options: GenerateCharacterTemplateOptions,
   ): Promise<void>
-  /** 将已创建的 Character 绑定到入口节点；一条 Run 不允许改绑到另一角色。 */
-  bindCharacter(nodeId: CharacterSetupWorkflowNode['id'], characterId: string): Promise<void>
   /** 仅在入口节点尚未提交时修改角色描述和参考媒体。 */
   updateCharacterSetup(
     nodeId: CharacterSetupWorkflowNode['id'],
@@ -99,10 +97,12 @@ export interface WorkflowController {
   acceptUploadedCharacterTemplate(
     nodeId: CharacterSetupWorkflowNode['id'],
     selectedImageUrl: string,
+    characterId: string,
   ): Promise<void>
   confirmCharacterTemplate(
     nodeId: CharacterTemplateWorkflowNode['id'],
     selectedImageUrl: string,
+    characterId: string,
   ): Promise<void>
   generateFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
@@ -213,8 +213,19 @@ export function createWorkflowController({
       const candidate = transform(before)
       if (candidate === before) return structuredClone(before)
 
-      // 只有后端确认保存后才替换内存快照；失败时页面不会看到“假成功”。
-      const saved = await workflowRunApis.update(candidate)
+      // 只有更新响应或回读结果确认已落库后才替换内存快照，避免页面显示“假成功”。
+      let saved: WorkflowRun
+      try {
+        saved = await workflowRunApis.update(candidate)
+      } catch (cause) {
+        try {
+          const latest = await workflowRunApis.get(candidate.id)
+          if (!hasSamePersistedState(candidate, latest)) throw cause
+          saved = latest
+        } catch {
+          throw cause
+        }
+      }
       current = structuredClone(saved)
       notifyListeners()
       return structuredClone(saved)
@@ -395,42 +406,42 @@ export function createWorkflowController({
   function confirmCharacterTemplate(
     nodeId: CharacterTemplateWorkflowNode['id'],
     selectedImageUrl: string,
+    characterId: string,
   ) {
     ensureRunning()
     const imageUrl = nonEmpty(selectedImageUrl, 'selectedImageUrl')
-    return persist((run) =>
-      updateNode(run, nodeId, (node) => {
-        if (node.type !== 'character-template') throw new Error('目标节点不是角色母版')
-        if (node.status !== 'active' || node.phase !== 'selecting') {
-          throw new Error('角色母版节点当前不能确认候选图')
-        }
-        return unlockReadyNodes({
-          ...run,
-          nodes: run.nodes.map((item) =>
-            item.id === node.id
-              ? { ...node, selectedImageUrl: imageUrl, phase: 'completed', status: 'passed' }
-              : item,
-          ),
-        })
-      }),
-    )
-  }
-
-  function bindCharacter(nodeId: CharacterSetupWorkflowNode['id'], characterId: string) {
-    ensureRunning()
     const normalizedCharacterId = nonEmpty(characterId, 'characterId')
-    return persist((run) =>
-      updateNode(run, nodeId, (node) => {
-        if (node.type !== 'character-setup') throw new Error('目标节点不是角色设定')
-        if (node.input.characterId && node.input.characterId !== normalizedCharacterId) {
-          throw new Error('WorkflowRun 已绑定到另一角色，不能改绑')
-        }
-        return replaceNode(run, {
-          ...node,
-          input: { ...node.input, characterId: normalizedCharacterId },
-        })
-      }),
-    )
+    return persist((run) => {
+      const templateNode = findNode(run, nodeId)
+      if (templateNode.type !== 'character-template') throw new Error('目标节点不是角色母版')
+      if (templateNode.status !== 'active' || templateNode.phase !== 'selecting') {
+        throw new Error('角色母版节点当前不能确认候选图')
+      }
+      const setupNode = findSingleDependencyNode(run, templateNode, 'character-setup')
+      if (setupNode.input.characterId && setupNode.input.characterId !== normalizedCharacterId) {
+        throw new Error('WorkflowRun 已绑定到另一角色，不能改绑')
+      }
+      return unlockReadyNodes({
+        ...run,
+        nodes: run.nodes.map((node) => {
+          if (node.id === setupNode.id) {
+            return {
+              ...setupNode,
+              input: { ...setupNode.input, characterId: normalizedCharacterId },
+            }
+          }
+          if (node.id === templateNode.id) {
+            return {
+              ...templateNode,
+              selectedImageUrl: imageUrl,
+              phase: 'completed',
+              status: 'passed',
+            }
+          }
+          return node
+        }),
+      })
+    })
   }
 
   function updateCharacterSetup(
@@ -460,9 +471,11 @@ export function createWorkflowController({
   function acceptUploadedCharacterTemplate(
     nodeId: CharacterSetupWorkflowNode['id'],
     selectedImageUrl: string,
+    characterId: string,
   ) {
     ensureRunning()
     const imageUrl = nonEmpty(selectedImageUrl, 'selectedImageUrl')
+    const normalizedCharacterId = nonEmpty(characterId, 'characterId')
     return persist((run) => {
       const setupNode = findNode(run, nodeId)
       if (setupNode.type !== 'character-setup') throw new Error('目标节点不是角色设定')
@@ -473,11 +486,20 @@ export function createWorkflowController({
       if (templateNode.status !== 'locked' || templateNode.phase !== 'ready') {
         throw new Error('角色母版节点当前不能使用上传图片')
       }
+      if (setupNode.input.characterId && setupNode.input.characterId !== normalizedCharacterId) {
+        throw new Error('WorkflowRun 已绑定到另一角色，不能改绑')
+      }
       return unlockReadyNodes({
         ...run,
         nodes: run.nodes.map((node) => {
           if (node.id === setupNode.id) {
-            return { ...setupNode, status: 'passed', phase: 'completed', error: null }
+            return {
+              ...setupNode,
+              status: 'passed',
+              phase: 'completed',
+              error: null,
+              input: { ...setupNode.input, characterId: normalizedCharacterId },
+            }
           }
           if (node.id === templateNode.id) {
             return {
@@ -980,7 +1002,6 @@ export function createWorkflowController({
     setCharacterName: asCommand(setCharacterName),
     addAction: asCommand(addAction),
     generateCharacterTemplate: asCommand(generateCharacterTemplate),
-    bindCharacter: asCommand(bindCharacter),
     updateCharacterSetup: asCommand(updateCharacterSetup),
     acceptUploadedCharacterTemplate: asCommand(acceptUploadedCharacterTemplate),
     confirmCharacterTemplate: asCommand(confirmCharacterTemplate),
@@ -997,6 +1018,26 @@ export function createWorkflowController({
     getGeneration,
     dispose,
   }
+}
+
+function hasSamePersistedState(expected: WorkflowRun, actual: WorkflowRun) {
+  return (
+    expected.id === actual.id &&
+    expected.projectId === actual.projectId &&
+    expected.storageStatus === actual.storageStatus &&
+    JSON.stringify(canonicalizeJson(expected.nodes)) ===
+      JSON.stringify(canonicalizeJson(actual.nodes))
+  )
+}
+
+function canonicalizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeJson)
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, canonicalizeJson(item)]),
+  )
 }
 
 function asCommand<TArgs extends unknown[]>(
