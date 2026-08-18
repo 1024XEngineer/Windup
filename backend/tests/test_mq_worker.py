@@ -436,8 +436,6 @@ def test_consumer_skips_in_flight_message(engine, worker_session, monkeypatch):
 
 
 def test_consumer_acquires_generation_semaphore(engine, worker_session, monkeypatch):
-    from windup_app.server.mq.catalog import MSG_TYPE_CHARACTER_IMAGE
-
     message_id = uuid.uuid4()
     mq_repo.insert_pending(
         worker_session,

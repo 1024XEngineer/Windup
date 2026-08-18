@@ -6,8 +6,6 @@ import json
 import time
 from unittest.mock import MagicMock
 
-import pytest
-
 from windup_framework.sse.bridge import (
     InProcessTaskEventBridge,
     RedisTaskEventBridge,
