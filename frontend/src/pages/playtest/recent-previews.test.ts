@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   MAX_RECENT_PREVIEWS,
+  recentPreviewOwnerIdFromAccessToken,
   readRecentPreviews,
   rememberRecentPreview,
   removeRecentPreview,
@@ -33,6 +34,11 @@ describe('recent previews', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-17T12:00:00Z'))
+  })
+
+  it('uses the authenticated JWT subject as the account namespace', () => {
+    expect(recentPreviewOwnerIdFromAccessToken('header.eyJzdWIiOiI3In0.signature')).toBe('7')
+    expect(recentPreviewOwnerIdFromAccessToken('not-a-jwt')).toBeNull()
   })
 
   it('keeps recent previews isolated by user and caps them at three unique outfits', () => {

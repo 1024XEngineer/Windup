@@ -8,6 +8,11 @@ import { AuthenticatedAuthSession } from '@/test/auth-session'
 
 import { rememberRecentPreview, type RecentPreview } from './recent-previews'
 
+vi.mock('./recent-previews', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./recent-previews')>()
+  return { ...actual, getRecentPreviewOwnerId: () => '7' }
+})
+
 beforeEach(() => {
   vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
   window.localStorage.clear()

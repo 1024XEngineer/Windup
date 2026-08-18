@@ -9,6 +9,11 @@ import { createProjectAssetsBackend } from '@/test/project-assets-backend'
 
 import { readRecentPreviews, rememberRecentPreview } from './recent-previews'
 
+vi.mock('./recent-previews', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./recent-previews')>()
+  return { ...actual, getRecentPreviewOwnerId: () => '7' }
+})
+
 beforeEach(() => {
   window.localStorage.clear()
 })
