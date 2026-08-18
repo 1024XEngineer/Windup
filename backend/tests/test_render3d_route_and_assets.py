@@ -248,13 +248,21 @@ def test_real_server_path_stays_on_i2v_when_the_outfit_has_no_model():
     assert renderer.calls == 0
 
 
-def test_web_layer_reads_the_outfit_model_url_into_the_task_input(auth_client, monkeypatch):
+def test_web_layer_reads_the_outfit_model_url_into_the_task_input(auth_client, engine, monkeypatch):
     """Web 层要把造型上的 model_3d_url **真的填进任务入参**。
 
     这一步是上次那个缺陷的落点:字段从没被赋过值,而下游全部正常运行、只是永远
     走不到三渲二。所以要断言的是"值到底进没进入参",不是"端点返回 200"。
     """
+    from sqlalchemy.orm import sessionmaker
+
+    from conftest import seed_credit_account
     from windup_app.web.api import generation as gen_api
+
+    # 提交动作生成会预冻结积分(#351),没有账户就在扣费那一步 404。
+    with sessionmaker(bind=engine)() as s:
+        seed_credit_account(s, 1)
+        s.commit()
 
     project = auth_client.post("/projects", json={
         "project_name": "三渲二", "character_perspective": 1, "directional_movement": 2,
@@ -290,10 +298,18 @@ def test_web_layer_reads_the_outfit_model_url_into_the_task_input(auth_client, m
     assert captured[0].outfit_id == OUTFIT
 
 
-def test_web_layer_does_not_guess_an_outfit_when_none_is_given(auth_client, monkeypatch):
+def test_web_layer_does_not_guess_an_outfit_when_none_is_given(auth_client, engine, monkeypatch):
     """没给 outfit_id 就不许挑一个造型顶上 —— 猜错等于拿另一套衣服渲这次的动作,
     而帧数、时长、成色全部正常,没有任何一道会红。"""
+    from sqlalchemy.orm import sessionmaker
+
+    from conftest import seed_credit_account
     from windup_app.web.api import generation as gen_api
+
+    # 提交动作生成会预冻结积分(#351),没有账户就在扣费那一步 404。
+    with sessionmaker(bind=engine)() as s:
+        seed_credit_account(s, 1)
+        s.commit()
 
     project = auth_client.post("/projects", json={
         "project_name": "三渲二", "character_perspective": 1, "directional_movement": 2,
