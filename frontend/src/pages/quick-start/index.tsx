@@ -241,17 +241,6 @@ function QuickStartInput({
   const hasPrompt = Boolean(prompt.trim())
   const showStylePrompts = !hasPrompt && !templateFile
 
-  const originalPromptShortcuts = [
-    {
-      label: '像素守夜人',
-      prompt: '一位提着风灯、披深色斗篷的像素守夜人',
-    },
-    {
-      label: '轻装信使',
-      prompt: '轻装信使，侧视像素风，轮廓清晰，动作轻快',
-    },
-  ] as const
-
   useEffect(
     () => () => {
       submitAbortController.current?.abort()
@@ -358,28 +347,6 @@ function QuickStartInput({
               >
                 <strong className="text-sm font-semibold text-app-ink">{stylePrompt.title}</strong>
                 <span className="text-[11px] text-app-muted">{stylePrompt.detail}</span>
-              </button>
-            ))}
-          </div>
-          <div
-            data-layout="quick-start-original-shortcuts"
-            data-presence={showStylePrompts ? 'visible' : 'hidden'}
-            aria-hidden={!showStylePrompts}
-            className={`flex flex-wrap justify-center gap-2 transition-[opacity,transform,filter] duration-[460ms] motion-reduce:transition-none ${
-              showStylePrompts
-                ? 'translate-y-0 opacity-100 blur-0'
-                : 'pointer-events-none -translate-y-1 opacity-0 blur-[4px]'
-            }`}
-          >
-            {originalPromptShortcuts.map((shortcut) => (
-              <button
-                key={shortcut.label}
-                type="button"
-                disabled={!showStylePrompts}
-                onClick={() => setPrompt(shortcut.prompt)}
-                className="rounded-full border border-app-line px-3 py-1.5 text-xs font-medium text-app-muted transition hover:border-app-line-strong hover:text-app-accent"
-              >
-                {shortcut.label}
               </button>
             ))}
           </div>
