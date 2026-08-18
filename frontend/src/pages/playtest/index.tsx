@@ -29,13 +29,20 @@ export interface PlaytestPageProps {
 }
 
 interface PageData {
+  loadedCharacterId: string | null
   character: Character | null
   project: Project | null
   error: string | null
   loading: boolean
 }
 
-const initialPageData: PageData = { character: null, project: null, error: null, loading: false }
+const initialPageData: PageData = {
+  loadedCharacterId: null,
+  character: null,
+  project: null,
+  error: null,
+  loading: false,
+}
 
 /**
  * 后端把「角色不存在」表达成 HTTP 200 里的业务码 404，真正的传输失败才落在 status 上。
@@ -77,7 +84,15 @@ export function PlaytestPage({ renderToolbar }: PlaytestPageProps = {}) {
       }))
       .then(
         ({ character, project }) => {
-          if (!cancelled) setData({ character, project, error: null, loading: false })
+          if (!cancelled) {
+            setData({
+              loadedCharacterId: characterId,
+              character,
+              project,
+              error: null,
+              loading: false,
+            })
+          }
         },
         (error: unknown) => {
           if (!cancelled) {
@@ -98,7 +113,14 @@ export function PlaytestPage({ renderToolbar }: PlaytestPageProps = {}) {
   }, [characterId, outfitId, recentOwnerId])
 
   useEffect(() => {
-    if (!recentOwnerId || !characterId || !data.character || !data.project || data.error !== null)
+    if (
+      !recentOwnerId ||
+      !characterId ||
+      data.loadedCharacterId !== characterId ||
+      !data.character ||
+      !data.project ||
+      data.error !== null
+    )
       return
 
     const outfit = data.character.outfits.find((candidate) => candidate.id === outfitId)
@@ -117,7 +139,15 @@ export function PlaytestPage({ renderToolbar }: PlaytestPageProps = {}) {
       previewUrl: outfit.previewUrl,
       lastOpenedAt: Date.now(),
     })
-  }, [characterId, data.character, data.error, data.project, outfitId, recentOwnerId])
+  }, [
+    characterId,
+    data.character,
+    data.error,
+    data.loadedCharacterId,
+    data.project,
+    outfitId,
+    recentOwnerId,
+  ])
 
   if (characterId === undefined || outfitId === undefined)
     return <PlaytestPageMessage>预览台路由参数不完整</PlaytestPageMessage>
