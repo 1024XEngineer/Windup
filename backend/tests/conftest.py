@@ -31,6 +31,7 @@ from windup_app.server.quota.model import (
 from windup_app.server.user.model import User
 from windup_app.server.orchestrator.model import GenerationTaskRecord
 from windup_app.server.workflow_run.model import WorkflowRun
+from windup_framework.mq.model import MqMessage
 from windup_app.server.user.service import create_access_token
 from windup_framework.config.quota import settings as quota_settings
 from windup_framework.db import Base, get_session
@@ -54,8 +55,12 @@ def insert_project(session, **overrides) -> Project:
 
 
 def _disable_generation_execution(app):
-    app.state.run_action_task = lambda *args: None
-    app.state.run_image_task = lambda *args: None
+    """测试环境禁用 MQ 实际投递（mock publisher）。"""
+    from unittest.mock import Mock
+
+    mock_publisher = Mock()
+    mock_publisher.enqueue.return_value = "00000000-0000-0000-0000-000000000001"
+    app.state.mq_publisher = mock_publisher
 
 
 def seed_invite_code(session, code: str = "AB23CD45") -> str:
@@ -123,6 +128,7 @@ def engine():
             InviteCode.__table__,
             InviteRecord.__table__,
             GenerationTaskRecord.__table__,
+            MqMessage.__table__,
         ],
     )
     yield engine
@@ -161,9 +167,12 @@ def client(engine):
 
     app = create_app()
     _disable_generation_execution(app)
+    from windup_app.server.orchestrator import task_repo
+    from windup_app.web.api.generation import event_bus
+
+    task_repo.bind_event_bus(event_bus)
     app.dependency_overrides[get_session] = override_get_session
     yield TestClient(app)
-    app.state.generation_dispatcher.shutdown()
     app.dependency_overrides.clear()
 
 
@@ -188,6 +197,10 @@ def auth_client(engine):
 
     app = create_app()
     _disable_generation_execution(app)
+    from windup_app.server.orchestrator import task_repo
+    from windup_app.web.api.generation import event_bus
+
+    task_repo.bind_event_bus(event_bus)
     app.dependency_overrides[get_session] = override_get_session
 
     # 生成测试用 token
@@ -195,7 +208,6 @@ def auth_client(engine):
     client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
 
     yield client
-    app.state.generation_dispatcher.shutdown()
     app.dependency_overrides.clear()
 
 
@@ -217,13 +229,16 @@ def auth_client_b(engine):
 
     app = create_app()
     _disable_generation_execution(app)
+    from windup_app.server.orchestrator import task_repo
+    from windup_app.web.api.generation import event_bus
+
+    task_repo.bind_event_bus(event_bus)
     app.dependency_overrides[get_session] = override_get_session
 
     token = create_access_token(2, "other@example.com")
     client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
 
     yield client
-    app.state.generation_dispatcher.shutdown()
     app.dependency_overrides.clear()
 
 

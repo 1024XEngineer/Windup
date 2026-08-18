@@ -19,15 +19,14 @@ from windup_framework.db import Base, engine, SessionLocal
 from windup_ai_engine.impl.character_namer import LangChainCharacterNamer
 from windup_app.server.character.model import Character  # noqa: F401
 from windup_app.server.character.service import service as character_service
-from windup_app.server.orchestrator.dispatcher import GenerationDispatcher
 from windup_app.server.project.model import Project  # noqa: F401
 from windup_app.server.quota.model import CreditAccount, CreditTransaction, InviteCode, InviteRecord  # noqa: F401
 from windup_app.server.user.model import User  # noqa: F401
 from windup_app.server.workflow_run.model import WorkflowRun  # noqa: F401
+from windup_framework.mq.model import MqMessage  # noqa: F401
 from windup_app.web.api.auth import router as auth_router
 from windup_app.web.api.character import router as character_router
 from windup_app.server.orchestrator import task_repo
-from windup_app.server.orchestrator.executor import run_action_task, run_image_task
 from windup_app.server.orchestrator.render3d_service import default_operations, precheck_master
 from windup_app.web.api.generation import router as generation_router
 from windup_app.web.api.media import router as media_router
@@ -37,6 +36,9 @@ from windup_app.web.api.render3d import router as render3d_router
 from windup_app.web.api.workflow_run import router as workflow_run_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
 from windup_app.web.middleware.auth import AuthMiddleware
+from windup_framework.mq.publisher import MqPublisher
+from windup_framework.mq.relay import relay_pending_messages
+from windup_framework.sse.bridge import RedisTaskEventBridge, RedisTaskEventSubscriber
 
 
 def _env_flag(name: str) -> bool:
@@ -74,14 +76,24 @@ def print_banner() -> None:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    """应用启动时建表，关闭时等待已排队的生成任务收敛。"""
+    """应用启动时建表，关闭时停止 SSE Subscriber。"""
     Base.metadata.create_all(engine)
     print_banner()
+    from windup_app.web.api.generation import event_bus
+
+    subscriber = RedisTaskEventSubscriber(
+        lambda project_id, task_id, event, data: event_bus.publish(
+            project_id, task_id, event, data,
+        ),
+    )
+    subscriber.start()
+    app.state.sse_subscriber = subscriber
     _recover_orphaned_generation(app)
+    relay_pending_messages()
     try:
         yield
     finally:
-        app.state.generation_dispatcher.shutdown()
+        subscriber.stop()
 
 
 def _recover_orphaned_generation(app: FastAPI) -> None:
@@ -92,9 +104,7 @@ def _recover_orphaned_generation(app: FastAPI) -> None:
     try:
         recover_orphaned_generation_tasks(
             session,
-            dispatcher=app.state.generation_dispatcher,
-            run_image_task=app.state.run_image_task,
-            run_action_task=app.state.run_action_task,
+            publisher=app.state.mq_publisher,
         )
         session.commit()
     except Exception:
@@ -106,7 +116,7 @@ def _recover_orphaned_generation(app: FastAPI) -> None:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="windup", version="0.1.0", lifespan=_lifespan)
-    app.state.generation_dispatcher = GenerationDispatcher()
+    app.state.mq_publisher = MqPublisher()
     # 起名器在 composition root 注入,避免 web→character.service 碰到 ai_engine。
     # LangChainCharacterNamer 构造期不创建 ChatOpenAI；缺 AI_API_KEY 时应用仍能启动。
     # 测试若已注入假 namer，不要覆盖。
@@ -135,20 +145,12 @@ def create_app() -> FastAPI:
     app.include_router(generation_router)
     app.include_router(quota_router)
     app.include_router(render3d_router)
-    # 生成任务的后台执行器挂到 app.state:端点只建 PENDING 记录立即返回,真正的
-    # 图生图/i2v 在后台线程跑。放在 state 而不是 import 到 web 层,是因为
-    # import-linter 的分层契约禁止 app.web 直连 ai_engine,而 executor 要调它。
-    app.state.run_action_task = run_action_task
-    app.state.run_image_task = run_image_task
-    # 母版预检与建 3D 资产同理:两者都经 ai_engine,web 层不能静态依赖。
-    # 预检是零成本纯函数;建资产要花钱,``default_operations`` 自带 WINDUP_RENDER3D_ALLOW_SPEND 开关。
+    # 母版预检与建 3D 资产:web 层不能静态依赖 ai_engine,由 state 注入。
     app.state.precheck_master = precheck_master
     app.state.render3d_operations = default_operations()
 
-    # task_repo 状态变更时自动推 SSE。延迟 import 避免与 generation 模块循环依赖。
-    from windup_app.web.api.generation import event_bus
-
-    task_repo.bind_event_bus(event_bus)
+    # task_repo 状态变更时经 Redis Pub/Sub 推 SSE（worker publish → web subscribe → EventBus）
+    task_repo.bind_task_event_publisher(RedisTaskEventBridge())
     register_exception_handlers(app)
     return app
 

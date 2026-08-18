@@ -22,7 +22,6 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
-from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
@@ -32,7 +31,11 @@ from windup_framework.db import get_session
 
 from windup_app.server.character.model import Character, CharacterData
 from windup_app.server.orchestrator import task_repo
-from windup_app.server.orchestrator.dispatcher import GenerationDispatcher
+from windup_app.server.mq.catalog import (
+    GENERATION_STREAM,
+    MSG_TYPE_CHARACTER_ACTION,
+    MSG_TYPE_CHARACTER_IMAGE,
+)
 from windup_app.server.orchestrator.service import service as generation_service
 from windup_app.server.orchestrator.model import (
     ActionType,
@@ -288,20 +291,27 @@ def _validate_project_size(project: Project, width: int, height: int) -> None:
         )
 
 
-def _dispatch_after_commit(
+def _publish_generation_after_commit(
     session: Session,
-    dispatcher: GenerationDispatcher,
-    target,
-    *args,
+    publisher: MqPublisher,
+    *,
+    task_id: int,
+    task_type: str,
 ) -> None:
-    """注册 after_commit 回调:session 提交成功后再排入生成队列。
-
-    解决竞态: create_task() 只 flush,session 在 handler 返回后才 commit。
-    若直接排队,后台 session 可能读不到未提交的行,导致 update 静默跳过。
-    """
-    @event.listens_for(session, "after_commit", once=True)
-    def _after_commit(session):
-        dispatcher.submit(target, *args)
+    """注册 after_commit 回调:session 提交成功后再投递到 Redis Stream。"""
+    msg_type = (
+        MSG_TYPE_CHARACTER_IMAGE
+        if task_type == MSG_TYPE_CHARACTER_IMAGE
+        else MSG_TYPE_CHARACTER_ACTION
+    )
+    message_id = publisher.enqueue(
+        session,
+        stream=GENERATION_STREAM,
+        msg_type=msg_type,
+        payload={"task_id": task_id, "task_type": task_type},
+        dedupe_key=f"generation:{task_id}",
+    )
+    publisher.register_after_commit(session, message_id)
 
 
 @router.post("/image", response_model=Response[GenerationTaskOut])
@@ -327,13 +337,11 @@ def submit_image_generation(
     )
     # 生成任务要在 commit 之后再入队:任务行未提交时工作线程用自己的 session 读不到它,
     # update 会静默跳过,表现为任务永远停在 PENDING。
-    _dispatch_after_commit(
+    _publish_generation_after_commit(
         session,
-        request.app.state.generation_dispatcher,
-        request.app.state.run_image_task,
-        task.id,
-        input_data,
-        body.project_id,
+        request.app.state.mq_publisher,
+        task_id=task.id,
+        task_type=task.task_type.value,
     )
     return Response.success(_task_to_out(task), message="任务已提交")
 
@@ -365,13 +373,11 @@ def submit_action_generation(
     task = generation_service.generate_character_action(
         session, user_id=user_id, project_id=body.project_id, input=input_data,
     )
-    _dispatch_after_commit(
+    _publish_generation_after_commit(
         session,
-        request.app.state.generation_dispatcher,
-        request.app.state.run_action_task,
-        task.id,
-        input_data,
-        body.project_id,
+        request.app.state.mq_publisher,
+        task_id=task.id,
+        task_type=task.task_type.value,
     )
     return Response.success(_task_to_out(task), message="任务已提交")
 

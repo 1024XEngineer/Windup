@@ -183,12 +183,17 @@ def test_both_send_paths_use_the_same_payload_builder(session):
         def publish(self, project_id, tid, event, data):
             sent.append(data)
 
-    old_bus = task_repo._event_bus
-    task_repo._event_bus = _Bus()
+    old_publisher = task_repo._task_event_publisher
+
+    class _Publisher:
+        def publish(self, project_id, tid, event, data):
+            sent.append(data)
+
+    task_repo._task_event_publisher = _Publisher()
     try:
         task_repo._publish_task_update(task_id, task)
     finally:
-        task_repo._event_bus = old_bus
+        task_repo._task_event_publisher = old_publisher
 
     assert set(sent[0]) == _EVENT_KEYS
     assert set(task_repo.task_event_payload(task)) == _EVENT_KEYS
@@ -234,13 +239,18 @@ def test_task_without_project_id_logs_instead_of_publishing_into_the_void(sessio
         def publish(self, *a):
             sent.append(a)
 
-    old_bus = task_repo._event_bus
-    task_repo._event_bus = _Bus()
+    old_publisher = task_repo._task_event_publisher
+
+    class _Publisher:
+        def publish(self, *a):
+            sent.append(a)
+
+    task_repo._task_event_publisher = _Publisher()
     try:
         with caplog.at_level(logging.WARNING):
             task_repo._publish_task_update(task_id, task)
     finally:
-        task_repo._event_bus = old_bus
+        task_repo._task_event_publisher = old_publisher
 
     assert sent == [], "不该发到一个没人听的键上"
     assert any("project_id" in r.message for r in caplog.records), "应记 warning"

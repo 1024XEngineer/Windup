@@ -248,13 +248,16 @@ def test_real_server_path_stays_on_i2v_when_the_outfit_has_no_model():
     assert renderer.calls == 0
 
 
-def test_web_layer_reads_the_outfit_model_url_into_the_task_input(auth_client, monkeypatch):
+def test_web_layer_reads_the_outfit_model_url_into_the_task_input(auth_client, db_session):
     """Web 层要把造型上的 model_3d_url **真的填进任务入参**。
 
     这一步是上次那个缺陷的落点:字段从没被赋过值,而下游全部正常运行、只是永远
     走不到三渲二。所以要断言的是"值到底进没进入参",不是"端点返回 200"。
     """
-    from windup_app.web.api import generation as gen_api
+    from conftest import seed_credit_account
+
+    seed_credit_account(db_session, 1)
+    db_session.commit()
 
     project = auth_client.post("/projects", json={
         "project_name": "三渲二", "character_perspective": 1, "directional_movement": 2,
@@ -272,28 +275,27 @@ def test_web_layer_reads_the_outfit_model_url_into_the_task_input(auth_client, m
         },
     }).json()["data"]
 
-    captured: list[CharacterActionInput] = []
-    monkeypatch.setattr(
-        gen_api, "_dispatch_after_commit",
-        # 位置参数随 _dispatch_after_commit 的签名走;这里只关心 input_data,
-        # 用 *args 收下其余,免得签名一变桩就报 TypeError。
-        lambda *args: captured.append(next(a for a in args if isinstance(a, CharacterActionInput))),
-    )
     resp = auth_client.post("/generation/action", json={
         "project_id": project["id"], "character_id": character["id"],
         "action_type": "walk", "num_frames": 4, "outfit_id": OUTFIT,
     })
 
     assert resp.json()["data"] is not None, resp.json()
-    assert captured, "任务没被派发,拿不到入参"
-    assert captured[0].model_3d_url == "https://cdn.example.com/outfits/hanfu.glb"
-    assert captured[0].outfit_id == OUTFIT
+    task_id = resp.json()["data"]["id"]
+    task = auth_client.get(
+        f"/generation/tasks/{task_id}?project_id={project['id']}",
+    ).json()["data"]
+    assert task["input_payload"]["model_3d_url"] == "https://cdn.example.com/outfits/hanfu.glb"
+    assert task["input_payload"]["outfit_id"] == OUTFIT
 
 
-def test_web_layer_does_not_guess_an_outfit_when_none_is_given(auth_client, monkeypatch):
+def test_web_layer_does_not_guess_an_outfit_when_none_is_given(auth_client, db_session):
     """没给 outfit_id 就不许挑一个造型顶上 —— 猜错等于拿另一套衣服渲这次的动作,
     而帧数、时长、成色全部正常,没有任何一道会红。"""
-    from windup_app.web.api import generation as gen_api
+    from conftest import seed_credit_account
+
+    seed_credit_account(db_session, 1)
+    db_session.commit()
 
     project = auth_client.post("/projects", json={
         "project_name": "三渲二", "character_perspective": 1, "directional_movement": 2,
@@ -307,19 +309,16 @@ def test_web_layer_does_not_guess_an_outfit_when_none_is_given(auth_client, monk
         }]},
     }).json()["data"]
 
-    captured: list[CharacterActionInput] = []
-    monkeypatch.setattr(
-        gen_api, "_dispatch_after_commit",
-        # 位置参数随 _dispatch_after_commit 的签名走;这里只关心 input_data,
-        # 用 *args 收下其余,免得签名一变桩就报 TypeError。
-        lambda *args: captured.append(next(a for a in args if isinstance(a, CharacterActionInput))),
-    )
-    auth_client.post("/generation/action", json={
+    resp = auth_client.post("/generation/action", json={
         "project_id": project["id"], "character_id": character["id"],
         "action_type": "walk", "num_frames": 4,
     })
 
-    assert captured and captured[0].model_3d_url is None
+    task_id = resp.json()["data"]["id"]
+    task = auth_client.get(
+        f"/generation/tasks/{task_id}?project_id={project['id']}",
+    ).json()["data"]
+    assert task["input_payload"]["model_3d_url"] is None
 
 
 def test_unknown_outfit_id_is_rejected_not_ignored(auth_client):

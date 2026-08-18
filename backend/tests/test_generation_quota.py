@@ -21,6 +21,7 @@ from windup_app.server.quota.model import CreditAccount, CreditTransaction
 from windup_common.enums.quota import CreditReason
 from windup_common.exceptions import BizException
 from windup_framework.config.quota import settings as quota_settings
+from windup_framework.mq.model import MqMessage  # noqa: F401 — register metadata
 
 from conftest import seed_credit_account
 from test_generation_orchestration import _SpyGenerator, _tiny_png
@@ -52,6 +53,30 @@ def _reasons(session: Session, user_id: int) -> list[int]:
         .order_by(CreditTransaction.id)
     ).all()
     return [row.reason for row in rows]
+
+
+def _tracking_publisher():
+    """记录 recover 入队参数的 mock publisher。"""
+    enqueued: list[dict] = []
+
+    class _Publisher:
+        def enqueue(self, session, *, stream, msg_type, payload, dedupe_key):
+            enqueued.append(
+                {
+                    "stream": stream,
+                    "msg_type": msg_type,
+                    "payload": payload,
+                    "dedupe_key": dedupe_key,
+                },
+            )
+            import uuid
+
+            return uuid.uuid4()
+
+        def register_after_commit(self, session, message_id) -> None:
+            pass
+
+    return _Publisher(), enqueued
 
 
 def test_submit_image_generation_reserves_prepaid_credit(auth_client, db_session):
@@ -263,11 +288,7 @@ def test_release_uses_frozen_amount_when_price_falls(session_factory, monkeypatc
 def test_recover_requeues_pending_tasks_with_open_freeze(session_factory):
     from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
 
-    queued: list[tuple] = []
-
-    class _Dispatcher:
-        def submit(self, target, *args):
-            queued.append((target, args))
+    publisher, enqueued = _tracking_publisher()
 
     with session_factory() as session:
         _seed_account(session, 1)
@@ -284,27 +305,14 @@ def test_recover_requeues_pending_tasks_with_open_freeze(session_factory):
         session.commit()
         task_id = task.id
 
-    def _run_image(*_args):
-        raise AssertionError("不应入队图片任务")
-
-    def _run_action(*_args):
-        raise AssertionError("recover 只负责入队，不直接跑")
-
     with session_factory() as session:
-        recover_orphaned_generation_tasks(
-            session,
-            dispatcher=_Dispatcher(),
-            run_image_task=_run_image,
-            run_action_task=_run_action,
-        )
+        recover_orphaned_generation_tasks(session, publisher=publisher)
         session.commit()
 
-    assert len(queued) == 1
-    _target, args = queued[0]
-    assert _target is _run_action
-    assert args[0] == task_id
-    assert args[1].action_type is ActionType.WALK
-    assert args[2] == 7
+    assert len(enqueued) == 1
+    assert enqueued[0]["dedupe_key"] == f"generation:{task_id}"
+    assert enqueued[0]["msg_type"] == "character_action"
+    assert enqueued[0]["payload"]["task_id"] == task_id
 
     with session_factory() as session:
         still = service.get_task(session, project_id=7, task_id=task_id)
@@ -333,9 +341,7 @@ def test_recover_fails_and_unfreezes_running_orphans(session_factory):
     with session_factory() as session:
         recover_orphaned_generation_tasks(
             session,
-            dispatcher=type("D", (), {"submit": staticmethod(lambda *a, **k: None)})(),
-            run_image_task=lambda *a: None,
-            run_action_task=lambda *a: None,
+            publisher=_tracking_publisher()[0],
         )
         session.commit()
 
@@ -445,11 +451,7 @@ def test_recover_skips_pending_without_open_freeze(session_factory):
     from windup_app.server.orchestrator import task_repo
     from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
 
-    queued: list = []
-
-    class _Dispatcher:
-        def submit(self, target, *args):
-            queued.append((target, args))
+    publisher, enqueued = _tracking_publisher()
 
     with session_factory() as session:
         task_repo.create_task(
@@ -460,24 +462,15 @@ def test_recover_skips_pending_without_open_freeze(session_factory):
         session.commit()
 
     with session_factory() as session:
-        recover_orphaned_generation_tasks(
-            session,
-            dispatcher=_Dispatcher(),
-            run_image_task=lambda *a: None,
-            run_action_task=lambda *a: None,
-        )
+        recover_orphaned_generation_tasks(session, publisher=publisher)
 
-    assert queued == []
+    assert enqueued == []
 
 
 def test_recover_requeues_pending_image_tasks(session_factory):
     from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
 
-    queued: list[tuple] = []
-
-    class _Dispatcher:
-        def submit(self, target, *args):
-            queued.append((target, args))
+    publisher, enqueued = _tracking_publisher()
 
     with session_factory() as session:
         _seed_account(session, 1)
@@ -491,31 +484,23 @@ def test_recover_requeues_pending_image_tasks(session_factory):
         session.commit()
         task_id = task.id
 
-    def _run_image(*_args):
-        raise AssertionError("只入队")
-
     with session_factory() as session:
-        recover_orphaned_generation_tasks(
-            session,
-            dispatcher=_Dispatcher(),
-            run_image_task=_run_image,
-            run_action_task=lambda *a: None,
-        )
+        recover_orphaned_generation_tasks(session, publisher=publisher)
 
-    assert len(queued) == 1
-    target, args = queued[0]
-    assert target is _run_image
-    assert args[0] == task_id
-    assert args[1].prompt == "勇者"
-    assert args[2] == 3
+    assert len(enqueued) == 1
+    assert enqueued[0]["msg_type"] == "character_image"
+    assert enqueued[0]["payload"]["task_id"] == task_id
 
 
 def test_recover_unfreezes_when_requeue_fails(session_factory):
     from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
 
-    class _BoomDispatcher:
-        def submit(self, *_args, **_kwargs):
+    class _BoomPublisher:
+        def enqueue(self, *_args, **_kwargs):
             raise RuntimeError("队列不可用")
+
+        def register_after_commit(self, *_args, **_kwargs) -> None:
+            pass
 
     with session_factory() as session:
         _seed_account(session, 1)
@@ -530,12 +515,7 @@ def test_recover_unfreezes_when_requeue_fails(session_factory):
         task_id = task.id
 
     with session_factory() as session:
-        recover_orphaned_generation_tasks(
-            session,
-            dispatcher=_BoomDispatcher(),
-            run_image_task=lambda *a: None,
-            run_action_task=lambda *a: None,
-        )
+        recover_orphaned_generation_tasks(session, publisher=_BoomPublisher())
         session.commit()
 
     with session_factory() as session:
@@ -550,11 +530,7 @@ def test_recover_unfreezes_unknown_task_type(session_factory, monkeypatch):
     from windup_app.server.orchestrator import task_repo
     from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
 
-    queued: list = []
-
-    class _Dispatcher:
-        def submit(self, target, *args):
-            queued.append((target, args))
+    publisher, enqueued = _tracking_publisher()
 
     with session_factory() as session:
         _seed_account(session, 1)
@@ -579,15 +555,10 @@ def test_recover_unfreezes_unknown_task_type(session_factory, monkeypatch):
     monkeypatch.setattr(task_repo, "list_by_status", _unknown_type)
 
     with session_factory() as session:
-        recover_orphaned_generation_tasks(
-            session,
-            dispatcher=_Dispatcher(),
-            run_image_task=lambda *a: None,
-            run_action_task=lambda *a: None,
-        )
+        recover_orphaned_generation_tasks(session, publisher=publisher)
         session.commit()
 
-    assert queued == []
+    assert enqueued == []
     with session_factory() as session:
         done = AiGenerationService().get_task(session, project_id=1, task_id=task_id)
         assert done.status is TaskStatus.FAILED
