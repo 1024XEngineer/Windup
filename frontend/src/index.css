@@ -141,6 +141,7 @@ body,
 
   --shadow-app-card: 0 18px 45px rgb(29 37 31 / 9%);
   --shadow-app-panel: 0 22px 60px rgb(29 37 31 / 12%);
+  --shadow-app-composer-focus: 0 18px 48px rgb(29 37 31 / 14%);
   --shadow-app-page: 0 26px 80px rgb(29 37 31 / 10%);
   --shadow-app-header: inset 0 1px 0 rgb(255 255 255 / 55%);
   --shadow-app-menu: 0 8px 24px rgb(29 37 31 / 10%);

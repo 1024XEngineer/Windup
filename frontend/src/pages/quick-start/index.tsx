@@ -355,20 +355,20 @@ function QuickStartInput({
         <div data-layout="quick-start-composer" className="mx-auto w-full max-w-3xl self-end">
           <form
             onSubmit={(event) => void submit(event)}
-            className="grid items-center gap-1.5 rounded-xl border border-app-line-strong bg-app-surface-raised p-1.5 shadow-app-panel transition-shadow focus-within:border-app-accent sm:grid-cols-[1fr_auto_auto]"
+            className="grid items-center gap-1.5 rounded-xl border border-app-line-strong bg-app-surface-raised p-1.5 shadow-app-panel transition-shadow focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)] sm:grid-cols-[1fr_auto_auto]"
           >
             <label className="min-w-0" htmlFor="quick-start-prompt">
               <span className="sr-only">创作指令</span>
-              <textarea
+              <input
                 id="quick-start-prompt"
+                type="text"
                 aria-label="创作指令"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
-                rows={2}
                 placeholder={
                   templateFile ? '描述动作，可留空生成待机动作…' : '描述角色的外形、身份和气质…'
                 }
-                className="min-h-10 w-full min-w-0 resize-none border-0 bg-transparent px-3 py-2 text-[15px] leading-6 text-app-ink outline-none placeholder:text-app-faint"
+                className="h-10 w-full min-w-0 border-0 bg-transparent px-3 text-[15px] text-app-ink outline-none placeholder:text-app-faint"
               />
             </label>
 
