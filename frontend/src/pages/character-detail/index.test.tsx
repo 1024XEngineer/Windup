@@ -90,4 +90,35 @@ describe('CharacterDetailPage', () => {
     expect(screen.getByText('这个造型还没有动作')).toBeTruthy()
     expect(screen.queryByRole('link', { name: '在预览台打开当前造型' })).toBeNull()
   })
+
+  it('renders a real empty state when the Character has no Outfit', async () => {
+    const backend = createProjectAssetsBackend()
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      const response = await backend.fetch(input, init)
+      if (!request.url.endsWith('/characters/51')) return response
+
+      const payload = (await response.json()) as {
+        data: { character_data: { outfits: unknown[] } }
+        [key: string]: unknown
+      }
+      payload.data.character_data.outfits = []
+      return new Response(JSON.stringify(payload), {
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects/42/assets/51']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(await screen.findByText('这个角色还没有造型')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '导出资产包' })).toBeNull()
+    expect(screen.queryByRole('link', { name: '在预览台打开当前造型' })).toBeNull()
+  })
 })

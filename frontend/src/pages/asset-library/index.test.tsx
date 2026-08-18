@@ -53,6 +53,48 @@ describe('AssetLibraryPage', () => {
     expect(screen.queryByRole('link', { name: /查看角色/ })).toBeNull()
   })
 
+  it('uses the shared empty preview when a published Character has no Outfit', async () => {
+    const backend = createProjectAssetsBackend()
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      const response = await backend.fetch(input, init)
+      if (!request.url.includes('/characters?project_id=42')) return response
+
+      const payload = (await response.json()) as {
+        data: Array<Record<string, unknown>>
+        total: number
+        [key: string]: unknown
+      }
+      payload.data.push({
+        id: 53,
+        project_id: 42,
+        workflow_run_id: 503,
+        name: '无造型角色',
+        description: null,
+        reference_image_url: null,
+        character_data: { version: 1, outfits: [] },
+        status: 1,
+      })
+      payload.total += 1
+      return new Response(JSON.stringify(payload), {
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects/42/assets']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(await screen.findByText('无造型角色')).toBeTruthy()
+    expect(screen.getByText('尚未创建造型')).toBeTruthy()
+    expect(screen.getByText('暂无造型预览')).toBeTruthy()
+  })
+
   it('requests each published Character page from the backend', async () => {
     const backend = createProjectAssetsBackend({ characterCount: 26 })
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
