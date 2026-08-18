@@ -1,6 +1,7 @@
 """OnnxU2NetMatteProvider 契约测试(不加载模型 / 不联网:构造 + 协议合规)。"""
 
 import numpy as np
+from PIL import Image
 import pytest
 
 from windup_framework.providers import MatteProvider, OnnxU2NetMatteProvider
@@ -513,3 +514,68 @@ def test_kill_radius_follows_background_noise():
 
     assert _kill_radius(clean) == _KEY_KILL_MIN
     assert _KEY_KILL_MIN < _kill_radius(noisy) <= _KEY_KILL_MAX
+
+
+# ── 两个模型的 alpha 取并集 ───────────────────────────────────────────────
+#
+# 两者漏检的位置不重叠:轻量版把浅肤色角色的脸颊与小腿判成背景(测试反馈的"浅色角色被
+# 抠穿"),全量版把 T-pose 平举的细手臂整条丢掉。实测 9 张:主体覆盖 14.78% → 15.77%,
+# 漏检最严重那张的洞 11.69% → 0.06%。
+
+
+class _SaliencySession:
+    """按给定的显著性图返回 u2net 形状的输出。"""
+
+    def __init__(self, sal):
+        self._sal = np.asarray(sal, dtype=np.float32)
+
+    class _In:
+        name = "input.1"
+
+    def get_inputs(self):
+        return [self._In()]
+
+    def run(self, _outputs, _feed):
+        return [self._sal[None, None, :, :]]
+
+
+def _provider_with(main_sal, refine_sal):
+    from windup_framework.providers import matte as M
+
+    prov = M.OnnxU2NetMatteProvider(model_path="/nonexistent.onnx", refine_model_url=None)
+    prov._session = _SaliencySession(main_sal)
+    prov._refine_session = _SaliencySession(refine_sal) if refine_sal is not None else None
+    return prov
+
+
+def test_the_two_models_cover_each_others_misses():
+    """一个模型漏左半、另一个漏右半 —— 并集两边都在。"""
+    n = 320
+    left = np.zeros((n, n), dtype=np.float32)
+    left[:, : n // 2] = 1.0
+    right = np.zeros((n, n), dtype=np.float32)
+    right[:, n // 2 :] = 1.0
+    prov = _provider_with(left, right)
+
+    mask = np.asarray(prov._predict_mask(Image.new("RGB", (n, n), (30, 30, 30))))
+    assert mask[:, 10].mean() > 200, "左半被丢了"
+    assert mask[:, -10].mean() > 200, "右半被丢了 —— 并集没生效"
+
+
+def test_a_missing_refine_model_degrades_to_one_model_and_says_so(caplog):
+    """补充模型取不到时不该整条失败,但必须留痕。"""
+    from windup_framework.providers import matte as M
+
+    prov = M.OnnxU2NetMatteProvider(
+        model_path="/nonexistent.onnx",
+        refine_model_path="/nonexistent-refine.onnx",
+        refine_model_url=None,
+    )
+    with caplog.at_level("WARNING"):
+        assert prov._get_refine_session() is None
+    assert any("补充模型" in r.message for r in caplog.records), \
+        f"降级没留痕:{[r.message for r in caplog.records]}"
+    # 第二次不再重试、也不再刷日志
+    n0 = len(caplog.records)
+    assert prov._get_refine_session() is None
+    assert len(caplog.records) == n0, "每帧都重试了一次取模型"
