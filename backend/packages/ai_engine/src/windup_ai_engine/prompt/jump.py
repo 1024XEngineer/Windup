@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from windup_common.models import Facing
 
+from windup_ai_engine.prompt._framing import with_framing
 from windup_ai_engine.prompt._md import load_section
 
 __all__ = ["JUMP_PHASES", "build_jump_prompt"]
@@ -23,4 +24,4 @@ def build_jump_prompt(facing: Facing | str = Facing.SIDE) -> str:
         facing: :class:`Facing` 成员(或其等价字符串),**必须与母版朝向一致**。
 
     """
-    return load_section(_DOC, Facing(facing).value)
+    return with_framing(load_section(_DOC, Facing(facing).value))
