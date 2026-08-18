@@ -1,5 +1,8 @@
 """OnnxU2NetMatteProvider 契约测试(不加载模型 / 不联网:构造 + 协议合规)。"""
 
+import numpy as np
+import pytest
+
 from windup_framework.providers import MatteProvider, OnnxU2NetMatteProvider
 
 
@@ -440,3 +443,73 @@ def test_cutout_applies_flat_bg_cleanup_before_filling_holes(monkeypatch):
                         lambda a, rgb: (order.append("fill"), real_fill(a, rgb))[1])
     _provider_with_fake_session(monkeypatch).cutout(_png())
     assert order == ["clean", "fill"], order
+
+
+# ── 键控清理不得抠穿主体 ────────────────────────────────────────────────────
+#
+# 固定阈值 38 会杀掉与底色距离小于它的**主体内部**像素:实测五个真实角色母版上,
+# 用 u2netp 掩码判主体,受损比例最高到 34.4%(美少女)、10.2%(钟表匠)。深色角色距离
+# 300 以上,永远不沾这个窗口 —— 所以症状只出现在浅色角色身上。
+
+
+def _synth(bg, body, size=96):
+    """整幅 bg 底色,中间一块 body 色的主体。"""
+    img = np.full((size, size, 3), bg, dtype=np.float32)
+    img[28:76, 32:64] = body
+    return img
+
+
+@pytest.mark.parametrize("name,bg,body", [
+    ("骨白角色白底", (250, 250, 250), (238, 236, 228)),
+    ("浅灰铠甲白底", (248, 248, 248), (226, 226, 224)),
+    ("浅肤色灰白底", (235, 235, 232), (241, 214, 196)),
+    ("米白布料白底", (250, 250, 250), (232, 228, 215)),
+])
+def test_light_subject_is_not_keyed_through(name, bg, body):
+    """浅色主体不得被键控清理削掉,一个像素都不行。"""
+    from windup_framework.providers.matte import _flat_bg_penalty
+
+    core = _flat_bg_penalty(_synth(bg, body))[28:76, 32:64]
+    assert (core == 1.0).all(), f"{name}: {int((core < 1.0).sum())} 个主体像素被削"
+
+
+def test_dark_subject_unaffected():
+    """深色主体本来就不受影响,改动不该改变它。"""
+    from windup_framework.providers.matte import _flat_bg_penalty
+
+    core = _flat_bg_penalty(_synth((250, 250, 250), (60, 55, 70)))[28:76, 32:64]
+    assert (core == 1.0).all()
+
+
+@pytest.mark.parametrize("noise", [0.0, 3.0])
+def test_enclosed_gap_still_cleaned(noise):
+    """清理能力不得回退:被主体围住的底色空隙仍要被清掉。
+
+    这是 _flat_bg_penalty 存在的理由 —— u2netp 对闭合区域失灵,四足腿间的背景会被
+    当成主体内部整块留下。窄半径不能把这个能力一起窄掉。
+    """
+    from windup_framework.providers.matte import _flat_bg_penalty
+
+    rng = np.random.default_rng(7)
+    img = np.full((96, 96, 3), (250, 250, 250), dtype=np.float32)
+    if noise:
+        img += rng.normal(0, noise, img.shape)
+    img[20:80, 24:72] = (60, 55, 70)                 # 主体
+    img[40:60, 40:56] = (250, 250, 250)              # 主体内部的底色空隙
+    if noise:
+        img[40:60, 40:56] += rng.normal(0, noise, (20, 16, 3))
+
+    gap = _flat_bg_penalty(img)[40:60, 40:56]
+    assert (gap == 0.0).mean() > 0.9, "闭合空隙没被清掉,清理能力回退了"
+
+
+def test_kill_radius_follows_background_noise():
+    """半径随底噪走:干净底取下限,噪声底自动放宽。"""
+    from windup_framework.providers.matte import _kill_radius, _KEY_KILL_MIN, _KEY_KILL_MAX
+
+    rng = np.random.default_rng(3)
+    clean = np.full((96, 96, 3), 250.0, dtype=np.float32)
+    noisy = clean + rng.normal(0, 4.0, clean.shape)
+
+    assert _kill_radius(clean) == _KEY_KILL_MIN
+    assert _KEY_KILL_MIN < _kill_radius(noisy) <= _KEY_KILL_MAX

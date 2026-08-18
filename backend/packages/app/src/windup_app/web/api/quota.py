@@ -4,11 +4,8 @@
 --------
 GET  /quota/balance          查询积分余额
 GET  /quota/transactions     查询积分流水（分页）
-
-暂不实现：
-POST /quota/invite/redeem    兑换邀请码
 GET  /quota/invite/code      获取我的邀请码
-POST /quota/invite/generate  生成新邀请码
+POST /quota/invite/generate  签发新邀请码
 """
 
 from __future__ import annotations
@@ -63,15 +60,14 @@ class CreditTransactionOut(BaseModel):
     create_at: datetime
 
 
-# -- 暂不实现 ----------------------------------------------------------------
-#
-# class InviteCodeOut(BaseModel):
-#     """邀请码响应。"""
-#     ...
-#
-# class RedeemRequest(BaseModel):
-#     """兑换邀请码请求。"""
-#     ...
+class InviteCodeOut(BaseModel):
+    """邀请码响应。"""
+
+    code: str
+    used_count: int
+    expires_at: datetime
+    create_at: datetime
+    update_at: datetime
 
 
 # -- 端点 ----------------------------------------------------------------
@@ -102,7 +98,9 @@ def list_transactions(
 ) -> ListResponse[CreditTransactionOut]:
     """查询积分流水（分页）。"""
     user_id = request.state.current_user.id
-    txns, total = service.list_transactions(session, user_id, page=page, page_size=page_size)
+    txns, total = service.list_transactions(
+        session, user_id, page=page, page_size=page_size
+    )
     return ListResponse.success(
         [CreditTransactionOut.model_validate(t) for t in txns],
         total=total,
@@ -111,13 +109,38 @@ def list_transactions(
     )
 
 
-# -- 邀请码端点（暂不实现）--------------------------------------------------
-#
-# @router.get("/invite/code")
-# def get_invite_code(...): ...
-#
-# @router.post("/invite/generate")
-# def generate_invite_code(...): ...
-#
-# @router.post("/invite/redeem")
-# def redeem_invite_code(...): ...
+@router.get("/invite/code", response_model=Response[InviteCodeOut])
+def get_invite_code(
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[InviteCodeOut]:
+    """获取当前用户未过期邀请码；没有或已过期则签发新行。"""
+    view = service.get_invite_code(session, request.state.current_user.id)
+    return Response.success(
+        InviteCodeOut(
+            code=view.code,
+            used_count=view.used_count,
+            expires_at=view.expires_at,
+            create_at=view.create_at,
+            update_at=view.update_at,
+        )
+    )
+
+
+@router.post("/invite/generate", response_model=Response[InviteCodeOut])
+def generate_invite_code(
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[InviteCodeOut]:
+    """签发新邀请码。旧码立即过期，行保留。"""
+    view = service.generate_invite_code(session, request.state.current_user.id)
+    return Response.success(
+        InviteCodeOut(
+            code=view.code,
+            used_count=view.used_count,
+            expires_at=view.expires_at,
+            create_at=view.create_at,
+            update_at=view.update_at,
+        ),
+        message="邀请码已更新",
+    )

@@ -1,4 +1,5 @@
 import { useEffect, useId, useReducer, useRef, useState, type FormEvent } from 'react'
+import { useSearchParams } from 'react-router'
 
 import accountBadgeArtwork from '@/assets/account/illustrations/account-badge.webp'
 import type { User } from '@/entities'
@@ -10,6 +11,7 @@ import {
   useQuotaTransactions,
 } from '@/features/quota'
 import { Pagination } from '@/shared/ui'
+import { InviteSection } from '@/pages/invite'
 
 import './account.css'
 import { createProfileState, initialSecurityState, profileReducer, securityReducer } from './state'
@@ -143,6 +145,8 @@ function QuotaSection() {
 
 /** 账号页以 /auth/me 为事实来源；会话层负责把刷新和编辑结果同步给 Header。 */
 export function AccountPage() {
+  const [searchParams] = useSearchParams()
+  const requestedSection = searchParams.get('section')
   const session = useAuthSession()
   const {
     changePassword: changeSessionPassword,
@@ -158,7 +162,9 @@ export function AccountPage() {
     createProfileState,
   )
   const [security, dispatchSecurity] = useReducer(securityReducer, initialSecurityState)
-  const [activeSection, setActiveSection] = useState<'profile' | 'security' | 'quota'>('profile')
+  const [activeSection, setActiveSection] = useState<'profile' | 'security' | 'quota' | 'invite'>(
+    requestedSection === 'invite' ? 'invite' : 'profile',
+  )
   const nicknameId = useId()
   const oldPasswordId = useId()
   const newPasswordId = useId()
@@ -180,6 +186,10 @@ export function AccountPage() {
       active = false
     }
   }, [refreshCurrentUser])
+
+  useEffect(() => {
+    if (requestedSection === 'invite') selectSection('invite')
+  }, [requestedSection])
 
   async function saveNickname(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -230,7 +240,7 @@ export function AccountPage() {
     void logout().catch(() => undefined)
   }
 
-  function selectSection(section: 'profile' | 'security' | 'quota') {
+  function selectSection(section: 'profile' | 'security' | 'quota' | 'invite') {
     setActiveSection(section)
     dispatchProfile({ type: 'sectionChanged' })
     dispatchSecurity({ type: 'sectionChanged' })
@@ -292,6 +302,7 @@ export function AccountPage() {
                   ['profile', '个人资料'],
                   ['security', '登录安全'],
                   ['quota', '积分账户'],
+                  ['invite', '邀请奖励'],
                 ] as const
               ).map(([section, label]) => (
                 <button
@@ -301,8 +312,8 @@ export function AccountPage() {
                   aria-current={activeSection === section ? 'page' : undefined}
                   className={`min-h-10 rounded-lg px-3 text-left text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent ${
                     activeSection === section
-                      ? 'bg-app-accent-soft font-semibold text-app-accent'
-                      : 'text-app-muted hover:bg-app-accent-muted hover:text-app-ink-soft'
+                      ? 'bg-app-surface-muted font-semibold text-app-ink'
+                      : 'text-app-muted hover:bg-app-surface-muted/70 hover:text-app-ink-soft'
                   }`}
                 >
                   {label}
@@ -488,8 +499,10 @@ export function AccountPage() {
                   </button>
                 </form>
               </div>
-            ) : (
+            ) : activeSection === 'quota' ? (
               <QuotaSection />
+            ) : (
+              <InviteSection />
             )}
           </section>
         </div>

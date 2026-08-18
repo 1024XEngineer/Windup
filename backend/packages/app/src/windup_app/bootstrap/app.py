@@ -21,18 +21,19 @@ from windup_app.server.character.model import Character  # noqa: F401
 from windup_app.server.character.service import service as character_service
 from windup_app.server.orchestrator.dispatcher import GenerationDispatcher
 from windup_app.server.project.model import Project  # noqa: F401
-from windup_app.server.quota.model import CreditAccount, CreditTransaction  # noqa: F401
-# InviteCode, InviteRecord, TokenUsage 暂不实现
+from windup_app.server.quota.model import CreditAccount, CreditTransaction, InviteCode, InviteRecord  # noqa: F401
 from windup_app.server.user.model import User  # noqa: F401
 from windup_app.server.workflow_run.model import WorkflowRun  # noqa: F401
 from windup_app.web.api.auth import router as auth_router
 from windup_app.web.api.character import router as character_router
 from windup_app.server.orchestrator import task_repo
 from windup_app.server.orchestrator.executor import run_action_task, run_image_task
+from windup_app.server.orchestrator.render3d_service import default_operations, precheck_master
 from windup_app.web.api.generation import router as generation_router
 from windup_app.web.api.media import router as media_router
 from windup_app.web.api.project import router as project_router
 from windup_app.web.api.quota import router as quota_router
+from windup_app.web.api.render3d import router as render3d_router
 from windup_app.web.api.workflow_run import router as workflow_run_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
 from windup_app.web.middleware.auth import AuthMiddleware
@@ -133,11 +134,16 @@ def create_app() -> FastAPI:
     app.include_router(media_router)
     app.include_router(generation_router)
     app.include_router(quota_router)
+    app.include_router(render3d_router)
     # 生成任务的后台执行器挂到 app.state:端点只建 PENDING 记录立即返回,真正的
     # 图生图/i2v 在后台线程跑。放在 state 而不是 import 到 web 层,是因为
     # import-linter 的分层契约禁止 app.web 直连 ai_engine,而 executor 要调它。
     app.state.run_action_task = run_action_task
     app.state.run_image_task = run_image_task
+    # 母版预检与建 3D 资产同理:两者都经 ai_engine,web 层不能静态依赖。
+    # 预检是零成本纯函数;建资产要花钱,``default_operations`` 自带 WINDUP_RENDER3D_ALLOW_SPEND 开关。
+    app.state.precheck_master = precheck_master
+    app.state.render3d_operations = default_operations()
 
     # task_repo 状态变更时自动推 SSE。延迟 import 避免与 generation 模块循环依赖。
     from windup_app.web.api.generation import event_bus

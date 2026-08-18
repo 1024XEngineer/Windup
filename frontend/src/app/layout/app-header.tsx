@@ -228,11 +228,10 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
           ) : session.state.status === 'guest' ? (
             <Link
               to={accountEntry}
-              aria-label="登录"
+              aria-label="登录 / 注册"
               className="inline-flex min-h-10 items-center rounded-lg border border-app-ink/14 bg-app-surface-raised/45 px-3 text-[13px] font-medium whitespace-nowrap text-app-ink-soft transition-colors hover:bg-app-surface-raised/75 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
             >
-              {/* 内测关闭公开注册。重新开放时改回「登录 / 注册」。 */}
-              <span className="hidden sm:inline">登录</span>
+              <span className="hidden sm:inline">登录 / 注册</span>
               <span className="sm:hidden">登录</span>
             </Link>
           ) : (
@@ -246,7 +245,10 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
                   <div className="relative flex items-start gap-3">
                     <div className="min-w-0">
                       <p className="text-[13px] font-medium leading-5 text-app-ink-soft">
-                        邀请好友，双方各得 200 积分
+                        每日前 3 位好友，你各得 200 积分
+                      </p>
+                      <p className="mt-0.5 text-[11px] leading-4 text-app-faint">
+                        好友注册共得 500 积分
                       </p>
                       <Link
                         to="/account?section=invite"

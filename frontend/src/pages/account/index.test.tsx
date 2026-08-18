@@ -51,13 +51,13 @@ function LocationProbe() {
   )
 }
 
-function renderAccount(apis = createApis()) {
+function renderAccount(apis = createApis(), entry = '/account') {
   window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
   return {
     apis,
     ...render(
       <AuthSessionProvider apis={apis}>
-        <MemoryRouter initialEntries={['/account']}>
+        <MemoryRouter initialEntries={[entry]}>
           <AppRoutes />
           <LocationProbe />
         </MemoryRouter>
@@ -187,6 +187,65 @@ describe('AccountPage', () => {
     expect(await screen.findByText('90')).toBeTruthy()
     expect(screen.getByText('积分变动（原因码 99）')).toBeTruthy()
     expect(screen.getByText('-12')).toBeTruthy()
+  })
+
+  it('在账号中心直接管理邀请奖励', async () => {
+    vi.spyOn(quotaApis, 'getBalance').mockResolvedValue({
+      id: '11',
+      userId: '7',
+      balance: 90,
+      frozen: 10,
+      totalEarned: 150,
+      totalSpent: 50,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+    vi.spyOn(quotaApis, 'listTransactions').mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 20,
+    })
+    vi.spyOn(quotaApis, 'getInviteCode').mockResolvedValue({
+      code: 'AB23CD45',
+      usedCount: 2,
+      expiresAt: '2026-09-16T01:02:03Z',
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+
+    renderAccount()
+    fireEvent.click(await screen.findByRole('button', { name: '邀请奖励' }))
+
+    expect(await screen.findByRole('heading', { name: '邀请奖励' })).toBeTruthy()
+    expect(await screen.findByText('AB23CD45')).toBeTruthy()
+  })
+
+  it('通过账号中心链接直接打开邀请奖励', async () => {
+    vi.spyOn(quotaApis, 'getBalance').mockResolvedValue({
+      id: '11',
+      userId: '7',
+      balance: 90,
+      frozen: 10,
+      totalEarned: 150,
+      totalSpent: 50,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+    vi.spyOn(quotaApis, 'getInviteCode').mockResolvedValue({
+      code: 'AB23CD45',
+      usedCount: 2,
+      expiresAt: '2026-09-16T01:02:03Z',
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+
+    renderAccount(createApis(), '/account?section=invite')
+
+    expect(await screen.findByRole('heading', { name: '邀请奖励' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '邀请奖励' }).getAttribute('aria-current')).toBe(
+      'page',
+    )
   })
 
   it('reports a profile refresh failure without claiming the data is synchronized', async () => {
