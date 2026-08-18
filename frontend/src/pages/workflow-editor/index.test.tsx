@@ -200,6 +200,22 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(updateCharacterSetup).not.toHaveBeenCalled()
   })
 
+  it('页面卸载后会释放迟到返回的 Workflow Editor 会话', async () => {
+    const pendingSession = deferred<WorkflowEditorSession>()
+    const session = createSession()
+    const dispose = vi.spyOn(session.controller, 'dispose')
+    defaultSessionLoader.mockReturnValue(pendingSession.promise)
+    const view = renderEditor('/workflow-editor/42')
+
+    view.unmount()
+    await act(async () => {
+      pendingSession.resolve(session)
+      await pendingSession.promise
+    })
+
+    expect(dispose).toHaveBeenCalledTimes(1)
+  })
+
   it('真实 Generation 尚未实现时展示接口错误，不回退到演示候选', async () => {
     defaultSessionLoader.mockResolvedValue(createSession())
     renderEditor('/workflow-editor/42')
