@@ -45,19 +45,6 @@ function createQuotaApis(): QuotaApis & {
       page,
       pageSize,
     })),
-    getInviteCode: vi.fn(async () => ({
-      code: 'AB23CD45',
-      usedCount: 0,
-      createdAt: '2026-08-12T01:02:03Z',
-      updatedAt: '2026-08-17T01:02:03Z',
-    })),
-    generateInviteCode: vi.fn(async () => ({
-      code: 'XY89KL23',
-      usedCount: 0,
-      createdAt: '2026-08-17T03:00:00Z',
-      updatedAt: '2026-08-17T03:00:00Z',
-    })),
-    redeemInviteCode: vi.fn(async () => undefined),
   }
 }
 
@@ -131,7 +118,6 @@ describe('quota queries', () => {
   })
 
   it('为已知和未知原因码提供文案，并处理无效时间', () => {
-    expect(getCreditReasonLabel(2)).toBe('邀请奖励')
     expect(getCreditReasonLabel(4)).toBe('生成角色动作')
     expect(getCreditReasonLabel(99)).toBe('积分变动（原因码 99）')
     expect(formatCreditDateTime('not-a-date')).toBe('时间未知')

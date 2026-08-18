@@ -52,7 +52,6 @@ describe('createUserApis', () => {
       password: 'password-123',
       code: '123456',
       nickname: 'Reader',
-      inviteCode: 'AB23CD45',
     })
     await apis.login({
       email: 'reader@example.com',
@@ -80,7 +79,6 @@ describe('createUserApis', () => {
             email: 'reader@example.com',
             password: 'password-123',
             code: '123456',
-            invite_code: 'AB23CD45',
             nickname: 'Reader',
           },
         },
@@ -187,7 +185,6 @@ describe('createUserApis', () => {
       password: 'password-123',
       code: '123456',
       nickname: '',
-      inviteCode: 'AB23CD45',
     })
 
     expect(request).toHaveBeenCalledWith('/auth/register', {
@@ -196,7 +193,6 @@ describe('createUserApis', () => {
         email: 'reader@example.com',
         password: 'password-123',
         code: '123456',
-        invite_code: 'AB23CD45',
       },
     })
   })

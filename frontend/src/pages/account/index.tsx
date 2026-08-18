@@ -1,8 +1,7 @@
 import { useEffect, useId, useReducer, useRef, useState, type FormEvent } from 'react'
 
 import accountBadgeArtwork from '@/assets/account/illustrations/account-badge.webp'
-import { quotaApis } from '@/entities'
-import type { InviteCode, User } from '@/entities'
+import type { User } from '@/entities'
 import { useAuthSession } from '@/features/auth-session'
 import {
   formatCreditDateTime,
@@ -37,149 +36,6 @@ function formatCredits(value: number): string {
   return value.toLocaleString('zh-CN')
 }
 
-const INVITE_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{4,16}$/i
-
-function InviteSection({ onCreditsChanged }: { onCreditsChanged(): void }) {
-  const redeemId = useId()
-  const [invite, setInvite] = useState<InviteCode | null>(null)
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const [actionError, setActionError] = useState<string | null>(null)
-  const [success, setSuccess] = useState<string | null>(null)
-  const [redeemCode, setRedeemCode] = useState('')
-  const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    let active = true
-    void quotaApis.getInviteCode().then(
-      (view) => {
-        if (!active) return
-        setInvite(view)
-        setLoadError(null)
-      },
-      (error: unknown) => {
-        if (!active) return
-        setLoadError(errorMessage(error))
-      },
-    )
-    return () => {
-      active = false
-    }
-  }, [])
-
-  async function rotateCode() {
-    if (busy) return
-    setBusy(true)
-    setActionError(null)
-    setSuccess(null)
-    try {
-      const view = await quotaApis.generateInviteCode()
-      setInvite(view)
-      setSuccess('邀请码已更新')
-    } catch (error) {
-      setActionError(errorMessage(error))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function redeem(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (busy) return
-    const normalized = redeemCode.trim().toUpperCase()
-    if (!INVITE_CODE_PATTERN.test(normalized)) {
-      setActionError('请填写有效邀请码')
-      setSuccess(null)
-      return
-    }
-    setBusy(true)
-    setActionError(null)
-    setSuccess(null)
-    try {
-      await quotaApis.redeemInviteCode(normalized)
-      setRedeemCode('')
-      setSuccess('邀请码填写成功')
-      onCreditsChanged()
-    } catch (error) {
-      setActionError(errorMessage(error))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <section className="mt-7" aria-labelledby="invite-code-title">
-      <h3 id="invite-code-title" className="text-sm font-semibold text-app-ink-soft">
-        邀请码
-      </h3>
-      <p className="mt-1.5 text-sm text-app-muted">
-        把你的邀请码发给朋友即可注册。已有账号也可以在这里补填一次邀请码。
-      </p>
-
-      {loadError ? (
-        <p role="alert" className="mt-3 text-sm text-app-danger">
-          {loadError}
-        </p>
-      ) : invite ? (
-        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-app-line bg-app-surface-muted px-4 py-3">
-          <div className="min-w-0 flex-1">
-            <p className="font-mono text-lg font-semibold tracking-[0.18em] text-app-ink">
-              {invite.code}
-            </p>
-            <p className="mt-0.5 text-xs text-app-faint">已邀请 {invite.usedCount} 人</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => void rotateCode()}
-            disabled={busy}
-            className="text-sm font-semibold text-app-accent underline"
-          >
-            {busy ? '处理中…' : '重新生成'}
-          </button>
-        </div>
-      ) : (
-        <p role="status" className="mt-3 text-sm text-app-muted">
-          正在加载邀请码…
-        </p>
-      )}
-
-      <form className="mt-4 grid max-w-xl gap-3" onSubmit={redeem} noValidate>
-        <label htmlFor={redeemId} className="grid gap-1.5 text-sm font-medium text-app-ink-soft">
-          填写邀请码
-          <input
-            id={redeemId}
-            type="text"
-            autoComplete="off"
-            value={redeemCode}
-            disabled={busy}
-            onChange={(event) => setRedeemCode(event.target.value)}
-            className="account-field"
-            placeholder="输入好友的邀请码"
-          />
-        </label>
-        {actionError && (
-          <p
-            role="alert"
-            className="rounded-lg bg-app-danger-soft px-3 py-2.5 text-sm text-app-danger"
-          >
-            {actionError}
-          </p>
-        )}
-        {success && (
-          <p
-            role="status"
-            className="rounded-lg bg-app-accent-muted px-3 py-2.5 text-sm text-app-accent"
-          >
-            {success}
-          </p>
-        )}
-        <button type="submit" disabled={busy} className="account-primary-button justify-self-start">
-          确认填写
-        </button>
-      </form>
-    </section>
-  )
-}
-
 function QuotaSection() {
   const balance = useQuotaBalance(true)
   const transactions = useQuotaTransactions(true)
@@ -209,13 +65,6 @@ function QuotaSection() {
           </div>
         ))}
       </dl>
-
-      <InviteSection
-        onCreditsChanged={() => {
-          balance.reload()
-          transactions.reload()
-        }}
-      />
 
       {balance.status === 'loading' && (
         <p role="status" className="mt-3 text-sm text-app-muted">

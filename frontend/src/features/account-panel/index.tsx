@@ -19,7 +19,6 @@ import {
   EyeClosed,
   Keyhole,
   SealCheck,
-  Ticket,
   UserCircle,
   X,
   type Icon,
@@ -92,6 +91,7 @@ const loginMotionCopy = [
 const REGISTER_STEP_COUNT = 4
 const AUTH_ICON_PROPS = { weight: 'light' as const }
 const AUTH_FIELD_CLASS = 'auth-screen-field w-full outline-none disabled:cursor-not-allowed'
+const ACCESS_REQUEST_URL = 'https://github.com/1024XEngineer/Windup/issues'
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '操作失败，请稍后重试'
@@ -201,7 +201,9 @@ export function AccountPanel() {
   const entry = searchParams.get('account')
   if (entry !== 'login' && entry !== 'register') return null
 
-  return <AccountPanelDialog key={entry} entry={entry} />
+  // 内测期间关闭公开注册。重新开放时改回：
+  // return <AccountPanelDialog key={entry} entry={entry} />
+  return <AccountPanelDialog key="login" entry="login" />
 }
 
 /** 只有面板真正打开时才读取会话，关闭状态不把认证 Context 强加给应用外壳。 */
@@ -215,7 +217,6 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
   const [showPassword, setShowPassword] = useState(false)
   const [code, setCode] = useState('')
   const [nickname, setNickname] = useState('')
-  const [inviteCode, setInviteCode] = useState('')
   const [registerStep, setRegisterStep] = useState(0)
   const [motionDirection, setMotionDirection] = useState<MotionDirection>('forward')
   const [copyIndex, setCopyIndex] = useState(0)
@@ -346,6 +347,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
     window.requestAnimationFrame(() => emailInputRef.current?.focus())
   }
 
+  /*
   function switchEntry(nextEntry: AccountEntry) {
     leaveWithAnimation(() => {
       const next = new URLSearchParams(searchParams)
@@ -353,6 +355,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
       setSearchParams(next, { replace: true })
     })
   }
+  */
 
   async function sendCode(): Promise<boolean> {
     if (isSendingCode || cooldownSeconds > 0) return false
@@ -393,7 +396,6 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
 
   function validateRegistration(): string | null {
     if (!EMAIL_PATTERN.test(normalizedEmail)) return '请输入有效邮箱地址'
-    if (!/^[A-HJ-NP-Z2-9]{4,16}$/i.test(inviteCode.trim())) return '请填写有效邀请码'
     if (password.length < 8 || password.length > 128) return '密码需为 8–128 位'
     if (nickname.length > 50) return '昵称不能超过 50 个字符'
     if (!CODE_PATTERN.test(code)) return '验证码需为 6 位数字'
@@ -404,8 +406,6 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
     let validationError: string | null = null
     if (registerStep === 0 && !EMAIL_PATTERN.test(normalizedEmail)) {
       validationError = '请输入有效邮箱地址'
-    } else if (registerStep === 0 && !/^[A-HJ-NP-Z2-9]{4,16}$/i.test(inviteCode.trim())) {
-      validationError = '请填写有效邀请码'
     } else if (registerStep === 1 && (password.length < 8 || password.length > 128)) {
       validationError = '密码需为 8–128 位'
     } else if (registerStep === 2 && nickname.length > 50) {
@@ -458,12 +458,13 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
           email: normalizedEmail,
           password,
           code,
-          inviteCode: inviteCode.trim().toUpperCase(),
           ...(nickname.trim() ? { nickname: nickname.trim() } : {}),
         })
         successMessage = '账号已创建，正在继续。'
       } else if (mode === 'code') {
         await session.loginByCode({ email: normalizedEmail, code })
+        // 内测不自动建号。重新开放注册时改回：
+        // successMessage = '登录成功。如果这是你首次使用该邮箱，我们已为你创建账号。'
         successMessage = '登录成功，正在继续。'
       } else {
         await session.login({ email: normalizedEmail, password })
@@ -669,34 +670,19 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
               className={`auth-motion-stage auth-motion-stage-${motionDirection}`}
             >
               {(!isRegister || registerStep === 0) && (
-                <>
-                  {isRegister && (
-                    <AuthField
-                      id={`${emailId}-invite`}
-                      label="邀请码"
-                      icon={Ticket}
-                      value={inviteCode}
-                      autoComplete="off"
-                      required
-                      onValueChange={setInviteCode}
-                      disabled={isSubmitting}
-                      placeholder="邀请码"
-                    />
-                  )}
-                  <AuthField
-                    id={emailId}
-                    label="邮箱"
-                    icon={isRegister ? RegisterFieldIcon : EnvelopeSimple}
-                    type="email"
-                    autoComplete="email"
-                    required
-                    value={email}
-                    onValueChange={setEmail}
-                    inputRef={emailInputRef}
-                    disabled={isSubmitting || isSendingCode}
-                    placeholder="邮箱地址"
-                  />
-                </>
+                <AuthField
+                  id={emailId}
+                  label="邮箱"
+                  icon={isRegister ? RegisterFieldIcon : EnvelopeSimple}
+                  type="email"
+                  autoComplete="email"
+                  required
+                  value={email}
+                  onValueChange={setEmail}
+                  inputRef={emailInputRef}
+                  disabled={isSubmitting || isSendingCode}
+                  placeholder="邮箱地址"
+                />
               )}
 
               {((isRegister && registerStep === 1) || (!isRegister && mode === 'password')) && (
@@ -770,7 +756,10 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
               )}
 
               {!isRegister && mode === 'code' && (
-                <p className="auth-screen-helper text-xs leading-5">没有账号请先用邀请码注册。</p>
+                <p className="auth-screen-helper text-xs leading-5">
+                  {/* 未注册的邮箱将在验证后自动创建账号。 */}
+                  内测期间仅支持已有账号登录。
+                </p>
               )}
             </div>
 
@@ -795,11 +784,20 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
             </button>
           </form>
 
+          {/*
           <p className="auth-screen-entry-switch mt-7 text-center text-sm">
             {isRegister ? '已有账号？' : '还没有账号？'}{' '}
             <button type="button" onClick={() => switchEntry(isRegister ? 'login' : 'register')}>
               {isRegister ? '登录' : '创建账号'}
             </button>
+          </p>
+          */}
+          <p className="auth-screen-entry-switch mt-7 text-center text-sm">
+            内测期间暂不开放注册。如需开通，请通过{' '}
+            <a href={ACCESS_REQUEST_URL} target="_blank" rel="noreferrer">
+              GitHub Issues
+            </a>{' '}
+            联系团队申请。
           </p>
         </div>
       </div>

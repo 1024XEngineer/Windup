@@ -24,7 +24,6 @@ export interface UserApis {
     password: string
     code: string
     nickname?: string
-    inviteCode: string
   }): Promise<AuthTokens>
   /** 密码登录不带验证码；验证码只用于注册、免密登录与重设密码。 */
   login(input: { email: string; password: string }): Promise<AuthTokens>

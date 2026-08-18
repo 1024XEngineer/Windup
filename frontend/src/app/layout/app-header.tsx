@@ -201,10 +201,11 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
           ) : session.state.status === 'guest' ? (
             <Link
               to={accountEntry}
-              aria-label="登录 / 注册"
+              aria-label="登录"
               className="inline-flex min-h-10 items-center rounded-lg border border-app-ink/14 bg-app-surface-raised/45 px-3 text-[13px] font-medium whitespace-nowrap text-app-ink-soft transition-colors hover:bg-app-surface-raised/75 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
             >
-              <span className="hidden sm:inline">登录 / 注册</span>
+              {/* 内测关闭公开注册。重新开放时改回「登录 / 注册」。 */}
+              <span className="hidden sm:inline">登录</span>
               <span className="sm:hidden">登录</span>
             </Link>
           ) : (

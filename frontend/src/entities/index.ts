@@ -10,7 +10,6 @@ export type {
   CreateQuotaApisOptions,
   CreditAccount,
   CreditTransaction,
-  InviteCode,
   QuotaApis,
   QuotaTransactionPageQuery,
 } from './quota'
