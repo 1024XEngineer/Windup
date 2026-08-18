@@ -594,12 +594,17 @@ export function createWorkflowController({
     const prompt = adjustedPrompt(setupNode.input.prompt, options)
     const sourceImageUrl = options.mode === 'refine' ? templateNode.selectedImageUrl : undefined
     await restartFromNode(nodeId)
-    return generateCharacterTemplate(setupNode.id, {
-      spriteWidth: options.spriteWidth,
-      spriteHeight: options.spriteHeight,
-      sourceImageUrl,
-      prompt,
-    })
+    try {
+      return await generateCharacterTemplate(setupNode.id, {
+        spriteWidth: options.spriteWidth,
+        spriteHeight: options.spriteHeight,
+        sourceImageUrl,
+        prompt,
+      })
+    } catch (cause) {
+      await rollbackRegeneration(before, nodeId)
+      throw cause
+    }
   }
 
   async function regenerateFirstFrame(
@@ -623,12 +628,44 @@ export function createWorkflowController({
     const sourceImageUrl =
       options.mode === 'refine' ? firstFrameNode.selectedFirstFrameUrl : undefined
     await restartFromNode(nodeId)
-    return generateFirstFrame(nodeId, {
-      spriteWidth: options.spriteWidth,
-      spriteHeight: options.spriteHeight,
-      sourceImageUrl,
-      prompt,
-    })
+    try {
+      return await generateFirstFrame(nodeId, {
+        spriteWidth: options.spriteWidth,
+        spriteHeight: options.spriteHeight,
+        sourceImageUrl,
+        prompt,
+      })
+    } catch (cause) {
+      await rollbackRegeneration(before, nodeId)
+      throw cause
+    }
+  }
+
+  /**
+   * 重新生成必须先回退节点才能提交请求，提交失败时把回退过的节点还原成用户确认过的样子。
+   * 不还原的话这条执行线会丢掉已接受的图片：重新生成还能从原始输入重来，微调却连参考图
+   * 和临时描述都没有了，用户只能拿一张全新的图重新对齐。
+   *
+   * 还原本身失败不覆盖原始错误——页面要看到的是"生成没成功"，而不是"回滚没成功"。
+   */
+  async function rollbackRegeneration(before: WorkflowRun, nodeId: WorkflowNode['id']) {
+    const affectedIds = collectDescendantIds(before.nodes, nodeId)
+    const restored = new Map(
+      before.nodes.filter((node) => affectedIds.has(node.id)).map((node) => [node.id, node]),
+    )
+    for (const affectedId of affectedIds) {
+      for (const [key] of unattachedGenerations) {
+        if (key.startsWith(`${affectedId}:`)) unattachedGenerations.delete(key)
+      }
+    }
+    try {
+      await persist((latest) => ({
+        ...latest,
+        nodes: normalizeAvailability(latest.nodes.map((node) => restored.get(node.id) ?? node)),
+      }))
+    } catch {
+      // 忽略：原始生成错误已经在向上抛出，页面按它给用户提示。
+    }
   }
 
   function confirmFirstFrame(
