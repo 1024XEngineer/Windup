@@ -31,6 +31,12 @@ from windup_app.server.user.service import (
 # -- Fixtures ------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _seed_invite(request):
+    if "db_session" in request.fixturenames:
+        request.getfixturevalue("invite_code")
+
+
 @pytest.fixture()
 def mock_redis():
     """Mock Redis 客户端。"""
@@ -129,6 +135,7 @@ def test_register_success(db_session, service, mock_email):
         email="new@example.com",
         password="password123",
         code="123456",
+        invite_code="AB23CD45",
     )
 
     result = service.register_by_email(db_session, input_data)
@@ -148,6 +155,7 @@ def test_public_methods_accept_session(db_session, service, mock_email):
             email="public@example.com",
             password="password123",
             code="123456",
+            invite_code="AB23CD45",
         ),
     )
 
@@ -191,19 +199,21 @@ def test_register_creates_credit_account(db_session, service, mock_email):
         email="credit@example.com",
         password="password123",
         code="123456",
+        invite_code="AB23CD45",
     )
 
     result = service.register_by_email(db_session, input_data)
     user_id = result.user.id
+    expected = quota_settings.register_gift_amount + quota_settings.invite_reward_amount
 
     # 验证积分账户已创建
     account = db_session.scalar(
         select(CreditAccount).where(CreditAccount.user_id == user_id)
     )
     assert account is not None
-    assert account.balance == quota_settings.register_gift_amount
+    assert account.balance == expected
     assert account.frozen == 0
-    assert account.total_earned == quota_settings.register_gift_amount
+    assert account.total_earned == expected
     assert account.total_spent == 0
 
     # 验证赠送流水已记录
@@ -222,7 +232,12 @@ def test_register_creates_credit_account(db_session, service, mock_email):
 def test_register_duplicate_email(db_session, service):
     # 先注册一个用户
     service._redis.get.return_value = "123456"
-    input_data = RegisterInput(email="dup@example.com", password="pass123", code="123456")
+    input_data = RegisterInput(
+        email="dup@example.com",
+        password="pass123",
+        code="123456",
+        invite_code="AB23CD45",
+    )
     service.register_by_email(db_session, input_data)
 
     # 尝试重复注册
@@ -237,6 +252,7 @@ def test_register_wrong_code(db_session, service):
         email="new@example.com",
         password="password123",
         code="999999",  # 错误验证码
+        invite_code="AB23CD45",
     )
 
     with pytest.raises(BizException, match="验证码错误"):
@@ -250,10 +266,70 @@ def test_register_expired_code(db_session, service):
         email="new@example.com",
         password="password123",
         code="123456",
+        invite_code="AB23CD45",
     )
 
     with pytest.raises(BizException, match="验证码已过期"):
         service.register_by_email(db_session, input_data)
+
+
+def test_register_blank_invite_code_only_gives_register_gift(db_session, service):
+    """未带邀请码时只发注册赠送，不挡注册。"""
+    from sqlalchemy import select
+    from windup_app.server.quota.model import CreditAccount
+    from windup_framework.config.quota import settings as quota_settings
+
+    service._redis.get.return_value = "123456"
+    input_data = RegisterInput(
+        email="blank-invite@example.com",
+        password="password123",
+        code="123456",
+        invite_code="   ",
+    )
+
+    result = service.register_by_email(db_session, input_data)
+    account = db_session.scalar(
+        select(CreditAccount).where(CreditAccount.user_id == result.user.id)
+    )
+    assert account is not None
+    assert account.balance == quota_settings.register_gift_amount
+
+
+def test_register_rejects_invite_code_outside_link_charset(db_session, service):
+    """前端邀请链接用 A-H/J-N/P-Z/2-9，含 I/O/0/1 的码不会进注册请求。"""
+    service._redis.get.return_value = "123456"
+    input_data = RegisterInput(
+        email="bad-charset@example.com",
+        password="password123",
+        code="123456",
+        invite_code="IIII",
+    )
+
+    with pytest.raises(BizException, match="邀请码无效"):
+        service.register_by_email(db_session, input_data)
+
+
+def test_register_expired_invite_code(db_session, service):
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select
+    from windup_app.server.quota.model import InviteCode
+    from windup_common.enums.biz_code import BizCode
+
+    row = db_session.scalar(select(InviteCode).where(InviteCode.code == "AB23CD45"))
+    row.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+    db_session.flush()
+
+    service._redis.get.return_value = "123456"
+    input_data = RegisterInput(
+        email="late@example.com",
+        password="password123",
+        code="123456",
+        invite_code="AB23CD45",
+    )
+    with pytest.raises(BizException, match="邀请码已过期") as exc:
+        service.register_by_email(db_session, input_data)
+    assert exc.value.code == BizCode.NOT_FOUND
+    assert db_session.scalar(select(User).where(User.email == "late@example.com")) is None
 
 
 # -- 登录测试 ------------------------------------------------------------
@@ -262,7 +338,12 @@ def test_register_expired_code(db_session, service):
 def test_login_success(db_session, service, mock_email):
     # 先注册
     service._redis.get.return_value = "123456"
-    register_input = RegisterInput(email="login@example.com", password="pass123", code="123456")
+    register_input = RegisterInput(
+        email="login@example.com",
+        password="pass123",
+        code="123456",
+        invite_code="AB23CD45",
+    )
     service.register_by_email(db_session, register_input)
 
     # 登录（不需要验证码）
@@ -277,7 +358,12 @@ def test_login_success(db_session, service, mock_email):
 def test_login_wrong_password(db_session, service, mock_email):
     # 先注册
     service._redis.get.return_value = "123456"
-    register_input = RegisterInput(email="login@example.com", password="pass123", code="123456")
+    register_input = RegisterInput(
+        email="login@example.com",
+        password="pass123",
+        code="123456",
+        invite_code="AB23CD45",
+    )
     service.register_by_email(db_session, register_input)
 
     # 密码错误
@@ -301,11 +387,17 @@ def test_login_nonexistent_user(db_session, service):
 def test_login_banned_user(db_session, service, mock_email):
     # 先注册
     service._redis.get.return_value = "123456"
-    register_input = RegisterInput(email="banned@example.com", password="pass123", code="123456")
+    register_input = RegisterInput(
+        email="banned@example.com",
+        password="pass123",
+        code="123456",
+        invite_code="AB23CD45",
+    )
     service.register_by_email(db_session, register_input)
 
     # 封禁用户
     from sqlalchemy import select
+
     user = db_session.scalar(select(User).where(User.email == "banned@example.com"))
     user.status = UserStatus.BANNED
     db_session.flush()
@@ -321,29 +413,36 @@ def test_login_banned_user(db_session, service, mock_email):
 # -- 验证码登录测试 ------------------------------------------------------
 
 
-def test_login_by_code_unknown_email_does_not_create_user(db_session, service, mock_email):
-    """内测关闭公开注册后，验证码登录不得自动建号。"""
+def test_login_by_code_unknown_email_creates_user_and_gifts(
+    db_session, service, mock_email
+):
+    """未知邮箱验证码登录自动建号，并只发注册赠送。"""
     from sqlalchemy import select
+    from windup_app.server.quota.model import CreditAccount
+    from windup_framework.config.quota import settings as quota_settings
 
     service._redis.get.return_value = "123456"
     input_data = LoginByCodeInput(email="code@example.com", code="123456")
 
-    with pytest.raises(BizException, match="账号不存在") as exc:
-        service.login_by_code(db_session, input_data)
+    result = service.login_by_code(db_session, input_data)
 
-    from windup_common.enums.biz_code import BizCode
+    user = db_session.scalar(select(User).where(User.email == "code@example.com"))
+    assert user is not None
+    assert result.user.id == user.id
+    assert result.user.email_verified_at is not None
+    account = db_session.scalar(
+        select(CreditAccount).where(CreditAccount.user_id == user.id)
+    )
+    assert account is not None
+    assert account.balance == quota_settings.register_gift_amount
 
-    assert exc.value.code == BizCode.NOT_FOUND
-    assert db_session.scalar(select(User).where(User.email == "code@example.com")) is None
 
-
-def test_send_verification_code_rejects_register_purpose(service, mock_email):
+def test_send_verification_code_allows_register_purpose(service, mock_email):
     service._redis.get.return_value = None
 
-    with pytest.raises(BizException, match="内测期间暂不开放注册"):
-        service.send_verification_code("new@example.com", "register")
+    service.send_verification_code("new@example.com", "register")
 
-    mock_email.send_verification_code.assert_not_called()
+    mock_email.send_verification_code.assert_called_once()
 
 
 def test_login_by_code_banned_user(db_session, service, mock_email):
@@ -352,9 +451,16 @@ def test_login_by_code_banned_user(db_session, service, mock_email):
     service._redis.get.return_value = "123456"
     service.register_by_email(
         db_session,
-        RegisterInput(email="banned-code@example.com", password="pass123", code="123456"),
+        RegisterInput(
+            email="banned-code@example.com",
+            password="pass123",
+            code="123456",
+            invite_code="AB23CD45",
+        ),
     )
-    user = db_session.scalar(select(User).where(User.email == "banned-code@example.com"))
+    user = db_session.scalar(
+        select(User).where(User.email == "banned-code@example.com")
+    )
     user.status = UserStatus.BANNED
     db_session.flush()
 
@@ -384,7 +490,12 @@ def test_login_by_code_marks_unverified_email(db_session, service):
 def test_login_by_code_existing_user(db_session, service, mock_email):
     # 先注册
     service._redis.get.return_value = "123456"
-    register_input = RegisterInput(email="exist@example.com", password="pass123", code="123456")
+    register_input = RegisterInput(
+        email="exist@example.com",
+        password="pass123",
+        code="123456",
+        invite_code="AB23CD45",
+    )
     service.register_by_email(db_session, register_input)
 
     # 验证码登录
@@ -490,16 +601,25 @@ def test_refresh_tokens_concurrent_reuse(service, mock_redis):
 def test_change_password(db_session, service, mock_email):
     # 先注册
     service._redis.get.return_value = "123456"
-    register_input = RegisterInput(email="change@example.com", password="oldpass123", code="123456")
+    register_input = RegisterInput(
+        email="change@example.com",
+        password="oldpass123",
+        code="123456",
+        invite_code="AB23CD45",
+    )
     result = service.register_by_email(db_session, register_input)
 
     # 修改密码
-    change_input = ChangePasswordInput(old_password="oldpass123", new_password="newpass123")
+    change_input = ChangePasswordInput(
+        old_password="oldpass123", new_password="newpass123"
+    )
     service.change_password(db_session, result.user.id, change_input)
 
     # 用新密码登录
     service._redis.get.return_value = None
-    login_input = LoginByPasswordInput(email="change@example.com", password="newpass123")
+    login_input = LoginByPasswordInput(
+        email="change@example.com", password="newpass123"
+    )
     login_result = service.login_by_password(db_session, login_input)
 
     assert login_result.user.email == "change@example.com"
@@ -508,7 +628,12 @@ def test_change_password(db_session, service, mock_email):
 def test_change_password_wrong_old(db_session, service, mock_email):
     # 先注册
     service._redis.get.return_value = "123456"
-    register_input = RegisterInput(email="change@example.com", password="oldpass123", code="123456")
+    register_input = RegisterInput(
+        email="change@example.com",
+        password="oldpass123",
+        code="123456",
+        invite_code="AB23CD45",
+    )
     result = service.register_by_email(db_session, register_input)
 
     # 旧密码错误
@@ -524,7 +649,13 @@ def test_change_password_wrong_old(db_session, service, mock_email):
 def test_update_nickname(db_session, service, mock_email):
     """修改昵称后立即生效。"""
     service._redis.get.return_value = "123456"
-    register_input = RegisterInput(email="nick@example.com", password="pass1234", code="123456", nickname="旧昵称")
+    register_input = RegisterInput(
+        email="nick@example.com",
+        password="pass1234",
+        code="123456",
+        nickname="旧昵称",
+        invite_code="AB23CD45",
+    )
     result = service.register_by_email(db_session, register_input)
 
     update_input = UpdateNicknameInput(nickname="新昵称")
@@ -537,7 +668,12 @@ def test_update_nickname(db_session, service, mock_email):
 def test_update_nickname_max_length(db_session, service, mock_email):
     """昵称长度上限 50。"""
     service._redis.get.return_value = "123456"
-    register_input = RegisterInput(email="nick2@example.com", password="pass1234", code="123456")
+    register_input = RegisterInput(
+        email="nick2@example.com",
+        password="pass1234",
+        code="123456",
+        invite_code="AB23CD45",
+    )
     result = service.register_by_email(db_session, register_input)
 
     long_nickname = "a" * 50
@@ -562,12 +698,19 @@ def test_reset_password(db_session, service, mock_email):
     """邮箱+验证码重置密码后，新密码可登录。"""
     # 先注册
     service._redis.get.return_value = "123456"
-    register_input = RegisterInput(email="reset@example.com", password="oldpass123", code="123456")
+    register_input = RegisterInput(
+        email="reset@example.com",
+        password="oldpass123",
+        code="123456",
+        invite_code="AB23CD45",
+    )
     service.register_by_email(db_session, register_input)
 
     # 重置密码（验证码 purpose 为 reset_password）
     service._redis.get.return_value = "654321"
-    reset_input = ResetPasswordInput(email="reset@example.com", code="654321", new_password="newpass123")
+    reset_input = ResetPasswordInput(
+        email="reset@example.com", code="654321", new_password="newpass123"
+    )
     service.reset_password(db_session, reset_input)
 
     # 用新密码登录
@@ -581,12 +724,19 @@ def test_reset_password(db_session, service, mock_email):
 def test_reset_password_wrong_code(db_session, service, mock_email):
     """验证码错误时拒绝重置。"""
     service._redis.get.return_value = "123456"
-    register_input = RegisterInput(email="reset2@example.com", password="oldpass123", code="123456")
+    register_input = RegisterInput(
+        email="reset2@example.com",
+        password="oldpass123",
+        code="123456",
+        invite_code="AB23CD45",
+    )
     service.register_by_email(db_session, register_input)
 
     # 验证码错误
     service._redis.get.return_value = None  # 验证码过期
-    reset_input = ResetPasswordInput(email="reset2@example.com", code="000000", new_password="newpass123")
+    reset_input = ResetPasswordInput(
+        email="reset2@example.com", code="000000", new_password="newpass123"
+    )
 
     with pytest.raises(BizException, match="验证码已过期"):
         service.reset_password(db_session, reset_input)
@@ -595,7 +745,9 @@ def test_reset_password_wrong_code(db_session, service, mock_email):
 def test_reset_password_user_not_found(db_session, service):
     """用户不存在时拒绝重置。"""
     service._redis.get.return_value = "654321"
-    reset_input = ResetPasswordInput(email="noexist@example.com", code="654321", new_password="newpass123")
+    reset_input = ResetPasswordInput(
+        email="noexist@example.com", code="654321", new_password="newpass123"
+    )
 
     with pytest.raises(BizException, match="用户不存在"):
         service.reset_password(db_session, reset_input)
@@ -608,7 +760,12 @@ def test_login_account_locked(db_session, service, mock_email):
     """账号被锁定后拒绝登录（即使密码正确）。"""
     # 先注册
     service._redis.get.return_value = "123456"
-    register_input = RegisterInput(email="lock@example.com", password="pass123", code="123456")
+    register_input = RegisterInput(
+        email="lock@example.com",
+        password="pass123",
+        code="123456",
+        invite_code="AB23CD45",
+    )
     service.register_by_email(db_session, register_input)
 
     # 模拟账号锁定

@@ -22,7 +22,12 @@ from sqlalchemy.pool import StaticPool
 from windup_app.bootstrap.app import create_app
 from windup_app.server.character.model import Character
 from windup_app.server.project.model import Project
-from windup_app.server.quota.model import CreditAccount, CreditTransaction
+from windup_app.server.quota.model import (
+    CreditAccount,
+    CreditTransaction,
+    InviteCode,
+    InviteRecord,
+)
 from windup_app.server.user.model import User
 from windup_app.server.orchestrator.model import GenerationTaskRecord
 from windup_app.server.workflow_run.model import WorkflowRun
@@ -53,7 +58,19 @@ def _disable_generation_execution(app):
     app.state.run_image_task = lambda *args: None
 
 
-def seed_credit_account(session, user_id: int, *, balance: int | None = None) -> CreditAccount:
+def seed_invite_code(session, code: str = "AB23CD45") -> str:
+    """预置一个可重复使用的邀请码，供注册测试使用。"""
+    inviter = User(email=f"inviter-{code.lower()}@example.com", password_hash="x")
+    session.add(inviter)
+    session.flush()
+    session.add(InviteCode(user_id=inviter.id, code=code, used_count=0))
+    seed_credit_account(session, inviter.id)
+    return code
+
+
+def seed_credit_account(
+    session, user_id: int, *, balance: int | None = None
+) -> CreditAccount:
     """给测试用户补一张积分账户（注册赠送口径）。"""
     gift = quota_settings.register_gift_amount
     account = CreditAccount(
@@ -86,14 +103,28 @@ def _make_engine():
 
 
 @pytest.fixture()
+def invite_code(db_session):
+    return seed_invite_code(db_session)
+
+
+@pytest.fixture()
 def engine():
     """建好 ``windup_project`` 和 ``windup_user`` 表的内存 engine。"""
     engine = _make_engine()
-    Base.metadata.create_all(engine, tables=[
-        Project.__table__, User.__table__, Character.__table__, WorkflowRun.__table__,
-        CreditAccount.__table__, CreditTransaction.__table__,
-        GenerationTaskRecord.__table__,
-    ])
+    Base.metadata.create_all(
+        engine,
+        tables=[
+            Project.__table__,
+            User.__table__,
+            Character.__table__,
+            WorkflowRun.__table__,
+            CreditAccount.__table__,
+            CreditTransaction.__table__,
+            InviteCode.__table__,
+            InviteRecord.__table__,
+            GenerationTaskRecord.__table__,
+        ],
+    )
     yield engine
     engine.dispose()
 

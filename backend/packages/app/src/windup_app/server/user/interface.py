@@ -27,9 +27,9 @@ class UserService(ABC):
 
     @abstractmethod
     def register_by_email(self, session: Session, input: RegisterInput) -> LoginResult:
-        """邮箱+密码注册，注册成功即登录。
+        """邮箱+验证码+密码注册。邀请码选填。
 
-        :raises windup_common.exceptions.BizException: 邮箱已注册。
+        :raises windup_common.exceptions.BizException: 邮箱已注册 / 邀请码无效。
         """
 
     # -- 登录 ------------------------------------------------------------
@@ -53,9 +53,9 @@ class UserService(ABC):
 
     @abstractmethod
     def login_by_code(self, session: Session, input: LoginByCodeInput) -> LoginResult:
-        """邮箱+验证码登录。内测期间不自动建号。
+        """邮箱+验证码登录。未知邮箱自动建号并赠送注册积分。
 
-        :raises windup_common.exceptions.BizException: 验证码错误 / 已过期 / 账号不存在 / 账号已封禁。
+        :raises windup_common.exceptions.BizException: 验证码错误 / 已过期 / 账号已封禁。
         """
 
     # -- 登出 ------------------------------------------------------------
