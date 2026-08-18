@@ -524,12 +524,14 @@ class TestInviteCode:
 
         again = auth_quota_client.get("/quota/invite/code")
         assert again.json()["data"]["code"] == data["data"]["code"]
+        assert again.json()["data"]["expires_at"]
 
     def test_generate_invite_code_rotates(self, auth_quota_client):
         first = auth_quota_client.get("/quota/invite/code").json()["data"]["code"]
         second = auth_quota_client.post("/quota/invite/generate").json()["data"]["code"]
         assert second != first
         assert len(second) == 8
+        assert auth_quota_client.get("/quota/invite/code").json()["data"]["code"] == second
 
     def test_generate_invite_code_locks_existing_row(
         self, db_session, quota_service, monkeypatch
@@ -552,6 +554,55 @@ class TestInviteCode:
         monkeypatch.setattr(Select, "with_for_update", tracking)
         quota_service.generate_invite_code(db_session, host.id)
         assert locked, "轮换已有邀请码时应对该行加 FOR UPDATE"
+
+    def test_generate_invite_code_keeps_old_row(self, db_session, quota_service):
+        from datetime import datetime, timezone
+        from sqlalchemy import select
+        from windup_app.server.quota.model import InviteCode
+        from windup_app.server.user.model import User
+
+        host = User(email="append-host@example.com", password_hash="x")
+        db_session.add(host)
+        db_session.flush()
+        first = quota_service.generate_invite_code(db_session, host.id)
+        second = quota_service.generate_invite_code(db_session, host.id)
+        rows = db_session.scalars(
+            select(InviteCode).where(InviteCode.user_id == host.id)
+        ).all()
+        assert {row.code for row in rows} == {first.code, second.code}
+        old = next(row for row in rows if row.code == first.code)
+        now = datetime.now(timezone.utc)
+        exp = old.expires_at if old.expires_at.tzinfo else old.expires_at.replace(
+            tzinfo=timezone.utc
+        )
+        assert exp <= now
+
+    def test_get_invite_code_issues_new_row_after_expiry(
+        self, db_session, quota_service
+    ):
+        from datetime import datetime, timedelta, timezone
+        from sqlalchemy import select
+        from windup_app.server.quota.model import InviteCode
+        from windup_app.server.user.model import User
+
+        host = User(email="expire-host@example.com", password_hash="x")
+        db_session.add(host)
+        db_session.flush()
+        first = quota_service.generate_invite_code(db_session, host.id)
+        row = db_session.scalar(
+            select(InviteCode).where(InviteCode.code == first.code)
+        )
+        row.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        db_session.flush()
+
+        second = quota_service.get_invite_code(db_session, host.id)
+        assert second.code != first.code
+        assert (
+            db_session.scalar(
+                select(InviteCode).where(InviteCode.code == first.code)
+            )
+            is not None
+        )
 
     def test_redeem_unique_violation_is_already_redeemed(
         self, db_session, quota_service, monkeypatch
@@ -671,6 +722,29 @@ class TestInviteCode:
         with pytest.raises(BizException, match="邀请码无效"):
             quota_service.redeem_invite_code(db_session, guest.id, "NOPE1234")
 
+    def test_redeem_rejects_expired_code(self, db_session, quota_service):
+        from datetime import datetime, timedelta, timezone
+        from sqlalchemy import select
+        from windup_app.server.quota.model import InviteCode
+        from windup_app.server.user.model import User
+        from windup_common.enums.biz_code import BizCode
+        from windup_common.exceptions import BizException
+
+        host = User(email="stale-host@example.com", password_hash="x")
+        guest = User(email="stale-guest@example.com", password_hash="x")
+        db_session.add_all([host, guest])
+        db_session.flush()
+        _gift_account(db_session, host.id)
+        _gift_account(db_session, guest.id)
+        view = quota_service.generate_invite_code(db_session, host.id)
+        row = db_session.scalar(select(InviteCode).where(InviteCode.code == view.code))
+        row.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        db_session.flush()
+
+        with pytest.raises(BizException, match="邀请码已过期") as exc:
+            quota_service.redeem_invite_code(db_session, guest.id, view.code)
+        assert exc.value.code == BizCode.NOT_FOUND
+
     def test_redeem_rejects_missing_invitee(self, db_session, quota_service):
         from windup_app.server.user.model import User
         from windup_common.exceptions import BizException
@@ -684,18 +758,6 @@ class TestInviteCode:
         with pytest.raises(BizException, match="用户不存在"):
             quota_service.redeem_invite_code(db_session, 999999, view.code)
 
-    def test_redeem_invite_code_endpoint(self, auth_quota_client, db_session):
-        from windup_app.server.user.model import User
-
-        host = User(email="api-host@example.com", password_hash="x")
-        db_session.add(host)
-        db_session.flush()
-        _gift_account(db_session, host.id)
-        view = SqlAlchemyQuotaService().generate_invite_code(db_session, host.id)
-        db_session.commit()
-
-        resp = auth_quota_client.post("/quota/invite/redeem", json={"code": view.code})
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["code"] == 200
-        assert body["message"] == "邀请码填写成功"
+    def test_invite_redeem_endpoint_removed(self, auth_quota_client):
+        resp = auth_quota_client.post("/quota/invite/redeem", json={"code": "AB23CD45"})
+        assert resp.status_code == 404

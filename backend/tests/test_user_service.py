@@ -309,6 +309,29 @@ def test_register_rejects_invite_code_outside_link_charset(db_session, service):
         service.register_by_email(db_session, input_data)
 
 
+def test_register_expired_invite_code(db_session, service):
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select
+    from windup_app.server.quota.model import InviteCode
+    from windup_common.enums.biz_code import BizCode
+
+    row = db_session.scalar(select(InviteCode).where(InviteCode.code == "AB23CD45"))
+    row.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+    db_session.flush()
+
+    service._redis.get.return_value = "123456"
+    input_data = RegisterInput(
+        email="late@example.com",
+        password="password123",
+        code="123456",
+        invite_code="AB23CD45",
+    )
+    with pytest.raises(BizException, match="邀请码已过期") as exc:
+        service.register_by_email(db_session, input_data)
+    assert exc.value.code == BizCode.NOT_FOUND
+    assert db_session.scalar(select(User).where(User.email == "late@example.com")) is None
+
+
 # -- 登录测试 ------------------------------------------------------------
 
 

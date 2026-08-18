@@ -5,8 +5,7 @@
 GET  /quota/balance          查询积分余额
 GET  /quota/transactions     查询积分流水（分页）
 GET  /quota/invite/code      获取我的邀请码
-POST /quota/invite/generate  生成新邀请码
-POST /quota/invite/redeem    兑换邀请码
+POST /quota/invite/generate  签发新邀请码
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from windup_common.result import ListResponse, Response
@@ -66,14 +65,9 @@ class InviteCodeOut(BaseModel):
 
     code: str
     used_count: int
+    expires_at: datetime
     create_at: datetime
     update_at: datetime
-
-
-class RedeemRequest(BaseModel):
-    """兑换邀请码请求。"""
-
-    code: str = Field(min_length=4, max_length=16)
 
 
 # -- 端点 ----------------------------------------------------------------
@@ -120,12 +114,13 @@ def get_invite_code(
     request: Request,
     session: Session = Depends(get_session),
 ) -> Response[InviteCodeOut]:
-    """获取当前用户邀请码；没有则生成。"""
+    """获取当前用户未过期邀请码；没有或已过期则签发新行。"""
     view = service.get_invite_code(session, request.state.current_user.id)
     return Response.success(
         InviteCodeOut(
             code=view.code,
             used_count=view.used_count,
+            expires_at=view.expires_at,
             create_at=view.create_at,
             update_at=view.update_at,
         )
@@ -137,25 +132,15 @@ def generate_invite_code(
     request: Request,
     session: Session = Depends(get_session),
 ) -> Response[InviteCodeOut]:
-    """生成或轮换当前用户邀请码。轮换后旧码立即失效。"""
+    """签发新邀请码。旧码立即过期，行保留。"""
     view = service.generate_invite_code(session, request.state.current_user.id)
     return Response.success(
         InviteCodeOut(
             code=view.code,
             used_count=view.used_count,
+            expires_at=view.expires_at,
             create_at=view.create_at,
             update_at=view.update_at,
         ),
         message="邀请码已更新",
     )
-
-
-@router.post("/invite/redeem", response_model=Response[None])
-def redeem_invite_code(
-    body: RedeemRequest,
-    request: Request,
-    session: Session = Depends(get_session),
-) -> Response[None]:
-    """已登录用户补填邀请码，双方发放邀请奖励。每人限一次。"""
-    service.redeem_invite_code(session, request.state.current_user.id, body.code)
-    return Response.success(None, message="邀请码填写成功")

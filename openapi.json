@@ -740,11 +740,17 @@
           "used_count": {
             "title": "Used Count",
             "type": "integer"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
           }
         },
         "required": [
           "code",
           "used_count",
+          "expires_at",
           "create_at",
           "update_at"
         ],
@@ -1242,22 +1248,6 @@
           "update_at"
         ],
         "title": "ProjectOut",
-        "type": "object"
-      },
-      "RedeemRequest": {
-        "description": "兑换邀请码请求。",
-        "properties": {
-          "code": {
-            "maxLength": 16,
-            "minLength": 4,
-            "title": "Code",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code"
-        ],
-        "title": "RedeemRequest",
         "type": "object"
       },
       "RefreshRequest": {
@@ -3210,7 +3200,7 @@
     },
     "/quota/invite/code": {
       "get": {
-        "description": "获取当前用户邀请码；没有则生成。",
+        "description": "获取当前用户未过期邀请码；没有或已过期则签发新行。",
         "operationId": "get_invite_code_quota_invite_code_get",
         "responses": {
           "200": {
@@ -3232,7 +3222,7 @@
     },
     "/quota/invite/generate": {
       "post": {
-        "description": "生成或轮换当前用户邀请码。轮换后旧码立即失效。",
+        "description": "签发新邀请码。旧码立即过期，行保留。",
         "operationId": "generate_invite_code_quota_invite_generate_post",
         "responses": {
           "200": {
@@ -3247,48 +3237,6 @@
           }
         },
         "summary": "Generate Invite Code",
-        "tags": [
-          "quota"
-        ]
-      }
-    },
-    "/quota/invite/redeem": {
-      "post": {
-        "description": "已登录用户补填邀请码，双方发放邀请奖励。每人限一次。",
-        "operationId": "redeem_invite_code_quota_invite_redeem_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RedeemRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Response_NoneType_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Redeem Invite Code",
         "tags": [
           "quota"
         ]

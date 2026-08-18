@@ -22,6 +22,7 @@ class QuotaSettings(BaseSettings):
     # -- 注册 / 邀请 -------------------------------------------------------
     register_gift_amount: int = 300         # 注册赠送积分
     invite_reward_amount: int = 200         # 邀请奖励（双方各得）
+    invite_code_ttl_days: int = 30          # 邀请码有效期（天）
 
     # -- 生成任务 -----------------------------------------------------------
     generate_image_cost: int = 10           # 生成角色参考图

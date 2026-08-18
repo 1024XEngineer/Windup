@@ -25,7 +25,7 @@ from windup_common.enums.quota import CreditReason
 from windup_common.exceptions import BizException
 from windup_framework.config.quota import settings as quota_settings
 
-from windup_app.server.quota.model import CreditAccount, CreditTransaction, InviteCode
+from windup_app.server.quota.model import CreditAccount, CreditTransaction
 from windup_app.server.user.interface import UserService
 from windup_app.server.user.model import (
     ChangePasswordInput,
@@ -177,11 +177,7 @@ class SqlAlchemyUserService(UserService):
         raw_invite = (input.invite_code or "").strip()
         invite_code = parse_invite_code(raw_invite) if raw_invite else None
         if invite_code is not None:
-            invite_exists = session.scalar(
-                select(InviteCode.id).where(InviteCode.code == invite_code).limit(1)
-            )
-            if invite_exists is None:
-                raise BizException("邀请码无效", code=BizCode.BAD_REQUEST)
+            quota_service.require_active_invite(session, invite_code)
 
         self._verify_code(input.email, input.code, "register")
 

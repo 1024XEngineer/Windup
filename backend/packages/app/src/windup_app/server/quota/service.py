@@ -14,6 +14,7 @@ rollback，故本实现只 ``flush``（把变更发到当前事务、取回生�
 import logging
 import re
 import secrets
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -48,7 +49,7 @@ def normalize_invite_code(code: str) -> str:
 
 
 def parse_invite_code(code: str) -> str:
-    """解析邀请链接/补填传入的邀请码，字符集与前端 INVITE_CODE_PATTERN 一致。"""
+    """解析邀请链接传入的邀请码，字符集与前端 INVITE_CODE_PATTERN 一致。"""
     normalized = normalize_invite_code(code)
     if _INVITE_CODE_RE.fullmatch(normalized) is None:
         raise BizException("邀请码无效", code=BizCode.BAD_REQUEST)
@@ -64,10 +65,20 @@ def _is_invitee_unique_violation(exc: IntegrityError) -> bool:
     return "invitee" in text or "windup_invite_record" in text
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _is_expired(expires_at: datetime) -> bool:
+    exp = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)
+    return exp <= _now()
+
+
 def _to_invite_view(row: InviteCode) -> InviteCodeView:
     return InviteCodeView(
         code=row.code,
         used_count=row.used_count,
+        expires_at=row.expires_at,
         create_at=row.create_at,
         update_at=row.update_at,
     )
@@ -347,7 +358,11 @@ class SqlAlchemyQuotaService(QuotaService):
     # -- 邀请码 -----------------------------------------------------------
 
     def get_invite_code(self, session: Session, user_id: int) -> InviteCodeView:
-        row = session.scalar(select(InviteCode).where(InviteCode.user_id == user_id))
+        row = session.scalar(
+            select(InviteCode)
+            .where(InviteCode.user_id == user_id, InviteCode.expires_at > _now())
+            .order_by(InviteCode.id.desc())
+        )
         if row is not None:
             return _to_invite_view(row)
         return self.generate_invite_code(session, user_id)
@@ -356,34 +371,52 @@ class SqlAlchemyQuotaService(QuotaService):
         if session.get(User, user_id) is None:
             raise BizException("用户不存在", code=BizCode.NOT_FOUND)
 
-        row = session.scalar(
-            select(InviteCode).where(InviteCode.user_id == user_id).with_for_update()
+        now = _now()
+        existing = session.scalars(
+            select(InviteCode)
+            .where(InviteCode.user_id == user_id)
+            .with_for_update()
+        ).all()
+        for row in existing:
+            if not _is_expired(row.expires_at):
+                row.expires_at = now
+
+        row = InviteCode(
+            user_id=user_id,
+            code=self._allocate_invite_code(session),
+            used_count=0,
+            expires_at=now
+            + timedelta(days=quota_settings.invite_code_ttl_days),
         )
-        if row is None:
-            row = InviteCode(
-                user_id=user_id, code=self._allocate_invite_code(session), used_count=0
-            )
-            session.add(row)
-        else:
-            row.code = self._allocate_invite_code(session, exclude_id=row.id)
+        session.add(row)
         session.flush()
         logger.info("[WINDUP] 生成邀请码 | user_id=%s code=%s", user_id, row.code)
         return _to_invite_view(row)
 
-    def _allocate_invite_code(
-        self, session: Session, exclude_id: int | None = None
-    ) -> str:
+    def _allocate_invite_code(self, session: Session) -> str:
         for _ in range(16):
             code = _new_invite_code()
-            query = select(InviteCode.id).where(InviteCode.code == code)
-            if exclude_id is not None:
-                query = query.where(InviteCode.id != exclude_id)
-            if session.scalar(query) is None:
+            if session.scalar(select(InviteCode.id).where(InviteCode.code == code)) is None:
                 return code
         raise BizException("邀请码生成失败，请稍后重试", code=BizCode.BAD_REQUEST)
 
-    def redeem_invite_code(self, session: Session, user_id: int, code: str) -> None:
+    def require_active_invite(self, session: Session, code: str) -> InviteCode:
         normalized = parse_invite_code(code)
+        invite = session.scalar(
+            select(InviteCode).where(InviteCode.code == normalized)
+        )
+        if invite is None:
+            raise BizException("邀请码无效", code=BizCode.BAD_REQUEST)
+        if _is_expired(invite.expires_at):
+            raise BizException("邀请码已过期", code=BizCode.NOT_FOUND)
+        return invite
+
+    def redeem_invite_code(self, session: Session, user_id: int, code: str) -> None:
+        invite = self.require_active_invite(session, code)
+        if invite.user_id == user_id:
+            raise BizException("不能填写自己的邀请码", code=BizCode.BAD_REQUEST)
+        if session.get(User, user_id) is None:
+            raise BizException("用户不存在", code=BizCode.NOT_FOUND)
 
         existing = session.scalar(
             select(InviteRecord.id).where(InviteRecord.invitee_id == user_id)
@@ -391,20 +424,10 @@ class SqlAlchemyQuotaService(QuotaService):
         if existing is not None:
             raise BizException("已填写过邀请码", code=BizCode.BAD_REQUEST)
 
-        invite = session.scalar(
-            select(InviteCode).where(InviteCode.code == normalized).with_for_update()
-        )
-        if invite is None:
-            raise BizException("邀请码无效", code=BizCode.BAD_REQUEST)
-        if invite.user_id == user_id:
-            raise BizException("不能填写自己的邀请码", code=BizCode.BAD_REQUEST)
-        if session.get(User, user_id) is None:
-            raise BizException("用户不存在", code=BizCode.NOT_FOUND)
-
         record = InviteRecord(
             inviter_id=invite.user_id,
             invitee_id=user_id,
-            code=normalized,
+            code=invite.code,
         )
         session.add(record)
         invite.used_count += 1
@@ -434,7 +457,7 @@ class SqlAlchemyQuotaService(QuotaService):
             "[WINDUP] 兑换邀请码 | invitee=%s inviter=%s code=%s",
             user_id,
             invite.user_id,
-            normalized,
+            invite.code,
         )
 
 

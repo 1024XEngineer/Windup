@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from windup_app.server.quota.model import (
     CreditAccountView,
     CreditTransactionView,
+    InviteCode,
     InviteCodeView,
 )
 
@@ -92,15 +93,19 @@ class QuotaService(ABC):
 
     @abstractmethod
     def get_invite_code(self, session: Session, user_id: int) -> InviteCodeView:
-        """获取用户当前邀请码；没有则生成。"""
+        """获取当前未过期邀请码；没有或已过期则签发新行。"""
 
     @abstractmethod
     def generate_invite_code(self, session: Session, user_id: int) -> InviteCodeView:
-        """生成新邀请码（替换旧码）。已有行会 FOR UPDATE，旧码立即失效。"""
+        """签发新邀请码：插入新行，仍有效的旧码立即过期但保留。"""
+
+    @abstractmethod
+    def require_active_invite(self, session: Session, code: str) -> InviteCode:
+        """注册前校验邀请码存在且未过期。非法返回「邀请码无效」，过期返回「邀请码已过期」。"""
 
     @abstractmethod
     def redeem_invite_code(self, session: Session, user_id: int, code: str) -> None:
-        """兑换邀请码，双方各得积分。
+        """注册时兑换邀请码，双方各得积分。不提供登录后补填。
 
-        :raises BizException: 邀请码无效 / 已填过码 / 不能填自己的码。
+        :raises BizException: 邀请码无效 / 已过期 / 已填过码 / 不能填自己的码。
         """

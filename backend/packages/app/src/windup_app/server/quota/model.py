@@ -15,7 +15,7 @@ ORM 模型
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import (
     BigInteger,
@@ -27,6 +27,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from windup_framework.config.quota import settings as quota_settings
 from windup_framework.db import Base
 
 
@@ -115,7 +116,7 @@ class CreditTransaction(Base):
 
 
 class InviteCode(Base):
-    """用户当前邀请码。每人一行，轮换时覆盖 code。"""
+    """用户邀请码。只增不删；轮换插入新行，旧行保留。"""
 
     __tablename__ = "windup_invite_code"
 
@@ -126,11 +127,17 @@ class InviteCode(Base):
     )
     user_id: Mapped[int] = mapped_column(
         BigInteger().with_variant(Integer, "sqlite"),
-        unique=True,
+        index=True,
         nullable=False,
     )
     code: Mapped[str] = mapped_column(String(16), unique=True, nullable=False)
     used_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc)
+        + timedelta(days=quota_settings.invite_code_ttl_days),
+    )
     create_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -215,5 +222,6 @@ class InviteCodeView:
 
     code: str
     used_count: int = 0
+    expires_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     create_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     update_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
