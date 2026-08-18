@@ -12,6 +12,7 @@ from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
     CharacterImageInput,
+    GenerationTask,
     GenerationTaskRecord,
     GenerationType,
     TaskStatus,
@@ -683,3 +684,33 @@ def test_pending_orphan_without_freeze_reaches_a_terminal_status_without_rerunni
         done = AiGenerationService().get_task(session, project_id=7, task_id=task_id)
         assert done.status is TaskStatus.FAILED, "无冻结的 pending 任务还停在开放态"
         assert "重新提交" in (done.error_message or "")
+
+
+def test_a_row_without_an_id_is_skipped_instead_of_crashing_recovery(
+    session_factory, monkeypatch
+):
+    """没有主键的任务行只跳过，不能让整轮对账炸掉、也不能被写成失败。
+
+    对账在进程启动时跑，一行坏数据把它打死等于所有开放任务都失去恢复机会。
+    """
+    from windup_app.server.orchestrator import recover as recover_mod
+    from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
+
+    orphan = GenerationTask(
+        user_id=1, project_id=7, task_type=GenerationType.CHARACTER_ACTION,
+        status=TaskStatus.RUNNING, input_payload={},
+    )
+    assert orphan.id is None
+    monkeypatch.setattr(recover_mod.task_repo, "list_by_status", lambda *a, **k: [orphan])
+    monkeypatch.setattr(
+        recover_mod.task_repo, "update_status",
+        lambda *a, **k: pytest.fail("没有主键的行被写状态了"),
+    )
+
+    with session_factory() as session:
+        recover_orphaned_generation_tasks(
+            session,
+            dispatcher=type("D", (), {"submit": staticmethod(lambda *a, **k: None)})(),
+            run_image_task=lambda *a: None,
+            run_action_task=lambda *a: None,
+        )
