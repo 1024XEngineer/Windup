@@ -53,16 +53,17 @@ function createQuotaMock(): QuotaApis & {
     getInviteCode: vi.fn(async () => ({
       code: 'AB23CD45',
       usedCount: 0,
+      expiresAt: '2026-09-16T01:02:03Z',
       createdAt: '2026-08-17T01:02:03Z',
       updatedAt: '2026-08-17T01:02:03Z',
     })),
     generateInviteCode: vi.fn(async () => ({
       code: 'XY89KL23',
       usedCount: 0,
+      expiresAt: '2026-09-16T01:02:03Z',
       createdAt: '2026-08-17T01:02:03Z',
       updatedAt: '2026-08-17T01:02:03Z',
     })),
-    redeemInviteCode: vi.fn(async () => undefined),
   }
 }
 
@@ -216,7 +217,7 @@ describe('AppHeader', () => {
   it('为访客提供可发现的登录入口并保留完整站内回跳地址', async () => {
     renderHeader('/quick-start?mode=fast#brief')
 
-    const entry = await screen.findByRole('link', { name: '登录' })
+    const entry = await screen.findByRole('link', { name: '登录 / 注册' })
     expect(entry.getAttribute('href')).toBe(
       '/?account=login&returnTo=%2Fquick-start%3Fmode%3Dfast%23brief',
     )
@@ -232,7 +233,7 @@ describe('AppHeader', () => {
     fireEvent.click(screen.getByRole('button', { name: '退出登录' }))
 
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/'))
-    expect(await screen.findByRole('link', { name: '登录' })).toBeTruthy()
+    expect(await screen.findByRole('link', { name: '登录 / 注册' })).toBeTruthy()
     expect(apis.logout).toHaveBeenCalledWith('rotated-refresh-token')
   })
 
@@ -252,6 +253,8 @@ describe('AppHeader', () => {
     renderHeader('/workspace')
 
     const hint = await screen.findByRole('status', { name: '邀请奖励提示' })
+    expect(screen.getByText('每日前 3 位好友，你各得 200 积分')).toBeTruthy()
+    expect(screen.getByText('好友注册共得 500 积分')).toBeTruthy()
     expect(screen.getByRole('link', { name: '去看看邀请奖励' }).getAttribute('href')).toBe(
       '/account?section=invite',
     )
@@ -292,7 +295,7 @@ describe('AppHeader', () => {
     fireEvent.click(screen.getByRole('button', { name: '退出登录' }))
 
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/'))
-    expect(await screen.findByRole('link', { name: '登录' })).toBeTruthy()
+    expect(await screen.findByRole('link', { name: '登录 / 注册' })).toBeTruthy()
   })
 
   it('没有昵称时使用邮箱展示账号身份', async () => {

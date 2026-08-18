@@ -22,16 +22,17 @@ function createApis(): QuotaApis & Record<keyof QuotaApis, ReturnType<typeof vi.
     getInviteCode: vi.fn(async () => ({
       code: 'AB23CD45',
       usedCount: 2,
+      expiresAt: '2026-09-16T03:00:00Z',
       createdAt: '2026-08-12T01:02:03Z',
       updatedAt: '2026-08-17T01:02:03Z',
     })),
     generateInviteCode: vi.fn(async () => ({
       code: 'XY89KL23',
       usedCount: 2,
+      expiresAt: '2026-09-16T03:00:00Z',
       createdAt: '2026-08-12T01:02:03Z',
       updatedAt: '2026-08-17T03:00:00Z',
     })),
-    redeemInviteCode: vi.fn(async () => undefined),
   }
 }
 
@@ -70,12 +71,22 @@ describe('InviteSection', () => {
     expect(character.className).toContain('invite-character-artwork')
   })
 
-  it('展示邀请事实并复制邀请码与注册链接', async () => {
+  it('展示最终奖励规则、当前邀请码使用次数和有效期', async () => {
     renderInvite()
 
     expect(await screen.findByText('AB23CD45')).toBeTruthy()
     expect(screen.getByText('2')).toBeTruthy()
     expect(screen.getByText('100')).toBeTruthy()
+    expect(screen.getByText('当前码注册')).toBeTruthy()
+    expect(screen.getByText(/好友注册共得 500 积分/)).toBeTruthy()
+    expect(screen.getByText(/每日前 3 位各得 200 积分/)).toBeTruthy()
+    expect(screen.getByText('有效至 2026年9月16日')).toBeTruthy()
+  })
+
+  it('复制邀请码与注册链接', async () => {
+    renderInvite()
+
+    expect(await screen.findByText('AB23CD45')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: '复制邀请码' }))
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith('AB23CD45'))
@@ -94,40 +105,12 @@ describe('InviteSection', () => {
     expect(screen.queryByRole('button', { name: /更换邀请码|确认更换/ })).toBeNull()
   })
 
-  it('补填邀请码后刷新积分，并保留清晰的成功结果', async () => {
-    const apis = createApis()
-    apis.getBalance
-      .mockResolvedValueOnce({
-        id: '11',
-        userId: '7',
-        balance: 100,
-        frozen: 0,
-        totalEarned: 100,
-        totalSpent: 0,
-        createdAt: '2026-08-12T01:02:03Z',
-        updatedAt: '2026-08-17T01:02:03Z',
-      })
-      .mockResolvedValue({
-        id: '11',
-        userId: '7',
-        balance: 150,
-        frozen: 0,
-        totalEarned: 150,
-        totalSpent: 0,
-        createdAt: '2026-08-12T01:02:03Z',
-        updatedAt: '2026-08-17T03:00:00Z',
-      })
+  it('不提供登录后的补填邀请码入口', async () => {
+    renderInvite()
+    expect(await screen.findByText('AB23CD45')).toBeTruthy()
 
-    renderInvite(apis)
-    expect(await screen.findByText('100')).toBeTruthy()
-
-    fireEvent.change(screen.getByLabelText('补填邀请码'), { target: { value: 'mn67pq89' } })
-    fireEvent.click(screen.getByRole('button', { name: '确认补填' }))
-
-    await waitFor(() => expect(apis.redeemInviteCode).toHaveBeenCalledWith('MN67PQ89'))
-    expect(await screen.findByText('邀请奖励已到账')).toBeTruthy()
-    await waitFor(() => expect(apis.getBalance).toHaveBeenCalledTimes(2))
-    expect(await screen.findByText('150')).toBeTruthy()
+    expect(screen.queryByLabelText('补填邀请码')).toBeNull()
+    expect(screen.queryByRole('button', { name: '确认补填' })).toBeNull()
   })
 
   it('复制失败时给出可恢复提示', async () => {
@@ -141,32 +124,6 @@ describe('InviteSection', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('复制失败，请重试')
   })
 
-  it('把标准化后的邀请码交给后端校验', async () => {
-    const { apis } = renderInvite()
-    apis.redeemInviteCode.mockRejectedValue(new Error('邀请码无效'))
-    expect(await screen.findByText('AB23CD45')).toBeTruthy()
-
-    fireEvent.change(screen.getByLabelText('补填邀请码'), { target: { value: 'I0O1' } })
-    fireEvent.click(screen.getByRole('button', { name: '确认补填' }))
-
-    await waitFor(() => expect(apis.redeemInviteCode).toHaveBeenCalledWith('I0O1'))
-    expect((await screen.findByRole('alert')).textContent).toContain('邀请码无效')
-  })
-
-  it('补填失败时保留邀请码，便于用户修正或重试', async () => {
-    const apis = createApis()
-    apis.redeemInviteCode.mockRejectedValue(new Error('邀请码已被使用'))
-    renderInvite(apis)
-    expect(await screen.findByText('AB23CD45')).toBeTruthy()
-
-    const input = screen.getByLabelText('补填邀请码')
-    fireEvent.change(input, { target: { value: 'MN67PQ89' } })
-    fireEvent.click(screen.getByRole('button', { name: '确认补填' }))
-
-    expect((await screen.findByRole('alert')).textContent).toContain('邀请码已被使用')
-    expect((input as HTMLInputElement).value).toBe('MN67PQ89')
-  })
-
   it('邀请信息加载失败后允许原地重试', async () => {
     const apis = createApis()
     apis.getInviteCode
@@ -174,6 +131,7 @@ describe('InviteSection', () => {
       .mockResolvedValueOnce({
         code: 'AB23CD45',
         usedCount: 2,
+        expiresAt: '2026-09-16T03:00:00Z',
         createdAt: '2026-08-12T01:02:03Z',
         updatedAt: '2026-08-17T01:02:03Z',
       })
