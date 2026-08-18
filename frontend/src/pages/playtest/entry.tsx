@@ -2,18 +2,16 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 
 import playtestArtwork from '@/assets/workspace/playtest.png'
-import { useAuthSession } from '@/features/auth-session'
 
-import { readRecentPreviews, type RecentPreview } from './recent-previews'
+import { getRecentPreviewOwnerId, readRecentPreviews, type RecentPreview } from './recent-previews'
 
 export function PlaytestEntryPage() {
-  const session = useAuthSession()
-  const userId = session.state.status === 'authenticated' ? session.state.user.id : null
+  const recentOwnerId = getRecentPreviewOwnerId()
   const [recent, setRecent] = useState<RecentPreview[]>([])
 
   useEffect(() => {
-    setRecent(userId ? readRecentPreviews(userId) : [])
-  }, [userId])
+    setRecent(recentOwnerId ? readRecentPreviews(recentOwnerId) : [])
+  }, [recentOwnerId])
 
   return (
     <div className="mx-auto w-full max-w-[1560px] px-4 pb-8 pt-[clamp(4.75rem,11vh,7rem)] sm:px-6 xl:px-8">

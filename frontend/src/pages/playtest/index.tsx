@@ -9,10 +9,13 @@ import {
   type Project,
 } from '@/entities'
 import { ApiError } from '@/shared/api'
-import { useAuthSession } from '@/features/auth-session'
 
 import { PlaytestWorkbench } from './workbench'
-import { rememberRecentPreview, removeRecentPreview } from './recent-previews'
+import {
+  getRecentPreviewOwnerId,
+  rememberRecentPreview,
+  removeRecentPreview,
+} from './recent-previews'
 
 export { PlaytestEntryPage } from './entry'
 
@@ -57,10 +60,9 @@ function isUnavailableAssetError(error: unknown): boolean {
 export function PlaytestPage({ renderToolbar }: PlaytestPageProps = {}) {
   const { characterId, outfitId } = useParams()
   const [searchParams] = useSearchParams()
-  const session = useAuthSession()
+  const recentOwnerId = getRecentPreviewOwnerId()
   const initialActionId = searchParams.get('actionId')
   const [data, setData] = useState<PageData>(initialPageData)
-  const userId = session.state.status === 'authenticated' ? session.state.user.id : null
 
   useEffect(() => {
     if (characterId === undefined) return
@@ -79,8 +81,8 @@ export function PlaytestPage({ renderToolbar }: PlaytestPageProps = {}) {
         },
         (error: unknown) => {
           if (!cancelled) {
-            if (userId && outfitId && isUnavailableAssetError(error)) {
-              removeRecentPreview(userId, characterId, outfitId)
+            if (recentOwnerId && outfitId && isUnavailableAssetError(error)) {
+              removeRecentPreview(recentOwnerId, characterId, outfitId)
             }
             setData({
               ...initialPageData,
@@ -93,18 +95,19 @@ export function PlaytestPage({ renderToolbar }: PlaytestPageProps = {}) {
     return () => {
       cancelled = true
     }
-  }, [characterId, outfitId, userId])
+  }, [characterId, outfitId, recentOwnerId])
 
   useEffect(() => {
-    if (!userId || !characterId || !data.character || !data.project || data.error !== null) return
+    if (!recentOwnerId || !characterId || !data.character || !data.project || data.error !== null)
+      return
 
     const outfit = data.character.outfits.find((candidate) => candidate.id === outfitId)
     if (!outfit || !getOutfitPlayback(outfit).playable) {
-      removeRecentPreview(userId, characterId, outfitId ?? '')
+      removeRecentPreview(recentOwnerId, characterId, outfitId ?? '')
       return
     }
 
-    rememberRecentPreview(userId, {
+    rememberRecentPreview(recentOwnerId, {
       characterId,
       outfitId: outfit.id,
       characterName: data.character.name ?? '未命名角色',
@@ -114,7 +117,7 @@ export function PlaytestPage({ renderToolbar }: PlaytestPageProps = {}) {
       previewUrl: outfit.previewUrl,
       lastOpenedAt: Date.now(),
     })
-  }, [characterId, data.character, data.error, data.project, outfitId, userId])
+  }, [characterId, data.character, data.error, data.project, outfitId, recentOwnerId])
 
   if (characterId === undefined || outfitId === undefined)
     return <PlaytestPageMessage>预览台路由参数不完整</PlaytestPageMessage>

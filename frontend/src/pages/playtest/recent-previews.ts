@@ -1,3 +1,5 @@
+import { getApiAccessToken } from '@/shared/api'
+
 export const MAX_RECENT_PREVIEWS = 3
 
 const STORAGE_PREFIX = 'windup.playtest.recent.v1:'
@@ -14,6 +16,28 @@ export interface RecentPreview {
 }
 
 type RecentPreviewStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+
+export function recentPreviewOwnerIdFromAccessToken(
+  accessToken: string | null | undefined,
+): string | null {
+  const payload = accessToken?.split('.')[1]
+  if (!payload) return null
+
+  try {
+    const normalized = payload.replaceAll('-', '+').replaceAll('_', '/')
+    const padding = '='.repeat((4 - (normalized.length % 4)) % 4)
+    const claims: unknown = JSON.parse(globalThis.atob(`${normalized}${padding}`))
+    if (typeof claims !== 'object' || claims === null) return null
+    const subject = (claims as { sub?: unknown }).sub
+    return typeof subject === 'string' && subject.length > 0 ? subject : null
+  } catch {
+    return null
+  }
+}
+
+export function getRecentPreviewOwnerId(): string | null {
+  return recentPreviewOwnerIdFromAccessToken(getApiAccessToken())
+}
 
 function storageKey(userId: string) {
   return `${STORAGE_PREFIX}${userId}`
