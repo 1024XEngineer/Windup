@@ -5,6 +5,7 @@ import accountBadgeArtwork from '@/assets/account/illustrations/account-badge.we
 import type { User } from '@/entities'
 import { useAuthSession } from '@/features/auth-session'
 import {
+  CREDIT_REASON_OPTIONS,
   formatCreditDateTime,
   getCreditReasonLabel,
   useQuotaBalance,
@@ -17,16 +18,6 @@ import './account.css'
 import { createProfileState, initialSecurityState, profileReducer, securityReducer } from './state'
 
 const MAX_NICKNAME_LENGTH = 50
-const CREDIT_REASON_OPTIONS = [
-  [1, '注册赠送'],
-  [2, '邀请奖励'],
-  [3, '生成角色参考图'],
-  [4, '生成角色动作'],
-  [5, '管理员调整'],
-  [6, '退款 / 回退'],
-  [7, '积分冻结'],
-  [8, '实际扣减'],
-] as const
 
 function localDateStart(value: string): Date | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
@@ -173,7 +164,7 @@ function QuotaSection() {
               className="account-filter-field"
             >
               <option value="">全部原因</option>
-              {CREDIT_REASON_OPTIONS.map(([value, label]) => (
+              {CREDIT_REASON_OPTIONS.map(({ value, label }) => (
                 <option key={value} value={value}>
                   {label}
                 </option>

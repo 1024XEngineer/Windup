@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { CreditAccount, QuotaApis } from '@/entities'
 
 import {
+  CREDIT_REASON_OPTIONS,
   formatCreditDateTime,
   getCreditReasonLabel,
   useQuotaBalance,
@@ -166,6 +167,9 @@ describe('quota queries', () => {
   })
 
   it('为已知和未知原因码提供文案，并处理无效时间', () => {
+    expect(CREDIT_REASON_OPTIONS.map(({ value }) => getCreditReasonLabel(value))).toEqual(
+      CREDIT_REASON_OPTIONS.map(({ label }) => label),
+    )
     expect(getCreditReasonLabel(4)).toBe('生成角色动作')
     expect(getCreditReasonLabel(99)).toBe('积分变动（原因码 99）')
     expect(formatCreditDateTime('not-a-date')).toBe('时间未知')

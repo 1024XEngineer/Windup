@@ -155,16 +155,20 @@ export function useQuotaTransactions(
   return { ...result, loadPage, setPageSize, applyFilters, reload }
 }
 
-const reasonLabels: Readonly<Record<number, string>> = {
-  1: '注册赠送',
-  2: '邀请奖励',
-  3: '生成角色参考图',
-  4: '生成角色动作',
-  5: '管理员调整',
-  6: '退款 / 回退',
-  7: '积分冻结',
-  8: '实际扣减',
-}
+export const CREDIT_REASON_OPTIONS = [
+  { value: 1, label: '注册赠送' },
+  { value: 2, label: '邀请奖励' },
+  { value: 3, label: '生成角色参考图' },
+  { value: 4, label: '生成角色动作' },
+  { value: 5, label: '管理员调整' },
+  { value: 6, label: '退款 / 回退' },
+  { value: 7, label: '积分冻结' },
+  { value: 8, label: '实际扣减' },
+] as const
+
+const reasonLabels: Readonly<Record<number, string>> = Object.fromEntries(
+  CREDIT_REASON_OPTIONS.map(({ value, label }) => [value, label]),
+)
 
 export function getCreditReasonLabel(reason: number): string {
   return reasonLabels[reason] ?? `积分变动（原因码 ${reason}）`
