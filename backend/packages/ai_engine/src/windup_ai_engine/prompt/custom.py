@@ -9,11 +9,8 @@ from __future__ import annotations
 
 from windup_common.models import Facing
 
-<<<<<<< HEAD
 from windup_ai_engine.prompt._framing import with_framing
 
-__all__ = ["build_custom_prompt", "MAX_ACTION_CHARS"]
-=======
 __all__ = [
     "build_custom_prompt",
     "build_custom_body",
@@ -21,7 +18,6 @@ __all__ = [
     "ONESHOT_TAIL",
     "MAX_ACTION_CHARS",
 ]
->>>>>>> 60bcf14 (feat(prompt): 用户描述先过措辞门禁与适配器)
 
 # 不是接口限制,是产品判断:描述越长越容易夹带角色外观,而外观由母版承载,写两遍会打架。
 MAX_ACTION_CHARS = 200
@@ -90,17 +86,5 @@ def build_custom_prompt(
         ValueError: 描述为空或超长。空描述不兜底默认动作——那会付一次 i2v 的钱拿到一段
             站着不动的视频,而帧数时长全对、看不出描述丢了。
     """
-<<<<<<< HEAD
-    text = (action or "").strip()
-    if not text:
-        raise ValueError("自定义动作的描述不能为空")
-    if len(text) > MAX_ACTION_CHARS:
-        raise ValueError(f"自定义动作描述 {len(text)} 字,超过上限 {MAX_ACTION_CHARS}")
-    lock = _FACING_LOCK[Facing(facing)]      # 非法朝向要炸,不静默落到某一支
-    tail = _CYCLIC_TAIL if cyclic else _ONESHOT_TAIL
-    # 朝向放最前:最强的约束先钉。
-    return with_framing(f"The character {lock}: {text}, {_KEEP_WHAT_IT_HAS}. {tail}")
-=======
     tail = CYCLIC_TAIL if cyclic else ONESHOT_TAIL
-    return f"{build_custom_body(action, facing=facing)} {tail}"
->>>>>>> 60bcf14 (feat(prompt): 用户描述先过措辞门禁与适配器)
+    return with_framing(f"{build_custom_body(action, facing=facing)} {tail}")

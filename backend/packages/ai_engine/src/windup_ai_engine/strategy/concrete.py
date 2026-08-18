@@ -19,11 +19,8 @@ from windup_common.models import (
     ActionSpec,
     ActionType,
     CharacterCard,
-<<<<<<< HEAD
-    Facing,
-=======
     CharacterStance,
->>>>>>> 60bcf14 (feat(prompt): 用户描述先过措辞门禁与适配器)
+    Facing,
     GenRoute,
     Stylize,
 )
@@ -42,6 +39,7 @@ from windup_ai_engine.prompt import (
     build_jump_prompt,
     build_walk_prompt,
 )
+from windup_ai_engine.prompt._framing import with_framing
 from windup_ai_engine.prompt.adapter import RuleBasedPromptAdapter
 from windup_ai_engine.prompt.custom import CYCLIC_TAIL, ONESHOT_TAIL
 from windup_ai_engine.strategy.base import DerivationStrategy, is_cyclic
@@ -76,21 +74,13 @@ class VideoFrameStrategy(DerivationStrategy):
         # (朝向锁 / 正向措辞 / 装备存在无关 / 一次性的单次+终态保持)。
         # 不能塞进下面那张表 —— 那张表里的 builder 只接 facing。
         if action.action is ActionType.CUSTOM:
-<<<<<<< HEAD
-            return build_custom_prompt(
-                action.custom_action or "",
-                facing=action.facing,
-                cyclic=bool(action.cyclic),
-            )
+            return self._custom_prompt(action, stance)
         # attack 同样进不了那张表:它还要按运动拓扑选提示词分支。archetype 缺省时不在这里
         # 兜一个默认值 —— 缺省只由 build_attack_prompt 定义一次,写两处会各自漂移。
         if action.action is ActionType.ATTACK:
             if action.archetype is None:
                 return build_attack_prompt(facing=action.facing)
             return build_attack_prompt(facing=action.facing, archetype=action.archetype)
-=======
-            return self._custom_prompt(action, stance)
->>>>>>> 60bcf14 (feat(prompt): 用户描述先过措辞门禁与适配器)
         builders = {
             ActionType.JUMP: build_jump_prompt,
             ActionType.IDLE: build_idle_prompt,
@@ -118,7 +108,8 @@ class VideoFrameStrategy(DerivationStrategy):
         except Exception:
             # 适配器坏掉只该丢掉那层改写,不该把整条生成打死:骨架本身不依赖它。
             return build_custom_prompt(clause, facing=action.facing, cyclic=cyclic)
-        return f"{adapted.text} {CYCLIC_TAIL if cyclic else ONESHOT_TAIL}"
+        # 兜底那支走 build_custom_prompt,构图约束在它内部加;这支绕过了它,要自己加。
+        return with_framing(f"{adapted.text} {CYCLIC_TAIL if cyclic else ONESHOT_TAIL}")
 
     def derive(
         self,

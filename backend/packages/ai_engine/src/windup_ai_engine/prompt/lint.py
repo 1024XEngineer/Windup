@@ -63,7 +63,9 @@ _NEGATION_RE = (
 )
 _HAZARD = (
     "dust", "dusty", "smoke", "smoky", "smoking", "spark", "sparks", "sparking",
-    "debris", "flame", "flames", "flaming", "fire", "fires", "fiery",
+    # 光溜溜的 fire / fires 不进词表:它们最常见的是动词义(母版姿态里的 "ready to fire"
+    # 是"准备出击"),而要挡的火焰特效由 flame 家族与 fireball 覆盖。
+    "debris", "flame", "flames", "flaming", "fiery", "fireball", "fireballs",
     "ember", "embers", "dirt", "haze", "hazy",
     "烟雾", "扬尘", "火花", "灰尘", "火焰", "碎屑",
 )

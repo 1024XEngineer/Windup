@@ -15,6 +15,7 @@ from PIL import Image
 from windup_ai_engine.ports import AdaptedPrompt, PromptRejectCode, PromptRejected
 from windup_ai_engine.prompt._md import load_doc
 from windup_ai_engine.prompt.adapter import _STANCE_PARTS, RuleBasedPromptAdapter
+from windup_ai_engine.prompt._framing import SINGLE_SUBJECT_FRAMING
 from windup_ai_engine.prompt.custom import CYCLIC_TAIL, MAX_ACTION_CHARS, ONESHOT_TAIL
 from windup_ai_engine.prompt.lint import lint
 from windup_ai_engine.strategy.concrete import VideoFrameStrategy
@@ -52,14 +53,17 @@ def test_shipped_prompts_pass_the_lint(doc: str):
         assert not bad, f"{doc} `## {section}`: {[(i.category, i.term) for i in bad]}"
 
 
-def test_attack_prompt_is_caught_on_equipment_shape_priors():
-    """attack 正文里焊着刃面 / 弧线 / 前手 —— 母版里没有的形状会跟着这个角色走。
+def test_equipment_shape_priors_are_caught():
+    """门禁的真实性检验:词表写不对,它就报不出刃面 / 弧线 / 前手。
 
-    这条是门禁的真实性检验:词表写不对,它就报不出这三个。
+    断言的是给定文本而不是随仓库演进的 attack.md —— 那份正文按运动拓扑重写后已经不含
+    这些词(#309 的 archetype),拿它当样本会让这条测试跟着别人的修改一起失效。
     """
-    caught: set[str] = set()
-    for section, text in load_doc("attack.md").items():
-        caught |= {i.term for i in _errors(text, "i2v") if i.category == "shape_prior"}
+    sample = (
+        "the broad side of the weapon sweeps in a crescent arc "
+        "while the leading arm extends"
+    )
+    caught = {i.term for i in _errors(sample, "i2v") if i.category == "shape_prior"}
     assert {"broad side", "crescent", "leading arm"} <= caught, caught
 
 
@@ -280,7 +284,10 @@ def test_the_prompt_that_reaches_the_model_went_through_the_adapter(monkeypatch)
     (sent,) = video.prompts
     assert "waves the right hand above the head" in sent
     assert "One single character alone in the frame" in sent, "适配器没接上"
-    assert sent.endswith(ONESHOT_TAIL), "一次性动作丢了单次 + 终态保持"
+    # 尾句在构图约束前面而不是最末:构图约束由 with_framing 统一追加在所有动作提示词
+    # 末尾,两个不变量各钉一条。
+    assert ONESHOT_TAIL in sent, "一次性动作丢了单次 + 终态保持"
+    assert sent.endswith(SINGLE_SUBJECT_FRAMING), "适配器那支绕过了构图约束"
 
 
 def test_the_declared_loop_flag_still_picks_the_tail(monkeypatch):
@@ -288,7 +295,8 @@ def test_the_declared_loop_flag_still_picks_the_tail(monkeypatch):
     strat, video = _offline(monkeypatch)
     card = CharacterCard(name="t", desc="t")
     strat.derive(card, _spec("来回走动", cyclic=True), _png(), _NullProgress())
-    assert video.prompts[-1].endswith(CYCLIC_TAIL)
+    assert CYCLIC_TAIL in video.prompts[-1]
+    assert video.prompts[-1].endswith(SINGLE_SUBJECT_FRAMING)
 
 
 def test_a_rejected_description_never_reaches_the_paid_call(monkeypatch):
@@ -358,7 +366,8 @@ def test_a_broken_adapter_falls_back_to_the_existing_skeleton(monkeypatch):
     (sent,) = video.prompts
     assert "waves the right hand" in sent
     assert "SIDE VIEW facing right" in sent      # 朝向锁还在
-    assert sent.endswith(ONESHOT_TAIL)
+    assert ONESHOT_TAIL in sent
+    assert sent.endswith(SINGLE_SUBJECT_FRAMING)
     assert "One single character alone" not in sent, "坏掉的适配器不该还有产物"
 
 
