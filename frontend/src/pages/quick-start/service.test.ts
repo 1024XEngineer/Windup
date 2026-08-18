@@ -452,6 +452,38 @@ describe('createQuickStartService', () => {
     )
   })
 
+  it('creates the character without a name so the backend derives it from the description', async () => {
+    const longPrompt = '一位穿着红色斗篷的像素风格女骑士手持长剑站立'
+    let savedCharacter = characterFixture({
+      description: longPrompt,
+      referenceImageUrl: 'https://example.test/template.png',
+    })
+    const characterApis = mutableCharacterApis(
+      () => savedCharacter,
+      (value) => (savedCharacter = value),
+    )
+    // 名称由后端按描述生成。前端一旦自己填，就会撞上 CharacterCreate.name 的 20 字
+    // 上限——这里的提示词有 22 字，正是线上创角失败的那一类输入。
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis(),
+      generationApis: pendingGenerationApis(),
+      characterApis,
+      mediaApis: {
+        upload: vi.fn(async () => 'https://example.test/template.png' as MediaReference),
+      },
+      prepareProject: async () => ({ id: 'project-1', spriteSize: { width: 256, height: 256 } }),
+      projectApis: projectReader(),
+      onAsyncError: vi.fn(),
+    })
+
+    await service.startWithUploadedTemplate(
+      new File(['pixels'], 'hero.png', { type: 'image/png' }),
+      longPrompt,
+    )
+
+    expect(vi.mocked(characterApis.create).mock.calls[0]?.[0].name).toBeUndefined()
+  })
+
   it('uploads a template, persists the character tree, and appends another action to it', async () => {
     const generationApis = pendingGenerationApis()
     let savedCharacter = characterFixture({
