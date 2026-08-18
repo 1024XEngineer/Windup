@@ -338,8 +338,6 @@ describe('QuickStartPage', () => {
     expect(screen.getByRole('button', { name: /16-bit 日式 RPG/u })).toBeTruthy()
     expect(screen.getByRole('button', { name: /暗黑哥特像素/u })).toBeTruthy()
     expect(screen.getByRole('button', { name: /温暖手绘像素/u })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '像素守夜人' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '轻装信使' })).toBeTruthy()
 
     fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
       target: { value: '戴银色面具的游侠' },
@@ -350,18 +348,27 @@ describe('QuickStartPage', () => {
     expect(screen.queryByRole('button', { name: /暗黑哥特像素/u })).toBeNull()
   })
 
-  it('keeps the original Quick Start prompt shortcuts functional', () => {
-    const view = renderAt('/quick-start', serviceFor(null))
-    fireEvent.click(screen.getByRole('button', { name: '像素守夜人' }))
-    expect((screen.getByRole('textbox', { name: '创作指令' }) as HTMLTextAreaElement).value).toBe(
-      '一位提着风灯、披深色斗篷的像素守夜人',
-    )
-
-    view.unmount()
+  it('offers style prompts only, without the retired role-example shortcuts', () => {
     renderAt('/quick-start', serviceFor(null))
-    fireEvent.click(screen.getByRole('button', { name: '轻装信使' }))
-    expect((screen.getByRole('textbox', { name: '创作指令' }) as HTMLTextAreaElement).value).toBe(
-      '轻装信使，侧视像素风，轮廓清晰，动作轻快',
+
+    // 入口只保留三张风格卡：角色样例会让人误以为这些形象是现成资产。
+    expect(screen.queryByRole('button', { name: '像素守夜人' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '轻装信使' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /16-bit 日式 RPG/u }))
+    expect((screen.getByRole('textbox', { name: '创作指令' }) as HTMLInputElement).value).toBe(
+      '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色',
+    )
+  })
+
+  it('keeps the entry composer on a single line', () => {
+    renderAt('/quick-start', serviceFor(null))
+    const composer = screen.getByRole('textbox', { name: '创作指令' })
+
+    expect(composer.tagName).toBe('INPUT')
+    expect(composer.className).toContain('h-10')
+    expect(composer.closest('form')?.className).toContain(
+      'focus-within:shadow-[var(--shadow-app-composer-focus)]',
     )
   })
 
@@ -748,7 +755,7 @@ describe('QuickStartPage', () => {
 
     expect(screen.getByRole('textbox', { name: '创作指令' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /16-bit 日式 RPG/u }))
-    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe(
+    expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe(
       '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色',
     )
     expect(screen.queryByRole('button', { name: /暗黑哥特像素/u })).toBeNull()
@@ -846,7 +853,7 @@ describe('QuickStartPage', () => {
     fireEvent.change(screen.getByLabelText('上传角色母版'), { target: { files: [file] } })
 
     const composer = screen.getByLabelText('创作指令').closest('form')
-    expect(screen.getByLabelText('创作指令').tagName).toBe('TEXTAREA')
+    expect(screen.getByLabelText('创作指令').tagName).toBe('INPUT')
     expect(composer?.textContent).toContain('hero.png')
     expect(screen.getByRole('button', { name: '移除图片' }).closest('form')).toBe(composer)
     expect(composer?.querySelector('[data-layout="quick-start-attachment-row"]')).toBeNull()

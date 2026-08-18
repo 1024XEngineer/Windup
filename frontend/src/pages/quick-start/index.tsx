@@ -241,17 +241,6 @@ function QuickStartInput({
   const hasPrompt = Boolean(prompt.trim())
   const showStylePrompts = !hasPrompt && !templateFile
 
-  const originalPromptShortcuts = [
-    {
-      label: '像素守夜人',
-      prompt: '一位提着风灯、披深色斗篷的像素守夜人',
-    },
-    {
-      label: '轻装信使',
-      prompt: '轻装信使，侧视像素风，轮廓清晰，动作轻快',
-    },
-  ] as const
-
   useEffect(
     () => () => {
       submitAbortController.current?.abort()
@@ -361,47 +350,25 @@ function QuickStartInput({
               </button>
             ))}
           </div>
-          <div
-            data-layout="quick-start-original-shortcuts"
-            data-presence={showStylePrompts ? 'visible' : 'hidden'}
-            aria-hidden={!showStylePrompts}
-            className={`flex flex-wrap justify-center gap-2 transition-[opacity,transform,filter] duration-[460ms] motion-reduce:transition-none ${
-              showStylePrompts
-                ? 'translate-y-0 opacity-100 blur-0'
-                : 'pointer-events-none -translate-y-1 opacity-0 blur-[4px]'
-            }`}
-          >
-            {originalPromptShortcuts.map((shortcut) => (
-              <button
-                key={shortcut.label}
-                type="button"
-                disabled={!showStylePrompts}
-                onClick={() => setPrompt(shortcut.prompt)}
-                className="rounded-full border border-app-line px-3 py-1.5 text-xs font-medium text-app-muted transition hover:border-app-line-strong hover:text-app-accent"
-              >
-                {shortcut.label}
-              </button>
-            ))}
-          </div>
         </div>
 
         <div data-layout="quick-start-composer" className="mx-auto w-full max-w-3xl self-end">
           <form
             onSubmit={(event) => void submit(event)}
-            className="grid items-center gap-1.5 rounded-xl border border-app-line-strong bg-app-surface-raised p-1.5 shadow-app-panel transition-shadow focus-within:border-app-accent sm:grid-cols-[1fr_auto_auto]"
+            className="grid items-center gap-1.5 rounded-xl border border-app-line-strong bg-app-surface-raised p-1.5 shadow-app-panel transition-shadow focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)] sm:grid-cols-[1fr_auto_auto]"
           >
             <label className="min-w-0" htmlFor="quick-start-prompt">
               <span className="sr-only">创作指令</span>
-              <textarea
+              <input
                 id="quick-start-prompt"
+                type="text"
                 aria-label="创作指令"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
-                rows={2}
                 placeholder={
                   templateFile ? '描述动作，可留空生成待机动作…' : '描述角色的外形、身份和气质…'
                 }
-                className="min-h-10 w-full min-w-0 resize-none border-0 bg-transparent px-3 py-2 text-[15px] leading-6 text-app-ink outline-none placeholder:text-app-faint"
+                className="h-10 w-full min-w-0 border-0 bg-transparent px-3 text-[15px] text-app-ink outline-none placeholder:text-app-faint"
               />
             </label>
 
