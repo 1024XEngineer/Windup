@@ -146,6 +146,17 @@ describe('AccountPanel', () => {
     expect(screen.getByTestId('location').textContent).toBe('/?returnTo=%2Fprojects&source=header')
   })
 
+  it('closes immediately when reduced motion is requested', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('matchMedia', () => ({ matches: true }))
+    renderPanel('/?account=login')
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
   it('keeps keyboard focus inside the dialog in both tab directions', () => {
     renderPanel('/?account=login')
 
@@ -442,6 +453,30 @@ describe('AccountPanel', () => {
       }),
     )
     expect((await screen.findByRole('alert')).textContent).toContain('邀请码已过期')
+  })
+
+  it('submits public registration without an invite code', async () => {
+    const { apis } = renderPanel('/?account=register&returnTo=%2Fworkspace')
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'direct@example.com' } })
+    fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
+
+    fireEvent.change(await screen.findByLabelText('密码'), {
+      target: { value: 'password-123' },
+    })
+    fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
+    await screen.findByLabelText('昵称（选填）')
+    fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
+
+    fireEvent.change(await screen.findByLabelText('验证码'), { target: { value: '123456' } })
+    fireEvent.submit(screen.getByRole('button', { name: '创建账号' }).closest('form')!)
+
+    await waitFor(() =>
+      expect(apis.register).toHaveBeenCalledWith({
+        email: 'direct@example.com',
+        password: 'password-123',
+        code: '123456',
+      }),
+    )
   })
 })
 
