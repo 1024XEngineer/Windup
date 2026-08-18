@@ -448,3 +448,9 @@ def test_parse_envelope_roundtrip():
 def test_parse_envelope_requires_data_field():
     with pytest.raises(ValueError, match="缺少 data"):
         mq_client.parse_envelope({})
+
+
+def test_parse_envelope_accepts_bytes_payload():
+    envelope = {"v": 1, "id": "abc", "type": "verification_code", "payload": {}}
+    parsed = mq_client.parse_envelope({"data": json.dumps(envelope).encode()})
+    assert parsed["id"] == "abc"

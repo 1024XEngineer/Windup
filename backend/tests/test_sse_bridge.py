@@ -108,3 +108,79 @@ def test_subscriber_ignores_invalid_payload(monkeypatch):
     subscriber.start()
     time.sleep(0.2)
     subscriber.stop()
+
+
+def test_subscriber_start_is_idempotent(monkeypatch):
+    class FakePubSub:
+        def subscribe(self, _channel: str) -> None:
+            return None
+
+        def get_message(self, timeout: float = 1.0):
+            return None
+
+        def close(self) -> None:
+            return None
+
+    redis_mock = MagicMock()
+    redis_mock.pubsub.return_value = FakePubSub()
+    monkeypatch.setattr("windup_framework.sse.bridge.get_redis", lambda: redis_mock)
+
+    subscriber = RedisTaskEventSubscriber(lambda *_args: None, channel="test:events")
+    subscriber.start()
+    first = subscriber._thread
+    subscriber.start()
+    assert subscriber._thread is first
+    subscriber.stop()
+
+
+def test_subscriber_reconnects_after_listen_failure(monkeypatch):
+    attempts = {"count": 0}
+
+    def fake_listen_once(self):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise ConnectionError("redis disconnected")
+        self._stop.set()
+
+    monkeypatch.setattr(RedisTaskEventSubscriber, "_listen_once", fake_listen_once)
+    monkeypatch.setattr("windup_framework.sse.bridge._RECONNECT_BASE_SECONDS", 0.01)
+    monkeypatch.setattr("windup_framework.sse.bridge._RECONNECT_MAX_SECONDS", 0.02)
+
+    subscriber = RedisTaskEventSubscriber(lambda *_args: None, channel="test:events")
+    subscriber.start()
+    deadline = time.time() + 3
+    while time.time() < deadline and attempts["count"] < 2:
+        time.sleep(0.05)
+    subscriber.stop()
+
+    assert attempts["count"] >= 2
+
+
+def test_subscriber_skips_non_message_events(monkeypatch):
+    class FakePubSub:
+        def subscribe(self, _channel: str) -> None:
+            return None
+
+        calls = {"count": 0}
+
+        def get_message(self, timeout: float = 1.0):
+            self.calls["count"] += 1
+            if self.calls["count"] == 1:
+                return {"type": "subscribe", "data": None}
+            return None
+
+        def close(self) -> None:
+            return None
+
+    fake = FakePubSub()
+    redis_mock = MagicMock()
+    redis_mock.pubsub.return_value = fake
+    monkeypatch.setattr("windup_framework.sse.bridge.get_redis", lambda: redis_mock)
+
+    subscriber = RedisTaskEventSubscriber(
+        lambda *_args: (_ for _ in ()).throw(AssertionError("unexpected callback")),
+        channel="test:events",
+    )
+    subscriber.start()
+    time.sleep(0.2)
+    subscriber.stop()
