@@ -76,16 +76,20 @@ def pick_frame(count: int) -> int:
 def review(
     judge: JudgePort | None,
     frames: list[bytes],
-    master: bytes,
+    master: bytes | None,
     action: str,
     *,
     config: QualityGateSettings = settings,
 ) -> GateDecision | None:
-    """判一段交付物;``None`` = 没判(没注入判官或闸口未启用)。
+    """判一段交付物;``None`` = 没判(没注入判官、闸口未启用,或没有可比的参照)。
 
     "没判"要与"判了没问题"分得开:只有后者能支持"这批产物是干净的"这句话。
+
+    ``master`` 允许为 None:三渲二路线的帧是渲出来的,没有母版图,而判官的四问
+    (主体数 / 多出的东西 / 动作对不对 / 有没有被裁)全是冲生成漂移设的,渲染路线上
+    没有那个漂移。这种情形按"没判"返回 None,不是"判了没问题"。
     """
-    if judge is None or not config.enabled or not frames:
+    if judge is None or master is None or not config.enabled or not frames:
         return None
 
     index = pick_frame(len(frames))

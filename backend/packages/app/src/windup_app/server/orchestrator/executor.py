@@ -326,6 +326,9 @@ class ActionTaskExecutor:
         # i2v —— 两条路线的画风、成本、多朝向能力都不同,悄悄换一条等于让调用方拿着
         # 错误的前提做后续决定,而帧数、时长、成色全都正常,没有任何一道会红。
         model_url = (input.model_3d_url or "").strip()
+        # 三渲二那支不取母版,而出口的判官闸口要拿它当参照 —— 不先置 None 的话那支会
+        # 撞 UnboundLocalError,而它只在有 3D 资产的造型上触发。
+        master: bytes | None = None
         if model_url:
             rigged = (self._fetch_model3d or self._download_model3d)(model_url)
             logger.info(
@@ -354,6 +357,7 @@ class ActionTaskExecutor:
             "action_type": input.action_type.value,
             "frames": frames,
         }
+        # master 为 None 时 review 按"没判"返回 None(三渲二路线没有可比的参照)。
         decision = quality_gate.review(
             self._get_judge(), checked, master, _judged_action(input)
         )

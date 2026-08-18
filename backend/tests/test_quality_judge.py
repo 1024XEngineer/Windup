@@ -301,6 +301,17 @@ def test_no_judge_injected_returns_none():
     assert quality_gate.review(None, _FRAMES, _MASTER, "walk", config=_SHADOW) is None
 
 
+def test_no_master_returns_none_instead_of_judging_against_nothing():
+    """三渲二路线没有母版图,而判官的四问全是冲生成漂移设的。
+
+    实测这一支会 UnboundLocalError:编排层只在 i2v 那支取母版,而闸口无条件读它 ——
+    崩只发生在造型带 3D 资产时,i2v 的测试一条都不会红。
+    """
+    judge = _StubJudge(_verdict())
+    assert quality_gate.review(judge, _FRAMES, None, "walk", config=_SHADOW) is None
+    assert judge.calls == [], "没有参照还是把图送去判了,那笔钱是白花的"
+
+
 def test_shadow_records_problems_without_blocking():
     judge = _StubJudge(_verdict(subject_count=2, clipped=True))
     decision = quality_gate.review(judge, _FRAMES, _MASTER, "walk", config=_SHADOW)
