@@ -34,6 +34,7 @@ interface CreditTransactionDto {
 interface InviteCodeDto {
   code: string
   used_count: number
+  expires_at: string
   create_at: string
   update_at: string
 }
@@ -72,6 +73,7 @@ function toInviteCode(dto: InviteCodeDto): InviteCode {
   return {
     code: dto.code,
     usedCount: dto.used_count,
+    expiresAt: dto.expires_at,
     createdAt: dto.create_at,
     updatedAt: dto.update_at,
   }
@@ -107,12 +109,6 @@ export function createQuotaApis(options: CreateQuotaApisOptions = {}): QuotaApis
         await protectedClient.request<InviteCodeDto>('/quota/invite/generate', { method: 'POST' }),
       )
     },
-    async redeemInviteCode(code: string) {
-      await protectedClient.request<null>('/quota/invite/redeem', {
-        method: 'POST',
-        json: { code },
-      })
-    },
   }
 }
 
@@ -129,5 +125,4 @@ export const quotaApis: QuotaApis = {
   listTransactions: (query) => getDefaultApis().listTransactions(query),
   getInviteCode: () => getDefaultApis().getInviteCode(),
   generateInviteCode: () => getDefaultApis().generateInviteCode(),
-  redeemInviteCode: (code) => getDefaultApis().redeemInviteCode(code),
 }
