@@ -18,7 +18,10 @@ describe('Pagination', () => {
       'page',
     )
     expect(screen.getByRole('button', { name: '第 10 页' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '上一页' }))
     fireEvent.click(screen.getByRole('button', { name: '第 6 页' }))
+    fireEvent.click(screen.getByRole('button', { name: '下一页' }))
+    expect(onPageChange).toHaveBeenCalledWith(4)
     expect(onPageChange).toHaveBeenCalledWith(6)
   })
 })
