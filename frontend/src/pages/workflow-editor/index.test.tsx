@@ -109,7 +109,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
   })
 
-  it('动作首帧完成后可以提交微调描述', async () => {
+  it('动作首帧完成后可以重新生成或提交微调描述', async () => {
     const session = createSession(reviewingActionWorkflow())
     const refine = vi.spyOn(session.controller, 'regenerateFirstFrame').mockResolvedValue(undefined)
     defaultSessionLoader.mockResolvedValue(session)
@@ -124,6 +124,17 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(refine).toHaveBeenCalledWith(
       'action-walk',
       expect.objectContaining({ mode: 'refine', adjustmentPrompt: '抬高手臂' }),
+    )
+
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: '重新生成动作首帧' }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '重新生成动作首帧' }))
+    expect(refine).toHaveBeenLastCalledWith(
+      'action-walk',
+      expect.objectContaining({ mode: 'regenerate' }),
     )
   })
 

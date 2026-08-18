@@ -902,6 +902,45 @@ describe('WorkflowController', () => {
     })
   })
 
+  it('角色母版尚未确认图片时拒绝重新生成', async () => {
+    const { controller, generation } = createController()
+
+    await expect(
+      controller.regenerateCharacterTemplate('template-1', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+        mode: 'regenerate',
+      }),
+    ).rejects.toThrow('角色母版当前不能重新生成')
+    expect(generation.apis.create).not.toHaveBeenCalled()
+  })
+
+  it('角色母版重新生成提交失败后还原用户已确认的图片', async () => {
+    const previousImage = 'https://img/knight.png'
+    const { controller, generation } = createController(createRun(completedCharacterNodes()))
+    vi.mocked(generation.apis.create).mockRejectedValueOnce(new Error('生成服务暂时不可用'))
+
+    await expect(
+      controller.regenerateCharacterTemplate('template-1', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+        mode: 'refine',
+        adjustmentPrompt: '换成水彩风格',
+      }),
+    ).rejects.toThrow('生成服务暂时不可用')
+
+    expect(controller.getWorkflow().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'template-1',
+          status: 'passed',
+          phase: 'completed',
+          selectedImageUrl: previousImage,
+        }),
+      ]),
+    )
+  })
+
   it('角色设定已落库但生成请求失败后可以重试', async () => {
     const { controller, generation } = createController()
     vi.mocked(generation.apis.create).mockRejectedValueOnce(new Error('生成服务暂时不可用'))
@@ -1803,6 +1842,57 @@ describe('WorkflowController', () => {
       spriteWidth: 64,
       spriteHeight: 96,
     })
+  })
+
+  it('动作首帧尚未确认时拒绝重新生成', async () => {
+    const run = createRun([...completedCharacterNodes(), ...actionNodes()])
+    const { controller, generation } = createController(run)
+
+    await expect(
+      controller.regenerateFirstFrame('action-walk', {
+        spriteWidth: 64,
+        spriteHeight: 96,
+        mode: 'regenerate',
+      }),
+    ).rejects.toThrow('动作首帧当前不能重新生成')
+    expect(generation.apis.create).not.toHaveBeenCalled()
+  })
+
+  it('动作首帧重新生成提交失败后还原用户已确认的首帧', async () => {
+    const previousImage = 'https://img/first-frame-previous.png'
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: previousImage,
+      }),
+      generationMethodNode(),
+      fullFrameNode(),
+      reviewNode(),
+    ])
+    const { controller, generation } = createController(run)
+    vi.mocked(generation.apis.create).mockRejectedValueOnce(new Error('生成服务暂时不可用'))
+
+    await expect(
+      controller.regenerateFirstFrame('action-walk', {
+        spriteWidth: 64,
+        spriteHeight: 96,
+        mode: 'refine',
+        adjustmentPrompt: '抬高手臂',
+      }),
+    ).rejects.toThrow('生成服务暂时不可用')
+
+    expect(controller.getWorkflow().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'action-walk',
+          status: 'passed',
+          phase: 'completed',
+          selectedFirstFrameUrl: previousImage,
+        }),
+      ]),
+    )
   })
 
   it('生成动作首帧时使用清理后的自定义提示词', async () => {
