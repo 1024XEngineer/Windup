@@ -34,6 +34,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0        # 需要全部 tag 才能算出上一版和变更范围
+          # 钉到触发本次发版的那轮 CI 所验证的提交。不钉的话取的是 checkout 时刻的
+          # main —— CI 绿之后又合进来的提交会一起被打进 tag,而它们一行都没跑过测试,
+          # 正是 #334 第四节要挡的东西。
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Decide next version
         id: ver
@@ -104,10 +108,21 @@ jobs:
           NEXT: ${{ steps.ver.outputs.next }}
         run: |
           set -euo pipefail
-          # 幂等:同名 tag 已存在就不再发,避免 workflow_run 重放造成重复 Release
-          if git rev-parse "$NEXT" >/dev/null 2>&1; then
-            echo "$NEXT 已存在,跳过"; exit 0
+          # 幂等判据看 **Release** 而不是 tag:打 tag 与建 Release 是两次独立操作,tag 推成功
+          # 之后建 Release 若因网络或 API 抖动失败,重跑时按 tag 判会永久跳过,仓库里留下一个
+          # 没有 Release 的版本 tag —— 而部署只认 Release,那个版本就永远上不了线。
+          if gh release view "$NEXT" >/dev/null 2>&1; then
+            echo "Release $NEXT 已存在,跳过"; exit 0
           fi
-          git tag -a "$NEXT" -m "$NEXT"
-          git push origin "$NEXT"
+          # tag 可能是上一次跑到一半留下的。已存在且指向同一个提交就沿用,指向别处则是
+          # 真冲突,必须报错而不是悄悄挪走别人的 tag。
+          if git rev-parse -q --verify "refs/tags/$NEXT" >/dev/null; then
+            if [ "$(git rev-parse "refs/tags/$NEXT^{commit}")" != "$(git rev-parse HEAD)" ]; then
+              echo "::error::$NEXT 已指向别的提交,不覆盖"; exit 1
+            fi
+            echo "$NEXT 已存在且指向本次提交,补建 Release"
+          else
+            git tag -a "$NEXT" -m "$NEXT"
+            git push origin "$NEXT"
+          fi
           gh release create "$NEXT" --title "$NEXT" --notes-file notes.md
