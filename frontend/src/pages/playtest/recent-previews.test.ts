@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   MAX_RECENT_PREVIEWS,
+  getRecentPreviewOwnerId,
   recentPreviewOwnerIdFromAccessToken,
   readRecentPreviews,
   rememberRecentPreview,
@@ -39,6 +40,10 @@ describe('recent previews', () => {
   it('uses the authenticated JWT subject as the account namespace', () => {
     expect(recentPreviewOwnerIdFromAccessToken('header.eyJzdWIiOiI3In0.signature')).toBe('7')
     expect(recentPreviewOwnerIdFromAccessToken('not-a-jwt')).toBeNull()
+    expect(recentPreviewOwnerIdFromAccessToken('header.bm90LWpzb24.signature')).toBeNull()
+    expect(recentPreviewOwnerIdFromAccessToken('header.bnVsbA.signature')).toBeNull()
+    expect(recentPreviewOwnerIdFromAccessToken('header.e30.signature')).toBeNull()
+    expect(getRecentPreviewOwnerId()).toBeNull()
   })
 
   it('keeps recent previews isolated by user and caps them at three unique outfits', () => {
@@ -68,6 +73,9 @@ describe('recent previews', () => {
     const storage = createStorage()
     storage.setItem('windup.playtest.recent.v1:user-7', '{"bad":true}')
 
+    expect(readRecentPreviews('user-7', storage)).toEqual([])
+
+    storage.setItem('windup.playtest.recent.v1:user-7', '{')
     expect(readRecentPreviews('user-7', storage)).toEqual([])
   })
 

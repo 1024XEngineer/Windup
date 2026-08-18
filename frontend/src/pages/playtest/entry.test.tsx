@@ -86,4 +86,18 @@ describe('PlaytestEntryPage', () => {
       (await screen.findByRole('link', { name: '继续预览 角色 1 · 造型 1' })).getAttribute('href'),
     ).toBe('/playtest/51/outfit-1')
   })
+
+  it('renders a real preview image and falls back for an unnamed character', async () => {
+    rememberRecentPreview(
+      '7',
+      { ...preview(1), characterName: '', previewUrl: 'https://cdn.windup.test/outfit-1.png' },
+      window.localStorage,
+    )
+
+    renderEntry()
+
+    expect(
+      (await screen.findByRole('img', { name: '未命名角色 · 造型 1预览图' })).getAttribute('src'),
+    ).toBe('https://cdn.windup.test/outfit-1.png')
+  })
 })
