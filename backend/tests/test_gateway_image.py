@@ -99,7 +99,7 @@ def test_aggregator_circuit_skips_fallback_model():
     assert br.is_open("aggregator")
 
 
-def test_429_falls_back_to_next_model(monkeypatch):
+def test_429_does_not_switch_model_when_only_one_key(monkeypatch):
     monkeypatch.setattr("windup_framework.gateway.image.time.sleep", lambda _: None)
     rate = AdapterResult(ok=False, error_type=ModelErrorType.RATE_LIMIT, http_status=429)
     ad = FakeImageAdapter({
@@ -107,9 +107,83 @@ def test_429_falls_back_to_next_model(monkeypatch):
         "gemini-2.5-flash-image-alt": [PNG],
     })
     gw = _make_gw(ad, image_fallbacks="gemini-2.5-flash-image-alt")
+    with pytest.raises(RuntimeError, match="429"):
+        gw.gen_image("p", [])
+    assert ad.calls == ["gemini-2.5-flash-image"] * 3
+    assert "gemini-2.5-flash-image-alt" not in ad.calls
+
+
+def test_429_switches_key_on_same_base_url_before_model(monkeypatch, caplog):
+    monkeypatch.setattr("windup_framework.gateway.image.time.sleep", lambda _: None)
+    caplog.set_level(logging.INFO, logger="windup.gateway")
+    rate = AdapterResult(ok=False, error_type=ModelErrorType.RATE_LIMIT, http_status=429)
+    key_a = FakeImageAdapter({
+        "gemini-2.5-flash-image": [rate, rate, rate],
+        "gemini-2.5-flash-image-alt": [PNG],
+    })
+    key_b = FakeImageAdapter({"gemini-2.5-flash-image": [PNG]})
+    cfg = AIProviderSettings(
+        image_model="gemini-2.5-flash-image",
+        image_fallbacks="gemini-2.5-flash-image-alt",
+        route_primary_name="primary",
+        route_primary_base_url="https://api.qnaigc.com/v1",
+        route_primary_api_key="key-a",
+        route_primary_api_keys="key-b",
+    )
+    gw = ImageGateway(
+        ModelRegistry.from_settings(cfg),
+        key_a,
+        CircuitBreaker(),
+        cfg,
+        route_adapters={"primary.key0": key_a, "primary.key1": key_b},
+    )
+
     assert gw.gen_image("p", []).startswith(b"\x89PNG")
-    assert ad.calls[-1] == "gemini-2.5-flash-image-alt"
-    assert ad.calls.count("gemini-2.5-flash-image") == 3
+    assert key_a.calls == ["gemini-2.5-flash-image"] * 3
+    assert key_b.calls == ["gemini-2.5-flash-image"]
+    assert "gemini-2.5-flash-image-alt" not in key_a.calls
+
+    records = [json.loads(r.message) for r in caplog.records if r.name == "windup.gateway"]
+    success = [r for r in records if r.get("outcome") in ("success", "fallback_success")]
+    assert success, caplog.text
+    line = success[-1]
+    assert line["route_reason"] == "key_rate_limit"
+    assert line["route_layer"] == "key"
+    assert line["base_url_id"] == "primary"
+    assert line["api_key_id"].endswith("key1")
+
+
+def test_522_skips_remaining_keys_on_same_url(caplog):
+    caplog.set_level(logging.INFO, logger="windup.gateway")
+    key_a = FakeImageAdapter({
+        "gemini-2.5-flash-image": [UNREACHED, UNREACHED],
+        "gemini-2.5-flash-image-alt": [PNG],
+    })
+    key_b = FakeImageAdapter({"gemini-2.5-flash-image": [PNG]})
+    backup = FakeImageAdapter({"gemini-2.5-flash-image": [PNG]})
+    cfg = AIProviderSettings(
+        image_model="gemini-2.5-flash-image",
+        image_fallbacks="gemini-2.5-flash-image-alt",
+        route_primary_name="primary",
+        route_primary_base_url="https://api.qnaigc.com/v1",
+        route_primary_api_key="key-a",
+        route_primary_api_keys="key-b",
+        route_fallback_name="backup",
+        route_fallback_base_url="https://backup.example.com/v1",
+        route_fallback_api_key="key-c",
+    )
+    gw = ImageGateway(
+        ModelRegistry.from_settings(cfg),
+        key_a,
+        CircuitBreaker(),
+        cfg,
+        route_adapters={"primary.key0": key_a, "primary.key1": key_b, "backup.key0": backup},
+    )
+
+    assert gw.gen_image("p", []).startswith(b"\x89PNG")
+    assert key_a.calls == ["gemini-2.5-flash-image", "gemini-2.5-flash-image"]
+    assert key_b.calls == []
+    assert backup.calls == ["gemini-2.5-flash-image"]
 
 
 def test_520_does_not_retry():

@@ -9,7 +9,8 @@ from sqlalchemy.orm import sessionmaker
 from windup_framework.db import Base
 from windup_framework.gateway.ledger import persist_attempt
 from windup_framework.gateway.models import AIGatewayAttempt, AIGatewayAttemptDetail
-from windup_framework.gateway.trace import AttemptTrace
+from windup_framework.gateway.routes import GatewayRoute
+from windup_framework.gateway.trace import AttemptDetail, AttemptTrace
 from windup_framework.gateway.types import Scene
 
 
@@ -31,27 +32,30 @@ def test_persist_attempt_splits_hot_and_detail_fields():
             scene=Scene.CHARACTER_IMAGE,
             model="gemini-2.5-flash-image",
             family="image.chat_data_uri",
-            route_id="backup.fallback",
-            route_group="character_image",
-            candidate_index=1,
-            provider_name="openai-compatible",
-            base_url_id="backup",
-            base_url_host="backup.example.com",
-            api_key_id="backup",
+            route=GatewayRoute(
+                route_id="backup.fallback",
+                route_group="character_image",
+                candidate_index=1,
+                provider_name="openai-compatible",
+                base_url_id="backup",
+                base_url="https://backup.example.com/v1",
+                api_key_id="backup",
+                api_key="k",
+            ),
             attempt_index=2,
             retry_count=1,
             route_reason="base_url_unreached",
-            route_layer="base_url",
-            circuit_scope=None,
             outcome="fallback_success",
-            edge_fingerprint="cf-ray=abc",
             maybe_billed=True,
             cost=0.25,
             price_version="2026-08-16",
-            provider_usage={"total_tokens": 12},
             started_at=datetime.now(timezone.utc).isoformat(),
             ended_at=datetime.now(timezone.utc).isoformat(),
             attempt_latency_ms=123,
+            detail=AttemptDetail(
+                edge_fingerprint="cf-ray=abc",
+                provider_usage={"total_tokens": 12},
+            ),
         ),
         session_factory=session_factory,
     )

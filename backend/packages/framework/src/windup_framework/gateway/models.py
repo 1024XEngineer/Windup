@@ -43,11 +43,11 @@ class AIGatewayAttempt(Base):
     __tablename__ = "windup_ai_gateway_attempt"
     __table_args__ = (
         CheckConstraint(
-            "scene IN ('character_image', 'character_action')",
+            "scene IN ('chat', 'character_image', 'character_action')",
             name="ck_gateway_attempt_scene",
         ),
         CheckConstraint(
-            "phase IN ('image_sync', 'submit', 'follow', 'download')",
+            "phase IN ('chat_sync', 'image_sync', 'submit', 'follow', 'download')",
             name="ck_gateway_attempt_phase",
         ),
         CheckConstraint(

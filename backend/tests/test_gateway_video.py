@@ -101,6 +101,45 @@ def test_submit_522_switches_base_url_route_before_model_fallback(caplog):
     assert line["base_url_id"] == "backup"
 
 
+def test_submit_429_switches_key_on_same_base_url(monkeypatch):
+    monkeypatch.setattr("windup_framework.gateway.video.time.sleep", lambda _: None)
+    rate = AdapterResult(ok=False, error_type=ModelErrorType.RATE_LIMIT, http_status=429)
+    key_a = FakeVideoAdapter(
+        submits={
+            "kling-v2-5-turbo": [rate, rate, rate],
+            "kling-v2-6": [AdapterResult(ok=True, job_id="wrong", maybe_billed=True)],
+        },
+        follows={},
+    )
+    key_b = FakeVideoAdapter(
+        submits={
+            "kling-v2-5-turbo": [AdapterResult(ok=True, job_id="j-key-b", maybe_billed=True)],
+            "kling-v2-6": [],
+        },
+        follows={"j-key-b": MP4},
+    )
+    cfg = AIProviderSettings(
+        video_model="kling-v2-5-turbo",
+        video_fallbacks="kling-v2-6",
+        route_primary_name="primary",
+        route_primary_base_url="https://api.qnaigc.com/v1",
+        route_primary_api_key="key-a",
+        route_primary_api_keys="key-b",
+    )
+    gw = VideoGateway(
+        registry=ModelRegistry.from_settings(cfg),
+        adapter=key_a,
+        circuit=CircuitBreaker(cooldown_s=60),
+        settings=cfg,
+        route_adapters={"primary.key0": key_a, "primary.key1": key_b},
+    )
+
+    assert gw.i2v(b"frame", "walk").startswith(b"\x00\x00\x00\x18ftyp")
+    assert key_a.submit_models == ["kling-v2-5-turbo"] * 3
+    assert key_b.submit_models == ["kling-v2-5-turbo"]
+    assert "kling-v2-6" not in key_a.submit_models
+
+
 def test_follow_failed_opens_new_job_on_fallback():
     ad = FakeVideoAdapter(
         submits={

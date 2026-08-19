@@ -12,10 +12,10 @@ def test_522_retries_once_then_opens_aggregator():
     assert decide(error_type=ModelErrorType.UNREACHED, retry_count=1, has_job_id=False) is NextStep.OPEN_AGGREGATOR
 
 
-def test_429_retries_twice_then_fallback():
+def test_429_retries_twice_then_fallback_key():
     assert decide(error_type=ModelErrorType.RATE_LIMIT, retry_count=0, has_job_id=False) is NextStep.RETRY_SAME
     assert decide(error_type=ModelErrorType.RATE_LIMIT, retry_count=1, has_job_id=False) is NextStep.RETRY_SAME
-    assert decide(error_type=ModelErrorType.RATE_LIMIT, retry_count=2, has_job_id=False) is NextStep.FALLBACK
+    assert decide(error_type=ModelErrorType.RATE_LIMIT, retry_count=2, has_job_id=False) is NextStep.FALLBACK_KEY
 
 
 def test_520_never_retries():

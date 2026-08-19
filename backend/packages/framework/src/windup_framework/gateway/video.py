@@ -10,14 +10,16 @@ from windup_framework.config.provider import AIProviderSettings, settings as def
 from windup_framework.gateway.context import current_call_context
 from windup_framework.gateway.image import _CIRCUIT
 from windup_framework.gateway.policy import decide
-from windup_framework.gateway.registry import ModelRegistry
+from windup_framework.gateway.registry import ModelRegistry, RegistryError
 from windup_framework.gateway.routes import (
     GatewayRoute,
     config_for_route,
-    route_layer_for,
+    key_circuit_id,
+    lookup_adapter,
     routes_from_settings,
 )
 from windup_framework.gateway.trace import (
+    AttemptDetail,
     AttemptTrace,
     emit,
     estimate_cost,
@@ -44,7 +46,7 @@ class VideoGateway:
         self._route_adapters = dict(route_adapters or {})
 
     def _adapter_for(self, route: GatewayRoute):
-        return self._route_adapters.get(route.base_url_id, self._adapter)
+        return lookup_adapter(self._route_adapters, route, self._adapter)
 
     def i2v(
         self,
@@ -86,18 +88,19 @@ class VideoGateway:
             model = models[0] if models else ""
             route = routes[0]
             self._emit(
-                request_id=request_id,
-                ctx=ctx,
-                model=model,
-                route=route,
-                attempt_index=start_i,
-                retry_count=0,
-                route_reason="skip_circuit_open",
-                circuit_scope="aggregator",
-                outcome="failed",
-                input_hash=input_hash,
-                total_latency_ms=total_ms(),
-                fallback_used=False,
+                AttemptTrace(
+                    request_id=request_id,
+                    scene=Scene.CHARACTER_ACTION,
+                    model=model,
+                    route=route,
+                    attempt_index=start_i,
+                    retry_count=0,
+                    route_reason="skip_circuit_open",
+                    outcome="failed",
+                    circuit_scope="aggregator",
+                    total_latency_ms=total_ms(),
+                    detail=AttemptDetail(input_hash=input_hash),
+                )
             )
             fail(None)
 
@@ -106,6 +109,12 @@ class VideoGateway:
                 if route_index + 1 < len(routes):
                     fallback_used = True
                     route_reason_override = "base_url_unreached"
+                    continue
+                fail(last_http_status)
+            if self._circuit.is_open(key_circuit_id(route)):
+                if route_index + 1 < len(routes):
+                    fallback_used = True
+                    route_reason_override = "key_rate_limit"
                     continue
                 fail(last_http_status)
 
@@ -117,18 +126,20 @@ class VideoGateway:
                     fallback_used = True
                     fallback_reason = "skip"
                     self._emit(
-                        request_id=request_id,
-                        ctx=ctx,
-                        model=model,
-                        route=route,
-                        attempt_index=attempt_index,
-                        retry_count=0,
-                        route_reason="skip_circuit_open",
-                        circuit_scope="model",
-                        outcome="failed",
-                        input_hash=input_hash,
-                        total_latency_ms=total_ms(),
-                        fallback_used=fallback_used,
+                        AttemptTrace(
+                            request_id=request_id,
+                            scene=Scene.CHARACTER_ACTION,
+                            model=model,
+                            route=route,
+                            attempt_index=attempt_index,
+                            retry_count=0,
+                            route_reason="skip_circuit_open",
+                            outcome="failed",
+                            circuit_scope="model",
+                            fallback_used=fallback_used,
+                            total_latency_ms=total_ms(),
+                            detail=AttemptDetail(input_hash=input_hash),
+                        )
                     )
                     continue
 
@@ -177,7 +188,6 @@ class VideoGateway:
                     if result.ok:
                         self._emit_result(
                             request_id=request_id,
-                            ctx=ctx,
                             model=model,
                             route=route,
                             attempt_index=attempt_index,
@@ -214,13 +224,15 @@ class VideoGateway:
                         else:
                             self._circuit.open("aggregator")
                             circuit_scope = "aggregator"
+                    elif step is NextStep.FALLBACK_KEY:
+                        self._circuit.open(key_circuit_id(route))
+                        circuit_scope = "key"
                     elif step is NextStep.FALLBACK:
                         self._circuit.open("model:" + model)
                         circuit_scope = "model"
 
                     self._emit_result(
                         request_id=request_id,
-                        ctx=ctx,
                         model=model,
                         route=route,
                         attempt_index=attempt_index,
@@ -249,6 +261,15 @@ class VideoGateway:
                         route_reason_override = "base_url_unreached"
                         switch_to_next_route = True
                         break
+                    if step is NextStep.FALLBACK_KEY:
+                        if bound_job_id is not None:
+                            fail(last_http_status)
+                        if has_next_route:
+                            fallback_used = True
+                            route_reason_override = "key_rate_limit"
+                            switch_to_next_route = True
+                            break
+                        fail(last_http_status)
                     if step is NextStep.RETRY_SAME:
                         if error_type is ModelErrorType.RATE_LIMIT:
                             wait = (
@@ -291,7 +312,6 @@ class VideoGateway:
         self,
         *,
         request_id: str,
-        ctx,
         model: str,
         route: GatewayRoute,
         attempt_index: int,
@@ -325,127 +345,57 @@ class VideoGateway:
             else None
         )
         self._emit(
-            request_id=request_id,
-            ctx=ctx,
-            model=model,
-            route=route,
-            attempt_index=attempt_index,
-            retry_count=retry_count,
-            route_reason=route_reason,
-            circuit_scope=circuit_scope,
-            outcome=outcome,
-            input_hash=input_hash,
-            output_hash=hash_bytes(result.body) if result.ok else None,
-            total_latency_ms=total_latency_ms,
-            fallback_used=fallback_used,
-            http_status=result.http_status,
-            error_type=error_type.value if error_type is not None else None,
-            maybe_billed=True if result.ok else result.maybe_billed,
-            cost=cost,
-            started_at=started_at,
-            ended_at=ended_at,
-            attempt_latency_ms=attempt_latency_ms,
-            resend_spent=resend_spent,
-            output_bytes=len(result.body) if result.ok else (result.output_bytes or None),
-            expected_bytes=result.expected_bytes,
-            provider_usage=result.provider_usage,
-            edge_fingerprint=result.edge_fingerprint or None,
-            job_id=result.job_id,
-            job_status=result.job_status,
-            retry_after_ms=retry_after_ms,
-            submit_ms=submit_ms,
-            poll_ms=result.poll_ms,
-            download_ms=result.download_ms,
-            poll_count=result.poll_count,
-        )
-
-    def _emit(
-        self,
-        *,
-        request_id: str,
-        ctx,
-        model: str,
-        route: GatewayRoute,
-        attempt_index: int,
-        retry_count: int,
-        route_reason: str,
-        circuit_scope: str | None,
-        outcome: str,
-        input_hash: str,
-        total_latency_ms: int,
-        fallback_used: bool,
-        output_hash: str | None = None,
-        http_status: int | None = None,
-        error_type: str | None = None,
-        maybe_billed: bool | None = None,
-        cost: float | None = None,
-        started_at: str | None = None,
-        ended_at: str | None = None,
-        attempt_latency_ms: int | None = None,
-        resend_spent: int | None = 0,
-        output_bytes: int | None = None,
-        expected_bytes: int | None = None,
-        provider_usage: object | None = None,
-        edge_fingerprint: str | None = None,
-        job_id: str | None = None,
-        job_status: str | None = None,
-        retry_after_ms: int | None = None,
-        submit_ms: int | None = None,
-        poll_ms: int | None = None,
-        download_ms: int | None = None,
-        poll_count: int | None = None,
-    ) -> None:
-        family = None
-        if model:
-            family = self._registry.family_of(model).value
-        emit(
             AttemptTrace(
                 request_id=request_id,
-                attempt_id=str(uuid.uuid4()),
-                task_id=ctx.task_id,
-                user_id=ctx.user_id,
                 scene=Scene.CHARACTER_ACTION,
                 model=model,
-                family=family,
-                route_id=route.route_id,
-                route_group=route.route_group,
-                candidate_index=route.candidate_index,
-                provider_name=route.provider_name,
-                base_url_id=route.base_url_id,
-                base_url_host=route.host,
-                api_key_id=route.api_key_id,
+                route=route,
                 attempt_index=attempt_index,
                 retry_count=retry_count,
                 route_reason=route_reason,
-                route_layer=route_layer_for(route_reason),
-                circuit_scope=circuit_scope,
-                error_type=error_type,
-                http_status=http_status,
-                edge_fingerprint=edge_fingerprint,
-                job_id=job_id,
-                fallback_used=fallback_used,
                 outcome=outcome,
-                job_status=job_status,
-                started_at=started_at or _utc_now(),
-                ended_at=ended_at or _utc_now(),
+                circuit_scope=circuit_scope,
+                error_type=error_type.value if error_type is not None else None,
+                http_status=result.http_status,
+                job_id=result.job_id,
+                fallback_used=fallback_used,
+                started_at=started_at,
+                ended_at=ended_at,
                 attempt_latency_ms=attempt_latency_ms,
                 total_latency_ms=total_latency_ms,
-                submit_ms=submit_ms,
-                poll_ms=poll_ms,
-                download_ms=download_ms,
-                poll_count=poll_count,
-                retry_after_ms=retry_after_ms,
-                resend_spent=resend_spent,
-                output_bytes=output_bytes,
-                expected_bytes=expected_bytes,
-                input_hash=input_hash,
-                output_hash=output_hash,
-                maybe_billed=maybe_billed,
+                maybe_billed=True if result.ok else result.maybe_billed,
                 cost=cost,
-                price_version=self._settings.price_version,
-                provider_usage=provider_usage,
+                detail=AttemptDetail(
+                    input_hash=input_hash,
+                    output_hash=hash_bytes(result.body) if result.ok else None,
+                    output_bytes=len(result.body) if result.ok else (result.output_bytes or None),
+                    expected_bytes=result.expected_bytes,
+                    retry_after_ms=retry_after_ms,
+                    submit_ms=submit_ms,
+                    poll_ms=result.poll_ms,
+                    download_ms=result.download_ms,
+                    poll_count=result.poll_count,
+                    resend_spent=resend_spent,
+                    job_status=result.job_status,
+                    edge_fingerprint=result.edge_fingerprint or None,
+                    provider_usage=result.provider_usage,
+                ),
             )
         )
+
+    def _emit(self, trace: AttemptTrace) -> None:
+        if not trace.family and trace.model:
+            try:
+                trace.family = self._registry.family_of(trace.model).value
+            except RegistryError:
+                pass
+        if not trace.started_at:
+            trace.started_at = _utc_now()
+        if not trace.ended_at:
+            trace.ended_at = _utc_now()
+        if trace.price_version is None:
+            trace.price_version = self._settings.price_version
+        emit(trace)
 
 
 def build_video_gateway(config=None, *, adapter=None, circuit=None) -> VideoGateway:
@@ -456,10 +406,10 @@ def build_video_gateway(config=None, *, adapter=None, circuit=None) -> VideoGate
 
         routes = routes_from_settings(cfg, route_group=Scene.CHARACTER_ACTION.value)
         route_adapters = {
-            route.base_url_id: SufyVideoProvider(config=config_for_route(cfg, route))
+            route.route_id: SufyVideoProvider(config=config_for_route(cfg, route))
             for route in routes
         }
-        adapter = route_adapters[routes[0].base_url_id]
+        adapter = route_adapters[routes[0].route_id]
     return VideoGateway(
         ModelRegistry.from_settings(cfg),
         adapter,

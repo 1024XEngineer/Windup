@@ -35,6 +35,7 @@ class AIProviderSettings(BaseSettings):
     video_model: str = "kling-v2-5-turbo"
     image_model: str = "gemini-2.5-flash-image"
 
+    chat_fallbacks: str = ""
     image_fallbacks: str = ""
     video_fallbacks: str = ""
     image_unit_cost: float | None = None
@@ -44,12 +45,15 @@ class AIProviderSettings(BaseSettings):
     # ── Gateway route spike: base_url / key route candidates ────────────────
     # 第一版仍以 env 管理。primary 留空时复用上面的 AI_BASE_URL / AI_API_KEY;
     # fallback 三个字段都填才表示启用一个备用入口。
+    # *_API_KEYS 是同入口额外 key（逗号分隔）：429 换 key，UNREACHED 跳过剩余 key。
     route_primary_name: str = "primary"
     route_primary_base_url: str = ""
     route_primary_api_key: str = ""
+    route_primary_api_keys: str = ""
     route_fallback_name: str = ""
     route_fallback_base_url: str = ""
     route_fallback_api_key: str = ""
+    route_fallback_api_keys: str = ""
     gateway_ledger_enabled: bool = True
 
     @field_validator("image_unit_cost", "video_unit_cost_per_second", mode="before")

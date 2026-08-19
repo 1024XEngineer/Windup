@@ -7,11 +7,13 @@ from windup_common.enums.model import ModelErrorType
 
 
 class Scene(str, Enum):
+    CHAT = "chat"
     CHARACTER_IMAGE = "character_image"
     CHARACTER_ACTION = "character_action"
 
 
 class Family(str, Enum):
+    CHAT_COMPLETIONS = "chat.completions"
     IMAGE_CHAT_DATA_URI = "image.chat_data_uri"
     VIDEO_INPUT_REFERENCE = "video.input_reference"
     VIDEO_IMAGE_LIST = "video.image_list"
@@ -20,6 +22,7 @@ class Family(str, Enum):
 class NextStep(str, Enum):
     RETRY_SAME = "retry_same"
     FALLBACK = "fallback"
+    FALLBACK_KEY = "fallback_key"
     FAIL = "fail"
     OPEN_AGGREGATOR = "open_aggregator"
 

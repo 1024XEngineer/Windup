@@ -25,7 +25,7 @@ def decide(
     if error_type is ModelErrorType.RATE_LIMIT and retry_count < 2:
         return NextStep.RETRY_SAME
     if error_type is ModelErrorType.RATE_LIMIT:
-        return NextStep.FALLBACK
+        return NextStep.FALLBACK_KEY
     if error_type is ModelErrorType.INVALID_RESPONSE and retry_count < 2:
         return NextStep.RETRY_SAME
     if error_type is ModelErrorType.INVALID_RESPONSE:

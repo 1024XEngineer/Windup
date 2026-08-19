@@ -8,7 +8,8 @@ from typing import Any
 
 from windup_framework.db import SessionLocal
 from windup_framework.gateway.models import AIGatewayAttempt, AIGatewayAttemptDetail
-from windup_framework.gateway.trace import AttemptTrace
+from windup_framework.gateway.routes import route_layer_for
+from windup_framework.gateway.trace import AttemptDetail, AttemptTrace
 
 logger = logging.getLogger("windup.gateway.ledger")
 
@@ -43,6 +44,14 @@ def _ledger_outcome(value: str | None) -> str:
     return "failed"
 
 
+def _phase_for(trace: AttemptTrace) -> str:
+    if trace.scene.value == "chat":
+        return "chat_sync"
+    if trace.scene.value == "character_image":
+        return "image_sync"
+    return "submit"
+
+
 def _json_or_none(value: Any) -> Any:
     if value is None:
         return None
@@ -55,6 +64,7 @@ def persist_attempt(trace: AttemptTrace, *, session_factory=SessionLocal) -> Non
     """Persist one gateway attempt without letting ledger failures affect generation."""
 
     attempt_uuid = _uuid(trace.attempt_id)
+    route = trace.route
     try:
         with session_factory() as session:
             session.add(
@@ -67,19 +77,19 @@ def persist_attempt(trace: AttemptTrace, *, session_factory=SessionLocal) -> Non
                     scene=trace.scene.value,
                     attempt_index=trace.attempt_index or 0,
                     retry_count=trace.retry_count,
-                    route_id=trace.route_id or "default.primary",
-                    route_group=trace.route_group or trace.scene.value,
-                    candidate_index=trace.candidate_index or 0,
-                    provider_name=trace.provider_name or "openai-compatible",
-                    base_url_id=trace.base_url_id or "primary",
-                    base_url_host=trace.base_url_host or "",
-                    api_key_id=trace.api_key_id,
+                    route_id=route.route_id,
+                    route_group=route.route_group,
+                    candidate_index=route.candidate_index,
+                    provider_name=route.provider_name,
+                    base_url_id=route.base_url_id,
+                    base_url_host=route.host or "",
+                    api_key_id=route.api_key_id,
                     model=trace.model,
                     family=trace.family or "",
                     route_reason=trace.route_reason or "primary",
-                    route_layer=trace.route_layer or "none",
+                    route_layer=route_layer_for(trace.route_reason),
                     circuit_scope=trace.circuit_scope,
-                    phase="image_sync" if trace.scene.value == "character_image" else "submit",
+                    phase=_phase_for(trace),
                     outcome=_ledger_outcome(trace.outcome),
                     job_id=trace.job_id,
                     error_type=trace.error_type,
@@ -98,6 +108,7 @@ def persist_attempt(trace: AttemptTrace, *, session_factory=SessionLocal) -> Non
         logger.exception("Gateway hot ledger write failed request_id=%s", trace.request_id)
         return
 
+    detail = trace.detail or AttemptDetail()
     try:
         with session_factory() as session:
             session.add(
@@ -105,20 +116,20 @@ def persist_attempt(trace: AttemptTrace, *, session_factory=SessionLocal) -> Non
                     attempt_id=attempt_uuid,
                     request_id=trace.request_id,
                     task_id=_int_or_none(trace.task_id),
-                    job_status=trace.job_status,
-                    edge_fingerprint=trace.edge_fingerprint,
+                    job_status=detail.job_status,
+                    edge_fingerprint=detail.edge_fingerprint,
                     error_message=None,
                     provider_request_id=None,
-                    provider_usage=_json_or_none(trace.provider_usage),
-                    input_hash=trace.input_hash,
-                    output_hash=trace.output_hash,
-                    output_bytes=trace.output_bytes,
-                    expected_bytes=trace.expected_bytes,
-                    retry_after_ms=trace.retry_after_ms,
-                    submit_ms=trace.submit_ms,
-                    poll_ms=trace.poll_ms,
-                    download_ms=trace.download_ms,
-                    poll_count=trace.poll_count,
+                    provider_usage=_json_or_none(detail.provider_usage),
+                    input_hash=detail.input_hash,
+                    output_hash=detail.output_hash,
+                    output_bytes=detail.output_bytes,
+                    expected_bytes=detail.expected_bytes,
+                    retry_after_ms=detail.retry_after_ms,
+                    submit_ms=detail.submit_ms,
+                    poll_ms=detail.poll_ms,
+                    download_ms=detail.download_ms,
+                    poll_count=detail.poll_count,
                     extra=None,
                 )
             )
