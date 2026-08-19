@@ -111,10 +111,15 @@ class ChatGateway:
     def _adapter_for(self, route: GatewayRoute):
         return lookup_adapter(self._route_adapters, route, self._adapter)
 
+    @property
+    def model_name(self) -> str:
+        return (self._settings.chat_model or self._settings.model).strip()
+
     def _models(self) -> tuple[str, ...]:
-        if not self._settings.model.strip():
-            raise RuntimeError("chat gateway requires AI_MODEL")
-        return (self._settings.model, *_parse_fallbacks(self._settings.chat_fallbacks))
+        primary = self.model_name
+        if not primary:
+            raise RuntimeError("chat gateway requires AI_CHAT_MODEL")
+        return (primary, *_parse_fallbacks(self._settings.chat_fallbacks))
 
     def invoke(self, messages: Any, **kwargs: Any) -> Any:
         ctx = current_call_context()

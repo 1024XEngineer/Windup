@@ -88,7 +88,7 @@ def test_chat_gateway_switches_key_after_429(monkeypatch, caplog):
 
 
 def test_create_chat_model_returns_gateway_without_hand_rolling_protocol():
-    cfg = AIProviderSettings(model="gpt-4o-mini")
+    cfg = AIProviderSettings(api_key="test-key", model="gpt-4o-mini")
     chat = create_chat_model(config=cfg)
 
     assert hasattr(chat, "invoke")

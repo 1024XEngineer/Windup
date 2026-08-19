@@ -21,6 +21,9 @@ from windup_app.server.orchestrator.model import (
 )
 from windup_app.server.orchestrator.service import AiGenerationService
 from windup_app.server.project.model import Project  # noqa: F401 — 注册表
+from windup_app.server.quota.model import CreditAccount, CreditTransaction  # noqa: F401 — 注册表
+
+from conftest import seed_credit_account
 
 
 @pytest.fixture
@@ -31,7 +34,11 @@ def session_factory():
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine)
+    factory = sessionmaker(bind=engine)
+    with factory() as session:
+        seed_credit_account(session, 1)
+        session.commit()
+    return factory
 
 
 def test_none_video_model_means_deploy_default():

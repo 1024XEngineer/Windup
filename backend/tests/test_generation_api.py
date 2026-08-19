@@ -255,13 +255,16 @@ def test_validation_error_message_tells_the_user_what_is_wrong(auth_client):
 
 
 def test_stance_from_request_reaches_the_engine(auth_client, monkeypatch):
-    from windup_app.web.api import generation as gen_api
-    from windup_app.server.orchestrator.model import CharacterActionInput
+    from windup_app.server.orchestrator import service as gen_service
 
-    dispatched: list = []
-    monkeypatch.setattr(
-        gen_api, "_dispatch_after_commit", lambda *args: dispatched.append(args)
-    )
+    captured: list = []
+    _orig = gen_service.service.generate_character_action
+
+    def _spy(*args, **kwargs):
+        captured.append(kwargs.get("input"))
+        return _orig(*args, **kwargs)
+
+    monkeypatch.setattr(gen_service.service, "generate_character_action", _spy)
     project = _create_project(auth_client)
     character = _create_character(auth_client, project["id"])
 
@@ -270,21 +273,23 @@ def test_stance_from_request_reaches_the_engine(auth_client, monkeypatch):
         json=_action_payload(project["id"], character["id"], stance="quadruped"),
     )
 
-    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
-    assert inputs, "任务没被收下"
-    assert inputs[0].stance is not None, "体型断在请求层,引擎侧永远看不到"
-    assert inputs[0].stance.value == "quadruped"
+    assert captured, "任务没被收下"
+    assert captured[0].stance is not None, "体型断在请求层,引擎侧永远看不到"
+    assert captured[0].stance.value == "quadruped"
 
 
 def test_stance_omitted_stays_none_not_biped(auth_client, monkeypatch):
     """不给体型时原样传 None —— 在这层替调用方填 biped，"没给"与"明确双足"就分不开了。"""
-    from windup_app.web.api import generation as gen_api
-    from windup_app.server.orchestrator.model import CharacterActionInput
+    from windup_app.server.orchestrator import service as gen_service
 
-    dispatched: list = []
-    monkeypatch.setattr(
-        gen_api, "_dispatch_after_commit", lambda *args: dispatched.append(args)
-    )
+    captured: list = []
+    _orig = gen_service.service.generate_character_action
+
+    def _spy(*args, **kwargs):
+        captured.append(kwargs.get("input"))
+        return _orig(*args, **kwargs)
+
+    monkeypatch.setattr(gen_service.service, "generate_character_action", _spy)
     project = _create_project(auth_client)
     character = _create_character(auth_client, project["id"])
 
@@ -292,8 +297,7 @@ def test_stance_omitted_stays_none_not_biped(auth_client, monkeypatch):
         "/generation/action", json=_action_payload(project["id"], character["id"]),
     )
 
-    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
-    assert inputs and inputs[0].stance is None
+    assert captured and captured[0].stance is None
 
 
 def test_illegal_stance_is_rejected_at_the_entrance(auth_client):

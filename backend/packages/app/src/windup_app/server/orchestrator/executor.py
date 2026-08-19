@@ -525,10 +525,12 @@ class ImageTaskExecutor:
                 session.commit()
         except Exception as exc:  # noqa: BLE001 —— 兜底
             logger.exception("图片任务 %s 失败", task_id)
+            session.rollback()
             task_repo.update_status(
                 session, task_id, TaskStatus.FAILED,
                 error_message=f"{exc}; request_id={request_id}",
             )
+            _settle_credit(session, task_id, success=False)
             if own:
                 session.commit()
         finally:
