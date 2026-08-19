@@ -13,6 +13,7 @@ from sqlalchemy import BigInteger, DateTime, Integer, JSON, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from windup_common.models import CharacterStance
 from windup_framework.db import Base
 
 
@@ -88,6 +89,9 @@ class CharacterActionInput:
     # 传 URL 而不是让编排层自己去查:与 reference_image_urls 同一口径 —— 取数在上层
     # 做完,"这次选了哪条路线"在入参上就可见,不是埋在某个分支里的隐式判断。
     model_3d_url: str | None = None
+    # 角色体型。``None`` 原样往下传,由编排层兜成双足 —— 本层替调用方填默认值的话,
+    # "没给"与"明确给了 biped"从这里起就分不开了。判据见 prompt.adapter 的体型门禁。
+    stance: CharacterStance | None = None
 
 
 # -- 出参（按任务类型细化，前端可直接回填 character 模块）------------------
@@ -121,11 +125,24 @@ class CharacterActionOutput:
     前端拿到后写入 ``character_data.outfits[].actions[]``：
     ``action_type`` → ``CharacterAction.type``，
     ``frames`` → ``CharacterAction.frames[]``。
+
+    ``quality`` / ``prompt_version`` 是引擎产出成色的账本(``ai_engine.ports.ActionQuality``
+    的原样转录 + 提示词版本),不参与前端回填、只落库供后续对比——本层不据此判成败,
+    见 executor 里"只记账不判决"的说明。
     """
 
     type: str = "character_action"
     action_type: str = ""
     frames: list[CharacterActionFrame] = field(default_factory=list)
+    # 判官读数(``quality_gate.GateDecision.as_payload``)。``None`` = **没判**,不是
+    # "判了没问题" —— 闸口默认不启用,把缺省读成"干净"会让 shadow 期的统计凭空多出一批
+    # 从未判读过的样本。形状留 dict 而不是拆成字段:shadow 期正是要观察该记哪些东西,
+    # 每加一个读数就改一次 ORM 反序列化的话,数据还没攒够就先僵住了。
+    # 字段名不叫 quality:引擎那份本地像素成色(``ports.ActionQuality``)也要落到同一个
+    # payload 里,两者来源与代价都不同,共用一个键会让先写的那份被后写的悄悄盖掉。
+    judge: dict | None = None
+    quality: dict | None = None
+    prompt_version: str | None = None
 
 
 # -- 任务记录 ------------------------------------------------------------

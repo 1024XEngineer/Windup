@@ -11,7 +11,8 @@
 - 节点通过 `dependsOnNodeIds` 保存直接前置依赖，因此边会与节点一起落库，不再依赖数组顺序猜测连线。
 - 每个 Action 使用 `action-first-frame -> action-generation-method -> action-full-frame -> review` 四节点链；多条链共同依赖
   `character-template`，角色母版通过后即可并行，不互相阻塞。
-- 资产生成方式当前可选 `video-cropping` 与 `3d-to-2d`。3D 转 2D 后端接口未提供前只保存选择并明确阻止提交，不伪装成视频路线。
+- 资产生成方式当前可选 `video-cropping` 与 `3d-to-2d`（三渲二）。后者只在所选造型已有 `Outfit.model3dUrl`
+  时可选，判据是免费查询、不猜；没有资产就不提供这个选项，不让它悄悄退化成视频路线。
 - Quick Start 与 Workflow Editor 是两种独立界面，但推进同一张节点图，核心数据不区分 `ai/manual driver`。
 - 角色设定节点在 `input.characterId` 中保存所属角色。前端按项目列出 Run 后用该字段定位角色的唯一 Run；旧数据允许暂未绑定。
 - 后端不提供 Revision 历史。重做时覆盖旧结果，并用 `nodeId + taskId` 防止旧请求串线。

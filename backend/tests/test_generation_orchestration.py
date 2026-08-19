@@ -131,6 +131,46 @@ def test_action_task_runs_end_to_end(session_factory, monkeypatch):
         assert frame.duration_ms is not None
 
 
+def test_quality_and_prompt_version_reach_the_persisted_result(session_factory, monkeypatch):
+    """成色从生成到落库这条链路必须闭合,否则线上永远答不出"改完提示词到底有没有
+    变好"(见 executor 里"只记账不判决"的说明)。
+
+    落库后必须能读到 motion_scale / dead_frames / subject_blobs 三个成色读数,
+    以及 prompt_version。
+    """
+    service = AiGenerationService()
+    executor = ActionTaskExecutor(
+        generator=_real_offline_generator(monkeypatch),
+        upload=lambda png: "https://cdn.example.com/f.png",
+        fetch_master=lambda _input: _tiny_png(),
+        session_factory=session_factory,
+    )
+    action_input = CharacterActionInput(
+        character_id=1, action_type=ActionType.WALK, num_frames=6,
+    )
+    with session_factory() as s:
+        task = service.generate_character_action(s, user_id=1, input=action_input)
+        s.commit()
+        task_id = task.id
+
+    executor.run_action_task(task_id, action_input)
+
+    with session_factory() as s:
+        done = service.get_task(s, project_id=1, task_id=task_id)
+    assert done.status is TaskStatus.COMPLETED
+    quality = done.result.quality
+    assert quality is not None, "quality 被丢在了 executor 到落库之间的某一步"
+    assert isinstance(quality["motion_scale"], float)
+    assert "dead_frames" in quality
+    assert "subject_blobs" in quality and len(quality["subject_blobs"]) == len(
+        done.result.frames
+    )
+    assert done.result.prompt_version, "prompt_version 没有随成色一起落库"
+
+    # 本步只记账,不判决:即便 motion_scale 恰好是 0 这种"典型坏产出"信号,
+    # 任务仍然是 COMPLETED —— 交付/重试是产品决策,不该由这一步替调用方做。
+
+
 def _png_of(w: int, h: int) -> bytes:
     """指定尺寸的一张带主体的 PNG。"""
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -172,7 +212,10 @@ class _SpyGenerator:
         return GeneratedAction(
             frames=[_png_of(*size)],
             durations=[100],
-            quality=ActionQuality(motion_scale=1.0, dead_frames=[], loop_seam=None),
+            quality=ActionQuality(
+                motion_scale=1.0, dead_frames=[], loop_seam=None, subject_blobs=(1,)
+            ),
+            prompt_version="test-v0",
         )
 
 

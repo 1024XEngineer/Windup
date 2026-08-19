@@ -64,17 +64,15 @@ export function WorkflowEditorView({
   return (
     <div className="workflow-editor-shell fixed inset-0 z-30 overflow-hidden bg-[var(--color-app-canvas)] text-[var(--color-app-ink)]">
       <aside
-        className="pointer-events-none absolute bottom-[18px] left-[18px] z-15 grid min-w-[250px] max-w-[min(380px,calc(100vw-112px))] gap-1 rounded-[10px] border border-app-line bg-app-surface-raised/90 px-[15px] py-3 shadow-app-menu backdrop-blur-[14px]"
+        className="pointer-events-none absolute bottom-4 left-4 z-15 grid min-w-[220px] max-w-[min(340px,calc(100vw-104px))] gap-1 rounded-lg border border-app-line bg-app-surface-raised/92 px-3.5 py-3 shadow-app-menu backdrop-blur-xl"
         aria-label="当前项目"
       >
         <div>
-          <p className="m-0 mb-[5px] text-[8px] font-extrabold tracking-[0.12em] text-app-faint">
-            PROJECT
-          </p>
+          <p className="m-0 mb-1 text-[9px] font-semibold text-app-muted">当前项目</p>
           <h1 className="m-0 text-sm font-bold text-app-ink-soft">{project.name}</h1>
         </div>
         <p className="m-0 overflow-hidden text-ellipsis whitespace-nowrap text-[9px] leading-[1.5] text-app-faint">
-          {constraints.join(' · ')}
+          {constraints.join(' / ')}
         </p>
         <div className="mt-1 flex justify-end">
           <small className="font-mono text-[8px] font-bold text-[var(--color-app-muted)]">
@@ -120,7 +118,7 @@ export function WorkflowEditorView({
           elementsSelectable
           deleteKeyCode={null}
           fitView
-          fitViewOptions={{ padding: 0.14, maxZoom: 0.82 }}
+          fitViewOptions={{ padding: 0.16, maxZoom: 0.92 }}
           minZoom={0.3}
           maxZoom={1.2}
         >
@@ -138,7 +136,7 @@ function FitViewOnNodeSetChange({ nodeIds }: { nodeIds: string[] }) {
   useEffect(() => {
     if (!signature) return
     const timer = window.setTimeout(() => {
-      void fitView({ padding: 0.14, maxZoom: 0.82, duration: 180 })
+      void fitView({ padding: 0.16, maxZoom: 0.92, duration: 180 })
     }, 32)
     return () => window.clearTimeout(timer)
   }, [fitView, signature])

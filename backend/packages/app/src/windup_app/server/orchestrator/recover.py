@@ -1,29 +1,32 @@
 """进程重启后对账：有冻结、未终态的生成任务重新入队或失败解冻。
 
-调度本身仍是进程内 ThreadPoolExecutor。队列项会随进程消失，但任务行和
-FROZEN 流水在库里。启动时扫描 PENDING/RUNNING 且仍有开放冻结的任务：
+调度载体为 Redis Stream + mq_message outbox。worker 启动时扫描 PENDING/RUNNING
+且仍有开放冻结的任务：
 
-- PENDING：按落库的 ``input_payload`` 再入队（生成尚未开始）
-- RUNNING：视为执行中被打断，标 FAILED 并解冻（避免重复打上游）
+- PENDING：通过 publisher 补投（dedupe_key 幂等，不插第二行）
+- RUNNING：仅当 update_at 超过 stale 阈值才视为孤儿并 FAILED + 解冻
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from typing import Any
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
+from windup_app.server.mq.catalog import (
+    GENERATION_RUNNING_STALE_SECONDS,
+    GENERATION_STREAM,
+    MSG_TYPE_CHARACTER_ACTION,
+    MSG_TYPE_CHARACTER_IMAGE,
+)
 from windup_app.server.orchestrator import billing, task_repo
 from windup_app.server.orchestrator.model import (
-    ActionType,
-    CharacterActionInput,
-    CharacterImageInput,
     GenerationTask,
     GenerationType,
     TaskStatus,
 )
+from windup_framework.mq.publisher import MqPublisher
 
 logger = logging.getLogger("windup.generation.recover")
 
@@ -31,18 +34,12 @@ logger = logging.getLogger("windup.generation.recover")
 def recover_orphaned_generation_tasks(
     session: Session,
     *,
-    dispatcher: Any,
-    run_image_task: Callable[..., Any],
-    run_action_task: Callable[..., Any],
+    publisher: MqPublisher,
+    fail_stale_running: bool = False,
+    running_stale_seconds: int = GENERATION_RUNNING_STALE_SECONDS,
 ) -> None:
-    """扫描开放任务并恢复。调用方负责 commit。
-
-    没有开放冻结的任务此前被整个跳过,于是线上攒下 3 条 running 了四五天的任务和 1 条
-    同样久的 pending —— 既没有终态也没有错误信息,用户那侧就是一直转圈。
-
-    但"跳过重入队"和"跳过标终态"两件事的代价不对等,所以只放开后者:重入队一个没有
-    冻结的任务等于让它免费跑一次,而让它永远停在开放态没有任何好处。
-    """
+    """扫描未结清冻结的开放任务并恢复。调用方负责 commit。"""
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(seconds=running_stale_seconds)
     for task in task_repo.list_by_status(
         session, (TaskStatus.PENDING, TaskStatus.RUNNING),
     ):
@@ -52,9 +49,16 @@ def recover_orphaned_generation_tasks(
             _fail_unrecoverable(session, task)
             continue
         if task.status is TaskStatus.RUNNING:
+            if not fail_stale_running:
+                continue
+            updated = task.update_at
+            if updated is not None and updated.tzinfo is None:
+                updated = updated.replace(tzinfo=timezone.utc)
+            if updated is not None and updated >= stale_cutoff:
+                continue
             _fail_interrupted(session, task)
             continue
-        _requeue_pending(session, dispatcher, run_image_task, run_action_task, task)
+        _requeue_pending(session, publisher, task)
 
 
 def _fail_unrecoverable(session: Session, task: GenerationTask) -> None:
@@ -79,52 +83,34 @@ def _fail_interrupted(session: Session, task: GenerationTask) -> None:
 
 def _requeue_pending(
     session: Session,
-    dispatcher: Any,
-    run_image_task: Callable[..., Any],
-    run_action_task: Callable[..., Any],
+    publisher: MqPublisher,
     task: GenerationTask,
 ) -> None:
     assert task.id is not None
-    payload = task.input_payload or {}
     try:
         if task.task_type is GenerationType.CHARACTER_IMAGE:
-            dispatcher.submit(
-                run_image_task, task.id, _image_input(payload), task.project_id,
-            )
+            msg_type = MSG_TYPE_CHARACTER_IMAGE
         elif task.task_type is GenerationType.CHARACTER_ACTION:
-            dispatcher.submit(
-                run_action_task, task.id, _action_input(payload), task.project_id,
-            )
+            msg_type = MSG_TYPE_CHARACTER_ACTION
         else:
             raise ValueError(f"未知任务类型: {task.task_type}")
+        message_id = publisher.enqueue(
+            session,
+            stream=GENERATION_STREAM,
+            msg_type=msg_type,
+            payload={
+                "task_id": task.id,
+                "task_type": (
+                    task.task_type.value
+                    if hasattr(task.task_type, "value")
+                    else str(task.task_type)
+                ),
+            },
+            dedupe_key=f"generation:{task.id}",
+        )
+        publisher.register_after_commit(session, message_id)
     except Exception:
         logger.exception("PENDING 任务重入队失败，改为解冻 | task_id=%s", task.id)
         _fail_interrupted(session, task)
         return
     logger.info("孤儿 PENDING 任务已重入队 | task_id=%s", task.id)
-
-
-def _image_input(payload: dict) -> CharacterImageInput:
-    return CharacterImageInput(
-        reference_image_url=payload.get("reference_image_url"),
-        prompt=payload.get("prompt") or "",
-        negative_prompt=payload.get("negative_prompt") or "",
-        width=int(payload.get("width") or 1024),
-        height=int(payload.get("height") or 1024),
-        num_images=int(payload.get("num_images") or 1),
-    )
-
-
-def _action_input(payload: dict) -> CharacterActionInput:
-    raw_type = payload.get("action_type")
-    action_type = raw_type if isinstance(raw_type, ActionType) else ActionType(raw_type)
-    return CharacterActionInput(
-        character_id=int(payload["character_id"]),
-        action_type=action_type,
-        custom_prompt=payload.get("custom_prompt"),
-        reference_video_url=payload.get("reference_video_url"),
-        reference_image_urls=list(payload.get("reference_image_urls") or []),
-        num_frames=int(payload.get("num_frames") or 16),
-        loop=payload.get("loop"),
-        video_model=payload.get("video_model"),
-    )

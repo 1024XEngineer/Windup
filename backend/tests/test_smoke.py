@@ -33,18 +33,22 @@ def test_health_endpoint_reports_ok_without_auth(client):
     assert response.json() == {"status": "ok"}
 
 
-def test_lifespan_shuts_down_generation_dispatcher(monkeypatch):
+def test_lifespan_stops_sse_subscriber(monkeypatch):
     import windup_app.bootstrap.app as app_module
 
     create_all = Mock()
     monkeypatch.setattr(app_module.Base.metadata, "create_all", create_all)
+    monkeypatch.setattr(app_module, "relay_pending_messages", Mock())
+
+    subscriber = Mock()
+    monkeypatch.setattr(app_module, "RedisTaskEventSubscriber", Mock(return_value=subscriber))
+
     app = create_app()
-    dispatcher = Mock()
-    app.state.generation_dispatcher = dispatcher
 
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
-        dispatcher.shutdown.assert_not_called()
+        subscriber.start.assert_called_once()
+        subscriber.stop.assert_not_called()
 
     create_all.assert_called_once_with(app_module.engine)
-    dispatcher.shutdown.assert_called_once_with()
+    subscriber.stop.assert_called_once_with()
