@@ -638,12 +638,15 @@ export function createWorkflowController({
     const setupNode = findSingleDependencyNode(before, templateNode, 'character-setup')
     const prompt = adjustedPrompt(setupNode.input.prompt, options)
     const sourceImageUrl = options.mode === 'refine' ? templateNode.selectedImageUrl : undefined
-    const key = `${nodeId}:character_template`
-    const pending = unattachedGenerations.get(key)?.regeneration
-      ? unattachedGenerations.get(key)
-      : undefined
+    const keys = sourceDirections.map((direction) =>
+      generationKey(nodeId, 'character_template', direction),
+    )
+    const pending = keys.flatMap((key) => {
+      const attachment = unattachedGenerations.get(key)
+      return attachment?.regeneration ? [attachment] : []
+    })
     await restartFromNode(nodeId)
-    return runRegenerationAttempt(before, nodeId, key, pending, () => {
+    return runRegenerationAttempt(before, nodeId, keys, pending, () => {
       return generateCharacterTemplate(setupNode.id, {
         spriteWidth: options.spriteWidth,
         spriteHeight: options.spriteHeight,
@@ -673,12 +676,15 @@ export function createWorkflowController({
     const prompt = adjustedPrompt(basePrompt, options)
     const sourceImageUrl =
       options.mode === 'refine' ? firstFrameNode.selectedFirstFrameUrl : undefined
-    const key = `${nodeId}:first_frame`
-    const pending = unattachedGenerations.get(key)?.regeneration
-      ? unattachedGenerations.get(key)
-      : undefined
+    const keys = sourceDirections.map((direction) =>
+      generationKey(nodeId, 'first_frame', direction),
+    )
+    const pending = keys.flatMap((key) => {
+      const attachment = unattachedGenerations.get(key)
+      return attachment?.regeneration ? [attachment] : []
+    })
     await restartFromNode(nodeId)
-    return runRegenerationAttempt(before, nodeId, key, pending, () => {
+    return runRegenerationAttempt(before, nodeId, keys, pending, () => {
       return generateFirstFrame(nodeId, {
         spriteWidth: options.spriteWidth,
         spriteHeight: options.spriteHeight,
@@ -691,17 +697,22 @@ export function createWorkflowController({
   async function runRegenerationAttempt(
     before: WorkflowRun,
     nodeId: WorkflowNode['id'],
-    key: string,
-    pending: PendingGenerationAttachment | undefined,
+    keys: readonly string[],
+    pending: readonly PendingGenerationAttachment[],
     generate: () => Promise<WorkflowRun>,
   ): Promise<WorkflowRun> {
     try {
-      if (pending) {
-        const retryAttachment = { ...pending, expectedEpoch: nodeEpoch(nodeId) }
+      for (const attachment of pending) {
+        const retryAttachment = { ...attachment, expectedEpoch: nodeEpoch(nodeId) }
+        const key = generationKey(
+          retryAttachment.nodeId,
+          retryAttachment.role,
+          retryAttachment.direction,
+        )
         unattachedGenerations.set(key, retryAttachment)
-        return await attachGeneration(retryAttachment)
+        await attachGeneration(retryAttachment)
       }
-      regenerationKeys.add(key)
+      keys.forEach((key) => regenerationKeys.add(key))
       return await generate()
     } catch (cause) {
       try {
@@ -711,7 +722,7 @@ export function createWorkflowController({
       }
       throw cause
     } finally {
-      regenerationKeys.delete(key)
+      keys.forEach((key) => regenerationKeys.delete(key))
     }
   }
 

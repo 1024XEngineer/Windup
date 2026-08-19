@@ -9,7 +9,7 @@ from windup_common.directions import (
     ActionDirection,
     source_directions_for_movement,
 )
-from windup_common.models import ActionSpec, ActionType, Facing
+from windup_common.models import ActionSpec, ActionType, CharacterStance, Facing
 
 
 def test_source_direction_profile_has_one_three_or_five_real_tasks():
@@ -41,7 +41,8 @@ def test_action_prompt_contains_direction_lock():
             action=ActionType.WALK,
             facing=Facing.SIDE,
             direction=ActionDirection.NORTH_EAST,
-        )
+        ),
+        CharacterStance.BIPED,
     )
 
     assert "north-east" in prompt.lower()
