@@ -1105,6 +1105,29 @@ describe('建 3D 资产入口', () => {
     return session
   }
 
+  it('资产就绪后当场解锁三渲二，不要求用户刷新页面', async () => {
+    // 造型初始没有 3D 模型，资产接口报 ready —— 也就是用户刚等完两段付费流程那一刻。
+    const character = characterFixture()
+    character.outfits[0]!.model3dUrl = null
+    const session = createSession(selectingGenerationMethodWorkflow(), {
+      character,
+      render3d: stubRender3DApis({
+        getOutfitAsset: async () =>
+          absentAsset({ state: 'ready', model3dUrl: 'https://assets.windup.test/day.glb' }),
+      }),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    // 三渲二能否选中读的是页面级 Character，轮询到 ready 必须把它一起带上；
+    // 不带的话这个按钮会一直是灰的，用户只能整页刷新。
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: '三渲二' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    )
+  })
+
   it('母版还没确认时根本没有建 3D 资产这个入口', async () => {
     const buildOutfitAsset = vi.fn()
     const session = createSession(selectingTemplateWorkflow(3, 'character-task'), {
