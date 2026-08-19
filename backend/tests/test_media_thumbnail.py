@@ -57,6 +57,11 @@ def test_card_thumbnail_rejects_sources_over_the_pixel_budget(monkeypatch):
         build_card_thumbnail(_png((3, 2)))
 
 
+def test_card_thumbnail_rejects_bytes_pillow_cannot_decode():
+    with pytest.raises(InvalidThumbnailSourceError, match="无法安全生成缩略图"):
+        build_card_thumbnail(b"not an image at all")
+
+
 def test_card_thumbnail_key_is_a_predictable_sibling():
     assert (
         card_thumbnail_key("media/reference-image/character.source.png")
@@ -190,6 +195,36 @@ def test_delete_uses_qiniu_bucket_manager(monkeypatch):
     bucket.delete.assert_called_once_with(
         "example-bucket", "media/reference-image/asset.card.webp"
     )
+
+
+# 612 是七牛的「对象不存在」,清理路径重复调用不该炸;其余状态码必须抛出来,
+# 否则缩略图上传失败后的回滚会静默留下孤儿原图。
+@pytest.mark.parametrize("status_code", [200, 612])
+def test_delete_tolerates_already_missing_objects(monkeypatch, status_code):
+    import qiniu
+    import windup_app.server.media.service as media_service_module
+
+    monkeypatch.setattr(media_service_module.storage_settings, "bucket_name", "example-bucket")
+    monkeypatch.setattr(qiniu, "Auth", Mock(return_value=Mock()))
+    bucket = Mock()
+    bucket.delete.return_value = ({}, Mock(status_code=status_code))
+    monkeypatch.setattr(qiniu, "BucketManager", Mock(return_value=bucket))
+
+    ObjectStorageMediaService().delete("media/reference-image/asset.card.webp")
+
+
+def test_delete_raises_when_qiniu_rejects_the_request(monkeypatch):
+    import qiniu
+    import windup_app.server.media.service as media_service_module
+
+    monkeypatch.setattr(media_service_module.storage_settings, "bucket_name", "example-bucket")
+    monkeypatch.setattr(qiniu, "Auth", Mock(return_value=Mock()))
+    bucket = Mock()
+    bucket.delete.return_value = ({}, Mock(status_code=599, text="network error"))
+    monkeypatch.setattr(qiniu, "BucketManager", Mock(return_value=bucket))
+
+    with pytest.raises(RuntimeError, match="七牛删除失败: status=599"):
+        ObjectStorageMediaService().delete("media/reference-image/asset.card.webp")
 
 
 def test_action_frame_upload_does_not_write_a_thumbnail(monkeypatch):
