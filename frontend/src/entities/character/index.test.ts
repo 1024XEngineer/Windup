@@ -83,6 +83,58 @@ function jsonResponse(data: unknown) {
 }
 
 describe('characterApis', () => {
+  it('maps lightweight Character summaries without a Character asset tree', async () => {
+    let requestUrl = ''
+    const characterApis = await loadCharacterApis(async (input) => {
+      requestUrl = String(input)
+      return new Response(
+        JSON.stringify({
+          code: 200,
+          message: 'success',
+          data: [
+            {
+              id: 51,
+              project_id: 42,
+              name: '轻装信使',
+              status: 1,
+              preview_url: 'https://cdn.windup.test/outfit.png',
+              outfit_name: '常态造型',
+              outfit_count: 1,
+              action_count: 2,
+            },
+          ],
+          total: 1,
+          page: 1,
+          page_size: 24,
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      )
+    })
+
+    await expect(
+      characterApis.listSummariesByProject('42', { page: 1, pageSize: 24, status: 1 }),
+    ).resolves.toEqual({
+      items: [
+        {
+          id: '51',
+          projectId: '42',
+          name: '轻装信使',
+          status: 1,
+          previewUrl: 'https://cdn.windup.test/outfit.png',
+          outfitName: '常态造型',
+          outfitCount: 1,
+          actionCount: 2,
+        },
+      ],
+      total: 1,
+      page: 1,
+      pageSize: 24,
+    })
+    expect(requestUrl).toBe(
+      'https://api.windup.test/characters/summaries?project_id=42&page=1&page_size=24&status=1',
+    )
+  })
+
   it('maps an explicit draft publication status', async () => {
     const characterApis = await loadCharacterApis(async () =>
       jsonResponse({ ...characterDto, status: 0 }),
