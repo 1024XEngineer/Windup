@@ -429,3 +429,129 @@ def test_missing_widths_falls_back_to_old_behaviour():
     h = [60 + 40 * i / (n - 1) for i in range(n)]
     comp, _ = scale_drift(h)                          # 不传 widths
     assert any(c != 1.0 for c in comp)
+# ── 坏帧标记:站位明显偏离全序列的帧要被挑出来 ────────────────────────────────
+
+
+def _figure(cell=256, cx=128, foot=200, w=40, h=90):
+    """在指定位置画一个不透明矩形当角色。"""
+    im = Image.new("RGBA", (cell, cell), (0, 0, 0, 0))
+    px = im.load()
+    for x in range(max(0, cx - w // 2), min(cell, cx + w // 2)):
+        for y in range(max(0, foot - h), min(cell, foot)):
+            px[x, y] = (200, 180, 160, 255)
+    return im
+
+
+def test_clean_sequence_flags_nothing():
+    from windup_ai_engine.postprocess.pack import drifted_frames
+
+    frames = [_figure(foot=200 + (i % 2), cx=128) for i in range(12)]
+    assert drifted_frames(frames) == ()
+
+
+def test_foot_outlier_is_flagged():
+    """某一帧脚底明显高于其余 —— 角色悬空,通常是那帧姿态崩了。"""
+    from windup_ai_engine.postprocess.pack import drifted_frames
+
+    frames = [_figure(foot=200) for _ in range(12)]
+    frames[5] = _figure(foot=160)
+    assert 5 in drifted_frames(frames)
+
+
+def test_horizontal_outlier_is_flagged():
+    from windup_ai_engine.postprocess.pack import drifted_frames
+
+    frames = [_figure(cx=128) for _ in range(12)]
+    frames[3] = _figure(cx=180)
+    assert 3 in drifted_frames(frames)
+
+
+def test_median_not_mean_so_one_bad_frame_cannot_hide():
+    """判据用中位数:坏帧会把均值拖过去,于是所有帧都显得"没偏多少"。"""
+    from windup_ai_engine.postprocess.pack import drifted_frames
+
+    frames = [_figure(foot=200) for _ in range(12)]
+    frames[0] = _figure(foot=60)               # 极端离群
+    assert drifted_frames(frames) == (0,), "只有那一帧该被标记"
+
+
+def test_too_few_observations_flags_nothing():
+    """观测不足时中位数不成立,不硬判。"""
+    from windup_ai_engine.postprocess.pack import drifted_frames
+
+    assert drifted_frames([_figure(), _figure(foot=100)]) == ()
+
+
+def test_steady_walk_translation_is_not_flagged():
+    """角色连续横移不是坏帧:坏帧孤立地偏离邻居,位移是连续同向的。"""
+    from windup_ai_engine.postprocess.pack import drifted_frames
+
+    frames = [_figure(cx=100 + i * 4, foot=200) for i in range(16)]
+    assert drifted_frames(frames) == ()
+
+
+def test_outlier_on_top_of_translation_still_flagged():
+    """位移之上叠一帧真离群,仍要报出来。"""
+    from windup_ai_engine.postprocess.pack import drifted_frames
+
+    frames = [_figure(cx=100 + i * 4, foot=200) for i in range(16)]
+    frames[7] = _figure(cx=100 + 7 * 4, foot=140)
+    assert 7 in drifted_frames(frames)
+
+
+def _with_extension(cell=256, cx=128, foot=200, reach=90):
+    """本体不动,只从右手伸出一条细长延展物(斧柄 / 剑 / 披风)。"""
+    im = _figure(cell=cell, cx=cx, foot=foot)
+    px = im.load()
+    for x in range(cx, min(cell, cx + reach)):
+        for y in range(foot - 60, foot - 52):
+            px[x, y] = (120, 120, 120, 255)
+    return im
+
+
+def test_extension_swing_is_not_mistaken_for_a_shifted_pose():
+    """延展物甩出去不是站位变了。
+
+    横向中心按整体包围盒算时,一柄伸出的斧子能把中心带走一大截:实测一段斧战士序列
+    包围盒中心一帧跳 38px(画布宽 256),20 帧里 11 帧被判成漂移,而本体中心几乎不动。
+    """
+    from windup_ai_engine.postprocess.pack import drifted_frames
+
+    frames = [_figure(cx=128, foot=200) for _ in range(6)]
+    frames += [_with_extension(cx=128, foot=200) for _ in range(6)]
+    assert drifted_frames(frames) == ()
+
+
+def test_linear_translation_at_the_tolerance_edge_is_not_flagged():
+    """斜率的分母取中位数各自的帧位,不取序列总长。
+
+    256px 画布、16 帧、每帧横移 13px:按总长算斜率会得到 11.27/帧,两端各剩 13px 残差、
+    双双越过 12.03 的容差,于是匀速位移被误报成首末两帧坏。
+    """
+    from windup_ai_engine.postprocess.pack import drifted_frames
+
+    frames = [_figure(cx=30 + i * 13, foot=200) for i in range(16)]
+    assert drifted_frames(frames) == ()
+
+
+def test_a_frame_with_no_subject_at_all_is_flagged():
+    """全透明帧是抠图抠穿或生成漏了角色,正是本函数要找的那种坏帧。
+
+    它不进中位数(没有可量的锚点),所以必须单独并进结果 —— 静默跳过的话,一组正常帧里
+    插一张透明 PNG 会返回空元组,而 ``_lastmile`` 只拒空字节、合法的全透明 PNG 照样通过。
+    """
+    from windup_ai_engine.postprocess.pack import drifted_frames
+    from PIL import Image
+
+    frames = [_figure(foot=200) for _ in range(12)]
+    frames[4] = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+    assert 4 in drifted_frames(frames)
+
+
+def test_no_subject_is_reported_even_when_observations_are_too_few():
+    """观测不足时中位数不成立,但"这帧没有主体"不需要参照就能判。"""
+    from windup_ai_engine.postprocess.pack import drifted_frames
+    from PIL import Image
+
+    frames = [_figure(), Image.new("RGBA", (256, 256), (0, 0, 0, 0))]
+    assert drifted_frames(frames) == (1,)
