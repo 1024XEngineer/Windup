@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 
 import { AppRoutes } from '@/app'
-import { characterApis } from '@/entities'
 import { AuthenticatedAuthSession } from '@/test/auth-session'
 import { createProjectAssetsBackend } from '@/test/project-assets-backend'
 
@@ -60,27 +59,15 @@ describe('ProjectsPage', () => {
     expect(screen.queryByText('项目名称')).toBeNull()
     expect(screen.queryByText('视角 / 朝向')).toBeNull()
     expect(screen.queryByRole('link', { name: /查看角色/ })).toBeNull()
-    expect(
-      backend.requests.every((request) =>
-        ['/projects', '/characters'].includes(new URL(request.url).pathname),
-      ),
-    ).toBe(true)
+    expect(backend.requests.every((request) => new URL(request.url).pathname === '/projects')).toBe(
+      true,
+    )
     expect(
       backend.requests.filter((request) => new URL(request.url).pathname === '/projects'),
     ).toHaveLength(1)
-    const previewRequests = backend.requests.filter(
-      (request) => new URL(request.url).pathname === '/characters',
-    )
-    expect(previewRequests).toHaveLength(2)
     expect(
-      previewRequests.map((request) => new URL(request.url).searchParams.get('project_id')),
-    ).toEqual(['42', '99'])
-    expect(
-      previewRequests.every((request) => {
-        const query = new URL(request.url).searchParams
-        return query.get('page') === '1' && query.get('page_size') === '6'
-      }),
-    ).toBe(true)
+      backend.requests.filter((request) => new URL(request.url).pathname === '/characters'),
+    ).toHaveLength(0)
   })
 
   it('sends creation to the project create page and deletes through the Project API', async () => {
@@ -133,36 +120,10 @@ describe('ProjectsPage', () => {
     expect(screen.getByRole('link', { name: '打开项目 点灯人 · MVP' })).toBeTruthy()
   })
 
-  it('falls back through character preview sources without blocking the gallery', async () => {
+  it('uses project previews and keeps missing previews in the empty state', async () => {
     const backend = createProjectAssetsBackend({ projectCount: 3 })
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
     vi.stubGlobal('fetch', backend.fetch)
-    const character = await characterApis.get('51')
-    vi.spyOn(characterApis, 'listByProject').mockImplementation(async (projectId) => {
-      if (Number(projectId) === 1002) throw new Error('preview unavailable')
-      const emptyCharacter = {
-        ...character,
-        referenceImageUrl: null,
-        outfits: character.outfits.map((outfit) => ({
-          ...outfit,
-          previewUrl: null,
-          actions: outfit.actions.map((action) => ({ ...action, frames: [] })),
-        })),
-      }
-      return {
-        items: [
-          emptyCharacter,
-          {
-            ...character,
-            referenceImageUrl: Number(projectId) === 42 ? character.referenceImageUrl : null,
-            outfits: character.outfits.map((outfit) => ({ ...outfit, previewUrl: null })),
-          },
-        ],
-        total: 1,
-        page: 1,
-        pageSize: 6,
-      }
-    })
     render(
       <AuthenticatedAuthSession>
         <MemoryRouter initialEntries={['/projects']}>
@@ -178,102 +139,18 @@ describe('ProjectsPage', () => {
           .getByRole('link', { name: '打开项目 点灯人 · MVP' })
           .querySelector('img')
           ?.getAttribute('src'),
-      ).toBe('https://cdn.windup.test/messenger-reference.png')
+      ).toBe('https://cdn.windup.test/messenger-outfit.png')
       expect(
         screen
           .getByRole('link', { name: '打开项目 空白海岸' })
           .querySelector('img')
           ?.getAttribute('src'),
-      ).toBe('https://cdn.windup.test/idle-01.png')
-      expect(screen.getByText('等待第一份角色资产')).toBeTruthy()
+      ).toBeUndefined()
+      expect(screen.getAllByText('等待第一份角色资产')).toHaveLength(1)
     })
-  })
-
-  it('limits preview request concurrency', async () => {
-    const backend = createProjectAssetsBackend({ projectCount: 5 })
-    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
-    vi.stubGlobal('fetch', backend.fetch)
-    let activeRequests = 0
-    let maxActiveRequests = 0
-    let releaseRequests: (() => void) | undefined
-    const requestGate = new Promise<void>((resolve) => {
-      releaseRequests = resolve
-    })
-    const listSpy = vi.spyOn(characterApis, 'listByProject').mockImplementation(async () => {
-      activeRequests += 1
-      maxActiveRequests = Math.max(maxActiveRequests, activeRequests)
-      await requestGate
-      activeRequests -= 1
-      return { items: [], total: 0, page: 1, pageSize: 6 }
-    })
-    render(
-      <AuthenticatedAuthSession>
-        <MemoryRouter initialEntries={['/projects']}>
-          <AppRoutes />
-        </MemoryRouter>
-      </AuthenticatedAuthSession>,
-    )
-
-    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(2))
-    expect(maxActiveRequests).toBe(2)
-    releaseRequests?.()
-    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(5))
-    expect(maxActiveRequests).toBe(2)
-    expect(listSpy.mock.calls.every(([, query]) => query?.page === 1 && query.pageSize === 6)).toBe(
-      true,
-    )
-  })
-
-  it('shares concurrency across pages, deduplicates active requests, and reuses cached previews', async () => {
-    const backend = createProjectAssetsBackend({ projectCount: 13 })
-    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
-    vi.stubGlobal('fetch', backend.fetch)
-    let activeRequests = 0
-    let maxActiveRequests = 0
-    let releaseRequests: (() => void) | undefined
-    const requestGate = new Promise<void>((resolve) => {
-      releaseRequests = resolve
-    })
-    const listSpy = vi.spyOn(characterApis, 'listByProject').mockImplementation(async () => {
-      activeRequests += 1
-      maxActiveRequests = Math.max(maxActiveRequests, activeRequests)
-      await requestGate
-      activeRequests -= 1
-      return { items: [], total: 0, page: 1, pageSize: 6 }
-    })
-    render(
-      <AuthenticatedAuthSession>
-        <MemoryRouter initialEntries={['/projects']}>
-          <AppRoutes />
-        </MemoryRouter>
-      </AuthenticatedAuthSession>,
-    )
-
-    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(2))
-    fireEvent.click(screen.getByRole('button', { name: '下一页' }))
-    await waitFor(() => {
-      expect(screen.getAllByRole('link', { name: /打开项目/ })).toHaveLength(1)
-    })
-    expect(listSpy).toHaveBeenCalledTimes(2)
-    fireEvent.click(screen.getByRole('button', { name: '上一页' }))
-    await waitFor(() => {
-      expect(screen.getAllByRole('link', { name: /打开项目/ })).toHaveLength(12)
-    })
-    expect(listSpy).toHaveBeenCalledTimes(2)
-    expect(new Set(listSpy.mock.calls.map(([projectId]) => projectId)).size).toBe(2)
-
-    releaseRequests?.()
-    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(12))
-    expect(maxActiveRequests).toBe(2)
-    fireEvent.click(screen.getByRole('button', { name: '下一页' }))
-    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(13))
-    fireEvent.click(screen.getByRole('button', { name: '上一页' }))
-    await waitFor(() => {
-      expect(screen.getAllByRole('link', { name: /打开项目/ })).toHaveLength(12)
-    })
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(listSpy).toHaveBeenCalledTimes(13)
-    expect(maxActiveRequests).toBe(2)
+    expect(
+      backend.requests.filter((request) => new URL(request.url).pathname === '/characters'),
+    ).toHaveLength(0)
   })
 
   it('navigates every backend Project page instead of truncating after the first page', async () => {
