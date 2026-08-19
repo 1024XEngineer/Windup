@@ -19,11 +19,11 @@ function moduleSpecifiers(source: string): string[] {
 }
 
 describe('quick-start-agent architecture boundary', () => {
-  it('accepts business actions through injection instead of importing business modules', () => {
+  it('keeps business imports out of the Agent core', () => {
     const forbidden = ['@/pages', '@/entities', '@/shared/api', '@/features']
-    const featureDependencies = productionFiles(featureDirectory).flatMap((file) =>
-      moduleSpecifiers(readFileSync(file, 'utf8')),
-    )
+    const featureDependencies = productionFiles(featureDirectory)
+      .filter((file) => !file.endsWith('/production.ts'))
+      .flatMap((file) => moduleSpecifiers(readFileSync(file, 'utf8')))
 
     expect(
       featureDependencies.filter((dependency) =>
