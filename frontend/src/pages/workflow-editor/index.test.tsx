@@ -265,6 +265,66 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(image.className).toContain('opacity-100')
   })
 
+  it('图片加载失败时在原位显示错误状态', async () => {
+    defaultSessionLoader.mockResolvedValue(createSession(completedTemplateWorkflow('42')))
+
+    renderEditor('/workflow-editor/42')
+
+    const image = await screen.findByRole('img', { name: '已确认身份母版' })
+    fireEvent.error(image)
+
+    expect(screen.getByText('图片加载失败')).toBeTruthy()
+    expect(screen.queryByRole('status', { name: '正在加载已确认身份母版' })).toBeNull()
+    expect(image.className).toContain('opacity-0')
+  })
+
+  it('生成任务运行时显示动态状态', async () => {
+    defaultSessionLoader.mockResolvedValue(
+      createSession(generatingTemplateWorkflow(), {
+        generationApis: generationApisFixture({
+          get: vi.fn().mockResolvedValue({
+            id: 'in-flight-task',
+            projectId: '1',
+            type: 'character_template',
+            status: 'running',
+            result: null,
+            error: null,
+          } satisfies Generation),
+        }),
+      }),
+    )
+
+    renderEditor('/workflow-editor/42')
+
+    expect((await screen.findByRole('status')).textContent).toContain('生成中…')
+  })
+
+  it('动作首帧等待候选结果时显示处理中状态', async () => {
+    const workflow = completedTemplateWorkflow('42')
+    workflow.nodes.push({
+      id: 'action-walk',
+      type: 'action-first-frame',
+      status: 'active',
+      phase: 'selecting',
+      dependsOnNodeIds: ['character-template'],
+      generations: [],
+      error: null,
+      input: {
+        outfitId: 'day',
+        name: '行走',
+        type: 'walk',
+        prompt: null,
+        fps: 12,
+      },
+      selectedFirstFrameUrl: null,
+    })
+    defaultSessionLoader.mockResolvedValue(createSession(workflow))
+
+    renderEditor('/workflow-editor/42')
+
+    expect((await screen.findByText('处理中…')).getAttribute('role')).toBe('status')
+  })
+
   it('导出是次要动作，当前节点推进仍是主要动作', async () => {
     const character = characterFixture()
     character.outfits[0] = {
