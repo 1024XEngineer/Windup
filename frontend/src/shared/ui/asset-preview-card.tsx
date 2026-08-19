@@ -1,3 +1,4 @@
+import { useEffect, useState, type ImgHTMLAttributes } from 'react'
 import { Link } from 'react-router'
 
 export interface AssetPreviewCardProps {
@@ -11,6 +12,7 @@ export interface AssetPreviewCardProps {
   eager?: boolean
   priority?: boolean
   footer?: string
+  thumbnail?: boolean
 }
 
 export interface AssetPreviewSurfaceProps {
@@ -19,6 +21,49 @@ export interface AssetPreviewSurfaceProps {
   eager?: boolean
   priority?: boolean
   className?: string
+  thumbnail?: boolean
+}
+
+type AssetThumbnailImageProps = Omit<ImgHTMLAttributes<HTMLImageElement>, 'src'> & {
+  src: string
+}
+
+/** 新资产先读固定兄弟 key；历史对象缺图时退回原 URL，详情数据无需迁移。 */
+export function AssetThumbnailImage({ src, onError, ...props }: AssetThumbnailImageProps) {
+  const thumbnailUrl = cardThumbnailUrl(src)
+  const [thumbnailFailed, setThumbnailFailed] = useState(false)
+
+  useEffect(() => setThumbnailFailed(false), [src])
+
+  return (
+    <img
+      {...props}
+      src={thumbnailUrl && !thumbnailFailed ? thumbnailUrl : src}
+      onError={(event) => {
+        if (thumbnailUrl && !thumbnailFailed) setThumbnailFailed(true)
+        onError?.(event)
+      }}
+    />
+  )
+}
+
+function cardThumbnailUrl(sourceUrl: string): string | null {
+  try {
+    const url = new URL(sourceUrl)
+    if (url.search || url.hash) return null
+    if (!/\/media\/(?:reference-image|outfit-preview)\//.test(url.pathname)) return null
+    const slash = url.pathname.lastIndexOf('/')
+    const dot = url.pathname.lastIndexOf('.')
+    const stem =
+      url.pathname.endsWith('.source') || dot <= slash
+        ? url.pathname
+        : url.pathname.slice(0, dot)
+    if (!stem.endsWith('.source')) return null
+    url.pathname = `${stem.slice(0, -'.source'.length)}.card.webp`
+    return url.toString()
+  } catch {
+    return null
+  }
 }
 
 /** 所有造型入口共用同一份真实图片与缺图状态。 */
@@ -28,20 +73,32 @@ export function AssetPreviewSurface({
   priority = false,
   eager = priority,
   className = '',
+  thumbnail = false,
 }: AssetPreviewSurfaceProps) {
   return (
     <div
       className={`relative overflow-hidden rounded-[1.25rem] border border-app-line bg-app-surface-muted ${className}`}
     >
       {previewUrl ? (
-        <img
-          src={previewUrl}
-          alt={previewAlt}
-          loading={eager ? 'eager' : 'lazy'}
-          decoding="async"
-          fetchPriority={priority ? 'high' : 'auto'}
-          className="h-full w-full object-contain p-6 [image-rendering:pixelated]"
-        />
+        thumbnail ? (
+          <AssetThumbnailImage
+            src={previewUrl}
+            alt={previewAlt}
+            loading={eager ? 'eager' : 'lazy'}
+            decoding="async"
+            fetchPriority={priority ? 'high' : 'auto'}
+            className="h-full w-full object-contain p-6 [image-rendering:pixelated]"
+          />
+        ) : (
+          <img
+            src={previewUrl}
+            alt={previewAlt}
+            loading={eager ? 'eager' : 'lazy'}
+            decoding="async"
+            fetchPriority={priority ? 'high' : 'auto'}
+            className="h-full w-full object-contain p-6 [image-rendering:pixelated]"
+          />
+        )
       ) : (
         <div className="relative h-full overflow-hidden bg-app-surface-muted">
           <div
@@ -78,6 +135,7 @@ export function AssetPreviewCard({
   priority = false,
   eager = priority,
   footer,
+  thumbnail = false,
 }: AssetPreviewCardProps) {
   return (
     <article className="group/tile relative min-w-0">
@@ -91,6 +149,7 @@ export function AssetPreviewCard({
           previewAlt={previewAlt}
           eager={eager}
           priority={priority}
+          thumbnail={thumbnail}
           className="aspect-[16/10] transition duration-300 group-hover/tile:-translate-y-0.5 group-hover/tile:border-app-line-strong [&_img]:transition-transform [&_img]:duration-500 group-hover/tile:[&_img]:scale-[1.025]"
         />
         <div className="mt-3 min-w-0 px-0.5">
