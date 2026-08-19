@@ -5,6 +5,8 @@
 2. API 层：余额端点、流水端点、无账户时 404、分页参数
 """
 
+from datetime import datetime, timezone
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -366,6 +368,57 @@ class TestListTransactions:
         assert total == 0
         assert txns == []
 
+    def test_filters_direction_reason_and_created_range_before_paginating(
+        self, db_session, quota_service, user_with_account
+    ):
+        uid = user_with_account.id
+        db_session.add_all(
+            [
+                CreditTransaction(
+                    user_id=uid,
+                    delta=30,
+                    reason=CreditReason.ADMIN_ADJUST,
+                    billing_mode=0,
+                    ref_id="filter:income-in-range",
+                    balance_after=130,
+                    create_at=datetime(2026, 8, 10, 3, tzinfo=timezone.utc),
+                ),
+                CreditTransaction(
+                    user_id=uid,
+                    delta=-20,
+                    reason=CreditReason.GENERATE_IMAGE,
+                    billing_mode=0,
+                    ref_id="filter:expense-in-range",
+                    balance_after=110,
+                    create_at=datetime(2026, 8, 10, 8, tzinfo=timezone.utc),
+                ),
+                CreditTransaction(
+                    user_id=uid,
+                    delta=10,
+                    reason=CreditReason.ADMIN_ADJUST,
+                    billing_mode=0,
+                    ref_id="filter:income-outside-range",
+                    balance_after=120,
+                    create_at=datetime(2026, 8, 11, tzinfo=timezone.utc),
+                ),
+            ]
+        )
+        db_session.flush()
+
+        txns, total = quota_service.list_transactions(
+            db_session,
+            uid,
+            page=1,
+            page_size=1,
+            direction="income",
+            reason=CreditReason.ADMIN_ADJUST,
+            created_from=datetime(2026, 8, 10, tzinfo=timezone.utc),
+            created_before=datetime(2026, 8, 11, tzinfo=timezone.utc),
+        )
+
+        assert total == 1
+        assert [txn.ref_id for txn in txns] == ["filter:income-in-range"]
+
 
 # -- 预付费完整流程 ----------------------------------------------------------
 
@@ -489,6 +542,62 @@ class TestQuotaAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] == 1
+
+    def test_list_transactions_forwards_filters(
+        self, auth_quota_client, db_session, user_with_account
+    ):
+        uid = user_with_account.id
+        db_session.add_all(
+            [
+                CreditTransaction(
+                    user_id=uid,
+                    delta=15,
+                    reason=CreditReason.ADMIN_ADJUST,
+                    billing_mode=0,
+                    ref_id="api-filter:income",
+                    balance_after=115,
+                    create_at=datetime(2026, 8, 10, 12, tzinfo=timezone.utc),
+                ),
+                CreditTransaction(
+                    user_id=uid,
+                    delta=-5,
+                    reason=CreditReason.GENERATE_IMAGE,
+                    billing_mode=0,
+                    ref_id="api-filter:expense",
+                    balance_after=110,
+                    create_at=datetime(2026, 8, 10, 13, tzinfo=timezone.utc),
+                ),
+            ]
+        )
+        db_session.commit()
+
+        resp = auth_quota_client.get(
+            "/quota/transactions",
+            params={
+                "direction": "expense",
+                "reason": int(CreditReason.GENERATE_IMAGE),
+                "created_from": "2026-08-10T00:00:00Z",
+                "created_before": "2026-08-11T00:00:00Z",
+            },
+        )
+
+        data = resp.json()
+        assert data["code"] == 200
+        assert data["total"] == 1
+        assert data["data"][0]["ref_id"] == "api-filter:expense"
+
+    def test_list_transactions_rejects_an_inverted_created_range(
+        self, auth_quota_client
+    ):
+        resp = auth_quota_client.get(
+            "/quota/transactions",
+            params={
+                "created_from": "2026-08-11T00:00:00Z",
+                "created_before": "2026-08-10T00:00:00Z",
+            },
+        )
+
+        assert resp.json()["code"] == 400
 
     def test_unauthenticated_access(self, client):
         """未登录访问应返回 401。"""

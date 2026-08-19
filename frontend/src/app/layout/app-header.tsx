@@ -153,7 +153,6 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
     >
       <div className="relative mx-auto grid min-h-14 w-full max-w-[90rem] grid-cols-[auto_1fr_auto] items-center gap-4 px-4 sm:px-6 lg:px-8">
         <div className="flex min-w-0 items-center gap-1.5">
-          <PageBackButton />
           <Link
             to="/workspace"
             aria-label="返回 Windup 工作台"
@@ -168,6 +167,7 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
               <WaveText playId={wave.entry === 'brand' ? wave.playId : 0} text="Windup" />
             </strong>
           </Link>
+          <PageBackButton />
         </div>
 
         <nav

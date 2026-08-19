@@ -24,7 +24,18 @@ export interface CreditTransaction {
   createdAt: string
 }
 
-export type QuotaTransactionPageQuery = PageQuery
+export type CreditTransactionDirection = 'income' | 'expense'
+
+export interface QuotaTransactionFilters {
+  direction?: CreditTransactionDirection
+  reason?: number
+  /** ISO 时刻，包含该边界。 */
+  createdFrom?: string
+  /** ISO 时刻，不包含该边界。 */
+  createdBefore?: string
+}
+
+export type QuotaTransactionPageQuery = PageQuery & QuotaTransactionFilters
 
 /** 当前登录用户未过期的邀请码；usedCount 只统计当前码的成功注册次数。 */
 export interface InviteCode {

@@ -94,13 +94,16 @@ export function useWorkflowEditorSession(
   )
 
   const runCommand = useCallback(
-    (branchKey: string, command: () => Promise<void>) => {
+    (branchKey: string, command: () => Promise<void>, onSuccess?: () => void) => {
       if (workflowConflictRef.current || busyBranchesRef.current.has(branchKey)) return
       const sessionSignal = sessionAbortRef.current?.signal
       busyBranchesRef.current = new Set(busyBranchesRef.current).add(branchKey)
       dispatch({ type: 'command-started', branchKey })
       dispatch({ type: 'workflow-error-cleared' })
       void command()
+        .then(() => {
+          if (!sessionSignal?.aborted) onSuccess?.()
+        })
         .catch((cause: unknown) => {
           if (!sessionSignal?.aborted) reportWorkflowError(cause, '工作流命令执行失败')
         })

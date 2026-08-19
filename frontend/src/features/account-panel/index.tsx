@@ -19,6 +19,7 @@ import {
   EyeClosed,
   Keyhole,
   SealCheck,
+  Ticket,
   UserCircle,
   X,
   type Icon,
@@ -57,6 +58,10 @@ const registrationStepCopy = [
     description: '从一个角色开始，慢慢搭建属于你的世界。',
   },
   {
+    title: '填写邀请码',
+    description: '有邀请码就填在这里，没有也可以直接继续。',
+  },
+  {
     title: '为账号加一道保护',
     description: '设置 8–128 位密码，方便安全地回到你的创作。',
   },
@@ -87,7 +92,7 @@ const loginMotionCopy = [
   ['从上一次确认出发，', '让灵感继续向前。'],
 ] as const
 
-const REGISTER_STEP_COUNT = 4
+const REGISTER_STEP_COUNT = 5
 const AUTH_ICON_PROPS = { weight: 'light' as const }
 const AUTH_FIELD_CLASS = 'auth-screen-field w-full outline-none disabled:cursor-not-allowed'
 
@@ -206,7 +211,7 @@ export function AccountPanel() {
 /** 只有面板真正打开时才读取会话，关闭状态不把认证 Context 强加给应用外壳。 */
 function AccountPanelDialog({
   entry,
-  inviteCode,
+  inviteCode: initialInviteCode,
 }: {
   entry: AccountEntry
   inviteCode: string | null
@@ -220,6 +225,7 @@ function AccountPanelDialog({
   const [showPassword, setShowPassword] = useState(false)
   const [code, setCode] = useState('')
   const [nickname, setNickname] = useState('')
+  const [inviteCode, setInviteCode] = useState(initialInviteCode ?? '')
   const [registerStep, setRegisterStep] = useState(0)
   const [motionDirection, setMotionDirection] = useState<MotionDirection>('forward')
   const [copyIndex, setCopyIndex] = useState(0)
@@ -245,6 +251,7 @@ function AccountPanelDialog({
   const nicknameId = useId()
   const passwordId = useId()
   const codeId = useId()
+  const inviteCodeId = useId()
   const isRegister = entry === 'register'
   const shouldShowMotionCopy = !isRegister || registerStep === 0
   const motionCopy = isRegister ? registrationWelcomeMotionCopy : loginMotionCopy
@@ -252,6 +259,7 @@ function AccountPanelDialog({
   const passwordChanged =
     session.state.status === 'guest' && session.state.reason === 'password-changed'
   const normalizedEmail = email.trim()
+  const normalizedInviteCode = inviteCode.trim().toUpperCase()
   const cooldownSeconds = Math.max(
     0,
     Math.ceil(((cooldowns.get(email.trim().toLowerCase()) ?? 0) - now) / 1_000),
@@ -410,9 +418,9 @@ function AccountPanelDialog({
     let validationError: string | null = null
     if (registerStep === 0 && !EMAIL_PATTERN.test(normalizedEmail)) {
       validationError = '请输入有效邮箱地址'
-    } else if (registerStep === 1 && (password.length < 8 || password.length > 128)) {
+    } else if (registerStep === 2 && (password.length < 8 || password.length > 128)) {
       validationError = '密码需为 8–128 位'
-    } else if (registerStep === 2 && nickname.length > 50) {
+    } else if (registerStep === 3 && nickname.length > 50) {
       validationError = '昵称不能超过 50 个字符'
     }
 
@@ -423,7 +431,7 @@ function AccountPanelDialog({
 
     setError(null)
     setSuccess(null)
-    if (registerStep === 2) {
+    if (registerStep === 3) {
       if (cooldownSeconds === 0 && !(await sendCode())) return
     }
     setMotionDirection('forward')
@@ -462,7 +470,7 @@ function AccountPanelDialog({
           email: normalizedEmail,
           password,
           code,
-          ...(inviteCode ? { inviteCode } : {}),
+          ...(normalizedInviteCode ? { inviteCode: normalizedInviteCode } : {}),
           ...(nickname.trim() ? { nickname: nickname.trim() } : {}),
         })
         successMessage = '账号已创建，正在继续。'
@@ -514,7 +522,9 @@ function AccountPanelDialog({
 
   const tabClass = 'auth-screen-tab min-h-11 flex-1 px-2 text-sm font-semibold'
   const submitLabel = isRegister ? '创建账号' : loginModeCopy[mode].submit
-  const RegisterFieldIcon: Icon = [EnvelopeSimple, Keyhole, UserCircle, SealCheck][registerStep]
+  const RegisterFieldIcon: Icon = [EnvelopeSimple, Ticket, Keyhole, UserCircle, SealCheck][
+    registerStep
+  ]
   const registerCopy = registrationStepCopy[registerStep]
   const titleCopy = isRegister ? registerCopy.title : loginWelcomeCopy.title
   const descriptionCopy = isRegister ? registerCopy.description : loginWelcomeCopy.description
@@ -688,7 +698,27 @@ function AccountPanelDialog({
                 />
               )}
 
-              {((isRegister && registerStep === 1) || (!isRegister && mode === 'password')) && (
+              {isRegister && registerStep === 1 && (
+                <div className="auth-invite-field">
+                  <AuthField
+                    id={inviteCodeId}
+                    label="邀请码（选填）"
+                    icon={RegisterFieldIcon}
+                    value={inviteCode}
+                    onValueChange={setInviteCode}
+                    disabled={isSubmitting || isSendingCode}
+                    placeholder="邀请码（选填）"
+                    autoComplete="off"
+                    autoCapitalize="characters"
+                    spellCheck={false}
+                  />
+                  {initialInviteCode && (
+                    <p className="auth-invite-helper">已从邀请链接带入，可修改或清空。</p>
+                  )}
+                </div>
+              )}
+
+              {((isRegister && registerStep === 2) || (!isRegister && mode === 'password')) && (
                 <AuthField
                   id={passwordId}
                   label="密码"
@@ -709,7 +739,7 @@ function AccountPanelDialog({
                 />
               )}
 
-              {isRegister && registerStep === 2 && (
+              {isRegister && registerStep === 3 && (
                 <AuthField
                   id={nicknameId}
                   label="昵称（选填）"
@@ -723,7 +753,7 @@ function AccountPanelDialog({
                 />
               )}
 
-              {((isRegister && registerStep === 3) || (!isRegister && mode === 'code')) && (
+              {((isRegister && registerStep === 4) || (!isRegister && mode === 'code')) && (
                 <AuthField
                   id={codeId}
                   label="验证码"
@@ -793,8 +823,8 @@ function AccountPanelDialog({
             </button>
           </p>
           {isRegister && (
-            <p className="mt-2 text-center text-xs text-app-faint">
-              {inviteCode ? '邀请链接已带入，注册后共得 500 积分。' : '注册即赠 300 积分。'}
+            <p className="auth-screen-helper mt-2 text-center text-sm">
+              {normalizedInviteCode ? '填写邀请码，注册后共得 500 积分。' : '注册即赠 300 积分。'}
             </p>
           )}
         </div>

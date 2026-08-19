@@ -344,6 +344,27 @@ describe('createQuickStartService', () => {
     )
   })
 
+  it('continues to the next readable project name after five conflicts', async () => {
+    const create = vi.fn()
+    for (let sequence = 1; sequence <= 5; sequence += 1) {
+      create.mockRejectedValueOnce(new ProjectNameConflictError())
+    }
+    create.mockResolvedValueOnce({
+      id: 'project-6',
+      name: '像素骑士 6',
+      spriteSize: { width: 256, height: 256 },
+    })
+    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
+
+    await expect(prepare('像素骑士')).resolves.toEqual({
+      id: 'project-6',
+      spriteSize: { width: 256, height: 256 },
+    })
+
+    expect(create).toHaveBeenCalledTimes(6)
+    expect(create).toHaveBeenNthCalledWith(6, expect.objectContaining({ name: '像素骑士 6' }))
+  })
+
   it('uses a readable fallback for an empty project prompt', async () => {
     const create = vi.fn(async (input) => ({
       id: 'project-fallback',
@@ -399,13 +420,13 @@ describe('createQuickStartService', () => {
     expect(Array.from(create.mock.calls[1]?.[0].name ?? '')).toHaveLength(20)
   })
 
-  it('stops after five conflicting project names to avoid excessive write requests', async () => {
+  it('stops after a bounded number of conflicting project names', async () => {
     const conflict = new ProjectNameConflictError()
     const create = vi.fn().mockRejectedValue(conflict)
     const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
 
     await expect(prepare('像素骑士')).rejects.toBe(conflict)
-    expect(create).toHaveBeenCalledTimes(5)
+    expect(create).toHaveBeenCalledTimes(100)
   })
 
   it('creates one persisted node graph and starts the character image task', async () => {
@@ -1355,6 +1376,51 @@ describe('createQuickStartService', () => {
     })
     expect(run.nodes.find((node) => node.type === 'action-first-frame')).toMatchObject({
       input: { name: '待机', type: 'idle', prompt: null },
+    })
+  })
+
+  it('keeps a custom action display name bounded while preserving its full prompt', async () => {
+    const actionDescription = '挥手向远处的朋友打招呼并转身轻轻鞠躬并保持姿态'
+    const character = characterFixture({
+      workflowRunId: 'old-run',
+      referenceImageUrl: 'existing.png',
+      outfits: [
+        {
+          id: 'outfit-existing',
+          characterId: 'character-1',
+          name: '默认造型',
+          description: null,
+          previewUrl: 'existing.png',
+          actions: [],
+        },
+      ],
+    })
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis(),
+      generationApis: pendingGenerationApis(),
+      characterApis: {
+        get: vi.fn(async () => character),
+        listByProject: vi.fn(async () => ({ items: [character], total: 1, page: 1, pageSize: 20 })),
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      } as unknown as CharacterApis,
+      projectApis: projectReader(),
+      prepareProject: vi.fn(),
+    })
+
+    const session = await service.startAction(
+      { characterId: character.id, outfitId: 'outfit-existing' },
+      actionDescription,
+    )
+    expect(
+      session.getWorkflow().nodes.find((node) => node.type === 'action-first-frame'),
+    ).toMatchObject({
+      input: {
+        name: '挥手向远处的朋友打招呼并转身轻轻鞠躬并…',
+        prompt: actionDescription,
+        type: 'custom',
+      },
     })
   })
 

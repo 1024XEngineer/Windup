@@ -19,6 +19,7 @@ from windup_common.models import (
     ActionSpec,
     ActionType,
     CharacterCard,
+    CharacterStance,
     Facing,
     GenRoute,
     Stylize,
@@ -28,7 +29,7 @@ from windup_framework.providers import ImageProvider, MatteProvider, VideoProvid
 from windup_ai_engine._imgio import from_png as _img
 from windup_ai_engine._imgio import to_png as _png
 from windup_ai_engine.master_prep import prepare_master
-from windup_ai_engine.ports import ProgressPort
+from windup_ai_engine.ports import ProgressPort, PromptAdapterPort, PromptRejected
 from windup_ai_engine.postprocess import master_pixel_spec, pixelate_frames
 from windup_ai_engine.slicing import extract_all_frames_bytes, pick_cycle, pick_oneshot
 from windup_ai_engine.prompt import (
@@ -38,6 +39,9 @@ from windup_ai_engine.prompt import (
     build_jump_prompt,
     build_walk_prompt,
 )
+from windup_ai_engine.prompt._framing import with_framing
+from windup_ai_engine.prompt.adapter import RuleBasedPromptAdapter
+from windup_ai_engine.prompt.custom import CYCLIC_TAIL, ONESHOT_TAIL
 from windup_ai_engine.strategy.base import DerivationStrategy, is_cyclic
 
 if TYPE_CHECKING:
@@ -54,21 +58,23 @@ class VideoFrameStrategy(DerivationStrategy):
 
     route = GenRoute.VIDEO_I2V
 
-    def __init__(self, video: VideoProvider, matte: MatteProvider) -> None:
+    def __init__(
+        self,
+        video: VideoProvider,
+        matte: MatteProvider,
+        adapter: PromptAdapterPort | None = None,
+    ) -> None:
         self._video = video
         self._matte = matte
+        self._adapter = RuleBasedPromptAdapter() if adapter is None else adapter
 
-    def _build_prompt(self, action: ActionSpec) -> str:
+    def _build_prompt(self, action: ActionSpec, stance: CharacterStance) -> str:
         """按动作类型选提示词;朝向随 ActionSpec.facing。"""
-        # custom 单独一支:它的动作内容来自用户,只能由 build_custom_prompt 把那句话
-        # 嵌进机制骨架(朝向锁 / 正向措辞 / 装备存在无关 / 一次性的单次+终态保持)。
+        # custom 单独一支:它的动作内容来自用户,只能由骨架把那句话嵌进机制约束
+        # (朝向锁 / 正向措辞 / 装备存在无关 / 一次性的单次+终态保持)。
         # 不能塞进下面那张表 —— 那张表里的 builder 只接 facing。
         if action.action is ActionType.CUSTOM:
-            return build_custom_prompt(
-                action.custom_action or "",
-                facing=action.facing,
-                cyclic=bool(action.cyclic),
-            )
+            return self._custom_prompt(action, stance)
         # attack 同样进不了那张表:它还要按运动拓扑选提示词分支。archetype 缺省时不在这里
         # 兜一个默认值 —— 缺省只由 build_attack_prompt 定义一次,写两处会各自漂移。
         if action.action is ActionType.ATTACK:
@@ -81,6 +87,29 @@ class VideoFrameStrategy(DerivationStrategy):
         }
         build = builders.get(action.action, build_walk_prompt)
         return build(facing=action.facing)
+
+    def _custom_prompt(self, action: ActionSpec, stance: CharacterStance) -> str:
+        """用户那句话先过适配器,再按声明的循环性收尾。
+
+        Raises:
+            PromptRejected: 这段描述送进模型必然出坏产物 → server 映射 4xx 让用户改。
+        """
+        clause = action.custom_action or ""
+        cyclic = bool(action.cyclic)
+        try:
+            adapted = self._adapter.adapt(
+                clause, kind="i2v", facing=action.facing, stance=stance,
+            )
+        except PromptRejected:
+            # 与下面那条分得很清:这不是组件不可用,是这段描述本身跑不出可用产物,
+            # 而下一步就是付费调用 —— 回退等于照样把钱花掉换一段废视频。
+            # 顺序也是约束:它是 ValueError 的子类,放到宽兜底后面就永远轮不上。
+            raise
+        except Exception:
+            # 适配器坏掉只该丢掉那层改写,不该把整条生成打死:骨架本身不依赖它。
+            return build_custom_prompt(clause, facing=action.facing, cyclic=cyclic)
+        # 兜底那支走 build_custom_prompt,构图约束在它内部加;这支绕过了它,要自己加。
+        return with_framing(f"{adapted.text} {CYCLIC_TAIL if cyclic else ONESHOT_TAIL}")
 
     def derive(
         self,
@@ -98,7 +127,7 @@ class VideoFrameStrategy(DerivationStrategy):
         progress.step("derive", 0, 3, f"{action.action.value}: i2v 生成视频")
         # 母版按动作预处理:jump 要在顶部补空间,否则角色腾空时头顶顶出视频画面被裁
         framed = prepare_master(master, action.action.value)
-        video = self._video.i2v(framed, self._build_prompt(action), seconds=5)
+        video = self._video.i2v(framed, self._build_prompt(action, card.stance), seconds=5)
 
         dense = extract_all_frames_bytes(video)
         # 跨动作一致性:用视频首帧(=母版姿态)的角色高当共同定标基准。各动作都从同一母版

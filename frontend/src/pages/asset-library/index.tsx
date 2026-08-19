@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, useOutletContext, useParams } from 'react-router'
 
-import { CHARACTER_STATUS, characterApis, type Character } from '@/entities'
+import { CHARACTER_STATUS, characterApis, type Character, type Project } from '@/entities'
 import type { Paged } from '@/shared/pagination'
-import { Pagination } from '@/shared/ui'
+import { AssetPreviewCard, Pagination } from '@/shared/ui'
 
 const CHARACTER_PAGE_SIZE = 24
 
@@ -13,6 +13,7 @@ function characterName(character: Character) {
 
 export function AssetLibraryPage() {
   const { projectId } = useParams()
+  const project = useOutletContext<Project>()
   const [pageNumber, setPageNumber] = useState(1)
   const [charactersPage, setCharactersPage] = useState<Paged<Character> | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -49,21 +50,24 @@ export function AssetLibraryPage() {
 
   return (
     <section aria-labelledby="asset-library-title" className="min-h-full min-w-0">
-      <h2 id="asset-library-title" className="sr-only">
-        角色
-      </h2>
       <div className="p-6 lg:p-8">
-        <div className="mb-4 flex justify-end">
-          <button
-            type="button"
-            aria-label="新建角色"
-            disabled
-            title="角色生成应进入 Workflow Editor"
-            className="cursor-not-allowed rounded-full border border-app-line px-4 py-2 text-xs font-semibold text-app-faint"
+        <header className="mb-7 border-b border-app-line pb-6">
+          <Link
+            to="/projects"
+            className="text-xs font-medium text-app-muted underline decoration-app-line underline-offset-4 hover:text-app-accent"
           >
-            ＋ 新建角色
-          </button>
-        </div>
+            返回项目中心
+          </Link>
+          <h2
+            id="asset-library-title"
+            className="mt-3 font-serif text-[clamp(2.15rem,4vw,3.5rem)] font-medium leading-none tracking-[-0.05em] text-app-ink"
+          >
+            {project.name}
+          </h2>
+          <p className="mt-2 text-sm text-app-muted">
+            {charactersPage === null ? '正在读取角色资产' : `${charactersPage.total} 个角色`}
+          </p>
+        </header>
         {error ? (
           <p
             role="alert"
@@ -99,47 +103,19 @@ function CharacterGrid({ projectId, characters }: { projectId: string; character
         const outfit = character.outfits[0]
         const actionCount = character.outfits.reduce((sum, item) => sum + item.actions.length, 0)
         return (
-          <Link
+          <AssetPreviewCard
             key={character.id}
             to={`/projects/${projectId}/assets/${character.id}`}
-            aria-label={`查看角色 ${name}`}
-            className="group overflow-hidden rounded-[1.25rem] border border-app-line bg-app-surface-raised transition hover:border-app-line-strong"
-          >
-            <div className="relative aspect-[4/3] overflow-hidden bg-app-surface-muted">
-              {outfit?.previewUrl ? (
-                <img
-                  src={outfit.previewUrl}
-                  alt={`${name}的${outfit.name}预览`}
-                  loading={index < 4 ? 'eager' : 'lazy'}
-                  decoding="async"
-                  fetchPriority={index === 0 ? 'high' : 'auto'}
-                  className="h-full w-full object-contain p-5 [image-rendering:pixelated] transition group-hover:scale-[1.025]"
-                />
-              ) : (
-                <div className="grid h-full place-items-center bg-[linear-gradient(135deg,var(--color-app-surface-muted)_25%,var(--color-app-surface)_25%,var(--color-app-surface)_50%,var(--color-app-surface-muted)_50%,var(--color-app-surface-muted)_75%,var(--color-app-surface)_75%)] bg-[length:24px_24px]">
-                  <span className="rounded-full border border-app-line bg-app-surface-raised px-2.5 py-1 text-xs font-medium text-app-muted">
-                    暂无造型预览
-                  </span>
-                </div>
-              )}
-            </div>
-            <div className="p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="font-semibold text-app-ink">{name}</h3>
-                  <p className="mt-1 text-xs text-app-faint">{outfit?.name ?? '尚未创建造型'}</p>
-                </div>
-                <span aria-hidden="true" className="text-app-faint">
-                  ↗
-                </span>
-              </div>
-              <div className="mt-4 flex gap-2 border-t border-app-line pt-3 text-xs text-app-muted">
-                <span>{character.outfits.length} 套造型</span>
-                <span>·</span>
-                <span>{actionCount} 个动作</span>
-              </div>
-            </div>
-          </Link>
+            ariaLabel={`查看角色 ${name}`}
+            title={name}
+            subtitle={outfit?.name ?? '尚未创建造型'}
+            trailing="↗"
+            footer={`${character.outfits.length} 套造型 · ${actionCount} 个动作`}
+            previewUrl={outfit?.previewUrl ?? null}
+            previewAlt={`${name}的${outfit?.name ?? '造型'}预览`}
+            eager={index < 4}
+            priority={index === 0}
+          />
         )
       })}
     </div>

@@ -93,10 +93,18 @@ export function createQuotaApis(options: CreateQuotaApisOptions = {}): QuotaApis
       return toCreditAccount(await protectedClient.request<CreditAccountDto>('/quota/balance'))
     },
     async listTransactions(query: QuotaTransactionPageQuery = {}) {
+      const requestQuery = {
+        page: query.page,
+        page_size: query.pageSize,
+        ...(query.direction ? { direction: query.direction } : {}),
+        ...(query.reason === undefined ? {} : { reason: query.reason }),
+        ...(query.createdFrom ? { created_from: query.createdFrom } : {}),
+        ...(query.createdBefore ? { created_before: query.createdBefore } : {}),
+      }
       const result = await protectedClient.requestList<CreditTransactionDto>(
         '/quota/transactions',
         {
-          query: { page: query.page, page_size: query.pageSize },
+          query: requestQuery,
         },
       )
       return { ...result, items: result.items.map(toCreditTransaction) }

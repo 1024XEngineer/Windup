@@ -213,6 +213,18 @@
   font-weight: 500;
 }
 
+.auth-invite-field {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.auth-invite-helper {
+  margin: 0 0.15rem;
+  color: var(--auth-muted);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
 .auth-register-field-shell {
   position: relative;
   display: grid;
@@ -883,6 +895,7 @@
   .auth-register-fields .auth-screen-toast,
   .auth-submit-label,
   .auth-screen-helper,
+  .auth-invite-helper,
   .auth-screen-entry-switch {
     animation: none;
     filter: none;
