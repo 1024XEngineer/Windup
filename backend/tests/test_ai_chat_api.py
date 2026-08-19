@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from langchain_core.messages import (
@@ -14,6 +15,7 @@ from langchain_core.messages import (
 )
 from openai.types.chat import ChatCompletionChunk
 
+from windup_app.web.api.agent import _openai_tool_calls_to_lc, _tool_call_chunk_to_openai
 from windup_common.enums.biz_code import BizCode
 
 
@@ -316,3 +318,122 @@ def test_chat_upstream_error_does_not_send_done(auth_client):
     events = _parse_sse(response.text)
     assert any(isinstance(event, dict) and "error" in event for event in events)
     assert "[DONE]" not in events
+
+
+def test_chat_keeps_system_role_messages_and_skips_empty_chunks(auth_client):
+    fake = _FakeChatModel(
+        [
+            AIMessageChunk(content=""),
+            AIMessageChunk(content="ok"),
+        ]
+    )
+    with patch(
+        "windup_app.web.api.agent.create_chat_model",
+        return_value=fake,
+    ):
+        response = auth_client.post(
+            "/ai/chat",
+            json=_payload(
+                messages=[
+                    {"role": "system", "content": "只说 ok"},
+                    {"role": "user", "content": "你好"},
+                ]
+            ),
+        )
+
+    assert response.status_code == 200
+    assert _delta_contents(_parse_sse(response.text)) == ["ok"]
+    assert isinstance(fake.seen_messages[0], SystemMessage)
+    assert fake.seen_messages[0].content == "只说 ok"
+
+
+def test_chat_tool_call_arguments_as_object(auth_client):
+    fake = _FakeChatModel([AIMessageChunk(content="ok")])
+    with patch(
+        "windup_app.web.api.agent.create_chat_model",
+        return_value=fake,
+    ):
+        response = auth_client.post(
+            "/ai/chat",
+            json=_payload(
+                messages=[
+                    {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "lookup",
+                                    "arguments": {"q": "风"},
+                                },
+                            }
+                        ],
+                    }
+                ]
+            ),
+        )
+
+    assert response.status_code == 200
+    assert fake.seen_messages[0].tool_calls[0]["args"] == {"q": "风"}
+
+
+def test_chat_tool_call_arguments_non_object_returns_bad_request(auth_client):
+    fake = _FakeChatModel([AIMessageChunk(content="ok")])
+    with patch(
+        "windup_app.web.api.agent.create_chat_model",
+        return_value=fake,
+    ):
+        response = auth_client.post(
+            "/ai/chat",
+            json=_payload(
+                messages=[
+                    {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "lookup",
+                                    "arguments": "[1]",
+                                },
+                            }
+                        ],
+                    }
+                ]
+            ),
+        )
+
+    assert response.json()["code"] == BizCode.BAD_REQUEST
+    assert fake.seen_messages is None
+
+
+def test_openai_tool_calls_empty_and_passthrough():
+    assert _openai_tool_calls_to_lc(None) == []
+    assert _openai_tool_calls_to_lc([]) == []
+    assert _openai_tool_calls_to_lc([{"id": "call_1"}]) == [{"id": "call_1"}]
+
+
+def test_openai_tool_calls_rejects_non_json_object_type():
+    try:
+        _openai_tool_calls_to_lc(
+            [
+                {
+                    "id": "call_1",
+                    "function": {"name": "lookup", "arguments": 1},
+                }
+            ]
+        )
+    except Exception as exc:
+        assert getattr(exc, "code", None) == BizCode.BAD_REQUEST
+    else:
+        raise AssertionError("expected BizException")
+
+
+def test_tool_call_chunk_from_object_serializes_args():
+    chunk = SimpleNamespace(index=0, id="call_1", name="lookup", args={"q": "风"})
+    out = _tool_call_chunk_to_openai(chunk)
+    assert out["id"] == "call_1"
+    assert out["function"]["name"] == "lookup"
+    assert json.loads(out["function"]["arguments"]) == {"q": "风"}
