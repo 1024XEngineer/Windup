@@ -83,6 +83,7 @@ export interface CharacterApis {
 
 export interface CharacterPageQuery extends PageQuery {
   status?: CharacterPublicationStatus
+  signal?: AbortSignal
 }
 
 interface CharacterFrameDto {
@@ -226,6 +227,7 @@ export const characterApis: CharacterApis = {
 
   async listByProject(projectId, query = {}) {
     const result = await getApiClient().requestList<CharacterDto>('/characters', {
+      signal: query.signal,
       query: {
         project_id: toBackendId(projectId, 'projectId'),
         page: query.page,
