@@ -1503,7 +1503,7 @@ describe('createQuickStartService', () => {
     })
     await expect(
       noOutfit.startAction({ characterId: 'character', outfitId: 'missing' }, 'walk'),
-    ).rejects.toThrow('当前造型没有可用于生成动作的角色母版')
+    ).rejects.toThrow('当前造型还没有可用的角色母版，请先完成定妆再生成动作')
 
     const staticRun: WorkflowRun = {
       id: 'run-static',

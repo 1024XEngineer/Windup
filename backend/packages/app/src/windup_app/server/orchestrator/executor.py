@@ -24,17 +24,19 @@ from sqlalchemy.orm import Session
 
 from windup_ai_engine.ports import PromptRejected
 from windup_common.models import ActionSpec, ActionType as EngineActionType, CharacterCard
+from windup_framework.config.quality_gate import settings as gate_settings
 
-from windup_app.server.orchestrator import billing, task_repo
+from windup_app.server.orchestrator import billing, quality_gate, task_repo
 from windup_app.server.orchestrator._fetch import fetch_own_media
 from windup_app.server.orchestrator.model import (
+    ActionType,
     CharacterActionInput,
     CharacterImageInput,
     TaskStatus,
 )
 
 if TYPE_CHECKING:
-    from windup_ai_engine.ports import CharacterGeneratorPort, ProgressPort
+    from windup_ai_engine.ports import CharacterGeneratorPort, JudgePort, ProgressPort
     from windup_framework.providers import ImageProvider, MatteProvider
 
 logger = logging.getLogger("windup.generation.executor")
@@ -177,6 +179,19 @@ def _resolve_video_model(name: str | None) -> str | None:
     return name
 
 
+def _judged_action(input: CharacterActionInput) -> str:
+    """判官要判的是"这帧是不是这个动作",而 custom 的动作内容在 ``custom_prompt`` 里。
+
+    传枚举值 ``"custom"`` 等于问"这帧是不是 custom",判官无从判断:拦截档开启时会把
+    所有自定义动作误判成不匹配,shadow 期的自定义读数也全是噪声。
+    """
+    if input.action_type is ActionType.CUSTOM:
+        prompt = (input.custom_prompt or "").strip()
+        if prompt:
+            return prompt
+    return input.action_type.value
+
+
 def _to_engine_action(t) -> EngineActionType:
     """generation.ActionType → 引擎 common.ActionType(按值映射)。
 
@@ -196,6 +211,7 @@ class ActionTaskExecutor:
         self,
         *,
         generator: CharacterGeneratorPort | None = None,
+        judge: JudgePort | None = None,
         upload: Callable[[bytes], str] | None = None,
         fetch_master: Callable[[CharacterActionInput], bytes] | None = None,
         fetch_model3d: Callable[[str], bytes] | None = None,
@@ -209,6 +225,9 @@ class ActionTaskExecutor:
         # 各自惰性加载一份 ONNX 会话,按桶各建等于把同一个模型在进程里装多次。
         self._matte: MatteProvider | None = None
         self._image: ImageProvider | None = None
+        # 判官同样与视频模型无关,故不分桶。缺省 None 时**不建**实例:建了就意味着每个
+        # 任务多一次付费调用,那要由 QUALITY_GATE_ENABLED 显式打开,见 _get_judge。
+        self._judge: JudgePort | None = judge
         # 本执行器是进程级单例,而每个请求起一个线程跑 run_action_task,上面几个缓存
         # 都是跨线程共用的可变状态。缺锁时并发首请求会各装一套(见 _get_generator)。
         self._assembly_lock = threading.Lock()
@@ -329,6 +348,9 @@ class ActionTaskExecutor:
         # i2v —— 两条路线的画风、成本、多朝向能力都不同,悄悄换一条等于让调用方拿着
         # 错误的前提做后续决定,而帧数、时长、成色全都正常,没有任何一道会红。
         model_url = (input.model_3d_url or "").strip()
+        # 三渲二那支不取母版,而出口的判官闸口要拿它当参照 —— 不先置 None 的话那支会
+        # 撞 UnboundLocalError,而它只在有 3D 资产的造型上触发。
+        master: bytes | None = None
         if model_url:
             rigged = (self._fetch_model3d or self._download_model3d)(model_url)
             logger.info(
@@ -347,21 +369,42 @@ class ActionTaskExecutor:
             )
 
         upload = self._upload or self._upload_frame
+        checked = [_require_size(png, cons.sprite_w, cons.sprite_h) for png in generated.frames]
         frames = [
-            {"index": i,
-             "image_url": upload(_require_size(png, cons.sprite_w, cons.sprite_h)),
-             "duration_ms": dur}
-            for i, (png, dur) in enumerate(zip(generated.frames, generated.durations))
+            {"index": i, "image_url": upload(png), "duration_ms": dur}
+            for i, (png, dur) in enumerate(zip(checked, generated.durations))
         ]
         # quality / prompt_version 只落库记账,不在此处据成色改判决:交付/重试是产品
         # 决策,该由读这本账的下游按阈值决定,任务状态仍只反映"生成流程是否跑完"。
-        return {
+        result = {
             "type": "character_action",
             "action_type": input.action_type.value,
             "frames": frames,
             "quality": dataclasses.asdict(generated.quality),
             "prompt_version": generated.prompt_version,
         }
+        # master 为 None 时 review 按"没判"返回 None(三渲二路线没有可比的参照)。
+        decision = quality_gate.review(
+            self._get_judge(), checked, master, _judged_action(input)
+        )
+        if decision is not None:
+            result["judge"] = decision.as_payload()
+            if decision.blocked:
+                # 帧已经生成、已经上传,钱早就花完了。拦在这里的意义只剩"不把坏产物当成
+                # 交付物交出去";这也正是拦截档默认关着的原因。
+                raise quality_gate.QualityBlocked(decision.problems)
+        return result
+
+    def _get_judge(self) -> JudgePort | None:
+        """闸口启用时懒建判官;未启用返回 ``None``,一次调用都不发。"""
+        if self._judge is not None or not gate_settings.enabled:
+            return self._judge
+        with self._assembly_lock:
+            if self._judge is None:
+                from windup_framework.providers import SufyJudgeProvider
+
+                self._judge = SufyJudgeProvider()
+            return self._judge
 
     def _get_generator(self, video_model: str | None = None) -> CharacterGeneratorPort:
         """懒装配 CharacterGenerator,按模型名分桶。
