@@ -626,7 +626,7 @@ function CharacterTemplateContent({
                 >
                   <WorkflowImage
                     src={image.url}
-                    alt={`${directionLabel(direction)}角色候选 ${index + 1}`}
+                    alt={`${directions.length === 1 ? '角色候选' : `${directionLabel(direction)}角色候选`} ${index + 1}`}
                     variant="thumbnail"
                   />
                 </button>
@@ -1011,7 +1011,7 @@ function FirstFrameContent({
                 >
                   <WorkflowImage
                     src={image.url}
-                    alt={`${directionLabel(direction)}动作首帧候选 ${index + 1}`}
+                    alt={`${directions.length === 1 ? '动作首帧候选' : `${directionLabel(direction)}动作首帧候选`} ${index + 1}`}
                     variant="thumbnail"
                   />
                 </button>
@@ -1213,7 +1213,7 @@ function AnimationContent({
                 <WorkflowImage
                   key={`${frame.url}-${index}`}
                   src={frame.url}
-                  alt={`${directionLabel(direction)}动画帧 ${index + 1}`}
+                  alt={`${groups.length === 1 ? '动画帧' : `${directionLabel(direction)}动画帧`} ${index + 1}`}
                   variant="frame"
                 />
               ))}
