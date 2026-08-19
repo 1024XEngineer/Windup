@@ -484,6 +484,39 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
   })
 
+  it('可以在编辑器中输入描述并创建自定义动作分支', async () => {
+    const session = createSession(completedTemplateWorkflow('42'), {
+      character: characterFixture(),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '添加动作分支' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成动作 ›' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择造型 夜行装' }))
+    fireEvent.click(screen.getByRole('button', { name: /自定义动作/ }))
+    fireEvent.change(screen.getByRole('textbox', { name: '动作描述' }), {
+      target: { value: '挥手打招呼' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /开始生成/ }))
+
+    await waitFor(() =>
+      expect(session.controller.getWorkflow().nodes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: 'action-first-frame',
+            input: expect.objectContaining({
+              outfitId: 'night',
+              name: '挥手打招呼',
+              type: 'custom',
+              prompt: '挥手打招呼',
+            }),
+          }),
+        ]),
+      ),
+    )
+  })
+
   it('展示三张动作首帧候选并确认用户选择的一张', async () => {
     const workflow = reviewingActionWorkflow()
     const firstFrame = workflow.nodes.find((node) => node.type === 'action-first-frame')
