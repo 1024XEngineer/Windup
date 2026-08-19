@@ -15,6 +15,7 @@ import { QuickStartPage } from '@/pages/quick-start'
 import { WorkspacePage } from '@/pages/workspace'
 import { ProtectedRoute } from '@/features/auth-guard'
 import { AppShellRoute, MarketingShellRoute } from './layout'
+import { productionQuickStartAgentDependencies } from '@/features/quick-start-agent/production'
 
 const WorkflowEditorPage = lazy(() =>
   import('@/pages/workflow-editor').then(({ WorkflowEditorPage: Page }) => ({ default: Page })),
@@ -42,6 +43,10 @@ function LazyWorkflowEditorPage() {
   )
 }
 
+function QuickStartRoute() {
+  return <QuickStartPage agent={productionQuickStartAgentDependencies} />
+}
+
 /** 路由声明独立导出，测试用 MemoryRouter 验证直达地址。 */
 export function AppRoutes() {
   return (
@@ -54,8 +59,8 @@ export function AppRoutes() {
         <Route element={<AppShellRoute />}>
           <Route path="/workspace" element={<WorkspacePage />} />
           <Route path="/account" element={<AccountPage />} />
-          <Route path="/quick-start" element={<QuickStartPage />} />
-          <Route path="/quick-start/:runId" element={<QuickStartPage />} />
+          <Route path="/quick-start" element={<QuickStartRoute />} />
+          <Route path="/quick-start/:runId" element={<QuickStartRoute />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/new" element={<ProjectCreatePage />} />
           <Route path="/workflow-editor/:runId" element={<LazyWorkflowEditorPage />} />
