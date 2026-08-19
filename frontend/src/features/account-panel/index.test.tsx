@@ -105,7 +105,7 @@ describe('AccountPanel', () => {
 
     expect(screen.getByRole('dialog', { name: '创建 Windup 账号' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '欢迎来到 Windup' })).toBeTruthy()
-    expect(screen.queryByLabelText('邀请码')).toBeNull()
+    expect(screen.queryByLabelText('邀请码（选填）')).toBeNull()
     expect(screen.getByText('注册即赠 300 积分。')).toBeTruthy()
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('邮箱')))
   })
@@ -120,14 +120,19 @@ describe('AccountPanel', () => {
     expect(screen.queryByText('继续搭建，')).toBeNull()
     expect(screen.getByTestId('register-fields').className).toContain('auth-register-fields')
     expect(screen.queryByRole('tablist', { name: '账号操作' })).toBeNull()
-    expect(screen.queryByLabelText('邀请码')).toBeNull()
     expect(screen.getByLabelText('邮箱')).toBeTruthy()
-    expect(screen.queryByLabelText('密码')).toBeNull()
-    expect(screen.queryByLabelText('昵称（选填）')).toBeNull()
-    expect(screen.queryByLabelText('验证码')).toBeNull()
     expect(screen.getByTestId('register-fields').querySelector('[aria-live]')).toBeNull()
     expect(screen.getByRole('button', { name: '继续' })).toBeTruthy()
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('邮箱')))
+
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'new@example.com' } })
+    fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
+
+    expect(await screen.findByRole('heading', { name: '填写邀请码' })).toBeTruthy()
+    expect((screen.getByLabelText('邀请码（选填）') as HTMLInputElement).value).toBe('I0O1')
+    expect(screen.getByText('已从邀请链接带入，可修改或清空。')).toBeTruthy()
+    expect(screen.queryByLabelText('邮箱')).toBeNull()
+    expect(screen.queryByLabelText('密码')).toBeNull()
   })
 
   it('keeps the close control inside the dialog focus boundary', () => {
@@ -392,11 +397,18 @@ describe('AccountPanel', () => {
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'new@example.com' } })
     fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
 
+    expect(await screen.findByLabelText('邀请码（选填）')).toBeTruthy()
+    fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
+
     const password = await screen.findByLabelText('密码')
     expect(password.getAttribute('type')).toBe('password')
     fireEvent.click(screen.getByRole('button', { name: '显示密码' }))
     expect(password.getAttribute('type')).toBe('text')
 
+    fireEvent.click(screen.getByRole('button', { name: '返回上一步' }))
+    expect(((await screen.findByLabelText('邀请码（选填）')) as HTMLInputElement).value).toBe(
+      'AB23CD45',
+    )
     fireEvent.click(screen.getByRole('button', { name: '返回上一步' }))
     expect(((await screen.findByLabelText('邮箱')) as HTMLInputElement).value).toBe(
       'new@example.com',
@@ -407,9 +419,12 @@ describe('AccountPanel', () => {
   it('submits the invite link code and shows backend expiry errors inline', async () => {
     const { apis } = renderPanel('/?account=register&invite=ab23cd45&returnTo=%2Fworkspace')
     apis.register.mockRejectedValue(new Error('邀请码已过期'))
-    expect(screen.queryByLabelText('邀请码')).toBeNull()
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'new@example.com' } })
 
+    fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
+    fireEvent.change(await screen.findByLabelText('邀请码（选填）'), {
+      target: { value: '  xy67za89  ' },
+    })
     fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
     expect(screen.getByRole('dialog', { name: '创建 Windup 账号' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '为账号加一道保护' })).toBeTruthy()
@@ -450,7 +465,7 @@ describe('AccountPanel', () => {
         email: 'new@example.com',
         password: 'password-123',
         code: '123456',
-        inviteCode: 'AB23CD45',
+        inviteCode: 'XY67ZA89',
         nickname: '新用户',
       }),
     )
@@ -460,6 +475,12 @@ describe('AccountPanel', () => {
   it('submits public registration without an invite code', async () => {
     const { apis } = renderPanel('/?account=register&returnTo=%2Fworkspace')
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'direct@example.com' } })
+    fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
+
+    fireEvent.change(await screen.findByLabelText('邀请码（选填）'), {
+      target: { value: 'AB23CD45' },
+    })
+    fireEvent.change(screen.getByLabelText('邀请码（选填）'), { target: { value: '' } })
     fireEvent.submit(screen.getByRole('button', { name: '继续' }).closest('form')!)
 
     fireEvent.change(await screen.findByLabelText('密码'), {
