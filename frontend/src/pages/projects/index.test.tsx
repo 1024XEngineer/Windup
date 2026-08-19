@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 
@@ -23,6 +23,166 @@ function installBackend() {
 }
 
 describe('ProjectsPage', () => {
+  it('keeps pending project previews distinct from empty projects', async () => {
+    installBackend()
+    let releaseRequests: (() => void) | undefined
+    const requestGate = new Promise<void>((resolve) => {
+      releaseRequests = resolve
+    })
+    vi.spyOn(characterApis, 'listByProject').mockImplementation(async () => {
+      await requestGate
+      return { items: [], total: 0, page: 1, pageSize: 6 }
+    })
+
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(await screen.findAllByRole('link', { name: /打开项目/ })).toHaveLength(2)
+    const loadingPreviews = screen.getAllByRole('status', { name: /正在装载.+项目预览/ })
+    expect(loadingPreviews).toHaveLength(2)
+    expect(
+      loadingPreviews.every(
+        (preview) => preview.querySelectorAll('[data-pixel-matrix-dot]').length === 432,
+      ),
+    ).toBe(true)
+    expect(
+      loadingPreviews.every(
+        (preview) => preview.querySelector('[data-pixel-matrix-coverage="compact"]') !== null,
+      ),
+    ).toBe(true)
+    expect(screen.queryByText('等待第一份角色资产')).toBeNull()
+
+    releaseRequests?.()
+    expect(
+      await screen.findAllByRole('status', { name: /项目预览：等待第一份角色资产/ }),
+    ).toHaveLength(2)
+  })
+
+  it('reveals each completed preview without waiting for the rest of the page', async () => {
+    installBackend()
+    let releaseSlowRequest: (() => void) | undefined
+    const slowRequest = new Promise<void>((resolve) => {
+      releaseSlowRequest = resolve
+    })
+    vi.spyOn(characterApis, 'listByProject').mockImplementation(async (projectId) => {
+      if (String(projectId) === '42') await slowRequest
+      return { items: [], total: 0, page: 1, pageSize: 6 }
+    })
+
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    try {
+      expect(
+        await screen.findByRole('status', {
+          name: '空白海岸的项目预览：等待第一份角色资产',
+        }),
+      ).toBeTruthy()
+      expect(screen.getByRole('status', { name: '正在装载点灯人 · MVP的项目预览' })).toBeTruthy()
+    } finally {
+      releaseSlowRequest?.()
+    }
+  })
+
+  it('shows preview request failures instead of presenting the project as empty', async () => {
+    installBackend()
+    vi.spyOn(characterApis, 'listByProject').mockRejectedValue(new Error('preview unavailable'))
+
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(
+      await screen.findAllByRole('status', { name: /项目预览：预览暂时无法读取/ }),
+    ).toHaveLength(2)
+    expect(screen.queryByText('等待第一份角色资产')).toBeNull()
+  })
+
+  it('does not call a project empty when characters exist without a usable preview', async () => {
+    installBackend()
+    const character = await characterApis.get('51')
+    vi.spyOn(characterApis, 'listByProject').mockResolvedValue({
+      items: [
+        {
+          ...character,
+          referenceImageUrl: null,
+          outfits: character.outfits.map((outfit) => ({
+            ...outfit,
+            previewUrl: null,
+            actions: outfit.actions.map((action) => ({ ...action, frames: [] })),
+          })),
+        },
+      ],
+      total: 7,
+      page: 1,
+      pageSize: 6,
+    })
+
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(await screen.findAllByText('预览暂时无法读取')).toHaveLength(2)
+    expect(screen.queryByText('等待第一份角色资产')).toBeNull()
+  })
+
+  it('keeps the loading surface until the preview image is decoded', async () => {
+    installBackend()
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    const project = await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
+    const preview = await screen.findByRole('img', { name: '点灯人 · MVP的项目预览' })
+    expect(screen.getByRole('status', { name: '正在装载点灯人 · MVP的项目预览' })).toBeTruthy()
+    expect(project.querySelector('[aria-busy="true"]')).toBeTruthy()
+
+    fireEvent.load(preview)
+
+    expect(screen.queryByRole('status', { name: '正在装载点灯人 · MVP的项目预览' })).toBeNull()
+    expect(project.querySelector('[aria-busy="false"]')).toBeTruthy()
+  })
+
+  it('shows an image error when a resolved preview cannot be displayed', async () => {
+    installBackend()
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    const project = await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
+    const preview = await screen.findByRole('img', { name: '点灯人 · MVP的项目预览' })
+    fireEvent.error(preview)
+
+    expect(await screen.findByText('预览图片无法显示')).toBeTruthy()
+    expect(within(project).queryByText('等待第一份角色资产')).toBeNull()
+  })
+
   it('renders backend Projects as the first browsing level', async () => {
     const backend = installBackend()
     render(
@@ -185,7 +345,7 @@ describe('ProjectsPage', () => {
           .querySelector('img')
           ?.getAttribute('src'),
       ).toBe('https://cdn.windup.test/idle-01.png')
-      expect(screen.getByText('等待第一份角色资产')).toBeTruthy()
+      expect(screen.getByText('预览暂时无法读取')).toBeTruthy()
     })
   })
 
@@ -224,23 +384,43 @@ describe('ProjectsPage', () => {
     )
   })
 
-  it('shares concurrency across pages, deduplicates active requests, and reuses cached previews', async () => {
+  it('reuses completed preview results when returning to a project page', async () => {
     const backend = createProjectAssetsBackend({ projectCount: 13 })
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
     vi.stubGlobal('fetch', backend.fetch)
-    let activeRequests = 0
-    let maxActiveRequests = 0
-    let releaseRequests: (() => void) | undefined
-    const requestGate = new Promise<void>((resolve) => {
-      releaseRequests = resolve
+    const listSpy = vi.spyOn(characterApis, 'listByProject').mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 6,
     })
-    const listSpy = vi.spyOn(characterApis, 'listByProject').mockImplementation(async () => {
-      activeRequests += 1
-      maxActiveRequests = Math.max(maxActiveRequests, activeRequests)
-      await requestGate
-      activeRequests -= 1
-      return { items: [], total: 0, page: 1, pageSize: 6 }
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(12))
+    fireEvent.click(screen.getByRole('button', { name: '下一页' }))
+    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(13))
+    fireEvent.click(screen.getByRole('button', { name: '上一页' }))
+    await waitFor(() => {
+      expect(screen.getAllByRole('link', { name: /打开项目/ })).toHaveLength(12)
     })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(listSpy).toHaveBeenCalledTimes(13)
+  })
+
+  it('releases active preview slots when their project page leaves', async () => {
+    const backend = createProjectAssetsBackend({ projectCount: 13 })
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', backend.fetch)
+    const listSpy = vi
+      .spyOn(characterApis, 'listByProject')
+      .mockImplementation(() => new Promise(() => undefined))
+
     render(
       <AuthenticatedAuthSession>
         <MemoryRouter initialEntries={['/projects']}>
@@ -251,29 +431,8 @@ describe('ProjectsPage', () => {
 
     await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(2))
     fireEvent.click(screen.getByRole('button', { name: '下一页' }))
-    await waitFor(() => {
-      expect(screen.getAllByRole('link', { name: /打开项目/ })).toHaveLength(1)
-    })
-    expect(listSpy).toHaveBeenCalledTimes(2)
-    fireEvent.click(screen.getByRole('button', { name: '上一页' }))
-    await waitFor(() => {
-      expect(screen.getAllByRole('link', { name: /打开项目/ })).toHaveLength(12)
-    })
-    expect(listSpy).toHaveBeenCalledTimes(2)
-    expect(new Set(listSpy.mock.calls.map(([projectId]) => projectId)).size).toBe(2)
 
-    releaseRequests?.()
-    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(12))
-    expect(maxActiveRequests).toBe(2)
-    fireEvent.click(screen.getByRole('button', { name: '下一页' }))
-    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(13))
-    fireEvent.click(screen.getByRole('button', { name: '上一页' }))
-    await waitFor(() => {
-      expect(screen.getAllByRole('link', { name: /打开项目/ })).toHaveLength(12)
-    })
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(listSpy).toHaveBeenCalledTimes(13)
-    expect(maxActiveRequests).toBe(2)
+    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(3))
   })
 
   it('navigates every backend Project page instead of truncating after the first page', async () => {
