@@ -23,6 +23,8 @@ export interface ExportButtonProps {
   model: ExportPackageModel
   exporter?: AssetExporter
   className?: string
+  idleLabel?: string
+  pill?: boolean
 }
 
 type ExportState =
@@ -144,6 +146,8 @@ export function ExportButton({
   model,
   exporter = defaultExporter,
   className = '',
+  idleLabel,
+  pill = false,
 }: ExportButtonProps) {
   const { state, working, startExport } = useExportAction(model, exporter)
   const label =
@@ -153,17 +157,24 @@ export function ExportButton({
         ? '重新导出'
         : state.status === 'success'
           ? '下载完成'
-          : `导出${STAGE_LABELS[model.stage]}`
+          : (idleLabel ?? `导出${STAGE_LABELS[model.stage]}`)
 
   return (
-    <button
-      type="button"
-      disabled={working}
-      title={state.status === 'failure' ? state.message : undefined}
-      onClick={() => void startExport()}
-      className={`rounded-lg border border-current px-3 py-2 text-xs font-semibold disabled:opacity-50 ${className}`}
-    >
-      {label}
-    </button>
+    <div className="grid min-w-0 gap-1">
+      <button
+        type="button"
+        disabled={working}
+        title={state.status === 'failure' ? state.message : undefined}
+        onClick={() => void startExport()}
+        className={`${pill ? 'rounded-full' : 'rounded-lg'} border border-current px-3 py-2 text-xs font-semibold disabled:opacity-50 ${className}`}
+      >
+        {label}
+      </button>
+      {state.status === 'failure' ? (
+        <span role="alert" className="max-w-64 text-[11px] font-medium leading-4 text-app-danger">
+          导出失败：{state.message}
+        </span>
+      ) : null}
+    </div>
   )
 }

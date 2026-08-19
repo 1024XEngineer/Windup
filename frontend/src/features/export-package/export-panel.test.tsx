@@ -185,4 +185,24 @@ describe('ExportPanel', () => {
 
     expect(await screen.findByRole('button', { name: '下载完成' })).toBeTruthy()
   })
+
+  it('紧凑导出按钮失败后显示可访问的具体错误', async () => {
+    const exporter = vi.fn().mockRejectedValue(new Error('图片下载失败'))
+
+    const { container } = render(<ExportButton model={model} exporter={exporter} />)
+    fireEvent.click(screen.getByRole('button', { name: '导出完整动作资产' }))
+
+    const alert = await screen.findByRole('alert')
+    const retryButton = screen.getByRole('button', { name: '重新导出' })
+    expect(container.firstElementChild?.className).toContain('grid')
+    expect(retryButton.contains(alert)).toBe(false)
+    expect(alert.textContent).toBe('导出失败：图片下载失败')
+  })
+
+  it('紧凑导出按钮支持资产页的直接导出文案与胶囊形态', () => {
+    render(<ExportButton model={model} idleLabel="导出资产包" pill />)
+
+    const button = screen.getByRole('button', { name: '导出资产包' })
+    expect(button.className).toContain('rounded-full')
+  })
 })

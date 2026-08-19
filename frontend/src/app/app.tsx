@@ -62,11 +62,11 @@ export function AppRoutes() {
           <Route path="/workflow-editor/:runId/:stage" element={<LazyWorkflowEditorPage />} />
           <Route path="/playtest" element={<PlaytestEntryPage />} />
           <Route path="/playtest/:characterId/:outfitId" element={<PlaytestExportPage />} />
-        </Route>
-        <Route path="/projects/:projectId" element={<ProjectDetailPage />}>
-          <Route index element={<Navigate replace to="assets" />} />
-          <Route path="assets" element={<AssetLibraryPage />} />
-          <Route path="assets/:characterId" element={<CharacterDetailPage />} />
+          <Route path="/projects/:projectId" element={<ProjectDetailPage />}>
+            <Route index element={<Navigate replace to="assets" />} />
+            <Route path="assets" element={<AssetLibraryPage />} />
+            <Route path="assets/:characterId" element={<CharacterDetailPage />} />
+          </Route>
         </Route>
       </Route>
     </Routes>
