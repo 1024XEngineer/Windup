@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Link, useOutletContext, useParams } from 'react-router'
 
-import { CHARACTER_STATUS, characterApis, type Character, type Project } from '@/entities'
+import { CHARACTER_STATUS, characterApis, type CharacterSummary, type Project } from '@/entities'
 import type { Paged } from '@/shared/pagination'
 import { AssetPreviewCard, Pagination } from '@/shared/ui'
 
 const CHARACTER_PAGE_SIZE = 24
 
-function characterName(character: Character) {
+function characterName(character: CharacterSummary) {
   return character.name ?? '未命名角色'
 }
 
@@ -15,7 +15,7 @@ export function AssetLibraryPage() {
   const { projectId } = useParams()
   const project = useOutletContext<Project>()
   const [pageNumber, setPageNumber] = useState(1)
-  const [charactersPage, setCharactersPage] = useState<Paged<Character> | null>(null)
+  const [charactersPage, setCharactersPage] = useState<Paged<CharacterSummary> | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -30,7 +30,7 @@ export function AssetLibraryPage() {
     setCharactersPage(null)
     setError(null)
     void characterApis
-      .listByProject(projectId, {
+      .listSummariesByProject(projectId, {
         page: pageNumber,
         pageSize: CHARACTER_PAGE_SIZE,
         status: CHARACTER_STATUS.PUBLISHED,
@@ -93,26 +93,30 @@ export function AssetLibraryPage() {
   )
 }
 
-function CharacterGrid({ projectId, characters }: { projectId: string; characters: Character[] }) {
+function CharacterGrid({
+  projectId,
+  characters,
+}: {
+  projectId: string
+  characters: CharacterSummary[]
+}) {
   if (characters.length === 0) return <EmptyState />
 
   return (
     <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-4">
       {characters.map((character, index) => {
         const name = characterName(character)
-        const outfit = character.outfits[0]
-        const actionCount = character.outfits.reduce((sum, item) => sum + item.actions.length, 0)
         return (
           <AssetPreviewCard
             key={character.id}
             to={`/projects/${projectId}/assets/${character.id}`}
             ariaLabel={`查看角色 ${name}`}
             title={name}
-            subtitle={outfit?.name ?? '尚未创建造型'}
+            subtitle={character.outfitName ?? '尚未创建造型'}
             trailing="↗"
-            footer={`${character.outfits.length} 套造型 · ${actionCount} 个动作`}
-            previewUrl={outfit?.previewUrl ?? null}
-            previewAlt={`${name}的${outfit?.name ?? '造型'}预览`}
+            footer={`${character.outfitCount} 套造型 · ${character.actionCount} 个动作`}
+            previewUrl={character.previewUrl}
+            previewAlt={`${name}的${character.outfitName ?? '造型'}预览`}
             thumbnail
             eager={index < 4}
             priority={index === 0}

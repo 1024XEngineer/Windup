@@ -46,6 +46,8 @@ export type {
   ActionType,
   Character,
   CharacterApis,
+  CharacterSummaryApis,
+  CharacterSummary,
   CharacterPageQuery,
   CharacterPublicationStatus,
   CharacterStatus,
