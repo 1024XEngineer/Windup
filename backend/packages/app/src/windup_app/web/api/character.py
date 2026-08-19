@@ -64,6 +64,19 @@ class CharacterOut(BaseModel):
     status: int
 
 
+class CharacterSummaryOut(BaseModel):
+    """角色集合的卡片投影；不携带完整资产树。"""
+
+    id: int
+    project_id: int
+    name: str | None
+    status: int
+    preview_url: str | None
+    outfit_name: str | None
+    outfit_count: int
+    action_count: int
+
+
 # ── 辅助函数 ─────────────────────────────────────────────────────────────────
 
 
@@ -208,6 +221,49 @@ def list_characters(
     )
     return ListResponse.success(
         [CharacterOut.model_validate(c) for c in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+def _character_summary(character: Character) -> CharacterSummaryOut:
+    outfits = (character.character_data or {}).get("outfits", [])
+    first_outfit = outfits[0] if outfits else None
+    return CharacterSummaryOut(
+        id=character.id,
+        project_id=character.project_id,
+        name=character.name,
+        status=character.status,
+        preview_url=first_outfit.get("preview_url") if first_outfit else None,
+        outfit_name=first_outfit.get("name") if first_outfit else None,
+        outfit_count=len(outfits),
+        action_count=sum(len(outfit.get("actions", [])) for outfit in outfits),
+    )
+
+
+@router.get("/summaries", response_model=ListResponse[CharacterSummaryOut])
+def list_character_summaries(
+    project_id: int = Query(..., gt=0),
+    request: Request = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    status: int | None = Query(
+        None, ge=0, le=1, description="按发布状态过滤: 0=草稿, 1=已发布"
+    ),
+    session: Session = Depends(get_session),
+) -> ListResponse[CharacterSummaryOut]:
+    user_id = request.state.current_user.id
+    _get_project_or_raise(session, project_id, user_id)
+    items, total = character_service.list_characters(
+        session,
+        project_id=project_id,
+        page=page,
+        page_size=page_size,
+        status=status,
+    )
+    return ListResponse.success(
+        [_character_summary(character) for character in items],
         total=total,
         page=page,
         page_size=page_size,
