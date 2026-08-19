@@ -24,6 +24,7 @@ from windup_app.server.project.model import Project  # noqa: F401
 from windup_app.server.quota.model import CreditAccount, CreditTransaction, InviteCode, InviteRecord  # noqa: F401
 from windup_app.server.user.model import User  # noqa: F401
 from windup_app.server.workflow_run.model import WorkflowRun  # noqa: F401
+from windup_app.web.api.agent import router as agent_router
 from windup_app.web.api.auth import router as auth_router
 from windup_app.web.api.character import router as character_router
 from windup_app.server.orchestrator import task_repo
@@ -135,6 +136,7 @@ def create_app() -> FastAPI:
     app.include_router(generation_router)
     app.include_router(quota_router)
     app.include_router(render3d_router)
+    app.include_router(agent_router)
     # 生成任务的后台执行器挂到 app.state:端点只建 PENDING 记录立即返回,真正的
     # 图生图/i2v 在后台线程跑。放在 state 而不是 import 到 web 层,是因为
     # import-linter 的分层契约禁止 app.web 直连 ai_engine,而 executor 要调它。
