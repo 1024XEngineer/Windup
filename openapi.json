@@ -1,6 +1,20 @@
 {
   "components": {
     "schemas": {
+      "ActionDirection": {
+        "enum": [
+          "east",
+          "west",
+          "north",
+          "south",
+          "north_east",
+          "north_west",
+          "south_east",
+          "south_west"
+        ],
+        "title": "ActionDirection",
+        "type": "string"
+      },
       "ActionPresetOut": {
         "description": "动作预设响应。",
         "properties": {
@@ -29,20 +43,6 @@
         ],
         "title": "ActionPresetOut",
         "type": "object"
-      },
-      "ActionDirection": {
-        "enum": [
-          "east",
-          "west",
-          "north",
-          "south",
-          "north_east",
-          "north_west",
-          "south_east",
-          "south_west"
-        ],
-        "title": "ActionDirection",
-        "type": "string"
       },
       "ActionType": {
         "description": "角色动作子类型。",
