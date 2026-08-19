@@ -21,6 +21,8 @@ import {
 import { forgetActiveRun, isMissingActiveRunError, syncActiveRun } from '@/features/active-run'
 import { useOptionalAuthSession } from '@/features/auth-session'
 import { ExportButton, type ExportPackageModel } from '@/features/export-package'
+import { useQuickStartAgent, type QuickStartAgentState } from '@/features/quick-start-agent/react'
+import type { CreateQuickStartAgentOptions } from '@/features/quick-start-agent/runtime'
 import {
   GenerationPreviewCard,
   GenerationProgressCopy,
@@ -142,12 +144,15 @@ export interface QuickStartPageProps {
   service?: QuickStartEntryService
   /** 直渲染页面测试可显式提供；生产中取当前认证用户。 */
   activeRunUserId?: string
+  /** app 组合层注入 Planner 与绑定到现有 WorkflowController 的唯一写 action。 */
+  agent: CreateQuickStartAgentOptions
 }
 
 /** Quick Start 独立完成 AI 入口；它不跳转 Workflow Editor。 */
 export function QuickStartPage({
   service,
   activeRunUserId: providedActiveRunUserId,
+  agent,
 }: QuickStartPageProps) {
   const { runId } = useParams()
   const [searchParams] = useSearchParams()
@@ -181,7 +186,7 @@ export function QuickStartPage({
       onSessionCreated={setCreatedSession}
     />
   ) : (
-    <QuickStartInput service={activeService} onSessionCreated={setCreatedSession} />
+    <QuickStartInput service={activeService} agent={agent} onSessionCreated={setCreatedSession} />
   )
 }
 
@@ -267,11 +272,65 @@ function QuickStartActionInput({
   )
 }
 
+function QuickStartAgentInlineState({ state }: { state: QuickStartAgentState }) {
+  if (state.status === 'idle') return null
+  if (state.status === 'planning') {
+    return (
+      <p role="status" className="mb-3 px-1 text-sm text-app-muted">
+        正在判断信息是否足够…
+      </p>
+    )
+  }
+  if (state.status === 'awaiting-input' || state.status === 'restart-required') {
+    return (
+      <p
+        role="status"
+        className="mb-3 rounded-xl border border-app-line bg-app-surface/80 px-4 py-3 text-sm text-app-ink-soft"
+      >
+        {state.message}
+      </p>
+    )
+  }
+  if (state.status === 'error') {
+    return (
+      <p
+        role="alert"
+        className="mb-3 rounded-xl bg-app-danger px-4 py-3 text-sm text-app-danger-soft"
+      >
+        {state.message}
+      </p>
+    )
+  }
+  return (
+    <div
+      role="status"
+      className="mb-3 rounded-xl border border-app-line-strong bg-app-surface/90 px-4 py-3"
+    >
+      <p className="font-mono text-[10px] font-bold tracking-[0.12em] text-app-muted">优化后描述</p>
+      <p className="mt-1 text-sm leading-6 text-app-ink">{state.optimizedPrompt}</p>
+      {state.assumptions.length > 0 ? (
+        <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="本次生成采用的默认假设">
+          {state.assumptions.map((assumption) => (
+            <li
+              key={assumption}
+              className="rounded-md bg-app-surface-muted px-2 py-1 text-xs text-app-muted"
+            >
+              {assumption}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
+
 function QuickStartInput({
   service,
+  agent,
   onSessionCreated,
 }: {
   service: QuickStartEntryService
+  agent: CreateQuickStartAgentOptions
   onSessionCreated: (session: QuickStartSession) => void
 }) {
   const navigate = useNavigate()
@@ -283,9 +342,11 @@ function QuickStartInput({
   const fileInput = useRef<HTMLInputElement>(null)
   const submitAbortController = useRef<AbortController | null>(null)
   const handoffTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const agentSession = useQuickStartAgent(agent)
   const unavailableReason = service.unavailableReason
+  const entryBusy = submitting || agentSession.busy
   const hasPrompt = Boolean(prompt.trim())
-  const showStylePrompts = !hasPrompt && !templateFile
+  const showStylePrompts = !hasPrompt && !templateFile && agentSession.state.status === 'idle'
 
   useEffect(
     () => () => {
@@ -296,6 +357,7 @@ function QuickStartInput({
   )
 
   function selectTemplateFile(event: ChangeEvent<HTMLInputElement>) {
+    if (entryBusy) return
     const selected = event.target.files?.[0] ?? null
     setTemplateFile(selected)
     setError(null)
@@ -309,7 +371,31 @@ function QuickStartInput({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const normalizedPrompt = prompt.trim()
-    if ((!normalizedPrompt && !templateFile) || submitting || unavailableReason) return
+    if ((!normalizedPrompt && !templateFile) || entryBusy || unavailableReason) return
+
+    if (!templateFile) {
+      setError(null)
+      try {
+        const result = await agentSession.submit(normalizedPrompt)
+        if (result.kind === 'message') {
+          setPrompt('')
+          return
+        }
+        setEntryTransition('leaving')
+        await new Promise<void>((resolve) => {
+          handoffTimer.current = setTimeout(() => {
+            handoffTimer.current = null
+            resolve()
+          }, ENTRY_HANDOFF_MS)
+        })
+        navigate(`/quick-start/${encodeURIComponent(result.runId)}`)
+      } catch (cause) {
+        if (!(cause instanceof Error && cause.name === 'AbortError')) {
+          setEntryTransition('idle')
+        }
+      }
+      return
+    }
 
     const abortController = new AbortController()
     submitAbortController.current = abortController
@@ -317,9 +403,11 @@ function QuickStartInput({
     setEntryTransition('leaving')
     setError(null)
     try {
-      const sessionPromise = templateFile
-        ? service.startWithUploadedTemplate(templateFile, normalizedPrompt, abortController.signal)
-        : service.start(normalizedPrompt)
+      const sessionPromise = service.startWithUploadedTemplate(
+        templateFile,
+        normalizedPrompt,
+        abortController.signal,
+      )
       const handoffPromise = new Promise<void>((resolve) => {
         handoffTimer.current = setTimeout(() => {
           handoffTimer.current = null
@@ -362,7 +450,7 @@ function QuickStartInput({
           }`}
         >
           <KineticCopyCycle
-            active={!templateFile && !submitting}
+            active={!templateFile && !entryBusy}
             as="h1"
             ariaLabel="想做一个什么角色？"
             motionMode="characters"
@@ -399,6 +487,7 @@ function QuickStartInput({
         </div>
 
         <div data-layout="quick-start-composer" className="mx-auto w-full max-w-3xl self-end">
+          {!templateFile ? <QuickStartAgentInlineState state={agentSession.state} /> : null}
           <form
             onSubmit={(event) => void submit(event)}
             className="grid items-center gap-1.5 rounded-xl border border-app-line-strong bg-app-surface-raised p-1.5 shadow-app-panel transition-shadow focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)] sm:grid-cols-[1fr_auto_auto]"
@@ -411,6 +500,7 @@ function QuickStartInput({
                 aria-label="创作指令"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
+                disabled={entryBusy}
                 placeholder={
                   templateFile ? '描述动作，可留空生成待机动作…' : '描述角色的外形、身份和气质…'
                 }
@@ -423,6 +513,7 @@ function QuickStartInput({
               type="file"
               accept="image/*"
               aria-label="上传角色母版"
+              disabled={entryBusy}
               className="sr-only"
               onChange={selectTemplateFile}
             />
@@ -431,6 +522,7 @@ function QuickStartInput({
                 <button
                   type="button"
                   aria-label={`更换母版 ${templateFile.name}`}
+                  disabled={entryBusy}
                   onClick={() => fileInput.current?.click()}
                   className="inline-flex h-full min-w-0 items-center gap-2 rounded-l-lg px-2.5 font-semibold transition hover:bg-app-surface hover:text-app-accent focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
                 >
@@ -440,6 +532,7 @@ function QuickStartInput({
                 <button
                   type="button"
                   aria-label="移除图片"
+                  disabled={entryBusy}
                   onClick={removeTemplateFile}
                   className="grid size-8 shrink-0 place-items-center rounded-md text-app-muted transition hover:bg-app-surface hover:text-app-accent focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
                 >
@@ -449,6 +542,7 @@ function QuickStartInput({
             ) : (
               <button
                 type="button"
+                disabled={entryBusy}
                 onClick={() => fileInput.current?.click()}
                 className="inline-flex h-10 items-center gap-2 rounded-lg px-3 text-xs font-semibold whitespace-nowrap text-app-muted transition hover:bg-app-surface-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
               >
@@ -459,12 +553,22 @@ function QuickStartInput({
             <button
               type="submit"
               disabled={
-                (!prompt.trim() && !templateFile) || submitting || Boolean(unavailableReason)
+                (!prompt.trim() && !templateFile) || entryBusy || Boolean(unavailableReason)
               }
               className="inline-flex h-10 items-center gap-2 rounded-lg bg-app-accent px-4 text-sm font-bold whitespace-nowrap text-app-on-accent transition hover:bg-app-accent-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
             >
-              {submitting ? '正在创建…' : '生成角色'}
-              {!submitting ? <ArrowUp aria-hidden="true" size={16} weight="bold" /> : null}
+              {templateFile && submitting
+                ? '正在创建…'
+                : agentSession.state.status === 'planning'
+                  ? '正在判断…'
+                  : agentSession.state.status === 'dispatching'
+                    ? '正在开始生成…'
+                    : agentSession.state.status === 'restart-required'
+                      ? '重新开始'
+                      : agentSession.state.status === 'awaiting-input'
+                        ? '继续'
+                        : '生成角色'}
+              {!entryBusy ? <ArrowUp aria-hidden="true" size={16} weight="bold" /> : null}
             </button>
           </form>
 

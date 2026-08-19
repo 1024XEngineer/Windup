@@ -11,6 +11,7 @@ export type QuickStartAgentState =
   | { status: 'idle' }
   | { status: 'planning' }
   | { status: 'awaiting-input'; message: string }
+  | { status: 'restart-required'; message: string }
   | ({ status: 'dispatching' } & CharacterGenerationPlan)
   | { status: 'error'; message: string }
 
@@ -38,6 +39,8 @@ export function useQuickStartAgent({
   const [state, setState] = useState<QuickStartAgentState>({ status: 'idle' })
   const agent = useRef<ReturnType<typeof createQuickStartAgent> | null>(null)
   const started = useRef(false)
+  const clarificationReceived = useRef(false)
+  const restartRequired = useRef(false)
   const running = useRef(false)
   const abortController = useRef<AbortController | null>(null)
   const mounted = useRef(true)
@@ -51,12 +54,21 @@ export function useQuickStartAgent({
       agent.current?.revoke()
       agent.current = null
       started.current = false
+      clarificationReceived.current = false
+      restartRequired.current = false
     }
   }, [planner, startCharacterGeneration])
 
   const submit = useCallback(
     async (input: string): Promise<QuickStartAgentResult> => {
       if (running.current) throw new Error('Planner 正在处理上一条输入')
+      if (restartRequired.current) {
+        agent.current?.revoke()
+        agent.current = null
+        started.current = false
+        clarificationReceived.current = false
+        restartRequired.current = false
+      }
       running.current = true
       const controller = new AbortController()
       abortController.current = controller
@@ -65,7 +77,8 @@ export function useQuickStartAgent({
       try {
         agent.current ??= createQuickStartAgent({ planner, startCharacterGeneration })
         const activeAgent = agent.current
-        const runTurn = started.current ? activeAgent.continue : activeAgent.start
+        const continuing = started.current
+        const runTurn = continuing ? activeAgent.continue : activeAgent.start
         started.current = true
         const result = await runTurn(input, {
           signal: controller.signal,
@@ -75,7 +88,13 @@ export function useQuickStartAgent({
           },
         })
         if (result.kind === 'message' && mounted.current) {
-          setState({ status: 'awaiting-input', message: result.message })
+          const clarificationExhausted = clarificationReceived.current
+          clarificationReceived.current = true
+          restartRequired.current = clarificationExhausted
+          setState({
+            status: clarificationExhausted ? 'restart-required' : 'awaiting-input',
+            message: result.message,
+          })
         }
         return result
       } catch (cause) {
