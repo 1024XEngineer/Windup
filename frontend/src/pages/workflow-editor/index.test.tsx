@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import type { ReactNode } from 'react'
+import { createElement, type ComponentType, type ReactNode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Link, MemoryRouter, Route, Routes } from 'react-router'
@@ -61,7 +61,8 @@ interface TestCanvasNode {
   deletable?: boolean
   draggable?: boolean
   dragHandle?: string
-  data: { title: string; content: ReactNode }
+  position: { x: number; y: number }
+  data: { eyebrow: string; title: string; content: ReactNode }
 }
 
 interface TestFlowProps extends Record<string, unknown> {
@@ -191,6 +192,102 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(await screen.findByLabelText('当前项目')).toBeTruthy()
     expect(screen.queryByText('真实 WorkflowRun 接口')).toBeNull()
     expect(defaultSessionLoader).toHaveBeenCalledWith('42')
+  })
+
+  it('节点抬头只显示流程序号，不附加英文阶段名', async () => {
+    defaultSessionLoader.mockResolvedValue(createSession(reviewingActionWorkflow()))
+
+    renderEditor('/workflow-editor/42')
+
+    await waitFor(() => expect(latestFlowProps().nodes).toHaveLength(6))
+    expect(latestFlowProps().nodes.map((node) => node.data.eyebrow)).toEqual([
+      '01',
+      '02',
+      '03',
+      '04',
+      '05',
+      '06',
+    ])
+  })
+
+  it('用紧凑卡片和更短的节点间距呈现完整工作流', async () => {
+    defaultSessionLoader.mockResolvedValue(
+      createSession(reviewingActionWorkflow('action-a', 'action-b')),
+    )
+
+    renderEditor('/workflow-editor/42')
+
+    await waitFor(() => expect(latestFlowProps().nodes).toHaveLength(10))
+    const nodes = latestFlowProps().nodes
+    const xValues = nodes.map((node) => node.position.x)
+    expect(Math.max(...xValues) - Math.min(...xValues)).toBeLessThanOrEqual(1700)
+
+    const actionRoots = nodes.filter((node) => node.data.title === '动作首帧')
+    expect(actionRoots[1]!.position.y - actionRoots[0]!.position.y).toBeLessThanOrEqual(400)
+
+    const Card = (
+      latestFlowProps().nodeTypes as Record<string, ComponentType<Record<string, unknown>>>
+    )['workflow-card']!
+    const cardView = render(
+      createElement(Card, {
+        id: 'compact-card',
+        selected: false,
+        data: {
+          eyebrow: '01',
+          title: '角色设定',
+          status: 'active',
+          content: <span>内容</span>,
+        },
+      }),
+    )
+    expect(cardView.container.querySelector('article')?.className).toContain('w-[296px]')
+    const header = cardView.container.querySelector('header')
+    expect(header).not.toBeNull()
+    expect(header?.textContent).toContain('01')
+    expect(header?.textContent).toContain('角色设定')
+    expect(header?.className).not.toContain('border-b')
+    expect(header?.className).not.toContain('bg-app-surface')
+    expect(header?.querySelector('span')?.className).not.toContain('bg-app-accent-muted')
+  })
+
+  it('图片加载时保留版面并在完成后淡入', async () => {
+    defaultSessionLoader.mockResolvedValue(createSession(completedTemplateWorkflow('42')))
+
+    renderEditor('/workflow-editor/42')
+
+    const image = await screen.findByRole('img', { name: '已确认身份母版' })
+    expect(screen.getByRole('status', { name: '正在加载已确认身份母版' })).toBeTruthy()
+    expect(image.className).toContain('opacity-0')
+
+    fireEvent.load(image)
+
+    expect(screen.queryByRole('status', { name: '正在加载已确认身份母版' })).toBeNull()
+    expect(image.className).toContain('opacity-100')
+  })
+
+  it('导出是次要动作，当前节点推进仍是主要动作', async () => {
+    const character = characterFixture()
+    character.outfits[0] = {
+      ...character.outfits[0]!,
+      previewUrl: 'https://assets.windup.test/42.png',
+    }
+    defaultSessionLoader.mockResolvedValue(
+      createSession(reviewingActionWorkflow(), {
+        character,
+        generationApis: generationApisFixture({
+          get: vi.fn().mockResolvedValue(completeAnimationGeneration()),
+        }),
+      }),
+    )
+
+    renderEditor('/workflow-editor/42')
+
+    const exportButtons = await screen.findAllByRole('button', { name: /导出角色母版/ })
+    expect(exportButtons.length).toBeGreaterThan(0)
+    expect(
+      exportButtons.every((button) => button.className.includes('border-app-line-strong')),
+    ).toBe(true)
+    expect(screen.getByRole('button', { name: '审核通过' }).className).toContain('bg-app-accent')
   })
 
   it('会话加载失败时展示恢复错误', async () => {
