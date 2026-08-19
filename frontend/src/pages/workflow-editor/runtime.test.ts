@@ -13,6 +13,7 @@ import type {
 import { WorkflowRunConflictError } from '@/entities'
 import { registerApiAccessTokenProvider, registerApiUnauthorizedRecovery } from '@/shared/api'
 import { createDefaultRealWorkflowEditorSession, createRealWorkflowEditorSession } from './runtime'
+import { stubRender3DApis } from '@/test/render3d-apis'
 
 describe('createRealWorkflowEditorSession', () => {
   it('通过公开 MediaApis 上传角色参考图并固定用途分类', async () => {
@@ -70,6 +71,7 @@ describe('createRealWorkflowEditorSession', () => {
       workflowRunApis,
       generationApis,
       mediaApis: { upload: vi.fn() },
+      render3d: stubRender3DApis(),
       projectApis,
       characterApis,
       onAsyncError: vi.fn(),
@@ -121,6 +123,7 @@ describe('createRealWorkflowEditorSession', () => {
           subscribe: vi.fn(() => () => undefined),
         },
         mediaApis: { upload: vi.fn() },
+        render3d: stubRender3DApis(),
         projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
         characterApis,
         onAsyncError: vi.fn(),
@@ -144,6 +147,7 @@ describe('createRealWorkflowEditorSession', () => {
         subscribe: vi.fn(() => () => undefined),
       },
       mediaApis: { upload: vi.fn() },
+      render3d: stubRender3DApis(),
       projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
       characterApis: {
         listByProject: vi.fn().mockResolvedValue({
@@ -192,6 +196,7 @@ describe('createRealWorkflowEditorSession', () => {
         subscribe: vi.fn(() => () => undefined),
       },
       mediaApis: { upload: vi.fn() },
+      render3d: stubRender3DApis(),
       projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
       characterApis: {
         listByProject: vi.fn().mockResolvedValue({
@@ -292,6 +297,7 @@ describe('createRealWorkflowEditorSession', () => {
         update: vi.fn(async (character) => structuredClone(character)),
         remove,
       },
+      render3d: stubRender3DApis(),
       onAsyncError,
     })
 
@@ -375,6 +381,7 @@ describe('createRealWorkflowEditorSession', () => {
         }),
         remove: vi.fn(),
       },
+      render3d: stubRender3DApis(),
       onAsyncError: vi.fn(),
     })
 
@@ -424,6 +431,7 @@ describe('createRealWorkflowEditorSession', () => {
         }),
         remove: vi.fn(),
       },
+      render3d: stubRender3DApis(),
       onAsyncError,
     })
 
@@ -453,6 +461,7 @@ describe('createRealWorkflowEditorSession', () => {
         subscribe: vi.fn(() => () => undefined),
       },
       mediaApis: { upload: vi.fn() },
+      render3d: stubRender3DApis(),
       projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
       characterApis: {
         listByProject: vi.fn().mockResolvedValue({
@@ -512,6 +521,7 @@ describe('createRealWorkflowEditorSession', () => {
         update: vi.fn(),
         remove: vi.fn(),
       },
+      render3d: stubRender3DApis(),
       onAsyncError: vi.fn(),
     })
 
@@ -556,6 +566,7 @@ describe('createRealWorkflowEditorSession', () => {
         update: updateCharacter,
         remove: vi.fn(),
       },
+      render3d: stubRender3DApis(),
       onAsyncError: vi.fn(),
     })
 
@@ -619,6 +630,7 @@ describe('createRealWorkflowEditorSession', () => {
         update: updateCharacter,
         remove: vi.fn(),
       },
+      render3d: stubRender3DApis(),
       onAsyncError: vi.fn(),
     })
 
@@ -694,6 +706,7 @@ describe('createRealWorkflowEditorSession', () => {
         }),
         remove: vi.fn(),
       },
+      render3d: stubRender3DApis(),
       onAsyncError: vi.fn(),
     })
 
@@ -752,6 +765,7 @@ describe('createRealWorkflowEditorSession', () => {
         }),
         remove: vi.fn(),
       },
+      render3d: stubRender3DApis(),
       onAsyncError,
     })
 
@@ -891,6 +905,7 @@ async function createCharacterTemplateSession(
       remove,
     },
     mediaApis: options.mediaApis ?? { upload: vi.fn() },
+    render3d: stubRender3DApis(),
     onAsyncError: vi.fn(),
   })
   return { session, create, update, remove }
@@ -956,6 +971,7 @@ function characterWithOutfitFixture(): Character {
         name: '常态造型',
         description: null,
         previewUrl: null,
+        model3dUrl: null,
         actions: [],
       },
     ],

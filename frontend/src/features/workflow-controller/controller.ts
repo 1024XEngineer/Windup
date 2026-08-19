@@ -755,9 +755,6 @@ export function createWorkflowController({
       if (node.phase !== 'ready') throw new Error('完整动画节点当前不能生成')
       const methodNode = findSingleDependencyNode(run, node, 'action-generation-method')
       if (!methodNode.method) throw new Error('尚未选择动作生成方式')
-      if (methodNode.method === '3d-to-2d') {
-        throw new Error('3D 转 2D 接口尚未提供，暂时不能开始生成')
-      }
       const firstFrameNode = findSingleDependencyNode(run, methodNode, 'action-first-frame')
       if (!firstFrameNode.selectedFirstFrameUrl) throw new Error('动作首帧尚未确认')
       const input: CompleteAnimationGenerationInput = {
@@ -765,6 +762,7 @@ export function createWorkflowController({
         projectId: run.projectId,
         characterId,
         outfitId: firstFrameNode.input.outfitId,
+        method: methodNode.method,
         actionType: firstFrameNode.input.type,
         firstFrameUrl: firstFrameNode.selectedFirstFrameUrl,
         prompt: firstFrameNode.input.prompt,

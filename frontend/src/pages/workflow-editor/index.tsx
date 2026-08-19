@@ -19,8 +19,12 @@ import {
   type CharacterSetupWorkflowNode,
   type CharacterTemplateWorkflowNode,
   type Generation,
+  type MasterPrecheckReport,
+  type MasterWarning,
   type MediaReference,
   type Project,
+  type Render3DApis,
+  type Render3DAsset,
   type ReviewWorkflowNode,
   type WorkflowGenerationRole,
   type WorkflowNode,
@@ -83,6 +87,15 @@ const CARD_SUMMARY =
   'm-0 rounded-lg bg-app-accent-muted px-3 py-2 text-[11px] leading-[1.55] text-app-ink-soft'
 
 const CARD_TEXT = 'm-0 text-[11px] leading-[1.6] text-[var(--color-app-muted)]'
+
+/**
+ * 三渲二判据只有一条:该造型有没有已确认的绑骨 3D 模型(`Outfit.model3dUrl`)。
+ * 没有就不提供这个选项——猜一个"反正总能兜底成 i2v"等于让用户在不知情下换了路线。
+ * 建模型本身是按次计费、每造型一次性(图生 3D + 绑骨),且生成后要人工确认模型才能继续绑骨。
+ */
+const RENDER3D_UNAVAILABLE_HINT =
+  '该造型暂无绑骨 3D 模型，暂不能使用三渲二。到「身份母版」卡片上的「建 3D 资产」建一份：' +
+  '图生 3D + 自动绑骨，按次计费、每造型一次性，中间有一道人工确认；不合格只能重新生成，不能修改。'
 
 /** 加号菜单里的条目：撑满菜单宽度的两行文字，跟卡片主按钮完全不同。 */
 const MENU_ITEM =
@@ -191,6 +204,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
             uploadReferenceImage: session.uploadReferenceImage,
             publishReviewedAction: session.publishReviewedAction,
             project: session.project,
+            render3d: session.render3d,
             character,
             generations,
             exportModels,
@@ -291,6 +305,8 @@ interface ProjectionInput {
   publishReviewedAction(reviewNodeId: ReviewWorkflowNode['id']): Promise<Character>
   project: Project
   character: Character | null
+  /** 母版预检与建 3D 资产；页面不直连适配器，替身注入只有会话这一个入口。 */
+  render3d: Render3DApis
   generations: Record<string, Generation | null>
   exportModels: ReadonlyMap<string, ExportPackageModel>
   selectedImages: Record<string, string>
@@ -611,19 +627,17 @@ function CharacterTemplateContent({
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          className={CARD_BUTTON}
-          disabled={!selectedImageUrl || branchBusy}
-          onClick={() =>
-            input.runCommand(branchKey, async () => {
-              const character = await input.confirmCharacterTemplate(node.id, selectedImageUrl!)
-              input.setCharacter(character)
-            })
-          }
-        >
-          确认身份母版
-        </button>
+        {selectedImageUrl ? (
+          <MasterGate
+            node={node}
+            input={input}
+            imageUrl={selectedImageUrl}
+            branchKey={branchKey}
+            branchBusy={branchBusy}
+          />
+        ) : (
+          <p className={CARD_TEXT}>先选一张候选，再决定是否把它定为母版。</p>
+        )}
       </div>
     )
   }
@@ -636,6 +650,14 @@ function CharacterTemplateContent({
       <div className={CARD_STACK}>
         <WorkflowImage src={node.selectedImageUrl} alt="已确认身份母版" variant="master" />
         <span className="text-center text-[11px] text-[var(--color-app-muted)]">身份已锁定</span>
+        {input.character && outfit ? (
+          <Render3DAssetPanel
+            input={input}
+            characterId={input.character.id}
+            outfitId={outfit.id}
+            hasModel={Boolean(outfit.model3dUrl)}
+          />
+        ) : null}
         {outfit ? <NodeExportButton model={input.exportModels.get(outfit.id)} /> : null}
         <div className="grid gap-2">
           <button
@@ -721,6 +743,325 @@ function CharacterTemplateContent({
     )
   }
   return <StatusText node={node} input={input} />
+}
+
+/**
+ * 母版确认闸：挑中候选之后、把它当母版用之前的那个停点。
+ *
+ * 为什么这道闸值得存在：一张母版约 ¥0.29，图生 3D 一次 ¥2.40，而混元的模型**生成即
+ * 最终**（拓扑、绑点在生成那一步定死，事后改不动）。母版不合格 → 模型必然不合格 →
+ * 只能整个重来。所以要在最便宜的位置纠错，而不是等模型出来再看。
+ *
+ * 闸上摆的是**零成本就能判的**那几条（后端 master_check）。判不了的（画的是不是这个
+ * 角色、朝向对不对、画面里有没有文字）由人自己看放大图 —— 所以放大图是这道闸的主体，
+ * 预检只是旁证。
+ */
+function MasterGate({
+  node,
+  input,
+  imageUrl,
+  branchKey,
+  branchBusy,
+}: {
+  node: CharacterTemplateWorkflowNode
+  input: ProjectionInput
+  imageUrl: string
+  branchKey: string
+  branchBusy: boolean
+}) {
+  const precheck = useMasterPrecheck(input, imageUrl)
+  const setupNode = findDependency(input.run, node, 'character-setup')
+  const rejected = precheck.status === 'done' && !precheck.report.accepted
+
+  return (
+    <div className={CARD_STACK}>
+      <WorkflowImage src={imageUrl} alt="待确认定妆母版" variant="master" />
+      <MasterPrecheckReadout state={precheck} />
+      <button
+        type="button"
+        className={CARD_BUTTON}
+        // 预检的判据是近似的（面积比、连通块数），会误判；它拦下来的图未必真不能用。
+        // 所以拒绝只改文案不改可用性——把"这张不行"的决定权留给看得见图的人。
+        disabled={branchBusy}
+        title={rejected ? precheck.report.detail : undefined}
+        onClick={() =>
+          input.runCommand(branchKey, async () => {
+            const character = await input.confirmCharacterTemplate(node.id, imageUrl)
+            input.setCharacter(character)
+          })
+        }
+      >
+        确认为定妆母版
+      </button>
+      <button
+        type="button"
+        className={CARD_BUTTON}
+        disabled={branchBusy || !setupNode}
+        onClick={() => {
+          if (!setupNode) return
+          input.setSelectedImages((selected) => {
+            const next = { ...selected }
+            delete next[node.id]
+            return next
+          })
+          // 先复位再重生成：不复位的话新的三张会挂在一个仍处于 selecting 的节点上，
+          // 页面会把旧的选择当成对新候选的选择。
+          input.runCommand(branchKey, async () => {
+            await input.controller.restartFromNode(node.id)
+            await input.controller.generateCharacterTemplate(setupNode.id, {
+              spriteWidth: input.project.spriteSize.width,
+              spriteHeight: input.project.spriteSize.height,
+            })
+          })
+        }}
+      >
+        重新生成三张
+      </button>
+    </div>
+  )
+}
+
+type MasterPrecheckState =
+  | { status: 'loading' }
+  | { status: 'done'; report: MasterPrecheckReport }
+  | { status: 'error'; message: string }
+
+/** 预检失败不影响确认：它是旁证，不是准入条件。判据坏了不该连带把人挡在外面。 */
+function useMasterPrecheck(input: ProjectionInput, imageUrl: string): MasterPrecheckState {
+  const [state, setState] = useState<MasterPrecheckState>({ status: 'loading' })
+  const { render3d } = input
+  const { width, height } = input.project.spriteSize
+
+  useEffect(() => {
+    let cancelled = false
+    setState({ status: 'loading' })
+    void render3d
+      .precheckMaster(imageUrl, { width, height })
+      .then((report) => {
+        if (!cancelled) setState({ status: 'done', report })
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) setState({ status: 'error', message: errorMessage(cause, '母版预检失败') })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [height, imageUrl, render3d, width])
+
+  return state
+}
+
+const WARNING_TITLE: Record<MasterWarning['code'], string> = {
+  limbs_fused: '双腿可能粘连',
+  extra_component: '画面里还有别的东西',
+}
+
+function MasterPrecheckReadout({ state }: { state: MasterPrecheckState }) {
+  if (state.status === 'loading') {
+    return (
+      <p className={CARD_SUMMARY} role="status">
+        正在预检母版…
+      </p>
+    )
+  }
+  if (state.status === 'error') {
+    return (
+      <p className={CARD_SUMMARY}>
+        母版预检没跑成：{state.message}。这不影响确认，但下一步的形态问题得你自己看。
+      </p>
+    )
+  }
+  const { report } = state
+  if (!report.accepted) {
+    return (
+      <p
+        role="alert"
+        className="m-0 rounded-[10px] border border-app-danger-line bg-app-danger-soft px-3 py-2.5 text-[11px] leading-[1.6] text-app-danger"
+      >
+        这张不能用：{report.detail}
+      </p>
+    )
+  }
+  return (
+    <div className={CARD_STACK}>
+      <p className={CARD_SUMMARY}>{report.detail}</p>
+      {report.warnings.map((warning) => (
+        <p key={warning.code} className={CARD_SUMMARY}>
+          <b>{WARNING_TITLE[warning.code]}</b>
+          <br />
+          {warning.detail}
+        </p>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * 建 3D 资产：把 `Render3DAssetBuilder` 那条链交到用户手里。
+ *
+ * 三件事不能省：
+ *  - **成本先说**。图生 3D + 绑骨按次计费，每造型一次性；数字由后端从计费实现取，
+ *    这里不抄常量。用户不知情就触发按次计费是红线。
+ *  - **人工确认闸不能自动放行**。模型出来后停在 `awaiting_review`，等人点头才绑骨。
+ *  - **不装进度条**。没有 3D 预览能力，就给状态、给模型下载地址、给怎么看的说明，
+ *    而不是转一个和真实进度无关的圈。
+ */
+function Render3DAssetPanel({
+  input,
+  characterId,
+  outfitId,
+  hasModel,
+}: {
+  input: ProjectionInput
+  characterId: string
+  outfitId: string
+  hasModel: boolean
+}) {
+  const { render3d } = input
+  const [asset, setAsset] = useState<Render3DAsset | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
+
+  const inFlight = asset?.state === 'building' || asset?.state === 'rigging'
+
+  useEffect(() => {
+    let cancelled = false
+    const read = () =>
+      render3d
+        .getOutfitAsset(characterId, outfitId)
+        .then((next) => {
+          if (!cancelled) setAsset(next)
+        })
+        .catch((cause: unknown) => {
+          if (!cancelled) setError(errorMessage(cause, '读取 3D 资产状态失败'))
+        })
+    void read()
+    // 两段付费调用各要几十秒到几分钟，跑在后端线程上，只能轮询。停在闸上时不轮询——
+    // 那个状态只会因为人点按钮而改变，轮询它纯属浪费。
+    if (!inFlight)
+      return () => {
+        cancelled = true
+      }
+    const timer = window.setInterval(() => void read(), 3000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [characterId, inFlight, outfitId, refreshKey, render3d])
+
+  // 轮询拿到 ready 时,页面级 Character 还停在旧值,而三渲二能不能选读的正是它
+  // (`outfits[].model3dUrl`)。不回填的话,用户等完两段付费流程仍看到那条路线是灰的,
+  // 得整页刷新才能继续 —— 刚花掉三十积分的人最不该撞上这个。
+  // 守卫只用 hasModel,不另设"同步过了"的一次性开关:那种开关在 Character 被别处
+  // 重新拉取、回到没有 model3dUrl 的旧值时就再也不会补,又退回"必须刷新页面"。
+  useEffect(() => {
+    if (asset?.state !== 'ready' || !asset.model3dUrl || hasModel) return
+    const character = input.character
+    if (!character) return
+    input.setCharacter({
+      ...character,
+      outfits: character.outfits.map((outfit) =>
+        outfit.id === outfitId ? { ...outfit, model3dUrl: asset.model3dUrl } : outfit,
+      ),
+    })
+  }, [asset, hasModel, input, outfitId])
+
+  const act = (operation: () => Promise<Render3DAsset>) => {
+    if (busy) return
+    setBusy(true)
+    setError(null)
+    void operation()
+      .then((next) => setAsset(next))
+      .catch((cause: unknown) => setError(errorMessage(cause, '操作 3D 资产失败')))
+      .finally(() => {
+        setBusy(false)
+        setRefreshKey((key) => key + 1)
+      })
+  }
+
+  if (!asset) {
+    return <p className={CARD_SUMMARY}>{error ?? '正在读取 3D 资产状态…'}</p>
+  }
+
+  const cost = asset.cost
+  const costLine =
+    `图生 3D ${cost.model3dCredits} 积分 + 绑骨 ${cost.autorigCredits} 积分 = ` +
+    `${cost.totalCredits} 积分（后付费约 ¥${cost.totalCny}）。每造型一次性，做多少个动作都不再收。`
+
+  return (
+    <section className={CARD_STACK} aria-label="三渲二 3D 资产">
+      {error ? <p className={CARD_SUMMARY}>{error}</p> : null}
+      {asset.state === 'absent' || asset.state === 'failed' ? (
+        <>
+          <p className={CARD_SUMMARY}>{costLine}</p>
+          {asset.state === 'failed' && asset.error ? (
+            <p className={CARD_SUMMARY}>上次没建成：{asset.error}</p>
+          ) : null}
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={busy}
+            onClick={() => act(() => render3d.buildOutfitAsset(characterId, outfitId))}
+          >
+            建 3D 资产（{cost.totalCredits} 积分 · 约 ¥{cost.totalCny}）
+          </button>
+        </>
+      ) : null}
+
+      {asset.state === 'building' ? (
+        <p className={CARD_SUMMARY} role="status">
+          正在图生 3D（{cost.model3dCredits} 积分已计费）。这一步几十秒到几分钟，
+          出来后会停下来等你确认，不会自己接着绑骨。
+        </p>
+      ) : null}
+
+      {asset.state === 'awaiting_review' ? (
+        <>
+          <p className={CARD_SUMMARY}>
+            模型已生成，等你确认。<b>混元的模型改不动</b>——不合格只能重新生成，
+            所以这一步别放水：绑骨还要再花 {cost.autorigCredits} 积分。
+          </p>
+          {asset.reviewModelUrl ? (
+            <p className={CARD_TEXT}>
+              <a href={asset.reviewModelUrl} target="_blank" rel="noreferrer">
+                下载待审模型（.glb）
+              </a>
+              ：用 Blender 或任意 glTF 查看器打开，看四肢有没有粘连、有没有多出来的物体。
+            </p>
+          ) : (
+            <p className={CARD_TEXT}>待审模型暂时取不到地址，先别放行。</p>
+          )}
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={busy}
+            onClick={() => act(() => render3d.approveOutfitAsset(characterId, outfitId))}
+          >
+            通过 · 继续绑骨（{cost.autorigCredits} 积分）
+          </button>
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={busy}
+            onClick={() => act(() => render3d.discardOutfitAsset(characterId, outfitId))}
+          >
+            不合格 · 重新生成（再花 {cost.model3dCredits} 积分）
+          </button>
+        </>
+      ) : null}
+
+      {asset.state === 'rigging' ? (
+        <p className={CARD_SUMMARY} role="status">
+          正在自动绑骨（{cost.autorigCredits} 积分已计费）。完成后这个造型就能选三渲二了。
+        </p>
+      ) : null}
+
+      {asset.state === 'ready' ? (
+        <p className={CARD_SUMMARY}>3D 资产已就绪，这个造型可以走三渲二了。</p>
+      ) : null}
+    </section>
+  )
 }
 
 function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templateNodeId: string }) {
@@ -1072,8 +1413,17 @@ function MethodContent({
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
   if (node.status === 'failed') return <StatusText node={node} input={input} />
-  if (node.phase === 'completed') return <p className={CARD_SUMMARY}>视频裁剪</p>
+  if (node.phase === 'completed') {
+    return <p className={CARD_SUMMARY}>{node.method === '3d-to-2d' ? '三渲二' : '视频裁剪'}</p>
+  }
   if (node.status !== 'active') return <StatusText node={node} input={input} />
+
+  const firstFrameNode = findDependency(input.run, node, 'action-first-frame')
+  const outfit = firstFrameNode
+    ? input.character?.outfits.find((candidate) => candidate.id === firstFrameNode.input.outfitId)
+    : null
+  const render3dReady = Boolean(outfit?.model3dUrl)
+
   return (
     <div className={CARD_STACK}>
       <button
@@ -1088,9 +1438,20 @@ function MethodContent({
       >
         视频裁剪
       </button>
-      <button type="button" className={CARD_BUTTON_SECONDARY} disabled title="后端接口尚未提供">
-        3D 转 2D · 尚未开放
+      <button
+        type="button"
+        className={CARD_BUTTON}
+        disabled={branchBusy || !render3dReady}
+        title={render3dReady ? undefined : RENDER3D_UNAVAILABLE_HINT}
+        onClick={() =>
+          input.runCommand(branchKey, () =>
+            input.controller.selectActionGenerationMethod(node.id, '3d-to-2d'),
+          )
+        }
+      >
+        三渲二{render3dReady ? '' : ' · 需先建 3D 模型'}
       </button>
+      {render3dReady ? null : <p className={CARD_TEXT}>{RENDER3D_UNAVAILABLE_HINT}</p>}
     </div>
   )
 }
