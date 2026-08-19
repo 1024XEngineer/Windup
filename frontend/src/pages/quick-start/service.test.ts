@@ -474,6 +474,25 @@ describe('createQuickStartService', () => {
     )
   })
 
+  it('returns the accepted generation without adding a fallible post-write run read', async () => {
+    const workflowRunApis = createWorkflowRunApis()
+    vi.spyOn(workflowRunApis, 'get').mockRejectedValue(new Error('run read unavailable'))
+    const service = createQuickStartService({
+      workflowRunApis,
+      generationApis: pendingGenerationApis(),
+      prepareProject: async () => ({ id: 'project-1', spriteSize: { width: 256, height: 256 } }),
+      projectApis: projectReader(),
+    })
+
+    const session = await service.start('像素骑士')
+
+    expect(session.getWorkflow().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'character-template', phase: 'generating' }),
+      ]),
+    )
+  })
+
   it('creates the character without a name so the backend derives it from the description', async () => {
     const longPrompt = '一位穿着红色斗篷的像素风格女骑士手持长剑站立'
     let savedCharacter = characterFixture({
