@@ -228,7 +228,7 @@ describe('createGenerationApis', () => {
   })
 
   it('选视频裁剪时不发 outfit_id——后端拿它在场与否当三渲二的唯一判据', async () => {
-    const request = vi.fn(async () =>
+    const request = vi.fn(async (_url: string, _init?: RequestInit) =>
       success(
         taskData({
           task_type: 'character_action',
