@@ -4,6 +4,10 @@
 export { createUserApis, userApis } from './user'
 export type { AuthTokens, CreateUserApisOptions, SendCodePurpose, User, UserApis } from './user'
 
+/* 动作预设 —— 菜单文案与生成描述，唯一真相源在后端 */
+export { actionPresetApis, ActionPresetContractError } from './action-preset/api'
+export type { ActionPreset, ActionPresetApis } from './action-preset'
+
 /* 积分 —— 读取当前用户的可用余额与账本汇总 */
 export { createQuotaApis, quotaApis } from './quota'
 export type {

@@ -1,4 +1,5 @@
 import type {
+  ActionPreset,
   Character,
   CharacterApis,
   GenerationApis,
@@ -12,6 +13,7 @@ import type {
   WorkflowRunApis,
 } from '@/entities'
 import {
+  actionPresetApis,
   characterApis,
   createAuthenticatedGenerationApis,
   createMediaApis,
@@ -227,6 +229,13 @@ export function createDefaultRealWorkflowEditorSession(
     characterApis,
     onAsyncError: () => undefined,
   })
+}
+
+/**
+ * 读后端的动作预设。和会话走同一条注入路径 —— 页面不直连适配器，替身注入只有这一个入口。
+ */
+export function loadDefaultActionPresets(signal?: AbortSignal): Promise<ActionPreset[]> {
+  return actionPresetApis.list(signal)
 }
 
 async function loadWorkflowCharacter(
