@@ -115,22 +115,25 @@ describe('ProjectsPage', () => {
   it('does not call a project empty when characters exist without a usable preview', async () => {
     installBackend()
     const character = await characterApis.get('51')
-    vi.spyOn(characterApis, 'listByProject').mockResolvedValue({
-      items: [
-        {
-          ...character,
-          referenceImageUrl: null,
-          outfits: character.outfits.map((outfit) => ({
-            ...outfit,
-            previewUrl: null,
-            actions: outfit.actions.map((action) => ({ ...action, frames: [] })),
-          })),
-        },
-      ],
+    vi.spyOn(characterApis, 'listByProject').mockImplementation(async (_projectId, query) => ({
+      items:
+        query?.page === 1
+          ? [
+              {
+                ...character,
+                referenceImageUrl: null,
+                outfits: character.outfits.map((outfit) => ({
+                  ...outfit,
+                  previewUrl: null,
+                  actions: outfit.actions.map((action) => ({ ...action, frames: [] })),
+                })),
+              },
+            ]
+          : [],
       total: 7,
-      page: 1,
+      page: query?.page ?? 1,
       pageSize: 6,
-    })
+    }))
 
     render(
       <AuthenticatedAuthSession>
@@ -142,6 +145,47 @@ describe('ProjectsPage', () => {
 
     expect(await screen.findAllByText('预览暂时无法读取')).toHaveLength(2)
     expect(screen.queryByText('等待第一份角色资产')).toBeNull()
+  })
+
+  it('finds a usable preview on a later character page', async () => {
+    installBackend()
+    const character = await characterApis.get('51')
+    const emptyCharacter = {
+      ...character,
+      referenceImageUrl: null,
+      outfits: character.outfits.map((outfit) => ({
+        ...outfit,
+        previewUrl: null,
+        actions: outfit.actions.map((action) => ({ ...action, frames: [] })),
+      })),
+    }
+    const listSpy = vi
+      .spyOn(characterApis, 'listByProject')
+      .mockImplementation(async (projectId, query) => {
+        if (String(projectId) !== '42') {
+          return { items: [], total: 0, page: 1, pageSize: 6 }
+        }
+        return query?.page === 2
+          ? { items: [character], total: 7, page: 2, pageSize: 6 }
+          : { items: [emptyCharacter], total: 7, page: 1, pageSize: 6 }
+      })
+
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(
+      (await screen.findByRole('img', { name: '点灯人 · MVP的项目预览' })).getAttribute('src'),
+    ).toBe('https://cdn.windup.test/messenger-outfit.png')
+    expect(
+      listSpy.mock.calls.some(
+        ([projectId, query]) => String(projectId) === '42' && query?.page === 2,
+      ),
+    ).toBe(true)
   })
 
   it('keeps the loading surface until the preview image is decoded', async () => {
@@ -417,9 +461,16 @@ describe('ProjectsPage', () => {
     const backend = createProjectAssetsBackend({ projectCount: 13 })
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
     vi.stubGlobal('fetch', backend.fetch)
-    const listSpy = vi
-      .spyOn(characterApis, 'listByProject')
-      .mockImplementation(() => new Promise(() => undefined))
+    const signals: AbortSignal[] = []
+    const listSpy = vi.spyOn(characterApis, 'listByProject').mockImplementation(
+      (_projectId, query) =>
+        new Promise((_resolve, reject) => {
+          const signal = query?.signal
+          if (!signal) throw new Error('项目预览请求缺少取消信号')
+          signals.push(signal)
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+        }),
+    )
 
     render(
       <AuthenticatedAuthSession>
@@ -433,6 +484,8 @@ describe('ProjectsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '下一页' }))
 
     await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(3))
+    expect(signals.slice(0, 2).every((signal) => signal.aborted)).toBe(true)
+    expect(signals[2]?.aborted).toBe(false)
   })
 
   it('navigates every backend Project page instead of truncating after the first page', async () => {
