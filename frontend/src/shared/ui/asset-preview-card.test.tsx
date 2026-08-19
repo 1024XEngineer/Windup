@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MemoryRouter } from 'react-router'
 
@@ -69,5 +69,53 @@ describe('AssetPreviewCard', () => {
     const image = screen.getByRole('img', { name: '第二个角色的常态预览' })
     expect(image.getAttribute('loading')).toBe('eager')
     expect(image.getAttribute('fetchpriority')).toBe('auto')
+  })
+
+  it('keeps source assets unchanged unless a list explicitly opts into thumbnails', () => {
+    render(
+      <MemoryRouter>
+        <AssetPreviewCard
+          to="/playtest/51/outfit-1"
+          ariaLabel="继续预览 轻装信使"
+          title="轻装信使"
+          subtitle="常态"
+          trailing="最近"
+          previewUrl="https://cdn.windup.test/media/outfit-preview/outfit-1.source.png"
+          previewAlt="轻装信使原图"
+        />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByRole('img', { name: '轻装信使原图' }).getAttribute('src')).toBe(
+      'https://cdn.windup.test/media/outfit-preview/outfit-1.source.png',
+    )
+  })
+
+  it('loads the card thumbnail first and falls back to the original asset', () => {
+    render(
+      <MemoryRouter>
+        <AssetPreviewCard
+          to="/projects/42/assets/51"
+          ariaLabel="查看角色 轻装信使"
+          title="轻装信使"
+          subtitle="常态"
+          trailing="↗"
+          previewUrl="https://cdn.windup.test/media/outfit-preview/outfit-1.source.png"
+          previewAlt="轻装信使的常态预览"
+          thumbnail
+        />
+      </MemoryRouter>,
+    )
+
+    const image = screen.getByRole('img', { name: '轻装信使的常态预览' })
+    expect(image.getAttribute('src')).toBe(
+      'https://cdn.windup.test/media/outfit-preview/outfit-1.card.webp',
+    )
+
+    fireEvent.error(image)
+
+    expect(image.getAttribute('src')).toBe(
+      'https://cdn.windup.test/media/outfit-preview/outfit-1.source.png',
+    )
   })
 })
