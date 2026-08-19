@@ -19,6 +19,7 @@ import {
   WorkflowRunConflictError,
 } from '@/entities'
 import { ExportButton, type ExportPackageModel } from '@/features/export-package'
+import { PixelMatrix } from '@/shared/ui'
 import { KineticCopyCycle, type KineticCopyMessage } from './kinetic-copy-cycle'
 import {
   quickStartService,
@@ -551,16 +552,6 @@ function AssetVisual({
   )
 }
 
-const GENERATION_DOTS = Array.from({ length: 432 }, (_, index) => {
-  const column = index % 24
-  const row = Math.floor(index / 24)
-  const noise = ((column * 37 + row * 61 + index * 17) % 101) / 100
-  const wave = (Math.sin(column * 0.72 + row * 0.41) + 1) / 2
-  const level = 0.3 + (noise * 0.55 + wave * 0.45) * 0.7
-  const delay = Math.round(((column / 23) * 0.48 + (row / 17) * 0.3 + noise * 0.22) * 900)
-  return { delay, level: level.toFixed(2) }
-})
-
 function GenerationCanvas({ label }: { label: string }) {
   return (
     <div
@@ -571,21 +562,7 @@ function GenerationCanvas({ label }: { label: string }) {
       data-reveal="generation-canvas"
       className="quick-start-generation-canvas"
     >
-      <div className="quick-start-generation-dots" aria-hidden="true">
-        {GENERATION_DOTS.map(({ delay, level }, index) => (
-          <i
-            key={index}
-            data-generation-dot
-            className="quick-start-generation-dot"
-            style={
-              {
-                '--generation-delay': `${delay}ms`,
-                '--generation-level': level,
-              } as CSSProperties
-            }
-          />
-        ))}
-      </div>
+      <PixelMatrix />
     </div>
   )
 }
