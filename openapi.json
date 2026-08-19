@@ -30,6 +30,20 @@
         "title": "ActionPresetOut",
         "type": "object"
       },
+      "ActionDirection": {
+        "enum": [
+          "east",
+          "west",
+          "north",
+          "south",
+          "north_east",
+          "north_west",
+          "south_east",
+          "south_west"
+        ],
+        "title": "ActionDirection",
+        "type": "string"
+      },
       "ActionType": {
         "description": "角色动作子类型。",
         "enum": [
@@ -162,6 +176,10 @@
             ],
             "title": "Custom Prompt"
           },
+          "direction": {
+            "$ref": "#/components/schemas/ActionDirection",
+            "default": "east"
+          },
           "loop": {
             "anyOf": [
               {
@@ -174,7 +192,7 @@
             "title": "Loop"
           },
           "num_frames": {
-            "default": 16,
+            "default": 32,
             "maximum": 64.0,
             "minimum": 1.0,
             "title": "Num Frames",
@@ -428,6 +446,10 @@
       "CharacterImageGenerateRequest": {
         "description": "提交角色图片生成任务。",
         "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/ActionDirection",
+            "default": "east"
+          },
           "height": {
             "default": 1024,
             "maximum": 2048.0,
@@ -441,9 +463,9 @@
             "type": "string"
           },
           "num_images": {
-            "default": 1,
-            "maximum": 4.0,
-            "minimum": 1.0,
+            "default": 2,
+            "maximum": 2.0,
+            "minimum": 2.0,
             "title": "Num Images",
             "type": "integer"
           },
