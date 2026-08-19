@@ -106,7 +106,12 @@ function renderHeader(
   }
 }
 
+function finishBackAnimation() {
+  act(() => vi.advanceTimersByTime(240))
+}
+
 afterEach(() => {
+  vi.useRealTimers()
   cleanup()
   window.localStorage.clear()
   window.sessionStorage.clear()
@@ -122,6 +127,7 @@ describe('AppHeader', () => {
     ['/workspace', '/'],
     ['/account', '/workspace'],
   ])('直接打开 %s 时按页面层级返回 %s', (entry, expected) => {
+    vi.useFakeTimers()
     window.history.replaceState({ idx: 0 }, '')
     renderHeader(entry)
 
@@ -131,15 +137,37 @@ describe('AppHeader', () => {
     expect(back.className).toContain('w-9')
 
     fireEvent.click(back)
+    finishBackAnimation()
     expect(screen.getByTestId('location').textContent).toBe(expected)
   })
 
   it('存在站内浏览历史时返回真实上一页', () => {
+    vi.useFakeTimers()
     window.history.replaceState({ idx: 1 }, '')
     renderHeader('/quick-start', createApis(), '/projects')
 
-    fireEvent.click(screen.getByRole('button', { name: '返回上一页' }))
+    const back = screen.getByRole('button', { name: '返回上一页' })
+    fireEvent.click(back)
+    finishBackAnimation()
     expect(screen.getByTestId('location').textContent).toBe('/projects')
+  })
+
+  it('点击后先播放方向过渡，再执行返回', () => {
+    vi.useFakeTimers()
+    window.history.replaceState({ idx: 0 }, '')
+    renderHeader('/projects')
+
+    const back = screen.getByRole('button', { name: '返回上一页' })
+    fireEvent.click(back)
+
+    expect(back.classList.contains('app-header-back-in-flight')).toBe(true)
+    expect(screen.getByTestId('location').textContent).toBe('/projects')
+
+    act(() => vi.advanceTimersByTime(190))
+    expect(screen.getByTestId('location').textContent).toBe('/projects')
+
+    act(() => vi.advanceTimersByTime(50))
+    expect(screen.getByTestId('location').textContent).toBe('/workspace')
   })
 
   it('提供预览台入口，并将工作流路由归入创作', () => {
@@ -153,6 +181,16 @@ describe('AppHeader', () => {
     expect(screen.getByRole('link', { name: '项目资产' }).getAttribute('href')).toBe('/projects')
     expect(screen.getByRole('link', { name: '创作' }).getAttribute('aria-current')).toBe('page')
     expect(screen.getByRole('link', { name: '预览台' }).getAttribute('href')).toBe('/playtest')
+  })
+
+  it('左侧先显示品牌，再以无边框按钮承接返回操作', () => {
+    renderHeader('/projects')
+
+    const brand = screen.getByRole('link', { name: '返回 Windup 工作台' })
+    const back = screen.getByRole('button', { name: '返回上一页' })
+
+    expect(brand.compareDocumentPosition(back) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(back.className).not.toContain('border')
   })
 
   it('在工作台首页只高亮首页一项', () => {
