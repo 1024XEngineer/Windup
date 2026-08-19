@@ -579,6 +579,54 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
   })
 
+  it('四向角色母版按真实源方向分组选择并逐一确认', async () => {
+    const workflow = selectingTemplateWorkflow(3, 'template-east')
+    workflow.nodes[1] = {
+      ...(workflow.nodes[1] as CharacterTemplateWorkflowNode),
+      generations: (['east', 'north', 'south'] as const).map((direction) => ({
+        taskId: `template-${direction}`,
+        role: 'character_template',
+        direction,
+      })),
+    }
+    const session = createSession(workflow, {
+      generationApis: generationApisFixture({
+        get: vi.fn(async (_projectId: string, taskId: string) => {
+          const direction = taskId.replace('template-', '') as 'east' | 'north' | 'south'
+          return directionalCharacterGeneration(direction)
+        }) as GenerationApis['get'],
+      }),
+    })
+    session.project.directionalMovement = 'four-way'
+    const confirmCharacterTemplate = vi.fn(
+      async (_nodeId: string, _selectedImageUrl: string, _direction?: 'east' | 'north' | 'south') =>
+        characterFixture(),
+    )
+    session.confirmCharacterTemplate = confirmCharacterTemplate
+    defaultSessionLoader.mockResolvedValue(session)
+
+    renderEditor('/workflow-editor/42')
+
+    for (const [direction, label] of [
+      ['east', '东'],
+      ['north', '北'],
+      ['south', '南'],
+    ] as const) {
+      expect(
+        (await screen.findByRole('img', { name: `${label}角色候选 1` })).getAttribute('src'),
+      ).toContain(`/${direction}.png`)
+      fireEvent.click(screen.getByRole('button', { name: `选择${label}角色候选 1` }))
+    }
+    fireEvent.click(screen.getByRole('button', { name: '确认身份母版' }))
+
+    await waitFor(() => expect(confirmCharacterTemplate).toHaveBeenCalledTimes(3))
+    expect(confirmCharacterTemplate.mock.calls.map((call) => call[2])).toEqual([
+      'east',
+      'north',
+      'south',
+    ])
+  })
+
   it('切换 WorkflowRun 时清空上一条任务的临时动作菜单', async () => {
     defaultSessionLoader
       .mockResolvedValueOnce(createSession(completedTemplateWorkflow('42')))
@@ -1616,6 +1664,23 @@ function characterGeneration(label: string): Generation {
     result: {
       type: 'character_template',
       images: [{ url: `https://assets.windup.test/${label}.png` }],
+    },
+    error: null,
+  }
+}
+
+function directionalCharacterGeneration(
+  direction: 'east' | 'north' | 'south',
+): Generation<'character_template'> {
+  return {
+    id: `template-${direction}`,
+    projectId: '1',
+    type: 'character_template',
+    status: 'completed',
+    result: {
+      type: 'character_template',
+      direction,
+      images: [{ url: `https://assets.windup.test/${direction}.png` }],
     },
     error: null,
   }
