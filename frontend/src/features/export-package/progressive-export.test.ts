@@ -220,7 +220,10 @@ describe('createProgressiveExportModel', () => {
       error: null,
       result: {
         type: 'complete_animation',
-        frames: [{ index: 0, url: '/walk-0.png', durationMs: 100 }],
+        frames: [
+          { index: 1, url: '/walk-1.png', durationMs: null },
+          { index: 0, url: '/walk-0.png', durationMs: 100 },
+        ],
       },
     } satisfies Generation<'complete_animation'>
 
@@ -236,7 +239,10 @@ describe('createProgressiveExportModel', () => {
     expect(model.actions[0]).toMatchObject({ id: 'walk-first', name: '行走' })
     expect(model.actions[0]?.sequences[0]).toMatchObject({
       qualityStatus: 'pending',
-      frames: [{ index: 0, imageUrl: '/walk-0.png', durationMs: 100 }],
+      frames: [
+        { index: 0, imageUrl: '/walk-0.png', durationMs: 100 },
+        { index: 1, imageUrl: '/walk-1.png' },
+      ],
     })
 
     const approved = createProgressiveExportModel({
@@ -254,6 +260,33 @@ describe('createProgressiveExportModel', () => {
       generations: [generation],
     })
     expect(approved.actions[0]?.sequences[0]?.qualityStatus).toBe('passed')
+
+    expect(() =>
+      createProgressiveExportModel({
+        project,
+        character,
+        outfitId: 'outfit-1',
+        run: actionRun,
+        generations: [
+          {
+            ...generation,
+            result: {
+              type: 'complete_animation',
+              frames: [{ index: 1, url: '/walk-1.png', durationMs: 100 }],
+            },
+          },
+        ],
+      }),
+    ).toThrow('行走的east方向帧序号必须从 0 连续排列')
+
+    const pending = createProgressiveExportModel({
+      project,
+      character,
+      outfitId: 'outfit-1',
+      run: actionRun,
+      generations: [{ ...generation, status: 'pending', result: null }],
+    })
+    expect(pending.actions).toEqual([])
   })
 
   it('四向动作必须收齐三个真实源方向，并由导出包补出镜像方向', () => {

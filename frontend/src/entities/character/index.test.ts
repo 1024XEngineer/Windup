@@ -426,6 +426,57 @@ describe('characterApis', () => {
     await expect(characterApis.get('51')).rejects.toThrow('镜像动作方向帧数与源方向不一致')
   })
 
+  it('rejects invalid, inconsistent, and source-less character templates', async () => {
+    const east = {
+      direction: 'east',
+      source_direction: null,
+      mirror_x: false,
+      image_url: 'https://cdn.windup.test/reference.png',
+    }
+    const invalidCases = [
+      {
+        templates: [{ ...east, direction: 'up' }],
+        message: '角色母版方向无效或重复',
+      },
+      {
+        templates: [{ ...east, direction: 'west' }],
+        message: '角色母版方向镜像关系无效',
+      },
+      {
+        templates: [
+          east,
+          {
+            direction: 'west',
+            source_direction: 'east',
+            mirror_x: true,
+            image_url: 'https://cdn.windup.test/west.png',
+          },
+        ],
+        message: '角色母版图片与方向类型不匹配',
+      },
+      {
+        templates: [
+          {
+            direction: 'west',
+            source_direction: 'east',
+            mirror_x: true,
+            image_url: null,
+          },
+        ],
+        message: '镜像角色母版缺少真实源方向',
+      },
+    ]
+
+    for (const invalidCase of invalidCases) {
+      const invalidDto = structuredClone(characterDto)
+      invalidDto.character_data.templates =
+        invalidCase.templates as unknown as typeof invalidDto.character_data.templates
+      const characterApis = await loadCharacterApis(async () => jsonResponse(invalidDto))
+
+      await expect(characterApis.get('51')).rejects.toThrow(invalidCase.message)
+    }
+  })
+
   it('rejects unknown, duplicate, frame-owning, and source-less mirror directions', async () => {
     const east = {
       direction: 'east',

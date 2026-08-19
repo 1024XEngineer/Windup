@@ -55,7 +55,10 @@ export function buildReviewedAction(
   const references = fullFrameNode.generations.filter(
     (reference) => reference.role === 'complete_animation',
   )
-  const byDirection = new Map<ActionDirection, Generation>()
+  const byDirection = new Map<
+    ActionDirection,
+    Extract<Generation['result'], { type: 'complete_animation' }>
+  >()
   for (const generation of generations) {
     if (generation.projectId !== workflow.projectId) {
       throw new Error('Generation 与当前 WorkflowRun 不匹配')
@@ -64,16 +67,16 @@ export function buildReviewedAction(
     if (!reference || generation.type !== 'complete_animation') {
       throw new Error('完整动画生成结果不可发布')
     }
-    if (generation.status !== 'completed' || generation.result?.type !== 'complete_animation') {
-      throw new Error('完整动画生成结果不可发布')
-    }
-    const direction = generationDirectionOf(generation, reference.direction)
-    if (byDirection.has(direction)) throw new Error(`重复的 ${direction} 方向动画结果`)
     const result = generation.result
-    if (!result || result.type !== 'complete_animation' || result.frames.length === 0) {
+    if (generation.status !== 'completed' || result?.type !== 'complete_animation') {
       throw new Error('完整动画生成结果不可发布')
     }
-    byDirection.set(direction, generation)
+    const direction = result.direction ?? reference.direction ?? 'east'
+    if (byDirection.has(direction)) throw new Error(`重复的 ${direction} 方向动画结果`)
+    if (result.frames.length === 0) {
+      throw new Error('完整动画生成结果不可发布')
+    }
+    byDirection.set(direction, result)
   }
 
   const profile = getDirectionProfile(directionalMovement)
@@ -83,11 +86,7 @@ export function buildReviewedAction(
 
   const framesByDirection = new Map<ActionDirection, FrameData>()
   for (const direction of profile.sourceDirections) {
-    const generation = byDirection.get(direction)!
-    const result = generation.result
-    if (!result || result.type !== 'complete_animation') {
-      throw new Error('完整动画生成结果不可发布')
-    }
+    const result = byDirection.get(direction)!
     framesByDirection.set(direction, {
       frameCount: result.frames.length,
       frames: result.frames.map((frame) => ({
@@ -125,16 +124,6 @@ export function buildReviewedAction(
 interface FrameData {
   frameCount: number
   frames: Action['frames']
-}
-
-function generationDirectionOf(
-  generation: Generation,
-  fallback?: ActionDirection,
-): ActionDirection {
-  const result = generation.result
-  return result && 'direction' in result && result.direction !== undefined
-    ? result.direction
-    : (fallback ?? 'east')
 }
 
 /**

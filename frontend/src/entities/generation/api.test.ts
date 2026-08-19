@@ -329,6 +329,81 @@ describe('createGenerationApis', () => {
     expect(generation.result).toMatchObject({ type: 'complete_animation', direction: 'north' })
   })
 
+  it('拒绝任务输入或结果偷换已请求的方向', async () => {
+    const imageResultMismatch = taskData({
+      result: {
+        type: 'character_image',
+        direction: 'north',
+        image_urls: ['north-1.png', 'north-2.png'],
+      },
+    })
+    const actionResultMismatch = taskData({
+      task_type: 'character_action',
+      input_payload: { num_frames: 32, action_type: 'walk', direction: 'east' },
+      result: {
+        type: 'character_action',
+        action_type: 'walk',
+        direction: 'north',
+        frames: actionFrames(32),
+      },
+    })
+    const imageInputMismatch = taskData({
+      input_payload: { num_images: 2, direction: 'north' },
+      result: {
+        type: 'character_image',
+        direction: 'north',
+        image_urls: ['north-1.png', 'north-2.png'],
+      },
+    })
+    const actionInputMismatch = taskData({
+      task_type: 'character_action',
+      input_payload: { num_frames: 32, action_type: 'walk', direction: 'north' },
+      result: {
+        type: 'character_action',
+        action_type: 'walk',
+        direction: 'north',
+        frames: actionFrames(32),
+      },
+    })
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(success(imageResultMismatch))
+      .mockResolvedValueOnce(success(actionResultMismatch))
+      .mockResolvedValueOnce(success(imageInputMismatch))
+      .mockResolvedValueOnce(success(actionInputMismatch))
+      .mockResolvedValueOnce(
+        success(
+          taskData({
+            input_payload: { num_images: 2 },
+            result: {
+              type: 'character_image',
+              image_urls: ['legacy-1.png', 'legacy-2.png'],
+            },
+          }),
+        ),
+      )
+    const apis = createGenerationApis({
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    await expect(
+      apis.get('42', '91', { type: 'character_template', direction: 'east' }),
+    ).rejects.toThrow('角色图片结果 direction 与请求不一致')
+    await expect(
+      apis.get('42', '91', { type: 'complete_animation', actionType: 'walk', direction: 'east' }),
+    ).rejects.toThrow('完整动画结果 direction 与请求不一致')
+    await expect(
+      apis.get('42', '91', { type: 'character_template', direction: 'east' }),
+    ).rejects.toThrow('生成任务 direction 与请求不一致')
+    await expect(
+      apis.get('42', '91', { type: 'complete_animation', actionType: 'walk', direction: 'east' }),
+    ).rejects.toThrow('生成任务 direction 与请求不一致')
+    await expect(apis.get('42', '91')).resolves.toMatchObject({
+      type: 'character_template',
+      result: { type: 'character_template' },
+    })
+  })
+
   it('拒绝未知任务状态而不是默认为 pending', async () => {
     const request = vi.fn(async () => success(taskData({ status: 'queued' })))
     const apis = createGenerationApis({

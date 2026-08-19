@@ -129,6 +129,88 @@ describe('Character asset publisher', () => {
       }),
     ).rejects.toThrow('完整动画生成结果不可发布')
   })
+
+  it('publishes every real four-way direction and derives west by mirroring east', () => {
+    const workflow = workflowFixture()
+    const fullFrame = workflow.nodes.find((node) => node.type === 'action-full-frame')
+    if (!fullFrame || fullFrame.type !== 'action-full-frame') throw new Error('missing full frame')
+    const directions = ['east', 'north', 'south'] as const
+    fullFrame.generations = directions.map((direction) => ({
+      taskId: `generation-${direction}`,
+      role: 'complete_animation',
+      direction,
+    }))
+    const generations = directions.map((direction) => ({
+      ...completeAnimationFixture(),
+      id: `generation-${direction}`,
+      result: {
+        type: 'complete_animation' as const,
+        direction,
+        frames: [
+          { index: 0, url: `${direction}-0.png`, durationMs: 100 },
+          { index: 1, url: `${direction}-1.png`, durationMs: 100 },
+        ],
+      },
+    }))
+
+    const action = exportFeature.buildReviewedAction(
+      workflow,
+      'action-walk:review',
+      generations,
+      'four-way',
+    )
+
+    expect(action.sequences?.map((sequence) => sequence.direction)).toEqual([
+      'east',
+      'west',
+      'north',
+      'south',
+    ])
+    expect(action.sequences?.find((sequence) => sequence.direction === 'west')).toMatchObject({
+      sourceDirection: 'east',
+      mirrorX: true,
+      frames: [],
+    })
+  })
+
+  it('rejects incomplete workflows and unusable directional results', () => {
+    const incomplete = workflowFixture()
+    const incompleteFull = incomplete.nodes.find((node) => node.type === 'action-full-frame')
+    if (!incompleteFull || incompleteFull.type !== 'action-full-frame') {
+      throw new Error('missing full frame')
+    }
+    incompleteFull.status = 'active'
+    expect(() =>
+      exportFeature.buildReviewedAction(incomplete, 'action-walk:review', [
+        completeAnimationFixture(),
+      ]),
+    ).toThrow('完整动画尚未完成')
+
+    const unconfirmed = workflowFixture()
+    const template = unconfirmed.nodes.find((node) => node.type === 'character-template')
+    if (!template || template.type !== 'character-template') throw new Error('missing template')
+    template.selectedImageUrl = null
+    expect(() =>
+      exportFeature.buildReviewedAction(unconfirmed, 'action-walk:review', [
+        completeAnimationFixture(),
+      ]),
+    ).toThrow('角色母版尚未确认')
+
+    expect(() =>
+      exportFeature.buildReviewedAction(workflowFixture(), 'action-walk:review', [
+        { ...completeAnimationFixture(), status: 'failed', result: null },
+      ]),
+    ).toThrow('完整动画生成结果不可发布')
+
+    expect(() =>
+      exportFeature.buildReviewedAction(workflowFixture(), 'action-walk:review', [
+        {
+          ...completeAnimationFixture(),
+          result: { type: 'complete_animation', frames: [] },
+        },
+      ]),
+    ).toThrow('完整动画生成结果不可发布')
+  })
 })
 
 function createRejectingPublisher() {

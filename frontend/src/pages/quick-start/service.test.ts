@@ -100,9 +100,12 @@ function completedAnimationGenerationApis(): GenerationApis {
   }
 }
 
-function projectReader(spriteSize = { width: 256, height: 256 }) {
+function projectReader(
+  spriteSize = { width: 256, height: 256 },
+  directionalMovement: 'single' | 'four-way' | 'eight-way' = 'single',
+) {
   return {
-    get: vi.fn(async (id: string) => ({ id, spriteSize })),
+    get: vi.fn(async (id: string) => ({ id, spriteSize, directionalMovement })),
   } as unknown as Pick<ProjectApis, 'get'>
 }
 
@@ -879,7 +882,7 @@ describe('createQuickStartService', () => {
       workflowRunApis,
       generationApis,
       characterApis,
-      projectApis: projectReader(),
+      projectApis: projectReader({ width: 256, height: 256 }, 'four-way'),
       mediaApis: { upload: vi.fn(async () => 'replacement.png' as MediaReference) },
       prepareProject: vi.fn(),
     })
@@ -897,6 +900,37 @@ describe('createQuickStartService', () => {
         expect.objectContaining({ type: 'action-first-frame', phase: 'generating' }),
       ]),
     )
+    expect(character.templates).toEqual([
+      {
+        direction: 'east',
+        sourceDirection: null,
+        mirrorX: false,
+        imageUrl: 'replacement.png',
+      },
+      {
+        direction: 'west',
+        sourceDirection: 'east',
+        mirrorX: true,
+        imageUrl: null,
+      },
+      {
+        direction: 'north',
+        sourceDirection: null,
+        mirrorX: false,
+        imageUrl: 'replacement.png',
+      },
+      {
+        direction: 'south',
+        sourceDirection: null,
+        mirrorX: false,
+        imageUrl: 'replacement.png',
+      },
+    ])
+    expect(vi.mocked(generationApis.create).mock.calls.map(([input]) => input.direction)).toEqual([
+      'east',
+      'north',
+      'south',
+    ])
     const listener = vi.fn()
     const stop = session.subscribe(listener)
     await Promise.resolve()
@@ -1119,6 +1153,119 @@ describe('createQuickStartService', () => {
         expect.objectContaining({ type: 'character-template', status: 'passed' }),
       ]),
     )
+  })
+
+  it('四向候选确认后持久化各方向母版并自动生成各方向动作', async () => {
+    const tasks = new Map<string, Awaited<ReturnType<GenerationApis['create']>>>()
+    let sequence = 0
+    const generationApis: GenerationApis = {
+      create: vi.fn(async (input) => {
+        const id = `direction-task-${++sequence}`
+        const direction = input.direction ?? 'east'
+        const task =
+          input.type === 'complete_animation'
+            ? {
+                id,
+                projectId: input.projectId,
+                type: 'complete_animation' as const,
+                status: 'pending' as const,
+                result: null,
+                error: null,
+              }
+            : {
+                id,
+                projectId: input.projectId,
+                type: input.type,
+                status: 'completed' as const,
+                result: {
+                  type: input.type,
+                  direction,
+                  images: [
+                    { url: `${direction}-${input.type}-1.png` },
+                    { url: `${direction}-${input.type}-2.png` },
+                  ],
+                },
+                error: null,
+              }
+        tasks.set(id, task)
+        return task
+      }) as GenerationApis['create'],
+      get: vi.fn(async (_projectId, id) => structuredClone(tasks.get(id)!)),
+      subscribe: vi.fn(() => () => undefined),
+    }
+    let character = characterFixture({
+      id: 'direction-character',
+      description: '四向骑士',
+      referenceImageUrl: 'east-character_template-1.png',
+    })
+    const characterApis = mutableCharacterApis(
+      () => character,
+      (value) => (character = value),
+    )
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis(),
+      generationApis,
+      characterApis,
+      prepareProject: vi.fn(async () => ({
+        id: 'project-1',
+        spriteSize: { width: 256, height: 256 },
+        directionalMovement: 'four-way' as const,
+      })),
+      projectApis: projectReader(),
+    })
+
+    const session = await service.start('四向骑士')
+    await vi.waitFor(async () => {
+      await expect(session.getTemplateCandidates()).resolves.toEqual([
+        'east-character_template-1.png',
+        'east-character_template-2.png',
+      ])
+    })
+    await session.confirmCandidate('east-character_template-1.png', '挥手')
+
+    await vi.waitFor(() => {
+      const animationCalls = vi
+        .mocked(generationApis.create)
+        .mock.calls.map(([input]) => input)
+        .filter((input) => input.type === 'complete_animation')
+      expect(animationCalls).toHaveLength(3)
+    })
+    expect(character.templates).toEqual([
+      {
+        direction: 'east',
+        sourceDirection: null,
+        mirrorX: false,
+        imageUrl: 'east-character_template-1.png',
+      },
+      {
+        direction: 'west',
+        sourceDirection: 'east',
+        mirrorX: true,
+        imageUrl: null,
+      },
+      {
+        direction: 'north',
+        sourceDirection: null,
+        mirrorX: false,
+        imageUrl: 'north-character_template-1.png',
+      },
+      {
+        direction: 'south',
+        sourceDirection: null,
+        mirrorX: false,
+        imageUrl: 'south-character_template-1.png',
+      },
+    ])
+    const firstFrameCalls = vi
+      .mocked(generationApis.create)
+      .mock.calls.map(([input]) => input)
+      .filter((input) => input.type === 'first_frame')
+    expect(firstFrameCalls.map((input) => input.direction)).toEqual(['east', 'north', 'south'])
+    expect(firstFrameCalls.map((input) => input.referenceMedia[0])).toEqual([
+      'east-character_template-1.png',
+      'north-character_template-1.png',
+      'south-character_template-1.png',
+    ])
   })
 
   it('Run 已落库但响应丢失时不删除已绑定的 Character', async () => {

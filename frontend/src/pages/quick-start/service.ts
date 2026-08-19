@@ -240,6 +240,13 @@ export function createQuickStartService({
       if (!selected) throw new Error(`缺少${direction}方向角色候选图`)
       await controller.confirmCharacterTemplate(template.id, selected, characterId, direction)
     }
+    await persistSelectedCharacterTemplates(controller, characterId)
+  }
+
+  async function persistSelectedCharacterTemplates(
+    controller: WorkflowController,
+    characterId: Character['id'],
+  ) {
     if (!characterApis) return
     const character = await characterApis.get(characterId)
     const selectedImages = templateNode(controller.getWorkflow()).selectedImages ?? {}
@@ -662,6 +669,7 @@ export function createQuickStartService({
             direction,
           )
         }
+        await persistSelectedCharacterTemplates(controller, target.characterId)
         const spriteSize =
           knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
         await prepareAction(controller, target.outfitId, actionDescription, spriteSize)
