@@ -134,6 +134,13 @@ class CharacterActionOutput:
     type: str = "character_action"
     action_type: str = ""
     frames: list[CharacterActionFrame] = field(default_factory=list)
+    # 判官读数(``quality_gate.GateDecision.as_payload``)。``None`` = **没判**,不是
+    # "判了没问题" —— 闸口默认不启用,把缺省读成"干净"会让 shadow 期的统计凭空多出一批
+    # 从未判读过的样本。形状留 dict 而不是拆成字段:shadow 期正是要观察该记哪些东西,
+    # 每加一个读数就改一次 ORM 反序列化的话,数据还没攒够就先僵住了。
+    # 字段名不叫 quality:引擎那份本地像素成色(``ports.ActionQuality``)也要落到同一个
+    # payload 里,两者来源与代价都不同,共用一个键会让先写的那份被后写的悄悄盖掉。
+    judge: dict | None = None
     quality: dict | None = None
     prompt_version: str | None = None
 
