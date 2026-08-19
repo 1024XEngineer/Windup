@@ -517,6 +517,31 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
   })
 
+  it('自定义动作要求非空描述，并可返回重新选择造型', async () => {
+    const session = createSession(completedTemplateWorkflow('42'), {
+      character: characterFixture(),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '添加动作分支' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成动作 ›' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择造型 夜行装' }))
+    fireEvent.click(screen.getByRole('button', { name: /自定义动作/ }))
+
+    const generateButton = screen.getByRole('button', { name: /开始生成/ })
+    expect((generateButton as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(screen.getByRole('textbox', { name: '动作描述' }), {
+      target: { value: '   ' },
+    })
+    expect((generateButton as HTMLButtonElement).disabled).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: '← 生成动作' }))
+    expect(screen.getByRole('button', { name: /自定义动作/ })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '← 生成动作' }))
+    expect(screen.getByRole('button', { name: '选择造型 夜行装' })).toBeTruthy()
+  })
+
   it('展示三张动作首帧候选并确认用户选择的一张', async () => {
     const workflow = reviewingActionWorkflow()
     const firstFrame = workflow.nodes.find((node) => node.type === 'action-first-frame')
