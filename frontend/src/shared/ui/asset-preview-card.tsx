@@ -55,9 +55,7 @@ function cardThumbnailUrl(sourceUrl: string): string | null {
     const slash = url.pathname.lastIndexOf('/')
     const dot = url.pathname.lastIndexOf('.')
     const stem =
-      url.pathname.endsWith('.source') || dot <= slash
-        ? url.pathname
-        : url.pathname.slice(0, dot)
+      url.pathname.endsWith('.source') || dot <= slash ? url.pathname : url.pathname.slice(0, dot)
     if (!stem.endsWith('.source')) return null
     url.pathname = `${stem.slice(0, -'.source'.length)}.card.webp`
     return url.toString()
