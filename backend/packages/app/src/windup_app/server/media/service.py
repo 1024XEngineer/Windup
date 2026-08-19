@@ -28,7 +28,11 @@ class ObjectStorageMediaService(MediaService):
     ) -> MediaUploadResult:
         download_base = storage_settings.download_base
         suffix = _file_suffix(metadata.filename)
-        marker = ".source" if metadata.category in _CARD_THUMBNAIL_CATEGORIES else ""
+        should_build_thumbnail = (
+            metadata.category in _CARD_THUMBNAIL_CATEGORIES
+            and metadata.content_type.startswith("image/")
+        )
+        marker = ".source" if should_build_thumbnail else ""
         object_key = f"media/{metadata.category}/{uuid4().hex}{marker}{suffix}"
 
         from qiniu import Auth, put_data
@@ -36,10 +40,7 @@ class ObjectStorageMediaService(MediaService):
         auth = Auth(storage_settings.access_key, storage_settings.secret_key)
         thumbnail = None
         thumbnail_key = None
-        if (
-            metadata.category in _CARD_THUMBNAIL_CATEGORIES
-            and metadata.content_type.startswith("image/")
-        ):
+        if should_build_thumbnail:
             thumbnail_key = card_thumbnail_key(object_key)
             thumbnail = build_card_thumbnail(data)
 
@@ -71,24 +72,43 @@ class ObjectStorageMediaService(MediaService):
 
 
 _CARD_THUMBNAIL_EDGE = 640
+_CARD_THUMBNAIL_MAX_SOURCE_EDGE = 16_384
+_CARD_THUMBNAIL_MAX_SOURCE_PIXELS = 40_000_000
 _CARD_THUMBNAIL_CATEGORIES = {
     MediaCategory.REFERENCE_IMAGE,
     MediaCategory.OUTFIT_PREVIEW,
 }
 
 
+class InvalidThumbnailSourceError(ValueError):
+    """图片无法安全解码为卡片缩略图。"""
+
+
 def build_card_thumbnail(data: bytes) -> bytes:
     """生成不放大的无损 WebP 卡片图；透明像素和像素边缘都保留。"""
-    with Image.open(BytesIO(data)) as source:
-        has_alpha = source.mode in {"RGBA", "LA"} or "transparency" in source.info
-        image = source.convert("RGBA" if has_alpha else "RGB")
-        image.thumbnail(
-            (_CARD_THUMBNAIL_EDGE, _CARD_THUMBNAIL_EDGE),
-            Image.Resampling.NEAREST,
-        )
-        output = BytesIO()
-        image.save(output, format="WEBP", lossless=True, method=6)
-        return output.getvalue()
+    try:
+        with Image.open(BytesIO(data)) as source:
+            width, height = source.size
+            if (
+                width > _CARD_THUMBNAIL_MAX_SOURCE_EDGE
+                or height > _CARD_THUMBNAIL_MAX_SOURCE_EDGE
+                or width * height > _CARD_THUMBNAIL_MAX_SOURCE_PIXELS
+            ):
+                raise InvalidThumbnailSourceError("图片像素尺寸超过缩略图处理上限")
+            source.load()
+            has_alpha = source.mode in {"RGBA", "LA"} or "transparency" in source.info
+            image = source.convert("RGBA" if has_alpha else "RGB")
+            image.thumbnail(
+                (_CARD_THUMBNAIL_EDGE, _CARD_THUMBNAIL_EDGE),
+                Image.Resampling.NEAREST,
+            )
+            output = BytesIO()
+            image.save(output, format="WEBP", lossless=True, method=6)
+            return output.getvalue()
+    except InvalidThumbnailSourceError:
+        raise
+    except (Image.DecompressionBombError, OSError, ValueError) as exc:
+        raise InvalidThumbnailSourceError("图片无法安全生成缩略图") from exc
 
 
 def card_thumbnail_key(object_key: str) -> str:
