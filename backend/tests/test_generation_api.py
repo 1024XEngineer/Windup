@@ -54,11 +54,17 @@ def _image_payload(project_id: int, **overrides) -> dict:
     return payload
 
 
+_MASTER_URL = "https://cdn.example.com/masters/hero.png"
+
+
 def _action_payload(project_id: int, character_id: int, **overrides) -> dict:
+    # 母版是提交动作生成的前置条件(见 _require_master),缺了它整条请求都进不去,
+    # 所以默认带上;要测"缺母版"的用例显式覆盖成空。
     payload = {
         "project_id": project_id,
         "character_id": character_id,
         "action_type": "walk",
+        "reference_image_urls": [_MASTER_URL],
     }
     payload.update(overrides)
     return payload
@@ -246,6 +252,125 @@ def test_validation_error_message_tells_the_user_what_is_wrong(auth_client):
     assert body["message"] != "请求参数校验失败", "还是笼统文案,用户看不懂"
     assert "custom_prompt" in body["message"] or "动作" in body["message"]
     assert not body["message"].startswith("Value error,"), "pydantic 前缀是噪声,该剥掉"
+
+# ── 缺母版必须在提交时就拒收 ───────────────────────────────────────────────
+#
+# 曾经是：提交返 200、任务 pending，直到执行阶段 _download_master 才抛
+# "缺少母版:reference_image_urls 为空"。用户看到的是任务莫名其妙 failed，
+# 错误还是句写给后端看的话。
+
+
+def _capture_dispatch(monkeypatch) -> list:
+    """接管派发，用来断言"这个任务压根没被收下"，而不只是响应体不好看。"""
+    from windup_app.web.api import generation as gen_api
+
+    return _capture_action_input(gen_api, monkeypatch)
+
+
+def test_action_without_master_is_rejected_at_submission(auth_client, monkeypatch):
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+    dispatched = _capture_dispatch(monkeypatch)
+
+    body = auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"], reference_image_urls=[]),
+    ).json()
+
+    assert body["code"] == 400, body
+    assert body["data"] is None, body
+    # 消息要告诉用户下一步做什么，不是复述内部字段名。
+    assert "定妆" in body["message"], body["message"]
+    assert not dispatched, "缺母版的任务不该被收下并排队"
+
+
+def test_action_with_only_blank_master_urls_is_rejected(auth_client, monkeypatch):
+    """空白串不算母版——判定口径必须和执行器取 reference_image_urls[0] 一致。"""
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+    dispatched = _capture_dispatch(monkeypatch)
+
+    body = auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"], reference_image_urls=["", "   "]),
+    ).json()
+
+    assert body["code"] == 400, body
+    assert not dispatched
+
+
+def test_blank_master_urls_never_reach_the_executor(auth_client, monkeypatch):
+    """混着空白串提交时，落到任务入参上的必须是干净的那一条。"""
+    from windup_app.server.orchestrator.model import CharacterActionInput
+
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+    dispatched = _capture_dispatch(monkeypatch)
+
+    auth_client.post(
+        "/generation/action",
+        json=_action_payload(
+            project["id"], character["id"], reference_image_urls=["  ", _MASTER_URL],
+        ),
+    )
+
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs and inputs[0].reference_image_urls == [_MASTER_URL]
+
+
+def test_custom_action_without_prompt_is_rejected(auth_client, monkeypatch):
+    """最后一道防线也要有人断言它还在。
+
+    前端已经在提交前拦了空描述，但这道是它漏掉时唯一的兜底；本仓有过"校验被 rebase
+    换回桩、CI 全绿"的先例，没测试断言的防线等于没有。
+    """
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+    dispatched = _capture_dispatch(monkeypatch)
+
+    body = auth_client.post(
+        "/generation/action",
+        json=_action_payload(
+            project["id"], character["id"], action_type="custom", custom_prompt="   ",
+        ),
+    ).json()
+
+    assert body["code"] == 400, body
+    assert not dispatched
+
+
+def test_action_with_3d_outfit_is_accepted_without_reference_images(auth_client):
+    """三渲二路线的母版是绑骨模型，没有 raster 母版可言，不该被这道预检误伤。"""
+    project = _create_project(auth_client)
+    character = auth_client.post(
+        "/characters",
+        json={
+            "project_id": project["id"],
+            "workflow_run_id": 1,
+            "name": "勇者",
+            "character_data": {
+                "version": 1,
+                "outfits": [{
+                    "id": "outfit-3d",
+                    "name": "汉服",
+                    "model_3d_url": "https://cdn.example.com/outfits/hanfu.glb",
+                    "actions": [],
+                }],
+            },
+        },
+    ).json()["data"]
+
+    body = auth_client.post(
+        "/generation/action",
+        json=_action_payload(
+            project["id"], character["id"],
+            reference_image_urls=[],
+            outfit_id="outfit-3d",
+        ),
+    ).json()
+
+    assert body["data"] is not None, body
+    assert body["data"]["status"] == "pending"
 
 
 # ── 体型必须从 HTTP 入口一路传到 CharacterCard ─────────────────────────────

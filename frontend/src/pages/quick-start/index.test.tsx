@@ -544,7 +544,7 @@ describe('QuickStartPage', () => {
       const canvas = await screen.findByRole('img', { name: label })
       expect(canvas.getAttribute('data-generation-state')).toBe('generating')
       expect(canvas.getAttribute('data-generation-motion')).toBe('continuous')
-      expect(canvas.querySelectorAll('[data-generation-dot]').length).toBeGreaterThan(20)
+      expect(canvas.querySelectorAll('[data-pixel-matrix-dot]')).toHaveLength(432)
       expect(canvas.querySelector('[data-generation-silhouette]')).toBeNull()
     },
   )
@@ -921,6 +921,30 @@ describe('QuickStartPage', () => {
     fireEvent.change(screen.getByLabelText('动作描述'), { target: { value: '挥手' } })
     fireEvent.click(screen.getByRole('button', { name: '开始生成新动作' }))
     expect((await screen.findByRole('alert')).textContent).toContain('动作创建失败')
+  })
+
+  it('blocks an empty action description and says what to type instead', async () => {
+    // 空描述会被后端当成 custom 动作缺 custom_prompt 拒掉，回来的是一句
+    // "请求参数校验失败"。这里断言用户根本走不到那一步。
+    const service = serviceFor(null)
+    renderAt('/quick-start?characterId=character-1&outfitId=outfit-1', service)
+
+    const submit = screen.getByRole('button', { name: '开始生成新动作' })
+    expect((submit as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText('请先描述动作，例如：来回踱步')).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('动作描述'), { target: { value: '   ' } })
+    expect((submit as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText('请先描述动作，例如：来回踱步')).toBeTruthy()
+    fireEvent.click(submit)
+    fireEvent.submit(submit.closest('form')!)
+    await waitFor(() => expect(service.startAction).not.toHaveBeenCalled())
+
+    fireEvent.change(screen.getByLabelText('动作描述'), { target: { value: '来回踱步' } })
+    expect((submit as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.queryByText('请先描述动作，例如：来回踱步')).toBeNull()
+    fireEvent.click(submit)
+    await waitFor(() => expect(service.startAction).toHaveBeenCalledTimes(1))
   })
 
   it('recovers missing runs and returns to the creation entry', async () => {

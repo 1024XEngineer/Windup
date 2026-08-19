@@ -215,6 +215,15 @@ class CharacterActionGenerateRequest(BaseModel):
             self.custom_prompt = prompt
         return self
 
+    @model_validator(mode="after")
+    def drop_blank_reference_image_urls(self):
+        # 执行阶段只取 reference_image_urls[0]。留着空串会让"有母版"的判定成立,
+        # 却要等到下载那一步才炸 —— 两处口径必须一致,否则提交时的预检形同虚设。
+        self.reference_image_urls = [
+            url.strip() for url in self.reference_image_urls if url.strip()
+        ]
+        return self
+
 
 class GenerationTaskOut(BaseModel):
     """生成任务响应。"""
@@ -298,6 +307,20 @@ def _outfit_model_3d_url(character: Character, outfit_id: str | None) -> str | N
     return (outfit.model_3d_url or "").strip() or None
 
 
+def _require_master(model_3d_url: str | None, reference_image_urls: list[str]) -> None:
+    """动作生成拿不到母版就当场拒收,不收下一个注定在执行阶段失败的任务。"""
+    # 判据照抄执行器的取母版逻辑(``ActionTaskExecutor._produce_action``):有 3D 资产走
+    # 三渲二吃 model_3d_url,否则走 i2v 只认 reference_image_urls[0]。
+    # **不回落到 Character.reference_image_url** —— 执行器根本不读它,这里替它回落等于
+    # 拿另一张图生成,而任务照样 COMPLETED、帧数成色全部正常,没有任何一道会红。
+    if model_3d_url or reference_image_urls:
+        return
+    raise BizException(
+        "缺少角色母版:请先完成定妆(生成并确认角色图),再带上确认后的母版图生成动作",
+        code=BizCode.BAD_REQUEST,
+    )
+
+
 def _validate_project_size(project: Project, width: int, height: int) -> None:
     """校验输入尺寸与项目约束是否一致;不一致则抛异常。"""
     if width != project.sprite_width or height != project.sprite_height:
@@ -372,6 +395,8 @@ def submit_action_generation(
     user_id = request.state.current_user.id
     _get_project_or_raise(session, body.project_id, user_id)
     character = _get_character_or_raise(session, body.character_id, body.project_id)
+    model_3d_url = _outfit_model_3d_url(character, body.outfit_id)
+    _require_master(model_3d_url, body.reference_image_urls)
     input_data = CharacterActionInput(
         character_id=body.character_id,
         action_type=body.action_type,
@@ -384,7 +409,7 @@ def submit_action_generation(
         outfit_id=body.outfit_id,
         # 路线选择在这里定死并写进入参,而不是留给编排层现查:这样"这次走的哪条路线"
         # 在任务入参上就是可见的,排查时不用去猜当时 DB 是什么状态。
-        model_3d_url=_outfit_model_3d_url(character, body.outfit_id),
+        model_3d_url=model_3d_url,
         stance=body.stance,
     )
     task = generation_service.generate_character_action(

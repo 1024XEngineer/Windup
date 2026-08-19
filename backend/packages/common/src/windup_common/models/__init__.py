@@ -10,6 +10,7 @@ from windup_common.models.character import (
     GenRoute,
     Stylize,
 )
+from windup_common.models.quality import JudgeVerdict
 
 __all__ = [
     "ActionType",
@@ -22,4 +23,5 @@ __all__ = [
     "DEFAULT_N_FRAMES",
     "CharacterCard",
     "ActionSpec",
+    "JudgeVerdict",
 ]
