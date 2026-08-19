@@ -275,6 +275,7 @@ describe('createGenerationApis', () => {
       await expect(
         apis.create({
           type: 'complete_animation',
+          method: 'video-cropping',
           projectId: '42',
           characterId: '5',
           outfitId: 'default',
@@ -298,6 +299,7 @@ describe('createGenerationApis', () => {
     await expect(
       apis.create({
         type: 'complete_animation',
+        method: 'video-cropping',
         projectId: '42',
         characterId: '5',
         outfitId: 'default',
