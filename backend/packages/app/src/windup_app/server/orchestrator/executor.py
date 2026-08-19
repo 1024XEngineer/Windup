@@ -319,9 +319,6 @@ class ActionTaskExecutor:
             **extra,
         )
         progress: ProgressPort = _LogProgress()
-        generated = self._get_generator().generate(
-            card, action, master, progress, canvas=(cons.sprite_w, cons.sprite_h)
-        )
         canvas = (cons.sprite_w, cons.sprite_h)
 
         # ── 路线选择:这一步是 server 的事,不是引擎的(#122)────────────────
@@ -332,6 +329,8 @@ class ActionTaskExecutor:
         # **不静默回退。** 拿到了 model_3d_url 却下载不下来 / 渲不出来,就报错,不改走
         # i2v —— 两条路线的画风、成本、多朝向能力都不同,悄悄换一条等于让调用方拿着
         # 错误的前提做后续决定,而帧数、时长、成色全都正常,没有任何一道会红。
+        #
+        # 选哪个 kling 不在这里传:run_action_task 已经 bind_call_context(start_from_model)。
         model_url = (input.model_3d_url or "").strip()
         if model_url:
             rigged = (self._fetch_model3d or self._download_model3d)(model_url)
@@ -339,14 +338,12 @@ class ActionTaskExecutor:
                 "[gen] 造型 %s 有 3D 资产(%d bytes),走三渲二",
                 input.outfit_id or "?", len(rigged),
             )
-            generated = self._get_generator(
-                _resolve_video_model(input.video_model)).generate_rendered(
+            generated = self._get_generator().generate_rendered(
                 card, action, rigged, progress, canvas=canvas
             )
         else:
             master = (self._fetch_master or self._download_master)(input)
-            generated = self._get_generator(
-                _resolve_video_model(input.video_model)).generate(
+            generated = self._get_generator().generate(
                 card, action, master, progress, canvas=canvas
             )
 
