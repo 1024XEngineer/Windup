@@ -4,6 +4,8 @@ export type {
   CreditAccount,
   CreditTransaction,
   InviteCode,
+  CreditTransactionDirection,
   QuotaApis,
+  QuotaTransactionFilters,
   QuotaTransactionPageQuery,
 } from './types'
