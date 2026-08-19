@@ -112,6 +112,7 @@ function finishBackAnimation() {
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.unstubAllGlobals()
   cleanup()
   window.localStorage.clear()
   window.sessionStorage.clear()
@@ -168,6 +169,44 @@ describe('AppHeader', () => {
 
     act(() => vi.advanceTimersByTime(50))
     expect(screen.getByTestId('location').textContent).toBe('/workspace')
+  })
+
+  it('动画进行中重复点击不会推迟返回', () => {
+    vi.useFakeTimers()
+    window.history.replaceState({ idx: 0 }, '')
+    renderHeader('/projects')
+
+    const back = screen.getByRole('button', { name: '返回上一页' })
+    fireEvent.click(back)
+    act(() => vi.advanceTimersByTime(150))
+    fireEvent.click(back)
+    act(() => vi.advanceTimersByTime(80))
+
+    expect(screen.getByTestId('location').textContent).toBe('/workspace')
+  })
+
+  it('减少动态效果时立即返回', () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({ matches: true })),
+    )
+    window.history.replaceState({ idx: 0 }, '')
+    renderHeader('/projects')
+
+    fireEvent.click(screen.getByRole('button', { name: '返回上一页' }))
+
+    expect(screen.getByTestId('location').textContent).toBe('/workspace')
+  })
+
+  it('动画中卸载会取消待执行的返回', () => {
+    vi.useFakeTimers()
+    const { unmount } = renderHeader('/projects')
+
+    fireEvent.click(screen.getByRole('button', { name: '返回上一页' }))
+    expect(vi.getTimerCount()).toBe(1)
+    unmount()
+
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('提供预览台入口，并将工作流路由归入创作', () => {
