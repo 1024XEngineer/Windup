@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -169,8 +171,14 @@ def _tool_call_chunk_to_openai(chunk: Any) -> dict:
     return item
 
 
-def _chunk_to_event(chunk: Any) -> dict | None:
-    """把 LangChain 流式 chunk 转成 OpenAI 兼容 SSE 事件体。"""
+def _chunk_to_event(
+    chunk: Any,
+    *,
+    chunk_id: str,
+    model: str,
+    created: int,
+) -> dict | None:
+    """把 LangChain 流式 chunk 转成 OpenAI ``ChatCompletionChunk`` SSE 事件体。"""
     delta: dict[str, Any] = {}
     content = getattr(chunk, "content", None)
     if content:
@@ -180,10 +188,24 @@ def _chunk_to_event(chunk: Any) -> dict | None:
         delta["tool_calls"] = [_tool_call_chunk_to_openai(item) for item in tool_call_chunks]
     if not delta:
         return None
-    return {"choices": [{"delta": delta}]}
+    return {
+        "id": chunk_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+    }
 
 
-def _build_chat_model(body: ChatRequest):
+def _resolve_model_name(body: ChatRequest, llm: Any) -> str:
+    return (
+        (body.model or "").strip()
+        or str(getattr(llm, "model_name", "") or "").strip()
+        or (settings.chat_model or settings.model or "").strip()
+    )
+
+
+def _build_chat_model(body: ChatRequest) -> tuple[Any, str]:
     config = settings
     if body.model:
         config = settings.model_copy(update={"chat_model": body.model})
@@ -191,12 +213,13 @@ def _build_chat_model(body: ChatRequest):
     if body.temperature is not None:
         kwargs["temperature"] = body.temperature
     llm = create_chat_model(config, **kwargs)
+    model_name = _resolve_model_name(body, llm)
     if body.tools:
         try:
             llm = llm.bind_tools([tool.model_dump() for tool in body.tools])
         except (KeyError, TypeError, ValueError) as exc:
             raise BizException("工具定义无效", code=BizCode.BAD_REQUEST) from exc
-    return llm
+    return llm, model_name
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -218,21 +241,22 @@ async def chat(
     4. 不解析 tool_calls、不执行工具、不存对话历史
     5. 本端点不计量积分；``model`` 透传给 provider（缺省用 AI_CHAT_MODEL）
 
-    响应格式：OpenAI 兼容 SSE
+    响应格式：OpenAI 兼容 SSE（每条 data 都是 ChatCompletionChunk）
     ```
-    data: {"choices": [{"delta": {"content": "好"}}]}
-    data: {"choices": [{"delta": {"tool_calls": [...]}}]}
+    data: {"id":"...","object":"chat.completion.chunk","created":0,"model":"...","choices":[{"index":0,"delta":{"content":"好"},"finish_reason":null}]}
     data: [DONE]
     ```
     """
     user_id = request.state.current_user.id
     logger.info("ai chat stream user_id=%s model=%s", user_id, body.model)
     try:
-        llm = _build_chat_model(body)
+        llm, model_name = _build_chat_model(body)
     except ValueError as exc:
         raise BizException(str(exc), code=BizCode.MODEL_UNAVAILABLE) from exc
 
     messages = _to_lc_messages(body)
+    chunk_id = f"chatcmpl-{uuid.uuid4().hex}"
+    created = int(time.time())
 
     async def _forward():
         try:
@@ -240,7 +264,9 @@ async def chat(
                 if await request.is_disconnected():
                     logger.debug("ai chat client disconnected user_id=%s", user_id)
                     break
-                event = _chunk_to_event(chunk)
+                event = _chunk_to_event(
+                    chunk, chunk_id=chunk_id, model=model_name, created=created
+                )
                 if event is not None:
                     yield _sse(event)
         except Exception:

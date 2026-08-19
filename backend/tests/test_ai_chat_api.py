@@ -12,6 +12,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from openai.types.chat import ChatCompletionChunk
 
 from windup_common.enums.biz_code import BizCode
 
@@ -94,6 +95,14 @@ def test_chat_streams_openai_sse_content(auth_client):
     events = _parse_sse(response.text)
     assert _delta_contents(events) == ["你", "好"]
     assert events[-1] == "[DONE]"
+    chunks = [event for event in events if isinstance(event, dict) and "choices" in event]
+    assert chunks
+    for chunk in chunks:
+        ChatCompletionChunk.model_validate(chunk)
+        assert chunk["object"] == "chat.completion.chunk"
+        assert chunk["model"] == "fake-model"
+        assert chunk["choices"][0]["index"] == 0
+    assert {chunk["id"] for chunk in chunks} == {chunks[0]["id"]}
     assert fake.seen_messages is not None
     assert isinstance(fake.seen_messages[0], HumanMessage)
     assert fake.seen_messages[0].content == "你好"
@@ -218,6 +227,7 @@ def test_chat_streams_tool_call_deltas(auth_client):
     assert tool_call["id"] == "call_1"
     assert tool_call["function"]["name"] == "lookup"
     assert tool_call["function"]["arguments"] == '{"q":'
+    ChatCompletionChunk.model_validate(tool_events[0])
 
 
 def test_chat_missing_api_key_returns_model_unavailable(auth_client):

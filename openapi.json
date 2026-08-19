@@ -552,6 +552,132 @@
         "title": "CharacterUpdate",
         "type": "object"
       },
+      "ChatMessage": {
+        "description": "对话消息。",
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "消息内容",
+            "title": "Content"
+          },
+          "role": {
+            "description": "消息角色：system / user / assistant / tool",
+            "title": "Role",
+            "type": "string"
+          },
+          "tool_call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "工具结果关联的调用 ID（tool 角色）",
+            "title": "Tool Call Id"
+          },
+          "tool_calls": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "工具调用（assistant 角色）",
+            "title": "Tool Calls"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "ChatMessage",
+        "type": "object"
+      },
+      "ChatRequest": {
+        "description": "LLM 代理请求。",
+        "properties": {
+          "messages": {
+            "description": "对话历史（前端维护完整列表）",
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "模型名称，省略则使用默认模型",
+            "title": "Model"
+          },
+          "system": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "系统提示词",
+            "title": "System"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "maximum": 2.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "温度参数",
+            "title": "Temperature"
+          },
+          "tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ToolDefinition"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "可用工具列表（前端定义，后端透传给 LLM）",
+            "title": "Tools"
+          }
+        },
+        "required": [
+          "messages"
+        ],
+        "title": "ChatRequest",
+        "type": "object"
+      },
       "CreditAccountOut": {
         "description": "积分账户响应。",
         "properties": {
@@ -1913,6 +2039,28 @@
         "title": "TokenResponse",
         "type": "object"
       },
+      "ToolDefinition": {
+        "description": "工具定义（OpenAI function calling 格式）。",
+        "properties": {
+          "function": {
+            "additionalProperties": true,
+            "description": "函数定义：{name, description, parameters}",
+            "title": "Function",
+            "type": "object"
+          },
+          "type": {
+            "default": "function",
+            "description": "工具类型，固定为 function",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "function"
+        ],
+        "title": "ToolDefinition",
+        "type": "object"
+      },
       "UpdateNicknameRequest": {
         "description": "修改昵称请求。",
         "properties": {
@@ -2207,6 +2355,46 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/ai/chat": {
+      "post": {
+        "description": "LLM 代理（流式响应）。\n\n后端职责：\n1. 从 JWT 解析 user_id（用于日志/审计）\n2. 调用 create_chat_model 工厂创建 LLM 实例\n3. 流式转发 LLM 响应\n4. 不解析 tool_calls、不执行工具、不存对话历史\n5. 本端点不计量积分；``model`` 透传给 provider（缺省用 AI_CHAT_MODEL）\n\n响应格式：OpenAI 兼容 SSE（每条 data 都是 ChatCompletionChunk）\n```\ndata: {\"id\":\"...\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"...\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"好\"},\"finish_reason\":null}]}\ndata: [DONE]\n```",
+        "operationId": "chat_ai_chat_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Chat",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
     "/auth/change-password": {
       "post": {
         "description": "修改密码。",
