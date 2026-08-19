@@ -91,9 +91,8 @@ export function ProjectsPage() {
   }, [projectsPage])
 
   function loadProjectPreview(projectId: string): Promise<ProjectPreviewState> {
-    if (projectPreviewCache.current.has(projectId)) {
-      return Promise.resolve(projectPreviewCache.current.get(projectId) ?? { status: 'empty' })
-    }
+    const cachedPreview = projectPreviewCache.current.get(projectId)
+    if (cachedPreview) return Promise.resolve(cachedPreview)
     const currentRequest = projectPreviewRequests.current.get(projectId)
     if (currentRequest) return currentRequest.promise
 
@@ -152,9 +151,7 @@ export function ProjectsPage() {
         if (request.cancelled) return
         if (preview.status !== 'error') projectPreviewCache.current.set(request.projectId, preview)
         request.resolve(preview)
-        if (projectPreviewRequests.current.get(request.projectId) === request) {
-          projectPreviewRequests.current.delete(request.projectId)
-        }
+        projectPreviewRequests.current.delete(request.projectId)
         activeProjectPreviewRequests.current -= 1
         processProjectPreviewQueue()
       })()
@@ -164,13 +161,11 @@ export function ProjectsPage() {
   function cancelProjectPreviewRequests(projectIds: Set<string>) {
     projectIds.forEach((projectId) => {
       const request = projectPreviewRequests.current.get(projectId)
-      if (!request || request.cancelled) return
+      if (!request) return
       request.cancelled = true
       request.controller.abort()
       request.resolve({ status: 'loading' })
-      if (projectPreviewRequests.current.get(projectId) === request) {
-        projectPreviewRequests.current.delete(projectId)
-      }
+      projectPreviewRequests.current.delete(projectId)
       if (request.state === 'active') activeProjectPreviewRequests.current -= 1
     })
     projectPreviewQueue.current = projectPreviewQueue.current.filter(

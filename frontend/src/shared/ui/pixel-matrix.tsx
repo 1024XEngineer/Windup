@@ -12,11 +12,11 @@ const PIXEL_MATRIX_DOTS = Array.from({ length: 432 }, (_, index) => {
   return { delay, level: level.toFixed(2) }
 })
 
-export function PixelMatrix({ coverage = 'inset' }: { coverage?: 'inset' | 'compact' | 'full' }) {
+export function PixelMatrix({ coverage = 'inset' }: { coverage?: 'inset' | 'compact' }) {
   return (
     <div
       data-pixel-matrix-coverage={coverage}
-      className={`pixel-matrix ${coverage === 'compact' ? 'pixel-matrix-compact' : ''} ${coverage === 'full' ? 'pixel-matrix-full' : ''}`}
+      className={`pixel-matrix ${coverage === 'compact' ? 'pixel-matrix-compact' : ''}`}
       aria-hidden="true"
     >
       {PIXEL_MATRIX_DOTS.map(({ delay, level }, index) => (

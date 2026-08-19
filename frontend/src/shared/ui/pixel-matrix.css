@@ -10,10 +10,6 @@
   inset: 4%;
 }
 
-.pixel-matrix-full {
-  inset: 0;
-}
-
 .pixel-matrix-dot {
   align-self: center;
   justify-self: center;
