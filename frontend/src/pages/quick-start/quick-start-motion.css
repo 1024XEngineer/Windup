@@ -52,27 +52,6 @@
   animation-delay: 100ms;
 }
 
-.quick-start-generation-dots {
-  position: absolute;
-  inset: 8%;
-  display: grid;
-  grid-template-columns: repeat(24, 1fr);
-  grid-template-rows: repeat(18, 1fr);
-}
-
-.quick-start-generation-dot {
-  align-self: center;
-  justify-self: center;
-  width: clamp(0.1rem, 0.34vw, 0.18rem);
-  aspect-ratio: 1;
-  border-radius: 0;
-  background: color-mix(in srgb, var(--color-app-ink) 78%, var(--color-app-accent));
-  opacity: 0.035;
-  transform: scale(0.45);
-  animation: quick-start-pixel-matrix 4.1s steps(9, end) infinite;
-  animation-delay: var(--generation-delay);
-}
-
 .quick-start-reveal-card {
   opacity: 0;
   filter: blur(7px);
@@ -112,34 +91,6 @@
   }
 }
 
-@keyframes quick-start-pixel-matrix {
-  0%,
-  8% {
-    opacity: 0.025;
-    transform: scale(0.4);
-  }
-  24% {
-    opacity: calc(0.1 + var(--generation-level) * 0.2);
-    transform: scale(0.72);
-  }
-  43% {
-    opacity: calc(0.22 + var(--generation-level) * 0.62);
-    transform: scale(1);
-  }
-  61% {
-    opacity: calc(0.08 + var(--generation-level) * 0.3);
-    transform: scale(0.68);
-  }
-  77% {
-    opacity: calc(0.17 + var(--generation-level) * 0.49);
-    transform: scale(0.9);
-  }
-  100% {
-    opacity: 0.045;
-    transform: scale(0.45);
-  }
-}
-
 @keyframes quick-start-card-reveal {
   to {
     opacity: 1;
@@ -176,7 +127,6 @@
   }
 
   .quick-start-generation-canvas,
-  .quick-start-generation-dot,
   .quick-start-reveal-card,
   .quick-start-generated-image {
     opacity: 1;

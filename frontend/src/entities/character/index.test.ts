@@ -153,6 +153,33 @@ describe('characterApis', () => {
     })
   })
 
+  it('forwards a cancellation signal for project character pages', async () => {
+    let requestSignal: AbortSignal | null | undefined
+    const characterApis = await loadCharacterApis(async (_input, init) => {
+      requestSignal = init?.signal
+      return new Response(
+        JSON.stringify({
+          code: 200,
+          message: 'success',
+          data: [],
+          total: 0,
+          page: 1,
+          page_size: 6,
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      )
+    })
+    const controller = new AbortController()
+
+    await characterApis.listByProject('42', {
+      page: 1,
+      pageSize: 6,
+      signal: controller.signal,
+    })
+
+    expect(requestSignal).toBe(controller.signal)
+  })
+
   it('serializes CreateCharacterInput without inventing generated assets', async () => {
     let request: Request | undefined
     const characterApis = await loadCharacterApis(async (input, init) => {

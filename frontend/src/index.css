@@ -235,6 +235,67 @@ body,
   }
 }
 
+.project-preview-loading,
+.project-preview-message {
+  position: relative;
+  display: grid;
+  height: 100%;
+  overflow: hidden;
+  place-items: center;
+  background: linear-gradient(
+    145deg,
+    var(--color-app-surface-muted),
+    var(--color-app-surface-strong)
+  );
+}
+
+.project-preview-message-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgb(143 160 146 / 18%) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(143 160 146 / 18%) 1px, transparent 1px);
+  background-position: center;
+  background-size: 24px 24px;
+  mask-image: radial-gradient(circle at center, #000 20%, transparent 76%);
+}
+
+.project-preview-image {
+  opacity: 0;
+  transform: scale(0.985);
+  transition:
+    opacity 320ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 560ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.project-preview-image-ready {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.project-preview-message span {
+  position: relative;
+  border: 1px solid rgb(143 160 146 / 24%);
+  background: rgb(247 248 244 / 78%);
+  padding: 0.3rem 0.55rem;
+  color: var(--color-app-faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.625rem;
+  letter-spacing: 0.06em;
+  backdrop-filter: blur(6px);
+}
+
+.project-preview-message-error {
+  background:
+    radial-gradient(circle at 28% 16%, rgb(255 248 243 / 74%), transparent 38%),
+    linear-gradient(145deg, var(--color-app-surface-muted), rgb(214 193 182 / 40%));
+}
+
+.project-preview-message-error span {
+  border-color: var(--color-app-danger-line);
+  color: var(--color-app-danger-muted);
+}
+
 @keyframes projects-dialog-backdrop {
   from {
     opacity: 0;
@@ -300,6 +361,10 @@ body,
   .action-reveal,
   .project-pixel-mark i {
     animation: none !important;
+  }
+
+  .project-preview-image {
+    transition: none;
   }
 }
 
