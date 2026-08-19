@@ -60,10 +60,13 @@ def service(mock_redis):
 
 
 @pytest.fixture()
-def mock_email():
-    """Mock 邮件服务。"""
-    with patch("windup_app.server.user.service.email_provider") as mock:
-        yield mock
+def mock_mq_publish():
+    """Mock MQ 邮件投递。"""
+    with patch("windup_app.server.user.service.MqPublisher") as mock_cls:
+        mock_pub = MagicMock()
+        mock_cls.return_value = mock_pub
+        mock_pub.publish_now.return_value = "00000000-0000-0000-0000-000000000001"
+        yield mock_pub
 
 
 # -- 密码哈希测试 --------------------------------------------------------
@@ -127,7 +130,7 @@ def test_decode_invalid_token():
 # -- 注册测试 ------------------------------------------------------------
 
 
-def test_register_success(db_session, service, mock_email):
+def test_register_success(db_session, service, mock_mq_publish):
     # Mock Redis 验证码
     service._redis.get.return_value = "123456"
 
@@ -146,7 +149,7 @@ def test_register_success(db_session, service, mock_email):
     assert result.user.email_verified_at is not None  # 注册即验证
 
 
-def test_public_methods_accept_session(db_session, service, mock_email):
+def test_public_methods_accept_session(db_session, service, mock_mq_publish):
     """公开接口走 session-per-call，不再抛 NotImplementedError。"""
     service._redis.get.return_value = "123456"
     registered = service.register_by_email(
@@ -186,7 +189,7 @@ def test_public_methods_accept_session(db_session, service, mock_email):
     assert code_login.user.id == registered.user.id
 
 
-def test_register_creates_credit_account(db_session, service, mock_email):
+def test_register_creates_credit_account(db_session, service, mock_mq_publish):
     """注册时应自动创建积分账户并赠送初始积分。"""
     from sqlalchemy import select
     from windup_app.server.quota.model import CreditAccount, CreditTransaction
@@ -335,7 +338,7 @@ def test_register_expired_invite_code(db_session, service):
 # -- 登录测试 ------------------------------------------------------------
 
 
-def test_login_success(db_session, service, mock_email):
+def test_login_success(db_session, service, mock_mq_publish):
     # 先注册
     service._redis.get.return_value = "123456"
     register_input = RegisterInput(
@@ -355,7 +358,7 @@ def test_login_success(db_session, service, mock_email):
     assert result.access_token is not None
 
 
-def test_login_wrong_password(db_session, service, mock_email):
+def test_login_wrong_password(db_session, service, mock_mq_publish):
     # 先注册
     service._redis.get.return_value = "123456"
     register_input = RegisterInput(
@@ -384,7 +387,7 @@ def test_login_nonexistent_user(db_session, service):
         service.login_by_password(db_session, login_input)
 
 
-def test_login_banned_user(db_session, service, mock_email):
+def test_login_banned_user(db_session, service, mock_mq_publish):
     # 先注册
     service._redis.get.return_value = "123456"
     register_input = RegisterInput(
@@ -414,7 +417,7 @@ def test_login_banned_user(db_session, service, mock_email):
 
 
 def test_login_by_code_unknown_email_creates_user_and_gifts(
-    db_session, service, mock_email
+    db_session, service, mock_mq_publish
 ):
     """未知邮箱验证码登录自动建号，并只发注册赠送。"""
     from sqlalchemy import select
@@ -437,15 +440,15 @@ def test_login_by_code_unknown_email_creates_user_and_gifts(
     assert account.balance == quota_settings.register_gift_amount
 
 
-def test_send_verification_code_allows_register_purpose(service, mock_email):
+def test_send_verification_code_allows_register_purpose(service, mock_mq_publish):
     service._redis.get.return_value = None
 
     service.send_verification_code("new@example.com", "register")
 
-    mock_email.send_verification_code.assert_called_once()
+    mock_mq_publish.publish_now.assert_called_once()
 
 
-def test_login_by_code_banned_user(db_session, service, mock_email):
+def test_login_by_code_banned_user(db_session, service, mock_mq_publish):
     from sqlalchemy import select
 
     service._redis.get.return_value = "123456"
@@ -487,7 +490,7 @@ def test_login_by_code_marks_unverified_email(db_session, service):
     assert result.user.email_verified_at is not None
 
 
-def test_login_by_code_existing_user(db_session, service, mock_email):
+def test_login_by_code_existing_user(db_session, service, mock_mq_publish):
     # 先注册
     service._redis.get.return_value = "123456"
     register_input = RegisterInput(
@@ -518,16 +521,16 @@ def test_login_by_code_wrong_code(db_session, service):
 # -- 发送验证码测试 ------------------------------------------------------
 
 
-def test_send_verification_code(service, mock_email):
+def test_send_verification_code(service, mock_mq_publish):
     service._redis.get.return_value = None  # 无冷却
 
     service.send_verification_code("test@example.com", "login")
 
-    mock_email.send_verification_code.assert_called_once()
+    mock_mq_publish.publish_now.assert_called_once()
     service._redis.pipeline.assert_called_once()
 
 
-def test_send_verification_code_cooldown(service, mock_email):
+def test_send_verification_code_cooldown(service, mock_mq_publish):
     service._redis.get.return_value = "1"  # 冷却中
 
     with pytest.raises(BizException, match="发送过于频繁"):
@@ -598,7 +601,7 @@ def test_refresh_tokens_concurrent_reuse(service, mock_redis):
 # -- 修改密码测试 --------------------------------------------------------
 
 
-def test_change_password(db_session, service, mock_email):
+def test_change_password(db_session, service, mock_mq_publish):
     # 先注册
     service._redis.get.return_value = "123456"
     register_input = RegisterInput(
@@ -625,7 +628,7 @@ def test_change_password(db_session, service, mock_email):
     assert login_result.user.email == "change@example.com"
 
 
-def test_change_password_wrong_old(db_session, service, mock_email):
+def test_change_password_wrong_old(db_session, service, mock_mq_publish):
     # 先注册
     service._redis.get.return_value = "123456"
     register_input = RegisterInput(
@@ -646,7 +649,7 @@ def test_change_password_wrong_old(db_session, service, mock_email):
 # -- 昵称修改测试 --------------------------------------------------------
 
 
-def test_update_nickname(db_session, service, mock_email):
+def test_update_nickname(db_session, service, mock_mq_publish):
     """修改昵称后立即生效。"""
     service._redis.get.return_value = "123456"
     register_input = RegisterInput(
@@ -665,7 +668,7 @@ def test_update_nickname(db_session, service, mock_email):
     assert user_view.id == result.user.id
 
 
-def test_update_nickname_max_length(db_session, service, mock_email):
+def test_update_nickname_max_length(db_session, service, mock_mq_publish):
     """昵称长度上限 50。"""
     service._redis.get.return_value = "123456"
     register_input = RegisterInput(
@@ -694,7 +697,7 @@ def test_update_nickname_user_not_found(db_session, service):
 # -- 重置密码测试 --------------------------------------------------------
 
 
-def test_reset_password(db_session, service, mock_email):
+def test_reset_password(db_session, service, mock_mq_publish):
     """邮箱+验证码重置密码后，新密码可登录。"""
     # 先注册
     service._redis.get.return_value = "123456"
@@ -721,7 +724,7 @@ def test_reset_password(db_session, service, mock_email):
     assert login_result.user.email == "reset@example.com"
 
 
-def test_reset_password_wrong_code(db_session, service, mock_email):
+def test_reset_password_wrong_code(db_session, service, mock_mq_publish):
     """验证码错误时拒绝重置。"""
     service._redis.get.return_value = "123456"
     register_input = RegisterInput(
@@ -756,7 +759,7 @@ def test_reset_password_user_not_found(db_session, service):
 # -- 登录限流测试 --------------------------------------------------------
 
 
-def test_login_account_locked(db_session, service, mock_email):
+def test_login_account_locked(db_session, service, mock_mq_publish):
     """账号被锁定后拒绝登录（即使密码正确）。"""
     # 先注册
     service._redis.get.return_value = "123456"
