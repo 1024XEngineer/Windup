@@ -511,9 +511,12 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
           reference_video_url: null,
           reference_image_urls: referenceImageUrls,
           num_frames: 32,
-          // 后端据此查该造型的 model_3d_url 决定路线（三渲二 / i2v，#122）；不发就恒为
-          // None，路线永远选不中。
-          outfit_id: nonEmptyString(input.outfitId, 'outfitId'),
+          // 后端拿 outfit_id 在场与否当三渲二的唯一判据（#122），所以它同时是"路线选择"
+          // 本身，不只是一个标识。无条件发送会让建过 3D 资产的造型点"视频裁剪"也走三渲二，
+          // 画风、成本、生成语义全被静默改掉，故只在用户真选了三渲二时发。
+          ...(input.method === '3d-to-2d'
+            ? { outfit_id: nonEmptyString(input.outfitId, 'outfitId') }
+            : {}),
         })
         expectations.set(generation.id, expectation)
         return generation as Generation<T['type']>

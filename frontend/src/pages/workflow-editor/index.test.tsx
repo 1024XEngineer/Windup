@@ -1020,7 +1020,7 @@ describe('母版确认闸', () => {
     expect(screen.getByRole('button', { name: '重新生成三张' })).toBeTruthy()
   })
 
-  it('预检拒绝时不许确认，并说清为什么', async () => {
+  it('预检拒绝只说清为什么，不替人把图否掉', async () => {
     await openGate(
       stubRender3DApis({
         precheckMaster: async () =>
@@ -1033,9 +1033,11 @@ describe('母版确认闸', () => {
       }),
     )
 
+    expect((await screen.findByRole('alert')).textContent).toContain('下游画布装不下')
+    // 拒绝判据是近似的（面积比、连通块数），会误判。挡下去的代价是用户只能重新生成
+    // 一张付费母版，而放行的代价只是下游多一次失败——所以决定权留给看得见图的人。
     const confirm = await screen.findByRole('button', { name: '确认为定妆母版' })
-    await waitFor(() => expect((confirm as HTMLButtonElement).disabled).toBe(true))
-    expect(screen.getByRole('alert').textContent).toContain('下游画布装不下')
+    expect((confirm as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('警告只提示不挡路——侧视角色两腿重叠时这条判据必然误报', async () => {

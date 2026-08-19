@@ -199,6 +199,7 @@ describe('createGenerationApis', () => {
       projectId: '42',
       characterId: '5',
       outfitId: 'default',
+      method: '3d-to-2d',
       actionType: 'walk',
       firstFrameUrl: 'https://cdn.test/frame-1.png',
       prompt: 'move forward',
@@ -224,6 +225,43 @@ describe('createGenerationApis', () => {
         durationMs: index % 2 === 0 ? 100 : null,
       })),
     })
+  })
+
+  it('选视频裁剪时不发 outfit_id——后端拿它在场与否当三渲二的唯一判据', async () => {
+    const request = vi.fn(async () =>
+      success(
+        taskData({
+          task_type: 'character_action',
+          input_payload: { num_frames: 32, action_type: 'walk' },
+          result: {
+            type: 'character_action',
+            action_type: 'walk',
+            frames: actionFrames(32),
+          },
+        }),
+      ),
+    )
+    const apis = createGenerationApis({
+      baseUrl: '/api',
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    // 这个造型建过 3D 资产（outfitId 有值），但用户选的是视频裁剪。带上 outfit_id
+    // 的话后端会查到 model_3d_url 并静默改走三渲二。
+    await apis.create({
+      type: 'complete_animation',
+      projectId: '42',
+      characterId: '5',
+      outfitId: 'default',
+      method: 'video-cropping',
+      actionType: 'walk',
+      firstFrameUrl: 'https://cdn.test/frame-1.png',
+      prompt: 'move forward',
+      referenceMedia: [],
+    })
+
+    const body = JSON.parse(String(request.mock.calls[0]?.[1]?.body))
+    expect('outfit_id' in body).toBe(false)
   })
 
   it('拒绝未知任务状态而不是默认为 pending', async () => {

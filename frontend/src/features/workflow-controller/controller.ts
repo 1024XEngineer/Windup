@@ -732,6 +732,7 @@ export function createWorkflowController({
         projectId: run.projectId,
         characterId,
         outfitId: firstFrameNode.input.outfitId,
+        method: methodNode.method,
         actionType: firstFrameNode.input.type,
         firstFrameUrl: firstFrameNode.selectedFirstFrameUrl,
         prompt: firstFrameNode.input.prompt,

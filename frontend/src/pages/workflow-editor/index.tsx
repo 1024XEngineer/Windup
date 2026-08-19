@@ -710,7 +710,9 @@ function MasterGate({
       <button
         type="button"
         className={CARD_BUTTON}
-        disabled={branchBusy || rejected}
+        // 预检的判据是近似的（面积比、连通块数），会误判；它拦下来的图未必真不能用。
+        // 所以拒绝只改文案不改可用性——把"这张不行"的决定权留给看得见图的人。
+        disabled={branchBusy}
         title={rejected ? precheck.report.detail : undefined}
         onClick={() =>
           input.runCommand(branchKey, async () => {
@@ -878,6 +880,23 @@ function Render3DAssetPanel({
     }
   }, [characterId, inFlight, outfitId, refreshKey, render3d])
 
+  // 轮询拿到 ready 时,页面级 Character 还停在旧值,而三渲二能不能选读的正是它
+  // (`outfits[].model3dUrl`)。不回填的话,用户等完两段付费流程仍看到那条路线是灰的,
+  // 得整页刷新才能继续 —— 刚花掉三十积分的人最不该撞上这个。
+  // 守卫只用 hasModel,不另设"同步过了"的一次性开关:那种开关在 Character 被别处
+  // 重新拉取、回到没有 model3dUrl 的旧值时就再也不会补,又退回"必须刷新页面"。
+  useEffect(() => {
+    if (asset?.state !== 'ready' || !asset.model3dUrl || hasModel) return
+    const character = input.character
+    if (!character) return
+    input.setCharacter({
+      ...character,
+      outfits: character.outfits.map((outfit) =>
+        outfit.id === outfitId ? { ...outfit, model3dUrl: asset.model3dUrl } : outfit,
+      ),
+    })
+  }, [asset, hasModel, input, outfitId])
+
   const act = (operation: () => Promise<Render3DAsset>) => {
     if (busy) return
     setBusy(true)
@@ -969,9 +988,7 @@ function Render3DAssetPanel({
       ) : null}
 
       {asset.state === 'ready' ? (
-        <p className={CARD_SUMMARY}>
-          3D 资产已就绪，这个造型可以走三渲二了{hasModel ? '' : '（刷新后生效）'}。
-        </p>
+        <p className={CARD_SUMMARY}>3D 资产已就绪，这个造型可以走三渲二了。</p>
       ) : null}
     </section>
   )
