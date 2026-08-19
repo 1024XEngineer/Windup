@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass, fields
 from enum import Enum
 
+from windup_framework.config.provider import settings as provider_settings
 from windup_framework.gateway.types import Scene
 
 logger = logging.getLogger("windup.gateway")
@@ -20,10 +21,17 @@ class AttemptTrace:
     task_id: str | None = None
     user_id: str | None = None
     family: str | None = None
+    route_id: str | None = None
+    route_group: str | None = None
+    candidate_index: int | None = None
+    provider_name: str | None = None
+    base_url_id: str | None = None
     base_url_host: str | None = None
+    api_key_id: str | None = None
     attempt_index: int | None = None
     retry_count: int = 0
     route_reason: str | None = None
+    route_layer: str | None = None
     circuit_scope: str | None = None
     error_type: str | None = None
     http_status: int | None = None
@@ -91,3 +99,7 @@ def hash_bytes(data: bytes) -> str:
 
 def emit(trace: AttemptTrace) -> None:
     logger.info("%s", json.dumps(trace.as_dict(), ensure_ascii=False, default=str))
+    if provider_settings.gateway_ledger_enabled:
+        from windup_framework.gateway.ledger import persist_attempt
+
+        persist_attempt(trace)

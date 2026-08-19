@@ -52,6 +52,55 @@ def test_submit_522_retries_once_does_not_open_second_job_on_fallback_model():
     assert ad.submit_models == ["kling-v2-5-turbo", "kling-v2-5-turbo"]
     assert ad.followed == []
 
+
+def test_submit_522_switches_base_url_route_before_model_fallback(caplog):
+    caplog.set_level(logging.INFO, logger="windup.gateway")
+    primary = FakeVideoAdapter(
+        submits={
+            "kling-v2-5-turbo": [UNREACHED, UNREACHED],
+            "kling-v2-6": [AdapterResult(ok=True, job_id="wrong", maybe_billed=True)],
+        },
+        follows={},
+    )
+    backup = FakeVideoAdapter(
+        submits={
+            "kling-v2-5-turbo": [AdapterResult(ok=True, job_id="j-backup", maybe_billed=True)],
+            "kling-v2-6": [],
+        },
+        follows={"j-backup": MP4},
+    )
+    cfg = AIProviderSettings(
+        video_model="kling-v2-5-turbo",
+        video_fallbacks="kling-v2-6",
+        route_primary_name="primary",
+        route_primary_base_url="https://api.qnaigc.com/v1",
+        route_primary_api_key="primary-key",
+        route_fallback_name="backup",
+        route_fallback_base_url="https://backup.example.com/v1",
+        route_fallback_api_key="backup-key",
+    )
+    gw = VideoGateway(
+        registry=ModelRegistry.from_settings(cfg),
+        adapter=primary,
+        circuit=CircuitBreaker(cooldown_s=60),
+        settings=cfg,
+        route_adapters={"primary": primary, "backup": backup},
+    )
+
+    assert gw.i2v(b"frame", "walk").startswith(b"\x00\x00\x00\x18ftyp")
+    assert primary.submit_models == ["kling-v2-5-turbo", "kling-v2-5-turbo"]
+    assert backup.submit_models == ["kling-v2-5-turbo"]
+    assert "kling-v2-6" not in primary.submit_models
+
+    records = [json.loads(r.message) for r in caplog.records if r.name == "windup.gateway"]
+    success = [r for r in records if r.get("outcome") in ("success", "fallback_success")]
+    assert success, caplog.text
+    line = success[-1]
+    assert line["route_reason"] == "base_url_unreached"
+    assert line["route_layer"] == "base_url"
+    assert line["base_url_id"] == "backup"
+
+
 def test_follow_failed_opens_new_job_on_fallback():
     ad = FakeVideoAdapter(
         submits={

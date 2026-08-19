@@ -47,6 +47,45 @@ def test_522_retries_same_model_once_and_does_not_fallback():
     assert ad.calls == ["gemini-2.5-flash-image", "gemini-2.5-flash-image"]
 
 
+def test_522_switches_base_url_route_before_model_fallback(caplog):
+    caplog.set_level(logging.INFO, logger="windup.gateway")
+    primary = FakeImageAdapter({
+        "gemini-2.5-flash-image": [UNREACHED, UNREACHED],
+        "gemini-2.5-flash-image-alt": [PNG],
+    })
+    backup = FakeImageAdapter({"gemini-2.5-flash-image": [PNG]})
+    cfg = AIProviderSettings(
+        image_model="gemini-2.5-flash-image",
+        image_fallbacks="gemini-2.5-flash-image-alt",
+        route_primary_name="primary",
+        route_primary_base_url="https://api.qnaigc.com/v1",
+        route_primary_api_key="primary-key",
+        route_fallback_name="backup",
+        route_fallback_base_url="https://backup.example.com/v1",
+        route_fallback_api_key="backup-key",
+    )
+    gw = ImageGateway(
+        ModelRegistry.from_settings(cfg),
+        primary,
+        CircuitBreaker(),
+        cfg,
+        route_adapters={"primary": primary, "backup": backup},
+    )
+
+    assert gw.gen_image("p", []).startswith(b"\x89PNG")
+    assert primary.calls == ["gemini-2.5-flash-image", "gemini-2.5-flash-image"]
+    assert backup.calls == ["gemini-2.5-flash-image"]
+    assert "gemini-2.5-flash-image-alt" not in primary.calls
+
+    records = [json.loads(r.message) for r in caplog.records if r.name == "windup.gateway"]
+    success = [r for r in records if r.get("outcome") in ("success", "fallback_success")]
+    assert success, caplog.text
+    line = success[-1]
+    assert line["route_reason"] == "base_url_unreached"
+    assert line["route_layer"] == "base_url"
+    assert line["base_url_id"] == "backup"
+
+
 def test_aggregator_circuit_skips_fallback_model():
     ad = FakeImageAdapter({
         "gemini-2.5-flash-image": [UNREACHED, UNREACHED],

@@ -41,6 +41,17 @@ class AIProviderSettings(BaseSettings):
     video_unit_cost_per_second: float | None = None
     price_version: str = "2026-08-16"
 
+    # ── Gateway route spike: base_url / key route candidates ────────────────
+    # 第一版仍以 env 管理。primary 留空时复用上面的 AI_BASE_URL / AI_API_KEY;
+    # fallback 三个字段都填才表示启用一个备用入口。
+    route_primary_name: str = "primary"
+    route_primary_base_url: str = ""
+    route_primary_api_key: str = ""
+    route_fallback_name: str = ""
+    route_fallback_base_url: str = ""
+    route_fallback_api_key: str = ""
+    gateway_ledger_enabled: bool = True
+
     @field_validator("image_unit_cost", "video_unit_cost_per_second", mode="before")
     @classmethod
     def _empty_cost_is_none(cls, v):
@@ -51,6 +62,22 @@ class AIProviderSettings(BaseSettings):
     @property
     def normalized_base_url(self) -> str:
         return self.base_url.rstrip("/")
+
+    @property
+    def effective_route_primary_base_url(self) -> str:
+        return (self.route_primary_base_url or self.base_url).rstrip("/")
+
+    @property
+    def effective_route_primary_api_key(self) -> str:
+        return self.route_primary_api_key or self.api_key
+
+    @property
+    def route_fallback_enabled(self) -> bool:
+        return all((
+            self.route_fallback_name.strip(),
+            self.route_fallback_base_url.strip(),
+            self.route_fallback_api_key.strip(),
+        ))
 
 
 settings = AIProviderSettings()

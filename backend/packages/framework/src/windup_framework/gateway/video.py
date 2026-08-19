@@ -4,7 +4,6 @@ import time
 import uuid
 from dataclasses import replace
 from datetime import datetime, timezone
-from urllib.parse import urlparse
 
 from windup_common.enums.model import ModelErrorType
 from windup_framework.config.provider import AIProviderSettings, settings as default_settings
@@ -12,6 +11,12 @@ from windup_framework.gateway.context import current_call_context
 from windup_framework.gateway.image import _CIRCUIT
 from windup_framework.gateway.policy import decide
 from windup_framework.gateway.registry import ModelRegistry
+from windup_framework.gateway.routes import (
+    GatewayRoute,
+    config_for_route,
+    route_layer_for,
+    routes_from_settings,
+)
 from windup_framework.gateway.trace import (
     AttemptTrace,
     emit,
@@ -30,11 +35,16 @@ def _utc_now() -> str:
 
 
 class VideoGateway:
-    def __init__(self, registry, adapter, circuit, settings) -> None:
+    def __init__(self, registry, adapter, circuit, settings, route_adapters=None) -> None:
         self._registry = registry
         self._adapter = adapter
         self._circuit = circuit
         self._settings = settings
+        self._routes = routes_from_settings(settings, route_group=Scene.CHARACTER_ACTION.value)
+        self._route_adapters = dict(route_adapters or {})
+
+    def _adapter_for(self, route: GatewayRoute):
+        return self._route_adapters.get(route.base_url_id, self._adapter)
 
     def i2v(
         self,
@@ -47,11 +57,12 @@ class VideoGateway:
         request_id = ctx.request_id or str(uuid.uuid4())
         started = time.monotonic()
         input_hash = hash_image_input(prompt, [first_frame])
-        host = urlparse(self._settings.base_url).hostname
         last_http_status: int | None = None
         last_error: ModelErrorType | None = None
         fallback_used = False
         fallback_reason: str | None = None
+        route_reason_override: str | None = None
+        routes = self._routes
 
         chain = list(self._registry.chain(Scene.CHARACTER_ACTION))
         if ctx.start_from_model and ctx.start_from_model in chain:
@@ -73,11 +84,12 @@ class VideoGateway:
 
         if self._circuit.is_open("aggregator"):
             model = models[0] if models else ""
+            route = routes[0]
             self._emit(
                 request_id=request_id,
                 ctx=ctx,
                 model=model,
-                host=host,
+                route=route,
                 attempt_index=start_i,
                 retry_count=0,
                 route_reason="skip_circuit_open",
@@ -89,75 +101,128 @@ class VideoGateway:
             )
             fail(None)
 
-        for i, model in enumerate(models):
-            attempt_index = start_i + i
-            if self._circuit.is_open("model:" + model):
-                fallback_used = True
-                fallback_reason = "skip"
-                self._emit(
-                    request_id=request_id,
-                    ctx=ctx,
-                    model=model,
-                    host=host,
-                    attempt_index=attempt_index,
-                    retry_count=0,
-                    route_reason="skip_circuit_open",
-                    circuit_scope="model",
-                    outcome="failed",
-                    input_hash=input_hash,
-                    total_latency_ms=total_ms(),
-                    fallback_used=fallback_used,
-                )
-                continue
+        for route_index, route in enumerate(routes):
+            if self._circuit.is_open("base_url:" + route.base_url_id):
+                if route_index + 1 < len(routes):
+                    fallback_used = True
+                    route_reason_override = "base_url_unreached"
+                    continue
+                fail(last_http_status)
 
-            if i == 0:
-                route_reason = (
-                    "start_from_caller"
-                    if ctx.start_from_model and ctx.start_from_model in chain
-                    else "primary"
-                )
-            elif fallback_reason == "429":
-                route_reason = "fallback_after_429"
-            elif fallback_reason == "skip":
-                route_reason = "skip_circuit_open"
-            else:
-                route_reason = "fallback_after_upstream_fail"
-
-            retry_count = 0
-            resend_spent = 0
-            bound_job_id: str | None = None
-            while True:
-                attempt_t0 = time.monotonic()
-                started_at = _utc_now()
-                submit_ms: int | None = None
-                if bound_job_id is None:
-                    submit_t0 = time.monotonic()
-                    result = self._adapter.submit_video(
-                        first_frame, prompt, seconds, size, model
+            adapter = self._adapter_for(route)
+            switch_to_next_route = False
+            for i, model in enumerate(models):
+                attempt_index = start_i + i
+                if self._circuit.is_open("model:" + model):
+                    fallback_used = True
+                    fallback_reason = "skip"
+                    self._emit(
+                        request_id=request_id,
+                        ctx=ctx,
+                        model=model,
+                        route=route,
+                        attempt_index=attempt_index,
+                        retry_count=0,
+                        route_reason="skip_circuit_open",
+                        circuit_scope="model",
+                        outcome="failed",
+                        input_hash=input_hash,
+                        total_latency_ms=total_ms(),
+                        fallback_used=fallback_used,
                     )
-                    submit_ms = int((time.monotonic() - submit_t0) * 1000)
-                    if result.ok and result.job_id:
-                        bound_job_id = result.job_id
-                        result = self._adapter.follow_job(bound_job_id)
-                    elif result.ok:
-                        result = replace(
-                            result,
-                            ok=False,
-                            error_type=ModelErrorType.INVALID_RESPONSE,
-                            body=b"",
-                        )
-                else:
-                    result = self._adapter.follow_job(bound_job_id)
+                    continue
 
-                ended_at = _utc_now()
-                attempt_latency_ms = int((time.monotonic() - attempt_t0) * 1000)
-                last_http_status = result.http_status
-                if result.ok:
+                if i == 0:
+                    route_reason = route_reason_override or (
+                        "start_from_caller"
+                        if ctx.start_from_model and ctx.start_from_model in chain
+                        else "primary"
+                    )
+                elif fallback_reason == "429":
+                    route_reason = "fallback_after_429"
+                elif fallback_reason == "skip":
+                    route_reason = "skip_circuit_open"
+                else:
+                    route_reason = "fallback_after_upstream_fail"
+
+                retry_count = 0
+                resend_spent = 0
+                bound_job_id: str | None = None
+                while True:
+                    attempt_t0 = time.monotonic()
+                    started_at = _utc_now()
+                    submit_ms: int | None = None
+                    if bound_job_id is None:
+                        submit_t0 = time.monotonic()
+                        result = adapter.submit_video(
+                            first_frame, prompt, seconds, size, model
+                        )
+                        submit_ms = int((time.monotonic() - submit_t0) * 1000)
+                        if result.ok and result.job_id:
+                            bound_job_id = result.job_id
+                            result = adapter.follow_job(bound_job_id)
+                        elif result.ok:
+                            result = replace(
+                                result,
+                                ok=False,
+                                error_type=ModelErrorType.INVALID_RESPONSE,
+                                body=b"",
+                            )
+                    else:
+                        result = adapter.follow_job(bound_job_id)
+
+                    ended_at = _utc_now()
+                    attempt_latency_ms = int((time.monotonic() - attempt_t0) * 1000)
+                    last_http_status = result.http_status
+                    if result.ok:
+                        self._emit_result(
+                            request_id=request_id,
+                            ctx=ctx,
+                            model=model,
+                            route=route,
+                            attempt_index=attempt_index,
+                            retry_count=retry_count,
+                            route_reason=route_reason,
+                            result=result,
+                            input_hash=input_hash,
+                            total_latency_ms=total_ms(),
+                            fallback_used=fallback_used,
+                            started_at=started_at,
+                            ended_at=ended_at,
+                            attempt_latency_ms=attempt_latency_ms,
+                            resend_spent=resend_spent,
+                            seconds=seconds,
+                            outcome="fallback_success" if fallback_used else "success",
+                            submit_ms=submit_ms,
+                        )
+                        return result.body
+
+                    error_type = result.error_type or ModelErrorType.UNKNOWN
+                    last_error = error_type
+                    has_job_id = bool(result.job_id or bound_job_id)
+                    step = decide(
+                        error_type=error_type,
+                        retry_count=retry_count,
+                        has_job_id=has_job_id,
+                    )
+                    circuit_scope = None
+                    has_next_route = route_index + 1 < len(routes)
+                    if step is NextStep.OPEN_AGGREGATOR:
+                        if has_next_route:
+                            self._circuit.open("base_url:" + route.base_url_id)
+                            circuit_scope = "base_url"
+                        else:
+                            self._circuit.open("aggregator")
+                            circuit_scope = "aggregator"
+                    elif step is NextStep.FALLBACK:
+                        self._circuit.open("model:" + model)
+                        circuit_scope = "model"
+
                     self._emit_result(
                         request_id=request_id,
                         ctx=ctx,
                         model=model,
-                        host=host,
+                        route=route,
                         attempt_index=attempt_index,
                         retry_count=retry_count,
                         route_reason=route_reason,
@@ -170,79 +235,55 @@ class VideoGateway:
                         attempt_latency_ms=attempt_latency_ms,
                         resend_spent=resend_spent,
                         seconds=seconds,
-                        outcome="fallback_success" if fallback_used else "success",
+                        outcome="failed",
+                        circuit_scope=circuit_scope,
+                        error_type=error_type,
                         submit_ms=submit_ms,
                     )
-                    return result.body
-
-                error_type = result.error_type or ModelErrorType.UNKNOWN
-                last_error = error_type
-                has_job_id = bool(result.job_id or bound_job_id)
-                step = decide(
-                    error_type=error_type,
-                    retry_count=retry_count,
-                    has_job_id=has_job_id,
-                )
-                circuit_scope = None
-                if step is NextStep.OPEN_AGGREGATOR:
-                    self._circuit.open("aggregator")
-                    circuit_scope = "aggregator"
-                elif step is NextStep.FALLBACK:
-                    self._circuit.open("model:" + model)
-                    circuit_scope = "model"
-
-                self._emit_result(
-                    request_id=request_id,
-                    ctx=ctx,
-                    model=model,
-                    host=host,
-                    attempt_index=attempt_index,
-                    retry_count=retry_count,
-                    route_reason=route_reason,
-                    result=result,
-                    input_hash=input_hash,
-                    total_latency_ms=total_ms(),
-                    fallback_used=fallback_used,
-                    started_at=started_at,
-                    ended_at=ended_at,
-                    attempt_latency_ms=attempt_latency_ms,
-                    resend_spent=resend_spent,
-                    seconds=seconds,
-                    outcome="failed",
-                    circuit_scope=circuit_scope,
-                    error_type=error_type,
-                    submit_ms=submit_ms,
-                )
-                if step is NextStep.RETRY_SAME:
-                    if error_type is ModelErrorType.RATE_LIMIT:
-                        wait = (
-                            result.retry_after_s
-                            if result.retry_after_s is not None
-                            else _DEFAULT_RETRY_AFTER_S
+                    if (
+                        step is NextStep.OPEN_AGGREGATOR
+                        and has_next_route
+                        and bound_job_id is None
+                    ):
+                        fallback_used = True
+                        route_reason_override = "base_url_unreached"
+                        switch_to_next_route = True
+                        break
+                    if step is NextStep.RETRY_SAME:
+                        if error_type is ModelErrorType.RATE_LIMIT:
+                            wait = (
+                                result.retry_after_s
+                                if result.retry_after_s is not None
+                                else _DEFAULT_RETRY_AFTER_S
+                            )
+                            time.sleep(min(wait, _SLEEP_CAP_S))
+                        retry_count += 1
+                        if error_type is ModelErrorType.UNREACHED:
+                            resend_spent = 1
+                        continue
+                    if step is NextStep.FALLBACK:
+                        if (
+                            bound_job_id is not None
+                            and error_type is not ModelErrorType.UPSTREAM_FAILED
+                        ):
+                            fail(last_http_status)
+                        if (
+                            bound_job_id is None
+                            and error_type is not ModelErrorType.RATE_LIMIT
+                        ):
+                            fail(last_http_status)
+                        fallback_used = True
+                        fallback_reason = (
+                            "429" if error_type is ModelErrorType.RATE_LIMIT else "upstream"
                         )
-                        time.sleep(min(wait, _SLEEP_CAP_S))
-                    retry_count += 1
-                    if error_type is ModelErrorType.UNREACHED:
-                        resend_spent = 1
-                    continue
-                if step is NextStep.FALLBACK:
-                    if (
-                        bound_job_id is not None
-                        and error_type is not ModelErrorType.UPSTREAM_FAILED
-                    ):
-                        fail(last_http_status)
-                    if (
-                        bound_job_id is None
-                        and error_type is not ModelErrorType.RATE_LIMIT
-                    ):
-                        fail(last_http_status)
-                    fallback_used = True
-                    fallback_reason = (
-                        "429" if error_type is ModelErrorType.RATE_LIMIT else "upstream"
-                    )
-                    bound_job_id = None
+                        bound_job_id = None
+                        break
+                    fail(last_http_status)
+                if switch_to_next_route:
                     break
-                fail(last_http_status)
+            if switch_to_next_route:
+                continue
+            route_reason_override = None
 
         fail(last_http_status)
 
@@ -252,7 +293,7 @@ class VideoGateway:
         request_id: str,
         ctx,
         model: str,
-        host: str | None,
+        route: GatewayRoute,
         attempt_index: int,
         retry_count: int,
         route_reason: str,
@@ -287,7 +328,7 @@ class VideoGateway:
             request_id=request_id,
             ctx=ctx,
             model=model,
-            host=host,
+            route=route,
             attempt_index=attempt_index,
             retry_count=retry_count,
             route_reason=route_reason,
@@ -324,7 +365,7 @@ class VideoGateway:
         request_id: str,
         ctx,
         model: str,
-        host: str | None,
+        route: GatewayRoute,
         attempt_index: int,
         retry_count: int,
         route_reason: str,
@@ -366,10 +407,17 @@ class VideoGateway:
                 scene=Scene.CHARACTER_ACTION,
                 model=model,
                 family=family,
-                base_url_host=host,
+                route_id=route.route_id,
+                route_group=route.route_group,
+                candidate_index=route.candidate_index,
+                provider_name=route.provider_name,
+                base_url_id=route.base_url_id,
+                base_url_host=route.host,
+                api_key_id=route.api_key_id,
                 attempt_index=attempt_index,
                 retry_count=retry_count,
                 route_reason=route_reason,
+                route_layer=route_layer_for(route_reason),
                 circuit_scope=circuit_scope,
                 error_type=error_type,
                 http_status=http_status,
@@ -402,13 +450,20 @@ class VideoGateway:
 
 def build_video_gateway(config=None, *, adapter=None, circuit=None) -> VideoGateway:
     cfg: AIProviderSettings = config or default_settings
+    route_adapters = None
     if adapter is None:
         from windup_framework.providers.sufy import SufyVideoProvider
 
-        adapter = SufyVideoProvider(config=cfg)
+        routes = routes_from_settings(cfg, route_group=Scene.CHARACTER_ACTION.value)
+        route_adapters = {
+            route.base_url_id: SufyVideoProvider(config=config_for_route(cfg, route))
+            for route in routes
+        }
+        adapter = route_adapters[routes[0].base_url_id]
     return VideoGateway(
         ModelRegistry.from_settings(cfg),
         adapter,
         circuit if circuit is not None else _CIRCUIT,
         cfg,
+        route_adapters=route_adapters,
     )

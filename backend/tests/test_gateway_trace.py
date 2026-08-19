@@ -6,7 +6,9 @@ from windup_framework.gateway.types import Scene
 
 REQUIRED = {
     "request_id", "attempt_id", "task_id", "user_id", "scene", "model", "family",
-    "base_url_host", "attempt_index", "retry_count", "route_reason", "circuit_scope",
+    "route_id", "route_group", "candidate_index", "provider_name", "base_url_id",
+    "base_url_host", "api_key_id", "attempt_index", "retry_count", "route_reason",
+    "route_layer", "circuit_scope",
     "error_type", "http_status", "edge_fingerprint", "job_id", "fallback_used",
     "outcome", "job_status", "started_at", "ended_at", "attempt_latency_ms",
     "total_latency_ms", "submit_ms", "poll_ms", "download_ms", "poll_count",
