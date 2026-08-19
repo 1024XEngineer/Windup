@@ -674,6 +674,7 @@ describe('createQuickStartService', () => {
       { index: 7, imageUrl: 'frame-7.png', durationMs: 83 },
       { index: 9, imageUrl: 'frame-9.png', durationMs: null },
     ])
+    await expect(session.getExportModel()).rejects.toThrow('挥手的east方向帧序号必须从 0 连续排列')
     session.dispose()
     await session.resume()
     vi.mocked(characterApis.update).mockRejectedValueOnce(new Error('asset write failed'))
@@ -779,6 +780,7 @@ describe('createQuickStartService', () => {
         prepareProject: vi.fn(async () => ({
           id: 'project-1',
           spriteSize: { width: 256, height: 256 },
+          directionalMovement: 'four-way' as const,
         })),
         projectApis: projectReader(),
         onAsyncError,
@@ -1808,6 +1810,28 @@ describe('createQuickStartService', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(methodAttempts).toBe(1)
     unsubscribe()
+  })
+
+  it('自动确认动作首帧读取失败时停止推进并上报原始错误', async () => {
+    const run = actionRun(true)
+    const generationApis = pendingGenerationApis()
+    vi.mocked(generationApis.get).mockRejectedValue(new Error('候选图读取失败'))
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+    })
+    const session = await service.open(run.id)
+    const errors: Error[] = []
+    session.subscribeErrors((error) => errors.push(error))
+
+    await session.resume()
+
+    await vi.waitFor(() =>
+      expect(errors).toEqual([expect.objectContaining({ message: '候选图读取失败' })]),
+    )
+    await session.interrupt()
   })
 
   it('错误上报器和页面订阅者抛错时仍完成容错', async () => {
