@@ -498,6 +498,14 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
       const projectId = inputPositiveInteger(input.projectId, 'projectId')
       if (input.type === 'complete_animation') {
         const referenceImageUrls = references(input)
+        // 这两道拦在 HTTP 之前。后端各有一道最后防线，但它回给用户的是
+        // "请求参数校验失败"和一条 pydantic 明细，读不懂也不知道下一步做什么。
+        if (input.actionType === 'custom' && !(input.prompt ?? '').trim()) {
+          throw new GenerationApiError('自定义动作必须填写动作描述，例如：来回踱步')
+        }
+        if (referenceImageUrls.length === 0) {
+          throw new GenerationApiError('这个造型还没有可用的角色母版，请先完成定妆再生成动作')
+        }
         const expectation = { type: input.type, actionType: input.actionType } as const
         const generation = await post('/generation/action', projectId, expectation, {
           project_id: projectId,
