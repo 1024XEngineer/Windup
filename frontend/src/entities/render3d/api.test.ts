@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ApiClient } from '@/shared/api'
-import { createRender3DApis, Render3DContractError } from './api'
+import { createRender3DApis, render3DApis, Render3DContractError } from './api'
 
 function clientReturning(data: unknown): { client: ApiClient; calls: string[] } {
   const calls: string[] = []
@@ -194,5 +194,45 @@ describe('三渲二适配器的形状守卫', () => {
 
   it('整个预检结果不是对象时拒收', async () => {
     await expect(precheckWith(['报告'])).rejects.toBeInstanceOf(Render3DContractError)
+  })
+})
+
+describe('render3DApis 单例', () => {
+  // 单例是五个方法各自转发一次,新增方法时很容易只加在工厂上、忘了往这里挂 ——
+  // 那样界面调用的是 undefined,而工厂的测试全绿。这条按端点逐个点名。
+  it('五个方法都接到各自的端点上', async () => {
+    const calls: string[] = []
+    vi.stubEnv('VITE_API_BASE_URL', 'http://api.test')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        const path = String(url)
+        calls.push(`${init?.method ?? 'GET'} ${path.slice(path.indexOf('/render3d'))}`)
+        return new Response(
+          JSON.stringify({
+            code: 200,
+            message: 'success',
+            data: path.includes('master-precheck') ? REPORT : ASSET,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }),
+    )
+
+    await render3DApis.precheckMaster('https://cdn.test/master.png')
+    await render3DApis.getOutfitAsset('7', 'outfit-default')
+    await render3DApis.buildOutfitAsset('7', 'outfit-default')
+    await render3DApis.approveOutfitAsset('7', 'outfit-default')
+    await render3DApis.discardOutfitAsset('7', 'outfit-default')
+
+    expect(calls).toEqual([
+      'POST /render3d/master-precheck',
+      'GET /render3d/characters/7/outfits/outfit-default',
+      'POST /render3d/characters/7/outfits/outfit-default/build',
+      'POST /render3d/characters/7/outfits/outfit-default/approve',
+      'POST /render3d/characters/7/outfits/outfit-default/discard',
+    ])
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
   })
 })
