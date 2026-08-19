@@ -15,6 +15,7 @@ import logging
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -345,18 +346,39 @@ class SqlAlchemyQuotaService(QuotaService):
     # -- 流水查询 ---------------------------------------------------------
 
     def list_transactions(
-        self, session: Session, user_id: int, page: int = 1, page_size: int = 20
+        self,
+        session: Session,
+        user_id: int,
+        page: int = 1,
+        page_size: int = 20,
+        *,
+        direction: Literal["income", "expense"] | None = None,
+        reason: int | None = None,
+        created_from: datetime | None = None,
+        created_before: datetime | None = None,
     ) -> tuple[list[CreditTransactionView], int]:
-        """分页查询积分流水。"""
+        """筛选并分页查询积分流水。"""
+        conditions = [CreditTransaction.user_id == user_id]
+        if direction == "income":
+            conditions.append(CreditTransaction.delta > 0)
+        elif direction == "expense":
+            conditions.append(CreditTransaction.delta < 0)
+        if reason is not None:
+            conditions.append(CreditTransaction.reason == reason)
+        if created_from is not None:
+            conditions.append(CreditTransaction.create_at >= created_from)
+        if created_before is not None:
+            conditions.append(CreditTransaction.create_at < created_before)
+
         total = session.scalar(
             select(func.count())
             .select_from(CreditTransaction)
-            .where(CreditTransaction.user_id == user_id)
+            .where(*conditions)
         )
 
         rows = session.scalars(
             select(CreditTransaction)
-            .where(CreditTransaction.user_id == user_id)
+            .where(*conditions)
             .order_by(CreditTransaction.id.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)

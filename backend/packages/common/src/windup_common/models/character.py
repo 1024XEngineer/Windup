@@ -71,6 +71,20 @@ class AttackArchetype(str, Enum):
     LUNGE = "lunge"      # 非双足:整体前扑,头部 / 前肢领先
 
 
+class CharacterStance(str, Enum):
+    """角色体型 —— 决定"手臂 / 手肘"这类人体部位词能不能进提示词。
+
+    非双足角色的描述里出现"手臂",模型会给它凭空接上一对人的上肢来调和文图矛盾,
+    而帧数、时长、成色全部正常。成员按"发力部位不同"分,每个非双足成员都要在
+    ``ai_engine.prompt.adapter`` 的替换建议表里有自己那套部位说法,否则拒绝理由
+    只能告诉用户"不行"、给不出改法。
+    """
+
+    BIPED = "biped"            # 双腿站立 + 一对上肢(人形 / 类人怪)
+    QUADRUPED = "quadruped"    # 四肢着地,前肢兼作手
+    SERPENTINE = "serpentine"  # 无肢,靠躯干起伏推进(蛇 / 鳗 / 触手)
+
+
 class GenRoute(str, Enum):
     """生成路线 —— 实测挣得的分流依据(见 ai_engine.strategy 层 docstring)。
 
@@ -134,8 +148,9 @@ DEFAULT_N_FRAMES = 8
 class CharacterCard(BaseModel):
     """角色卡 —— 一致性主键 + 资产库基础(产品核心实体)。
 
-    注意:视频路线**不读本模型的任何字段**,角色身份由母版图像承载。
-    详见 ``windup_ai_engine.ports.CharacterGeneratorPort`` 的 docstring。
+    注意:视频路线的**角色身份**由母版图像承载,不读 name / desc。它只读 ``stance``,
+    且只用来判用户那句描述能不能进提示词。详见
+    ``windup_ai_engine.ports.CharacterGeneratorPort`` 的 docstring。
     """
 
     model_config = _STRICT
@@ -145,6 +160,12 @@ class CharacterCard(BaseModel):
     view: CharacterView = CharacterView.SIDE
     master_ref: str = ""                         # 定妆母版的存储 ref(对象存储,非本地路径)
     version: str = "v1"
+
+    # 体型。默认值等于对每个没声明体型的角色做一次断言,所以取断言最少的那个:双足这一支
+    # 不往提示词里加任何部位词、也不要求用户改写措辞。反过来把默认设成非双足,会让占多数的
+    # 人形角色被要求把"手臂"改写成"前肢 / 尾",那些词进提示词就是让模型凭空长出对应部位。
+    # 不自动识别:那要调模型,而认错是静默的 —— 错误的体型只在下一次付费生成的画面上显形。
+    stance: CharacterStance = CharacterStance.BIPED
 
     # 注:曾有 `palette: str = ""`。2026-08-08 删除,理由是它会变成"看起来生效、实则被
     # 忽略"的第二真相源:真正锁色的色板由 postprocess.master_pixel_spec 从母版像素里量出来

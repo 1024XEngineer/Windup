@@ -1,4 +1,8 @@
+import { ArrowLeft } from '@phosphor-icons/react'
+import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
+
+const backTransitionDurationMs = 230
 
 function fallbackPath(pathname: string): string {
   if (/^\/quick-start\/[^/]+$/.test(pathname)) return '/quick-start'
@@ -21,8 +25,18 @@ function hasInternalHistory(): boolean {
 export function PageBackButton() {
   const { pathname } = useLocation()
   const navigate = useNavigate()
+  const [transitioning, setTransitioning] = useState(false)
+  const transitioningRef = useRef(false)
+  const fallbackTimerRef = useRef<number | null>(null)
 
-  function goBack() {
+  useEffect(
+    () => () => {
+      if (fallbackTimerRef.current !== null) window.clearTimeout(fallbackTimerRef.current)
+    },
+    [],
+  )
+
+  function navigateBack() {
     if (hasInternalHistory()) {
       navigate(-1)
       return
@@ -30,16 +44,40 @@ export function PageBackButton() {
     navigate(fallbackPath(pathname), { replace: true })
   }
 
+  function finishTransition() {
+    transitioningRef.current = false
+    fallbackTimerRef.current = null
+    setTransitioning(false)
+    navigateBack()
+  }
+
+  function requestBack() {
+    if (transitioningRef.current) return
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      navigateBack()
+      return
+    }
+
+    transitioningRef.current = true
+    setTransitioning(true)
+    fallbackTimerRef.current = window.setTimeout(finishTransition, backTransitionDurationMs)
+  }
+
   return (
     <button
       type="button"
       aria-label="返回上一页"
       title="返回上一页"
-      onClick={goBack}
-      className="inline-grid h-9 w-9 shrink-0 place-items-center rounded-md border border-app-accent/12 bg-app-surface-raised/35 text-app-ink-soft transition-[background-color,color,transform] duration-150 hover:bg-app-surface-raised/75 hover:text-app-accent-hover active:translate-y-px active:scale-[0.96] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent motion-reduce:transform-none"
+      onClick={requestBack}
+      className={`inline-grid h-9 w-9 shrink-0 place-items-center rounded-md bg-transparent text-app-muted transition-[background-color,color] duration-150 hover:bg-app-surface-raised/55 hover:text-app-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent ${
+        transitioning ? 'app-header-back-in-flight' : ''
+      }`}
     >
-      <span aria-hidden="true" className="text-[1.2rem] leading-none">
-        ←
+      <span aria-hidden="true" className="relative block h-[18px] w-[18px] overflow-hidden">
+        <span className="app-header-back-strip absolute inset-y-0 left-0 flex items-center gap-2">
+          <ArrowLeft className="shrink-0" size={18} weight="regular" />
+          <ArrowLeft className="shrink-0" size={18} weight="regular" />
+        </span>
       </span>
     </button>
   )

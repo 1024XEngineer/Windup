@@ -248,6 +248,95 @@ describe('AccountPage', () => {
     )
   })
 
+  it('按收支、原因和本地日期筛选流水并调整分页', async () => {
+    vi.spyOn(quotaApis, 'getBalance').mockResolvedValue({
+      id: '11',
+      userId: '7',
+      balance: 90,
+      frozen: 0,
+      totalEarned: 100,
+      totalSpent: 10,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+    const listTransactions = vi
+      .spyOn(quotaApis, 'listTransactions')
+      .mockImplementation(async ({ page = 1, pageSize = 20 } = {}) => ({
+        items: [],
+        total: 80,
+        page,
+        pageSize,
+      }))
+
+    renderAccount()
+    fireEvent.click(await screen.findByRole('button', { name: '积分账户' }))
+    await waitFor(() => expect(listTransactions).toHaveBeenCalled())
+
+    fireEvent.change(screen.getByLabelText('变动方向'), { target: { value: 'expense' } })
+    fireEvent.change(screen.getByLabelText('变动原因'), { target: { value: '3' } })
+    fireEvent.change(screen.getByLabelText('开始日期'), { target: { value: '2026-08-10' } })
+    fireEvent.change(screen.getByLabelText('结束日期'), { target: { value: '2026-08-12' } })
+    fireEvent.change(screen.getByLabelText('每页条数'), { target: { value: '50' } })
+    fireEvent.submit(screen.getByRole('form', { name: '积分流水筛选' }))
+
+    await waitFor(() =>
+      expect(listTransactions).toHaveBeenLastCalledWith({
+        page: 1,
+        pageSize: 50,
+        direction: 'expense',
+        reason: 3,
+        createdFrom: new Date(2026, 7, 10).toISOString(),
+        createdBefore: new Date(2026, 7, 13).toISOString(),
+      }),
+    )
+    expect(screen.getByRole('button', { name: '第 1 页' }).getAttribute('aria-current')).toBe(
+      'page',
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '重置' }))
+    await waitFor(() =>
+      expect(listTransactions).toHaveBeenLastCalledWith({ page: 1, pageSize: 20 }),
+    )
+    expect((screen.getByLabelText('变动方向') as HTMLSelectElement).value).toBe('')
+    expect((screen.getByLabelText('变动原因') as HTMLSelectElement).value).toBe('')
+    expect((screen.getByLabelText('开始日期') as HTMLInputElement).value).toBe('')
+    expect((screen.getByLabelText('结束日期') as HTMLInputElement).value).toBe('')
+    expect((screen.getByLabelText('每页条数') as HTMLSelectElement).value).toBe('20')
+
+    const callsBeforeEmptyApply = listTransactions.mock.calls.length
+    fireEvent.click(screen.getByRole('button', { name: '应用筛选' }))
+    await waitFor(() => expect(listTransactions).toHaveBeenCalledTimes(callsBeforeEmptyApply + 1))
+    await waitFor(() =>
+      expect(listTransactions).toHaveBeenLastCalledWith({ page: 1, pageSize: 20 }),
+    )
+  })
+
+  it('在本地拒绝开始日期晚于结束日期的筛选', async () => {
+    vi.spyOn(quotaApis, 'getBalance').mockResolvedValue({
+      id: '11',
+      userId: '7',
+      balance: 90,
+      frozen: 0,
+      totalEarned: 100,
+      totalSpent: 10,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+    const listTransactions = vi
+      .spyOn(quotaApis, 'listTransactions')
+      .mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 })
+
+    renderAccount()
+    fireEvent.click(await screen.findByRole('button', { name: '积分账户' }))
+    await waitFor(() => expect(listTransactions).toHaveBeenCalledTimes(1))
+    fireEvent.change(screen.getByLabelText('开始日期'), { target: { value: '2026-08-12' } })
+    fireEvent.change(screen.getByLabelText('结束日期'), { target: { value: '2026-08-10' } })
+    fireEvent.submit(screen.getByRole('form', { name: '积分流水筛选' }))
+
+    expect((await screen.findByRole('alert')).textContent).toContain('开始日期不能晚于结束日期')
+    expect(listTransactions).toHaveBeenCalledTimes(1)
+  })
+
   it('reports a profile refresh failure without claiming the data is synchronized', async () => {
     const apis = createApis()
     apis.me.mockRejectedValue(new Error('资料读取失败'))

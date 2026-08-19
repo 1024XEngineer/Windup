@@ -5,7 +5,6 @@ import { Link } from 'react-router'
 import characterJourney from '@/assets/landing/illustrations/character-journey.webp'
 import gongbiBirdLeft from '@/assets/landing/illustrations/gongbi-tit-flight-up.webp'
 import gongbiBirdRight from '@/assets/landing/illustrations/gongbi-tit-flight-down.webp'
-import workflowEditorDesktop from '@/assets/landing/screenshots/workflow-editor-runtime-desktop.jpg'
 import { useAuthSession } from '@/features/auth-session'
 import { usePrefersReducedMotion } from '@/shared/hooks'
 import { CapabilitiesRail } from './capabilities-rail'
@@ -149,14 +148,9 @@ function PlayTestScene() {
 function WorkflowCanvasScene() {
   return (
     <div
+      data-testid="workflow-editor-placeholder"
       className={`${capabilitySceneClassName} [opacity:var(--canvas-opacity)] [transform:scale(var(--canvas-scale))] motion-reduce:hidden`}
-    >
-      <img
-        src={workflowEditorDesktop}
-        alt="Windup 工作流画布中的角色母版、动作首帧、生成与审核节点"
-        className="absolute inset-0 h-full w-full object-cover object-center"
-      />
-    </div>
+    />
   )
 }
 
@@ -565,16 +559,10 @@ export function LandingPage() {
           </div>
 
           <figure className="absolute top-[calc(80dvh_-_4.5rem)] left-1/2 z-20 w-[80%] max-w-[72rem] -translate-x-1/2 transform-gpu">
-            <div className="aspect-[2/1] overflow-hidden rounded-2xl border border-[#c9c8c0] bg-[#f9f8f3] shadow-[0_30px_80px_rgba(53,58,49,0.18)]">
-              <img
-                src={workflowEditorDesktop}
-                alt="Windup Workflow Editor 真实运行界面"
-                loading="eager"
-                decoding="async"
-                fetchPriority="high"
-                className="block w-full origin-top -translate-y-31 scale-[1.04]"
-              />
-            </div>
+            <div
+              data-testid="workflow-editor-placeholder"
+              className="aspect-[2/1] overflow-hidden rounded-2xl border border-[#c9c8c0] bg-[#f9f8f3] shadow-[0_30px_80px_rgba(53,58,49,0.18)]"
+            />
           </figure>
         </section>
 
@@ -610,15 +598,10 @@ export function LandingPage() {
             </div>
 
             <figure>
-              <div className="aspect-[16/10] overflow-hidden rounded-xl border border-rule bg-paper-sunken">
-                <img
-                  src={workflowEditorDesktop}
-                  alt="Windup Workflow Editor 真实运行界面"
-                  loading="lazy"
-                  decoding="async"
-                  className="block w-full origin-[22%_46%] scale-[1.62]"
-                />
-              </div>
+              <div
+                data-testid="workflow-editor-placeholder"
+                className="aspect-[16/10] overflow-hidden rounded-xl border border-rule bg-paper-sunken"
+              />
               <figcaption className="mt-4 text-body text-ink-faint">
                 真实 WorkflowRun 会保留画布中的每一次确认结果。
               </figcaption>

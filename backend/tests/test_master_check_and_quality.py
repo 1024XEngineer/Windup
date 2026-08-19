@@ -232,8 +232,9 @@ def test_loop_seam_measures_the_gap_between_last_and_first():
 def test_quality_fields_are_independent():
     """三个字段互不可推导：全同帧的 motion_scale=0 而 dead_frames 为空，
     两者若能互推，这一组断言不可能同时成立。"""
-    q = ActionQuality(motion_scale=0.0, dead_frames=(), loop_seam=None)
+    q = ActionQuality(motion_scale=0.0, dead_frames=(), loop_seam=None, subject_blobs=(1,))
     assert q.motion_scale == 0.0 and q.dead_frames == () and q.loop_seam is None
+    assert q.subject_blobs == (1,)
 
 
 # ── 分区动量:整幅指标的盲区 ──────────────────────────────────────────────

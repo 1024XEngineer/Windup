@@ -42,6 +42,8 @@ export interface Outfit {
   name: string
   description: string | null
   previewUrl: string | null
+  /** 该造型已确认的绑骨 3D 模型；null = 三渲二在此造型上不可用，动作生成走 i2v。 */
+  model3dUrl: string | null
   actions: Action[]
 }
 
@@ -83,6 +85,7 @@ export interface CharacterApis {
 
 export interface CharacterPageQuery extends PageQuery {
   status?: CharacterPublicationStatus
+  signal?: AbortSignal
 }
 
 interface CharacterFrameDto {
@@ -106,6 +109,7 @@ interface CharacterOutfitDto {
   name: string
   description: string | null
   preview_url: string | null
+  model_3d_url?: string | null
   actions: CharacterActionDto[]
 }
 
@@ -164,6 +168,7 @@ function mapOutfit(dto: CharacterOutfitDto, characterId: string): Outfit {
     name: dto.name,
     description: dto.description,
     previewUrl: dto.preview_url,
+    model3dUrl: dto.model_3d_url ?? null,
     actions: dto.actions.map((action) => mapAction(action, dto.id)),
   }
 }
@@ -209,6 +214,7 @@ function toOutfitDto(outfit: Outfit): CharacterOutfitDto {
     name: outfit.name,
     description: outfit.description,
     preview_url: outfit.previewUrl,
+    model_3d_url: outfit.model3dUrl,
     actions: outfit.actions.map(toActionDto),
   }
 }
@@ -226,6 +232,7 @@ export const characterApis: CharacterApis = {
 
   async listByProject(projectId, query = {}) {
     const result = await getApiClient().requestList<CharacterDto>('/characters', {
+      signal: query.signal,
       query: {
         project_id: toBackendId(projectId, 'projectId'),
         page: query.page,
