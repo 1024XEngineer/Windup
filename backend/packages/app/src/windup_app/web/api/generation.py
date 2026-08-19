@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
+from windup_common.directions import ActionDirection, is_source_direction
 from windup_common.exceptions import BizException
 from windup_common.models import CharacterStance
 from windup_common.result import Response
@@ -129,7 +130,7 @@ class _EventBus:
         try:
             here = asyncio.get_running_loop()
         except RuntimeError:
-            here = None                       # 从没有 loop 的生成工作线程调用
+            here = None  # 从没有 loop 的生成工作线程调用
 
         for queue, loop in list(self._queues.get((project_id, task_id), [])):
             if loop is here:
@@ -143,7 +144,9 @@ class _EventBus:
             except RuntimeError:
                 # loop 已关闭(客户端断连后请求 loop 结束)。丢弃即可 —— 没有订阅者在等
                 # 这条消息,而任务状态本身已落库,重连后靠 GET /tasks/{id} 取。
-                logger.debug("SSE loop 已关闭,丢弃事件 task_id=%d event=%s", task_id, event)
+                logger.debug(
+                    "SSE loop 已关闭,丢弃事件 task_id=%d event=%s", task_id, event
+                )
 
 
 # 全局实例，挂到 app.state.event_bus
@@ -171,7 +174,8 @@ class CharacterImageGenerateRequest(BaseModel):
     # (2026-08-10 机器审逮到)。宽高上界按当前 i2v 与像素化管线的实际处理范围取。
     width: int = Field(default=1024, ge=64, le=2048)
     height: int = Field(default=1024, ge=64, le=2048)
-    num_images: int = Field(default=1, ge=1, le=4)
+    num_images: int = Field(default=2, ge=2, le=2)
+    direction: ActionDirection = ActionDirection.EAST
 
 
 class CharacterActionGenerateRequest(BaseModel):
@@ -188,7 +192,7 @@ class CharacterActionGenerateRequest(BaseModel):
     reference_video_url: str | None = None
     reference_image_urls: list[str] = Field(default_factory=list)
     # 同上:帧数决定抽帧与逐帧抠图的工作量,上界 64 已远超引擎能出的有效周期长度。
-    num_frames: int = Field(default=16, ge=1, le=64)
+    num_frames: int = Field(default=32, ge=1, le=64)
     # ── action_type=custom 才用到(#239)───────────────────────────────────
     # 这个动作是否循环播放。不给则编排层兜成一次性,也不按描述文字猜 —— 两个方向的代价
     # 不对称:一次性动作被当成循环会让末帧接回首帧抽搐、产物不可用,反之只是不无缝闭环、
@@ -205,6 +209,7 @@ class CharacterActionGenerateRequest(BaseModel):
     # 它们,模型会凭空接上一对人的上肢,而帧数/时长/成色全部正常、没有一道会红。
     # 不给则按双足处理:这是绝大多数角色的实情,而误判成非双足会把合法描述拒掉。
     stance: CharacterStance | None = None
+    direction: ActionDirection = ActionDirection.EAST
 
     @model_validator(mode="after")
     def require_custom_prompt(self):
@@ -298,8 +303,10 @@ def _outfit_model_3d_url(character: Character, outfit_id: str | None) -> str | N
     except ValidationError:
         # 结构对不上就当没有资产:这一步只决定"走哪条路线",不该因为 character_data
         # 里某个无关字段脏了就让整个动作生成起不来。走 i2v 仍然出得了帧。
-        logger.warning("character %s 的 character_data 解析失败,三渲二判据按无资产处理",
-                       character.id)
+        logger.warning(
+            "character %s 的 character_data 解析失败,三渲二判据按无资产处理",
+            character.id,
+        )
         return None
     outfit = next((o for o in data.outfits if o.id == outfit_id), None)
     if outfit is None:
@@ -326,6 +333,16 @@ def _validate_project_size(project: Project, width: int, height: int) -> None:
     if width != project.sprite_width or height != project.sprite_height:
         raise BizException(
             f"输入尺寸 {width}×{height} 与项目约束 {project.sprite_width}×{project.sprite_height} 不一致",
+            code=BizCode.BAD_REQUEST,
+        )
+
+
+def _validate_project_direction(project: Project, direction: ActionDirection) -> None:
+    """只允许该项目的真实源方向进入生成队列，镜像方向不重复生成。"""
+
+    if not is_source_direction(project.directional_movement, direction):
+        raise BizException(
+            f"方向 {direction.value} 不是当前项目的真实源方向，镜像方向由资产层复用",
             code=BizCode.BAD_REQUEST,
         )
 
@@ -363,6 +380,7 @@ def submit_image_generation(
     user_id = request.state.current_user.id
     project = _get_project_or_raise(session, body.project_id, user_id)
     _validate_project_size(project, body.width, body.height)
+    _validate_project_direction(project, body.direction)
     input_data = CharacterImageInput(
         reference_image_url=body.reference_image_url,
         prompt=body.prompt,
@@ -370,9 +388,13 @@ def submit_image_generation(
         width=body.width,
         height=body.height,
         num_images=body.num_images,
+        direction=body.direction,
     )
     task = generation_service.generate_character_image(
-        session, user_id=user_id, project_id=body.project_id, input=input_data,
+        session,
+        user_id=user_id,
+        project_id=body.project_id,
+        input=input_data,
     )
     # 生成任务要在 commit 之后再入队:任务行未提交时工作线程用自己的 session 读不到它,
     # update 会静默跳过,表现为任务永远停在 PENDING。
@@ -393,7 +415,8 @@ def submit_action_generation(
 ) -> Response[GenerationTaskOut]:
     """提交角色动作生成任务:建 PENDING 记录立即返回,实际生成后台跑。"""
     user_id = request.state.current_user.id
-    _get_project_or_raise(session, body.project_id, user_id)
+    project = _get_project_or_raise(session, body.project_id, user_id)
+    _validate_project_direction(project, body.direction)
     character = _get_character_or_raise(session, body.character_id, body.project_id)
     model_3d_url = _outfit_model_3d_url(character, body.outfit_id)
     _require_master(model_3d_url, body.reference_image_urls)
@@ -407,13 +430,17 @@ def submit_action_generation(
         reference_image_urls=body.reference_image_urls,
         num_frames=body.num_frames,
         outfit_id=body.outfit_id,
+        direction=body.direction,
         # 路线选择在这里定死并写进入参,而不是留给编排层现查:这样"这次走的哪条路线"
         # 在任务入参上就是可见的,排查时不用去猜当时 DB 是什么状态。
         model_3d_url=model_3d_url,
         stance=body.stance,
     )
     task = generation_service.generate_character_action(
-        session, user_id=user_id, project_id=body.project_id, input=input_data,
+        session,
+        user_id=user_id,
+        project_id=body.project_id,
+        input=input_data,
     )
     _publish_generation_after_commit(
         session,
@@ -481,7 +508,9 @@ async def stream_task(
     async def _event_generator():
         try:
             if terminal_event is not None:
-                payload = json.dumps(task_repo.task_event_payload(task), ensure_ascii=False)
+                payload = json.dumps(
+                    task_repo.task_event_payload(task), ensure_ascii=False
+                )
                 yield f"event: {terminal_event}\ndata: {payload}\n\n"
                 return
             while True:
