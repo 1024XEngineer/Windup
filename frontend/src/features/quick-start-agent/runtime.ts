@@ -168,6 +168,7 @@ export function createQuickStartAgent({
 
       if (terminal.kind === 'message') {
         messages = [...nextMessages, { role: 'assistant', content: terminal.message }]
+        if (clarificationUsed) revoked = true
         clarificationUsed = true
         return terminal
       }

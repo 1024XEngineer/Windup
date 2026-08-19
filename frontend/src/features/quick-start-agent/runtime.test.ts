@@ -188,6 +188,28 @@ describe('createQuickStartAgent', () => {
     expect(startCharacterGeneration).toHaveBeenCalledTimes(1)
   })
 
+  it('ends an unresolved conversation after the single clarification turn', async () => {
+    const textResult = plannerResult({
+      text: '这个请求仍有冲突，请修改后重新开始。',
+      finishReason: 'stop',
+      toolCalls: [],
+    })
+    const { agent, planner, startCharacterGeneration } = fixture(textResult)
+
+    await expect(agent.start('一个角色')).resolves.toEqual({
+      kind: 'message',
+      message: '这个请求仍有冲突，请修改后重新开始。',
+    })
+    await expect(agent.continue('补充说明')).resolves.toEqual({
+      kind: 'message',
+      message: '这个请求仍有冲突，请修改后重新开始。',
+    })
+    await expect(agent.continue('再追问一次')).rejects.toThrow('生成授权已失效')
+
+    expect(planner).toHaveBeenCalledTimes(2)
+    expect(startCharacterGeneration).not.toHaveBeenCalled()
+  })
+
   it('does not dispatch an unknown, duplicate, invalid, or text-only terminal result', async () => {
     const cases = [
       plannerResult({ toolCalls: [{ toolName: 'unknown', input: {} }] }),
