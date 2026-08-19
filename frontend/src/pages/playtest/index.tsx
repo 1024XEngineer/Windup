@@ -166,6 +166,7 @@ export function PlaytestPage({ renderToolbar }: PlaytestPageProps = {}) {
     <PlaytestWorkbench
       character={data.character}
       outfitId={outfitId}
+      movementMode={data.project.directionalMovement}
       initialActionId={initialActionId}
       toolbar={toolbar}
     />

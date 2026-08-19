@@ -37,6 +37,8 @@ export type {
 /* 角色 —— 资产本体；造型、动作、帧都在这棵树里 */
 export type {
   Action,
+  ActionDirection,
+  ActionSequence,
   ActionType,
   Character,
   CharacterApis,
@@ -48,6 +50,13 @@ export type {
   Outfit,
 } from './character'
 export { CHARACTER_STATUS, characterApis } from './character'
+export {
+  ACTION_DIRECTIONS,
+  getDirectionProfile,
+  isActionDirection,
+  resolveActionDirection,
+} from './character/directions'
+export type { DirectionProfile, ResolvedActionDirection } from './character/directions'
 export { getOutfitPlayback } from './character/outfit-playback'
 
 /* 动作模板 —— 能跨角色复用的配方 */

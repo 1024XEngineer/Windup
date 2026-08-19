@@ -34,8 +34,9 @@
 """
 
 from datetime import datetime, timezone
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import (
     BigInteger,
     DateTime,
@@ -127,6 +128,58 @@ class CharacterFrame(BaseModel):
     duration_ms: int | None = Field(default=None, gt=0, description="帧时长(毫秒)")
 
 
+ActionDirection = Literal[
+    "east",
+    "west",
+    "north",
+    "south",
+    "north_east",
+    "north_west",
+    "south_east",
+    "south_west",
+]
+
+_MIRROR_SOURCES: dict[str, str] = {
+    "west": "east",
+    "north_west": "north_east",
+    "south_west": "south_east",
+}
+
+
+class CharacterActionSequence(BaseModel):
+    """一个动作的源方向帧或水平镜像关系。"""
+
+    direction: ActionDirection
+    source_direction: ActionDirection | None = Field(
+        default=None, description="镜像方向引用的真实源方向"
+    )
+    mirror_x: bool = Field(default=False, description="是否水平镜像源方向")
+    frame_count: int = Field(ge=0, description="该方向声明的帧数")
+    frames: list[CharacterFrame] = Field(
+        default_factory=list, description="该方向帧列表"
+    )
+
+    @model_validator(mode="after")
+    def validate_source_or_mirror(self) -> "CharacterActionSequence":
+        expected_source = _MIRROR_SOURCES.get(self.direction)
+        if expected_source is None:
+            if self.mirror_x or self.source_direction is not None:
+                raise ValueError("动作方向镜像关系无效")
+            if self.frame_count != len(self.frames) or self.frame_count == 0:
+                raise ValueError("源动作方向必须包含与 frame_count 一致的真实帧")
+            if sorted(frame.index for frame in self.frames) != list(
+                range(self.frame_count)
+            ):
+                raise ValueError("源动作方向帧序号必须从 0 连续递增")
+            return self
+
+        if not self.mirror_x or self.source_direction != expected_source:
+            raise ValueError("动作方向镜像关系无效")
+        if self.frames:
+            raise ValueError("镜像动作方向不能保存独立帧")
+        return self
+
+
 class CharacterAction(BaseModel):
     """动作（从属于某个造型）。"""
 
@@ -137,6 +190,29 @@ class CharacterAction(BaseModel):
     fps: float = Field(default=12, gt=0, description="播放帧率")
     frame_count: int = Field(ge=0, description="帧数")
     frames: list[CharacterFrame] = Field(default_factory=list, description="帧列表")
+    sequences: list[CharacterActionSequence] = Field(
+        default_factory=list,
+        description="可选多方向源序列与镜像关系；旧数据的 frames 视为 east",
+    )
+
+    @model_validator(mode="after")
+    def validate_direction_relations(self) -> "CharacterAction":
+        by_direction: dict[str, CharacterActionSequence] = {}
+        for sequence in self.sequences:
+            if sequence.direction in by_direction:
+                raise ValueError("同一动作不能包含重复方向")
+            by_direction[sequence.direction] = sequence
+
+        for sequence in self.sequences:
+            source_direction = sequence.source_direction
+            if source_direction is None:
+                continue
+            source = by_direction.get(source_direction)
+            if source is None or source.source_direction is not None or source.mirror_x:
+                raise ValueError("镜像动作方向缺少真实源方向")
+            if sequence.frame_count != source.frame_count:
+                raise ValueError("镜像动作方向帧数必须与源方向一致")
+        return self
 
 
 class CharacterOutfit(BaseModel):
@@ -157,7 +233,9 @@ class CharacterOutfit(BaseModel):
     model_3d_url: str | None = Field(
         default=None, description="该造型的绑骨 3D 模型 URL;None = 未建,三渲二不可用"
     )
-    actions: list[CharacterAction] = Field(default_factory=list, description="该造型下的动作列表")
+    actions: list[CharacterAction] = Field(
+        default_factory=list, description="该造型下的动作列表"
+    )
 
 
 class CharacterData(BaseModel):

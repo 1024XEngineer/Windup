@@ -88,6 +88,14 @@
             "title": "Name",
             "type": "string"
           },
+          "sequences": {
+            "description": "可选多方向源序列与镜像关系；旧数据的 frames 视为 east",
+            "items": {
+              "$ref": "#/components/schemas/CharacterActionSequence"
+            },
+            "title": "Sequences",
+            "type": "array"
+          },
           "type": {
             "description": "动作类型: idle / walk / attack / custom",
             "title": "Type",
@@ -195,6 +203,73 @@
           "action_type"
         ],
         "title": "CharacterActionGenerateRequest",
+        "type": "object"
+      },
+      "CharacterActionSequence": {
+        "description": "一个动作的源方向帧或水平镜像关系。",
+        "properties": {
+          "direction": {
+            "enum": [
+              "east",
+              "west",
+              "north",
+              "south",
+              "north_east",
+              "north_west",
+              "south_east",
+              "south_west"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "frame_count": {
+            "description": "该方向声明的帧数",
+            "minimum": 0.0,
+            "title": "Frame Count",
+            "type": "integer"
+          },
+          "frames": {
+            "description": "该方向帧列表",
+            "items": {
+              "$ref": "#/components/schemas/CharacterFrame"
+            },
+            "title": "Frames",
+            "type": "array"
+          },
+          "mirror_x": {
+            "default": false,
+            "description": "是否水平镜像源方向",
+            "title": "Mirror X",
+            "type": "boolean"
+          },
+          "source_direction": {
+            "anyOf": [
+              {
+                "enum": [
+                  "east",
+                  "west",
+                  "north",
+                  "south",
+                  "north_east",
+                  "north_west",
+                  "south_east",
+                  "south_west"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "镜像方向引用的真实源方向",
+            "title": "Source Direction"
+          }
+        },
+        "required": [
+          "direction",
+          "frame_count"
+        ],
+        "title": "CharacterActionSequence",
         "type": "object"
       },
       "CharacterCreate": {

@@ -1,8 +1,14 @@
-import type { ActionType, Character, Frame } from '@/entities'
+import type { ActionDirection, ActionType, Character, Frame } from '@/entities'
 
 export interface PlaytestFrame {
   readonly imageUrl: string
   readonly durationMs: number
+}
+
+export interface PlaytestPlayback {
+  readonly frames: readonly PlaytestFrame[]
+  readonly sourceDirection: ActionDirection
+  readonly mirrorX: boolean
 }
 
 export interface PlaytestAction {
@@ -11,6 +17,9 @@ export interface PlaytestAction {
   readonly type: ActionType
   /** 一次性动作播完停在末帧；只有循环动作才回到首帧。 */
   readonly loop: boolean
+  /** 每个逻辑方向解析到真实源帧和渲染镜像标记。 */
+  readonly sequences?: Readonly<Partial<Record<ActionDirection, PlaytestPlayback>>>
+  /** 旧调用方的侧向播放序列；只允许 legacy 顶层帧或真实 east 帧。 */
   readonly frames: readonly PlaytestFrame[]
 }
 
@@ -43,6 +52,48 @@ function orderedFrames(frames: readonly Frame[]): readonly Frame[] {
   return [...frames].sort((left, right) => left.index - right.index)
 }
 
+function playtestFrames(frames: readonly Frame[], fps: number): readonly PlaytestFrame[] {
+  return orderedFrames(frames).map((frame) => ({
+    imageUrl: frame.imageUrl,
+    durationMs: frameDuration(frame.durationMs, fps),
+  }))
+}
+
+function playtestSequences(
+  action: Character['outfits'][number]['actions'][number],
+): Partial<Record<ActionDirection, PlaytestPlayback>> {
+  const sequences: Partial<Record<ActionDirection, PlaytestPlayback>> = {}
+
+  for (const sequence of action.sequences ?? []) {
+    if (sequence.sourceDirection !== null) continue
+    const frames = playtestFrames(sequence.frames, action.fps)
+    if (frames.length === 0) continue
+    sequences[sequence.direction] = {
+      frames,
+      sourceDirection: sequence.direction,
+      mirrorX: false,
+    }
+  }
+
+  const legacyEast = playtestFrames(action.frames, action.fps)
+  if (sequences.east === undefined && legacyEast.length > 0) {
+    sequences.east = { frames: legacyEast, sourceDirection: 'east', mirrorX: false }
+    sequences.west = { frames: legacyEast, sourceDirection: 'east', mirrorX: true }
+  }
+
+  for (const sequence of action.sequences ?? []) {
+    if (sequence.sourceDirection === null) continue
+    const source = sequences[sequence.sourceDirection]
+    if (source === undefined) continue
+    sequences[sequence.direction] = {
+      frames: source.frames,
+      sourceDirection: sequence.sourceDirection,
+      mirrorX: sequence.mirrorX,
+    }
+  }
+  return sequences
+}
+
 /** Playtest 只保留渲染和操控所需的数据；审核、生成与根位移仍属于各自原有边界。 */
 export function createPlaytestModel(character: Character, outfitId: string): PlaytestModelResult {
   const outfit = character.outfits.find((candidate) => candidate.id === outfitId)
@@ -54,17 +105,24 @@ export function createPlaytestModel(character: Character, outfitId: string): Pla
       characterId: character.id,
       outfitName: outfit.name,
       actions: outfit.actions
-        .filter((action) => action.frames.length > 0)
-        .map((action) => ({
-          id: action.id,
-          name: action.name,
-          type: action.type,
-          loop: action.loop,
-          frames: orderedFrames(action.frames).map((frame) => ({
-            imageUrl: frame.imageUrl,
-            durationMs: frameDuration(frame.durationMs, action.fps),
-          })),
-        })),
+        .filter(
+          (action) =>
+            action.frames.length > 0 ||
+            action.sequences?.some((sequence) => sequence.frames.length > 0) === true,
+        )
+        .map((action) => {
+          const sequences = playtestSequences(action)
+          const fallbackFrames = sequences.east?.frames ?? []
+
+          return {
+            id: action.id,
+            name: action.name,
+            type: action.type,
+            loop: action.loop,
+            sequences,
+            frames: fallbackFrames,
+          }
+        }),
     },
   }
 }

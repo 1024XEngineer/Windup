@@ -1,11 +1,17 @@
-import type { PlaytestAction } from '../model'
+import type { ActionDirection, DirectionalMovement } from '@/entities'
+
+import type { PlaytestActionBindings, PlaytestControlKey } from '../bindings'
+import type { PlaytestAction, PlaytestFrame, PlaytestPlayback } from '../model'
 
 export type Direction = 'left' | 'right'
-export type Facing = -1 | 1
+export type MovementDirection = 'up' | 'down' | Direction
+export type Facing = ActionDirection
 
 export interface StageBounds {
   readonly minX: number
   readonly maxX: number
+  readonly minY?: number
+  readonly maxY?: number
 }
 
 export interface PlaytestRuntime {
@@ -13,24 +19,85 @@ export interface PlaytestRuntime {
   readonly frameIndex: number
   readonly frameElapsedMs: number
   readonly x: number
+  readonly y: number
   readonly facing: Facing
-  readonly held: Readonly<Record<Direction, boolean>>
+  readonly movementMode: DirectionalMovement
+  readonly held: Readonly<Record<MovementDirection, boolean>>
+  readonly heldOrder: readonly MovementDirection[]
 }
 
-const EMPTY_HELD: PlaytestRuntime['held'] = { left: false, right: false }
+const EMPTY_HELD: PlaytestRuntime['held'] = {
+  up: false,
+  down: false,
+  left: false,
+  right: false,
+}
+
+export function framesForFacing(
+  action: PlaytestAction,
+  facing: Facing,
+): readonly PlaytestFrame[] | undefined {
+  return playbackForFacing(action, facing)?.frames
+}
+
+export function playbackForFacing(
+  action: PlaytestAction,
+  facing: Facing,
+): PlaytestPlayback | undefined {
+  const explicit = action.sequences?.[facing]
+  if (explicit !== undefined) return explicit
+  // 一旦动作带有方向序列，frames 只是旧调用方的兼容别名，不能再把它
+  // 当成 east/west。否则 north-only 等动作会被伪装成横向动作。
+  if (Object.keys(action.sequences ?? {}).length > 0) return undefined
+  if (action.frames.length === 0 || (facing !== 'east' && facing !== 'west')) return undefined
+  return {
+    frames: action.frames,
+    sourceDirection: 'east',
+    mirrorX: facing === 'west',
+  }
+}
+
+function hasFrames(action: PlaytestAction): boolean {
+  return (
+    action.frames.length > 0 ||
+    Object.values(action.sequences ?? {}).some((playback) => (playback?.frames.length ?? 0) > 0)
+  )
+}
 
 function actionById(
   actions: readonly PlaytestAction[],
   actionId: string | null,
 ): PlaytestAction | undefined {
-  return actions.find((action) => action.id === actionId && action.frames.length > 0)
+  return actions.find((action) => action.id === actionId && hasFrames(action))
 }
 
 function actionByType(
   actions: readonly PlaytestAction[],
   type: PlaytestAction['type'],
 ): PlaytestAction | undefined {
-  return actions.find((action) => action.type === type && action.frames.length > 0)
+  return actions.find((action) => action.type === type && hasFrames(action))
+}
+
+const FACING_FALLBACK_ORDER: readonly Facing[] = [
+  'east',
+  'west',
+  'north',
+  'south',
+  'north_east',
+  'north_west',
+  'south_east',
+  'south_west',
+]
+
+function facingForAction(action: PlaytestAction, preferred: Facing): Facing {
+  const candidates = [
+    preferred,
+    ...FACING_FALLBACK_ORDER.filter((direction) => direction !== preferred),
+  ]
+  return (
+    candidates.find((direction) => (framesForFacing(action, direction)?.length ?? 0) > 0) ??
+    preferred
+  )
 }
 
 function initialAction(
@@ -40,21 +107,26 @@ function initialAction(
   return (
     actionById(actions, requestedActionId) ??
     actionByType(actions, 'idle') ??
-    actions.find((action) => action.frames.length > 0)
+    actions.find(hasFrames)
   )
 }
 
 export function createRuntime(
   actions: readonly PlaytestAction[],
   initialActionId: string | null,
+  movementMode: DirectionalMovement = 'single',
 ): PlaytestRuntime {
+  const action = initialAction(actions, initialActionId)
   return {
-    actionId: initialAction(actions, initialActionId)?.id ?? null,
+    actionId: action?.id ?? null,
     frameIndex: 0,
     frameElapsedMs: 0,
     x: 0,
-    facing: 1,
+    y: 0,
+    facing: action === undefined ? 'east' : facingForAction(action, 'east'),
+    movementMode,
     held: EMPTY_HELD,
+    heldOrder: [],
   }
 }
 
@@ -69,18 +141,109 @@ export function selectRuntimeAction(
   return {
     ...runtime,
     actionId: action.id,
+    facing: facingForAction(action, runtime.facing),
     frameIndex: 0,
     frameElapsedMs: 0,
   }
 }
 
-function horizontalAxis(held: PlaytestRuntime['held']): -1 | 0 | 1 {
-  if (held.left === held.right) return 0
-  return held.left ? -1 : 1
+function axis(negative: boolean, positive: boolean): -1 | 0 | 1 {
+  if (negative === positive) return 0
+  return negative ? -1 : 1
 }
 
-function frameDurationMs(action: PlaytestAction, frameIndex: number): number {
-  return Math.max(1, action.frames[frameIndex]?.durationMs ?? 1)
+function horizontalAxis(held: PlaytestRuntime['held']): -1 | 0 | 1 {
+  return axis(held.left, held.right)
+}
+
+function verticalAxis(held: PlaytestRuntime['held']): -1 | 0 | 1 {
+  return axis(held.up, held.down)
+}
+
+function frameDurationMs(frames: readonly PlaytestFrame[], frameIndex: number): number {
+  return Math.max(1, frames[frameIndex]?.durationMs ?? 1)
+}
+
+function isLocomotionAction(action: PlaytestAction): boolean {
+  return action.type === 'walk' || action.type === 'run'
+}
+
+function cardinalFacing(direction: MovementDirection): Facing {
+  if (direction === 'up') return 'north'
+  if (direction === 'down') return 'south'
+  if (direction === 'left') return 'west'
+  return 'east'
+}
+
+function diagonalFacing(horizontal: -1 | 1, vertical: -1 | 1): Facing {
+  if (vertical < 0) return horizontal < 0 ? 'north_west' : 'north_east'
+  return horizontal < 0 ? 'south_west' : 'south_east'
+}
+
+function facingForHeld(
+  held: PlaytestRuntime['held'],
+  heldOrder: PlaytestRuntime['heldOrder'],
+  movementMode: DirectionalMovement,
+  fallback: Facing,
+): Facing {
+  const horizontal = horizontalAxis(held)
+  const vertical = verticalAxis(held)
+  if (movementMode === 'eight-way') {
+    if (horizontal !== 0 && vertical !== 0) return diagonalFacing(horizontal, vertical)
+    if (horizontal !== 0) return horizontal < 0 ? 'west' : 'east'
+    if (vertical !== 0) return vertical < 0 ? 'north' : 'south'
+  }
+  const remaining = [...heldOrder]
+    .reverse()
+    .find((direction) => movementMode !== 'single' || direction === 'left' || direction === 'right')
+  return remaining === undefined ? fallback : cardinalFacing(remaining)
+}
+
+export function setMovementInput(
+  runtime: PlaytestRuntime,
+  actions: readonly PlaytestAction[],
+  direction: MovementDirection,
+  pressed: boolean,
+): PlaytestRuntime {
+  if (runtime.held[direction] === pressed) return runtime
+
+  const activeAction = actionById(actions, runtime.actionId)
+  const locomotion = actionByType(actions, 'walk') ?? actionByType(actions, 'run')
+  const directionAction = locomotion ?? activeAction
+  const held = { ...runtime.held, [direction]: pressed }
+  const heldOrder = pressed
+    ? [...runtime.heldOrder, direction]
+    : runtime.heldOrder.filter((heldDirection) => heldDirection !== direction)
+  const nextFacing = facingForHeld(held, heldOrder, runtime.movementMode, runtime.facing)
+  if (
+    pressed &&
+    (directionAction === undefined ||
+      (runtime.movementMode === 'single' && (direction === 'up' || direction === 'down')) ||
+      (framesForFacing(directionAction, nextFacing)?.length ?? 0) === 0)
+  ) {
+    return runtime
+  }
+
+  const isMoving = horizontalAxis(held) !== 0 || verticalAxis(held) !== 0
+  const shouldReturnToIdle =
+    !isMoving && activeAction !== undefined && isLocomotionAction(activeAction)
+  const nextAction = shouldReturnToIdle
+    ? actionByType(actions, 'idle')
+    : isMoving
+      ? locomotion
+      : activeAction
+  const nextActionId = nextAction?.id ?? runtime.actionId
+  const resolvedFacing =
+    nextAction === undefined ? nextFacing : facingForAction(nextAction, nextFacing)
+  return {
+    ...runtime,
+    held,
+    heldOrder,
+    facing: resolvedFacing,
+    actionId: nextActionId,
+    frameIndex: nextActionId === runtime.actionId ? runtime.frameIndex : 0,
+    frameElapsedMs: nextActionId === runtime.actionId ? runtime.frameElapsedMs : 0,
+  }
 }
 
 export function setDirectionInput(
@@ -89,21 +252,22 @@ export function setDirectionInput(
   direction: Direction,
   pressed: boolean,
 ): PlaytestRuntime {
-  if (runtime.held[direction] === pressed) return runtime
+  return setMovementInput(runtime, actions, direction, pressed)
+}
 
-  const held = { ...runtime.held, [direction]: pressed }
-  const axis = horizontalAxis(held)
-  const action = axis === 0 ? actionByType(actions, 'idle') : actionByType(actions, 'walk')
-  const nextActionId = action?.id ?? runtime.actionId
-
-  return {
-    ...runtime,
-    held,
-    facing: axis === 0 ? runtime.facing : axis,
-    actionId: nextActionId,
-    frameIndex: nextActionId === runtime.actionId ? runtime.frameIndex : 0,
-    frameElapsedMs: nextActionId === runtime.actionId ? runtime.frameElapsedMs : 0,
-  }
+export function setControlInput(
+  runtime: PlaytestRuntime,
+  actions: readonly PlaytestAction[],
+  bindings: PlaytestActionBindings,
+  key: PlaytestControlKey,
+  pressed: boolean,
+): PlaytestRuntime {
+  if (!pressed || bindings[key] === null) return runtime
+  const action = actionById(actions, bindings[key])
+  if (action === undefined) return runtime
+  if (action.id !== runtime.actionId) return selectRuntimeAction(runtime, actions, action.id)
+  if (action.loop) return runtime
+  return { ...runtime, frameIndex: 0, frameElapsedMs: 0 }
 }
 
 export function advanceRuntime(
@@ -117,35 +281,45 @@ export function advanceRuntime(
 
   const action = actionById(actions, runtime.actionId)
   if (action === undefined) return runtime
+  const frames = framesForFacing(action, runtime.facing)
+  if (frames === undefined || frames.length === 0) return runtime
 
-  const axis = horizontalAxis(runtime.held)
+  const rawX = isLocomotionAction(action) ? horizontalAxis(runtime.held) : 0
+  const rawY = isLocomotionAction(action) ? verticalAxis(runtime.held) : 0
+  const magnitude = rawX !== 0 && rawY !== 0 ? Math.SQRT1_2 : 1
+  const minY = bounds.minY ?? runtime.y
+  const maxY = bounds.maxY ?? runtime.y
   const nextX = Math.min(
     bounds.maxX,
-    Math.max(bounds.minX, runtime.x + (axis * movementSpeed * deltaMs) / 1000),
+    Math.max(bounds.minX, runtime.x + (rawX * magnitude * movementSpeed * deltaMs) / 1000),
   )
-  const lastFrameIndex = action.frames.length - 1
+  const nextY = Math.min(
+    maxY,
+    Math.max(minY, runtime.y + (rawY * magnitude * movementSpeed * deltaMs) / 1000),
+  )
+  const lastFrameIndex = frames.length - 1
   let frameIndex = Math.min(runtime.frameIndex, lastFrameIndex)
   let frameElapsedMs = runtime.frameElapsedMs + deltaMs
 
-  let currentFrameDurationMs = frameDurationMs(action, frameIndex)
+  let currentFrameDurationMs = frameDurationMs(frames, frameIndex)
   while (frameElapsedMs >= currentFrameDurationMs) {
-    // 非循环动作走到末帧就停住：攻击、跳跃这类一次性动作回到首帧会变成假的循环动画。
     if (!action.loop && frameIndex === lastFrameIndex) {
       frameElapsedMs = currentFrameDurationMs
       break
     }
     frameElapsedMs -= currentFrameDurationMs
-    frameIndex = (frameIndex + 1) % action.frames.length
-    currentFrameDurationMs = frameDurationMs(action, frameIndex)
+    frameIndex = (frameIndex + 1) % frames.length
+    currentFrameDurationMs = frameDurationMs(frames, frameIndex)
   }
 
   if (
     nextX === runtime.x &&
+    nextY === runtime.y &&
     frameIndex === runtime.frameIndex &&
     frameElapsedMs === runtime.frameElapsedMs
   ) {
     return runtime
   }
 
-  return { ...runtime, x: nextX, frameIndex, frameElapsedMs }
+  return { ...runtime, x: nextX, y: nextY, frameIndex, frameElapsedMs }
 }

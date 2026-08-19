@@ -34,4 +34,29 @@ describe('getOutfitPlayback', () => {
     expect(getOutfitPlayback(makeOutfit(2))).toEqual({ frameCount: 2, playable: true })
     expect(getOutfitPlayback(makeOutfit(0))).toEqual({ frameCount: 0, playable: false })
   })
+
+  it('counts sequence-only source frames without counting mirrored directions twice', () => {
+    const outfit = makeOutfit(0)
+    outfit.actions[0]!.sequences = [
+      {
+        direction: 'east',
+        sourceDirection: null,
+        mirrorX: false,
+        frameCount: 2,
+        frames: [
+          { index: 0, imageUrl: '/east-0.png', durationMs: 100 },
+          { index: 1, imageUrl: '/east-1.png', durationMs: 100 },
+        ],
+      },
+      {
+        direction: 'west',
+        sourceDirection: 'east',
+        mirrorX: true,
+        frameCount: 2,
+        frames: [],
+      },
+    ]
+
+    expect(getOutfitPlayback(outfit)).toEqual({ frameCount: 2, playable: true })
+  })
 })

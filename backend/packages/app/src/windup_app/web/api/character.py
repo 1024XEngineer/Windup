@@ -77,19 +77,24 @@ def _extract_object_keys(character: Character) -> list[str]:
     # 参考图
     url = character.reference_image_url
     if url and url.startswith(prefix):
-        keys.append(url[len(prefix):])
+        keys.append(url[len(prefix) :])
 
     # character_data 内的 URL
     data = character.character_data or {}
     for outfit in data.get("outfits", []):
         url = outfit.get("preview_url")
         if url and url.startswith(prefix):
-            keys.append(url[len(prefix):])
+            keys.append(url[len(prefix) :])
         for action in outfit.get("actions", []):
-            for frame in action.get("frames", []):
-                url = frame.get("image_url")
-                if url and url.startswith(prefix):
-                    keys.append(url[len(prefix):])
+            frame_groups = [action.get("frames", [])]
+            frame_groups.extend(
+                sequence.get("frames", []) for sequence in action.get("sequences", [])
+            )
+            for frames in frame_groups:
+                for frame in frames:
+                    url = frame.get("image_url")
+                    if url and url.startswith(prefix):
+                        keys.append(url[len(prefix) :])
 
     return keys
 
@@ -98,7 +103,11 @@ def _extract_object_keys(character: Character) -> list[str]:
 
 
 def _get_project_or_raise(
-    session: Session, project_id: int, user_id: int, *, for_update: bool = False,
+    session: Session,
+    project_id: int,
+    user_id: int,
+    *,
+    for_update: bool = False,
 ) -> Project:
     """校验项目存在且属于当前用户，否则抛 BizException。
 
@@ -111,7 +120,9 @@ def _get_project_or_raise(
 
 
 def get_character_with_auth(
-    session: Session, character_id: int, user_id: int,
+    session: Session,
+    character_id: int,
+    user_id: int,
 ) -> Character:
     """获取角色并校验其所属项目属于当前用户。
 
@@ -170,13 +181,19 @@ def list_characters(
     request: Request = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    status: int | None = Query(None, ge=0, le=1, description="按发布状态过滤: 0=草稿, 1=已发布"),
+    status: int | None = Query(
+        None, ge=0, le=1, description="按发布状态过滤: 0=草稿, 1=已发布"
+    ),
     session: Session = Depends(get_session),
 ) -> ListResponse[CharacterOut]:
     user_id = request.state.current_user.id
     _get_project_or_raise(session, project_id, user_id)
     items, total = character_service.list_characters(
-        session, project_id=project_id, page=page, page_size=page_size, status=status,
+        session,
+        project_id=project_id,
+        page=page,
+        page_size=page_size,
+        status=status,
     )
     return ListResponse.success(
         [CharacterOut.model_validate(c) for c in items],
