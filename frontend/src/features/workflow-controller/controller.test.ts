@@ -828,6 +828,28 @@ describe('WorkflowController', () => {
     expect(asyncErrors).toEqual([])
   })
 
+  it('服务端回包已改变母版阶段时拒绝继续创建生成任务', async () => {
+    const { controller, workflow, generation } = createController()
+    const update = vi.mocked(workflow.apis.update)
+    const save = update.getMockImplementation()!
+    update.mockImplementationOnce(async (run) => {
+      const saved = await save(run)
+      return {
+        ...saved,
+        nodes: saved.nodes.map((node) =>
+          node.id === 'template-1' && node.type === 'character-template'
+            ? { ...node, phase: 'selecting' as const }
+            : node,
+        ),
+      }
+    })
+
+    await expect(
+      controller.generateCharacterTemplate('setup-1', { spriteWidth: 64, spriteHeight: 64 }),
+    ).rejects.toThrow('角色母版节点当前不能开始生成')
+    expect(generation.apis.create).not.toHaveBeenCalled()
+  })
+
   it('角色母版重生成使用调用方提供的上一版图片作为参考', async () => {
     const previousImage = 'https://img/knight-previous.png'
     const { controller, generation } = createController(createRun(completedCharacterNodes()))
@@ -1264,6 +1286,36 @@ describe('WorkflowController', () => {
         }),
       ]),
     )
+  })
+
+  it('角色母版任务已被并发请求挂载时复用相同引用', async () => {
+    const { controller, workflow, generation } = createController(
+      createRun(completedCharacterNodes()),
+    )
+    const update = vi.mocked(workflow.apis.update)
+    const save = update.getMockImplementation()!
+    update.mockImplementationOnce(save).mockImplementationOnce(async (run) => {
+      const saved = await save(run)
+      return {
+        ...saved,
+        nodes: saved.nodes.map((node) =>
+          node.id === 'template-1'
+            ? { ...node, generations: [{ taskId: 'task-1', role: 'character_template' as const }] }
+            : node,
+        ),
+      }
+    })
+
+    await controller.regenerateCharacterTemplate('template-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      mode: 'regenerate',
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledOnce()
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+      generations: [{ taskId: 'task-1', role: 'character_template' }],
+    })
   })
 
   it('角色设定已落库但生成请求失败后可以重试', async () => {

@@ -443,6 +443,10 @@ describe('characterApis', () => {
         message: '角色母版方向镜像关系无效',
       },
       {
+        templates: [{ ...east, image_url: ' ' }],
+        message: '真实源方向缺少角色母版图片',
+      },
+      {
         templates: [
           east,
           {

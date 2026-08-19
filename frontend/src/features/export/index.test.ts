@@ -171,6 +171,22 @@ describe('Character asset publisher', () => {
       mirrorX: true,
       frames: [],
     })
+    expect(() =>
+      exportFeature.buildReviewedAction(
+        workflow,
+        'action-walk:review',
+        [generations[0]!],
+        'four-way',
+      ),
+    ).toThrow('缺少 north 方向动画结果')
+    expect(() =>
+      exportFeature.buildReviewedAction(
+        workflow,
+        'action-walk:review',
+        [generations[0]!, { ...generations[1]!, result: generations[0]!.result }],
+        'four-way',
+      ),
+    ).toThrow('重复的 east 方向动画结果')
   })
 
   it('rejects incomplete workflows and unusable directional results', () => {
