@@ -941,6 +941,122 @@ describe('WorkflowController', () => {
     )
   })
 
+  it('角色母版回滚持久化失败时暴露工作流冲突', async () => {
+    const { controller, workflow, generation } = createController(
+      createRun(completedCharacterNodes()),
+    )
+    const update = vi.mocked(workflow.apis.update)
+    const save = update.getMockImplementation()!
+    update
+      .mockImplementationOnce(save)
+      .mockRejectedValueOnce(new Error('任务引用保存失败'))
+      .mockRejectedValueOnce(new Error('回滚保存失败'))
+
+    await expect(
+      controller.regenerateCharacterTemplate('template-1', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+        mode: 'refine',
+        adjustmentPrompt: '换成水彩风格',
+      }),
+    ).rejects.toMatchObject({ name: 'WorkflowRunConflictError' })
+    expect(generation.apis.create).toHaveBeenCalledTimes(1)
+  })
+
+  it('角色母版任务已创建但挂载失败时重试复用同一个任务', async () => {
+    const { controller, workflow, generation } = createController(
+      createRun(completedCharacterNodes()),
+    )
+    const update = vi.mocked(workflow.apis.update)
+    const save = update.getMockImplementation()!
+    update.mockImplementationOnce(save).mockRejectedValueOnce(new Error('任务引用保存失败'))
+
+    const options = {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      mode: 'refine' as const,
+      adjustmentPrompt: '换成水彩风格',
+    }
+    await expect(controller.regenerateCharacterTemplate('template-1', options)).rejects.toThrow(
+      '任务引用保存失败',
+    )
+    await controller.regenerateCharacterTemplate('template-1', options)
+
+    expect(generation.apis.create).toHaveBeenCalledTimes(1)
+    expect(controller.getWorkflow().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'template-1',
+          phase: 'generating',
+          generations: [{ taskId: 'task-1', role: 'character_template' }],
+        }),
+      ]),
+    )
+  })
+
+  it('角色母版任务已创建但订阅失败时重试复用同一个任务', async () => {
+    const { controller, generation } = createController(createRun(completedCharacterNodes()))
+    vi.mocked(generation.apis.subscribe).mockImplementationOnce(() => {
+      throw new Error('生成任务订阅失败')
+    })
+
+    const options = {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      mode: 'regenerate' as const,
+    }
+    await expect(controller.regenerateCharacterTemplate('template-1', options)).rejects.toThrow(
+      '生成任务订阅失败',
+    )
+    await controller.regenerateCharacterTemplate('template-1', options)
+
+    expect(generation.apis.create).toHaveBeenCalledTimes(1)
+    expect(controller.getWorkflow().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'template-1',
+          phase: 'generating',
+          generations: [{ taskId: 'task-1', role: 'character_template' }],
+        }),
+      ]),
+    )
+  })
+
+  it('角色母版挂载时发现节点已被其他任务占用则保留现有引用', async () => {
+    const { controller, workflow, generation } = createController(
+      createRun(completedCharacterNodes()),
+    )
+    const update = vi.mocked(workflow.apis.update)
+    const save = update.getMockImplementation()!
+    update.mockImplementationOnce(save).mockImplementationOnce(async (run) => {
+      const saved = await save(run)
+      return {
+        ...saved,
+        nodes: saved.nodes.map((node) =>
+          node.id === 'template-1'
+            ? { ...node, generations: [{ taskId: 'other-task', role: 'character_template' }] }
+            : node,
+        ),
+      }
+    })
+
+    await controller.regenerateCharacterTemplate('template-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      mode: 'regenerate',
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledTimes(1)
+    expect(controller.getWorkflow().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'template-1',
+          generations: [{ taskId: 'other-task', role: 'character_template' }],
+        }),
+      ]),
+    )
+  })
+
   it('角色设定已落库但生成请求失败后可以重试', async () => {
     const { controller, generation } = createController()
     vi.mocked(generation.apis.create).mockRejectedValueOnce(new Error('生成服务暂时不可用'))

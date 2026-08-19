@@ -383,14 +383,28 @@ def test_action_with_3d_outfit_is_accepted_without_reference_images(auth_client)
 # 永远触发不了它。这条测试从真实端点发起,断言的是"贯通"而不是"函数会不会算"。
 
 
+def _capture_action_input(gen_api, monkeypatch) -> list:
+    """截下建任务时的引擎入参。
+
+    挂在建任务这一步而不是投递那一步:投递只带 task_id,看不到入参,而这两条用例
+    要断言的正是"字段有没有从请求一路走到引擎入参"。
+    """
+    seen: list = []
+    real = gen_api.generation_service.generate_character_action
+
+    def spy(*args, **kwargs):
+        seen.append((kwargs.get("input"),))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(gen_api.generation_service, "generate_character_action", spy)
+    return seen
+
+
 def test_stance_from_request_reaches_the_engine(auth_client, monkeypatch):
     from windup_app.web.api import generation as gen_api
     from windup_app.server.orchestrator.model import CharacterActionInput
 
-    dispatched: list = []
-    monkeypatch.setattr(
-        gen_api, "_dispatch_after_commit", lambda *args: dispatched.append(args)
-    )
+    dispatched = _capture_action_input(gen_api, monkeypatch)
     project = _create_project(auth_client)
     character = _create_character(auth_client, project["id"])
 
@@ -410,10 +424,7 @@ def test_stance_omitted_stays_none_not_biped(auth_client, monkeypatch):
     from windup_app.web.api import generation as gen_api
     from windup_app.server.orchestrator.model import CharacterActionInput
 
-    dispatched: list = []
-    monkeypatch.setattr(
-        gen_api, "_dispatch_after_commit", lambda *args: dispatched.append(args)
-    )
+    dispatched = _capture_action_input(gen_api, monkeypatch)
     project = _create_project(auth_client)
     character = _create_character(auth_client, project["id"])
 
