@@ -772,7 +772,7 @@ function MasterGate({
 
   return (
     <div className={CARD_STACK}>
-      <img className={MASTER_IMAGE} src={imageUrl} alt="待确认定妆母版" />
+      <WorkflowImage src={imageUrl} alt="待确认定妆母版" variant="master" />
       <MasterPrecheckReadout state={precheck} />
       <button
         type="button"
