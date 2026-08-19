@@ -5,7 +5,6 @@ import { MemoryRouter } from 'react-router'
 
 import expectedBirdLeft from '@/assets/landing/illustrations/gongbi-tit-flight-up.webp'
 import expectedBirdRight from '@/assets/landing/illustrations/gongbi-tit-flight-down.webp'
-import expectedWorkflowEditorDesktop from '@/assets/landing/screenshots/workflow-editor-runtime-desktop.jpg'
 import { AuthenticatedAuthSession, GuestAuthSession } from '@/test/auth-session'
 import { LandingPage } from './index'
 
@@ -15,7 +14,7 @@ afterEach(() => {
 })
 
 describe('LandingPage', () => {
-  it('用居中宣言、两只工笔鸟与真实编辑器组成首屏', async () => {
+  it('用居中宣言、两只工笔鸟与留白产品窗组成首屏', async () => {
     render(
       <GuestAuthSession>
         <MemoryRouter>
@@ -29,12 +28,9 @@ describe('LandingPage', () => {
     expect(within(hero).getByRole('heading', { name: '让你的角色，真正登场。' })).toBeTruthy()
     const birdLeft = within(hero).getByTestId('hero-bird-left')
     const birdRight = within(hero).getByTestId('hero-bird-right')
-    const editor = within(hero).getByRole('img', {
-      name: 'Windup Workflow Editor 真实运行界面',
-    })
     expect(birdLeft.getAttribute('src')).toBe(expectedBirdLeft)
     expect(birdRight.getAttribute('src')).toBe(expectedBirdRight)
-    for (const image of [birdLeft, birdRight, editor]) {
+    for (const image of [birdLeft, birdRight]) {
       expect(image.getAttribute('loading')).toBe('eager')
       expect(image.getAttribute('decoding')).toBe('async')
       expect(image.getAttribute('fetchpriority')).toBe('high')
@@ -101,7 +97,7 @@ describe('LandingPage', () => {
     expect(screen.queryByRole('link', { name: '登录' })).toBeNull()
   })
 
-  it('所有宣传页产品窗只使用真实桌面截图，不附带未维护的移动端变体', async () => {
+  it('移除 Workflow Editor 图片，但保留三个白色占位容器', async () => {
     render(
       <GuestAuthSession>
         <MemoryRouter>
@@ -110,13 +106,8 @@ describe('LandingPage', () => {
       </GuestAuthSession>,
     )
 
-    const screenshots = await screen.findAllByRole('img', {
-      name: 'Windup Workflow Editor 真实运行界面',
-    })
-    expect(screenshots).toHaveLength(2)
-    for (const screenshot of screenshots) {
-      expect(screenshot.getAttribute('src')).toBe(expectedWorkflowEditorDesktop)
-    }
+    expect(await screen.findAllByTestId('workflow-editor-placeholder')).toHaveLength(3)
+    expect(document.querySelector('img[src*="workflow-editor"]')).toBeNull()
     expect(document.querySelector('source[srcset*="workflow-editor"]')).toBeNull()
   })
 })
