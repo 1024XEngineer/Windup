@@ -698,6 +698,88 @@ def test_list_characters_without_status_returns_all(auth_client):
     assert len(data["data"]) == 2
 
 
+def test_list_character_summaries_omits_asset_tree(auth_client):
+    project = _create_project(auth_client)
+    auth_client.post(
+        "/characters",
+        json=_payload_with_frames(
+            project["id"],
+            workflow_run_id=12,
+            character_data={
+                "version": 1,
+                "outfits": [
+                    {
+                        "id": "outfit-1",
+                        "name": "常态",
+                        "preview_url": "https://example.com/preview.png",
+                        "actions": [
+                            {
+                                "id": "idle",
+                                "type": "idle",
+                                "name": "待机",
+                                "frame_count": 1,
+                                "frames": [
+                                    {
+                                        "index": 0,
+                                        "image_url": "https://example.com/private-frame.png",
+                                    }
+                                ],
+                            },
+                            {
+                                "id": "walk",
+                                "type": "walk",
+                                "name": "行走",
+                                "frame_count": 1,
+                                "frames": [
+                                    {
+                                        "index": 0,
+                                        "image_url": "https://example.com/private-walk.png",
+                                    }
+                                ],
+                            },
+                        ],
+                    }
+                ],
+            },
+        ),
+    )
+
+    body = auth_client.get(
+        "/characters/summaries",
+        params={"project_id": project["id"], "status": 1},
+    ).json()
+
+    assert body["code"] == 200
+    assert body["total"] == 1
+    assert body["data"] == [
+        {
+            "id": body["data"][0]["id"],
+            "project_id": project["id"],
+            "name": "有帧角色",
+            "status": 1,
+            "preview_url": "https://example.com/preview.png",
+            "outfit_name": "常态",
+            "outfit_count": 1,
+            "action_count": 2,
+        }
+    ]
+    assert "character_data" not in body["data"][0]
+    assert "private-frame.png" not in str(body)
+
+
+def test_list_character_summaries_preserves_project_ownership(
+    auth_client, auth_client_b
+):
+    project = _create_project(auth_client)
+
+    body = auth_client_b.get(
+        "/characters/summaries", params={"project_id": project["id"]}
+    ).json()
+
+    assert body["code"] == 404
+    assert body["message"] == "项目不存在"
+
+
 def test_update_character_data_recalculates_status(auth_client):
     """更新 character_data 后应自动重新计算 status。"""
     project = _create_project(auth_client)
