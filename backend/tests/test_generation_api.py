@@ -264,11 +264,7 @@ def _capture_dispatch(monkeypatch) -> list:
     """接管派发，用来断言"这个任务压根没被收下"，而不只是响应体不好看。"""
     from windup_app.web.api import generation as gen_api
 
-    dispatched: list = []
-    monkeypatch.setattr(
-        gen_api, "_dispatch_after_commit", lambda *args: dispatched.append(args)
-    )
-    return dispatched
+    return _capture_action_input(gen_api, monkeypatch)
 
 
 def test_action_without_master_is_rejected_at_submission(auth_client, monkeypatch):
