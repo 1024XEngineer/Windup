@@ -13,7 +13,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
-from windup_common.models import ActionSpec, CharacterCard
+from windup_common.models import ActionSpec, CharacterCard, CharacterStance, Facing
+
+from windup_ai_engine.prompt.lint import Kind, LintIssue
 
 
 # ---- server 实现、注入给 ai_engine 的进度回调 port ----
@@ -61,8 +63,9 @@ class MasterRejected(ValueError):
     """母版不具备可生成性,在**调用付费模型之前**拒绝。
 
     与 ai_engine 其他异常的分工(这条分工是给 server 用的):
-      - ``MasterRejected`` = **调用方的输入不行**,同一张母版重试多少次都一样。
-        server 应映射成 4xx、把 ``code`` 翻成"请换一张母版"类文案,**不要重试**。
+      - ``MasterRejected`` / ``PromptRejected`` = **调用方的输入不行**,同一份输入
+        重试多少次都一样。server 应映射成 4xx、按 ``code`` 选"换一张母版" /
+        "改一下这句描述"的文案,**不要重试**。
       - ``NotImplementedError`` / 其他 ``ValueError`` = 引擎侧装配或产出出了问题
         (路线没注入、strategy 吐空帧、帧数对不上),属于 5xx、要人介入,
         让用户换母版是把锅甩错地方。
@@ -72,6 +75,88 @@ class MasterRejected(ValueError):
         super().__init__(f"母版不可用({code.value}):{detail}")
         self.code = code
         self.detail = detail
+
+
+class PromptRejectCode(str, Enum):
+    """用户那句动作描述被拒的原因 —— server 据此选文案,别 parse 异常消息做分支。
+
+    每个取值对应一条**模型侧的机制**(见 :mod:`windup_ai_engine.prompt.lint`),
+    不是文风偏好;判定全部本地零成本,发生在付费调用之前。
+    """
+
+    EMPTY = "empty"                        # 没写动作:模型照跑,回来一段站着不动的视频
+    TOO_LONG = "too_long"                  # 越长越容易夹带外观,而外观由母版承载
+    NEGATION = "negation"                  # 无 negative_prompt,"不要 X"把 X 送进画面
+    HAZARD_NOUN = "hazard_noun"            # 特效名词盖住轮廓,抠图留脏边
+    SHAPE_PRIOR = "shape_prior"            # 断言母版里没有的装备形状,焊到角色身上
+    SUBTHRESHOLD = "subthreshold"          # 幅度低于模型可控分辨率 → 逐帧随机抖
+    UNANCHORED_PROP = "unanchored_prop"    # 没交代身体整体怎么动,手里的东西自行漂移
+    MULTI_STAGE = "multi_stage"            # 静态模型没有时间轴,多阶段摊成分解姿势图
+    STANCE_MISMATCH = "stance_mismatch"    # 非双足角色写人体部位 → 凭空长出人的上肢
+
+
+class PromptRejected(ValueError):
+    """这段描述送进模型必然出坏产物,在**调用付费模型之前**拒绝。
+
+    形状与 :class:`MasterRejected` 一致、分工同一条:它是**调用方输入不行**那一类,
+    server 映射 4xx 让用户改那句话,而不是 5xx 报"系统出问题了"——用户改得动的东西
+    被报成服务器故障,他只会重试同一句话。
+
+    多条机制同时命中时 ``code`` 取报告序里的第一条,``detail`` 仍把每条都列出来:
+    只讲一条会让用户改完再被下一条拦一次。
+    """
+
+    def __init__(self, code: PromptRejectCode, detail: str) -> None:
+        super().__init__(f"这段描述跑不出可用产物({code.value}):{detail}")
+        self.code = code
+        self.detail = detail
+
+
+# ---- 用户大白话 → 正式提示词(实现在别处,见下)----
+@dataclass(frozen=True)
+class AdaptedPrompt:
+    """一次**成功**适配的结果 —— 拿到它就等于可以往下送。
+
+    不可适配走 :class:`PromptRejected`,不在这里留一个"拒了"的字段:同一件事两条返回
+    路径,调用方得写两套处理,而漏写返回值那条是静默的 —— 空文本照样进付费调用。
+    """
+
+    text: str
+    """正式提示词。
+
+    ``kind="i2v"`` 时它**不含**循环性尾句:循环与否是请求的属性(``ActionSpec.cyclic``),
+    适配器的入参里没有,替调用方猜一条会把一次性动作首尾闭环,而帧数 / 时长 / 成色全正常。
+    调用方按自己声明的循环性追加 ``prompt.custom`` 的两条尾句之一。
+    """
+
+    issues: tuple[LintIssue, ...] = ()
+    """确定性改写做不到、但不足以拦下的问题(warn 级)。error 级都走拒绝,不会到这里。"""
+
+
+class PromptAdapterPort(Protocol):
+    """把用户那句大白话改写进已验证的骨架。
+
+    引擎侧只定协议:确定性规则之外的改写要调模型,那属于 provider 那一层。
+
+    Args:
+        user_text: 用户自述的动作,只讲做什么动作。
+        kind: 目标模型类型 —— 决定哪些规则成立(见 ``prompt.lint`` 的 ``kind``)。
+        facing: 母版朝向。**必须与母版一致**。
+        stance: 角色体型(``CharacterCard.stance``)。非双足时"手臂"一类词会让模型
+            凭空长出人的上肢,故它参与判定,不只是记录。
+
+    Raises:
+        PromptRejected: 这段描述送进模型必然出坏产物 → 4xx,让用户改这句话。
+    """
+
+    def adapt(
+        self,
+        user_text: str,
+        *,
+        kind: Kind,
+        facing: Facing,
+        stance: CharacterStance,
+    ) -> AdaptedPrompt: ...
 
 
 # ---- ai_engine 出参(不含存储引用:上传 / 落库在 server 侧)----
@@ -160,11 +245,12 @@ class CharacterGeneratorPort(Protocol):
     不关心租户 / 配额 / 任务状态 / 存储(那些在 app.server)。
 
     Args:
-        card: 角色卡。**当前唯一实现的视频路线一个字段都不读**——``git grep 'card\\.'``
-            在 ai_engine 下零命中(2026-08-08 复核)。这不是遗漏:i2v 的角色身份完全由
-            ``master`` 这张母版图像承载,身份描述再写一遍反而会和母版打架。本参数是给
-            未实现路线预留的入参:逐帧图生图(#53)要靠 ``name`` / ``desc`` 在每帧提示词里
-            锁一致性。**调用方不要指望改 card 能影响视频路线的产出。**
+        card: 角色卡。视频路线**只读 ``stance`` 一个字段**,且它不进提示词、只决定用户那句
+            描述里的人体部位词(手臂 / 手肘)放不放行 —— 非双足角色放行了,模型会给它接上
+            一对人的上肢。**角色身份不读 card**:i2v 的一致性完全由 ``master`` 这张母版图像
+            承载,身份描述再写一遍反而会和母版打架。其余字段是给未实现路线预留的:逐帧图生图
+            (#53)要靠 ``name`` / ``desc`` 在每帧提示词里锁一致性,渲染出帧(#81 #122)要靠
+            ``master_ref`` / ``version`` 定位 3D 资产。**改 name / desc 影响不了视频路线的产出。**
         action: 动作规格(类型 / 帧数 / 风格化 / 朝向)。视频路线的实际入参在这里:
             ``action``、``n_frames``、``facing``、``stylize`` 等。
         master: 定妆母版图 bytes(server 从 reference_image_url 取)。**视频路线的
@@ -181,6 +267,8 @@ class CharacterGeneratorPort(Protocol):
     Raises:
         MasterRejected: 母版形态不可生成(见 :class:`MasterRejectCode`)。**在花钱
             之前抛**,同一张母版重试无意义 → server 映射 4xx、请用户换母版。
+        PromptRejected: ``action=custom`` 时用户那句描述必然出坏产物(见
+            :class:`PromptRejectCode`)。同样在花钱之前抛 → 4xx、请用户改那句话。
         NotImplementedError: 该动作分流到的路线没有实现或没注入 strategy。
         ValueError: 产出对不上契约(空帧 / 帧数不足)。钱已经花了,但错产物不放行。
 
