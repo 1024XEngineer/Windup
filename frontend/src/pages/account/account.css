@@ -34,6 +34,43 @@
   color: var(--color-app-faint);
 }
 
+.account-filter-field {
+  min-height: 2.35rem;
+  width: 100%;
+  border: 1px solid var(--color-app-line);
+  border-radius: 0.375rem;
+  background: var(--color-app-surface);
+  padding-inline: 0.625rem;
+  color: var(--color-app-ink-soft);
+  font-size: 0.8125rem;
+  outline: none;
+}
+
+.account-filter-field:focus {
+  border-color: var(--color-app-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-app-accent) 10%, transparent);
+}
+
+.account-filter-button,
+.account-filter-reset {
+  min-height: 2.35rem;
+  border-radius: 0.375rem;
+  padding-inline: 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.account-filter-button {
+  background: var(--color-app-accent);
+  color: var(--color-app-on-accent);
+}
+
+.account-filter-reset {
+  border: 1px solid var(--color-app-line);
+  color: var(--color-app-muted);
+}
+
 .account-primary-button {
   display: inline-flex;
   min-height: 2.75rem;

@@ -12,11 +12,14 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
+from windup_common.enums.biz_code import BizCode
+from windup_common.exceptions import BizException
 from windup_common.result import ListResponse, Response
 from windup_framework.db import get_session
 
@@ -94,12 +97,26 @@ def list_transactions(
     request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    direction: Literal["income", "expense"] | None = Query(None),
+    reason: int | None = Query(None, ge=0),
+    created_from: AwareDatetime | None = Query(None),
+    created_before: AwareDatetime | None = Query(None),
     session: Session = Depends(get_session),
 ) -> ListResponse[CreditTransactionOut]:
-    """查询积分流水（分页）。"""
+    """查询积分流水（筛选、分页）。"""
+    if created_from is not None and created_before is not None:
+        if created_from >= created_before:
+            raise BizException("开始时间必须早于结束时间", code=BizCode.BAD_REQUEST)
     user_id = request.state.current_user.id
     txns, total = service.list_transactions(
-        session, user_id, page=page, page_size=page_size
+        session,
+        user_id,
+        page=page,
+        page_size=page_size,
+        direction=direction,
+        reason=reason,
+        created_from=created_from,
+        created_before=created_before,
     )
     return ListResponse.success(
         [CreditTransactionOut.model_validate(t) for t in txns],
