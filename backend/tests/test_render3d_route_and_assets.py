@@ -414,6 +414,40 @@ def test_direction_task_renders_only_its_requested_3d_direction():
     assert renderer.last_direction == "ne"
 
 
+def test_one_way_3d_task_uses_a_valid_renderer_table(monkeypatch):
+    """单向项目仍只请求 east，但本地 3D 出帧台的方向表只能是四向或八向。"""
+
+    class _OneWayRenderer:
+        def render(
+            self,
+            _rigged_model,
+            *,
+            directions=4,
+            frames=12,
+            direction=None,
+            **_kwargs,
+        ) -> SpriteSheet:
+            if directions not in (4, 8):
+                raise ValueError("出帧台方向数只能是 4 或 8")
+            if direction != "e":
+                raise ValueError(f"单向任务请求了错误朝向 {direction}")
+            return _sheet((direction,), frames)
+
+    monkeypatch.setattr(
+        "windup_framework.providers.render3d.LocalSpriteRenderProvider",
+        _OneWayRenderer,
+    )
+
+    frames = ActionTaskExecutor._build_render3d(1).derive(
+        _card(),
+        _spec(direction=ActionDirection.EAST),
+        b"RIGGED",
+        _NullProgress(),
+    )
+
+    assert len(frames) == 4
+
+
 def test_missing_direction_raises_instead_of_handing_back_another():
     """出帧台没出请求的朝向就报错。换一个交出去 = 角色朝反方向走,而没有任何一道会红。"""
     renderer = _FakeRenderer(directions=("w", "s"), honor_requested=False)

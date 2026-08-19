@@ -504,6 +504,10 @@ class ActionTaskExecutor:
         from windup_ai_engine.strategy.base import DerivationStrategy
         from windup_common.models import GenRoute
 
+        # 项目可选单向(1/4/8)，但 3D 出帧台的相机表只接受四向或八向。
+        # 单向任务仍通过 ActionSpec.direction 只请求 east；这里的 4 只是底层表规格。
+        renderer_directions = 4 if directions == 1 else directions
+
         class _LazyRenderStrategy(DerivationStrategy):
             route = GenRoute.RENDER_3D
 
@@ -519,7 +523,7 @@ class ActionTaskExecutor:
 
                     self._inner = RenderFrameStrategy(
                         LocalSpriteRenderProvider(),
-                        directions=directions,
+                        directions=renderer_directions,
                     )
                 return self._inner.derive(card, action, source, progress)
 
