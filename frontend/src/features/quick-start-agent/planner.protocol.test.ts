@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { createAiSdkQuickStartPlanner } from './planner'
+import { validatePlannerTerminal } from './runtime'
 
 function completion(choice: Record<string, unknown>) {
   return Response.json({
@@ -86,6 +87,38 @@ describe('AI SDK OpenAI-compatible protocol fixture', () => {
         },
       ],
     })
+  })
+
+  it('rejects a Tool Call whose arguments fail the declared schema', async () => {
+    const planner = createAiSdkQuickStartPlanner({
+      baseURL: 'https://api.windup.test/ai/v1',
+      fetch: vi.fn(async () =>
+        completion({
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-invalid',
+                type: 'function',
+                function: {
+                  name: 'start_character_generation',
+                  arguments: '{"optimizedPrompt":"","assumptions":[]}',
+                },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        }),
+      ),
+    })
+
+    const result = await planner({
+      messages: [{ role: 'user', content: '直接生成' }],
+      clarificationUsed: false,
+    })
+
+    expect(() => validatePlannerTerminal(result)).toThrow('生成 Tool 的 optimizedPrompt 无效')
   })
 
   it('surfaces a standard 401 and honors cancellation', async () => {

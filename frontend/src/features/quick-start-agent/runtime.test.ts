@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   createQuickStartAgent,
+  parseCharacterGenerationPlan,
   validatePlannerTerminal,
   type PlannerResult,
   type QuickStartPlanner,
@@ -75,9 +76,74 @@ describe('validatePlannerTerminal', () => {
   ])('fails closed for %s', (_label, result) => {
     expect(() => validatePlannerTerminal(result)).toThrow()
   })
+
+  it('rejects an incomplete text terminal result', () => {
+    expect(() =>
+      validatePlannerTerminal(plannerResult({ text: '', finishReason: 'stop', toolCalls: [] })),
+    ).toThrow('Planner 未返回完整的文字响应')
+  })
+})
+
+describe('parseCharacterGenerationPlan', () => {
+  it.each([
+    [
+      'unknown fields',
+      { optimizedPrompt: '像素骑士', assumptions: [], unexpected: true },
+      '生成 Tool 参数字段无效',
+    ],
+    [
+      'non-array assumptions',
+      { optimizedPrompt: '像素骑士', assumptions: '默认单角色' },
+      '生成 Tool 的 assumptions 无效',
+    ],
+    [
+      'empty assumption',
+      { optimizedPrompt: '像素骑士', assumptions: [' '] },
+      '生成 Tool 的 assumptions 无效',
+    ],
+  ])('rejects %s', (_label, input, message) => {
+    expect(() => parseCharacterGenerationPlan(input)).toThrow(message)
+  })
 })
 
 describe('createQuickStartAgent', () => {
+  it('revokes authorization when the request is already cancelled', async () => {
+    const { agent, planner, startCharacterGeneration } = fixture()
+    const abortController = new AbortController()
+    abortController.abort()
+
+    await expect(agent.start('直接生成', { signal: abortController.signal })).rejects.toMatchObject(
+      { name: 'AbortError' },
+    )
+    await expect(agent.continue('再试一次')).rejects.toThrow('生成授权已失效')
+    expect(planner).not.toHaveBeenCalled()
+    expect(startCharacterGeneration).not.toHaveBeenCalled()
+  })
+
+  it('revokes authorization when cancellation happens while planning', async () => {
+    let resolvePlanner: ((result: PlannerResult) => void) | undefined
+    const planner = vi.fn<QuickStartPlanner>(
+      () =>
+        new Promise((resolve) => {
+          resolvePlanner = resolve
+        }),
+    )
+    const startCharacterGeneration = vi.fn<StartCharacterGenerationAction>(async () => ({
+      runId: 'run-should-not-exist',
+    }))
+    const agent = createQuickStartAgent({ planner, startCharacterGeneration })
+    const abortController = new AbortController()
+
+    const request = agent.start('直接生成', { signal: abortController.signal })
+    await vi.waitFor(() => expect(planner).toHaveBeenCalledTimes(1))
+    abortController.abort()
+    resolvePlanner?.(plannerResult())
+
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(agent.continue('再试一次')).rejects.toThrow('生成授权已失效')
+    expect(startCharacterGeneration).not.toHaveBeenCalled()
+  })
+
   it('dispatches the injected write action once after exposing the final prompt', async () => {
     const { agent, startCharacterGeneration } = fixture()
     const events: string[] = []
