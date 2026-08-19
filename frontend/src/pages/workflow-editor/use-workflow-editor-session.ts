@@ -246,27 +246,56 @@ async function readGenerations(
   run: WorkflowRun,
   settled: Map<Generation['id'], Generation>,
 ): Promise<Record<string, Generation | null>> {
-  const entries = await Promise.all(
-    run.nodes
-      .filter((node) => !node.deletedAt)
-      .flatMap((node) =>
-        node.generations.map(async (reference) => {
-          const key = generationKey(node.id, reference.role)
-          const cached = settled.get(reference.taskId)
-          if (cached) return [key, cached] as const
-          const generation = await controller.getGeneration(node.id, reference.role)
-          if (generation && (generation.status === 'completed' || generation.status === 'failed')) {
-            settled.set(generation.id, generation)
-          }
-          return [key, generation] as const
-        }),
-      ),
-  )
+  const entries: Array<readonly [string, Generation | null]> = []
+  const seen = new Set<string>()
+  for (const node of run.nodes.filter((item) => !item.deletedAt)) {
+    for (const reference of node.generations) {
+      const groupKey = `${node.id}:${reference.role}`
+      if (seen.has(groupKey)) continue
+      seen.add(groupKey)
+      const references = node.generations.filter((item) => item.role === reference.role)
+      const cachedGenerations = references.map((item) => settled.get(item.taskId))
+      if (
+        cachedGenerations.every((generation): generation is Generation => generation !== undefined)
+      ) {
+        for (const generation of cachedGenerations) {
+          const direction =
+            generation.result && 'direction' in generation.result
+              ? (generation.result.direction ?? 'east')
+              : (references.find((item) => item.taskId === generation.id)?.direction ?? 'east')
+          entries.push([generationKey(node.id, reference.role, direction), generation])
+        }
+        continue
+      }
+      // 真实 Controller 支持批量读取方向任务；旧页面测试和外部适配器可能只实现
+      // 单条读取，因此保留兼容分支，避免方向扩展改变原有 Session 接口的最低要求。
+      const generations =
+        typeof controller.getGenerations === 'function'
+          ? await controller.getGenerations(node.id, reference.role)
+          : [await controller.getGeneration(node.id, reference.role)].filter(
+              (generation): generation is Generation => generation !== null,
+            )
+      for (const generation of generations) {
+        if (generation.status === 'completed' || generation.status === 'failed') {
+          settled.set(generation.id, generation)
+        }
+        const direction =
+          generation.result && 'direction' in generation.result
+            ? (generation.result.direction ?? 'east')
+            : (reference.direction ?? 'east')
+        entries.push([generationKey(node.id, reference.role, direction), generation])
+      }
+    }
+  }
   return Object.fromEntries(entries)
 }
 
-function generationKey(nodeId: WorkflowNode['id'], role: WorkflowGenerationRole) {
-  return `${nodeId}:${role}`
+function generationKey(
+  nodeId: WorkflowNode['id'],
+  role: WorkflowGenerationRole,
+  direction: string = 'east',
+) {
+  return direction === 'east' ? `${nodeId}:${role}` : `${nodeId}:${role}:${direction}`
 }
 
 function errorMessage(cause: unknown, fallback: string) {

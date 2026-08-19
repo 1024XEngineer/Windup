@@ -13,6 +13,7 @@ import { useLocation, useParams } from 'react-router'
 import {
   type ActionPreset,
   type ActionFirstFrameWorkflowNode,
+  type ActionDirection,
   type ActionFullFrameWorkflowNode,
   type ActionGenerationMethodWorkflowNode,
   type Character,
@@ -25,6 +26,7 @@ import {
   type WorkflowGenerationRole,
   type WorkflowNode,
   type WorkflowRun,
+  getDirectionProfile,
 } from '@/entities'
 import type { WorkflowController } from '@/features/workflow-controller'
 import {
@@ -286,6 +288,7 @@ interface ProjectionInput {
   confirmCharacterTemplate(
     nodeId: CharacterTemplateWorkflowNode['id'],
     selectedImageUrl: string,
+    direction?: ActionDirection,
   ): Promise<Character>
   uploadReferenceImage(file: File, signal?: AbortSignal): Promise<MediaReference>
   publishReviewedAction(reviewNodeId: ReviewWorkflowNode['id']): Promise<Character>
@@ -586,39 +589,67 @@ function CharacterTemplateContent({
     )
   }
   if (node.phase === 'selecting') {
-    const result = input.generations[generationKey(node.id, 'character_template')]?.result
-    const images = result?.type === 'character_template' ? result.images : []
-    const selectedImageUrl =
-      images.find((image) => image.url === input.selectedImages[node.id])?.url ?? null
+    const directions = getDirectionProfile(input.project.directionalMovement).sourceDirections
+    const groups = directions.map((direction) => {
+      const result =
+        input.generations[generationKey(node.id, 'character_template', direction)]?.result
+      return {
+        direction,
+        images: result?.type === 'character_template' ? result.images : [],
+      }
+    })
+    const allSelected = groups.every(({ direction, images }) => {
+      const selected = input.selectedImages[selectionKey(node.id, direction)]
+      return images.some((image) => image.url === selected)
+    })
     return (
       <div className={CARD_STACK}>
-        <div className="grid grid-cols-2 gap-[7px]">
-          {images.map((image, index) => (
-            <button
-              type="button"
-              key={image.url}
-              className={THUMB_BUTTON}
-              aria-label={`选择角色候选 ${index + 1}`}
-              aria-pressed={selectedImageUrl === image.url}
-              onClick={() =>
-                input.setSelectedImages((selected) => ({
-                  ...selected,
-                  [node.id]: image.url,
-                }))
-              }
-            >
-              <WorkflowImage src={image.url} alt={`角色候选 ${index + 1}`} variant="thumbnail" />
-            </button>
-          ))}
-        </div>
+        {groups.map(({ direction, images }) => (
+          <div key={direction} className="grid gap-2">
+            <p className={CARD_TEXT}>方向：{directionLabel(direction)}</p>
+            <div className="grid grid-cols-2 gap-[7px]">
+              {images.map((image, index) => (
+                <button
+                  type="button"
+                  key={image.url}
+                  className={THUMB_BUTTON}
+                  aria-label={`${directions.length === 1 ? '选择角色候选' : `选择${directionLabel(direction)}角色候选`} ${index + 1}`}
+                  aria-pressed={
+                    input.selectedImages[selectionKey(node.id, direction)] === image.url
+                  }
+                  onClick={() =>
+                    input.setSelectedImages((selected) => ({
+                      ...selected,
+                      [selectionKey(node.id, direction)]: image.url,
+                    }))
+                  }
+                >
+                  <WorkflowImage
+                    src={image.url}
+                    alt={`${directionLabel(direction)}角色候选 ${index + 1}`}
+                    variant="thumbnail"
+                  />
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
         <button
           type="button"
           className={CARD_BUTTON}
-          disabled={!selectedImageUrl || branchBusy}
+          disabled={!allSelected || branchBusy}
           onClick={() =>
             input.runCommand(branchKey, async () => {
-              const character = await input.confirmCharacterTemplate(node.id, selectedImageUrl!)
-              input.setCharacter(character)
+              let character: Character | null = null
+              for (const direction of directions) {
+                const selectedImageUrl = input.selectedImages[selectionKey(node.id, direction)]
+                if (!selectedImageUrl) throw new Error(`请选择${directionLabel(direction)}候选`)
+                character =
+                  directions.length === 1
+                    ? await input.confirmCharacterTemplate(node.id, selectedImageUrl)
+                    : await input.confirmCharacterTemplate(node.id, selectedImageUrl, direction)
+              }
+              if (character) input.setCharacter(character)
             })
           }
         >
@@ -914,8 +945,15 @@ function FirstFrameContent({
   const branchBusy = input.busyBranches.has(branchKey)
   const [refining, setRefining] = useState(false)
   const [adjustmentPrompt, setAdjustmentPrompt] = useState('')
-  const result = input.generations[generationKey(node.id, 'first_frame')]?.result
-  const images = result?.type === 'first_frame' ? result.images : []
+  const directions = getDirectionProfile(input.project.directionalMovement).sourceDirections
+  const groups = directions.map((direction) => {
+    const result = input.generations[generationKey(node.id, 'first_frame', direction)]?.result
+    return {
+      direction,
+      images: result?.type === 'first_frame' ? result.images : [],
+    }
+  })
+  const allImages = groups.flatMap(({ images }) => images)
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.phase === 'configuring') {
     const character = characterOwningOutfit(input.character, node.input.outfitId)
@@ -944,43 +982,55 @@ function FirstFrameContent({
       </div>
     )
   }
-  if (node.phase === 'selecting' && images.length > 0) {
-    const selectedImageUrl = images.some((image) => image.url === input.selectedImages[node.id])
-      ? input.selectedImages[node.id]!
-      : null
+  if (node.phase === 'selecting' && allImages.length > 0) {
+    const allSelected = groups.every(({ direction, images }) => {
+      const selected = input.selectedImages[selectionKey(node.id, direction)]
+      return images.some((image) => image.url === selected)
+    })
     return (
       <div className={CARD_STACK}>
-        <div className="grid grid-cols-3 gap-2">
-          {images.map((image, index) => (
-            <button
-              key={image.url}
-              type="button"
-              className={THUMB_BUTTON}
-              aria-label={`选择动作首帧 ${index + 1}`}
-              aria-pressed={selectedImageUrl === image.url}
-              onClick={() =>
-                input.setSelectedImages((selected) => ({
-                  ...selected,
-                  [node.id]: image.url,
-                }))
-              }
-            >
-              <WorkflowImage
-                src={image.url}
-                alt={`动作首帧候选 ${index + 1}`}
-                variant="thumbnail"
-              />
-            </button>
-          ))}
-        </div>
+        {groups.map(({ direction, images }) => (
+          <div key={direction} className="grid gap-2">
+            <p className={CARD_TEXT}>方向：{directionLabel(direction)}</p>
+            <div className="grid grid-cols-2 gap-[7px]">
+              {images.map((image, index) => (
+                <button
+                  key={image.url}
+                  type="button"
+                  className={THUMB_BUTTON}
+                  aria-label={`${directions.length === 1 ? '选择动作首帧' : `选择${directionLabel(direction)}动作首帧候选`} ${index + 1}`}
+                  aria-pressed={
+                    input.selectedImages[selectionKey(node.id, direction)] === image.url
+                  }
+                  onClick={() =>
+                    input.setSelectedImages((selected) => ({
+                      ...selected,
+                      [selectionKey(node.id, direction)]: image.url,
+                    }))
+                  }
+                >
+                  <WorkflowImage
+                    src={image.url}
+                    alt={`${directionLabel(direction)}动作首帧候选 ${index + 1}`}
+                    variant="thumbnail"
+                  />
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
         <button
           type="button"
           className={CARD_BUTTON}
-          disabled={!selectedImageUrl || branchBusy}
+          disabled={!allSelected || branchBusy}
           onClick={() =>
-            input.runCommand(branchKey, () =>
-              input.controller.confirmFirstFrame(node.id, selectedImageUrl!),
-            )
+            input.runCommand(branchKey, async () => {
+              for (const direction of directions) {
+                const selectedImageUrl = input.selectedImages[selectionKey(node.id, direction)]
+                if (!selectedImageUrl) throw new Error(`请选择${directionLabel(direction)}首帧`)
+                await input.controller.confirmFirstFrame(node.id, selectedImageUrl, direction)
+              }
+            })
           }
         >
           确认动作首帧
@@ -988,10 +1038,13 @@ function FirstFrameContent({
       </div>
     )
   }
-  if (node.phase === 'completed' && node.selectedFirstFrameUrl) {
+  if (node.phase === 'completed' && (node.selectedFirstFrameUrl || node.selectedFirstFrameUrls)) {
+    const selectedImageUrl =
+      node.selectedFirstFrameUrls?.east ?? node.selectedFirstFrameUrl ?? undefined
+    if (!selectedImageUrl) return <StatusText node={node} input={input} />
     return (
       <div className={CARD_STACK}>
-        <WorkflowImage src={node.selectedFirstFrameUrl} alt="已确认动作首帧" variant="master" />
+        <WorkflowImage src={selectedImageUrl} alt="已确认动作首帧" variant="master" />
         <div className="grid gap-2">
           <button
             type="button"
@@ -1104,8 +1157,15 @@ function AnimationContent({
 }) {
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
-  const result = input.generations[generationKey(node.id, 'complete_animation')]?.result
-  const frames = result?.type === 'complete_animation' ? result.frames : []
+  const directions = getDirectionProfile(input.project.directionalMovement).sourceDirections
+  const groups = directions.map((direction) => {
+    const result =
+      input.generations[generationKey(node.id, 'complete_animation', direction)]?.result
+    return {
+      direction,
+      frames: result?.type === 'complete_animation' ? result.frames : [],
+    }
+  })
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.phase === 'ready' && node.status === 'active') {
     // 依赖链是 首帧 → 生产方式 → 完整动画，所以要往上翻两层才拿得到首帧的造型。
@@ -1135,23 +1195,31 @@ function AnimationContent({
       </button>
     )
   }
-  if (node.phase === 'completed' && frames.length) {
+  if (
+    node.phase === 'completed' &&
+    groups.some(({ frames: directionFrames }) => directionFrames.length)
+  ) {
     const methodNode = findDependency(input.run, node, 'action-generation-method')
     const firstFrameNode = methodNode
       ? findDependency(input.run, methodNode, 'action-first-frame')
       : null
     return (
       <div className={CARD_STACK}>
-        <div className="nodrag nopan nowheel grid max-h-40 grid-cols-8 gap-[3px] overflow-auto">
-          {frames.map((frame, index) => (
-            <WorkflowImage
-              key={`${frame.url}-${index}`}
-              src={frame.url}
-              alt={`动画帧 ${index + 1}`}
-              variant="frame"
-            />
-          ))}
-        </div>
+        {groups.map(({ direction, frames: directionFrames }) => (
+          <div key={direction} className="grid gap-1.5">
+            <p className={CARD_TEXT}>方向：{directionLabel(direction)}</p>
+            <div className="nodrag nopan nowheel grid max-h-40 grid-cols-8 gap-[3px] overflow-auto">
+              {directionFrames.map((frame, index) => (
+                <WorkflowImage
+                  key={`${frame.url}-${index}`}
+                  src={frame.url}
+                  alt={`${directionLabel(direction)}动画帧 ${index + 1}`}
+                  variant="frame"
+                />
+              ))}
+            </div>
+          </div>
+        ))}
         {firstFrameNode ? (
           <NodeExportButton model={input.exportModels.get(firstFrameNode.input.outfitId)} />
         ) : null}
@@ -1283,8 +1351,30 @@ function EditorBoundary({ message }: { message: string }) {
  * 一个节点可以同时挂多个角色的生成任务，所以字典的键必须带上角色，
  * 只用节点 ID 会让后读到的那条静默覆盖前一条。已删节点不再读取。
  */
-function generationKey(nodeId: WorkflowNode['id'], role: WorkflowGenerationRole) {
-  return `${nodeId}:${role}`
+function generationKey(
+  nodeId: WorkflowNode['id'],
+  role: WorkflowGenerationRole,
+  direction: ActionDirection = 'east',
+) {
+  return direction === 'east' ? `${nodeId}:${role}` : `${nodeId}:${role}:${direction}`
+}
+
+function selectionKey(nodeId: WorkflowNode['id'], direction: ActionDirection) {
+  return direction === 'east' ? nodeId : `${nodeId}:${direction}`
+}
+
+function directionLabel(direction: ActionDirection) {
+  const labels: Record<ActionDirection, string> = {
+    east: '东',
+    west: '西',
+    north: '北',
+    south: '南',
+    north_east: '东北',
+    north_west: '西北',
+    south_east: '东南',
+    south_west: '西南',
+  }
+  return labels[direction]
 }
 
 /**

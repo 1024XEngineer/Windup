@@ -57,6 +57,25 @@ describe('Character asset publisher', () => {
           { index: 0, imageUrl: 'https://assets.windup.test/walk-01.png', durationMs: 125 },
           { index: 1, imageUrl: 'https://assets.windup.test/walk-02.png', durationMs: 80 },
         ],
+        sequences: [
+          {
+            direction: 'east',
+            sourceDirection: null,
+            mirrorX: false,
+            frameCount: 2,
+            frames: [
+              { index: 0, imageUrl: 'https://assets.windup.test/walk-01.png', durationMs: 125 },
+              { index: 1, imageUrl: 'https://assets.windup.test/walk-02.png', durationMs: 80 },
+            ],
+          },
+          {
+            direction: 'west',
+            sourceDirection: 'east',
+            mirrorX: true,
+            frameCount: 2,
+            frames: [],
+          },
+        ],
       },
     ])
   })

@@ -1,21 +1,140 @@
 import type {
   Action,
+  ActionDirection,
   Character,
   CharacterApis,
   Generation,
+  DirectionalMovement,
   WorkflowNode,
   WorkflowRun,
 } from '@/entities'
+import { getDirectionProfile, resolveActionDirection } from '@/entities'
 
 export interface PublishReviewedActionInput {
   character: Character
   workflow: WorkflowRun
   reviewNodeId: string
-  generation: Generation
+  /** 兼容旧调用方；新流程应传入同一动作的全部真实方向结果。 */
+  generation?: Generation
+  generations?: readonly Generation[]
+  directionalMovement?: DirectionalMovement
 }
 
 export interface CharacterAssetPublisher {
   publishReviewedAction(input: PublishReviewedActionInput): Promise<Character>
+}
+
+/**
+ * 把一个动作节点下各真实方向的生成结果组装成一棵 Action。
+ *
+ * 真实方向各自保留帧；西/西北/西南等可由水平翻转得到的方向只保存关系，
+ * 这样后端和 Playtest 都能知道“这是镜像”，不会因为重复保存一份帧而失去来源。
+ */
+export function buildReviewedAction(
+  workflow: WorkflowRun,
+  reviewNodeId: string,
+  generations: readonly Generation[],
+  directionalMovement: DirectionalMovement = 'single',
+): Action {
+  const reviewNode = findNode(workflow, reviewNodeId, 'review')
+  const fullFrameNode = findSingleDependency(workflow, reviewNode, 'action-full-frame')
+  if (fullFrameNode.status !== 'passed' || fullFrameNode.phase !== 'completed') {
+    throw new Error('完整动画尚未完成')
+  }
+
+  const methodNode = findSingleDependency(workflow, fullFrameNode, 'action-generation-method')
+  const firstFrameNode = findSingleDependency(workflow, methodNode, 'action-first-frame')
+  const templateNode = findSingleDependency(workflow, firstFrameNode, 'character-template')
+  if (
+    !templateNode.selectedImageUrl &&
+    Object.keys(templateNode.selectedImages ?? {}).length === 0
+  ) {
+    throw new Error('角色母版尚未确认')
+  }
+
+  const references = fullFrameNode.generations.filter(
+    (reference) => reference.role === 'complete_animation',
+  )
+  const byDirection = new Map<ActionDirection, Generation>()
+  for (const generation of generations) {
+    if (generation.projectId !== workflow.projectId) {
+      throw new Error('Generation 与当前 WorkflowRun 不匹配')
+    }
+    const reference = references.find((item) => item.taskId === generation.id)
+    if (!reference || generation.type !== 'complete_animation') {
+      throw new Error('完整动画生成结果不可发布')
+    }
+    if (generation.status !== 'completed' || generation.result?.type !== 'complete_animation') {
+      throw new Error('完整动画生成结果不可发布')
+    }
+    const direction = generationDirectionOf(generation, reference.direction)
+    if (byDirection.has(direction)) throw new Error(`重复的 ${direction} 方向动画结果`)
+    const result = generation.result
+    if (!result || result.type !== 'complete_animation' || result.frames.length === 0) {
+      throw new Error('完整动画生成结果不可发布')
+    }
+    byDirection.set(direction, generation)
+  }
+
+  const profile = getDirectionProfile(directionalMovement)
+  for (const direction of profile.sourceDirections) {
+    if (!byDirection.has(direction)) throw new Error(`缺少 ${direction} 方向动画结果`)
+  }
+
+  const framesByDirection = new Map<ActionDirection, FrameData>()
+  for (const direction of profile.sourceDirections) {
+    const generation = byDirection.get(direction)!
+    const result = generation.result
+    if (!result || result.type !== 'complete_animation') {
+      throw new Error('完整动画生成结果不可发布')
+    }
+    framesByDirection.set(direction, {
+      frameCount: result.frames.length,
+      frames: result.frames.map((frame) => ({
+        index: frame.index,
+        imageUrl: frame.url,
+        durationMs: frame.durationMs,
+      })),
+    })
+  }
+
+  const east = framesByDirection.get('east')!
+  return {
+    id: firstFrameNode.id,
+    outfitId: firstFrameNode.input.outfitId,
+    name: firstFrameNode.input.name,
+    type: firstFrameNode.input.type,
+    loop: firstFrameNode.input.type === 'idle' || firstFrameNode.input.type === 'walk',
+    fps: firstFrameNode.input.fps,
+    frameCount: east.frameCount,
+    frames: east.frames,
+    sequences: profile.logicalDirections.map((direction) => {
+      const resolved = resolveActionDirection(direction)
+      const source = framesByDirection.get(resolved.sourceDirection)!
+      return {
+        direction,
+        sourceDirection: resolved.mirrorX ? resolved.sourceDirection : null,
+        mirrorX: resolved.mirrorX,
+        frameCount: source.frameCount,
+        frames: resolved.mirrorX ? [] : source.frames,
+      }
+    }),
+  }
+}
+
+interface FrameData {
+  frameCount: number
+  frames: Action['frames']
+}
+
+function generationDirectionOf(
+  generation: Generation,
+  fallback?: ActionDirection,
+): ActionDirection {
+  const result = generation.result
+  return result && 'direction' in result && result.direction !== undefined
+    ? result.direction
+    : (fallback ?? 'east')
 }
 
 /**
@@ -26,7 +145,14 @@ export function createCharacterAssetPublisher(
   characterApis: Pick<CharacterApis, 'update'>,
 ): CharacterAssetPublisher {
   return {
-    async publishReviewedAction({ character, workflow, reviewNodeId, generation }) {
+    async publishReviewedAction({
+      character,
+      workflow,
+      reviewNodeId,
+      generation,
+      generations,
+      directionalMovement = 'single',
+    }) {
       if (character.workflowRunId !== workflow.id || character.projectId !== workflow.projectId) {
         throw new Error('Character 与当前 WorkflowRun 不匹配')
       }
@@ -39,44 +165,17 @@ export function createCharacterAssetPublisher(
       if (fullFrameNode.status !== 'passed' || fullFrameNode.phase !== 'completed') {
         throw new Error('完整动画尚未完成')
       }
-      if (generation.projectId !== workflow.projectId) {
-        throw new Error('Generation 与当前 WorkflowRun 不匹配')
-      }
-      if (
-        generation.id !==
-          fullFrameNode.generations.find((item) => item.role === 'complete_animation')?.taskId ||
-        generation.type !== 'complete_animation' ||
-        generation.status !== 'completed' ||
-        generation.result?.type !== 'complete_animation' ||
-        generation.result.frames.length === 0
-      ) {
-        throw new Error('完整动画生成结果不可发布')
-      }
-
-      const methodNode = findSingleDependency(workflow, fullFrameNode, 'action-generation-method')
-      const firstFrameNode = findSingleDependency(workflow, methodNode, 'action-first-frame')
-      const templateNode = findSingleDependency(workflow, firstFrameNode, 'character-template')
-      if (!templateNode.selectedImageUrl) throw new Error('角色母版尚未确认')
-
-      const outfitIndex = character.outfits.findIndex(
-        (outfit) => outfit.id === firstFrameNode.input.outfitId,
+      const actionGenerations = generations ?? (generation ? [generation] : [])
+      if (actionGenerations.length === 0) throw new Error('完整动画生成结果不存在')
+      const action = buildReviewedAction(
+        workflow,
+        reviewNodeId,
+        actionGenerations,
+        directionalMovement,
       )
-      if (outfitIndex < 0) throw new Error('动作所属造型不存在')
 
-      const action: Action = {
-        id: firstFrameNode.id,
-        outfitId: firstFrameNode.input.outfitId,
-        name: firstFrameNode.input.name,
-        type: firstFrameNode.input.type,
-        loop: firstFrameNode.input.type === 'idle' || firstFrameNode.input.type === 'walk',
-        fps: firstFrameNode.input.fps,
-        frameCount: generation.result.frames.length,
-        frames: generation.result.frames.map((frame) => ({
-          index: frame.index,
-          imageUrl: frame.url,
-          durationMs: frame.durationMs,
-        })),
-      }
+      const outfitIndex = character.outfits.findIndex((outfit) => outfit.id === action.outfitId)
+      if (outfitIndex < 0) throw new Error('动作所属造型不存在')
       const targetOutfit = character.outfits[outfitIndex]!
       const actionIndex = targetOutfit.actions.findIndex((item) => item.id === action.id)
       const actions = [...targetOutfit.actions]

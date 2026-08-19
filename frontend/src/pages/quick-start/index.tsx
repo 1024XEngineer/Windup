@@ -1008,7 +1008,7 @@ function QuickStartRun({
                 <>
                   <AgentCopy
                     lines={[
-                      '已生成 3 个角色方向。',
+                      '已生成 2 个角色方案。',
                       isTemplateSelecting
                         ? '选择一个方案，再描述它接下来的动作。'
                         : '角色方案已确认。',
@@ -1016,7 +1016,7 @@ function QuickStartRun({
                   />
                   <div
                     data-layout="agent-result-set"
-                    className="grid w-full max-w-2xl grid-cols-3 gap-3"
+                    className="grid w-full max-w-2xl grid-cols-2 gap-3"
                   >
                     {candidates.map((candidateUrl, index) => (
                       <button
@@ -1106,7 +1106,7 @@ function QuickStartRun({
                     <>
                       <AgentCopy
                         lines={[
-                          isFirstFrameSelecting ? '已生成 3 个动作起始姿态。' : '动作首帧',
+                          isFirstFrameSelecting ? '已生成 2 个动作起始姿态。' : '动作首帧',
                           isFirstFrameSelecting
                             ? '选择一个起始姿态，随后生成完整动作。'
                             : '动作起始姿态已确认。',
@@ -1114,7 +1114,7 @@ function QuickStartRun({
                       />
                       <div
                         data-layout="agent-result-set"
-                        className="grid w-full max-w-2xl grid-cols-3 gap-3"
+                        className="grid w-full max-w-2xl grid-cols-2 gap-3"
                       >
                         {firstFrameCandidates.map((frame, index) => (
                           <button

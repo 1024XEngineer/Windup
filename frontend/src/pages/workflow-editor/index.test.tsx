@@ -795,7 +795,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(screen.getByRole('button', { name: '选择造型 夜行装' })).toBeTruthy()
   })
 
-  it('展示三张动作首帧候选并确认用户选择的一张', async () => {
+  it('展示两张动作首帧候选并确认用户选择的一张', async () => {
     const workflow = reviewingActionWorkflow()
     const firstFrame = workflow.nodes.find((node) => node.type === 'action-first-frame')
     if (!firstFrame || firstFrame.type !== 'action-first-frame') throw new Error('missing frame')
@@ -819,7 +819,6 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     const candidates = [
       'https://assets.windup.test/first-1.png',
       'https://assets.windup.test/first-2.png',
-      'https://assets.windup.test/first-3.png',
     ]
     const session = createSession(workflow, {
       character: characterFixture(),
@@ -842,7 +841,6 @@ describe('WorkflowEditorPage real runtime boundary', () => {
 
     expect(await screen.findByRole('img', { name: '动作首帧候选 1' })).toBeTruthy()
     expect(screen.getByRole('img', { name: '动作首帧候选 2' })).toBeTruthy()
-    expect(screen.getByRole('img', { name: '动作首帧候选 3' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '选择动作首帧 2' }))
     fireEvent.click(screen.getByRole('button', { name: '确认动作首帧' }))
 

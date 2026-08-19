@@ -64,4 +64,6 @@ npm run build
 - 帧顺序使用后端显式 `Frame.index`，断号或重复序号会在读取图片前失败。
 - `durationMs` 为空时才按 Action FPS 计算，不覆盖后端逐帧时长。
 - 锚点和脚线沿用 `ai_engine.align_bottom_center` 的底部居中与 `0.92` 脚线约定。
-- 当前 Character 只表达单方向动作，因此统一导出为 `default`；四向和八向需等待资产契约扩展。
+- 旧 Character 的顶层 `frames` 在单向项目中作为 `east` 源序列，并在打包时生成独立的 `west` 镜像 PNG 与图集。
+- 四向和八向项目按 `east/west/north/south` 及斜向标识导出；缺少项目要求的真实源方向时拒绝导出，不借用相邻方向。
+- `meta.json` 从 1.2.0 起为每个动作序列写入明确的 `direction`，镜像关系只用于打包期渲染，不重复保存 Character 源帧。

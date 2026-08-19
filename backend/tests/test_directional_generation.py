@@ -1,0 +1,48 @@
+"""多方向生成契约的最小测试。
+
+这些测试先锁住跨层共同约定，再让 API、编排器和前端分别实现：
+真实源方向各自生成，镜像方向只保存关系，不重复调用模型。
+"""
+
+from windup_ai_engine.strategy.concrete import VideoFrameStrategy
+from windup_common.directions import (
+    ActionDirection,
+    source_directions_for_movement,
+)
+from windup_common.models import ActionSpec, ActionType, Facing
+
+
+def test_source_direction_profile_has_one_three_or_five_real_tasks():
+    assert source_directions_for_movement(1) == (ActionDirection.EAST,)
+    assert source_directions_for_movement(2) == (
+        ActionDirection.EAST,
+        ActionDirection.NORTH,
+        ActionDirection.SOUTH,
+    )
+    assert source_directions_for_movement(3) == (
+        ActionDirection.EAST,
+        ActionDirection.NORTH,
+        ActionDirection.SOUTH,
+        ActionDirection.NORTH_EAST,
+        ActionDirection.SOUTH_EAST,
+    )
+
+
+def test_mirror_direction_is_never_a_generation_source():
+    assert ActionDirection.WEST not in source_directions_for_movement(3)
+    assert ActionDirection.NORTH_WEST not in source_directions_for_movement(3)
+    assert ActionDirection.SOUTH_WEST not in source_directions_for_movement(3)
+
+
+def test_action_prompt_contains_direction_lock():
+    strategy = VideoFrameStrategy(video=None, matte=None)  # type: ignore[arg-type]
+    prompt = strategy._build_prompt(
+        ActionSpec(
+            action=ActionType.WALK,
+            facing=Facing.SIDE,
+            direction=ActionDirection.NORTH_EAST,
+        )
+    )
+
+    assert "north-east" in prompt.lower()
+    assert "do not turn" in prompt.lower()

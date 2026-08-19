@@ -233,11 +233,147 @@ describe('createProgressiveExportModel', () => {
     })
 
     expect(model.stage).toBe('action-assets')
-    expect(model.actions[0]).toMatchObject({ id: 'walk-full', name: '行走' })
+    expect(model.actions[0]).toMatchObject({ id: 'walk-first', name: '行走' })
     expect(model.actions[0]?.sequences[0]).toMatchObject({
       qualityStatus: 'pending',
       frames: [{ index: 0, imageUrl: '/walk-0.png', durationMs: 100 }],
     })
+
+    const approved = createProgressiveExportModel({
+      project,
+      character,
+      outfitId: 'outfit-1',
+      run: {
+        ...actionRun,
+        nodes: actionRun.nodes.map((node) =>
+          node.type === 'review'
+            ? { ...node, status: 'passed' as const, phase: 'completed' as const }
+            : node,
+        ),
+      },
+      generations: [generation],
+    })
+    expect(approved.actions[0]?.sequences[0]?.qualityStatus).toBe('passed')
+  })
+
+  it('四向动作必须收齐三个真实源方向，并由导出包补出镜像方向', () => {
+    const directionalProject: Project = {
+      ...project,
+      directionalMovement: 'four-way',
+    }
+    const directionalRun: WorkflowRun = {
+      ...run,
+      nodes: [
+        ...run.nodes,
+        {
+          id: 'walk-method',
+          type: 'action-generation-method',
+          status: 'passed',
+          phase: 'completed',
+          dependsOnNodeIds: ['walk-first'],
+          generations: [],
+          error: null,
+          method: 'video-cropping',
+        },
+        {
+          id: 'walk-full',
+          type: 'action-full-frame',
+          status: 'passed',
+          phase: 'completed',
+          dependsOnNodeIds: ['walk-method'],
+          generations: (['east', 'north', 'south'] as const).map((direction) => ({
+            taskId: `generation-full-${direction}`,
+            role: 'complete_animation' as const,
+            direction,
+          })),
+          error: null,
+        },
+        {
+          id: 'walk-review',
+          type: 'review',
+          status: 'active',
+          phase: 'reviewing',
+          dependsOnNodeIds: ['walk-full'],
+          generations: [],
+          error: null,
+        },
+      ],
+    }
+    const generations = (['east', 'north', 'south'] as const).map((direction) => ({
+      id: `generation-full-${direction}`,
+      projectId: project.id,
+      type: 'complete_animation' as const,
+      status: 'completed' as const,
+      error: null,
+      result: {
+        type: 'complete_animation' as const,
+        direction,
+        frames: [{ index: 0, url: `/${direction}-0.png`, durationMs: 100 }],
+      },
+    })) satisfies readonly Generation<'complete_animation'>[]
+
+    const model = createProgressiveExportModel({
+      project: directionalProject,
+      character,
+      outfitId: 'outfit-1',
+      run: directionalRun,
+      generations,
+    })
+
+    expect(
+      model.actions[0]?.sequences.map((sequence) => [
+        sequence.direction,
+        sequence.sourceDirection,
+        sequence.mirrorX,
+      ]),
+    ).toEqual([
+      ['east', null, false],
+      ['west', 'east', true],
+      ['north', null, false],
+      ['south', null, false],
+    ])
+    expect(model.actions[0]?.sequences.map((sequence) => sequence.frames[0]?.imageUrl)).toEqual([
+      '/east-0.png',
+      '/east-0.png',
+      '/north-0.png',
+      '/south-0.png',
+    ])
+  })
+
+  it('拒绝缺少真实源方向的镜像动作，而不是静默导出错误帧', () => {
+    const malformed: Character = {
+      ...character,
+      outfits: [
+        {
+          ...character.outfits[0]!,
+          actions: [
+            {
+              id: 'walk',
+              outfitId: 'outfit-1',
+              name: '行走',
+              type: 'walk',
+              loop: true,
+              fps: 10,
+              frameCount: 0,
+              frames: [],
+              sequences: [
+                {
+                  direction: 'west',
+                  sourceDirection: 'east',
+                  mirrorX: true,
+                  frameCount: 1,
+                  frames: [],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+
+    expect(() =>
+      createProgressiveExportModel({ project, character: malformed, outfitId: 'outfit-1' }),
+    ).toThrow('行走缺少 east 方向动作帧')
   })
 
   it('同名但不同 ID 的已发布与生成中动作不会互相覆盖', () => {
@@ -306,7 +442,7 @@ describe('createProgressiveExportModel', () => {
       generations: [generation],
     })
 
-    expect(model.actions.map((action) => action.id)).toEqual(['published-walk', 'generated-walk'])
+    expect(model.actions.map((action) => action.id)).toEqual(['published-walk', 'walk-first'])
     expect(model.firstFrames.map((frame) => frame.actionId)).toEqual([
       'walk-first',
       'published-walk',

@@ -2,6 +2,7 @@ import type {
   ActionPreset,
   Character,
   CharacterApis,
+  ActionDirection,
   GenerationApis,
   MediaApis,
   MediaReference,
@@ -33,6 +34,7 @@ export interface WorkflowEditorSession {
   confirmCharacterTemplate(
     nodeId: CharacterTemplateWorkflowNode['id'],
     selectedImageUrl: string,
+    direction?: ActionDirection,
   ): Promise<Character>
   /** 上传角色生成约束图；页面不接触 multipart 协议或用途枚举。 */
   uploadReferenceImage(file: File, signal?: AbortSignal): Promise<MediaReference>
@@ -85,6 +87,7 @@ export async function createRealWorkflowEditorSession(
     workflowRunApis: dependencies.workflowRunApis,
     generationApis: dependencies.generationApis,
     onAsyncError: reportAsyncError,
+    directionalMovement: project.directionalMovement,
   })
   const publisher = createCharacterAssetPublisher(dependencies.characterApis)
   async function shouldRollbackWorkflowChange(isPersisted: (latest: WorkflowRun) => boolean) {
@@ -168,15 +171,16 @@ export async function createRealWorkflowEditorSession(
       if (!firstFrameNode || firstFrameNode.type !== 'action-first-frame') {
         throw new Error('完整动画缺少动作首帧节点')
       }
-      const generation = await controller.getGeneration(fullFrameNodeId, 'complete_animation')
-      if (!generation) throw new Error('完整动画生成结果不存在')
+      const generations = await controller.getGenerations(fullFrameNodeId, 'complete_animation')
+      if (generations.length === 0) throw new Error('完整动画生成结果不存在')
 
       const originalCharacter = structuredClone(currentCharacter)
       const publishedCharacter = await publisher.publishReviewedAction({
         character: originalCharacter,
         workflow: currentWorkflow,
         reviewNodeId,
-        generation,
+        generations,
+        directionalMovement: project.directionalMovement,
       })
       try {
         await controller.approveReview(reviewNodeId)

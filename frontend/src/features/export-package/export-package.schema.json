@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://windup.local/schemas/export-package-1.1.0.json",
+  "$id": "https://windup.local/schemas/export-package-1.2.0.json",
   "title": "Windup Generic Export Package",
   "type": "object",
   "additionalProperties": false,
@@ -16,7 +16,7 @@
     "source"
   ],
   "properties": {
-    "schema_version": { "const": "1.1.0" },
+    "schema_version": { "const": "1.2.0" },
     "stage": { "enum": ["character", "first-frame", "action-assets", "playtest"] },
     "character": {
       "type": "object",
@@ -54,6 +54,7 @@
         "required": [
           "id",
           "name",
+          "direction",
           "fps",
           "loop",
           "quality_status",
@@ -65,6 +66,18 @@
         "properties": {
           "id": { "type": "string", "minLength": 1 },
           "name": { "type": "string", "minLength": 1 },
+          "direction": {
+            "enum": [
+              "east",
+              "west",
+              "north",
+              "south",
+              "north_east",
+              "north_west",
+              "south_east",
+              "south_west"
+            ]
+          },
           "fps": { "type": "integer", "minimum": 1 },
           "loop": { "type": "boolean" },
           "quality_status": { "enum": ["passed", "pending", "failed"] },

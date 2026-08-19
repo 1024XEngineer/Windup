@@ -72,7 +72,8 @@ describe('createCharacterExportModel', () => {
       source: { workflowRunId: '501', generationIds: [] },
     })
     expect(model.actions[0]?.sequences[0]).toMatchObject({
-      direction: 'default',
+      direction: 'east',
+      mirrorX: false,
       expectedFrameCount: 3,
       loop: true,
       anchor: { x: 0.5, y: 0.92 },
@@ -83,6 +84,75 @@ describe('createCharacterExportModel', () => {
       { index: 0, imageUrl: '/walk-01.png', durationMs: 100 },
       { index: 1, imageUrl: '/walk-02.png', durationMs: 90 },
       { index: 2, imageUrl: '/walk-03.png', durationMs: 120 },
+    ])
+    expect(model.actions[0]?.sequences[1]).toMatchObject({
+      direction: 'west',
+      mirrorX: true,
+    })
+    expect(model.actions[0]?.sequences[1]?.frames).toEqual(model.actions[0]?.sequences[0]?.frames)
+  })
+
+  it('keeps legacy frame-only characters exportable after a project adopts four-way movement', () => {
+    const model = createCharacterExportModel({
+      project: { ...project, directionalMovement: 'four-way' },
+      character,
+      outfitId: 'outfit-default',
+    })
+
+    expect(model.actions[0]?.sequences.map((sequence) => sequence.direction)).toEqual([
+      'east',
+      'west',
+    ])
+  })
+
+  it('exports every available directional sequence independently', () => {
+    const directional = structuredClone(character)
+    const directionalProject = { ...project, directionalMovement: 'four-way' as const }
+    directional.outfits[0]!.actions[0]!.sequences = [
+      {
+        direction: 'east',
+        sourceDirection: null,
+        mirrorX: false,
+        frameCount: 1,
+        frames: [{ index: 0, imageUrl: '/walk-east-01.png', durationMs: 100 }],
+      },
+      {
+        direction: 'west',
+        sourceDirection: 'east',
+        mirrorX: true,
+        frameCount: 1,
+        frames: [],
+      },
+      {
+        direction: 'north',
+        sourceDirection: null,
+        mirrorX: false,
+        frameCount: 1,
+        frames: [{ index: 0, imageUrl: '/walk-north-01.png', durationMs: 110 }],
+      },
+      {
+        direction: 'south',
+        sourceDirection: null,
+        mirrorX: false,
+        frameCount: 1,
+        frames: [{ index: 0, imageUrl: '/walk-south-01.png', durationMs: 120 }],
+      },
+    ]
+
+    const model = createCharacterExportModel({
+      project: directionalProject,
+      character: directional,
+      outfitId: 'outfit-default',
+    })
+
+    expect(model.actions[0]?.sequences.map((sequence) => sequence.direction)).toEqual([
+      'east',
+      'west',
+      'north',
+      'south',
+    ])
+    expect(model.actions[0]?.sequences[2]?.frames).toEqual([
+      { index: 0, imageUrl: '/walk-north-01.png', durationMs: 110 },
     ])
   })
 

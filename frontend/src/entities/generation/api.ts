@@ -22,6 +22,7 @@ import type {
   GenerationType,
   TaskStatus,
 } from '.'
+import { isActionDirection, type ActionDirection } from '@/entities/character/directions'
 
 type RequestFunction = (url: string, init?: RequestInit) => Promise<Response>
 
@@ -172,7 +173,15 @@ function expectedBackendType(type: GenerationType): BackendGenerationType {
   return type === 'complete_animation' ? 'character_action' : 'character_image'
 }
 
-export const IMAGE_CANDIDATE_COUNT = 3
+export const IMAGE_CANDIDATE_COUNT = 2
+
+const DEFAULT_DIRECTION: ActionDirection = 'east'
+
+function taskDirection(value: unknown, field: string): ActionDirection | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!isActionDirection(value)) throw new GenerationApiError(`${field} 无效`, 200)
+  return value
+}
 
 function nonEmptyString(value: unknown, field: string): string {
   if (typeof value !== 'string' || value.trim() === '') {
@@ -187,6 +196,10 @@ function mapImageResult(
 ): GenerationResult {
   if (result.type !== 'character_image') {
     throw new GenerationApiError('角色图片结果 type 无效', 200)
+  }
+  const resultDirection = taskDirection(result.direction, '角色图片结果 direction')
+  if (expectation.direction !== undefined && resultDirection !== expectation.direction) {
+    throw new GenerationApiError('角色图片结果 direction 与请求不一致', 200)
   }
   if (
     !Array.isArray(result.image_urls) ||
@@ -203,7 +216,9 @@ function mapImageResult(
       200,
     )
   }
-  return { type: expectation.type, images }
+  return expectation.direction === undefined
+    ? { type: expectation.type, images }
+    : { type: expectation.type, direction: expectation.direction, images }
 }
 
 function mapActionResult(
@@ -212,6 +227,10 @@ function mapActionResult(
 ): GenerationResult {
   if (result.type !== 'character_action') {
     throw new GenerationApiError('完整动画结果 type 无效', 200)
+  }
+  const resultDirection = taskDirection(result.direction, '完整动画结果 direction')
+  if (expectation.direction !== undefined && resultDirection !== expectation.direction) {
+    throw new GenerationApiError('完整动画结果 direction 与请求不一致', 200)
   }
   if (typeof result.action_type !== 'string' || !ACTION_TYPES.has(result.action_type)) {
     throw new GenerationApiError('完整动画结果 action_type 无效', 200)
@@ -258,10 +277,13 @@ function mapActionResult(
       throw new GenerationApiError('动作帧 index 必须从 0 开始连续排列', 200)
     }
   }
-  return {
+  const mapped = {
     type: 'complete_animation',
     frames: orderedFrames,
-  }
+  } as const
+  return expectation.direction === undefined
+    ? mapped
+    : { ...mapped, direction: expectation.direction }
 }
 
 function mapResult(
@@ -307,6 +329,12 @@ function validateInputPayload(
         200,
       )
     }
+    if (expectation.direction !== undefined) {
+      const direction = taskDirection(inputPayload.direction, '生成任务 direction')
+      if (direction !== expectation.direction) {
+        throw new GenerationApiError('生成任务 direction 与请求不一致', 200)
+      }
+    }
     return
   }
   const expectedFrameCount = 32
@@ -319,10 +347,23 @@ function validateInputPayload(
   if (inputPayload.action_type !== expectation.actionType) {
     throw new GenerationApiError('动作任务 input_payload.action_type 与请求不一致', 200)
   }
+  if (expectation.direction !== undefined) {
+    const direction = taskDirection(inputPayload.direction, '生成任务 direction')
+    if (direction !== expectation.direction) {
+      throw new GenerationApiError('生成任务 direction 与请求不一致', 200)
+    }
+  }
 }
 
 function inferExpectation(dto: GenerationTaskDto): GenerationExpectation {
-  if (dto.taskType === 'character_image') return { type: 'character_template' }
+  const direction = dto.inputPayload
+    ? taskDirection(dto.inputPayload.direction, '生成任务 direction')
+    : undefined
+  if (dto.taskType === 'character_image') {
+    return direction === undefined
+      ? { type: 'character_template' }
+      : { type: 'character_template', direction }
+  }
   if (dto.inputPayload === null) {
     throw new GenerationApiError('动作任务缺少 input_payload', 200)
   }
@@ -331,7 +372,9 @@ function inferExpectation(dto: GenerationTaskDto): GenerationExpectation {
     throw new GenerationApiError('动作任务 input_payload.action_type 无效', 200)
   }
   if (dto.inputPayload.num_frames === 32) {
-    return { type: 'complete_animation', actionType }
+    return direction === undefined
+      ? { type: 'complete_animation', actionType }
+      : { type: 'complete_animation', actionType, direction }
   }
   throw new GenerationApiError('动作任务 input_payload.num_frames 无法映射到前端阶段', 200)
 }
@@ -506,7 +549,11 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
         if (referenceImageUrls.length === 0) {
           throw new GenerationApiError('这个造型还没有可用的角色母版，请先完成定妆再生成动作')
         }
-        const expectation = { type: input.type, actionType: input.actionType } as const
+        const expectation = {
+          type: input.type,
+          actionType: input.actionType,
+          ...(input.direction === undefined ? {} : { direction: input.direction }),
+        } as const
         const generation = await post('/generation/action', projectId, expectation, {
           project_id: projectId,
           character_id: inputPositiveInteger(input.characterId, 'characterId'),
@@ -519,6 +566,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
           reference_video_url: null,
           reference_image_urls: referenceImageUrls,
           num_frames: 32,
+          direction: input.direction ?? DEFAULT_DIRECTION,
         })
         expectations.set(generation.id, expectation)
         return generation as Generation<T['type']>
@@ -526,8 +574,15 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
 
       const expectation =
         input.type === 'first_frame'
-          ? ({ type: 'first_frame', actionType: input.actionType } as const)
-          : ({ type: 'character_template' } as const)
+          ? ({
+              type: 'first_frame',
+              actionType: input.actionType,
+              ...(input.direction === undefined ? {} : { direction: input.direction }),
+            } as const)
+          : ({
+              type: 'character_template',
+              ...(input.direction === undefined ? {} : { direction: input.direction }),
+            } as const)
       const referenceImageUrl = input.referenceMedia[0] ? String(input.referenceMedia[0]) : null
       if (input.type === 'first_frame' && !referenceImageUrl) {
         throw new GenerationApiError('动作首帧生成必须提供已确认的角色母版')
@@ -539,8 +594,9 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
         negative_prompt: '',
         width: inputPositiveInteger(input.spriteWidth, 'spriteWidth'),
         height: inputPositiveInteger(input.spriteHeight, 'spriteHeight'),
-        // 角色母版和动作首帧都由一次图片任务生成三张候选。
+        // 角色母版和动作首帧都由一次图片任务生成两张候选。
         num_images: IMAGE_CANDIDATE_COUNT,
+        direction: input.direction ?? DEFAULT_DIRECTION,
       })
       expectations.set(generation.id, expectation)
       return generation as Generation<T['type']>

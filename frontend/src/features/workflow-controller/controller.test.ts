@@ -10,6 +10,7 @@ import type {
   GenerationApis,
   GenerationEvent,
   ReviewWorkflowNode,
+  DirectionalMovement,
   WorkflowActionInput,
   WorkflowNode,
   WorkflowRun,
@@ -219,7 +220,7 @@ function createGenerationHarness() {
   return { apis, emit, listeners, snapshots }
 }
 
-function createController(run = createRun()) {
+function createController(run = createRun(), directionalMovement: DirectionalMovement = 'single') {
   const workflow = createWorkflowApis(run)
   const generation = createGenerationHarness()
   const asyncErrors: Error[] = []
@@ -230,6 +231,7 @@ function createController(run = createRun()) {
     createId: () => 'action-created',
     now: () => '2026-08-09T00:00:00.000Z',
     onAsyncError: (error) => asyncErrors.push(error),
+    directionalMovement,
   })
   return { controller, workflow, generation, asyncErrors }
 }
@@ -375,11 +377,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'character_template',
-        images: [
-          { url: 'https://img/knight-1.png' },
-          { url: 'https://img/knight-2.png' },
-          { url: 'https://img/knight-3.png' },
-        ],
+        images: [{ url: 'https://img/knight-1.png' }, { url: 'https://img/knight-2.png' }],
       },
       error: null,
     })
@@ -796,6 +794,7 @@ describe('WorkflowController', () => {
       referenceMedia: [],
       spriteWidth: 64,
       spriteHeight: 64,
+      direction: 'east',
     })
     expect(workflow.getSaved().nodes).toEqual(
       expect.arrayContaining([
@@ -814,11 +813,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'character_template',
-        images: [
-          { url: 'https://img/knight-1.png' },
-          { url: 'https://img/knight-2.png' },
-          { url: 'https://img/knight-3.png' },
-        ],
+        images: [{ url: 'https://img/knight-1.png' }, { url: 'https://img/knight-2.png' }],
       },
       error: null,
     })
@@ -851,6 +846,88 @@ describe('WorkflowController', () => {
       referenceMedia: [previousImage],
       spriteWidth: 64,
       spriteHeight: 64,
+      direction: 'east',
+    })
+  })
+
+  it.each([
+    ['four-way', ['east', 'north', 'south']],
+    ['eight-way', ['east', 'north', 'south', 'north_east', 'south_east']],
+  ] as const)('按项目方向为 %s 创建独立的两张候选任务', async (movement, directions) => {
+    const { controller, generation } = createController(createRun(), movement)
+
+    await controller.generateCharacterTemplate('setup-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledTimes(directions.length)
+    for (const [index, direction] of directions.entries()) {
+      generation.emit({
+        taskId: `task-${index + 1}`,
+        type: 'character_template',
+        status: 'completed',
+        result: {
+          type: 'character_template',
+          direction,
+          images: [{ url: `${direction}-1.png` }, { url: `${direction}-2.png` }],
+        },
+        error: null,
+      })
+    }
+    await flushAsyncWork()
+
+    const template = controller.getWorkflow().nodes[1]
+    expect(template).toMatchObject({
+      phase: 'selecting',
+      status: 'active',
+      generations: directions.map((_, index) => ({
+        taskId: `task-${index + 1}`,
+        role: 'character_template',
+      })),
+    })
+  })
+
+  it('四向首帧必须逐方向确认，不能用东向选择冒充其它方向', async () => {
+    const run = createRun([...completedCharacterNodes(), ...actionNodes()])
+    const { controller, generation } = createController(run, 'four-way')
+
+    await controller.generateFirstFrame('action-walk', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+    for (const [index, direction] of ['east', 'north', 'south'].entries()) {
+      generation.emit({
+        taskId: `task-${index + 1}`,
+        type: 'first_frame',
+        status: 'completed',
+        result: {
+          type: 'first_frame',
+          direction: direction as 'east' | 'north' | 'south',
+          images: [{ url: `${direction}-1.png` }, { url: `${direction}-2.png` }],
+        },
+        error: null,
+      })
+    }
+    await flushAsyncWork()
+
+    await controller.confirmFirstFrame('action-walk', 'east-1', 'east')
+    await controller.confirmFirstFrame('action-walk', 'north-1', 'north')
+    expect(controller.getWorkflow().nodes.find((node) => node.id === 'action-walk')).toMatchObject({
+      status: 'active',
+      phase: 'selecting',
+      selectedFirstFrameUrls: { east: 'east-1', north: 'north-1' },
+    })
+
+    await controller.confirmFirstFrame('action-walk', 'south-1', 'south')
+    expect(controller.getWorkflow().nodes.find((node) => node.id === 'action-walk')).toMatchObject({
+      status: 'passed',
+      phase: 'completed',
+      selectedFirstFrameUrls: {
+        east: 'east-1',
+        north: 'north-1',
+        south: 'south-1',
+      },
     })
   })
 
@@ -872,6 +949,7 @@ describe('WorkflowController', () => {
       referenceMedia: [previousImage],
       spriteWidth: 64,
       spriteHeight: 64,
+      direction: 'east',
     })
     expect(controller.getWorkflow().nodes).toEqual(
       expect.arrayContaining([
@@ -899,6 +977,7 @@ describe('WorkflowController', () => {
       referenceMedia: [],
       spriteWidth: 64,
       spriteHeight: 64,
+      direction: 'east',
     })
   })
 
@@ -1096,11 +1175,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'character_template',
-        images: [
-          { url: 'https://img/knight-1.png' },
-          { url: 'https://img/knight-2.png' },
-          { url: 'https://img/knight-3.png' },
-        ],
+        images: [{ url: 'https://img/knight-1.png' }, { url: 'https://img/knight-2.png' }],
       },
       error: null,
     }
@@ -1150,11 +1225,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'character_template',
-        images: [
-          { url: 'https://img/knight-1.png' },
-          { url: 'https://img/knight-2.png' },
-          { url: 'https://img/knight-3.png' },
-        ],
+        images: [{ url: 'https://img/knight-1.png' }, { url: 'https://img/knight-2.png' }],
       },
       error: null,
     })
@@ -1175,11 +1246,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'first_frame',
-        images: [
-          { url: 'https://img/walk-1.png' },
-          { url: 'https://img/walk-2.png' },
-          { url: 'https://img/walk-3.png' },
-        ],
+        images: [{ url: 'https://img/walk-1.png' }, { url: 'https://img/walk-2.png' }],
       },
       error: null,
     }
@@ -1774,7 +1841,7 @@ describe('WorkflowController', () => {
         status: 'completed',
         result: {
           type: 'first_frame',
-          images: [{ url: 'jump-1.png' }, { url: 'jump-2.png' }, { url: 'jump-3.png' }],
+          images: [{ url: 'jump-1.png' }, { url: 'jump-2.png' }],
         },
         error: null,
       },
@@ -1802,11 +1869,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'first_frame',
-        images: [
-          { url: 'https://img/first.png' },
-          { url: 'https://img/first-2.png' },
-          { url: 'https://img/first-3.png' },
-        ],
+        images: [{ url: 'https://img/first.png' }, { url: 'https://img/first-2.png' }],
       },
       error: null,
     })
@@ -1833,6 +1896,7 @@ describe('WorkflowController', () => {
       spriteWidth: 64,
       spriteHeight: 96,
       referenceMedia: ['https://img/knight.png'],
+      direction: 'east',
     })
     expect(generation.apis.create).toHaveBeenNthCalledWith(
       2,
@@ -1891,6 +1955,7 @@ describe('WorkflowController', () => {
       referenceMedia: [previousImage],
       spriteWidth: 64,
       spriteHeight: 96,
+      direction: 'east',
     })
   })
 
@@ -1925,6 +1990,7 @@ describe('WorkflowController', () => {
       referenceMedia: [previousImage],
       spriteWidth: 64,
       spriteHeight: 96,
+      direction: 'east',
     })
   })
 
@@ -1957,6 +2023,7 @@ describe('WorkflowController', () => {
       referenceMedia: ['https://img/knight.png'],
       spriteWidth: 64,
       spriteHeight: 96,
+      direction: 'east',
     })
   })
 
@@ -2084,11 +2151,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'first_frame',
-        images: [
-          { url: 'https://img/first.png' },
-          { url: 'https://img/first-2.png' },
-          { url: 'https://img/first-3.png' },
-        ],
+        images: [{ url: 'https://img/first.png' }, { url: 'https://img/first-2.png' }],
       },
       error: null,
     })

@@ -41,7 +41,8 @@ def recover_orphaned_generation_tasks(
     """扫描未结清冻结的开放任务并恢复。调用方负责 commit。"""
     stale_cutoff = datetime.now(timezone.utc) - timedelta(seconds=running_stale_seconds)
     for task in task_repo.list_by_status(
-        session, (TaskStatus.PENDING, TaskStatus.RUNNING),
+        session,
+        (TaskStatus.PENDING, TaskStatus.RUNNING),
     ):
         if task.id is None:
             continue
@@ -65,7 +66,9 @@ def _fail_unrecoverable(session: Session, task: GenerationTask) -> None:
     """没有冻结可退,也不重跑;只保证它不再停在开放态。"""
     assert task.id is not None
     task_repo.update_status(
-        session, task.id, TaskStatus.FAILED,
+        session,
+        task.id,
+        TaskStatus.FAILED,
         error_message="任务已中断，请重新提交",
     )
     logger.warning("无冻结的开放任务已置为失败 | task_id=%s %s", task.id, task.status)
@@ -74,7 +77,9 @@ def _fail_unrecoverable(session: Session, task: GenerationTask) -> None:
 def _fail_interrupted(session: Session, task: GenerationTask) -> None:
     assert task.id is not None
     task_repo.update_status(
-        session, task.id, TaskStatus.FAILED,
+        session,
+        task.id,
+        TaskStatus.FAILED,
         error_message="进程中断，已解冻积分",
     )
     billing.release_for_task(session, user_id=task.user_id, task_id=task.id)

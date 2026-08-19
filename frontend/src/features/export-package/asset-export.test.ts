@@ -29,6 +29,8 @@ function action(frameCount = 9): ExportAction {
     sequences: [
       {
         direction: 'south',
+        sourceDirection: 'south',
+        mirrorX: false,
         expectedFrameCount: frameCount,
         loop: true,
         anchor: { x: 0.5, y: 0.9 },
@@ -133,6 +135,48 @@ describe('asset export', () => {
         { ...model, stage: 'character', actions: [], playtest: { initialActionId: null } },
         'playtest: 只有 Playtest 阶段可以包含运行配置',
       ],
+      [
+        {
+          ...model,
+          actions: [
+            {
+              ...model.actions[0]!,
+              sequences: [{ ...model.actions[0]!.sequences[0]!, direction: 'side' }],
+            },
+          ],
+        } as unknown as ExportPackageModel,
+        'actions[0].sequences[0].direction: 不是支持的动作方向',
+      ],
+      [
+        {
+          ...model,
+          actions: [
+            {
+              ...model.actions[0]!,
+              sequences: [model.actions[0]!.sequences[0]!, { ...model.actions[0]!.sequences[0]! }],
+            },
+          ],
+        },
+        'actions[0].sequences[1].direction: 动作方向不能重复',
+      ],
+      [
+        {
+          ...model,
+          actions: [
+            {
+              ...model.actions[0]!,
+              sequences: [
+                {
+                  ...model.actions[0]!.sequences[0]!,
+                  sourceDirection: 'east',
+                  mirrorX: true,
+                },
+              ],
+            },
+          ],
+        },
+        'actions[0].sequences[0].sourceDirection: 方向来源或镜像关系无效',
+      ],
     ]
 
     for (const [candidate, message] of cases) {
@@ -190,7 +234,7 @@ describe('asset export', () => {
       new TextDecoder().decode(playtestEntries.get(`${root}/playtest.json`)),
     )
     expect(playtest).toEqual({
-      schema_version: '1.1.0',
+      schema_version: '1.2.0',
       initial_action_id: 'walk-abcdef12',
       action_ids: ['walk-abcdef12'],
     })
@@ -249,13 +293,14 @@ describe('asset export', () => {
     const validate = new Ajv2020().compile(schema)
     expect(validate(meta), JSON.stringify(validate.errors)).toBe(true)
     expect(meta).toMatchObject({
-      schema_version: '1.1.0',
+      schema_version: '1.2.0',
       character: { id: 'character-1', name: 'Aster' },
       canvas: { w: 32, h: 40 },
       source: { workflow_run_id: 'run-1', generation_ids: ['generation-1'] },
     })
     expect(meta.actions[0]).toMatchObject({
       name: 'Walk / Forward',
+      direction: 'south',
       fps: 10,
       loop: true,
       anchor: { x: 0.5, y: 0.9 },
@@ -263,6 +308,69 @@ describe('asset export', () => {
       atlas: { cols: 8, rows: 2, cell: { w: 32, h: 40 } },
     })
     expect(names.some((name) => name.endsWith('.gif'))).toBe(false)
+  })
+
+  it('materializes mirrored directions as new frame PNG bytes', async () => {
+    const source = action(1)
+    const mirroredModel: ExportPackageModel = {
+      ...model,
+      actions: [
+        {
+          ...source,
+          sequences: [
+            {
+              ...source.sequences[0]!,
+              direction: 'east',
+              sourceDirection: 'east',
+              mirrorX: false,
+            },
+            {
+              ...source.sequences[0]!,
+              direction: 'west',
+              sourceDirection: 'east',
+              mirrorX: true,
+            },
+          ],
+        },
+      ],
+    }
+    const scales: Array<[number, number]> = []
+    const testRuntime = runtime()
+    testRuntime.createCanvas = vi.fn((width, height) => {
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      let mirrored = false
+      Object.defineProperty(canvas, 'getContext', {
+        value: () => ({
+          clearRect: vi.fn(),
+          drawImage: vi.fn(),
+          save: vi.fn(),
+          restore: vi.fn(),
+          translate: vi.fn(),
+          scale: vi.fn((x: number, y: number) => {
+            scales.push([x, y])
+            mirrored = x === -1 && y === 1
+          }),
+        }),
+      })
+      Object.defineProperty(canvas, 'toBlob', {
+        value: (callback: BlobCallback) =>
+          callback(new Blob([mirrored ? 'mirrored' : 'plain'], { type: 'image/png' })),
+      })
+      return canvas
+    })
+
+    const entries = await readStoredZip(
+      (await exportGameAssets(mirroredModel, { runtime: testRuntime })).blob,
+    )
+    const root = 'Aster-character-1-Explorer-outfit-1'
+    const east = entries.get(`${root}/frames/Walk-Forward-east/Walk-Forward-east_000.png`)!
+    const west = entries.get(`${root}/frames/Walk-Forward-west/Walk-Forward-west_000.png`)!
+
+    expect(new TextDecoder().decode(west)).toBe('mirrored')
+    expect(west).not.toEqual(east)
+    expect(scales).toContainEqual([-1, 1])
   })
 
   it('把 Outfit 标识写入包名，避免同一 Character 的不同造型互相覆盖', async () => {
@@ -444,7 +552,7 @@ describe('asset export', () => {
     }
 
     await expect(exportGameAssets(model, { runtime: testRuntime })).rejects.toThrow(
-      'atlas: PNG 编码失败',
+      'atlas/Walk-Forward-south.png: PNG 编码失败',
     )
   })
 

@@ -179,10 +179,10 @@ const defaultRuntime: AssetExportRuntime = {
   },
 }
 
-function canvasPng(canvas: HTMLCanvasElement): Promise<Blob> {
+function canvasPng(canvas: HTMLCanvasElement, field = 'atlas'): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
-      if (blob === null) reject(new Error('atlas: PNG 编码失败'))
+      if (blob === null) reject(new Error(`${field}: PNG 编码失败`))
       else resolve(blob)
     }, 'image/png')
   })
@@ -341,6 +341,39 @@ function context2d(canvas: HTMLCanvasElement, field: string): CanvasRenderingCon
   return context
 }
 
+function drawFrame(
+  context: CanvasRenderingContext2D,
+  source: CanvasImageSource,
+  x: number,
+  y: number,
+  width: number,
+  mirrorX: boolean,
+): void {
+  if (!mirrorX) {
+    context.drawImage(source, x, y)
+    return
+  }
+  context.save()
+  context.translate(x + width, y)
+  context.scale(-1, 1)
+  context.drawImage(source, 0, 0)
+  context.restore()
+}
+
+async function renderFramePng(
+  frame: LoadedFrame,
+  loaded: LoadedSequence,
+  model: ExportPackageModel,
+  runtime: AssetExportRuntime,
+): Promise<Uint8Array> {
+  if (!loaded.item.sequence.mirrorX) return frame.data
+  const canvas = runtime.createCanvas(model.canvas.width, model.canvas.height)
+  const context = context2d(canvas, frame.relativeFile)
+  context.clearRect(0, 0, canvas.width, canvas.height)
+  drawFrame(context, frame.decoded.source, 0, 0, model.canvas.width, true)
+  return bytes(await canvasPng(canvas, frame.relativeFile))
+}
+
 async function renderAtlas(
   loaded: LoadedSequence,
   model: ExportPackageModel,
@@ -355,9 +388,16 @@ async function renderAtlas(
   loaded.frames.forEach((frame) => {
     const column = frame.index % loaded.item.columns
     const row = Math.floor(frame.index / loaded.item.columns)
-    context.drawImage(frame.decoded.source, column * model.canvas.width, row * model.canvas.height)
+    drawFrame(
+      context,
+      frame.decoded.source,
+      column * model.canvas.width,
+      row * model.canvas.height,
+      model.canvas.width,
+      loaded.item.sequence.mirrorX,
+    )
   })
-  return canvasPng(canvas)
+  return canvasPng(canvas, loaded.item.atlasFile)
 }
 
 function createMetadata(
@@ -384,6 +424,7 @@ function createMetadata(
     actions: plan.map((item) => ({
       id: item.action.id,
       name: item.action.name,
+      direction: item.sequence.direction,
       fps: item.action.fps,
       loop: item.sequence.loop,
       quality_status: item.sequence.qualityStatus,
@@ -565,7 +606,10 @@ export async function exportGameAssets(
     const current = await loadSequence(item, model, runtime, frameCache)
     try {
       for (const frame of current.frames) {
-        entries.push({ name: `${root}/${frame.relativeFile}`, data: frame.data })
+        entries.push({
+          name: `${root}/${frame.relativeFile}`,
+          data: await renderFramePng(frame, current, model, runtime),
+        })
       }
       entries.push({
         name: `${root}/${current.item.atlasFile}`,

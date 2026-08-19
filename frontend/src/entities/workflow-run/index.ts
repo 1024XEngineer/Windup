@@ -1,4 +1,4 @@
-import type { ActionType } from '../character'
+import type { ActionDirection, ActionType } from '../character'
 import type { Generation } from '../generation'
 import type { MediaReference } from '../media'
 import type { Paged, PageQuery } from '@/shared/pagination'
@@ -23,6 +23,8 @@ export type ActionGenerationMethod = 'video-cropping' | '3d-to-2d'
 export interface WorkflowGenerationRef {
   taskId: Generation['id']
   role: WorkflowGenerationRole
+  /** 源方向任务；旧数据缺省时按 east 解释。镜像方向不会出现任务引用。 */
+  direction?: ActionDirection
 }
 
 interface WorkflowNodeBase {
@@ -68,6 +70,8 @@ export interface CharacterTemplateWorkflowNode extends WorkflowNodeBase {
   type: 'character-template'
   phase: 'ready' | 'generating' | 'selecting' | 'completed'
   selectedImageUrl: string | null
+  /** 各真实源方向最终确认的母版；selectedImageUrl 保留为 east 兼容字段。 */
+  selectedImages?: Partial<Record<ActionDirection, string>>
 }
 
 export interface WorkflowActionInput {
@@ -84,6 +88,8 @@ export interface ActionFirstFrameWorkflowNode extends WorkflowNodeBase {
   phase: 'configuring' | 'generating' | 'selecting' | 'completed'
   input: WorkflowActionInput
   selectedFirstFrameUrl: string | null
+  /** 各真实源方向最终确认的首帧；selectedFirstFrameUrl 保留为 east 兼容字段。 */
+  selectedFirstFrameUrls?: Partial<Record<ActionDirection, string>>
 }
 
 /** 首帧确认后选择完整动画的生产路线。 */

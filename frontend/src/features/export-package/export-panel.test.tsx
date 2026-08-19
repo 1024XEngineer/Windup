@@ -26,6 +26,8 @@ const model = {
       sequences: [
         {
           direction: 'south',
+          sourceDirection: 'south',
+          mirrorX: false,
           expectedFrameCount: 1,
           loop: true,
           anchor: { x: 0.5, y: 0.9 },

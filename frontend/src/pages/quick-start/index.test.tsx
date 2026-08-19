@@ -205,7 +205,6 @@ function renderStateFixture(
   const candidateUrls = [
     'https://example.test/character-1.png',
     'https://example.test/character-2.png',
-    'https://example.test/character-3.png',
   ]
   const firstFrames = candidateUrls.map((_, index) => ({
     index,
@@ -524,7 +523,7 @@ describe('QuickStartPage', () => {
     expect(roleTurn).toBeTruthy()
     expect(roleTurn?.querySelector('[data-agent-identity]')).toBeNull()
     expect(roleTurn?.querySelector('[data-agent-copy]')).toBeTruthy()
-    expect(choices).toHaveLength(3)
+    expect(choices).toHaveLength(2)
     expect(
       Array.from(transcript.querySelectorAll('[data-asset-choice="true"]')).every((asset) =>
         Boolean(asset.closest('[data-agent-turn]')),
@@ -624,17 +623,13 @@ describe('QuickStartPage', () => {
     renderStateFixture('template-selecting')
 
     const cards = await screen.findAllByRole('button', { name: /选择角色方案/u })
-    expect(cards).toHaveLength(3)
+    expect(cards).toHaveLength(2)
     expect(cards.every((card) => card.dataset.assetChoice === 'true')).toBe(true)
     expect(cards.every((card) => card.querySelectorAll('[data-asset-frame]').length === 1)).toBe(
       true,
     )
     expect(cards.every((card) => card.dataset.reveal === 'card')).toBe(true)
-    expect(cards.map((card) => card.style.getPropertyValue('--reveal-index'))).toEqual([
-      '0',
-      '1',
-      '2',
-    ])
+    expect(cards.map((card) => card.style.getPropertyValue('--reveal-index'))).toEqual(['0', '1'])
     expect(cards.every((card) => card.querySelector('img'))).toBeTruthy()
   })
 
@@ -647,14 +642,14 @@ describe('QuickStartPage', () => {
     expect(cards.every((card) => card.textContent === '')).toBe(true)
   })
 
-  it('presents three equal candidate frames without inventing a preferred result', async () => {
+  it('presents two equal candidate frames without inventing a preferred result', async () => {
     renderStateFixture('template-selecting')
 
     const choices = await screen.findAllByRole('button', { name: /选择角色方案/u })
     const resultLayout = choices[0]?.parentElement
 
     expect(resultLayout?.getAttribute('data-layout')).toBe('agent-result-set')
-    expect(resultLayout?.className).toContain('grid-cols-3')
+    expect(resultLayout?.className).toContain('grid-cols-2')
     expect(choices.every((choice) => choice.getAttribute('data-result-priority') === null)).toBe(
       true,
     )
@@ -662,16 +657,16 @@ describe('QuickStartPage', () => {
   })
 
   it.each([
-    ['template-generating', '角色图生成画布'],
-    ['first-selecting', '动作首帧候选 1'],
-    ['complete', '完整动作预览'],
-  ] as const)('keeps %s on the first-round asset frame grid', async (state, label) => {
+    ['template-generating', '角色图生成画布', 'grid-cols-3'],
+    ['first-selecting', '动作首帧候选 1', 'grid-cols-2'],
+    ['complete', '完整动作预览', 'grid-cols-3'],
+  ] as const)('keeps %s on the first-round asset frame grid', async (state, label, columns) => {
     const view = renderStateFixture(state)
     const asset = await screen.findByRole('img', { name: label })
     const frameGrid = asset.closest('[data-layout="agent-result-set"]')
 
     expect(frameGrid?.className).toContain('max-w-2xl')
-    expect(frameGrid?.className).toContain('grid-cols-3')
+    expect(frameGrid?.className).toContain(columns)
     view.unmount()
   })
 
@@ -722,7 +717,7 @@ describe('QuickStartPage', () => {
   it('keeps earlier turns visible while the agent conversation moves downward', async () => {
     renderStateFixture('first-selecting')
 
-    await screen.findByLabelText(/已生成 3 个动作起始姿态。 选择一个起始姿态，随后生成完整动作。/u)
+    await screen.findByLabelText(/已生成 2 个动作起始姿态。 选择一个起始姿态，随后生成完整动作。/u)
     const transcript = await screen.findByTestId('quick-start-transcript')
     const topLevelText = Array.from(transcript.children).map(
       (element) =>
@@ -733,13 +728,13 @@ describe('QuickStartPage', () => {
     const roleTurnIndex = topLevelText.findIndex((text) => text.includes('角色方案已确认'))
     const userActionIndex = topLevelText.findIndex((text) => text.includes('挥手'))
     const firstFrameTurnIndex = topLevelText.findIndex((text) =>
-      text.includes('已生成 3 个动作起始姿态'),
+      text.includes('已生成 2 个动作起始姿态'),
     )
     expect(roleTurnIndex).toBeGreaterThanOrEqual(0)
     expect(roleTurnIndex).toBeLessThan(userActionIndex)
     expect(userActionIndex).toBeLessThan(firstFrameTurnIndex)
     expect(screen.getByRole('img', { name: '已选择的角色' })).toBeTruthy()
-    expect(screen.getAllByRole('img', { name: /动作首帧候选/u })).toHaveLength(3)
+    expect(screen.getAllByRole('img', { name: /动作首帧候选/u })).toHaveLength(2)
   })
 
   it('keeps the candidate selected until the action description is sent', async () => {
@@ -812,7 +807,7 @@ describe('QuickStartPage', () => {
 
     await waitFor(() =>
       expect(
-        view.container.querySelector('[data-agent-copy][aria-label^="已生成 3 个动作起始姿态"]'),
+        view.container.querySelector('[data-agent-copy][aria-label^="已生成 2 个动作起始姿态"]'),
       ).toBeTruthy(),
     )
     const firstFrame = view.getByRole('img', { name: '动作首帧候选 1' })

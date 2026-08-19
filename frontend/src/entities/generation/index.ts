@@ -1,4 +1,5 @@
 import type { ActionType } from '../character'
+import type { ActionDirection } from '../character'
 import type { MediaReference } from '../media'
 
 /**
@@ -25,9 +26,9 @@ export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed'
 export type GenerationType = 'character_template' | 'first_frame' | 'complete_animation'
 
 export type GenerationExpectation =
-  | { type: 'character_template' }
-  | { type: 'first_frame'; actionType: ActionType }
-  | { type: 'complete_animation'; actionType: ActionType }
+  | { type: 'character_template'; direction?: ActionDirection }
+  | { type: 'first_frame'; actionType: ActionType; direction?: ActionDirection }
+  | { type: 'complete_animation'; actionType: ActionType; direction?: ActionDirection }
 
 interface GenerationInputBase {
   projectId: string
@@ -43,6 +44,8 @@ export interface CharacterTemplateGenerationInput extends GenerationInputBase {
   /** 必须与 Project 的精灵尺寸一致，后端会在提交时校验。 */
   spriteWidth: number
   spriteHeight: number
+  /** 当前任务生成的真实源方向；旧调用缺省时按 east 兼容。 */
+  direction?: ActionDirection
 }
 
 /** 基于已确认角色母版生成动作首帧候选图。 */
@@ -54,6 +57,8 @@ export interface FirstFrameGenerationInput extends GenerationInputBase {
   /** 必须与 Project 的精灵尺寸一致，后端会在提交时校验。 */
   spriteWidth: number
   spriteHeight: number
+  /** 首帧必须与角色母版使用同一个真实源方向。 */
+  direction?: ActionDirection
 }
 
 /** 以已确认首帧为起点生成完整动画。 */
@@ -72,6 +77,8 @@ export interface CompleteAnimationGenerationInput extends GenerationInputBase {
    * 抽搐、产物不可用；反之只是不无缝闭环、产物仍可用。所以能给就给。
    */
   loop?: boolean
+  /** 完整动作的真实源方向；镜像方向不创建动画任务。 */
+  direction?: ActionDirection
 }
 
 export type GenerationInput =
@@ -93,17 +100,20 @@ export interface GeneratedFrame extends GeneratedImage {
 /** 结果按 type 分别定义，不共用一个 urls 数组。 */
 export interface CharacterTemplateGenerationResult {
   type: 'character_template'
+  direction?: ActionDirection
   images: readonly GeneratedImage[]
 }
 
 export interface FirstFrameGenerationResult {
   type: 'first_frame'
-  /** 同一图片任务生成的三张动作首帧候选。 */
+  /** 同一图片任务生成的两张动作首帧候选。 */
+  direction?: ActionDirection
   images: readonly GeneratedImage[]
 }
 
 export interface CompleteAnimationGenerationResult {
   type: 'complete_animation'
+  direction?: ActionDirection
   frames: readonly GeneratedFrame[]
 }
 

@@ -1,4 +1,4 @@
-import type { ActionType } from '@/entities'
+import type { ActionDirection, ActionType } from '@/entities'
 
 /**
  * 导出模块只读取这份模型，不直接读取 Playtest 页面状态。
@@ -33,7 +33,10 @@ export interface ExportPlaytest {
 }
 
 export interface ExportSequence {
-  direction: string
+  direction: ActionDirection
+  /** 真实源方向为 null；只有镜像方向才记录它复用的源方向。 */
+  sourceDirection: ActionDirection | null
+  mirrorX: boolean
   /** 后端声明的完整帧数；不能用 frames.length 代替，否则无法发现缺帧。 */
   expectedFrameCount: number
   loop: boolean

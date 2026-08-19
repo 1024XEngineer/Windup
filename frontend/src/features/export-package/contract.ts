@@ -1,8 +1,9 @@
 import exportSchemaText from './export-package.schema.json?raw'
+import { ACTION_DIRECTIONS, resolveActionDirection } from '@/entities'
 import { EXPORT_STAGES } from './model'
 import type { ExportPackageModel } from './model'
 
-export const EXPORT_PACKAGE_SCHEMA_VERSION = '1.1.0'
+export const EXPORT_PACKAGE_SCHEMA_VERSION = '1.2.0'
 export const EXPORT_PACKAGE_JSON_SCHEMA_TEXT = exportSchemaText
 
 export interface GenericExportFrame {
@@ -13,6 +14,7 @@ export interface GenericExportFrame {
 export interface GenericExportAction {
   id: string
   name: string
+  direction: ExportPackageModel['actions'][number]['sequences'][number]['direction']
   fps: number
   loop: boolean
   quality_status: ExportPackageModel['actions'][number]['sequences'][number]['qualityStatus']
@@ -117,9 +119,22 @@ export function validateExportPackageModel(model: ExportPackageModel): void {
     requirePositiveInteger(`${actionField}.fps`, action.fps)
     if (action.sequences.length === 0) fail(`${actionField}.sequences`, '至少需要一个动作方向')
 
+    const directions = new Set<string>()
     action.sequences.forEach((sequence, sequenceIndex) => {
       const sequenceField = `${actionField}.sequences[${sequenceIndex}]`
       requireText(`${sequenceField}.direction`, sequence.direction)
+      if (!ACTION_DIRECTIONS.includes(sequence.direction)) {
+        fail(`${sequenceField}.direction`, '不是支持的动作方向')
+      }
+      if (directions.has(sequence.direction)) fail(`${sequenceField}.direction`, '动作方向不能重复')
+      directions.add(sequence.direction)
+      const resolution = resolveActionDirection(sequence.direction)
+      if (
+        sequence.sourceDirection !== resolution.sourceDirection ||
+        sequence.mirrorX !== resolution.mirrorX
+      ) {
+        fail(`${sequenceField}.sourceDirection`, '方向来源或镜像关系无效')
+      }
       requirePositiveInteger(`${sequenceField}.expectedFrameCount`, sequence.expectedFrameCount)
       requireUnitNumber(`${sequenceField}.anchor.x`, sequence.anchor.x)
       requireUnitNumber(`${sequenceField}.anchor.y`, sequence.anchor.y)

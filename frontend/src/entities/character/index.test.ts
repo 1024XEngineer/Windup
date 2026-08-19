@@ -226,6 +226,226 @@ describe('characterApis', () => {
     })
   })
 
+  it('preserves directional action sequences across GET and PATCH', async () => {
+    let request: Request | undefined
+    const directionalDto = structuredClone(characterDto)
+    const directionalSequences = [
+      {
+        direction: 'east',
+        source_direction: null,
+        mirror_x: false,
+        frame_count: 1,
+        frames: [
+          {
+            index: 0,
+            image_url: 'https://cdn.windup.test/walk-east-01.png',
+            duration_ms: 100,
+          },
+        ],
+      },
+      {
+        direction: 'west',
+        source_direction: 'east',
+        mirror_x: true,
+        frame_count: 1,
+        frames: [],
+      },
+    ]
+    Object.assign(directionalDto.character_data.outfits[0]!.actions[0]!, {
+      sequences: directionalSequences,
+    })
+    const characterApis = await loadCharacterApis(async (input, init) => {
+      request = new Request(input, init)
+      return jsonResponse(directionalDto)
+    })
+
+    const character = await characterApis.get('51')
+    expect(character.outfits[0]?.actions[0]?.sequences).toEqual([
+      {
+        direction: 'east',
+        sourceDirection: null,
+        mirrorX: false,
+        frameCount: 1,
+        frames: [
+          {
+            index: 0,
+            imageUrl: 'https://cdn.windup.test/walk-east-01.png',
+            durationMs: 100,
+          },
+        ],
+      },
+      {
+        direction: 'west',
+        sourceDirection: 'east',
+        mirrorX: true,
+        frameCount: 1,
+        frames: [],
+      },
+    ])
+
+    await characterApis.update(character)
+    await expect(request?.json()).resolves.toMatchObject({
+      character_data: {
+        outfits: [
+          {
+            actions: [
+              {
+                sequences: directionalSequences,
+              },
+            ],
+          },
+        ],
+      },
+    })
+  })
+
+  it('rejects a directional payload that mirrors north from south', async () => {
+    const invalidDto = structuredClone(characterDto)
+    Object.assign(invalidDto.character_data.outfits[0]!.actions[0]!, {
+      sequences: [
+        {
+          direction: 'south',
+          source_direction: null,
+          mirror_x: false,
+          frame_count: 1,
+          frames: [
+            {
+              index: 0,
+              image_url: 'https://cdn.windup.test/walk-south-01.png',
+              duration_ms: 100,
+            },
+          ],
+        },
+        {
+          direction: 'north',
+          source_direction: 'south',
+          mirror_x: true,
+          frame_count: 1,
+          frames: [],
+        },
+      ],
+    })
+    const characterApis = await loadCharacterApis(async () => jsonResponse(invalidDto))
+
+    await expect(characterApis.get('51')).rejects.toThrow('动作方向镜像关系无效')
+  })
+
+  it('rejects source direction frames that do not match the declared count', async () => {
+    const invalidDto = structuredClone(characterDto)
+    Object.assign(invalidDto.character_data.outfits[0]!.actions[0]!, {
+      sequences: [
+        {
+          direction: 'east',
+          source_direction: null,
+          mirror_x: false,
+          frame_count: 2,
+          frames: [
+            {
+              index: 1,
+              image_url: 'https://cdn.windup.test/walk-east-02.png',
+              duration_ms: 100,
+            },
+          ],
+        },
+      ],
+    })
+    const characterApis = await loadCharacterApis(async () => jsonResponse(invalidDto))
+
+    await expect(characterApis.get('51')).rejects.toThrow('源动作方向帧无效')
+  })
+
+  it('rejects a mirrored direction whose frame count differs from its source', async () => {
+    const invalidDto = structuredClone(characterDto)
+    Object.assign(invalidDto.character_data.outfits[0]!.actions[0]!, {
+      sequences: [
+        {
+          direction: 'east',
+          source_direction: null,
+          mirror_x: false,
+          frame_count: 1,
+          frames: [
+            {
+              index: 0,
+              image_url: 'https://cdn.windup.test/walk-east-01.png',
+              duration_ms: 100,
+            },
+          ],
+        },
+        {
+          direction: 'west',
+          source_direction: 'east',
+          mirror_x: true,
+          frame_count: 2,
+          frames: [],
+        },
+      ],
+    })
+    const characterApis = await loadCharacterApis(async () => jsonResponse(invalidDto))
+
+    await expect(characterApis.get('51')).rejects.toThrow('镜像动作方向帧数与源方向不一致')
+  })
+
+  it('rejects unknown, duplicate, frame-owning, and source-less mirror directions', async () => {
+    const east = {
+      direction: 'east',
+      source_direction: null,
+      mirror_x: false,
+      frame_count: 1,
+      frames: [
+        {
+          index: 0,
+          image_url: 'https://cdn.windup.test/walk-east-01.png',
+          duration_ms: 100,
+        },
+      ],
+    }
+    const invalidCases = [
+      {
+        sequences: [{ ...east, direction: 'up_left' }],
+        message: '动作方向无效或重复',
+      },
+      {
+        sequences: [east, { ...east }],
+        message: '动作方向无效或重复',
+      },
+      {
+        sequences: [
+          east,
+          {
+            direction: 'west',
+            source_direction: 'east',
+            mirror_x: true,
+            frame_count: 1,
+            frames: east.frames,
+          },
+        ],
+        message: '镜像动作方向不能保存独立帧',
+      },
+      {
+        sequences: [
+          {
+            direction: 'west',
+            source_direction: 'east',
+            mirror_x: true,
+            frame_count: 1,
+            frames: [],
+          },
+        ],
+        message: '镜像动作方向缺少源方向',
+      },
+    ]
+
+    for (const invalidCase of invalidCases) {
+      const invalidDto = structuredClone(characterDto)
+      Object.assign(invalidDto.character_data.outfits[0]!.actions[0]!, {
+        sequences: invalidCase.sequences,
+      })
+      const characterApis = await loadCharacterApis(async () => jsonResponse(invalidDto))
+
+      await expect(characterApis.get('51')).rejects.toThrow(invalidCase.message)
+    }
+  })
+
   it('deletes one Character through the backend resource path', async () => {
     let request: Request | undefined
     const characterApis = await loadCharacterApis(async (input, init) => {

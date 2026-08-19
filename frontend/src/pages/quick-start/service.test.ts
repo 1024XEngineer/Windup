@@ -142,7 +142,8 @@ function characterWithDefaultOutfit(
 
 function priorAction(): Character['outfits'][number]['actions'][number] {
   return {
-    id: 'action-full',
+    // Action 的稳定身份来自动作定义节点，而不是某一次完整动画生成节点。
+    id: 'action-first',
     outfitId: 'outfit-1',
     name: '旧动作',
     type: 'custom',
@@ -308,6 +309,7 @@ describe('createQuickStartService', () => {
 
     await expect(prepare('  一位名字特别长的像素角色设定用于验证截断继续  ')).resolves.toEqual({
       id: 'project-1',
+      directionalMovement: 'single',
       spriteSize: { width: 256, height: 256 },
     })
     const createdName = create.mock.calls[0]?.[0].name
@@ -1038,11 +1040,7 @@ describe('createQuickStartService', () => {
                 status: 'completed' as const,
                 result: {
                   type: 'character_template' as const,
-                  images: [
-                    { url: 'candidate.png' },
-                    { url: 'candidate-2.png' },
-                    { url: 'candidate-3.png' },
-                  ],
+                  images: [{ url: 'candidate.png' }, { url: 'candidate-2.png' }],
                 },
                 error: null,
               }
@@ -1097,7 +1095,6 @@ describe('createQuickStartService', () => {
       await expect(started.getTemplateCandidates()).resolves.toEqual([
         'candidate.png',
         'candidate-2.png',
-        'candidate-3.png',
       ])
     })
 

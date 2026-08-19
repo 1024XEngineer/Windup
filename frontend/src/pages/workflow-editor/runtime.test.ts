@@ -818,7 +818,7 @@ describe('createDefaultRealWorkflowEditorSession', () => {
           project_id: 1,
           task_type: 'character_image',
           status: 'failed',
-          input_payload: { num_images: 3 },
+          input_payload: { num_images: 2 },
           result: null,
           error_message: 'provider unavailable',
         })
