@@ -11,6 +11,8 @@ export interface Project {
   spriteSize: { width: number; height: number }
   gameStyle: string | null
   sampleImageUrl: string | null
+  /** 项目列表已经解析好的卡片预览；详情响应不承诺提供。 */
+  previewUrl?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -91,6 +93,7 @@ interface ProjectDto {
   sprite_height: number
   game_style: string | null
   sprite_sample_url: string | null
+  preview_url?: string | null
   create_at: string
   update_at: string
 }
@@ -152,6 +155,7 @@ function mapProject(dto: ProjectDto): Project {
     spriteSize: { width: dto.sprite_width, height: dto.sprite_height },
     gameStyle: dto.game_style,
     sampleImageUrl: dto.sprite_sample_url,
+    previewUrl: dto.preview_url ?? dto.sprite_sample_url,
     createdAt: dto.create_at,
     updatedAt: dto.update_at,
   }
