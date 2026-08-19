@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { QuickStartEntryService, QuickStartSession } from './service'
 import { WorkflowRunConflictError, type WorkflowRun } from '@/entities'
 import type { ExportPackageModel } from '@/features/export-package'
+import type { QuickStartConversationClient } from '@/features/quick-start-conversation'
 import { QuickStartPage } from './index'
 
 afterEach(() => {
@@ -148,7 +149,30 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-function renderAt(path: string, service: QuickStartEntryService) {
+async function sendCurrentDraftAndConfirm() {
+  fireEvent.click(screen.getByRole('button', { name: '发送描述' }))
+  const confirm = await screen.findByRole('button', { name: '按此生成角色' })
+  fireEvent.click(confirm)
+}
+
+function conversationClientFor(
+  optimizedPrompt = '单一角色，戴星形单片眼镜的像素裁缝，完整身体，纯净背景',
+): QuickStartConversationClient {
+  return {
+    respond: vi.fn(async () => ({
+      type: 'prompt_suggestion' as const,
+      reply: '我整理了一版适合动作生成的描述。',
+      optimizedPrompt,
+      warnings: [],
+    })),
+  }
+}
+
+function renderAt(
+  path: string,
+  service: QuickStartEntryService,
+  conversationClient = conversationClientFor(),
+) {
   function PlaytestLocation() {
     const location = useLocation()
     return <h1>{`${location.pathname}${location.search}`}</h1>
@@ -156,8 +180,14 @@ function renderAt(path: string, service: QuickStartEntryService) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/quick-start" element={<QuickStartPage service={service} />} />
-        <Route path="/quick-start/:runId" element={<QuickStartPage service={service} />} />
+        <Route
+          path="/quick-start"
+          element={<QuickStartPage service={service} conversationClient={conversationClient} />}
+        />
+        <Route
+          path="/quick-start/:runId"
+          element={<QuickStartPage service={service} conversationClient={conversationClient} />}
+        />
         <Route path="/projects/:projectId/assets" element={<PlaytestLocation />} />
         <Route path="/playtest/:characterId/:outfitId" element={<PlaytestLocation />} />
       </Routes>
@@ -255,6 +285,29 @@ function renderStateFixture(
 }
 
 describe('QuickStartPage', () => {
+  it('starts the existing Quick Start service only after confirming the LLM suggestion', async () => {
+    const service = serviceFor(null)
+    const conversationClient = conversationClientFor()
+    renderAt('/quick-start', service, conversationClient)
+
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '戴星形眼镜的裁缝' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送描述' }))
+
+    expect(
+      await screen.findByDisplayValue('单一角色，戴星形单片眼镜的像素裁缝，完整身体，纯净背景'),
+    ).toBeTruthy()
+    expect(service.start).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '按此生成角色' }))
+
+    await waitFor(() =>
+      expect(service.start).toHaveBeenCalledWith(
+        '单一角色，戴星形单片眼镜的像素裁缝，完整身体，纯净背景',
+      ),
+    )
+  })
+
   it('keeps the main export capability available in the conversation UI', async () => {
     const run = workflow(setupAndTemplate({ selectedImageUrl: '/master.png' }))
     const model: ExportPackageModel = {
@@ -700,7 +753,10 @@ describe('QuickStartPage', () => {
     fireEvent.change(screen.getByLabelText('创作指令'), {
       target: { value: '提着风灯的森林守夜人' },
     })
-    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+    await act(async () => undefined)
+    fireEvent.click(screen.getByRole('button', { name: '发送描述' }))
+    await act(async () => undefined)
+    fireEvent.click(screen.getByRole('button', { name: '按此生成角色' }))
     await act(async () => undefined)
 
     const entry = screen.getByLabelText('创作指令').closest('[data-layout="quick-start-entry"]')
@@ -824,13 +880,12 @@ describe('QuickStartPage', () => {
 
   it('submits both text and uploaded-template creation from the natural-language entry', async () => {
     const service = serviceFor(null)
-    const view = renderAt('/quick-start', service)
+    const stylePrompt = '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色'
+    const view = renderAt('/quick-start', service, conversationClientFor(stylePrompt))
 
     fireEvent.click(screen.getByRole('button', { name: /16-bit 日式 RPG/u }))
-    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
-    await waitFor(() =>
-      expect(service.start).toHaveBeenCalledWith('16-bit 日式 RPG 像素风，清晰轮廓，明亮配色'),
-    )
+    await sendCurrentDraftAndConfirm()
+    await waitFor(() => expect(service.start).toHaveBeenCalledWith(stylePrompt))
     expect(service.open).not.toHaveBeenCalled()
 
     view.unmount()
@@ -856,15 +911,25 @@ describe('QuickStartPage', () => {
       <StrictMode>
         <MemoryRouter initialEntries={['/quick-start']}>
           <Routes>
-            <Route path="/quick-start" element={<QuickStartPage service={service} />} />
-            <Route path="/quick-start/:runId" element={<QuickStartPage service={service} />} />
+            <Route
+              path="/quick-start"
+              element={
+                <QuickStartPage service={service} conversationClient={conversationClientFor()} />
+              }
+            />
+            <Route
+              path="/quick-start/:runId"
+              element={
+                <QuickStartPage service={service} conversationClient={conversationClientFor()} />
+              }
+            />
           </Routes>
         </MemoryRouter>
       </StrictMode>,
     )
 
     fireEvent.change(screen.getByLabelText('创作指令'), { target: { value: '像素骑士' } })
-    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+    await sendCurrentDraftAndConfirm()
 
     await waitFor(() => expect(service.resume).toHaveBeenCalled())
     expect(service.open).not.toHaveBeenCalled()
@@ -884,7 +949,7 @@ describe('QuickStartPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '移除图片' }))
     expect(screen.queryByText('hero.png')).toBeNull()
     fireEvent.change(screen.getByLabelText('创作指令'), { target: { value: '骑士' } })
-    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+    await sendCurrentDraftAndConfirm()
     expect((await screen.findByRole('alert')).textContent).toContain('服务繁忙')
   })
 
