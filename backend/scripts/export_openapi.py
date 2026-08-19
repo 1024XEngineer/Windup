@@ -20,7 +20,9 @@ def main() -> None:
     try:
         schema = app.openapi()
     finally:
-        app.state.generation_dispatcher.shutdown()
+        subscriber = getattr(app.state, "sse_subscriber", None)
+        if subscriber is not None:
+            subscriber.stop()
 
     OPENAPI_PATH.write_text(
         json.dumps(schema, ensure_ascii=False, indent=2, sort_keys=True) + "\n",

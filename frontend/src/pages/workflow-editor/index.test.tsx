@@ -119,6 +119,28 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
   })
 
+  it('角色母版微调失败时保留输入草稿以便重试', async () => {
+    const session = createSession(completedTemplateWorkflow('42'))
+    vi.spyOn(session.controller, 'regenerateCharacterTemplate').mockRejectedValueOnce(
+      new Error('生成服务暂时不可用'),
+    )
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '微调角色母版' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '角色母版微调描述' }), {
+      target: { value: '换成水彩风格' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提交角色母版微调' }))
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('生成服务暂时不可用'),
+    )
+    expect(
+      (screen.getByRole('textbox', { name: '角色母版微调描述' }) as HTMLTextAreaElement).value,
+    ).toBe('换成水彩风格')
+  })
+
   it('动作首帧完成后可以重新生成或提交微调描述', async () => {
     const session = createSession(reviewingActionWorkflow())
     const refine = vi.spyOn(session.controller, 'regenerateFirstFrame').mockResolvedValue(undefined)
@@ -146,6 +168,28 @@ describe('WorkflowEditorPage real runtime boundary', () => {
       'action-walk',
       expect.objectContaining({ mode: 'regenerate' }),
     )
+  })
+
+  it('动作首帧微调失败时保留输入草稿以便重试', async () => {
+    const session = createSession(reviewingActionWorkflow())
+    vi.spyOn(session.controller, 'regenerateFirstFrame').mockRejectedValueOnce(
+      new Error('生成服务暂时不可用'),
+    )
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '微调动作首帧' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '动作首帧微调描述' }), {
+      target: { value: '抬高手臂' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提交动作首帧微调' }))
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('生成服务暂时不可用'),
+    )
+    expect(
+      (screen.getByRole('textbox', { name: '动作首帧微调描述' }) as HTMLTextAreaElement).value,
+    ).toBe('抬高手臂')
   })
 
   it('默认路由只恢复真实 WorkflowRun 会话', async () => {

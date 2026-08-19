@@ -307,7 +307,7 @@ interface ProjectionInput {
   setActionMenuLevel(level: ActionMenuLevel): void
   setSelectedOutfitId(outfitId: string | null): void
   setCharacter(character: Character): void
-  runCommand(branchKey: string, command: () => Promise<void>): void
+  runCommand(branchKey: string, command: () => Promise<void>, onSuccess?: () => void): void
 }
 
 function NodeExportButton({ model }: { model: ExportPackageModel | undefined }) {
@@ -623,16 +623,20 @@ function CharacterTemplateContent({
                 onClick={() => {
                   const prompt = adjustmentPrompt.trim()
                   if (!prompt) return
-                  input.runCommand(branchKey, () =>
-                    input.controller.regenerateCharacterTemplate(node.id, {
-                      spriteWidth: input.project.spriteSize.width,
-                      spriteHeight: input.project.spriteSize.height,
-                      mode: 'refine',
-                      adjustmentPrompt: prompt,
-                    }),
+                  input.runCommand(
+                    branchKey,
+                    () =>
+                      input.controller.regenerateCharacterTemplate(node.id, {
+                        spriteWidth: input.project.spriteSize.width,
+                        spriteHeight: input.project.spriteSize.height,
+                        mode: 'refine',
+                        adjustmentPrompt: prompt,
+                      }),
+                    () => {
+                      setRefining(false)
+                      setAdjustmentPrompt('')
+                    },
                   )
-                  setRefining(false)
-                  setAdjustmentPrompt('')
                 }}
               >
                 提交角色母版微调
@@ -970,16 +974,20 @@ function FirstFrameContent({
                 onClick={() => {
                   const prompt = adjustmentPrompt.trim()
                   if (!prompt) return
-                  input.runCommand(branchKey, () =>
-                    input.controller.regenerateFirstFrame(node.id, {
-                      spriteWidth: input.project.spriteSize.width,
-                      spriteHeight: input.project.spriteSize.height,
-                      mode: 'refine',
-                      adjustmentPrompt: prompt,
-                    }),
+                  input.runCommand(
+                    branchKey,
+                    () =>
+                      input.controller.regenerateFirstFrame(node.id, {
+                        spriteWidth: input.project.spriteSize.width,
+                        spriteHeight: input.project.spriteSize.height,
+                        mode: 'refine',
+                        adjustmentPrompt: prompt,
+                      }),
+                    () => {
+                      setRefining(false)
+                      setAdjustmentPrompt('')
+                    },
                   )
-                  setRefining(false)
-                  setAdjustmentPrompt('')
                 }}
               >
                 提交动作首帧微调
