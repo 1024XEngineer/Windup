@@ -24,7 +24,7 @@ import type {
   WorkflowRun,
   WorkflowRunApis,
 } from '@/entities'
-import { IMAGE_CANDIDATE_COUNT } from '@/entities'
+import { IMAGE_CANDIDATE_COUNT, WorkflowRunConflictError } from '@/entities'
 
 const COMPLETE_ANIMATION_FRAME_COUNT = 32
 
@@ -174,6 +174,7 @@ interface PendingGenerationAttachment {
   nodeId: WorkflowNode['id']
   role: WorkflowGenerationRole
   expectedEpoch: number
+  regeneration: boolean
   generation: Generation
 }
 
@@ -193,6 +194,7 @@ export function createWorkflowController({
   const subscriptions = new Map<string, ActiveSubscription>()
   const nodeEpochs = new Map<WorkflowNode['id'], number>()
   const unattachedGenerations = new Map<string, PendingGenerationAttachment>()
+  const regenerationKeys = new Set<string>()
   const settlements = new Map<string, Promise<WorkflowRun>>()
   const listeners = new Set<(workflow: WorkflowRun) => void>()
 
@@ -593,18 +595,19 @@ export function createWorkflowController({
     const setupNode = findSingleDependencyNode(before, templateNode, 'character-setup')
     const prompt = adjustedPrompt(setupNode.input.prompt, options)
     const sourceImageUrl = options.mode === 'refine' ? templateNode.selectedImageUrl : undefined
+    const key = `${nodeId}:character_template`
+    const pending = unattachedGenerations.get(key)?.regeneration
+      ? unattachedGenerations.get(key)
+      : undefined
     await restartFromNode(nodeId)
-    try {
-      return await generateCharacterTemplate(setupNode.id, {
+    return runRegenerationAttempt(before, nodeId, key, pending, () => {
+      return generateCharacterTemplate(setupNode.id, {
         spriteWidth: options.spriteWidth,
         spriteHeight: options.spriteHeight,
         sourceImageUrl,
         prompt,
       })
-    } catch (cause) {
-      await rollbackRegeneration(before, nodeId)
-      throw cause
-    }
+    })
   }
 
   async function regenerateFirstFrame(
@@ -627,17 +630,45 @@ export function createWorkflowController({
     const prompt = adjustedPrompt(basePrompt, options)
     const sourceImageUrl =
       options.mode === 'refine' ? firstFrameNode.selectedFirstFrameUrl : undefined
+    const key = `${nodeId}:first_frame`
+    const pending = unattachedGenerations.get(key)?.regeneration
+      ? unattachedGenerations.get(key)
+      : undefined
     await restartFromNode(nodeId)
-    try {
-      return await generateFirstFrame(nodeId, {
+    return runRegenerationAttempt(before, nodeId, key, pending, () => {
+      return generateFirstFrame(nodeId, {
         spriteWidth: options.spriteWidth,
         spriteHeight: options.spriteHeight,
         sourceImageUrl,
         prompt,
       })
+    })
+  }
+
+  async function runRegenerationAttempt(
+    before: WorkflowRun,
+    nodeId: WorkflowNode['id'],
+    key: string,
+    pending: PendingGenerationAttachment | undefined,
+    generate: () => Promise<WorkflowRun>,
+  ): Promise<WorkflowRun> {
+    try {
+      if (pending) {
+        const retryAttachment = { ...pending, expectedEpoch: nodeEpoch(nodeId) }
+        unattachedGenerations.set(key, retryAttachment)
+        return await attachGeneration(retryAttachment)
+      }
+      regenerationKeys.add(key)
+      return await generate()
     } catch (cause) {
-      await rollbackRegeneration(before, nodeId)
+      try {
+        await rollbackRegeneration(before, nodeId)
+      } catch (rollbackCause) {
+        throw createRegenerationRecoveryError(cause, rollbackCause)
+      }
       throw cause
+    } finally {
+      regenerationKeys.delete(key)
     }
   }
 
@@ -646,26 +677,25 @@ export function createWorkflowController({
    * 不还原的话这条执行线会丢掉已接受的图片：重新生成还能从原始输入重来，微调却连参考图
    * 和临时描述都没有了，用户只能拿一张全新的图重新对齐。
    *
-   * 还原本身失败不覆盖原始错误——页面要看到的是"生成没成功"，而不是"回滚没成功"。
+   * 还原本身失败由调用方转换成 WorkflowRun 冲突，页面必须先刷新快照，不能继续使用不完整状态。
    */
   async function rollbackRegeneration(before: WorkflowRun, nodeId: WorkflowNode['id']) {
     const affectedIds = collectDescendantIds(before.nodes, nodeId)
     const restored = new Map(
       before.nodes.filter((node) => affectedIds.has(node.id)).map((node) => [node.id, node]),
     )
-    for (const affectedId of affectedIds) {
-      for (const [key] of unattachedGenerations) {
-        if (key.startsWith(`${affectedId}:`)) unattachedGenerations.delete(key)
+    for (const [key, pending] of unattachedGenerations) {
+      const belongsToAffectedBranch = [...affectedIds].some((affectedId) =>
+        key.startsWith(`${affectedId}:`),
+      )
+      if (belongsToAffectedBranch && !pending.regeneration) {
+        unattachedGenerations.delete(key)
       }
     }
-    try {
-      await persist((latest) => ({
-        ...latest,
-        nodes: normalizeAvailability(latest.nodes.map((node) => restored.get(node.id) ?? node)),
-      }))
-    } catch {
-      // 忽略：原始生成错误已经在向上抛出，页面按它给用户提示。
-    }
+    await persist((latest) => ({
+      ...latest,
+      nodes: normalizeAvailability(latest.nodes.map((node) => restored.get(node.id) ?? node)),
+    }))
   }
 
   function confirmFirstFrame(
@@ -836,7 +866,13 @@ export function createWorkflowController({
     // 重做发生在请求等待期间时，任务可以留在后端，但绝不能再挂回新的节点执行线。
     if (nodeEpoch(nodeId) !== expectedEpoch) return snapshot()
 
-    const attachment = { nodeId, role, expectedEpoch, generation }
+    const attachment = {
+      nodeId,
+      role,
+      expectedEpoch,
+      regeneration: regenerationKeys.has(key),
+      generation,
+    }
     unattachedGenerations.set(key, attachment)
     return attachGeneration(attachment)
   }
@@ -864,17 +900,23 @@ export function createWorkflowController({
     const attachedReference = findNode(attached, nodeId).generations.find(
       (item) => item.role === role,
     )
-    if (unattachedGenerations.get(key)?.generation.id === generation.id) {
-      unattachedGenerations.delete(key)
+    const forgetPendingAttachment = () => {
+      if (unattachedGenerations.get(key)?.generation.id === generation.id) {
+        unattachedGenerations.delete(key)
+      }
     }
     if (attachedReference?.taskId !== generation.id) {
+      forgetPendingAttachment()
       return attached
     }
 
     if (generation.status === 'completed' || generation.status === 'failed') {
-      return applyGenerationResult({ nodeId, taskId: generation.id, generation })
+      const settled = await applyGenerationResult({ nodeId, taskId: generation.id, generation })
+      forgetPendingAttachment()
+      return settled
     }
     await watchGeneration(nodeId, generation.id)
+    forgetPendingAttachment()
     return snapshot()
   }
 
@@ -1445,6 +1487,15 @@ function adjustedPrompt(basePrompt: string, options: RegenerateImageOptions) {
   }
   if (options.mode !== 'refine') throw new Error('不支持的重新生成模式')
   return `${base}\n${nonEmpty(options.adjustmentPrompt ?? '', 'adjustmentPrompt')}`
+}
+
+function createRegenerationRecoveryError(originalCause: unknown, rollbackCause: unknown) {
+  const original = asError(originalCause)
+  const rollback = asError(rollbackCause)
+  return new WorkflowRunConflictError(
+    `重新生成失败：${original.message}；恢复原有工作流失败：${rollback.message}，请加载最新版本后重试`,
+    { cause: rollback },
+  )
 }
 
 function ensurePositiveInteger(value: number, field: string) {
