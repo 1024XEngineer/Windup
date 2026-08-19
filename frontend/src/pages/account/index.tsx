@@ -5,6 +5,7 @@ import accountBadgeArtwork from '@/assets/account/illustrations/account-badge.we
 import type { User } from '@/entities'
 import { useAuthSession } from '@/features/auth-session'
 import {
+  CREDIT_REASON_OPTIONS,
   formatCreditDateTime,
   getCreditReasonLabel,
   useQuotaBalance,
@@ -17,6 +18,16 @@ import './account.css'
 import { createProfileState, initialSecurityState, profileReducer, securityReducer } from './state'
 
 const MAX_NICKNAME_LENGTH = 50
+
+function localDateStart(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) return null
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+}
+
+function dayAfter(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1)
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '操作失败，请稍后重试'
@@ -41,6 +52,12 @@ function formatCredits(value: number): string {
 function QuotaSection() {
   const balance = useQuotaBalance(true)
   const transactions = useQuotaTransactions(true)
+  const [direction, setDirection] = useState('')
+  const [reason, setReason] = useState('')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
+  const [pageSize, setPageSize] = useState('20')
+  const [filterError, setFilterError] = useState<string | null>(null)
   const account = balance.status === 'ready' ? balance.account : null
   const summaryRows: Array<[string, string]> = [
     ['可用积分', account ? formatCredits(account.balance) : '—'],
@@ -48,6 +65,36 @@ function QuotaSection() {
     ['累计获得', account ? formatCredits(account.totalEarned) : '—'],
     ['累计使用', account ? formatCredits(account.totalSpent) : '—'],
   ]
+
+  function applyTransactionFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const createdFrom = startDate ? localDateStart(startDate) : null
+    const end = endDate ? localDateStart(endDate) : null
+    if (createdFrom && end && createdFrom > end) {
+      setFilterError('开始日期不能晚于结束日期')
+      return
+    }
+    setFilterError(null)
+    transactions.applyFilters(
+      {
+        ...(direction ? { direction: direction as 'income' | 'expense' } : {}),
+        ...(reason ? { reason: Number(reason) } : {}),
+        ...(createdFrom ? { createdFrom: createdFrom.toISOString() } : {}),
+        ...(end ? { createdBefore: dayAfter(end).toISOString() } : {}),
+      },
+      Number(pageSize),
+    )
+  }
+
+  function resetTransactionFilters() {
+    setDirection('')
+    setReason('')
+    setStartDate('')
+    setEndDate('')
+    setPageSize('20')
+    setFilterError(null)
+    transactions.applyFilters({}, 20)
+  }
 
   return (
     <div>
@@ -91,6 +138,89 @@ function QuotaSection() {
             <span className="text-xs text-app-faint">共 {transactions.total} 条</span>
           )}
         </div>
+
+        <form
+          aria-label="积分流水筛选"
+          onSubmit={applyTransactionFilters}
+          className="mt-3 grid gap-3 border-y border-app-line py-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_minmax(0,1fr)_minmax(0,1fr)_7rem_auto] xl:items-end"
+        >
+          <label className="grid gap-1 text-xs text-app-muted">
+            变动方向
+            <select
+              value={direction}
+              onChange={(event) => setDirection(event.target.value)}
+              className="account-filter-field"
+            >
+              <option value="">全部</option>
+              <option value="income">积分获得</option>
+              <option value="expense">积分支出</option>
+            </select>
+          </label>
+          <label className="grid gap-1 text-xs text-app-muted">
+            变动原因
+            <select
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              className="account-filter-field"
+            >
+              <option value="">全部原因</option>
+              {CREDIT_REASON_OPTIONS.map(({ value, label }) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1 text-xs text-app-muted">
+            开始日期
+            <input
+              type="date"
+              value={startDate}
+              max={endDate || undefined}
+              onChange={(event) => setStartDate(event.target.value)}
+              className="account-filter-field"
+            />
+          </label>
+          <label className="grid gap-1 text-xs text-app-muted">
+            结束日期
+            <input
+              type="date"
+              value={endDate}
+              min={startDate || undefined}
+              onChange={(event) => setEndDate(event.target.value)}
+              className="account-filter-field"
+            />
+          </label>
+          <label className="grid gap-1 text-xs text-app-muted">
+            每页条数
+            <select
+              value={pageSize}
+              onChange={(event) => setPageSize(event.target.value)}
+              className="account-filter-field"
+            >
+              <option value="10">10 条</option>
+              <option value="20">20 条</option>
+              <option value="50">50 条</option>
+            </select>
+          </label>
+          <div className="flex gap-2">
+            <button type="submit" className="account-filter-button">
+              应用筛选
+            </button>
+            <button
+              type="button"
+              onClick={resetTransactionFilters}
+              className="account-filter-reset"
+            >
+              重置
+            </button>
+          </div>
+          {filterError && (
+            <p role="alert" className="text-xs text-app-danger sm:col-span-2 xl:col-span-full">
+              {filterError}
+            </p>
+          )}
+        </form>
 
         {transactions.status === 'loading' ? (
           <p role="status" className="mt-3 text-sm text-app-muted">
@@ -136,6 +266,7 @@ function QuotaSection() {
           pageSize={transactions.pageSize}
           total={transactions.total}
           disabled={transactions.status === 'loading'}
+          showPageNumbers
           onPageChange={transactions.loadPage}
         />
       </section>

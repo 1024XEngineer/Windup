@@ -30,7 +30,7 @@ describe('AssetLibraryPage', () => {
   it('hides draft characters from the published asset list', async () => {
     renderRoute('/projects/42/assets')
 
-    expect(await screen.findByRole('heading', { name: '角色' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '点灯人 · MVP' })).toBeTruthy()
     expect(await screen.findAllByRole('link', { name: /查看角色/ })).toHaveLength(1)
     expect(screen.getByText('轻装信使')).toBeTruthy()
     expect(screen.queryByText('待定角色')).toBeNull()
@@ -49,9 +49,50 @@ describe('AssetLibraryPage', () => {
     renderRoute('/projects/99/assets')
 
     expect(await screen.findByText('这个项目还没有角色')).toBeTruthy()
-    const createButton = screen.getByRole('button', { name: '新建角色' })
-    expect(createButton.hasAttribute('disabled')).toBe(true)
+    expect(screen.queryByRole('button', { name: '新建角色' })).toBeNull()
     expect(screen.queryByRole('link', { name: /查看角色/ })).toBeNull()
+  })
+
+  it('uses the shared empty preview when a published Character has no Outfit', async () => {
+    const backend = createProjectAssetsBackend()
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      const response = await backend.fetch(input, init)
+      if (!request.url.includes('/characters?project_id=42')) return response
+
+      const payload = (await response.json()) as {
+        data: Array<Record<string, unknown>>
+        total: number
+        [key: string]: unknown
+      }
+      payload.data.push({
+        id: 53,
+        project_id: 42,
+        workflow_run_id: 503,
+        name: '无造型角色',
+        description: null,
+        reference_image_url: null,
+        character_data: { version: 1, outfits: [] },
+        status: 1,
+      })
+      payload.total += 1
+      return new Response(JSON.stringify(payload), {
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects/42/assets']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(await screen.findByText('无造型角色')).toBeTruthy()
+    expect(screen.getByText('尚未创建造型')).toBeTruthy()
+    expect(screen.getByText('暂无造型预览')).toBeTruthy()
   })
 
   it('requests each published Character page from the backend', async () => {

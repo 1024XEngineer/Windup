@@ -40,7 +40,7 @@ export interface WorkflowEditorPageProps {
   loadSession?: (runId: string) => Promise<WorkflowEditorSession>
 }
 
-type ActionMenuLevel = 'root' | 'outfits' | 'actions'
+type ActionMenuLevel = 'root' | 'outfits' | 'actions' | 'custom'
 
 /**
  * 菜单里的预设动作。label 只用于展示，name 是落进 WorkflowRun 的动作名——
@@ -140,6 +140,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
   } = state
   const [selectedImages, setSelectedImages] = useState<Record<string, string>>({})
   const [setupPromptDrafts, setSetupPromptDrafts] = useState<Record<string, string>>({})
+  const [actionPromptDraft, setActionPromptDraft] = useState('')
   const [actionMenuOpen, setActionMenuOpen] = useState(false)
   const [actionMenuLevel, setActionMenuLevel] = useState<ActionMenuLevel>('root')
   const [selectedOutfitId, setSelectedOutfitId] = useState<string | null>(null)
@@ -148,6 +149,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
   useEffect(() => {
     setSelectedImages({})
     setSetupPromptDrafts({})
+    setActionPromptDraft('')
     setActionMenuOpen(false)
     setActionMenuLevel('root')
     setSelectedOutfitId(null)
@@ -194,6 +196,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
             exportModels,
             selectedImages,
             setupPromptDrafts,
+            actionPromptDraft,
             actionMenuOpen,
             actionMenuLevel,
             selectedOutfitId,
@@ -201,6 +204,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
             resumeBlocked: Boolean(resumeError),
             setSelectedImages,
             setSetupPromptDrafts,
+            setActionPromptDraft,
             setActionMenuOpen,
             setActionMenuLevel,
             setSelectedOutfitId,
@@ -211,6 +215,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
     [
       actionMenuOpen,
       actionMenuLevel,
+      actionPromptDraft,
       busyBranches,
       character,
       exportModels,
@@ -286,6 +291,7 @@ interface ProjectionInput {
   exportModels: ReadonlyMap<string, ExportPackageModel>
   selectedImages: Record<string, string>
   setupPromptDrafts: Record<string, string>
+  actionPromptDraft: string
   actionMenuOpen: boolean
   actionMenuLevel: ActionMenuLevel
   selectedOutfitId: string | null
@@ -293,6 +299,7 @@ interface ProjectionInput {
   resumeBlocked: boolean
   setSelectedImages: React.Dispatch<React.SetStateAction<Record<string, string>>>
   setSetupPromptDrafts: React.Dispatch<React.SetStateAction<Record<string, string>>>
+  setActionPromptDraft(value: string): void
   setActionMenuOpen(open: boolean): void
   setActionMenuLevel(level: ActionMenuLevel): void
   setSelectedOutfitId(outfitId: string | null): void
@@ -495,6 +502,8 @@ function CharacterTemplateContent({
 }) {
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
+  const [refining, setRefining] = useState(false)
+  const [adjustmentPrompt, setAdjustmentPrompt] = useState('')
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.phase === 'ready' && node.status === 'active') {
     const setupNode = findDependency(input.run, node, 'character-setup')
@@ -569,6 +578,65 @@ function CharacterTemplateContent({
         <img className={MASTER_IMAGE} src={node.selectedImageUrl} alt="已确认身份母版" />
         <span className="text-center text-[11px] text-[var(--color-app-muted)]">身份已锁定</span>
         {outfit ? <NodeExportButton model={input.exportModels.get(outfit.id)} /> : null}
+        <div className="grid gap-2">
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={branchBusy}
+            onClick={() =>
+              input.runCommand(branchKey, () =>
+                input.controller.regenerateCharacterTemplate(node.id, {
+                  spriteWidth: input.project.spriteSize.width,
+                  spriteHeight: input.project.spriteSize.height,
+                  mode: 'regenerate',
+                }),
+              )
+            }
+          >
+            重新生成角色母版
+          </button>
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={branchBusy}
+            onClick={() => setRefining((active) => !active)}
+          >
+            微调角色母版
+          </button>
+          {refining ? (
+            <div className="grid gap-2">
+              <textarea
+                aria-label="角色母版微调描述"
+                rows={3}
+                className="min-h-[64px] w-full resize-y rounded-lg border border-[var(--color-app-line)] bg-app-surface-raised px-3 py-2.5 font-[inherit] text-[11px] leading-[1.55] text-[var(--color-app-ink)] focus:border-app-accent focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-app-accent-soft"
+                value={adjustmentPrompt}
+                disabled={branchBusy}
+                onChange={(event) => setAdjustmentPrompt(event.target.value)}
+              />
+              <button
+                type="button"
+                className={CARD_BUTTON}
+                disabled={branchBusy || !adjustmentPrompt.trim()}
+                onClick={() => {
+                  const prompt = adjustmentPrompt.trim()
+                  if (!prompt) return
+                  input.runCommand(branchKey, () =>
+                    input.controller.regenerateCharacterTemplate(node.id, {
+                      spriteWidth: input.project.spriteSize.width,
+                      spriteHeight: input.project.spriteSize.height,
+                      mode: 'refine',
+                      adjustmentPrompt: prompt,
+                    }),
+                  )
+                  setRefining(false)
+                  setAdjustmentPrompt('')
+                }}
+              >
+                提交角色母版微调
+              </button>
+            </div>
+          ) : null}
+        </div>
         <button
           type="button"
           className="absolute -bottom-4 -right-4 z-8 grid h-8 min-h-8 w-8 place-items-center rounded-full border border-[var(--color-app-ink)] bg-app-surface-raised p-0 text-[15px] leading-none text-[var(--color-app-ink)] shadow-[var(--shadow-app-panel)] hover:bg-[var(--color-app-ink)] hover:text-app-on-accent"
@@ -657,6 +725,59 @@ function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templat
     )
   }
 
+  if (input.actionMenuLevel === 'custom') {
+    const prompt = input.actionPromptDraft.trim()
+    return (
+      <div className="contents">
+        <button
+          type="button"
+          className={`${MENU_ITEM} ${MENU_ITEM_LEAD}`}
+          onClick={() => input.setActionMenuLevel('actions')}
+        >
+          ← 生成动作
+        </button>
+        <label className="flex flex-col gap-1.5 border-t border-app-line px-3 py-2.5 text-[10px] font-semibold text-app-muted">
+          动作描述
+          <textarea
+            aria-label="动作描述"
+            value={input.actionPromptDraft}
+            onChange={(event) => input.setActionPromptDraft(event.target.value)}
+            placeholder="例如：挥手打招呼、蹲下查看地面"
+            rows={3}
+            className="nodrag nopan nowheel min-h-20 resize-y rounded-md border border-app-line-strong bg-app-surface p-2 text-[11px] font-normal text-app-ink outline-none focus:border-app-accent"
+          />
+        </label>
+        <button
+          type="button"
+          className={MENU_ITEM}
+          disabled={!selectedOutfit || !prompt || branchBusy}
+          onClick={() => {
+            if (!selectedOutfit || !prompt) return
+            input.runCommand(SHARED_BRANCH, () =>
+              input.controller.addAction({
+                dependsOnNodeIds: [templateNodeId],
+                input: {
+                  outfitId: selectedOutfit.id,
+                  name: prompt,
+                  type: 'custom',
+                  prompt,
+                  fps: 12,
+                },
+              }),
+            )
+            input.setActionPromptDraft('')
+            input.setActionMenuOpen(false)
+            input.setActionMenuLevel('root')
+            input.setSelectedOutfitId(null)
+          }}
+        >
+          <b className={MENU_ITEM_TITLE}>开始生成</b>
+          <small className={MENU_ITEM_HINT}>创建自定义动作分支</small>
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div className="contents">
       <button
@@ -695,9 +816,17 @@ function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templat
           <small className={MENU_ITEM_HINT}>{ACTION_PRESET_HINT}</small>
         </button>
       ))}
-      <button type="button" className={MENU_ITEM} disabled title="当前页面尚未提供动作描述输入">
+      <button
+        type="button"
+        className={MENU_ITEM}
+        disabled={!selectedOutfit || branchBusy}
+        onClick={() => {
+          input.setActionPromptDraft('')
+          input.setActionMenuLevel('custom')
+        }}
+      >
         <b className={MENU_ITEM_TITLE}>自定义动作</b>
-        <small className={MENU_ITEM_HINT}>描述输入尚未开放</small>
+        <small className={MENU_ITEM_HINT}>输入描述后生成</small>
       </button>
     </div>
   )
@@ -712,6 +841,8 @@ function FirstFrameContent({
 }) {
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
+  const [refining, setRefining] = useState(false)
+  const [adjustmentPrompt, setAdjustmentPrompt] = useState('')
   const result = input.generations[generationKey(node.id, 'first_frame')]?.result
   const images = result?.type === 'first_frame' ? result.images : []
   if (node.status === 'failed') return <StatusText node={node} input={input} />
@@ -786,6 +917,65 @@ function FirstFrameContent({
     return (
       <div className={CARD_STACK}>
         <img className={MASTER_IMAGE} src={node.selectedFirstFrameUrl} alt="已确认动作首帧" />
+        <div className="grid gap-2">
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={branchBusy}
+            onClick={() =>
+              input.runCommand(branchKey, () =>
+                input.controller.regenerateFirstFrame(node.id, {
+                  spriteWidth: input.project.spriteSize.width,
+                  spriteHeight: input.project.spriteSize.height,
+                  mode: 'regenerate',
+                }),
+              )
+            }
+          >
+            重新生成动作首帧
+          </button>
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={branchBusy}
+            onClick={() => setRefining((active) => !active)}
+          >
+            微调动作首帧
+          </button>
+          {refining ? (
+            <div className="grid gap-2">
+              <textarea
+                aria-label="动作首帧微调描述"
+                rows={3}
+                className="min-h-[64px] w-full resize-y rounded-lg border border-[var(--color-app-line)] bg-app-surface-raised px-3 py-2.5 font-[inherit] text-[11px] leading-[1.55] text-[var(--color-app-ink)] focus:border-app-accent focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-app-accent-soft"
+                value={adjustmentPrompt}
+                disabled={branchBusy}
+                onChange={(event) => setAdjustmentPrompt(event.target.value)}
+              />
+              <button
+                type="button"
+                className={CARD_BUTTON}
+                disabled={branchBusy || !adjustmentPrompt.trim()}
+                onClick={() => {
+                  const prompt = adjustmentPrompt.trim()
+                  if (!prompt) return
+                  input.runCommand(branchKey, () =>
+                    input.controller.regenerateFirstFrame(node.id, {
+                      spriteWidth: input.project.spriteSize.width,
+                      spriteHeight: input.project.spriteSize.height,
+                      mode: 'refine',
+                      adjustmentPrompt: prompt,
+                    }),
+                  )
+                  setRefining(false)
+                  setAdjustmentPrompt('')
+                }}
+              >
+                提交动作首帧微调
+              </button>
+            </div>
+          ) : null}
+        </div>
         <NodeExportButton model={input.exportModels.get(node.input.outfitId)} />
       </div>
     )

@@ -106,7 +106,13 @@ function renderHeader(
   }
 }
 
+function finishBackAnimation() {
+  act(() => vi.advanceTimersByTime(240))
+}
+
 afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
   cleanup()
   window.localStorage.clear()
   window.sessionStorage.clear()
@@ -122,6 +128,7 @@ describe('AppHeader', () => {
     ['/workspace', '/'],
     ['/account', '/workspace'],
   ])('直接打开 %s 时按页面层级返回 %s', (entry, expected) => {
+    vi.useFakeTimers()
     window.history.replaceState({ idx: 0 }, '')
     renderHeader(entry)
 
@@ -131,15 +138,75 @@ describe('AppHeader', () => {
     expect(back.className).toContain('w-9')
 
     fireEvent.click(back)
+    finishBackAnimation()
     expect(screen.getByTestId('location').textContent).toBe(expected)
   })
 
   it('存在站内浏览历史时返回真实上一页', () => {
+    vi.useFakeTimers()
     window.history.replaceState({ idx: 1 }, '')
     renderHeader('/quick-start', createApis(), '/projects')
 
-    fireEvent.click(screen.getByRole('button', { name: '返回上一页' }))
+    const back = screen.getByRole('button', { name: '返回上一页' })
+    fireEvent.click(back)
+    finishBackAnimation()
     expect(screen.getByTestId('location').textContent).toBe('/projects')
+  })
+
+  it('点击后先播放方向过渡，再执行返回', () => {
+    vi.useFakeTimers()
+    window.history.replaceState({ idx: 0 }, '')
+    renderHeader('/projects')
+
+    const back = screen.getByRole('button', { name: '返回上一页' })
+    fireEvent.click(back)
+
+    expect(back.classList.contains('app-header-back-in-flight')).toBe(true)
+    expect(screen.getByTestId('location').textContent).toBe('/projects')
+
+    act(() => vi.advanceTimersByTime(190))
+    expect(screen.getByTestId('location').textContent).toBe('/projects')
+
+    act(() => vi.advanceTimersByTime(50))
+    expect(screen.getByTestId('location').textContent).toBe('/workspace')
+  })
+
+  it('动画进行中重复点击不会推迟返回', () => {
+    vi.useFakeTimers()
+    window.history.replaceState({ idx: 0 }, '')
+    renderHeader('/projects')
+
+    const back = screen.getByRole('button', { name: '返回上一页' })
+    fireEvent.click(back)
+    act(() => vi.advanceTimersByTime(150))
+    fireEvent.click(back)
+    act(() => vi.advanceTimersByTime(80))
+
+    expect(screen.getByTestId('location').textContent).toBe('/workspace')
+  })
+
+  it('减少动态效果时立即返回', () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({ matches: true })),
+    )
+    window.history.replaceState({ idx: 0 }, '')
+    renderHeader('/projects')
+
+    fireEvent.click(screen.getByRole('button', { name: '返回上一页' }))
+
+    expect(screen.getByTestId('location').textContent).toBe('/workspace')
+  })
+
+  it('动画中卸载会取消待执行的返回', () => {
+    vi.useFakeTimers()
+    const { unmount } = renderHeader('/projects')
+
+    fireEvent.click(screen.getByRole('button', { name: '返回上一页' }))
+    expect(vi.getTimerCount()).toBe(1)
+    unmount()
+
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('提供预览台入口，并将工作流路由归入创作', () => {
@@ -153,6 +220,16 @@ describe('AppHeader', () => {
     expect(screen.getByRole('link', { name: '项目资产' }).getAttribute('href')).toBe('/projects')
     expect(screen.getByRole('link', { name: '创作' }).getAttribute('aria-current')).toBe('page')
     expect(screen.getByRole('link', { name: '预览台' }).getAttribute('href')).toBe('/playtest')
+  })
+
+  it('左侧先显示品牌，再以无边框按钮承接返回操作', () => {
+    renderHeader('/projects')
+
+    const brand = screen.getByRole('link', { name: '返回 Windup 工作台' })
+    const back = screen.getByRole('button', { name: '返回上一页' })
+
+    expect(brand.compareDocumentPosition(back) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(back.className).not.toContain('border')
   })
 
   it('在工作台首页只高亮首页一项', () => {
@@ -253,8 +330,8 @@ describe('AppHeader', () => {
     renderHeader('/workspace')
 
     const hint = await screen.findByRole('status', { name: '邀请奖励提示' })
-    expect(screen.getByText('每日前 3 位好友，你各得 200 积分')).toBeTruthy()
-    expect(screen.getByText('好友注册共得 500 积分')).toBeTruthy()
+    expect(screen.getByText('邀请成功，双方各得 200 积分')).toBeTruthy()
+    expect(screen.getByText('每日前 3 次邀请可得奖励')).toBeTruthy()
     expect(screen.getByRole('link', { name: '去看看邀请奖励' }).getAttribute('href')).toBe(
       '/account?section=invite',
     )

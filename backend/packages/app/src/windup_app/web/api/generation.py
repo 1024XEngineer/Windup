@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
 from windup_common.exceptions import BizException
+from windup_common.models import CharacterStance
 from windup_common.result import Response
 from windup_framework.db import get_session
 
@@ -186,6 +187,10 @@ class CharacterActionGenerateRequest(BaseModel):
     # 不给则照旧走 i2v(向后兼容:前端接上之前所有调用都是这样)。
     # 让**所有**动作生成都按造型定位外观是 #253,不在本改动范围内。
     outfit_id: str | None = None
+    # 角色体型。决定"手臂/手肘"这类人体部位词能不能进提示词 —— 非双足角色的描述里出现
+    # 它们,模型会凭空接上一对人的上肢,而帧数/时长/成色全部正常、没有一道会红。
+    # 不给则按双足处理:这是绝大多数角色的实情,而误判成非双足会把合法描述拒掉。
+    stance: CharacterStance | None = None
 
     @model_validator(mode="after")
     def require_custom_prompt(self):
@@ -386,6 +391,7 @@ def submit_action_generation(
         # 路线选择在这里定死并写进入参,而不是留给编排层现查:这样"这次走的哪条路线"
         # 在任务入参上就是可见的,排查时不用去猜当时 DB 是什么状态。
         model_3d_url=model_3d_url,
+        stance=body.stance,
     )
     task = generation_service.generate_character_action(
         session, user_id=user_id, project_id=body.project_id, input=input_data,

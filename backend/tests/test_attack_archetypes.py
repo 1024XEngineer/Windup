@@ -21,7 +21,7 @@ from windup_ai_engine.prompt import (
 )
 from windup_ai_engine.prompt._framing import SINGLE_SUBJECT_FRAMING
 from windup_ai_engine.strategy.concrete import VideoFrameStrategy
-from windup_common.models import ActionSpec, ActionType, AttackArchetype, Facing
+from windup_common.models import CharacterStance, ActionSpec, ActionType, AttackArchetype, Facing
 
 FACINGS = (Facing.SIDE, Facing.FRONT)
 COMBOS = list(itertools.product(AttackArchetype, FACINGS))
@@ -145,7 +145,7 @@ def test_strategy_builds_the_prompt_of_the_requested_archetype(archetype):
     """契约字段填了却没人读,是本项目最典型的静默失败(见 ActionSpec.fps 那段)。"""
     strat = VideoFrameStrategy(video=None, matte=None)
     spec = ActionSpec(action=ActionType.ATTACK, archetype=archetype, facing=Facing.FRONT)
-    assert strat._build_prompt(spec) == build_attack_prompt(
+    assert strat._build_prompt(spec, CharacterStance.BIPED) == build_attack_prompt(
         facing=Facing.FRONT, archetype=archetype
     )
 
@@ -153,7 +153,7 @@ def test_strategy_builds_the_prompt_of_the_requested_archetype(archetype):
 def test_strategy_without_an_archetype_falls_back_to_the_builder_default():
     strat = VideoFrameStrategy(video=None, matte=None)
     spec = ActionSpec(action=ActionType.ATTACK, facing=Facing.SIDE)
-    assert strat._build_prompt(spec) == build_attack_prompt(facing=Facing.SIDE)
+    assert strat._build_prompt(spec, CharacterStance.BIPED) == build_attack_prompt(facing=Facing.SIDE)
 
 
 # ── ⑥ 统一构图后缀:五个动作都要带 ───────────────────────────────────────

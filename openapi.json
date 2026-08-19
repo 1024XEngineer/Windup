@@ -177,6 +177,16 @@
             ],
             "title": "Reference Video Url"
           },
+          "stance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CharacterStance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "video_model": {
             "anyOf": [
               {
@@ -500,6 +510,16 @@
         ],
         "title": "CharacterOutfit",
         "type": "object"
+      },
+      "CharacterStance": {
+        "description": "角色体型 —— 决定\"手臂 / 手肘\"这类人体部位词能不能进提示词。\n\n非双足角色的描述里出现\"手臂\",模型会给它凭空接上一对人的上肢来调和文图矛盾,\n而帧数、时长、成色全部正常。成员按\"发力部位不同\"分,每个非双足成员都要在\n``ai_engine.prompt.adapter`` 的替换建议表里有自己那套部位说法,否则拒绝理由\n只能告诉用户\"不行\"、给不出改法。",
+        "enum": [
+          "biped",
+          "quadruped",
+          "serpentine"
+        ],
+        "title": "CharacterStance",
+        "type": "string"
       },
       "CharacterUpdate": {
         "description": "更新角色请求——所有字段可选。",
@@ -3350,7 +3370,7 @@
     },
     "/quota/transactions": {
       "get": {
-        "description": "查询积分流水（分页）。",
+        "description": "查询积分流水（筛选、分页）。",
         "operationId": "list_transactions_quota_transactions_get",
         "parameters": [
           {
@@ -3374,6 +3394,77 @@
               "minimum": 1,
               "title": "Page Size",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "income",
+                    "expense"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Direction"
+            }
+          },
+          {
+            "in": "query",
+            "name": "reason",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Reason"
+            }
+          },
+          {
+            "in": "query",
+            "name": "created_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Created From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "created_before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Created Before"
             }
           }
         ],
