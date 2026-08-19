@@ -29,6 +29,7 @@ from windup_common.models import (
     ActionType,
     AttackArchetype,
     CharacterCard,
+    CharacterStance,
     CharacterView,
     Facing,
     Stylize,
@@ -89,6 +90,26 @@ def test_character_card_default_view_is_a_legal_value():
     对每一个默认构造的角色卡都会走错分支，且不会有任何报错。
     """
     assert CharacterCard(name="n", desc="d").view in set(CharacterView)
+
+
+def test_character_stance_rejects_typos():
+    """体型拼错要当场炸:裸 str 时 "Quadruped" 会被当成非双足以外的第 N 种值一路放行,
+    而它唯一的消费方是"手臂一类词放不放行"的判定 —— 判错的代价是模型给四足角色接上
+    一对人的上肢,一次付费生成之后才在画面上看出来。
+    """
+    with pytest.raises(ValidationError):
+        CharacterCard(name="n", desc="d", stance="Quadruped")
+    card = CharacterCard(name="n", desc="d", stance="quadruped")
+    assert card.stance is CharacterStance.QUADRUPED
+
+
+def test_character_card_defaults_to_the_least_asserting_stance():
+    """默认值是对每个没声明体型的角色做的断言,所以取断言最少的那支。
+
+    双足这一支不往提示词里加任何部位词;反过来把默认设成非双足,会让占多数的人形角色
+    被要求把"手臂"改写成"前肢 / 尾",而那些词进了提示词就是让模型凭空长出对应部位。
+    """
+    assert CharacterCard(name="n", desc="d").stance is CharacterStance.BIPED
 
 
 def test_unknown_field_name_is_rejected_not_silently_dropped():

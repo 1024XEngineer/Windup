@@ -246,3 +246,72 @@ def test_validation_error_message_tells_the_user_what_is_wrong(auth_client):
     assert body["message"] != "请求参数校验失败", "还是笼统文案,用户看不懂"
     assert "custom_prompt" in body["message"] or "动作" in body["message"]
     assert not body["message"].startswith("Value error,"), "pydantic 前缀是噪声,该剥掉"
+
+
+# ── 体型必须从 HTTP 入口一路传到 CharacterCard ─────────────────────────────
+#
+# 只在 ai_engine 侧加门禁不够:生产链路恒走 CharacterCard 的 BIPED 默认值,四足角色
+# 永远触发不了它。这条测试从真实端点发起,断言的是"贯通"而不是"函数会不会算"。
+
+
+def _capture_action_input(gen_api, monkeypatch) -> list:
+    """截下建任务时的引擎入参。
+
+    挂在建任务这一步而不是投递那一步:投递只带 task_id,看不到入参,而这两条用例
+    要断言的正是"字段有没有从请求一路走到引擎入参"。
+    """
+    seen: list = []
+    real = gen_api.generation_service.generate_character_action
+
+    def spy(*args, **kwargs):
+        seen.append((kwargs.get("input"),))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(gen_api.generation_service, "generate_character_action", spy)
+    return seen
+
+
+def test_stance_from_request_reaches_the_engine(auth_client, monkeypatch):
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.orchestrator.model import CharacterActionInput
+
+    dispatched = _capture_action_input(gen_api, monkeypatch)
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+
+    auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"], stance="quadruped"),
+    )
+
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs, "任务没被收下"
+    assert inputs[0].stance is not None, "体型断在请求层,引擎侧永远看不到"
+    assert inputs[0].stance.value == "quadruped"
+
+
+def test_stance_omitted_stays_none_not_biped(auth_client, monkeypatch):
+    """不给体型时原样传 None —— 在这层替调用方填 biped，"没给"与"明确双足"就分不开了。"""
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.orchestrator.model import CharacterActionInput
+
+    dispatched = _capture_action_input(gen_api, monkeypatch)
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+
+    auth_client.post(
+        "/generation/action", json=_action_payload(project["id"], character["id"]),
+    )
+
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs and inputs[0].stance is None
+
+
+def test_illegal_stance_is_rejected_at_the_entrance(auth_client):
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+    body = auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"], stance="octopod"),
+    ).json()
+    assert body["code"] == 400, body

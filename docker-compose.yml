@@ -67,6 +67,30 @@ services:
     networks:
       - windup-net
 
+  # ── Worker（MQ 消费：邮件 + 生成调度） ──
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: windup-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+    command: ["python", "-m", "windup_app.worker"]
+    healthcheck:
+      disable: true
+    networks:
+      - windup-net
+
   # ── 前端静态产物构建任务 ──
   frontend:
     build:

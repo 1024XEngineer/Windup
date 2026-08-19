@@ -27,6 +27,7 @@ from windup_framework.config.quota import settings as quota_settings
 
 from windup_app.server.quota.model import CreditAccount, CreditTransaction
 from windup_app.server.user.interface import UserService
+from windup_app.server.mq.catalog import EMAIL_STREAM, MSG_TYPE_VERIFICATION_CODE
 from windup_app.server.user.model import (
     ChangePasswordInput,
     LoginByCodeInput,
@@ -40,7 +41,7 @@ from windup_app.server.user.model import (
     UserView,
 )
 from windup_framework.config.jwt import settings as jwt_settings
-from windup_framework.providers.email import email_provider
+from windup_framework.mq.publisher import MqPublisher
 from windup_framework.db.redis import get_redis
 
 logger = logging.getLogger("windup.user.service")
@@ -298,9 +299,28 @@ class SqlAlchemyUserService(UserService):
         pipe.setex(cooldown_key, COOLDOWN_TTL, "1")
         pipe.execute()
 
-        # 发送邮件
-        email_provider.send_verification_code(email, code)
-        logger.info("[WINDUP] 验证码已发送 | email=%s purpose=%s", email, purpose)
+        # SETEX 成功后再写 outbox。受理口径：mq_message 落库成功即接口成功；
+        # 当场 XADD 失败不抬接口错误（行留 pending，由 relay 补投）。
+        dedupe_key = f"email:{purpose}:{email}:{uuid.uuid4()}"
+        publisher = MqPublisher()
+        from windup_framework.db.session import SessionLocal
+
+        session = SessionLocal()
+        try:
+            publisher.publish_now(
+                session,
+                stream=EMAIL_STREAM,
+                msg_type=MSG_TYPE_VERIFICATION_CODE,
+                payload={"email": email, "purpose": purpose},
+                dedupe_key=dedupe_key,
+            )
+        except Exception as exc:
+            logger.exception("[WINDUP] 验证码邮件入队失败 | email=%s purpose=%s", email, purpose)
+            raise BizException("验证码发送失败，请稍后重试", code=BizCode.INTERNAL_ERROR) from exc
+        finally:
+            session.close()
+
+        logger.info("[WINDUP] 验证码已入队 | email=%s purpose=%s", email, purpose)
 
     def _verify_code(self, email: str, code: str, purpose: str) -> None:
         """校验验证码，失败抛 BizException。"""
