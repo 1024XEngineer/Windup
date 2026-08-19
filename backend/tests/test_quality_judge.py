@@ -408,7 +408,10 @@ class _SpyGenerator:
         return GeneratedAction(
             frames=[frame, frame],
             durations=[100, 100],
-            quality=ActionQuality(motion_scale=1.0, dead_frames=(), loop_seam=None),
+            quality=ActionQuality(
+                motion_scale=1.0, dead_frames=(), loop_seam=None, subject_blobs=(1,)
+            ),
+            prompt_version="test-v0",
         )
 
 

@@ -4,6 +4,8 @@ API 层只依赖本模块定义的抽象，不感知具体实现（ORM / SQL）�
 """
 
 from abc import ABC, abstractmethod
+from datetime import datetime
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -85,9 +87,18 @@ class QuotaService(ABC):
 
     @abstractmethod
     def list_transactions(
-        self, session: Session, user_id: int, page: int = 1, page_size: int = 20
+        self,
+        session: Session,
+        user_id: int,
+        page: int = 1,
+        page_size: int = 20,
+        *,
+        direction: Literal["income", "expense"] | None = None,
+        reason: int | None = None,
+        created_from: datetime | None = None,
+        created_before: datetime | None = None,
     ) -> tuple[list[CreditTransactionView], int]:
-        """分页查询积分流水，返回 (列表, 总数)。"""
+        """筛选并分页查询积分流水，返回 (列表, 总数)。"""
 
     # -- 邀请码 -----------------------------------------------------------
 

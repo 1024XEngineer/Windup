@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import threading
 from collections.abc import Callable
@@ -21,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
+from windup_ai_engine.ports import PromptRejected
 from windup_common.models import ActionSpec, ActionType as EngineActionType, CharacterCard
 from windup_framework.config.quality_gate import settings as gate_settings
 
@@ -261,6 +263,20 @@ class ActionTaskExecutor:
             _settle_credit(session, task_id, success=True)
             if own:
                 session.commit()
+        except PromptRejected as exc:
+            # 单独捕获而不是落进下面那个兜底:兜底只存 str(exc),``code`` 就丢了,server
+            # 于是分不出"用户改一句话就能过的输入错"和"引擎故障",只能去解析异常文本。
+            logger.info("动作任务 %s 的描述被措辞门禁拒绝: %s", task_id, exc.code.value)
+            task_repo.update_result(
+                session, task_id, _ACTION_RESULT,
+                {"type": _ACTION_RESULT, "reject_code": exc.code.value,
+                 "reject_detail": exc.detail},
+            )
+            task_repo.update_status(
+                session, task_id, TaskStatus.FAILED, error_message=str(exc),
+            )
+            if own:
+                session.commit()
         except Exception as exc:  # noqa: BLE001 —— 兜底任何生成/上传/网络异常
             logger.exception("动作任务 %s 失败", task_id)
             session.rollback()
@@ -296,7 +312,13 @@ class ActionTaskExecutor:
         desc_parts = [input.custom_prompt or ""]
         if cons.style:
             desc_parts.append(f"Art style: {cons.style}")
-        card = CharacterCard(name=f"char-{input.character_id}", desc=" ".join(desc_parts))
+        # 体型必须从请求一路传到这里 —— 只在 ai_engine 侧加门禁的话,生产链路恒走
+        # CharacterCard 的 BIPED 默认值,四足/蛇形角色永远触发不了它(机器审逮到)。
+        card = CharacterCard(
+            name=f"char-{input.character_id}",
+            desc=" ".join(desc_parts),
+            **({"stance": input.stance} if input.stance is not None else {}),
+        )
         engine_action = _to_engine_action(input.action_type)
         # custom 的动作内容与循环性是 ActionSpec 的必填字段。但 cyclic 由本层补上默认值,
         # 所以 ActionSpec 里那道 `cyclic is None` 守卫拦不到走这条路径的请求 —— 它保的是
@@ -352,10 +374,14 @@ class ActionTaskExecutor:
             {"index": i, "image_url": upload(png), "duration_ms": dur}
             for i, (png, dur) in enumerate(zip(checked, generated.durations))
         ]
+        # quality / prompt_version 只落库记账,不在此处据成色改判决:交付/重试是产品
+        # 决策,该由读这本账的下游按阈值决定,任务状态仍只反映"生成流程是否跑完"。
         result = {
             "type": "character_action",
             "action_type": input.action_type.value,
             "frames": frames,
+            "quality": dataclasses.asdict(generated.quality),
+            "prompt_version": generated.prompt_version,
         }
         # master 为 None 时 review 按"没判"返回 None(三渲二路线没有可比的参照)。
         decision = quality_gate.review(

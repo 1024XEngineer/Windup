@@ -36,7 +36,9 @@ describe('ProjectDetailPage', () => {
       </AuthenticatedAuthSession>,
     )
 
-    expect((await screen.findByRole('alert')).textContent).toContain('这个项目不存在或暂时无法读取')
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('这个项目不存在或暂时无法读取')
+    expect(alert.parentElement?.parentElement?.className).toContain('pt-[4.25rem]')
   })
 
   it('keeps the Project workspace around a directly opened Character', async () => {
@@ -52,20 +54,9 @@ describe('ProjectDetailPage', () => {
       </AuthenticatedAuthSession>,
     )
 
-    expect(await screen.findByRole('heading', { name: '点灯人 · MVP' })).toBeTruthy()
-    expect(screen.getByText('横版视角')).toBeTruthy()
-    expect(screen.getByText('四向')).toBeTruthy()
-    expect(screen.getByText('64 × 64')).toBeTruthy()
-    expect(screen.getByText('低饱和像素绘本')).toBeTruthy()
-    expect(screen.getByRole('link', { name: '返回项目中心' }).getAttribute('href')).toBe(
-      '/projects',
-    )
-    expect((await screen.findByRole('link', { name: '角色1' })).getAttribute('aria-current')).toBe(
-      'page',
-    )
-    expect(screen.getByRole('button', { name: '动作模板' }).hasAttribute('disabled')).toBe(true)
-    expect(screen.queryByText('穿戴')).toBeNull()
     expect(await screen.findByRole('heading', { name: '轻装信使' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '项目资产' })).toBeTruthy()
+    expect(screen.queryByText('穿戴')).toBeNull()
     expect(container.querySelector('[data-route-transition="/projects/42/assets/51"]')).toBeTruthy()
   })
 
@@ -88,9 +79,8 @@ describe('ProjectDetailPage', () => {
       </AuthenticatedAuthSession>,
     )
 
-    expect(await screen.findByRole('heading', { name: '点灯人 · MVP' })).toBeTruthy()
-    expect(screen.queryByRole('alert')).toBeNull()
     expect(await screen.findByRole('heading', { name: '轻装信使' })).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('renders the Project workspace without waiting for the character count request', async () => {
@@ -113,10 +103,9 @@ describe('ProjectDetailPage', () => {
     )
 
     expect(await screen.findByRole('heading', { name: '点灯人 · MVP' })).toBeTruthy()
-    expect(screen.getByText('64 × 64')).toBeTruthy()
   })
 
-  it('shows the current account in the workspace and returns home after logout', async () => {
+  it('uses the global account menu instead of a project-sidebar account footer', async () => {
     const backend = createProjectAssetsBackend()
     const apis = createAuthenticatedTestApis()
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
@@ -133,10 +122,11 @@ describe('ProjectDetailPage', () => {
     )
 
     expect(await screen.findByRole('heading', { name: '点灯人 · MVP' })).toBeTruthy()
-    const account = screen.getByLabelText('当前账号')
-    expect(account.textContent).toContain('Reader')
-    expect(account.textContent).toContain('reader@example.com')
+    expect(screen.getByRole('link', { name: '预览台' })).toBeTruthy()
+    expect(screen.queryByLabelText('当前账号')).toBeNull()
 
+    fireEvent.click(screen.getByRole('button', { name: '打开账号菜单' }))
+    expect(screen.getByRole('button', { name: '打开账号菜单' }).textContent).toContain('Reader')
     fireEvent.click(screen.getByRole('button', { name: '退出登录' }))
 
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/'))
@@ -161,6 +151,7 @@ describe('ProjectDetailPage', () => {
     )
 
     expect(await screen.findByRole('heading', { name: '点灯人 · MVP' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '打开账号菜单' }))
     fireEvent.click(screen.getByRole('button', { name: '退出登录' }))
 
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/'))

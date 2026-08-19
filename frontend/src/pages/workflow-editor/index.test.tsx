@@ -78,6 +78,66 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('WorkflowEditorPage real runtime boundary', () => {
+  it('角色母版完成后可以重新生成或提交微调描述', async () => {
+    const session = createSession(completedTemplateWorkflow('42'))
+    const regenerate = vi
+      .spyOn(session.controller, 'regenerateCharacterTemplate')
+      .mockResolvedValue(undefined)
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '微调角色母版' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '角色母版微调描述' }), {
+      target: { value: '换成水彩风格' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提交角色母版微调' }))
+
+    expect(regenerate).toHaveBeenLastCalledWith(
+      'character-template',
+      expect.objectContaining({ mode: 'refine', adjustmentPrompt: '换成水彩风格' }),
+    )
+
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: '重新生成角色母版' }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '重新生成角色母版' }))
+    expect(regenerate).toHaveBeenLastCalledWith(
+      'character-template',
+      expect.objectContaining({ mode: 'regenerate' }),
+    )
+  })
+
+  it('动作首帧完成后可以重新生成或提交微调描述', async () => {
+    const session = createSession(reviewingActionWorkflow())
+    const refine = vi.spyOn(session.controller, 'regenerateFirstFrame').mockResolvedValue(undefined)
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '微调动作首帧' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '动作首帧微调描述' }), {
+      target: { value: '抬高手臂' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提交动作首帧微调' }))
+
+    expect(refine).toHaveBeenCalledWith(
+      'action-walk',
+      expect.objectContaining({ mode: 'refine', adjustmentPrompt: '抬高手臂' }),
+    )
+
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: '重新生成动作首帧' }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '重新生成动作首帧' }))
+    expect(refine).toHaveBeenLastCalledWith(
+      'action-walk',
+      expect.objectContaining({ mode: 'regenerate' }),
+    )
+  })
+
   it('默认路由只恢复真实 WorkflowRun 会话', async () => {
     defaultSessionLoader.mockResolvedValue(createSession())
     window.history.replaceState({}, '', '/workflow-editor/42')
@@ -422,6 +482,64 @@ describe('WorkflowEditorPage real runtime boundary', () => {
         ]),
       ),
     )
+  })
+
+  it('可以在编辑器中输入描述并创建自定义动作分支', async () => {
+    const session = createSession(completedTemplateWorkflow('42'), {
+      character: characterFixture(),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '添加动作分支' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成动作 ›' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择造型 夜行装' }))
+    fireEvent.click(screen.getByRole('button', { name: /自定义动作/ }))
+    fireEvent.change(screen.getByRole('textbox', { name: '动作描述' }), {
+      target: { value: '挥手打招呼' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /开始生成/ }))
+
+    await waitFor(() =>
+      expect(session.controller.getWorkflow().nodes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: 'action-first-frame',
+            input: expect.objectContaining({
+              outfitId: 'night',
+              name: '挥手打招呼',
+              type: 'custom',
+              prompt: '挥手打招呼',
+            }),
+          }),
+        ]),
+      ),
+    )
+  })
+
+  it('自定义动作要求非空描述，并可返回重新选择造型', async () => {
+    const session = createSession(completedTemplateWorkflow('42'), {
+      character: characterFixture(),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '添加动作分支' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成动作 ›' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择造型 夜行装' }))
+    fireEvent.click(screen.getByRole('button', { name: /自定义动作/ }))
+
+    const generateButton = screen.getByRole('button', { name: /开始生成/ })
+    expect((generateButton as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(screen.getByRole('textbox', { name: '动作描述' }), {
+      target: { value: '   ' },
+    })
+    expect((generateButton as HTMLButtonElement).disabled).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: '← 生成动作' }))
+    expect(screen.getByRole('button', { name: /自定义动作/ })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '← 生成动作' }))
+    expect(screen.getByRole('button', { name: '选择造型 夜行装' })).toBeTruthy()
   })
 
   it('展示三张动作首帧候选并确认用户选择的一张', async () => {

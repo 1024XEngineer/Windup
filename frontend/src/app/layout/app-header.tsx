@@ -153,7 +153,6 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
     >
       <div className="relative mx-auto grid min-h-14 w-full max-w-[90rem] grid-cols-[auto_1fr_auto] items-center gap-4 px-4 sm:px-6 lg:px-8">
         <div className="flex min-w-0 items-center gap-1.5">
-          <PageBackButton />
           <Link
             to="/workspace"
             aria-label="返回 Windup 工作台"
@@ -168,6 +167,7 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
               <WaveText playId={wave.entry === 'brand' ? wave.playId : 0} text="Windup" />
             </strong>
           </Link>
+          <PageBackButton />
         </div>
 
         <nav
@@ -245,10 +245,10 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
                   <div className="relative flex items-start gap-3">
                     <div className="min-w-0">
                       <p className="text-[13px] font-medium leading-5 text-app-ink-soft">
-                        每日前 3 位好友，你各得 200 积分
+                        邀请成功，双方各得 200 积分
                       </p>
                       <p className="mt-0.5 text-[11px] leading-4 text-app-faint">
-                        好友注册共得 500 积分
+                        每日前 3 次邀请可得奖励
                       </p>
                       <Link
                         to="/account?section=invite"

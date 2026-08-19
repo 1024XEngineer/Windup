@@ -11,6 +11,9 @@ onnxruntime 惰性导入(启动慢、按需加载),会话按需构建一次。
 from __future__ import annotations
 
 import io
+import logging
+import shutil
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -19,9 +22,19 @@ from PIL import Image
 
 from .interfaces import MatteProvider
 
-# u2netp:轻量版(~4.7MB)。rembg 官方 release 托管;国内不可达时可预置 model_path。
+logger = logging.getLogger("windup.matte")
+
+# u2netp:轻量版(~4.4MB)。rembg 官方 release 托管;国内不可达时可预置 model_path。
 _U2NETP_URL = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx"
 _DEFAULT_CACHE = Path.home() / ".cache" / "windup" / "u2netp.onnx"
+
+# 全量版(~176MB)。它不是"更好的轻量版",两者漏检的位置不重叠:
+#   · 轻量版把浅肤色角色的脸颊与小腿判成背景(测试反馈的"浅色角色被抠穿"就是这个);
+#   · 全量版把 T-pose 平举的细手臂整条丢掉。
+# 所以取两张 alpha 的逐像素较大值,而不是二选一。实测 9 张:主体覆盖 14.78% → 15.77%,
+# 漏检最严重那张(林间斥候)的洞从 11.69% 降到 0.06%,代价是 0.27s/帧 → 0.77s/帧。
+_U2NET_URL = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx"
+_REFINE_CACHE = Path.home() / ".cache" / "windup" / "u2net.onnx"
 
 # u2net 预处理常量(与 rembg 一致)。
 _MEAN = (0.485, 0.456, 0.406)
@@ -52,6 +65,33 @@ _BG_FLAT_STD = 8.0  # 四角色标准差上限;超过说明底不是纯色,不�
 # 取 2 是为容下 2 px 宽的边框;真正不均匀的底(噪声/渐变/拼色)让多少都照样超阈值,守卫不松。
 _EDGE_SKIP = 2
 _CORNER = 12        # 每个角的采样块边长
+
+
+def _download_atomic(url: str, dest: Path) -> None:
+    """下到同目录的临时文件,整个传完再原子改名。
+
+    直接写目标路径的话,176MB 传到一半断开会留下一个不完整文件,而之后每次都靠
+    ``exists()`` 判断"已经有了" —— 网络恢复了也不会重下,ONNX 会话建不起来,这台机器
+    就长期退回单模型,而单模型正是会把浅肤色角色抠穿的那条路。同目录是为了让 replace
+    落在同一文件系统上,跨设备改名不是原子的。
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=dest.parent, suffix=".part", delete=False) as tmp:
+        part = Path(tmp.name)
+    try:
+        with urllib.request.urlopen(url) as resp, part.open("wb") as out:
+            shutil.copyfileobj(resp, out)
+        part.replace(dest)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
+
+
+def _saliency(session, tensor: np.ndarray) -> np.ndarray:
+    """一个 u2net 会话的前向 → 归一化到 [0,1] 的二维显著性图。"""
+    pred = session.run(None, {session.get_inputs()[0].name: tensor})[0][:, 0, :, :]
+    mi, ma = float(pred.min()), float(pred.max())
+    return ((pred - mi) / max(ma - mi, 1e-6)).squeeze()
 
 
 def _corner_pixels(rgb: np.ndarray) -> np.ndarray:
@@ -195,18 +235,64 @@ def _flat_bg_penalty(rgb: np.ndarray) -> np.ndarray:
 
 
 class OnnxU2NetMatteProvider(MatteProvider):
-    """u2netp.onnx via onnxruntime。frame bytes → 抠好的 PNG(RGBA) bytes。"""
+    """u2net onnx via onnxruntime。frame bytes → 抠好的 PNG(RGBA) bytes。
 
-    def __init__(self, model_path: str | Path | None = None, model_url: str = _U2NETP_URL) -> None:
+    两个模型的 alpha 取逐像素较大值 —— 理由见 :data:`_U2NET_URL` 上方。补充模型取不到时
+    退回单模型并留一条 WARNING:少一层补漏仍能出产物,而为了它整条生成失败不值得;但
+    "少了一层"必须留痕,否则浅色角色被抠穿会被当成模型本身的水平。
+    """
+
+    def __init__(
+        self,
+        model_path: str | Path | None = None,
+        model_url: str = _U2NETP_URL,
+        *,
+        refine_model_path: str | Path | None = None,
+        refine_model_url: str | None = _U2NET_URL,
+    ) -> None:
         self._model_path = Path(model_path) if model_path else _DEFAULT_CACHE
         self._model_url = model_url
         self._session = None  # 惰性
+        self._refine_path = (
+            Path(refine_model_path) if refine_model_path
+            else (_REFINE_CACHE if refine_model_url else None)
+        )
+        self._refine_url = refine_model_url
+        self._refine_session = None
+        self._refine_failed = False
 
     def _ensure_model(self) -> Path:
         if not self._model_path.exists():
-            self._model_path.parent.mkdir(parents=True, exist_ok=True)
-            urllib.request.urlretrieve(self._model_url, self._model_path)
+            _download_atomic(self._model_url, self._model_path)
         return self._model_path
+
+    def _get_refine_session(self):
+        """补充模型的会话;取不到就永久放弃并只警告一次。"""
+        if self._refine_session is not None or self._refine_failed or self._refine_path is None:
+            return self._refine_session
+        try:
+            import onnxruntime as ort
+
+            if not self._refine_path.exists():
+                if not self._refine_url:
+                    raise FileNotFoundError(self._refine_path)
+                _download_atomic(self._refine_url, self._refine_path)
+            try:
+                self._refine_session = ort.InferenceSession(
+                    str(self._refine_path), providers=["CPUExecutionProvider"]
+                )
+            except Exception:
+                # 建会话失败说明这个文件本身不可用(上一次下载留下的残片、或版本不合)。
+                # 留着它会让之后每次都跳过重下,所以就地删掉。
+                self._refine_path.unlink(missing_ok=True)
+                raise
+        except Exception:
+            self._refine_failed = True
+            logger.warning(
+                "抠图补充模型不可用(%s),本进程只用轻量模型 —— 浅肤色角色的脸颊与小腿"
+                "可能被判成背景", self._refine_path, exc_info=True,
+            )
+        return self._refine_session
 
     def _get_session(self):
         if self._session is None:
@@ -226,7 +312,7 @@ class OnnxU2NetMatteProvider(MatteProvider):
         return self._session
 
     def _predict_mask(self, img: Image.Image) -> Image.Image:
-        """u2netp 前向 → 单通道显著性 mask(L,原图尺寸)。"""
+        """两个模型各前向一次,取逐像素较大值 → 单通道显著性 mask(L,原图尺寸)。"""
         im = img.convert("RGB").resize(_SIZE, Image.LANCZOS)
         ary = np.array(im).astype(np.float32)
         ary = ary / max(float(ary.max()), 1e-6)
@@ -235,12 +321,15 @@ class OnnxU2NetMatteProvider(MatteProvider):
             tmp[:, :, c] = (ary[:, :, c] - _MEAN[c]) / _STD[c]
         tensor = np.expand_dims(tmp.transpose(2, 0, 1), 0).astype(np.float32)
 
-        session = self._get_session()
-        pred = session.run(None, {session.get_inputs()[0].name: tensor})[0][:, 0, :, :]
-        mi, ma = float(pred.min()), float(pred.max())
-        pred = (pred - mi) / max(ma - mi, 1e-6)
-        mask = (pred.squeeze() * 255).astype(np.uint8)
-        return Image.fromarray(mask, "L").resize(img.size, Image.LANCZOS)
+        mask = _saliency(self._get_session(), tensor)
+        refine = self._get_refine_session()
+        if refine is not None:
+            # 归一化在每个模型内部各自做完再取 max:两个模型的原始输出量纲不同,
+            # 先合并再归一化会让量纲大的那个把另一个整体压掉。
+            mask = np.maximum(mask, _saliency(refine, tensor))
+        return Image.fromarray(
+            (mask * 255).astype(np.uint8), "L"
+        ).resize(img.size, Image.LANCZOS)
 
     def cutout(self, frame: bytes) -> bytes:
         img = Image.open(io.BytesIO(frame)).convert("RGBA")
