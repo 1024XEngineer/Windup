@@ -9,6 +9,26 @@ const characterDto = {
   reference_image_url: 'https://cdn.windup.test/reference.png',
   character_data: {
     version: 2,
+    templates: [
+      {
+        direction: 'east',
+        source_direction: null,
+        mirror_x: false,
+        image_url: 'https://cdn.windup.test/reference.png',
+      },
+      {
+        direction: 'west',
+        source_direction: 'east',
+        mirror_x: true,
+        image_url: null,
+      },
+      {
+        direction: 'north',
+        source_direction: null,
+        mirror_x: false,
+        image_url: 'https://cdn.windup.test/reference-north.png',
+      },
+    ],
     outfits: [
       {
         id: 'outfit-default',
@@ -111,6 +131,26 @@ describe('characterApis', () => {
           referenceImageUrl: 'https://cdn.windup.test/reference.png',
           dataVersion: 2,
           status: 1,
+          templates: [
+            {
+              direction: 'east',
+              sourceDirection: null,
+              mirrorX: false,
+              imageUrl: 'https://cdn.windup.test/reference.png',
+            },
+            {
+              direction: 'west',
+              sourceDirection: 'east',
+              mirrorX: true,
+              imageUrl: null,
+            },
+            {
+              direction: 'north',
+              sourceDirection: null,
+              mirrorX: false,
+              imageUrl: 'https://cdn.windup.test/reference-north.png',
+            },
+          ],
           outfits: [
             {
               id: 'outfit-default',
@@ -221,6 +261,7 @@ describe('characterApis', () => {
       reference_image_url: 'https://cdn.windup.test/reference.png',
       character_data: {
         version: 2,
+        templates: characterDto.character_data.templates,
         outfits: characterDto.character_data.outfits,
       },
     })

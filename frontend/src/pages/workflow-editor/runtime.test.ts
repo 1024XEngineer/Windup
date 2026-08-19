@@ -222,6 +222,20 @@ describe('createRealWorkflowEditorSession', () => {
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({
         id: '9',
+        templates: [
+          {
+            direction: 'east',
+            sourceDirection: null,
+            mirrorX: false,
+            imageUrl: 'https://assets.windup.test/master.png',
+          },
+          {
+            direction: 'west',
+            sourceDirection: 'east',
+            mirrorX: true,
+            imageUrl: null,
+          },
+        ],
         outfits: [
           expect.objectContaining({
             id: 'outfit-default',
@@ -323,7 +337,7 @@ describe('createRealWorkflowEditorSession', () => {
     expect(create).not.toHaveBeenCalled()
   })
 
-  it('已有 Character 和造型时只推进身份母版节点', async () => {
+  it('已有 Character 和造型时仍持久化已确认的方向母版', async () => {
     const existing = characterWithOutfitFixture()
     const { session, create, update } = await createCharacterTemplateSession({
       characters: [existing],
@@ -334,9 +348,24 @@ describe('createRealWorkflowEditorSession', () => {
       'https://assets.windup.test/master.png',
     )
 
-    expect(character).toEqual(existing)
+    expect(character).toMatchObject({
+      templates: [
+        {
+          direction: 'east',
+          sourceDirection: null,
+          mirrorX: false,
+          imageUrl: 'https://assets.windup.test/master.png',
+        },
+        {
+          direction: 'west',
+          sourceDirection: 'east',
+          mirrorX: true,
+          imageUrl: null,
+        },
+      ],
+    })
     expect(create).not.toHaveBeenCalled()
-    expect(update).not.toHaveBeenCalled()
+    expect(update).toHaveBeenCalledOnce()
     expect(
       session.controller.getWorkflow().nodes.find((node) => node.id === 'template'),
     ).toMatchObject({ status: 'passed', phase: 'completed' })

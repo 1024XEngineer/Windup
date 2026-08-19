@@ -5,6 +5,8 @@ import {
   projectApis,
   ProjectNameConflictError,
   workflowRunApis,
+  characterTemplateImages,
+  characterTemplatesFromImages,
   getDirectionProfile,
   type Character,
   type CharacterApis,
@@ -238,6 +240,13 @@ export function createQuickStartService({
       if (!selected) throw new Error(`缺少${direction}方向角色候选图`)
       await controller.confirmCharacterTemplate(template.id, selected, characterId, direction)
     }
+    if (!characterApis) return
+    const character = await characterApis.get(characterId)
+    const selectedImages = templateNode(controller.getWorkflow()).selectedImages ?? {}
+    const templates = characterTemplatesFromImages(selectedImages)
+    if (JSON.stringify(character.templates ?? []) !== JSON.stringify(templates)) {
+      await characterApis.update({ ...character, templates })
+    }
   }
 
   async function confirmAllFirstFrameDirections(
@@ -325,10 +334,13 @@ export function createQuickStartService({
   }
 
   function existingCharacterNodes(
-    characterId: string,
+    character: Character,
     templateUrl: string,
     prompt: string,
   ): WorkflowNode[] {
+    const selectedImages = characterTemplateImages(character.templates)
+    if (!selectedImages.east) selectedImages.east = templateUrl
+    const referenceMedia = [...new Set(Object.values(selectedImages))] as MediaReference[]
     return [
       {
         id: 'character-setup',
@@ -338,7 +350,7 @@ export function createQuickStartService({
         dependsOnNodeIds: [],
         generations: [],
         error: null,
-        input: { characterId, prompt, referenceMedia: [templateUrl as MediaReference] },
+        input: { characterId: character.id, prompt, referenceMedia },
       },
       {
         id: 'character-template',
@@ -349,6 +361,7 @@ export function createQuickStartService({
         generations: [],
         error: null,
         selectedImageUrl: templateUrl,
+        selectedImages,
       },
     ]
   }
@@ -409,18 +422,25 @@ export function createQuickStartService({
 
     // 先用 WorkflowRun 的 version 确定候选图胜者，失败的客户端不得改写共用 Character。
     await persistRun(setup.id, character.id)
+    const selectedImages = {
+      ...templateNode(controller.getWorkflow()).selectedImages,
+      east: selectedImageUrl,
+    }
+    const templates = characterTemplatesFromImages(selectedImages)
     const existingOutfit = character.outfits.find(
       (item) => item.previewUrl === selectedImageUrl || item.id === 'outfit-default',
     )
     const outfitId = existingOutfit?.id ?? 'outfit-default'
     const characterMatchesSelection =
       character.referenceImageUrl === selectedImageUrl &&
-      existingOutfit?.previewUrl === selectedImageUrl
+      existingOutfit?.previewUrl === selectedImageUrl &&
+      JSON.stringify(character.templates ?? []) === JSON.stringify(templates)
     if (!characterMatchesSelection) {
       try {
         await characterApis.update({
           ...character,
           referenceImageUrl: selectedImageUrl,
+          templates,
           outfits: existingOutfit
             ? character.outfits.map((item) =>
                 item.id === existingOutfit.id ? { ...item, previewUrl: selectedImageUrl } : item,
@@ -839,7 +859,12 @@ export function createQuickStartService({
     if (!characterApis) throw new Error('角色服务尚未配置，不能增加动作')
     const character = await characterApis.get(target.characterId)
     const outfit = character.outfits.find((item) => item.id === target.outfitId)
-    if (!outfit?.previewUrl) {
+    if (!outfit) {
+      throw new Error('当前造型还没有可用的角色母版，请先完成定妆再生成动作')
+    }
+    const sourceImages = characterTemplateImages(character.templates)
+    const templateUrl = sourceImages.east ?? outfit.previewUrl ?? character.referenceImageUrl
+    if (!templateUrl) {
       throw new Error('当前造型还没有可用的角色母版，请先完成定妆再生成动作')
     }
 
@@ -859,8 +884,8 @@ export function createQuickStartService({
       : await createRun(
           character.projectId,
           existingCharacterNodes(
-            character.id,
-            outfit.previewUrl,
+            character,
+            templateUrl,
             character.description ?? actionDescription,
           ),
           project.directionalMovement,

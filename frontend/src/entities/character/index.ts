@@ -1,7 +1,12 @@
 import { createApiClient, getApiAccessToken } from '@/shared/api'
 import type { Paged, PageQuery } from '@/shared/pagination'
 
-import { isActionDirection, resolveActionDirection, type ActionDirection } from './directions'
+import {
+  ACTION_DIRECTIONS,
+  isActionDirection,
+  resolveActionDirection,
+  type ActionDirection,
+} from './directions'
 
 export type { ActionDirection } from './directions'
 
@@ -33,6 +38,14 @@ export interface ActionSequence {
   readonly mirrorX: boolean
   readonly frameCount: number
   readonly frames: Frame[]
+}
+
+/** Character 级母版；真实源方向保存图片，镜像方向只保存来源关系。 */
+export interface CharacterTemplate {
+  readonly direction: ActionDirection
+  readonly sourceDirection: ActionDirection | null
+  readonly mirrorX: boolean
+  readonly imageUrl: string | null
 }
 
 export interface Action {
@@ -68,6 +81,8 @@ export interface Character {
   name: string | null
   description: string | null
   referenceImageUrl: string | null
+  /** 后续新增动作时恢复各方向输入，避免用 east 母版生成其他朝向。 */
+  templates?: CharacterTemplate[]
   /** character_data.version，更新整棵资产树时必须原样带回。 */
   dataVersion: number
   status: CharacterStatus
@@ -113,6 +128,13 @@ interface CharacterActionSequenceDto {
   frames: CharacterFrameDto[]
 }
 
+interface CharacterTemplateDto {
+  direction: unknown
+  source_direction: unknown
+  mirror_x: unknown
+  image_url: unknown
+}
+
 interface CharacterActionDto {
   id: string
   type: string
@@ -134,6 +156,7 @@ interface CharacterOutfitDto {
 
 interface CharacterDataDto {
   version: number
+  templates?: CharacterTemplateDto[]
   outfits: CharacterOutfitDto[]
 }
 
@@ -221,6 +244,84 @@ function mapActionSequences(dtos: CharacterActionSequenceDto[]): ActionSequence[
   return sequences
 }
 
+function mapCharacterTemplates(dtos: CharacterTemplateDto[]): CharacterTemplate[] {
+  const directions = new Set<ActionDirection>()
+  const templates = dtos.map((dto) => {
+    if (!isActionDirection(dto.direction) || directions.has(dto.direction)) {
+      throw new TypeError('角色母版方向无效或重复')
+    }
+    directions.add(dto.direction)
+    const resolution = resolveActionDirection(dto.direction)
+    const sourceDirection = dto.source_direction
+    if (
+      typeof dto.mirror_x !== 'boolean' ||
+      (sourceDirection !== null && !isActionDirection(sourceDirection)) ||
+      dto.mirror_x !== resolution.mirrorX ||
+      sourceDirection !== (resolution.mirrorX ? resolution.sourceDirection : null)
+    ) {
+      throw new TypeError('角色母版方向镜像关系无效')
+    }
+    if (dto.mirror_x ? dto.image_url !== null : typeof dto.image_url !== 'string') {
+      throw new TypeError('角色母版图片与方向类型不匹配')
+    }
+    const imageUrl = typeof dto.image_url === 'string' ? dto.image_url.trim() : null
+    if (!dto.mirror_x && !imageUrl) throw new TypeError('真实源方向缺少角色母版图片')
+    return {
+      direction: dto.direction,
+      sourceDirection,
+      mirrorX: dto.mirror_x,
+      imageUrl,
+    }
+  })
+
+  const byDirection = new Map(templates.map((template) => [template.direction, template]))
+  for (const template of templates) {
+    if (template.sourceDirection === null) continue
+    const source = byDirection.get(template.sourceDirection)
+    if (
+      source === undefined ||
+      source.sourceDirection !== null ||
+      source.mirrorX ||
+      !source.imageUrl
+    ) {
+      throw new TypeError('镜像角色母版缺少真实源方向')
+    }
+  }
+  return templates
+}
+
+/** 将 WorkflowRun 选中的真实源图转成可持久化的完整方向关系。 */
+export function characterTemplatesFromImages(
+  images: Partial<Record<ActionDirection, string>>,
+): CharacterTemplate[] {
+  return ACTION_DIRECTIONS.flatMap((direction) => {
+    const resolution = resolveActionDirection(direction)
+    const imageUrl = images[resolution.sourceDirection]?.trim()
+    if (!imageUrl) return []
+    return [
+      {
+        direction,
+        sourceDirection: resolution.mirrorX ? resolution.sourceDirection : null,
+        mirrorX: resolution.mirrorX,
+        imageUrl: resolution.mirrorX ? null : imageUrl,
+      },
+    ]
+  })
+}
+
+/** 只还原真实源图；镜像方向由消费方根据关系生成。 */
+export function characterTemplateImages(
+  templates: readonly CharacterTemplate[] = [],
+): Partial<Record<ActionDirection, string>> {
+  return Object.fromEntries(
+    templates.flatMap((template) =>
+      template.sourceDirection === null && !template.mirrorX && template.imageUrl
+        ? [[template.direction, template.imageUrl]]
+        : [],
+    ),
+  )
+}
+
 function mapAction(dto: CharacterActionDto, outfitId: string): Action {
   return {
     id: dto.id,
@@ -259,6 +360,7 @@ function mapCharacter(dto: CharacterDto): Character {
     name: dto.name,
     description: dto.description,
     referenceImageUrl: dto.reference_image_url,
+    templates: mapCharacterTemplates(dto.character_data.templates ?? []),
     dataVersion: dto.character_data.version,
     status: mapCharacterStatus(dto.status),
     outfits: dto.character_data.outfits.map((outfit) => mapOutfit(outfit, characterId)),
@@ -354,6 +456,12 @@ export const characterApis: CharacterApis = {
           reference_image_url: character.referenceImageUrl,
           character_data: {
             version: character.dataVersion,
+            templates: (character.templates ?? []).map((template) => ({
+              direction: template.direction,
+              source_direction: template.sourceDirection,
+              mirror_x: template.mirrorX,
+              image_url: template.imageUrl,
+            })),
             outfits: character.outfits.map(toOutfitDto),
           },
         },

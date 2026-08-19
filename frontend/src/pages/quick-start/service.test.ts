@@ -1340,6 +1340,28 @@ describe('createQuickStartService', () => {
         },
       ],
     })
+    Object.assign(character, {
+      templates: [
+        {
+          direction: 'east',
+          sourceDirection: null,
+          mirrorX: false,
+          imageUrl: 'existing.png',
+        },
+        {
+          direction: 'west',
+          sourceDirection: 'east',
+          mirrorX: true,
+          imageUrl: null,
+        },
+        {
+          direction: 'north',
+          sourceDirection: null,
+          mirrorX: false,
+          imageUrl: 'existing-north.png',
+        },
+      ],
+    })
     const generationApis = pendingGenerationApis()
     const service = createQuickStartService({
       workflowRunApis: createWorkflowRunApis(),
@@ -1362,7 +1384,16 @@ describe('createQuickStartService', () => {
     const run = session.getWorkflow()
     expect(run.nodes[0]).toMatchObject({
       type: 'character-setup',
-      input: { characterId: character.id, prompt: '' },
+      input: {
+        characterId: character.id,
+        prompt: '',
+        referenceMedia: ['existing.png', 'existing-north.png'],
+      },
+    })
+    expect(run.nodes[1]).toMatchObject({
+      type: 'character-template',
+      selectedImageUrl: 'existing.png',
+      selectedImages: { east: 'existing.png', north: 'existing-north.png' },
     })
     expect(run.nodes.find((node) => node.type === 'action-first-frame')).toMatchObject({
       input: { name: '待机', type: 'idle', prompt: null },

@@ -293,13 +293,14 @@ class RenderFrameStrategy(DerivationStrategy):
             "derive",
             0,
             3,
-            f"渲 {self._directions} 朝向 × {action.n_frames} 帧"
+            f"渲 {want} 朝向 × {action.n_frames} 帧"
             f"({self._size[0]}×{self._size[1]},材质 {self._material})",
         )
         sheet: SpriteSheet = self._renderer.render(
             rigged_model,
             clip=action.action.value,
             directions=self._directions,
+            direction=want,
             frames=action.n_frames,
             size=self._size,
             material=self._material,

@@ -10,6 +10,7 @@
 
     windup_character
     └── character_data            JSONB: 角色完整数据
+        ├── templates[]           list[CharacterTemplateSequence]: 各源方向母版与镜像关系
         └── outfits[]             list[CharacterOutfit]: 造型列表
             ├── id                str: 造型稳定 ID
             ├── name              str: 造型名称
@@ -180,6 +181,33 @@ class CharacterActionSequence(BaseModel):
         return self
 
 
+class CharacterTemplateSequence(BaseModel):
+    """角色母版的真实源方向或水平镜像关系。"""
+
+    direction: ActionDirection
+    source_direction: ActionDirection | None = Field(
+        default=None, description="镜像方向引用的真实源方向"
+    )
+    mirror_x: bool = Field(default=False, description="是否水平镜像源方向")
+    image_url: str | None = Field(default=None, description="真实源方向的母版 URL")
+
+    @model_validator(mode="after")
+    def validate_source_or_mirror(self) -> "CharacterTemplateSequence":
+        expected_source = _MIRROR_SOURCES.get(self.direction)
+        if expected_source is None:
+            if self.mirror_x or self.source_direction is not None:
+                raise ValueError("角色母版方向镜像关系无效")
+            if not self.image_url or not self.image_url.strip():
+                raise ValueError("真实源方向必须包含角色母版 URL")
+            return self
+
+        if not self.mirror_x or self.source_direction != expected_source:
+            raise ValueError("角色母版方向镜像关系无效")
+        if self.image_url is not None:
+            raise ValueError("镜像角色母版不能保存独立图片")
+        return self
+
+
 class CharacterAction(BaseModel):
     """动作（从属于某个造型）。"""
 
@@ -239,7 +267,32 @@ class CharacterOutfit(BaseModel):
 
 
 class CharacterData(BaseModel):
-    """角色完整数据（造型→动作→帧）。"""
+    """角色完整数据（方向母版与造型→动作→帧）。"""
 
     version: int = Field(default=1, description="结构版本")
+    templates: list[CharacterTemplateSequence] = Field(
+        default_factory=list, description="角色各源方向母版与镜像关系"
+    )
     outfits: list[CharacterOutfit] = Field(default_factory=list, description="造型列表")
+
+    @model_validator(mode="after")
+    def validate_template_relations(self) -> "CharacterData":
+        by_direction: dict[str, CharacterTemplateSequence] = {}
+        for template in self.templates:
+            if template.direction in by_direction:
+                raise ValueError("角色母版不能包含重复方向")
+            by_direction[template.direction] = template
+
+        for template in self.templates:
+            source_direction = template.source_direction
+            if source_direction is None:
+                continue
+            source = by_direction.get(source_direction)
+            if (
+                source is None
+                or source.source_direction is not None
+                or source.mirror_x
+                or not source.image_url
+            ):
+                raise ValueError("镜像角色母版缺少真实源方向")
+        return self

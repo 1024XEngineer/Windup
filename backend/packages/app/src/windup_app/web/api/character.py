@@ -73,18 +73,25 @@ def _extract_object_keys(character: Character) -> list[str]:
     """
     prefix = storage_settings.download_base + "/"
     keys: list[str] = []
+    seen: set[str] = set()
+
+    def add_url(url: str | None) -> None:
+        if not url or not url.startswith(prefix):
+            return
+        key = url[len(prefix) :]
+        if key not in seen:
+            seen.add(key)
+            keys.append(key)
 
     # 参考图
-    url = character.reference_image_url
-    if url and url.startswith(prefix):
-        keys.append(url[len(prefix) :])
+    add_url(character.reference_image_url)
 
     # character_data 内的 URL
     data = character.character_data or {}
+    for template in data.get("templates", []):
+        add_url(template.get("image_url"))
     for outfit in data.get("outfits", []):
-        url = outfit.get("preview_url")
-        if url and url.startswith(prefix):
-            keys.append(url[len(prefix) :])
+        add_url(outfit.get("preview_url"))
         for action in outfit.get("actions", []):
             frame_groups = [action.get("frames", [])]
             frame_groups.extend(
@@ -92,9 +99,7 @@ def _extract_object_keys(character: Character) -> list[str]:
             )
             for frames in frame_groups:
                 for frame in frames:
-                    url = frame.get("image_url")
-                    if url and url.startswith(prefix):
-                        keys.append(url[len(prefix) :])
+                    add_url(frame.get("image_url"))
 
     return keys
 
