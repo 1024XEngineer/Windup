@@ -206,6 +206,16 @@
             ],
             "title": "Reference Video Url"
           },
+          "stance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CharacterStance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "video_model": {
             "anyOf": [
               {
@@ -529,6 +539,16 @@
         ],
         "title": "CharacterOutfit",
         "type": "object"
+      },
+      "CharacterStance": {
+        "description": "角色体型 —— 决定\"手臂 / 手肘\"这类人体部位词能不能进提示词。\n\n非双足角色的描述里出现\"手臂\",模型会给它凭空接上一对人的上肢来调和文图矛盾,\n而帧数、时长、成色全部正常。成员按\"发力部位不同\"分,每个非双足成员都要在\n``ai_engine.prompt.adapter`` 的替换建议表里有自己那套部位说法,否则拒绝理由\n只能告诉用户\"不行\"、给不出改法。",
+        "enum": [
+          "biped",
+          "quadruped",
+          "serpentine"
+        ],
+        "title": "CharacterStance",
+        "type": "string"
       },
       "CharacterUpdate": {
         "description": "更新角色请求——所有字段可选。",
