@@ -72,30 +72,34 @@ const SHARED_BRANCH = 'shared'
   搬成工具类后写在这里，好处是能看见哪些元素共用同一套外观，而不是被选择器隐式波及。
   nodrag/nopan/nowheel 是 React Flow 的约定类：让卡片内的交互不被画布手势吞掉。
 */
-const CARD_STACK = 'grid gap-[17px] nodrag nopan nowheel'
+const CARD_STACK = 'grid gap-3 nodrag nopan nowheel'
+
+const CARD_BUTTON_BASE =
+  'min-h-9 rounded-lg border px-3 py-2 text-[11px] font-semibold transition-[color,background-color,border-color,transform,box-shadow] ' +
+  'duration-150 ease-out focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent ' +
+  'enabled:active:translate-y-px enabled:active:scale-[0.98] motion-reduce:transform-none disabled:cursor-not-allowed ' +
+  'disabled:border-app-line disabled:bg-app-surface-muted disabled:text-app-faint'
 
 const CARD_BUTTON =
-  'min-h-[42px] rounded-lg border border-app-accent bg-app-accent px-3 py-[9px] text-[11px] ' +
-  'font-[750] text-app-on-accent enabled:hover:border-app-accent-hover enabled:hover:bg-app-accent-hover ' +
-  'aria-pressed:border-app-accent-hover aria-pressed:bg-app-accent-hover disabled:cursor-not-allowed ' +
-  'disabled:border-app-line disabled:bg-app-surface-muted disabled:text-app-faint'
+  `${CARD_BUTTON_BASE} border-app-accent bg-app-accent text-app-on-accent ` +
+  'enabled:hover:border-app-accent-hover enabled:hover:bg-app-accent-hover enabled:hover:shadow-app-menu ' +
+  'aria-pressed:border-app-accent-hover aria-pressed:bg-app-accent-hover'
+
+const CARD_BUTTON_SECONDARY =
+  `${CARD_BUTTON_BASE} border-app-line-strong bg-app-surface-raised text-app-ink-soft ` +
+  'enabled:hover:border-app-accent enabled:hover:bg-app-accent-muted enabled:hover:text-app-accent'
 
 /** 缩略图按钮：沿用卡片按钮的尺寸约定，但换成浅底，让图片自己当主角。 */
 const THUMB_BUTTON =
   'min-h-[42px] rounded-lg border border-[var(--color-app-line)] bg-app-surface-raised p-1 ' +
-  'aria-pressed:border-[var(--color-app-ink)] aria-pressed:bg-app-surface-raised ' +
-  'aria-pressed:shadow-app-pulse disabled:cursor-not-allowed'
-
-const THUMB_IMAGE = 'block aspect-square w-full rounded-lg object-cover'
-
-/** 已确认的母版/首帧：像素资产按原样放大，不做平滑。 */
-const MASTER_IMAGE =
-  'block aspect-square w-full rounded-xl border border-[var(--color-app-line)] bg-app-surface ' +
-  'object-cover [image-rendering:pixelated]'
+  'transition-[border-color,background-color,transform,box-shadow] duration-150 ease-out ' +
+  'hover:border-app-line-strong active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 ' +
+  'focus-visible:outline-app-accent motion-reduce:transform-none aria-pressed:border-app-accent ' +
+  'aria-pressed:bg-app-surface-raised aria-pressed:shadow-[0_0_0_2px_var(--color-app-accent-soft)] ' +
+  'disabled:cursor-not-allowed'
 
 const CARD_SUMMARY =
-  'm-0 rounded-[10px] border border-[var(--color-app-line)] bg-app-surface px-3 py-2.5 ' +
-  'text-[11px] leading-[1.6] text-[var(--color-app-muted)]'
+  'm-0 rounded-lg bg-app-accent-muted px-3 py-2 text-[11px] leading-[1.55] text-app-ink-soft'
 
 const CARD_TEXT = 'm-0 text-[11px] leading-[1.6] text-[var(--color-app-muted)]'
 
@@ -309,7 +313,7 @@ interface ProjectionInput {
 
 function NodeExportButton({ model }: { model: ExportPackageModel | undefined }) {
   return model ? (
-    <ExportButton model={model} className={`${CARD_BUTTON} nodrag nopan nowheel`} />
+    <ExportButton model={model} className={`${CARD_BUTTON_SECONDARY} nodrag nopan nowheel`} />
   ) : null
 }
 
@@ -376,6 +380,58 @@ function contentFor(node: WorkflowNode, input: ProjectionInput): ReactNode {
   if (node.type === 'action-generation-method') return <MethodContent node={node} input={input} />
   if (node.type === 'action-full-frame') return <AnimationContent node={node} input={input} />
   return <ReviewContent node={node} input={input} />
+}
+
+type WorkflowImageVariant = 'master' | 'thumbnail' | 'frame'
+
+/** 图片先占住最终版面，再从骨架淡入，避免远程资产到达时把节点和连线一起顶动。 */
+function WorkflowImage({
+  src,
+  alt,
+  variant,
+}: {
+  src: string
+  alt: string
+  variant: WorkflowImageVariant
+}) {
+  const [state, setState] = useState<'loading' | 'loaded' | 'failed'>('loading')
+
+  useEffect(() => setState('loading'), [src])
+
+  const frameClass =
+    variant === 'master'
+      ? 'aspect-[4/3] rounded-lg border border-app-line bg-app-surface'
+      : variant === 'thumbnail'
+        ? 'aspect-square rounded-md bg-app-surface'
+        : 'aspect-square rounded border border-app-line bg-app-surface'
+  const imageClass =
+    variant === 'master' ? 'object-contain p-2 [image-rendering:pixelated]' : 'object-cover'
+
+  return (
+    <span className={`relative block w-full overflow-hidden ${frameClass}`}>
+      {state === 'loading' ? (
+        <span
+          role="status"
+          aria-label={`正在加载${alt}`}
+          className="workflow-image-skeleton absolute inset-0"
+        />
+      ) : null}
+      {state === 'failed' ? (
+        <span className="absolute inset-0 grid place-items-center px-2 text-center text-[10px] text-app-faint">
+          图片加载失败
+        </span>
+      ) : null}
+      <img
+        className={`absolute inset-0 block h-full w-full transition-opacity duration-200 ease-out motion-reduce:transition-none ${imageClass} ${
+          state === 'loaded' ? 'opacity-100' : 'opacity-0'
+        }`}
+        src={src}
+        alt={alt}
+        onLoad={() => setState('loaded')}
+        onError={() => setState('failed')}
+      />
+    </span>
+  )
 }
 
 function CharacterSetupContent({
@@ -548,7 +604,7 @@ function CharacterTemplateContent({
                 }))
               }
             >
-              <img className={THUMB_IMAGE} src={image.url} alt={`角色候选 ${index + 1}`} />
+              <WorkflowImage src={image.url} alt={`角色候选 ${index + 1}`} variant="thumbnail" />
             </button>
           ))}
         </div>
@@ -575,7 +631,7 @@ function CharacterTemplateContent({
       ) ?? input.character?.outfits[0]
     return (
       <div className={CARD_STACK}>
-        <img className={MASTER_IMAGE} src={node.selectedImageUrl} alt="已确认身份母版" />
+        <WorkflowImage src={node.selectedImageUrl} alt="已确认身份母版" variant="master" />
         <span className="text-center text-[11px] text-[var(--color-app-muted)]">身份已锁定</span>
         {outfit ? <NodeExportButton model={input.exportModels.get(outfit.id)} /> : null}
         <div className="grid gap-2">
@@ -643,7 +699,7 @@ function CharacterTemplateContent({
         </div>
         <button
           type="button"
-          className="absolute -bottom-4 -right-4 z-8 grid h-8 min-h-8 w-8 place-items-center rounded-full border border-[var(--color-app-ink)] bg-app-surface-raised p-0 text-[15px] leading-none text-[var(--color-app-ink)] shadow-[var(--shadow-app-panel)] hover:bg-[var(--color-app-ink)] hover:text-app-on-accent"
+          className="absolute -bottom-3.5 -right-3.5 z-8 grid h-8 min-h-8 w-8 place-items-center rounded-full border border-app-line-strong bg-app-surface-raised p-0 text-[15px] leading-none text-app-accent shadow-app-menu transition-[color,background-color,border-color,transform,box-shadow] duration-150 ease-out hover:border-app-accent hover:bg-app-accent-muted hover:shadow-app-card active:translate-y-px active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent motion-reduce:transform-none"
           aria-label="添加动作分支"
           onClick={() => {
             input.setActionMenuLevel('root')
@@ -898,7 +954,11 @@ function FirstFrameContent({
                 }))
               }
             >
-              <img className={THUMB_IMAGE} src={image.url} alt={`动作首帧候选 ${index + 1}`} />
+              <WorkflowImage
+                src={image.url}
+                alt={`动作首帧候选 ${index + 1}`}
+                variant="thumbnail"
+              />
             </button>
           ))}
         </div>
@@ -920,7 +980,7 @@ function FirstFrameContent({
   if (node.phase === 'completed' && node.selectedFirstFrameUrl) {
     return (
       <div className={CARD_STACK}>
-        <img className={MASTER_IMAGE} src={node.selectedFirstFrameUrl} alt="已确认动作首帧" />
+        <WorkflowImage src={node.selectedFirstFrameUrl} alt="已确认动作首帧" variant="master" />
         <div className="grid gap-2">
           <button
             type="button"
@@ -1017,7 +1077,7 @@ function MethodContent({
       >
         视频裁剪
       </button>
-      <button type="button" className={CARD_BUTTON} disabled title="后端接口尚未提供">
+      <button type="button" className={CARD_BUTTON_SECONDARY} disabled title="后端接口尚未提供">
         3D 转 2D · 尚未开放
       </button>
     </div>
@@ -1073,11 +1133,11 @@ function AnimationContent({
       <div className={CARD_STACK}>
         <div className="nodrag nopan nowheel grid max-h-40 grid-cols-8 gap-[3px] overflow-auto">
           {frames.map((frame, index) => (
-            <img
+            <WorkflowImage
               key={`${frame.url}-${index}`}
-              className="block aspect-square w-full rounded border border-[var(--color-app-line)] object-cover"
               src={frame.url}
               alt={`动画帧 ${index + 1}`}
+              variant="frame"
             />
           ))}
         </div>
@@ -1130,23 +1190,29 @@ function ReviewContent({ node, input }: { node: ReviewWorkflowNode; input: Proje
   )
 }
 
-function WorkflowCard({ data }: NodeProps<WorkflowCardNode>) {
+function WorkflowCard({ data, selected }: NodeProps<WorkflowCardNode>) {
   return (
     <article
+      aria-label={data.title}
       className={[
-        'w-[368px] overflow-visible rounded-xl border border-[var(--color-app-line)] bg-app-surface-raised/98 shadow-[var(--shadow-app-panel)]',
+        'w-[296px] overflow-visible rounded-[10px] border bg-app-surface-raised/98 transition-[border-color,box-shadow,opacity] duration-150 ease-out',
+        selected
+          ? 'border-app-accent shadow-app-card'
+          : 'border-app-line shadow-app-menu hover:border-app-line-strong',
         data.status === 'failed' ? 'border-dashed' : 'border-solid',
-        data.status === 'locked' ? 'opacity-45' : '',
+        data.status === 'locked' ? 'opacity-60' : '',
       ].join(' ')}
     >
       <Handle type="target" position={Position.Left} isConnectable={false} />
-      <header className="workflow-card__handle grid min-h-[62px] cursor-grab select-none content-center gap-0.5 rounded-t-[11px] bg-app-accent px-[18px] py-3 text-app-on-accent active:cursor-grabbing">
-        <span className="text-[8px] font-extrabold tracking-[0.12em] text-app-line">
+      <header className="workflow-card__handle flex min-h-[50px] cursor-grab select-none items-center gap-2 px-3.5 py-2.5 active:cursor-grabbing">
+        <span className="font-mono text-[9px] font-bold leading-none text-app-muted">
           {data.eyebrow}
         </span>
-        <strong className="text-sm font-bold">{data.title}</strong>
+        <strong className="text-[13px] font-semibold text-app-ink-soft">{data.title}</strong>
       </header>
-      <div className="rounded-b-[11px] bg-app-surface-raised/98 p-[21px]">{data.content}</div>
+      <div className="rounded-b-[9px] bg-app-surface-raised/98 px-3.5 pb-3.5 pt-1">
+        {data.content}
+      </div>
       <Handle type="source" position={Position.Right} isConnectable={false} />
     </article>
   )
@@ -1179,6 +1245,14 @@ function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInpu
   }
   const label =
     node.status === 'locked' ? '等待上游节点' : node.phase === 'generating' ? '生成中…' : '处理中…'
+  if (node.phase === 'generating' || (node.status === 'active' && label === '处理中…')) {
+    return (
+      <p role="status" className={`${CARD_SUMMARY} flex items-center gap-2`}>
+        <span className="workflow-status-pulse h-1.5 w-1.5 shrink-0 rounded-full bg-app-accent" />
+        {label}
+      </p>
+    )
+  }
   return <p className={CARD_SUMMARY}>{label}</p>
 }
 
@@ -1226,28 +1300,28 @@ function branchIndexFor(branchKey: string, actionRootIds: string[]): number {
 
 function positionFor(type: WorkflowNode['type'], branchIndex: number) {
   const x: Record<WorkflowNode['type'], number> = {
-    'character-setup': 70,
-    'character-template': 510,
-    'action-first-frame': 950,
-    'action-generation-method': 1390,
-    'action-full-frame': 1820,
-    review: 2250,
+    'character-setup': 60,
+    'character-template': 400,
+    'action-first-frame': 740,
+    'action-generation-method': 1080,
+    'action-full-frame': 1420,
+    review: 1760,
   }
   const isActionBranch = type.startsWith('action') || type === 'review'
   return {
     x: x[type],
-    y: isActionBranch ? 60 + branchIndex * 510 : 280,
+    y: isActionBranch ? 48 + branchIndex * 380 : 218,
   }
 }
 
 /** 卡片抬头文案。序号是流程顺序，与 positionFor 的横向排布一致。 */
 const CARD_LABELS: Record<WorkflowNode['type'], { eyebrow: string; title: string }> = {
-  'character-setup': { eyebrow: '01 · ORIGIN', title: '角色设定' },
-  'character-template': { eyebrow: '02 · MASTER', title: '身份母版' },
-  'action-first-frame': { eyebrow: '03 · FIRST FRAME', title: '动作首帧' },
-  'action-generation-method': { eyebrow: '04 · METHOD', title: '生产方式' },
-  'action-full-frame': { eyebrow: '05 · ANIMATION', title: '完整动画' },
-  review: { eyebrow: '06 · REVIEW', title: '动画审核' },
+  'character-setup': { eyebrow: '01', title: '角色设定' },
+  'character-template': { eyebrow: '02', title: '身份母版' },
+  'action-first-frame': { eyebrow: '03', title: '动作首帧' },
+  'action-generation-method': { eyebrow: '04', title: '生产方式' },
+  'action-full-frame': { eyebrow: '05', title: '完整动画' },
+  review: { eyebrow: '06', title: '动画审核' },
 }
 
 /**
