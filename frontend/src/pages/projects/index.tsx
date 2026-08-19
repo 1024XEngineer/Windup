@@ -10,7 +10,7 @@ import {
   type Project,
 } from '@/entities'
 import type { Paged } from '@/shared/pagination'
-import { Pagination } from '@/shared/ui'
+import { AssetThumbnailImage, Pagination } from '@/shared/ui'
 
 const PROJECT_PAGE_SIZE = 12
 const PROJECT_PREVIEW_CHARACTER_LIMIT = 6
@@ -370,7 +370,7 @@ function ProjectGalleryTile({
       >
         <div className="relative aspect-[16/10] overflow-hidden rounded-[1.25rem] border border-app-line bg-app-surface-muted transition duration-300 group-hover/tile:-translate-y-0.5 group-hover/tile:border-app-line-strong">
           {previewUrl ? (
-            <img
+            <AssetThumbnailImage
               src={previewUrl}
               alt={`${project.name}的项目预览`}
               className="h-full w-full object-contain p-6 [image-rendering:pixelated] transition-transform duration-500 group-hover/tile:scale-[1.025]"
