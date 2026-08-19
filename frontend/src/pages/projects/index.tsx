@@ -147,13 +147,19 @@ export function ProjectsPage() {
           }
         } catch {
           preview = { status: 'error' }
+        } finally {
+          if (!request.cancelled) {
+            if (preview.status !== 'error') {
+              projectPreviewCache.current.set(request.projectId, preview)
+            }
+            request.resolve(preview)
+            if (projectPreviewRequests.current.get(request.projectId) === request) {
+              projectPreviewRequests.current.delete(request.projectId)
+            }
+          }
+          activeProjectPreviewRequests.current -= 1
+          processProjectPreviewQueue()
         }
-        if (request.cancelled) return
-        if (preview.status !== 'error') projectPreviewCache.current.set(request.projectId, preview)
-        request.resolve(preview)
-        projectPreviewRequests.current.delete(request.projectId)
-        activeProjectPreviewRequests.current -= 1
-        processProjectPreviewQueue()
       })()
     }
   }
@@ -166,7 +172,6 @@ export function ProjectsPage() {
       request.controller.abort()
       request.resolve({ status: 'loading' })
       projectPreviewRequests.current.delete(projectId)
-      if (request.state === 'active') activeProjectPreviewRequests.current -= 1
     })
     projectPreviewQueue.current = projectPreviewQueue.current.filter(
       (request) => !request.cancelled,

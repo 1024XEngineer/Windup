@@ -462,13 +462,14 @@ describe('ProjectsPage', () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
     vi.stubGlobal('fetch', backend.fetch)
     const signals: AbortSignal[] = []
+    const releaseRequests: Array<() => void> = []
     const listSpy = vi.spyOn(characterApis, 'listByProject').mockImplementation(
       (_projectId, query) =>
-        new Promise((_resolve, reject) => {
+        new Promise((resolve) => {
           const signal = query?.signal
           if (!signal) throw new Error('项目预览请求缺少取消信号')
           signals.push(signal)
-          signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+          releaseRequests.push(() => resolve({ items: [], total: 0, page: 1, pageSize: 6 }))
         }),
     )
 
@@ -483,8 +484,11 @@ describe('ProjectsPage', () => {
     await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(2))
     fireEvent.click(screen.getByRole('button', { name: '下一页' }))
 
-    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(3))
     expect(signals.slice(0, 2).every((signal) => signal.aborted)).toBe(true)
+    expect(listSpy).toHaveBeenCalledTimes(2)
+    releaseRequests[0]?.()
+    releaseRequests[1]?.()
+    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(3))
     expect(signals[2]?.aborted).toBe(false)
   })
 
