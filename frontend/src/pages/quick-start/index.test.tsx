@@ -8,6 +8,11 @@ import { WorkflowRunConflictError, type WorkflowRun } from '@/entities'
 import { ApiError } from '@/shared/api'
 import type { ExportPackageModel } from '@/features/export-package'
 import { readActiveRun, rememberActiveRun } from '@/features/active-run'
+import type {
+  CreateQuickStartAgentOptions,
+  PlannerInput,
+  PlannerResult,
+} from '@/features/quick-start-agent'
 import { QuickStartPage } from './index'
 
 afterEach(() => {
@@ -157,7 +162,30 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-function renderAt(path: string, service: QuickStartEntryService) {
+function agentFor(
+  overrides: Partial<CreateQuickStartAgentOptions> = {},
+): CreateQuickStartAgentOptions {
+  return {
+    planner: vi.fn(async ({ messages }) => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'start_character_generation',
+          input: { optimizedPrompt: messages.at(-1)?.content ?? '', assumptions: [] },
+        },
+      ],
+    })),
+    startCharacterGeneration: vi.fn(async () => ({ runId: 'run-new' })),
+    ...overrides,
+  }
+}
+
+function renderAt(
+  path: string,
+  service: QuickStartEntryService,
+  agent: CreateQuickStartAgentOptions = agentFor(),
+) {
   function PlaytestLocation() {
     const location = useLocation()
     return <h1>{`${location.pathname}${location.search}`}</h1>
@@ -167,11 +195,11 @@ function renderAt(path: string, service: QuickStartEntryService) {
       <Routes>
         <Route
           path="/quick-start"
-          element={<QuickStartPage service={service} activeRunUserId="7" />}
+          element={<QuickStartPage service={service} activeRunUserId="7" agent={agent} />}
         />
         <Route
           path="/quick-start/:runId"
-          element={<QuickStartPage service={service} activeRunUserId="7" />}
+          element={<QuickStartPage service={service} activeRunUserId="7" agent={agent} />}
         />
         <Route path="/projects/:projectId/assets" element={<PlaytestLocation />} />
         <Route path="/playtest/:characterId/:outfitId" element={<PlaytestLocation />} />
@@ -185,6 +213,7 @@ function renderWithRunSwitcher(
   initialRunId: string,
   nextRunId: string,
 ) {
+  const agent = agentFor()
   function Controls() {
     const navigate = useNavigate()
     const location = useLocation()
@@ -204,7 +233,7 @@ function renderWithRunSwitcher(
       <Routes>
         <Route
           path="/quick-start/:runId"
-          element={<QuickStartPage service={service} activeRunUserId="7" />}
+          element={<QuickStartPage service={service} activeRunUserId="7" agent={agent} />}
         />
       </Routes>
     </MemoryRouter>,
@@ -722,18 +751,26 @@ describe('QuickStartPage', () => {
   it('hands the creation entry off to the generating canvas instead of hard-cutting routes', async () => {
     vi.useFakeTimers()
     const createdRun = workflow(setupAndTemplate({ phase: 'generating' }), 'run-created')
-    const service = serviceFor(null, {
+    const service = serviceFor(createdRun, {
       runId: 'run-created',
       getWorkflow: vi.fn(() => createdRun),
       resume: vi.fn(async () => createdRun),
     })
-    renderAt('/quick-start', service)
+    renderAt(
+      '/quick-start',
+      service,
+      agentFor({
+        startCharacterGeneration: vi.fn(async () => ({ runId: 'run-created' })),
+      }),
+    )
 
     fireEvent.change(screen.getByLabelText('创作指令'), {
       target: { value: '提着风灯的森林守夜人' },
     })
     fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
     await act(async () => undefined)
+    expect(screen.getByText('提着风灯的森林守夜人')).toBeTruthy()
+    await act(async () => vi.advanceTimersByTimeAsync(32))
 
     const entry = screen.getByLabelText('创作指令').closest('[data-layout="quick-start-entry"]')
     expect(entry?.getAttribute('data-transition')).toBe('leaving')
@@ -854,7 +891,7 @@ describe('QuickStartPage', () => {
   it('keeps the natural-language creation entry visible when no run is selected', () => {
     render(
       <MemoryRouter>
-        <QuickStartPage />
+        <QuickStartPage service={serviceFor(null)} agent={agentFor()} />
       </MemoryRouter>,
     )
 
@@ -864,6 +901,87 @@ describe('QuickStartPage', () => {
       '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色',
     )
     expect(screen.queryByRole('button', { name: /暗黑哥特像素/u })).toBeNull()
+  })
+
+  it('asks once, then shows the optimized description and assumptions before the Controller action', async () => {
+    const action = deferred<{ runId: string }>()
+    const plannerResults: PlannerResult[] = [
+      { text: '请补充角色的美术风格。', finishReason: 'stop', toolCalls: [] },
+      {
+        text: '',
+        finishReason: 'tool-calls',
+        toolCalls: [
+          {
+            toolName: 'start_character_generation',
+            input: {
+              optimizedPrompt: '银发骑士，16-bit 像素风，全身像',
+              assumptions: ['默认单角色', '动作稍后处理'],
+            },
+          },
+        ],
+      },
+    ]
+    const planner = vi.fn(async (_input: PlannerInput) => plannerResults.shift()!)
+    const startCharacterGeneration = vi.fn(() => action.promise)
+    renderAt('/quick-start', serviceFor(null), { planner, startCharacterGeneration })
+
+    fireEvent.change(screen.getByLabelText('创作指令'), { target: { value: '银发骑士' } })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+    expect(await screen.findByText('请补充角色的美术风格。')).toBeTruthy()
+    expect(startCharacterGeneration).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('创作指令'), {
+      target: { value: '16-bit 像素风，请直接生成' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '继续' }))
+    expect(await screen.findByText('优化后描述')).toBeTruthy()
+    expect(await screen.findByText('银发骑士，16-bit 像素风，全身像')).toBeTruthy()
+    expect(screen.getByText('默认单角色')).toBeTruthy()
+    expect(screen.getByText('动作稍后处理')).toBeTruthy()
+    await waitFor(() => expect(startCharacterGeneration).toHaveBeenCalledTimes(1))
+
+    action.resolve({ runId: 'run-new' })
+  })
+
+  it('restarts with a fresh Agent session after the clarification budget is exhausted', async () => {
+    const plannerResults: PlannerResult[] = [
+      { text: '请补充角色风格。', finishReason: 'stop', toolCalls: [] },
+      { text: '描述仍有冲突，请修改后重新开始。', finishReason: 'stop', toolCalls: [] },
+      {
+        text: '',
+        finishReason: 'tool-calls',
+        toolCalls: [
+          {
+            toolName: 'start_character_generation',
+            input: { optimizedPrompt: '银发像素骑士，全身像', assumptions: [] },
+          },
+        ],
+      },
+    ]
+    const planner = vi.fn(async (_input: PlannerInput) => plannerResults.shift()!)
+    const startCharacterGeneration = vi.fn(async () => ({ runId: 'run-new' }))
+    renderAt('/quick-start', serviceFor(null), { planner, startCharacterGeneration })
+
+    fireEvent.change(screen.getByLabelText('创作指令'), { target: { value: '一个骑士' } })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+    expect(await screen.findByText('请补充角色风格。')).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('创作指令'), {
+      target: { value: '仍然缺少明确风格' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '继续' }))
+    expect(await screen.findByText('描述仍有冲突，请修改后重新开始。')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '重新开始' })).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('创作指令'), {
+      target: { value: '16-bit 银发像素骑士，请直接生成' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '重新开始' }))
+
+    await waitFor(() => expect(startCharacterGeneration).toHaveBeenCalledTimes(1))
+    expect(planner.mock.calls[2]?.[0].messages).toEqual([
+      { role: 'user', content: '16-bit 银发像素骑士，请直接生成' },
+    ])
   })
 
   it('shows first-frame confirmation instead of stale character candidates after a template is confirmed', async () => {
@@ -890,14 +1008,18 @@ describe('QuickStartPage', () => {
 
   it('submits both text and uploaded-template creation from the natural-language entry', async () => {
     const service = serviceFor(null)
-    const view = renderAt('/quick-start', service)
+    const startCharacterGeneration = vi.fn(async () => ({ runId: 'run-new' }))
+    const agent = agentFor({ startCharacterGeneration })
+    const view = renderAt('/quick-start', service, agent)
 
     fireEvent.click(screen.getByRole('button', { name: /16-bit 日式 RPG/u }))
     fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
     await waitFor(() =>
-      expect(service.start).toHaveBeenCalledWith('16-bit 日式 RPG 像素风，清晰轮廓，明亮配色'),
+      expect(startCharacterGeneration).toHaveBeenCalledWith({
+        prompt: '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色',
+      }),
     )
-    expect(service.open).not.toHaveBeenCalled()
+    expect(service.start).not.toHaveBeenCalled()
 
     view.unmount()
     renderAt('/quick-start', service)
@@ -917,13 +1039,21 @@ describe('QuickStartPage', () => {
   })
 
   it('hands the created session to the run page under the production StrictMode lifecycle', async () => {
-    const service = serviceFor(null)
+    const run = workflow(setupAndTemplate({ phase: 'generating' }), 'run-new')
+    const service = serviceFor(run)
+    const agent = agentFor()
     const view = render(
       <StrictMode>
         <MemoryRouter initialEntries={['/quick-start']}>
           <Routes>
-            <Route path="/quick-start" element={<QuickStartPage service={service} />} />
-            <Route path="/quick-start/:runId" element={<QuickStartPage service={service} />} />
+            <Route
+              path="/quick-start"
+              element={<QuickStartPage service={service} agent={agent} />}
+            />
+            <Route
+              path="/quick-start/:runId"
+              element={<QuickStartPage service={service} agent={agent} />}
+            />
           </Routes>
         </MemoryRouter>
       </StrictMode>,
@@ -933,18 +1063,20 @@ describe('QuickStartPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
 
     await waitFor(() => expect(service.resume).toHaveBeenCalled())
-    expect(service.open).not.toHaveBeenCalled()
-    expect(service.dispose).not.toHaveBeenCalled()
+    expect(service.open).toHaveBeenCalledWith('run-new')
+    expect(service.start).not.toHaveBeenCalled()
+    expect(service.dispose).toHaveBeenCalledTimes(1)
 
     view.unmount()
-    await waitFor(() => expect(service.dispose).toHaveBeenCalledOnce())
+    await waitFor(() => expect(service.dispose).toHaveBeenCalledTimes(2))
   })
 
   it('shows entry errors and supports removing an uploaded template', async () => {
-    const service = serviceFor(null, {
-      start: vi.fn(async () => Promise.reject(new Error('服务繁忙'))),
+    const service = serviceFor(null)
+    const agent = agentFor({
+      startCharacterGeneration: vi.fn(async () => Promise.reject(new Error('服务繁忙'))),
     })
-    renderAt('/quick-start', service)
+    renderAt('/quick-start', service, agent)
     const file = new File(['pixels'], 'hero.png', { type: 'image/png' })
     fireEvent.change(screen.getByLabelText('上传角色母版'), { target: { files: [file] } })
     fireEvent.click(screen.getByRole('button', { name: '移除图片' }))

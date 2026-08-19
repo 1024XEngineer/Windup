@@ -2,10 +2,14 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { PlannerResult } from './runtime'
+import type { PlannerInput, PlannerResult } from './runtime'
 import { useQuickStartAgent } from './react'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
 
 function deferred() {
   let resolve!: () => void
@@ -34,7 +38,7 @@ describe('useQuickStartAgent', () => {
         ],
       },
     ]
-    const planner = vi.fn(async () => plannerResults.shift()!)
+    const planner = vi.fn(async (_input: PlannerInput) => plannerResults.shift()!)
     const startCharacterGeneration = vi.fn(async () => ({ runId: 'run-agent' }))
     const { result } = renderHook(() =>
       useQuickStartAgent({
@@ -94,5 +98,145 @@ describe('useQuickStartAgent', () => {
 
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
     expect(startCharacterGeneration).not.toHaveBeenCalled()
+  })
+
+  it('rejects overlapping turns while the current Planner request is pending', async () => {
+    let resolvePlanner!: (result: PlannerResult) => void
+    const planner = vi.fn(
+      async () =>
+        new Promise<PlannerResult>((resolve) => {
+          resolvePlanner = resolve
+        }),
+    )
+    const startCharacterGeneration = vi.fn(async () => ({ runId: 'run-agent' }))
+    const { result } = renderHook(() => useQuickStartAgent({ planner, startCharacterGeneration }))
+
+    let firstTurn!: Promise<unknown>
+    act(() => {
+      firstTurn = result.current.submit('银发骑士')
+    })
+    await waitFor(() => expect(planner).toHaveBeenCalledTimes(1))
+
+    await expect(result.current.submit('再发一条')).rejects.toThrow('Planner 正在处理上一条输入')
+
+    resolvePlanner({ text: '请补充角色风格。', finishReason: 'stop', toolCalls: [] })
+    await act(async () => {
+      await firstTurn
+    })
+    expect(result.current.state).toEqual({
+      status: 'awaiting-input',
+      message: '请补充角色风格。',
+    })
+  })
+
+  it('shows the safe fallback message for a non-Error Planner rejection', async () => {
+    const planner = vi.fn(async () => Promise.reject('offline'))
+    const startCharacterGeneration = vi.fn(async () => ({ runId: 'run-agent' }))
+    const { result } = renderHook(() => useQuickStartAgent({ planner, startCharacterGeneration }))
+    let rejection: unknown
+
+    await act(async () => {
+      try {
+        await result.current.submit('银发骑士')
+      } catch (cause) {
+        rejection = cause
+      }
+    })
+
+    expect(rejection).toBe('offline')
+    expect(result.current.state).toEqual({
+      status: 'error',
+      message: 'Agent 暂时不可用，请稍后重试',
+    })
+  })
+
+  it('keeps the first successful clarification available after an initial Planner failure', async () => {
+    const planner = vi
+      .fn<(input: PlannerInput) => Promise<PlannerResult>>()
+      .mockRejectedValueOnce(new Error('network unavailable'))
+      .mockResolvedValueOnce({
+        text: '请补充角色风格。',
+        finishReason: 'stop',
+        toolCalls: [],
+      })
+    const startCharacterGeneration = vi.fn(async () => ({ runId: 'run-agent' }))
+    const { result } = renderHook(() => useQuickStartAgent({ planner, startCharacterGeneration }))
+
+    await act(async () => {
+      await expect(result.current.submit('一个骑士')).rejects.toThrow('network unavailable')
+    })
+    await act(async () => {
+      await result.current.submit('重试')
+    })
+
+    expect(result.current.state).toEqual({
+      status: 'awaiting-input',
+      message: '请补充角色风格。',
+    })
+  })
+
+  it('dispatches without a presentation delay when animation frames are unavailable', async () => {
+    vi.stubGlobal('requestAnimationFrame', undefined)
+    const planner = vi.fn(
+      async (): Promise<PlannerResult> => ({
+        text: '',
+        finishReason: 'tool-calls',
+        toolCalls: [
+          {
+            toolName: 'start_character_generation',
+            input: { optimizedPrompt: '银发像素骑士，全身像', assumptions: [] },
+          },
+        ],
+      }),
+    )
+    const startCharacterGeneration = vi.fn(async () => ({ runId: 'run-agent' }))
+    const { result } = renderHook(() => useQuickStartAgent({ planner, startCharacterGeneration }))
+
+    await act(async () => {
+      await result.current.submit('请直接生成银发骑士')
+    })
+
+    expect(startCharacterGeneration).toHaveBeenCalledWith({
+      prompt: '银发像素骑士，全身像',
+    })
+  })
+
+  it('requires an explicit restart after the one clarification is exhausted', async () => {
+    const plannerResults: PlannerResult[] = [
+      { text: '请补充角色风格。', finishReason: 'stop', toolCalls: [] },
+      { text: '描述仍有冲突，请修改后重新开始。', finishReason: 'stop', toolCalls: [] },
+      {
+        text: '',
+        finishReason: 'tool-calls',
+        toolCalls: [
+          {
+            toolName: 'start_character_generation',
+            input: { optimizedPrompt: '银发像素骑士，全身像', assumptions: [] },
+          },
+        ],
+      },
+    ]
+    const planner = vi.fn(async (_input: PlannerInput) => plannerResults.shift()!)
+    const startCharacterGeneration = vi.fn(async () => ({ runId: 'run-agent' }))
+    const { result } = renderHook(() => useQuickStartAgent({ planner, startCharacterGeneration }))
+
+    await act(async () => {
+      await result.current.submit('一个骑士')
+      await result.current.submit('仍然缺少明确风格')
+    })
+    expect(result.current.state).toEqual({
+      status: 'restart-required',
+      message: '描述仍有冲突，请修改后重新开始。',
+    })
+
+    await act(async () => {
+      await result.current.submit('16-bit 银发像素骑士，请直接生成')
+    })
+    expect(startCharacterGeneration).toHaveBeenCalledWith({
+      prompt: '银发像素骑士，全身像',
+    })
+    expect(planner.mock.calls[2]?.[0].messages).toEqual([
+      { role: 'user', content: '16-bit 银发像素骑士，请直接生成' },
+    ])
   })
 })
