@@ -23,6 +23,7 @@ interface ProjectPreviewRequest {
   projectId: string
   state: 'queued' | 'active'
   cancelled: boolean
+  controller: AbortController
   promise: Promise<ProjectPreviewState>
   resolve: (preview: ProjectPreviewState) => void
 }
@@ -104,6 +105,7 @@ export function ProjectsPage() {
       projectId,
       state: 'queued',
       cancelled: false,
+      controller: new AbortController(),
       promise,
       resolve: resolvePreview,
     }
@@ -125,16 +127,25 @@ export function ProjectsPage() {
       void (async () => {
         let preview: ProjectPreviewState = { status: 'error' }
         try {
-          const page = await characterApis.listByProject(request.projectId, {
-            page: 1,
-            pageSize: PROJECT_PREVIEW_CHARACTER_LIMIT,
-          })
-          const url = previewFromCharacters(page.items)
-          preview = url
-            ? { status: 'ready', url }
-            : page.total === 0
-              ? { status: 'empty' }
-              : { status: 'error' }
+          let pageNumber = 1
+          while (!request.cancelled) {
+            const page = await characterApis.listByProject(request.projectId, {
+              page: pageNumber,
+              pageSize: PROJECT_PREVIEW_CHARACTER_LIMIT,
+              signal: request.controller.signal,
+            })
+            const url = previewFromCharacters(page.items)
+            if (url) {
+              preview = { status: 'ready', url }
+              break
+            }
+            if (page.total === 0) {
+              preview = { status: 'empty' }
+              break
+            }
+            if (page.items.length === 0 || page.page * page.pageSize >= page.total) break
+            pageNumber = page.page + 1
+          }
         } catch {
           preview = { status: 'error' }
         }
@@ -155,6 +166,7 @@ export function ProjectsPage() {
       const request = projectPreviewRequests.current.get(projectId)
       if (!request || request.cancelled) return
       request.cancelled = true
+      request.controller.abort()
       request.resolve({ status: 'loading' })
       if (projectPreviewRequests.current.get(projectId) === request) {
         projectPreviewRequests.current.delete(projectId)
