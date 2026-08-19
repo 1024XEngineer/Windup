@@ -216,10 +216,20 @@ class ActionQuality:
     0.0 会被读成"完美闭环",正是本仓忌讳的"貌似合理的默认值"。
     """
 
+    subject_blobs: tuple[int, ...]
+    """逐帧的"够大"连通块数(alpha>128,4-邻域;见 ``slicing.quality.subject_blobs``)。
+
+    上层拿它做的决定:全程恒为 2(或更多)→ 母版/提示词让引擎画出了第二个角色,
+    提示重试或换母版,这类病 ``motion_scale``/``dead_frames``/``loop_seam`` 全部
+    测不出——三者都只看"帧与帧之间变了多少",一个稳定存在的额外主体不影响它们
+    任何一个读数。只在中段冒出的 2 是另一类病(挥动的肢体/道具被抠断),修法是
+    调抠图阈值而非换母版,与前者必须分开看,故给逐帧序列而非一个均值。
+    """
+
 
 @dataclass
 class GeneratedAction:
-    """一个动作的生成产物:对齐后的原地序列帧 + 逐帧时长 + 成色。
+    """一个动作的生成产物:对齐后的原地序列帧 + 逐帧时长 + 成色 + 提示词版本。
 
     frames / durations **等长**;server 侧把每帧上传对象存储得 URL,组成
     ``CharacterActionOutput.frames[{index, image_url, duration_ms}]`` 回填 character_data。
@@ -235,6 +245,9 @@ class GeneratedAction:
     # 给个 None 缺省的话,漏测与"测出来没问题"在调用方看来一模一样,而这个出参的
     # 全部意义就是把这两者分开。
     quality: ActionQuality = field(kw_only=True)
+    # 同一条理由:不给缺省,逼调用方显式带出当下的 ``windup_ai_engine.prompt.PROMPT_VERSION``。
+    # 改了提示词模板而没带上新版本号,这批产出与改动前的产出在账本里就再也分不清。
+    prompt_version: str = field(kw_only=True)
 
 
 # ---- ai_engine 暴露给 server(server 调用的唯一入口)----
