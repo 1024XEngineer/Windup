@@ -27,6 +27,7 @@ from windup_framework.config.quota import settings as quota_settings
 
 from windup_app.server.quota.model import CreditAccount, CreditTransaction
 from windup_app.server.user.interface import UserService
+from windup_app.server.mq.catalog import EMAIL_STREAM, MSG_TYPE_VERIFICATION_CODE
 from windup_app.server.user.model import (
     ChangePasswordInput,
     LoginByCodeInput,
@@ -40,7 +41,7 @@ from windup_app.server.user.model import (
     UserView,
 )
 from windup_framework.config.jwt import settings as jwt_settings
-from windup_framework.providers.email import email_provider
+from windup_framework.mq.publisher import MqPublisher
 from windup_framework.db.redis import get_redis
 
 logger = logging.getLogger("windup.user.service")
@@ -49,7 +50,7 @@ logger = logging.getLogger("windup.user.service")
 
 JWT_SECRET = jwt_settings.secret.get_secret_value()
 JWT_ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_SECONDS = 15 * 60        # 15 分钟
+ACCESS_TOKEN_EXPIRE_SECONDS = 15 * 60  # 15 分钟
 REFRESH_TOKEN_EXPIRE_SECONDS = 7 * 24 * 3600  # 7 天
 
 # -- 密码哈希 -------------------------------------------------------------
@@ -64,6 +65,7 @@ def _verify_password(password: str, hashed: str) -> bool:
     """验证密码。"""
     return bcrypt.checkpw(password.encode(), hashed.encode())
 
+
 # -- Redis key 前缀 -------------------------------------------------------
 
 VERIFY_COOLDOWN_KEY = "verify:cooldown:{email}"
@@ -72,12 +74,12 @@ REFRESH_TOKEN_KEY = "refresh:{token_hash}"
 LOGIN_FAIL_KEY = "login:fail:{email}"
 LOGIN_LOCK_KEY = "login:lock:{email}"
 
-VERIFY_CODE_TTL = 300   # 5 分钟
-COOLDOWN_TTL = 60       # 60 秒
+VERIFY_CODE_TTL = 300  # 5 分钟
+COOLDOWN_TTL = 60  # 60 秒
 
-LOGIN_FAIL_LIMIT = 5            # 连续错误密码上限
-LOGIN_FAIL_WINDOW = 15 * 60     # 失败计数窗口 15 分钟
-LOGIN_LOCK_DURATION = 15 * 60   # 锁定时长 15 分钟
+LOGIN_FAIL_LIMIT = 5  # 连续错误密码上限
+LOGIN_FAIL_WINDOW = 15 * 60  # 失败计数窗口 15 分钟
+LOGIN_LOCK_DURATION = 15 * 60  # 锁定时长 15 分钟
 
 
 def _hash_token(token: str) -> str:
@@ -166,18 +168,18 @@ class SqlAlchemyUserService(UserService):
 
     # -- 注册 ------------------------------------------------------------
 
-    def register_by_email(self, input: RegisterInput) -> LoginResult:
-        # 检查邮箱是否已注册（通过全局 session，这里需要外部传入）
-        # 由于接口签名不含 session，改为类级持有或工厂注入
-        # 但当前项目模式是 service 单例 + session 由调用方传入
-        # 此处需要重构：register 不走 session 查询，直接用内部方法
-        raise NotImplementedError("请通过 API 层调用带 session 的版本")
+    def register_by_email(self, session: Session, input: RegisterInput) -> LoginResult:
+        """邮箱+验证码+密码注册。邀请码选填。"""
+        from windup_app.server.quota.service import (
+            parse_invite_code,
+            service as quota_service,
+        )
 
-    def register_by_email_with_session(
-        self, session: Session, input: RegisterInput
-    ) -> LoginResult:
-        """邮箱+验证码+密码注册（带 session）。"""
-        # 校验验证码
+        raw_invite = (input.invite_code or "").strip()
+        invite_code = parse_invite_code(raw_invite) if raw_invite else None
+        if invite_code is not None:
+            quota_service.require_active_invite(session, invite_code)
+
         self._verify_code(input.email, input.code, "register")
 
         # 检查邮箱唯一
@@ -191,13 +193,17 @@ class SqlAlchemyUserService(UserService):
             email=input.email,
             password_hash=_hash_password(input.password),
             nickname=input.nickname,
-            email_verified_at=datetime.now(timezone.utc),  # 注册即验证（已通过验证码校验）
+            email_verified_at=datetime.now(
+                timezone.utc
+            ),  # 注册即验证（已通过验证码校验）
         )
         session.add(user)
         session.flush()
 
-        # 注册送积分
+        # 注册送积分；有邀请码再发双方邀请奖励
         self._create_credit_account(session, user.id)
+        if invite_code is not None:
+            quota_service.redeem_invite_code(session, user.id, invite_code)
 
         # 注册即登录，签发 token
         access_token = create_access_token(user.id, user.email)
@@ -236,13 +242,10 @@ class SqlAlchemyUserService(UserService):
 
     # -- 登录 ------------------------------------------------------------
 
-    def login_by_password(self, input: LoginByPasswordInput) -> LoginResult:
-        raise NotImplementedError("请通过 API 层调用带 session 的版本")
-
-    def login_by_password_with_session(
+    def login_by_password(
         self, session: Session, input: LoginByPasswordInput
     ) -> LoginResult:
-        """邮箱+密码登录（带 session）。"""
+        """邮箱+密码登录。"""
         # 检查账号锁定
         self._check_login_lock(input.email)
 
@@ -283,7 +286,9 @@ class SqlAlchemyUserService(UserService):
         # 频率限制
         cooldown_key = VERIFY_COOLDOWN_KEY.format(email=email)
         if self.redis.get(cooldown_key):
-            raise BizException("发送过于频繁，请稍后再试", code=BizCode.TOO_MANY_REQUESTS)
+            raise BizException(
+                "发送过于频繁，请稍后再试", code=BizCode.TOO_MANY_REQUESTS
+            )
 
         code = _generate_code()
         code_key = VERIFY_CODE_KEY.format(purpose=purpose, email=email)
@@ -294,9 +299,28 @@ class SqlAlchemyUserService(UserService):
         pipe.setex(cooldown_key, COOLDOWN_TTL, "1")
         pipe.execute()
 
-        # 发送邮件
-        email_provider.send_verification_code(email, code)
-        logger.info("[WINDUP] 验证码已发送 | email=%s purpose=%s", email, purpose)
+        # SETEX 成功后再写 outbox。受理口径：mq_message 落库成功即接口成功；
+        # 当场 XADD 失败不抬接口错误（行留 pending，由 relay 补投）。
+        dedupe_key = f"email:{purpose}:{email}:{uuid.uuid4()}"
+        publisher = MqPublisher()
+        from windup_framework.db.session import SessionLocal
+
+        session = SessionLocal()
+        try:
+            publisher.publish_now(
+                session,
+                stream=EMAIL_STREAM,
+                msg_type=MSG_TYPE_VERIFICATION_CODE,
+                payload={"email": email, "purpose": purpose},
+                dedupe_key=dedupe_key,
+            )
+        except Exception as exc:
+            logger.exception("[WINDUP] 验证码邮件入队失败 | email=%s purpose=%s", email, purpose)
+            raise BizException("验证码发送失败，请稍后重试", code=BizCode.INTERNAL_ERROR) from exc
+        finally:
+            session.close()
+
+        logger.info("[WINDUP] 验证码已入队 | email=%s purpose=%s", email, purpose)
 
     def _verify_code(self, email: str, code: str, purpose: str) -> None:
         """校验验证码，失败抛 BizException。"""
@@ -309,29 +333,24 @@ class SqlAlchemyUserService(UserService):
         # 验证通过，删除验证码
         self.redis.delete(code_key)
 
-    def login_by_code(self, input: LoginByCodeInput) -> LoginResult:
-        raise NotImplementedError("请通过 API 层调用带 session 的版本")
-
-    def login_by_code_with_session(
-        self, session: Session, input: LoginByCodeInput
-    ) -> LoginResult:
-        """邮箱+验证码登录，无账号自动注册（带 session）。"""
+    def login_by_code(self, session: Session, input: LoginByCodeInput) -> LoginResult:
+        """邮箱+验证码登录。未知邮箱自动建号并赠送注册积分。"""
         # 校验验证码
         self._verify_code(input.email, input.code, "login")
 
-        # 查找或创建用户
         user = session.scalar(select(User).where(User.email == input.email))
         if user is None:
-            user = User(email=input.email, email_verified_at=datetime.now(timezone.utc))
+            user = User(
+                email=input.email,
+                password_hash="",
+                email_verified_at=datetime.now(timezone.utc),
+            )
             session.add(user)
             session.flush()
-            # 自动注册送积分
             self._create_credit_account(session, user.id)
-            logger.info("[WINDUP] 验证码自动注册 | user_id=%s email=%s", user.id, user.email)
         else:
             if user.status == UserStatus.BANNED:
                 raise BizException("账号已被封禁", code=BizCode.BAD_REQUEST)
-            # 标记邮箱已验证
             if user.email_verified_at is None:
                 user.email_verified_at = datetime.now(timezone.utc)
 
@@ -443,13 +462,10 @@ class SqlAlchemyUserService(UserService):
 
     # -- 密码 ------------------------------------------------------------
 
-    def change_password(self, user_id: int, input: ChangePasswordInput) -> None:
-        raise NotImplementedError("请通过 API 层调用带 session 的版本")
-
-    def change_password_with_session(
+    def change_password(
         self, session: Session, user_id: int, input: ChangePasswordInput
     ) -> None:
-        """修改密码（带 session）。"""
+        """修改密码。"""
         user = session.get(User, user_id)
         if user is None:
             raise BizException("用户不存在", code=BizCode.NOT_FOUND)
@@ -464,9 +480,7 @@ class SqlAlchemyUserService(UserService):
         self._revoke_all_user_tokens(user_id)
         logger.info("[WINDUP] 密码已修改 | user_id=%s", user_id)
 
-    def reset_password_with_session(
-        self, session: Session, input: ResetPasswordInput
-    ) -> None:
+    def reset_password(self, session: Session, input: ResetPasswordInput) -> None:
         """邮箱+验证码重置密码（忘记密码场景）。"""
         # 校验验证码（purpose 必须为 reset_password）
         self._verify_code(input.email, input.code, "reset_password")
@@ -487,10 +501,10 @@ class SqlAlchemyUserService(UserService):
 
     # -- 昵称 ------------------------------------------------------------
 
-    def update_nickname_with_session(
+    def update_nickname(
         self, session: Session, user_id: int, input: UpdateNicknameInput
     ) -> UserView:
-        """修改昵称（带 session）。"""
+        """修改昵称。"""
         user = session.get(User, user_id)
         if user is None:
             raise BizException("用户不存在", code=BizCode.NOT_FOUND)
@@ -503,18 +517,11 @@ class SqlAlchemyUserService(UserService):
 
     # -- 查询 ------------------------------------------------------------
 
-    def get_by_id(self, user_id: int) -> UserView | None:
-        # 需要 session，由 API 层直接查 ORM
-        raise NotImplementedError("请通过 API 层直接查询 ORM")
-
-    def get_by_email(self, email: str) -> UserView | None:
-        raise NotImplementedError("请通过 API 层直接查询 ORM")
-
-    def get_by_id_with_session(self, session: Session, user_id: int) -> UserView | None:
+    def get_by_id(self, session: Session, user_id: int) -> UserView | None:
         user = session.get(User, user_id)
         return _to_view(user) if user else None
 
-    def get_by_email_with_session(self, session: Session, email: str) -> UserView | None:
+    def get_by_email(self, session: Session, email: str) -> UserView | None:
         user = session.scalar(select(User).where(User.email == email))
         return _to_view(user) if user else None
 
@@ -545,7 +552,8 @@ class SqlAlchemyUserService(UserService):
 
         logger.info(
             "[WINDUP] 注册送积分 | user_id=%s amount=%s",
-            user_id, quota_settings.register_gift_amount,
+            user_id,
+            quota_settings.register_gift_amount,
         )
 
     def _store_refresh_token(self, jti: str, user_id: int) -> None:

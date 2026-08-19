@@ -13,7 +13,7 @@ import zipfile
 
 import pytest
 
-from windup_ai_engine.master_prep import MASTER_POSES
+from windup_ai_engine.master_prep import ATTACK_MASTER_POSES, MASTER_POSES
 from windup_ai_engine.prompt import (
     build_attack_prompt,
     build_idle_prompt,
@@ -21,12 +21,20 @@ from windup_ai_engine.prompt import (
     build_walk_prompt,
 )
 from windup_ai_engine.prompt._md import PromptAssetError, load_doc, load_section
+from windup_common.models import AttackArchetype
 
 BUILDERS = {
     "walk": build_walk_prompt,
     "jump": build_jump_prompt,
     "idle": build_idle_prompt,
     "attack": build_attack_prompt,
+}
+
+# 每份 md 里必须真的有内容的节。attack 的节名是 `<运动拓扑>.<朝向>`。
+SECTIONS = {
+    doc: ["side", "front"] for doc in ("walk.md", "jump.md", "idle.md")
+} | {
+    "attack.md": [f"{a.value}.{f}" for a in AttackArchetype for f in ("side", "front")],
 }
 
 
@@ -152,14 +160,21 @@ def test_master_poses_keeps_its_intentional_blanks():
     assert MASTER_POSES["walk"] == "" and MASTER_POSES["run"] == ""
     assert MASTER_POSES["idle"] == ""
     assert "deep crouch" in MASTER_POSES["jump"]
-    assert "wind-up" in MASTER_POSES["attack"]
+
+
+def test_every_attack_archetype_has_its_own_master_pose():
+    """四支的起手姿态互不兼容,缺一支就该炸 —— 母版姿态决定动作,不能退回中性站立。"""
+    assert set(ATTACK_MASTER_POSES) == set(AttackArchetype)
+    texts = [t.strip() for t in ATTACK_MASTER_POSES.values()]
+    assert all(texts), f"有空的攻击母版姿态:{ATTACK_MASTER_POSES}"
+    assert len(set(texts)) == len(texts), "有两支共用同一段母版姿态"
 
 
 def test_only_master_poses_may_be_empty():
     """``allow_empty`` 是给"空本身有含义"的地方开的口子,别的提示词不许走这条。"""
-    for action in BUILDERS:
-        for facing in ("side", "front"):
-            assert load_section(f"{action}.md", facing), f"{action}.{facing} 空了"
+    for doc, sections in SECTIONS.items():
+        for section in sections:
+            assert load_section(doc, section), f"{doc} 的 {section} 空了"
 
 
 # ── ④ 打包:md 必须真的进 wheel,不能只在源码树里存在 ─────────────────────

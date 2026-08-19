@@ -4,8 +4,26 @@
 export { createUserApis, userApis } from './user'
 export type { AuthTokens, CreateUserApisOptions, SendCodePurpose, User, UserApis } from './user'
 
+/* 积分 —— 读取当前用户的可用余额与账本汇总 */
+export { createQuotaApis, quotaApis } from './quota'
+export type {
+  CreateQuotaApisOptions,
+  CreditAccount,
+  CreditTransaction,
+  InviteCode,
+  CreditTransactionDirection,
+  QuotaApis,
+  QuotaTransactionFilters,
+  QuotaTransactionPageQuery,
+} from './quota'
+
 /* 项目 —— 全局约束：视角、朝向、精灵尺寸、画风 */
-export { CHARACTER_PERSPECTIVE, DIRECTIONAL_MOVEMENT, ProjectNameConflictError } from './project'
+export {
+  CHARACTER_PERSPECTIVE,
+  DIRECTIONAL_MOVEMENT,
+  ProjectHasCharactersError,
+  ProjectNameConflictError,
+} from './project'
 export { projectApis } from './project'
 export type {
   CharacterPerspective,
@@ -67,7 +85,7 @@ export { createMediaApis } from './media/api'
 export type { MediaApis, MediaCategory, MediaReference } from './media'
 
 /* 工作流 —— 前端管理节点，后端只持久化完整 nodes 文档 */
-export { workflowRunApis } from './workflow-run'
+export { WorkflowRunConflictError, workflowRunApis } from './workflow-run'
 export type {
   ActionFirstFrameWorkflowNode,
   ActionFullFrameWorkflowNode,

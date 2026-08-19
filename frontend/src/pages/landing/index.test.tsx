@@ -59,6 +59,8 @@ describe('LandingPage', () => {
     expect(screen.getByRole('link', { name: '注册' }).getAttribute('href')).toBe(
       '/?account=register&returnTo=%2Fworkspace',
     )
+    expect(screen.queryByRole('button', { name: '注册' })).toBeNull()
+    expect(screen.queryByText('内测暂不开放，联系团队申请')).toBeNull()
     // Header 只处理账号入口，Hero 与收尾负责把用户带进创作。
     const creationLinks = screen.getAllByRole('link', { name: '开始创作' })
     expect(creationLinks).toHaveLength(2)

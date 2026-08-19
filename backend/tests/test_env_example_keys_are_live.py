@@ -14,11 +14,19 @@ import pytest
 
 _ENV_EXAMPLE = pathlib.Path(__file__).resolve().parents[2] / ".env.example"
 
-# 非 pydantic-settings 消费的键:由 docker-compose / 部署脚本直接读,不走配置类。
+# 非 pydantic-settings 消费的键:由 docker-compose / 部署脚本直接读,或 mq/sse 模块 os.getenv。
 _INFRA_KEYS = frozenset({
     "WINDUP_HOST", "WINDUP_PORT", "WINDUP_CORS_ORIGINS", "WINDUP_CORS_ORIGIN_REGEX",
     "POSTGRES_DATA_DIR", "REDIS_DATA_DIR", "POSTGRES_EXTERNAL_PORT",
     "SERPAPI_API_KEY", "VITE_API_BASE_URL",
+    # windup_framework.mq.config / windup_app.server.mq.catalog / sse.bridge
+    "WINDUP_MQ_STREAM_MAXLEN", "WINDUP_MQ_PEL_CLAIM_IDLE_MS",
+    "WINDUP_MQ_PEL_CLAIM_INTERVAL_SECONDS", "WINDUP_MQ_MAX_PUBLISH_ATTEMPTS",
+    "WINDUP_MQ_MAX_CONSUME_ATTEMPTS", "WINDUP_MQ_CONSUME_LEASE_SECONDS",
+    "WINDUP_MQ_EMAIL_HANDLER_RETRIES", "WINDUP_MQ_EMAIL_CONCURRENCY",
+    "WINDUP_MQ_GENERATION_IMAGE_CONCURRENCY", "WINDUP_MQ_GENERATION_ACTION_CONCURRENCY",
+    "WINDUP_GENERATION_PENDING_MAX_AGE", "WINDUP_GENERATION_RUNNING_STALE_SECONDS",
+    "WINDUP_SSE_REDIS_CHANNEL",
 })
 
 

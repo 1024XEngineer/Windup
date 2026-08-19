@@ -3,22 +3,33 @@
 - VideoFrameStrategy：**已迁入 windup-pipeline 实测通路**（walk 主链，2026-07-27 验证）。
 - PerFrameStrategy：**未实现**，调用即抛 NotImplementedError（见 #53）。不返回空帧——
   空帧会伪装成一次成功的生成流到 server 落库，用户看到的是一组裂图。
+- RenderFrameStrategy：三渲二。吃**已绑骨的 3D 模型**（不是母版图），纯本地渲帧、
+  零 API 成本；建模型那两段按次计费的活在 server 侧（#121 #122）。
 
 VideoFrameStrategy 实测通路：严格侧面母版 → kling i2v(v2-5-turbo) → 抽单循环 N 帧 →
 matte 抠图 → 像素化。返回对齐前的 RGBA PNG 帧（对齐 / 打包在 CharacterGenerator 最后一公里）。
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from windup_common.models import ActionSpec, ActionType, CharacterCard, GenRoute, Stylize
+from windup_common.models import (
+    ActionSpec,
+    ActionType,
+    CharacterCard,
+    CharacterStance,
+    Facing,
+    GenRoute,
+    Stylize,
+)
 from windup_framework.providers import ImageProvider, MatteProvider, VideoProvider
 
 from windup_ai_engine._imgio import from_png as _img
 from windup_ai_engine._imgio import to_png as _png
 from windup_ai_engine.master_prep import prepare_master
-from windup_ai_engine.ports import ProgressPort
+from windup_ai_engine.ports import ProgressPort, PromptAdapterPort, PromptRejected
 from windup_ai_engine.postprocess import master_pixel_spec, pixelate_frames
 from windup_ai_engine.slicing import extract_all_frames_bytes, pick_cycle, pick_oneshot
 from windup_ai_engine.prompt import (
@@ -28,7 +39,13 @@ from windup_ai_engine.prompt import (
     build_jump_prompt,
     build_walk_prompt,
 )
+from windup_ai_engine.prompt._framing import with_framing
+from windup_ai_engine.prompt.adapter import RuleBasedPromptAdapter
+from windup_ai_engine.prompt.custom import CYCLIC_TAIL, ONESHOT_TAIL
 from windup_ai_engine.strategy.base import DerivationStrategy, is_cyclic
+
+if TYPE_CHECKING:
+    from windup_framework.providers.render3d import SpriteRenderProvider, SpriteSheet
 
 
 class VideoFrameStrategy(DerivationStrategy):
@@ -41,28 +58,58 @@ class VideoFrameStrategy(DerivationStrategy):
 
     route = GenRoute.VIDEO_I2V
 
-    def __init__(self, video: VideoProvider, matte: MatteProvider) -> None:
+    def __init__(
+        self,
+        video: VideoProvider,
+        matte: MatteProvider,
+        adapter: PromptAdapterPort | None = None,
+    ) -> None:
         self._video = video
         self._matte = matte
+        self._adapter = RuleBasedPromptAdapter() if adapter is None else adapter
 
-    def _build_prompt(self, action: ActionSpec) -> str:
+    def _build_prompt(self, action: ActionSpec, stance: CharacterStance) -> str:
         """按动作类型选提示词;朝向随 ActionSpec.facing。"""
-        # custom 单独一支:它的动作内容来自用户,只能由 build_custom_prompt 把那句话
-        # 嵌进机制骨架(朝向锁 / 正向措辞 / 装备存在无关 / 一次性的单次+终态保持)。
+        # custom 单独一支:它的动作内容来自用户,只能由骨架把那句话嵌进机制约束
+        # (朝向锁 / 正向措辞 / 装备存在无关 / 一次性的单次+终态保持)。
         # 不能塞进下面那张表 —— 那张表里的 builder 只接 facing。
         if action.action is ActionType.CUSTOM:
-            return build_custom_prompt(
-                action.custom_action or "",
-                facing=action.facing,
-                cyclic=bool(action.cyclic),
-            )
+            return self._custom_prompt(action, stance)
+        # attack 同样进不了那张表:它还要按运动拓扑选提示词分支。archetype 缺省时不在这里
+        # 兜一个默认值 —— 缺省只由 build_attack_prompt 定义一次,写两处会各自漂移。
+        if action.action is ActionType.ATTACK:
+            if action.archetype is None:
+                return build_attack_prompt(facing=action.facing)
+            return build_attack_prompt(facing=action.facing, archetype=action.archetype)
         builders = {
             ActionType.JUMP: build_jump_prompt,
             ActionType.IDLE: build_idle_prompt,
-            ActionType.ATTACK: build_attack_prompt,
         }
         build = builders.get(action.action, build_walk_prompt)
         return build(facing=action.facing)
+
+    def _custom_prompt(self, action: ActionSpec, stance: CharacterStance) -> str:
+        """用户那句话先过适配器,再按声明的循环性收尾。
+
+        Raises:
+            PromptRejected: 这段描述送进模型必然出坏产物 → server 映射 4xx 让用户改。
+        """
+        clause = action.custom_action or ""
+        cyclic = bool(action.cyclic)
+        try:
+            adapted = self._adapter.adapt(
+                clause, kind="i2v", facing=action.facing, stance=stance,
+            )
+        except PromptRejected:
+            # 与下面那条分得很清:这不是组件不可用,是这段描述本身跑不出可用产物,
+            # 而下一步就是付费调用 —— 回退等于照样把钱花掉换一段废视频。
+            # 顺序也是约束:它是 ValueError 的子类,放到宽兜底后面就永远轮不上。
+            raise
+        except Exception:
+            # 适配器坏掉只该丢掉那层改写,不该把整条生成打死:骨架本身不依赖它。
+            return build_custom_prompt(clause, facing=action.facing, cyclic=cyclic)
+        # 兜底那支走 build_custom_prompt,构图约束在它内部加;这支绕过了它,要自己加。
+        return with_framing(f"{adapted.text} {CYCLIC_TAIL if cyclic else ONESHOT_TAIL}")
 
     def derive(
         self,
@@ -80,7 +127,7 @@ class VideoFrameStrategy(DerivationStrategy):
         progress.step("derive", 0, 3, f"{action.action.value}: i2v 生成视频")
         # 母版按动作预处理:jump 要在顶部补空间,否则角色腾空时头顶顶出视频画面被裁
         framed = prepare_master(master, action.action.value)
-        video = self._video.i2v(framed, self._build_prompt(action), seconds=5)
+        video = self._video.i2v(framed, self._build_prompt(action, card.stance), seconds=5)
 
         dense = extract_all_frames_bytes(video)
         # 跨动作一致性:用视频首帧(=母版姿态)的角色高当共同定标基准。各动作都从同一母版
@@ -151,6 +198,122 @@ class PerFrameStrategy(DerivationStrategy):
             f"生成路线 {self.route.value} 尚未实现（动作 {action.action.value}）。"
             "见 1024XEngineer/Windup#53。"
         )
+
+
+# Facing → 出帧台的朝向名。键名与前端导出模型的 ExportAction.sequences[].direction
+# 同域,不需要转换层。
+#
+# **值是真渲一遍量出来的,不能按方位名推。** 直觉上 "south = 朝观者",实际 n(yaw=90°)
+# 才是正面(奶白胸腹与口鼻可见,浅色像素占比 21.0%),s 是背面(8.5%)。两者主体像素数
+# 几乎相同,靠轮廓分不出正反,而单元测试也逮不到 —— 朝向错了但帧数、时长、成色全部正常。
+# 改这张表之前先渲一遍再量。
+_FACING_TO_DIRECTION: dict[Facing, str] = {
+    Facing.SIDE: "e",     # yaw=0°,角色朝画面右(与出帧台 faces="right" 同口径)
+    Facing.FRONT: "n",    # yaw=90°,身体正对观者
+}
+
+
+class RenderFrameStrategy(DerivationStrategy):
+    """三渲二:已绑骨的 3D 模型 → 套预设动作 → 渲 2D 序列帧。
+
+    **吃的是绑骨模型,不是母版图。** 图生 3D 与自动绑骨那两段按次计费、每造型一次性,
+    由 server 侧的 ``Render3DAssetBuilder`` 负责(#121);走到这里钱已经花完,本段纯本地、
+    零 API 成本。相对 i2v 的独占优势是**多朝向零成本且跨朝向天生一致**。
+    """
+
+    route = GenRoute.RENDER_3D
+
+    def __init__(
+        self,
+        renderer: SpriteRenderProvider,
+        *,
+        directions: int = 4,
+        material: str = "cel",
+        size: tuple[int, int] | None = None,
+    ) -> None:
+        # 出帧台的 provider 包只在这条路线上用得着(它连着 node + 浏览器)。在模块顶层
+        # import 会让走 i2v / 逐帧的部署也必须装齐它,而这两条路线一行都用不到。
+        from windup_framework.providers.render3d import RENDER_SIZE
+
+        self._renderer = renderer
+        self._directions = directions
+        self._material = material
+        self._size = size or RENDER_SIZE
+
+    def derive(
+        self,
+        card: CharacterCard,
+        action: ActionSpec,
+        rigged_model: bytes,
+        progress: ProgressPort,
+    ) -> list[bytes]:
+        if not rigged_model:
+            # 空模型必须在这里炸:让它流下去的话出帧台只报一句"Bad glTF",
+            # 排查方向会整个跑偏到出帧管线上。
+            raise ValueError(
+                f"三渲二拿到空的绑骨模型(角色 {card.name!r}、动作 {action.action.value})。"
+                "server 侧应在调用前确认该造型的 3D 资产可读。"
+            )
+
+        want = _FACING_TO_DIRECTION.get(action.facing, "e")
+        progress.step(
+            "derive", 0, 3,
+            f"渲 {self._directions} 朝向 × {action.n_frames} 帧"
+            f"({self._size[0]}×{self._size[1]},材质 {self._material})",
+        )
+        sheet: SpriteSheet = self._renderer.render(
+            rigged_model,
+            clip=action.action.value,
+            directions=self._directions,
+            frames=action.n_frames,
+            size=self._size,
+            material=self._material,
+        )
+
+        available = tuple(s.direction for s in sheet.sequences)
+        chosen = next((s for s in sheet.sequences if s.direction == want), None)
+        if chosen is None:
+            # 不静默换一个朝向交出去:朝向错了的序列帧就是角色朝反方向走,
+            # 而帧数、时长、成色全都正常,没有任何一道会红。
+            raise ValueError(
+                f"出帧台没有产出朝向 {want}(动作 {action.action.value}、facing "
+                f"{action.facing.value});实际产出 {available}。"
+            )
+        frames = list(chosen.frames)
+        if not frames:
+            raise ValueError(
+                f"三渲二未产出任何帧(动作 {action.action.value}、朝向 {chosen.direction})。"
+            )
+
+        extra = [d for d in available if d != chosen.direction]
+        if extra:
+            # 如实报:这些朝向已经渲出来了、零额外成本,但出参装不下,只能丢。
+            # 不写成 warning 日志而是进度文案,因为这串字最终会经 server 到用户眼前,
+            # 而"多朝向"正是这条路线的卖点 —— 用户该知道它已经算好了。
+            progress.step(
+                "derive", 1, 3,
+                f"已渲 {len(available)} 个朝向,本次出参只带 {chosen.direction};"
+                f"其余 {','.join(extra)} 零成本可用但当前契约装不下(#122)",
+            )
+        else:
+            progress.step("derive", 1, 3, f"朝向 {chosen.direction} 共 {len(frames)} 帧")
+
+        # 3D 帧本来就是透明底,**不套抠图**:去白边那一步会把浅灰甲当漏白吃掉。
+        # 像素化仍按 ActionSpec 走。
+        if action.stylize is Stylize.NONE:
+            progress.step("derive", 2, 3, "保留渲染画风(不像素化)")
+            return frames
+
+        # 像素化的目标高与色板本来该从母版量(master_pixel_spec),但本路线**没有母版** ——
+        # 它吃的是 3D 模型。所以只能按 ActionSpec 声明的 pixel_h + 通用量化走。
+        # 这是一处已知差异,不是遗漏:锁母版色板要靠母版像素,而这条路线上根本没有那张图。
+        progress.step("derive", 2, 3, f"像素化(h={action.pixel_h}·通用量化)")
+        pix = pixelate_frames(
+            [_img(f) for f in frames],
+            target_h=action.pixel_h,
+            palette_size=action.palette_size,
+        )
+        return [_png(p) for p in pix]
 
 
 # 注:曾有 ProcIdleStrategy(GenRoute.PROC_IDLE)—— 待机走"母版抠图 + 程序化局部躯干呼吸"

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useOutletContext, useParams } from 'react-router'
 
 import { characterApis, type Action, type Character, type Outfit, type Project } from '@/entities'
-import { createCharacterExportModel, ExportPanel } from '@/features/export-package'
+import { createCharacterExportModel, ExportButton } from '@/features/export-package'
+import { AssetPreviewSurface } from '@/shared/ui'
 
 const ACTION_TYPE_LABELS: Record<string, string> = {
   walk: '行走',
@@ -27,7 +28,6 @@ export function CharacterDetailPage() {
   const { projectId, characterId } = useParams()
   const project = useOutletContext<Project>()
   const [character, setCharacter] = useState<Character | null>(null)
-  const [selectedOutfitId, setSelectedOutfitId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -40,7 +40,6 @@ export function CharacterDetailPage() {
     }
 
     setCharacter(null)
-    setSelectedOutfitId(null)
     setError(null)
     void characterApis.get(characterId).then(
       (nextCharacter) => {
@@ -50,7 +49,6 @@ export function CharacterDetailPage() {
           return
         }
         setCharacter(nextCharacter)
-        setSelectedOutfitId(nextCharacter.outfits[0]?.id ?? null)
       },
       () => {
         if (active) setError('这个角色不存在或暂时无法读取')
@@ -75,61 +73,46 @@ export function CharacterDetailPage() {
   if (!character) return <p className="p-6 text-sm text-app-muted">正在读取角色资产…</p>
 
   const name = characterName(character)
-  const selectedOutfit =
-    character.outfits.find((outfit) => outfit.id === selectedOutfitId) ??
-    character.outfits[0] ??
-    null
+  const selectedOutfit = character.outfits[0] ?? null
   const canPlaytest = selectedOutfit?.actions.some((action) => action.frames.length > 0) ?? false
 
   return (
     <section aria-labelledby="character-title" className="p-4 lg:px-6 lg:py-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <Link
-            to={`/projects/${projectId}/assets`}
-            className="text-xs font-semibold text-app-muted underline decoration-app-line underline-offset-4 hover:text-app-accent"
-          >
-            返回资产库
-          </Link>
-          <h2
-            id="character-title"
-            className="mt-2 text-2xl font-semibold tracking-[-0.035em] text-app-ink"
-          >
-            {name}
-          </h2>
-          <p className="mt-1 text-xs text-app-muted">选择动作卡片查看完整帧序列。</p>
-        </div>
-        <div className="flex flex-col items-end gap-2">
-          {selectedOutfit ? (
-            <label className="flex items-center gap-2 text-xs font-medium text-app-muted">
-              <span>造型</span>
-              <select
-                aria-label="选择造型"
-                value={selectedOutfit.id}
-                onChange={(event) => setSelectedOutfitId(event.target.value)}
-                className="rounded-full border border-app-line bg-app-surface-raised px-3 py-2 text-sm font-semibold text-app-ink-soft outline-none focus:border-app-accent"
-              >
-                {character.outfits.map((outfit) => (
-                  <option key={outfit.id} value={outfit.id}>
-                    {outfit.name} · {outfit.actions.length} 动作
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          <div className="flex flex-wrap justify-end gap-2">
+      <header className="border-b border-app-line pb-5">
+        <Link
+          to={`/projects/${projectId}/assets`}
+          className="text-xs text-app-muted transition-colors hover:text-app-accent"
+        >
+          ← 返回资产库
+        </Link>
+        <div className="mt-5 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-[0.68rem] tracking-[0.12em] text-app-faint">
+              {project.name} / 角色资产
+            </p>
+            <h2
+              id="character-title"
+              className="mt-1 font-serif text-3xl font-medium tracking-[-0.04em] text-app-ink"
+            >
+              {name}
+            </h2>
+          </div>
+          <div className="flex flex-wrap items-start gap-2 sm:justify-end">
+            {selectedOutfit ? (
+              <CharacterExport project={project} character={character} outfit={selectedOutfit} />
+            ) : null}
             {selectedOutfit && canPlaytest ? (
               <Link
                 to={`/playtest/${character.id}/${selectedOutfit.id}`}
                 aria-label="在预览台打开当前造型"
-                className="inline-flex min-h-9 items-center rounded-full bg-app-accent px-4 text-xs font-semibold text-app-on-accent transition-colors hover:bg-app-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
+                className="inline-flex min-h-10 items-center rounded-full bg-app-accent px-5 text-xs font-semibold text-app-on-accent transition-colors hover:bg-app-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
               >
                 在预览台打开
               </Link>
             ) : null}
           </div>
         </div>
-      </div>
+      </header>
 
       {character.outfits.length === 0 || !selectedOutfit ? (
         <div className="mt-6 rounded-[1.5rem] border border-dashed border-app-line bg-app-surface-raised p-7">
@@ -140,8 +123,7 @@ export function CharacterDetailPage() {
           <div className="mt-3">
             <OutfitMaster character={character} outfit={selectedOutfit} />
           </div>
-          <CharacterExport project={project} character={character} outfit={selectedOutfit} />
-          <ActionList key={selectedOutfit.id} character={character} outfit={selectedOutfit} />
+          <ActionList key={selectedOutfit.id} outfit={selectedOutfit} />
         </>
       )}
     </section>
@@ -180,9 +162,12 @@ function CharacterExport({
   }
   if (result.model === null || result.model.actions.length === 0) return null
   return (
-    <div className="mt-4 max-w-sm">
-      <ExportPanel model={result.model} />
-    </div>
+    <ExportButton
+      model={result.model}
+      idleLabel="导出资产包"
+      pill
+      className="inline-flex min-h-10 items-center border-app-line px-5 text-xs font-semibold text-app-ink-soft transition-colors hover:border-app-line-strong hover:text-app-accent"
+    />
   )
 }
 
@@ -191,22 +176,12 @@ function OutfitMaster({ character, outfit }: { character: Character; outfit: Out
   return (
     <section aria-labelledby="outfit-master-title" className="flex min-w-0 items-center gap-4 py-2">
       <div className="h-28 w-28 shrink-0 sm:h-32 sm:w-32">
-        {outfit.previewUrl ? (
-          <img
-            src={outfit.previewUrl}
-            alt={`${name}的${outfit.name}预览`}
-            loading="eager"
-            decoding="async"
-            fetchPriority="high"
-            className="h-full w-full object-contain [image-rendering:pixelated]"
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center bg-[linear-gradient(135deg,var(--color-app-surface-muted)_25%,var(--color-app-surface)_25%,var(--color-app-surface)_50%,var(--color-app-surface-muted)_50%,var(--color-app-surface-muted)_75%,var(--color-app-surface)_75%)] bg-[length:28px_28px]">
-            <span className="rounded-full border border-app-line bg-app-surface-raised/90 px-3 py-1 text-xs font-semibold text-app-muted">
-              暂无造型预览
-            </span>
-          </div>
-        )}
+        <AssetPreviewSurface
+          previewUrl={outfit.previewUrl}
+          previewAlt={`${name}的${outfit.name}预览`}
+          priority
+          className="h-full"
+        />
       </div>
       <div className="min-w-0 flex-1">
         <h3
@@ -215,9 +190,6 @@ function OutfitMaster({ character, outfit }: { character: Character; outfit: Out
         >
           {outfit.name}
         </h3>
-        {outfit.description ? (
-          <p className="mt-1 text-xs leading-5 text-app-muted">{outfit.description}</p>
-        ) : null}
         <p className="mt-2 text-[0.7rem] font-medium text-app-muted">
           {outfit.actions.length} 个动作
         </p>
@@ -226,29 +198,15 @@ function OutfitMaster({ character, outfit }: { character: Character; outfit: Out
   )
 }
 
-function ActionList({ character, outfit }: { character: Character; outfit: Outfit }) {
+function ActionList({ outfit }: { outfit: Outfit }) {
   const [selectedActionId, setSelectedActionId] = useState<string | null>(null)
   const selectedAction = outfit.actions.find((action) => action.id === selectedActionId) ?? null
 
   return (
     <section aria-labelledby="action-list-title" className="mt-3">
-      <div className="flex items-end justify-between gap-4">
-        <h3 id="action-list-title" className="text-lg font-semibold text-app-ink">
-          动作与帧
-        </h3>
-        <div className="flex items-center gap-3">
-          <span className="text-[0.7rem] text-app-faint">点击卡片展开完整帧</span>
-          <button
-            type="button"
-            aria-label="增加动作"
-            disabled
-            title="动作生成应进入 Workflow Editor"
-            className="cursor-not-allowed rounded-full border border-app-line px-3 py-1.5 text-xs font-semibold text-app-faint"
-          >
-            ＋ 增加动作
-          </button>
-        </div>
-      </div>
+      <h3 id="action-list-title" className="text-lg font-semibold text-app-ink">
+        动作与帧
+      </h3>
 
       {outfit.actions.length === 0 ? (
         <div className="mt-4 rounded-[1.5rem] border border-dashed border-app-line bg-app-surface-raised p-7">
@@ -312,70 +270,58 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
           {selectedAction ? (
             <section
               aria-label={`${selectedAction.name}完整帧序列`}
-              className="action-reveal overflow-hidden rounded-[1.35rem] border border-app-line bg-app-surface-raised p-4"
+              className="action-reveal grid gap-5 border-t border-app-line py-5 lg:grid-cols-[10rem_minmax(0,1fr)]"
             >
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h4 className="text-lg font-semibold text-app-ink">{selectedAction.name}</h4>
-                    <span className="rounded-full bg-app-surface-muted px-2.5 py-1 text-[0.68rem] font-semibold text-app-ink-soft">
-                      {actionTypeLabel(selectedAction.type)}
-                    </span>
-                  </div>
-                  <p className="mt-2 text-xs text-app-faint">
-                    {selectedAction.fps} FPS · {selectedAction.frameCount} 帧 ·{' '}
-                    {selectedAction.loop ? '循环播放' : '单次播放'}
-                  </p>
-                </div>
-                <div className="flex flex-wrap justify-end gap-2">
-                  <button
-                    type="button"
-                    aria-label={`重新生成${selectedAction.name}`}
-                    disabled
-                    title="需要原 WorkflowRun 的步骤上下文"
-                    className="cursor-not-allowed rounded-full border border-app-line px-3 py-1.5 text-xs font-semibold text-app-faint"
-                  >
-                    重新生成
-                  </button>
-                  <button
-                    type="button"
-                    disabled
-                    aria-label="保存为动作模板"
-                    title="动作模板后端未提供"
-                    className="cursor-not-allowed rounded-full border border-app-line px-3 py-1.5 text-xs font-semibold text-app-faint"
-                  >
-                    保存为动作模板
-                  </button>
-                </div>
+              <div>
+                <p className="text-[0.68rem] font-medium tracking-[0.12em] text-app-faint">
+                  当前动作
+                </p>
+                <h4 className="mt-1 text-lg font-semibold tracking-[-0.025em] text-app-ink">
+                  {selectedAction.name}
+                </h4>
+                <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-xs">
+                  <dt className="text-app-faint">类型</dt>
+                  <dd className="text-app-ink-soft">{actionTypeLabel(selectedAction.type)}</dd>
+                  <dt className="text-app-faint">帧率</dt>
+                  <dd className="tabular-nums text-app-ink-soft">{selectedAction.fps} FPS</dd>
+                  <dt className="text-app-faint">帧数</dt>
+                  <dd className="tabular-nums text-app-ink-soft">{selectedAction.frameCount}</dd>
+                  <dt className="text-app-faint">播放</dt>
+                  <dd className="text-app-ink-soft">{selectedAction.loop ? '循环' : '单次'}</dd>
+                </dl>
               </div>
-              <p className="mt-2 text-[0.65rem] text-app-faint">动作模板后端未提供</p>
-              <p className="mt-2 text-[0.68rem] font-medium text-app-muted">
-                {characterName(character)} / {outfit.name} / {selectedAction.name}
-              </p>
-              <div className="mt-3 overflow-x-auto pb-1">
-                <ol className="flex min-w-max gap-2.5">
-                  {orderedFrames(selectedAction).map((frame) => (
-                    <li key={`${selectedAction.id}-${frame.index}`} className="w-20 shrink-0">
-                      <div className="overflow-hidden rounded-xl border border-app-line">
-                        <img
-                          src={frame.imageUrl}
-                          alt={`${selectedAction.name}第 ${frame.index + 1} 帧`}
-                          loading="lazy"
-                          decoding="async"
-                          className="aspect-square w-full object-contain p-1 [image-rendering:pixelated]"
-                        />
-                      </div>
-                      <div className="mt-2 flex items-center justify-between gap-1 text-[0.65rem] text-app-faint">
-                        <span>#{String(frame.index + 1).padStart(2, '0')}</span>
-                        <span>
-                          {frame.durationMs === null
-                            ? `按 ${selectedAction.fps} FPS`
-                            : `${frame.durationMs} ms`}
-                        </span>
-                      </div>
-                    </li>
-                  ))}
-                </ol>
+              <div className="min-w-0">
+                <div className="flex items-baseline justify-between gap-4">
+                  <h5 className="text-sm font-semibold text-app-ink">帧序列</h5>
+                  <span className="text-[0.68rem] tabular-nums text-app-faint">
+                    {selectedAction.frameCount} 帧
+                  </span>
+                </div>
+                <div className="mt-3 overflow-x-auto pb-2">
+                  <ol className="flex min-w-max gap-3">
+                    {orderedFrames(selectedAction).map((frame) => (
+                      <li key={`${selectedAction.id}-${frame.index}`} className="w-24 shrink-0">
+                        <div className="overflow-hidden rounded-lg border border-app-line bg-app-surface-muted">
+                          <img
+                            src={frame.imageUrl}
+                            alt={`${selectedAction.name}第 ${frame.index + 1} 帧`}
+                            loading="lazy"
+                            decoding="async"
+                            className="aspect-square w-full object-contain p-1.5 [image-rendering:pixelated]"
+                          />
+                        </div>
+                        <div className="mt-2 flex items-center justify-between gap-1 text-[0.65rem] tabular-nums text-app-faint">
+                          <span>#{String(frame.index + 1).padStart(2, '0')}</span>
+                          <span>
+                            {frame.durationMs === null
+                              ? `按 ${selectedAction.fps} FPS`
+                              : `${frame.durationMs} ms`}
+                          </span>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
               </div>
             </section>
           ) : null}

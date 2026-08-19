@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 
-import { useAuthSession } from '@/features/auth-session'
+import { quotaApis as defaultQuotaApis } from '@/entities'
+import type { QuotaApis } from '@/entities'
+import { AUTH_SESSION_STORAGE_PREFIX, useAuthSession } from '@/features/auth-session'
+import { useQuotaBalance } from '@/features/quota'
 import { PageBackButton } from './page-back-button'
 
 interface ProductNavigationItem {
@@ -14,7 +17,12 @@ interface ProductNavigationItem {
 
 type AccountMenuState = 'closed' | 'open' | 'closing'
 
+export interface AppHeaderProps {
+  quotaApis?: QuotaApis
+}
+
 const accountMenuExitDurationMs = 260
+const inviteHintStorageKey = `${AUTH_SESSION_STORAGE_PREFIX}invite-hint-seen.v1`
 
 /** 四个入口对应四种去处：回首页、看资产、做新东西、核验已完成的造型。 */
 const productNavigation: ProductNavigationItem[] = [
@@ -67,12 +75,17 @@ function WaveText({ playId, text }: { playId: number; text: string }) {
  * 跨页面顶栏知道产品路由，因此属于 app 外壳，不下沉到 shared/ui。
  * 品牌、主导航和账号共用一个平面，避免三个功能层被误读成彼此独立的卡片。
  */
-export function AppHeader() {
+export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {}) {
   const { pathname, search, hash } = useLocation()
   const navigate = useNavigate()
   const session = useAuthSession()
   const [accountMenuState, setAccountMenuState] = useState<AccountMenuState>('closed')
+  const [inviteHintVisible, setInviteHintVisible] = useState(false)
   const accountMenuOpen = accountMenuState === 'open'
+  const creditBalance = useQuotaBalance(
+    accountMenuState !== 'closed' && session.state.status === 'authenticated',
+    quotaApis,
+  )
   const [wave, setWave] = useState({ entry: '', playId: 0 })
   const accountEntry = `/?${new URLSearchParams({
     account: 'login',
@@ -88,13 +101,38 @@ export function AppHeader() {
     return () => window.clearTimeout(timer)
   }, [accountMenuState])
 
+  useEffect(() => {
+    if (pathname !== '/workspace' || session.state.status !== 'authenticated') {
+      setInviteHintVisible(false)
+      return
+    }
+
+    if (window.sessionStorage.getItem(inviteHintStorageKey) === '1') return
+
+    window.sessionStorage.setItem(inviteHintStorageKey, '1')
+    setInviteHintVisible(true)
+
+    const timer = window.setTimeout(() => {
+      setInviteHintVisible(false)
+    }, 15_000)
+
+    return () => window.clearTimeout(timer)
+  }, [pathname, session.state.status])
+
   function signOut() {
+    window.sessionStorage.removeItem(inviteHintStorageKey)
     const returnHome = () => navigate('/', { replace: true })
     void session.logout().then(returnHome, returnHome)
   }
 
   function toggleAccountMenu() {
+    dismissInviteHint()
     setAccountMenuState((state) => (state === 'open' ? 'closing' : 'open'))
+  }
+
+  function dismissInviteHint() {
+    window.sessionStorage.setItem(inviteHintStorageKey, '1')
+    setInviteHintVisible(false)
   }
 
   function finishAccountMenuMotion() {
@@ -115,7 +153,6 @@ export function AppHeader() {
     >
       <div className="relative mx-auto grid min-h-14 w-full max-w-[90rem] grid-cols-[auto_1fr_auto] items-center gap-4 px-4 sm:px-6 lg:px-8">
         <div className="flex min-w-0 items-center gap-1.5">
-          <PageBackButton />
           <Link
             to="/workspace"
             aria-label="返回 Windup 工作台"
@@ -130,6 +167,7 @@ export function AppHeader() {
               <WaveText playId={wave.entry === 'brand' ? wave.playId : 0} text="Windup" />
             </strong>
           </Link>
+          <PageBackButton />
         </div>
 
         <nav
@@ -198,6 +236,39 @@ export function AppHeader() {
             </Link>
           ) : (
             <>
+              {inviteHintVisible ? (
+                <div
+                  role="status"
+                  aria-label="邀请奖励提示"
+                  className="absolute top-[calc(100%+0.7rem)] right-0 z-10 w-[min(15rem,calc(100vw-2rem))] rounded-lg border border-app-ink/12 bg-app-surface-raised px-3.5 py-3 text-left shadow-app-menu before:absolute before:-top-1.5 before:right-5 before:h-3 before:w-3 before:rotate-45 before:border-l before:border-t before:border-app-ink/12 before:bg-app-surface-raised"
+                >
+                  <div className="relative flex items-start gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium leading-5 text-app-ink-soft">
+                        邀请成功，双方各得 200 积分
+                      </p>
+                      <p className="mt-0.5 text-[11px] leading-4 text-app-faint">
+                        每日前 3 次邀请可得奖励
+                      </p>
+                      <Link
+                        to="/account?section=invite"
+                        onClick={dismissInviteHint}
+                        className="mt-1 inline-flex text-[12px] text-app-muted underline decoration-app-ink/20 underline-offset-2 transition-colors hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
+                      >
+                        去看看邀请奖励
+                      </Link>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="关闭邀请奖励提示"
+                      onClick={dismissInviteHint}
+                      className="-mr-1 -mt-1 grid h-6 w-6 shrink-0 place-items-center rounded-md text-sm leading-none text-app-faint transition-colors hover:bg-app-ink/5 hover:text-app-ink-soft focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <button
                 type="button"
                 aria-label="打开账号菜单"
@@ -218,14 +289,6 @@ export function AppHeader() {
                 <span className="hidden truncate sm:inline">
                   {session.state.user.nickname || session.state.user.email}
                 </span>
-                <span
-                  aria-hidden="true"
-                  className={`text-[10px] text-app-faint transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none ${
-                    accountMenuOpen ? 'rotate-180' : 'rotate-0'
-                  }`}
-                >
-                  ↓
-                </span>
               </button>
 
               <div
@@ -243,6 +306,30 @@ export function AppHeader() {
                       : 'invisible pointer-events-none -translate-y-2 scale-[0.82] opacity-0'
                 }`}
               >
+                <div
+                  aria-label="积分余额"
+                  className="flex min-h-11 items-center justify-between gap-4 border-b border-app-ink/10 px-3 pb-1 text-[13px]"
+                >
+                  <span className="text-app-muted">可用积分</span>
+                  <output aria-live="polite" className="font-mono font-semibold text-app-accent">
+                    {creditBalance.status === 'ready' ? (
+                      <>
+                        {creditBalance.account.balance}
+                        <span className="ml-1 font-sans text-[11px] font-normal text-app-faint">
+                          积分
+                        </span>
+                      </>
+                    ) : creditBalance.status === 'error' ? (
+                      <span className="font-sans text-[12px] font-normal text-app-faint">
+                        积分暂不可用
+                      </span>
+                    ) : (
+                      <span className="font-sans text-[12px] font-normal text-app-faint">
+                        查询中…
+                      </span>
+                    )}
+                  </output>
+                </div>
                 <Link
                   to="/account"
                   aria-label="打开账号中心"

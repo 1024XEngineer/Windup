@@ -2,7 +2,9 @@ from windup_common.models.character import (
     DEFAULT_N_FRAMES,
     ActionSpec,
     ActionType,
+    AttackArchetype,
     CharacterCard,
+    CharacterStance,
     CharacterView,
     Facing,
     GenRoute,
@@ -11,9 +13,11 @@ from windup_common.models.character import (
 
 __all__ = [
     "ActionType",
+    "AttackArchetype",
     "GenRoute",
     "Facing",
     "CharacterView",
+    "CharacterStance",
     "Stylize",
     "DEFAULT_N_FRAMES",
     "CharacterCard",

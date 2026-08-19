@@ -18,6 +18,7 @@ from windup_app.server.character.model import Character, CharacterData
 from windup_app.server.character.service import service as character_service
 from windup_app.server.media.service import service as media_service
 from windup_app.server.project.model import Project
+from windup_app.server.project.service import service as project_service
 
 logger = logging.getLogger("windup.character.api")
 
@@ -97,16 +98,19 @@ def _extract_object_keys(character: Character) -> list[str]:
 
 
 def _get_project_or_raise(
-    session: Session, project_id: int, user_id: int,
+    session: Session, project_id: int, user_id: int, *, for_update: bool = False,
 ) -> Project:
-    """校验项目存在且属于当前用户，否则抛 BizException。"""
-    project = session.get(Project, project_id)
+    """校验项目存在且属于当前用户，否则抛 BizException。
+
+    创建角色时 ``for_update=True``，与删除项目锁同一行，避免并发下留下无归属角色。
+    """
+    project = project_service.get_project(session, project_id, for_update=for_update)
     if project is None or project.user_id != user_id:
         raise BizException("项目不存在", code=BizCode.NOT_FOUND)
     return project
 
 
-def _get_character_with_auth(
+def get_character_with_auth(
     session: Session, character_id: int, user_id: int,
 ) -> Character:
     """获取角色并校验其所属项目属于当前用户。
@@ -132,7 +136,7 @@ def create_character(
     session: Session = Depends(get_session),
 ) -> Response[CharacterOut]:
     user_id = request.state.current_user.id
-    _get_project_or_raise(session, body.project_id, user_id)
+    _get_project_or_raise(session, body.project_id, user_id, for_update=True)
     character_data = body.character_data.model_dump()
     status = CharacterStatus.from_character_data(character_data)
     try:
@@ -146,8 +150,11 @@ def create_character(
             character_data=character_data,
             status=status,
         )
-    except IntegrityError:
+    except IntegrityError as exc:
         session.rollback()
+        orig = str(getattr(exc, "orig", exc)).lower()
+        if "foreign key" in orig:
+            raise BizException("项目不存在", code=BizCode.NOT_FOUND) from None
         character = character_service.get_character_by_workflow_run(
             session,
             body.workflow_run_id,
@@ -186,7 +193,7 @@ def get_character(
     session: Session = Depends(get_session),
 ) -> Response[CharacterOut]:
     user_id = request.state.current_user.id
-    character = _get_character_with_auth(session, character_id, user_id)
+    character = get_character_with_auth(session, character_id, user_id)
     return Response.success(CharacterOut.model_validate(character))
 
 
@@ -198,7 +205,7 @@ def update_character(
     session: Session = Depends(get_session),
 ) -> Response[CharacterOut]:
     user_id = request.state.current_user.id
-    _get_character_with_auth(session, character_id, user_id)
+    get_character_with_auth(session, character_id, user_id)
     fields = body.model_dump(exclude_unset=True)
     # 如果更新了 character_data，自动推断 status
     if "character_data" in fields:
@@ -221,7 +228,7 @@ def delete_character(
     session: Session = Depends(get_session),
 ) -> Response[None]:
     user_id = request.state.current_user.id
-    character = _get_character_with_auth(session, character_id, user_id)
+    character = get_character_with_auth(session, character_id, user_id)
 
     # 先提取对象 key,再删 DB 记录
     object_keys = _extract_object_keys(character)

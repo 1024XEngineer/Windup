@@ -15,7 +15,7 @@ import inspect
 import pytest
 from pydantic import ValidationError
 
-from windup_ai_engine.master_prep import MASTER_POSES
+from windup_ai_engine.master_prep import ATTACK_MASTER_POSES, MASTER_POSES
 from windup_ai_engine.prompt import (
     build_attack_prompt,
     build_idle_prompt,
@@ -27,7 +27,9 @@ from windup_common.models import (
     DEFAULT_N_FRAMES,
     ActionSpec,
     ActionType,
+    AttackArchetype,
     CharacterCard,
+    CharacterStance,
     CharacterView,
     Facing,
     Stylize,
@@ -68,9 +70,11 @@ def test_action_spec_restricted_fields_reject_typos(field, bad, good, member):
     assert getattr(ActionSpec(action=ActionType.WALK, **{field: good}), field) is member
 
 
-def test_character_view_rejects_typos_and_matches_frontend_contract():
-    """view 的取值与前端契约（frontend/API_CONTRACT.md：1 side / 2 top-down / 3 isometric）
-    逐字一致，免得将来做 int↔str 映射时出现 topdown / top_down / top-down 三种写法。
+def test_character_view_rejects_typos_and_matches_perspective_mapping():
+    """view 固定映射 perspective：1 side / 2 top-down / 3 isometric。
+
+    字符串必须逐字一致，免得将来做 int↔str 映射时出现
+    topdown / top_down / top-down 三种写法。
     """
     assert {v.value for v in CharacterView} == {"side", "top-down", "isometric"}
     with pytest.raises(ValidationError):
@@ -86,6 +90,26 @@ def test_character_card_default_view_is_a_legal_value():
     对每一个默认构造的角色卡都会走错分支，且不会有任何报错。
     """
     assert CharacterCard(name="n", desc="d").view in set(CharacterView)
+
+
+def test_character_stance_rejects_typos():
+    """体型拼错要当场炸:裸 str 时 "Quadruped" 会被当成非双足以外的第 N 种值一路放行,
+    而它唯一的消费方是"手臂一类词放不放行"的判定 —— 判错的代价是模型给四足角色接上
+    一对人的上肢,一次付费生成之后才在画面上看出来。
+    """
+    with pytest.raises(ValidationError):
+        CharacterCard(name="n", desc="d", stance="Quadruped")
+    card = CharacterCard(name="n", desc="d", stance="quadruped")
+    assert card.stance is CharacterStance.QUADRUPED
+
+
+def test_character_card_defaults_to_the_least_asserting_stance():
+    """默认值是对每个没声明体型的角色做的断言,所以取断言最少的那支。
+
+    双足这一支不往提示词里加任何部位词;反过来把默认设成非双足,会让占多数的人形角色
+    被要求把"手臂"改写成"前肢 / 尾",而那些词进了提示词就是让模型凭空长出对应部位。
+    """
+    assert CharacterCard(name="n", desc="d").stance is CharacterStance.BIPED
 
 
 def test_unknown_field_name_is_rejected_not_silently_dropped():
@@ -176,9 +200,10 @@ def test_prompt_names_no_equipment(build, facing):
 
 def test_master_poses_name_no_equipment():
     """母版姿势描述同样不许写装备 —— 母版是整条 i2v 链的身份来源，污染会传到所有动作。"""
-    for action, pose in MASTER_POSES.items():
+    poses = {**MASTER_POSES, **{a.value: t for a, t in ATTACK_MASTER_POSES.items()}}
+    for action, pose in poses.items():
         named = _named_equipment(pose)
-        assert not named, f"MASTER_POSES[{action!r}] 断言了装备: {named}"
+        assert not named, f"母版姿态 {action!r} 断言了装备: {named}"
 
 
 @pytest.mark.parametrize(
@@ -191,8 +216,21 @@ def test_prompt_builders_expose_facing_only(build):
     而调用侧（``strategy.concrete._build_prompt``）只传 facing，默认值就成了全体角色的
     实际取值。要按角色定制装备文字，得先有地方存它，那是角色卡契约的事；在这里留一个
     没人传的参数，只会让人以为该能力已经存在。
+
+    attack 多一个 ``archetype``：它选的是运动拓扑(身体怎么发力)、取值是枚举、且真有写入方
+    (``ActionSpec.archetype`` → ``_build_prompt``)，与"没人传的装备参数"不是一类。
     """
-    assert list(inspect.signature(build).parameters) == ["facing"]
+    allowed = ["facing", "archetype"] if build is build_attack_prompt else ["facing"]
+    assert list(inspect.signature(build).parameters) == allowed
+
+
+def test_attack_archetype_is_an_enum_not_free_text():
+    """拼错的拓扑要当场炸,不能静默落到某一支 —— 理由同 facing 用枚举。"""
+    p = inspect.signature(build_attack_prompt).parameters["archetype"]
+    assert p.kind is inspect.Parameter.KEYWORD_ONLY, "archetype 必须是关键字参数,免得与 facing 传串位"
+    assert p.default is AttackArchetype.THRUST
+    with pytest.raises(ValueError):
+        build_attack_prompt(facing=Facing.SIDE, archetype="swep")
 
 
 def test_strategy_passes_only_facing_into_prompt_builders():

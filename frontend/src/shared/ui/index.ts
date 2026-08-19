@@ -1,4 +1,8 @@
+export { KineticCopy } from './kinetic-copy'
+export type { KineticCopyPhase, KineticCopyProps } from './kinetic-copy'
 export { PageContainer } from './page-container'
 export type { PageContainerProps } from './page-container'
 export { Pagination } from './pagination'
 export type { PaginationProps } from './pagination'
+export { AssetPreviewCard, AssetPreviewSurface } from './asset-preview-card'
+export type { AssetPreviewCardProps, AssetPreviewSurfaceProps } from './asset-preview-card'

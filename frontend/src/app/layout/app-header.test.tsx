@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
-import type { AuthTokens, UserApis } from '@/entities'
+import type { AuthTokens, CreditAccount, QuotaApis, UserApis } from '@/entities'
 import { AuthSessionProvider } from '@/features/auth-session'
 import { AppHeader } from './app-header'
 
@@ -33,6 +33,40 @@ function createApis(): UserApis & Record<keyof UserApis, ReturnType<typeof vi.fn
   }
 }
 
+const creditAccount: CreditAccount = {
+  id: '11',
+  userId: '7',
+  balance: 90,
+  frozen: 10,
+  totalEarned: 150,
+  totalSpent: 50,
+  createdAt: '2026-08-12T01:02:03Z',
+  updatedAt: '2026-08-17T01:02:03Z',
+}
+
+function createQuotaMock(): QuotaApis & {
+  [K in keyof QuotaApis]: ReturnType<typeof vi.fn>
+} {
+  return {
+    getBalance: vi.fn(async () => creditAccount),
+    listTransactions: vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 20 })),
+    getInviteCode: vi.fn(async () => ({
+      code: 'AB23CD45',
+      usedCount: 0,
+      expiresAt: '2026-09-16T01:02:03Z',
+      createdAt: '2026-08-17T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })),
+    generateInviteCode: vi.fn(async () => ({
+      code: 'XY89KL23',
+      usedCount: 0,
+      expiresAt: '2026-09-16T01:02:03Z',
+      createdAt: '2026-08-17T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })),
+  }
+}
+
 function LocationProbe() {
   const location = useLocation()
   return (
@@ -40,9 +74,15 @@ function LocationProbe() {
   )
 }
 
-function renderHeader(entry = '/', apis = createApis(), previousEntry?: string) {
+function renderHeader(
+  entry = '/',
+  apis = createApis(),
+  previousEntry?: string,
+  quota = createQuotaMock(),
+) {
   return {
     apis,
+    quota,
     ...render(
       <AuthSessionProvider apis={apis}>
         <MemoryRouter
@@ -54,7 +94,7 @@ function renderHeader(entry = '/', apis = createApis(), previousEntry?: string) 
               path="*"
               element={
                 <>
-                  <AppHeader />
+                  <AppHeader quotaApis={quota} />
                   <LocationProbe />
                 </>
               }
@@ -66,9 +106,16 @@ function renderHeader(entry = '/', apis = createApis(), previousEntry?: string) 
   }
 }
 
+function finishBackAnimation() {
+  act(() => vi.advanceTimersByTime(240))
+}
+
 afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
   cleanup()
   window.localStorage.clear()
+  window.sessionStorage.clear()
   window.history.replaceState({ idx: 0 }, '')
 })
 
@@ -81,6 +128,7 @@ describe('AppHeader', () => {
     ['/workspace', '/'],
     ['/account', '/workspace'],
   ])('直接打开 %s 时按页面层级返回 %s', (entry, expected) => {
+    vi.useFakeTimers()
     window.history.replaceState({ idx: 0 }, '')
     renderHeader(entry)
 
@@ -90,15 +138,75 @@ describe('AppHeader', () => {
     expect(back.className).toContain('w-9')
 
     fireEvent.click(back)
+    finishBackAnimation()
     expect(screen.getByTestId('location').textContent).toBe(expected)
   })
 
   it('存在站内浏览历史时返回真实上一页', () => {
+    vi.useFakeTimers()
     window.history.replaceState({ idx: 1 }, '')
     renderHeader('/quick-start', createApis(), '/projects')
 
-    fireEvent.click(screen.getByRole('button', { name: '返回上一页' }))
+    const back = screen.getByRole('button', { name: '返回上一页' })
+    fireEvent.click(back)
+    finishBackAnimation()
     expect(screen.getByTestId('location').textContent).toBe('/projects')
+  })
+
+  it('点击后先播放方向过渡，再执行返回', () => {
+    vi.useFakeTimers()
+    window.history.replaceState({ idx: 0 }, '')
+    renderHeader('/projects')
+
+    const back = screen.getByRole('button', { name: '返回上一页' })
+    fireEvent.click(back)
+
+    expect(back.classList.contains('app-header-back-in-flight')).toBe(true)
+    expect(screen.getByTestId('location').textContent).toBe('/projects')
+
+    act(() => vi.advanceTimersByTime(190))
+    expect(screen.getByTestId('location').textContent).toBe('/projects')
+
+    act(() => vi.advanceTimersByTime(50))
+    expect(screen.getByTestId('location').textContent).toBe('/workspace')
+  })
+
+  it('动画进行中重复点击不会推迟返回', () => {
+    vi.useFakeTimers()
+    window.history.replaceState({ idx: 0 }, '')
+    renderHeader('/projects')
+
+    const back = screen.getByRole('button', { name: '返回上一页' })
+    fireEvent.click(back)
+    act(() => vi.advanceTimersByTime(150))
+    fireEvent.click(back)
+    act(() => vi.advanceTimersByTime(80))
+
+    expect(screen.getByTestId('location').textContent).toBe('/workspace')
+  })
+
+  it('减少动态效果时立即返回', () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({ matches: true })),
+    )
+    window.history.replaceState({ idx: 0 }, '')
+    renderHeader('/projects')
+
+    fireEvent.click(screen.getByRole('button', { name: '返回上一页' }))
+
+    expect(screen.getByTestId('location').textContent).toBe('/workspace')
+  })
+
+  it('动画中卸载会取消待执行的返回', () => {
+    vi.useFakeTimers()
+    const { unmount } = renderHeader('/projects')
+
+    fireEvent.click(screen.getByRole('button', { name: '返回上一页' }))
+    expect(vi.getTimerCount()).toBe(1)
+    unmount()
+
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('提供预览台入口，并将工作流路由归入创作', () => {
@@ -112,6 +220,16 @@ describe('AppHeader', () => {
     expect(screen.getByRole('link', { name: '项目资产' }).getAttribute('href')).toBe('/projects')
     expect(screen.getByRole('link', { name: '创作' }).getAttribute('aria-current')).toBe('page')
     expect(screen.getByRole('link', { name: '预览台' }).getAttribute('href')).toBe('/playtest')
+  })
+
+  it('左侧先显示品牌，再以无边框按钮承接返回操作', () => {
+    renderHeader('/projects')
+
+    const brand = screen.getByRole('link', { name: '返回 Windup 工作台' })
+    const back = screen.getByRole('button', { name: '返回上一页' })
+
+    expect(brand.compareDocumentPosition(back) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(back.className).not.toContain('border')
   })
 
   it('在工作台首页只高亮首页一项', () => {
@@ -196,6 +314,54 @@ describe('AppHeader', () => {
     expect(apis.logout).toHaveBeenCalledWith('rotated-refresh-token')
   })
 
+  it('登录工作台后显示一次邀请奖励提示，打开账号菜单时收起', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    renderHeader('/workspace')
+
+    expect(await screen.findByRole('status', { name: '邀请奖励提示' })).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: '打开账号菜单' }))
+
+    expect(screen.queryByRole('status', { name: '邀请奖励提示' })).toBeNull()
+  })
+
+  it('邀请提示可以直达邀请奖励，并在关闭或十五秒后收起', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    const timeoutSpy = vi.spyOn(window, 'setTimeout')
+    renderHeader('/workspace')
+
+    const hint = await screen.findByRole('status', { name: '邀请奖励提示' })
+    expect(screen.getByText('邀请成功，双方各得 200 积分')).toBeTruthy()
+    expect(screen.getByText('每日前 3 次邀请可得奖励')).toBeTruthy()
+    expect(screen.getByRole('link', { name: '去看看邀请奖励' }).getAttribute('href')).toBe(
+      '/account?section=invite',
+    )
+    const timerCall = timeoutSpy.mock.calls.find(([, delay]) => delay === 15_000)
+    expect(timerCall).toBeTruthy()
+    const timerCallback = timerCall?.[0]
+    expect(typeof timerCallback).toBe('function')
+    act(() => {
+      if (typeof timerCallback === 'function') timerCallback()
+    })
+    expect(screen.queryByRole('status', { name: '邀请奖励提示' })).toBeNull()
+
+    window.sessionStorage.clear()
+    cleanup()
+    renderHeader('/workspace')
+    expect(await screen.findByRole('status', { name: '邀请奖励提示' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '关闭邀请奖励提示' }))
+    expect(hint.isConnected).toBe(false)
+  })
+
+  it('当前登录会话离开工作台后不重复显示', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    renderHeader('/workspace')
+    expect(await screen.findByRole('status', { name: '邀请奖励提示' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('link', { name: '项目资产' }))
+    fireEvent.click(screen.getByRole('link', { name: '首页' }))
+    expect(screen.queryByRole('status', { name: '邀请奖励提示' })).toBeNull()
+  })
+
   it('远端退出失败时仍清除本地会话并返回首页', async () => {
     window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
     const apis = createApis()
@@ -260,6 +426,44 @@ describe('AppHeader', () => {
 
     await waitFor(() => expect(menuSurface.getAttribute('data-state')).toBe('closed'))
     expect(menuSurface.classList.contains('invisible')).toBe(true)
+  })
+
+  it('打开账号菜单时查询并展示最新可用积分', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    let resolveBalance: (account: CreditAccount) => void = () => undefined
+    const quota = createQuotaMock()
+    quota.getBalance.mockReturnValue(
+      new Promise<CreditAccount>((resolve) => {
+        resolveBalance = resolve
+      }),
+    )
+    renderHeader('/workspace', createApis(), undefined, quota)
+
+    fireEvent.click(await screen.findByRole('button', { name: '打开账号菜单' }))
+
+    await waitFor(() => expect(quota.getBalance).toHaveBeenCalledTimes(1))
+    expect(screen.getByText('可用积分')).toBeTruthy()
+    expect(screen.getByText('查询中…')).toBeTruthy()
+
+    resolveBalance(creditAccount)
+    expect(await screen.findByText('90')).toBeTruthy()
+    expect(screen.getByText('积分')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '打开账号菜单' }))
+    expect(screen.getByText('90')).toBeTruthy()
+  })
+
+  it('积分查询失败时保留账号菜单的其他操作', async () => {
+    window.localStorage.setItem('windup.auth.refresh-token', 'stored-refresh-token')
+    const quota = createQuotaMock()
+    quota.getBalance.mockRejectedValue(new Error('积分接口不可用'))
+    renderHeader('/workspace', createApis(), undefined, quota)
+
+    fireEvent.click(await screen.findByRole('button', { name: '打开账号菜单' }))
+
+    expect(await screen.findByText('积分暂不可用')).toBeTruthy()
+    expect(screen.getByRole('link', { name: '打开账号中心' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '退出登录' })).toBeTruthy()
   })
 
   it('使用贴顶毛玻璃栏承载品牌、产品导航与账号入口', async () => {

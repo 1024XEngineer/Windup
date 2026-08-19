@@ -16,44 +16,122 @@ os.environ.setdefault("AI_GATEWAY_LEDGER_ENABLED", "false")
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from windup_app.bootstrap.app import create_app
 from windup_app.server.character.model import Character
 from windup_app.server.project.model import Project
-from windup_app.server.quota.model import CreditAccount, CreditTransaction
+from windup_app.server.quota.model import (
+    CreditAccount,
+    CreditTransaction,
+    InviteCode,
+    InviteRecord,
+)
 from windup_app.server.user.model import User
 from windup_app.server.orchestrator.model import GenerationTaskRecord
 from windup_app.server.workflow_run.model import WorkflowRun
+from windup_framework.mq.model import MqMessage
 from windup_app.server.user.service import create_access_token
+from windup_framework.config.quota import settings as quota_settings
 from windup_framework.db import Base, get_session
 
 
+def insert_project(session, **overrides) -> Project:
+    """写入一条合法项目，供需要 ``windup_character.project_id`` 外键的测试使用。"""
+    fields = {
+        "user_id": 1,
+        "project_name": "测试项目",
+        "character_perspective": 1,
+        "directional_movement": 2,
+        "sprite_width": 64,
+        "sprite_height": 64,
+    }
+    fields.update(overrides)
+    project = Project(**fields)
+    session.add(project)
+    session.flush()
+    return project
+
+
 def _disable_generation_execution(app):
-    app.state.run_action_task = lambda *args: None
-    app.state.run_image_task = lambda *args: None
+    """测试环境禁用 MQ 实际投递（mock publisher）。"""
+    from unittest.mock import Mock
+
+    mock_publisher = Mock()
+    mock_publisher.enqueue.return_value = "00000000-0000-0000-0000-000000000001"
+    app.state.mq_publisher = mock_publisher
+
+
+def seed_invite_code(session, code: str = "AB23CD45") -> str:
+    """预置一个可重复使用的邀请码，供注册测试使用。"""
+    inviter = User(email=f"inviter-{code.lower()}@example.com", password_hash="x")
+    session.add(inviter)
+    session.flush()
+    session.add(InviteCode(user_id=inviter.id, code=code, used_count=0))
+    seed_credit_account(session, inviter.id)
+    return code
+
+
+def seed_credit_account(
+    session, user_id: int, *, balance: int | None = None
+) -> CreditAccount:
+    """给测试用户补一张积分账户（注册赠送口径）。"""
+    gift = quota_settings.register_gift_amount
+    account = CreditAccount(
+        user_id=user_id,
+        balance=gift if balance is None else balance,
+        frozen=0,
+        total_earned=gift,
+        total_spent=0,
+    )
+    session.add(account)
+    session.flush()
+    return account
 
 
 def _make_engine():
     """单连接内存 SQLite;``check_same_thread=False`` 让 TestClient 线程可共用。"""
-    return create_engine(
+    engine = create_engine(
         "sqlite:///:memory:",
         poolclass=StaticPool,
         connect_args={"check_same_thread": False},
     )
+
+    @event.listens_for(engine, "connect")
+    def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    return engine
+
+
+@pytest.fixture()
+def invite_code(db_session):
+    return seed_invite_code(db_session)
 
 
 @pytest.fixture()
 def engine():
     """建好 ``windup_project`` 和 ``windup_user`` 表的内存 engine。"""
     engine = _make_engine()
-    Base.metadata.create_all(engine, tables=[
-        Project.__table__, User.__table__, Character.__table__, WorkflowRun.__table__,
-        CreditAccount.__table__, CreditTransaction.__table__,
-        GenerationTaskRecord.__table__,
-    ])
+    Base.metadata.create_all(
+        engine,
+        tables=[
+            Project.__table__,
+            User.__table__,
+            Character.__table__,
+            WorkflowRun.__table__,
+            CreditAccount.__table__,
+            CreditTransaction.__table__,
+            InviteCode.__table__,
+            InviteRecord.__table__,
+            GenerationTaskRecord.__table__,
+            MqMessage.__table__,
+        ],
+    )
     yield engine
     engine.dispose()
 
@@ -90,9 +168,12 @@ def client(engine):
 
     app = create_app()
     _disable_generation_execution(app)
+    from windup_app.server.orchestrator import task_repo
+    from windup_app.web.api.generation import event_bus
+
+    task_repo.bind_event_bus(event_bus)
     app.dependency_overrides[get_session] = override_get_session
     yield TestClient(app)
-    app.state.generation_dispatcher.shutdown()
     app.dependency_overrides.clear()
 
 
@@ -117,6 +198,10 @@ def auth_client(engine):
 
     app = create_app()
     _disable_generation_execution(app)
+    from windup_app.server.orchestrator import task_repo
+    from windup_app.web.api.generation import event_bus
+
+    task_repo.bind_event_bus(event_bus)
     app.dependency_overrides[get_session] = override_get_session
 
     # 生成测试用 token
@@ -124,7 +209,6 @@ def auth_client(engine):
     client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
 
     yield client
-    app.state.generation_dispatcher.shutdown()
     app.dependency_overrides.clear()
 
 
@@ -146,13 +230,16 @@ def auth_client_b(engine):
 
     app = create_app()
     _disable_generation_execution(app)
+    from windup_app.server.orchestrator import task_repo
+    from windup_app.web.api.generation import event_bus
+
+    task_repo.bind_event_bus(event_bus)
     app.dependency_overrides[get_session] = override_get_session
 
     token = create_access_token(2, "other@example.com")
     client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
 
     yield client
-    app.state.generation_dispatcher.shutdown()
     app.dependency_overrides.clear()
 
 

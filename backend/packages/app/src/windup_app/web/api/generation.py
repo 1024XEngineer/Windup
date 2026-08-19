@@ -21,18 +21,24 @@ from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import event
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
 from windup_common.exceptions import BizException
+from windup_common.models import CharacterStance
 from windup_common.result import Response
 from windup_framework.db import get_session
+from windup_framework.db.session import SessionLocal
+from windup_framework.mq.publisher import MqPublisher
 
-from windup_app.server.character.model import Character
+from windup_app.server.character.model import Character, CharacterData
 from windup_app.server.orchestrator import task_repo
-from windup_app.server.orchestrator.dispatcher import GenerationDispatcher
+from windup_app.server.mq.catalog import (
+    GENERATION_STREAM,
+    MSG_TYPE_CHARACTER_ACTION,
+    MSG_TYPE_CHARACTER_IMAGE,
+)
 from windup_app.server.orchestrator.service import service as generation_service
 from windup_app.server.orchestrator.model import (
     ActionType,
@@ -56,6 +62,15 @@ _HEARTBEAT_TIMEOUT = 30.0
 
 # 终态事件
 _TERMINAL_EVENTS = {"completed", "failed"}
+
+
+def _poll_terminal_snapshot(task_id: int, project_id: int) -> tuple[str, dict] | None:
+    """SSE heartbeat 查库兜底：Pub/Sub 断线期间错过的终态由此补发。"""
+    session = SessionLocal()
+    try:
+        return task_repo.terminal_snapshot(session, task_id, project_id)
+    finally:
+        session.close()
 
 
 class _EventBus:
@@ -182,6 +197,14 @@ class CharacterActionGenerateRequest(BaseModel):
     # 视频模型。None = 用部署默认。取值域见 ModelRegistry.chain(CHARACTER_ACTION);
     # 非法值在入口就报错,不到付费调用才失败。选中的型号表示这次从它开始试。
     video_model: str | None = None
+    # 这次动作属于哪个造型。给了才可能走三渲二 —— 3D 资产挂在造型一级(#121)。
+    # 不给则照旧走 i2v(向后兼容:前端接上之前所有调用都是这样)。
+    # 让**所有**动作生成都按造型定位外观是 #253,不在本改动范围内。
+    outfit_id: str | None = None
+    # 角色体型。决定"手臂/手肘"这类人体部位词能不能进提示词 —— 非双足角色的描述里出现
+    # 它们,模型会凭空接上一对人的上肢,而帧数/时长/成色全部正常、没有一道会红。
+    # 不给则按双足处理:这是绝大多数角色的实情,而误判成非双足会把合法描述拒掉。
+    stance: CharacterStance | None = None
 
     @model_validator(mode="after")
     def require_custom_prompt(self):
@@ -252,6 +275,29 @@ def _get_character_or_raise(
     return character
 
 
+def _outfit_model_3d_url(character: Character, outfit_id: str | None) -> str | None:
+    """这个造型有没有绑骨 3D 模型 —— **三渲二的唯一判据**(#122)。
+
+    判据在这里读 DB 而不是做成 ai_engine port 上的查询:引擎只吃 bytes、不碰存储。
+    没给 ``outfit_id`` 就返回 None 照旧走 i2v,**不猜"那就用第一个造型吧"** —— 猜错
+    等于拿另一个造型的模型渲这次的动作,角色穿错衣服而帧数、时长、成色全部正常。
+    """
+    if not outfit_id:
+        return None
+    try:
+        data = CharacterData.model_validate(character.character_data or {})
+    except ValidationError:
+        # 结构对不上就当没有资产:这一步只决定"走哪条路线",不该因为 character_data
+        # 里某个无关字段脏了就让整个动作生成起不来。走 i2v 仍然出得了帧。
+        logger.warning("character %s 的 character_data 解析失败,三渲二判据按无资产处理",
+                       character.id)
+        return None
+    outfit = next((o for o in data.outfits if o.id == outfit_id), None)
+    if outfit is None:
+        raise BizException(f"造型 {outfit_id!r} 不属于该角色", code=BizCode.NOT_FOUND)
+    return (outfit.model_3d_url or "").strip() or None
+
+
 def _validate_project_size(project: Project, width: int, height: int) -> None:
     """校验输入尺寸与项目约束是否一致;不一致则抛异常。"""
     if width != project.sprite_width or height != project.sprite_height:
@@ -261,20 +307,27 @@ def _validate_project_size(project: Project, width: int, height: int) -> None:
         )
 
 
-def _dispatch_after_commit(
+def _publish_generation_after_commit(
     session: Session,
-    dispatcher: GenerationDispatcher,
-    target,
-    *args,
+    publisher: MqPublisher,
+    *,
+    task_id: int,
+    task_type: str,
 ) -> None:
-    """注册 after_commit 回调:session 提交成功后再排入生成队列。
-
-    解决竞态: create_task() 只 flush,session 在 handler 返回后才 commit。
-    若直接排队,后台 session 可能读不到未提交的行,导致 update 静默跳过。
-    """
-    @event.listens_for(session, "after_commit", once=True)
-    def _after_commit(session):
-        dispatcher.submit(target, *args)
+    """注册 after_commit 回调:session 提交成功后再投递到 Redis Stream。"""
+    msg_type = (
+        MSG_TYPE_CHARACTER_IMAGE
+        if task_type == MSG_TYPE_CHARACTER_IMAGE
+        else MSG_TYPE_CHARACTER_ACTION
+    )
+    message_id = publisher.enqueue(
+        session,
+        stream=GENERATION_STREAM,
+        msg_type=msg_type,
+        payload={"task_id": task_id, "task_type": task_type},
+        dedupe_key=f"generation:{task_id}",
+    )
+    publisher.register_after_commit(session, message_id)
 
 
 @router.post("/image", response_model=Response[GenerationTaskOut])
@@ -300,13 +353,11 @@ def submit_image_generation(
     )
     # 生成任务要在 commit 之后再入队:任务行未提交时工作线程用自己的 session 读不到它,
     # update 会静默跳过,表现为任务永远停在 PENDING。
-    _dispatch_after_commit(
+    _publish_generation_after_commit(
         session,
-        request.app.state.generation_dispatcher,
-        request.app.state.run_image_task,
-        task.id,
-        input_data,
-        body.project_id,
+        request.app.state.mq_publisher,
+        task_id=task.id,
+        task_type=task.task_type.value,
     )
     return Response.success(_task_to_out(task), message="任务已提交")
 
@@ -320,7 +371,7 @@ def submit_action_generation(
     """提交角色动作生成任务:建 PENDING 记录立即返回,实际生成后台跑。"""
     user_id = request.state.current_user.id
     _get_project_or_raise(session, body.project_id, user_id)
-    _get_character_or_raise(session, body.character_id, body.project_id)
+    character = _get_character_or_raise(session, body.character_id, body.project_id)
     input_data = CharacterActionInput(
         character_id=body.character_id,
         action_type=body.action_type,
@@ -330,17 +381,20 @@ def submit_action_generation(
         reference_video_url=body.reference_video_url,
         reference_image_urls=body.reference_image_urls,
         num_frames=body.num_frames,
+        outfit_id=body.outfit_id,
+        # 路线选择在这里定死并写进入参,而不是留给编排层现查:这样"这次走的哪条路线"
+        # 在任务入参上就是可见的,排查时不用去猜当时 DB 是什么状态。
+        model_3d_url=_outfit_model_3d_url(character, body.outfit_id),
+        stance=body.stance,
     )
     task = generation_service.generate_character_action(
         session, user_id=user_id, project_id=body.project_id, input=input_data,
     )
-    _dispatch_after_commit(
+    _publish_generation_after_commit(
         session,
-        request.app.state.generation_dispatcher,
-        request.app.state.run_action_task,
-        task.id,
-        input_data,
-        body.project_id,
+        request.app.state.mq_publisher,
+        task_id=task.id,
+        task_type=task.task_type.value,
     )
     return Response.success(_task_to_out(task), message="任务已提交")
 
@@ -420,6 +474,21 @@ async def stream_task(
                         logger.debug("SSE 终态: task_id=%d event=%s", task_id, event)
                         break
                 except asyncio.TimeoutError:
+                    polled = await asyncio.to_thread(
+                        _poll_terminal_snapshot,
+                        task_id,
+                        project_id,
+                    )
+                    if polled is not None:
+                        event, data = polled
+                        payload = json.dumps(data, ensure_ascii=False)
+                        yield f"event: {event}\ndata: {payload}\n\n"
+                        logger.debug(
+                            "SSE heartbeat 查库命中终态: task_id=%d event=%s",
+                            task_id,
+                            event,
+                        )
+                        break
                     yield ": heartbeat\n\n"
         finally:
             await event_bus.unsubscribe(project_id, task_id, queue)

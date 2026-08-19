@@ -1,7 +1,25 @@
 """角色 CRUD API 集成测试。"""
 
+import pytest
+
 from windup_app.server.character.model import Character
+from windup_app.server.character.service import service as character_service
 from windup_common.enums.character import CharacterStatus
+
+
+class _FakeNamer:
+    def name_from_description(self, description: str) -> str:
+        return f"名:{description}"[:20]
+
+
+@pytest.fixture(autouse=True)
+def _inject_fake_character_namer():
+    original = character_service._namer
+    character_service._namer = _FakeNamer()
+    try:
+        yield
+    finally:
+        character_service._namer = original
 
 
 def _create_project(auth_client, name: str = "默认项目") -> dict:
@@ -54,7 +72,10 @@ def _payload_with_frames(project_id: int, **overrides):
 
 def test_character_model_defaults_to_draft(db_session):
     """非 API 写入也不得把尚无真实动作帧的角色默认为已发布。"""
-    character = Character(project_id=1, workflow_run_id=999, character_data={})
+    from conftest import insert_project
+
+    project = insert_project(db_session)
+    character = Character(project_id=project.id, workflow_run_id=999, character_data={})
     db_session.add(character)
     db_session.flush()
 
@@ -81,7 +102,7 @@ def test_create_without_name(auth_client):
     resp = auth_client.post("/characters", json=_payload(project["id"], name=None))
 
     assert resp.json()["code"] == 200
-    assert resp.json()["data"]["name"] is None
+    assert resp.json()["data"]["name"] == "名:主角"
 
 
 def test_create_name_roundtrip(auth_client):

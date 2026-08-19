@@ -15,6 +15,7 @@ import type {
   WorkflowRun,
   WorkflowRunApis,
 } from '@/entities'
+import { WorkflowRunConflictError } from '@/entities'
 import { createWorkflowController } from '.'
 
 function setupNode(
@@ -255,20 +256,6 @@ async function flushAsyncWork() {
 }
 
 describe('WorkflowController', () => {
-  it('绑定角色后拒绝把同一条 WorkflowRun 改绑到另一角色', async () => {
-    const { controller } = createController()
-
-    await controller.bindCharacter('setup-1', 'character-1')
-
-    expect(controller.getWorkflow().nodes[0]).toMatchObject({
-      type: 'character-setup',
-      input: { characterId: 'character-1' },
-    })
-    await expect(controller.bindCharacter('setup-1', 'character-2')).rejects.toThrow(
-      'WorkflowRun 已绑定到另一角色，不能改绑',
-    )
-  })
-
   it('只在角色设定节点仍处于配置阶段时更新提示词和参考媒体', async () => {
     const { controller } = createController()
 
@@ -288,10 +275,19 @@ describe('WorkflowController', () => {
   it('接受上传母版时完成角色设定和母版节点', async () => {
     const { controller } = createController()
 
-    await controller.acceptUploadedCharacterTemplate('setup-1', 'https://img/uploaded-template.png')
+    await controller.acceptUploadedCharacterTemplate(
+      'setup-1',
+      'https://img/uploaded-template.png',
+      'character-1',
+    )
 
     expect(controller.getWorkflow().nodes).toMatchObject([
-      { type: 'character-setup', status: 'passed', phase: 'completed' },
+      {
+        type: 'character-setup',
+        status: 'passed',
+        phase: 'completed',
+        input: { characterId: 'character-1' },
+      },
       {
         type: 'character-template',
         status: 'passed',
@@ -299,6 +295,64 @@ describe('WorkflowController', () => {
         selectedImageUrl: 'https://img/uploaded-template.png',
       },
     ])
+  })
+
+  it('母版确认和上传都拒绝错误节点状态与角色改绑', async () => {
+    const { controller: lockedController } = createController()
+    await expect(
+      lockedController.confirmCharacterTemplate(
+        'template-1',
+        'https://img/knight.png',
+        'character-1',
+      ),
+    ).rejects.toThrow('角色母版节点当前不能确认候选图')
+    await expect(
+      lockedController.confirmCharacterTemplate(
+        'setup-1' as never,
+        'https://img/knight.png',
+        'character-1',
+      ),
+    ).rejects.toThrow('目标节点不是角色母版')
+
+    const boundRun = createRun([
+      setupNode({
+        status: 'passed',
+        phase: 'completed',
+        input: {
+          prompt: '像素骑士',
+          referenceMedia: [],
+          characterId: 'character-existing',
+        },
+      }),
+      templateNode({ status: 'active', phase: 'selecting' }),
+    ])
+    const { controller: boundController } = createController(boundRun)
+    await expect(
+      boundController.confirmCharacterTemplate(
+        'template-1',
+        'https://img/knight.png',
+        'character-other',
+      ),
+    ).rejects.toThrow('WorkflowRun 已绑定到另一角色，不能改绑')
+
+    const uploadRun = createRun([
+      setupNode({
+        input: {
+          prompt: '像素骑士',
+          referenceMedia: [],
+          characterId: 'character-existing',
+        },
+      }),
+      templateNode(),
+    ])
+    const { controller: uploadController } = createController(uploadRun)
+    await expect(
+      uploadController.acceptUploadedCharacterTemplate(
+        'setup-1',
+        'https://img/uploaded.png',
+        'character-other',
+      ),
+    ).rejects.toThrow('WorkflowRun 已绑定到另一角色，不能改绑')
   })
 
   it('页面通过订阅接收命令保存和 SSE 写回后的同一份 WorkflowRun', async () => {
@@ -711,10 +765,14 @@ describe('WorkflowController', () => {
     ])
     const { controller } = createController(run)
 
-    await controller.confirmCharacterTemplate('template-1', 'https://img/knight.png')
+    await controller.confirmCharacterTemplate('template-1', 'https://img/knight.png', 'character-1')
 
     expect(controller.getWorkflow().nodes).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          id: 'setup-1',
+          input: expect.objectContaining({ characterId: 'character-1' }),
+        }),
         expect.objectContaining({ id: 'template-1', status: 'passed', phase: 'completed' }),
         expect.objectContaining({ id: 'action-walk', status: 'active' }),
         expect.objectContaining({ id: 'action-jump', status: 'active' }),
@@ -773,6 +831,230 @@ describe('WorkflowController', () => {
       error: null,
     })
     expect(asyncErrors).toEqual([])
+  })
+
+  it('角色母版重生成使用调用方提供的上一版图片作为参考', async () => {
+    const previousImage = 'https://img/knight-previous.png'
+    const { controller, generation } = createController(createRun(completedCharacterNodes()))
+
+    await controller.restartFromNode('template-1')
+    await controller.generateCharacterTemplate('setup-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      sourceImageUrl: previousImage,
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledWith({
+      type: 'character_template',
+      projectId: '1',
+      prompt: '像素骑士',
+      referenceMedia: [previousImage],
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+  })
+
+  it('角色母版微调由 Controller 读取上一版图片并组合临时描述', async () => {
+    const previousImage = 'https://img/knight.png'
+    const { controller, generation } = createController(createRun(completedCharacterNodes()))
+
+    await controller.regenerateCharacterTemplate('template-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      mode: 'refine',
+      adjustmentPrompt: '换成水彩风格',
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledWith({
+      type: 'character_template',
+      projectId: '1',
+      prompt: '像素骑士\n换成水彩风格',
+      referenceMedia: [previousImage],
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+    expect(controller.getWorkflow().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'setup-1',
+          input: expect.objectContaining({ prompt: '像素骑士' }),
+        }),
+      ]),
+    )
+  })
+
+  it('角色母版重新生成沿用原始输入且不携带上一版图片', async () => {
+    const { controller, generation } = createController(createRun(completedCharacterNodes()))
+
+    await controller.regenerateCharacterTemplate('template-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      mode: 'regenerate',
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledWith({
+      type: 'character_template',
+      projectId: '1',
+      prompt: '像素骑士',
+      referenceMedia: [],
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+  })
+
+  it('角色母版尚未确认图片时拒绝重新生成', async () => {
+    const { controller, generation } = createController()
+
+    await expect(
+      controller.regenerateCharacterTemplate('template-1', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+        mode: 'regenerate',
+      }),
+    ).rejects.toThrow('角色母版当前不能重新生成')
+    expect(generation.apis.create).not.toHaveBeenCalled()
+  })
+
+  it('角色母版重新生成提交失败后还原用户已确认的图片', async () => {
+    const previousImage = 'https://img/knight.png'
+    const { controller, generation } = createController(createRun(completedCharacterNodes()))
+    vi.mocked(generation.apis.create).mockRejectedValueOnce(new Error('生成服务暂时不可用'))
+
+    await expect(
+      controller.regenerateCharacterTemplate('template-1', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+        mode: 'refine',
+        adjustmentPrompt: '换成水彩风格',
+      }),
+    ).rejects.toThrow('生成服务暂时不可用')
+
+    expect(controller.getWorkflow().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'template-1',
+          status: 'passed',
+          phase: 'completed',
+          selectedImageUrl: previousImage,
+        }),
+      ]),
+    )
+  })
+
+  it('角色母版回滚持久化失败时暴露工作流冲突', async () => {
+    const { controller, workflow, generation } = createController(
+      createRun(completedCharacterNodes()),
+    )
+    const update = vi.mocked(workflow.apis.update)
+    const save = update.getMockImplementation()!
+    update
+      .mockImplementationOnce(save)
+      .mockRejectedValueOnce(new Error('任务引用保存失败'))
+      .mockRejectedValueOnce(new Error('回滚保存失败'))
+
+    await expect(
+      controller.regenerateCharacterTemplate('template-1', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+        mode: 'refine',
+        adjustmentPrompt: '换成水彩风格',
+      }),
+    ).rejects.toMatchObject({ name: 'WorkflowRunConflictError' })
+    expect(generation.apis.create).toHaveBeenCalledTimes(1)
+  })
+
+  it('角色母版任务已创建但挂载失败时重试复用同一个任务', async () => {
+    const { controller, workflow, generation } = createController(
+      createRun(completedCharacterNodes()),
+    )
+    const update = vi.mocked(workflow.apis.update)
+    const save = update.getMockImplementation()!
+    update.mockImplementationOnce(save).mockRejectedValueOnce(new Error('任务引用保存失败'))
+
+    const options = {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      mode: 'refine' as const,
+      adjustmentPrompt: '换成水彩风格',
+    }
+    await expect(controller.regenerateCharacterTemplate('template-1', options)).rejects.toThrow(
+      '任务引用保存失败',
+    )
+    await controller.regenerateCharacterTemplate('template-1', options)
+
+    expect(generation.apis.create).toHaveBeenCalledTimes(1)
+    expect(controller.getWorkflow().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'template-1',
+          phase: 'generating',
+          generations: [{ taskId: 'task-1', role: 'character_template' }],
+        }),
+      ]),
+    )
+  })
+
+  it('角色母版任务已创建但订阅失败时重试复用同一个任务', async () => {
+    const { controller, generation } = createController(createRun(completedCharacterNodes()))
+    vi.mocked(generation.apis.subscribe).mockImplementationOnce(() => {
+      throw new Error('生成任务订阅失败')
+    })
+
+    const options = {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      mode: 'regenerate' as const,
+    }
+    await expect(controller.regenerateCharacterTemplate('template-1', options)).rejects.toThrow(
+      '生成任务订阅失败',
+    )
+    await controller.regenerateCharacterTemplate('template-1', options)
+
+    expect(generation.apis.create).toHaveBeenCalledTimes(1)
+    expect(controller.getWorkflow().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'template-1',
+          phase: 'generating',
+          generations: [{ taskId: 'task-1', role: 'character_template' }],
+        }),
+      ]),
+    )
+  })
+
+  it('角色母版挂载时发现节点已被其他任务占用则保留现有引用', async () => {
+    const { controller, workflow, generation } = createController(
+      createRun(completedCharacterNodes()),
+    )
+    const update = vi.mocked(workflow.apis.update)
+    const save = update.getMockImplementation()!
+    update.mockImplementationOnce(save).mockImplementationOnce(async (run) => {
+      const saved = await save(run)
+      return {
+        ...saved,
+        nodes: saved.nodes.map((node) =>
+          node.id === 'template-1'
+            ? { ...node, generations: [{ taskId: 'other-task', role: 'character_template' }] }
+            : node,
+        ),
+      }
+    })
+
+    await controller.regenerateCharacterTemplate('template-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      mode: 'regenerate',
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledTimes(1)
+    expect(controller.getWorkflow().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'template-1',
+          generations: [{ taskId: 'other-task', role: 'character_template' }],
+        }),
+      ]),
+    )
   })
 
   it('角色设定已落库但生成请求失败后可以重试', async () => {
@@ -1294,7 +1576,7 @@ describe('WorkflowController', () => {
     ])
     const { controller } = createController(run)
 
-    await controller.confirmCharacterTemplate('template-1', 'https://img/knight.png')
+    await controller.confirmCharacterTemplate('template-1', 'https://img/knight.png', 'character-1')
 
     expect(controller.getWorkflow().nodes[2]).toMatchObject({
       status: 'locked',
@@ -1311,13 +1593,54 @@ describe('WorkflowController', () => {
     vi.mocked(workflow.apis.update).mockRejectedValueOnce(new Error('后端保存失败'))
 
     await expect(
-      controller.confirmCharacterTemplate('template-1', 'https://img/knight.png'),
+      controller.confirmCharacterTemplate('template-1', 'https://img/knight.png', 'character-1'),
     ).rejects.toThrow('后端保存失败')
 
     expect(controller.getWorkflow().nodes[1]).toMatchObject({
       status: 'active',
       phase: 'selecting',
       selectedImageUrl: null,
+    })
+  })
+
+  it('PATCH 已落库但响应丢失时接纳回读快照并将命令视为成功', async () => {
+    const run = createRun([
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({ status: 'active', phase: 'selecting' }),
+    ])
+    const { controller, workflow } = createController(run)
+    const update = vi.mocked(workflow.apis.update)
+    const get = vi.mocked(workflow.apis.get)
+    const persist = update.getMockImplementation()!
+    const read = get.getMockImplementation()!
+    update.mockImplementationOnce(async (candidate) => {
+      await persist(candidate)
+      throw new WorkflowRunConflictError('执行记录版本冲突')
+    })
+    get.mockImplementationOnce(async (id) => {
+      const reverseObjectKeys = (value: unknown): unknown => {
+        if (Array.isArray(value)) return value.map(reverseObjectKeys)
+        if (value === null || typeof value !== 'object') return value
+        return Object.fromEntries(
+          Object.entries(value)
+            .reverse()
+            .map(([key, item]) => [key, reverseObjectKeys(item)]),
+        )
+      }
+      return reverseObjectKeys(await read(id)) as WorkflowRun
+    })
+
+    await controller.confirmCharacterTemplate('template-1', 'https://img/knight.png', 'character-1')
+
+    expect(controller.getWorkflow()).toMatchObject({
+      version: 2,
+      nodes: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'setup-1',
+          input: expect.objectContaining({ characterId: 'character-1' }),
+        }),
+        expect.objectContaining({ id: 'template-1', status: 'passed' }),
+      ]),
     })
   })
 
@@ -1536,6 +1859,156 @@ describe('WorkflowController', () => {
       },
       { type: 'review', status: 'passed' },
     ])
+  })
+
+  it('动作首帧重生成使用调用方提供的上一版图片作为参考', async () => {
+    const previousImage = 'https://img/first-frame-previous.png'
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: previousImage,
+      }),
+      generationMethodNode(),
+      fullFrameNode(),
+      reviewNode(),
+    ])
+    const { controller, generation } = createController(run)
+
+    await controller.restartFromNode('action-walk')
+    await controller.generateFirstFrame('action-walk', {
+      spriteWidth: 64,
+      spriteHeight: 96,
+      sourceImageUrl: previousImage,
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledWith({
+      type: 'first_frame',
+      projectId: '1',
+      actionType: 'walk',
+      prompt: '行走',
+      referenceMedia: [previousImage],
+      spriteWidth: 64,
+      spriteHeight: 96,
+    })
+  })
+
+  it('动作首帧微调由 Controller 读取上一版图片并组合临时描述', async () => {
+    const previousImage = 'https://img/first-frame-previous.png'
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: previousImage,
+        input: actionInput({ prompt: '向前行走' }),
+      }),
+      generationMethodNode(),
+      fullFrameNode(),
+      reviewNode(),
+    ])
+    const { controller, generation } = createController(run)
+
+    await controller.regenerateFirstFrame('action-walk', {
+      spriteWidth: 64,
+      spriteHeight: 96,
+      mode: 'refine',
+      adjustmentPrompt: '抬高手臂',
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledWith({
+      type: 'first_frame',
+      projectId: '1',
+      actionType: 'walk',
+      prompt: '向前行走\n抬高手臂',
+      referenceMedia: [previousImage],
+      spriteWidth: 64,
+      spriteHeight: 96,
+    })
+  })
+
+  it('动作首帧重新生成沿用原始输入且不携带上一版图片', async () => {
+    const previousImage = 'https://img/first-frame-previous.png'
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: previousImage,
+      }),
+      generationMethodNode(),
+      fullFrameNode(),
+      reviewNode(),
+    ])
+    const { controller, generation } = createController(run)
+
+    await controller.regenerateFirstFrame('action-walk', {
+      spriteWidth: 64,
+      spriteHeight: 96,
+      mode: 'regenerate',
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledWith({
+      type: 'first_frame',
+      projectId: '1',
+      actionType: 'walk',
+      prompt: '行走',
+      referenceMedia: ['https://img/knight.png'],
+      spriteWidth: 64,
+      spriteHeight: 96,
+    })
+  })
+
+  it('动作首帧尚未确认时拒绝重新生成', async () => {
+    const run = createRun([...completedCharacterNodes(), ...actionNodes()])
+    const { controller, generation } = createController(run)
+
+    await expect(
+      controller.regenerateFirstFrame('action-walk', {
+        spriteWidth: 64,
+        spriteHeight: 96,
+        mode: 'regenerate',
+      }),
+    ).rejects.toThrow('动作首帧当前不能重新生成')
+    expect(generation.apis.create).not.toHaveBeenCalled()
+  })
+
+  it('动作首帧重新生成提交失败后还原用户已确认的首帧', async () => {
+    const previousImage = 'https://img/first-frame-previous.png'
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: previousImage,
+      }),
+      generationMethodNode(),
+      fullFrameNode(),
+      reviewNode(),
+    ])
+    const { controller, generation } = createController(run)
+    vi.mocked(generation.apis.create).mockRejectedValueOnce(new Error('生成服务暂时不可用'))
+
+    await expect(
+      controller.regenerateFirstFrame('action-walk', {
+        spriteWidth: 64,
+        spriteHeight: 96,
+        mode: 'refine',
+        adjustmentPrompt: '抬高手臂',
+      }),
+    ).rejects.toThrow('生成服务暂时不可用')
+
+    expect(controller.getWorkflow().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'action-walk',
+          status: 'passed',
+          phase: 'completed',
+          selectedFirstFrameUrl: previousImage,
+        }),
+      ]),
+    )
   })
 
   it('生成动作首帧时使用清理后的自定义提示词', async () => {

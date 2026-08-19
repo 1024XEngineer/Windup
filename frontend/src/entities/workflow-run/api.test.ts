@@ -212,8 +212,50 @@ describe('workflowRunApis', () => {
       nodes,
     })
     expect(request?.method).toBe('PATCH')
-    await expect(request?.json()).resolves.toEqual({ nodes, status: 'active' })
+    await expect(request?.json()).resolves.toEqual({ nodes, status: 'active', version: 3 })
     expect(updated.version).toBe(4)
+  })
+
+  it('exposes a version conflict as a workflow-run domain error', async () => {
+    const apis = await loadWorkflowRunApis(
+      async () =>
+        new Response(
+          JSON.stringify({ code: 409, message: '执行记录版本冲突，请刷新后重试', data: null }),
+          { headers: { 'content-type': 'application/json' } },
+        ),
+    )
+
+    await expect(
+      apis.update({
+        id: '17',
+        projectId: '42',
+        version: 3,
+        storageStatus: 'active',
+        nodes,
+      }),
+    ).rejects.toMatchObject({
+      name: 'WorkflowRunConflictError',
+      message: '执行记录版本冲突，请刷新后重试',
+    })
+  })
+
+  it('preserves non-conflict API errors from an update', async () => {
+    const apis = await loadWorkflowRunApis(
+      async () =>
+        new Response(JSON.stringify({ code: 500, message: '保存失败', data: null }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+
+    await expect(
+      apis.update({
+        id: '17',
+        projectId: '42',
+        version: 3,
+        storageStatus: 'active',
+        nodes,
+      }),
+    ).rejects.toMatchObject({ name: 'ApiError', code: 500, message: '保存失败' })
   })
 
   it('soft deletes through the backend DELETE endpoint', async () => {

@@ -1,22 +1,16 @@
 import {
-  Controls,
   Handle,
   Position,
-  ReactFlow,
   applyNodeChanges,
   type Edge,
-  type Node,
   type NodeChange,
   type NodeProps,
-  useReactFlow,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { useParams } from 'react-router'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useLocation, useParams } from 'react-router'
 
 import {
-  CHARACTER_PERSPECTIVE,
-  DIRECTIONAL_MOVEMENT,
   type ActionFirstFrameWorkflowNode,
   type ActionFullFrameWorkflowNode,
   type ActionGenerationMethodWorkflowNode,
@@ -37,22 +31,16 @@ import {
   ExportButton,
   type ExportPackageModel,
 } from '@/features/export-package'
-import { createDefaultRealWorkflowEditorSession, type WorkflowEditorSession } from './runtime'
+import type { WorkflowEditorSession } from './runtime'
+import { useWorkflowEditorSession } from './use-workflow-editor-session'
+import { WorkflowEditorView, type WorkflowCardNode } from './workflow-editor-view'
 import './workflow-editor.css'
 
 export interface WorkflowEditorPageProps {
   loadSession?: (runId: string) => Promise<WorkflowEditorSession>
 }
 
-type WorkflowCardData = {
-  title: string
-  eyebrow: string
-  status: WorkflowNode['status']
-  content: ReactNode
-}
-
-type WorkflowCardNode = Node<WorkflowCardData, 'workflow-card'>
-type ActionMenuLevel = 'root' | 'outfits' | 'actions'
+type ActionMenuLevel = 'root' | 'outfits' | 'actions' | 'custom'
 
 /**
  * 菜单里的预设动作。label 只用于展示，name 是落进 WorkflowRun 的动作名——
@@ -134,136 +122,39 @@ const nodeTypes = { 'workflow-card': WorkflowCard }
  */
 export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}) {
   const { runId } = useParams<{ runId: string }>()
-  const [session, setSession] = useState<WorkflowEditorSession | null>(null)
-  const [character, setCharacter] = useState<Character | null>(null)
-  const [run, setRun] = useState<WorkflowRun | null>(null)
-  const [generations, setGenerations] = useState<Record<string, Generation | null>>({})
+  const location = useLocation()
+  const { state, retryGenerations, runCommand, setCharacter } = useWorkflowEditorSession(
+    runId,
+    loadSession,
+  )
+  const {
+    session,
+    character,
+    run,
+    generations,
+    busyBranches,
+    error,
+    workflowConflict,
+    resumeError,
+    generationReadError,
+  } = state
   const [selectedImages, setSelectedImages] = useState<Record<string, string>>({})
+  const [setupPromptDrafts, setSetupPromptDrafts] = useState<Record<string, string>>({})
+  const [actionPromptDraft, setActionPromptDraft] = useState('')
   const [actionMenuOpen, setActionMenuOpen] = useState(false)
   const [actionMenuLevel, setActionMenuLevel] = useState<ActionMenuLevel>('root')
   const [selectedOutfitId, setSelectedOutfitId] = useState<string | null>(null)
-  /** 正在执行命令的分支。必须是集合：并行分支各自持锁，后起的不能顶掉先起的。 */
-  const [busyBranches, setBusyBranches] = useState<ReadonlySet<string>>(() => new Set())
-  const [error, setError] = useState<string | null>(null)
-  const [resumeError, setResumeError] = useState<string | null>(null)
-  const [generationReadError, setGenerationReadError] = useState<string | null>(null)
   const [canvasNodes, setCanvasNodes] = useState<WorkflowCardNode[]>([])
-  /** 当前会话的有效期。换 WorkflowRun 就 abort，所有异步回调只认这一个信号。 */
-  const sessionAbortRef = useRef<AbortController | null>(null)
-  /** 最近一次生成结果读取。同一会话内被新的读取顶掉时 abort，避免旧结果盖住新结果。 */
-  const latestReadAbortRef = useRef<AbortController | null>(null)
-  /** 已到终态的生成结果，按 taskId 记住，避免每次推进都重拉一遍。 */
-  const settledGenerationsRef = useRef(new Map<Generation['id'], Generation>())
-
-  const requestGenerations = useCallback(
-    (targetSession: WorkflowEditorSession, targetRun: WorkflowRun, sessionSignal: AbortSignal) => {
-      latestReadAbortRef.current?.abort()
-      const readAbort = new AbortController()
-      latestReadAbortRef.current = readAbort
-      const outdated = () => sessionSignal.aborted || readAbort.signal.aborted
-      void readGenerations(targetSession.controller, targetRun, settledGenerationsRef.current)
-        .then((results) => {
-          if (outdated()) return
-          setGenerations(results)
-          setGenerationReadError(null)
-        })
-        .catch((cause: unknown) => {
-          if (outdated()) return
-          setGenerationReadError(errorMessage(cause, '读取生成结果失败'))
-        })
-    },
-    [],
-  )
-
-  const runCommand = useCallback(
-    (branchKey: string, command: () => Promise<void>) => {
-      // 同一分支内互斥，防重复提交；别的分支照常能操作，也不会被这条命令解锁。
-      if (busyBranches.has(branchKey)) return
-      const sessionSignal = sessionAbortRef.current?.signal
-      setBusyBranches((current) => new Set(current).add(branchKey))
-      setError(null)
-      void command()
-        .catch((cause: unknown) => {
-          if (sessionSignal?.aborted) return
-          setError(errorMessage(cause, '工作流命令执行失败'))
-        })
-        .finally(() => {
-          if (sessionSignal?.aborted) return
-          setBusyBranches((current) => {
-            if (!current.has(branchKey)) return current
-            const next = new Set(current)
-            next.delete(branchKey)
-            return next
-          })
-        })
-    },
-    [busyBranches],
-  )
 
   useEffect(() => {
-    const sessionAbort = new AbortController()
-    sessionAbortRef.current = sessionAbort
-    latestReadAbortRef.current?.abort()
-    settledGenerationsRef.current = new Map()
-    setSession(null)
-    setCharacter(null)
-    setRun(null)
-    setGenerations({})
     setSelectedImages({})
+    setSetupPromptDrafts({})
+    setActionPromptDraft('')
     setActionMenuOpen(false)
     setActionMenuLevel('root')
     setSelectedOutfitId(null)
-    setBusyBranches(new Set())
-    setError(null)
-    setResumeError(null)
-    setGenerationReadError(null)
     setCanvasNodes([])
-    if (!runId) return
-
-    let loaded: WorkflowEditorSession | null = null
-    let unsubscribe: () => void = () => undefined
-    let unsubscribeErrors: () => void = () => undefined
-    const loader = loadSession ?? createDefaultRealWorkflowEditorSession
-    const signal = sessionAbort.signal
-
-    void loader(runId)
-      .then(async (nextSession) => {
-        if (signal.aborted) {
-          nextSession.dispose()
-          return
-        }
-        loaded = nextSession
-        setSession(nextSession)
-        setCharacter(nextSession.character)
-        unsubscribeErrors = nextSession.subscribeErrors((nextError) => {
-          if (signal.aborted) return
-          setError(errorMessage(nextError, '工作流异步处理失败'))
-        })
-        unsubscribe = nextSession.controller.subscribe((nextRun) => {
-          if (signal.aborted) return
-          setRun(nextRun)
-          requestGenerations(nextSession, nextRun, signal)
-        })
-        try {
-          await nextSession.controller.resume()
-        } catch (cause: unknown) {
-          if (signal.aborted) return
-          setResumeError(errorMessage(cause, '恢复 WorkflowRun 失败'))
-        }
-      })
-      .catch((cause: unknown) => {
-        if (signal.aborted) return
-        setError(errorMessage(cause, '恢复 WorkflowRun 失败'))
-      })
-
-    return () => {
-      sessionAbort.abort()
-      latestReadAbortRef.current?.abort()
-      unsubscribe()
-      unsubscribeErrors()
-      loaded?.dispose()
-    }
-  }, [loadSession, requestGenerations, runId])
+  }, [runId])
 
   const exportModels = useMemo(() => {
     const models = new Map<string, ExportPackageModel>()
@@ -304,12 +195,16 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
             generations,
             exportModels,
             selectedImages,
+            setupPromptDrafts,
+            actionPromptDraft,
             actionMenuOpen,
             actionMenuLevel,
             selectedOutfitId,
             busyBranches,
             resumeBlocked: Boolean(resumeError),
             setSelectedImages,
+            setSetupPromptDrafts,
+            setActionPromptDraft,
             setActionMenuOpen,
             setActionMenuLevel,
             setSelectedOutfitId,
@@ -320,6 +215,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
     [
       actionMenuOpen,
       actionMenuLevel,
+      actionPromptDraft,
       busyBranches,
       character,
       exportModels,
@@ -328,6 +224,8 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
       runCommand,
       resumeError,
       selectedImages,
+      setCharacter,
+      setupPromptDrafts,
       selectedOutfitId,
       session,
     ],
@@ -341,18 +239,6 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
       })),
     )
   }, [projected.nodes])
-
-  useEffect(() => {
-    if (
-      resumeError &&
-      run &&
-      !run.nodes.some(
-        (node) => !node.deletedAt && node.status === 'active' && node.phase === 'generating',
-      )
-    ) {
-      setResumeError(null)
-    }
-  }, [resumeError, run])
 
   function onNodesChange(changes: NodeChange<WorkflowCardNode>[]) {
     const safeChanges = changes.filter((change) => change.type !== 'remove')
@@ -371,97 +257,23 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
     return <EditorBoundary message="正在恢复 WorkflowRun" />
   }
 
-  const constraints = [
-    CHARACTER_PERSPECTIVE[session.project.perspective],
-    DIRECTIONAL_MOVEMENT[session.project.directionalMovement],
-    `${session.project.spriteSize.width} × ${session.project.spriteSize.height}`,
-    session.project.gameStyle ?? '未设置画风',
-  ]
   const visibleError = error ?? resumeError ?? generationReadError
 
   return (
-    <div className="workflow-editor-shell fixed inset-0 z-30 overflow-hidden bg-[var(--color-app-canvas)] text-[var(--color-app-ink)]">
-      <aside
-        className="pointer-events-none absolute bottom-[18px] left-[18px] z-15 grid min-w-[250px] max-w-[min(380px,calc(100vw-112px))] gap-1 rounded-[10px] border border-app-line bg-app-surface-raised/90 px-[15px] py-3 shadow-app-menu backdrop-blur-[14px]"
-        aria-label="当前项目"
-      >
-        <div>
-          <p className="m-0 mb-[5px] text-[8px] font-extrabold tracking-[0.12em] text-app-faint">
-            PROJECT
-          </p>
-          <h1 className="m-0 text-sm font-bold text-app-ink-soft">{session.project.name}</h1>
-        </div>
-        <p className="m-0 overflow-hidden text-ellipsis whitespace-nowrap text-[9px] leading-[1.5] text-app-faint">
-          {constraints.join(' · ')}
-        </p>
-        <div className="mt-1 flex justify-end">
-          <small className="font-mono text-[8px] font-bold text-[var(--color-app-muted)]">
-            Run {run.id} · v{run.version}
-          </small>
-        </div>
-      </aside>
-      {visibleError ? (
-        <div
-          className="absolute left-1/2 top-[150px] z-10 flex -translate-x-1/2 items-center gap-3 border border-app-danger-line bg-app-danger-soft px-[14px] py-2.5 text-xs text-app-danger"
-          role="alert"
-        >
-          <span>{visibleError}</span>
-          {!error && !resumeError && generationReadError ? (
-            <button
-              type="button"
-              className="rounded-md border border-current bg-transparent px-2 py-[5px] font-bold text-inherit"
-              onClick={() => {
-                const signal = sessionAbortRef.current?.signal
-                if (signal) requestGenerations(session, run, signal)
-              }}
-            >
-              重试读取生成结果
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-      <section className="workflow-editor-canvas absolute inset-0" aria-label="WorkflowRun 画布">
-        <ReactFlow<WorkflowCardNode>
-          nodes={canvasNodes}
-          edges={projected.edges}
-          nodeTypes={nodeTypes}
-          onNodesChange={onNodesChange}
-          nodesDraggable
-          nodesConnectable={false}
-          edgesReconnectable={false}
-          elementsSelectable
-          deleteKeyCode={null}
-          fitView
-          fitViewOptions={{ padding: 0.14, maxZoom: 0.82 }}
-          minZoom={0.3}
-          maxZoom={1.2}
-        >
-          <FitViewOnNodeSetChange nodeIds={canvasNodes.map((node) => node.id)} />
-          <Controls position="bottom-right" showInteractive={false} />
-        </ReactFlow>
-      </section>
-    </div>
+    <WorkflowEditorView
+      project={session.project}
+      run={run}
+      nodes={canvasNodes}
+      edges={projected.edges}
+      nodeTypes={nodeTypes}
+      error={visibleError}
+      workflowConflict={workflowConflict}
+      generationReadError={!error && !resumeError ? generationReadError : null}
+      reloadTo={`${location.pathname}${location.search}${location.hash}`}
+      onRetryGenerations={retryGenerations}
+      onNodesChange={onNodesChange}
+    />
   )
-}
-
-/**
- * 只有画布上的节点增减时才重新取景，让新长出来的分支进入视野。
- * 节点内容变化（生成结果到达、状态推进、版本号增加）一律不动视角——
- * 用户拖过、缩放过的位置是他自己选的，命令执行不该把它拽回全景。
- *
- * 延迟一帧再取景：新节点要等 React Flow 量完尺寸，立刻调会按旧尺寸算错取景框。
- */
-function FitViewOnNodeSetChange({ nodeIds }: { nodeIds: string[] }) {
-  const { fitView } = useReactFlow()
-  const signature = nodeIds.join(',')
-  useEffect(() => {
-    if (!signature) return
-    const timer = window.setTimeout(() => {
-      void fitView({ padding: 0.14, maxZoom: 0.82, duration: 180 })
-    }, 32)
-    return () => window.clearTimeout(timer)
-  }, [fitView, signature])
-  return null
 }
 
 interface ProjectionInput {
@@ -478,17 +290,21 @@ interface ProjectionInput {
   generations: Record<string, Generation | null>
   exportModels: ReadonlyMap<string, ExportPackageModel>
   selectedImages: Record<string, string>
+  setupPromptDrafts: Record<string, string>
+  actionPromptDraft: string
   actionMenuOpen: boolean
   actionMenuLevel: ActionMenuLevel
   selectedOutfitId: string | null
   busyBranches: ReadonlySet<string>
   resumeBlocked: boolean
   setSelectedImages: React.Dispatch<React.SetStateAction<Record<string, string>>>
+  setSetupPromptDrafts: React.Dispatch<React.SetStateAction<Record<string, string>>>
+  setActionPromptDraft(value: string): void
   setActionMenuOpen(open: boolean): void
   setActionMenuLevel(level: ActionMenuLevel): void
   setSelectedOutfitId(outfitId: string | null): void
   setCharacter(character: Character): void
-  runCommand(branchKey: string, command: () => Promise<void>): void
+  runCommand(branchKey: string, command: () => Promise<void>, onSuccess?: () => void): void
 }
 
 function NodeExportButton({ model }: { model: ExportPackageModel | undefined }) {
@@ -571,14 +387,11 @@ function CharacterSetupContent({
 }) {
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
-  const [prompt, setPrompt] = useState(node.input.prompt)
+  const prompt = input.setupPromptDrafts[node.id] ?? node.input.prompt
   const [uploadingReference, setUploadingReference] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const uploadAbortRef = useRef<AbortController | null>(null)
 
-  useEffect(() => {
-    setPrompt(node.input.prompt)
-  }, [node.id, node.input.prompt])
   useEffect(() => () => uploadAbortRef.current?.abort(), [])
 
   function uploadReferenceImage(file: File) {
@@ -618,7 +431,10 @@ function CharacterSetupContent({
           className="min-h-[84px] w-full resize-y rounded-lg border border-[var(--color-app-line)] bg-app-surface-raised px-3 py-2.5 font-[inherit] text-[11px] leading-[1.55] text-[var(--color-app-ink)] focus:border-app-accent focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-app-accent-soft"
           value={prompt}
           disabled={branchBusy || uploadingReference}
-          onChange={(event) => setPrompt(event.target.value)}
+          onChange={(event) => {
+            const value = event.target.value
+            input.setSetupPromptDrafts((drafts) => ({ ...drafts, [node.id]: value }))
+          }}
         />
         {node.input.referenceMedia.length > 0 ? (
           <small className="text-[9px] font-[750] text-app-muted">
@@ -686,6 +502,8 @@ function CharacterTemplateContent({
 }) {
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
+  const [refining, setRefining] = useState(false)
+  const [adjustmentPrompt, setAdjustmentPrompt] = useState('')
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.phase === 'ready' && node.status === 'active') {
     const setupNode = findDependency(input.run, node, 'character-setup')
@@ -760,6 +578,69 @@ function CharacterTemplateContent({
         <img className={MASTER_IMAGE} src={node.selectedImageUrl} alt="已确认身份母版" />
         <span className="text-center text-[11px] text-[var(--color-app-muted)]">身份已锁定</span>
         {outfit ? <NodeExportButton model={input.exportModels.get(outfit.id)} /> : null}
+        <div className="grid gap-2">
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={branchBusy}
+            onClick={() =>
+              input.runCommand(branchKey, () =>
+                input.controller.regenerateCharacterTemplate(node.id, {
+                  spriteWidth: input.project.spriteSize.width,
+                  spriteHeight: input.project.spriteSize.height,
+                  mode: 'regenerate',
+                }),
+              )
+            }
+          >
+            重新生成角色母版
+          </button>
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={branchBusy}
+            onClick={() => setRefining((active) => !active)}
+          >
+            微调角色母版
+          </button>
+          {refining ? (
+            <div className="grid gap-2">
+              <textarea
+                aria-label="角色母版微调描述"
+                rows={3}
+                className="min-h-[64px] w-full resize-y rounded-lg border border-[var(--color-app-line)] bg-app-surface-raised px-3 py-2.5 font-[inherit] text-[11px] leading-[1.55] text-[var(--color-app-ink)] focus:border-app-accent focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-app-accent-soft"
+                value={adjustmentPrompt}
+                disabled={branchBusy}
+                onChange={(event) => setAdjustmentPrompt(event.target.value)}
+              />
+              <button
+                type="button"
+                className={CARD_BUTTON}
+                disabled={branchBusy || !adjustmentPrompt.trim()}
+                onClick={() => {
+                  const prompt = adjustmentPrompt.trim()
+                  if (!prompt) return
+                  input.runCommand(
+                    branchKey,
+                    () =>
+                      input.controller.regenerateCharacterTemplate(node.id, {
+                        spriteWidth: input.project.spriteSize.width,
+                        spriteHeight: input.project.spriteSize.height,
+                        mode: 'refine',
+                        adjustmentPrompt: prompt,
+                      }),
+                    () => {
+                      setRefining(false)
+                      setAdjustmentPrompt('')
+                    },
+                  )
+                }}
+              >
+                提交角色母版微调
+              </button>
+            </div>
+          ) : null}
+        </div>
         <button
           type="button"
           className="absolute -bottom-4 -right-4 z-8 grid h-8 min-h-8 w-8 place-items-center rounded-full border border-[var(--color-app-ink)] bg-app-surface-raised p-0 text-[15px] leading-none text-[var(--color-app-ink)] shadow-[var(--shadow-app-panel)] hover:bg-[var(--color-app-ink)] hover:text-app-on-accent"
@@ -848,6 +729,59 @@ function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templat
     )
   }
 
+  if (input.actionMenuLevel === 'custom') {
+    const prompt = input.actionPromptDraft.trim()
+    return (
+      <div className="contents">
+        <button
+          type="button"
+          className={`${MENU_ITEM} ${MENU_ITEM_LEAD}`}
+          onClick={() => input.setActionMenuLevel('actions')}
+        >
+          ← 生成动作
+        </button>
+        <label className="flex flex-col gap-1.5 border-t border-app-line px-3 py-2.5 text-[10px] font-semibold text-app-muted">
+          动作描述
+          <textarea
+            aria-label="动作描述"
+            value={input.actionPromptDraft}
+            onChange={(event) => input.setActionPromptDraft(event.target.value)}
+            placeholder="例如：挥手打招呼、蹲下查看地面"
+            rows={3}
+            className="nodrag nopan nowheel min-h-20 resize-y rounded-md border border-app-line-strong bg-app-surface p-2 text-[11px] font-normal text-app-ink outline-none focus:border-app-accent"
+          />
+        </label>
+        <button
+          type="button"
+          className={MENU_ITEM}
+          disabled={!selectedOutfit || !prompt || branchBusy}
+          onClick={() => {
+            if (!selectedOutfit || !prompt) return
+            input.runCommand(SHARED_BRANCH, () =>
+              input.controller.addAction({
+                dependsOnNodeIds: [templateNodeId],
+                input: {
+                  outfitId: selectedOutfit.id,
+                  name: prompt,
+                  type: 'custom',
+                  prompt,
+                  fps: 12,
+                },
+              }),
+            )
+            input.setActionPromptDraft('')
+            input.setActionMenuOpen(false)
+            input.setActionMenuLevel('root')
+            input.setSelectedOutfitId(null)
+          }}
+        >
+          <b className={MENU_ITEM_TITLE}>开始生成</b>
+          <small className={MENU_ITEM_HINT}>创建自定义动作分支</small>
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div className="contents">
       <button
@@ -886,9 +820,17 @@ function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templat
           <small className={MENU_ITEM_HINT}>{ACTION_PRESET_HINT}</small>
         </button>
       ))}
-      <button type="button" className={MENU_ITEM} disabled title="当前页面尚未提供动作描述输入">
+      <button
+        type="button"
+        className={MENU_ITEM}
+        disabled={!selectedOutfit || branchBusy}
+        onClick={() => {
+          input.setActionPromptDraft('')
+          input.setActionMenuLevel('custom')
+        }}
+      >
         <b className={MENU_ITEM_TITLE}>自定义动作</b>
-        <small className={MENU_ITEM_HINT}>描述输入尚未开放</small>
+        <small className={MENU_ITEM_HINT}>输入描述后生成</small>
       </button>
     </div>
   )
@@ -903,6 +845,8 @@ function FirstFrameContent({
 }) {
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
+  const [refining, setRefining] = useState(false)
+  const [adjustmentPrompt, setAdjustmentPrompt] = useState('')
   const result = input.generations[generationKey(node.id, 'first_frame')]?.result
   const images = result?.type === 'first_frame' ? result.images : []
   if (node.status === 'failed') return <StatusText node={node} input={input} />
@@ -977,6 +921,69 @@ function FirstFrameContent({
     return (
       <div className={CARD_STACK}>
         <img className={MASTER_IMAGE} src={node.selectedFirstFrameUrl} alt="已确认动作首帧" />
+        <div className="grid gap-2">
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={branchBusy}
+            onClick={() =>
+              input.runCommand(branchKey, () =>
+                input.controller.regenerateFirstFrame(node.id, {
+                  spriteWidth: input.project.spriteSize.width,
+                  spriteHeight: input.project.spriteSize.height,
+                  mode: 'regenerate',
+                }),
+              )
+            }
+          >
+            重新生成动作首帧
+          </button>
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={branchBusy}
+            onClick={() => setRefining((active) => !active)}
+          >
+            微调动作首帧
+          </button>
+          {refining ? (
+            <div className="grid gap-2">
+              <textarea
+                aria-label="动作首帧微调描述"
+                rows={3}
+                className="min-h-[64px] w-full resize-y rounded-lg border border-[var(--color-app-line)] bg-app-surface-raised px-3 py-2.5 font-[inherit] text-[11px] leading-[1.55] text-[var(--color-app-ink)] focus:border-app-accent focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-app-accent-soft"
+                value={adjustmentPrompt}
+                disabled={branchBusy}
+                onChange={(event) => setAdjustmentPrompt(event.target.value)}
+              />
+              <button
+                type="button"
+                className={CARD_BUTTON}
+                disabled={branchBusy || !adjustmentPrompt.trim()}
+                onClick={() => {
+                  const prompt = adjustmentPrompt.trim()
+                  if (!prompt) return
+                  input.runCommand(
+                    branchKey,
+                    () =>
+                      input.controller.regenerateFirstFrame(node.id, {
+                        spriteWidth: input.project.spriteSize.width,
+                        spriteHeight: input.project.spriteSize.height,
+                        mode: 'refine',
+                        adjustmentPrompt: prompt,
+                      }),
+                    () => {
+                      setRefining(false)
+                      setAdjustmentPrompt('')
+                    },
+                  )
+                }}
+              >
+                提交动作首帧微调
+              </button>
+            </div>
+          ) : null}
+        </div>
         <NodeExportButton model={input.exportModels.get(node.input.outfitId)} />
       </div>
     )
@@ -1114,7 +1121,6 @@ function ReviewContent({ node, input }: { node: ReviewWorkflowNode; input: Proje
           input.runCommand(branchKey, async () => {
             const character = await input.publishReviewedAction(node.id)
             input.setCharacter(character)
-            await input.controller.approveReview(node.id)
           })
         }
       >
@@ -1194,34 +1200,6 @@ function EditorBoundary({ message }: { message: string }) {
  */
 function generationKey(nodeId: WorkflowNode['id'], role: WorkflowGenerationRole) {
   return `${nodeId}:${role}`
-}
-
-/**
- * 读取节点的生成结果。WorkflowRun 每推进一步都会 emit，而已经到终态的任务不会再变，
- * 所以按 taskId 记住它们；只有还在跑的任务才值得重新问后端。
- */
-async function readGenerations(
-  controller: WorkflowController,
-  run: WorkflowRun,
-  settled: Map<Generation['id'], Generation>,
-): Promise<Record<string, Generation | null>> {
-  const entries = await Promise.all(
-    run.nodes
-      .filter((node) => !node.deletedAt)
-      .flatMap((node) =>
-        node.generations.map(async (reference) => {
-          const key = generationKey(node.id, reference.role)
-          const cached = settled.get(reference.taskId)
-          if (cached) return [key, cached] as const
-          const generation = await controller.getGeneration(node.id, reference.role)
-          if (generation && (generation.status === 'completed' || generation.status === 'failed')) {
-            settled.set(generation.id, generation)
-          }
-          return [key, generation] as const
-        }),
-      ),
-  )
-  return Object.fromEntries(entries)
 }
 
 /**

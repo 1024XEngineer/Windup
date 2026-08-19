@@ -176,7 +176,7 @@ describe('ProjectCreatePage', () => {
     fireEvent.change(screen.getByLabelText('画风约束'), { target: { value: '低饱和像素绘本' } })
     fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
 
-    expect(await screen.findByRole('heading', { name: '角色' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '雾港来信' })).toBeTruthy()
     const [request] = creationRequests(backend)
     expect(request.headers.get('authorization')).toBe('Bearer access-token-for-test')
     const body = (await request.json()) as Record<string, unknown>

@@ -122,3 +122,59 @@ def test_delete_not_found_returns_404(auth_client):
     resp = auth_client.delete("/projects/99999")
 
     assert resp.json()["code"] == 404
+
+
+def test_delete_rejected_when_project_has_characters(auth_client):
+    created = auth_client.post("/projects", json=_payload(project_name="有角色")).json()[
+        "data"
+    ]
+    character = auth_client.post(
+        "/characters",
+        json={
+            "project_id": created["id"],
+            "workflow_run_id": 348,
+            "name": "挂载角色",
+            "description": "阻止删项目",
+        },
+    ).json()
+
+    assert character["code"] == 200
+
+    resp = auth_client.delete(f"/projects/{created['id']}")
+
+    body = resp.json()
+    assert body["code"] == 400
+    assert body["message"] == "项目下仍有角色，无法删除"
+    assert body["data"] is None
+    assert auth_client.get(f"/projects/{created['id']}").json()["code"] == 200
+    assert auth_client.get(f"/characters/{character['data']['id']}").json()["code"] == 200
+
+
+def test_delete_rejected_when_character_arrives_after_empty_check(auth_client, monkeypatch):
+    """模拟检查与删除之间插入角色：应用层已看见空项目，数据库仍应拦住删除。"""
+    created = auth_client.post("/projects", json=_payload(project_name="竞态")).json()[
+        "data"
+    ]
+    character = auth_client.post(
+        "/characters",
+        json={
+            "project_id": created["id"],
+            "workflow_run_id": 349,
+            "name": "后插入",
+            "description": "检查之后才出现",
+        },
+    ).json()
+    assert character["code"] == 200
+
+    monkeypatch.setattr(
+        "windup_app.web.api.project.character_service.project_has_characters",
+        lambda session, project_id: False,
+    )
+
+    resp = auth_client.delete(f"/projects/{created['id']}")
+
+    body = resp.json()
+    assert body["code"] == 400
+    assert body["message"] == "项目下仍有角色，无法删除"
+    assert auth_client.get(f"/projects/{created['id']}").json()["code"] == 200
+    assert auth_client.get(f"/characters/{character['data']['id']}").json()["code"] == 200

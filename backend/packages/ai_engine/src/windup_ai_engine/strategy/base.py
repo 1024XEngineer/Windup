@@ -62,13 +62,20 @@ def is_cyclic(action: ActionSpec) -> bool:
 # 本矩阵的形状本身有个已知边界,记录在此以免后来者按错误前提扩展:
 # 它是「动作类型 → 路线」的一对一映射,隐含前提是"路线由动作的物理性质唯一决定"。
 # 该前提对逐帧 / 视频两条路线成立(有无连续步态是动作固有属性),但对渲染出帧路线不成立
-# —— 同一个 walk 既可走 i2v 也可走渲染,选哪条取决于"该角色有没有 3D 模型",那是 server
-# 才知道的事。接入第三条路线前须先定「路线选择由谁决定」,并可能要把本矩阵改成
-# 「动作类型 → 可选路线集合」+ 一个选择器。Refs 1024XEngineer/Windup#81 #122。
+# —— 同一个 walk 既可走 i2v 也可走渲染,选哪条取决于"该造型有没有 3D 模型",那是 server
+# 才知道的事。
+#
+# 所以渲染出帧路线**不进本矩阵**:server 读 DB 判断该造型有没有 3D 资产,再直接调
+# ``CharacterGeneratorPort.generate_rendered``。本矩阵只留"由动作物理性质唯一决定"的
+# 那两条,隐含前提得以保住。反过来把它改成「动作 → 可选路线集合」+ 选择器,等于把一个
+# 只有 DB 答得出的问题塞进引擎。Refs 1024XEngineer/Windup#81 #122。
 
 
 class DerivationStrategy(ABC):
-    """一条生成路线的骨架:母版 → 对齐前的角色帧序列。"""
+    """一条生成路线的骨架:一份源 bytes → 对齐前的角色帧序列。
+
+    没有"我能不能服务这个角色"的自报钩子:那个判据在 DB 里,只有 server 看得到。
+    """
 
     route: GenRoute
 
@@ -77,8 +84,13 @@ class DerivationStrategy(ABC):
         self,
         card: CharacterCard,
         action: ActionSpec,
-        master: bytes,
+        source: bytes,
         progress: ProgressPort,
     ) -> list[bytes]:
-        """从母版 bytes 产出对齐前的角色帧(RGBA PNG bytes 列表)。"""
+        """从源 bytes 产出对齐前的角色帧(RGBA PNG bytes 列表)。
+
+        ``source`` 随路线不同:i2v / 逐帧吃定妆母版图,三渲二吃已绑骨的 3D 模型 ——
+        两者由各自的入口喂进来,不存在传错。各实现按自己吃的东西给形参命名,
+        统一叫 ``master`` 会让渲染路线的签名说谎。
+        """
         raise NotImplementedError

@@ -2,7 +2,21 @@
 
 import asyncio
 
+import pytest
+from sqlalchemy.orm import sessionmaker
+
 from windup_app.web.api.generation import GenerationTaskOut, _EventBus
+
+from conftest import seed_credit_account
+
+
+@pytest.fixture(autouse=True)
+def _gift_credits(engine):
+    """提交生成任务会冻结积分，本文件用例都预置注册赠送账户。"""
+    with sessionmaker(bind=engine)() as session:
+        seed_credit_account(session, 1)
+        seed_credit_account(session, 2)
+        session.commit()
 
 
 def _create_project(auth_client, name: str = "生成项目") -> dict:
@@ -213,3 +227,80 @@ def test_response_conversion_path_is_live(auth_client):
     for k in ("id", "status", "task_type"):
         assert k in data, f"缺字段 {k}：{data}"
     assert "user_id" not in data, "响应不该暴露 user_id"
+
+
+def test_validation_error_message_tells_the_user_what_is_wrong(auth_client):
+    """校验失败的 message 必须是可读原因,不是一句笼统的"请求参数校验失败"。
+
+    前端展示的是 message;把原因只塞进 data 等于用户永远看不到 —— 实测用户看到的是
+    读不懂的"请求参数校验失败",而"custom 动作必须提供 custom_prompt"就在 data 里躺着。
+    """
+    project = _create_project(auth_client)
+    r = auth_client.post("/generation/action", json={
+        "project_id": project["id"], "character_id": 1,
+        "action_type": "custom", "custom_prompt": "",
+        "num_frames": 32, "reference_image_urls": ["https://media.windup.xin/x.png"],
+    })
+    body = r.json()
+    assert body["code"] == 400
+    assert body["message"] != "请求参数校验失败", "还是笼统文案,用户看不懂"
+    assert "custom_prompt" in body["message"] or "动作" in body["message"]
+    assert not body["message"].startswith("Value error,"), "pydantic 前缀是噪声,该剥掉"
+
+
+# ── 体型必须从 HTTP 入口一路传到 CharacterCard ─────────────────────────────
+#
+# 只在 ai_engine 侧加门禁不够:生产链路恒走 CharacterCard 的 BIPED 默认值,四足角色
+# 永远触发不了它。这条测试从真实端点发起,断言的是"贯通"而不是"函数会不会算"。
+
+
+def test_stance_from_request_reaches_the_engine(auth_client, monkeypatch):
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.orchestrator.model import CharacterActionInput
+
+    dispatched: list = []
+    monkeypatch.setattr(
+        gen_api, "_dispatch_after_commit", lambda *args: dispatched.append(args)
+    )
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+
+    auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"], stance="quadruped"),
+    )
+
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs, "任务没被收下"
+    assert inputs[0].stance is not None, "体型断在请求层,引擎侧永远看不到"
+    assert inputs[0].stance.value == "quadruped"
+
+
+def test_stance_omitted_stays_none_not_biped(auth_client, monkeypatch):
+    """不给体型时原样传 None —— 在这层替调用方填 biped，"没给"与"明确双足"就分不开了。"""
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.orchestrator.model import CharacterActionInput
+
+    dispatched: list = []
+    monkeypatch.setattr(
+        gen_api, "_dispatch_after_commit", lambda *args: dispatched.append(args)
+    )
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+
+    auth_client.post(
+        "/generation/action", json=_action_payload(project["id"], character["id"]),
+    )
+
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs and inputs[0].stance is None
+
+
+def test_illegal_stance_is_rejected_at_the_entrance(auth_client):
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+    body = auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"], stance="octopod"),
+    ).json()
+    assert body["code"] == 400, body

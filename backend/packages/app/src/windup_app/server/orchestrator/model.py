@@ -13,6 +13,7 @@ from sqlalchemy import BigInteger, DateTime, Integer, JSON, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from windup_common.models import CharacterStance
 from windup_framework.db import Base
 
 
@@ -78,6 +79,19 @@ class CharacterActionInput:
     # ``ModelRegistry.chain(CHARACTER_ACTION)``(部署默认 + fallbacks);不在链上 → 入口
     # 报错,不到付费调用才失败。选中的型号表示这次从它开始试,由 Gateway 读 start_from_model。
     video_model: str | None = None
+    # ── 三渲二(#192)────────────────────────────────────────────────────
+    #
+    # 这次动作属于哪个造型。3D 资产挂在造型一级(#121),没有它就连"按造型定位资产"
+    # 都表达不出来。目前只被三渲二消费;推广成所有动作生成都按造型定位外观是 #253。
+    outfit_id: str | None = None
+    # 该造型的绑骨 3D 模型 URL。**有值 = 这次走三渲二**;None = 照旧走 video_i2v。
+    #
+    # 传 URL 而不是让编排层自己去查:与 reference_image_urls 同一口径 —— 取数在上层
+    # 做完,"这次选了哪条路线"在入参上就可见,不是埋在某个分支里的隐式判断。
+    model_3d_url: str | None = None
+    # 角色体型。``None`` 原样往下传,由编排层兜成双足 —— 本层替调用方填默认值的话,
+    # "没给"与"明确给了 biped"从这里起就分不开了。判据见 prompt.adapter 的体型门禁。
+    stance: CharacterStance | None = None
 
 
 # -- 出参（按任务类型细化，前端可直接回填 character 模块）------------------
@@ -111,11 +125,17 @@ class CharacterActionOutput:
     前端拿到后写入 ``character_data.outfits[].actions[]``：
     ``action_type`` → ``CharacterAction.type``，
     ``frames`` → ``CharacterAction.frames[]``。
+
+    ``quality`` / ``prompt_version`` 是引擎产出成色的账本(``ai_engine.ports.ActionQuality``
+    的原样转录 + 提示词版本),不参与前端回填、只落库供后续对比——本层不据此判成败,
+    见 executor 里"只记账不判决"的说明。
     """
 
     type: str = "character_action"
     action_type: str = ""
     frames: list[CharacterActionFrame] = field(default_factory=list)
+    quality: dict | None = None
+    prompt_version: str | None = None
 
 
 # -- 任务记录 ------------------------------------------------------------

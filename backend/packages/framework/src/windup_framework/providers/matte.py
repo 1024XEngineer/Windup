@@ -11,6 +11,9 @@ onnxruntime 惰性导入(启动慢、按需加载),会话按需构建一次。
 from __future__ import annotations
 
 import io
+import logging
+import shutil
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -19,9 +22,19 @@ from PIL import Image
 
 from .interfaces import MatteProvider
 
-# u2netp:轻量版(~4.7MB)。rembg 官方 release 托管;国内不可达时可预置 model_path。
+logger = logging.getLogger("windup.matte")
+
+# u2netp:轻量版(~4.4MB)。rembg 官方 release 托管;国内不可达时可预置 model_path。
 _U2NETP_URL = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx"
 _DEFAULT_CACHE = Path.home() / ".cache" / "windup" / "u2netp.onnx"
+
+# 全量版(~176MB)。它不是"更好的轻量版",两者漏检的位置不重叠:
+#   · 轻量版把浅肤色角色的脸颊与小腿判成背景(测试反馈的"浅色角色被抠穿"就是这个);
+#   · 全量版把 T-pose 平举的细手臂整条丢掉。
+# 所以取两张 alpha 的逐像素较大值,而不是二选一。实测 9 张:主体覆盖 14.78% → 15.77%,
+# 漏检最严重那张(林间斥候)的洞从 11.69% 降到 0.06%,代价是 0.27s/帧 → 0.77s/帧。
+_U2NET_URL = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx"
+_REFINE_CACHE = Path.home() / ".cache" / "windup" / "u2net.onnx"
 
 # u2net 预处理常量(与 rembg 一致)。
 _MEAN = (0.485, 0.456, 0.406)
@@ -33,8 +46,15 @@ _SIZE = (320, 320)
 # (222,130,70)的角色配玫红底(222,41,124),两者红通道完全相同、欧氏距离仅 104 ——
 # 宽阈值会把毛判成半透明并去"反解",越解越坏(先成橄榄绿再成亮绿)。橙毛 d≈117,
 # 阈值 38 完全碰不到它;而闭合空隙里的背景 d≈0,能干净移除。
-_KEY_KILL = 38.0    # d < 此值 → 判为纯背景
-_KEY_SOFT = 14.0    # 到 _KEY_KILL + _KEY_SOFT 之间线性过渡,避免硬边锯齿
+# 杀伤半径不是常数,由实测的底色噪声推出来 —— 见 _kill_radius。下面两个是它的上下限。
+#
+# 固定阈值 38 抠穿过浅色角色:骨白角色到白底的距离只有 28.7,整块本体被判成背景;
+# 39~52 这一档不被杀但整块变半透明,角色发虚而不报任何异常。深色角色距离 300 以上,
+# 永远不沾这个窗口 —— 所以症状只出现在浅色角色身上。
+_KEY_KILL_MIN = 6.0     # 下限:再干净的底也留一点余量,否则压缩噪声会漏清
+_KEY_KILL_MAX = 24.0    # 上限:真空隙就是渲染出来的底色本身,不需要比这更宽
+_KEY_NOISE_K = 4.0      # 半径 = 底色噪声标准差 × 此系数
+_KEY_SOFT = 14.0    # 到杀伤半径 + 此值之间线性过渡,避免硬边锯齿
 _BG_FLAT_STD = 8.0  # 四角色标准差上限;超过说明底不是纯色,不做任何清理
 
 # 采样前先丢掉最外圈像素。视频帧的最外一两行/列常是**编码器边缘伪影**,不是底色:
@@ -45,6 +65,33 @@ _BG_FLAT_STD = 8.0  # 四角色标准差上限;超过说明底不是纯色,不�
 # 取 2 是为容下 2 px 宽的边框;真正不均匀的底(噪声/渐变/拼色)让多少都照样超阈值,守卫不松。
 _EDGE_SKIP = 2
 _CORNER = 12        # 每个角的采样块边长
+
+
+def _download_atomic(url: str, dest: Path) -> None:
+    """下到同目录的临时文件,整个传完再原子改名。
+
+    直接写目标路径的话,176MB 传到一半断开会留下一个不完整文件,而之后每次都靠
+    ``exists()`` 判断"已经有了" —— 网络恢复了也不会重下,ONNX 会话建不起来,这台机器
+    就长期退回单模型,而单模型正是会把浅肤色角色抠穿的那条路。同目录是为了让 replace
+    落在同一文件系统上,跨设备改名不是原子的。
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=dest.parent, suffix=".part", delete=False) as tmp:
+        part = Path(tmp.name)
+    try:
+        with urllib.request.urlopen(url) as resp, part.open("wb") as out:
+            shutil.copyfileobj(resp, out)
+        part.replace(dest)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
+
+
+def _saliency(session, tensor: np.ndarray) -> np.ndarray:
+    """一个 u2net 会话的前向 → 归一化到 [0,1] 的二维显著性图。"""
+    pred = session.run(None, {session.get_inputs()[0].name: tensor})[0][:, 0, :, :]
+    mi, ma = float(pred.min()), float(pred.max())
+    return ((pred - mi) / max(ma - mi, 1e-6)).squeeze()
 
 
 def _corner_pixels(rgb: np.ndarray) -> np.ndarray:
@@ -147,6 +194,20 @@ def _fill_enclosed_holes(alpha: np.ndarray, rgb: np.ndarray) -> np.ndarray:
     return out
 
 
+def _kill_radius(rgb: np.ndarray) -> float:
+    """按四角实测的底色噪声定杀伤半径,而不是取一个固定常数。
+
+    要清掉的是**渲染出来的底色本身**(被主体围住的那块空隙),它与四角同源,差异只来自
+    压缩噪声,量级由四角的离散度直接给出。固定常数没有这个信息,取宽了就会吃掉与底色
+    接近的角色像素 —— 浅色角色正是落在那个窗口里。
+
+    上限的意义:底噪再大也不该把半径放到能吞掉主体的程度;超过上限时宁可少清一点,
+    留下的底色是可见的脏边,而抠穿角色是不可逆的破坏。
+    """
+    spread = float(_corner_pixels(rgb).std(axis=0).max())
+    return float(np.clip(spread * _KEY_NOISE_K, _KEY_KILL_MIN, _KEY_KILL_MAX))
+
+
 def _flat_bg_penalty(rgb: np.ndarray) -> np.ndarray:
     """底色清理系数(0=纯背景,1=主体),形状与图同宽高。
 
@@ -155,10 +216,10 @@ def _flat_bg_penalty(rgb: np.ndarray) -> np.ndarray:
     (2026-08-07 实测)。而母版底色是刻意生成的纯色,均匀度极高(实测四角标准差 1.0~1.2),
     用它做一次窄阈值清理就能补上这个洞。
 
-    与"按颜色抠是死路"那条规则的边界:那条说的是**拿颜色当主体判据**(白底浅色角色
-    会被抠穿)。这里主体判据仍然是 u2netp,颜色只用来**做减法** —— 绝不新增主体像素,
-    最坏情况是少清理一点,不会抠穿角色。底色不够均匀时(std 超阈值)直接返回全 1,
-    等于不清理。
+    与"按颜色抠是死路"那条规则的边界:那条说的是**拿颜色当主体判据**。这里主体判据仍然是
+    u2netp,颜色只用来做减法。但减法同样会减在角色身上 —— 本函数是乘性惩罚、作用于全图,
+    与底色足够接近的**主体内部**像素照样归零。所以杀伤半径必须窄到只覆盖底色自身的噪声,
+    由 :func:`_kill_radius` 按四角离散度推出。底色不够均匀时(std 超阈值)返回全 1,不清理。
 
     **逐帧独立采样是安全的**(2026-08-10 在真视频帧上验证):同一段视频里逐帧算出的 key 色
     几乎不动(9 段 i2v 实测帧间位移 <= 1.73/255),故不需要跨帧共享一次采样。序列帧真正的
@@ -170,22 +231,68 @@ def _flat_bg_penalty(rgb: np.ndarray) -> np.ndarray:
     if key is None:
         return np.ones(rgb.shape[:2], dtype=np.float32)   # 底不是纯色 → 不动
     d = np.linalg.norm(rgb - key, axis=2)
-    return np.clip((d - _KEY_KILL) / _KEY_SOFT, 0.0, 1.0).astype(np.float32)
+    return np.clip((d - _kill_radius(rgb)) / _KEY_SOFT, 0.0, 1.0).astype(np.float32)
 
 
 class OnnxU2NetMatteProvider(MatteProvider):
-    """u2netp.onnx via onnxruntime。frame bytes → 抠好的 PNG(RGBA) bytes。"""
+    """u2net onnx via onnxruntime。frame bytes → 抠好的 PNG(RGBA) bytes。
 
-    def __init__(self, model_path: str | Path | None = None, model_url: str = _U2NETP_URL) -> None:
+    两个模型的 alpha 取逐像素较大值 —— 理由见 :data:`_U2NET_URL` 上方。补充模型取不到时
+    退回单模型并留一条 WARNING:少一层补漏仍能出产物,而为了它整条生成失败不值得;但
+    "少了一层"必须留痕,否则浅色角色被抠穿会被当成模型本身的水平。
+    """
+
+    def __init__(
+        self,
+        model_path: str | Path | None = None,
+        model_url: str = _U2NETP_URL,
+        *,
+        refine_model_path: str | Path | None = None,
+        refine_model_url: str | None = _U2NET_URL,
+    ) -> None:
         self._model_path = Path(model_path) if model_path else _DEFAULT_CACHE
         self._model_url = model_url
         self._session = None  # 惰性
+        self._refine_path = (
+            Path(refine_model_path) if refine_model_path
+            else (_REFINE_CACHE if refine_model_url else None)
+        )
+        self._refine_url = refine_model_url
+        self._refine_session = None
+        self._refine_failed = False
 
     def _ensure_model(self) -> Path:
         if not self._model_path.exists():
-            self._model_path.parent.mkdir(parents=True, exist_ok=True)
-            urllib.request.urlretrieve(self._model_url, self._model_path)
+            _download_atomic(self._model_url, self._model_path)
         return self._model_path
+
+    def _get_refine_session(self):
+        """补充模型的会话;取不到就永久放弃并只警告一次。"""
+        if self._refine_session is not None or self._refine_failed or self._refine_path is None:
+            return self._refine_session
+        try:
+            import onnxruntime as ort
+
+            if not self._refine_path.exists():
+                if not self._refine_url:
+                    raise FileNotFoundError(self._refine_path)
+                _download_atomic(self._refine_url, self._refine_path)
+            try:
+                self._refine_session = ort.InferenceSession(
+                    str(self._refine_path), providers=["CPUExecutionProvider"]
+                )
+            except Exception:
+                # 建会话失败说明这个文件本身不可用(上一次下载留下的残片、或版本不合)。
+                # 留着它会让之后每次都跳过重下,所以就地删掉。
+                self._refine_path.unlink(missing_ok=True)
+                raise
+        except Exception:
+            self._refine_failed = True
+            logger.warning(
+                "抠图补充模型不可用(%s),本进程只用轻量模型 —— 浅肤色角色的脸颊与小腿"
+                "可能被判成背景", self._refine_path, exc_info=True,
+            )
+        return self._refine_session
 
     def _get_session(self):
         if self._session is None:
@@ -205,7 +312,7 @@ class OnnxU2NetMatteProvider(MatteProvider):
         return self._session
 
     def _predict_mask(self, img: Image.Image) -> Image.Image:
-        """u2netp 前向 → 单通道显著性 mask(L,原图尺寸)。"""
+        """两个模型各前向一次,取逐像素较大值 → 单通道显著性 mask(L,原图尺寸)。"""
         im = img.convert("RGB").resize(_SIZE, Image.LANCZOS)
         ary = np.array(im).astype(np.float32)
         ary = ary / max(float(ary.max()), 1e-6)
@@ -214,12 +321,15 @@ class OnnxU2NetMatteProvider(MatteProvider):
             tmp[:, :, c] = (ary[:, :, c] - _MEAN[c]) / _STD[c]
         tensor = np.expand_dims(tmp.transpose(2, 0, 1), 0).astype(np.float32)
 
-        session = self._get_session()
-        pred = session.run(None, {session.get_inputs()[0].name: tensor})[0][:, 0, :, :]
-        mi, ma = float(pred.min()), float(pred.max())
-        pred = (pred - mi) / max(ma - mi, 1e-6)
-        mask = (pred.squeeze() * 255).astype(np.uint8)
-        return Image.fromarray(mask, "L").resize(img.size, Image.LANCZOS)
+        mask = _saliency(self._get_session(), tensor)
+        refine = self._get_refine_session()
+        if refine is not None:
+            # 归一化在每个模型内部各自做完再取 max:两个模型的原始输出量纲不同,
+            # 先合并再归一化会让量纲大的那个把另一个整体压掉。
+            mask = np.maximum(mask, _saliency(refine, tensor))
+        return Image.fromarray(
+            (mask * 255).astype(np.uint8), "L"
+        ).resize(img.size, Image.LANCZOS)
 
     def cutout(self, frame: bytes) -> bytes:
         img = Image.open(io.BytesIO(frame)).convert("RGBA")

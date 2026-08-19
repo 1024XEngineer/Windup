@@ -58,6 +58,33 @@ class ActionType(str, Enum):
     CUSTOM = "custom"
 
 
+class AttackArchetype(str, Enum):
+    """攻击的运动拓扑 —— 决定 ``prompts/attack.md`` 取哪一节(取值即节名前缀)。
+
+    按"身体怎么发力"分而不按装备形状分:提示词里的形状先验(宽面、弧线)等于断言角色
+    手握一件有宽面的长条物,喂空手 / 法杖 / 四足角色时模型会凭空补出那件东西来调和矛盾。
+    """
+
+    SWEEP = "sweep"      # 长条持物:横挥 / 下劈
+    THRUST = "thrust"    # 短持物或空手:直出 / 戳刺
+    PROJECT = "project"  # 远程:身体前压、送到位、终态保持
+    LUNGE = "lunge"      # 非双足:整体前扑,头部 / 前肢领先
+
+
+class CharacterStance(str, Enum):
+    """角色体型 —— 决定"手臂 / 手肘"这类人体部位词能不能进提示词。
+
+    非双足角色的描述里出现"手臂",模型会给它凭空接上一对人的上肢来调和文图矛盾,
+    而帧数、时长、成色全部正常。成员按"发力部位不同"分,每个非双足成员都要在
+    ``ai_engine.prompt.adapter`` 的替换建议表里有自己那套部位说法,否则拒绝理由
+    只能告诉用户"不行"、给不出改法。
+    """
+
+    BIPED = "biped"            # 双腿站立 + 一对上肢(人形 / 类人怪)
+    QUADRUPED = "quadruped"    # 四肢着地,前肢兼作手
+    SERPENTINE = "serpentine"  # 无肢,靠躯干起伏推进(蛇 / 鳗 / 触手)
+
+
 class GenRoute(str, Enum):
     """生成路线 —— 实测挣得的分流依据(见 ai_engine.strategy 层 docstring)。
 
@@ -68,6 +95,11 @@ class GenRoute(str, Enum):
 
     VIDEO_I2V = "video_i2v"   # 步态位移动作:图生视频(连贯交替腿)
     PER_FRAME = "per_frame"   # 离散姿势:逐帧图生图(单帧可编辑)
+    # 三渲二:母版 → 图生 3D → 自动绑骨 → 套预设动作 → 渲 2D 序列帧。与上面两条有个
+    # **结构性差异**:前两条由动作的物理性质唯一决定,这一条还取决于"该造型有没有 3D
+    # 资产"。所以它**不进 ROUTE_MATRIX** —— 由 server 读 DB 后直接调
+    # ``CharacterGeneratorPort.generate_rendered``(#122)。
+    RENDER_3D = "render_3d"
 
 
 class Facing(str, Enum):
@@ -88,8 +120,8 @@ class Facing(str, Enum):
 class CharacterView(str, Enum):
     """角色美术视角 —— 与 ``Project.character_perspective``(1/2/3)一一对应。
 
-    字符串取值与前端契约(frontend/API_CONTRACT.md 的映射表)逐字一致,
-    免得将来做 int ↔ str 映射时再造一套别名(如 topdown / top_down / top-down 三写)。
+    映射固定为 1→side、2→top-down、3→isometric。字符串取值必须逐字一致,
+    免得调用方再造一套别名(如 topdown / top_down / top-down 三写)。
     """
 
     SIDE = "side"            # perspective=1 横版
@@ -116,8 +148,9 @@ DEFAULT_N_FRAMES = 8
 class CharacterCard(BaseModel):
     """角色卡 —— 一致性主键 + 资产库基础(产品核心实体)。
 
-    注意:视频路线**不读本模型的任何字段**,角色身份由母版图像承载。
-    详见 ``windup_ai_engine.ports.CharacterGeneratorPort`` 的 docstring。
+    注意:视频路线的**角色身份**由母版图像承载,不读 name / desc。它只读 ``stance``,
+    且只用来判用户那句描述能不能进提示词。详见
+    ``windup_ai_engine.ports.CharacterGeneratorPort`` 的 docstring。
     """
 
     model_config = _STRICT
@@ -127,6 +160,12 @@ class CharacterCard(BaseModel):
     view: CharacterView = CharacterView.SIDE
     master_ref: str = ""                         # 定妆母版的存储 ref(对象存储,非本地路径)
     version: str = "v1"
+
+    # 体型。默认值等于对每个没声明体型的角色做一次断言,所以取断言最少的那个:双足这一支
+    # 不往提示词里加任何部位词、也不要求用户改写措辞。反过来把默认设成非双足,会让占多数的
+    # 人形角色被要求把"手臂"改写成"前肢 / 尾",那些词进提示词就是让模型凭空长出对应部位。
+    # 不自动识别:那要调模型,而认错是静默的 —— 错误的体型只在下一次付费生成的画面上显形。
+    stance: CharacterStance = CharacterStance.BIPED
 
     # 注:曾有 `palette: str = ""`。2026-08-08 删除,理由是它会变成"看起来生效、实则被
     # 忽略"的第二真相源:真正锁色的色板由 postprocess.master_pixel_spec 从母版像素里量出来
@@ -191,6 +230,19 @@ class ActionSpec(BaseModel):
     # pick_cycle 还是 pick_oneshot、出参要不要量 loop_seam。
     cyclic: bool | None = None
 
+    # 攻击走哪一支运动拓扑。``None`` = 不指定,由 ``build_attack_prompt`` 的默认值决定 ——
+    # 这里不给默认值,否则同一个缺省被两处各写一份,改一处另一处静默不动。
+    archetype: AttackArchetype | None = None
+
+    @model_validator(mode="after")
+    def _archetype_belongs_to_attack_only(self) -> ActionSpec:
+        """非攻击动作带 archetype 要炸:它只被攻击提示词消费,传了不会生效。"""
+        if self.action is not ActionType.ATTACK and self.archetype is not None:
+            raise ValueError(
+                f"action={self.action.value} 不该带 archetype;它只决定攻击提示词取哪一支,传了不会生效"
+            )
+        return self
+
     @model_validator(mode="after")
     def _custom_needs_its_own_settings(self) -> ActionSpec:
         """两个方向都卡:缺了只能猜、而猜错是静默的;多给了调用方以为能覆盖 walk 的
@@ -213,6 +265,9 @@ class ActionSpec(BaseModel):
                     "传了不会生效"
                 )
         return self
+    # 这里**没有** ``route`` 字段:路线选择整个在 server —— 走不走三渲二取决于"这个造型
+    # 有没有 3D 资产",那份数据在 DB 里,server 读完直接调 ``generate_rendered``。
+    # 加一个零消费方的字段等于留一个"填了看起来会生效、实际没人读"的入参。
 
     @model_validator(mode="before")
     @classmethod

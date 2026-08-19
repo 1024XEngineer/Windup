@@ -13,7 +13,7 @@ import numpy as np
 from ._frames import gray as _gray
 
 __all__ = ["active_span", "blur_ratio", "dead_frame_indices", "dead_frame_mask",
-           "frame_deltas", "loop_seam", "motion_scale"]
+           "frame_deltas", "limb_motion", "loop_seam", "motion_scale", "subject_blobs"]
 
 
 def frame_deltas(frames) -> np.ndarray:
@@ -116,6 +116,79 @@ def active_span(frames, floor: float = 0.25, min_run: int = 3) -> tuple[int, int
     return s, e
 
 
+def _row_runs(row: np.ndarray) -> list[tuple[int, int]]:
+    """一行内为真的连续区间 ``[start, end)``。差分找边沿,不逐像素判断。"""
+    padded = np.concatenate(([False], row, [False]))
+    edges = np.flatnonzero(padded[1:] != padded[:-1])
+    return [(int(edges[i]), int(edges[i + 1])) for i in range(0, len(edges), 2)]
+
+
+def _count_blobs(mask: np.ndarray, min_area_ratio: float) -> int:
+    """4-连通域计数(游程并查集,不依赖 scipy)。
+
+    按行取真值游程,相邻两行的游程只要列区间有重叠就判定竖直相连——同一游程内的像素
+    horizontal 方向本就连续,故这一条合并规则等价于逐像素 4-邻域标记,但只需在"游程"
+    这个粗粒度上做并查集,免去逐像素扫描。
+    """
+    parent: list[int] = []
+
+    def find(a: int) -> int:
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    prev_runs: list[tuple[int, int, int]] = []  # (start, end, label)
+    areas: dict[int, int] = {}
+    for row in mask:
+        cur_runs = []
+        for start, end in _row_runs(row):
+            label = len(parent)
+            parent.append(label)
+            areas[label] = end - start
+            for ps, pe, plabel in prev_runs:
+                if ps < end and start < pe:      # 列区间重叠 → 与上一行竖直相连
+                    union(label, plabel)
+            cur_runs.append((start, end, label))
+        prev_runs = cur_runs
+
+    if not areas:
+        return 0
+    totals: dict[int, int] = {}
+    for label, area in areas.items():
+        root = find(label)
+        totals[root] = totals.get(root, 0) + area
+    max_area = max(totals.values())
+    # 阈值语义:比全帧最大块小的块,只有达到该块 min_area_ratio 的面积才算数——
+    # 目的只是滤掉"主体+噪点"里的噪点(面积占比通常 <1%),不是要卡死一个精确的
+    # "第二主体"下限;真出现被这条误伤/漏判的样本,回头拿那批样本重新校这个数。
+    return sum(1 for a in totals.values() if a >= min_area_ratio * max_area)
+
+
+def subject_blobs(frames, *, min_area_ratio: float = 0.15) -> tuple[int, ...]:
+    """逐帧统计画面里有几个"够大"的连通块(alpha>128,4-邻域)。
+
+    **返回逐帧计数,不是均值** —— 与 :func:`dead_frame_indices` 给下标同一个理由:
+    分布形态对应不同的病,修法不同。全程恒为 2 = 真出了第二个角色(母版/提示词问题);
+    只有中段冒出 2 = 挥动的手臂或手持物被抠断成两截(抠图/对齐问题)。压成一个均值,
+    这两种病看起来一样。
+
+    单人持长条物(如剑)只要与身体像素相连,就与身体同属一个连通块,不会被数成 2 ——
+    这条计数器的价值就在于分得清"真第二主体"与"伸出去的长条肢体/道具"，
+    见校准测试 ``test_subject_blobs.py``。
+    """
+    out = []
+    for f in frames:
+        alpha = np.asarray(f.convert("RGBA"))[:, :, 3]
+        out.append(_count_blobs(alpha > 128, min_area_ratio))
+    return tuple(out)
+
+
 def blur_ratio(frames, ps: int = 32) -> np.ndarray:
     """逐帧「静止区清晰度 / 前后帧同区清晰度」。<1 = 这帧自己糊了，与动作快慢无关。"""
     def _pm(a):
@@ -145,4 +218,48 @@ def blur_ratio(frames, ps: int = 32) -> np.ndarray:
             k = max(4, int(cand.sum() * .25))
             m = cand & (mv <= np.sort(mv[cand])[:k].max())
         out[i] = float(np.median(sharp[i][m] / np.maximum(ref[m], 1e-6)))
+    return out
+
+
+def limb_motion(frames, *, grid: tuple[int, int] = (3, 2)) -> dict[str, float]:
+    """按身体分区量动量,返回**各区占总动量的比例** + 最静区名 ``still``。
+
+    存在的理由是整幅平均逮不到"一部分肢体在动、另一部分冻着"::func:`motion_scale`
+    与 :func:`dead_frame_mask` 的判据都是相对的,整体在动时它们全绿,而"腿在迈、手臂
+    僵成柱子"正是**自动绑骨漏认肢体**的典型表现 —— 那块网格没有骨骼驱动,每帧同姿势。
+
+    只报占比、不给合格线:几何分区区分不了"该动没动"和"本来就不该动",那需要动作语义。
+    试过的两个汇总判据都不成立 —— ``max/min`` 的分母常落在本就不该动的静区,
+    ``max/median`` 在半数区冻结时中位数落到活跃那侧,恰在最该报警时比值 ≈ 1.0。
+    故**判决交给调用方**,与 :class:`ports.ActionQuality` 其余读数同一取向。
+
+    读法:6 区均匀分布时各占 ≈0.17;某区接近 0 且按动作语义**该动**,那块多半没被骨骼
+    驱动。分区按主体包围盒切(不是整幅画布),否则角色在画面里位置一变区就对不上。
+    """
+    from ._frames import alpha_stack as _masks
+
+    m = _masks(frames)
+    if m.shape[0] < 2:
+        return {"still": ""}
+    ys, xs = np.where(m.any(0))
+    if not len(ys):
+        return {"still": ""}
+    y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
+    rows, cols = grid
+    hs = np.linspace(y0, y1, rows + 1).astype(int)
+    ws = np.linspace(x0, x1, cols + 1).astype(int)
+    names_r = ("上", "中", "下")[:rows]
+    names_c = ("左", "右")[:cols] if cols == 2 else tuple(str(i) for i in range(cols))
+
+    raw: dict[str, float] = {}
+    for r in range(rows):
+        for c in range(cols):
+            blk = m[:, hs[r]:hs[r + 1], ws[c]:ws[c + 1]]
+            raw[f"{names_r[r]}{names_c[c]}"] = float(blk.std(0).sum())
+    total = sum(raw.values())
+    out: dict[str, float] = {k: round(v / total, 3) if total > 0 else 0.0
+                             for k, v in raw.items()}
+    # 在**只有分区**的字典上挑最静区,再把它写回去。反过来的话 `still` 会挑中自己写进去
+    # 的汇总键 —— 一个只在数据上体现、不会报错的错。
+    out["still"] = min(raw, key=lambda k: raw[k])
     return out

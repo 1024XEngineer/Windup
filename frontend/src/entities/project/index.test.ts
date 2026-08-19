@@ -159,4 +159,16 @@ describe('projectApis', () => {
       }),
     ).rejects.toBeInstanceOf(ProjectNameConflictError)
   })
+
+  it('maps the backend in-use project contract to a stable domain error', async () => {
+    const { ProjectHasCharactersError, projectApis } = await loadProjectApis(
+      async () =>
+        new Response(
+          JSON.stringify({ code: 400, message: '项目下仍有角色，无法删除', data: null }),
+          { headers: { 'content-type': 'application/json' } },
+        ),
+    )
+
+    await expect(projectApis.remove('42')).rejects.toBeInstanceOf(ProjectHasCharactersError)
+  })
 })

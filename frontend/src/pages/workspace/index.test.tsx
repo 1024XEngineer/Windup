@@ -233,6 +233,7 @@ describe('WorkspacePage', () => {
     renderWorkspace()
 
     expect(screen.getByRole('heading', { name: '工作台' })).toBeTruthy()
+    expect(screen.getByText('从这里开始，去任何地方')).toBeTruthy()
     expect(screen.getByRole('link', { name: '进入快速开始' }).getAttribute('href')).toBe(
       '/quick-start',
     )

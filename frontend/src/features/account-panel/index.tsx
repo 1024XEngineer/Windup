@@ -19,6 +19,7 @@ import {
   EyeClosed,
   Keyhole,
   SealCheck,
+  Ticket,
   UserCircle,
   X,
   type Icon,
@@ -27,6 +28,7 @@ import { useNavigate, useSearchParams } from 'react-router'
 
 import { useAuthSession } from '@/features/auth-session'
 import { sanitizeInternalPath } from '@/shared/navigation'
+import { KineticCopy, type KineticCopyPhase } from '@/shared/ui'
 import messengerPigeon from '@/assets/auth/illustrations/messenger-pigeon.webp'
 
 import './account-panel.css'
@@ -34,10 +36,8 @@ import './account-panel.css'
 type AccountEntry = 'login' | 'register'
 type LoginMode = 'code' | 'password'
 type MotionDirection = 'forward' | 'backward'
-type CopyPhase = 'entering' | 'resting' | 'exiting'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-const CODE_PATTERN = /^\d{6}$/
 const SUCCESS_NAVIGATION_DELAY_MS = 900
 const AUTH_EXIT_DURATION_MS = 520
 
@@ -56,6 +56,10 @@ const registrationStepCopy = [
   {
     title: '欢迎来到 Windup',
     description: '从一个角色开始，慢慢搭建属于你的世界。',
+  },
+  {
+    title: '填写邀请码',
+    description: '有邀请码就填在这里，没有也可以直接继续。',
   },
   {
     title: '为账号加一道保护',
@@ -88,20 +92,12 @@ const loginMotionCopy = [
   ['从上一次确认出发，', '让灵感继续向前。'],
 ] as const
 
-const REGISTER_STEP_COUNT = 4
+const REGISTER_STEP_COUNT = 5
 const AUTH_ICON_PROPS = { weight: 'light' as const }
 const AUTH_FIELD_CLASS = 'auth-screen-field w-full outline-none disabled:cursor-not-allowed'
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '操作失败，请稍后重试'
-}
-
-function emailKey(email: string): string {
-  return email.trim().toLowerCase()
-}
-
-function prefersReducedMotion(): boolean {
-  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 }
 
 function KineticTitle({ id, text, emphasis }: { id: string; text: string; emphasis?: string }) {
@@ -126,36 +122,6 @@ function KineticTitle({ id, text, emphasis }: { id: string; text: string; emphas
         ))}
       </span>
     </h2>
-  )
-}
-
-function KineticCopy({
-  lines,
-  copyKey,
-  phase,
-}: {
-  lines: readonly [string, string]
-  copyKey: string
-  phase: CopyPhase
-}) {
-  return (
-    <div
-      key={copyKey}
-      data-copy-phase={phase}
-      className={`auth-copy-cycle auth-copy-cycle-${phase}`}
-      aria-hidden="true"
-    >
-      {lines.map((line, index) => (
-        <span key={line} className="auth-copy-line">
-          <span
-            className="auth-copy-line-inner"
-            style={{ '--auth-line-index': index } as CSSProperties}
-          >
-            {line}
-          </span>
-        </span>
-      ))}
-    </div>
   )
 }
 
@@ -227,14 +193,29 @@ function PasswordVisibilityButton({ visible, onClick }: { visible: boolean; onCl
 /** 查询参数驱动的认证入口，不创建独立登录页面。 */
 export function AccountPanel() {
   const [searchParams] = useSearchParams()
-  const entry = searchParams.get('account')
-  if (entry !== 'login' && entry !== 'register') return null
+  const requestedEntry = searchParams.get('account')
+  if (requestedEntry !== 'login' && requestedEntry !== 'register') return null
 
-  return <AccountPanelDialog key={entry} entry={entry} />
+  const inviteCode = searchParams.get('invite')?.trim().toUpperCase() ?? ''
+  const entry: AccountEntry = requestedEntry
+
+  return (
+    <AccountPanelDialog
+      key={`${entry}:${inviteCode}`}
+      entry={entry}
+      inviteCode={entry === 'register' ? inviteCode : null}
+    />
+  )
 }
 
 /** 只有面板真正打开时才读取会话，关闭状态不把认证 Context 强加给应用外壳。 */
-function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
+function AccountPanelDialog({
+  entry,
+  inviteCode: initialInviteCode,
+}: {
+  entry: AccountEntry
+  inviteCode: string | null
+}) {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const session = useAuthSession()
@@ -244,10 +225,11 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
   const [showPassword, setShowPassword] = useState(false)
   const [code, setCode] = useState('')
   const [nickname, setNickname] = useState('')
+  const [inviteCode, setInviteCode] = useState(initialInviteCode ?? '')
   const [registerStep, setRegisterStep] = useState(0)
   const [motionDirection, setMotionDirection] = useState<MotionDirection>('forward')
   const [copyIndex, setCopyIndex] = useState(0)
-  const [copyPhase, setCopyPhase] = useState<CopyPhase>('entering')
+  const [copyPhase, setCopyPhase] = useState<KineticCopyPhase>('entering')
   const [isExiting, setIsExiting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
@@ -269,6 +251,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
   const nicknameId = useId()
   const passwordId = useId()
   const codeId = useId()
+  const inviteCodeId = useId()
   const isRegister = entry === 'register'
   const shouldShowMotionCopy = !isRegister || registerStep === 0
   const motionCopy = isRegister ? registrationWelcomeMotionCopy : loginMotionCopy
@@ -276,9 +259,10 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
   const passwordChanged =
     session.state.status === 'guest' && session.state.reason === 'password-changed'
   const normalizedEmail = email.trim()
+  const normalizedInviteCode = inviteCode.trim().toUpperCase()
   const cooldownSeconds = Math.max(
     0,
-    Math.ceil(((cooldowns.get(emailKey(email)) ?? 0) - now) / 1_000),
+    Math.ceil(((cooldowns.get(email.trim().toLowerCase()) ?? 0) - now) / 1_000),
   )
 
   const returnTarget = useMemo(
@@ -316,7 +300,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
     setCopyIndex(0)
     setCopyPhase('entering')
     if (!shouldShowMotionCopy) return
-    if (prefersReducedMotion()) return
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
     copyRestTimerRef.current = window.setTimeout(() => setCopyPhase('resting'), 760)
     const timer = window.setInterval(() => {
       setCopyPhase('exiting')
@@ -352,7 +336,9 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
     setCopyPhase('exiting')
     setIsExiting(true)
 
-    const duration = prefersReducedMotion() ? 0 : AUTH_EXIT_DURATION_MS
+    const duration = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      ? 0
+      : AUTH_EXIT_DURATION_MS
     exitTimerRef.current = window.setTimeout(action, duration)
   }
 
@@ -360,6 +346,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
     leaveWithAnimation(() => {
       const next = new URLSearchParams(searchParams)
       next.delete('account')
+      next.delete('invite')
       setSearchParams(next, { replace: true })
     })
   }
@@ -399,7 +386,9 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
       })
       const sentAt = Date.now()
       setNow(sentAt)
-      setCooldowns((previous) => new Map(previous).set(emailKey(normalizedEmail), sentAt + 60_000))
+      setCooldowns((previous) =>
+        new Map(previous).set(normalizedEmail.toLowerCase(), sentAt + 60_000),
+      )
       setSuccess('验证码已发送，请在 5 分钟内使用。')
       return true
     } catch (sendError) {
@@ -415,7 +404,6 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
     if (mode === 'password' && (password.length < 8 || password.length > 128)) {
       return '密码需为 8–128 位'
     }
-    if (mode === 'code' && !CODE_PATTERN.test(code)) return '验证码需为 6 位数字'
     return null
   }
 
@@ -423,7 +411,6 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
     if (!EMAIL_PATTERN.test(normalizedEmail)) return '请输入有效邮箱地址'
     if (password.length < 8 || password.length > 128) return '密码需为 8–128 位'
     if (nickname.length > 50) return '昵称不能超过 50 个字符'
-    if (!CODE_PATTERN.test(code)) return '验证码需为 6 位数字'
     return null
   }
 
@@ -431,9 +418,9 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
     let validationError: string | null = null
     if (registerStep === 0 && !EMAIL_PATTERN.test(normalizedEmail)) {
       validationError = '请输入有效邮箱地址'
-    } else if (registerStep === 1 && (password.length < 8 || password.length > 128)) {
+    } else if (registerStep === 2 && (password.length < 8 || password.length > 128)) {
       validationError = '密码需为 8–128 位'
-    } else if (registerStep === 2 && nickname.length > 50) {
+    } else if (registerStep === 3 && nickname.length > 50) {
       validationError = '昵称不能超过 50 个字符'
     }
 
@@ -444,7 +431,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
 
     setError(null)
     setSuccess(null)
-    if (registerStep === 2) {
+    if (registerStep === 3) {
       if (cooldownSeconds === 0 && !(await sendCode())) return
     }
     setMotionDirection('forward')
@@ -483,12 +470,13 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
           email: normalizedEmail,
           password,
           code,
+          ...(normalizedInviteCode ? { inviteCode: normalizedInviteCode } : {}),
           ...(nickname.trim() ? { nickname: nickname.trim() } : {}),
         })
         successMessage = '账号已创建，正在继续。'
       } else if (mode === 'code') {
         await session.loginByCode({ email: normalizedEmail, code })
-        successMessage = '登录成功。如果这是你首次使用该邮箱，我们已为你创建账号。'
+        successMessage = '登录成功，正在继续。'
       } else {
         await session.login({ email: normalizedEmail, password })
         successMessage = '登录成功，正在继续。'
@@ -518,7 +506,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
   function trapFocus(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.key !== 'Tab') return
     const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
     )
     if (!focusable?.length) return
     const first = focusable[0]
@@ -534,7 +522,9 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
 
   const tabClass = 'auth-screen-tab min-h-11 flex-1 px-2 text-sm font-semibold'
   const submitLabel = isRegister ? '创建账号' : loginModeCopy[mode].submit
-  const RegisterFieldIcon: Icon = [EnvelopeSimple, Keyhole, UserCircle, SealCheck][registerStep]
+  const RegisterFieldIcon: Icon = [EnvelopeSimple, Ticket, Keyhole, UserCircle, SealCheck][
+    registerStep
+  ]
   const registerCopy = registrationStepCopy[registerStep]
   const titleCopy = isRegister ? registerCopy.title : loginWelcomeCopy.title
   const descriptionCopy = isRegister ? registerCopy.description : loginWelcomeCopy.description
@@ -708,7 +698,27 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
                 />
               )}
 
-              {((isRegister && registerStep === 1) || (!isRegister && mode === 'password')) && (
+              {isRegister && registerStep === 1 && (
+                <div className="auth-invite-field">
+                  <AuthField
+                    id={inviteCodeId}
+                    label="邀请码（选填）"
+                    icon={RegisterFieldIcon}
+                    value={inviteCode}
+                    onValueChange={setInviteCode}
+                    disabled={isSubmitting || isSendingCode}
+                    placeholder="邀请码（选填）"
+                    autoComplete="off"
+                    autoCapitalize="characters"
+                    spellCheck={false}
+                  />
+                  {initialInviteCode && (
+                    <p className="auth-invite-helper">已从邀请链接带入，可修改或清空。</p>
+                  )}
+                </div>
+              )}
+
+              {((isRegister && registerStep === 2) || (!isRegister && mode === 'password')) && (
                 <AuthField
                   id={passwordId}
                   label="密码"
@@ -729,7 +739,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
                 />
               )}
 
-              {isRegister && registerStep === 2 && (
+              {isRegister && registerStep === 3 && (
                 <AuthField
                   id={nicknameId}
                   label="昵称（选填）"
@@ -743,7 +753,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
                 />
               )}
 
-              {((isRegister && registerStep === 3) || (!isRegister && mode === 'code')) && (
+              {((isRegister && registerStep === 4) || (!isRegister && mode === 'code')) && (
                 <AuthField
                   id={codeId}
                   label="验证码"
@@ -780,7 +790,7 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
 
               {!isRegister && mode === 'code' && (
                 <p className="auth-screen-helper text-xs leading-5">
-                  未注册的邮箱将在验证后自动创建账号。
+                  未注册的邮箱将在验证后自动创建账号，并获得 300 积分。
                 </p>
               )}
             </div>
@@ -812,6 +822,11 @@ function AccountPanelDialog({ entry }: { entry: AccountEntry }) {
               {isRegister ? '登录' : '创建账号'}
             </button>
           </p>
+          {isRegister && (
+            <p className="auth-screen-helper mt-2 text-center text-sm">
+              {normalizedInviteCode ? '填写邀请码，注册后共得 500 积分。' : '注册即赠 300 积分。'}
+            </p>
+          )}
         </div>
       </div>
     </div>

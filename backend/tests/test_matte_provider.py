@@ -1,5 +1,9 @@
 """OnnxU2NetMatteProvider 契约测试(不加载模型 / 不联网:构造 + 协议合规)。"""
 
+import numpy as np
+from PIL import Image
+import pytest
+
 from windup_framework.providers import MatteProvider, OnnxU2NetMatteProvider
 
 
@@ -440,3 +444,176 @@ def test_cutout_applies_flat_bg_cleanup_before_filling_holes(monkeypatch):
                         lambda a, rgb: (order.append("fill"), real_fill(a, rgb))[1])
     _provider_with_fake_session(monkeypatch).cutout(_png())
     assert order == ["clean", "fill"], order
+
+
+# ── 键控清理不得抠穿主体 ────────────────────────────────────────────────────
+#
+# 固定阈值 38 会杀掉与底色距离小于它的**主体内部**像素:实测五个真实角色母版上,
+# 用 u2netp 掩码判主体,受损比例最高到 34.4%(美少女)、10.2%(钟表匠)。深色角色距离
+# 300 以上,永远不沾这个窗口 —— 所以症状只出现在浅色角色身上。
+
+
+def _synth(bg, body, size=96):
+    """整幅 bg 底色,中间一块 body 色的主体。"""
+    img = np.full((size, size, 3), bg, dtype=np.float32)
+    img[28:76, 32:64] = body
+    return img
+
+
+@pytest.mark.parametrize("name,bg,body", [
+    ("骨白角色白底", (250, 250, 250), (238, 236, 228)),
+    ("浅灰铠甲白底", (248, 248, 248), (226, 226, 224)),
+    ("浅肤色灰白底", (235, 235, 232), (241, 214, 196)),
+    ("米白布料白底", (250, 250, 250), (232, 228, 215)),
+])
+def test_light_subject_is_not_keyed_through(name, bg, body):
+    """浅色主体不得被键控清理削掉,一个像素都不行。"""
+    from windup_framework.providers.matte import _flat_bg_penalty
+
+    core = _flat_bg_penalty(_synth(bg, body))[28:76, 32:64]
+    assert (core == 1.0).all(), f"{name}: {int((core < 1.0).sum())} 个主体像素被削"
+
+
+def test_dark_subject_unaffected():
+    """深色主体本来就不受影响,改动不该改变它。"""
+    from windup_framework.providers.matte import _flat_bg_penalty
+
+    core = _flat_bg_penalty(_synth((250, 250, 250), (60, 55, 70)))[28:76, 32:64]
+    assert (core == 1.0).all()
+
+
+@pytest.mark.parametrize("noise", [0.0, 3.0])
+def test_enclosed_gap_still_cleaned(noise):
+    """清理能力不得回退:被主体围住的底色空隙仍要被清掉。
+
+    这是 _flat_bg_penalty 存在的理由 —— u2netp 对闭合区域失灵,四足腿间的背景会被
+    当成主体内部整块留下。窄半径不能把这个能力一起窄掉。
+    """
+    from windup_framework.providers.matte import _flat_bg_penalty
+
+    rng = np.random.default_rng(7)
+    img = np.full((96, 96, 3), (250, 250, 250), dtype=np.float32)
+    if noise:
+        img += rng.normal(0, noise, img.shape)
+    img[20:80, 24:72] = (60, 55, 70)                 # 主体
+    img[40:60, 40:56] = (250, 250, 250)              # 主体内部的底色空隙
+    if noise:
+        img[40:60, 40:56] += rng.normal(0, noise, (20, 16, 3))
+
+    gap = _flat_bg_penalty(img)[40:60, 40:56]
+    assert (gap == 0.0).mean() > 0.9, "闭合空隙没被清掉,清理能力回退了"
+
+
+def test_kill_radius_follows_background_noise():
+    """半径随底噪走:干净底取下限,噪声底自动放宽。"""
+    from windup_framework.providers.matte import _kill_radius, _KEY_KILL_MIN, _KEY_KILL_MAX
+
+    rng = np.random.default_rng(3)
+    clean = np.full((96, 96, 3), 250.0, dtype=np.float32)
+    noisy = clean + rng.normal(0, 4.0, clean.shape)
+
+    assert _kill_radius(clean) == _KEY_KILL_MIN
+    assert _KEY_KILL_MIN < _kill_radius(noisy) <= _KEY_KILL_MAX
+
+
+# ── 两个模型的 alpha 取并集 ───────────────────────────────────────────────
+#
+# 两者漏检的位置不重叠:轻量版把浅肤色角色的脸颊与小腿判成背景(测试反馈的"浅色角色被
+# 抠穿"),全量版把 T-pose 平举的细手臂整条丢掉。实测 9 张:主体覆盖 14.78% → 15.77%,
+# 漏检最严重那张的洞 11.69% → 0.06%。
+
+
+class _SaliencySession:
+    """按给定的显著性图返回 u2net 形状的输出。"""
+
+    def __init__(self, sal):
+        self._sal = np.asarray(sal, dtype=np.float32)
+
+    class _In:
+        name = "input.1"
+
+    def get_inputs(self):
+        return [self._In()]
+
+    def run(self, _outputs, _feed):
+        return [self._sal[None, None, :, :]]
+
+
+def _provider_with(main_sal, refine_sal):
+    from windup_framework.providers import matte as M
+
+    prov = M.OnnxU2NetMatteProvider(model_path="/nonexistent.onnx", refine_model_url=None)
+    prov._session = _SaliencySession(main_sal)
+    prov._refine_session = _SaliencySession(refine_sal) if refine_sal is not None else None
+    return prov
+
+
+def test_the_two_models_cover_each_others_misses():
+    """一个模型漏左半、另一个漏右半 —— 并集两边都在。"""
+    n = 320
+    left = np.zeros((n, n), dtype=np.float32)
+    left[:, : n // 2] = 1.0
+    right = np.zeros((n, n), dtype=np.float32)
+    right[:, n // 2 :] = 1.0
+    prov = _provider_with(left, right)
+
+    mask = np.asarray(prov._predict_mask(Image.new("RGB", (n, n), (30, 30, 30))))
+    assert mask[:, 10].mean() > 200, "左半被丢了"
+    assert mask[:, -10].mean() > 200, "右半被丢了 —— 并集没生效"
+
+
+def test_a_missing_refine_model_degrades_to_one_model_and_says_so(caplog):
+    """补充模型取不到时不该整条失败,但必须留痕。"""
+    from windup_framework.providers import matte as M
+
+    prov = M.OnnxU2NetMatteProvider(
+        model_path="/nonexistent.onnx",
+        refine_model_path="/nonexistent-refine.onnx",
+        refine_model_url=None,
+    )
+    with caplog.at_level("WARNING"):
+        assert prov._get_refine_session() is None
+    assert any("补充模型" in r.message for r in caplog.records), \
+        f"降级没留痕:{[r.message for r in caplog.records]}"
+    # 第二次不再重试、也不再刷日志
+    n0 = len(caplog.records)
+    assert prov._get_refine_session() is None
+    assert len(caplog.records) == n0, "每帧都重试了一次取模型"
+
+
+def test_an_interrupted_download_leaves_no_cache_file(tmp_path, monkeypatch):
+    """传输中途断开不能留下不完整文件。
+
+    留了的话之后每次都靠 exists() 判断"已经有了"，网络恢复也不会重下，这台机器就长期
+    退回单模型 —— 而单模型正是会把浅肤色角色抠穿的那条路。
+    """
+    from windup_framework.providers import matte as M
+
+    dest = tmp_path / "sub" / "u2net.onnx"
+
+    class _Half:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, *_a): raise OSError("connection reset")
+
+    monkeypatch.setattr(M.urllib.request, "urlopen", lambda _u: _Half())
+    with pytest.raises(OSError):
+        M._download_atomic("https://example.invalid/m.onnx", dest)
+    assert not dest.exists(), "残片留在了缓存路径上"
+    assert list(dest.parent.glob("*.part")) == [], "临时文件没清掉"
+
+
+def test_an_unusable_cached_model_is_removed_so_the_next_run_can_redownload(
+    tmp_path, monkeypatch, caplog
+):
+    """已存在但建不起会话的文件要删掉，否则每次都跳过重下、永久降级。"""
+    from windup_framework.providers import matte as M
+
+    bad = tmp_path / "u2net.onnx"
+    bad.write_bytes(b"not-an-onnx")
+    prov = M.OnnxU2NetMatteProvider(
+        model_path="/nonexistent.onnx", refine_model_path=bad, refine_model_url=None,
+    )
+    with caplog.at_level("WARNING"):
+        assert prov._get_refine_session() is None
+    assert not bad.exists(), "坏文件留在缓存里，下次还会跳过重下"

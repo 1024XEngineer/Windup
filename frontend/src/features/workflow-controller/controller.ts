@@ -13,6 +13,7 @@ import type {
   GenerationApis,
   GenerationEvent,
   GenerationExpectation,
+  GeneratedImage,
   MediaReference,
   ReviewWorkflowNode,
   WorkflowActionInput,
@@ -23,7 +24,7 @@ import type {
   WorkflowRun,
   WorkflowRunApis,
 } from '@/entities'
-import { IMAGE_CANDIDATE_COUNT } from '@/entities'
+import { IMAGE_CANDIDATE_COUNT, WorkflowRunConflictError } from '@/entities'
 
 const COMPLETE_ANIMATION_FRAME_COUNT = 32
 
@@ -38,6 +39,10 @@ export interface AddActionInput {
 export interface GenerateCharacterTemplateOptions {
   spriteWidth: number
   spriteHeight: number
+  /** 重生成时用上一版图片约束本次结果；不覆盖角色设定中的原始参考素材。 */
+  sourceImageUrl?: GeneratedImage['url']
+  /** 只影响本次请求的 prompt 覆盖值；不改写角色设定节点的原始输入。 */
+  prompt?: string
   /** 手动编辑器提交时覆盖 configuring 节点的初始输入；节点通过后不再改写。 */
   input?: WorkflowCharacterInput
 }
@@ -51,6 +56,20 @@ export interface GenerateActionOptions {
 export interface GenerateFirstFrameOptions {
   spriteWidth: number
   spriteHeight: number
+  /** 重生成时用上一版首帧约束本次结果；不改写已确认的角色母版。 */
+  sourceImageUrl?: GeneratedImage['url']
+  /** 只影响本次请求的 prompt 覆盖值；不改写动作节点的原始输入。 */
+  prompt?: string
+}
+
+export type RegenerationMode = 'regenerate' | 'refine'
+
+export interface RegenerateImageOptions {
+  spriteWidth: number
+  spriteHeight: number
+  mode: RegenerationMode
+  /** 微调时追加到原始描述的临时说明；重新生成模式下不得提交。 */
+  adjustmentPrompt?: string
 }
 
 export interface ApplyGenerationResultInput {
@@ -88,8 +107,10 @@ export interface WorkflowController {
     nodeId: CharacterSetupWorkflowNode['id'],
     options: GenerateCharacterTemplateOptions,
   ): Promise<void>
-  /** 将已创建的 Character 绑定到入口节点；一条 Run 不允许改绑到另一角色。 */
-  bindCharacter(nodeId: CharacterSetupWorkflowNode['id'], characterId: string): Promise<void>
+  regenerateCharacterTemplate(
+    nodeId: CharacterTemplateWorkflowNode['id'],
+    options: RegenerateImageOptions,
+  ): Promise<void>
   /** 仅在入口节点尚未提交时修改角色描述和参考媒体。 */
   updateCharacterSetup(
     nodeId: CharacterSetupWorkflowNode['id'],
@@ -99,14 +120,20 @@ export interface WorkflowController {
   acceptUploadedCharacterTemplate(
     nodeId: CharacterSetupWorkflowNode['id'],
     selectedImageUrl: string,
+    characterId: string,
   ): Promise<void>
   confirmCharacterTemplate(
     nodeId: CharacterTemplateWorkflowNode['id'],
     selectedImageUrl: string,
+    characterId: string,
   ): Promise<void>
   generateFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
     options: GenerateFirstFrameOptions,
+  ): Promise<void>
+  regenerateFirstFrame(
+    nodeId: ActionFirstFrameWorkflowNode['id'],
+    options: RegenerateImageOptions,
   ): Promise<void>
   confirmFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
@@ -147,6 +174,7 @@ interface PendingGenerationAttachment {
   nodeId: WorkflowNode['id']
   role: WorkflowGenerationRole
   expectedEpoch: number
+  regeneration: boolean
   generation: Generation
 }
 
@@ -166,6 +194,7 @@ export function createWorkflowController({
   const subscriptions = new Map<string, ActiveSubscription>()
   const nodeEpochs = new Map<WorkflowNode['id'], number>()
   const unattachedGenerations = new Map<string, PendingGenerationAttachment>()
+  const regenerationKeys = new Set<string>()
   const settlements = new Map<string, Promise<WorkflowRun>>()
   const listeners = new Set<(workflow: WorkflowRun) => void>()
 
@@ -213,8 +242,19 @@ export function createWorkflowController({
       const candidate = transform(before)
       if (candidate === before) return structuredClone(before)
 
-      // 只有后端确认保存后才替换内存快照；失败时页面不会看到“假成功”。
-      const saved = await workflowRunApis.update(candidate)
+      // 只有更新响应或回读结果确认已落库后才替换内存快照，避免页面显示“假成功”。
+      let saved: WorkflowRun
+      try {
+        saved = await workflowRunApis.update(candidate)
+      } catch (cause) {
+        try {
+          const latest = await workflowRunApis.get(candidate.id)
+          if (!hasSamePersistedState(candidate, latest)) throw cause
+          saved = latest
+        } catch {
+          throw cause
+        }
+      }
       current = structuredClone(saved)
       notifyListeners()
       return structuredClone(saved)
@@ -346,6 +386,7 @@ export function createWorkflowController({
     nodeId: CharacterSetupWorkflowNode['id'],
     options: GenerateCharacterTemplateOptions,
   ): Promise<WorkflowRun> {
+    const sourceImage = generatedImageReference(options.sourceImageUrl)
     const before = requireWorkflow()
     const setupBefore = findNode(before, nodeId)
     if (setupBefore.type !== 'character-setup') throw new Error('目标节点不是角色设定')
@@ -383,8 +424,11 @@ export function createWorkflowController({
       const input: CharacterTemplateGenerationInput = {
         type: 'character_template',
         projectId: run.projectId,
-        prompt: setupNode.input.prompt,
-        referenceMedia: setupNode.input.referenceMedia,
+        prompt:
+          options.prompt === undefined
+            ? setupNode.input.prompt
+            : nonEmpty(options.prompt, 'prompt'),
+        referenceMedia: sourceImage ? [sourceImage] : setupNode.input.referenceMedia,
         spriteWidth: options.spriteWidth,
         spriteHeight: options.spriteHeight,
       }
@@ -395,42 +439,42 @@ export function createWorkflowController({
   function confirmCharacterTemplate(
     nodeId: CharacterTemplateWorkflowNode['id'],
     selectedImageUrl: string,
+    characterId: string,
   ) {
     ensureRunning()
     const imageUrl = nonEmpty(selectedImageUrl, 'selectedImageUrl')
-    return persist((run) =>
-      updateNode(run, nodeId, (node) => {
-        if (node.type !== 'character-template') throw new Error('目标节点不是角色母版')
-        if (node.status !== 'active' || node.phase !== 'selecting') {
-          throw new Error('角色母版节点当前不能确认候选图')
-        }
-        return unlockReadyNodes({
-          ...run,
-          nodes: run.nodes.map((item) =>
-            item.id === node.id
-              ? { ...node, selectedImageUrl: imageUrl, phase: 'completed', status: 'passed' }
-              : item,
-          ),
-        })
-      }),
-    )
-  }
-
-  function bindCharacter(nodeId: CharacterSetupWorkflowNode['id'], characterId: string) {
-    ensureRunning()
     const normalizedCharacterId = nonEmpty(characterId, 'characterId')
-    return persist((run) =>
-      updateNode(run, nodeId, (node) => {
-        if (node.type !== 'character-setup') throw new Error('目标节点不是角色设定')
-        if (node.input.characterId && node.input.characterId !== normalizedCharacterId) {
-          throw new Error('WorkflowRun 已绑定到另一角色，不能改绑')
-        }
-        return replaceNode(run, {
-          ...node,
-          input: { ...node.input, characterId: normalizedCharacterId },
-        })
-      }),
-    )
+    return persist((run) => {
+      const templateNode = findNode(run, nodeId)
+      if (templateNode.type !== 'character-template') throw new Error('目标节点不是角色母版')
+      if (templateNode.status !== 'active' || templateNode.phase !== 'selecting') {
+        throw new Error('角色母版节点当前不能确认候选图')
+      }
+      const setupNode = findSingleDependencyNode(run, templateNode, 'character-setup')
+      if (setupNode.input.characterId && setupNode.input.characterId !== normalizedCharacterId) {
+        throw new Error('WorkflowRun 已绑定到另一角色，不能改绑')
+      }
+      return unlockReadyNodes({
+        ...run,
+        nodes: run.nodes.map((node) => {
+          if (node.id === setupNode.id) {
+            return {
+              ...setupNode,
+              input: { ...setupNode.input, characterId: normalizedCharacterId },
+            }
+          }
+          if (node.id === templateNode.id) {
+            return {
+              ...templateNode,
+              selectedImageUrl: imageUrl,
+              phase: 'completed',
+              status: 'passed',
+            }
+          }
+          return node
+        }),
+      })
+    })
   }
 
   function updateCharacterSetup(
@@ -460,9 +504,11 @@ export function createWorkflowController({
   function acceptUploadedCharacterTemplate(
     nodeId: CharacterSetupWorkflowNode['id'],
     selectedImageUrl: string,
+    characterId: string,
   ) {
     ensureRunning()
     const imageUrl = nonEmpty(selectedImageUrl, 'selectedImageUrl')
+    const normalizedCharacterId = nonEmpty(characterId, 'characterId')
     return persist((run) => {
       const setupNode = findNode(run, nodeId)
       if (setupNode.type !== 'character-setup') throw new Error('目标节点不是角色设定')
@@ -473,11 +519,20 @@ export function createWorkflowController({
       if (templateNode.status !== 'locked' || templateNode.phase !== 'ready') {
         throw new Error('角色母版节点当前不能使用上传图片')
       }
+      if (setupNode.input.characterId && setupNode.input.characterId !== normalizedCharacterId) {
+        throw new Error('WorkflowRun 已绑定到另一角色，不能改绑')
+      }
       return unlockReadyNodes({
         ...run,
         nodes: run.nodes.map((node) => {
           if (node.id === setupNode.id) {
-            return { ...setupNode, status: 'passed', phase: 'completed', error: null }
+            return {
+              ...setupNode,
+              status: 'passed',
+              phase: 'completed',
+              error: null,
+              input: { ...setupNode.input, characterId: normalizedCharacterId },
+            }
           }
           if (node.id === templateNode.id) {
             return {
@@ -497,6 +552,7 @@ export function createWorkflowController({
     nodeId: ActionFirstFrameWorkflowNode['id'],
     options: GenerateFirstFrameOptions,
   ) {
+    const sourceImage = generatedImageReference(options.sourceImageUrl)
     return submitGeneration(nodeId, 'first_frame', (run, node) => {
       if (node.type !== 'action-first-frame') throw new Error('目标节点不是动作首帧')
       if (node.phase !== 'configuring') throw new Error('动作首帧节点当前不能生成')
@@ -508,13 +564,138 @@ export function createWorkflowController({
         type: 'first_frame',
         projectId: run.projectId,
         actionType: node.input.type,
-        prompt: node.input.prompt?.trim() || node.input.name,
+        prompt:
+          options.prompt === undefined
+            ? node.input.prompt?.trim() || node.input.name
+            : nonEmpty(options.prompt, 'prompt'),
         spriteWidth: options.spriteWidth,
         spriteHeight: options.spriteHeight,
-        referenceMedia: [characterTemplateReference],
+        referenceMedia: [sourceImage ?? characterTemplateReference],
       }
       return input
     })
+  }
+
+  async function regenerateCharacterTemplate(
+    nodeId: CharacterTemplateWorkflowNode['id'],
+    options: RegenerateImageOptions,
+  ): Promise<WorkflowRun> {
+    ensurePositiveInteger(options.spriteWidth, 'spriteWidth')
+    ensurePositiveInteger(options.spriteHeight, 'spriteHeight')
+    const before = requireWorkflow()
+    const templateNode = findNode(before, nodeId)
+    if (templateNode.type !== 'character-template') throw new Error('目标节点不是角色母版')
+    if (
+      templateNode.status !== 'passed' ||
+      templateNode.phase !== 'completed' ||
+      !templateNode.selectedImageUrl
+    ) {
+      throw new Error('角色母版当前不能重新生成')
+    }
+    const setupNode = findSingleDependencyNode(before, templateNode, 'character-setup')
+    const prompt = adjustedPrompt(setupNode.input.prompt, options)
+    const sourceImageUrl = options.mode === 'refine' ? templateNode.selectedImageUrl : undefined
+    const key = `${nodeId}:character_template`
+    const pending = unattachedGenerations.get(key)?.regeneration
+      ? unattachedGenerations.get(key)
+      : undefined
+    await restartFromNode(nodeId)
+    return runRegenerationAttempt(before, nodeId, key, pending, () => {
+      return generateCharacterTemplate(setupNode.id, {
+        spriteWidth: options.spriteWidth,
+        spriteHeight: options.spriteHeight,
+        sourceImageUrl,
+        prompt,
+      })
+    })
+  }
+
+  async function regenerateFirstFrame(
+    nodeId: ActionFirstFrameWorkflowNode['id'],
+    options: RegenerateImageOptions,
+  ): Promise<WorkflowRun> {
+    ensurePositiveInteger(options.spriteWidth, 'spriteWidth')
+    ensurePositiveInteger(options.spriteHeight, 'spriteHeight')
+    const before = requireWorkflow()
+    const firstFrameNode = findNode(before, nodeId)
+    if (firstFrameNode.type !== 'action-first-frame') throw new Error('目标节点不是动作首帧')
+    if (
+      firstFrameNode.status !== 'passed' ||
+      firstFrameNode.phase !== 'completed' ||
+      !firstFrameNode.selectedFirstFrameUrl
+    ) {
+      throw new Error('动作首帧当前不能重新生成')
+    }
+    const basePrompt = firstFrameNode.input.prompt?.trim() || firstFrameNode.input.name
+    const prompt = adjustedPrompt(basePrompt, options)
+    const sourceImageUrl =
+      options.mode === 'refine' ? firstFrameNode.selectedFirstFrameUrl : undefined
+    const key = `${nodeId}:first_frame`
+    const pending = unattachedGenerations.get(key)?.regeneration
+      ? unattachedGenerations.get(key)
+      : undefined
+    await restartFromNode(nodeId)
+    return runRegenerationAttempt(before, nodeId, key, pending, () => {
+      return generateFirstFrame(nodeId, {
+        spriteWidth: options.spriteWidth,
+        spriteHeight: options.spriteHeight,
+        sourceImageUrl,
+        prompt,
+      })
+    })
+  }
+
+  async function runRegenerationAttempt(
+    before: WorkflowRun,
+    nodeId: WorkflowNode['id'],
+    key: string,
+    pending: PendingGenerationAttachment | undefined,
+    generate: () => Promise<WorkflowRun>,
+  ): Promise<WorkflowRun> {
+    try {
+      if (pending) {
+        const retryAttachment = { ...pending, expectedEpoch: nodeEpoch(nodeId) }
+        unattachedGenerations.set(key, retryAttachment)
+        return await attachGeneration(retryAttachment)
+      }
+      regenerationKeys.add(key)
+      return await generate()
+    } catch (cause) {
+      try {
+        await rollbackRegeneration(before, nodeId)
+      } catch (rollbackCause) {
+        throw createRegenerationRecoveryError(cause, rollbackCause)
+      }
+      throw cause
+    } finally {
+      regenerationKeys.delete(key)
+    }
+  }
+
+  /**
+   * 重新生成必须先回退节点才能提交请求，提交失败时把回退过的节点还原成用户确认过的样子。
+   * 不还原的话这条执行线会丢掉已接受的图片：重新生成还能从原始输入重来，微调却连参考图
+   * 和临时描述都没有了，用户只能拿一张全新的图重新对齐。
+   *
+   * 还原本身失败由调用方转换成 WorkflowRun 冲突，页面必须先刷新快照，不能继续使用不完整状态。
+   */
+  async function rollbackRegeneration(before: WorkflowRun, nodeId: WorkflowNode['id']) {
+    const affectedIds = collectDescendantIds(before.nodes, nodeId)
+    const restored = new Map(
+      before.nodes.filter((node) => affectedIds.has(node.id)).map((node) => [node.id, node]),
+    )
+    for (const [key, pending] of unattachedGenerations) {
+      const belongsToAffectedBranch = [...affectedIds].some((affectedId) =>
+        key.startsWith(`${affectedId}:`),
+      )
+      if (belongsToAffectedBranch && !pending.regeneration) {
+        unattachedGenerations.delete(key)
+      }
+    }
+    await persist((latest) => ({
+      ...latest,
+      nodes: normalizeAvailability(latest.nodes.map((node) => restored.get(node.id) ?? node)),
+    }))
   }
 
   function confirmFirstFrame(
@@ -685,7 +866,13 @@ export function createWorkflowController({
     // 重做发生在请求等待期间时，任务可以留在后端，但绝不能再挂回新的节点执行线。
     if (nodeEpoch(nodeId) !== expectedEpoch) return snapshot()
 
-    const attachment = { nodeId, role, expectedEpoch, generation }
+    const attachment = {
+      nodeId,
+      role,
+      expectedEpoch,
+      regeneration: regenerationKeys.has(key),
+      generation,
+    }
     unattachedGenerations.set(key, attachment)
     return attachGeneration(attachment)
   }
@@ -713,17 +900,23 @@ export function createWorkflowController({
     const attachedReference = findNode(attached, nodeId).generations.find(
       (item) => item.role === role,
     )
-    if (unattachedGenerations.get(key)?.generation.id === generation.id) {
-      unattachedGenerations.delete(key)
+    const forgetPendingAttachment = () => {
+      if (unattachedGenerations.get(key)?.generation.id === generation.id) {
+        unattachedGenerations.delete(key)
+      }
     }
     if (attachedReference?.taskId !== generation.id) {
+      forgetPendingAttachment()
       return attached
     }
 
     if (generation.status === 'completed' || generation.status === 'failed') {
-      return applyGenerationResult({ nodeId, taskId: generation.id, generation })
+      const settled = await applyGenerationResult({ nodeId, taskId: generation.id, generation })
+      forgetPendingAttachment()
+      return settled
     }
     await watchGeneration(nodeId, generation.id)
+    forgetPendingAttachment()
     return snapshot()
   }
 
@@ -980,11 +1173,12 @@ export function createWorkflowController({
     setCharacterName: asCommand(setCharacterName),
     addAction: asCommand(addAction),
     generateCharacterTemplate: asCommand(generateCharacterTemplate),
-    bindCharacter: asCommand(bindCharacter),
+    regenerateCharacterTemplate: asCommand(regenerateCharacterTemplate),
     updateCharacterSetup: asCommand(updateCharacterSetup),
     acceptUploadedCharacterTemplate: asCommand(acceptUploadedCharacterTemplate),
     confirmCharacterTemplate: asCommand(confirmCharacterTemplate),
     generateFirstFrame: asCommand(generateFirstFrame),
+    regenerateFirstFrame: asCommand(regenerateFirstFrame),
     confirmFirstFrame: asCommand(confirmFirstFrame),
     selectActionGenerationMethod: asCommand(selectActionGenerationMethod),
     generateCompleteAnimation: asCommand(generateCompleteAnimation),
@@ -997,6 +1191,26 @@ export function createWorkflowController({
     getGeneration,
     dispose,
   }
+}
+
+function hasSamePersistedState(expected: WorkflowRun, actual: WorkflowRun) {
+  return (
+    expected.id === actual.id &&
+    expected.projectId === actual.projectId &&
+    expected.storageStatus === actual.storageStatus &&
+    JSON.stringify(canonicalizeJson(expected.nodes)) ===
+      JSON.stringify(canonicalizeJson(actual.nodes))
+  )
+}
+
+function canonicalizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeJson)
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, canonicalizeJson(item)]),
+  )
 }
 
 function asCommand<TArgs extends unknown[]>(
@@ -1259,6 +1473,29 @@ function nonEmpty(value: string, field: string) {
   const normalized = value.trim()
   if (!normalized) throw new Error(`${field} 不能为空`)
   return normalized
+}
+
+function generatedImageReference(value: GeneratedImage['url'] | undefined) {
+  return value === undefined ? undefined : (nonEmpty(value, 'sourceImageUrl') as MediaReference)
+}
+
+function adjustedPrompt(basePrompt: string, options: RegenerateImageOptions) {
+  const base = nonEmpty(basePrompt, 'prompt')
+  if (options.mode === 'regenerate') {
+    if (options.adjustmentPrompt?.trim()) throw new Error('重新生成不能携带微调描述')
+    return base
+  }
+  if (options.mode !== 'refine') throw new Error('不支持的重新生成模式')
+  return `${base}\n${nonEmpty(options.adjustmentPrompt ?? '', 'adjustmentPrompt')}`
+}
+
+function createRegenerationRecoveryError(originalCause: unknown, rollbackCause: unknown) {
+  const original = asError(originalCause)
+  const rollback = asError(rollbackCause)
+  return new WorkflowRunConflictError(
+    `重新生成失败：${original.message}；恢复原有工作流失败：${rollback.message}，请加载最新版本后重试`,
+    { cause: rollback },
+  )
 }
 
 function ensurePositiveInteger(value: number, field: string) {

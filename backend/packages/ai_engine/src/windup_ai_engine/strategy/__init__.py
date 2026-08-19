@@ -1,7 +1,7 @@
-"""strategy:动作 → 生成路线分流(ROUTE_MATRIX)+ 三条 DerivationStrategy。"""
+"""strategy:动作 → 生成路线分流(ROUTE_MATRIX)+ 各条 DerivationStrategy。"""
 
 from .base import CYCLIC_ACTIONS, ROUTE_MATRIX, DerivationStrategy
-from .concrete import PerFrameStrategy, VideoFrameStrategy
+from .concrete import PerFrameStrategy, RenderFrameStrategy, VideoFrameStrategy
 
 __all__ = [
     "ROUTE_MATRIX",
@@ -9,4 +9,5 @@ __all__ = [
     "DerivationStrategy",
     "VideoFrameStrategy",
     "PerFrameStrategy",
+    "RenderFrameStrategy",
 ]
