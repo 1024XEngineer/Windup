@@ -19,6 +19,11 @@ import {
   WorkflowRunConflictError,
 } from '@/entities'
 import { ExportButton, type ExportPackageModel } from '@/features/export-package'
+import {
+  QuickStartConversation,
+  quickStartConversationClient,
+  type QuickStartConversationClient,
+} from '@/features/quick-start-conversation'
 import { KineticCopyCycle, type KineticCopyMessage } from './kinetic-copy-cycle'
 import {
   quickStartService,
@@ -119,10 +124,15 @@ export interface QuickStartPageProps {
    * 未注入时，Quick Start 自己装配真实实体接口，避免 app 层承担流程细节。
    */
   service?: QuickStartEntryService
+  /** 页面测试可以注入确定性 LLM 响应；生产默认调用现有 `/ai/chat`。 */
+  conversationClient?: QuickStartConversationClient
 }
 
 /** Quick Start 独立完成 AI 入口；它不跳转 Workflow Editor。 */
-export function QuickStartPage({ service }: QuickStartPageProps) {
+export function QuickStartPage({
+  service,
+  conversationClient = quickStartConversationClient,
+}: QuickStartPageProps) {
   const { runId } = useParams()
   const [searchParams] = useSearchParams()
   const activeService = useMemo(() => {
@@ -150,7 +160,11 @@ export function QuickStartPage({ service }: QuickStartPageProps) {
       onSessionCreated={setCreatedSession}
     />
   ) : (
-    <QuickStartInput service={activeService} onSessionCreated={setCreatedSession} />
+    <QuickStartInput
+      service={activeService}
+      conversationClient={conversationClient}
+      onSessionCreated={setCreatedSession}
+    />
   )
 }
 
@@ -229,9 +243,11 @@ function QuickStartActionInput({
 
 function QuickStartInput({
   service,
+  conversationClient,
   onSessionCreated,
 }: {
   service: QuickStartEntryService
+  conversationClient: QuickStartConversationClient
   onSessionCreated: (session: QuickStartSession) => void
 }) {
   const navigate = useNavigate()
@@ -239,13 +255,14 @@ function QuickStartInput({
   const [templateFile, setTemplateFile] = useState<File | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [entryTransition, setEntryTransition] = useState<'idle' | 'leaving'>('idle')
+  const [conversationStarted, setConversationStarted] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const submitAbortController = useRef<AbortController | null>(null)
   const handoffTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const unavailableReason = service.unavailableReason
   const hasPrompt = Boolean(prompt.trim())
-  const showStylePrompts = !hasPrompt && !templateFile
+  const showStylePrompts = !hasPrompt && !templateFile && !conversationStarted
 
   useEffect(
     () => () => {
@@ -266,20 +283,16 @@ function QuickStartInput({
     if (fileInput.current) fileInput.current.value = ''
   }
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const normalizedPrompt = prompt.trim()
-    if ((!normalizedPrompt && !templateFile) || submitting || unavailableReason) return
-
+  async function handoffCreation(
+    startSession: (signal: AbortSignal) => Promise<QuickStartSession>,
+  ) {
     const abortController = new AbortController()
     submitAbortController.current = abortController
     setSubmitting(true)
     setEntryTransition('leaving')
     setError(null)
     try {
-      const sessionPromise = templateFile
-        ? service.startWithUploadedTemplate(templateFile, normalizedPrompt, abortController.signal)
-        : service.start(normalizedPrompt)
+      const sessionPromise = startSession(abortController.signal)
       const handoffPromise = new Promise<void>((resolve) => {
         handoffTimer.current = setTimeout(() => {
           handoffTimer.current = null
@@ -294,13 +307,31 @@ function QuickStartInput({
         if (handoffTimer.current) clearTimeout(handoffTimer.current)
         handoffTimer.current = null
         setEntryTransition('idle')
-        setError(errorMessage(cause, '创建失败，请稍后重试'))
       }
+      throw cause
     } finally {
       if (submitAbortController.current === abortController) {
         submitAbortController.current = null
         if (!abortController.signal.aborted) setSubmitting(false)
       }
+    }
+  }
+
+  async function confirmPrompt(optimizedPrompt: string) {
+    if (unavailableReason) throw new Error(unavailableReason)
+    if (submitting) throw new Error('正在创建角色，请稍候')
+    await handoffCreation(() => service.start(optimizedPrompt))
+  }
+
+  async function submitUploadedTemplate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!templateFile || submitting || unavailableReason) return
+    try {
+      await handoffCreation((signal) =>
+        service.startWithUploadedTemplate(templateFile, prompt.trim(), signal),
+      )
+    } catch (cause) {
+      setError(errorMessage(cause, '创建失败，请稍后重试'))
     }
   }
 
@@ -359,34 +390,31 @@ function QuickStartInput({
         </div>
 
         <div data-layout="quick-start-composer" className="mx-auto w-full max-w-3xl self-end">
-          <form
-            onSubmit={(event) => void submit(event)}
-            className="grid items-center gap-1.5 rounded-xl border border-app-line-strong bg-app-surface-raised p-1.5 shadow-app-panel transition-shadow focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)] sm:grid-cols-[1fr_auto_auto]"
-          >
-            <label className="min-w-0" htmlFor="quick-start-prompt">
-              <span className="sr-only">创作指令</span>
-              <input
-                id="quick-start-prompt"
-                type="text"
-                aria-label="创作指令"
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                placeholder={
-                  templateFile ? '描述动作，可留空生成待机动作…' : '描述角色的外形、身份和气质…'
-                }
-                className="h-10 w-full min-w-0 border-0 bg-transparent px-3 text-[15px] text-app-ink outline-none placeholder:text-app-faint"
-              />
-            </label>
-
-            <input
-              ref={fileInput}
-              type="file"
-              accept="image/*"
-              aria-label="上传角色母版"
-              className="sr-only"
-              onChange={selectTemplateFile}
-            />
-            {templateFile ? (
+          <input
+            ref={fileInput}
+            type="file"
+            accept="image/*"
+            aria-label="上传角色母版"
+            className="sr-only"
+            onChange={selectTemplateFile}
+          />
+          {templateFile ? (
+            <form
+              onSubmit={(event) => void submitUploadedTemplate(event)}
+              className="grid items-center gap-1.5 rounded-xl border border-app-line-strong bg-app-surface-raised p-1.5 shadow-app-panel transition-shadow focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)] sm:grid-cols-[1fr_auto_auto]"
+            >
+              <label className="min-w-0" htmlFor="quick-start-prompt">
+                <span className="sr-only">创作指令</span>
+                <input
+                  id="quick-start-prompt"
+                  type="text"
+                  aria-label="创作指令"
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  placeholder="描述动作，可留空生成待机动作…"
+                  className="h-10 w-full min-w-0 border-0 bg-transparent px-3 text-[15px] text-app-ink outline-none placeholder:text-app-faint"
+                />
+              </label>
               <span className="flex h-10 min-w-0 max-w-56 items-center rounded-lg bg-app-surface-muted text-xs text-app-ink-soft">
                 <button
                   type="button"
@@ -406,27 +434,34 @@ function QuickStartInput({
                   <X aria-hidden="true" size={14} weight="bold" />
                 </button>
               </span>
-            ) : (
               <button
-                type="button"
-                onClick={() => fileInput.current?.click()}
-                className="inline-flex h-10 items-center gap-2 rounded-lg px-3 text-xs font-semibold whitespace-nowrap text-app-muted transition hover:bg-app-surface-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
+                type="submit"
+                disabled={submitting || Boolean(unavailableReason)}
+                className="inline-flex h-10 items-center gap-2 rounded-lg bg-app-accent px-4 text-sm font-bold whitespace-nowrap text-app-on-accent transition hover:bg-app-accent-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
               >
-                <ImageSquare aria-hidden="true" size={17} weight="duotone" />
-                添加母版
+                {submitting ? '正在创建…' : '生成角色'}
+                {!submitting ? <ArrowUp aria-hidden="true" size={16} weight="bold" /> : null}
               </button>
-            )}
-            <button
-              type="submit"
-              disabled={
-                (!prompt.trim() && !templateFile) || submitting || Boolean(unavailableReason)
+            </form>
+          ) : (
+            <QuickStartConversation
+              client={conversationClient}
+              draft={prompt}
+              onDraftChange={setPrompt}
+              onStarted={() => setConversationStarted(true)}
+              onConfirm={confirmPrompt}
+              accessory={
+                <button
+                  type="button"
+                  onClick={() => fileInput.current?.click()}
+                  className="inline-flex h-10 items-center gap-2 rounded-lg px-3 text-xs font-semibold whitespace-nowrap text-app-muted transition hover:bg-app-surface-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
+                >
+                  <ImageSquare aria-hidden="true" size={17} weight="duotone" />
+                  添加母版
+                </button>
               }
-              className="inline-flex h-10 items-center gap-2 rounded-lg bg-app-accent px-4 text-sm font-bold whitespace-nowrap text-app-on-accent transition hover:bg-app-accent-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              {submitting ? '正在创建…' : '生成角色'}
-              {!submitting ? <ArrowUp aria-hidden="true" size={16} weight="bold" /> : null}
-            </button>
-          </form>
+            />
+          )}
 
           {unavailableReason ? (
             <p className="mt-3 rounded-xl border border-app-warning-line bg-app-warning-soft px-4 py-3 text-sm text-app-warning">
