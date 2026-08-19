@@ -254,17 +254,28 @@ def test_validation_error_message_tells_the_user_what_is_wrong(auth_client):
 # 永远触发不了它。这条测试从真实端点发起,断言的是"贯通"而不是"函数会不会算"。
 
 
+def _capture_action_input(gen_api, monkeypatch) -> list:
+    """截下建任务时的引擎入参。
+
+    挂在建任务这一步而不是投递那一步:投递只带 task_id,看不到入参,而这两条用例
+    要断言的正是"字段有没有从请求一路走到引擎入参"。
+    """
+    seen: list = []
+    real = gen_api.generation_service.generate_character_action
+
+    def spy(*args, **kwargs):
+        seen.append((kwargs.get("input"),))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(gen_api.generation_service, "generate_character_action", spy)
+    return seen
+
+
 def test_stance_from_request_reaches_the_engine(auth_client, monkeypatch):
-    from windup_app.server.orchestrator import service as gen_service
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.orchestrator.model import CharacterActionInput
 
-    captured: list = []
-    _orig = gen_service.service.generate_character_action
-
-    def _spy(*args, **kwargs):
-        captured.append(kwargs.get("input"))
-        return _orig(*args, **kwargs)
-
-    monkeypatch.setattr(gen_service.service, "generate_character_action", _spy)
+    dispatched = _capture_action_input(gen_api, monkeypatch)
     project = _create_project(auth_client)
     character = _create_character(auth_client, project["id"])
 
@@ -273,23 +284,18 @@ def test_stance_from_request_reaches_the_engine(auth_client, monkeypatch):
         json=_action_payload(project["id"], character["id"], stance="quadruped"),
     )
 
-    assert captured, "任务没被收下"
-    assert captured[0].stance is not None, "体型断在请求层,引擎侧永远看不到"
-    assert captured[0].stance.value == "quadruped"
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs, "任务没被收下"
+    assert inputs[0].stance is not None, "体型断在请求层,引擎侧永远看不到"
+    assert inputs[0].stance.value == "quadruped"
 
 
 def test_stance_omitted_stays_none_not_biped(auth_client, monkeypatch):
     """不给体型时原样传 None —— 在这层替调用方填 biped，"没给"与"明确双足"就分不开了。"""
-    from windup_app.server.orchestrator import service as gen_service
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.orchestrator.model import CharacterActionInput
 
-    captured: list = []
-    _orig = gen_service.service.generate_character_action
-
-    def _spy(*args, **kwargs):
-        captured.append(kwargs.get("input"))
-        return _orig(*args, **kwargs)
-
-    monkeypatch.setattr(gen_service.service, "generate_character_action", _spy)
+    dispatched = _capture_action_input(gen_api, monkeypatch)
     project = _create_project(auth_client)
     character = _create_character(auth_client, project["id"])
 
@@ -297,7 +303,8 @@ def test_stance_omitted_stays_none_not_biped(auth_client, monkeypatch):
         "/generation/action", json=_action_payload(project["id"], character["id"]),
     )
 
-    assert captured and captured[0].stance is None
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs and inputs[0].stance is None
 
 
 def test_illegal_stance_is_rejected_at_the_entrance(auth_client):

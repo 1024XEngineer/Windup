@@ -13,7 +13,8 @@ from PIL import Image
 
 _logger = logging.getLogger(__name__)
 
-__all__ = ["CELL", "CORE_THICKNESS", "FILL_H", "FILL_W", "FOOT_LINE",
+__all__ = ["CELL", "CORE_THICKNESS", "DRIFT_CX_TOL", "DRIFT_FOOT_TOL",
+           "FILL_H", "FILL_W", "FOOT_LINE", "drifted_frames",
            "align_bottom_center", "core_span", "sprite_sheet", "save_gif"]
 
 # 交付画布的几何 —— 提成模块常量而不是只当默认参数,是因为**入口预检要按同一套几何
@@ -282,6 +283,117 @@ def align_bottom_center(
         canvas.alpha_composite(crop, (cw // 2 - w // 2, int(ch * foot_line) - h - lift))
         out.append(canvas)
     return out
+
+
+# 逐帧锚点相对中位数的容差(比例,相对画布高/宽)。超出即认为该帧生成得偏。
+# 用比例而不是像素:交付画布尺寸随项目变,像素阈值在 256 与 512 上不是同一个严格度。
+#
+# 脚底那档按归档里 58 段真实序列扫出来:0.023 时报 3 段,其中两段目视干净 —— 同批
+# 3D 渲出的走路序列自然步态起伏最大到 1.5%,而那两段擦边在 2.5% 与 2.8%。0.028 到
+# 0.045 是同一个结论(只剩一段真离群),取这段平台的中点而不是它的下沿。
+DRIFT_FOOT_TOL = 0.035   # 脚底线
+DRIFT_CX_TOL = 0.047     # 本体横向中心
+
+
+def drifted_frames(
+    frames: list[Image.Image],
+    foot_tol: float = DRIFT_FOOT_TOL,
+    cx_tol: float = DRIFT_CX_TOL,
+) -> tuple[int, ...]:
+    """挑出脚底或横向中心明显偏离全序列中位数的帧下标。
+
+    **量的是对齐之前的原始帧**:``align_bottom_center`` 会把每帧摆正,对齐后再量恒为 0,
+    那时偏差已经被搬运掉、但生成本身歪没歪的信息也一起没了。这里要的正是后者 ——
+    一帧的角色站位与其余帧差得远,通常是那一帧生成坏了(姿态崩、主体缺失、多出人物)。
+
+    判据用**中位数**不用均值:坏帧本身会把均值拖过去,于是所有帧看起来都"没偏多少"。
+
+    横向中心取本体跨度的中心而不是包围盒中心 —— 见 :func:`_core_columns`。
+    """
+    import numpy as np
+
+    feet: list[tuple[int, float]] = []
+    cxs: list[tuple[int, float]] = []
+    empty: set[int] = set()
+    for i, f in enumerate(frames):
+        a = np.asarray(f)[:, :, 3]
+        ys, xs = np.where(a > 128)
+        if not len(ys):
+            # 整帧没有主体就是本函数要找的那种坏帧(抠图抠穿、生成漏了角色),不是
+            # "没测到"。它不进中位数、直接进结果,也不受下面那道观测数下限的约束 ——
+            # 一帧全透明这件事本身不需要参照就能判。
+            empty.add(i)
+            continue
+        feet.append((i, float(ys.max())))
+        core = _core_columns(a > 128)
+        if core is None:
+            continue
+        cxs.append((i, float(sum(core) / 2)))
+    if len(feet) < 3:
+        return tuple(sorted(empty))      # 观测太少,中位数不成立
+
+    h = frames[0].size[1]
+    w = frames[0].size[0]
+    bad = _outliers(feet, foot_tol * h)
+    bad |= _outliers(cxs, cx_tol * w)
+    return tuple(sorted(bad | empty))
+
+
+def _core_columns(mask) -> tuple[int, int] | None:
+    """本体占据的首尾列。判据与 :func:`core_span` 的列方向一致(以最厚的列为基准)。
+
+    不用整体包围盒:延展物的幅度随动作变,而它对中心的拉扯不是角色站位变了。实测一段
+    斧战士序列,斧头从举过头顶甩到水平前伸,包围盒中心一帧跳 38px(画布宽 256),
+    本体中心几乎不动 —— 按包围盒判,20 帧里 11 帧被误报成站位漂移。
+    """
+    import numpy as np
+
+    cols = mask.sum(axis=0)
+    if not cols.any():
+        return None
+    keep = np.flatnonzero(cols >= float(cols.max()) * CORE_THICKNESS)
+    if not len(keep):
+        return None
+    return int(keep.min()), int(keep.max())
+
+
+def _outliers(obs: list[tuple[int, float]], tol: float) -> set[int]:
+    """按中位数判离群;整段有净位移时先把这条直线除掉。
+
+    两种误报要同时躲开,而它们要求相反的处理:
+
+    - **净位移**(角色一路向右走):不除趋势的话后半段整片被判离群。实测一段斧战士序列
+      连续 7 帧横偏稳定在 30px 上下、脚偏全 0 —— 那是走位。
+    - **周期摆动**(原地走路、四足步态):除趋势反而制造离群。实测一段狼序列脚底是
+      1342/1370/1352/1377 循环三遍、净位移为 0,而逐帧差分的中位数给出 25px/帧 的
+      假斜率,残差被推到 ±120px,整段 12 帧报出 8 帧。
+
+    判据因此看**首尾净变化**而不是逐帧差分:周期序列首尾回到同一点,净变化接近 0,
+    不触发除趋势;真的一路位移才触发。
+    """
+    import numpy as np
+
+    if len(obs) < 4:
+        med = float(np.median([v for _, v in obs])) if obs else 0.0
+        return {i for i, v in obs if abs(v - med) > tol}
+
+    x = np.array([i for i, _ in obs], dtype=float)
+    y = np.array([v for _, v in obs], dtype=float)
+    # 首尾各取三帧的中位数比,单帧首尾正好是坏帧时会把整条判据带偏。
+    head = float(np.median(y[:3]))
+    tail = float(np.median(y[-3:]))
+    # 斜率的分母取这两个中位数**各自对应的帧位**,不取序列总长:三帧窗口的中位数落在窗口
+    # 中间那一帧上,拿总长当分母会把斜率算小。实测 16 帧每帧横移 13px 的线性序列,按总长
+    # 算出 11.27/帧,两端各剩 13px 残差、双双越过 12.03 的容差,匀速位移被误报成坏帧。
+    head_i = float(np.median(x[:3]))
+    tail_i = float(np.median(x[-3:]))
+    # 无条件除趋势,不设"位移够大才除"的门槛:那个门槛会造一个悬崖 —— 实测一段打捞员
+    # 走路净位移 24.0px、容差 24.1px,差 0.1 就不除趋势,于是首两帧被误报。周期序列首尾
+    # 回到同一点、净位移≈0,减掉一条≈0 的直线是空操作,所以无条件除对它们无害。
+    if tail_i > head_i:
+        y = y - (tail - head) / (tail_i - head_i) * x
+    med = float(np.median(y))
+    return {int(i) for i, v in zip(x, y) if abs(v - med) > tol}
 
 
 def sprite_sheet(frames: list[Image.Image], bg=(0, 0, 0, 0)) -> Image.Image:
