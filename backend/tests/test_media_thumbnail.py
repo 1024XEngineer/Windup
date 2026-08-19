@@ -8,6 +8,7 @@ from PIL import Image
 
 from windup_app.server.media.model import MediaUploadInput
 from windup_app.server.media.service import (
+    InvalidThumbnailSourceError,
     ObjectStorageMediaService,
     build_card_thumbnail,
     card_thumbnail_key,
@@ -45,6 +46,15 @@ def test_card_thumbnail_does_not_enlarge_small_assets():
 
     with Image.open(BytesIO(thumbnail)) as image:
         assert image.size == (48, 32)
+
+
+def test_card_thumbnail_rejects_sources_over_the_pixel_budget(monkeypatch):
+    import windup_app.server.media.service as media_service_module
+
+    monkeypatch.setattr(media_service_module, "_CARD_THUMBNAIL_MAX_SOURCE_PIXELS", 4)
+
+    with pytest.raises(InvalidThumbnailSourceError, match="像素尺寸"):
+        build_card_thumbnail(_png((3, 2)))
 
 
 def test_card_thumbnail_key_is_a_predictable_sibling():
@@ -117,7 +127,7 @@ def test_non_image_reference_category_skips_thumbnail_generation(monkeypatch):
     monkeypatch.setattr(qiniu, "put_data", put_data)
     data = b"glTF"
 
-    ObjectStorageMediaService().upload(
+    result = ObjectStorageMediaService().upload(
         data,
         MediaUploadInput(
             filename="model.glb",
@@ -128,6 +138,8 @@ def test_non_image_reference_category_skips_thumbnail_generation(monkeypatch):
     )
 
     put_data.assert_called_once()
+    assert result.object_key.endswith(".glb")
+    assert ".source." not in result.object_key
 
 
 def test_thumbnail_upload_failure_cleans_original(monkeypatch):
