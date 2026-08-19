@@ -11,6 +11,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useParams } from 'react-router'
 
 import {
+  type ActionPreset,
   type ActionFirstFrameWorkflowNode,
   type ActionFullFrameWorkflowNode,
   type ActionGenerationMethodWorkflowNode,
@@ -31,7 +32,7 @@ import {
   ExportButton,
   type ExportPackageModel,
 } from '@/features/export-package'
-import type { WorkflowEditorSession } from './runtime'
+import { loadDefaultActionPresets, type WorkflowEditorSession } from './runtime'
 import { useWorkflowEditorSession } from './use-workflow-editor-session'
 import { WorkflowEditorView, type WorkflowCardNode } from './workflow-editor-view'
 import './workflow-editor.css'
@@ -41,26 +42,6 @@ export interface WorkflowEditorPageProps {
 }
 
 type ActionMenuLevel = 'root' | 'outfits' | 'actions' | 'custom'
-
-/**
- * 菜单里的预设动作。label 只用于展示，name 是落进 WorkflowRun 的动作名——
- * 两者分开写，改菜单文案不会连带改掉已经落库的数据。
- */
-const ACTION_PRESETS = [
-  {
-    type: 'idle',
-    label: 'Idle 待机',
-    name: '待机',
-    prompt: '平稳呼吸，重心轻微起伏',
-  },
-  { type: 'walk', label: 'Walk 行走', name: '行走', prompt: '轻快地向前行走' },
-  {
-    type: 'attack',
-    label: 'Attack 攻击',
-    name: '攻击',
-    prompt: '蓄力后向前攻击并回到准备姿态',
-  },
-] as const
 
 const ACTION_PRESET_HINT = '预设动作 · 逐帧生成'
 
@@ -149,6 +130,21 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
   const [actionMenuLevel, setActionMenuLevel] = useState<ActionMenuLevel>('root')
   const [selectedOutfitId, setSelectedOutfitId] = useState<string | null>(null)
   const [canvasNodes, setCanvasNodes] = useState<WorkflowCardNode[]>([])
+  const [actionPresets, setActionPresets] = useState<ActionPreset[] | null>(null)
+  const [actionPresetError, setActionPresetError] = useState<string | null>(null)
+
+  // 预设文案的唯一真相源在后端（它归措辞门禁管），这里只读一次。菜单打开前就取，
+  // 免得用户点开看到空的再等一次网络往返。
+  useEffect(() => {
+    const abort = new AbortController()
+    loadDefaultActionPresets(abort.signal)
+      .then((presets) => setActionPresets(presets))
+      .catch((cause: unknown) => {
+        if (abort.signal.aborted) return
+        setActionPresetError(errorMessage(cause, '读取动作预设失败'))
+      })
+    return () => abort.abort()
+  }, [])
 
   useEffect(() => {
     setSelectedImages({})
@@ -203,6 +199,8 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
             actionPromptDraft,
             actionMenuOpen,
             actionMenuLevel,
+            actionPresets,
+            actionPresetError,
             selectedOutfitId,
             busyBranches,
             resumeBlocked: Boolean(resumeError),
@@ -219,6 +217,8 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
     [
       actionMenuOpen,
       actionMenuLevel,
+      actionPresets,
+      actionPresetError,
       actionPromptDraft,
       busyBranches,
       character,
@@ -298,6 +298,9 @@ interface ProjectionInput {
   actionPromptDraft: string
   actionMenuOpen: boolean
   actionMenuLevel: ActionMenuLevel
+  /** 后端预设。null = 还没拿到（加载中或失败），与"拿到了但是空表"必须分得开。 */
+  actionPresets: ActionPreset[] | null
+  actionPresetError: string | null
   selectedOutfitId: string | null
   busyBranches: ReadonlySet<string>
   resumeBlocked: boolean
@@ -847,35 +850,43 @@ function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templat
       >
         ← 生成动作
       </button>
-      {ACTION_PRESETS.map((preset) => (
-        <button
-          type="button"
-          key={preset.type}
-          className={MENU_ITEM}
-          disabled={!selectedOutfit || branchBusy}
-          onClick={() => {
-            if (!selectedOutfit) return
-            input.runCommand(SHARED_BRANCH, () =>
-              input.controller.addAction({
-                dependsOnNodeIds: [templateNodeId],
-                input: {
-                  outfitId: selectedOutfit.id,
-                  name: preset.name,
-                  type: preset.type,
-                  prompt: preset.prompt,
-                  fps: 12,
-                },
-              }),
-            )
-            input.setActionMenuOpen(false)
-            input.setActionMenuLevel('root')
-            input.setSelectedOutfitId(null)
-          }}
-        >
-          <b className={MENU_ITEM_TITLE}>{preset.label}</b>
-          <small className={MENU_ITEM_HINT}>{ACTION_PRESET_HINT}</small>
-        </button>
-      ))}
+      {input.actionPresets === null ? (
+        // 拿不到就说拿不到,不退回一份前端副本兜底:那份副本正是本次要消除的东西,
+        // 而"菜单看起来正常、发出去的描述却是旧文案"比空菜单难查得多。
+        <p className={MENU_ITEM_HINT + ' px-3 py-[9px]'}>
+          {input.actionPresetError ?? '正在读取动作预设…'}
+        </p>
+      ) : (
+        input.actionPresets.map((preset) => (
+          <button
+            type="button"
+            key={preset.type}
+            className={MENU_ITEM}
+            disabled={!selectedOutfit || branchBusy}
+            onClick={() => {
+              if (!selectedOutfit) return
+              input.runCommand(SHARED_BRANCH, () =>
+                input.controller.addAction({
+                  dependsOnNodeIds: [templateNodeId],
+                  input: {
+                    outfitId: selectedOutfit.id,
+                    name: preset.name,
+                    type: preset.type,
+                    prompt: preset.description,
+                    fps: 12,
+                  },
+                }),
+              )
+              input.setActionMenuOpen(false)
+              input.setActionMenuLevel('root')
+              input.setSelectedOutfitId(null)
+            }}
+          >
+            <b className={MENU_ITEM_TITLE}>{preset.label}</b>
+            <small className={MENU_ITEM_HINT}>{ACTION_PRESET_HINT}</small>
+          </button>
+        ))
+      )}
       <button
         type="button"
         className={MENU_ITEM}

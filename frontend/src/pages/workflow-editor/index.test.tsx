@@ -25,11 +25,20 @@ const { defaultSessionLoader, flowProps, fitView } = vi.hoisted(() => ({
   fitView: vi.fn(),
 }))
 
+const ACTION_PRESET_FIXTURE = [
+  { type: 'idle', label: 'Idle 待机', name: '待机', description: '呼吸带动胸腔起伏' },
+  { type: 'walk', label: 'Walk 行走', name: '行走', description: '轻快地向前行走' },
+  { type: 'attack', label: 'Attack 攻击', name: '攻击', description: '直刺发力前的蓄势瞬间' },
+] as const
+
+const defaultActionPresetLoader = vi.fn(async (_signal?: AbortSignal) => [...ACTION_PRESET_FIXTURE])
+
 vi.mock('./runtime', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./runtime')>()
   return {
     ...actual,
     createDefaultRealWorkflowEditorSession: defaultSessionLoader,
+    loadDefaultActionPresets: (signal?: AbortSignal) => defaultActionPresetLoader(signal),
   }
 })
 
@@ -72,6 +81,7 @@ interface TestFlowProps extends Record<string, unknown> {
 
 beforeEach(() => {
   defaultSessionLoader.mockReset()
+  defaultActionPresetLoader.mockClear()
   fitView.mockClear()
   flowProps.current = null
   window.history.replaceState({}, '', '/')
@@ -656,6 +666,48 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(screen.getByRole('img', { name: '角色候选 1' }).getAttribute('src')).toContain(
       '/new.png',
     )
+  })
+
+  it('提交的动作描述来自后端预设，不来自前端副本', async () => {
+    const session = createSession(completedTemplateWorkflow('42'), {
+      character: characterFixture(),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '添加动作分支' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成动作 ›' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择造型 夜行装' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Attack 攻击/ }))
+
+    // 描述直通两条付费通路，写在前端的副本会与后端漂移、且绕开措辞门禁。
+    await waitFor(() =>
+      expect(session.controller.getWorkflow().nodes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: 'action-first-frame',
+            input: expect.objectContaining({ prompt: '直刺发力前的蓄势瞬间' }),
+          }),
+        ]),
+      ),
+    )
+  })
+
+  it('预设读不到时菜单说明原因，而不是退回一份前端副本', async () => {
+    defaultActionPresetLoader.mockRejectedValueOnce(new Error('动作预设响应格式错误：预设列表为空'))
+    const session = createSession(completedTemplateWorkflow('42'), {
+      character: characterFixture(),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '添加动作分支' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成动作 ›' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择造型 夜行装' }))
+
+    expect(await screen.findByText(/预设列表为空/)).toBeTruthy()
+    // 兜底副本会让菜单看着正常、发出去的描述却是旧文案，比空菜单难查得多。
+    expect(screen.queryByRole('button', { name: /Attack 攻击/ })).toBeNull()
   })
 
   it('从 WorkflowRun 绑定角色中明确选择造型，并只提交后端支持的动作类型', async () => {
