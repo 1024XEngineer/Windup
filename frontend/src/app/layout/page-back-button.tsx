@@ -45,9 +45,7 @@ export function PageBackButton() {
   }
 
   function finishTransition() {
-    if (!transitioningRef.current) return
     transitioningRef.current = false
-    if (fallbackTimerRef.current !== null) window.clearTimeout(fallbackTimerRef.current)
     fallbackTimerRef.current = null
     setTransitioning(false)
     navigateBack()
