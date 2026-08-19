@@ -40,6 +40,7 @@ from windup_app.web.handler.exception_handlers import register_exception_handler
 from windup_app.web.middleware.auth import AuthMiddleware
 from windup_framework.mq.publisher import MqPublisher
 from windup_framework.mq.relay import relay_pending_messages
+from windup_framework.providers import create_chat_model
 from windup_framework.sse.bridge import RedisTaskEventBridge, RedisTaskEventSubscriber
 
 
@@ -100,6 +101,7 @@ async def _lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="windup", version="0.1.0", lifespan=_lifespan)
     app.state.mq_publisher = MqPublisher()
+    app.state.chat_model_factory = create_chat_model
     # 起名器在 composition root 注入,避免 web→character.service 碰到 ai_engine。
     # LangChainCharacterNamer 构造期不创建 ChatOpenAI；缺 AI_API_KEY 时应用仍能启动。
     # 测试若已注入假 namer，不要覆盖。
