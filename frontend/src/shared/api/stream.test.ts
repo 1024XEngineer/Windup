@@ -255,6 +255,75 @@ describe('createEventStreamSubscriber', () => {
     expect(fetchFn).toHaveBeenCalledTimes(2)
   })
 
+  it('重新建立连接时通知业务层，首次连接不通知', async () => {
+    const onReconnect = vi.fn()
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError('connection reset'))
+      .mockResolvedValueOnce(eventStreamResponse('{"status":"completed"}'))
+    const subscriber = createEventStreamSubscriber({
+      fetchFn,
+      getAccessToken: () => null,
+      reconnectDelayMs: 0,
+    })
+
+    await new Promise<void>((resolve) => {
+      subscriber('https://api.test/stream', {
+        eventName: 'task_update',
+        onEvent() {
+          resolve()
+          return true
+        },
+        onError: () => undefined,
+        onReconnect,
+      })
+    })
+
+    expect(onReconnect).toHaveBeenCalledOnce()
+  })
+
+  it('连续重连时延迟指数增长并带抖动，不再固定间隔', async () => {
+    const delays: number[] = []
+    const originalSetTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
+      handler: TimerHandler,
+      ms?: number,
+      ...rest: unknown[]
+    ) => {
+      delays.push(Number(ms))
+      return originalSetTimeout(handler as () => void, 0, ...rest)
+    }) as typeof globalThis.setTimeout)
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError('connection reset'))
+      .mockRejectedValueOnce(new TypeError('connection reset'))
+      .mockRejectedValueOnce(new TypeError('connection reset'))
+      .mockResolvedValueOnce(eventStreamResponse('{"status":"completed"}'))
+    const subscriber = createEventStreamSubscriber({
+      fetchFn,
+      getAccessToken: () => null,
+      reconnectDelayMs: 100,
+    })
+
+    try {
+      await new Promise<void>((resolve) => {
+        subscriber('https://api.test/stream', {
+          eventName: 'task_update',
+          onEvent() {
+            resolve()
+            return true
+          },
+          onError: () => undefined,
+        })
+      })
+
+      expect(delays).toEqual([75, 150, 300])
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
   it('把匹配到的实际事件名交给业务解析器', async () => {
     const onEvent = vi.fn((_data: string, _eventName: string) => true)
     const subscriber = createEventStreamSubscriber({

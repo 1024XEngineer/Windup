@@ -5,7 +5,11 @@ import {
   createGenerationApis,
   GenerationApiError,
 } from '@/entities'
-import { EventStreamError, type EventStreamOptions } from '@/shared/api/stream'
+import {
+  createEventStreamSubscriber,
+  EventStreamError,
+  type EventStreamOptions,
+} from '@/shared/api/stream'
 
 import type { MediaReference } from '../media'
 
@@ -399,6 +403,105 @@ describe('createGenerationApis', () => {
 
     unsubscribe()
     expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('SSE 重连后补拉一次任务状态，交付断线窗口内错过的终态', async () => {
+    let streamOptions: EventStreamOptions | undefined
+    const request = vi.fn(async () => success(taskData()))
+    const apis = createGenerationApis({
+      baseUrl: 'https://api.test',
+      transport: {
+        request,
+        stream: vi.fn((_url: string, options: NonNullable<typeof streamOptions>) => {
+          streamOptions = options
+          return vi.fn()
+        }),
+      },
+    })
+    const onEvent = vi.fn()
+
+    apis.subscribe('42', '91', { type: 'character_template' }, onEvent, vi.fn())
+    expect(request).not.toHaveBeenCalled()
+
+    streamOptions?.onReconnect?.()
+    await vi.waitFor(() => expect(onEvent).toHaveBeenCalledOnce())
+
+    expect(request).toHaveBeenCalledOnce()
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: '91', status: 'completed' }),
+    )
+  })
+
+  it('任务在 SSE 断线窗口内结束时，重连后仍然交付终态', async () => {
+    const encoder = new TextEncoder()
+    const runningThenDrop = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              `event: task_update\ndata: ${JSON.stringify(taskData({ status: 'running', result: null }))}\n\n`,
+            ),
+          )
+          controller.close()
+        },
+      }),
+      { headers: { 'content-type': 'text/event-stream' } },
+    )
+    // 重连后建立的流一直沉默：断线期间产生的终态事件不会被补发。
+    const silent = new Response(new ReadableStream<Uint8Array>({ start: () => undefined }), {
+      headers: { 'content-type': 'text/event-stream' },
+    })
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(runningThenDrop)
+      .mockResolvedValueOnce(silent)
+    const apis = createGenerationApis({
+      baseUrl: 'https://api.test',
+      transport: {
+        request: vi.fn(async () => success(taskData())),
+        stream: createEventStreamSubscriber({
+          fetchFn,
+          getAccessToken: () => null,
+          reconnectDelayMs: 0,
+        }),
+      },
+    })
+    const statuses: string[] = []
+
+    apis.subscribe(
+      '42',
+      '91',
+      { type: 'character_template' },
+      (event) => statuses.push(event.status),
+      vi.fn(),
+    )
+
+    await vi.waitFor(() => expect(statuses).toContain('completed'))
+    expect(statuses).toEqual(['running', 'completed'])
+  })
+
+  it('重连补拉遇到错误时报告，不把任务当作已结束', async () => {
+    let streamOptions: EventStreamOptions | undefined
+    const apis = createGenerationApis({
+      baseUrl: 'https://api.test',
+      transport: {
+        request: vi.fn(async () => {
+          throw new Error('network down')
+        }),
+        stream: vi.fn((_url: string, options: NonNullable<typeof streamOptions>) => {
+          streamOptions = options
+          return vi.fn()
+        }),
+      },
+    })
+    const onEvent = vi.fn()
+    const onError = vi.fn()
+
+    apis.subscribe('42', '91', { type: 'character_template' }, onEvent, onError)
+    streamOptions?.onReconnect?.()
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce())
+
+    expect(onEvent).not.toHaveBeenCalled()
   })
 
   it('从查询结果推断前端阶段，并允许现有三参数订阅继续使用', async () => {
