@@ -3,7 +3,9 @@ import { Link } from 'react-router'
 
 import assetLibraryArtwork from '@/assets/workspace/asset-library.png'
 import {
+  CHARACTER_PERSPECTIVE,
   characterApis,
+  DIRECTIONAL_MOVEMENT,
   projectApis,
   ProjectHasCharactersError,
   type Character,
@@ -208,20 +210,9 @@ export function ProjectsPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1560px] px-4 pb-8 pt-[clamp(4.75rem,11vh,7rem)] sm:px-6 xl:px-8">
-      <section aria-labelledby="projects-title">
-        <header data-projects-intro className="projects-intro border-b border-app-line pb-6">
-          <h1
-            id="projects-title"
-            className="font-serif text-[clamp(2.15rem,4.5vw,4rem)] leading-none font-medium tracking-[-0.055em] text-app-ink"
-          >
-            项目中心
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-app-muted">
-            项目隔离角色资产与生成规格；先选项目，再管理其资产。
-          </p>
-        </header>
-
+    <div className="mx-auto w-full max-w-[1560px] px-4 pb-8 pt-[4.5rem] sm:px-6 xl:px-8">
+      <section aria-label="项目资产">
+        <h1 className="sr-only">项目中心</h1>
         {error ? (
           <p
             role="alert"
@@ -234,7 +225,7 @@ export function ProjectsPage() {
           <p className="mt-6 text-sm text-app-muted">正在读取项目…</p>
         ) : null}
         {projectsPage ? (
-          <div className="mt-5">
+          <div>
             <ProjectCreateCard />
             {projectsPage.items.length > 0 ? (
               <ProjectGallery
@@ -340,7 +331,7 @@ function ProjectGallery({
   onDelete: (project: Project) => void
 }) {
   return (
-    <section aria-labelledby="project-gallery-title" className="mt-9">
+    <section aria-labelledby="project-gallery-title" className="mt-7">
       <div className="mb-4">
         <h2
           id="project-gallery-title"
@@ -349,7 +340,7 @@ function ProjectGallery({
           最近项目 · {String(total).padStart(2, '0')}
         </h2>
       </div>
-      <div className="grid gap-x-4 gap-y-7 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-x-4 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
         {projects.map((project, index) => (
           <ProjectGalleryTile
             key={project.id}
@@ -402,6 +393,14 @@ function ProjectGalleryTile({
           <h3 className="min-w-0 truncate text-sm font-semibold text-app-ink">{project.name}</h3>
           <span className="shrink-0 text-xs tabular-nums text-app-faint">{updatedAt}</span>
         </div>
+        <p className="mt-1.5 truncate px-0.5 text-xs text-app-muted">
+          {CHARACTER_PERSPECTIVE[project.perspective]} ·{' '}
+          {DIRECTIONAL_MOVEMENT[project.directionalMovement]} · {project.spriteSize.width} ×{' '}
+          {project.spriteSize.height} px
+        </p>
+        <p className="mt-1 truncate px-0.5 font-mono text-[0.65rem] tracking-[0.02em] text-app-faint">
+          {project.gameStyle || '未设置游戏风格'}
+        </p>
       </Link>
       <button
         type="button"
