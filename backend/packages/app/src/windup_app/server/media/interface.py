@@ -15,3 +15,7 @@ class MediaService(ABC):
         metadata: MediaUploadInput,
     ) -> MediaUploadResult:
         """上传文件到对象存储并返回可回填业务数据的 URL。"""
+
+    @abstractmethod
+    def delete(self, object_key: str) -> None:
+        """删除对象；对象已经不存在时视为成功。"""

@@ -15,6 +15,7 @@ const characterDto = {
         name: '常态造型',
         description: '旅行装束',
         preview_url: 'https://cdn.windup.test/outfit.png',
+        model_3d_url: 'https://cdn.windup.test/outfit.glb',
         actions: [
           {
             id: 'walk',
@@ -118,6 +119,7 @@ describe('characterApis', () => {
               name: '常态造型',
               description: '旅行装束',
               previewUrl: 'https://cdn.windup.test/outfit.png',
+              model3dUrl: 'https://cdn.windup.test/outfit.glb',
               actions: [
                 {
                   id: 'walk',
@@ -149,6 +151,33 @@ describe('characterApis', () => {
       page: 1,
       pageSize: 20,
     })
+  })
+
+  it('forwards a cancellation signal for project character pages', async () => {
+    let requestSignal: AbortSignal | null | undefined
+    const characterApis = await loadCharacterApis(async (_input, init) => {
+      requestSignal = init?.signal
+      return new Response(
+        JSON.stringify({
+          code: 200,
+          message: 'success',
+          data: [],
+          total: 0,
+          page: 1,
+          page_size: 6,
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      )
+    })
+    const controller = new AbortController()
+
+    await characterApis.listByProject('42', {
+      page: 1,
+      pageSize: 6,
+      signal: controller.signal,
+    })
+
+    expect(requestSignal).toBe(controller.signal)
   })
 
   it('serializes CreateCharacterInput without inventing generated assets', async () => {
@@ -224,6 +253,22 @@ describe('characterApis', () => {
         outfits: characterDto.character_data.outfits,
       },
     })
+  })
+
+  it('defaults model3dUrl to null when the outfit has no 3D asset yet', async () => {
+    const characterApis = await loadCharacterApis(async () =>
+      jsonResponse({
+        ...characterDto,
+        character_data: {
+          version: 2,
+          outfits: [{ ...characterDto.character_data.outfits[0], model_3d_url: undefined }],
+        },
+      }),
+    )
+
+    const character = await characterApis.get('51')
+
+    expect(character.outfits[0]?.model3dUrl).toBeNull()
   })
 
   it('deletes one Character through the backend resource path', async () => {

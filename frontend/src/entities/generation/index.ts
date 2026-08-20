@@ -1,5 +1,6 @@
 import type { ActionType } from '../character'
 import type { MediaReference } from '../media'
+import type { ActionGenerationMethod } from '../workflow-run'
 
 /**
  * Generation 是业务数据，不是「调用图片生成能力」。
@@ -61,6 +62,12 @@ export interface CompleteAnimationGenerationInput extends GenerationInputBase {
   type: 'complete_animation'
   characterId: string
   outfitId: string
+  /**
+   * 用户选定的生成路线。必填而不是从"这个造型有没有 3D 资产"推断：后端把
+   * `outfit_id` 在场与否当成三渲二的唯一判据，无条件发送等于替用户选了路线——
+   * 造型一旦建过 3D 资产，点"视频裁剪"也会被静默改成三渲二。
+   */
+  method: ActionGenerationMethod
   actionType: ActionType
   /** 已确认的生成首帧 URL。 */
   firstFrameUrl: string
