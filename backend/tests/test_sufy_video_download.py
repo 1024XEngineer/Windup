@@ -268,6 +268,21 @@ def test_submit_image_returns_png_on_200():
     assert r.ok and r.body.startswith(b"\x89PNG")
 
 
+def test_submit_image_maps_disconnect_to_unreached():
+    """对端拆连接且无状态行时不得把异常抛出执行器;Gateway 才能按 UNREACHED 重试。"""
+
+    def h(request):
+        raise httpx.RemoteProtocolError("Server disconnected without sending a response")
+
+    r = _image_provider(h).submit_image("x", [], "gemini-2.5-flash-image")
+    assert not r.ok
+    assert r.error_type is ModelErrorType.UNREACHED
+    assert r.http_status is None
+    assert r.maybe_billed is False
+    assert r.job_id is None
+    assert "disconnected" in r.edge_fingerprint
+
+
 def test_submit_image_sends_the_model_argument():
     seen: dict = {}
 
@@ -729,6 +744,21 @@ def test_follow_job_records_poll_and_download_timings():
     assert result.poll_count == 2
     assert isinstance(result.poll_ms, int)
     assert isinstance(result.download_ms, int)
+
+
+def test_submit_video_maps_disconnect_to_unreached():
+    """建单前对端拆连接:无 job_id,Gateway 才能同路重发,而不是冒新单。"""
+
+    def h(request):
+        raise httpx.RemoteProtocolError("Server disconnected without sending a response")
+
+    r = _video_provider(h).submit_video(_jpeg_first_frame(), "walk", 5, "1280x720", "kling-v2-5-turbo")
+    assert not r.ok
+    assert r.error_type is ModelErrorType.UNREACHED
+    assert r.http_status is None
+    assert r.maybe_billed is False
+    assert r.job_id is None
+    assert "disconnected" in r.edge_fingerprint
 
 
 def test_i2v_submits_polls_and_downloads():

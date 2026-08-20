@@ -34,7 +34,11 @@ import httpx
 
 from windup_common.enums.model import ModelErrorType
 from windup_framework.config.provider import AIProviderSettings, settings
-from windup_framework.gateway.classify import classify_http, retry_after_seconds as _retry_after_seconds
+from windup_framework.gateway.classify import (
+    classify_exception,
+    classify_http,
+    retry_after_seconds as _retry_after_seconds,
+)
 from windup_framework.gateway.types import AdapterResult
 
 from .interfaces import ImageProvider, VideoProvider
@@ -88,6 +92,18 @@ def _video_http_error(resp: httpx.Response, *, job_id: str | None = None) -> Ada
         edge_fingerprint=_edge_fingerprint(resp),
         retry_after_s=retry_after_s,
         job_id=job_id,
+    )
+
+
+def _transport_result(exc: BaseException) -> AdapterResult:
+    """POST 还没拿到状态行:收成 AdapterResult,让 Gateway 按 UNREACHED 决定是否重发。"""
+    error_type, status, edge = classify_exception(exc)
+    return AdapterResult(
+        ok=False,
+        error_type=error_type,
+        http_status=status,
+        maybe_billed=error_type is ModelErrorType.MAYBE_BILLED,
+        edge_fingerprint=edge,
     )
 
 
@@ -151,7 +167,10 @@ class SufyVideoProvider(VideoProvider):
             body["input_reference"] = _first_frame_datauri(first_frame, size)
 
         with self._client() as client:
-            resp = client.post("/videos", json=body)
+            try:
+                resp = client.post("/videos", json=body)
+            except httpx.TransportError as exc:
+                return _transport_result(exc)
 
         if 200 <= resp.status_code < 300:
             try:
@@ -598,7 +617,10 @@ class ChatCompletionsFace:
             })
         body = {"model": model, "messages": [{"role": "user", "content": content}]}
         with self._client() as client:
-            resp = client.post(self._cfg.chat_completions_path, json=body)
+            try:
+                resp = client.post(self._cfg.chat_completions_path, json=body)
+            except httpx.TransportError as exc:
+                return _transport_result(exc)
 
         if 200 <= resp.status_code < 300:
             return _image_result_from_2xx(resp)

@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import math
 
+import httpx
+
 from windup_common.enums.model import ModelErrorType
 
 _MAX_RETRY_WAIT = 30.0
@@ -41,3 +43,31 @@ def classify_http(status: int) -> ModelErrorType:
     if status >= 500:
         return ModelErrorType.MAYBE_BILLED
     return ModelErrorType.UNKNOWN
+
+
+def classify_exception(exc: BaseException) -> tuple[ModelErrorType, int | None, str]:
+    """把没有 HTTP 状态行的传输失败收成策略输入。
+
+    对端拆连接、连不上、写出失败:都还没拿到响应,按 UNREACHED(可同路重试)。
+    读超时另算 TIMEOUT:请求可能已经离开本机,不能当成 52x。
+    """
+    status = getattr(exc, "status_code", None)
+    response = getattr(exc, "response", None)
+    if status is None and response is not None:
+        status = getattr(response, "status_code", None)
+    if isinstance(status, int):
+        return classify_http(status), status, str(exc)[:200]
+    if isinstance(
+        exc,
+        (
+            httpx.RemoteProtocolError,
+            httpx.LocalProtocolError,
+            httpx.ConnectError,
+            httpx.WriteError,
+            httpx.NetworkError,
+        ),
+    ):
+        return ModelErrorType.UNREACHED, None, str(exc)[:200]
+    if isinstance(exc, (httpx.ReadTimeout, httpx.TimeoutException, TimeoutError)):
+        return ModelErrorType.TIMEOUT, None, str(exc)[:200]
+    return ModelErrorType.UNKNOWN, None, str(exc)[:200]

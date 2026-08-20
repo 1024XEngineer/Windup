@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-import httpx
 from langchain_openai import ChatOpenAI
 
 from windup_common.enums.model import ModelErrorType
@@ -56,19 +55,9 @@ def _hash_messages(messages: Any) -> str:
 
 
 def _error_type_from_exception(exc: Exception) -> tuple[ModelErrorType, int | None, str]:
-    status = getattr(exc, "status_code", None)
-    response = getattr(exc, "response", None)
-    if status is None and response is not None:
-        status = getattr(response, "status_code", None)
-    if isinstance(status, int):
-        from windup_framework.gateway.classify import classify_http
+    from windup_framework.gateway.classify import classify_exception
 
-        return classify_http(status), status, str(exc)[:200]
-    if isinstance(exc, (httpx.ConnectError, httpx.NetworkError)):
-        return ModelErrorType.UNREACHED, None, str(exc)[:200]
-    if isinstance(exc, (httpx.ReadTimeout, httpx.TimeoutException, TimeoutError)):
-        return ModelErrorType.TIMEOUT, None, str(exc)[:200]
-    return ModelErrorType.UNKNOWN, None, str(exc)[:200]
+    return classify_exception(exc)
 
 
 class LangChainChatAdapter:

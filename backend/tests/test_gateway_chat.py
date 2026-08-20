@@ -283,6 +283,18 @@ def test_langchain_adapter_maps_connect_and_timeout(monkeypatch):
     r = LangChainChatAdapter(_primary_cfg()).invoke([], model="gpt-4o-mini")
     assert r.error_type is ModelErrorType.UNREACHED
 
+    class _Disconnect:
+        def __init__(self, **kwargs):
+            pass
+
+        def invoke(self, messages, **kwargs):
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response")
+
+    monkeypatch.setattr("windup_framework.gateway.chat.ChatOpenAI", _Disconnect)
+    r = LangChainChatAdapter(_primary_cfg()).invoke([], model="gpt-4o-mini")
+    assert r.error_type is ModelErrorType.UNREACHED
+    assert r.http_status is None
+
     class _Timeout:
         def __init__(self, **kwargs):
             pass
