@@ -49,3 +49,14 @@ def test_user_fixable_input_error_still_says_what_to_fix():
 def test_unknown_exception_falls_back_instead_of_leaking():
     msg = user_message(RuntimeError("postgresql://root:hunter2@10.0.0.5:5432/windup"))
     assert "hunter2" not in msg and "10.0.0.5" not in msg
+
+
+def test_download_failures_are_generic_too():
+    """产物下载失败也来自上游链路,同样不该带出地址。"""
+    from windup_framework.providers.sufy import IncompleteDownloadError, UnsafeDownloadUrlError
+
+    for exc in (IncompleteDownloadError("只下到 12 字节, Content-Length 说 900000"),
+                UnsafeDownloadUrlError("成品 URL 协议不是 http(s): file:///etc/passwd")):
+        msg = user_message(exc)
+        assert "下载失败" in msg
+        assert "/etc/passwd" not in msg and "Content-Length" not in msg

@@ -319,6 +319,28 @@ def test_precheck_endpoint_reports_facts_and_warnings_without_spending(api, rend
     assert render3d.test_model3d.calls == 0
 
 
+def test_precheck_failure_does_not_echo_internal_detail(api, render3d):
+    """预检失败的报错会直接显示在界面上,不能把来源校验的内部说明带出去。"""
+    def _boom(url, canvas=None):
+        raise ValueError(
+            "只允许拉自家对象存储（https://media.example.internal）上的素材，"
+            "收到 'http://127.0.0.1/'。外部图片请先经 POST /media/upload 传入。"
+        )
+
+    api.app.state.precheck_master = _boom
+    body = api.post("/render3d/master-precheck", json={"image_url": MASTER_URL}).json()
+    assert body["code"] == 400
+    for token in ("media.example.internal", "127.0.0.1", "/media/upload"):
+        assert token not in body["message"], f"{token} 泄露到了界面文案"
+
+
+def test_discard_failure_does_not_echo_internal_detail(api):
+    """丢弃走的是同一个出口,一并锁住 —— 四个端点里漏一个就等于没做。"""
+    body = api.post(f"{_base()}/discard").json()
+    assert body["code"] == 400
+    assert "没有待审模型" in body["message"] or body["message"]
+
+
 # ── ⑤ 归属与键 ──────────────────────────────────────────────────────────────
 
 
