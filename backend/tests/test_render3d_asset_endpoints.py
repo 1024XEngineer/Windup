@@ -152,7 +152,7 @@ def test_status_always_carries_the_cost_even_before_anything_is_built(api, rende
     assert data["cost"]["model3d_credits"] == 20
     assert data["cost"]["autorig_credits"] == 10
     assert data["cost"]["total_credits"] == BUILD_CREDITS
-    assert data["cost"]["total_cny"] == pytest.approx(3.60)
+    assert "total_cny" not in data["cost"], "人民币金额不出参 —— 那是我们的成本,不是用户的价钱"
     assert data["cost"]["scope"] == "per_outfit_once"
     assert render3d.test_model3d.calls == 0     # 看一眼状态不花钱
 
@@ -167,18 +167,12 @@ def test_reading_status_is_free_no_matter_how_often(api, render3d):
 def test_cost_numbers_come_from_the_billing_implementation(api):
     """成本不是前端抄的常量。改了计费实现而这里没跟着变,说明有人抄了一份数字 ——
     抄的那一份正是给用户看的,告知错的价钱比不告知更糟。"""
-    from windup_framework.providers.render3d.tencent import (
-        CREDIT_PRICE_CNY,
-        CREDITS,
-        RIG_CREDITS,
-    )
+    from windup_framework.providers.render3d.tencent import CREDITS, RIG_CREDITS
 
     cost = _data(api.get(_base()))["cost"]
     assert cost["model3d_credits"] == CREDITS["Normal"]
     assert cost["autorig_credits"] == RIG_CREDITS
-    assert cost["total_cny"] == pytest.approx(
-        (CREDITS["Normal"] + RIG_CREDITS) * CREDIT_PRICE_CNY, abs=0.005
-    )
+    assert cost["total_credits"] == CREDITS["Normal"] + RIG_CREDITS
 
 
 # ── ② 人工确认闸 ────────────────────────────────────────────────────────────
@@ -323,6 +317,28 @@ def test_precheck_endpoint_reports_facts_and_warnings_without_spending(api, rend
     assert data["accepted"] is True
     assert data["warnings"][0]["code"] == "limbs_fused"
     assert render3d.test_model3d.calls == 0
+
+
+def test_precheck_failure_does_not_echo_internal_detail(api, render3d):
+    """预检失败的报错会直接显示在界面上,不能把来源校验的内部说明带出去。"""
+    def _boom(url, canvas=None):
+        raise ValueError(
+            "只允许拉自家对象存储（https://media.example.internal）上的素材，"
+            "收到 'http://127.0.0.1/'。外部图片请先经 POST /media/upload 传入。"
+        )
+
+    api.app.state.precheck_master = _boom
+    body = api.post("/render3d/master-precheck", json={"image_url": MASTER_URL}).json()
+    assert body["code"] == 400
+    for token in ("media.example.internal", "127.0.0.1", "/media/upload"):
+        assert token not in body["message"], f"{token} 泄露到了界面文案"
+
+
+def test_discard_failure_does_not_echo_internal_detail(api):
+    """丢弃走的是同一个出口,一并锁住 —— 四个端点里漏一个就等于没做。"""
+    body = api.post(f"{_base()}/discard").json()
+    assert body["code"] == 400
+    assert "没有待审模型" in body["message"] or body["message"]
 
 
 # ── ⑤ 归属与键 ──────────────────────────────────────────────────────────────

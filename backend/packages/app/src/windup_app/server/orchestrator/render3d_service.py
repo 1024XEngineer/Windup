@@ -167,7 +167,6 @@ class Render3DAssetOperations:
                 "model3d_credits": MODEL3D_CREDITS,
                 "autorig_credits": AUTORIG_CREDITS,
                 "total_credits": BUILD_CREDITS,
-                "total_cny": BUILD_CNY,
                 "billing": "postpaid",
                 "scope": "per_outfit_once",
             },

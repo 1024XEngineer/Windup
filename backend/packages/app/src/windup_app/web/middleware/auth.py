@@ -23,6 +23,23 @@ def _biz_error(msg: str, code: int) -> JSONResponse:
         content=Resp.fail(msg, code=code).model_dump(mode="json"),
     )
 
+
+def _auth_error(request: Request, msg: str, code: int) -> JSONResponse:
+    """The OpenAI-compatible endpoint needs a real 401 for SDK error handling."""
+    if request.url.path == "/ai/chat":
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": {
+                    "message": msg,
+                    "type": "authentication_error",
+                    "code": "authentication_error",
+                }
+            },
+        )
+    return _biz_error(msg, code)
+
+
 # -- 白名单路径（不需要鉴权）---------------------------------------------
 
 AUTH_WHITELIST: set[str] = {
@@ -63,7 +80,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # 提取 Authorization header
         auth_header = request.headers.get("authorization", "")
         if not auth_header.startswith("Bearer "):
-            return _biz_error("未登录", BizCode.UNAUTHORIZED)
+            return _auth_error(request, "未登录", BizCode.UNAUTHORIZED)
 
         token = auth_header[7:]  # 去掉 "Bearer " 前缀
 
@@ -71,10 +88,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         try:
             payload = decode_token(token)
         except BizException as e:
-            return _biz_error(e.message, e.code)
+            return _auth_error(request, e.message, e.code)
 
         if payload.get("type") != "access":
-            return _biz_error("token 类型错误", BizCode.UNAUTHORIZED)
+            return _auth_error(request, "token 类型错误", BizCode.UNAUTHORIZED)
 
         # 注入当前用户到 request.state
         request.state.current_user = type(

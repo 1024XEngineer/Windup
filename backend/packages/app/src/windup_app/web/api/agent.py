@@ -1,16 +1,8 @@
-"""AI Proxy（LLM 代理）API。
+"""Authenticated OpenAI-compatible chat proxy for the frontend Agent.
 
-后端是无状态 LLM 代理，不做 agent 编排。
-前端维护 conversation history，传完整 messages 数组。
-OpenAI 兼容格式，前端可用 OpenAI SDK 解析。
-
-端点
-----
-POST /ai/chat    LLM 代理（流式响应）
-
-认证
-----
-复用现有 JWT 体系，user_id 从 token 解析（用于日志/审计，不存对话）。
+This endpoint owns only the paid model boundary: server-side provider settings,
+request limits and response translation. It does not store conversations,
+execute Tool Calls or touch workflow state.
 """
 
 from __future__ import annotations
@@ -18,269 +10,326 @@ from __future__ import annotations
 import json
 import logging
 import time
-import uuid
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, Literal
+from uuid import uuid4
 
-from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, Response
+from fastapi.routing import APIRoute
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, ConfigDict, Field
 
-from windup_common.enums.biz_code import BizCode
-from windup_common.exceptions import BizException
-from windup_framework.config.provider import settings
-from windup_framework.providers.chat import create_chat_model
+from windup_framework.config.provider import settings as provider_settings
 
 logger = logging.getLogger("windup.ai.proxy")
 
-router = APIRouter(prefix="/ai", tags=["ai"])
+
+class RequestTooLargeError(HTTPException):
+    """Raised while counting a chunked request before JSON parsing."""
+
+    def __init__(self) -> None:
+        super().__init__(status_code=413, detail="请求体超过 64 KiB 上限")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 请求/响应模型
-# ══════════════════════════════════════════════════════════════════════════════
+class OpenAICompatibleRoute(APIRoute):
+    """Keep this protocol endpoint out of the app's HTTP-200 error envelope."""
+
+    def get_route_handler(self) -> Callable[[Request], Awaitable[Response]]:
+        original = super().get_route_handler()
+
+        async def route_handler(request: Request) -> Response:
+            content_length = request.headers.get("content-length")
+            if content_length is not None:
+                try:
+                    if int(content_length) > MAX_REQUEST_BYTES:
+                        return _error_response(
+                            413,
+                            message="请求体超过 64 KiB 上限",
+                            error_type="invalid_request_error",
+                            code="request_too_large",
+                        )
+                except ValueError:
+                    pass
+
+            received = 0
+            receive = request._receive
+
+            async def limited_receive():
+                nonlocal received
+                message = await receive()
+                if message["type"] == "http.request":
+                    received += len(message.get("body", b""))
+                    if received > MAX_REQUEST_BYTES:
+                        raise RequestTooLargeError
+                return message
+
+            request._receive = limited_receive
+            try:
+                return await original(request)
+            except RequestTooLargeError:
+                return _error_response(
+                    413,
+                    message="请求体超过 64 KiB 上限",
+                    error_type="invalid_request_error",
+                    code="request_too_large",
+                )
+            except RequestValidationError:
+                return _error_response(
+                    422,
+                    message="请求参数无效",
+                    error_type="invalid_request_error",
+                    code="invalid_request",
+                )
+
+        return route_handler
+
+
+router = APIRouter(prefix="/ai", tags=["ai"], route_class=OpenAICompatibleRoute)
+bearer_scheme = HTTPBearer(auto_error=False)
+
+MAX_REQUEST_BYTES = 64 * 1_024
+MAX_MESSAGES = 16
+MAX_MESSAGE_CHARS = 8_000
+MAX_OUTPUT_TOKENS = 1_024
 
 
 class ChatMessage(BaseModel):
-    """对话消息。"""
+    """One OpenAI-compatible message kept by the browser."""
 
-    role: str = Field(description="消息角色：system / user / assistant / tool")
-    content: str | None = Field(default=None, description="消息内容")
-    tool_calls: list[dict] | None = Field(default=None, description="工具调用（assistant 角色）")
-    tool_call_id: str | None = Field(default=None, description="工具结果关联的调用 ID（tool 角色）")
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["system", "user", "assistant", "tool"]
+    content: str | None = Field(default=None, max_length=MAX_MESSAGE_CHARS)
+    tool_calls: list[dict[str, Any]] | None = Field(default=None, max_length=1)
+    tool_call_id: str | None = Field(default=None, max_length=128)
+
+
+class FunctionDefinition(BaseModel):
+    """Schema-only function definition forwarded to the model provider."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=64)
+    description: str | None = Field(default=None, max_length=1_000)
+    parameters: dict[str, Any]
+    strict: bool | None = None
 
 
 class ToolDefinition(BaseModel):
-    """工具定义（OpenAI function calling 格式）。"""
+    """Only OpenAI function tools are accepted; the backend never executes them."""
 
-    type: str = Field(default="function", description="工具类型，固定为 function")
-    function: dict = Field(description="函数定义：{name, description, parameters}")
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["function"] = "function"
+    function: FunctionDefinition
 
 
 class ChatRequest(BaseModel):
-    """LLM 代理请求。"""
+    """Bounded subset of Chat Completions used by AI SDK Core."""
 
-    system: str | None = Field(default=None, description="系统提示词")
-    messages: list[ChatMessage] = Field(description="对话历史（前端维护完整列表）")
-    model: str | None = Field(default=None, description="模型名称，省略则使用默认模型")
-    temperature: float | None = Field(default=None, ge=0, le=2, description="温度参数")
-    tools: list[ToolDefinition] | None = Field(
-        default=None,
-        description="可用工具列表（前端定义，后端透传给 LLM）",
-    )
+    # AI SDK may send provider options such as max_tokens. Cost-bearing fields
+    # are intentionally ignored and replaced with server-owned values below.
+    model_config = ConfigDict(extra="ignore")
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 消息 / SSE 转换
-# ══════════════════════════════════════════════════════════════════════════════
+    model: str | None = Field(default=None, max_length=128)
+    messages: list[ChatMessage] = Field(min_length=1, max_length=MAX_MESSAGES)
+    tools: list[ToolDefinition] | None = Field(default=None, max_length=1)
+    tool_choice: Literal["auto", "none", "required"] | None = None
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    stream: Literal[False] = False
 
 
-def _openai_tool_calls_to_lc(tool_calls: list[dict] | None) -> list[dict]:
-    """把前端 OpenAI 格式 tool_calls 转成 LangChain ``AIMessage.tool_calls``。"""
-    if not tool_calls:
-        return []
-    converted: list[dict] = []
-    for call in tool_calls:
-        function = call.get("function")
-        if not isinstance(function, dict):
-            converted.append(call)
-            continue
-        raw_args = function.get("arguments", "{}")
-        if isinstance(raw_args, str):
-            try:
-                args = json.loads(raw_args) if raw_args else {}
-            except json.JSONDecodeError as exc:
-                raise BizException(
-                    "tool_calls.arguments 不是合法 JSON",
-                    code=BizCode.BAD_REQUEST,
-                ) from exc
-        elif isinstance(raw_args, dict):
-            args = raw_args
-        else:
-            raise BizException(
-                "tool_calls.arguments 必须是 JSON 对象",
-                code=BizCode.BAD_REQUEST,
-            )
-        if not isinstance(args, dict):
-            raise BizException(
-                "tool_calls.arguments 必须是 JSON 对象",
-                code=BizCode.BAD_REQUEST,
-            )
-        converted.append(
-            {
-                "name": function.get("name") or "",
-                "args": args,
-                "id": call.get("id") or "",
-                "type": "tool_call",
-            }
-        )
-    return converted
+class FunctionCallResponse(BaseModel):
+    name: str
+    arguments: str
 
 
-def _to_lc_messages(body: ChatRequest) -> list[BaseMessage]:
-    """把请求体转成 ``create_chat_model().astream`` 需要的 LangChain 消息。"""
-    messages: list[BaseMessage] = []
-    if body.system:
-        messages.append(SystemMessage(content=body.system))
-    for item in body.messages:
-        if item.role == "system":
-            messages.append(SystemMessage(content=item.content or ""))
-        elif item.role == "assistant":
-            kwargs: dict[str, Any] = {"content": item.content or ""}
-            tool_calls = _openai_tool_calls_to_lc(item.tool_calls)
-            if tool_calls:
-                kwargs["tool_calls"] = tool_calls
-            messages.append(AIMessage(**kwargs))
-        elif item.role == "tool":
-            messages.append(
-                ToolMessage(content=item.content or "", tool_call_id=item.tool_call_id or "")
-            )
-        else:
-            messages.append(HumanMessage(content=item.content or ""))
-    return messages
+class ToolCallResponse(BaseModel):
+    id: str
+    type: Literal["function"] = "function"
+    function: FunctionCallResponse
 
 
-def _sse(data: dict | str) -> str:
-    if data == "[DONE]":
-        return "data: [DONE]\n\n"
-    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+class AssistantMessageResponse(BaseModel):
+    role: Literal["assistant"] = "assistant"
+    content: str | None
+    tool_calls: list[ToolCallResponse] | None = None
 
 
-def _tool_call_chunk_to_openai(chunk: Any) -> dict:
-    if hasattr(chunk, "get"):
-        index = chunk.get("index", 0)
-        call_id = chunk.get("id")
-        name = chunk.get("name")
-        args = chunk.get("args") or ""
-    else:
-        index = getattr(chunk, "index", 0)
-        call_id = getattr(chunk, "id", None)
-        name = getattr(chunk, "name", None)
-        args = getattr(chunk, "args", None) or ""
-    if not isinstance(args, str):
-        args = json.dumps(args, ensure_ascii=False)
-    item: dict[str, Any] = {
-        "index": index,
-        "type": "function",
-        "function": {"arguments": args},
-    }
-    if call_id:
-        item["id"] = call_id
-    if name:
-        item["function"]["name"] = name
-    return item
+class ChatChoiceResponse(BaseModel):
+    index: int = 0
+    message: AssistantMessageResponse
+    finish_reason: str
 
 
-def _chunk_to_event(
-    chunk: Any,
+class ChatUsageResponse(BaseModel):
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+
+class ChatCompletionResponse(BaseModel):
+    id: str
+    object: Literal["chat.completion"] = "chat.completion"
+    created: int
+    model: str
+    choices: list[ChatChoiceResponse]
+    usage: ChatUsageResponse | None = None
+
+
+class OpenAIErrorDetail(BaseModel):
+    message: str
+    type: str
+    code: str
+
+
+class OpenAIErrorResponse(BaseModel):
+    error: OpenAIErrorDetail
+
+
+def _error_response(
+    status_code: int,
     *,
-    chunk_id: str,
-    model: str,
-    created: int,
-) -> dict | None:
-    """把 LangChain 流式 chunk 转成 OpenAI ``ChatCompletionChunk`` SSE 事件体。"""
-    delta: dict[str, Any] = {}
-    content = getattr(chunk, "content", None)
-    if content:
-        delta["content"] = content
-    tool_call_chunks = getattr(chunk, "tool_call_chunks", None) or []
-    if tool_call_chunks:
-        delta["tool_calls"] = [_tool_call_chunk_to_openai(item) for item in tool_call_chunks]
-    if not delta:
-        return None
-    return {
-        "id": chunk_id,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": model,
-        "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
-    }
-
-
-def _resolve_model_name(body: ChatRequest, llm: Any) -> str:
-    return (
-        (body.model or "").strip()
-        or str(getattr(llm, "model_name", "") or "").strip()
-        or (settings.chat_model or settings.model or "").strip()
+    message: str,
+    error_type: str,
+    code: str,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={"error": {"message": message, "type": error_type, "code": code}},
     )
 
 
-def _build_chat_model(body: ChatRequest) -> tuple[Any, str]:
-    config = settings
-    if body.model:
-        config = settings.model_copy(update={"chat_model": body.model})
-    kwargs: dict[str, Any] = {}
-    if body.temperature is not None:
-        kwargs["temperature"] = body.temperature
-    llm = create_chat_model(config, **kwargs)
-    model_name = _resolve_model_name(body, llm)
-    if body.tools:
-        try:
-            llm = llm.bind_tools([tool.model_dump() for tool in body.tools])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise BizException("工具定义无效", code=BizCode.BAD_REQUEST) from exc
-    return llm, model_name
+def _serialize_tool_calls(result: Any) -> list[ToolCallResponse] | None:
+    if result.invalid_tool_calls:
+        raise ValueError("provider returned an invalid Tool Call")
+    if not result.tool_calls:
+        return None
+
+    calls: list[ToolCallResponse] = []
+    for call in result.tool_calls:
+        call_id = call.get("id")
+        name = call.get("name")
+        arguments = call.get("args")
+        if not isinstance(call_id, str) or not isinstance(name, str):
+            raise ValueError("provider returned an incomplete Tool Call")
+        if not isinstance(arguments, dict):
+            raise ValueError("provider returned invalid Tool arguments")
+        calls.append(
+            ToolCallResponse(
+                id=call_id,
+                function=FunctionCallResponse(
+                    name=name,
+                    arguments=json.dumps(
+                        arguments,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                ),
+            )
+        )
+    return calls
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 端点
-# ══════════════════════════════════════════════════════════════════════════════
+def _serialize_completion(result: Any, fallback_model: str) -> ChatCompletionResponse:
+    tool_calls = _serialize_tool_calls(result)
+    content = result.content
+    if not isinstance(content, str):
+        raise ValueError("provider returned non-text chat content")
+
+    metadata = result.response_metadata
+    finish_reason = metadata.get("finish_reason") or (
+        "tool_calls" if tool_calls else "stop"
+    )
+    upstream_id = metadata.get("id")
+    model_name = metadata.get("model_name") or fallback_model
+    usage = result.usage_metadata
+
+    return ChatCompletionResponse(
+        id=str(upstream_id or result.id or f"chatcmpl-{uuid4().hex}"),
+        created=int(time.time()),
+        model=str(model_name),
+        choices=[
+            ChatChoiceResponse(
+                message=AssistantMessageResponse(
+                    content=content or None if tool_calls else content,
+                    tool_calls=tool_calls,
+                ),
+                finish_reason=str(finish_reason),
+            )
+        ],
+        usage=(
+            ChatUsageResponse(
+                prompt_tokens=usage["input_tokens"],
+                completion_tokens=usage["output_tokens"],
+                total_tokens=usage["total_tokens"],
+            )
+            if usage
+            else None
+        ),
+    )
 
 
-@router.post("/chat")
+@router.post(
+    "/chat",
+    response_model=ChatCompletionResponse,
+    responses={
+        401: {"model": OpenAIErrorResponse},
+        413: {"model": OpenAIErrorResponse},
+        422: {"model": OpenAIErrorResponse},
+        502: {"model": OpenAIErrorResponse},
+        503: {"model": OpenAIErrorResponse},
+    },
+)
 async def chat(
     body: ChatRequest,
     request: Request,
-) -> StreamingResponse:
-    """LLM 代理（流式响应）。
+    _credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+):
+    """Call the configured model once and return a non-streaming completion."""
+    proxy_settings = provider_settings.model_copy(update={"max_retries": 0})
+    model_kwargs: dict[str, Any] = {"max_tokens": MAX_OUTPUT_TOKENS}
+    if body.temperature is not None:
+        model_kwargs["temperature"] = body.temperature
 
-    后端职责：
-    1. 从 JWT 解析 user_id（用于日志/审计）
-    2. 调用 create_chat_model 工厂创建 LLM 实例
-    3. 流式转发 LLM 响应
-    4. 不解析 tool_calls、不执行工具、不存对话历史
-    5. 本端点不计量积分；``model`` 透传给 provider（缺省用 AI_CHAT_MODEL）
-
-    响应格式：OpenAI 兼容 SSE（每条 data 都是 ChatCompletionChunk）
-    ```
-    data: {"id":"...","object":"chat.completion.chunk","created":0,"model":"...","choices":[{"index":0,"delta":{"content":"好"},"finish_reason":null}]}
-    data: [DONE]
-    ```
-    """
-    user_id = request.state.current_user.id
-    logger.info("ai chat stream user_id=%s model=%s", user_id, body.model)
     try:
-        llm, model_name = _build_chat_model(body)
-    except ValueError as exc:
-        raise BizException(str(exc), code=BizCode.MODEL_UNAVAILABLE) from exc
+        model = request.app.state.chat_model_factory(proxy_settings, **model_kwargs)
+    except ValueError:
+        return _error_response(
+            503,
+            message="AI 服务未配置",
+            error_type="service_unavailable",
+            code="ai_not_configured",
+        )
 
-    messages = _to_lc_messages(body)
-    chunk_id = f"chatcmpl-{uuid.uuid4().hex}"
-    created = int(time.time())
+    invoke_kwargs: dict[str, Any] = {}
+    if body.tools:
+        invoke_kwargs["tools"] = [
+            tool.model_dump(exclude_none=True) for tool in body.tools
+        ]
+    if body.tool_choice is not None:
+        invoke_kwargs["tool_choice"] = body.tool_choice
 
-    async def _forward():
-        try:
-            async for chunk in llm.astream(messages):
-                if await request.is_disconnected():
-                    logger.debug("ai chat client disconnected user_id=%s", user_id)
-                    break
-                event = _chunk_to_event(
-                    chunk, chunk_id=chunk_id, model=model_name, created=created
-                )
-                if event is not None:
-                    yield _sse(event)
-        except Exception:
-            logger.exception("ai chat stream failed user_id=%s", user_id)
-            yield _sse({"error": {"message": "模型调用失败", "type": "server_error"}})
-            return
-        yield _sse("[DONE]")
-
-    return StreamingResponse(
-        _forward(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    try:
+        result = await model.ainvoke(
+            [message.model_dump(exclude_none=True) for message in body.messages],
+            **invoke_kwargs,
+        )
+        configured_model = (
+            proxy_settings.chat_model or proxy_settings.model or "unknown"
+        )
+        return _serialize_completion(result, configured_model)
+    except Exception as exc:
+        logger.warning(
+            "AI chat provider failed user_id=%s error=%s",
+            request.state.current_user.id,
+            type(exc).__name__,
+        )
+        return _error_response(
+            502,
+            message="AI 服务暂时不可用",
+            error_type="upstream_error",
+            code="ai_upstream_error",
+        )

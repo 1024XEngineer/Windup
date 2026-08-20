@@ -1,0 +1,67 @@
+.generation-progress-slot {
+  width: 100%;
+  min-height: 2rem;
+  overflow: hidden;
+}
+
+.generation-progress-copy {
+  justify-items: start;
+  color: var(--color-app-ink);
+  font-weight: 500;
+  line-height: 1.75rem;
+  text-align: left;
+  letter-spacing: -0.025em;
+}
+
+.generation-progress-copy--conversation {
+  font-size: 1.0625rem;
+}
+
+.generation-progress-copy--node {
+  font-size: 0.8125rem;
+  line-height: 1.5rem;
+}
+
+/* 逐字进入完成后再开高光，避免父层裁字与子层字符同时绘制同一句。 */
+.generation-progress-copy.kinetic-copy-cycle-resting .kinetic-copy-line-inner {
+  color: transparent;
+  background: var(--color-app-muted)
+    linear-gradient(
+      to right,
+      var(--color-app-muted) 0%,
+      rgb(255 255 255 / 75%) 40%,
+      rgb(255 255 255 / 75%) 60%,
+      var(--color-app-muted) 100%
+    );
+  background-position: -100% 0;
+  background-repeat: no-repeat;
+  background-size: 50% 200%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: generation-progress-copy-shimmer 1.333s linear infinite;
+}
+
+.generation-progress-copy.kinetic-copy-cycle-entering .kinetic-copy-line-inner,
+.generation-progress-copy.kinetic-copy-cycle-exiting .kinetic-copy-line-inner {
+  color: var(--color-app-muted);
+  background: none;
+  -webkit-text-fill-color: currentColor;
+}
+
+@keyframes generation-progress-copy-shimmer {
+  from {
+    background-position: -100% 0;
+  }
+  to {
+    background-position: 250% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .generation-progress-copy.kinetic-copy-cycle-resting .kinetic-copy-line-inner {
+    color: var(--color-app-muted);
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}

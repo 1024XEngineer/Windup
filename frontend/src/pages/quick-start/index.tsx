@@ -18,9 +18,15 @@ import {
   type WorkflowRun,
   WorkflowRunConflictError,
 } from '@/entities'
+import { forgetActiveRun, isMissingActiveRunError, syncActiveRun } from '@/features/active-run'
+import { useOptionalAuthSession } from '@/features/auth-session'
 import { ExportButton, type ExportPackageModel } from '@/features/export-package'
-import { PixelMatrix } from '@/shared/ui'
-import { KineticCopyCycle, type KineticCopyMessage } from './kinetic-copy-cycle'
+import {
+  GenerationPreviewCard,
+  GenerationProgressCopy,
+  KineticCopyCycle,
+  type KineticCopyMessage,
+} from '@/shared/ui'
 import {
   quickStartService,
   type QuickStartCandidate,
@@ -121,33 +127,6 @@ const ROLE_DEFAULT_MESSAGE: readonly KineticCopyMessage[] = [
   { lines: ['用文字塑造你的角色……'], className: 'text-app-ink' },
 ]
 
-const TEMPLATE_GENERATION_MESSAGES: readonly KineticCopyMessage[] = [
-  { lines: ['勾勒角色轮廓'] },
-  { lines: ['给衣服配颜色'] },
-  { lines: ['把发型画清楚'] },
-  { lines: ['添上表情'] },
-  { lines: ['处理一下光影'] },
-  { lines: ['补齐画面细节'] },
-]
-
-const FIRST_FRAME_GENERATION_MESSAGES: readonly KineticCopyMessage[] = [
-  { lines: ['摆好动作姿态'] },
-  { lines: ['调整手脚位置'] },
-  { lines: ['让重心自然一点'] },
-  { lines: ['拉开姿态的区别'] },
-  { lines: ['保持角色样子'] },
-  { lines: ['补上动作细节'] },
-]
-
-const ACTION_GENERATION_MESSAGES: readonly KineticCopyMessage[] = [
-  { lines: ['把动作连起来'] },
-  { lines: ['补上中间的变化'] },
-  { lines: ['理顺每一帧的节奏'] },
-  { lines: ['检查手脚的衔接'] },
-  { lines: ['让起落自然一点'] },
-  { lines: ['调整动作幅度'] },
-]
-
 const ENTRY_HANDOFF_MS = 460
 
 function playtestPath(characterId: string, outfitId: string, actionId?: string): string {
@@ -161,12 +140,21 @@ export interface QuickStartPageProps {
    * 未注入时，Quick Start 自己装配真实实体接口，避免 app 层承担流程细节。
    */
   service?: QuickStartEntryService
+  /** 直渲染页面测试可显式提供；生产中取当前认证用户。 */
+  activeRunUserId?: string
 }
 
 /** Quick Start 独立完成 AI 入口；它不跳转 Workflow Editor。 */
-export function QuickStartPage({ service }: QuickStartPageProps) {
+export function QuickStartPage({
+  service,
+  activeRunUserId: providedActiveRunUserId,
+}: QuickStartPageProps) {
   const { runId } = useParams()
   const [searchParams] = useSearchParams()
+  const authSession = useOptionalAuthSession()
+  const activeRunUserId =
+    providedActiveRunUserId ??
+    (authSession?.state.status === 'authenticated' ? authSession.state.user.id : null)
   const activeService = useMemo(() => {
     return service ?? quickStartService
   }, [service])
@@ -184,6 +172,7 @@ export function QuickStartPage({ service }: QuickStartPageProps) {
       initialSession={createdSession?.runId === runId ? createdSession : null}
       onSessionCreated={setCreatedSession}
       onInitialSessionConsumed={consumeCreatedSession}
+      activeRunUserId={activeRunUserId}
     />
   ) : characterId && outfitId ? (
     <QuickStartActionInput
@@ -523,29 +512,6 @@ function AgentCopy({
   )
 }
 
-function GenerationProgress({
-  label,
-  messages,
-}: {
-  label: string
-  messages: readonly KineticCopyMessage[]
-}) {
-  return (
-    <div data-generation-progress className="min-h-8 overflow-hidden">
-      <KineticCopyCycle
-        active
-        ariaLabel={label}
-        messages={messages}
-        motionMode="characters"
-        firstCycleMs={7_540}
-        cycleMs={8_000}
-        loopStartIndex={0}
-        className="quick-start-agent-copy quick-start-generation-shimmer justify-items-start text-left font-serif text-[17px] leading-7 font-medium tracking-[-0.025em] text-app-ink"
-      />
-    </div>
-  )
-}
-
 function UserTurn({ children }: { children: ReactNode }) {
   return (
     <div
@@ -684,18 +650,7 @@ function DirectionCandidatePicker({
 }
 
 function GenerationCanvas({ label }: { label: string }) {
-  return (
-    <div
-      role="img"
-      aria-label={label}
-      data-generation-state="generating"
-      data-generation-motion="continuous"
-      data-reveal="generation-canvas"
-      className="quick-start-generation-canvas"
-    >
-      <PixelMatrix />
-    </div>
-  )
+  return <GenerationPreviewCard label={label} />
 }
 
 function QuickStartRun({
@@ -704,12 +659,14 @@ function QuickStartRun({
   initialSession,
   onSessionCreated,
   onInitialSessionConsumed,
+  activeRunUserId,
 }: {
   service: QuickStartEntryService
   runId: string
   initialSession: QuickStartSession | null
   onSessionCreated: (session: QuickStartSession) => void
   onInitialSessionConsumed: (session: QuickStartSession) => void
+  activeRunUserId: string | null
 }) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -763,6 +720,11 @@ function QuickStartRun({
     }
   }, [])
 
+  // 用户会在生成的几分钟里离开这个页面，Header 靠这个指针提供返回入口。
+  useEffect(() => {
+    if (activeRunUserId) syncActiveRun(activeRunUserId, run)
+  }, [activeRunUserId, run])
+
   useEffect(() => {
     let active = true
     let currentSession: QuickStartSession | null = null
@@ -810,6 +772,9 @@ function QuickStartRun({
       }
     })().catch((cause) => {
       if (active) {
+        if (activeRunUserId && isMissingActiveRunError(cause)) {
+          forgetActiveRun(activeRunUserId, runId)
+        }
         reportWorkflowError(cause, '恢复生成任务失败')
         setRestoring(false)
       }
@@ -830,7 +795,14 @@ function QuickStartRun({
         pendingDisposeRef.current = { session: sessionToDispose, timer }
       }
     }
-  }, [clearWorkflowError, onInitialSessionConsumed, reportWorkflowError, runId, service])
+  }, [
+    activeRunUserId,
+    clearWorkflowError,
+    onInitialSessionConsumed,
+    reportWorkflowError,
+    runId,
+    service,
+  ])
 
   useEffect(() => {
     if (!run || !session) {
@@ -1235,10 +1207,7 @@ function QuickStartRun({
                 </>
               ) : (
                 <>
-                  <GenerationProgress
-                    label="角色生成进度"
-                    messages={TEMPLATE_GENERATION_MESSAGES}
-                  />
+                  <GenerationProgressCopy label="角色生成进度" kind="character-template" />
                   <div
                     data-layout="agent-result-set"
                     className="grid w-full max-w-2xl grid-cols-3 gap-3"
@@ -1318,10 +1287,7 @@ function QuickStartRun({
                     </>
                   ) : (
                     <>
-                      <GenerationProgress
-                        label="动作首帧生成进度"
-                        messages={FIRST_FRAME_GENERATION_MESSAGES}
-                      />
+                      <GenerationProgressCopy label="动作首帧生成进度" kind="action-first-frame" />
                       <div
                         data-layout="agent-result-set"
                         className="grid w-full max-w-2xl grid-cols-3 gap-3"
@@ -1407,10 +1373,7 @@ function QuickStartRun({
                     </>
                   ) : (
                     <>
-                      <GenerationProgress
-                        label="完整动作生成进度"
-                        messages={ACTION_GENERATION_MESSAGES}
-                      />
+                      <GenerationProgressCopy label="完整动作生成进度" kind="action-full-frame" />
                       <div
                         data-layout="agent-result-set"
                         className="grid w-full max-w-2xl grid-cols-3 gap-3"

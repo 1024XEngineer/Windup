@@ -28,6 +28,65 @@ body,
   animation: app-header-glyph-wave 380ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
 }
 
+/*
+ * 生成中那个小机器人。方脸方眼是照产品本体的像素语汇画的——圆脸圆眼是通用
+ * emoji 语汇，跟"做像素角色资产"这件事没关系，排在中文字旁边像贴上去的。
+ *
+ * 动的只有瞳孔，脸不动：脸跟着晃就成了摇头，那是"不同意"不是"在张望"。
+ * 视线和眨眼分成两条动画，周期故意不整除（3.6s / 4.3s），合起来的节奏不重复。
+ * 每次移动占约 8% 周期（≈290ms）滑过去，到位后停住十几个百分点再走下一步。
+ */
+@keyframes app-header-bot-gaze {
+  0%,
+  22% {
+    transform: translate(0, 0);
+  }
+  /* 瞟左边 */
+  30%,
+  44% {
+    transform: translate(-2px, 0);
+  }
+  /* 扫到右边 */
+  52%,
+  64% {
+    transform: translate(2px, 0);
+  }
+  /* 抬头想一下 */
+  72%,
+  84% {
+    transform: translate(0, -2px);
+  }
+  92%,
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+@keyframes app-header-bot-blink {
+  0%,
+  92% {
+    transform: scaleY(1);
+  }
+  94.5% {
+    transform: scaleY(0.15);
+  }
+  97%,
+  100% {
+    transform: scaleY(1);
+  }
+}
+
+.app-header-bot-gaze {
+  animation: app-header-bot-gaze 3600ms cubic-bezier(0.5, 0, 0.15, 1) infinite;
+}
+
+.app-header-bot-blink {
+  /* SVG 默认绕用户坐标原点缩放，不套 fill-box 的话眨眼会把眼睛甩出脸外。 */
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: app-header-bot-blink 4300ms cubic-bezier(0.4, 0, 0.55, 1) infinite;
+}
+
 @keyframes app-header-back-strip {
   from {
     transform: translate3d(0, 0, 0);
@@ -94,7 +153,9 @@ body,
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .app-header-text-wave .app-header-wave-glyph {
+  .app-header-text-wave .app-header-wave-glyph,
+  .app-header-bot-gaze,
+  .app-header-bot-blink {
     animation: none;
   }
 
