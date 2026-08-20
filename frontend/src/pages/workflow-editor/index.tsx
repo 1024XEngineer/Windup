@@ -80,7 +80,7 @@ const CARD_BUTTON_SECONDARY =
 
 /** 缩略图按钮：沿用卡片按钮的尺寸约定，但换成浅底，让图片自己当主角。 */
 const THUMB_BUTTON =
-  'min-h-[42px] rounded-lg border border-[var(--color-app-line)] bg-app-surface-raised p-1 ' +
+  'min-h-[42px] rounded-[10px] border border-[var(--color-app-line)] bg-app-surface-raised p-1 ' +
   'transition-[border-color,background-color,transform,box-shadow] duration-150 ease-out ' +
   'hover:border-app-line-strong active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 ' +
   'focus-visible:outline-app-accent motion-reduce:transform-none aria-pressed:border-app-accent ' +
@@ -417,7 +417,7 @@ function WorkflowImage({
 
   const frameClass =
     variant === 'master'
-      ? 'aspect-square rounded-lg border border-app-line bg-app-surface'
+      ? 'aspect-square rounded-[10px] border border-app-line bg-app-surface'
       : variant === 'thumbnail'
         ? 'aspect-square rounded-md bg-app-surface'
         : 'aspect-square rounded border border-app-line bg-app-surface'
