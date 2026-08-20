@@ -2148,6 +2148,7 @@ version = "0.1.0"
 source = { editable = "packages/app" }
 dependencies = [
     { name = "fastapi" },
+    { name = "pillow" },
     { name = "pydantic", extra = ["email"] },
     { name = "python-multipart" },
     { name = "sqlalchemy" },
@@ -2160,6 +2161,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "pillow", specifier = ">=10.4" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.7" },
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "sqlalchemy", specifier = ">=2.0" },
