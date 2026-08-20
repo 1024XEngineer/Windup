@@ -1009,6 +1009,76 @@ describe('WorkflowController', () => {
     expect(generation.apis.create).not.toHaveBeenCalled()
   })
 
+  it('生成入口拒绝不属于目标阶段的节点', async () => {
+    const { controller, generation } = createController(
+      createRun([...completedCharacterNodes(), ...actionNodes()]),
+    )
+
+    await expect(
+      controller.generateFirstFrame('template-1', { spriteWidth: 64, spriteHeight: 64 }),
+    ).rejects.toThrow('目标节点不是动作首帧')
+    await expect(
+      controller.generateCompleteAnimation('action-walk', {
+        characterId: 'character-1',
+        referenceMedia: [],
+      }),
+    ).rejects.toThrow('目标节点不是完整动画')
+    expect(generation.apis.create).not.toHaveBeenCalled()
+  })
+
+  it('生成入口在提交前重新校验节点阶段和动作生成方式', async () => {
+    const selectingFirstFrame = createController(
+      createRun([
+        ...completedCharacterNodes(),
+        firstFrameNode({ status: 'active', phase: 'selecting' }),
+      ]),
+    )
+    await expect(
+      selectingFirstFrame.controller.generateFirstFrame('action-walk', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+      }),
+    ).rejects.toThrow('动作首帧节点当前不能生成')
+
+    const generatingFullFrame = createController(
+      createRun([
+        ...completedCharacterNodes(),
+        firstFrameNode({
+          status: 'passed',
+          phase: 'completed',
+          selectedFirstFrameUrl: 'first.png',
+        }),
+        generationMethodNode({ status: 'passed', phase: 'completed', method: 'video-cropping' }),
+        fullFrameNode({ status: 'active', phase: 'generating' }),
+      ]),
+    )
+    await expect(
+      generatingFullFrame.controller.generateCompleteAnimation('action-walk:action-full-frame', {
+        characterId: 'character-1',
+        referenceMedia: [],
+      }),
+    ).rejects.toThrow('完整动画节点当前不能生成')
+
+    const missingMethod = createController(
+      createRun([
+        ...completedCharacterNodes(),
+        firstFrameNode({
+          status: 'passed',
+          phase: 'completed',
+          selectedFirstFrameUrl: 'first.png',
+        }),
+        generationMethodNode({ status: 'passed', phase: 'completed', method: null }),
+        fullFrameNode({ status: 'active', phase: 'ready' }),
+      ]),
+    )
+    await expect(
+      missingMethod.controller.generateCompleteAnimation('action-walk:action-full-frame', {
+        characterId: 'character-1',
+        referenceMedia: [],
+      }),
+    ).rejects.toThrow('尚未选择动作生成方式')
+  })
+
   it('拒绝确认镜像方向，并在服务端返回错误方向时终止节点', async () => {
     const { controller, generation } = createController(createRun(), 'four-way')
 
@@ -2481,6 +2551,104 @@ describe('WorkflowController', () => {
     expect(controller.getWorkflow().nodes[4]).toMatchObject({
       status: 'failed',
       error: '完整动画结果格式无效',
+    })
+  })
+
+  it('角色母版节点拒绝候选数量不足的结果', async () => {
+    const run = createRun([
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({
+        status: 'active',
+        phase: 'generating',
+        generations: [{ taskId: 'task-template', role: 'character_template' }],
+      }),
+    ])
+    const { controller } = createController(run)
+
+    await controller.applyGenerationResult({
+      nodeId: 'template-1',
+      taskId: 'task-template',
+      generation: {
+        id: 'task-template',
+        projectId: '1',
+        type: 'character_template',
+        status: 'completed',
+        result: { type: 'character_template', images: [{ url: 'only-one.png' }] },
+        error: null,
+      },
+    })
+
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+      status: 'failed',
+      error: '角色候选图结果格式无效',
+    })
+  })
+
+  it('动作首帧节点拒绝其它类型的生成结果', async () => {
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        phase: 'generating',
+        generations: [{ taskId: 'task-first', role: 'first_frame' }],
+      }),
+    ])
+    const { controller } = createController(run)
+
+    await controller.applyGenerationResult({
+      nodeId: 'action-walk',
+      taskId: 'task-first',
+      generation: {
+        id: 'task-first',
+        projectId: '1',
+        type: 'character_template',
+        status: 'completed',
+        result: {
+          type: 'character_template',
+          images: [{ url: 'wrong-1.png' }, { url: 'wrong-2.png' }],
+        },
+        error: null,
+      },
+    })
+
+    expect(controller.getWorkflow().nodes[2]).toMatchObject({
+      status: 'failed',
+      error: '动作首帧结果格式无效',
+    })
+  })
+
+  it('完整动画节点拒绝帧数不足的结果', async () => {
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({ status: 'passed', phase: 'completed', selectedFirstFrameUrl: 'first.png' }),
+      generationMethodNode({ status: 'passed', phase: 'completed', method: 'video-cropping' }),
+      fullFrameNode({
+        status: 'active',
+        phase: 'generating',
+        generations: [{ taskId: 'task-animation', role: 'complete_animation' }],
+      }),
+      reviewNode(),
+    ])
+    const { controller } = createController(run)
+
+    await controller.applyGenerationResult({
+      nodeId: 'action-walk:action-full-frame',
+      taskId: 'task-animation',
+      generation: {
+        id: 'task-animation',
+        projectId: '1',
+        type: 'complete_animation',
+        status: 'completed',
+        result: {
+          type: 'complete_animation',
+          frames: [{ index: 0, url: 'frame.png', durationMs: 80 }],
+        },
+        error: null,
+      },
+    })
+
+    expect(controller.getWorkflow().nodes[4]).toMatchObject({
+      status: 'failed',
+      error: '完整动画应为 32 帧，实际为 1 帧',
     })
   })
 

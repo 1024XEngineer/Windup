@@ -442,6 +442,90 @@ describe('createQuickStartService', () => {
     )
   })
 
+  it('没有动作首帧时拒绝确认候选', async () => {
+    const run: WorkflowRun = {
+      id: 'run-without-first-frame',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(),
+    }
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis: pendingGenerationApis(),
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+    })
+    const session = await service.open(run.id)
+
+    await expect(session.confirmFirstFrame('first.png')).rejects.toThrow(
+      '当前运行没有可确认的动作首帧',
+    )
+  })
+
+  it('继续上传母版时拒绝没有可用造型的已有角色', async () => {
+    const run: WorkflowRun = {
+      id: 'run-upload-without-outfit',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(),
+    }
+    const template = run.nodes[1]
+    if (!template || template.type !== 'character-template') throw new Error('missing template')
+    template.status = 'active'
+    template.phase = 'selecting'
+    const character = characterFixture({ workflowRunId: run.id, outfits: [] })
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis: pendingGenerationApis(),
+      characterApis: mutableCharacterApis(
+        () => character,
+        () => undefined,
+      ),
+      mediaApis: {
+        upload: vi.fn(async () => 'replacement.png' as MediaReference),
+      },
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+    })
+    const session = await service.open(run.id)
+
+    await expect(
+      session.continueWithUploadedTemplate(new File(['pixels'], 'replacement.png'), ''),
+    ).rejects.toThrow('角色母版缺少可用造型')
+  })
+
+  it('重复确认母版时拒绝没有可用造型的已有角色', async () => {
+    const run: WorkflowRun = {
+      id: 'run-confirm-without-outfit',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(),
+    }
+    const template = run.nodes[1]
+    if (!template || template.type !== 'character-template') throw new Error('missing template')
+    template.status = 'active'
+    template.phase = 'selecting'
+    const character = characterFixture({ workflowRunId: run.id, outfits: [] })
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis: pendingGenerationApis(),
+      characterApis: mutableCharacterApis(
+        () => character,
+        () => undefined,
+      ),
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+    })
+    const session = await service.open(run.id)
+
+    await expect(session.confirmCandidate('template.png', '')).rejects.toThrow(
+      '角色母版缺少可用造型',
+    )
+  })
+
   it('creates a readable bounded project name without a hash suffix', async () => {
     const create = vi.fn(async (input) => ({
       id: 'project-1',

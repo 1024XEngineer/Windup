@@ -158,6 +158,18 @@ describe('Character asset publisher', () => {
     ).toThrow('完整动画方向 north 的生成结果不可发布')
   })
 
+  it('拒绝未携带任何生成结果的发布请求', async () => {
+    const publisher = createRejectingPublisher()
+
+    await expect(
+      publisher.publishReviewedAction({
+        character: characterFixture(),
+        workflow: workflowFixture(),
+        reviewNodeId: 'action-walk:review',
+      }),
+    ).rejects.toThrow('Generation 与当前 WorkflowRun 不匹配')
+  })
+
   it('rejects a completed task from another project', async () => {
     const publisher = createRejectingPublisher()
 

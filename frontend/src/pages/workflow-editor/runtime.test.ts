@@ -258,6 +258,29 @@ describe('createRealWorkflowEditorSession', () => {
     ).toMatchObject({ status: 'passed', phase: 'completed' })
   })
 
+  it('四向流程先确认北向母版时用该图创建默认造型', async () => {
+    const { session, update } = await createCharacterTemplateSession({
+      directionalMovement: 'four-way',
+    })
+
+    await session.confirmCharacterTemplate(
+      'template',
+      'https://assets.windup.test/north-master.png',
+      'north',
+    )
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceImageUrl: 'https://assets.windup.test/north-master.png',
+        outfits: [
+          expect.objectContaining({
+            previewUrl: 'https://assets.windup.test/north-master.png',
+          }),
+        ],
+      }),
+    )
+  })
+
   it('拒绝用空图片确认身份母版', async () => {
     const { session, create } = await createCharacterTemplateSession()
 
@@ -617,6 +640,45 @@ describe('createRealWorkflowEditorSession', () => {
     )
   })
 
+  it('拒绝发布没有生成任务引用的完整动画', async () => {
+    const workflow = reviewingWorkflowFixture()
+    const fullFrame = workflow.nodes.find((node) => node.type === 'action-full-frame')!
+    fullFrame.generations = []
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(workflow),
+        update: vi.fn(),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn(),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({
+          items: [characterWithOutfitFixture()],
+          total: 1,
+          page: 1,
+          pageSize: 100,
+        }),
+        create: vi.fn(),
+        get: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      },
+      render3d: stubRender3DApis(),
+      onAsyncError: vi.fn(),
+    })
+
+    await expect(session.publishReviewedAction('action-walk:review')).rejects.toThrow(
+      '完整动画生成结果不存在',
+    )
+  })
+
   it('审核 Run 已落库但响应丢失时保留已发布的动作资产', async () => {
     let savedWorkflow = reviewingWorkflowFixture()
     let savedCharacter = characterWithOutfitFixture()
@@ -957,6 +1019,7 @@ async function createCharacterTemplateSession(
     characters?: Character[]
     mediaApis?: Pick<MediaApis, 'upload'>
     workflowRunUpdate?: WorkflowRunApis['update']
+    directionalMovement?: Project['directionalMovement']
   } = {},
 ) {
   const workflow = options.workflow ?? selectingCharacterTemplateWorkflowFixture()
@@ -978,7 +1041,12 @@ async function createCharacterTemplateSession(
       get: vi.fn(),
       subscribe: vi.fn(() => () => undefined),
     },
-    projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+    projectApis: {
+      get: vi.fn().mockResolvedValue({
+        ...projectFixture(),
+        directionalMovement: options.directionalMovement ?? 'single',
+      }),
+    },
     characterApis: {
       listByProject: vi.fn().mockResolvedValue({
         items: characters,

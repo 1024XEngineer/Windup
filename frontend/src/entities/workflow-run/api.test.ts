@@ -113,6 +113,7 @@ describe('workflowRunApis', () => {
           generations: [{ taskId: 'task-template', role: 'character_template' }],
           error: null,
           selectedImageUrl: 'https://img/knight.png',
+          selectedImages: { east: 'https://img/knight.png' },
         },
         {
           id: 'first-frame-1',
@@ -124,6 +125,7 @@ describe('workflowRunApis', () => {
           error: null,
           input: { outfitId: 'outfit-1', name: 'walk', type: 'walk', prompt: null, fps: 12 },
           selectedFirstFrameUrl: 'https://img/walk-first.png',
+          selectedFirstFrameUrls: { east: 'https://img/walk-first.png' },
         },
         {
           id: 'generation-method-1',

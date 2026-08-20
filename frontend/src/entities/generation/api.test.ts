@@ -446,6 +446,72 @@ describe('createGenerationApis', () => {
     })
   })
 
+  it('未提供预期时从图片和动画任务推断方向并拒绝非法值', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(
+        success(
+          taskData({
+            input_payload: { num_images: 2, direction: 'north' },
+            result: {
+              type: 'character_image',
+              direction: 'north',
+              image_urls: ['north-1.png', 'north-2.png'],
+            },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        success(
+          taskData({
+            task_type: 'character_action',
+            input_payload: { num_frames: 32, action_type: 'walk' },
+            result: {
+              type: 'character_action',
+              action_type: 'walk',
+              frames: actionFrames(32),
+            },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        success(
+          taskData({
+            task_type: 'character_action',
+            input_payload: { num_frames: 32, action_type: 'walk', direction: 'north' },
+            result: {
+              type: 'character_action',
+              action_type: 'walk',
+              direction: 'north',
+              frames: actionFrames(32),
+            },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(success(taskData({ input_payload: null })))
+      .mockResolvedValueOnce(
+        success(taskData({ input_payload: { num_images: 2, direction: 'up' } })),
+      )
+    const apis = createGenerationApis({
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    await expect(apis.get('42', '91')).resolves.toMatchObject({
+      type: 'character_template',
+      result: { type: 'character_template', direction: 'north' },
+    })
+    await expect(apis.get('42', '91')).resolves.toMatchObject({
+      type: 'complete_animation',
+      result: { type: 'complete_animation' },
+    })
+    await expect(apis.get('42', '91')).resolves.toMatchObject({
+      type: 'complete_animation',
+      result: { type: 'complete_animation', direction: 'north' },
+    })
+    await expect(apis.get('42', '91')).rejects.toThrow('生成任务缺少 input_payload')
+    await expect(apis.get('42', '91')).rejects.toThrow('生成任务 direction 无效')
+  })
+
   it('拒绝未知任务状态而不是默认为 pending', async () => {
     const request = vi.fn(async () => success(taskData({ status: 'queued' })))
     const apis = createGenerationApis({

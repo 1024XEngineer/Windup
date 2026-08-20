@@ -294,6 +294,11 @@ describe('characterApis', () => {
         outfits: characterDto.character_data.outfits,
       },
     })
+
+    await characterApis.update({ ...character, templates: undefined })
+    await expect(request?.json()).resolves.toMatchObject({
+      character_data: { templates: [] },
+    })
   })
 
   it('defaults model3dUrl to null when the outfit has no 3D asset yet', async () => {
