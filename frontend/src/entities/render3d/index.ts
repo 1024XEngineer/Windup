@@ -61,7 +61,6 @@ export interface Render3DAssetCost {
   model3dCredits: number
   autorigCredits: number
   totalCredits: number
-  totalCny: number
   /** 后付费 / 预付费。 */
   billing: string
   /** per_outfit_once = 每造型一次性,不是每动作一次。 */
