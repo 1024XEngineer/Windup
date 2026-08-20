@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
 import type { AuthTokens, CreditAccount, QuotaApis, UserApis } from '@/entities'
+import { forgetActiveRun, rememberActiveRun } from '@/features/active-run'
 import { AuthSessionProvider } from '@/features/auth-session'
 import { AppHeader } from './app-header'
 
@@ -117,6 +118,84 @@ afterEach(() => {
   window.localStorage.clear()
   window.sessionStorage.clear()
   window.history.replaceState({ idx: 0 }, '')
+})
+
+describe('AppHeader 进行中任务入口', () => {
+  it('没有进行中的任务时，创作仍是直达新建的链接', () => {
+    renderHeader('/workspace')
+
+    expect(screen.getByRole('link', { name: '创作' }).getAttribute('href')).toBe('/quick-start')
+    expect(screen.queryByRole('button', { name: /创作/ })).toBeNull()
+  })
+
+  it('存在进行中的任务时，创作入口带标记并可展开', () => {
+    rememberActiveRun('77')
+
+    renderHeader('/workspace')
+
+    const entry = screen.getByRole('button', { name: '创作，有任务进行中' })
+    expect(entry.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('link', { name: '创作' })).toBeNull()
+  })
+
+  it('任务在同一标签页开始后，入口无需刷新就出现', () => {
+    renderHeader('/quick-start')
+    expect(screen.queryByRole('button', { name: /创作/ })).toBeNull()
+
+    act(() => rememberActiveRun('77'))
+
+    expect(screen.getByRole('button', { name: '创作，有任务进行中' })).toBeTruthy()
+  })
+
+  it('任务进行期间文字旁跟一个张望的小机器人，红点自己不动', () => {
+    renderHeader('/workspace')
+    expect(document.querySelector('[data-active-run-bot]')).toBeNull()
+
+    act(() => rememberActiveRun('77'))
+    const entry = screen.getByRole('button', { name: '创作，有任务进行中' })
+    const bot = entry.querySelector('[data-active-run-bot]')
+    expect(bot).toBeTruthy()
+    // 文字保留：这一项不该在图标和文字之间换形态。
+    expect(entry.textContent).toContain('创作')
+    // 只有眼睛会动；脸和红点都挂在静止的层上。
+    expect(bot?.querySelector('.app-header-bot-gaze')).toBeTruthy()
+    expect(bot?.querySelector('.app-header-bot-blink')).toBeTruthy()
+    expect(bot?.querySelector('[data-active-run-dot]')).toBeNull()
+    expect(entry.querySelector('[data-active-run-dot]')).toBeTruthy()
+
+    act(() => forgetActiveRun('77'))
+    expect(document.querySelector('[data-active-run-bot]')).toBeNull()
+  })
+
+  it('任务结束后入口随即收起', () => {
+    rememberActiveRun('77')
+    renderHeader('/quick-start')
+
+    act(() => forgetActiveRun('77'))
+
+    expect(screen.getByRole('link', { name: '创作' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /创作/ })).toBeNull()
+  })
+
+  it('展开后可以返回那条进行中的任务', () => {
+    rememberActiveRun('77')
+    renderHeader('/workspace')
+
+    fireEvent.click(screen.getByRole('button', { name: '创作，有任务进行中' }))
+    fireEvent.click(screen.getByRole('link', { name: '返回进行中的任务' }))
+
+    expect(screen.getByTestId('location').textContent).toBe('/quick-start/77')
+  })
+
+  it('展开后仍然可以开始新的创作', () => {
+    rememberActiveRun('77')
+    renderHeader('/workspace')
+
+    fireEvent.click(screen.getByRole('button', { name: '创作，有任务进行中' }))
+    fireEvent.click(screen.getByRole('link', { name: '开始新的创作' }))
+
+    expect(screen.getByTestId('location').textContent).toBe('/quick-start')
+  })
 })
 
 describe('AppHeader', () => {

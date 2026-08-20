@@ -6,10 +6,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { QuickStartEntryService, QuickStartSession } from './service'
 import { WorkflowRunConflictError, type WorkflowRun } from '@/entities'
 import type { ExportPackageModel } from '@/features/export-package'
+import { readActiveRun } from '@/features/active-run'
 import { QuickStartPage } from './index'
 
 afterEach(() => {
   cleanup()
+  window.localStorage.clear()
   vi.useRealTimers()
 })
 
@@ -441,6 +443,19 @@ describe('QuickStartPage', () => {
     expect(screen.queryByText('WORKFLOW RUN')).toBeNull()
     expect(screen.queryByText(/STEPS PASSED/u)).toBeNull()
     expect(screen.getByRole('button', { name: '中断自动制作' })).toBeTruthy()
+  })
+
+  it('生成进行中时为 Header 留下返回入口，走完就清掉', async () => {
+    renderStateFixture('template-generating')
+
+    await waitFor(() => expect(readActiveRun()).toBe('run-1'))
+  })
+
+  it('没有节点在生成时不留返回入口', async () => {
+    renderStateFixture('template-selecting')
+
+    await screen.findByTestId('quick-start-transcript')
+    expect(readActiveRun()).toBeNull()
   })
 
   it('presents Agent replies as restrained product copy without display typography or avatars', async () => {
