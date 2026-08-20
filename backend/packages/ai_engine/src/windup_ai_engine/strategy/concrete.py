@@ -9,6 +9,7 @@
 VideoFrameStrategy 实测通路：严格侧面母版 → kling i2v(v2-5-turbo) → 抽单循环 N 帧 →
 matte 抠图 → 像素化。返回对齐前的 RGBA PNG 帧（对齐 / 打包在 CharacterGenerator 最后一公里）。
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -24,6 +25,7 @@ from windup_common.models import (
     GenRoute,
     Stylize,
 )
+from windup_ai_engine.prompt._framing import with_direction_lock
 from windup_framework.providers import ImageProvider, MatteProvider, VideoProvider
 
 from windup_ai_engine._imgio import from_png as _img
@@ -79,14 +81,18 @@ class VideoFrameStrategy(DerivationStrategy):
         # 兜一个默认值 —— 缺省只由 build_attack_prompt 定义一次,写两处会各自漂移。
         if action.action is ActionType.ATTACK:
             if action.archetype is None:
-                return build_attack_prompt(facing=action.facing)
-            return build_attack_prompt(facing=action.facing, archetype=action.archetype)
+                body = build_attack_prompt(facing=action.facing)
+            else:
+                body = build_attack_prompt(
+                    facing=action.facing, archetype=action.archetype
+                )
+            return with_direction_lock(body, action.direction)
         builders = {
             ActionType.JUMP: build_jump_prompt,
             ActionType.IDLE: build_idle_prompt,
         }
         build = builders.get(action.action, build_walk_prompt)
-        return build(facing=action.facing)
+        return with_direction_lock(build(facing=action.facing), action.direction)
 
     def _custom_prompt(self, action: ActionSpec, stance: CharacterStance) -> str:
         """用户那句话先过适配器,再按声明的循环性收尾。
@@ -107,9 +113,15 @@ class VideoFrameStrategy(DerivationStrategy):
             raise
         except Exception:
             # 适配器坏掉只该丢掉那层改写,不该把整条生成打死:骨架本身不依赖它。
-            return build_custom_prompt(clause, facing=action.facing, cyclic=cyclic)
+            return with_direction_lock(
+                build_custom_prompt(clause, facing=action.facing, cyclic=cyclic),
+                action.direction,
+            )
         # 兜底那支走 build_custom_prompt,构图约束在它内部加;这支绕过了它,要自己加。
-        return with_framing(f"{adapted.text} {CYCLIC_TAIL if cyclic else ONESHOT_TAIL}")
+        return with_direction_lock(
+            with_framing(f"{adapted.text} {CYCLIC_TAIL if cyclic else ONESHOT_TAIL}"),
+            action.direction,
+        )
 
     def derive(
         self,
@@ -139,11 +151,11 @@ class VideoFrameStrategy(DerivationStrategy):
             ref_h = float(_ys.max() - _ys.min()) if len(_ys) else None
         if is_cyclic(action):
             progress.step("derive", 1, 3, f"步态周期取 {n} 帧(无缝 loop)+ 抠图")
-            picked = pick_cycle(dense, n)                   # 单周期闭环(#21)
+            picked = pick_cycle(dense, n)  # 单周期闭环(#21)
         else:
             progress.step("derive", 1, 3, f"裁动作区间取 {n} 帧(不闭环)+ 抠图")
             kind = "airborne" if action.action is ActionType.JUMP else "swing"
-            picked = pick_oneshot(dense, n, kind=kind)      # 一次性动作:裁起止
+            picked = pick_oneshot(dense, n, kind=kind)  # 一次性动作:裁起止
         cut = [_img(self._matte.cutout(_png(im))) for im in picked]
 
         # 风格化按需(见 ActionSpec.stylize):none=保留 i2v 画风(插画/伪 3D 角色);
@@ -155,18 +167,23 @@ class VideoFrameStrategy(DerivationStrategy):
 
         target_h, palette = action.pixel_h, None
         try:
-            logical_h, pal = master_pixel_spec(_img(master))   # 用原始母版,不用补过边的
-            if logical_h > 8:                      # 母版确为像素画 → 按它的规格走
+            logical_h, pal = master_pixel_spec(_img(master))  # 用原始母版,不用补过边的
+            if logical_h > 8:  # 母版确为像素画 → 按它的规格走
                 target_h, palette = logical_h, pal
-        except Exception:                          # 母版非像素画/量不出 → 回退通用量化
+        except Exception:  # 母版非像素画/量不出 → 回退通用量化
             pass
         progress.step(
-            "derive", 2, 3,
+            "derive",
+            2,
+            3,
             f"像素化(h={target_h}{'·锁母版色板' if palette is not None else '·通用量化'})",
         )
         pix = pixelate_frames(
-            cut, target_h=target_h, palette_size=action.palette_size,
-            palette=palette, ref_height=ref_h,
+            cut,
+            target_h=target_h,
+            palette_size=action.palette_size,
+            palette=palette,
+            ref_height=ref_h,
         )
         return [_png(p) for p in pix]
 
@@ -208,8 +225,19 @@ class PerFrameStrategy(DerivationStrategy):
 # 几乎相同,靠轮廓分不出正反,而单元测试也逮不到 —— 朝向错了但帧数、时长、成色全部正常。
 # 改这张表之前先渲一遍再量。
 _FACING_TO_DIRECTION: dict[Facing, str] = {
-    Facing.SIDE: "e",     # yaw=0°,角色朝画面右(与出帧台 faces="right" 同口径)
-    Facing.FRONT: "n",    # yaw=90°,身体正对观者
+    Facing.SIDE: "e",  # yaw=0°,角色朝画面右(与出帧台 faces="right" 同口径)
+    Facing.FRONT: "n",  # yaw=90°,身体正对观者
+}
+
+_ACTION_DIRECTION_TO_RENDERER: dict[str, str] = {
+    "east": "e",
+    "west": "w",
+    "north": "n",
+    "south": "s",
+    "north_east": "ne",
+    "north_west": "nw",
+    "south_east": "se",
+    "south_west": "sw",
 }
 
 
@@ -255,16 +283,24 @@ class RenderFrameStrategy(DerivationStrategy):
                 "server 侧应在调用前确认该造型的 3D 资产可读。"
             )
 
-        want = _FACING_TO_DIRECTION.get(action.facing, "e")
+        # 新请求按真实源方向取序列；旧的三渲二调用没有 direction 时，继续按
+        # facing 选择序列，不能把缺省值误当成 east。
+        if action.direction is None:
+            want = _FACING_TO_DIRECTION.get(action.facing, "e")
+        else:
+            want = _ACTION_DIRECTION_TO_RENDERER[action.direction.value]
         progress.step(
-            "derive", 0, 3,
-            f"渲 {self._directions} 朝向 × {action.n_frames} 帧"
+            "derive",
+            0,
+            3,
+            f"渲 {want} 朝向 × {action.n_frames} 帧"
             f"({self._size[0]}×{self._size[1]},材质 {self._material})",
         )
         sheet: SpriteSheet = self._renderer.render(
             rigged_model,
             clip=action.action.value,
             directions=self._directions,
+            direction=want,
             frames=action.n_frames,
             size=self._size,
             material=self._material,
@@ -291,12 +327,16 @@ class RenderFrameStrategy(DerivationStrategy):
             # 不写成 warning 日志而是进度文案,因为这串字最终会经 server 到用户眼前,
             # 而"多朝向"正是这条路线的卖点 —— 用户该知道它已经算好了。
             progress.step(
-                "derive", 1, 3,
+                "derive",
+                1,
+                3,
                 f"已渲 {len(available)} 个朝向,本次出参只带 {chosen.direction};"
                 f"其余 {','.join(extra)} 零成本可用但当前契约装不下(#122)",
             )
         else:
-            progress.step("derive", 1, 3, f"朝向 {chosen.direction} 共 {len(frames)} 帧")
+            progress.step(
+                "derive", 1, 3, f"朝向 {chosen.direction} 共 {len(frames)} 帧"
+            )
 
         # 3D 帧本来就是透明底,**不套抠图**:去白边那一步会把浅灰甲当漏白吃掉。
         # 像素化仍按 ActionSpec 走。

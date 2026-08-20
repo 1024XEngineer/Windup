@@ -26,7 +26,7 @@ from windup_ai_engine.impl import CharacterGenerator
 from windup_ai_engine.strategy.concrete import RenderFrameStrategy, VideoFrameStrategy
 from windup_app.server.orchestrator.executor import ActionTaskExecutor, ProjectConstraints
 from windup_app.server.orchestrator.model import ActionType as InputActionType
-from windup_app.server.orchestrator.model import CharacterActionInput
+from windup_app.server.orchestrator.model import ActionDirection, CharacterActionInput
 from windup_app.server.orchestrator.render3d_assets import (
     LocalDirAssetStore,
     LocalDirModelReview,
@@ -127,18 +127,28 @@ class _FakeRenderer:
     """出帧台替身。**只有它是假的** —— 真出帧台要 node + playwright + three.js,
     CI 里跑不了;而路线选择、策略装配、编排接线全部走真代码。"""
 
-    def __init__(self, directions=("e", "n", "w", "s")) -> None:
+    def __init__(
+        self, directions=("e", "n", "w", "s"), *, honor_requested=True
+    ) -> None:
         self.calls = 0
         self.last_model: bytes | None = None
         self._directions = directions
         self.last_size: tuple[int, int] | None = None
+        self.last_direction: str | None = None
+        self._honor_requested = honor_requested
 
     def render(self, rigged_model, *, clip=None, directions=4, frames=12,
-               size=(1536, 2560), material="cel") -> SpriteSheet:
+               size=(1536, 2560), material="cel", direction=None) -> SpriteSheet:
         self.calls += 1
         self.last_model = rigged_model
         self.last_size = size
-        return _sheet(self._directions, frames)
+        self.last_direction = direction
+        rendered = (
+            (direction,)
+            if direction is not None and self._honor_requested
+            else self._directions
+        )
+        return _sheet(rendered, frames)
 
 
 class _AutoApproveReview:
@@ -390,9 +400,57 @@ def test_requested_facing_picks_the_matching_direction():
     assert any("朝向 n" in n or "只带 n" in n for n in spy.notes), spy.notes
 
 
+def test_direction_task_renders_only_its_requested_3d_direction():
+    renderer = _FakeRenderer()
+
+    RenderFrameStrategy(renderer, directions=8).derive(
+        _card(),
+        _spec(direction=ActionDirection.NORTH_EAST),
+        b"RIGGED",
+        _NullProgress(),
+    )
+
+    assert renderer.calls == 1
+    assert renderer.last_direction == "ne"
+
+
+def test_one_way_3d_task_uses_a_valid_renderer_table(monkeypatch):
+    """单向项目仍只请求 east，但本地 3D 出帧台的方向表只能是四向或八向。"""
+
+    class _OneWayRenderer:
+        def render(
+            self,
+            _rigged_model,
+            *,
+            directions=4,
+            frames=12,
+            direction=None,
+            **_kwargs,
+        ) -> SpriteSheet:
+            if directions not in (4, 8):
+                raise ValueError("出帧台方向数只能是 4 或 8")
+            if direction != "e":
+                raise ValueError(f"单向任务请求了错误朝向 {direction}")
+            return _sheet((direction,), frames)
+
+    monkeypatch.setattr(
+        "windup_framework.providers.render3d.LocalSpriteRenderProvider",
+        _OneWayRenderer,
+    )
+
+    frames = ActionTaskExecutor._build_render3d(1).derive(
+        _card(),
+        _spec(direction=ActionDirection.EAST),
+        b"RIGGED",
+        _NullProgress(),
+    )
+
+    assert len(frames) == 4
+
+
 def test_missing_direction_raises_instead_of_handing_back_another():
     """出帧台没出请求的朝向就报错。换一个交出去 = 角色朝反方向走,而没有任何一道会红。"""
-    renderer = _FakeRenderer(directions=("w", "s"))
+    renderer = _FakeRenderer(directions=("w", "s"), honor_requested=False)
     with pytest.raises(ValueError, match="没有产出朝向"):
         RenderFrameStrategy(renderer).derive(_card(), _spec(), b"RIGGED", _NullProgress())
 
@@ -400,7 +458,9 @@ def test_missing_direction_raises_instead_of_handing_back_another():
 def test_extra_directions_are_reported_not_silently_dropped():
     """多渲出来的朝向零成本、但出参装不下 —— 这笔浪费要**可见**。"""
     spy = _SpyProgress()
-    RenderFrameStrategy(_FakeRenderer(directions=("e", "n", "w", "s"))).derive(
+    RenderFrameStrategy(
+        _FakeRenderer(directions=("e", "n", "w", "s"), honor_requested=False)
+    ).derive(
         _card(), _spec(), b"RIGGED", spy,
     )
     assert any("零成本可用但当前契约装不下" in n for n in spy.notes), spy.notes

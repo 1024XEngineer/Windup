@@ -23,6 +23,48 @@ function installBackend() {
 }
 
 describe('ProjectsPage', () => {
+  it('loads a project card thumbnail and falls back to its original preview', async () => {
+    const backend = createProjectAssetsBackend()
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      const response = await backend.fetch(input, init)
+      if (!request.url.includes('/characters?project_id=42')) return response
+
+      const payload = (await response.json()) as {
+        data: Array<{
+          character_data: { outfits: Array<{ preview_url: string | null }> }
+        }>
+      }
+      payload.data[0]!.character_data.outfits[0]!.preview_url =
+        'https://cdn.windup.test/media/outfit-preview/messenger.source.png'
+      return new Response(JSON.stringify(payload), {
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    const preview = await screen.findByRole('img', { name: '点灯人 · MVP的项目预览' })
+    expect(preview.getAttribute('src')).toBe(
+      'https://cdn.windup.test/media/outfit-preview/messenger.card.webp',
+    )
+
+    fireEvent.error(preview)
+
+    await waitFor(() => {
+      expect(preview.getAttribute('src')).toBe(
+        'https://cdn.windup.test/media/outfit-preview/messenger.source.png',
+      )
+    })
+  })
+
   it('keeps pending project previews distinct from empty projects', async () => {
     installBackend()
     let releaseRequests: (() => void) | undefined

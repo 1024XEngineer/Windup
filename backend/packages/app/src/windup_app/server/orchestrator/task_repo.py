@@ -25,6 +25,7 @@ from windup_app.server.orchestrator.model import (
     GenerationType,
     TaskStatus,
 )
+from windup_common.directions import ActionDirection
 
 logger = logging.getLogger("windup.task_repo")
 
@@ -214,7 +215,8 @@ def get_task_by_user(
 
 
 def list_by_status(
-    session: Session, statuses: tuple[TaskStatus, ...],
+    session: Session,
+    statuses: tuple[TaskStatus, ...],
 ) -> list[GenerationTask]:
     """按状态列出任务（启动对账用）。"""
     values = [status.value for status in statuses]
@@ -255,6 +257,8 @@ def _deserialize_result(
         return CharacterImageOutput(
             type=raw.get("type", "character_image"),
             image_urls=raw.get("image_urls", []),
+            direction=ActionDirection(raw.get("direction", ActionDirection.EAST.value)),
+            quality=raw.get("quality"),
         )
     if result_type == "character_action":
         from windup_app.server.orchestrator.model import CharacterActionFrame
@@ -274,5 +278,6 @@ def _deserialize_result(
             judge=raw.get("judge"),
             quality=raw.get("quality"),
             prompt_version=raw.get("prompt_version"),
+            direction=ActionDirection(raw.get("direction", ActionDirection.EAST.value)),
         )
     return None

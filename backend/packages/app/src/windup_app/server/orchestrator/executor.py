@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy.orm import Session
 
 from windup_ai_engine.ports import PromptRejected
+from windup_ai_engine.slicing.quality import subject_blobs
+from windup_common.directions import direction_prompt
 from windup_common.models import ActionSpec, ActionType as EngineActionType, CharacterCard
 from windup_framework.gateway import bind_call_context
 from windup_framework.gateway.registry import ModelRegistry
@@ -57,6 +59,7 @@ def _settle_credit(session: Session, task_id: int, *, success: bool) -> None:
     else:
         billing.release_for_task(session, user_id=task.user_id, task_id=task.id)
 
+
 # ── 项目全局约束(Project 表)→ 统合喂给生成逻辑 ─────────────────────────
 # character_perspective 游戏视角:1=横版(侧视) 2=俯视 3=2.5D → 生成朝向/视角
 _PERSPECTIVE_FACING: dict[int, str] = {1: "side", 2: "front", 3: "front"}
@@ -73,15 +76,15 @@ _MOVEMENT_DIRECTIONS: dict[int, int] = {1: 1, 2: 4, 3: 8}
 class ProjectConstraints:
     """从 Project 取的全局生成约束,统一约束角色图/动作生成。"""
 
-    facing: str = "side"        # character_perspective → 朝向(须与母版一致 #35)
+    facing: str = "side"  # character_perspective → 朝向(须与母版一致 #35)
     view: str = "side view, horizontal side-scroller"
-    perspective: int = 1        # 1横版 2俯视 3 2.5D
-    directions: int = 1         # directional_movement → 方向数(1/4/8)
-    sprite_w: int = 256         # 输出/切帧尺寸(关键)
+    perspective: int = 1  # 1横版 2俯视 3 2.5D
+    directions: int = 1  # directional_movement → 方向数(1/4/8)
+    sprite_w: int = 256  # 输出/切帧尺寸(关键)
     sprite_h: int = 256
-    style: str = ""             # game_style 画风
-    stylize: str = "none"       # 由 style 推:像素游戏 → pixel
-    sprite_sample_url: str = "" # 项目风格参考图 URL
+    style: str = ""  # game_style 画风
+    stylize: str = "none"  # 由 style 推:像素游戏 → pixel
+    sprite_sample_url: str = ""  # 项目风格参考图 URL
 
 
 def _load_constraints(session: Session, project_id: int | None) -> ProjectConstraints:
@@ -208,12 +211,18 @@ class ActionTaskExecutor:
         upload: Callable[[bytes], str] | None = None,
         fetch_master: Callable[[CharacterActionInput], bytes] | None = None,
         fetch_model3d: Callable[[str], bytes] | None = None,
-        fetch_constraints: Callable[[Session, int | None], ProjectConstraints] | None = None,
+        fetch_constraints: Callable[[Session, int | None], ProjectConstraints]
+        | None = None,
         session_factory: Callable[[], Session] | None = None,
     ) -> None:
-        self._generator = generator          # None → 懒加载真实装配(一套共享 Gateway)
-        # 抠图 / 图生图与视频 Gateway 无关型号分桶:选哪个 kling 是 Gateway 读
-        # start_from_model 的事。每个抠图实例都会惰性加载一份 ONNX 会话,只装一次。
+        self._generator = generator  # None → 懒加载真实装配(一套共享 Gateway)
+        # 选哪个 kling 是 Gateway 读 start_from_model 的事,不分模型桶。
+        # 三渲二的渲染方向数仍属项目约束:4 向和 8 向的相机表不同,必须分桶,
+        # 否则先请求的项目会把后续项目的方向数锁死。directions=1 用整数 1
+        # 做键,已有 `_get_generator()` 调用仍走同一份。
+        self._by_model: dict[int, CharacterGeneratorPort] = {}
+        # 抠图 / 图生图与视频 Gateway 无关方向分桶,所有桶共用一份:每个抠图实例
+        # 都会惰性加载一份 ONNX 会话,按桶各建等于把同一个模型在进程里装多次。
         self._matte: MatteProvider | None = None
         self._image: ImageProvider | None = None
         # 判官同样与视频模型无关,故不分桶。缺省 None 时**不建**实例:建了就意味着每个
@@ -222,8 +231,8 @@ class ActionTaskExecutor:
         # 本执行器是进程级单例,而每个请求起一个线程跑 run_action_task,上面几个缓存
         # 都是跨线程共用的可变状态。缺锁时并发首请求会各装一套(见 _get_generator)。
         self._assembly_lock = threading.Lock()
-        self._upload = upload                # None → 真实对象存储上传
-        self._fetch_master = fetch_master    # None → 下载 reference_image_urls[0]
+        self._upload = upload  # None → 真实对象存储上传
+        self._fetch_master = fetch_master  # None → 下载 reference_image_urls[0]
         self._fetch_model3d = fetch_model3d  # None → 下载 input.model_3d_url
         self._fetch_constraints = fetch_constraints  # None → 查 project 全局约束
         self._session_factory = session_factory  # None → SessionLocal
@@ -293,12 +302,15 @@ class ActionTaskExecutor:
 
     # -- 内部 --------------------------------------------------------------
 
-    def _produce_action(self, input: CharacterActionInput, cons: ProjectConstraints) -> dict:
+    def _produce_action(
+        self, input: CharacterActionInput, cons: ProjectConstraints
+    ) -> dict:
         """母版 → ai_engine 按项目尺寸出帧 → 逐帧上传 → 组结果 dict。
 
         项目约束落实:``facing`` 随视角、``stylize`` 随画风(像素游戏→像素化)、
-        输出帧尺寸随 ``sprite_w×sprite_h``。方向数(directions)MVP 先出主方向,
-        四向/八向为扩展(需多次生成或镜像)。
+        输出帧尺寸随 ``sprite_w×sprite_h``。四向/八向项目由上层为每个真实源方向
+        创建独立任务；本任务只生成 ``input.direction``，左右镜像由资产层复用，避免
+        为镜像方向重复调用模型和扣费。
 
         **尺寸是传给引擎的,不是拿到帧再缩的。** 这里曾对每帧再做一次
         ``_fit_to(png, sprite_w, sprite_h)``:引擎恒出 256,项目要 512 就等于二次
@@ -308,9 +320,13 @@ class ActionTaskExecutor:
         现在把 ``canvas`` 交给引擎,它一次就出到项目尺寸,那一步整个不存在了。
         """
         if cons.directions > 1:
-            logger.info("项目要求 %s 方向,MVP 先出主方向(多方向待扩展)", cons.directions)
+            logger.info(
+                "项目要求 %s 方向，本任务只负责真实源方向 %s；镜像方向由资产层复用",
+                cons.directions,
+                input.direction.value,
+            )
         # 视频 i2v 没有独立的 style reference 字段,风格约束走提示词文字
-        desc_parts = [input.custom_prompt or ""]
+        desc_parts = [input.custom_prompt or "", direction_prompt(input.direction)]
         if cons.style:
             desc_parts.append(f"Art style: {cons.style}")
         # 体型必须从请求一路传到这里 —— 只在 ai_engine 侧加门禁的话,生产链路恒走
@@ -334,6 +350,7 @@ class ActionTaskExecutor:
             action=engine_action,
             poses=[""] * input.num_frames,
             facing=cons.facing,
+            direction=input.direction,
             stylize=cons.stylize,
             **extra,
         )
@@ -358,16 +375,17 @@ class ActionTaskExecutor:
             rigged = (self._fetch_model3d or self._download_model3d)(model_url)
             logger.info(
                 "[gen] 造型 %s 有 3D 资产(%d bytes),走三渲二",
-                input.outfit_id or "?", len(rigged),
+                input.outfit_id or "?",
+                len(rigged),
             )
-            generated = self._get_generator().generate_rendered(
-                card, action, rigged, progress, canvas=canvas
-            )
+            generated = self._get_generator(
+                _resolve_video_model(input.video_model), cons.directions
+            ).generate_rendered(card, action, rigged, progress, canvas=canvas)
         else:
             master = (self._fetch_master or self._download_master)(input)
-            generated = self._get_generator().generate(
-                card, action, master, progress, canvas=canvas
-            )
+            generated = self._get_generator(
+                _resolve_video_model(input.video_model), cons.directions
+            ).generate(card, action, master, progress, canvas=canvas)
 
         upload = self._upload or self._upload_frame
         checked = [_require_size(png, cons.sprite_w, cons.sprite_h) for png in generated.frames]
@@ -380,6 +398,7 @@ class ActionTaskExecutor:
         result = {
             "type": "character_action",
             "action_type": input.action_type.value,
+            "direction": input.direction.value,
             "frames": frames,
             "quality": dataclasses.asdict(generated.quality),
             "prompt_version": generated.prompt_version,
@@ -407,22 +426,33 @@ class ActionTaskExecutor:
                 self._judge = SufyJudgeProvider()
             return self._judge
 
-    def _get_generator(self) -> CharacterGeneratorPort:
-        """懒装配一套共享 CharacterGenerator(ImageGateway + VideoGateway + matte)。
+    def _get_generator(
+        self,
+        video_model: str | None = None,
+        directions: int = 1,
+    ) -> CharacterGeneratorPort:
+        """懒装配 CharacterGenerator(ImageGateway + VideoGateway + matte)。
 
         选哪个 kling 不在装配时定,由 bind_call_context 的 start_from_model 交给 Gateway。
+        ``video_model`` 仍接入口传入,但不参与分桶;分桶只为三渲二的方向数。
         """
+        del video_model
         if self._generator is not None:
             return self._generator
-        # 命中缓存的快路径不进锁,否则每个请求都要在这里排一次队。只有首次装配才上锁,
-        # 锁内重查一次:两个线程同时错过时,后进来的那个要看见前一个的成果。
+        # 命中缓存的快路径不进锁,否则每个请求都要在这里排一次队。只有装配新桶才上锁,
+        # 锁内重查一次:两个线程同时错过同一个桶时,后进来的那个要看见前一个的成果。
+        cached = self._by_model.get(directions)
+        if cached is not None:
+            return cached
         with self._assembly_lock:
-            if self._generator is None:
-                self._generator = self._assemble()
-            return self._generator
+            cached = self._by_model.get(directions)
+            if cached is None:
+                cached = self._assemble(directions)
+                self._by_model[directions] = cached
+            return cached
 
-    def _assemble(self) -> CharacterGeneratorPort:
-        """装一套共享 Gateway。**调用方须持有 ``self._assembly_lock``**。"""
+    def _assemble(self, directions: int) -> CharacterGeneratorPort:
+        """装一个方向桶。**调用方须持有 ``self._assembly_lock``**(会写共用 provider)。"""
         from windup_ai_engine.impl import CharacterGenerator
         from windup_ai_engine.strategy.concrete import (
             PerFrameStrategy,
@@ -444,7 +474,7 @@ class ActionTaskExecutor:
         strategies = {
             GenRoute.VIDEO_I2V: VideoFrameStrategy(video, self._matte),
             GenRoute.PER_FRAME: PerFrameStrategy(self._image, self._matte),
-            GenRoute.RENDER_3D: self._build_render3d(),
+            GenRoute.RENDER_3D: self._build_render3d(directions),
         }
         missing = set(GenRoute) - set(strategies)
         if missing:
@@ -455,7 +485,7 @@ class ActionTaskExecutor:
         return CharacterGenerator(strategies)
 
     @staticmethod
-    def _build_render3d():
+    def _build_render3d(directions: int):
         """三渲二的**渲帧**那一段。纯本地(node + playwright + three.js),零 API 成本。
 
         真被请求时才 import 出帧台那套依赖:它只有这条路线用得着,装配期就要齐会让本来
@@ -468,6 +498,10 @@ class ActionTaskExecutor:
         from windup_ai_engine.strategy.base import DerivationStrategy
         from windup_common.models import GenRoute
 
+        # 项目可选单向(1/4/8)，但 3D 出帧台的相机表只接受四向或八向。
+        # 单向任务仍通过 ActionSpec.direction 只请求 east；这里的 4 只是底层表规格。
+        renderer_directions = 4 if directions == 1 else directions
+
         class _LazyRenderStrategy(DerivationStrategy):
             route = GenRoute.RENDER_3D
 
@@ -477,9 +511,14 @@ class ActionTaskExecutor:
             def derive(self, card, action, source, progress):
                 if self._inner is None:
                     from windup_ai_engine.strategy.concrete import RenderFrameStrategy
-                    from windup_framework.providers.render3d import LocalSpriteRenderProvider
+                    from windup_framework.providers.render3d import (
+                        LocalSpriteRenderProvider,
+                    )
 
-                    self._inner = RenderFrameStrategy(LocalSpriteRenderProvider())
+                    self._inner = RenderFrameStrategy(
+                        LocalSpriteRenderProvider(),
+                        directions=renderer_directions,
+                    )
                 return self._inner.derive(card, action, source, progress)
 
         return _LazyRenderStrategy()
@@ -527,12 +566,15 @@ class ImageTaskExecutor:
     def __init__(
         self,
         *,
-        image=None,                                      # None → 懒加载 ImageGateway
-        upload: Callable[[bytes], str] | None = None,    # None → 真实对象存储上传
-        fetch_ref: Callable[[str], bytes] | None = None, # None → 下载 reference_image_url
+        image=None,  # None → 懒加载 ImageGateway
+        matte: MatteProvider | None = None,  # None → 懒加载 OnnxU2NetMatteProvider
+        upload: Callable[[bytes], str] | None = None,  # None → 真实对象存储上传
+        fetch_ref: Callable[[str], bytes]
+        | None = None,  # None → 下载 reference_image_url
         session_factory: Callable[[], Session] | None = None,
     ) -> None:
         self._image = image
+        self._matte = matte
         self._upload = upload
         self._fetch_ref = fetch_ref
         self._session_factory = session_factory
@@ -553,16 +595,23 @@ class ImageTaskExecutor:
             task_repo.update_status(session, task_id, TaskStatus.RUNNING)
             if own:
                 session.commit()
-            cons = _load_constraints(session, project_id)   # 角色图也受项目约束
+            cons = _load_constraints(session, project_id)  # 角色图也受项目约束
             reset = bind_call_context(
                 request_id=request_id,
                 task_id=str(task_id),
             )
-            urls = self._produce_image(input, cons)
-            task_repo.update_result(session, task_id, _IMAGE_RESULT, {
-                "type": "character_image",
-                "image_urls": urls,
-            })
+            urls, quality = self._produce_image(input, cons)
+            task_repo.update_result(
+                session,
+                task_id,
+                _IMAGE_RESULT,
+                {
+                    "type": "character_image",
+                    "direction": input.direction.value,
+                    "image_urls": urls,
+                    "quality": quality,
+                },
+            )
             _settle_credit(session, task_id, success=True)
             if own:
                 session.commit()
@@ -582,8 +631,10 @@ class ImageTaskExecutor:
             if own:
                 session.close()
 
-    def _produce_image(self, input: CharacterImageInput, cons: ProjectConstraints) -> list[str]:
-        """根据项目约束决定生成模式,返回 URL 列表。
+    def _produce_image(
+        self, input: CharacterImageInput, cons: ProjectConstraints
+    ) -> tuple[list[str], dict]:
+        """根据项目约束决定生成模式,返回 (URL 列表, 成色读数)。
 
         模式判断:
           - 项目有 sprite_sample_url → **图生图**: 风格参考图 + 提示词
@@ -609,8 +660,15 @@ class ImageTaskExecutor:
                 pass  # 风格参考图下载失败不阻断
 
         # 3. 构建提示词
-        base = input.prompt or "Clean full-body character reference of the figure in the image."
-        parts = [base, f"{cons.view}, full body head to feet, centered."]
+        base = (
+            input.prompt
+            or "Clean full-body character reference of the figure in the image."
+        )
+        parts = [
+            base,
+            f"{cons.view}, full body head to feet, centered.",
+            direction_prompt(input.direction),
+        ]
         if cons.style:
             parts.append(f"Art style: {cons.style}.")
         parts.append("Plain light-gray background, no shadow.")
@@ -627,16 +685,30 @@ class ImageTaskExecutor:
 
         prompt = " ".join(parts)
 
+        import io
+
+        from PIL import Image
+
         image_gen = self._get_image()
+        matte = self._get_matte()
         upload = self._upload or self._upload_image
         urls: list[str] = []
+        cut: list[Image.Image] = []
         for _ in range(max(1, input.num_images)):
             img = image_gen.gen_image(prompt, refs)
+            # 提示词要的是浅灰底,交付的母版却必须是透明底:不在这里抠,灰底会一路带进
+            # 预览、也会成为下一次图生图的参考底色(#430)。抠在缩放之前 —— u2netp 按模型
+            # 原始分辨率分割,先缩再抠等于把一半可用像素丢掉再让它猜。
+            # 抠不动时让它抛:静默交一张带灰底的母版,正是"看起来成功的错产物"。
             # 请求里的 width/height 此前被丢掉:入口收下并校验过它们(_validate_project_size),
             # 而 ImageProvider.gen_image 没有尺寸参数,模型出多大就返多大 —— 又一个"接了不
             # 履约"的字段。模型本身不吃宽高,所以在这里落实。
-            urls.append(upload(_fit_to(img, input.width, input.height, smooth=True)))
-        return urls
+            png = _fit_to(matte.cutout(img), input.width, input.height, smooth=True)
+            cut.append(Image.open(io.BytesIO(png)).convert("RGBA"))
+            urls.append(upload(png))
+        # 同一份 alpha 顺手数一次主体数(#427):此前多主体母版要等下一个动作任务才留痕,
+        # 而那时钱已经花在错的母版上了。只记账,不在此处判成败 —— 与动作那条同一立场。
+        return urls, {"subject_blobs": list(subject_blobs(cut))}
 
     def _get_image(self):
         if self._image is None:
@@ -644,6 +716,13 @@ class ImageTaskExecutor:
 
             self._image = build_image_gateway()
         return self._image
+
+    def _get_matte(self):
+        if self._matte is None:
+            from windup_framework.providers import OnnxU2NetMatteProvider
+
+            self._matte = OnnxU2NetMatteProvider()
+        return self._matte
 
     def _download(self, url: str) -> bytes:
         # 同 _download_master:参考图 URL 由调用方给,必须走白名单取图。
@@ -654,8 +733,10 @@ class ImageTaskExecutor:
         from windup_app.server.media.service import service as media_service
 
         meta = MediaUploadInput(
-            filename="character.png", content_type="image/png",
-            size=len(png), category=MediaCategory.REFERENCE_IMAGE,
+            filename="character.png",
+            content_type="image/png",
+            size=len(png),
+            category=MediaCategory.REFERENCE_IMAGE,
         )
         return media_service.upload(png, meta).url
 

@@ -10,7 +10,7 @@ import {
   type Project,
 } from '@/entities'
 import type { Paged } from '@/shared/pagination'
-import { Pagination, PixelMatrix } from '@/shared/ui'
+import { AssetThumbnailImage, Pagination, PixelMatrix } from '@/shared/ui'
 
 const PROJECT_PAGE_SIZE = 12
 const PROJECT_PREVIEW_CHARACTER_LIMIT = 6
@@ -453,11 +453,13 @@ function ProjectPreviewImage({ projectName, url }: { projectName: string; url: s
 
   return (
     <div aria-busy={imageState === 'loading'} className="relative h-full">
-      <img
+      <AssetThumbnailImage
         src={url}
         alt={`${projectName}的项目预览`}
         onLoad={() => setImageState('ready')}
-        onError={() => setImageState('error')}
+        onError={(event) => {
+          if (!event.currentTarget.src.endsWith('.card.webp')) setImageState('error')
+        }}
         className={`project-preview-image h-full w-full object-contain p-6 [image-rendering:pixelated] group-hover/tile:scale-[1.025] ${
           imageState === 'ready' ? 'project-preview-image-ready' : ''
         }`}

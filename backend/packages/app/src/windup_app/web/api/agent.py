@@ -17,10 +17,19 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+import uuid
+from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, Field
+
+from windup_common.enums.biz_code import BizCode
+from windup_common.exceptions import BizException
+from windup_framework.config.provider import settings
+from windup_framework.providers.chat import create_chat_model
 
 logger = logging.getLogger("windup.ai.proxy")
 
@@ -62,6 +71,158 @@ class ChatRequest(BaseModel):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 消息 / SSE 转换
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _openai_tool_calls_to_lc(tool_calls: list[dict] | None) -> list[dict]:
+    """把前端 OpenAI 格式 tool_calls 转成 LangChain ``AIMessage.tool_calls``。"""
+    if not tool_calls:
+        return []
+    converted: list[dict] = []
+    for call in tool_calls:
+        function = call.get("function")
+        if not isinstance(function, dict):
+            converted.append(call)
+            continue
+        raw_args = function.get("arguments", "{}")
+        if isinstance(raw_args, str):
+            try:
+                args = json.loads(raw_args) if raw_args else {}
+            except json.JSONDecodeError as exc:
+                raise BizException(
+                    "tool_calls.arguments 不是合法 JSON",
+                    code=BizCode.BAD_REQUEST,
+                ) from exc
+        elif isinstance(raw_args, dict):
+            args = raw_args
+        else:
+            raise BizException(
+                "tool_calls.arguments 必须是 JSON 对象",
+                code=BizCode.BAD_REQUEST,
+            )
+        if not isinstance(args, dict):
+            raise BizException(
+                "tool_calls.arguments 必须是 JSON 对象",
+                code=BizCode.BAD_REQUEST,
+            )
+        converted.append(
+            {
+                "name": function.get("name") or "",
+                "args": args,
+                "id": call.get("id") or "",
+                "type": "tool_call",
+            }
+        )
+    return converted
+
+
+def _to_lc_messages(body: ChatRequest) -> list[BaseMessage]:
+    """把请求体转成 ``create_chat_model().astream`` 需要的 LangChain 消息。"""
+    messages: list[BaseMessage] = []
+    if body.system:
+        messages.append(SystemMessage(content=body.system))
+    for item in body.messages:
+        if item.role == "system":
+            messages.append(SystemMessage(content=item.content or ""))
+        elif item.role == "assistant":
+            kwargs: dict[str, Any] = {"content": item.content or ""}
+            tool_calls = _openai_tool_calls_to_lc(item.tool_calls)
+            if tool_calls:
+                kwargs["tool_calls"] = tool_calls
+            messages.append(AIMessage(**kwargs))
+        elif item.role == "tool":
+            messages.append(
+                ToolMessage(content=item.content or "", tool_call_id=item.tool_call_id or "")
+            )
+        else:
+            messages.append(HumanMessage(content=item.content or ""))
+    return messages
+
+
+def _sse(data: dict | str) -> str:
+    if data == "[DONE]":
+        return "data: [DONE]\n\n"
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _tool_call_chunk_to_openai(chunk: Any) -> dict:
+    if hasattr(chunk, "get"):
+        index = chunk.get("index", 0)
+        call_id = chunk.get("id")
+        name = chunk.get("name")
+        args = chunk.get("args") or ""
+    else:
+        index = getattr(chunk, "index", 0)
+        call_id = getattr(chunk, "id", None)
+        name = getattr(chunk, "name", None)
+        args = getattr(chunk, "args", None) or ""
+    if not isinstance(args, str):
+        args = json.dumps(args, ensure_ascii=False)
+    item: dict[str, Any] = {
+        "index": index,
+        "type": "function",
+        "function": {"arguments": args},
+    }
+    if call_id:
+        item["id"] = call_id
+    if name:
+        item["function"]["name"] = name
+    return item
+
+
+def _chunk_to_event(
+    chunk: Any,
+    *,
+    chunk_id: str,
+    model: str,
+    created: int,
+) -> dict | None:
+    """把 LangChain 流式 chunk 转成 OpenAI ``ChatCompletionChunk`` SSE 事件体。"""
+    delta: dict[str, Any] = {}
+    content = getattr(chunk, "content", None)
+    if content:
+        delta["content"] = content
+    tool_call_chunks = getattr(chunk, "tool_call_chunks", None) or []
+    if tool_call_chunks:
+        delta["tool_calls"] = [_tool_call_chunk_to_openai(item) for item in tool_call_chunks]
+    if not delta:
+        return None
+    return {
+        "id": chunk_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+    }
+
+
+def _resolve_model_name(body: ChatRequest, llm: Any) -> str:
+    return (
+        (body.model or "").strip()
+        or str(getattr(llm, "model_name", "") or "").strip()
+        or (settings.chat_model or settings.model or "").strip()
+    )
+
+
+def _build_chat_model(body: ChatRequest) -> tuple[Any, str]:
+    config = settings
+    if body.model:
+        config = settings.model_copy(update={"chat_model": body.model})
+    kwargs: dict[str, Any] = {}
+    if body.temperature is not None:
+        kwargs["temperature"] = body.temperature
+    llm = create_chat_model(config, **kwargs)
+    model_name = _resolve_model_name(body, llm)
+    if body.tools:
+        try:
+            llm = llm.bind_tools([tool.model_dump() for tool in body.tools])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise BizException("工具定义无效", code=BizCode.BAD_REQUEST) from exc
+    return llm, model_name
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 端点
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -78,22 +239,44 @@ async def chat(
     2. 调用 create_chat_model 工厂创建 LLM 实例
     3. 流式转发 LLM 响应
     4. 不解析 tool_calls、不执行工具、不存对话历史
+    5. 本端点不计量积分；``model`` 透传给 provider（缺省用 AI_CHAT_MODEL）
 
-    响应格式：OpenAI 兼容 SSE
+    响应格式：OpenAI 兼容 SSE（每条 data 都是 ChatCompletionChunk）
     ```
-    data: {"choices": [{"delta": {"content": "好"}}]}
-    data: {"choices": [{"delta": {"tool_calls": [...]}}]}
+    data: {"id":"...","object":"chat.completion.chunk","created":0,"model":"...","choices":[{"index":0,"delta":{"content":"好"},"finish_reason":null}]}
     data: [DONE]
     ```
     """
-    # TODO: 调用 create_chat_model 创建 LLM 实例，流式转发
-    # 当前返回占位实现
-    async def _placeholder():
-        yield f'data: {json.dumps({"choices": [{"delta": {"content": "AI Proxy 尚未实现，请配置 LLM provider。"}}]}, ensure_ascii=False)}\n\n'
-        yield "data: [DONE]\n\n"
+    user_id = request.state.current_user.id
+    logger.info("ai chat stream user_id=%s model=%s", user_id, body.model)
+    try:
+        llm, model_name = _build_chat_model(body)
+    except ValueError as exc:
+        raise BizException(str(exc), code=BizCode.MODEL_UNAVAILABLE) from exc
+
+    messages = _to_lc_messages(body)
+    chunk_id = f"chatcmpl-{uuid.uuid4().hex}"
+    created = int(time.time())
+
+    async def _forward():
+        try:
+            async for chunk in llm.astream(messages):
+                if await request.is_disconnected():
+                    logger.debug("ai chat client disconnected user_id=%s", user_id)
+                    break
+                event = _chunk_to_event(
+                    chunk, chunk_id=chunk_id, model=model_name, created=created
+                )
+                if event is not None:
+                    yield _sse(event)
+        except Exception:
+            logger.exception("ai chat stream failed user_id=%s", user_id)
+            yield _sse({"error": {"message": "模型调用失败", "type": "server_error"}})
+            return
+        yield _sse("[DONE]")
 
     return StreamingResponse(
-        _placeholder(),
+        _forward(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
