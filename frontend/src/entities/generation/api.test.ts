@@ -504,6 +504,148 @@ describe('createGenerationApis', () => {
     expect(onEvent).not.toHaveBeenCalled()
   })
 
+  it('取消订阅后忽略尚未开始的重连对账', async () => {
+    let streamOptions: EventStreamOptions | undefined
+    const request = vi.fn(async () => success(taskData()))
+    const apis = createGenerationApis({
+      baseUrl: 'https://api.test',
+      transport: {
+        request,
+        stream: vi.fn((_url: string, options: NonNullable<typeof streamOptions>) => {
+          streamOptions = options
+          return vi.fn()
+        }),
+      },
+    })
+    const onEvent = vi.fn()
+    const unsubscribe = apis.subscribe('42', '91', { type: 'character_template' }, onEvent, vi.fn())
+
+    unsubscribe()
+    streamOptions?.onReconnect?.()
+    await Promise.resolve()
+
+    expect(request).not.toHaveBeenCalled()
+    expect(onEvent).not.toHaveBeenCalled()
+  })
+
+  it('重连对账请求完成前取消订阅时不再交付结果', async () => {
+    let streamOptions: EventStreamOptions | undefined
+    let resolveRequest: ((response: Response) => void) | undefined
+    const request = vi.fn(
+      async () =>
+        new Promise<Response>((resolve) => {
+          resolveRequest = resolve
+        }),
+    )
+    const apis = createGenerationApis({
+      baseUrl: 'https://api.test',
+      transport: {
+        request,
+        stream: vi.fn((_url: string, options: NonNullable<typeof streamOptions>) => {
+          streamOptions = options
+          return vi.fn()
+        }),
+      },
+    })
+    const onEvent = vi.fn()
+    const unsubscribe = apis.subscribe('42', '91', { type: 'character_template' }, onEvent, vi.fn())
+
+    streamOptions?.onReconnect?.()
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce())
+    unsubscribe()
+    resolveRequest?.(success(taskData()))
+    await Promise.resolve()
+
+    expect(onEvent).not.toHaveBeenCalled()
+  })
+
+  it('重连对账请求失败前取消订阅时不再报告错误', async () => {
+    let streamOptions: EventStreamOptions | undefined
+    let rejectRequest: ((reason: unknown) => void) | undefined
+    const request = vi.fn(
+      async () =>
+        new Promise<Response>((_resolve, reject) => {
+          rejectRequest = reject
+        }),
+    )
+    const apis = createGenerationApis({
+      baseUrl: 'https://api.test',
+      transport: {
+        request,
+        stream: vi.fn((_url: string, options: NonNullable<typeof streamOptions>) => {
+          streamOptions = options
+          return vi.fn()
+        }),
+      },
+    })
+    const onError = vi.fn()
+    const unsubscribe = apis.subscribe('42', '91', { type: 'character_template' }, vi.fn(), onError)
+
+    streamOptions?.onReconnect?.()
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce())
+    unsubscribe()
+    rejectRequest?.(new Error('network down'))
+    await Promise.resolve()
+
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('重连对账把非 Error 异常归一化后报告', async () => {
+    let streamOptions: EventStreamOptions | undefined
+    const apis = createGenerationApis({
+      baseUrl: 'https://api.test',
+      transport: {
+        request: vi.fn(async () => {
+          throw 'network down'
+        }),
+        stream: vi.fn((_url: string, options: NonNullable<typeof streamOptions>) => {
+          streamOptions = options
+          return vi.fn()
+        }),
+      },
+    })
+    const onError = vi.fn()
+
+    apis.subscribe('42', '91', { type: 'character_template' }, vi.fn(), onError)
+    streamOptions?.onReconnect?.()
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce())
+
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: '重连后任务对账失败' }))
+  })
+
+  it.each([
+    ['running', false],
+    ['failed', true],
+  ] as const)('重连对账到 %s 状态时按终态决定是否停流', async (status, shouldStop) => {
+    let streamOptions: EventStreamOptions | undefined
+    const stopStream = vi.fn()
+    const apis = createGenerationApis({
+      baseUrl: 'https://api.test',
+      transport: {
+        request: vi.fn(async () =>
+          success(
+            taskData({
+              status,
+              result: null,
+              error_message: status === 'failed' ? 'generation failed' : null,
+            }),
+          ),
+        ),
+        stream: vi.fn((_url: string, options: NonNullable<typeof streamOptions>) => {
+          streamOptions = options
+          return stopStream
+        }),
+      },
+    })
+    const onEvent = vi.fn()
+
+    apis.subscribe('42', '91', { type: 'character_template' }, onEvent, vi.fn())
+    streamOptions?.onReconnect?.()
+    await vi.waitFor(() => expect(onEvent).toHaveBeenCalledOnce())
+
+    expect(stopStream).toHaveBeenCalledTimes(shouldStop ? 1 : 0)
+  })
+
   it('从查询结果推断前端阶段，并允许现有三参数订阅继续使用', async () => {
     let streamOptions: EventStreamOptions | undefined
     const task = taskData({
