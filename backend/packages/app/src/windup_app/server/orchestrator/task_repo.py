@@ -28,14 +28,27 @@ from windup_app.server.orchestrator.model import (
 
 logger = logging.getLogger("windup.task_repo")
 
-# EventBus 引用（bootstrap 中绑定，避免循环导入）
-_event_bus = None
+# 任务事件发布器（bootstrap / worker 中绑定，避免循环导入）
+_task_event_publisher = None
+
+
+def bind_task_event_publisher(publisher) -> None:
+    """绑定 TaskEventPublisher（Redis bridge 或测试用 in-process）。"""
+    global _task_event_publisher
+    _task_event_publisher = publisher
 
 
 def bind_event_bus(event_bus) -> None:
-    """绑定 EventBus 实例（bootstrap 中调用）。"""
-    global _event_bus
-    _event_bus = event_bus
+    """兼容旧调用：将 EventBus 包装为 in-process publisher。"""
+    from windup_framework.sse.bridge import InProcessTaskEventBridge
+
+    bind_task_event_publisher(
+        InProcessTaskEventBridge(
+            lambda project_id, task_id, event, data: event_bus.publish(
+                project_id, task_id, event, data,
+            ),
+        ),
+    )
 
 
 # 状态 → SSE 事件名。终态必须用独立事件名:web 层的 stream 靠事件名判断何时收尾
@@ -72,6 +85,21 @@ def terminal_event_for(task: GenerationTask) -> str | None:
     return _STATUS_EVENT.get(task.status.value)
 
 
+def terminal_snapshot(
+    session: Session,
+    task_id: int,
+    project_id: int,
+) -> tuple[str, dict] | None:
+    """若任务已终态，返回 (event, payload)；否则 None。供 SSE heartbeat 查库兜底。"""
+    task = get_task(session, task_id)
+    if task is None or task.project_id != project_id:
+        return None
+    event = terminal_event_for(task)
+    if event is None:
+        return None
+    return event, task_event_payload(task)
+
+
 def _publish_task_update(task_id: int, task: GenerationTask) -> None:
     """将完整 task 推送到 EventBus（若有订阅者）。
 
@@ -81,7 +109,7 @@ def _publish_task_update(task_id: int, task: GenerationTask) -> None:
     静默发出去的话,现象是"任务确实在跑、状态也在落库,但前端进度条一动不动",
     而日志里一行异常都没有。
     """
-    if _event_bus is None:
+    if _task_event_publisher is None:
         return
     if task.project_id is None:
         logger.warning(
@@ -90,7 +118,12 @@ def _publish_task_update(task_id: int, task: GenerationTask) -> None:
         )
         return
     event = _STATUS_EVENT.get(task.status.value, "task_update")
-    _event_bus.publish(task.project_id, task_id, event, task_event_payload(task))
+    _task_event_publisher.publish(
+        task.project_id,
+        task_id,
+        event,
+        task_event_payload(task),
+    )
 
 
 # ── 写入 ─────────────────────────────────────────────────────────────────
@@ -222,6 +255,7 @@ def _deserialize_result(
         return CharacterImageOutput(
             type=raw.get("type", "character_image"),
             image_urls=raw.get("image_urls", []),
+            quality=raw.get("quality"),
         )
     if result_type == "character_action":
         from windup_app.server.orchestrator.model import CharacterActionFrame
@@ -238,5 +272,8 @@ def _deserialize_result(
             type=raw.get("type", "character_action"),
             action_type=raw.get("action_type", ""),
             frames=frames,
+            judge=raw.get("judge"),
+            quality=raw.get("quality"),
+            prompt_version=raw.get("prompt_version"),
         )
     return None

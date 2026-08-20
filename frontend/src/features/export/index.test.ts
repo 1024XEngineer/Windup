@@ -137,6 +137,7 @@ function characterFixture(): Character {
         name: '常态造型',
         description: null,
         previewUrl: 'https://assets.windup.test/outfit.png',
+        model3dUrl: null,
         actions: [
           {
             id: 'idle',

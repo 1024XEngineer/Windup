@@ -16,6 +16,10 @@ function visiblePages(page: number, totalPages: number): number[] {
     .sort((left, right) => left - right)
 }
 
+function positiveInteger(value: number): number {
+  return Number.isFinite(value) ? Math.max(1, Math.floor(value)) : 1
+}
+
 /** 后端分页列表共用的最小翻页控件，不解释具体业务项。 */
 export function Pagination({
   page,
@@ -25,11 +29,13 @@ export function Pagination({
   showPageNumbers = false,
   onPageChange,
 }: PaginationProps) {
-  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const safePage = positiveInteger(page)
+  const safePageSize = positiveInteger(pageSize)
+  const totalPages = Math.max(1, Math.ceil(total / safePageSize))
   if (totalPages === 1) return null
 
   if (showPageNumbers) {
-    const pages = visiblePages(page, totalPages)
+    const pages = visiblePages(safePage, totalPages)
     return (
       <nav
         aria-label="分页"
@@ -39,8 +45,8 @@ export function Pagination({
           type="button"
           aria-label="上一页"
           title="上一页"
-          disabled={disabled || page <= 1}
-          onClick={() => onPageChange(page - 1)}
+          disabled={disabled || safePage <= 1}
+          onClick={() => onPageChange(safePage - 1)}
           className="grid size-8 place-items-center rounded-md border border-app-line text-app-ink-soft disabled:cursor-not-allowed disabled:opacity-40"
         >
           <CaretLeft aria-hidden="true" size={15} weight="bold" />
@@ -57,11 +63,11 @@ export function Pagination({
               <button
                 type="button"
                 aria-label={`第 ${value} 页`}
-                aria-current={value === page ? 'page' : undefined}
+                aria-current={value === safePage ? 'page' : undefined}
                 disabled={disabled}
                 onClick={() => onPageChange(value)}
                 className={`size-8 rounded-md border text-center font-semibold tabular-nums disabled:cursor-not-allowed disabled:opacity-40 ${
-                  value === page
+                  value === safePage
                     ? 'border-app-accent bg-app-accent text-app-on-accent'
                     : 'border-app-line text-app-ink-soft hover:border-app-line-strong'
                 }`}
@@ -75,8 +81,8 @@ export function Pagination({
           type="button"
           aria-label="下一页"
           title="下一页"
-          disabled={disabled || page >= totalPages}
-          onClick={() => onPageChange(page + 1)}
+          disabled={disabled || safePage >= totalPages}
+          onClick={() => onPageChange(safePage + 1)}
           className="grid size-8 place-items-center rounded-md border border-app-line text-app-ink-soft disabled:cursor-not-allowed disabled:opacity-40"
         >
           <CaretRight aria-hidden="true" size={15} weight="bold" />
@@ -91,20 +97,20 @@ export function Pagination({
       <button
         type="button"
         aria-label="上一页"
-        disabled={disabled || page <= 1}
-        onClick={() => onPageChange(page - 1)}
+        disabled={disabled || safePage <= 1}
+        onClick={() => onPageChange(safePage - 1)}
         className="rounded-full border border-app-line px-3 py-1.5 font-semibold text-app-ink-soft disabled:cursor-not-allowed disabled:opacity-40"
       >
         上一页
       </button>
       <span className="tabular-nums text-app-faint">
-        第 {page} / {totalPages} 页 · 共 {total} 项
+        第 {safePage} / {totalPages} 页 · 共 {total} 项
       </span>
       <button
         type="button"
         aria-label="下一页"
-        disabled={disabled || page >= totalPages}
-        onClick={() => onPageChange(page + 1)}
+        disabled={disabled || safePage >= totalPages}
+        onClick={() => onPageChange(safePage + 1)}
         className="rounded-full border border-app-line px-3 py-1.5 font-semibold text-app-ink-soft disabled:cursor-not-allowed disabled:opacity-40"
       >
         下一页

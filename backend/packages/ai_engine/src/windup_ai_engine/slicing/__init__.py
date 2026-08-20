@@ -4,7 +4,8 @@
 loop),一次性动作裁动作区间。像素化 / 对齐 / 打包在 :mod:`..postprocess`。
 
 :mod:`.quality` 原本纯做诊断,现在还兼一份出参职责:交付帧的成色读数
-(``motion_scale`` / ``dead_frame_indices`` / ``loop_seam`` / ``limb_motion``)汇成
+(``motion_scale`` / ``dead_frame_indices`` / ``loop_seam`` / ``limb_motion`` /
+``subject_blobs``)汇成
 ``ports.ActionQuality``。
 注意它**仍然不参与选帧** —— 那条消融结论没变,见 :func:`.loop.pick_cycle`。
 """
@@ -18,7 +19,13 @@ from .oneshot import (
     pick_oneshot,
     split_jump_phases,
 )
-from .quality import dead_frame_indices, limb_motion, loop_seam, motion_scale
+from .quality import (
+    dead_frame_indices,
+    limb_motion,
+    loop_seam,
+    motion_scale,
+    subject_blobs,
+)
 
 __all__ = [
     "extract_frames_bytes",
@@ -30,6 +37,7 @@ __all__ = [
     "limb_motion",
     "loop_seam",
     "motion_scale",
+    "subject_blobs",
     "find_motion_span",
     "first_action_end",
     "foot_line_series",

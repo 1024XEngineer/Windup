@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from io import BytesIO
 from unittest.mock import Mock
 
 import httpx
 import pytest
+from PIL import Image
 
 from windup_app.server.media.model import MediaUploadInput
 from windup_app.server.media.service import ObjectStorageMediaService
@@ -66,17 +68,24 @@ def test_generation_dispatcher_serializes_provider_work():
 
 
 def test_generation_dispatch_starts_only_after_commit(db_session):
-    from windup_app.web.api.generation import _dispatch_after_commit
+    from unittest.mock import Mock
 
-    dispatcher = Mock()
-    target = Mock()
+    from windup_app.web.api.generation import _publish_generation_after_commit
 
-    _dispatch_after_commit(db_session, dispatcher, target, 7, "payload")
-    dispatcher.submit.assert_not_called()
+    publisher = Mock()
+    publisher.enqueue.return_value = "msg-id"
+
+    _publish_generation_after_commit(
+        db_session,
+        publisher,
+        task_id=7,
+        task_type="character_image",
+    )
+    publisher.enqueue.assert_called_once()
+    publisher.register_after_commit.assert_called_once_with(db_session, "msg-id")
+    publisher.flush_to_stream.assert_not_called()
 
     db_session.commit()
-
-    dispatcher.submit.assert_called_once_with(target, 7, "payload")
 
 
 @pytest.mark.parametrize(
@@ -178,20 +187,23 @@ def test_media_upload_uses_validated_download_base(monkeypatch):
     put_data = Mock(return_value=({"key": "uploaded"}, response))
     monkeypatch.setattr(qiniu, "put_data", put_data)
 
+    buffer = BytesIO()
+    Image.new("RGBA", (8, 8), (0, 0, 0, 0)).save(buffer, format="PNG")
+    data = buffer.getvalue()
     metadata = MediaUploadInput(
         filename="character.png",
         content_type="image/png",
-        size=3,
+        size=len(data),
         category=MediaCategory.REFERENCE_IMAGE,
     )
-    result = ObjectStorageMediaService().upload(b"png", metadata)
+    result = ObjectStorageMediaService().upload(data, metadata)
 
     assert result.url == f"https://cdn.example.com/{result.object_key}"
-    auth.upload_token.assert_called_once_with("example-bucket", result.object_key)
-    put_data.assert_called_once_with(
+    assert auth.upload_token.call_count == 2
+    put_data.assert_any_call(
         "upload-token",
         result.object_key,
-        b"png",
+        data,
         mime_type="image/png",
     )
 
@@ -371,11 +383,11 @@ def test_terminal_states_publish_terminal_event_names(status, expected, monkeypa
 
     sent: list[str] = []
 
-    class _Bus:
+    class _Publisher:
         def publish(self, project_id, task_id, event, data):
             sent.append(event)
 
-    monkeypatch.setattr(R, "_event_bus", _Bus())
+    monkeypatch.setattr(R, "_task_event_publisher", _Publisher())
     # 必须带 project_id：EventBus 按 (project_id, task_id) 索引，_publish_task_update
     # 对 project_id 为空的任务会记 warning 并早退（发到没人听的键上等于静默失败）。
     R._publish_task_update(1, GenerationTask(
@@ -548,6 +560,13 @@ def _png(w: int, h: int) -> bytes:
     return buf.getvalue()
 
 
+class _PassthroughMatte:
+    """本文件量的是尺寸,不是抠图。原样返回,让 alpha 不参与断言。"""
+
+    def cutout(self, png: bytes) -> bytes:
+        return png
+
+
 @pytest.mark.parametrize(("want_w", "want_h"), [(512, 512), (256, 384), (1024, 1024)])
 def test_requested_image_size_is_actually_applied(want_w, want_h):
     """入口收下 width/height 并校验过，但 ImageProvider.gen_image 没有尺寸参数。
@@ -567,7 +586,10 @@ def test_requested_image_size_is_actually_applied(want_w, want_h):
             return _png(1024, 1024)          # 模型固定出 1024²
 
     got: list[bytes] = []
-    ex = ImageTaskExecutor(image=_Gen(), upload=lambda b: (got.append(b), "u")[1])
+    ex = ImageTaskExecutor(
+        image=_Gen(), matte=_PassthroughMatte(),
+        upload=lambda b: (got.append(b), "u")[1],
+    )
     ex._produce_image(
         CharacterImageInput(prompt="knight", width=want_w, height=want_h, num_images=1),
         _constraints(),

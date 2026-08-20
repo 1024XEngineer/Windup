@@ -116,6 +116,10 @@ jobs:
           fi
           # tag 可能是上一次跑到一半留下的。已存在且指向同一个提交就沿用,指向别处则是
           # 真冲突,必须报错而不是悄悄挪走别人的 tag。
+          # 附注 tag 要写进 tagger 身份,而 runner 的主机名是 `.(none)`,git 推不出邮箱,
+          # 直接以 128 退出。身份必须显式给,不能指望自动探测。
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if git rev-parse -q --verify "refs/tags/$NEXT" >/dev/null; then
             if [ "$(git rev-parse "refs/tags/$NEXT^{commit}")" != "$(git rev-parse HEAD)" ]; then
               echo "::error::$NEXT 已指向别的提交,不覆盖"; exit 1

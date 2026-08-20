@@ -34,6 +34,11 @@ class AIProviderSettings(BaseSettings):
     chat_model: str = "gpt-4o-mini"
     video_model: str = "kling-v2-5-turbo"
     image_model: str = "gemini-2.5-flash-image"
+    # 判官是**看图的聊天模型**,不是图像生成模型:它要读一张图然后回一段 JSON,而
+    # ``image_model`` 那个型号只会回图;共用一个字段的话,换判官会连带把出图换掉。
+    # 本默认值未在本仓实测过 —— 网关目录里没有它时,``_post`` 的 400/404 分支会指到
+    # ``GET /models`` 去核对。
+    judge_model: str = "gemini-2.5-flash"
 
     @property
     def normalized_base_url(self) -> str:

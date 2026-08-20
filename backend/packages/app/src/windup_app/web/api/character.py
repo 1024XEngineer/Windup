@@ -16,6 +16,7 @@ from windup_framework.db import get_session
 
 from windup_app.server.character.model import Character, CharacterData
 from windup_app.server.character.service import service as character_service
+from windup_app.server.media.service import card_thumbnail_key
 from windup_app.server.media.service import service as media_service
 from windup_app.server.project.model import Project
 from windup_app.server.project.service import service as project_service
@@ -77,14 +78,22 @@ def _extract_object_keys(character: Character) -> list[str]:
     # 参考图
     url = character.reference_image_url
     if url and url.startswith(prefix):
-        keys.append(url[len(prefix) :])
+        key = url[len(prefix) :]
+        keys.append(key)
+        thumbnail_key = card_thumbnail_key(key)
+        if thumbnail_key != key:
+            keys.append(thumbnail_key)
 
     # character_data 内的 URL
     data = character.character_data or {}
     for outfit in data.get("outfits", []):
         url = outfit.get("preview_url")
         if url and url.startswith(prefix):
-            keys.append(url[len(prefix) :])
+            key = url[len(prefix) :]
+            keys.append(key)
+            thumbnail_key = card_thumbnail_key(key)
+            if thumbnail_key != key:
+                keys.append(thumbnail_key)
         for action in outfit.get("actions", []):
             frame_groups = [action.get("frames", [])]
             frame_groups.extend(
