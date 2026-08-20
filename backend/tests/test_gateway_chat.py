@@ -1,10 +1,19 @@
 import json
 import logging
 
+import httpx
+import pytest
+
 from windup_common.enums.model import ModelErrorType
 from windup_framework.config.provider import AIProviderSettings
-from windup_framework.gateway.chat import ChatAdapterResult, ChatGateway
+from windup_framework.gateway.chat import (
+    ChatAdapterResult,
+    ChatGateway,
+    LangChainChatAdapter,
+)
 from windup_framework.gateway.circuit import CircuitBreaker
+from windup_framework.gateway.routes import key_circuit_id, routes_from_settings
+from windup_framework.gateway.types import Scene
 from windup_framework.providers.chat import create_chat_model
 
 UNREACHED = ChatAdapterResult(ok=False, error_type=ModelErrorType.UNREACHED, http_status=522)
@@ -93,3 +102,204 @@ def test_create_chat_model_returns_gateway_without_hand_rolling_protocol():
 
     assert hasattr(chat, "invoke")
     assert chat.__class__.__name__ == "ChatGateway"
+
+
+def _primary_cfg(**kwargs) -> AIProviderSettings:
+    base = dict(
+        chat_model="gpt-4o-mini",
+        api_key="k",
+        route_primary_name="primary",
+        route_primary_base_url="https://api.qnaigc.com/v1",
+        route_primary_api_key="primary-key",
+    )
+    base.update(kwargs)
+    return AIProviderSettings(**base)
+
+
+def test_chat_requires_chat_model():
+    gw = ChatGateway(
+        adapter=FakeChatAdapter({}),
+        circuit=CircuitBreaker(),
+        settings=_primary_cfg(chat_model="", model=""),
+    )
+    with pytest.raises(RuntimeError, match="AI_CHAT_MODEL"):
+        gw.invoke([{"role": "user", "content": "ping"}])
+
+
+def test_chat_skips_when_aggregator_circuit_is_open(caplog):
+    caplog.set_level(logging.INFO, logger="windup.gateway")
+    adapter = FakeChatAdapter({"gpt-4o-mini": [OK]})
+    circuit = CircuitBreaker()
+    circuit.open("aggregator")
+    gw = ChatGateway(adapter=adapter, circuit=circuit, settings=_primary_cfg())
+    with pytest.raises(RuntimeError, match="chat gateway failed"):
+        gw.invoke([{"role": "user", "content": "ping"}])
+    assert adapter.calls == []
+    records = [json.loads(r.message) for r in caplog.records if r.name == "windup.gateway"]
+    assert records[-1]["route_reason"] == "skip_circuit_open"
+    assert records[-1]["circuit_scope"] == "aggregator"
+
+
+def test_chat_skips_open_base_url_to_backup():
+    primary = FakeChatAdapter({"gpt-4o-mini": [OK]})
+    backup = FakeChatAdapter({"gpt-4o-mini": [OK]})
+    cfg = _primary_cfg(
+        route_fallback_name="backup",
+        route_fallback_base_url="https://backup.example.com/v1",
+        route_fallback_api_key="backup-key",
+    )
+    circuit = CircuitBreaker()
+    circuit.open("base_url:primary")
+    gw = ChatGateway(
+        adapter=primary,
+        circuit=circuit,
+        settings=cfg,
+        route_adapters={"primary": primary, "backup": backup},
+    )
+    assert gw.invoke([{"role": "user", "content": "ping"}]) == "pong"
+    assert primary.calls == []
+    assert backup.calls == ["gpt-4o-mini"]
+
+
+def test_chat_fails_when_last_base_url_circuit_is_open():
+    adapter = FakeChatAdapter({"gpt-4o-mini": [OK]})
+    circuit = CircuitBreaker()
+    circuit.open("base_url:primary")
+    gw = ChatGateway(adapter=adapter, circuit=circuit, settings=_primary_cfg())
+    with pytest.raises(RuntimeError, match="chat gateway failed"):
+        gw.invoke([{"role": "user", "content": "ping"}])
+    assert adapter.calls == []
+
+
+def test_chat_skips_open_key_circuit_to_next_key():
+    key_a = FakeChatAdapter({"gpt-4o-mini": [OK]})
+    key_b = FakeChatAdapter({"gpt-4o-mini": [OK]})
+    cfg = _primary_cfg(route_primary_api_keys="key-b")
+    routes = routes_from_settings(cfg, route_group=Scene.CHAT.value)
+    circuit = CircuitBreaker()
+    circuit.open(key_circuit_id(routes[0]))
+    gw = ChatGateway(
+        adapter=key_a,
+        circuit=circuit,
+        settings=cfg,
+        route_adapters={"primary.key0": key_a, "primary.key1": key_b},
+    )
+    assert gw.invoke([{"role": "user", "content": "ping"}]) == "pong"
+    assert key_a.calls == []
+    assert key_b.calls == ["gpt-4o-mini"]
+
+
+def test_chat_falls_back_to_next_model_after_invalid_response():
+    bad = ChatAdapterResult(ok=False, error_type=ModelErrorType.INVALID_RESPONSE)
+    adapter = FakeChatAdapter({
+        "gpt-4o-mini": [bad, bad, bad],
+        "gpt-4o-mini-alt": [OK],
+    })
+    gw = ChatGateway(
+        adapter=adapter,
+        circuit=CircuitBreaker(),
+        settings=_primary_cfg(chat_fallbacks="gpt-4o-mini-alt"),
+    )
+    assert gw.invoke([{"role": "user", "content": "ping"}]) == "pong"
+    assert adapter.calls == ["gpt-4o-mini"] * 3 + ["gpt-4o-mini-alt"]
+
+
+def test_chat_auth_error_fails_without_fallback():
+    auth = ChatAdapterResult(ok=False, error_type=ModelErrorType.AUTH, http_status=401)
+    adapter = FakeChatAdapter({
+        "gpt-4o-mini": [auth],
+        "gpt-4o-mini-alt": [OK],
+    })
+    gw = ChatGateway(
+        adapter=adapter,
+        circuit=CircuitBreaker(),
+        settings=_primary_cfg(chat_fallbacks="gpt-4o-mini-alt"),
+    )
+    with pytest.raises(RuntimeError, match="http_status=401"):
+        gw.invoke([{"role": "user", "content": "ping"}])
+    assert "gpt-4o-mini-alt" not in adapter.calls
+
+
+def test_langchain_adapter_returns_ok(monkeypatch):
+    class _Ok:
+        def __init__(self, **kwargs):
+            pass
+
+        def invoke(self, messages, **kwargs):
+            return "hi"
+
+    monkeypatch.setattr("windup_framework.gateway.chat.ChatOpenAI", _Ok)
+    r = LangChainChatAdapter(_primary_cfg()).invoke([], model="gpt-4o-mini")
+    assert r.ok and r.value == "hi"
+
+
+def test_langchain_adapter_maps_status_code(monkeypatch):
+    class _Boom:
+        def __init__(self, **kwargs):
+            pass
+
+        def invoke(self, messages, **kwargs):
+            err = Exception("quota")
+            err.status_code = 429
+            raise err
+
+    monkeypatch.setattr("windup_framework.gateway.chat.ChatOpenAI", _Boom)
+    r = LangChainChatAdapter(_primary_cfg()).invoke([], model="gpt-4o-mini")
+    assert not r.ok
+    assert r.error_type is ModelErrorType.RATE_LIMIT
+    assert r.http_status == 429
+
+
+def test_langchain_adapter_maps_response_status(monkeypatch):
+    class _Boom:
+        def __init__(self, **kwargs):
+            pass
+
+        def invoke(self, messages, **kwargs):
+            err = Exception("denied")
+            err.response = httpx.Response(401, request=httpx.Request("POST", "https://x"))
+            raise err
+
+    monkeypatch.setattr("windup_framework.gateway.chat.ChatOpenAI", _Boom)
+    r = LangChainChatAdapter(_primary_cfg()).invoke([], model="gpt-4o-mini")
+    assert r.error_type is ModelErrorType.AUTH
+    assert r.http_status == 401
+
+
+def test_langchain_adapter_maps_connect_and_timeout(monkeypatch):
+    req = httpx.Request("POST", "https://x")
+
+    class _Connect:
+        def __init__(self, **kwargs):
+            pass
+
+        def invoke(self, messages, **kwargs):
+            raise httpx.ConnectError("down", request=req)
+
+    monkeypatch.setattr("windup_framework.gateway.chat.ChatOpenAI", _Connect)
+    r = LangChainChatAdapter(_primary_cfg()).invoke([], model="gpt-4o-mini")
+    assert r.error_type is ModelErrorType.UNREACHED
+
+    class _Timeout:
+        def __init__(self, **kwargs):
+            pass
+
+        def invoke(self, messages, **kwargs):
+            raise httpx.ReadTimeout("slow", request=req)
+
+    monkeypatch.setattr("windup_framework.gateway.chat.ChatOpenAI", _Timeout)
+    r = LangChainChatAdapter(_primary_cfg()).invoke([], model="gpt-4o-mini")
+    assert r.error_type is ModelErrorType.TIMEOUT
+
+
+def test_langchain_adapter_unknown_exception_stays_unknown(monkeypatch):
+    class _Boom:
+        def __init__(self, **kwargs):
+            pass
+
+        def invoke(self, messages, **kwargs):
+            raise ValueError("weird")
+
+    monkeypatch.setattr("windup_framework.gateway.chat.ChatOpenAI", _Boom)
+    r = LangChainChatAdapter(_primary_cfg()).invoke([], model="gpt-4o-mini")
+    assert r.error_type is ModelErrorType.UNKNOWN
