@@ -25,6 +25,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import logging
 import re
 import time
 from dataclasses import replace
@@ -37,6 +38,8 @@ from windup_framework.gateway.classify import classify_http, retry_after_seconds
 from windup_framework.gateway.types import AdapterResult
 
 from .interfaces import ImageProvider, VideoProvider
+
+logger = logging.getLogger("windup.providers.sufy")
 
 # 只有 kling-video-o1 走 image_list;v2 系列 / sora 走 input_reference(字段按模型选,塞错任务会 failed)。
 _IMAGE_LIST_MODELS = ("kling-video-o1",)
@@ -430,9 +433,47 @@ DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image"
 # "调用成功但没返回有效图"的下限。返回里可能带一个几十字节的占位串,当图存下去就是一个打不开的文件。
 _MIN_IMAGE_BYTES = 5000
 _CONNECT_RETRIES = 3
+_MAX_RETRY_WAIT = 30.0
 _IMAGE_TIMEOUT_MULTIPLIER = 1.5
 
+# 判官 ``_post`` 自带的 429 / 52x 重试。出图不走这里：Gateway 一次一枪。
+_POST_TRIES = 3
+
+# 521 源站拒绝连接、523 源站不可达都止步于 TCP 层;522 按 Cloudflare 自己的定义含两种
+# 情形 —— 握手没收到 SYN+ACK,以及连接已建立但源站未及时确认请求,后者请求已经写到源站。
+# 所以"重发不会重复计费"是大概率而非保证,重发次数因此要受 _UNREACHED_RESENDS 约束。
+_CLOUDFLARE_UNREACHED_STATUS = frozenset({521, 522, 523})
+_UNREACHED_RESENDS = 2
+
 _DIAGNOSTIC_HEADERS = ("server", "cf-ray", "via", "x-served-by", "retry-after")
+
+
+class _ResendBudget:
+    """跨 _post 的多次调用共享:叠乘的是循环次数,可重复计费的次数不该跟着叠乘。"""
+
+    def __init__(self) -> None:
+        self._left = _UNREACHED_RESENDS
+        self.spent = 0
+
+    def take(self) -> bool:
+        if self._left <= 0:
+            return False
+        self._left -= 1
+        self.spent += 1
+        return True
+
+
+def _retry_exhausted_message(status: int, tries: int, fingerprint: str) -> str:
+    """这条文本常常是线上唯一留下的失败记录,少一样就得靠猜是限流、还是哪一跳断的。"""
+    if status == 429:
+        return (
+            f"图像服务请求过于频繁(HTTP {status})，连发 {tries} 次均被限流；"
+            f"请稍后重试或检查服务商额度；{fingerprint}"
+        )
+    return (
+        f"图像网关未能连上上游(HTTP {status})，已重发 {tries} 次仍未通；"
+        f"再重发有重复计费风险，故停止；{fingerprint}"
+    )
 
 
 def _edge_fingerprint(response: httpx.Response) -> str:
@@ -477,10 +518,10 @@ def _image_result_from_2xx(resp: httpx.Response) -> AdapterResult:
 
 
 class ChatCompletionsFace:
-    """网关 ``/chat/completions`` 面的共用管道:建 client、发请求、判哪些失败可以重发。
+    """网关 ``/chat/completions`` 面的共用管道:建 client、发请求。
 
-    出图与判官共用一份 —— 同一网关同一把 key,限流与 52x 的语义一样;各写一份的话,
-    改一次重试判据要记得改两处,漏掉的那处的代价是重复计费。
+    判官走 ``_post``(自带 429 / 52x 重试);出图走 ``submit_image`` 一次一枪,
+    重试由 Gateway 做。client / 指纹 / 超时倍数仍共用,免得两处配成两套。
     """
 
     # 出图比一次问答慢得多,所以超时按能力放大;判官用基准超时。
@@ -501,6 +542,51 @@ class ChatCompletionsFace:
             transport=httpx.HTTPTransport(retries=_CONNECT_RETRIES),
         )
 
+    def _post(self, client: httpx.Client, body: dict, resends: _ResendBudget) -> dict:
+        """发送请求，只重试大概率没被上游收下的失败(429 与 521/522/523)。
+
+        为什么把 400 / 404 单独挑出来说:同一把 key 下不同网关的模型目录**不一样**。实测
+        ``GET /v1/models``:一个网关 73 个模型、一个图像模型都没有;另一个 134 个、
+        含本模块默认的那个(2026-08-10)。配错 ``AI_BASE_URL`` 时原始报错只是一条
+        404,读的人无从知道该去改配置还是改模型名。
+        """
+        for attempt in range(1, _POST_TRIES + 1):
+            resp = client.post(self._cfg.chat_completions_path, json=body)
+            code = resp.status_code
+            edge = _edge_fingerprint(resp)
+            if code in _CLOUDFLARE_UNREACHED_STATUS and not resends.take():
+                raise RuntimeError(_retry_exhausted_message(code, resends.spent, edge))
+            retryable = code == 429 or code in _CLOUDFLARE_UNREACHED_STATUS
+            if not retryable:
+                if code >= 500:
+                    logger.warning(
+                        "图像服务返回 %d,不重发(无法排除请求已到达上游并计费);%s",
+                        code, edge,
+                    )
+                break
+            if attempt == _POST_TRIES:
+                raise RuntimeError(_retry_exhausted_message(code, _POST_TRIES, edge))
+            delay = _retry_after_seconds(resp.headers.get("Retry-After", ""))
+            if delay is None:
+                delay = min(float(2**attempt), _MAX_RETRY_WAIT)
+            logger.warning(
+                "模型服务返回 %d，第 %d/%d 次请求，%.2f 秒后重试;%s",
+                code,
+                attempt,
+                _POST_TRIES,
+                delay,
+                edge,
+            )
+            time.sleep(delay)
+        if resp.status_code in (400, 404):
+            raise RuntimeError(
+                f"网关 {self._cfg.normalized_base_url} 拒绝了模型 {self._model!r}"
+                f"(HTTP {resp.status_code})。先确认该网关的目录里有它:"
+                f"GET {self._cfg.normalized_base_url}/models —— 不同网关目录不同,"
+                f"同一把 key 也是。原始响应:{resp.text[:200]}"
+            )
+        return resp.raise_for_status().json()
+
     def submit_image(self, prompt: str, refs: list[bytes], model: str) -> AdapterResult:
         """提示词 + 参考图 → 一次 POST → AdapterResult。重试由 Gateway 做。"""
         content: list[dict] = [{"type": "text", "text": prompt}]
@@ -518,34 +604,6 @@ class ChatCompletionsFace:
             return _image_result_from_2xx(resp)
 
         error_type = classify_http(resp.status_code)
-            code = resp.status_code
-            edge = _edge_fingerprint(resp)
-            if code in _CLOUDFLARE_UNREACHED_STATUS and not resends.take():
-                raise RuntimeError(_retry_exhausted_message(code, resends.spent, edge))
-            retryable = code == 429 or code in _CLOUDFLARE_UNREACHED_STATUS
-            if not retryable:
-                # 5xx 一律留指纹:要不要人工重发,取决于失败落在链路的哪一跳。
-                if code >= 500:
-                    logger.warning(
-                        "图像服务返回 %d,不重发(无法排除请求已到达上游并计费);%s",
-                        code, edge,
-                    )
-                break
-            if attempt == _POST_TRIES:
-                raise RuntimeError(_retry_exhausted_message(code, _POST_TRIES, edge))
-            delay = _retry_after_seconds(resp.headers.get("Retry-After", ""))
-            if delay is None:
-                # 上限同样兜住指数退避:上游挂掉时不该把一个图像任务堵成长时间阻塞。
-                delay = min(float(2**attempt), _MAX_RETRY_WAIT)
-            logger.warning(
-                "模型服务返回 %d，第 %d/%d 次请求，%.2f 秒后重试;%s",
-                code,
-                attempt,
-                _POST_TRIES,
-                delay,
-                edge,
-            )
-            time.sleep(delay)
         if resp.status_code in (400, 404):
             edge = (
                 f"网关 {self._cfg.normalized_base_url} 拒绝了模型 {model!r}"
