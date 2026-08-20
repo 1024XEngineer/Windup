@@ -4,9 +4,16 @@ import { Link } from 'react-router'
 import assetLibraryArtwork from '@/assets/workspace/asset-library.png'
 import { projectApis, ProjectHasCharactersError, type Project } from '@/entities'
 import type { Paged } from '@/shared/pagination'
-import { Pagination } from '@/shared/ui'
+import { Pagination, PixelMatrix } from '@/shared/ui'
 
 const PROJECT_PAGE_SIZE = 12
+
+/**
+ * 卡片预览只有两种落点：后端聚合出了图，或这个项目还没有可用素材。
+ * 列表响应已经带上 previewUrl，所以不存在"预览正在请求中"这一态——
+ * 图片自身的解码等待由 ProjectPreviewImage 内部处理，别和这里混为一谈。
+ */
+type ProjectPreviewState = { status: 'ready'; url: string } | { status: 'empty' }
 
 /** 项目中心；项目是角色资产与生成规格的隔离边界。 */
 export function ProjectsPage() {
@@ -181,7 +188,7 @@ function ProjectGallery({
           <ProjectGalleryTile
             key={project.id}
             project={project}
-            previewUrl={project.previewUrl ?? project.sampleImageUrl}
+            preview={projectPreview(project)}
             motionOrder={index}
             onDelete={() => onDelete(project)}
           />
@@ -191,14 +198,19 @@ function ProjectGallery({
   )
 }
 
+function projectPreview(project: Project): ProjectPreviewState {
+  const url = project.previewUrl ?? project.sampleImageUrl
+  return url ? { status: 'ready', url } : { status: 'empty' }
+}
+
 function ProjectGalleryTile({
   project,
-  previewUrl,
+  preview,
   motionOrder,
   onDelete,
 }: {
   project: Project
-  previewUrl: string | null
+  preview: ProjectPreviewState
   motionOrder: number
   onDelete: () => void
 }) {
@@ -218,29 +230,7 @@ function ProjectGalleryTile({
         className="block focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-ink"
       >
         <div className="relative aspect-[16/10] overflow-hidden rounded-[1.25rem] border border-app-line bg-app-surface-muted transition duration-300 group-hover/tile:-translate-y-0.5 group-hover/tile:border-app-line-strong">
-          {previewUrl ? (
-            <img
-              src={previewUrl}
-              alt={`${project.name}的项目预览`}
-              className="h-full w-full object-contain p-6 [image-rendering:pixelated] transition-transform duration-500 group-hover/tile:scale-[1.025]"
-            />
-          ) : (
-            <div className="relative h-full overflow-hidden bg-app-surface-muted">
-              <div
-                aria-hidden="true"
-                className="absolute inset-0 opacity-55"
-                style={{
-                  backgroundImage:
-                    'linear-gradient(to right, var(--color-app-line) 1px, transparent 1px), linear-gradient(to bottom, var(--color-app-line) 1px, transparent 1px)',
-                  backgroundPosition: 'center center',
-                  backgroundSize: '24px 24px',
-                }}
-              />
-              <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-app-surface/85 px-2 py-1 font-mono text-[10px] tracking-[0.06em] text-app-faint backdrop-blur-sm">
-                等待第一份角色资产
-              </span>
-            </div>
-          )}
+          <ProjectPreview projectName={project.name} preview={preview} />
         </div>
         <div className="mt-3 flex min-w-0 items-baseline justify-between gap-4 px-0.5">
           <h3 className="min-w-0 truncate text-sm font-semibold text-app-ink">{project.name}</h3>
@@ -256,6 +246,84 @@ function ProjectGalleryTile({
         ⋯
       </button>
     </article>
+  )
+}
+
+function ProjectPreview({
+  projectName,
+  preview,
+}: {
+  projectName: string
+  preview: ProjectPreviewState
+}) {
+  if (preview.status === 'empty') {
+    return (
+      <ProjectPreviewMessage projectName={projectName}>等待第一份角色资产</ProjectPreviewMessage>
+    )
+  }
+  return <ProjectPreviewImage key={preview.url} projectName={projectName} url={preview.url} />
+}
+
+function ProjectPreviewImage({ projectName, url }: { projectName: string; url: string }) {
+  const [imageState, setImageState] = useState<'loading' | 'ready' | 'error'>('loading')
+
+  if (imageState === 'error') {
+    return (
+      <ProjectPreviewMessage projectName={projectName} tone="error">
+        预览图片无法显示
+      </ProjectPreviewMessage>
+    )
+  }
+
+  return (
+    <div aria-busy={imageState === 'loading'} className="relative h-full">
+      <img
+        src={url}
+        alt={`${projectName}的项目预览`}
+        onLoad={() => setImageState('ready')}
+        onError={() => setImageState('error')}
+        className={`project-preview-image h-full w-full object-contain p-6 [image-rendering:pixelated] group-hover/tile:scale-[1.025] ${
+          imageState === 'ready' ? 'project-preview-image-ready' : ''
+        }`}
+      />
+      {imageState === 'loading' ? <ProjectPreviewLoading projectName={projectName} /> : null}
+    </div>
+  )
+}
+
+/** 只盖在待解码的预览图上；列表响应自带 previewUrl，卡片不会整格停在装载态。 */
+function ProjectPreviewLoading({ projectName }: { projectName: string }) {
+  return (
+    <div
+      role="status"
+      aria-label={`正在装载${projectName}的项目预览`}
+      aria-busy="true"
+      className="project-preview-loading absolute inset-0"
+    >
+      <PixelMatrix coverage="compact" />
+    </div>
+  )
+}
+
+function ProjectPreviewMessage({
+  children,
+  projectName,
+  tone = 'empty',
+}: {
+  children: string
+  projectName: string
+  tone?: 'empty' | 'error'
+}) {
+  return (
+    <div
+      role="status"
+      aria-label={`${projectName}的项目预览：${children}`}
+      aria-busy="false"
+      className={`project-preview-message ${tone === 'error' ? 'project-preview-message-error' : ''}`}
+    >
+      <div aria-hidden="true" className="project-preview-message-grid" />
+      <span>{children}</span>
+    </div>
   )
 }
 

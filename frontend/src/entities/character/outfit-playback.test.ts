@@ -10,6 +10,7 @@ function makeOutfit(frameCount: number): Outfit {
     name: '常态造型',
     description: null,
     previewUrl: null,
+    model3dUrl: null,
     actions: [
       {
         id: 'walk',

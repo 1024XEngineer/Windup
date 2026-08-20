@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 
@@ -22,6 +22,45 @@ function installBackend() {
 }
 
 describe('ProjectsPage', () => {
+  it('keeps the loading surface until the preview image is decoded', async () => {
+    installBackend()
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    const project = await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
+    const preview = await screen.findByRole('img', { name: '点灯人 · MVP的项目预览' })
+    expect(screen.getByRole('status', { name: '正在装载点灯人 · MVP的项目预览' })).toBeTruthy()
+    expect(project.querySelector('[aria-busy="true"]')).toBeTruthy()
+
+    fireEvent.load(preview)
+
+    expect(screen.queryByRole('status', { name: '正在装载点灯人 · MVP的项目预览' })).toBeNull()
+    expect(project.querySelector('[aria-busy="false"]')).toBeTruthy()
+  })
+
+  it('shows an image error when a resolved preview cannot be displayed', async () => {
+    installBackend()
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    const project = await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })
+    const preview = await screen.findByRole('img', { name: '点灯人 · MVP的项目预览' })
+    fireEvent.error(preview)
+
+    expect(await screen.findByText('预览图片无法显示')).toBeTruthy()
+    expect(within(project).queryByText('等待第一份角色资产')).toBeNull()
+  })
+
   it('renders backend Projects as the first browsing level', async () => {
     const backend = installBackend()
     render(

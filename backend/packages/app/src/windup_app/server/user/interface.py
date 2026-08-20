@@ -48,7 +48,8 @@ class UserService(ABC):
         """发送邮箱验证码。
 
         :param purpose: 用途，如 "login" / "register" / "reset_password"。
-        :raises windup_common.exceptions.BizException: 发送频率超限。
+        :raises windup_common.exceptions.BizException: 发送频率超限；
+            或 outbox 落库失败。当场 XADD 失败不视为接口失败。
         """
 
     @abstractmethod

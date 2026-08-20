@@ -33,6 +33,7 @@ const character: Character = {
       name: '常态造型',
       description: null,
       previewUrl: '/master.png',
+      model3dUrl: null,
       actions: [
         {
           id: 'walk',

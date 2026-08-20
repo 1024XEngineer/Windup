@@ -1,0 +1,27 @@
+"""MQ 相关配置。"""
+
+import os
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    return int(raw)
+
+
+STREAM_MAXLEN = _env_int("WINDUP_MQ_STREAM_MAXLEN", 10_000)
+PEL_CLAIM_IDLE_MS = _env_int("WINDUP_MQ_PEL_CLAIM_IDLE_MS", 30 * 60 * 1000)
+MAX_PUBLISH_ATTEMPTS = _env_int("WINDUP_MQ_MAX_PUBLISH_ATTEMPTS", 10)
+MAX_CONSUME_ATTEMPTS = _env_int("WINDUP_MQ_MAX_CONSUME_ATTEMPTS", 5)
+EMAIL_HANDLER_RETRIES = _env_int("WINDUP_MQ_EMAIL_HANDLER_RETRIES", 3)
+GENERATION_PENDING_MAX_AGE_SECONDS = _env_int(
+    "WINDUP_GENERATION_PENDING_MAX_AGE",
+    24 * 3600,
+)
+CONSUME_LEASE_SECONDS = _env_int("WINDUP_MQ_CONSUME_LEASE_SECONDS", 30 * 60)
+GENERATION_RUNNING_STALE_SECONDS = _env_int(
+    "WINDUP_GENERATION_RUNNING_STALE_SECONDS",
+    30 * 60,
+)
+PEL_CLAIM_INTERVAL_SECONDS = _env_int("WINDUP_MQ_PEL_CLAIM_INTERVAL_SECONDS", 30)

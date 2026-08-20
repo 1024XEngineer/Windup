@@ -1,4 +1,5 @@
 import type {
+  ActionPreset,
   Character,
   CharacterApis,
   GenerationApis,
@@ -7,15 +8,18 @@ import type {
   Project,
   ProjectApis,
   CharacterTemplateWorkflowNode,
+  Render3DApis,
   ReviewWorkflowNode,
   WorkflowRun,
   WorkflowRunApis,
 } from '@/entities'
 import {
+  actionPresetApis,
   characterApis,
   createAuthenticatedGenerationApis,
   createMediaApis,
   projectApis,
+  render3DApis,
   workflowRunApis,
 } from '@/entities'
 import { createCharacterAssetPublisher } from '@/features/export'
@@ -36,6 +40,11 @@ export interface WorkflowEditorSession {
   uploadReferenceImage(file: File, signal?: AbortSignal): Promise<MediaReference>
   /** 幂等发布动作资产，并与审核节点的保存作为一个用户命令处理。 */
   publishReviewedAction(reviewNodeId: ReviewWorkflowNode['id']): Promise<Character>
+  /**
+   * 母版预检与建 3D 资产。两者都挂在会话上而不是页面直连适配器，理由与其余能力一致：
+   * 页面只消费会话，替身注入才有单一入口。
+   */
+  render3d: Render3DApis
   subscribeErrors(listener: (error: Error) => void): () => void
   dispose(): void
 }
@@ -46,6 +55,7 @@ export interface RealWorkflowEditorDependencies {
   mediaApis: Pick<MediaApis, 'upload'>
   projectApis: Pick<ProjectApis, 'get'>
   characterApis: Pick<CharacterApis, 'get' | 'listByProject' | 'create' | 'update' | 'remove'>
+  render3d: Render3DApis
   onAsyncError(error: Error): void
 }
 
@@ -143,6 +153,7 @@ export async function createRealWorkflowEditorSession(
     controller,
     project,
     character: loadedCharacter,
+    render3d: dependencies.render3d,
     uploadReferenceImage(file, signal) {
       return dependencies.mediaApis.upload(file, 'reference-image', signal)
     },
@@ -225,8 +236,16 @@ export function createDefaultRealWorkflowEditorSession(
     mediaApis: createMediaApis(),
     projectApis,
     characterApis,
+    render3d: render3DApis,
     onAsyncError: () => undefined,
   })
+}
+
+/**
+ * 读后端的动作预设。和会话走同一条注入路径 —— 页面不直连适配器，替身注入只有这一个入口。
+ */
+export function loadDefaultActionPresets(signal?: AbortSignal): Promise<ActionPreset[]> {
+  return actionPresetApis.list(signal)
 }
 
 async function loadWorkflowCharacter(

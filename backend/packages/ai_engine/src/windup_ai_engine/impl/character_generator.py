@@ -27,11 +27,13 @@ from windup_ai_engine.ports import (
     ProgressPort,
 )
 from windup_ai_engine.postprocess import align_bottom_center, frame_durations
+from windup_ai_engine.prompt import PROMPT_VERSION
 from windup_ai_engine.slicing import (
     dead_frame_indices,
     limb_motion,
     loop_seam,
     motion_scale,
+    subject_blobs,
 )
 from windup_ai_engine.strategy.base import (
     ROUTE_MATRIX,
@@ -197,6 +199,7 @@ class CharacterGenerator(CharacterGeneratorPort):
             frames=[_png(im) for im in aligned],
             durations=frame_durations(action.action.value, len(aligned)),
             quality=quality,
+            prompt_version=PROMPT_VERSION,
         )
 
     def _assess(self, frames: list[Image.Image], action: ActionSpec) -> ActionQuality:
@@ -216,6 +219,7 @@ class CharacterGenerator(CharacterGeneratorPort):
             # 分区动量:整幅指标的盲区补充。自动绑骨漏认一条肢体时那块网格每帧同姿势,
             # 而 motion_scale 与死帧全部正常。
             limbs=limb_motion(frames),
+            subject_blobs=subject_blobs(frames),
         )
 
     def _lastmile(

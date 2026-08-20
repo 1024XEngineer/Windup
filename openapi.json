@@ -1,6 +1,35 @@
 {
   "components": {
     "schemas": {
+      "ActionPresetOut": {
+        "description": "动作预设响应。",
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "label",
+          "name",
+          "description"
+        ],
+        "title": "ActionPresetOut",
+        "type": "object"
+      },
       "ActionType": {
         "description": "角色动作子类型。",
         "enum": [
@@ -176,6 +205,16 @@
               }
             ],
             "title": "Reference Video Url"
+          },
+          "stance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CharacterStance"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "video_model": {
             "anyOf": [
@@ -501,6 +540,16 @@
         "title": "CharacterOutfit",
         "type": "object"
       },
+      "CharacterStance": {
+        "description": "角色体型 —— 决定\"手臂 / 手肘\"这类人体部位词能不能进提示词。\n\n非双足角色的描述里出现\"手臂\",模型会给它凭空接上一对人的上肢来调和文图矛盾,\n而帧数、时长、成色全部正常。成员按\"发力部位不同\"分,每个非双足成员都要在\n``ai_engine.prompt.adapter`` 的替换建议表里有自己那套部位说法,否则拒绝理由\n只能告诉用户\"不行\"、给不出改法。",
+        "enum": [
+          "biped",
+          "quadruped",
+          "serpentine"
+        ],
+        "title": "CharacterStance",
+        "type": "string"
+      },
       "CharacterUpdate": {
         "description": "更新角色请求——所有字段可选。",
         "properties": {
@@ -778,6 +827,65 @@
           "update_at"
         ],
         "title": "InviteCodeOut",
+        "type": "object"
+      },
+      "ListResponse_ActionPresetOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "description": "业务数据列表",
+            "items": {
+              "$ref": "#/components/schemas/ActionPresetOut"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "page": {
+            "default": 1,
+            "description": "当前页码,从 1 开始",
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "default": 0,
+            "description": "每页条数;0 表示不分页(全量)",
+            "minimum": 0.0,
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          },
+          "total": {
+            "default": 0,
+            "description": "数据总数;分页时为查询条件总数,不分页时为 len(data)",
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "ListResponse[ActionPresetOut]",
         "type": "object"
       },
       "ListResponse_CharacterOut_": {
@@ -2306,6 +2414,28 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/action-presets": {
+      "get": {
+        "description": "列出全部动作预设。",
+        "operationId": "list_action_presets_action_presets_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse_ActionPresetOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Action Presets",
+        "tags": [
+          "action-presets"
+        ]
+      }
+    },
     "/auth/change-password": {
       "post": {
         "description": "修改密码。",
