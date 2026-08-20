@@ -16,6 +16,8 @@ import type {
   GenerationExpectation,
   GeneratedImage,
   MediaReference,
+  Project,
+  ProjectApis,
   ReviewWorkflowNode,
   WorkflowActionInput,
   WorkflowCharacterInput,
@@ -26,10 +28,16 @@ import type {
   WorkflowRunApis,
   DirectionalMovement,
 } from '@/entities'
-import { getDirectionProfile } from '@/entities'
-import { IMAGE_CANDIDATE_COUNT, WorkflowRunConflictError } from '@/entities'
+import {
+  getDirectionProfile,
+  IMAGE_CANDIDATE_COUNT,
+  ProjectNameConflictError,
+  WorkflowRunConflictError,
+} from '@/entities'
 
 const COMPLETE_ANIMATION_FRAME_COUNT = 32
+const PROJECT_NAME_MAX_LENGTH = 20
+const QUICK_START_PROJECT_NAME_ATTEMPTS = 100
 
 export interface AddActionInput {
   /** 首帧节点 ID；完整动画和审核节点在此 ID 后追加稳定后缀。 */
@@ -92,6 +100,18 @@ export interface ApplyGenerationResultInput {
   generation: Generation
 }
 
+export type PrepareQuickStartProject = (
+  prompt: string,
+) => Promise<Pick<Project, 'id' | 'spriteSize'> & Partial<Pick<Project, 'directionalMovement'>>>
+
+export interface StartCharacterGenerationInput {
+  prompt: string
+}
+
+export interface StartCharacterGenerationResult {
+  runId: WorkflowRun['id']
+}
+
 export interface CreateWorkflowControllerOptions {
   /** 已从 WorkflowRunApis.get 取回的运行记录；不传时只能先调用 create。 */
   workflow?: WorkflowRun
@@ -99,6 +119,8 @@ export interface CreateWorkflowControllerOptions {
   generationApis: GenerationApis
   createId?: () => string
   now?: () => string
+  /** 只有纯文本入口需要；调用时机仍由 Controller 的生成命令持有。 */
+  prepareProject?: PrepareQuickStartProject
   /** SSE 回调无法 await，异步保存错误通过此处交给装配层展示或记录。 */
   onAsyncError: (error: Error) => void
   /** 项目方向模式；缺省按旧单向 WorkflowRun 兼容。 */
@@ -113,6 +135,10 @@ export interface CreateWorkflowControllerOptions {
  */
 export interface WorkflowController {
   create(input: CreateWorkflowRunInput): Promise<void>
+  /** 从纯文本入口创建一条 Run 并提交角色母版生成；提交后不参与后续流程。 */
+  startCharacterGeneration(
+    input: StartCharacterGenerationInput,
+  ): Promise<StartCharacterGenerationResult>
   /** 页面首次读取当前快照；后续变化统一通过 subscribe 接收。 */
   getWorkflow(): WorkflowRun
   subscribe(listener: (workflow: WorkflowRun) => void): () => void
@@ -205,12 +231,54 @@ interface PendingGenerationAttachment {
   generation: Generation
 }
 
+function boundedProjectName(value: string, maxLength: number): string {
+  const characters = Array.from(value)
+  return characters.length > maxLength
+    ? `${characters.slice(0, maxLength - 1).join('')}…`
+    : characters.join('')
+}
+
+export function createAutoPrepareProject(
+  projectApis: Pick<ProjectApis, 'create'>,
+): PrepareQuickStartProject {
+  return async (prompt) => {
+    const normalizedPrompt = prompt.trim().replace(/\s+/gu, ' ') || '未命名项目'
+    let lastConflict: unknown
+
+    for (let sequence = 1; sequence <= QUICK_START_PROJECT_NAME_ATTEMPTS; sequence += 1) {
+      const suffix = sequence === 1 ? '' : ` ${sequence}`
+      const maxBaseLength = PROJECT_NAME_MAX_LENGTH - Array.from(suffix).length
+      const base = boundedProjectName(normalizedPrompt, maxBaseLength)
+
+      try {
+        const project = await projectApis.create({
+          name: `${base}${suffix}`,
+          perspective: 'side',
+          directionalMovement: 'single',
+          spriteSize: { width: 256, height: 256 },
+        })
+        return {
+          id: project.id,
+          spriteSize: project.spriteSize,
+          directionalMovement: project.directionalMovement,
+        }
+      } catch (error) {
+        if (!(error instanceof ProjectNameConflictError)) throw error
+        lastConflict = error
+      }
+    }
+
+    throw lastConflict
+  }
+}
+
 export function createWorkflowController({
   workflow,
   workflowRunApis,
   generationApis,
   createId = createBrowserSafeId,
   now = () => new Date().toISOString(),
+  prepareProject,
   onAsyncError,
   directionalMovement = 'single',
 }: CreateWorkflowControllerOptions): WorkflowController {
@@ -313,6 +381,47 @@ export function createWorkflowController({
 
   function getWorkflow() {
     return snapshot()
+  }
+
+  async function startCharacterGeneration({
+    prompt,
+  }: StartCharacterGenerationInput): Promise<StartCharacterGenerationResult> {
+    ensureRunning()
+    if (!prepareProject) {
+      throw new Error('WorkflowController 未配置 Quick Start 项目准备能力')
+    }
+    const normalizedPrompt = nonEmpty(prompt, '角色描述')
+    const project = await prepareProject(normalizedPrompt)
+    await create({
+      projectId: project.id,
+      nodes: [
+        {
+          id: 'character-setup',
+          type: 'character-setup',
+          status: 'active',
+          phase: 'configuring',
+          dependsOnNodeIds: [],
+          generations: [],
+          error: null,
+          input: { prompt: normalizedPrompt, referenceMedia: [] },
+        },
+        {
+          id: 'character-template',
+          type: 'character-template',
+          status: 'locked',
+          phase: 'ready',
+          dependsOnNodeIds: ['character-setup'],
+          generations: [],
+          error: null,
+          selectedImageUrl: null,
+        },
+      ],
+    })
+    await generateCharacterTemplate('character-setup', {
+      spriteWidth: project.spriteSize.width,
+      spriteHeight: project.spriteSize.height,
+    })
+    return { runId: requireWorkflow().id }
   }
 
   function setCharacterName(
@@ -1580,6 +1689,7 @@ export function createWorkflowController({
 
   return {
     create: asCommand(create),
+    startCharacterGeneration,
     getWorkflow,
     subscribe,
     setCharacterName: asCommand(setCharacterName),

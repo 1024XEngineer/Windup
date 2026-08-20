@@ -3,7 +3,6 @@ import {
   createGenerationApis,
   createMediaApis,
   projectApis,
-  ProjectNameConflictError,
   workflowRunApis,
   characterTemplateImages,
   characterTemplatesFromImages,
@@ -24,14 +23,17 @@ import {
 } from '@/entities'
 import { getApiAccessToken, recoverApiUnauthorized, resolveApiBaseUrl } from '@/shared/api'
 import { createEventStreamSubscriber } from '@/shared/api/stream'
-import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
+import {
+  createAutoPrepareProject,
+  createWorkflowController,
+  type PrepareQuickStartProject,
+  type WorkflowController,
+} from '@/features/workflow-controller'
 import { createProgressiveExportModel, type ExportPackageModel } from '@/features/export-package'
 import { createActionSequences } from '@/features/export'
 
-/** 页面不直接拼接后端字段；只负责准备项目约束。 */
-export type PrepareQuickStartProject = (
-  prompt: string,
-) => Promise<Pick<Project, 'id' | 'spriteSize'> & Partial<Pick<Project, 'directionalMovement'>>>
+export { createAutoPrepareProject }
+export type { PrepareQuickStartProject }
 
 export interface QuickStartFrame {
   index: number
@@ -120,8 +122,6 @@ export interface CreateQuickStartServiceOptions {
 
 type GeneratableActionType = 'idle' | 'walk' | 'jump' | 'attack' | 'custom'
 
-const PROJECT_NAME_MAX_LENGTH = 20
-const QUICK_START_PROJECT_NAME_ATTEMPTS = 100
 const ACTION_DISPLAY_NAME_MAX_LENGTH = 20
 
 function boundedDisplayName(value: string, maxLength: number): string {
@@ -1062,39 +1062,6 @@ export function createQuickStartService({
       projectDirectionalMovements.set(project.id, project.directionalMovement)
       return createSession(createController(run, project.directionalMovement), project.spriteSize)
     },
-  }
-}
-
-export function createAutoPrepareProject(projectApis: ProjectApis): PrepareQuickStartProject {
-  return async (prompt) => {
-    const normalizedPrompt = prompt.trim().replace(/\s+/gu, ' ') || '未命名项目'
-    let lastConflict: unknown
-
-    for (let sequence = 1; sequence <= QUICK_START_PROJECT_NAME_ATTEMPTS; sequence += 1) {
-      // 首次名称不预留编号空间；只有重名时才缩短前缀，为可读编号让出 20 字上限。
-      const suffix = sequence === 1 ? '' : ` ${sequence}`
-      const maxBaseLength = PROJECT_NAME_MAX_LENGTH - Array.from(suffix).length
-      const base = boundedDisplayName(normalizedPrompt, maxBaseLength)
-
-      try {
-        const project = await projectApis.create({
-          name: `${base}${suffix}`,
-          perspective: 'side',
-          directionalMovement: 'single',
-          spriteSize: { width: 256, height: 256 },
-        })
-        return {
-          id: project.id,
-          spriteSize: project.spriteSize,
-          directionalMovement: project.directionalMovement,
-        }
-      } catch (error) {
-        if (!(error instanceof ProjectNameConflictError)) throw error
-        lastConflict = error
-      }
-    }
-
-    throw lastConflict
   }
 }
 

@@ -258,6 +258,59 @@ async function flushAsyncWork() {
 }
 
 describe('WorkflowController', () => {
+  it('从角色描述创建两节点 Run 并提交母版生成', async () => {
+    const workflow = createWorkflowApis()
+    const generation = createGenerationHarness()
+    const prepareProject = vi.fn(async () => ({
+      id: 'project-agent',
+      spriteSize: { width: 256, height: 256 },
+    }))
+    const controller = createWorkflowController({
+      workflowRunApis: workflow.apis,
+      generationApis: generation.apis,
+      prepareProject,
+      onAsyncError: () => undefined,
+    })
+
+    await expect(
+      controller.startCharacterGeneration({ prompt: '  银发像素骑士  ' }),
+    ).resolves.toEqual({ runId: 'run-1' })
+
+    expect(prepareProject).toHaveBeenCalledWith('银发像素骑士')
+    expect(workflow.apis.create).toHaveBeenCalledWith({
+      projectId: 'project-agent',
+      nodes: [
+        expect.objectContaining({
+          id: 'character-setup',
+          type: 'character-setup',
+          input: { prompt: '银发像素骑士', referenceMedia: [] },
+        }),
+        expect.objectContaining({
+          id: 'character-template',
+          type: 'character-template',
+          dependsOnNodeIds: ['character-setup'],
+        }),
+      ],
+    })
+    expect(generation.apis.create).toHaveBeenCalledWith({
+      type: 'character_template',
+      projectId: 'project-agent',
+      prompt: '银发像素骑士',
+      referenceMedia: [],
+      spriteWidth: 256,
+      spriteHeight: 256,
+      direction: 'east',
+    })
+  })
+
+  it('未注入项目准备能力时拒绝 Quick Start 生成命令', async () => {
+    const { controller } = createController()
+
+    await expect(controller.startCharacterGeneration({ prompt: '银发像素骑士' })).rejects.toThrow(
+      'WorkflowController 未配置 Quick Start 项目准备能力',
+    )
+  })
+
   it('只在角色设定节点仍处于配置阶段时更新提示词和参考媒体', async () => {
     const { controller } = createController()
 
