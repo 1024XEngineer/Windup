@@ -7,6 +7,11 @@ export interface EventStreamOptions {
   onEvent(data: string, eventName: string): boolean
   /** 包含连接中断、非法响应和业务解析器抛出的错误。 */
   onError(error: Error): void
+  /**
+   * 断线后重新建立连接时触发，首次连接不触发。
+   * 传输层不补发断线窗口内的事件，业务层收到后应自行对账当前状态。
+   */
+  onReconnect?(): void
 }
 
 export type EventStreamSubscriber = (url: string, options: EventStreamOptions) => () => void
@@ -116,6 +121,18 @@ async function readEventStream(response: Response, options: EventStreamOptions):
   }
 }
 
+const MAX_RECONNECT_DELAY_MS = 30_000
+
+/**
+ * 指数退避加抖动。服务端整体不可用时，固定间隔会让所有在线页面以同一节奏
+ * 持续重试；抖动把它们的重连时刻打散，退避把总量压下来。
+ */
+function reconnectDelay(baseDelayMs: number, failures: number): number {
+  if (baseDelayMs <= 0) return 0
+  const backoff = Math.min(baseDelayMs * 2 ** failures, MAX_RECONNECT_DELAY_MS)
+  return Math.round(backoff * (0.5 + Math.random() * 0.5))
+}
+
 function waitForReconnect(delayMs: number, signal: AbortSignal): Promise<void> {
   if (delayMs <= 0 || signal.aborted) return Promise.resolve()
   return new Promise((resolve) => {
@@ -142,9 +159,15 @@ export function createEventStreamSubscriber(
   return (url, options) => {
     const controller = new AbortController()
     let attemptedUnauthorizedRecovery = false
+    let attempted = false
+    let failures = 0
 
     const run = async () => {
       while (!controller.signal.aborted) {
+        // 重连判定放在发起请求之前：首次连接就失败、由重试建立起来的流，
+        // 同样错过了断线窗口内的事件。
+        const reconnecting = attempted
+        attempted = true
         try {
           const headers = new Headers({ Accept: 'text/event-stream' })
           const accessToken = config.getAccessToken()
@@ -181,6 +204,9 @@ export function createEventStreamSubscriber(
             throw new EventStreamError('SSE 响应类型无效')
           }
           attemptedUnauthorizedRecovery = false
+          if (reconnecting) options.onReconnect?.()
+          // 流建立成功即视为服务端恢复，退避从头算起。
+          failures = 0
           const terminal = await readEventStream(response, options)
           if (terminal || controller.signal.aborted) return
           throw connectionError()
@@ -189,7 +215,8 @@ export function createEventStreamSubscriber(
           const error = asError(cause)
           options.onError(error)
           if (!(error instanceof EventStreamError) || !error.retryable) return
-          await waitForReconnect(reconnectDelayMs, controller.signal)
+          await waitForReconnect(reconnectDelay(reconnectDelayMs, failures), controller.signal)
+          failures += 1
         }
       }
     }
