@@ -567,6 +567,9 @@ describe('QuickStartPage', () => {
       renderStateFixture(state)
 
       const canvas = await screen.findByRole('img', { name: label })
+      expect(canvas.getAttribute('data-generation-preview')).toBe('true')
+      expect(canvas.getAttribute('data-generation-preview-size')).toBe('candidate')
+      expect(canvas.getAttribute('data-generation-preview-radius')).toBe('output')
       expect(canvas.getAttribute('data-generation-state')).toBe('generating')
       expect(canvas.getAttribute('data-generation-motion')).toBe('continuous')
       expect(canvas.querySelectorAll('[data-pixel-matrix-dot]')).toHaveLength(432)
@@ -610,8 +613,8 @@ describe('QuickStartPage', () => {
 
     await act(async () => undefined)
     const progress = screen.getByLabelText(label)
+    expect(progress.className).toContain('generation-progress-copy')
     expect(progress.getAttribute('data-copy-motion-mode')).toBe('characters')
-    expect(progress.className).toContain('quick-start-generation-shimmer')
     expect(progress.textContent).toBe(messages[0])
     expect(progress.getAttribute('data-copy-phase')).toBe('entering')
 
