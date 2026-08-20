@@ -275,4 +275,40 @@ describe('cocos-target', () => {
       'Walk-north',
     ])
   })
+
+  it('rejects metadata and plan action-count drift before creating a manifest', async () => {
+    const context = buildContext()
+
+    await expect(cocosCreatorTarget.createFiles({ ...context, plan: [] })).rejects.toThrow(
+      'meta.json 动作数量 1 与 plan 数量 0 不一致',
+    )
+  })
+
+  it('rejects a sparse plan entry instead of producing a misaligned action', async () => {
+    const context = buildContext()
+    const sparsePlan = new Array<PlannedSequence>(1)
+
+    await expect(cocosCreatorTarget.createFiles({ ...context, plan: sparsePlan })).rejects.toThrow(
+      'meta.json 缺少第 0 个 plan 动作',
+    )
+  })
+
+  it('uses a null duration when metadata contains a frame absent from the plan', async () => {
+    const context = buildContext()
+    const metadata = {
+      ...context.metadata,
+      actions: context.metadata.actions.map((action) => ({
+        ...action,
+        frames: [...action.frames, { index: 4, file: 'Walk-default_004.png' }],
+      })),
+    }
+    const files = await cocosCreatorTarget.createFiles({ ...context, metadata })
+    const manifest = JSON.parse(String(files[0]?.data))
+
+    expect(manifest.actions[0].frames[4]).toEqual({
+      index: 4,
+      file: 'Walk-default_004.png',
+      duration_ms: null,
+    })
+  })
 })

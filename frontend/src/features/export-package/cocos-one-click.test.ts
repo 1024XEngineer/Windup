@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { AssetExportResult } from './asset-export'
 import type { CocosBridgeApi, CocosImportCache, CocosOneClickPhase } from './cocos-one-click'
@@ -56,6 +56,10 @@ const packageResult: AssetExportResult = {
   blob: new Blob(['zip'], { type: 'application/zip' }),
   filename: 'windup-Hero.zip',
 }
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('importIntoCocos', () => {
   it('checks Creator, exports once, uploads and returns the completed result', async () => {
@@ -203,6 +207,131 @@ describe('importIntoCocos', () => {
         },
       ),
     ).resolves.toMatchObject({ projectName: 'Game' })
+  })
+
+  it('accepts a supported Creator prerelease suffix', async () => {
+    await expect(
+      importIntoCocos(
+        model(),
+        bridge({
+          health: async () => ({
+            protocol: 'windup-cocos-bridge/1.0.0',
+            creatorVersion: '3.8.8-beta.1',
+            projectName: 'Game',
+            projectOpen: true,
+            paired: true,
+          }),
+        }),
+        () => undefined,
+        { exporter: async () => packageResult, pollDelay: async () => undefined },
+      ),
+    ).resolves.toMatchObject({ projectName: 'Game' })
+  })
+
+  it.each([null, '4.8.8', '3.7.8'])('rejects incompatible Creator version %s', async (version) => {
+    await expect(
+      importIntoCocos(
+        model(),
+        bridge({
+          health: async () => ({
+            protocol: 'windup-cocos-bridge/1.0.0',
+            creatorVersion: version,
+            projectName: 'Game',
+            projectOpen: true,
+            paired: true,
+          }),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'VERSION_UNSUPPORTED' })
+  })
+
+  it('reports every plugin phase while a job advances', async () => {
+    const phases: CocosOneClickPhase[] = []
+    const pendingPhases = ['queued', 'validating', 'converting', 'writing', 'refreshing'] as const
+    let call = 0
+    const api = bridge({
+      getJob: async () => {
+        const phase = pendingPhases[call]
+        call += 1
+        if (phase === undefined) return completedJob()
+        return {
+          protocol: 'windup-cocos-bridge/1.0.0',
+          jobId: 'job-1',
+          status: phase === 'queued' ? 'queued' : 'running',
+          phase,
+        }
+      },
+    })
+
+    await importIntoCocos(model(), api, (phase) => phases.push(phase), {
+      exporter: async () => packageResult,
+      pollDelay: async () => undefined,
+    })
+
+    expect(phases).toEqual([
+      'detecting',
+      'uploading',
+      'queued',
+      'validating',
+      'converting',
+      'writing',
+      'refreshing',
+      'verifying',
+    ])
+  })
+
+  it('rejects a completed job that omits its import result', async () => {
+    const completedWithoutResult = completedJob()
+    delete completedWithoutResult.result
+
+    await expect(
+      importIntoCocos(
+        model(),
+        bridge({ getJob: async () => completedWithoutResult }),
+        () => undefined,
+        { exporter: async () => packageResult, pollDelay: async () => undefined },
+      ),
+    ).rejects.toThrow('Creator 插件未返回导入结果')
+  })
+
+  it('uses stable failure details when a failed job omits its error payload', async () => {
+    const failedWithoutError = completedJob()
+    failedWithoutError.status = 'failed'
+    failedWithoutError.phase = 'converting'
+    delete failedWithoutError.result
+
+    await expect(
+      importIntoCocos(
+        model(),
+        bridge({ getJob: async () => failedWithoutError }),
+        () => undefined,
+        { exporter: async () => packageResult, pollDelay: async () => undefined },
+      ),
+    ).rejects.toMatchObject({
+      message: 'Cocos 导入失败',
+      jobCode: 'IMPORT_FAILED',
+      phase: 'converting',
+      rolledBack: false,
+    })
+  })
+
+  it('uses the default polling delay when no custom delay is supplied', async () => {
+    vi.useFakeTimers()
+    const running = completedJob()
+    running.status = 'running'
+    running.phase = 'queued'
+    delete running.result
+
+    const promise = importIntoCocos(
+      model(),
+      bridge({ getJob: async () => running }),
+      () => undefined,
+      { exporter: async () => packageResult, maxPolls: 1 },
+    )
+    const rejection = expect(promise).rejects.toThrow('等待 Cocos 导入完成超时')
+    await vi.advanceTimersByTimeAsync(500)
+
+    await rejection
   })
 
   it('reports the plugin failure and whether the previous asset was restored', async () => {

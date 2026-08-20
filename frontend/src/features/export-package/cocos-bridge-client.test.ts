@@ -82,6 +82,23 @@ describe('CocosBridgeClient', () => {
     })
   })
 
+  it('accepts a paired Creator health response without a project name', async () => {
+    const fetch: typeof globalThis.fetch = async () =>
+      json({
+        protocol: COCOS_BRIDGE_PROTOCOL,
+        creatorVersion: '3.8.8',
+        projectName: null,
+        projectOpen: false,
+        paired: true,
+      })
+
+    await expect(new CocosBridgeClient(options(fetch)).health()).resolves.toMatchObject({
+      projectName: null,
+      projectOpen: false,
+      paired: true,
+    })
+  })
+
   it('stores the issued token after a valid one-time pairing code', async () => {
     const storage = new MemoryStorage()
     const fetch: typeof globalThis.fetch = async (input, init) => {
@@ -244,6 +261,72 @@ describe('CocosBridgeClient', () => {
 
     await expect(client.getJob('job-3')).rejects.toMatchObject({ code: 'IMPORT_FAILED' })
   })
+
+  it.each([
+    {
+      name: 'non-object health body',
+      body: [] as unknown,
+      message: 'health 返回格式错误',
+    },
+    {
+      name: 'empty Creator version',
+      body: {
+        protocol: COCOS_BRIDGE_PROTOCOL,
+        creatorVersion: '',
+        projectName: 'Game',
+        projectOpen: true,
+        paired: true,
+      },
+      message: 'health.creatorVersion 必须是非空字符串',
+    },
+    {
+      name: 'non-boolean pairing state',
+      body: { protocol: COCOS_BRIDGE_PROTOCOL, paired: 'yes' },
+      message: 'health.paired 必须是布尔值',
+    },
+  ])('rejects $name at the health boundary', async ({ body, message }) => {
+    const client = new CocosBridgeClient(options(async () => json(body)))
+
+    await expect(client.health()).rejects.toThrow(message)
+  })
+
+  it('rejects non-numeric import totals instead of accepting a corrupt result', async () => {
+    const storage = new MemoryStorage()
+    storage.setItem('windup:cocos-bridge:token:v1', 'token')
+    const client = new CocosBridgeClient(
+      options(
+        async () =>
+          json({
+            protocol: COCOS_BRIDGE_PROTOCOL,
+            jobId: 'job-bad-total',
+            status: 'completed',
+            phase: 'verifying',
+            result: {
+              projectName: 'Game',
+              dbUrl: 'db://assets/result.prefab',
+              animationCount: null,
+              frameCount: 64,
+            },
+          }),
+        storage,
+      ),
+    )
+
+    await expect(client.getJob('job-bad-total')).rejects.toThrow(
+      'job.result.animationCount 必须是数字',
+    )
+  })
+
+  it.each([{ message: '' }, null])(
+    'uses a stable fallback when an HTTP error has no usable message: %j',
+    async (body) => {
+      const storage = new MemoryStorage()
+      storage.setItem('windup:cocos-bridge:token:v1', 'token')
+      const client = new CocosBridgeClient(options(async () => json(body, 500), storage))
+
+      await expect(client.getJob('job-1')).rejects.toThrow('Cocos 导入失败')
+    },
+  )
 
   it('rejects a bridge using another protocol version', async () => {
     const client = new CocosBridgeClient(
