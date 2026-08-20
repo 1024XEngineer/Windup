@@ -1463,21 +1463,24 @@ function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInpu
   return <p className={CARD_SUMMARY}>{label}</p>
 }
 
-function generationPreviewLabel(node: WorkflowNode) {
+type GenerationFeedbackNode = Extract<
+  WorkflowNode,
+  { type: 'character-template' | 'action-first-frame' | 'action-full-frame' }
+>
+
+function generationPreviewLabel(node: GenerationFeedbackNode) {
   if (node.type === 'character-template') return '身份母版生成预览'
   if (node.type === 'action-first-frame') return '动作首帧生成预览'
-  if (node.type === 'action-full-frame') return '完整动作生成预览'
-  return '生成任务预览'
+  return '完整动作生成预览'
 }
 
-function generationProgressLabel(node: WorkflowNode) {
+function generationProgressLabel(node: GenerationFeedbackNode) {
   if (node.type === 'character-template') return '身份母版生成进度'
   if (node.type === 'action-first-frame') return '动作首帧生成进度'
-  if (node.type === 'action-full-frame') return '完整动作生成进度'
-  return '生成任务进度'
+  return '完整动作生成进度'
 }
 
-function generationProgressKind(node: WorkflowNode): GenerationProgressKind {
+function generationProgressKind(node: GenerationFeedbackNode): GenerationProgressKind {
   if (node.type === 'action-first-frame') return 'action-first-frame'
   if (node.type === 'action-full-frame') return 'action-full-frame'
   return 'character-template'
