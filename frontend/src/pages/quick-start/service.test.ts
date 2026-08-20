@@ -464,9 +464,9 @@ describe('createQuickStartService', () => {
   })
 
   it.each([
-    ['north', '缺少north方向角色候选图'],
-    ['south', '缺少south方向角色候选图'],
-  ] as const)('四向母版确认拒绝缺失的 %s 候选', async (missing, message) => {
+    ['north', { east: 'east-1.png', south: 'south-1.png' }, '缺少north方向的用户选择'],
+    ['south', { east: 'east-1.png', north: 'north-1.png' }, '缺少south方向的用户选择'],
+  ] as const)('四向母版确认拒绝缺失的 %s 方向用户选择', async (missing, selections, message) => {
     const run: WorkflowRun = {
       id: `run-missing-${missing}-template`,
       projectId: 'project-1',
@@ -516,7 +516,7 @@ describe('createQuickStartService', () => {
     })
     const session = await service.open(run.id)
 
-    await expect(session.confirmCandidate('east-1.png', '')).rejects.toThrow(message)
+    await expect(session.confirmCandidate(selections, '')).rejects.toThrow(message)
   })
 
   it('四向首帧确认拒绝缺失的同方向候选', async () => {
@@ -557,9 +557,9 @@ describe('createQuickStartService', () => {
     })
     const session = await service.open(run.id)
 
-    await expect(session.confirmFirstFrame('east-1.png')).rejects.toThrow(
-      '缺少north方向动作首帧候选图',
-    )
+    await expect(
+      session.confirmFirstFrame({ east: 'east-1.png', south: 'south-1.png' }),
+    ).rejects.toThrow('缺少north方向的用户选择')
   })
 
   it('继续上传母版时拒绝没有可用造型的已有角色', async () => {
@@ -1029,7 +1029,9 @@ describe('createQuickStartService', () => {
 
     const session = await service.open(run.id)
     await session.resume()
-    await expect(session.getTemplateCandidates()).resolves.toEqual(['template.png'])
+    await expect(session.getTemplateCandidates()).resolves.toEqual([
+      { direction: 'east', index: 0, imageUrl: 'template.png' },
+    ])
     await expect(session.getActionFrames()).resolves.toEqual([
       { index: 7, imageUrl: 'frame-7.png', durationMs: 83 },
       { index: 9, imageUrl: 'frame-9.png', durationMs: null },
@@ -1558,8 +1560,8 @@ describe('createQuickStartService', () => {
     const started = await service.start('像素骑士')
     await vi.waitFor(async () => {
       await expect(started.getTemplateCandidates()).resolves.toEqual([
-        'candidate.png',
-        'candidate-2.png',
+        { direction: 'east', index: 0, imageUrl: 'candidate.png' },
+        { direction: 'east', index: 1, imageUrl: 'candidate-2.png' },
       ])
     })
 
@@ -1586,7 +1588,7 @@ describe('createQuickStartService', () => {
     )
   })
 
-  it('四向候选确认后持久化各方向母版并自动生成各方向动作', async () => {
+  it('四向候选由用户逐方向确认后才生成各方向动作', async () => {
     const tasks = new Map<string, Awaited<ReturnType<GenerationApis['create']>>>()
     let sequence = 0
     const generationApis: GenerationApis = {
@@ -1648,37 +1650,75 @@ describe('createQuickStartService', () => {
     const session = await service.start('四向骑士')
     await vi.waitFor(async () => {
       await expect(session.getTemplateCandidates()).resolves.toEqual([
-        'east-character_template-1.png',
-        'east-character_template-2.png',
+        { direction: 'east', index: 0, imageUrl: 'east-character_template-1.png' },
+        { direction: 'east', index: 1, imageUrl: 'east-character_template-2.png' },
+        { direction: 'north', index: 0, imageUrl: 'north-character_template-1.png' },
+        { direction: 'north', index: 1, imageUrl: 'north-character_template-2.png' },
+        { direction: 'south', index: 0, imageUrl: 'south-character_template-1.png' },
+        { direction: 'south', index: 1, imageUrl: 'south-character_template-2.png' },
       ])
     })
+    const selectedTemplates = {
+      east: 'east-character_template-2.png',
+      north: 'north-character_template-2.png',
+      south: 'south-character_template-2.png',
+    }
+    const confirmTemplates = session.confirmCandidate as unknown as (
+      selectedImages: typeof selectedTemplates,
+      actionDescription: string,
+    ) => Promise<WorkflowRun>
     const updateCharacter = vi.mocked(characterApis.update)
     const persistCharacter = updateCharacter.getMockImplementation()!
     updateCharacter
       .mockImplementationOnce(persistCharacter)
       .mockRejectedValueOnce(new Error('direction templates write failed'))
-    await expect(session.confirmCandidate('east-character_template-1.png', '挥手')).rejects.toThrow(
+    await expect(confirmTemplates(selectedTemplates, '挥手')).rejects.toThrow(
       'direction templates write failed',
     )
     expect(
       session.getWorkflow().nodes.find((node) => node.type === 'character-template'),
     ).toMatchObject({ status: 'active', phase: 'selecting' })
 
-    await session.confirmCandidate('east-character_template-1.png', '挥手')
+    await confirmTemplates(selectedTemplates, '挥手')
 
-    await vi.waitFor(() => {
-      const animationCalls = vi
-        .mocked(generationApis.create)
-        .mock.calls.map(([input]) => input)
-        .filter((input) => input.type === 'complete_animation')
-      expect(animationCalls).toHaveLength(3)
+    await vi.waitFor(async () => {
+      await expect(session.getFirstFrameCandidates()).resolves.toEqual([
+        { direction: 'east', index: 0, imageUrl: 'east-first_frame-1.png' },
+        { direction: 'east', index: 1, imageUrl: 'east-first_frame-2.png' },
+        { direction: 'north', index: 0, imageUrl: 'north-first_frame-1.png' },
+        { direction: 'north', index: 1, imageUrl: 'north-first_frame-2.png' },
+        { direction: 'south', index: 0, imageUrl: 'south-first_frame-1.png' },
+        { direction: 'south', index: 1, imageUrl: 'south-first_frame-2.png' },
+      ])
     })
+    expect(
+      vi
+        .mocked(generationApis.create)
+        .mock.calls.filter(([input]) => input.type === 'complete_animation'),
+    ).toHaveLength(0)
+    const selectedFirstFrames = {
+      east: 'east-first_frame-2.png',
+      north: 'north-first_frame-2.png',
+      south: 'south-first_frame-2.png',
+    }
+    const confirmFirstFrames = session.confirmFirstFrame as unknown as (
+      selectedImages: typeof selectedFirstFrames,
+    ) => Promise<WorkflowRun>
+    await confirmFirstFrames(selectedFirstFrames)
+
+    await vi.waitFor(() =>
+      expect(
+        vi
+          .mocked(generationApis.create)
+          .mock.calls.filter(([input]) => input.type === 'complete_animation'),
+      ).toHaveLength(3),
+    )
     expect(character.templates).toEqual([
       {
         direction: 'east',
         sourceDirection: null,
         mirrorX: false,
-        imageUrl: 'east-character_template-1.png',
+        imageUrl: 'east-character_template-2.png',
       },
       {
         direction: 'west',
@@ -1690,13 +1730,13 @@ describe('createQuickStartService', () => {
         direction: 'north',
         sourceDirection: null,
         mirrorX: false,
-        imageUrl: 'north-character_template-1.png',
+        imageUrl: 'north-character_template-2.png',
       },
       {
         direction: 'south',
         sourceDirection: null,
         mirrorX: false,
-        imageUrl: 'south-character_template-1.png',
+        imageUrl: 'south-character_template-2.png',
       },
     ])
     const firstFrameCalls = vi
@@ -1705,9 +1745,18 @@ describe('createQuickStartService', () => {
       .filter((input) => input.type === 'first_frame')
     expect(firstFrameCalls.map((input) => input.direction)).toEqual(['east', 'north', 'south'])
     expect(firstFrameCalls.map((input) => input.referenceMedia[0])).toEqual([
-      'east-character_template-1.png',
-      'north-character_template-1.png',
-      'south-character_template-1.png',
+      'east-character_template-2.png',
+      'north-character_template-2.png',
+      'south-character_template-2.png',
+    ])
+    const animationCalls = vi
+      .mocked(generationApis.create)
+      .mock.calls.map(([input]) => input)
+      .filter((input) => input.type === 'complete_animation')
+    expect(animationCalls.map((input) => input.firstFrameUrl)).toEqual([
+      'east-first_frame-2.png',
+      'north-first_frame-2.png',
+      'south-first_frame-2.png',
     ])
   })
 
@@ -2274,9 +2323,9 @@ describe('createQuickStartService', () => {
     const session = await service.open('run-1')
 
     await expect(session.getFirstFrameCandidates()).resolves.toEqual([
-      { index: 0, imageUrl: firstFrameUrls[0], durationMs: null },
-      { index: 1, imageUrl: firstFrameUrls[1], durationMs: null },
-      { index: 2, imageUrl: firstFrameUrls[2], durationMs: null },
+      { direction: 'east', index: 0, imageUrl: firstFrameUrls[0] },
+      { direction: 'east', index: 1, imageUrl: firstFrameUrls[1] },
+      { direction: 'east', index: 2, imageUrl: firstFrameUrls[2] },
     ])
     await session.confirmFirstFrame(firstFrameUrls[1]!)
 
@@ -2326,10 +2375,9 @@ describe('createQuickStartService', () => {
     unsubscribe()
   })
 
-  it('自动确认动作首帧读取失败时停止推进并上报原始错误', async () => {
+  it('动作首帧进入 selecting 后等待用户确认而不自动读取候选', async () => {
     const run = actionRun(true)
     const generationApis = pendingGenerationApis()
-    vi.mocked(generationApis.get).mockRejectedValue(new Error('候选图读取失败'))
     const service = createQuickStartService({
       workflowRunApis: createWorkflowRunApis([run]),
       generationApis,
@@ -2337,14 +2385,14 @@ describe('createQuickStartService', () => {
       projectApis: projectReader(),
     })
     const session = await service.open(run.id)
-    const errors: Error[] = []
-    session.subscribeErrors((error) => errors.push(error))
 
     await session.resume()
+    await Promise.resolve()
 
-    await vi.waitFor(() =>
-      expect(errors).toEqual([expect.objectContaining({ message: '候选图读取失败' })]),
-    )
+    expect(generationApis.get).not.toHaveBeenCalled()
+    expect(
+      session.getWorkflow().nodes.find((node) => node.type === 'action-first-frame'),
+    ).toMatchObject({ status: 'active', phase: 'selecting' })
     await session.interrupt()
   })
 

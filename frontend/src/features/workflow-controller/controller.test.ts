@@ -1994,6 +1994,45 @@ describe('WorkflowController', () => {
     )
   })
 
+  it('新方向任务引用落库后订阅失败时不回滚到旧失败任务', async () => {
+    const run = createRun([
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({
+        status: 'failed',
+        phase: 'generating',
+        error: 'north provider failed',
+        generations: [
+          { taskId: 'task-east', role: 'character_template' },
+          { taskId: 'task-north', role: 'character_template', direction: 'north' },
+          { taskId: 'task-south', role: 'character_template', direction: 'south' },
+        ],
+      }),
+    ])
+    const { controller, workflow, generation } = createController(run, 'four-way')
+    vi.mocked(generation.apis.subscribe).mockImplementationOnce(() => {
+      throw new Error('新任务订阅失败')
+    })
+
+    await expect(
+      controller.retryGenerationDirection('template-1', 'north', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+      }),
+    ).rejects.toThrow('新任务订阅失败')
+
+    expect(workflow.getSaved().nodes[1]).toMatchObject({
+      status: 'active',
+      phase: 'generating',
+      error: null,
+      generations: [
+        { taskId: 'task-east', role: 'character_template' },
+        { taskId: 'task-south', role: 'character_template', direction: 'south' },
+        { taskId: 'task-1', role: 'character_template', direction: 'north' },
+      ],
+    })
+    expect(generation.apis.create).toHaveBeenCalledTimes(1)
+  })
+
   it('角色母版微调由 Controller 读取上一版图片并组合临时描述', async () => {
     const previousImage = 'https://img/knight.png'
     const { controller, generation } = createController(createRun(completedCharacterNodes()))

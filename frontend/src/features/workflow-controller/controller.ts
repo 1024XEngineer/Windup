@@ -996,7 +996,11 @@ export function createWorkflowController({
         direction,
       )
     } catch (cause) {
-      await persist((run) => replaceNode(run, originalNode))
+      const currentNode = findNode(requireWorkflow(), nodeId)
+      const attachedRetry = currentNode.generations.some(
+        (item) => role === item.role && generationReferenceDirection(item) === direction,
+      )
+      if (!attachedRetry) await persist((run) => replaceNode(run, originalNode))
       throw cause
     }
     // 新任务已经持久化后不能再回滚，否则恢复订阅的瞬时失败会遗失付费任务引用。

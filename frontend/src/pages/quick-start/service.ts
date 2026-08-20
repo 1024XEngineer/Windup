@@ -39,6 +39,15 @@ export interface QuickStartFrame {
   durationMs: number | null
 }
 
+export interface QuickStartCandidate {
+  direction: ActionDirection
+  index: number
+  imageUrl: string
+}
+
+export type QuickStartDirectionSelections = Readonly<Partial<Record<ActionDirection, string>>>
+type QuickStartCandidateSelection = string | QuickStartDirectionSelections
+
 export interface QuickStartFailedDirection {
   nodeId: WorkflowNode['id']
   direction: ActionDirection
@@ -61,15 +70,18 @@ export interface QuickStartSession {
     actionDescription: string,
     signal?: AbortSignal,
   ): Promise<WorkflowRun>
-  confirmCandidate(selectedImageUrl: string, actionDescription?: string): Promise<WorkflowRun>
+  confirmCandidate(
+    selectedImages: QuickStartCandidateSelection,
+    actionDescription?: string,
+  ): Promise<WorkflowRun>
   /** 读取当前 Action 首帧生成任务的候选帧。 */
-  getFirstFrameCandidates(): Promise<readonly QuickStartFrame[]>
+  getFirstFrameCandidates(): Promise<readonly QuickStartCandidate[]>
   /** 确认首帧后，Quick Start 自动选择已接入的生成路线并提交完整动画。 */
-  confirmFirstFrame(selectedImageUrl: string): Promise<WorkflowRun>
+  confirmFirstFrame(selectedImages: QuickStartCandidateSelection): Promise<WorkflowRun>
   approveReview(): Promise<WorkflowRun>
   getCharacterInfo(): { characterId: string; outfitId: string } | null
   resolveCharacterInfo(): Promise<{ characterId: string; outfitId: string } | null>
-  getTemplateCandidates(): Promise<readonly string[]>
+  getTemplateCandidates(): Promise<readonly QuickStartCandidate[]>
   getActionFrames(): Promise<readonly QuickStartFrame[]>
   getFailedGenerationDirections(): Promise<readonly QuickStartFailedDirection[]>
   retryGenerationDirection(
@@ -218,12 +230,12 @@ export function createQuickStartService({
     return getDirectionProfile(movement).sourceDirections
   }
 
-  async function firstImageByDirection(
+  async function candidatesByDirection(
     controller: WorkflowController,
     nodeId: WorkflowNode['id'],
     role: 'character_template' | 'first_frame',
-  ): Promise<Map<ActionDirection, string>> {
-    const result = new Map<ActionDirection, string>()
+  ): Promise<QuickStartCandidate[]> {
+    const result: QuickStartCandidate[] = []
     for (const generation of await controller.getGenerations(nodeId, role)) {
       const images =
         role === 'character_template' && generation.result?.type === 'character_template'
@@ -232,37 +244,50 @@ export function createQuickStartService({
             ? generation.result.images
             : []
       const direction = generation.result?.direction ?? 'east'
-      const first = images[0]?.url
-      if (first) result.set(direction, first)
+      images.forEach((image, index) => result.push({ direction, index, imageUrl: image.url }))
     }
     return result
+  }
+
+  function selectedDirections(
+    controller: WorkflowController,
+    selection: QuickStartCandidateSelection,
+    existing: QuickStartDirectionSelections = {},
+  ): QuickStartDirectionSelections {
+    const selected = {
+      ...existing,
+      ...(typeof selection === 'string' ? { east: selection } : selection),
+    }
+    for (const direction of sourceDirectionsFor(controller)) {
+      if (!selected[direction]) throw new Error(`缺少${direction}方向的用户选择`)
+    }
+    return selected
   }
 
   async function confirmRemainingTemplateDirections(
     controller: WorkflowController,
     characterId: Character['id'],
+    selectedImages: QuickStartDirectionSelections,
   ) {
     const template = templateNode(controller.getWorkflow())
     const directions = sourceDirectionsFor(controller)
     if (directions.length <= 1) return
-    const candidates = await firstImageByDirection(controller, template.id, 'character_template')
     const remaining = directions.slice(1)
     for (const direction of remaining.slice(0, -1)) {
-      const selected = candidates.get(direction)
-      if (!selected) throw new Error(`缺少${direction}方向角色候选图`)
+      const selected = selectedImages[direction]!
       await controller.confirmCharacterTemplate(template.id, selected, characterId, direction)
     }
     const lastDirection = remaining.at(-1)
     if (!lastDirection) return
-    const lastSelected = candidates.get(lastDirection)
-    if (!lastSelected) throw new Error(`缺少${lastDirection}方向角色候选图`)
-    const selectedImages = {
+    const lastSelected = selectedImages[lastDirection]!
+    const persistedImages = {
       ...(templateNode(controller.getWorkflow()).selectedImages ?? {}),
+      ...selectedImages,
       [lastDirection]: lastSelected,
     }
     // Character 先完整落库，再让最后一个方向把 Run 推进为 passed。资产写入失败时
     // Run 仍停在 selecting，用户可以幂等重试，不会出现“Run 完成但资产缺方向”。
-    await persistSelectedCharacterTemplates(controller, characterId, selectedImages)
+    await persistSelectedCharacterTemplates(controller, characterId, persistedImages)
     await controller.confirmCharacterTemplate(template.id, lastSelected, characterId, lastDirection)
   }
 
@@ -284,21 +309,19 @@ export function createQuickStartService({
   async function confirmAllFirstFrameDirections(
     controller: WorkflowController,
     nodeId: WorkflowNode['id'],
-    selectedEastUrl?: string,
+    selection: QuickStartCandidateSelection,
   ) {
     const firstFrame = latestActionFirstFrame(controller.getWorkflow())
     if (!firstFrame || firstFrame.type !== 'action-first-frame' || firstFrame.id !== nodeId) {
       throw new Error('当前运行没有可确认的动作首帧')
     }
     const directions = sourceDirectionsFor(controller)
-    const candidates = await firstImageByDirection(controller, firstFrame.id, 'first_frame')
+    const selectedImages = selectedDirections(controller, selection, {
+      ...(firstFrame.selectedFirstFrameUrl ? { east: firstFrame.selectedFirstFrameUrl } : {}),
+      ...(firstFrame.selectedFirstFrameUrls ?? {}),
+    })
     for (const direction of directions) {
-      const selected =
-        direction === 'east'
-          ? (selectedEastUrl ?? candidates.get(direction))
-          : candidates.get(direction)
-      if (!selected) throw new Error(`缺少${direction}方向动作首帧候选图`)
-      await controller.confirmFirstFrame(firstFrame.id, selected, direction)
+      await controller.confirmFirstFrame(firstFrame.id, selectedImages[direction]!, direction)
     }
   }
 
@@ -547,32 +570,6 @@ export function createQuickStartService({
 
     const advance = (run: WorkflowRun) => {
       if (advancing || stopped) return
-      const selectingFirstFrame = run.nodes.findLast(
-        (node) =>
-          node.type === 'action-first-frame' &&
-          !node.deletedAt &&
-          node.status === 'active' &&
-          node.phase === 'selecting',
-      )
-      if (selectingFirstFrame && selectingFirstFrame.type === 'action-first-frame') {
-        advancing = true
-        void confirmAllFirstFrameDirections(controller, selectingFirstFrame.id).then(
-          () => {
-            advancing = false
-            if (!stopped) advance(controller.getWorkflow())
-          },
-          (cause: unknown) => {
-            advancing = false
-            if (stopped) return
-            stopped = true
-            reportControllerError(
-              controller,
-              cause instanceof Error ? cause : new Error('Quick Start 自动确认首帧失败'),
-            )
-          },
-        )
-        return
-      }
       const method = run.nodes.find(
         (node) =>
           node.type === 'action-generation-method' && !node.deletedAt && node.status === 'active',
@@ -727,11 +724,16 @@ export function createQuickStartService({
         ensureAutomaticAdvance()
         return controller.getWorkflow()
       },
-      confirmCandidate(selectedImageUrl, actionDescription) {
+      confirmCandidate(selection, actionDescription) {
         if (candidateCommand) return candidateCommand
         const command = (async () => {
           const template = templateNode(controller.getWorkflow())
           const setup = setupNode(controller.getWorkflow())
+          const selectedImages = selectedDirections(controller, selection, {
+            ...(template.selectedImageUrl ? { east: template.selectedImageUrl } : {}),
+            ...(template.selectedImages ?? {}),
+          })
+          const selectedImageUrl = selectedImages.east!
           let target: { characterId: string; outfitId: string }
           if (
             template.status === 'active' &&
@@ -754,7 +756,7 @@ export function createQuickStartService({
                 controller.confirmCharacterTemplate(template.id, selectedImageUrl, characterId),
             )
           }
-          await confirmRemainingTemplateDirections(controller, target.characterId)
+          await confirmRemainingTemplateDirections(controller, target.characterId, selectedImages)
           const spriteSize =
             knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
           await prepareAction(controller, target.outfitId, actionDescription ?? '', spriteSize)
@@ -769,21 +771,14 @@ export function createQuickStartService({
       async getFirstFrameCandidates() {
         const firstFrame = latestActionFirstFrame(controller.getWorkflow())
         if (!firstFrame || firstFrame.type !== 'action-first-frame') return []
-        const generation = await controller.getGeneration(firstFrame.id, 'first_frame')
-        return generation?.type === 'first_frame' && generation.result?.type === 'first_frame'
-          ? generation.result.images.map((image, index) => ({
-              index,
-              imageUrl: image.url,
-              durationMs: null,
-            }))
-          : []
+        return candidatesByDirection(controller, firstFrame.id, 'first_frame')
       },
-      async confirmFirstFrame(selectedImageUrl) {
+      async confirmFirstFrame(selectedImages) {
         const firstFrame = latestActionFirstFrame(controller.getWorkflow())
         if (!firstFrame || firstFrame.type !== 'action-first-frame') {
           throw new Error('当前运行没有可确认的动作首帧')
         }
-        await confirmAllFirstFrameDirections(controller, firstFrame.id, selectedImageUrl)
+        await confirmAllFirstFrameDirections(controller, firstFrame.id, selectedImages)
         ensureAutomaticAdvance()
         return controller.getWorkflow()
       },
@@ -919,11 +914,7 @@ export function createQuickStartService({
       resolveCharacterInfo: () => resolveCharacterInfo(controller),
       async getTemplateCandidates() {
         const template = templateNode(controller.getWorkflow())
-        const generation = await controller.getGeneration(template.id, 'character_template')
-        return generation?.type === 'character_template' &&
-          generation.result?.type === 'character_template'
-          ? generation.result.images.map((image) => image.url)
-          : []
+        return candidatesByDirection(controller, template.id, 'character_template')
       },
       async getActionFrames() {
         const fullFrame = latestFullFrame(controller.getWorkflow())
