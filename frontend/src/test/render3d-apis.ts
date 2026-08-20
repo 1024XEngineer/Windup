@@ -11,7 +11,6 @@ export const RENDER3D_COST: Render3DAsset['cost'] = {
   model3dCredits: 20,
   autorigCredits: 10,
   totalCredits: 30,
-  totalCny: 3.6,
   billing: 'postpaid',
   scope: 'per_outfit_once',
 }

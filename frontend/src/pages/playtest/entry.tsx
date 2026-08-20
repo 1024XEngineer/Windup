@@ -15,25 +15,9 @@ export function PlaytestEntryPage() {
   }, [recentOwnerId])
 
   return (
-    <div className="mx-auto w-full max-w-[1560px] px-4 pb-8 pt-[clamp(4.75rem,11vh,7rem)] sm:px-6 xl:px-8">
-      <section aria-labelledby="playtest-entry-title" className="pb-10">
-        <header className="flex flex-col gap-4 border-b border-app-line pb-6 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h1
-              id="playtest-entry-title"
-              className="font-serif text-[clamp(2.15rem,4.5vw,4rem)] leading-none font-medium tracking-[-0.055em] text-app-ink"
-            >
-              预览台
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-app-muted">
-              继续最近打开的角色造型，或回到项目资产库选择新的预览对象。
-            </p>
-          </div>
-          <p className="shrink-0 pb-0.5 font-mono text-[0.68rem] text-app-faint">
-            {recent.length > 0 ? `${recent.length} 条最近预览` : '等待第一次预览'}
-          </p>
-        </header>
-
+    <div className="mx-auto w-full max-w-[1560px] px-4 pb-8 pt-[4.5rem] sm:px-6 xl:px-8">
+      <section aria-label="角色预览入口" className="pb-10">
+        <h1 className="sr-only">预览台</h1>
         <AssetPickerEntry hasRecent={recent.length > 0} />
         {recent.length > 0 ? <RecentPreviewGrid previews={recent} /> : null}
       </section>
@@ -52,7 +36,7 @@ function RecentPreviewGrid({ previews }: { previews: RecentPreview[] }) {
           最近预览 · {String(previews.length).padStart(2, '0')}
         </h2>
       </div>
-      <div className="grid gap-x-4 gap-y-7 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-x-4 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
         {previews.map((preview, index) => (
           <RecentPreviewCard
             key={`${preview.characterId}:${preview.outfitId}`}
@@ -83,7 +67,7 @@ function RecentPreviewCard({ preview, priority }: { preview: RecentPreview; prio
 
 function AssetPickerEntry({ hasRecent }: { hasRecent: boolean }) {
   return (
-    <div className="mt-5">
+    <div>
       <Link
         to="/projects"
         aria-label="从项目资产中选择"

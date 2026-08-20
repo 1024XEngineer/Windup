@@ -11,12 +11,15 @@
 枚举把这类错误从"生成完靠肉眼发现"提前到"构造 ActionSpec 时 ValidationError",
 成本从一次付费生成降到零。``loop`` / ``stylize`` / ``view`` 同理。
 """
+
 from __future__ import annotations
 
 from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from windup_common.directions import ActionDirection
 
 # 未知字段一律报错(pydantic 默认是 extra="ignore",静默丢弃)。理由与本文件用枚举取代裸
 # str 完全同源:字段名也是靠字符串传递的约束。`ActionSpec(action=..., n_frame=16)`(少个 s)
@@ -48,7 +51,7 @@ class ActionType(str, Enum):
     IDLE = "idle"
     WALK = "walk"
     RUN = "run"
-    JUMP = "jump"      # 一次性动作,且要按状态切段(见 postprocess.split_jump_phases)
+    JUMP = "jump"  # 一次性动作,且要按状态切段(见 postprocess.split_jump_phases)
     ATTACK = "attack"  # slash / thrust / dash 归此
     HIT = "hit"
     # 用户自述动作。与上面几个的**结构性差异**:上面每个都自带一套写死的产线设定
@@ -65,10 +68,10 @@ class AttackArchetype(str, Enum):
     手握一件有宽面的长条物,喂空手 / 法杖 / 四足角色时模型会凭空补出那件东西来调和矛盾。
     """
 
-    SWEEP = "sweep"      # 长条持物:横挥 / 下劈
-    THRUST = "thrust"    # 短持物或空手:直出 / 戳刺
+    SWEEP = "sweep"  # 长条持物:横挥 / 下劈
+    THRUST = "thrust"  # 短持物或空手:直出 / 戳刺
     PROJECT = "project"  # 远程:身体前压、送到位、终态保持
-    LUNGE = "lunge"      # 非双足:整体前扑,头部 / 前肢领先
+    LUNGE = "lunge"  # 非双足:整体前扑,头部 / 前肢领先
 
 
 class CharacterStance(str, Enum):
@@ -93,8 +96,8 @@ class GenRoute(str, Enum):
     (见 #81 #122),随实现一起加成员 —— 枚举加成员是纯加法,不构成破坏性变更。
     """
 
-    VIDEO_I2V = "video_i2v"   # 步态位移动作:图生视频(连贯交替腿)
-    PER_FRAME = "per_frame"   # 离散姿势:逐帧图生图(单帧可编辑)
+    VIDEO_I2V = "video_i2v"  # 步态位移动作:图生视频(连贯交替腿)
+    PER_FRAME = "per_frame"  # 离散姿势:逐帧图生图(单帧可编辑)
     # 三渲二:母版 → 图生 3D → 自动绑骨 → 套预设动作 → 渲 2D 序列帧。与上面两条有个
     # **结构性差异**:前两条由动作的物理性质唯一决定,这一条还取决于"该造型有没有 3D
     # 资产"。所以它**不进 ROUTE_MATRIX** —— 由 server 读 DB 后直接调
@@ -124,8 +127,8 @@ class CharacterView(str, Enum):
     免得调用方再造一套别名(如 topdown / top_down / top-down 三写)。
     """
 
-    SIDE = "side"            # perspective=1 横版
-    TOP_DOWN = "top-down"    # perspective=2 俯视
+    SIDE = "side"  # perspective=1 横版
+    TOP_DOWN = "top-down"  # perspective=2 俯视
     ISOMETRIC = "isometric"  # perspective=3 2.5D
 
 
@@ -156,9 +159,9 @@ class CharacterCard(BaseModel):
     model_config = _STRICT
 
     name: str
-    desc: str                                    # 身份描述(喂模型锁一致性)
+    desc: str  # 身份描述(喂模型锁一致性)
     view: CharacterView = CharacterView.SIDE
-    master_ref: str = ""                         # 定妆母版的存储 ref(对象存储,非本地路径)
+    master_ref: str = ""  # 定妆母版的存储 ref(对象存储,非本地路径)
     version: str = "v1"
 
     # 体型。默认值等于对每个没声明体型的角色做一次断言,所以取断言最少的那个:双足这一支
@@ -211,10 +214,14 @@ class ActionSpec(BaseModel):
     # pixel_h  → postprocess.to_pixel_art 对 <1 直接 raise,契约没理由比实现更宽松;
     # palette_size → 同处 `quantize(colors=max(2, palette_size))` 会把 1 静默抬成 2,
     #   于是"我要 1 色"拿到 2 色且无任何提示 —— 正是本项目最忌讳的静默纠正。
-    pixel_h: int = Field(default=100, ge=1)        # 像素化目标高(角色像素行数)
-    palette_size: int = Field(default=32, ge=2)    # 色板色数(1 色的像素画不存在)
+    pixel_h: int = Field(default=100, ge=1)  # 像素化目标高(角色像素行数)
+    palette_size: int = Field(default=32, ge=2)  # 色板色数(1 色的像素画不存在)
     # 生成提示词的朝向,**必须与母版朝向一致**(对应 Project.perspective)。
     facing: Facing = Facing.SIDE
+    # 项目方向集合中的一个真实源方向。镜像方向不会进入 ActionSpec，因为它不应
+    # 调用模型；前端/编排层会为每个源方向创建独立 GenerationTask。
+    # None 只表示旧的底层调用没有声明方向；服务端编排请求会始终显式传入方向。
+    direction: ActionDirection | None = None
 
     # ── 仅 action=CUSTOM 用的两个字段(#239)────────────────────────────────
     #
@@ -250,7 +257,9 @@ class ActionSpec(BaseModel):
         """
         if self.action is ActionType.CUSTOM:
             if not (self.custom_action or "").strip():
-                raise ValueError("action=custom 必须给 custom_action(动作描述),否则无从构建提示词")
+                raise ValueError(
+                    "action=custom 必须给 custom_action(动作描述),否则无从构建提示词"
+                )
             if self.cyclic is None:
                 raise ValueError(
                     "action=custom 必须显式给 cyclic(是否循环播放)。不猜 —— "
@@ -258,13 +267,16 @@ class ActionSpec(BaseModel):
                 )
         else:
             if self.custom_action is not None:
-                raise ValueError(f"action={self.action.value} 不该带 custom_action;它的提示词由模板给")
+                raise ValueError(
+                    f"action={self.action.value} 不该带 custom_action;它的提示词由模板给"
+                )
             if self.cyclic is not None:
                 raise ValueError(
                     f"action={self.action.value} 不该带 cyclic;循环性由 CYCLIC_ACTIONS 写死,"
                     "传了不会生效"
                 )
         return self
+
     # 这里**没有** ``route`` 字段:路线选择整个在 server —— 走不走三渲二取决于"这个造型
     # 有没有 3D 资产",那份数据在 DB 里,server 读完直接调 ``generate_rendered``。
     # 加一个零消费方的字段等于留一个"填了看起来会生效、实际没人读"的入参。
@@ -281,7 +293,7 @@ class ActionSpec(BaseModel):
         - 显式 ``None`` 一律等同"没传"(两条分支一致):调用方写
           ``n_frames=form.get("n_frames")`` 时 None 表示"未指定",该走缺省,不该炸。
         """
-        if not isinstance(data, dict):          # model_validate(实例) 等非 dict 入参原样放行
+        if not isinstance(data, dict):  # model_validate(实例) 等非 dict 入参原样放行
             return data
         n = data.get("n_frames")
         poses = data.get("poses")
@@ -289,7 +301,11 @@ class ActionSpec(BaseModel):
             # 有 poses 就回退到 len(poses),没有则删键让字段缺省值(DEFAULT_N_FRAMES)生效。
             # 不能原样留 None:`n_frames: int` 会报 "Input should be a valid integer",
             # 于是"显式 None"在有/无 poses 两种情况下行为不一致(一个回退、一个报错)。
-            return {**data, "n_frames": len(poses)} if poses else _without(data, "n_frames")
+            return (
+                {**data, "n_frames": len(poses)}
+                if poses
+                else _without(data, "n_frames")
+            )
         if not poses:
             return data
         # 先按 int 归一再比:pydantic 之后会把 JSON 里的 "2" 收成 2,而这里若直接 `n != len`
@@ -298,7 +314,7 @@ class ActionSpec(BaseModel):
         try:
             n_int = int(n)
         except (TypeError, ValueError):
-            return data                         # 类型本就不对 → 交给字段校验报正经的 int 错
+            return data  # 类型本就不对 → 交给字段校验报正经的 int 错
         if n_int != len(poses):
             raise ValueError(
                 f"n_frames={n_int} 与 len(poses)={len(poses)} 不一致;"

@@ -284,8 +284,10 @@ class SpriteRenderProvider(Protocol):
     只换相机方位角重渲一遍,各朝向天生一致(同一网格、同一骨骼、同一采样时刻)。
     逐帧 / 视频路线做同样的事是 N 倍生成费用,且各朝向之间没有一致性保证。
 
-    ``directions`` 只接受 4 或 8(8 向是 4 向的超集)。``material`` 必须是出帧台**真正认识**
-    的取值,实现会校验 —— 详见 :mod:`.sprite` 里 ``MATERIALS`` 的注释。
+    ``directions`` 只接受 4 或 8(8 向是 4 向的超集)。单方向任务通过 ``direction``
+    指定本次真正需要的相机方向，避免每个任务都重渲完整方向表；不传时保留完整表行为。
+    ``material`` 必须是出帧台**真正认识**的取值,实现会校验 —— 详见
+    :mod:`.sprite` 里 ``MATERIALS`` 的注释。
     """
 
     def render(
@@ -294,6 +296,7 @@ class SpriteRenderProvider(Protocol):
         *,
         clip: str | None = None,
         directions: int = 4,
+        direction: str | None = None,
         frames: int = 12,
         size: tuple[int, int] = RENDER_SIZE,
         material: str = "cel",

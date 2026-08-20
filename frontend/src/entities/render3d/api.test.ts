@@ -25,7 +25,6 @@ const ASSET = {
     model3d_credits: 20,
     autorig_credits: 10,
     total_credits: 30,
-    total_cny: 3.6,
     billing: 'postpaid',
     scope: 'per_outfit_once',
   },
@@ -54,7 +53,7 @@ describe('三渲二资产适配器', () => {
     expect(asset.state).toBe('awaiting_review')
     expect(asset.reviewModelUrl).toBe('https://cdn.test/pending.glb')
     expect(asset.cost.totalCredits).toBe(30)
-    expect(asset.cost.totalCny).toBe(3.6)
+    expect('totalCny' in asset.cost).toBe(false) // 人民币金额不出参
   })
 
   it('四个动作各自打到自己的路径上', async () => {
@@ -81,7 +80,7 @@ describe('三渲二资产适配器', () => {
   })
 
   it('成本字段缺一个就拒收——界面拿它让用户做付费决定', async () => {
-    const { total_cny: _dropped, ...partial } = ASSET.cost
+    const { total_credits: _dropped, ...partial } = ASSET.cost
     const { client } = clientReturning({ ...ASSET, cost: partial })
     await expect(createRender3DApis(client).getOutfitAsset('7', 'a')).rejects.toBeInstanceOf(
       Render3DContractError,

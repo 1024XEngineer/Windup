@@ -49,17 +49,24 @@ describe('ProjectsPage', () => {
     )
 
     const preview = await screen.findByRole('img', { name: '点灯人 · MVP的项目预览' })
-    expect(preview.getAttribute('src')).toBe(
-      'https://cdn.windup.test/media/outfit-preview/messenger.card.webp',
-    )
+    // findByRole 只等到 img 挂上，不等 src 落定：缩略图地址要等角色请求回来后的那次状态
+    // 更新才写进去。裸断言在 CI 这类慢环境上会取到写入前的值，随机把无关 PR 染红。
+    await waitFor(() => {
+      expect(preview.getAttribute('src')).toBe(
+        'https://cdn.windup.test/media/outfit-preview/messenger.card.webp',
+      )
+    })
 
     fireEvent.error(preview)
 
-    await waitFor(() => {
-      expect(preview.getAttribute('src')).toBe(
-        'https://cdn.windup.test/media/outfit-preview/messenger.source.png',
-      )
-    })
+    await waitFor(
+      () => {
+        expect(preview.getAttribute('src')).toBe(
+          'https://cdn.windup.test/media/outfit-preview/messenger.source.png',
+        )
+      },
+      { timeout: 5_000 },
+    )
   })
 
   it('keeps the loading surface until the preview image is decoded', async () => {
@@ -111,7 +118,8 @@ describe('ProjectsPage', () => {
       </AuthenticatedAuthSession>,
     )
 
-    expect(await screen.findByRole('heading', { name: '项目中心' })).toBeTruthy()
+    const pageTitle = await screen.findByRole('heading', { name: '项目中心', level: 1 })
+    expect(pageTitle.classList.contains('sr-only')).toBe(true)
     const createLink = await screen.findByRole('link', { name: '新建项目' })
     const artwork = createLink.querySelector('img')
     expect(artwork).toBeTruthy()
@@ -135,9 +143,15 @@ describe('ProjectsPage', () => {
       expect(emptyProject.textContent).toContain('等待第一份角色资产')
     })
     expect(previewProject.textContent).toContain('08/04')
+    expect(previewProject.textContent).toContain('横版视角 · 四向')
+    expect(previewProject.textContent).toContain('64 × 64 px')
+    expect(previewProject.textContent).toContain('低饱和像素绘本')
     expect(screen.queryByText('项目名称')).toBeNull()
-    expect(screen.queryByText('视角 / 朝向')).toBeNull()
     expect(screen.queryByRole('link', { name: /查看角色/ })).toBeNull()
+    const gallery = screen.getByRole('heading', { name: '最近项目 · 02' }).closest('section')
+    expect(gallery).toBeTruthy()
+    expect(within(gallery as HTMLElement).queryByRole('link', { name: '新建项目' })).toBeNull()
+    // 预览改由列表响应带回后，这个页面不再打 /characters；放宽成白名单会让瀑布悄悄回来。
     expect(backend.requests.every((request) => new URL(request.url).pathname === '/projects')).toBe(
       true,
     )

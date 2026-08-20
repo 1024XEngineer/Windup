@@ -269,6 +269,37 @@ export function createProjectAssetsBackend({
       )
     }
 
+    if (request.method === 'GET' && url.pathname === '/characters/summaries') {
+      const projectId = Number(url.searchParams.get('project_id'))
+      const page = Number(url.searchParams.get('page') ?? 1)
+      const pageSize = Number(url.searchParams.get('page_size') ?? 20)
+      const status = url.searchParams.get('status')
+      const projectCharacters = characters.filter(
+        (item) =>
+          item.project_id === projectId && (status === null || item.status === Number(status)),
+      )
+      const summaries = projectCharacters.map((item) => {
+        const outfits = item.character_data.outfits
+        return {
+          id: item.id,
+          project_id: item.project_id,
+          name: item.name,
+          status: item.status,
+          preview_url: outfits[0]?.preview_url ?? null,
+          outfit_name: outfits[0]?.name ?? null,
+          outfit_count: outfits.length,
+          action_count: outfits.reduce((sum, outfit) => sum + outfit.actions.length, 0),
+        }
+      })
+      const start = (page - 1) * pageSize
+      return listResponse(
+        summaries.slice(start, start + pageSize),
+        page,
+        pageSize,
+        summaries.length,
+      )
+    }
+
     if (request.method === 'GET' && url.pathname.startsWith('/characters/')) {
       const characterId = Number(url.pathname.split('/').at(-1))
       const character = characters.find((item) => item.id === characterId)

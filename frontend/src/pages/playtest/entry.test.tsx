@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -54,7 +54,8 @@ describe('PlaytestEntryPage', () => {
   it('does not call project or character APIs and points new users to the asset library', async () => {
     const fetch = renderEntry()
 
-    expect(await screen.findByRole('heading', { name: '预览台' })).toBeTruthy()
+    const pageTitle = await screen.findByRole('heading', { name: '预览台', level: 1 })
+    expect(pageTitle.classList.contains('sr-only')).toBe(true)
     expect(screen.getByText('还没有最近预览')).toBeTruthy()
     expect(screen.getByRole('link', { name: '从项目资产中选择' }).getAttribute('href')).toBe(
       '/projects',
@@ -69,12 +70,19 @@ describe('PlaytestEntryPage', () => {
 
     renderEntry()
 
-    expect(await screen.findByRole('heading', { name: '角色 4 · 造型 4' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '最近预览 · 03', level: 2 })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '预览台', level: 1 })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '角色 4 · 造型 4' })).toBeTruthy()
     expect(screen.getAllByRole('link', { name: /继续预览/ })).toHaveLength(3)
     expect(screen.queryByText('角色 1')).toBeNull()
     expect(screen.getByRole('link', { name: '从项目资产中选择' }).getAttribute('href')).toBe(
       '/projects',
     )
+    const recentSection = screen.getByRole('heading', { name: '最近预览 · 03' }).closest('section')
+    expect(recentSection).toBeTruthy()
+    expect(
+      within(recentSection as HTMLElement).queryByRole('link', { name: '从项目资产中选择' }),
+    ).toBeNull()
   })
 
   it('keeps the recent preview link on the existing parameterized workbench route', async () => {

@@ -227,6 +227,20 @@ describe('createRealWorkflowEditorSession', () => {
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({
         id: '9',
+        templates: [
+          {
+            direction: 'east',
+            sourceDirection: null,
+            mirrorX: false,
+            imageUrl: 'https://assets.windup.test/master.png',
+          },
+          {
+            direction: 'west',
+            sourceDirection: 'east',
+            mirrorX: true,
+            imageUrl: null,
+          },
+        ],
         outfits: [
           expect.objectContaining({
             id: 'outfit-default',
@@ -242,6 +256,29 @@ describe('createRealWorkflowEditorSession', () => {
     expect(
       session.controller.getWorkflow().nodes.find((node) => node.id === 'template'),
     ).toMatchObject({ status: 'passed', phase: 'completed' })
+  })
+
+  it('四向流程先确认北向母版时用该图创建默认造型', async () => {
+    const { session, update } = await createCharacterTemplateSession({
+      directionalMovement: 'four-way',
+    })
+
+    await session.confirmCharacterTemplate(
+      'template',
+      'https://assets.windup.test/north-master.png',
+      'north',
+    )
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceImageUrl: 'https://assets.windup.test/north-master.png',
+        outfits: [
+          expect.objectContaining({
+            previewUrl: 'https://assets.windup.test/north-master.png',
+          }),
+        ],
+      }),
+    )
   })
 
   it('拒绝用空图片确认身份母版', async () => {
@@ -329,7 +366,7 @@ describe('createRealWorkflowEditorSession', () => {
     expect(create).not.toHaveBeenCalled()
   })
 
-  it('已有 Character 和造型时只推进身份母版节点', async () => {
+  it('已有 Character 和造型时仍持久化已确认的方向母版', async () => {
     const existing = characterWithOutfitFixture()
     const { session, create, update } = await createCharacterTemplateSession({
       characters: [existing],
@@ -340,9 +377,24 @@ describe('createRealWorkflowEditorSession', () => {
       'https://assets.windup.test/master.png',
     )
 
-    expect(character).toEqual(existing)
+    expect(character).toMatchObject({
+      templates: [
+        {
+          direction: 'east',
+          sourceDirection: null,
+          mirrorX: false,
+          imageUrl: 'https://assets.windup.test/master.png',
+        },
+        {
+          direction: 'west',
+          sourceDirection: 'east',
+          mirrorX: true,
+          imageUrl: null,
+        },
+      ],
+    })
     expect(create).not.toHaveBeenCalled()
-    expect(update).not.toHaveBeenCalled()
+    expect(update).toHaveBeenCalledOnce()
     expect(
       session.controller.getWorkflow().nodes.find((node) => node.id === 'template'),
     ).toMatchObject({ status: 'passed', phase: 'completed' })
@@ -492,6 +544,64 @@ describe('createRealWorkflowEditorSession', () => {
     ).toMatchObject({ status: 'passed', phase: 'completed' })
   })
 
+  it('四向审核发布时把全部方向写入同一个 Character 动作', async () => {
+    const workflow = reviewingWorkflowFixture()
+    const fullFrame = workflow.nodes.find((node) => node.type === 'action-full-frame')!
+    fullFrame.generations = [
+      { taskId: 'generation-east', role: 'complete_animation', direction: 'east' },
+      { taskId: 'generation-north', role: 'complete_animation', direction: 'north' },
+      { taskId: 'generation-south', role: 'complete_animation', direction: 'south' },
+    ]
+    const generations = new Map([
+      ['generation-east', directionalAnimationFixture('generation-east', 'east')],
+      ['generation-north', directionalAnimationFixture('generation-north', 'north')],
+      ['generation-south', directionalAnimationFixture('generation-south', 'south')],
+    ])
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(workflow),
+        update: vi.fn(async (run) => ({ ...structuredClone(run), version: run.version + 1 })),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn(async (_projectId, id) => structuredClone(generations.get(id)!)),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      render3d: stubRender3DApis(),
+      projectApis: {
+        get: vi.fn().mockResolvedValue({
+          ...projectFixture(),
+          directionalMovement: 'four-way',
+        }),
+      },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({
+          items: [characterWithOutfitFixture()],
+          total: 1,
+          page: 1,
+          pageSize: 100,
+        }),
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(characterWithOutfitFixture()),
+        update: vi.fn(async (character) => structuredClone(character)),
+        remove: vi.fn(),
+      },
+      onAsyncError: vi.fn(),
+    })
+
+    const published = await session.publishReviewedAction('action-walk:review')
+
+    expect(published.outfits[0]?.actions[0]?.sequences?.map((item) => item.direction)).toEqual([
+      'east',
+      'west',
+      'north',
+      'south',
+    ])
+  })
+
   it('拒绝发布缺少动作首帧依赖的完整动画', async () => {
     const workflow = reviewingWorkflowFixture()
     workflow.nodes = workflow.nodes.filter((node) => node.type !== 'action-first-frame')
@@ -527,6 +637,45 @@ describe('createRealWorkflowEditorSession', () => {
 
     await expect(session.publishReviewedAction('action-walk:review')).rejects.toThrow(
       '完整动画缺少动作首帧节点',
+    )
+  })
+
+  it('拒绝发布没有生成任务引用的完整动画', async () => {
+    const workflow = reviewingWorkflowFixture()
+    const fullFrame = workflow.nodes.find((node) => node.type === 'action-full-frame')!
+    fullFrame.generations = []
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(workflow),
+        update: vi.fn(),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn(),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({
+          items: [characterWithOutfitFixture()],
+          total: 1,
+          page: 1,
+          pageSize: 100,
+        }),
+        create: vi.fn(),
+        get: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      },
+      render3d: stubRender3DApis(),
+      onAsyncError: vi.fn(),
+    })
+
+    await expect(session.publishReviewedAction('action-walk:review')).rejects.toThrow(
+      '完整动画生成结果不存在',
     )
   })
 
@@ -832,7 +981,7 @@ describe('createDefaultRealWorkflowEditorSession', () => {
           project_id: 1,
           task_type: 'character_image',
           status: 'failed',
-          input_payload: { num_images: 3 },
+          input_payload: { num_images: 2 },
           result: null,
           error_message: 'provider unavailable',
         })
@@ -870,6 +1019,7 @@ async function createCharacterTemplateSession(
     characters?: Character[]
     mediaApis?: Pick<MediaApis, 'upload'>
     workflowRunUpdate?: WorkflowRunApis['update']
+    directionalMovement?: Project['directionalMovement']
   } = {},
 ) {
   const workflow = options.workflow ?? selectingCharacterTemplateWorkflowFixture()
@@ -891,7 +1041,12 @@ async function createCharacterTemplateSession(
       get: vi.fn(),
       subscribe: vi.fn(() => () => undefined),
     },
-    projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+    projectApis: {
+      get: vi.fn().mockResolvedValue({
+        ...projectFixture(),
+        directionalMovement: options.directionalMovement ?? 'single',
+      }),
+    },
     characterApis: {
       listByProject: vi.fn().mockResolvedValue({
         items: characters,
@@ -1098,6 +1253,21 @@ function completeAnimationFixture(): Generation<'complete_animation'> {
         { index: 0, url: 'https://assets.windup.test/walk-01.png', durationMs: 100 },
         { index: 1, url: 'https://assets.windup.test/walk-02.png', durationMs: null },
       ],
+    },
+  }
+}
+
+function directionalAnimationFixture(
+  id: string,
+  direction: 'east' | 'north' | 'south',
+): Generation<'complete_animation'> {
+  return {
+    ...completeAnimationFixture(),
+    id,
+    result: {
+      type: 'complete_animation',
+      direction,
+      frames: [{ index: 0, url: `${direction}.png`, durationMs: 80 }],
     },
   }
 }
