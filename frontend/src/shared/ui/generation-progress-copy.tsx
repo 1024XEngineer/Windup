@@ -6,35 +6,33 @@ export type GenerationProgressKind =
   | 'action-first-frame'
   | 'action-full-frame'
 
-const GENERATION_PROGRESS_MESSAGES: Record<
-  GenerationProgressKind,
-  readonly KineticCopyMessage[]
-> = {
-  'character-template': [
-    { lines: ['勾勒角色轮廓'] },
-    { lines: ['给衣服配颜色'] },
-    { lines: ['把发型画清楚'] },
-    { lines: ['添上表情'] },
-    { lines: ['处理一下光影'] },
-    { lines: ['补齐画面细节'] },
-  ],
-  'action-first-frame': [
-    { lines: ['摆好动作姿态'] },
-    { lines: ['调整手脚位置'] },
-    { lines: ['让重心自然一点'] },
-    { lines: ['拉开姿态的区别'] },
-    { lines: ['保持角色样子'] },
-    { lines: ['补上动作细节'] },
-  ],
-  'action-full-frame': [
-    { lines: ['把动作连起来'] },
-    { lines: ['补上中间的变化'] },
-    { lines: ['理顺每一帧的节奏'] },
-    { lines: ['检查手脚的衔接'] },
-    { lines: ['让起落自然一点'] },
-    { lines: ['调整动作幅度'] },
-  ],
-}
+const GENERATION_PROGRESS_MESSAGES: Record<GenerationProgressKind, readonly KineticCopyMessage[]> =
+  {
+    'character-template': [
+      { lines: ['勾勒角色轮廓'] },
+      { lines: ['给衣服配颜色'] },
+      { lines: ['把发型画清楚'] },
+      { lines: ['添上表情'] },
+      { lines: ['处理一下光影'] },
+      { lines: ['补齐画面细节'] },
+    ],
+    'action-first-frame': [
+      { lines: ['摆好动作姿态'] },
+      { lines: ['调整手脚位置'] },
+      { lines: ['让重心自然一点'] },
+      { lines: ['拉开姿态的区别'] },
+      { lines: ['保持角色样子'] },
+      { lines: ['补上动作细节'] },
+    ],
+    'action-full-frame': [
+      { lines: ['把动作连起来'] },
+      { lines: ['补上中间的变化'] },
+      { lines: ['理顺每一帧的节奏'] },
+      { lines: ['检查手脚的衔接'] },
+      { lines: ['让起落自然一点'] },
+      { lines: ['调整动作幅度'] },
+    ],
+  }
 
 export interface GenerationProgressCopyProps {
   kind: GenerationProgressKind

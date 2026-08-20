@@ -1033,10 +1033,7 @@ function QuickStartRun({
                 </>
               ) : (
                 <>
-                  <GenerationProgressCopy
-                    label="角色生成进度"
-                    kind="character-template"
-                  />
+                  <GenerationProgressCopy label="角色生成进度" kind="character-template" />
                   <div
                     data-layout="agent-result-set"
                     className="grid w-full max-w-2xl grid-cols-3 gap-3"
@@ -1133,10 +1130,7 @@ function QuickStartRun({
                     </>
                   ) : (
                     <>
-                      <GenerationProgressCopy
-                        label="动作首帧生成进度"
-                        kind="action-first-frame"
-                      />
+                      <GenerationProgressCopy label="动作首帧生成进度" kind="action-first-frame" />
                       <div
                         data-layout="agent-result-set"
                         className="grid w-full max-w-2xl grid-cols-3 gap-3"
@@ -1221,10 +1215,7 @@ function QuickStartRun({
                     </>
                   ) : (
                     <>
-                      <GenerationProgressCopy
-                        label="完整动作生成进度"
-                        kind="action-full-frame"
-                      />
+                      <GenerationProgressCopy label="完整动作生成进度" kind="action-full-frame" />
                       <div
                         data-layout="agent-result-set"
                         className="grid w-full max-w-2xl grid-cols-3 gap-3"
