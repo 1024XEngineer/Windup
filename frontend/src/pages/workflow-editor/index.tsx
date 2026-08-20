@@ -35,11 +35,7 @@ import {
   ExportButton,
   type ExportPackageModel,
 } from '@/features/export-package'
-import {
-  GenerationPreviewCard,
-  GenerationProgressCopy,
-  type GenerationProgressKind,
-} from '@/shared/ui'
+import { GenerationPreviewCard, GenerationProgressCopy } from '@/shared/ui'
 import { loadDefaultActionPresets, type WorkflowEditorSession } from './runtime'
 import { useWorkflowEditorSession } from './use-workflow-editor-session'
 import { WorkflowEditorView, type WorkflowCardNode } from './workflow-editor-view'
@@ -1436,18 +1432,16 @@ function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInpu
     )
   }
   if (node.phase === 'generating') {
+    const feedback =
+      node.type === 'character-template'
+        ? (['character-template', '身份母版生成进度', '身份母版生成预览'] as const)
+        : node.type === 'action-first-frame'
+          ? (['action-first-frame', '动作首帧生成进度', '动作首帧生成预览'] as const)
+          : (['action-full-frame', '完整动作生成进度', '完整动作生成预览'] as const)
     return (
       <div className={`${CARD_STACK} justify-items-center`}>
-        <GenerationProgressCopy
-          kind={generationProgressKind(node)}
-          label={generationProgressLabel(node)}
-          placement="node"
-        />
-        <GenerationPreviewCard
-          label={generationPreviewLabel(node)}
-          radius="node"
-          size="candidate"
-        />
+        <GenerationProgressCopy kind={feedback[0]} label={feedback[1]} placement="node" />
+        <GenerationPreviewCard label={feedback[2]} radius="node" size="candidate" />
       </div>
     )
   }
@@ -1461,29 +1455,6 @@ function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInpu
     )
   }
   return <p className={CARD_SUMMARY}>{label}</p>
-}
-
-type GenerationFeedbackNode = Extract<
-  WorkflowNode,
-  { type: 'character-template' | 'action-first-frame' | 'action-full-frame' }
->
-
-function generationPreviewLabel(node: GenerationFeedbackNode) {
-  if (node.type === 'character-template') return '身份母版生成预览'
-  if (node.type === 'action-first-frame') return '动作首帧生成预览'
-  return '完整动作生成预览'
-}
-
-function generationProgressLabel(node: GenerationFeedbackNode) {
-  if (node.type === 'character-template') return '身份母版生成进度'
-  if (node.type === 'action-first-frame') return '动作首帧生成进度'
-  return '完整动作生成进度'
-}
-
-function generationProgressKind(node: GenerationFeedbackNode): GenerationProgressKind {
-  if (node.type === 'action-first-frame') return 'action-first-frame'
-  if (node.type === 'action-full-frame') return 'action-full-frame'
-  return 'character-template'
 }
 
 function EditorBoundary({ message }: { message: string }) {
