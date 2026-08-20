@@ -1,0 +1,29 @@
+name: Pixel grid reconstructor CI
+
+on:
+  push:
+    paths:
+      - "backend/native/pixel_grid_reconstructor/**"
+      - ".github/workflows/pixel-grid-reconstructor.yml"
+  pull_request:
+    paths:
+      - "backend/native/pixel_grid_reconstructor/**"
+      - ".github/workflows/pixel-grid-reconstructor.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend/native/pixel_grid_reconstructor
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Rust format
+        run: cargo fmt --check
+
+      - name: Rust tests
+        run: cargo test --release --locked
