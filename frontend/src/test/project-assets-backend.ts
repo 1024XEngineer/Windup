@@ -9,6 +9,7 @@ interface ProjectDto {
   sprite_height: number
   game_style: string | null
   sprite_sample_url: string | null
+  preview_url: string | null
   create_at: string
   update_at: string
 }
@@ -24,6 +25,7 @@ const projectDtos: ProjectDto[] = [
     sprite_height: 64,
     game_style: '低饱和像素绘本',
     sprite_sample_url: null,
+    preview_url: 'https://cdn.windup.test/messenger-outfit.png',
     create_at: '2026-08-01T08:00:00Z',
     update_at: '2026-08-04T10:30:00Z',
   },
@@ -37,6 +39,7 @@ const projectDtos: ProjectDto[] = [
     sprite_height: 128,
     game_style: null,
     sprite_sample_url: null,
+    preview_url: null,
     create_at: '2026-08-02T08:00:00Z',
     update_at: '2026-08-03T09:00:00Z',
   },
@@ -229,6 +232,7 @@ export function createProjectAssetsBackend({
         sprite_height: body.sprite_height,
         game_style: body.game_style ?? null,
         sprite_sample_url: body.sprite_sample_url ?? null,
+        preview_url: body.sprite_sample_url ?? null,
         create_at: '2026-08-06T00:00:00Z',
         update_at: '2026-08-06T00:00:00Z',
       }
