@@ -10,6 +10,7 @@ from windup_common.result import Response
 
 from windup_app.server.media.model import MediaCategory, MediaUploadInput, MediaUploadResult
 from windup_app.server.media.service import service
+from windup_app.server.media.service import InvalidThumbnailSourceError
 
 router = APIRouter(prefix="/media", tags=["media"])
 
@@ -111,5 +112,8 @@ async def upload_media(
     )
 
     # 同步上传放到线程池，避免阻塞事件循环
-    result = await asyncio.to_thread(service.upload, data, metadata)
+    try:
+        result = await asyncio.to_thread(service.upload, data, metadata)
+    except InvalidThumbnailSourceError as exc:
+        raise BizException(str(exc), code=BizCode.BAD_REQUEST) from exc
     return Response.success(result)
