@@ -2,6 +2,7 @@ import type {
   ActionPreset,
   Character,
   CharacterApis,
+  ActionDirection,
   GenerationApis,
   MediaApis,
   MediaReference,
@@ -35,6 +36,7 @@ export interface WorkflowEditorSession {
   confirmCharacterTemplate(
     nodeId: CharacterTemplateWorkflowNode['id'],
     selectedImageUrl: string,
+    direction?: ActionDirection,
   ): Promise<Character>
   /** 上传角色生成约束图；页面不接触 multipart 协议或用途枚举。 */
   uploadReferenceImage(file: File, signal?: AbortSignal): Promise<MediaReference>
@@ -93,6 +95,7 @@ export async function createRealWorkflowEditorSession(
     workflowRunApis: dependencies.workflowRunApis,
     generationApis: dependencies.generationApis,
     onAsyncError: reportAsyncError,
+    directionalMovement: project.directionalMovement,
   })
   const publisher = createCharacterAssetPublisher(dependencies.characterApis)
   async function shouldRollbackWorkflowChange(isPersisted: (latest: WorkflowRun) => boolean) {

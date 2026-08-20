@@ -9,6 +9,26 @@ const characterDto = {
   reference_image_url: 'https://cdn.windup.test/reference.png',
   character_data: {
     version: 2,
+    templates: [
+      {
+        direction: 'east',
+        source_direction: null,
+        mirror_x: false,
+        image_url: 'https://cdn.windup.test/reference.png',
+      },
+      {
+        direction: 'west',
+        source_direction: 'east',
+        mirror_x: true,
+        image_url: null,
+      },
+      {
+        direction: 'north',
+        source_direction: null,
+        mirror_x: false,
+        image_url: 'https://cdn.windup.test/reference-north.png',
+      },
+    ],
     outfits: [
       {
         id: 'outfit-default',
@@ -112,6 +132,26 @@ describe('characterApis', () => {
           referenceImageUrl: 'https://cdn.windup.test/reference.png',
           dataVersion: 2,
           status: 1,
+          templates: [
+            {
+              direction: 'east',
+              sourceDirection: null,
+              mirrorX: false,
+              imageUrl: 'https://cdn.windup.test/reference.png',
+            },
+            {
+              direction: 'west',
+              sourceDirection: 'east',
+              mirrorX: true,
+              imageUrl: null,
+            },
+            {
+              direction: 'north',
+              sourceDirection: null,
+              mirrorX: false,
+              imageUrl: 'https://cdn.windup.test/reference-north.png',
+            },
+          ],
           outfits: [
             {
               id: 'outfit-default',
@@ -250,6 +290,7 @@ describe('characterApis', () => {
       reference_image_url: 'https://cdn.windup.test/reference.png',
       character_data: {
         version: 2,
+        templates: characterDto.character_data.templates,
         outfits: characterDto.character_data.outfits,
       },
     })
@@ -269,6 +310,281 @@ describe('characterApis', () => {
     const character = await characterApis.get('51')
 
     expect(character.outfits[0]?.model3dUrl).toBeNull()
+  })
+
+  it('preserves directional action sequences across GET and PATCH', async () => {
+    let request: Request | undefined
+    const directionalDto = structuredClone(characterDto)
+    const directionalSequences = [
+      {
+        direction: 'east',
+        source_direction: null,
+        mirror_x: false,
+        frame_count: 1,
+        frames: [
+          {
+            index: 0,
+            image_url: 'https://cdn.windup.test/walk-east-01.png',
+            duration_ms: 100,
+          },
+        ],
+      },
+      {
+        direction: 'west',
+        source_direction: 'east',
+        mirror_x: true,
+        frame_count: 1,
+        frames: [],
+      },
+    ]
+    Object.assign(directionalDto.character_data.outfits[0]!.actions[0]!, {
+      sequences: directionalSequences,
+    })
+    const characterApis = await loadCharacterApis(async (input, init) => {
+      request = new Request(input, init)
+      return jsonResponse(directionalDto)
+    })
+
+    const character = await characterApis.get('51')
+    expect(character.outfits[0]?.actions[0]?.sequences).toEqual([
+      {
+        direction: 'east',
+        sourceDirection: null,
+        mirrorX: false,
+        frameCount: 1,
+        frames: [
+          {
+            index: 0,
+            imageUrl: 'https://cdn.windup.test/walk-east-01.png',
+            durationMs: 100,
+          },
+        ],
+      },
+      {
+        direction: 'west',
+        sourceDirection: 'east',
+        mirrorX: true,
+        frameCount: 1,
+        frames: [],
+      },
+    ])
+
+    await characterApis.update(character)
+    await expect(request?.json()).resolves.toMatchObject({
+      character_data: {
+        outfits: [
+          {
+            actions: [
+              {
+                sequences: directionalSequences,
+              },
+            ],
+          },
+        ],
+      },
+    })
+  })
+
+  it('rejects a directional payload that mirrors north from south', async () => {
+    const invalidDto = structuredClone(characterDto)
+    Object.assign(invalidDto.character_data.outfits[0]!.actions[0]!, {
+      sequences: [
+        {
+          direction: 'south',
+          source_direction: null,
+          mirror_x: false,
+          frame_count: 1,
+          frames: [
+            {
+              index: 0,
+              image_url: 'https://cdn.windup.test/walk-south-01.png',
+              duration_ms: 100,
+            },
+          ],
+        },
+        {
+          direction: 'north',
+          source_direction: 'south',
+          mirror_x: true,
+          frame_count: 1,
+          frames: [],
+        },
+      ],
+    })
+    const characterApis = await loadCharacterApis(async () => jsonResponse(invalidDto))
+
+    await expect(characterApis.get('51')).rejects.toThrow('动作方向镜像关系无效')
+  })
+
+  it('rejects source direction frames that do not match the declared count', async () => {
+    const invalidDto = structuredClone(characterDto)
+    Object.assign(invalidDto.character_data.outfits[0]!.actions[0]!, {
+      sequences: [
+        {
+          direction: 'east',
+          source_direction: null,
+          mirror_x: false,
+          frame_count: 2,
+          frames: [
+            {
+              index: 1,
+              image_url: 'https://cdn.windup.test/walk-east-02.png',
+              duration_ms: 100,
+            },
+          ],
+        },
+      ],
+    })
+    const characterApis = await loadCharacterApis(async () => jsonResponse(invalidDto))
+
+    await expect(characterApis.get('51')).rejects.toThrow('源动作方向帧无效')
+  })
+
+  it('rejects a mirrored direction whose frame count differs from its source', async () => {
+    const invalidDto = structuredClone(characterDto)
+    Object.assign(invalidDto.character_data.outfits[0]!.actions[0]!, {
+      sequences: [
+        {
+          direction: 'east',
+          source_direction: null,
+          mirror_x: false,
+          frame_count: 1,
+          frames: [
+            {
+              index: 0,
+              image_url: 'https://cdn.windup.test/walk-east-01.png',
+              duration_ms: 100,
+            },
+          ],
+        },
+        {
+          direction: 'west',
+          source_direction: 'east',
+          mirror_x: true,
+          frame_count: 2,
+          frames: [],
+        },
+      ],
+    })
+    const characterApis = await loadCharacterApis(async () => jsonResponse(invalidDto))
+
+    await expect(characterApis.get('51')).rejects.toThrow('镜像动作方向帧数与源方向不一致')
+  })
+
+  it('rejects invalid, inconsistent, and source-less character templates', async () => {
+    const east = {
+      direction: 'east',
+      source_direction: null,
+      mirror_x: false,
+      image_url: 'https://cdn.windup.test/reference.png',
+    }
+    const invalidCases = [
+      {
+        templates: [{ ...east, direction: 'up' }],
+        message: '角色母版方向无效或重复',
+      },
+      {
+        templates: [{ ...east, direction: 'west' }],
+        message: '角色母版方向镜像关系无效',
+      },
+      {
+        templates: [{ ...east, image_url: ' ' }],
+        message: '真实源方向缺少角色母版图片',
+      },
+      {
+        templates: [
+          east,
+          {
+            direction: 'west',
+            source_direction: 'east',
+            mirror_x: true,
+            image_url: 'https://cdn.windup.test/west.png',
+          },
+        ],
+        message: '角色母版图片与方向类型不匹配',
+      },
+      {
+        templates: [
+          {
+            direction: 'west',
+            source_direction: 'east',
+            mirror_x: true,
+            image_url: null,
+          },
+        ],
+        message: '镜像角色母版缺少真实源方向',
+      },
+    ]
+
+    for (const invalidCase of invalidCases) {
+      const invalidDto = structuredClone(characterDto)
+      invalidDto.character_data.templates =
+        invalidCase.templates as unknown as typeof invalidDto.character_data.templates
+      const characterApis = await loadCharacterApis(async () => jsonResponse(invalidDto))
+
+      await expect(characterApis.get('51')).rejects.toThrow(invalidCase.message)
+    }
+  })
+
+  it('rejects unknown, duplicate, frame-owning, and source-less mirror directions', async () => {
+    const east = {
+      direction: 'east',
+      source_direction: null,
+      mirror_x: false,
+      frame_count: 1,
+      frames: [
+        {
+          index: 0,
+          image_url: 'https://cdn.windup.test/walk-east-01.png',
+          duration_ms: 100,
+        },
+      ],
+    }
+    const invalidCases = [
+      {
+        sequences: [{ ...east, direction: 'up_left' }],
+        message: '动作方向无效或重复',
+      },
+      {
+        sequences: [east, { ...east }],
+        message: '动作方向无效或重复',
+      },
+      {
+        sequences: [
+          east,
+          {
+            direction: 'west',
+            source_direction: 'east',
+            mirror_x: true,
+            frame_count: 1,
+            frames: east.frames,
+          },
+        ],
+        message: '镜像动作方向不能保存独立帧',
+      },
+      {
+        sequences: [
+          {
+            direction: 'west',
+            source_direction: 'east',
+            mirror_x: true,
+            frame_count: 1,
+            frames: [],
+          },
+        ],
+        message: '镜像动作方向缺少源方向',
+      },
+    ]
+
+    for (const invalidCase of invalidCases) {
+      const invalidDto = structuredClone(characterDto)
+      Object.assign(invalidDto.character_data.outfits[0]!.actions[0]!, {
+        sequences: invalidCase.sequences,
+      })
+      const characterApis = await loadCharacterApis(async () => jsonResponse(invalidDto))
+
+      await expect(characterApis.get('51')).rejects.toThrow(invalidCase.message)
+    }
   })
 
   it('deletes one Character through the backend resource path', async () => {

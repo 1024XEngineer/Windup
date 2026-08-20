@@ -16,6 +16,7 @@ import {
   WORKFLOW_NODE_STATUSES,
   WORKFLOW_RUN_STORAGE_STATUSES,
 } from './constants'
+import { isActionDirection } from '../character/directions'
 
 /** 当前 WorkflowRun 已被其他请求更新，调用方需要重新读取后再继续修改。 */
 export class WorkflowRunConflictError extends Error {
@@ -50,7 +51,19 @@ function isGenerationRef(value: unknown): boolean {
     isRecord(value) &&
     typeof value.taskId === 'string' &&
     value.taskId.length > 0 &&
-    isMember(value.role, WORKFLOW_GENERATION_ROLES)
+    isMember(value.role, WORKFLOW_GENERATION_ROLES) &&
+    (value.direction === undefined || isActionDirection(value.direction))
+  )
+}
+
+function isDirectionalSelectionMap(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (isRecord(value) &&
+      Object.entries(value).every(
+        ([direction, imageUrl]) =>
+          isActionDirection(direction) && typeof imageUrl === 'string' && imageUrl.length > 0,
+      ))
   )
 }
 
@@ -143,8 +156,10 @@ function isCharacterTemplateNode(value: unknown): value is CharacterTemplateWork
     ['ready', 'generating', 'selecting', 'completed'].includes(String(value.phase)) &&
     hasOnlyGenerationRole(value, 'character_template') &&
     isNullableString(value.selectedImageUrl) &&
+    isDirectionalSelectionMap(value.selectedImages) &&
     (value.phase !== 'completed' ||
-      (typeof value.selectedImageUrl === 'string' && value.selectedImageUrl.length > 0))
+      (typeof value.selectedImageUrl === 'string' && value.selectedImageUrl.length > 0) ||
+      (isRecord(value.selectedImages) && Object.keys(value.selectedImages).length > 0))
   )
 }
 
@@ -157,8 +172,11 @@ function isActionFirstFrameNode(value: unknown): value is ActionFirstFrameWorkfl
     hasValidActionInput(value.input) &&
     hasOnlyGenerationRole(value, 'first_frame') &&
     isNullableString(value.selectedFirstFrameUrl) &&
+    isDirectionalSelectionMap(value.selectedFirstFrameUrls) &&
     (value.phase !== 'completed' ||
-      (typeof value.selectedFirstFrameUrl === 'string' && value.selectedFirstFrameUrl.length > 0))
+      (typeof value.selectedFirstFrameUrl === 'string' && value.selectedFirstFrameUrl.length > 0) ||
+      (isRecord(value.selectedFirstFrameUrls) &&
+        Object.keys(value.selectedFirstFrameUrls).length > 0))
   )
 }
 

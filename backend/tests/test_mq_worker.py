@@ -34,6 +34,7 @@ from windup_app.worker.handlers import (
     handle_verification_code,
 )
 from windup_app.worker.pending_timeout import release_stale_pending_tasks
+from windup_common.directions import ActionDirection
 from windup_framework.db.base import Base
 from windup_framework.mq.config import MAX_CONSUME_ATTEMPTS
 from windup_framework.mq.model import MqMessage
@@ -138,7 +139,9 @@ def test_handle_generation_dispatches_image_task(db_session, engine, monkeypatch
         db_session,
         user_id=1,
         project_id=1,
-        input=CharacterImageInput(prompt="hero", width=512, height=512),
+        input=CharacterImageInput(
+            prompt="hero", width=512, height=512, direction=ActionDirection.NORTH
+        ),
     )
     db_session.commit()
 
@@ -150,6 +153,7 @@ def test_handle_generation_dispatches_image_task(db_session, engine, monkeypatch
     )
     run_image.assert_called_once()
     assert run_image.call_args.args[0] == task.id
+    assert run_image.call_args.args[1].direction is ActionDirection.NORTH
 
 
 def test_dispatch_handler_unknown_type_raises():
@@ -400,7 +404,12 @@ def test_handle_generation_dispatches_action_task(db_session, engine, monkeypatc
         db_session,
         user_id=1,
         project_id=1,
-        input=CharacterActionInput(character_id=1, action_type=ActionType.WALK, num_frames=4),
+        input=CharacterActionInput(
+            character_id=1,
+            action_type=ActionType.WALK,
+            num_frames=4,
+            direction=ActionDirection.SOUTH,
+        ),
     )
     db_session.commit()
 
@@ -412,6 +421,7 @@ def test_handle_generation_dispatches_action_task(db_session, engine, monkeypatc
     )
     run_action.assert_called_once()
     assert run_action.call_args.args[0] == task.id
+    assert run_action.call_args.args[1].direction is ActionDirection.SOUTH
 
 
 def test_handle_generation_unknown_type_raises(db_session, engine, monkeypatch):

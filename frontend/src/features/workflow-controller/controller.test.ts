@@ -10,6 +10,7 @@ import type {
   GenerationApis,
   GenerationEvent,
   ReviewWorkflowNode,
+  DirectionalMovement,
   WorkflowActionInput,
   WorkflowNode,
   WorkflowRun,
@@ -219,7 +220,7 @@ function createGenerationHarness() {
   return { apis, emit, listeners, snapshots }
 }
 
-function createController(run = createRun()) {
+function createController(run = createRun(), directionalMovement: DirectionalMovement = 'single') {
   const workflow = createWorkflowApis(run)
   const generation = createGenerationHarness()
   const asyncErrors: Error[] = []
@@ -230,6 +231,7 @@ function createController(run = createRun()) {
     createId: () => 'action-created',
     now: () => '2026-08-09T00:00:00.000Z',
     onAsyncError: (error) => asyncErrors.push(error),
+    directionalMovement,
   })
   return { controller, workflow, generation, asyncErrors }
 }
@@ -375,11 +377,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'character_template',
-        images: [
-          { url: 'https://img/knight-1.png' },
-          { url: 'https://img/knight-2.png' },
-          { url: 'https://img/knight-3.png' },
-        ],
+        images: [{ url: 'https://img/knight-1.png' }, { url: 'https://img/knight-2.png' }],
       },
       error: null,
     })
@@ -804,6 +802,7 @@ describe('WorkflowController', () => {
       referenceMedia: [],
       spriteWidth: 64,
       spriteHeight: 64,
+      direction: 'east',
     })
     expect(workflow.getSaved().nodes).toEqual(
       expect.arrayContaining([
@@ -822,11 +821,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'character_template',
-        images: [
-          { url: 'https://img/knight-1.png' },
-          { url: 'https://img/knight-2.png' },
-          { url: 'https://img/knight-3.png' },
-        ],
+        images: [{ url: 'https://img/knight-1.png' }, { url: 'https://img/knight-2.png' }],
       },
       error: null,
     })
@@ -839,6 +834,28 @@ describe('WorkflowController', () => {
       error: null,
     })
     expect(asyncErrors).toEqual([])
+  })
+
+  it('服务端回包已改变母版阶段时拒绝继续创建生成任务', async () => {
+    const { controller, workflow, generation } = createController()
+    const update = vi.mocked(workflow.apis.update)
+    const save = update.getMockImplementation()!
+    update.mockImplementationOnce(async (run) => {
+      const saved = await save(run)
+      return {
+        ...saved,
+        nodes: saved.nodes.map((node) =>
+          node.id === 'template-1' && node.type === 'character-template'
+            ? { ...node, phase: 'selecting' as const }
+            : node,
+        ),
+      }
+    })
+
+    await expect(
+      controller.generateCharacterTemplate('setup-1', { spriteWidth: 64, spriteHeight: 64 }),
+    ).rejects.toThrow('角色母版节点当前不能开始生成')
+    expect(generation.apis.create).not.toHaveBeenCalled()
   })
 
   it('角色母版重生成使用调用方提供的上一版图片作为参考', async () => {
@@ -859,7 +876,387 @@ describe('WorkflowController', () => {
       referenceMedia: [previousImage],
       spriteWidth: 64,
       spriteHeight: 64,
+      direction: 'east',
     })
+  })
+
+  it.each([
+    ['four-way', ['east', 'north', 'south']],
+    ['eight-way', ['east', 'north', 'south', 'north_east', 'south_east']],
+  ] as const)('按项目方向为 %s 创建独立的两张候选任务', async (movement, directions) => {
+    const { controller, generation } = createController(createRun(), movement)
+
+    await controller.generateCharacterTemplate('setup-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledTimes(directions.length)
+    for (const [index, direction] of directions.entries()) {
+      generation.emit({
+        taskId: `task-${index + 1}`,
+        type: 'character_template',
+        status: 'completed',
+        result: {
+          type: 'character_template',
+          direction,
+          images: [{ url: `${direction}-1.png` }, { url: `${direction}-2.png` }],
+        },
+        error: null,
+      })
+    }
+    await flushAsyncWork()
+
+    const template = controller.getWorkflow().nodes[1]
+    expect(template).toMatchObject({
+      phase: 'selecting',
+      status: 'active',
+      generations: directions.map((_, index) => ({
+        taskId: `task-${index + 1}`,
+        role: 'character_template',
+      })),
+    })
+  })
+
+  it('四向首帧必须逐方向确认，不能用东向选择冒充其它方向', async () => {
+    const run = createRun([
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedImageUrl: 'https://img/east.png',
+        selectedImages: {
+          east: 'https://img/east.png',
+          north: 'https://img/north.png',
+          south: 'https://img/south.png',
+        },
+      }),
+      ...actionNodes(),
+    ])
+    const { controller, generation } = createController(run, 'four-way')
+
+    await controller.generateFirstFrame('action-walk', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+    for (const [index, direction] of ['east', 'north', 'south'].entries()) {
+      generation.emit({
+        taskId: `task-${index + 1}`,
+        type: 'first_frame',
+        status: 'completed',
+        result: {
+          type: 'first_frame',
+          direction: direction as 'east' | 'north' | 'south',
+          images: [{ url: `${direction}-1.png` }, { url: `${direction}-2.png` }],
+        },
+        error: null,
+      })
+    }
+    await flushAsyncWork()
+
+    await controller.confirmFirstFrame('action-walk', 'east-1', 'east')
+    await controller.confirmFirstFrame('action-walk', 'north-1', 'north')
+    expect(controller.getWorkflow().nodes.find((node) => node.id === 'action-walk')).toMatchObject({
+      status: 'active',
+      phase: 'selecting',
+      selectedFirstFrameUrls: { east: 'east-1', north: 'north-1' },
+    })
+
+    await controller.confirmFirstFrame('action-walk', 'south-1', 'south')
+    expect(controller.getWorkflow().nodes.find((node) => node.id === 'action-walk')).toMatchObject({
+      status: 'passed',
+      phase: 'completed',
+      selectedFirstFrameUrls: {
+        east: 'east-1',
+        north: 'north-1',
+        south: 'south-1',
+      },
+    })
+  })
+
+  it('四向旧角色只有东向兼容字段时拒绝创建任何首帧任务', async () => {
+    const run = createRun([...completedCharacterNodes(), ...actionNodes()])
+    const { controller, generation } = createController(run, 'four-way')
+
+    await expect(
+      controller.generateFirstFrame('action-walk', { spriteWidth: 64, spriteHeight: 64 }),
+    ).rejects.toThrow('角色母版尚未确认方向 north')
+
+    expect(generation.apis.create).not.toHaveBeenCalled()
+  })
+
+  it('四向旧首帧只有东向兼容字段时拒绝创建任何完整动画任务', async () => {
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: 'https://img/east.png',
+      }),
+      generationMethodNode({ status: 'passed', phase: 'completed', method: 'video-cropping' }),
+      fullFrameNode({ status: 'active' }),
+      reviewNode(),
+    ])
+    const { controller, generation } = createController(run, 'four-way')
+
+    await expect(
+      controller.generateCompleteAnimation('action-walk:action-full-frame', {
+        characterId: 'character-1',
+        referenceMedia: [],
+      }),
+    ).rejects.toThrow('动作首帧尚未确认方向 north')
+
+    expect(generation.apis.create).not.toHaveBeenCalled()
+  })
+
+  it('拒绝确认镜像方向，并在服务端返回错误方向时终止节点', async () => {
+    const { controller, generation } = createController(createRun(), 'four-way')
+
+    await expect(
+      controller.confirmCharacterTemplate('template-1', 'west.png', 'character-1', 'west'),
+    ).rejects.toThrow('方向 west 是镜像方向，不能单独生成或确认')
+
+    await controller.generateCharacterTemplate('setup-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+    generation.emit({
+      taskId: 'task-1',
+      type: 'character_template',
+      status: 'completed',
+      result: {
+        type: 'character_template',
+        direction: 'north',
+        images: [{ url: 'north-1.png' }, { url: 'north-2.png' }],
+      },
+      error: null,
+    })
+    await flushAsyncWork()
+
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+      status: 'failed',
+      error: '生成结果方向与 WorkflowRun 任务方向不一致',
+    })
+  })
+
+  it('四向节点等待全部方向，并传播其它方向的失败或错向结果', async () => {
+    const references = (['east', 'north', 'south'] as const).map((direction) => ({
+      taskId: `task-${direction}`,
+      role: 'character_template' as const,
+      direction,
+    }))
+    const run = createRun([
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({ status: 'active', phase: 'generating', generations: references }),
+    ])
+    const current = {
+      id: 'task-east',
+      projectId: '1',
+      type: 'character_template' as const,
+      status: 'completed' as const,
+      result: {
+        type: 'character_template' as const,
+        direction: 'east' as const,
+        images: [{ url: 'east-1.png' }, { url: 'east-2.png' }],
+      },
+      error: null,
+    }
+    const failed = createController(run, 'four-way')
+    failed.generation.snapshots.set('task-north', {
+      id: 'task-north',
+      projectId: '1',
+      type: 'character_template',
+      status: 'failed',
+      result: null,
+      error: 'north provider failed',
+    })
+    failed.generation.snapshots.set('task-south', {
+      id: 'task-south',
+      projectId: '1',
+      type: 'character_template',
+      status: 'pending',
+      result: null,
+      error: null,
+    })
+
+    await failed.controller.applyGenerationResult({
+      nodeId: 'template-1',
+      taskId: 'task-east',
+      generation: current,
+    })
+    expect(failed.controller.getWorkflow().nodes[1]).toMatchObject({
+      status: 'failed',
+      error: 'north provider failed',
+    })
+
+    const mismatched = createController(run, 'four-way')
+    for (const [taskId, direction] of [
+      ['task-north', 'south'],
+      ['task-south', 'south'],
+    ] as const) {
+      mismatched.generation.snapshots.set(taskId, {
+        id: taskId,
+        projectId: '1',
+        type: 'character_template',
+        status: 'completed',
+        result: {
+          type: 'character_template',
+          direction,
+          images: [{ url: `${direction}-1.png` }, { url: `${direction}-2.png` }],
+        },
+        error: null,
+      })
+    }
+    await mismatched.controller.applyGenerationResult({
+      nodeId: 'template-1',
+      taskId: 'task-east',
+      generation: current,
+    })
+    expect(mismatched.controller.getWorkflow().nodes[1]).toMatchObject({
+      status: 'failed',
+      error: '生成结果方向与 WorkflowRun 任务方向不一致',
+    })
+
+    const incomplete = createController(
+      createRun([
+        setupNode({ status: 'passed', phase: 'completed' }),
+        templateNode({
+          status: 'active',
+          phase: 'generating',
+          generations: [references[0]!],
+        }),
+      ]),
+      'four-way',
+    )
+    await incomplete.controller.applyGenerationResult({
+      nodeId: 'template-1',
+      taskId: 'task-east',
+      generation: current,
+    })
+    expect(incomplete.controller.getWorkflow().nodes[1]).toMatchObject({
+      status: 'active',
+      phase: 'generating',
+    })
+  })
+
+  it('只重试失败方向并保留其它方向的任务引用', async () => {
+    const { controller, generation } = createController(createRun(), 'four-way')
+
+    await controller.generateCharacterTemplate('setup-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+    for (const [index, direction] of ['east', 'north', 'south'].entries()) {
+      generation.emit({
+        taskId: `task-${index + 1}`,
+        type: 'character_template',
+        status: direction === 'north' ? 'failed' : 'completed',
+        result:
+          direction === 'north'
+            ? null
+            : {
+                type: 'character_template',
+                direction: direction as 'east' | 'south',
+                images: [{ url: `${direction}-1.png` }, { url: `${direction}-2.png` }],
+              },
+        error: direction === 'north' ? 'north provider failed' : null,
+      })
+    }
+    await flushAsyncWork()
+
+    await controller.retryGenerationDirection('template-1', 'north', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledTimes(4)
+    expect(generation.apis.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: 'character_template', direction: 'north' }),
+    )
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+      status: 'active',
+      phase: 'generating',
+      generations: [
+        { taskId: 'task-1', role: 'character_template' },
+        { taskId: 'task-3', role: 'character_template', direction: 'south' },
+        { taskId: 'task-4', role: 'character_template', direction: 'north' },
+      ],
+    })
+  })
+
+  it('刷新后恢复其它方向订阅失败时仍保留新建的重试任务引用', async () => {
+    const run = createRun([
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({
+        status: 'failed',
+        phase: 'generating',
+        error: 'north provider failed',
+        generations: [
+          { taskId: 'task-east', role: 'character_template' },
+          { taskId: 'task-north', role: 'character_template', direction: 'north' },
+          { taskId: 'task-south', role: 'character_template', direction: 'south' },
+        ],
+      }),
+    ])
+    const { controller, generation } = createController(run, 'four-way')
+    generation.snapshots.set('task-east', {
+      id: 'task-east',
+      projectId: '1',
+      type: 'character_template',
+      status: 'completed',
+      result: {
+        type: 'character_template',
+        direction: 'east',
+        images: [{ url: 'east-1.png' }, { url: 'east-2.png' }],
+      },
+      error: null,
+    })
+    generation.snapshots.set('task-north', {
+      id: 'task-north',
+      projectId: '1',
+      type: 'character_template',
+      status: 'failed',
+      result: null,
+      error: 'north provider failed',
+    })
+    generation.snapshots.set('task-south', {
+      id: 'task-south',
+      projectId: '1',
+      type: 'character_template',
+      status: 'running',
+      result: null,
+      error: null,
+    })
+    const readGeneration = vi.mocked(generation.apis.get)
+    const readSnapshot = readGeneration.getMockImplementation()!
+    let failSouthRestore = false
+    readGeneration.mockImplementation(async (projectId, taskId, expectation) => {
+      if (failSouthRestore && taskId === 'task-south') {
+        throw new Error('south subscription restore failed')
+      }
+      return readSnapshot(projectId, taskId, expectation)
+    })
+
+    await controller.resume()
+    expect(generation.apis.subscribe).not.toHaveBeenCalled()
+    failSouthRestore = true
+    await expect(
+      controller.retryGenerationDirection('template-1', 'north', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+      }),
+    ).rejects.toThrow('south subscription restore failed')
+
+    expect(generation.apis.subscribe).toHaveBeenCalledWith(
+      '1',
+      'task-south',
+      expect.objectContaining({ type: 'character_template', direction: 'south' }),
+      expect.any(Function),
+      expect.any(Function),
+    )
+    expect(controller.getWorkflow().nodes[1]?.generations).toEqual(
+      expect.arrayContaining([expect.objectContaining({ taskId: 'task-1', direction: 'north' })]),
+    )
   })
 
   it('角色母版微调由 Controller 读取上一版图片并组合临时描述', async () => {
@@ -880,6 +1277,7 @@ describe('WorkflowController', () => {
       referenceMedia: [previousImage],
       spriteWidth: 64,
       spriteHeight: 64,
+      direction: 'east',
     })
     expect(controller.getWorkflow().nodes).toEqual(
       expect.arrayContaining([
@@ -907,6 +1305,7 @@ describe('WorkflowController', () => {
       referenceMedia: [],
       spriteWidth: 64,
       spriteHeight: 64,
+      direction: 'east',
     })
   })
 
@@ -1065,6 +1464,36 @@ describe('WorkflowController', () => {
     )
   })
 
+  it('角色母版任务已被并发请求挂载时复用相同引用', async () => {
+    const { controller, workflow, generation } = createController(
+      createRun(completedCharacterNodes()),
+    )
+    const update = vi.mocked(workflow.apis.update)
+    const save = update.getMockImplementation()!
+    update.mockImplementationOnce(save).mockImplementationOnce(async (run) => {
+      const saved = await save(run)
+      return {
+        ...saved,
+        nodes: saved.nodes.map((node) =>
+          node.id === 'template-1'
+            ? { ...node, generations: [{ taskId: 'task-1', role: 'character_template' as const }] }
+            : node,
+        ),
+      }
+    })
+
+    await controller.regenerateCharacterTemplate('template-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      mode: 'regenerate',
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledOnce()
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+      generations: [{ taskId: 'task-1', role: 'character_template' }],
+    })
+  })
+
   it('角色设定已落库但生成请求失败后可以重试', async () => {
     const { controller, generation } = createController()
     vi.mocked(generation.apis.create).mockRejectedValueOnce(new Error('生成服务暂时不可用'))
@@ -1104,11 +1533,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'character_template',
-        images: [
-          { url: 'https://img/knight-1.png' },
-          { url: 'https://img/knight-2.png' },
-          { url: 'https://img/knight-3.png' },
-        ],
+        images: [{ url: 'https://img/knight-1.png' }, { url: 'https://img/knight-2.png' }],
       },
       error: null,
     }
@@ -1158,11 +1583,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'character_template',
-        images: [
-          { url: 'https://img/knight-1.png' },
-          { url: 'https://img/knight-2.png' },
-          { url: 'https://img/knight-3.png' },
-        ],
+        images: [{ url: 'https://img/knight-1.png' }, { url: 'https://img/knight-2.png' }],
       },
       error: null,
     })
@@ -1183,11 +1604,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'first_frame',
-        images: [
-          { url: 'https://img/walk-1.png' },
-          { url: 'https://img/walk-2.png' },
-          { url: 'https://img/walk-3.png' },
-        ],
+        images: [{ url: 'https://img/walk-1.png' }, { url: 'https://img/walk-2.png' }],
       },
       error: null,
     }
@@ -1744,6 +2161,50 @@ describe('WorkflowController', () => {
     })
   })
 
+  it('完整动画节点拒绝图片任务结果', async () => {
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: 'https://img/first.png',
+      }),
+      generationMethodNode({
+        status: 'passed',
+        phase: 'completed',
+        method: 'video-cropping',
+      }),
+      fullFrameNode({
+        status: 'active',
+        phase: 'generating',
+        generations: [{ taskId: 'task-animation', role: 'complete_animation' }],
+      }),
+      reviewNode(),
+    ])
+    const { controller } = createController(run)
+
+    await controller.applyGenerationResult({
+      nodeId: 'action-walk:action-full-frame',
+      taskId: 'task-animation',
+      generation: {
+        id: 'task-animation',
+        projectId: '1',
+        type: 'first_frame',
+        status: 'completed',
+        result: {
+          type: 'first_frame',
+          images: [{ url: 'wrong-1.png' }, { url: 'wrong-2.png' }],
+        },
+        error: null,
+      },
+    })
+
+    expect(controller.getWorkflow().nodes[4]).toMatchObject({
+      status: 'failed',
+      error: '完整动画结果格式无效',
+    })
+  })
+
   it('一个并行 Action 失败不会阻止另一个 Action 接收生成结果', async () => {
     const run = createRun([
       ...completedCharacterNodes(),
@@ -1782,7 +2243,7 @@ describe('WorkflowController', () => {
         status: 'completed',
         result: {
           type: 'first_frame',
-          images: [{ url: 'jump-1.png' }, { url: 'jump-2.png' }, { url: 'jump-3.png' }],
+          images: [{ url: 'jump-1.png' }, { url: 'jump-2.png' }],
         },
         error: null,
       },
@@ -1810,11 +2271,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'first_frame',
-        images: [
-          { url: 'https://img/first.png' },
-          { url: 'https://img/first-2.png' },
-          { url: 'https://img/first-3.png' },
-        ],
+        images: [{ url: 'https://img/first.png' }, { url: 'https://img/first-2.png' }],
       },
       error: null,
     })
@@ -1841,6 +2298,7 @@ describe('WorkflowController', () => {
       spriteWidth: 64,
       spriteHeight: 96,
       referenceMedia: ['https://img/knight.png'],
+      direction: 'east',
     })
     expect(generation.apis.create).toHaveBeenNthCalledWith(
       2,
@@ -1899,6 +2357,7 @@ describe('WorkflowController', () => {
       referenceMedia: [previousImage],
       spriteWidth: 64,
       spriteHeight: 96,
+      direction: 'east',
     })
   })
 
@@ -1933,6 +2392,7 @@ describe('WorkflowController', () => {
       referenceMedia: [previousImage],
       spriteWidth: 64,
       spriteHeight: 96,
+      direction: 'east',
     })
   })
 
@@ -1965,6 +2425,7 @@ describe('WorkflowController', () => {
       referenceMedia: ['https://img/knight.png'],
       spriteWidth: 64,
       spriteHeight: 96,
+      direction: 'east',
     })
   })
 
@@ -2092,11 +2553,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'first_frame',
-        images: [
-          { url: 'https://img/first.png' },
-          { url: 'https://img/first-2.png' },
-          { url: 'https://img/first-3.png' },
-        ],
+        images: [{ url: 'https://img/first.png' }, { url: 'https://img/first-2.png' }],
       },
       error: null,
     })

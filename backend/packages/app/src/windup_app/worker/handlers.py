@@ -21,6 +21,7 @@ from windup_app.server.orchestrator.model import (
     GenerationType,
     TaskStatus,
 )
+from windup_common.directions import ActionDirection
 from windup_app.server.user.service import VERIFY_CODE_KEY
 from windup_framework.db.redis import get_redis
 from windup_framework.db.session import SessionLocal
@@ -68,6 +69,7 @@ def _image_input(payload: dict) -> CharacterImageInput:
         width=int(payload.get("width") or 1024),
         height=int(payload.get("height") or 1024),
         num_images=int(payload.get("num_images") or 1),
+        direction=ActionDirection(payload.get("direction") or ActionDirection.EAST.value),
     )
 
 
@@ -85,6 +87,7 @@ def _action_input(payload: dict) -> CharacterActionInput:
         video_model=payload.get("video_model"),
         outfit_id=payload.get("outfit_id"),
         model_3d_url=payload.get("model_3d_url"),
+        direction=ActionDirection(payload.get("direction") or ActionDirection.EAST.value),
     )
 
 

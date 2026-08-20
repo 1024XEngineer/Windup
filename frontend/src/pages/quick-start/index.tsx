@@ -24,6 +24,7 @@ import { KineticCopyCycle, type KineticCopyMessage } from './kinetic-copy-cycle'
 import {
   quickStartService,
   type QuickStartEntryService,
+  type QuickStartFailedDirection,
   type QuickStartFrame,
   type QuickStartSession,
 } from './service'
@@ -75,6 +76,17 @@ const ROLE_IDEA_MESSAGES: readonly KineticCopyMessage[] = [
     className: 'text-app-accent',
   })),
 ]
+
+const DIRECTION_LABELS = {
+  east: '东',
+  west: '西',
+  north: '北',
+  south: '南',
+  north_east: '东北',
+  north_west: '西北',
+  south_east: '东南',
+  south_west: '西南',
+} as const
 
 const ROLE_DEFAULT_MESSAGE: readonly KineticCopyMessage[] = [
   { lines: ['用文字塑造你的角色……'], className: 'text-app-ink' },
@@ -602,6 +614,8 @@ function QuickStartRun({
   const [candidates, setCandidates] = useState<readonly string[]>([])
   const [firstFrameCandidates, setFirstFrameCandidates] = useState<readonly QuickStartFrame[]>([])
   const [actionFrames, setActionFrames] = useState<readonly QuickStartFrame[]>([])
+  const [failedDirections, setFailedDirections] = useState<readonly QuickStartFailedDirection[]>([])
+  const [retryingDirection, setRetryingDirection] = useState<string | null>(null)
   const [exportModel, setExportModel] = useState<ExportPackageModel | null>(null)
   const [publishing, setPublishing] = useState(false)
   const [confirmingCandidate, setConfirmingCandidate] = useState(false)
@@ -709,6 +723,7 @@ function QuickStartRun({
       setCandidates([])
       setFirstFrameCandidates([])
       setActionFrames([])
+      setFailedDirections([])
       setExportModel(null)
       return
     }
@@ -718,28 +733,32 @@ function QuickStartRun({
       session.getFirstFrameCandidates(),
       session.getActionFrames(),
       session.getExportModel(),
+      session.getFailedGenerationDirections(),
     ])
-      .then(([nextCandidates, nextFirstFrameCandidates, nextFrames, nextExportModel]) => {
-        if (!active) return
-        const templateIsSelecting = run.nodes.some(
-          (node) =>
-            node.type === 'character-template' &&
-            node.status === 'active' &&
-            node.phase === 'selecting',
-        )
-        const firstFrameIsSelecting = run.nodes.some(
-          (node) =>
-            node.type === 'action-first-frame' &&
-            node.status === 'active' &&
-            node.phase === 'selecting',
-        )
-        if (templateIsSelecting && nextCandidates.length > 0) setCandidates(nextCandidates)
-        if (firstFrameIsSelecting && nextFirstFrameCandidates.length > 0) {
-          setFirstFrameCandidates(nextFirstFrameCandidates)
-        }
-        if (nextFrames.length > 0) setActionFrames(nextFrames)
-        setExportModel(nextExportModel)
-      })
+      .then(
+        ([nextCandidates, nextFirstFrameCandidates, nextFrames, nextExportModel, nextFailed]) => {
+          if (!active) return
+          const templateIsSelecting = run.nodes.some(
+            (node) =>
+              node.type === 'character-template' &&
+              node.status === 'active' &&
+              node.phase === 'selecting',
+          )
+          const firstFrameIsSelecting = run.nodes.some(
+            (node) =>
+              node.type === 'action-first-frame' &&
+              node.status === 'active' &&
+              node.phase === 'selecting',
+          )
+          if (templateIsSelecting && nextCandidates.length > 0) setCandidates(nextCandidates)
+          if (firstFrameIsSelecting && nextFirstFrameCandidates.length > 0) {
+            setFirstFrameCandidates(nextFirstFrameCandidates)
+          }
+          if (nextFrames.length > 0) setActionFrames(nextFrames)
+          setExportModel(nextExportModel)
+          setFailedDirections(nextFailed)
+        },
+      )
       .catch((cause) => {
         if (active) reportWorkflowError(cause, '读取生成结果失败')
       })
@@ -919,6 +938,51 @@ function QuickStartRun({
     }
   }
 
+  async function retryFailedDirection(item: QuickStartFailedDirection) {
+    const targetSession = session
+    if (!targetSession || workflowConflictRef.current) return
+    const key = `${item.nodeId}:${item.direction}`
+    setRetryingDirection(key)
+    clearWorkflowError()
+    try {
+      const updated = await targetSession.retryGenerationDirection(item.nodeId, item.direction)
+      if (!mountedRef.current || activeSessionRef.current !== targetSession) return
+      setRun(updated)
+    } catch (cause) {
+      if (!mountedRef.current || activeSessionRef.current !== targetSession) return
+      reportWorkflowError(cause, `重试${DIRECTION_LABELS[item.direction]}方向失败`)
+    } finally {
+      if (mountedRef.current && activeSessionRef.current === targetSession) {
+        setRetryingDirection(null)
+      }
+    }
+  }
+
+  function DirectionRetryButtons({ nodeId }: { nodeId: string }) {
+    const items = failedDirections.filter((item) => item.nodeId === nodeId)
+    if (items.length === 0) return null
+    return (
+      <div className="flex flex-wrap gap-2">
+        {items.map((item) => {
+          const key = `${item.nodeId}:${item.direction}`
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => void retryFailedDirection(item)}
+              disabled={retryingDirection !== null || workflowConflict}
+              className="rounded-lg border border-current px-3 py-1.5 text-xs font-bold text-app-danger disabled:opacity-50"
+            >
+              {retryingDirection === key
+                ? `正在重试${DIRECTION_LABELS[item.direction]}方向…`
+                : `重试${DIRECTION_LABELS[item.direction]}方向`}
+            </button>
+          )
+        })}
+      </div>
+    )
+  }
+
   function continueConversation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (workflowConflictRef.current) return
@@ -985,7 +1049,7 @@ function QuickStartRun({
                 <>
                   <AgentCopy
                     lines={[
-                      '已生成 3 个角色方向。',
+                      '已生成 2 个角色方案。',
                       isTemplateSelecting
                         ? '选择一个方案，再描述它接下来的动作。'
                         : '角色方案已确认。',
@@ -993,7 +1057,7 @@ function QuickStartRun({
                   />
                   <div
                     data-layout="agent-result-set"
-                    className="grid w-full max-w-2xl grid-cols-3 gap-3"
+                    className="grid w-full max-w-2xl grid-cols-2 gap-3"
                   >
                     {candidates.map((candidateUrl, index) => (
                       <button
@@ -1058,6 +1122,7 @@ function QuickStartRun({
                       '你的描述还在。换一种说法，或者补充新的要求后再试一次。',
                     ]}
                   />
+                  {templateStep ? <DirectionRetryButtons nodeId={templateStep.id} /> : null}
                 </>
               ) : (
                 <>
@@ -1083,7 +1148,7 @@ function QuickStartRun({
                     <>
                       <AgentCopy
                         lines={[
-                          isFirstFrameSelecting ? '已生成 3 个动作起始姿态。' : '动作首帧',
+                          isFirstFrameSelecting ? '已生成 2 个动作起始姿态。' : '动作首帧',
                           isFirstFrameSelecting
                             ? '选择一个起始姿态，随后生成完整动作。'
                             : '动作起始姿态已确认。',
@@ -1091,7 +1156,7 @@ function QuickStartRun({
                       />
                       <div
                         data-layout="agent-result-set"
-                        className="grid w-full max-w-2xl grid-cols-3 gap-3"
+                        className="grid w-full max-w-2xl grid-cols-2 gap-3"
                       >
                         {firstFrameCandidates.map((frame, index) => (
                           <button
@@ -1158,6 +1223,7 @@ function QuickStartRun({
                         tone="danger"
                         lines={['动作首帧生成失败', '内容还在，可以在下面修改要求后重试。']}
                       />
+                      <DirectionRetryButtons nodeId={firstFrameStep.id} />
                     </>
                   ) : (
                     <>
@@ -1246,6 +1312,7 @@ function QuickStartRun({
                         tone="danger"
                         lines={['动作生成失败', '内容还在，可以在下面修改要求后重试。']}
                       />
+                      <DirectionRetryButtons nodeId={actionStep.id} />
                     </>
                   ) : (
                     <>
