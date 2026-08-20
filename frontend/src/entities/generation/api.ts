@@ -680,6 +680,25 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
         }
       }
 
+      const reconcileAfterReconnect = async () => {
+        if (pollingController.signal.aborted) return
+        try {
+          const generation = await apis.get(projectId, id, expectation)
+          if (pollingController.signal.aborted) return
+          onEvent({
+            taskId: generation.id,
+            type: generation.type,
+            status: generation.status,
+            result: generation.result,
+            error: generation.error,
+          } as GenerationEvent)
+          if (generation.status === 'completed' || generation.status === 'failed') stopStream()
+        } catch (cause) {
+          if (pollingController.signal.aborted) return
+          onError(cause instanceof Error ? cause : new GenerationApiError('重连后任务对账失败'))
+        }
+      }
+
       stopStream = stream(
         endpoint(
           config.baseUrl,
@@ -708,6 +727,11 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
               return
             }
             onError(error)
+          },
+          // 断线窗口内的事件不会被补发，重连后必须自己查一次当前状态，
+          // 否则恰在窗口内结束的任务会永远停在最后一次收到的中间态。
+          onReconnect() {
+            void reconcileAfterReconnect()
           },
         },
       )
