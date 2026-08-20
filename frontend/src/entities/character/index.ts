@@ -91,6 +91,18 @@ export interface Character {
   outfits: Outfit[]
 }
 
+/** 角色列表卡片只消费摘要；完整资产树通过 get 或旧列表边界读取。 */
+export interface CharacterSummary {
+  id: string
+  projectId: string
+  name: string | null
+  status: CharacterStatus
+  previewUrl: string | null
+  outfitName: string | null
+  outfitCount: number
+  actionCount: number
+}
+
 /** 创建 Character 记录的字段；生成流程由 Workflow Editor 负责。 */
 export interface CreateCharacterInput {
   projectId: string
@@ -110,6 +122,14 @@ export interface CharacterApis {
   create(input: CreateCharacterInput): Promise<Character>
   update(character: Character): Promise<Character>
   remove(id: Character['id']): Promise<void>
+}
+
+/** 卡片集合的轻量读取边界，不扩大生成流程依赖的 CharacterApis。 */
+export interface CharacterSummaryApis {
+  listSummariesByProject(
+    projectId: string,
+    query?: CharacterPageQuery,
+  ): Promise<Paged<CharacterSummary>>
 }
 
 export interface CharacterPageQuery extends PageQuery {
@@ -173,6 +193,17 @@ interface CharacterDto {
   reference_image_url: string | null
   character_data: CharacterDataDto
   status: number
+}
+
+interface CharacterSummaryDto {
+  id: number
+  project_id: number
+  name: string | null
+  status: number
+  preview_url: string | null
+  outfit_name: string | null
+  outfit_count: number
+  action_count: number
 }
 
 function toBackendId(value: string, field: string): number {
@@ -372,6 +403,19 @@ function mapCharacter(dto: CharacterDto): Character {
   }
 }
 
+function mapCharacterSummary(dto: CharacterSummaryDto): CharacterSummary {
+  return {
+    id: String(dto.id),
+    projectId: String(dto.project_id),
+    name: dto.name,
+    status: mapCharacterStatus(dto.status),
+    previewUrl: dto.preview_url,
+    outfitName: dto.outfit_name,
+    outfitCount: dto.outfit_count,
+    actionCount: dto.action_count,
+  }
+}
+
 function toFrameDto(frame: Frame): CharacterFrameDto {
   return {
     index: frame.index,
@@ -418,7 +462,7 @@ function getApiClient() {
   return createApiClient({ getAccessToken: getApiAccessToken })
 }
 
-export const characterApis: CharacterApis = {
+export const characterApis: CharacterApis & CharacterSummaryApis = {
   async get(id) {
     return mapCharacter(
       await getApiClient().request<CharacterDto>(`/characters/${encodeURIComponent(id)}`),
@@ -436,6 +480,18 @@ export const characterApis: CharacterApis = {
       },
     })
     return { ...result, items: result.items.map(mapCharacter) }
+  },
+
+  async listSummariesByProject(projectId, query = {}) {
+    const result = await getApiClient().requestList<CharacterSummaryDto>('/characters/summaries', {
+      query: {
+        project_id: toBackendId(projectId, 'projectId'),
+        page: query.page,
+        page_size: query.pageSize,
+        status: query.status,
+      },
+    })
+    return { ...result, items: result.items.map(mapCharacterSummary) }
   },
 
   async create(input) {
