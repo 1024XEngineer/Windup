@@ -560,6 +560,13 @@ def _png(w: int, h: int) -> bytes:
     return buf.getvalue()
 
 
+class _PassthroughMatte:
+    """本文件量的是尺寸,不是抠图。原样返回,让 alpha 不参与断言。"""
+
+    def cutout(self, png: bytes) -> bytes:
+        return png
+
+
 @pytest.mark.parametrize(("want_w", "want_h"), [(512, 512), (256, 384), (1024, 1024)])
 def test_requested_image_size_is_actually_applied(want_w, want_h):
     """入口收下 width/height 并校验过，但 ImageProvider.gen_image 没有尺寸参数。
@@ -579,7 +586,10 @@ def test_requested_image_size_is_actually_applied(want_w, want_h):
             return _png(1024, 1024)          # 模型固定出 1024²
 
     got: list[bytes] = []
-    ex = ImageTaskExecutor(image=_Gen(), upload=lambda b: (got.append(b), "u")[1])
+    ex = ImageTaskExecutor(
+        image=_Gen(), matte=_PassthroughMatte(),
+        upload=lambda b: (got.append(b), "u")[1],
+    )
     ex._produce_image(
         CharacterImageInput(prompt="knight", width=want_w, height=want_h, num_images=1),
         _constraints(),

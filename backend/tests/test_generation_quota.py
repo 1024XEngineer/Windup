@@ -406,7 +406,9 @@ def test_image_success_captures_reserved_credit(session_factory):
         upload=lambda _png: "https://cdn.example.com/img.png",
         session_factory=session_factory,
     )
-    executor._produce_image = lambda _input, _cons: ["https://cdn.example.com/img.png"]
+    executor._produce_image = lambda _input, _cons: (
+        ["https://cdn.example.com/img.png"], {"subject_blobs": [1]},
+    )
     image_input = CharacterImageInput(prompt="勇者", width=64, height=64)
     with session_factory() as session:
         task = AiGenerationService().generate_character_image(
