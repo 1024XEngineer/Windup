@@ -255,6 +255,7 @@ def _deserialize_result(
         return CharacterImageOutput(
             type=raw.get("type", "character_image"),
             image_urls=raw.get("image_urls", []),
+            quality=raw.get("quality"),
         )
     if result_type == "character_action":
         from windup_app.server.orchestrator.model import CharacterActionFrame
