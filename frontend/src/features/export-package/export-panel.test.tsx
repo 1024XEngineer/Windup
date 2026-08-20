@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ExportPackageModel } from './model'
 import { ExportButton, ExportPanel } from './export-panel'
+import { CocosBridgeError } from './cocos-bridge-client'
 
 const model = {
   stage: 'action-assets',
@@ -61,6 +62,9 @@ describe('ExportPanel', () => {
           name: '导出游戏资产包',
         }) as HTMLButtonElement
       ).disabled,
+    ).toBe(true)
+    expect(
+      (screen.getByRole('button', { name: '一键导入 Cocos' }) as HTMLButtonElement).disabled,
     ).toBe(true)
   })
 
@@ -159,6 +163,111 @@ describe('ExportPanel', () => {
     await waitFor(() => expect(exporter).toHaveBeenCalledTimes(1))
   })
 
+  it('Cocos 下载降级按钮调用适配导出器并下载适配包', async () => {
+    const exporter = vi.fn().mockResolvedValue({
+      blob: new Blob(['cocos-zip'], { type: 'application/zip' }),
+      filename: 'windup-cocos.zip',
+    })
+    const createObjectURL = vi.fn(() => 'blob:cocos')
+    const revokeObjectURL = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+
+    render(<ExportPanel model={model} cocosExporter={exporter} />)
+    fireEvent.click(screen.getByRole('button', { name: '下载 Cocos 包' }))
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Cocos 包下载完成' })).toBeTruthy(),
+    )
+    expect(exporter).toHaveBeenCalledWith(model, expect.any(Function))
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:cocos')
+  })
+
+  it('一键导入完成后显示当前工程和资产统计', async () => {
+    const importer = vi
+      .fn()
+      .mockImplementation(
+        async (_model: ExportPackageModel, onPhase: (phase: 'uploading' | 'verifying') => void) => {
+          onPhase('uploading')
+          onPhase('verifying')
+          return {
+            projectName: 'CocosGame',
+            dbUrl: 'db://assets/windup-imports/Aster/Explorer/prefabs/Aster-Explorer.prefab',
+            animationCount: 2,
+            frameCount: 64,
+          }
+        },
+      )
+
+    render(<ExportPanel model={model} cocosImporter={importer} />)
+    fireEvent.click(screen.getByRole('button', { name: '一键导入 Cocos' }))
+
+    expect(await screen.findByText('已导入到当前 Cocos 工程')).toBeTruthy()
+    expect(screen.getByText('CocosGame · 2 个动作，64 帧')).toBeTruthy()
+    expect(importer).toHaveBeenCalledTimes(1)
+  })
+
+  it('首次未配对时显示连接码输入框，配对后继续同一次导入', async () => {
+    const importer = vi
+      .fn()
+      .mockRejectedValueOnce(new CocosBridgeError('PAIRING_REQUIRED', '请先配对'))
+      .mockResolvedValueOnce({
+        projectName: 'Game',
+        dbUrl: 'db://assets/windup-imports/Aster/Explorer/prefabs/Aster-Explorer.prefab',
+        animationCount: 1,
+        frameCount: 1,
+      })
+    const pairer = vi.fn().mockResolvedValue(undefined)
+
+    render(<ExportPanel model={model} cocosImporter={importer} cocosPairer={pairer} />)
+    fireEvent.click(screen.getByRole('button', { name: '一键导入 Cocos' }))
+    const input = await screen.findByLabelText('Creator 连接码')
+    fireEvent.change(input, { target: { value: '123456' } })
+    fireEvent.click(screen.getByRole('button', { name: '连接并导入' }))
+
+    await waitFor(() => expect(pairer).toHaveBeenCalledWith('123456'))
+    expect(await screen.findByText('已导入到当前 Cocos 工程')).toBeTruthy()
+    expect(importer).toHaveBeenCalledTimes(2)
+  })
+
+  it('插件不可用时保留明确错误和 Cocos 包下载降级入口', async () => {
+    const importer = vi
+      .fn()
+      .mockRejectedValue(new CocosBridgeError('PLUGIN_UNAVAILABLE', '未检测到 Cocos Creator 插件'))
+
+    render(<ExportPanel model={model} cocosImporter={importer} />)
+    fireEvent.click(screen.getByRole('button', { name: '一键导入 Cocos' }))
+
+    expect(await screen.findByText('导入失败：未检测到 Cocos Creator 插件')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '下载 Cocos 包' })).toBeTruthy()
+  })
+
+  it('导入失败时显示阶段、稳定错误码和未回滚警告', async () => {
+    const error = new CocosBridgeError('IMPORT_FAILED', '写入失败', undefined, {
+      jobCode: 'IMPORT_ROLLBACK_FAILED',
+      phase: 'writing',
+      rolledBack: false,
+    })
+    const importer = vi.fn().mockRejectedValue(error)
+
+    render(<ExportPanel model={model} cocosImporter={importer} />)
+    fireEvent.click(screen.getByRole('button', { name: '一键导入 Cocos' }))
+
+    expect(await screen.findByText('导入失败：写入失败')).toBeTruthy()
+    expect(screen.getByText(/错误码：IMPORT_ROLLBACK_FAILED/)).toBeTruthy()
+    expect(screen.getByText(/回滚：未完成，请检查工程资产/)).toBeTruthy()
+  })
+
+  it('可关闭 Cocos 导出入口而不影响通用导出', () => {
+    render(<ExportPanel model={model} enableCocosExport={false} />)
+
+    expect(screen.queryByRole('button', { name: '一键导入 Cocos' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '下载 Cocos 包' })).toBeNull()
+    expect(screen.getByRole('button', { name: '导出游戏资产包' })).toBeTruthy()
+  })
+
   it('导出器抛出非 Error 值时展示通用错误', async () => {
     const exporter = vi.fn().mockRejectedValue('network unavailable')
 
@@ -184,6 +293,27 @@ describe('ExportPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: '导出完整动作资产' }))
 
     expect(await screen.findByRole('button', { name: '下载完成' })).toBeTruthy()
+  })
+
+  it('紧凑导出按钮提供 Cocos Creator 下载降级入口', async () => {
+    const cocosExporter = vi.fn().mockResolvedValue({
+      blob: new Blob(['cocos-zip'], { type: 'application/zip' }),
+      filename: 'windup-cocos.zip',
+    })
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn(() => 'blob:cocos-compact'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+
+    render(<ExportButton model={model} cocosExporter={cocosExporter} />)
+    fireEvent.click(screen.getByRole('button', { name: '下载 Cocos 包' }))
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Cocos 包下载完成' })).toBeTruthy(),
+    )
+    expect(cocosExporter).toHaveBeenCalledWith(model, expect.any(Function))
   })
 
   it('紧凑导出按钮失败后显示可访问的具体错误', async () => {
