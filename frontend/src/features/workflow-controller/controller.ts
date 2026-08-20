@@ -44,6 +44,8 @@ export interface GenerateCharacterTemplateOptions {
   spriteHeight: number
   /** 重生成时用上一版图片约束本次结果；不覆盖角色设定中的原始参考素材。 */
   sourceImageUrl?: GeneratedImage['url']
+  /** 多方向微调时，每个源方向必须使用自己上一版的已确认图片。 */
+  sourceImageUrls?: Partial<Record<ActionDirection, GeneratedImage['url']>>
   /** 只影响本次请求的 prompt 覆盖值；不改写角色设定节点的原始输入。 */
   prompt?: string
   /** 手动编辑器提交时覆盖 configuring 节点的初始输入；节点通过后不再改写。 */
@@ -61,6 +63,8 @@ export interface GenerateFirstFrameOptions {
   spriteHeight: number
   /** 重生成时用上一版首帧约束本次结果；不改写已确认的角色母版。 */
   sourceImageUrl?: GeneratedImage['url']
+  /** 多方向微调时，每个源方向必须使用自己上一版的已确认首帧。 */
+  sourceImageUrls?: Partial<Record<ActionDirection, GeneratedImage['url']>>
   /** 只影响本次请求的 prompt 覆盖值；不改写动作节点的原始输入。 */
   prompt?: string
 }
@@ -419,7 +423,6 @@ export function createWorkflowController({
     nodeId: CharacterSetupWorkflowNode['id'],
     options: GenerateCharacterTemplateOptions,
   ): Promise<WorkflowRun> {
-    const sourceImage = generatedImageReference(options.sourceImageUrl)
     const before = requireWorkflow()
     const setupBefore = findNode(before, nodeId)
     if (setupBefore.type !== 'character-setup') throw new Error('目标节点不是角色设定')
@@ -459,6 +462,9 @@ export function createWorkflowController({
           throw new Error('角色母版节点当前不能开始生成')
         }
         const setupNode = findSingleDependencyNode(run, node, 'character-setup')
+        const sourceImage = generatedImageReference(
+          options.sourceImageUrls?.[direction] ?? options.sourceImageUrl,
+        )
         const input: CharacterTemplateGenerationInput = {
           type: 'character_template',
           projectId: run.projectId,
@@ -610,7 +616,6 @@ export function createWorkflowController({
     nodeId: ActionFirstFrameWorkflowNode['id'],
     options: GenerateFirstFrameOptions,
   ) {
-    const sourceImage = generatedImageReference(options.sourceImageUrl)
     const before = requireWorkflow()
     const targetNode = findNode(before, nodeId)
     if (targetNode.type !== 'action-first-frame') throw new Error('目标节点不是动作首帧')
@@ -639,6 +644,9 @@ export function createWorkflowController({
           direction,
         )
         if (!characterTemplateReference) throw new Error(`角色母版尚未确认方向 ${direction}`)
+        const sourceImage = generatedImageReference(
+          options.sourceImageUrls?.[direction] ?? options.sourceImageUrl,
+        )
         const input: FirstFrameGenerationInput = {
           type: 'first_frame',
           projectId: run.projectId,
@@ -676,7 +684,20 @@ export function createWorkflowController({
     }
     const setupNode = findSingleDependencyNode(before, templateNode, 'character-setup')
     const prompt = adjustedPrompt(setupNode.input.prompt, options)
-    const sourceImageUrl = options.mode === 'refine' ? templateNode.selectedImageUrl : undefined
+    const sourceImageUrls =
+      options.mode === 'refine'
+        ? Object.fromEntries(
+            sourceDirections.map((direction) => {
+              const imageUrl = selectedDirectionUrl(
+                templateNode.selectedImages,
+                templateNode.selectedImageUrl,
+                direction,
+              )
+              if (!imageUrl) throw new Error(`角色母版尚未确认方向 ${direction}`)
+              return [direction, imageUrl]
+            }),
+          )
+        : undefined
     const keys = sourceDirections.map((direction) =>
       generationKey(nodeId, 'character_template', direction),
     )
@@ -689,7 +710,7 @@ export function createWorkflowController({
       return generateCharacterTemplate(setupNode.id, {
         spriteWidth: options.spriteWidth,
         spriteHeight: options.spriteHeight,
-        sourceImageUrl,
+        sourceImageUrls,
         prompt,
       })
     })
@@ -713,8 +734,20 @@ export function createWorkflowController({
     }
     const basePrompt = firstFrameNode.input.prompt?.trim() || firstFrameNode.input.name
     const prompt = adjustedPrompt(basePrompt, options)
-    const sourceImageUrl =
-      options.mode === 'refine' ? firstFrameNode.selectedFirstFrameUrl : undefined
+    const sourceImageUrls =
+      options.mode === 'refine'
+        ? Object.fromEntries(
+            sourceDirections.map((direction) => {
+              const imageUrl = selectedDirectionUrl(
+                firstFrameNode.selectedFirstFrameUrls,
+                firstFrameNode.selectedFirstFrameUrl,
+                direction,
+              )
+              if (!imageUrl) throw new Error(`动作首帧尚未确认方向 ${direction}`)
+              return [direction, imageUrl]
+            }),
+          )
+        : undefined
     const keys = sourceDirections.map((direction) =>
       generationKey(nodeId, 'first_frame', direction),
     )
@@ -727,7 +760,7 @@ export function createWorkflowController({
       return generateFirstFrame(nodeId, {
         spriteWidth: options.spriteWidth,
         spriteHeight: options.spriteHeight,
-        sourceImageUrl,
+        sourceImageUrls,
         prompt,
       })
     })
@@ -1334,7 +1367,10 @@ export function createWorkflowController({
 
     // 方向是任务契约的一部分。服务端返回了错误方向时不能把它静默挂到当前方向，
     // 否则四向/八向资产会在导入 Playtest 后出现“名称对得上、画面却错位”的问题。
-    if (generationDirectionOf(generation) !== generationReferenceDirection(reference)) {
+    if (
+      generation.status === 'completed' &&
+      generationDirectionOf(generation) !== generationReferenceDirection(reference)
+    ) {
       return persist((run) => {
         const currentNode = findNode(run, nodeId)
         return currentNode.status === 'active'

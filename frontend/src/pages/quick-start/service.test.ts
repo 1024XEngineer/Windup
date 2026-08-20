@@ -708,6 +708,57 @@ describe('createQuickStartService', () => {
     ])
   })
 
+  it('Quick Start 四向审核发布时保留全部方向序列', async () => {
+    const run = actionRun()
+    const fullFrame = run.nodes.find((node) => node.type === 'action-full-frame')!
+    fullFrame.generations = [
+      { taskId: 'task-east', role: 'complete_animation', direction: 'east' },
+      { taskId: 'task-north', role: 'complete_animation', direction: 'north' },
+      { taskId: 'task-south', role: 'complete_animation', direction: 'south' },
+    ]
+    const generationApis: GenerationApis = {
+      create: vi.fn(),
+      get: vi.fn(async (projectId, id) => {
+        const direction = id.replace('task-', '') as 'east' | 'north' | 'south'
+        return {
+          id,
+          projectId,
+          type: 'complete_animation' as const,
+          status: 'completed' as const,
+          result: {
+            type: 'complete_animation' as const,
+            direction,
+            frames: [{ index: 0, url: `${direction}.png`, durationMs: 80 }],
+          },
+          error: null,
+        }
+      }),
+      subscribe: vi.fn(() => () => undefined),
+    }
+    let character = characterWithDefaultOutfit(run.id)
+    const characterApis = mutableCharacterApis(
+      () => character,
+      (value) => (character = value),
+    )
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      characterApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader({ width: 256, height: 256 }, 'four-way'),
+    })
+
+    const session = await service.open(run.id)
+    await session.approveReview()
+
+    expect(character.outfits[0]?.actions[0]?.sequences?.map((item) => item.direction)).toEqual([
+      'east',
+      'west',
+      'north',
+      'south',
+    ])
+  })
+
   it.each([new Error('WorkflowRun 回读失败'), '回读失败'])(
     '审核冲突后无法回读 Run 时保留幂等动作并上报对账错误',
     async (reconcileCause) => {

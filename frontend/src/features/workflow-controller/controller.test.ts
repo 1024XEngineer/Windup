@@ -1139,6 +1139,53 @@ describe('WorkflowController', () => {
     })
   })
 
+  it('非东向任务失败时保留服务端错误而不误报方向不一致', async () => {
+    const references = (['east', 'north', 'south'] as const).map((direction) => ({
+      taskId: `task-${direction}`,
+      role: 'character_template' as const,
+      direction,
+    }))
+    const run = createRun([
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({ status: 'active', phase: 'generating', generations: references }),
+    ])
+    const { controller, generation } = createController(run, 'four-way')
+    generation.snapshots.set('task-east', {
+      id: 'task-east',
+      projectId: '1',
+      type: 'character_template',
+      status: 'running',
+      result: null,
+      error: null,
+    })
+    generation.snapshots.set('task-south', {
+      id: 'task-south',
+      projectId: '1',
+      type: 'character_template',
+      status: 'running',
+      result: null,
+      error: null,
+    })
+
+    await controller.applyGenerationResult({
+      nodeId: 'template-1',
+      taskId: 'task-north',
+      generation: {
+        id: 'task-north',
+        projectId: '1',
+        type: 'character_template',
+        status: 'failed',
+        result: null,
+        error: 'north provider failed',
+      },
+    })
+
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+      status: 'failed',
+      error: 'north provider failed',
+    })
+  })
+
   it('只重试失败方向并保留其它方向的任务引用', async () => {
     const { controller, generation } = createController(createRun(), 'four-way')
 
@@ -2394,6 +2441,89 @@ describe('WorkflowController', () => {
       spriteHeight: 96,
       direction: 'east',
     })
+  })
+
+  it('四向角色母版微调分别使用同方向已确认图片', async () => {
+    const run = createRun([
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedImageUrl: 'east-template.png',
+        selectedImages: {
+          east: 'east-template.png',
+          north: 'north-template.png',
+          south: 'south-template.png',
+        },
+      }),
+    ])
+    const { controller, generation } = createController(run, 'four-way')
+
+    await controller.regenerateCharacterTemplate('template-1', {
+      spriteWidth: 64,
+      spriteHeight: 96,
+      mode: 'refine',
+      adjustmentPrompt: '增加轮廓光',
+    })
+
+    expect(
+      vi.mocked(generation.apis.create).mock.calls.map(([input]) => ({
+        direction: input.direction,
+        referenceMedia: input.referenceMedia,
+      })),
+    ).toEqual([
+      { direction: 'east', referenceMedia: ['east-template.png'] },
+      { direction: 'north', referenceMedia: ['north-template.png'] },
+      { direction: 'south', referenceMedia: ['south-template.png'] },
+    ])
+  })
+
+  it('四向动作首帧微调分别使用同方向已确认图片', async () => {
+    const run = createRun([
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedImageUrl: 'east-template.png',
+        selectedImages: {
+          east: 'east-template.png',
+          north: 'north-template.png',
+          south: 'south-template.png',
+        },
+      }),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: 'east-frame.png',
+        selectedFirstFrameUrls: {
+          east: 'east-frame.png',
+          north: 'north-frame.png',
+          south: 'south-frame.png',
+        },
+      }),
+      generationMethodNode(),
+      fullFrameNode(),
+      reviewNode(),
+    ])
+    const { controller, generation } = createController(run, 'four-way')
+
+    await controller.regenerateFirstFrame('action-walk', {
+      spriteWidth: 64,
+      spriteHeight: 96,
+      mode: 'refine',
+      adjustmentPrompt: '增加轮廓光',
+    })
+
+    expect(
+      vi.mocked(generation.apis.create).mock.calls.map(([input]) => ({
+        direction: input.direction,
+        referenceMedia: input.referenceMedia,
+      })),
+    ).toEqual([
+      { direction: 'east', referenceMedia: ['east-frame.png'] },
+      { direction: 'north', referenceMedia: ['north-frame.png'] },
+      { direction: 'south', referenceMedia: ['south-frame.png'] },
+    ])
   })
 
   it('动作首帧重新生成沿用原始输入且不携带上一版图片', async () => {

@@ -521,6 +521,64 @@ describe('createRealWorkflowEditorSession', () => {
     ).toMatchObject({ status: 'passed', phase: 'completed' })
   })
 
+  it('四向审核发布时把全部方向写入同一个 Character 动作', async () => {
+    const workflow = reviewingWorkflowFixture()
+    const fullFrame = workflow.nodes.find((node) => node.type === 'action-full-frame')!
+    fullFrame.generations = [
+      { taskId: 'generation-east', role: 'complete_animation', direction: 'east' },
+      { taskId: 'generation-north', role: 'complete_animation', direction: 'north' },
+      { taskId: 'generation-south', role: 'complete_animation', direction: 'south' },
+    ]
+    const generations = new Map([
+      ['generation-east', directionalAnimationFixture('generation-east', 'east')],
+      ['generation-north', directionalAnimationFixture('generation-north', 'north')],
+      ['generation-south', directionalAnimationFixture('generation-south', 'south')],
+    ])
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(workflow),
+        update: vi.fn(async (run) => ({ ...structuredClone(run), version: run.version + 1 })),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn(async (_projectId, id) => structuredClone(generations.get(id)!)),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      render3d: stubRender3DApis(),
+      projectApis: {
+        get: vi.fn().mockResolvedValue({
+          ...projectFixture(),
+          directionalMovement: 'four-way',
+        }),
+      },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({
+          items: [characterWithOutfitFixture()],
+          total: 1,
+          page: 1,
+          pageSize: 100,
+        }),
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(characterWithOutfitFixture()),
+        update: vi.fn(async (character) => structuredClone(character)),
+        remove: vi.fn(),
+      },
+      onAsyncError: vi.fn(),
+    })
+
+    const published = await session.publishReviewedAction('action-walk:review')
+
+    expect(published.outfits[0]?.actions[0]?.sequences?.map((item) => item.direction)).toEqual([
+      'east',
+      'west',
+      'north',
+      'south',
+    ])
+  })
+
   it('拒绝发布缺少动作首帧依赖的完整动画', async () => {
     const workflow = reviewingWorkflowFixture()
     workflow.nodes = workflow.nodes.filter((node) => node.type !== 'action-first-frame')
@@ -1127,6 +1185,21 @@ function completeAnimationFixture(): Generation<'complete_animation'> {
         { index: 0, url: 'https://assets.windup.test/walk-01.png', durationMs: 100 },
         { index: 1, url: 'https://assets.windup.test/walk-02.png', durationMs: null },
       ],
+    },
+  }
+}
+
+function directionalAnimationFixture(
+  id: string,
+  direction: 'east' | 'north' | 'south',
+): Generation<'complete_animation'> {
+  return {
+    ...completeAnimationFixture(),
+    id,
+    result: {
+      type: 'complete_animation',
+      direction,
+      frames: [{ index: 0, url: `${direction}.png`, durationMs: 80 }],
     },
   }
 }

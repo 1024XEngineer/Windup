@@ -180,15 +180,16 @@ export async function createRealWorkflowEditorSession(
       if (!firstFrameNode || firstFrameNode.type !== 'action-first-frame') {
         throw new Error('完整动画缺少动作首帧节点')
       }
-      const generation = await controller.getGeneration(fullFrameNodeId, 'complete_animation')
-      if (!generation) throw new Error('完整动画生成结果不存在')
+      const generations = await controller.getGenerations(fullFrameNodeId, 'complete_animation')
+      if (generations.length === 0) throw new Error('完整动画生成结果不存在')
 
       const originalCharacter = structuredClone(currentCharacter)
       const publishedCharacter = await publisher.publishReviewedAction({
         character: originalCharacter,
         workflow: currentWorkflow,
         reviewNodeId,
-        generation,
+        generations,
+        directionalMovement: project.directionalMovement,
       })
       try {
         await controller.approveReview(reviewNodeId)

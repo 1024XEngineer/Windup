@@ -26,6 +26,7 @@ import { getApiAccessToken, recoverApiUnauthorized, resolveApiBaseUrl } from '@/
 import { createEventStreamSubscriber } from '@/shared/api/stream'
 import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
 import { createProgressiveExportModel, type ExportPackageModel } from '@/features/export-package'
+import { createActionSequences } from '@/features/export'
 
 /** 页面不直接拼接后端字段；只负责准备项目约束。 */
 export type PrepareQuickStartProject = (
@@ -834,15 +835,10 @@ export function createQuickStartService({
           throw new Error('完整动画当前不能通过审核')
         }
 
-        const generation = await controller.getGeneration(fullFrame.id, 'complete_animation')
-        if (
-          !generation ||
-          generation.status !== 'completed' ||
-          generation.type !== 'complete_animation' ||
-          generation.result?.type !== 'complete_animation'
-        ) {
-          throw new Error('完整动画结果尚未就绪')
-        }
+        const generations = await controller.getGenerations(fullFrame.id, 'complete_animation')
+        const directionalMovement = projectDirectionalMovements.get(run.projectId) ?? 'single'
+        const sequences = createActionSequences(generations, directionalMovement)
+        const eastSequence = sequences.find((sequence) => sequence.direction === 'east')!
         const info = await resolveCharacterInfo(controller)
         if (!info) throw new Error('WorkflowRun 缺少角色或造型绑定')
         const firstFrame = latestActionFirstFrame(controller.getWorkflow())
@@ -860,12 +856,9 @@ export function createQuickStartService({
           loop: true,
           type: firstFrame.input.type,
           fps: firstFrame.input.fps,
-          frameCount: generation.result.frames.length,
-          frames: generation.result.frames.map((frame) => ({
-            index: frame.index,
-            imageUrl: frame.url,
-            durationMs: frame.durationMs,
-          })),
+          frameCount: eastSequence.frameCount,
+          frames: eastSequence.frames,
+          sequences,
         }
         const publishedCharacter = await characterApis.update({
           ...character,
