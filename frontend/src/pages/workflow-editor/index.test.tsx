@@ -967,6 +967,70 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
   })
 
+  it('四向动作首帧可以单独重做一个真实源方向', async () => {
+    const workflow = reviewingActionWorkflow()
+    const firstFrame = workflow.nodes.find((node) => node.type === 'action-first-frame')
+    if (!firstFrame || firstFrame.type !== 'action-first-frame') throw new Error('missing frame')
+    Object.assign(firstFrame, {
+      status: 'active',
+      phase: 'selecting',
+      generations: (['east', 'north', 'south'] as const).map((direction) => ({
+        taskId: `first-${direction}`,
+        role: 'first_frame' as const,
+        direction,
+      })),
+      selectedFirstFrameUrl: null,
+    })
+    for (const node of workflow.nodes) {
+      if (node.type === 'action-generation-method') {
+        node.status = 'locked'
+        node.phase = 'selecting'
+        node.method = null
+      } else if (node.type === 'action-full-frame') {
+        node.status = 'locked'
+        node.phase = 'ready'
+        node.generations = []
+      } else if (node.type === 'review') {
+        node.status = 'locked'
+      }
+    }
+    const project = { ...projectFixture(), directionalMovement: 'four-way' as const }
+    const session = createSession(workflow, {
+      project,
+      generationApis: generationApisFixture({
+        get: vi.fn(async (_projectId: string, taskId: string) => {
+          const direction = taskId.replace('first-', '') as 'east' | 'north' | 'south'
+          return {
+            id: taskId,
+            projectId: '1',
+            type: 'first_frame' as const,
+            status: 'completed' as const,
+            result: {
+              type: 'first_frame' as const,
+              direction,
+              images: [{ url: `${direction}-1.png` }, { url: `${direction}-2.png` }],
+            },
+            error: null,
+          }
+        }) as GenerationApis['get'],
+      }),
+    })
+    const retry = vi.spyOn(session.controller, 'retryGenerationDirection').mockResolvedValue()
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '重做北方向' }))
+
+    await waitFor(() =>
+      expect(retry).toHaveBeenCalledWith(firstFrame.id, 'north', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+        referenceMedia: [],
+      }),
+    )
+    expect(screen.getByRole('img', { name: '北动作首帧候选 1' })).toBeTruthy()
+  })
+
   it('该造型没有 3D 资产时禁用三渲二选项并给出原因', async () => {
     const workflow = selectingGenerationMethodWorkflow()
     const session = createSession(workflow, { character: characterFixture() })

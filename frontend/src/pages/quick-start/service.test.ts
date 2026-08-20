@@ -300,6 +300,148 @@ describe('createQuickStartService', () => {
     await expect(service.open('missing')).rejects.toThrow('not found')
   })
 
+  it('只列出各生成节点真正失败的方向', async () => {
+    const run: WorkflowRun = {
+      id: 'run-failed-directions',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: [
+        {
+          id: 'setup',
+          type: 'character-setup',
+          status: 'passed',
+          phase: 'completed',
+          dependsOnNodeIds: [],
+          generations: [],
+          error: null,
+          input: { prompt: '像素骑士', referenceMedia: [] },
+        },
+        {
+          id: 'template',
+          type: 'character-template',
+          status: 'failed',
+          phase: 'generating',
+          dependsOnNodeIds: ['setup'],
+          generations: [
+            { taskId: 'template-east', role: 'character_template' },
+            { taskId: 'template-north', role: 'character_template', direction: 'north' },
+          ],
+          error: 'north failed',
+          selectedImageUrl: null,
+        },
+        {
+          id: 'first-frame',
+          type: 'action-first-frame',
+          status: 'failed',
+          phase: 'generating',
+          dependsOnNodeIds: ['template'],
+          generations: [
+            { taskId: 'first-east', role: 'first_frame' },
+            { taskId: 'first-south', role: 'first_frame', direction: 'south' },
+          ],
+          error: 'east failed',
+          input: { outfitId: 'outfit-1', name: '挥手', type: 'custom', prompt: null, fps: 12 },
+          selectedFirstFrameUrl: null,
+        },
+        {
+          id: 'method',
+          type: 'action-generation-method',
+          status: 'failed',
+          phase: 'selecting',
+          dependsOnNodeIds: ['first-frame'],
+          generations: [],
+          error: 'method failed',
+          method: null,
+        },
+        {
+          id: 'full-frame',
+          type: 'action-full-frame',
+          status: 'failed',
+          phase: 'generating',
+          dependsOnNodeIds: ['method'],
+          generations: [
+            { taskId: 'full-north', role: 'complete_animation', direction: 'north' },
+            { taskId: 'full-south', role: 'complete_animation', direction: 'south' },
+          ],
+          error: 'south failed',
+        },
+        {
+          id: 'deleted-template',
+          type: 'character-template',
+          status: 'failed',
+          phase: 'generating',
+          dependsOnNodeIds: ['setup'],
+          generations: [{ taskId: 'deleted-east', role: 'character_template' }],
+          error: 'deleted failed',
+          selectedImageUrl: null,
+          deletedAt: '2026-08-20T00:00:00Z',
+        },
+      ],
+    }
+    const outcomes = new Map<
+      string,
+      readonly [
+        'character_template' | 'first_frame' | 'complete_animation',
+        'pending' | 'completed' | 'failed',
+      ]
+    >([
+      ['template-east', ['character_template', 'pending']],
+      ['template-north', ['character_template', 'failed']],
+      ['first-east', ['first_frame', 'failed']],
+      ['first-south', ['first_frame', 'completed']],
+      ['full-north', ['complete_animation', 'completed']],
+      ['full-south', ['complete_animation', 'failed']],
+    ])
+    const generationApis: GenerationApis = {
+      create: vi.fn(async (input) => ({
+        id: 'retry-north',
+        projectId: input.projectId,
+        type: input.type,
+        status: 'pending' as const,
+        result: null,
+        error: null,
+      })) as GenerationApis['create'],
+      get: vi.fn(async (projectId, id) => {
+        const outcome =
+          outcomes.get(id) ??
+          (id === 'retry-north' ? (['character_template', 'pending'] as const) : undefined)
+        if (!outcome) throw new Error(`unexpected generation: ${id}`)
+        return {
+          id,
+          projectId,
+          type: outcome[0],
+          status: outcome[1],
+          result: null,
+          error: outcome[1] === 'failed' ? `${id} failed` : null,
+        }
+      }) as GenerationApis['get'],
+      subscribe: vi.fn(() => () => undefined),
+    }
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader(undefined, 'four-way'),
+    })
+
+    const session = await service.open(run.id)
+
+    await expect(session.getFailedGenerationDirections()).resolves.toEqual([
+      { nodeId: 'template', direction: 'north' },
+      { nodeId: 'first-frame', direction: 'east' },
+      { nodeId: 'full-frame', direction: 'south' },
+    ])
+    expect(generationApis.get).toHaveBeenCalledTimes(6)
+
+    await session.retryGenerationDirection('template', 'north')
+
+    expect(generationApis.create).toHaveBeenCalledTimes(1)
+    expect(generationApis.create).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'character_template', direction: 'north' }),
+    )
+  })
+
   it('creates a readable bounded project name without a hash suffix', async () => {
     const create = vi.fn(async (input) => ({
       id: 'project-1',
@@ -675,6 +817,7 @@ describe('createQuickStartService', () => {
       { index: 7, imageUrl: 'frame-7.png', durationMs: 83 },
       { index: 9, imageUrl: 'frame-9.png', durationMs: null },
     ])
+    await expect(session.getExportModel()).rejects.toThrow('挥手的帧序号必须从 0 连续排列')
     session.dispose()
     await session.resume()
     vi.mocked(characterApis.update).mockRejectedValueOnce(new Error('asset write failed'))

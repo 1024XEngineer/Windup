@@ -1402,6 +1402,67 @@ describe('WorkflowController', () => {
     ])
   })
 
+  it('方向重试拒绝非生成节点、不可重试状态和缺失任务引用', async () => {
+    const { controller } = createController(
+      createRun([
+        setupNode({ status: 'passed', phase: 'completed' }),
+        templateNode({
+          status: 'passed',
+          phase: 'completed',
+          selectedImageUrl: 'east-template.png',
+          generations: [{ taskId: 'task-east', role: 'character_template' }],
+        }),
+        firstFrameNode({ status: 'failed', phase: 'generating' }),
+        generationMethodNode({ status: 'failed', phase: 'selecting' }),
+      ]),
+      'four-way',
+    )
+
+    await expect(
+      controller.retryGenerationDirection('action-walk:action-generation-method', 'north', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+      }),
+    ).rejects.toThrow('目标节点不是生成节点')
+    await expect(
+      controller.retryGenerationDirection('template-1', 'east', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+      }),
+    ).rejects.toThrow('当前方向不能重新生成')
+    await expect(
+      controller.retryGenerationDirection('action-walk', 'north', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+      }),
+    ).rejects.toThrow('方向 north 没有可替换的生成任务')
+  })
+
+  it('方向重试提交失败时恢复原节点及失败信息', async () => {
+    const original = templateNode({
+      status: 'failed',
+      phase: 'generating',
+      generations: [{ taskId: 'task-north', role: 'character_template', direction: 'north' }],
+      error: 'north provider failed',
+      selectedImageUrl: 'east-template.png',
+      selectedImages: { east: 'east-template.png', north: 'north-template.png' },
+    })
+    const { controller, generation } = createController(
+      createRun([setupNode({ status: 'passed', phase: 'completed' }), original]),
+      'four-way',
+    )
+    vi.mocked(generation.apis.create).mockRejectedValueOnce(new Error('retry request failed'))
+
+    await expect(
+      controller.retryGenerationDirection('template-1', 'north', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+      }),
+    ).rejects.toThrow('retry request failed')
+
+    expect(controller.getWorkflow().nodes[1]).toEqual(original)
+  })
+
   it('刷新后恢复其它方向订阅失败时仍保留新建的重试任务引用', async () => {
     const run = createRun([
       setupNode({ status: 'passed', phase: 'completed' }),

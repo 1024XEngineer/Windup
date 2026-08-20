@@ -1362,6 +1362,23 @@ describe('QuickStartPage', () => {
     )
   })
 
+  it('方向重试失败时显示原始错误并恢复按钮', async () => {
+    const run = actionWorkflow({ firstStatus: 'failed', error: '北方向失败' })
+    const service = serviceFor(run, {
+      getFailedGenerationDirections: vi.fn(async () => [
+        { nodeId: 'action-first', direction: 'north' as const },
+      ]),
+      retryGenerationDirection: vi.fn(async () => Promise.reject(new Error('north retry failed'))),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    const retryButton = await screen.findByRole('button', { name: '重试北方向' })
+    fireEvent.click(retryButton)
+
+    expect((await screen.findByRole('alert')).textContent).toContain('north retry failed')
+    await waitFor(() => expect((retryButton as HTMLButtonElement).disabled).toBe(false))
+  })
+
   it('saves a completed animation without navigating and exposes both explicit destinations', async () => {
     const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'active' })
     const approved = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
