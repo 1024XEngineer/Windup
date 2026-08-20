@@ -1,6 +1,20 @@
 {
   "components": {
     "schemas": {
+      "ActionDirection": {
+        "enum": [
+          "east",
+          "west",
+          "north",
+          "south",
+          "north_east",
+          "north_west",
+          "south_east",
+          "south_west"
+        ],
+        "title": "ActionDirection",
+        "type": "string"
+      },
       "ActionPresetOut": {
         "description": "动作预设响应。",
         "properties": {
@@ -117,6 +131,14 @@
             "title": "Name",
             "type": "string"
           },
+          "sequences": {
+            "description": "可选多方向源序列与镜像关系；旧数据的 frames 视为 east",
+            "items": {
+              "$ref": "#/components/schemas/CharacterActionSequence"
+            },
+            "title": "Sequences",
+            "type": "array"
+          },
           "type": {
             "description": "动作类型: idle / walk / attack / custom",
             "title": "Type",
@@ -154,6 +176,10 @@
             ],
             "title": "Custom Prompt"
           },
+          "direction": {
+            "$ref": "#/components/schemas/ActionDirection",
+            "default": "east"
+          },
           "loop": {
             "anyOf": [
               {
@@ -166,7 +192,7 @@
             "title": "Loop"
           },
           "num_frames": {
-            "default": 16,
+            "default": 32,
             "maximum": 64.0,
             "minimum": 1.0,
             "title": "Num Frames",
@@ -236,6 +262,73 @@
         "title": "CharacterActionGenerateRequest",
         "type": "object"
       },
+      "CharacterActionSequence": {
+        "description": "一个动作的源方向帧或水平镜像关系。",
+        "properties": {
+          "direction": {
+            "enum": [
+              "east",
+              "west",
+              "north",
+              "south",
+              "north_east",
+              "north_west",
+              "south_east",
+              "south_west"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "frame_count": {
+            "description": "该方向声明的帧数",
+            "minimum": 0.0,
+            "title": "Frame Count",
+            "type": "integer"
+          },
+          "frames": {
+            "description": "该方向帧列表",
+            "items": {
+              "$ref": "#/components/schemas/CharacterFrame"
+            },
+            "title": "Frames",
+            "type": "array"
+          },
+          "mirror_x": {
+            "default": false,
+            "description": "是否水平镜像源方向",
+            "title": "Mirror X",
+            "type": "boolean"
+          },
+          "source_direction": {
+            "anyOf": [
+              {
+                "enum": [
+                  "east",
+                  "west",
+                  "north",
+                  "south",
+                  "north_east",
+                  "north_west",
+                  "south_east",
+                  "south_west"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "镜像方向引用的真实源方向",
+            "title": "Source Direction"
+          }
+        },
+        "required": [
+          "direction",
+          "frame_count"
+        ],
+        "title": "CharacterActionSequence",
+        "type": "object"
+      },
       "CharacterCreate": {
         "description": "创建角色请求。",
         "properties": {
@@ -295,7 +388,7 @@
         "type": "object"
       },
       "CharacterData": {
-        "description": "角色完整数据（造型→动作→帧）。",
+        "description": "角色完整数据（方向母版与造型→动作→帧）。",
         "properties": {
           "outfits": {
             "description": "造型列表",
@@ -303,6 +396,14 @@
               "$ref": "#/components/schemas/CharacterOutfit"
             },
             "title": "Outfits",
+            "type": "array"
+          },
+          "templates": {
+            "description": "角色各源方向母版与镜像关系",
+            "items": {
+              "$ref": "#/components/schemas/CharacterTemplateSequence"
+            },
+            "title": "Templates",
             "type": "array"
           },
           "version": {
@@ -353,6 +454,10 @@
       "CharacterImageGenerateRequest": {
         "description": "提交角色图片生成任务。",
         "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/ActionDirection",
+            "default": "east"
+          },
           "height": {
             "default": 1024,
             "maximum": 2048.0,
@@ -366,9 +471,9 @@
             "type": "string"
           },
           "num_images": {
-            "default": 1,
-            "maximum": 4.0,
-            "minimum": 1.0,
+            "default": 2,
+            "maximum": 2.0,
+            "minimum": 2.0,
             "title": "Num Images",
             "type": "integer"
           },
@@ -549,6 +654,70 @@
         ],
         "title": "CharacterStance",
         "type": "string"
+      },
+      "CharacterTemplateSequence": {
+        "description": "角色母版的真实源方向或水平镜像关系。",
+        "properties": {
+          "direction": {
+            "enum": [
+              "east",
+              "west",
+              "north",
+              "south",
+              "north_east",
+              "north_west",
+              "south_east",
+              "south_west"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "真实源方向的母版 URL",
+            "title": "Image Url"
+          },
+          "mirror_x": {
+            "default": false,
+            "description": "是否水平镜像源方向",
+            "title": "Mirror X",
+            "type": "boolean"
+          },
+          "source_direction": {
+            "anyOf": [
+              {
+                "enum": [
+                  "east",
+                  "west",
+                  "north",
+                  "south",
+                  "north_east",
+                  "north_west",
+                  "south_east",
+                  "south_west"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "镜像方向引用的真实源方向",
+            "title": "Source Direction"
+          }
+        },
+        "required": [
+          "direction"
+        ],
+        "title": "CharacterTemplateSequence",
+        "type": "object"
       },
       "CharacterUpdate": {
         "description": "更新角色请求——所有字段可选。",

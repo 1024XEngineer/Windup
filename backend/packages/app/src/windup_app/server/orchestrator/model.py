@@ -13,6 +13,7 @@ from sqlalchemy import BigInteger, DateTime, Integer, JSON, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from windup_common.directions import ActionDirection
 from windup_common.models import CharacterStance
 from windup_framework.db import Base
 
@@ -23,8 +24,8 @@ from windup_framework.db import Base
 class GenerationType(StrEnum):
     """生成任务类型——每新增一种生成能力，在此加一个成员。"""
 
-    CHARACTER_IMAGE = "character_image"      # 角色参考图
-    CHARACTER_ACTION = "character_action"    # 角色动作帧序列
+    CHARACTER_IMAGE = "character_image"  # 角色参考图
+    CHARACTER_ACTION = "character_action"  # 角色动作帧序列
 
 
 class ActionType(StrEnum):
@@ -58,7 +59,9 @@ class CharacterImageInput:
     negative_prompt: str = ""
     width: int = 1024
     height: int = 1024
-    num_images: int = 1
+    # 角色母版和动作首帧统一返回两张候选；API 层也会把这个值限制为 2。
+    num_images: int = 2
+    direction: ActionDirection = ActionDirection.EAST
 
 
 @dataclass
@@ -70,7 +73,7 @@ class CharacterActionInput:
     custom_prompt: str | None = None
     reference_video_url: str | None = None
     reference_image_urls: list[str] = field(default_factory=list)
-    num_frames: int = 16
+    num_frames: int = 32
     # ── action_type=custom 才用到的两个(#239)──────────────────────────────
     # 这个动作是否循环播放。``None`` 原样往下传,由编排层兜成一次性:本层替调用方填默认值
     # 的话,"没给"和"明确给了 False"从这里起就再也分不开了。
@@ -92,6 +95,7 @@ class CharacterActionInput:
     # 角色体型。``None`` 原样往下传,由编排层兜成双足 —— 本层替调用方填默认值的话,
     # "没给"与"明确给了 biped"从这里起就分不开了。判据见 prompt.adapter 的体型门禁。
     stance: CharacterStance | None = None
+    direction: ActionDirection = ActionDirection.EAST
 
 
 # -- 出参（按任务类型细化，前端可直接回填 character 模块）------------------
@@ -101,12 +105,13 @@ class CharacterActionInput:
 class CharacterImageOutput:
     """角色图片生成结果。
 
-    前端拿到 ``image_urls`` 后写入 ``Character.reference_image_url``。
-    单张也用列表: ``["url"]``。
+    前端拿到 ``image_urls`` 后把两张候选交给工作流节点选择；只有被确认的图片
+    才写入 ``Character.reference_image_url``。
     """
 
     type: str = "character_image"
     image_urls: list[str] = field(default_factory=list)
+    direction: ActionDirection = ActionDirection.EAST
     # 出图当场量的主体数(``ai_engine.slicing.quality.subject_blobs`` 的逐张读数)。与动作
     # 结果那份 ``quality`` 同键同语义:只落库、不参与前端回填,本层不据此判成败。
     # ``None`` = **没量过**,不是"量了没问题"。
@@ -147,6 +152,7 @@ class CharacterActionOutput:
     judge: dict | None = None
     quality: dict | None = None
     prompt_version: str | None = None
+    direction: ActionDirection = ActionDirection.EAST
 
 
 # -- 任务记录 ------------------------------------------------------------
@@ -192,11 +198,13 @@ class GenerationTaskRecord(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     project_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     task_type: Mapped[str] = mapped_column(
-        Text, nullable=False,
+        Text,
+        nullable=False,
         default=GenerationType.CHARACTER_IMAGE.value,
     )
     status: Mapped[str] = mapped_column(
-        Text, nullable=False,
+        Text,
+        nullable=False,
         default=TaskStatus.PENDING.value,
     )
     input_payload: Mapped[dict] = mapped_column(

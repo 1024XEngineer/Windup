@@ -19,7 +19,7 @@ master, progress)`` 对 ``master`` 一个前置判定都没有。2026-08-07 实�
 拒绝与警告的分界**由判据能不能证伪决定,不由后果严重程度决定**。④⑤ 指向的是混元图生 3D
 的硬约束(四肢粘连 → 绑骨绑不出腿;画面里有武器配件 → 明确不允许),后果比 ③ 更贵,
 但两条判据都会在合法母版上误报,所以只能警告。**上层拿它们做什么决定**:摆在母版确认闸
-上给人看,让人在付费建 3D 之前决定"就用这张 / 重新生成三张";任何一条都不阻断流程。
+上给人看,让人在付费建 3D 之前决定"就用这张 / 重新生成两张";任何一条都不阻断流程。
 
 **本层不判什么、为什么 —— 别把下面这些当成已经守住了:**
   - **画面里有没有文字**(提示词含 "reference sheet" 时生图模型会自己糊上标注,烤进母版
@@ -46,6 +46,7 @@ master, progress)`` 对 ``master`` 一个前置判定都没有。2026-08-07 实�
 
 纯 PIL / numpy,零 API,不联网。
 """
+
 from __future__ import annotations
 
 import io
@@ -63,10 +64,20 @@ from windup_ai_engine.ports import (
 )
 from windup_ai_engine.postprocess.pack import FILL_H, FILL_W
 
-__all__ = ["LIMB_BANDS", "MIN_EXTRA_COMPONENT_RATIO", "MIN_LIMB_RUN_PX",
-           "MIN_SUBJECT_AREA_RATIO", "MIN_SUBJECT_SIDE", "REJECT_ASPECT",
-           "MasterFacts", "check_master", "component_sizes", "limb_segments",
-           "main_component", "reject_aspect_for"]
+__all__ = [
+    "LIMB_BANDS",
+    "MIN_EXTRA_COMPONENT_RATIO",
+    "MIN_LIMB_RUN_PX",
+    "MIN_SUBJECT_AREA_RATIO",
+    "MIN_SUBJECT_SIDE",
+    "REJECT_ASPECT",
+    "MasterFacts",
+    "check_master",
+    "component_sizes",
+    "limb_segments",
+    "main_component",
+    "reject_aspect_for",
+]
 
 # 主体宽高比上限。**由交付画布的几何推出,不是拍的**:align_bottom_center 按高定标
 # (cell*FILL_H);主体 w/h 超过 FILL_W/FILL_H(≈1.55)后宽度兜底接管,交付主体高度
@@ -96,6 +107,7 @@ def reject_aspect_for(canvas: tuple[int, int] | None) -> float:
         return REJECT_ASPECT
     cw, ch = canvas
     return REJECT_ASPECT * (cw / ch)
+
 
 # 主体包围盒的最短边下限。下游 align_bottom_center 会把包围盒裁出来、NEAREST 放大到
 # cell*FILL_H≈159px;8px 放大 20 倍是色块不是角色。更要紧的是:这么小的一块,四角
@@ -127,8 +139,11 @@ MIN_EXTRA_COMPONENT_RATIO = 0.02
 def _runs(row: np.ndarray, min_px: int = 1) -> list[tuple[int, int]]:
     """一行里的连通段 ``[(x0, x1), ...]``(半开),短于 ``min_px`` 的丢掉。"""
     edges = np.flatnonzero(np.diff(np.concatenate(([0], row.astype(np.int8), [0]))))
-    return [(int(a), int(b)) for a, b in zip(edges[::2], edges[1::2], strict=True)
-            if b - a >= min_px]
+    return [
+        (int(a), int(b))
+        for a, b in zip(edges[::2], edges[1::2], strict=True)
+        if b - a >= min_px
+    ]
 
 
 def limb_segments(mask: np.ndarray, box: tuple[int, int, int, int]) -> tuple[int, ...]:
@@ -136,7 +151,11 @@ def limb_segments(mask: np.ndarray, box: tuple[int, int, int, int]) -> tuple[int
     x0, y0, x1, y1 = box
     span = y1 - y0 - 1
     return tuple(
-        len(_runs(mask[min(y1 - 1, y0 + int(round(frac * span))), x0:x1], MIN_LIMB_RUN_PX))
+        len(
+            _runs(
+                mask[min(y1 - 1, y0 + int(round(frac * span))), x0:x1], MIN_LIMB_RUN_PX
+            )
+        )
         for frac in LIMB_BANDS
     )
 
@@ -166,7 +185,7 @@ def _label(mask: np.ndarray) -> tuple[list[tuple[int, int, int, int]], dict[int,
             label = len(parent)
             parent.append(label)
             for pa, pb, plabel in previous:
-                if a <= pb and pa <= b:          # 端点相碰即视为连通 = 八邻接
+                if a <= pb and pa <= b:  # 端点相碰即视为连通 = 八邻接
                     ra, rb = find(label), find(plabel)
                     if ra != rb:
                         parent[rb] = ra
@@ -208,12 +227,12 @@ class MasterFacts:
     """预检**量到**的母版形态。返回它而不是只返 None:通过时这些数进进度文案,
     出问题时(比如误拒)一眼看得出引擎当时把什么当成了主体。"""
 
-    size: tuple[int, int]                      # 母版画布 (w, h)
-    subject_box: tuple[int, int, int, int]     # 主体包围盒 (x0, y0, x1, y1),半开
-    subject_ratio: float                       # 主体 w/h
-    subject_area_ratio: float                  # 主体像素 / 画幅像素
-    limb_segments: tuple[int, ...] = ()        # LIMB_BANDS 各处的横向连通段数
-    components: tuple[int, ...] = ()           # 够大的连通块像素数,从大到小
+    size: tuple[int, int]  # 母版画布 (w, h)
+    subject_box: tuple[int, int, int, int]  # 主体包围盒 (x0, y0, x1, y1),半开
+    subject_ratio: float  # 主体 w/h
+    subject_area_ratio: float  # 主体像素 / 画幅像素
+    limb_segments: tuple[int, ...] = ()  # LIMB_BANDS 各处的横向连通段数
+    components: tuple[int, ...] = ()  # 够大的连通块像素数,从大到小
     warnings: tuple[MasterWarning, ...] = field(default_factory=tuple)
 
     def note(self) -> str:
@@ -221,9 +240,11 @@ class MasterFacts:
         w, h = self.size
         x0, y0, x1, y1 = self.subject_box
         tail = f";{len(self.warnings)} 条警告" if self.warnings else ""
-        return (f"母版 {w}×{h},主体 {x1 - x0}×{y1 - y0}"
-                f"(w/h {self.subject_ratio:.2f},占幅 {self.subject_area_ratio:.1%})"
-                f"{tail}")
+        return (
+            f"母版 {w}×{h},主体 {x1 - x0}×{y1 - y0}"
+            f"(w/h {self.subject_ratio:.2f},占幅 {self.subject_area_ratio:.1%})"
+            f"{tail}"
+        )
 
 
 def _decode(master: bytes) -> Image.Image:
@@ -250,22 +271,26 @@ def _warnings(
     """把量到的两组数翻成警告。**只在信号明确时出声** —— 详见各条的假阳性来源。"""
     out: list[MasterWarning] = []
     if segments and max(segments) < 2:
-        out.append(MasterWarning(
-            MasterWarningCode.LIMBS_FUSED,
-            f"下半身 {list(LIMB_BANDS)} 四处横切都只有 {list(segments)} 段主体像素,"
-            "两腿之间量不到空隙。混元靠这道空隙分左右腿,粘连时会绑出一条腿的骨架,"
-            "而接口不会报错。**侧视角色两腿前后重叠时本条必然误报**,"
-            "确认这张是侧视就忽略它。",
-        ))
+        out.append(
+            MasterWarning(
+                MasterWarningCode.LIMBS_FUSED,
+                f"下半身 {list(LIMB_BANDS)} 四处横切都只有 {list(segments)} 段主体像素,"
+                "两腿之间量不到空隙。混元靠这道空隙分左右腿,粘连时会绑出一条腿的骨架,"
+                "而接口不会报错。**侧视角色两腿前后重叠时本条必然误报**,"
+                "确认这张是侧视就忽略它。",
+            )
+        )
     if len(blocks) > 1:
         extra = ", ".join(f"{n}px" for n in blocks[1:])
-        out.append(MasterWarning(
-            MasterWarningCode.EXTRA_COMPONENT,
-            f"主体({blocks[0]}px)之外还有 {len(blocks) - 1} 块独立色块({extra})。"
-            "混元明写送检模型不得含人体以外的组件,画面里的武器/道具会被一起建进网格、"
-            "再被绑上权重乱甩。也可能是生图模型自己糊上的标注文字。"
-            "**与身体相连的手持物本条逮不到**,只能靠人看。",
-        ))
+        out.append(
+            MasterWarning(
+                MasterWarningCode.EXTRA_COMPONENT,
+                f"主体({blocks[0]}px)之外还有 {len(blocks) - 1} 块独立色块({extra})。"
+                "混元明写送检模型不得含人体以外的组件,画面里的武器/道具会被一起建进网格、"
+                "再被绑上权重乱甩。也可能是生图模型自己糊上的标注文字。"
+                "**与身体相连的手持物本条逮不到**,只能靠人看。",
+            )
+        )
     return tuple(out)
 
 

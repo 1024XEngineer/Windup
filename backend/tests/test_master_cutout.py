@@ -152,7 +152,7 @@ def test_quality_reaches_the_task_result_over_http(session_factory):
         seed_credit_account(session, 1)
         session.commit()
 
-    image_input = CharacterImageInput(prompt="勇者", width=64, height=64)
+    image_input = CharacterImageInput(prompt="勇者", width=64, height=64, num_images=1)
     with session_factory() as session:
         task = AiGenerationService().generate_character_image(
             session, user_id=1, input=image_input,
