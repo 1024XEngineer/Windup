@@ -74,11 +74,23 @@ def _error_type_from_exception(exc: Exception) -> tuple[ModelErrorType, int | No
 class LangChainChatAdapter:
     """Protocol adapter: Gateway policy around LangChain's ChatOpenAI client."""
 
-    def __init__(self, config: AIProviderSettings, **client_kwargs: Any) -> None:
+    def __init__(
+        self,
+        config: AIProviderSettings,
+        *,
+        tools: list[Any] | None = None,
+        **client_kwargs: Any,
+    ) -> None:
         self._cfg = config
         self._client_kwargs = client_kwargs
+        self._tools = tools
 
-    def invoke(self, messages: Any, *, model: str, **kwargs: Any) -> ChatAdapterResult:
+    def bind_tools(self, tools: list[Any]) -> LangChainChatAdapter:
+        return LangChainChatAdapter(
+            self._cfg, tools=list(tools), **self._client_kwargs
+        )
+
+    def _client(self, model: str) -> Any:
         client = ChatOpenAI(
             model=model,
             api_key=self._cfg.api_key or None,
@@ -88,11 +100,29 @@ class LangChainChatAdapter:
             max_retries=0,
             **self._client_kwargs,
         )
+        if self._tools:
+            client = client.bind_tools(self._tools)
+        return client
+
+    def invoke(self, messages: Any, *, model: str, **kwargs: Any) -> ChatAdapterResult:
         try:
-            return ChatAdapterResult(ok=True, value=client.invoke(messages, **kwargs))
+            return ChatAdapterResult(ok=True, value=self._client(model).invoke(messages, **kwargs))
         except Exception as exc:
             error_type, status, edge = _error_type_from_exception(exc)
             return ChatAdapterResult(
+                ok=False,
+                error_type=error_type,
+                http_status=status,
+                edge_fingerprint=edge,
+            )
+
+    async def astream(self, messages: Any, *, model: str, **kwargs: Any):
+        try:
+            async for chunk in self._client(model).astream(messages, **kwargs):
+                yield ChatAdapterResult(ok=True, value=chunk)
+        except Exception as exc:
+            error_type, status, edge = _error_type_from_exception(exc)
+            yield ChatAdapterResult(
                 ok=False,
                 error_type=error_type,
                 http_status=status,
@@ -120,6 +150,23 @@ class ChatGateway:
         if not primary:
             raise RuntimeError("chat gateway requires AI_CHAT_MODEL")
         return (primary, *_parse_fallbacks(self._settings.chat_fallbacks))
+
+    def bind_tools(self, tools: list[Any]) -> ChatGateway:
+        """LangChain 兼容：``/ai/chat`` 在流式转发前会绑工具定义。"""
+        bound_default = self._adapter
+        bind = getattr(self._adapter, "bind_tools", None)
+        if callable(bind):
+            bound_default = bind(tools)
+        bound_routes = {}
+        for route_id, adapter in self._route_adapters.items():
+            route_bind = getattr(adapter, "bind_tools", None)
+            bound_routes[route_id] = route_bind(tools) if callable(route_bind) else adapter
+        return ChatGateway(
+            adapter=bound_default,
+            circuit=self._circuit,
+            settings=self._settings,
+            route_adapters=bound_routes,
+        )
 
     def invoke(self, messages: Any, **kwargs: Any) -> Any:
         ctx = current_call_context()
@@ -312,6 +359,51 @@ class ChatGateway:
             route_reason_override = None
 
         fail(last_http_status)
+
+    async def astream(self, messages: Any, **kwargs: Any):
+        """LangChain 兼容流式出口。开流前仍跳过已熔断路由；一旦吐出 chunk 不再换路。"""
+        ctx = current_call_context()
+        request_id = ctx.request_id or str(uuid.uuid4())
+        models = self._models()
+        if self._circuit.is_open("aggregator"):
+            raise RuntimeError(
+                f"chat gateway failed request_id={request_id} http_status=None"
+            )
+        last_http_status: int | None = None
+        for route_index, route in enumerate(self._routes):
+            if self._circuit.is_open("base_url:" + route.base_url_id):
+                continue
+            if self._circuit.is_open(key_circuit_id(route)):
+                continue
+            adapter = self._adapter_for(route)
+            stream = getattr(adapter, "astream", None)
+            if not callable(stream):
+                yield self.invoke(messages, **kwargs)
+                return
+            yielded = False
+            async for result in stream(messages, model=models[0], **kwargs):
+                if not isinstance(result, ChatAdapterResult):
+                    yielded = True
+                    yield result
+                    continue
+                last_http_status = result.http_status
+                if result.ok:
+                    yielded = True
+                    yield result.value
+                    continue
+                if yielded:
+                    raise RuntimeError(
+                        f"chat gateway failed request_id={request_id} "
+                        f"http_status={result.http_status}"
+                    )
+                break
+            else:
+                return
+            if route_index + 1 >= len(self._routes):
+                break
+        raise RuntimeError(
+            f"chat gateway failed request_id={request_id} http_status={last_http_status}"
+        )
 
     def _emit(self, trace: AttemptTrace) -> None:
         if not trace.started_at:

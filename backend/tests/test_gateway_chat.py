@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 
@@ -101,6 +102,8 @@ def test_create_chat_model_returns_gateway_without_hand_rolling_protocol():
     chat = create_chat_model(config=cfg)
 
     assert hasattr(chat, "invoke")
+    assert hasattr(chat, "astream")
+    assert hasattr(chat, "bind_tools")
     assert chat.__class__.__name__ == "ChatGateway"
 
 
@@ -303,3 +306,62 @@ def test_langchain_adapter_unknown_exception_stays_unknown(monkeypatch):
     monkeypatch.setattr("windup_framework.gateway.chat.ChatOpenAI", _Boom)
     r = LangChainChatAdapter(_primary_cfg()).invoke([], model="gpt-4o-mini")
     assert r.error_type is ModelErrorType.UNKNOWN
+
+
+class _StreamAdapter:
+    def __init__(self, chunks):
+        self.chunks = list(chunks)
+        self.tools = None
+        self.calls: list[str] = []
+
+    def bind_tools(self, tools):
+        bound = _StreamAdapter(self.chunks)
+        bound.tools = tools
+        return bound
+
+    async def astream(self, messages, *, model: str, **kwargs):
+        self.calls.append(model)
+        for chunk in self.chunks:
+            if isinstance(chunk, ChatAdapterResult):
+                yield chunk
+            else:
+                yield ChatAdapterResult(ok=True, value=chunk)
+
+
+def test_chat_gateway_bind_tools_keeps_model_name():
+    adapter = _StreamAdapter(["hi"])
+    gw = ChatGateway(
+        adapter=adapter,
+        circuit=CircuitBreaker(),
+        settings=_primary_cfg(),
+        route_adapters={"primary": adapter},
+    )
+    bound = gw.bind_tools([{"type": "function", "function": {"name": "lookup"}}])
+    assert bound.model_name == "gpt-4o-mini"
+    assert bound._adapter.tools[0]["function"]["name"] == "lookup"
+
+
+def test_chat_gateway_astream_yields_chunks_and_skips_open_route():
+    down = _StreamAdapter([UNREACHED])
+    up = _StreamAdapter(["你", "好"])
+    cfg = _primary_cfg(
+        route_fallback_name="backup",
+        route_fallback_base_url="https://backup.example.com/v1",
+        route_fallback_api_key="backup-key",
+    )
+    circuit = CircuitBreaker()
+    circuit.open("base_url:primary")
+    gw = ChatGateway(
+        adapter=down,
+        circuit=circuit,
+        settings=cfg,
+        route_adapters={"primary": down, "backup": up},
+    )
+
+    async def _collect():
+        return [chunk async for chunk in gw.astream([{"role": "user", "content": "ping"}])]
+
+    chunks = asyncio.run(_collect())
+    assert chunks == ["你", "好"]
+    assert down.calls == []
+    assert up.calls == ["gpt-4o-mini"]
