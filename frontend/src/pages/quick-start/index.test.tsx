@@ -1362,6 +1362,33 @@ describe('QuickStartPage', () => {
     )
   })
 
+  it('角色母版失败时也提供定向重试入口', async () => {
+    const run = workflow(
+      setupAndTemplate({
+        status: 'failed',
+        phase: 'generating',
+        error: '北向母版失败',
+        generations: [
+          { taskId: 'template-east', role: 'character_template' },
+          { taskId: 'template-north', role: 'character_template', direction: 'north' },
+        ],
+      }),
+    )
+    const service = serviceFor(run, {
+      getFailedGenerationDirections: vi.fn(async () => [
+        { nodeId: 'character-template', direction: 'north' as const },
+      ]),
+      retryGenerationDirection: vi.fn(async () => run),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    fireEvent.click(await screen.findByRole('button', { name: '重试北方向' }))
+
+    await waitFor(() =>
+      expect(service.retryGenerationDirection).toHaveBeenCalledWith('character-template', 'north'),
+    )
+  })
+
   it('方向重试失败时显示原始错误并恢复按钮', async () => {
     const run = actionWorkflow({ firstStatus: 'failed', error: '北方向失败' })
     const service = serviceFor(run, {

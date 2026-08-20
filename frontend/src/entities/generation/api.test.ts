@@ -130,6 +130,39 @@ describe('createGenerationApis', () => {
     })
   })
 
+  it('未指定方向时用 east 创建兼容的角色母版任务', async () => {
+    const request = vi.fn(async (_url: string, _init?: RequestInit) =>
+      success(
+        taskData({
+          input_payload: { num_images: 2, direction: 'east' },
+          result: {
+            type: 'character_image',
+            direction: 'east',
+            image_urls: ['east-1.png', 'east-2.png'],
+          },
+        }),
+      ),
+    )
+    const apis = createGenerationApis({
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    const generation = await apis.create({
+      type: 'character_template',
+      projectId: '42',
+      referenceMedia: [],
+      prompt: 'pixel hero',
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+
+    expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toMatchObject({ direction: 'east' })
+    expect(generation.result).toEqual({
+      type: 'character_template',
+      images: [{ url: 'east-1.png' }, { url: 'east-2.png' }],
+    })
+  })
+
   it('根据角色母版和动作提示词生成两张动作首帧候选', async () => {
     const request = vi.fn(async (_url: string, _init?: RequestInit) =>
       success(

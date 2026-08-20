@@ -463,6 +463,105 @@ describe('createQuickStartService', () => {
     )
   })
 
+  it.each([
+    ['north', '缺少north方向角色候选图'],
+    ['south', '缺少south方向角色候选图'],
+  ] as const)('四向母版确认拒绝缺失的 %s 候选', async (missing, message) => {
+    const run: WorkflowRun = {
+      id: `run-missing-${missing}-template`,
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(null, null),
+    }
+    const template = run.nodes[1]
+    if (!template || template.type !== 'character-template') throw new Error('missing template')
+    template.generations = (['east', 'north', 'south'] as const).map((direction) => ({
+      taskId: `template-${direction}`,
+      role: 'character_template' as const,
+      ...(direction === 'east' ? {} : { direction }),
+    }))
+    const generationApis: GenerationApis = {
+      create: vi.fn(),
+      get: vi.fn(async (projectId, id) => {
+        const direction = id.replace('template-', '') as 'east' | 'north' | 'south'
+        return {
+          id,
+          projectId,
+          type: 'character_template' as const,
+          status: 'completed' as const,
+          result: {
+            type: 'character_template' as const,
+            direction,
+            images:
+              direction === missing
+                ? []
+                : [{ url: `${direction}-1.png` }, { url: `${direction}-2.png` }],
+          },
+          error: null,
+        }
+      }),
+      subscribe: vi.fn(() => () => undefined),
+    }
+    let character = characterFixture({ workflowRunId: run.id })
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      characterApis: mutableCharacterApis(
+        () => character,
+        (value) => (character = value),
+      ),
+      prepareProject: vi.fn(),
+      projectApis: projectReader(undefined, 'four-way'),
+    })
+    const session = await service.open(run.id)
+
+    await expect(session.confirmCandidate('east-1.png', '')).rejects.toThrow(message)
+  })
+
+  it('四向首帧确认拒绝缺失的同方向候选', async () => {
+    const run = actionRun(true)
+    const firstFrame = run.nodes.find((node) => node.type === 'action-first-frame')!
+    firstFrame.generations = (['east', 'north', 'south'] as const).map((direction) => ({
+      taskId: `first-${direction}`,
+      role: 'first_frame' as const,
+      ...(direction === 'east' ? {} : { direction }),
+    }))
+    const generationApis: GenerationApis = {
+      create: vi.fn(),
+      get: vi.fn(async (projectId, id) => {
+        const direction = id.replace('first-', '') as 'east' | 'north' | 'south'
+        return {
+          id,
+          projectId,
+          type: 'first_frame' as const,
+          status: 'completed' as const,
+          result: {
+            type: 'first_frame' as const,
+            direction,
+            images:
+              direction === 'north'
+                ? []
+                : [{ url: `${direction}-1.png` }, { url: `${direction}-2.png` }],
+          },
+          error: null,
+        }
+      }),
+      subscribe: vi.fn(() => () => undefined),
+    }
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader(undefined, 'four-way'),
+    })
+    const session = await service.open(run.id)
+
+    await expect(session.confirmFirstFrame('east-1.png')).rejects.toThrow(
+      '缺少north方向动作首帧候选图',
+    )
+  })
+
   it('继续上传母版时拒绝没有可用造型的已有角色', async () => {
     const run: WorkflowRun = {
       id: 'run-upload-without-outfit',
@@ -475,7 +574,24 @@ describe('createQuickStartService', () => {
     if (!template || template.type !== 'character-template') throw new Error('missing template')
     template.status = 'active'
     template.phase = 'selecting'
-    const character = characterFixture({ workflowRunId: run.id, outfits: [] })
+    template.selectedImageUrl = 'template.png'
+    const setup = run.nodes[0]
+    if (!setup || setup.type !== 'character-setup') throw new Error('missing setup')
+    setup.input.characterId = 'character-1'
+    const character = characterFixture({
+      workflowRunId: run.id,
+      outfits: [
+        {
+          id: 'unrelated-outfit',
+          characterId: 'character-1',
+          name: '其它造型',
+          description: null,
+          previewUrl: 'other.png',
+          model3dUrl: null,
+          actions: [],
+        },
+      ],
+    })
     const service = createQuickStartService({
       workflowRunApis: createWorkflowRunApis([run]),
       generationApis: pendingGenerationApis(),
@@ -508,7 +624,24 @@ describe('createQuickStartService', () => {
     if (!template || template.type !== 'character-template') throw new Error('missing template')
     template.status = 'active'
     template.phase = 'selecting'
-    const character = characterFixture({ workflowRunId: run.id, outfits: [] })
+    template.selectedImageUrl = 'template.png'
+    const setup = run.nodes[0]
+    if (!setup || setup.type !== 'character-setup') throw new Error('missing setup')
+    setup.input.characterId = 'character-1'
+    const character = characterFixture({
+      workflowRunId: run.id,
+      outfits: [
+        {
+          id: 'unrelated-outfit',
+          characterId: 'character-1',
+          name: '其它造型',
+          description: null,
+          previewUrl: 'other.png',
+          model3dUrl: null,
+          actions: [],
+        },
+      ],
+    })
     const service = createQuickStartService({
       workflowRunApis: createWorkflowRunApis([run]),
       generationApis: pendingGenerationApis(),
@@ -1984,6 +2117,76 @@ describe('createQuickStartService', () => {
     await expect(
       noOutfit.startAction({ characterId: 'character', outfitId: 'missing' }, 'walk'),
     ).rejects.toThrow('当前造型还没有可用的角色母版，请先完成定妆再生成动作')
+
+    const outfitWithoutTemplate = characterFixture({
+      id: 'character-with-empty-outfit',
+      workflowRunId: 'run',
+      referenceImageUrl: null,
+      templates: [],
+      outfits: [
+        {
+          id: 'empty-outfit',
+          characterId: 'character-with-empty-outfit',
+          name: '空造型',
+          description: null,
+          previewUrl: null,
+          model3dUrl: null,
+          actions: [],
+        },
+      ],
+    })
+    const noTemplate = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis(),
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+      characterApis: {
+        get: vi.fn(async () => outfitWithoutTemplate),
+      } as unknown as CharacterApis,
+    })
+    await expect(
+      noTemplate.startAction(
+        { characterId: outfitWithoutTemplate.id, outfitId: 'empty-outfit' },
+        'walk',
+      ),
+    ).rejects.toThrow('当前造型还没有可用的角色母版，请先完成定妆再生成动作')
+
+    const characterReferenceOnly = characterFixture({
+      id: 'character-reference-only',
+      referenceImageUrl: 'character-reference.png',
+      templates: [],
+      outfits: [
+        {
+          id: 'reference-outfit',
+          characterId: 'character-reference-only',
+          name: '参考图造型',
+          description: null,
+          previewUrl: null,
+          model3dUrl: null,
+          actions: [],
+        },
+      ],
+    })
+    const referenceGenerations = pendingGenerationApis()
+    const referenceFallback = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis(),
+      generationApis: referenceGenerations,
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+      characterApis: {
+        get: vi.fn(async () => characterReferenceOnly),
+      } as unknown as CharacterApis,
+    })
+    await referenceFallback.startAction(
+      { characterId: characterReferenceOnly.id, outfitId: 'reference-outfit' },
+      'walk',
+    )
+    expect(referenceGenerations.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'first_frame',
+        referenceMedia: ['character-reference.png'],
+      }),
+    )
 
     const staticRun: WorkflowRun = {
       id: 'run-static',

@@ -974,6 +974,86 @@ describe('WorkflowController', () => {
     })
   })
 
+  it('非东向确认优先沿用方向选择表中的东向兼容值', async () => {
+    const template = createController(
+      createRun([
+        setupNode({ status: 'passed', phase: 'completed' }),
+        templateNode({
+          status: 'active',
+          phase: 'selecting',
+          selectedImageUrl: null,
+          selectedImages: { east: 'east-template.png' },
+        }),
+      ]),
+      'four-way',
+    )
+    await template.controller.confirmCharacterTemplate(
+      'template-1',
+      'north-template.png',
+      'character-1',
+      'north',
+    )
+    expect(template.controller.getWorkflow().nodes[1]).toMatchObject({
+      selectedImageUrl: 'east-template.png',
+    })
+
+    const firstFrame = createController(
+      createRun([
+        ...completedCharacterNodes(),
+        firstFrameNode({
+          status: 'active',
+          phase: 'selecting',
+          selectedFirstFrameUrl: null,
+          selectedFirstFrameUrls: { east: 'east-frame.png' },
+        }),
+      ]),
+      'four-way',
+    )
+    await firstFrame.controller.confirmFirstFrame('action-walk', 'north-frame.png', 'north')
+    expect(firstFrame.controller.getWorkflow().nodes[2]).toMatchObject({
+      selectedFirstFrameUrl: 'east-frame.png',
+    })
+  })
+
+  it('非东向确认在尚无东向选择时不伪造兼容值', async () => {
+    const template = createController(
+      createRun([
+        setupNode({ status: 'passed', phase: 'completed' }),
+        templateNode({
+          status: 'active',
+          phase: 'selecting',
+          selectedImageUrl: null,
+          selectedImages: undefined,
+        }),
+      ]),
+      'four-way',
+    )
+    await template.controller.confirmCharacterTemplate(
+      'template-1',
+      'north-template.png',
+      'character-1',
+      'north',
+    )
+    expect(template.controller.getWorkflow().nodes[1]).toMatchObject({ selectedImageUrl: null })
+
+    const firstFrame = createController(
+      createRun([
+        ...completedCharacterNodes(),
+        firstFrameNode({
+          status: 'active',
+          phase: 'selecting',
+          selectedFirstFrameUrl: null,
+          selectedFirstFrameUrls: undefined,
+        }),
+      ]),
+      'four-way',
+    )
+    await firstFrame.controller.confirmFirstFrame('action-walk', 'north-frame.png', 'north')
+    expect(firstFrame.controller.getWorkflow().nodes[2]).toMatchObject({
+      selectedFirstFrameUrl: null,
+    })
+  })
+
   it('四向旧角色只有东向兼容字段时拒绝创建任何首帧任务', async () => {
     const run = createRun([...completedCharacterNodes(), ...actionNodes()])
     const { controller, generation } = createController(run, 'four-way')
@@ -1472,6 +1552,309 @@ describe('WorkflowController', () => {
     ])
   })
 
+  it('重试东向时只清空对应的兼容选择字段', async () => {
+    const templateRetry = createController(
+      createRun([
+        setupNode({ status: 'passed', phase: 'completed' }),
+        templateNode({
+          status: 'failed',
+          phase: 'generating',
+          generations: [{ taskId: 'template-east', role: 'character_template' }],
+          selectedImageUrl: 'east-template.png',
+          selectedImages: { east: 'east-template.png', north: 'north-template.png' },
+          error: 'east failed',
+        }),
+      ]),
+    )
+
+    await templateRetry.controller.retryGenerationDirection('template-1', 'east', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+    const retriedTemplate = templateRetry.controller.getWorkflow().nodes[1]
+    expect(retriedTemplate).toMatchObject({
+      selectedImageUrl: null,
+    })
+    if (!retriedTemplate || retriedTemplate.type !== 'character-template') {
+      throw new Error('missing template')
+    }
+    expect(retriedTemplate.selectedImages).toEqual({ north: 'north-template.png' })
+
+    const firstFrameRetry = createController(
+      createRun([
+        ...completedCharacterNodes(),
+        firstFrameNode({
+          status: 'failed',
+          phase: 'generating',
+          generations: [{ taskId: 'first-east', role: 'first_frame' }],
+          selectedFirstFrameUrl: 'east-frame.png',
+          selectedFirstFrameUrls: { east: 'east-frame.png', north: 'north-frame.png' },
+          error: 'east failed',
+        }),
+      ]),
+    )
+
+    await firstFrameRetry.controller.retryGenerationDirection('action-walk', 'east', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+    const retriedFirstFrame = firstFrameRetry.controller.getWorkflow().nodes[2]
+    expect(retriedFirstFrame).toMatchObject({
+      selectedFirstFrameUrl: null,
+    })
+    if (!retriedFirstFrame || retriedFirstFrame.type !== 'action-first-frame') {
+      throw new Error('missing first frame')
+    }
+    expect(retriedFirstFrame.selectedFirstFrameUrls).toEqual({ north: 'north-frame.png' })
+  })
+
+  it('方向重试在创建任务前校验同方向依赖', async () => {
+    const missingTemplate = createController(
+      createRun([
+        setupNode({ status: 'passed', phase: 'completed' }),
+        templateNode({
+          status: 'passed',
+          phase: 'completed',
+          selectedImageUrl: 'east-template.png',
+          selectedImages: { east: 'east-template.png', south: 'south-template.png' },
+        }),
+        firstFrameNode({
+          status: 'failed',
+          phase: 'generating',
+          generations: [{ taskId: 'first-north', role: 'first_frame', direction: 'north' }],
+          error: 'north failed',
+        }),
+      ]),
+      'four-way',
+    )
+    await expect(
+      missingTemplate.controller.retryGenerationDirection('action-walk', 'north', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+      }),
+    ).rejects.toThrow('角色母版尚未确认方向 north')
+    expect(missingTemplate.generation.apis.create).not.toHaveBeenCalled()
+
+    const fullFrameNodes = (
+      setup = setupNode({
+        status: 'passed',
+        phase: 'completed',
+        input: { prompt: '像素骑士', referenceMedia: [], characterId: 'character-1' },
+      }),
+      method: 'video-cropping' | null = 'video-cropping',
+      selectedFirstFrameUrls: Record<string, string> = {
+        east: 'east-frame.png',
+        north: 'north-frame.png',
+        south: 'south-frame.png',
+      },
+    ) => [
+      setup,
+      templateNode({ status: 'passed', phase: 'completed', selectedImageUrl: 'east-template.png' }),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: 'east-frame.png',
+        selectedFirstFrameUrls,
+      }),
+      generationMethodNode({ status: 'passed', phase: 'completed', method }),
+      fullFrameNode({
+        status: 'failed',
+        phase: 'generating',
+        generations: [{ taskId: 'full-north', role: 'complete_animation', direction: 'north' }],
+        error: 'north failed',
+      }),
+      reviewNode(),
+    ]
+
+    const missingMethod = createController(createRun(fullFrameNodes(undefined, null)), 'four-way')
+    await expect(
+      missingMethod.controller.retryGenerationDirection(
+        'action-walk:action-full-frame',
+        'north',
+        { spriteWidth: 64, spriteHeight: 64 },
+      ),
+    ).rejects.toThrow('尚未选择动作生成方式')
+    expect(missingMethod.generation.apis.create).not.toHaveBeenCalled()
+
+    const missingCharacter = createController(
+      createRun(
+        fullFrameNodes(setupNode({ status: 'passed', phase: 'completed' })),
+      ),
+      'four-way',
+    )
+    await expect(
+      missingCharacter.controller.retryGenerationDirection(
+        'action-walk:action-full-frame',
+        'north',
+        { spriteWidth: 64, spriteHeight: 64 },
+      ),
+    ).rejects.toThrow('characterId 不能为空')
+    expect(missingCharacter.generation.apis.create).not.toHaveBeenCalled()
+
+    const missingFirstFrame = createController(
+      createRun(fullFrameNodes(undefined, 'video-cropping', { east: 'east-frame.png' })),
+      'four-way',
+    )
+    await expect(
+      missingFirstFrame.controller.retryGenerationDirection(
+        'action-walk:action-full-frame',
+        'north',
+        { spriteWidth: 64, spriteHeight: 64 },
+      ),
+    ).rejects.toThrow('动作首帧尚未确认方向 north')
+    expect(missingFirstFrame.generation.apis.create).not.toHaveBeenCalled()
+  })
+
+  it('完整动画方向重试未传引用媒体时显式使用空数组', async () => {
+    const run = createRun([
+      setupNode({
+        status: 'passed',
+        phase: 'completed',
+        input: { prompt: '像素骑士', referenceMedia: [], characterId: 'character-1' },
+      }),
+      templateNode({ status: 'passed', phase: 'completed', selectedImageUrl: 'east-template.png' }),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: 'east-frame.png',
+      }),
+      generationMethodNode({ status: 'passed', phase: 'completed', method: 'video-cropping' }),
+      fullFrameNode({
+        status: 'failed',
+        phase: 'generating',
+        generations: [{ taskId: 'full-east', role: 'complete_animation' }],
+        error: 'east failed',
+      }),
+      reviewNode(),
+    ])
+    const { controller, generation } = createController(run)
+
+    await controller.retryGenerationDirection('action-walk:action-full-frame', 'east', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'complete_animation', referenceMedia: [], direction: 'east' }),
+    )
+  })
+
+  it('失败任务没有可用错误文本时使用可诊断的默认错误', async () => {
+    const { controller, generation } = createController(
+      createRun([
+        setupNode({ status: 'passed', phase: 'completed' }),
+        templateNode({
+          status: 'active',
+          phase: 'generating',
+          generations: [
+            { taskId: 'task-east', role: 'character_template' },
+            { taskId: 'task-north', role: 'character_template', direction: 'north' },
+            { taskId: 'task-south', role: 'character_template', direction: 'south' },
+          ],
+        }),
+      ]),
+      'four-way',
+    )
+    generation.snapshots.set('task-north', {
+      id: 'task-north',
+      projectId: '1',
+      type: 'character_template',
+      status: 'failed',
+      result: null,
+      error: '   ',
+    })
+    generation.snapshots.set('task-south', {
+      id: 'task-south',
+      projectId: '1',
+      type: 'character_template',
+      status: 'running',
+      result: null,
+      error: null,
+    })
+
+    await controller.applyGenerationResult({
+      nodeId: 'template-1',
+      taskId: 'task-east',
+      generation: {
+        id: 'task-east',
+        projectId: '1',
+        type: 'character_template',
+        status: 'completed',
+        result: {
+          type: 'character_template',
+          direction: 'east',
+          images: [{ url: 'east-1.png' }, { url: 'east-2.png' }],
+        },
+        error: null,
+      },
+    })
+
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+      status: 'failed',
+      error: '方向生成任务失败',
+    })
+  })
+
+  it('查询任务时可回退到唯一的非东向结果', async () => {
+    const run = createRun([
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({
+        status: 'active',
+        phase: 'generating',
+        generations: [{ taskId: 'task-north', role: 'character_template', direction: 'north' }],
+      }),
+    ])
+    const { controller, generation } = createController(run, 'four-way')
+    generation.snapshots.set('task-north', {
+      id: 'task-north',
+      projectId: '1',
+      type: 'character_template',
+      status: 'completed',
+      result: {
+        type: 'character_template',
+        direction: 'north',
+        images: [{ url: 'north-1.png' }, { url: 'north-2.png' }],
+      },
+      error: null,
+    })
+
+    await expect(controller.getGeneration('template-1', 'character_template')).resolves.toMatchObject({
+      id: 'task-north',
+      result: { direction: 'north' },
+    })
+  })
+
+  it('损坏运行把生成引用挂到非生成节点时安全忽略结果', async () => {
+    const setup = setupNode({
+      status: 'active',
+      phase: 'configuring',
+      generations: [{ taskId: 'orphan-task', role: 'character_template' }],
+    })
+    const { controller } = createController(createRun([setup]))
+    const before = controller.getWorkflow()
+
+    await controller.applyGenerationResult({
+      nodeId: setup.id,
+      taskId: 'orphan-task',
+      generation: {
+        id: 'orphan-task',
+        projectId: '1',
+        type: 'character_template',
+        status: 'completed',
+        result: {
+          type: 'character_template',
+          images: [{ url: 'one.png' }, { url: 'two.png' }],
+        },
+        error: null,
+      },
+    })
+
+    expect(controller.getWorkflow()).toEqual(before)
+    await expect(controller.getGenerations(setup.id, 'character_template')).rejects.toThrow(
+      '不是生成节点',
+    )
+  })
+
   it('方向重试拒绝非生成节点、不可重试状态和缺失任务引用', async () => {
     const { controller } = createController(
       createRun([
@@ -1669,6 +2052,52 @@ describe('WorkflowController', () => {
       }),
     ).rejects.toThrow('角色母版当前不能重新生成')
     expect(generation.apis.create).not.toHaveBeenCalled()
+  })
+
+  it('四向微调在重启节点前拒绝缺失的同方向参考图', async () => {
+    const templateRun = createRun([
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedImageUrl: 'east-template.png',
+        selectedImages: { east: 'east-template.png', south: 'south-template.png' },
+      }),
+    ])
+    const template = createController(templateRun, 'four-way')
+    const templateBefore = template.controller.getWorkflow()
+    await expect(
+      template.controller.regenerateCharacterTemplate('template-1', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+        mode: 'refine',
+        adjustmentPrompt: '加强阴影',
+      }),
+    ).rejects.toThrow('角色母版尚未确认方向 north')
+    expect(template.generation.apis.create).not.toHaveBeenCalled()
+    expect(template.controller.getWorkflow()).toEqual(templateBefore)
+
+    const firstFrameRun = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: 'east-frame.png',
+        selectedFirstFrameUrls: { east: 'east-frame.png', south: 'south-frame.png' },
+      }),
+    ])
+    const firstFrame = createController(firstFrameRun, 'four-way')
+    const firstFrameBefore = firstFrame.controller.getWorkflow()
+    await expect(
+      firstFrame.controller.regenerateFirstFrame('action-walk', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+        mode: 'refine',
+        adjustmentPrompt: '调整姿势',
+      }),
+    ).rejects.toThrow('动作首帧尚未确认方向 north')
+    expect(firstFrame.generation.apis.create).not.toHaveBeenCalled()
+    expect(firstFrame.controller.getWorkflow()).toEqual(firstFrameBefore)
   })
 
   it('角色母版重新生成提交失败后还原用户已确认的图片', async () => {
