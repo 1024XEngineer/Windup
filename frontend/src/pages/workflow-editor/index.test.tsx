@@ -298,6 +298,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
 
     const image = await screen.findByRole('img', { name: '已确认身份母版' })
     expect(image.parentElement?.getAttribute('data-workflow-image-shape')).toBe('square')
+    expect(image.parentElement?.className).toContain('rounded-[10px]')
     expect(screen.getByRole('status', { name: '正在加载已确认身份母版' })).toBeTruthy()
     expect(image.className).toContain('opacity-0')
 
@@ -375,6 +376,49 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     renderEditor('/workflow-editor/42')
 
     expect((await screen.findByText('处理中…')).getAttribute('role')).toBe('status')
+  })
+
+  it.each([
+    {
+      nodeType: 'action-first-frame' as const,
+      previewLabel: '动作首帧生成预览',
+      progressLabel: '动作首帧生成进度',
+      progressCopy: '摆好动作姿态',
+    },
+    {
+      nodeType: 'action-full-frame' as const,
+      previewLabel: '完整动作生成预览',
+      progressLabel: '完整动作生成进度',
+      progressCopy: '把动作连起来',
+    },
+  ])('$nodeType 生成时使用对应的共享预览语义', async (scenario) => {
+    const workflow = reviewingActionWorkflow()
+    const target = workflow.nodes.find((node) => node.type === scenario.nodeType)
+    if (!target) throw new Error(`missing ${scenario.nodeType}`)
+    target.status = 'active'
+    target.phase = 'generating'
+    if (target.type === 'action-first-frame') {
+      target.generations = [{ taskId: 'running-first-frame', role: 'first_frame' }]
+    }
+    defaultSessionLoader.mockResolvedValue(
+      createSession(workflow, {
+        generationApis: generationApisFixture({
+          get: vi.fn().mockResolvedValue({
+            id: `running-${scenario.nodeType}`,
+            projectId: '1',
+            type: scenario.nodeType === 'action-first-frame' ? 'first_frame' : 'complete_animation',
+            status: 'running',
+            result: null,
+            error: null,
+          } satisfies Generation),
+        }),
+      }),
+    )
+
+    renderEditor('/workflow-editor/42')
+
+    expect(await screen.findByRole('img', { name: scenario.previewLabel })).toBeTruthy()
+    expect(screen.getByLabelText(scenario.progressLabel).textContent).toBe(scenario.progressCopy)
   })
 
   it('导出是次要动作，当前节点推进仍是主要动作', async () => {
@@ -1366,6 +1410,7 @@ describe('母版确认闸', () => {
 
     const selectedCandidate = screen.getByRole('button', { name: '选择角色候选 1' })
     expect(selectedCandidate.getAttribute('aria-pressed')).toBe('true')
+    expect(selectedCandidate.className).toContain('rounded-[10px]')
     expect(screen.queryByRole('img', { name: '待确认定妆母版' })).toBeNull()
     expect(screen.getByRole('button', { name: '确认为定妆母版' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '重新生成三张' })).toBeTruthy()
