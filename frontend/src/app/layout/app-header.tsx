@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router'
 
 import { quotaApis as defaultQuotaApis } from '@/entities'
 import type { QuotaApis } from '@/entities'
+import { readActiveRun, subscribeActiveRun } from '@/features/active-run'
 import { AUTH_SESSION_STORAGE_PREFIX, useAuthSession } from '@/features/auth-session'
 import { useQuotaBalance } from '@/features/quota'
 import { PageBackButton } from './page-back-button'
@@ -40,19 +41,50 @@ const productNavigation: ProductNavigationItem[] = [
     isActive: (pathname) => pathname.startsWith('/projects'),
   },
   {
+    motionKey: 'playtest',
+    to: '/playtest',
+    label: '预览台',
+    isActive: (pathname) => pathname.startsWith('/playtest'),
+  },
+  // 排在末位：有任务在跑时这一项会换成小机器人，夹在导航中间会把另外三项挤开。
+  {
     motionKey: 'create',
     to: '/quick-start',
     label: '创作',
     isActive: (pathname) =>
       pathname.startsWith('/quick-start') || pathname.startsWith('/workflow-editor'),
   },
-  {
-    motionKey: 'playtest',
-    to: '/playtest',
-    label: '预览台',
-    isActive: (pathname) => pathname.startsWith('/playtest'),
-  },
 ]
+
+function navItemClassName(active: boolean, waving: boolean): string {
+  return `relative inline-flex min-h-11 items-center px-1.5 text-[12px] font-medium whitespace-nowrap transition-colors after:absolute after:inset-x-1.5 after:bottom-0 after:h-[2px] after:origin-center after:bg-app-accent after:transition-transform focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent sm:px-3 sm:text-[13px] sm:after:inset-x-3 ${
+    active
+      ? 'text-app-accent after:scale-x-100'
+      : 'text-app-muted after:scale-x-0 hover:text-app-accent'
+  } ${waving ? 'app-header-text-wave' : ''}`
+}
+
+/**
+ * 有任务在跑时跟在"创作"右边的小机器人：圆脸加两只眼，眼睛左右张望。
+ * 顶掉文字试过一版：这一项会在图标和文字之间来回换形态，读起来像换了个入口。
+ * 颜色继承文字色，所以选中态和 hover 都不用另外配色。
+ */
+function ActiveRunBot() {
+  return (
+    <span aria-hidden="true" data-active-run-bot className="inline-flex shrink-0 align-middle">
+      <svg viewBox="0 0 24 24" className="h-[1.15rem] w-[1.15rem]" fill="none">
+        <rect x="4" y="5" width="16" height="14" stroke="currentColor" strokeWidth="2" />
+        {/* 两层分开：外层管看哪儿，内层管眨眼，合在一起会互相覆盖 transform。 */}
+        <g className="app-header-bot-gaze">
+          <g className="app-header-bot-blink" fill="currentColor">
+            <rect x="8" y="10" width="3" height="3" />
+            <rect x="13" y="10" width="3" height="3" />
+          </g>
+        </g>
+      </svg>
+    </span>
+  )
+}
 
 function WaveText({ playId, text }: { playId: number; text: string }) {
   return (
@@ -87,10 +119,15 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
     quotaApis,
   )
   const [wave, setWave] = useState({ entry: '', playId: 0 })
+  const [activeRunId, setActiveRunId] = useState(readActiveRun)
+  const [activeRunMenuState, setActiveRunMenuState] = useState<AccountMenuState>('closed')
+  const activeRunMenuOpen = activeRunMenuState === 'open'
   const accountEntry = `/?${new URLSearchParams({
     account: 'login',
     returnTo: `${pathname}${search}${hash}`,
   })}`
+
+  useEffect(() => subscribeActiveRun(() => setActiveRunId(readActiveRun())), [])
 
   useEffect(() => {
     if (accountMenuState !== 'closing') {
@@ -141,6 +178,20 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
     }
   }
 
+  function toggleActiveRunMenu() {
+    setActiveRunMenuState((state) => (state === 'open' ? 'closing' : 'open'))
+  }
+
+  function closeActiveRunMenu() {
+    setActiveRunMenuState((state) => (state === 'open' ? 'closing' : state))
+  }
+
+  function finishActiveRunMenuMotion() {
+    if (activeRunMenuState === 'closing') {
+      setActiveRunMenuState('closed')
+    }
+  }
+
   function playTextWave(entry: string) {
     setWave(({ playId }) => ({ entry, playId: playId + 1 }))
   }
@@ -176,6 +227,87 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
         >
           {productNavigation.map((item) => {
             const active = item.isActive(pathname)
+            const playId = wave.entry === item.motionKey ? wave.playId : 0
+            const label = item.compactLabel ? (
+              <>
+                <span className="hidden md:inline">
+                  <WaveText playId={playId} text={item.label} />
+                </span>
+                <span className="md:hidden">
+                  <WaveText playId={playId} text={item.compactLabel} />
+                </span>
+              </>
+            ) : (
+              <WaveText playId={playId} text={item.label} />
+            )
+            const className = navItemClassName(active, wave.entry === item.motionKey)
+
+            // 有任务在跑时，创作入口先展开一层：新建和返回各占一项，
+            // 直接跳回旧任务会让用户没有开始下一次创作的地方。
+            if (item.motionKey === 'create' && activeRunId) {
+              return (
+                <div key={item.to} className="relative flex items-stretch">
+                  <button
+                    type="button"
+                    aria-label="创作，有任务进行中"
+                    aria-expanded={activeRunMenuOpen}
+                    aria-current={active ? 'page' : undefined}
+                    data-motion="text-wave"
+                    onClick={() => {
+                      playTextWave(item.motionKey)
+                      toggleActiveRunMenu()
+                    }}
+                    className={className}
+                  >
+                    {/* 红点贴内容而不是贴按钮：按钮左右有 padding，挂在按钮上会飘到相邻项那边去。 */}
+                    <span className="relative inline-flex items-center gap-1.5">
+                      {label}
+                      <ActiveRunBot />
+                      <span
+                        aria-hidden="true"
+                        data-active-run-dot
+                        className="absolute -top-0.5 -right-1.5 h-1.5 w-1.5 rounded-full bg-app-danger"
+                      />
+                    </span>
+                  </button>
+
+                  <div
+                    data-testid="active-run-menu"
+                    data-state={activeRunMenuState}
+                    data-motion="scale-fade"
+                    aria-hidden={activeRunMenuOpen ? undefined : true}
+                    inert={!activeRunMenuOpen}
+                    onAnimationEnd={finishActiveRunMenuMotion}
+                    className={`absolute top-[calc(100%+0.5rem)] left-1/2 grid min-w-44 origin-top -translate-x-1/2 overflow-hidden rounded-lg border border-app-ink/12 bg-app-surface-raised p-1.5 shadow-app-menu ${
+                      activeRunMenuState === 'open'
+                        ? 'visible app-header-account-menu-in'
+                        : activeRunMenuState === 'closing'
+                          ? 'visible pointer-events-none app-header-account-menu-out'
+                          : 'invisible pointer-events-none -translate-y-2 scale-[0.82] opacity-0'
+                    }`}
+                  >
+                    <Link
+                      to={`/quick-start/${encodeURIComponent(activeRunId)}`}
+                      onClick={closeActiveRunMenu}
+                      className="flex min-h-11 items-center gap-2 rounded-md px-3 text-[13px] text-app-ink-soft transition-colors hover:bg-app-accent-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="h-1.5 w-1.5 shrink-0 rounded-full bg-app-danger"
+                      />
+                      返回进行中的任务
+                    </Link>
+                    <Link
+                      to={item.to}
+                      onClick={closeActiveRunMenu}
+                      className="flex min-h-11 items-center rounded-md px-3 text-[13px] text-app-ink-soft transition-colors hover:bg-app-accent-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
+                    >
+                      开始新的创作
+                    </Link>
+                  </div>
+                </div>
+              )
+            }
 
             return (
               <Link
@@ -185,33 +317,9 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
                 aria-current={active ? 'page' : undefined}
                 data-motion="text-wave"
                 onClick={() => playTextWave(item.motionKey)}
-                className={`relative inline-flex min-h-11 items-center px-1.5 text-[12px] font-medium whitespace-nowrap transition-colors after:absolute after:inset-x-1.5 after:bottom-0 after:h-[2px] after:origin-center after:bg-app-accent after:transition-transform focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent sm:px-3 sm:text-[13px] sm:after:inset-x-3 ${
-                  active
-                    ? 'text-app-accent after:scale-x-100'
-                    : 'text-app-muted after:scale-x-0 hover:text-app-accent'
-                } ${wave.entry === item.motionKey ? 'app-header-text-wave' : ''}`}
+                className={className}
               >
-                {item.compactLabel ? (
-                  <>
-                    <span className="hidden md:inline">
-                      <WaveText
-                        playId={wave.entry === item.motionKey ? wave.playId : 0}
-                        text={item.label}
-                      />
-                    </span>
-                    <span className="md:hidden">
-                      <WaveText
-                        playId={wave.entry === item.motionKey ? wave.playId : 0}
-                        text={item.compactLabel}
-                      />
-                    </span>
-                  </>
-                ) : (
-                  <WaveText
-                    playId={wave.entry === item.motionKey ? wave.playId : 0}
-                    text={item.label}
-                  />
-                )}
+                {label}
               </Link>
             )
           })}

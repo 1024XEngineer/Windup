@@ -18,6 +18,7 @@ import {
   type WorkflowRun,
   WorkflowRunConflictError,
 } from '@/entities'
+import { syncActiveRun } from '@/features/active-run'
 import { ExportButton, type ExportPackageModel } from '@/features/export-package'
 import { PixelMatrix } from '@/shared/ui'
 import { KineticCopyCycle, type KineticCopyMessage } from './kinetic-copy-cycle'
@@ -636,6 +637,9 @@ function QuickStartRun({
       activeSessionRef.current = null
     }
   }, [])
+
+  // 用户会在生成的几分钟里离开这个页面，Header 靠这个指针提供返回入口。
+  useEffect(() => syncActiveRun(run), [run])
 
   useEffect(() => {
     let active = true
