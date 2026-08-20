@@ -21,8 +21,12 @@ import {
 import { forgetActiveRun, isMissingActiveRunError, syncActiveRun } from '@/features/active-run'
 import { useOptionalAuthSession } from '@/features/auth-session'
 import { ExportButton, type ExportPackageModel } from '@/features/export-package'
-import { PixelMatrix } from '@/shared/ui'
-import { KineticCopyCycle, type KineticCopyMessage } from './kinetic-copy-cycle'
+import {
+  GenerationPreviewCard,
+  GenerationProgressCopy,
+  KineticCopyCycle,
+  type KineticCopyMessage,
+} from '@/shared/ui'
 import {
   quickStartService,
   type QuickStartEntryService,
@@ -80,33 +84,6 @@ const ROLE_IDEA_MESSAGES: readonly KineticCopyMessage[] = [
 
 const ROLE_DEFAULT_MESSAGE: readonly KineticCopyMessage[] = [
   { lines: ['用文字塑造你的角色……'], className: 'text-app-ink' },
-]
-
-const TEMPLATE_GENERATION_MESSAGES: readonly KineticCopyMessage[] = [
-  { lines: ['勾勒角色轮廓'] },
-  { lines: ['给衣服配颜色'] },
-  { lines: ['把发型画清楚'] },
-  { lines: ['添上表情'] },
-  { lines: ['处理一下光影'] },
-  { lines: ['补齐画面细节'] },
-]
-
-const FIRST_FRAME_GENERATION_MESSAGES: readonly KineticCopyMessage[] = [
-  { lines: ['摆好动作姿态'] },
-  { lines: ['调整手脚位置'] },
-  { lines: ['让重心自然一点'] },
-  { lines: ['拉开姿态的区别'] },
-  { lines: ['保持角色样子'] },
-  { lines: ['补上动作细节'] },
-]
-
-const ACTION_GENERATION_MESSAGES: readonly KineticCopyMessage[] = [
-  { lines: ['把动作连起来'] },
-  { lines: ['补上中间的变化'] },
-  { lines: ['理顺每一帧的节奏'] },
-  { lines: ['检查手脚的衔接'] },
-  { lines: ['让起落自然一点'] },
-  { lines: ['调整动作幅度'] },
 ]
 
 const ENTRY_HANDOFF_MS = 460
@@ -494,29 +471,6 @@ function AgentCopy({
   )
 }
 
-function GenerationProgress({
-  label,
-  messages,
-}: {
-  label: string
-  messages: readonly KineticCopyMessage[]
-}) {
-  return (
-    <div data-generation-progress className="min-h-8 overflow-hidden">
-      <KineticCopyCycle
-        active
-        ariaLabel={label}
-        messages={messages}
-        motionMode="characters"
-        firstCycleMs={7_540}
-        cycleMs={8_000}
-        loopStartIndex={0}
-        className="quick-start-agent-copy quick-start-generation-shimmer justify-items-start text-left font-serif text-[17px] leading-7 font-medium tracking-[-0.025em] text-app-ink"
-      />
-    </div>
-  )
-}
-
 function UserTurn({ children }: { children: ReactNode }) {
   return (
     <div
@@ -574,18 +528,7 @@ function AssetVisual({
 }
 
 function GenerationCanvas({ label }: { label: string }) {
-  return (
-    <div
-      role="img"
-      aria-label={label}
-      data-generation-state="generating"
-      data-generation-motion="continuous"
-      data-reveal="generation-canvas"
-      className="quick-start-generation-canvas"
-    >
-      <PixelMatrix />
-    </div>
-  )
+  return <GenerationPreviewCard label={label} />
 }
 
 function QuickStartRun({
@@ -1090,9 +1033,9 @@ function QuickStartRun({
                 </>
               ) : (
                 <>
-                  <GenerationProgress
+                  <GenerationProgressCopy
                     label="角色生成进度"
-                    messages={TEMPLATE_GENERATION_MESSAGES}
+                    kind="character-template"
                   />
                   <div
                     data-layout="agent-result-set"
@@ -1190,9 +1133,9 @@ function QuickStartRun({
                     </>
                   ) : (
                     <>
-                      <GenerationProgress
+                      <GenerationProgressCopy
                         label="动作首帧生成进度"
-                        messages={FIRST_FRAME_GENERATION_MESSAGES}
+                        kind="action-first-frame"
                       />
                       <div
                         data-layout="agent-result-set"
@@ -1278,9 +1221,9 @@ function QuickStartRun({
                     </>
                   ) : (
                     <>
-                      <GenerationProgress
+                      <GenerationProgressCopy
                         label="完整动作生成进度"
-                        messages={ACTION_GENERATION_MESSAGES}
+                        kind="action-full-frame"
                       />
                       <div
                         data-layout="agent-result-set"
