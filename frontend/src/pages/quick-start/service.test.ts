@@ -134,6 +134,7 @@ function characterWithDefaultOutfit(
         name: '默认造型',
         description: null,
         previewUrl: 'template.png',
+        model3dUrl: null,
         actions,
       },
     ],
@@ -643,6 +644,7 @@ describe('createQuickStartService', () => {
           name: '默认造型',
           description: null,
           previewUrl: 'template.png',
+          model3dUrl: null,
           actions: [],
         },
       ],
@@ -863,6 +865,7 @@ describe('createQuickStartService', () => {
               name: '其他造型',
               description: null,
               previewUrl: 'unrelated.png',
+              model3dUrl: null,
               actions: [],
             },
           ],
@@ -944,6 +947,7 @@ describe('createQuickStartService', () => {
           name: '默认造型',
           description: null,
           previewUrl: 'template.png',
+          model3dUrl: null,
           actions: [],
         },
       ],
@@ -996,6 +1000,7 @@ describe('createQuickStartService', () => {
           name: '默认造型',
           description: null,
           previewUrl: 'replacement.png',
+          model3dUrl: null,
           actions: [],
         },
       ],
@@ -1202,6 +1207,7 @@ describe('createQuickStartService', () => {
           name: '默认造型',
           description: null,
           previewUrl: 'candidate.png',
+          model3dUrl: null,
           actions: [],
         },
       ],
@@ -1339,6 +1345,7 @@ describe('createQuickStartService', () => {
           name: '默认造型',
           description: null,
           previewUrl: 'existing.png',
+          model3dUrl: null,
           actions: [],
         },
       ],
@@ -1384,6 +1391,7 @@ describe('createQuickStartService', () => {
           name: '默认造型',
           description: null,
           previewUrl: 'existing.png',
+          model3dUrl: null,
           actions: [],
         },
       ],
@@ -1495,7 +1503,7 @@ describe('createQuickStartService', () => {
     })
     await expect(
       noOutfit.startAction({ characterId: 'character', outfitId: 'missing' }, 'walk'),
-    ).rejects.toThrow('当前造型没有可用于生成动作的角色母版')
+    ).rejects.toThrow('当前造型还没有可用的角色母版，请先完成定妆再生成动作')
 
     const staticRun: WorkflowRun = {
       id: 'run-static',

@@ -4,6 +4,7 @@ from windup_framework.config.provider import AIProviderSettings
 from windup_framework.gateway import bind_call_context, build_image_gateway, build_video_gateway
 from windup_framework.providers.chat import create_chat_model
 from windup_framework.providers.image import create_image_client
+from windup_framework.providers.judge import JudgeResponseError, SufyJudgeProvider
 from windup_framework.providers.interfaces import (
     ImageProvider,
     MatteProvider,
@@ -34,4 +35,7 @@ __all__ = [
     "bind_call_context",
     "build_image_gateway",
     "build_video_gateway",
+    # 判官:出参是结构化读数而不是 bytes,故不在 interfaces 的三个 Protocol 之列
+    "SufyJudgeProvider",
+    "JudgeResponseError",
 ]

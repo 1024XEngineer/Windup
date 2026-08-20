@@ -476,31 +476,25 @@ def _image_result_from_2xx(resp: httpx.Response) -> AdapterResult:
     return AdapterResult(ok=True, body=data, http_status=resp.status_code)
 
 
-class SufyImageProvider(ImageProvider):
-    """文生图 / 图生图 provider(OpenAI 兼容的 ``/chat/completions`` 面)。
+class ChatCompletionsFace:
+    """网关 ``/chat/completions`` 面的共用管道:建 client、发请求、判哪些失败可以重发。
 
-    调用形状与 i2v 那两个 provider 完全不同:图像走 chat 接口、参考图以 data URI 塞进
-    ``content`` 数组,没有提交-轮询-下载三段式。
-
-    2026-08-10 修:此前 ``gen_image`` 直接抛 NotImplementedError,而
-    ``POST /generation/image`` 端点是可达的、``ImageTaskExecutor`` 又默认实例化本类 ——
-    于是每个图像任务都稳定走到 FAILED。端点看着可用、实际必失败,正是本仓最忌讳的形态
-    (机器审逮到)。实现取自管线仓已跑通的通路(同日用它出过三张角色母版)。
+    出图与判官共用一份 —— 同一网关同一把 key,限流与 52x 的语义一样;各写一份的话,
+    改一次重试判据要记得改两处,漏掉的那处的代价是重复计费。
     """
 
-    def __init__(
-        self,
-        config: AIProviderSettings = settings,
-        model: str | None = None,
-    ) -> None:
+    # 出图比一次问答慢得多,所以超时按能力放大;判官用基准超时。
+    _timeout_multiplier: float = 1.0
+
+    def __init__(self, config: AIProviderSettings, model: str) -> None:
         self._cfg = config
-        self._model = model or config.image_model
+        self._model = model
 
     def _client(self) -> httpx.Client:
         return httpx.Client(
             base_url=self._cfg.normalized_base_url,
             headers={"Authorization": f"Bearer {self._cfg.api_key}"},
-            timeout=self._cfg.timeout * _IMAGE_TIMEOUT_MULTIPLIER,
+            timeout=self._cfg.timeout * self._timeout_multiplier,
             # retries 只覆盖建连阶段的失败(SSL 握手、连接被重置)。本机走代理时这类抖动
             # 常见,已跑通的管线实现正是靠一层网络重试扛住的;不加会在人家能恢复的地方
             # 放弃。它不重试读超时与 5xx —— 那两种请求可能已达上游,重发会重复计费。
@@ -524,6 +518,34 @@ class SufyImageProvider(ImageProvider):
             return _image_result_from_2xx(resp)
 
         error_type = classify_http(resp.status_code)
+            code = resp.status_code
+            edge = _edge_fingerprint(resp)
+            if code in _CLOUDFLARE_UNREACHED_STATUS and not resends.take():
+                raise RuntimeError(_retry_exhausted_message(code, resends.spent, edge))
+            retryable = code == 429 or code in _CLOUDFLARE_UNREACHED_STATUS
+            if not retryable:
+                # 5xx 一律留指纹:要不要人工重发,取决于失败落在链路的哪一跳。
+                if code >= 500:
+                    logger.warning(
+                        "图像服务返回 %d,不重发(无法排除请求已到达上游并计费);%s",
+                        code, edge,
+                    )
+                break
+            if attempt == _POST_TRIES:
+                raise RuntimeError(_retry_exhausted_message(code, _POST_TRIES, edge))
+            delay = _retry_after_seconds(resp.headers.get("Retry-After", ""))
+            if delay is None:
+                # 上限同样兜住指数退避:上游挂掉时不该把一个图像任务堵成长时间阻塞。
+                delay = min(float(2**attempt), _MAX_RETRY_WAIT)
+            logger.warning(
+                "模型服务返回 %d，第 %d/%d 次请求，%.2f 秒后重试;%s",
+                code,
+                attempt,
+                _POST_TRIES,
+                delay,
+                edge,
+            )
+            time.sleep(delay)
         if resp.status_code in (400, 404):
             edge = (
                 f"网关 {self._cfg.normalized_base_url} 拒绝了模型 {model!r}"
@@ -545,6 +567,28 @@ class SufyImageProvider(ImageProvider):
             edge_fingerprint=edge,
             retry_after_s=retry_after_s,
         )
+
+
+class SufyImageProvider(ChatCompletionsFace, ImageProvider):
+    """文生图 / 图生图 provider(OpenAI 兼容的 ``/chat/completions`` 面)。
+
+    调用形状与 i2v 那两个 provider 完全不同:图像走 chat 接口、参考图以 data URI 塞进
+    ``content`` 数组,没有提交-轮询-下载三段式。
+
+    2026-08-10 修:此前 ``gen_image`` 直接抛 NotImplementedError,而
+    ``POST /generation/image`` 端点是可达的、``ImageTaskExecutor`` 又默认实例化本类 ——
+    于是每个图像任务都稳定走到 FAILED。端点看着可用、实际必失败,正是本仓最忌讳的形态
+    (机器审逮到)。实现取自管线仓已跑通的通路(同日用它出过三张角色母版)。
+    """
+
+    _timeout_multiplier = _IMAGE_TIMEOUT_MULTIPLIER
+
+    def __init__(
+        self,
+        config: AIProviderSettings = settings,
+        model: str | None = None,
+    ) -> None:
+        super().__init__(config, model or config.image_model)
 
     def gen_image(self, prompt: str, refs: list[bytes]) -> bytes:
         """提示词 + 参考图 → 一张 PNG bytes。拿不到有效图就抛,不返回空 bytes。

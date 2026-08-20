@@ -724,7 +724,7 @@ describe('WorkflowController', () => {
     expect(workflow.getSaved()).toEqual(archived)
   })
 
-  it('保存 3D 转 2D 选择，但接口提供前不误走视频生成', async () => {
+  it('选择三渲二生产方式后按该造型的 outfitId 提交完整动画请求', async () => {
     const run = createRun([
       ...completedCharacterNodes(),
       firstFrameNode({
@@ -742,14 +742,22 @@ describe('WorkflowController', () => {
       'action-walk:action-generation-method',
       '3d-to-2d',
     )
+    await controller.generateCompleteAnimation('action-walk:action-full-frame', {
+      characterId: 'character-backend-1',
+      referenceMedia: [],
+    })
 
-    await expect(
-      controller.generateCompleteAnimation('action-walk:action-full-frame', {
-        characterId: 'character-backend-1',
-        referenceMedia: [],
-      }),
-    ).rejects.toThrow('3D 转 2D 接口尚未提供')
-    expect(generation.apis.create).not.toHaveBeenCalled()
+    expect(controller.getWorkflow().nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'action-walk:action-generation-method',
+          method: '3d-to-2d',
+        }),
+      ]),
+    )
+    expect(generation.apis.create).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'complete_animation', outfitId: 'outfit-1' }),
+    )
   })
 
   it('角色母版通过后按显式边同时解锁多个 Action 首帧节点', async () => {

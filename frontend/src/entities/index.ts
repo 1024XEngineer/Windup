@@ -4,6 +4,10 @@
 export { createUserApis, userApis } from './user'
 export type { AuthTokens, CreateUserApisOptions, SendCodePurpose, User, UserApis } from './user'
 
+/* 动作预设 —— 菜单文案与生成描述，唯一真相源在后端 */
+export { actionPresetApis, ActionPresetContractError } from './action-preset/api'
+export type { ActionPreset, ActionPresetApis } from './action-preset'
+
 /* 积分 —— 读取当前用户的可用余额与账本汇总 */
 export { createQuotaApis, quotaApis } from './quota'
 export type {
@@ -79,6 +83,20 @@ export type {
   TaskStatus,
 } from './generation'
 export type { GenerationApiConfig, GenerationTransport } from './generation/api'
+
+/* 三渲二资产 —— 母版预检结果与造型级 3D 模型的建造状态 */
+export { createRender3DApis, render3DApis, Render3DContractError } from './render3d/api'
+export type {
+  MasterFacts,
+  MasterPrecheckReport,
+  MasterRejectCode,
+  MasterWarning,
+  MasterWarningCode,
+  Render3DApis,
+  Render3DAsset,
+  Render3DAssetCost,
+  Render3DAssetState,
+} from './render3d'
 
 /* 媒体上传 —— 页面只依赖公开工厂与不透明引用，不处理 multipart 协议。 */
 export { createMediaApis } from './media/api'

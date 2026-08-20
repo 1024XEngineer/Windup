@@ -312,6 +312,9 @@ def test_web_layer_does_not_guess_an_outfit_when_none_is_given(auth_client, db_s
     resp = auth_client.post("/generation/action", json={
         "project_id": project["id"], "character_id": character["id"],
         "action_type": "walk", "num_frames": 4,
+        # 没给 outfit_id 就走 i2v,而 i2v 要母版才收单(_require_master);带上它,
+        # 这个用例才停在"路线选择"这个题上。
+        "reference_image_urls": ["https://cdn.example.com/masters/hero.png"],
     })
 
     task_id = resp.json()["data"]["id"]

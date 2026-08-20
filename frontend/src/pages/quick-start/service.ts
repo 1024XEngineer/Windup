@@ -358,6 +358,7 @@ export function createQuickStartService({
                   name: '默认造型',
                   description: null,
                   previewUrl: selectedImageUrl,
+                  model3dUrl: null,
                   actions: [],
                 },
               ],
@@ -736,7 +737,9 @@ export function createQuickStartService({
     if (!characterApis) throw new Error('角色服务尚未配置，不能增加动作')
     const character = await characterApis.get(target.characterId)
     const outfit = character.outfits.find((item) => item.id === target.outfitId)
-    if (!outfit?.previewUrl) throw new Error('当前造型没有可用于生成动作的角色母版')
+    if (!outfit?.previewUrl) {
+      throw new Error('当前造型还没有可用的角色母版，请先完成定妆再生成动作')
+    }
 
     if (!workflowRunApis.listByProject) {
       throw new Error('工作流列表服务尚未配置，不能为现有角色增加动作')

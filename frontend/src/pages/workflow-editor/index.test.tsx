@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import type { ReactNode } from 'react'
+import { createElement, type ComponentType, type ReactNode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Link, MemoryRouter, Route, Routes } from 'react-router'
@@ -12,10 +12,12 @@ import {
   type GenerationApis,
   type MediaReference,
   type Project,
+  type Render3DApis,
   type WorkflowRun,
   type WorkflowRunApis,
 } from '@/entities'
 import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
+import { absentAsset, acceptedReport, stubRender3DApis } from '@/test/render3d-apis'
 import { WorkflowEditorPage } from './index'
 import type { WorkflowEditorSession } from './runtime'
 
@@ -25,11 +27,20 @@ const { defaultSessionLoader, flowProps, fitView } = vi.hoisted(() => ({
   fitView: vi.fn(),
 }))
 
+const ACTION_PRESET_FIXTURE = [
+  { type: 'idle', label: 'Idle 待机', name: '待机', description: '呼吸带动胸腔起伏' },
+  { type: 'walk', label: 'Walk 行走', name: '行走', description: '轻快地向前行走' },
+  { type: 'attack', label: 'Attack 攻击', name: '攻击', description: '直刺发力前的蓄势瞬间' },
+] as const
+
+const defaultActionPresetLoader = vi.fn(async (_signal?: AbortSignal) => [...ACTION_PRESET_FIXTURE])
+
 vi.mock('./runtime', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./runtime')>()
   return {
     ...actual,
     createDefaultRealWorkflowEditorSession: defaultSessionLoader,
+    loadDefaultActionPresets: (signal?: AbortSignal) => defaultActionPresetLoader(signal),
   }
 })
 
@@ -61,7 +72,8 @@ interface TestCanvasNode {
   deletable?: boolean
   draggable?: boolean
   dragHandle?: string
-  data: { title: string; content: ReactNode }
+  position: { x: number; y: number }
+  data: { eyebrow: string; title: string; content: ReactNode }
 }
 
 interface TestFlowProps extends Record<string, unknown> {
@@ -71,6 +83,7 @@ interface TestFlowProps extends Record<string, unknown> {
 
 beforeEach(() => {
   defaultSessionLoader.mockReset()
+  defaultActionPresetLoader.mockClear()
   fitView.mockClear()
   flowProps.current = null
   window.history.replaceState({}, '', '/')
@@ -191,6 +204,162 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(await screen.findByLabelText('当前项目')).toBeTruthy()
     expect(screen.queryByText('真实 WorkflowRun 接口')).toBeNull()
     expect(defaultSessionLoader).toHaveBeenCalledWith('42')
+  })
+
+  it('节点抬头只显示流程序号，不附加英文阶段名', async () => {
+    defaultSessionLoader.mockResolvedValue(createSession(reviewingActionWorkflow()))
+
+    renderEditor('/workflow-editor/42')
+
+    await waitFor(() => expect(latestFlowProps().nodes).toHaveLength(6))
+    expect(latestFlowProps().nodes.map((node) => node.data.eyebrow)).toEqual([
+      '01',
+      '02',
+      '03',
+      '04',
+      '05',
+      '06',
+    ])
+  })
+
+  it('用紧凑卡片和更短的节点间距呈现完整工作流', async () => {
+    defaultSessionLoader.mockResolvedValue(
+      createSession(reviewingActionWorkflow('action-a', 'action-b')),
+    )
+
+    renderEditor('/workflow-editor/42')
+
+    await waitFor(() => expect(latestFlowProps().nodes).toHaveLength(10))
+    const nodes = latestFlowProps().nodes
+    const xValues = nodes.map((node) => node.position.x)
+    expect(Math.max(...xValues) - Math.min(...xValues)).toBeLessThanOrEqual(1700)
+
+    const actionRoots = nodes.filter((node) => node.data.title === '动作首帧')
+    expect(actionRoots[1]!.position.y - actionRoots[0]!.position.y).toBeLessThanOrEqual(400)
+
+    const Card = (
+      latestFlowProps().nodeTypes as Record<string, ComponentType<Record<string, unknown>>>
+    )['workflow-card']!
+    const cardView = render(
+      createElement(Card, {
+        id: 'compact-card',
+        selected: false,
+        data: {
+          eyebrow: '01',
+          title: '角色设定',
+          status: 'active',
+          content: <span>内容</span>,
+        },
+      }),
+    )
+    expect(cardView.container.querySelector('article')?.className).toContain('w-[296px]')
+    const header = cardView.container.querySelector('header')
+    expect(header).not.toBeNull()
+    expect(header?.textContent).toContain('01')
+    expect(header?.textContent).toContain('角色设定')
+    expect(header?.className).not.toContain('border-b')
+    expect(header?.className).not.toContain('bg-app-surface')
+    expect(header?.querySelector('span')?.className).not.toContain('bg-app-accent-muted')
+  })
+
+  it('图片加载时保留版面并在完成后淡入', async () => {
+    defaultSessionLoader.mockResolvedValue(createSession(completedTemplateWorkflow('42')))
+
+    renderEditor('/workflow-editor/42')
+
+    const image = await screen.findByRole('img', { name: '已确认身份母版' })
+    expect(screen.getByRole('status', { name: '正在加载已确认身份母版' })).toBeTruthy()
+    expect(image.className).toContain('opacity-0')
+
+    fireEvent.load(image)
+
+    expect(screen.queryByRole('status', { name: '正在加载已确认身份母版' })).toBeNull()
+    expect(image.className).toContain('opacity-100')
+  })
+
+  it('图片加载失败时在原位显示错误状态', async () => {
+    defaultSessionLoader.mockResolvedValue(createSession(completedTemplateWorkflow('42')))
+
+    renderEditor('/workflow-editor/42')
+
+    const image = await screen.findByRole('img', { name: '已确认身份母版' })
+    fireEvent.error(image)
+
+    expect(screen.getByText('图片加载失败')).toBeTruthy()
+    expect(screen.queryByRole('status', { name: '正在加载已确认身份母版' })).toBeNull()
+    expect(image.className).toContain('opacity-0')
+  })
+
+  it('生成任务运行时显示动态状态', async () => {
+    defaultSessionLoader.mockResolvedValue(
+      createSession(generatingTemplateWorkflow(), {
+        generationApis: generationApisFixture({
+          get: vi.fn().mockResolvedValue({
+            id: 'in-flight-task',
+            projectId: '1',
+            type: 'character_template',
+            status: 'running',
+            result: null,
+            error: null,
+          } satisfies Generation),
+        }),
+      }),
+    )
+
+    renderEditor('/workflow-editor/42')
+
+    expect((await screen.findByRole('status')).textContent).toContain('生成中…')
+  })
+
+  it('动作首帧等待候选结果时显示处理中状态', async () => {
+    const workflow = completedTemplateWorkflow('42')
+    workflow.nodes.push({
+      id: 'action-walk',
+      type: 'action-first-frame',
+      status: 'active',
+      phase: 'selecting',
+      dependsOnNodeIds: ['character-template'],
+      generations: [],
+      error: null,
+      input: {
+        outfitId: 'day',
+        name: '行走',
+        type: 'walk',
+        prompt: null,
+        fps: 12,
+      },
+      selectedFirstFrameUrl: null,
+    })
+    defaultSessionLoader.mockResolvedValue(createSession(workflow))
+
+    renderEditor('/workflow-editor/42')
+
+    expect((await screen.findByText('处理中…')).getAttribute('role')).toBe('status')
+  })
+
+  it('导出是次要动作，当前节点推进仍是主要动作', async () => {
+    const character = characterFixture()
+    character.outfits[0] = {
+      ...character.outfits[0]!,
+      previewUrl: 'https://assets.windup.test/42.png',
+    }
+    defaultSessionLoader.mockResolvedValue(
+      createSession(reviewingActionWorkflow(), {
+        character,
+        generationApis: generationApisFixture({
+          get: vi.fn().mockResolvedValue(completeAnimationGeneration()),
+        }),
+      }),
+    )
+
+    renderEditor('/workflow-editor/42')
+
+    const exportButtons = await screen.findAllByRole('button', { name: /导出角色母版/ })
+    expect(exportButtons.length).toBeGreaterThan(0)
+    expect(
+      exportButtons.every((button) => button.className.includes('border-app-line-strong')),
+    ).toBe(true)
+    expect(screen.getByRole('button', { name: '审核通过' }).className).toContain('bg-app-accent')
   })
 
   it('会话加载失败时展示恢复错误', async () => {
@@ -397,7 +566,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     renderEditor('/workflow-editor/42')
 
     fireEvent.click(await screen.findByRole('button', { name: '选择角色候选 1' }))
-    fireEvent.click(screen.getByRole('button', { name: '确认身份母版' }))
+    fireEvent.click(await screen.findByRole('button', { name: '确认为定妆母版' }))
 
     await waitFor(() =>
       expect(confirmCharacterTemplate).toHaveBeenCalledWith(
@@ -499,6 +668,48 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(screen.getByRole('img', { name: '角色候选 1' }).getAttribute('src')).toContain(
       '/new.png',
     )
+  })
+
+  it('提交的动作描述来自后端预设，不来自前端副本', async () => {
+    const session = createSession(completedTemplateWorkflow('42'), {
+      character: characterFixture(),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '添加动作分支' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成动作 ›' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择造型 夜行装' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Attack 攻击/ }))
+
+    // 描述直通两条付费通路，写在前端的副本会与后端漂移、且绕开措辞门禁。
+    await waitFor(() =>
+      expect(session.controller.getWorkflow().nodes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: 'action-first-frame',
+            input: expect.objectContaining({ prompt: '直刺发力前的蓄势瞬间' }),
+          }),
+        ]),
+      ),
+    )
+  })
+
+  it('预设读不到时菜单说明原因，而不是退回一份前端副本', async () => {
+    defaultActionPresetLoader.mockRejectedValueOnce(new Error('动作预设响应格式错误：预设列表为空'))
+    const session = createSession(completedTemplateWorkflow('42'), {
+      character: characterFixture(),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '添加动作分支' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成动作 ›' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择造型 夜行装' }))
+
+    expect(await screen.findByText(/预设列表为空/)).toBeTruthy()
+    // 兜底副本会让菜单看着正常、发出去的描述却是旧文案，比空菜单难查得多。
+    expect(screen.queryByRole('button', { name: /Attack 攻击/ })).toBeNull()
   })
 
   it('从 WorkflowRun 绑定角色中明确选择造型，并只提交后端支持的动作类型', async () => {
@@ -643,6 +854,47 @@ describe('WorkflowEditorPage real runtime boundary', () => {
           expect.objectContaining({
             id: firstFrame.id,
             selectedFirstFrameUrl: candidates[1],
+            status: 'passed',
+          }),
+        ]),
+      ),
+    )
+  })
+
+  it('该造型没有 3D 资产时禁用三渲二选项并给出原因', async () => {
+    const workflow = selectingGenerationMethodWorkflow()
+    const session = createSession(workflow, { character: characterFixture() })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    const render3dButton = await screen.findByRole('button', { name: /三渲二/ })
+    expect(render3dButton.hasAttribute('disabled')).toBe(true)
+    expect(screen.getByText(/暂无绑骨 3D 模型/)).toBeTruthy()
+
+    fireEvent.click(render3dButton)
+    expect(workflow.nodes.find((node) => node.type === 'action-generation-method')).toMatchObject({
+      method: null,
+    })
+  })
+
+  it('该造型已有 3D 资产时可以选择三渲二并据此提交完整动画', async () => {
+    const workflow = selectingGenerationMethodWorkflow()
+    const character = characterFixture()
+    character.outfits[0]!.model3dUrl = 'https://assets.windup.test/day.glb'
+    const session = createSession(workflow, { character })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    const render3dButton = await screen.findByRole('button', { name: '三渲二' })
+    expect(render3dButton.hasAttribute('disabled')).toBe(false)
+    fireEvent.click(render3dButton)
+
+    await waitFor(() =>
+      expect(session.controller.getWorkflow().nodes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: 'action-generation-method',
+            method: '3d-to-2d',
             status: 'passed',
           }),
         ]),
@@ -865,9 +1117,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     renderEditor('/workflow-editor/42')
 
     fireEvent.click(await screen.findByRole('button', { name: '选择角色候选 1' }))
-    expect(
-      (screen.getByRole('button', { name: '确认身份母版' }) as HTMLButtonElement).disabled,
-    ).toBe(false)
+    expect(await screen.findByRole('button', { name: '确认为定妆母版' })).toBeTruthy()
 
     act(() => controlled.emit(failedTemplateWorkflow()))
     fireEvent.click(await screen.findByRole('button', { name: '从此节点重做' }))
@@ -878,9 +1128,8 @@ describe('WorkflowEditorPage real runtime boundary', () => {
       ),
     )
 
-    expect(
-      (screen.getByRole('button', { name: '确认身份母版' }) as HTMLButtonElement).disabled,
-    ).toBe(true)
+    // 选择失效后母版确认闸整个收起来：没有被选中的候选，就没有"这一张"可以确认。
+    expect(screen.queryByRole('button', { name: '确认为定妆母版' })).toBeNull()
   })
 
   it('Generation 候选集合变化时使旧选择失效', async () => {
@@ -896,9 +1145,8 @@ describe('WorkflowEditorPage real runtime boundary', () => {
       ),
     )
 
-    expect(
-      (screen.getByRole('button', { name: '确认身份母版' }) as HTMLButtonElement).disabled,
-    ).toBe(true)
+    // 选择失效后母版确认闸整个收起来：没有被选中的候选，就没有"这一张"可以确认。
+    expect(screen.queryByRole('button', { name: '确认为定妆母版' })).toBeNull()
   })
 
   it('生成接口提交失败后仍保留角色候选重试入口', async () => {
@@ -1053,6 +1301,282 @@ describe('WorkflowEditorPage real runtime boundary', () => {
   })
 })
 
+/**
+ * 母版确认闸。挑中一张候选之后、把它当母版用之前的那个停点。
+ *
+ * 值钱的地方是位置：一张母版约 ¥0.29，图生 3D 一次 ¥2.40，而混元的模型生成即最终，
+ * 母版不合格只能整个重来。所以这里的用例锁的是"能不能在最便宜的位置退回去"。
+ */
+describe('母版确认闸', () => {
+  async function openGate(render3d?: Render3DApis) {
+    const session = createSession(selectingTemplateWorkflow(3, 'character-task'), {
+      generationApis: generationApisFixture({
+        get: vi.fn().mockResolvedValue(characterGeneration('character')),
+      }),
+      render3d,
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+    fireEvent.click(await screen.findByRole('button', { name: '选择角色候选 1' }))
+    return session
+  }
+
+  it('挑中候选后先展示放大的母版，不直接进入下一步', async () => {
+    await openGate()
+
+    expect((await screen.findByRole('img', { name: '待确认定妆母版' })).getAttribute('src')).toBe(
+      'https://assets.windup.test/character.png',
+    )
+    expect(screen.getByRole('button', { name: '确认为定妆母版' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '重新生成三张' })).toBeTruthy()
+  })
+
+  it('预检拒绝只说清为什么，不替人把图否掉', async () => {
+    await openGate(
+      stubRender3DApis({
+        precheckMaster: async () =>
+          acceptedReport({
+            accepted: false,
+            rejectCode: 'aspect_too_wide',
+            detail: '主体 w/h=4.10 超过 3.10；下游画布装不下',
+            facts: null,
+          }),
+      }),
+    )
+
+    expect((await screen.findByRole('alert')).textContent).toContain('下游画布装不下')
+    // 拒绝判据是近似的（面积比、连通块数），会误判。挡下去的代价是用户只能重新生成
+    // 一张付费母版，而放行的代价只是下游多一次失败——所以决定权留给看得见图的人。
+    const confirm = await screen.findByRole('button', { name: '确认为定妆母版' })
+    expect((confirm as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('警告只提示不挡路——侧视角色两腿重叠时这条判据必然误报', async () => {
+    await openGate(
+      stubRender3DApis({
+        precheckMaster: async () =>
+          acceptedReport({
+            warnings: [{ code: 'limbs_fused', detail: '两腿之间量不到空隙' }],
+          }),
+      }),
+    )
+
+    expect(await screen.findByText(/两腿之间量不到空隙/)).toBeTruthy()
+    expect(
+      (screen.getByRole('button', { name: '确认为定妆母版' }) as HTMLButtonElement).disabled,
+    ).toBe(false)
+  })
+
+  it('预检本身跑不通不连带把人挡在外面——它是旁证，不是准入条件', async () => {
+    await openGate(
+      stubRender3DApis({
+        precheckMaster: async () => {
+          throw new Error('预检服务未装配')
+        },
+      }),
+    )
+
+    expect(await screen.findByText(/预检服务未装配/)).toBeTruthy()
+    expect(
+      (screen.getByRole('button', { name: '确认为定妆母版' }) as HTMLButtonElement).disabled,
+    ).toBe(false)
+  })
+
+  it('重新生成三张会先复位节点再重新提交，不复用旧候选', async () => {
+    const session = await openGate()
+    const restartFromNode = vi.spyOn(session.controller, 'restartFromNode')
+    const generateCharacterTemplate = vi.spyOn(session.controller, 'generateCharacterTemplate')
+
+    fireEvent.click(await screen.findByRole('button', { name: '重新生成三张' }))
+
+    await waitFor(() => expect(restartFromNode).toHaveBeenCalledWith('character-template'))
+    await waitFor(() => expect(generateCharacterTemplate).toHaveBeenCalled())
+    expect(generateCharacterTemplate.mock.calls[0]?.[0]).toBe('character-setup')
+    // 复位后没有被选中的候选，闸自然收起来——旧选择不会被当成对新三张的选择。
+    await waitFor(() => expect(screen.queryByRole('button', { name: '确认为定妆母版' })).toBeNull())
+  })
+})
+
+/**
+ * 建 3D 资产入口。原本用户看得到"该造型暂无绑骨 3D 模型"，却没有任何地方能去建。
+ *
+ * 用例锁两件事：**按次计费的成本必须先说**，以及**人工确认闸不点头就不绑骨**。
+ */
+describe('建 3D 资产入口', () => {
+  function sessionWithConfirmedMaster(render3d: Render3DApis) {
+    const character = characterFixture()
+    const session = createSession(completedTemplateWorkflow('42'), {
+      character: {
+        ...character,
+        outfits: [{ ...character.outfits[0]!, previewUrl: 'https://assets.windup.test/42.png' }],
+      },
+      render3d,
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    return session
+  }
+
+  it('资产就绪后当场解锁三渲二，不要求用户刷新页面', async () => {
+    // 造型初始没有 3D 模型，资产接口报 ready —— 也就是用户刚等完两段付费流程那一刻。
+    const character = characterFixture()
+    character.outfits[0]!.model3dUrl = null
+    const session = createSession(selectingGenerationMethodWorkflow(), {
+      character,
+      render3d: stubRender3DApis({
+        getOutfitAsset: async () =>
+          absentAsset({ state: 'ready', model3dUrl: 'https://assets.windup.test/day.glb' }),
+      }),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    // 三渲二能否选中读的是页面级 Character，轮询到 ready 必须把它一起带上；
+    // 不带的话这个按钮会一直是灰的，用户只能整页刷新。
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: '三渲二' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    )
+  })
+
+  it('母版还没确认时根本没有建 3D 资产这个入口', async () => {
+    const buildOutfitAsset = vi.fn()
+    const session = createSession(selectingTemplateWorkflow(3, 'character-task'), {
+      generationApis: generationApisFixture({
+        get: vi.fn().mockResolvedValue(characterGeneration('character')),
+      }),
+      render3d: stubRender3DApis({ buildOutfitAsset }),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '选择角色候选 1' }))
+    await screen.findByRole('button', { name: '确认为定妆母版' })
+
+    expect(screen.queryByLabelText('三渲二 3D 资产')).toBeNull()
+    expect(screen.queryByRole('button', { name: /建 3D 资产/ })).toBeNull()
+    expect(buildOutfitAsset).not.toHaveBeenCalled()
+  })
+
+  it('触发按次计费之前把积分和金额摆在按钮上', async () => {
+    sessionWithConfirmedMaster(stubRender3DApis())
+    renderEditor('/workflow-editor/42')
+
+    const build = await screen.findByRole('button', {
+      name: '建 3D 资产（30 积分 · 约 ¥3.6）',
+    })
+    expect(build).toBeTruthy()
+    expect(
+      screen.getByText(/图生 3D 20 积分 \+ 绑骨 10 积分 = 30 积分（后付费约 ¥3.6）/),
+    ).toBeTruthy()
+    expect(screen.getByText(/每造型一次性/)).toBeTruthy()
+  })
+
+  it('成本数字来自后端返回，不是前端写死的常量', async () => {
+    sessionWithConfirmedMaster(
+      stubRender3DApis({
+        getOutfitAsset: async () =>
+          absentAsset({
+            cost: {
+              model3dCredits: 25,
+              autorigCredits: 10,
+              totalCredits: 35,
+              totalCny: 4.2,
+              billing: 'postpaid',
+              scope: 'per_outfit_once',
+            },
+          }),
+      }),
+    )
+    renderEditor('/workflow-editor/42')
+
+    expect(
+      await screen.findByRole('button', { name: '建 3D 资产（35 积分 · 约 ¥4.2）' }),
+    ).toBeTruthy()
+  })
+
+  it('模型出来后停在确认闸上，没人点头就绝不绑骨', async () => {
+    const approveOutfitAsset = vi.fn(async () => absentAsset({ state: 'ready' }))
+    let asset = absentAsset()
+    sessionWithConfirmedMaster(
+      stubRender3DApis({
+        getOutfitAsset: async () => asset,
+        buildOutfitAsset: async () => {
+          asset = absentAsset({
+            state: 'awaiting_review',
+            reviewModelUrl: 'https://assets.windup.test/pending.glb',
+          })
+          return asset
+        },
+        approveOutfitAsset,
+      }),
+    )
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: /建 3D 资产/ }))
+
+    expect(await screen.findByText(/模型已生成，等你确认/)).toBeTruthy()
+    expect(approveOutfitAsset).not.toHaveBeenCalled()
+
+    // 待审模型必须真的能打开——只躺在服务器上的话，"通过"就退化成一个必须点的步骤。
+    expect(
+      (screen.getByRole('link', { name: /下载待审模型/ }) as HTMLAnchorElement).getAttribute(
+        'href',
+      ),
+    ).toBe('https://assets.windup.test/pending.glb')
+
+    fireEvent.click(screen.getByRole('button', { name: /通过 · 继续绑骨/ }))
+    await waitFor(() => expect(approveOutfitAsset).toHaveBeenCalledWith('9', 'day'))
+  })
+
+  it('判不合格时走丢弃重做，并说清要再花一次图生 3D 的钱', async () => {
+    const discardOutfitAsset = vi.fn(async () => absentAsset())
+    const approveOutfitAsset = vi.fn(async () => absentAsset({ state: 'ready' }))
+    sessionWithConfirmedMaster(
+      stubRender3DApis({
+        getOutfitAsset: async () =>
+          absentAsset({
+            state: 'awaiting_review',
+            reviewModelUrl: 'https://assets.windup.test/pending.glb',
+          }),
+        approveOutfitAsset,
+        discardOutfitAsset,
+      }),
+    )
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: '不合格 · 重新生成（再花 20 积分）' }),
+    )
+
+    await waitFor(() => expect(discardOutfitAsset).toHaveBeenCalledWith('9', 'day'))
+    expect(approveOutfitAsset).not.toHaveBeenCalled()
+  })
+
+  it('在跑的两段付费调用给状态说明，不给一个和真实进度无关的进度条', async () => {
+    sessionWithConfirmedMaster(
+      stubRender3DApis({ getOutfitAsset: async () => absentAsset({ state: 'rigging' }) }),
+    )
+    renderEditor('/workflow-editor/42')
+
+    expect(await screen.findByText(/正在自动绑骨/)).toBeTruthy()
+    expect(screen.queryByRole('progressbar')).toBeNull()
+  })
+
+  it('上一次没建成时把原因摆出来，并允许重来', async () => {
+    sessionWithConfirmedMaster(
+      stubRender3DApis({
+        getOutfitAsset: async () =>
+          absentAsset({ state: 'failed', error: '绑骨轮询 10 分钟仍未出结果' }),
+      }),
+    )
+    renderEditor('/workflow-editor/42')
+
+    expect(await screen.findByText(/绑骨轮询 10 分钟仍未出结果/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /建 3D 资产/ })).toBeTruthy()
+  })
+})
+
 function renderEditor(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
@@ -1067,6 +1591,7 @@ interface SessionFixtureOptions {
   character?: Character | null
   generationApis?: GenerationApis
   workflowRunApis?: Partial<WorkflowRunApis>
+  render3d?: Render3DApis
   uploadReferenceImage?: WorkflowEditorSession['uploadReferenceImage']
   publishReviewedAction?(reviewNodeId: string): Promise<Character>
 }
@@ -1102,6 +1627,7 @@ function createSession(
     controller,
     project: projectFixture(),
     character: options.character ?? null,
+    render3d: options.render3d ?? stubRender3DApis(),
     uploadReferenceImage:
       options.uploadReferenceImage ??
       vi.fn(() => Promise.reject(new Error('媒体上传服务尚未装配'))),
@@ -1198,6 +1724,19 @@ function completedTemplateWorkflow(id: string): WorkflowRun {
       },
     ],
   }
+}
+
+/** 首帧已确认、正等待用户选择生产方式的工作流——三渲二可选性的判定发生在这一步。 */
+function selectingGenerationMethodWorkflow(): WorkflowRun {
+  const workflow = reviewingActionWorkflow()
+  for (const node of workflow.nodes) {
+    if (node.type === 'action-generation-method') {
+      node.status = 'active'
+      node.phase = 'selecting'
+      node.method = null
+    }
+  }
+  return workflow
 }
 
 function reviewingActionWorkflow(...actionIds: string[]): WorkflowRun {
@@ -1332,6 +1871,7 @@ function createGenerationRaceSession(
     controller,
     project: projectFixture(),
     character: null,
+    render3d: stubRender3DApis(),
     uploadReferenceImage: vi.fn(() => Promise.reject(new Error('媒体上传服务尚未装配'))),
     confirmCharacterTemplate: vi.fn(async () => characterFixture()),
     publishReviewedAction: vi.fn(async () => Promise.reject(new Error('资产发布未装配'))),
@@ -1390,6 +1930,7 @@ function createRestartSelectionSession(options: { status?: Generation['status'] 
       controller,
       project: projectFixture(),
       character: null,
+      render3d: stubRender3DApis(),
       uploadReferenceImage: vi.fn(() => Promise.reject(new Error('媒体上传服务尚未装配'))),
       confirmCharacterTemplate: vi.fn(async () => characterFixture()),
       publishReviewedAction: vi.fn(async () => Promise.reject(new Error('资产发布未装配'))),
@@ -1448,6 +1989,7 @@ function characterFixture(): Character {
         name: '常态装',
         description: null,
         previewUrl: null,
+        model3dUrl: null,
         actions: [],
       },
       {
@@ -1456,6 +1998,7 @@ function characterFixture(): Character {
         name: '夜行装',
         description: null,
         previewUrl: null,
+        model3dUrl: null,
         actions: [],
       },
     ],

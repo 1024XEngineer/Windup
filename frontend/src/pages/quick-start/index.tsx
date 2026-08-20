@@ -19,6 +19,7 @@ import {
   WorkflowRunConflictError,
 } from '@/entities'
 import { ExportButton, type ExportPackageModel } from '@/features/export-package'
+import { PixelMatrix } from '@/shared/ui'
 import { KineticCopyCycle, type KineticCopyMessage } from './kinetic-copy-cycle'
 import {
   quickStartService,
@@ -167,6 +168,9 @@ function QuickStartActionInput({
   const [description, setDescription] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 空描述会被后端当成 custom 动作缺 custom_prompt 拒掉，回来的是一句
+  // "请求参数校验失败"；用户不该走到那一步，更不该只看到一个变灰的按钮。
+  const missingDescription = !description.trim()
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -206,9 +210,15 @@ function QuickStartActionInput({
               value={description}
               onChange={(event) => setDescription(event.target.value)}
               placeholder="例如：挥手打招呼、蹲下查看地面、举起画笔作画"
+              aria-describedby={missingDescription ? 'quick-start-action-hint' : undefined}
               className="mt-2 min-h-32 w-full resize-y rounded-lg border border-app-line-strong bg-app-surface-raised p-4 text-base outline-none focus:border-app-accent"
             />
           </label>
+          {missingDescription ? (
+            <p id="quick-start-action-hint" className="text-sm text-app-muted">
+              请先描述动作，例如：来回踱步
+            </p>
+          ) : null}
           {error ? (
             <p role="alert" className="text-sm text-app-danger">
               {error}
@@ -216,7 +226,7 @@ function QuickStartActionInput({
           ) : null}
           <button
             type="submit"
-            disabled={!description.trim() || submitting || Boolean(service.unavailableReason)}
+            disabled={missingDescription || submitting || Boolean(service.unavailableReason)}
             className="min-h-11 rounded-lg bg-app-accent px-5 text-sm font-semibold text-app-on-accent disabled:opacity-50"
           >
             {submitting ? '正在开始生成…' : '开始生成新动作'}
@@ -551,16 +561,6 @@ function AssetVisual({
   )
 }
 
-const GENERATION_DOTS = Array.from({ length: 432 }, (_, index) => {
-  const column = index % 24
-  const row = Math.floor(index / 24)
-  const noise = ((column * 37 + row * 61 + index * 17) % 101) / 100
-  const wave = (Math.sin(column * 0.72 + row * 0.41) + 1) / 2
-  const level = 0.3 + (noise * 0.55 + wave * 0.45) * 0.7
-  const delay = Math.round(((column / 23) * 0.48 + (row / 17) * 0.3 + noise * 0.22) * 900)
-  return { delay, level: level.toFixed(2) }
-})
-
 function GenerationCanvas({ label }: { label: string }) {
   return (
     <div
@@ -571,21 +571,7 @@ function GenerationCanvas({ label }: { label: string }) {
       data-reveal="generation-canvas"
       className="quick-start-generation-canvas"
     >
-      <div className="quick-start-generation-dots" aria-hidden="true">
-        {GENERATION_DOTS.map(({ delay, level }, index) => (
-          <i
-            key={index}
-            data-generation-dot
-            className="quick-start-generation-dot"
-            style={
-              {
-                '--generation-delay': `${delay}ms`,
-                '--generation-level': level,
-              } as CSSProperties
-            }
-          />
-        ))}
-      </div>
+      <PixelMatrix />
     </div>
   )
 }

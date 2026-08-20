@@ -116,6 +116,7 @@ async function prepareCharacter(
         name: '常态造型',
         description: null,
         previewUrl: context.imageUrl,
+        model3dUrl: null,
         actions: [],
       },
     ],

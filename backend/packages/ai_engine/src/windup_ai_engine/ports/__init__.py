@@ -13,7 +13,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
-from windup_common.models import ActionSpec, CharacterCard, CharacterStance, Facing
+from windup_common.models import (
+    ActionSpec,
+    CharacterCard,
+    CharacterStance,
+    Facing,
+    JudgeVerdict,
+)
 
 from windup_ai_engine.prompt.lint import Kind, LintIssue
 
@@ -248,6 +254,21 @@ class GeneratedAction:
     # 同一条理由:不给缺省,逼调用方显式带出当下的 ``windup_ai_engine.prompt.PROMPT_VERSION``。
     # 改了提示词模板而没带上新版本号,这批产出与改动前的产出在账本里就再也分不清。
     prompt_version: str = field(kw_only=True)
+
+
+# ---- 出门那道闸的仪器:判官(server 注入实现,framework 层有一个)----
+# 与 ``ActionQuality`` 分工不同:那三个数由本地像素算出来,零成本、量的是帧**之间**的
+# 关系;判官量的是一帧画面**里**有什么,要花一次付费调用,且本地算不出来 —— 像素统计
+# 分不出"两个角色"和"一个角色 + 一件道具"。
+@runtime_checkable
+class JudgePort(Protocol):
+    """交付帧 + 母版 → 四个可数读数(:class:`JudgeVerdict`)。
+
+    读不出结论必须抛错,不得兜底成"通过":静默放行会让"没判"与"判了没问题"在下游
+    长得一样。``master`` 必填 —— "有没有母版里没有的物体"离开母版无从回答。
+    """
+
+    def judge(self, frame: bytes, master: bytes, action: str) -> JudgeVerdict: ...
 
 
 # ---- ai_engine 暴露给 server(server 调用的唯一入口)----
