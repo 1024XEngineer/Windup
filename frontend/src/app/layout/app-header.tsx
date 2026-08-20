@@ -119,7 +119,8 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
     quotaApis,
   )
   const [wave, setWave] = useState({ entry: '', playId: 0 })
-  const [activeRunId, setActiveRunId] = useState(readActiveRun)
+  const activeRunUserId = session.state.status === 'authenticated' ? session.state.user.id : null
+  const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [activeRunMenuState, setActiveRunMenuState] = useState<AccountMenuState>('closed')
   const activeRunMenuOpen = activeRunMenuState === 'open'
   const accountEntry = `/?${new URLSearchParams({
@@ -127,7 +128,15 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
     returnTo: `${pathname}${search}${hash}`,
   })}`
 
-  useEffect(() => subscribeActiveRun(() => setActiveRunId(readActiveRun())), [])
+  useEffect(() => {
+    if (!activeRunUserId) {
+      setActiveRunId(null)
+      return
+    }
+    const refresh = () => setActiveRunId(readActiveRun(activeRunUserId))
+    refresh()
+    return subscribeActiveRun(activeRunUserId, refresh)
+  }, [activeRunUserId])
 
   useEffect(() => {
     if (accountMenuState !== 'closing') {

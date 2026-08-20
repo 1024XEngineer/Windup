@@ -1,11 +1,13 @@
+import { ApiError } from '@/shared/api'
+
 /**
  * 进行中生成任务的本地指针。
  *
  * runId 本身只活在 `/quick-start/:runId` 的 URL 里，用户离开那个地址后就没有
- * 任何地方记得它。这里只存"最近一条还没结束的任务"这一个指针，供 Header 提供
- * 返回入口；它不是任务状态的副本，真相仍然是后端的 WorkflowRun。
+ * 任何地方记得它。这里只存“当前用户最近一条还没结束的任务”这个指针，供 Header
+ * 提供返回入口；它不是任务状态的副本，真相仍然是后端的 WorkflowRun。
  */
-const storageKey = 'windup.quick-start.active-run.v1'
+const storageKeyPrefix = 'windup.quick-start.active-run.v2.'
 
 /**
  * `storage` 事件只在其他标签页写入时触发，本标签页自己写不会收到。
@@ -13,31 +15,96 @@ const storageKey = 'windup.quick-start.active-run.v1'
  */
 const changeEvent = 'windup:active-run-change'
 
-function broadcast(): void {
-  window.dispatchEvent(new Event(changeEvent))
+type ActiveRunStorageTarget = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+
+export interface ActiveRunStorage {
+  remember(userId: string, runId: string): void
+  read(userId: string): string | null
+  forget(userId: string, runId: string): boolean
 }
 
-export function rememberActiveRun(runId: string): void {
-  window.localStorage.setItem(storageKey, runId)
-  broadcast()
+function storageKey(userId: string): string {
+  return `${storageKeyPrefix}${encodeURIComponent(userId)}`
 }
 
-export function readActiveRun(): string | null {
-  return window.localStorage.getItem(storageKey)
+function getLocalStorage(): ActiveRunStorageTarget | null {
+  try {
+    return globalThis.localStorage
+  } catch {
+    return null
+  }
+}
+
+/** localStorage 是跨刷新增强能力；被浏览器拒绝时，本标签页继续用内存指针。 */
+export function createActiveRunStorage(storage?: ActiveRunStorageTarget | null): ActiveRunStorage {
+  const memory = new Map<string, string>()
+  let memoryOnly = false
+  const resolveStorage = () => (storage === undefined ? getLocalStorage() : storage)
+
+  return {
+    remember(userId, runId) {
+      const key = storageKey(userId)
+      memory.set(key, runId)
+      if (memoryOnly) return
+      try {
+        resolveStorage()?.setItem(key, runId)
+      } catch {
+        memoryOnly = true
+      }
+    },
+    read(userId) {
+      const key = storageKey(userId)
+      if (memoryOnly) return memory.get(key) ?? null
+      try {
+        const stored = resolveStorage()?.getItem(key) ?? null
+        if (stored === null) memory.delete(key)
+        else memory.set(key, stored)
+      } catch {
+        memoryOnly = true
+      }
+      return memory.get(key) ?? null
+    },
+    forget(userId, runId) {
+      const key = storageKey(userId)
+      if (this.read(userId) !== runId) return false
+      memory.delete(key)
+      if (!memoryOnly) {
+        try {
+          resolveStorage()?.removeItem(key)
+        } catch {
+          memoryOnly = true
+        }
+      }
+      return true
+    },
+  }
+}
+
+const activeRunStorage = createActiveRunStorage()
+
+function broadcast(userId: string): void {
+  window.dispatchEvent(new CustomEvent(changeEvent, { detail: { userId } }))
+}
+
+export function rememberActiveRun(userId: string, runId: string): void {
+  activeRunStorage.remember(userId, runId)
+  broadcast(userId)
+}
+
+export function readActiveRun(userId: string): string | null {
+  return activeRunStorage.read(userId)
 }
 
 /**
  * 只在指针仍指向 runId 时才清除。用户可能已经开始了下一条任务，而上一条的
  * 结束回调这时才到；无条件清除会把新任务的入口一起抹掉。
  */
-export function forgetActiveRun(runId: string): void {
-  if (window.localStorage.getItem(storageKey) !== runId) return
-  window.localStorage.removeItem(storageKey)
-  broadcast()
+export function forgetActiveRun(userId: string, runId: string): void {
+  if (activeRunStorage.forget(userId, runId)) broadcast(userId)
 }
 
 /**
- * 只取判断"是否还在生成"所需的最小形状，不引 entities 的 WorkflowRun：
+ * 只取判断“是否还在生成”所需的最小形状，不引 entities 的 WorkflowRun：
  * 这个 feature 只认指针，不认工作流语义。
  */
 export interface ActiveRunNodeSnapshot {
@@ -53,24 +120,40 @@ export interface ActiveRunSnapshot {
 }
 
 /**
- * 按最新的工作流快照对齐指针。"进行中"取的是节点层面的生成态，与 Header 上
- * "有任务进行中"的说法同义；整条 Run 是否走完不在这里判断，那是用户自己的节奏。
+ * 按最新的工作流快照对齐指针。“进行中”取的是节点层面的生成态，与 Header 上
+ * “有任务进行中”的说法同义；整条 Run 是否走完不在这里判断，那是用户自己的节奏。
  */
-export function syncActiveRun(run: ActiveRunSnapshot | null): void {
+export function syncActiveRun(userId: string, run: ActiveRunSnapshot | null): void {
   if (!run) return
   const generating = run.nodes.some(
     (node) => !node.deletedAt && node.status === 'active' && node.phase === 'generating',
   )
-  if (generating) rememberActiveRun(run.id)
-  else forgetActiveRun(run.id)
+  if (generating) rememberActiveRun(userId, run.id)
+  else forgetActiveRun(userId, run.id)
 }
 
-/** 订阅指针变化；同时覆盖本标签页写入和其他标签页的 `storage` 事件。 */
-export function subscribeActiveRun(listener: () => void): () => void {
-  window.addEventListener(changeEvent, listener)
-  window.addEventListener('storage', listener)
+/** 只有后端明确确认无权访问或记录不存在时，旧入口才应被丢弃。 */
+export function isMissingActiveRunError(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    (error.code === 403 || error.code === 404 || error.status === 403 || error.status === 404)
+  )
+}
+
+/** 订阅当前用户的指针变化；同时覆盖本标签页写入和其他标签页的 `storage` 事件。 */
+export function subscribeActiveRun(userId: string, listener: () => void): () => void {
+  const key = storageKey(userId)
+  const onChange = (event: Event) => {
+    if (event instanceof StorageEvent) {
+      if (event.key === key || event.key === null) listener()
+      return
+    }
+    if (event instanceof CustomEvent && event.detail?.userId === userId) listener()
+  }
+  window.addEventListener(changeEvent, onChange)
+  window.addEventListener('storage', onChange)
   return () => {
-    window.removeEventListener(changeEvent, listener)
-    window.removeEventListener('storage', listener)
+    window.removeEventListener(changeEvent, onChange)
+    window.removeEventListener('storage', onChange)
   }
 }
