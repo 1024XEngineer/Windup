@@ -839,3 +839,52 @@ def test_non_positive_poll_interval_is_rejected_at_construction():
     for bad in (0, -1, -0.5):
         with pytest.raises(ValueError, match="poll_interval"):
             SufyVideoProvider(config=cfg, poll_interval=bad)
+
+
+# ── 轮询节奏:先短后长,别每次都睡满一个间隔 ─────────────────────────────────
+
+
+def test_first_poll_happens_long_before_a_full_interval(monkeypatch):
+    """一段 20 秒就绪的视频不该等满 60 秒才被发现。
+
+    线上实测:一次 walk 的轮询段 125.8 秒 / 2 次,第一次就白等了 60 秒。
+    """
+    import windup_framework.providers.sufy as sufy
+
+    slept: list[float] = []
+    monkeypatch.setattr(sufy.time, "sleep", slept.append)
+
+    seen: dict = {}
+    p = _video_provider(_i2v_handler(seen, statuses=("processing", "completed")))
+    p.i2v(_jpeg_first_frame(), "walk")
+
+    assert slept, "至少要睡过一次"
+    assert slept[0] <= 5.0, f"第一次就睡了 {slept[0]} 秒,又是先睡再查"
+    assert sum(slept) < 60.0, f"两次查询共睡 {sum(slept)} 秒,不该超过一个完整间隔"
+
+
+def test_backoff_never_exceeds_the_configured_interval(monkeypatch):
+    """退避有上限:慢任务的网关压力不能比原来大。"""
+    import windup_framework.providers.sufy as sufy
+
+    slept: list[float] = []
+    monkeypatch.setattr(sufy.time, "sleep", slept.append)
+
+    seen: dict = {}
+    # _video_provider 固定 poll_interval=30，退避上限即 30。
+    p = _video_provider(_i2v_handler(seen, statuses=("processing",) * 12 + ("completed",)))
+    p.i2v(_jpeg_first_frame(), "walk")
+
+    assert max(slept) <= 30.0, f"睡了 {max(slept)} 秒,超过了配置的间隔"
+    assert slept[-1] == 30.0, "退避到上限后应保持在上限"
+    assert slept[0] < slept[-1], "应当是先短后长,而不是一上来就睡满"
+
+
+def test_non_positive_first_poll_is_rejected_at_construction():
+    from windup_framework.config.provider import AIProviderSettings
+    from windup_framework.providers.sufy import SufyVideoProvider
+
+    cfg = AIProviderSettings(base_url="https://gw.example.com/v1", api_key="k")
+    for bad in (0, -1.0):
+        with pytest.raises(ValueError, match="first_poll_after"):
+            SufyVideoProvider(config=cfg, first_poll_after=bad)
