@@ -70,6 +70,32 @@ describe('ActiveRunMonitor', () => {
     expect(harness.service.open).not.toHaveBeenCalled()
   })
 
+  it('open 在监控卸载后才返回时只释放 session', async () => {
+    const opened = deferred<Awaited<ReturnType<ActiveRunMonitorService['open']>>>()
+    const harness = monitorService()
+    const service: ActiveRunMonitorService = { open: vi.fn(() => opened.promise) }
+    rememberActiveRun('7', '42')
+    const view = render(<ActiveRunMonitor userId="7" pathname="/workspace" service={service} />)
+    await waitFor(() => expect(service.open).toHaveBeenCalledOnce())
+
+    view.unmount()
+    await act(async () => opened.resolve(harness.session))
+
+    expect(harness.dispose).toHaveBeenCalledOnce()
+    expect(harness.session.resume).not.toHaveBeenCalled()
+  })
+
+  it('初始快照已经结束时立即清除入口并释放 session', async () => {
+    const harness = monitorService(run('selecting'))
+    rememberActiveRun('7', '42')
+
+    render(<ActiveRunMonitor userId="7" pathname="/workspace" service={harness.service} />)
+
+    await waitFor(() => expect(readActiveRun('7')).toBeNull())
+    expect(harness.dispose).toHaveBeenCalledOnce()
+    expect(harness.session.resume).not.toHaveBeenCalled()
+  })
+
   it('后端确认任务不存在时清除旧指针', async () => {
     rememberActiveRun('7', '42')
     const service: ActiveRunMonitorService = {

@@ -6,6 +6,7 @@ import {
   forgetActiveRun,
   readActiveRun,
   rememberActiveRun,
+  subscribeActiveRun,
   syncActiveRun,
   type ActiveRunNodeSnapshot,
 } from './index'
@@ -66,6 +67,63 @@ describe('活跃生成任务的本地指针', () => {
     expect(storage.read('7')).toBe('42')
     expect(() => storage.forget('7', '42')).not.toThrow()
     expect(storage.read('7')).toBeNull()
+  })
+
+  it('首次读取被拒绝时也从空内存开始', () => {
+    const storage = createActiveRunStorage({
+      getItem: vi.fn(() => {
+        throw new DOMException('blocked', 'SecurityError')
+      }),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    })
+
+    expect(storage.read('7')).toBeNull()
+    storage.remember('7', '42')
+    expect(storage.read('7')).toBe('42')
+  })
+
+  it('删除被拒绝时仍清掉本标签页的内存指针', () => {
+    const storage = createActiveRunStorage({
+      getItem: vi.fn(() => '42'),
+      setItem: vi.fn(),
+      removeItem: vi.fn(() => {
+        throw new DOMException('blocked', 'SecurityError')
+      }),
+    })
+
+    expect(storage.forget('7', '42')).toBe(true)
+    expect(storage.read('7')).toBeNull()
+  })
+
+  it('取得 localStorage 本身抛错时返回空而不泄漏异常', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('blocked', 'SecurityError')
+      },
+    })
+
+    try {
+      expect(createActiveRunStorage().read('7')).toBeNull()
+    } finally {
+      if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor)
+      else delete (globalThis as { localStorage?: Storage }).localStorage
+    }
+  })
+
+  it('只响应当前用户的跨标签 storage 变化', () => {
+    const listener = vi.fn()
+    const unsubscribe = subscribeActiveRun('7', listener)
+
+    window.dispatchEvent(new StorageEvent('storage', { key: 'windup.quick-start.active-run.v2.8' }))
+    window.dispatchEvent(new StorageEvent('storage', { key: 'windup.quick-start.active-run.v2.7' }))
+    window.dispatchEvent(new StorageEvent('storage', { key: null }))
+    unsubscribe()
+    window.dispatchEvent(new StorageEvent('storage', { key: null }))
+
+    expect(listener).toHaveBeenCalledTimes(2)
   })
 })
 
