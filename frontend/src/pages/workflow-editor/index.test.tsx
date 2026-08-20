@@ -1458,17 +1458,17 @@ describe('建 3D 资产入口', () => {
     expect(buildOutfitAsset).not.toHaveBeenCalled()
   })
 
-  it('触发按次计费之前把积分和金额摆在按钮上', async () => {
+  it('触发按次计费之前把积分摆在按钮上，但不显示人民币金额', async () => {
     sessionWithConfirmedMaster(stubRender3DApis())
     renderEditor('/workflow-editor/42')
 
     const build = await screen.findByRole('button', {
-      name: '建 3D 资产（30 积分 · 约 ¥3.6）',
+      name: '建 3D 资产（30 积分）',
     })
     expect(build).toBeTruthy()
-    expect(
-      screen.getByText(/图生 3D 20 积分 \+ 绑骨 10 积分 = 30 积分（后付费约 ¥3.6）/),
-    ).toBeTruthy()
+    expect(screen.getByText(/图生 3D 20 积分 \+ 绑骨 10 积分 = 30 积分/)).toBeTruthy()
+    // 人民币金额是我们的成本口径，不该出现在用户界面上
+    expect(screen.queryByText(/¥/)).toBeNull()
     expect(screen.getByText(/每造型一次性/)).toBeTruthy()
   })
 
@@ -1481,7 +1481,6 @@ describe('建 3D 资产入口', () => {
               model3dCredits: 25,
               autorigCredits: 10,
               totalCredits: 35,
-              totalCny: 4.2,
               billing: 'postpaid',
               scope: 'per_outfit_once',
             },
@@ -1490,9 +1489,7 @@ describe('建 3D 资产入口', () => {
     )
     renderEditor('/workflow-editor/42')
 
-    expect(
-      await screen.findByRole('button', { name: '建 3D 资产（35 积分 · 约 ¥4.2）' }),
-    ).toBeTruthy()
+    expect(await screen.findByRole('button', { name: '建 3D 资产（35 积分）' })).toBeTruthy()
   })
 
   it('模型出来后停在确认闸上，没人点头就绝不绑骨', async () => {

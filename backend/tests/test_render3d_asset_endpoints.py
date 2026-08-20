@@ -152,7 +152,7 @@ def test_status_always_carries_the_cost_even_before_anything_is_built(api, rende
     assert data["cost"]["model3d_credits"] == 20
     assert data["cost"]["autorig_credits"] == 10
     assert data["cost"]["total_credits"] == BUILD_CREDITS
-    assert data["cost"]["total_cny"] == pytest.approx(3.60)
+    assert "total_cny" not in data["cost"], "人民币金额不出参 —— 那是我们的成本,不是用户的价钱"
     assert data["cost"]["scope"] == "per_outfit_once"
     assert render3d.test_model3d.calls == 0     # 看一眼状态不花钱
 
@@ -167,18 +167,12 @@ def test_reading_status_is_free_no_matter_how_often(api, render3d):
 def test_cost_numbers_come_from_the_billing_implementation(api):
     """成本不是前端抄的常量。改了计费实现而这里没跟着变,说明有人抄了一份数字 ——
     抄的那一份正是给用户看的,告知错的价钱比不告知更糟。"""
-    from windup_framework.providers.render3d.tencent import (
-        CREDIT_PRICE_CNY,
-        CREDITS,
-        RIG_CREDITS,
-    )
+    from windup_framework.providers.render3d.tencent import CREDITS, RIG_CREDITS
 
     cost = _data(api.get(_base()))["cost"]
     assert cost["model3d_credits"] == CREDITS["Normal"]
     assert cost["autorig_credits"] == RIG_CREDITS
-    assert cost["total_cny"] == pytest.approx(
-        (CREDITS["Normal"] + RIG_CREDITS) * CREDIT_PRICE_CNY, abs=0.005
-    )
+    assert cost["total_credits"] == CREDITS["Normal"] + RIG_CREDITS
 
 
 # ── ② 人工确认闸 ────────────────────────────────────────────────────────────

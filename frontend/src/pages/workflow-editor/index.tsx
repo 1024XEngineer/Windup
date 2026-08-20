@@ -987,7 +987,7 @@ function Render3DAssetPanel({
   const cost = asset.cost
   const costLine =
     `图生 3D ${cost.model3dCredits} 积分 + 绑骨 ${cost.autorigCredits} 积分 = ` +
-    `${cost.totalCredits} 积分（后付费约 ¥${cost.totalCny}）。每造型一次性，做多少个动作都不再收。`
+    `${cost.totalCredits} 积分。每造型一次性，做多少个动作都不再收。`
 
   return (
     <section className={CARD_STACK} aria-label="三渲二 3D 资产">
@@ -1004,7 +1004,7 @@ function Render3DAssetPanel({
             disabled={busy}
             onClick={() => act(() => render3d.buildOutfitAsset(characterId, outfitId))}
           >
-            建 3D 资产（{cost.totalCredits} 积分 · 约 ¥{cost.totalCny}）
+            建 3D 资产（{cost.totalCredits} 积分）
           </button>
         </>
       ) : null}

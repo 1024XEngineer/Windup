@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import httpx
 
-from windup_ai_engine.ports import PromptRejected
-
 _GENERIC = "生成没能完成，请稍后重试。若反复失败请联系我们。"
 
 # 判官问题码 → 用户能据以行动的一句话。键取自 quality_gate 的 PROBLEM_* 常量。
@@ -30,11 +28,15 @@ _QUALITY_TEXT = {
 
 def user_message(exc: BaseException) -> str:
     """把异常翻成一句用户能据以行动、又不含内部信息的话。"""
-    # 用户自己能改的输入错 —— 这类必须说清楚,否则用户不知道改什么。
-    if isinstance(exc, PromptRejected):
-        return f"动作描述没通过检查：{exc.detail}" if exc.detail else "动作描述没通过检查，换一种说法再试。"
-
+    # 全部按类名判,不 import 具体异常类:本模块被 web 层调用,而 web 层不得直连
+    # ai_engine(分层契约「入口层不经 ai_engine 直连」)。为了拿一个类型注解把整条
+    # 依赖链牵进入口层,不值得。
     name = type(exc).__name__
+
+    # 用户自己能改的输入错 —— 这类必须说清楚,否则用户不知道改什么。
+    if name == "PromptRejected":
+        detail = getattr(exc, "detail", "")
+        return f"动作描述没通过检查：{detail}" if detail else "动作描述没通过检查，换一种说法再试。"
     if name == "FetchNotAllowed":
         return "参考图地址不被接受，请重新上传图片后再试。"
     if name == "QualityBlocked":
