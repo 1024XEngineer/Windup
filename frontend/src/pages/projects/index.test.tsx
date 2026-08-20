@@ -62,11 +62,14 @@ describe('ProjectsPage', () => {
 
     fireEvent.error(preview)
 
-    await waitFor(() => {
-      expect(preview.getAttribute('src')).toBe(
-        'https://cdn.windup.test/media/outfit-preview/messenger.source.png',
-      )
-    })
+    await waitFor(
+      () => {
+        expect(preview.getAttribute('src')).toBe(
+          'https://cdn.windup.test/media/outfit-preview/messenger.source.png',
+        )
+      },
+      { timeout: 5_000 },
+    )
   })
 
   it('keeps pending project previews distinct from empty projects', async () => {

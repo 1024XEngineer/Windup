@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { QuickStartEntryService, QuickStartSession } from './service'
+import type { QuickStartCandidate, QuickStartEntryService, QuickStartSession } from './service'
 import { WorkflowRunConflictError, type WorkflowRun } from '@/entities'
 import { ApiError } from '@/shared/api'
 import type { ExportPackageModel } from '@/features/export-package'
@@ -128,6 +128,8 @@ function serviceFor(run: WorkflowRun | null, overrides: Partial<QuickStartMock> 
     dispose: vi.fn(),
     confirmCandidate: vi.fn(async () => fallbackRun),
     getFirstFrameCandidates: vi.fn(async () => []),
+    getFailedGenerationDirections: vi.fn(async () => []),
+    retryGenerationDirection: vi.fn(async () => fallbackRun),
     confirmFirstFrame: vi.fn(async () => fallbackRun),
     approveReview: vi.fn(async () => fallbackRun),
     getCharacterInfo: vi.fn(() => ({ characterId: 'character-1', outfitId: 'outfit-1' })),
@@ -139,6 +141,10 @@ function serviceFor(run: WorkflowRun | null, overrides: Partial<QuickStartMock> 
   }
   Object.assign(service, overrides)
   return service
+}
+
+function eastCandidates(...imageUrls: string[]): readonly QuickStartCandidate[] {
+  return imageUrls.map((imageUrl, index) => ({ direction: 'east', index, imageUrl }))
 }
 
 function deferred<T>() {
@@ -217,9 +223,9 @@ function renderStateFixture(
   const candidateUrls = [
     'https://example.test/character-1.png',
     'https://example.test/character-2.png',
-    'https://example.test/character-3.png',
   ]
   const firstFrames = candidateUrls.map((_, index) => ({
+    direction: 'east' as const,
     index,
     imageUrl: `https://example.test/first-${index + 1}.png`,
     durationMs: 80,
@@ -240,7 +246,9 @@ function renderStateFixture(
     const run = workflow(setupAndTemplate())
     return renderAt(
       '/quick-start/run-1',
-      serviceFor(run, { getTemplateCandidates: vi.fn(async () => candidateUrls) }),
+      serviceFor(run, {
+        getTemplateCandidates: vi.fn(async () => eastCandidates(...candidateUrls)),
+      }),
     )
   }
   if (state === 'first-generating') {
@@ -549,7 +557,7 @@ describe('QuickStartPage', () => {
     expect(roleTurn).toBeTruthy()
     expect(roleTurn?.querySelector('[data-agent-identity]')).toBeNull()
     expect(roleTurn?.querySelector('[data-agent-copy]')).toBeTruthy()
-    expect(choices).toHaveLength(3)
+    expect(choices).toHaveLength(2)
     expect(
       Array.from(transcript.querySelectorAll('[data-asset-choice="true"]')).every((asset) =>
         Boolean(asset.closest('[data-agent-turn]')),
@@ -652,17 +660,13 @@ describe('QuickStartPage', () => {
     renderStateFixture('template-selecting')
 
     const cards = await screen.findAllByRole('button', { name: /选择角色方案/u })
-    expect(cards).toHaveLength(3)
+    expect(cards).toHaveLength(2)
     expect(cards.every((card) => card.dataset.assetChoice === 'true')).toBe(true)
     expect(cards.every((card) => card.querySelectorAll('[data-asset-frame]').length === 1)).toBe(
       true,
     )
     expect(cards.every((card) => card.dataset.reveal === 'card')).toBe(true)
-    expect(cards.map((card) => card.style.getPropertyValue('--reveal-index'))).toEqual([
-      '0',
-      '1',
-      '2',
-    ])
+    expect(cards.map((card) => card.style.getPropertyValue('--reveal-index'))).toEqual(['0', '1'])
     expect(cards.every((card) => card.querySelector('img'))).toBeTruthy()
   })
 
@@ -675,14 +679,14 @@ describe('QuickStartPage', () => {
     expect(cards.every((card) => card.textContent === '')).toBe(true)
   })
 
-  it('presents three equal candidate frames without inventing a preferred result', async () => {
+  it('presents two equal candidate frames without inventing a preferred result', async () => {
     renderStateFixture('template-selecting')
 
     const choices = await screen.findAllByRole('button', { name: /选择角色方案/u })
     const resultLayout = choices[0]?.parentElement
 
     expect(resultLayout?.getAttribute('data-layout')).toBe('agent-result-set')
-    expect(resultLayout?.className).toContain('grid-cols-3')
+    expect(resultLayout?.className).toContain('grid-cols-2')
     expect(choices.every((choice) => choice.getAttribute('data-result-priority') === null)).toBe(
       true,
     )
@@ -690,16 +694,16 @@ describe('QuickStartPage', () => {
   })
 
   it.each([
-    ['template-generating', '角色图生成画布'],
-    ['first-selecting', '动作首帧候选 1'],
-    ['complete', '完整动作预览'],
-  ] as const)('keeps %s on the first-round asset frame grid', async (state, label) => {
+    ['template-generating', '角色图生成画布', 'grid-cols-3'],
+    ['first-selecting', '动作首帧候选 1', 'grid-cols-2'],
+    ['complete', '完整动作预览', 'grid-cols-3'],
+  ] as const)('keeps %s on the first-round asset frame grid', async (state, label, columns) => {
     const view = renderStateFixture(state)
     const asset = await screen.findByRole('img', { name: label })
     const frameGrid = asset.closest('[data-layout="agent-result-set"]')
 
     expect(frameGrid?.className).toContain('max-w-2xl')
-    expect(frameGrid?.className).toContain('grid-cols-3')
+    expect(frameGrid?.className).toContain(columns)
     view.unmount()
   })
 
@@ -750,7 +754,7 @@ describe('QuickStartPage', () => {
   it('keeps earlier turns visible while the agent conversation moves downward', async () => {
     renderStateFixture('first-selecting')
 
-    await screen.findByLabelText(/已生成 3 个动作起始姿态。 选择一个起始姿态，随后生成完整动作。/u)
+    await screen.findByLabelText(/已生成 2 个动作起始姿态。 选择一个起始姿态，随后生成完整动作。/u)
     const transcript = await screen.findByTestId('quick-start-transcript')
     const topLevelText = Array.from(transcript.children).map(
       (element) =>
@@ -761,13 +765,13 @@ describe('QuickStartPage', () => {
     const roleTurnIndex = topLevelText.findIndex((text) => text.includes('角色方案已确认'))
     const userActionIndex = topLevelText.findIndex((text) => text.includes('挥手'))
     const firstFrameTurnIndex = topLevelText.findIndex((text) =>
-      text.includes('已生成 3 个动作起始姿态'),
+      text.includes('已生成 2 个动作起始姿态'),
     )
     expect(roleTurnIndex).toBeGreaterThanOrEqual(0)
     expect(roleTurnIndex).toBeLessThan(userActionIndex)
     expect(userActionIndex).toBeLessThan(firstFrameTurnIndex)
     expect(screen.getByRole('img', { name: '已选择的角色' })).toBeTruthy()
-    expect(screen.getAllByRole('img', { name: /动作首帧候选/u })).toHaveLength(3)
+    expect(screen.getAllByRole('img', { name: /动作首帧候选/u })).toHaveLength(2)
   })
 
   it('keeps the candidate selected until the action description is sent', async () => {
@@ -775,11 +779,13 @@ describe('QuickStartPage', () => {
     const selectingRun = workflow(setupAndTemplate())
     const nextRun = actionWorkflow({ firstStatus: 'active', firstPhase: 'generating' })
     const service = serviceFor(selectingRun, {
-      getTemplateCandidates: vi.fn(async () => [
-        'https://example.test/character-1.png',
-        'https://example.test/character-2.png',
-        'https://example.test/character-3.png',
-      ]),
+      getTemplateCandidates: vi.fn(async () =>
+        eastCandidates(
+          'https://example.test/character-1.png',
+          'https://example.test/character-2.png',
+          'https://example.test/character-3.png',
+        ),
+      ),
       confirmCandidate: vi.fn(async () => nextRun),
     })
     renderAt('/quick-start/run-1', service)
@@ -808,8 +814,40 @@ describe('QuickStartPage', () => {
     expect(transcript).not.toContain('你选择了')
     expect(transcript).toContain('摆好动作姿态')
     expect(service.confirmCandidate).toHaveBeenCalledWith(
-      'https://example.test/character-2.png',
+      { east: 'https://example.test/character-2.png' },
       '转身挥动风灯',
+    )
+  })
+
+  it('四向角色候选全部选定后才提交逐方向选择', async () => {
+    const selectingRun = workflow(setupAndTemplate())
+    const directionalCandidates = [
+      { direction: 'east', index: 0, imageUrl: 'east-1.png' },
+      { direction: 'east', index: 1, imageUrl: 'east-2.png' },
+      { direction: 'north', index: 0, imageUrl: 'north-1.png' },
+      { direction: 'north', index: 1, imageUrl: 'north-2.png' },
+      { direction: 'south', index: 0, imageUrl: 'south-1.png' },
+      { direction: 'south', index: 1, imageUrl: 'south-2.png' },
+    ] satisfies readonly QuickStartCandidate[]
+    const service = serviceFor(selectingRun, {
+      getTemplateCandidates: vi.fn(async () => directionalCandidates),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    const submit = await screen.findByRole('button', { name: '确认选择，继续下一步' })
+    fireEvent.click(await screen.findByRole('button', { name: '选择东方向角色方案 2' }))
+    expect(submit.hasAttribute('disabled')).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '选择北方向角色方案 1' }))
+    expect(submit.hasAttribute('disabled')).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '选择南方向角色方案 2' }))
+    expect(submit.hasAttribute('disabled')).toBe(false)
+    fireEvent.click(submit)
+
+    await waitFor(() =>
+      expect(service.confirmCandidate).toHaveBeenCalledWith(
+        { east: 'east-2.png', north: 'north-1.png', south: 'south-2.png' },
+        '',
+      ),
     )
   })
 
@@ -831,16 +869,16 @@ describe('QuickStartPage', () => {
   it('shows first-frame confirmation instead of stale character candidates after a template is confirmed', async () => {
     const run = actionWorkflow({ firstStatus: 'active', firstPhase: 'selecting' })
     const service = serviceFor(run, {
-      getTemplateCandidates: vi.fn(async () => ['stale-template.png']),
-      getFirstFrameCandidates: vi.fn(async () => [
-        { index: 0, imageUrl: 'first-frame.png', durationMs: null },
-      ]),
+      getTemplateCandidates: vi.fn(async () => eastCandidates('stale-template.png')),
+      getFirstFrameCandidates: vi.fn(async () =>
+        eastCandidates('first-frame.png', 'first-frame-2.png'),
+      ),
     })
     const view = renderAt('/quick-start/run-1', service)
 
     await waitFor(() =>
       expect(
-        view.container.querySelector('[data-agent-copy][aria-label^="已生成 3 个动作起始姿态"]'),
+        view.container.querySelector('[data-agent-copy][aria-label^="已生成 2 个动作起始姿态"]'),
       ).toBeTruthy(),
     )
     const firstFrame = view.getByRole('img', { name: '动作首帧候选 1' })
@@ -1013,7 +1051,9 @@ describe('QuickStartPage', () => {
   it('selects a character first, then submits its action through the conversation composer', async () => {
     const run = workflow(setupAndTemplate())
     const service = serviceFor(run, {
-      getTemplateCandidates: vi.fn(async () => ['https://example.test/candidate.png']),
+      getTemplateCandidates: vi.fn(async () =>
+        eastCandidates('https://example.test/candidate.png'),
+      ),
       confirmCandidate: vi.fn(async () => Promise.reject(new Error('候选确认失败'))),
       start: vi.fn(async () => Promise.reject(new Error('重新生成失败'))),
     })
@@ -1030,7 +1070,7 @@ describe('QuickStartPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '确认选择，继续下一步' }))
     await waitFor(() =>
       expect(service.confirmCandidate).toHaveBeenCalledWith(
-        'https://example.test/candidate.png',
+        { east: 'https://example.test/candidate.png' },
         '挥手',
       ),
     )
@@ -1041,7 +1081,9 @@ describe('QuickStartPage', () => {
   it('freezes the current conversation and offers a full reload after a version conflict', async () => {
     const run = workflow(setupAndTemplate())
     const service = serviceFor(run, {
-      getTemplateCandidates: vi.fn(async () => ['https://example.test/candidate.png']),
+      getTemplateCandidates: vi.fn(async () =>
+        eastCandidates('https://example.test/candidate.png'),
+      ),
       confirmCandidate: vi.fn(async () => {
         throw new WorkflowRunConflictError('执行记录版本冲突，请刷新后重试')
       }),
@@ -1066,7 +1108,7 @@ describe('QuickStartPage', () => {
     const run = workflow(setupAndTemplate())
     let reportError: ((error: Error) => void) | null = null
     let rejectRead: ((error: Error) => void) | null = null
-    const pendingRead = new Promise<readonly string[]>((_resolve, reject) => {
+    const pendingRead = new Promise<readonly QuickStartCandidate[]>((_resolve, reject) => {
       rejectRead = reject
     })
     const service = serviceFor(run, {
@@ -1158,7 +1200,7 @@ describe('QuickStartPage', () => {
     if (newSetup?.type !== 'character-setup') throw new Error('测试工作流缺少角色设定节点')
     newSetup.input.prompt = '当前新运行'
     const newRun = workflow(newNodes, 'run-new')
-    const oldRead = deferred<readonly string[]>()
+    const oldRead = deferred<readonly QuickStartCandidate[]>()
     let reportOldError: ((error: Error) => void) | null = null
     const oldSession = serviceFor(oldRun, {
       getTemplateCandidates: vi.fn(() => oldRead.promise),
@@ -1277,7 +1319,9 @@ describe('QuickStartPage', () => {
       resolveRegeneration = resolve
     })
     const oldSession = serviceFor(oldRun, {
-      getTemplateCandidates: vi.fn(async () => ['https://example.test/candidate.png']),
+      getTemplateCandidates: vi.fn(async () =>
+        eastCandidates('https://example.test/candidate.png'),
+      ),
     })
     const newSession = serviceFor(newRun)
     const entryService = serviceFor(null, {
@@ -1311,7 +1355,9 @@ describe('QuickStartPage', () => {
     const newRun = workflow(newNodes, 'run-new')
     const regeneration = deferred<QuickStartSession>()
     const oldSession = serviceFor(oldRun, {
-      getTemplateCandidates: vi.fn(async () => ['https://example.test/candidate.png']),
+      getTemplateCandidates: vi.fn(async () =>
+        eastCandidates('https://example.test/candidate.png'),
+      ),
     })
     const newSession = serviceFor(newRun)
     const entryService = serviceFor(null, {
@@ -1339,7 +1385,9 @@ describe('QuickStartPage', () => {
   it('keeps the original regenerate and new-creation controls reachable', async () => {
     const run = workflow(setupAndTemplate())
     const service = serviceFor(run, {
-      getTemplateCandidates: vi.fn(async () => ['https://example.test/candidate.png']),
+      getTemplateCandidates: vi.fn(async () =>
+        eastCandidates('https://example.test/candidate.png'),
+      ),
       start: vi.fn(async () => Promise.reject(new Error('重新生成失败'))),
     })
     renderAt('/quick-start/run-1', service)
@@ -1355,9 +1403,7 @@ describe('QuickStartPage', () => {
   it('confirms a generated first frame before starting the full animation', async () => {
     const run = actionWorkflow({ firstStatus: 'active', firstPhase: 'selecting' })
     const service = serviceFor(run, {
-      getFirstFrameCandidates: vi.fn(async () => [
-        { index: 4, imageUrl: 'https://example.test/first.png', durationMs: 80 },
-      ]),
+      getFirstFrameCandidates: vi.fn(async () => eastCandidates('https://example.test/first.png')),
       confirmFirstFrame: vi.fn(async () => Promise.reject(new Error('首帧确认失败'))),
     })
     renderAt('/quick-start/run-1', service)
@@ -1365,9 +1411,44 @@ describe('QuickStartPage', () => {
     expect(service.confirmFirstFrame).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '确认首帧，生成完整动作' }))
     await waitFor(() =>
-      expect(service.confirmFirstFrame).toHaveBeenCalledWith('https://example.test/first.png'),
+      expect(service.confirmFirstFrame).toHaveBeenCalledWith({
+        east: 'https://example.test/first.png',
+      }),
     )
     expect((await screen.findByRole('alert')).textContent).toContain('首帧确认失败')
+  })
+
+  it('四向动作首帧全部选定后才确认并生成完整动作', async () => {
+    const run = actionWorkflow({ firstStatus: 'active', firstPhase: 'selecting' })
+    const service = serviceFor(run, {
+      getFirstFrameCandidates: vi.fn(
+        async () =>
+          [
+            { direction: 'east', index: 0, imageUrl: 'east-1.png' },
+            { direction: 'east', index: 1, imageUrl: 'east-2.png' },
+            { direction: 'north', index: 0, imageUrl: 'north-1.png' },
+            { direction: 'north', index: 1, imageUrl: 'north-2.png' },
+            { direction: 'south', index: 0, imageUrl: 'south-1.png' },
+            { direction: 'south', index: 1, imageUrl: 'south-2.png' },
+          ] satisfies readonly QuickStartCandidate[],
+      ),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    fireEvent.click(await screen.findByRole('button', { name: '选择东方向动作首帧 1' }))
+    expect(screen.queryByRole('button', { name: '确认首帧，生成完整动作' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '选择北方向动作首帧 2' }))
+    expect(screen.queryByRole('button', { name: '确认首帧，生成完整动作' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '选择南方向动作首帧 1' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认首帧，生成完整动作' }))
+
+    await waitFor(() =>
+      expect(service.confirmFirstFrame).toHaveBeenCalledWith({
+        east: 'east-1.png',
+        north: 'north-2.png',
+        south: 'south-1.png',
+      }),
+    )
   })
 
   it('renders generating and failed states for both first-frame and full animation tasks', async () => {
@@ -1383,6 +1464,72 @@ describe('QuickStartPage', () => {
       expect(await screen.findByLabelText(new RegExp(label, 'u'))).toBeTruthy()
       view.unmount()
     }
+  })
+
+  it('只重试 Quick Start 中失败的源方向', async () => {
+    const run = actionWorkflow({ firstStatus: 'failed', error: '北方向失败' })
+    const firstFrame = run.nodes.find((node) => node.type === 'action-first-frame')!
+    firstFrame.generations = [
+      { taskId: 'first-east', role: 'first_frame' },
+      { taskId: 'first-north', role: 'first_frame', direction: 'north' },
+    ]
+    const service = serviceFor(run, {
+      getFailedGenerationDirections: vi.fn(async () => [
+        { nodeId: 'action-first', direction: 'north' as const },
+      ]),
+      retryGenerationDirection: vi.fn(async () => run),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    fireEvent.click(await screen.findByRole('button', { name: '重试北方向' }))
+
+    await waitFor(() =>
+      expect(service.retryGenerationDirection).toHaveBeenCalledWith('action-first', 'north'),
+    )
+  })
+
+  it('角色母版失败时也提供定向重试入口', async () => {
+    const run = workflow(
+      setupAndTemplate({
+        status: 'failed',
+        phase: 'generating',
+        error: '北向母版失败',
+        generations: [
+          { taskId: 'template-east', role: 'character_template' },
+          { taskId: 'template-north', role: 'character_template', direction: 'north' },
+        ],
+      }),
+    )
+    const service = serviceFor(run, {
+      getFailedGenerationDirections: vi.fn(async () => [
+        { nodeId: 'character-template', direction: 'north' as const },
+      ]),
+      retryGenerationDirection: vi.fn(async () => run),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    fireEvent.click(await screen.findByRole('button', { name: '重试北方向' }))
+
+    await waitFor(() =>
+      expect(service.retryGenerationDirection).toHaveBeenCalledWith('character-template', 'north'),
+    )
+  })
+
+  it('方向重试失败时显示原始错误并恢复按钮', async () => {
+    const run = actionWorkflow({ firstStatus: 'failed', error: '北方向失败' })
+    const service = serviceFor(run, {
+      getFailedGenerationDirections: vi.fn(async () => [
+        { nodeId: 'action-first', direction: 'north' as const },
+      ]),
+      retryGenerationDirection: vi.fn(async () => Promise.reject(new Error('north retry failed'))),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    const retryButton = await screen.findByRole('button', { name: '重试北方向' })
+    fireEvent.click(retryButton)
+
+    expect((await screen.findByRole('alert')).textContent).toContain('north retry failed')
+    await waitFor(() => expect((retryButton as HTMLButtonElement).disabled).toBe(false))
   })
 
   it('saves a completed animation without navigating and exposes both explicit destinations', async () => {

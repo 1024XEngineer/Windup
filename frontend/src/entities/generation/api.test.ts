@@ -28,14 +28,11 @@ function taskData(overrides: Record<string, unknown> = {}) {
     project_id: 42,
     task_type: 'character_image',
     status: 'completed',
-    input_payload: { num_images: 3 },
+    input_payload: { num_images: 2, direction: 'east' },
     result: {
       type: 'character_image',
-      image_urls: [
-        'https://cdn.test/candidate-1.png',
-        'https://cdn.test/candidate-2.png',
-        'https://cdn.test/candidate-3.png',
-      ],
+      direction: 'east',
+      image_urls: ['https://cdn.test/candidate-1.png', 'https://cdn.test/candidate-2.png'],
     },
     error_message: null,
     ...overrides,
@@ -81,8 +78,19 @@ describe('createGenerationApis', () => {
     }
   })
 
-  it('固定请求并映射三张角色母版候选', async () => {
-    const request = vi.fn(async (_url: string, _init?: RequestInit) => success(taskData()))
+  it('固定请求并映射两张角色母版候选', async () => {
+    const request = vi.fn(async (_url: string, _init?: RequestInit) =>
+      success(
+        taskData({
+          input_payload: { num_images: 2, direction: 'north_east' },
+          result: {
+            type: 'character_image',
+            direction: 'north_east',
+            image_urls: ['https://cdn.test/candidate-1.png', 'https://cdn.test/candidate-2.png'],
+          },
+        }),
+      ),
+    )
     const stream = vi.fn(() => vi.fn())
     const apis = createGenerationApis({
       baseUrl: 'https://api.test/',
@@ -96,6 +104,7 @@ describe('createGenerationApis', () => {
       prompt: 'pixel hero',
       spriteWidth: 64,
       spriteHeight: 96,
+      direction: 'north_east',
     })
 
     expect(request).toHaveBeenCalledWith(
@@ -110,22 +119,69 @@ describe('createGenerationApis', () => {
           negative_prompt: '',
           width: 64,
           height: 96,
-          num_images: 3,
+          num_images: 2,
+          direction: 'north_east',
         }),
       }),
     )
     expect(generation.result).toEqual({
       type: 'character_template',
+      direction: 'north_east',
       images: [
         { url: 'https://cdn.test/candidate-1.png' },
         { url: 'https://cdn.test/candidate-2.png' },
-        { url: 'https://cdn.test/candidate-3.png' },
       ],
     })
   })
 
-  it('根据角色母版和动作提示词生成三张动作首帧候选', async () => {
-    const request = vi.fn(async (_url: string, _init?: RequestInit) => success(taskData()))
+  it('未指定方向时用 east 创建兼容的角色母版任务', async () => {
+    const request = vi.fn(async (_url: string, _init?: RequestInit) =>
+      success(
+        taskData({
+          input_payload: { num_images: 2, direction: 'east' },
+          result: {
+            type: 'character_image',
+            direction: 'east',
+            image_urls: ['east-1.png', 'east-2.png'],
+          },
+        }),
+      ),
+    )
+    const apis = createGenerationApis({
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    const generation = await apis.create({
+      type: 'character_template',
+      projectId: '42',
+      referenceMedia: [],
+      prompt: 'pixel hero',
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+
+    expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toMatchObject({
+      direction: 'east',
+    })
+    expect(generation.result).toEqual({
+      type: 'character_template',
+      images: [{ url: 'east-1.png' }, { url: 'east-2.png' }],
+    })
+  })
+
+  it('根据角色母版和动作提示词生成两张动作首帧候选', async () => {
+    const request = vi.fn(async (_url: string, _init?: RequestInit) =>
+      success(
+        taskData({
+          input_payload: { num_images: 2, direction: 'south' },
+          result: {
+            type: 'character_image',
+            direction: 'south',
+            image_urls: ['https://cdn.test/candidate-1.png', 'https://cdn.test/candidate-2.png'],
+          },
+        }),
+      ),
+    )
     const apis = createGenerationApis({
       baseUrl: '',
       transport: { request, stream: vi.fn(() => vi.fn()) },
@@ -139,6 +195,7 @@ describe('createGenerationApis', () => {
       referenceMedia: [reference('https://cdn.test/template.png')],
       spriteWidth: 64,
       spriteHeight: 96,
+      direction: 'south',
     })
 
     expect(request.mock.calls[0]?.[0]).toBe('/generation/image')
@@ -149,14 +206,15 @@ describe('createGenerationApis', () => {
       negative_prompt: '',
       width: 64,
       height: 96,
-      num_images: 3,
+      num_images: 2,
+      direction: 'south',
     })
     expect(generation.result).toEqual({
       type: 'first_frame',
+      direction: 'south',
       images: [
         { url: 'https://cdn.test/candidate-1.png' },
         { url: 'https://cdn.test/candidate-2.png' },
-        { url: 'https://cdn.test/candidate-3.png' },
       ],
     })
   })
@@ -220,6 +278,7 @@ describe('createGenerationApis', () => {
       reference_image_urls: ['https://cdn.test/frame-1.png', 'https://cdn.test/extra.png'],
       num_frames: 32,
       outfit_id: 'default',
+      direction: 'east',
     })
     expect(generation.result).toEqual({
       type: 'complete_animation',
@@ -314,6 +373,182 @@ describe('createGenerationApis', () => {
       }),
     ).rejects.toThrow('请先完成定妆')
     expect(request).not.toHaveBeenCalled()
+  })
+
+  it('保留多方向完整动画任务的方向约束', async () => {
+    const request = vi.fn(async () =>
+      success(
+        taskData({
+          task_type: 'character_action',
+          input_payload: { num_frames: 32, action_type: 'walk', direction: 'north' },
+          result: {
+            type: 'character_action',
+            action_type: 'walk',
+            direction: 'north',
+            frames: actionFrames(32),
+          },
+        }),
+      ),
+    )
+    const apis = createGenerationApis({
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    const generation = await apis.create({
+      type: 'complete_animation',
+      projectId: '42',
+      characterId: '5',
+      outfitId: 'default',
+      method: 'video-cropping',
+      actionType: 'walk',
+      firstFrameUrl: 'https://cdn.test/frame-1.png',
+      prompt: 'move forward',
+      referenceMedia: [],
+      direction: 'north',
+    })
+
+    expect(generation.result).toMatchObject({ type: 'complete_animation', direction: 'north' })
+  })
+
+  it('拒绝任务输入或结果偷换已请求的方向', async () => {
+    const imageResultMismatch = taskData({
+      result: {
+        type: 'character_image',
+        direction: 'north',
+        image_urls: ['north-1.png', 'north-2.png'],
+      },
+    })
+    const actionResultMismatch = taskData({
+      task_type: 'character_action',
+      input_payload: { num_frames: 32, action_type: 'walk', direction: 'east' },
+      result: {
+        type: 'character_action',
+        action_type: 'walk',
+        direction: 'north',
+        frames: actionFrames(32),
+      },
+    })
+    const imageInputMismatch = taskData({
+      input_payload: { num_images: 2, direction: 'north' },
+      result: {
+        type: 'character_image',
+        direction: 'north',
+        image_urls: ['north-1.png', 'north-2.png'],
+      },
+    })
+    const actionInputMismatch = taskData({
+      task_type: 'character_action',
+      input_payload: { num_frames: 32, action_type: 'walk', direction: 'north' },
+      result: {
+        type: 'character_action',
+        action_type: 'walk',
+        direction: 'north',
+        frames: actionFrames(32),
+      },
+    })
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(success(imageResultMismatch))
+      .mockResolvedValueOnce(success(actionResultMismatch))
+      .mockResolvedValueOnce(success(imageInputMismatch))
+      .mockResolvedValueOnce(success(actionInputMismatch))
+      .mockResolvedValueOnce(
+        success(
+          taskData({
+            input_payload: { num_images: 2 },
+            result: {
+              type: 'character_image',
+              image_urls: ['legacy-1.png', 'legacy-2.png'],
+            },
+          }),
+        ),
+      )
+    const apis = createGenerationApis({
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    await expect(
+      apis.get('42', '91', { type: 'character_template', direction: 'east' }),
+    ).rejects.toThrow('角色图片结果 direction 与请求不一致')
+    await expect(
+      apis.get('42', '91', { type: 'complete_animation', actionType: 'walk', direction: 'east' }),
+    ).rejects.toThrow('完整动画结果 direction 与请求不一致')
+    await expect(
+      apis.get('42', '91', { type: 'character_template', direction: 'east' }),
+    ).rejects.toThrow('生成任务 direction 与请求不一致')
+    await expect(
+      apis.get('42', '91', { type: 'complete_animation', actionType: 'walk', direction: 'east' }),
+    ).rejects.toThrow('生成任务 direction 与请求不一致')
+    await expect(apis.get('42', '91')).resolves.toMatchObject({
+      type: 'character_template',
+      result: { type: 'character_template' },
+    })
+  })
+
+  it('未提供预期时从图片和动画任务推断方向并拒绝非法值', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(
+        success(
+          taskData({
+            input_payload: { num_images: 2, direction: 'north' },
+            result: {
+              type: 'character_image',
+              direction: 'north',
+              image_urls: ['north-1.png', 'north-2.png'],
+            },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        success(
+          taskData({
+            task_type: 'character_action',
+            input_payload: { num_frames: 32, action_type: 'walk' },
+            result: {
+              type: 'character_action',
+              action_type: 'walk',
+              frames: actionFrames(32),
+            },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        success(
+          taskData({
+            task_type: 'character_action',
+            input_payload: { num_frames: 32, action_type: 'walk', direction: 'north' },
+            result: {
+              type: 'character_action',
+              action_type: 'walk',
+              direction: 'north',
+              frames: actionFrames(32),
+            },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(success(taskData({ input_payload: null })))
+      .mockResolvedValueOnce(
+        success(taskData({ input_payload: { num_images: 2, direction: 'up' } })),
+      )
+    const apis = createGenerationApis({
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    await expect(apis.get('42', '91')).resolves.toMatchObject({
+      type: 'character_template',
+      result: { type: 'character_template', direction: 'north' },
+    })
+    await expect(apis.get('42', '91')).resolves.toMatchObject({
+      type: 'complete_animation',
+      result: { type: 'complete_animation' },
+    })
+    await expect(apis.get('42', '91')).resolves.toMatchObject({
+      type: 'complete_animation',
+      result: { type: 'complete_animation', direction: 'north' },
+    })
+    await expect(apis.get('42', '91')).rejects.toThrow('生成任务缺少 input_payload')
+    await expect(apis.get('42', '91')).rejects.toThrow('生成任务 direction 无效')
   })
 
   it('拒绝未知任务状态而不是默认为 pending', async () => {
@@ -775,13 +1010,13 @@ describe('createGenerationApis', () => {
     ['输入对象', { input_payload: [] }, '生成任务 input_payload 无效'],
     ['结果对象', { result: [] }, '生成任务 result 无效'],
     ['错误字段', { error_message: 1 }, '生成任务 error_message 无效'],
-    ['任务输入', { input_payload: { num_images: 4 } }, 'num_images 必须为 3'],
+    ['任务输入', { input_payload: { num_images: 4 } }, 'num_images 必须为 2'],
     [
       '图片结果类型',
       { result: { type: 'video', image_urls: ['a', 'b', 'c'] } },
       '角色图片结果 type 无效',
     ],
-    ['图片数量', { result: { type: 'character_image', image_urls: ['a'] } }, '必须包含 3 个候选'],
+    ['图片数量', { result: { type: 'character_image', image_urls: ['a'] } }, '必须包含 2 个候选'],
     ['完成结果', { result: null }, '完成任务缺少 result'],
   ])('校验%s', async (_label, overrides, message) => {
     const apis = createGenerationApis({
@@ -952,7 +1187,7 @@ describe('createGenerationApis', () => {
     )
   })
 
-  it('按显式阶段恢复图片任务为三张动作首帧候选', async () => {
+  it('按显式阶段恢复图片任务为两张动作首帧候选', async () => {
     const request = vi.fn().mockResolvedValueOnce(success(taskData()))
     const apis = createGenerationApis({
       transport: { request, stream: vi.fn(() => vi.fn()) },
@@ -967,13 +1202,12 @@ describe('createGenerationApis', () => {
         images: [
           { url: 'https://cdn.test/candidate-1.png' },
           { url: 'https://cdn.test/candidate-2.png' },
-          { url: 'https://cdn.test/candidate-3.png' },
         ],
       },
     })
   })
 
-  it('订阅图片任务时按首帧阶段映射三张候选', () => {
+  it('订阅图片任务时按首帧阶段映射两张候选', () => {
     let streamOptions: EventStreamOptions | undefined
     const onEvent = vi.fn()
     const apis = createGenerationApis({
@@ -998,7 +1232,6 @@ describe('createGenerationApis', () => {
         images: [
           { url: 'https://cdn.test/candidate-1.png' },
           { url: 'https://cdn.test/candidate-2.png' },
-          { url: 'https://cdn.test/candidate-3.png' },
         ],
       },
       error: null,

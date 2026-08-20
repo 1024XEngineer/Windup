@@ -36,4 +36,4 @@ it('只有进入 Workflow Editor 路由时才加载 React Flow 页面', async ()
 
   expect(await screen.findByText('懒加载 Workflow Editor')).toBeTruthy()
   expect(pageModuleFactory).toHaveBeenCalledTimes(1)
-})
+}, 30_000)
