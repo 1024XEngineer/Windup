@@ -43,6 +43,28 @@ describe('ProjectsPage', () => {
       })
     })
 
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    const preview = await screen.findByRole('img', { name: '点灯人 · MVP的项目预览' })
+    expect(preview.getAttribute('src')).toBe(
+      'https://cdn.windup.test/media/outfit-preview/messenger.card.webp',
+    )
+
+    fireEvent.error(preview)
+
+    await waitFor(() => {
+      expect(preview.getAttribute('src')).toBe(
+        'https://cdn.windup.test/media/outfit-preview/messenger.source.png',
+      )
+    })
+  })
+
   it('keeps pending project previews distinct from empty projects', async () => {
     installBackend()
     let releaseRequests: (() => void) | undefined
@@ -60,17 +82,6 @@ describe('ProjectsPage', () => {
           <AppRoutes />
         </MemoryRouter>
       </AuthenticatedAuthSession>,
-    )
-
-    const preview = await screen.findByRole('img', { name: '点灯人 · MVP的项目预览' })
-    expect(preview.getAttribute('src')).toBe(
-      'https://cdn.windup.test/media/outfit-preview/messenger.card.webp',
-    )
-
-    fireEvent.error(preview)
-
-    expect(preview.getAttribute('src')).toBe(
-      'https://cdn.windup.test/media/outfit-preview/messenger.source.png',
     )
 
     expect(await screen.findAllByRole('link', { name: /打开项目/ })).toHaveLength(2)
