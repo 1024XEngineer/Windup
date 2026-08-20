@@ -300,7 +300,8 @@ def test_action_task_marks_failed_on_error(session_factory):
     with session_factory() as s:
         done = service.get_task(s, project_id=1, task_id=task_id)
     assert done.status is TaskStatus.FAILED
-    assert "母版下载失败" in (done.error_message or "")
+    # 用户看到的是脱敏文案(见 _failure.user_message),原始异常只进日志。
+    assert done.error_message and "母版下载失败" not in done.error_message
 
 
 # ── 交付尺寸传给引擎(2026-08-11 挣得)──────────────────────────────────────────
@@ -366,4 +367,5 @@ def test_engine_frame_of_wrong_size_fails_instead_of_being_rescaled(session_fact
     with session_factory() as s:
         done = AiGenerationService().get_task(s, project_id=1, task_id=task_id)
     assert done.status is TaskStatus.FAILED, "尺寸对不上必须失败,不能悄悄缩放交付"
-    assert "512" in (done.error_message or ""), "报错要说清期望尺寸"
+    # 尺寸不符是生成侧缺陷、用户改不动,故用户侧只给通用文案;期望尺寸留在日志里。
+    assert done.error_message and "512" not in done.error_message

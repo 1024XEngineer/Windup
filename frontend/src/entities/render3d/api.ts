@@ -126,7 +126,6 @@ function parseCost(value: unknown): Render3DAssetCost {
     model3dCredits: requireNumber(cost.model3d_credits, 'cost.model3d_credits'),
     autorigCredits: requireNumber(cost.autorig_credits, 'cost.autorig_credits'),
     totalCredits: requireNumber(cost.total_credits, 'cost.total_credits'),
-    totalCny: requireNumber(cost.total_cny, 'cost.total_cny'),
     billing: requireString(cost.billing, 'cost.billing'),
     scope: requireString(cost.scope, 'cost.scope'),
   }
