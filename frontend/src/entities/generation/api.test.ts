@@ -156,7 +156,9 @@ describe('createGenerationApis', () => {
       spriteHeight: 64,
     })
 
-    expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toMatchObject({ direction: 'east' })
+    expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toMatchObject({
+      direction: 'east',
+    })
     expect(generation.result).toEqual({
       type: 'character_template',
       images: [{ url: 'east-1.png' }, { url: 'east-2.png' }],

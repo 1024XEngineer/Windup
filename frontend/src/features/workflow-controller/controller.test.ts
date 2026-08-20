@@ -1668,18 +1668,15 @@ describe('WorkflowController', () => {
 
     const missingMethod = createController(createRun(fullFrameNodes(undefined, null)), 'four-way')
     await expect(
-      missingMethod.controller.retryGenerationDirection(
-        'action-walk:action-full-frame',
-        'north',
-        { spriteWidth: 64, spriteHeight: 64 },
-      ),
+      missingMethod.controller.retryGenerationDirection('action-walk:action-full-frame', 'north', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+      }),
     ).rejects.toThrow('尚未选择动作生成方式')
     expect(missingMethod.generation.apis.create).not.toHaveBeenCalled()
 
     const missingCharacter = createController(
-      createRun(
-        fullFrameNodes(setupNode({ status: 'passed', phase: 'completed' })),
-      ),
+      createRun(fullFrameNodes(setupNode({ status: 'passed', phase: 'completed' }))),
       'four-way',
     )
     await expect(
@@ -1735,7 +1732,11 @@ describe('WorkflowController', () => {
     })
 
     expect(generation.apis.create).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'complete_animation', referenceMedia: [], direction: 'east' }),
+      expect.objectContaining({
+        type: 'complete_animation',
+        referenceMedia: [],
+        direction: 'east',
+      }),
     )
   })
 
@@ -1818,7 +1819,9 @@ describe('WorkflowController', () => {
       error: null,
     })
 
-    await expect(controller.getGeneration('template-1', 'character_template')).resolves.toMatchObject({
+    await expect(
+      controller.getGeneration('template-1', 'character_template'),
+    ).resolves.toMatchObject({
       id: 'task-north',
       result: { direction: 'north' },
     })
