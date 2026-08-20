@@ -52,9 +52,13 @@ describe('ProjectsPage', () => {
     )
 
     const preview = await screen.findByRole('img', { name: '点灯人 · MVP的项目预览' })
-    expect(preview.getAttribute('src')).toBe(
-      'https://cdn.windup.test/media/outfit-preview/messenger.card.webp',
-    )
+    // findByRole 只等到 img 挂上，不等 src 落定：缩略图地址要等角色请求回来后的那次状态
+    // 更新才写进去。裸断言在 CI 这类慢环境上会取到写入前的值，随机把无关 PR 染红。
+    await waitFor(() => {
+      expect(preview.getAttribute('src')).toBe(
+        'https://cdn.windup.test/media/outfit-preview/messenger.card.webp',
+      )
+    })
 
     fireEvent.error(preview)
 
