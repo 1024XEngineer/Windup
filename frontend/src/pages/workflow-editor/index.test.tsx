@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { createElement, type ComponentType, type ReactNode } from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Link, MemoryRouter, Route, Routes } from 'react-router'
 
@@ -17,7 +17,7 @@ import {
   type WorkflowRunApis,
 } from '@/entities'
 import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
-import { absentAsset, acceptedReport, stubRender3DApis } from '@/test/render3d-apis'
+import { acceptedReport, stubRender3DApis } from '@/test/render3d-apis'
 import { WorkflowEditorPage } from './index'
 import type { WorkflowEditorSession } from './runtime'
 
@@ -91,6 +91,35 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('WorkflowEditorPage real runtime boundary', () => {
+  it('身份母版只展示现有操作，并让加号菜单专注于生成动作', async () => {
+    const character = characterFixture()
+    character.outfits[0] = {
+      ...character.outfits[0]!,
+      previewUrl: 'https://assets.windup.test/42.png',
+    }
+    defaultSessionLoader.mockResolvedValue(
+      createSession(completedTemplateWorkflow('42'), { character }),
+    )
+    renderEditor('/workflow-editor/42')
+
+    const primaryActions = await screen.findByRole('group', { name: '角色母版操作' })
+    expect(within(primaryActions).getByRole('button', { name: '导出角色母版' })).toBeTruthy()
+
+    const secondaryActions = within(primaryActions).getByRole('group', {
+      name: '调整角色母版',
+    })
+    expect(within(secondaryActions).getByRole('button', { name: '重新生成角色母版' })).toBeTruthy()
+    expect(within(secondaryActions).getByRole('button', { name: '微调角色母版' })).toBeTruthy()
+    expect(screen.queryByText(/3D 资产/)).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '添加动作分支' }))
+    const actionMenu = screen.getByRole('menu', { name: '新增节点' })
+    expect(within(actionMenu).getAllByRole('button')).toHaveLength(1)
+    expect(within(actionMenu).getByRole('button', { name: '生成动作 ›' })).toBeTruthy()
+    expect(within(actionMenu).queryByText('生成静态资产')).toBeNull()
+    expect(within(actionMenu).queryByText('导出')).toBeNull()
+  })
+
   it('角色母版完成后可以重新生成或提交微调描述', async () => {
     const session = createSession(completedTemplateWorkflow('42'))
     const regenerate = vi
@@ -268,6 +297,8 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     renderEditor('/workflow-editor/42')
 
     const image = await screen.findByRole('img', { name: '已确认身份母版' })
+    expect(image.parentElement?.getAttribute('data-workflow-image-shape')).toBe('square')
+    expect(image.parentElement?.className).toContain('rounded-[10px]')
     expect(screen.getByRole('status', { name: '正在加载已确认身份母版' })).toBeTruthy()
     expect(image.className).toContain('opacity-0')
 
@@ -308,7 +339,17 @@ describe('WorkflowEditorPage real runtime boundary', () => {
 
     renderEditor('/workflow-editor/42')
 
-    expect((await screen.findByRole('status')).textContent).toContain('生成中…')
+    const preview = await screen.findByRole('img', { name: '身份母版生成预览' })
+    expect(preview.getAttribute('data-generation-preview')).toBe('true')
+    expect(preview.getAttribute('data-generation-preview-size')).toBe('candidate')
+    expect(preview.getAttribute('data-generation-preview-radius')).toBe('node')
+    expect(preview.getAttribute('data-generation-preview-fit')).toBe('container')
+    expect(preview.querySelectorAll('[data-pixel-matrix-dot]')).toHaveLength(432)
+    const progress = screen.getByLabelText('身份母版生成进度')
+    expect(progress.textContent).toBe('勾勒角色轮廓')
+    expect(progress.className).toContain('generation-progress-copy')
+    expect(progress.getAttribute('data-copy-motion-mode')).toBe('characters')
+    expect(screen.queryByText('生成中…')).toBeNull()
   })
 
   it('动作首帧等待候选结果时显示处理中状态', async () => {
@@ -335,6 +376,49 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     renderEditor('/workflow-editor/42')
 
     expect((await screen.findByText('处理中…')).getAttribute('role')).toBe('status')
+  })
+
+  it.each([
+    {
+      nodeType: 'action-first-frame' as const,
+      previewLabel: '动作首帧生成预览',
+      progressLabel: '动作首帧生成进度',
+      progressCopy: '摆好动作姿态',
+    },
+    {
+      nodeType: 'action-full-frame' as const,
+      previewLabel: '完整动作生成预览',
+      progressLabel: '完整动作生成进度',
+      progressCopy: '把动作连起来',
+    },
+  ])('$nodeType 生成时使用对应的共享预览语义', async (scenario) => {
+    const workflow = reviewingActionWorkflow()
+    const target = workflow.nodes.find((node) => node.type === scenario.nodeType)
+    if (!target) throw new Error(`missing ${scenario.nodeType}`)
+    target.status = 'active'
+    target.phase = 'generating'
+    if (target.type === 'action-first-frame') {
+      target.generations = [{ taskId: 'running-first-frame', role: 'first_frame' }]
+    }
+    defaultSessionLoader.mockResolvedValue(
+      createSession(workflow, {
+        generationApis: generationApisFixture({
+          get: vi.fn().mockResolvedValue({
+            id: `running-${scenario.nodeType}`,
+            projectId: '1',
+            type: scenario.nodeType === 'action-first-frame' ? 'first_frame' : 'complete_animation',
+            status: 'running',
+            result: null,
+            error: null,
+          } satisfies Generation),
+        }),
+      }),
+    )
+
+    renderEditor('/workflow-editor/42')
+
+    expect(await screen.findByRole('img', { name: scenario.previewLabel })).toBeTruthy()
+    expect(screen.getByLabelText(scenario.progressLabel).textContent).toBe(scenario.progressCopy)
   })
 
   it('导出是次要动作，当前节点推进仍是主要动作', async () => {
@@ -1491,12 +1575,13 @@ describe('母版确认闸', () => {
     return session
   }
 
-  it('挑中候选后先展示放大的母版，不直接进入下一步', async () => {
+  it('挑中候选后只在缩略图上标记选择，不重复展示放大图', async () => {
     await openGate()
 
-    expect((await screen.findByRole('img', { name: '待确认定妆母版' })).getAttribute('src')).toBe(
-      'https://assets.windup.test/character.png',
-    )
+    const selectedCandidate = screen.getByRole('button', { name: '选择角色候选 1' })
+    expect(selectedCandidate.getAttribute('aria-pressed')).toBe('true')
+    expect(selectedCandidate.className).toContain('rounded-[10px]')
+    expect(screen.queryByRole('img', { name: '待确认定妆母版' })).toBeNull()
     expect(screen.getByRole('button', { name: '确认为定妆母版' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '重新生成三张' })).toBeTruthy()
   })
@@ -1564,183 +1649,6 @@ describe('母版确认闸', () => {
     expect(generateCharacterTemplate.mock.calls[0]?.[0]).toBe('character-setup')
     // 复位后没有被选中的候选，闸自然收起来——旧选择不会被当成对新三张的选择。
     await waitFor(() => expect(screen.queryByRole('button', { name: '确认为定妆母版' })).toBeNull())
-  })
-})
-
-/**
- * 建 3D 资产入口。原本用户看得到"该造型暂无绑骨 3D 模型"，却没有任何地方能去建。
- *
- * 用例锁两件事：**按次计费的成本必须先说**，以及**人工确认闸不点头就不绑骨**。
- */
-describe('建 3D 资产入口', () => {
-  function sessionWithConfirmedMaster(render3d: Render3DApis) {
-    const character = characterFixture()
-    const session = createSession(completedTemplateWorkflow('42'), {
-      character: {
-        ...character,
-        outfits: [{ ...character.outfits[0]!, previewUrl: 'https://assets.windup.test/42.png' }],
-      },
-      render3d,
-    })
-    defaultSessionLoader.mockResolvedValue(session)
-    return session
-  }
-
-  it('资产就绪后当场解锁三渲二，不要求用户刷新页面', async () => {
-    // 造型初始没有 3D 模型，资产接口报 ready —— 也就是用户刚等完两段付费流程那一刻。
-    const character = characterFixture()
-    character.outfits[0]!.model3dUrl = null
-    const session = createSession(selectingGenerationMethodWorkflow(), {
-      character,
-      render3d: stubRender3DApis({
-        getOutfitAsset: async () =>
-          absentAsset({ state: 'ready', model3dUrl: 'https://assets.windup.test/day.glb' }),
-      }),
-    })
-    defaultSessionLoader.mockResolvedValue(session)
-    renderEditor('/workflow-editor/42')
-
-    // 三渲二能否选中读的是页面级 Character，轮询到 ready 必须把它一起带上；
-    // 不带的话这个按钮会一直是灰的，用户只能整页刷新。
-    await waitFor(() =>
-      expect((screen.getByRole('button', { name: '三渲二' }) as HTMLButtonElement).disabled).toBe(
-        false,
-      ),
-    )
-  })
-
-  it('母版还没确认时根本没有建 3D 资产这个入口', async () => {
-    const buildOutfitAsset = vi.fn()
-    const session = createSession(selectingTemplateWorkflow(3, 'character-task'), {
-      generationApis: generationApisFixture({
-        get: vi.fn().mockResolvedValue(characterGeneration('character')),
-      }),
-      render3d: stubRender3DApis({ buildOutfitAsset }),
-    })
-    defaultSessionLoader.mockResolvedValue(session)
-    renderEditor('/workflow-editor/42')
-
-    fireEvent.click(await screen.findByRole('button', { name: '选择角色候选 1' }))
-    await screen.findByRole('button', { name: '确认为定妆母版' })
-
-    expect(screen.queryByLabelText('三渲二 3D 资产')).toBeNull()
-    expect(screen.queryByRole('button', { name: /建 3D 资产/ })).toBeNull()
-    expect(buildOutfitAsset).not.toHaveBeenCalled()
-  })
-
-  it('触发按次计费之前把积分摆在按钮上，但不显示人民币金额', async () => {
-    sessionWithConfirmedMaster(stubRender3DApis())
-    renderEditor('/workflow-editor/42')
-
-    const build = await screen.findByRole('button', {
-      name: '建 3D 资产（30 积分）',
-    })
-    expect(build).toBeTruthy()
-    expect(screen.getByText(/图生 3D 20 积分 \+ 绑骨 10 积分 = 30 积分/)).toBeTruthy()
-    // 人民币金额是我们的成本口径，不该出现在用户界面上
-    expect(screen.queryByText(/¥/)).toBeNull()
-    expect(screen.getByText(/每造型一次性/)).toBeTruthy()
-  })
-
-  it('成本数字来自后端返回，不是前端写死的常量', async () => {
-    sessionWithConfirmedMaster(
-      stubRender3DApis({
-        getOutfitAsset: async () =>
-          absentAsset({
-            cost: {
-              model3dCredits: 25,
-              autorigCredits: 10,
-              totalCredits: 35,
-              billing: 'postpaid',
-              scope: 'per_outfit_once',
-            },
-          }),
-      }),
-    )
-    renderEditor('/workflow-editor/42')
-
-    expect(await screen.findByRole('button', { name: '建 3D 资产（35 积分）' })).toBeTruthy()
-  })
-
-  it('模型出来后停在确认闸上，没人点头就绝不绑骨', async () => {
-    const approveOutfitAsset = vi.fn(async () => absentAsset({ state: 'ready' }))
-    let asset = absentAsset()
-    sessionWithConfirmedMaster(
-      stubRender3DApis({
-        getOutfitAsset: async () => asset,
-        buildOutfitAsset: async () => {
-          asset = absentAsset({
-            state: 'awaiting_review',
-            reviewModelUrl: 'https://assets.windup.test/pending.glb',
-          })
-          return asset
-        },
-        approveOutfitAsset,
-      }),
-    )
-    renderEditor('/workflow-editor/42')
-
-    fireEvent.click(await screen.findByRole('button', { name: /建 3D 资产/ }))
-
-    expect(await screen.findByText(/模型已生成，等你确认/)).toBeTruthy()
-    expect(approveOutfitAsset).not.toHaveBeenCalled()
-
-    // 待审模型必须真的能打开——只躺在服务器上的话，"通过"就退化成一个必须点的步骤。
-    expect(
-      (screen.getByRole('link', { name: /下载待审模型/ }) as HTMLAnchorElement).getAttribute(
-        'href',
-      ),
-    ).toBe('https://assets.windup.test/pending.glb')
-
-    fireEvent.click(screen.getByRole('button', { name: /通过 · 继续绑骨/ }))
-    await waitFor(() => expect(approveOutfitAsset).toHaveBeenCalledWith('9', 'day'))
-  })
-
-  it('判不合格时走丢弃重做，并说清要再花一次图生 3D 的钱', async () => {
-    const discardOutfitAsset = vi.fn(async () => absentAsset())
-    const approveOutfitAsset = vi.fn(async () => absentAsset({ state: 'ready' }))
-    sessionWithConfirmedMaster(
-      stubRender3DApis({
-        getOutfitAsset: async () =>
-          absentAsset({
-            state: 'awaiting_review',
-            reviewModelUrl: 'https://assets.windup.test/pending.glb',
-          }),
-        approveOutfitAsset,
-        discardOutfitAsset,
-      }),
-    )
-    renderEditor('/workflow-editor/42')
-
-    fireEvent.click(
-      await screen.findByRole('button', { name: '不合格 · 重新生成（再花 20 积分）' }),
-    )
-
-    await waitFor(() => expect(discardOutfitAsset).toHaveBeenCalledWith('9', 'day'))
-    expect(approveOutfitAsset).not.toHaveBeenCalled()
-  })
-
-  it('在跑的两段付费调用给状态说明，不给一个和真实进度无关的进度条', async () => {
-    sessionWithConfirmedMaster(
-      stubRender3DApis({ getOutfitAsset: async () => absentAsset({ state: 'rigging' }) }),
-    )
-    renderEditor('/workflow-editor/42')
-
-    expect(await screen.findByText(/正在自动绑骨/)).toBeTruthy()
-    expect(screen.queryByRole('progressbar')).toBeNull()
-  })
-
-  it('上一次没建成时把原因摆出来，并允许重来', async () => {
-    sessionWithConfirmedMaster(
-      stubRender3DApis({
-        getOutfitAsset: async () =>
-          absentAsset({ state: 'failed', error: '绑骨轮询 10 分钟仍未出结果' }),
-      }),
-    )
-    renderEditor('/workflow-editor/42')
-
-    expect(await screen.findByText(/绑骨轮询 10 分钟仍未出结果/)).toBeTruthy()
-    expect(screen.getByRole('button', { name: /建 3D 资产/ })).toBeTruthy()
   })
 })
 
