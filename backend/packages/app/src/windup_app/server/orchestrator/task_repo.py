@@ -258,6 +258,7 @@ def _deserialize_result(
             type=raw.get("type", "character_image"),
             image_urls=raw.get("image_urls", []),
             direction=ActionDirection(raw.get("direction", ActionDirection.EAST.value)),
+            quality=raw.get("quality"),
         )
     if result_type == "character_action":
         from windup_app.server.orchestrator.model import CharacterActionFrame

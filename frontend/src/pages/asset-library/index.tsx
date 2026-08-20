@@ -113,6 +113,7 @@ function CharacterGrid({ projectId, characters }: { projectId: string; character
             footer={`${character.outfits.length} 套造型 · ${actionCount} 个动作`}
             previewUrl={outfit?.previewUrl ?? null}
             previewAlt={`${name}的${outfit?.name ?? '造型'}预览`}
+            thumbnail
             eager={index < 4}
             priority={index === 0}
           />

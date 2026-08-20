@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy.orm import Session
 
 from windup_ai_engine.ports import PromptRejected
+from windup_ai_engine.slicing.quality import subject_blobs
 from windup_common.directions import direction_prompt
 from windup_common.models import ActionSpec, ActionType as EngineActionType, CharacterCard
 from windup_framework.config.quality_gate import settings as gate_settings
@@ -573,12 +574,14 @@ class ImageTaskExecutor:
         self,
         *,
         image=None,  # None → 懒加载 SufyImageProvider
+        matte: MatteProvider | None = None,  # None → 懒加载 OnnxU2NetMatteProvider
         upload: Callable[[bytes], str] | None = None,  # None → 真实对象存储上传
         fetch_ref: Callable[[str], bytes]
         | None = None,  # None → 下载 reference_image_url
         session_factory: Callable[[], Session] | None = None,
     ) -> None:
         self._image = image
+        self._matte = matte
         self._upload = upload
         self._fetch_ref = fetch_ref
         self._session_factory = session_factory
@@ -598,7 +601,7 @@ class ImageTaskExecutor:
             if own:
                 session.commit()
             cons = _load_constraints(session, project_id)  # 角色图也受项目约束
-            urls = self._produce_image(input, cons)
+            urls, quality = self._produce_image(input, cons)
             task_repo.update_result(
                 session,
                 task_id,
@@ -607,6 +610,7 @@ class ImageTaskExecutor:
                     "type": "character_image",
                     "direction": input.direction.value,
                     "image_urls": urls,
+                    "quality": quality,
                 },
             )
             _settle_credit(session, task_id, success=True)
@@ -627,8 +631,8 @@ class ImageTaskExecutor:
 
     def _produce_image(
         self, input: CharacterImageInput, cons: ProjectConstraints
-    ) -> list[str]:
-        """根据项目约束决定生成模式,返回 URL 列表。
+    ) -> tuple[list[str], dict]:
+        """根据项目约束决定生成模式,返回 (URL 列表, 成色读数)。
 
         模式判断:
           - 项目有 sprite_sample_url → **图生图**: 风格参考图 + 提示词
@@ -679,16 +683,30 @@ class ImageTaskExecutor:
 
         prompt = " ".join(parts)
 
+        import io
+
+        from PIL import Image
+
         image_gen = self._get_image()
+        matte = self._get_matte()
         upload = self._upload or self._upload_image
         urls: list[str] = []
+        cut: list[Image.Image] = []
         for _ in range(max(1, input.num_images)):
             img = image_gen.gen_image(prompt, refs)
+            # 提示词要的是浅灰底,交付的母版却必须是透明底:不在这里抠,灰底会一路带进
+            # 预览、也会成为下一次图生图的参考底色(#430)。抠在缩放之前 —— u2netp 按模型
+            # 原始分辨率分割,先缩再抠等于把一半可用像素丢掉再让它猜。
+            # 抠不动时让它抛:静默交一张带灰底的母版,正是"看起来成功的错产物"。
             # 请求里的 width/height 此前被丢掉:入口收下并校验过它们(_validate_project_size),
             # 而 ImageProvider.gen_image 没有尺寸参数,模型出多大就返多大 —— 又一个"接了不
             # 履约"的字段。模型本身不吃宽高,所以在这里落实。
-            urls.append(upload(_fit_to(img, input.width, input.height, smooth=True)))
-        return urls
+            png = _fit_to(matte.cutout(img), input.width, input.height, smooth=True)
+            cut.append(Image.open(io.BytesIO(png)).convert("RGBA"))
+            urls.append(upload(png))
+        # 同一份 alpha 顺手数一次主体数(#427):此前多主体母版要等下一个动作任务才留痕,
+        # 而那时钱已经花在错的母版上了。只记账,不在此处判成败 —— 与动作那条同一立场。
+        return urls, {"subject_blobs": list(subject_blobs(cut))}
 
     def _get_image(self):
         if self._image is None:
@@ -696,6 +714,13 @@ class ImageTaskExecutor:
 
             self._image = SufyImageProvider()
         return self._image
+
+    def _get_matte(self):
+        if self._matte is None:
+            from windup_framework.providers import OnnxU2NetMatteProvider
+
+            self._matte = OnnxU2NetMatteProvider()
+        return self._matte
 
     def _download(self, url: str) -> bytes:
         # 同 _download_master:参考图 URL 由调用方给,必须走白名单取图。

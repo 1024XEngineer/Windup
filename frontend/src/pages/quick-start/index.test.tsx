@@ -544,7 +544,7 @@ describe('QuickStartPage', () => {
       const canvas = await screen.findByRole('img', { name: label })
       expect(canvas.getAttribute('data-generation-state')).toBe('generating')
       expect(canvas.getAttribute('data-generation-motion')).toBe('continuous')
-      expect(canvas.querySelectorAll('[data-generation-dot]').length).toBeGreaterThan(20)
+      expect(canvas.querySelectorAll('[data-pixel-matrix-dot]')).toHaveLength(432)
       expect(canvas.querySelector('[data-generation-silhouette]')).toBeNull()
     },
   )

@@ -16,7 +16,10 @@ export type WorkflowNodeStatus = (typeof WORKFLOW_NODE_STATUSES)[number]
 export type WorkflowNodePhase = (typeof WORKFLOW_NODE_PHASES)[number]
 export type WorkflowGenerationRole = (typeof WORKFLOW_GENERATION_ROLES)[number]
 
-/** 动作资产的生产路线；3D 转 2D 接口尚未提供，但选择必须随 WorkflowRun 落库。 */
+/**
+ * 动作资产的生产路线。3D 转 2D（三渲二）只在所选造型已有绑骨 3D 模型时可选——
+ * 判据是 `Outfit.model3dUrl`，没有资产就不提供这个选项。
+ */
 export type ActionGenerationMethod = 'video-cropping' | '3d-to-2d'
 
 /** 一个节点对后端 GenerationTask 的引用；节点可关联零个、一个或多个任务。 */

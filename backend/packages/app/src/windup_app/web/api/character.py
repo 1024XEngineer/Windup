@@ -16,6 +16,7 @@ from windup_framework.db import get_session
 
 from windup_app.server.character.model import Character, CharacterData
 from windup_app.server.character.service import service as character_service
+from windup_app.server.media.service import card_thumbnail_key
 from windup_app.server.media.service import service as media_service
 from windup_app.server.project.model import Project
 from windup_app.server.project.service import service as project_service
@@ -75,23 +76,28 @@ def _extract_object_keys(character: Character) -> list[str]:
     keys: list[str] = []
     seen: set[str] = set()
 
-    def add_url(url: str | None) -> None:
+    def add_url(url: str | None, *, include_thumbnail: bool = False) -> None:
         if not url or not url.startswith(prefix):
             return
         key = url[len(prefix) :]
         if key not in seen:
             seen.add(key)
             keys.append(key)
+        if include_thumbnail:
+            thumbnail_key = card_thumbnail_key(key)
+            if thumbnail_key not in seen:
+                seen.add(thumbnail_key)
+                keys.append(thumbnail_key)
 
     # 参考图
-    add_url(character.reference_image_url)
+    add_url(character.reference_image_url, include_thumbnail=True)
 
     # character_data 内的 URL
     data = character.character_data or {}
     for template in data.get("templates", []):
         add_url(template.get("image_url"))
     for outfit in data.get("outfits", []):
-        add_url(outfit.get("preview_url"))
+        add_url(outfit.get("preview_url"), include_thumbnail=True)
         for action in outfit.get("actions", []):
             frame_groups = [action.get("frames", [])]
             frame_groups.extend(

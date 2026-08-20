@@ -8,6 +8,7 @@ from unittest.mock import patch
 from windup_common.enums.biz_code import BizCode
 
 from windup_app.server.media.model import MediaUploadResult
+from windup_app.server.media.service import InvalidThumbnailSourceError
 from windup_app.web.api.media import (
     _ALLOWED_IMAGE_TYPES,
     _ALLOWED_MODEL_TYPES,
@@ -148,6 +149,20 @@ def test_upload_success(mock_service, auth_client):
     assert body["code"] == BizCode.SUCCESS
     assert body["data"]["url"] == MOCK_RESULT.url
     mock_service.upload.assert_called_once()
+
+
+@patch("windup_app.web.api.media.service")
+def test_upload_maps_unsafe_thumbnail_source_to_bad_request(mock_service, auth_client):
+    mock_service.upload.side_effect = InvalidThumbnailSourceError("图片像素尺寸超过缩略图处理上限")
+
+    resp = auth_client.post(
+        "/media/upload",
+        files={"file": ("test.png", _make_png_bytes(512), "image/png")},
+        params={"category": "reference-image"},
+    )
+
+    assert resp.json()["code"] == BizCode.BAD_REQUEST
+    assert resp.json()["message"] == "图片像素尺寸超过缩略图处理上限"
 
 
 @patch("windup_app.web.api.media.service")
