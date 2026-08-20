@@ -107,6 +107,10 @@ class CharacterImageOutput:
 
     type: str = "character_image"
     image_urls: list[str] = field(default_factory=list)
+    # 出图当场量的主体数(``ai_engine.slicing.quality.subject_blobs`` 的逐张读数)。与动作
+    # 结果那份 ``quality`` 同键同语义:只落库、不参与前端回填,本层不据此判成败。
+    # ``None`` = **没量过**,不是"量了没问题"。
+    quality: dict | None = None
 
 
 @dataclass
