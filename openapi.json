@@ -1132,7 +1132,7 @@
         "title": "ListResponse[CreditTransactionOut]",
         "type": "object"
       },
-      "ListResponse_ProjectOut_": {
+      "ListResponse_ProjectListOut_": {
         "properties": {
           "code": {
             "default": 200,
@@ -1143,7 +1143,7 @@
           "data": {
             "description": "业务数据列表",
             "items": {
-              "$ref": "#/components/schemas/ProjectOut"
+              "$ref": "#/components/schemas/ProjectListOut"
             },
             "title": "Data",
             "type": "array"
@@ -1188,7 +1188,7 @@
             "type": "integer"
           }
         },
-        "title": "ListResponse[ProjectOut]",
+        "title": "ListResponse[ProjectListOut]",
         "type": "object"
       },
       "ListResponse_WorkflowRunOut_": {
@@ -1457,6 +1457,105 @@
           "sprite_height"
         ],
         "title": "ProjectCreate",
+        "type": "object"
+      },
+      "ProjectListOut": {
+        "description": "项目列表项；预览是读取投影，不写回 Project。",
+        "properties": {
+          "character_perspective": {
+            "title": "Character Perspective",
+            "type": "integer"
+          },
+          "create_at": {
+            "format": "date-time",
+            "title": "Create At",
+            "type": "string"
+          },
+          "directional_movement": {
+            "title": "Directional Movement",
+            "type": "integer"
+          },
+          "game_style": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Game Style"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "preview_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview Url"
+          },
+          "project_name": {
+            "title": "Project Name",
+            "type": "string"
+          },
+          "sprite_height": {
+            "title": "Sprite Height",
+            "type": "integer"
+          },
+          "sprite_sample_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sprite Sample Url"
+          },
+          "sprite_width": {
+            "title": "Sprite Width",
+            "type": "integer"
+          },
+          "update_at": {
+            "format": "date-time",
+            "title": "Update At",
+            "type": "string"
+          },
+          "workflow_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Id"
+          }
+        },
+        "required": [
+          "id",
+          "workflow_id",
+          "project_name",
+          "character_perspective",
+          "directional_movement",
+          "sprite_width",
+          "sprite_height",
+          "game_style",
+          "sprite_sample_url",
+          "create_at",
+          "update_at",
+          "preview_url"
+        ],
+        "title": "ProjectListOut",
         "type": "object"
       },
       "ProjectOut": {
@@ -3456,7 +3555,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListResponse_ProjectOut_"
+                  "$ref": "#/components/schemas/ListResponse_ProjectListOut_"
                 }
               }
             },

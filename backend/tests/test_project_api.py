@@ -5,6 +5,8 @@
 ``timestamp`` 默认省略)与 400/404 业务码路径。
 """
 
+from sqlalchemy import event
+
 
 def _payload(**overrides):
     """构造合法的创建请求体(对齐 ``ProjectCreate``)。"""
@@ -103,6 +105,128 @@ def test_list_paginates(auth_client):
     assert all("user_id" not in item for item in body["data"])
 
 
+def _create_character(auth_client, project_id, workflow_run_id, **overrides):
+    payload = {
+        "project_id": project_id,
+        "workflow_run_id": workflow_run_id,
+        "name": f"角色 {workflow_run_id}",
+        "character_data": {"version": 1, "outfits": []},
+    }
+    payload.update(overrides)
+    body = auth_client.post("/characters", json=payload).json()
+    assert body["code"] == 200
+    return body["data"]
+
+
+def test_list_includes_project_preview_fallbacks(auth_client):
+    outfit_project = auth_client.post(
+        "/projects", json=_payload(project_name="造型预览")
+    ).json()["data"]
+    reference_project = auth_client.post(
+        "/projects", json=_payload(project_name="参考图预览")
+    ).json()["data"]
+    frame_project = auth_client.post(
+        "/projects", json=_payload(project_name="帧预览")
+    ).json()["data"]
+    auth_client.post("/projects", json=_payload(project_name="空项目"))
+
+    _create_character(
+        auth_client,
+        outfit_project["id"],
+        601,
+        reference_image_url="https://cdn.windup.test/reference-unused.png",
+        character_data={
+            "version": 1,
+            "outfits": [
+                {
+                    "id": "outfit-1",
+                    "name": "常态",
+                    "preview_url": "https://cdn.windup.test/outfit.png",
+                    "actions": [],
+                }
+            ],
+        },
+    )
+    _create_character(
+        auth_client,
+        reference_project["id"],
+        602,
+        reference_image_url="https://cdn.windup.test/reference.png",
+    )
+    _create_character(
+        auth_client,
+        frame_project["id"],
+        603,
+        character_data={
+            "version": 1,
+            "outfits": [
+                {
+                    "id": "outfit-3",
+                    "name": "常态",
+                    "preview_url": None,
+                    "actions": [
+                        {
+                            "id": "idle",
+                            "type": "idle",
+                            "name": "待机",
+                            "loop": True,
+                            "fps": 8,
+                            "frame_count": 1,
+                            "frames": [
+                                {
+                                    "index": 0,
+                                    "image_url": "https://cdn.windup.test/frame.png",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    body = auth_client.get("/projects", params={"page_size": 10}).json()
+    previews = {item["project_name"]: item["preview_url"] for item in body["data"]}
+
+    assert previews == {
+        "空项目": None,
+        "帧预览": "https://cdn.windup.test/frame.png",
+        "参考图预览": "https://cdn.windup.test/reference.png",
+        "造型预览": "https://cdn.windup.test/outfit.png",
+    }
+
+
+def test_list_loads_all_project_previews_with_one_character_query(auth_client, engine):
+    first = auth_client.post(
+        "/projects", json=_payload(project_name="固定查询一")
+    ).json()["data"]
+    second = auth_client.post(
+        "/projects", json=_payload(project_name="固定查询二")
+    ).json()["data"]
+    _create_character(auth_client, first["id"], 611)
+    _create_character(auth_client, second["id"], 612)
+    statements = []
+
+    def record_character_select(
+        _conn, _cursor, statement, _parameters, _context, _many
+    ):
+        normalized = statement.lower()
+        if (
+            normalized.lstrip().startswith("select")
+            and "windup_character" in normalized
+        ):
+            statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record_character_select)
+    try:
+        body = auth_client.get("/projects", params={"page_size": 10}).json()
+    finally:
+        event.remove(engine, "before_cursor_execute", record_character_select)
+
+    assert body["code"] == 200
+    assert len(statements) == 1
+
+
 # -- DELETE /projects/{id} ---------------------------------------------------
 
 
@@ -125,9 +249,9 @@ def test_delete_not_found_returns_404(auth_client):
 
 
 def test_delete_rejected_when_project_has_characters(auth_client):
-    created = auth_client.post("/projects", json=_payload(project_name="有角色")).json()[
-        "data"
-    ]
+    created = auth_client.post(
+        "/projects", json=_payload(project_name="有角色")
+    ).json()["data"]
     character = auth_client.post(
         "/characters",
         json={
@@ -147,10 +271,14 @@ def test_delete_rejected_when_project_has_characters(auth_client):
     assert body["message"] == "项目下仍有角色，无法删除"
     assert body["data"] is None
     assert auth_client.get(f"/projects/{created['id']}").json()["code"] == 200
-    assert auth_client.get(f"/characters/{character['data']['id']}").json()["code"] == 200
+    assert (
+        auth_client.get(f"/characters/{character['data']['id']}").json()["code"] == 200
+    )
 
 
-def test_delete_rejected_when_character_arrives_after_empty_check(auth_client, monkeypatch):
+def test_delete_rejected_when_character_arrives_after_empty_check(
+    auth_client, monkeypatch
+):
     """模拟检查与删除之间插入角色：应用层已看见空项目，数据库仍应拦住删除。"""
     created = auth_client.post("/projects", json=_payload(project_name="竞态")).json()[
         "data"
@@ -177,4 +305,6 @@ def test_delete_rejected_when_character_arrives_after_empty_check(auth_client, m
     assert body["code"] == 400
     assert body["message"] == "项目下仍有角色，无法删除"
     assert auth_client.get(f"/projects/{created['id']}").json()["code"] == 200
-    assert auth_client.get(f"/characters/{character['data']['id']}").json()["code"] == 200
+    assert (
+        auth_client.get(f"/characters/{character['data']['id']}").json()["code"] == 200
+    )
