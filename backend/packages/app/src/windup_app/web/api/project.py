@@ -52,6 +52,12 @@ class ProjectOut(BaseModel):
     update_at: datetime
 
 
+class ProjectListOut(ProjectOut):
+    """项目列表项；预览是读取投影，不写回 Project。"""
+
+    preview_url: str | None
+
+
 @router.post("", response_model=Response[ProjectOut])
 def create_project(
     body: ProjectCreate,
@@ -81,19 +87,30 @@ def create_project(
     return Response.success(ProjectOut.model_validate(project), message="创建成功")
 
 
-@router.get("", response_model=ListResponse[ProjectOut])
+@router.get("", response_model=ListResponse[ProjectListOut])
 def list_projects(
     request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     session: Session = Depends(get_session),
-) -> ListResponse[ProjectOut]:
+) -> ListResponse[ProjectListOut]:
     user_id = request.state.current_user.id
     projects, total = service.list_projects(
         session, page=page, page_size=page_size, user_id=user_id
     )
+    previews = service.list_project_previews(
+        session,
+        [project.id for project in projects],
+        character_limit=6,
+    )
     return ListResponse.success(
-        [ProjectOut.model_validate(item) for item in projects],
+        [
+            ProjectListOut(
+                **ProjectOut.model_validate(item).model_dump(),
+                preview_url=item.sprite_sample_url or previews[item.id],
+            )
+            for item in projects
+        ],
         total=total,
         page=page,
         page_size=page_size,
@@ -127,5 +144,7 @@ def delete_project(
         service.delete_project(session, project_id)
     except IntegrityError:
         session.rollback()
-        raise BizException("项目下仍有角色，无法删除", code=BizCode.BAD_REQUEST) from None
+        raise BizException(
+            "项目下仍有角色，无法删除", code=BizCode.BAD_REQUEST
+        ) from None
     return Response.success(None, message="删除成功")

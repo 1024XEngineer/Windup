@@ -10,6 +10,7 @@ const projectDto = {
   sprite_height: 96,
   game_style: null,
   sprite_sample_url: 'https://cdn.windup.test/style.png',
+  preview_url: 'https://cdn.windup.test/project-preview.png',
   create_at: '2026-08-01T08:00:00Z',
   update_at: '2026-08-02T09:30:00Z',
 }
@@ -61,6 +62,7 @@ describe('projectApis', () => {
           spriteSize: { width: 64, height: 96 },
           gameStyle: null,
           sampleImageUrl: 'https://cdn.windup.test/style.png',
+          previewUrl: 'https://cdn.windup.test/project-preview.png',
           createdAt: '2026-08-01T08:00:00Z',
           updatedAt: '2026-08-02T09:30:00Z',
         },
