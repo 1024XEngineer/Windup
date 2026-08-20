@@ -101,6 +101,87 @@ describe('PlaytestPage', () => {
     expect(stageFrameUrl()).toBe('https://cdn.windup.test/walk-01.png')
   })
 
+  it('uses the project movement mode to play an eight-way diagonal sequence', async () => {
+    const backend = createProjectAssetsBackend()
+    const directionalFetch: typeof globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init)
+      const response = await backend.fetch(input, init)
+      const path = new URL(request.url).pathname
+      if (path !== '/projects/42' && path !== '/characters/51') return response
+      const body = (await response.json()) as { data: Record<string, unknown> }
+      if (path === '/projects/42') body.data.directional_movement = 3
+      if (path === '/characters/51') {
+        const data = body.data as {
+          character_data: {
+            outfits: Array<{
+              actions: Array<{
+                id: string
+                frames: Array<{ index: number; image_url: string; duration_ms: number | null }>
+                sequences?: unknown[]
+              }>
+            }>
+          }
+        }
+        const walk = data.character_data.outfits[0]!.actions.find((action) => action.id === 'walk')!
+        walk.sequences = [
+          {
+            direction: 'east',
+            source_direction: null,
+            mirror_x: false,
+            frame_count: walk.frames.length,
+            frames: walk.frames,
+          },
+          {
+            direction: 'west',
+            source_direction: 'east',
+            mirror_x: true,
+            frame_count: walk.frames.length,
+            frames: [],
+          },
+          ...['north', 'south', 'north_east', 'south_east'].map((direction) => ({
+            direction,
+            source_direction: null,
+            mirror_x: false,
+            frame_count: 1,
+            frames: [
+              {
+                index: 0,
+                image_url: `https://cdn.windup.test/walk-${direction}.png`,
+                duration_ms: 100,
+              },
+            ],
+          })),
+          {
+            direction: 'north_west',
+            source_direction: 'north_east',
+            mirror_x: true,
+            frame_count: 1,
+            frames: [],
+          },
+          {
+            direction: 'south_west',
+            source_direction: 'south_east',
+            mirror_x: true,
+            frame_count: 1,
+            frames: [],
+          },
+        ]
+      }
+      return new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } })
+    }
+    renderPlaytest('/playtest/51/outfit-default?actionId=walk', directionalFetch)
+    expect(await screen.findByRole('heading', { name: '51 · 常态造型' })).toBeTruthy()
+
+    const right = screen.getByRole('button', { name: '向右移动' })
+    const up = screen.getByRole('button', { name: '向上移动' })
+    Object.assign(right, { setPointerCapture: vi.fn() })
+    Object.assign(up, { setPointerCapture: vi.fn() })
+    fireEvent.pointerDown(right, { pointerId: 1 })
+    fireEvent.pointerDown(up, { pointerId: 2 })
+
+    await waitFor(() => expect(stageFrameUrl()).toBe('https://cdn.windup.test/walk-north_east.png'))
+  })
+
   it('reports a missing outfit instead of falling back to another one', async () => {
     renderPlaytest('/playtest/51/outfit-missing')
 
