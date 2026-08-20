@@ -213,7 +213,9 @@ describe('AccountPanel', () => {
     )
     // 断言"进入冷却"，不断言"还剩 60 秒"：这条用例走真实计时器，点击到断言之间过掉
     // 一秒钟标签就成了 59s。近 30 小时里三个人的四条分支都栽在这一行。
-    expect(screen.getByRole('button', { name: /^\d+s$/u }).hasAttribute('disabled')).toBe(true)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^\d+s$/u }).hasAttribute('disabled')).toBe(true),
+    )
 
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'new@example.com' } })
     expect(screen.getByRole('button', { name: '发送验证码' }).hasAttribute('disabled')).toBe(false)

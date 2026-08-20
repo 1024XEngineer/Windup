@@ -18,6 +18,8 @@ import {
   type WorkflowRun,
   WorkflowRunConflictError,
 } from '@/entities'
+import { forgetActiveRun, isMissingActiveRunError, syncActiveRun } from '@/features/active-run'
+import { useOptionalAuthSession } from '@/features/auth-session'
 import { ExportButton, type ExportPackageModel } from '@/features/export-package'
 import { PixelMatrix } from '@/shared/ui'
 import { KineticCopyCycle, type KineticCopyMessage } from './kinetic-copy-cycle'
@@ -120,12 +122,21 @@ export interface QuickStartPageProps {
    * 未注入时，Quick Start 自己装配真实实体接口，避免 app 层承担流程细节。
    */
   service?: QuickStartEntryService
+  /** 直渲染页面测试可显式提供；生产中取当前认证用户。 */
+  activeRunUserId?: string
 }
 
 /** Quick Start 独立完成 AI 入口；它不跳转 Workflow Editor。 */
-export function QuickStartPage({ service }: QuickStartPageProps) {
+export function QuickStartPage({
+  service,
+  activeRunUserId: providedActiveRunUserId,
+}: QuickStartPageProps) {
   const { runId } = useParams()
   const [searchParams] = useSearchParams()
+  const authSession = useOptionalAuthSession()
+  const activeRunUserId =
+    providedActiveRunUserId ??
+    (authSession?.state.status === 'authenticated' ? authSession.state.user.id : null)
   const activeService = useMemo(() => {
     return service ?? quickStartService
   }, [service])
@@ -143,6 +154,7 @@ export function QuickStartPage({ service }: QuickStartPageProps) {
       initialSession={createdSession?.runId === runId ? createdSession : null}
       onSessionCreated={setCreatedSession}
       onInitialSessionConsumed={consumeCreatedSession}
+      activeRunUserId={activeRunUserId}
     />
   ) : characterId && outfitId ? (
     <QuickStartActionInput
@@ -582,12 +594,14 @@ function QuickStartRun({
   initialSession,
   onSessionCreated,
   onInitialSessionConsumed,
+  activeRunUserId,
 }: {
   service: QuickStartEntryService
   runId: string
   initialSession: QuickStartSession | null
   onSessionCreated: (session: QuickStartSession) => void
   onInitialSessionConsumed: (session: QuickStartSession) => void
+  activeRunUserId: string | null
 }) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -637,6 +651,11 @@ function QuickStartRun({
     }
   }, [])
 
+  // 用户会在生成的几分钟里离开这个页面，Header 靠这个指针提供返回入口。
+  useEffect(() => {
+    if (activeRunUserId) syncActiveRun(activeRunUserId, run)
+  }, [activeRunUserId, run])
+
   useEffect(() => {
     let active = true
     let currentSession: QuickStartSession | null = null
@@ -682,6 +701,9 @@ function QuickStartRun({
       }
     })().catch((cause) => {
       if (active) {
+        if (activeRunUserId && isMissingActiveRunError(cause)) {
+          forgetActiveRun(activeRunUserId, runId)
+        }
         reportWorkflowError(cause, '恢复生成任务失败')
         setRestoring(false)
       }
@@ -702,7 +724,14 @@ function QuickStartRun({
         pendingDisposeRef.current = { session: sessionToDispose, timer }
       }
     }
-  }, [clearWorkflowError, onInitialSessionConsumed, reportWorkflowError, runId, service])
+  }, [
+    activeRunUserId,
+    clearWorkflowError,
+    onInitialSessionConsumed,
+    reportWorkflowError,
+    runId,
+    service,
+  ])
 
   useEffect(() => {
     if (!run || !session) {

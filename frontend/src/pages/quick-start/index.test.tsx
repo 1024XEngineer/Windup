@@ -5,11 +5,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { QuickStartEntryService, QuickStartSession } from './service'
 import { WorkflowRunConflictError, type WorkflowRun } from '@/entities'
+import { ApiError } from '@/shared/api'
 import type { ExportPackageModel } from '@/features/export-package'
+import { readActiveRun, rememberActiveRun } from '@/features/active-run'
 import { QuickStartPage } from './index'
 
 afterEach(() => {
   cleanup()
+  window.localStorage.clear()
   vi.useRealTimers()
 })
 
@@ -156,8 +159,14 @@ function renderAt(path: string, service: QuickStartEntryService) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/quick-start" element={<QuickStartPage service={service} />} />
-        <Route path="/quick-start/:runId" element={<QuickStartPage service={service} />} />
+        <Route
+          path="/quick-start"
+          element={<QuickStartPage service={service} activeRunUserId="7" />}
+        />
+        <Route
+          path="/quick-start/:runId"
+          element={<QuickStartPage service={service} activeRunUserId="7" />}
+        />
         <Route path="/projects/:projectId/assets" element={<PlaytestLocation />} />
         <Route path="/playtest/:characterId/:outfitId" element={<PlaytestLocation />} />
       </Routes>
@@ -187,7 +196,10 @@ function renderWithRunSwitcher(
     <MemoryRouter initialEntries={[`/quick-start/${initialRunId}`]}>
       <Controls />
       <Routes>
-        <Route path="/quick-start/:runId" element={<QuickStartPage service={service} />} />
+        <Route
+          path="/quick-start/:runId"
+          element={<QuickStartPage service={service} activeRunUserId="7" />}
+        />
       </Routes>
     </MemoryRouter>,
   )
@@ -441,6 +453,19 @@ describe('QuickStartPage', () => {
     expect(screen.queryByText('WORKFLOW RUN')).toBeNull()
     expect(screen.queryByText(/STEPS PASSED/u)).toBeNull()
     expect(screen.getByRole('button', { name: '中断自动制作' })).toBeTruthy()
+  })
+
+  it('生成进行中时为 Header 留下返回入口，走完就清掉', async () => {
+    renderStateFixture('template-generating')
+
+    await waitFor(() => expect(readActiveRun('7')).toBe('run-1'))
+  })
+
+  it('没有节点在生成时不留返回入口', async () => {
+    renderStateFixture('template-selecting')
+
+    await screen.findByTestId('quick-start-transcript')
+    expect(readActiveRun('7')).toBeNull()
   })
 
   it('presents Agent replies as restrained product copy without display typography or avatars', async () => {
@@ -953,6 +978,20 @@ describe('QuickStartPage', () => {
     expect(await screen.findByRole('heading', { name: '无法恢复这次创作' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '返回快速开始' }))
     expect(screen.getByRole('textbox', { name: '创作指令' })).toBeTruthy()
+  })
+
+  it('clears the saved entry when the backend confirms that run is missing', async () => {
+    rememberActiveRun('7', 'missing')
+    const service = serviceFor(null, {
+      open: vi.fn(async () => {
+        throw new ApiError('执行记录不存在', { kind: 'business', code: 404, status: 200 })
+      }),
+    })
+
+    renderAt('/quick-start/missing', service)
+
+    expect(await screen.findByRole('heading', { name: '无法恢复这次创作' })).toBeTruthy()
+    expect(readActiveRun('7')).toBeNull()
   })
 
   it('opens a recoverable run once and accepts its session update', async () => {
