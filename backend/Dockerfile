@@ -1,7 +1,16 @@
 # ── 后端 Dockerfile ──────────────────────────────────────────────────
 # 多阶段构建:builder 装依赖 → runtime 只拷贝产物，镜像更小
 
-# ── 阶段 1: 构建 ──
+# ── 阶段 0: 构建两个独立的本地像素工具 ──
+FROM rust:1.89-slim AS pixel-tools-builder
+
+WORKDIR /build
+COPY native/pixel_grid_detector/ pixel_grid_detector/
+COPY native/pixel_grid_reconstructor/ pixel_grid_reconstructor/
+RUN cargo build --release --locked --manifest-path pixel_grid_detector/Cargo.toml \
+    && cargo build --release --locked --manifest-path pixel_grid_reconstructor/Cargo.toml
+
+# ── 阶段 1: 构建 Python 环境 ──
 FROM python:3.12-slim AS builder
 
 # 安装 uv（比 pip 快 10x）
@@ -38,6 +47,10 @@ WORKDIR /app
 # 从 builder 拷贝虚拟环境和包
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/packages /app/packages
+COPY --from=pixel-tools-builder /build/pixel_grid_detector/target/release/windup-pixel-grid-detector /usr/local/bin/windup-pixel-grid-detector
+COPY --from=pixel-tools-builder /build/pixel_grid_reconstructor/target/release/windup-pixel-grid-reconstructor /usr/local/bin/windup-pixel-grid-reconstructor
+COPY native/pixel_grid_detector/LICENSE /licenses/pixel-grid-detector/LICENSE
+COPY native/pixel_grid_reconstructor/LICENSE /licenses/pixel-grid-reconstructor/LICENSE
 
 # 把 venv/bin 加入 PATH
 ENV PATH="/app/.venv/bin:$PATH"
@@ -46,6 +59,8 @@ ENV PATH="/app/.venv/bin:$PATH"
 ENV WINDUP_HOST=0.0.0.0
 ENV WINDUP_PORT=8000
 ENV WINDUP_RELOAD=false
+ENV PIXEL_GRID_DETECTOR_BIN=/usr/local/bin/windup-pixel-grid-detector
+ENV PIXEL_GRID_RECONSTRUCTOR_BIN=/usr/local/bin/windup-pixel-grid-reconstructor
 
 EXPOSE 8000
 
