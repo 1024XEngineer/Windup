@@ -1,4 +1,4 @@
-import type { PlaytestAction } from './model'
+import { hasPlayableFrames, type PlaytestAction } from './model'
 
 export const PLAYTEST_CONTROL_KEYS = ['space', 'shift'] as const
 
@@ -20,5 +20,5 @@ function findAction(
   actions: readonly PlaytestAction[],
   predicate: (action: PlaytestAction) => boolean,
 ) {
-  return actions.find((action) => action.frames.length > 0 && predicate(action))
+  return actions.find((action) => hasPlayableFrames(action) && predicate(action))
 }

@@ -109,6 +109,26 @@ def test_extract_object_keys_includes_directional_action_frames(monkeypatch):
         workflow_run_id=1,
         reference_image_url="https://assets.example.com/characters/reference.png",
         character_data={
+            "templates": [
+                {
+                    "direction": "east",
+                    "source_direction": None,
+                    "mirror_x": False,
+                    "image_url": "https://assets.example.com/characters/reference.png",
+                },
+                {
+                    "direction": "west",
+                    "source_direction": "east",
+                    "mirror_x": True,
+                    "image_url": None,
+                },
+                {
+                    "direction": "north",
+                    "source_direction": None,
+                    "mirror_x": False,
+                    "image_url": "https://assets.example.com/characters/north.png",
+                },
+            ],
             "outfits": [
                 {
                     "preview_url": "https://assets.example.com/outfits/preview.png",
@@ -146,6 +166,7 @@ def test_extract_object_keys_includes_directional_action_frames(monkeypatch):
 
     assert character_api._extract_object_keys(character) == [
         "characters/reference.png",
+        "characters/north.png",
         "outfits/preview.png",
         "actions/legacy.png",
         "actions/north.png",
@@ -153,6 +174,125 @@ def test_extract_object_keys_includes_directional_action_frames(monkeypatch):
 
 
 # -- POST /characters --------------------------------------------------------
+
+
+def test_directional_character_templates_roundtrip(auth_client):
+    project = _create_project(auth_client)
+    templates = [
+        {
+            "direction": "east",
+            "source_direction": None,
+            "mirror_x": False,
+            "image_url": "https://example.com/template-east.png",
+        },
+        {
+            "direction": "west",
+            "source_direction": "east",
+            "mirror_x": True,
+            "image_url": None,
+        },
+        {
+            "direction": "north",
+            "source_direction": None,
+            "mirror_x": False,
+            "image_url": "https://example.com/template-north.png",
+        },
+    ]
+    payload = _payload(
+        project["id"],
+        reference_image_url="https://example.com/template-east.png",
+        character_data={"templates": templates, "outfits": []},
+    )
+
+    created = auth_client.post("/characters", json=payload).json()["data"]
+    fetched = auth_client.get(f"/characters/{created['id']}").json()["data"]
+
+    assert fetched["character_data"]["templates"] == templates
+
+
+@pytest.mark.parametrize(
+    "templates",
+    [
+        [
+            {
+                "direction": "east",
+                "source_direction": None,
+                "mirror_x": True,
+                "image_url": "https://example.com/template-east.png",
+            }
+        ],
+        [
+            {
+                "direction": "east",
+                "source_direction": None,
+                "mirror_x": False,
+                "image_url": " ",
+            }
+        ],
+        [
+            {
+                "direction": "west",
+                "source_direction": "east",
+                "mirror_x": False,
+                "image_url": None,
+            }
+        ],
+        [
+            {
+                "direction": "east",
+                "source_direction": None,
+                "mirror_x": False,
+                "image_url": "https://example.com/template-east.png",
+            },
+            {
+                "direction": "west",
+                "source_direction": "east",
+                "mirror_x": True,
+                "image_url": "https://example.com/template-west.png",
+            },
+        ],
+        [
+            {
+                "direction": "east",
+                "source_direction": None,
+                "mirror_x": False,
+                "image_url": "https://example.com/template-east.png",
+            },
+            {
+                "direction": "east",
+                "source_direction": None,
+                "mirror_x": False,
+                "image_url": "https://example.com/template-east-2.png",
+            },
+        ],
+        [
+            {
+                "direction": "west",
+                "source_direction": "east",
+                "mirror_x": True,
+                "image_url": None,
+            }
+        ],
+    ],
+    ids=[
+        "source-mirror-flags",
+        "source-empty-image",
+        "mirror-flags",
+        "mirror-image",
+        "duplicate",
+        "missing-source",
+    ],
+)
+def test_rejects_invalid_directional_character_templates(auth_client, templates):
+    project = _create_project(auth_client)
+    payload = _payload(
+        project["id"],
+        character_data={"templates": templates, "outfits": []},
+    )
+
+    response = auth_client.post("/characters", json=payload).json()
+
+    assert response["code"] == 400
 
 
 def test_create_with_name(auth_client):

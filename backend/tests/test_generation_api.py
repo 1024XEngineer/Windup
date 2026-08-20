@@ -114,6 +114,33 @@ def test_action_generation_uses_token_user_without_body_user_id(auth_client):
     assert body["data"]["status"] == "pending"
 
 
+def test_image_generation_rejects_mirrored_direction(auth_client):
+    project = _create_project(auth_client)
+
+    response = auth_client.post(
+        "/generation/image",
+        json=_image_payload(project["id"], direction="west"),
+    )
+
+    body = response.json()
+    assert body["code"] == 400
+    assert "镜像方向" in body["message"]
+
+
+def test_action_generation_rejects_mirrored_direction(auth_client):
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+
+    response = auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"], direction="west"),
+    )
+
+    body = response.json()
+    assert body["code"] == 400
+    assert "镜像方向" in body["message"]
+
+
 def test_action_character_must_belong_to_requested_project(auth_client):
     first_project = _create_project(auth_client, "项目一")
     second_project = _create_project(auth_client, "项目二")
@@ -190,8 +217,9 @@ def test_image_endpoint_actually_creates_a_task_row(auth_client):
     assert body["data"] is not None, body
     task_id = body["data"]["id"]
 
-    got = auth_client.get(f"/generation/tasks/{task_id}",
-                          params={"project_id": project["id"]}).json()
+    got = auth_client.get(
+        f"/generation/tasks/{task_id}", params={"project_id": project["id"]}
+    ).json()
     assert got["data"]["id"] == task_id
     assert got["data"]["status"] == "pending"
 
@@ -217,8 +245,9 @@ def test_task_query_rejects_a_task_from_another_project(auth_client):
     other = _create_project(auth_client, "另一个项目")
     task_id = _submit_image(auth_client, other["id"])["data"]["id"]
 
-    got = auth_client.get(f"/generation/tasks/{task_id}",
-                          params={"project_id": mine["id"]}).json()
+    got = auth_client.get(
+        f"/generation/tasks/{task_id}", params={"project_id": mine["id"]}
+    ).json()
     assert got["data"] is None, got
 
 
@@ -242,11 +271,17 @@ def test_validation_error_message_tells_the_user_what_is_wrong(auth_client):
     读不懂的"请求参数校验失败",而"custom 动作必须提供 custom_prompt"就在 data 里躺着。
     """
     project = _create_project(auth_client)
-    r = auth_client.post("/generation/action", json={
-        "project_id": project["id"], "character_id": 1,
-        "action_type": "custom", "custom_prompt": "",
-        "num_frames": 32, "reference_image_urls": ["https://media.windup.xin/x.png"],
-    })
+    r = auth_client.post(
+        "/generation/action",
+        json={
+            "project_id": project["id"],
+            "character_id": 1,
+            "action_type": "custom",
+            "custom_prompt": "",
+            "num_frames": 32,
+            "reference_image_urls": ["https://media.windup.xin/x.png"],
+        },
+    )
     body = r.json()
     assert body["code"] == 400
     assert body["message"] != "请求参数校验失败", "还是笼统文案,用户看不懂"

@@ -49,11 +49,17 @@ export type {
   CharacterPageQuery,
   CharacterPublicationStatus,
   CharacterStatus,
+  CharacterTemplate,
   CreateCharacterInput,
   Frame,
   Outfit,
 } from './character'
-export { CHARACTER_STATUS, characterApis } from './character'
+export {
+  CHARACTER_STATUS,
+  characterApis,
+  characterTemplateImages,
+  characterTemplatesFromImages,
+} from './character'
 export {
   ACTION_DIRECTIONS,
   getDirectionProfile,

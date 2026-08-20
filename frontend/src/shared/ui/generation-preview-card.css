@@ -1,0 +1,54 @@
+.generation-preview-shell {
+  position: relative;
+  width: 100%;
+}
+
+.generation-preview-card {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  isolation: isolate;
+  border: 1px solid var(--color-app-line);
+  background: var(--color-app-surface-raised);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 62%, transparent);
+  animation: generation-preview-enter 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: 100ms;
+}
+
+.generation-preview-card--candidate {
+  aspect-ratio: 1;
+}
+
+.generation-preview-card--master {
+  aspect-ratio: 4 / 3;
+}
+
+.generation-preview-card--output {
+  border-radius: 1rem;
+}
+
+.generation-preview-card--node {
+  border-radius: 0.625rem;
+}
+
+@keyframes generation-preview-enter {
+  from {
+    opacity: 0;
+    filter: blur(10px);
+    transform: translate3d(0, 10px, 0) scale(0.988);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .generation-preview-card {
+    opacity: 1;
+    filter: none;
+    transform: none;
+    animation: none;
+  }
+}

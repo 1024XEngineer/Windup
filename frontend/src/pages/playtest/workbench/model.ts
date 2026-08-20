@@ -29,6 +29,13 @@ export interface PlaytestModel {
   readonly actions: readonly PlaytestAction[]
 }
 
+export function hasPlayableFrames(action: PlaytestAction): boolean {
+  return (
+    action.frames.length > 0 ||
+    Object.values(action.sequences ?? {}).some((playback) => (playback?.frames.length ?? 0) > 0)
+  )
+}
+
 export type PlaytestModelResult =
   | { readonly ok: true; readonly model: PlaytestModel }
   | { readonly ok: false; readonly reason: 'outfit_not_found' }

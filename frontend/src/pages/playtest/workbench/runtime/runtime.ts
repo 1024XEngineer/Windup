@@ -1,7 +1,12 @@
 import type { ActionDirection, DirectionalMovement } from '@/entities'
 
 import type { PlaytestActionBindings, PlaytestControlKey } from '../bindings'
-import type { PlaytestAction, PlaytestFrame, PlaytestPlayback } from '../model'
+import {
+  hasPlayableFrames,
+  type PlaytestAction,
+  type PlaytestFrame,
+  type PlaytestPlayback,
+} from '../model'
 
 export type Direction = 'left' | 'right'
 export type MovementDirection = 'up' | 'down' | Direction
@@ -57,25 +62,18 @@ export function playbackForFacing(
   }
 }
 
-function hasFrames(action: PlaytestAction): boolean {
-  return (
-    action.frames.length > 0 ||
-    Object.values(action.sequences ?? {}).some((playback) => (playback?.frames.length ?? 0) > 0)
-  )
-}
-
 function actionById(
   actions: readonly PlaytestAction[],
   actionId: string | null,
 ): PlaytestAction | undefined {
-  return actions.find((action) => action.id === actionId && hasFrames(action))
+  return actions.find((action) => action.id === actionId && hasPlayableFrames(action))
 }
 
 function actionByType(
   actions: readonly PlaytestAction[],
   type: PlaytestAction['type'],
 ): PlaytestAction | undefined {
-  return actions.find((action) => action.type === type && hasFrames(action))
+  return actions.find((action) => action.type === type && hasPlayableFrames(action))
 }
 
 const FACING_FALLBACK_ORDER: readonly Facing[] = [
@@ -107,7 +105,7 @@ function initialAction(
   return (
     actionById(actions, requestedActionId) ??
     actionByType(actions, 'idle') ??
-    actions.find(hasFrames)
+    actions.find(hasPlayableFrames)
   )
 }
 

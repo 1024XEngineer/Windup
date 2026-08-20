@@ -36,4 +36,35 @@ describe('playtest action bindings', () => {
       shift: null,
     })
   })
+
+  it('binds actions whose playable frames only exist in directional sequences', () => {
+    const directionalFrame = { imageUrl: '/north.png', durationMs: 100 }
+    const jump = {
+      ...action('directional-jump', 'jump'),
+      frames: [],
+      sequences: {
+        north: {
+          frames: [directionalFrame],
+          sourceDirection: 'north' as const,
+          mirrorX: false,
+        },
+      },
+    }
+    const crouch = {
+      ...action('directional-crouch', 'crouch'),
+      frames: [],
+      sequences: {
+        south: {
+          frames: [directionalFrame],
+          sourceDirection: 'south' as const,
+          mirrorX: false,
+        },
+      },
+    }
+
+    expect(createDefaultActionBindings([jump, crouch])).toEqual({
+      space: 'directional-jump',
+      shift: 'directional-crouch',
+    })
+  })
 })

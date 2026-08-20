@@ -158,6 +158,7 @@ class LocalSpriteRenderProvider:
         *,
         clip: str | None = None,
         directions: int = 4,
+        direction: str | None = None,
         frames: int = 12,
         size: tuple[int, int] = RENDER_SIZE,
         material: str = "cel",
@@ -176,7 +177,14 @@ class LocalSpriteRenderProvider:
                 "找不到 three.js。装一份(npm i three)或用 WINDUP_THREE_DIR / "
                 "LocalSpriteRenderProvider(three_dir=...) 指过去。")
 
-        table = DIRECTIONS_8 if directions == 8 else DIRECTIONS_4
+        direction_table = DIRECTIONS_8 if directions == 8 else DIRECTIONS_4
+        if direction is not None and direction not in direction_table:
+            raise ValueError(f"方向 {direction!r} 不属于当前 {directions} 向项目")
+        table = (
+            {direction: direction_table[direction]}
+            if direction is not None
+            else direction_table
+        )
         with tempfile.TemporaryDirectory(prefix="windup_bake_") as tmp:
             root = pathlib.Path(tmp)
             docroot = root / "www"

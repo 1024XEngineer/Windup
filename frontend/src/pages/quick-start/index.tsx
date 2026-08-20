@@ -18,12 +18,21 @@ import {
   type WorkflowRun,
   WorkflowRunConflictError,
 } from '@/entities'
+import { forgetActiveRun, isMissingActiveRunError, syncActiveRun } from '@/features/active-run'
+import { useOptionalAuthSession } from '@/features/auth-session'
 import { ExportButton, type ExportPackageModel } from '@/features/export-package'
-import { PixelMatrix } from '@/shared/ui'
-import { KineticCopyCycle, type KineticCopyMessage } from './kinetic-copy-cycle'
+import {
+  GenerationPreviewCard,
+  GenerationProgressCopy,
+  KineticCopyCycle,
+  type KineticCopyMessage,
+} from '@/shared/ui'
 import {
   quickStartService,
+  type QuickStartCandidate,
+  type QuickStartDirectionSelections,
   type QuickStartEntryService,
+  type QuickStartFailedDirection,
   type QuickStartFrame,
   type QuickStartSession,
 } from './service'
@@ -76,35 +85,46 @@ const ROLE_IDEA_MESSAGES: readonly KineticCopyMessage[] = [
   })),
 ]
 
+const DIRECTION_LABELS = {
+  east: '东',
+  west: '西',
+  north: '北',
+  south: '南',
+  north_east: '东北',
+  north_west: '西北',
+  south_east: '东南',
+  south_west: '西南',
+} as const
+
+function groupCandidates(candidates: readonly (QuickStartCandidate | string)[]) {
+  const groups = new Map<QuickStartCandidate['direction'], QuickStartCandidate[]>()
+  for (const candidate of candidates) {
+    const direction = typeof candidate === 'string' ? 'east' : (candidate.direction ?? 'east')
+    const group = groups.get(direction) ?? []
+    group.push(
+      typeof candidate === 'string'
+        ? { direction, index: group.length, imageUrl: candidate }
+        : { ...candidate, direction },
+    )
+    groups.set(direction, group)
+  }
+  return [...groups].map(([direction, items]) => ({ direction, items }))
+}
+
+function allDirectionsSelected(
+  candidates: readonly (QuickStartCandidate | string)[],
+  selections: QuickStartDirectionSelections,
+): boolean {
+  const directions = new Set(
+    candidates.map((candidate) =>
+      typeof candidate === 'string' ? 'east' : (candidate.direction ?? 'east'),
+    ),
+  )
+  return directions.size > 0 && [...directions].every((direction) => Boolean(selections[direction]))
+}
+
 const ROLE_DEFAULT_MESSAGE: readonly KineticCopyMessage[] = [
   { lines: ['用文字塑造你的角色……'], className: 'text-app-ink' },
-]
-
-const TEMPLATE_GENERATION_MESSAGES: readonly KineticCopyMessage[] = [
-  { lines: ['勾勒角色轮廓'] },
-  { lines: ['给衣服配颜色'] },
-  { lines: ['把发型画清楚'] },
-  { lines: ['添上表情'] },
-  { lines: ['处理一下光影'] },
-  { lines: ['补齐画面细节'] },
-]
-
-const FIRST_FRAME_GENERATION_MESSAGES: readonly KineticCopyMessage[] = [
-  { lines: ['摆好动作姿态'] },
-  { lines: ['调整手脚位置'] },
-  { lines: ['让重心自然一点'] },
-  { lines: ['拉开姿态的区别'] },
-  { lines: ['保持角色样子'] },
-  { lines: ['补上动作细节'] },
-]
-
-const ACTION_GENERATION_MESSAGES: readonly KineticCopyMessage[] = [
-  { lines: ['把动作连起来'] },
-  { lines: ['补上中间的变化'] },
-  { lines: ['理顺每一帧的节奏'] },
-  { lines: ['检查手脚的衔接'] },
-  { lines: ['让起落自然一点'] },
-  { lines: ['调整动作幅度'] },
 ]
 
 const ENTRY_HANDOFF_MS = 460
@@ -120,12 +140,21 @@ export interface QuickStartPageProps {
    * 未注入时，Quick Start 自己装配真实实体接口，避免 app 层承担流程细节。
    */
   service?: QuickStartEntryService
+  /** 直渲染页面测试可显式提供；生产中取当前认证用户。 */
+  activeRunUserId?: string
 }
 
 /** Quick Start 独立完成 AI 入口；它不跳转 Workflow Editor。 */
-export function QuickStartPage({ service }: QuickStartPageProps) {
+export function QuickStartPage({
+  service,
+  activeRunUserId: providedActiveRunUserId,
+}: QuickStartPageProps) {
   const { runId } = useParams()
   const [searchParams] = useSearchParams()
+  const authSession = useOptionalAuthSession()
+  const activeRunUserId =
+    providedActiveRunUserId ??
+    (authSession?.state.status === 'authenticated' ? authSession.state.user.id : null)
   const activeService = useMemo(() => {
     return service ?? quickStartService
   }, [service])
@@ -143,6 +172,7 @@ export function QuickStartPage({ service }: QuickStartPageProps) {
       initialSession={createdSession?.runId === runId ? createdSession : null}
       onSessionCreated={setCreatedSession}
       onInitialSessionConsumed={consumeCreatedSession}
+      activeRunUserId={activeRunUserId}
     />
   ) : characterId && outfitId ? (
     <QuickStartActionInput
@@ -482,29 +512,6 @@ function AgentCopy({
   )
 }
 
-function GenerationProgress({
-  label,
-  messages,
-}: {
-  label: string
-  messages: readonly KineticCopyMessage[]
-}) {
-  return (
-    <div data-generation-progress className="min-h-8 overflow-hidden">
-      <KineticCopyCycle
-        active
-        ariaLabel={label}
-        messages={messages}
-        motionMode="characters"
-        firstCycleMs={7_540}
-        cycleMs={8_000}
-        loopStartIndex={0}
-        className="quick-start-agent-copy quick-start-generation-shimmer justify-items-start text-left font-serif text-[17px] leading-7 font-medium tracking-[-0.025em] text-app-ink"
-      />
-    </div>
-  )
-}
-
 function UserTurn({ children }: { children: ReactNode }) {
   return (
     <div
@@ -561,19 +568,89 @@ function AssetVisual({
   )
 }
 
-function GenerationCanvas({ label }: { label: string }) {
+function DirectionCandidatePicker({
+  candidates,
+  selections,
+  disabled,
+  kind,
+  onSelect,
+}: {
+  candidates: readonly QuickStartCandidate[]
+  selections: QuickStartDirectionSelections
+  disabled: boolean
+  kind: '角色方案' | '动作首帧'
+  onSelect: (direction: QuickStartCandidate['direction'], imageUrl: string) => void
+}) {
+  const groups = groupCandidates(candidates)
+  const multipleDirections = groups.length > 1
+  const imageName = kind === '角色方案' ? '角色图候选' : '动作首帧候选'
+
   return (
     <div
-      role="img"
-      aria-label={label}
-      data-generation-state="generating"
-      data-generation-motion="continuous"
-      data-reveal="generation-canvas"
-      className="quick-start-generation-canvas"
+      data-layout="agent-result-set"
+      className={`grid w-full max-w-2xl ${multipleDirections ? 'gap-5' : 'grid-cols-2 gap-3'}`}
     >
-      <PixelMatrix />
+      {groups.map((group) => (
+        <section
+          key={group.direction}
+          aria-label={`${DIRECTION_LABELS[group.direction]}方向${kind}候选`}
+          className={multipleDirections ? 'grid gap-2' : 'col-span-2 grid'}
+        >
+          {multipleDirections ? (
+            <p className="text-xs font-bold text-app-muted">
+              {DIRECTION_LABELS[group.direction]}方向
+            </p>
+          ) : null}
+          <div data-layout="agent-result-set" className="grid w-full max-w-2xl grid-cols-2 gap-3">
+            {group.items.map((candidate, displayIndex) => {
+              const chosen = selections[group.direction] === candidate.imageUrl
+              const directionLabel = multipleDirections
+                ? `${DIRECTION_LABELS[group.direction]}方向`
+                : ''
+              return (
+                <button
+                  key={`${candidate.imageUrl}:${candidate.index}`}
+                  type="button"
+                  aria-label={`选择${directionLabel}${kind} ${displayIndex + 1}`}
+                  aria-pressed={chosen}
+                  disabled={disabled}
+                  onClick={() => onSelect(group.direction, candidate.imageUrl)}
+                  data-asset-choice="true"
+                  data-result-priority={
+                    kind === '动作首帧'
+                      ? displayIndex === 0
+                        ? 'primary'
+                        : 'alternative'
+                      : undefined
+                  }
+                  data-reveal="card"
+                  style={{ '--reveal-index': displayIndex } as CSSProperties}
+                  className={`quick-start-reveal-card relative aspect-square overflow-hidden rounded-2xl border bg-app-surface-raised text-left transition duration-200 ${
+                    chosen
+                      ? 'border-app-accent ring-1 ring-app-accent'
+                      : 'border-app-line hover:border-app-line-strong'
+                  } disabled:cursor-default disabled:hover:border-app-line`}
+                >
+                  <span data-asset-frame className="block h-full min-h-0 bg-app-surface-muted">
+                    <AssetVisual
+                      src={candidate.imageUrl}
+                      alt={`${directionLabel}${imageName} ${displayIndex + 1}`}
+                      priority={displayIndex === 0}
+                      className="quick-start-generated-image aspect-square h-full w-full object-contain [image-rendering:pixelated]"
+                    />
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </section>
+      ))}
     </div>
   )
+}
+
+function GenerationCanvas({ label }: { label: string }) {
+  return <GenerationPreviewCard label={label} />
 }
 
 function QuickStartRun({
@@ -582,12 +659,14 @@ function QuickStartRun({
   initialSession,
   onSessionCreated,
   onInitialSessionConsumed,
+  activeRunUserId,
 }: {
   service: QuickStartEntryService
   runId: string
   initialSession: QuickStartSession | null
   onSessionCreated: (session: QuickStartSession) => void
   onInitialSessionConsumed: (session: QuickStartSession) => void
+  activeRunUserId: string | null
 }) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -596,12 +675,16 @@ function QuickStartRun({
   const [restoring, setRestoring] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [workflowConflict, setWorkflowConflict] = useState(false)
-  const [selectedCandidate, setSelectedCandidate] = useState<string | null>(null)
-  const [selectedFirstFrame, setSelectedFirstFrame] = useState<string | null>(null)
+  const [selectedCandidates, setSelectedCandidates] = useState<QuickStartDirectionSelections>({})
+  const [selectedFirstFrames, setSelectedFirstFrames] = useState<QuickStartDirectionSelections>({})
   const [actionDescription, setActionDescription] = useState('')
-  const [candidates, setCandidates] = useState<readonly string[]>([])
-  const [firstFrameCandidates, setFirstFrameCandidates] = useState<readonly QuickStartFrame[]>([])
+  const [candidates, setCandidates] = useState<readonly QuickStartCandidate[]>([])
+  const [firstFrameCandidates, setFirstFrameCandidates] = useState<readonly QuickStartCandidate[]>(
+    [],
+  )
   const [actionFrames, setActionFrames] = useState<readonly QuickStartFrame[]>([])
+  const [failedDirections, setFailedDirections] = useState<readonly QuickStartFailedDirection[]>([])
+  const [retryingDirection, setRetryingDirection] = useState<string | null>(null)
   const [exportModel, setExportModel] = useState<ExportPackageModel | null>(null)
   const [publishing, setPublishing] = useState(false)
   const [confirmingCandidate, setConfirmingCandidate] = useState(false)
@@ -637,6 +720,11 @@ function QuickStartRun({
     }
   }, [])
 
+  // 用户会在生成的几分钟里离开这个页面，Header 靠这个指针提供返回入口。
+  useEffect(() => {
+    if (activeRunUserId) syncActiveRun(activeRunUserId, run)
+  }, [activeRunUserId, run])
+
   useEffect(() => {
     let active = true
     let currentSession: QuickStartSession | null = null
@@ -645,6 +733,8 @@ function QuickStartRun({
     setRestoring(true)
     setSession(null)
     setRun(null)
+    setSelectedCandidates({})
+    setSelectedFirstFrames({})
     workflowConflictRef.current = false
     setError(null)
     setWorkflowConflict(false)
@@ -682,6 +772,9 @@ function QuickStartRun({
       }
     })().catch((cause) => {
       if (active) {
+        if (activeRunUserId && isMissingActiveRunError(cause)) {
+          forgetActiveRun(activeRunUserId, runId)
+        }
         reportWorkflowError(cause, '恢复生成任务失败')
         setRestoring(false)
       }
@@ -702,13 +795,21 @@ function QuickStartRun({
         pendingDisposeRef.current = { session: sessionToDispose, timer }
       }
     }
-  }, [clearWorkflowError, onInitialSessionConsumed, reportWorkflowError, runId, service])
+  }, [
+    activeRunUserId,
+    clearWorkflowError,
+    onInitialSessionConsumed,
+    reportWorkflowError,
+    runId,
+    service,
+  ])
 
   useEffect(() => {
     if (!run || !session) {
       setCandidates([])
       setFirstFrameCandidates([])
       setActionFrames([])
+      setFailedDirections([])
       setExportModel(null)
       return
     }
@@ -718,28 +819,32 @@ function QuickStartRun({
       session.getFirstFrameCandidates(),
       session.getActionFrames(),
       session.getExportModel(),
+      session.getFailedGenerationDirections(),
     ])
-      .then(([nextCandidates, nextFirstFrameCandidates, nextFrames, nextExportModel]) => {
-        if (!active) return
-        const templateIsSelecting = run.nodes.some(
-          (node) =>
-            node.type === 'character-template' &&
-            node.status === 'active' &&
-            node.phase === 'selecting',
-        )
-        const firstFrameIsSelecting = run.nodes.some(
-          (node) =>
-            node.type === 'action-first-frame' &&
-            node.status === 'active' &&
-            node.phase === 'selecting',
-        )
-        if (templateIsSelecting && nextCandidates.length > 0) setCandidates(nextCandidates)
-        if (firstFrameIsSelecting && nextFirstFrameCandidates.length > 0) {
-          setFirstFrameCandidates(nextFirstFrameCandidates)
-        }
-        if (nextFrames.length > 0) setActionFrames(nextFrames)
-        setExportModel(nextExportModel)
-      })
+      .then(
+        ([nextCandidates, nextFirstFrameCandidates, nextFrames, nextExportModel, nextFailed]) => {
+          if (!active) return
+          const templateIsSelecting = run.nodes.some(
+            (node) =>
+              node.type === 'character-template' &&
+              node.status === 'active' &&
+              node.phase === 'selecting',
+          )
+          const firstFrameIsSelecting = run.nodes.some(
+            (node) =>
+              node.type === 'action-first-frame' &&
+              node.status === 'active' &&
+              node.phase === 'selecting',
+          )
+          if (templateIsSelecting && nextCandidates.length > 0) setCandidates(nextCandidates)
+          if (firstFrameIsSelecting && nextFirstFrameCandidates.length > 0) {
+            setFirstFrameCandidates(nextFirstFrameCandidates)
+          }
+          if (nextFrames.length > 0) setActionFrames(nextFrames)
+          setExportModel(nextExportModel)
+          setFailedDirections(nextFailed)
+        },
+      )
       .catch((cause) => {
         if (active) reportWorkflowError(cause, '读取生成结果失败')
       })
@@ -832,6 +937,25 @@ function QuickStartRun({
   const isFirstFrameSelecting =
     firstFrameStep?.status === 'active' && firstFrameStep.phase === 'selecting'
   const isFirstFrameFailed = firstFrameStep?.status === 'failed'
+  const candidateGroups = groupCandidates(candidates)
+  const firstFrameCandidateGroups = groupCandidates(firstFrameCandidates)
+  const templateSelections: QuickStartDirectionSelections = {
+    ...(templateStep?.selectedImageUrl ? { east: templateStep.selectedImageUrl } : {}),
+    ...(templateStep?.selectedImages ?? {}),
+    ...selectedCandidates,
+  }
+  const firstFrameSelections: QuickStartDirectionSelections = {
+    ...(firstFrameStep?.selectedFirstFrameUrl
+      ? { east: firstFrameStep.selectedFirstFrameUrl }
+      : {}),
+    ...(firstFrameStep?.selectedFirstFrameUrls ?? {}),
+    ...selectedFirstFrames,
+  }
+  const templateSelectionComplete = allDirectionsSelected(candidates, templateSelections)
+  const firstFrameSelectionComplete = allDirectionsSelected(
+    firstFrameCandidates,
+    firstFrameSelections,
+  )
 
   async function interrupt() {
     try {
@@ -862,14 +986,14 @@ function QuickStartRun({
   }
 
   async function confirmSelection() {
-    if (workflowConflictRef.current || !selectedCandidate || confirmingCandidate) return
+    if (workflowConflictRef.current || !templateSelectionComplete || confirmingCandidate) return
     setConfirmingCandidate(true)
     clearWorkflowError()
     try {
       if (!session) return
-      const updated = await session.confirmCandidate(selectedCandidate, actionDescription)
+      const updated = await session.confirmCandidate(templateSelections, actionDescription)
       setRun(updated)
-      setSelectedCandidate(null)
+      setSelectedCandidates({})
       setActionDescription('')
     } catch (cause) {
       reportWorkflowError(cause, '确认选择失败')
@@ -879,14 +1003,14 @@ function QuickStartRun({
   }
 
   async function confirmFirstFrame() {
-    if (workflowConflictRef.current || !selectedFirstFrame || confirmingFirstFrame) return
+    if (workflowConflictRef.current || !firstFrameSelectionComplete || confirmingFirstFrame) return
     setConfirmingFirstFrame(true)
     clearWorkflowError()
     try {
       if (!session) return
-      const updated = await session.confirmFirstFrame(selectedFirstFrame)
+      const updated = await session.confirmFirstFrame(firstFrameSelections)
       setRun(updated)
-      setSelectedFirstFrame(null)
+      setSelectedFirstFrames({})
     } catch (cause) {
       reportWorkflowError(cause, '确认动作首帧失败')
     } finally {
@@ -919,6 +1043,51 @@ function QuickStartRun({
     }
   }
 
+  async function retryFailedDirection(item: QuickStartFailedDirection) {
+    const targetSession = session
+    if (!targetSession || workflowConflictRef.current) return
+    const key = `${item.nodeId}:${item.direction}`
+    setRetryingDirection(key)
+    clearWorkflowError()
+    try {
+      const updated = await targetSession.retryGenerationDirection(item.nodeId, item.direction)
+      if (!mountedRef.current || activeSessionRef.current !== targetSession) return
+      setRun(updated)
+    } catch (cause) {
+      if (!mountedRef.current || activeSessionRef.current !== targetSession) return
+      reportWorkflowError(cause, `重试${DIRECTION_LABELS[item.direction]}方向失败`)
+    } finally {
+      if (mountedRef.current && activeSessionRef.current === targetSession) {
+        setRetryingDirection(null)
+      }
+    }
+  }
+
+  function DirectionRetryButtons({ nodeId }: { nodeId: string }) {
+    const items = failedDirections.filter((item) => item.nodeId === nodeId)
+    if (items.length === 0) return null
+    return (
+      <div className="flex flex-wrap gap-2">
+        {items.map((item) => {
+          const key = `${item.nodeId}:${item.direction}`
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => void retryFailedDirection(item)}
+              disabled={retryingDirection !== null || workflowConflict}
+              className="rounded-lg border border-current px-3 py-1.5 text-xs font-bold text-app-danger disabled:opacity-50"
+            >
+              {retryingDirection === key
+                ? `正在重试${DIRECTION_LABELS[item.direction]}方向…`
+                : `重试${DIRECTION_LABELS[item.direction]}方向`}
+            </button>
+          )
+        })}
+      </div>
+    )
+  }
+
   function continueConversation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (workflowConflictRef.current) return
@@ -933,13 +1102,13 @@ function QuickStartRun({
   }
 
   const composerPlaceholder = isTemplateSelecting
-    ? selectedCandidate
+    ? templateSelectionComplete
       ? '描述这个角色接下来要做的动作…'
-      : '先从上面选择一个角色…'
+      : '请先为每个方向选择一个角色方案…'
     : isFirstFrameSelecting
-      ? selectedFirstFrame
+      ? firstFrameSelectionComplete
         ? '按发送确认这张首帧…'
-        : '先从上面选择一个动作首帧…'
+        : '请先为每个方向选择一个动作首帧…'
       : workflowHasFailure(run)
         ? '这次未完成，可以新建一次创作…'
         : canPublish
@@ -947,13 +1116,11 @@ function QuickStartRun({
           : '制作中，完成后可以继续修改…'
 
   const composerCanSubmit =
-    (isTemplateSelecting && Boolean(selectedCandidate)) ||
-    (isFirstFrameSelecting && Boolean(selectedFirstFrame))
+    (isTemplateSelecting && templateSelectionComplete) ||
+    (isFirstFrameSelecting && firstFrameSelectionComplete)
   const selectedTemplateUrl = templateStep?.selectedImageUrl
   const selectedFirstFrameUrl = firstFrameStep?.selectedFirstFrameUrl
   const requestedAction = firstFrameStep?.input.prompt || firstFrameStep?.input.name
-  const chosenTemplateUrl = selectedTemplateUrl ?? selectedCandidate
-  const chosenFirstFrameUrl = selectedFirstFrameUrl ?? selectedFirstFrame
   const characterTurnIsCurrent = !firstFrameStep
   const firstFrameTurnIsCurrent = Boolean(firstFrameStep) && actionStep?.status === 'locked'
   const actionTurnIsCurrent = Boolean(actionStep && actionStep.status !== 'locked')
@@ -985,47 +1152,25 @@ function QuickStartRun({
                 <>
                   <AgentCopy
                     lines={[
-                      '已生成 3 个角色方向。',
+                      candidateGroups.length > 1
+                        ? `已生成 ${candidateGroups.length} 个方向的角色方案。`
+                        : `已生成 ${candidates.length} 个角色方案。`,
                       isTemplateSelecting
-                        ? '选择一个方案，再描述它接下来的动作。'
+                        ? candidateGroups.length > 1
+                          ? '为每个方向选择一个方案，再描述它接下来的动作。'
+                          : '选择一个方案，再描述它接下来的动作。'
                         : '角色方案已确认。',
                     ]}
                   />
-                  <div
-                    data-layout="agent-result-set"
-                    className="grid w-full max-w-2xl grid-cols-3 gap-3"
-                  >
-                    {candidates.map((candidateUrl, index) => (
-                      <button
-                        key={`${candidateUrl}:${index}`}
-                        type="button"
-                        aria-label={`选择角色方案 ${index + 1}`}
-                        aria-pressed={chosenTemplateUrl === candidateUrl}
-                        disabled={!isTemplateSelecting || confirmingCandidate || workflowConflict}
-                        onClick={() => setSelectedCandidate(candidateUrl)}
-                        data-asset-choice="true"
-                        data-reveal="card"
-                        style={{ '--reveal-index': index } as CSSProperties}
-                        className={`quick-start-reveal-card group/asset relative aspect-square overflow-hidden rounded-2xl border bg-app-surface-raised text-left transition duration-200 ${
-                          chosenTemplateUrl === candidateUrl
-                            ? 'border-app-accent ring-1 ring-app-accent'
-                            : 'border-app-line hover:border-app-line-strong'
-                        } disabled:cursor-default disabled:hover:border-app-line`}
-                      >
-                        <span
-                          data-asset-frame
-                          className="block h-full min-h-0 bg-app-surface-muted"
-                        >
-                          <AssetVisual
-                            src={candidateUrl}
-                            alt={`角色图候选 ${index + 1}`}
-                            priority={index === 0}
-                            className="quick-start-generated-image aspect-square h-full w-full object-contain [image-rendering:pixelated]"
-                          />
-                        </span>
-                      </button>
-                    ))}
-                  </div>
+                  <DirectionCandidatePicker
+                    candidates={candidates}
+                    selections={templateSelections}
+                    disabled={!isTemplateSelecting || confirmingCandidate || workflowConflict}
+                    kind="角色方案"
+                    onSelect={(direction, imageUrl) =>
+                      setSelectedCandidates((current) => ({ ...current, [direction]: imageUrl }))
+                    }
+                  />
                   <button
                     type="button"
                     onClick={() => void regenerate()}
@@ -1058,13 +1203,11 @@ function QuickStartRun({
                       '你的描述还在。换一种说法，或者补充新的要求后再试一次。',
                     ]}
                   />
+                  {templateStep ? <DirectionRetryButtons nodeId={templateStep.id} /> : null}
                 </>
               ) : (
                 <>
-                  <GenerationProgress
-                    label="角色生成进度"
-                    messages={TEMPLATE_GENERATION_MESSAGES}
-                  />
+                  <GenerationProgressCopy label="角色生成进度" kind="character-template" />
                   <div
                     data-layout="agent-result-set"
                     className="grid w-full max-w-2xl grid-cols-3 gap-3"
@@ -1083,51 +1226,33 @@ function QuickStartRun({
                     <>
                       <AgentCopy
                         lines={[
-                          isFirstFrameSelecting ? '已生成 3 个动作起始姿态。' : '动作首帧',
                           isFirstFrameSelecting
-                            ? '选择一个起始姿态，随后生成完整动作。'
+                            ? firstFrameCandidateGroups.length > 1
+                              ? `已生成 ${firstFrameCandidateGroups.length} 个方向的动作起始姿态。`
+                              : `已生成 ${firstFrameCandidates.length} 个动作起始姿态。`
+                            : '动作首帧',
+                          isFirstFrameSelecting
+                            ? firstFrameCandidateGroups.length > 1
+                              ? '为每个方向选择一个起始姿态，随后生成完整动作。'
+                              : '选择一个起始姿态，随后生成完整动作。'
                             : '动作起始姿态已确认。',
                         ]}
                       />
-                      <div
-                        data-layout="agent-result-set"
-                        className="grid w-full max-w-2xl grid-cols-3 gap-3"
-                      >
-                        {firstFrameCandidates.map((frame, index) => (
-                          <button
-                            key={`${frame.imageUrl}:${index}`}
-                            type="button"
-                            aria-label={`选择动作首帧 ${index + 1}`}
-                            aria-pressed={chosenFirstFrameUrl === frame.imageUrl}
-                            disabled={
-                              !isFirstFrameSelecting || confirmingFirstFrame || workflowConflict
-                            }
-                            onClick={() => setSelectedFirstFrame(frame.imageUrl)}
-                            data-asset-choice="true"
-                            data-result-priority={index === 0 ? 'primary' : 'alternative'}
-                            data-reveal="card"
-                            style={{ '--reveal-index': index } as CSSProperties}
-                            className={`quick-start-reveal-card relative overflow-hidden rounded-2xl border bg-app-surface-raised text-left transition ${
-                              chosenFirstFrameUrl === frame.imageUrl
-                                ? 'border-app-accent ring-1 ring-app-accent'
-                                : 'border-app-line hover:border-app-line-strong'
-                            } disabled:cursor-default disabled:hover:border-app-line`}
-                          >
-                            <span
-                              data-asset-frame
-                              className="block aspect-square bg-app-surface-muted"
-                            >
-                              <AssetVisual
-                                src={frame.imageUrl}
-                                alt={`动作首帧候选 ${index + 1}`}
-                                priority={index === 0}
-                                className="quick-start-generated-image h-full w-full object-contain [image-rendering:pixelated]"
-                              />
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                      {selectedFirstFrame ? (
+                      <DirectionCandidatePicker
+                        candidates={firstFrameCandidates}
+                        selections={firstFrameSelections}
+                        disabled={
+                          !isFirstFrameSelecting || confirmingFirstFrame || workflowConflict
+                        }
+                        kind="动作首帧"
+                        onSelect={(direction, imageUrl) =>
+                          setSelectedFirstFrames((current) => ({
+                            ...current,
+                            [direction]: imageUrl,
+                          }))
+                        }
+                      />
+                      {firstFrameSelectionComplete ? (
                         <button
                           type="button"
                           onClick={() => void confirmFirstFrame()}
@@ -1158,13 +1283,11 @@ function QuickStartRun({
                         tone="danger"
                         lines={['动作首帧生成失败', '内容还在，可以在下面修改要求后重试。']}
                       />
+                      <DirectionRetryButtons nodeId={firstFrameStep.id} />
                     </>
                   ) : (
                     <>
-                      <GenerationProgress
-                        label="动作首帧生成进度"
-                        messages={FIRST_FRAME_GENERATION_MESSAGES}
-                      />
+                      <GenerationProgressCopy label="动作首帧生成进度" kind="action-first-frame" />
                       <div
                         data-layout="agent-result-set"
                         className="grid w-full max-w-2xl grid-cols-3 gap-3"
@@ -1246,13 +1369,11 @@ function QuickStartRun({
                         tone="danger"
                         lines={['动作生成失败', '内容还在，可以在下面修改要求后重试。']}
                       />
+                      <DirectionRetryButtons nodeId={actionStep.id} />
                     </>
                   ) : (
                     <>
-                      <GenerationProgress
-                        label="完整动作生成进度"
-                        messages={ACTION_GENERATION_MESSAGES}
-                      />
+                      <GenerationProgressCopy label="完整动作生成进度" kind="action-full-frame" />
                       <div
                         data-layout="agent-result-set"
                         className="grid w-full max-w-2xl grid-cols-3 gap-3"

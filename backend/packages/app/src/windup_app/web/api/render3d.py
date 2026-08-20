@@ -21,6 +21,7 @@ from windup_common.result import Response
 from windup_framework.db import get_session
 
 from windup_app.server.character.model import Character, CharacterData
+from windup_app.server.orchestrator._failure import user_message
 from windup_app.server.character.service import service as character_service
 from windup_app.web.api.character import get_character_with_auth
 
@@ -117,7 +118,7 @@ def precheck_master(
     try:
         report = _precheck(request)(body.image_url, canvas)
     except ValueError as exc:
-        raise BizException(str(exc), code=BizCode.BAD_REQUEST) from exc
+        raise BizException(user_message(exc), code=BizCode.BAD_REQUEST) from exc
     return Response.success(report)
 
 
@@ -155,7 +156,7 @@ def build_outfit_asset(
             message="已开始生成 3D 模型",
         )
     except ValueError as exc:
-        raise BizException(str(exc), code=BizCode.BAD_REQUEST) from exc
+        raise BizException(user_message(exc), code=BizCode.BAD_REQUEST) from exc
 
 
 @router.post("/characters/{character_id}/outfits/{outfit_id}/approve", response_model=Response[dict])
@@ -174,7 +175,7 @@ def approve_outfit_asset(
             _asset_key(character_id, outfit_id), _master_url_or_raise(outfit)
         )
     except ValueError as exc:
-        raise BizException(str(exc), code=BizCode.BAD_REQUEST) from exc
+        raise BizException(user_message(exc), code=BizCode.BAD_REQUEST) from exc
     return Response.success(view, message="已放行,开始绑骨")
 
 
@@ -192,5 +193,5 @@ def discard_outfit_asset(
     try:
         view = _operations(request).discard(_asset_key(character_id, outfit_id))
     except ValueError as exc:
-        raise BizException(str(exc), code=BizCode.BAD_REQUEST) from exc
+        raise BizException(user_message(exc), code=BizCode.BAD_REQUEST) from exc
     return Response.success(view, message="已丢弃待审模型")
