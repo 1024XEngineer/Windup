@@ -57,7 +57,8 @@ describe('ProjectDetailPage', () => {
     expect(await screen.findByRole('heading', { name: '轻装信使' })).toBeTruthy()
     expect(screen.getByRole('link', { name: '项目资产' })).toBeTruthy()
     expect(screen.queryByText('穿戴')).toBeNull()
-    expect(container.querySelector('[data-route-transition="/projects/42/assets/51"]')).toBeTruthy()
+    expect(container.querySelector('[data-testid="route-motion-surface"]')).toBeTruthy()
+    expect(container.querySelector('[data-route-transition]')).toBeNull()
   })
 
   it('keeps the Project workspace available when the character count request fails', async () => {
