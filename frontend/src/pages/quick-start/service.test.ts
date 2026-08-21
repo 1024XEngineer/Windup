@@ -1507,7 +1507,11 @@ describe('createQuickStartService', () => {
                 status: 'completed' as const,
                 result: {
                   type: 'character_template' as const,
-                  images: [{ url: 'candidate.png' }, { url: 'candidate-2.png' }],
+                  images: [
+                    { url: 'candidate.png' },
+                    { url: 'candidate-2.png' },
+                    { url: 'candidate-3.png' },
+                  ],
                 },
                 error: null,
               }
@@ -1562,6 +1566,7 @@ describe('createQuickStartService', () => {
       await expect(started.getTemplateCandidates()).resolves.toEqual([
         { direction: 'east', index: 0, imageUrl: 'candidate.png' },
         { direction: 'east', index: 1, imageUrl: 'candidate-2.png' },
+        { direction: 'east', index: 2, imageUrl: 'candidate-3.png' },
       ])
     })
 
@@ -1616,6 +1621,7 @@ describe('createQuickStartService', () => {
                   images: [
                     { url: `${direction}-${input.type}-1.png` },
                     { url: `${direction}-${input.type}-2.png` },
+                    { url: `${direction}-${input.type}-3.png` },
                   ],
                 },
                 error: null,
@@ -1652,10 +1658,13 @@ describe('createQuickStartService', () => {
       await expect(session.getTemplateCandidates()).resolves.toEqual([
         { direction: 'east', index: 0, imageUrl: 'east-character_template-1.png' },
         { direction: 'east', index: 1, imageUrl: 'east-character_template-2.png' },
+        { direction: 'east', index: 2, imageUrl: 'east-character_template-3.png' },
         { direction: 'north', index: 0, imageUrl: 'north-character_template-1.png' },
         { direction: 'north', index: 1, imageUrl: 'north-character_template-2.png' },
+        { direction: 'north', index: 2, imageUrl: 'north-character_template-3.png' },
         { direction: 'south', index: 0, imageUrl: 'south-character_template-1.png' },
         { direction: 'south', index: 1, imageUrl: 'south-character_template-2.png' },
+        { direction: 'south', index: 2, imageUrl: 'south-character_template-3.png' },
       ])
     })
     const selectedTemplates = {
@@ -1685,10 +1694,13 @@ describe('createQuickStartService', () => {
       await expect(session.getFirstFrameCandidates()).resolves.toEqual([
         { direction: 'east', index: 0, imageUrl: 'east-first_frame-1.png' },
         { direction: 'east', index: 1, imageUrl: 'east-first_frame-2.png' },
+        { direction: 'east', index: 2, imageUrl: 'east-first_frame-3.png' },
         { direction: 'north', index: 0, imageUrl: 'north-first_frame-1.png' },
         { direction: 'north', index: 1, imageUrl: 'north-first_frame-2.png' },
+        { direction: 'north', index: 2, imageUrl: 'north-first_frame-3.png' },
         { direction: 'south', index: 0, imageUrl: 'south-first_frame-1.png' },
         { direction: 'south', index: 1, imageUrl: 'south-first_frame-2.png' },
+        { direction: 'south', index: 2, imageUrl: 'south-first_frame-3.png' },
       ])
     })
     expect(

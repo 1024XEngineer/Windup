@@ -34,7 +34,7 @@ async function generateCharacter() {
 - `entities/workflow-run` 定义纯数据和异步 CRUD，不包含推进方法。
 - Controller 根据 `dependsOnNodeIds` 解锁节点，允许同一依赖下的多个 Action 并行。
 - 新增 Action 一次创建动作首帧、动作生成方式、完整动画和审核四个 node，不会遗漏路线选择或用数组位置猜关系。
-- 动作首帧按项目的真实源方向分别调用图片 Generation，每个方向生成两张候选；用户为全部真实方向各确认一张后，完整动画节点才使用对应首帧调用 32 帧动作 Generation。可水平镜像的方向只保存关系，不创建重复任务。
+- 动作首帧按项目的真实源方向分别调用图片 Generation，每个方向生成三张候选；用户为全部真实方向各确认一张后，完整动画节点才使用对应首帧调用 32 帧动作 Generation。可水平镜像的方向只保存关系，不创建重复任务。
 - Controller 方法与后端 Generation、WorkflowRun node 使用同一概念名：`characterTemplate`、`firstFrame`、`completeAnimation` 和 `review`，不再为同一概念保留另一套叫法。
 - 当前视频裁剪路线继续调用既有 Generation；3D 转 2D 选择会随 WorkflowRun 落库，但接口提供前明确阻止生成。
 - Generation 通过 `nodeId + taskId` 写回；节点重做后，旧任务的迟到结果会被丢弃。

@@ -173,7 +173,7 @@ function expectedBackendType(type: GenerationType): BackendGenerationType {
   return type === 'complete_animation' ? 'character_action' : 'character_image'
 }
 
-export const IMAGE_CANDIDATE_COUNT = 2
+export const IMAGE_CANDIDATE_COUNT = 3
 
 const DEFAULT_DIRECTION: ActionDirection = 'east'
 
@@ -600,7 +600,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
         negative_prompt: '',
         width: inputPositiveInteger(input.spriteWidth, 'spriteWidth'),
         height: inputPositiveInteger(input.spriteHeight, 'spriteHeight'),
-        // 角色母版和动作首帧都由一次图片任务生成两张候选。
+        // 角色母版和动作首帧都由一次图片任务生成三张候选。
         num_images: IMAGE_CANDIDATE_COUNT,
         direction: input.direction ?? DEFAULT_DIRECTION,
       })
