@@ -518,7 +518,7 @@ function MarketingHeaderView({ session, wave, onWave }: MarketingHeaderViewProps
     <header
       data-layout="unified"
       data-surface="frosted-bar"
-      className="sticky top-0 z-50 border-b border-[#d8d6ce] bg-[#f3f2ec]/92 text-[#252520] backdrop-blur-xl"
+      className="sticky top-0 z-50 border-b border-rule bg-app-canvas/92 text-ink backdrop-blur-xl"
     >
       <div className="relative mx-auto flex min-h-18 w-full max-w-[82rem] items-center justify-between px-4 sm:px-8 lg:px-12">
         <Link
@@ -534,8 +534,8 @@ function MarketingHeaderView({ session, wave, onWave }: MarketingHeaderViewProps
           <strong className="hidden font-serif text-lg leading-none sm:inline">
             <WaveText playId={wave.entry === 'brand' ? wave.playId : 0} text="Windup" />
           </strong>
-          <span aria-hidden="true" className="hidden h-4 w-px bg-[#d2d0c7] lg:block" />
-          <span className="hidden truncate text-meta text-[#74736d] lg:block">
+          <span aria-hidden="true" className="hidden h-4 w-px bg-rule lg:block" />
+          <span className="hidden truncate text-meta text-ink-faint lg:block">
             2D 角色资产工作台
           </span>
         </Link>
