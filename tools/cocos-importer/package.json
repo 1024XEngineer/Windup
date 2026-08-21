@@ -1,0 +1,15 @@
+{
+  "name": "windup-importer",
+  "version": "0.1.0",
+  "description": "把 Windup 一键导出的 Cocos Creator 适配包自动导入到 Cocos Creator 工程。",
+  "author": "xyh202131",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "cli": "node ./bin/windup-cocos-import.mjs",
+    "test": "node --test test/manifest-reader.test.mjs test/asset-planner.test.mjs test/bridge-uuid.test.mjs test/import-core.test.mjs test/e2e-cli.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
