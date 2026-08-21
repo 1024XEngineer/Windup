@@ -68,6 +68,11 @@ def _fit_first_frame(frame: bytes, size: str, *, background: tuple[int, int, int
 
     小于目标画布的输入必须**放大**:128x128 的 sprite 原尺寸贴进 1280x720 只占 13% 高,
     等于自愿把主体有效分辨率砍掉七分之六,之后无论 i2v 还是重抠图都补不回来。
+
+    **放大用 NEAREST,缩小用 LANCZOS。** 放大是把一个源像素铺成一块,插值会在块边界
+    造出源图里没有的中间色:实测一张 256x256 的像素画母版放到 720x720,唯一色从 5982
+    涨到 32479(5.4 倍),硬边糊成渐变,而这张糊图正是喂给 i2v 的输入。缩小反过来,
+    NEAREST 会丢样出锯齿。交付侧的 ``_fit_to`` 早就是这条规则,这里与它对齐。
     """
     from PIL import Image
 
@@ -83,7 +88,7 @@ def _fit_first_frame(frame: bytes, size: str, *, background: tuple[int, int, int
         pad = im.getpixel((0, 0))     # 不透明输入沿用角点色,补边与画面自身背景连成一片
     scale = min(w/im.width, h/im.height)
     tw, th = max(1, round(im.width*scale)), max(1, round(im.height*scale))
-    fitted = im.resize((tw, th), Image.LANCZOS)
+    fitted = im.resize((tw, th), Image.NEAREST if scale > 1 else Image.LANCZOS)
     canvas = Image.new("RGB", (w, h), pad)
     canvas.paste(fitted, ((w - tw)//2, (h - th)//2))
     buf = io.BytesIO()
