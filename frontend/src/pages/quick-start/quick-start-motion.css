@@ -2,6 +2,57 @@
   width: 100%;
 }
 
+.quick-start-agent-loading {
+  min-height: 1.75rem;
+  display: flex;
+  align-items: center;
+}
+
+.quick-start-agent-loading-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.quick-start-agent-loading-dot {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  background: var(--color-app-muted);
+  opacity: 0.22;
+  filter: blur(1px);
+  animation: quick-start-agent-loading 1.1s ease-in-out infinite;
+  animation-delay: calc(var(--agent-loading-index, 0) * 150ms);
+}
+
+.quick-start-agent-composer {
+  position: relative;
+}
+
+.quick-start-agent-composer[data-prompt-state='rewriting'] {
+  border-color: color-mix(in srgb, var(--color-app-accent) 58%, var(--color-app-line-strong));
+  box-shadow: var(--shadow-app-composer-focus);
+}
+
+.quick-start-agent-composer[data-prompt-state='rewriting']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 15%,
+    color-mix(in srgb, var(--color-app-accent) 8%, transparent) 48%,
+    transparent 82%
+  );
+  transform: translateX(-110%);
+  animation: quick-start-prompt-sweep 1.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.quick-start-prompt-kinetic {
+  place-items: start;
+}
+
 .quick-start-reveal-card {
   opacity: 0;
   filter: blur(7px);
@@ -56,10 +107,36 @@
   }
 }
 
+@keyframes quick-start-agent-loading {
+  50% {
+    opacity: 0.9;
+    filter: blur(0);
+    transform: translateY(-0.16rem);
+  }
+}
+
+@keyframes quick-start-prompt-sweep {
+  to {
+    transform: translateX(110%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .quick-start-reveal-card,
   .quick-start-generated-image {
     opacity: 1;
+    filter: none;
+    transform: none;
+    animation: none;
+  }
+
+  .quick-start-agent-composer[data-prompt-state='rewriting']::after {
+    display: none;
+    animation: none;
+  }
+
+  .quick-start-agent-loading-dot {
+    opacity: 0.55;
     filter: none;
     transform: none;
     animation: none;
