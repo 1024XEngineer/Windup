@@ -46,8 +46,8 @@ services:
   # ── 后端 API 服务 ──
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: windup-backend
     restart: unless-stopped
     depends_on:
@@ -70,8 +70,8 @@ services:
   # ── Worker（MQ 消费：邮件 + 生成调度） ──
   worker:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: windup-worker
     restart: unless-stopped
     depends_on:
