@@ -706,6 +706,7 @@ describe('WorkflowController', () => {
         type: 'action-full-frame',
         status: 'locked',
         dependsOnNodeIds: ['action-walk:action-generation-method'],
+        input: { prompt: null },
       },
       {
         id: 'action-walk:review',
@@ -813,6 +814,43 @@ describe('WorkflowController', () => {
     expect(generation.apis.create).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'complete_animation', outfitId: 'outfit-1' }),
     )
+  })
+
+  it('完整动画保存并使用自己的提示词，不复用动作首帧提示词', async () => {
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        input: actionInput({ prompt: '挥拳前保持蓄势姿势' }),
+        selectedFirstFrameUrl: 'https://img/first.png',
+      }),
+      generationMethodNode({ status: 'passed', phase: 'completed', method: 'video-cropping' }),
+      fullFrameNode({ status: 'active' }),
+      reviewNode(),
+    ])
+    const { controller, generation } = createController(run)
+
+    await controller.generateCompleteAnimation('action-walk:action-full-frame', {
+      characterId: 'character-backend-1',
+      referenceMedia: [],
+      prompt: '向前挥拳、击中后自然收势，保持身体重心连续',
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'complete_animation',
+        prompt: '向前挥拳、击中后自然收势，保持身体重心连续',
+      }),
+    )
+    expect(
+      controller.getWorkflow().nodes.find((node) => node.id === 'action-walk:action-full-frame'),
+    ).toMatchObject({
+      input: { prompt: '向前挥拳、击中后自然收势，保持身体重心连续' },
+    })
+    expect(controller.getWorkflow().nodes.find((node) => node.id === 'action-walk')).toMatchObject({
+      input: { prompt: '挥拳前保持蓄势姿势' },
+    })
   })
 
   it('角色母版通过后按显式边同时解锁多个 Action 首帧节点', async () => {
@@ -1523,7 +1561,7 @@ describe('WorkflowController', () => {
     ])
   })
 
-  it('完整动画只重试失败方向并沿用同方向首帧', async () => {
+  it('完整动画只重试失败方向并沿用同方向首帧和独立动作描述', async () => {
     const run = createRun([
       setupNode({
         status: 'passed',
@@ -1538,6 +1576,7 @@ describe('WorkflowController', () => {
       firstFrameNode({
         status: 'passed',
         phase: 'completed',
+        input: actionInput({ prompt: '挥拳前保持蓄势姿势' }),
         selectedFirstFrameUrl: 'east-frame.png',
         selectedFirstFrameUrls: {
           east: 'east-frame.png',
@@ -1549,6 +1588,7 @@ describe('WorkflowController', () => {
       fullFrameNode({
         status: 'failed',
         phase: 'generating',
+        input: { prompt: '向前挥拳、击中后自然收势' },
         generations: [
           { taskId: 'task-east', role: 'complete_animation' },
           { taskId: 'task-north', role: 'complete_animation', direction: 'north' },
@@ -1589,7 +1629,7 @@ describe('WorkflowController', () => {
       method: 'video-cropping',
       actionType: 'walk',
       firstFrameUrl: 'north-frame.png',
-      prompt: null,
+      prompt: '向前挥拳、击中后自然收势',
       referenceMedia: ['north-reference.png'],
       direction: 'north',
     })
