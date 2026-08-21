@@ -30,7 +30,7 @@ import type {
 } from '@/entities'
 import {
   getDirectionProfile,
-  IMAGE_CANDIDATE_COUNT,
+  isImageCandidateCount,
   ProjectNameConflictError,
   WorkflowRunConflictError,
 } from '@/entities'
@@ -1860,7 +1860,7 @@ function generationResultError(node: WorkflowNode, generation: Generation): stri
   if (node.type === 'character-template') {
     return generation.type === 'character_template' &&
       generation.result?.type === 'character_template' &&
-      generation.result.images.length === IMAGE_CANDIDATE_COUNT
+      isImageCandidateCount(generation.result.images.length)
       ? null
       : '角色候选图结果格式无效'
   }
@@ -1868,7 +1868,7 @@ function generationResultError(node: WorkflowNode, generation: Generation): stri
   if (node.type === 'action-first-frame') {
     return generation.type === 'first_frame' &&
       generation.result?.type === 'first_frame' &&
-      generation.result.images.length === IMAGE_CANDIDATE_COUNT &&
+      isImageCandidateCount(generation.result.images.length) &&
       generation.result.images.every((image) => Boolean(image.url))
       ? null
       : '动作首帧结果格式无效'

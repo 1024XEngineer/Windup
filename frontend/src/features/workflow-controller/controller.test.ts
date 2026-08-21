@@ -2471,6 +2471,31 @@ describe('WorkflowController', () => {
     expect(controller.getWorkflow().nodes[1].phase).toBe('selecting')
   })
 
+  it('刷新后恢复历史双候选角色母版任务', async () => {
+    const { controller, generation } = createController()
+    await controller.generateCharacterTemplate('setup-1', { spriteWidth: 64, spriteHeight: 64 })
+    await controller.interrupt()
+    generation.snapshots.set('task-1', {
+      id: 'task-1',
+      projectId: '1',
+      type: 'character_template',
+      status: 'completed',
+      result: {
+        type: 'character_template',
+        images: [{ url: 'https://img/legacy-1.png' }, { url: 'https://img/legacy-2.png' }],
+      },
+      error: null,
+    })
+
+    await controller.resume()
+
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+      status: 'active',
+      phase: 'selecting',
+      error: null,
+    })
+  })
+
   it('首帧订阅后的补偿查询沿用节点的图片结果预期', async () => {
     const run = createRun([...completedCharacterNodes(), ...actionNodes()])
     const workflow = createWorkflowApis(run)
@@ -3082,7 +3107,7 @@ describe('WorkflowController', () => {
     })
   })
 
-  it('角色母版节点拒绝候选数量不足的结果', async () => {
+  it('角色母版节点拒绝没有候选的结果', async () => {
     const run = createRun([
       setupNode({ status: 'passed', phase: 'completed' }),
       templateNode({
@@ -3101,7 +3126,7 @@ describe('WorkflowController', () => {
         projectId: '1',
         type: 'character_template',
         status: 'completed',
-        result: { type: 'character_template', images: [{ url: 'only-one.png' }] },
+        result: { type: 'character_template', images: [] },
         error: null,
       },
     })

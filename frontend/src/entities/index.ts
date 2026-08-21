@@ -80,6 +80,7 @@ export {
   createGenerationApis,
   GenerationApiError,
   IMAGE_CANDIDATE_COUNT,
+  isImageCandidateCount,
 } from './generation/api'
 export type {
   CharacterTemplateGenerationInput,
@@ -97,6 +98,7 @@ export type {
   GenerationResult,
   GenerationResultFor,
   GenerationType,
+  ImageCandidateCount,
   TaskStatus,
 } from './generation'
 export type { GenerationApiConfig, GenerationTransport } from './generation/api'
