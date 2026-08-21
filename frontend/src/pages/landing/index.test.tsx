@@ -49,6 +49,11 @@ describe('LandingPage', () => {
 
     expect(await screen.findByRole('heading', { name: '让你的角色，真正登场。' })).toBeTruthy()
     expect(screen.getByRole('navigation', { name: '宣传页导航' })).toBeTruthy()
+    const globalHeader = document.querySelector('header[data-layout="unified"]')
+    expect(globalHeader?.getAttribute('data-layout')).toBe('unified')
+    expect(globalHeader?.getAttribute('data-surface')).toBe('frosted-bar')
+    expect(globalHeader?.firstElementChild?.className).toContain('min-h-18')
+    expect(globalHeader?.className).toContain('sticky')
     expect(screen.getByRole('link', { name: '登录' }).getAttribute('href')).toBe(
       '/?account=login&returnTo=%2Fworkspace',
     )

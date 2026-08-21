@@ -2,6 +2,15 @@ html:has(.landing-page) {
   scroll-behavior: smooth;
 }
 
+@media (max-width: 1023px) {
+  .landing-page {
+    --text-display: clamp(2.25rem, 10vw, 3rem);
+    --text-title: clamp(1.75rem, 8vw, 2.25rem);
+    --text-lead: 1rem;
+    --text-subtitle: 1.125rem;
+  }
+}
+
 @keyframes landing-rise {
   from {
     opacity: 0;

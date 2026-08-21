@@ -20,6 +20,7 @@ type AccountMenuState = 'closed' | 'open' | 'closing'
 
 export interface AppHeaderProps {
   quotaApis?: QuotaApis
+  variant?: 'product' | 'marketing'
 }
 
 const accountMenuExitDurationMs = 260
@@ -62,6 +63,12 @@ function navItemClassName(active: boolean, waving: boolean): string {
       ? 'text-app-accent after:scale-x-100'
       : 'text-app-muted after:scale-x-0 hover:text-app-accent'
   } ${waving ? 'app-header-text-wave' : ''}`
+}
+
+function marketingNavItemClassName(waving: boolean): string {
+  return `relative inline-flex min-h-11 items-center px-1.5 text-body font-medium whitespace-nowrap text-app-muted transition-colors after:absolute after:inset-x-1.5 after:bottom-0 after:h-[2px] after:origin-center after:scale-x-0 after:bg-app-accent after:transition-transform hover:text-app-accent hover:after:scale-x-100 focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent sm:px-3 sm:after:inset-x-3 ${
+    waving ? 'app-header-text-wave' : ''
+  }`
 }
 
 /**
@@ -107,7 +114,10 @@ function WaveText({ playId, text }: { playId: number; text: string }) {
  * 跨页面顶栏知道产品路由，因此属于 app 外壳，不下沉到 shared/ui。
  * 品牌、主导航和账号共用一个平面，避免三个功能层被误读成彼此独立的卡片。
  */
-export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {}) {
+export function AppHeader({
+  quotaApis = defaultQuotaApis,
+  variant = 'product',
+}: AppHeaderProps = {}) {
   const { pathname, search, hash } = useLocation()
   const navigate = useNavigate()
   const session = useAuthSession()
@@ -203,6 +213,10 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
 
   function playTextWave(entry: string) {
     setWave(({ playId }) => ({ entry, playId: playId + 1 }))
+  }
+
+  if (variant === 'marketing') {
+    return <MarketingHeaderView session={session} wave={wave} onWave={playTextWave} />
   }
 
   return (
@@ -466,6 +480,129 @@ export function AppHeader({ quotaApis = defaultQuotaApis }: AppHeaderProps = {})
                 </button>
               </div>
             </>
+          )}
+        </div>
+      </div>
+    </header>
+  )
+}
+
+interface MarketingHeaderViewProps {
+  session: ReturnType<typeof useAuthSession>
+  wave: { entry: string; playId: number }
+  onWave: (entry: string) => void
+}
+
+const marketingNavigation = [
+  { href: '#capabilities', label: '产品能力', compactLabel: '能力', motionKey: 'capabilities' },
+  { href: '#workflow', label: '制作流程', compactLabel: '流程', motionKey: 'workflow' },
+  { href: '#workspace', label: '资产工作台', compactLabel: '资产', motionKey: 'workspace' },
+] as const
+
+const marketingLoginEntry = `/?${new URLSearchParams({
+  account: 'login',
+  returnTo: '/workspace',
+})}`
+
+const marketingRegisterEntry = `/?${new URLSearchParams({
+  account: 'register',
+  returnTo: '/workspace',
+})}`
+
+/**
+ * 公开主页只换导航内容，沿用产品顶栏的布局、触控尺寸和视觉表面。
+ * 这样两套入口在手机上不会因为各自维护断点而逐渐错位。
+ */
+function MarketingHeaderView({ session, wave, onWave }: MarketingHeaderViewProps) {
+  return (
+    <header
+      data-layout="unified"
+      data-surface="frosted-bar"
+      className="sticky top-0 z-50 border-b border-rule bg-app-canvas/92 text-ink backdrop-blur-xl"
+    >
+      <div className="relative mx-auto flex min-h-18 w-full max-w-[82rem] items-center justify-between px-4 sm:px-8 lg:px-12">
+        <Link
+          to="/"
+          aria-label="返回 Windup 宣传页"
+          data-motion="text-wave"
+          onClick={() => onWave('brand')}
+          className={`flex min-h-11 shrink-0 items-center gap-2.5 pr-1 text-app-ink focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent max-[360px]:hidden ${
+            wave.entry === 'brand' ? 'app-header-text-wave' : ''
+          }`}
+        >
+          <img src="/windup-mark.svg" alt="" className="h-7 w-7" />
+          <strong className="hidden font-serif text-lg leading-none sm:inline">
+            <WaveText playId={wave.entry === 'brand' ? wave.playId : 0} text="Windup" />
+          </strong>
+          <span aria-hidden="true" className="hidden h-4 w-px bg-rule lg:block" />
+          <span className="hidden truncate text-meta text-ink-faint lg:block">
+            2D 角色资产工作台
+          </span>
+        </Link>
+
+        <nav
+          aria-label="宣传页导航"
+          className="absolute left-1/2 flex -translate-x-1/2 items-stretch gap-0 sm:gap-1 max-[360px]:left-4 max-[360px]:translate-x-0"
+        >
+          {marketingNavigation.map((item) => {
+            const playId = wave.entry === item.motionKey ? wave.playId : 0
+            return (
+              <a
+                key={item.href}
+                aria-label={item.label}
+                href={item.href}
+                data-motion="text-wave"
+                onClick={() => onWave(item.motionKey)}
+                className={marketingNavItemClassName(wave.entry === item.motionKey)}
+              >
+                <span className="hidden sm:inline">
+                  <WaveText playId={playId} text={item.label} />
+                </span>
+                <span className="sm:hidden">
+                  <WaveText playId={playId} text={item.compactLabel} />
+                </span>
+              </a>
+            )
+          })}
+        </nav>
+
+        <div
+          aria-label="账号"
+          className="relative ml-auto flex shrink-0 items-center gap-1 sm:gap-6"
+        >
+          {session.state.status === 'booting' ? (
+            <span
+              aria-label="正在恢复登录状态"
+              className="inline-grid min-h-11 min-w-11 place-items-center text-sm text-app-faint"
+            >
+              …
+            </span>
+          ) : session.state.status === 'guest' ? (
+            <>
+              <Link
+                to={marketingLoginEntry}
+                aria-label="登录"
+                className="inline-flex min-h-11 items-center rounded-lg px-2 text-body font-medium whitespace-nowrap text-app-ink-soft transition-colors hover:bg-app-accent-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent sm:px-3"
+              >
+                登录
+              </Link>
+              <Link
+                to={marketingRegisterEntry}
+                aria-label="注册"
+                className="inline-flex min-h-11 items-center rounded-lg bg-app-ink px-3 text-body font-medium whitespace-nowrap text-app-surface-raised transition-colors hover:bg-app-ink-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent sm:px-4"
+              >
+                注册
+              </Link>
+            </>
+          ) : (
+            <Link
+              to="/workspace"
+              aria-label="进入工作台"
+              className="inline-flex min-h-11 items-center rounded-lg bg-app-ink px-3 text-body font-medium whitespace-nowrap text-app-surface-raised transition-colors hover:bg-app-ink-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent sm:px-4"
+            >
+              <span className="hidden sm:inline">进入工作台</span>
+              <span className="sm:hidden">进入</span>
+            </Link>
           )}
         </div>
       </div>
