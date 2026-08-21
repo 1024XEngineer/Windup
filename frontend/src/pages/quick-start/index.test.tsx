@@ -800,14 +800,14 @@ describe('QuickStartPage', () => {
     expect(cards.every((card) => card.textContent === '')).toBe(true)
   })
 
-  it('presents two equal candidate frames without inventing a preferred result', async () => {
+  it('keeps equal candidate frames at the same size as confirmed assets', async () => {
     renderStateFixture('template-selecting')
 
     const choices = await screen.findAllByRole('button', { name: /选择角色方案/u })
     const resultLayout = choices[0]?.parentElement
 
     expect(resultLayout?.getAttribute('data-layout')).toBe('agent-result-set')
-    expect(resultLayout?.className).toContain('grid-cols-2')
+    expect(resultLayout?.className).toContain('grid-cols-3')
     expect(choices.every((choice) => choice.getAttribute('data-result-priority') === null)).toBe(
       true,
     )
@@ -816,7 +816,7 @@ describe('QuickStartPage', () => {
 
   it.each([
     ['template-generating', '角色图生成画布', 'grid-cols-3'],
-    ['first-selecting', '动作首帧候选 1', 'grid-cols-2'],
+    ['first-selecting', '动作首帧候选 1', 'grid-cols-3'],
     ['complete', '完整动作预览', 'grid-cols-3'],
   ] as const)('keeps %s on the first-round asset frame grid', async (state, label, columns) => {
     const view = renderStateFixture(state)
@@ -1659,6 +1659,35 @@ describe('QuickStartPage', () => {
       }),
     )
     expect((await screen.findByRole('alert')).textContent).toContain('首帧确认失败')
+  })
+
+  it('collapses first-frame candidates to the confirmed frame after confirmation', async () => {
+    const selectingRun = actionWorkflow({ firstStatus: 'active', firstPhase: 'selecting' })
+    const confirmedRun = actionWorkflow({ fullStatus: 'active' })
+    const confirmedFirstFrame = confirmedRun.nodes.find(
+      (node) => node.type === 'action-first-frame',
+    )
+    if (!confirmedFirstFrame || confirmedFirstFrame.type !== 'action-first-frame') {
+      throw new Error('测试工作流缺少动作首帧节点')
+    }
+    confirmedFirstFrame.selectedFirstFrameUrl = 'first-2.png'
+    const pendingRefresh = deferred<ExportPackageModel | null>()
+    const service = serviceFor(selectingRun, {
+      getFirstFrameCandidates: vi.fn(async () =>
+        eastCandidates('first-1.png', 'first-2.png', 'first-3.png'),
+      ),
+      confirmFirstFrame: vi.fn(async () => confirmedRun),
+      getExportModel: vi.fn().mockResolvedValueOnce(null).mockReturnValue(pendingRefresh.promise),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    fireEvent.click(await screen.findByRole('button', { name: '选择动作首帧 2' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认首帧，生成完整动作' }))
+
+    expect((await screen.findByRole('img', { name: '已选择的动作首帧' })).getAttribute('src')).toBe(
+      'first-2.png',
+    )
+    expect(screen.queryByRole('img', { name: /动作首帧候选/u })).toBeNull()
   })
 
   it('四向动作首帧全部选定后才确认并生成完整动作', async () => {
