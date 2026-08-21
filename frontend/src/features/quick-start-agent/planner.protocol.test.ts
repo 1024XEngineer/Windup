@@ -62,7 +62,7 @@ describe('AI SDK OpenAI-compatible protocol fixture', () => {
                 function: {
                   name: 'start_character_generation',
                   arguments:
-                    '{"optimizedPrompt":"银发像素骑士全身像","assumptions":["默认单角色"]}',
+                    '{"optimizedPrompt":"银发像素骑士全身像","optimizationSummary":"我会保留银发骑士特征，并整理为完整的全身母版描述。"}',
                 },
               },
             ],
@@ -83,7 +83,10 @@ describe('AI SDK OpenAI-compatible protocol fixture', () => {
       toolCalls: [
         {
           toolName: 'start_character_generation',
-          input: { optimizedPrompt: '银发像素骑士全身像', assumptions: ['默认单角色'] },
+          input: {
+            optimizedPrompt: '银发像素骑士全身像',
+            optimizationSummary: '我会保留银发骑士特征，并整理为完整的全身母版描述。',
+          },
         },
       ],
     })
@@ -103,7 +106,7 @@ describe('AI SDK OpenAI-compatible protocol fixture', () => {
                 type: 'function',
                 function: {
                   name: 'start_character_generation',
-                  arguments: '{"optimizedPrompt":"","assumptions":[]}',
+                  arguments: '{"optimizedPrompt":"","optimizationSummary":"我会整理角色描述。"}',
                 },
               },
             ],

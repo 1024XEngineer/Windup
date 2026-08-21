@@ -15,9 +15,10 @@ describe('quickStartPlannerInstructions', () => {
     expect(firstTurn).toContain('直接生成')
     expect(firstTurn).toContain('不要生成')
     expect(firstTurn).toContain('不得依赖关键词匹配')
-    expect(firstTurn).toContain('动作将在角色母版确认后处理')
+    expect(firstTurn).toContain('交给用户检查和编辑')
+    expect(firstTurn).toContain('不得输出思维过程')
     expect(laterTurn).toContain('追问额度已经用完')
-    expect(laterTurn).toContain('默认假设')
+    expect(laterTurn).toContain('必要补全直接写入 optimizedPrompt')
   })
 })
 
@@ -30,7 +31,10 @@ describe('createAiSdkQuickStartPlanner', () => {
       toolCalls: [
         {
           toolName: 'start_character_generation',
-          input: { optimizedPrompt: '银发像素骑士全身像', assumptions: ['默认单角色'] },
+          input: {
+            optimizedPrompt: '银发像素骑士全身像',
+            optimizationSummary: '我会保留银发骑士特征，并整理为完整的全身母版描述。',
+          },
         },
       ],
     }))
@@ -53,7 +57,10 @@ describe('createAiSdkQuickStartPlanner', () => {
       toolCalls: [
         {
           toolName: 'start_character_generation',
-          input: { optimizedPrompt: '银发像素骑士全身像', assumptions: ['默认单角色'] },
+          input: {
+            optimizedPrompt: '银发像素骑士全身像',
+            optimizationSummary: '我会保留银发骑士特征，并整理为完整的全身母版描述。',
+          },
         },
       ],
     })
