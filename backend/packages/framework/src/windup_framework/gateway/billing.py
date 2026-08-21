@@ -16,6 +16,9 @@ def upstream_reached_label(
     if error_type in {
         ModelErrorType.UNREACHED,
         ModelErrorType.NETWORK,
+        ModelErrorType.MODEL_NOT_FOUND,
+        ModelErrorType.CONFIG_ERROR,
+        ModelErrorType.JOB_NOT_FOUND,
     }:
         return "false"
     if error_type is ModelErrorType.TIMEOUT and http_status is None:
@@ -52,6 +55,9 @@ def billing_flags(
         ModelErrorType.AUTH,
         ModelErrorType.RATE_LIMIT,
         ModelErrorType.UNKNOWN,
+        ModelErrorType.MODEL_NOT_FOUND,
+        ModelErrorType.CONFIG_ERROR,
+        ModelErrorType.JOB_NOT_FOUND,
     }:
         return False
     if error_type in {

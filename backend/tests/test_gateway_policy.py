@@ -40,6 +40,18 @@ def test_poll_timeout_fails_without_new_job():
     assert decide(error_type=ModelErrorType.TIMEOUT, retry_count=0, has_job_id=True) is NextStep.FAIL
 
 
+def test_model_not_found_fallbacks():
+    assert decide(error_type=ModelErrorType.MODEL_NOT_FOUND, retry_count=0, has_job_id=False) is NextStep.FALLBACK
+
+
+def test_config_error_fails_fast():
+    assert decide(error_type=ModelErrorType.CONFIG_ERROR, retry_count=0, has_job_id=False) is NextStep.FAIL
+
+
+def test_job_not_found_fails():
+    assert decide(error_type=ModelErrorType.JOB_NOT_FOUND, retry_count=0, has_job_id=True) is NextStep.FAIL
+
+
 def test_circuit_opens_and_cools_down(monkeypatch):
     clock = {"t": 0.0}
     br = CircuitBreaker(cooldown_s=60, monotonic=lambda: clock["t"])

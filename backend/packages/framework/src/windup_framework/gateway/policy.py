@@ -12,6 +12,12 @@ def decide(
 ) -> NextStep:
     if error_type in (ModelErrorType.MAYBE_BILLED, ModelErrorType.AUTH):
         return NextStep.FAIL
+    if error_type is ModelErrorType.CONFIG_ERROR:
+        return NextStep.FAIL
+    if error_type is ModelErrorType.JOB_NOT_FOUND:
+        return NextStep.FAIL
+    if error_type is ModelErrorType.MODEL_NOT_FOUND:
+        return NextStep.FALLBACK
     if has_job_id and error_type is ModelErrorType.TIMEOUT:
         return NextStep.FAIL
     if has_job_id and error_type is ModelErrorType.UPSTREAM_FAILED:

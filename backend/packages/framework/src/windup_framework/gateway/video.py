@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 
 from windup_common.enums.model import ModelErrorType
 from windup_framework.config.provider import AIProviderSettings, settings as default_settings
+from windup_framework.gateway.billing import billing_flags, upstream_reached_label
+from windup_framework.gateway.budget import AttemptBudget
 from windup_framework.gateway.context import current_call_context
 from windup_framework.gateway.image import _CIRCUIT
 from windup_framework.gateway.policy import decide
@@ -18,6 +20,7 @@ from windup_framework.gateway.routes import (
     lookup_adapter,
     routes_from_settings,
 )
+from windup_framework.gateway.sequencer import AttemptSequencer
 from windup_framework.gateway.trace import (
     AttemptDetail,
     AttemptTrace,
@@ -65,6 +68,8 @@ class VideoGateway:
         fallback_reason: str | None = None
         route_reason_override: str | None = None
         routes = self._routes
+        seq = AttemptSequencer()
+        budget = AttemptBudget()
 
         chain = list(self._registry.chain(Scene.CHARACTER_ACTION))
         if ctx.start_from_model and ctx.start_from_model in chain:
@@ -93,13 +98,18 @@ class VideoGateway:
                     scene=Scene.CHARACTER_ACTION,
                     model=model,
                     route=route,
-                    attempt_index=start_i,
+                    attempt_index=seq.next_index(),
                     retry_count=0,
                     route_reason="skip_circuit_open",
                     outcome="failed",
                     circuit_scope="aggregator",
                     total_latency_ms=total_ms(),
-                    detail=AttemptDetail(input_hash=input_hash),
+                    maybe_billed=False,
+                    detail=AttemptDetail(
+                        input_hash=input_hash,
+                        policy_next_step="fail",
+                        upstream_reached="false",
+                    ),
                 )
             )
             fail(None)
@@ -121,7 +131,7 @@ class VideoGateway:
             adapter = self._adapter_for(route)
             switch_to_next_route = False
             for i, model in enumerate(models):
-                attempt_index = start_i + i
+                model_index = start_i + i
                 if self._circuit.is_open("model:" + model):
                     fallback_used = True
                     fallback_reason = "skip"
@@ -131,14 +141,20 @@ class VideoGateway:
                             scene=Scene.CHARACTER_ACTION,
                             model=model,
                             route=route,
-                            attempt_index=attempt_index,
+                            attempt_index=seq.next_index(),
                             retry_count=0,
                             route_reason="skip_circuit_open",
                             outcome="failed",
                             circuit_scope="model",
                             fallback_used=fallback_used,
                             total_latency_ms=total_ms(),
-                            detail=AttemptDetail(input_hash=input_hash),
+                            maybe_billed=False,
+                            detail=AttemptDetail(
+                                input_hash=input_hash,
+                                policy_next_step="fallback",
+                                upstream_reached="false",
+                                model_index=model_index,
+                            ),
                         )
                     )
                     continue
@@ -185,12 +201,46 @@ class VideoGateway:
                     ended_at = _utc_now()
                     attempt_latency_ms = int((time.monotonic() - attempt_t0) * 1000)
                     last_http_status = result.http_status
+                    error_type = (
+                        None if result.ok else (result.error_type or ModelErrorType.UNKNOWN)
+                    )
+                    maybe_billed = billing_flags(
+                        error_type=error_type,
+                        http_status=result.http_status,
+                        ok=result.ok,
+                    )
+                    if not budget.can_record(maybe_billed):
+                        self._emit_result(
+                            request_id=request_id,
+                            model=model,
+                            route=route,
+                            attempt_index=seq.next_index(),
+                            retry_count=retry_count,
+                            route_reason="attempt_budget_exhausted",
+                            result=result,
+                            input_hash=input_hash,
+                            total_latency_ms=total_ms(),
+                            fallback_used=fallback_used,
+                            started_at=started_at,
+                            ended_at=ended_at,
+                            attempt_latency_ms=attempt_latency_ms,
+                            resend_spent=resend_spent,
+                            seconds=seconds,
+                            outcome="failed",
+                            error_type=error_type,
+                            submit_ms=submit_ms,
+                            policy_next_step="fail",
+                            model_index=model_index,
+                            maybe_billed=maybe_billed,
+                        )
+                        fail(last_http_status)
+
                     if result.ok:
                         self._emit_result(
                             request_id=request_id,
                             model=model,
                             route=route,
-                            attempt_index=attempt_index,
+                            attempt_index=seq.next_index(),
                             retry_count=retry_count,
                             route_reason=route_reason,
                             result=result,
@@ -204,6 +254,9 @@ class VideoGateway:
                             seconds=seconds,
                             outcome="fallback_success" if fallback_used else "success",
                             submit_ms=submit_ms,
+                            policy_next_step="success",
+                            model_index=model_index,
+                            maybe_billed=maybe_billed,
                         )
                         return result.body
 
@@ -215,8 +268,19 @@ class VideoGateway:
                         retry_count=retry_count,
                         has_job_id=has_job_id,
                     )
-                    circuit_scope = None
                     has_next_route = route_index + 1 < len(routes)
+                    if step is NextStep.FAIL and bound_job_id is None:
+                        tier_step = budget.tier_b_escalation(
+                            error_type,
+                            has_next_route=has_next_route,
+                            has_job_id=has_job_id,
+                        )
+                        if tier_step is not None:
+                            step = tier_step
+                            if tier_step is NextStep.OPEN_AGGREGATOR:
+                                route_reason_override = "fallback_after_maybe_billed"
+                    policy_next_step = step.value
+                    circuit_scope = None
                     if step is NextStep.OPEN_AGGREGATOR:
                         if has_next_route:
                             self._circuit.open("base_url:" + route.base_url_id)
@@ -231,11 +295,12 @@ class VideoGateway:
                         self._circuit.open("model:" + model)
                         circuit_scope = "model"
 
+                    budget.record(maybe_billed)
                     self._emit_result(
                         request_id=request_id,
                         model=model,
                         route=route,
-                        attempt_index=attempt_index,
+                        attempt_index=seq.next_index(),
                         retry_count=retry_count,
                         route_reason=route_reason,
                         result=result,
@@ -251,6 +316,9 @@ class VideoGateway:
                         circuit_scope=circuit_scope,
                         error_type=error_type,
                         submit_ms=submit_ms,
+                        policy_next_step=policy_next_step,
+                        model_index=model_index,
+                        maybe_billed=maybe_billed,
                     )
                     if (
                         step is NextStep.OPEN_AGGREGATOR
@@ -330,11 +398,19 @@ class VideoGateway:
         circuit_scope: str | None = None,
         error_type: ModelErrorType | None = None,
         submit_ms: int | None = None,
+        policy_next_step: str | None = None,
+        model_index: int | None = None,
+        maybe_billed: bool | None = None,
     ) -> None:
-        billed = result.ok or result.maybe_billed
+        if maybe_billed is None:
+            maybe_billed = billing_flags(
+                error_type=error_type,
+                http_status=result.http_status,
+                ok=result.ok,
+            )
         cost = estimate_cost(
             Scene.CHARACTER_ACTION,
-            billed=billed,
+            billed=result.ok or maybe_billed,
             seconds=seconds,
             image_unit_cost=self._settings.image_unit_cost,
             video_unit_cost_per_second=self._settings.video_unit_cost_per_second,
@@ -363,7 +439,7 @@ class VideoGateway:
                 ended_at=ended_at,
                 attempt_latency_ms=attempt_latency_ms,
                 total_latency_ms=total_latency_ms,
-                maybe_billed=True if result.ok else result.maybe_billed,
+                maybe_billed=maybe_billed,
                 cost=cost,
                 detail=AttemptDetail(
                     input_hash=input_hash,
@@ -379,6 +455,11 @@ class VideoGateway:
                     job_status=result.job_status,
                     edge_fingerprint=result.edge_fingerprint or None,
                     provider_usage=result.provider_usage,
+                    policy_next_step=policy_next_step,
+                    upstream_reached=upstream_reached_label(
+                        error_type, http_status=result.http_status, ok=result.ok
+                    ),
+                    model_index=model_index,
                 ),
             )
         )
