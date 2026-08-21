@@ -48,7 +48,6 @@ export function PageBackButton() {
     transitioningRef.current = false
     fallbackTimerRef.current = null
     setTransitioning(false)
-    navigateBack()
   }
 
   function requestBack() {
@@ -61,6 +60,7 @@ export function PageBackButton() {
     transitioningRef.current = true
     setTransitioning(true)
     fallbackTimerRef.current = window.setTimeout(finishTransition, backTransitionDurationMs)
+    navigateBack()
   }
 
   return (
