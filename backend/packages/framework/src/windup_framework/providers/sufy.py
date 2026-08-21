@@ -50,24 +50,41 @@ _IMAGE_LIST_MODELS = ("kling-video-o1",)
 DEFAULT_VIDEO_MODEL = "kling-v2-5-turbo"
 
 
-def _fit_first_frame(frame: bytes, size: str) -> bytes:
-    """首帧 bytes → 等比缩放 + 背景色补边到目标尺寸 → JPG(RGB,q90) bytes。
+#: 透明首帧合成到不透明视频输入时的底色。中灰而不是黑:抠图靠主体与底色的距离
+#: 判前景,黑底会把角色的暗部判成背景(#497 的方向已实测为"被抠掉的是最暗部"),
+#: 白底对浅色角色同理。中灰对两端都不偏。
+_FIRST_FRAME_BG = (128, 128, 128)
+
+
+def _fit_first_frame(frame: bytes, size: str, *, background: tuple[int, int, int] = _FIRST_FRAME_BG) -> bytes:
+    """首帧 bytes → 等比缩放(可放大) + 补边到目标尺寸 → JPG(RGB,q90) bytes。
 
     不强拉到目标尺寸(母版多为横幅,强压成方会把角色压成瘦长鬼影);JPG 因 PNG base64
     会 VENDOR_FAILED(实测)。
 
     这一步同时是 kling 系"输出画幅"的唯一控制点:kling 的 i2v 端点没有 resolution/size
     字段,成片画幅跟随首帧,所以 ``size`` 只能在这里生效。
+
+    小于目标画布的输入必须**放大**:128x128 的 sprite 原尺寸贴进 1280x720 只占 13% 高,
+    等于自愿把主体有效分辨率砍掉七分之六,之后无论 i2v 还是重抠图都补不回来。
     """
     from PIL import Image
 
     w, h = (int(x) for x in size.split("x"))
-    im = Image.open(io.BytesIO(frame)).convert("RGB")
-    pad = im.getpixel((0, 0))
-    fitted = im.copy()
-    fitted.thumbnail((w, h), Image.LANCZOS)
+    im = Image.open(io.BytesIO(frame))
+    if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
+        im = im.convert("RGBA")
+        flat = Image.new("RGB", im.size, background)
+        flat.paste(im, (0, 0), im)     # 不能 convert("RGB"):透明像素的 RGB 未定义
+        im, pad = flat, background
+    else:
+        im = im.convert("RGB")
+        pad = im.getpixel((0, 0))     # 不透明输入沿用角点色,补边与画面自身背景连成一片
+    scale = min(w/im.width, h/im.height)
+    tw, th = max(1, round(im.width*scale)), max(1, round(im.height*scale))
+    fitted = im.resize((tw, th), Image.LANCZOS)
     canvas = Image.new("RGB", (w, h), pad)
-    canvas.paste(fitted, ((w - fitted.width) // 2, (h - fitted.height) // 2))
+    canvas.paste(fitted, ((w - tw)//2, (h - th)//2))
     buf = io.BytesIO()
     canvas.save(buf, "JPEG", quality=90)
     return buf.getvalue()

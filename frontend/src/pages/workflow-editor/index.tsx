@@ -138,7 +138,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
   const [actionMenuOpen, setActionMenuOpen] = useState(false)
   const [actionMenuLevel, setActionMenuLevel] = useState<ActionMenuLevel>('root')
   const [selectedOutfitId, setSelectedOutfitId] = useState<string | null>(null)
-  const [canvasNodes, setCanvasNodes] = useState<WorkflowCardNode[]>([])
+  const [canvasNodeState, setCanvasNodeState] = useState<WorkflowCardNode[]>([])
   const [actionPresets, setActionPresets] = useState<ActionPreset[] | null>(null)
   const [actionPresetError, setActionPresetError] = useState<string | null>(null)
 
@@ -162,7 +162,7 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
     setActionMenuOpen(false)
     setActionMenuLevel('root')
     setSelectedOutfitId(null)
-    setCanvasNodes([])
+    setCanvasNodeState([])
   }, [runId])
 
   const exportModels = useMemo(() => {
@@ -245,18 +245,19 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
     ],
   )
 
-  useEffect(() => {
-    setCanvasNodes((previous) =>
-      projected.nodes.map((node) => ({
-        ...node,
-        position: previous.find((candidate) => candidate.id === node.id)?.position ?? node.position,
-      })),
-    )
-  }, [projected.nodes])
+  // React Flow gesture state (position, selection and measurements) is local, while node content
+  // must come from the current render. Keeping content in an effect-synchronized copy leaves
+  // controlled textareas one render behind and can reset an in-progress IME composition.
+  const canvasNodes = useMemo(
+    () => mergeCanvasNodes(projected.nodes, canvasNodeState),
+    [canvasNodeState, projected.nodes],
+  )
 
   function onNodesChange(changes: NodeChange<WorkflowCardNode>[]) {
     const safeChanges = changes.filter((change) => change.type !== 'remove')
-    setCanvasNodes((nodes) => applyNodeChanges(safeChanges, nodes))
+    setCanvasNodeState((nodes) =>
+      applyNodeChanges(safeChanges, mergeCanvasNodes(projected.nodes, nodes)),
+    )
   }
 
   if (!runId) {
@@ -288,6 +289,17 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
       onNodesChange={onNodesChange}
     />
   )
+}
+
+function mergeCanvasNodes(
+  projectedNodes: WorkflowCardNode[],
+  canvasNodeState: WorkflowCardNode[],
+): WorkflowCardNode[] {
+  const stateById = new Map(canvasNodeState.map((node) => [node.id, node]))
+  return projectedNodes.map((node) => {
+    const state = stateById.get(node.id)
+    return state ? { ...state, ...node, position: state.position } : node
+  })
 }
 
 interface ProjectionInput {

@@ -21,7 +21,7 @@ import {
 import { forgetActiveRun, isMissingActiveRunError, syncActiveRun } from '@/features/active-run'
 import { useOptionalAuthSession } from '@/features/auth-session'
 import { ExportButton, type ExportPackageModel } from '@/features/export-package'
-import { useQuickStartAgent, type QuickStartAgentState } from '@/features/quick-start-agent/react'
+import { useQuickStartAgent } from '@/features/quick-start-agent/react'
 import type { CreateQuickStartAgentOptions } from '@/features/quick-start-agent/runtime'
 import {
   GenerationPreviewCard,
@@ -130,6 +130,60 @@ const ROLE_DEFAULT_MESSAGE: readonly KineticCopyMessage[] = [
 ]
 
 const ENTRY_HANDOFF_MS = 460
+const PROMPT_REWRITE_MS = 760
+const AGENT_CONVERSATION_STORAGE_KEY = 'windup.quick-start.agent-chat.v1'
+
+type AgentConversationTurn = {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+type AgentConversationRecord = {
+  runId: string | null
+  turns: readonly AgentConversationTurn[]
+}
+
+function agentConversationStorageKey(userId: string | null): string {
+  return `${AGENT_CONVERSATION_STORAGE_KEY}:${userId ?? 'local'}`
+}
+
+function readAgentConversation(userId: string | null): AgentConversationRecord | null {
+  try {
+    const stored = window.localStorage.getItem(agentConversationStorageKey(userId))
+    if (!stored) return null
+    const parsed: unknown = JSON.parse(stored)
+    if (typeof parsed !== 'object' || parsed === null || !('turns' in parsed)) return null
+    const runId = 'runId' in parsed && typeof parsed.runId === 'string' ? parsed.runId : null
+    if (!Array.isArray(parsed.turns)) return null
+    const turns = parsed.turns.filter(
+      (turn): turn is AgentConversationTurn =>
+        typeof turn === 'object' &&
+        turn !== null &&
+        'role' in turn &&
+        (turn.role === 'user' || turn.role === 'assistant') &&
+        'content' in turn &&
+        typeof turn.content === 'string' &&
+        Boolean(turn.content.trim()),
+    )
+    return turns.length > 0 ? { runId, turns } : null
+  } catch {
+    return null
+  }
+}
+
+function writeAgentConversation(userId: string | null, record: AgentConversationRecord): void {
+  try {
+    window.localStorage.setItem(agentConversationStorageKey(userId), JSON.stringify(record))
+  } catch {
+    // 对话持久化只增强刷新体验，存储不可用时不能阻断真实生成流程。
+  }
+}
+
+function planConfirmationCopy(assumptions: readonly string[]): string {
+  return assumptions.length > 0
+    ? `提示词优化已完成。\n默认处理：${assumptions.join('、')}。确认后点击发送。`
+    : '提示词优化已完成。请检查输入框，确认后点击发送。'
+}
 
 function playtestPath(characterId: string, outfitId: string, actionId?: string): string {
   const path = `/playtest/${encodeURIComponent(characterId)}/${encodeURIComponent(outfitId)}`
@@ -186,7 +240,12 @@ export function QuickStartPage({
       onSessionCreated={setCreatedSession}
     />
   ) : (
-    <QuickStartInput service={activeService} agent={agent} onSessionCreated={setCreatedSession} />
+    <QuickStartInput
+      service={activeService}
+      agent={agent}
+      activeRunUserId={activeRunUserId}
+      onSessionCreated={setCreatedSession}
+    />
   )
 }
 
@@ -272,65 +331,15 @@ function QuickStartActionInput({
   )
 }
 
-function QuickStartAgentInlineState({ state }: { state: QuickStartAgentState }) {
-  if (state.status === 'idle') return null
-  if (state.status === 'planning') {
-    return (
-      <p role="status" className="mb-3 px-1 text-sm text-app-muted">
-        正在判断信息是否足够…
-      </p>
-    )
-  }
-  if (state.status === 'awaiting-input' || state.status === 'restart-required') {
-    return (
-      <p
-        role="status"
-        className="mb-3 rounded-xl border border-app-line bg-app-surface/80 px-4 py-3 text-sm text-app-ink-soft"
-      >
-        {state.message}
-      </p>
-    )
-  }
-  if (state.status === 'error') {
-    return (
-      <p
-        role="alert"
-        className="mb-3 rounded-xl bg-app-danger px-4 py-3 text-sm text-app-danger-soft"
-      >
-        {state.message}
-      </p>
-    )
-  }
-  return (
-    <div
-      role="status"
-      className="mb-3 rounded-xl border border-app-line-strong bg-app-surface/90 px-4 py-3"
-    >
-      <p className="font-mono text-[10px] font-bold tracking-[0.12em] text-app-muted">优化后描述</p>
-      <p className="mt-1 text-sm leading-6 text-app-ink">{state.optimizedPrompt}</p>
-      {state.assumptions.length > 0 ? (
-        <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="本次生成采用的默认假设">
-          {state.assumptions.map((assumption) => (
-            <li
-              key={assumption}
-              className="rounded-md bg-app-surface-muted px-2 py-1 text-xs text-app-muted"
-            >
-              {assumption}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
-  )
-}
-
 function QuickStartInput({
   service,
   agent,
+  activeRunUserId,
   onSessionCreated,
 }: {
   service: QuickStartEntryService
   agent: CreateQuickStartAgentOptions
+  activeRunUserId: string | null
   onSessionCreated: (session: QuickStartSession) => void
 }) {
   const navigate = useNavigate()
@@ -338,23 +347,98 @@ function QuickStartInput({
   const [templateFile, setTemplateFile] = useState<File | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [entryTransition, setEntryTransition] = useState<'idle' | 'leaving'>('idle')
+  const [promptState, setPromptState] = useState<
+    'collecting' | 'rewriting' | 'ready' | 'confirmed'
+  >('collecting')
   const [error, setError] = useState<string | null>(null)
+  const [conversationTurns, setConversationTurns] = useState<readonly AgentConversationTurn[]>(
+    () => {
+      const stored = readAgentConversation(activeRunUserId)
+      return stored?.runId === null ? stored.turns : []
+    },
+  )
   const fileInput = useRef<HTMLInputElement>(null)
   const submitAbortController = useRef<AbortController | null>(null)
   const handoffTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const agentSession = useQuickStartAgent(agent)
+  const rewriteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const generationConfirmation = useRef<(() => void) | null>(null)
+  const conversationTurnsRef = useRef(conversationTurns)
+  const initialConversationLength = useRef(conversationTurns.length)
+  const waitForGenerationConfirmation = useCallback(
+    () =>
+      new Promise<void>((resolve) => {
+        generationConfirmation.current = resolve
+      }),
+    [],
+  )
+  const agentSession = useQuickStartAgent({
+    ...agent,
+    waitForPresentation: waitForGenerationConfirmation,
+  })
   const unavailableReason = service.unavailableReason
-  const entryBusy = submitting || agentSession.busy
+  const agentPlanning = agentSession.state.status === 'planning'
+  const generationStarting = promptState === 'confirmed'
+  const entryBusy = submitting || agentPlanning || promptState === 'rewriting' || generationStarting
   const hasPrompt = Boolean(prompt.trim())
-  const showStylePrompts = !hasPrompt && !templateFile && agentSession.state.status === 'idle'
+  const hasConversation = conversationTurns.length > 0
+  const showStylePrompts =
+    !hasPrompt && !templateFile && !hasConversation && agentSession.state.status === 'idle'
+  const showConversation = hasConversation || agentPlanning || agentSession.state.status === 'error'
+  const promptMessage = useMemo<readonly KineticCopyMessage[]>(
+    () => [{ lines: [prompt] }],
+    [prompt],
+  )
+
+  const persistConversation = useCallback(
+    (turns: readonly AgentConversationTurn[], runId: string | null = null) => {
+      conversationTurnsRef.current = turns
+      writeAgentConversation(activeRunUserId, { runId, turns })
+    },
+    [activeRunUserId],
+  )
+
+  const appendConversationTurn = useCallback(
+    (turn: AgentConversationTurn) => {
+      setConversationTurns((current) => {
+        const next = [...current, turn]
+        persistConversation(next)
+        return next
+      })
+    },
+    [persistConversation],
+  )
 
   useEffect(
     () => () => {
       submitAbortController.current?.abort()
       if (handoffTimer.current) clearTimeout(handoffTimer.current)
+      if (rewriteTimer.current) clearTimeout(rewriteTimer.current)
+      generationConfirmation.current?.()
+      generationConfirmation.current = null
     },
     [],
   )
+
+  useEffect(() => {
+    const state = agentSession.state
+    if (state.status !== 'dispatching') return
+
+    setPrompt(state.optimizedPrompt)
+    setPromptState('rewriting')
+    rewriteTimer.current = setTimeout(() => {
+      rewriteTimer.current = null
+      setPromptState('ready')
+      appendConversationTurn({
+        role: 'assistant',
+        content: planConfirmationCopy(state.assumptions),
+      })
+    }, PROMPT_REWRITE_MS)
+
+    return () => {
+      if (rewriteTimer.current) clearTimeout(rewriteTimer.current)
+      rewriteTimer.current = null
+    }
+  }, [agentSession.state, appendConversationTurn])
 
   function selectTemplateFile(event: ChangeEvent<HTMLInputElement>) {
     if (entryBusy) return
@@ -371,16 +455,29 @@ function QuickStartInput({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const normalizedPrompt = prompt.trim()
+
+    if (agentSession.state.status === 'dispatching' && promptState === 'ready') {
+      const confirm = generationConfirmation.current
+      if (!confirm) return
+      generationConfirmation.current = null
+      setPromptState('confirmed')
+      confirm()
+      return
+    }
+
     if ((!normalizedPrompt && !templateFile) || entryBusy || unavailableReason) return
 
     if (!templateFile) {
       setError(null)
+      appendConversationTurn({ role: 'user', content: normalizedPrompt })
+      setPrompt('')
       try {
         const result = await agentSession.submit(normalizedPrompt)
         if (result.kind === 'message') {
-          setPrompt('')
+          appendConversationTurn({ role: 'assistant', content: result.message })
           return
         }
+        persistConversation(conversationTurnsRef.current, result.runId)
         setEntryTransition('leaving')
         await new Promise<void>((resolve) => {
           handoffTimer.current = setTimeout(() => {
@@ -392,6 +489,7 @@ function QuickStartInput({
       } catch (cause) {
         if (!(cause instanceof Error && cause.name === 'AbortError')) {
           setEntryTransition('idle')
+          setPromptState('collecting')
         }
       }
       return
@@ -432,6 +530,28 @@ function QuickStartInput({
     }
   }
 
+  const inputLocked =
+    submitting || agentPlanning || promptState === 'rewriting' || generationStarting
+  const awaitingGenerationConfirmation =
+    agentSession.state.status === 'dispatching' && promptState === 'ready'
+  const buttonLabel = submitting
+    ? '正在创建…'
+    : agentPlanning
+      ? '正在判断…'
+      : promptState === 'rewriting'
+        ? '优化中'
+        : awaitingGenerationConfirmation
+          ? '发送生成'
+          : generationStarting
+            ? '正在开始生成…'
+            : agentSession.state.status === 'restart-required'
+              ? '重新开始'
+              : agentSession.state.status === 'awaiting-input'
+                ? '继续'
+                : '生成角色'
+  const canSubmit =
+    awaitingGenerationConfirmation || Boolean(prompt.trim()) || Boolean(templateFile)
+
   return (
     <section className="relative min-h-[100dvh] overflow-hidden border border-app-line bg-app-canvas pt-14 text-app-ink shadow-app-page">
       <AmbientGrid />
@@ -443,56 +563,122 @@ function QuickStartInput({
       >
         <div
           data-layout="quick-start-entry-stage"
-          className={`mx-auto grid w-full max-w-3xl content-center gap-5 pb-8 transition-[opacity,transform,filter] duration-[460ms] ease-[cubic-bezier(0.55,0,1,0.45)] motion-reduce:transition-none sm:gap-6 ${
+          className={`mx-auto grid min-h-0 w-full max-w-3xl gap-5 overflow-y-auto pb-8 transition-[opacity,transform,filter] duration-[460ms] ease-[cubic-bezier(0.55,0,1,0.45)] motion-reduce:transition-none sm:gap-6 ${
+            showConversation ? 'content-end' : 'content-center'
+          } ${
             entryTransition === 'leaving'
               ? 'pointer-events-none -translate-y-3 scale-[0.985] opacity-0 blur-[7px]'
               : 'translate-y-0 scale-100 opacity-100 blur-0'
           }`}
         >
-          <KineticCopyCycle
-            active={!templateFile && !entryBusy}
-            as="h1"
-            ariaLabel="想做一个什么角色？"
-            motionMode="characters"
-            firstCycleMs={2_400}
-            loopStartIndex={1}
-            messages={hasPrompt ? ROLE_DEFAULT_MESSAGE : ROLE_IDEA_MESSAGES}
-            className="min-h-12 text-center font-serif text-[clamp(1.75rem,4vw,2.65rem)] leading-none font-medium tracking-[-0.045em]"
-          />
+          {showConversation ? (
+            <div
+              data-testid="quick-start-transcript"
+              className="grid min-h-full w-full content-end gap-5 py-4"
+            >
+              {conversationTurns.map((turn, index) => (
+                <div
+                  key={`${turn.role}:${index}:${turn.content}`}
+                  data-conversation-kind="agent"
+                  className="min-w-0"
+                >
+                  {turn.role === 'user' ? (
+                    <UserTurn>{turn.content}</UserTurn>
+                  ) : (
+                    <AgentCopy
+                      lines={turn.content.split('\n')}
+                      animate={index >= initialConversationLength.current}
+                    />
+                  )}
+                </div>
+              ))}
+              {agentPlanning ? (
+                <div
+                  data-conversation-kind="agent"
+                  data-agent-loading
+                  role="status"
+                  aria-label="Agent 正在思考"
+                  className="quick-start-agent-loading min-w-0"
+                >
+                  <span aria-hidden="true" className="quick-start-agent-loading-dots">
+                    {[0, 1, 2].map((dot) => (
+                      <span
+                        key={dot}
+                        className="quick-start-agent-loading-dot"
+                        style={{ '--agent-loading-index': dot } as CSSProperties}
+                      />
+                    ))}
+                  </span>
+                </div>
+              ) : null}
+              {agentSession.state.status === 'error' ? (
+                <div role="alert" data-conversation-kind="agent" className="min-w-0">
+                  <AgentCopy lines={[agentSession.state.message]} tone="danger" />
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <>
+              <KineticCopyCycle
+                active={!templateFile && !entryBusy}
+                as="h1"
+                ariaLabel="想做一个什么角色？"
+                motionMode="characters"
+                firstCycleMs={2_400}
+                loopStartIndex={1}
+                messages={hasPrompt ? ROLE_DEFAULT_MESSAGE : ROLE_IDEA_MESSAGES}
+                className="min-h-12 text-center font-serif text-[clamp(1.75rem,4vw,2.65rem)] leading-none font-medium tracking-[-0.045em]"
+              />
 
-          <div
-            data-layout="quick-start-starters"
-            data-presence={showStylePrompts ? 'visible' : 'hidden'}
-            aria-hidden={!showStylePrompts}
-            className={`grid gap-2 transition-[opacity,transform,filter] duration-[460ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none sm:grid-cols-3 ${
-              showStylePrompts
-                ? 'translate-y-0 scale-100 opacity-100 blur-0'
-                : 'pointer-events-none -translate-y-2 scale-[0.985] opacity-0 blur-[6px]'
-            }`}
-          >
-            {STYLE_PROMPTS.map((stylePrompt) => (
-              <button
-                key={stylePrompt.title}
-                type="button"
-                disabled={!showStylePrompts}
-                aria-label={`${stylePrompt.title}：${stylePrompt.detail}`}
-                onClick={() => setPrompt(stylePrompt.prompt)}
-                className="group grid min-h-16 content-center gap-1 rounded-xl border border-app-line bg-app-surface/70 px-4 py-3 text-left transition duration-200 hover:-translate-y-0.5 hover:border-app-line-strong hover:bg-app-surface-raised hover:shadow-app-card focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent motion-reduce:transform-none"
+              <div
+                data-layout="quick-start-starters"
+                data-presence={showStylePrompts ? 'visible' : 'hidden'}
+                aria-hidden={!showStylePrompts}
+                className={`grid gap-2 transition-[opacity,transform,filter] duration-[460ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none sm:grid-cols-3 ${
+                  showStylePrompts
+                    ? 'translate-y-0 scale-100 opacity-100 blur-0'
+                    : 'pointer-events-none -translate-y-2 scale-[0.985] opacity-0 blur-[6px]'
+                }`}
               >
-                <strong className="text-sm font-semibold text-app-ink">{stylePrompt.title}</strong>
-                <span className="text-[11px] text-app-muted">{stylePrompt.detail}</span>
-              </button>
-            ))}
-          </div>
+                {STYLE_PROMPTS.map((stylePrompt) => (
+                  <button
+                    key={stylePrompt.title}
+                    type="button"
+                    disabled={!showStylePrompts}
+                    aria-label={`${stylePrompt.title}：${stylePrompt.detail}`}
+                    onClick={() => setPrompt(stylePrompt.prompt)}
+                    className="group grid min-h-16 content-center gap-1 rounded-xl border border-app-line bg-app-surface/70 px-4 py-3 text-left transition duration-200 hover:-translate-y-0.5 hover:border-app-line-strong hover:bg-app-surface-raised hover:shadow-app-card focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent motion-reduce:transform-none"
+                  >
+                    <strong className="text-sm font-semibold text-app-ink">
+                      {stylePrompt.title}
+                    </strong>
+                    <span className="text-[11px] text-app-muted">{stylePrompt.detail}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
-        <div data-layout="quick-start-composer" className="mx-auto w-full max-w-3xl self-end">
-          {!templateFile ? <QuickStartAgentInlineState state={agentSession.state} /> : null}
+        <div
+          data-testid="quick-start-composer"
+          data-layout="quick-start-composer"
+          data-position="floating"
+          data-prompt-state={promptState}
+          className={`mx-auto w-full max-w-3xl self-end transition-[opacity,transform,filter] duration-[460ms] ease-[cubic-bezier(0.55,0,1,0.45)] motion-reduce:transition-none ${
+            entryTransition === 'leaving'
+              ? 'pointer-events-none translate-y-2 opacity-0 blur-[5px]'
+              : 'translate-y-0 opacity-100 blur-0'
+          }`}
+        >
           <form
             onSubmit={(event) => void submit(event)}
-            className="grid items-center gap-1.5 rounded-xl border border-app-line-strong bg-app-surface-raised p-1.5 shadow-app-panel transition-shadow focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)] sm:grid-cols-[1fr_auto_auto]"
+            data-prompt-state={promptState}
+            className={`quick-start-agent-composer grid items-center gap-1.5 overflow-hidden rounded-xl border border-app-line-strong bg-app-surface-raised p-1.5 shadow-app-panel transition-shadow focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)] ${
+              hasConversation ? 'sm:grid-cols-[1fr_auto]' : 'sm:grid-cols-[1fr_auto_auto]'
+            }`}
           >
-            <label className="min-w-0" htmlFor="quick-start-prompt">
+            <label className="relative min-w-0" htmlFor="quick-start-prompt">
               <span className="sr-only">创作指令</span>
               <input
                 id="quick-start-prompt"
@@ -500,12 +686,36 @@ function QuickStartInput({
                 aria-label="创作指令"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
-                disabled={entryBusy}
+                disabled={inputLocked}
+                readOnly={agentSession.state.status === 'dispatching'}
                 placeholder={
-                  templateFile ? '描述动作，可留空生成待机动作…' : '描述角色的外形、身份和气质…'
+                  agentPlanning
+                    ? 'Agent 正在整理…'
+                    : generationStarting
+                      ? '正在创建素材流程…'
+                      : templateFile
+                        ? '描述动作，可留空生成待机动作…'
+                        : '描述角色的外形、身份和气质…'
                 }
-                className="h-10 w-full min-w-0 border-0 bg-transparent px-3 text-[15px] text-app-ink outline-none placeholder:text-app-faint"
+                className={`h-10 w-full min-w-0 border-0 bg-transparent px-3 text-[15px] text-app-ink outline-none placeholder:text-app-faint ${
+                  promptState === 'rewriting' ? 'text-transparent caret-transparent' : ''
+                }`}
               />
+              {promptState === 'rewriting' ? (
+                <span
+                  data-prompt-rewrite
+                  aria-hidden="true"
+                  className="quick-start-prompt-rewrite absolute inset-0 flex h-10 items-center overflow-hidden px-3 text-[15px] whitespace-nowrap text-app-ink"
+                >
+                  <KineticCopyCycle
+                    active
+                    as="span"
+                    messages={promptMessage}
+                    motionMode="characters"
+                    className="quick-start-prompt-kinetic"
+                  />
+                </span>
+              ) : null}
             </label>
 
             <input
@@ -513,7 +723,7 @@ function QuickStartInput({
               type="file"
               accept="image/*"
               aria-label="上传角色母版"
-              disabled={entryBusy}
+              disabled={entryBusy || hasConversation}
               className="sr-only"
               onChange={selectTemplateFile}
             />
@@ -539,7 +749,7 @@ function QuickStartInput({
                   <X aria-hidden="true" size={14} weight="bold" />
                 </button>
               </span>
-            ) : (
+            ) : !hasConversation ? (
               <button
                 type="button"
                 disabled={entryBusy}
@@ -549,25 +759,13 @@ function QuickStartInput({
                 <ImageSquare aria-hidden="true" size={17} weight="duotone" />
                 添加母版
               </button>
-            )}
+            ) : null}
             <button
               type="submit"
-              disabled={
-                (!prompt.trim() && !templateFile) || entryBusy || Boolean(unavailableReason)
-              }
+              disabled={!canSubmit || entryBusy || Boolean(unavailableReason)}
               className="inline-flex h-10 items-center gap-2 rounded-lg bg-app-accent px-4 text-sm font-bold whitespace-nowrap text-app-on-accent transition hover:bg-app-accent-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
             >
-              {templateFile && submitting
-                ? '正在创建…'
-                : agentSession.state.status === 'planning'
-                  ? '正在判断…'
-                  : agentSession.state.status === 'dispatching'
-                    ? '正在开始生成…'
-                    : agentSession.state.status === 'restart-required'
-                      ? '重新开始'
-                      : agentSession.state.status === 'awaiting-input'
-                        ? '继续'
-                        : '生成角色'}
+              {buttonLabel}
               {!entryBusy ? <ArrowUp aria-hidden="true" size={16} weight="bold" /> : null}
             </button>
           </form>
@@ -594,24 +792,35 @@ function QuickStartInput({
 function AgentCopy({
   lines,
   tone = 'default',
+  animate = true,
 }: {
   lines: readonly string[]
   tone?: 'default' | 'danger'
+  animate?: boolean
 }) {
+  const copy = lines.join('\n')
+  const messages = useMemo<readonly KineticCopyMessage[]>(
+    () => [{ lines: copy.split('\n') }],
+    [copy],
+  )
+
   return (
     <div
       data-agent-copy
       aria-label={lines.join(' ')}
-      className={`quick-start-agent-copy font-sans ${
+      className={`quick-start-agent-copy generation-progress-copy generation-progress-copy--conversation font-serif ${
         tone === 'danger' ? 'text-app-danger' : 'text-app-ink-soft'
       }`}
     >
-      <p className="text-sm leading-6 font-medium">{lines[0]}</p>
-      {lines.slice(1).map((line) => (
-        <p key={line} className="mt-0.5 max-w-2xl text-[13px] leading-5 text-app-muted">
-          {line}
-        </p>
-      ))}
+      <span aria-hidden="true" className="sr-only">
+        {lines.join(' ')}
+      </span>
+      <KineticCopyCycle
+        active={animate}
+        messages={messages}
+        motionMode="characters"
+        className="quick-start-agent-copy font-serif"
+      />
     </div>
   )
 }
@@ -620,7 +829,7 @@ function UserTurn({ children }: { children: ReactNode }) {
   return (
     <div
       data-user-turn
-      className="ml-auto max-w-[78%] rounded-[1.15rem] rounded-br-md bg-app-surface-muted px-4 py-2.5 text-left text-sm leading-6 text-app-ink-soft"
+      className="ml-auto w-fit max-w-[78%] rounded-[1.15rem] rounded-br-md bg-app-surface-muted px-4 py-2.5 text-left text-sm leading-6 text-app-ink-soft"
     >
       <span>{children}</span>
     </div>
@@ -793,6 +1002,10 @@ function QuickStartRun({
   const [publishing, setPublishing] = useState(false)
   const [confirmingCandidate, setConfirmingCandidate] = useState(false)
   const [confirmingFirstFrame, setConfirmingFirstFrame] = useState(false)
+  const agentConversationTurns = useMemo(() => {
+    const stored = readAgentConversation(activeRunUserId)
+    return stored?.runId === runId ? stored.turns : []
+  }, [activeRunUserId, runId])
   const automaticPublishAttempt = useRef<string | null>(null)
   const transcriptScrollRegion = useRef<HTMLElement>(null)
   const workflowConflictRef = useRef(false)
@@ -1249,7 +1462,23 @@ function QuickStartRun({
             data-testid="quick-start-transcript"
             className="mx-auto grid min-h-full w-full max-w-3xl content-end gap-7 pb-8 sm:gap-9"
           >
-            <UserTurn>{workflowPrompt(run) || '未命名角色创作'}</UserTurn>
+            {agentConversationTurns.map((turn, index) => (
+              <div
+                key={`${turn.role}:${index}:${turn.content}`}
+                data-conversation-kind="agent"
+                className="min-w-0"
+              >
+                {turn.role === 'user' ? (
+                  <UserTurn>{turn.content}</UserTurn>
+                ) : (
+                  <AgentCopy lines={turn.content.split('\n')} animate={false} />
+                )}
+              </div>
+            ))}
+
+            <div data-conversation-kind="workflow" className="min-w-0">
+              <UserTurn>{workflowPrompt(run) || '未命名角色创作'}</UserTurn>
+            </div>
 
             <AgentTurn step="character-template" current={characterTurnIsCurrent}>
               {candidates.length ? (

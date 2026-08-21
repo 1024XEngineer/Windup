@@ -918,3 +918,129 @@ def test_non_positive_first_poll_is_rejected_at_construction():
     for bad in (0, -1.0):
         with pytest.raises(ValueError, match="first_poll_after"):
             SufyVideoProvider(config=cfg, first_poll_after=bad)
+
+
+def _sprite(w: int, h: int, *, alpha: bool, subject_ratio: float = 0.5,
+            void_rgb: tuple[int, int, int] = (0, 0, 0)) -> bytes:
+    """一张 sprite：正中一块暗色主体，四周是背景。
+
+    ``alpha=True`` 时四周真透明，且透明像素的 RGB 填 ``void_rgb`` —— 透明像素的 RGB 是
+    未定义值，测试必须能证明结果不随它变。
+    """
+    import io as _io
+
+    from PIL import Image as _Image
+
+    sh = max(1, round(h * subject_ratio))
+    sw = max(1, round(w * 0.4))
+    if alpha:
+        im = _Image.new("RGBA", (w, h), (*void_rgb, 0))
+        im.paste((10, 10, 10, 255), ((w - sw) // 2, (h - sh) // 2, (w + sw) // 2, (h + sh) // 2))
+    else:
+        im = _Image.new("RGB", (w, h), (200, 200, 200))
+        im.paste((10, 10, 10), ((w - sw) // 2, (h - sh) // 2, (w + sw) // 2, (h + sh) // 2))
+    buf = _io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _submitted_first_frame(frame: bytes, size: str = "1280x720"):
+    import base64 as _b64
+    import io as _io
+
+    from PIL import Image as _Image
+
+    seen: dict = {}
+    _video_provider(_i2v_handler(seen)).i2v(frame, "x", size=size)
+    uri = seen["body"]["input_reference"]
+    return _Image.open(_io.BytesIO(_b64.b64decode(uri.split(",", 1)[1])))
+
+
+def _subject_height(im) -> int:
+    """暗色主体在成品里的高度（像素）。JPEG 会糊边，阈值取宽一点。"""
+    import numpy as _np
+
+    a = _np.asarray(im.convert("L"))
+    ys, _ = _np.where(a < 90)
+    return int(ys.max() - ys.min() + 1) if ys.size else 0
+
+
+@pytest.mark.parametrize("src_w,src_h", [(64, 64), (128, 128), (256, 256), (200, 300), (400, 200)])
+@pytest.mark.parametrize("alpha", [True, False])
+def test_small_first_frame_is_enlarged_instead_of_pasted_at_source_size(src_w, src_h, alpha):
+    """小于目标画布的输入必须等比放大后再补边，不能原尺寸贴进去。
+
+    只缩不放会把主体的有效分辨率按 (源边长/画布边长) 砍掉:128x128 贴进 1280x720 只占
+    13% 高,之后 i2v 与重抠图都补不回来（#509）。判据取"主体占内容区高度的比例"而不是
+    绝对像素:它对画布尺寸与长宽比都成立,且正是用户看到的那个量。
+    """
+    W, H, ratio = 1280, 720, 0.5
+    im = _submitted_first_frame(_sprite(src_w, src_h, alpha=alpha, subject_ratio=ratio))
+    assert im.size == (W, H)
+
+    scale = min(W / src_w, H / src_h)
+    content_h = round(src_h * scale)
+    got = _subject_height(im)
+    assert abs(got - ratio * content_h) <= 0.08 * content_h, (
+        f"{src_w}x{src_h} alpha={alpha}: 主体 {got}px，内容区高 {content_h}px，"
+        f"期望约 {ratio * content_h:.0f}px；只缩不放会得到约 {ratio * src_h:.0f}px"
+    )
+    # 与"不拉伸"是两条独立约束：放大到了也可能是拉伸放大的。
+    assert scale > 1, "本用例的输入都小于画布，否则测不到放大"
+
+
+def test_transparent_first_frame_background_does_not_depend_on_undefined_rgb():
+    """透明像素的 RGB 是未定义值，直接 ``convert("RGB")`` 会把它当真。
+
+    抠图后透明区的 RGB 恰好是 0，于是视频输入静默变成黑底；换个抠图实现就换个底色。
+    合成规则必须是声明出来的常量，且同一 alpha、不同未定义 RGB 必须给出同一张图。
+    """
+    import numpy as _np
+
+    from windup_framework.providers.sufy import _FIRST_FRAME_BG
+
+    black_void = _submitted_first_frame(_sprite(256, 256, alpha=True, void_rgb=(0, 0, 0)))
+    red_void = _submitted_first_frame(_sprite(256, 256, alpha=True, void_rgb=(255, 0, 0)))
+
+    corner = _np.asarray(black_void)[4, 4]
+    assert _np.allclose(corner, _FIRST_FRAME_BG, atol=12), f"角落底色 {corner}，应为声明的 {_FIRST_FRAME_BG}"
+    assert not _np.allclose(corner, (0, 0, 0), atol=12), "透明背景又变成黑底了"
+
+    diff = _np.abs(_np.asarray(black_void, dtype=float) - _np.asarray(red_void, dtype=float))
+    assert diff.max() <= 12, f"未定义 RGB 换个值就产出不同图像（最大差 {diff.max()}）"
+
+
+def test_opaque_first_frame_keeps_sampling_its_own_corner_for_padding():
+    """不透明输入的补边色沿用角点色 —— 强行改成固定底色会在画面与补边之间造出一条缝。"""
+    import numpy as _np
+
+    im = _submitted_first_frame(_sprite(256, 256, alpha=False))
+    corner = _np.asarray(im)[4, 4]
+    assert _np.allclose(corner, (200, 200, 200), atol=12), f"补边色 {corner}，应沿用源图角点色"
+
+
+def test_square_first_frame_forms_a_720x720_content_region_in_a_1280x720_canvas():
+    """方形输入在 1280x720 里应是 720x720 的等比内容区，左右各补 280px。
+
+    与"主体占幅"是两条判据:主体占幅对了也可能是内容区偏了(比如贴在角上)。
+    源图最外一圈填成不透明亮色,内容区边界才量得到 —— 补边色与合成底色相同,
+    只看底色是量不出边界的。
+    """
+    import io as _io
+
+    import numpy as _np
+    from PIL import Image as _Image
+
+    src = _Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+    src.paste((240, 240, 240, 255), (0, 0, 256, 256))
+    src.paste((10, 10, 10, 255), (60, 60, 196, 196))      # 内部暗块，避免整幅纯色
+    buf = _io.BytesIO()
+    src.save(buf, "PNG")
+
+    im = _submitted_first_frame(buf.getvalue())
+    a = _np.asarray(im.convert("L"))
+    cols = _np.where((a > 200).any(axis=0))[0]
+    rows = _np.where((a > 200).any(axis=1))[0]
+    assert 715 <= cols.max()-cols.min()+1 <= 725, f"内容区宽 {cols.max()-cols.min()+1}，应≈720"
+    assert 715 <= rows.max()-rows.min()+1 <= 725, f"内容区高 {rows.max()-rows.min()+1}，应≈720"
+    assert abs(cols.min() - 280) <= 4, f"内容区左边界 {cols.min()}，应≈280（左右各补 280）"

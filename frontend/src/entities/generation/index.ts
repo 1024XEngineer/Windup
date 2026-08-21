@@ -26,6 +26,8 @@ export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed'
  */
 export type GenerationType = 'character_template' | 'first_frame' | 'complete_animation'
 
+export type ImageCandidateCount = 1 | 2 | 3 | 4
+
 export type GenerationExpectation =
   | { type: 'character_template'; direction?: ActionDirection }
   | { type: 'first_frame'; actionType: ActionType; direction?: ActionDirection }
@@ -47,6 +49,8 @@ export interface CharacterTemplateGenerationInput extends GenerationInputBase {
   spriteHeight: number
   /** 当前任务生成的真实源方向；旧调用缺省时按 east 兼容。 */
   direction?: ActionDirection
+  /** 每个方向生成的候选数；缺省为 3，后端允许 1–4。 */
+  candidateCount?: ImageCandidateCount
 }
 
 /** 基于已确认角色母版生成动作首帧候选图。 */
@@ -60,6 +64,8 @@ export interface FirstFrameGenerationInput extends GenerationInputBase {
   spriteHeight: number
   /** 首帧必须与角色母版使用同一个真实源方向。 */
   direction?: ActionDirection
+  /** 每个方向生成的候选数；缺省为 3，后端允许 1–4。 */
+  candidateCount?: ImageCandidateCount
 }
 
 /** 以已确认首帧为起点生成完整动画。 */
@@ -113,7 +119,7 @@ export interface CharacterTemplateGenerationResult {
 
 export interface FirstFrameGenerationResult {
   type: 'first_frame'
-  /** 同一图片任务生成的两张动作首帧候选。 */
+  /** 同一图片任务生成的 1–4 张动作首帧候选。 */
   direction?: ActionDirection
   images: readonly GeneratedImage[]
 }

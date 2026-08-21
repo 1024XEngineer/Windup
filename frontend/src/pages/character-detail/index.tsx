@@ -1,8 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useOutletContext, useParams } from 'react-router'
+import { Graph, Lightning, Plus, X } from '@phosphor-icons/react'
+import { Link, useNavigate, useOutletContext, useParams } from 'react-router'
 
-import { characterApis, type Action, type Character, type Outfit, type Project } from '@/entities'
+import {
+  characterTemplateImages,
+  characterApis,
+  workflowRunApis,
+  type Action,
+  type Character,
+  type Outfit,
+  type Project,
+} from '@/entities'
 import { createCharacterExportModel, ExportButton } from '@/features/export-package'
+import { createExistingCharacterActionRun } from '@/features/workflow-controller'
 import { AssetPreviewSurface } from '@/shared/ui'
 
 const ACTION_TYPE_LABELS: Record<string, string> = {
@@ -123,7 +133,7 @@ export function CharacterDetailPage() {
           <div className="mt-3">
             <OutfitMaster character={character} outfit={selectedOutfit} />
           </div>
-          <ActionList key={selectedOutfit.id} outfit={selectedOutfit} />
+          <ActionList key={selectedOutfit.id} character={character} outfit={selectedOutfit} />
         </>
       )}
     </section>
@@ -198,15 +208,131 @@ function OutfitMaster({ character, outfit }: { character: Character; outfit: Out
   )
 }
 
-function ActionList({ outfit }: { outfit: Outfit }) {
+function ActionList({ character, outfit }: { character: Character; outfit: Outfit }) {
+  const navigate = useNavigate()
   const [selectedActionId, setSelectedActionId] = useState<string | null>(null)
+  const [entryOpen, setEntryOpen] = useState(false)
+  const [creatingEditor, setCreatingEditor] = useState(false)
+  const [entryError, setEntryError] = useState<string | null>(null)
   const selectedAction = outfit.actions.find((action) => action.id === selectedActionId) ?? null
+  const templateImages = characterTemplateImages(character.templates)
+  const canCreateAction = Boolean(
+    templateImages.east || outfit.previewUrl || character.referenceImageUrl,
+  )
+  const quickStartPath = `/quick-start?${new URLSearchParams({
+    characterId: character.id,
+    outfitId: outfit.id,
+  })}`
+
+  async function openWorkflowEditor() {
+    if (creatingEditor) return
+    setCreatingEditor(true)
+    setEntryError(null)
+    try {
+      const { run } = await createExistingCharacterActionRun(
+        { characterId: character.id, outfitId: outfit.id },
+        { characterApis, workflowRunApis },
+      )
+      navigate(`/workflow-editor/${encodeURIComponent(run.id)}`)
+    } catch (cause) {
+      setEntryError(cause instanceof Error ? cause.message : '无法创建动作工作流')
+      setCreatingEditor(false)
+    }
+  }
 
   return (
     <section aria-labelledby="action-list-title" className="mt-3">
-      <h3 id="action-list-title" className="text-lg font-semibold text-app-ink">
-        动作与帧
-      </h3>
+      <div className="flex items-end justify-between gap-4">
+        <h3 id="action-list-title" className="text-lg font-semibold text-app-ink">
+          动作与帧
+        </h3>
+        <div className="flex items-center gap-3">
+          <span className="text-[0.7rem] text-app-faint">点击卡片展开完整帧</span>
+          <button
+            type="button"
+            aria-label="增加动作"
+            disabled={!canCreateAction}
+            title={canCreateAction ? '选择动作创建方式' : '当前造型缺少角色母版'}
+            onClick={() => setEntryOpen(true)}
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-app-line px-3 text-xs font-semibold text-app-ink-soft transition-colors hover:border-app-accent hover:text-app-accent disabled:cursor-not-allowed disabled:text-app-faint"
+          >
+            <Plus size={14} weight="bold" aria-hidden="true" />
+            增加动作
+          </button>
+        </div>
+      </div>
+
+      {entryOpen ? (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-app-ink/20 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !creatingEditor) setEntryOpen(false)
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="action-entry-title"
+            className="w-full max-w-md rounded-lg border border-app-line bg-app-surface-raised p-5 shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h4 id="action-entry-title" className="text-lg font-semibold text-app-ink">
+                  选择动作创建方式
+                </h4>
+                <p className="mt-1 text-xs leading-5 text-app-muted">
+                  两种方式都会复用“{outfit.name}”的角色母版，直接开始制作新动作。
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="关闭动作创建方式"
+                disabled={creatingEditor}
+                onClick={() => setEntryOpen(false)}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-md text-app-muted hover:bg-app-surface-muted hover:text-app-ink disabled:opacity-40"
+              >
+                <X size={17} aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <Link
+                to={quickStartPath}
+                aria-label="使用 Quick Start"
+                className="flex min-h-28 flex-col justify-between rounded-lg border border-app-line p-4 text-left transition-colors hover:border-app-accent hover:bg-app-accent-muted"
+              >
+                <Lightning size={20} weight="fill" className="text-app-accent" aria-hidden="true" />
+                <span>
+                  <b className="block text-sm text-app-ink">Quick Start</b>
+                  <small className="mt-1 block text-xs leading-5 text-app-muted">
+                    描述动作后自动生成
+                  </small>
+                </span>
+              </Link>
+              <button
+                type="button"
+                aria-label="使用 Workflow Editor"
+                disabled={creatingEditor}
+                onClick={() => void openWorkflowEditor()}
+                className="flex min-h-28 flex-col justify-between rounded-lg border border-app-line p-4 text-left transition-colors hover:border-app-accent hover:bg-app-accent-muted disabled:opacity-50"
+              >
+                <Graph size={20} className="text-app-accent" aria-hidden="true" />
+                <span>
+                  <b className="block text-sm text-app-ink">Workflow Editor</b>
+                  <small className="mt-1 block text-xs leading-5 text-app-muted">
+                    {creatingEditor ? '正在创建工作流…' : '手动控制每个生成节点'}
+                  </small>
+                </span>
+              </button>
+            </div>
+            {entryError ? (
+              <p role="alert" className="mt-4 text-xs font-medium text-app-danger">
+                {entryError}
+              </p>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
 
       {outfit.actions.length === 0 ? (
         <div className="mt-4 rounded-[1.5rem] border border-dashed border-app-line bg-app-surface-raised p-7">

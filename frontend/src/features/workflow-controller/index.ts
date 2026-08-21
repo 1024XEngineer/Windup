@@ -1,4 +1,5 @@
 export { createAutoPrepareProject, createWorkflowController } from './controller'
+export { createExistingCharacterActionRun } from './existing-character-action'
 export type {
   AddActionInput,
   ApplyGenerationResultInput,
@@ -10,3 +11,7 @@ export type {
   StartCharacterGenerationResult,
   WorkflowController,
 } from './controller'
+export type {
+  ExistingCharacterActionRun,
+  ExistingCharacterActionTarget,
+} from './existing-character-action'

@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { createElement, type ComponentType, type ReactNode } from 'react'
+import { flushSync } from 'react-dom'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Link, MemoryRouter, Route, Routes } from 'react-router'
@@ -962,6 +963,38 @@ describe('WorkflowEditorPage real runtime boundary', () => {
         ]),
       ),
     )
+  })
+
+  it('画布投影尚未同步时也能保留完整的 IME 动作描述', async () => {
+    const session = createSession(completedTemplateWorkflow('42'), {
+      character: characterFixture(),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '添加动作分支' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成动作 ›' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择造型 夜行装' }))
+    fireEvent.click(screen.getByRole('button', { name: /自定义动作/ }))
+
+    const promptInput = screen.getByRole('textbox', { name: '动作描述' }) as HTMLTextAreaElement
+    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+    if (!setValue) throw new Error('textarea value setter is unavailable')
+
+    promptInput.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+    for (const character of '快速挥手打招呼') {
+      flushSync(() => {
+        setValue.call(promptInput, promptInput.value + character)
+        promptInput.dispatchEvent(
+          new InputEvent('input', { bubbles: true, data: character, isComposing: true }),
+        )
+      })
+    }
+    promptInput.dispatchEvent(
+      new CompositionEvent('compositionend', { bubbles: true, data: '快速挥手打招呼' }),
+    )
+
+    expect(promptInput.value).toBe('快速挥手打招呼')
   })
 
   it('自定义动作要求非空描述，并可返回重新选择造型', async () => {
