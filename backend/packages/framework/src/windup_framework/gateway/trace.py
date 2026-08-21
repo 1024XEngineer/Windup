@@ -30,6 +30,9 @@ class AttemptDetail:
     job_status: str | None = None
     edge_fingerprint: str | None = None
     provider_usage: object | None = None
+    policy_next_step: str | None = None
+    upstream_reached: str | None = None
+    model_index: int | None = None
 
 
 @dataclass

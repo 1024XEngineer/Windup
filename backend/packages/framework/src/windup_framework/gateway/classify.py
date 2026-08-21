@@ -36,6 +36,8 @@ def classify_http(status: int) -> ModelErrorType:
         return ModelErrorType.RATE_LIMIT
     if status in (401, 403):
         return ModelErrorType.AUTH
+    if status in (502, 503):
+        return ModelErrorType.UNREACHED
     if status in (521, 522, 523, 525):
         return ModelErrorType.UNREACHED
     if status in (400, 404):

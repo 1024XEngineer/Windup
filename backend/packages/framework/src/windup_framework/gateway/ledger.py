@@ -60,6 +60,17 @@ def _json_or_none(value: Any) -> Any:
     return {"value": str(value)}
 
 
+def _audit_extra(detail: AttemptDetail) -> dict | None:
+    extra: dict[str, object] = {}
+    if detail.policy_next_step:
+        extra["policy_next_step"] = detail.policy_next_step
+    if detail.upstream_reached:
+        extra["upstream_reached"] = detail.upstream_reached
+    if detail.model_index is not None:
+        extra["model_index"] = detail.model_index
+    return extra or None
+
+
 def persist_attempt(trace: AttemptTrace, *, session_factory=SessionLocal) -> None:
     """Persist one gateway attempt without letting ledger failures affect generation."""
 
@@ -130,7 +141,7 @@ def persist_attempt(trace: AttemptTrace, *, session_factory=SessionLocal) -> Non
                     poll_ms=detail.poll_ms,
                     download_ms=detail.download_ms,
                     poll_count=detail.poll_count,
-                    extra=None,
+                    extra=_audit_extra(detail),
                 )
             )
             session.commit()
