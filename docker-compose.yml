@@ -72,6 +72,8 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      # 出帧依赖只装进 worker：backend 不出帧，不该背 700MB 量级的浏览器
+      target: runtime-render3d
     container_name: windup-worker
     restart: unless-stopped
     depends_on:
