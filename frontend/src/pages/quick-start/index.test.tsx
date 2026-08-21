@@ -676,6 +676,33 @@ describe('QuickStartPage', () => {
     expect(screen.queryByText('第二条运行的对话')).toBeNull()
   })
 
+  it('migrates only legacy Agent turns bound to the current run', async () => {
+    const run = workflow(setupAndTemplate(), 'run-1')
+    const legacyKey = 'windup.quick-start.agent-chat.v1:7'
+    window.localStorage.setItem(
+      legacyKey,
+      JSON.stringify({ runId: null, turns: [{ role: 'user', content: '旧版未绑定草稿' }] }),
+    )
+
+    const unboundView = renderAt('/quick-start/run-1', serviceFor(run))
+
+    expect(screen.queryByText('旧版未绑定草稿')).toBeNull()
+    expect(window.localStorage.getItem(legacyKey)).toContain('旧版未绑定草稿')
+
+    unboundView.unmount()
+    window.localStorage.setItem(
+      legacyKey,
+      JSON.stringify({ runId: 'run-1', turns: [{ role: 'user', content: '旧版运行对话' }] }),
+    )
+    renderAt('/quick-start/run-1', serviceFor(run))
+
+    expect(await screen.findByText('旧版运行对话')).toBeTruthy()
+    expect(window.localStorage.getItem('windup.quick-start.agent-chat.v2:run:7:run-1')).toContain(
+      '旧版运行对话',
+    )
+    expect(window.localStorage.getItem(legacyKey)).toBeNull()
+  })
+
   it('rewrites the real optimized prompt in the composer and waits for explicit generation send', async () => {
     vi.useFakeTimers()
     const service = serviceFor(null)
