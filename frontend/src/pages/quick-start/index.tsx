@@ -969,6 +969,44 @@ function GenerationCanvas({ label }: { label: string }) {
   return <GenerationPreviewCard label={label} />
 }
 
+function RestoringConversation({ turns }: { turns: readonly AgentConversationTurn[] }) {
+  return (
+    <section className="relative min-h-screen overflow-hidden bg-app-canvas pt-14 text-app-ink">
+      <div
+        aria-busy="true"
+        data-testid="quick-start-run"
+        data-layout="agent-shell"
+        className="relative h-[calc(100dvh-3.5rem)] overflow-hidden"
+      >
+        <main
+          data-layout="quick-start-scroll-region"
+          className="absolute inset-0 overflow-y-auto px-5 pt-14 pb-32 sm:px-8 sm:pt-10 sm:pb-36"
+        >
+          <div
+            data-testid="quick-start-restoring-transcript"
+            className="mx-auto grid min-h-full w-full max-w-3xl content-end gap-7 pb-8 sm:gap-9"
+          >
+            {turns.map((turn, index) => (
+              <div
+                key={`${turn.role}:${index}:${turn.content}`}
+                data-conversation-kind="agent"
+                className="min-w-0"
+              >
+                {turn.role === 'user' ? (
+                  <UserTurn>{turn.content}</UserTurn>
+                ) : (
+                  <AgentCopy lines={turn.content.split('\n')} animate={false} />
+                )}
+              </div>
+            ))}
+            <div data-testid="quick-start-transcript-end" />
+          </div>
+        </main>
+      </div>
+    </section>
+  )
+}
+
 function QuickStartRun({
   service,
   runId,
@@ -1210,30 +1248,24 @@ function QuickStartRun({
   }, [actionFrames, candidates, firstFrameCandidates, run])
 
   if (!run) {
+    if (restoring) return <RestoringConversation turns={agentConversationTurns} />
+
     return (
       <section className="min-h-[520px] rounded-[2rem] border border-app-line bg-app-canvas p-8 text-app-ink">
         <p className="font-mono text-[10px] font-bold tracking-[0.16em] text-app-muted">
           QUICK START / RECOVERY
         </p>
-        <h1 className="mt-4 font-serif text-4xl">
-          {restoring ? '正在恢复这次创作' : '无法恢复这次创作'}
-        </h1>
-        {restoring ? (
-          <p className="mt-4 max-w-xl text-sm leading-7 text-app-muted">正在读取工作流状态…</p>
-        ) : (
-          <>
-            <p role="alert" className="mt-4 max-w-xl text-sm leading-7 text-app-muted">
-              {error || `没有找到运行记录 ${runId}`}
-            </p>
-            <button
-              type="button"
-              onClick={() => navigate('/quick-start')}
-              className="mt-8 rounded-xl bg-app-accent px-5 py-3 text-sm font-semibold text-app-on-accent"
-            >
-              返回快速开始
-            </button>
-          </>
-        )}
+        <h1 className="mt-4 font-serif text-4xl">无法恢复这次创作</h1>
+        <p role="alert" className="mt-4 max-w-xl text-sm leading-7 text-app-muted">
+          {error || `没有找到运行记录 ${runId}`}
+        </p>
+        <button
+          type="button"
+          onClick={() => navigate('/quick-start')}
+          className="mt-8 rounded-xl bg-app-accent px-5 py-3 text-sm font-semibold text-app-on-accent"
+        >
+          返回快速开始
+        </button>
       </section>
     )
   }
