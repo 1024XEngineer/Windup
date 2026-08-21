@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from windup_framework.config.pixel_perfect import settings as pixel_perfect_settings
 from windup_framework.db import Base, engine
 
 # 模型导入：触发 Base.metadata 注册，确保 create_all 能发现所有表
@@ -107,7 +108,9 @@ def create_app() -> FastAPI:
     app = FastAPI(title="windup", version="0.1.0", lifespan=_lifespan)
     app.state.mq_publisher = MqPublisher()
     app.state.chat_model_factory = create_chat_model
-    app.state.pixel_perfect_tool = create_pixel_perfect_tool()
+    app.state.pixel_perfect_tool = create_pixel_perfect_tool(
+        max_concurrency=pixel_perfect_settings.concurrency
+    )
     # 起名器在 composition root 注入,避免 web→character.service 碰到 ai_engine。
     # LangChainCharacterNamer 构造期不创建 ChatOpenAI；缺 AI_API_KEY 时应用仍能启动。
     # 测试若已注入假 namer，不要覆盖。
@@ -122,7 +125,7 @@ def create_app() -> FastAPI:
     app.add_middleware(AuthMiddleware)
     app.add_middleware(
         PixelPerfectRequestLimitsMiddleware,
-        max_concurrency=int(os.getenv("PIXEL_PERFECT_CONCURRENCY", "1")),
+        max_concurrency=pixel_perfect_settings.concurrency,
     )
     app.add_middleware(
         CORSMiddleware,
