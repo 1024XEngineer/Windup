@@ -170,6 +170,7 @@ class GenerationTask:
     input_payload: dict | None = None
     result: CharacterImageOutput | CharacterActionOutput | None = None
     error_message: str | None = None
+    runtime: dict | None = None
     create_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     update_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -197,6 +198,12 @@ class GenerationTaskRecord(Base):
     )
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     project_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # 这次生成跑在哪个版本上。写在任务行而不是 result 里:失败的任务同样要能归因,
+    # 而失败时没有 result。见 windup_framework.runtime_version。
+    runtime: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=True,
+    )
     task_type: Mapped[str] = mapped_column(
         Text,
         nullable=False,

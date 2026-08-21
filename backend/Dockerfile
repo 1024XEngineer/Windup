@@ -42,6 +42,11 @@ COPY --from=builder /app/packages /app/packages
 # 把 venv/bin 加入 PATH
 ENV PATH="/app/.venv/bin:$PATH"
 
+# 这次构建对应的 commit。镜像里没有 .git,不在构建期烘进来的话,任务落库时的
+# 版本恒为 unknown,线上数据就没法按版本归因(#501)。
+ARG WINDUP_BUILD_COMMIT=""
+ENV WINDUP_BUILD_COMMIT=${WINDUP_BUILD_COMMIT}
+
 # 默认环境变量（可被 docker-compose / .env 覆盖）
 ENV WINDUP_HOST=0.0.0.0
 ENV WINDUP_PORT=8000

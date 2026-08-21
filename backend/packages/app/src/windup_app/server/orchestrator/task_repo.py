@@ -26,6 +26,7 @@ from windup_app.server.orchestrator.model import (
     TaskStatus,
 )
 from windup_common.directions import ActionDirection
+from windup_framework.runtime_version import runtime_snapshot
 
 logger = logging.getLogger("windup.task_repo")
 
@@ -137,6 +138,7 @@ def create_task(
     project_id: int | None,
     task_type: GenerationType,
     input_payload: dict,
+    runtime: dict | None = None,
 ) -> GenerationTask:
     """创建生成任务记录，返回领域对象。"""
     record = GenerationTaskRecord(
@@ -145,10 +147,26 @@ def create_task(
         task_type=task_type.value,
         status=TaskStatus.PENDING.value,
         input_payload=input_payload,
+        # 建任务时就写死版本,而不是等结果回来 —— 失败的任务同样要能归因,
+        # 而失败时没有 result 可挂。
+        runtime=runtime_snapshot(**(runtime or {})),
     )
     session.add(record)
     session.flush()
     return _record_to_domain(record)
+
+
+def merge_runtime(session: Session, task_id: int, extra: dict) -> None:
+    """把生成侧真正用到的东西并进 ``runtime``。
+
+    合并而不是覆盖:建任务时写的 commit 必须留住。这里只在**真的解析出型号之后**
+    才调用 —— 记配置里的默认值等于记了一件没发生过的事。
+    """
+    record = session.get(GenerationTaskRecord, task_id)
+    if record is None or not extra:
+        return
+    record.runtime = {**(record.runtime or {}), **{k: v for k, v in extra.items() if v}}
+    session.flush()
 
 
 def update_status(
@@ -241,6 +259,7 @@ def _record_to_domain(record: GenerationTaskRecord) -> GenerationTask:
         input_payload=record.input_payload,
         result=result,
         error_message=record.error_message,
+        runtime=record.runtime,
         create_at=record.create_at,
         update_at=record.update_at,
     )

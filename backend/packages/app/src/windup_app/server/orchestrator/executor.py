@@ -269,6 +269,11 @@ class ActionTaskExecutor:
                 session.commit()
 
             cons = (self._fetch_constraints or _load_constraints)(session, project_id)
+            # 记的是这次真正用到的型号与路线,不是配置里的默认值。
+            task_repo.merge_runtime(session, task_id, {
+                "video_model": _resolve_video_model(input.video_model),
+                "route": "render_3d" if (input.model_3d_url or "").strip() else "video_i2v",
+            })
             result = self._produce_action(input, cons)
             task_repo.update_result(session, task_id, _ACTION_RESULT, result)
             _settle_credit(session, task_id, success=True)
@@ -602,6 +607,9 @@ class ImageTaskExecutor:
             if own:
                 session.commit()
             cons = _load_constraints(session, project_id)  # 角色图也受项目约束
+            task_repo.merge_runtime(session, task_id, {
+                "image_model": getattr(self._get_image(), "_model", None),
+            })
             urls, quality = self._produce_image(input, cons)
             task_repo.update_result(
                 session,

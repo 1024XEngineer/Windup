@@ -48,6 +48,9 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        # 由部署脚本传入:`WINDUP_BUILD_COMMIT=$(git rev-parse HEAD) docker compose build`
+        WINDUP_BUILD_COMMIT: ${WINDUP_BUILD_COMMIT:-}
     container_name: windup-backend
     restart: unless-stopped
     depends_on:
@@ -72,6 +75,9 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        # 由部署脚本传入:`WINDUP_BUILD_COMMIT=$(git rev-parse HEAD) docker compose build`
+        WINDUP_BUILD_COMMIT: ${WINDUP_BUILD_COMMIT:-}
     container_name: windup-worker
     restart: unless-stopped
     depends_on:
