@@ -1044,3 +1044,39 @@ def test_square_first_frame_forms_a_720x720_content_region_in_a_1280x720_canvas(
     assert 715 <= cols.max()-cols.min()+1 <= 725, f"内容区宽 {cols.max()-cols.min()+1}，应≈720"
     assert 715 <= rows.max()-rows.min()+1 <= 725, f"内容区高 {rows.max()-rows.min()+1}，应≈720"
     assert abs(cols.min() - 280) <= 4, f"内容区左边界 {cols.min()}，应≈280（左右各补 280）"
+
+
+def test_upscaling_a_small_sprite_keeps_hard_edges_instead_of_interpolating_them():
+    """放大用 NEAREST：插值会把 sprite 的硬边糊成渐变，而这张糊图正是喂给 i2v 的输入。
+
+    判据取一条竖直硬边在成品里的**过渡带宽度**（既不接近左色、也不接近右色的像素数）。
+    倍率越大差距越明显，实测同一函数下：64x64 源（11.2x）NEAREST 4px、LANCZOS 20px；
+    而 256x256 源（2.8x）只有 4px 对 5px —— 所以这条用小 sprite 测，大图分辨不出来。
+    小 sprite 也正是 #509 点名的场景。
+
+    不测色数：JPEG q90 本身就把 7704 色变成 23000 色，两种滤波在那个量上分不开
+    （12 张真实母版配对实测 1.0 倍），拿色数当判据会得出"没区别"的错结论。
+    """
+    import io as _io
+
+    import numpy as _np
+    from PIL import Image as _Image
+
+    left, right = (30, 60, 200), (240, 200, 40)
+    src = _np.zeros((64, 64, 4), _np.uint8)
+    src[:, :, 3] = 255
+    src[:, :32] = (*left, 255)
+    src[:, 32:] = (*right, 255)
+    buf = _io.BytesIO()
+    _Image.fromarray(src, "RGBA").save(buf, "PNG")
+
+    im = _submitted_first_frame(buf.getvalue())
+    # 只取内容区：1280 宽的画布里，720x720 的内容区居中，两侧各 280px 是补边
+    row = _np.asarray(im.convert("RGB"))[360].astype(int)[280:1000]
+    far_from_left = _np.abs(row - _np.array(left)).sum(1) > 40
+    far_from_right = _np.abs(row - _np.array(right)).sum(1) > 40
+    width = int((far_from_left & far_from_right).sum())
+    assert width <= 8, (
+        f"硬边过渡带 {width}px，说明放大用了插值（实测 LANCZOS 20px、BICUBIC 10px、"
+        f"NEAREST 4px）。sprite 的硬边被糊掉后，i2v 拿到的就是一张糊图。"
+    )
