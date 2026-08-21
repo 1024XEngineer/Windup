@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from windup_framework.config.pixel_perfect import settings as pixel_perfect_settings
 from windup_framework.db import Base, engine
 from windup_framework.gateway.models import AIGatewayAttempt, AIGatewayAttemptDetail  # noqa: F401
 
@@ -30,15 +31,20 @@ from windup_framework.mq.model import MqMessage  # noqa: F401
 from windup_app.web.api.auth import router as auth_router
 from windup_app.web.api.character import router as character_router
 from windup_app.server.orchestrator import task_repo
+from windup_app.server.pixel_perfect import create_pixel_perfect_tool
 from windup_app.server.orchestrator.render3d_service import default_operations, precheck_master
 from windup_app.web.api.generation import router as generation_router
 from windup_app.web.api.media import router as media_router
+from windup_app.web.api.pixel_perfect import router as pixel_perfect_router
 from windup_app.web.api.project import router as project_router
 from windup_app.web.api.quota import router as quota_router
 from windup_app.web.api.render3d import router as render3d_router
 from windup_app.web.api.workflow_run import router as workflow_run_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
 from windup_app.web.middleware.auth import AuthMiddleware
+from windup_app.web.middleware.pixel_perfect_limits import (
+    PixelPerfectRequestLimitsMiddleware,
+)
 from windup_framework.mq.publisher import MqPublisher
 from windup_framework.mq.relay import relay_pending_messages
 from windup_framework.providers import create_chat_model
@@ -103,6 +109,9 @@ def create_app() -> FastAPI:
     app = FastAPI(title="windup", version="0.1.0", lifespan=_lifespan)
     app.state.mq_publisher = MqPublisher()
     app.state.chat_model_factory = create_chat_model
+    app.state.pixel_perfect_tool = create_pixel_perfect_tool(
+        max_concurrency=pixel_perfect_settings.concurrency
+    )
     # 起名器在 composition root 注入,避免 web→character.service 碰到 ai_engine。
     # LangChainCharacterNamer 构造期不创建 ChatOpenAI；缺 AI_API_KEY 时应用仍能启动。
     # 测试若已注入假 namer，不要覆盖。
@@ -116,18 +125,31 @@ def create_app() -> FastAPI:
     # 中间件（add_middleware 后加的先执行：请求先进 CORS → 再进 Auth → 最后到路由）
     app.add_middleware(AuthMiddleware)
     app.add_middleware(
+        PixelPerfectRequestLimitsMiddleware,
+        max_concurrency=pixel_perfect_settings.concurrency,
+    )
+    app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
         allow_origin_regex=_cors_origin_regex(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=[
+            "X-Pixel-Cols",
+            "X-Pixel-Rows",
+            "X-Pixel-Step-X",
+            "X-Pixel-Step-Y",
+            "X-Pixel-Consensus",
+            "X-Pixel-Confidence",
+        ],
     )
     app.include_router(auth_router)
     app.include_router(project_router)
     app.include_router(character_router)
     app.include_router(workflow_run_router)
     app.include_router(media_router)
+    app.include_router(pixel_perfect_router)
     app.include_router(generation_router)
     app.include_router(quota_router)
     app.include_router(render3d_router)

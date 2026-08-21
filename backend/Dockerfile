@@ -1,7 +1,36 @@
 # ── 后端 Dockerfile ──────────────────────────────────────────────────
 # 多阶段构建:builder 装依赖 → runtime 只拷贝产物，镜像更小
 
-# ── 阶段 1: 构建 ──
+# ── 阶段 0: 构建 PyO3 原生扩展 wheel ──
+FROM rust:1.89-slim AS rust-toolchain
+
+FROM python:3.12-slim AS pixel-native-builder
+
+COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
+COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+ENV PATH="/usr/local/cargo/bin:$PATH" \
+    CARGO_HOME=/usr/local/cargo \
+    RUSTUP_HOME=/usr/local/rustup \
+    UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/ \
+    UV_HTTP_TIMEOUT=180
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build/native/pixel-perfect
+COPY native/pixel-perfect/crates/detector/ crates/detector/
+COPY native/pixel-perfect/crates/reconstructor/ crates/reconstructor/
+COPY native/pixel-perfect/bindings/python/ bindings/python/
+RUN uv tool run --from maturin==1.14.1 maturin build \
+    --release \
+    --locked \
+    --manifest-path bindings/python/Cargo.toml \
+    --out /wheels
+
+# ── 阶段 1: 构建 Python 环境 ──
 FROM python:3.12-slim AS builder
 
 # 安装 uv（比 pip 快 10x）
@@ -17,18 +46,23 @@ ENV UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/ \
 WORKDIR /app
 
 # 先拷贝依赖定义，利用 Docker layer cache
-COPY pyproject.toml uv.lock ./
-COPY packages/common/pyproject.toml packages/common/
-COPY packages/framework/pyproject.toml packages/framework/
-COPY packages/ai_engine/pyproject.toml packages/ai_engine/
-COPY packages/app/pyproject.toml packages/app/
+COPY backend/pyproject.toml backend/uv.lock ./
+COPY backend/packages/common/pyproject.toml packages/common/
+COPY backend/packages/framework/pyproject.toml packages/framework/
+COPY backend/packages/ai_engine/pyproject.toml packages/ai_engine/
+COPY backend/packages/app/pyproject.toml packages/app/
 
 # 安装依赖（不含 dev 依赖）
 RUN uv sync --frozen --no-dev --no-install-workspace
 
 # 拷贝源码并安装
-COPY packages/ packages/
+COPY backend/packages/ packages/
 RUN uv sync --frozen --no-dev
+
+# 原生扩展是显式工具的可选源码依赖，由镜像在构建期安装；缺失时应用仍可启动。
+COPY --from=pixel-native-builder /wheels /wheels
+RUN uv pip install --python /app/.venv/bin/python /wheels/*.whl \
+    && /app/.venv/bin/python -c "import windup_pixel_perfect_native"
 
 # ── 阶段 2: 运行时 ──
 FROM python:3.12-slim AS runtime
@@ -38,6 +72,8 @@ WORKDIR /app
 # 从 builder 拷贝虚拟环境和包
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/packages /app/packages
+COPY native/pixel-perfect/crates/detector/LICENSE /licenses/pixel-grid-detector/LICENSE
+COPY native/pixel-perfect/crates/reconstructor/LICENSE /licenses/pixel-grid-reconstructor/LICENSE
 
 # 把 venv/bin 加入 PATH
 ENV PATH="/app/.venv/bin:$PATH"

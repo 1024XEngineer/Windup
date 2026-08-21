@@ -1,0 +1,19 @@
+[package]
+name = "windup-pixel-perfect-native"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+name = "windup_pixel_perfect_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.26", features = ["abi3-py312", "extension-module"] }
+windup-pixel-grid-detector = { path = "../../crates/detector" }
+windup-pixel-grid-reconstructor = { path = "../../crates/reconstructor" }
+
+[profile.release]
+lto = true
+codegen-units = 1

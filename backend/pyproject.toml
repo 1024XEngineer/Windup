@@ -42,6 +42,30 @@ type = "forbidden"
 source_modules = ["windup_app.web", "windup_app.worker"]
 forbidden_modules = ["windup_ai_engine"]
 
+[[tool.importlinter.contracts]]
+name = "独立完美像素工具不依赖生成和业务基础设施"
+type = "forbidden"
+source_modules = [
+    "windup_app.server.pixel_perfect",
+    "windup_app.web.api.pixel_perfect",
+]
+forbidden_modules = [
+    "windup_ai_engine",
+    "windup_framework",
+    "windup_app.server.media",
+    "windup_app.server.orchestrator",
+]
+
+[[tool.importlinter.contracts]]
+name = "现有生成管线不依赖独立完美像素工具"
+type = "forbidden"
+source_modules = [
+    "windup_app.server.orchestrator",
+    "windup_app.web.api.generation",
+    "windup_app.worker",
+]
+forbidden_modules = ["windup_app.server.pixel_perfect"]
+
 # ── pytest 配置 ─────────────────────────────────────────────────────
 [tool.pytest.ini_options]
 markers = [

@@ -96,6 +96,39 @@
         "title": "AssistantMessageResponse",
         "type": "object"
       },
+      "Body_pixel_perfect_file_tools_pixel_perfect_post": {
+        "properties": {
+          "colors": {
+            "default": 32,
+            "maximum": 64.0,
+            "minimum": 2.0,
+            "title": "Colors",
+            "type": "integer"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "pixel_size": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pixel Size"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_pixel_perfect_file_tools_pixel_perfect_post",
+        "type": "object"
+      },
       "Body_upload_media_media_upload_post": {
         "properties": {
           "file": {
@@ -2834,6 +2867,33 @@
         "title": "ToolDefinition",
         "type": "object"
       },
+      "ToolErrorResponse": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ToolErrorResponse",
+        "type": "object"
+      },
       "UpdateNicknameRequest": {
         "description": "修改昵称请求。",
         "properties": {
@@ -4844,6 +4904,49 @@
         "summary": "Precheck Master",
         "tags": [
           "render3d"
+        ]
+      }
+    },
+    "/tools/pixel-perfect": {
+      "post": {
+        "description": "显式调用本地工具；不会被任何生成流程自动触发。",
+        "operationId": "pixel_perfect_file_tools_pixel_perfect_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_pixel_perfect_file_tools_pixel_perfect_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolErrorResponse"
+                }
+              },
+              "image/png": {}
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pixel Perfect File",
+        "tags": [
+          "tools"
         ]
       }
     },
