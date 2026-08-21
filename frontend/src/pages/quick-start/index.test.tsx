@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
+import { BrowserRouter, MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { QuickStartCandidate, QuickStartEntryService, QuickStartSession } from './service'
@@ -18,6 +18,8 @@ import { QuickStartPage } from './index'
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
+  window.sessionStorage.clear()
+  window.history.replaceState(null, '', '/')
   vi.useRealTimers()
 })
 
@@ -205,6 +207,22 @@ function renderAt(
         <Route path="/playtest/:characterId/:outfitId" element={<PlaytestLocation />} />
       </Routes>
     </MemoryRouter>,
+  )
+}
+
+function renderInBrowserHistory(
+  service: QuickStartEntryService,
+  agent: CreateQuickStartAgentOptions = agentFor(),
+) {
+  return render(
+    <BrowserRouter>
+      <Routes>
+        <Route
+          path="/quick-start"
+          element={<QuickStartPage service={service} activeRunUserId="7" agent={agent} />}
+        />
+      </Routes>
+    </BrowserRouter>,
   )
 }
 
@@ -551,7 +569,7 @@ describe('QuickStartPage', () => {
     expect(standaloneAvatar).toBeUndefined()
   })
 
-  it('persists real Agent turns on the frontend without a demo route or WorkflowRun turns', async () => {
+  it('keeps an unbound Agent draft in its current Quick Start history entry', async () => {
     const service = serviceFor(null)
     const planner = vi.fn(async () => ({
       text: '可以。你最想保留哪个外观特征？',
@@ -559,10 +577,14 @@ describe('QuickStartPage', () => {
       toolCalls: [],
     }))
     const agent = agentFor({ planner })
-    const firstView = renderAt('/quick-start?demo=conversation', service, agent)
+    window.history.replaceState(null, '', '/quick-start')
+    const firstView = renderInBrowserHistory(service, agent)
 
     expect(screen.queryByText('MOCK 演示')).toBeNull()
     expect(screen.getByRole('textbox', { name: '创作指令' })).toBeTruthy()
+    expect(window.sessionStorage.length).toBe(0)
+    expect(window.localStorage.length).toBe(0)
+    expect(window.history.state?.windupQuickStartAgentDraftId).toBeUndefined()
 
     fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
       target: { value: '我想做一个住在云端的机械师。' },
@@ -572,16 +594,86 @@ describe('QuickStartPage', () => {
     expect(await screen.findByText('我想做一个住在云端的机械师。')).toBeTruthy()
     expect(await screen.findByText('可以。你最想保留哪个外观特征？')).toBeTruthy()
     expect(planner).toHaveBeenCalledTimes(1)
-    const persistedAgentChat = window.localStorage.getItem('windup.quick-start.agent-chat.v1:7')
+    const draftId = window.history.state?.windupQuickStartAgentDraftId
+    expect(draftId).toEqual(expect.any(String))
+    const persistedAgentChat = window.sessionStorage.getItem(
+      `windup.quick-start.agent-chat.v2:draft:7:${draftId}`,
+    )
     expect(persistedAgentChat).toContain('我想做一个住在云端的机械师。')
     expect(persistedAgentChat).toContain('可以。你最想保留哪个外观特征？')
     expect(persistedAgentChat).not.toContain('勾勒角色轮廓')
+    expect(window.localStorage.length).toBe(0)
 
     firstView.unmount()
-    renderAt('/quick-start', service, agent)
+    const restoredView = renderInBrowserHistory(service, agent)
 
     expect(screen.getByText('我想做一个住在云端的机械师。')).toBeTruthy()
     expect(screen.getByText('可以。你最想保留哪个外观特征？')).toBeTruthy()
+
+    restoredView.unmount()
+    window.history.pushState(null, '', '/quick-start')
+    renderInBrowserHistory(service, agent)
+
+    expect(screen.queryByText('我想做一个住在云端的机械师。')).toBeNull()
+    expect(screen.queryByText('可以。你最想保留哪个外观特征？')).toBeNull()
+  })
+
+  it('moves the Agent draft into a run-scoped sidecar when generation starts', async () => {
+    vi.useFakeTimers()
+    const createdRun = workflow(setupAndTemplate({ phase: 'generating' }), 'run-created')
+    const service = serviceFor(createdRun, {
+      runId: 'run-created',
+      getWorkflow: vi.fn(() => createdRun),
+      resume: vi.fn(async () => createdRun),
+    })
+    renderAt(
+      '/quick-start',
+      service,
+      agentFor({
+        startCharacterGeneration: vi.fn(async () => ({ runId: 'run-created' })),
+      }),
+    )
+
+    fireEvent.change(screen.getByLabelText('创作指令'), {
+      target: { value: '提着风灯的森林守夜人' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+    await act(async () => undefined)
+
+    const draftId = window.history.state?.windupQuickStartAgentDraftId
+    expect(draftId).toEqual(expect.any(String))
+    expect(
+      window.sessionStorage.getItem(`windup.quick-start.agent-chat.v2:draft:7:${draftId}`),
+    ).toContain('提着风灯的森林守夜人')
+
+    await act(async () => vi.advanceTimersByTimeAsync(760))
+    fireEvent.click(screen.getByRole('button', { name: '发送生成' }))
+    await act(async () => undefined)
+    await act(async () => vi.advanceTimersByTime(460))
+
+    expect(
+      window.localStorage.getItem('windup.quick-start.agent-chat.v2:run:7:run-created'),
+    ).toContain('提着风灯的森林守夜人')
+    expect(
+      window.sessionStorage.getItem(`windup.quick-start.agent-chat.v2:draft:7:${draftId}`),
+    ).toBeNull()
+  })
+
+  it('loads Agent turns only from the matching run sidecar', async () => {
+    window.localStorage.setItem(
+      'windup.quick-start.agent-chat.v2:run:7:run-1',
+      JSON.stringify({ turns: [{ role: 'user', content: '第一条运行的对话' }] }),
+    )
+    window.localStorage.setItem(
+      'windup.quick-start.agent-chat.v2:run:7:run-2',
+      JSON.stringify({ turns: [{ role: 'user', content: '第二条运行的对话' }] }),
+    )
+    const run = workflow(setupAndTemplate(), 'run-1')
+
+    renderAt('/quick-start/run-1', serviceFor(run))
+
+    expect(await screen.findByText('第一条运行的对话')).toBeTruthy()
+    expect(screen.queryByText('第二条运行的对话')).toBeNull()
   })
 
   it('rewrites the real optimized prompt in the composer and waits for explicit generation send', async () => {
