@@ -15,7 +15,6 @@ pub mod varcontrast;
 use std::io::Cursor;
 
 use image::{ImageFormat, ImageReader, Limits};
-use serde::Serialize;
 
 pub const MAX_INPUT_PIXELS: usize = 4_000_000;
 pub const MAX_INPUT_BYTES: usize = 32 * 1024 * 1024;
@@ -28,7 +27,7 @@ pub enum DetectorMode {
     Fast,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 pub struct GridDetection {
     pub step_x: f64,
     pub step_y: f64,

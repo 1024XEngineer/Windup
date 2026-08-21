@@ -9,13 +9,3 @@ publish = false
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 rayon = "1.12.0"
 rustfft = "6"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-
-[[bin]]
-name = "windup-pixel-grid-detector"
-path = "src/main.rs"
-
-[profile.release]
-lto = true
-codegen-units = 1

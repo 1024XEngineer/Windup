@@ -1,6 +1,4 @@
-use std::collections::BTreeSet;
-use std::io::{Cursor, Write};
-use std::process::{Command, Stdio};
+use std::io::Cursor;
 
 use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
 use windup_pixel_grid_detector::{detect_bytes, DetectorMode};
@@ -56,62 +54,6 @@ fn sub_three_pixel_results_are_reported_as_low_confidence() {
 
     assert!(result.step_x < 3.0 || result.step_y < 3.0);
     assert_eq!(result.confidence, "low");
-}
-
-#[test]
-fn cli_emits_only_the_six_field_grid_contract() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_windup-pixel-grid-detector"))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("spawn detector CLI");
-    child
-        .stdin
-        .take()
-        .expect("open stdin")
-        .write_all(&upscaled_pixel_art())
-        .expect("write fixture");
-
-    let output = child.wait_with_output().expect("wait for detector CLI");
-    assert!(output.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse JSON");
-    let keys: BTreeSet<&str> = json
-        .as_object()
-        .expect("JSON object")
-        .keys()
-        .map(String::as_str)
-        .collect();
-
-    assert_eq!(
-        keys,
-        BTreeSet::from([
-            "cols",
-            "confidence",
-            "consensus",
-            "rows",
-            "step_x",
-            "step_y"
-        ])
-    );
-}
-
-#[test]
-fn cli_rejects_an_oversized_encoded_input_before_decoding() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_windup-pixel-grid-detector"))
-        .stdin(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn detector CLI");
-    child
-        .stdin
-        .take()
-        .expect("open stdin")
-        .write_all(&vec![0u8; 32 * 1024 * 1024 + 1])
-        .expect("write oversized input");
-
-    let output = child.wait_with_output().expect("wait for detector CLI");
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("encoded input exceeds"));
 }
 
 #[test]
