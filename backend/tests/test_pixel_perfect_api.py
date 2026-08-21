@@ -117,6 +117,28 @@ def test_pixel_perfect_endpoint_bounds_the_uploaded_bytes(auth_client):
     assert tool.calls == []
 
 
+def test_pixel_perfect_endpoint_wraps_oversized_multipart_as_business_error(
+    auth_client,
+):
+    response = auth_client.post(
+        "/tools/pixel-perfect",
+        files={
+            "file": (
+                "source.png",
+                bytes(11 * 1024 * 1024 + 1),
+                "image/png",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "code": BizCode.BAD_REQUEST,
+        "message": "请求体不能超过 11 MB",
+        "data": None,
+    }
+
+
 def test_pixel_perfect_metadata_headers_are_visible_to_the_browser(auth_client):
     auth_client.app.state.pixel_perfect_tool = _RecordingTool()
 
