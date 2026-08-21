@@ -47,26 +47,38 @@ class PixelPerfectRequestLimitsMiddleware:
             self._active += 1
 
         received = 0
+        body_too_large = False
 
         async def bounded_receive():
-            nonlocal received
+            nonlocal body_too_large, received
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
                 if received > self.max_body_bytes:
+                    body_too_large = True
                     raise _BodyTooLarge
             return message
 
+        async def bounded_send(message):
+            # Starlette 把 multipart 读取异常改写成自己的 400；先压住该响应，
+            # 再由本中间件返回项目约定的业务错误包络。
+            if not body_too_large:
+                await send(message)
+
         try:
-            await self.app(scope, bounded_receive, send)
-        except _BodyTooLarge:
-            await self._reject(
-                scope,
-                receive,
-                send,
-                "请求体不能超过 11 MB",
-                BizCode.BAD_REQUEST,
-            )
+            try:
+                await self.app(scope, bounded_receive, bounded_send)
+            except _BodyTooLarge:
+                body_too_large = True
+
+            if body_too_large:
+                await self._reject(
+                    scope,
+                    receive,
+                    send,
+                    "请求体不能超过 11 MB",
+                    BizCode.BAD_REQUEST,
+                )
         finally:
             async with self._lock:
                 self._active -= 1
