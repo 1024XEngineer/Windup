@@ -1,7 +1,0 @@
-[workspace]
-members = ["crates/detector"]
-resolver = "2"
-
-[profile.release]
-lto = true
-codegen-units = 1

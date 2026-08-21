@@ -5,7 +5,7 @@ Windup 的独立本地像素网格识别库。它只读取 PNG/JPEG 字节并返
 默认执行 Pixel Art Fixer 的完整多检测器共识流程：autocorrelation、run-length comb、shift self-similarity 与证据仲裁。调用方可以显式选择 `DetectorMode::Fast` 作为低延迟模式。
 
 ```bash
-cargo test --release --locked -p windup-pixel-grid-detector
+cargo test --release --locked
 ```
 
 公共入口为 `detect_bytes`，返回字段包括 `cols`、`rows`、`step_x`、`step_y`、`consensus` 和 `confidence`。Python 绑定由独立集成模块提供，本 crate 不依赖 Python 或 Windup 后端。
