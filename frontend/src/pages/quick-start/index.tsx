@@ -553,7 +553,10 @@ function QuickStartInput({
     awaitingGenerationConfirmation || Boolean(prompt.trim()) || Boolean(templateFile)
 
   return (
-    <section className="relative min-h-[100dvh] overflow-hidden border border-app-line bg-app-canvas pt-14 text-app-ink shadow-app-page">
+    <section
+      aria-label="创作入口"
+      className="relative min-h-[100dvh] overflow-hidden bg-app-canvas pt-14 text-app-ink"
+    >
       <AmbientGrid />
 
       <div
