@@ -978,10 +978,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     fireEvent.click(screen.getByRole('button', { name: /自定义动作/ }))
 
     const promptInput = screen.getByRole('textbox', { name: '动作描述' }) as HTMLTextAreaElement
-    const setValue = Object.getOwnPropertyDescriptor(
-      HTMLTextAreaElement.prototype,
-      'value',
-    )?.set
+    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
     if (!setValue) throw new Error('textarea value setter is unavailable')
 
     promptInput.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
