@@ -253,6 +253,10 @@ function completedAnimationEvent(taskId = 'task-2'): GenerationEvent {
   }
 }
 
+function imageCandidates(prefix: string) {
+  return [1, 2, 3].map((index) => ({ url: `${prefix}-${index}.png` }))
+}
+
 async function flushAsyncWork() {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
@@ -430,7 +434,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'character_template',
-        images: [{ url: 'https://img/knight-1.png' }, { url: 'https://img/knight-2.png' }],
+        images: imageCandidates('https://img/knight'),
       },
       error: null,
     })
@@ -874,7 +878,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'character_template',
-        images: [{ url: 'https://img/knight-1.png' }, { url: 'https://img/knight-2.png' }],
+        images: imageCandidates('https://img/knight'),
       },
       error: null,
     })
@@ -936,7 +940,7 @@ describe('WorkflowController', () => {
   it.each([
     ['four-way', ['east', 'north', 'south']],
     ['eight-way', ['east', 'north', 'south', 'north_east', 'south_east']],
-  ] as const)('按项目方向为 %s 创建独立的两张候选任务', async (movement, directions) => {
+  ] as const)('按项目方向为 %s 创建独立的三张候选任务', async (movement, directions) => {
     const { controller, generation } = createController(createRun(), movement)
 
     await controller.generateCharacterTemplate('setup-1', {
@@ -953,7 +957,7 @@ describe('WorkflowController', () => {
         result: {
           type: 'character_template',
           direction,
-          images: [{ url: `${direction}-1.png` }, { url: `${direction}-2.png` }],
+          images: imageCandidates(direction),
         },
         error: null,
       })
@@ -1000,7 +1004,7 @@ describe('WorkflowController', () => {
         result: {
           type: 'first_frame',
           direction: direction as 'east' | 'north' | 'south',
-          images: [{ url: `${direction}-1.png` }, { url: `${direction}-2.png` }],
+          images: imageCandidates(direction),
         },
         error: null,
       })
@@ -2406,7 +2410,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'character_template',
-        images: [{ url: 'https://img/knight-1.png' }, { url: 'https://img/knight-2.png' }],
+        images: imageCandidates('https://img/knight'),
       },
       error: null,
     }
@@ -2456,7 +2460,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'character_template',
-        images: [{ url: 'https://img/knight-1.png' }, { url: 'https://img/knight-2.png' }],
+        images: imageCandidates('https://img/knight'),
       },
       error: null,
     })
@@ -2465,6 +2469,31 @@ describe('WorkflowController', () => {
 
     await controller.resume()
     expect(controller.getWorkflow().nodes[1].phase).toBe('selecting')
+  })
+
+  it('刷新后恢复历史双候选角色母版任务', async () => {
+    const { controller, generation } = createController()
+    await controller.generateCharacterTemplate('setup-1', { spriteWidth: 64, spriteHeight: 64 })
+    await controller.interrupt()
+    generation.snapshots.set('task-1', {
+      id: 'task-1',
+      projectId: '1',
+      type: 'character_template',
+      status: 'completed',
+      result: {
+        type: 'character_template',
+        images: [{ url: 'https://img/legacy-1.png' }, { url: 'https://img/legacy-2.png' }],
+      },
+      error: null,
+    })
+
+    await controller.resume()
+
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+      status: 'active',
+      phase: 'selecting',
+      error: null,
+    })
   })
 
   it('首帧订阅后的补偿查询沿用节点的图片结果预期', async () => {
@@ -2477,7 +2506,7 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'first_frame',
-        images: [{ url: 'https://img/walk-1.png' }, { url: 'https://img/walk-2.png' }],
+        images: imageCandidates('https://img/walk'),
       },
       error: null,
     }
@@ -3078,7 +3107,7 @@ describe('WorkflowController', () => {
     })
   })
 
-  it('角色母版节点拒绝候选数量不足的结果', async () => {
+  it('角色母版节点拒绝没有候选的结果', async () => {
     const run = createRun([
       setupNode({ status: 'passed', phase: 'completed' }),
       templateNode({
@@ -3097,7 +3126,7 @@ describe('WorkflowController', () => {
         projectId: '1',
         type: 'character_template',
         status: 'completed',
-        result: { type: 'character_template', images: [{ url: 'only-one.png' }] },
+        result: { type: 'character_template', images: [] },
         error: null,
       },
     })
@@ -3214,7 +3243,7 @@ describe('WorkflowController', () => {
         status: 'completed',
         result: {
           type: 'first_frame',
-          images: [{ url: 'jump-1.png' }, { url: 'jump-2.png' }],
+          images: imageCandidates('jump'),
         },
         error: null,
       },
@@ -3242,7 +3271,11 @@ describe('WorkflowController', () => {
       status: 'completed',
       result: {
         type: 'first_frame',
-        images: [{ url: 'https://img/first.png' }, { url: 'https://img/first-2.png' }],
+        images: [
+          { url: 'https://img/first.png' },
+          { url: 'https://img/first-2.png' },
+          { url: 'https://img/first-3.png' },
+        ],
       },
       error: null,
     })

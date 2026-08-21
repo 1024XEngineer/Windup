@@ -20,6 +20,7 @@ import type {
   GenerationInput,
   GenerationResult,
   GenerationType,
+  ImageCandidateCount,
   TaskStatus,
 } from '.'
 import { isActionDirection, type ActionDirection } from '@/entities/character/directions'
@@ -173,7 +174,24 @@ function expectedBackendType(type: GenerationType): BackendGenerationType {
   return type === 'complete_animation' ? 'character_action' : 'character_image'
 }
 
-export const IMAGE_CANDIDATE_COUNT = 2
+export const IMAGE_CANDIDATE_COUNT = 3
+const MIN_IMAGE_CANDIDATE_COUNT = 1
+const MAX_IMAGE_CANDIDATE_COUNT = 4
+
+export function isImageCandidateCount(value: unknown): value is ImageCandidateCount {
+  return (
+    Number.isSafeInteger(value) &&
+    (value as number) >= MIN_IMAGE_CANDIDATE_COUNT &&
+    (value as number) <= MAX_IMAGE_CANDIDATE_COUNT
+  )
+}
+
+function imageCandidateCount(value: unknown, field: string, code = 0): ImageCandidateCount {
+  if (!isImageCandidateCount(value)) {
+    throw new GenerationApiError(`${field} 必须是 1 到 4 之间的整数`, code)
+  }
+  return value
+}
 
 const DEFAULT_DIRECTION: ActionDirection = 'east'
 
@@ -193,6 +211,7 @@ function nonEmptyString(value: unknown, field: string): string {
 function mapImageResult(
   result: Record<string, unknown>,
   expectation: Extract<GenerationExpectation, { type: 'character_template' | 'first_frame' }>,
+  expectedCandidateCount?: ImageCandidateCount,
 ): GenerationResult {
   if (result.type !== 'character_image') {
     throw new GenerationApiError('角色图片结果 type 无效', 200)
@@ -210,9 +229,15 @@ function mapImageResult(
   }
   const images = result.image_urls.map((url): GeneratedImage => ({ url: url as string }))
 
-  if (images.length !== IMAGE_CANDIDATE_COUNT) {
+  if (!isImageCandidateCount(images.length)) {
     throw new GenerationApiError(
-      `${expectation.type === 'first_frame' ? '动作首帧' : '角色母版'}结果必须包含 ${IMAGE_CANDIDATE_COUNT} 个候选`,
+      `${expectation.type === 'first_frame' ? '动作首帧' : '角色母版'}结果必须包含 1 到 4 个候选`,
+      200,
+    )
+  }
+  if (expectedCandidateCount !== undefined && images.length !== expectedCandidateCount) {
+    throw new GenerationApiError(
+      `${expectation.type === 'first_frame' ? '动作首帧' : '角色母版'}结果数量必须与 input_payload.num_images ${expectedCandidateCount} 一致`,
       200,
     )
   }
@@ -290,6 +315,7 @@ function mapResult(
   result: Record<string, unknown> | null,
   status: TaskStatus,
   expectation: GenerationExpectation,
+  expectedCandidateCount?: ImageCandidateCount,
 ): GenerationResult | null {
   if (status !== 'completed') {
     if (result !== null) {
@@ -300,7 +326,7 @@ function mapResult(
   if (result === null) throw new GenerationApiError('完成任务缺少 result', 200)
   return expectation.type === 'complete_animation'
     ? mapActionResult(result, expectation)
-    : mapImageResult(result, expectation)
+    : mapImageResult(result, expectation, expectedCandidateCount)
 }
 
 function validateStatusError(status: TaskStatus, error: string | null): void {
@@ -318,14 +344,16 @@ function validateStatusError(status: TaskStatus, error: string | null): void {
 function validateInputPayload(
   inputPayload: Record<string, unknown> | null,
   expectation: GenerationExpectation,
-): void {
+  expectedCandidateCount?: ImageCandidateCount,
+): ImageCandidateCount | undefined {
   if (inputPayload === null) {
     throw new GenerationApiError('生成任务缺少 input_payload', 200)
   }
   if (expectation.type !== 'complete_animation') {
-    if (inputPayload.num_images !== IMAGE_CANDIDATE_COUNT) {
+    const candidateCount = imageCandidateCount(inputPayload.num_images, '生成任务 num_images', 200)
+    if (expectedCandidateCount !== undefined && candidateCount !== expectedCandidateCount) {
       throw new GenerationApiError(
-        `${expectation.type === 'first_frame' ? '动作首帧' : '角色母版'}任务 input_payload.num_images 必须为 ${IMAGE_CANDIDATE_COUNT}`,
+        `${expectation.type === 'first_frame' ? '动作首帧' : '角色母版'}任务 input_payload.num_images 与请求的 ${expectedCandidateCount} 不一致`,
         200,
       )
     }
@@ -335,7 +363,7 @@ function validateInputPayload(
         throw new GenerationApiError('生成任务 direction 与请求不一致', 200)
       }
     }
-    return
+    return candidateCount
   }
   const expectedFrameCount = 32
   if (inputPayload.num_frames !== expectedFrameCount) {
@@ -353,6 +381,7 @@ function validateInputPayload(
       throw new GenerationApiError('生成任务 direction 与请求不一致', 200)
     }
   }
+  return undefined
 }
 
 function inferExpectation(dto: GenerationTaskDto): GenerationExpectation {
@@ -384,7 +413,8 @@ function validateTaskIdentity(
   expectedProjectId: number,
   expectation: GenerationExpectation,
   expectedTaskId?: number,
-): void {
+  expectedCandidateCount?: ImageCandidateCount,
+): ImageCandidateCount | undefined {
   if (dto.projectId !== expectedProjectId) {
     throw new GenerationApiError(`生成任务未归属请求中的项目 ${expectedProjectId}`, 200)
   }
@@ -395,7 +425,7 @@ function validateTaskIdentity(
     throw new GenerationApiError(`生成任务类型与 ${expectation.type} 不匹配`, 200)
   }
   validateStatusError(dto.status, dto.errorMessage)
-  validateInputPayload(dto.inputPayload, expectation)
+  return validateInputPayload(dto.inputPayload, expectation, expectedCandidateCount)
 }
 
 function mapTask(
@@ -403,17 +433,27 @@ function mapTask(
   expectedProjectId: number,
   expectation?: GenerationExpectation,
   expectedTaskId?: number,
-): Generation {
+  expectedCandidateCount?: ImageCandidateCount,
+): { generation: Generation; candidateCount?: ImageCandidateCount } {
   const dto = parseTaskDto(value)
   const resolvedExpectation = expectation ?? inferExpectation(dto)
-  validateTaskIdentity(dto, expectedProjectId, resolvedExpectation, expectedTaskId)
+  const candidateCount = validateTaskIdentity(
+    dto,
+    expectedProjectId,
+    resolvedExpectation,
+    expectedTaskId,
+    expectedCandidateCount,
+  )
   return {
-    id: String(dto.id),
-    projectId: String(dto.projectId),
-    type: resolvedExpectation.type,
-    status: dto.status,
-    result: mapResult(dto.result, dto.status, resolvedExpectation),
-    error: dto.errorMessage,
+    generation: {
+      id: String(dto.id),
+      projectId: String(dto.projectId),
+      type: resolvedExpectation.type,
+      status: dto.status,
+      result: mapResult(dto.result, dto.status, resolvedExpectation, candidateCount),
+      error: dto.errorMessage,
+    },
+    ...(candidateCount === undefined ? {} : { candidateCount }),
   }
 }
 
@@ -474,6 +514,7 @@ function mapEvent<TType extends GenerationType>(
   expectedTaskId: number,
   expectation: Extract<GenerationExpectation, { type: TType }>,
   eventName: string,
+  expectedCandidateCount?: ImageCandidateCount,
 ): GenerationEvent<TType> {
   if (!isRecord(value)) throw new GenerationApiError('task_update 不是对象', 200)
   const taskId = eventTaskId(value)
@@ -489,9 +530,14 @@ function mapEvent<TType extends GenerationType>(
   ) {
     throw new GenerationApiError('task_update 不属于当前项目', 200)
   }
-  if (value.input_payload !== undefined) {
-    validateInputPayload(dtoNullableRecord(value.input_payload, 'input_payload'), expectation)
-  }
+  const candidateCount =
+    value.input_payload === undefined
+      ? expectedCandidateCount
+      : validateInputPayload(
+          dtoNullableRecord(value.input_payload, 'input_payload'),
+          expectation,
+          expectedCandidateCount,
+        )
   const status = eventStatus(value, eventName)
   const result = value.result === undefined ? null : dtoNullableRecord(value.result, 'result')
   const error =
@@ -503,7 +549,7 @@ function mapEvent<TType extends GenerationType>(
     taskId: String(taskId),
     type: expectation.type,
     status,
-    result: mapResult(result, status, expectation),
+    result: mapResult(result, status, expectation, candidateCount),
     error,
   }
 }
@@ -521,19 +567,27 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
     throw new GenerationApiError('pollIntervalMs 必须是非负数')
   }
   const expectations = new Map<string, GenerationExpectation>()
+  const candidateCounts = new Map<string, ImageCandidateCount>()
 
   async function post<TType extends GenerationType>(
     path: '/generation/image' | '/generation/action',
     projectId: number,
     expectation: Extract<GenerationExpectation, { type: TType }>,
     body: Record<string, unknown>,
+    expectedCandidateCount?: ImageCandidateCount,
   ): Promise<Generation<TType>> {
     const response = await request(endpoint(config.baseUrl, path), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     })
-    return mapTask(await readData(response), projectId, expectation) as Generation<TType>
+    return mapTask(
+      await readData(response),
+      projectId,
+      expectation,
+      undefined,
+      expectedCandidateCount,
+    ).generation as Generation<TType>
   }
 
   const apis: GenerationApis = {
@@ -593,18 +647,29 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
       if (input.type === 'first_frame' && !referenceImageUrl) {
         throw new GenerationApiError('动作首帧生成必须提供已确认的角色母版')
       }
-      const generation = await post('/generation/image', projectId, expectation, {
-        project_id: projectId,
-        reference_image_url: referenceImageUrl,
-        prompt: input.prompt ?? '',
-        negative_prompt: '',
-        width: inputPositiveInteger(input.spriteWidth, 'spriteWidth'),
-        height: inputPositiveInteger(input.spriteHeight, 'spriteHeight'),
-        // 角色母版和动作首帧都由一次图片任务生成两张候选。
-        num_images: IMAGE_CANDIDATE_COUNT,
-        direction: input.direction ?? DEFAULT_DIRECTION,
-      })
+      const candidateCount = imageCandidateCount(
+        input.candidateCount ?? IMAGE_CANDIDATE_COUNT,
+        'candidateCount',
+      )
+      const generation = await post(
+        '/generation/image',
+        projectId,
+        expectation,
+        {
+          project_id: projectId,
+          reference_image_url: referenceImageUrl,
+          prompt: input.prompt ?? '',
+          negative_prompt: '',
+          width: inputPositiveInteger(input.spriteWidth, 'spriteWidth'),
+          height: inputPositiveInteger(input.spriteHeight, 'spriteHeight'),
+          // 缺省生成三张；调用方可按后端契约在 1–4 张之间选择。
+          num_images: candidateCount,
+          direction: input.direction ?? DEFAULT_DIRECTION,
+        },
+        candidateCount,
+      )
       expectations.set(generation.id, expectation)
+      candidateCounts.set(generation.id, candidateCount)
       return generation as Generation<T['type']>
     },
 
@@ -624,8 +689,14 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
       )
       const raw = await readData(response)
       const resolvedExpectation = expectation ?? inferExpectation(parseTaskDto(raw))
-      const generation = mapTask(raw, numericProjectId, resolvedExpectation, numericTaskId)
+      const { generation, candidateCount } = mapTask(
+        raw,
+        numericProjectId,
+        resolvedExpectation,
+        numericTaskId,
+      )
       expectations.set(generation.id, resolvedExpectation)
+      if (candidateCount !== undefined) candidateCounts.set(generation.id, candidateCount)
       return generation
     },
 
@@ -651,6 +722,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
         typeof expectationOrOnEvent === 'function'
           ? () => undefined
           : (maybeOnError ?? (() => undefined))
+      const expectedCandidateCount = candidateCounts.get(id)
       const pollingController = new AbortController()
       let polling = false
       let stopStream: () => void = () => undefined
@@ -713,6 +785,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
               numericTaskId,
               expectation,
               eventName,
+              expectedCandidateCount,
             )
             onEvent(event as GenerationEvent)
             return event.status === 'completed' || event.status === 'failed'

@@ -15,6 +15,18 @@ import type { MediaReference } from '../media'
 
 const reference = (url: string) => url as MediaReference
 
+function candidateUrls(prefix = 'https://cdn.test/candidate') {
+  return [1, 2, 3].map((index) => `${prefix}-${index}.png`)
+}
+
+function candidateUrlsForCount(count: number, prefix = 'https://cdn.test/candidate') {
+  return Array.from({ length: count }, (_, index) => `${prefix}-${index + 1}.png`)
+}
+
+function candidates(prefix?: string) {
+  return candidateUrls(prefix).map((url) => ({ url }))
+}
+
 function success(data: unknown): Response {
   return new Response(JSON.stringify({ code: 200, message: 'success', data }), {
     status: 200,
@@ -28,11 +40,11 @@ function taskData(overrides: Record<string, unknown> = {}) {
     project_id: 42,
     task_type: 'character_image',
     status: 'completed',
-    input_payload: { num_images: 2, direction: 'east' },
+    input_payload: { num_images: 3, direction: 'east' },
     result: {
       type: 'character_image',
       direction: 'east',
-      image_urls: ['https://cdn.test/candidate-1.png', 'https://cdn.test/candidate-2.png'],
+      image_urls: candidateUrls(),
     },
     error_message: null,
     ...overrides,
@@ -78,15 +90,15 @@ describe('createGenerationApis', () => {
     }
   })
 
-  it('固定请求并映射两张角色母版候选', async () => {
+  it('固定请求并映射三张角色母版候选', async () => {
     const request = vi.fn(async (_url: string, _init?: RequestInit) =>
       success(
         taskData({
-          input_payload: { num_images: 2, direction: 'north_east' },
+          input_payload: { num_images: 3, direction: 'north_east' },
           result: {
             type: 'character_image',
             direction: 'north_east',
-            image_urls: ['https://cdn.test/candidate-1.png', 'https://cdn.test/candidate-2.png'],
+            image_urls: candidateUrls(),
           },
         }),
       ),
@@ -119,7 +131,7 @@ describe('createGenerationApis', () => {
           negative_prompt: '',
           width: 64,
           height: 96,
-          num_images: 2,
+          num_images: 3,
           direction: 'north_east',
         }),
       }),
@@ -127,22 +139,74 @@ describe('createGenerationApis', () => {
     expect(generation.result).toEqual({
       type: 'character_template',
       direction: 'north_east',
-      images: [
-        { url: 'https://cdn.test/candidate-1.png' },
-        { url: 'https://cdn.test/candidate-2.png' },
-      ],
+      images: candidates(),
     })
+  })
+
+  it.each([1, 2, 3, 4] as const)('允许调用方显式请求 %i 张图片候选', async (candidateCount) => {
+    const request = vi.fn(async (_url: string, _init?: RequestInit) =>
+      success(
+        taskData({
+          input_payload: { num_images: candidateCount, direction: 'east' },
+          result: {
+            type: 'character_image',
+            direction: 'east',
+            image_urls: candidateUrlsForCount(candidateCount),
+          },
+        }),
+      ),
+    )
+    const apis = createGenerationApis({
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    const generation = await apis.create({
+      type: 'character_template',
+      projectId: '42',
+      referenceMedia: [],
+      prompt: 'pixel hero',
+      spriteWidth: 64,
+      spriteHeight: 64,
+      candidateCount,
+    })
+
+    expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toMatchObject({
+      num_images: candidateCount,
+    })
+    expect(
+      generation.result?.type === 'character_template' && generation.result.images,
+    ).toHaveLength(candidateCount)
+  })
+
+  it.each([0, 5, 1.5])('创建图片任务时拒绝候选数量 %s', async (candidateCount) => {
+    const request = vi.fn()
+    const apis = createGenerationApis({
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    await expect(
+      apis.create({
+        type: 'character_template',
+        projectId: '42',
+        referenceMedia: [],
+        prompt: 'pixel hero',
+        spriteWidth: 64,
+        spriteHeight: 64,
+        candidateCount: candidateCount as 1,
+      }),
+    ).rejects.toThrow('candidateCount 必须是 1 到 4 之间的整数')
+    expect(request).not.toHaveBeenCalled()
   })
 
   it('未指定方向时用 east 创建兼容的角色母版任务', async () => {
     const request = vi.fn(async (_url: string, _init?: RequestInit) =>
       success(
         taskData({
-          input_payload: { num_images: 2, direction: 'east' },
+          input_payload: { num_images: 3, direction: 'east' },
           result: {
             type: 'character_image',
             direction: 'east',
-            image_urls: ['east-1.png', 'east-2.png'],
+            image_urls: candidateUrls('east'),
           },
         }),
       ),
@@ -165,19 +229,19 @@ describe('createGenerationApis', () => {
     })
     expect(generation.result).toEqual({
       type: 'character_template',
-      images: [{ url: 'east-1.png' }, { url: 'east-2.png' }],
+      images: candidates('east'),
     })
   })
 
-  it('根据角色母版和动作提示词生成两张动作首帧候选', async () => {
+  it('根据角色母版和动作提示词生成三张动作首帧候选', async () => {
     const request = vi.fn(async (_url: string, _init?: RequestInit) =>
       success(
         taskData({
-          input_payload: { num_images: 2, direction: 'south' },
+          input_payload: { num_images: 3, direction: 'south' },
           result: {
             type: 'character_image',
             direction: 'south',
-            image_urls: ['https://cdn.test/candidate-1.png', 'https://cdn.test/candidate-2.png'],
+            image_urls: candidateUrls(),
           },
         }),
       ),
@@ -206,16 +270,13 @@ describe('createGenerationApis', () => {
       negative_prompt: '',
       width: 64,
       height: 96,
-      num_images: 2,
+      num_images: 3,
       direction: 'south',
     })
     expect(generation.result).toEqual({
       type: 'first_frame',
       direction: 'south',
-      images: [
-        { url: 'https://cdn.test/candidate-1.png' },
-        { url: 'https://cdn.test/candidate-2.png' },
-      ],
+      images: candidates(),
     })
   })
 
@@ -415,7 +476,7 @@ describe('createGenerationApis', () => {
       result: {
         type: 'character_image',
         direction: 'north',
-        image_urls: ['north-1.png', 'north-2.png'],
+        image_urls: candidateUrls('north'),
       },
     })
     const actionResultMismatch = taskData({
@@ -429,11 +490,11 @@ describe('createGenerationApis', () => {
       },
     })
     const imageInputMismatch = taskData({
-      input_payload: { num_images: 2, direction: 'north' },
+      input_payload: { num_images: 3, direction: 'north' },
       result: {
         type: 'character_image',
         direction: 'north',
-        image_urls: ['north-1.png', 'north-2.png'],
+        image_urls: candidateUrls('north'),
       },
     })
     const actionInputMismatch = taskData({
@@ -455,10 +516,10 @@ describe('createGenerationApis', () => {
       .mockResolvedValueOnce(
         success(
           taskData({
-            input_payload: { num_images: 2 },
+            input_payload: { num_images: 3 },
             result: {
               type: 'character_image',
-              image_urls: ['legacy-1.png', 'legacy-2.png'],
+              image_urls: candidateUrls('legacy'),
             },
           }),
         ),
@@ -491,11 +552,11 @@ describe('createGenerationApis', () => {
       .mockResolvedValueOnce(
         success(
           taskData({
-            input_payload: { num_images: 2, direction: 'north' },
+            input_payload: { num_images: 3, direction: 'north' },
             result: {
               type: 'character_image',
               direction: 'north',
-              image_urls: ['north-1.png', 'north-2.png'],
+              image_urls: candidateUrls('north'),
             },
           }),
         ),
@@ -529,7 +590,7 @@ describe('createGenerationApis', () => {
       )
       .mockResolvedValueOnce(success(taskData({ input_payload: null })))
       .mockResolvedValueOnce(
-        success(taskData({ input_payload: { num_images: 2, direction: 'up' } })),
+        success(taskData({ input_payload: { num_images: 3, direction: 'up' } })),
       )
     const apis = createGenerationApis({
       transport: { request, stream: vi.fn(() => vi.fn()) },
@@ -575,6 +636,92 @@ describe('createGenerationApis', () => {
 
     await expect(apis.get('42', '91', { type: 'character_template' })).rejects.toThrow(
       '角色图片结果 image_urls 无效',
+    )
+  })
+
+  it.each([1, 2, 3, 4] as const)('恢复声明生成 %i 张候选的历史图片任务', async (count) => {
+    const request = vi.fn(async () =>
+      success(
+        taskData({
+          input_payload: { num_images: count, direction: 'east' },
+          result: {
+            type: 'character_image',
+            direction: 'east',
+            image_urls: candidateUrlsForCount(count),
+          },
+        }),
+      ),
+    )
+    const apis = createGenerationApis({
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    const generation = await apis.get('42', '91', { type: 'character_template' })
+
+    expect(
+      generation.result?.type === 'character_template' && generation.result.images,
+    ).toHaveLength(count)
+  })
+
+  it('拒绝图片结果数量与任务声明不一致', async () => {
+    const request = vi.fn(async () =>
+      success(
+        taskData({
+          input_payload: { num_images: 2, direction: 'east' },
+          result: {
+            type: 'character_image',
+            direction: 'east',
+            image_urls: candidateUrlsForCount(3),
+          },
+        }),
+      ),
+    )
+    const apis = createGenerationApis({
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    await expect(apis.get('42', '91', { type: 'character_template' })).rejects.toThrow(
+      '角色母版结果数量必须与 input_payload.num_images 2 一致',
+    )
+  })
+
+  it('查询后按缓存数量恢复未携带 input_payload 的 SSE 结果', async () => {
+    let streamOptions: EventStreamOptions | undefined
+    const request = vi.fn(async () =>
+      success(
+        taskData({
+          status: 'running',
+          input_payload: { num_images: 2, direction: 'east' },
+          result: null,
+        }),
+      ),
+    )
+    const apis = createGenerationApis({
+      transport: {
+        request,
+        stream: vi.fn((_url: string, options: NonNullable<typeof streamOptions>) => {
+          streamOptions = options
+          return vi.fn()
+        }),
+      },
+    })
+    await apis.get('42', '91', { type: 'character_template' })
+    const onEvent = vi.fn()
+    apis.subscribe('42', '91', onEvent)
+    const event = taskData({
+      input_payload: undefined,
+      result: {
+        type: 'character_image',
+        direction: 'east',
+        image_urls: candidateUrlsForCount(2),
+      },
+    })
+
+    expect(() => streamOptions?.onEvent(JSON.stringify(event), 'completed')).not.toThrow()
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({ images: candidates().slice(0, 2) }),
+      }),
     )
   })
 
@@ -1010,13 +1157,17 @@ describe('createGenerationApis', () => {
     ['输入对象', { input_payload: [] }, '生成任务 input_payload 无效'],
     ['结果对象', { result: [] }, '生成任务 result 无效'],
     ['错误字段', { error_message: 1 }, '生成任务 error_message 无效'],
-    ['任务输入', { input_payload: { num_images: 4 } }, 'num_images 必须为 2'],
+    ['任务输入', { input_payload: { num_images: 5 } }, 'num_images 必须是 1 到 4 之间的整数'],
     [
       '图片结果类型',
       { result: { type: 'video', image_urls: ['a', 'b', 'c'] } },
       '角色图片结果 type 无效',
     ],
-    ['图片数量', { result: { type: 'character_image', image_urls: ['a'] } }, '必须包含 2 个候选'],
+    [
+      '图片数量',
+      { result: { type: 'character_image', image_urls: ['a'] } },
+      '结果数量必须与 input_payload.num_images 3 一致',
+    ],
     ['完成结果', { result: null }, '完成任务缺少 result'],
   ])('校验%s', async (_label, overrides, message) => {
     const apis = createGenerationApis({
@@ -1187,7 +1338,7 @@ describe('createGenerationApis', () => {
     )
   })
 
-  it('按显式阶段恢复图片任务为两张动作首帧候选', async () => {
+  it('按显式阶段恢复图片任务为三张动作首帧候选', async () => {
     const request = vi.fn().mockResolvedValueOnce(success(taskData()))
     const apis = createGenerationApis({
       transport: { request, stream: vi.fn(() => vi.fn()) },
@@ -1199,15 +1350,12 @@ describe('createGenerationApis', () => {
       type: 'first_frame',
       result: {
         type: 'first_frame',
-        images: [
-          { url: 'https://cdn.test/candidate-1.png' },
-          { url: 'https://cdn.test/candidate-2.png' },
-        ],
+        images: candidates(),
       },
     })
   })
 
-  it('订阅图片任务时按首帧阶段映射两张候选', () => {
+  it('订阅图片任务时按首帧阶段映射三张候选', () => {
     let streamOptions: EventStreamOptions | undefined
     const onEvent = vi.fn()
     const apis = createGenerationApis({
@@ -1229,10 +1377,7 @@ describe('createGenerationApis', () => {
       status: 'completed',
       result: {
         type: 'first_frame',
-        images: [
-          { url: 'https://cdn.test/candidate-1.png' },
-          { url: 'https://cdn.test/candidate-2.png' },
-        ],
+        images: candidates(),
       },
       error: null,
     })
