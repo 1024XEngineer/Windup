@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import time
@@ -105,6 +106,19 @@ class LangChainChatAdapter:
                 edge_fingerprint=edge,
             )
 
+    async def ainvoke(self, messages: Any, *, model: str, **kwargs: Any) -> ChatAdapterResult:
+        try:
+            value = await self._client(model).ainvoke(messages, **kwargs)
+            return ChatAdapterResult(ok=True, value=value)
+        except Exception as exc:
+            error_type, status, edge = _error_type_from_exception(exc)
+            return ChatAdapterResult(
+                ok=False,
+                error_type=error_type,
+                http_status=status,
+                edge_fingerprint=edge,
+            )
+
     async def astream(self, messages: Any, *, model: str, **kwargs: Any):
         try:
             async for chunk in self._client(model).astream(messages, **kwargs):
@@ -158,6 +172,15 @@ class ChatGateway:
         )
 
     def invoke(self, messages: Any, **kwargs: Any) -> Any:
+        return asyncio.run(self.ainvoke(messages, **kwargs))
+
+    async def _adapter_result(self, adapter, messages: Any, model: str, kwargs: dict) -> ChatAdapterResult:
+        fn = getattr(adapter, "ainvoke", None)
+        if callable(fn):
+            return await fn(messages, model=model, **kwargs)
+        return await asyncio.to_thread(adapter.invoke, messages, model=model, **kwargs)
+
+    async def ainvoke(self, messages: Any, **kwargs: Any) -> Any:
         ctx = current_call_context()
         request_id = ctx.request_id or str(uuid.uuid4())
         started = time.monotonic()
@@ -223,7 +246,7 @@ class ChatGateway:
                 while True:
                     attempt_t0 = time.monotonic()
                     started_at = _utc_now()
-                    result = adapter.invoke(messages, model=model, **kwargs)
+                    result = await self._adapter_result(adapter, messages, model, kwargs)
                     ended_at = _utc_now()
                     attempt_latency_ms = int((time.monotonic() - attempt_t0) * 1000)
                     last_http_status = result.http_status

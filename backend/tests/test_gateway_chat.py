@@ -97,11 +97,25 @@ def test_chat_gateway_switches_key_after_429(monkeypatch, caplog):
     assert line["route_layer"] == "key"
 
 
+def test_chat_gateway_ainvoke_returns_adapter_value():
+    """``/ai/chat`` 走 ainvoke；没有这个方法时 AttributeError 会被翻成 502。"""
+    adapter = FakeChatAdapter({"gpt-4o-mini": [OK]})
+    gw = ChatGateway(
+        adapter=adapter,
+        circuit=CircuitBreaker(),
+        settings=_primary_cfg(),
+        route_adapters={"primary": adapter},
+    )
+    assert asyncio.run(gw.ainvoke([{"role": "user", "content": "ping"}])) == "pong"
+    assert adapter.calls == ["gpt-4o-mini"]
+
+
 def test_create_chat_model_returns_gateway_without_hand_rolling_protocol():
     cfg = AIProviderSettings(api_key="test-key", model="gpt-4o-mini")
     chat = create_chat_model(config=cfg)
 
     assert hasattr(chat, "invoke")
+    assert hasattr(chat, "ainvoke")
     assert hasattr(chat, "astream")
     assert hasattr(chat, "bind_tools")
     assert chat.__class__.__name__ == "ChatGateway"
