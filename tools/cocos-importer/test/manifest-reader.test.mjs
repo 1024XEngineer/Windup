@@ -216,3 +216,47 @@ test('buildManifestFromLegacyMeta 兼容旧版 action-assets 包', () => {
   assert.equal(manifest.actions[0].timing_mode, 'constant-fps')
   assert.equal(manifest.actions[0].frames[0].duration_ms, null)
 })
+
+test('buildManifestFromLegacyMeta 从旧版 atlas 路径恢复实际导出目录', () => {
+  const legacy = {
+    character: { id: 46, name: '网站看板娘', image: 'character/master.png' },
+    outfit: { id: 'outfit-default', name: '默认造型' },
+    canvas: { w: 256, h: 256 },
+    actions: [
+      {
+        id: 'walk-south',
+        name: 'Walk / Forward',
+        direction: 'south',
+        fps: 12,
+        anchor: { x: 0.5, y: 0.92 },
+        frames: [{ index: 0, file: 'Walk-Forward-south_000.png' }],
+        atlas: {
+          file: 'atlas/Walk-Forward-south.png',
+          cols: 1,
+          rows: 1,
+          cell: { w: 256, h: 256 },
+        },
+      },
+      {
+        id: 'walk-south-duplicate',
+        name: 'Walk / Forward',
+        direction: 'south',
+        fps: 12,
+        anchor: { x: 0.5, y: 0.92 },
+        frames: [{ index: 0, file: 'Walk-Forward-south-a1b2c3_000.png' }],
+        atlas: {
+          file: 'atlas/Walk-Forward-south-a1b2c3.png',
+          cols: 1,
+          rows: 1,
+          cell: { w: 256, h: 256 },
+        },
+      },
+    ],
+  }
+
+  const manifest = buildManifestFromLegacyMeta(legacy)
+  assert.deepEqual(
+    manifest.actions.map((action) => action.export_name),
+    ['Walk-Forward-south', 'Walk-Forward-south-a1b2c3'],
+  )
+})

@@ -197,7 +197,7 @@ export function buildManifestFromLegacyMeta(legacy) {
       return {
         id: String(action.id ?? `legacy-action-${index}`),
         name: String(action.name ?? `action-${index}`),
-        export_name: String(action.name ?? `action-${index}`),
+        export_name: legacyExportName(action, atlas, frameList, index),
         direction: validDirection(action.direction) ? action.direction : 'default',
         fps,
         timing_mode: 'constant-fps',
@@ -221,6 +221,27 @@ export function buildManifestFromLegacyMeta(legacy) {
     }),
   }
   return validateManifest(manifest)
+}
+
+function legacyExportName(action, atlas, frames, index) {
+  const atlasMatch = typeof atlas.file === 'string'
+    ? /^atlas\/([^/\\\0]+)\.png$/u.exec(atlas.file)
+    : null
+  if (usableLegacySegment(atlasMatch?.[1])) return atlasMatch[1]
+
+  for (const frame of frames) {
+    if (!frame || typeof frame !== 'object' || Array.isArray(frame)) continue
+    const frameMatch = typeof frame.file === 'string'
+      ? /^([^/\\\0]+)_\d+\.png$/u.exec(frame.file)
+      : null
+    if (usableLegacySegment(frameMatch?.[1])) return frameMatch[1]
+  }
+
+  return String(action.name ?? `action-${index}`)
+}
+
+function usableLegacySegment(value) {
+  return typeof value === 'string' && value !== '.' && value !== '..'
 }
 
 function firstAnchor(actions) {

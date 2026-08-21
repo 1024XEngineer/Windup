@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { prepareImport, validatePreparedImport } from '../src/import-core.js'
+import { prepareImport, prepareImportFromEntries, validatePreparedImport } from '../src/import-core.js'
 import { readStoredZip } from '../src/zip-reader.js'
 
 const testDir = dirname(fileURLToPath(import.meta.url))
@@ -61,6 +61,48 @@ test('prepareImport 在内存中把 Windup ZIP 转换为完整 Cocos 文件集�
   assert.ok(prepared.files.has('windup-imports/Hero/Ranger/prefabs/Hero-Ranger.prefab'))
   assert.ok(prepared.files.has('windup-imports/Hero/Ranger/animations/Walk.anim'))
   assert.doesNotThrow(() => validatePreparedImport(prepared))
+})
+
+test('prepareImportFromEntries 可导入显示名与旧版实际目录不同的资产包', () => {
+  const encoder = new TextEncoder()
+  const bytes = (value) => encoder.encode(value)
+  const legacy = {
+    character: { id: '46', name: '网站看板娘', image: 'character/master.png' },
+    outfit: { id: 'default', name: '默认造型' },
+    canvas: { w: 1, h: 1 },
+    actions: [{
+      id: 'walk-south',
+      name: 'Walk / Forward',
+      direction: 'south',
+      fps: 12,
+      loop: true,
+      anchor: { x: 0.5, y: 0.92 },
+      frames: [{ index: 0, file: 'Walk-Forward-south_000.png' }],
+      atlas: {
+        file: 'atlas/Walk-Forward-south.png',
+        cols: 1,
+        rows: 1,
+        cell: { w: 1, h: 1 },
+      },
+    }],
+  }
+  const entries = [
+    ['meta.json', bytes(JSON.stringify(legacy))],
+    ['character/master.png', bytes('master')],
+    ['frames/Walk-Forward-south/Walk-Forward-south_000.png', bytes('frame')],
+    ['atlas/Walk-Forward-south.png', bytes('atlas')],
+  ].map(([relativePath, data]) => ({
+    relativePath,
+    data,
+    size: data.byteLength,
+    rootDir: 'legacy-fixture',
+  }))
+
+  const prepared = prepareImportFromEntries(entries)
+  assert.equal(prepared.manifest.actions[0].export_name, 'Walk-Forward-south')
+  assert.ok(prepared.files.has(
+    'windup-imports/网站看板娘/默认造型/animations/Walk-Forward-south/Walk-Forward-south_000.png',
+  ))
 })
 
 test('validatePreparedImport 拒绝缺失 SpriteFrame 源文件的结果', () => {
@@ -139,8 +181,7 @@ test('readStoredZip 在解析前限制条目数、单条目和总解包大小', 
   assert.throws(() => readStoredZip(bytes, { maxTotalBytes: 1 }), /总解包大小/)
 })
 
-test('prepareImportFromEntries 按每次输出复制量限制重复素材引用', async () => {
-  const { prepareImportFromEntries } = await import('../src/import-core.js')
+test('prepareImportFromEntries 按每次输出复制量限制重复素材引用', () => {
   const frameCount = 65
   const manifest = {
     schema_version: 'windup-cocos-import-1.1.0',
