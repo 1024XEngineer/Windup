@@ -1,3 +1,7 @@
+# 覆盖率只做展示，不当门禁。#167 要的是 PR 评论和 README 徽章。
+# patch 默认 target: auto 会跟着总覆盖率上移：仓库从 90% 涨到 93%，
+# 下一笔新代码也必须达到差不多的 diff 覆盖率，codecov/patch 才会绿。
+# 覆盖率越高门槛越高，会逼出只为百分比而写的测试。见 #498。
 coverage:
   status:
     project:
@@ -6,13 +10,16 @@ coverage:
     patch:
       default:
         informational: true
+        # 即使 GitHub Check 忽略 informational，0% 也不会因 91.30 vs 91.36 失败。
+        target: 0%
+
+flags:
+  backend:
+    paths:
+      - backend/
+  frontend:
+    paths:
+      - frontend/
 
 comment:
   layout: "reach,diff,flags,files"
-  flags:
-    backend:
-      paths:
-        - backend/
-    frontend:
-      paths:
-        - frontend/
