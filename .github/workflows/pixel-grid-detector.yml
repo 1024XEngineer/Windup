@@ -3,11 +3,11 @@ name: Pixel grid detector CI
 on:
   push:
     paths:
-      - "backend/native/pixel_grid_detector/**"
+      - "native/pixel-perfect/**"
       - ".github/workflows/pixel-grid-detector.yml"
   pull_request:
     paths:
-      - "backend/native/pixel_grid_detector/**"
+      - "native/pixel-perfect/**"
       - ".github/workflows/pixel-grid-detector.yml"
 
 permissions:
@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: backend/native/pixel_grid_detector
+        working-directory: native/pixel-perfect
     steps:
       - uses: actions/checkout@v7
 
