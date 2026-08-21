@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
+import math
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-import math
 
 import httpx
 
@@ -10,9 +11,102 @@ from windup_common.enums.model import ModelErrorType
 
 _MAX_RETRY_WAIT = 30.0
 
+_MODEL_HINTS = (
+    "model_not_found",
+    "model not found",
+    "invalid model",
+    "unknown model",
+    "does not exist",
+    "model_not_exist",
+)
+_CONFIG_HINTS = (
+    "invalid url",
+    "unknown url",
+    "no route",
+    "endpoint",
+    "not found",
+)
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _body_lower(body: str | None) -> str:
+    if not body:
+        return ""
+    return body.lower()
+
+
+def _json_error_code(body: str | None) -> str:
+    if not body:
+        return ""
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, TypeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    err = payload.get("error")
+    if isinstance(err, dict):
+        code = err.get("code") or err.get("type")
+        return str(code or "").lower()
+    return str(err or "").lower()
+
+
+def _looks_like_model_not_found(status: int, body: str | None) -> bool:
+    if status not in (400, 404):
+        return False
+    text = _body_lower(body)
+    code = _json_error_code(body)
+    if any(h in text or h in code for h in _MODEL_HINTS):
+        return True
+    if status == 404 and "model" in text:
+        return True
+    return status == 404
+
+
+def _looks_like_config_error(status: int, body: str | None) -> bool:
+    if status not in (400, 404):
+        return False
+    text = _body_lower(body)
+    code = _json_error_code(body)
+    if any(h in text or h in code for h in _CONFIG_HINTS):
+        if "model" in text and status in (400, 404):
+            return False
+        return True
+    return False
+
+
+def classify_http_response(
+    status: int,
+    body: str | None = None,
+    *,
+    phase: str = "submit",
+) -> ModelErrorType:
+    if status == 429:
+        return ModelErrorType.RATE_LIMIT
+    if status in (401, 403):
+        return ModelErrorType.AUTH
+    if status in (502, 503):
+        return ModelErrorType.UNREACHED
+    if status in (521, 522, 523, 525):
+        return ModelErrorType.UNREACHED
+    if status == 404 and phase in {"follow", "poll", "download"}:
+        return ModelErrorType.JOB_NOT_FOUND
+    if _looks_like_config_error(status, body):
+        return ModelErrorType.CONFIG_ERROR
+    if _looks_like_model_not_found(status, body):
+        return ModelErrorType.MODEL_NOT_FOUND
+    if status in (400, 404):
+        return ModelErrorType.UNKNOWN
+    if status >= 500:
+        return ModelErrorType.MAYBE_BILLED
+    return ModelErrorType.UNKNOWN
+
+
+def classify_http(status: int) -> ModelErrorType:
+    return classify_http_response(status)
 
 
 def retry_after_seconds(value: str) -> float | None:
@@ -31,22 +125,6 @@ def retry_after_seconds(value: str) -> float | None:
     return min(max(delay, 0.0), _MAX_RETRY_WAIT)
 
 
-def classify_http(status: int) -> ModelErrorType:
-    if status == 429:
-        return ModelErrorType.RATE_LIMIT
-    if status in (401, 403):
-        return ModelErrorType.AUTH
-    if status in (502, 503):
-        return ModelErrorType.UNREACHED
-    if status in (521, 522, 523, 525):
-        return ModelErrorType.UNREACHED
-    if status in (400, 404):
-        return ModelErrorType.UNKNOWN
-    if status >= 500:
-        return ModelErrorType.MAYBE_BILLED
-    return ModelErrorType.UNKNOWN
-
-
 def classify_exception(exc: BaseException) -> tuple[ModelErrorType, int | None, str]:
     """把没有 HTTP 状态行的传输失败收成策略输入。
 
@@ -58,7 +136,8 @@ def classify_exception(exc: BaseException) -> tuple[ModelErrorType, int | None, 
     if status is None and response is not None:
         status = getattr(response, "status_code", None)
     if isinstance(status, int):
-        return classify_http(status), status, str(exc)[:200]
+        body = response.text if response is not None else None
+        return classify_http_response(status, body), status, str(exc)[:200]
     if isinstance(
         exc,
         (

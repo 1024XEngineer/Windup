@@ -598,7 +598,7 @@ def test_model_missing_from_the_gateway_catalogue_says_so(code):
         return httpx.Response(code, text='{"error":{"message":"model not found"}}')
 
     r = _image_provider(h).submit_image("x", [], "gemini-2.5-flash-image")
-    assert r.error_type is ModelErrorType.UNKNOWN
+    assert r.error_type is ModelErrorType.MODEL_NOT_FOUND
     assert "/models" in r.edge_fingerprint
     assert r.http_status == code
     assert not r.ok

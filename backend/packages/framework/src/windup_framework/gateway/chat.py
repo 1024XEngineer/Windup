@@ -268,7 +268,7 @@ class ChatGateway:
                         http_status=result.http_status,
                         ok=result.ok,
                     )
-                    if not budget.can_record(maybe_billed):
+                    if not result.ok and not budget.can_record(maybe_billed):
                         self._emit(
                             AttemptTrace(
                                 request_id=request_id,

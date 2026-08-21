@@ -34,9 +34,10 @@ import httpx
 
 from windup_common.enums.model import ModelErrorType
 from windup_framework.config.provider import AIProviderSettings, settings
+from windup_framework.gateway.billing import billing_flags
 from windup_framework.gateway.classify import (
     classify_exception,
-    classify_http,
+    classify_http_response,
     retry_after_seconds as _retry_after_seconds,
 )
 from windup_framework.gateway.types import AdapterResult
@@ -95,17 +96,28 @@ def _first_frame_datauri(frame: bytes, size: str) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(_fit_first_frame(frame, size)).decode()
 
 
-def _video_http_error(resp: httpx.Response, *, job_id: str | None = None) -> AdapterResult:
-    error_type = classify_http(resp.status_code)
+def _video_http_error(
+    resp: httpx.Response,
+    *,
+    job_id: str | None = None,
+    phase: str = "submit",
+) -> AdapterResult:
+    error_type = classify_http_response(resp.status_code, resp.text, phase=phase)
     retry_after_header = resp.headers.get("Retry-After")
     retry_after_s = (
         _retry_after_seconds(retry_after_header) if retry_after_header else None
     )
+    maybe_billed = billing_flags(error_type=error_type, http_status=resp.status_code)
+    if job_id is not None and error_type not in {
+        ModelErrorType.UNREACHED,
+        ModelErrorType.NETWORK,
+    }:
+        maybe_billed = True
     return AdapterResult(
         ok=False,
         error_type=error_type,
         http_status=resp.status_code,
-        maybe_billed=job_id is not None or error_type is ModelErrorType.MAYBE_BILLED,
+        maybe_billed=maybe_billed,
         edge_fingerprint=_edge_fingerprint(resp),
         retry_after_s=retry_after_s,
         job_id=job_id,
@@ -254,7 +266,7 @@ class SufyVideoProvider(VideoProvider):
                 resp = _poll_get(client, job_id)
                 poll_count += 1
                 if not (200 <= resp.status_code < 300):
-                    return with_poll(_video_http_error(resp, job_id=job_id))
+                    return with_poll(_video_http_error(resp, job_id=job_id, phase="follow"))
                 try:
                     st = resp.json()
                 except ValueError:
@@ -657,7 +669,7 @@ class ChatCompletionsFace:
         if 200 <= resp.status_code < 300:
             return _image_result_from_2xx(resp)
 
-        error_type = classify_http(resp.status_code)
+        error_type = classify_http_response(resp.status_code, resp.text)
         if resp.status_code in (400, 404):
             edge = (
                 f"网关 {self._cfg.normalized_base_url} 拒绝了模型 {model!r}"

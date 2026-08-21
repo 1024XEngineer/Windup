@@ -1,5 +1,9 @@
 from windup_common.enums.model import ModelErrorType
-from windup_framework.gateway.classify import classify_http, retry_after_seconds
+from windup_framework.gateway.classify import (
+    classify_http,
+    classify_http_response,
+    retry_after_seconds,
+)
 
 
 def test_522_is_unreached():
@@ -54,3 +58,21 @@ def test_retry_after_seconds_number_and_cap():
     assert retry_after_seconds("300") == 30.0
     assert retry_after_seconds("invalid") is None
     assert retry_after_seconds("NaN") is None
+
+
+def test_404_submit_model_not_found():
+    body = '{"error":{"code":"model_not_found","message":"model x not found"}}'
+    assert classify_http_response(404, body) is ModelErrorType.MODEL_NOT_FOUND
+
+
+def test_404_submit_default_is_model_not_found():
+    assert classify_http_response(404) is ModelErrorType.MODEL_NOT_FOUND
+
+
+def test_404_follow_is_job_not_found():
+    assert classify_http_response(404, phase="follow") is ModelErrorType.JOB_NOT_FOUND
+
+
+def test_404_config_error_when_endpoint_wrong():
+    body = '{"error":"invalid url: no route matched"}'
+    assert classify_http_response(404, body) is ModelErrorType.CONFIG_ERROR

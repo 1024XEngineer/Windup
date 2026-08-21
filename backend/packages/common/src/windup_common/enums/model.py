@@ -18,6 +18,9 @@ class ModelErrorType(str, Enum):
     UNREACHED = "unreached"                 # 521/522/523/525,请求大概率未到上游
     MAYBE_BILLED = "maybe_billed"           # 520/524/其它可能已计费 5xx
     UPSTREAM_FAILED = "upstream_failed"     # 视频 job failed/cancelled
+    MODEL_NOT_FOUND = "model_not_found"     # 404 模型不存在 → fallback model
+    CONFIG_ERROR = "config_error"             # 404/400 路径或 endpoint 配错 → fail fast
+    JOB_NOT_FOUND = "job_not_found"           # 异步 poll job 404 → 任务失败
     UNKNOWN = "unknown"                     # 未知错误
 
     @property
