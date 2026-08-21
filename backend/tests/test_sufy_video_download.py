@@ -1004,7 +1004,8 @@ def test_square_first_frame_forms_a_720x720_content_region_in_a_1280x720_canvas(
     src = _Image.new("RGBA", (256, 256), (0, 0, 0, 0))
     src.paste((240, 240, 240, 255), (0, 0, 256, 256))
     src.paste((10, 10, 10, 255), (60, 60, 196, 196))      # 内部暗块，避免整幅纯色
-    buf = _io.BytesIO(); src.save(buf, "PNG")
+    buf = _io.BytesIO()
+    src.save(buf, "PNG")
 
     im = _submitted_first_frame(buf.getvalue())
     a = _np.asarray(im.convert("L"))
