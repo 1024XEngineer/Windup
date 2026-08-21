@@ -16,8 +16,8 @@ export type QuickStartAgentState =
   | { status: 'error'; message: string }
 
 export interface UseQuickStartAgentOptions extends CreateQuickStartAgentOptions {
-  /** 测试可替换；生产至少等待一帧，保证最终 Prompt 先于付费写操作可见。 */
-  waitForPresentation?: () => Promise<void>
+  /** 测试可替换；页面可在展示提案后返回用户编辑过的最终 Prompt。 */
+  waitForPresentation?: (plan: CharacterGenerationPlan) => Promise<string | void>
 }
 
 async function waitForBrowserPresentation(): Promise<void> {
@@ -28,7 +28,15 @@ async function waitForBrowserPresentation(): Promise<void> {
 }
 
 function errorMessage(cause: unknown): string {
-  return cause instanceof Error && cause.message ? cause.message : 'Agent 暂时不可用，请稍后重试'
+  if (!(cause instanceof Error) || !cause.message) return 'Agent 暂时不可用，请稍后重试'
+  if (
+    /Tool|Planner|start_character_generation|optimizedPrompt|optimizationSummary|生成授权/u.test(
+      cause.message,
+    )
+  ) {
+    return '提示词优化没有完成，请重新发送'
+  }
+  return cause.message
 }
 
 export function useQuickStartAgent({
@@ -84,7 +92,7 @@ export function useQuickStartAgent({
           signal: controller.signal,
           async onBeforeDispatch(plan) {
             if (mounted.current) setState({ status: 'dispatching', ...plan })
-            await waitForPresentation()
+            return await waitForPresentation(plan)
           },
         })
         if (result.kind === 'message' && mounted.current) {

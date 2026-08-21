@@ -1,8 +1,7 @@
 export const START_CHARACTER_GENERATION_TOOL = 'start_character_generation' as const
 
 const MAX_PROMPT_LENGTH = 4_000
-const MAX_ASSUMPTIONS = 6
-const MAX_ASSUMPTION_LENGTH = 200
+const MAX_OPTIMIZATION_SUMMARY_LENGTH = 600
 
 export interface PlannerMessage {
   role: 'user' | 'assistant'
@@ -30,7 +29,7 @@ export type QuickStartPlanner = (input: PlannerInput) => Promise<PlannerResult>
 
 export interface CharacterGenerationPlan {
   optimizedPrompt: string
-  assumptions: readonly string[]
+  optimizationSummary: string
 }
 
 export type ValidatedPlannerTerminal =
@@ -43,8 +42,8 @@ export type QuickStartAgentResult =
 
 export interface QuickStartAgentTurnOptions {
   signal?: AbortSignal
-  /** 页面在此处先渲染实际 Prompt 与默认假设；回调完成前不得发起付费写操作。 */
-  onBeforeDispatch?: (plan: CharacterGenerationPlan) => void | Promise<void>
+  /** 页面先展示提案并等待用户确认；返回值可覆盖最终提交的 Prompt。 */
+  onBeforeDispatch?: (plan: CharacterGenerationPlan) => string | void | Promise<string | void>
 }
 
 export interface QuickStartAgent {
@@ -71,9 +70,9 @@ export function parseCharacterGenerationPlan(value: unknown): CharacterGeneratio
   if (!isRecord(value)) throw new Error('生成 Tool 参数必须是对象')
   const keys = Object.keys(value)
   if (
-    keys.some((key) => key !== 'optimizedPrompt' && key !== 'assumptions') ||
+    keys.some((key) => key !== 'optimizedPrompt' && key !== 'optimizationSummary') ||
     !keys.includes('optimizedPrompt') ||
-    !keys.includes('assumptions')
+    !keys.includes('optimizationSummary')
   ) {
     throw new Error('生成 Tool 参数字段无效')
   }
@@ -83,17 +82,12 @@ export function parseCharacterGenerationPlan(value: unknown): CharacterGeneratio
   if (!optimizedPrompt || optimizedPrompt.length > MAX_PROMPT_LENGTH) {
     throw new Error('生成 Tool 的 optimizedPrompt 无效')
   }
-  if (!Array.isArray(value.assumptions) || value.assumptions.length > MAX_ASSUMPTIONS) {
-    throw new Error('生成 Tool 的 assumptions 无效')
+  const optimizationSummary =
+    typeof value.optimizationSummary === 'string' ? value.optimizationSummary.trim() : ''
+  if (!optimizationSummary || optimizationSummary.length > MAX_OPTIMIZATION_SUMMARY_LENGTH) {
+    throw new Error('生成 Tool 的 optimizationSummary 无效')
   }
-  const assumptions = value.assumptions.map((assumption) => {
-    const normalized = typeof assumption === 'string' ? assumption.trim() : ''
-    if (!normalized || normalized.length > MAX_ASSUMPTION_LENGTH) {
-      throw new Error('生成 Tool 的 assumptions 无效')
-    }
-    return normalized
-  })
-  return { optimizedPrompt, assumptions }
+  return { optimizedPrompt, optimizationSummary }
 }
 
 /** SDK 完整返回后再做一次 fail-closed 终态校验，校验通过前不触发业务 action。 */
@@ -175,21 +169,27 @@ export function createQuickStartAgent({
 
       const plan: CharacterGenerationPlan = {
         optimizedPrompt: terminal.optimizedPrompt,
-        assumptions: terminal.assumptions,
+        optimizationSummary: terminal.optimizationSummary,
       }
-      await onBeforeDispatch?.(plan)
+      const promptOverride = await onBeforeDispatch?.(plan)
       if (signal?.aborted) {
         revoked = true
         throw abortError()
       }
       assertAuthorized()
 
+      const effectivePrompt =
+        promptOverride === undefined ? plan.optimizedPrompt : promptOverride.trim()
+      if (!effectivePrompt || effectivePrompt.length > MAX_PROMPT_LENGTH) {
+        throw new Error('确认后的角色提示词无效')
+      }
+
       // 写权限在调用前消费。即使响应丢失，也不得自动重放可能已经计费的 action。
       consumed = true
       const { runId } = await startCharacterGeneration({
-        prompt: plan.optimizedPrompt,
+        prompt: effectivePrompt,
       })
-      return { kind: 'generated', runId, ...plan }
+      return { kind: 'generated', runId, ...plan, optimizedPrompt: effectivePrompt }
     } finally {
       running = false
     }
