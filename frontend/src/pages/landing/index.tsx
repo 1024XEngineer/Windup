@@ -366,8 +366,11 @@ function StyleGenerationShowcase() {
   const activeItem = styleShowcaseItems[activeStyle]
 
   return (
-    <section id="styles" className="border-b border-rule bg-paper px-12 py-32">
-      <div className="mx-auto grid max-w-[82rem] grid-cols-[minmax(0,1.2fr)_minmax(21rem,0.72fr)] items-center gap-20">
+    <section
+      id="styles"
+      className="border-b border-rule bg-paper px-12 py-32 max-lg:px-4 max-lg:py-20"
+    >
+      <div className="mx-auto grid max-w-[82rem] grid-cols-[minmax(0,1.2fr)_minmax(21rem,0.72fr)] items-center gap-20 max-lg:grid-cols-1 max-lg:gap-12">
         <figure
           className="min-w-0"
           onMouseEnter={() => setIsPaused(true)}
@@ -404,9 +407,12 @@ function StyleGenerationShowcase() {
 
 function GenerationPipeline() {
   return (
-    <section id="pipeline" className="border-b border-rule bg-[#f1f1ee] px-12 py-32">
+    <section
+      id="pipeline"
+      className="border-b border-rule bg-[#f1f1ee] px-12 py-32 max-lg:px-4 max-lg:py-20"
+    >
       <div className="mx-auto max-w-[82rem]">
-        <div className="grid grid-cols-[minmax(0,0.72fr)_minmax(30rem,1.28fr)] items-end gap-20">
+        <div className="grid grid-cols-[minmax(0,0.72fr)_minmax(30rem,1.28fr)] items-end gap-20 max-lg:grid-cols-1 max-lg:gap-10">
           <div>
             <p className="font-mono text-meta text-ink-faint">GENERATION STRATEGY</p>
             <h2 className="mt-6 max-w-[8em] text-display text-ink">
@@ -424,8 +430,8 @@ function GenerationPipeline() {
           </div>
         </div>
 
-        <div className="mt-16 overflow-hidden rounded-xl bg-white">
-          <ol className="grid grid-cols-5" aria-label="角色生成管线">
+        <div className="mt-16 overflow-hidden rounded-xl bg-white max-lg:overflow-x-auto">
+          <ol className="grid grid-cols-5 max-lg:min-w-[48rem]" aria-label="角色生成管线">
             {pipelineStages.map(([number, title, detail], index) => (
               <li
                 key={title}
@@ -444,7 +450,11 @@ function GenerationPipeline() {
             ))}
           </ol>
 
-          <div className="border-t border-[#dedfda]" role="table" aria-label="不同制作阶段的取舍">
+          <div
+            className="border-t border-[#dedfda] max-lg:min-w-[48rem]"
+            role="table"
+            aria-label="不同制作阶段的取舍"
+          >
             <div role="row" className="grid grid-cols-[1.15fr_repeat(3,1fr)] bg-[#f7f7f5]">
               {['制作阶段', '质量', '效率', '资源投入'].map((heading, index) => (
                 <span
@@ -502,7 +512,7 @@ export function LandingPage() {
       <main>
         <section
           aria-label="Windup 首屏"
-          className="relative isolate min-h-[calc(80dvh_-_4.5rem_+_min(40vw,_36rem))] overflow-hidden border-b border-[#d8d6ce] text-[#252520] [background:linear-gradient(180deg,rgb(247_246_240/0.82),rgb(237_239_231/0.92)),#f2f1ea]"
+          className="relative isolate min-h-0 overflow-hidden border-b border-[#d8d6ce] text-[#252520] [background:linear-gradient(180deg,rgb(247_246_240/0.82),rgb(237_239_231/0.92)),#f2f1ea] sm:min-h-[calc(80dvh_-_4.5rem_+_min(40vw,_36rem))]"
         >
           <div
             aria-hidden="true"
@@ -516,7 +526,7 @@ export function LandingPage() {
             loading="eager"
             decoding="async"
             fetchPriority="high"
-            className="pointer-events-none absolute top-[18.75rem] -left-24 z-[1] block h-auto w-[min(34vw,31rem)] rotate-[2deg] select-none"
+            className="pointer-events-none absolute top-80 -left-10 z-[1] block h-auto w-[min(34vw,31rem)] rotate-[2deg] select-none sm:top-[18.75rem] sm:-left-24"
           />
           <img
             src={gongbiBirdRight}
@@ -526,10 +536,10 @@ export function LandingPage() {
             loading="eager"
             decoding="async"
             fetchPriority="high"
-            className="pointer-events-none absolute top-21 -right-[9.5rem] z-[1] block h-auto w-[min(32vw,29rem)] -rotate-[4deg] select-none"
+            className="pointer-events-none absolute top-28 -right-16 z-[1] block h-auto w-[min(32vw,29rem)] -rotate-[4deg] select-none sm:top-21 sm:-right-[9.5rem]"
           />
 
-          <div className="relative z-10 mx-auto flex w-full max-w-[82rem] flex-col items-center px-12 pt-20 text-center">
+          <div className="relative z-10 mx-auto flex w-full max-w-[82rem] flex-col items-center px-4 pt-16 text-center sm:px-12 sm:pt-20">
             <p
               className={`${riseClassName} mx-auto w-full text-[0.875rem] leading-6 font-medium tracking-[0.04em] text-[#696861]`}
               style={riseDelay(0)}
@@ -537,14 +547,14 @@ export function LandingPage() {
               从角色设定到可玩的 2D 动作资产
             </p>
             <h1
-              className={`${riseClassName} mx-auto mt-5 w-full max-w-[11em] font-['Songti_SC','Noto_Serif_CJK_SC','STSong',Georgia,serif] text-[clamp(4rem,5.5vw,5.25rem)] leading-[1.12] font-semibold tracking-[-0.055em] text-[#23231f]`}
+              className={`${riseClassName} mx-auto mt-5 w-full max-w-[12em] font-['Songti_SC','Noto_Serif_CJK_SC','STSong',Georgia,serif] text-[clamp(3rem,13vw,5.25rem)] leading-[1.08] font-semibold tracking-[-0.055em] text-[#23231f] sm:max-w-[11em] sm:text-[clamp(4rem,5.5vw,5.25rem)] sm:leading-[1.12]`}
               style={riseDelay(1)}
             >
               <span className="block">让你的角色，</span>
               <span className="block">真正登场。</span>
             </h1>
             <p
-              className={`${riseClassName} mx-auto mt-6 w-full max-w-[31rem] text-[1.0625rem] leading-8 text-[#5d5c56]`}
+              className={`${riseClassName} mx-auto mt-6 w-full max-w-[31rem] text-[1rem] leading-7 text-[#5d5c56] sm:text-[1.0625rem] sm:leading-8`}
               style={riseDelay(2)}
             >
               用一条可审核的工作流，生成并管理保持一致的 2D 角色动作。
@@ -558,7 +568,7 @@ export function LandingPage() {
             </Link>
           </div>
 
-          <figure className="absolute top-[calc(80dvh_-_4.5rem)] left-1/2 z-20 w-[80%] max-w-[72rem] -translate-x-1/2 transform-gpu">
+          <figure className="relative z-20 mx-auto mt-16 w-[calc(100%_-_2rem)] max-w-[72rem] transform-gpu sm:absolute sm:top-[calc(80dvh_-_4.5rem)] sm:left-1/2 sm:mx-0 sm:mt-0 sm:w-[80%] sm:-translate-x-1/2">
             <div
               data-testid="workflow-editor-placeholder"
               className="aspect-[2/1] overflow-hidden rounded-2xl border border-[#c9c8c0] bg-[#f9f8f3] shadow-[0_30px_80px_rgba(53,58,49,0.18)]"
@@ -576,8 +586,8 @@ export function LandingPage() {
 
         <GenerationPipeline />
 
-        <section className="border-b border-rule px-8 py-28 lg:px-12">
-          <div className="mx-auto grid max-w-[82rem] gap-16 lg:grid-cols-[minmax(18rem,0.5fr)_minmax(0,1fr)] lg:items-center">
+        <section className="border-b border-rule px-8 py-28 max-lg:px-4 max-lg:py-20 lg:px-12">
+          <div className="mx-auto grid max-w-[82rem] gap-16 max-lg:gap-12 lg:grid-cols-[minmax(18rem,0.5fr)_minmax(0,1fr)] lg:items-center">
             <div>
               <h2 className="max-w-[7.4em] text-title text-ink">同一份创作，两种进入方式。</h2>
               <dl className="mt-12 grid gap-8">
@@ -609,8 +619,11 @@ export function LandingPage() {
           </div>
         </section>
 
-        <section id="workspace" className="scroll-mt-28 px-8 py-28 lg:px-12">
-          <div className="mx-auto grid max-w-[82rem] gap-16 lg:grid-cols-[minmax(18rem,0.5fr)_minmax(0,1fr)]">
+        <section
+          id="workspace"
+          className="scroll-mt-28 px-8 py-28 max-lg:px-4 max-lg:py-20 lg:px-12"
+        >
+          <div className="mx-auto grid max-w-[82rem] gap-16 max-lg:gap-12 lg:grid-cols-[minmax(18rem,0.5fr)_minmax(0,1fr)]">
             <div>
               <h2 className="max-w-[7.4em] text-title text-ink">资产会留下来，继续生长。</h2>
               <p className="mt-6 max-w-[22em] text-lead text-ink-muted">
@@ -625,8 +638,12 @@ export function LandingPage() {
             */}
             <ol aria-label="Windup 资产层级" className="grid gap-3">
               {assetLevels.map(([name, title, detail], index) => (
-                <li key={name} style={{ paddingInlineStart: `${index * 2.5}rem` }}>
-                  <article className="grid grid-cols-[8rem_1fr] items-baseline gap-6 rounded-xl border-l-2 border-rule bg-paper-raised py-6 pr-8 pl-7 transition-colors duration-200 hover:border-spark">
+                <li
+                  key={name}
+                  className="max-lg:!pl-0"
+                  style={{ paddingInlineStart: `${index * 2.5}rem` }}
+                >
+                  <article className="grid grid-cols-[8rem_1fr] items-baseline gap-6 rounded-xl border-l-2 border-rule bg-paper-raised py-6 pr-8 pl-7 transition-colors duration-200 hover:border-spark max-lg:grid-cols-1 max-lg:gap-2 max-lg:px-4 max-lg:py-5">
                     <span className="font-mono text-meta text-ink-faint">{name}</span>
                     <span>
                       <strong className="block text-subtitle font-semibold text-ink">
@@ -647,16 +664,16 @@ export function LandingPage() {
           像素上。反过来让文案撑高度的话，窗口高度跟着 padding 走，云一定会被切掉。
           文案绝对定位浮在上半部分那片天空里，不参与块高。
         */}
-        <div className="relative isolate">
+        <div className="relative isolate max-lg:min-h-[38rem] max-lg:overflow-hidden">
           <img
             src={characterJourney}
             alt="同一批角色从线稿逐步走到成品，最后站进游戏场景里"
             loading="lazy"
             decoding="async"
-            className="block aspect-[1536/571] w-full object-cover object-[center_49%]"
+            className="block aspect-[1536/571] w-full object-cover object-[center_49%] max-lg:absolute max-lg:inset-0 max-lg:h-full"
           />
 
-          <div className="absolute inset-x-0 top-0 px-8 pt-14 lg:px-12">
+          <div className="absolute inset-x-0 top-0 px-8 pt-14 max-lg:px-4 max-lg:pt-12 lg:px-12">
             <div className="mx-auto max-w-[82rem]">
               <h2 className="max-w-[8.4em] text-display text-ink">从一个角色开始。</h2>
               <p className="mt-5 max-w-[22em] text-lead text-ink-muted">

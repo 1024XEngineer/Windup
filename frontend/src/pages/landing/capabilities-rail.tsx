@@ -81,19 +81,19 @@ export function CapabilitiesRail() {
 
       <div
         ref={viewportRef}
-        className="mt-14 overflow-hidden border-y border-rule bg-paper-sunken motion-reduce:snap-x motion-reduce:snap-mandatory motion-reduce:overflow-x-auto"
+        className="mt-14 overflow-hidden border-y border-rule bg-paper-sunken max-lg:snap-x max-lg:snap-mandatory max-lg:overflow-x-auto motion-reduce:snap-x motion-reduce:snap-mandatory motion-reduce:overflow-x-auto"
       >
         <div
           ref={trackRef}
           role="list"
           aria-label="产品能力横向滚动"
-          className="flex w-max items-center px-[5vw] py-8 [transform:translate3d(var(--rail-x,0px),0,0)] will-change-transform motion-reduce:transform-none"
+          className="flex w-max items-center px-[5vw] py-8 [transform:translate3d(var(--rail-x,0px),0,0)] will-change-transform max-lg:!transform-none max-lg:will-change-auto motion-reduce:transform-none"
         >
           {capabilities.map(({ statement, title }) => (
             <article
               key={title}
               role="listitem"
-              className="group flex shrink-0 items-baseline gap-7 border-r border-rule px-14 first:pl-0 last:border-r-0 motion-reduce:snap-start"
+              className="group flex shrink-0 items-baseline gap-7 border-r border-rule px-14 first:pl-0 last:border-r-0 max-lg:snap-start motion-reduce:snap-start"
             >
               <h3 className="font-mono text-meta whitespace-nowrap text-ink-faint transition-colors duration-200 group-hover:text-spark">
                 {title}
