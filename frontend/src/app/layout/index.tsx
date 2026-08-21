@@ -6,6 +6,7 @@ import { SessionExpiredNotice } from '@/features/auth-guard'
 import { useAuthSession } from '@/features/auth-session'
 import { ActiveRunMonitor } from './active-run-monitor'
 import { AppHeader } from './app-header'
+import { RouteMotionSurface } from '../route-motion'
 
 export interface AppShellProps {
   /** 渲染在全局导航下方的当前路由页面。 */
@@ -17,7 +18,7 @@ export function AppShell({ children }: AppShellProps) {
   const { pathname } = useLocation()
   const session = useAuthSession()
   return (
-    <div className="min-h-screen bg-app-canvas text-app-ink">
+    <div className="min-h-screen overflow-x-clip bg-app-canvas text-app-ink">
       {session.state.status === 'authenticated' ? (
         <ActiveRunMonitor userId={session.state.user.id} pathname={pathname} />
       ) : null}
@@ -27,7 +28,9 @@ export function AppShell({ children }: AppShellProps) {
         也不按 pathname 分支给不同页面配不同容器。
         顶栏悬浮不占布局高度，内容页的避让由 PageContainer 统一让出，满幅页面自己让。
       */}
-      <main className="w-full">{children}</main>
+      <RouteMotionSurface as="main" className="w-full">
+        {children}
+      </RouteMotionSurface>
       <AccountPanel />
       <SessionExpiredNotice />
     </div>
@@ -37,8 +40,8 @@ export function AppShell({ children }: AppShellProps) {
 /** 公开页面外壳只提供认证面板与会话提醒，宣传导航由 LandingPage 自己组合。 */
 export function MarketingShell({ children }: AppShellProps) {
   return (
-    <div className="min-h-[100dvh] bg-[#f6f8f3] text-[#1d2920]">
-      {children}
+    <div className="min-h-[100dvh] overflow-x-clip bg-[#f6f8f3] text-[#1d2920]">
+      <RouteMotionSurface>{children}</RouteMotionSurface>
       <AccountPanel />
       <SessionExpiredNotice />
     </div>
