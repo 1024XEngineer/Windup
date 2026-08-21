@@ -85,21 +85,17 @@ export function ProjectsPage() {
             {error}
           </p>
         ) : null}
-        {projectsPage === null && !error ? (
-          <p className="mt-6 text-sm text-app-muted">正在读取项目…</p>
-        ) : null}
-        {projectsPage ? (
-          <div>
-            <ProjectCreateCard />
-            {projectsPage.items.length > 0 ? (
-              <ProjectGallery
-                projects={projectsPage.items}
-                total={projectsPage.total}
-                onDelete={setDeleteTarget}
-              />
-            ) : null}
-          </div>
-        ) : null}
+        <div>
+          <ProjectCreateCard />
+          {projectsPage === null && !error ? <ProjectGalleryLoading /> : null}
+          {projectsPage && projectsPage.items.length > 0 ? (
+            <ProjectGallery
+              projects={projectsPage.items}
+              total={projectsPage.total}
+              onDelete={setDeleteTarget}
+            />
+          ) : null}
+        </div>
         {projectsPage ? (
           <Pagination
             page={projectsPage.page}
@@ -156,6 +152,34 @@ function ProjectCreateCard() {
         />
       </div>
     </Link>
+  )
+}
+
+function ProjectGalleryLoading() {
+  return (
+    <section role="status" aria-label="正在读取项目" aria-busy="true" className="mt-7">
+      <h2 aria-hidden="true" className="mb-4 text-sm font-medium tracking-[0.04em] text-app-ink">
+        最近项目
+      </h2>
+      <div
+        aria-hidden="true"
+        className="grid gap-x-4 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
+      >
+        {Array.from({ length: 3 }, (_, index) => (
+          <article key={index} data-project-loading-placeholder className="min-w-0">
+            <div className="relative aspect-[16/10] overflow-hidden rounded-[1.25rem] border border-app-line bg-app-surface-muted">
+              <PixelMatrix coverage="compact" />
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-4 px-0.5">
+              <span className="h-3.5 w-2/5 rounded-sm bg-app-line" />
+              <span className="h-3 w-10 rounded-sm bg-app-line" />
+            </div>
+            <span className="mt-2 block h-3 w-3/5 rounded-sm bg-app-line" />
+            <span className="mt-2 block h-2.5 w-2/5 rounded-sm bg-app-line" />
+          </article>
+        ))}
+      </div>
+    </section>
   )
 }
 
