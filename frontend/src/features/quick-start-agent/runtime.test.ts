@@ -16,7 +16,10 @@ function plannerResult(overrides: Partial<PlannerResult> = {}): PlannerResult {
     toolCalls: [
       {
         toolName: 'start_character_generation',
-        input: { optimizedPrompt: '完整身体的银发像素骑士', assumptions: ['默认单角色'] },
+        input: {
+          optimizedPrompt: '完整身体的银发像素骑士',
+          optimizationSummary: '我会保留银发骑士的身份特征，并补全适合角色母版的全身描述。',
+        },
       },
     ],
     ...overrides,
@@ -37,7 +40,7 @@ describe('validatePlannerTerminal', () => {
     expect(validatePlannerTerminal(plannerResult())).toEqual({
       kind: 'tool',
       optimizedPrompt: '完整身体的银发像素骑士',
-      assumptions: ['默认单角色'],
+      optimizationSummary: '我会保留银发骑士的身份特征，并补全适合角色母版的全身描述。',
     })
   })
 
@@ -67,7 +70,10 @@ describe('validatePlannerTerminal', () => {
         toolCalls: [
           {
             toolName: 'start_character_generation',
-            input: { optimizedPrompt: ' ', assumptions: ['默认单角色'] },
+            input: {
+              optimizedPrompt: ' ',
+              optimizationSummary: '我会整理角色描述。',
+            },
           },
         ],
       }),
@@ -88,18 +94,18 @@ describe('parseCharacterGenerationPlan', () => {
   it.each([
     [
       'unknown fields',
-      { optimizedPrompt: '像素骑士', assumptions: [], unexpected: true },
+      {
+        optimizedPrompt: '像素骑士',
+        optimizationSummary: '我会整理角色描述。',
+        unexpected: true,
+      },
       '生成 Tool 参数字段无效',
     ],
+    ['missing optimization summary', { optimizedPrompt: '像素骑士' }, '生成 Tool 参数字段无效'],
     [
-      'non-array assumptions',
-      { optimizedPrompt: '像素骑士', assumptions: '默认单角色' },
-      '生成 Tool 的 assumptions 无效',
-    ],
-    [
-      'empty assumption',
-      { optimizedPrompt: '像素骑士', assumptions: [' '] },
-      '生成 Tool 的 assumptions 无效',
+      'empty optimization summary',
+      { optimizedPrompt: '像素骑士', optimizationSummary: ' ' },
+      '生成 Tool 的 optimizationSummary 无效',
     ],
   ])('rejects %s', (_label, input, message) => {
     expect(() => parseCharacterGenerationPlan(input)).toThrow(message)
@@ -144,7 +150,7 @@ describe('createQuickStartAgent', () => {
     expect(startCharacterGeneration).not.toHaveBeenCalled()
   })
 
-  it('dispatches the injected write action once after exposing the final prompt', async () => {
+  it('dispatches the user-edited prompt once after presenting the proposal', async () => {
     const { agent, startCharacterGeneration } = fixture()
     const events: string[] = []
     startCharacterGeneration.mockImplementation(async () => {
@@ -156,20 +162,33 @@ describe('createQuickStartAgent', () => {
       agent.start('银发骑士', {
         onBeforeDispatch: async (plan) => {
           events.push(`visible:${plan.optimizedPrompt}`)
+          return '完整身体的银发像素骑士，深蓝斗篷'
         },
       }),
     ).resolves.toEqual({
       kind: 'generated',
       runId: 'run-1',
-      optimizedPrompt: '完整身体的银发像素骑士',
-      assumptions: ['默认单角色'],
+      optimizedPrompt: '完整身体的银发像素骑士，深蓝斗篷',
+      optimizationSummary: '我会保留银发骑士的身份特征，并补全适合角色母版的全身描述。',
     })
 
     expect(events).toEqual(['visible:完整身体的银发像素骑士', 'action'])
     expect(startCharacterGeneration).toHaveBeenCalledTimes(1)
     expect(startCharacterGeneration).toHaveBeenCalledWith({
-      prompt: '完整身体的银发像素骑士',
+      prompt: '完整身体的银发像素骑士，深蓝斗篷',
     })
+  })
+
+  it('rejects an explicitly cleared prompt without dispatching the write action', async () => {
+    const { agent, startCharacterGeneration } = fixture()
+
+    await expect(
+      agent.start('银发骑士', {
+        onBeforeDispatch: async () => '   ',
+      }),
+    ).rejects.toThrow('确认后的角色提示词无效')
+
+    expect(startCharacterGeneration).not.toHaveBeenCalled()
   })
 
   it('keeps a text-only response side-effect free and spends at most one clarification', async () => {
@@ -220,7 +239,7 @@ describe('createQuickStartAgent', () => {
         toolCalls: [
           {
             toolName: 'start_character_generation',
-            input: { optimizedPrompt: '', assumptions: [] },
+            input: { optimizedPrompt: '', optimizationSummary: '我会整理角色描述。' },
           },
         ],
       }),

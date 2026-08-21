@@ -174,7 +174,10 @@ function agentFor(
       toolCalls: [
         {
           toolName: 'start_character_generation',
-          input: { optimizedPrompt: messages.at(-1)?.content ?? '', assumptions: [] },
+          input: {
+            optimizedPrompt: messages.at(-1)?.content ?? '',
+            optimizationSummary: '我会保留角色的核心特征，并整理成适合母版生成的完整描述。',
+          },
         },
       ],
     })),
@@ -227,6 +230,8 @@ function renderInBrowserHistory(
 }
 
 async function confirmAgentGeneration() {
+  const fill = await screen.findByRole('button', { name: '填入输入框' })
+  fireEvent.click(fill)
   const send = await screen.findByRole('button', { name: '发送生成' })
   fireEvent.click(send)
   await act(async () => undefined)
@@ -487,12 +492,20 @@ describe('QuickStartPage', () => {
     )
   })
 
-  it('keeps the entry composer on a single line', () => {
+  it('keeps the entry composer compact before expanding with content', () => {
     renderAt('/quick-start', serviceFor(null))
     const composer = screen.getByRole('textbox', { name: '创作指令' })
+    const editingSurface = composer.closest('label')
 
-    expect(composer.tagName).toBe('INPUT')
-    expect(composer.className).toContain('h-10')
+    expect(composer.tagName).toBe('TEXTAREA')
+    expect((composer as HTMLTextAreaElement).rows).toBe(1)
+    expect(composer.className).toContain('min-h-10')
+    expect(composer.className).toContain('[field-sizing:content]')
+    expect(composer.className).toContain('px-4')
+    expect(editingSurface?.className).toContain('ml-2')
+    expect(editingSurface?.className).toContain('rounded-lg')
+    expect(editingSurface?.className).not.toContain('bg-app-surface')
+    expect(screen.getByRole('button', { name: '生成角色' }).className).toContain('self-end')
     expect(composer.closest('form')?.className).toContain(
       'focus-within:shadow-[var(--shadow-app-composer-focus)]',
     )
@@ -703,7 +716,7 @@ describe('QuickStartPage', () => {
     expect(window.localStorage.getItem(legacyKey)).toBeNull()
   })
 
-  it('rewrites the real optimized prompt in the composer and waits for explicit generation send', async () => {
+  it('keeps the proposal in chat until the user fills, edits, and sends it', async () => {
     vi.useFakeTimers()
     const service = serviceFor(null)
     const startCharacterGeneration = vi.fn(() => new Promise<{ runId: string }>(() => undefined))
@@ -717,7 +730,30 @@ describe('QuickStartPage', () => {
     await act(async () => undefined)
 
     const composer = screen.getByTestId('quick-start-composer')
-    const input = screen.getByRole('textbox', { name: '创作指令' }) as HTMLInputElement
+    const input = screen.getByRole('textbox', { name: '创作指令' }) as HTMLTextAreaElement
+    expect(input.tagName).toBe('TEXTAREA')
+    expect(input.rows).toBe(1)
+    expect(input.className).toContain('[field-sizing:content]')
+    expect(input.value).toBe('')
+    expect(
+      screen.getByText('我会保留角色的核心特征，并整理成适合母版生成的完整描述。'),
+    ).toBeTruthy()
+    expect(screen.getAllByText('云端工坊的银发机械师')).toHaveLength(2)
+    expect(screen.queryByText(/默认处理|Tool|确认后点击发送/u)).toBeNull()
+    expect(startCharacterGeneration).not.toHaveBeenCalled()
+
+    const proposal = screen
+      .getAllByText('云端工坊的银发机械师')
+      .find((element) => element.tagName === 'BLOCKQUOTE')
+      ?.closest('[data-prompt-proposal]')
+    const optimizedCopy = proposal?.querySelector('blockquote')
+    expect(optimizedCopy?.className).not.toContain('border-l')
+    expect(optimizedCopy?.className).not.toContain('pl-4')
+    const fill = screen.getByRole('button', { name: '填入输入框' })
+    expect(fill.className).not.toContain('border')
+    expect(fill.textContent).toContain('填入输入框后，还可以继续修改')
+    fireEvent.click(fill)
+
     expect(composer.dataset.promptState).toBe('rewriting')
     const promptRewrite = composer.querySelector('[data-prompt-rewrite]')
     expect(promptRewrite?.querySelector('[data-copy-motion-mode="characters"]')).toBeTruthy()
@@ -727,12 +763,19 @@ describe('QuickStartPage', () => {
     await act(async () => vi.advanceTimersByTimeAsync(760))
     expect(composer.dataset.promptState).toBe('ready')
     expect(input.value).toBe('云端工坊的银发机械师')
+    expect(input.hasAttribute('readonly')).toBe(false)
+    fireEvent.change(input, { target: { value: '   ' } })
+    expect(screen.getByRole('button', { name: '发送生成' }).hasAttribute('disabled')).toBe(true)
+    expect(startCharacterGeneration).not.toHaveBeenCalled()
+    fireEvent.change(input, { target: { value: '云端工坊的银发机械师，佩戴黄铜护目镜' } })
     expect(screen.getByRole('button', { name: '发送生成' })).toBeTruthy()
     expect(startCharacterGeneration).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: '发送生成' }))
     await act(async () => undefined)
-    expect(startCharacterGeneration).toHaveBeenCalledTimes(1)
+    expect(startCharacterGeneration).toHaveBeenCalledWith({
+      prompt: '云端工坊的银发机械师，佩戴黄铜护目镜',
+    })
   })
 
   it('keeps one persistent Agent shell with a floating composer outside the scrolling transcript', async () => {
@@ -982,10 +1025,12 @@ describe('QuickStartPage', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
     await act(async () => undefined)
-    expect(screen.getByText('提着风灯的森林守夜人')).toBeTruthy()
-    expect(screen.getByTestId('quick-start-composer').dataset.promptState).toBe('rewriting')
+    expect(screen.getAllByText('提着风灯的森林守夜人')).toHaveLength(2)
+    expect(screen.getByTestId('quick-start-composer').dataset.promptState).toBe('collecting')
     expect(screen.queryByTestId('quick-start-run')).toBeNull()
 
+    fireEvent.click(screen.getByRole('button', { name: '填入输入框' }))
+    expect(screen.getByTestId('quick-start-composer').dataset.promptState).toBe('rewriting')
     await act(async () => vi.advanceTimersByTimeAsync(760))
     expect(screen.getByRole('button', { name: '发送生成' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '发送生成' }))
@@ -1125,7 +1170,7 @@ describe('QuickStartPage', () => {
     expect(screen.queryByRole('button', { name: /暗黑哥特像素/u })).toBeNull()
   })
 
-  it('asks once, then shows the optimized description and assumptions before the Controller action', async () => {
+  it('asks once, then presents a user-facing proposal without internal assumptions', async () => {
     const action = deferred<{ runId: string }>()
     const plannerResults: PlannerResult[] = [
       { text: '请补充角色的美术风格。', finishReason: 'stop', toolCalls: [] },
@@ -1137,7 +1182,8 @@ describe('QuickStartPage', () => {
             toolName: 'start_character_generation',
             input: {
               optimizedPrompt: '银发骑士，16-bit 像素风，全身像',
-              assumptions: ['默认单角色', '动作稍后处理'],
+              optimizationSummary:
+                '我会保留银发骑士和 16-bit 风格，并整理为轮廓清楚的全身母版描述。',
             },
           },
         ],
@@ -1156,11 +1202,15 @@ describe('QuickStartPage', () => {
       target: { value: '16-bit 像素风，请直接生成' },
     })
     fireEvent.click(screen.getByRole('button', { name: '继续' }))
-    const optimizedPrompt = (await screen.findByRole('textbox', {
+    const composerInput = (await screen.findByRole('textbox', {
       name: '创作指令',
     })) as HTMLInputElement
-    await waitFor(() => expect(optimizedPrompt.value).toBe('银发骑士，16-bit 像素风，全身像'))
-    expect(await screen.findByText(/默认处理：默认单角色、动作稍后处理/u)).toBeTruthy()
+    expect(composerInput.value).toBe('')
+    expect(
+      await screen.findByText('我会保留银发骑士和 16-bit 风格，并整理为轮廓清楚的全身母版描述。'),
+    ).toBeTruthy()
+    expect(screen.getByText('银发骑士，16-bit 像素风，全身像')).toBeTruthy()
+    expect(screen.queryByText(/默认处理|动作稍后处理|确认后点击发送/u)).toBeNull()
     expect(startCharacterGeneration).not.toHaveBeenCalled()
 
     await confirmAgentGeneration()
@@ -1179,7 +1229,10 @@ describe('QuickStartPage', () => {
         toolCalls: [
           {
             toolName: 'start_character_generation',
-            input: { optimizedPrompt: '银发像素骑士，全身像', assumptions: [] },
+            input: {
+              optimizedPrompt: '银发像素骑士，全身像',
+              optimizationSummary: '我会保留银发骑士特征，并整理为完整的全身母版描述。',
+            },
           },
         ],
       },
@@ -1318,14 +1371,14 @@ describe('QuickStartPage', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('服务繁忙')
   })
 
-  it('keeps the uploaded template controls in the single-line composer', () => {
+  it('keeps the uploaded template controls in the adaptive composer', () => {
     renderAt('/quick-start', serviceFor(null))
     const file = new File(['pixels'], 'hero.png', { type: 'image/png' })
 
     fireEvent.change(screen.getByLabelText('上传角色母版'), { target: { files: [file] } })
 
     const composer = screen.getByLabelText('创作指令').closest('form')
-    expect(screen.getByLabelText('创作指令').tagName).toBe('INPUT')
+    expect(screen.getByLabelText('创作指令').tagName).toBe('TEXTAREA')
     expect(composer?.textContent).toContain('hero.png')
     expect(screen.getByRole('button', { name: '移除图片' }).closest('form')).toBe(composer)
     expect(composer?.querySelector('[data-layout="quick-start-attachment-row"]')).toBeNull()
