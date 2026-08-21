@@ -1,17 +1,21 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { PlaytestStage } from './stage'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 
-function renderStage(x: number) {
+function renderStage(x: number, y = 0, mirrorX = false) {
   render(
     <PlaytestStage
       frame={{ imageUrl: '/idle-01.png', durationMs: 100 }}
       x={x}
-      facing={1}
+      y={y}
+      mirrorX={mirrorX}
       onBoundsChange={() => undefined}
     />,
   )
@@ -20,9 +24,9 @@ function renderStage(x: number) {
 
 describe('PlaytestStage', () => {
   it('centers and moves the sprite through a single transform', () => {
-    const sprite = renderStage(40)
+    const sprite = renderStage(40, -25)
 
-    expect(sprite?.style.transform).toBe('translate3d(calc(-50% + 40px), 0, 0) scaleX(1)')
+    expect(sprite?.style.transform).toBe('translate3d(calc(-50% + 40px), -25px, 0) scaleX(1)')
     expect(sprite?.getAttribute('loading')).toBe('eager')
     expect(sprite?.getAttribute('decoding')).toBe('async')
     expect(sprite?.getAttribute('fetchpriority')).toBe('high')
@@ -31,9 +35,76 @@ describe('PlaytestStage', () => {
     expect(sprite?.className).not.toMatch(/(^|\s)-?translate-/)
   })
 
+  it('mirrors only playback that explicitly requests horizontal reflection', () => {
+    expect(renderStage(0, 0, true)?.style.transform).toContain('scaleX(-1)')
+    cleanup()
+    expect(renderStage(0, 0, false)?.style.transform).toContain('scaleX(1)')
+  })
+
   it('shows an empty stage when the action has no frame to play', () => {
-    render(<PlaytestStage frame={null} x={0} facing={1} onBoundsChange={() => undefined} />)
+    render(
+      <PlaytestStage frame={null} x={0} y={0} mirrorX={false} onBoundsChange={() => undefined} />,
+    )
 
     expect(screen.getByText('暂无可播放帧')).toBeTruthy()
+  })
+
+  it('measures horizontal and depth bounds from the stage and sprite sizes', () => {
+    const onBoundsChange = vi.fn()
+    render(
+      <PlaytestStage
+        frame={{ imageUrl: '/idle-01.png', durationMs: 100 }}
+        x={0}
+        y={0}
+        mirrorX={false}
+        onBoundsChange={onBoundsChange}
+      />,
+    )
+    const stage = screen.getByRole('region', { name: '预览舞台' })
+    const sprite = stage.querySelector('img')!
+    vi.spyOn(stage, 'getBoundingClientRect').mockReturnValue({
+      width: 500,
+      height: 400,
+    } as DOMRect)
+    vi.spyOn(sprite, 'getBoundingClientRect').mockReturnValue({
+      width: 100,
+      height: 120,
+    } as DOMRect)
+
+    fireEvent.load(sprite)
+
+    expect(onBoundsChange).toHaveBeenLastCalledWith({
+      minX: -172,
+      maxX: 172,
+      minY: -96,
+      maxY: 96,
+    })
+  })
+
+  it('observes stage resizes and disconnects the observer on unmount', () => {
+    const observe = vi.fn()
+    const disconnect = vi.fn()
+    vi.stubGlobal(
+      'ResizeObserver',
+      class ResizeObserver {
+        observe = observe
+        disconnect = disconnect
+      },
+    )
+
+    const { unmount } = render(
+      <PlaytestStage
+        frame={{ imageUrl: '/idle-01.png', durationMs: 100 }}
+        x={0}
+        y={0}
+        mirrorX={false}
+        onBoundsChange={() => undefined}
+      />,
+    )
+    const stage = screen.getByRole('region', { name: '预览舞台' })
+
+    expect(observe).toHaveBeenCalledWith(stage)
+    unmount()
+    expect(disconnect).toHaveBeenCalledOnce()
   })
 })

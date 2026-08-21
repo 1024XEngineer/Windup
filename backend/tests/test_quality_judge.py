@@ -574,7 +574,8 @@ def test_enforce_fails_the_task(session_factory, monkeypatch):
     from windup_app.server.orchestrator.model import TaskStatus
 
     assert task.status is TaskStatus.FAILED
-    assert quality_gate.PROBLEM_CLIPPED in task.error_message
+    # 问题码不再直接透出,但对应的那句人话必须在 —— 用户要知道该改什么。
+    assert "裁到" in task.error_message
 
 
 def test_custom_action_sends_the_description_not_the_enum(session_factory, monkeypatch):

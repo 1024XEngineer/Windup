@@ -1,4 +1,4 @@
-"""Executor 经 Gateway 装配,失败文案带回 request_id。"""
+"""Executor 经 Gateway 装配,失败时仍绑定 request_id 供日志/trace,界面文案走脱敏出口。"""
 from __future__ import annotations
 
 import pytest
@@ -84,7 +84,8 @@ def test_action_task_failure_includes_request_id(session_factory):
     with session_factory() as s:
         done = service.get_task(s, project_id=1, task_id=task_id)
     assert done.status is TaskStatus.FAILED
-    assert f"request_id=act-{task_id}" in (done.error_message or "")
+    assert done.error_message
+    assert "request_id" not in (done.error_message or "")
     assert seen["request_id"] == f"act-{task_id}"
     assert seen["task_id"] == str(task_id)
     assert seen["start_from_model"] is None
@@ -119,7 +120,7 @@ def test_action_task_binds_start_from_model(session_factory):
         done = service.get_task(s, project_id=1, task_id=task_id)
     assert done.status is TaskStatus.FAILED
     assert seen["start_from_model"] == "kling-v2-5-turbo"
-    assert f"request_id=act-{task_id}" in (done.error_message or "")
+    assert "request_id" not in (done.error_message or "")
 
 
 def test_image_task_failure_includes_request_id(session_factory):
@@ -147,6 +148,7 @@ def test_image_task_failure_includes_request_id(session_factory):
     with session_factory() as s:
         done = service.get_task(s, project_id=1, task_id=task_id)
     assert done.status is TaskStatus.FAILED
-    assert f"request_id=img-{task_id}" in (done.error_message or "")
+    assert done.error_message
+    assert "request_id" not in (done.error_message or "")
     assert seen["request_id"] == f"img-{task_id}"
     assert seen["task_id"] == str(task_id)

@@ -27,7 +27,9 @@ class ProjectService(ABC):
         """
 
     @abstractmethod
-    def project_name_exists(self, session: Session, *, user_id: int, project_name: str) -> bool:
+    def project_name_exists(
+        self, session: Session, *, user_id: int, project_name: str
+    ) -> bool:
         """判断用户下的项目名称是否已存在。"""
 
     @abstractmethod
@@ -45,6 +47,12 @@ class ProjectService(ABC):
         self, session: Session, *, page: int, page_size: int, user_id: int | None = None
     ) -> tuple[list[Project], int]:
         """分页查询项目,返回 (当前页数据, 总数)。"""
+
+    @abstractmethod
+    def list_project_previews(
+        self, session: Session, project_ids: list[int], *, character_limit: int
+    ) -> dict[int, str | None]:
+        """一次查询当前页项目的资产预览，结果包含所有传入项目 ID。"""
 
     @abstractmethod
     def delete_project(self, session: Session, project_id: int) -> bool:

@@ -59,7 +59,7 @@ class CharacterImageInput:
     negative_prompt: str = ""
     width: int = 1024
     height: int = 1024
-    # 角色母版和动作首帧统一返回两张候选；API 层也会把这个值限制为 2。
+    # 候选数量由调用方决定；API 默认请求 3 张，并把可付费调用次数限制在 1–4。
     num_images: int = 2
     direction: ActionDirection = ActionDirection.EAST
 
@@ -105,7 +105,7 @@ class CharacterActionInput:
 class CharacterImageOutput:
     """角色图片生成结果。
 
-    前端拿到 ``image_urls`` 后把两张候选交给工作流节点选择；只有被确认的图片
+    前端拿到 ``image_urls`` 后把候选图交给工作流节点选择；只有被确认的图片
     才写入 ``Character.reference_image_url``。
     """
 

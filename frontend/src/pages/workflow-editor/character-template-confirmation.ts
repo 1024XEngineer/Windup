@@ -1,10 +1,12 @@
 import type {
   Character,
   CharacterApis,
+  ActionDirection,
   CharacterSetupWorkflowNode,
   CharacterTemplateWorkflowNode,
   WorkflowRun,
 } from '@/entities'
+import { characterTemplatesFromImages } from '@/entities'
 import type { WorkflowController } from '@/features/workflow-controller'
 
 interface CharacterTemplateConfirmerDependencies {
@@ -18,6 +20,8 @@ interface CharacterTemplateConfirmerDependencies {
 
 interface CharacterTemplateContext {
   imageUrl: string
+  direction: ActionDirection
+  selectedImages: Partial<Record<ActionDirection, string>>
   setupNode: CharacterSetupWorkflowNode
   workflow: WorkflowRun
 }
@@ -35,11 +39,13 @@ export function createCharacterTemplateConfirmer(
   return async (
     nodeId: CharacterTemplateWorkflowNode['id'],
     selectedImageUrl: string,
+    direction: ActionDirection = 'east',
   ): Promise<Character> => {
     const context = resolveCharacterTemplateContext(
       dependencies.controller.getWorkflow(),
       nodeId,
       selectedImageUrl,
+      direction,
     )
     const write: CharacterWrite = {
       original: cloneCharacter(dependencies.getCurrentCharacter()),
@@ -54,6 +60,7 @@ export function createCharacterTemplateConfirmer(
         nodeId,
         context.imageUrl,
         write.next!.id,
+        context.direction,
       )
       dependencies.setCurrentCharacter(write.next!)
       return write.next!
@@ -68,6 +75,7 @@ function resolveCharacterTemplateContext(
   workflow: WorkflowRun,
   nodeId: CharacterTemplateWorkflowNode['id'],
   selectedImageUrl: string,
+  direction: ActionDirection,
 ): CharacterTemplateContext {
   const imageUrl = selectedImageUrl.trim()
   if (!imageUrl) throw new Error('必须选择角色母版')
@@ -88,7 +96,13 @@ function resolveCharacterTemplateContext(
   if (!setupNode || setupNode.type !== 'character-setup') {
     throw new Error('角色母版缺少角色设定')
   }
-  return { imageUrl, setupNode, workflow }
+  return {
+    imageUrl,
+    direction,
+    selectedImages: { ...templateNode.selectedImages, [direction]: imageUrl },
+    setupNode,
+    workflow,
+  }
 }
 
 async function prepareCharacter(
@@ -105,21 +119,25 @@ async function prepareCharacter(
     })
     write.created = true
   }
-  if (write.next.outfits.length > 0) return
-
+  const templateUrl = context.selectedImages.east ?? context.imageUrl
   write.next = await characterApis.update({
     ...write.next,
-    outfits: [
-      {
-        id: 'outfit-default',
-        characterId: write.next.id,
-        name: '常态造型',
-        description: null,
-        previewUrl: context.imageUrl,
-        model3dUrl: null,
-        actions: [],
-      },
-    ],
+    referenceImageUrl: write.next.referenceImageUrl ?? templateUrl,
+    templates: characterTemplatesFromImages(context.selectedImages),
+    outfits:
+      write.next.outfits.length > 0
+        ? write.next.outfits
+        : [
+            {
+              id: 'outfit-default',
+              characterId: write.next.id,
+              name: '常态造型',
+              description: null,
+              previewUrl: templateUrl,
+              model3dUrl: null,
+              actions: [],
+            },
+          ],
   })
   write.updatedExisting = !write.created
 }
@@ -135,8 +153,8 @@ async function reconcileCharacterWrite(
     const latestSetup = latest.nodes.find((node) => node.id === context.setupNode.id)
     return (
       latestTemplate?.type === 'character-template' &&
-      latestTemplate.status === 'passed' &&
-      latestTemplate.selectedImageUrl === context.imageUrl &&
+      (latestTemplate.selectedImageUrl === context.imageUrl ||
+        latestTemplate.selectedImages?.[context.direction] === context.imageUrl) &&
       latestSetup?.type === 'character-setup' &&
       latestSetup.input.characterId === write.next?.id
     )

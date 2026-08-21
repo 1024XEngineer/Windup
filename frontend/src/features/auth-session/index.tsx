@@ -397,6 +397,11 @@ export function useAuthSession(): AuthSessionValue {
   return session
 }
 
+/** 允许可独立渲染的业务页读取会话；生产外壳存在时仍返回同一份 AuthSession。 */
+export function useOptionalAuthSession(): AuthSessionValue | null {
+  return useContext(AuthSessionContext)
+}
+
 function getRefreshTime(accessToken: string | null): number | null {
   const payload = accessToken?.split('.')[1]
   if (!payload) return null

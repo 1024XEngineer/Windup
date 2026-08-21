@@ -174,7 +174,7 @@ class CharacterImageGenerateRequest(BaseModel):
     # (2026-08-10 机器审逮到)。宽高上界按当前 i2v 与像素化管线的实际处理范围取。
     width: int = Field(default=1024, ge=64, le=2048)
     height: int = Field(default=1024, ge=64, le=2048)
-    num_images: int = Field(default=2, ge=2, le=2)
+    num_images: int = Field(default=3, ge=1, le=4)
     direction: ActionDirection = ActionDirection.EAST
 
 

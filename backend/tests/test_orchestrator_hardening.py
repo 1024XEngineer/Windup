@@ -500,10 +500,12 @@ def test_num_images_is_bounded_at_the_contract_layer():
     绕过按请求计的限流，把成本拉到无上限。
     """
     with pytest.raises(ValueError):
-        CharacterImageGenerateRequest(project_id=42, prompt="x", num_images=10_000)
+        CharacterImageGenerateRequest(project_id=42, prompt="x", num_images=5)
     with pytest.raises(ValueError):
         CharacterImageGenerateRequest(project_id=42, prompt="x", num_images=0)
-    assert CharacterImageGenerateRequest(project_id=42, prompt="x", num_images=2).num_images == 2
+    assert CharacterImageGenerateRequest(project_id=42, prompt="x").num_images == 3
+    assert CharacterImageGenerateRequest(project_id=42, prompt="x", num_images=1).num_images == 1
+    assert CharacterImageGenerateRequest(project_id=42, prompt="x", num_images=4).num_images == 4
 
 
 def test_image_dimensions_are_bounded():

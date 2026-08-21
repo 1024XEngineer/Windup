@@ -1,18 +1,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import type { DirectionalMovement } from '@/entities'
+
+import {
+  createDefaultActionBindings,
+  type PlaytestActionBindings,
+  type PlaytestControlKey,
+} from '../bindings'
 import type { PlaytestAction } from '../model'
 import {
   advanceRuntime,
   createRuntime,
+  playbackForFacing,
   selectRuntimeAction,
-  setDirectionInput,
+  setControlInput,
+  setMovementInput,
   type Direction,
+  type MovementDirection,
   type StageBounds,
 } from './runtime'
 
 const MOVEMENT_SPEED = 150
 const MAX_FRAME_DELTA_MS = 50
-const INITIAL_BOUNDS: StageBounds = { minX: 0, maxX: 0 }
+const INITIAL_BOUNDS: StageBounds = { minX: 0, maxX: 0, minY: 0, maxY: 0 }
+const MOVEMENT_DIRECTIONS: readonly MovementDirection[] = ['up', 'down', 'left', 'right']
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
@@ -24,11 +35,30 @@ function isTypingTarget(target: EventTarget | null): boolean {
   )
 }
 
-function keyDirection(key: string): Direction | null {
+function keyboardInput(key: string, code: string): MovementDirection | PlaytestControlKey | null {
   const normalized = key.toLowerCase()
-  if (normalized === 'a' || normalized === 'arrowleft') return 'left'
-  if (normalized === 'd' || normalized === 'arrowright') return 'right'
+  if (normalized === 'arrowleft' || normalized === 'a') return 'left'
+  if (normalized === 'arrowright' || normalized === 'd') return 'right'
+  if (normalized === 'arrowup' || normalized === 'w') return 'up'
+  if (normalized === 'arrowdown' || normalized === 's') return 'down'
+  if (code === 'Space' || key === ' ' || normalized === 'spacebar') return 'space'
+  if (code === 'ShiftLeft' || code === 'ShiftRight' || normalized === 'shift') return 'shift'
   return null
+}
+
+function isMovementDirection(
+  input: MovementDirection | PlaytestControlKey,
+): input is MovementDirection {
+  return MOVEMENT_DIRECTIONS.includes(input as MovementDirection)
+}
+
+function actionImageUrls(action: PlaytestAction): readonly string[] {
+  return [
+    ...action.frames.map((frame) => frame.imageUrl),
+    ...Object.values(action.sequences ?? {}).flatMap(
+      (playback) => playback?.frames.map((frame) => frame.imageUrl) ?? [],
+    ),
+  ]
 }
 
 export function preloadActionFrames(
@@ -43,10 +73,10 @@ export function preloadActionFrames(
   const orderedActions = preferredAction
     ? [preferredAction, ...actions.filter((action) => action.id !== preferredAction.id)]
     : actions
-  const preferredUrls = new Set(preferredAction?.frames.map((frame) => frame.imageUrl) ?? [])
-  const imageUrls = [
-    ...new Set(orderedActions.flatMap((action) => action.frames.map((frame) => frame.imageUrl))),
-  ]
+  const preferredUrls = new Set(
+    preferredAction === undefined ? [] : actionImageUrls(preferredAction),
+  )
+  const imageUrls = [...new Set(orderedActions.flatMap(actionImageUrls))]
 
   return imageUrls.map((imageUrl) => {
     const image = imageFactory()
@@ -61,22 +91,35 @@ export function preloadActionFrames(
 export function usePlaytestRuntime(
   actions: readonly PlaytestAction[],
   initialActionId: string | null,
+  movementMode: DirectionalMovement = 'single',
+  bindings?: PlaytestActionBindings,
 ) {
-  const [runtime, setRuntime] = useState(() => createRuntime(actions, initialActionId))
+  const effectiveBindings = useMemo(
+    () => bindings ?? createDefaultActionBindings(actions),
+    [actions, bindings],
+  )
+  const [runtime, setRuntime] = useState(() =>
+    createRuntime(actions, initialActionId, movementMode),
+  )
   const actionsRef = useRef(actions)
+  const bindingsRef = useRef(effectiveBindings)
   const boundsRef = useRef<StageBounds>(INITIAL_BOUNDS)
-  const activeInputsRef = useRef(new Map<string, Direction>())
+  const activeInputsRef = useRef(new Map<string, MovementDirection>())
   const preloadedImagesRef = useRef<readonly HTMLImageElement[]>([])
   const initialRuntimeActionId = useMemo(
-    () => createRuntime(actions, initialActionId).actionId,
-    [actions, initialActionId],
+    () => createRuntime(actions, initialActionId, movementMode).actionId,
+    [actions, initialActionId, movementMode],
   )
 
   useEffect(() => {
     actionsRef.current = actions
     activeInputsRef.current.clear()
-    setRuntime(createRuntime(actions, initialActionId))
-  }, [actions, initialActionId])
+    setRuntime(createRuntime(actions, initialActionId, movementMode))
+  }, [actions, initialActionId, movementMode])
+
+  useEffect(() => {
+    bindingsRef.current = effectiveBindings
+  }, [effectiveBindings])
 
   useEffect(() => {
     preloadedImagesRef.current = preloadActionFrames(actions, initialRuntimeActionId)
@@ -105,39 +148,60 @@ export function usePlaytestRuntime(
     return () => cancelAnimationFrame(animationFrame)
   }, [])
 
-  const setDirection = useCallback(
-    (direction: Direction, pressed: boolean, source: string = direction) => {
-      if (pressed) activeInputsRef.current.set(source, direction)
-      else activeInputsRef.current.delete(source)
-
-      const stillHeld = [...activeInputsRef.current.values()].includes(direction)
-      setRuntime((current) => setDirectionInput(current, actionsRef.current, direction, stillHeld))
+  const setControl = useCallback(
+    (key: PlaytestControlKey, pressed: boolean, _source: string = key) => {
+      setRuntime((current) =>
+        setControlInput(current, actionsRef.current, bindingsRef.current, key, pressed),
+      )
     },
     [],
   )
 
+  const setMovement = useCallback(
+    (direction: MovementDirection, pressed: boolean, source: string = direction) => {
+      if (pressed) activeInputsRef.current.set(source, direction)
+      else activeInputsRef.current.delete(source)
+      const stillHeld = [...activeInputsRef.current.values()].includes(direction)
+      setRuntime((current) => setMovementInput(current, actionsRef.current, direction, stillHeld))
+    },
+    [],
+  )
+
+  const setDirection = useCallback(
+    (direction: Direction, pressed: boolean, source: string = direction) => {
+      setMovement(direction, pressed, source)
+    },
+    [setMovement],
+  )
+
   const clearDirections = useCallback(() => {
     activeInputsRef.current.clear()
-    setRuntime((current) => {
-      const withoutLeft = setDirectionInput(current, actionsRef.current, 'left', false)
-      return setDirectionInput(withoutLeft, actionsRef.current, 'right', false)
-    })
+    setRuntime((current) =>
+      MOVEMENT_DIRECTIONS.reduce(
+        (next, direction) => setMovementInput(next, actionsRef.current, direction, false),
+        current,
+      ),
+    )
   }, [])
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (isTypingTarget(event.target)) return
-      const direction = keyDirection(event.key)
-      if (direction === null) return
+      const input = keyboardInput(event.key, event.code)
+      if (input === null) return
       event.preventDefault()
       if (event.repeat) return
-      setDirection(direction, true, `keyboard:${event.code || event.key}`)
+      const source = `keyboard:${event.code || event.key}`
+      if (isMovementDirection(input)) setMovement(input, true, source)
+      else setControl(input, true, source)
     }
     const handleKeyUp = (event: globalThis.KeyboardEvent) => {
-      const direction = keyDirection(event.key)
-      if (direction === null) return
+      const input = keyboardInput(event.key, event.code)
+      if (input === null) return
       event.preventDefault()
-      setDirection(direction, false, `keyboard:${event.code || event.key}`)
+      const source = `keyboard:${event.code || event.key}`
+      if (isMovementDirection(input)) setMovement(input, false, source)
+      else setControl(input, false, source)
     }
 
     window.addEventListener('keydown', handleKeyDown)
@@ -148,7 +212,7 @@ export function usePlaytestRuntime(
       window.removeEventListener('keyup', handleKeyUp)
       window.removeEventListener('blur', clearDirections)
     }
-  }, [clearDirections, setDirection])
+  }, [clearDirections, setControl, setMovement])
 
   const selectAction = useCallback((actionId: string) => {
     setRuntime((current) => selectRuntimeAction(current, actionsRef.current, actionId))
@@ -159,6 +223,7 @@ export function usePlaytestRuntime(
     setRuntime((current) => ({
       ...current,
       x: Math.min(bounds.maxX, Math.max(bounds.minX, current.x)),
+      y: Math.min(bounds.maxY ?? current.y, Math.max(bounds.minY ?? current.y, current.y)),
     }))
   }, [])
 
@@ -166,14 +231,18 @@ export function usePlaytestRuntime(
     () => actions.find((candidate) => candidate.id === runtime.actionId) ?? null,
     [actions, runtime.actionId],
   )
-  const frame = action?.frames[runtime.frameIndex] ?? action?.frames[0] ?? null
+  const playback = action === null ? undefined : playbackForFacing(action, runtime.facing)
+  const frame = playback?.frames[runtime.frameIndex] ?? playback?.frames[0] ?? null
 
   return {
     runtime,
     action,
     frame,
+    mirrorX: playback?.mirrorX ?? false,
     selectAction,
+    setControl,
     setDirection,
+    setMovement,
     setBounds,
   }
 }

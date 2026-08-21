@@ -56,6 +56,46 @@
         "title": "ActionType",
         "type": "string"
       },
+      "AssistantMessageResponse": {
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "role": {
+            "const": "assistant",
+            "default": "assistant",
+            "title": "Role",
+            "type": "string"
+          },
+          "tool_calls": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ToolCallResponse"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Calls"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "title": "AssistantMessageResponse",
+        "type": "object"
+      },
       "Body_upload_media_media_upload_post": {
         "properties": {
           "file": {
@@ -471,9 +511,9 @@
             "type": "string"
           },
           "num_images": {
-            "default": 2,
-            "maximum": 2.0,
-            "minimum": 2.0,
+            "default": 3,
+            "maximum": 4.0,
+            "minimum": 1.0,
             "title": "Num Images",
             "type": "integer"
           },
@@ -655,6 +695,76 @@
         "title": "CharacterStance",
         "type": "string"
       },
+      "CharacterSummaryOut": {
+        "description": "角色集合的卡片投影；不携带完整资产树。",
+        "properties": {
+          "action_count": {
+            "title": "Action Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "outfit_count": {
+            "title": "Outfit Count",
+            "type": "integer"
+          },
+          "outfit_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outfit Name"
+          },
+          "preview_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview Url"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "name",
+          "status",
+          "preview_url",
+          "outfit_name",
+          "outfit_count",
+          "action_count"
+        ],
+        "title": "CharacterSummaryOut",
+        "type": "object"
+      },
       "CharacterTemplateSequence": {
         "description": "角色母版的真实源方向或水平镜像关系。",
         "properties": {
@@ -770,36 +880,111 @@
         "title": "CharacterUpdate",
         "type": "object"
       },
+      "ChatChoiceResponse": {
+        "properties": {
+          "finish_reason": {
+            "title": "Finish Reason",
+            "type": "string"
+          },
+          "index": {
+            "default": 0,
+            "title": "Index",
+            "type": "integer"
+          },
+          "message": {
+            "$ref": "#/components/schemas/AssistantMessageResponse"
+          }
+        },
+        "required": [
+          "message",
+          "finish_reason"
+        ],
+        "title": "ChatChoiceResponse",
+        "type": "object"
+      },
+      "ChatCompletionResponse": {
+        "properties": {
+          "choices": {
+            "items": {
+              "$ref": "#/components/schemas/ChatChoiceResponse"
+            },
+            "title": "Choices",
+            "type": "array"
+          },
+          "created": {
+            "title": "Created",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "object": {
+            "const": "chat.completion",
+            "default": "chat.completion",
+            "title": "Object",
+            "type": "string"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChatUsageResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "created",
+          "model",
+          "choices"
+        ],
+        "title": "ChatCompletionResponse",
+        "type": "object"
+      },
       "ChatMessage": {
-        "description": "对话消息。",
+        "additionalProperties": false,
+        "description": "One OpenAI-compatible message kept by the browser.",
         "properties": {
           "content": {
             "anyOf": [
               {
+                "maxLength": 8000,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "消息内容",
             "title": "Content"
           },
           "role": {
-            "description": "消息角色：system / user / assistant / tool",
+            "enum": [
+              "system",
+              "user",
+              "assistant",
+              "tool"
+            ],
             "title": "Role",
             "type": "string"
           },
           "tool_call_id": {
             "anyOf": [
               {
+                "maxLength": 128,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "工具结果关联的调用 ID（tool 角色）",
             "title": "Tool Call Id"
           },
           "tool_calls": {
@@ -809,13 +994,13 @@
                   "additionalProperties": true,
                   "type": "object"
                 },
+                "maxItems": 1,
                 "type": "array"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "工具调用（assistant 角色）",
             "title": "Tool Calls"
           }
         },
@@ -826,39 +1011,34 @@
         "type": "object"
       },
       "ChatRequest": {
-        "description": "LLM 代理请求。",
+        "description": "Bounded subset of Chat Completions used by AI SDK Core.",
         "properties": {
           "messages": {
-            "description": "对话历史（前端维护完整列表）",
             "items": {
               "$ref": "#/components/schemas/ChatMessage"
             },
+            "maxItems": 16,
+            "minItems": 1,
             "title": "Messages",
             "type": "array"
           },
           "model": {
             "anyOf": [
               {
+                "maxLength": 128,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "模型名称，省略则使用默认模型",
             "title": "Model"
           },
-          "system": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "系统提示词",
-            "title": "System"
+          "stream": {
+            "const": false,
+            "default": false,
+            "title": "Stream",
+            "type": "boolean"
           },
           "temperature": {
             "anyOf": [
@@ -871,8 +1051,23 @@
                 "type": "null"
               }
             ],
-            "description": "温度参数",
             "title": "Temperature"
+          },
+          "tool_choice": {
+            "anyOf": [
+              {
+                "enum": [
+                  "auto",
+                  "none",
+                  "required"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Choice"
           },
           "tools": {
             "anyOf": [
@@ -880,13 +1075,13 @@
                 "items": {
                   "$ref": "#/components/schemas/ToolDefinition"
                 },
+                "maxItems": 1,
                 "type": "array"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "可用工具列表（前端定义，后端透传给 LLM）",
             "title": "Tools"
           }
         },
@@ -894,6 +1089,29 @@
           "messages"
         ],
         "title": "ChatRequest",
+        "type": "object"
+      },
+      "ChatUsageResponse": {
+        "properties": {
+          "completion_tokens": {
+            "title": "Completion Tokens",
+            "type": "integer"
+          },
+          "prompt_tokens": {
+            "title": "Prompt Tokens",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "title": "Total Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "prompt_tokens",
+          "completion_tokens",
+          "total_tokens"
+        ],
+        "title": "ChatUsageResponse",
         "type": "object"
       },
       "CreditAccountOut": {
@@ -1002,6 +1220,70 @@
           "create_at"
         ],
         "title": "CreditTransactionOut",
+        "type": "object"
+      },
+      "FunctionCallResponse": {
+        "properties": {
+          "arguments": {
+            "title": "Arguments",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "arguments"
+        ],
+        "title": "FunctionCallResponse",
+        "type": "object"
+      },
+      "FunctionDefinition": {
+        "additionalProperties": false,
+        "description": "Schema-only function definition forwarded to the model provider.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "title": "Parameters",
+            "type": "object"
+          },
+          "strict": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strict"
+          }
+        },
+        "required": [
+          "name",
+          "parameters"
+        ],
+        "title": "FunctionDefinition",
         "type": "object"
       },
       "GenerationTaskOut": {
@@ -1242,6 +1524,65 @@
         "title": "ListResponse[CharacterOut]",
         "type": "object"
       },
+      "ListResponse_CharacterSummaryOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "description": "业务数据列表",
+            "items": {
+              "$ref": "#/components/schemas/CharacterSummaryOut"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "page": {
+            "default": 1,
+            "description": "当前页码,从 1 开始",
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "default": 0,
+            "description": "每页条数;0 表示不分页(全量)",
+            "minimum": 0.0,
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          },
+          "total": {
+            "default": 0,
+            "description": "数据总数;分页时为查询条件总数,不分页时为 len(data)",
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "ListResponse[CharacterSummaryOut]",
+        "type": "object"
+      },
       "ListResponse_CreditTransactionOut_": {
         "properties": {
           "code": {
@@ -1301,7 +1642,7 @@
         "title": "ListResponse[CreditTransactionOut]",
         "type": "object"
       },
-      "ListResponse_ProjectOut_": {
+      "ListResponse_ProjectListOut_": {
         "properties": {
           "code": {
             "default": 200,
@@ -1312,7 +1653,7 @@
           "data": {
             "description": "业务数据列表",
             "items": {
-              "$ref": "#/components/schemas/ProjectOut"
+              "$ref": "#/components/schemas/ProjectListOut"
             },
             "title": "Data",
             "type": "array"
@@ -1357,7 +1698,7 @@
             "type": "integer"
           }
         },
-        "title": "ListResponse[ProjectOut]",
+        "title": "ListResponse[ProjectListOut]",
         "type": "object"
       },
       "ListResponse_WorkflowRunOut_": {
@@ -1551,6 +1892,41 @@
         "title": "MediaUploadResult",
         "type": "object"
       },
+      "OpenAIErrorDetail": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "type",
+          "code"
+        ],
+        "title": "OpenAIErrorDetail",
+        "type": "object"
+      },
+      "OpenAIErrorResponse": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/OpenAIErrorDetail"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "OpenAIErrorResponse",
+        "type": "object"
+      },
       "ProjectCreate": {
         "description": "创建项目请求。",
         "properties": {
@@ -1626,6 +2002,105 @@
           "sprite_height"
         ],
         "title": "ProjectCreate",
+        "type": "object"
+      },
+      "ProjectListOut": {
+        "description": "项目列表项；预览是读取投影，不写回 Project。",
+        "properties": {
+          "character_perspective": {
+            "title": "Character Perspective",
+            "type": "integer"
+          },
+          "create_at": {
+            "format": "date-time",
+            "title": "Create At",
+            "type": "string"
+          },
+          "directional_movement": {
+            "title": "Directional Movement",
+            "type": "integer"
+          },
+          "game_style": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Game Style"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "preview_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview Url"
+          },
+          "project_name": {
+            "title": "Project Name",
+            "type": "string"
+          },
+          "sprite_height": {
+            "title": "Sprite Height",
+            "type": "integer"
+          },
+          "sprite_sample_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sprite Sample Url"
+          },
+          "sprite_width": {
+            "title": "Sprite Width",
+            "type": "integer"
+          },
+          "update_at": {
+            "format": "date-time",
+            "title": "Update At",
+            "type": "string"
+          },
+          "workflow_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Id"
+          }
+        },
+        "required": [
+          "id",
+          "workflow_id",
+          "project_name",
+          "character_perspective",
+          "directional_movement",
+          "sprite_width",
+          "sprite_height",
+          "game_style",
+          "sprite_sample_url",
+          "create_at",
+          "update_at",
+          "preview_url"
+        ],
+        "title": "ProjectListOut",
         "type": "object"
       },
       "ProjectOut": {
@@ -2316,18 +2791,39 @@
         "title": "TokenResponse",
         "type": "object"
       },
-      "ToolDefinition": {
-        "description": "工具定义（OpenAI function calling 格式）。",
+      "ToolCallResponse": {
         "properties": {
           "function": {
-            "additionalProperties": true,
-            "description": "函数定义：{name, description, parameters}",
-            "title": "Function",
-            "type": "object"
+            "$ref": "#/components/schemas/FunctionCallResponse"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
           },
           "type": {
+            "const": "function",
             "default": "function",
-            "description": "工具类型，固定为 function",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "function"
+        ],
+        "title": "ToolCallResponse",
+        "type": "object"
+      },
+      "ToolDefinition": {
+        "additionalProperties": false,
+        "description": "Only OpenAI function tools are accepted; the backend never executes them.",
+        "properties": {
+          "function": {
+            "$ref": "#/components/schemas/FunctionDefinition"
+          },
+          "type": {
+            "const": "function",
+            "default": "function",
             "title": "Type",
             "type": "string"
           }
@@ -2624,6 +3120,12 @@
         "title": "WorkflowRunUpdate",
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
     }
   },
   "info": {
@@ -2656,7 +3158,7 @@
     },
     "/ai/chat": {
       "post": {
-        "description": "LLM 代理（流式响应）。\n\n后端职责：\n1. 从 JWT 解析 user_id（用于日志/审计）\n2. 调用 create_chat_model 工厂创建 LLM 实例\n3. 流式转发 LLM 响应\n4. 不解析 tool_calls、不执行工具、不存对话历史\n5. 本端点不计量积分；``model`` 透传给 provider（缺省用 AI_CHAT_MODEL）\n\n响应格式：OpenAI 兼容 SSE（每条 data 都是 ChatCompletionChunk）\n```\ndata: {\"id\":\"...\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"...\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"好\"},\"finish_reason\":null}]}\ndata: [DONE]\n```",
+        "description": "Call the configured model once and return a non-streaming completion.",
         "operationId": "chat_ai_chat_post",
         "requestBody": {
           "content": {
@@ -2672,22 +3174,69 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ChatCompletionResponse"
+                }
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Chat",
         "tags": [
           "ai"
@@ -3219,6 +3768,92 @@
         ]
       }
     },
+    "/characters/summaries": {
+      "get": {
+        "operationId": "list_character_summaries_characters_summaries_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "title": "Project Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "按发布状态过滤: 0=草稿, 1=已发布",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "按发布状态过滤: 0=草稿, 1=已发布",
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse_CharacterSummaryOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Character Summaries",
+        "tags": [
+          "characters"
+        ]
+      }
+    },
     "/characters/{character_id}": {
       "delete": {
         "operationId": "delete_character_characters__character_id__delete",
@@ -3625,7 +4260,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListResponse_ProjectOut_"
+                  "$ref": "#/components/schemas/ListResponse_ProjectListOut_"
                 }
               }
             },

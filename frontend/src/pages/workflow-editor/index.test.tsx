@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { createElement, type ComponentType, type ReactNode } from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Link, MemoryRouter, Route, Routes } from 'react-router'
 
@@ -17,7 +17,7 @@ import {
   type WorkflowRunApis,
 } from '@/entities'
 import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
-import { absentAsset, acceptedReport, stubRender3DApis } from '@/test/render3d-apis'
+import { acceptedReport, stubRender3DApis } from '@/test/render3d-apis'
 import { WorkflowEditorPage } from './index'
 import type { WorkflowEditorSession } from './runtime'
 
@@ -91,6 +91,35 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('WorkflowEditorPage real runtime boundary', () => {
+  it('身份母版只展示现有操作，并让加号菜单专注于生成动作', async () => {
+    const character = characterFixture()
+    character.outfits[0] = {
+      ...character.outfits[0]!,
+      previewUrl: 'https://assets.windup.test/42.png',
+    }
+    defaultSessionLoader.mockResolvedValue(
+      createSession(completedTemplateWorkflow('42'), { character }),
+    )
+    renderEditor('/workflow-editor/42')
+
+    const primaryActions = await screen.findByRole('group', { name: '角色母版操作' })
+    expect(within(primaryActions).getByRole('button', { name: '导出角色母版' })).toBeTruthy()
+
+    const secondaryActions = within(primaryActions).getByRole('group', {
+      name: '调整角色母版',
+    })
+    expect(within(secondaryActions).getByRole('button', { name: '重新生成角色母版' })).toBeTruthy()
+    expect(within(secondaryActions).getByRole('button', { name: '微调角色母版' })).toBeTruthy()
+    expect(screen.queryByText(/3D 资产/)).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '添加动作分支' }))
+    const actionMenu = screen.getByRole('menu', { name: '新增节点' })
+    expect(within(actionMenu).getAllByRole('button')).toHaveLength(1)
+    expect(within(actionMenu).getByRole('button', { name: '生成动作 ›' })).toBeTruthy()
+    expect(within(actionMenu).queryByText('生成静态资产')).toBeNull()
+    expect(within(actionMenu).queryByText('导出')).toBeNull()
+  })
+
   it('角色母版完成后可以重新生成或提交微调描述', async () => {
     const session = createSession(completedTemplateWorkflow('42'))
     const regenerate = vi
@@ -268,6 +297,8 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     renderEditor('/workflow-editor/42')
 
     const image = await screen.findByRole('img', { name: '已确认身份母版' })
+    expect(image.parentElement?.getAttribute('data-workflow-image-shape')).toBe('square')
+    expect(image.parentElement?.className).toContain('rounded-[10px]')
     expect(screen.getByRole('status', { name: '正在加载已确认身份母版' })).toBeTruthy()
     expect(image.className).toContain('opacity-0')
 
@@ -308,7 +339,17 @@ describe('WorkflowEditorPage real runtime boundary', () => {
 
     renderEditor('/workflow-editor/42')
 
-    expect((await screen.findByRole('status')).textContent).toContain('生成中…')
+    const preview = await screen.findByRole('img', { name: '身份母版生成预览' })
+    expect(preview.getAttribute('data-generation-preview')).toBe('true')
+    expect(preview.getAttribute('data-generation-preview-size')).toBe('candidate')
+    expect(preview.getAttribute('data-generation-preview-radius')).toBe('node')
+    expect(preview.getAttribute('data-generation-preview-fit')).toBe('container')
+    expect(preview.querySelectorAll('[data-pixel-matrix-dot]')).toHaveLength(432)
+    const progress = screen.getByLabelText('身份母版生成进度')
+    expect(progress.textContent).toBe('勾勒角色轮廓')
+    expect(progress.className).toContain('generation-progress-copy')
+    expect(progress.getAttribute('data-copy-motion-mode')).toBe('characters')
+    expect(screen.queryByText('生成中…')).toBeNull()
   })
 
   it('动作首帧等待候选结果时显示处理中状态', async () => {
@@ -335,6 +376,49 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     renderEditor('/workflow-editor/42')
 
     expect((await screen.findByText('处理中…')).getAttribute('role')).toBe('status')
+  })
+
+  it.each([
+    {
+      nodeType: 'action-first-frame' as const,
+      previewLabel: '动作首帧生成预览',
+      progressLabel: '动作首帧生成进度',
+      progressCopy: '摆好动作姿态',
+    },
+    {
+      nodeType: 'action-full-frame' as const,
+      previewLabel: '完整动作生成预览',
+      progressLabel: '完整动作生成进度',
+      progressCopy: '把动作连起来',
+    },
+  ])('$nodeType 生成时使用对应的共享预览语义', async (scenario) => {
+    const workflow = reviewingActionWorkflow()
+    const target = workflow.nodes.find((node) => node.type === scenario.nodeType)
+    if (!target) throw new Error(`missing ${scenario.nodeType}`)
+    target.status = 'active'
+    target.phase = 'generating'
+    if (target.type === 'action-first-frame') {
+      target.generations = [{ taskId: 'running-first-frame', role: 'first_frame' }]
+    }
+    defaultSessionLoader.mockResolvedValue(
+      createSession(workflow, {
+        generationApis: generationApisFixture({
+          get: vi.fn().mockResolvedValue({
+            id: `running-${scenario.nodeType}`,
+            projectId: '1',
+            type: scenario.nodeType === 'action-first-frame' ? 'first_frame' : 'complete_animation',
+            status: 'running',
+            result: null,
+            error: null,
+          } satisfies Generation),
+        }),
+      }),
+    )
+
+    renderEditor('/workflow-editor/42')
+
+    expect(await screen.findByRole('img', { name: scenario.previewLabel })).toBeTruthy()
+    expect(screen.getByLabelText(scenario.progressLabel).textContent).toBe(scenario.progressCopy)
   })
 
   it('导出是次要动作，当前节点推进仍是主要动作', async () => {
@@ -581,6 +665,114 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
   })
 
+  it('四向角色母版按真实源方向分组选择并逐一确认', async () => {
+    const workflow = selectingTemplateWorkflow(3, 'template-east')
+    workflow.nodes[1] = {
+      ...(workflow.nodes[1] as CharacterTemplateWorkflowNode),
+      generations: (['east', 'north', 'south'] as const).map((direction) => ({
+        taskId: `template-${direction}`,
+        role: 'character_template',
+        direction,
+      })),
+    }
+    const session = createSession(workflow, {
+      generationApis: generationApisFixture({
+        get: vi.fn(async (_projectId: string, taskId: string) => {
+          const direction = taskId.replace('template-', '') as 'east' | 'north' | 'south'
+          return directionalCharacterGeneration(direction)
+        }) as GenerationApis['get'],
+      }),
+    })
+    session.project.directionalMovement = 'four-way'
+    const retryGenerationDirection = vi
+      .spyOn(session.controller, 'retryGenerationDirection')
+      .mockResolvedValue()
+    const confirmCharacterTemplate = vi.fn(
+      async (_nodeId: string, _selectedImageUrl: string, _direction?: 'east' | 'north' | 'south') =>
+        characterFixture(),
+    )
+    session.confirmCharacterTemplate = confirmCharacterTemplate
+    defaultSessionLoader.mockResolvedValue(session)
+
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '重做北方向' }))
+    await waitFor(() =>
+      expect(retryGenerationDirection).toHaveBeenCalledWith('character-template', 'north', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+        referenceMedia: [],
+      }),
+    )
+
+    for (const [direction, label] of [
+      ['east', '东'],
+      ['north', '北'],
+      ['south', '南'],
+    ] as const) {
+      expect(
+        (await screen.findByRole('img', { name: `${label}角色候选 1` })).getAttribute('src'),
+      ).toContain(`/${direction}.png`)
+      fireEvent.click(screen.getByRole('button', { name: `选择${label}角色候选 1` }))
+    }
+    fireEvent.click(screen.getByRole('button', { name: '确认身份母版' }))
+
+    await waitFor(() => expect(confirmCharacterTemplate).toHaveBeenCalledTimes(3))
+    expect(confirmCharacterTemplate.mock.calls.map((call) => call[2])).toEqual([
+      'east',
+      'north',
+      'south',
+    ])
+  })
+
+  it('方向任务失败时只提供该源方向的重试入口', async () => {
+    const workflow = selectingTemplateWorkflow(4, 'task-east')
+    const template = workflow.nodes.find((node) => node.id === 'character-template')
+    if (!template || template.type !== 'character-template') throw new Error('missing template')
+    Object.assign(template, {
+      status: 'failed',
+      phase: 'generating',
+      error: 'north provider failed',
+      generations: [
+        { taskId: 'task-east', role: 'character_template' as const },
+        { taskId: 'task-north', role: 'character_template' as const, direction: 'north' as const },
+        { taskId: 'task-south', role: 'character_template' as const, direction: 'south' as const },
+      ],
+    })
+    const generationApis = generationApisFixture({
+      get: vi.fn(async (_projectId, taskId) => ({
+        id: taskId,
+        projectId: '1',
+        type: 'character_template' as const,
+        status: taskId === 'task-north' ? ('failed' as const) : ('completed' as const),
+        result:
+          taskId === 'task-north'
+            ? null
+            : {
+                type: 'character_template' as const,
+                direction: taskId === 'task-east' ? ('east' as const) : ('south' as const),
+                images: [{ url: `${taskId}-1.png` }, { url: `${taskId}-2.png` }],
+              },
+        error: taskId === 'task-north' ? 'north provider failed' : null,
+      })),
+    })
+    const project = { ...projectFixture(), directionalMovement: 'four-way' as const }
+    const session = createSession(workflow, { generationApis, project })
+    const retry = vi.spyOn(session.controller, 'retryGenerationDirection').mockResolvedValue()
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '重试北方向' }))
+
+    expect(screen.queryByRole('button', { name: '重试东方向' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '重试南方向' })).toBeNull()
+    expect(retry).toHaveBeenCalledWith('character-template', 'north', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+      referenceMedia: [],
+    })
+  })
+
   it('切换 WorkflowRun 时清空上一条任务的临时动作菜单', async () => {
     defaultSessionLoader
       .mockResolvedValueOnce(createSession(completedTemplateWorkflow('42')))
@@ -797,7 +989,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(screen.getByRole('button', { name: '选择造型 夜行装' })).toBeTruthy()
   })
 
-  it('展示三张动作首帧候选并确认用户选择的一张', async () => {
+  it('展示两张动作首帧候选并确认用户选择的一张', async () => {
     const workflow = reviewingActionWorkflow()
     const firstFrame = workflow.nodes.find((node) => node.type === 'action-first-frame')
     if (!firstFrame || firstFrame.type !== 'action-first-frame') throw new Error('missing frame')
@@ -821,7 +1013,6 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     const candidates = [
       'https://assets.windup.test/first-1.png',
       'https://assets.windup.test/first-2.png',
-      'https://assets.windup.test/first-3.png',
     ]
     const session = createSession(workflow, {
       character: characterFixture(),
@@ -844,7 +1035,6 @@ describe('WorkflowEditorPage real runtime boundary', () => {
 
     expect(await screen.findByRole('img', { name: '动作首帧候选 1' })).toBeTruthy()
     expect(screen.getByRole('img', { name: '动作首帧候选 2' })).toBeTruthy()
-    expect(screen.getByRole('img', { name: '动作首帧候选 3' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '选择动作首帧 2' }))
     fireEvent.click(screen.getByRole('button', { name: '确认动作首帧' }))
 
@@ -859,6 +1049,70 @@ describe('WorkflowEditorPage real runtime boundary', () => {
         ]),
       ),
     )
+  })
+
+  it('四向动作首帧可以单独重做一个真实源方向', async () => {
+    const workflow = reviewingActionWorkflow()
+    const firstFrame = workflow.nodes.find((node) => node.type === 'action-first-frame')
+    if (!firstFrame || firstFrame.type !== 'action-first-frame') throw new Error('missing frame')
+    Object.assign(firstFrame, {
+      status: 'active',
+      phase: 'selecting',
+      generations: (['east', 'north', 'south'] as const).map((direction) => ({
+        taskId: `first-${direction}`,
+        role: 'first_frame' as const,
+        direction,
+      })),
+      selectedFirstFrameUrl: null,
+    })
+    for (const node of workflow.nodes) {
+      if (node.type === 'action-generation-method') {
+        node.status = 'locked'
+        node.phase = 'selecting'
+        node.method = null
+      } else if (node.type === 'action-full-frame') {
+        node.status = 'locked'
+        node.phase = 'ready'
+        node.generations = []
+      } else if (node.type === 'review') {
+        node.status = 'locked'
+      }
+    }
+    const project = { ...projectFixture(), directionalMovement: 'four-way' as const }
+    const session = createSession(workflow, {
+      project,
+      generationApis: generationApisFixture({
+        get: vi.fn(async (_projectId: string, taskId: string) => {
+          const direction = taskId.replace('first-', '') as 'east' | 'north' | 'south'
+          return {
+            id: taskId,
+            projectId: '1',
+            type: 'first_frame' as const,
+            status: 'completed' as const,
+            result: {
+              type: 'first_frame' as const,
+              direction,
+              images: [{ url: `${direction}-1.png` }, { url: `${direction}-2.png` }],
+            },
+            error: null,
+          }
+        }) as GenerationApis['get'],
+      }),
+    })
+    const retry = vi.spyOn(session.controller, 'retryGenerationDirection').mockResolvedValue()
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '重做北方向' }))
+
+    await waitFor(() =>
+      expect(retry).toHaveBeenCalledWith(firstFrame.id, 'north', {
+        spriteWidth: 64,
+        spriteHeight: 64,
+        referenceMedia: [],
+      }),
+    )
+    expect(screen.getByRole('img', { name: '北动作首帧候选 1' })).toBeTruthy()
   })
 
   it('该造型没有 3D 资产时禁用三渲二选项并给出原因', async () => {
@@ -1321,12 +1575,13 @@ describe('母版确认闸', () => {
     return session
   }
 
-  it('挑中候选后先展示放大的母版，不直接进入下一步', async () => {
+  it('挑中候选后只在缩略图上标记选择，不重复展示放大图', async () => {
     await openGate()
 
-    expect((await screen.findByRole('img', { name: '待确认定妆母版' })).getAttribute('src')).toBe(
-      'https://assets.windup.test/character.png',
-    )
+    const selectedCandidate = screen.getByRole('button', { name: '选择角色候选 1' })
+    expect(selectedCandidate.getAttribute('aria-pressed')).toBe('true')
+    expect(selectedCandidate.className).toContain('rounded-[10px]')
+    expect(screen.queryByRole('img', { name: '待确认定妆母版' })).toBeNull()
     expect(screen.getByRole('button', { name: '确认为定妆母版' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '重新生成三张' })).toBeTruthy()
   })
@@ -1397,186 +1652,6 @@ describe('母版确认闸', () => {
   })
 })
 
-/**
- * 建 3D 资产入口。原本用户看得到"该造型暂无绑骨 3D 模型"，却没有任何地方能去建。
- *
- * 用例锁两件事：**按次计费的成本必须先说**，以及**人工确认闸不点头就不绑骨**。
- */
-describe('建 3D 资产入口', () => {
-  function sessionWithConfirmedMaster(render3d: Render3DApis) {
-    const character = characterFixture()
-    const session = createSession(completedTemplateWorkflow('42'), {
-      character: {
-        ...character,
-        outfits: [{ ...character.outfits[0]!, previewUrl: 'https://assets.windup.test/42.png' }],
-      },
-      render3d,
-    })
-    defaultSessionLoader.mockResolvedValue(session)
-    return session
-  }
-
-  it('资产就绪后当场解锁三渲二，不要求用户刷新页面', async () => {
-    // 造型初始没有 3D 模型，资产接口报 ready —— 也就是用户刚等完两段付费流程那一刻。
-    const character = characterFixture()
-    character.outfits[0]!.model3dUrl = null
-    const session = createSession(selectingGenerationMethodWorkflow(), {
-      character,
-      render3d: stubRender3DApis({
-        getOutfitAsset: async () =>
-          absentAsset({ state: 'ready', model3dUrl: 'https://assets.windup.test/day.glb' }),
-      }),
-    })
-    defaultSessionLoader.mockResolvedValue(session)
-    renderEditor('/workflow-editor/42')
-
-    // 三渲二能否选中读的是页面级 Character，轮询到 ready 必须把它一起带上；
-    // 不带的话这个按钮会一直是灰的，用户只能整页刷新。
-    await waitFor(() =>
-      expect((screen.getByRole('button', { name: '三渲二' }) as HTMLButtonElement).disabled).toBe(
-        false,
-      ),
-    )
-  })
-
-  it('母版还没确认时根本没有建 3D 资产这个入口', async () => {
-    const buildOutfitAsset = vi.fn()
-    const session = createSession(selectingTemplateWorkflow(3, 'character-task'), {
-      generationApis: generationApisFixture({
-        get: vi.fn().mockResolvedValue(characterGeneration('character')),
-      }),
-      render3d: stubRender3DApis({ buildOutfitAsset }),
-    })
-    defaultSessionLoader.mockResolvedValue(session)
-    renderEditor('/workflow-editor/42')
-
-    fireEvent.click(await screen.findByRole('button', { name: '选择角色候选 1' }))
-    await screen.findByRole('button', { name: '确认为定妆母版' })
-
-    expect(screen.queryByLabelText('三渲二 3D 资产')).toBeNull()
-    expect(screen.queryByRole('button', { name: /建 3D 资产/ })).toBeNull()
-    expect(buildOutfitAsset).not.toHaveBeenCalled()
-  })
-
-  it('触发按次计费之前把积分和金额摆在按钮上', async () => {
-    sessionWithConfirmedMaster(stubRender3DApis())
-    renderEditor('/workflow-editor/42')
-
-    const build = await screen.findByRole('button', {
-      name: '建 3D 资产（30 积分 · 约 ¥3.6）',
-    })
-    expect(build).toBeTruthy()
-    expect(
-      screen.getByText(/图生 3D 20 积分 \+ 绑骨 10 积分 = 30 积分（后付费约 ¥3.6）/),
-    ).toBeTruthy()
-    expect(screen.getByText(/每造型一次性/)).toBeTruthy()
-  })
-
-  it('成本数字来自后端返回，不是前端写死的常量', async () => {
-    sessionWithConfirmedMaster(
-      stubRender3DApis({
-        getOutfitAsset: async () =>
-          absentAsset({
-            cost: {
-              model3dCredits: 25,
-              autorigCredits: 10,
-              totalCredits: 35,
-              totalCny: 4.2,
-              billing: 'postpaid',
-              scope: 'per_outfit_once',
-            },
-          }),
-      }),
-    )
-    renderEditor('/workflow-editor/42')
-
-    expect(
-      await screen.findByRole('button', { name: '建 3D 资产（35 积分 · 约 ¥4.2）' }),
-    ).toBeTruthy()
-  })
-
-  it('模型出来后停在确认闸上，没人点头就绝不绑骨', async () => {
-    const approveOutfitAsset = vi.fn(async () => absentAsset({ state: 'ready' }))
-    let asset = absentAsset()
-    sessionWithConfirmedMaster(
-      stubRender3DApis({
-        getOutfitAsset: async () => asset,
-        buildOutfitAsset: async () => {
-          asset = absentAsset({
-            state: 'awaiting_review',
-            reviewModelUrl: 'https://assets.windup.test/pending.glb',
-          })
-          return asset
-        },
-        approveOutfitAsset,
-      }),
-    )
-    renderEditor('/workflow-editor/42')
-
-    fireEvent.click(await screen.findByRole('button', { name: /建 3D 资产/ }))
-
-    expect(await screen.findByText(/模型已生成，等你确认/)).toBeTruthy()
-    expect(approveOutfitAsset).not.toHaveBeenCalled()
-
-    // 待审模型必须真的能打开——只躺在服务器上的话，"通过"就退化成一个必须点的步骤。
-    expect(
-      (screen.getByRole('link', { name: /下载待审模型/ }) as HTMLAnchorElement).getAttribute(
-        'href',
-      ),
-    ).toBe('https://assets.windup.test/pending.glb')
-
-    fireEvent.click(screen.getByRole('button', { name: /通过 · 继续绑骨/ }))
-    await waitFor(() => expect(approveOutfitAsset).toHaveBeenCalledWith('9', 'day'))
-  })
-
-  it('判不合格时走丢弃重做，并说清要再花一次图生 3D 的钱', async () => {
-    const discardOutfitAsset = vi.fn(async () => absentAsset())
-    const approveOutfitAsset = vi.fn(async () => absentAsset({ state: 'ready' }))
-    sessionWithConfirmedMaster(
-      stubRender3DApis({
-        getOutfitAsset: async () =>
-          absentAsset({
-            state: 'awaiting_review',
-            reviewModelUrl: 'https://assets.windup.test/pending.glb',
-          }),
-        approveOutfitAsset,
-        discardOutfitAsset,
-      }),
-    )
-    renderEditor('/workflow-editor/42')
-
-    fireEvent.click(
-      await screen.findByRole('button', { name: '不合格 · 重新生成（再花 20 积分）' }),
-    )
-
-    await waitFor(() => expect(discardOutfitAsset).toHaveBeenCalledWith('9', 'day'))
-    expect(approveOutfitAsset).not.toHaveBeenCalled()
-  })
-
-  it('在跑的两段付费调用给状态说明，不给一个和真实进度无关的进度条', async () => {
-    sessionWithConfirmedMaster(
-      stubRender3DApis({ getOutfitAsset: async () => absentAsset({ state: 'rigging' }) }),
-    )
-    renderEditor('/workflow-editor/42')
-
-    expect(await screen.findByText(/正在自动绑骨/)).toBeTruthy()
-    expect(screen.queryByRole('progressbar')).toBeNull()
-  })
-
-  it('上一次没建成时把原因摆出来，并允许重来', async () => {
-    sessionWithConfirmedMaster(
-      stubRender3DApis({
-        getOutfitAsset: async () =>
-          absentAsset({ state: 'failed', error: '绑骨轮询 10 分钟仍未出结果' }),
-      }),
-    )
-    renderEditor('/workflow-editor/42')
-
-    expect(await screen.findByText(/绑骨轮询 10 分钟仍未出结果/)).toBeTruthy()
-    expect(screen.getByRole('button', { name: /建 3D 资产/ })).toBeTruthy()
-  })
-})
-
 function renderEditor(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
@@ -1589,6 +1664,7 @@ function renderEditor(path: string) {
 
 interface SessionFixtureOptions {
   character?: Character | null
+  project?: Project
   generationApis?: GenerationApis
   workflowRunApis?: Partial<WorkflowRunApis>
   render3d?: Render3DApis
@@ -1621,11 +1697,12 @@ function createSession(
     workflowRunApis,
     generationApis,
     onAsyncError: vi.fn(),
+    directionalMovement: options.project?.directionalMovement,
   })
 
   return {
     controller,
-    project: projectFixture(),
+    project: options.project ?? projectFixture(),
     character: options.character ?? null,
     render3d: options.render3d ?? stubRender3DApis(),
     uploadReferenceImage:
@@ -1950,6 +2027,23 @@ function characterGeneration(label: string): Generation {
     result: {
       type: 'character_template',
       images: [{ url: `https://assets.windup.test/${label}.png` }],
+    },
+    error: null,
+  }
+}
+
+function directionalCharacterGeneration(
+  direction: 'east' | 'north' | 'south',
+): Generation<'character_template'> {
+  return {
+    id: `template-${direction}`,
+    projectId: '1',
+    type: 'character_template',
+    status: 'completed',
+    result: {
+      type: 'character_template',
+      direction,
+      images: [{ url: `https://assets.windup.test/${direction}.png` }],
     },
     error: null,
   }

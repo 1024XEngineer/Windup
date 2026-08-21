@@ -17,18 +17,19 @@ function renderRoute(route: string) {
   const backend = createProjectAssetsBackend()
   vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
   vi.stubGlobal('fetch', backend.fetch)
-  return render(
+  const view = render(
     <AuthenticatedAuthSession>
       <MemoryRouter initialEntries={[route]}>
         <AppRoutes />
       </MemoryRouter>
     </AuthenticatedAuthSession>,
   )
+  return { backend, view }
 }
 
 describe('AssetLibraryPage', () => {
   it('hides draft characters from the published asset list', async () => {
-    renderRoute('/projects/42/assets')
+    const { backend } = renderRoute('/projects/42/assets')
 
     expect(await screen.findByRole('heading', { name: '点灯人 · MVP' })).toBeTruthy()
     expect(await screen.findAllByRole('link', { name: /查看角色/ })).toHaveLength(1)
@@ -43,6 +44,14 @@ describe('AssetLibraryPage', () => {
     expect(screen.getByText('2 个动作')).toBeTruthy()
     expect(screen.queryByRole('searchbox')).toBeNull()
     expect(screen.queryByRole('button', { name: '导出全部角色资产' })).toBeNull()
+    expect(
+      backend.requests.some((request) =>
+        new URL(request.url).pathname.endsWith('/characters/summaries'),
+      ),
+    ).toBe(true)
+    expect(
+      backend.requests.some((request) => new URL(request.url).pathname === '/characters'),
+    ).toBe(false)
   })
 
   it('renders the real empty state without creating a local Character', async () => {
@@ -59,7 +68,7 @@ describe('AssetLibraryPage', () => {
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init)
       const response = await backend.fetch(input, init)
-      if (!request.url.includes('/characters?project_id=42')) return response
+      if (!request.url.includes('/characters/summaries?project_id=42')) return response
 
       const payload = (await response.json()) as {
         data: Array<Record<string, unknown>>
@@ -73,8 +82,11 @@ describe('AssetLibraryPage', () => {
         name: '无造型角色',
         description: null,
         reference_image_url: null,
-        character_data: { version: 1, outfits: [] },
         status: 1,
+        preview_url: null,
+        outfit_name: null,
+        outfit_count: 0,
+        action_count: 0,
       })
       payload.total += 1
       return new Response(JSON.stringify(payload), {
@@ -109,7 +121,7 @@ describe('AssetLibraryPage', () => {
 
     expect(await screen.findAllByRole('link', { name: /查看角色/ })).toHaveLength(24)
     const requestsBeforePaging = backend.requests.filter((request) =>
-      request.url.includes('/characters?project_id=42'),
+      request.url.includes('/characters/summaries?project_id=42'),
     ).length
     fireEvent.click(screen.getByRole('button', { name: '下一页' }))
 
@@ -117,7 +129,7 @@ describe('AssetLibraryPage', () => {
       expect(screen.getAllByRole('link', { name: /查看角色/ })).toHaveLength(1)
     })
     const characterRequests = backend.requests.filter((request) =>
-      request.url.includes('/characters?project_id=42'),
+      request.url.includes('/characters/summaries?project_id=42'),
     )
     expect(characterRequests).toHaveLength(requestsBeforePaging + 1)
     expect(characterRequests.at(-1)?.url).toContain('page=2&page_size=24&status=1')

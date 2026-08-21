@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react'
-import { Outlet } from 'react-router'
+import { Outlet, useLocation } from 'react-router'
 
 import { AccountPanel } from '@/features/account-panel'
 import { SessionExpiredNotice } from '@/features/auth-guard'
+import { useAuthSession } from '@/features/auth-session'
+import { ActiveRunMonitor } from './active-run-monitor'
 import { AppHeader } from './app-header'
 
 export interface AppShellProps {
@@ -12,8 +14,13 @@ export interface AppShellProps {
 
 /** 登录产品外壳；只服务工作台与受保护业务页。 */
 export function AppShell({ children }: AppShellProps) {
+  const { pathname } = useLocation()
+  const session = useAuthSession()
   return (
     <div className="min-h-screen bg-app-canvas text-app-ink">
+      {session.state.status === 'authenticated' ? (
+        <ActiveRunMonitor userId={session.state.user.id} pathname={pathname} />
+      ) : null}
       <AppHeader />
       {/*
         外壳只管顶栏。页面自己决定宽度与留白，不在这里统一夹到屏幕中间，

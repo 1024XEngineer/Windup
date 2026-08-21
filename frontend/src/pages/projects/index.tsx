@@ -1,42 +1,30 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router'
 
 import assetLibraryArtwork from '@/assets/workspace/asset-library.png'
 import {
-  characterApis,
+  CHARACTER_PERSPECTIVE,
+  DIRECTIONAL_MOVEMENT,
   projectApis,
   ProjectHasCharactersError,
-  type Character,
   type Project,
 } from '@/entities'
 import type { Paged } from '@/shared/pagination'
 import { AssetThumbnailImage, Pagination, PixelMatrix } from '@/shared/ui'
 
 const PROJECT_PAGE_SIZE = 12
-const PROJECT_PREVIEW_CHARACTER_LIMIT = 6
-const PROJECT_PREVIEW_REQUEST_CONCURRENCY = 2
-type ResolvedProjectPreview = { status: 'ready'; url: string } | { status: 'empty' }
 
-type ProjectPreviewState = ResolvedProjectPreview | { status: 'loading' } | { status: 'error' }
-
-interface ProjectPreviewRequest {
-  projectId: string
-  state: 'queued' | 'active'
-  cancelled: boolean
-  controller: AbortController
-  promise: Promise<ProjectPreviewState>
-  resolve: (preview: ProjectPreviewState) => void
-}
+/**
+ * 卡片预览只有两种落点：后端聚合出了图，或这个项目还没有可用素材。
+ * 列表响应已经带上 previewUrl，所以不存在"预览正在请求中"这一态——
+ * 图片自身的解码等待由 ProjectPreviewImage 内部处理，别和这里混为一谈。
+ */
+type ProjectPreviewState = { status: 'ready'; url: string } | { status: 'empty' }
 
 /** 项目中心；项目是角色资产与生成规格的隔离边界。 */
 export function ProjectsPage() {
   const [pageNumber, setPageNumber] = useState(1)
   const [projectsPage, setProjectsPage] = useState<Paged<Project> | null>(null)
-  const [projectPreviews, setProjectPreviews] = useState<Record<string, ProjectPreviewState>>({})
-  const projectPreviewCache = useRef(new Map<string, ResolvedProjectPreview>())
-  const projectPreviewRequests = useRef(new Map<string, ProjectPreviewRequest>())
-  const projectPreviewQueue = useRef<ProjectPreviewRequest[]>([])
-  const activeProjectPreviewRequests = useRef(0)
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -58,133 +46,11 @@ export function ProjectsPage() {
     }
   }, [pageNumber])
 
-  useEffect(() => {
-    let active = true
-    if (!projectsPage)
-      return () => {
-        active = false
-      }
-
-    const previews = Object.fromEntries(
-      projectsPage.items.map((project) => [
-        project.id,
-        project.sampleImageUrl
-          ? { status: 'ready' as const, url: project.sampleImageUrl }
-          : (projectPreviewCache.current.get(project.id) ?? { status: 'loading' as const }),
-      ]),
-    )
-    setProjectPreviews(previews)
-    const projectsWithoutPreview = projectsPage.items.filter(
-      (project) => !project.sampleImageUrl && !projectPreviewCache.current.has(project.id),
-    )
-    const requestedProjectIds = new Set(projectsWithoutPreview.map((project) => project.id))
-    projectsWithoutPreview.forEach((project) => {
-      void loadProjectPreview(project.id).then((preview) => {
-        if (active) setProjectPreviews((current) => ({ ...current, [project.id]: preview }))
-      })
-    })
-
-    return () => {
-      active = false
-      cancelProjectPreviewRequests(requestedProjectIds)
-    }
-  }, [projectsPage])
-
-  function loadProjectPreview(projectId: string): Promise<ProjectPreviewState> {
-    const cachedPreview = projectPreviewCache.current.get(projectId)
-    if (cachedPreview) return Promise.resolve(cachedPreview)
-    const currentRequest = projectPreviewRequests.current.get(projectId)
-    if (currentRequest) return currentRequest.promise
-
-    let resolvePreview: (preview: ProjectPreviewState) => void = () => undefined
-    const promise = new Promise<ProjectPreviewState>((resolve) => {
-      resolvePreview = resolve
-    })
-    const request: ProjectPreviewRequest = {
-      projectId,
-      state: 'queued',
-      cancelled: false,
-      controller: new AbortController(),
-      promise,
-      resolve: resolvePreview,
-    }
-    projectPreviewRequests.current.set(projectId, request)
-    projectPreviewQueue.current.push(request)
-    processProjectPreviewQueue()
-    return promise
-  }
-
-  function processProjectPreviewQueue() {
-    while (
-      activeProjectPreviewRequests.current < PROJECT_PREVIEW_REQUEST_CONCURRENCY &&
-      projectPreviewQueue.current.length > 0
-    ) {
-      const request = projectPreviewQueue.current.shift()
-      if (!request || request.cancelled) continue
-      request.state = 'active'
-      activeProjectPreviewRequests.current += 1
-      void (async () => {
-        let preview: ProjectPreviewState = { status: 'error' }
-        try {
-          let pageNumber = 1
-          while (!request.cancelled) {
-            const page = await characterApis.listByProject(request.projectId, {
-              page: pageNumber,
-              pageSize: PROJECT_PREVIEW_CHARACTER_LIMIT,
-              signal: request.controller.signal,
-            })
-            const url = previewFromCharacters(page.items)
-            if (url) {
-              preview = { status: 'ready', url }
-              break
-            }
-            if (page.total === 0) {
-              preview = { status: 'empty' }
-              break
-            }
-            if (page.items.length === 0 || page.page * page.pageSize >= page.total) break
-            pageNumber = page.page + 1
-          }
-        } catch {
-          preview = { status: 'error' }
-        } finally {
-          if (!request.cancelled) {
-            if (preview.status !== 'error') {
-              projectPreviewCache.current.set(request.projectId, preview)
-            }
-            request.resolve(preview)
-            if (projectPreviewRequests.current.get(request.projectId) === request) {
-              projectPreviewRequests.current.delete(request.projectId)
-            }
-          }
-          activeProjectPreviewRequests.current -= 1
-          processProjectPreviewQueue()
-        }
-      })()
-    }
-  }
-
-  function cancelProjectPreviewRequests(projectIds: Set<string>) {
-    projectIds.forEach((projectId) => {
-      const request = projectPreviewRequests.current.get(projectId)
-      if (!request) return
-      request.cancelled = true
-      request.controller.abort()
-      request.resolve({ status: 'loading' })
-      projectPreviewRequests.current.delete(projectId)
-    })
-    projectPreviewQueue.current = projectPreviewQueue.current.filter(
-      (request) => !request.cancelled,
-    )
-    processProjectPreviewQueue()
-  }
-
   async function deleteProject(project: Project) {
     setDeleting(true)
     setError(null)
     try {
       await projectApis.remove(project.id)
-      projectPreviewCache.current.delete(project.id)
       if (projectsPage?.items.length === 1 && projectsPage.page > 1) {
         setPageNumber(projectsPage.page - 1)
       } else {
@@ -208,20 +74,9 @@ export function ProjectsPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1560px] px-4 pb-8 pt-[clamp(4.75rem,11vh,7rem)] sm:px-6 xl:px-8">
-      <section aria-labelledby="projects-title">
-        <header data-projects-intro className="projects-intro border-b border-app-line pb-6">
-          <h1
-            id="projects-title"
-            className="font-serif text-[clamp(2.15rem,4.5vw,4rem)] leading-none font-medium tracking-[-0.055em] text-app-ink"
-          >
-            项目中心
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-app-muted">
-            项目隔离角色资产与生成规格；先选项目，再管理其资产。
-          </p>
-        </header>
-
+    <div className="mx-auto w-full max-w-[1560px] px-4 pb-8 pt-[4.5rem] sm:px-6 xl:px-8">
+      <section aria-label="项目资产">
+        <h1 className="sr-only">项目中心</h1>
         {error ? (
           <p
             role="alert"
@@ -234,13 +89,12 @@ export function ProjectsPage() {
           <p className="mt-6 text-sm text-app-muted">正在读取项目…</p>
         ) : null}
         {projectsPage ? (
-          <div className="mt-5">
+          <div>
             <ProjectCreateCard />
             {projectsPage.items.length > 0 ? (
               <ProjectGallery
                 projects={projectsPage.items}
                 total={projectsPage.total}
-                previews={projectPreviews}
                 onDelete={setDeleteTarget}
               />
             ) : null}
@@ -266,29 +120,6 @@ export function ProjectsPage() {
       ) : null}
     </div>
   )
-}
-
-function previewFromCharacter(character: Character | undefined): string | null {
-  if (!character) return null
-  for (const outfit of character.outfits) {
-    if (outfit.previewUrl) return outfit.previewUrl
-  }
-  if (character.referenceImageUrl) return character.referenceImageUrl
-  for (const outfit of character.outfits) {
-    for (const action of outfit.actions) {
-      const frame = action.frames.find((item) => item.imageUrl)
-      if (frame) return frame.imageUrl
-    }
-  }
-  return null
-}
-
-function previewFromCharacters(characters: Character[]): string | null {
-  for (const character of characters) {
-    const preview = previewFromCharacter(character)
-    if (preview) return preview
-  }
-  return null
 }
 
 function ProjectCreateCard() {
@@ -331,16 +162,14 @@ function ProjectCreateCard() {
 function ProjectGallery({
   projects,
   total,
-  previews,
   onDelete,
 }: {
   projects: Project[]
   total: number
-  previews: Record<string, ProjectPreviewState>
   onDelete: (project: Project) => void
 }) {
   return (
-    <section aria-labelledby="project-gallery-title" className="mt-9">
+    <section aria-labelledby="project-gallery-title" className="mt-7">
       <div className="mb-4">
         <h2
           id="project-gallery-title"
@@ -349,17 +178,12 @@ function ProjectGallery({
           最近项目 · {String(total).padStart(2, '0')}
         </h2>
       </div>
-      <div className="grid gap-x-4 gap-y-7 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-x-4 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
         {projects.map((project, index) => (
           <ProjectGalleryTile
             key={project.id}
             project={project}
-            preview={
-              previews[project.id] ??
-              (project.sampleImageUrl
-                ? { status: 'ready', url: project.sampleImageUrl }
-                : { status: 'loading' })
-            }
+            preview={projectPreview(project)}
             motionOrder={index}
             onDelete={() => onDelete(project)}
           />
@@ -367,6 +191,11 @@ function ProjectGallery({
       </div>
     </section>
   )
+}
+
+function projectPreview(project: Project): ProjectPreviewState {
+  const url = project.previewUrl ?? project.sampleImageUrl
+  return url ? { status: 'ready', url } : { status: 'empty' }
 }
 
 function ProjectGalleryTile({
@@ -402,6 +231,14 @@ function ProjectGalleryTile({
           <h3 className="min-w-0 truncate text-sm font-semibold text-app-ink">{project.name}</h3>
           <span className="shrink-0 text-xs tabular-nums text-app-faint">{updatedAt}</span>
         </div>
+        <p className="mt-1.5 truncate px-0.5 text-xs text-app-muted">
+          {CHARACTER_PERSPECTIVE[project.perspective]} ·{' '}
+          {DIRECTIONAL_MOVEMENT[project.directionalMovement]} · {project.spriteSize.width} ×{' '}
+          {project.spriteSize.height} px
+        </p>
+        <p className="mt-1 truncate px-0.5 font-mono text-[0.65rem] tracking-[0.02em] text-app-faint">
+          {project.gameStyle || '未设置游戏风格'}
+        </p>
       </Link>
       <button
         type="button"
@@ -422,16 +259,6 @@ function ProjectPreview({
   projectName: string
   preview: ProjectPreviewState
 }) {
-  if (preview.status === 'loading') {
-    return <ProjectPreviewLoading projectName={projectName} />
-  }
-  if (preview.status === 'error') {
-    return (
-      <ProjectPreviewMessage projectName={projectName} tone="error">
-        预览暂时无法读取
-      </ProjectPreviewMessage>
-    )
-  }
   if (preview.status === 'empty') {
     return (
       <ProjectPreviewMessage projectName={projectName}>等待第一份角色资产</ProjectPreviewMessage>
@@ -464,26 +291,19 @@ function ProjectPreviewImage({ projectName, url }: { projectName: string; url: s
           imageState === 'ready' ? 'project-preview-image-ready' : ''
         }`}
       />
-      {imageState === 'loading' ? (
-        <ProjectPreviewLoading projectName={projectName} overlay />
-      ) : null}
+      {imageState === 'loading' ? <ProjectPreviewLoading projectName={projectName} /> : null}
     </div>
   )
 }
 
-function ProjectPreviewLoading({
-  projectName,
-  overlay = false,
-}: {
-  projectName: string
-  overlay?: boolean
-}) {
+/** 只盖在待解码的预览图上；列表响应自带 previewUrl，卡片不会整格停在装载态。 */
+function ProjectPreviewLoading({ projectName }: { projectName: string }) {
   return (
     <div
       role="status"
       aria-label={`正在装载${projectName}的项目预览`}
       aria-busy="true"
-      className={`project-preview-loading ${overlay ? 'absolute inset-0' : 'h-full'}`}
+      className="project-preview-loading absolute inset-0"
     >
       <PixelMatrix coverage="compact" />
     </div>

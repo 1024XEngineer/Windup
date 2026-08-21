@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import type { Character, CharacterApis, Generation, WorkflowRun } from '@/entities'
+import type {
+  Character,
+  CharacterApis,
+  DirectionalMovement,
+  Generation,
+  WorkflowRun,
+} from '@/entities'
 
 import * as exportFeature from './index'
 
@@ -10,7 +16,9 @@ interface ExportFeatureModule {
       character: Character
       workflow: WorkflowRun
       reviewNodeId: string
-      generation: Generation
+      generation?: Generation
+      generations?: readonly Generation[]
+      directionalMovement?: DirectionalMovement
     }): Promise<Character>
   }
 }
@@ -45,7 +53,7 @@ describe('Character asset publisher', () => {
     })
     expect(published.outfits[0]?.actions).toEqual([
       expect.objectContaining({ id: 'idle', type: 'idle' }),
-      {
+      expect.objectContaining({
         id: 'action-walk',
         outfitId: 'outfit-default',
         name: '行走',
@@ -57,7 +65,7 @@ describe('Character asset publisher', () => {
           { index: 0, imageUrl: 'https://assets.windup.test/walk-01.png', durationMs: 125 },
           { index: 1, imageUrl: 'https://assets.windup.test/walk-02.png', durationMs: 80 },
         ],
-      },
+      }),
     ])
   })
 
@@ -79,6 +87,87 @@ describe('Character asset publisher', () => {
     const retried = await publisher.publishReviewedAction({ character: first, ...input })
 
     expect(retried.outfits[0]?.actions.map((action) => action.id)).toEqual(['idle', 'action-walk'])
+  })
+
+  it('publishes every real and mirrored direction into one action', async () => {
+    const publisher = (
+      exportFeature as unknown as ExportFeatureModule
+    ).createCharacterAssetPublisher({
+      async update(character) {
+        return structuredClone(character)
+      },
+    })
+    const workflow = workflowFixture()
+    const fullFrame = workflow.nodes.find((node) => node.type === 'action-full-frame')!
+    fullFrame.generations = [
+      { taskId: 'generation-east', role: 'complete_animation', direction: 'east' },
+      { taskId: 'generation-north', role: 'complete_animation', direction: 'north' },
+      { taskId: 'generation-south', role: 'complete_animation', direction: 'south' },
+    ]
+
+    const published = await publisher.publishReviewedAction({
+      character: characterFixture(),
+      workflow,
+      reviewNodeId: 'action-walk:review',
+      generations: [
+        directionalAnimationFixture('generation-east', 'east', 'east'),
+        directionalAnimationFixture('generation-north', 'north', 'north'),
+        directionalAnimationFixture('generation-south', 'south', 'south'),
+      ],
+      directionalMovement: 'four-way',
+    })
+
+    expect(published.outfits[0]?.actions.at(-1)?.sequences).toEqual([
+      {
+        direction: 'east',
+        sourceDirection: null,
+        mirrorX: false,
+        frameCount: 1,
+        frames: [{ index: 0, imageUrl: 'east-0.png', durationMs: 80 }],
+      },
+      {
+        direction: 'west',
+        sourceDirection: 'east',
+        mirrorX: true,
+        frameCount: 1,
+        frames: [],
+      },
+      {
+        direction: 'north',
+        sourceDirection: null,
+        mirrorX: false,
+        frameCount: 1,
+        frames: [{ index: 0, imageUrl: 'north-0.png', durationMs: 80 }],
+      },
+      {
+        direction: 'south',
+        sourceDirection: null,
+        mirrorX: false,
+        frameCount: 1,
+        frames: [{ index: 0, imageUrl: 'south-0.png', durationMs: 80 }],
+      },
+    ])
+  })
+
+  it('rejects a directional action when any real source direction is missing', () => {
+    expect(() =>
+      exportFeature.createActionSequences(
+        [directionalAnimationFixture('generation-east', 'east', 'east')],
+        'four-way',
+      ),
+    ).toThrow('完整动画方向 north 的生成结果不可发布')
+  })
+
+  it('拒绝未携带任何生成结果的发布请求', async () => {
+    const publisher = createRejectingPublisher()
+
+    await expect(
+      publisher.publishReviewedAction({
+        character: characterFixture(),
+        workflow: workflowFixture(),
+        reviewNodeId: 'action-walk:review',
+      }),
+    ).rejects.toThrow('Generation 与当前 WorkflowRun 不匹配')
   })
 
   it('rejects a completed task from another project', async () => {
@@ -108,7 +197,7 @@ describe('Character asset publisher', () => {
         reviewNodeId: 'action-walk:review',
         generation: wrongType,
       }),
-    ).rejects.toThrow('完整动画生成结果不可发布')
+    ).rejects.toThrow('完整动画方向 east 的生成结果不可发布')
   })
 })
 
@@ -250,6 +339,25 @@ function completeAnimationFixture(): Generation<'complete_animation'> {
         { index: 0, url: 'https://assets.windup.test/walk-01.png', durationMs: 125 },
         { index: 1, url: 'https://assets.windup.test/walk-02.png', durationMs: 80 },
       ],
+    },
+  }
+}
+
+function directionalAnimationFixture(
+  id: string,
+  direction: 'east' | 'north' | 'south',
+  prefix: string,
+): Generation<'complete_animation'> {
+  return {
+    id,
+    projectId: '42',
+    type: 'complete_animation',
+    status: 'completed',
+    error: null,
+    result: {
+      type: 'complete_animation',
+      direction,
+      frames: [{ index: 0, url: `${prefix}-0.png`, durationMs: 80 }],
     },
   }
 }

@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 
 import { AppRoutes } from '@/app'
-import { characterApis } from '@/entities'
 import { AuthenticatedAuthSession } from '@/test/auth-session'
 import { createProjectAssetsBackend } from '@/test/project-assets-backend'
 
@@ -29,14 +28,12 @@ describe('ProjectsPage', () => {
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init)
       const response = await backend.fetch(input, init)
-      if (!request.url.includes('/characters?project_id=42')) return response
+      if (new URL(request.url).pathname !== '/projects') return response
 
       const payload = (await response.json()) as {
-        data: Array<{
-          character_data: { outfits: Array<{ preview_url: string | null }> }
-        }>
+        data: Array<{ preview_url: string | null }>
       }
-      payload.data[0]!.character_data.outfits[0]!.preview_url =
+      payload.data[0]!.preview_url =
         'https://cdn.windup.test/media/outfit-preview/messenger.source.png'
       return new Response(JSON.stringify(payload), {
         headers: { 'content-type': 'application/json' },
@@ -52,182 +49,24 @@ describe('ProjectsPage', () => {
     )
 
     const preview = await screen.findByRole('img', { name: '点灯人 · MVP的项目预览' })
-    expect(preview.getAttribute('src')).toBe(
-      'https://cdn.windup.test/media/outfit-preview/messenger.card.webp',
-    )
+    // findByRole 只等到 img 挂上，不等 src 落定：缩略图地址要等角色请求回来后的那次状态
+    // 更新才写进去。裸断言在 CI 这类慢环境上会取到写入前的值，随机把无关 PR 染红。
+    await waitFor(() => {
+      expect(preview.getAttribute('src')).toBe(
+        'https://cdn.windup.test/media/outfit-preview/messenger.card.webp',
+      )
+    })
 
     fireEvent.error(preview)
 
-    await waitFor(() => {
-      expect(preview.getAttribute('src')).toBe(
-        'https://cdn.windup.test/media/outfit-preview/messenger.source.png',
-      )
-    })
-  })
-
-  it('keeps pending project previews distinct from empty projects', async () => {
-    installBackend()
-    let releaseRequests: (() => void) | undefined
-    const requestGate = new Promise<void>((resolve) => {
-      releaseRequests = resolve
-    })
-    vi.spyOn(characterApis, 'listByProject').mockImplementation(async () => {
-      await requestGate
-      return { items: [], total: 0, page: 1, pageSize: 6 }
-    })
-
-    render(
-      <AuthenticatedAuthSession>
-        <MemoryRouter initialEntries={['/projects']}>
-          <AppRoutes />
-        </MemoryRouter>
-      </AuthenticatedAuthSession>,
+    await waitFor(
+      () => {
+        expect(preview.getAttribute('src')).toBe(
+          'https://cdn.windup.test/media/outfit-preview/messenger.source.png',
+        )
+      },
+      { timeout: 5_000 },
     )
-
-    expect(await screen.findAllByRole('link', { name: /打开项目/ })).toHaveLength(2)
-    const loadingPreviews = screen.getAllByRole('status', { name: /正在装载.+项目预览/ })
-    expect(loadingPreviews).toHaveLength(2)
-    expect(
-      loadingPreviews.every(
-        (preview) => preview.querySelectorAll('[data-pixel-matrix-dot]').length === 432,
-      ),
-    ).toBe(true)
-    expect(
-      loadingPreviews.every(
-        (preview) => preview.querySelector('[data-pixel-matrix-coverage="compact"]') !== null,
-      ),
-    ).toBe(true)
-    expect(screen.queryByText('等待第一份角色资产')).toBeNull()
-
-    releaseRequests?.()
-    expect(
-      await screen.findAllByRole('status', { name: /项目预览：等待第一份角色资产/ }),
-    ).toHaveLength(2)
-  })
-
-  it('reveals each completed preview without waiting for the rest of the page', async () => {
-    installBackend()
-    let releaseSlowRequest: (() => void) | undefined
-    const slowRequest = new Promise<void>((resolve) => {
-      releaseSlowRequest = resolve
-    })
-    vi.spyOn(characterApis, 'listByProject').mockImplementation(async (projectId) => {
-      if (String(projectId) === '42') await slowRequest
-      return { items: [], total: 0, page: 1, pageSize: 6 }
-    })
-
-    render(
-      <AuthenticatedAuthSession>
-        <MemoryRouter initialEntries={['/projects']}>
-          <AppRoutes />
-        </MemoryRouter>
-      </AuthenticatedAuthSession>,
-    )
-
-    try {
-      expect(
-        await screen.findByRole('status', {
-          name: '空白海岸的项目预览：等待第一份角色资产',
-        }),
-      ).toBeTruthy()
-      expect(screen.getByRole('status', { name: '正在装载点灯人 · MVP的项目预览' })).toBeTruthy()
-    } finally {
-      releaseSlowRequest?.()
-    }
-  })
-
-  it('shows preview request failures instead of presenting the project as empty', async () => {
-    installBackend()
-    vi.spyOn(characterApis, 'listByProject').mockRejectedValue(new Error('preview unavailable'))
-
-    render(
-      <AuthenticatedAuthSession>
-        <MemoryRouter initialEntries={['/projects']}>
-          <AppRoutes />
-        </MemoryRouter>
-      </AuthenticatedAuthSession>,
-    )
-
-    expect(
-      await screen.findAllByRole('status', { name: /项目预览：预览暂时无法读取/ }),
-    ).toHaveLength(2)
-    expect(screen.queryByText('等待第一份角色资产')).toBeNull()
-  })
-
-  it('does not call a project empty when characters exist without a usable preview', async () => {
-    installBackend()
-    const character = await characterApis.get('51')
-    vi.spyOn(characterApis, 'listByProject').mockImplementation(async (_projectId, query) => ({
-      items:
-        query?.page === 1
-          ? [
-              {
-                ...character,
-                referenceImageUrl: null,
-                outfits: character.outfits.map((outfit) => ({
-                  ...outfit,
-                  previewUrl: null,
-                  actions: outfit.actions.map((action) => ({ ...action, frames: [] })),
-                })),
-              },
-            ]
-          : [],
-      total: 7,
-      page: query?.page ?? 1,
-      pageSize: 6,
-    }))
-
-    render(
-      <AuthenticatedAuthSession>
-        <MemoryRouter initialEntries={['/projects']}>
-          <AppRoutes />
-        </MemoryRouter>
-      </AuthenticatedAuthSession>,
-    )
-
-    expect(await screen.findAllByText('预览暂时无法读取')).toHaveLength(2)
-    expect(screen.queryByText('等待第一份角色资产')).toBeNull()
-  })
-
-  it('finds a usable preview on a later character page', async () => {
-    installBackend()
-    const character = await characterApis.get('51')
-    const emptyCharacter = {
-      ...character,
-      referenceImageUrl: null,
-      outfits: character.outfits.map((outfit) => ({
-        ...outfit,
-        previewUrl: null,
-        actions: outfit.actions.map((action) => ({ ...action, frames: [] })),
-      })),
-    }
-    const listSpy = vi
-      .spyOn(characterApis, 'listByProject')
-      .mockImplementation(async (projectId, query) => {
-        if (String(projectId) !== '42') {
-          return { items: [], total: 0, page: 1, pageSize: 6 }
-        }
-        return query?.page === 2
-          ? { items: [character], total: 7, page: 2, pageSize: 6 }
-          : { items: [emptyCharacter], total: 7, page: 1, pageSize: 6 }
-      })
-
-    render(
-      <AuthenticatedAuthSession>
-        <MemoryRouter initialEntries={['/projects']}>
-          <AppRoutes />
-        </MemoryRouter>
-      </AuthenticatedAuthSession>,
-    )
-
-    expect(
-      (await screen.findByRole('img', { name: '点灯人 · MVP的项目预览' })).getAttribute('src'),
-    ).toBe('https://cdn.windup.test/messenger-outfit.png')
-    expect(
-      listSpy.mock.calls.some(
-        ([projectId, query]) => String(projectId) === '42' && query?.page === 2,
-      ),
-    ).toBe(true)
   })
 
   it('keeps the loading surface until the preview image is decoded', async () => {
@@ -279,7 +118,8 @@ describe('ProjectsPage', () => {
       </AuthenticatedAuthSession>,
     )
 
-    expect(await screen.findByRole('heading', { name: '项目中心' })).toBeTruthy()
+    const pageTitle = await screen.findByRole('heading', { name: '项目中心', level: 1 })
+    expect(pageTitle.classList.contains('sr-only')).toBe(true)
     const createLink = await screen.findByRole('link', { name: '新建项目' })
     const artwork = createLink.querySelector('img')
     expect(artwork).toBeTruthy()
@@ -303,30 +143,24 @@ describe('ProjectsPage', () => {
       expect(emptyProject.textContent).toContain('等待第一份角色资产')
     })
     expect(previewProject.textContent).toContain('08/04')
+    expect(previewProject.textContent).toContain('横版视角 · 四向')
+    expect(previewProject.textContent).toContain('64 × 64 px')
+    expect(previewProject.textContent).toContain('低饱和像素绘本')
     expect(screen.queryByText('项目名称')).toBeNull()
-    expect(screen.queryByText('视角 / 朝向')).toBeNull()
     expect(screen.queryByRole('link', { name: /查看角色/ })).toBeNull()
-    expect(
-      backend.requests.every((request) =>
-        ['/projects', '/characters'].includes(new URL(request.url).pathname),
-      ),
-    ).toBe(true)
+    const gallery = screen.getByRole('heading', { name: '最近项目 · 02' }).closest('section')
+    expect(gallery).toBeTruthy()
+    expect(within(gallery as HTMLElement).queryByRole('link', { name: '新建项目' })).toBeNull()
+    // 预览改由列表响应带回后，这个页面不再打 /characters；放宽成白名单会让瀑布悄悄回来。
+    expect(backend.requests.every((request) => new URL(request.url).pathname === '/projects')).toBe(
+      true,
+    )
     expect(
       backend.requests.filter((request) => new URL(request.url).pathname === '/projects'),
     ).toHaveLength(1)
-    const previewRequests = backend.requests.filter(
-      (request) => new URL(request.url).pathname === '/characters',
-    )
-    expect(previewRequests).toHaveLength(2)
     expect(
-      previewRequests.map((request) => new URL(request.url).searchParams.get('project_id')),
-    ).toEqual(['42', '99'])
-    expect(
-      previewRequests.every((request) => {
-        const query = new URL(request.url).searchParams
-        return query.get('page') === '1' && query.get('page_size') === '6'
-      }),
-    ).toBe(true)
+      backend.requests.filter((request) => new URL(request.url).pathname === '/characters'),
+    ).toHaveLength(0)
   })
 
   it('sends creation to the project create page and deletes through the Project API', async () => {
@@ -379,36 +213,10 @@ describe('ProjectsPage', () => {
     expect(screen.getByRole('link', { name: '打开项目 点灯人 · MVP' })).toBeTruthy()
   })
 
-  it('falls back through character preview sources without blocking the gallery', async () => {
+  it('uses project previews and keeps missing previews in the empty state', async () => {
     const backend = createProjectAssetsBackend({ projectCount: 3 })
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
     vi.stubGlobal('fetch', backend.fetch)
-    const character = await characterApis.get('51')
-    vi.spyOn(characterApis, 'listByProject').mockImplementation(async (projectId) => {
-      if (Number(projectId) === 1002) throw new Error('preview unavailable')
-      const emptyCharacter = {
-        ...character,
-        referenceImageUrl: null,
-        outfits: character.outfits.map((outfit) => ({
-          ...outfit,
-          previewUrl: null,
-          actions: outfit.actions.map((action) => ({ ...action, frames: [] })),
-        })),
-      }
-      return {
-        items: [
-          emptyCharacter,
-          {
-            ...character,
-            referenceImageUrl: Number(projectId) === 42 ? character.referenceImageUrl : null,
-            outfits: character.outfits.map((outfit) => ({ ...outfit, previewUrl: null })),
-          },
-        ],
-        total: 1,
-        page: 1,
-        pageSize: 6,
-      }
-    })
     render(
       <AuthenticatedAuthSession>
         <MemoryRouter initialEntries={['/projects']}>
@@ -424,114 +232,18 @@ describe('ProjectsPage', () => {
           .getByRole('link', { name: '打开项目 点灯人 · MVP' })
           .querySelector('img')
           ?.getAttribute('src'),
-      ).toBe('https://cdn.windup.test/messenger-reference.png')
+      ).toBe('https://cdn.windup.test/messenger-outfit.png')
       expect(
         screen
           .getByRole('link', { name: '打开项目 空白海岸' })
           .querySelector('img')
           ?.getAttribute('src'),
-      ).toBe('https://cdn.windup.test/idle-01.png')
-      expect(screen.getByText('预览暂时无法读取')).toBeTruthy()
+      ).toBeUndefined()
+      expect(screen.getAllByText('等待第一份角色资产')).toHaveLength(1)
     })
-  })
-
-  it('limits preview request concurrency', async () => {
-    const backend = createProjectAssetsBackend({ projectCount: 5 })
-    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
-    vi.stubGlobal('fetch', backend.fetch)
-    let activeRequests = 0
-    let maxActiveRequests = 0
-    let releaseRequests: (() => void) | undefined
-    const requestGate = new Promise<void>((resolve) => {
-      releaseRequests = resolve
-    })
-    const listSpy = vi.spyOn(characterApis, 'listByProject').mockImplementation(async () => {
-      activeRequests += 1
-      maxActiveRequests = Math.max(maxActiveRequests, activeRequests)
-      await requestGate
-      activeRequests -= 1
-      return { items: [], total: 0, page: 1, pageSize: 6 }
-    })
-    render(
-      <AuthenticatedAuthSession>
-        <MemoryRouter initialEntries={['/projects']}>
-          <AppRoutes />
-        </MemoryRouter>
-      </AuthenticatedAuthSession>,
-    )
-
-    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(2))
-    expect(maxActiveRequests).toBe(2)
-    releaseRequests?.()
-    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(5))
-    expect(maxActiveRequests).toBe(2)
-    expect(listSpy.mock.calls.every(([, query]) => query?.page === 1 && query.pageSize === 6)).toBe(
-      true,
-    )
-  })
-
-  it('reuses completed preview results when returning to a project page', async () => {
-    const backend = createProjectAssetsBackend({ projectCount: 13 })
-    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
-    vi.stubGlobal('fetch', backend.fetch)
-    const listSpy = vi.spyOn(characterApis, 'listByProject').mockResolvedValue({
-      items: [],
-      total: 0,
-      page: 1,
-      pageSize: 6,
-    })
-    render(
-      <AuthenticatedAuthSession>
-        <MemoryRouter initialEntries={['/projects']}>
-          <AppRoutes />
-        </MemoryRouter>
-      </AuthenticatedAuthSession>,
-    )
-
-    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(12))
-    fireEvent.click(screen.getByRole('button', { name: '下一页' }))
-    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(13))
-    fireEvent.click(screen.getByRole('button', { name: '上一页' }))
-    await waitFor(() => {
-      expect(screen.getAllByRole('link', { name: /打开项目/ })).toHaveLength(12)
-    })
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(listSpy).toHaveBeenCalledTimes(13)
-  })
-
-  it('releases active preview slots when their project page leaves', async () => {
-    const backend = createProjectAssetsBackend({ projectCount: 13 })
-    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
-    vi.stubGlobal('fetch', backend.fetch)
-    const signals: AbortSignal[] = []
-    const releaseRequests: Array<() => void> = []
-    const listSpy = vi.spyOn(characterApis, 'listByProject').mockImplementation(
-      (_projectId, query) =>
-        new Promise((resolve) => {
-          const signal = query?.signal
-          if (!signal) throw new Error('项目预览请求缺少取消信号')
-          signals.push(signal)
-          releaseRequests.push(() => resolve({ items: [], total: 0, page: 1, pageSize: 6 }))
-        }),
-    )
-
-    render(
-      <AuthenticatedAuthSession>
-        <MemoryRouter initialEntries={['/projects']}>
-          <AppRoutes />
-        </MemoryRouter>
-      </AuthenticatedAuthSession>,
-    )
-
-    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(2))
-    fireEvent.click(screen.getByRole('button', { name: '下一页' }))
-
-    expect(signals.slice(0, 2).every((signal) => signal.aborted)).toBe(true)
-    expect(listSpy).toHaveBeenCalledTimes(2)
-    releaseRequests[0]?.()
-    releaseRequests[1]?.()
-    await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(3))
-    expect(signals[2]?.aborted).toBe(false)
+    expect(
+      backend.requests.filter((request) => new URL(request.url).pathname === '/characters'),
+    ).toHaveLength(0)
   })
 
   it('navigates every backend Project page instead of truncating after the first page', async () => {

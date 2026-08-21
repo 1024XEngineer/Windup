@@ -35,7 +35,7 @@ function messageParts(message: KineticCopyMessage) {
     : (message as Exclude<KineticCopyMessage, readonly string[]>)
 }
 
-/** Quick Start 的裁切字幕：完整退场后再换文案，避免重叠与跳字。 */
+/** 裁切字幕完整退场后再换文案，避免跨页面复用时出现重叠与跳字。 */
 export function KineticCopyCycle({
   messages,
   active = true,

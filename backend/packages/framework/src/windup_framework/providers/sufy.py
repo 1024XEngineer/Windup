@@ -125,17 +125,20 @@ class SufyVideoProvider(VideoProvider):
         mode: str = "std",
         poll_interval: float = 60.0,
         max_min: int = 30,
+        first_poll_after: float = 5.0,
     ) -> None:
-        # 轮询间隔必须 > 0:下面用 `max_min * 60 // poll` 算预算次数,传 0 直接除零
-        # (2026-08-11 补 i2v 主流程测试时逮到)。0 的语义本身也不成立 —— 那是忙等,
-        # 会把网关打满。测试要跑快就把 time.sleep 打桩掉,别把间隔设成 0。
+        # 轮询间隔必须 > 0:0 的语义不成立 —— 那是忙等,会把网关打满。
+        # 测试要跑快就把 time.sleep 打桩掉,别把间隔设成 0。
         if poll_interval <= 0:
             raise ValueError(f"poll_interval 必须为正数,收到 {poll_interval}")
+        if first_poll_after <= 0:
+            raise ValueError(f"first_poll_after 必须为正数,收到 {first_poll_after}")
         self._cfg = config
         self._model = model or config.video_model
         self._mode = mode
         self._poll = poll_interval
         self._max_min = max_min
+        self._first_poll_after = min(first_poll_after, poll_interval)
 
     def _client(self) -> httpx.Client:
         return httpx.Client(
@@ -217,8 +220,20 @@ class SufyVideoProvider(VideoProvider):
         with self._client() as client:
             url = None
             last_status: str | None = None
-            for _ in range(max(1, int(self._max_min * 60 // self._poll))):
-                time.sleep(self._poll)
+            # 先短后长,而不是每次都睡满 ``poll_interval``。此前第一次查询也要等满一个
+            # 间隔:60 秒的间隔下,一段 20 秒就绪的视频要到第 60 秒才被发现,纯白等。
+            # 退避到上限后与原来一致,所以对慢任务不增加网关压力。
+            # 次数与时间双上限。只用时间会让"永不完成"这类用例必须真等满预算
+            # (实测把一条 0.01 秒的用例拖成 60 秒);只用次数则退避变快之后预算被提前
+            # 耗光。两者取先到的那个。
+            budget = max(1, int(self._max_min * 60 // self._poll))
+            deadline = time.monotonic() + self._max_min * 60
+            wait = self._first_poll_after
+            for _ in range(budget):
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(wait)
+                wait = min(wait * 2, self._poll)
                 resp = _poll_get(client, job_id)
                 poll_count += 1
                 if not (200 <= resp.status_code < 300):

@@ -32,6 +32,7 @@ from windup_framework.gateway.types import Scene
 from windup_framework.config.quality_gate import settings as gate_settings
 
 from windup_app.server.orchestrator import billing, quality_gate, task_repo
+from windup_app.server.orchestrator._failure import user_message
 from windup_app.server.orchestrator._fetch import fetch_own_media
 from windup_app.server.orchestrator.model import (
     ActionType,
@@ -280,7 +281,7 @@ class ActionTaskExecutor:
                  "reject_detail": exc.detail},
             )
             task_repo.update_status(
-                session, task_id, TaskStatus.FAILED, error_message=str(exc),
+                session, task_id, TaskStatus.FAILED, error_message=user_message(exc),
             )
             if own:
                 session.commit()
@@ -288,8 +289,10 @@ class ActionTaskExecutor:
             logger.exception("动作任务 %s 失败", task_id)
             session.rollback()
             task_repo.update_status(
-                session, task_id, TaskStatus.FAILED,
-                error_message=f"{exc}; request_id={request_id}",
+                session,
+                task_id,
+                TaskStatus.FAILED,
+                error_message=user_message(exc),
             )
             _settle_credit(session, task_id, success=False)
             if own:
@@ -619,8 +622,7 @@ class ImageTaskExecutor:
             logger.exception("图片任务 %s 失败", task_id)
             session.rollback()
             task_repo.update_status(
-                session, task_id, TaskStatus.FAILED,
-                error_message=f"{exc}; request_id={request_id}",
+                session, task_id, TaskStatus.FAILED, error_message=user_message(exc)
             )
             _settle_credit(session, task_id, success=False)
             if own:
