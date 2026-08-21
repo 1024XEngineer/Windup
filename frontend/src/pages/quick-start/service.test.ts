@@ -21,11 +21,12 @@ import { registerApiAccessTokenProvider } from '@/shared/api'
 
 function createWorkflowRunApis(initialRuns: readonly WorkflowRun[] = []): WorkflowRunApis {
   let version = 0
+  let runSequence = initialRuns.length
   const runs = new Map(initialRuns.map((run) => [run.id, structuredClone(run)]))
   return {
     async create(input) {
       const run: WorkflowRun = {
-        id: 'run-1',
+        id: `run-${++runSequence}`,
         projectId: input.projectId,
         version: ++version,
         storageStatus: 'active',
@@ -938,9 +939,10 @@ describe('createQuickStartService', () => {
     await service.startAction(target, '站立挥手')
     const finalSession = await service.startAction(target, '跑步攻击')
     const finalRun = finalSession.getWorkflow()
-    expect(secondSession.runId).toBe(firstSession.runId)
-    expect(finalSession.runId).toBe(firstSession.runId)
-    expect(finalRun.nodes.filter((node) => node.type === 'action-first-frame')).toHaveLength(6)
+    expect(secondSession.runId).not.toBe(firstSession.runId)
+    expect(finalSession.runId).not.toBe(firstSession.runId)
+    expect(finalSession.runId).not.toBe(secondSession.runId)
+    expect(finalRun.nodes.filter((node) => node.type === 'action-first-frame')).toHaveLength(1)
     expect(generationApis.create).toHaveBeenCalledTimes(6)
     expect(generationApis.create).toHaveBeenNthCalledWith(
       1,
@@ -2013,6 +2015,12 @@ describe('createQuickStartService', () => {
           mirrorX: false,
           imageUrl: 'existing-north.png',
         },
+        {
+          direction: 'south',
+          sourceDirection: null,
+          mirrorX: false,
+          imageUrl: 'existing-south.png',
+        },
       ],
     })
     const generationApis = pendingGenerationApis()
@@ -2026,7 +2034,7 @@ describe('createQuickStartService', () => {
         update: vi.fn(),
         remove: vi.fn(),
       } as unknown as CharacterApis,
-      projectApis: projectReader(),
+      projectApis: projectReader(undefined, 'four-way'),
       prepareProject: vi.fn(),
     })
 
@@ -2039,18 +2047,28 @@ describe('createQuickStartService', () => {
       type: 'character-setup',
       input: {
         characterId: character.id,
-        prompt: '',
-        referenceMedia: ['existing.png', 'existing-north.png'],
+        prompt: '老角色',
+        referenceMedia: ['existing.png', 'existing-north.png', 'existing-south.png'],
       },
     })
     expect(run.nodes[1]).toMatchObject({
       type: 'character-template',
       selectedImageUrl: 'existing.png',
-      selectedImages: { east: 'existing.png', north: 'existing-north.png' },
+      selectedImages: {
+        east: 'existing.png',
+        north: 'existing-north.png',
+        south: 'existing-south.png',
+      },
     })
     expect(run.nodes.find((node) => node.type === 'action-first-frame')).toMatchObject({
       input: { name: '待机', type: 'idle', prompt: null },
     })
+    expect(generationApis.create).toHaveBeenCalledTimes(3)
+    expect(vi.mocked(generationApis.create).mock.calls.map(([input]) => input.direction)).toEqual([
+      'east',
+      'north',
+      'south',
+    ])
   })
 
   it('keeps a custom action display name bounded while preserving its full prompt', async () => {

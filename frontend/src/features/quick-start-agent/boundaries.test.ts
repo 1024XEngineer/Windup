@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from 'node:fs'
-import { extname, join, resolve } from 'node:path'
+import { basename, extname, join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const featureDirectory = resolve(import.meta.dirname)
@@ -22,7 +22,7 @@ describe('quick-start-agent architecture boundary', () => {
   it('keeps business imports out of the Agent core', () => {
     const forbidden = ['@/pages', '@/entities', '@/shared/api', '@/features']
     const featureDependencies = productionFiles(featureDirectory)
-      .filter((file) => !file.endsWith('/production.ts'))
+      .filter((file) => basename(file) !== 'production.ts')
       .flatMap((file) => moduleSpecifiers(readFileSync(file, 'utf8')))
 
     expect(

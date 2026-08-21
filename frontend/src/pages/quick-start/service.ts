@@ -4,7 +4,6 @@ import {
   createMediaApis,
   projectApis,
   workflowRunApis,
-  characterTemplateImages,
   characterTemplatesFromImages,
   getDirectionProfile,
   type Action,
@@ -25,6 +24,7 @@ import { getApiAccessToken, recoverApiUnauthorized, resolveApiBaseUrl } from '@/
 import { createEventStreamSubscriber } from '@/shared/api/stream'
 import {
   createAutoPrepareProject,
+  createExistingCharacterActionRun,
   createWorkflowController,
   type PrepareQuickStartProject,
   type WorkflowController,
@@ -384,39 +384,6 @@ export function createQuickStartService({
         generations: [],
         error: null,
         selectedImageUrl: null,
-      },
-    ]
-  }
-
-  function existingCharacterNodes(
-    character: Character,
-    templateUrl: string,
-    prompt: string,
-  ): WorkflowNode[] {
-    const selectedImages = characterTemplateImages(character.templates)
-    if (!selectedImages.east) selectedImages.east = templateUrl
-    const referenceMedia = [...new Set(Object.values(selectedImages))] as MediaReference[]
-    return [
-      {
-        id: 'character-setup',
-        type: 'character-setup',
-        status: 'passed',
-        phase: 'completed',
-        dependsOnNodeIds: [],
-        generations: [],
-        error: null,
-        input: { characterId: character.id, prompt, referenceMedia },
-      },
-      {
-        id: 'character-template',
-        type: 'character-template',
-        status: 'passed',
-        phase: 'completed',
-        dependsOnNodeIds: ['character-setup'],
-        generations: [],
-        error: null,
-        selectedImageUrl: templateUrl,
-        selectedImages,
       },
     ]
   }
@@ -963,40 +930,12 @@ export function createQuickStartService({
     actionDescription: string,
   ) {
     if (!characterApis) throw new Error('角色服务尚未配置，不能增加动作')
-    const character = await characterApis.get(target.characterId)
-    const outfit = character.outfits.find((item) => item.id === target.outfitId)
-    if (!outfit) {
-      throw new Error('当前造型还没有可用的角色母版，请先完成定妆再生成动作')
-    }
-    const sourceImages = characterTemplateImages(character.templates)
-    const templateUrl = sourceImages.east ?? outfit.previewUrl ?? character.referenceImageUrl
-    if (!templateUrl) {
-      throw new Error('当前造型还没有可用的角色母版，请先完成定妆再生成动作')
-    }
-
-    if (!workflowRunApis.listByProject) {
-      throw new Error('工作流列表服务尚未配置，不能为现有角色增加动作')
-    }
-    const listed = await workflowRunApis.listByProject(character.projectId, {
-      page: 1,
-      pageSize: 100,
+    const { run, character, outfit } = await createExistingCharacterActionRun(target, {
+      characterApis,
+      workflowRunApis,
     })
-    const existing = listed.items.find((run) => setupNode(run).input.characterId === character.id)
-    const project = await projectApis.get(character.projectId)
-    projectSpriteSizes.set(project.id, project.spriteSize)
-    projectDirectionalMovements.set(project.id, project.directionalMovement)
-    const controller = existing
-      ? createController(existing, project.directionalMovement)
-      : await createRun(
-          character.projectId,
-          existingCharacterNodes(
-            character,
-            templateUrl,
-            character.description ?? actionDescription,
-          ),
-          project.directionalMovement,
-        )
-    const spriteSize = project.spriteSize
+    const spriteSize = await resolveProjectSpriteSize(character.projectId)
+    const controller = createController(run)
     await prepareAction(controller, outfit.id, actionDescription, spriteSize)
     return createSession(controller, spriteSize)
   }
