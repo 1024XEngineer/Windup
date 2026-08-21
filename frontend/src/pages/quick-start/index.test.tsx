@@ -338,6 +338,20 @@ describe('QuickStartPage', () => {
     expect(entrySection?.className).toContain('pt-14')
   })
 
+  it('exposes the creation entry as a shared route-motion region', () => {
+    renderAt('/quick-start', serviceFor(null))
+
+    expect(screen.getByRole('region', { name: '创作入口' })).toBeTruthy()
+  })
+
+  it('keeps the creation entry on the app canvas without a second page frame', () => {
+    renderAt('/quick-start', serviceFor(null))
+
+    const entry = screen.getByRole('region', { name: '创作入口' })
+    expect(entry.className).not.toContain('border-app-line')
+    expect(entry.className).not.toContain('shadow-app-page')
+  })
+
   it('uses a centered creation desk with style prompts before the composer', () => {
     const entry = renderAt('/quick-start', serviceFor(null))
     const entrySection = entry.getByLabelText('创作指令').closest('section')
