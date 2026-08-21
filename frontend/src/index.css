@@ -377,14 +377,41 @@ body,
   }
 }
 
-@keyframes route-transition {
+@keyframes route-page-enter-forward {
   from {
-    opacity: 0;
-    transform: translateY(6px);
+    transform: translate3d(14px, 0, 0);
   }
+
+  68% {
+    transform: translate3d(1px, 0, 0);
+  }
+
   to {
-    opacity: 1;
-    transform: translateY(0);
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes route-page-enter-backward {
+  from {
+    transform: translate3d(-14px, 0, 0);
+  }
+
+  68% {
+    transform: translate3d(-1px, 0, 0);
+  }
+
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes route-page-enter-lateral {
+  from {
+    transform: translate3d(8px, 0, 0);
+  }
+
+  to {
+    transform: translate3d(0, 0, 0);
   }
 }
 
@@ -405,8 +432,37 @@ body,
   animation: projects-dialog-panel 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.route-transition {
-  animation: route-transition 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+.route-motion-surface[data-motion-active='true']
+  :where(header, main, aside, footer, section[aria-label], [role='region'], h1:not(header *)) {
+  backface-visibility: hidden;
+  --route-motion-lag: 0ms;
+}
+
+.route-motion-surface[data-motion-active='true']
+  :where(main, section[aria-label], [role='region']) {
+  --route-motion-lag: 18ms;
+}
+
+.route-motion-surface[data-motion-active='true'] :where(aside, footer) {
+  --route-motion-lag: 34ms;
+}
+
+.route-motion-surface[data-motion-active='true'][data-motion-direction='forward']
+  :where(header, main, aside, footer, section[aria-label], [role='region'], h1:not(header *)) {
+  animation: route-page-enter-forward 222ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: var(--route-motion-lag);
+}
+
+.route-motion-surface[data-motion-active='true'][data-motion-direction='backward']
+  :where(header, main, aside, footer, section[aria-label], [role='region'], h1:not(header *)) {
+  animation: route-page-enter-backward 222ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: var(--route-motion-lag);
+}
+
+.route-motion-surface[data-motion-active='true'][data-motion-direction='lateral']
+  :where(header, main, aside, footer, section[aria-label], [role='region'], h1:not(header *)) {
+  animation: route-page-enter-lateral 222ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: var(--route-motion-lag);
 }
 
 .action-reveal {
@@ -418,7 +474,9 @@ body,
   .projects-card-enter,
   .projects-dialog-backdrop,
   .projects-dialog-panel,
-  .route-transition,
+  .route-motion-surface,
+  .route-motion-surface
+    :where(header, main, aside, footer, section[aria-label], [role='region'], h1:not(header *)),
   .action-reveal,
   .project-pixel-mark i {
     animation: none !important;
