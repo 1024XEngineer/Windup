@@ -840,11 +840,13 @@ describe('QuickStartPage', () => {
     expect(turns.at(-1)?.dataset.currentTurn).toBe('true')
   })
 
-  it('hands the creation entry off to the generating canvas instead of hard-cutting routes', async () => {
+  it('keeps the Agent conversation visible while the run restore is pending', async () => {
     vi.useFakeTimers()
     const createdRun = workflow(setupAndTemplate({ phase: 'generating' }), 'run-created')
+    const restoredSession = deferred<QuickStartSession>()
     const service = serviceFor(createdRun, {
       runId: 'run-created',
+      open: vi.fn(() => restoredSession.promise),
       getWorkflow: vi.fn(() => createdRun),
       resume: vi.fn(async () => createdRun),
     })
@@ -880,13 +882,13 @@ describe('QuickStartPage', () => {
     expect(screen.queryByTestId('quick-start-run')).toBeNull()
 
     await act(async () => vi.advanceTimersByTime(1))
-    const runTranscript = screen.getByTestId('quick-start-transcript')
-    expect(runTranscript.textContent).toContain('提着风灯的森林守夜人')
-    expect(runTranscript.querySelector('[data-conversation-kind="agent"]')).toBeTruthy()
-    expect(runTranscript.querySelector('[data-conversation-kind="workflow"]')).toBeTruthy()
-    expect(screen.getByRole('img', { name: '角色图生成画布' }).getAttribute('data-reveal')).toBe(
-      'generation-canvas',
-    )
+    const restoringTranscript = screen.getByTestId('quick-start-restoring-transcript')
+    expect(restoringTranscript.textContent).toContain('提着风灯的森林守夜人')
+    expect(screen.queryByText('正在恢复这次创作')).toBeNull()
+    expect(screen.queryByText('正在读取工作流状态…')).toBeNull()
+
+    expect(restoringTranscript.querySelector('[data-conversation-kind="agent"]')).toBeTruthy()
+    expect(screen.getByTestId('quick-start-run').getAttribute('aria-busy')).toBe('true')
   })
 
   it('keeps earlier turns visible while the agent conversation moves downward', async () => {
