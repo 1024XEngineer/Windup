@@ -145,6 +145,7 @@ describe('workflowRunApis', () => {
           dependsOnNodeIds: ['generation-method-1'],
           generations: [{ taskId: 'task-animation', role: 'complete_animation' }],
           error: null,
+          input: { prompt: '向前行走并自然摆臂' },
         },
         {
           id: 'review-1',
@@ -165,7 +166,11 @@ describe('workflowRunApis', () => {
         { type: 'character-template', dependsOnNodeIds: ['setup-1'] },
         { type: 'action-first-frame', dependsOnNodeIds: ['template-1'] },
         { type: 'action-generation-method', dependsOnNodeIds: ['first-frame-1'] },
-        { type: 'action-full-frame', dependsOnNodeIds: ['generation-method-1'] },
+        {
+          type: 'action-full-frame',
+          dependsOnNodeIds: ['generation-method-1'],
+          input: { prompt: '向前行走并自然摆臂' },
+        },
         { type: 'review', dependsOnNodeIds: ['full-frame-1'] },
       ],
     })
@@ -306,6 +311,22 @@ describe('workflowRunApis', () => {
         ...workflowRunDto,
         nodes: nodes.map((node) =>
           node.id === 'walk-full-frame' ? { ...node, deletedAt: '' } : node,
+        ),
+      }),
+    )
+
+    await expect(apis.get('17')).rejects.toMatchObject({
+      name: 'ApiError',
+      kind: 'invalid-response',
+    })
+  })
+
+  it('拒绝完整动画节点中非文本类型的独立动作描述', async () => {
+    const apis = await loadWorkflowRunApis(async () =>
+      jsonResponse({
+        ...workflowRunDto,
+        nodes: nodes.map((node) =>
+          node.id === 'walk-full-frame' ? { ...node, input: { prompt: 42 } } : node,
         ),
       }),
     )

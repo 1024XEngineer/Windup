@@ -1189,6 +1189,60 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
   })
 
+  it('完整动画节点要求填写自己的动作描述并提交该提示词', async () => {
+    const workflow = selectingGenerationMethodWorkflow()
+    const firstFrame = workflow.nodes.find((node) => node.type === 'action-first-frame')
+    if (!firstFrame || firstFrame.type !== 'action-first-frame') throw new Error('missing frame')
+    firstFrame.input.prompt = '挥拳前保持蓄势姿势'
+    for (const node of workflow.nodes) {
+      if (node.type === 'action-full-frame') {
+        node.status = 'locked'
+        node.phase = 'ready'
+        node.generations = []
+      } else if (node.type === 'review') {
+        node.status = 'locked'
+      }
+    }
+    const createGeneration = vi.fn(async () => ({
+      id: 'animation-task',
+      projectId: '1',
+      type: 'complete_animation' as const,
+      status: 'pending' as const,
+      result: null,
+      error: null,
+    })) as GenerationApis['create']
+    const session = createSession(workflow, {
+      character: characterFixture(),
+      generationApis: generationApisFixture({ create: createGeneration }),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '视频裁剪' }))
+    const generateButton = await screen.findByRole('button', { name: '生成完整动画' })
+    const promptInput = screen.getByRole('textbox', { name: '完整动作描述' })
+    expect((generateButton as HTMLButtonElement).disabled).toBe(true)
+
+    fireEvent.change(promptInput, {
+      target: { value: '向前挥拳、击中后自然收势，保持身体重心连续' },
+    })
+    expect((generateButton as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.click(generateButton)
+
+    await waitFor(() =>
+      expect(createGeneration).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: '向前挥拳、击中后自然收势，保持身体重心连续',
+        }),
+      ),
+    )
+    expect(
+      session.controller.getWorkflow().nodes.find((node) => node.type === 'action-full-frame'),
+    ).toMatchObject({
+      input: { prompt: '向前挥拳、击中后自然收势，保持身体重心连续' },
+    })
+  })
+
   it('发布与审核命令失败时显示错误并释放分支锁', async () => {
     const publishReviewedAction = vi.fn(() => Promise.reject(new Error('审核保存失败')))
     const session = createSession(reviewingActionWorkflow(), {

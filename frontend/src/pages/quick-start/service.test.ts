@@ -1758,6 +1758,10 @@ describe('createQuickStartService', () => {
       'north-first_frame-2.png',
       'south-first_frame-2.png',
     ])
+    expect(animationCalls.map((input) => input.prompt)).toEqual(['挥手', '挥手', '挥手'])
+    expect(
+      session.getWorkflow().nodes.find((node) => node.type === 'action-full-frame'),
+    ).toMatchObject({ input: { prompt: '挥手' } })
   })
 
   it('Run 已落库但响应丢失时不删除已绑定的 Character', async () => {

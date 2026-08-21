@@ -186,6 +186,8 @@ function isActionFullFrameNode(value: unknown): value is ActionFullFrameWorkflow
     value.type === 'action-full-frame' &&
     hasValidCommonNodeFields(value) &&
     ['ready', 'generating', 'completed'].includes(String(value.phase)) &&
+    (value.input === undefined ||
+      (isRecord(value.input) && isNullableString(value.input.prompt))) &&
     hasOnlyGenerationRole(value, 'complete_animation')
   )
 }

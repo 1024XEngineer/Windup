@@ -106,6 +106,8 @@ export interface ActionGenerationMethodWorkflowNode extends WorkflowNodeBase {
 export interface ActionFullFrameWorkflowNode extends WorkflowNodeBase {
   type: 'action-full-frame'
   phase: 'ready' | 'generating' | 'completed'
+  /** 完整动画自己的动作过程描述；旧 Run 没有该字段。 */
+  input?: { prompt: string | null }
 }
 
 /** 只负责核验完整动画；审核通过不等于下载或导出。 */

@@ -64,6 +64,8 @@ export interface GenerateActionOptions {
   characterId: string
   /** 由上传/媒体边界提供，Controller 不把展示 URL 冒充 MediaReference。 */
   referenceMedia: readonly MediaReference[]
+  /** 完整动画自己的动作过程描述，不读取动作首帧描述。 */
+  prompt?: string
 }
 
 export interface GenerateFirstFrameOptions {
@@ -484,6 +486,7 @@ export function createWorkflowController({
         dependsOnNodeIds: [methodId],
         generations: [],
         error: null,
+        input: { prompt: null },
       }
       const methodNode: ActionGenerationMethodWorkflowNode = {
         id: methodId,
@@ -1094,7 +1097,10 @@ export function createWorkflowController({
               method: methodNode.method,
               actionType: firstFrameNode.input.type,
               firstFrameUrl,
-              prompt: firstFrameNode.input.prompt,
+              prompt:
+                node.input === undefined
+                  ? firstFrameNode.input.prompt
+                  : nonEmpty(node.input.prompt ?? '', '完整动作描述'),
               referenceMedia: options.referenceMedia ?? [],
               direction: retryDirection,
             }
@@ -1140,7 +1146,7 @@ export function createWorkflowController({
     )
   }
 
-  function generateCompleteAnimation(
+  async function generateCompleteAnimation(
     nodeId: ActionFullFrameWorkflowNode['id'],
     options: GenerateActionOptions,
   ) {
@@ -1161,6 +1167,13 @@ export function createWorkflowController({
         throw new Error(`动作首帧尚未确认方向 ${direction}`)
       }
     }
+    const prompt = completeAnimationPrompt(targetNode, targetFirstFrame, options.prompt)
+    await persist((run) =>
+      updateNode(run, nodeId, (node) => {
+        if (node.type !== 'action-full-frame') throw new Error('目标节点不是完整动画')
+        return replaceNode(run, { ...node, input: { prompt } })
+      }),
+    )
     return submitDirectionalGenerations(
       nodeId,
       'complete_animation',
@@ -1184,7 +1197,7 @@ export function createWorkflowController({
           method: methodNode.method,
           actionType: firstFrameNode.input.type,
           firstFrameUrl,
-          prompt: firstFrameNode.input.prompt,
+          prompt: nonEmpty(node.input?.prompt ?? '', '完整动作描述'),
           referenceMedia: options.referenceMedia,
           direction,
         }
@@ -2064,6 +2077,18 @@ function nonEmpty(value: string, field: string) {
   const normalized = value.trim()
   if (!normalized) throw new Error(`${field} 不能为空`)
   return normalized
+}
+
+function completeAnimationPrompt(
+  fullFrameNode: ActionFullFrameWorkflowNode,
+  firstFrameNode: ActionFirstFrameWorkflowNode,
+  override: string | undefined,
+) {
+  if (override !== undefined) return nonEmpty(override, '完整动作描述')
+  if (fullFrameNode.input !== undefined) {
+    return nonEmpty(fullFrameNode.input.prompt ?? '', '完整动作描述')
+  }
+  return firstFrameNode.input.prompt?.trim() || firstFrameNode.input.name
 }
 
 function generatedImageReference(value: GeneratedImage['url'] | undefined) {

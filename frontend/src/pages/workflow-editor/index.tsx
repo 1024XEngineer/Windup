@@ -406,7 +406,9 @@ function contentFor(node: WorkflowNode, input: ProjectionInput): ReactNode {
   }
   if (node.type === 'action-first-frame') return <FirstFrameContent node={node} input={input} />
   if (node.type === 'action-generation-method') return <MethodContent node={node} input={input} />
-  if (node.type === 'action-full-frame') return <AnimationContent node={node} input={input} />
+  if (node.type === 'action-full-frame') {
+    return <AnimationContent key={`${input.run.id}:${node.id}`} node={node} input={input} />
+  }
   return <ReviewContent node={node} input={input} />
 }
 
@@ -1405,6 +1407,7 @@ function AnimationContent({
 }) {
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
+  const [promptDraft, setPromptDraft] = useState(node.input?.prompt ?? '')
   const directions = getDirectionProfile(input.project.directionalMovement).sourceDirections
   const groups = directions.map((direction) => {
     const result =
@@ -1425,22 +1428,37 @@ function AnimationContent({
       ? characterOwningOutfit(input.character, firstFrameNode.input.outfitId)
       : null
     return (
-      <button
-        type="button"
-        className={`${CARD_BUTTON} nodrag nopan nowheel`}
-        disabled={!character || branchBusy}
-        onClick={() => {
-          if (!character) return
-          input.runCommand(branchKey, () =>
-            input.controller.generateCompleteAnimation(node.id, {
-              characterId: character.id,
-              referenceMedia: [],
-            }),
-          )
-        }}
-      >
-        生成完整动画
-      </button>
+      <div className={CARD_STACK}>
+        <textarea
+          aria-label="完整动作描述"
+          rows={4}
+          className="min-h-[76px] w-full resize-y rounded-lg border border-[var(--color-app-line)] bg-app-surface-raised px-3 py-2.5 font-[inherit] text-[11px] leading-[1.55] text-[var(--color-app-ink)] focus:border-app-accent focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-app-accent-soft"
+          placeholder="描述动作过程、节奏、幅度与收势，例如：向前挥拳，击中后自然收势"
+          value={promptDraft}
+          disabled={branchBusy}
+          onChange={(event) => setPromptDraft(event.target.value)}
+        />
+        <p className={CARD_TEXT}>该描述仅用于完整动画，不会覆盖动作首帧描述。</p>
+        <button
+          type="button"
+          className={`${CARD_BUTTON} nodrag nopan nowheel`}
+          disabled={!character || branchBusy || !promptDraft.trim()}
+          onClick={() => {
+            if (!character) return
+            const prompt = promptDraft.trim()
+            if (!prompt) return
+            input.runCommand(branchKey, () =>
+              input.controller.generateCompleteAnimation(node.id, {
+                characterId: character.id,
+                referenceMedia: [],
+                prompt,
+              }),
+            )
+          }}
+        >
+          生成完整动画
+        </button>
+      </div>
     )
   }
   if (

@@ -600,6 +600,7 @@ export function createQuickStartService({
         await controller.generateCompleteAnimation(fullFrame.id, {
           characterId,
           referenceMedia: [],
+          prompt: firstFrame.input.prompt?.trim() || firstFrame.input.name,
         })
       })().then(
         () => {
