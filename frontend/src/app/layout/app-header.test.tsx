@@ -240,7 +240,7 @@ describe('AppHeader', () => {
     expect(screen.getByTestId('location').textContent).toBe('/projects')
   })
 
-  it('点击后先播放方向过渡，再执行返回', () => {
+  it('点击后立即请求返回，同时保留箭头反馈', () => {
     vi.useFakeTimers()
     window.history.replaceState({ idx: 0 }, '')
     renderHeader('/projects')
@@ -249,13 +249,10 @@ describe('AppHeader', () => {
     fireEvent.click(back)
 
     expect(back.classList.contains('app-header-back-in-flight')).toBe(true)
-    expect(screen.getByTestId('location').textContent).toBe('/projects')
-
-    act(() => vi.advanceTimersByTime(190))
-    expect(screen.getByTestId('location').textContent).toBe('/projects')
-
-    act(() => vi.advanceTimersByTime(50))
     expect(screen.getByTestId('location').textContent).toBe('/workspace')
+
+    act(() => vi.advanceTimersByTime(240))
+    expect(back.classList.contains('app-header-back-in-flight')).toBe(false)
   })
 
   it('动画进行中重复点击不会推迟返回', () => {
