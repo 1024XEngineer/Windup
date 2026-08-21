@@ -135,6 +135,8 @@ class _FakeRenderer:
         self._directions = directions
         self.last_size: tuple[int, int] | None = None
         self.last_direction: str | None = None
+        # honor_requested=False 只用于注入"出帧台没给请求的朝向"这个故障,
+        # 不代表任何生产路径 —— 策略恒传 direction,真出帧台据此裁成单条。
         self._honor_requested = honor_requested
 
     def render(self, rigged_model, *, clip=None, directions=4, frames=12,
@@ -455,15 +457,18 @@ def test_missing_direction_raises_instead_of_handing_back_another():
         RenderFrameStrategy(renderer).derive(_card(), _spec(), b"RIGGED", _NullProgress())
 
 
-def test_extra_directions_are_reported_not_silently_dropped():
-    """多渲出来的朝向零成本、但出参装不下 —— 这笔浪费要**可见**。"""
+def test_only_the_requested_direction_is_rendered_and_reported():
+    """出帧台只渲请求的那一个朝向,进度文案也只报它。
+
+    这条钉的是生产实际走的路径。原来那条断言的是"多渲出来的朝向零成本但出参装不下",
+    只有给假渲染器传 ``honor_requested=False`` 才跑得到 —— 而策略恒传 ``direction``,
+    出帧台据此把方向表裁成单条,生产里不存在"多渲出来的朝向"。
+    """
     spy = _SpyProgress()
-    RenderFrameStrategy(
-        _FakeRenderer(directions=("e", "n", "w", "s"), honor_requested=False)
-    ).derive(
-        _card(), _spec(), b"RIGGED", spy,
-    )
-    assert any("零成本可用但当前契约装不下" in n for n in spy.notes), spy.notes
+    renderer = _FakeRenderer(directions=("e", "n", "w", "s"))
+    RenderFrameStrategy(renderer).derive(_card(), _spec(), b"RIGGED", spy)
+    assert renderer.last_direction is not None, "策略必须指名朝向,不能让出帧台渲全部"
+    assert not any("装不下" in n for n in spy.notes), spy.notes
 
 
 def test_render_uses_the_measured_portrait_canvas():
