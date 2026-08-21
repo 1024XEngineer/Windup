@@ -914,7 +914,7 @@ function DirectionCandidatePicker({
               {DIRECTION_LABELS[group.direction]}方向
             </p>
           ) : null}
-          <div data-layout="agent-result-set" className="grid w-full max-w-2xl grid-cols-2 gap-3">
+          <div data-layout="agent-result-set" className="grid w-full max-w-2xl grid-cols-3 gap-3">
             {group.items.map((candidate, displayIndex) => {
               const chosen = selections[group.direction] === candidate.imageUrl
               const directionLabel = multipleDirections
@@ -1130,6 +1130,20 @@ function QuickStartRun({
       setExportModel(null)
       return
     }
+    const templateIsSelecting = run.nodes.some(
+      (node) =>
+        node.type === 'character-template' &&
+        node.status === 'active' &&
+        node.phase === 'selecting',
+    )
+    const firstFrameIsSelecting = run.nodes.some(
+      (node) =>
+        node.type === 'action-first-frame' &&
+        node.status === 'active' &&
+        node.phase === 'selecting',
+    )
+    if (!templateIsSelecting) setCandidates([])
+    if (!firstFrameIsSelecting) setFirstFrameCandidates([])
     let active = true
     void Promise.all([
       session.getTemplateCandidates(),
@@ -1141,18 +1155,6 @@ function QuickStartRun({
       .then(
         ([nextCandidates, nextFirstFrameCandidates, nextFrames, nextExportModel, nextFailed]) => {
           if (!active) return
-          const templateIsSelecting = run.nodes.some(
-            (node) =>
-              node.type === 'character-template' &&
-              node.status === 'active' &&
-              node.phase === 'selecting',
-          )
-          const firstFrameIsSelecting = run.nodes.some(
-            (node) =>
-              node.type === 'action-first-frame' &&
-              node.status === 'active' &&
-              node.phase === 'selecting',
-          )
           if (templateIsSelecting && nextCandidates.length > 0) setCandidates(nextCandidates)
           if (firstFrameIsSelecting && nextFirstFrameCandidates.length > 0) {
             setFirstFrameCandidates(nextFirstFrameCandidates)
@@ -1481,7 +1483,7 @@ function QuickStartRun({
             </div>
 
             <AgentTurn step="character-template" current={characterTurnIsCurrent}>
-              {candidates.length ? (
+              {isTemplateSelecting && candidates.length ? (
                 <>
                   <AgentCopy
                     lines={[
@@ -1555,7 +1557,7 @@ function QuickStartRun({
               <>
                 <UserTurn>{requestedAction || '待机'}</UserTurn>
                 <AgentTurn step="action-first-frame" current={firstFrameTurnIsCurrent}>
-                  {firstFrameCandidates.length ? (
+                  {isFirstFrameSelecting && firstFrameCandidates.length ? (
                     <>
                       <AgentCopy
                         lines={[
