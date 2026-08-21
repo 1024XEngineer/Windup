@@ -659,6 +659,7 @@ describe('QuickStartPage', () => {
       window.sessionStorage.getItem(`windup.quick-start.agent-chat.v2:draft:7:${draftId}`),
     ).toContain('提着风灯的森林守夜人')
 
+    fireEvent.click(screen.getByRole('button', { name: '填入输入框' }))
     await act(async () => vi.advanceTimersByTimeAsync(760))
     fireEvent.click(screen.getByRole('button', { name: '发送生成' }))
     await act(async () => undefined)
