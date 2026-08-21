@@ -131,7 +131,8 @@ const ROLE_DEFAULT_MESSAGE: readonly KineticCopyMessage[] = [
 
 const ENTRY_HANDOFF_MS = 460
 const PROMPT_REWRITE_MS = 760
-const AGENT_CONVERSATION_STORAGE_KEY = 'windup.quick-start.agent-chat.v1'
+const AGENT_CONVERSATION_STORAGE_KEY = 'windup.quick-start.agent-chat.v2'
+const AGENT_DRAFT_HISTORY_STATE_KEY = 'windupQuickStartAgentDraftId'
 
 type AgentConversationTurn = {
   role: 'user' | 'assistant'
@@ -139,22 +140,54 @@ type AgentConversationTurn = {
 }
 
 type AgentConversationRecord = {
-  runId: string | null
   turns: readonly AgentConversationTurn[]
 }
 
-function agentConversationStorageKey(userId: string | null): string {
-  return `${AGENT_CONVERSATION_STORAGE_KEY}:${userId ?? 'local'}`
+type AgentConversationStorageName = 'localStorage' | 'sessionStorage'
+
+function agentDraftConversationStorageKey(userId: string | null, draftId: string): string {
+  return `${AGENT_CONVERSATION_STORAGE_KEY}:draft:${userId ?? 'local'}:${draftId}`
 }
 
-function readAgentConversation(userId: string | null): AgentConversationRecord | null {
+function agentRunConversationStorageKey(userId: string | null, runId: string): string {
+  return `${AGENT_CONVERSATION_STORAGE_KEY}:run:${userId ?? 'local'}:${runId}`
+}
+
+function readAgentDraftId(): string | null {
   try {
-    const stored = window.localStorage.getItem(agentConversationStorageKey(userId))
-    if (!stored) return null
+    const state: unknown = window.history.state
+    if (typeof state !== 'object' || state === null || !(AGENT_DRAFT_HISTORY_STATE_KEY in state)) {
+      return null
+    }
+    const draftId = (state as Record<string, unknown>)[AGENT_DRAFT_HISTORY_STATE_KEY]
+    return typeof draftId === 'string' && draftId ? draftId : null
+  } catch {
+    return null
+  }
+}
+
+function createAgentDraftId(): string {
+  const draftId = window.crypto.randomUUID()
+  try {
+    const state: unknown = window.history.state
+    const currentState = typeof state === 'object' && state !== null ? state : {}
+    window.history.replaceState({ ...currentState, [AGENT_DRAFT_HISTORY_STATE_KEY]: draftId }, '')
+  } catch {
+    // history state 不可写时仍保留本次内存草稿，不阻断对话和生成。
+  }
+  return draftId
+}
+
+function readAgentConversation(
+  storageName: AgentConversationStorageName,
+  key: string,
+): readonly AgentConversationTurn[] {
+  try {
+    const stored = window[storageName].getItem(key)
+    if (!stored) return []
     const parsed: unknown = JSON.parse(stored)
-    if (typeof parsed !== 'object' || parsed === null || !('turns' in parsed)) return null
-    const runId = 'runId' in parsed && typeof parsed.runId === 'string' ? parsed.runId : null
-    if (!Array.isArray(parsed.turns)) return null
+    if (typeof parsed !== 'object' || parsed === null || !('turns' in parsed)) return []
+    if (!Array.isArray(parsed.turns)) return []
     const turns = parsed.turns.filter(
       (turn): turn is AgentConversationTurn =>
         typeof turn === 'object' &&
@@ -165,17 +198,31 @@ function readAgentConversation(userId: string | null): AgentConversationRecord |
         typeof turn.content === 'string' &&
         Boolean(turn.content.trim()),
     )
-    return turns.length > 0 ? { runId, turns } : null
+    return turns
   } catch {
-    return null
+    return []
   }
 }
 
-function writeAgentConversation(userId: string | null, record: AgentConversationRecord): void {
+function writeAgentConversation(
+  storageName: AgentConversationStorageName,
+  key: string,
+  record: AgentConversationRecord,
+): boolean {
   try {
-    window.localStorage.setItem(agentConversationStorageKey(userId), JSON.stringify(record))
+    window[storageName].setItem(key, JSON.stringify(record))
+    return true
   } catch {
     // 对话持久化只增强刷新体验，存储不可用时不能阻断真实生成流程。
+    return false
+  }
+}
+
+function removeAgentConversation(storageName: AgentConversationStorageName, key: string): void {
+  try {
+    window[storageName].removeItem(key)
+  } catch {
+    // 清理失败只会留下当前标签页的孤立草稿，不影响真实生成流程。
   }
 }
 
@@ -209,6 +256,7 @@ export function QuickStartPage({
   agent,
 }: QuickStartPageProps) {
   const { runId } = useParams()
+  const location = useLocation()
   const [searchParams] = useSearchParams()
   const authSession = useOptionalAuthSession()
   const activeRunUserId =
@@ -241,6 +289,7 @@ export function QuickStartPage({
     />
   ) : (
     <QuickStartInput
+      key={location.key}
       service={activeService}
       agent={agent}
       activeRunUserId={activeRunUserId}
@@ -351,10 +400,16 @@ function QuickStartInput({
     'collecting' | 'rewriting' | 'ready' | 'confirmed'
   >('collecting')
   const [error, setError] = useState<string | null>(null)
+  const draftIdRef = useRef(readAgentDraftId())
   const [conversationTurns, setConversationTurns] = useState<readonly AgentConversationTurn[]>(
     () => {
-      const stored = readAgentConversation(activeRunUserId)
-      return stored?.runId === null ? stored.turns : []
+      const draftId = draftIdRef.current
+      return draftId
+        ? readAgentConversation(
+            'sessionStorage',
+            agentDraftConversationStorageKey(activeRunUserId, draftId),
+          )
+        : []
     },
   )
   const fileInput = useRef<HTMLInputElement>(null)
@@ -389,10 +444,44 @@ function QuickStartInput({
     [prompt],
   )
 
-  const persistConversation = useCallback(
-    (turns: readonly AgentConversationTurn[], runId: string | null = null) => {
+  const ensureDraftId = useCallback(() => {
+    const current = draftIdRef.current
+    if (current) return current
+    const draftId = createAgentDraftId()
+    draftIdRef.current = draftId
+    return draftId
+  }, [])
+
+  const persistDraftConversation = useCallback(
+    (turns: readonly AgentConversationTurn[]) => {
       conversationTurnsRef.current = turns
-      writeAgentConversation(activeRunUserId, { runId, turns })
+      const draftId = ensureDraftId()
+      writeAgentConversation(
+        'sessionStorage',
+        agentDraftConversationStorageKey(activeRunUserId, draftId),
+        { turns },
+      )
+    },
+    [activeRunUserId, ensureDraftId],
+  )
+
+  const persistRunConversation = useCallback(
+    (turns: readonly AgentConversationTurn[], runId: string) => {
+      conversationTurnsRef.current = turns
+      const stored = writeAgentConversation(
+        'localStorage',
+        agentRunConversationStorageKey(activeRunUserId, runId),
+        { turns },
+      )
+      if (stored) {
+        const draftId = draftIdRef.current
+        if (draftId) {
+          removeAgentConversation(
+            'sessionStorage',
+            agentDraftConversationStorageKey(activeRunUserId, draftId),
+          )
+        }
+      }
     },
     [activeRunUserId],
   )
@@ -401,11 +490,11 @@ function QuickStartInput({
     (turn: AgentConversationTurn) => {
       setConversationTurns((current) => {
         const next = [...current, turn]
-        persistConversation(next)
+        persistDraftConversation(next)
         return next
       })
     },
-    [persistConversation],
+    [persistDraftConversation],
   )
 
   useEffect(
@@ -477,7 +566,7 @@ function QuickStartInput({
           appendConversationTurn({ role: 'assistant', content: result.message })
           return
         }
-        persistConversation(conversationTurnsRef.current, result.runId)
+        persistRunConversation(conversationTurnsRef.current, result.runId)
         setEntryTransition('leaving')
         await new Promise<void>((resolve) => {
           handoffTimer.current = setTimeout(() => {
@@ -1005,10 +1094,11 @@ function QuickStartRun({
   const [publishing, setPublishing] = useState(false)
   const [confirmingCandidate, setConfirmingCandidate] = useState(false)
   const [confirmingFirstFrame, setConfirmingFirstFrame] = useState(false)
-  const agentConversationTurns = useMemo(() => {
-    const stored = readAgentConversation(activeRunUserId)
-    return stored?.runId === runId ? stored.turns : []
-  }, [activeRunUserId, runId])
+  const agentConversationTurns = useMemo(
+    () =>
+      readAgentConversation('localStorage', agentRunConversationStorageKey(activeRunUserId, runId)),
+    [activeRunUserId, runId],
+  )
   const automaticPublishAttempt = useRef<string | null>(null)
   const transcriptScrollRegion = useRef<HTMLElement>(null)
   const workflowConflictRef = useRef(false)
