@@ -22,6 +22,44 @@ function installBackend() {
 }
 
 describe('ProjectsPage', () => {
+  it('renders the project shell while the project list is pending', async () => {
+    const backend = createProjectAssetsBackend()
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    let releaseProjects: (() => void) | undefined
+    const projectsGate = new Promise<void>((resolve) => {
+      releaseProjects = resolve
+    })
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      if (new URL(request.url).pathname === '/projects') await projectsGate
+      return backend.fetch(input, init)
+    })
+
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    try {
+      expect(await screen.findByRole('link', { name: '新建项目' })).toBeTruthy()
+      const loadingShell = screen.getByRole('status', { name: '正在读取项目' })
+      expect(loadingShell.getAttribute('aria-busy')).toBe('true')
+      expect(loadingShell.querySelectorAll('[data-project-loading-placeholder]')).toHaveLength(3)
+      expect(loadingShell.querySelectorAll('[data-pixel-matrix-dot]')).toHaveLength(3 * 432)
+      expect(screen.queryByText('正在读取项目…')).toBeNull()
+      expect(screen.queryByRole('link', { name: /打开项目/ })).toBeNull()
+    } finally {
+      releaseProjects?.()
+    }
+
+    expect(await screen.findAllByRole('link', { name: /打开项目/ })).toHaveLength(2)
+    expect(screen.queryByRole('status', { name: '正在读取项目' })).toBeNull()
+    expect(document.querySelector('[data-project-loading-placeholder]')).toBeNull()
+  })
+
   it('loads a project card thumbnail and falls back to its original preview', async () => {
     const backend = createProjectAssetsBackend()
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
