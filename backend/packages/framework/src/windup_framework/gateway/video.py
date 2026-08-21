@@ -209,7 +209,7 @@ class VideoGateway:
                         http_status=result.http_status,
                         ok=result.ok,
                     )
-                    if not budget.can_record(maybe_billed):
+                    if not result.ok and not budget.can_record(maybe_billed):
                         self._emit_result(
                             request_id=request_id,
                             model=model,
@@ -236,6 +236,7 @@ class VideoGateway:
                         fail(last_http_status)
 
                     if result.ok:
+                        budget.record(maybe_billed)
                         self._emit_result(
                             request_id=request_id,
                             model=model,
@@ -358,7 +359,11 @@ class VideoGateway:
                             fail(last_http_status)
                         if (
                             bound_job_id is None
-                            and error_type is not ModelErrorType.RATE_LIMIT
+                            and error_type
+                            not in (
+                                ModelErrorType.RATE_LIMIT,
+                                ModelErrorType.MODEL_NOT_FOUND,
+                            )
                         ):
                             fail(last_http_status)
                         fallback_used = True

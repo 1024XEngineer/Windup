@@ -7,6 +7,7 @@ from windup_framework.config.provider import AIProviderSettings
 from windup_framework.gateway.circuit import CircuitBreaker
 from windup_framework.gateway.registry import ModelRegistry
 from windup_framework.gateway.types import AdapterResult
+from windup_framework.gateway.budget import AttemptBudget
 from windup_framework.gateway.video import VideoGateway
 
 UNREACHED = AdapterResult(ok=False, error_type=ModelErrorType.UNREACHED, http_status=522)
@@ -257,6 +258,35 @@ def test_submit_invalid_response_does_not_open_fallback_job():
         _video_gw(ad).i2v(b"frame", "walk")
     assert "kling-v2-6" not in ad.submit_models
     assert ad.submit_models == ["kling-v2-5-turbo"] * 3
+
+
+def test_submit_model_not_found_fallbacks_to_next_model():
+    missing = AdapterResult(
+        ok=False, error_type=ModelErrorType.MODEL_NOT_FOUND, http_status=404
+    )
+    ad = FakeVideoAdapter(
+        submits={
+            "kling-v2-5-turbo": [missing],
+            "kling-v2-6": [AdapterResult(ok=True, job_id="j-alt", maybe_billed=True)],
+        },
+        follows={"j-alt": MP4},
+    )
+    body = _video_gw(ad).i2v(b"frame", "walk")
+    assert body.startswith(b"\x00\x00\x00\x18ftyp")
+    assert ad.submit_models == ["kling-v2-5-turbo", "kling-v2-6"]
+
+
+def test_success_is_not_rejected_when_maybe_billed_budget_full(monkeypatch):
+    monkeypatch.setattr(AttemptBudget, "max_maybe_billed", 0)
+    ad = FakeVideoAdapter(
+        submits={
+            "kling-v2-5-turbo": [AdapterResult(ok=True, job_id="j1", maybe_billed=True)],
+            "kling-v2-6": [],
+        },
+        follows={"j1": MP4},
+    )
+    body = _video_gw(ad).i2v(b"frame", "walk")
+    assert body.startswith(b"\x00\x00\x00\x18ftyp")
 
 
 def test_submit_ok_without_job_id_is_invalid_response():
