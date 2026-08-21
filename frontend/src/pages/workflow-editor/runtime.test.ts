@@ -166,6 +166,7 @@ describe('createRealWorkflowEditorSession', () => {
       },
       mediaApis: { upload: vi.fn() },
       projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      render3d: stubRender3DApis(),
       characterApis: {
         get: getCharacter,
         listByProject,
@@ -211,6 +212,7 @@ describe('createRealWorkflowEditorSession', () => {
         },
         mediaApis: { upload: vi.fn() },
         projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+        render3d: stubRender3DApis(),
         characterApis: {
           get: vi.fn().mockResolvedValue({ ...characterFixture(), projectId: 'other-project' }),
           listByProject: vi.fn(),

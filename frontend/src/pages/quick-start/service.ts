@@ -4,7 +4,6 @@ import {
   createMediaApis,
   projectApis,
   workflowRunApis,
-  characterTemplateImages,
   characterTemplatesFromImages,
   getDirectionProfile,
   type Action,
@@ -935,8 +934,8 @@ export function createQuickStartService({
       characterApis,
       workflowRunApis,
     })
-    const controller = createController(run)
     const spriteSize = await resolveProjectSpriteSize(character.projectId)
+    const controller = createController(run)
     await prepareAction(controller, outfit.id, actionDescription, spriteSize)
     return createSession(controller, spriteSize)
   }

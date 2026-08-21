@@ -12,6 +12,26 @@ const character: Character = {
   referenceImageUrl: '/reference.png',
   dataVersion: 1,
   status: 1,
+  templates: [
+    {
+      direction: 'east',
+      sourceDirection: null,
+      mirrorX: false,
+      imageUrl: '/master.png',
+    },
+    {
+      direction: 'west',
+      sourceDirection: 'east',
+      mirrorX: true,
+      imageUrl: null,
+    },
+    {
+      direction: 'north',
+      sourceDirection: null,
+      mirrorX: false,
+      imageUrl: '/master-north.png',
+    },
+  ],
   outfits: [
     {
       id: 'outfit-default',
@@ -19,6 +39,7 @@ const character: Character = {
       name: '常态造型',
       description: null,
       previewUrl: '/master.png',
+      model3dUrl: null,
       actions: [],
     },
   ],
@@ -49,12 +70,16 @@ describe('createExistingCharacterActionRun', () => {
         expect.objectContaining({
           type: 'character-setup',
           status: 'passed',
-          input: expect.objectContaining({ characterId: '51' }),
+          input: expect.objectContaining({
+            characterId: '51',
+            referenceMedia: ['/master.png', '/master-north.png'],
+          }),
         }),
         expect.objectContaining({
           type: 'character-template',
           status: 'passed',
           selectedImageUrl: '/master.png',
+          selectedImages: { east: '/master.png', north: '/master-north.png' },
         }),
       ],
     })
@@ -68,7 +93,7 @@ describe('createExistingCharacterActionRun', () => {
 
     await expect(
       createExistingCharacterActionRun({ characterId: '51', outfitId: 'missing' }, dependencies),
-    ).rejects.toThrow('当前造型没有可用于生成动作的角色母版')
+    ).rejects.toThrow('当前造型还没有可用的角色母版，请先完成定妆再生成动作')
     expect(dependencies.workflowRunApis.create).not.toHaveBeenCalled()
   })
 

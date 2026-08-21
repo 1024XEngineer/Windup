@@ -7,6 +7,9 @@ import type {
   WorkflowRun,
   WorkflowRunApis,
 } from '@/entities'
+import { characterTemplateImages } from '@/entities'
+
+const MISSING_TEMPLATE_MESSAGE = '当前造型还没有可用的角色母版，请先完成定妆再生成动作'
 
 export interface ExistingCharacterActionTarget {
   readonly characterId: Character['id']
@@ -25,9 +28,12 @@ export interface ExistingCharacterActionRun {
 }
 
 function existingCharacterNodes(character: Character, outfit: Outfit): WorkflowNode[] {
-  const templateUrl = outfit.previewUrl
-  if (!templateUrl) throw new Error('当前造型没有可用于生成动作的角色母版')
+  const selectedImages = characterTemplateImages(character.templates)
+  const templateUrl = selectedImages.east ?? outfit.previewUrl ?? character.referenceImageUrl
+  if (!templateUrl) throw new Error(MISSING_TEMPLATE_MESSAGE)
+  if (!selectedImages.east) selectedImages.east = templateUrl
   const prompt = character.description?.trim() || character.name?.trim() || '现有角色'
+  const referenceMedia = [...new Set(Object.values(selectedImages))] as MediaReference[]
 
   return [
     {
@@ -41,7 +47,7 @@ function existingCharacterNodes(character: Character, outfit: Outfit): WorkflowN
       input: {
         characterId: character.id,
         prompt,
-        referenceMedia: [templateUrl as MediaReference],
+        referenceMedia,
       },
     },
     {
@@ -53,6 +59,7 @@ function existingCharacterNodes(character: Character, outfit: Outfit): WorkflowN
       generations: [],
       error: null,
       selectedImageUrl: templateUrl,
+      selectedImages,
     },
   ]
 }
@@ -64,7 +71,7 @@ export async function createExistingCharacterActionRun(
 ): Promise<ExistingCharacterActionRun> {
   const character = await dependencies.characterApis.get(target.characterId)
   const outfit = character.outfits.find((candidate) => candidate.id === target.outfitId)
-  if (!outfit?.previewUrl) throw new Error('当前造型没有可用于生成动作的角色母版')
+  if (!outfit) throw new Error(MISSING_TEMPLATE_MESSAGE)
 
   const run = await dependencies.workflowRunApis.create({
     projectId: character.projectId,

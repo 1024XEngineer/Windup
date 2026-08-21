@@ -152,6 +152,43 @@ describe('CharacterDetailPage', () => {
     expect(scroller?.querySelector('ol')?.className).toContain('min-w-max')
   })
 
+  it('allows adding an action when the character has directional templates without an outfit preview', async () => {
+    const backend = createProjectAssetsBackend()
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      const response = await backend.fetch(input, init)
+      if (!request.url.endsWith('/characters/52')) return response
+
+      const payload = (await response.json()) as {
+        data: { character_data: { templates?: unknown[] } }
+        [key: string]: unknown
+      }
+      payload.data.character_data.templates = [
+        {
+          direction: 'east',
+          source_direction: null,
+          mirror_x: false,
+          image_url: 'https://cdn.windup.test/draft-east.png',
+        },
+      ]
+      return new Response(JSON.stringify(payload), {
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects/42/assets/52']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(await screen.findByRole('heading', { name: '待定角色' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '增加动作' }).hasAttribute('disabled')).toBe(false)
+  })
+
   it('preserves the Outfit level when no Action exists', async () => {
     renderCharacter('52')
 

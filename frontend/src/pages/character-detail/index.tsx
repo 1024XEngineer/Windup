@@ -3,6 +3,7 @@ import { Graph, Lightning, Plus, X } from '@phosphor-icons/react'
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router'
 
 import {
+  characterTemplateImages,
   characterApis,
   workflowRunApis,
   type Action,
@@ -214,7 +215,10 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
   const [creatingEditor, setCreatingEditor] = useState(false)
   const [entryError, setEntryError] = useState<string | null>(null)
   const selectedAction = outfit.actions.find((action) => action.id === selectedActionId) ?? null
-  const canCreateAction = Boolean(outfit.previewUrl)
+  const templateImages = characterTemplateImages(character.templates)
+  const canCreateAction = Boolean(
+    templateImages.east || outfit.previewUrl || character.referenceImageUrl,
+  )
   const quickStartPath = `/quick-start?${new URLSearchParams({
     characterId: character.id,
     outfitId: outfit.id,

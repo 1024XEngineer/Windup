@@ -2003,6 +2003,12 @@ describe('createQuickStartService', () => {
           mirrorX: false,
           imageUrl: 'existing-north.png',
         },
+        {
+          direction: 'south',
+          sourceDirection: null,
+          mirrorX: false,
+          imageUrl: 'existing-south.png',
+        },
       ],
     })
     const generationApis = pendingGenerationApis()
@@ -2016,7 +2022,7 @@ describe('createQuickStartService', () => {
         update: vi.fn(),
         remove: vi.fn(),
       } as unknown as CharacterApis,
-      projectApis: projectReader(),
+      projectApis: projectReader(undefined, 'four-way'),
       prepareProject: vi.fn(),
     })
 
@@ -2030,17 +2036,27 @@ describe('createQuickStartService', () => {
       input: {
         characterId: character.id,
         prompt: '老角色',
-        referenceMedia: ['existing.png', 'existing-north.png'],
+        referenceMedia: ['existing.png', 'existing-north.png', 'existing-south.png'],
       },
     })
     expect(run.nodes[1]).toMatchObject({
       type: 'character-template',
       selectedImageUrl: 'existing.png',
-      selectedImages: { east: 'existing.png', north: 'existing-north.png' },
+      selectedImages: {
+        east: 'existing.png',
+        north: 'existing-north.png',
+        south: 'existing-south.png',
+      },
     })
     expect(run.nodes.find((node) => node.type === 'action-first-frame')).toMatchObject({
       input: { name: '待机', type: 'idle', prompt: null },
     })
+    expect(generationApis.create).toHaveBeenCalledTimes(3)
+    expect(vi.mocked(generationApis.create).mock.calls.map(([input]) => input.direction)).toEqual([
+      'east',
+      'north',
+      'south',
+    ])
   })
 
   it('keeps a custom action display name bounded while preserving its full prompt', async () => {
