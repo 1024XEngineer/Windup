@@ -132,6 +132,7 @@ const ROLE_DEFAULT_MESSAGE: readonly KineticCopyMessage[] = [
 const ENTRY_HANDOFF_MS = 460
 const PROMPT_REWRITE_MS = 760
 const AGENT_CONVERSATION_STORAGE_KEY = 'windup.quick-start.agent-chat.v2'
+const LEGACY_AGENT_CONVERSATION_STORAGE_KEY = 'windup.quick-start.agent-chat.v1'
 const AGENT_DRAFT_HISTORY_STATE_KEY = 'windupQuickStartAgentDraftId'
 
 type AgentConversationTurn = {
@@ -151,6 +152,10 @@ function agentDraftConversationStorageKey(userId: string | null, draftId: string
 
 function agentRunConversationStorageKey(userId: string | null, runId: string): string {
   return `${AGENT_CONVERSATION_STORAGE_KEY}:run:${userId ?? 'local'}:${runId}`
+}
+
+function legacyAgentConversationStorageKey(userId: string | null): string {
+  return `${LEGACY_AGENT_CONVERSATION_STORAGE_KEY}:${userId ?? 'local'}`
 }
 
 function readAgentDraftId(): string | null {
@@ -223,6 +228,40 @@ function removeAgentConversation(storageName: AgentConversationStorageName, key:
     window[storageName].removeItem(key)
   } catch {
     // 清理失败只会留下当前标签页的孤立草稿，不影响真实生成流程。
+  }
+}
+
+function readAgentRunConversation(
+  userId: string | null,
+  runId: string,
+): readonly AgentConversationTurn[] {
+  const runKey = agentRunConversationStorageKey(userId, runId)
+  const currentTurns = readAgentConversation('localStorage', runKey)
+  if (currentTurns.length > 0) return currentTurns
+
+  const legacyKey = legacyAgentConversationStorageKey(userId)
+  try {
+    const stored = window.localStorage.getItem(legacyKey)
+    if (!stored) return []
+    const parsed: unknown = JSON.parse(stored)
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      !('runId' in parsed) ||
+      parsed.runId !== runId
+    ) {
+      return []
+    }
+
+    // v1 只有用户级 key；仅迁移已绑定当前运行的记录，避免复活未绑定的全局草稿。
+    const legacyTurns = readAgentConversation('localStorage', legacyKey)
+    if (legacyTurns.length === 0) return []
+    if (writeAgentConversation('localStorage', runKey, { turns: legacyTurns })) {
+      removeAgentConversation('localStorage', legacyKey)
+    }
+    return legacyTurns
+  } catch {
+    return []
   }
 }
 
@@ -1095,8 +1134,7 @@ function QuickStartRun({
   const [confirmingCandidate, setConfirmingCandidate] = useState(false)
   const [confirmingFirstFrame, setConfirmingFirstFrame] = useState(false)
   const agentConversationTurns = useMemo(
-    () =>
-      readAgentConversation('localStorage', agentRunConversationStorageKey(activeRunUserId, runId)),
+    () => readAgentRunConversation(activeRunUserId, runId),
     [activeRunUserId, runId],
   )
   const automaticPublishAttempt = useRef<string | null>(null)
