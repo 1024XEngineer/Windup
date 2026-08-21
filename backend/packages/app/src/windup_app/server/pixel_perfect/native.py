@@ -1,10 +1,9 @@
-"""两个独立原生模块的进程适配器。"""
+"""PyO3 原生扩展与 Python 工具编排之间的适配层。"""
 
-from collections.abc import Sequence
-import json
+from collections.abc import Callable
+from importlib import import_module
 import math
-import subprocess
-from threading import Thread
+from typing import Protocol
 
 from windup_app.server.pixel_perfect.errors import (
     PixelPerfectInputError,
@@ -13,24 +12,51 @@ from windup_app.server.pixel_perfect.errors import (
 from windup_app.server.pixel_perfect.model import GridDetection
 
 
+class PixelPerfectNativeModule(Protocol):
+    def detect(self, source: bytes, mode: str) -> object: ...
+
+    def reconstruct(
+        self,
+        source: bytes,
+        cols: int,
+        rows: int,
+        colors: int,
+    ) -> object: ...
+
+
+NativeModuleLoader = Callable[[], PixelPerfectNativeModule]
+
+
+def _load_installed_module() -> PixelPerfectNativeModule:
+    return import_module("windup_pixel_perfect_native")
+
+
+def _load_native(loader: NativeModuleLoader) -> PixelPerfectNativeModule:
+    try:
+        return loader()
+    except (ImportError, OSError) as error:
+        raise PixelPerfectUnavailableError(
+            "本地像素原生扩展未安装或无法加载"
+        ) from error
+
+
 class NativeGridDetector:
-    def __init__(self, command: Sequence[str], *, timeout_seconds: float) -> None:
-        self._command = tuple(command)
-        self._timeout_seconds = timeout_seconds
+    def __init__(
+        self, module_loader: NativeModuleLoader = _load_installed_module
+    ) -> None:
+        self._module_loader = module_loader
 
     def detect(self, source: bytes) -> GridDetection:
-        output = _run(
-            (*self._command, "--full"),
-            source,
-            timeout_seconds=self._timeout_seconds,
-            stdout_limit=64 * 1024,
-        )
-        if len(output) > 64 * 1024:
-            raise PixelPerfectUnavailableError("检测器返回数据过大")
+        native = _load_native(self._module_loader)
         try:
-            payload = json.loads(output)
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise PixelPerfectUnavailableError("检测器返回了无效 JSON") from error
+            payload = native.detect(source, "full")
+        except ValueError as error:
+            raise PixelPerfectInputError(
+                str(error) or "原生检测器拒绝了输入"
+            ) from error
+        except Exception as error:
+            raise PixelPerfectUnavailableError("原生检测器调用失败") from error
+
         expected = {
             "cols",
             "rows",
@@ -68,108 +94,23 @@ class NativeGridDetector:
 
 
 class NativeGridReconstructor:
-    def __init__(self, command: Sequence[str], *, timeout_seconds: float) -> None:
-        self._command = tuple(command)
-        self._timeout_seconds = timeout_seconds
+    def __init__(
+        self, module_loader: NativeModuleLoader = _load_installed_module
+    ) -> None:
+        self._module_loader = module_loader
 
     def reconstruct(self, source: bytes, *, cols: int, rows: int, colors: int) -> bytes:
-        output = _run(
-            (
-                *self._command,
-                "--cols",
-                str(cols),
-                "--rows",
-                str(rows),
-                "--colors",
-                str(colors),
-            ),
-            source,
-            timeout_seconds=self._timeout_seconds,
-            stdout_limit=32 * 1024 * 1024,
-        )
+        native = _load_native(self._module_loader)
+        try:
+            output = native.reconstruct(source, cols, rows, colors)
+        except ValueError as error:
+            raise PixelPerfectInputError(
+                str(error) or "原生重建器拒绝了输入"
+            ) from error
+        except Exception as error:
+            raise PixelPerfectUnavailableError("原生重建器调用失败") from error
+        if not isinstance(output, bytes):
+            raise PixelPerfectUnavailableError("重建器返回类型不符合约定")
         if len(output) > 32 * 1024 * 1024:
             raise PixelPerfectUnavailableError("重建器返回数据过大")
         return output
-
-
-def _run(
-    command: Sequence[str],
-    source: bytes,
-    *,
-    timeout_seconds: float,
-    stdout_limit: int,
-    stderr_limit: int = 64 * 1024,
-) -> bytes:
-    if not command or timeout_seconds <= 0 or min(stdout_limit, stderr_limit) < 1:
-        raise ValueError("native command and positive timeout are required")
-    try:
-        process = subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-    except (FileNotFoundError, OSError) as error:
-        raise PixelPerfectUnavailableError("本地像素工具未安装或无法启动") from error
-
-    stdout = bytearray()
-    stderr = bytearray()
-    overflow = []
-
-    def read_bounded(stream, target: bytearray, limit: int, name: str) -> None:
-        while chunk := stream.read(64 * 1024):
-            remaining = limit + 1 - len(target)
-            target.extend(chunk[:remaining])
-            if len(target) > limit:
-                overflow.append(name)
-                process.kill()
-                break
-        stream.close()
-
-    def write_input() -> None:
-        try:
-            process.stdin.write(source)
-        except (BrokenPipeError, OSError):
-            pass
-        finally:
-            process.stdin.close()
-
-    threads = [
-        Thread(target=write_input, daemon=True),
-        Thread(
-            target=read_bounded,
-            args=(process.stdout, stdout, stdout_limit, "stdout"),
-            daemon=True,
-        ),
-        Thread(
-            target=read_bounded,
-            args=(process.stderr, stderr, stderr_limit, "stderr"),
-            daemon=True,
-        ),
-    ]
-    for thread in threads:
-        thread.start()
-    try:
-        process.wait(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired as error:
-        process.kill()
-        process.wait()
-        raise PixelPerfectUnavailableError("本地像素工具处理超时") from error
-    finally:
-        for thread in threads:
-            thread.join()
-
-    if overflow:
-        raise PixelPerfectUnavailableError(f"本地像素工具 {overflow[0]} 超过资源上限")
-    if process.returncode < 0:
-        raise PixelPerfectUnavailableError(
-            f"本地像素工具被信号 {-process.returncode} 终止"
-        )
-    if process.returncode == 1:
-        detail = stderr.decode("utf-8", errors="replace").strip()[:500]
-        raise PixelPerfectInputError(detail or "本地像素工具拒绝了输入")
-    if process.returncode != 0:
-        raise PixelPerfectUnavailableError(
-            f"本地像素工具异常退出（code={process.returncode}）"
-        )
-    return bytes(stdout)
