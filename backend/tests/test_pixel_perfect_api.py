@@ -2,10 +2,7 @@
 
 import asyncio
 from io import BytesIO
-import json
-import signal
 import struct
-import sys
 import zlib
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
@@ -270,7 +267,7 @@ def test_tool_validates_the_complete_reconstruction_png_and_grid_size():
             raise AssertionError("invalid reconstruction must be rejected")
 
 
-def test_native_detector_reads_stdin_and_parses_the_six_field_contract():
+def test_native_detector_calls_the_extension_and_parses_the_six_field_contract():
     payload = {
         "cols": 8,
         "rows": 6,
@@ -279,84 +276,69 @@ def test_native_detector_reads_stdin_and_parses_the_six_field_contract():
         "consensus": "arbitrated",
         "confidence": "medium",
     }
-    code = (
-        "import json,sys; sys.stdin.buffer.read(); "
-        f"print(json.dumps({json.dumps(payload)}))"
-    )
-    detector = NativeGridDetector((sys.executable, "-c", code), timeout_seconds=1)
+    calls = []
 
-    result = detector.detect(_png_bytes(32, 24))
+    class NativeModule:
+        @staticmethod
+        def detect(source: bytes, mode: str):
+            calls.append((source, mode))
+            return payload
+
+    detector = NativeGridDetector(module_loader=lambda: NativeModule)
+    source = _png_bytes(32, 24)
+
+    result = detector.detect(source)
 
     assert result == GridDetection(**payload)
+    assert calls == [(source, "full")]
 
 
-def test_native_reconstructor_passes_only_explicit_grid_arguments():
+def test_native_reconstructor_passes_only_the_explicit_grid_contract():
     output = _png_bytes(8, 6)
-    code = (
-        "import sys; data=sys.stdin.buffer.read(); "
-        "expected=['--cols','8','--rows','6','--colors','16']; "
-        "sys.exit(2) if sys.argv[1:] != expected else sys.stdout.buffer.write(data)"
-    )
-    reconstructor = NativeGridReconstructor(
-        (sys.executable, "-c", code), timeout_seconds=1
-    )
+    calls = []
+
+    class NativeModule:
+        @staticmethod
+        def reconstruct(source: bytes, cols: int, rows: int, colors: int):
+            calls.append((source, cols, rows, colors))
+            return source
+
+    reconstructor = NativeGridReconstructor(module_loader=lambda: NativeModule)
 
     result = reconstructor.reconstruct(output, cols=8, rows=6, colors=16)
 
     assert result == output
+    assert calls == [(output, 8, 6, 16)]
 
 
-def test_native_process_timeout_is_reported_as_tool_unavailable():
-    detector = NativeGridDetector(
-        (sys.executable, "-c", "import time; time.sleep(1)"),
-        timeout_seconds=0.01,
-    )
+def test_native_extension_value_errors_are_reported_as_bad_input():
+    class NativeModule:
+        @staticmethod
+        def detect(_source: bytes, _mode: str):
+            raise ValueError("invalid image")
+
+    detector = NativeGridDetector(module_loader=lambda: NativeModule)
+
+    try:
+        detector.detect(_png_bytes(32, 24))
+    except PixelPerfectInputError as error:
+        assert "invalid image" in str(error)
+    else:
+        raise AssertionError("native input errors must preserve their category")
+
+
+def test_missing_native_extension_is_reported_as_tool_unavailable():
+    def missing_module():
+        raise ModuleNotFoundError("windup_pixel_perfect_native")
+
+    detector = NativeGridDetector(module_loader=missing_module)
 
     try:
         detector.detect(_png_bytes(32, 24))
     except PixelPerfectUnavailableError as error:
-        assert "超时" in str(error)
+        assert "未安装" in str(error)
     else:
-        raise AssertionError("native timeout must be reported")
-
-
-def test_native_process_output_is_bounded_while_the_child_is_running():
-    detector = NativeGridDetector(
-        (
-            sys.executable,
-            "-c",
-            "import sys; sys.stdin.buffer.read(); sys.stdout.buffer.write(b'x'*70000)",
-        ),
-        timeout_seconds=1,
-    )
-
-    try:
-        detector.detect(_png_bytes(32, 24))
-    except PixelPerfectUnavailableError as error:
-        assert "stdout" in str(error)
-    else:
-        raise AssertionError("oversized native output must be rejected")
-
-
-def test_native_signal_exit_is_tool_unavailable_not_bad_input():
-    detector = NativeGridDetector(
-        (
-            sys.executable,
-            "-c",
-            (
-                "import os,signal,sys; sys.stdin.buffer.read(); "
-                "os.kill(os.getpid(), signal.SIGTERM)"
-            ),
-        ),
-        timeout_seconds=1,
-    )
-
-    try:
-        detector.detect(_png_bytes(32, 24))
-    except PixelPerfectUnavailableError as error:
-        assert str(signal.SIGTERM) in str(error)
-    else:
-        raise AssertionError("signal exit must be unavailable")
+        raise AssertionError("missing native extensions must not break app startup")
 
 
 def test_endpoint_maps_local_tool_failures_to_stable_business_codes(auth_client):
