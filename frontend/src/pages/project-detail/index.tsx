@@ -1,12 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Outlet, useLocation, useParams } from 'react-router'
+import { Outlet, useParams } from 'react-router'
 
 import { projectApis, type Project } from '@/entities'
 
 /** 项目常驻工作区；子路由负责具体资产内容。 */
 export function ProjectDetailPage() {
   const { projectId } = useParams()
-  const location = useLocation()
   const [project, setProject] = useState<Project | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -56,11 +55,7 @@ export function ProjectDetailPage() {
 
   return (
     <div className="min-h-[100dvh] bg-app-canvas px-4 pb-8 pt-[4.25rem] text-app-ink sm:px-6 lg:px-8">
-      <div
-        key={location.pathname}
-        data-route-transition={location.pathname}
-        className="route-transition mx-auto min-h-full w-full max-w-[90rem]"
-      >
+      <div className="mx-auto min-h-full w-full max-w-[90rem]">
         <Outlet context={project} />
       </div>
     </div>
