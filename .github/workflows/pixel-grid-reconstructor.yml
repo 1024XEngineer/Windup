@@ -3,11 +3,11 @@ name: Pixel grid reconstructor CI
 on:
   push:
     paths:
-      - "backend/native/pixel_grid_reconstructor/**"
+      - "native/pixel-perfect/crates/reconstructor/**"
       - ".github/workflows/pixel-grid-reconstructor.yml"
   pull_request:
     paths:
-      - "backend/native/pixel_grid_reconstructor/**"
+      - "native/pixel-perfect/crates/reconstructor/**"
       - ".github/workflows/pixel-grid-reconstructor.yml"
 
 permissions:
@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: backend/native/pixel_grid_reconstructor
+        working-directory: native/pixel-perfect/crates/reconstructor
     steps:
       - uses: actions/checkout@v7
 
