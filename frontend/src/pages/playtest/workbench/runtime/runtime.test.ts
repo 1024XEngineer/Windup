@@ -201,7 +201,7 @@ describe('playtest runtime', () => {
     ])
   })
 
-  it('switches to a real direction when the selected action lacks the current facing', () => {
+  it('keeps the current action and facing when the selected action lacks that direction', () => {
     const sideOnlyAction: PlaytestAction = {
       id: 'side-attack',
       name: '侧向攻击',
@@ -226,8 +226,8 @@ describe('playtest runtime', () => {
 
     const selected = selectRuntimeAction(current, actionSet, 'side-attack')
 
-    expect(selected).toMatchObject({ actionId: 'side-attack', facing: 'east', frameIndex: 0 })
-    expect(framesForFacing(sideOnlyAction, selected.facing)).toBeDefined()
+    expect(selected).toBe(current)
+    expect(selected).toMatchObject({ actionId: 'idle', facing: 'north' })
   })
 
   it('does not treat a directional-only action as a side action', () => {
