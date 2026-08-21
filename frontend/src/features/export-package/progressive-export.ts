@@ -4,6 +4,7 @@ import type {
   Frame,
   Generation,
   Project,
+  SequenceGeometry,
   WorkflowActionInput,
   WorkflowRun,
 } from '@/entities'
@@ -16,7 +17,27 @@ import type {
   ExportPlaytest,
 } from './model'
 
-const FOOT_LINE_RATIO = 0.92
+/**
+ * 后端没报落位几何时的回落值（早于 geometry 上线的资产）。
+ *
+ * 这个数与后端 `postprocess.pack.FOOT_LINE` 是同一条线，抄一份在这里就是第二真相源 ——
+ * 所以只在缺 geometry 时用，能拿到就一律用后端报的那份。两份不同步的后果是角色不站在
+ * 地上，而帧数、时长、成色全都正常，没有任何一道会红。
+ */
+const FALLBACK_FOOT_LINE_RATIO = 0.92
+
+function sequenceGeometry(
+  geometry: SequenceGeometry | undefined,
+  spriteHeight: number,
+): { anchor: { x: number; y: number }; footY: number } {
+  if (geometry) {
+    return { anchor: geometry.anchor, footY: geometry.footY }
+  }
+  return {
+    anchor: { x: 0.5, y: FALLBACK_FOOT_LINE_RATIO },
+    footY: Math.trunc(spriteHeight * FALLBACK_FOOT_LINE_RATIO),
+  }
+}
 
 export interface CreateProgressiveExportModelInput {
   project: Project
@@ -63,8 +84,7 @@ function exportAction(action: Action, project: Project): ExportAction {
         direction: 'default',
         expectedFrameCount: action.frameCount,
         loop: action.loop,
-        anchor: { x: 0.5, y: FOOT_LINE_RATIO },
-        footY: Math.trunc(project.spriteSize.height * FOOT_LINE_RATIO),
+        ...sequenceGeometry(undefined, project.spriteSize.height),
         qualityStatus: 'passed',
         frames: exportFrames(action),
       },
@@ -186,8 +206,7 @@ function generatedActions(
             direction: 'default',
             expectedFrameCount: frames.length,
             loop: true,
-            anchor: { x: 0.5, y: FOOT_LINE_RATIO },
-            footY: Math.trunc(project.spriteSize.height * FOOT_LINE_RATIO),
+            ...sequenceGeometry(generation.result.geometry, project.spriteSize.height),
             qualityStatus: review?.status === 'passed' ? 'passed' : 'pending',
             frames,
           },
