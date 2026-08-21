@@ -208,6 +208,12 @@ function renderAt(
   )
 }
 
+async function confirmAgentGeneration() {
+  const send = await screen.findByRole('button', { name: '发送生成' })
+  fireEvent.click(send)
+  await act(async () => undefined)
+}
+
 function renderWithRunSwitcher(
   service: QuickStartEntryService,
   initialRunId: string,
@@ -505,7 +511,7 @@ describe('QuickStartPage', () => {
     expect(readActiveRun('7')).toBeNull()
   })
 
-  it('presents Agent replies as restrained product copy without display typography or avatars', async () => {
+  it('reuses generation-copy typography and blur reveal for Agent replies without avatars', async () => {
     renderStateFixture('action-generating')
 
     const transcript = await screen.findByTestId('quick-start-transcript')
@@ -517,12 +523,83 @@ describe('QuickStartPage', () => {
     expect(agentCopies.length).toBeGreaterThan(0)
     expect(
       agentCopies.every((copy) => {
+        const motion = copy.querySelector<HTMLElement>('[data-copy-motion-mode="characters"]')
         return (
-          copy.className.includes('font-sans') && !copy.querySelector('[data-copy-motion-mode]')
+          copy.className.includes('font-serif') &&
+          copy.className.includes('generation-progress-copy--conversation') &&
+          motion &&
+          !motion.className.includes('generation-progress-copy') &&
+          copy.querySelectorAll('.kinetic-copy-character').length > 0 &&
+          copy.querySelectorAll('[data-agent-character]').length === 0
         )
       }),
     ).toBe(true)
     expect(standaloneAvatar).toBeUndefined()
+  })
+
+  it('persists real Agent turns on the frontend without a demo route or WorkflowRun turns', async () => {
+    const service = serviceFor(null)
+    const planner = vi.fn(async () => ({
+      text: '可以。你最想保留哪个外观特征？',
+      finishReason: 'stop',
+      toolCalls: [],
+    }))
+    const agent = agentFor({ planner })
+    const firstView = renderAt('/quick-start?demo=conversation', service, agent)
+
+    expect(screen.queryByText('MOCK 演示')).toBeNull()
+    expect(screen.getByRole('textbox', { name: '创作指令' })).toBeTruthy()
+
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '我想做一个住在云端的机械师。' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+
+    expect(await screen.findByText('我想做一个住在云端的机械师。')).toBeTruthy()
+    expect(await screen.findByText('可以。你最想保留哪个外观特征？')).toBeTruthy()
+    expect(planner).toHaveBeenCalledTimes(1)
+    const persistedAgentChat = window.localStorage.getItem('windup.quick-start.agent-chat.v1:7')
+    expect(persistedAgentChat).toContain('我想做一个住在云端的机械师。')
+    expect(persistedAgentChat).toContain('可以。你最想保留哪个外观特征？')
+    expect(persistedAgentChat).not.toContain('勾勒角色轮廓')
+
+    firstView.unmount()
+    renderAt('/quick-start', service, agent)
+
+    expect(screen.getByText('我想做一个住在云端的机械师。')).toBeTruthy()
+    expect(screen.getByText('可以。你最想保留哪个外观特征？')).toBeTruthy()
+  })
+
+  it('rewrites the real optimized prompt in the composer and waits for explicit generation send', async () => {
+    vi.useFakeTimers()
+    const service = serviceFor(null)
+    const startCharacterGeneration = vi.fn(() => new Promise<{ runId: string }>(() => undefined))
+    const agent = agentFor({ startCharacterGeneration })
+    renderAt('/quick-start', service, agent)
+
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '云端工坊的银发机械师' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+    await act(async () => undefined)
+
+    const composer = screen.getByTestId('quick-start-composer')
+    const input = screen.getByRole('textbox', { name: '创作指令' }) as HTMLInputElement
+    expect(composer.dataset.promptState).toBe('rewriting')
+    const promptRewrite = composer.querySelector('[data-prompt-rewrite]')
+    expect(promptRewrite?.querySelector('[data-copy-motion-mode="characters"]')).toBeTruthy()
+    expect(promptRewrite?.querySelectorAll('.kinetic-copy-character').length).toBeGreaterThan(0)
+    expect(startCharacterGeneration).not.toHaveBeenCalled()
+
+    await act(async () => vi.advanceTimersByTimeAsync(760))
+    expect(composer.dataset.promptState).toBe('ready')
+    expect(input.value).toBe('云端工坊的银发机械师')
+    expect(screen.getByRole('button', { name: '发送生成' })).toBeTruthy()
+    expect(startCharacterGeneration).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '发送生成' }))
+    await act(async () => undefined)
+    expect(startCharacterGeneration).toHaveBeenCalledTimes(1)
   })
 
   it('keeps one persistent Agent shell with a floating composer outside the scrolling transcript', async () => {
@@ -542,6 +619,7 @@ describe('QuickStartPage', () => {
     expect(composer.className).toContain('absolute')
     expect(agentTurns.length).toBeGreaterThanOrEqual(2)
     expect(userTurns.length).toBeGreaterThanOrEqual(2)
+    expect(userTurns.every((turn) => turn.className.includes('w-fit'))).toBe(true)
     expect(transcript.querySelector('[data-agent-identity]')).toBeNull()
   })
 
@@ -770,19 +848,28 @@ describe('QuickStartPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
     await act(async () => undefined)
     expect(screen.getByText('提着风灯的森林守夜人')).toBeTruthy()
-    await act(async () => vi.advanceTimersByTimeAsync(32))
+    expect(screen.getByTestId('quick-start-composer').dataset.promptState).toBe('rewriting')
+    expect(screen.queryByTestId('quick-start-run')).toBeNull()
+
+    await act(async () => vi.advanceTimersByTimeAsync(760))
+    expect(screen.getByRole('button', { name: '发送生成' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '发送生成' }))
+    await act(async () => undefined)
 
     const entry = screen.getByLabelText('创作指令').closest('[data-layout="quick-start-entry"]')
     expect(entry?.getAttribute('data-transition')).toBe('leaving')
-    expect(
-      entry?.querySelector('[data-layout="quick-start-starters"]')?.getAttribute('data-presence'),
-    ).toBe('hidden')
-    expect(screen.queryByTestId('quick-start-transcript')).toBeNull()
+    expect(screen.getByTestId('quick-start-transcript').textContent).toContain(
+      '提着风灯的森林守夜人',
+    )
 
     await act(async () => vi.advanceTimersByTime(459))
-    expect(screen.queryByTestId('quick-start-transcript')).toBeNull()
+    expect(screen.queryByTestId('quick-start-run')).toBeNull()
 
     await act(async () => vi.advanceTimersByTime(1))
+    const runTranscript = screen.getByTestId('quick-start-transcript')
+    expect(runTranscript.textContent).toContain('提着风灯的森林守夜人')
+    expect(runTranscript.querySelector('[data-conversation-kind="agent"]')).toBeTruthy()
+    expect(runTranscript.querySelector('[data-conversation-kind="workflow"]')).toBeTruthy()
     expect(screen.getByRole('img', { name: '角色图生成画布' }).getAttribute('data-reveal')).toBe(
       'generation-canvas',
     )
@@ -934,10 +1021,14 @@ describe('QuickStartPage', () => {
       target: { value: '16-bit 像素风，请直接生成' },
     })
     fireEvent.click(screen.getByRole('button', { name: '继续' }))
-    expect(await screen.findByText('优化后描述')).toBeTruthy()
-    expect(await screen.findByText('银发骑士，16-bit 像素风，全身像')).toBeTruthy()
-    expect(screen.getByText('默认单角色')).toBeTruthy()
-    expect(screen.getByText('动作稍后处理')).toBeTruthy()
+    const optimizedPrompt = (await screen.findByRole('textbox', {
+      name: '创作指令',
+    })) as HTMLInputElement
+    await waitFor(() => expect(optimizedPrompt.value).toBe('银发骑士，16-bit 像素风，全身像'))
+    expect(await screen.findByText(/默认处理：默认单角色、动作稍后处理/u)).toBeTruthy()
+    expect(startCharacterGeneration).not.toHaveBeenCalled()
+
+    await confirmAgentGeneration()
     await waitFor(() => expect(startCharacterGeneration).toHaveBeenCalledTimes(1))
 
     action.resolve({ runId: 'run-new' })
@@ -978,6 +1069,8 @@ describe('QuickStartPage', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '重新开始' }))
 
+    expect(startCharacterGeneration).not.toHaveBeenCalled()
+    await confirmAgentGeneration()
     await waitFor(() => expect(startCharacterGeneration).toHaveBeenCalledTimes(1))
     expect(planner.mock.calls[2]?.[0].messages).toEqual([
       { role: 'user', content: '16-bit 银发像素骑士，请直接生成' },
@@ -1014,6 +1107,8 @@ describe('QuickStartPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /16-bit 日式 RPG/u }))
     fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+    expect(startCharacterGeneration).not.toHaveBeenCalled()
+    await confirmAgentGeneration()
     await waitFor(() =>
       expect(startCharacterGeneration).toHaveBeenCalledWith({
         prompt: '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色',
@@ -1061,6 +1156,7 @@ describe('QuickStartPage', () => {
 
     fireEvent.change(screen.getByLabelText('创作指令'), { target: { value: '像素骑士' } })
     fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+    await confirmAgentGeneration()
 
     await waitFor(() => expect(service.resume).toHaveBeenCalled())
     expect(service.open).toHaveBeenCalledWith('run-new')
@@ -1083,6 +1179,7 @@ describe('QuickStartPage', () => {
     expect(screen.queryByText('hero.png')).toBeNull()
     fireEvent.change(screen.getByLabelText('创作指令'), { target: { value: '骑士' } })
     fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+    await confirmAgentGeneration()
     expect((await screen.findByRole('alert')).textContent).toContain('服务繁忙')
   })
 
