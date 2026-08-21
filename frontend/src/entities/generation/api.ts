@@ -21,6 +21,7 @@ import type {
   GenerationResult,
   GenerationType,
   ImageCandidateCount,
+  SequenceGeometry,
   TaskStatus,
 } from '.'
 import { isActionDirection, type ActionDirection } from '@/entities/character/directions'
@@ -302,13 +303,50 @@ function mapActionResult(
       throw new GenerationApiError('动作帧 index 必须从 0 开始连续排列', 200)
     }
   }
+  const geometry = actionGeometry(result.geometry)
   const mapped = {
     type: 'complete_animation',
     frames: orderedFrames,
+    ...(geometry === undefined ? {} : { geometry }),
   } as const
   return expectation.direction === undefined
     ? mapped
     : { ...mapped, direction: expectation.direction }
+}
+
+/**
+ * 解析交付帧的落位几何。缺失返回 undefined —— 旧任务没有这一段，而"没给"与
+ * "给了默认值"必须能被消费方区分开：把缺省读成实测，角色不站在地上时没有一处会报错。
+ * 给了就按结构严格校验，半个几何比没有更糟。
+ */
+function actionGeometry(value: unknown): SequenceGeometry | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!isRecord(value)) throw new GenerationApiError('完整动画结果 geometry 不是对象', 200)
+  const anchor = value.anchor
+  if (!isRecord(anchor)) throw new GenerationApiError('完整动画结果 geometry.anchor 无效', 200)
+  const unit = (raw: unknown, field: string) => {
+    if (!Number.isFinite(raw) || (raw as number) < 0 || (raw as number) > 1) {
+      throw new GenerationApiError(`完整动画结果 ${field} 必须是 0-1 归一化值`, 200)
+    }
+    return raw as number
+  }
+  const positive = (raw: unknown, field: string) => {
+    if (!Number.isSafeInteger(raw) || (raw as number) <= 0) {
+      throw new GenerationApiError(`完整动画结果 ${field} 无效`, 200)
+    }
+    return raw as number
+  }
+  const canvasHeight = positive(value.canvas_height, 'geometry.canvas_height')
+  const footY = value.foot_y
+  if (!Number.isSafeInteger(footY) || (footY as number) < 0 || (footY as number) > canvasHeight) {
+    throw new GenerationApiError('完整动画结果 geometry.foot_y 超出画布', 200)
+  }
+  return {
+    canvasWidth: positive(value.canvas_width, 'geometry.canvas_width'),
+    canvasHeight,
+    anchor: { x: unit(anchor.x, 'geometry.anchor.x'), y: unit(anchor.y, 'geometry.anchor.y') },
+    footY: footY as number,
+  }
 }
 
 function mapResult(

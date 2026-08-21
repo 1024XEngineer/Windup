@@ -233,6 +233,22 @@ class ActionQuality:
     """
 
 
+@dataclass(frozen=True)
+class SequenceGeometry:
+    """一组交付帧的落位几何:主体锚点与脚线,取自对齐那一步的实参。
+
+    ``anchor`` 用左上原点、y 轴向下的 0-1 归一化坐标,与前端导出契约同一口径;
+    ``foot_y`` 是同一条线的像素值,一并给出是因为消费方要按画布像素画,而
+    ``int(canvas_h * anchor_y)`` 的取整方式不该由每个消费方各自决定。
+    """
+
+    canvas_w: int
+    canvas_h: int
+    anchor_x: float
+    anchor_y: float
+    foot_y: int
+
+
 @dataclass
 class GeneratedAction:
     """一个动作的生成产物:对齐后的原地序列帧 + 逐帧时长 + 成色 + 提示词版本。
@@ -242,6 +258,10 @@ class GeneratedAction:
     """
 
     frames: list[bytes] = field(default_factory=list)   # RGBA PNG,按播放序
+    # 交付帧的落位几何。**报出来而不是让消费方按常数推**:脚线比例、画布尺寸都是
+    # 对齐那一步的实参,消费方抄一份常数过去就是第二真相源 —— 前端 export 正是这么
+    # 抄的(``FOOT_LINE_RATIO = 0.92``),而这边改了 FOOT_LINE 那边不会跟着变。
+    geometry: SequenceGeometry | None = field(default=None, kw_only=True)
     # 播放时序的**唯一**真相源。曾另有一个 fps 字段抄自入参,与本字段互相矛盾:
     # fps=20 宣称 50ms/帧,而 walk 这里给的是 125ms/帧 —— 同一段素材两个播放速度,
     # 取哪个看消费方心情(2026-08-10 机器审 P2)。逐帧 ms 严格更能表达(关键帧定格),

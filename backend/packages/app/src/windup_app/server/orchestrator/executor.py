@@ -406,6 +406,17 @@ class ActionTaskExecutor:
                 "quality": dataclasses.asdict(generated.quality),
                 "prompt_version": generated.prompt_version,
             }
+            # 落位几何随产物一起交出:消费方要把帧画到画布上、判角色有没有站在地上,
+            # 而这条线的比例是对齐那一步的实参。前端此前抄了一份 0.92 自己算 —— 两份
+            # 常数只要有一次不同步,角色就不站在地上,而没有任何一道会红。
+            if generated.geometry is not None:
+                g = generated.geometry
+                result["geometry"] = {
+                    "canvas_width": g.canvas_w,
+                    "canvas_height": g.canvas_h,
+                    "anchor": {"x": g.anchor_x, "y": g.anchor_y},
+                    "foot_y": g.foot_y,
+                }
             # master 为 None 时 review 按"没判"返回 None(三渲二路线没有可比的参照)。
             decision = quality_gate.review(
                 self._get_judge(), checked, master, _judged_action(input)

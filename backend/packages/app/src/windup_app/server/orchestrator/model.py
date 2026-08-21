@@ -133,7 +133,9 @@ class CharacterActionOutput:
 
     前端拿到后写入 ``character_data.outfits[].actions[]``：
     ``action_type`` → ``CharacterAction.type``，
-    ``frames`` → ``CharacterAction.frames[]``。
+    ``frames`` + ``direction`` → ``CharacterAction.sequences[]``(一个方向一条,
+    镜像方向按 ``CharacterActionSequence`` 的校验只存来源关系、不存帧),
+    ``geometry`` → 导出契约的 ``anchor`` / ``footY``。
 
     ``quality`` / ``prompt_version`` 是引擎产出成色的账本(``ai_engine.ports.ActionQuality``
     的原样转录 + 提示词版本),不参与前端回填、只落库供后续对比——本层不据此判成败,
@@ -153,6 +155,9 @@ class CharacterActionOutput:
     quality: dict | None = None
     prompt_version: str | None = None
     direction: ActionDirection = ActionDirection.EAST
+    # 交付帧的落位几何(画布尺寸、主体锚点、脚线像素)。``None`` = 引擎没给,
+    # 不是"用默认值" —— 消费方要能区分这两者,才不会把缺省当成实测。
+    geometry: dict | None = None
 
 
 # -- 任务记录 ------------------------------------------------------------
