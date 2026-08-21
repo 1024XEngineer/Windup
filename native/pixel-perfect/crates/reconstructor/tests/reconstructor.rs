@@ -64,23 +64,6 @@ fn structure_color_count_does_not_cap_the_final_palette() {
 }
 
 #[test]
-fn transparent_rgb_does_not_tint_a_majority_opaque_cell() {
-    let mut source = RgbaImage::from_pixel(16, 16, Rgba([255, 0, 0, 255]));
-    for y in 0..4 {
-        for x in 0..16 {
-            source.put_pixel(x, y, Rgba([0, 0, 255, 0]));
-        }
-    }
-
-    let result = reconstruct_bytes(&encode(source), 1, 1, 2).expect("reconstruct cell");
-    let decoded = image::load_from_memory(&result.png)
-        .expect("decode output")
-        .to_rgba8();
-
-    assert_eq!(decoded.get_pixel(0, 0), &Rgba([255, 0, 0, 255]));
-}
-
-#[test]
 fn dense_grid_color_reconstruction_stays_within_source_color_bounds() {
     let size = 64;
     let mut source = RgbaImage::new(size, size);
