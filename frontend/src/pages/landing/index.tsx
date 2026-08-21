@@ -526,7 +526,7 @@ export function LandingPage() {
             loading="eager"
             decoding="async"
             fetchPriority="high"
-            className="pointer-events-none absolute top-80 -left-10 z-[1] block h-auto w-[min(34vw,31rem)] rotate-[2deg] select-none sm:top-[18.75rem] sm:-left-24"
+            className="pointer-events-none absolute top-72 -left-16 z-[1] block h-auto w-[min(52vw,31rem)] rotate-[2deg] select-none sm:top-[18.75rem] sm:-left-24 sm:w-[min(34vw,31rem)]"
           />
           <img
             src={gongbiBirdRight}
@@ -536,7 +536,7 @@ export function LandingPage() {
             loading="eager"
             decoding="async"
             fetchPriority="high"
-            className="pointer-events-none absolute top-28 -right-16 z-[1] block h-auto w-[min(32vw,29rem)] -rotate-[4deg] select-none sm:top-21 sm:-right-[9.5rem]"
+            className="pointer-events-none absolute top-20 -right-16 z-[1] block h-auto w-[min(48vw,29rem)] -rotate-[4deg] select-none sm:top-21 sm:-right-[9.5rem] sm:w-[min(32vw,29rem)]"
           />
 
           <div className="relative z-10 mx-auto flex w-full max-w-[82rem] flex-col items-center px-4 pt-16 text-center sm:px-12 sm:pt-20">
