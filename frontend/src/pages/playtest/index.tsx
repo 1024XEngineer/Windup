@@ -168,6 +168,7 @@ export function PlaytestPage({ renderToolbar }: PlaytestPageProps = {}) {
       outfitId={outfitId}
       movementMode={data.project.directionalMovement}
       initialActionId={initialActionId}
+      userId={recentOwnerId}
       toolbar={toolbar}
     />
   )
