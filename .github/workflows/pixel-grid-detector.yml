@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: native/pixel-perfect
+        working-directory: native/pixel-perfect/crates/detector
     steps:
       - uses: actions/checkout@v7
 
