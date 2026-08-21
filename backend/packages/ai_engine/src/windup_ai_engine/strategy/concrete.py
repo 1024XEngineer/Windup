@@ -321,22 +321,10 @@ class RenderFrameStrategy(DerivationStrategy):
                 f"三渲二未产出任何帧(动作 {action.action.value}、朝向 {chosen.direction})。"
             )
 
-        extra = [d for d in available if d != chosen.direction]
-        if extra:
-            # 如实报:这些朝向已经渲出来了、零额外成本,但出参装不下,只能丢。
-            # 不写成 warning 日志而是进度文案,因为这串字最终会经 server 到用户眼前,
-            # 而"多朝向"正是这条路线的卖点 —— 用户该知道它已经算好了。
-            progress.step(
-                "derive",
-                1,
-                3,
-                f"已渲 {len(available)} 个朝向,本次出参只带 {chosen.direction};"
-                f"其余 {','.join(extra)} 零成本可用但当前契约装不下(#122)",
-            )
-        else:
-            progress.step(
-                "derive", 1, 3, f"朝向 {chosen.direction} 共 {len(frames)} 帧"
-            )
+        # 只报拿到的这一个朝向。这里曾有一条"其余朝向零成本可用但契约装不下"的分支,
+        # 而 ``want`` 恒非 None → ``direction`` 恒传入 → 出帧台恒把方向表裁成单条,
+        # 那条分支在生产里无条件不成立。留着会让人以为多朝向已经算好了只是没带出来。
+        progress.step("derive", 1, 3, f"朝向 {chosen.direction} 共 {len(frames)} 帧")
 
         # 3D 帧本来就是透明底,**不套抠图**:去白边那一步会把浅灰甲当漏白吃掉。
         # 像素化仍按 ActionSpec 走。
