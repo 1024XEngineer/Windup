@@ -79,6 +79,13 @@ def _oracle_handler(seen: list[dict]):
     return handler
 
 
+def _ok_verdict_response() -> httpx.Response:
+    return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps({
+        "subject_count": 1, "foreign_objects": [],
+        "action_matches": True, "clipped": False,
+    })}}]})
+
+
 def _provider(monkeypatch, handler) -> SufyJudgeProvider:
     """把 provider 的 client 换成走 MockTransport 的,保留它自己组的 headers / base_url。"""
     provider = SufyJudgeProvider(config=_cfg())
@@ -160,6 +167,91 @@ def test_request_hits_chat_completions_with_bearer(monkeypatch):
     request = seen_requests[0]
     assert str(request.url) == f"{GATEWAY}/chat/completions"
     assert request.headers["Authorization"] == "Bearer test-key"
+
+
+# ── 判官走 _post 重试;出图不走这条 ─────────────────────────────────────────
+#
+# 合入 Gateway 时这段曾被揉进 submit_image 后丢掉。下面几条钉住:429/52x 才重发,
+# 500 可能已计费所以不重发,404 要说出型号和目录。
+
+
+def test_judge_retries_429_then_succeeds(monkeypatch):
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"})
+        return _ok_verdict_response()
+
+    verdict = _provider(monkeypatch, handler).judge(_png(1), _png(1), "walk")
+    assert calls["n"] == 2
+    assert verdict.subject_count == 1
+
+
+def test_judge_retries_522_then_succeeds(monkeypatch):
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(522, headers={"server": "cloudflare"})
+        return _ok_verdict_response()
+
+    _provider(monkeypatch, handler).judge(_png(1), _png(1), "walk")
+    assert calls["n"] == 2
+
+
+def test_judge_does_not_retry_500(monkeypatch):
+    """500 无法排除请求已到上游,再打一枪就是为同一帧付两次。"""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(500, text="upstream")
+
+    with pytest.raises(httpx.HTTPStatusError):
+        _provider(monkeypatch, handler).judge(_png(1), _png(1), "walk")
+    assert calls["n"] == 1
+
+
+def test_judge_404_names_the_model_and_models_catalog(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="model not found")
+
+    with pytest.raises(RuntimeError, match="judge-x") as e:
+        _provider(monkeypatch, handler).judge(_png(1), _png(1), "walk")
+    assert "/models" in str(e.value)
+
+
+def test_judge_exhausted_429_says_rate_limited(monkeypatch):
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(429, text="quota exceeded")
+
+    with pytest.raises(RuntimeError, match="限流"):
+        _provider(monkeypatch, handler).judge(_png(1), _png(1), "walk")
+    assert calls["n"] == 3
+
+
+def test_judge_stops_52x_when_resend_budget_is_spent(monkeypatch):
+    """52x 重发有重复计费风险,额度花完必须停,不能跟 429 一样打满 _POST_TRIES。"""
+    monkeypatch.setattr("windup_framework.providers.sufy.time.sleep", lambda _: None)
+    monkeypatch.setattr("windup_framework.providers.sufy._POST_TRIES", 9)
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(522, headers={"server": "APISIX"})
+
+    with pytest.raises(RuntimeError, match="未能连上上游"):
+        _provider(monkeypatch, handler).judge(_png(1), _png(1), "walk")
+    assert calls["n"] == 3, "额度 2 次 + 发现花完的那一枪,不是把 _POST_TRIES 打满"
 
 
 # ── 读不出结论必须抛错,不得兜底成"通过" ────────────────────────────────────

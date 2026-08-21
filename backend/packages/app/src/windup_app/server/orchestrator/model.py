@@ -78,9 +78,9 @@ class CharacterActionInput:
     # 这个动作是否循环播放。``None`` 原样往下传,由编排层兜成一次性:本层替调用方填默认值
     # 的话,"没给"和"明确给了 False"从这里起就再也分不开了。
     loop: bool | None = None
-    # 视频模型。``None`` = 用部署配置的默认值(kling-v2-5-turbo)。
-    # 取值域见 executor.ALLOWED_VIDEO_MODELS —— 只开放两个,因为每个模型的入参形状不同
-    # (image_list / input_reference / Fal 队列),全开等于把三套协议适配塞进一个改动。
+    # 视频模型。``None`` = 用部署配置的默认值。取值域为
+    # ``ModelRegistry.chain(CHARACTER_ACTION)``(部署默认 + fallbacks);不在链上 → 入口
+    # 报错,不到付费调用才失败。选中的型号表示这次从它开始试,由 Gateway 读 start_from_model。
     video_model: str | None = None
     # ── 三渲二(#192)────────────────────────────────────────────────────
     #

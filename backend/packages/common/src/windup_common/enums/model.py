@@ -15,6 +15,9 @@ class ModelErrorType(str, Enum):
     NETWORK = "network"                     # 网络错误(连接失败 / DNS),可重试
     AUTH = "auth"                           # 鉴权失败(密钥错 / 失效),不可重试
     INVALID_RESPONSE = "invalid_response"   # 返回格式错误(如该出图却返回纯文本 / 空)
+    UNREACHED = "unreached"                 # 521/522/523/525,请求大概率未到上游
+    MAYBE_BILLED = "maybe_billed"           # 520/524/其它可能已计费 5xx
+    UPSTREAM_FAILED = "upstream_failed"     # 视频 job failed/cancelled
     UNKNOWN = "unknown"                     # 未知错误
 
     @property
@@ -24,4 +27,5 @@ class ModelErrorType(str, Enum):
             ModelErrorType.RATE_LIMIT,
             ModelErrorType.TIMEOUT,
             ModelErrorType.NETWORK,
+            ModelErrorType.UNREACHED,
         }

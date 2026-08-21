@@ -12,6 +12,7 @@ import pathlib
 # setdefault 不覆盖已有的环境变量(本地 .env 或 CI secrets 优先生效)。
 os.environ.setdefault("JWT_SECRET", "test-secret-key-for-ci-only-32chars")
 os.environ.setdefault("POSTGRES_PASSWORD", "testpassword123")
+os.environ.setdefault("AI_GATEWAY_LEDGER_ENABLED", "false")
 
 import pytest
 from fastapi.testclient import TestClient

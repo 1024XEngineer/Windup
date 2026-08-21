@@ -26,6 +26,9 @@ from windup_ai_engine.ports import PromptRejected
 from windup_ai_engine.slicing.quality import subject_blobs
 from windup_common.directions import direction_prompt
 from windup_common.models import ActionSpec, ActionType as EngineActionType, CharacterCard
+from windup_framework.gateway import bind_call_context
+from windup_framework.gateway.registry import ModelRegistry
+from windup_framework.gateway.types import Scene
 from windup_framework.config.quality_gate import settings as gate_settings
 
 from windup_app.server.orchestrator import billing, quality_gate, task_repo
@@ -159,27 +162,17 @@ class _LogProgress:
         logger.info("[gen] %s %s/%s %s", stage, i, total, note)
 
 
-# 白名单而不是放开任意模型名:每个模型的入参形状不同(image_list / input_reference /
-# Fal 队列 + `Authorization: Key`)。列进来却没适配它的协议,等于"看起来能选、点了必然
-# 产生一个用不了的付费任务"。只列 SufyVideoProvider 真能建单的。Refs #239。
-ALLOWED_VIDEO_MODELS: dict[str, str] = {
-    "kling-v2-5-turbo": "默认。稳,本地首帧即可",
-    "kling-v2-6": "有 motion-control",
-}
-
-
 def _resolve_video_model(name: str | None) -> str | None:
     """校验并返回视频模型名;``None`` 表示用部署默认值。
 
+    只允许是 CHARACTER_ACTION 链上的一员,含义是「这次从它开始试」。
     非法取值在入口炸,不等到付费调用才失败。
     """
     if name is None:
         return None
-    if name not in ALLOWED_VIDEO_MODELS:
-        raise ValueError(
-            f"视频模型 {name!r} 不在本期开放列表内。可选:"
-            + "；".join(f"{k}({v})" for k, v in ALLOWED_VIDEO_MODELS.items())
-        )
+    chain = ModelRegistry.from_settings().chain(Scene.CHARACTER_ACTION)
+    if name not in chain:
+        raise ValueError(f"视频模型 {name!r} 不在本期开放列表内。可选:" + "；".join(chain))
     return name
 
 
@@ -223,17 +216,14 @@ class ActionTaskExecutor:
         | None = None,
         session_factory: Callable[[], Session] | None = None,
     ) -> None:
-        self._generator = generator  # None → 懒加载真实装配
-        # 按视频模型名分桶的 generator 缓存(模型是 provider 的构造参数,不能事后换)
-        # 三渲二的渲染方向数属于项目约束；同一视频模型在 4 向和 8 向项目中
-        # 不是同一个缓存实例，否则先请求的项目会把后续项目的方向数锁死。
-        # directions=1 保留旧的 model/None 键，避免已有注入测试和调用方失效；
-        # 多方向项目用二元组分桶，防止同一模型的方向配置互相污染。
-        self._by_model: dict[
-            str | None | tuple[str | None, int], CharacterGeneratorPort
-        ] = {}
-        # 抠图 / 图生图 provider 与视频模型无关,所有模型桶共用一份:每个抠图实例都会
-        # 各自惰性加载一份 ONNX 会话,按桶各建等于把同一个模型在进程里装多次。
+        self._generator = generator  # None → 懒加载真实装配(一套共享 Gateway)
+        # 选哪个 kling 是 Gateway 读 start_from_model 的事,不分模型桶。
+        # 三渲二的渲染方向数仍属项目约束:4 向和 8 向的相机表不同,必须分桶,
+        # 否则先请求的项目会把后续项目的方向数锁死。directions=1 用整数 1
+        # 做键,已有 `_get_generator()` 调用仍走同一份。
+        self._by_model: dict[int, CharacterGeneratorPort] = {}
+        # 抠图 / 图生图与视频 Gateway 无关方向分桶,所有桶共用一份:每个抠图实例
+        # 都会惰性加载一份 ONNX 会话,按桶各建等于把同一个模型在进程里装多次。
         self._matte: MatteProvider | None = None
         self._image: ImageProvider | None = None
         # 判官同样与视频模型无关,故不分桶。缺省 None 时**不建**实例:建了就意味着每个
@@ -261,14 +251,21 @@ class ActionTaskExecutor:
         先从 ``project`` 取全局约束(朝向/画风/尺寸/方向)再调 ai_engine。``session``
         缺省时自开一个(后台场景);测试可传入自己的 session。
         """
+        request_id = f"act-{task_id}"
         own = session is None
         session = session or self._make_session()
+        reset = None
         try:
             task_repo.update_status(session, task_id, TaskStatus.RUNNING)
             if own:
                 session.commit()
 
             cons = (self._fetch_constraints or _load_constraints)(session, project_id)
+            reset = bind_call_context(
+                request_id=request_id,
+                task_id=str(task_id),
+                start_from_model=_resolve_video_model(input.video_model),
+            )
             result = self._produce_action(input, cons)
             task_repo.update_result(session, task_id, _ACTION_RESULT, result)
             _settle_credit(session, task_id, success=True)
@@ -301,6 +298,8 @@ class ActionTaskExecutor:
             if own:
                 session.commit()
         finally:
+            if reset is not None:
+                reset()
             if own:
                 session.close()
 
@@ -369,6 +368,8 @@ class ActionTaskExecutor:
         # **不静默回退。** 拿到了 model_3d_url 却下载不下来 / 渲不出来,就报错,不改走
         # i2v —— 两条路线的画风、成本、多朝向能力都不同,悄悄换一条等于让调用方拿着
         # 错误的前提做后续决定,而帧数、时长、成色全都正常,没有任何一道会红。
+        #
+        # 选哪个 kling 不在这里传:run_action_task 已经 bind_call_context(start_from_model)。
         model_url = (input.model_3d_url or "").strip()
         # 三渲二那支不取母版,而出口的判官闸口要拿它当参照 —— 不先置 None 的话那支会
         # 撞 UnboundLocalError,而它只在有 3D 资产的造型上触发。
@@ -433,49 +434,43 @@ class ActionTaskExecutor:
         video_model: str | None = None,
         directions: int = 1,
     ) -> CharacterGeneratorPort:
-        """懒装配 CharacterGenerator,按模型名分桶。
+        """懒装配 CharacterGenerator(ImageGateway + VideoGateway + matte)。
 
-        视频 provider 的模型是构造参数,不分桶的话第一个请求指定的模型会被后续所有请求
-        沿用,而调用方以为自己指定了。
+        选哪个 kling 不在装配时定,由 bind_call_context 的 start_from_model 交给 Gateway。
+        ``video_model`` 仍接入口传入,但不参与分桶;分桶只为三渲二的方向数。
         """
+        del video_model
         if self._generator is not None:
             return self._generator
         # 命中缓存的快路径不进锁,否则每个请求都要在这里排一次队。只有装配新桶才上锁,
         # 锁内重查一次:两个线程同时错过同一个桶时,后进来的那个要看见前一个的成果。
-        cache_key: str | None | tuple[str | None, int]
-        cache_key = video_model if directions == 1 else (video_model, directions)
-        cached = self._by_model.get(cache_key)
+        cached = self._by_model.get(directions)
         if cached is not None:
             return cached
         with self._assembly_lock:
-            cached = self._by_model.get(cache_key)
+            cached = self._by_model.get(directions)
             if cached is None:
-                cached = self._assemble(video_model, directions)
-                self._by_model[cache_key] = cached
+                cached = self._assemble(directions)
+                self._by_model[directions] = cached
             return cached
 
-    def _assemble(
-        self, video_model: str | None, directions: int
-    ) -> CharacterGeneratorPort:
-        """装一个模型桶。**调用方须持有 ``self._assembly_lock``**(会写共用 provider)。"""
+    def _assemble(self, directions: int) -> CharacterGeneratorPort:
+        """装一个方向桶。**调用方须持有 ``self._assembly_lock``**(会写共用 provider)。"""
         from windup_ai_engine.impl import CharacterGenerator
         from windup_ai_engine.strategy.concrete import (
             PerFrameStrategy,
             VideoFrameStrategy,
         )
         from windup_common.models import GenRoute
-        from windup_framework.providers import (
-            OnnxU2NetMatteProvider,
-            SufyImageProvider,
-            SufyVideoProvider,
-        )
+        from windup_framework.gateway import build_image_gateway, build_video_gateway
+        from windup_framework.gateway.image import _CIRCUIT
+        from windup_framework.providers import OnnxU2NetMatteProvider
 
         if self._matte is None:
             self._matte = OnnxU2NetMatteProvider()
         if self._image is None:
-            self._image = SufyImageProvider()
-        # 只有它随模型变 —— 模型是构造参数,换模型必须换实例。
-        video = SufyVideoProvider(model=video_model)
+            self._image = build_image_gateway(circuit=_CIRCUIT)
+        video = build_video_gateway(circuit=_CIRCUIT)
         # 装配表必须与 GenRoute 对齐。下面那条断言让漏装在装配时暴露,而不是等到某个
         # 动作第一次被请求时才炸——注入 generator 的测试走不到这条装配路径,漏了会测试
         # 全绿而真实调用全崩。
@@ -574,7 +569,7 @@ class ImageTaskExecutor:
     def __init__(
         self,
         *,
-        image=None,  # None → 懒加载 SufyImageProvider
+        image=None,  # None → 懒加载 ImageGateway
         matte: MatteProvider | None = None,  # None → 懒加载 OnnxU2NetMatteProvider
         upload: Callable[[bytes], str] | None = None,  # None → 真实对象存储上传
         fetch_ref: Callable[[str], bytes]
@@ -595,13 +590,19 @@ class ImageTaskExecutor:
         *,
         session: Session | None = None,
     ) -> None:
+        request_id = f"img-{task_id}"
         own = session is None
         session = session or self._make_session()
+        reset = None
         try:
             task_repo.update_status(session, task_id, TaskStatus.RUNNING)
             if own:
                 session.commit()
             cons = _load_constraints(session, project_id)  # 角色图也受项目约束
+            reset = bind_call_context(
+                request_id=request_id,
+                task_id=str(task_id),
+            )
             urls, quality = self._produce_image(input, cons)
             task_repo.update_result(
                 session,
@@ -627,6 +628,8 @@ class ImageTaskExecutor:
             if own:
                 session.commit()
         finally:
+            if reset is not None:
+                reset()
             if own:
                 session.close()
 
@@ -711,9 +714,9 @@ class ImageTaskExecutor:
 
     def _get_image(self):
         if self._image is None:
-            from windup_framework.providers import SufyImageProvider
+            from windup_framework.gateway import build_image_gateway
 
-            self._image = SufyImageProvider()
+            self._image = build_image_gateway()
         return self._image
 
     def _get_matte(self):

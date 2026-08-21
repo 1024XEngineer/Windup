@@ -23,18 +23,23 @@
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 import io
 import json
 import logging
-import math
 import re
 import time
+from dataclasses import replace
 
 import httpx
 
+from windup_common.enums.model import ModelErrorType
 from windup_framework.config.provider import AIProviderSettings, settings
+from windup_framework.gateway.classify import (
+    classify_exception,
+    classify_http,
+    retry_after_seconds as _retry_after_seconds,
+)
+from windup_framework.gateway.types import AdapterResult
 
 from .interfaces import ImageProvider, VideoProvider
 
@@ -73,6 +78,43 @@ def _first_frame_datauri(frame: bytes, size: str) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(_fit_first_frame(frame, size)).decode()
 
 
+def _video_http_error(resp: httpx.Response, *, job_id: str | None = None) -> AdapterResult:
+    error_type = classify_http(resp.status_code)
+    retry_after_header = resp.headers.get("Retry-After")
+    retry_after_s = (
+        _retry_after_seconds(retry_after_header) if retry_after_header else None
+    )
+    return AdapterResult(
+        ok=False,
+        error_type=error_type,
+        http_status=resp.status_code,
+        maybe_billed=job_id is not None or error_type is ModelErrorType.MAYBE_BILLED,
+        edge_fingerprint=_edge_fingerprint(resp),
+        retry_after_s=retry_after_s,
+        job_id=job_id,
+    )
+
+
+def _transport_result(exc: BaseException) -> AdapterResult:
+    """POST 还没拿到状态行:收成 AdapterResult,让 Gateway 按 UNREACHED 决定是否重发。"""
+    error_type, status, edge = classify_exception(exc)
+    return AdapterResult(
+        ok=False,
+        error_type=error_type,
+        http_status=status,
+        maybe_billed=error_type is ModelErrorType.MAYBE_BILLED,
+        edge_fingerprint=edge,
+    )
+
+
+def _poll_get(client: httpx.Client, job_id: str) -> httpx.Response:
+    """轮询 GET;522/525(及同档未达上游码)该次再试 1 次,不新开单。"""
+    resp = client.get(f"/videos/{job_id}")
+    if resp.status_code in (521, 522, 523, 525):
+        resp = client.get(f"/videos/{job_id}")
+    return resp
+
+
 class SufyVideoProvider(VideoProvider):
     """kling i2v(默认 v2-5-turbo)。首帧 + 动作 prompt → mp4 bytes。"""
 
@@ -105,26 +147,79 @@ class SufyVideoProvider(VideoProvider):
             timeout=self._cfg.timeout,
         )
 
-    def i2v(
-        self, first_frame: bytes, prompt: str, seconds: int = 5, size: str = "1280x720"
-    ) -> bytes:
+    def submit_video(
+        self,
+        first_frame: bytes,
+        prompt: str,
+        seconds: int,
+        size: str,
+        model: str,
+    ) -> AdapterResult:
+        """一次 POST 建单。成功: ok=True, job_id, body=b"", maybe_billed=True。"""
         body: dict = {
-            "model": self._model,
+            "model": model,
             "prompt": prompt,
             "size": size,
             "seconds": str(seconds),
             "mode": self._mode,
         }
-        if self._model in _IMAGE_LIST_MODELS:
+        if model in _IMAGE_LIST_MODELS:
             b64 = _first_frame_datauri(first_frame, size).split(",", 1)[1]
             body["image_list"] = [{"image": b64}]
         else:
             body["input_reference"] = _first_frame_datauri(first_frame, size)
 
         with self._client() as client:
-            job = client.post("/videos", json=body).raise_for_status().json()
-            jid = job.get("id")
+            try:
+                resp = client.post("/videos", json=body)
+            except httpx.TransportError as exc:
+                return _transport_result(exc)
+
+        if 200 <= resp.status_code < 300:
+            try:
+                payload = resp.json()
+            except ValueError:
+                return AdapterResult(
+                    ok=False,
+                    error_type=ModelErrorType.INVALID_RESPONSE,
+                    http_status=resp.status_code,
+                    edge_fingerprint="响应不是 JSON",
+                )
+            jid = payload.get("id")
+            if not jid:
+                return AdapterResult(
+                    ok=False,
+                    error_type=ModelErrorType.INVALID_RESPONSE,
+                    http_status=resp.status_code,
+                    edge_fingerprint="响应没有 job id",
+                )
+            return AdapterResult(
+                ok=True,
+                job_id=str(jid),
+                body=b"",
+                maybe_billed=True,
+                http_status=resp.status_code,
+            )
+        return _video_http_error(resp)
+
+    def follow_job(self, job_id: str) -> AdapterResult:
+        """轮询已建单据 + 下载。poll GET 522/525 该次再试 1 次,不新开单。"""
+        poll_t0 = time.monotonic()
+        poll_count = 0
+
+        def with_poll(
+            result: AdapterResult, *, download_ms: int | None = None
+        ) -> AdapterResult:
+            return replace(
+                result,
+                poll_ms=int((time.monotonic() - poll_t0) * 1000),
+                poll_count=poll_count,
+                download_ms=download_ms,
+            )
+
+        with self._client() as client:
             url = None
+            last_status: str | None = None
             # 先短后长,而不是每次都睡满 ``poll_interval``。此前第一次查询也要等满一个
             # 间隔:60 秒的间隔下,一段 20 秒就绪的视频要到第 60 秒才被发现,纯白等。
             # 退避到上限后与原来一致,所以对慢任务不增加网关压力。
@@ -139,17 +234,104 @@ class SufyVideoProvider(VideoProvider):
                     break
                 time.sleep(wait)
                 wait = min(wait * 2, self._poll)
-                st = client.get(f"/videos/{jid}").raise_for_status().json()
-                status = st.get("status")
-                if status == "completed":
+                resp = _poll_get(client, job_id)
+                poll_count += 1
+                if not (200 <= resp.status_code < 300):
+                    return with_poll(_video_http_error(resp, job_id=job_id))
+                try:
+                    st = resp.json()
+                except ValueError:
+                    return with_poll(
+                        AdapterResult(
+                            ok=False,
+                            error_type=ModelErrorType.INVALID_RESPONSE,
+                            http_status=resp.status_code,
+                            job_id=job_id,
+                            maybe_billed=True,
+                            edge_fingerprint="轮询响应不是 JSON",
+                        )
+                    )
+                last_status = st.get("status")
+                if last_status == "completed":
                     vids = (st.get("task_result") or {}).get("videos") or []
                     url = vids[0].get("url") if vids else None
                     break
-                if status in ("failed", "cancelled"):
-                    raise RuntimeError(f"i2v 失败: {status} — {st.get('error')}")
+                if last_status in ("failed", "cancelled"):
+                    return with_poll(
+                        AdapterResult(
+                            ok=False,
+                            error_type=ModelErrorType.UPSTREAM_FAILED,
+                            job_id=job_id,
+                            maybe_billed=True,
+                            job_status=last_status,
+                            edge_fingerprint=str(st.get("error") or ""),
+                        )
+                    )
+            poll_ms = int((time.monotonic() - poll_t0) * 1000)
             if not url:
-                raise RuntimeError("i2v 未取得视频 URL(超时或失败)")
-            return _download(client, url)
+                return replace(
+                    AdapterResult(
+                        ok=False,
+                        error_type=ModelErrorType.TIMEOUT,
+                        job_id=job_id,
+                        maybe_billed=True,
+                        job_status=last_status or "timeout",
+                    ),
+                    poll_ms=poll_ms,
+                    poll_count=poll_count,
+                )
+            try:
+                download_t0 = time.monotonic()
+                body = _download(client, url)
+                download_ms = int((time.monotonic() - download_t0) * 1000)
+            except RuntimeError as exc:
+                return replace(
+                    AdapterResult(
+                        ok=False,
+                        error_type=ModelErrorType.MAYBE_BILLED,
+                        job_id=job_id,
+                        maybe_billed=True,
+                        job_status="completed",
+                        edge_fingerprint=str(exc),
+                    ),
+                    poll_ms=poll_ms,
+                    poll_count=poll_count,
+                )
+            return replace(
+                AdapterResult(
+                    ok=True,
+                    body=body,
+                    job_id=job_id,
+                    maybe_billed=True,
+                    job_status="completed",
+                ),
+                poll_ms=poll_ms,
+                poll_count=poll_count,
+                download_ms=download_ms,
+            )
+
+    def i2v(
+        self, first_frame: bytes, prompt: str, seconds: int = 5, size: str = "1280x720"
+    ) -> bytes:
+        submitted = self.submit_video(first_frame, prompt, seconds, size, self._model)
+        if not submitted.ok or not submitted.job_id:
+            raise RuntimeError(
+                f"i2v 建单失败(HTTP {submitted.http_status} {submitted.error_type}): "
+                f"{submitted.edge_fingerprint}"
+            )
+        followed = self.follow_job(submitted.job_id)
+        if followed.ok:
+            return followed.body
+        if followed.error_type is ModelErrorType.TIMEOUT:
+            raise RuntimeError("i2v 未取得视频 URL(超时或失败)")
+        if followed.error_type is ModelErrorType.UPSTREAM_FAILED:
+            raise RuntimeError(
+                f"i2v 失败: {followed.job_status} — {followed.edge_fingerprint}"
+            )
+        raise RuntimeError(
+            f"i2v 失败(HTTP {followed.http_status} {followed.error_type}): "
+            f"{followed.edge_fingerprint}"
+        )
 
 
 class IncompleteDownloadError(RuntimeError):
@@ -282,34 +464,19 @@ def _download(client: httpx.Client, url: str, tries: int = 3) -> bytes:
 
 DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image"
 
-# "调用成功但没返回有效图"的重试次数。与 _download 的网络重试是两码事:那个治连接断,
-# 这个治模型返回了一条不含图的正常响应(实测偶发)。也是为什么下面要判 base64 长度 ——
-# 返回里可能带一个几十字节的占位串,当图存下去就是一个打不开的文件。
-_IMAGE_TRIES = 3
+# "调用成功但没返回有效图"的下限。返回里可能带一个几十字节的占位串,当图存下去就是一个打不开的文件。
 _MIN_IMAGE_BYTES = 5000
 _CONNECT_RETRIES = 3
 _MAX_RETRY_WAIT = 30.0
 _IMAGE_TIMEOUT_MULTIPLIER = 1.5
 
-# 429 是被限流拒收、必然没计费,所以按次数放开重试。它与 _IMAGE_TRIES 会叠乘,单次
-# gen_image 的最坏情况因此是:_IMAGE_TRIES × _POST_TRIES = 9 次请求,退避最多睡
-# 6 × _MAX_RETRY_WAIT = 180 秒,加上每次请求自身 timeout × _IMAGE_TIMEOUT_MULTIPLIER。
+# 判官 ``_post`` 自带的 429 / 52x 重试。出图不走这里：Gateway 一次一枪。
 _POST_TRIES = 3
 
 # 521 源站拒绝连接、523 源站不可达都止步于 TCP 层;522 按 Cloudflare 自己的定义含两种
 # 情形 —— 握手没收到 SYN+ACK,以及连接已建立但源站未及时确认请求,后者请求已经写到源站。
 # 所以"重发不会重复计费"是大概率而非保证,重发次数因此要受 _UNREACHED_RESENDS 约束。
-#
-# 判据只看码、不看响应头:``AI_BASE_URL`` 后面挂的是哪家网关不可知,靠 ``cf-ray`` +
-# ``server: cloudflare`` 认 Cloudflare 会把真实链路上的 52x 全判否(实测网关自报
-# ``server: APISIX``),整条重试等于不存在。
-#
-# 520 与 524 不在此列:连接已建立、请求可能正在源站处理中(524 就是"源站 100 秒没答完"),
-# 重发一次就是为同一张图付两次钱。
 _CLOUDFLARE_UNREACHED_STATUS = frozenset({521, 522, 523})
-
-# 一次 gen_image 内允许把 52x 重发几次。只按码判就无法排除"网关转发给上游之后才回 52x",
-# 与其赌它不存在,不如把最坏情况封成一个小常数:最多多付两张图,且不随上面两层循环叠乘。
 _UNREACHED_RESENDS = 2
 
 _DIAGNOSTIC_HEADERS = ("server", "cf-ray", "via", "x-served-by", "retry-after")
@@ -330,32 +497,6 @@ class _ResendBudget:
         return True
 
 
-def _edge_fingerprint(response: httpx.Response) -> str:
-    """52x 出自链路上哪一跳,只能从这几个头看 —— 不记下来,线上就只剩一个状态码可复盘。"""
-    seen = {k: response.headers.get(k) for k in _DIAGNOSTIC_HEADERS}
-    return " ".join(f"{k}={v}" for k, v in seen.items() if v) or "无可辨识的边缘响应头"
-
-
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _retry_after_seconds(value: str) -> float | None:
-    try:
-        delay = float(value)
-    except ValueError:
-        try:
-            retry_at = parsedate_to_datetime(value)
-        except (TypeError, ValueError, OverflowError):
-            return None
-        if retry_at.tzinfo is None:
-            retry_at = retry_at.replace(tzinfo=timezone.utc)
-        delay = (retry_at.astimezone(timezone.utc) - _utc_now()).total_seconds()
-    if not math.isfinite(delay):
-        return None
-    return min(max(delay, 0.0), _MAX_RETRY_WAIT)
-
-
 def _retry_exhausted_message(status: int, tries: int, fingerprint: str) -> str:
     """这条文本常常是线上唯一留下的失败记录,少一样就得靠猜是限流、还是哪一跳断的。"""
     if status == 429:
@@ -369,17 +510,52 @@ def _retry_exhausted_message(status: int, tries: int, fingerprint: str) -> str:
     )
 
 
+def _edge_fingerprint(response: httpx.Response) -> str:
+    """52x 出自链路上哪一跳,只能从这几个头看 —— 不记下来,线上就只剩一个状态码可复盘。"""
+    seen = {k: response.headers.get(k) for k in _DIAGNOSTIC_HEADERS}
+    return " ".join(f"{k}={v}" for k, v in seen.items() if v) or "无可辨识的边缘响应头"
+
+
 # 从响应里捞 data URI。模型把图放在 message.content 里,而不同网关的包裹层级不一样
 # (有的 content 是字符串、有的是 parts 数组),故对整个响应 JSON 做一次正则,
 # 不去猜层级 —— 猜错的代价是"调用成功、费用已产生、但我们说没图"。
 _DATA_URI = re.compile(r"data:image/[^;]+;base64,([A-Za-z0-9+/=]{100,})")
 
 
-class ChatCompletionsFace:
-    """网关 ``/chat/completions`` 面的共用管道:建 client、发请求、判哪些失败可以重发。
+def _image_result_from_2xx(resp: httpx.Response) -> AdapterResult:
+    try:
+        payload = resp.json()
+    except ValueError:
+        return AdapterResult(
+            ok=False,
+            error_type=ModelErrorType.INVALID_RESPONSE,
+            http_status=resp.status_code,
+            edge_fingerprint="响应不是 JSON",
+        )
+    found = _DATA_URI.search(json.dumps(payload))
+    if not found:
+        return AdapterResult(
+            ok=False,
+            error_type=ModelErrorType.INVALID_RESPONSE,
+            http_status=resp.status_code,
+            edge_fingerprint="响应里没有 data URI",
+        )
+    data = base64.b64decode(found.group(1))
+    if len(data) < _MIN_IMAGE_BYTES:
+        return AdapterResult(
+            ok=False,
+            error_type=ModelErrorType.INVALID_RESPONSE,
+            http_status=resp.status_code,
+            edge_fingerprint=f"图只有 {len(data)} 字节(下限 {_MIN_IMAGE_BYTES})",
+        )
+    return AdapterResult(ok=True, body=data, http_status=resp.status_code)
 
-    出图与判官共用一份 —— 同一网关同一把 key,限流与 52x 的语义一样;各写一份的话,
-    改一次重试判据要记得改两处,漏掉的那处的代价是重复计费。
+
+class ChatCompletionsFace:
+    """网关 ``/chat/completions`` 面的共用管道:建 client、发请求。
+
+    判官走 ``_post``(自带 429 / 52x 重试);出图走 ``submit_image`` 一次一枪,
+    重试由 Gateway 做。client / 指纹 / 超时倍数仍共用,免得两处配成两套。
     """
 
     # 出图比一次问答慢得多,所以超时按能力放大;判官用基准超时。
@@ -416,7 +592,6 @@ class ChatCompletionsFace:
                 raise RuntimeError(_retry_exhausted_message(code, resends.spent, edge))
             retryable = code == 429 or code in _CLOUDFLARE_UNREACHED_STATUS
             if not retryable:
-                # 5xx 一律留指纹:要不要人工重发,取决于失败落在链路的哪一跳。
                 if code >= 500:
                     logger.warning(
                         "图像服务返回 %d,不重发(无法排除请求已到达上游并计费);%s",
@@ -427,7 +602,6 @@ class ChatCompletionsFace:
                 raise RuntimeError(_retry_exhausted_message(code, _POST_TRIES, edge))
             delay = _retry_after_seconds(resp.headers.get("Retry-After", ""))
             if delay is None:
-                # 上限同样兜住指数退避:上游挂掉时不该把一个图像任务堵成长时间阻塞。
                 delay = min(float(2**attempt), _MAX_RETRY_WAIT)
             logger.warning(
                 "模型服务返回 %d，第 %d/%d 次请求，%.2f 秒后重试;%s",
@@ -446,6 +620,48 @@ class ChatCompletionsFace:
                 f"同一把 key 也是。原始响应:{resp.text[:200]}"
             )
         return resp.raise_for_status().json()
+
+    def submit_image(self, prompt: str, refs: list[bytes], model: str) -> AdapterResult:
+        """提示词 + 参考图 → 一次 POST → AdapterResult。重试由 Gateway 做。"""
+        content: list[dict] = [{"type": "text", "text": prompt}]
+        for raw in refs:
+            b64 = base64.b64encode(raw).decode()
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{b64}"},
+            })
+        body = {"model": model, "messages": [{"role": "user", "content": content}]}
+        with self._client() as client:
+            try:
+                resp = client.post(self._cfg.chat_completions_path, json=body)
+            except httpx.TransportError as exc:
+                return _transport_result(exc)
+
+        if 200 <= resp.status_code < 300:
+            return _image_result_from_2xx(resp)
+
+        error_type = classify_http(resp.status_code)
+        if resp.status_code in (400, 404):
+            edge = (
+                f"网关 {self._cfg.normalized_base_url} 拒绝了模型 {model!r}"
+                f"(HTTP {resp.status_code})。先确认该网关的目录里有它:"
+                f"GET {self._cfg.normalized_base_url}/models —— 不同网关目录不同,"
+                f"同一把 key 也是。原始响应:{resp.text[:200]}"
+            )
+        else:
+            edge = _edge_fingerprint(resp)
+        retry_after_header = resp.headers.get("Retry-After")
+        retry_after_s = (
+            _retry_after_seconds(retry_after_header) if retry_after_header else None
+        )
+        return AdapterResult(
+            ok=False,
+            error_type=error_type,
+            http_status=resp.status_code,
+            maybe_billed=error_type is ModelErrorType.MAYBE_BILLED,
+            edge_fingerprint=edge,
+            retry_after_s=retry_after_s,
+        )
 
 
 class SufyImageProvider(ChatCompletionsFace, ImageProvider):
@@ -475,28 +691,11 @@ class SufyImageProvider(ChatCompletionsFace, ImageProvider):
         为什么不返回空 bytes 兜底:上游 ``ImageTaskExecutor`` 会把返回值直接上传对象存储
         并写进任务结果,一个 0 字节的"成功"会变成用户看到的一张裂图。
         """
-        content: list[dict] = [{"type": "text", "text": prompt}]
-        for raw in refs:
-            b64 = base64.b64encode(raw).decode()
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{b64}"},
-            })
-        body = {"model": self._model, "messages": [{"role": "user", "content": content}]}
-
-        last = ""
-        # 预算建在循环外:同一张图的多次尝试共用一份"可能已计费"的额度。
-        resends = _ResendBudget()
-        with self._client() as client:
-            for attempt in range(1, _IMAGE_TRIES + 1):
-                payload = self._post(client, body, resends)
-                found = _DATA_URI.search(json.dumps(payload))
-                if found:
-                    data = base64.b64decode(found.group(1))
-                    if len(data) >= _MIN_IMAGE_BYTES:
-                        return data
-                    last = f"图只有 {len(data)} 字节(下限 {_MIN_IMAGE_BYTES})"
-                else:
-                    last = "响应里没有 data URI"
-                logger.warning("文生图第 %d/%d 次没拿到有效图:%s", attempt, _IMAGE_TRIES, last)
-        raise RuntimeError(f"文生图 {_IMAGE_TRIES} 次均未取得有效图:{last}")
+        r = self.submit_image(prompt, refs, self._model)
+        if r.ok:
+            return r.body
+        if r.error_type is ModelErrorType.INVALID_RESPONSE:
+            raise RuntimeError(f"文生图未取得有效图:{r.edge_fingerprint}")
+        raise RuntimeError(
+            f"文生图失败(HTTP {r.http_status} {r.error_type}): {r.edge_fingerprint}"
+        )

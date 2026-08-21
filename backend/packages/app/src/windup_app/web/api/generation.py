@@ -198,8 +198,8 @@ class CharacterActionGenerateRequest(BaseModel):
     # 不对称:一次性动作被当成循环会让末帧接回首帧抽搐、产物不可用,反之只是不无缝闭环、
     # 仍可用。而且猜错是静默的,帧数/时长/成色全部正常、没有任何一道会红。
     loop: bool | None = None
-    # 视频模型。None = 用部署默认(kling-v2-5-turbo)。取值域见
-    # orchestrator.executor.ALLOWED_VIDEO_MODELS;非法值在入口就报错,不到付费调用才失败。
+    # 视频模型。None = 用部署默认。取值域见 ModelRegistry.chain(CHARACTER_ACTION);
+    # 非法值在入口就报错,不到付费调用才失败。选中的型号表示这次从它开始试。
     video_model: str | None = None
     # 这次动作属于哪个造型。给了才可能走三渲二 —— 3D 资产挂在造型一级(#121)。
     # 不给则照旧走 i2v(向后兼容:前端接上之前所有调用都是这样)。

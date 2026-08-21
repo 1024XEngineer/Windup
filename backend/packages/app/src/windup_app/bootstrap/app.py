@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from windup_framework.db import Base, engine
+from windup_framework.gateway.models import AIGatewayAttempt, AIGatewayAttemptDetail  # noqa: F401
 
 # 模型导入：触发 Base.metadata 注册，确保 create_all 能发现所有表
 from windup_ai_engine.impl.character_namer import LangChainCharacterNamer
