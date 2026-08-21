@@ -115,6 +115,7 @@ pub fn two_stage_pack(
     let mut selected_count = vec![0f64; cell_count];
     let mut pixel_count = vec![0f64; cell_count];
     let mut fallback_sum = vec![[0f64; 3]; cell_count];
+    let mut transparent_fallback_sum = vec![[0f64; 3]; cell_count];
     let mut opaque_count = vec![0f64; cell_count];
     for y in 0..height {
         for x in 0..width {
@@ -129,12 +130,16 @@ pub fn two_stage_pack(
             ];
             pixel_count[cell] += 1.0;
             for channel in 0..3 {
-                fallback_sum[cell][channel] += rgb[channel];
+                transparent_fallback_sum[cell][channel] += rgb[channel];
             }
-            if rgba[source_offset + 3] > 127 {
+            let is_opaque = rgba[source_offset + 3] > 127;
+            if is_opaque {
                 opaque_count[cell] += 1.0;
+                for channel in 0..3 {
+                    fallback_sum[cell][channel] += rgb[channel];
+                }
             }
-            if labels[source_index] == winning_label[cell] {
+            if is_opaque && labels[source_index] == winning_label[cell] {
                 selected_count[cell] += 1.0;
                 color_weight[cell] += weight;
                 for channel in 0..3 {
@@ -153,12 +158,20 @@ pub fn two_stage_pack(
                 color_sum[cell][2] / color_weight[cell],
             ]
         } else {
-            let count = pixel_count[cell].max(1.0);
-            [
-                fallback_sum[cell][0] / count,
-                fallback_sum[cell][1] / count,
-                fallback_sum[cell][2] / count,
-            ]
+            if opaque_count[cell] > 0.0 {
+                [
+                    fallback_sum[cell][0] / opaque_count[cell],
+                    fallback_sum[cell][1] / opaque_count[cell],
+                    fallback_sum[cell][2] / opaque_count[cell],
+                ]
+            } else {
+                let count = pixel_count[cell].max(1.0);
+                [
+                    transparent_fallback_sum[cell][0] / count,
+                    transparent_fallback_sum[cell][1] / count,
+                    transparent_fallback_sum[cell][2] / count,
+                ]
+            }
         };
         for channel in 0..3 {
             output[cell * 4 + channel] = pyround(color[channel] * 255.0).clamp(0.0, 255.0) as u8;
