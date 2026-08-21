@@ -1,5 +1,7 @@
-"""Executor 经 Gateway 装配,失败时仍绑定 request_id 供日志/trace,界面文案走脱敏出口。"""
+"""Executor 经 Gateway 装配,失败时仍绑定 task_id 供日志/trace,界面文案走脱敏出口。"""
 from __future__ import annotations
+
+import uuid
 
 import pytest
 from sqlalchemy import create_engine
@@ -86,7 +88,8 @@ def test_action_task_failure_includes_request_id(session_factory):
     assert done.status is TaskStatus.FAILED
     assert done.error_message
     assert "request_id" not in (done.error_message or "")
-    assert seen["request_id"] == f"act-{task_id}"
+    assert seen["request_id"] is not None
+    uuid.UUID(str(seen["request_id"]))
     assert seen["task_id"] == str(task_id)
     assert seen["start_from_model"] is None
 
@@ -150,5 +153,46 @@ def test_image_task_failure_includes_request_id(session_factory):
     assert done.status is TaskStatus.FAILED
     assert done.error_message
     assert "request_id" not in (done.error_message or "")
-    assert seen["request_id"] == f"img-{task_id}"
+    assert seen["request_id"] is not None
+    uuid.UUID(str(seen["request_id"]))
     assert seen["task_id"] == str(task_id)
+
+
+def test_image_task_uses_distinct_request_ids_for_each_image(session_factory):
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGBA", (64, 64), (0, 0, 0, 0)).save(buf, format="PNG")
+    png = buf.getvalue()
+    seen_ids: list[str | None] = []
+
+    class _CountingImage:
+        def gen_image(self, prompt, refs):
+            seen_ids.append(current_call_context().request_id)
+            return png
+
+    class _FakeMatte:
+        def cutout(self, img):
+            return img
+
+    service = AiGenerationService()
+    executor = ImageTaskExecutor(
+        image=_CountingImage(),
+        matte=_FakeMatte(),
+        upload=lambda _png: "https://cdn.example.com/a.png",
+        session_factory=session_factory,
+    )
+    image_input = CharacterImageInput(prompt="knight", num_images=3)
+    with session_factory() as s:
+        task = service.generate_character_image(s, user_id=1, input=image_input)
+        s.commit()
+        task_id = task.id
+
+    executor.run_image_task(task_id, image_input)
+
+    assert len(seen_ids) == 3
+    assert len(set(seen_ids)) == 3
+    for rid in seen_ids:
+        uuid.UUID(str(rid))

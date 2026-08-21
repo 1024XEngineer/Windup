@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Callable
+import uuid
 
 
 @dataclass(frozen=True)
@@ -40,3 +41,14 @@ def bind_call_context(
         _call_context.reset(token)
 
     return reset
+
+
+def fresh_gateway_request(**overrides: str | None) -> Callable[[], None]:
+    """Bind a new UUID request_id; keep task/user/start_from_model from current context."""
+    ctx = current_call_context()
+    return bind_call_context(
+        request_id=str(uuid.uuid4()),
+        task_id=overrides.get("task_id", ctx.task_id),
+        user_id=overrides.get("user_id", ctx.user_id),
+        start_from_model=overrides.get("start_from_model", ctx.start_from_model),
+    )

@@ -22,6 +22,11 @@ def test_remote_protocol_error_is_unreached():
     assert "disconnected" in edge
 
 
+def test_502_and_503_are_unreached():
+    assert classify_http(502) is ModelErrorType.UNREACHED
+    assert classify_http(503) is ModelErrorType.UNREACHED
+
+
 def test_520_and_524_are_maybe_billed():
     assert classify_http(520) is ModelErrorType.MAYBE_BILLED
     assert classify_http(524) is ModelErrorType.MAYBE_BILLED

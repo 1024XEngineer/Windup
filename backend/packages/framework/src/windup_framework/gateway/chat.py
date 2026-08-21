@@ -13,6 +13,8 @@ from langchain_openai import ChatOpenAI
 
 from windup_common.enums.model import ModelErrorType
 from windup_framework.config.provider import AIProviderSettings, settings as default_settings
+from windup_framework.gateway.billing import billing_flags, upstream_reached_label
+from windup_framework.gateway.budget import AttemptBudget
 from windup_framework.gateway.circuit import CircuitBreaker
 from windup_framework.gateway.context import current_call_context
 from windup_framework.gateway.policy import decide
@@ -24,6 +26,7 @@ from windup_framework.gateway.routes import (
     routes_from_settings,
 )
 from windup_framework.gateway.trace import AttemptDetail, AttemptTrace, emit
+from windup_framework.gateway.sequencer import AttemptSequencer
 from windup_framework.gateway.types import Family, NextStep, Scene
 
 _CIRCUIT = CircuitBreaker()
@@ -190,6 +193,8 @@ class ChatGateway:
         fallback_reason: str | None = None
         route_reason_override: str | None = None
         last_http_status: int | None = None
+        seq = AttemptSequencer()
+        budget = AttemptBudget()
 
         def total_ms() -> int:
             return int((time.monotonic() - started) * 1000)
@@ -207,13 +212,18 @@ class ChatGateway:
                     model=models[0],
                     family=Family.CHAT_COMPLETIONS.value,
                     route=self._routes[0],
-                    attempt_index=0,
+                    attempt_index=seq.next_index(),
                     retry_count=0,
                     route_reason="skip_circuit_open",
                     outcome="failed",
                     circuit_scope="aggregator",
                     total_latency_ms=total_ms(),
-                    detail=AttemptDetail(input_hash=input_hash),
+                    maybe_billed=False,
+                    detail=AttemptDetail(
+                        input_hash=input_hash,
+                        policy_next_step="fail",
+                        upstream_reached="false",
+                    ),
                 )
             )
             fail(None)
@@ -250,12 +260,15 @@ class ChatGateway:
                     ended_at = _utc_now()
                     attempt_latency_ms = int((time.monotonic() - attempt_t0) * 1000)
                     last_http_status = result.http_status
-                    retry_after_ms = (
-                        int(result.retry_after_s * 1000)
-                        if result.retry_after_s is not None
-                        else None
+                    error_type = (
+                        None if result.ok else (result.error_type or ModelErrorType.UNKNOWN)
                     )
-                    if result.ok:
+                    maybe_billed = billing_flags(
+                        error_type=error_type,
+                        http_status=result.http_status,
+                        ok=result.ok,
+                    )
+                    if not budget.can_record(maybe_billed):
                         self._emit(
                             AttemptTrace(
                                 request_id=request_id,
@@ -263,7 +276,45 @@ class ChatGateway:
                                 model=model,
                                 family=Family.CHAT_COMPLETIONS.value,
                                 route=route,
-                                attempt_index=model_index,
+                                attempt_index=seq.next_index(),
+                                retry_count=retry_count,
+                                route_reason="attempt_budget_exhausted",
+                                outcome="failed",
+                                error_type=error_type.value if error_type else None,
+                                http_status=result.http_status,
+                                fallback_used=fallback_used,
+                                started_at=started_at,
+                                ended_at=ended_at,
+                                attempt_latency_ms=attempt_latency_ms,
+                                total_latency_ms=total_ms(),
+                                maybe_billed=maybe_billed,
+                                detail=AttemptDetail(
+                                    input_hash=input_hash,
+                                    policy_next_step="fail",
+                                    upstream_reached=upstream_reached_label(
+                                        error_type, http_status=result.http_status
+                                    ),
+                                    model_index=model_index,
+                                ),
+                            )
+                        )
+                        fail(last_http_status)
+                    retry_after_ms = (
+                        int(result.retry_after_s * 1000)
+                        if result.retry_after_s is not None
+                        else None
+                    )
+                    if result.ok:
+                        attempt_index = seq.next_index()
+                        budget.record(maybe_billed)
+                        self._emit(
+                            AttemptTrace(
+                                request_id=request_id,
+                                scene=Scene.CHAT,
+                                model=model,
+                                family=Family.CHAT_COMPLETIONS.value,
+                                route=route,
+                                attempt_index=attempt_index,
                                 retry_count=retry_count,
                                 route_reason=route_reason,
                                 outcome="fallback_success" if fallback_used else "success",
@@ -273,25 +324,38 @@ class ChatGateway:
                                 ended_at=ended_at,
                                 attempt_latency_ms=attempt_latency_ms,
                                 total_latency_ms=total_ms(),
-                                maybe_billed=True,
+                                maybe_billed=maybe_billed,
                                 detail=AttemptDetail(
                                     input_hash=input_hash,
                                     output_bytes=len(str(result.value).encode()),
                                     retry_after_ms=retry_after_ms,
                                     edge_fingerprint=result.edge_fingerprint or None,
                                     provider_usage=result.provider_usage,
+                                    policy_next_step="success",
+                                    upstream_reached="true",
+                                    model_index=model_index,
                                 ),
                             )
                         )
                         return result.value
 
-                    error_type = result.error_type or ModelErrorType.UNKNOWN
                     step = decide(
                         error_type=error_type,
                         retry_count=retry_count,
                         has_job_id=False,
                     )
                     has_next_route = route_index + 1 < len(self._routes)
+                    if step is NextStep.FAIL:
+                        tier_step = budget.tier_b_escalation(
+                            error_type,
+                            has_next_route=has_next_route,
+                            has_job_id=False,
+                        )
+                        if tier_step is not None:
+                            step = tier_step
+                            if tier_step is NextStep.OPEN_AGGREGATOR:
+                                route_reason_override = "fallback_after_maybe_billed"
+                    policy_next_step = step.value
                     circuit_scope = None
                     if step is NextStep.OPEN_AGGREGATOR:
                         if has_next_route:
@@ -307,6 +371,8 @@ class ChatGateway:
                         self._circuit.open("model:" + model)
                         circuit_scope = "model"
 
+                    attempt_index = seq.next_index()
+                    budget.record(maybe_billed)
                     self._emit(
                         AttemptTrace(
                             request_id=request_id,
@@ -314,7 +380,7 @@ class ChatGateway:
                             model=model,
                             family=Family.CHAT_COMPLETIONS.value,
                             route=route,
-                            attempt_index=model_index,
+                            attempt_index=attempt_index,
                             retry_count=retry_count,
                             route_reason=route_reason,
                             outcome="failed",
@@ -326,12 +392,17 @@ class ChatGateway:
                             ended_at=ended_at,
                             attempt_latency_ms=attempt_latency_ms,
                             total_latency_ms=total_ms(),
-                            maybe_billed=False,
+                            maybe_billed=maybe_billed,
                             detail=AttemptDetail(
                                 input_hash=input_hash,
                                 retry_after_ms=retry_after_ms,
                                 edge_fingerprint=result.edge_fingerprint or None,
                                 provider_usage=result.provider_usage,
+                                policy_next_step=policy_next_step,
+                                upstream_reached=upstream_reached_label(
+                                    error_type, http_status=result.http_status
+                                ),
+                                model_index=model_index,
                             ),
                         )
                     )

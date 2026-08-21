@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 
 from windup_common.enums.model import ModelErrorType
 from windup_framework.config.provider import AIProviderSettings, settings as default_settings
+from windup_framework.gateway.billing import billing_flags, upstream_reached_label
+from windup_framework.gateway.budget import AttemptBudget
 from windup_framework.gateway.circuit import CircuitBreaker
 from windup_framework.gateway.context import current_call_context
 from windup_framework.gateway.policy import decide
@@ -25,6 +27,7 @@ from windup_framework.gateway.trace import (
     hash_bytes,
     hash_image_input,
 )
+from windup_framework.gateway.sequencer import AttemptSequencer
 from windup_framework.gateway.types import NextStep, Scene
 
 _CIRCUIT = CircuitBreaker()
@@ -58,6 +61,8 @@ class ImageGateway:
         fallback_reason: str | None = None
         route_reason_override: str | None = None
         routes = self._routes
+        seq = AttemptSequencer()
+        budget = AttemptBudget()
 
         chain = list(self._registry.chain(Scene.CHARACTER_IMAGE))
         if ctx.start_from_model and ctx.start_from_model in chain:
@@ -84,13 +89,18 @@ class ImageGateway:
                     scene=Scene.CHARACTER_IMAGE,
                     model=model,
                     route=route,
-                    attempt_index=start_i,
+                    attempt_index=seq.next_index(),
                     retry_count=0,
                     route_reason="skip_circuit_open",
                     outcome="failed",
                     circuit_scope="aggregator",
                     total_latency_ms=total_ms(),
-                    detail=AttemptDetail(input_hash=input_hash),
+                    maybe_billed=False,
+                    detail=AttemptDetail(
+                        input_hash=input_hash,
+                        policy_next_step="fail",
+                        upstream_reached="false",
+                    ),
                 )
             )
             fail(None)
@@ -112,7 +122,7 @@ class ImageGateway:
             adapter = self._adapter_for(route)
             switch_to_next_route = False
             for i, model in enumerate(models):
-                attempt_index = start_i + i
+                model_index = start_i + i
                 if self._circuit.is_open("model:" + model):
                     fallback_used = True
                     fallback_reason = "skip"
@@ -122,14 +132,20 @@ class ImageGateway:
                             scene=Scene.CHARACTER_IMAGE,
                             model=model,
                             route=route,
-                            attempt_index=attempt_index,
+                            attempt_index=seq.next_index(),
                             retry_count=0,
                             route_reason="skip_circuit_open",
                             outcome="failed",
                             circuit_scope="model",
                             fallback_used=fallback_used,
                             total_latency_ms=total_ms(),
-                            detail=AttemptDetail(input_hash=input_hash),
+                            maybe_billed=False,
+                            detail=AttemptDetail(
+                                input_hash=input_hash,
+                                policy_next_step="fallback",
+                                upstream_reached="false",
+                                model_index=model_index,
+                            ),
                         )
                     )
                     continue
@@ -156,7 +172,45 @@ class ImageGateway:
                     ended_at = _utc_now()
                     attempt_latency_ms = int((time.monotonic() - attempt_t0) * 1000)
                     last_http_status = result.http_status
-                    billed = result.ok or result.maybe_billed
+                    error_type = (
+                        None if result.ok else (result.error_type or ModelErrorType.UNKNOWN)
+                    )
+                    maybe_billed = billing_flags(
+                        error_type=error_type,
+                        http_status=result.http_status,
+                        ok=result.ok,
+                    )
+                    if not budget.can_record(maybe_billed):
+                        self._emit(
+                            AttemptTrace(
+                                request_id=request_id,
+                                scene=Scene.CHARACTER_IMAGE,
+                                model=model,
+                                route=route,
+                                attempt_index=seq.next_index(),
+                                retry_count=retry_count,
+                                route_reason="attempt_budget_exhausted",
+                                outcome="failed",
+                                error_type=error_type.value if error_type else None,
+                                http_status=result.http_status,
+                                fallback_used=fallback_used,
+                                started_at=started_at,
+                                ended_at=ended_at,
+                                attempt_latency_ms=attempt_latency_ms,
+                                total_latency_ms=total_ms(),
+                                maybe_billed=maybe_billed,
+                                detail=AttemptDetail(
+                                    input_hash=input_hash,
+                                    policy_next_step="fail",
+                                    upstream_reached=upstream_reached_label(
+                                        error_type, http_status=result.http_status, ok=result.ok
+                                    ),
+                                    model_index=model_index,
+                                ),
+                            )
+                        )
+                        fail(last_http_status)
+                    billed = result.ok or maybe_billed
                     cost = estimate_cost(
                         Scene.CHARACTER_IMAGE,
                         billed=billed,
@@ -170,6 +224,8 @@ class ImageGateway:
                         else None
                     )
                     if result.ok:
+                        attempt_index = seq.next_index()
+                        budget.record(maybe_billed)
                         self._emit(
                             AttemptTrace(
                                 request_id=request_id,
@@ -187,7 +243,7 @@ class ImageGateway:
                                 ended_at=ended_at,
                                 attempt_latency_ms=attempt_latency_ms,
                                 total_latency_ms=total_ms(),
-                                maybe_billed=True,
+                                maybe_billed=maybe_billed,
                                 cost=cost,
                                 detail=AttemptDetail(
                                     input_hash=input_hash,
@@ -199,17 +255,31 @@ class ImageGateway:
                                     job_status=result.job_status,
                                     edge_fingerprint=result.edge_fingerprint or None,
                                     provider_usage=result.provider_usage,
+                                    policy_next_step="success",
+                                    upstream_reached="true",
+                                    model_index=model_index,
                                 ),
                             )
                         )
                         return result.body
 
-                    error_type = result.error_type or ModelErrorType.UNKNOWN
                     step = decide(
                         error_type=error_type,
                         retry_count=retry_count,
                         has_job_id=bool(result.job_id),
                     )
+                    has_next_route = route_index + 1 < len(routes)
+                    if step is NextStep.FAIL:
+                        tier_step = budget.tier_b_escalation(
+                            error_type,
+                            has_next_route=has_next_route,
+                            has_job_id=bool(result.job_id),
+                        )
+                        if tier_step is not None:
+                            step = tier_step
+                            if tier_step is NextStep.OPEN_AGGREGATOR:
+                                route_reason_override = "fallback_after_maybe_billed"
+                    policy_next_step = step.value
                     circuit_scope = None
                     has_next_route = route_index + 1 < len(routes)
                     if step is NextStep.OPEN_AGGREGATOR:
@@ -226,6 +296,8 @@ class ImageGateway:
                         self._circuit.open("model:" + model)
                         circuit_scope = "model"
 
+                    attempt_index = seq.next_index()
+                    budget.record(maybe_billed)
                     self._emit(
                         AttemptTrace(
                             request_id=request_id,
@@ -245,7 +317,7 @@ class ImageGateway:
                             ended_at=ended_at,
                             attempt_latency_ms=attempt_latency_ms,
                             total_latency_ms=total_ms(),
-                            maybe_billed=result.maybe_billed,
+                            maybe_billed=maybe_billed,
                             cost=cost,
                             detail=AttemptDetail(
                                 input_hash=input_hash,
@@ -256,6 +328,11 @@ class ImageGateway:
                                 job_status=result.job_status,
                                 edge_fingerprint=result.edge_fingerprint or None,
                                 provider_usage=result.provider_usage,
+                                policy_next_step=policy_next_step,
+                                upstream_reached=upstream_reached_label(
+                                    error_type, http_status=result.http_status
+                                ),
+                                model_index=model_index,
                             ),
                         )
                     )

@@ -26,7 +26,7 @@ from windup_ai_engine.ports import PromptRejected
 from windup_ai_engine.slicing.quality import subject_blobs
 from windup_common.directions import direction_prompt
 from windup_common.models import ActionSpec, ActionType as EngineActionType, CharacterCard
-from windup_framework.gateway import bind_call_context
+from windup_framework.gateway import bind_call_context, fresh_gateway_request
 from windup_framework.gateway.registry import ModelRegistry
 from windup_framework.gateway.types import Scene
 from windup_framework.config.quality_gate import settings as gate_settings
@@ -251,7 +251,6 @@ class ActionTaskExecutor:
         先从 ``project`` 取全局约束(朝向/画风/尺寸/方向)再调 ai_engine。``session``
         缺省时自开一个(后台场景);测试可传入自己的 session。
         """
-        request_id = f"act-{task_id}"
         own = session is None
         session = session or self._make_session()
         reset = None
@@ -262,7 +261,6 @@ class ActionTaskExecutor:
 
             cons = (self._fetch_constraints or _load_constraints)(session, project_id)
             reset = bind_call_context(
-                request_id=request_id,
                 task_id=str(task_id),
                 start_from_model=_resolve_video_model(input.video_model),
             )
@@ -360,63 +358,67 @@ class ActionTaskExecutor:
         progress: ProgressPort = _LogProgress()
         canvas = (cons.sprite_w, cons.sprite_h)
 
-        # ── 路线选择:这一步是 server 的事,不是引擎的(#122)────────────────
-        #
-        # 判据就一条:这个造型有没有绑骨 3D 模型(character_data.outfits[].model_3d_url,
-        # 由 web 层读出来放进 input)。有 → 三渲二;没有 → 照旧 i2v。
-        #
-        # **不静默回退。** 拿到了 model_3d_url 却下载不下来 / 渲不出来,就报错,不改走
-        # i2v —— 两条路线的画风、成本、多朝向能力都不同,悄悄换一条等于让调用方拿着
-        # 错误的前提做后续决定,而帧数、时长、成色全都正常,没有任何一道会红。
-        #
-        # 选哪个 kling 不在这里传:run_action_task 已经 bind_call_context(start_from_model)。
-        model_url = (input.model_3d_url or "").strip()
-        # 三渲二那支不取母版,而出口的判官闸口要拿它当参照 —— 不先置 None 的话那支会
-        # 撞 UnboundLocalError,而它只在有 3D 资产的造型上触发。
-        master: bytes | None = None
-        if model_url:
-            rigged = (self._fetch_model3d or self._download_model3d)(model_url)
-            logger.info(
-                "[gen] 造型 %s 有 3D 资产(%d bytes),走三渲二",
-                input.outfit_id or "?",
-                len(rigged),
-            )
-            generated = self._get_generator(
-                _resolve_video_model(input.video_model), cons.directions
-            ).generate_rendered(card, action, rigged, progress, canvas=canvas)
-        else:
-            master = (self._fetch_master or self._download_master)(input)
-            generated = self._get_generator(
-                _resolve_video_model(input.video_model), cons.directions
-            ).generate(card, action, master, progress, canvas=canvas)
+        reset_call = fresh_gateway_request()
+        try:
+            # ── 路线选择:这一步是 server 的事,不是引擎的(#122)────────────────
+            #
+            # 判据就一条:这个造型有没有绑骨 3D 模型(character_data.outfits[].model_3d_url,
+            # 由 web 层读出来放进 input)。有 → 三渲二;没有 → 照旧 i2v。
+            #
+            # **不静默回退。** 拿到了 model_3d_url 却下载不下来 / 渲不出来,就报错,不改走
+            # i2v —— 两条路线的画风、成本、多朝向能力都不同,悄悄换一条等于让调用方拿着
+            # 错误的前提做后续决定,而帧数、时长、成色全都正常,没有任何一道会红。
+            #
+            # 选哪个 kling 不在这里传:run_action_task 已经 bind_call_context(start_from_model)。
+            model_url = (input.model_3d_url or "").strip()
+            # 三渲二那支不取母版,而出口的判官闸口要拿它当参照 —— 不先置 None 的话那支会
+            # 撞 UnboundLocalError,而它只在有 3D 资产的造型上触发。
+            master: bytes | None = None
+            if model_url:
+                rigged = (self._fetch_model3d or self._download_model3d)(model_url)
+                logger.info(
+                    "[gen] 造型 %s 有 3D 资产(%d bytes),走三渲二",
+                    input.outfit_id or "?",
+                    len(rigged),
+                )
+                generated = self._get_generator(
+                    _resolve_video_model(input.video_model), cons.directions
+                ).generate_rendered(card, action, rigged, progress, canvas=canvas)
+            else:
+                master = (self._fetch_master or self._download_master)(input)
+                generated = self._get_generator(
+                    _resolve_video_model(input.video_model), cons.directions
+                ).generate(card, action, master, progress, canvas=canvas)
 
-        upload = self._upload or self._upload_frame
-        checked = [_require_size(png, cons.sprite_w, cons.sprite_h) for png in generated.frames]
-        frames = [
-            {"index": i, "image_url": upload(png), "duration_ms": dur}
-            for i, (png, dur) in enumerate(zip(checked, generated.durations))
-        ]
-        # quality / prompt_version 只落库记账,不在此处据成色改判决:交付/重试是产品
-        # 决策,该由读这本账的下游按阈值决定,任务状态仍只反映"生成流程是否跑完"。
-        result = {
-            "type": "character_action",
-            "action_type": input.action_type.value,
-            "direction": input.direction.value,
-            "frames": frames,
-            "quality": dataclasses.asdict(generated.quality),
-            "prompt_version": generated.prompt_version,
-        }
-        # master 为 None 时 review 按"没判"返回 None(三渲二路线没有可比的参照)。
-        decision = quality_gate.review(
-            self._get_judge(), checked, master, _judged_action(input)
-        )
-        if decision is not None:
-            result["judge"] = decision.as_payload()
-            if decision.blocked:
-                # 帧已经生成、已经上传,钱早就花完了。拦在这里的意义只剩"不把坏产物当成
-                # 交付物交出去";这也正是拦截档默认关着的原因。
-                raise quality_gate.QualityBlocked(decision.problems)
-        return result
+            upload = self._upload or self._upload_frame
+            checked = [_require_size(png, cons.sprite_w, cons.sprite_h) for png in generated.frames]
+            frames = [
+                {"index": i, "image_url": upload(png), "duration_ms": dur}
+                for i, (png, dur) in enumerate(zip(checked, generated.durations))
+            ]
+            # quality / prompt_version 只落库记账,不在此处据成色改判决:交付/重试是产品
+            # 决策,该由读这本账的下游按阈值决定,任务状态仍只反映"生成流程是否跑完"。
+            result = {
+                "type": "character_action",
+                "action_type": input.action_type.value,
+                "direction": input.direction.value,
+                "frames": frames,
+                "quality": dataclasses.asdict(generated.quality),
+                "prompt_version": generated.prompt_version,
+            }
+            # master 为 None 时 review 按"没判"返回 None(三渲二路线没有可比的参照)。
+            decision = quality_gate.review(
+                self._get_judge(), checked, master, _judged_action(input)
+            )
+            if decision is not None:
+                result["judge"] = decision.as_payload()
+                if decision.blocked:
+                    # 帧已经生成、已经上传,钱早就花完了。拦在这里的意义只剩"不把坏产物当成
+                    # 交付物交出去";这也正是拦截档默认关着的原因。
+                    raise quality_gate.QualityBlocked(decision.problems)
+            return result
+        finally:
+            reset_call()
 
     def _get_judge(self) -> JudgePort | None:
         """闸口启用时懒建判官;未启用返回 ``None``,一次调用都不发。"""
@@ -590,7 +592,6 @@ class ImageTaskExecutor:
         *,
         session: Session | None = None,
     ) -> None:
-        request_id = f"img-{task_id}"
         own = session is None
         session = session or self._make_session()
         reset = None
@@ -599,10 +600,7 @@ class ImageTaskExecutor:
             if own:
                 session.commit()
             cons = _load_constraints(session, project_id)  # 角色图也受项目约束
-            reset = bind_call_context(
-                request_id=request_id,
-                task_id=str(task_id),
-            )
+            reset = bind_call_context(task_id=str(task_id))
             urls, quality = self._produce_image(input, cons)
             task_repo.update_result(
                 session,
@@ -697,7 +695,11 @@ class ImageTaskExecutor:
         urls: list[str] = []
         cut: list[Image.Image] = []
         for _ in range(max(1, input.num_images)):
-            img = image_gen.gen_image(prompt, refs)
+            reset_call = fresh_gateway_request()
+            try:
+                img = image_gen.gen_image(prompt, refs)
+            finally:
+                reset_call()
             # 提示词要的是浅灰底,交付的母版却必须是透明底:不在这里抠,灰底会一路带进
             # 预览、也会成为下一次图生图的参考底色(#430)。抠在缩放之前 —— u2netp 按模型
             # 原始分辨率分割,先缩再抠等于把一半可用像素丢掉再让它猜。
