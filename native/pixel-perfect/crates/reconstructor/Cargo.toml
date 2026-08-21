@@ -9,10 +9,6 @@ publish = false
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 rayon = "1.12.0"
 
-[[bin]]
-name = "windup-pixel-grid-reconstructor"
-path = "src/main.rs"
-
 [profile.release]
 lto = true
 codegen-units = 1

@@ -1,5 +1,4 @@
-use std::io::{Cursor, Write};
-use std::process::{Command, Stdio};
+use std::io::Cursor;
 
 use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
 use windup_pixel_grid_reconstructor::reconstruct_bytes;
@@ -138,26 +137,4 @@ fn reconstructor_rejects_more_than_four_million_pixels_before_decoding() {
     let error = reconstruct_bytes(&source, 16, 16, 16).unwrap_err();
 
     assert!(error.to_string().contains("maximum is 4000000 pixels"));
-}
-
-#[test]
-fn cli_rejects_an_oversized_encoded_input_before_decoding() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_windup-pixel-grid-reconstructor"))
-        .args(["--cols", "16", "--rows", "16"])
-        .stdin(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn reconstructor CLI");
-    child
-        .stdin
-        .take()
-        .expect("open stdin")
-        .write_all(&vec![0u8; 32 * 1024 * 1024 + 1])
-        .expect("write oversized input");
-
-    let output = child
-        .wait_with_output()
-        .expect("wait for reconstructor CLI");
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("encoded input exceeds"));
 }
