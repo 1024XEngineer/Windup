@@ -1,0 +1,11 @@
+[package]
+name = "windup-pixel-grid-detector"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+rayon = "1.12.0"
+rustfft = "6"

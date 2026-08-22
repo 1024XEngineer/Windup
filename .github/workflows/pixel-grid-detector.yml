@@ -1,0 +1,29 @@
+name: Pixel grid detector CI
+
+on:
+  push:
+    paths:
+      - "native/pixel-perfect/**"
+      - ".github/workflows/pixel-grid-detector.yml"
+  pull_request:
+    paths:
+      - "native/pixel-perfect/**"
+      - ".github/workflows/pixel-grid-detector.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: native/pixel-perfect/crates/detector
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Rust format
+        run: cargo fmt --check
+
+      - name: Rust tests
+        run: cargo test --release --locked
