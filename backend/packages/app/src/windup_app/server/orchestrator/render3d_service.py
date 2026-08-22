@@ -31,7 +31,6 @@ from windup_ai_engine.ports import MasterRejected
 from windup_app.server.orchestrator._fetch import FetchNotAllowed, fetch_own_media
 from windup_app.server.orchestrator.render3d_assets import (
     AUTORIG_CREDITS,
-    BUILD_CNY,
     BUILD_CREDITS,
     MODEL3D_CREDITS,
     RAW_KEY_PREFIX,
@@ -183,7 +182,7 @@ class Render3DAssetOperations:
         if not self._builder.may_build_assets:
             raise SpendNotAuthorized(
                 f"本部署未开启建 3D 资产(需 WINDUP_RENDER3D_ALLOW_SPEND)。建一次 "
-                f"{BUILD_CREDITS} 积分,约 ¥{BUILD_CNY}。"
+                f"{BUILD_CREDITS} 积分。"
             )
         state = self._builder.state(outfit_key)
         if state is not Render3DAssetState.ABSENT:
