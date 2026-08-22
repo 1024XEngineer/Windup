@@ -273,24 +273,16 @@ class ActionTaskExecutor:
             # 单独捕获而不是落进下面那个兜底:兜底只存 str(exc),``code`` 就丢了,server
             # 于是分不出"用户改一句话就能过的输入错"和"引擎故障",只能去解析异常文本。
             logger.info("动作任务 %s 的描述被措辞门禁拒绝: %s", task_id, exc.code.value)
-            task_repo.update_result(
-                session, task_id, _ACTION_RESULT,
-                {"type": _ACTION_RESULT, "reject_code": exc.code.value,
-                 "reject_detail": exc.detail},
-            )
-            task_repo.update_status(
-                session, task_id, TaskStatus.FAILED, error_message=user_message(exc),
+            task_repo.fail_task(
+                session, task_id, error_message=user_message(exc),
             )
             if own:
                 session.commit()
         except Exception as exc:  # noqa: BLE001 —— 兜底任何生成/上传/网络异常
             logger.exception("动作任务 %s 失败", task_id)
             session.rollback()
-            task_repo.update_status(
-                session,
-                task_id,
-                TaskStatus.FAILED,
-                error_message=user_message(exc),
+            task_repo.fail_task(
+                session, task_id, error_message=user_message(exc),
             )
             _settle_credit(session, task_id, success=False)
             if own:
@@ -619,8 +611,8 @@ class ImageTaskExecutor:
         except Exception as exc:  # noqa: BLE001 —— 兜底
             logger.exception("图片任务 %s 失败", task_id)
             session.rollback()
-            task_repo.update_status(
-                session, task_id, TaskStatus.FAILED, error_message=user_message(exc)
+            task_repo.fail_task(
+                session, task_id, error_message=user_message(exc),
             )
             _settle_credit(session, task_id, success=False)
             if own:

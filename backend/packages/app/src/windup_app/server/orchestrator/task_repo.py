@@ -169,6 +169,29 @@ def update_status(
     _publish_task_update(task_id, _record_to_domain(record))
 
 
+def fail_task(
+    session: Session,
+    task_id: int,
+    *,
+    error_message: str,
+) -> None:
+    """将任务标记为失败，并清空结果。
+
+    前端合同要求非 ``completed`` 任务不得携带 ``result``;失败路径统一走这里,
+    避免先 ``update_result()`` 再改 ``failed`` 时遗留脏数据。
+    """
+    record = session.get(GenerationTaskRecord, task_id)
+    if record is None:
+        return
+    record.status = TaskStatus.FAILED.value
+    record.error_message = error_message
+    record.result_type = None
+    record.result = None
+    record.update_at = datetime.now(timezone.utc)
+    session.flush()
+    _publish_task_update(task_id, _record_to_domain(record))
+
+
 def update_result(
     session: Session,
     task_id: int,
