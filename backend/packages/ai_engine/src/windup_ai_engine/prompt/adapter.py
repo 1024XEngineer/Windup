@@ -1,11 +1,7 @@
 """零模型的 :class:`~windup_ai_engine.ports.PromptAdapterPort` 实现。
 
-先做规则版而不是直接上 LLM:它不花钱、确定性、可测,且换成 LLM 版之后它仍然是兜底
-(模型不可用时的降级)与对照组(判断 LLM 改写到底有没有比规则更好)。
-
-它只做确定性做得到的三件事:跑门禁并在 error 级上拒掉、把用户那句话嵌进已验证的骨架、
-追加统一的单主体与构图后缀。**翻译、改写措辞、把"轻微"换成一个具体幅度,规则做不到**
-—— 那些是 LLM 版的活,这里只负责讲清楚拦在哪、为什么。
+用户描述先经 :mod:`rewrite` 用 Chat Gateway 大模型预改写,再跑措辞门禁与骨架装配。
+改写失败时回退原文;门禁的拒绝逻辑不变。
 
 放在 ai_engine 而不是 framework:分层门禁(``lint-imports`` 的"包分层链")规定
 framework 在 ai_engine 之下,framework 里的模块 import 不到本层的门禁与骨架。
@@ -21,6 +17,7 @@ from windup_common.models import CharacterStance, Facing
 from windup_ai_engine.ports import AdaptedPrompt, PromptRejectCode, PromptRejected
 from windup_ai_engine.prompt.custom import MAX_ACTION_CHARS, build_custom_body
 from windup_ai_engine.prompt.lint import Kind, lint
+from windup_ai_engine.prompt.rewrite import rewrite_prompt
 
 __all__ = ["RuleBasedPromptAdapter"]
 
@@ -97,6 +94,8 @@ class RuleBasedPromptAdapter:
                 f"描述有 {len(clause)} 字,超过上限 {MAX_ACTION_CHARS}。描述越长越容易"
                 f"夹带角色外观,而外观由母版承载,写两遍会打架。只留动作本身。",
             )
+
+        clause = rewrite_prompt(clause, kind=kind, stance=stance)
 
         issues = lint(clause, kind=kind)
         blockers = [
