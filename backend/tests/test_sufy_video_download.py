@@ -737,6 +737,24 @@ def _i2v_handler(seen: dict, *, statuses=("completed",), video=b"MP4DATA" * 200)
     return h
 
 
+def test_inspect_job_pending_has_no_error_type():
+    p = _video_provider(_i2v_handler({}, statuses=("in_progress",)))
+    snap = p.inspect_job("job-1")
+    assert not snap.ok
+    assert snap.error_type is None
+    assert snap.job_status == "in_progress"
+    assert not snap.body
+
+
+def test_inspect_job_completed_puts_url_in_edge_fingerprint():
+    p = _video_provider(_i2v_handler({}, statuses=("completed",)))
+    snap = p.inspect_job("job-1")
+    assert snap.ok
+    assert snap.job_status == "completed"
+    assert snap.edge_fingerprint.endswith("/out.mp4")
+    assert not snap.body
+
+
 def test_follow_job_records_poll_and_download_timings():
     p = _video_provider(_i2v_handler({}, statuses=("in_progress", "completed")))
     result = p.follow_job("job-1")

@@ -104,10 +104,12 @@ def test_asking_for_more_frames_than_the_video_has_returns_all(video):
 
 
 def test_bytes_entry_point_streams_too(video, monkeypatch):
-    """公开入口是 bytes 版,它也必须走流式(它只是多包了一层临时文件)。"""
+    """公开入口是 bytes 版,它也必须走流式,且 pyav 成功时不落盘。"""
     import imageio.v3 as iio
+    import windup_ai_engine.slicing.extract as extract_mod
 
     monkeypatch.setattr(iio, "imread", _forbidden)
+    monkeypatch.setattr(extract_mod.tempfile, "TemporaryDirectory", _forbidden)
     with open(video, "rb") as f:
         assert len(extract_frames_bytes(f.read(), 4)) == 4
 

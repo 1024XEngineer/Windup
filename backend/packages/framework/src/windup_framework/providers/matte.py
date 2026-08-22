@@ -294,6 +294,11 @@ class OnnxU2NetMatteProvider(MatteProvider):
             )
         return self._refine_session
 
+    def warmup(self) -> None:
+        """进程启动时把两个 ONNX 会话装进内存,避免首个任务和 overlay 缺页叠在一起。"""
+        self._get_session()
+        self._get_refine_session()
+
     def _get_session(self):
         if self._session is None:
             try:

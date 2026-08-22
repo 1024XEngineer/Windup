@@ -446,6 +446,24 @@ def test_handle_generation_unknown_type_raises(db_session, engine, monkeypatch):
         )
 
 
+def test_dispatch_handler_routes_action_poll(monkeypatch):
+    called = {"ok": False}
+
+    monkeypatch.setattr(
+        "windup_app.worker.handlers.handle_action_poll",
+        lambda payload, **kwargs: called.update(ok=True, payload=payload),
+    )
+
+    dispatch_handler(
+        "character_action_poll",
+        {"task_id": 9, "task_type": "character_action", "poll_count": 1},
+        run_image_task=MagicMock(),
+        run_action_task=MagicMock(),
+        resume_action_poll=MagicMock(),
+    )
+    assert called["ok"] is True
+
+
 def test_dispatch_handler_routes_character_action(monkeypatch):
     called = {"ok": False}
 

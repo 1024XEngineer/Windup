@@ -231,6 +231,63 @@ class SufyVideoProvider(VideoProvider):
             )
         return _video_http_error(resp)
 
+    def inspect_job(self, job_id: str) -> AdapterResult:
+        """单次 GET 任务状态,不 sleep、不下载。
+
+        completed: ``ok=True``,视频 URL 放 ``edge_fingerprint``。
+        进行中: ``ok=False``,``error_type is None``,``job_status`` 为上游状态。
+        """
+        with self._client() as client:
+            resp = _poll_get(client, job_id)
+            if not (200 <= resp.status_code < 300):
+                return _video_http_error(resp, job_id=job_id, phase="follow")
+            try:
+                st = resp.json()
+            except ValueError:
+                return AdapterResult(
+                    ok=False,
+                    error_type=ModelErrorType.INVALID_RESPONSE,
+                    http_status=resp.status_code,
+                    job_id=job_id,
+                    maybe_billed=True,
+                    edge_fingerprint="轮询响应不是 JSON",
+                )
+            last_status = st.get("status")
+            if last_status == "completed":
+                vids = (st.get("task_result") or {}).get("videos") or []
+                url = vids[0].get("url") if vids else None
+                if not url:
+                    return AdapterResult(
+                        ok=False,
+                        error_type=ModelErrorType.INVALID_RESPONSE,
+                        job_id=job_id,
+                        maybe_billed=True,
+                        job_status="completed",
+                        edge_fingerprint="completed 但没有视频 URL",
+                    )
+                return AdapterResult(
+                    ok=True,
+                    job_id=job_id,
+                    maybe_billed=True,
+                    job_status="completed",
+                    edge_fingerprint=url,
+                )
+            if last_status in ("failed", "cancelled"):
+                return AdapterResult(
+                    ok=False,
+                    error_type=ModelErrorType.UPSTREAM_FAILED,
+                    job_id=job_id,
+                    maybe_billed=True,
+                    job_status=last_status,
+                    edge_fingerprint=str(st.get("error") or ""),
+                )
+            return AdapterResult(
+                ok=False,
+                job_id=job_id,
+                maybe_billed=True,
+                job_status=last_status or "pending",
+            )
+
     def follow_job(self, job_id: str) -> AdapterResult:
         """轮询已建单据 + 下载。poll GET 522/525 该次再试 1 次,不新开单。"""
         poll_t0 = time.monotonic()
@@ -246,98 +303,70 @@ class SufyVideoProvider(VideoProvider):
                 download_ms=download_ms,
             )
 
-        with self._client() as client:
-            url = None
-            last_status: str | None = None
-            # 先短后长,而不是每次都睡满 ``poll_interval``。此前第一次查询也要等满一个
-            # 间隔:60 秒的间隔下,一段 20 秒就绪的视频要到第 60 秒才被发现,纯白等。
-            # 退避到上限后与原来一致,所以对慢任务不增加网关压力。
-            # 次数与时间双上限。只用时间会让"永不完成"这类用例必须真等满预算
-            # (实测把一条 0.01 秒的用例拖成 60 秒);只用次数则退避变快之后预算被提前
-            # 耗光。两者取先到的那个。
-            budget = max(1, int(self._max_min * 60 // self._poll))
-            deadline = time.monotonic() + self._max_min * 60
-            wait = self._first_poll_after
-            for _ in range(budget):
-                if time.monotonic() >= deadline:
-                    break
-                time.sleep(wait)
-                wait = min(wait * 2, self._poll)
-                resp = _poll_get(client, job_id)
-                poll_count += 1
-                if not (200 <= resp.status_code < 300):
-                    return with_poll(_video_http_error(resp, job_id=job_id, phase="follow"))
-                try:
-                    st = resp.json()
-                except ValueError:
-                    return with_poll(
-                        AdapterResult(
-                            ok=False,
-                            error_type=ModelErrorType.INVALID_RESPONSE,
-                            http_status=resp.status_code,
-                            job_id=job_id,
-                            maybe_billed=True,
-                            edge_fingerprint="轮询响应不是 JSON",
-                        )
-                    )
-                last_status = st.get("status")
-                if last_status == "completed":
-                    vids = (st.get("task_result") or {}).get("videos") or []
-                    url = vids[0].get("url") if vids else None
-                    break
-                if last_status in ("failed", "cancelled"):
-                    return with_poll(
-                        AdapterResult(
-                            ok=False,
-                            error_type=ModelErrorType.UPSTREAM_FAILED,
-                            job_id=job_id,
-                            maybe_billed=True,
-                            job_status=last_status,
-                            edge_fingerprint=str(st.get("error") or ""),
-                        )
-                    )
-            poll_ms = int((time.monotonic() - poll_t0) * 1000)
-            if not url:
-                return replace(
-                    AdapterResult(
-                        ok=False,
-                        error_type=ModelErrorType.TIMEOUT,
-                        job_id=job_id,
-                        maybe_billed=True,
-                        job_status=last_status or "timeout",
-                    ),
-                    poll_ms=poll_ms,
-                    poll_count=poll_count,
-                )
-            try:
-                download_t0 = time.monotonic()
-                body = _download(client, url)
-                download_ms = int((time.monotonic() - download_t0) * 1000)
-            except RuntimeError as exc:
-                return replace(
-                    AdapterResult(
-                        ok=False,
-                        error_type=ModelErrorType.MAYBE_BILLED,
-                        job_id=job_id,
-                        maybe_billed=True,
-                        job_status="completed",
-                        edge_fingerprint=str(exc),
-                    ),
-                    poll_ms=poll_ms,
-                    poll_count=poll_count,
-                )
+        url = None
+        last_status: str | None = None
+        # 先短后长,而不是每次都睡满 ``poll_interval``。此前第一次查询也要等满一个
+        # 间隔:60 秒的间隔下,一段 20 秒就绪的视频要到第 60 秒才被发现,纯白等。
+        # 退避到上限后与原来一致,所以对慢任务不增加网关压力。
+        # 次数与时间双上限。只用时间会让"永不完成"这类用例必须真等满预算
+        # (实测把一条 0.01 秒的用例拖成 60 秒);只用次数则退避变快之后预算被提前
+        # 耗光。两者取先到的那个。
+        budget = max(1, int(self._max_min * 60 // self._poll))
+        deadline = time.monotonic() + self._max_min * 60
+        wait = self._first_poll_after
+        for _ in range(budget):
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(wait)
+            wait = min(wait * 2, self._poll)
+            snap = self.inspect_job(job_id)
+            poll_count += 1
+            last_status = snap.job_status
+            if snap.ok and snap.job_status == "completed":
+                url = snap.edge_fingerprint
+                break
+            if snap.error_type is not None:
+                return with_poll(snap)
+        poll_ms = int((time.monotonic() - poll_t0) * 1000)
+        if not url:
             return replace(
                 AdapterResult(
-                    ok=True,
-                    body=body,
+                    ok=False,
+                    error_type=ModelErrorType.TIMEOUT,
                     job_id=job_id,
                     maybe_billed=True,
-                    job_status="completed",
+                    job_status=last_status or "timeout",
                 ),
                 poll_ms=poll_ms,
                 poll_count=poll_count,
-                download_ms=download_ms,
             )
+        downloaded = self.download_completed(job_id, url)
+        return with_poll(downloaded, download_ms=downloaded.download_ms)
+
+    def download_completed(self, job_id: str, url: str) -> AdapterResult:
+        """按 inspect 拿到的 URL 下载 mp4,不轮询。"""
+        try:
+            download_t0 = time.monotonic()
+            with self._client() as client:
+                body = _download(client, url)
+            download_ms = int((time.monotonic() - download_t0) * 1000)
+        except RuntimeError as exc:
+            return AdapterResult(
+                ok=False,
+                error_type=ModelErrorType.MAYBE_BILLED,
+                job_id=job_id,
+                maybe_billed=True,
+                job_status="completed",
+                edge_fingerprint=str(exc),
+            )
+        return AdapterResult(
+            ok=True,
+            body=body,
+            job_id=job_id,
+            maybe_billed=True,
+            job_status="completed",
+            download_ms=download_ms,
+        )
 
     def i2v(
         self, first_frame: bytes, prompt: str, seconds: int = 5, size: str = "1280x720"
