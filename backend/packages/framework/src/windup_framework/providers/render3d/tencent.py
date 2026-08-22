@@ -43,7 +43,7 @@ from .interfaces import (
 
 __all__ = [
     "TencentModel3DProvider", "TencentAutoRigProvider", "TencentCosModelUploader",
-    "SpendNotAuthorizedError", "CREDITS", "CREDIT_PRICE_CNY", "PRESET_MOTIONS",
+    "SpendNotAuthorizedError", "CREDITS", "PRESET_MOTIONS",
     "RIG_CREDITS", "MAX_IMAGE_BYTES", "VIEW_TYPES",
 ]
 
@@ -54,7 +54,6 @@ VERSION = "2025-05-13"
 
 CREDITS = {"Normal": 20, "LowPoly": 25, "Geometry": 15, "Sketch": 25}
 RIG_CREDITS = 10
-CREDIT_PRICE_CNY = 0.12          # 后付费单价;预付费 0.09–0.1
 MAX_IMAGE_BYTES = 6 * 10**6      # ImageBase64 上限
 VIEW_TYPES = ("back", "left", "right")   # 正面走主参数,不在这里
 
@@ -266,10 +265,10 @@ class TencentModel3DProvider:
         self._poll = poll_interval
         self._max_min = max_min
 
-    def quote(self, n_views: int = 1) -> tuple[int, float]:
+    def quote(self, n_views: int = 1) -> int:
         """返回 (积分, 预估元)。PBR、多视图各 +10 积分。纯计算,可在提交前随便调。"""
         credits = CREDITS[self._type] + (10 if self._pbr else 0) + (10 if n_views > 1 else 0)
-        return credits, round(credits * CREDIT_PRICE_CNY, 2)
+        return credits
 
     def build_params(self, master: bytes,
                      extra_views: Mapping[str, bytes] | None = None) -> dict:
@@ -305,10 +304,10 @@ class TencentModel3DProvider:
         if want not in MODEL_FORMATS:
             raise ArtifactFormatError(f"want 只能是 {MODEL_FORMATS},收到 {want!r}")
         params = self.build_params(master, extra_views)
-        credits, cny = self.quote(1 + len(extra_views or {}))
+        credits = self.quote(1 + len(extra_views or {}))
         if not self._allow_spend:
             raise SpendNotAuthorizedError(
-                f"图生 3D 会消耗 {credits} 积分(后付费约 ¥{cny})。"
+                f"图生 3D 会消耗 {credits} 积分。"
                 "确认要花这笔钱后,用 TencentModel3DProvider(..., allow_spend=True) 构造。")
 
         if self._ask_format:
@@ -392,8 +391,8 @@ class TencentAutoRigProvider:
     def preset_motions(self) -> Mapping[str, PresetMotion]:
         return PRESET_MOTIONS
 
-    def quote(self) -> tuple[int, float]:
-        return RIG_CREDITS, round(RIG_CREDITS * CREDIT_PRICE_CNY, 2)
+    def quote(self) -> int:
+        return RIG_CREDITS
 
     def resolve_motion(self, motion: str | int | None) -> PresetMotion | None:
         """动作名 / 编号 → :class:`PresetMotion`。名字不认识就抛,不猜编号。"""
@@ -424,10 +423,10 @@ class TencentAutoRigProvider:
             # 入口预检在**上传与提交之前**:三条硬约束违反了接口不报错,只默默出错结果。
             check_model(model)
 
-        credits, cny = self.quote()
+        credits = self.quote()
         if not self._allow_spend:
             raise SpendNotAuthorizedError(
-                f"绑骨会消耗 {credits} 积分(后付费约 ¥{cny})。"
+                f"绑骨会消耗 {credits} 积分。"
                 "确认要花这笔钱后,用 TencentAutoRigProvider(..., allow_spend=True) 构造。")
 
         url = self._upload(model, src_fmt)

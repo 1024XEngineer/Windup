@@ -44,7 +44,6 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from windup_ai_engine.ports import ProgressPort
 from windup_framework.providers.render3d.tencent import (
-    CREDIT_PRICE_CNY,
     CREDITS,
     RIG_CREDITS,
 )
@@ -69,7 +68,6 @@ RAW_KEY_PREFIX = "raw:"
 MODEL3D_CREDITS = CREDITS["Normal"]
 AUTORIG_CREDITS = RIG_CREDITS
 BUILD_CREDITS = MODEL3D_CREDITS + AUTORIG_CREDITS
-BUILD_CNY = round(BUILD_CREDITS * CREDIT_PRICE_CNY, 2)
 
 
 class Render3DAssetState(str, Enum):
@@ -303,7 +301,7 @@ class Render3DAssetBuilder:
         if not self._may_build_assets:
             raise SpendNotAuthorized(
                 f"造型 {outfit_key!r} 的 3D 资产未就绪,而本实例未获准建(建一次 "
-                f"{BUILD_CREDITS} 积分,约 ¥{BUILD_CNY}:图生 3D {MODEL3D_CREDITS} + "
+                f"{BUILD_CREDITS} 积分:图生 3D {MODEL3D_CREDITS} + "
                 f"绑骨 {AUTORIG_CREDITS})。要现建请显式授权花钱,"
                 "或先把资产备好,或改走 video_i2v。"
             )
