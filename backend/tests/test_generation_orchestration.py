@@ -21,6 +21,7 @@ from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
     CharacterActionOutput,
+    GenerationType,
     TaskStatus,
 )
 from windup_app.server.orchestrator.executor import ActionTaskExecutor
@@ -302,6 +303,73 @@ def test_action_task_marks_failed_on_error(session_factory):
     assert done.status is TaskStatus.FAILED
     # 用户看到的是脱敏文案(见 _failure.user_message),原始异常只进日志。
     assert done.error_message and "母版下载失败" not in done.error_message
+
+
+def test_action_task_prompt_rejected_leaves_no_result(session_factory):
+    """措辞门禁拒绝时任务应 failed 且 result 为空,避免前端合同校验弹窗。"""
+    from windup_ai_engine.ports import PromptRejectCode, PromptRejected
+    from windup_app.server.orchestrator import task_repo
+
+    class _RejectGen:
+        def generate(self, *args, **kwargs):
+            raise PromptRejected(PromptRejectCode.NEGATION, "描述里不要写否定词")
+
+    service = AiGenerationService()
+    executor = ActionTaskExecutor(
+        generator=_RejectGen(),
+        fetch_master=lambda _input: _tiny_png(),
+        session_factory=session_factory,
+    )
+    action_input = CharacterActionInput(
+        character_id=1,
+        action_type=ActionType.CUSTOM,
+        custom_prompt="不要扬尘",
+        num_frames=4,
+    )
+    with session_factory() as s:
+        task = service.generate_character_action(s, user_id=1, input=action_input)
+        s.commit()
+        task_id = task.id
+
+    executor.run_action_task(task_id, action_input)
+
+    with session_factory() as s:
+        done = service.get_task(s, project_id=1, task_id=task_id)
+    assert done.status is TaskStatus.FAILED
+    assert done.result is None
+    assert done.error_message and "动作描述没通过检查" in done.error_message
+    payload = task_repo.task_event_payload(done)
+    assert payload["status"] == "failed"
+    assert payload["result"] is None
+    assert payload["error_message"]
+
+
+def test_fail_task_clears_stale_result(session_factory):
+    from windup_app.server.orchestrator import task_repo
+
+    with session_factory() as s:
+        task = task_repo.create_task(
+            s,
+            user_id=1,
+            project_id=1,
+            task_type=GenerationType.CHARACTER_ACTION,
+            input_payload={"character_id": 1},
+        )
+        task_repo.update_result(
+            s,
+            task.id,
+            "character_action",
+            {"type": "character_action", "reject_code": "negation"},
+        )
+        task_repo.fail_task(s, task.id, error_message="动作描述没通过检查")
+        s.commit()
+        done = task_repo.get_task(s, task.id)
+
+    assert done.status is TaskStatus.FAILED
+    assert done.result is None
+    assert done.error_message == "动作描述没通过检查"
+    payload = task_repo.task_event_payload(done)
+    assert payload["result"] is None
 
 
 # ── 交付尺寸传给引擎(2026-08-11 挣得)──────────────────────────────────────────
