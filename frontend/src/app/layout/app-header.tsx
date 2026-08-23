@@ -506,7 +506,7 @@ function MarketingHeaderView({ session, wave, onWave }: MarketingHeaderViewProps
     <header
       data-layout="unified"
       data-surface="borderless-glass"
-      className="fixed inset-x-0 top-0 z-50 bg-[#f7f6f0]/28 text-ink backdrop-blur-[18px] backdrop-saturate-[0.82]"
+      className="fixed inset-x-0 top-0 z-50 bg-paper/28 text-ink backdrop-blur-[18px] backdrop-saturate-[0.82]"
     >
       <div className="relative mx-auto flex min-h-18 w-full max-w-[82rem] items-center justify-between px-5 sm:min-h-21 sm:px-8 lg:px-12">
         <Link
