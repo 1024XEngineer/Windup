@@ -266,7 +266,7 @@ class TencentModel3DProvider:
         self._max_min = max_min
 
     def quote(self, n_views: int = 1) -> int:
-        """返回 (积分, 预估元)。PBR、多视图各 +10 积分。纯计算,可在提交前随便调。"""
+        """返回本次要花的积分。PBR、多视图各 +10。纯计算,花钱之前就该问得出花多少。"""
         credits = CREDITS[self._type] + (10 if self._pbr else 0) + (10 if n_views > 1 else 0)
         return credits
 
