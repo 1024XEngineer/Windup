@@ -113,7 +113,7 @@ def _load_constraints(session: Session, project_id: int | None) -> ProjectConstr
 
 
 def _fit_to(png: bytes, w: int, h: int, *, smooth: bool = False) -> bytes:
-    """把图等比缩放进 w×h(透明补边),落实尺寸约束。
+    """把图等比 contain 进 w×h(透明补边),落实尺寸约束。
 
     ``smooth`` 决定重采样:序列帧是像素画,必须 NEAREST(插值会把硬边糊成灰边、
     并引入调色板外的颜色);全彩角色母版反过来,NEAREST 缩图会明显锯齿,用 LANCZOS。
@@ -125,8 +125,14 @@ def _fit_to(png: bytes, w: int, h: int, *, smooth: bool = False) -> bytes:
     im = Image.open(io.BytesIO(png)).convert("RGBA")
     if im.size == (w, h):
         return png
-    fitted = im.copy()
-    fitted.thumbnail((w, h), Image.LANCZOS if smooth else Image.NEAREST)
+    # 小于画布也要缩放:原尺寸贴入会按画布比例压小主体占幅、把脚线一并上移,而母版是
+    # 交付物,后面没有环节把这两样补回来(#512)。取整兜到 1 像素,免得极端长宽比缩成
+    # 空图 —— 那是一张能通过尺寸断言的全透明母版。
+    scale = min(w / im.width, h / im.height)
+    fitted = im.resize(
+        (max(1, round(im.width * scale)), max(1, round(im.height * scale))),
+        Image.LANCZOS if smooth else Image.NEAREST,
+    )
     canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     canvas.alpha_composite(fitted, ((w - fitted.width) // 2, (h - fitted.height) // 2))
     buf = io.BytesIO()
