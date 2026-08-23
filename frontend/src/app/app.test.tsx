@@ -38,7 +38,10 @@ describe('AppRoutes authentication boundary', () => {
     )
 
     expect(await screen.findByRole('heading', { name: /让你的角色/ })).toBeTruthy()
-    expect(screen.getByRole('navigation', { name: '宣传页导航' })).toBeTruthy()
+    const loginEntry = screen.getByRole('link', { name: '登录' })
+    expect(loginEntry.closest('header')?.getAttribute('data-surface')).toBe('borderless-glass')
+    expect(screen.getByRole('link', { name: '注册' })).toBeTruthy()
+    expect(screen.queryByRole('navigation', { name: '宣传页导航' })).toBeNull()
     expect(screen.queryByRole('navigation', { name: '产品导航' })).toBeNull()
   })
 
@@ -51,8 +54,10 @@ describe('AppRoutes authentication boundary', () => {
       </AuthenticatedAuthSession>,
     )
 
-    expect(await screen.findByRole('navigation', { name: '宣传页导航' })).toBeTruthy()
-    expect(screen.getByRole('link', { name: '进入工作台' }).getAttribute('href')).toBe('/workspace')
+    const workspaceEntry = await screen.findByRole('link', { name: '进入工作台' })
+    expect(workspaceEntry.closest('header')?.getAttribute('data-surface')).toBe('borderless-glass')
+    expect(screen.queryByRole('navigation', { name: '宣传页导航' })).toBeNull()
+    expect(workspaceEntry.getAttribute('href')).toBe('/workspace')
   })
 
   it('protects the workspace home and preserves it as the login return path', async () => {
