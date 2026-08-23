@@ -244,6 +244,24 @@ export function createProjectAssetsBackend({
       const projectId = Number(url.pathname.split('/').at(-1))
       const project = projects.find((item) => item.id === projectId)
       if (request.method === 'GET' && project) return response(project)
+      if (request.method === 'PATCH' && project) {
+        const body = (await request.json()) as { project_name: string }
+        if (
+          projects.some((item) => item.id !== projectId && item.project_name === body.project_name)
+        ) {
+          return new Response(
+            JSON.stringify({
+              code: 400,
+              message: '项目名称已存在',
+              data: null,
+            }),
+            { headers: { 'content-type': 'application/json' } },
+          )
+        }
+        project.project_name = body.project_name
+        project.update_at = '2026-08-07T00:00:00Z'
+        return response(project, '重命名成功')
+      }
       if (request.method === 'DELETE' && project) {
         projects = projects.filter((item) => item.id !== projectId)
         return response(null, '删除成功')

@@ -201,6 +201,53 @@ describe('ProjectsPage', () => {
     ).toHaveLength(0)
   })
 
+  it('keeps project actions discoverable and persists a renamed project', async () => {
+    const backend = installBackend()
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(await screen.findAllByRole('link', { name: /打开项目/ })).toHaveLength(2)
+    const actions = screen.getByRole('button', { name: '项目操作 空白海岸' })
+    expect(actions.getAttribute('aria-expanded')).toBe('false')
+
+    fireEvent.click(actions)
+
+    expect(actions.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('group', { name: '空白海岸的项目操作' })).toBeTruthy()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(actions.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('group', { name: '空白海岸的项目操作' })).toBeNull()
+
+    fireEvent.click(actions)
+    const actionsGroup = screen.getByRole('group', {
+      name: '空白海岸的项目操作',
+    })
+    fireEvent.click(within(actionsGroup).getByRole('button', { name: '重命名项目' }))
+
+    const dialog = screen.getByRole('dialog', { name: '重命名项目' })
+    const nameInput = within(dialog).getByRole('textbox', { name: '项目名称' })
+    expect(nameInput.getAttribute('value')).toBe('空白海岸')
+    fireEvent.change(nameInput, { target: { value: '雾港' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存名称' }))
+
+    expect(await screen.findByRole('link', { name: '打开项目 雾港' })).toBeTruthy()
+    expect(screen.queryByRole('dialog', { name: '重命名项目' })).toBeNull()
+    const renameRequest = backend.requests.find(
+      (request) => request.method === 'PATCH' && request.url.endsWith('/projects/99'),
+    )
+    expect(renameRequest).toBeTruthy()
+    await expect(renameRequest?.json()).resolves.toEqual({
+      project_name: '雾港',
+    })
+  })
+
   it('sends creation to the project create page and deletes through the Project API', async () => {
     const backend = installBackend()
     render(
@@ -217,7 +264,8 @@ describe('ProjectsPage', () => {
     )
     expect(screen.queryByRole('dialog', { name: '新建项目' })).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: '删除项目 空白海岸' }))
+    fireEvent.click(screen.getByRole('button', { name: '项目操作 空白海岸' }))
+    fireEvent.click(screen.getByRole('button', { name: '删除项目' }))
     fireEvent.click(screen.getByRole('button', { name: '确认删除项目' }))
 
     await waitFor(() => {
@@ -243,7 +291,8 @@ describe('ProjectsPage', () => {
     )
 
     expect(await screen.findByRole('link', { name: '打开项目 点灯人 · MVP' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '删除项目 点灯人 · MVP' }))
+    fireEvent.click(screen.getByRole('button', { name: '项目操作 点灯人 · MVP' }))
+    fireEvent.click(screen.getByRole('button', { name: '删除项目' }))
     fireEvent.click(screen.getByRole('button', { name: '确认删除项目' }))
 
     expect(await screen.findByText('项目下仍有角色，无法删除')).toBeTruthy()
