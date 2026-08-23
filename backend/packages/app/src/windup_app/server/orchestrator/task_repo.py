@@ -279,5 +279,8 @@ def _deserialize_result(
             quality=raw.get("quality"),
             prompt_version=raw.get("prompt_version"),
             direction=ActionDirection(raw.get("direction", ActionDirection.EAST.value)),
+            # 落库再读回的这条路上漏掉它，查询接口与断线重连拿到的已完成任务就没有几何，
+            # 前端只能回落到自己那份常数 —— 而实时事件那条路是好的，两条路给出不同的导出结果。
+            geometry=raw.get("geometry"),
         )
     return None
