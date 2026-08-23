@@ -512,7 +512,7 @@ export function LandingPage() {
       <main>
         <section
           aria-label="Windup 首屏"
-          className="relative isolate min-h-0 overflow-hidden border-b border-[#d8d6ce] text-[#252520] [background:linear-gradient(180deg,rgb(247_246_240/0.82),rgb(237_239_231/0.92)),#f2f1ea] sm:min-h-[calc(80dvh_-_4.5rem_+_min(40vw,_36rem))]"
+          className="relative isolate min-h-[100svh] overflow-hidden text-[#252520] [background:linear-gradient(180deg,rgb(247_246_240/0.82),rgb(237_239_231/0.92)),#f2f1ea] sm:min-h-[calc(80dvh_+_min(40vw,_36rem))]"
         >
           <div
             aria-hidden="true"
@@ -526,7 +526,7 @@ export function LandingPage() {
             loading="eager"
             decoding="async"
             fetchPriority="high"
-            className="pointer-events-none absolute top-72 -left-16 z-[1] block h-auto w-[min(52vw,31rem)] rotate-[2deg] select-none sm:top-[18.75rem] sm:-left-24 sm:w-[min(34vw,31rem)]"
+            className="pointer-events-none absolute top-96 -left-16 z-[1] block h-auto w-[min(52vw,31rem)] rotate-[2deg] select-none sm:top-[23.25rem] sm:-left-24 sm:w-[min(34vw,31rem)]"
           />
           <img
             src={gongbiBirdRight}
@@ -536,10 +536,10 @@ export function LandingPage() {
             loading="eager"
             decoding="async"
             fetchPriority="high"
-            className="pointer-events-none absolute top-20 -right-16 z-[1] block h-auto w-[min(48vw,29rem)] -rotate-[4deg] select-none sm:top-21 sm:-right-[9.5rem] sm:w-[min(32vw,29rem)]"
+            className="pointer-events-none absolute top-32 -right-12 z-[1] block h-auto w-[min(48vw,26rem)] -rotate-[4deg] select-none sm:top-[9.75rem] sm:-right-[9.5rem] sm:w-[min(32vw,29rem)]"
           />
 
-          <div className="relative z-10 mx-auto flex w-full max-w-[82rem] flex-col items-center px-4 pt-16 text-center sm:px-12 sm:pt-20">
+          <div className="relative z-10 mx-auto flex w-full max-w-[82rem] flex-col items-center px-4 pt-40 text-center sm:px-12 sm:pt-40">
             <p
               className={`${riseClassName} mx-auto w-full text-[0.875rem] leading-6 font-medium tracking-[0.04em] text-[#696861]`}
               style={riseDelay(0)}
@@ -568,7 +568,7 @@ export function LandingPage() {
             </Link>
           </div>
 
-          <figure className="relative z-20 mx-auto mt-16 w-[calc(100%_-_2rem)] max-w-[72rem] transform-gpu sm:absolute sm:top-[calc(80dvh_-_4.5rem)] sm:left-1/2 sm:mx-0 sm:mt-0 sm:w-[80%] sm:-translate-x-1/2">
+          <figure className="relative z-20 mx-auto mt-16 w-[calc(100%_-_2rem)] max-w-[72rem] transform-gpu sm:absolute sm:top-[80dvh] sm:left-1/2 sm:mx-0 sm:mt-0 sm:w-[80%] sm:-translate-x-1/2">
             <div
               data-testid="workflow-editor-placeholder"
               className="aspect-[2/1] overflow-hidden rounded-2xl border border-[#c9c8c0] bg-[#f9f8f3] shadow-[0_30px_80px_rgba(53,58,49,0.18)]"
