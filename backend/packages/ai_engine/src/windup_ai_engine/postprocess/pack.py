@@ -13,9 +13,10 @@ from PIL import Image
 
 _logger = logging.getLogger(__name__)
 
-__all__ = ["CELL", "CORE_THICKNESS", "DRIFT_CX_TOL", "DRIFT_FOOT_TOL",
-           "FILL_H", "FILL_W", "FOOT_LINE", "drifted_frames",
-           "align_bottom_center", "core_span", "sprite_sheet", "save_gif"]
+__all__ = ["ANCHOR_CENTROID", "ANCHOR_FOOT", "CELL", "CORE_THICKNESS",
+           "DRIFT_CX_TOL", "DRIFT_FOOT_TOL", "FILL_H", "FILL_W", "FOOT_LINE",
+           "drifted_frames", "align_bottom_center", "core_span", "sprite_sheet",
+           "save_gif"]
 
 # 交付画布的几何 —— 提成模块常量而不是只当默认参数,是因为**入口预检要按同一套几何
 # 判母版能不能装下**(见 master_check.REJECT_ASPECT)。抄一份数字过去就等于埋下
@@ -28,6 +29,12 @@ FILL_W = 0.96       # 主体占画布宽的上限(宽度兜底的天花板)
 # "厚"的门槛:某行/列的主体像素数达到该帧行/列宽度**中位数**的这个比例,才算本体。
 # 0.25 之下是延展物(尾巴、翅膀、披风、举起的武器)—— 它们细,本体厚。
 CORE_THICKNESS = 0.25
+
+# 垂直对齐锚点。脚线那档对站在地上的动作成立;飞 / 游 / 攀全程没有地面接触,它们的包围盒
+# 底边是尾羽与爪子、逐帧在变,钉死底边等于让身体跟着延展物上下浮动(#534)。
+ANCHOR_FOOT = "foot"
+ANCHOR_CENTROID = "centroid"
+_ANCHORS = (ANCHOR_FOOT, ANCHOR_CENTROID)
 
 
 def core_span(frame: Image.Image, thickness: float = CORE_THICKNESS) -> tuple[float, float] | None:
@@ -54,12 +61,9 @@ def core_span(frame: Image.Image, thickness: float = CORE_THICKNESS) -> tuple[fl
     #   · 它又让**大量列**只有 10px 高 → 列方向若以中位数为基准,中位数被压到 10、门槛低到
     #     2,翅膀整条算进本体,量出的本体宽 209px(真值 49)。故列用 **max**。
     # 判据不对称是数据形态决定的,不是漏了统一。
-    def span(counts: np.ndarray, base: float) -> float:
-        keep = np.flatnonzero(counts >= base * thickness)
-        return float(keep.max() - keep.min())
-
-    nz_rows = rows[rows > 0]
-    return (span(rows, float(np.median(nz_rows))), span(cols, float(cols.max())))
+    r0, r1 = _core_rows(m, thickness)
+    keep = np.flatnonzero(cols >= float(cols.max()) * thickness)
+    return (float(r1 - r0), float(keep.max() - keep.min()))
 
 
 # 单调漂移的判定门槛(整段首尾相对变化)。低于它的不动 —— 真实身高起伏实测约 4%,
@@ -152,6 +156,7 @@ def align_bottom_center(
     preserve_lift: bool = False,
     ref_height: float | None = None,
     cell_h: int | None = None,
+    anchor: str = ANCHOR_FOOT,
 ) -> list[Image.Image]:
     """按脚线对齐到统一画布,消除逐帧画布漂移(Issue #21)。
 
@@ -160,7 +165,7 @@ def align_bottom_center(
     缩小。统一缩放后帧间只剩真实姿态差,尺度稳定。
 
     水平方向按**主体水平中心**对齐(不含挥出的武器会更好,当前用整体包围盒中心兜底);
-    垂直方向按**脚线**(包围盒底边)对齐到 ``foot_line``。
+    垂直方向按 ``anchor`` 选锚点,默认脚线(包围盒底边)对齐到 ``foot_line``。
 
     ``ref_height``:**跨动作一致性的关键**,单位=传入帧的像素高。给定时按它定标,否则按本
     序列最高帧。按最高帧定标会让"举过头顶"的动作整段被缩小去迁就那一帧 —— 实测攻击时
@@ -169,6 +174,10 @@ def align_bottom_center(
 
     ``preserve_lift``:腾空位移**默认不烘进像素**(业界:位移交引擎 root motion)。仅在要把
     位移画进序列帧时才开;开启后以序列里最低的脚线为地面基准,保留每帧相对地面的抬升量。
+
+    ``anchor``:``"foot"`` 给有地面接触的动作,``"centroid"`` 给飞 / 游 / 攀 —— 后者的底边
+    是尾羽与爪子、逐帧在变,钉死底边身体反而上下浮动(#534)。质心那档落在
+    ``foot_line - fill_h/2``,即参考姿态包围盒的纵向中心,故换锚点不改变构图。
 
     ``cell``/``cell_h``:交付画布的宽与高,``cell_h=None`` 即方形 ``cell×cell``(默认,
     行为与加这个参数之前逐像素相同)。**要能出非方形画布,是为了让引擎一次就出到项目
@@ -189,6 +198,14 @@ def align_bottom_center(
         # 不静默出一张 0×0:PIL 允许建 0 边长的图,后面 alpha_composite 也不报错,
         # 错产物要到落库/前端才暴露。
         raise ValueError(f"交付画布尺寸必须为正,收到 cell={cell} cell_h={cell_h}")
+    if anchor not in _ANCHORS:
+        # 拼错一个字母不静默回落到脚线:那正好是本参数要修的那个错,而帧数 / 尺寸 / 成色
+        # 全部正常,要靠人看动图才发现。
+        raise ValueError(f"anchor 只能是 {_ANCHORS} 之一,收到 {anchor!r}")
+    if preserve_lift and anchor == ANCHOR_CENTROID:
+        # 质心对齐把每帧摆到同一条线上,抬升量随之被抹平 —— 两个都开等于 preserve_lift
+        # 是个空操作。
+        raise ValueError("preserve_lift 与 anchor='centroid' 互斥:质心对齐会抹平抬升量")
 
     boxes: list[tuple[int, int, int, int] | None] = []
     for f in frames:
@@ -277,10 +294,16 @@ def align_bottom_center(
         fs = scale * per_frame[idx]
         w = max(1, round(crop.width * fs))
         h = max(1, round(crop.height * fs))
+        if anchor == ANCHOR_CENTROID:
+            # 锚点在缩放之前量:本体判据看的是原始像素,resize 的取整会把细延展物抹掉或加粗。
+            r0, r1 = _core_rows(np.asarray(crop)[:, :, 3] > 128)
+            top = round(ch * (foot_line - fill_h / 2) - (r0 + r1) / 2 * fs)
+        else:
+            lift = round((ground - box[3]) * fs) if preserve_lift else 0
+            top = int(ch * foot_line) - h - lift
         crop = crop.resize((w, h), Image.NEAREST)
-        lift = round((ground - box[3]) * fs) if preserve_lift else 0
         canvas = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
-        canvas.alpha_composite(crop, (cw // 2 - w // 2, int(ch * foot_line) - h - lift))
+        canvas.alpha_composite(crop, (cw // 2 - w // 2, top))
         out.append(canvas)
     return out
 
@@ -354,6 +377,19 @@ def _core_columns(mask) -> tuple[int, int] | None:
     keep = np.flatnonzero(cols >= float(cols.max()) * CORE_THICKNESS)
     if not len(keep):
         return None
+    return int(keep.min()), int(keep.max())
+
+
+def _core_rows(mask, thickness: float = CORE_THICKNESS) -> tuple[int, int]:
+    """本体占据的首尾行;``mask`` 须有主体像素。
+
+    基准取行宽中位数而不是最厚那行,理由见 :func:`core_span` 里"延展物对行、列的污染方向
+    相反"那段 —— 与它共用一把尺子,免得本体的**位置**和**跨度**各按各的判据算。
+    """
+    import numpy as np
+
+    rows = mask.sum(1)
+    keep = np.flatnonzero(rows >= float(np.median(rows[rows > 0])) * thickness)
     return int(keep.min()), int(keep.max())
 
 
