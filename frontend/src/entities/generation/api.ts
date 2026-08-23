@@ -246,9 +246,26 @@ function mapImageResult(
     : { type: expectation.type, direction: expectation.direction, images }
 }
 
+/**
+ * 任务声明的帧数。哪种动作出多少帧由后端定，前端读回来当结果帧数的判据——
+ * 在前端也写一个数就是第二份约定，与后端分叉时两边都不会报错。
+ */
+function declaredFrameCount(
+  inputPayload: Record<string, unknown> | null,
+  expectation: GenerationExpectation,
+): number | undefined {
+  if (expectation.type !== 'complete_animation' || inputPayload === null) return undefined
+  const value = inputPayload.num_frames
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
+    throw new GenerationApiError('动作任务 input_payload.num_frames 无效', 200)
+  }
+  return value as number
+}
+
 function mapActionResult(
   result: Record<string, unknown>,
   expectation: Extract<GenerationExpectation, { type: 'complete_animation' }>,
+  frameCount: number | undefined,
 ): GenerationResult {
   if (result.type !== 'character_action') {
     throw new GenerationApiError('完整动画结果 type 无效', 200)
@@ -293,7 +310,8 @@ function mapActionResult(
   })
 
   const orderedFrames = frames.sort((left, right) => left.index - right.index)
-  const expectedFrameCount = 32
+  // 事件没带 input_payload 时无从比对帧数，退回只查连续性——不能拿一个前端猜的数当判据。
+  const expectedFrameCount = frameCount ?? orderedFrames.length
   if (orderedFrames.length !== expectedFrameCount) {
     throw new GenerationApiError(`完整动画结果必须包含 ${expectedFrameCount} 帧`, 200)
   }
@@ -316,6 +334,7 @@ function mapResult(
   status: TaskStatus,
   expectation: GenerationExpectation,
   expectedCandidateCount?: ImageCandidateCount,
+  frameCount?: number,
 ): GenerationResult | null {
   if (status !== 'completed') {
     if (result !== null) {
@@ -325,7 +344,7 @@ function mapResult(
   }
   if (result === null) throw new GenerationApiError('完成任务缺少 result', 200)
   return expectation.type === 'complete_animation'
-    ? mapActionResult(result, expectation)
+    ? mapActionResult(result, expectation, frameCount)
     : mapImageResult(result, expectation, expectedCandidateCount)
 }
 
@@ -365,13 +384,6 @@ function validateInputPayload(
     }
     return candidateCount
   }
-  const expectedFrameCount = 32
-  if (inputPayload.num_frames !== expectedFrameCount) {
-    throw new GenerationApiError(
-      `动作任务 input_payload.num_frames 必须为 ${expectedFrameCount}`,
-      200,
-    )
-  }
   if (inputPayload.action_type !== expectation.actionType) {
     throw new GenerationApiError('动作任务 input_payload.action_type 与请求不一致', 200)
   }
@@ -400,12 +412,11 @@ function inferExpectation(dto: GenerationTaskDto): GenerationExpectation {
   if (typeof actionType !== 'string' || !ACTION_TYPES.has(actionType)) {
     throw new GenerationApiError('动作任务 input_payload.action_type 无效', 200)
   }
-  if (dto.inputPayload.num_frames === 32) {
-    return direction === undefined
-      ? { type: 'complete_animation', actionType }
-      : { type: 'complete_animation', actionType, direction }
-  }
-  throw new GenerationApiError('动作任务 input_payload.num_frames 无法映射到前端阶段', 200)
+  // 阶段由 task_type 与 action_type 定：character_action 在前端只对应"完整动画"这一个阶段。
+  // 帧数是产物参数不是阶段判据——拿它判，改一个动作的帧数就会让这类任务整个认不出来。
+  return direction === undefined
+    ? { type: 'complete_animation', actionType }
+    : { type: 'complete_animation', actionType, direction }
 }
 
 function validateTaskIdentity(
@@ -450,7 +461,13 @@ function mapTask(
       projectId: String(dto.projectId),
       type: resolvedExpectation.type,
       status: dto.status,
-      result: mapResult(dto.result, dto.status, resolvedExpectation, candidateCount),
+      result: mapResult(
+        dto.result,
+        dto.status,
+        resolvedExpectation,
+        candidateCount,
+        declaredFrameCount(dto.inputPayload, resolvedExpectation),
+      ),
       error: dto.errorMessage,
     },
     ...(candidateCount === undefined ? {} : { candidateCount }),
@@ -530,14 +547,14 @@ function mapEvent<TType extends GenerationType>(
   ) {
     throw new GenerationApiError('task_update 不属于当前项目', 200)
   }
-  const candidateCount =
+  const inputPayload =
     value.input_payload === undefined
+      ? undefined
+      : dtoNullableRecord(value.input_payload, 'input_payload')
+  const candidateCount =
+    inputPayload === undefined
       ? expectedCandidateCount
-      : validateInputPayload(
-          dtoNullableRecord(value.input_payload, 'input_payload'),
-          expectation,
-          expectedCandidateCount,
-        )
+      : validateInputPayload(inputPayload, expectation, expectedCandidateCount)
   const status = eventStatus(value, eventName)
   const result = value.result === undefined ? null : dtoNullableRecord(value.result, 'result')
   const error =
@@ -549,7 +566,13 @@ function mapEvent<TType extends GenerationType>(
     taskId: String(taskId),
     type: expectation.type,
     status,
-    result: mapResult(result, status, expectation, candidateCount),
+    result: mapResult(
+      result,
+      status,
+      expectation,
+      candidateCount,
+      inputPayload === undefined ? undefined : declaredFrameCount(inputPayload, expectation),
+    ),
     error,
   }
 }
@@ -619,7 +642,9 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
           ...(input.actionType === 'custom' ? { loop: input.loop ?? false } : {}),
           reference_video_url: null,
           reference_image_urls: referenceImageUrls,
-          num_frames: 32,
+          // 不发帧数：哪种动作出多少帧是后端按 action_type 定的约定，前端发一个数就是
+          // 第二份约定，两边分叉时任务照跑、帧照出，没有一处会红。
+
           // 后端拿 outfit_id 在场与否当三渲二的唯一判据（#122），所以它同时是"路线选择"
           // 本身，不只是一个标识。无条件发送会让建过 3D 资产的造型点"视频裁剪"也走三渲二，
           // 画风、成本、生成语义全被静默改掉，故只在用户真选了三渲二时发。

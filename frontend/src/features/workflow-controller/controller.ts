@@ -35,7 +35,6 @@ import {
   WorkflowRunConflictError,
 } from '@/entities'
 
-const COMPLETE_ANIMATION_FRAME_COUNT = 32
 const PROJECT_NAME_MAX_LENGTH = 20
 const QUICK_START_PROJECT_NAME_ATTEMPTS = 100
 
@@ -1894,9 +1893,9 @@ function generationResultError(node: WorkflowNode, generation: Generation): stri
     ) {
       return '完整动画结果格式无效'
     }
-    return generation.result.frames.length === COMPLETE_ANIMATION_FRAME_COUNT
-      ? null
-      : `完整动画应为 ${COMPLETE_ANIMATION_FRAME_COUNT} 帧，实际为 ${generation.result.frames.length} 帧`
+    // 帧数是否合乎该动作类型的约定，由 generation 适配器按任务声明的 num_frames 判；
+    // 这里再写一个数就是第二份约定，各动作帧数不同时它会把合规结果判成失败。
+    return generation.result.frames.length > 0 ? null : '完整动画结果没有帧'
   }
 
   return '当前节点不能绑定生成结果'

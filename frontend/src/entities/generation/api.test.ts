@@ -298,7 +298,7 @@ describe('createGenerationApis', () => {
     ).rejects.toThrow('动作首帧生成必须提供已确认的角色母版')
   })
 
-  it('以首帧请求完整动画并按后端 index 排序，当前合同固定为三十二帧', async () => {
+  it('以首帧请求完整动画并按后端 index 排序', async () => {
     const request = vi.fn(async (_url: string, _init?: RequestInit) =>
       success(
         taskData({
@@ -337,7 +337,6 @@ describe('createGenerationApis', () => {
       custom_prompt: 'move forward',
       reference_video_url: null,
       reference_image_urls: ['https://cdn.test/frame-1.png', 'https://cdn.test/extra.png'],
-      num_frames: 32,
       outfit_id: 'default',
       direction: 'east',
     })
@@ -349,6 +348,46 @@ describe('createGenerationApis', () => {
         durationMs: index % 2 === 0 ? 100 : null,
       })),
     })
+  })
+
+  it('提交动作不发帧数，待机任务的十二帧照样识别得出阶段并映射结果', async () => {
+    const request = vi.fn(async (_url: string, _init?: RequestInit) =>
+      success(
+        taskData({
+          task_type: 'character_action',
+          input_payload: { num_frames: 12, action_type: 'idle' },
+          result: {
+            type: 'character_action',
+            action_type: 'idle',
+            frames: actionFrames(12),
+          },
+        }),
+      ),
+    )
+    const apis = createGenerationApis({
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    const created = await apis.create({
+      type: 'complete_animation',
+      projectId: '42',
+      characterId: '5',
+      outfitId: 'default',
+      method: 'video-cropping',
+      actionType: 'idle',
+      firstFrameUrl: 'https://cdn.test/frame-1.png',
+      prompt: null,
+      referenceMedia: [],
+    })
+    // 不带 expectation 查一次，走的是 inferExpectation：它必须只认 task_type 与
+    // action_type，认帧数的话待机任务在这里就抛"无法映射到前端阶段"。
+    const recovered = await apis.get('42', '91')
+
+    expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).not.toHaveProperty('num_frames')
+    expect(created.result).toMatchObject({ type: 'complete_animation' })
+    expect((created.result as { frames: readonly unknown[] }).frames).toHaveLength(12)
+    expect(recovered.type).toBe('complete_animation')
+    expect((recovered.result as { frames: readonly unknown[] }).frames).toHaveLength(12)
   })
 
   it('选视频裁剪时不发 outfit_id——后端拿它在场与否当三渲二的唯一判据', async () => {
