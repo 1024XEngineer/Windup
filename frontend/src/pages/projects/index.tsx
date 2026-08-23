@@ -1,4 +1,5 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { DotsThree, PencilSimple, Trash } from '@phosphor-icons/react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router'
 
 import assetLibraryArtwork from '@/assets/workspace/asset-library.png'
@@ -7,6 +8,7 @@ import {
   DIRECTIONAL_MOVEMENT,
   projectApis,
   ProjectHasCharactersError,
+  ProjectNameConflictError,
   type Project,
 } from '@/entities'
 import type { Paged } from '@/shared/pagination'
@@ -25,6 +27,9 @@ type ProjectPreviewState = { status: 'ready'; url: string } | { status: 'empty' 
 export function ProjectsPage() {
   const [pageNumber, setPageNumber] = useState(1)
   const [projectsPage, setProjectsPage] = useState<Paged<Project> | null>(null)
+  const [renameTarget, setRenameTarget] = useState<Project | null>(null)
+  const [renaming, setRenaming] = useState(false)
+  const [renameError, setRenameError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -73,6 +78,31 @@ export function ProjectsPage() {
     }
   }
 
+  async function renameProject(project: Project, name: string) {
+    setRenaming(true)
+    setRenameError(null)
+    try {
+      const renamed = await projectApis.rename(project.id, name)
+      setProjectsPage((current) =>
+        current
+          ? {
+              ...current,
+              items: current.items.map((item) =>
+                item.id === project.id ? { ...renamed, previewUrl: item.previewUrl } : item,
+              ),
+            }
+          : current,
+      )
+      setRenameTarget(null)
+    } catch (error) {
+      setRenameError(
+        error instanceof ProjectNameConflictError ? error.message : '项目暂时无法重命名',
+      )
+    } finally {
+      setRenaming(false)
+    }
+  }
+
   return (
     <div className="mx-auto w-full max-w-[1560px] px-4 pb-8 pt-[4.5rem] sm:px-6 xl:px-8">
       <section aria-label="项目资产">
@@ -92,6 +122,10 @@ export function ProjectsPage() {
             <ProjectGallery
               projects={projectsPage.items}
               total={projectsPage.total}
+              onRename={(project) => {
+                setRenameError(null)
+                setRenameTarget(project)
+              }}
               onDelete={setDeleteTarget}
             />
           ) : null}
@@ -105,6 +139,19 @@ export function ProjectsPage() {
           />
         ) : null}
       </section>
+
+      {renameTarget ? (
+        <RenameProjectDialog
+          project={renameTarget}
+          pending={renaming}
+          error={renameError}
+          onClose={() => {
+            setRenameError(null)
+            setRenameTarget(null)
+          }}
+          onConfirm={(name) => renameProject(renameTarget, name)}
+        />
+      ) : null}
 
       {deleteTarget ? (
         <DeleteProjectDialog
@@ -186,10 +233,12 @@ function ProjectGalleryLoading() {
 function ProjectGallery({
   projects,
   total,
+  onRename,
   onDelete,
 }: {
   projects: Project[]
   total: number
+  onRename: (project: Project) => void
   onDelete: (project: Project) => void
 }) {
   return (
@@ -209,6 +258,7 @@ function ProjectGallery({
             project={project}
             preview={projectPreview(project)}
             motionOrder={index}
+            onRename={() => onRename(project)}
             onDelete={() => onDelete(project)}
           />
         ))}
@@ -226,11 +276,13 @@ function ProjectGalleryTile({
   project,
   preview,
   motionOrder,
+  onRename,
   onDelete,
 }: {
   project: Project
   preview: ProjectPreviewState
   motionOrder: number
+  onRename: () => void
   onDelete: () => void
 }) {
   const updatedAt = new Intl.DateTimeFormat('zh-CN', {
@@ -264,15 +316,81 @@ function ProjectGalleryTile({
           {project.gameStyle || '未设置游戏风格'}
         </p>
       </Link>
+      <ProjectActions project={project} onRename={onRename} onDelete={onDelete} />
+    </article>
+  )
+}
+
+function ProjectActions({
+  project,
+  onRename,
+  onDelete,
+}: {
+  project: Project
+  onRename: () => void
+  onDelete: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function closeOnOutsidePress(event: PointerEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnOutsidePress)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePress)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [open])
+
+  return (
+    <div ref={rootRef} className="absolute right-3 top-3 z-10">
       <button
         type="button"
-        aria-label={`删除项目 ${project.name}`}
-        onClick={onDelete}
-        className="absolute right-3 top-3 rounded-full border border-app-line bg-app-surface/90 px-2.5 py-1.5 text-sm leading-none text-app-faint opacity-0 backdrop-blur-sm transition hover:text-app-danger group-hover/tile:opacity-100 focus-visible:opacity-100"
+        aria-label={`项目操作 ${project.name}`}
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        className="grid h-9 w-9 place-items-center rounded-full border border-app-line bg-app-canvas/95 text-app-ink-soft shadow-sm backdrop-blur-sm transition hover:border-app-line-strong hover:text-app-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-ink"
       >
-        ⋯
+        <DotsThree aria-hidden="true" size={20} weight="bold" />
       </button>
-    </article>
+      {open ? (
+        <div
+          role="group"
+          aria-label={`${project.name}的项目操作`}
+          className="absolute right-0 top-11 w-36 overflow-hidden rounded-xl border border-app-line bg-app-surface-raised p-1.5 shadow-lg"
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false)
+              onRename()
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-app-ink-soft transition hover:bg-app-surface-muted hover:text-app-ink focus-visible:outline-2 focus-visible:outline-app-ink"
+          >
+            <PencilSimple aria-hidden="true" size={16} />
+            重命名项目
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false)
+              onDelete()
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-app-danger transition hover:bg-app-danger-soft focus-visible:outline-2 focus-visible:outline-app-danger"
+          >
+            <Trash aria-hidden="true" size={16} />
+            删除项目
+          </button>
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -352,6 +470,81 @@ function ProjectPreviewMessage({
     >
       <div aria-hidden="true" className="project-preview-message-grid" />
       <span>{children}</span>
+    </div>
+  )
+}
+
+function RenameProjectDialog({
+  project,
+  pending,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  project: Project
+  pending: boolean
+  error: string | null
+  onClose: () => void
+  onConfirm: (name: string) => Promise<void>
+}) {
+  const [name, setName] = useState(project.name)
+  const normalizedName = name.trim()
+
+  return (
+    <div className="projects-dialog-backdrop fixed inset-0 z-50 grid place-items-center bg-app-ink/20 p-4 backdrop-blur-sm">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-label="重命名项目"
+        className="projects-dialog-panel w-full max-w-md rounded-[1.5rem] border border-app-line bg-app-surface-raised p-6"
+      >
+        <h2 className="text-lg font-semibold text-app-ink">重命名项目</h2>
+        <p className="mt-2 text-sm leading-6 text-app-muted">项目名称会同步更新到项目中心。</p>
+        <form
+          className="mt-5"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (normalizedName) void onConfirm(normalizedName)
+          }}
+        >
+          <label className="block text-sm font-medium text-app-ink" htmlFor="project-rename-name">
+            项目名称
+          </label>
+          <input
+            id="project-rename-name"
+            autoFocus
+            required
+            maxLength={20}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            className="mt-2 w-full rounded-xl border border-app-line bg-app-surface px-3.5 py-2.5 text-sm text-app-ink outline-none transition focus:border-app-ink"
+          />
+          <div className="mt-2 flex items-start justify-between gap-4 text-xs">
+            <span role={error ? 'alert' : undefined} className="text-app-danger">
+              {error}
+            </span>
+            <span className="ml-auto shrink-0 text-app-faint">{name.length}/20</span>
+          </div>
+          <div className="mt-6 flex justify-end gap-2">
+            <button
+              type="button"
+              disabled={pending}
+              onClick={onClose}
+              className="rounded-full border border-app-line px-4 py-2 text-sm disabled:opacity-50"
+            >
+              取消
+            </button>
+            <button
+              type="submit"
+              aria-label="保存名称"
+              disabled={pending || !normalizedName || normalizedName === project.name}
+              className="rounded-full bg-app-accent px-4 py-2 text-sm font-semibold text-app-on-accent disabled:opacity-50"
+            >
+              {pending ? '正在保存…' : '保存名称'}
+            </button>
+          </div>
+        </form>
+      </section>
     </div>
   )
 }
