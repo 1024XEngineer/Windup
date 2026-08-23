@@ -72,7 +72,7 @@ def fit_first_frame(
 
 
 def first_frame_datauri(frame: bytes, size: str) -> str:
-    """首帧 → base64 dataURI(本面专用;FAL 队列面不吃 dataURI)。"""
+    """首帧 → base64 dataURI。FAL 队列面同样吃这个形状,故两面共用。"""
     return "data:image/jpeg;base64," + base64.b64encode(fit_first_frame(frame, size)).decode()
 
 
@@ -197,3 +197,7 @@ class OpenAIVideoProtocol:
 
     def build_fetch(self, job_id: str) -> HttpCall | None:
         return None
+
+    def parse_fetch(self, resp: httpx.Response, job_id: str) -> AdapterResult:
+        """本面的取结果地址就是轮询地址,所以两步解析是同一个。"""
+        return self.parse_poll(resp, job_id)
