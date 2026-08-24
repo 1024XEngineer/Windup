@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
 import httpx
+from openai import APIConnectionError, APITimeoutError
 
 from windup_common.enums.model import ModelErrorType
 
@@ -125,30 +126,47 @@ def retry_after_seconds(value: str) -> float | None:
     return min(max(delay, 0.0), _MAX_RETRY_WAIT)
 
 
+def _exception_chain(exc: BaseException):
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        yield current
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+
+
 def classify_exception(exc: BaseException) -> tuple[ModelErrorType, int | None, str]:
     """把没有 HTTP 状态行的传输失败收成策略输入。
 
     对端拆连接、连不上、写出失败:都还没拿到响应,按 UNREACHED(可同路重试)。
+    OpenAI SDK 会把 httpx 连接失败包成 APIConnectionError,要沿异常链识别。
     读超时另算 TIMEOUT:请求可能已经离开本机,不能当成 52x。
+    APITimeoutError 是 APIConnectionError 的子类,必须先按超时处理。
     """
-    status = getattr(exc, "status_code", None)
-    response = getattr(exc, "response", None)
-    if status is None and response is not None:
-        status = getattr(response, "status_code", None)
-    if isinstance(status, int):
-        body = response.text if response is not None else None
-        return classify_http_response(status, body), status, str(exc)[:200]
-    if isinstance(
-        exc,
-        (
-            httpx.RemoteProtocolError,
-            httpx.LocalProtocolError,
-            httpx.ConnectError,
-            httpx.WriteError,
-            httpx.NetworkError,
-        ),
-    ):
-        return ModelErrorType.UNREACHED, None, str(exc)[:200]
-    if isinstance(exc, (httpx.ReadTimeout, httpx.TimeoutException, TimeoutError)):
-        return ModelErrorType.TIMEOUT, None, str(exc)[:200]
-    return ModelErrorType.UNKNOWN, None, str(exc)[:200]
+    edge = str(exc)[:200]
+    for item in _exception_chain(exc):
+        status = getattr(item, "status_code", None)
+        response = getattr(item, "response", None)
+        if status is None and response is not None:
+            status = getattr(response, "status_code", None)
+        if isinstance(status, int):
+            body = response.text if response is not None else None
+            return classify_http_response(status, body), status, edge
+        if isinstance(
+            item,
+            (APITimeoutError, httpx.ReadTimeout, httpx.TimeoutException, TimeoutError),
+        ):
+            return ModelErrorType.TIMEOUT, None, edge
+        if isinstance(
+            item,
+            (
+                APIConnectionError,
+                httpx.RemoteProtocolError,
+                httpx.LocalProtocolError,
+                httpx.ConnectError,
+                httpx.WriteError,
+                httpx.NetworkError,
+            ),
+        ):
+            return ModelErrorType.UNREACHED, None, edge
+    return ModelErrorType.UNKNOWN, None, edge
