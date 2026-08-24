@@ -137,3 +137,54 @@ def test_constraints_follow_the_project_style(db_session, stored, stylize, phras
     cons = _load_constraints(db_session, project.id)
     assert cons.stylize == stylize
     assert cons.style == phrase
+
+
+# -- 「没传」与「显式不指定」是两件事 ------------------------------------------
+
+
+def test_patch_to_unspecified_actually_clears_the_style(auth_client, db_session):
+    """把画风改回「不指定」必须真的落库,否则接口回成功而生成仍走旧约束。"""
+    from windup_app.server.orchestrator.executor import _load_constraints
+    from windup_app.server.project.model import Project
+
+    created = auth_client.post(
+        "/projects", json=_payload(game_style="pixel")
+    ).json()["data"]
+    assert _load_constraints(db_session, created["id"]).stylize == "pixel"
+
+    body = auth_client.patch(
+        f"/projects/{created['id']}", json={"game_style": "unspecified"}
+    ).json()
+
+    assert body["code"] == 200
+    db_session.expire_all()
+    assert db_session.get(Project, created["id"]).game_style is None
+    assert _load_constraints(db_session, created["id"]).stylize == "none"
+
+
+def test_patch_without_game_style_leaves_it_alone(auth_client, db_session):
+    """只改名时不能顺手把画风清掉 —— 哨兵要真的区分开这两种情况。"""
+    from windup_app.server.project.model import Project
+
+    created = auth_client.post(
+        "/projects", json=_payload(project_name="原名", game_style="cartoon")
+    ).json()["data"]
+
+    auth_client.patch(f"/projects/{created['id']}", json={"project_name": "新名"})
+
+    db_session.expire_all()
+    project = db_session.get(Project, created["id"])
+    assert project.project_name == "新名"
+    assert project.game_style == "cartoon"
+
+
+def test_patch_accepts_legacy_free_text(auth_client):
+    """PATCH 不能比 POST 还严:还没换下拉的客户端仍在发自由文本。"""
+    created = auth_client.post("/projects", json=_payload()).json()["data"]
+
+    body = auth_client.patch(
+        f"/projects/{created['id']}", json={"game_style": "低饱和像素风"}
+    ).json()
+
+    assert body["code"] == 200
+    assert body["data"]["game_style"] == "pixel"

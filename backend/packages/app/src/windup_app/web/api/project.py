@@ -15,11 +15,19 @@ from windup_common.result import ListResponse, Response
 from windup_framework.db import get_session
 
 from windup_app.server.character.service import service as character_service
+from windup_app.server.project.interface import UNSET
 from windup_app.server.project.service import service
 
 logger = logging.getLogger("windup.project.api")
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+
+def _legacy_style_or_none(value: object) -> ArtStyle | None:
+    """画风枚举化之前发的是自由文本;直接拒会让还没换下拉的客户端改不了项目。"""
+    if value is None:
+        return None
+    return ArtStyle.from_stored(value) if isinstance(value, str) else value
 
 
 def _stored_style(style: ArtStyle | None) -> str | None:
@@ -42,10 +50,7 @@ class ProjectCreate(BaseModel):
     @field_validator("game_style", mode="before")
     @classmethod
     def _accept_legacy_free_text(cls, value: object) -> ArtStyle:
-        """画风枚举化之前建项目发的是自由文本;直接拒会让还没换下拉的客户端建不了项目。"""
-        if value is None:
-            return ArtStyle.UNSPECIFIED
-        return ArtStyle.from_stored(value) if isinstance(value, str) else value
+        return _legacy_style_or_none(value) or ArtStyle.UNSPECIFIED
 
 
 class ProjectPatch(BaseModel):
@@ -53,6 +58,10 @@ class ProjectPatch(BaseModel):
 
     project_name: str | None = Field(default=None, min_length=1, max_length=20)
     game_style: ArtStyle | None = None
+
+    _accept_legacy = field_validator("game_style", mode="before")(
+        _legacy_style_or_none
+    )
 
     @model_validator(mode="after")
     def _at_least_one(self) -> "ProjectPatch":
@@ -179,7 +188,9 @@ def update_project(
             session,
             project,
             project_name=rename_to,
-            game_style=_stored_style(body.game_style) if body.game_style else None,
+            game_style=(
+                UNSET if body.game_style is None else _stored_style(body.game_style)
+            ),
         )
     except IntegrityError:
         session.rollback()
