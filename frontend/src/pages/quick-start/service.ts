@@ -1,5 +1,6 @@
 import {
   characterApis,
+  characterTemplateImages,
   createGenerationApis,
   createMediaApis,
   projectApis,
@@ -225,9 +226,9 @@ export function createQuickStartService({
     controllerErrorChannels.get(controller)?.report(error)
   }
 
-  function sourceDirectionsFor(controller: WorkflowController): readonly ActionDirection[] {
+  function generationDirectionsFor(controller: WorkflowController): readonly ActionDirection[] {
     const movement = projectDirectionalMovements.get(controller.getWorkflow().projectId) ?? 'single'
-    return getDirectionProfile(movement).sourceDirections
+    return getDirectionProfile(movement).generationDirections
   }
 
   async function candidatesByDirection(
@@ -258,7 +259,7 @@ export function createQuickStartService({
       ...existing,
       ...(typeof selection === 'string' ? { east: selection } : selection),
     }
-    for (const direction of sourceDirectionsFor(controller)) {
+    for (const direction of generationDirectionsFor(controller)) {
       if (!selected[direction]) throw new Error(`缺少${direction}方向的用户选择`)
     }
     return selected
@@ -270,7 +271,7 @@ export function createQuickStartService({
     selectedImages: QuickStartDirectionSelections,
   ) {
     const template = templateNode(controller.getWorkflow())
-    const directions = sourceDirectionsFor(controller)
+    const directions = generationDirectionsFor(controller)
     if (directions.length <= 1) return
     const remaining = directions.slice(1)
     for (const direction of remaining.slice(0, -1)) {
@@ -315,7 +316,7 @@ export function createQuickStartService({
     if (!firstFrame || firstFrame.type !== 'action-first-frame' || firstFrame.id !== nodeId) {
       throw new Error('当前运行没有可确认的动作首帧')
     }
-    const directions = sourceDirectionsFor(controller)
+    const directions = generationDirectionsFor(controller)
     const selectedImages = selectedDirections(controller, selection, {
       ...(firstFrame.selectedFirstFrameUrl ? { east: firstFrame.selectedFirstFrameUrl } : {}),
       ...(firstFrame.selectedFirstFrameUrls ?? {}),
@@ -644,51 +645,34 @@ export function createQuickStartService({
         }
         const templateReference = await mediaApis.upload(file, 'reference-image', signal)
         const setup = setupNode(controller.getWorkflow())
-        let target: { characterId: string; outfitId: string }
         if (template.selectedImageUrl && setup.input.characterId && characterApis) {
           const character = await characterApis.get(setup.input.characterId)
           const outfit =
             character.outfits.find((item) => item.previewUrl === template.selectedImageUrl) ??
             character.outfits.find((item) => item.id === 'outfit-default')
           if (!outfit) throw new Error('角色母版缺少可用造型')
-          target = { characterId: character.id, outfitId: outfit.id }
-        } else {
-          target = await persistCharacterTemplate(
-            controller,
-            templateReference,
-            (_setupId, characterId) =>
-              controller.confirmCharacterTemplate(template.id, templateReference, characterId),
-          )
         }
-        // 继续任务时角色设定节点已经通过，不能再走“初次上传”的入口；
-        // 但同一张上传母版仍要填入其它真实源方向，否则四向/八向动作会缺母版。
-        const directions = sourceDirectionsFor(controller)
-        const selectedImages = templateNode(controller.getWorkflow()).selectedImages ?? {}
-        const remaining = directions.slice(1).filter((direction) => !selectedImages[direction])
-        for (const direction of remaining.slice(0, -1)) {
-          await controller.confirmCharacterTemplate(
-            template.id,
-            templateReference,
-            target.characterId,
-            direction,
-          )
-        }
-        const lastDirection = remaining.at(-1)
-        if (lastDirection) {
-          await persistSelectedCharacterTemplates(controller, target.characterId, {
-            ...(templateNode(controller.getWorkflow()).selectedImages ?? {}),
-            [lastDirection]: templateReference,
-          })
-          await controller.confirmCharacterTemplate(
-            template.id,
-            templateReference,
-            target.characterId,
-            lastDirection,
-          )
-        }
+        const target = await persistCharacterTemplate(
+          controller,
+          templateReference,
+          (_setupId, characterId) =>
+            controller.confirmCharacterTemplate(
+              template.id,
+              templateReference,
+              characterId,
+              'east',
+            ),
+        )
         const spriteSize =
           knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
-        await prepareAction(controller, target.outfitId, actionDescription, spriteSize)
+        if (generationDirectionsFor(controller).length > 1) {
+          await controller.generateCharacterTemplate(setupNode(controller.getWorkflow()).id, {
+            spriteWidth: spriteSize.width,
+            spriteHeight: spriteSize.height,
+          })
+        } else {
+          await prepareAction(controller, target.outfitId, actionDescription, spriteSize)
+        }
         ensureAutomaticAdvance()
         return controller.getWorkflow()
       },
@@ -931,11 +915,30 @@ export function createQuickStartService({
     actionDescription: string,
   ) {
     if (!characterApis) throw new Error('角色服务尚未配置，不能增加动作')
-    const { run, character, outfit } = await createExistingCharacterActionRun(target, {
+    const existingCharacter = await characterApis.get(target.characterId)
+    const project = await projectApis.get(existingCharacter.projectId)
+    projectSpriteSizes.set(project.id, project.spriteSize)
+    projectDirectionalMovements.set(project.id, project.directionalMovement)
+    const templateImages = characterTemplateImages(existingCharacter.templates)
+    const existingOutfit = existingCharacter.outfits.find(
+      (candidate) => candidate.id === target.outfitId,
+    )
+    const fallbackTemplate = existingOutfit?.previewUrl ?? existingCharacter.referenceImageUrl
+    if (!existingOutfit || !fallbackTemplate) {
+      throw new Error('当前造型还没有可用的角色母版，请先完成定妆再生成动作')
+    }
+    templateImages.east ??= fallbackTemplate
+    const missingDirection = getDirectionProfile(
+      project.directionalMovement,
+    ).generationDirections.find((direction) => !templateImages[direction])
+    if (missingDirection) {
+      throw new Error(`角色母版尚未确认方向 ${missingDirection}，请先补齐全部方向母版`)
+    }
+    const { run, outfit } = await createExistingCharacterActionRun(target, {
       characterApis,
       workflowRunApis,
     })
-    const spriteSize = await resolveProjectSpriteSize(character.projectId)
+    const spriteSize = project.spriteSize
     const controller = createController(run)
     await prepareAction(controller, outfit.id, actionDescription, spriteSize)
     return createSession(controller, spriteSize)
@@ -989,7 +992,17 @@ export function createQuickStartService({
         (setupId, characterId) =>
           controller.acceptUploadedCharacterTemplate(setupId, templateReference, characterId),
       )
-      await prepareAction(controller, target.outfitId, actionDescription, project.spriteSize)
+      const directions = getDirectionProfile(
+        project.directionalMovement ?? 'single',
+      ).generationDirections
+      if (directions.length > 1) {
+        await controller.generateCharacterTemplate('character-setup', {
+          spriteWidth: project.spriteSize.width,
+          spriteHeight: project.spriteSize.height,
+        })
+      } else {
+        await prepareAction(controller, target.outfitId, actionDescription, project.spriteSize)
+      }
       return createSession(controller, project.spriteSize)
     },
 
