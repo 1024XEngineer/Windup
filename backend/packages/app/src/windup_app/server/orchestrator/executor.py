@@ -381,30 +381,20 @@ class ActionTaskExecutor:
             # 单独捕获而不是落进下面那个兜底:兜底只存 str(exc),``code`` 就丢了,server
             # 于是分不出"用户改一句话就能过的输入错"和"引擎故障",只能去解析异常文本。
             logger.info("动作任务 %s 的描述被措辞门禁拒绝: %s", task_id, exc.code.value)
+            error_message = user_message(exc)
 
             def _reject(s: Session) -> None:
-                task_repo.update_result(
-                    s, task_id, _ACTION_RESULT,
-                    {"type": _ACTION_RESULT, "reject_code": exc.code.value,
-                     "reject_detail": exc.detail},
-                )
-                task_repo.update_status(
-                    s, task_id, TaskStatus.FAILED, error_message=user_message(exc),
-                )
+                task_repo.fail_task(s, task_id, error_message=error_message)
 
             _using_session(session, self._make_session, _reject)
         except Exception as exc:  # noqa: BLE001 —— 兜底任何生成/上传/网络异常
             logger.exception("动作任务 %s 失败", task_id)
             if session is not None:
                 session.rollback()
+            error_message = user_message(exc)
 
             def _fail(s: Session) -> None:
-                task_repo.update_status(
-                    s,
-                    task_id,
-                    TaskStatus.FAILED,
-                    error_message=user_message(exc),
-                )
+                task_repo.fail_task(s, task_id, error_message=error_message)
                 _settle_credit(s, task_id, success=False)
 
             _using_session(session, self._make_session, _fail)
@@ -562,9 +552,6 @@ class ActionTaskExecutor:
             if elapsed >= I2V_MAX_WAIT_S:
                 raise RuntimeError("i2v 未取得视频 URL(超时或失败)")
 
-            card, action, canvas = self._action_spec(input, cons)
-            progress: ProgressPort = _LogProgress()
-            master = (self._fetch_master or self._download_master)(input)
             gen = self._get_generator(
                 _resolve_video_model(input.video_model), cons.directions
             )
@@ -588,6 +575,9 @@ class ActionTaskExecutor:
                     )
                     return
 
+                card, action, canvas = self._action_spec(input, cons)
+                progress: ProgressPort = _LogProgress()
+                master = (self._fetch_master or self._download_master)(input)
                 generated = gen.finish_video(
                     video, card, action, master, progress, canvas=canvas
                 )
@@ -603,30 +593,20 @@ class ActionTaskExecutor:
             _using_session(session, self._make_session, _complete)
         except PromptRejected as exc:
             logger.info("动作任务 %s 的描述被措辞门禁拒绝: %s", task_id, exc.code.value)
+            error_message = user_message(exc)
 
             def _reject(s: Session) -> None:
-                task_repo.update_result(
-                    s, task_id, _ACTION_RESULT,
-                    {"type": _ACTION_RESULT, "reject_code": exc.code.value,
-                     "reject_detail": exc.detail},
-                )
-                task_repo.update_status(
-                    s, task_id, TaskStatus.FAILED, error_message=user_message(exc),
-                )
+                task_repo.fail_task(s, task_id, error_message=error_message)
 
             _using_session(session, self._make_session, _reject)
         except Exception as exc:  # noqa: BLE001
             logger.exception("动作任务 %s 轮询失败", task_id)
             if session is not None:
                 session.rollback()
+            error_message = user_message(exc)
 
             def _fail(s: Session) -> None:
-                task_repo.update_status(
-                    s,
-                    task_id,
-                    TaskStatus.FAILED,
-                    error_message=user_message(exc),
-                )
+                task_repo.fail_task(s, task_id, error_message=error_message)
                 _settle_credit(s, task_id, success=False)
 
             _using_session(session, self._make_session, _fail)
@@ -948,11 +928,10 @@ class ImageTaskExecutor:
             logger.exception("图片任务 %s 失败", task_id)
             if session is not None:
                 session.rollback()
+            error_message = user_message(exc)
 
             def _fail(s: Session) -> None:
-                task_repo.update_status(
-                    s, task_id, TaskStatus.FAILED, error_message=user_message(exc)
-                )
+                task_repo.fail_task(s, task_id, error_message=error_message)
                 _settle_credit(s, task_id, success=False)
 
             _using_session(session, self._make_session, _fail)

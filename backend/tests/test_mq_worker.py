@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from conftest import seed_credit_account
 from windup_app.server.mq.catalog import (
     MSG_TYPE_CHARACTER_ACTION,
+    MSG_TYPE_CHARACTER_ACTION_POLL,
     MSG_TYPE_CHARACTER_IMAGE,
     MSG_TYPE_VERIFICATION_CODE,
 )
@@ -736,6 +737,109 @@ def test_consumer_action_message_uses_action_semaphore(
     consumer._process_message("4-0", {"data": json.dumps(envelope)})
 
     redis_mock.xack.assert_called_once()
+
+
+def test_consumer_routes_poll_to_reserved_executor():
+    consumer = StreamConsumer(
+        ConsumerConfig(stream="windup:stream:generation", group="generation", concurrency=2),
+        run_image_task=MagicMock(),
+        run_action_task=MagicMock(),
+        stop_event=threading.Event(),
+    )
+    try:
+        poll_fields = {
+            "data": json.dumps({
+                "v": 1,
+                "id": str(uuid.uuid4()),
+                "type": MSG_TYPE_CHARACTER_ACTION_POLL,
+                "payload": {"task_id": 1},
+            })
+        }
+        image_fields = {
+            "data": json.dumps({
+                "v": 1,
+                "id": str(uuid.uuid4()),
+                "type": MSG_TYPE_CHARACTER_IMAGE,
+                "payload": {"task_id": 1},
+            })
+        }
+        assert consumer._poll_executor is not None
+        assert consumer._executor_for(poll_fields) is consumer._poll_executor
+        assert consumer._executor_for(image_fields) is consumer._executor
+    finally:
+        consumer.shutdown()
+
+
+def test_poll_message_runs_while_image_workers_are_busy(
+    engine, worker_session, monkeypatch,
+):
+    monkeypatch.setenv("WINDUP_MQ_GENERATION_IMAGE_CONCURRENCY", "1")
+    monkeypatch.setenv("WINDUP_MQ_GENERATION_POLL_CONCURRENCY", "1")
+    _patch_worker_session_local(monkeypatch, engine)
+
+    image_id = uuid.uuid4()
+    poll_id = uuid.uuid4()
+    mq_repo.insert_pending(
+        worker_session,
+        message_id=image_id,
+        dedupe_key=f"generation:image:{image_id}",
+        stream="windup:stream:generation",
+        msg_type=MSG_TYPE_CHARACTER_IMAGE,
+        payload={"task_id": 1, "task_type": "character_image"},
+    )
+    mq_repo.mark_published(worker_session, image_id, "i-0")
+    mq_repo.insert_pending(
+        worker_session,
+        message_id=poll_id,
+        dedupe_key=f"generation:poll:{poll_id}",
+        stream="windup:stream:generation",
+        msg_type=MSG_TYPE_CHARACTER_ACTION_POLL,
+        payload={"task_id": 2, "task_type": "character_action"},
+    )
+    mq_repo.mark_published(worker_session, poll_id, "p-0")
+    worker_session.commit()
+
+    redis_mock = MagicMock()
+    monkeypatch.setattr("windup_app.worker.consumer.get_redis", lambda: redis_mock)
+
+    image_started = threading.Event()
+    image_release = threading.Event()
+    poll_ran = threading.Event()
+
+    def dispatch(msg_type, payload, **kwargs):
+        if msg_type == MSG_TYPE_CHARACTER_IMAGE:
+            image_started.set()
+            assert image_release.wait(timeout=5)
+        elif msg_type == MSG_TYPE_CHARACTER_ACTION_POLL:
+            poll_ran.set()
+
+    monkeypatch.setattr("windup_app.worker.consumer.dispatch_handler", dispatch)
+
+    consumer = StreamConsumer(
+        ConsumerConfig(stream="windup:stream:generation", group="generation", concurrency=1),
+        run_image_task=MagicMock(),
+        run_action_task=MagicMock(),
+        stop_event=threading.Event(),
+        resume_action_poll=MagicMock(),
+    )
+    try:
+        consumer._submit_message("i-0", {"data": json.dumps({
+            "v": 1,
+            "id": str(image_id),
+            "type": MSG_TYPE_CHARACTER_IMAGE,
+            "payload": {"task_id": 1, "task_type": "character_image"},
+        })})
+        assert image_started.wait(timeout=5)
+        consumer._submit_message("p-0", {"data": json.dumps({
+            "v": 1,
+            "id": str(poll_id),
+            "type": MSG_TYPE_CHARACTER_ACTION_POLL,
+            "payload": {"task_id": 2, "task_type": "character_action"},
+        })})
+        assert poll_ran.wait(timeout=5), "poll 应在 image 占满共享池时仍能执行"
+    finally:
+        image_release.set()
+        consumer.shutdown()
 
 
 def test_release_stale_pending_tasks_unfreezes(db_session, engine, monkeypatch):

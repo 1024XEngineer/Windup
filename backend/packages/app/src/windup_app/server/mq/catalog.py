@@ -47,11 +47,9 @@ def email_stream_spec() -> StreamSpec:
 
 
 def generation_worker_pool_size() -> int:
-    return (
-        generation_image_concurrency()
-        + generation_action_concurrency()
-        + generation_poll_concurrency()
-    )
+    # image/action 共用一个线程池。poll 走独立执行器,不能加进这个数字,
+    # 否则 image 占满线程后 poll 只能排队。
+    return generation_image_concurrency() + generation_action_concurrency()
 
 
 def generation_stream_spec() -> StreamSpec:

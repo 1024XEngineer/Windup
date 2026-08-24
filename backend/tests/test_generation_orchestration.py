@@ -22,6 +22,7 @@ from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
     CharacterActionOutput,
+    GenerationType,
     TaskStatus,
 )
 from windup_app.server.orchestrator.executor import (
@@ -386,6 +387,73 @@ def test_action_task_marks_failed_on_error(session_factory):
     assert done.error_message and "母版下载失败" not in done.error_message
 
 
+def test_action_task_prompt_rejected_leaves_no_result(session_factory):
+    """措辞门禁拒绝时任务应 failed 且 result 为空,避免前端合同校验弹窗。"""
+    from windup_ai_engine.ports import PromptRejectCode, PromptRejected
+    from windup_app.server.orchestrator import task_repo
+
+    class _RejectGen:
+        def generate(self, *args, **kwargs):
+            raise PromptRejected(PromptRejectCode.NEGATION, "描述里不要写否定词")
+
+    service = AiGenerationService()
+    executor = ActionTaskExecutor(
+        generator=_RejectGen(),
+        fetch_master=lambda _input: _tiny_png(),
+        session_factory=session_factory,
+    )
+    action_input = CharacterActionInput(
+        character_id=1,
+        action_type=ActionType.CUSTOM,
+        custom_prompt="不要扬尘",
+        num_frames=4,
+    )
+    with session_factory() as s:
+        task = service.generate_character_action(s, user_id=1, input=action_input)
+        s.commit()
+        task_id = task.id
+
+    executor.run_action_task(task_id, action_input)
+
+    with session_factory() as s:
+        done = service.get_task(s, project_id=1, task_id=task_id)
+    assert done.status is TaskStatus.FAILED
+    assert done.result is None
+    assert done.error_message and "动作描述没通过检查" in done.error_message
+    payload = task_repo.task_event_payload(done)
+    assert payload["status"] == "failed"
+    assert payload["result"] is None
+    assert payload["error_message"]
+
+
+def test_fail_task_clears_stale_result(session_factory):
+    from windup_app.server.orchestrator import task_repo
+
+    with session_factory() as s:
+        task = task_repo.create_task(
+            s,
+            user_id=1,
+            project_id=1,
+            task_type=GenerationType.CHARACTER_ACTION,
+            input_payload={"character_id": 1},
+        )
+        task_repo.update_result(
+            s,
+            task.id,
+            "character_action",
+            {"type": "character_action", "reject_code": "negation"},
+        )
+        task_repo.fail_task(s, task.id, error_message="动作描述没通过检查")
+        s.commit()
+        done = task_repo.get_task(s, task.id)
+
+    assert done.status is TaskStatus.FAILED
+    assert done.result is None
+    assert done.error_message == "动作描述没通过检查"
+    payload = task_repo.task_event_payload(done)
+    assert payload["result"] is None
+
+
 # ── 交付尺寸传给引擎(2026-08-11 挣得)──────────────────────────────────────────
 #
 # 这里以前是拿到 256 的帧再 _fit_to 到项目 sprite 尺寸。那步用 Image.thumbnail 补边,
@@ -548,3 +616,64 @@ def test_resume_action_poll_finishes_when_video_ready(session_factory, monkeypat
         done = service.get_task(s, project_id=1, task_id=task_id)
     assert done.status is TaskStatus.COMPLETED
     assert done.result.frames[0].image_url.startswith("https://")
+
+
+def test_resume_action_poll_does_not_fetch_master_while_pending(
+    session_factory, monkeypatch,
+):
+    """未成片时只 inspect,取母版失败不得把仍在上游跑的任务标 FAILED。"""
+    fetched: list[int] = []
+    parked: list[int] = []
+
+    class _AsyncGen:
+        def poll_video(self, job_id, route_id=None):
+            return None
+
+        def finish_video(self, *args, **kwargs):
+            raise AssertionError("未成片不该 finish")
+
+    import time as _time
+
+    monkeypatch.setattr(
+        "windup_app.server.mq.i2v_state.load_i2v_state",
+        lambda task_id: {
+            "job_id": "job-pending",
+            "poll_count": 0,
+            "next_wait": 5.0,
+            "started_at": _time.time(),
+            "route_id": "primary",
+            "model": "kling-v2-5-turbo",
+        },
+    )
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.executor.ActionTaskExecutor._park_i2v",
+        lambda self, task_id, job, **kw: parked.append(task_id),
+    )
+
+    def _boom(_input):
+        fetched.append(1)
+        raise RuntimeError("对象存储瞬时失败")
+
+    service = AiGenerationService()
+    executor = ActionTaskExecutor(
+        generator=_AsyncGen(),
+        fetch_master=_boom,
+        session_factory=session_factory,
+        fetch_constraints=lambda _s, _pid: ProjectConstraints(sprite_w=64, sprite_h=96),
+    )
+    action_input = CharacterActionInput(
+        character_id=1, action_type=ActionType.WALK, num_frames=1,
+    )
+    with session_factory() as s:
+        task = service.generate_character_action(s, user_id=1, input=action_input)
+        s.commit()
+        task_id = task.id
+        from windup_app.server.orchestrator import task_repo
+        task_repo.update_status(s, task_id, TaskStatus.RUNNING)
+        s.commit()
+    executor.resume_action_poll(task_id, action_input)
+    assert fetched == []
+    assert parked == [task_id]
+    with session_factory() as s:
+        done = service.get_task(s, project_id=1, task_id=task_id)
+    assert done.status is TaskStatus.RUNNING

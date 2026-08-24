@@ -30,9 +30,7 @@ def test_generation_stream_spec_aggregates_pool_size():
     assert spec.group == GENERATION_GROUP
     assert spec.concurrency == generation_worker_pool_size()
     assert spec.concurrency == (
-        generation_image_concurrency()
-        + generation_action_concurrency()
-        + generation_poll_concurrency()
+        generation_image_concurrency() + generation_action_concurrency()
     )
 
 
@@ -63,4 +61,4 @@ def test_catalog_respects_env_overrides(monkeypatch):
     assert generation_image_concurrency() == 10
     assert generation_action_concurrency() == 5
     assert generation_poll_concurrency() == 4
-    assert generation_stream_spec().concurrency == 19
+    assert generation_stream_spec().concurrency == 15

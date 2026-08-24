@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from windup_app.server.mq.catalog import (
+    GENERATION_GROUP,
     MSG_TYPE_CHARACTER_ACTION,
     MSG_TYPE_CHARACTER_ACTION_POLL,
     MSG_TYPE_CHARACTER_IMAGE,
@@ -61,6 +62,15 @@ class StreamConsumer:
             max_workers=config.concurrency,
             thread_name_prefix=f"windup-{config.group}",
         )
+        # poll 必须有自己的线程:共享池里 image 会在 acquire 前占满 worker。
+        self._poll_executor = (
+            ThreadPoolExecutor(
+                max_workers=generation_poll_concurrency(),
+                thread_name_prefix="windup-generation-poll",
+            )
+            if config.group == GENERATION_GROUP
+            else None
+        )
         self._image_sem = threading.Semaphore(generation_image_concurrency())
         self._action_sem = threading.Semaphore(generation_action_concurrency())
         self._poll_sem = threading.Semaphore(generation_poll_concurrency())
@@ -78,6 +88,8 @@ class StreamConsumer:
 
     def shutdown(self, *, wait_timeout: float = 30.0) -> None:
         self._executor.shutdown(wait=True, cancel_futures=False)
+        if self._poll_executor is not None:
+            self._poll_executor.shutdown(wait=True, cancel_futures=False)
 
     def _loop(self) -> None:
         redis_client = get_redis()
@@ -109,7 +121,7 @@ class StreamConsumer:
 
             for _stream, messages in batches:
                 for stream_id, fields in messages:
-                    self._executor.submit(self._process_message, stream_id, fields)
+                    self._submit_message(stream_id, fields)
 
     def _claim_idle(self, redis_client) -> None:
         while not self._stop.is_set():
@@ -122,9 +134,24 @@ class StreamConsumer:
             )
             self._claim_cursor = next_start
             for stream_id, fields in claimed:
-                self._executor.submit(self._process_message, stream_id, fields)
+                self._submit_message(stream_id, fields)
             if not claimed:
                 break
+
+    def _submit_message(self, stream_id: str, fields: dict[str, str]) -> None:
+        self._executor_for(fields).submit(self._process_message, stream_id, fields)
+
+    def _executor_for(self, fields: dict[str, str]) -> ThreadPoolExecutor:
+        poll = self._poll_executor
+        if poll is None:
+            return self._executor
+        try:
+            msg_type = str(mq_client.parse_envelope(fields)["type"])
+        except Exception:
+            return self._executor
+        if msg_type == MSG_TYPE_CHARACTER_ACTION_POLL:
+            return poll
+        return self._executor
 
     def _process_message(self, stream_id: str, fields: dict[str, str]) -> None:
         redis_client = get_redis()
