@@ -27,7 +27,7 @@ export type UseQuickStartAgentOptions = CreateQuickStartAgentOptions
 function errorMessage(cause: unknown): string {
   if (!(cause instanceof Error) || !cause.message) return 'Agent 暂时不可用，请稍后重试'
   if (
-    /Tool|Planner|quick_start_decision|optimizedPrompt|optimizationSummary|生成授权/u.test(
+    /Tool|Planner|quick_start_decision|optimizedPrompt|optimizationSummary|生成提案|请求参数无效|生成授权/u.test(
       cause.message,
     )
   ) {
