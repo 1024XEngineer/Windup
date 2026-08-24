@@ -494,14 +494,17 @@ export function createQuickStartService({
               ],
         })
       } catch (cause) {
-        try {
-          await controller.restartFromNode(templateNode(controller.getWorkflow()).id)
-        } catch (reopenCause) {
-          onAsyncError(
-            reopenCause instanceof Error
-              ? reopenCause
-              : new Error('角色母版资产写入失败后重新打开节点失败'),
-          )
+        const currentTemplate = templateNode(controller.getWorkflow())
+        if (currentTemplate.status !== 'active' || currentTemplate.phase !== 'selecting') {
+          try {
+            await controller.restartFromNode(currentTemplate.id)
+          } catch (reopenCause) {
+            onAsyncError(
+              reopenCause instanceof Error
+                ? reopenCause
+                : new Error('角色母版资产写入失败后重新打开节点失败'),
+            )
+          }
         }
         throw cause
       }
@@ -657,51 +660,39 @@ export function createQuickStartService({
         }
         const templateReference = await mediaApis.upload(file, 'reference-image', signal)
         const setup = setupNode(controller.getWorkflow())
-        let target: { characterId: string; outfitId: string }
-        if (template.selectedImageUrl && setup.input.characterId && characterApis) {
+        if (
+          template.selectedImageUrl &&
+          !template.selectedImages?.east &&
+          setup.input.characterId &&
+          characterApis
+        ) {
           const character = await characterApis.get(setup.input.characterId)
           const outfit =
             character.outfits.find((item) => item.previewUrl === template.selectedImageUrl) ??
             character.outfits.find((item) => item.id === 'outfit-default')
           if (!outfit) throw new Error('角色母版缺少可用造型')
-          target = { characterId: character.id, outfitId: outfit.id }
-        } else {
-          target = await persistCharacterTemplate(
-            controller,
-            templateReference,
-            (_setupId, characterId) =>
-              controller.confirmCharacterTemplate(template.id, templateReference, characterId),
-          )
         }
-        // 继续任务时角色设定节点已经通过，不能再走“初次上传”的入口；
-        // 但同一张上传母版仍要填入其它真实源方向，否则四向/八向动作会缺母版。
-        const directions = generationDirectionsFor(controller)
-        const selectedImages = templateNode(controller.getWorkflow()).selectedImages ?? {}
-        const remaining = directions.slice(1).filter((direction) => !selectedImages[direction])
-        for (const direction of remaining.slice(0, -1)) {
-          await controller.confirmCharacterTemplate(
-            template.id,
-            templateReference,
-            target.characterId,
-            direction,
-          )
-        }
-        const lastDirection = remaining.at(-1)
-        if (lastDirection) {
-          await persistSelectedCharacterTemplates(controller, target.characterId, {
-            ...(templateNode(controller.getWorkflow()).selectedImages ?? {}),
-            [lastDirection]: templateReference,
-          })
-          await controller.confirmCharacterTemplate(
-            template.id,
-            templateReference,
-            target.characterId,
-            lastDirection,
-          )
-        }
+        const target = await persistCharacterTemplate(
+          controller,
+          templateReference,
+          (_setupId, characterId) =>
+            controller.confirmCharacterTemplate(
+              template.id,
+              templateReference,
+              characterId,
+              'east',
+            ),
+        )
         const spriteSize =
           knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
-        await prepareAction(controller, target.outfitId, actionDescription, spriteSize)
+        if (generationDirectionsFor(controller).length > 1) {
+          await controller.generateCharacterTemplate(setupNode(controller.getWorkflow()).id, {
+            spriteWidth: spriteSize.width,
+            spriteHeight: spriteSize.height,
+          })
+        } else {
+          await prepareAction(controller, target.outfitId, actionDescription, spriteSize)
+        }
         ensureAutomaticAdvance()
         return controller.getWorkflow()
       },
@@ -1057,7 +1048,17 @@ export function createQuickStartService({
         (setupId, characterId) =>
           controller.acceptUploadedCharacterTemplate(setupId, templateReference, characterId),
       )
-      await prepareAction(controller, target.outfitId, actionDescription, project.spriteSize)
+      const directions = getDirectionProfile(
+        project.directionalMovement ?? 'single',
+      ).generationDirections
+      if (directions.length > 1) {
+        await controller.generateCharacterTemplate('character-setup', {
+          spriteWidth: project.spriteSize.width,
+          spriteHeight: project.spriteSize.height,
+        })
+      } else {
+        await prepareAction(controller, target.outfitId, actionDescription, project.spriteSize)
+      }
       return createSession(controller, project.spriteSize)
     },
 

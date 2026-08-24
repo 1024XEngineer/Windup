@@ -1049,6 +1049,50 @@ describe('createQuickStartService', () => {
     )
   })
 
+  it('四向上传单张母版后只生成其余方向，等待用户逐方向确认再创建动作', async () => {
+    const generationApis = pendingGenerationApis()
+    let savedCharacter = characterFixture({
+      description: '挥手',
+      referenceImageUrl: 'https://example.test/template.png',
+    })
+    const characterApis = mutableCharacterApis(
+      () => savedCharacter,
+      (value) => (savedCharacter = value),
+    )
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis(),
+      generationApis,
+      characterApis,
+      mediaApis: {
+        upload: vi.fn(async () => 'https://example.test/template.png' as MediaReference),
+      },
+      prepareProject: async () => ({
+        id: 'project-1',
+        spriteSize: { width: 256, height: 256 },
+        directionalMovement: 'four-way' as const,
+      }),
+      projectApis: projectReader(undefined, 'four-way'),
+    })
+
+    const session = await service.startWithUploadedTemplate(
+      new File(['pixels'], 'hero.png', { type: 'image/png' }),
+      '挥手',
+    )
+
+    const calls = vi.mocked(generationApis.create).mock.calls.map(([input]) => input)
+    expect(
+      calls.filter((input) => input.type === 'character_template').map((input) => input.direction),
+    ).toEqual(['west', 'north', 'south'])
+    expect(calls.some((input) => input.type === 'first_frame')).toBe(false)
+    expect(
+      session.getWorkflow().nodes.find((node) => node.type === 'character-template'),
+    ).toMatchObject({
+      status: 'active',
+      phase: 'generating',
+      selectedImages: { east: 'https://example.test/template.png' },
+    })
+  })
+
   it('preserves backend frame metadata while approving and importing a completed action', async () => {
     const run = actionRun()
     const frames = [
@@ -1252,7 +1296,7 @@ describe('createQuickStartService', () => {
   )
 
   it.each([new Error('节点重新打开失败'), '节点重新打开失败'])(
-    'Character 写入失败且无法重新打开母版节点时上报错误',
+    '单向 Character 写入失败且无法重新打开母版节点时上报错误',
     async (reopenCause) => {
       const workflowRunApis = createWorkflowRunApis()
       const realUpdate = workflowRunApis.update.bind(workflowRunApis)
@@ -1281,7 +1325,7 @@ describe('createQuickStartService', () => {
         prepareProject: vi.fn(async () => ({
           id: 'project-1',
           spriteSize: { width: 256, height: 256 },
-          directionalMovement: 'four-way' as const,
+          directionalMovement: 'single' as const,
         })),
         projectApis: projectReader(),
         onAsyncError,
@@ -1340,7 +1384,7 @@ describe('createQuickStartService', () => {
     },
   )
 
-  it('continues from an uploaded replacement and restores missing character info from project assets', async () => {
+  it('四向继续上传替换母版时只替换东向并生成其它独立方向', async () => {
     const candidateRun: WorkflowRun = {
       id: 'run-candidate',
       projectId: 'project-1',
@@ -1393,10 +1437,7 @@ describe('createQuickStartService', () => {
 
     const session = await service.open(candidateRun.id)
     const updateCharacter = vi.mocked(characterApis.update)
-    const persistCharacter = updateCharacter.getMockImplementation()!
-    updateCharacter
-      .mockImplementationOnce(persistCharacter)
-      .mockRejectedValueOnce(new Error('uploaded templates write failed'))
+    updateCharacter.mockRejectedValueOnce(new Error('uploaded templates write failed'))
     await expect(
       session.continueWithUploadedTemplate(
         new File(['replacement'], 'replacement.png', { type: 'image/png' }),
@@ -1405,7 +1446,11 @@ describe('createQuickStartService', () => {
     ).rejects.toThrow('uploaded templates write failed')
     expect(
       session.getWorkflow().nodes.find((node) => node.type === 'character-template'),
-    ).toMatchObject({ status: 'active', phase: 'selecting' })
+    ).toMatchObject({
+      status: 'active',
+      phase: 'selecting',
+      selectedImages: { east: 'replacement.png' },
+    })
 
     const continued = await session.continueWithUploadedTemplate(
       new File(['replacement'], 'replacement.png', { type: 'image/png' }),
@@ -1414,11 +1459,13 @@ describe('createQuickStartService', () => {
     expect(continued.nodes.find((node) => node.type === 'character-setup')).toMatchObject({
       input: { characterId: 'character-restore' },
     })
-    expect(continued.nodes).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ type: 'action-first-frame', phase: 'generating' }),
-      ]),
-    )
+    expect(continued.nodes.find((node) => node.type === 'character-template')).toMatchObject({
+      status: 'active',
+      phase: 'generating',
+      selectedImageUrl: 'replacement.png',
+      selectedImages: { east: 'replacement.png' },
+    })
+    expect(continued.nodes.some((node) => node.type === 'action-first-frame')).toBe(false)
     expect(character.templates).toEqual([
       {
         direction: 'east',
@@ -1428,62 +1475,16 @@ describe('createQuickStartService', () => {
       },
       {
         direction: 'west',
-        sourceDirection: null,
-        mirrorX: false,
-        imageUrl: 'replacement.png',
-      },
-      {
-        direction: 'north',
-        sourceDirection: null,
-        mirrorX: false,
-        imageUrl: 'replacement.png',
-      },
-      {
-        direction: 'south',
-        sourceDirection: null,
-        mirrorX: false,
-        imageUrl: 'replacement.png',
+        sourceDirection: 'east',
+        mirrorX: true,
+        imageUrl: null,
       },
     ])
     expect(vi.mocked(generationApis.create).mock.calls.map(([input]) => input.direction)).toEqual([
-      'east',
       'west',
       'north',
       'south',
     ])
-    const listener = vi.fn()
-    const stop = session.subscribe(listener)
-    await Promise.resolve()
-    stop()
-    await session.interrupt()
-
-    const recoveryRun = structuredClone(continued)
-    const recoverySetup = recoveryRun.nodes.find((node) => node.type === 'character-setup')
-    if (!recoverySetup || recoverySetup.type !== 'character-setup') throw new Error('missing setup')
-    delete recoverySetup.input.characterId
-    const recoveryService = createQuickStartService({
-      workflowRunApis: createWorkflowRunApis([recoveryRun]),
-      generationApis,
-      characterApis,
-      prepareProject: vi.fn(),
-      projectApis: projectReader(),
-    })
-    const recoverySession = await recoveryService.open(recoveryRun.id)
-    await recoverySession.resume()
-    await expect(recoverySession.resolveCharacterInfo()).resolves.toEqual({
-      characterId: 'character-restore',
-      outfitId: character.outfits[0]!.id,
-    })
-    vi.mocked(characterApis.listByProject).mockResolvedValueOnce({
-      items: [
-        structuredClone(character),
-        characterFixture({ id: 'duplicate-character', workflowRunId: recoveryRun.id }),
-      ],
-      total: 2,
-      page: 1,
-      pageSize: 20,
-    })
-    await expect(recoverySession.resolveCharacterInfo()).resolves.toBeNull()
   })
 
   it('restores character info when the bound character is on a later project page', async () => {

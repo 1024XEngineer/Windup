@@ -356,6 +356,66 @@ describe('WorkflowController', () => {
     ])
   })
 
+  it('多方向项目只把上传母版记入指定方向，全部方向上传后才完成节点', async () => {
+    const { controller } = createController(createRun(), 'four-way')
+
+    await controller.acceptUploadedCharacterTemplate(
+      'setup-1',
+      'https://img/east.png',
+      'character-1',
+      'east',
+    )
+
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+      status: 'active',
+      phase: 'selecting',
+      selectedImageUrl: 'https://img/east.png',
+      selectedImages: { east: 'https://img/east.png' },
+    })
+
+    for (const direction of ['west', 'north', 'south'] as const) {
+      await controller.acceptUploadedCharacterTemplate(
+        'setup-1',
+        `https://img/${direction}.png`,
+        'character-1',
+        direction,
+      )
+    }
+
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+      status: 'passed',
+      phase: 'completed',
+      selectedImages: {
+        east: 'https://img/east.png',
+        west: 'https://img/west.png',
+        north: 'https://img/north.png',
+        south: 'https://img/south.png',
+      },
+    })
+  })
+
+  it('多方向项目上传东向母版后只生成其余缺失方向', async () => {
+    const { controller, generation } = createController(createRun(), 'four-way')
+    await controller.acceptUploadedCharacterTemplate(
+      'setup-1',
+      'https://img/east.png',
+      'character-1',
+      'east',
+    )
+
+    await controller.generateCharacterTemplate('setup-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledTimes(3)
+    expect(vi.mocked(generation.apis.create).mock.calls.map(([input]) => input.direction)).toEqual([
+      'west',
+      'north',
+      'south',
+    ])
+  })
+
   it('母版确认和上传都拒绝错误节点状态与角色改绑', async () => {
     const { controller: lockedController } = createController()
     await expect(
@@ -1016,6 +1076,55 @@ describe('WorkflowController', () => {
     })
   })
 
+  it('一个方向提交失败时先保留其它已创建任务，重试只补缺失方向', async () => {
+    const { controller, generation } = createController(createRun(), 'four-way')
+    const create = vi.mocked(generation.apis.create)
+    const originalCreate = create.getMockImplementation()!
+    const finishSuccessfulCreates: Array<() => void> = []
+    create.mockImplementation((input) => {
+      if (input.direction === 'west') {
+        return Promise.reject(new Error('west submit failed'))
+      }
+      return new Promise((resolve) => {
+        finishSuccessfulCreates.push(() => void resolve(originalCreate(input)))
+      })
+    })
+
+    const generationRequest = controller.generateCharacterTemplate('setup-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+    let requestState: 'pending' | 'rejected' = 'pending'
+    void generationRequest.catch(() => {
+      requestState = 'rejected'
+    })
+    await flushAsyncWork()
+
+    expect(requestState).toBe('pending')
+    finishSuccessfulCreates.forEach((finish) => finish())
+    await expect(generationRequest).rejects.toThrow('west submit failed')
+
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+      status: 'active',
+      phase: 'generating',
+      generations: [
+        { taskId: 'task-1', role: 'character_template' },
+        { taskId: 'task-2', role: 'character_template', direction: 'north' },
+        { taskId: 'task-3', role: 'character_template', direction: 'south' },
+      ],
+    })
+
+    create.mockImplementation(originalCreate)
+    await controller.generateCharacterTemplate('setup-1', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+
+    expect(create).toHaveBeenCalledTimes(5)
+    expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ direction: 'west' }))
+    expect(controller.getWorkflow().nodes[1]?.generations).toHaveLength(4)
+  })
+
   it('四向首帧必须逐方向确认，不能用东向选择冒充其它方向', async () => {
     const run = createRun([
       setupNode({ status: 'passed', phase: 'completed' }),
@@ -1342,6 +1451,14 @@ describe('WorkflowController', () => {
       status: 'failed',
       result: null,
       error: 'north provider failed',
+    })
+    failed.generation.snapshots.set('task-west', {
+      id: 'task-west',
+      projectId: '1',
+      type: 'character_template',
+      status: 'pending',
+      result: null,
+      error: null,
     })
     failed.generation.snapshots.set('task-south', {
       id: 'task-south',
