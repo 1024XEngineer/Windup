@@ -2084,6 +2084,89 @@ describe('createQuickStartService', () => {
     expect(characterApis.update).toHaveBeenCalledOnce()
   })
 
+  it('现有四向角色仍缺真实西向母版时阻止创建新动作', async () => {
+    const character = characterFixture({
+      id: 'character-existing',
+      workflowRunId: 'old-run',
+      name: '老角色',
+      referenceImageUrl: 'existing.png',
+      outfits: [
+        {
+          id: 'outfit-existing',
+          characterId: 'character-existing',
+          name: '默认造型',
+          description: null,
+          previewUrl: 'existing.png',
+          model3dUrl: null,
+          actions: [],
+        },
+      ],
+    })
+    Object.assign(character, {
+      templates: [
+        {
+          direction: 'east',
+          sourceDirection: null,
+          mirrorX: false,
+          imageUrl: 'existing.png',
+        },
+        {
+          direction: 'west',
+          sourceDirection: 'east',
+          mirrorX: true,
+          imageUrl: null,
+        },
+        {
+          direction: 'north',
+          sourceDirection: null,
+          mirrorX: false,
+          imageUrl: 'existing-north.png',
+        },
+        {
+          direction: 'south',
+          sourceDirection: null,
+          mirrorX: false,
+          imageUrl: 'existing-south.png',
+        },
+      ],
+    })
+    const nodes = setupNodes(character.id, 'existing.png')
+    Object.assign(nodes[1], {
+      selectedImages: {
+        east: 'existing.png',
+        north: 'existing-north.png',
+        south: 'existing-south.png',
+      },
+    })
+    const run: WorkflowRun = {
+      id: 'old-run',
+      projectId: character.projectId,
+      version: 1,
+      storageStatus: 'active',
+      nodes,
+    }
+    const generationApis = pendingGenerationApis()
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      characterApis: {
+        get: vi.fn(async () => character),
+        listByProject: vi.fn(async () => ({ items: [character], total: 1, page: 1, pageSize: 20 })),
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      } as unknown as CharacterApis,
+      projectApis: projectReader(undefined, 'four-way'),
+      prepareProject: vi.fn(),
+    })
+
+    const session = await service.open(run.id)
+    await expect(session.addAction('outfit-existing', '向北行走')).rejects.toThrow(
+      '角色母版尚未确认方向 west',
+    )
+    expect(generationApis.create).not.toHaveBeenCalled()
+  })
+
   it('keeps a custom action display name bounded while preserving its full prompt', async () => {
     const actionDescription = '挥手向远处的朋友打招呼并转身轻轻鞠躬并保持姿态'
     const run: WorkflowRun = {
