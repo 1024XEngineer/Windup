@@ -5,6 +5,8 @@ import logging
 import httpx
 import pytest
 
+from openai import APIConnectionError
+
 from windup_common.enums.model import ModelErrorType
 from windup_framework.config.provider import AIProviderSettings
 from windup_framework.gateway.chat import (
@@ -283,6 +285,75 @@ def test_langchain_adapter_maps_response_status(monkeypatch):
     assert r.http_status == 401
 
 
+def test_chat_gateway_retries_same_route_on_unreached(caplog):
+    caplog.set_level(logging.INFO, logger="windup.gateway")
+    adapter = FakeChatAdapter({"gpt-4o-mini": [UNREACHED, OK]})
+    gw = ChatGateway(
+        adapter=adapter,
+        circuit=CircuitBreaker(),
+        settings=_primary_cfg(),
+        route_adapters={"primary": adapter},
+    )
+    assert gw.invoke([{"role": "user", "content": "ping"}]) == "pong"
+    assert adapter.calls == ["gpt-4o-mini", "gpt-4o-mini"]
+    records = [json.loads(r.message) for r in caplog.records if r.name == "windup.gateway"]
+    failed = [r for r in records if r.get("outcome") == "failed"]
+    success = [r for r in records if r.get("outcome") == "success"]
+    assert failed[0]["error_type"] == "unreached"
+    assert failed[0]["retry_count"] == 0
+    assert failed[0]["attempt_index"] == 0
+    assert success[-1]["retry_count"] == 1
+    assert success[-1]["attempt_index"] == 1
+
+
+def test_chat_gateway_unknown_fails_without_retry():
+    unknown = ChatAdapterResult(ok=False, error_type=ModelErrorType.UNKNOWN)
+    adapter = FakeChatAdapter({"gpt-4o-mini": [unknown, OK]})
+    gw = ChatGateway(
+        adapter=adapter,
+        circuit=CircuitBreaker(),
+        settings=_primary_cfg(),
+        route_adapters={"primary": adapter},
+    )
+    with pytest.raises(RuntimeError, match="chat gateway failed"):
+        gw.invoke([{"role": "user", "content": "ping"}])
+    assert adapter.calls == ["gpt-4o-mini"]
+
+
+def test_chat_gateway_retries_openai_connection_error(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="windup.gateway")
+    req = httpx.Request("POST", "https://api.modelink.ai/v1/chat/completions")
+    calls = {"n": 0}
+
+    class _Flaky:
+        def __init__(self, **kwargs):
+            pass
+
+        async def ainvoke(self, messages, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                cause = httpx.ConnectError("Connection error", request=req)
+                raise APIConnectionError(request=req) from cause
+            return "pong"
+
+    monkeypatch.setattr("windup_framework.gateway.chat.ChatOpenAI", _Flaky)
+    adapter = LangChainChatAdapter(_primary_cfg())
+    gw = ChatGateway(
+        adapter=adapter,
+        circuit=CircuitBreaker(),
+        settings=_primary_cfg(),
+        route_adapters={"primary": adapter},
+    )
+    assert asyncio.run(gw.ainvoke([{"role": "user", "content": "ping"}])) == "pong"
+    assert calls["n"] == 2
+    records = [json.loads(r.message) for r in caplog.records if r.name == "windup.gateway"]
+    failed = [r for r in records if r.get("outcome") == "failed"]
+    success = [r for r in records if r.get("outcome") == "success"]
+    assert failed[0]["error_type"] == "unreached"
+    assert failed[0]["retry_count"] == 0
+    assert success[-1]["retry_count"] == 1
+
+
 def test_langchain_adapter_maps_connect_and_timeout(monkeypatch):
     req = httpx.Request("POST", "https://x")
 
@@ -296,6 +367,18 @@ def test_langchain_adapter_maps_connect_and_timeout(monkeypatch):
     monkeypatch.setattr("windup_framework.gateway.chat.ChatOpenAI", _Connect)
     r = LangChainChatAdapter(_primary_cfg()).invoke([], model="gpt-4o-mini")
     assert r.error_type is ModelErrorType.UNREACHED
+
+    class _OpenAIConnect:
+        def __init__(self, **kwargs):
+            pass
+
+        def invoke(self, messages, **kwargs):
+            raise APIConnectionError(request=req)
+
+    monkeypatch.setattr("windup_framework.gateway.chat.ChatOpenAI", _OpenAIConnect)
+    r = LangChainChatAdapter(_primary_cfg()).invoke([], model="gpt-4o-mini")
+    assert r.error_type is ModelErrorType.UNREACHED
+    assert r.http_status is None
 
     class _Disconnect:
         def __init__(self, **kwargs):
