@@ -22,7 +22,12 @@ import { forgetActiveRun, isMissingActiveRunError, syncActiveRun } from '@/featu
 import { useOptionalAuthSession } from '@/features/auth-session'
 import { ExportButton, type ExportPackageModel } from '@/features/export-package'
 import { useQuickStartAgent } from '@/features/quick-start-agent/react'
-import type { CreateQuickStartAgentOptions } from '@/features/quick-start-agent/runtime'
+import type {
+  CharacterGenerationProposal,
+  CreateQuickStartAgentOptions,
+  PlannerMessage,
+  QuickStartAgentResult,
+} from '@/features/quick-start-agent/runtime'
 import {
   GenerationPreviewCard,
   GenerationProgressCopy,
@@ -135,10 +140,22 @@ const AGENT_CONVERSATION_STORAGE_KEY = 'windup.quick-start.agent-chat.v2'
 const LEGACY_AGENT_CONVERSATION_STORAGE_KEY = 'windup.quick-start.agent-chat.v1'
 const AGENT_DRAFT_HISTORY_STATE_KEY = 'windupQuickStartAgentDraftId'
 
-type AgentConversationTurn = {
-  role: 'user' | 'assistant'
-  content: string
-}
+type AgentConversationTurn =
+  | { role: 'user'; content: string }
+  | {
+      role: 'assistant'
+      content: string
+      kind: 'reply' | 'clarification' | 'blocked'
+    }
+  | {
+      role: 'assistant'
+      content: string
+      kind: 'proposal'
+      proposalId: string
+      optimizedPrompt: string
+      optimizationSummary: string
+      proposalStatus: 'pending' | 'superseded' | 'adopted' | 'confirmed'
+    }
 
 type AgentConversationRecord = {
   turns: readonly AgentConversationTurn[]
@@ -193,19 +210,82 @@ function readAgentConversation(
     const parsed: unknown = JSON.parse(stored)
     if (typeof parsed !== 'object' || parsed === null || !('turns' in parsed)) return []
     if (!Array.isArray(parsed.turns)) return []
-    const turns = parsed.turns.filter(
-      (turn): turn is AgentConversationTurn =>
-        typeof turn === 'object' &&
-        turn !== null &&
-        'role' in turn &&
-        (turn.role === 'user' || turn.role === 'assistant') &&
-        'content' in turn &&
-        typeof turn.content === 'string' &&
-        Boolean(turn.content.trim()),
-    )
-    return turns
+    return parsed.turns.flatMap((turn): AgentConversationTurn[] => {
+      if (
+        typeof turn !== 'object' ||
+        turn === null ||
+        !('role' in turn) ||
+        !('content' in turn) ||
+        typeof turn.content !== 'string' ||
+        !turn.content.trim()
+      ) {
+        return []
+      }
+      if (turn.role === 'user') return [{ role: 'user', content: turn.content }]
+      if (turn.role !== 'assistant') return []
+
+      if (
+        'kind' in turn &&
+        turn.kind === 'proposal' &&
+        'proposalId' in turn &&
+        typeof turn.proposalId === 'string' &&
+        'optimizedPrompt' in turn &&
+        typeof turn.optimizedPrompt === 'string' &&
+        'optimizationSummary' in turn &&
+        typeof turn.optimizationSummary === 'string' &&
+        'proposalStatus' in turn &&
+        (turn.proposalStatus === 'pending' ||
+          turn.proposalStatus === 'superseded' ||
+          turn.proposalStatus === 'adopted' ||
+          turn.proposalStatus === 'confirmed')
+      ) {
+        return [
+          {
+            role: 'assistant',
+            content: turn.content,
+            kind: 'proposal',
+            proposalId: turn.proposalId,
+            optimizedPrompt: turn.optimizedPrompt,
+            optimizationSummary: turn.optimizationSummary,
+            proposalStatus: turn.proposalStatus,
+          },
+        ]
+      }
+
+      const kind =
+        'kind' in turn &&
+        (turn.kind === 'reply' || turn.kind === 'clarification' || turn.kind === 'blocked')
+          ? turn.kind
+          : 'reply'
+      return [{ role: 'assistant', content: turn.content, kind }]
+    })
   } catch {
     return []
+  }
+}
+
+function createAgentSeed(turns: readonly AgentConversationTurn[]): {
+  messages: readonly PlannerMessage[]
+  clarificationUsed: boolean
+  pendingProposal: CharacterGenerationProposal | null
+} {
+  const pending = turns.findLast(
+    (turn) =>
+      turn.role === 'assistant' && turn.kind === 'proposal' && turn.proposalStatus === 'pending',
+  )
+  return {
+    messages: turns.map(({ role, content }) => ({ role, content })),
+    clarificationUsed: turns.some(
+      (turn) => turn.role === 'assistant' && turn.kind === 'clarification',
+    ),
+    pendingProposal:
+      pending?.role === 'assistant' && pending.kind === 'proposal'
+        ? {
+            proposalId: pending.proposalId,
+            optimizedPrompt: pending.optimizedPrompt,
+            optimizationSummary: pending.optimizationSummary,
+          }
+        : null,
   }
 }
 
@@ -322,7 +402,7 @@ export function QuickStartPage({
     />
   ) : (
     <QuickStartInput
-      key={location.key}
+      key={`${location.key}:${activeRunUserId ?? 'local'}`}
       service={activeService}
       agent={agent}
       activeRunUserId={activeRunUserId}
@@ -450,19 +530,14 @@ function QuickStartInput({
   const submitAbortController = useRef<AbortController | null>(null)
   const handoffTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const rewriteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const generationConfirmation = useRef<((prompt: string) => void) | null>(null)
   const conversationTurnsRef = useRef(conversationTurns)
   const initialConversationLength = useRef(conversationTurns.length)
-  const waitForGenerationConfirmation = useCallback(
-    () =>
-      new Promise<string>((resolve) => {
-        generationConfirmation.current = resolve
-      }),
-    [],
-  )
+  const initialAgentSeed = useRef(createAgentSeed(conversationTurns)).current
   const agentSession = useQuickStartAgent({
     ...agent,
-    waitForPresentation: waitForGenerationConfirmation,
+    initialMessages: initialAgentSeed.messages,
+    initialClarificationUsed: initialAgentSeed.clarificationUsed,
+    initialProposal: initialAgentSeed.pendingProposal,
   })
   const unavailableReason = service.unavailableReason
   const agentPlanning = agentSession.state.status === 'planning'
@@ -522,11 +597,10 @@ function QuickStartInput({
 
   const appendConversationTurn = useCallback(
     (turn: AgentConversationTurn) => {
-      setConversationTurns((current) => {
-        const next = [...current, turn]
-        persistDraftConversation(next)
-        return next
-      })
+      const next = [...conversationTurnsRef.current, turn]
+      conversationTurnsRef.current = next
+      setConversationTurns(next)
+      persistDraftConversation(next)
     },
     [persistDraftConversation],
   )
@@ -536,16 +610,45 @@ function QuickStartInput({
       submitAbortController.current?.abort()
       if (handoffTimer.current) clearTimeout(handoffTimer.current)
       if (rewriteTimer.current) clearTimeout(rewriteTimer.current)
-      generationConfirmation.current?.('')
-      generationConfirmation.current = null
     },
     [],
   )
 
-  function fillOptimizedPrompt() {
-    const state = agentSession.state
-    if (state.status !== 'dispatching' || promptState === 'rewriting' || generationStarting) return
+  function updateProposalStatus(
+    proposalId: string,
+    proposalStatus: Extract<AgentConversationTurn, { kind: 'proposal' }>['proposalStatus'],
+    confirmedPrompt?: string,
+  ): readonly AgentConversationTurn[] {
+    const next = conversationTurnsRef.current.map((turn) =>
+      turn.role === 'assistant' && turn.kind === 'proposal' && turn.proposalId === proposalId
+        ? {
+            ...turn,
+            content: confirmedPrompt
+              ? `${turn.optimizationSummary}\n\n提示词提案：${confirmedPrompt}`
+              : turn.content,
+            optimizedPrompt: confirmedPrompt ?? turn.optimizedPrompt,
+            proposalStatus,
+          }
+        : turn,
+    )
+    conversationTurnsRef.current = next
+    setConversationTurns(next)
+    persistDraftConversation(next)
+    return next
+  }
 
+  function fillOptimizedPrompt(proposalId: string) {
+    const state = agentSession.state
+    if (
+      state.status !== 'proposal' ||
+      state.proposalId !== proposalId ||
+      promptState === 'rewriting' ||
+      generationStarting
+    ) {
+      return
+    }
+
+    updateProposalStatus(proposalId, 'adopted')
     setPrompt(state.optimizedPrompt)
     setPromptState('rewriting')
     if (rewriteTimer.current) clearTimeout(rewriteTimer.current)
@@ -568,17 +671,38 @@ function QuickStartInput({
     if (fileInput.current) fileInput.current.value = ''
   }
 
+  async function handoffGenerated(
+    result: Extract<QuickStartAgentResult, { kind: 'generated' }>,
+  ): Promise<void> {
+    const confirmedTurns = updateProposalStatus(
+      result.proposalId,
+      'confirmed',
+      result.optimizedPrompt,
+    )
+    persistRunConversation(confirmedTurns, result.runId)
+    setEntryTransition('leaving')
+    await new Promise<void>((resolve) => {
+      handoffTimer.current = setTimeout(() => {
+        handoffTimer.current = null
+        resolve()
+      }, ENTRY_HANDOFF_MS)
+    })
+    navigate(`/quick-start/${encodeURIComponent(result.runId)}`)
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const normalizedPrompt = prompt.trim()
 
-    if (agentSession.state.status === 'dispatching' && promptState === 'ready') {
+    if (agentSession.state.status === 'proposal' && promptState === 'ready') {
       if (!normalizedPrompt) return
-      const confirm = generationConfirmation.current
-      if (!confirm) return
-      generationConfirmation.current = null
       setPromptState('confirmed')
-      confirm(normalizedPrompt)
+      try {
+        const result = await agentSession.confirmProposal(normalizedPrompt)
+        if (result.kind === 'generated') await handoffGenerated(result)
+      } catch {
+        setPromptState('ready')
+      }
       return
     }
 
@@ -586,23 +710,32 @@ function QuickStartInput({
 
     if (!templateFile) {
       setError(null)
+      if (agentSession.state.status === 'proposal') {
+        updateProposalStatus(agentSession.state.proposalId, 'superseded')
+      }
       appendConversationTurn({ role: 'user', content: normalizedPrompt })
       setPrompt('')
       try {
         const result = await agentSession.submit(normalizedPrompt)
         if (result.kind === 'message') {
-          appendConversationTurn({ role: 'assistant', content: result.message })
+          appendConversationTurn({
+            role: 'assistant',
+            content: result.message,
+            kind: result.messageKind,
+          })
           return
         }
-        persistRunConversation(conversationTurnsRef.current, result.runId)
-        setEntryTransition('leaving')
-        await new Promise<void>((resolve) => {
-          handoffTimer.current = setTimeout(() => {
-            handoffTimer.current = null
-            resolve()
-          }, ENTRY_HANDOFF_MS)
-        })
-        navigate(`/quick-start/${encodeURIComponent(result.runId)}`)
+        if (result.kind === 'proposal') {
+          appendConversationTurn({
+            role: 'assistant',
+            content: `${result.optimizationSummary}\n\n提示词提案：${result.optimizedPrompt}`,
+            kind: 'proposal',
+            proposalId: result.proposalId,
+            optimizedPrompt: result.optimizedPrompt,
+            optimizationSummary: result.optimizationSummary,
+            proposalStatus: 'pending',
+          })
+        }
       } catch (cause) {
         if (!(cause instanceof Error && cause.name === 'AbortError')) {
           setEntryTransition('idle')
@@ -648,30 +781,22 @@ function QuickStartInput({
   }
 
   const inputLocked =
-    submitting ||
-    agentPlanning ||
-    promptState === 'rewriting' ||
-    generationStarting ||
-    (agentSession.state.status === 'dispatching' && promptState === 'collecting')
+    submitting || agentPlanning || promptState === 'rewriting' || generationStarting
   const awaitingGenerationConfirmation =
-    agentSession.state.status === 'dispatching' && promptState === 'ready'
+    agentSession.state.status === 'proposal' && promptState === 'ready'
   const buttonLabel = submitting
     ? '正在创建…'
     : agentPlanning
       ? '正在判断…'
       : promptState === 'rewriting'
         ? '优化中'
-        : agentSession.state.status === 'dispatching' && promptState === 'collecting'
-          ? '先填入提示词'
-          : awaitingGenerationConfirmation
-            ? '发送生成'
-            : generationStarting
-              ? '正在开始生成…'
-              : agentSession.state.status === 'restart-required'
-                ? '重新开始'
-                : agentSession.state.status === 'awaiting-input'
-                  ? '继续'
-                  : '生成角色'
+        : awaitingGenerationConfirmation
+          ? '发送生成'
+          : generationStarting
+            ? '正在开始生成…'
+            : hasConversation
+              ? '继续'
+              : '生成角色'
   const canSubmit = awaitingGenerationConfirmation
     ? Boolean(prompt.trim())
     : Boolean(prompt.trim()) || Boolean(templateFile)
@@ -711,6 +836,20 @@ function QuickStartInput({
                 >
                   {turn.role === 'user' ? (
                     <UserTurn>{turn.content}</UserTurn>
+                  ) : turn.kind === 'proposal' ? (
+                    <PromptProposal
+                      summary={turn.optimizationSummary}
+                      prompt={turn.optimizedPrompt}
+                      status={turn.proposalStatus}
+                      disabled={
+                        turn.proposalStatus !== 'pending' ||
+                        agentSession.state.status !== 'proposal' ||
+                        agentSession.state.proposalId !== turn.proposalId ||
+                        promptState === 'rewriting' ||
+                        generationStarting
+                      }
+                      onFill={() => fillOptimizedPrompt(turn.proposalId)}
+                    />
                   ) : (
                     <AgentCopy
                       lines={turn.content.split('\n')}
@@ -737,14 +876,6 @@ function QuickStartInput({
                     ))}
                   </span>
                 </div>
-              ) : null}
-              {agentSession.state.status === 'dispatching' ? (
-                <PromptProposal
-                  summary={agentSession.state.optimizationSummary}
-                  prompt={agentSession.state.optimizedPrompt}
-                  disabled={promptState === 'rewriting' || generationStarting}
-                  onFill={fillOptimizedPrompt}
-                />
               ) : null}
               {agentSession.state.status === 'error' ? (
                 <div role="alert" data-conversation-kind="agent" className="min-w-0">
@@ -930,11 +1061,13 @@ function QuickStartInput({
 function PromptProposal({
   summary,
   prompt,
+  status,
   disabled,
   onFill,
 }: {
   summary: string
   prompt: string
+  status: Extract<AgentConversationTurn, { kind: 'proposal' }>['proposalStatus']
   disabled: boolean
   onFill: () => void
 }) {
@@ -944,18 +1077,24 @@ function PromptProposal({
       <blockquote className="max-w-2xl font-serif text-base leading-7 text-app-ink">
         {prompt}
       </blockquote>
-      <button
-        type="button"
-        aria-label="填入输入框"
-        disabled={disabled}
-        onClick={onFill}
-        className="group inline-flex min-h-8 items-center gap-2 rounded-full pr-2 text-xs text-app-muted transition hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-45"
-      >
-        <span className="grid size-8 shrink-0 place-items-center rounded-full transition group-hover:bg-app-surface-muted">
-          <ArrowBendDownLeft aria-hidden="true" size={17} weight="bold" />
-        </span>
-        <span>填入输入框后，还可以继续修改</span>
-      </button>
+      {status === 'pending' ? (
+        <button
+          type="button"
+          aria-label="填入输入框"
+          disabled={disabled}
+          onClick={onFill}
+          className="group inline-flex min-h-8 items-center gap-2 rounded-full pr-2 text-xs text-app-muted transition hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-45"
+        >
+          <span className="grid size-8 shrink-0 place-items-center rounded-full transition group-hover:bg-app-surface-muted">
+            <ArrowBendDownLeft aria-hidden="true" size={17} weight="bold" />
+          </span>
+          <span>填入输入框后，还可以继续修改</span>
+        </button>
+      ) : status === 'superseded' ? (
+        <p className="text-xs text-app-faint">已继续讨论</p>
+      ) : status === 'adopted' ? (
+        <p className="text-xs text-app-muted">已填入输入框</p>
+      ) : null}
     </div>
   )
 }

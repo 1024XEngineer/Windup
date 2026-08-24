@@ -3,11 +3,14 @@ export type { CreateAiSdkQuickStartPlannerOptions, QuickStartGenerateText } from
 export {
   createQuickStartAgent,
   parseCharacterGenerationPlan,
+  parseQuickStartDecision,
+  QUICK_START_DECISION_TOOL,
   START_CHARACTER_GENERATION_TOOL,
   validatePlannerTerminal,
 } from './runtime'
 export type {
   CharacterGenerationPlan,
+  CharacterGenerationProposal,
   CreateQuickStartAgentOptions,
   PlannerInput,
   PlannerMessage,
@@ -16,7 +19,7 @@ export type {
   QuickStartAgent,
   QuickStartAgentResult,
   QuickStartAgentTurnOptions,
+  QuickStartDecision,
   QuickStartPlanner,
   StartCharacterGenerationAction,
-  ValidatedPlannerTerminal,
 } from './runtime'
