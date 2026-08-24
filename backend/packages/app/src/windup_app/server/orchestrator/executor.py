@@ -115,8 +115,9 @@ def _load_constraints(session: Session, project_id: int | None) -> ProjectConstr
 def _fit_to(png: bytes, w: int, h: int, *, smooth: bool = False) -> bytes:
     """把图等比 contain 进 w×h(透明补边),落实尺寸约束。
 
-    ``smooth`` 决定重采样:序列帧是像素画,必须 NEAREST(插值会把硬边糊成灰边、
-    并引入调色板外的颜色);全彩角色母版反过来,NEAREST 缩图会明显锯齿,用 LANCZOS。
+    ``smooth`` 决定重采样:全彩图缩小用 LANCZOS(NEAREST 会明显锯齿);像素画反过来,
+    必须 NEAREST —— 插值会把硬边糊成灰边、并引入调色板外的颜色。实测一张 8px 块、
+    6 色的母版压到 256:LANCZOS 后网格检不出、逻辑高错一倍、**100% 的像素落在色板外**。
     """
     import io
 
@@ -716,7 +717,15 @@ class ImageTaskExecutor:
             # 请求里的 width/height 此前被丢掉:入口收下并校验过它们(_validate_project_size),
             # 而 ImageProvider.gen_image 没有尺寸参数,模型出多大就返多大 —— 又一个"接了不
             # 履约"的字段。模型本身不吃宽高,所以在这里落实。
-            png = _fit_to(matte.cutout(img), input.width, input.height, smooth=True)
+            # 像素项目的母版按像素画缩:上传出去的就是这一张,动作生成再取回来提色板与
+            # 逻辑高(strategy.concrete.master_pixel_spec)。LANCZOS 缩完色板里已经没有
+            # 一个原色,后面吸附的目标本身就是坏的(#607)。
+            png = _fit_to(
+                matte.cutout(img),
+                input.width,
+                input.height,
+                smooth=cons.stylize != "pixel",
+            )
             cut.append(Image.open(io.BytesIO(png)).convert("RGBA"))
             urls.append(upload(png))
         # 同一份 alpha 顺手数一次主体数(#427):此前多主体母版要等下一个动作任务才留痕,
