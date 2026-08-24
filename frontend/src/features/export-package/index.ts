@@ -1,6 +1,11 @@
 /** 将预览台当前角色资产打包下载；与发布到资产库是两件事。 */
 export { AssetVersionExportButton, ExportButton, ExportPanel } from './export-panel'
-export type { ExportButtonProps, ExportPanelProps } from './export-panel'
+export type {
+  CocosImporter,
+  CocosPairer,
+  ExportButtonProps,
+  ExportPanelProps,
+} from './export-panel'
 export type {
   ExportAction,
   ExportAnchor,
@@ -22,7 +27,32 @@ export {
   validateExportPackageModel,
   type GenericExportMetadata,
 } from './contract'
-export { COCOS_TARGET_READINESS, toCocosAnchor } from './cocos-target'
+export {
+  COCOS_IMPORT_SCHEMA_VERSION,
+  COCOS_TARGET_READINESS,
+  cocosCreatorTarget,
+  toCocosAnchor,
+} from './cocos-target'
+export {
+  COCOS_BRIDGE_PROTOCOL,
+  COCOS_BRIDGE_TOKEN_KEY,
+  CocosBridgeClient,
+  CocosBridgeError,
+  type CocosBridgeClientOptions,
+  type CocosBridgeErrorCode,
+  type CocosBridgeHealth,
+  type CocosImportJob,
+  type CocosImportPhase,
+  type CocosImportResult,
+} from './cocos-bridge-client'
+export {
+  importIntoCocos,
+  type CocosBridgeApi,
+  type CocosImportCache,
+  type CocosOneClickPhase,
+  type CocosPackageExporter,
+  type ImportIntoCocosOptions,
+} from './cocos-one-click'
 export {
   createAssetExportPlan,
   exportGameAssets,

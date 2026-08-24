@@ -26,6 +26,8 @@ data/
 
 # 运行产物
 output/
+tools/cocos-importer/dist/
+tools/cocos-importer/test/.tmp-*/
 
 # 构建缓存
 .ruff_cache/

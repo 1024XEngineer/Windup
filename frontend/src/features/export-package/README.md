@@ -44,11 +44,18 @@ Aster-character-1-Explorer-outfit-1/
 
 已发布 Character 动作的 `expectedFrameCount` 来自后端声明，不能用 `frames.length` 自己推算；两者不同时导出立即失败。WorkflowRun 中尚未发布的生成结果没有独立的期望总帧数字段，因此当前只能校验帧序从 0 连续，不能识别生成服务在末尾少返回帧。所有阶段遇到图片读取失败、PNG 无透明信息或尺寸不一致都会失败，不会用透明占位掩盖问题。`action-assets` 可保留 `pending` 质量状态供检查；`playtest` 只接受 `passed` 动作。
 
-## Cocos Creator 边界
+## Cocos Creator 3.8.x 一键导入
 
-Issue #94 要求先用真实 Cocos Creator 3.x 验证图集切分数据、`.anim`、`.meta`、UUID 与小版本差异。当前仓库没有该实测结论，因此本模块只落地已确定的通用层和 target 扩展接口，不伪造 Cocos 原生文件。
+`cocosCreatorTarget` 在通用 ZIP 的 `targets/cocos-creator/` 中追加 `cocos-import.json` 1.1 清单。清单保留动作方向、精确帧序、FPS 或逐帧时长、循环设置、锚点、脚线、单帧文件和 atlas 信息；通用锚点 `(x, y)` 转换为 Creator 的 `(x, 1-y)`。
 
-Cocos 坐标转换规则已经明确：通用锚点 `(x, y)` 转成 Creator 锚点 `(x, 1-y)`。等实测字段回填后，只需新增一个 `AssetExportTarget`，不改 `meta.json` 与通用打包逻辑。
+`ExportPanel` 同时提供：
+
+- “一键导入 Cocos”：检查本机插件、配对状态、Creator 版本和目标工程，随后上传同一份 ZIP 并轮询导入进度。
+- “下载 Cocos 包”：浏览器或插件不可用时的离线回退，不重复渲染已经缓存的 ZIP。
+
+Creator 扩展位于 `tools/cocos-importer/extension/`，构建产物是 `tools/cocos-importer/dist/windup-cocos-importer.zip`。扩展支持 `>=3.8.8 <3.9.0`，只监听本机回环地址，并完成事务写入、AssetDB 刷新、Prefab/AnimationClip 引用校验、失败回滚和 Prefab 定位。CLI 仍保留给 CI 与离线排查。
+
+2026-08-20 已用 256×256 的“网站看板娘 / 默认造型”真实 2D 资产在 Creator 3.8.8 导入，验证 67 张 SpriteFrame、2 个 AnimationClip、64 个动作帧和 1 个 Prefab。
 
 ## 验证
 
