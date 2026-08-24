@@ -87,6 +87,24 @@ def test_openai_api_connection_error_is_unreached():
     assert "Connection error" in edge
 
 
+def test_openai_connection_error_uses_connect_cause():
+    req = httpx.Request("POST", "https://api.modelink.ai/v1/chat/completions")
+    err = APIConnectionError(request=req)
+    err.__cause__ = httpx.ConnectError("Connection error", request=req)
+    error_type, status, _ = classify_exception(err)
+    assert error_type is ModelErrorType.UNREACHED
+    assert status is None
+
+
+def test_openai_connection_error_does_not_mask_unknown_cause():
+    req = httpx.Request("POST", "https://api.modelink.ai/v1/chat/completions")
+    err = APIConnectionError(request=req)
+    err.__cause__ = ValueError("hook failed")
+    error_type, status, _ = classify_exception(err)
+    assert error_type is ModelErrorType.UNKNOWN
+    assert status is None
+
+
 def test_wrapped_connect_error_is_unreached():
     req = httpx.Request("POST", "https://api.modelink.ai/v1/chat/completions")
     cause = httpx.ConnectError("Connection error", request=req)
