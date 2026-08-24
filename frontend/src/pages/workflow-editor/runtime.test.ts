@@ -643,11 +643,13 @@ describe('createRealWorkflowEditorSession', () => {
     const fullFrame = workflow.nodes.find((node) => node.type === 'action-full-frame')!
     fullFrame.generations = [
       { taskId: 'generation-east', role: 'complete_animation', direction: 'east' },
+      { taskId: 'generation-west', role: 'complete_animation', direction: 'west' },
       { taskId: 'generation-north', role: 'complete_animation', direction: 'north' },
       { taskId: 'generation-south', role: 'complete_animation', direction: 'south' },
     ]
     const generations = new Map([
       ['generation-east', directionalAnimationFixture('generation-east', 'east')],
+      ['generation-west', directionalAnimationFixture('generation-west', 'west')],
       ['generation-north', directionalAnimationFixture('generation-north', 'north')],
       ['generation-south', directionalAnimationFixture('generation-south', 'south')],
     ])
@@ -1353,7 +1355,7 @@ function completeAnimationFixture(): Generation<'complete_animation'> {
 
 function directionalAnimationFixture(
   id: string,
-  direction: 'east' | 'north' | 'south',
+  direction: 'east' | 'west' | 'north' | 'south',
 ): Generation<'complete_animation'> {
   return {
     ...completeAnimationFixture(),

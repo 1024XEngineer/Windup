@@ -309,7 +309,7 @@ describe('WorkspacePage', () => {
     expect(
       (await screen.findByRole('link', { name: '预览 轻装信使 · 常态造型' })).getAttribute('href'),
     ).toBe('/playtest/51/outfit-default')
-    expect(screen.getByText('2 个动作 · 5 帧')).toBeTruthy()
+    expect(screen.getByText('2 个动作 · 20 帧')).toBeTruthy()
   })
 
   it('announces character loading for the selected project', async () => {

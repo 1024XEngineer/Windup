@@ -439,7 +439,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
 
     renderEditor('/workflow-editor/42')
 
-    const exportButtons = await screen.findAllByRole('button', { name: /导出角色母版/ })
+    const exportButtons = await screen.findAllByRole('button', { name: /导出.*资产/ })
     expect(exportButtons.length).toBeGreaterThan(0)
     expect(
       exportButtons.every((button) => button.className.includes('border-app-line-strong')),
@@ -2144,7 +2144,7 @@ function directionalCharacterGeneration(
 
 function completeAnimationGeneration(): Generation<'complete_animation'> {
   return {
-    id: 'generation-walk',
+    id: 'generation-action-walk',
     projectId: '1',
     type: 'complete_animation',
     status: 'completed',
