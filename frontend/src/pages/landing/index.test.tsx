@@ -112,4 +112,33 @@ describe('LandingPage', () => {
     expect(document.querySelector('img[src*="workflow-editor"]')).toBeNull()
     expect(document.querySelector('source[srcset*="workflow-editor"]')).toBeNull()
   })
+
+  it('在收尾插画之后提供真实的开源项目入口', async () => {
+    render(
+      <GuestAuthSession>
+        <MemoryRouter>
+          <LandingPage />
+        </MemoryRouter>
+      </GuestAuthSession>,
+    )
+
+    const footer = await screen.findByRole('contentinfo')
+    const header = document.querySelector<HTMLElement>('header[data-layout="unified"]')
+
+    expect(header).not.toBeNull()
+    expect(within(header!).getByRole('link', { name: 'GitHub' }).getAttribute('href')).toBe(
+      'https://github.com/1024XEngineer/Windup',
+    )
+    expect(within(footer).getByText('Windup 是一个开源的 2D 角色资产工作台。')).toBeTruthy()
+    expect(within(footer).getByRole('link', { name: 'GitHub 仓库' }).getAttribute('href')).toBe(
+      'https://github.com/1024XEngineer/Windup',
+    )
+    expect(within(footer).getByRole('link', { name: 'Issues' }).getAttribute('href')).toBe(
+      'https://github.com/1024XEngineer/Windup/issues',
+    )
+    expect(within(footer).getByRole('link', { name: 'Contributors' }).getAttribute('href')).toBe(
+      'https://github.com/1024XEngineer/Windup/graphs/contributors',
+    )
+    expect(within(footer).queryByText(/隐私政策|服务条款|备案/)).toBeNull()
+  })
 })
