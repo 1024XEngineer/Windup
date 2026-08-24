@@ -439,7 +439,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
 
     renderEditor('/workflow-editor/42')
 
-    const exportButtons = await screen.findAllByRole('button', { name: /导出角色母版/ })
+    const exportButtons = await screen.findAllByRole('button', { name: /导出.*资产/ })
     expect(exportButtons.length).toBeGreaterThan(0)
     expect(
       exportButtons.every((button) => button.className.includes('border-app-line-strong')),
@@ -667,10 +667,10 @@ describe('WorkflowEditorPage real runtime boundary', () => {
   })
 
   it('四向角色母版按真实源方向分组选择并逐一确认', async () => {
-    const workflow = selectingTemplateWorkflow(3, 'template-east')
+    const workflow = selectingTemplateWorkflow(4, 'template-east')
     workflow.nodes[1] = {
       ...(workflow.nodes[1] as CharacterTemplateWorkflowNode),
-      generations: (['east', 'north', 'south'] as const).map((direction) => ({
+      generations: (['east', 'west', 'north', 'south'] as const).map((direction) => ({
         taskId: `template-${direction}`,
         role: 'character_template',
         direction,
@@ -679,7 +679,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     const session = createSession(workflow, {
       generationApis: generationApisFixture({
         get: vi.fn(async (_projectId: string, taskId: string) => {
-          const direction = taskId.replace('template-', '') as 'east' | 'north' | 'south'
+          const direction = taskId.replace('template-', '') as 'east' | 'west' | 'north' | 'south'
           return directionalCharacterGeneration(direction)
         }) as GenerationApis['get'],
       }),
@@ -708,6 +708,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
 
     for (const [direction, label] of [
       ['east', '东'],
+      ['west', '西'],
       ['north', '北'],
       ['south', '南'],
     ] as const) {
@@ -718,9 +719,10 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     }
     fireEvent.click(screen.getByRole('button', { name: '确认身份母版' }))
 
-    await waitFor(() => expect(confirmCharacterTemplate).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(confirmCharacterTemplate).toHaveBeenCalledTimes(4))
     expect(confirmCharacterTemplate.mock.calls.map((call) => call[2])).toEqual([
       'east',
+      'west',
       'north',
       'south',
     ])
@@ -2198,7 +2200,7 @@ function characterGeneration(label: string): Generation {
 }
 
 function directionalCharacterGeneration(
-  direction: 'east' | 'north' | 'south',
+  direction: 'east' | 'west' | 'north' | 'south',
 ): Generation<'character_template'> {
   return {
     id: `template-${direction}`,
@@ -2216,7 +2218,7 @@ function directionalCharacterGeneration(
 
 function completeAnimationGeneration(): Generation<'complete_animation'> {
   return {
-    id: 'generation-walk',
+    id: 'generation-action-walk',
     projectId: '1',
     type: 'complete_animation',
     status: 'completed',

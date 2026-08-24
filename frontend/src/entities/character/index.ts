@@ -9,6 +9,7 @@ import {
 } from './directions'
 
 export type { ActionDirection } from './directions'
+export { validateDirectionalAsset, type DirectionalAssetValidation } from './directional-asset'
 
 /** PR #75 将动作类型定义为字符串；已知类型之外的后端扩展也应原样保留。 */
 export type ActionType = string
@@ -232,13 +233,12 @@ function mapActionSequences(dtos: CharacterActionSequenceDto[]): ActionSequence[
       throw new TypeError('动作方向无效或重复')
     }
     directions.add(dto.direction)
-    const resolution = resolveActionDirection(dto.direction)
     const sourceDirection = dto.source_direction
     if (
       typeof dto.mirror_x !== 'boolean' ||
       (sourceDirection !== null && !isActionDirection(sourceDirection)) ||
-      dto.mirror_x !== resolution.mirrorX ||
-      sourceDirection !== (resolution.mirrorX ? resolution.sourceDirection : null)
+      dto.mirror_x !== (sourceDirection !== null) ||
+      sourceDirection === dto.direction
     ) {
       throw new TypeError('动作方向镜像关系无效')
     }
@@ -286,13 +286,12 @@ function mapCharacterTemplates(dtos: CharacterTemplateDto[]): CharacterTemplate[
       throw new TypeError('角色母版方向无效或重复')
     }
     directions.add(dto.direction)
-    const resolution = resolveActionDirection(dto.direction)
     const sourceDirection = dto.source_direction
     if (
       typeof dto.mirror_x !== 'boolean' ||
       (sourceDirection !== null && !isActionDirection(sourceDirection)) ||
-      dto.mirror_x !== resolution.mirrorX ||
-      sourceDirection !== (resolution.mirrorX ? resolution.sourceDirection : null)
+      dto.mirror_x !== (sourceDirection !== null) ||
+      sourceDirection === dto.direction
     ) {
       throw new TypeError('角色母版方向镜像关系无效')
     }
@@ -330,6 +329,17 @@ export function characterTemplatesFromImages(
   images: Partial<Record<ActionDirection, string>>,
 ): CharacterTemplate[] {
   return ACTION_DIRECTIONS.flatMap((direction) => {
+    const explicitImageUrl = images[direction]?.trim()
+    if (explicitImageUrl) {
+      return [
+        {
+          direction,
+          sourceDirection: null,
+          mirrorX: false,
+          imageUrl: explicitImageUrl,
+        },
+      ]
+    }
     const resolution = resolveActionDirection(direction)
     const imageUrl = images[resolution.sourceDirection]?.trim()
     if (!imageUrl) return []

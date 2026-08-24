@@ -19,13 +19,15 @@ def _gift_credits(engine):
         session.commit()
 
 
-def _create_project(auth_client, name: str = "生成项目") -> dict:
+def _create_project(
+    auth_client, name: str = "生成项目", directional_movement: int = 2
+) -> dict:
     return auth_client.post(
         "/projects",
         json={
             "project_name": name,
             "character_perspective": 1,
-            "directional_movement": 2,
+            "directional_movement": directional_movement,
             "sprite_width": 64,
             "sprite_height": 64,
         },
@@ -114,7 +116,7 @@ def test_action_generation_uses_token_user_without_body_user_id(auth_client):
     assert body["data"]["status"] == "pending"
 
 
-def test_image_generation_rejects_mirrored_direction(auth_client):
+def test_image_generation_accepts_real_west_for_four_way_project(auth_client):
     project = _create_project(auth_client)
 
     response = auth_client.post(
@@ -123,11 +125,12 @@ def test_image_generation_rejects_mirrored_direction(auth_client):
     )
 
     body = response.json()
-    assert body["code"] == 400
-    assert "镜像方向" in body["message"]
+    assert body["code"] == 200
+    assert body["data"]["status"] == "pending"
+    assert body["data"]["input_payload"]["direction"] == "west"
 
 
-def test_action_generation_rejects_mirrored_direction(auth_client):
+def test_action_generation_accepts_real_west_for_four_way_project(auth_client):
     project = _create_project(auth_client)
     character = _create_character(auth_client, project["id"])
 
@@ -137,8 +140,26 @@ def test_action_generation_rejects_mirrored_direction(auth_client):
     )
 
     body = response.json()
-    assert body["code"] == 400
-    assert "镜像方向" in body["message"]
+    assert body["code"] == 200
+    assert body["data"]["status"] == "pending"
+    assert body["data"]["input_payload"]["direction"] == "west"
+
+
+def test_image_generation_accepts_real_north_west_for_eight_way_project(auth_client):
+    project = _create_project(
+        auth_client,
+        name="八向生成项目",
+        directional_movement=3,
+    )
+
+    body = auth_client.post(
+        "/generation/image",
+        json=_image_payload(project["id"], direction="north_west"),
+    ).json()
+
+    assert body["code"] == 200
+    assert body["data"]["status"] == "pending"
+    assert body["data"]["input_payload"]["direction"] == "north_west"
 
 
 def test_action_character_must_belong_to_requested_project(auth_client):

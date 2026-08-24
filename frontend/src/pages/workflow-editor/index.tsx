@@ -616,7 +616,7 @@ function CharacterTemplateContent({
     )
   }
   if (node.phase === 'selecting') {
-    const directions = getDirectionProfile(input.project.directionalMovement).sourceDirections
+    const directions = getDirectionProfile(input.project.directionalMovement).generationDirections
     const groups = directions.map((direction) => {
       const result =
         input.generations[generationKey(node.id, 'character_template', direction)]?.result
@@ -1157,7 +1157,7 @@ function FirstFrameContent({
   const branchBusy = input.busyBranches.has(branchKey)
   const [refining, setRefining] = useState(false)
   const [adjustmentPrompt, setAdjustmentPrompt] = useState('')
-  const directions = getDirectionProfile(input.project.directionalMovement).sourceDirections
+  const directions = getDirectionProfile(input.project.directionalMovement).generationDirections
   const groups = directions.map((direction) => {
     const result = input.generations[generationKey(node.id, 'first_frame', direction)]?.result
     return {
@@ -1408,7 +1408,7 @@ function AnimationContent({
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
   const [promptDraft, setPromptDraft] = useState(node.input?.prompt ?? '')
-  const directions = getDirectionProfile(input.project.directionalMovement).sourceDirections
+  const directions = getDirectionProfile(input.project.directionalMovement).generationDirections
   const groups = directions.map((direction) => {
     const result =
       input.generations[generationKey(node.id, 'complete_animation', direction)]?.result
@@ -1580,7 +1580,7 @@ function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInpu
           ? 'complete_animation'
           : null
   const failedDirections = generationRole
-    ? getDirectionProfile(input.project.directionalMovement).sourceDirections.filter(
+    ? getDirectionProfile(input.project.directionalMovement).generationDirections.filter(
         (direction) =>
           input.generations[generationKey(node.id, generationRole, direction)]?.status === 'failed',
       )
