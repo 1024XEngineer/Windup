@@ -125,7 +125,7 @@ def _load_constraints(session: Session, project_id: int | None) -> ProjectConstr
         directions=_MOVEMENT_DIRECTIONS.get(p.directional_movement, 1),
         sprite_w=p.sprite_width,
         sprite_h=p.sprite_height,
-        style=art_style.prompt_phrase,
+        style=ArtStyle.phrase_from_stored(p.game_style),
         stylize="pixel" if art_style.wants_pixelation else "none",
         sprite_sample_url=p.sprite_sample_url or "",
     )

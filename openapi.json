@@ -1973,8 +1973,16 @@
             "type": "integer"
           },
           "game_style": {
-            "$ref": "#/components/schemas/ArtStyle",
-            "default": "unspecified"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtStyle"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "default": "unspecified",
+            "title": "Game Style"
           },
           "project_name": {
             "maxLength": 20,
@@ -2222,9 +2230,13 @@
                 "$ref": "#/components/schemas/ArtStyle"
               },
               {
+                "type": "string"
+              },
+              {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Game Style"
           },
           "project_name": {
             "anyOf": [

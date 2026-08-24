@@ -23,16 +23,30 @@ logger = logging.getLogger("windup.project.api")
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
-def _legacy_style_or_none(value: object) -> ArtStyle | None:
-    """画风枚举化之前发的是自由文本;直接拒会让还没换下拉的客户端改不了项目。"""
-    if value is None:
+def _legacy_style_or_none(value: object) -> ArtStyle | str | None:
+    """画风枚举化之前发的是自由文本;直接拒会让还没换下拉的客户端改不了项目。
+
+    认不出的取值**原样留着**:归到 ``UNSPECIFIED`` 会把用户已有的画风约束静默抹掉。
+    等所有入口都改发枚举码之后,这条兼容连同 ``str`` 分支一起收紧。
+    """
+    if value is None or isinstance(value, ArtStyle):
+        return value
+    if not isinstance(value, str):
+        return value
+    try:
+        return ArtStyle(value.strip())
+    except ValueError:
+        return ArtStyle.PIXEL if ArtStyle.from_stored(value) is ArtStyle.PIXEL else value
+
+
+def _stored_style(style: ArtStyle | str | None) -> str | None:
+    """``UNSPECIFIED`` 落库存 NULL —— 现有前端把这一列原样显示,写字面量会让它显示出来。
+
+    非枚举的存量自由文本原样落库,交给 ``ArtStyle.phrase_from_stored`` 在生成时读回。
+    """
+    if style is None or style is ArtStyle.UNSPECIFIED:
         return None
-    return ArtStyle.from_stored(value) if isinstance(value, str) else value
-
-
-def _stored_style(style: ArtStyle | None) -> str | None:
-    """``UNSPECIFIED`` 落库存 NULL —— 现有前端把这一列原样显示,写字面量会让它显示出来。"""
-    return None if style is None or style is ArtStyle.UNSPECIFIED else style.value
+    return style.value if isinstance(style, ArtStyle) else style.strip() or None
 
 
 class ProjectCreate(BaseModel):
@@ -44,20 +58,21 @@ class ProjectCreate(BaseModel):
     directional_movement: int = Field(ge=1, le=3)
     sprite_width: int = Field(ge=32, le=2048)
     sprite_height: int = Field(ge=32, le=2048)
-    game_style: ArtStyle = ArtStyle.UNSPECIFIED
+    game_style: ArtStyle | str = ArtStyle.UNSPECIFIED
     sprite_sample_url: str | None = None
 
     @field_validator("game_style", mode="before")
     @classmethod
-    def _accept_legacy_free_text(cls, value: object) -> ArtStyle:
-        return _legacy_style_or_none(value) or ArtStyle.UNSPECIFIED
+    def _accept_legacy_free_text(cls, value: object) -> ArtStyle | str:
+        got = _legacy_style_or_none(value)
+        return ArtStyle.UNSPECIFIED if got is None else got
 
 
 class ProjectPatch(BaseModel):
     """改项目请求;只改传上来的那些字段。"""
 
     project_name: str | None = Field(default=None, min_length=1, max_length=20)
-    game_style: ArtStyle | None = None
+    game_style: ArtStyle | str | None = None
 
     _accept_legacy = field_validator("game_style", mode="before")(
         _legacy_style_or_none

@@ -60,10 +60,13 @@ def test_every_style_but_unspecified_carries_a_distinct_prompt_phrase():
 
 @pytest.mark.parametrize(
     "free_text, expected",
-    [("低饱和像素风", "pixel"), ("中世纪厚涂", None)],
+    [("低饱和像素风", "pixel"), ("中世纪厚涂", "中世纪厚涂")],
 )
 def test_legacy_free_text_still_creates_a_project(auth_client, free_text, expected):
-    """还没换成下拉的客户端仍在发自由文本,拒掉会让它们建不了项目。"""
+    """还没换成下拉的客户端仍在发自由文本,拒掉会让它们建不了项目。
+
+    认得出像素的归到枚举码;认不出的原样留着 —— 压成 NULL 会把用户的画风约束抹掉。
+    """
     created = auth_client.post(
         "/projects", json=_payload(game_style=free_text)
     ).json()["data"]
@@ -114,7 +117,7 @@ def test_patch_with_no_field_is_rejected(auth_client):
     [
         ("pixel", "pixel", "pixel art"),
         ("cartoon", "none", ArtStyle.CARTOON.prompt_phrase),
-        ("像素风格", "pixel", "pixel art"),
+        ("像素风格", "pixel", "像素风格"),
         (None, "none", ""),
     ],
 )
@@ -188,3 +191,19 @@ def test_patch_accepts_legacy_free_text(auth_client):
 
     assert body["code"] == 200
     assert body["data"]["game_style"] == "pixel"
+
+
+def test_a_non_pixel_legacy_style_still_reaches_the_prompt(auth_client, db_session):
+    """枚举化之前「中世纪厚涂」是原样进提示词的;归到不指定等于静默删掉用户的约束。"""
+    from windup_app.server.orchestrator.executor import _load_constraints
+    from windup_app.server.project.model import Project
+
+    created = auth_client.post(
+        "/projects", json=_payload(game_style="中世纪厚涂")
+    ).json()["data"]
+
+    db_session.expire_all()
+    assert db_session.get(Project, created["id"]).game_style == "中世纪厚涂"
+    cons = _load_constraints(db_session, created["id"])
+    assert cons.style == "中世纪厚涂"
+    assert cons.stylize == "none"

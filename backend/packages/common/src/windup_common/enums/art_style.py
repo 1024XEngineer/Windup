@@ -31,6 +31,22 @@ class ArtStyle(str, Enum):
         return _PROMPT_PHRASES[self]
 
     @classmethod
+    def phrase_from_stored(cls, value: str | None) -> str:
+        """库里那一列该往提示词里放什么。
+
+        存量项目存的是自由文本(如「中世纪厚涂」),枚举化之前它是原样进提示词的。
+        把它一律归到 ``UNSPECIFIED`` 会静默抹掉用户已有的画风约束,而帧数、时长、
+        成色全都正常,没有一处会红 —— 所以认不出的取值原样交出去。
+        """
+        if not value:
+            return ""
+        text = value.strip()
+        try:
+            return cls(text).prompt_phrase
+        except ValueError:
+            return text
+
+    @classmethod
     def from_stored(cls, value: str | None) -> "ArtStyle":
         """把库里的画风字段读成枚举。
 
