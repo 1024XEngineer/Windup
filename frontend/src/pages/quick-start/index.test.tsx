@@ -1314,6 +1314,8 @@ describe('QuickStartPage', () => {
     const directionalCandidates = [
       { direction: 'east', index: 0, imageUrl: 'east-1.png' },
       { direction: 'east', index: 1, imageUrl: 'east-2.png' },
+      { direction: 'west', index: 0, imageUrl: 'west-1.png' },
+      { direction: 'west', index: 1, imageUrl: 'west-2.png' },
       { direction: 'north', index: 0, imageUrl: 'north-1.png' },
       { direction: 'north', index: 1, imageUrl: 'north-2.png' },
       { direction: 'south', index: 0, imageUrl: 'south-1.png' },
@@ -1327,6 +1329,8 @@ describe('QuickStartPage', () => {
     const submit = await screen.findByRole('button', { name: '确认选择，继续下一步' })
     fireEvent.click(await screen.findByRole('button', { name: '选择东方向角色方案 2' }))
     expect(submit.hasAttribute('disabled')).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '选择西方向角色方案 2' }))
+    expect(submit.hasAttribute('disabled')).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: '选择北方向角色方案 1' }))
     expect(submit.hasAttribute('disabled')).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: '选择南方向角色方案 2' }))
@@ -1335,10 +1339,43 @@ describe('QuickStartPage', () => {
 
     await waitFor(() =>
       expect(service.confirmCandidate).toHaveBeenCalledWith(
-        { east: 'east-2.png', north: 'north-1.png', south: 'south-2.png' },
+        {
+          east: 'east-2.png',
+          west: 'west-2.png',
+          north: 'north-1.png',
+          south: 'south-2.png',
+        },
         '',
       ),
     )
+  })
+
+  it('八向角色候选完整展示全部八个独立方向', async () => {
+    const selectingRun = workflow(setupAndTemplate())
+    const directions = [
+      ['east', '东'],
+      ['west', '西'],
+      ['north', '北'],
+      ['south', '南'],
+      ['north_east', '东北'],
+      ['north_west', '西北'],
+      ['south_east', '东南'],
+      ['south_west', '西南'],
+    ] as const
+    const service = serviceFor(selectingRun, {
+      getTemplateCandidates: vi.fn(async () =>
+        directions.map(([direction]) => ({
+          direction,
+          index: 0,
+          imageUrl: `${direction}.png`,
+        })),
+      ),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    for (const [, label] of directions) {
+      expect(await screen.findByRole('region', { name: `${label}方向角色方案候选` })).toBeTruthy()
+    }
   })
 
   it('keeps the natural-language creation entry visible when no run is selected', () => {
@@ -2071,6 +2108,8 @@ describe('QuickStartPage', () => {
           [
             { direction: 'east', index: 0, imageUrl: 'east-1.png' },
             { direction: 'east', index: 1, imageUrl: 'east-2.png' },
+            { direction: 'west', index: 0, imageUrl: 'west-1.png' },
+            { direction: 'west', index: 1, imageUrl: 'west-2.png' },
             { direction: 'north', index: 0, imageUrl: 'north-1.png' },
             { direction: 'north', index: 1, imageUrl: 'north-2.png' },
             { direction: 'south', index: 0, imageUrl: 'south-1.png' },
@@ -2082,6 +2121,8 @@ describe('QuickStartPage', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: '选择东方向动作首帧 1' }))
     expect(screen.queryByRole('button', { name: '确认首帧，生成完整动作' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '选择西方向动作首帧 2' }))
+    expect(screen.queryByRole('button', { name: '确认首帧，生成完整动作' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '选择北方向动作首帧 2' }))
     expect(screen.queryByRole('button', { name: '确认首帧，生成完整动作' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '选择南方向动作首帧 1' }))
@@ -2090,6 +2131,7 @@ describe('QuickStartPage', () => {
     await waitFor(() =>
       expect(service.confirmFirstFrame).toHaveBeenCalledWith({
         east: 'east-1.png',
+        west: 'west-2.png',
         north: 'north-2.png',
         south: 'south-1.png',
       }),
