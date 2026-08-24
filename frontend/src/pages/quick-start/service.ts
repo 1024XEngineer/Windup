@@ -61,6 +61,10 @@ export interface QuickStartFailedDirection {
   direction: ActionDirection
 }
 
+export interface QuickStartResumeOptions {
+  automaticActionAdvance?: boolean
+}
+
 export interface QuickStartMediaApis {
   upload(file: File, category: 'reference-image', signal?: AbortSignal): Promise<MediaReference>
 }
@@ -70,7 +74,7 @@ export interface QuickStartSession {
   getWorkflow(): WorkflowRun
   subscribe(listener: (run: WorkflowRun) => void): () => void
   subscribeErrors(listener: (error: Error) => void): () => void
-  resume(): Promise<WorkflowRun>
+  resume(options?: QuickStartResumeOptions): Promise<WorkflowRun>
   interrupt(): Promise<WorkflowRun>
   dispose(): void
   continueWithUploadedTemplate(
@@ -632,10 +636,10 @@ export function createQuickStartService({
         listeners.add(listener)
         return () => listeners.delete(listener)
       },
-      async resume() {
+      async resume({ automaticActionAdvance = true } = {}) {
         disposed = false
         await controller.resume()
-        if (!disposed) ensureAutomaticAdvance()
+        if (!disposed && automaticActionAdvance) ensureAutomaticAdvance()
         return controller.getWorkflow()
       },
       async interrupt() {

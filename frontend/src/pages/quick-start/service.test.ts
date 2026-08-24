@@ -2416,6 +2416,37 @@ describe('createQuickStartService', () => {
     await session.interrupt()
   })
 
+  it('新增动作入口恢复已有 Run 时不自动推进历史动作', async () => {
+    const run = actionRun()
+    run.nodes = run.nodes.map((node) => {
+      if (node.type === 'action-generation-method') {
+        return { ...node, status: 'active', phase: 'selecting', method: null }
+      }
+      if (node.type === 'action-full-frame') {
+        return { ...node, status: 'locked', phase: 'ready', generations: [] }
+      }
+      if (node.type === 'review') return { ...node, status: 'locked' }
+      return node
+    })
+    const generationApis = pendingGenerationApis()
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+    })
+    const session = await service.open(run.id)
+
+    await session.resume({ automaticActionAdvance: false })
+    await Promise.resolve()
+
+    expect(generationApis.create).not.toHaveBeenCalled()
+    expect(
+      session.getWorkflow().nodes.find((node) => node.type === 'action-generation-method'),
+    ).toMatchObject({ status: 'active', phase: 'selecting', method: null })
+    await session.interrupt()
+  })
+
   it('错误上报器和页面订阅者抛错时仍完成容错', async () => {
     const run = actionRun(true)
     const storedApis = createWorkflowRunApis([run])
