@@ -24,6 +24,7 @@ import { ExportButton, type ExportPackageModel } from '@/features/export-package
 import { useQuickStartAgent } from '@/features/quick-start-agent/react'
 import type { CreateQuickStartAgentOptions } from '@/features/quick-start-agent/runtime'
 import {
+  FrameAnimationPlayer,
   GenerationPreviewCard,
   GenerationProgressCopy,
   KineticCopyCycle,
@@ -1850,10 +1851,14 @@ function QuickStartRun({
                         data-layout="agent-result-set"
                         className="grid w-full max-w-2xl grid-cols-3 gap-3"
                       >
-                        <AssetVisual
-                          src={actionFrames[0]!.imageUrl}
+                        <FrameAnimationPlayer
+                          frames={actionFrames}
                           alt="完整动作预览"
-                          priority
+                          fps={firstFrameStep?.input.fps}
+                          loop
+                          loading="eager"
+                          decoding="async"
+                          fetchPriority="high"
                           className="quick-start-generated-image aspect-square w-full rounded-2xl border border-app-line bg-app-surface-muted object-contain [image-rendering:pixelated]"
                         />
                       </div>

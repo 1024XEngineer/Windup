@@ -948,6 +948,30 @@ describe('QuickStartPage', () => {
     expect(complete.container.querySelector('[data-generation-progress]')).toBeNull()
   })
 
+  it('animates only the completed action preview with the action fps fallback', async () => {
+    vi.useFakeTimers()
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const service = serviceFor(run, {
+      getActionFrames: vi.fn(async () => [
+        { index: 0, imageUrl: 'https://example.test/action-1.png', durationMs: null },
+        { index: 1, imageUrl: 'https://example.test/action-2.png', durationMs: null },
+      ]),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    await act(async () => undefined)
+    const preview = screen.getByRole('img', { name: '完整动作预览' })
+    const firstThumbnail = screen.getByRole('img', { name: '动作第 1 帧' })
+    expect(preview.getAttribute('src')).toBe('https://example.test/action-1.png')
+
+    await act(async () => vi.advanceTimersByTime(82))
+    expect(preview.getAttribute('src')).toBe('https://example.test/action-1.png')
+
+    await act(async () => vi.advanceTimersByTime(1))
+    expect(preview.getAttribute('src')).toBe('https://example.test/action-2.png')
+    expect(firstThumbnail.getAttribute('src')).toBe('https://example.test/action-1.png')
+  })
+
   it('reveals generated candidate frames with staggered motion', async () => {
     renderStateFixture('template-selecting')
 
