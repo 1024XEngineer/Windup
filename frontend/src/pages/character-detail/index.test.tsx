@@ -54,14 +54,26 @@ describe('CharacterDetailPage', () => {
     }
     expect(screen.queryByText('GIF')).toBeNull()
     expect(screen.getByRole('button', { name: '增加动作' }).hasAttribute('disabled')).toBe(false)
-    const exportEntry = screen.getByRole('button', { name: '导出资产包' })
+    const assetActions = screen.getByRole('group', { name: '角色资产操作' })
+    const exportEntry = within(assetActions).getByRole('button', { name: '导出资产包' })
     expect(exportEntry.className).toContain('rounded-full')
+    const pixelPerfectEntry = within(assetActions).getByRole('button', { name: '完美像素化' })
+    const playtestEntry = within(assetActions).getByRole('link', {
+      name: '在预览台打开当前造型',
+    })
+    for (const action of [exportEntry, pixelPerfectEntry, playtestEntry]) {
+      expect(action.querySelector('svg')).toBeTruthy()
+      expect(action.className).toContain('min-h-10')
+      expect(action.className).toContain('rounded-full')
+    }
+    expect(screen.queryByRole('button', { name: '完美像素画' })).toBeNull()
     expect(screen.queryByText('当前阶段')).toBeNull()
+    expect(screen.queryByRole('heading', { name: '动作与帧' })).toBeNull()
+    expect(screen.getByRole('region', { name: '角色动作' })).toBeTruthy()
     expect(screen.queryByRole('dialog', { name: '导出资产包' })).toBeNull()
     expect(screen.queryByText('导出能力待 PR #97 合并并完成资产字段接线')).toBeNull()
-    const playtestEntry = screen.getByRole('link', { name: '在预览台打开当前造型' })
     expect(playtestEntry.getAttribute('href')).toBe('/playtest/51/outfit-default')
-    expect(playtestEntry.parentElement?.className).toContain('items-start')
+    expect(playtestEntry.parentElement?.className).toContain('items-center')
   })
 
   it('routes both add-action choices to the character existing WorkflowRun', async () => {
@@ -96,6 +108,8 @@ describe('CharacterDetailPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '展开行走' }))
 
     const sequence = screen.getByRole('region', { name: '行走完整帧序列' })
+    const expandedCard = screen.getByRole('article', { name: '动作 行走' })
+    expect(expandedCard.contains(sequence)).toBe(true)
     const frames = within(sequence).getAllByRole('img')
     expect(frames.map((frame) => frame.getAttribute('src'))).toEqual([
       'https://cdn.windup.test/walk-01.png',
@@ -104,9 +118,26 @@ describe('CharacterDetailPage', () => {
     ])
     expect(within(sequence).queryByRole('button', { name: '保存为动作模板' })).toBeNull()
     expect(screen.queryByText('动作模板后端未提供')).toBeNull()
-    const scroller = sequence.querySelector('.overflow-x-auto')
+    const scroller = sequence.querySelector('.overflow-y-auto')
     expect(scroller).toBeTruthy()
-    expect(scroller?.querySelector('ol')?.className).toContain('min-w-max')
+    expect(scroller?.className).not.toContain('overflow-x-auto')
+    expect(scroller?.querySelector('ol')?.className).toContain('auto-fill')
+  })
+
+  it('keeps the frame panel mounted while the selected card collapses', async () => {
+    renderCharacter('51')
+
+    expect(await screen.findByRole('heading', { name: '轻装信使' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '展开行走' }))
+    const card = screen.getByRole('article', { name: '动作 行走' })
+    expect(card.querySelector('[aria-label="行走完整帧序列"]')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '收起行走' }))
+
+    const exitingPanel = card.querySelector('[aria-label="行走完整帧序列"]')
+    expect(exitingPanel).toBeTruthy()
+    expect(exitingPanel?.getAttribute('aria-hidden')).toBe('true')
+    expect(exitingPanel?.className).toContain('h-0')
   })
 
   it('allows adding an action when the character has directional templates without an outfit preview', async () => {
@@ -186,6 +217,7 @@ describe('CharacterDetailPage', () => {
 
     expect(await screen.findByText('这个角色还没有造型')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '导出资产包' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '完美像素化' })).toBeNull()
     expect(screen.queryByRole('link', { name: '在预览台打开当前造型' })).toBeNull()
   })
 })
