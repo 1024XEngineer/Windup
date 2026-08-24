@@ -55,5 +55,11 @@ class ProjectService(ABC):
         """一次查询当前页项目的资产预览，结果包含所有传入项目 ID。"""
 
     @abstractmethod
+    def rename_project(
+        self, session: Session, project: Project, *, project_name: str
+    ) -> Project:
+        """修改已完成归属校验的项目名称。"""
+
+    @abstractmethod
     def delete_project(self, session: Session, project_id: int) -> bool:
         """删除项目并返回是否找到。"""

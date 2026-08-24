@@ -75,11 +75,12 @@ export const DIRECTIONAL_MOVEMENT: Record<DirectionalMovement, string> = {
   'eight-way': '八向',
 }
 
-/** Project 对应的一组后端接口。PR #75 未提供更新端点，因此这里不声明 update。 */
+/** Project 对应的一组后端接口。 */
 export interface ProjectApis {
   list(query?: ProjectPageQuery): Promise<Paged<Project>>
   get(id: Project['id']): Promise<Project>
   create(input: CreateProjectInput): Promise<Project>
+  rename(id: Project['id'], name: string): Promise<Project>
   remove(id: Project['id']): Promise<void>
 }
 
@@ -206,6 +207,27 @@ export const projectApis: ProjectApis = {
     } catch (error) {
       // 后端目前只返回通用 BAD_REQUEST；中文 message 是项目重名的唯一可辨识契约。
       // 文案映射仅留在 HTTP 适配器，业务用例只依赖稳定的前端错误类型。
+      if (
+        error instanceof ApiError &&
+        error.kind === 'business' &&
+        error.code === 400 &&
+        error.message === '项目名称已存在'
+      ) {
+        throw new ProjectNameConflictError({ cause: error })
+      }
+      throw error
+    }
+  },
+
+  async rename(id, name) {
+    try {
+      return mapProject(
+        await getApiClient().request<ProjectDto>(`/projects/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          json: { project_name: name },
+        }),
+      )
+    } catch (error) {
       if (
         error instanceof ApiError &&
         error.kind === 'business' &&

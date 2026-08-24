@@ -34,6 +34,12 @@ class ProjectCreate(BaseModel):
     sprite_sample_url: str | None = None
 
 
+class ProjectRename(BaseModel):
+    """重命名项目请求。"""
+
+    project_name: str = Field(min_length=1, max_length=20)
+
+
 class ProjectOut(BaseModel):
     """项目响应。"""
 
@@ -127,6 +133,35 @@ def get_project(
     if project is None or project.user_id != request.state.current_user.id:
         raise BizException("项目不存在", code=BizCode.NOT_FOUND)
     return Response.success(ProjectOut.model_validate(project))
+
+
+@router.patch("/{project_id}", response_model=Response[ProjectOut])
+def rename_project(
+    project_id: int,
+    body: ProjectRename,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[ProjectOut]:
+    user_id = request.state.current_user.id
+    project = service.get_project(session, project_id, for_update=True)
+    if project is None or project.user_id != user_id:
+        raise BizException("项目不存在", code=BizCode.NOT_FOUND)
+    if project.project_name == body.project_name:
+        return Response.success(
+            ProjectOut.model_validate(project), message="重命名成功"
+        )
+    if service.project_name_exists(
+        session, user_id=user_id, project_name=body.project_name
+    ):
+        raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST)
+    try:
+        project = service.rename_project(
+            session, project, project_name=body.project_name
+        )
+    except IntegrityError:
+        session.rollback()
+        raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST) from None
+    return Response.success(ProjectOut.model_validate(project), message="重命名成功")
 
 
 @router.delete("/{project_id}", response_model=Response[None])

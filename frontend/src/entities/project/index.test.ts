@@ -117,6 +117,25 @@ describe('projectApis', () => {
     expect(requestUrl).toBe('https://api.windup.test/projects/42')
   })
 
+  it('renames one Project through the backend resource path', async () => {
+    let request: Request | undefined
+    const renamedDto = { ...projectDto, project_name: '新项目名' }
+    const { projectApis } = await loadProjectApis(async (input, init) => {
+      request = new Request(input, init)
+      return jsonResponse(renamedDto)
+    })
+
+    await expect(projectApis.rename('42', '新项目名')).resolves.toMatchObject({
+      id: '42',
+      name: '新项目名',
+    })
+    expect(request?.url).toBe('https://api.windup.test/projects/42')
+    expect(request?.method).toBe('PATCH')
+    await expect(request?.json()).resolves.toEqual({
+      project_name: '新项目名',
+    })
+  })
+
   it('uses the access-token provider registered at the shared HTTP boundary', async () => {
     let authorization: string | null = null
     const { projectApis } = await loadProjectApis(async (input, init) => {
@@ -160,6 +179,10 @@ describe('projectApis', () => {
         spriteSize: { width: 256, height: 256 },
       }),
     ).rejects.toBeInstanceOf(ProjectNameConflictError)
+
+    await expect(projectApis.rename('42', '点灯人')).rejects.toBeInstanceOf(
+      ProjectNameConflictError,
+    )
   })
 
   it('maps the backend in-use project contract to a stable domain error', async () => {
