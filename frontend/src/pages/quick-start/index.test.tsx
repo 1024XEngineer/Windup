@@ -1401,6 +1401,30 @@ describe('QuickStartPage', () => {
     await waitFor(() => expect(service.addAction).toHaveBeenCalledWith('outfit-1', '挥手'))
   })
 
+  it('adds an action when an older action branch failed', async () => {
+    const current = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const run = workflow([
+      ...current.nodes.slice(0, 2),
+      {
+        ...current.nodes[4],
+        id: 'failed-action-full',
+        status: 'failed',
+        error: '旧动作生成失败',
+      },
+      ...current.nodes.slice(2),
+    ])
+    const service = serviceFor(run)
+    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service)
+
+    const input = await screen.findByRole('textbox', { name: '继续描述你的想法' })
+    fireEvent.change(input, { target: { value: '跳跃' } })
+
+    const submit = screen.getByRole('button', { name: '发送' })
+    await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(submit)
+    await waitFor(() => expect(service.addAction).toHaveBeenCalledWith('outfit-1', '跳跃'))
+  })
+
   it('reports add-action failures inside the existing Quick Start run', async () => {
     const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
     const service = serviceFor(run, {

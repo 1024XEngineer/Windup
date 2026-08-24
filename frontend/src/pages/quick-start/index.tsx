@@ -1361,9 +1361,10 @@ function QuickStartRun({
   const reviewStep = actionStep ? pairedReviewStep(revision, actionStep.id) : null
   const canPublish =
     actionFrames.length > 0 && (reviewStep?.status === 'active' || reviewStep?.status === 'passed')
-  const workflowIsActive =
-    revision.nodes.some((node) => !node.deletedAt && node.status === 'active') &&
-    !workflowHasFailure(revision)
+  const workflowHasActiveNode = revision.nodes.some(
+    (node) => !node.deletedAt && node.status === 'active',
+  )
+  const workflowIsActive = workflowHasActiveNode && !workflowHasFailure(revision)
   const isActionFailed = actionStep?.status === 'failed'
   const isTemplateSelecting =
     templateStep?.status === 'active' && templateStep.phase === 'selecting'
@@ -1393,8 +1394,7 @@ function QuickStartRun({
   const requestedOutfitId = searchParams.get('outfitId')
   const canAddAction =
     addActionIntent &&
-    !workflowIsActive &&
-    !workflowHasFailure(revision) &&
+    !workflowHasActiveNode &&
     !isTemplateSelecting &&
     !isFirstFrameSelecting &&
     !publishing
@@ -1572,12 +1572,12 @@ function QuickStartRun({
       ? firstFrameSelectionComplete
         ? '按发送确认这张首帧…'
         : '请先为每个方向选择一个动作首帧…'
-      : workflowHasFailure(run)
-        ? '这次未完成，可以新建一次创作…'
-        : addActionIntent
-          ? addingAction || workflowIsActive
-            ? '正在生成新动作…'
-            : '描述要新增的动作…'
+      : addActionIntent
+        ? addingAction || workflowHasActiveNode
+          ? '正在生成新动作…'
+          : '描述要新增的动作…'
+        : workflowHasFailure(run)
+          ? '这次未完成，可以新建一次创作…'
           : canPublish
             ? '确认保存后，还可以继续描述修改…'
             : '制作中，完成后可以继续修改…'
