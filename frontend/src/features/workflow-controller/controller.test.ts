@@ -2371,7 +2371,7 @@ describe('WorkflowController', () => {
         mode: 'refine',
         adjustmentPrompt: '加强阴影',
       }),
-    ).rejects.toThrow('角色母版尚未确认方向 west')
+    ).rejects.toThrow('角色母版尚未确认方向 north')
     expect(template.generation.apis.create).not.toHaveBeenCalled()
     expect(template.controller.getWorkflow()).toEqual(templateBefore)
 
@@ -2397,7 +2397,7 @@ describe('WorkflowController', () => {
         mode: 'refine',
         adjustmentPrompt: '调整姿势',
       }),
-    ).rejects.toThrow('动作首帧尚未确认方向 west')
+    ).rejects.toThrow('动作首帧尚未确认方向 north')
     expect(firstFrame.generation.apis.create).not.toHaveBeenCalled()
     expect(firstFrame.controller.getWorkflow()).toEqual(firstFrameBefore)
   })

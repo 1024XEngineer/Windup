@@ -1,6 +1,5 @@
 import {
   characterApis,
-  characterTemplateImages,
   createGenerationApis,
   createMediaApis,
   projectApis,

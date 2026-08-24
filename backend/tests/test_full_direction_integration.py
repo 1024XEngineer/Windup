@@ -1,4 +1,7 @@
-"""八向生成从 HTTP 提交到 worker 执行、结果落库和计费的离线验收。"""
+"""八向生成从 HTTP 提交到 Worker、结果落库和结算的离线跨层回归。
+
+Provider 边界使用记录型测试替身；本文件不替代真实 Provider 任务验收。
+"""
 
 from __future__ import annotations
 
@@ -47,7 +50,7 @@ class _RecordingGenerator:
                 loop_seam=None,
                 subject_blobs=(1,),
             ),
-            prompt_version="acceptance-v1",
+            prompt_version="integration-v1",
         )
 
 
@@ -70,7 +73,7 @@ def _create_eight_way_project(auth_client) -> dict:
     return auth_client.post(
         "/projects",
         json={
-            "project_name": "八向验收项目",
+            "project_name": "八向集成项目",
             "character_perspective": 1,
             "directional_movement": 3,
             "sprite_width": 64,
@@ -79,7 +82,7 @@ def _create_eight_way_project(auth_client) -> dict:
     ).json()["data"]
 
 
-def test_eight_way_http_tasks_reach_worker_as_eight_real_results_and_charges(
+def test_eight_way_http_tasks_reach_worker_as_eight_real_results_and_settle_each_task(
     auth_client,
     db_session,
     engine,
@@ -162,7 +165,7 @@ def test_eight_way_http_tasks_reach_worker_as_eight_real_results_and_charges(
     ]
 
 
-def test_eight_way_image_tasks_call_provider_with_eight_direction_locks_and_charges(
+def test_eight_way_image_tasks_call_provider_with_eight_direction_locks_and_settle_each_task(
     auth_client,
     db_session,
     engine,

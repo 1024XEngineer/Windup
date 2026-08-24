@@ -22,9 +22,9 @@ from windup_app.server.orchestrator.model import (
     GenerationType,
     TaskStatus,
 )
+from windup_app.server.user.service import VERIFY_CODE_KEY
 from windup_common.directions import ActionDirection
 from windup_common.models import CharacterStance
-from windup_app.server.user.service import VERIFY_CODE_KEY
 from windup_framework.db.redis import get_redis
 from windup_framework.db.session import SessionLocal
 from windup_framework.providers.email import email_provider
