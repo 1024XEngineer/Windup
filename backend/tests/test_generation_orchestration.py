@@ -28,8 +28,8 @@ from windup_app.server.orchestrator.model import (
 from windup_app.server.orchestrator.executor import (
     ActionTaskExecutor,
     ProjectConstraints,
-    _upload_frames,
 )
+from windup_app.server.orchestrator.generation_io import upload_frames
 from windup_ai_engine.ports import ActionQuality, GeneratedAction
 from windup_app.server.orchestrator.service import AiGenerationService
 from windup_ai_engine.impl import CharacterGenerator
@@ -111,14 +111,14 @@ def test_upload_frames_preserves_index_when_later_frames_finish_first():
             first_may_finish.set()
         return f"https://cdn.example.com/f{i}.png"
 
-    urls = _upload_frames(_upload, [bytes([i]) for i in range(4)])
+    urls = upload_frames(_upload, [bytes([i]) for i in range(4)])
     assert urls == [f"https://cdn.example.com/f{i}.png" for i in range(4)]
     assert finished and finished[0] != 0
 
 
 def test_upload_frames_single_does_not_need_a_pool():
-    assert _upload_frames(lambda png: f"u-{png.decode()}", [b"a"]) == ["u-a"]
-    assert _upload_frames(lambda png: "u", []) == []
+    assert upload_frames(lambda png: f"u-{png.decode()}", [b"a"]) == ["u-a"]
+    assert upload_frames(lambda png: "u", []) == []
 
 
 def test_action_task_opens_a_fresh_session_after_generate(session_factory):
