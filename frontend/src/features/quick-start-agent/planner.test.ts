@@ -109,4 +109,28 @@ describe('createAiSdkQuickStartPlanner', () => {
     expect(options?.tools?.refine_character_template?.execute).toBeUndefined()
     expect(options?.tools?.regenerate_first_frame).toBeUndefined()
   })
+
+  it('keeps the request within the backend message limit while preserving the latest turn', async () => {
+    const generate = vi.fn<QuickStartGenerateText>(async () => ({
+      text: '可以继续。',
+      finishReason: 'stop',
+      toolCalls: [],
+    }))
+    const planner = createAiSdkQuickStartPlanner({
+      baseURL: 'https://api.windup.test/ai/v1',
+      generateText: generate,
+    })
+    const messages = Array.from({ length: 19 }, (_, index) => ({
+      role: (index % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+      content: `消息 ${index + 1}`,
+    }))
+
+    await planner({ messages, clarificationUsed: true })
+
+    expect(generate.mock.calls[0]?.[0].messages).toEqual(messages.slice(-15))
+    expect(generate.mock.calls[0]?.[0].messages.at(-1)).toEqual({
+      role: 'user',
+      content: '消息 19',
+    })
+  })
 })
