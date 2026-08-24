@@ -142,6 +142,27 @@ describe('useQuickStartAgent', () => {
     await act(async () => firstTurn)
   })
 
+  it.each(['生成提案参数字段无效', '请求参数无效'])(
+    'keeps the internal protocol error %s out of the conversation',
+    async (message) => {
+      const planner = vi.fn(async () => {
+        throw new Error(message)
+      })
+      const { result } = renderHook(() =>
+        useQuickStartAgent({ planner, startCharacterGeneration: vi.fn() }),
+      )
+
+      await act(async () => {
+        await expect(result.current.submit('直接生成')).rejects.toThrow(message)
+      })
+
+      expect(result.current.state).toEqual({
+        status: 'error',
+        message: 'Agent 没有完成这次回复，请重新发送',
+      })
+    },
+  )
+
   it('revokes pending work when the host unmounts', async () => {
     const planner = vi.fn(
       async ({ signal }: PlannerInput) =>
