@@ -79,19 +79,25 @@ function exportAction(action: Action, project: Project): ExportAction {
     (sequence) =>
       sequence.sourceDirection === null && !sequence.mirrorX && sequence.frames.length > 0,
   )
+  const hasDirectionalSequences = (action.sequences?.length ?? 0) > 0
   const profile = getDirectionProfile(project.directionalMovement)
-  const directionalSequences =
+  const singleSequence =
     project.directionalMovement === 'single'
+      ? realSequences.find((sequence) => sequence.direction === 'east')
+      : undefined
+  const directionalSequences =
+    project.directionalMovement === 'single' || !hasDirectionalSequences
       ? []
       : profile.generationDirections.map((direction) => {
           const sequence = realSequences.find((item) => item.direction === direction)
           if (!sequence) throw new Error(`${action.name}缺少${direction}方向真实序列`)
           return sequence
         })
+  const selectedSequences = singleSequence ? [singleSequence] : directionalSequences
   const sequences =
-    directionalSequences.length > 0
-      ? directionalSequences.map((sequence) => ({
-          direction: sequence.direction,
+    selectedSequences.length > 0
+      ? selectedSequences.map((sequence) => ({
+          direction: singleSequence ? ('default' as const) : sequence.direction,
           expectedFrameCount: sequence.frameCount,
           loop: action.loop,
           ...sequenceGeometry(undefined, project.spriteSize.height),

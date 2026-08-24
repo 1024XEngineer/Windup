@@ -230,6 +230,7 @@ def test_real_server_path_reaches_render3d_when_the_outfit_has_a_model():
             model_3d_url="https://cdn.example.com/outfits/hanfu.glb",
         ),
         ProjectConstraints(sprite_w=64, sprite_h=64),
+        task_id=1,
     )
 
     assert renderer.calls == 1, "三渲二没被走到 —— 路线选择又断了"
@@ -256,6 +257,7 @@ def test_real_server_path_stays_on_i2v_when_the_outfit_has_no_model():
                 outfit_id=OUTFIT, model_3d_url=None,
             ),
             ProjectConstraints(sprite_w=64, sprite_h=64),
+            task_id=1,
         )
     assert renderer.calls == 0
 
@@ -605,6 +607,32 @@ def test_after_approval_it_proceeds_and_reuses_the_stored_model(tmp_path):
     gate.approve(OUTFIT)
     assert builder.ensure(OUTFIT, _png(), _NullProgress()) == b"RIGGED-bytes"
     assert (m.calls, r.calls) == (1, 1)
+
+
+def test_geometry_follows_the_anchor_it_was_aligned_with():
+    """质心对齐的动作要报质心那条线,不能仍报脚线。
+
+    帧按质心摆、几何说的是脚线的话,消费方按它落位会错开半个身高,而帧数、时长、成色
+    全部正常,没有一道会红 —— 与 #534 换锚点是同一件事的两半。
+    """
+    from windup_ai_engine.postprocess import FOOT_LINE
+    from windup_ai_engine.postprocess.pack import FILL_H
+
+    canvas = (256, 320)
+    gen = _real_generator(_FakeRenderer())
+    foot = gen.generate_rendered(
+        _card(), _spec(), b"RIGGED", _NullProgress(), canvas=canvas,
+    ).geometry
+    fly = gen.generate_rendered(
+        _card(),
+        _spec(action=ActionType.CUSTOM, custom_action="飞", cyclic=True, ground_contact=False),
+        b"RIGGED", _NullProgress(), canvas=canvas,
+    ).geometry
+
+    assert foot.anchor_y == FOOT_LINE
+    assert fly.anchor_y == pytest.approx(FOOT_LINE - FILL_H / 2)
+    assert fly.foot_y == int(canvas[1] * fly.anchor_y)
+    assert fly.anchor_y < foot.anchor_y, "质心那条线必须在脚线之上"
 
 
 def test_generated_action_reports_the_alignment_geometry_instead_of_a_constant():

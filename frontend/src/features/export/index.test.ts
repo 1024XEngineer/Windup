@@ -155,7 +155,11 @@ describe('Character asset publisher', () => {
   it('rejects a directional action when any real source direction is missing', () => {
     expect(() =>
       exportFeature.createActionSequences(
-        [directionalAnimationFixture('generation-east', 'east', 'east')],
+        [
+          directionalAnimationFixture('generation-east', 'east', 'east'),
+          directionalAnimationFixture('generation-north', 'north', 'north'),
+          directionalAnimationFixture('generation-south', 'south', 'south'),
+        ],
         'four-way',
       ),
     ).toThrow('完整动画方向 west 的生成结果不可发布')

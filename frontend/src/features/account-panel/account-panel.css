@@ -122,7 +122,7 @@
 }
 
 .auth-register-title {
-  font-family: 'Songti SC', 'Noto Serif CJK SC', STSong, Georgia, serif;
+  font-family: var(--font-serif);
   margin: 0;
   overflow: hidden;
   font-size: clamp(2.75rem, 5vw, 3.25rem);

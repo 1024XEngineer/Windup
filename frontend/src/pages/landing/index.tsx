@@ -16,6 +16,8 @@ const creationEntry = `/?${new URLSearchParams({
   returnTo: '/workspace',
 })}`
 
+const githubRepository = 'https://github.com/1024XEngineer/Windup'
+
 const productCapabilities = [
   {
     outcome:
@@ -547,7 +549,7 @@ export function LandingPage() {
               从角色设定到可玩的 2D 动作资产
             </p>
             <h1
-              className={`${riseClassName} mx-auto mt-5 w-full max-w-[12em] font-['Songti_SC','Noto_Serif_CJK_SC','STSong',Georgia,serif] text-[clamp(3rem,13vw,5.25rem)] leading-[1.08] font-semibold tracking-[-0.055em] text-[#23231f] sm:max-w-[11em] sm:text-[clamp(4rem,5.5vw,5.25rem)] sm:leading-[1.12]`}
+              className={`${riseClassName} mx-auto mt-5 w-full max-w-[12em] font-serif text-[clamp(3rem,13vw,5.25rem)] leading-[1.08] font-semibold tracking-[-0.055em] text-[#23231f] sm:max-w-[11em] sm:text-[clamp(4rem,5.5vw,5.25rem)] sm:leading-[1.12]`}
               style={riseDelay(1)}
             >
               <span className="block">让你的角色，</span>
@@ -686,6 +688,56 @@ export function LandingPage() {
           </div>
         </div>
       </main>
+
+      <footer className="border-t border-rule bg-paper-sunken px-4 py-12 sm:px-8 lg:px-12">
+        <div className="mx-auto grid max-w-[82rem] gap-12 md:grid-cols-[minmax(18rem,1fr)_auto] md:gap-20">
+          <div className="max-w-sm">
+            <Link
+              to="/"
+              aria-label="返回 Windup 宣传页"
+              className="inline-flex items-center gap-3 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-app-accent"
+            >
+              <img src="/windup-mark.svg" alt="" className="h-7 w-7" />
+              <strong className="font-serif text-xl tracking-[-0.02em] text-ink">Windup</strong>
+            </Link>
+            <p className="mt-5 text-body leading-7 text-ink-muted">
+              Windup 是一个开源的 2D 角色资产工作台。
+            </p>
+            <p className="mt-2 text-body leading-7 text-ink-faint">
+              查看源码、报告问题，或参与 Windup 的下一步。
+            </p>
+          </div>
+
+          <nav aria-label="页尾项目导航">
+            <h2 className="text-meta font-semibold tracking-[0.08em] text-ink-faint uppercase">
+              项目
+            </h2>
+            <ul className="mt-4 grid gap-1 text-body text-ink-muted">
+              {[
+                ['GitHub 仓库', githubRepository],
+                ['Issues', `${githubRepository}/issues`],
+                ['Contributors', `${githubRepository}/graphs/contributors`],
+              ].map(([label, href]) => (
+                <li key={href}>
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex min-h-10 items-center transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
+                  >
+                    {label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        </div>
+
+        <div className="mx-auto mt-10 flex max-w-[82rem] flex-wrap items-center justify-between gap-3 border-t border-rule pt-5 text-meta text-ink-faint">
+          <p>© {new Date().getFullYear()} Windup</p>
+          <p>2D 角色资产工作台</p>
+        </div>
+      </footer>
     </div>
   )
 }

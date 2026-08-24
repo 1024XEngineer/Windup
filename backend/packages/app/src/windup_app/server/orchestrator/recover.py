@@ -21,6 +21,7 @@ from windup_app.server.mq.catalog import (
     MSG_TYPE_CHARACTER_IMAGE,
 )
 from windup_app.server.orchestrator import billing, task_repo
+from windup_app.server.orchestrator.i2v_poll import reschedule_if_waiting
 from windup_app.server.orchestrator.model import (
     GenerationTask,
     GenerationType,
@@ -50,6 +51,11 @@ def recover_orphaned_generation_tasks(
             _fail_unrecoverable(session, task)
             continue
         if task.status is TaskStatus.RUNNING:
+            try:
+                if reschedule_if_waiting(task.id):
+                    continue
+            except Exception:
+                logger.exception("检查 i2v 延迟状态失败 | task_id=%s", task.id)
             if not fail_stale_running:
                 continue
             updated = task.update_at

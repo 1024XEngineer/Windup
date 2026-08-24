@@ -2,6 +2,7 @@
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import * as sharedUi from '.'
 import { FrameAnimationPlayer } from './frame-animation-player'
 
 const frames = [
@@ -119,9 +120,7 @@ describe('FrameAnimationPlayer', () => {
     expect(visibleFrame().getAttribute('draggable')).toBe('false')
   })
 
-  it('is available from the shared UI entry', async () => {
-    const sharedUi = (await import('.')) as Record<string, unknown>
-
+  it('is available from the shared UI entry', () => {
     expect(sharedUi.FrameAnimationPlayer).toBeTypeOf('function')
   })
 })
