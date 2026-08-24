@@ -28,6 +28,7 @@ import {
   ART_STYLE,
   ART_STYLE_OPTIONS,
   DIRECTIONAL_MOVEMENT,
+  isArtStyle,
   type ActionFirstFrameWorkflowNode,
   type ArtStyle,
   type CharacterTemplateWorkflowNode,
@@ -168,6 +169,8 @@ type AgentConversationTurn =
 
 type AgentConversationRecord = {
   turns: readonly AgentConversationTurn[]
+  /** 入口处选的画风；不随草稿存住的话，刷新后画风选择器已隐藏而值悄悄回到不指定。 */
+  gameStyle?: ArtStyle
 }
 
 type AgentConversationStorageName = 'localStorage' | 'sessionStorage'
@@ -194,6 +197,20 @@ function readAgentDraftId(): string | null {
     return typeof draftId === 'string' && draftId ? draftId : null
   } catch {
     return null
+  }
+}
+
+function readAgentDraftGameStyle(key: string): ArtStyle {
+  try {
+    const stored = window.sessionStorage.getItem(key)
+    if (!stored) return 'unspecified'
+    const parsed: unknown = JSON.parse(stored)
+    if (typeof parsed !== 'object' || parsed === null || !('gameStyle' in parsed)) {
+      return 'unspecified'
+    }
+    return isArtStyle(parsed.gameStyle) ? parsed.gameStyle : 'unspecified'
+  } catch {
+    return 'unspecified'
   }
 }
 
@@ -527,7 +544,14 @@ function QuickStartInput({
   const [prompt, setPrompt] = useState('')
   const [directionalMovement, setDirectionalMovement] = useState<DirectionalMovement>('single')
   const [templateFile, setTemplateFile] = useState<File | null>(null)
-  const [gameStyle, setGameStyle] = useState<ArtStyle>('unspecified')
+  const [gameStyle, setGameStyle] = useState<ArtStyle>(() => {
+    const draftId = readAgentDraftId()
+    return draftId
+      ? readAgentDraftGameStyle(agentDraftConversationStorageKey(activeRunUserId, draftId))
+      : 'unspecified'
+  })
+  const gameStyleRef = useRef(gameStyle)
+  gameStyleRef.current = gameStyle
   const [submitting, setSubmitting] = useState(false)
   const [revealingFirstAgentTurn, setRevealingFirstAgentTurn] = useState(false)
   const [entryTransition, setEntryTransition] = useState<'idle' | 'leaving'>('idle')
@@ -589,7 +613,7 @@ function QuickStartInput({
       writeAgentConversation(
         'sessionStorage',
         agentDraftConversationStorageKey(activeRunUserId, draftId),
-        { turns },
+        { turns, gameStyle: gameStyleRef.current },
       )
     },
     [activeRunUserId, ensureDraftId],
@@ -749,7 +773,9 @@ function QuickStartInput({
       if (!normalizedPrompt) return
       setPromptState('confirmed')
       try {
-        const result = await agentSession.confirmProposal(normalizedPrompt, directionalMovement)
+        const result = await agentSession.confirmProposal(normalizedPrompt, directionalMovement, {
+          gameStyle,
+        })
         if (result.kind === 'generated') await handoffGenerated(result)
       } catch {
         setPromptState('ready')
@@ -769,7 +795,7 @@ function QuickStartInput({
       else await revealFirstAgentTurn(userTurn)
       setPrompt('')
       try {
-        const result = await agentSession.submit(normalizedPrompt, { gameStyle })
+        const result = await agentSession.submit(normalizedPrompt)
         setRevealingFirstAgentTurn(false)
         if (result.kind === 'message') {
           appendConversationTurn({
@@ -1099,7 +1125,18 @@ function QuickStartInput({
                   value={gameStyle}
                   disabled={entryBusy}
                   aria-label="画风"
-                  onChange={(event) => setGameStyle(event.target.value as ArtStyle)}
+                  onChange={(event) => {
+                    const next = event.target.value as ArtStyle
+                    setGameStyle(next)
+                    const draftId = draftIdRef.current
+                    if (draftId) {
+                      writeAgentConversation(
+                        'sessionStorage',
+                        agentDraftConversationStorageKey(activeRunUserId, draftId),
+                        { turns: conversationTurnsRef.current, gameStyle: next },
+                      )
+                    }
+                  }}
                   className="rounded-md border border-app-line bg-app-surface px-2 py-1 text-xs text-app-ink-soft outline-none focus-visible:border-app-accent"
                 >
                   {ART_STYLE_OPTIONS.map((value) => (

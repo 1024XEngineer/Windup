@@ -41,6 +41,7 @@ interface WorkflowEditorViewProps {
   generationReadError: string | null
   reloadTo: string
   onRetryGenerations(): void
+  gameStyleSaving: boolean
   onGameStyleChange(gameStyle: ArtStyle): void
   onNodesChange(changes: NodeChange<WorkflowCardNode>[]): void
 }
@@ -56,6 +57,7 @@ export function WorkflowEditorView({
   generationReadError,
   reloadTo,
   onRetryGenerations,
+  gameStyleSaving,
   onGameStyleChange,
   onNodesChange,
 }: WorkflowEditorViewProps) {
@@ -83,6 +85,7 @@ export function WorkflowEditorView({
           <select
             value={project.gameStyle}
             aria-label="项目画风"
+            disabled={gameStyleSaving}
             onChange={(event) => onGameStyleChange(event.target.value as ArtStyle)}
             className="rounded border border-app-line bg-app-surface px-1.5 py-0.5 text-[9px] text-app-ink-soft outline-none focus-visible:border-app-accent"
           >

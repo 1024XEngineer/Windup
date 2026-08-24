@@ -65,7 +65,10 @@ export type QuickStartAgentResult =
 
 export interface QuickStartAgentTurnOptions {
   signal?: AbortSignal
-  /** 入口处选的画风，原样透传给宿主；取值范围由宿主定义,本模块不认识业务对象。 */
+}
+
+export interface ConfirmProposalOptions {
+  /** 画风原样透传给宿主；取值范围由宿主定义，本模块不认识业务对象。 */
   gameStyle?: string
 }
 
@@ -76,6 +79,7 @@ export interface QuickStartAgent {
     proposalId: string,
     prompt: string,
     directionalMovement?: QuickStartDirectionalMovement,
+    options?: ConfirmProposalOptions,
   ): Promise<QuickStartAgentResult>
   revoke(): void
 }
@@ -226,8 +230,6 @@ export function createQuickStartAgent({
   let running = false
   let messages: PlannerMessage[] = [...initialMessages]
   let currentProposal = initialProposal
-  /** 画风在入口那一轮就选定了,而真正下单在用户确认提案之后,中间要存住。 */
-  let pendingGameStyle: string | undefined
 
   function assertAuthorized() {
     if (revoked) throw new Error('生成授权已失效')
@@ -236,10 +238,9 @@ export function createQuickStartAgent({
 
   async function runTurn(
     input: string,
-    { signal, gameStyle }: QuickStartAgentTurnOptions = {},
+    { signal }: QuickStartAgentTurnOptions = {},
   ): Promise<QuickStartAgentResult> {
     assertAuthorized()
-    if (gameStyle !== undefined) pendingGameStyle = gameStyle
     if (running) throw new Error('Planner 正在处理上一条输入')
     const normalizedInput = input.trim()
     if (!normalizedInput) throw new Error('请先描述想要创建的角色')
@@ -289,6 +290,7 @@ export function createQuickStartAgent({
     proposalId: string,
     prompt: string,
     directionalMovement: QuickStartDirectionalMovement = 'single',
+    { gameStyle }: ConfirmProposalOptions = {},
   ): Promise<QuickStartAgentResult> {
     assertAuthorized()
     if (running) throw new Error('Planner 正在处理上一条输入')
@@ -308,7 +310,7 @@ export function createQuickStartAgent({
       const { runId } = await startCharacterGeneration({
         prompt: effectivePrompt,
         directionalMovement,
-        gameStyle: pendingGameStyle,
+        gameStyle,
       })
       return { kind: 'generated', runId, ...proposal, optimizedPrompt: effectivePrompt }
     } finally {

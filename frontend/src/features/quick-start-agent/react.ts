@@ -102,10 +102,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
   ])
 
   const submit = useCallback(
-    async (
-      input: string,
-      { gameStyle }: { gameStyle?: string } = {},
-    ): Promise<QuickStartAgentResult> => {
+    async (input: string): Promise<QuickStartAgentResult> => {
       if (running.current) throw new Error('Planner 正在处理上一条输入')
       running.current = true
       const controller = new AbortController()
@@ -116,7 +113,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
         const activeAgent = ensureAgent()
         const runTurn = started.current ? activeAgent.continue : activeAgent.start
         started.current = true
-        const result = await runTurn(input, { signal: controller.signal, gameStyle })
+        const result = await runTurn(input, { signal: controller.signal })
         if (mounted.current) {
           if (result.kind === 'message') {
             setState({
@@ -148,6 +145,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
     async (
       prompt: string,
       directionalMovement: QuickStartDirectionalMovement = 'single',
+      options?: { gameStyle?: string },
     ): Promise<QuickStartAgentResult> => {
       if (running.current) throw new Error('Planner 正在处理上一条输入')
       if (state.status !== 'proposal') throw new Error('提示词提案已失效')
@@ -162,7 +160,12 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
         })
       }
       try {
-        return await ensureAgent().confirmProposal(proposalId, prompt, directionalMovement)
+        return await ensureAgent().confirmProposal(
+          proposalId,
+          prompt,
+          directionalMovement,
+          options,
+        )
       } catch (cause) {
         if (mounted.current) {
           logAgentFailure(cause)
