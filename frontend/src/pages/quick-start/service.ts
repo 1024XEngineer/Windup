@@ -225,9 +225,9 @@ export function createQuickStartService({
     controllerErrorChannels.get(controller)?.report(error)
   }
 
-  function sourceDirectionsFor(controller: WorkflowController): readonly ActionDirection[] {
+  function generationDirectionsFor(controller: WorkflowController): readonly ActionDirection[] {
     const movement = projectDirectionalMovements.get(controller.getWorkflow().projectId) ?? 'single'
-    return getDirectionProfile(movement).sourceDirections
+    return getDirectionProfile(movement).generationDirections
   }
 
   async function candidatesByDirection(
@@ -258,7 +258,7 @@ export function createQuickStartService({
       ...existing,
       ...(typeof selection === 'string' ? { east: selection } : selection),
     }
-    for (const direction of sourceDirectionsFor(controller)) {
+    for (const direction of generationDirectionsFor(controller)) {
       if (!selected[direction]) throw new Error(`缺少${direction}方向的用户选择`)
     }
     return selected
@@ -270,7 +270,7 @@ export function createQuickStartService({
     selectedImages: QuickStartDirectionSelections,
   ) {
     const template = templateNode(controller.getWorkflow())
-    const directions = sourceDirectionsFor(controller)
+    const directions = generationDirectionsFor(controller)
     if (directions.length <= 1) return
     const remaining = directions.slice(1)
     for (const direction of remaining.slice(0, -1)) {
@@ -315,7 +315,7 @@ export function createQuickStartService({
     if (!firstFrame || firstFrame.type !== 'action-first-frame' || firstFrame.id !== nodeId) {
       throw new Error('当前运行没有可确认的动作首帧')
     }
-    const directions = sourceDirectionsFor(controller)
+    const directions = generationDirectionsFor(controller)
     const selectedImages = selectedDirections(controller, selection, {
       ...(firstFrame.selectedFirstFrameUrl ? { east: firstFrame.selectedFirstFrameUrl } : {}),
       ...(firstFrame.selectedFirstFrameUrls ?? {}),
@@ -662,7 +662,7 @@ export function createQuickStartService({
         }
         // 继续任务时角色设定节点已经通过，不能再走“初次上传”的入口；
         // 但同一张上传母版仍要填入其它真实源方向，否则四向/八向动作会缺母版。
-        const directions = sourceDirectionsFor(controller)
+        const directions = generationDirectionsFor(controller)
         const selectedImages = templateNode(controller.getWorkflow()).selectedImages ?? {}
         const remaining = directions.slice(1).filter((direction) => !selectedImages[direction])
         for (const direction of remaining.slice(0, -1)) {

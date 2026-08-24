@@ -8,7 +8,7 @@ import type {
   WorkflowNode,
   WorkflowRun,
 } from '@/entities'
-import { getDirectionProfile, resolveActionDirection } from '@/entities'
+import { getDirectionProfile } from '@/entities'
 
 export interface PublishReviewedActionInput {
   character: Character
@@ -54,7 +54,7 @@ export function createCharacterAssetPublisher(
       }
       const generationItems = generations ?? (generation ? [generation] : [])
       const profile = getDirectionProfile(directionalMovement)
-      for (const direction of profile.sourceDirections) {
+      for (const direction of profile.generationDirections) {
         const reference = fullFrameNode.generations.find(
           (item) => item.role === 'complete_animation' && (item.direction ?? 'east') === direction,
         )
@@ -119,7 +119,7 @@ export function createActionSequences(
 ): ActionSequence[] {
   const profile = getDirectionProfile(directionalMovement)
   const sources = new Map(
-    profile.sourceDirections.map((direction) => {
+    profile.generationDirections.map((direction) => {
       const generation = generations.find(
         (item) =>
           item.type === 'complete_animation' &&
@@ -138,21 +138,30 @@ export function createActionSequences(
     }),
   )
   return profile.logicalDirections.map((direction) => {
-    const resolution = resolveActionDirection(direction)
-    const frames = sources.get(resolution.sourceDirection)
-    if (!frames) throw new Error(`完整动画缺少方向 ${resolution.sourceDirection}`)
+    const directFrames = sources.get(direction)
+    if (directFrames) {
+      return {
+        direction,
+        sourceDirection: null,
+        mirrorX: false,
+        frameCount: directFrames.length,
+        frames: directFrames.map((frame) => ({
+          index: frame.index,
+          imageUrl: frame.url,
+          durationMs: frame.durationMs,
+        })),
+      }
+    }
+    const derived = profile.derivedDirections.find((item) => item.direction === direction)
+    if (!derived) throw new Error(`完整动画缺少方向 ${direction}`)
+    const frames = sources.get(derived.sourceDirection)
+    if (!frames) throw new Error(`完整动画缺少方向 ${derived.sourceDirection}`)
     return {
       direction,
-      sourceDirection: resolution.mirrorX ? resolution.sourceDirection : null,
-      mirrorX: resolution.mirrorX,
+      sourceDirection: derived.sourceDirection,
+      mirrorX: derived.mirrorX,
       frameCount: frames.length,
-      frames: resolution.mirrorX
-        ? []
-        : frames.map((frame) => ({
-            index: frame.index,
-            imageUrl: frame.url,
-            durationMs: frame.durationMs,
-          })),
+      frames: [],
     }
   })
 }
