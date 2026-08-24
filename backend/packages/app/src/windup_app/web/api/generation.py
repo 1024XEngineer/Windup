@@ -25,7 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
-from windup_common.directions import ActionDirection, is_source_direction
+from windup_common.directions import ActionDirection, is_required_direction
 from windup_common.exceptions import BizException
 from windup_common.models import CharacterStance
 from windup_common.result import Response
@@ -340,11 +340,11 @@ def _validate_project_size(project: Project, width: int, height: int) -> None:
 
 
 def _validate_project_direction(project: Project, direction: ActionDirection) -> None:
-    """只允许该项目的真实源方向进入生成队列，镜像方向不重复生成。"""
+    """只允许当前项目规格要求的真实方向进入生成队列。"""
 
-    if not is_source_direction(project.directional_movement, direction):
+    if not is_required_direction(project.directional_movement, direction):
         raise BizException(
-            f"方向 {direction.value} 不是当前项目的真实源方向，镜像方向由资产层复用",
+            f"方向 {direction.value} 不属于当前项目的生成规格",
             code=BizCode.BAD_REQUEST,
         )
 

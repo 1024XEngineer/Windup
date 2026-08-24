@@ -15,6 +15,9 @@ from windup_framework.config.storage import settings as storage_settings
 from windup_framework.db import get_session
 
 from windup_app.server.character.model import Character, CharacterData
+from windup_app.server.character.direction_validation import (
+    validate_character_directions,
+)
 from windup_app.server.character.service import service as character_service
 from windup_app.server.media.service import card_thumbnail_key
 from windup_app.server.media.service import service as media_service
@@ -161,6 +164,23 @@ def get_character_with_auth(
     return character
 
 
+def _validate_publishable_character_data(
+    data: CharacterData,
+    project: Project,
+    status: CharacterStatus,
+) -> None:
+    if status != CharacterStatus.PUBLISHED or data.version < 2:
+        return
+    try:
+        validate_character_directions(
+            data,
+            project.directional_movement,
+            require_complete=True,
+        )
+    except ValueError as exc:
+        raise BizException(str(exc), code=BizCode.BAD_REQUEST) from None
+
+
 # ── 端点 ─────────────────────────────────────────────────────────────────────
 
 
@@ -171,9 +191,10 @@ def create_character(
     session: Session = Depends(get_session),
 ) -> Response[CharacterOut]:
     user_id = request.state.current_user.id
-    _get_project_or_raise(session, body.project_id, user_id, for_update=True)
+    project = _get_project_or_raise(session, body.project_id, user_id, for_update=True)
     character_data = body.character_data.model_dump()
     status = CharacterStatus.from_character_data(character_data)
+    _validate_publishable_character_data(body.character_data, project, status)
     try:
         character = character_service.create_character(
             session,
@@ -289,7 +310,7 @@ def update_character(
     session: Session = Depends(get_session),
 ) -> Response[CharacterOut]:
     user_id = request.state.current_user.id
-    get_character_with_auth(session, character_id, user_id)
+    existing = get_character_with_auth(session, character_id, user_id)
     fields = body.model_dump(exclude_unset=True)
     # 如果更新了 character_data，自动推断 status
     if "character_data" in fields:
@@ -298,7 +319,16 @@ def update_character(
         character_data = fields["character_data"]
         if isinstance(character_data, CharacterData):
             character_data = character_data.model_dump()
-        fields["status"] = CharacterStatus.from_character_data(character_data)
+        status = CharacterStatus.from_character_data(character_data)
+        project = session.get(Project, existing.project_id)
+        if project is None:
+            raise BizException("项目不存在", code=BizCode.NOT_FOUND)
+        _validate_publishable_character_data(
+            CharacterData.model_validate(character_data),
+            project,
+            status,
+        )
+        fields["status"] = status
     character = character_service.update_character(session, character_id, **fields)
     if character is None:
         raise BizException("角色不存在", code=BizCode.NOT_FOUND)

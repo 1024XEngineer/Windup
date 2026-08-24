@@ -140,13 +140,6 @@ ActionDirection = Literal[
     "south_west",
 ]
 
-_MIRROR_SOURCES: dict[str, str] = {
-    "west": "east",
-    "north_west": "north_east",
-    "south_west": "south_east",
-}
-
-
 class CharacterActionSequence(BaseModel):
     """一个动作的源方向帧或水平镜像关系。"""
 
@@ -162,22 +155,18 @@ class CharacterActionSequence(BaseModel):
 
     @model_validator(mode="after")
     def validate_source_or_mirror(self) -> "CharacterActionSequence":
-        expected_source = _MIRROR_SOURCES.get(self.direction)
-        if expected_source is None:
-            if self.mirror_x or self.source_direction is not None:
-                raise ValueError("动作方向镜像关系无效")
-            if self.frame_count != len(self.frames) or self.frame_count == 0:
-                raise ValueError("源动作方向必须包含与 frame_count 一致的真实帧")
-            if sorted(frame.index for frame in self.frames) != list(
-                range(self.frame_count)
-            ):
-                raise ValueError("源动作方向帧序号必须从 0 连续递增")
-            return self
-
-        if not self.mirror_x or self.source_direction != expected_source:
+        if self.mirror_x != (self.source_direction is not None):
             raise ValueError("动作方向镜像关系无效")
-        if self.frames:
-            raise ValueError("镜像动作方向不能保存独立帧")
+        if self.source_direction is not None:
+            if self.source_direction == self.direction:
+                raise ValueError("动作方向不能镜像自身")
+            if self.frames:
+                raise ValueError("镜像动作方向不能保存独立帧")
+            return self
+        if self.frame_count != len(self.frames) or self.frame_count == 0:
+            raise ValueError("真实动作方向必须包含与 frame_count 一致的帧")
+        if sorted(frame.index for frame in self.frames) != list(range(self.frame_count)):
+            raise ValueError("真实动作方向帧序号必须从 0 连续递增")
         return self
 
 
@@ -193,18 +182,16 @@ class CharacterTemplateSequence(BaseModel):
 
     @model_validator(mode="after")
     def validate_source_or_mirror(self) -> "CharacterTemplateSequence":
-        expected_source = _MIRROR_SOURCES.get(self.direction)
-        if expected_source is None:
-            if self.mirror_x or self.source_direction is not None:
-                raise ValueError("角色母版方向镜像关系无效")
-            if not self.image_url or not self.image_url.strip():
-                raise ValueError("真实源方向必须包含角色母版 URL")
-            return self
-
-        if not self.mirror_x or self.source_direction != expected_source:
+        if self.mirror_x != (self.source_direction is not None):
             raise ValueError("角色母版方向镜像关系无效")
-        if self.image_url is not None:
-            raise ValueError("镜像角色母版不能保存独立图片")
+        if self.source_direction is not None:
+            if self.source_direction == self.direction:
+                raise ValueError("角色母版方向不能镜像自身")
+            if self.image_url is not None:
+                raise ValueError("镜像角色母版不能保存独立图片")
+            return self
+        if not self.image_url or not self.image_url.strip():
+            raise ValueError("真实方向必须包含角色母版 URL")
         return self
 
 
@@ -269,7 +256,7 @@ class CharacterOutfit(BaseModel):
 class CharacterData(BaseModel):
     """角色完整数据（方向母版与造型→动作→帧）。"""
 
-    version: int = Field(default=1, description="结构版本")
+    version: int = Field(default=1, ge=1, description="结构版本")
     templates: list[CharacterTemplateSequence] = Field(
         default_factory=list, description="角色各源方向母版与镜像关系"
     )

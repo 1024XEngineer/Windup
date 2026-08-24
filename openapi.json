@@ -455,6 +455,7 @@
           "version": {
             "default": 1,
             "description": "结构版本",
+            "minimum": 1.0,
             "title": "Version",
             "type": "integer"
           }

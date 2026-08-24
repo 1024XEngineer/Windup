@@ -426,7 +426,46 @@ describe('characterApis', () => {
     })
   })
 
-  it('rejects a directional payload that mirrors north from south', async () => {
+  it('preserves a real west sequence instead of forcing a mirror relation', async () => {
+    const directionalDto = structuredClone(characterDto)
+    const west = {
+      direction: 'west',
+      source_direction: null,
+      mirror_x: false,
+      frame_count: 1,
+      frames: [
+        {
+          index: 0,
+          image_url: 'https://cdn.windup.test/walk-west-01.png',
+          duration_ms: 100,
+        },
+      ],
+    }
+    Object.assign(directionalDto.character_data.outfits[0]!.actions[0]!, {
+      sequences: [west],
+    })
+    const characterApis = await loadCharacterApis(async () => jsonResponse(directionalDto))
+
+    const character = await characterApis.get('51')
+
+    expect(character.outfits[0]?.actions[0]?.sequences).toEqual([
+      {
+        direction: 'west',
+        sourceDirection: null,
+        mirrorX: false,
+        frameCount: 1,
+        frames: [
+          {
+            index: 0,
+            imageUrl: 'https://cdn.windup.test/walk-west-01.png',
+            durationMs: 100,
+          },
+        ],
+      },
+    ])
+  })
+
+  it('rejects a directional payload whose source lacks the mirror flag', async () => {
     const invalidDto = structuredClone(characterDto)
     Object.assign(invalidDto.character_data.outfits[0]!.actions[0]!, {
       sequences: [
@@ -446,7 +485,7 @@ describe('characterApis', () => {
         {
           direction: 'north',
           source_direction: 'south',
-          mirror_x: true,
+          mirror_x: false,
           frame_count: 1,
           frames: [],
         },
@@ -662,7 +701,7 @@ describe('characterApis', () => {
     })
   })
 
-  it('rejects a directional payload that mirrors north from south', async () => {
+  it('rejects a directional payload whose source lacks the mirror flag', async () => {
     const invalidDto = structuredClone(characterDto)
     Object.assign(invalidDto.character_data.outfits[0]!.actions[0]!, {
       sequences: [
@@ -682,7 +721,7 @@ describe('characterApis', () => {
         {
           direction: 'north',
           source_direction: 'south',
-          mirror_x: true,
+          mirror_x: false,
           frame_count: 1,
           frames: [],
         },
@@ -761,7 +800,7 @@ describe('characterApis', () => {
         message: '角色母版方向无效或重复',
       },
       {
-        templates: [{ ...east, direction: 'west' }],
+        templates: [{ ...east, source_direction: 'west' }],
         message: '角色母版方向镜像关系无效',
       },
       {

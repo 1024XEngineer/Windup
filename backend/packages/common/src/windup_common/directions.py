@@ -1,8 +1,4 @@
-"""角色动作的方向契约。
-
-方向生成只为真实源方向创建任务；west、north_west、south_west 是由对应源方向
-水平镜像得到的逻辑方向，不应再次调用模型或扣费。
-"""
+"""角色动作的方向契约。"""
 
 from enum import StrEnum
 
@@ -18,39 +14,27 @@ class ActionDirection(StrEnum):
     SOUTH_WEST = "south_west"
 
 
-_SOURCE_DIRECTIONS: dict[int, tuple[ActionDirection, ...]] = {
+_REQUIRED_DIRECTIONS: dict[int, tuple[ActionDirection, ...]] = {
     1: (ActionDirection.EAST,),
     2: (
         ActionDirection.EAST,
+        ActionDirection.WEST,
         ActionDirection.NORTH,
         ActionDirection.SOUTH,
     ),
-    3: (
-        ActionDirection.EAST,
-        ActionDirection.NORTH,
-        ActionDirection.SOUTH,
-        ActionDirection.NORTH_EAST,
-        ActionDirection.SOUTH_EAST,
-    ),
+    3: tuple(ActionDirection),
 }
 
-MIRROR_SOURCE_BY_DIRECTION: dict[ActionDirection, ActionDirection] = {
-    ActionDirection.WEST: ActionDirection.EAST,
-    ActionDirection.NORTH_WEST: ActionDirection.NORTH_EAST,
-    ActionDirection.SOUTH_WEST: ActionDirection.SOUTH_EAST,
-}
+def required_directions_for_movement(movement: int) -> tuple[ActionDirection, ...]:
+    """返回项目必须真实生成的方向；未知项目配置按单向兼容。"""
+
+    return _REQUIRED_DIRECTIONS.get(movement, _REQUIRED_DIRECTIONS[1])
 
 
-def source_directions_for_movement(movement: int) -> tuple[ActionDirection, ...]:
-    """返回项目需要真实生成的源方向；未知项目配置按单向兼容。"""
-
-    return _SOURCE_DIRECTIONS.get(movement, _SOURCE_DIRECTIONS[1])
-
-
-def is_source_direction(movement: int, direction: ActionDirection) -> bool:
+def is_required_direction(movement: int, direction: ActionDirection) -> bool:
     """判断请求方向是否属于该项目的真实生成集合。"""
 
-    return direction in source_directions_for_movement(movement)
+    return direction in required_directions_for_movement(movement)
 
 
 _DIRECTION_PROMPTS: dict[ActionDirection, str] = {

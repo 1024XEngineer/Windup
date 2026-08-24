@@ -25,14 +25,16 @@ def _inject_fake_character_namer():
         character_service._namer = original
 
 
-def _create_project(auth_client, name: str = "默认项目") -> dict:
+def _create_project(
+    auth_client, name: str = "默认项目", directional_movement: int = 2
+) -> dict:
     """创建一个项目并返回响应 data。"""
     return auth_client.post(
         "/projects",
         json={
             "project_name": name,
             "character_perspective": 1,
-            "directional_movement": 2,
+            "directional_movement": directional_movement,
             "sprite_width": 64,
             "sprite_height": 64,
         },
@@ -83,6 +85,52 @@ def _payload_with_frames(project_id: int, **overrides):
     }
     base.update(overrides)
     return base
+
+
+def _directional_data(directions: list[str]) -> dict:
+    def frame(direction: str) -> dict:
+        return {
+            "index": 0,
+            "image_url": f"https://example.com/{direction}-0.png",
+        }
+
+    return {
+        "version": 2,
+        "templates": [
+            {
+                "direction": direction,
+                "source_direction": None,
+                "mirror_x": False,
+                "image_url": f"https://example.com/{direction}.png",
+            }
+            for direction in directions
+        ],
+        "outfits": [
+            {
+                "id": "outfit-1",
+                "name": "默认造型",
+                "actions": [
+                    {
+                        "id": "idle",
+                        "type": "idle",
+                        "name": "待机",
+                        "frame_count": 1,
+                        "frames": [frame("east")],
+                        "sequences": [
+                            {
+                                "direction": direction,
+                                "source_direction": None,
+                                "mirror_x": False,
+                                "frame_count": 1,
+                                "frames": [frame(direction)],
+                            }
+                            for direction in directions
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
 
 
 def test_character_model_defaults_to_draft(db_session):
@@ -406,10 +454,10 @@ def test_directional_only_action_is_published_and_roundtrips(auth_client):
                 "frame_count": 1,
                 "frames": [{"index": 0, "image_url": "https://example.com/south.png"}],
             },
-            {
-                "direction": "north",
-                "source_direction": "south",
-                "mirror_x": True,
+                {
+                    "direction": "north",
+                    "source_direction": "north",
+                    "mirror_x": True,
                 "frame_count": 1,
                 "frames": [],
             },
@@ -485,7 +533,7 @@ def test_directional_only_action_is_published_and_roundtrips(auth_client):
     ],
     ids=[
         "duplicate",
-        "illegal-pair",
+        "self-source",
         "missing-source",
         "derived-frames",
         "source-frame-count",
@@ -821,6 +869,101 @@ def test_update_character_data_recalculates_status(auth_client):
     )
     assert resp.status_code == 200
     assert resp.json()["data"]["status"] == 1
+
+
+@pytest.mark.parametrize(
+    ("movement", "directions", "missing"),
+    [
+        (2, ["east", "north", "south"], "west"),
+        (
+            3,
+            ["east", "west", "north", "south", "north_east", "south_east"],
+            "north_west",
+        ),
+    ],
+)
+def test_update_rejects_published_version_two_assets_with_missing_real_directions(
+    auth_client, movement, directions, missing
+):
+    project = _create_project(
+        auth_client,
+        name=f"缺方向项目-{movement}",
+        directional_movement=movement,
+    )
+    created = auth_client.post(
+        "/characters",
+        json=_payload(project["id"]),
+    ).json()["data"]
+
+    body = auth_client.patch(
+        f"/characters/{created['id']}",
+        json={"character_data": _directional_data(directions)},
+    ).json()
+
+    assert body["code"] == 400
+    assert missing in body["message"]
+
+
+@pytest.mark.parametrize(
+    ("movement", "directions"),
+    [
+        (2, ["east", "west", "north", "south"]),
+        (
+            3,
+            [
+                "east",
+                "west",
+                "north",
+                "south",
+                "north_east",
+                "north_west",
+                "south_east",
+                "south_west",
+            ],
+        ),
+    ],
+)
+def test_update_accepts_complete_version_two_multi_direction_assets(
+    auth_client, movement, directions
+):
+    project = _create_project(
+        auth_client,
+        name=f"完整多向项目-{movement}",
+        directional_movement=movement,
+    )
+    created = auth_client.post(
+        "/characters",
+        json=_payload(project["id"]),
+    ).json()["data"]
+
+    response = auth_client.patch(
+        f"/characters/{created['id']}",
+        json={
+            "character_data": _directional_data(directions)
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == 1
+
+
+def test_create_rejects_incomplete_published_version_two_asset(auth_client):
+    project = _create_project(
+        auth_client,
+        name="创建缺方向项目",
+        directional_movement=2,
+    )
+
+    body = auth_client.post(
+        "/characters",
+        json=_payload(
+            project["id"],
+            character_data=_directional_data(["east", "north", "south"]),
+        ),
+    ).json()
+
+    assert body["code"] == 400
+    assert "west" in body["message"]
 
 
 def test_update_character_with_null_character_data(auth_client):
