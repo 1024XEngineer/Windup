@@ -11,7 +11,7 @@ from .pixelate import (
     pixelate_frames,
     to_pixel_art,
 )
-from .pack import align_bottom_center, save_gif, sprite_sheet
+from .pack import FOOT_LINE, align_bottom_center, save_gif, sprite_sheet
 
 __all__ = [
     "to_pixel_art",
@@ -23,6 +23,7 @@ __all__ = [
     "frame_durations",
     "DEFAULT_FPS_MS",
     "align_bottom_center",
+    "FOOT_LINE",
     "sprite_sheet",
     "save_gif",
 ]

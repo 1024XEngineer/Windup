@@ -16,3 +16,5 @@ export type {
 export { KineticCopyCycle } from './kinetic-copy-cycle'
 export type { KineticCopyCycleProps, KineticCopyMessage } from './kinetic-copy-cycle'
 export { PixelMatrix } from './pixel-matrix'
+export { FrameAnimationPlayer } from './frame-animation-player'
+export type { FrameAnimationFrame, FrameAnimationPlayerProps } from './frame-animation-player'

@@ -126,6 +126,13 @@ class SqlAlchemyProjectService(ProjectService):
                 )
         return previews
 
+    def rename_project(
+        self, session: Session, project: Project, *, project_name: str
+    ) -> Project:
+        project.project_name = project_name
+        session.flush()
+        return project
+
     def delete_project(self, session: Session, project_id: int) -> bool:
         project = session.get(Project, project_id)
         if project is None:

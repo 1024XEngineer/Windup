@@ -180,6 +180,8 @@ body,
  * 中性发丝线的语义名，不再承担锈红装饰，避免与深绿产品界面形成廉价撞色。
  */
 @theme {
+  --font-serif: 'Noto Serif SC Variable', serif;
+
   --color-paper: #f5f5f2;
   --color-paper-raised: #fbfbfa;
   --color-paper-sunken: #e9eae4;

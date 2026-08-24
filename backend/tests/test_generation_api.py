@@ -475,3 +475,65 @@ def test_illegal_stance_is_rejected_at_the_entrance(auth_client):
         json=_action_payload(project["id"], character["id"], stance="octopod"),
     ).json()
     assert body["code"] == 400, body
+
+
+# ── 帧数按动作类型取,且只有一份约定 ────────────────────────────────────────
+#
+# 32 曾同时是后端默认值和前端"这是完整动画任务"的判据,于是改一个动作的帧数会让
+# 前端认不出这类任务。现在约定只在 ACTION_FRAME_COUNTS 一处,前端提交时不发帧数。
+
+
+def test_idle_task_frames_come_from_the_convention(auth_client):
+    """待机任务落库的帧数取该动作类型的约定值。
+
+    断言的是任务 input_payload —— 前端与 MQ 重建都从它读帧数,只断言函数返回值的话,
+    请求层没接上也照样绿。
+    """
+    from windup_app.server.orchestrator.model import ActionType, frames_for
+
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+
+    body = auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"], action_type="idle"),
+    ).json()
+
+    assert body["data"] is not None, body
+    stored = body["data"]["input_payload"]["num_frames"]
+    assert stored == frames_for(ActionType.IDLE)
+    assert stored != 32, "待机还在按 32 帧生成"
+
+
+def test_walk_task_keeps_thirty_two_frames(auth_client):
+    """本改动只动待机;走路的帧数不变。"""
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+
+    body = auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"], action_type="walk"),
+    ).json()
+
+    assert body["data"]["input_payload"]["num_frames"] == 32
+
+
+def test_explicit_num_frames_wins_over_the_convention(auth_client):
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+
+    body = auth_client.post(
+        "/generation/action",
+        json=_action_payload(
+            project["id"], character["id"], action_type="idle", num_frames=20,
+        ),
+    ).json()
+
+    assert body["data"]["input_payload"]["num_frames"] == 20
+
+
+def test_frame_convention_covers_every_action_type():
+    """新增动作类型必须同时给出帧数 —— 漏了的话取帧数会在请求里抛 KeyError。"""
+    from windup_app.server.orchestrator.model import ACTION_FRAME_COUNTS, ActionType
+
+    assert set(ACTION_FRAME_COUNTS) == set(ActionType)

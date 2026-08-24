@@ -38,6 +38,24 @@ class ActionType(StrEnum):
     CUSTOM = "custom"
 
 
+# 动作类型 → 帧数(产品口径)。**这是唯一一份约定**:前端提交时不发 num_frames,
+# 从任务的 input_payload 读回来用 —— 两边各写一个数,分叉时任务照跑、没有一处会红。
+# 待机是原地小幅呼吸,32 帧里绝大多数帧之间没有差别,多出来的帧进不了有效循环,
+# 却照样占抽帧、抠图、对齐、上传的工作量与存储。
+ACTION_FRAME_COUNTS: dict[ActionType, int] = {
+    ActionType.WALK: 32,
+    ActionType.IDLE: 12,
+    ActionType.JUMP: 32,
+    ActionType.ATTACK: 32,
+    ActionType.CUSTOM: 32,
+}
+
+
+def frames_for(action_type: ActionType) -> int:
+    """该动作类型约定的帧数。"""
+    return ACTION_FRAME_COUNTS[action_type]
+
+
 class TaskStatus(StrEnum):
     """生成任务状态。"""
 
@@ -73,7 +91,10 @@ class CharacterActionInput:
     custom_prompt: str | None = None
     reference_video_url: str | None = None
     reference_image_urls: list[str] = field(default_factory=list)
-    num_frames: int = 32
+    # ``None`` = 调用方没指定,在 __post_init__ 里按动作类型解析成约定值。解析放在这层
+    # 而不是各个构造点:落库的 input_payload 是产线与前端读帧数的唯一来源,少解析一处
+    # 就多一个自带默认值的构造点(MQ 重建入参就是其中一个)。
+    num_frames: int | None = None
     # ── action_type=custom 才用到的两个(#239)──────────────────────────────
     # 这个动作是否循环播放。``None`` 原样往下传,由编排层兜成一次性:本层替调用方填默认值
     # 的话,"没给"和"明确给了 False"从这里起就再也分不开了。
@@ -96,6 +117,10 @@ class CharacterActionInput:
     # "没给"与"明确给了 biped"从这里起就分不开了。判据见 prompt.adapter 的体型门禁。
     stance: CharacterStance | None = None
     direction: ActionDirection = ActionDirection.EAST
+
+    def __post_init__(self) -> None:
+        if self.num_frames is None:
+            self.num_frames = frames_for(self.action_type)
 
 
 # -- 出参（按任务类型细化，前端可直接回填 character 模块）------------------
@@ -133,7 +158,9 @@ class CharacterActionOutput:
 
     前端拿到后写入 ``character_data.outfits[].actions[]``：
     ``action_type`` → ``CharacterAction.type``，
-    ``frames`` → ``CharacterAction.frames[]``。
+    ``frames`` + ``direction`` → ``CharacterAction.sequences[]``(一个方向一条,
+    镜像方向按 ``CharacterActionSequence`` 的校验只存来源关系、不存帧),
+    ``geometry`` → 导出契约的 ``anchor`` / ``footY``。
 
     ``quality`` / ``prompt_version`` 是引擎产出成色的账本(``ai_engine.ports.ActionQuality``
     的原样转录 + 提示词版本),不参与前端回填、只落库供后续对比——本层不据此判成败,
@@ -153,6 +180,9 @@ class CharacterActionOutput:
     quality: dict | None = None
     prompt_version: str | None = None
     direction: ActionDirection = ActionDirection.EAST
+    # 交付帧的落位几何(画布尺寸、主体锚点、脚线像素)。``None`` = 引擎没给,
+    # 不是"用默认值" —— 消费方要能区分这两者,才不会把缺省当成实测。
+    geometry: dict | None = None
 
 
 # -- 任务记录 ------------------------------------------------------------

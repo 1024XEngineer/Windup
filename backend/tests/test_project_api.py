@@ -227,6 +227,58 @@ def test_list_loads_all_project_previews_with_one_character_query(auth_client, e
     assert len(statements) == 1
 
 
+# -- PATCH /projects/{id} ----------------------------------------------------
+
+
+def test_rename_success_persists_the_new_name(auth_client):
+    created = auth_client.post(
+        "/projects", json=_payload(project_name="重命名前")
+    ).json()["data"]
+
+    resp = auth_client.patch(
+        f"/projects/{created['id']}", json={"project_name": "重命名后"}
+    )
+
+    body = resp.json()
+    assert body["code"] == 200
+    assert body["message"] == "重命名成功"
+    assert body["data"]["project_name"] == "重命名后"
+    persisted = auth_client.get(f"/projects/{created['id']}").json()["data"]
+    assert persisted["project_name"] == "重命名后"
+
+
+def test_rename_duplicate_name_returns_400(auth_client):
+    auth_client.post("/projects", json=_payload(project_name="已存在"))
+    created = auth_client.post(
+        "/projects", json=_payload(project_name="待修改")
+    ).json()["data"]
+
+    resp = auth_client.patch(
+        f"/projects/{created['id']}", json={"project_name": "已存在"}
+    )
+
+    assert resp.json()["code"] == 400
+    assert resp.json()["message"] == "项目名称已存在"
+    persisted = auth_client.get(f"/projects/{created['id']}").json()["data"]
+    assert persisted["project_name"] == "待修改"
+
+
+def test_rename_rejects_another_users_project(auth_client, auth_client_b):
+    created = auth_client.post(
+        "/projects", json=_payload(project_name="我的项目")
+    ).json()["data"]
+
+    resp = auth_client_b.patch(
+        f"/projects/{created['id']}", json={"project_name": "越权改名"}
+    )
+
+    assert resp.json()["code"] == 404
+    assert (
+        auth_client.get(f"/projects/{created['id']}").json()["data"]["project_name"]
+        == "我的项目"
+    )
+
+
 # -- DELETE /projects/{id} ---------------------------------------------------
 
 

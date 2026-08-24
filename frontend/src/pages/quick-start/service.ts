@@ -24,7 +24,6 @@ import { getApiAccessToken, recoverApiUnauthorized, resolveApiBaseUrl } from '@/
 import { createEventStreamSubscriber } from '@/shared/api/stream'
 import {
   createAutoPrepareProject,
-  createExistingCharacterActionRun,
   createWorkflowController,
   type PrepareQuickStartProject,
   type WorkflowController,
@@ -72,6 +71,8 @@ export interface QuickStartSession {
     actionDescription: string,
     signal?: AbortSignal,
   ): Promise<WorkflowRun>
+  /** 在当前 WorkflowRun 的角色母版后追加动作，不创建新的 Run。 */
+  addAction(outfitId: string, actionDescription: string): Promise<WorkflowRun>
   confirmCandidate(
     selectedImages: QuickStartCandidateSelection,
     actionDescription?: string,
@@ -101,10 +102,6 @@ export interface QuickStartEntryService {
     file: File,
     actionDescription: string,
     signal?: AbortSignal,
-  ): Promise<QuickStartSession>
-  startAction(
-    target: { characterId: string; outfitId: string },
-    actionDescription: string,
   ): Promise<QuickStartSession>
   open(runId: WorkflowRun['id']): Promise<QuickStartSession>
 }
@@ -692,6 +689,25 @@ export function createQuickStartService({
         ensureAutomaticAdvance()
         return controller.getWorkflow()
       },
+      async addAction(outfitId, actionDescription) {
+        const prompt = actionDescription.trim()
+        if (!prompt) throw new Error('请先描述要新增的动作')
+        const run = controller.getWorkflow()
+        const characterId = setupNode(run).input.characterId
+        if (characterApis && characterId) {
+          const character = await characterApis.get(characterId)
+          if (character.workflowRunId !== run.id) {
+            throw new Error('当前角色未绑定这条 WorkflowRun，不能追加动作')
+          }
+          if (!character.outfits.some((outfit) => outfit.id === outfitId)) {
+            throw new Error('当前角色没有这个造型，不能追加动作')
+          }
+        }
+        const spriteSize = knownSpriteSize ?? (await resolveProjectSpriteSize(run.projectId))
+        await prepareAction(controller, outfitId, prompt, spriteSize)
+        ensureAutomaticAdvance()
+        return controller.getWorkflow()
+      },
       confirmCandidate(selection, actionDescription) {
         if (candidateCommand) return candidateCommand
         const command = (async () => {
@@ -926,21 +942,6 @@ export function createQuickStartService({
     }
   }
 
-  async function appendActionForCharacter(
-    target: { characterId: string; outfitId: string },
-    actionDescription: string,
-  ) {
-    if (!characterApis) throw new Error('角色服务尚未配置，不能增加动作')
-    const { run, character, outfit } = await createExistingCharacterActionRun(target, {
-      characterApis,
-      workflowRunApis,
-    })
-    const spriteSize = await resolveProjectSpriteSize(character.projectId)
-    const controller = createController(run)
-    await prepareAction(controller, outfit.id, actionDescription, spriteSize)
-    return createSession(controller, spriteSize)
-  }
-
   return {
     unavailableReason: null,
 
@@ -992,8 +993,6 @@ export function createQuickStartService({
       await prepareAction(controller, target.outfitId, actionDescription, project.spriteSize)
       return createSession(controller, project.spriteSize)
     },
-
-    startAction: appendActionForCharacter,
 
     async open(runId) {
       const run = await workflowRunApis.get(runId)

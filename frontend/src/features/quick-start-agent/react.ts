@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   createQuickStartAgent,
-  type CharacterGenerationPlan,
+  type CharacterGenerationProposal,
   type CreateQuickStartAgentOptions,
   type QuickStartAgentResult,
 } from './runtime'
@@ -10,91 +10,102 @@ import {
 export type QuickStartAgentState =
   | { status: 'idle' }
   | { status: 'planning' }
-  | { status: 'awaiting-input'; message: string }
-  | { status: 'restart-required'; message: string }
-  | ({ status: 'dispatching' } & CharacterGenerationPlan)
+  | {
+      status: 'awaiting-input'
+      message: string
+      messageKind: 'reply' | 'clarification' | 'blocked'
+    }
+  | ({ status: 'proposal' } & CharacterGenerationProposal)
+  | ({ status: 'dispatching' } & CharacterGenerationProposal)
   | { status: 'error'; message: string }
 
-export interface UseQuickStartAgentOptions extends CreateQuickStartAgentOptions {
-  /** 测试可替换；生产至少等待一帧，保证最终 Prompt 先于付费写操作可见。 */
-  waitForPresentation?: () => Promise<void>
-}
-
-async function waitForBrowserPresentation(): Promise<void> {
-  if (typeof requestAnimationFrame !== 'function') return
-  await new Promise<void>((resolve) =>
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-  )
-}
+export type UseQuickStartAgentOptions = CreateQuickStartAgentOptions
 
 function errorMessage(cause: unknown): string {
-  return cause instanceof Error && cause.message ? cause.message : 'Agent 暂时不可用，请稍后重试'
+  if (!(cause instanceof Error) || !cause.message) return 'Agent 暂时不可用，请稍后重试'
+  if (
+    /Tool|Planner|quick_start_decision|optimizedPrompt|optimizationSummary|生成授权/u.test(
+      cause.message,
+    )
+  ) {
+    return 'Agent 没有完成这次回复，请重新发送'
+  }
+  return cause.message
 }
 
-export function useQuickStartAgent({
-  planner,
-  startCharacterGeneration,
-  waitForPresentation = waitForBrowserPresentation,
-}: UseQuickStartAgentOptions) {
-  const [state, setState] = useState<QuickStartAgentState>({ status: 'idle' })
+function initialState(options: UseQuickStartAgentOptions): QuickStartAgentState {
+  return options.initialProposal
+    ? { status: 'proposal', ...options.initialProposal }
+    : { status: 'idle' }
+}
+
+export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
+  const {
+    planner,
+    startCharacterGeneration,
+    initialMessages,
+    initialClarificationUsed,
+    initialProposal,
+  } = options
+  const [state, setState] = useState<QuickStartAgentState>(() => initialState(options))
   const agent = useRef<ReturnType<typeof createQuickStartAgent> | null>(null)
-  const started = useRef(false)
-  const clarificationReceived = useRef(false)
-  const restartRequired = useRef(false)
+  const started = useRef(Boolean(initialMessages?.length))
   const running = useRef(false)
   const abortController = useRef<AbortController | null>(null)
   const mounted = useRef(true)
 
   useEffect(() => {
     mounted.current = true
-    started.current = false
+    started.current = Boolean(initialMessages?.length)
     return () => {
       mounted.current = false
       abortController.current?.abort()
       agent.current?.revoke()
       agent.current = null
-      started.current = false
-      clarificationReceived.current = false
-      restartRequired.current = false
     }
-  }, [planner, startCharacterGeneration])
+  }, [initialMessages, planner, startCharacterGeneration])
+
+  const ensureAgent = useCallback(() => {
+    agent.current ??= createQuickStartAgent({
+      planner,
+      startCharacterGeneration,
+      initialMessages,
+      initialClarificationUsed,
+      initialProposal,
+    })
+    return agent.current
+  }, [
+    initialClarificationUsed,
+    initialMessages,
+    initialProposal,
+    planner,
+    startCharacterGeneration,
+  ])
 
   const submit = useCallback(
     async (input: string): Promise<QuickStartAgentResult> => {
       if (running.current) throw new Error('Planner 正在处理上一条输入')
-      if (restartRequired.current) {
-        agent.current?.revoke()
-        agent.current = null
-        started.current = false
-        clarificationReceived.current = false
-        restartRequired.current = false
-      }
       running.current = true
       const controller = new AbortController()
       abortController.current = controller
       if (mounted.current) setState({ status: 'planning' })
 
       try {
-        agent.current ??= createQuickStartAgent({ planner, startCharacterGeneration })
-        const activeAgent = agent.current
-        const continuing = started.current
-        const runTurn = continuing ? activeAgent.continue : activeAgent.start
+        const activeAgent = ensureAgent()
+        const runTurn = started.current ? activeAgent.continue : activeAgent.start
         started.current = true
-        const result = await runTurn(input, {
-          signal: controller.signal,
-          async onBeforeDispatch(plan) {
-            if (mounted.current) setState({ status: 'dispatching', ...plan })
-            await waitForPresentation()
-          },
-        })
-        if (result.kind === 'message' && mounted.current) {
-          const clarificationExhausted = clarificationReceived.current
-          clarificationReceived.current = true
-          restartRequired.current = clarificationExhausted
-          setState({
-            status: clarificationExhausted ? 'restart-required' : 'awaiting-input',
-            message: result.message,
-          })
+        const result = await runTurn(input, { signal: controller.signal })
+        if (mounted.current) {
+          if (result.kind === 'message') {
+            setState({
+              status: 'awaiting-input',
+              message: result.message,
+              messageKind: result.messageKind,
+            })
+          } else if (result.kind === 'proposal') {
+            const { proposalId, optimizedPrompt, optimizationSummary } = result
+            setState({ status: 'proposal', proposalId, optimizedPrompt, optimizationSummary })
+          }
         }
         return result
       } catch (cause) {
@@ -107,12 +118,39 @@ export function useQuickStartAgent({
         if (abortController.current === controller) abortController.current = null
       }
     },
-    [planner, startCharacterGeneration, waitForPresentation],
+    [ensureAgent],
+  )
+
+  const confirmProposal = useCallback(
+    async (prompt: string): Promise<QuickStartAgentResult> => {
+      if (running.current) throw new Error('Planner 正在处理上一条输入')
+      if (state.status !== 'proposal') throw new Error('提示词提案已失效')
+      running.current = true
+      const { proposalId, optimizedPrompt, optimizationSummary } = state
+      if (mounted.current) {
+        setState({
+          status: 'dispatching',
+          proposalId,
+          optimizedPrompt,
+          optimizationSummary,
+        })
+      }
+      try {
+        return await ensureAgent().confirmProposal(proposalId, prompt)
+      } catch (cause) {
+        if (mounted.current) setState({ status: 'error', message: errorMessage(cause) })
+        throw cause
+      } finally {
+        running.current = false
+      }
+    },
+    [ensureAgent, state],
   )
 
   return {
     state,
     busy: state.status === 'planning' || state.status === 'dispatching',
     submit,
+    confirmProposal,
   }
 }

@@ -25,8 +25,9 @@ from windup_ai_engine.ports import (
     CharacterGeneratorPort,
     GeneratedAction,
     ProgressPort,
+    SequenceGeometry,
 )
-from windup_ai_engine.postprocess import align_bottom_center, frame_durations
+from windup_ai_engine.postprocess import FOOT_LINE, align_bottom_center, frame_durations
 from windup_ai_engine.prompt import PROMPT_VERSION
 from windup_ai_engine.slicing import (
     dead_frame_indices,
@@ -255,6 +256,7 @@ class CharacterGenerator(CharacterGeneratorPort):
         return GeneratedAction(
             frames=[_png(im) for im in aligned],
             durations=frame_durations(action.action.value, len(aligned)),
+            geometry=_geometry_of(aligned[0], canvas),
             quality=quality,
             prompt_version=PROMPT_VERSION,
         )
@@ -320,3 +322,19 @@ class CharacterGenerator(CharacterGeneratorPort):
             return align_bottom_center(imgs, ref_height=ref)
         cw, ch = canvas
         return align_bottom_center(imgs, cell=cw, cell_h=ch, ref_height=ref)
+
+
+def _geometry_of(frame: Image.Image, canvas: tuple[int, int] | None) -> SequenceGeometry:
+    """交付帧的落位几何。取自对齐那一步用的同一组常量,不另立一份。
+
+    ``canvas`` 为 None 时 ``_lastmile`` 走 ``align_bottom_center`` 的默认 cell,
+    所以这里也回落到实际交付帧的尺寸,而不是把 CELL 再抄一遍。
+    """
+    w, h = canvas if canvas else frame.size
+    return SequenceGeometry(
+        canvas_w=w,
+        canvas_h=h,
+        anchor_x=0.5,          # align_bottom_center 横向恒居中
+        anchor_y=FOOT_LINE,
+        foot_y=int(h * FOOT_LINE),
+    )

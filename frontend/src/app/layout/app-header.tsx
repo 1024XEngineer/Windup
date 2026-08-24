@@ -65,12 +65,6 @@ function navItemClassName(active: boolean, waving: boolean): string {
   } ${waving ? 'app-header-text-wave' : ''}`
 }
 
-function marketingNavItemClassName(waving: boolean): string {
-  return `relative inline-flex min-h-11 items-center px-1.5 text-body font-medium whitespace-nowrap text-app-muted transition-colors after:absolute after:inset-x-1.5 after:bottom-0 after:h-[2px] after:origin-center after:scale-x-0 after:bg-app-accent after:transition-transform hover:text-app-accent hover:after:scale-x-100 focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent sm:px-3 sm:after:inset-x-3 ${
-    waving ? 'app-header-text-wave' : ''
-  }`
-}
-
 /**
  * 有任务在跑时跟在"创作"右边的小机器人：圆脸加两只眼，眼睛左右张望。
  * 顶掉文字试过一版：这一项会在图标和文字之间来回换形态，读起来像换了个入口。
@@ -493,12 +487,6 @@ interface MarketingHeaderViewProps {
   onWave: (entry: string) => void
 }
 
-const marketingNavigation = [
-  { href: '#capabilities', label: '产品能力', compactLabel: '能力', motionKey: 'capabilities' },
-  { href: '#workflow', label: '制作流程', compactLabel: '流程', motionKey: 'workflow' },
-  { href: '#workspace', label: '资产工作台', compactLabel: '资产', motionKey: 'workspace' },
-] as const
-
 const marketingLoginEntry = `/?${new URLSearchParams({
   account: 'login',
   returnTo: '/workspace',
@@ -509,29 +497,31 @@ const marketingRegisterEntry = `/?${new URLSearchParams({
   returnTo: '/workspace',
 })}`
 
+const githubRepository = 'https://github.com/1024XEngineer/Windup'
+
 /**
- * 公开主页只换导航内容，沿用产品顶栏的布局、触控尺寸和视觉表面。
- * 这样两套入口在手机上不会因为各自维护断点而逐渐错位。
+ * 公开主页的顶栏悬在首屏画布上，只保留品牌与账号入口。
+ * 半透明底色负责托住文字，边界交给背景模糊表达，避免把首屏切成上下两块。
  */
 function MarketingHeaderView({ session, wave, onWave }: MarketingHeaderViewProps) {
   return (
     <header
       data-layout="unified"
-      data-surface="frosted-bar"
-      className="sticky top-0 z-50 border-b border-rule bg-app-canvas/92 text-ink backdrop-blur-xl"
+      data-surface="borderless-glass"
+      className="fixed inset-x-0 top-0 z-50 bg-paper/28 text-ink backdrop-blur-[18px] backdrop-saturate-[0.82]"
     >
-      <div className="relative mx-auto flex min-h-18 w-full max-w-[82rem] items-center justify-between px-4 sm:px-8 lg:px-12">
+      <div className="relative mx-auto flex min-h-18 w-full max-w-[82rem] items-center justify-between px-5 sm:min-h-21 sm:px-8 lg:px-12">
         <Link
           to="/"
           aria-label="返回 Windup 宣传页"
           data-motion="text-wave"
           onClick={() => onWave('brand')}
-          className={`flex min-h-11 shrink-0 items-center gap-2.5 pr-1 text-app-ink focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent max-[360px]:hidden ${
+          className={`flex min-h-11 shrink-0 items-center gap-2.5 pr-1 text-app-ink focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent ${
             wave.entry === 'brand' ? 'app-header-text-wave' : ''
           }`}
         >
           <img src="/windup-mark.svg" alt="" className="h-7 w-7" />
-          <strong className="hidden font-serif text-lg leading-none sm:inline">
+          <strong className="font-serif text-lg leading-none">
             <WaveText playId={wave.entry === 'brand' ? wave.playId : 0} text="Windup" />
           </strong>
           <span aria-hidden="true" className="hidden h-4 w-px bg-rule lg:block" />
@@ -540,36 +530,18 @@ function MarketingHeaderView({ session, wave, onWave }: MarketingHeaderViewProps
           </span>
         </Link>
 
-        <nav
-          aria-label="宣传页导航"
-          className="absolute left-1/2 flex -translate-x-1/2 items-stretch gap-0 sm:gap-1 max-[360px]:left-4 max-[360px]:translate-x-0"
-        >
-          {marketingNavigation.map((item) => {
-            const playId = wave.entry === item.motionKey ? wave.playId : 0
-            return (
-              <a
-                key={item.href}
-                aria-label={item.label}
-                href={item.href}
-                data-motion="text-wave"
-                onClick={() => onWave(item.motionKey)}
-                className={marketingNavItemClassName(wave.entry === item.motionKey)}
-              >
-                <span className="hidden sm:inline">
-                  <WaveText playId={playId} text={item.label} />
-                </span>
-                <span className="sm:hidden">
-                  <WaveText playId={playId} text={item.compactLabel} />
-                </span>
-              </a>
-            )
-          })}
-        </nav>
-
         <div
           aria-label="账号"
           className="relative ml-auto flex shrink-0 items-center gap-1 sm:gap-6"
         >
+          <a
+            href={githubRepository}
+            target="_blank"
+            rel="noreferrer"
+            className="hidden min-h-11 items-center text-body font-medium text-app-muted transition-colors hover:text-app-accent focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent xl:inline-flex"
+          >
+            GitHub
+          </a>
           {session.state.status === 'booting' ? (
             <span
               aria-label="正在恢复登录状态"

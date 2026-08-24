@@ -48,12 +48,17 @@ describe('LandingPage', () => {
     )
 
     expect(await screen.findByRole('heading', { name: '让你的角色，真正登场。' })).toBeTruthy()
-    expect(screen.getByRole('navigation', { name: '宣传页导航' })).toBeTruthy()
+    expect(screen.queryByRole('navigation', { name: '宣传页导航' })).toBeNull()
+    expect(screen.queryByText('产品能力')).toBeNull()
+    expect(screen.queryByText('制作流程')).toBeNull()
     const globalHeader = document.querySelector('header[data-layout="unified"]')
     expect(globalHeader?.getAttribute('data-layout')).toBe('unified')
-    expect(globalHeader?.getAttribute('data-surface')).toBe('frosted-bar')
+    expect(globalHeader?.getAttribute('data-surface')).toBe('borderless-glass')
     expect(globalHeader?.firstElementChild?.className).toContain('min-h-18')
-    expect(globalHeader?.className).toContain('sticky')
+    expect(globalHeader?.className).toContain('fixed')
+    expect(globalHeader?.className).toContain('backdrop-blur-[18px]')
+    expect(globalHeader?.className).toContain('backdrop-saturate-[0.82]')
+    expect(globalHeader?.className).not.toContain('border')
     expect(screen.getByRole('link', { name: '登录' }).getAttribute('href')).toBe(
       '/?account=login&returnTo=%2Fworkspace',
     )
@@ -68,15 +73,7 @@ describe('LandingPage', () => {
     for (const link of creationLinks) {
       expect(link.getAttribute('href')).toBe('/?account=login&returnTo=%2Fworkspace')
     }
-    const sectionLinks = [
-      ['产品能力', '#capabilities'],
-      ['制作流程', '#workflow'],
-      ['资产工作台', '#workspace'],
-    ] as const
-    for (const [name, href] of sectionLinks) {
-      expect(screen.getByRole('link', { name }).getAttribute('href')).toBe(href)
-      expect(document.querySelector(href)).not.toBeNull()
-    }
+    expect(screen.getByText('从角色设定到可玩的 2D 动作资产')).toBeTruthy()
     expect(screen.getByRole('heading', { name: '角色做出来，还要留下来、跑起来。' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '同一份创作，两种进入方式。' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '资产会留下来，继续生长。' })).toBeTruthy()
@@ -114,5 +111,34 @@ describe('LandingPage', () => {
     expect(await screen.findAllByTestId('workflow-editor-placeholder')).toHaveLength(3)
     expect(document.querySelector('img[src*="workflow-editor"]')).toBeNull()
     expect(document.querySelector('source[srcset*="workflow-editor"]')).toBeNull()
+  })
+
+  it('在收尾插画之后提供真实的开源项目入口', async () => {
+    render(
+      <GuestAuthSession>
+        <MemoryRouter>
+          <LandingPage />
+        </MemoryRouter>
+      </GuestAuthSession>,
+    )
+
+    const footer = await screen.findByRole('contentinfo')
+    const header = document.querySelector<HTMLElement>('header[data-layout="unified"]')
+
+    expect(header).not.toBeNull()
+    expect(within(header!).getByRole('link', { name: 'GitHub' }).getAttribute('href')).toBe(
+      'https://github.com/1024XEngineer/Windup',
+    )
+    expect(within(footer).getByText('Windup 是一个开源的 2D 角色资产工作台。')).toBeTruthy()
+    expect(within(footer).getByRole('link', { name: 'GitHub 仓库' }).getAttribute('href')).toBe(
+      'https://github.com/1024XEngineer/Windup',
+    )
+    expect(within(footer).getByRole('link', { name: 'Issues' }).getAttribute('href')).toBe(
+      'https://github.com/1024XEngineer/Windup/issues',
+    )
+    expect(within(footer).getByRole('link', { name: 'Contributors' }).getAttribute('href')).toBe(
+      'https://github.com/1024XEngineer/Windup/graphs/contributors',
+    )
+    expect(within(footer).queryByText(/隐私政策|服务条款|备案/)).toBeNull()
   })
 })

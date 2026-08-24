@@ -192,7 +192,9 @@ class CharacterActionGenerateRequest(BaseModel):
     reference_video_url: str | None = None
     reference_image_urls: list[str] = Field(default_factory=list)
     # 同上:帧数决定抽帧与逐帧抠图的工作量,上界 64 已远超引擎能出的有效周期长度。
-    num_frames: int = Field(default=32, ge=1, le=64)
+    # 不给则按动作类型取约定值(ACTION_FRAME_COUNTS)——写死一个默认值就等于替所有动作
+    # 都答了同一个数,而待机与走路要的帧数本来就不同。
+    num_frames: int | None = Field(default=None, ge=1, le=64)
     # ── action_type=custom 才用到(#239)───────────────────────────────────
     # 这个动作是否循环播放。不给则编排层兜成一次性,也不按描述文字猜 —— 两个方向的代价
     # 不对称:一次性动作被当成循环会让末帧接回首帧抽搐、产物不可用,反之只是不无缝闭环、

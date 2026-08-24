@@ -9,7 +9,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react'
-import { ArrowUp, ImageSquare, X } from '@phosphor-icons/react'
+import { ArrowBendDownLeft, ArrowUp, ImageSquare, X } from '@phosphor-icons/react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 
 import {
@@ -22,8 +22,14 @@ import { forgetActiveRun, isMissingActiveRunError, syncActiveRun } from '@/featu
 import { useOptionalAuthSession } from '@/features/auth-session'
 import { ExportButton, type ExportPackageModel } from '@/features/export-package'
 import { useQuickStartAgent } from '@/features/quick-start-agent/react'
-import type { CreateQuickStartAgentOptions } from '@/features/quick-start-agent/runtime'
+import type {
+  CharacterGenerationProposal,
+  CreateQuickStartAgentOptions,
+  PlannerMessage,
+  QuickStartAgentResult,
+} from '@/features/quick-start-agent/runtime'
 import {
+  FrameAnimationPlayer,
   GenerationPreviewCard,
   GenerationProgressCopy,
   KineticCopyCycle,
@@ -135,10 +141,22 @@ const AGENT_CONVERSATION_STORAGE_KEY = 'windup.quick-start.agent-chat.v2'
 const LEGACY_AGENT_CONVERSATION_STORAGE_KEY = 'windup.quick-start.agent-chat.v1'
 const AGENT_DRAFT_HISTORY_STATE_KEY = 'windupQuickStartAgentDraftId'
 
-type AgentConversationTurn = {
-  role: 'user' | 'assistant'
-  content: string
-}
+type AgentConversationTurn =
+  | { role: 'user'; content: string }
+  | {
+      role: 'assistant'
+      content: string
+      kind: 'reply' | 'clarification' | 'blocked'
+    }
+  | {
+      role: 'assistant'
+      content: string
+      kind: 'proposal'
+      proposalId: string
+      optimizedPrompt: string
+      optimizationSummary: string
+      proposalStatus: 'pending' | 'superseded' | 'adopted' | 'confirmed'
+    }
 
 type AgentConversationRecord = {
   turns: readonly AgentConversationTurn[]
@@ -193,19 +211,82 @@ function readAgentConversation(
     const parsed: unknown = JSON.parse(stored)
     if (typeof parsed !== 'object' || parsed === null || !('turns' in parsed)) return []
     if (!Array.isArray(parsed.turns)) return []
-    const turns = parsed.turns.filter(
-      (turn): turn is AgentConversationTurn =>
-        typeof turn === 'object' &&
-        turn !== null &&
-        'role' in turn &&
-        (turn.role === 'user' || turn.role === 'assistant') &&
-        'content' in turn &&
-        typeof turn.content === 'string' &&
-        Boolean(turn.content.trim()),
-    )
-    return turns
+    return parsed.turns.flatMap((turn): AgentConversationTurn[] => {
+      if (
+        typeof turn !== 'object' ||
+        turn === null ||
+        !('role' in turn) ||
+        !('content' in turn) ||
+        typeof turn.content !== 'string' ||
+        !turn.content.trim()
+      ) {
+        return []
+      }
+      if (turn.role === 'user') return [{ role: 'user', content: turn.content }]
+      if (turn.role !== 'assistant') return []
+
+      if (
+        'kind' in turn &&
+        turn.kind === 'proposal' &&
+        'proposalId' in turn &&
+        typeof turn.proposalId === 'string' &&
+        'optimizedPrompt' in turn &&
+        typeof turn.optimizedPrompt === 'string' &&
+        'optimizationSummary' in turn &&
+        typeof turn.optimizationSummary === 'string' &&
+        'proposalStatus' in turn &&
+        (turn.proposalStatus === 'pending' ||
+          turn.proposalStatus === 'superseded' ||
+          turn.proposalStatus === 'adopted' ||
+          turn.proposalStatus === 'confirmed')
+      ) {
+        return [
+          {
+            role: 'assistant',
+            content: turn.content,
+            kind: 'proposal',
+            proposalId: turn.proposalId,
+            optimizedPrompt: turn.optimizedPrompt,
+            optimizationSummary: turn.optimizationSummary,
+            proposalStatus: turn.proposalStatus,
+          },
+        ]
+      }
+
+      const kind =
+        'kind' in turn &&
+        (turn.kind === 'reply' || turn.kind === 'clarification' || turn.kind === 'blocked')
+          ? turn.kind
+          : 'reply'
+      return [{ role: 'assistant', content: turn.content, kind }]
+    })
   } catch {
     return []
+  }
+}
+
+function createAgentSeed(turns: readonly AgentConversationTurn[]): {
+  messages: readonly PlannerMessage[]
+  clarificationUsed: boolean
+  pendingProposal: CharacterGenerationProposal | null
+} {
+  const pending = turns.findLast(
+    (turn) =>
+      turn.role === 'assistant' && turn.kind === 'proposal' && turn.proposalStatus === 'pending',
+  )
+  return {
+    messages: turns.map(({ role, content }) => ({ role, content })),
+    clarificationUsed: turns.some(
+      (turn) => turn.role === 'assistant' && turn.kind === 'clarification',
+    ),
+    pendingProposal:
+      pending?.role === 'assistant' && pending.kind === 'proposal'
+        ? {
+            proposalId: pending.proposalId,
+            optimizedPrompt: pending.optimizedPrompt,
+            optimizationSummary: pending.optimizationSummary,
+          }
+        : null,
   }
 }
 
@@ -265,12 +346,6 @@ function readAgentRunConversation(
   }
 }
 
-function planConfirmationCopy(assumptions: readonly string[]): string {
-  return assumptions.length > 0
-    ? `提示词优化已完成。\n默认处理：${assumptions.join('、')}。确认后点击发送。`
-    : '提示词优化已完成。请检查输入框，确认后点击发送。'
-}
-
 function playtestPath(characterId: string, outfitId: string, actionId?: string): string {
   const path = `/playtest/${encodeURIComponent(characterId)}/${encodeURIComponent(outfitId)}`
   return actionId ? `${path}?${new URLSearchParams({ actionId })}` : path
@@ -296,7 +371,6 @@ export function QuickStartPage({
 }: QuickStartPageProps) {
   const { runId } = useParams()
   const location = useLocation()
-  const [searchParams] = useSearchParams()
   const authSession = useOptionalAuthSession()
   const activeRunUserId =
     providedActiveRunUserId ??
@@ -308,8 +382,6 @@ export function QuickStartPage({
   const consumeCreatedSession = useCallback((consumed: QuickStartSession) => {
     setCreatedSession((current) => (current === consumed ? null : current))
   }, [])
-  const characterId = searchParams.get('characterId')
-  const outfitId = searchParams.get('outfitId')
   return runId ? (
     <QuickStartRun
       key={runId}
@@ -320,102 +392,14 @@ export function QuickStartPage({
       onInitialSessionConsumed={consumeCreatedSession}
       activeRunUserId={activeRunUserId}
     />
-  ) : characterId && outfitId ? (
-    <QuickStartActionInput
-      service={activeService}
-      target={{ characterId, outfitId }}
-      onSessionCreated={setCreatedSession}
-    />
   ) : (
     <QuickStartInput
-      key={location.key}
+      key={`${location.key}:${activeRunUserId ?? 'local'}`}
       service={activeService}
       agent={agent}
       activeRunUserId={activeRunUserId}
       onSessionCreated={setCreatedSession}
     />
-  )
-}
-
-function QuickStartActionInput({
-  service,
-  target,
-  onSessionCreated,
-}: {
-  service: QuickStartEntryService
-  target: { characterId: string; outfitId: string }
-  onSessionCreated: (session: QuickStartSession) => void
-}) {
-  const navigate = useNavigate()
-  const [description, setDescription] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  // 空描述会被后端当成 custom 动作缺 custom_prompt 拒掉，回来的是一句
-  // "请求参数校验失败"；用户不该走到那一步，更不该只看到一个变灰的按钮。
-  const missingDescription = !description.trim()
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const prompt = description.trim()
-    if (!prompt || submitting || service.unavailableReason) return
-    setSubmitting(true)
-    setError(null)
-    try {
-      const session = await service.startAction(target, prompt)
-      onSessionCreated(session)
-      navigate(`/quick-start/${encodeURIComponent(session.runId)}`)
-    } catch (cause) {
-      setError(errorMessage(cause, '创建动作失败，请稍后重试'))
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <section className="min-h-[560px] border border-app-line bg-app-canvas p-6 text-app-ink sm:p-10">
-      <Link
-        to={playtestPath(target.characterId, target.outfitId)}
-        className="text-xs font-semibold text-app-muted hover:text-app-accent"
-      >
-        ← 返回当前预览台
-      </Link>
-      <div className="mx-auto mt-14 max-w-2xl">
-        <p className="font-mono text-[10px] font-bold text-app-muted">ADD ACTION</p>
-        <h1 className="mt-3 font-serif text-4xl">给当前角色增加动作</h1>
-        <p className="mt-3 text-sm text-app-muted">
-          新动作会追加到角色 {target.characterId} 的当前造型，不会新建角色或覆盖已有动作。
-        </p>
-        <form onSubmit={submit} className="mt-8 space-y-4">
-          <label className="block text-xs font-semibold text-app-ink-soft">
-            动作描述
-            <textarea
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder="例如：挥手打招呼、蹲下查看地面、举起画笔作画"
-              aria-describedby={missingDescription ? 'quick-start-action-hint' : undefined}
-              className="mt-2 min-h-32 w-full resize-y rounded-lg border border-app-line-strong bg-app-surface-raised p-4 text-base outline-none focus:border-app-accent"
-            />
-          </label>
-          {missingDescription ? (
-            <p id="quick-start-action-hint" className="text-sm text-app-muted">
-              请先描述动作，例如：来回踱步
-            </p>
-          ) : null}
-          {error ? (
-            <p role="alert" className="text-sm text-app-danger">
-              {error}
-            </p>
-          ) : null}
-          <button
-            type="submit"
-            disabled={missingDescription || submitting || Boolean(service.unavailableReason)}
-            className="min-h-11 rounded-lg bg-app-accent px-5 text-sm font-semibold text-app-on-accent disabled:opacity-50"
-          >
-            {submitting ? '正在开始生成…' : '开始生成新动作'}
-          </button>
-        </form>
-      </div>
-    </section>
   )
 }
 
@@ -452,22 +436,18 @@ function QuickStartInput({
     },
   )
   const fileInput = useRef<HTMLInputElement>(null)
+  const promptInput = useRef<HTMLTextAreaElement>(null)
   const submitAbortController = useRef<AbortController | null>(null)
   const handoffTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const rewriteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const generationConfirmation = useRef<(() => void) | null>(null)
   const conversationTurnsRef = useRef(conversationTurns)
   const initialConversationLength = useRef(conversationTurns.length)
-  const waitForGenerationConfirmation = useCallback(
-    () =>
-      new Promise<void>((resolve) => {
-        generationConfirmation.current = resolve
-      }),
-    [],
-  )
+  const initialAgentSeed = useRef(createAgentSeed(conversationTurns)).current
   const agentSession = useQuickStartAgent({
     ...agent,
-    waitForPresentation: waitForGenerationConfirmation,
+    initialMessages: initialAgentSeed.messages,
+    initialClarificationUsed: initialAgentSeed.clarificationUsed,
+    initialProposal: initialAgentSeed.pendingProposal,
   })
   const unavailableReason = service.unavailableReason
   const agentPlanning = agentSession.state.status === 'planning'
@@ -527,11 +507,10 @@ function QuickStartInput({
 
   const appendConversationTurn = useCallback(
     (turn: AgentConversationTurn) => {
-      setConversationTurns((current) => {
-        const next = [...current, turn]
-        persistDraftConversation(next)
-        return next
-      })
+      const next = [...conversationTurnsRef.current, turn]
+      conversationTurnsRef.current = next
+      setConversationTurns(next)
+      persistDraftConversation(next)
     },
     [persistDraftConversation],
   )
@@ -541,32 +520,54 @@ function QuickStartInput({
       submitAbortController.current?.abort()
       if (handoffTimer.current) clearTimeout(handoffTimer.current)
       if (rewriteTimer.current) clearTimeout(rewriteTimer.current)
-      generationConfirmation.current?.()
-      generationConfirmation.current = null
     },
     [],
   )
 
-  useEffect(() => {
-    const state = agentSession.state
-    if (state.status !== 'dispatching') return
+  function updateProposalStatus(
+    proposalId: string,
+    proposalStatus: Extract<AgentConversationTurn, { kind: 'proposal' }>['proposalStatus'],
+    confirmedPrompt?: string,
+  ): readonly AgentConversationTurn[] {
+    const next = conversationTurnsRef.current.map((turn) =>
+      turn.role === 'assistant' && turn.kind === 'proposal' && turn.proposalId === proposalId
+        ? {
+            ...turn,
+            content: confirmedPrompt
+              ? `${turn.optimizationSummary}\n\n提示词提案：${confirmedPrompt}`
+              : turn.content,
+            optimizedPrompt: confirmedPrompt ?? turn.optimizedPrompt,
+            proposalStatus,
+          }
+        : turn,
+    )
+    conversationTurnsRef.current = next
+    setConversationTurns(next)
+    persistDraftConversation(next)
+    return next
+  }
 
+  function fillOptimizedPrompt(proposalId: string) {
+    const state = agentSession.state
+    if (
+      state.status !== 'proposal' ||
+      state.proposalId !== proposalId ||
+      promptState === 'rewriting' ||
+      generationStarting
+    ) {
+      return
+    }
+
+    updateProposalStatus(proposalId, 'adopted')
     setPrompt(state.optimizedPrompt)
     setPromptState('rewriting')
+    if (rewriteTimer.current) clearTimeout(rewriteTimer.current)
     rewriteTimer.current = setTimeout(() => {
       rewriteTimer.current = null
       setPromptState('ready')
-      appendConversationTurn({
-        role: 'assistant',
-        content: planConfirmationCopy(state.assumptions),
-      })
+      promptInput.current?.focus()
     }, PROMPT_REWRITE_MS)
-
-    return () => {
-      if (rewriteTimer.current) clearTimeout(rewriteTimer.current)
-      rewriteTimer.current = null
-    }
-  }, [agentSession.state, appendConversationTurn])
+  }
 
   function selectTemplateFile(event: ChangeEvent<HTMLInputElement>) {
     if (entryBusy) return
@@ -580,16 +581,38 @@ function QuickStartInput({
     if (fileInput.current) fileInput.current.value = ''
   }
 
+  async function handoffGenerated(
+    result: Extract<QuickStartAgentResult, { kind: 'generated' }>,
+  ): Promise<void> {
+    const confirmedTurns = updateProposalStatus(
+      result.proposalId,
+      'confirmed',
+      result.optimizedPrompt,
+    )
+    persistRunConversation(confirmedTurns, result.runId)
+    setEntryTransition('leaving')
+    await new Promise<void>((resolve) => {
+      handoffTimer.current = setTimeout(() => {
+        handoffTimer.current = null
+        resolve()
+      }, ENTRY_HANDOFF_MS)
+    })
+    navigate(`/quick-start/${encodeURIComponent(result.runId)}`)
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const normalizedPrompt = prompt.trim()
 
-    if (agentSession.state.status === 'dispatching' && promptState === 'ready') {
-      const confirm = generationConfirmation.current
-      if (!confirm) return
-      generationConfirmation.current = null
+    if (agentSession.state.status === 'proposal' && promptState === 'ready') {
+      if (!normalizedPrompt) return
       setPromptState('confirmed')
-      confirm()
+      try {
+        const result = await agentSession.confirmProposal(normalizedPrompt)
+        if (result.kind === 'generated') await handoffGenerated(result)
+      } catch {
+        setPromptState('ready')
+      }
       return
     }
 
@@ -597,23 +620,32 @@ function QuickStartInput({
 
     if (!templateFile) {
       setError(null)
+      if (agentSession.state.status === 'proposal') {
+        updateProposalStatus(agentSession.state.proposalId, 'superseded')
+      }
       appendConversationTurn({ role: 'user', content: normalizedPrompt })
       setPrompt('')
       try {
         const result = await agentSession.submit(normalizedPrompt)
         if (result.kind === 'message') {
-          appendConversationTurn({ role: 'assistant', content: result.message })
+          appendConversationTurn({
+            role: 'assistant',
+            content: result.message,
+            kind: result.messageKind,
+          })
           return
         }
-        persistRunConversation(conversationTurnsRef.current, result.runId)
-        setEntryTransition('leaving')
-        await new Promise<void>((resolve) => {
-          handoffTimer.current = setTimeout(() => {
-            handoffTimer.current = null
-            resolve()
-          }, ENTRY_HANDOFF_MS)
-        })
-        navigate(`/quick-start/${encodeURIComponent(result.runId)}`)
+        if (result.kind === 'proposal') {
+          appendConversationTurn({
+            role: 'assistant',
+            content: `${result.optimizationSummary}\n\n提示词提案：${result.optimizedPrompt}`,
+            kind: 'proposal',
+            proposalId: result.proposalId,
+            optimizedPrompt: result.optimizedPrompt,
+            optimizationSummary: result.optimizationSummary,
+            proposalStatus: 'pending',
+          })
+        }
       } catch (cause) {
         if (!(cause instanceof Error && cause.name === 'AbortError')) {
           setEntryTransition('idle')
@@ -661,7 +693,7 @@ function QuickStartInput({
   const inputLocked =
     submitting || agentPlanning || promptState === 'rewriting' || generationStarting
   const awaitingGenerationConfirmation =
-    agentSession.state.status === 'dispatching' && promptState === 'ready'
+    agentSession.state.status === 'proposal' && promptState === 'ready'
   const buttonLabel = submitting
     ? '正在创建…'
     : agentPlanning
@@ -672,13 +704,12 @@ function QuickStartInput({
           ? '发送生成'
           : generationStarting
             ? '正在开始生成…'
-            : agentSession.state.status === 'restart-required'
-              ? '重新开始'
-              : agentSession.state.status === 'awaiting-input'
-                ? '继续'
-                : '生成角色'
-  const canSubmit =
-    awaitingGenerationConfirmation || Boolean(prompt.trim()) || Boolean(templateFile)
+            : hasConversation
+              ? '继续'
+              : '生成角色'
+  const canSubmit = awaitingGenerationConfirmation
+    ? Boolean(prompt.trim())
+    : Boolean(prompt.trim()) || Boolean(templateFile)
 
   return (
     <section
@@ -715,6 +746,20 @@ function QuickStartInput({
                 >
                   {turn.role === 'user' ? (
                     <UserTurn>{turn.content}</UserTurn>
+                  ) : turn.kind === 'proposal' ? (
+                    <PromptProposal
+                      summary={turn.optimizationSummary}
+                      prompt={turn.optimizedPrompt}
+                      status={turn.proposalStatus}
+                      disabled={
+                        turn.proposalStatus !== 'pending' ||
+                        agentSession.state.status !== 'proposal' ||
+                        agentSession.state.proposalId !== turn.proposalId ||
+                        promptState === 'rewriting' ||
+                        generationStarting
+                      }
+                      onFill={() => fillOptimizedPrompt(turn.proposalId)}
+                    />
                   ) : (
                     <AgentCopy
                       lines={turn.content.split('\n')}
@@ -804,21 +849,26 @@ function QuickStartInput({
         >
           <form
             onSubmit={(event) => void submit(event)}
+            autoComplete="off"
             data-prompt-state={promptState}
             className={`quick-start-agent-composer grid items-center gap-1.5 overflow-hidden rounded-xl border border-app-line-strong bg-app-surface-raised p-1.5 shadow-app-panel transition-shadow focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)] ${
               hasConversation ? 'sm:grid-cols-[1fr_auto]' : 'sm:grid-cols-[1fr_auto_auto]'
             }`}
           >
-            <label className="relative min-w-0" htmlFor="quick-start-prompt">
+            <label
+              className="relative ml-2 min-w-0 overflow-hidden rounded-lg"
+              htmlFor="quick-start-prompt"
+            >
               <span className="sr-only">创作指令</span>
-              <input
+              <textarea
+                ref={promptInput}
                 id="quick-start-prompt"
-                type="text"
+                rows={1}
+                autoComplete="off"
                 aria-label="创作指令"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
                 disabled={inputLocked}
-                readOnly={agentSession.state.status === 'dispatching'}
                 placeholder={
                   agentPlanning
                     ? 'Agent 正在整理…'
@@ -828,7 +878,7 @@ function QuickStartInput({
                         ? '描述动作，可留空生成待机动作…'
                         : '描述角色的外形、身份和气质…'
                 }
-                className={`h-10 w-full min-w-0 border-0 bg-transparent px-3 text-[15px] text-app-ink outline-none placeholder:text-app-faint ${
+                className={`block min-h-10 max-h-40 w-full min-w-0 resize-none overflow-y-auto border-0 bg-transparent px-4 py-2.5 text-[15px] leading-5 text-app-ink outline-none [field-sizing:content] placeholder:text-app-faint ${
                   promptState === 'rewriting' ? 'text-transparent caret-transparent' : ''
                 }`}
               />
@@ -836,14 +886,14 @@ function QuickStartInput({
                 <span
                   data-prompt-rewrite
                   aria-hidden="true"
-                  className="quick-start-prompt-rewrite absolute inset-0 flex h-10 items-center overflow-hidden px-3 text-[15px] whitespace-nowrap text-app-ink"
+                  className="quick-start-prompt-rewrite absolute inset-0 flex min-h-10 max-h-40 items-start overflow-y-auto px-4 py-2.5 text-[15px] leading-5 text-app-ink"
                 >
                   <KineticCopyCycle
                     active
                     as="span"
                     messages={promptMessage}
                     motionMode="characters"
-                    className="quick-start-prompt-kinetic"
+                    className="quick-start-prompt-kinetic w-full"
                   />
                 </span>
               ) : null}
@@ -894,7 +944,7 @@ function QuickStartInput({
             <button
               type="submit"
               disabled={!canSubmit || entryBusy || Boolean(unavailableReason)}
-              className="inline-flex h-10 items-center gap-2 rounded-lg bg-app-accent px-4 text-sm font-bold whitespace-nowrap text-app-on-accent transition hover:bg-app-accent-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
+              className="inline-flex h-10 self-end items-center gap-2 rounded-lg bg-app-accent px-4 text-sm font-bold whitespace-nowrap text-app-on-accent transition hover:bg-app-accent-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
             >
               {buttonLabel}
               {!entryBusy ? <ArrowUp aria-hidden="true" size={16} weight="bold" /> : null}
@@ -917,6 +967,47 @@ function QuickStartInput({
         </div>
       </div>
     </section>
+  )
+}
+
+function PromptProposal({
+  summary,
+  prompt,
+  status,
+  disabled,
+  onFill,
+}: {
+  summary: string
+  prompt: string
+  status: Extract<AgentConversationTurn, { kind: 'proposal' }>['proposalStatus']
+  disabled: boolean
+  onFill: () => void
+}) {
+  return (
+    <div data-prompt-proposal data-conversation-kind="agent" className="min-w-0 space-y-3">
+      <AgentCopy lines={[summary]} />
+      <blockquote className="max-w-2xl font-serif text-base leading-7 text-app-ink">
+        {prompt}
+      </blockquote>
+      {status === 'pending' ? (
+        <button
+          type="button"
+          aria-label="填入输入框"
+          disabled={disabled}
+          onClick={onFill}
+          className="group inline-flex min-h-8 items-center gap-2 rounded-full pr-2 text-xs text-app-muted transition hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-45"
+        >
+          <span className="grid size-8 shrink-0 place-items-center rounded-full transition group-hover:bg-app-surface-muted">
+            <ArrowBendDownLeft aria-hidden="true" size={17} weight="bold" />
+          </span>
+          <span>填入输入框后，还可以继续修改</span>
+        </button>
+      ) : status === 'superseded' ? (
+        <p className="text-xs text-app-faint">已继续讨论</p>
+      ) : status === 'adopted' ? (
+        <p className="text-xs text-app-muted">已填入输入框</p>
+      ) : null}
+    </div>
   )
 }
 
@@ -1152,6 +1243,7 @@ function QuickStartRun({
 }) {
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams] = useSearchParams()
   const [session, setSession] = useState<QuickStartSession | null>(null)
   const [run, setRun] = useState<WorkflowRun | null>(null)
   const [restoring, setRestoring] = useState(true)
@@ -1171,6 +1263,7 @@ function QuickStartRun({
   const [publishing, setPublishing] = useState(false)
   const [confirmingCandidate, setConfirmingCandidate] = useState(false)
   const [confirmingFirstFrame, setConfirmingFirstFrame] = useState(false)
+  const [addingAction, setAddingAction] = useState(false)
   const agentConversationTurns = useMemo(
     () => readAgentRunConversation(activeRunUserId, runId),
     [activeRunUserId, runId],
@@ -1410,9 +1503,10 @@ function QuickStartRun({
   const reviewStep = actionStep ? pairedReviewStep(revision, actionStep.id) : null
   const canPublish =
     actionFrames.length > 0 && (reviewStep?.status === 'active' || reviewStep?.status === 'passed')
-  const workflowIsActive =
-    revision.nodes.some((node) => !node.deletedAt && node.status === 'active') &&
-    !workflowHasFailure(revision)
+  const workflowHasActiveNode = revision.nodes.some(
+    (node) => !node.deletedAt && node.status === 'active',
+  )
+  const workflowIsActive = workflowHasActiveNode && !workflowHasFailure(revision)
   const isActionFailed = actionStep?.status === 'failed'
   const isTemplateSelecting =
     templateStep?.status === 'active' && templateStep.phase === 'selecting'
@@ -1438,6 +1532,14 @@ function QuickStartRun({
     firstFrameCandidates,
     firstFrameSelections,
   )
+  const addActionIntent = searchParams.get('intent') === 'add-action'
+  const requestedOutfitId = searchParams.get('outfitId')
+  const canAddAction =
+    addActionIntent &&
+    !workflowHasActiveNode &&
+    !isTemplateSelecting &&
+    !isFirstFrameSelecting &&
+    !publishing
 
   async function interrupt() {
     try {
@@ -1570,7 +1672,7 @@ function QuickStartRun({
     )
   }
 
-  function continueConversation(event: FormEvent<HTMLFormElement>) {
+  async function continueConversation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (workflowConflictRef.current) return
     if (isTemplateSelecting) {
@@ -1580,6 +1682,27 @@ function QuickStartRun({
     if (isFirstFrameSelecting) {
       void confirmFirstFrame()
       return
+    }
+    const prompt = actionDescription.trim()
+    if (!canAddAction || !prompt || !session || addingAction) return
+    setAddingAction(true)
+    clearWorkflowError()
+    try {
+      let outfitId = requestedOutfitId
+      if (!outfitId) {
+        const info = session.getCharacterInfo() ?? (await session.resolveCharacterInfo())
+        outfitId = info?.outfitId ?? null
+      }
+      if (!outfitId) throw new Error('没有找到要追加动作的角色造型')
+      const updated = await session.addAction(outfitId, prompt)
+      if (!mountedRef.current || activeSessionRef.current !== session) return
+      setRun(updated)
+      setActionDescription('')
+    } catch (cause) {
+      if (!mountedRef.current || activeSessionRef.current !== session) return
+      reportWorkflowError(cause, '新增动作失败，请稍后重试')
+    } finally {
+      if (mountedRef.current && activeSessionRef.current === session) setAddingAction(false)
     }
   }
 
@@ -1591,15 +1714,20 @@ function QuickStartRun({
       ? firstFrameSelectionComplete
         ? '按发送确认这张首帧…'
         : '请先为每个方向选择一个动作首帧…'
-      : workflowHasFailure(run)
-        ? '这次未完成，可以新建一次创作…'
-        : canPublish
-          ? '确认保存后，还可以继续描述修改…'
-          : '制作中，完成后可以继续修改…'
+      : addActionIntent
+        ? addingAction || workflowHasActiveNode
+          ? '正在生成新动作…'
+          : '描述要新增的动作…'
+        : workflowHasFailure(run)
+          ? '这次未完成，可以新建一次创作…'
+          : canPublish
+            ? '确认保存后，还可以继续描述修改…'
+            : '制作中，完成后可以继续修改…'
 
   const composerCanSubmit =
     (isTemplateSelecting && templateSelectionComplete) ||
-    (isFirstFrameSelecting && firstFrameSelectionComplete)
+    (isFirstFrameSelecting && firstFrameSelectionComplete) ||
+    (canAddAction && Boolean(actionDescription.trim()) && !addingAction)
   const selectedTemplateUrl = templateStep?.selectedImageUrl
   const selectedFirstFrameUrl = firstFrameStep?.selectedFirstFrameUrl
   const requestedAction = firstFrameStep?.input.prompt || firstFrameStep?.input.name
@@ -1808,10 +1936,14 @@ function QuickStartRun({
                         data-layout="agent-result-set"
                         className="grid w-full max-w-2xl grid-cols-3 gap-3"
                       >
-                        <AssetVisual
-                          src={actionFrames[0]!.imageUrl}
+                        <FrameAnimationPlayer
+                          frames={actionFrames}
                           alt="完整动作预览"
-                          priority
+                          fps={firstFrameStep?.input.fps}
+                          loop
+                          loading="eager"
+                          decoding="async"
+                          fetchPriority="high"
                           className="quick-start-generated-image aspect-square w-full rounded-2xl border border-app-line bg-app-surface-muted object-contain [image-rendering:pixelated]"
                         />
                       </div>
