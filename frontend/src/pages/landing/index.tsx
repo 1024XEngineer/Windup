@@ -547,7 +547,7 @@ export function LandingPage() {
               从角色设定到可玩的 2D 动作资产
             </p>
             <h1
-              className={`${riseClassName} mx-auto mt-5 w-full max-w-[12em] font-['Songti_SC','Noto_Serif_CJK_SC','STSong',Georgia,serif] text-[clamp(3rem,13vw,5.25rem)] leading-[1.08] font-semibold tracking-[-0.055em] text-[#23231f] sm:max-w-[11em] sm:text-[clamp(4rem,5.5vw,5.25rem)] sm:leading-[1.12]`}
+              className={`${riseClassName} mx-auto mt-5 w-full max-w-[12em] font-serif text-[clamp(3rem,13vw,5.25rem)] leading-[1.08] font-semibold tracking-[-0.055em] text-[#23231f] sm:max-w-[11em] sm:text-[clamp(4rem,5.5vw,5.25rem)] sm:leading-[1.12]`}
               style={riseDelay(1)}
             >
               <span className="block">让你的角色，</span>
