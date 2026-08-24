@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import threading
 import uuid
@@ -35,6 +36,7 @@ from windup_app.worker.handlers import (
 )
 from windup_app.worker.pending_timeout import release_stale_pending_tasks
 from windup_common.directions import ActionDirection
+from windup_common.models import CharacterStance
 from windup_framework.db.base import Base
 from windup_framework.mq.config import MAX_CONSUME_ATTEMPTS
 from windup_framework.mq.model import MqMessage
@@ -938,3 +940,71 @@ def test_action_input_keeps_the_stored_frame_count():
     rebuilt = _action_input({"character_id": 1, "action_type": "idle", "num_frames": 20})
 
     assert rebuilt.num_frames == 20
+
+
+def _stored_payload(**overrides) -> dict:
+    """产线落库的那份 input_payload —— ``asdict`` 后经 JSONB 存取,枚举回来是字符串。"""
+    fields: dict = {"character_id": 1, "action_type": ActionType.WALK}
+    fields.update(overrides)
+    return json.loads(json.dumps(dataclasses.asdict(CharacterActionInput(**fields))))
+
+
+def test_action_input_reads_the_stored_stance():
+    """体型丢在 MQ 重建这一步时,四足角色照跑双足动作,帧数、时长、成色全部正常。"""
+    from windup_app.worker.handlers import _action_input
+
+    rebuilt = _action_input(_stored_payload(stance=CharacterStance.QUADRUPED))
+
+    assert rebuilt.stance is CharacterStance.QUADRUPED
+
+
+def test_action_input_keeps_the_stance_unset_when_none_was_declared():
+    """没声明体型就原样传 None:在这层兜成双足,编排层从此分不出"没给"与"给了双足"。"""
+    from windup_app.worker.handlers import _action_input
+
+    rebuilt = _action_input(_stored_payload())
+
+    assert rebuilt.stance is None
+
+
+class _CardCaptured(Exception):
+    """card 一到手就停:后面是出帧、上传、判官,本用例一样都不需要。"""
+
+
+class _CardSpy:
+    """出帧替身,只记下编排层组出来的 card。"""
+
+    def __init__(self) -> None:
+        self.card = None
+
+    def generate(self, card, action, master, progress, canvas=None):
+        self.card = card
+        raise _CardCaptured
+
+
+def test_the_card_still_carries_the_stance_after_the_mq_rebuild():
+    """落库 → MQ 重建 → 编排层走完,card 上的体型仍是四足。
+
+    体型门禁装在 ai_engine 侧,card 是它唯一的入口;链路上任一段丢掉它,四足角色
+    就静默落回 CharacterCard 的双足默认值。
+    """
+    from windup_app.server.orchestrator.executor import (
+        ActionTaskExecutor,
+        ProjectConstraints,
+    )
+    from windup_app.worker.handlers import _action_input
+
+    spy = _CardSpy()
+    executor = ActionTaskExecutor(
+        generator=spy,
+        fetch_master=lambda _input: b"master-bytes",
+        fetch_constraints=lambda *_: ProjectConstraints(sprite_w=64, sprite_h=64),
+    )
+    rebuilt = _action_input(
+        _stored_payload(stance=CharacterStance.QUADRUPED, num_frames=4)
+    )
+
+    with pytest.raises(_CardCaptured):
+        executor._produce_action(rebuilt, ProjectConstraints(sprite_w=64, sprite_h=64))
+
+    assert spy.card.stance is CharacterStance.QUADRUPED

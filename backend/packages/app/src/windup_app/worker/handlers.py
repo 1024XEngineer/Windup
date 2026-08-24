@@ -22,6 +22,7 @@ from windup_app.server.orchestrator.model import (
     TaskStatus,
 )
 from windup_common.directions import ActionDirection
+from windup_common.models import CharacterStance
 from windup_app.server.user.service import VERIFY_CODE_KEY
 from windup_framework.db.redis import get_redis
 from windup_framework.db.session import SessionLocal
@@ -79,6 +80,9 @@ def _action_input(payload: dict) -> CharacterActionInput:
     # 帧数缺失时原样传 None,交给入参按动作类型解析:在这里兜一个数就是第二份约定,
     # 它与真正的约定分叉时任务照跑、帧数照出,没有一处会红。
     raw_frames = payload.get("num_frames")
+    # 体型缺失时原样传 None,不在这里兜成双足:兜了以后"没给"与"明确给了双足"就再也
+    # 分不开,而四足/蛇形角色落回双足时帧数、时长、成色全部正常,没有一处会红。
+    raw_stance = payload.get("stance")
     return CharacterActionInput(
         character_id=int(payload["character_id"]),
         action_type=action_type,
@@ -90,6 +94,7 @@ def _action_input(payload: dict) -> CharacterActionInput:
         video_model=payload.get("video_model"),
         outfit_id=payload.get("outfit_id"),
         model_3d_url=payload.get("model_3d_url"),
+        stance=CharacterStance(raw_stance) if raw_stance is not None else None,
         direction=ActionDirection(payload.get("direction") or ActionDirection.EAST.value),
     )
 
