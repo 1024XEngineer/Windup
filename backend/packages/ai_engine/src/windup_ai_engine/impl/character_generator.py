@@ -28,6 +28,7 @@ from windup_ai_engine.ports import (
     SequenceGeometry,
 )
 from windup_ai_engine.postprocess import FOOT_LINE, align_bottom_center, frame_durations
+from windup_ai_engine.postprocess.pack import ANCHOR_CENTROID, FILL_H
 from windup_ai_engine.prompt import PROMPT_VERSION
 from windup_ai_engine.slicing import (
     dead_frame_indices,
@@ -40,6 +41,7 @@ from windup_ai_engine.strategy.base import (
     ROUTE_MATRIX,
     DerivationStrategy,
     is_cyclic,
+    vertical_anchor,
 )
 
 # ── 进度刻度:整条生产线只有一个 total ────────────────────────────────────────
@@ -241,8 +243,8 @@ class CharacterGenerator(CharacterGeneratorPort):
                 "请调小 n_frames 或加长视频。"
             )
 
-        # 最后一公里:脚线对齐成原地序列帧(直接对齐到调用方要的画布尺寸)
-        aligned = self._lastmile(frames, progress, canvas)
+        # 最后一公里:对齐成原地序列帧(直接对齐到调用方要的画布尺寸)
+        aligned = self._lastmile(frames, action, progress, canvas)
 
         # 量交付成色。在**对齐之后**量,量的是用户真正会看到的那组帧:抠图 / 像素化 /
         # 对齐都会改像素,在中间任何一步量出来的数都描述不了交付物。
@@ -256,7 +258,7 @@ class CharacterGenerator(CharacterGeneratorPort):
         return GeneratedAction(
             frames=[_png(im) for im in aligned],
             durations=frame_durations(action.action.value, len(aligned)),
-            geometry=_geometry_of(aligned[0], canvas),
+            geometry=_geometry_of(aligned[0], canvas, vertical_anchor(action)),
             quality=quality,
             prompt_version=PROMPT_VERSION,
         )
@@ -284,10 +286,11 @@ class CharacterGenerator(CharacterGeneratorPort):
     def _lastmile(
         self,
         frames: list[bytes],
+        action: ActionSpec,
         progress: ProgressPort,
         canvas: tuple[int, int] | None = None,
     ) -> list[Image.Image]:
-        """脚线对齐:把各帧对齐成原地序列帧(消除逐帧画布漂移,Issue #21)。
+        """对齐成原地序列帧(消除逐帧画布漂移,Issue #21);锚点随动作有无地面接触。
 
         返回 PIL 而不是 PNG bytes:紧接着的成色测量要按图看帧,再编码回 PNG 只为了
         让上一句话好听、下一句话又得解码回来。编码统一在 ``generate`` 出参那一步做。
@@ -300,7 +303,11 @@ class CharacterGenerator(CharacterGeneratorPort):
         原尺寸居中贴进 512 画布,于是这里刚对齐好的脚线 0.92 被挪到 0.709(2026-08-11
         实测),角色不站在地上、跨动作对齐也失效。在这里一次出到位就没有那一步了。
         """
-        progress.step("lastmile", _TICK_LASTMILE, _TOTAL, "脚线对齐(原地)")
+        anchor = vertical_anchor(action)
+        progress.step(
+            "lastmile", _TICK_LASTMILE, _TOTAL,
+            f"{'质心' if anchor == ANCHOR_CENTROID else '脚线'}对齐(原地)",
+        )
         # 空帧不再静默跳过:未实现的路线现在在 strategy / 装配表处就抛错(见 generate),
         # 走到这里还有空帧说明 provider 或抠图吐了坏数据,同样要炸而不是原样放行。
         if not frames:
@@ -319,22 +326,28 @@ class CharacterGenerator(CharacterGeneratorPort):
         # TODO(dev, #21): tail_match 循环闭合(净位移动作先锚点再匹配帧)
         ref = float(np.median(hs)) if hs else None
         if canvas is None:
-            return align_bottom_center(imgs, ref_height=ref)
+            return align_bottom_center(imgs, ref_height=ref, anchor=anchor)
         cw, ch = canvas
-        return align_bottom_center(imgs, cell=cw, cell_h=ch, ref_height=ref)
+        return align_bottom_center(imgs, cell=cw, cell_h=ch, ref_height=ref, anchor=anchor)
 
 
-def _geometry_of(frame: Image.Image, canvas: tuple[int, int] | None) -> SequenceGeometry:
+def _geometry_of(
+    frame: Image.Image, canvas: tuple[int, int] | None, anchor: str
+) -> SequenceGeometry:
     """交付帧的落位几何。取自对齐那一步用的同一组常量,不另立一份。
 
     ``canvas`` 为 None 时 ``_lastmile`` 走 ``align_bottom_center`` 的默认 cell,
     所以这里也回落到实际交付帧的尺寸,而不是把 CELL 再抄一遍。
+
+    锚点要跟着传:质心那档把主体摆在 ``foot_line - fill_h/2``,仍报脚线的话
+    帧是按质心摆的、几何说的是脚线,消费方按它落位就会错开半个身高。
     """
     w, h = canvas if canvas else frame.size
+    y = FOOT_LINE - FILL_H / 2 if anchor == ANCHOR_CENTROID else FOOT_LINE
     return SequenceGeometry(
         canvas_w=w,
         canvas_h=h,
         anchor_x=0.5,          # align_bottom_center 横向恒居中
-        anchor_y=FOOT_LINE,
-        foot_y=int(h * FOOT_LINE),
+        anchor_y=y,
+        foot_y=int(h * y),
     )

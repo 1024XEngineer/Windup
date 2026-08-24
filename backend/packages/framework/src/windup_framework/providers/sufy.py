@@ -23,7 +23,6 @@
 from __future__ import annotations
 
 import base64
-import io
 import json
 import logging
 import re
@@ -34,99 +33,21 @@ import httpx
 
 from windup_common.enums.model import ModelErrorType
 from windup_framework.config.provider import AIProviderSettings, settings
-from windup_framework.gateway.billing import billing_flags
 from windup_framework.gateway.classify import (
     classify_exception,
     classify_http_response,
+    edge_fingerprint,
     retry_after_seconds as _retry_after_seconds,
 )
 from windup_framework.gateway.types import AdapterResult
 
 from .interfaces import ImageProvider, VideoProvider
+from .protocol import HttpCall, VideoRequest
+from .protocol.openai_video import OpenAIVideoProtocol
 
 logger = logging.getLogger("windup.providers.sufy")
 
-# 只有 kling-video-o1 走 image_list;v2 系列 / sora 走 input_reference(字段按模型选,塞错任务会 failed)。
-_IMAGE_LIST_MODELS = ("kling-video-o1",)
 DEFAULT_VIDEO_MODEL = "kling-v2-5-turbo"
-
-
-#: 透明首帧合成到不透明视频输入时的底色。中灰而不是黑:抠图靠主体与底色的距离
-#: 判前景,黑底会把角色的暗部判成背景(#497 的方向已实测为"被抠掉的是最暗部"),
-#: 白底对浅色角色同理。中灰对两端都不偏。
-_FIRST_FRAME_BG = (128, 128, 128)
-
-
-def _fit_first_frame(frame: bytes, size: str, *, background: tuple[int, int, int] = _FIRST_FRAME_BG) -> bytes:
-    """首帧 bytes → 等比缩放(可放大) + 补边到目标尺寸 → JPG(RGB,q90) bytes。
-
-    不强拉到目标尺寸(母版多为横幅,强压成方会把角色压成瘦长鬼影);JPG 因 PNG base64
-    会 VENDOR_FAILED(实测)。
-
-    这一步同时是 kling 系"输出画幅"的唯一控制点:kling 的 i2v 端点没有 resolution/size
-    字段,成片画幅跟随首帧,所以 ``size`` 只能在这里生效。
-
-    小于目标画布的输入必须**放大**:128x128 的 sprite 原尺寸贴进 1280x720 只占 13% 高,
-    等于自愿把主体有效分辨率砍掉七分之六,之后无论 i2v 还是重抠图都补不回来。
-
-    **放大用 NEAREST,缩小用 LANCZOS。** 放大是把一个源像素铺成一块,插值会在块边界
-    造出源图里没有的中间色:实测一张 256x256 的像素画母版放到 720x720,唯一色从 5982
-    涨到 32479(5.4 倍),硬边糊成渐变,而这张糊图正是喂给 i2v 的输入。缩小反过来,
-    NEAREST 会丢样出锯齿。交付侧的 ``_fit_to`` 早就是这条规则,这里与它对齐。
-    """
-    from PIL import Image
-
-    w, h = (int(x) for x in size.split("x"))
-    im = Image.open(io.BytesIO(frame))
-    if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
-        im = im.convert("RGBA")
-        flat = Image.new("RGB", im.size, background)
-        flat.paste(im, (0, 0), im)     # 不能 convert("RGB"):透明像素的 RGB 未定义
-        im, pad = flat, background
-    else:
-        im = im.convert("RGB")
-        pad = im.getpixel((0, 0))     # 不透明输入沿用角点色,补边与画面自身背景连成一片
-    scale = min(w/im.width, h/im.height)
-    tw, th = max(1, round(im.width*scale)), max(1, round(im.height*scale))
-    fitted = im.resize((tw, th), Image.NEAREST if scale > 1 else Image.LANCZOS)
-    canvas = Image.new("RGB", (w, h), pad)
-    canvas.paste(fitted, ((w - tw)//2, (h - th)//2))
-    buf = io.BytesIO()
-    canvas.save(buf, "JPEG", quality=90)
-    return buf.getvalue()
-
-
-def _first_frame_datauri(frame: bytes, size: str) -> str:
-    """首帧 → base64 dataURI(OpenAI 风格 ``/v1/videos`` 面专用;FAL 面不吃 dataURI)。"""
-    return "data:image/jpeg;base64," + base64.b64encode(_fit_first_frame(frame, size)).decode()
-
-
-def _video_http_error(
-    resp: httpx.Response,
-    *,
-    job_id: str | None = None,
-    phase: str = "submit",
-) -> AdapterResult:
-    error_type = classify_http_response(resp.status_code, resp.text, phase=phase)
-    retry_after_header = resp.headers.get("Retry-After")
-    retry_after_s = (
-        _retry_after_seconds(retry_after_header) if retry_after_header else None
-    )
-    maybe_billed = billing_flags(error_type=error_type, http_status=resp.status_code)
-    if job_id is not None and error_type not in {
-        ModelErrorType.UNREACHED,
-        ModelErrorType.NETWORK,
-    }:
-        maybe_billed = True
-    return AdapterResult(
-        ok=False,
-        error_type=error_type,
-        http_status=resp.status_code,
-        maybe_billed=maybe_billed,
-        edge_fingerprint=_edge_fingerprint(resp),
-        retry_after_s=retry_after_s,
-        job_id=job_id,
-    )
 
 
 def _transport_result(exc: BaseException) -> AdapterResult:
@@ -141,11 +62,14 @@ def _transport_result(exc: BaseException) -> AdapterResult:
     )
 
 
-def _poll_get(client: httpx.Client, job_id: str) -> httpx.Response:
+def _poll_get(client: httpx.Client, call: HttpCall) -> httpx.Response:
     """轮询 GET;522/525(及同档未达上游码)该次再试 1 次,不新开单。"""
-    resp = client.get(f"/videos/{job_id}")
+    def once() -> httpx.Response:
+        return client.request(call.method, call.path, headers=dict(call.headers))
+
+    resp = once()
     if resp.status_code in (521, 522, 523, 525):
-        resp = client.get(f"/videos/{job_id}")
+        resp = once()
     return resp
 
 
@@ -174,6 +98,11 @@ class SufyVideoProvider(VideoProvider):
         self._max_min = max_min
         self._first_poll_after = min(first_poll_after, poll_interval)
 
+    @property
+    def _protocol(self) -> OpenAIVideoProtocol:
+        # 每次现取:key 由 config 注入,provider 建好之后 config 仍可能被换。
+        return OpenAIVideoProtocol(self._cfg.api_key)
+
     def _client(self) -> httpx.Client:
         return httpx.Client(
             base_url=self._cfg.normalized_base_url,
@@ -190,108 +119,49 @@ class SufyVideoProvider(VideoProvider):
         model: str,
     ) -> AdapterResult:
         """一次 POST 建单。成功: ok=True, job_id, body=b"", maybe_billed=True。"""
-        body: dict = {
-            "model": model,
-            "prompt": prompt,
-            "size": size,
-            "seconds": str(seconds),
-            "mode": self._mode,
-        }
-        if model in _IMAGE_LIST_MODELS:
-            b64 = _first_frame_datauri(first_frame, size).split(",", 1)[1]
-            body["image_list"] = [{"image": b64}]
-        else:
-            body["input_reference"] = _first_frame_datauri(first_frame, size)
-
+        call = self._protocol.build_submit(
+            VideoRequest(
+                model=model,
+                prompt=prompt,
+                seconds=seconds,
+                size=size,
+                mode=self._mode,
+                first_frame=first_frame,
+            )
+        )
         with self._client() as client:
             try:
-                resp = client.post("/videos", json=body)
+                resp = client.request(
+                    call.method, call.path, json=call.body, headers=dict(call.headers)
+                )
             except httpx.TransportError as exc:
                 return _transport_result(exc)
-
-        if 200 <= resp.status_code < 300:
-            try:
-                payload = resp.json()
-            except ValueError:
-                return AdapterResult(
-                    ok=False,
-                    error_type=ModelErrorType.INVALID_RESPONSE,
-                    http_status=resp.status_code,
-                    edge_fingerprint="响应不是 JSON",
-                )
-            jid = payload.get("id")
-            if not jid:
-                return AdapterResult(
-                    ok=False,
-                    error_type=ModelErrorType.INVALID_RESPONSE,
-                    http_status=resp.status_code,
-                    edge_fingerprint="响应没有 job id",
-                )
-            return AdapterResult(
-                ok=True,
-                job_id=str(jid),
-                body=b"",
-                maybe_billed=True,
-                http_status=resp.status_code,
-            )
-        return _video_http_error(resp)
+        return self._protocol.parse_submit(resp)
 
     def inspect_job(self, job_id: str) -> AdapterResult:
         """单次 GET 任务状态,不 sleep、不下载。
 
-        completed: ``ok=True``,视频 URL 放 ``edge_fingerprint``。
-        进行中: ``ok=False``,``error_type is None``,``job_status`` 为上游状态。
+        completed: ``ok=True``,视频 URL 放 ``edge_fingerprint``(Gateway poll 靠这个
+        去 ``download_completed``)。进行中: ``ok=False``,``error_type is None``。
         """
         with self._client() as client:
-            resp = _poll_get(client, job_id)
-            if not (200 <= resp.status_code < 300):
-                return _video_http_error(resp, job_id=job_id, phase="follow")
-            try:
-                st = resp.json()
-            except ValueError:
+            resp = _poll_get(client, self._protocol.build_poll(job_id))
+        parsed = self._protocol.parse_poll(resp, job_id)
+        if parsed.error_type is not None:
+            return parsed
+        if parsed.ok:
+            url = parsed.result_url
+            if not url:
                 return AdapterResult(
                     ok=False,
                     error_type=ModelErrorType.INVALID_RESPONSE,
-                    http_status=resp.status_code,
-                    job_id=job_id,
-                    maybe_billed=True,
-                    edge_fingerprint="轮询响应不是 JSON",
-                )
-            last_status = st.get("status")
-            if last_status == "completed":
-                vids = (st.get("task_result") or {}).get("videos") or []
-                url = vids[0].get("url") if vids else None
-                if not url:
-                    return AdapterResult(
-                        ok=False,
-                        error_type=ModelErrorType.INVALID_RESPONSE,
-                        job_id=job_id,
-                        maybe_billed=True,
-                        job_status="completed",
-                        edge_fingerprint="completed 但没有视频 URL",
-                    )
-                return AdapterResult(
-                    ok=True,
                     job_id=job_id,
                     maybe_billed=True,
                     job_status="completed",
-                    edge_fingerprint=url,
+                    edge_fingerprint="completed 但没有视频 URL",
                 )
-            if last_status in ("failed", "cancelled"):
-                return AdapterResult(
-                    ok=False,
-                    error_type=ModelErrorType.UPSTREAM_FAILED,
-                    job_id=job_id,
-                    maybe_billed=True,
-                    job_status=last_status,
-                    edge_fingerprint=str(st.get("error") or ""),
-                )
-            return AdapterResult(
-                ok=False,
-                job_id=job_id,
-                maybe_billed=True,
-                job_status=last_status or "pending",
-            )
+            return replace(parsed, edge_fingerprint=url)
+        return parsed
 
     def follow_job(self, job_id: str) -> AdapterResult:
         """轮询已建单据 + 下载。poll GET 522/525 该次再试 1 次,不新开单。"""
@@ -542,9 +412,6 @@ _POST_TRIES = 3
 _CLOUDFLARE_UNREACHED_STATUS = frozenset({521, 522, 523})
 _UNREACHED_RESENDS = 2
 
-_DIAGNOSTIC_HEADERS = ("server", "cf-ray", "via", "x-served-by", "retry-after")
-
-
 class _ResendBudget:
     """跨 _post 的多次调用共享:叠乘的是循环次数,可重复计费的次数不该跟着叠乘。"""
 
@@ -571,12 +438,6 @@ def _retry_exhausted_message(status: int, tries: int, fingerprint: str) -> str:
         f"图像网关未能连上上游(HTTP {status})，已重发 {tries} 次仍未通；"
         f"再重发有重复计费风险，故停止；{fingerprint}"
     )
-
-
-def _edge_fingerprint(response: httpx.Response) -> str:
-    """52x 出自链路上哪一跳,只能从这几个头看 —— 不记下来,线上就只剩一个状态码可复盘。"""
-    seen = {k: response.headers.get(k) for k in _DIAGNOSTIC_HEADERS}
-    return " ".join(f"{k}={v}" for k, v in seen.items() if v) or "无可辨识的边缘响应头"
 
 
 # 从响应里捞 data URI。模型把图放在 message.content 里,而不同网关的包裹层级不一样
@@ -650,7 +511,7 @@ class ChatCompletionsFace:
         for attempt in range(1, _POST_TRIES + 1):
             resp = client.post(self._cfg.chat_completions_path, json=body)
             code = resp.status_code
-            edge = _edge_fingerprint(resp)
+            edge = edge_fingerprint(resp)
             if code in _CLOUDFLARE_UNREACHED_STATUS and not resends.take():
                 raise RuntimeError(_retry_exhausted_message(code, resends.spent, edge))
             retryable = code == 429 or code in _CLOUDFLARE_UNREACHED_STATUS
@@ -712,7 +573,7 @@ class ChatCompletionsFace:
                 f"同一把 key 也是。原始响应:{resp.text[:200]}"
             )
         else:
-            edge = _edge_fingerprint(resp)
+            edge = edge_fingerprint(resp)
         retry_after_header = resp.headers.get("Retry-After")
         retry_after_s = (
             _retry_after_seconds(retry_after_header) if retry_after_header else None

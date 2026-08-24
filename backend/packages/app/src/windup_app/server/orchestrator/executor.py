@@ -438,7 +438,14 @@ class ActionTaskExecutor:
             # 缺 loop 时兜成一次性,依据是失败代价不对称:一次性误当循环会让末帧接回首帧
             # 抽搐、产物不可用;反之只是不无缝闭环、仍可用。不从描述文字猜。
             cyclic = False if input.loop is None else bool(input.loop)
-            extra = {"custom_action": input.custom_prompt or "", "cyclic": cyclic}
+            # 缺 ground_contact 时兜成"有地面接触":绝大多数自述动作有脚踩地,而误判成
+            # 全程离地会让角色不站在地上 —— 比飞行动作上下浮动严重。
+            grounded = True if input.ground_contact is None else bool(input.ground_contact)
+            extra = {
+                "custom_action": input.custom_prompt or "",
+                "cyclic": cyclic,
+                "ground_contact": grounded,
+            }
         action = ActionSpec(
             action=engine_action,
             poses=[""] * input.num_frames,

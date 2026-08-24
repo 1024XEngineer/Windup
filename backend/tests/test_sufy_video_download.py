@@ -863,10 +863,10 @@ def test_image_list_models_use_a_different_first_frame_field():
     直到生成阶段才 failed "model is not supported"，而费用可能已经产生
     （2026-07-29 实测）。
     """
-    from windup_framework.providers.sufy import _IMAGE_LIST_MODELS
+    from windup_framework.providers.protocol.openai_video import IMAGE_LIST_MODELS
 
     seen: dict = {}
-    p = _video_provider(_i2v_handler(seen), model=_IMAGE_LIST_MODELS[0], mode="pro")
+    p = _video_provider(_i2v_handler(seen), model=IMAGE_LIST_MODELS[0], mode="pro")
     p.i2v(_jpeg_first_frame(), "x")
     assert "image_list" in seen["body"] and "input_reference" not in seen["body"]
     assert not seen["body"]["image_list"][0]["image"].startswith("data:"), \
@@ -1015,13 +1015,13 @@ def test_transparent_first_frame_background_does_not_depend_on_undefined_rgb():
     """
     import numpy as _np
 
-    from windup_framework.providers.sufy import _FIRST_FRAME_BG
+    from windup_framework.providers.protocol.openai_video import FIRST_FRAME_BG
 
     black_void = _submitted_first_frame(_sprite(256, 256, alpha=True, void_rgb=(0, 0, 0)))
     red_void = _submitted_first_frame(_sprite(256, 256, alpha=True, void_rgb=(255, 0, 0)))
 
     corner = _np.asarray(black_void)[4, 4]
-    assert _np.allclose(corner, _FIRST_FRAME_BG, atol=12), f"角落底色 {corner}，应为声明的 {_FIRST_FRAME_BG}"
+    assert _np.allclose(corner, FIRST_FRAME_BG, atol=12), f"角落底色 {corner}，应为声明的 {FIRST_FRAME_BG}"
     assert not _np.allclose(corner, (0, 0, 0), atol=12), "透明背景又变成黑底了"
 
     diff = _np.abs(_np.asarray(black_void, dtype=float) - _np.asarray(red_void, dtype=float))

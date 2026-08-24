@@ -301,6 +301,76 @@ describe('createQuickStartService', () => {
     await expect(service.open('missing')).rejects.toThrow('not found')
   })
 
+  it('只向 Agent 暴露当前 Run 已确认结果可复用的 Controller 操作', async () => {
+    const run = actionRun()
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis: pendingGenerationApis(),
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+    })
+
+    const session = await service.open(run.id)
+
+    expect(session.getWorkflowAgentContext()).toEqual({
+      availableTools: [
+        'regenerate_character_template',
+        'refine_character_template',
+        'regenerate_first_frame',
+        'refine_first_frame',
+      ],
+    })
+  })
+
+  it('角色母版微调直接复用当前 Run 的 Controller 和上一版图片', async () => {
+    const run = actionRun()
+    const generationApis = pendingGenerationApis()
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader({ width: 96, height: 128 }),
+    })
+    const session = await service.open(run.id)
+
+    await session.regenerateCharacterTemplate('refine', '把披风改成深蓝色')
+
+    expect(generationApis.create).toHaveBeenCalledWith({
+      type: 'character_template',
+      projectId: 'project-1',
+      prompt: '像素骑士\n把披风改成深蓝色',
+      referenceMedia: ['template.png'],
+      spriteWidth: 96,
+      spriteHeight: 128,
+      direction: 'east',
+    })
+  })
+
+  it('动作首帧重新生成直接复用当前 Run 的 Controller 原始输入', async () => {
+    const run = actionRun()
+    const generationApis = pendingGenerationApis()
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader({ width: 80, height: 80 }),
+    })
+    const session = await service.open(run.id)
+
+    await session.regenerateFirstFrame('regenerate')
+
+    expect(generationApis.create).toHaveBeenCalledWith({
+      type: 'first_frame',
+      projectId: 'project-1',
+      actionType: 'custom',
+      prompt: '挥手',
+      spriteWidth: 80,
+      spriteHeight: 80,
+      referenceMedia: ['template.png'],
+      direction: 'east',
+    })
+  })
+
   it('只列出各生成节点真正失败的方向', async () => {
     const run: WorkflowRun = {
       id: 'run-failed-directions',
@@ -465,8 +535,16 @@ describe('createQuickStartService', () => {
   })
 
   it.each([
-    ['north', { east: 'east-1.png', south: 'south-1.png' }, '缺少north方向的用户选择'],
-    ['south', { east: 'east-1.png', north: 'north-1.png' }, '缺少south方向的用户选择'],
+    [
+      'north',
+      { east: 'east-1.png', west: 'west-1.png', south: 'south-1.png' },
+      '缺少north方向的用户选择',
+    ],
+    [
+      'south',
+      { east: 'east-1.png', west: 'west-1.png', north: 'north-1.png' },
+      '缺少south方向的用户选择',
+    ],
   ] as const)('四向母版确认拒绝缺失的 %s 方向用户选择', async (missing, selections, message) => {
     const run: WorkflowRun = {
       id: `run-missing-${missing}-template`,
@@ -477,7 +555,7 @@ describe('createQuickStartService', () => {
     }
     const template = run.nodes[1]
     if (!template || template.type !== 'character-template') throw new Error('missing template')
-    template.generations = (['east', 'north', 'south'] as const).map((direction) => ({
+    template.generations = (['east', 'west', 'north', 'south'] as const).map((direction) => ({
       taskId: `template-${direction}`,
       role: 'character_template' as const,
       ...(direction === 'east' ? {} : { direction }),
@@ -485,7 +563,7 @@ describe('createQuickStartService', () => {
     const generationApis: GenerationApis = {
       create: vi.fn(),
       get: vi.fn(async (projectId, id) => {
-        const direction = id.replace('template-', '') as 'east' | 'north' | 'south'
+        const direction = id.replace('template-', '') as 'east' | 'west' | 'north' | 'south'
         return {
           id,
           projectId,
@@ -523,7 +601,7 @@ describe('createQuickStartService', () => {
   it('四向首帧确认拒绝缺失的同方向候选', async () => {
     const run = actionRun(true)
     const firstFrame = run.nodes.find((node) => node.type === 'action-first-frame')!
-    firstFrame.generations = (['east', 'north', 'south'] as const).map((direction) => ({
+    firstFrame.generations = (['east', 'west', 'north', 'south'] as const).map((direction) => ({
       taskId: `first-${direction}`,
       role: 'first_frame' as const,
       ...(direction === 'east' ? {} : { direction }),
@@ -531,7 +609,7 @@ describe('createQuickStartService', () => {
     const generationApis: GenerationApis = {
       create: vi.fn(),
       get: vi.fn(async (projectId, id) => {
-        const direction = id.replace('first-', '') as 'east' | 'north' | 'south'
+        const direction = id.replace('first-', '') as 'east' | 'west' | 'north' | 'south'
         return {
           id,
           projectId,
@@ -559,7 +637,11 @@ describe('createQuickStartService', () => {
     const session = await service.open(run.id)
 
     await expect(
-      session.confirmFirstFrame({ east: 'east-1.png', south: 'south-1.png' }),
+      session.confirmFirstFrame({
+        east: 'east-1.png',
+        west: 'west-1.png',
+        south: 'south-1.png',
+      }),
     ).rejects.toThrow('缺少north方向的用户选择')
   })
 
@@ -1074,13 +1156,14 @@ describe('createQuickStartService', () => {
     const fullFrame = run.nodes.find((node) => node.type === 'action-full-frame')!
     fullFrame.generations = [
       { taskId: 'task-east', role: 'complete_animation', direction: 'east' },
+      { taskId: 'task-west', role: 'complete_animation', direction: 'west' },
       { taskId: 'task-north', role: 'complete_animation', direction: 'north' },
       { taskId: 'task-south', role: 'complete_animation', direction: 'south' },
     ]
     const generationApis: GenerationApis = {
       create: vi.fn(),
       get: vi.fn(async (projectId, id) => {
-        const direction = id.replace('task-', '') as 'east' | 'north' | 'south'
+        const direction = id.replace('task-', '') as 'east' | 'west' | 'north' | 'south'
         return {
           id,
           projectId,
@@ -1118,6 +1201,12 @@ describe('createQuickStartService', () => {
       'north',
       'south',
     ])
+    expect(character.outfits[0]?.actions[0]?.sequences?.[1]).toMatchObject({
+      direction: 'west',
+      sourceDirection: null,
+      mirrorX: false,
+      frames: [{ imageUrl: 'west.png' }],
+    })
   })
 
   it.each([new Error('WorkflowRun 回读失败'), '回读失败'])(
@@ -1339,9 +1428,9 @@ describe('createQuickStartService', () => {
       },
       {
         direction: 'west',
-        sourceDirection: 'east',
-        mirrorX: true,
-        imageUrl: null,
+        sourceDirection: null,
+        mirrorX: false,
+        imageUrl: 'replacement.png',
       },
       {
         direction: 'north',
@@ -1358,6 +1447,7 @@ describe('createQuickStartService', () => {
     ])
     expect(vi.mocked(generationApis.create).mock.calls.map(([input]) => input.direction)).toEqual([
       'east',
+      'west',
       'north',
       'south',
     ])
@@ -1658,6 +1748,9 @@ describe('createQuickStartService', () => {
         { direction: 'east', index: 0, imageUrl: 'east-character_template-1.png' },
         { direction: 'east', index: 1, imageUrl: 'east-character_template-2.png' },
         { direction: 'east', index: 2, imageUrl: 'east-character_template-3.png' },
+        { direction: 'west', index: 0, imageUrl: 'west-character_template-1.png' },
+        { direction: 'west', index: 1, imageUrl: 'west-character_template-2.png' },
+        { direction: 'west', index: 2, imageUrl: 'west-character_template-3.png' },
         { direction: 'north', index: 0, imageUrl: 'north-character_template-1.png' },
         { direction: 'north', index: 1, imageUrl: 'north-character_template-2.png' },
         { direction: 'north', index: 2, imageUrl: 'north-character_template-3.png' },
@@ -1668,6 +1761,7 @@ describe('createQuickStartService', () => {
     })
     const selectedTemplates = {
       east: 'east-character_template-2.png',
+      west: 'west-character_template-2.png',
       north: 'north-character_template-2.png',
       south: 'south-character_template-2.png',
     }
@@ -1694,6 +1788,9 @@ describe('createQuickStartService', () => {
         { direction: 'east', index: 0, imageUrl: 'east-first_frame-1.png' },
         { direction: 'east', index: 1, imageUrl: 'east-first_frame-2.png' },
         { direction: 'east', index: 2, imageUrl: 'east-first_frame-3.png' },
+        { direction: 'west', index: 0, imageUrl: 'west-first_frame-1.png' },
+        { direction: 'west', index: 1, imageUrl: 'west-first_frame-2.png' },
+        { direction: 'west', index: 2, imageUrl: 'west-first_frame-3.png' },
         { direction: 'north', index: 0, imageUrl: 'north-first_frame-1.png' },
         { direction: 'north', index: 1, imageUrl: 'north-first_frame-2.png' },
         { direction: 'north', index: 2, imageUrl: 'north-first_frame-3.png' },
@@ -1709,6 +1806,7 @@ describe('createQuickStartService', () => {
     ).toHaveLength(0)
     const selectedFirstFrames = {
       east: 'east-first_frame-2.png',
+      west: 'west-first_frame-2.png',
       north: 'north-first_frame-2.png',
       south: 'south-first_frame-2.png',
     }
@@ -1722,7 +1820,7 @@ describe('createQuickStartService', () => {
         vi
           .mocked(generationApis.create)
           .mock.calls.filter(([input]) => input.type === 'complete_animation'),
-      ).toHaveLength(3),
+      ).toHaveLength(4),
     )
     expect(character.templates).toEqual([
       {
@@ -1733,9 +1831,9 @@ describe('createQuickStartService', () => {
       },
       {
         direction: 'west',
-        sourceDirection: 'east',
-        mirrorX: true,
-        imageUrl: null,
+        sourceDirection: null,
+        mirrorX: false,
+        imageUrl: 'west-character_template-2.png',
       },
       {
         direction: 'north',
@@ -1754,9 +1852,15 @@ describe('createQuickStartService', () => {
       .mocked(generationApis.create)
       .mock.calls.map(([input]) => input)
       .filter((input) => input.type === 'first_frame')
-    expect(firstFrameCalls.map((input) => input.direction)).toEqual(['east', 'north', 'south'])
+    expect(firstFrameCalls.map((input) => input.direction)).toEqual([
+      'east',
+      'west',
+      'north',
+      'south',
+    ])
     expect(firstFrameCalls.map((input) => input.referenceMedia[0])).toEqual([
       'east-character_template-2.png',
+      'west-character_template-2.png',
       'north-character_template-2.png',
       'south-character_template-2.png',
     ])
@@ -1766,10 +1870,11 @@ describe('createQuickStartService', () => {
       .filter((input) => input.type === 'complete_animation')
     expect(animationCalls.map((input) => input.firstFrameUrl)).toEqual([
       'east-first_frame-2.png',
+      'west-first_frame-2.png',
       'north-first_frame-2.png',
       'south-first_frame-2.png',
     ])
-    expect(animationCalls.map((input) => input.prompt)).toEqual(['挥手', '挥手', '挥手'])
+    expect(animationCalls.map((input) => input.prompt)).toEqual(['挥手', '挥手', '挥手', '挥手'])
     expect(
       session.getWorkflow().nodes.find((node) => node.type === 'action-full-frame'),
     ).toMatchObject({ input: { prompt: '挥手' } })

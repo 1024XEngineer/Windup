@@ -220,6 +220,17 @@
             "$ref": "#/components/schemas/ActionDirection",
             "default": "east"
           },
+          "ground_contact": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ground Contact"
+          },
           "loop": {
             "anyOf": [
               {
@@ -455,6 +466,7 @@
           "version": {
             "default": 1,
             "description": "结构版本",
+            "minimum": 1.0,
             "title": "Version",
             "type": "integer"
           }

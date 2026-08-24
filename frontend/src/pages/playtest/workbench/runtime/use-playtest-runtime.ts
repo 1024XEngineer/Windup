@@ -9,6 +9,11 @@ import {
 } from '../bindings'
 import type { PlaytestAction } from '../model'
 import {
+  DEFAULT_PLAYTEST_PREFERENCES,
+  type PlaytestCommand,
+  type PlaytestPreferences,
+} from '../preferences'
+import {
   advanceRuntime,
   createRuntime,
   playbackForFacing,
@@ -35,15 +40,32 @@ function isTypingTarget(target: EventTarget | null): boolean {
   )
 }
 
-function keyboardInput(key: string, code: string): MovementDirection | PlaytestControlKey | null {
-  const normalized = key.toLowerCase()
-  if (normalized === 'arrowleft' || normalized === 'a') return 'left'
-  if (normalized === 'arrowright' || normalized === 'd') return 'right'
-  if (normalized === 'arrowup' || normalized === 'w') return 'up'
-  if (normalized === 'arrowdown' || normalized === 's') return 'down'
-  if (code === 'Space' || key === ' ' || normalized === 'spacebar') return 'space'
-  if (code === 'ShiftLeft' || code === 'ShiftRight' || normalized === 'shift') return 'shift'
-  return null
+const COMMAND_INPUTS: Readonly<Record<PlaytestCommand, MovementDirection | PlaytestControlKey>> = {
+  move_up: 'up',
+  move_down: 'down',
+  move_left: 'left',
+  move_right: 'right',
+  primary_action: 'space',
+  secondary_action: 'shift',
+}
+
+function fallbackCode(key: string): string {
+  if (/^[a-z]$/i.test(key)) return `Key${key.toUpperCase()}`
+  if (key === ' ') return 'Space'
+  if (key.toLowerCase() === 'shift') return 'ShiftLeft'
+  return key
+}
+
+function keyboardInput(
+  key: string,
+  code: string,
+  preferences: PlaytestPreferences,
+): MovementDirection | PlaytestControlKey | null {
+  const physicalCode = code || fallbackCode(key)
+  const command = Object.entries(preferences.bindings).find(
+    ([, binding]) => binding.code === physicalCode,
+  )?.[0] as PlaytestCommand | undefined
+  return command === undefined ? null : COMMAND_INPUTS[command]
 }
 
 function isMovementDirection(
@@ -93,6 +115,10 @@ export function usePlaytestRuntime(
   initialActionId: string | null,
   movementMode: DirectionalMovement = 'single',
   bindings?: PlaytestActionBindings,
+  options: {
+    readonly preferences?: PlaytestPreferences
+    readonly keyboardEnabled?: boolean
+  } = {},
 ) {
   const effectiveBindings = useMemo(
     () => bindings ?? createDefaultActionBindings(actions),
@@ -103,6 +129,7 @@ export function usePlaytestRuntime(
   )
   const actionsRef = useRef(actions)
   const bindingsRef = useRef(effectiveBindings)
+  const preferencesRef = useRef(options.preferences ?? DEFAULT_PLAYTEST_PREFERENCES)
   const boundsRef = useRef<StageBounds>(INITIAL_BOUNDS)
   const activeInputsRef = useRef(new Map<string, MovementDirection>())
   const preloadedImagesRef = useRef<readonly HTMLImageElement[]>([])
@@ -120,6 +147,10 @@ export function usePlaytestRuntime(
   useEffect(() => {
     bindingsRef.current = effectiveBindings
   }, [effectiveBindings])
+
+  useEffect(() => {
+    preferencesRef.current = options.preferences ?? DEFAULT_PLAYTEST_PREFERENCES
+  }, [options.preferences])
 
   useEffect(() => {
     preloadedImagesRef.current = preloadActionFrames(actions, initialRuntimeActionId)
@@ -185,9 +216,14 @@ export function usePlaytestRuntime(
   }, [])
 
   useEffect(() => {
+    if (options.keyboardEnabled === false) clearDirections()
+  }, [clearDirections, options.keyboardEnabled])
+
+  useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (options.keyboardEnabled === false) return
       if (isTypingTarget(event.target)) return
-      const input = keyboardInput(event.key, event.code)
+      const input = keyboardInput(event.key, event.code, preferencesRef.current)
       if (input === null) return
       event.preventDefault()
       if (event.repeat) return
@@ -196,7 +232,8 @@ export function usePlaytestRuntime(
       else setControl(input, true, source)
     }
     const handleKeyUp = (event: globalThis.KeyboardEvent) => {
-      const input = keyboardInput(event.key, event.code)
+      if (options.keyboardEnabled === false) return
+      const input = keyboardInput(event.key, event.code, preferencesRef.current)
       if (input === null) return
       event.preventDefault()
       const source = `keyboard:${event.code || event.key}`
@@ -212,7 +249,7 @@ export function usePlaytestRuntime(
       window.removeEventListener('keyup', handleKeyUp)
       window.removeEventListener('blur', clearDirections)
     }
-  }, [clearDirections, setControl, setMovement])
+  }, [clearDirections, options.keyboardEnabled, setControl, setMovement])
 
   const selectAction = useCallback((actionId: string) => {
     setRuntime((current) => selectRuntimeAction(current, actionsRef.current, actionId))

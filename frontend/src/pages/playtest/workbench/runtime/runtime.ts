@@ -134,12 +134,16 @@ export function selectRuntimeAction(
   actionId: string,
 ): PlaytestRuntime {
   const action = actionById(actions, actionId)
-  if (action === undefined || action.id === runtime.actionId) return runtime
+  if (
+    action === undefined ||
+    action.id === runtime.actionId ||
+    playbackForFacing(action, runtime.facing) === undefined
+  )
+    return runtime
 
   return {
     ...runtime,
     actionId: action.id,
-    facing: facingForAction(action, runtime.facing),
     frameIndex: 0,
     frameElapsedMs: 0,
   }

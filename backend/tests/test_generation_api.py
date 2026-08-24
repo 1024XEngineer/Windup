@@ -19,13 +19,15 @@ def _gift_credits(engine):
         session.commit()
 
 
-def _create_project(auth_client, name: str = "生成项目") -> dict:
+def _create_project(
+    auth_client, name: str = "生成项目", directional_movement: int = 2
+) -> dict:
     return auth_client.post(
         "/projects",
         json={
             "project_name": name,
             "character_perspective": 1,
-            "directional_movement": 2,
+            "directional_movement": directional_movement,
             "sprite_width": 64,
             "sprite_height": 64,
         },
@@ -114,7 +116,7 @@ def test_action_generation_uses_token_user_without_body_user_id(auth_client):
     assert body["data"]["status"] == "pending"
 
 
-def test_image_generation_rejects_mirrored_direction(auth_client):
+def test_image_generation_accepts_real_west_for_four_way_project(auth_client):
     project = _create_project(auth_client)
 
     response = auth_client.post(
@@ -123,11 +125,12 @@ def test_image_generation_rejects_mirrored_direction(auth_client):
     )
 
     body = response.json()
-    assert body["code"] == 400
-    assert "镜像方向" in body["message"]
+    assert body["code"] == 200
+    assert body["data"]["status"] == "pending"
+    assert body["data"]["input_payload"]["direction"] == "west"
 
 
-def test_action_generation_rejects_mirrored_direction(auth_client):
+def test_action_generation_accepts_real_west_for_four_way_project(auth_client):
     project = _create_project(auth_client)
     character = _create_character(auth_client, project["id"])
 
@@ -137,8 +140,26 @@ def test_action_generation_rejects_mirrored_direction(auth_client):
     )
 
     body = response.json()
-    assert body["code"] == 400
-    assert "镜像方向" in body["message"]
+    assert body["code"] == 200
+    assert body["data"]["status"] == "pending"
+    assert body["data"]["input_payload"]["direction"] == "west"
+
+
+def test_image_generation_accepts_real_north_west_for_eight_way_project(auth_client):
+    project = _create_project(
+        auth_client,
+        name="八向生成项目",
+        directional_movement=3,
+    )
+
+    body = auth_client.post(
+        "/generation/image",
+        json=_image_payload(project["id"], direction="north_west"),
+    ).json()
+
+    assert body["code"] == 200
+    assert body["data"]["status"] == "pending"
+    assert body["data"]["input_payload"]["direction"] == "north_west"
 
 
 def test_action_character_must_belong_to_requested_project(auth_client):
@@ -465,6 +486,57 @@ def test_stance_omitted_stays_none_not_biped(auth_client, monkeypatch):
 
     inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
     assert inputs and inputs[0].stance is None
+
+
+def test_ground_contact_from_request_reaches_the_task_input(auth_client, monkeypatch):
+    """飞 / 游 / 攀的声明断在请求层的话,对齐那一步永远走脚线分支(#534)。"""
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.orchestrator.model import CharacterActionInput
+
+    dispatched = _capture_action_input(gen_api, monkeypatch)
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+
+    auth_client.post(
+        "/generation/action",
+        json=_action_payload(
+            project["id"], character["id"],
+            action_type="custom", custom_prompt="flies forward", ground_contact=False,
+        ),
+    )
+
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs, "任务没被收下"
+    assert inputs[0].ground_contact is False
+
+
+def test_ground_contact_omitted_stays_none_not_true(auth_client, monkeypatch):
+    """不给就原样传 None —— 在这层填默认值,"没给"与"明确有地面接触"就分不开了。"""
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.orchestrator.model import CharacterActionInput
+
+    dispatched = _capture_action_input(gen_api, monkeypatch)
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+
+    auth_client.post(
+        "/generation/action", json=_action_payload(project["id"], character["id"]),
+    )
+
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs and inputs[0].ground_contact is None
+
+
+def test_ground_contact_on_a_fixed_action_is_rejected_at_the_entrance(auth_client):
+    """walk 收下这个字段等于让调用方以为自己能改它,而它不会生效。"""
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+    body = auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"], ground_contact=False),
+    ).json()
+    assert body["code"] == 400, body
+    assert "ground_contact" in body["message"], body["message"]
 
 
 def test_illegal_stance_is_rejected_at_the_entrance(auth_client):

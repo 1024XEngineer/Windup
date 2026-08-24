@@ -75,4 +75,38 @@ describe('createAiSdkQuickStartPlanner', () => {
     expect(options?.tools?.quick_start_decision?.execute).toBeUndefined()
     expect(options?.messages).toEqual([{ role: 'user', content: '直接生成银发骑士' }])
   })
+
+  it('exposes only Controller actions allowed by the current workflow snapshot', async () => {
+    const generate = vi.fn<QuickStartGenerateText>(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'refine_character_template',
+          input: { adjustmentPrompt: '把披风改成深蓝色' },
+        },
+      ],
+    }))
+    const planner = createAiSdkQuickStartPlanner({
+      baseURL: 'https://api.windup.test/ai/v1',
+      generateText: generate,
+    })
+
+    await planner({
+      messages: [{ role: 'user', content: '把披风改成深蓝色' }],
+      clarificationUsed: false,
+      workflow: {
+        availableTools: ['regenerate_character_template', 'refine_character_template'],
+      },
+    })
+
+    const options = generate.mock.calls[0]?.[0]
+    expect(options?.toolChoice).toBe('auto')
+    expect(Object.keys(options?.tools ?? {})).toEqual([
+      'regenerate_character_template',
+      'refine_character_template',
+    ])
+    expect(options?.tools?.refine_character_template?.execute).toBeUndefined()
+    expect(options?.tools?.regenerate_first_frame).toBeUndefined()
+  })
 })

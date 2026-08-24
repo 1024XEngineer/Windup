@@ -25,7 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
-from windup_common.directions import ActionDirection, is_source_direction
+from windup_common.directions import ActionDirection, is_required_direction
 from windup_common.exceptions import BizException
 from windup_common.models import CharacterStance
 from windup_common.result import Response
@@ -200,6 +200,10 @@ class CharacterActionGenerateRequest(BaseModel):
     # 不对称:一次性动作被当成循环会让末帧接回首帧抽搐、产物不可用,反之只是不无缝闭环、
     # 仍可用。而且猜错是静默的,帧数/时长/成色全部正常、没有任何一道会红。
     loop: bool | None = None
+    # 这个动作有没有地面接触。飞 / 游 / 攀全程离地,它们的包围盒底边是尾羽与爪子、逐帧在变,
+    # 按脚线对齐反而让身体上下浮动(#534)。不给按"有"处理:误判成离地会让角色不站在地上,
+    # 比浮动严重。jump 不走这个字段 —— 它腾空但要回地。
+    ground_contact: bool | None = None
     # 视频模型。None = 用部署默认。取值域见 ModelRegistry.chain(CHARACTER_ACTION);
     # 非法值在入口就报错,不到付费调用才失败。选中的型号表示这次从它开始试。
     video_model: str | None = None
@@ -220,6 +224,16 @@ class CharacterActionGenerateRequest(BaseModel):
             if not prompt:
                 raise ValueError("custom 动作必须提供 custom_prompt")
             self.custom_prompt = prompt
+        return self
+
+    @model_validator(mode="after")
+    def ground_contact_belongs_to_custom_only(self):
+        # 写死的那几个动作都有地面接触,收下这个字段等于让调用方以为自己能改它。
+        if self.action_type is not ActionType.CUSTOM and self.ground_contact is not None:
+            raise ValueError(
+                f"action_type={self.action_type.value} 不该带 ground_contact:"
+                "它只对 custom 动作有意义,写死的动作都有地面接触"
+            )
         return self
 
     @model_validator(mode="after")
@@ -340,11 +354,11 @@ def _validate_project_size(project: Project, width: int, height: int) -> None:
 
 
 def _validate_project_direction(project: Project, direction: ActionDirection) -> None:
-    """只允许该项目的真实源方向进入生成队列，镜像方向不重复生成。"""
+    """只允许当前项目规格要求的真实方向进入生成队列。"""
 
-    if not is_source_direction(project.directional_movement, direction):
+    if not is_required_direction(project.directional_movement, direction):
         raise BizException(
-            f"方向 {direction.value} 不是当前项目的真实源方向，镜像方向由资产层复用",
+            f"方向 {direction.value} 不属于当前项目的生成规格",
             code=BizCode.BAD_REQUEST,
         )
 
@@ -427,6 +441,7 @@ def submit_action_generation(
         action_type=body.action_type,
         custom_prompt=body.custom_prompt,
         loop=body.loop,
+        ground_contact=body.ground_contact,
         video_model=body.video_model,
         reference_video_url=body.reference_video_url,
         reference_image_urls=body.reference_image_urls,

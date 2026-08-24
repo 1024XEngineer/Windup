@@ -88,6 +88,7 @@ def _action_input(payload: dict) -> CharacterActionInput:
         reference_image_urls=list(payload.get("reference_image_urls") or []),
         num_frames=int(raw_frames) if raw_frames is not None else None,
         loop=payload.get("loop"),
+        ground_contact=payload.get("ground_contact"),
         video_model=payload.get("video_model"),
         outfit_id=payload.get("outfit_id"),
         model_3d_url=payload.get("model_3d_url"),

@@ -41,4 +41,12 @@ describe('quick-start-agent architecture boundary', () => {
     expect(pageSource).not.toContain('generateText(')
     expect(pageSource).not.toContain('quickStartPlannerInstructions')
   })
+
+  it('keeps the lazily loaded Planner out of page-level static imports', () => {
+    const pageDependencies = productionFiles(quickStartPageDirectory).flatMap((file) =>
+      moduleSpecifiers(readFileSync(file, 'utf8')),
+    )
+
+    expect(pageDependencies).not.toContain('@/features/quick-start-agent')
+  })
 })

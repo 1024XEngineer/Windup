@@ -49,6 +49,48 @@ describe('PlaytestStage', () => {
     expect(screen.getByText('暂无可播放帧')).toBeTruthy()
   })
 
+  it('reports a failed frame and retries the same image on demand', () => {
+    const firstSprite = renderStage(0)!
+
+    fireEvent.error(firstSprite)
+
+    expect(screen.getByText('当前帧加载失败')).toBeTruthy()
+    const retry = screen.getByRole('button', { name: '重试当前帧' })
+    fireEvent.click(retry)
+
+    expect(screen.queryByText('当前帧加载失败')).toBeNull()
+    const retriedSprite = screen.getByRole('region', { name: '预览舞台' }).querySelector('img')
+    expect(retriedSprite).not.toBe(firstSprite)
+    expect(retriedSprite?.getAttribute('src')).toBe('/idle-01.png')
+  })
+
+  it('clears a frame failure when playback advances to another image', () => {
+    const { rerender } = render(
+      <PlaytestStage
+        frame={{ imageUrl: '/idle-01.png', durationMs: 100 }}
+        x={0}
+        y={0}
+        mirrorX={false}
+        onBoundsChange={() => undefined}
+      />,
+    )
+    const stage = screen.getByRole('region', { name: '预览舞台' })
+    fireEvent.error(stage.querySelector('img')!)
+
+    rerender(
+      <PlaytestStage
+        frame={{ imageUrl: '/walk-02.png', durationMs: 100 }}
+        x={0}
+        y={0}
+        mirrorX={false}
+        onBoundsChange={() => undefined}
+      />,
+    )
+
+    expect(screen.queryByText('当前帧加载失败')).toBeNull()
+    expect(stage.querySelector('img')?.getAttribute('src')).toBe('/walk-02.png')
+  })
+
   it('measures horizontal and depth bounds from the stage and sprite sizes', () => {
     const onBoundsChange = vi.fn()
     render(
