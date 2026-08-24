@@ -4,10 +4,11 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from windup_common.enums import ArtStyle
 from windup_common.enums.biz_code import BizCode
 from windup_common.exceptions import BizException
 from windup_common.result import ListResponse, Response
@@ -21,6 +22,11 @@ logger = logging.getLogger("windup.project.api")
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
+def _stored_style(style: ArtStyle | None) -> str | None:
+    """``UNSPECIFIED`` 落库存 NULL —— 现有前端把这一列原样显示,写字面量会让它显示出来。"""
+    return None if style is None or style is ArtStyle.UNSPECIFIED else style.value
+
+
 class ProjectCreate(BaseModel):
     """创建项目请求。"""
 
@@ -30,14 +36,29 @@ class ProjectCreate(BaseModel):
     directional_movement: int = Field(ge=1, le=3)
     sprite_width: int = Field(ge=32, le=2048)
     sprite_height: int = Field(ge=32, le=2048)
-    game_style: str | None = None
+    game_style: ArtStyle = ArtStyle.UNSPECIFIED
     sprite_sample_url: str | None = None
 
+    @field_validator("game_style", mode="before")
+    @classmethod
+    def _accept_legacy_free_text(cls, value: object) -> ArtStyle:
+        """画风枚举化之前建项目发的是自由文本;直接拒会让还没换下拉的客户端建不了项目。"""
+        if value is None:
+            return ArtStyle.UNSPECIFIED
+        return ArtStyle.from_stored(value) if isinstance(value, str) else value
 
-class ProjectRename(BaseModel):
-    """重命名项目请求。"""
 
-    project_name: str = Field(min_length=1, max_length=20)
+class ProjectPatch(BaseModel):
+    """改项目请求;只改传上来的那些字段。"""
+
+    project_name: str | None = Field(default=None, min_length=1, max_length=20)
+    game_style: ArtStyle | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> "ProjectPatch":
+        if self.project_name is None and self.game_style is None:
+            raise ValueError("至少要改一个字段")
+        return self
 
 
 class ProjectOut(BaseModel):
@@ -81,7 +102,9 @@ def create_project(
         )
         raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST)
     try:
-        project = service.create_project(session, user_id=user_id, **body.model_dump())
+        fields = body.model_dump()
+        fields["game_style"] = _stored_style(body.game_style)
+        project = service.create_project(session, user_id=user_id, **fields)
     except IntegrityError:
         logger.warning(
             "[WINDUP] 创建拒绝-并发冲突 | user_id=%s project_name=%s",
@@ -136,9 +159,9 @@ def get_project(
 
 
 @router.patch("/{project_id}", response_model=Response[ProjectOut])
-def rename_project(
+def update_project(
     project_id: int,
-    body: ProjectRename,
+    body: ProjectPatch,
     request: Request,
     session: Session = Depends(get_session),
 ) -> Response[ProjectOut]:
@@ -146,22 +169,22 @@ def rename_project(
     project = service.get_project(session, project_id, for_update=True)
     if project is None or project.user_id != user_id:
         raise BizException("项目不存在", code=BizCode.NOT_FOUND)
-    if project.project_name == body.project_name:
-        return Response.success(
-            ProjectOut.model_validate(project), message="重命名成功"
-        )
-    if service.project_name_exists(
-        session, user_id=user_id, project_name=body.project_name
+    rename_to = body.project_name if body.project_name != project.project_name else None
+    if rename_to is not None and service.project_name_exists(
+        session, user_id=user_id, project_name=rename_to
     ):
         raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST)
     try:
-        project = service.rename_project(
-            session, project, project_name=body.project_name
+        project = service.update_project(
+            session,
+            project,
+            project_name=rename_to,
+            game_style=_stored_style(body.game_style) if body.game_style else None,
         )
     except IntegrityError:
         session.rollback()
         raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST) from None
-    return Response.success(ProjectOut.model_validate(project), message="重命名成功")
+    return Response.success(ProjectOut.model_validate(project), message="修改成功")
 
 
 @router.delete("/{project_id}", response_model=Response[None])
