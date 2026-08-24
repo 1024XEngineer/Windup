@@ -532,8 +532,8 @@ def test_action_task_parks_i2v_and_stays_running(session_factory, monkeypatch):
             raise AssertionError("有 start_video 时不该走阻塞 generate")
 
     monkeypatch.setattr(
-        "windup_app.server.orchestrator.executor.ActionTaskExecutor._park_i2v",
-        lambda self, task_id, job, **kw: parked.append({"task_id": task_id, "job": job, **kw}),
+        "windup_app.server.orchestrator.i2v_poll.schedule",
+        lambda task_id, job, **kw: parked.append({"task_id": task_id, "job": job, **kw}),
     )
     service = AiGenerationService()
     executor = ActionTaskExecutor(
@@ -582,7 +582,7 @@ def test_resume_action_poll_finishes_when_video_ready(session_factory, monkeypat
     import time as _time
 
     monkeypatch.setattr(
-        "windup_app.server.mq.i2v_state.load_i2v_state",
+        "windup_app.server.orchestrator.i2v_poll.load_i2v_state",
         lambda task_id: {
             "job_id": "job-ready",
             "poll_count": 0,
@@ -592,7 +592,7 @@ def test_resume_action_poll_finishes_when_video_ready(session_factory, monkeypat
             "model": "kling-v2-5-turbo",
         },
     )
-    monkeypatch.setattr("windup_app.server.mq.i2v_state.delete_i2v_state", lambda task_id: None)
+    monkeypatch.setattr("windup_app.server.orchestrator.i2v_poll.clear", lambda task_id: None)
     service = AiGenerationService()
     executor = ActionTaskExecutor(
         generator=_AsyncGen(),
@@ -635,7 +635,7 @@ def test_resume_action_poll_does_not_fetch_master_while_pending(
     import time as _time
 
     monkeypatch.setattr(
-        "windup_app.server.mq.i2v_state.load_i2v_state",
+        "windup_app.server.orchestrator.i2v_poll.load_i2v_state",
         lambda task_id: {
             "job_id": "job-pending",
             "poll_count": 0,
@@ -646,8 +646,8 @@ def test_resume_action_poll_does_not_fetch_master_while_pending(
         },
     )
     monkeypatch.setattr(
-        "windup_app.server.orchestrator.executor.ActionTaskExecutor._park_i2v",
-        lambda self, task_id, job, **kw: parked.append(task_id),
+        "windup_app.server.orchestrator.i2v_poll.schedule",
+        lambda task_id, job, **kw: parked.append(task_id),
     )
 
     def _boom(_input):

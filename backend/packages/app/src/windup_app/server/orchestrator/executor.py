@@ -19,7 +19,6 @@ import dataclasses
 import logging
 import os
 import threading
-import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -36,8 +35,9 @@ from windup_framework.gateway.registry import ModelRegistry
 from windup_framework.gateway.types import Scene
 from windup_framework.config.quality_gate import settings as gate_settings
 
-from windup_app.server.orchestrator import billing, quality_gate, task_repo
+from windup_app.server.orchestrator import billing, i2v_poll, quality_gate, task_repo
 from windup_app.server.orchestrator._failure import user_message
+from windup_app.server.orchestrator.i2v_poll import ActionAwaitingVideo
 from windup_app.server.orchestrator._fetch import fetch_own_media
 from windup_app.server.orchestrator.model import (
     ActionType,
@@ -55,28 +55,9 @@ logger = logging.getLogger("windup.generation.executor")
 _ACTION_RESULT = "character_action"  # task_repo._deserialize_result 按此标签反序列化
 
 
-class ActionAwaitingVideo(Exception):
-    """i2v 已建单,任务保持 RUNNING,等 ZSET 到期后再探,不占 action worker。"""
-
-
 class _PollSkip(Exception):
     """续跑时任务已终态,直接 ACK。"""
 
-
-def _job_fields(job: object) -> tuple[str, str, str]:
-    if isinstance(job, dict):
-        return (
-            str(job.get("job_id") or ""),
-            str(job.get("route_id") or ""),
-            str(job.get("model") or ""),
-        )
-    if isinstance(job, str):
-        return job, "", ""
-    return (
-        str(getattr(job, "job_id", "") or ""),
-        str(getattr(job, "route_id", "") or ""),
-        str(getattr(job, "model", "") or ""),
-    )
 
 T = TypeVar("T")
 R = TypeVar("R")
@@ -501,7 +482,7 @@ class ActionTaskExecutor:
                     can_defer() if callable(can_defer) else True
                 ):
                     job = gen.start_video(card, action, master, progress, canvas=canvas)
-                    self._park_i2v(task_id, job, poll_count=0)
+                    i2v_poll.schedule(task_id, job, poll_count=0)
                     raise ActionAwaitingVideo
                 generated = gen.generate(card, action, master, progress, canvas=canvas)
 
@@ -518,13 +499,6 @@ class ActionTaskExecutor:
         session: Session | None = None,
     ) -> None:
         """延迟队列到期后探一次 i2v。仍在跑则再挂单;完成则抽帧交付。"""
-        from windup_app.server.mq.i2v_state import (
-            I2V_MAX_WAIT_S,
-            I2V_POLL_INTERVAL_S,
-            delete_i2v_state,
-            load_i2v_state,
-        )
-
         reset = None
         try:
             def _mark_running(s: Session) -> ProjectConstraints:
@@ -544,47 +518,25 @@ class ActionTaskExecutor:
                 task_id=str(task_id),
                 start_from_model=_resolve_video_model(input.video_model),
             )
-            state = load_i2v_state(task_id)
-            if state is None or not state.get("job_id"):
-                raise RuntimeError(f"任务 {task_id} 没有 i2v 状态,无法续跑轮询")
-
-            elapsed = time.time() - float(state["started_at"] or 0)
-            if elapsed >= I2V_MAX_WAIT_S:
-                raise RuntimeError("i2v 未取得视频 URL(超时或失败)")
-
             gen = self._get_generator(
                 _resolve_video_model(input.video_model), cons.directions
             )
             reset_call = fresh_gateway_request()
             try:
-                video = gen.poll_video(
-                    state["job_id"], route_id=state.get("route_id") or None
-                )
-                if video is None:
-                    nxt = min(float(state["next_wait"]) * 2, I2V_POLL_INTERVAL_S)
-                    self._park_i2v(
-                        task_id,
-                        {
-                            "job_id": state["job_id"],
-                            "route_id": state.get("route_id") or "",
-                            "model": state.get("model") or "",
-                        },
-                        poll_count=int(state["poll_count"]) + 1,
-                        next_wait=nxt,
-                        started_at=float(state["started_at"]),
-                    )
+                outcome = i2v_poll.inspect(task_id, poll_video=gen.poll_video)
+                if isinstance(outcome, i2v_poll.Waiting):
                     return
 
                 card, action, canvas = self._action_spec(input, cons)
                 progress: ProgressPort = _LogProgress()
                 master = (self._fetch_master or self._download_master)(input)
                 generated = gen.finish_video(
-                    video, card, action, master, progress, canvas=canvas
+                    outcome.video, card, action, master, progress, canvas=canvas
                 )
                 result = self._deliver_generated(generated, input, cons, master)
             finally:
                 reset_call()
-            delete_i2v_state(task_id)
+            i2v_poll.clear(task_id)
 
             def _complete(s: Session) -> None:
                 task_repo.update_result(s, task_id, _ACTION_RESULT, result)
@@ -645,48 +597,6 @@ class ActionTaskExecutor:
             **extra,
         )
         return card, action, (cons.sprite_w, cons.sprite_h)
-
-    def _park_i2v(
-        self,
-        task_id: int,
-        job: object,
-        *,
-        poll_count: int,
-        next_wait: float | None = None,
-        started_at: float | None = None,
-    ) -> None:
-        from windup_app.server.mq.catalog import (
-            GENERATION_STREAM,
-            MSG_TYPE_CHARACTER_ACTION_POLL,
-        )
-        from windup_app.server.mq.i2v_state import (
-            I2V_FIRST_POLL_S,
-            save_i2v_state,
-        )
-        from windup_framework.mq.delayed import schedule_delayed
-
-        job_id, route_id, model = _job_fields(job)
-        wait = I2V_FIRST_POLL_S if next_wait is None else next_wait
-        save_i2v_state(
-            task_id,
-            job_id=job_id,
-            poll_count=poll_count,
-            next_wait=wait,
-            started_at=started_at,
-            route_id=route_id,
-            model=model,
-        )
-        schedule_delayed(
-            delay_s=wait,
-            stream=GENERATION_STREAM,
-            msg_type=MSG_TYPE_CHARACTER_ACTION_POLL,
-            payload={
-                "task_id": task_id,
-                "task_type": "character_action",
-                "poll_count": poll_count,
-            },
-            dedupe_key=f"generation:{task_id}:poll:{poll_count}",
-        )
 
     def _deliver_generated(
         self,

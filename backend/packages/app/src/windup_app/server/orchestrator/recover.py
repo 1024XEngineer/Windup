@@ -18,10 +18,10 @@ from windup_app.server.mq.catalog import (
     GENERATION_RUNNING_STALE_SECONDS,
     GENERATION_STREAM,
     MSG_TYPE_CHARACTER_ACTION,
-    MSG_TYPE_CHARACTER_ACTION_POLL,
     MSG_TYPE_CHARACTER_IMAGE,
 )
 from windup_app.server.orchestrator import billing, task_repo
+from windup_app.server.orchestrator.i2v_poll import reschedule_if_waiting
 from windup_app.server.orchestrator.model import (
     GenerationTask,
     GenerationType,
@@ -52,7 +52,7 @@ def recover_orphaned_generation_tasks(
             continue
         if task.status is TaskStatus.RUNNING:
             try:
-                if _reschedule_i2v_poll(task.id):
+                if reschedule_if_waiting(task.id):
                     continue
             except Exception:
                 logger.exception("检查 i2v 延迟状态失败 | task_id=%s", task.id)
@@ -66,30 +66,6 @@ def recover_orphaned_generation_tasks(
             _fail_interrupted(session, task)
             continue
         _requeue_pending(session, publisher, task)
-
-
-def _reschedule_i2v_poll(task_id: int) -> bool:
-    """RUNNING 且 Redis 里还有 i2v 状态:补一条即将到期的探活,不当孤儿失败。"""
-    from windup_app.server.mq.i2v_state import load_i2v_state
-    from windup_framework.mq.delayed import schedule_delayed
-
-    state = load_i2v_state(task_id)
-    if state is None or not state.get("job_id"):
-        return False
-    poll_count = int(state.get("poll_count") or 0)
-    schedule_delayed(
-        delay_s=1,
-        stream=GENERATION_STREAM,
-        msg_type=MSG_TYPE_CHARACTER_ACTION_POLL,
-        payload={
-            "task_id": task_id,
-            "task_type": "character_action",
-            "poll_count": poll_count,
-        },
-        dedupe_key=f"generation:{task_id}:poll:{poll_count}",
-    )
-    logger.info("RUNNING 任务仍在等 i2v,已补延迟轮询 | task_id=%s", task_id)
-    return True
 
 
 def _fail_unrecoverable(session: Session, task: GenerationTask) -> None:
