@@ -30,6 +30,13 @@ import {
 } from '@/features/workflow-controller'
 import { createProgressiveExportModel, type ExportPackageModel } from '@/features/export-package'
 import { createActionSequences } from '@/features/export'
+import {
+  REFINE_CHARACTER_TEMPLATE_TOOL,
+  REFINE_FIRST_FRAME_TOOL,
+  REGENERATE_CHARACTER_TEMPLATE_TOOL,
+  REGENERATE_FIRST_FRAME_TOOL,
+  type WorkflowAgentContext,
+} from '@/features/quick-start-agent/runtime'
 
 export { createAutoPrepareProject }
 export type { PrepareQuickStartProject }
@@ -90,6 +97,15 @@ export interface QuickStartSession {
   retryGenerationDirection(
     nodeId: WorkflowNode['id'],
     direction: ActionDirection,
+  ): Promise<WorkflowRun>
+  getWorkflowAgentContext(): WorkflowAgentContext
+  regenerateCharacterTemplate(
+    mode: 'regenerate' | 'refine',
+    adjustmentPrompt?: string,
+  ): Promise<WorkflowRun>
+  regenerateFirstFrame(
+    mode: 'regenerate' | 'refine',
+    adjustmentPrompt?: string,
   ): Promise<WorkflowRun>
   /** 按当前 Run 完成度装配统一导出包；角色母版尚未确认时返回 null。 */
   getExportModel(): Promise<ExportPackageModel | null>
@@ -799,6 +815,57 @@ export function createQuickStartService({
           referenceMedia: [],
         })
         ensureAutomaticAdvance()
+        return controller.getWorkflow()
+      },
+      getWorkflowAgentContext() {
+        const run = controller.getWorkflow()
+        const availableTools: WorkflowAgentContext['availableTools'][number][] = []
+        const template = run.nodes.find((node) => node.type === 'character-template')
+        if (
+          template?.type === 'character-template' &&
+          template.status === 'passed' &&
+          template.phase === 'completed' &&
+          template.selectedImageUrl
+        ) {
+          availableTools.push(REGENERATE_CHARACTER_TEMPLATE_TOOL, REFINE_CHARACTER_TEMPLATE_TOOL)
+        }
+        const firstFrame = latestActionFirstFrame(run)
+        if (
+          firstFrame?.type === 'action-first-frame' &&
+          firstFrame.status === 'passed' &&
+          firstFrame.phase === 'completed' &&
+          firstFrame.selectedFirstFrameUrl
+        ) {
+          availableTools.push(REGENERATE_FIRST_FRAME_TOOL, REFINE_FIRST_FRAME_TOOL)
+        }
+        return { availableTools }
+      },
+      async regenerateCharacterTemplate(mode, adjustmentPrompt) {
+        const run = controller.getWorkflow()
+        const template = templateNode(run)
+        const spriteSize =
+          knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
+        await controller.regenerateCharacterTemplate(template.id, {
+          spriteWidth: spriteSize.width,
+          spriteHeight: spriteSize.height,
+          mode,
+          ...(adjustmentPrompt === undefined ? {} : { adjustmentPrompt }),
+        })
+        return controller.getWorkflow()
+      },
+      async regenerateFirstFrame(mode, adjustmentPrompt) {
+        const firstFrame = latestActionFirstFrame(controller.getWorkflow())
+        if (!firstFrame || firstFrame.type !== 'action-first-frame') {
+          throw new Error('当前运行没有可重新生成的动作首帧')
+        }
+        const spriteSize =
+          knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
+        await controller.regenerateFirstFrame(firstFrame.id, {
+          spriteWidth: spriteSize.width,
+          spriteHeight: spriteSize.height,
+          mode,
+          ...(adjustmentPrompt === undefined ? {} : { adjustmentPrompt }),
+        })
         return controller.getWorkflow()
       },
       async approveReview() {
