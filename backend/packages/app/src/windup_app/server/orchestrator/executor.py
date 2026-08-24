@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from windup_ai_engine.ports import PromptRejected
 from windup_ai_engine.slicing.quality import subject_blobs
 from windup_common.directions import direction_prompt
+from windup_common.enums import ArtStyle
 from windup_common.models import ActionSpec, ActionType as EngineActionType, CharacterCard
 from windup_framework.gateway import bind_call_context, fresh_gateway_request
 from windup_framework.gateway.registry import ModelRegistry
@@ -169,8 +170,8 @@ class ProjectConstraints:
     directions: int = 1  # directional_movement → 方向数(1/4/8)
     sprite_w: int = 256  # 输出/切帧尺寸(关键)
     sprite_h: int = 256
-    style: str = ""  # game_style 画风
-    stylize: str = "none"  # 由 style 推:像素游戏 → pixel
+    style: str = ""  # 进提示词的画风短语(ArtStyle.prompt_phrase)
+    stylize: str = "none"  # 像素化开关,只有 ArtStyle.PIXEL 打开
     sprite_sample_url: str = ""  # 项目风格参考图 URL
 
 
@@ -183,8 +184,7 @@ def _load_constraints(session: Session, project_id: int | None) -> ProjectConstr
     p = SqlAlchemyProjectService().get_project(session, project_id)
     if p is None:
         return ProjectConstraints()
-    style = p.game_style or ""
-    is_pixel = "pixel" in style.lower() or "像素" in style
+    art_style = ArtStyle.from_stored(p.game_style)
     return ProjectConstraints(
         facing=_PERSPECTIVE_FACING.get(p.character_perspective, "side"),
         view=_PERSPECTIVE_VIEW.get(p.character_perspective, _PERSPECTIVE_VIEW[1]),
@@ -192,8 +192,8 @@ def _load_constraints(session: Session, project_id: int | None) -> ProjectConstr
         directions=_MOVEMENT_DIRECTIONS.get(p.directional_movement, 1),
         sprite_w=p.sprite_width,
         sprite_h=p.sprite_height,
-        style=style,
-        stylize="pixel" if is_pixel else "none",
+        style=art_style.prompt_phrase,
+        stylize="pixel" if art_style.wants_pixelation else "none",
         sprite_sample_url=p.sprite_sample_url or "",
     )
 
@@ -400,7 +400,7 @@ class ActionTaskExecutor:
     ) -> dict:
         """母版 → ai_engine 按项目尺寸出帧 → 逐帧上传 → 组结果 dict。
 
-        项目约束落实:``facing`` 随视角、``stylize`` 随画风(像素游戏→像素化)、
+        项目约束落实:``facing`` 随视角、``stylize`` 随项目画风(只有像素档打开)、
         输出帧尺寸随 ``sprite_w×sprite_h``。四向/八向项目由上层为每个真实源方向
         创建独立任务；本任务只生成 ``input.direction``，左右镜像由资产层复用，避免
         为镜像方向重复调用模型和扣费。

@@ -126,10 +126,18 @@ class SqlAlchemyProjectService(ProjectService):
                 )
         return previews
 
-    def rename_project(
-        self, session: Session, project: Project, *, project_name: str
+    def update_project(
+        self,
+        session: Session,
+        project: Project,
+        *,
+        project_name: str | None = None,
+        game_style: str | None = None,
     ) -> Project:
-        project.project_name = project_name
+        if project_name is not None:
+            project.project_name = project_name
+        if game_style is not None:
+            project.game_style = game_style
         session.flush()
         return project
 
