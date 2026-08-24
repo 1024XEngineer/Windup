@@ -29,16 +29,21 @@ def test_west_side_directions_are_real_generation_sources_for_multi_direction_pr
     assert ActionDirection.SOUTH_WEST in required_directions_for_movement(3)
 
 
-def test_action_prompt_contains_direction_lock():
+def test_every_action_direction_has_an_independent_provider_prompt_lock():
     strategy = VideoFrameStrategy(video=None, matte=None)  # type: ignore[arg-type]
-    prompt = strategy._build_prompt(
-        ActionSpec(
-            action=ActionType.WALK,
-            facing=Facing.SIDE,
-            direction=ActionDirection.NORTH_EAST,
-        ),
-        CharacterStance.BIPED,
-    )
+    prompts = {
+        direction: strategy._build_prompt(
+            ActionSpec(
+                action=ActionType.WALK,
+                facing=Facing.SIDE,
+                direction=direction,
+            ),
+            CharacterStance.BIPED,
+        )
+        for direction in ActionDirection
+    }
 
-    assert "north-east" in prompt.lower()
-    assert "do not turn" in prompt.lower()
+    assert len(set(prompts.values())) == len(ActionDirection)
+    for direction, prompt in prompts.items():
+        assert direction.value.replace("_", "-") in prompt.lower()
+        assert "do not turn" in prompt.lower()
