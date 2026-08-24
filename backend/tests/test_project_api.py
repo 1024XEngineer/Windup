@@ -126,7 +126,7 @@ def test_list_includes_project_preview_fallbacks(auth_client):
         "/projects", json=_payload(project_name="参考图预览")
     ).json()["data"]
     frame_project = auth_client.post(
-        "/projects", json=_payload(project_name="帧预览")
+        "/projects", json=_payload(project_name="帧预览", directional_movement=1)
     ).json()["data"]
     auth_client.post("/projects", json=_payload(project_name="空项目"))
 

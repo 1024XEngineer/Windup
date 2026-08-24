@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { PlaytestFrame } from './model'
 import type { StageBounds } from './runtime/runtime'
@@ -14,6 +14,8 @@ export interface PlaytestStageProps {
 export function PlaytestStage({ frame, x, y, mirrorX, onBoundsChange }: PlaytestStageProps) {
   const stageRef = useRef<HTMLDivElement>(null)
   const characterRef = useRef<HTMLImageElement>(null)
+  const [failedImageUrl, setFailedImageUrl] = useState<string | null>(null)
+  const [retryToken, setRetryToken] = useState(0)
 
   const measureBounds = useCallback(() => {
     const stageWidth = stageRef.current?.getBoundingClientRect().width ?? 0
@@ -45,6 +47,17 @@ export function PlaytestStage({ frame, x, y, mirrorX, onBoundsChange }: Playtest
     return () => observer.disconnect()
   }, [measureBounds])
 
+  useEffect(() => {
+    setFailedImageUrl(null)
+  }, [frame?.imageUrl])
+
+  const retryFrame = () => {
+    setFailedImageUrl(null)
+    setRetryToken((token) => token + 1)
+  }
+
+  const frameFailed = frame !== null && failedImageUrl === frame.imageUrl
+
   return (
     <div
       ref={stageRef}
@@ -72,8 +85,25 @@ export function PlaytestStage({ frame, x, y, mirrorX, onBoundsChange }: Playtest
         <p className="absolute inset-0 grid place-items-center text-xs tracking-[0.16em] text-[#6f746f]">
           暂无可播放帧
         </p>
+      ) : frameFailed ? (
+        <div
+          role="alert"
+          className="absolute inset-0 grid place-items-center px-6 text-center text-app-ink-soft"
+        >
+          <div className="rounded-3xl border border-app-surface-raised/70 bg-app-surface/80 px-6 py-5 shadow-app-float backdrop-blur-sm">
+            <p className="text-sm font-medium">当前帧加载失败</p>
+            <button
+              type="button"
+              onClick={retryFrame}
+              className="mt-3 rounded-full border border-app-line bg-app-surface-raised px-4 py-2 text-xs font-medium transition hover:-translate-y-0.5 hover:border-app-line-strong hover:shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent motion-reduce:transform-none"
+            >
+              重试当前帧
+            </button>
+          </div>
+        </div>
       ) : (
         <img
+          key={`${frame.imageUrl}:${retryToken}`}
           ref={characterRef}
           src={frame.imageUrl}
           alt=""
@@ -83,6 +113,7 @@ export function PlaytestStage({ frame, x, y, mirrorX, onBoundsChange }: Playtest
           decoding="async"
           fetchPriority="high"
           onLoad={measureBounds}
+          onError={() => setFailedImageUrl(frame.imageUrl)}
           className="pointer-events-none absolute left-1/2 w-[clamp(150px,22vw,256px)] select-none object-contain [image-rendering:pixelated] drop-shadow-[0_14px_9px_rgba(27,25,20,0.18)] will-change-transform"
           style={{
             bottom: 'calc(50% - 18px)',

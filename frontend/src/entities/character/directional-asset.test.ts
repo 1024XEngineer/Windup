@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { Action, CharacterTemplate } from '.'
+import { characterTemplatesFromImages, type Action, type CharacterTemplate } from '.'
 import { validateDirectionalAsset } from './directional-asset'
 
 function realTemplate(direction: CharacterTemplate['direction']): CharacterTemplate {
@@ -33,6 +33,22 @@ function realAction(directions: readonly CharacterTemplate['direction'][]): Acti
 }
 
 describe('validateDirectionalAsset', () => {
+  it('把显式上传的西向母版持久化为真实方向而不是东向镜像', () => {
+    expect(
+      characterTemplatesFromImages({
+        east: 'https://example.com/east.png',
+        west: 'https://example.com/west.png',
+        north: 'https://example.com/north.png',
+        south: 'https://example.com/south.png',
+      }),
+    ).toEqual([
+      realTemplate('east'),
+      realTemplate('west'),
+      realTemplate('north'),
+      realTemplate('south'),
+    ])
+  })
+
   it('accepts four real directions for a version 2 four-way asset', () => {
     const directions = ['east', 'west', 'north', 'south'] as const
 

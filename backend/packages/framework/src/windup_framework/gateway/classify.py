@@ -79,6 +79,16 @@ def _looks_like_config_error(status: int, body: str | None) -> bool:
     return False
 
 
+#: 52x 出自链路上哪一跳,只能从这几个头看。
+_DIAGNOSTIC_HEADERS = ("server", "cf-ray", "via", "x-served-by", "retry-after")
+
+
+def edge_fingerprint(response: httpx.Response) -> str:
+    """不记下这几个头,线上就只剩一个状态码可复盘。"""
+    seen = {k: response.headers.get(k) for k in _DIAGNOSTIC_HEADERS}
+    return " ".join(f"{k}={v}" for k, v in seen.items() if v) or "无可辨识的边缘响应头"
+
+
 def classify_http_response(
     status: int,
     body: str | None = None,

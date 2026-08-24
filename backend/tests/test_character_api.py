@@ -26,7 +26,7 @@ def _inject_fake_character_namer():
 
 
 def _create_project(
-    auth_client, name: str = "默认项目", directional_movement: int = 2
+    auth_client, name: str = "默认项目", directional_movement: int = 1
 ) -> dict:
     """创建一个项目并返回响应 data。"""
     return auth_client.post(
@@ -869,6 +869,52 @@ def test_update_character_data_recalculates_status(auth_client):
     )
     assert resp.status_code == 200
     assert resp.json()["data"]["status"] == 1
+
+
+@pytest.mark.parametrize("movement", [2, 3])
+def test_create_rejects_published_version_one_asset_in_multi_direction_project(
+    auth_client, movement
+):
+    project = _create_project(
+        auth_client,
+        name=f"旧版创建项目-{movement}",
+        directional_movement=movement,
+    )
+    character_data = _payload_with_frames(project["id"])["character_data"]
+    character_data["version"] = 1
+
+    body = auth_client.post(
+        "/characters",
+        json=_payload(project["id"], character_data=character_data),
+    ).json()
+
+    assert body["code"] == 400
+    assert "旧版镜像资产" in body["message"]
+
+
+@pytest.mark.parametrize("movement", [2, 3])
+def test_update_rejects_published_version_one_asset_in_multi_direction_project(
+    auth_client, movement
+):
+    project = _create_project(
+        auth_client,
+        name=f"旧版更新项目-{movement}",
+        directional_movement=movement,
+    )
+    created = auth_client.post(
+        "/characters",
+        json=_payload(project["id"]),
+    ).json()["data"]
+    character_data = _payload_with_frames(project["id"])["character_data"]
+    character_data["version"] = 1
+
+    body = auth_client.patch(
+        f"/characters/{created['id']}",
+        json={"character_data": character_data},
+    ).json()
+
+    assert body["code"] == 400
+    assert "旧版镜像资产" in body["message"]
 
 
 @pytest.mark.parametrize(

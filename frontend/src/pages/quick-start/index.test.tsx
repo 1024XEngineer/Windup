@@ -126,7 +126,7 @@ function serviceFor(run: WorkflowRun | null, overrides: Partial<QuickStartMock> 
       return service
     }),
     continueWithUploadedTemplate: vi.fn(async () => run!),
-    startAction: vi.fn(async () => service),
+    addAction: vi.fn(async () => fallbackRun),
     getWorkflow: vi.fn(() => fallbackRun),
     subscribe: vi.fn(() => () => undefined),
     subscribeErrors: vi.fn(() => () => undefined),
@@ -137,6 +137,23 @@ function serviceFor(run: WorkflowRun | null, overrides: Partial<QuickStartMock> 
     getFirstFrameCandidates: vi.fn(async () => []),
     getFailedGenerationDirections: vi.fn(async () => []),
     retryGenerationDirection: vi.fn(async () => fallbackRun),
+    getWorkflowAgentContext: vi.fn(() => ({
+      availableTools: fallbackRun.nodes.some(
+        (node) =>
+          node.type === 'character-template' &&
+          node.status === 'passed' &&
+          node.phase === 'completed',
+      )
+        ? ([
+            'regenerate_character_template',
+            'refine_character_template',
+            'regenerate_first_frame',
+            'refine_first_frame',
+          ] as const)
+        : [],
+    })),
+    regenerateCharacterTemplate: vi.fn(async () => fallbackRun),
+    regenerateFirstFrame: vi.fn(async () => fallbackRun),
     confirmFirstFrame: vi.fn(async () => fallbackRun),
     approveReview: vi.fn(async () => fallbackRun),
     getCharacterInfo: vi.fn(() => ({ characterId: 'character-1', outfitId: 'outfit-1' })),
@@ -149,6 +166,84 @@ function serviceFor(run: WorkflowRun | null, overrides: Partial<QuickStartMock> 
   Object.assign(service, overrides)
   return service
 }
+
+describe('Quick Start workflow Agent', () => {
+  it('routes a completed-run refinement through the current Controller session', async () => {
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const planner = vi.fn(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'refine_character_template',
+          input: { adjustmentPrompt: '把披风改成深蓝色' },
+        },
+      ],
+    }))
+    const service = serviceFor(run)
+    renderAt(`/quick-start/${run.id}`, service, agentFor({ planner }))
+
+    const composer = await screen.findByRole('textbox', { name: '继续描述你的想法' })
+    fireEvent.change(composer, { target: { value: '把披风改成深蓝色' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() =>
+      expect(service.regenerateCharacterTemplate).toHaveBeenCalledWith(
+        'refine',
+        '把披风改成深蓝色',
+      ),
+    )
+    const workflowPrompt = screen.getByText('像素骑士')
+    const refinementTurn = screen.getByText('把披风改成深蓝色')
+    expect(
+      workflowPrompt.compareDocumentPosition(refinementTurn) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(await screen.findByText('已提交角色母版微调。')).toBeTruthy()
+  })
+
+  it('keeps the conversation input disabled while a generation node is active', async () => {
+    const run = actionWorkflow({
+      firstStatus: 'passed',
+      fullStatus: 'active',
+      reviewStatus: 'locked',
+    })
+    const planner = vi.fn()
+    const service = serviceFor(run)
+    renderAt(`/quick-start/${run.id}`, service, agentFor({ planner }))
+
+    const composer = await screen.findByRole('textbox', { name: '继续描述你的想法' })
+    expect((composer as HTMLInputElement).disabled).toBe(true)
+    expect(planner).not.toHaveBeenCalled()
+  })
+
+  it('keeps persisted workflow Agent turns after the generated results on refresh', async () => {
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    window.localStorage.setItem(
+      `windup.quick-start.agent-chat.v2:run:7:${run.id}`,
+      JSON.stringify({
+        turns: [
+          { role: 'user', content: '银发骑士' },
+          { role: 'user', content: '把披风改成深蓝色', scope: 'workflow' },
+          {
+            role: 'assistant',
+            content: '已提交角色母版微调。',
+            kind: 'reply',
+            scope: 'workflow',
+          },
+        ],
+      }),
+    )
+
+    renderAt(`/quick-start/${run.id}`, serviceFor(run))
+
+    const workflowPrompt = await screen.findByText('像素骑士')
+    const refinementTurn = screen.getByText('把披风改成深蓝色')
+    expect(
+      workflowPrompt.compareDocumentPosition(refinementTurn) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(screen.getByText('已提交角色母版微调。')).toBeTruthy()
+  })
+})
 
 function eastCandidates(...imageUrls: string[]): readonly QuickStartCandidate[] {
   return imageUrls.map((imageUrl, index) => ({ direction: 'east', index, imageUrl }))
@@ -492,7 +587,7 @@ describe('QuickStartPage', () => {
     )
   })
 
-  it('keeps the entry composer compact before expanding with content', () => {
+  it('keeps the entry composer compact without a textarea baseline gap', () => {
     renderAt('/quick-start', serviceFor(null))
     const composer = screen.getByRole('textbox', { name: '创作指令' })
     const editingSurface = composer.closest('label')
@@ -501,6 +596,7 @@ describe('QuickStartPage', () => {
     expect((composer as HTMLTextAreaElement).rows).toBe(1)
     expect(composer.className).toContain('min-h-10')
     expect(composer.className).toContain('[field-sizing:content]')
+    expect(composer.className).toContain('block')
     expect(composer.className).toContain('px-4')
     expect(editingSurface?.className).toContain('ml-2')
     expect(editingSurface?.className).toContain('rounded-lg')
@@ -509,6 +605,14 @@ describe('QuickStartPage', () => {
     expect(composer.closest('form')?.className).toContain(
       'focus-within:shadow-[var(--shadow-app-composer-focus)]',
     )
+  })
+
+  it('keeps browser form history out of the creation composer', () => {
+    renderAt('/quick-start', serviceFor(null))
+    const composer = screen.getByRole('textbox', { name: '创作指令' })
+
+    expect(composer.getAttribute('autocomplete')).toBe('off')
+    expect(composer.closest('form')?.getAttribute('autocomplete')).toBe('off')
   })
 
   it('keeps the entry and run canvases at least viewport height', async () => {
@@ -584,7 +688,7 @@ describe('QuickStartPage', () => {
 
   it('keeps an unbound Agent draft in its current Quick Start history entry', async () => {
     const service = serviceFor(null)
-    const planner = vi.fn(async () => ({
+    const planner = vi.fn(async (_input: PlannerInput) => ({
       text: '可以。你最想保留哪个外观特征？',
       finishReason: 'stop',
       toolCalls: [],
@@ -622,6 +726,17 @@ describe('QuickStartPage', () => {
 
     expect(screen.getByText('我想做一个住在云端的机械师。')).toBeTruthy()
     expect(screen.getByText('可以。你最想保留哪个外观特征？')).toBeTruthy()
+
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '刚才我说了什么？' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '继续' }))
+    await waitFor(() => expect(planner).toHaveBeenCalledTimes(2))
+    expect(planner.mock.calls[1]?.[0].messages).toEqual([
+      { role: 'user', content: '我想做一个住在云端的机械师。' },
+      { role: 'assistant', content: '可以。你最想保留哪个外观特征？' },
+      { role: 'user', content: '刚才我说了什么？' },
+    ])
 
     restoredView.unmount()
     window.history.pushState(null, '', '/quick-start')
@@ -661,13 +776,17 @@ describe('QuickStartPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '填入输入框' }))
     await act(async () => vi.advanceTimersByTimeAsync(760))
+    fireEvent.change(screen.getByLabelText('创作指令'), {
+      target: { value: '提着蓝色风灯的森林守夜人' },
+    })
     fireEvent.click(screen.getByRole('button', { name: '发送生成' }))
     await act(async () => undefined)
     await act(async () => vi.advanceTimersByTime(460))
 
-    expect(
-      window.localStorage.getItem('windup.quick-start.agent-chat.v2:run:7:run-created'),
-    ).toContain('提着风灯的森林守夜人')
+    const runConversation = window.localStorage.getItem(
+      'windup.quick-start.agent-chat.v2:run:7:run-created',
+    )
+    expect(runConversation).toContain('提着蓝色风灯的森林守夜人')
     expect(
       window.sessionStorage.getItem(`windup.quick-start.agent-chat.v2:draft:7:${draftId}`),
     ).toBeNull()
@@ -682,12 +801,17 @@ describe('QuickStartPage', () => {
       'windup.quick-start.agent-chat.v2:run:7:run-2',
       JSON.stringify({ turns: [{ role: 'user', content: '第二条运行的对话' }] }),
     )
+    window.localStorage.setItem(
+      'windup.quick-start.agent-chat.v2:run:8:run-1',
+      JSON.stringify({ turns: [{ role: 'user', content: '另一位用户的对话' }] }),
+    )
     const run = workflow(setupAndTemplate(), 'run-1')
 
     renderAt('/quick-start/run-1', serviceFor(run))
 
     expect(await screen.findByText('第一条运行的对话')).toBeTruthy()
     expect(screen.queryByText('第二条运行的对话')).toBeNull()
+    expect(screen.queryByText('另一位用户的对话')).toBeNull()
   })
 
   it('migrates only legacy Agent turns bound to the current run', async () => {
@@ -777,6 +901,43 @@ describe('QuickStartPage', () => {
     expect(startCharacterGeneration).toHaveBeenCalledWith({
       prompt: '云端工坊的银发机械师，佩戴黄铜护目镜',
     })
+  })
+
+  it('keeps a proposal optional when the user continues the conversation', async () => {
+    const plannerResults: PlannerResult[] = [
+      {
+        text: '',
+        finishReason: 'tool-calls',
+        toolCalls: [
+          {
+            toolName: 'start_character_generation',
+            input: {
+              optimizedPrompt: '云端工坊的银发机械师，全身像',
+              optimizationSummary: '我会保留机械师设定，并整理为完整的全身母版描述。',
+            },
+          },
+        ],
+      },
+      { text: '可以先比较护目镜和单片镜两种方向。', finishReason: 'stop', toolCalls: [] },
+    ]
+    const planner = vi.fn(async () => plannerResults.shift()!)
+    const startCharacterGeneration = vi.fn(async () => ({ runId: 'run-should-not-exist' }))
+    renderAt('/quick-start', serviceFor(null), { planner, startCharacterGeneration })
+
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '云端工坊的银发机械师' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+    expect(await screen.findByRole('button', { name: '填入输入框' })).toBeTruthy()
+
+    const input = screen.getByRole('textbox', { name: '创作指令' }) as HTMLTextAreaElement
+    expect(input.disabled).toBe(false)
+    fireEvent.change(input, { target: { value: '你觉得眼镜应该怎么设计？' } })
+    fireEvent.click(screen.getByRole('button', { name: '继续' }))
+
+    expect(await screen.findByText('可以先比较护目镜和单片镜两种方向。')).toBeTruthy()
+    expect(startCharacterGeneration).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: '填入输入框' })).toBeNull()
   })
 
   it('keeps one persistent Agent shell with a floating composer outside the scrolling transcript', async () => {
@@ -938,6 +1099,30 @@ describe('QuickStartPage', () => {
     const complete = renderStateFixture('complete')
     await screen.findByRole('img', { name: '完整动作预览' })
     expect(complete.container.querySelector('[data-generation-progress]')).toBeNull()
+  })
+
+  it('animates only the completed action preview with the action fps fallback', async () => {
+    vi.useFakeTimers()
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const service = serviceFor(run, {
+      getActionFrames: vi.fn(async () => [
+        { index: 0, imageUrl: 'https://example.test/action-1.png', durationMs: null },
+        { index: 1, imageUrl: 'https://example.test/action-2.png', durationMs: null },
+      ]),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    await act(async () => undefined)
+    const preview = screen.getByRole('img', { name: '完整动作预览' })
+    const firstThumbnail = screen.getByRole('img', { name: '动作第 1 帧' })
+    expect(preview.getAttribute('src')).toBe('https://example.test/action-1.png')
+
+    await act(async () => vi.advanceTimersByTime(82))
+    expect(preview.getAttribute('src')).toBe('https://example.test/action-1.png')
+
+    await act(async () => vi.advanceTimersByTime(1))
+    expect(preview.getAttribute('src')).toBe('https://example.test/action-2.png')
+    expect(firstThumbnail.getAttribute('src')).toBe('https://example.test/action-1.png')
   })
 
   it('reveals generated candidate frames with staggered motion', async () => {
@@ -1220,7 +1405,7 @@ describe('QuickStartPage', () => {
     action.resolve({ runId: 'run-new' })
   })
 
-  it('restarts with a fresh Agent session after the clarification budget is exhausted', async () => {
+  it('keeps the same Agent session after multiple text decisions', async () => {
     const plannerResults: PlannerResult[] = [
       { text: '请补充角色风格。', finishReason: 'stop', toolCalls: [] },
       { text: '描述仍有冲突，请修改后重新开始。', finishReason: 'stop', toolCalls: [] },
@@ -1251,17 +1436,21 @@ describe('QuickStartPage', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '继续' }))
     expect(await screen.findByText('描述仍有冲突，请修改后重新开始。')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '重新开始' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '继续' })).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText('创作指令'), {
       target: { value: '16-bit 银发像素骑士，请直接生成' },
     })
-    fireEvent.click(screen.getByRole('button', { name: '重新开始' }))
+    fireEvent.click(screen.getByRole('button', { name: '继续' }))
 
     expect(startCharacterGeneration).not.toHaveBeenCalled()
     await confirmAgentGeneration()
     await waitFor(() => expect(startCharacterGeneration).toHaveBeenCalledTimes(1))
     expect(planner.mock.calls[2]?.[0].messages).toEqual([
+      { role: 'user', content: '一个骑士' },
+      { role: 'assistant', content: '请补充角色风格。' },
+      { role: 'user', content: '仍然缺少明确风格' },
+      { role: 'assistant', content: '描述仍有冲突，请修改后重新开始。' },
       { role: 'user', content: '16-bit 银发像素骑士，请直接生成' },
     ])
   })
@@ -1385,50 +1574,59 @@ describe('QuickStartPage', () => {
     expect(composer?.querySelector('[data-layout="quick-start-attachment-row"]')).toBeNull()
   })
 
-  it('adds an action to an existing character and reports submission errors', async () => {
-    const service = serviceFor(null)
-    const view = renderAt('/quick-start?characterId=character-1&outfitId=outfit-1', service)
-    fireEvent.change(screen.getByLabelText('动作描述'), { target: { value: '挥手' } })
-    fireEvent.click(screen.getByRole('button', { name: '开始生成新动作' }))
-    await waitFor(() =>
-      expect(service.startAction).toHaveBeenCalledWith(
-        { characterId: 'character-1', outfitId: 'outfit-1' },
-        '挥手',
-      ),
-    )
+  it('adds an action from the existing Quick Start run instead of creating another run', async () => {
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const service = serviceFor(run)
+    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service)
 
-    view.unmount()
-    const failed = serviceFor(null, {
-      startAction: vi.fn(async () => Promise.reject(new Error('动作创建失败'))),
-    })
-    renderAt('/quick-start?characterId=character-1&outfitId=outfit-1', failed)
-    fireEvent.change(screen.getByLabelText('动作描述'), { target: { value: '挥手' } })
-    fireEvent.click(screen.getByRole('button', { name: '开始生成新动作' }))
-    expect((await screen.findByRole('alert')).textContent).toContain('动作创建失败')
+    const input = await screen.findByRole('textbox', { name: '继续描述你的想法' })
+    const submit = screen.getByRole('button', { name: '发送' })
+    expect((submit as HTMLButtonElement).disabled).toBe(true)
+
+    fireEvent.change(input, { target: { value: '挥手' } })
+    await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(submit)
+
+    await waitFor(() => expect(service.addAction).toHaveBeenCalledWith('outfit-1', '挥手'))
   })
 
-  it('blocks an empty action description and says what to type instead', async () => {
-    // 空描述会被后端当成 custom 动作缺 custom_prompt 拒掉，回来的是一句
-    // "请求参数校验失败"。这里断言用户根本走不到那一步。
-    const service = serviceFor(null)
-    renderAt('/quick-start?characterId=character-1&outfitId=outfit-1', service)
+  it('adds an action when an older action branch failed', async () => {
+    const current = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const run = workflow([
+      ...current.nodes.slice(0, 2),
+      {
+        ...current.nodes[4],
+        id: 'failed-action-full',
+        status: 'failed',
+        error: '旧动作生成失败',
+      },
+      ...current.nodes.slice(2),
+    ])
+    const service = serviceFor(run)
+    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service)
 
-    const submit = screen.getByRole('button', { name: '开始生成新动作' })
-    expect((submit as HTMLButtonElement).disabled).toBe(true)
-    expect(screen.getByText('请先描述动作，例如：来回踱步')).toBeTruthy()
+    const input = await screen.findByRole('textbox', { name: '继续描述你的想法' })
+    fireEvent.change(input, { target: { value: '跳跃' } })
 
-    fireEvent.change(screen.getByLabelText('动作描述'), { target: { value: '   ' } })
-    expect((submit as HTMLButtonElement).disabled).toBe(true)
-    expect(screen.getByText('请先描述动作，例如：来回踱步')).toBeTruthy()
+    const submit = screen.getByRole('button', { name: '发送' })
+    await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false))
     fireEvent.click(submit)
-    fireEvent.submit(submit.closest('form')!)
-    await waitFor(() => expect(service.startAction).not.toHaveBeenCalled())
+    await waitFor(() => expect(service.addAction).toHaveBeenCalledWith('outfit-1', '跳跃'))
+  })
 
-    fireEvent.change(screen.getByLabelText('动作描述'), { target: { value: '来回踱步' } })
-    expect((submit as HTMLButtonElement).disabled).toBe(false)
-    expect(screen.queryByText('请先描述动作，例如：来回踱步')).toBeNull()
-    fireEvent.click(submit)
-    await waitFor(() => expect(service.startAction).toHaveBeenCalledTimes(1))
+  it('reports add-action failures inside the existing Quick Start run', async () => {
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const service = serviceFor(run, {
+      addAction: vi.fn(async () => Promise.reject(new Error('动作生成暂时不可用'))),
+    })
+    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service)
+
+    fireEvent.change(await screen.findByRole('textbox', { name: '继续描述你的想法' }), {
+      target: { value: '挥手' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    expect((await screen.findByRole('alert')).textContent).toContain('动作生成暂时不可用')
   })
 
   it('recovers missing runs and returns to the creation entry', async () => {

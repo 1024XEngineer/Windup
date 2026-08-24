@@ -488,6 +488,57 @@ def test_stance_omitted_stays_none_not_biped(auth_client, monkeypatch):
     assert inputs and inputs[0].stance is None
 
 
+def test_ground_contact_from_request_reaches_the_task_input(auth_client, monkeypatch):
+    """飞 / 游 / 攀的声明断在请求层的话,对齐那一步永远走脚线分支(#534)。"""
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.orchestrator.model import CharacterActionInput
+
+    dispatched = _capture_action_input(gen_api, monkeypatch)
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+
+    auth_client.post(
+        "/generation/action",
+        json=_action_payload(
+            project["id"], character["id"],
+            action_type="custom", custom_prompt="flies forward", ground_contact=False,
+        ),
+    )
+
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs, "任务没被收下"
+    assert inputs[0].ground_contact is False
+
+
+def test_ground_contact_omitted_stays_none_not_true(auth_client, monkeypatch):
+    """不给就原样传 None —— 在这层填默认值,"没给"与"明确有地面接触"就分不开了。"""
+    from windup_app.web.api import generation as gen_api
+    from windup_app.server.orchestrator.model import CharacterActionInput
+
+    dispatched = _capture_action_input(gen_api, monkeypatch)
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+
+    auth_client.post(
+        "/generation/action", json=_action_payload(project["id"], character["id"]),
+    )
+
+    inputs = [a for args in dispatched for a in args if isinstance(a, CharacterActionInput)]
+    assert inputs and inputs[0].ground_contact is None
+
+
+def test_ground_contact_on_a_fixed_action_is_rejected_at_the_entrance(auth_client):
+    """walk 收下这个字段等于让调用方以为自己能改它,而它不会生效。"""
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+    body = auth_client.post(
+        "/generation/action",
+        json=_action_payload(project["id"], character["id"], ground_contact=False),
+    ).json()
+    assert body["code"] == 400, body
+    assert "ground_contact" in body["message"], body["message"]
+
+
 def test_illegal_stance_is_rejected_at_the_entrance(auth_client):
     project = _create_project(auth_client)
     character = _create_character(auth_client, project["id"])

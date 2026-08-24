@@ -439,7 +439,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
 
     renderEditor('/workflow-editor/42')
 
-    const exportButtons = await screen.findAllByRole('button', { name: /导出角色母版/ })
+    const exportButtons = await screen.findAllByRole('button', { name: /导出.*资产/ })
     expect(exportButtons.length).toBeGreaterThan(0)
     expect(
       exportButtons.every((button) => button.className.includes('border-app-line-strong')),
@@ -667,10 +667,10 @@ describe('WorkflowEditorPage real runtime boundary', () => {
   })
 
   it('四向角色母版按真实源方向分组选择并逐一确认', async () => {
-    const workflow = selectingTemplateWorkflow(3, 'template-east')
+    const workflow = selectingTemplateWorkflow(4, 'template-east')
     workflow.nodes[1] = {
       ...(workflow.nodes[1] as CharacterTemplateWorkflowNode),
-      generations: (['east', 'north', 'south'] as const).map((direction) => ({
+      generations: (['east', 'west', 'north', 'south'] as const).map((direction) => ({
         taskId: `template-${direction}`,
         role: 'character_template',
         direction,
@@ -679,7 +679,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     const session = createSession(workflow, {
       generationApis: generationApisFixture({
         get: vi.fn(async (_projectId: string, taskId: string) => {
-          const direction = taskId.replace('template-', '') as 'east' | 'north' | 'south'
+          const direction = taskId.replace('template-', '') as 'east' | 'west' | 'north' | 'south'
           return directionalCharacterGeneration(direction)
         }) as GenerationApis['get'],
       }),
@@ -708,6 +708,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
 
     for (const [direction, label] of [
       ['east', '东'],
+      ['west', '西'],
       ['north', '北'],
       ['south', '南'],
     ] as const) {
@@ -718,9 +719,10 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     }
     fireEvent.click(screen.getByRole('button', { name: '确认身份母版' }))
 
-    await waitFor(() => expect(confirmCharacterTemplate).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(confirmCharacterTemplate).toHaveBeenCalledTimes(4))
     expect(confirmCharacterTemplate.mock.calls.map((call) => call[2])).toEqual([
       'east',
+      'west',
       'north',
       'south',
     ])
@@ -1241,6 +1243,84 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     ).toMatchObject({
       input: { prompt: '向前挥拳、击中后自然收势，保持身体重心连续' },
     })
+  })
+
+  it('完整动画完成后用共享播放器替代逐帧网格', async () => {
+    vi.useFakeTimers()
+    defaultSessionLoader.mockResolvedValue(
+      createSession(reviewingActionWorkflow(), {
+        generationApis: generationApisFixture({
+          get: vi.fn().mockResolvedValue(completeAnimationGeneration()),
+        }),
+      }),
+    )
+    const view = renderEditor('/workflow-editor/42')
+    try {
+      await act(async () => undefined)
+      await act(async () => undefined)
+
+      const player = screen.getByRole('img', { name: '完整动画预览' })
+      expect(player.getAttribute('src')).toContain('/walk-01.png')
+      expect(screen.queryByRole('img', { name: '动画帧 1' })).toBeNull()
+      expect(screen.queryByRole('img', { name: '动画帧 2' })).toBeNull()
+
+      act(() => vi.advanceTimersByTime(100))
+      expect(player.getAttribute('src')).toContain('/walk-02.png')
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
+  })
+
+  it('多方向完整动画为每个真实源方向分别播放结果', async () => {
+    const workflow = reviewingActionWorkflow()
+    const fullFrame = workflow.nodes.find((node) => node.type === 'action-full-frame')
+    if (!fullFrame || fullFrame.type !== 'action-full-frame') {
+      throw new Error('missing full frame')
+    }
+    const directions = ['east', 'north', 'south'] as const
+    fullFrame.generations = directions.map((direction) => ({
+      taskId: `generation-${direction}`,
+      role: 'complete_animation' as const,
+      direction,
+    }))
+    defaultSessionLoader.mockResolvedValue(
+      createSession(workflow, {
+        project: { ...projectFixture(), directionalMovement: 'four-way' },
+        generationApis: generationApisFixture({
+          get: vi.fn(async (_projectId: string, taskId: string) => {
+            const direction = taskId.replace('generation-', '') as (typeof directions)[number]
+            return {
+              ...completeAnimationGeneration(),
+              id: taskId,
+              result: {
+                type: 'complete_animation' as const,
+                direction,
+                frames: [
+                  {
+                    index: 0,
+                    url: `https://assets.windup.test/${direction}-01.png`,
+                    durationMs: 100,
+                  },
+                ],
+              },
+            }
+          }) as GenerationApis['get'],
+        }),
+      }),
+    )
+
+    renderEditor('/workflow-editor/42')
+
+    expect(
+      (await screen.findByRole('img', { name: '东完整动画预览' })).getAttribute('src'),
+    ).toContain('/east-01.png')
+    expect(screen.getByRole('img', { name: '北完整动画预览' }).getAttribute('src')).toContain(
+      '/north-01.png',
+    )
+    expect(screen.getByRole('img', { name: '南完整动画预览' }).getAttribute('src')).toContain(
+      '/south-01.png',
+    )
   })
 
   it('发布与审核命令失败时显示错误并释放分支锁', async () => {
@@ -2120,7 +2200,7 @@ function characterGeneration(label: string): Generation {
 }
 
 function directionalCharacterGeneration(
-  direction: 'east' | 'north' | 'south',
+  direction: 'east' | 'west' | 'north' | 'south',
 ): Generation<'character_template'> {
   return {
     id: `template-${direction}`,
@@ -2138,7 +2218,7 @@ function directionalCharacterGeneration(
 
 function completeAnimationGeneration(): Generation<'complete_animation'> {
   return {
-    id: 'generation-walk',
+    id: 'generation-action-walk',
     projectId: '1',
     type: 'complete_animation',
     status: 'completed',

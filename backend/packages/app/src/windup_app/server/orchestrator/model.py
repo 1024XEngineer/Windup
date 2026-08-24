@@ -99,6 +99,10 @@ class CharacterActionInput:
     # 这个动作是否循环播放。``None`` 原样往下传,由编排层兜成一次性:本层替调用方填默认值
     # 的话,"没给"和"明确给了 False"从这里起就再也分不开了。
     loop: bool | None = None
+    # 这个动作有没有地面接触。``None`` 原样往下传,由编排层兜成"有" —— 本层替调用方填默认
+    # 值的话,"没给"与"明确给了 True"从这里起就分不开了。飞 / 游 / 攀传 False,垂直对齐
+    # 改按躯干中心走(#534);jump 不属此列,它腾空但要回地。
+    ground_contact: bool | None = None
     # 视频模型。``None`` = 用部署配置的默认值。取值域为
     # ``ModelRegistry.chain(CHARACTER_ACTION)``(部署默认 + fallbacks);不在链上 → 入口
     # 报错,不到付费调用才失败。选中的型号表示这次从它开始试,由 Gateway 读 start_from_model。

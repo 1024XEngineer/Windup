@@ -84,13 +84,14 @@ const characterWithoutLocomotion: Character = {
   })),
 }
 
-function renderWorkbench() {
+function renderWorkbench(userId: string | null = '7') {
   render(
     <PlaytestWorkbench
       character={character}
       outfitId={OUTFIT_ID}
       movementMode="single"
       initialActionId={IDLE_ACTION_ID}
+      userId={userId}
     />,
   )
 }
@@ -101,7 +102,11 @@ function pressedState(actionName: string) {
     .getAttribute('aria-pressed')
 }
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  window.localStorage.clear()
+  vi.restoreAllMocks()
+})
 
 describe('PlaytestWorkbench minimal control path', () => {
   it('shows a clear error when the requested outfit does not exist', () => {
@@ -138,27 +143,33 @@ describe('PlaytestWorkbench minimal control path', () => {
     expect(pressedState('待机')).toBe('true')
   })
 
-  it('keeps moving until every key bound to the same direction is released', () => {
+  it('keeps moving until the keyboard and visible control are both released', () => {
     renderWorkbench()
+    const right = screen.getByRole('button', { name: '向右移动' })
+    Object.assign(right, {
+      setPointerCapture: vi.fn(),
+      hasPointerCapture: () => true,
+      releasePointerCapture: vi.fn(),
+    })
 
+    fireEvent.pointerDown(right, { pointerId: 41 })
     fireEvent.keyDown(window, { key: 'd', code: 'KeyD' })
-    fireEvent.keyDown(window, { key: 'ArrowRight', code: 'ArrowRight' })
     fireEvent.keyUp(window, { key: 'd', code: 'KeyD' })
 
     expect(pressedState('行走')).toBe('true')
 
-    fireEvent.keyUp(window, { key: 'ArrowRight', code: 'ArrowRight' })
+    fireEvent.pointerUp(right, { pointerId: 41 })
     expect(pressedState('待机')).toBe('true')
   })
 
   it('shows action assignments separately and disables directions without assets', () => {
     renderWorkbench()
 
-    expect((screen.getByLabelText('空格键分配动作') as HTMLSelectElement).value).toBe('jump')
-    expect((screen.getByLabelText('Shift 分配动作') as HTMLSelectElement).value).toBe('')
+    expect((screen.getByLabelText('主动作分配动作') as HTMLSelectElement).value).toBe('jump')
+    expect((screen.getByLabelText('次动作分配动作') as HTMLSelectElement).value).toBe('')
     expect(screen.queryByLabelText('A 分配动作')).toBeNull()
     expect(screen.queryByLabelText('D 分配动作')).toBeNull()
-    expect((screen.getByRole('button', { name: 'Shift 键' }) as HTMLButtonElement).disabled).toBe(
+    expect((screen.getByRole('button', { name: '次动作键' }) as HTMLButtonElement).disabled).toBe(
       true,
     )
     expect((screen.getByRole('button', { name: '向左移动' }) as HTMLButtonElement).disabled).toBe(
@@ -203,7 +214,7 @@ describe('PlaytestWorkbench minimal control path', () => {
   it('uses an adjusted assignment immediately without reloading the action frames', () => {
     renderWorkbench()
 
-    fireEvent.change(screen.getByLabelText('空格键分配动作'), {
+    fireEvent.change(screen.getByLabelText('主动作分配动作'), {
       target: { value: 'attack' },
     })
     fireEvent.keyDown(window, { key: ' ', code: 'Space' })
@@ -214,7 +225,7 @@ describe('PlaytestWorkbench minimal control path', () => {
   it('allows an assignment to be cleared and releases pointers without capture', () => {
     renderWorkbench()
 
-    const space = screen.getByRole('button', { name: '空格键' })
+    const space = screen.getByRole('button', { name: '主动作键' })
     const releaseControlPointerCapture = vi.fn()
     Object.assign(space, {
       hasPointerCapture: () => false,
@@ -223,10 +234,10 @@ describe('PlaytestWorkbench minimal control path', () => {
     fireEvent.pointerUp(space, { pointerId: 20 })
     expect(releaseControlPointerCapture).not.toHaveBeenCalled()
 
-    fireEvent.change(screen.getByLabelText('空格键分配动作'), {
+    fireEvent.change(screen.getByLabelText('主动作分配动作'), {
       target: { value: '' },
     })
-    expect((screen.getByRole('button', { name: '空格键' }) as HTMLButtonElement).disabled).toBe(
+    expect((screen.getByRole('button', { name: '主动作键' }) as HTMLButtonElement).disabled).toBe(
       true,
     )
 
@@ -275,7 +286,7 @@ describe('PlaytestWorkbench minimal control path', () => {
   it('uses the assigned action for pointer press, release, cancel, and lost capture', () => {
     renderWorkbench()
 
-    const space = screen.getByRole('button', { name: '空格键' })
+    const space = screen.getByRole('button', { name: '主动作键' })
     const setPointerCapture = vi.fn()
     const releasePointerCapture = vi.fn()
     Object.assign(space, {
@@ -298,5 +309,71 @@ describe('PlaytestWorkbench minimal control path', () => {
     fireEvent.pointerDown(space, { pointerId: 13 })
     fireEvent.lostPointerCapture(space, { pointerId: 13 })
     expect(space.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('captures a physical key and restores it for the same local account', () => {
+    renderWorkbench('7')
+
+    fireEvent.click(screen.getByRole('button', { name: '修改向右移动键位' }))
+    fireEvent.keyDown(window, { key: 'l', code: 'KeyL' })
+
+    expect(screen.getByText('已保存到此浏览器')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '修改向右移动键位' }).textContent).toContain('L')
+    expect(pressedState('待机')).toBe('true')
+
+    cleanup()
+    renderWorkbench('7')
+    expect(screen.getByRole('button', { name: '修改向右移动键位' }).textContent).toContain('L')
+  })
+
+  it('keeps persisted keybindings isolated between local accounts', () => {
+    renderWorkbench('7')
+    fireEvent.click(screen.getByRole('button', { name: '修改向右移动键位' }))
+    fireEvent.keyDown(window, { key: 'l', code: 'KeyL' })
+
+    cleanup()
+    renderWorkbench('8')
+
+    expect(screen.getByRole('button', { name: '修改向右移动键位' }).textContent).toContain('D')
+  })
+
+  it('swaps occupied controls and lets Escape cancel capture', () => {
+    renderWorkbench()
+
+    fireEvent.click(screen.getByRole('button', { name: '修改向右移动键位' }))
+    fireEvent.keyDown(window, { key: 'w', code: 'KeyW' })
+    expect(screen.getByRole('button', { name: '修改向右移动键位' }).textContent).toContain('W')
+    expect(screen.getByRole('button', { name: '修改向上移动键位' }).textContent).toContain('D')
+
+    fireEvent.click(screen.getByRole('button', { name: '修改向左移动键位' }))
+    expect(screen.getByText('请按新键')).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' })
+    expect(screen.queryByText('请按新键')).toBeNull()
+    expect(screen.getByRole('button', { name: '修改向左移动键位' }).textContent).toContain('A')
+  })
+
+  it('reports when browser persistence is unavailable instead of claiming success', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('blocked')
+    })
+    renderWorkbench()
+
+    fireEvent.click(screen.getByRole('button', { name: '修改向右移动键位' }))
+    fireEvent.keyDown(window, { key: 'l', code: 'KeyL' })
+
+    expect(screen.getByText('仅本次有效，浏览器未保存')).toBeTruthy()
+    expect(screen.queryByText('已保存到此浏览器')).toBeNull()
+  })
+
+  it('clears an action key and restores all defaults without touching the backend', () => {
+    renderWorkbench()
+
+    fireEvent.click(screen.getByRole('button', { name: '修改主动作键位' }))
+    fireEvent.keyDown(window, { key: 'Delete', code: 'Delete' })
+    expect(screen.getByRole('button', { name: '修改主动作键位' }).textContent).toContain('未绑定')
+
+    fireEvent.click(screen.getByRole('button', { name: '恢复默认键位' }))
+    expect(screen.getByRole('button', { name: '修改主动作键位' }).textContent).toContain('Space')
+    expect(screen.getByText('已恢复此浏览器默认键位')).toBeTruthy()
   })
 })
