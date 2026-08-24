@@ -44,3 +44,6 @@ class AdapterResult:
     poll_ms: int | None = None
     download_ms: int | None = None
     poll_count: int | None = None
+    #: 产物地址。OpenAI 面在轮询响应里就给出它,协议层要有地方交回来,
+    #: 否则只能另造一个平行的结果类型。
+    result_url: str | None = None

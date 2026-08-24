@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { PlaytestActionBindings } from '../bindings'
 import type { PlaytestAction } from '../model'
+import { DEFAULT_PLAYTEST_PREFERENCES, rebindPlaytestCommand } from '../preferences'
 import { preloadActionFrames, usePlaytestRuntime } from './use-playtest-runtime'
 
 afterEach(() => {
@@ -207,6 +208,40 @@ describe('preloadActionFrames', () => {
 
     act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', code: 'KeyS' })))
     expect(result.current.runtime).toMatchObject({ actionId: 'walk', facing: 'south' })
+  })
+
+  it('uses persisted physical key codes instead of the fixed default key', () => {
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn(() => 1),
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    const preferences = rebindPlaytestCommand(DEFAULT_PLAYTEST_PREFERENCES, 'move_right', 'KeyL')
+    const { result } = renderHook(() =>
+      usePlaytestRuntime(actions, 'idle', 'single', bindings, { preferences }),
+    )
+
+    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', code: 'KeyD' })))
+    expect(result.current.runtime.actionId).toBe('idle')
+
+    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'l', code: 'KeyL' })))
+    expect(result.current.runtime).toMatchObject({ actionId: 'walk', facing: 'east' })
+  })
+
+  it('pauses runtime keyboard handling while the workbench captures a new key', () => {
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn(() => 1),
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    const { result } = renderHook(() =>
+      usePlaytestRuntime(actions, 'idle', 'single', bindings, { keyboardEnabled: false }),
+    )
+
+    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', code: 'KeyD' })))
+
+    expect(result.current.runtime.actionId).toBe('idle')
+    expect(result.current.runtime.held.right).toBe(false)
   })
 
   it('ignores typing and unknown keys while keeping the direction compatibility entry', () => {

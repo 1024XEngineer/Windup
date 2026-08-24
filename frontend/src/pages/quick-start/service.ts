@@ -24,13 +24,19 @@ import { getApiAccessToken, recoverApiUnauthorized, resolveApiBaseUrl } from '@/
 import { createEventStreamSubscriber } from '@/shared/api/stream'
 import {
   createAutoPrepareProject,
-  createExistingCharacterActionRun,
   createWorkflowController,
   type PrepareQuickStartProject,
   type WorkflowController,
 } from '@/features/workflow-controller'
 import { createProgressiveExportModel, type ExportPackageModel } from '@/features/export-package'
 import { createActionSequences } from '@/features/export'
+import {
+  REFINE_CHARACTER_TEMPLATE_TOOL,
+  REFINE_FIRST_FRAME_TOOL,
+  REGENERATE_CHARACTER_TEMPLATE_TOOL,
+  REGENERATE_FIRST_FRAME_TOOL,
+  type WorkflowAgentContext,
+} from '@/features/quick-start-agent/runtime'
 
 export { createAutoPrepareProject }
 export type { PrepareQuickStartProject }
@@ -72,6 +78,8 @@ export interface QuickStartSession {
     actionDescription: string,
     signal?: AbortSignal,
   ): Promise<WorkflowRun>
+  /** 在当前 WorkflowRun 的角色母版后追加动作，不创建新的 Run。 */
+  addAction(outfitId: string, actionDescription: string): Promise<WorkflowRun>
   confirmCandidate(
     selectedImages: QuickStartCandidateSelection,
     actionDescription?: string,
@@ -90,6 +98,15 @@ export interface QuickStartSession {
     nodeId: WorkflowNode['id'],
     direction: ActionDirection,
   ): Promise<WorkflowRun>
+  getWorkflowAgentContext(): WorkflowAgentContext
+  regenerateCharacterTemplate(
+    mode: 'regenerate' | 'refine',
+    adjustmentPrompt?: string,
+  ): Promise<WorkflowRun>
+  regenerateFirstFrame(
+    mode: 'regenerate' | 'refine',
+    adjustmentPrompt?: string,
+  ): Promise<WorkflowRun>
   /** 按当前 Run 完成度装配统一导出包；角色母版尚未确认时返回 null。 */
   getExportModel(): Promise<ExportPackageModel | null>
 }
@@ -101,10 +118,6 @@ export interface QuickStartEntryService {
     file: File,
     actionDescription: string,
     signal?: AbortSignal,
-  ): Promise<QuickStartSession>
-  startAction(
-    target: { characterId: string; outfitId: string },
-    actionDescription: string,
   ): Promise<QuickStartSession>
   open(runId: WorkflowRun['id']): Promise<QuickStartSession>
 }
@@ -692,6 +705,25 @@ export function createQuickStartService({
         ensureAutomaticAdvance()
         return controller.getWorkflow()
       },
+      async addAction(outfitId, actionDescription) {
+        const prompt = actionDescription.trim()
+        if (!prompt) throw new Error('请先描述要新增的动作')
+        const run = controller.getWorkflow()
+        const characterId = setupNode(run).input.characterId
+        if (characterApis && characterId) {
+          const character = await characterApis.get(characterId)
+          if (character.workflowRunId !== run.id) {
+            throw new Error('当前角色未绑定这条 WorkflowRun，不能追加动作')
+          }
+          if (!character.outfits.some((outfit) => outfit.id === outfitId)) {
+            throw new Error('当前角色没有这个造型，不能追加动作')
+          }
+        }
+        const spriteSize = knownSpriteSize ?? (await resolveProjectSpriteSize(run.projectId))
+        await prepareAction(controller, outfitId, prompt, spriteSize)
+        ensureAutomaticAdvance()
+        return controller.getWorkflow()
+      },
       confirmCandidate(selection, actionDescription) {
         if (candidateCommand) return candidateCommand
         const command = (async () => {
@@ -783,6 +815,57 @@ export function createQuickStartService({
           referenceMedia: [],
         })
         ensureAutomaticAdvance()
+        return controller.getWorkflow()
+      },
+      getWorkflowAgentContext() {
+        const run = controller.getWorkflow()
+        const availableTools: WorkflowAgentContext['availableTools'][number][] = []
+        const template = run.nodes.find((node) => node.type === 'character-template')
+        if (
+          template?.type === 'character-template' &&
+          template.status === 'passed' &&
+          template.phase === 'completed' &&
+          template.selectedImageUrl
+        ) {
+          availableTools.push(REGENERATE_CHARACTER_TEMPLATE_TOOL, REFINE_CHARACTER_TEMPLATE_TOOL)
+        }
+        const firstFrame = latestActionFirstFrame(run)
+        if (
+          firstFrame?.type === 'action-first-frame' &&
+          firstFrame.status === 'passed' &&
+          firstFrame.phase === 'completed' &&
+          firstFrame.selectedFirstFrameUrl
+        ) {
+          availableTools.push(REGENERATE_FIRST_FRAME_TOOL, REFINE_FIRST_FRAME_TOOL)
+        }
+        return { availableTools }
+      },
+      async regenerateCharacterTemplate(mode, adjustmentPrompt) {
+        const run = controller.getWorkflow()
+        const template = templateNode(run)
+        const spriteSize =
+          knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
+        await controller.regenerateCharacterTemplate(template.id, {
+          spriteWidth: spriteSize.width,
+          spriteHeight: spriteSize.height,
+          mode,
+          ...(adjustmentPrompt === undefined ? {} : { adjustmentPrompt }),
+        })
+        return controller.getWorkflow()
+      },
+      async regenerateFirstFrame(mode, adjustmentPrompt) {
+        const firstFrame = latestActionFirstFrame(controller.getWorkflow())
+        if (!firstFrame || firstFrame.type !== 'action-first-frame') {
+          throw new Error('当前运行没有可重新生成的动作首帧')
+        }
+        const spriteSize =
+          knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
+        await controller.regenerateFirstFrame(firstFrame.id, {
+          spriteWidth: spriteSize.width,
+          spriteHeight: spriteSize.height,
+          mode,
+          ...(adjustmentPrompt === undefined ? {} : { adjustmentPrompt }),
+        })
         return controller.getWorkflow()
       },
       async approveReview() {
@@ -926,21 +1009,6 @@ export function createQuickStartService({
     }
   }
 
-  async function appendActionForCharacter(
-    target: { characterId: string; outfitId: string },
-    actionDescription: string,
-  ) {
-    if (!characterApis) throw new Error('角色服务尚未配置，不能增加动作')
-    const { run, character, outfit } = await createExistingCharacterActionRun(target, {
-      characterApis,
-      workflowRunApis,
-    })
-    const spriteSize = await resolveProjectSpriteSize(character.projectId)
-    const controller = createController(run)
-    await prepareAction(controller, outfit.id, actionDescription, spriteSize)
-    return createSession(controller, spriteSize)
-  }
-
   return {
     unavailableReason: null,
 
@@ -992,8 +1060,6 @@ export function createQuickStartService({
       await prepareAction(controller, target.outfitId, actionDescription, project.spriteSize)
       return createSession(controller, project.spriteSize)
     },
-
-    startAction: appendActionForCharacter,
 
     async open(runId) {
       const run = await workflowRunApis.get(runId)
