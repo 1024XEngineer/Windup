@@ -1,6 +1,9 @@
+export const QUICK_START_DECISION_TOOL = 'quick_start_decision' as const
+/** 旧前端测试与灰度响应的只读兼容名；命中时只生成提案，不会直接写入。 */
 export const START_CHARACTER_GENERATION_TOOL = 'start_character_generation' as const
 
 const MAX_PROMPT_LENGTH = 4_000
+const MAX_MESSAGE_LENGTH = 2_000
 const MAX_OPTIMIZATION_SUMMARY_LENGTH = 600
 
 export interface PlannerMessage {
@@ -32,23 +35,29 @@ export interface CharacterGenerationPlan {
   optimizationSummary: string
 }
 
-export type ValidatedPlannerTerminal =
-  | { kind: 'message'; message: string }
-  | ({ kind: 'tool' } & CharacterGenerationPlan)
+export interface CharacterGenerationProposal extends CharacterGenerationPlan {
+  proposalId: string
+}
+
+export type QuickStartDecision =
+  | { kind: 'reply'; message: string }
+  | { kind: 'clarification'; message: string }
+  | { kind: 'blocked'; message: string }
+  | ({ kind: 'proposal' } & CharacterGenerationPlan)
 
 export type QuickStartAgentResult =
-  | { kind: 'message'; message: string }
-  | ({ kind: 'generated'; runId: string } & CharacterGenerationPlan)
+  | { kind: 'message'; messageKind: 'reply' | 'clarification' | 'blocked'; message: string }
+  | ({ kind: 'proposal' } & CharacterGenerationProposal)
+  | ({ kind: 'generated'; runId: string } & CharacterGenerationProposal)
 
 export interface QuickStartAgentTurnOptions {
   signal?: AbortSignal
-  /** 页面先展示提案并等待用户确认；返回值可覆盖最终提交的 Prompt。 */
-  onBeforeDispatch?: (plan: CharacterGenerationPlan) => string | void | Promise<string | void>
 }
 
 export interface QuickStartAgent {
   start(input: string, options?: QuickStartAgentTurnOptions): Promise<QuickStartAgentResult>
   continue(input: string, options?: QuickStartAgentTurnOptions): Promise<QuickStartAgentResult>
+  confirmProposal(proposalId: string, prompt: string): Promise<QuickStartAgentResult>
   revoke(): void
 }
 
@@ -60,73 +69,108 @@ export type StartCharacterGenerationAction = (input: {
 export interface CreateQuickStartAgentOptions {
   planner: QuickStartPlanner
   startCharacterGeneration: StartCharacterGenerationAction
+  initialMessages?: readonly PlannerMessage[]
+  initialClarificationUsed?: boolean
+  initialProposal?: CharacterGenerationProposal | null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function parseMessage(value: unknown): string {
+  const message = typeof value === 'string' ? value.trim() : ''
+  if (!message || message.length > MAX_MESSAGE_LENGTH) {
+    throw new Error('Planner 的文字决策无效')
+  }
+  return message
+}
+
 export function parseCharacterGenerationPlan(value: unknown): CharacterGenerationPlan {
-  if (!isRecord(value)) throw new Error('生成 Tool 参数必须是对象')
+  if (!isRecord(value)) throw new Error('生成提案参数必须是对象')
   const keys = Object.keys(value)
   if (
-    keys.some((key) => key !== 'optimizedPrompt' && key !== 'optimizationSummary') ||
+    keys.some(
+      (key) => key !== 'kind' && key !== 'optimizedPrompt' && key !== 'optimizationSummary',
+    ) ||
+    (keys.includes('kind') && value.kind !== 'proposal') ||
     !keys.includes('optimizedPrompt') ||
     !keys.includes('optimizationSummary')
   ) {
-    throw new Error('生成 Tool 参数字段无效')
+    throw new Error('生成提案参数字段无效')
   }
 
   const optimizedPrompt =
     typeof value.optimizedPrompt === 'string' ? value.optimizedPrompt.trim() : ''
   if (!optimizedPrompt || optimizedPrompt.length > MAX_PROMPT_LENGTH) {
-    throw new Error('生成 Tool 的 optimizedPrompt 无效')
+    throw new Error('生成提案的 optimizedPrompt 无效')
   }
   const optimizationSummary =
     typeof value.optimizationSummary === 'string' ? value.optimizationSummary.trim() : ''
   if (!optimizationSummary || optimizationSummary.length > MAX_OPTIMIZATION_SUMMARY_LENGTH) {
-    throw new Error('生成 Tool 的 optimizationSummary 无效')
+    throw new Error('生成提案的 optimizationSummary 无效')
   }
   return { optimizedPrompt, optimizationSummary }
 }
 
-/** SDK 完整返回后再做一次 fail-closed 终态校验，校验通过前不触发业务 action。 */
-export function validatePlannerTerminal(result: PlannerResult): ValidatedPlannerTerminal {
-  if (result.toolCalls.length === 0) {
-    const message = result.text.trim()
-    if (result.finishReason !== 'stop' || !message) {
-      throw new Error('Planner 未返回完整的文字响应')
-    }
-    return { kind: 'message', message }
+export function parseQuickStartDecision(value: unknown): QuickStartDecision {
+  if (!isRecord(value)) throw new Error('Planner 决策必须是对象')
+  if (value.kind === 'proposal') {
+    return { kind: 'proposal', ...parseCharacterGenerationPlan(value) }
   }
+  if (value.kind !== 'reply' && value.kind !== 'clarification' && value.kind !== 'blocked') {
+    throw new Error('Planner 决策类型无效')
+  }
+  const keys = Object.keys(value)
+  if (keys.some((key) => key !== 'kind' && key !== 'message') || !keys.includes('message')) {
+    throw new Error('Planner 文字决策字段无效')
+  }
+  return { kind: value.kind, message: parseMessage(value.message) }
+}
 
+/** SDK 完整返回后再做一次 fail-closed 终态校验，校验通过前不触发业务 action。 */
+export function validatePlannerTerminal(result: PlannerResult): QuickStartDecision {
+  if (result.finishReason === 'stop' && result.toolCalls.length === 0) {
+    return { kind: 'reply', message: parseMessage(result.text) }
+  }
   if (result.finishReason !== 'tool-calls') {
-    throw new Error('Planner 的 Tool Call 响应未完整结束')
+    throw new Error('Planner 的决策响应未完整结束')
   }
   if (result.toolCalls.length !== 1) {
-    throw new Error('Planner 每轮必须且只能调用一个 Tool')
+    throw new Error('Planner 每轮必须且只能返回一个决策')
   }
   const [call] = result.toolCalls
-  if (call?.toolName !== START_CHARACTER_GENERATION_TOOL) {
-    throw new Error('Planner 调用了未知 Tool')
+  if (call?.toolName === START_CHARACTER_GENERATION_TOOL) {
+    return { kind: 'proposal', ...parseCharacterGenerationPlan(call.input) }
   }
-  return { kind: 'tool', ...parseCharacterGenerationPlan(call.input) }
+  if (call?.toolName !== QUICK_START_DECISION_TOOL) {
+    throw new Error('Planner 返回了未知决策')
+  }
+  return parseQuickStartDecision(call.input)
 }
 
 function abortError(): DOMException {
   return new DOMException('操作已取消', 'AbortError')
 }
 
+function proposalMessage(plan: CharacterGenerationPlan): string {
+  return `${plan.optimizationSummary}\n\n提示词提案：${plan.optimizedPrompt}`
+}
+
 export function createQuickStartAgent({
   planner,
   startCharacterGeneration,
+  initialMessages = [],
+  initialClarificationUsed = false,
+  initialProposal = null,
 }: CreateQuickStartAgentOptions): QuickStartAgent {
-  let started = false
+  let started = initialMessages.length > 0
   let revoked = false
   let consumed = false
-  let clarificationUsed = false
+  let clarificationUsed = initialClarificationUsed
   let running = false
-  let messages: PlannerMessage[] = []
+  let messages: PlannerMessage[] = [...initialMessages]
+  let currentProposal = initialProposal
 
   function assertAuthorized() {
     if (revoked) throw new Error('生成授权已失效')
@@ -135,7 +179,7 @@ export function createQuickStartAgent({
 
   async function runTurn(
     input: string,
-    { signal, onBeforeDispatch }: QuickStartAgentTurnOptions = {},
+    { signal }: QuickStartAgentTurnOptions = {},
   ): Promise<QuickStartAgentResult> {
     assertAuthorized()
     if (running) throw new Error('Planner 正在处理上一条输入')
@@ -147,12 +191,16 @@ export function createQuickStartAgent({
     }
 
     running = true
+    currentProposal = null
     try {
       const nextMessages: PlannerMessage[] = [
         ...messages,
         { role: 'user', content: normalizedInput },
       ]
-      const terminal = validatePlannerTerminal(
+      // 用户点击发送后，页面已经展示并持久化这条消息；即使 Planner 失败，
+      // runtime 也必须保留同一历史，避免刷新前后得到不同上下文。
+      messages = nextMessages
+      const decision = validatePlannerTerminal(
         await planner({ messages: nextMessages, clarificationUsed, signal }),
       )
       if (signal?.aborted) {
@@ -160,36 +208,46 @@ export function createQuickStartAgent({
         throw abortError()
       }
 
-      if (terminal.kind === 'message') {
-        messages = [...nextMessages, { role: 'assistant', content: terminal.message }]
-        if (clarificationUsed) revoked = true
-        clarificationUsed = true
-        return terminal
+      if (decision.kind !== 'proposal') {
+        messages = [...nextMessages, { role: 'assistant', content: decision.message }]
+        if (decision.kind === 'clarification') clarificationUsed = true
+        return { kind: 'message', messageKind: decision.kind, message: decision.message }
       }
 
-      const plan: CharacterGenerationPlan = {
-        optimizedPrompt: terminal.optimizedPrompt,
-        optimizationSummary: terminal.optimizationSummary,
+      const proposal: CharacterGenerationProposal = {
+        proposalId: `proposal-${nextMessages.length}`,
+        optimizedPrompt: decision.optimizedPrompt,
+        optimizationSummary: decision.optimizationSummary,
       }
-      const promptOverride = await onBeforeDispatch?.(plan)
-      if (signal?.aborted) {
-        revoked = true
-        throw abortError()
-      }
-      assertAuthorized()
+      currentProposal = proposal
+      messages = [...nextMessages, { role: 'assistant', content: proposalMessage(proposal) }]
+      return { kind: 'proposal', ...proposal }
+    } finally {
+      running = false
+    }
+  }
 
-      const effectivePrompt =
-        promptOverride === undefined ? plan.optimizedPrompt : promptOverride.trim()
-      if (!effectivePrompt || effectivePrompt.length > MAX_PROMPT_LENGTH) {
-        throw new Error('确认后的角色提示词无效')
-      }
+  async function confirmProposal(
+    proposalId: string,
+    prompt: string,
+  ): Promise<QuickStartAgentResult> {
+    assertAuthorized()
+    if (running) throw new Error('Planner 正在处理上一条输入')
+    if (!currentProposal || currentProposal.proposalId !== proposalId) {
+      throw new Error('提示词提案已失效')
+    }
+    const effectivePrompt = prompt.trim()
+    if (!effectivePrompt || effectivePrompt.length > MAX_PROMPT_LENGTH) {
+      throw new Error('确认后的角色提示词无效')
+    }
 
-      // 写权限在调用前消费。即使响应丢失，也不得自动重放可能已经计费的 action。
-      consumed = true
-      const { runId } = await startCharacterGeneration({
-        prompt: effectivePrompt,
-      })
-      return { kind: 'generated', runId, ...plan, optimizedPrompt: effectivePrompt }
+    running = true
+    consumed = true
+    const proposal = currentProposal
+    currentProposal = null
+    try {
+      const { runId } = await startCharacterGeneration({ prompt: effectivePrompt })
+      return { kind: 'generated', runId, ...proposal, optimizedPrompt: effectivePrompt }
     } finally {
       running = false
     }
@@ -205,7 +263,9 @@ export function createQuickStartAgent({
       if (!started) return Promise.reject(new Error('Agent 尚未开始'))
       return runTurn(input, options)
     },
+    confirmProposal,
     revoke() {
+      currentProposal = null
       if (!consumed) revoked = true
     },
   }

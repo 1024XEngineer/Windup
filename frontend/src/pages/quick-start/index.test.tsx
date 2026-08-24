@@ -593,7 +593,7 @@ describe('QuickStartPage', () => {
 
   it('keeps an unbound Agent draft in its current Quick Start history entry', async () => {
     const service = serviceFor(null)
-    const planner = vi.fn(async () => ({
+    const planner = vi.fn(async (_input: PlannerInput) => ({
       text: '可以。你最想保留哪个外观特征？',
       finishReason: 'stop',
       toolCalls: [],
@@ -631,6 +631,17 @@ describe('QuickStartPage', () => {
 
     expect(screen.getByText('我想做一个住在云端的机械师。')).toBeTruthy()
     expect(screen.getByText('可以。你最想保留哪个外观特征？')).toBeTruthy()
+
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '刚才我说了什么？' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '继续' }))
+    await waitFor(() => expect(planner).toHaveBeenCalledTimes(2))
+    expect(planner.mock.calls[1]?.[0].messages).toEqual([
+      { role: 'user', content: '我想做一个住在云端的机械师。' },
+      { role: 'assistant', content: '可以。你最想保留哪个外观特征？' },
+      { role: 'user', content: '刚才我说了什么？' },
+    ])
 
     restoredView.unmount()
     window.history.pushState(null, '', '/quick-start')
@@ -670,13 +681,17 @@ describe('QuickStartPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '填入输入框' }))
     await act(async () => vi.advanceTimersByTimeAsync(760))
+    fireEvent.change(screen.getByLabelText('创作指令'), {
+      target: { value: '提着蓝色风灯的森林守夜人' },
+    })
     fireEvent.click(screen.getByRole('button', { name: '发送生成' }))
     await act(async () => undefined)
     await act(async () => vi.advanceTimersByTime(460))
 
-    expect(
-      window.localStorage.getItem('windup.quick-start.agent-chat.v2:run:7:run-created'),
-    ).toContain('提着风灯的森林守夜人')
+    const runConversation = window.localStorage.getItem(
+      'windup.quick-start.agent-chat.v2:run:7:run-created',
+    )
+    expect(runConversation).toContain('提着蓝色风灯的森林守夜人')
     expect(
       window.sessionStorage.getItem(`windup.quick-start.agent-chat.v2:draft:7:${draftId}`),
     ).toBeNull()
@@ -691,12 +706,17 @@ describe('QuickStartPage', () => {
       'windup.quick-start.agent-chat.v2:run:7:run-2',
       JSON.stringify({ turns: [{ role: 'user', content: '第二条运行的对话' }] }),
     )
+    window.localStorage.setItem(
+      'windup.quick-start.agent-chat.v2:run:8:run-1',
+      JSON.stringify({ turns: [{ role: 'user', content: '另一位用户的对话' }] }),
+    )
     const run = workflow(setupAndTemplate(), 'run-1')
 
     renderAt('/quick-start/run-1', serviceFor(run))
 
     expect(await screen.findByText('第一条运行的对话')).toBeTruthy()
     expect(screen.queryByText('第二条运行的对话')).toBeNull()
+    expect(screen.queryByText('另一位用户的对话')).toBeNull()
   })
 
   it('migrates only legacy Agent turns bound to the current run', async () => {
@@ -786,6 +806,43 @@ describe('QuickStartPage', () => {
     expect(startCharacterGeneration).toHaveBeenCalledWith({
       prompt: '云端工坊的银发机械师，佩戴黄铜护目镜',
     })
+  })
+
+  it('keeps a proposal optional when the user continues the conversation', async () => {
+    const plannerResults: PlannerResult[] = [
+      {
+        text: '',
+        finishReason: 'tool-calls',
+        toolCalls: [
+          {
+            toolName: 'start_character_generation',
+            input: {
+              optimizedPrompt: '云端工坊的银发机械师，全身像',
+              optimizationSummary: '我会保留机械师设定，并整理为完整的全身母版描述。',
+            },
+          },
+        ],
+      },
+      { text: '可以先比较护目镜和单片镜两种方向。', finishReason: 'stop', toolCalls: [] },
+    ]
+    const planner = vi.fn(async () => plannerResults.shift()!)
+    const startCharacterGeneration = vi.fn(async () => ({ runId: 'run-should-not-exist' }))
+    renderAt('/quick-start', serviceFor(null), { planner, startCharacterGeneration })
+
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '云端工坊的银发机械师' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+    expect(await screen.findByRole('button', { name: '填入输入框' })).toBeTruthy()
+
+    const input = screen.getByRole('textbox', { name: '创作指令' }) as HTMLTextAreaElement
+    expect(input.disabled).toBe(false)
+    fireEvent.change(input, { target: { value: '你觉得眼镜应该怎么设计？' } })
+    fireEvent.click(screen.getByRole('button', { name: '继续' }))
+
+    expect(await screen.findByText('可以先比较护目镜和单片镜两种方向。')).toBeTruthy()
+    expect(startCharacterGeneration).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: '填入输入框' })).toBeNull()
   })
 
   it('keeps one persistent Agent shell with a floating composer outside the scrolling transcript', async () => {
@@ -1253,7 +1310,7 @@ describe('QuickStartPage', () => {
     action.resolve({ runId: 'run-new' })
   })
 
-  it('restarts with a fresh Agent session after the clarification budget is exhausted', async () => {
+  it('keeps the same Agent session after multiple text decisions', async () => {
     const plannerResults: PlannerResult[] = [
       { text: '请补充角色风格。', finishReason: 'stop', toolCalls: [] },
       { text: '描述仍有冲突，请修改后重新开始。', finishReason: 'stop', toolCalls: [] },
@@ -1284,17 +1341,21 @@ describe('QuickStartPage', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '继续' }))
     expect(await screen.findByText('描述仍有冲突，请修改后重新开始。')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '重新开始' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '继续' })).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText('创作指令'), {
       target: { value: '16-bit 银发像素骑士，请直接生成' },
     })
-    fireEvent.click(screen.getByRole('button', { name: '重新开始' }))
+    fireEvent.click(screen.getByRole('button', { name: '继续' }))
 
     expect(startCharacterGeneration).not.toHaveBeenCalled()
     await confirmAgentGeneration()
     await waitFor(() => expect(startCharacterGeneration).toHaveBeenCalledTimes(1))
     expect(planner.mock.calls[2]?.[0].messages).toEqual([
+      { role: 'user', content: '一个骑士' },
+      { role: 'assistant', content: '请补充角色风格。' },
+      { role: 'user', content: '仍然缺少明确风格' },
+      { role: 'assistant', content: '描述仍有冲突，请修改后重新开始。' },
       { role: 'user', content: '16-bit 银发像素骑士，请直接生成' },
     ])
   })
