@@ -41,7 +41,7 @@ describe('AI SDK OpenAI-compatible protocol fixture', () => {
     const captured = requestBody as unknown as Record<string, unknown>
     expect(captured).toMatchObject({
       model: 'quick-start-planner',
-      tool_choice: 'auto',
+      tool_choice: 'required',
     })
     expect(captured.stream).toBeUndefined()
     expect((captured.tools as unknown[] | undefined)?.length).toBe(1)
@@ -121,7 +121,7 @@ describe('AI SDK OpenAI-compatible protocol fixture', () => {
       clarificationUsed: false,
     })
 
-    expect(() => validatePlannerTerminal(result)).toThrow('生成 Tool 的 optimizedPrompt 无效')
+    expect(() => validatePlannerTerminal(result)).toThrow('生成提案的 optimizedPrompt 无效')
   })
 
   it('surfaces a standard 401 and honors cancellation', async () => {

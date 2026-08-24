@@ -295,7 +295,7 @@ export function createWorkflowController({
   const regenerationKeys = new Set<string>()
   const settlements = new Map<string, Promise<WorkflowRun>>()
   const listeners = new Set<(workflow: WorkflowRun) => void>()
-  const sourceDirections = getDirectionProfile(directionalMovement).generationDirections
+  const generationDirections = getDirectionProfile(directionalMovement).generationDirections
 
   function selectedDirectionUrl(
     values: Partial<Record<ActionDirection, string>> | undefined,
@@ -565,7 +565,7 @@ export function createWorkflowController({
             )
           })
     const templateNode = findSingleDependentNode(advanced, nodeId, 'character-template')
-    const missingDirections = sourceDirections.filter(
+    const missingDirections = generationDirections.filter(
       (direction) =>
         !selectedDirectionUrl(
           templateNode.selectedImages,
@@ -578,9 +578,9 @@ export function createWorkflowController({
       'character_template',
       (run, node, direction) => {
         if (node.type !== 'character-template') throw new Error('目标节点不是角色母版')
-        const hasSelectedDirection = sourceDirections.some((sourceDirection) =>
+        const hasSelectedDirection = generationDirections.some((generationDirection) =>
           Boolean(
-            selectedDirectionUrl(node.selectedImages, node.selectedImageUrl, sourceDirection),
+            selectedDirectionUrl(node.selectedImages, node.selectedImageUrl, generationDirection),
           ),
         )
         if (
@@ -621,7 +621,7 @@ export function createWorkflowController({
     ensureRunning()
     const imageUrl = nonEmpty(selectedImageUrl, 'selectedImageUrl')
     const normalizedCharacterId = nonEmpty(characterId, 'characterId')
-    assertSourceDirection(direction, sourceDirections)
+    assertGenerationDirection(direction, generationDirections)
     return persist((run) => {
       const templateNode = findNode(run, nodeId)
       if (templateNode.type !== 'character-template') throw new Error('目标节点不是角色母版')
@@ -646,8 +646,8 @@ export function createWorkflowController({
               ...(templateNode.selectedImages ?? {}),
               [direction]: imageUrl,
             }
-            const complete = sourceDirections.every((sourceDirection) => {
-              return Boolean(selectedImages[sourceDirection])
+            const complete = generationDirections.every((generationDirection) => {
+              return Boolean(selectedImages[generationDirection])
             })
             return {
               ...templateNode,
@@ -699,7 +699,7 @@ export function createWorkflowController({
     ensureRunning()
     const imageUrl = nonEmpty(selectedImageUrl, 'selectedImageUrl')
     const normalizedCharacterId = nonEmpty(characterId, 'characterId')
-    assertSourceDirection(direction, sourceDirections)
+    assertGenerationDirection(direction, generationDirections)
     return persist((run) => {
       const setupNode = findNode(run, nodeId)
       if (setupNode.type !== 'character-setup') throw new Error('目标节点不是角色设定')
@@ -737,8 +737,8 @@ export function createWorkflowController({
               ...(templateNode.selectedImages ?? {}),
               [direction]: imageUrl,
             }
-            const complete = sourceDirections.every((sourceDirection) => {
-              return Boolean(selectedImages[sourceDirection])
+            const complete = generationDirections.every((generationDirection) => {
+              return Boolean(selectedImages[generationDirection])
             })
             return {
               ...templateNode,
@@ -765,7 +765,7 @@ export function createWorkflowController({
     const targetNode = findNode(before, nodeId)
     if (targetNode.type !== 'action-first-frame') throw new Error('目标节点不是动作首帧')
     const targetTemplate = findSingleDependencyNode(before, targetNode, 'character-template')
-    for (const direction of sourceDirections) {
+    for (const direction of generationDirections) {
       if (
         !selectedDirectionUrl(
           targetTemplate.selectedImages,
@@ -807,7 +807,7 @@ export function createWorkflowController({
         }
         return input
       },
-      sourceDirections,
+      generationDirections,
     )
   }
 
@@ -832,7 +832,7 @@ export function createWorkflowController({
     const sourceImageUrls =
       options.mode === 'refine'
         ? Object.fromEntries(
-            sourceDirections.map((direction) => {
+            generationDirections.map((direction) => {
               const imageUrl = selectedDirectionUrl(
                 templateNode.selectedImages,
                 templateNode.selectedImageUrl,
@@ -843,7 +843,7 @@ export function createWorkflowController({
             }),
           )
         : undefined
-    const keys = sourceDirections.map((direction) =>
+    const keys = generationDirections.map((direction) =>
       generationKey(nodeId, 'character_template', direction),
     )
     const pending = keys.flatMap((key) => {
@@ -882,7 +882,7 @@ export function createWorkflowController({
     const sourceImageUrls =
       options.mode === 'refine'
         ? Object.fromEntries(
-            sourceDirections.map((direction) => {
+            generationDirections.map((direction) => {
               const imageUrl = selectedDirectionUrl(
                 firstFrameNode.selectedFirstFrameUrls,
                 firstFrameNode.selectedFirstFrameUrl,
@@ -893,7 +893,7 @@ export function createWorkflowController({
             }),
           )
         : undefined
-    const keys = sourceDirections.map((direction) =>
+    const keys = generationDirections.map((direction) =>
       generationKey(nodeId, 'first_frame', direction),
     )
     const pending = keys.flatMap((key) => {
@@ -976,7 +976,7 @@ export function createWorkflowController({
   ) {
     ensureRunning()
     const imageUrl = nonEmpty(selectedFirstFrameUrl, 'selectedFirstFrameUrl')
-    assertSourceDirection(direction, sourceDirections)
+    assertGenerationDirection(direction, generationDirections)
     return persist((run) =>
       updateNode(run, nodeId, (node) => {
         if (node.type !== 'action-first-frame') throw new Error('目标节点不是动作首帧')
@@ -987,8 +987,8 @@ export function createWorkflowController({
           ...(node.selectedFirstFrameUrls ?? {}),
           [direction]: imageUrl,
         }
-        const complete = sourceDirections.every((sourceDirection) =>
-          Boolean(selectedFirstFrameUrls[sourceDirection]),
+        const complete = generationDirections.every((generationDirection) =>
+          Boolean(selectedFirstFrameUrls[generationDirection]),
         )
         return unlockReadyNodes(
           replaceNode(run, {
@@ -1012,7 +1012,7 @@ export function createWorkflowController({
     options: RetryGenerationDirectionOptions,
   ): Promise<WorkflowRun> {
     ensureRunning()
-    assertSourceDirection(direction, sourceDirections)
+    assertGenerationDirection(direction, generationDirections)
     const before = requireWorkflow()
     const originalNode = structuredClone(findNode(before, nodeId))
     const role = generationRoleForNode(originalNode)
@@ -1189,7 +1189,7 @@ export function createWorkflowController({
     if (targetNode.type !== 'action-full-frame') throw new Error('目标节点不是完整动画')
     const targetMethod = findSingleDependencyNode(before, targetNode, 'action-generation-method')
     const targetFirstFrame = findSingleDependencyNode(before, targetMethod, 'action-first-frame')
-    for (const direction of sourceDirections) {
+    for (const direction of generationDirections) {
       if (
         !selectedDirectionUrl(
           targetFirstFrame.selectedFirstFrameUrls,
@@ -1236,7 +1236,7 @@ export function createWorkflowController({
         }
         return input
       },
-      sourceDirections,
+      generationDirections,
     )
   }
 
@@ -1317,7 +1317,7 @@ export function createWorkflowController({
       node: WorkflowNode,
       direction: ActionDirection,
     ) => Parameters<GenerationApis['create']>[0],
-    directions: readonly ActionDirection[] = sourceDirections,
+    directions: readonly ActionDirection[] = generationDirections,
   ): Promise<WorkflowRun> {
     if (directions.length === 0) throw new Error('项目没有可生成的真实源方向')
     // 方向之间彼此独立，可以并行排队；即使其中一个提交失败，也要等其它已创建任务
@@ -1546,7 +1546,7 @@ export function createWorkflowController({
     }
 
     const role = reference.role
-    const hasAllExpectedReferences = sourceDirections.every((direction) =>
+    const hasAllExpectedReferences = generationDirections.every((direction) =>
       node.generations.some(
         (item) => item.role === role && generationReferenceDirection(item) === direction,
       ),
@@ -2097,11 +2097,11 @@ function generationReferenceDirection(reference: WorkflowGenerationRef): ActionD
   return reference.direction ?? 'east'
 }
 
-function assertSourceDirection(
+function assertGenerationDirection(
   direction: ActionDirection,
-  sourceDirections: readonly ActionDirection[],
+  generationDirections: readonly ActionDirection[],
 ) {
-  if (!sourceDirections.includes(direction)) {
+  if (!generationDirections.includes(direction)) {
     throw new Error(`方向 ${direction} 是镜像方向，不能单独生成或确认`)
   }
 }

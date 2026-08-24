@@ -8,6 +8,7 @@ import type {
   WorkflowActionInput,
   WorkflowRun,
 } from '@/entities'
+import { getDirectionProfile } from '@/entities'
 
 import type {
   ExportAction,
@@ -74,21 +75,62 @@ function exportFrames(action: Action): readonly ExportFrame[] {
 }
 
 function exportAction(action: Action, project: Project): ExportAction {
+  const realSequences = (action.sequences ?? []).filter(
+    (sequence) =>
+      sequence.sourceDirection === null && !sequence.mirrorX && sequence.frames.length > 0,
+  )
+  const hasDirectionalSequences = (action.sequences?.length ?? 0) > 0
+  const profile = getDirectionProfile(project.directionalMovement)
+  const singleSequence =
+    project.directionalMovement === 'single'
+      ? realSequences.find((sequence) => sequence.direction === 'east')
+      : undefined
+  const directionalSequences =
+    project.directionalMovement === 'single' || !hasDirectionalSequences
+      ? []
+      : profile.generationDirections.map((direction) => {
+          const sequence = realSequences.find((item) => item.direction === direction)
+          if (!sequence) throw new Error(`${action.name}缺少${direction}方向真实序列`)
+          return sequence
+        })
+  const selectedSequences = singleSequence ? [singleSequence] : directionalSequences
+  const sequences =
+    selectedSequences.length > 0
+      ? selectedSequences.map((sequence) => ({
+          direction: singleSequence ? ('default' as const) : sequence.direction,
+          expectedFrameCount: sequence.frameCount,
+          loop: action.loop,
+          ...sequenceGeometry(undefined, project.spriteSize.height),
+          qualityStatus: 'passed' as const,
+          frames: [...sequence.frames]
+            .sort((left, right) => left.index - right.index)
+            .map((frame, index) => {
+              if (frame.index !== index) {
+                throw new Error(`${action.name}的${sequence.direction}方向帧序号必须从 0 连续排列`)
+              }
+              return {
+                index: frame.index,
+                imageUrl: frame.imageUrl,
+                durationMs: durationMs(frame, action),
+              }
+            }),
+        }))
+      : [
+          {
+            direction: 'default',
+            expectedFrameCount: action.frameCount,
+            loop: action.loop,
+            ...sequenceGeometry(undefined, project.spriteSize.height),
+            qualityStatus: 'passed' as const,
+            frames: exportFrames(action),
+          },
+        ]
   return {
     id: action.id,
     name: action.name,
     type: action.type,
     fps: action.fps,
-    sequences: [
-      {
-        direction: 'default',
-        expectedFrameCount: action.frameCount,
-        loop: action.loop,
-        ...sequenceGeometry(undefined, project.spriteSize.height),
-        qualityStatus: 'passed',
-        frames: exportFrames(action),
-      },
-    ],
+    sequences,
   }
 }
 
@@ -165,15 +207,6 @@ function generatedActions(
     ) {
       return []
     }
-    const reference = fullFrame.generations.find((item) => item.role === 'complete_animation')
-    const generation = reference ? generationsById.get(reference.taskId) : undefined
-    if (
-      !generation ||
-      generation.status !== 'completed' ||
-      generation.result?.type !== 'complete_animation'
-    ) {
-      return []
-    }
     const method = fullFrame.dependsOnNodeIds
       .map((dependencyId) => nodesById.get(dependencyId))
       .find((node) => node?.type === 'action-generation-method')
@@ -184,33 +217,52 @@ function generatedActions(
       : undefined
     if (!first || first.type !== 'action-first-frame' || first.input.outfitId !== outfitId)
       return []
-    const frames = [...generation.result.frames]
-      .sort((left, right) => left.index - right.index)
-      .map((frame, index) => {
-        if (frame.index !== index) throw new Error(`${first.input.name}的帧序号必须从 0 连续排列`)
-        const durationMs =
-          frame.durationMs !== null && frame.durationMs > 0
-            ? Math.round(frame.durationMs)
-            : Math.max(1, Math.round(1000 / first.input.fps))
-        return { index: frame.index, imageUrl: frame.url, durationMs }
-      })
     const review = reviewByFullFrameId.get(fullFrame.id)
+    const sequences = getDirectionProfile(project.directionalMovement).generationDirections.map(
+      (direction) => {
+        const reference = fullFrame.generations.find(
+          (item) => item.role === 'complete_animation' && (item.direction ?? 'east') === direction,
+        )
+        const generation = reference ? generationsById.get(reference.taskId) : undefined
+        if (
+          !generation ||
+          generation.status !== 'completed' ||
+          generation.result?.type !== 'complete_animation' ||
+          (generation.result.direction ?? 'east') !== direction
+        ) {
+          throw new Error(`${first.input.name}缺少${direction}方向完整动画`)
+        }
+        const frames = [...generation.result.frames]
+          .sort((left, right) => left.index - right.index)
+          .map((frame, index) => {
+            if (frame.index !== index) {
+              const directionLabel =
+                project.directionalMovement === 'single' ? '' : `${direction}方向`
+              throw new Error(`${first.input.name}的${directionLabel}帧序号必须从 0 连续排列`)
+            }
+            const durationMs =
+              frame.durationMs !== null && frame.durationMs > 0
+                ? Math.round(frame.durationMs)
+                : Math.max(1, Math.round(1000 / first.input.fps))
+            return { index: frame.index, imageUrl: frame.url, durationMs }
+          })
+        return {
+          direction: project.directionalMovement === 'single' ? 'default' : direction,
+          expectedFrameCount: frames.length,
+          loop: true,
+          ...sequenceGeometry(generation.result.geometry, project.spriteSize.height),
+          qualityStatus: review?.status === 'passed' ? ('passed' as const) : ('pending' as const),
+          frames,
+        }
+      },
+    )
     return [
       {
         id: fullFrame.id,
         name: first.input.name,
         type: first.input.type,
         fps: first.input.fps,
-        sequences: [
-          {
-            direction: 'default',
-            expectedFrameCount: frames.length,
-            loop: true,
-            ...sequenceGeometry(generation.result.geometry, project.spriteSize.height),
-            qualityStatus: review?.status === 'passed' ? 'passed' : 'pending',
-            frames,
-          },
-        ],
+        sequences,
       },
     ]
   })

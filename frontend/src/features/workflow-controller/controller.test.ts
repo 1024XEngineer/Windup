@@ -1041,7 +1041,7 @@ describe('WorkflowController', () => {
       'eight-way',
       ['east', 'west', 'north', 'south', 'north_east', 'north_west', 'south_east', 'south_west'],
     ],
-  ] as const)('按项目方向为 %s 创建独立的三张候选任务', async (movement, directions) => {
+  ] as const)('按项目方向为 %s 创建全部真实方向的候选任务', async (movement, directions) => {
     const { controller, generation } = createController(createRun(), movement)
 
     await controller.generateCharacterTemplate('setup-1', {
@@ -1369,7 +1369,33 @@ describe('WorkflowController', () => {
     ).rejects.toThrow('尚未选择动作生成方式')
   })
 
-  it('服务端返回与任务不一致的方向时终止节点', async () => {
+  it('四向允许确认西向、拒绝超规格斜向，并在服务端返回错误方向时终止节点', async () => {
+    const confirmation = createController(
+      createRun([
+        setupNode({ status: 'passed', phase: 'completed' }),
+        templateNode({ status: 'active', phase: 'selecting' }),
+      ]),
+      'four-way',
+    )
+
+    await confirmation.controller.confirmCharacterTemplate(
+      'template-1',
+      'west.png',
+      'character-1',
+      'west',
+    )
+    expect(confirmation.controller.getWorkflow().nodes[1]).toMatchObject({
+      selectedImages: { west: 'west.png' },
+    })
+    await expect(
+      confirmation.controller.confirmCharacterTemplate(
+        'template-1',
+        'north-east.png',
+        'character-1',
+        'north_east',
+      ),
+    ).rejects.toThrow('方向 north_east 是镜像方向，不能单独生成或确认')
+
     const { controller, generation } = createController(createRun(), 'four-way')
 
     await controller.generateCharacterTemplate('setup-1', {
@@ -1442,6 +1468,14 @@ describe('WorkflowController', () => {
       result: null,
       error: null,
     })
+    failed.generation.snapshots.set('task-west', {
+      id: 'task-west',
+      projectId: '1',
+      type: 'character_template',
+      status: 'pending',
+      result: null,
+      error: null,
+    })
 
     await failed.controller.applyGenerationResult({
       nodeId: 'template-1',
@@ -1455,7 +1489,7 @@ describe('WorkflowController', () => {
 
     const mismatched = createController(run, 'four-way')
     for (const [taskId, direction] of [
-      ['task-west', 'north'],
+      ['task-west', 'west'],
       ['task-north', 'south'],
       ['task-south', 'south'],
     ] as const) {
@@ -2321,7 +2355,11 @@ describe('WorkflowController', () => {
         status: 'passed',
         phase: 'completed',
         selectedImageUrl: 'east-template.png',
-        selectedImages: { east: 'east-template.png', south: 'south-template.png' },
+        selectedImages: {
+          east: 'east-template.png',
+          west: 'west-template.png',
+          south: 'south-template.png',
+        },
       }),
     ])
     const template = createController(templateRun, 'four-way')
@@ -2333,7 +2371,7 @@ describe('WorkflowController', () => {
         mode: 'refine',
         adjustmentPrompt: '加强阴影',
       }),
-    ).rejects.toThrow('角色母版尚未确认方向 west')
+    ).rejects.toThrow('角色母版尚未确认方向 north')
     expect(template.generation.apis.create).not.toHaveBeenCalled()
     expect(template.controller.getWorkflow()).toEqual(templateBefore)
 
@@ -2343,7 +2381,11 @@ describe('WorkflowController', () => {
         status: 'passed',
         phase: 'completed',
         selectedFirstFrameUrl: 'east-frame.png',
-        selectedFirstFrameUrls: { east: 'east-frame.png', south: 'south-frame.png' },
+        selectedFirstFrameUrls: {
+          east: 'east-frame.png',
+          west: 'west-frame.png',
+          south: 'south-frame.png',
+        },
       }),
     ])
     const firstFrame = createController(firstFrameRun, 'four-way')
@@ -2355,7 +2397,7 @@ describe('WorkflowController', () => {
         mode: 'refine',
         adjustmentPrompt: '调整姿势',
       }),
-    ).rejects.toThrow('动作首帧尚未确认方向 west')
+    ).rejects.toThrow('动作首帧尚未确认方向 north')
     expect(firstFrame.generation.apis.create).not.toHaveBeenCalled()
     expect(firstFrame.controller.getWorkflow()).toEqual(firstFrameBefore)
   })

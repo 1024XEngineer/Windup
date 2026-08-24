@@ -241,6 +241,12 @@ class ActionSpec(BaseModel):
     # 这里不给默认值,否则同一个缺省被两处各写一份,改一处另一处静默不动。
     archetype: AttackArchetype | None = None
 
+    # 这个动作有没有地面接触。``False`` = 飞 / 游 / 攀这类**全程离地**,垂直对齐改按躯干
+    # 中心走(见 ai_engine.strategy.base.vertical_anchor);jump 不属此列 —— 它腾空但要回地。
+    # 不给按有地面接触处理:代价不对称,把有脚的动作当离地会让角色不站在地上,而反过来
+    # 只是身体跟着尾羽上下浮动、产物仍可用。
+    ground_contact: bool | None = None
+
     @model_validator(mode="after")
     def _archetype_belongs_to_attack_only(self) -> ActionSpec:
         """非攻击动作带 archetype 要炸:它只被攻击提示词消费,传了不会生效。"""
@@ -274,6 +280,11 @@ class ActionSpec(BaseModel):
                 raise ValueError(
                     f"action={self.action.value} 不该带 cyclic;循环性由 CYCLIC_ACTIONS 写死,"
                     "传了不会生效"
+                )
+            if self.ground_contact is not None:
+                raise ValueError(
+                    f"action={self.action.value} 不该带 ground_contact;写死的那几个动作都有"
+                    "地面接触(jump 腾空但要回地),传了不会生效"
                 )
         return self
 

@@ -101,6 +101,7 @@ describe('Character asset publisher', () => {
     const fullFrame = workflow.nodes.find((node) => node.type === 'action-full-frame')!
     fullFrame.generations = [
       { taskId: 'generation-east', role: 'complete_animation', direction: 'east' },
+      { taskId: 'generation-west', role: 'complete_animation', direction: 'west' },
       { taskId: 'generation-north', role: 'complete_animation', direction: 'north' },
       { taskId: 'generation-south', role: 'complete_animation', direction: 'south' },
     ]
@@ -111,6 +112,7 @@ describe('Character asset publisher', () => {
       reviewNodeId: 'action-walk:review',
       generations: [
         directionalAnimationFixture('generation-east', 'east', 'east'),
+        directionalAnimationFixture('generation-west', 'west', 'west'),
         directionalAnimationFixture('generation-north', 'north', 'north'),
         directionalAnimationFixture('generation-south', 'south', 'south'),
       ],
@@ -127,10 +129,10 @@ describe('Character asset publisher', () => {
       },
       {
         direction: 'west',
-        sourceDirection: 'east',
-        mirrorX: true,
+        sourceDirection: null,
+        mirrorX: false,
         frameCount: 1,
-        frames: [],
+        frames: [{ index: 0, imageUrl: 'west-0.png', durationMs: 80 }],
       },
       {
         direction: 'north',
@@ -152,10 +154,14 @@ describe('Character asset publisher', () => {
   it('rejects a directional action when any real source direction is missing', () => {
     expect(() =>
       exportFeature.createActionSequences(
-        [directionalAnimationFixture('generation-east', 'east', 'east')],
+        [
+          directionalAnimationFixture('generation-east', 'east', 'east'),
+          directionalAnimationFixture('generation-north', 'north', 'north'),
+          directionalAnimationFixture('generation-south', 'south', 'south'),
+        ],
         'four-way',
       ),
-    ).toThrow('完整动画方向 north 的生成结果不可发布')
+    ).toThrow('完整动画方向 west 的生成结果不可发布')
   })
 
   it('拒绝未携带任何生成结果的发布请求', async () => {
@@ -345,7 +351,7 @@ function completeAnimationFixture(): Generation<'complete_animation'> {
 
 function directionalAnimationFixture(
   id: string,
-  direction: 'east' | 'north' | 'south',
+  direction: 'east' | 'west' | 'north' | 'south',
   prefix: string,
 ): Generation<'complete_animation'> {
   return {
