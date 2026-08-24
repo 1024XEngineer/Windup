@@ -97,10 +97,16 @@ class ProjectOut(BaseModel):
     directional_movement: int
     sprite_width: int
     sprite_height: int
-    game_style: str | None
+    game_style: ArtStyle
     sprite_sample_url: str | None
     create_at: datetime
     update_at: datetime
+
+    @field_validator("game_style", mode="before")
+    @classmethod
+    def _normalize_style(cls, value: object) -> ArtStyle:
+        """库里既有枚举值也有存量自由文本;不归一的话前端会把「像素风格」显示成不指定。"""
+        return ArtStyle.from_stored(value if isinstance(value, str) else None)
 
 
 class ProjectListOut(ProjectOut):

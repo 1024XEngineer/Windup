@@ -173,7 +173,7 @@ describe('ProjectCreatePage', () => {
     fireEvent.change(screen.getByLabelText('游戏视角'), { target: { value: 'top-down' } })
     fireEvent.change(screen.getByLabelText('朝向'), { target: { value: 'eight-way' } })
     fireEvent.click(screen.getByRole('button', { name: '512 × 512' }))
-    fireEvent.change(screen.getByLabelText('画风约束'), { target: { value: '低饱和像素绘本' } })
+    fireEvent.change(screen.getByLabelText('画风'), { target: { value: 'pixel' } })
     fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
 
     expect(await screen.findByRole('heading', { name: '雾港来信' })).toBeTruthy()
@@ -186,7 +186,7 @@ describe('ProjectCreatePage', () => {
       directional_movement: 3,
       sprite_width: 512,
       sprite_height: 512,
-      game_style: '低饱和像素绘本',
+      game_style: 'pixel',
     })
     // 归属由后端从 JWT 取；请求体再带 user_id 就等于宣称可以替别人建项目。
     expect(Object.hasOwn(body, 'user_id')).toBe(false)
@@ -217,11 +217,11 @@ describe('ProjectCreatePage', () => {
     await renderProjectCreate()
 
     fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '点灯人 · MVP' } })
-    fireEvent.change(screen.getByLabelText('画风约束'), { target: { value: '低饱和像素绘本' } })
+    fireEvent.change(screen.getByLabelText('画风'), { target: { value: 'pixel' } })
     fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
 
     expect((await screen.findByRole('alert')).textContent).toBe('项目名称已存在')
-    expect((screen.getByLabelText('画风约束') as HTMLTextAreaElement).value).toBe('低饱和像素绘本')
+    expect((screen.getByLabelText('画风') as HTMLSelectElement).value).toBe('pixel')
   })
 
   it('连续点击创建只发出一次请求', async () => {

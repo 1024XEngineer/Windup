@@ -11,6 +11,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useParams } from 'react-router'
 
 import {
+  projectApis,
+  type ArtStyle,
   type ActionPreset,
   type ActionFirstFrameWorkflowNode,
   type ActionDirection,
@@ -139,6 +141,8 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
   const [actionMenuLevel, setActionMenuLevel] = useState<ActionMenuLevel>('root')
   const [selectedOutfitId, setSelectedOutfitId] = useState<string | null>(null)
   const [canvasNodeState, setCanvasNodeState] = useState<WorkflowCardNode[]>([])
+  /** 画风改完只影响后续生成，重拉整个 session 太重，本页自己记住新值。 */
+  const [gameStyleOverride, setGameStyleOverride] = useState<ArtStyle | null>(null)
   const [actionPresets, setActionPresets] = useState<ActionPreset[] | null>(null)
   const [actionPresetError, setActionPresetError] = useState<string | null>(null)
 
@@ -276,7 +280,11 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
 
   return (
     <WorkflowEditorView
-      project={session.project}
+      project={
+        gameStyleOverride === null
+          ? session.project
+          : { ...session.project, gameStyle: gameStyleOverride }
+      }
       run={run}
       nodes={canvasNodes}
       edges={projected.edges}
@@ -286,6 +294,10 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
       generationReadError={!error && !resumeError ? generationReadError : null}
       reloadTo={`${location.pathname}${location.search}${location.hash}`}
       onRetryGenerations={retryGenerations}
+      onGameStyleChange={(gameStyle) => {
+        setGameStyleOverride(gameStyle)
+        void projectApis.setGameStyle(session.project.id, gameStyle)
+      }}
       onNodesChange={onNodesChange}
     />
   )

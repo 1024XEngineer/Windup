@@ -280,7 +280,9 @@ describe('WorkflowController', () => {
       controller.startCharacterGeneration({ prompt: '  银发像素骑士  ' }),
     ).resolves.toEqual({ runId: 'run-1' })
 
-    expect(prepareProject).toHaveBeenCalledWith('银发像素骑士', 'single')
+    expect(prepareProject).toHaveBeenCalledWith('银发像素骑士', 'single', {
+      gameStyle: undefined,
+    })
     expect(workflow.apis.create).toHaveBeenCalledWith({
       projectId: 'project-agent',
       nodes: [

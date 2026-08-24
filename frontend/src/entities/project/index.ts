@@ -9,7 +9,7 @@ export interface Project {
   perspective: CharacterPerspective
   directionalMovement: DirectionalMovement
   spriteSize: { width: number; height: number }
-  gameStyle: string | null
+  gameStyle: ArtStyle
   sampleImageUrl: string | null
   /** 项目列表已经解析好的卡片预览；详情响应不承诺提供。 */
   previewUrl?: string | null
@@ -27,7 +27,7 @@ export interface CreateProjectInput {
   perspective: CharacterPerspective
   directionalMovement: DirectionalMovement
   spriteSize: { width: number; height: number }
-  gameStyle?: string | null
+  gameStyle?: ArtStyle
   sampleImageUrl?: string | null
 }
 
@@ -75,12 +75,41 @@ export const DIRECTIONAL_MOVEMENT: Record<DirectionalMovement, string> = {
   'eight-way': '八向',
 }
 
+/** 后端 game_style；只有 pixel 会改变出帧管线，其余只进提示词。 */
+export type ArtStyle = 'pixel' | 'cartoon' | 'hand_drawn' | 'realistic' | 'unspecified'
+
+export const ART_STYLE: Record<ArtStyle, string> = {
+  pixel: '像素',
+  cartoon: '卡通',
+  hand_drawn: '手绘',
+  realistic: '写实',
+  unspecified: '不指定',
+}
+
+/** 选项旁的一句说明；用户选画风时看不到管线，得把差别讲出来。 */
+export const ART_STYLE_HINT: Record<ArtStyle, string> = {
+  pixel: '出帧吸附母版像素网格，颜色吸回母版色板',
+  cartoon: '粗描线、平涂',
+  hand_drawn: '有笔触与纸纹',
+  realistic: '无描线，走渐变与体积光',
+  unspecified: '不给模型画风约束',
+}
+
+export const ART_STYLE_OPTIONS: ArtStyle[] = [
+  'pixel',
+  'cartoon',
+  'hand_drawn',
+  'realistic',
+  'unspecified',
+]
+
 /** Project 对应的一组后端接口。 */
 export interface ProjectApis {
   list(query?: ProjectPageQuery): Promise<Paged<Project>>
   get(id: Project['id']): Promise<Project>
   create(input: CreateProjectInput): Promise<Project>
   rename(id: Project['id'], name: string): Promise<Project>
+  setGameStyle(id: Project['id'], gameStyle: ArtStyle): Promise<Project>
   remove(id: Project['id']): Promise<void>
 }
 
@@ -97,6 +126,15 @@ interface ProjectDto {
   preview_url?: string | null
   create_at: string
   update_at: string
+}
+
+export function isArtStyle(value: unknown): value is ArtStyle {
+  return typeof value === 'string' && value in ART_STYLE
+}
+
+/** 后端已经把存量自由文本归一成枚举；这里只兜住 null 与未知取值。 */
+function artStyleFromDto(value: string | null): ArtStyle {
+  return isArtStyle(value) ? value : 'unspecified'
 }
 
 const perspectiveFromDto: Record<number, CharacterPerspective> = {
@@ -154,7 +192,7 @@ function mapProject(dto: ProjectDto): Project {
       'directional_movement',
     ),
     spriteSize: { width: dto.sprite_width, height: dto.sprite_height },
-    gameStyle: dto.game_style,
+    gameStyle: artStyleFromDto(dto.game_style),
     sampleImageUrl: dto.sprite_sample_url,
     previewUrl: dto.preview_url ?? dto.sprite_sample_url,
     createdAt: dto.create_at,
@@ -238,6 +276,15 @@ export const projectApis: ProjectApis = {
       }
       throw error
     }
+  },
+
+  async setGameStyle(id, gameStyle) {
+    return mapProject(
+      await getApiClient().request<ProjectDto>(`/projects/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        json: { game_style: gameStyle },
+      }),
+    )
   },
 
   async remove(id) {

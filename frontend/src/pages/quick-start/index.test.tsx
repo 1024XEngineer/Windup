@@ -966,6 +966,7 @@ describe('QuickStartPage', () => {
     expect(startCharacterGeneration).toHaveBeenCalledWith({
       prompt: '云端工坊的银发机械师，佩戴黄铜护目镜',
       directionalMovement: 'single',
+      gameStyle: 'unspecified',
     })
   })
 
@@ -1596,6 +1597,7 @@ describe('QuickStartPage', () => {
       expect(startCharacterGeneration).toHaveBeenCalledWith({
         prompt: '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色',
         directionalMovement: 'four-way',
+        gameStyle: 'unspecified',
       }),
     )
     expect(service.start).not.toHaveBeenCalled()
@@ -1615,6 +1617,7 @@ describe('QuickStartPage', () => {
         '挥手',
         expect.any(AbortSignal),
         'eight-way',
+        { gameStyle: 'unspecified' },
       ),
     )
   })

@@ -102,7 +102,10 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
   ])
 
   const submit = useCallback(
-    async (input: string): Promise<QuickStartAgentResult> => {
+    async (
+      input: string,
+      { gameStyle }: { gameStyle?: string } = {},
+    ): Promise<QuickStartAgentResult> => {
       if (running.current) throw new Error('Planner 正在处理上一条输入')
       running.current = true
       const controller = new AbortController()
@@ -113,7 +116,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
         const activeAgent = ensureAgent()
         const runTurn = started.current ? activeAgent.continue : activeAgent.start
         started.current = true
-        const result = await runTurn(input, { signal: controller.signal })
+        const result = await runTurn(input, { signal: controller.signal, gameStyle })
         if (mounted.current) {
           if (result.kind === 'message') {
             setState({

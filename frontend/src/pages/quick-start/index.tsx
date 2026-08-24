@@ -25,8 +25,11 @@ import Markdown from 'markdown-to-jsx'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 
 import {
+  ART_STYLE,
+  ART_STYLE_OPTIONS,
   DIRECTIONAL_MOVEMENT,
   type ActionFirstFrameWorkflowNode,
+  type ArtStyle,
   type CharacterTemplateWorkflowNode,
   type DirectionalMovement,
   type WorkflowRun,
@@ -524,6 +527,7 @@ function QuickStartInput({
   const [prompt, setPrompt] = useState('')
   const [directionalMovement, setDirectionalMovement] = useState<DirectionalMovement>('single')
   const [templateFile, setTemplateFile] = useState<File | null>(null)
+  const [gameStyle, setGameStyle] = useState<ArtStyle>('unspecified')
   const [submitting, setSubmitting] = useState(false)
   const [revealingFirstAgentTurn, setRevealingFirstAgentTurn] = useState(false)
   const [entryTransition, setEntryTransition] = useState<'idle' | 'leaving'>('idle')
@@ -765,7 +769,7 @@ function QuickStartInput({
       else await revealFirstAgentTurn(userTurn)
       setPrompt('')
       try {
-        const result = await agentSession.submit(normalizedPrompt)
+        const result = await agentSession.submit(normalizedPrompt, { gameStyle })
         setRevealingFirstAgentTurn(false)
         if (result.kind === 'message') {
           appendConversationTurn({
@@ -807,6 +811,7 @@ function QuickStartInput({
         normalizedPrompt,
         abortController.signal,
         directionalMovement,
+        { gameStyle },
       )
       const handoffPromise = new Promise<void>((resolve) => {
         handoffTimer.current = setTimeout(() => {
@@ -1086,6 +1091,24 @@ function QuickStartInput({
                 <ImageSquare aria-hidden="true" size={17} weight="duotone" />
                 添加母版
               </button>
+            ) : null}
+            {!hasConversation ? (
+              <label className="inline-flex h-10 items-center gap-1.5 rounded-lg px-2 text-xs font-semibold whitespace-nowrap text-app-muted">
+                画风
+                <select
+                  value={gameStyle}
+                  disabled={entryBusy}
+                  aria-label="画风"
+                  onChange={(event) => setGameStyle(event.target.value as ArtStyle)}
+                  className="rounded-md border border-app-line bg-app-surface px-2 py-1 text-xs text-app-ink-soft outline-none focus-visible:border-app-accent"
+                >
+                  {ART_STYLE_OPTIONS.map((value) => (
+                    <option key={value} value={value}>
+                      {ART_STYLE[value]}
+                    </option>
+                  ))}
+                </select>
+              </label>
             ) : null}
             <button
               type="submit"

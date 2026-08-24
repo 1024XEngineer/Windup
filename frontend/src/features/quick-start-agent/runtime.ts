@@ -65,6 +65,8 @@ export type QuickStartAgentResult =
 
 export interface QuickStartAgentTurnOptions {
   signal?: AbortSignal
+  /** 入口处选的画风，原样透传给宿主；取值范围由宿主定义,本模块不认识业务对象。 */
+  gameStyle?: string
 }
 
 export interface QuickStartAgent {
@@ -82,6 +84,7 @@ export interface QuickStartAgent {
 export type StartCharacterGenerationAction = (input: {
   prompt: string
   directionalMovement?: QuickStartDirectionalMovement
+  gameStyle?: string
 }) => Promise<{ runId: string }>
 
 export interface CreateQuickStartAgentOptions {
@@ -223,6 +226,8 @@ export function createQuickStartAgent({
   let running = false
   let messages: PlannerMessage[] = [...initialMessages]
   let currentProposal = initialProposal
+  /** 画风在入口那一轮就选定了,而真正下单在用户确认提案之后,中间要存住。 */
+  let pendingGameStyle: string | undefined
 
   function assertAuthorized() {
     if (revoked) throw new Error('生成授权已失效')
@@ -231,9 +236,10 @@ export function createQuickStartAgent({
 
   async function runTurn(
     input: string,
-    { signal }: QuickStartAgentTurnOptions = {},
+    { signal, gameStyle }: QuickStartAgentTurnOptions = {},
   ): Promise<QuickStartAgentResult> {
     assertAuthorized()
+    if (gameStyle !== undefined) pendingGameStyle = gameStyle
     if (running) throw new Error('Planner 正在处理上一条输入')
     const normalizedInput = input.trim()
     if (!normalizedInput) throw new Error('请先描述想要创建的角色')
@@ -302,6 +308,7 @@ export function createQuickStartAgent({
       const { runId } = await startCharacterGeneration({
         prompt: effectivePrompt,
         directionalMovement,
+        gameStyle: pendingGameStyle,
       })
       return { kind: 'generated', runId, ...proposal, optimizedPrompt: effectivePrompt }
     } finally {

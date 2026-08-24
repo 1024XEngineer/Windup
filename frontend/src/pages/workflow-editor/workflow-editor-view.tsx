@@ -11,8 +11,11 @@ import { useEffect, type ReactNode } from 'react'
 import { Link } from 'react-router'
 
 import {
+  ART_STYLE,
+  ART_STYLE_OPTIONS,
   CHARACTER_PERSPECTIVE,
   DIRECTIONAL_MOVEMENT,
+  type ArtStyle,
   type Project,
   type WorkflowNode,
   type WorkflowRun,
@@ -38,6 +41,7 @@ interface WorkflowEditorViewProps {
   generationReadError: string | null
   reloadTo: string
   onRetryGenerations(): void
+  onGameStyleChange(gameStyle: ArtStyle): void
   onNodesChange(changes: NodeChange<WorkflowCardNode>[]): void
 }
 
@@ -52,13 +56,13 @@ export function WorkflowEditorView({
   generationReadError,
   reloadTo,
   onRetryGenerations,
+  onGameStyleChange,
   onNodesChange,
 }: WorkflowEditorViewProps) {
   const constraints = [
     CHARACTER_PERSPECTIVE[project.perspective],
     DIRECTIONAL_MOVEMENT[project.directionalMovement],
     `${project.spriteSize.width} × ${project.spriteSize.height}`,
-    project.gameStyle ?? '未设置画风',
   ]
 
   return (
@@ -74,6 +78,21 @@ export function WorkflowEditorView({
         <p className="m-0 overflow-hidden text-ellipsis whitespace-nowrap text-[9px] leading-[1.5] text-app-faint">
           {constraints.join(' / ')}
         </p>
+        <label className="pointer-events-auto m-0 flex items-center gap-1.5 text-[9px] leading-[1.5] text-app-faint">
+          画风
+          <select
+            value={project.gameStyle}
+            aria-label="项目画风"
+            onChange={(event) => onGameStyleChange(event.target.value as ArtStyle)}
+            className="rounded border border-app-line bg-app-surface px-1.5 py-0.5 text-[9px] text-app-ink-soft outline-none focus-visible:border-app-accent"
+          >
+            {ART_STYLE_OPTIONS.map((value) => (
+              <option key={value} value={value}>
+                {ART_STYLE[value]}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="mt-1 flex justify-end">
           <small className="font-mono text-[8px] font-bold text-[var(--color-app-muted)]">
             Run {run.id} · v{run.version}

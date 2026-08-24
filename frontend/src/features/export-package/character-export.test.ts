@@ -11,7 +11,7 @@ const project: Project = {
   perspective: 'side',
   directionalMovement: 'single',
   spriteSize: { width: 64, height: 80 },
-  gameStyle: null,
+  gameStyle: 'unspecified',
   sampleImageUrl: null,
   createdAt: '2026-08-01T08:00:00Z',
   updatedAt: '2026-08-01T08:00:00Z',

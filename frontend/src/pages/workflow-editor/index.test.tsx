@@ -2294,7 +2294,7 @@ function projectFixture(): Project {
     perspective: 'side',
     directionalMovement: 'single',
     spriteSize: { width: 64, height: 64 },
-    gameStyle: null,
+    gameStyle: 'unspecified',
     sampleImageUrl: null,
     createdAt: '2026-08-10T00:00:00.000Z',
     updatedAt: '2026-08-10T00:00:00.000Z',
