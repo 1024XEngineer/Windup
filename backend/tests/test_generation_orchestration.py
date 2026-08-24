@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import threading
 
+import numpy as np
 import pytest
 from PIL import Image
 from sqlalchemy import create_engine
@@ -845,3 +846,88 @@ def test_close_failed_does_not_overwrite_completed(session_factory):
         done = task_repo.get_task(s, task.id)
     assert done.status is TaskStatus.COMPLETED
     assert done.result is not None
+# -- 画风落到交付帧 ----------------------------------------------------------
+
+
+def _gradient_frame(shift: int = 0) -> Image.Image:
+    """多色渐变主体;像素化前后色数差得开,单色方块看不出这条支路走没走。"""
+    img = Image.new("RGBA", (64, 96), (0, 0, 0, 0))
+    for y in range(20, 80):
+        for x in range(24 + shift, 44 + shift):
+            img.putpixel((x, y), (60 + x * 2 % 190, 40 + y * 3 % 200, 200 - y % 150, 255))
+    return img
+
+
+def _pixel_master() -> bytes:
+    """8 像素块、4 色的像素画母版;逻辑高 > 8 才会走「锁母版色板」那一支。"""
+    img = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    palette = [(220, 40, 40), (40, 200, 90), (40, 90, 220), (240, 220, 60)]
+    for by in range(4, 14):
+        for bx in range(4, 12):
+            img.paste(
+                palette[(bx + by) % 4] + (255,),
+                (bx * 8, by * 8, bx * 8 + 8, by * 8 + 8),
+            )
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _delivered_colors(game_style: str | None, session_factory, monkeypatch) -> int:
+    """建一个该画风的项目,跑完一条动作任务,数交付帧的色数。"""
+    monkeypatch.setattr(
+        "windup_ai_engine.strategy.concrete.extract_all_frames_bytes",
+        lambda video, cap=150: [_gradient_frame(i % 6) for i in range(24)],
+    )
+    with session_factory() as s:
+        project = Project(
+            user_id=1, project_name=f"画风-{game_style}", character_perspective=1,
+            directional_movement=1, sprite_width=64, sprite_height=64,
+            game_style=game_style,
+        )
+        s.add(project)
+        s.commit()
+        project_id = project.id
+
+    uploaded: list[bytes] = []
+    executor = ActionTaskExecutor(
+        generator=CharacterGenerator(
+            {GenRoute.VIDEO_I2V: VideoFrameStrategy(_StubVideo(), _StubMatte())}
+        ),
+        upload=lambda png: (uploaded.append(png), "https://cdn.example.com/f.png")[1],
+        fetch_master=lambda _input: _pixel_master(),
+        session_factory=session_factory,
+    )
+    action_input = CharacterActionInput(
+        character_id=1, action_type=ActionType.WALK, num_frames=4,
+    )
+    with session_factory() as s:
+        task = AiGenerationService().generate_character_action(s, user_id=1, input=action_input)
+        s.commit()
+        task_id = task.id
+    executor.run_action_task(task_id, action_input, project_id)
+
+    with session_factory() as s:
+        done = AiGenerationService().get_task(s, project_id=project_id, task_id=task_id)
+    assert done is not None and done.status is TaskStatus.COMPLETED, "任务没跑完,色数无从谈起"
+    assert uploaded, "没有帧被上传"
+    colors = set()
+    for png in uploaded:
+        a = np.asarray(Image.open(io.BytesIO(png)).convert("RGBA"))
+        colors |= {tuple(px) for px in a[a[:, :, 3] > 128][:, :3]}
+    return len(colors)
+
+
+def test_pixel_style_actually_pixelates_the_delivered_frames(session_factory, monkeypatch):
+    """只差项目画风一个字段,交付帧必须真的不一样。
+
+    断言参数传到了不够 —— 加了入参却没贯通到消费点时,生产恒走默认分支、空操作还不
+    报错,而直接构造下游对象的测试照样全绿。
+    """
+    pixel_colors = _delivered_colors("pixel", session_factory, monkeypatch)
+    plain_colors = _delivered_colors(None, session_factory, monkeypatch)
+
+    assert pixel_colors < plain_colors, (
+        f"像素档没有生效:像素 {pixel_colors} 色 / 不指定 {plain_colors} 色"
+    )
+    assert pixel_colors <= 48, f"像素档应吸附回母版色板,实际 {pixel_colors} 色"
