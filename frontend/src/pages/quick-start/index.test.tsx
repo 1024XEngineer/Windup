@@ -492,7 +492,7 @@ describe('QuickStartPage', () => {
     )
   })
 
-  it('keeps the entry composer compact before expanding with content', () => {
+  it('keeps the entry composer compact without a textarea baseline gap', () => {
     renderAt('/quick-start', serviceFor(null))
     const composer = screen.getByRole('textbox', { name: '创作指令' })
     const editingSurface = composer.closest('label')
@@ -501,6 +501,7 @@ describe('QuickStartPage', () => {
     expect((composer as HTMLTextAreaElement).rows).toBe(1)
     expect(composer.className).toContain('min-h-10')
     expect(composer.className).toContain('[field-sizing:content]')
+    expect(composer.className).toContain('block')
     expect(composer.className).toContain('px-4')
     expect(editingSurface?.className).toContain('ml-2')
     expect(editingSurface?.className).toContain('rounded-lg')
