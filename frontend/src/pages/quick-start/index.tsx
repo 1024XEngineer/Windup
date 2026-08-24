@@ -21,12 +21,13 @@ import {
 import { forgetActiveRun, isMissingActiveRunError, syncActiveRun } from '@/features/active-run'
 import { useOptionalAuthSession } from '@/features/auth-session'
 import { ExportButton, type ExportPackageModel } from '@/features/export-package'
-import { useQuickStartAgent } from '@/features/quick-start-agent/react'
+import { useQuickStartAgent, useQuickStartWorkflowAgent } from '@/features/quick-start-agent/react'
 import type {
   CharacterGenerationProposal,
   CreateQuickStartAgentOptions,
   PlannerMessage,
   QuickStartAgentResult,
+  WorkflowAgentActions,
 } from '@/features/quick-start-agent/runtime'
 import {
   FrameAnimationPlayer,
@@ -142,11 +143,12 @@ const LEGACY_AGENT_CONVERSATION_STORAGE_KEY = 'windup.quick-start.agent-chat.v1'
 const AGENT_DRAFT_HISTORY_STATE_KEY = 'windupQuickStartAgentDraftId'
 
 type AgentConversationTurn =
-  | { role: 'user'; content: string }
+  | { role: 'user'; content: string; scope?: 'workflow' }
   | {
       role: 'assistant'
       content: string
       kind: 'reply' | 'clarification' | 'blocked'
+      scope?: 'workflow'
     }
   | {
       role: 'assistant'
@@ -156,6 +158,7 @@ type AgentConversationTurn =
       optimizedPrompt: string
       optimizationSummary: string
       proposalStatus: 'pending' | 'superseded' | 'adopted' | 'confirmed'
+      scope?: 'workflow'
     }
 
 type AgentConversationRecord = {
@@ -222,7 +225,10 @@ function readAgentConversation(
       ) {
         return []
       }
-      if (turn.role === 'user') return [{ role: 'user', content: turn.content }]
+      const scope = 'scope' in turn && turn.scope === 'workflow' ? 'workflow' : undefined
+      if (turn.role === 'user') {
+        return [{ role: 'user', content: turn.content, ...(scope ? { scope } : {}) }]
+      }
       if (turn.role !== 'assistant') return []
 
       if (
@@ -249,6 +255,7 @@ function readAgentConversation(
             optimizedPrompt: turn.optimizedPrompt,
             optimizationSummary: turn.optimizationSummary,
             proposalStatus: turn.proposalStatus,
+            ...(scope ? { scope } : {}),
           },
         ]
       }
@@ -258,7 +265,7 @@ function readAgentConversation(
         (turn.kind === 'reply' || turn.kind === 'clarification' || turn.kind === 'blocked')
           ? turn.kind
           : 'reply'
-      return [{ role: 'assistant', content: turn.content, kind }]
+      return [{ role: 'assistant', content: turn.content, kind, ...(scope ? { scope } : {}) }]
     })
   } catch {
     return []
@@ -391,6 +398,7 @@ export function QuickStartPage({
       onSessionCreated={setCreatedSession}
       onInitialSessionConsumed={consumeCreatedSession}
       activeRunUserId={activeRunUserId}
+      agent={agent}
     />
   ) : (
     <QuickStartInput
@@ -1233,6 +1241,7 @@ function QuickStartRun({
   onSessionCreated,
   onInitialSessionConsumed,
   activeRunUserId,
+  agent,
 }: {
   service: QuickStartEntryService
   runId: string
@@ -1240,6 +1249,7 @@ function QuickStartRun({
   onSessionCreated: (session: QuickStartSession) => void
   onInitialSessionConsumed: (session: QuickStartSession) => void
   activeRunUserId: string | null
+  agent: CreateQuickStartAgentOptions
 }) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -1264,10 +1274,10 @@ function QuickStartRun({
   const [confirmingCandidate, setConfirmingCandidate] = useState(false)
   const [confirmingFirstFrame, setConfirmingFirstFrame] = useState(false)
   const [addingAction, setAddingAction] = useState(false)
-  const agentConversationTurns = useMemo(
-    () => readAgentRunConversation(activeRunUserId, runId),
-    [activeRunUserId, runId],
-  )
+  const initialAgentConversation = useRef(readAgentRunConversation(activeRunUserId, runId)).current
+  const [agentConversationTurns, setAgentConversationTurns] = useState(initialAgentConversation)
+  const agentConversationTurnsRef = useRef(agentConversationTurns)
+  const initialWorkflowAgentSeed = useRef(createAgentSeed(initialAgentConversation)).current
   const automaticPublishAttempt = useRef<string | null>(null)
   const transcriptScrollRegion = useRef<HTMLElement>(null)
   const workflowConflictRef = useRef(false)
@@ -1278,6 +1288,42 @@ function QuickStartRun({
     timer: ReturnType<typeof setTimeout>
   } | null>(null)
   const mountedRef = useRef(true)
+  const workflowAgentActions = useMemo<WorkflowAgentActions>(
+    () => ({
+      getContext: () =>
+        activeSessionRef.current?.getWorkflowAgentContext() ?? { availableTools: [] },
+      async regenerateCharacterTemplate() {
+        const target = activeSessionRef.current
+        if (!target) throw new Error('当前生成会话尚未恢复')
+        const updated = await target.regenerateCharacterTemplate('regenerate')
+        if (mountedRef.current && activeSessionRef.current === target) setRun(updated)
+      },
+      async refineCharacterTemplate(adjustmentPrompt) {
+        const target = activeSessionRef.current
+        if (!target) throw new Error('当前生成会话尚未恢复')
+        const updated = await target.regenerateCharacterTemplate('refine', adjustmentPrompt)
+        if (mountedRef.current && activeSessionRef.current === target) setRun(updated)
+      },
+      async regenerateFirstFrame() {
+        const target = activeSessionRef.current
+        if (!target) throw new Error('当前生成会话尚未恢复')
+        const updated = await target.regenerateFirstFrame('regenerate')
+        if (mountedRef.current && activeSessionRef.current === target) setRun(updated)
+      },
+      async refineFirstFrame(adjustmentPrompt) {
+        const target = activeSessionRef.current
+        if (!target) throw new Error('当前生成会话尚未恢复')
+        const updated = await target.regenerateFirstFrame('refine', adjustmentPrompt)
+        if (mountedRef.current && activeSessionRef.current === target) setRun(updated)
+      },
+    }),
+    [],
+  )
+  const workflowAgentSession = useQuickStartWorkflowAgent({
+    planner: agent.planner,
+    actions: workflowAgentActions,
+    initialMessages: initialWorkflowAgentSeed.messages,
+  })
   const reportWorkflowError = useCallback((cause: unknown, fallback: string) => {
     const presented = presentWorkflowError(cause, fallback)
     if (workflowConflictRef.current && !presented.conflict) return
@@ -1290,6 +1336,20 @@ function QuickStartRun({
     setError(null)
     setWorkflowConflict(false)
   }, [])
+
+  const appendRunConversationTurn = useCallback(
+    (turn: AgentConversationTurn) => {
+      const next = [...agentConversationTurnsRef.current, turn]
+      agentConversationTurnsRef.current = next
+      setAgentConversationTurns(next)
+      writeAgentConversation(
+        'localStorage',
+        agentRunConversationStorageKey(activeRunUserId, runId),
+        { turns: next },
+      )
+    },
+    [activeRunUserId, runId],
+  )
 
   useEffect(() => {
     mountedRef.current = true
@@ -1468,7 +1528,7 @@ function QuickStartRun({
   useEffect(() => {
     const region = transcriptScrollRegion.current
     region?.scrollTo?.({ top: region.scrollHeight, behavior: 'smooth' })
-  }, [actionFrames, candidates, firstFrameCandidates, run])
+  }, [actionFrames, agentConversationTurns, candidates, firstFrameCandidates, run])
 
   if (!run) {
     if (restoring) return <RestoringConversation turns={agentConversationTurns} />
@@ -1683,26 +1743,44 @@ function QuickStartRun({
       void confirmFirstFrame()
       return
     }
-    const prompt = actionDescription.trim()
-    if (!canAddAction || !prompt || !session || addingAction) return
-    setAddingAction(true)
-    clearWorkflowError()
-    try {
-      let outfitId = requestedOutfitId
-      if (!outfitId) {
-        const info = session.getCharacterInfo() ?? (await session.resolveCharacterInfo())
-        outfitId = info?.outfitId ?? null
+    const message = actionDescription.trim()
+    if (addActionIntent) {
+      if (!canAddAction || !message || !session || addingAction) return
+      setAddingAction(true)
+      clearWorkflowError()
+      try {
+        let outfitId = requestedOutfitId
+        if (!outfitId) {
+          const info = session.getCharacterInfo() ?? (await session.resolveCharacterInfo())
+          outfitId = info?.outfitId ?? null
+        }
+        if (!outfitId) throw new Error('没有找到要追加动作的角色造型')
+        const updated = await session.addAction(outfitId, message)
+        if (!mountedRef.current || activeSessionRef.current !== session) return
+        setRun(updated)
+        setActionDescription('')
+      } catch (cause) {
+        if (!mountedRef.current || activeSessionRef.current !== session) return
+        reportWorkflowError(cause, '新增动作失败，请稍后重试')
+      } finally {
+        if (mountedRef.current && activeSessionRef.current === session) setAddingAction(false)
       }
-      if (!outfitId) throw new Error('没有找到要追加动作的角色造型')
-      const updated = await session.addAction(outfitId, prompt)
-      if (!mountedRef.current || activeSessionRef.current !== session) return
-      setRun(updated)
-      setActionDescription('')
+      return
+    }
+    if (!message || workflowIsActive || workflowAgentSession.busy) return
+    clearWorkflowError()
+    appendRunConversationTurn({ role: 'user', content: message, scope: 'workflow' })
+    setActionDescription('')
+    try {
+      const result = await workflowAgentSession.submit(message)
+      appendRunConversationTurn({
+        role: 'assistant',
+        content: result.message,
+        kind: 'reply',
+        scope: 'workflow',
+      })
     } catch (cause) {
-      if (!mountedRef.current || activeSessionRef.current !== session) return
-      reportWorkflowError(cause, '新增动作失败，请稍后重试')
-    } finally {
-      if (mountedRef.current && activeSessionRef.current === session) setAddingAction(false)
+      reportWorkflowError(cause, 'Agent 修改失败，请稍后重试')
     }
   }
 
@@ -1724,16 +1802,32 @@ function QuickStartRun({
             ? '确认保存后，还可以继续描述修改…'
             : '制作中，完成后可以继续修改…'
 
+  const workflowAgentAvailable =
+    !workflowIsActive &&
+    session !== null &&
+    session.getWorkflowAgentContext().availableTools.length > 0
+  const workflowAgentMode = !isTemplateSelecting && !isFirstFrameSelecting && !addActionIntent
   const composerCanSubmit =
     (isTemplateSelecting && templateSelectionComplete) ||
     (isFirstFrameSelecting && firstFrameSelectionComplete) ||
-    (canAddAction && Boolean(actionDescription.trim()) && !addingAction)
+    (canAddAction && Boolean(actionDescription.trim()) && !addingAction) ||
+    (workflowAgentMode && workflowAgentAvailable && Boolean(actionDescription.trim()))
+  const workflowComposerDisabled = addActionIntent
+    ? !canAddAction || addingAction || workflowConflict
+    : workflowAgentMode &&
+      (workflowIsActive || !workflowAgentAvailable || workflowAgentSession.busy || workflowConflict)
   const selectedTemplateUrl = templateStep?.selectedImageUrl
   const selectedFirstFrameUrl = firstFrameStep?.selectedFirstFrameUrl
   const requestedAction = firstFrameStep?.input.prompt || firstFrameStep?.input.name
   const characterTurnIsCurrent = !firstFrameStep
   const firstFrameTurnIsCurrent = Boolean(firstFrameStep) && actionStep?.status === 'locked'
   const actionTurnIsCurrent = Boolean(actionStep && actionStep.status !== 'locked')
+  const entryAgentConversationTurns = agentConversationTurns.filter(
+    (turn) => turn.scope !== 'workflow',
+  )
+  const workflowAgentConversationTurns = agentConversationTurns.filter(
+    (turn) => turn.scope === 'workflow',
+  )
 
   return (
     <section className="relative min-h-screen overflow-hidden bg-app-canvas pt-14 text-app-ink">
@@ -1755,7 +1849,7 @@ function QuickStartRun({
             data-testid="quick-start-transcript"
             className="mx-auto grid min-h-full w-full max-w-3xl content-end gap-7 pb-8 sm:gap-9"
           >
-            {agentConversationTurns.map((turn, index) => (
+            {entryAgentConversationTurns.map((turn, index) => (
               <div
                 key={`${turn.role}:${index}:${turn.content}`}
                 data-conversation-kind="agent"
@@ -2033,6 +2127,37 @@ function QuickStartRun({
                 ) : null}
               </div>
             ) : null}
+            {workflowAgentConversationTurns.map((turn, index) => (
+              <div
+                key={`${turn.role}:workflow:${index}:${turn.content}`}
+                data-conversation-kind="agent"
+                className="min-w-0"
+              >
+                {turn.role === 'user' ? (
+                  <UserTurn>{turn.content}</UserTurn>
+                ) : (
+                  <AgentCopy lines={turn.content.split('\n')} />
+                )}
+              </div>
+            ))}
+            {workflowAgentSession.state.status === 'planning' ? (
+              <div
+                data-conversation-kind="agent"
+                role="status"
+                aria-label="Agent 正在思考"
+                className="quick-start-agent-loading min-w-0"
+              >
+                <span aria-hidden="true" className="quick-start-agent-loading-dots">
+                  {[0, 1, 2].map((dot) => (
+                    <span
+                      key={dot}
+                      className="quick-start-agent-loading-dot"
+                      style={{ '--agent-loading-index': dot } as CSSProperties}
+                    />
+                  ))}
+                </span>
+              </div>
+            ) : null}
             <div data-testid="quick-start-transcript-end" />
           </div>
         </main>
@@ -2080,6 +2205,7 @@ function QuickStartRun({
                 aria-label="继续描述你的想法"
                 value={actionDescription}
                 onChange={(event) => setActionDescription(event.target.value)}
+                disabled={workflowComposerDisabled}
                 placeholder={composerPlaceholder}
                 className="h-10 w-full min-w-0 border-0 bg-transparent px-3 text-[15px] text-app-ink outline-none placeholder:text-app-faint"
               />
@@ -2087,7 +2213,11 @@ function QuickStartRun({
             <button
               type="submit"
               aria-label={isTemplateSelecting ? '确认选择，继续下一步' : '发送'}
-              disabled={!composerCanSubmit || workflowConflict}
+              disabled={
+                !composerCanSubmit ||
+                workflowConflict ||
+                (workflowAgentMode && workflowAgentSession.busy)
+              }
               className="grid h-10 w-10 place-items-center rounded-lg bg-app-accent text-app-on-accent transition hover:bg-app-accent-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-35"
             >
               <ArrowUp aria-hidden="true" size={16} weight="bold" />
