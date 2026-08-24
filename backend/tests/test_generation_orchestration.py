@@ -172,6 +172,37 @@ def test_quality_and_prompt_version_reach_the_persisted_result(session_factory, 
     # 任务仍然是 COMPLETED —— 交付/重试是产品决策,不该由这一步替调用方做。
 
 
+def test_geometry_survives_the_round_trip_through_the_database(session_factory, monkeypatch):
+    """几何要经得起"落库再读回",不能只在实时事件那条路上有。
+
+    查询接口与断线重连都走这条路;只在写入侧交出而反序列化时漏掉,前端就会回落到
+    自己那份 0.92,同一个任务从两条路读出的导出结果不一样,而没有任何一道会红。
+    """
+    service = AiGenerationService()
+    executor = ActionTaskExecutor(
+        generator=_real_offline_generator(monkeypatch),
+        upload=lambda png: "https://cdn.example.com/f.png",
+        fetch_master=lambda _input: _tiny_png(),
+        session_factory=session_factory,
+    )
+    action_input = CharacterActionInput(
+        character_id=1, action_type=ActionType.WALK, num_frames=6,
+    )
+    with session_factory() as s:
+        task_id = service.generate_character_action(s, user_id=1, input=action_input).id
+        s.commit()
+
+    executor.run_action_task(task_id, action_input)
+
+    with session_factory() as s:
+        done = service.get_task(s, project_id=1, task_id=task_id)
+    g = done.result.geometry
+    assert g is not None, "几何在落库到读回之间被丢掉了"
+    assert g["canvas_width"] > 0 and g["canvas_height"] > 0
+    assert 0 < g["anchor"]["y"] <= 1, "锚点是比例,不是像素"
+    assert g["foot_y"] == int(g["canvas_height"] * g["anchor"]["y"])
+
+
 def _png_of(w: int, h: int) -> bytes:
     """指定尺寸的一张带主体的 PNG。"""
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))

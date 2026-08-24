@@ -605,3 +605,25 @@ def test_after_approval_it_proceeds_and_reuses_the_stored_model(tmp_path):
     gate.approve(OUTFIT)
     assert builder.ensure(OUTFIT, _png(), _NullProgress()) == b"RIGGED-bytes"
     assert (m.calls, r.calls) == (1, 1)
+
+
+def test_generated_action_reports_the_alignment_geometry_instead_of_a_constant():
+    """交付几何由引擎报出,不让消费方按常数推。
+
+    前端导出契约此前自带一份 ``FOOT_LINE_RATIO = 0.92`` 算 anchor 与 footY。
+    两份常数只要有一次不同步,角色就不站在地上,而帧数、时长、成色全都正常 ——
+    没有任何一道会红。所以这条钉的是"报出来了",而且报的值必须来自
+    ``postprocess.FOOT_LINE`` 本身,不是用例里再抄一遍的字面量。
+    """
+    from windup_ai_engine.postprocess import FOOT_LINE
+
+    canvas = (256, 320)
+    out = _real_generator(_FakeRenderer()).generate_rendered(
+        _card(), _spec(), b"RIGGED", _NullProgress(), canvas=canvas,
+    )
+    g = out.geometry
+    assert g is not None, "几何必须报出来,None 表示引擎没给"
+    assert (g.canvas_w, g.canvas_h) == canvas
+    assert g.anchor_x == 0.5
+    assert g.anchor_y == FOOT_LINE
+    assert g.foot_y == int(canvas[1] * FOOT_LINE)

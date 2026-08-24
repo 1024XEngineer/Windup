@@ -85,6 +85,44 @@ const run: WorkflowRun = {
   ],
 }
 
+/** 一条走到"完整动画已生成、尚未发布"的流程，几何相关用例共用。 */
+function actionRunFixture(base: WorkflowRun): WorkflowRun {
+  return {
+    ...base,
+    nodes: [
+      ...base.nodes,
+      {
+        id: 'walk-method',
+        type: 'action-generation-method',
+        status: 'passed',
+        phase: 'completed',
+        dependsOnNodeIds: ['walk-first'],
+        generations: [],
+        error: null,
+        method: 'video-cropping',
+      },
+      {
+        id: 'walk-full',
+        type: 'action-full-frame',
+        status: 'passed',
+        phase: 'completed',
+        dependsOnNodeIds: ['walk-method'],
+        generations: [{ taskId: 'generation-full', role: 'complete_animation' }],
+        error: null,
+      },
+      {
+        id: 'walk-review',
+        type: 'review',
+        status: 'active',
+        phase: 'reviewing',
+        dependsOnNodeIds: ['walk-full'],
+        generations: [],
+        error: null,
+      },
+    ],
+  }
+}
+
 describe('createProgressiveExportModel', () => {
   it('拒绝把其它 WorkflowRun 的完成度拼到当前角色', () => {
     expect(() =>
@@ -239,6 +277,66 @@ describe('createProgressiveExportModel', () => {
       qualityStatus: 'pending',
       frames: [{ index: 0, imageUrl: '/walk-0.png', durationMs: 100 }],
     })
+  })
+
+  it('落位几何取后端报的那份，而不是前端自己按 0.92 算', () => {
+    const generation = {
+      id: 'generation-full',
+      projectId: project.id,
+      type: 'complete_animation',
+      status: 'completed',
+      error: null,
+      result: {
+        type: 'complete_animation',
+        frames: [{ index: 0, url: '/walk-0.png', durationMs: 100 }],
+        // 故意与 0.92 不同：若前端还在自己算，这条就会读出 spriteHeight*0.92
+        geometry: {
+          canvasWidth: project.spriteSize.width,
+          canvasHeight: project.spriteSize.height,
+          anchor: { x: 0.5, y: 0.8 },
+          footY: 32,
+        },
+      },
+    } satisfies Generation<'complete_animation'>
+
+    const model = createProgressiveExportModel({
+      project,
+      character,
+      outfitId: 'outfit-1',
+      run: actionRunFixture(run),
+      generations: [generation],
+    })
+
+    expect(model.actions[0]?.sequences[0]).toMatchObject({
+      anchor: { x: 0.5, y: 0.8 },
+      footY: 32,
+    })
+  })
+
+  it('后端没报几何时明示回落，不静默给 0', () => {
+    const generation = {
+      id: 'generation-full',
+      projectId: project.id,
+      type: 'complete_animation',
+      status: 'completed',
+      error: null,
+      result: {
+        type: 'complete_animation',
+        frames: [{ index: 0, url: '/walk-0.png', durationMs: 100 }],
+      },
+    } satisfies Generation<'complete_animation'>
+
+    const model = createProgressiveExportModel({
+      project,
+      character,
+      outfitId: 'outfit-1',
+      run: actionRunFixture(run),
+      generations: [generation],
+    })
+
+    const sequence = model.actions[0]?.sequences[0]
+    expect(sequence?.anchor).toEqual({ x: 0.5, y: 0.92 })
+    expect(sequence?.footY).toBe(Math.trunc(project.spriteSize.height * 0.92))
   })
 
   it('同名但不同 ID 的已发布与生成中动作不会互相覆盖', () => {

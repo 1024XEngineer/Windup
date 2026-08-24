@@ -124,10 +124,22 @@ export interface FirstFrameGenerationResult {
   images: readonly GeneratedImage[]
 }
 
+/** 交付帧的落位几何，由后端按对齐时的实参报出。 */
+export interface SequenceGeometry {
+  canvasWidth: number
+  canvasHeight: number
+  /** 左上原点、y 轴向下的 0-1 归一化坐标。 */
+  anchor: { x: number; y: number }
+  /** 脚底线距画布顶部的像素值。 */
+  footY: number
+}
+
 export interface CompleteAnimationGenerationResult {
   type: 'complete_animation'
   direction?: ActionDirection
   frames: readonly GeneratedFrame[]
+  /** 旧任务没有这一段；缺失时消费方不能当成"用默认值"，只能明示回落。 */
+  geometry?: SequenceGeometry
 }
 
 export type GenerationResult =

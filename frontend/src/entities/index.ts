@@ -99,6 +99,7 @@ export type {
   GenerationResultFor,
   GenerationType,
   ImageCandidateCount,
+  SequenceGeometry,
   TaskStatus,
 } from './generation'
 export type { GenerationApiConfig, GenerationTransport } from './generation/api'
