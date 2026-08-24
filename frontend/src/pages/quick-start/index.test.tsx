@@ -137,6 +137,23 @@ function serviceFor(run: WorkflowRun | null, overrides: Partial<QuickStartMock> 
     getFirstFrameCandidates: vi.fn(async () => []),
     getFailedGenerationDirections: vi.fn(async () => []),
     retryGenerationDirection: vi.fn(async () => fallbackRun),
+    getWorkflowAgentContext: vi.fn(() => ({
+      availableTools: fallbackRun.nodes.some(
+        (node) =>
+          node.type === 'character-template' &&
+          node.status === 'passed' &&
+          node.phase === 'completed',
+      )
+        ? ([
+            'regenerate_character_template',
+            'refine_character_template',
+            'regenerate_first_frame',
+            'refine_first_frame',
+          ] as const)
+        : [],
+    })),
+    regenerateCharacterTemplate: vi.fn(async () => fallbackRun),
+    regenerateFirstFrame: vi.fn(async () => fallbackRun),
     confirmFirstFrame: vi.fn(async () => fallbackRun),
     approveReview: vi.fn(async () => fallbackRun),
     getCharacterInfo: vi.fn(() => ({ characterId: 'character-1', outfitId: 'outfit-1' })),
@@ -149,6 +166,84 @@ function serviceFor(run: WorkflowRun | null, overrides: Partial<QuickStartMock> 
   Object.assign(service, overrides)
   return service
 }
+
+describe('Quick Start workflow Agent', () => {
+  it('routes a completed-run refinement through the current Controller session', async () => {
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const planner = vi.fn(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'refine_character_template',
+          input: { adjustmentPrompt: '把披风改成深蓝色' },
+        },
+      ],
+    }))
+    const service = serviceFor(run)
+    renderAt(`/quick-start/${run.id}`, service, agentFor({ planner }))
+
+    const composer = await screen.findByRole('textbox', { name: '继续描述你的想法' })
+    fireEvent.change(composer, { target: { value: '把披风改成深蓝色' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() =>
+      expect(service.regenerateCharacterTemplate).toHaveBeenCalledWith(
+        'refine',
+        '把披风改成深蓝色',
+      ),
+    )
+    const workflowPrompt = screen.getByText('像素骑士')
+    const refinementTurn = screen.getByText('把披风改成深蓝色')
+    expect(
+      workflowPrompt.compareDocumentPosition(refinementTurn) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(await screen.findByText('已提交角色母版微调。')).toBeTruthy()
+  })
+
+  it('keeps the conversation input disabled while a generation node is active', async () => {
+    const run = actionWorkflow({
+      firstStatus: 'passed',
+      fullStatus: 'active',
+      reviewStatus: 'locked',
+    })
+    const planner = vi.fn()
+    const service = serviceFor(run)
+    renderAt(`/quick-start/${run.id}`, service, agentFor({ planner }))
+
+    const composer = await screen.findByRole('textbox', { name: '继续描述你的想法' })
+    expect((composer as HTMLInputElement).disabled).toBe(true)
+    expect(planner).not.toHaveBeenCalled()
+  })
+
+  it('keeps persisted workflow Agent turns after the generated results on refresh', async () => {
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    window.localStorage.setItem(
+      `windup.quick-start.agent-chat.v2:run:7:${run.id}`,
+      JSON.stringify({
+        turns: [
+          { role: 'user', content: '银发骑士' },
+          { role: 'user', content: '把披风改成深蓝色', scope: 'workflow' },
+          {
+            role: 'assistant',
+            content: '已提交角色母版微调。',
+            kind: 'reply',
+            scope: 'workflow',
+          },
+        ],
+      }),
+    )
+
+    renderAt(`/quick-start/${run.id}`, serviceFor(run))
+
+    const workflowPrompt = await screen.findByText('像素骑士')
+    const refinementTurn = screen.getByText('把披风改成深蓝色')
+    expect(
+      workflowPrompt.compareDocumentPosition(refinementTurn) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(screen.getByText('已提交角色母版微调。')).toBeTruthy()
+  })
+})
 
 function eastCandidates(...imageUrls: string[]): readonly QuickStartCandidate[] {
   return imageUrls.map((imageUrl, index) => ({ direction: 'east', index, imageUrl }))
