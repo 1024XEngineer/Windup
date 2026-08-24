@@ -329,6 +329,17 @@ export function characterTemplatesFromImages(
   images: Partial<Record<ActionDirection, string>>,
 ): CharacterTemplate[] {
   return ACTION_DIRECTIONS.flatMap((direction) => {
+    const explicitImageUrl = images[direction]?.trim()
+    if (explicitImageUrl) {
+      return [
+        {
+          direction,
+          sourceDirection: null,
+          mirrorX: false,
+          imageUrl: explicitImageUrl,
+        },
+      ]
+    }
     const resolution = resolveActionDirection(direction)
     const imageUrl = images[resolution.sourceDirection]?.trim()
     if (!imageUrl) return []

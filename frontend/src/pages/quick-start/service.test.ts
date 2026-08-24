@@ -1133,13 +1133,14 @@ describe('createQuickStartService', () => {
     const fullFrame = run.nodes.find((node) => node.type === 'action-full-frame')!
     fullFrame.generations = [
       { taskId: 'task-east', role: 'complete_animation', direction: 'east' },
+      { taskId: 'task-west', role: 'complete_animation', direction: 'west' },
       { taskId: 'task-north', role: 'complete_animation', direction: 'north' },
       { taskId: 'task-south', role: 'complete_animation', direction: 'south' },
     ]
     const generationApis: GenerationApis = {
       create: vi.fn(),
       get: vi.fn(async (projectId, id) => {
-        const direction = id.replace('task-', '') as 'east' | 'north' | 'south'
+        const direction = id.replace('task-', '') as 'east' | 'west' | 'north' | 'south'
         return {
           id,
           projectId,
@@ -1742,9 +1743,9 @@ describe('createQuickStartService', () => {
       },
       {
         direction: 'west',
-        sourceDirection: 'east',
-        mirrorX: true,
-        imageUrl: null,
+        sourceDirection: null,
+        mirrorX: false,
+        imageUrl: 'west-character_template-2.png',
       },
       {
         direction: 'north',

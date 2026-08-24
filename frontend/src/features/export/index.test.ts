@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type {
+  ActionDirection,
   Character,
   CharacterApis,
   DirectionalMovement,
@@ -101,6 +102,7 @@ describe('Character asset publisher', () => {
     const fullFrame = workflow.nodes.find((node) => node.type === 'action-full-frame')!
     fullFrame.generations = [
       { taskId: 'generation-east', role: 'complete_animation', direction: 'east' },
+      { taskId: 'generation-west', role: 'complete_animation', direction: 'west' },
       { taskId: 'generation-north', role: 'complete_animation', direction: 'north' },
       { taskId: 'generation-south', role: 'complete_animation', direction: 'south' },
     ]
@@ -111,6 +113,7 @@ describe('Character asset publisher', () => {
       reviewNodeId: 'action-walk:review',
       generations: [
         directionalAnimationFixture('generation-east', 'east', 'east'),
+        directionalAnimationFixture('generation-west', 'west', 'west'),
         directionalAnimationFixture('generation-north', 'north', 'north'),
         directionalAnimationFixture('generation-south', 'south', 'south'),
       ],
@@ -127,10 +130,10 @@ describe('Character asset publisher', () => {
       },
       {
         direction: 'west',
-        sourceDirection: 'east',
-        mirrorX: true,
+        sourceDirection: null,
+        mirrorX: false,
         frameCount: 1,
-        frames: [],
+        frames: [{ index: 0, imageUrl: 'west-0.png', durationMs: 80 }],
       },
       {
         direction: 'north',
@@ -155,7 +158,33 @@ describe('Character asset publisher', () => {
         [directionalAnimationFixture('generation-east', 'east', 'east')],
         'four-way',
       ),
-    ).toThrow('完整动画方向 north 的生成结果不可发布')
+    ).toThrow('完整动画方向 west 的生成结果不可发布')
+  })
+
+  it('八向导出保留八个独立序列，不生成镜像占位', () => {
+    const directions = [
+      'east',
+      'west',
+      'north',
+      'south',
+      'north_east',
+      'north_west',
+      'south_east',
+      'south_west',
+    ] as const
+
+    const sequences = exportFeature.createActionSequences(
+      directions.map((direction) =>
+        directionalAnimationFixture(`generation-${direction}`, direction, direction),
+      ),
+      'eight-way',
+    )
+
+    expect(sequences.map((sequence) => sequence.direction)).toEqual(directions)
+    expect(sequences.every((sequence) => sequence.sourceDirection === null)).toBe(true)
+    expect(sequences.every((sequence) => !sequence.mirrorX && sequence.frames.length === 1)).toBe(
+      true,
+    )
   })
 
   it('拒绝未携带任何生成结果的发布请求', async () => {
@@ -345,7 +374,7 @@ function completeAnimationFixture(): Generation<'complete_animation'> {
 
 function directionalAnimationFixture(
   id: string,
-  direction: 'east' | 'north' | 'south',
+  direction: ActionDirection,
   prefix: string,
 ): Generation<'complete_animation'> {
   return {

@@ -89,7 +89,7 @@ describe('createPlaytestModel', () => {
     ])
   })
 
-  it('resolves real and mirrored eight-way sequences without copying stored frames', () => {
+  it('优先播放真实八向序列，不对西向和西北向应用镜像', () => {
     const directionalCharacter = structuredClone(character)
     directionalCharacter.outfits[0]!.actions[1]!.sequences = [
       {
@@ -104,10 +104,13 @@ describe('createPlaytestModel', () => {
       },
       {
         direction: 'west',
-        sourceDirection: 'east',
-        mirrorX: true,
+        sourceDirection: null,
+        mirrorX: false,
         frameCount: 2,
-        frames: [],
+        frames: [
+          { index: 1, imageUrl: '/walk-west-02.png', durationMs: 95 },
+          { index: 0, imageUrl: '/walk-west-01.png', durationMs: 95 },
+        ],
       },
       {
         direction: 'north_east',
@@ -118,10 +121,10 @@ describe('createPlaytestModel', () => {
       },
       {
         direction: 'north_west',
-        sourceDirection: 'north_east',
-        mirrorX: true,
+        sourceDirection: null,
+        mirrorX: false,
         frameCount: 1,
-        frames: [],
+        frames: [{ index: 0, imageUrl: '/walk-north-west-01.png', durationMs: 115 }],
       },
     ]
 
@@ -138,16 +141,16 @@ describe('createPlaytestModel', () => {
     })
     expect(walk?.sequences?.west).toEqual({
       frames: [
-        { imageUrl: '/walk-east-01.png', durationMs: 90 },
-        { imageUrl: '/walk-east-02.png', durationMs: 90 },
+        { imageUrl: '/walk-west-01.png', durationMs: 95 },
+        { imageUrl: '/walk-west-02.png', durationMs: 95 },
       ],
-      mirrorX: true,
-      sourceDirection: 'east',
+      mirrorX: false,
+      sourceDirection: 'west',
     })
     expect(walk?.sequences?.north_west).toEqual({
-      frames: [{ imageUrl: '/walk-north-east-01.png', durationMs: 110 }],
-      mirrorX: true,
-      sourceDirection: 'north_east',
+      frames: [{ imageUrl: '/walk-north-west-01.png', durationMs: 115 }],
+      mirrorX: false,
+      sourceDirection: 'north_west',
     })
   })
 
