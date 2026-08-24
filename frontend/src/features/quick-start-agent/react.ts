@@ -2,9 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   createQuickStartAgent,
+  createQuickStartWorkflowAgent,
   type CharacterGenerationProposal,
   type CreateQuickStartAgentOptions,
   type QuickStartAgentResult,
+  type CreateQuickStartWorkflowAgentOptions,
+  type WorkflowAgentToolName,
 } from './runtime'
 
 export type QuickStartAgentState =
@@ -152,5 +155,71 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
     busy: state.status === 'planning' || state.status === 'dispatching',
     submit,
     confirmProposal,
+  }
+}
+
+export type QuickStartWorkflowAgentState =
+  | { status: 'idle' }
+  | { status: 'planning' }
+  | { status: 'awaiting-input'; message: string }
+  | { status: 'action'; action: WorkflowAgentToolName; message: string }
+  | { status: 'error'; message: string }
+
+export function useQuickStartWorkflowAgent({
+  planner,
+  actions,
+  initialMessages,
+}: CreateQuickStartWorkflowAgentOptions) {
+  const [state, setState] = useState<QuickStartWorkflowAgentState>({ status: 'idle' })
+  const agent = useRef<ReturnType<typeof createQuickStartWorkflowAgent> | null>(null)
+  const running = useRef(false)
+  const abortController = useRef<AbortController | null>(null)
+  const mounted = useRef(true)
+
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      abortController.current?.abort()
+      agent.current?.revoke()
+      agent.current = null
+    }
+  }, [actions, initialMessages, planner])
+
+  const submit = useCallback(
+    async (input: string) => {
+      if (running.current) throw new Error('Planner 正在处理上一条输入')
+      running.current = true
+      const controller = new AbortController()
+      abortController.current = controller
+      if (mounted.current) setState({ status: 'planning' })
+      try {
+        agent.current ??= createQuickStartWorkflowAgent({ planner, actions, initialMessages })
+        const result = await agent.current.submit(input, { signal: controller.signal })
+        if (mounted.current) {
+          setState(
+            result.kind === 'action'
+              ? { status: 'action', action: result.action, message: result.message }
+              : { status: 'awaiting-input', message: result.message },
+          )
+        }
+        return result
+      } catch (cause) {
+        if (mounted.current && !(cause instanceof Error && cause.name === 'AbortError')) {
+          setState({ status: 'error', message: errorMessage(cause) })
+        }
+        throw cause
+      } finally {
+        running.current = false
+        if (abortController.current === controller) abortController.current = null
+      }
+    },
+    [actions, initialMessages, planner],
+  )
+
+  return {
+    state,
+    busy: state.status === 'planning',
+    submit,
   }
 }

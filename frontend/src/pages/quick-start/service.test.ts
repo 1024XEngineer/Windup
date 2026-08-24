@@ -301,6 +301,76 @@ describe('createQuickStartService', () => {
     await expect(service.open('missing')).rejects.toThrow('not found')
   })
 
+  it('只向 Agent 暴露当前 Run 已确认结果可复用的 Controller 操作', async () => {
+    const run = actionRun()
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis: pendingGenerationApis(),
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+    })
+
+    const session = await service.open(run.id)
+
+    expect(session.getWorkflowAgentContext()).toEqual({
+      availableTools: [
+        'regenerate_character_template',
+        'refine_character_template',
+        'regenerate_first_frame',
+        'refine_first_frame',
+      ],
+    })
+  })
+
+  it('角色母版微调直接复用当前 Run 的 Controller 和上一版图片', async () => {
+    const run = actionRun()
+    const generationApis = pendingGenerationApis()
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader({ width: 96, height: 128 }),
+    })
+    const session = await service.open(run.id)
+
+    await session.regenerateCharacterTemplate('refine', '把披风改成深蓝色')
+
+    expect(generationApis.create).toHaveBeenCalledWith({
+      type: 'character_template',
+      projectId: 'project-1',
+      prompt: '像素骑士\n把披风改成深蓝色',
+      referenceMedia: ['template.png'],
+      spriteWidth: 96,
+      spriteHeight: 128,
+      direction: 'east',
+    })
+  })
+
+  it('动作首帧重新生成直接复用当前 Run 的 Controller 原始输入', async () => {
+    const run = actionRun()
+    const generationApis = pendingGenerationApis()
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader({ width: 80, height: 80 }),
+    })
+    const session = await service.open(run.id)
+
+    await session.regenerateFirstFrame('regenerate')
+
+    expect(generationApis.create).toHaveBeenCalledWith({
+      type: 'first_frame',
+      projectId: 'project-1',
+      actionType: 'custom',
+      prompt: '挥手',
+      spriteWidth: 80,
+      spriteHeight: 80,
+      referenceMedia: ['template.png'],
+      direction: 'east',
+    })
+  })
+
   it('只列出各生成节点真正失败的方向', async () => {
     const run: WorkflowRun = {
       id: 'run-failed-directions',

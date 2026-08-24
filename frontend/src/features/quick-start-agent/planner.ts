@@ -2,12 +2,18 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { generateText as aiGenerateText, jsonSchema, tool } from 'ai'
 
 import {
+  REFINE_CHARACTER_TEMPLATE_TOOL,
+  REFINE_FIRST_FRAME_TOOL,
+  REGENERATE_CHARACTER_TEMPLATE_TOOL,
+  REGENERATE_FIRST_FRAME_TOOL,
   parseQuickStartDecision,
   QUICK_START_DECISION_TOOL,
   type PlannerInput,
   type PlannerResult,
   type QuickStartDecision,
   type QuickStartPlanner,
+  type WorkflowAgentContext,
+  type WorkflowAgentToolName,
 } from './runtime'
 
 interface GenerateTextResultLike {
@@ -21,7 +27,7 @@ interface GenerateTextOptionsLike {
   instructions: string
   messages: PlannerInput['messages']
   tools: Record<string, { execute?: unknown }>
-  toolChoice: 'required'
+  toolChoice: 'auto' | 'required'
   maxRetries: 0
   abortSignal?: AbortSignal
 }
@@ -71,6 +77,45 @@ const quickStartDecisionTool = tool({
   ),
 })
 
+const regenerateToolSchema = jsonSchema<Record<string, never>>({
+  type: 'object',
+  additionalProperties: false,
+  properties: {},
+})
+
+const refinementToolSchema = jsonSchema<{ adjustmentPrompt: string }>({
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    adjustmentPrompt: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 4_000,
+      description: '只描述相对上一版需要改变的内容，不重复角色或动作的完整原始描述。',
+    },
+  },
+  required: ['adjustmentPrompt'],
+})
+
+const workflowTools = {
+  [REGENERATE_CHARACTER_TEMPLATE_TOOL]: tool({
+    description: '用户明确要求放弃当前角色母版结果并按原始描述重新生成时使用。',
+    inputSchema: regenerateToolSchema,
+  }),
+  [REFINE_CHARACTER_TEMPLATE_TOOL]: tool({
+    description: '用户要求基于已确认的角色母版修改外观、服装、颜色或角色细节时使用。',
+    inputSchema: refinementToolSchema,
+  }),
+  [REGENERATE_FIRST_FRAME_TOOL]: tool({
+    description: '用户明确要求放弃当前动作首帧并按原始动作描述重新生成时使用。',
+    inputSchema: regenerateToolSchema,
+  }),
+  [REFINE_FIRST_FRAME_TOOL]: tool({
+    description: '用户要求基于已确认的动作首帧修改姿态、朝向或动作起始细节时使用。',
+    inputSchema: refinementToolSchema,
+  }),
+}
+
 export function quickStartPlannerInstructions(clarificationUsed: boolean): string {
   const clarificationRule = clarificationUsed
     ? '本草稿已经问过一次必要澄清，不得因为轮数强制生成，也不得再问第二个澄清问题；信息不足时用 reply 说明可继续补充，存在硬冲突时用 blocked。'
@@ -95,6 +140,19 @@ export function quickStartPlannerInstructions(clarificationUsed: boolean): strin
 ${clarificationRule}`
 }
 
+function quickStartWorkflowInstructions(context: WorkflowAgentContext): string {
+  const targets = context.availableTools.some((name) => name.includes('character_template'))
+    ? context.availableTools.some((name) => name.includes('first_frame'))
+      ? '已确认的角色母版和动作首帧'
+      : '已确认的角色母版'
+    : '已确认的动作首帧'
+  return `你是 Windup 生成流程中的轻量 Agent。当前可修改：${targets}。宿主只会在生成任务停止、结果允许修改时调用你。
+
+用户明确要求重新生成时，选择与目标对应的 regenerate Tool；重新生成不携带修改描述。用户给出相对上一版的具体修改时，选择对应的 refine Tool，并把具体变化写入 adjustmentPrompt。用户意图含糊、没有说明修改对象或只是在讨论时，直接用简短中文回复澄清，不调用 Tool。否定、引用或假设语境不得触发 Tool。
+
+每轮最多调用一个 Tool。不得输出思维过程、Tool 名称、内部状态或调用计划。所有实际修改由宿主绑定的 WorkflowController 完成。`
+}
+
 export function createAiSdkQuickStartPlanner({
   baseURL,
   modelId = 'quick-start-planner',
@@ -108,13 +166,20 @@ export function createAiSdkQuickStartPlanner({
   })
   const model = provider.chatModel(modelId)
 
-  return async ({ messages, clarificationUsed, signal }): Promise<PlannerResult> => {
+  return async ({ messages, clarificationUsed, workflow, signal }): Promise<PlannerResult> => {
+    const tools = workflow
+      ? Object.fromEntries(
+          workflow.availableTools.map((name: WorkflowAgentToolName) => [name, workflowTools[name]]),
+        )
+      : { [QUICK_START_DECISION_TOOL]: quickStartDecisionTool }
     const result = await generateText({
       model,
-      instructions: quickStartPlannerInstructions(clarificationUsed),
+      instructions: workflow
+        ? quickStartWorkflowInstructions(workflow)
+        : quickStartPlannerInstructions(clarificationUsed),
       messages,
-      tools: { [QUICK_START_DECISION_TOOL]: quickStartDecisionTool },
-      toolChoice: 'required',
+      tools,
+      toolChoice: workflow ? 'auto' : 'required',
       maxRetries: 0,
       abortSignal: signal,
     })

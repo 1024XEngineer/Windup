@@ -3,7 +3,7 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { PlannerInput, PlannerResult, QuickStartDecision } from './runtime'
-import { useQuickStartAgent } from './react'
+import { useQuickStartAgent, useQuickStartWorkflowAgent } from './react'
 
 afterEach(() => {
   cleanup()
@@ -162,5 +162,44 @@ describe('useQuickStartAgent', () => {
 
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
     expect(startCharacterGeneration).not.toHaveBeenCalled()
+  })
+})
+
+describe('useQuickStartWorkflowAgent', () => {
+  it('reports the submitted Controller action after planning', async () => {
+    const planner = vi.fn(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'regenerate_character_template',
+          input: {},
+        },
+      ],
+    }))
+    const regenerateCharacterTemplate = vi.fn(async () => undefined)
+    const { result } = renderHook(() =>
+      useQuickStartWorkflowAgent({
+        planner,
+        actions: {
+          getContext: () => ({ availableTools: ['regenerate_character_template'] }),
+          regenerateCharacterTemplate,
+          refineCharacterTemplate: vi.fn(async () => undefined),
+          regenerateFirstFrame: vi.fn(async () => undefined),
+          refineFirstFrame: vi.fn(async () => undefined),
+        },
+      }),
+    )
+
+    await act(async () => {
+      await result.current.submit('重新生成角色')
+    })
+
+    expect(result.current.state).toEqual({
+      status: 'action',
+      action: 'regenerate_character_template',
+      message: '已提交角色母版重新生成。',
+    })
+    expect(regenerateCharacterTemplate).toHaveBeenCalledOnce()
   })
 })
