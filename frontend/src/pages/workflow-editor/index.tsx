@@ -37,7 +37,7 @@ import {
   ExportButton,
   type ExportPackageModel,
 } from '@/features/export-package'
-import { GenerationPreviewCard, GenerationProgressCopy } from '@/shared/ui'
+import { FrameAnimationPlayer, GenerationPreviewCard, GenerationProgressCopy } from '@/shared/ui'
 import { loadDefaultActionPresets, type WorkflowEditorSession } from './runtime'
 import { useWorkflowEditorSession } from './use-workflow-editor-session'
 import { WorkflowEditorView, type WorkflowCardNode } from './workflow-editor-view'
@@ -1474,16 +1474,21 @@ function AnimationContent({
         {groups.map(({ direction, frames: directionFrames }) => (
           <div key={direction} className="grid gap-1.5">
             <p className={CARD_TEXT}>方向：{directionLabel(direction)}</p>
-            <div className="nodrag nopan nowheel grid max-h-40 grid-cols-8 gap-[3px] overflow-auto">
-              {directionFrames.map((frame, index) => (
-                <WorkflowImage
-                  key={`${frame.url}-${index}`}
-                  src={frame.url}
-                  alt={`${groups.length === 1 ? '动画帧' : `${directionLabel(direction)}动画帧`} ${index + 1}`}
-                  variant="frame"
-                />
-              ))}
-            </div>
+            <FrameAnimationPlayer
+              frames={directionFrames.map((frame) => ({
+                index: frame.index,
+                imageUrl: frame.url,
+                durationMs: frame.durationMs,
+              }))}
+              fps={firstFrameNode?.input.fps}
+              alt={
+                groups.length === 1 ? '完整动画预览' : `${directionLabel(direction)}完整动画预览`
+              }
+              loop
+              className="nodrag nopan nowheel aspect-square w-full rounded-[10px] border border-app-line bg-app-surface object-contain p-2 [image-rendering:pixelated]"
+              loading="eager"
+              decoding="async"
+            />
           </div>
         ))}
         {firstFrameNode ? (

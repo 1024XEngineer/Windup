@@ -216,6 +216,51 @@ describe('createProgressiveExportModel', () => {
     expect(playtestModel.playtest).toEqual({ initialActionId: 'walk' })
   })
 
+  it('单向动作只有 east 真实序列时将其导出为默认序列', () => {
+    const sequenceOnlyCharacter: Character = {
+      ...character,
+      outfits: [
+        {
+          ...character.outfits[0]!,
+          actions: [
+            {
+              id: 'idle',
+              outfitId: 'outfit-1',
+              name: '待机',
+              type: 'idle',
+              loop: true,
+              fps: 10,
+              frameCount: 1,
+              frames: [],
+              sequences: [
+                {
+                  direction: 'east',
+                  sourceDirection: null,
+                  mirrorX: false,
+                  frameCount: 1,
+                  frames: [{ index: 0, imageUrl: '/east.png', durationMs: 100 }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+
+    const model = createProgressiveExportModel({
+      project,
+      character: sequenceOnlyCharacter,
+      outfitId: 'outfit-1',
+    })
+
+    expect(model.actions[0]?.sequences).toEqual([
+      expect.objectContaining({
+        direction: 'default',
+        frames: [{ index: 0, imageUrl: '/east.png', durationMs: 100 }],
+      }),
+    ])
+  })
+
   it('四向已发布动作导出四组真实序列和各自图片', () => {
     const directions = ['east', 'west', 'north', 'south'] as const
     const directionalCharacter: Character = {
@@ -257,6 +302,42 @@ describe('createProgressiveExportModel', () => {
     expect(model.actions[0]?.sequences.map((sequence) => sequence.frames[0]?.imageUrl)).toEqual(
       directions.map((direction) => `/${direction}.png`),
     )
+  })
+
+  it('历史四向动作没有方向序列时仍按旧版默认序列导出', () => {
+    const legacyCharacter: Character = {
+      ...character,
+      outfits: [
+        {
+          ...character.outfits[0]!,
+          actions: [
+            {
+              id: 'idle',
+              outfitId: 'outfit-1',
+              name: '待机',
+              type: 'idle',
+              loop: true,
+              fps: 10,
+              frameCount: 1,
+              frames: [{ index: 0, imageUrl: '/idle.png', durationMs: 100 }],
+            },
+          ],
+        },
+      ],
+    }
+
+    const model = createProgressiveExportModel({
+      project: { ...project, directionalMovement: 'four-way' },
+      character: legacyCharacter,
+      outfitId: 'outfit-1',
+    })
+
+    expect(model.actions[0]?.sequences).toEqual([
+      expect.objectContaining({
+        direction: 'default',
+        frames: [{ index: 0, imageUrl: '/idle.png', durationMs: 100 }],
+      }),
+    ])
   })
 
   it('四向已发布动作缺少真实方向时拒绝导出', () => {

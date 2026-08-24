@@ -301,6 +301,76 @@ describe('createQuickStartService', () => {
     await expect(service.open('missing')).rejects.toThrow('not found')
   })
 
+  it('只向 Agent 暴露当前 Run 已确认结果可复用的 Controller 操作', async () => {
+    const run = actionRun()
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis: pendingGenerationApis(),
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+    })
+
+    const session = await service.open(run.id)
+
+    expect(session.getWorkflowAgentContext()).toEqual({
+      availableTools: [
+        'regenerate_character_template',
+        'refine_character_template',
+        'regenerate_first_frame',
+        'refine_first_frame',
+      ],
+    })
+  })
+
+  it('角色母版微调直接复用当前 Run 的 Controller 和上一版图片', async () => {
+    const run = actionRun()
+    const generationApis = pendingGenerationApis()
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader({ width: 96, height: 128 }),
+    })
+    const session = await service.open(run.id)
+
+    await session.regenerateCharacterTemplate('refine', '把披风改成深蓝色')
+
+    expect(generationApis.create).toHaveBeenCalledWith({
+      type: 'character_template',
+      projectId: 'project-1',
+      prompt: '像素骑士\n把披风改成深蓝色',
+      referenceMedia: ['template.png'],
+      spriteWidth: 96,
+      spriteHeight: 128,
+      direction: 'east',
+    })
+  })
+
+  it('动作首帧重新生成直接复用当前 Run 的 Controller 原始输入', async () => {
+    const run = actionRun()
+    const generationApis = pendingGenerationApis()
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader({ width: 80, height: 80 }),
+    })
+    const session = await service.open(run.id)
+
+    await session.regenerateFirstFrame('regenerate')
+
+    expect(generationApis.create).toHaveBeenCalledWith({
+      type: 'first_frame',
+      projectId: 'project-1',
+      actionType: 'custom',
+      prompt: '挥手',
+      spriteWidth: 80,
+      spriteHeight: 80,
+      referenceMedia: ['template.png'],
+      direction: 'east',
+    })
+  })
+
   it('只列出各生成节点真正失败的方向', async () => {
     const run: WorkflowRun = {
       id: 'run-failed-directions',
@@ -896,6 +966,7 @@ describe('createQuickStartService', () => {
       upload: vi.fn(async () => 'https://example.test/template.png' as MediaReference),
     }
     const workflowRunApis = createWorkflowRunApis()
+    const createRun = vi.spyOn(workflowRunApis, 'create')
     const persistRun = workflowRunApis.update.bind(workflowRunApis)
     let droppedTemplateResponse = false
     vi.spyOn(workflowRunApis, 'update').mockImplementation(async (nextRun) => {
@@ -941,20 +1012,16 @@ describe('createQuickStartService', () => {
       outfitId: savedCharacter.outfits[0]!.id,
     })
 
-    const secondSession = await service.startAction(
-      { characterId: 'character-1', outfitId: savedCharacter.outfits[0]!.id },
-      '跳跃',
-    )
-    const target = { characterId: 'character-1', outfitId: savedCharacter.outfits[0]!.id }
-    await service.startAction(target, '跑步')
-    await service.startAction(target, '攻击')
-    await service.startAction(target, '站立挥手')
-    const finalSession = await service.startAction(target, '跑步攻击')
-    const finalRun = finalSession.getWorkflow()
-    expect(secondSession.runId).not.toBe(firstSession.runId)
-    expect(finalSession.runId).not.toBe(firstSession.runId)
-    expect(finalSession.runId).not.toBe(secondSession.runId)
-    expect(finalRun.nodes.filter((node) => node.type === 'action-first-frame')).toHaveLength(1)
+    const outfitId = savedCharacter.outfits[0]!.id
+    await firstSession.addAction(outfitId, '跳跃')
+    await firstSession.addAction(outfitId, '跑步')
+    await firstSession.addAction(outfitId, '攻击')
+    await firstSession.addAction(outfitId, '站立挥手')
+    await firstSession.addAction(outfitId, '跑步攻击')
+    const finalRun = firstSession.getWorkflow()
+    expect(finalRun.id).toBe(firstRun.id)
+    expect(finalRun.nodes.filter((node) => node.type === 'action-first-frame')).toHaveLength(6)
+    expect(createRun).toHaveBeenCalledOnce()
     expect(generationApis.create).toHaveBeenCalledTimes(6)
     expect(generationApis.create).toHaveBeenNthCalledWith(
       1,
@@ -1178,6 +1245,12 @@ describe('createQuickStartService', () => {
       'north',
       'south',
     ])
+    expect(character.outfits[0]?.actions[0]?.sequences?.[1]).toMatchObject({
+      direction: 'west',
+      sourceDirection: null,
+      mirrorX: false,
+      frames: [{ imageUrl: 'west.png' }],
+    })
   })
 
   it.each([new Error('WorkflowRun 回读失败'), '回读失败'])(
@@ -1223,7 +1296,7 @@ describe('createQuickStartService', () => {
   )
 
   it.each([new Error('节点重新打开失败'), '节点重新打开失败'])(
-    'Character 写入失败且无法重新打开母版节点时上报错误',
+    '单向 Character 写入失败且无法重新打开母版节点时上报错误',
     async (reopenCause) => {
       const workflowRunApis = createWorkflowRunApis()
       const realUpdate = workflowRunApis.update.bind(workflowRunApis)
@@ -1252,7 +1325,7 @@ describe('createQuickStartService', () => {
         prepareProject: vi.fn(async () => ({
           id: 'project-1',
           spriteSize: { width: 256, height: 256 },
-          directionalMovement: 'four-way' as const,
+          directionalMovement: 'single' as const,
         })),
         projectApis: projectReader(),
         onAsyncError,
@@ -1363,6 +1436,22 @@ describe('createQuickStartService', () => {
     })
 
     const session = await service.open(candidateRun.id)
+    const updateCharacter = vi.mocked(characterApis.update)
+    updateCharacter.mockRejectedValueOnce(new Error('uploaded templates write failed'))
+    await expect(
+      session.continueWithUploadedTemplate(
+        new File(['replacement'], 'replacement.png', { type: 'image/png' }),
+        '',
+      ),
+    ).rejects.toThrow('uploaded templates write failed')
+    expect(
+      session.getWorkflow().nodes.find((node) => node.type === 'character-template'),
+    ).toMatchObject({
+      status: 'active',
+      phase: 'selecting',
+      selectedImages: { east: 'replacement.png' },
+    })
+
     const continued = await session.continueWithUploadedTemplate(
       new File(['replacement'], 'replacement.png', { type: 'image/png' }),
       '',
@@ -2041,9 +2130,24 @@ describe('createQuickStartService', () => {
         },
       ],
     })
+    const nodes = setupNodes(character.id, 'existing.png')
+    Object.assign(nodes[1], {
+      selectedImages: {
+        east: 'existing.png',
+        north: 'existing-north.png',
+        south: 'existing-south.png',
+      },
+    })
+    const run: WorkflowRun = {
+      id: 'old-run',
+      projectId: character.projectId,
+      version: 1,
+      storageStatus: 'active',
+      nodes,
+    }
     const generationApis = pendingGenerationApis()
     const service = createQuickStartService({
-      workflowRunApis: createWorkflowRunApis(),
+      workflowRunApis: createWorkflowRunApis([run]),
       generationApis,
       characterApis: {
         get: vi.fn(async () => character),
@@ -2056,47 +2160,34 @@ describe('createQuickStartService', () => {
       prepareProject: vi.fn(),
     })
 
-    await expect(
-      service.startAction({ characterId: character.id, outfitId: 'outfit-existing' }, ''),
-    ).rejects.toThrow('角色母版尚未确认方向 west，请先补齐全部方向母版')
+    const session = await service.open(run.id)
+    await expect(session.addAction('outfit-existing', '向北行走')).rejects.toThrow(
+      '角色母版尚未确认方向 west',
+    )
     expect(generationApis.create).not.toHaveBeenCalled()
   })
 
   it('keeps a custom action display name bounded while preserving its full prompt', async () => {
     const actionDescription = '挥手向远处的朋友打招呼并转身轻轻鞠躬并保持姿态'
-    const character = characterFixture({
-      workflowRunId: 'old-run',
-      referenceImageUrl: 'existing.png',
-      outfits: [
-        {
-          id: 'outfit-existing',
-          characterId: 'character-1',
-          name: '默认造型',
-          description: null,
-          previewUrl: 'existing.png',
-          model3dUrl: null,
-          actions: [],
-        },
-      ],
-    })
+    const run: WorkflowRun = {
+      id: 'old-run',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(),
+    }
     const service = createQuickStartService({
-      workflowRunApis: createWorkflowRunApis(),
+      workflowRunApis: createWorkflowRunApis([run]),
       generationApis: pendingGenerationApis(),
-      characterApis: {
-        get: vi.fn(async () => character),
-        listByProject: vi.fn(async () => ({ items: [character], total: 1, page: 1, pageSize: 20 })),
-        create: vi.fn(),
-        update: vi.fn(),
-        remove: vi.fn(),
-      } as unknown as CharacterApis,
       projectApis: projectReader(),
       prepareProject: vi.fn(),
     })
 
-    const session = await service.startAction(
-      { characterId: character.id, outfitId: 'outfit-existing' },
-      actionDescription,
+    const session = await service.open(run.id)
+    await expect(session.addAction('outfit-existing', '   ')).rejects.toThrow(
+      '请先描述要新增的动作',
     )
+    await session.addAction('outfit-existing', actionDescription)
     expect(
       session.getWorkflow().nodes.find((node) => node.type === 'action-first-frame'),
     ).toMatchObject({
@@ -2151,7 +2242,7 @@ describe('createQuickStartService', () => {
     })
   })
 
-  it('reports unavailable dependencies and invalid asset targets explicitly', async () => {
+  it('reports unavailable upload dependencies and invalid template continuation explicitly', async () => {
     const generationApis: GenerationApis = {
       create: vi.fn(),
       get: vi.fn(),
@@ -2165,98 +2256,6 @@ describe('createQuickStartService', () => {
     })
     const file = new File([], 'hero.png')
     await expect(bare.startWithUploadedTemplate(file, '')).rejects.toThrow('媒体上传服务尚未配置')
-    await expect(
-      bare.startAction({ characterId: 'character', outfitId: 'outfit' }, 'walk'),
-    ).rejects.toThrow('角色服务尚未配置')
-
-    const character = characterFixture({
-      id: 'character',
-      workflowRunId: 'run',
-      name: null,
-      referenceImageUrl: null,
-    })
-    const noOutfit = createQuickStartService({
-      workflowRunApis: createWorkflowRunApis(),
-      generationApis,
-      prepareProject: vi.fn(),
-      projectApis: projectReader(),
-      characterApis: {
-        get: vi.fn(async () => character),
-      } as unknown as CharacterApis,
-    })
-    await expect(
-      noOutfit.startAction({ characterId: 'character', outfitId: 'missing' }, 'walk'),
-    ).rejects.toThrow('当前造型还没有可用的角色母版，请先完成定妆再生成动作')
-
-    const outfitWithoutTemplate = characterFixture({
-      id: 'character-with-empty-outfit',
-      workflowRunId: 'run',
-      referenceImageUrl: null,
-      templates: [],
-      outfits: [
-        {
-          id: 'empty-outfit',
-          characterId: 'character-with-empty-outfit',
-          name: '空造型',
-          description: null,
-          previewUrl: null,
-          model3dUrl: null,
-          actions: [],
-        },
-      ],
-    })
-    const noTemplate = createQuickStartService({
-      workflowRunApis: createWorkflowRunApis(),
-      generationApis,
-      prepareProject: vi.fn(),
-      projectApis: projectReader(),
-      characterApis: {
-        get: vi.fn(async () => outfitWithoutTemplate),
-      } as unknown as CharacterApis,
-    })
-    await expect(
-      noTemplate.startAction(
-        { characterId: outfitWithoutTemplate.id, outfitId: 'empty-outfit' },
-        'walk',
-      ),
-    ).rejects.toThrow('当前造型还没有可用的角色母版，请先完成定妆再生成动作')
-
-    const characterReferenceOnly = characterFixture({
-      id: 'character-reference-only',
-      referenceImageUrl: 'character-reference.png',
-      templates: [],
-      outfits: [
-        {
-          id: 'reference-outfit',
-          characterId: 'character-reference-only',
-          name: '参考图造型',
-          description: null,
-          previewUrl: null,
-          model3dUrl: null,
-          actions: [],
-        },
-      ],
-    })
-    const referenceGenerations = pendingGenerationApis()
-    const referenceFallback = createQuickStartService({
-      workflowRunApis: createWorkflowRunApis(),
-      generationApis: referenceGenerations,
-      prepareProject: vi.fn(),
-      projectApis: projectReader(),
-      characterApis: {
-        get: vi.fn(async () => characterReferenceOnly),
-      } as unknown as CharacterApis,
-    })
-    await referenceFallback.startAction(
-      { characterId: characterReferenceOnly.id, outfitId: 'reference-outfit' },
-      'walk',
-    )
-    expect(referenceGenerations.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'first_frame',
-        referenceMedia: ['character-reference.png'],
-      }),
-    )
 
     const staticRun: WorkflowRun = {
       id: 'run-static',

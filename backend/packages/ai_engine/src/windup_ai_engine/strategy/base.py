@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 from windup_common.models import ActionSpec, ActionType, CharacterCard, GenRoute
 
 from windup_ai_engine.ports import ProgressPort
+from windup_ai_engine.postprocess.pack import ANCHOR_CENTROID, ANCHOR_FOOT
 
 # 动作类型 → 生成路线(架构决策,写死为契约)
 ROUTE_MATRIX: dict[ActionType, GenRoute] = {
@@ -58,6 +59,18 @@ def is_cyclic(action: ActionSpec) -> bool:
     if action.action is ActionType.CUSTOM:
         return bool(action.cyclic)
     return action.action in CYCLIC_ACTIONS
+
+
+def vertical_anchor(action: ActionSpec) -> str:
+    """这次生成按什么对齐垂直方向(见 postprocess.pack.align_bottom_center)。
+
+    **jump 不算无地面接触** —— 它腾空但要回地,按质心对齐会让落地帧悬在半空。全程无地面
+    的飞 / 游 / 攀只能以 CUSTOM 进来,故由调用方显式声明:按描述文字猜错是静默的(#534)。
+    """
+    if action.action is ActionType.CUSTOM and action.ground_contact is False:
+        return ANCHOR_CENTROID
+    return ANCHOR_FOOT
+
 
 # 本矩阵的形状本身有个已知边界,记录在此以免后来者按错误前提扩展:
 # 它是「动作类型 → 路线」的一对一映射,隐含前提是"路线由动作的物理性质唯一决定"。

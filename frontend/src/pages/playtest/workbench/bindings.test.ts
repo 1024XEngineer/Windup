@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import type { PlaytestAction } from './model'
-import { createDefaultActionBindings } from './bindings'
+import { createDefaultActionBindings, resolvePlaytestActionBindings } from './bindings'
+import { DEFAULT_PLAYTEST_PREFERENCES, setPlaytestActionType } from './preferences'
 
 function action(id: string, type: string): PlaytestAction {
   return {
@@ -65,6 +66,24 @@ describe('playtest action bindings', () => {
     expect(createDefaultActionBindings([jump, crouch])).toEqual({
       space: 'directional-jump',
       shift: 'directional-crouch',
+    })
+  })
+
+  it('resolves persisted action types against each character instead of reusing action ids', () => {
+    const preferences = setPlaytestActionType(
+      DEFAULT_PLAYTEST_PREFERENCES,
+      'primary_action',
+      'attack',
+    )
+
+    expect(
+      resolvePlaytestActionBindings(
+        [action('character-2-attack', 'attack'), action('character-2-duck', 'duck')],
+        preferences,
+      ),
+    ).toEqual({
+      space: 'character-2-attack',
+      shift: 'character-2-duck',
     })
   })
 })

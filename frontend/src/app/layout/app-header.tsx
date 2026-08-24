@@ -497,6 +497,8 @@ const marketingRegisterEntry = `/?${new URLSearchParams({
   returnTo: '/workspace',
 })}`
 
+const githubRepository = 'https://github.com/1024XEngineer/Windup'
+
 /**
  * 公开主页的顶栏悬在首屏画布上，只保留品牌与账号入口。
  * 半透明底色负责托住文字，边界交给背景模糊表达，避免把首屏切成上下两块。
@@ -532,6 +534,14 @@ function MarketingHeaderView({ session, wave, onWave }: MarketingHeaderViewProps
           aria-label="账号"
           className="relative ml-auto flex shrink-0 items-center gap-1 sm:gap-6"
         >
+          <a
+            href={githubRepository}
+            target="_blank"
+            rel="noreferrer"
+            className="hidden min-h-11 items-center text-body font-medium text-app-muted transition-colors hover:text-app-accent focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent xl:inline-flex"
+          >
+            GitHub
+          </a>
           {session.state.status === 'booting' ? (
             <span
               aria-label="正在恢复登录状态"

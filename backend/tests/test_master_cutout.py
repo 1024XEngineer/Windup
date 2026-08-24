@@ -9,6 +9,7 @@
 """
 
 import io
+import threading
 
 import numpy as np
 import pytest
@@ -80,10 +81,20 @@ def _constraints(size: int = 64) -> ProjectConstraints:
 
 def _run(png: bytes, *, matte=None, num_images: int = 1, want: int = 64):
     got: list[bytes] = []
+    n = 0
+    lock = threading.Lock()
+
+    def _upload(b: bytes) -> str:
+        nonlocal n
+        with lock:
+            n += 1
+            got.append(b)
+            return f"u{n}"
+
     ex = ImageTaskExecutor(
         image=_Gen(png),
         matte=matte or _BackgroundMatte(),
-        upload=lambda b: (got.append(b), f"u{len(got)}")[1],
+        upload=_upload,
     )
     urls, quality = ex._produce_image(
         CharacterImageInput(prompt="勇者", width=want, height=want, num_images=num_images),
@@ -197,3 +208,31 @@ def test_quality_reaches_the_task_result_over_http(session_factory):
 
     assert done.status is TaskStatus.COMPLETED
     assert done.result.quality == {"subject_blobs": [2]}
+
+
+def test_multi_image_generation_keeps_slot_count_when_calls_overlap():
+    """num_images>1 并行打模型,交付条数仍等于请求条数。"""
+    threads: set[int] = set()
+    lock = threading.Lock()
+    started = threading.Barrier(3)
+
+    class _SlowGen:
+        def gen_image(self, prompt, refs):
+            del prompt, refs
+            with lock:
+                threads.add(threading.get_ident())
+            started.wait(timeout=2)
+            return _master()
+
+    ex = ImageTaskExecutor(
+        image=_SlowGen(),
+        matte=_BackgroundMatte(),
+        upload=lambda b: f"u-{id(b)}",
+    )
+    urls, quality = ex._produce_image(
+        CharacterImageInput(prompt="勇者", width=64, height=64, num_images=3),
+        _constraints(),
+    )
+    assert len(urls) == 3
+    assert quality["subject_blobs"] == [1, 1, 1]
+    assert len(threads) > 1

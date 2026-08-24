@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 
@@ -64,7 +64,8 @@ describe('CharacterDetailPage', () => {
     expect(playtestEntry.parentElement?.className).toContain('items-start')
   })
 
-  it('lets the user choose Quick Start or Workflow Editor for the selected outfit', async () => {
+  it('routes both add-action choices to the character existing WorkflowRun', async () => {
+    const create = vi.spyOn(workflowRunApis, 'create')
     renderCharacter('51')
     await screen.findByRole('heading', { name: '轻装信使' })
 
@@ -72,9 +73,12 @@ describe('CharacterDetailPage', () => {
 
     expect(screen.getByRole('dialog', { name: '选择动作创建方式' })).toBeTruthy()
     expect(screen.getByRole('link', { name: '使用 Quick Start' }).getAttribute('href')).toBe(
-      '/quick-start?characterId=51&outfitId=outfit-default',
+      '/quick-start/501?intent=add-action&outfitId=outfit-default',
     )
-    expect(screen.getByRole('button', { name: '使用 Workflow Editor' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '使用 Workflow Editor' }).getAttribute('href')).toBe(
+      '/workflow-editor/501',
+    )
+    expect(create).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: '关闭动作创建方式' }))
     expect(screen.queryByRole('dialog', { name: '选择动作创建方式' })).toBeNull()
@@ -83,53 +87,6 @@ describe('CharacterDetailPage', () => {
     const dialog = screen.getByRole('dialog', { name: '选择动作创建方式' })
     fireEvent.mouseDown(dialog.parentElement!)
     expect(screen.queryByRole('dialog', { name: '选择动作创建方式' })).toBeNull()
-  })
-
-  it('keeps the chooser open and reports Workflow Editor creation failures', async () => {
-    vi.spyOn(workflowRunApis, 'create').mockRejectedValue(new Error('工作流暂时不可用'))
-    renderCharacter('51')
-    await screen.findByRole('heading', { name: '轻装信使' })
-
-    fireEvent.click(screen.getByRole('button', { name: '增加动作' }))
-    fireEvent.click(screen.getByRole('button', { name: '使用 Workflow Editor' }))
-
-    expect(await screen.findByRole('alert')).toHaveProperty('textContent', '工作流暂时不可用')
-    expect(screen.getByRole('dialog', { name: '选择动作创建方式' })).toBeTruthy()
-    expect(
-      screen.getByRole('button', { name: '使用 Workflow Editor' }).hasAttribute('disabled'),
-    ).toBe(false)
-  })
-
-  it('creates an independent template-bound run before opening Workflow Editor', async () => {
-    const create = vi.spyOn(workflowRunApis, 'create').mockImplementation(async (input) => ({
-      id: 'new-action-run',
-      projectId: input.projectId,
-      version: 1,
-      storageStatus: 'active',
-      nodes: input.nodes,
-    }))
-    renderCharacter('51')
-    await screen.findByRole('heading', { name: '轻装信使' })
-
-    fireEvent.click(screen.getByRole('button', { name: '增加动作' }))
-    fireEvent.click(screen.getByRole('button', { name: '使用 Workflow Editor' }))
-
-    await waitFor(() => expect(create).toHaveBeenCalledOnce())
-    expect(create).toHaveBeenCalledWith({
-      projectId: '42',
-      nodes: expect.arrayContaining([
-        expect.objectContaining({
-          type: 'character-setup',
-          status: 'passed',
-          input: expect.objectContaining({ characterId: '51' }),
-        }),
-        expect.objectContaining({
-          type: 'character-template',
-          status: 'passed',
-          selectedImageUrl: 'https://cdn.windup.test/messenger-outfit.png',
-        }),
-      ]),
-    })
   })
 
   it('expands an Action into backend Frames sorted by index', async () => {
