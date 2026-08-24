@@ -1243,6 +1243,84 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     })
   })
 
+  it('完整动画完成后用共享播放器替代逐帧网格', async () => {
+    vi.useFakeTimers()
+    defaultSessionLoader.mockResolvedValue(
+      createSession(reviewingActionWorkflow(), {
+        generationApis: generationApisFixture({
+          get: vi.fn().mockResolvedValue(completeAnimationGeneration()),
+        }),
+      }),
+    )
+    const view = renderEditor('/workflow-editor/42')
+    try {
+      await act(async () => undefined)
+      await act(async () => undefined)
+
+      const player = screen.getByRole('img', { name: '完整动画预览' })
+      expect(player.getAttribute('src')).toContain('/walk-01.png')
+      expect(screen.queryByRole('img', { name: '动画帧 1' })).toBeNull()
+      expect(screen.queryByRole('img', { name: '动画帧 2' })).toBeNull()
+
+      act(() => vi.advanceTimersByTime(100))
+      expect(player.getAttribute('src')).toContain('/walk-02.png')
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
+  })
+
+  it('多方向完整动画为每个真实源方向分别播放结果', async () => {
+    const workflow = reviewingActionWorkflow()
+    const fullFrame = workflow.nodes.find((node) => node.type === 'action-full-frame')
+    if (!fullFrame || fullFrame.type !== 'action-full-frame') {
+      throw new Error('missing full frame')
+    }
+    const directions = ['east', 'north', 'south'] as const
+    fullFrame.generations = directions.map((direction) => ({
+      taskId: `generation-${direction}`,
+      role: 'complete_animation' as const,
+      direction,
+    }))
+    defaultSessionLoader.mockResolvedValue(
+      createSession(workflow, {
+        project: { ...projectFixture(), directionalMovement: 'four-way' },
+        generationApis: generationApisFixture({
+          get: vi.fn(async (_projectId: string, taskId: string) => {
+            const direction = taskId.replace('generation-', '') as (typeof directions)[number]
+            return {
+              ...completeAnimationGeneration(),
+              id: taskId,
+              result: {
+                type: 'complete_animation' as const,
+                direction,
+                frames: [
+                  {
+                    index: 0,
+                    url: `https://assets.windup.test/${direction}-01.png`,
+                    durationMs: 100,
+                  },
+                ],
+              },
+            }
+          }) as GenerationApis['get'],
+        }),
+      }),
+    )
+
+    renderEditor('/workflow-editor/42')
+
+    expect(
+      (await screen.findByRole('img', { name: '东完整动画预览' })).getAttribute('src'),
+    ).toContain('/east-01.png')
+    expect(screen.getByRole('img', { name: '北完整动画预览' }).getAttribute('src')).toContain(
+      '/north-01.png',
+    )
+    expect(screen.getByRole('img', { name: '南完整动画预览' }).getAttribute('src')).toContain(
+      '/south-01.png',
+    )
+  })
+
   it('发布与审核命令失败时显示错误并释放分支锁', async () => {
     const publishReviewedAction = vi.fn(() => Promise.reject(new Error('审核保存失败')))
     const session = createSession(reviewingActionWorkflow(), {
