@@ -23,6 +23,7 @@ from windup_app.worker.consumer import StreamConsumer, start_delayed_loop, start
 from windup_app.worker.pending_timeout import release_stale_pending_tasks
 from windup_framework.db import Base, SessionLocal, engine
 from windup_framework.mq.model import MqMessage  # noqa: F401 — register metadata
+from windup_app.server.style_preset.model import StylePreset  # noqa: F401 — register metadata
 from windup_framework.mq.publisher import MqPublisher
 from windup_framework.mq.relay import relay_pending_messages
 from windup_framework.sse.bridge import RedisTaskEventBridge

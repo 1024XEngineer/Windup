@@ -30,11 +30,13 @@ from windup_app.server.sensitive_word.service import (
     SensitiveWordReloadSubscriber,
     service as sensitive_word_service,
 )
+from windup_app.server.style_preset.model import StylePreset  # noqa: F401
 from windup_app.server.user.model import User  # noqa: F401
 from windup_app.server.workflow_run.model import WorkflowRun  # noqa: F401
 from windup_app.server.action_preset import ACTION_PRESETS
 from windup_app.web.api.action_preset import router as action_preset_router
 from windup_app.web.api.admin_quota import router as admin_quota_router
+from windup_app.web.api.style_preset import router as style_preset_router
 from windup_app.web.api.agent import router as agent_router
 from windup_framework.mq.model import MqMessage  # noqa: F401
 from windup_app.web.api.auth import router as auth_router
@@ -181,6 +183,7 @@ def create_app() -> FastAPI:
     app.include_router(agent_router)
     app.include_router(action_preset_router)
     app.include_router(pixel_perfect_router)
+    app.include_router(style_preset_router)
     # 母版预检与建 3D 资产:web 层不能静态依赖 ai_engine,由 state 注入。
     app.state.precheck_master = precheck_master
     app.state.render3d_operations = default_operations()

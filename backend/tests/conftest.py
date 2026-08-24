@@ -23,6 +23,7 @@ from sqlalchemy.pool import StaticPool
 from windup_app.bootstrap.app import create_app
 from windup_app.server.character.model import Character
 from windup_app.server.project.model import Project
+from windup_app.server.style_preset.model import StylePreset
 from windup_app.server.quota.model import (
     CreditAccount,
     CreditRedemptionCode,
@@ -123,6 +124,7 @@ def engine():
         engine,
         tables=[
             Project.__table__,
+            StylePreset.__table__,
             User.__table__,
             Character.__table__,
             WorkflowRun.__table__,
