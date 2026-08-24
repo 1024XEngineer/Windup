@@ -511,6 +511,14 @@ describe('QuickStartPage', () => {
     )
   })
 
+  it('keeps browser form history out of the creation composer', () => {
+    renderAt('/quick-start', serviceFor(null))
+    const composer = screen.getByRole('textbox', { name: '创作指令' })
+
+    expect(composer.getAttribute('autocomplete')).toBe('off')
+    expect(composer.closest('form')?.getAttribute('autocomplete')).toBe('off')
+  })
+
   it('keeps the entry and run canvases at least viewport height', async () => {
     const entry = renderAt('/quick-start', serviceFor(null))
     expect(entry.getByLabelText('创作指令').closest('section')?.className).toContain(

@@ -808,6 +808,7 @@ function QuickStartInput({
         >
           <form
             onSubmit={(event) => void submit(event)}
+            autoComplete="off"
             data-prompt-state={promptState}
             className={`quick-start-agent-composer grid items-center gap-1.5 overflow-hidden rounded-xl border border-app-line-strong bg-app-surface-raised p-1.5 shadow-app-panel transition-shadow focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)] ${
               hasConversation ? 'sm:grid-cols-[1fr_auto]' : 'sm:grid-cols-[1fr_auto_auto]'
@@ -822,6 +823,7 @@ function QuickStartInput({
                 ref={promptInput}
                 id="quick-start-prompt"
                 rows={1}
+                autoComplete="off"
                 aria-label="创作指令"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
