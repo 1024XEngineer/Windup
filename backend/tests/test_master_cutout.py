@@ -74,11 +74,11 @@ class _Gen:
         return self._png
 
 
-def _constraints() -> ProjectConstraints:
-    return ProjectConstraints(sprite_w=64, sprite_h=64)
+def _constraints(size: int = 64) -> ProjectConstraints:
+    return ProjectConstraints(sprite_w=size, sprite_h=size)
 
 
-def _run(png: bytes, *, matte=None, num_images: int = 1):
+def _run(png: bytes, *, matte=None, num_images: int = 1, want: int = 64):
     got: list[bytes] = []
     ex = ImageTaskExecutor(
         image=_Gen(png),
@@ -86,14 +86,21 @@ def _run(png: bytes, *, matte=None, num_images: int = 1):
         upload=lambda b: (got.append(b), f"u{len(got)}")[1],
     )
     urls, quality = ex._produce_image(
-        CharacterImageInput(prompt="勇者", width=64, height=64, num_images=num_images),
-        _constraints(),
+        CharacterImageInput(prompt="勇者", width=want, height=want, num_images=num_images),
+        _constraints(want),
     )
     return got, urls, quality
 
 
 def _alpha(png: bytes) -> np.ndarray:
     return np.asarray(Image.open(io.BytesIO(png)).convert("RGBA"))[:, :, 3]
+
+
+def _geometry(png: bytes) -> tuple[float, float]:
+    """主体的高度占幅与脚线位置,都取比例 —— 换画布尺寸不该改变这两个数。"""
+    a = _alpha(png)
+    rows = np.where(a.max(axis=1) > 128)[0]
+    return (rows.max() + 1 - rows.min()) / a.shape[0], (rows.max() + 1) / a.shape[0]
 
 
 def test_delivered_master_has_no_background_left():
@@ -109,6 +116,24 @@ def test_delivered_master_has_no_background_left():
 
     assert _alpha(got[0])[0, 0] == 0
     assert _alpha(got[0])[20:44, 6:24].min() == 255, "主体不能被一起抠掉"
+
+
+def test_master_smaller_than_canvas_is_scaled_up_not_pasted():
+    """#512:源图小于项目画布时,主体占幅与脚线必须原样保住。
+
+    断言几何而不是画布尺寸:把 64 的图原尺寸居中贴进 256 画布,尺寸一样是对的,
+    可主体只剩四分之一大、脚线跟着上移,而母版是交付物,后面没有环节补得回来。
+    """
+    src = _master(size=64)
+    want_span, want_foot = _geometry(_BackgroundMatte().cutout(src))
+    assert want_span == pytest.approx(0.375), "仪器自检:源图主体占满高度的 3/8"
+
+    got, _, _ = _run(src, want=256)
+
+    assert Image.open(io.BytesIO(got[0])).size == (256, 256)
+    span, foot = _geometry(got[0])
+    assert span == pytest.approx(want_span, abs=0.01)
+    assert foot == pytest.approx(want_foot, abs=0.01)
 
 
 def test_multi_subject_master_is_counted_at_the_image_exit():
