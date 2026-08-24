@@ -15,6 +15,16 @@ from sqlalchemy.orm import Session
 from windup_app.server.project.model import Project
 
 
+class UnsetType:
+    """「这个字段没出现在请求里」——与「显式传了 null」区分开。"""
+
+    def __repr__(self) -> str:
+        return "UNSET"
+
+
+UNSET = UnsetType()
+
+
 class ProjectService(ABC):
     """项目 CRUD 用例的抽象边界。"""
 
@@ -61,9 +71,13 @@ class ProjectService(ABC):
         project: Project,
         *,
         project_name: str | None = None,
-        game_style: str | None = None,
+        game_style: str | None | UnsetType = UNSET,
     ) -> Project:
-        """改已完成归属校验的项目;``None`` 表示该字段不动。"""
+        """改已完成归属校验的项目。
+
+        ``game_style`` 用哨兵而不是 ``None`` 区分「没传」与「显式清空」:画风的
+        「不指定」落库就是 NULL,拿 None 当「不动」会让它永远清不掉。
+        """
 
     @abstractmethod
     def delete_project(self, session: Session, project_id: int) -> bool:
