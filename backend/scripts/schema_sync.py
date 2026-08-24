@@ -23,6 +23,11 @@ from sqlalchemy.schema import CreateColumn  # noqa: E402
 from windup_framework.db import Base, engine as default_engine  # noqa: E402
 
 
+def _norm_type(compiled: str) -> str:
+    """方言编译出的类型串归一,只吃掉排版差异,不吃掉参数。"""
+    return "".join(compiled.split()).upper()
+
+
 def _load_models() -> None:
     """导入所有 ORM 模块，让 Base.metadata 认全。
 
@@ -65,7 +70,9 @@ def plan(engine: Engine, metadata=None) -> tuple[list[tuple[str, str, str]], lis
                 # 这类声明的 str() 恒是基类型,拿它比会在变体生效的库上误报类型不一致。
                 want = col.type.compile(engine.dialect)
                 got = live[col.name]["type"].compile(engine.dialect)
-                if want.split("(")[0].upper() != got.split("(")[0].upper():
+                # 连参数一起比:只比基类型的话 VARCHAR(20) 与 VARCHAR(200)、
+                # NUMERIC 的不同精度都会被当成一样,而它们正是会丢数据的那类改动。
+                if _norm_type(want) != _norm_type(got):
                     manual.append(
                         f"{table.name}.{col.name} 类型不一致：模型 {want} / 库 {got}"
                     )
@@ -78,6 +85,13 @@ def plan(engine: Engine, metadata=None) -> tuple[list[tuple[str, str, str]], lis
                 continue
             ddl = str(CreateColumn(col).compile(engine))
             additive.append((table.name, col.name, ddl))
+
+        # 反向:库里有、模型没有。删列会丢数据,本脚本只报不动 —— 不报的话
+        # 巡检会在"模型删了一列"时返回干净,而库里那一列还带着数据。
+        for name in live.keys() - {c.name for c in table.columns}:
+            manual.append(
+                f"{table.name}.{name} 库里有而模型没有：删列会丢数据，请人工确认后手写 SQL"
+            )
     return additive, manual
 
 

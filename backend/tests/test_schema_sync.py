@@ -113,3 +113,30 @@ def test_it_fixes_the_real_case_a_live_table_missing_a_new_column():
     with Session(eng) as s:
         assert s.query(Project).first().project_name == "存量项目"
     assert plan(eng, Project.metadata) == ([], []), "补完再跑应当无事可做"
+
+
+def test_a_narrower_type_parameter_is_flagged():
+    """只比基类型的话 VARCHAR(20) 与 VARCHAR(200) 看着一样,而它正是会截断数据的那类改动。"""
+    live = _model(Column("project_name", String(200)))
+    want = _model(Column("project_name", String(20)))
+    additive, manual = plan(_engine_with(live), want.metadata)
+
+    assert additive == []
+    assert len(manual) == 1 and "project_name" in manual[0]
+
+
+def test_identical_types_are_not_flagged():
+    """归一只该吃掉排版差异;同一个类型不能因为编译串的空格差异被报成漂移。"""
+    live = _model(Column("project_name", String(20)))
+    want = _model(Column("project_name", String(20)))
+    assert plan(_engine_with(live), want.metadata) == ([], [])
+
+
+def test_a_column_removed_from_the_model_is_reported():
+    """模型删了列而库里还在:不报的话巡检返回干净,那一列却带着数据留在库里。"""
+    live = _model(Column("legacy_note", String(50)))
+    want = _model()
+    additive, manual = plan(_engine_with(live), want.metadata)
+
+    assert additive == []
+    assert len(manual) == 1 and "legacy_note" in manual[0]
