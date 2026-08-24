@@ -838,7 +838,7 @@ function QuickStartInput({
                         ? '描述动作，可留空生成待机动作…'
                         : '描述角色的外形、身份和气质…'
                 }
-                className={`min-h-10 max-h-40 w-full min-w-0 resize-none overflow-y-auto border-0 bg-transparent px-4 py-2.5 text-[15px] leading-5 text-app-ink outline-none [field-sizing:content] placeholder:text-app-faint ${
+                className={`block min-h-10 max-h-40 w-full min-w-0 resize-none overflow-y-auto border-0 bg-transparent px-4 py-2.5 text-[15px] leading-5 text-app-ink outline-none [field-sizing:content] placeholder:text-app-faint ${
                   promptState === 'rewriting' ? 'text-transparent caret-transparent' : ''
                 }`}
               />
