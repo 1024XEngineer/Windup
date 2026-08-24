@@ -36,6 +36,7 @@ from windup_app.worker.handlers import (
 )
 from windup_app.worker.pending_timeout import release_stale_pending_tasks
 from windup_common.directions import ActionDirection
+from windup_common.models import CharacterStance
 from windup_framework.db.base import Base
 from windup_framework.mq.config import MAX_CONSUME_ATTEMPTS
 from windup_framework.mq.model import MqMessage
@@ -410,6 +411,7 @@ def test_handle_generation_dispatches_action_task(db_session, engine, monkeypatc
             action_type=ActionType.WALK,
             num_frames=4,
             direction=ActionDirection.SOUTH,
+            stance=CharacterStance.QUADRUPED,
         ),
     )
     db_session.commit()
@@ -423,6 +425,7 @@ def test_handle_generation_dispatches_action_task(db_session, engine, monkeypatc
     run_action.assert_called_once()
     assert run_action.call_args.args[0] == task.id
     assert run_action.call_args.args[1].direction is ActionDirection.SOUTH
+    assert run_action.call_args.args[1].stance is CharacterStance.QUADRUPED
 
 
 def test_handle_generation_unknown_type_raises(db_session, engine, monkeypatch):
@@ -1036,9 +1039,6 @@ def test_consumer_acquires_generation_semaphore(engine, worker_session, monkeypa
     consumer._process_message("2-0", {"data": json.dumps(envelope)})
 
     redis_mock.xack.assert_called_once()
-
-
-
 def test_action_input_takes_frames_from_the_convention():
     """MQ 重建入参时缺帧数就按动作类型取,不在这层兜一个自己的数。
 

@@ -401,9 +401,8 @@ class ActionTaskExecutor:
         """母版 → ai_engine 按项目尺寸出帧 → 逐帧上传 → 组结果 dict。
 
         项目约束落实:``facing`` 随视角、``stylize`` 随画风(像素游戏→像素化)、
-        输出帧尺寸随 ``sprite_w×sprite_h``。四向/八向项目由上层为每个真实源方向
-        创建独立任务；本任务只生成 ``input.direction``，左右镜像由资产层复用，避免
-        为镜像方向重复调用模型和扣费。
+        输出帧尺寸随 ``sprite_w×sprite_h``。四向/八向项目由上层为每个必需方向
+        创建独立任务；本任务只生成 ``input.direction``，不会用镜像替代西向或斜向。
 
         **尺寸是传给引擎的,不是拿到帧再缩的。** 这里曾对每帧再做一次
         ``_fit_to(png, sprite_w, sprite_h)``:引擎恒出 256,项目要 512 就等于二次
@@ -414,7 +413,7 @@ class ActionTaskExecutor:
         """
         if cons.directions > 1:
             logger.info(
-                "项目要求 %s 方向，本任务只负责真实源方向 %s；镜像方向由资产层复用",
+                "项目要求 %s 方向，本任务负责独立方向 %s",
                 cons.directions,
                 input.direction.value,
             )

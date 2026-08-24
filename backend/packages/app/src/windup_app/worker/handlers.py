@@ -22,8 +22,9 @@ from windup_app.server.orchestrator.model import (
     GenerationType,
     TaskStatus,
 )
-from windup_common.directions import ActionDirection
 from windup_app.server.user.service import VERIFY_CODE_KEY
+from windup_common.directions import ActionDirection
+from windup_common.models import CharacterStance
 from windup_framework.db.redis import get_redis
 from windup_framework.db.session import SessionLocal
 from windup_framework.providers.email import email_provider
@@ -92,6 +93,7 @@ def _action_input(payload: dict) -> CharacterActionInput:
         video_model=payload.get("video_model"),
         outfit_id=payload.get("outfit_id"),
         model_3d_url=payload.get("model_3d_url"),
+        stance=CharacterStance(payload["stance"]) if payload.get("stance") else None,
         direction=ActionDirection(payload.get("direction") or ActionDirection.EAST.value),
     )
 
