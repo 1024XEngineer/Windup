@@ -1060,3 +1060,25 @@ def test_action_input_keeps_the_stored_frame_count():
     rebuilt = _action_input({"character_id": 1, "action_type": "idle", "num_frames": 20})
 
     assert rebuilt.num_frames == 20
+
+
+def test_image_input_uses_model_default_when_payload_omits_num_images():
+    """MQ 重建入参时缺张数就用 CharacterImageInput 自己的默认值,不在这层另写一份。
+
+    生产走的就是这条重建路径:这里兜 1 而入参默认是 2 时,同一请求经不经过 MQ
+    出图张数不同,费用跟着偏,没有一处会红。
+    """
+    from windup_app.worker.handlers import _image_input
+
+    rebuilt = _image_input({"prompt": "hero"})
+
+    assert rebuilt.num_images == CharacterImageInput().num_images
+
+
+def test_image_input_keeps_explicit_zero_num_images():
+    """显式 0 与没传必须能区分:or 会把 0 吃成另一份默认值。"""
+    from windup_app.worker.handlers import _image_input
+
+    rebuilt = _image_input({"prompt": "hero", "num_images": 0})
+
+    assert rebuilt.num_images == 0

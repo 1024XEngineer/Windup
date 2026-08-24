@@ -64,13 +64,16 @@ def handle_verification_code(payload: dict[str, Any]) -> None:
 
 
 def _image_input(payload: dict) -> CharacterImageInput:
+    # 张数缺失时原样传 None,交给入参自己的默认值:在这里兜一个数就是第二份约定,
+    # 它与 CharacterImageInput 分叉时同一请求经不经过 MQ 出图张数不同,没有一处会红。
+    raw_num_images = payload.get("num_images")
     return CharacterImageInput(
         reference_image_url=payload.get("reference_image_url"),
         prompt=payload.get("prompt") or "",
         negative_prompt=payload.get("negative_prompt") or "",
         width=int(payload.get("width") or 1024),
         height=int(payload.get("height") or 1024),
-        num_images=int(payload.get("num_images") or 1),
+        num_images=int(raw_num_images) if raw_num_images is not None else None,
         direction=ActionDirection(payload.get("direction") or ActionDirection.EAST.value),
     )
 
