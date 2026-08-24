@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   createQuickStartAgent,
+  createQuickStartWorkflowAgent,
   parseQuickStartDecision,
   validatePlannerTerminal,
   type PlannerResult,
   type QuickStartDecision,
   type QuickStartPlanner,
   type StartCharacterGenerationAction,
+  type WorkflowAgentActions,
 } from './runtime'
 
 function decisionResult(input: QuickStartDecision): PlannerResult {
@@ -284,5 +286,93 @@ describe('createQuickStartAgent', () => {
       agent.confirmProposal(proposal.proposalId, proposal.optimizedPrompt),
     ).rejects.toThrow('生成授权已使用')
     expect(startCharacterGeneration).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('createQuickStartWorkflowAgent', () => {
+  function workflowActions(): WorkflowAgentActions {
+    return {
+      getContext: () => ({
+        availableTools: [
+          'regenerate_character_template',
+          'refine_character_template',
+          'regenerate_first_frame',
+          'refine_first_frame',
+        ],
+      }),
+      regenerateCharacterTemplate: vi.fn(async () => undefined),
+      refineCharacterTemplate: vi.fn(async () => undefined),
+      regenerateFirstFrame: vi.fn(async () => undefined),
+      refineFirstFrame: vi.fn(async () => undefined),
+    }
+  }
+
+  it('executes one eligible refinement through the injected Controller action', async () => {
+    const planner = vi.fn<QuickStartPlanner>(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'refine_character_template',
+          input: { adjustmentPrompt: '  把披风改成深蓝色  ' },
+        },
+      ],
+    }))
+    const actions = workflowActions()
+    const agent = createQuickStartWorkflowAgent({
+      planner,
+      actions,
+      initialMessages: [{ role: 'user', content: '银发骑士' }],
+    })
+
+    await expect(agent.submit('把披风改成深蓝色')).resolves.toEqual({
+      kind: 'action',
+      action: 'refine_character_template',
+      message: '已提交角色母版微调。',
+    })
+    expect(actions.refineCharacterTemplate).toHaveBeenCalledWith('把披风改成深蓝色')
+    expect(actions.regenerateCharacterTemplate).not.toHaveBeenCalled()
+    expect(planner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflow: actions.getContext(),
+        messages: [
+          { role: 'user', content: '银发骑士' },
+          { role: 'user', content: '把披风改成深蓝色' },
+        ],
+      }),
+    )
+  })
+
+  it('rejects an action that the current Controller snapshot does not allow', async () => {
+    const planner = vi.fn<QuickStartPlanner>(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [{ toolName: 'regenerate_first_frame', input: {} }],
+    }))
+    const actions = workflowActions()
+    actions.getContext = () => ({
+      availableTools: ['regenerate_character_template', 'refine_character_template'],
+    })
+    const agent = createQuickStartWorkflowAgent({ planner, actions })
+
+    await expect(agent.submit('重新生成动作首帧')).rejects.toThrow('当前流程不能执行该操作')
+    expect(actions.regenerateFirstFrame).not.toHaveBeenCalled()
+  })
+
+  it('keeps ordinary replies in the same workflow conversation without an action', async () => {
+    const planner = vi.fn<QuickStartPlanner>(async () => ({
+      text: '可以。你想调整角色母版，还是动作首帧？',
+      finishReason: 'stop',
+      toolCalls: [],
+    }))
+    const actions = workflowActions()
+    const agent = createQuickStartWorkflowAgent({ planner, actions })
+
+    await expect(agent.submit('我想改一下')).resolves.toEqual({
+      kind: 'message',
+      message: '可以。你想调整角色母版，还是动作首帧？',
+    })
+    expect(actions.regenerateCharacterTemplate).not.toHaveBeenCalled()
+    expect(actions.refineFirstFrame).not.toHaveBeenCalled()
   })
 })
