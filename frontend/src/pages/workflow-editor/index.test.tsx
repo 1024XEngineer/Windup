@@ -670,7 +670,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     const workflow = selectingTemplateWorkflow(3, 'template-east')
     workflow.nodes[1] = {
       ...(workflow.nodes[1] as CharacterTemplateWorkflowNode),
-      generations: (['east', 'north', 'south'] as const).map((direction) => ({
+      generations: (['east', 'west', 'north', 'south'] as const).map((direction) => ({
         taskId: `template-${direction}`,
         role: 'character_template',
         direction,
@@ -679,7 +679,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     const session = createSession(workflow, {
       generationApis: generationApisFixture({
         get: vi.fn(async (_projectId: string, taskId: string) => {
-          const direction = taskId.replace('template-', '') as 'east' | 'north' | 'south'
+          const direction = taskId.replace('template-', '') as 'east' | 'west' | 'north' | 'south'
           return directionalCharacterGeneration(direction)
         }) as GenerationApis['get'],
       }),
@@ -689,8 +689,11 @@ describe('WorkflowEditorPage real runtime boundary', () => {
       .spyOn(session.controller, 'retryGenerationDirection')
       .mockResolvedValue()
     const confirmCharacterTemplate = vi.fn(
-      async (_nodeId: string, _selectedImageUrl: string, _direction?: 'east' | 'north' | 'south') =>
-        characterFixture(),
+      async (
+        _nodeId: string,
+        _selectedImageUrl: string,
+        _direction?: 'east' | 'west' | 'north' | 'south',
+      ) => characterFixture(),
     )
     session.confirmCharacterTemplate = confirmCharacterTemplate
     defaultSessionLoader.mockResolvedValue(session)
@@ -708,6 +711,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
 
     for (const [direction, label] of [
       ['east', '东'],
+      ['west', '西'],
       ['north', '北'],
       ['south', '南'],
     ] as const) {
@@ -718,9 +722,10 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     }
     fireEvent.click(screen.getByRole('button', { name: '确认身份母版' }))
 
-    await waitFor(() => expect(confirmCharacterTemplate).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(confirmCharacterTemplate).toHaveBeenCalledTimes(4))
     expect(confirmCharacterTemplate.mock.calls.map((call) => call[2])).toEqual([
       'east',
+      'west',
       'north',
       'south',
     ])
@@ -1091,7 +1096,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     Object.assign(firstFrame, {
       status: 'active',
       phase: 'selecting',
-      generations: (['east', 'north', 'south'] as const).map((direction) => ({
+      generations: (['east', 'west', 'north', 'south'] as const).map((direction) => ({
         taskId: `first-${direction}`,
         role: 'first_frame' as const,
         direction,
@@ -1116,7 +1121,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
       project,
       generationApis: generationApisFixture({
         get: vi.fn(async (_projectId: string, taskId: string) => {
-          const direction = taskId.replace('first-', '') as 'east' | 'north' | 'south'
+          const direction = taskId.replace('first-', '') as 'east' | 'west' | 'north' | 'south'
           return {
             id: taskId,
             projectId: '1',
@@ -1146,6 +1151,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
       }),
     )
     expect(screen.getByRole('img', { name: '北动作首帧候选 1' })).toBeTruthy()
+    expect(screen.getByRole('img', { name: '西动作首帧候选 1' })).toBeTruthy()
   })
 
   it('该造型没有 3D 资产时禁用三渲二选项并给出原因', async () => {
@@ -2120,7 +2126,7 @@ function characterGeneration(label: string): Generation {
 }
 
 function directionalCharacterGeneration(
-  direction: 'east' | 'north' | 'south',
+  direction: 'east' | 'west' | 'north' | 'south',
 ): Generation<'character_template'> {
   return {
     id: `template-${direction}`,
