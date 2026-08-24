@@ -220,6 +220,17 @@
             "$ref": "#/components/schemas/ActionDirection",
             "default": "east"
           },
+          "ground_contact": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ground Contact"
+          },
           "loop": {
             "anyOf": [
               {
