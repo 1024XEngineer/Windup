@@ -235,3 +235,15 @@ def test_no_phrase_uses_a_negation(style):
 
     errors = [i for i in lint(style.prompt_phrase, kind="still") if i.level == "error"]
     assert errors == [], f"{style.value}: {[i.message for i in errors]}"
+
+
+def test_reading_a_non_pixel_legacy_row_tells_the_truth(auth_client, db_session):
+    """接口不能说「没设画风」而生成时又在用那段文字 —— 认不出的原样交出去。"""
+    from windup_app.server.project.model import Project
+
+    created = auth_client.post("/projects", json=_payload()).json()["data"]
+    db_session.get(Project, created["id"]).game_style = "中世纪厚涂"
+    db_session.commit()
+
+    body = auth_client.get(f"/projects/{created['id']}").json()
+    assert body["data"]["game_style"] == "中世纪厚涂"

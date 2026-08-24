@@ -97,16 +97,27 @@ class ProjectOut(BaseModel):
     directional_movement: int
     sprite_width: int
     sprite_height: int
-    game_style: ArtStyle
+    game_style: ArtStyle | str
     sprite_sample_url: str | None
     create_at: datetime
     update_at: datetime
 
     @field_validator("game_style", mode="before")
     @classmethod
-    def _normalize_style(cls, value: object) -> ArtStyle:
-        """库里既有枚举值也有存量自由文本;不归一的话前端会把「像素风格」显示成不指定。"""
-        return ArtStyle.from_stored(value if isinstance(value, str) else None)
+    def _normalize_style(cls, value: object) -> ArtStyle | str:
+        """库里既有枚举码也有存量自由文本。
+
+        认得出的归一成枚举码,认不出的**原样交出去** —— 压成 ``UNSPECIFIED`` 会让接口
+        与生成时实际用的画风对不上:库里存着「中世纪厚涂」、提示词里也用着它,而接口说
+        这个项目没设画风。
+        """
+        if not isinstance(value, str) or not value.strip():
+            return ArtStyle.UNSPECIFIED
+        text = value.strip()
+        try:
+            return ArtStyle(text)
+        except ValueError:
+            return ArtStyle.PIXEL if ArtStyle.from_stored(text) is ArtStyle.PIXEL else text
 
 
 class ProjectListOut(ProjectOut):

@@ -2109,7 +2109,15 @@
             "type": "integer"
           },
           "game_style": {
-            "$ref": "#/components/schemas/ArtStyle"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtStyle"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Game Style"
           },
           "id": {
             "title": "Id",
@@ -2200,7 +2208,15 @@
             "type": "integer"
           },
           "game_style": {
-            "$ref": "#/components/schemas/ArtStyle"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtStyle"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Game Style"
           },
           "id": {
             "title": "Id",
