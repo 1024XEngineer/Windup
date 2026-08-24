@@ -915,3 +915,26 @@ def test_consumer_acquires_generation_semaphore(engine, worker_session, monkeypa
 
     redis_mock.xack.assert_called_once()
 
+
+
+def test_action_input_takes_frames_from_the_convention():
+    """MQ 重建入参时缺帧数就按动作类型取,不在这层兜一个自己的数。
+
+    生产走的就是这条重建路径:这里兜的数与约定分叉时,任务照跑、帧照出,没有一处会红。
+    """
+    from windup_app.server.orchestrator.model import frames_for
+    from windup_app.worker.handlers import _action_input
+
+    rebuilt = _action_input({"character_id": 1, "action_type": "idle"})
+
+    assert rebuilt.num_frames == frames_for(ActionType.IDLE)
+    assert rebuilt.num_frames != 32
+
+
+def test_action_input_keeps_the_stored_frame_count():
+    """落库的帧数是产线唯一来源,重建时原样取,不拿约定覆盖它。"""
+    from windup_app.worker.handlers import _action_input
+
+    rebuilt = _action_input({"character_id": 1, "action_type": "idle", "num_frames": 20})
+
+    assert rebuilt.num_frames == 20

@@ -3049,7 +3049,7 @@ describe('WorkflowController', () => {
     expect(generation.apis.create).toHaveBeenCalledTimes(1)
   })
 
-  it('完整动画必须是 32 帧，完成后只解锁自己的审核节点', async () => {
+  it('完整动画完成后只解锁自己的审核节点', async () => {
     const run = createRun([
       ...completedCharacterNodes(),
       firstFrameNode({
@@ -3209,7 +3209,7 @@ describe('WorkflowController', () => {
     })
   })
 
-  it('完整动画节点拒绝帧数不足的结果', async () => {
+  it('完整动画节点拒绝没有帧的结果', async () => {
     const run = createRun([
       ...completedCharacterNodes(),
       firstFrameNode({ status: 'passed', phase: 'completed', selectedFirstFrameUrl: 'first.png' }),
@@ -3233,7 +3233,7 @@ describe('WorkflowController', () => {
         status: 'completed',
         result: {
           type: 'complete_animation',
-          frames: [{ index: 0, url: 'frame.png', durationMs: 80 }],
+          frames: [],
         },
         error: null,
       },
@@ -3241,7 +3241,7 @@ describe('WorkflowController', () => {
 
     expect(controller.getWorkflow().nodes[4]).toMatchObject({
       status: 'failed',
-      error: '完整动画应为 32 帧，实际为 1 帧',
+      error: '完整动画结果没有帧',
     })
   })
 

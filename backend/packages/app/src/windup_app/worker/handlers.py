@@ -76,13 +76,16 @@ def _image_input(payload: dict) -> CharacterImageInput:
 def _action_input(payload: dict) -> CharacterActionInput:
     raw_type = payload.get("action_type")
     action_type = raw_type if isinstance(raw_type, ActionType) else ActionType(raw_type)
+    # 帧数缺失时原样传 None,交给入参按动作类型解析:在这里兜一个数就是第二份约定,
+    # 它与真正的约定分叉时任务照跑、帧数照出,没有一处会红。
+    raw_frames = payload.get("num_frames")
     return CharacterActionInput(
         character_id=int(payload["character_id"]),
         action_type=action_type,
         custom_prompt=payload.get("custom_prompt"),
         reference_video_url=payload.get("reference_video_url"),
         reference_image_urls=list(payload.get("reference_image_urls") or []),
-        num_frames=int(payload.get("num_frames") or 16),
+        num_frames=int(raw_frames) if raw_frames is not None else None,
         loop=payload.get("loop"),
         video_model=payload.get("video_model"),
         outfit_id=payload.get("outfit_id"),

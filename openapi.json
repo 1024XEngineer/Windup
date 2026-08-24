@@ -232,11 +232,17 @@
             "title": "Loop"
           },
           "num_frames": {
-            "default": 32,
-            "maximum": 64.0,
-            "minimum": 1.0,
-            "title": "Num Frames",
-            "type": "integer"
+            "anyOf": [
+              {
+                "maximum": 64.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Num Frames"
           },
           "outfit_id": {
             "anyOf": [
