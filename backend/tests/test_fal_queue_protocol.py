@@ -351,3 +351,16 @@ def test_queue_prefix_covers_every_registered_endpoint():
     """表里每一条都必须能被规则算出前两段,新登记一条时这里会先红。"""
     for endpoint in FAL_I2V_ENDPOINTS:
         assert queue_prefix(endpoint).count("/") == 1
+
+
+@pytest.mark.parametrize("body", ["[1, 2]", '"just a string"', "null", "17"])
+def test_a_2xx_that_is_not_a_json_object_is_invalid_not_a_crash(body):
+    """2xx 下返回合法但非对象的 JSON,要收成 INVALID_RESPONSE 而不是抛 AttributeError。
+
+    抛出去的话请求以未处理异常结束,Gateway 拿不到可判的结果,而单据可能已经建了。
+    """
+    p = _fal()
+    resp = httpx.Response(200, content=body, headers={"content-type": "application/json"})
+
+    assert p.parse_submit(resp).error_type is ModelErrorType.INVALID_RESPONSE
+    assert p.parse_poll(resp, "job-9").error_type is ModelErrorType.INVALID_RESPONSE

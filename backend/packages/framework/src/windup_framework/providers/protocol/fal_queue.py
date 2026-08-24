@@ -14,7 +14,7 @@ from windup_common.enums.model import ModelErrorType
 from windup_framework.gateway.classify import edge_fingerprint
 from windup_framework.gateway.types import AdapterResult
 
-from .openai_video import first_frame_datauri, http_error
+from .openai_video import first_frame_datauri, http_error, json_object
 from .types import HttpCall, VideoRequest
 
 #: 端点 → 首帧字段名。同为 kling,o1 叫 ``start_image_url``,别家叫 ``image_url``;
@@ -103,14 +103,13 @@ class FalQueueVideoProtocol:
     def parse_submit(self, resp: httpx.Response) -> AdapterResult:
         if not (200 <= resp.status_code < 300):
             return http_error(resp)
-        try:
-            payload = resp.json()
-        except ValueError:
+        payload = json_object(resp)
+        if payload is None:
             return AdapterResult(
                 ok=False,
                 error_type=ModelErrorType.INVALID_RESPONSE,
                 http_status=resp.status_code,
-                edge_fingerprint="响应不是 JSON",
+                edge_fingerprint="响应不是 JSON 对象",
             )
         jid = payload.get("request_id")
         if not jid:
@@ -137,16 +136,15 @@ class FalQueueVideoProtocol:
         """``ok`` 只表示轮询到此为止,不表示成功 —— 成败要由 :meth:`parse_fetch` 判。"""
         if not (200 <= resp.status_code < 300):
             return http_error(resp, job_id=job_id, phase="follow")
-        try:
-            st = resp.json()
-        except ValueError:
+        st = json_object(resp)
+        if st is None:
             return AdapterResult(
                 ok=False,
                 error_type=ModelErrorType.INVALID_RESPONSE,
                 http_status=resp.status_code,
                 job_id=job_id,
                 maybe_billed=True,
-                edge_fingerprint="轮询响应不是 JSON",
+                edge_fingerprint="轮询响应不是 JSON 对象",
             )
         status = st.get("status")
         if status == "COMPLETED":
@@ -212,11 +210,7 @@ class FalQueueVideoProtocol:
 
 
 def _payload(resp: httpx.Response) -> dict:
-    try:
-        payload = resp.json()
-    except ValueError:
-        return {}
-    return payload if isinstance(payload, dict) else {}
+    return json_object(resp) or {}
 
 
 def _detail(resp: httpx.Response) -> dict:
