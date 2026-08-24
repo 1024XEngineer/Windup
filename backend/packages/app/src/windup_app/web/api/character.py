@@ -169,7 +169,7 @@ def _validate_publishable_character_data(
     project: Project,
     status: CharacterStatus,
 ) -> None:
-    if status != CharacterStatus.PUBLISHED or data.version < 2:
+    if status != CharacterStatus.PUBLISHED:
         return
     try:
         validate_character_directions(
