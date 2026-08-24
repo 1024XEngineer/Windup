@@ -317,7 +317,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     const image = await screen.findByRole('img', { name: '已确认身份母版' })
     fireEvent.error(image)
 
-    expect(screen.getByText('图片加载失败')).toBeTruthy()
+    expect(await screen.findByText('图片加载失败')).toBeTruthy()
     expect(screen.queryByRole('status', { name: '正在加载已确认身份母版' })).toBeNull()
     expect(image.className).toContain('opacity-0')
   })

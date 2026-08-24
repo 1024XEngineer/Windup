@@ -150,7 +150,7 @@ describe('AppHeader 进行中任务入口', () => {
 
     act(() => rememberActiveRun('7', '77'))
 
-    expect(screen.getByRole('button', { name: '创作，有任务进行中' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: '创作，有任务进行中' })).toBeTruthy()
   })
 
   it('任务进行期间文字旁跟一个张望的小机器人，红点自己不动', async () => {
