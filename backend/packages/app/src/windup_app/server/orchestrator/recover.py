@@ -17,14 +17,12 @@ from sqlalchemy.orm import Session
 from windup_app.server.mq.catalog import (
     GENERATION_RUNNING_STALE_SECONDS,
     GENERATION_STREAM,
-    MSG_TYPE_CHARACTER_ACTION,
-    MSG_TYPE_CHARACTER_IMAGE,
+    msg_type_for_generation,
 )
 from windup_app.server.orchestrator import billing, task_repo
 from windup_app.server.orchestrator.i2v_poll import reschedule_if_waiting
 from windup_app.server.orchestrator.model import (
     GenerationTask,
-    GenerationType,
     TaskStatus,
 )
 from windup_framework.mq.publisher import MqPublisher
@@ -99,23 +97,18 @@ def _requeue_pending(
 ) -> None:
     assert task.id is not None
     try:
-        if task.task_type is GenerationType.CHARACTER_IMAGE:
-            msg_type = MSG_TYPE_CHARACTER_IMAGE
-        elif task.task_type is GenerationType.CHARACTER_ACTION:
-            msg_type = MSG_TYPE_CHARACTER_ACTION
-        else:
-            raise ValueError(f"未知任务类型: {task.task_type}")
+        task_type = (
+            task.task_type.value
+            if hasattr(task.task_type, "value")
+            else str(task.task_type)
+        )
         message_id = publisher.enqueue(
             session,
             stream=GENERATION_STREAM,
-            msg_type=msg_type,
+            msg_type=msg_type_for_generation(task_type),
             payload={
                 "task_id": task.id,
-                "task_type": (
-                    task.task_type.value
-                    if hasattr(task.task_type, "value")
-                    else str(task.task_type)
-                ),
+                "task_type": task_type,
             },
             dedupe_key=f"generation:{task.id}",
         )

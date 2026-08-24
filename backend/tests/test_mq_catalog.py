@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import pytest
+
 from windup_app.server.mq.catalog import (
     EMAIL_GROUP,
     EMAIL_STREAM,
     GENERATION_GROUP,
     GENERATION_STREAM,
+    MSG_TYPE_CHARACTER_ACTION,
+    MSG_TYPE_CHARACTER_ACTION_POLL,
+    MSG_TYPE_CHARACTER_IMAGE,
+    MSG_TYPE_VERIFICATION_CODE,
+    POOL_POLL,
+    POOL_SHARED,
     all_stream_specs,
     email_stream_spec,
     generation_action_concurrency,
@@ -14,6 +22,9 @@ from windup_app.server.mq.catalog import (
     generation_poll_concurrency,
     generation_stream_spec,
     generation_worker_pool_size,
+    msg_type_for_generation,
+    type_spec,
+    type_specs,
 )
 
 
@@ -62,3 +73,30 @@ def test_catalog_respects_env_overrides(monkeypatch):
     assert generation_action_concurrency() == 5
     assert generation_poll_concurrency() == 4
     assert generation_stream_spec().concurrency == 15
+
+
+def test_type_specs_register_pool_limit_and_recover():
+    by_type = {spec.msg_type: spec for spec in type_specs()}
+    assert by_type[MSG_TYPE_VERIFICATION_CODE].stream == EMAIL_STREAM
+    assert by_type[MSG_TYPE_VERIFICATION_CODE].pool == POOL_SHARED
+    assert by_type[MSG_TYPE_VERIFICATION_CODE].limit is False
+    assert by_type[MSG_TYPE_CHARACTER_IMAGE].pool == POOL_SHARED
+    assert by_type[MSG_TYPE_CHARACTER_IMAGE].limit is True
+    assert by_type[MSG_TYPE_CHARACTER_IMAGE].recover_as == MSG_TYPE_CHARACTER_IMAGE
+    assert by_type[MSG_TYPE_CHARACTER_ACTION].recover_as == MSG_TYPE_CHARACTER_ACTION
+    assert by_type[MSG_TYPE_CHARACTER_ACTION_POLL].pool == POOL_POLL
+    assert by_type[MSG_TYPE_CHARACTER_ACTION_POLL].recover_as is None
+    assert type_spec("unknown") is None
+
+
+def test_msg_type_for_generation_skips_poll_types():
+    assert msg_type_for_generation(MSG_TYPE_CHARACTER_IMAGE) == MSG_TYPE_CHARACTER_IMAGE
+    assert msg_type_for_generation(MSG_TYPE_CHARACTER_ACTION) == MSG_TYPE_CHARACTER_ACTION
+    with pytest.raises(ValueError, match="未知任务类型"):
+        msg_type_for_generation(MSG_TYPE_CHARACTER_ACTION_POLL)
+
+
+def test_handlers_cover_every_registered_type():
+    from windup_app.worker.handlers import HANDLERS
+
+    assert {spec.msg_type for spec in type_specs()} == set(HANDLERS)

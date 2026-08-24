@@ -773,6 +773,46 @@ def test_consumer_routes_poll_to_reserved_executor():
         consumer.shutdown()
 
 
+def test_consumer_routes_new_dedicated_pool_from_registry(monkeypatch):
+    """加 type 只改 catalog 注册表时,consumer 提交路径不必再写特判。"""
+    from windup_app.server.mq.catalog import TypeSpec, type_specs as live_specs
+
+    extra = TypeSpec(
+        msg_type="character_probe",
+        stream="windup:stream:generation",
+        pool="probe",
+        concurrency=1,
+        limit=True,
+    )
+    current = live_specs()
+    monkeypatch.setattr(
+        "windup_app.server.mq.catalog.type_specs",
+        lambda: (*current, extra),
+    )
+
+    consumer = StreamConsumer(
+        ConsumerConfig(stream="windup:stream:generation", group="generation", concurrency=2),
+        run_image_task=MagicMock(),
+        run_action_task=MagicMock(),
+        stop_event=threading.Event(),
+    )
+    try:
+        fields = {
+            "data": json.dumps({
+                "v": 1,
+                "id": str(uuid.uuid4()),
+                "type": "character_probe",
+                "payload": {"task_id": 1},
+            })
+        }
+        assert "probe" in consumer._executors
+        assert consumer._executor_for(fields) is consumer._executors["probe"]
+        assert consumer._semaphore_for("character_probe") is not None
+        assert consumer._executor_for(fields) is not consumer._executor
+    finally:
+        consumer.shutdown()
+
+
 def test_poll_message_runs_while_image_workers_are_busy(
     engine, worker_session, monkeypatch,
 ):
