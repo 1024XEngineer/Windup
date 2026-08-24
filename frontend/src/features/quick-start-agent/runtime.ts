@@ -1,6 +1,10 @@
 export const QUICK_START_DECISION_TOOL = 'quick_start_decision' as const
 /** 旧前端测试与灰度响应的只读兼容名；命中时只生成提案，不会直接写入。 */
 export const START_CHARACTER_GENERATION_TOOL = 'start_character_generation' as const
+export const REGENERATE_CHARACTER_TEMPLATE_TOOL = 'regenerate_character_template' as const
+export const REFINE_CHARACTER_TEMPLATE_TOOL = 'refine_character_template' as const
+export const REGENERATE_FIRST_FRAME_TOOL = 'regenerate_first_frame' as const
+export const REFINE_FIRST_FRAME_TOOL = 'refine_first_frame' as const
 
 const MAX_PROMPT_LENGTH = 4_000
 const MAX_MESSAGE_LENGTH = 2_000
@@ -25,6 +29,7 @@ export interface PlannerResult {
 export interface PlannerInput {
   messages: readonly PlannerMessage[]
   clarificationUsed: boolean
+  workflow?: WorkflowAgentContext
   signal?: AbortSignal
 }
 
@@ -72,6 +77,42 @@ export interface CreateQuickStartAgentOptions {
   initialMessages?: readonly PlannerMessage[]
   initialClarificationUsed?: boolean
   initialProposal?: CharacterGenerationProposal | null
+}
+
+export type WorkflowAgentToolName =
+  | typeof REGENERATE_CHARACTER_TEMPLATE_TOOL
+  | typeof REFINE_CHARACTER_TEMPLATE_TOOL
+  | typeof REGENERATE_FIRST_FRAME_TOOL
+  | typeof REFINE_FIRST_FRAME_TOOL
+
+export interface WorkflowAgentContext {
+  availableTools: readonly WorkflowAgentToolName[]
+}
+
+export interface WorkflowAgentActions {
+  getContext(): WorkflowAgentContext
+  regenerateCharacterTemplate(): Promise<void>
+  refineCharacterTemplate(adjustmentPrompt: string): Promise<void>
+  regenerateFirstFrame(): Promise<void>
+  refineFirstFrame(adjustmentPrompt: string): Promise<void>
+}
+
+export interface CreateQuickStartWorkflowAgentOptions {
+  planner: QuickStartPlanner
+  actions: WorkflowAgentActions
+  initialMessages?: readonly PlannerMessage[]
+}
+
+export type QuickStartWorkflowAgentResult =
+  | { kind: 'message'; message: string }
+  | { kind: 'action'; action: WorkflowAgentToolName; message: string }
+
+export interface QuickStartWorkflowAgent {
+  submit(
+    input: string,
+    options?: QuickStartAgentTurnOptions,
+  ): Promise<QuickStartWorkflowAgentResult>
+  revoke(): void
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -267,6 +308,142 @@ export function createQuickStartAgent({
     revoke() {
       currentProposal = null
       if (!consumed) revoked = true
+    },
+  }
+}
+
+interface WorkflowActionTerminal {
+  kind: 'action'
+  action: WorkflowAgentToolName
+  adjustmentPrompt?: string
+}
+
+function parseWorkflowActionInput(
+  action: WorkflowAgentToolName,
+  value: unknown,
+): WorkflowActionTerminal {
+  if (!isRecord(value)) throw new Error('工作流 Tool 参数必须是对象')
+  if (action === REFINE_CHARACTER_TEMPLATE_TOOL || action === REFINE_FIRST_FRAME_TOOL) {
+    if (
+      Object.keys(value).some((key) => key !== 'adjustmentPrompt') ||
+      !Object.hasOwn(value, 'adjustmentPrompt')
+    ) {
+      throw new Error('微调 Tool 参数字段无效')
+    }
+    const adjustmentPrompt =
+      typeof value.adjustmentPrompt === 'string' ? value.adjustmentPrompt.trim() : ''
+    if (!adjustmentPrompt || adjustmentPrompt.length > MAX_PROMPT_LENGTH) {
+      throw new Error('微调描述无效')
+    }
+    return { kind: 'action', action, adjustmentPrompt }
+  }
+  if (Object.keys(value).length > 0) throw new Error('重新生成 Tool 不接受参数')
+  return { kind: 'action', action }
+}
+
+function validateWorkflowPlannerTerminal(
+  result: PlannerResult,
+  context: WorkflowAgentContext,
+): { kind: 'message'; message: string } | WorkflowActionTerminal {
+  if (result.toolCalls.length === 0) {
+    if (result.finishReason !== 'stop') throw new Error('Planner 的工作流回复未完整结束')
+    return { kind: 'message', message: parseMessage(result.text) }
+  }
+  if (result.finishReason !== 'tool-calls' || result.toolCalls.length !== 1) {
+    throw new Error('Planner 每轮必须且只能调用一个工作流 Tool')
+  }
+  const [call] = result.toolCalls
+  const action = call?.toolName as WorkflowAgentToolName | undefined
+  if (!action || !context.availableTools.includes(action)) {
+    throw new Error('当前流程不能执行该操作')
+  }
+  return parseWorkflowActionInput(action, call.input)
+}
+
+function workflowActionMessage(action: WorkflowAgentToolName): string {
+  switch (action) {
+    case REGENERATE_CHARACTER_TEMPLATE_TOOL:
+      return '已提交角色母版重新生成。'
+    case REFINE_CHARACTER_TEMPLATE_TOOL:
+      return '已提交角色母版微调。'
+    case REGENERATE_FIRST_FRAME_TOOL:
+      return '已提交动作首帧重新生成。'
+    case REFINE_FIRST_FRAME_TOOL:
+      return '已提交动作首帧微调。'
+  }
+}
+
+export function createQuickStartWorkflowAgent({
+  planner,
+  actions,
+  initialMessages = [],
+}: CreateQuickStartWorkflowAgentOptions): QuickStartWorkflowAgent {
+  let messages = [...initialMessages]
+  let running = false
+  let revoked = false
+
+  async function submit(
+    input: string,
+    { signal }: QuickStartAgentTurnOptions = {},
+  ): Promise<QuickStartWorkflowAgentResult> {
+    if (revoked) throw new Error('工作流 Agent 已失效')
+    if (running) throw new Error('Planner 正在处理上一条输入')
+    const normalizedInput = input.trim()
+    if (!normalizedInput) throw new Error('请输入想要调整的内容')
+    if (signal?.aborted) {
+      revoked = true
+      throw abortError()
+    }
+
+    running = true
+    try {
+      const context = actions.getContext()
+      const nextMessages = [...messages, { role: 'user' as const, content: normalizedInput }]
+      messages = nextMessages
+      const terminal = validateWorkflowPlannerTerminal(
+        await planner({
+          messages: nextMessages,
+          clarificationUsed: false,
+          workflow: context,
+          signal,
+        }),
+        context,
+      )
+      if (signal?.aborted) {
+        revoked = true
+        throw abortError()
+      }
+      if (terminal.kind === 'message') {
+        messages = [...nextMessages, { role: 'assistant', content: terminal.message }]
+        return terminal
+      }
+
+      switch (terminal.action) {
+        case REGENERATE_CHARACTER_TEMPLATE_TOOL:
+          await actions.regenerateCharacterTemplate()
+          break
+        case REFINE_CHARACTER_TEMPLATE_TOOL:
+          await actions.refineCharacterTemplate(terminal.adjustmentPrompt!)
+          break
+        case REGENERATE_FIRST_FRAME_TOOL:
+          await actions.regenerateFirstFrame()
+          break
+        case REFINE_FIRST_FRAME_TOOL:
+          await actions.refineFirstFrame(terminal.adjustmentPrompt!)
+          break
+      }
+      const message = workflowActionMessage(terminal.action)
+      messages = [...nextMessages, { role: 'assistant', content: message }]
+      return { kind: 'action', action: terminal.action, message }
+    } finally {
+      running = false
+    }
+  }
+
+  return {
+    submit,
+    revoke() {
+      revoked = true
     },
   }
 }
