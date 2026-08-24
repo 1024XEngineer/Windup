@@ -74,6 +74,18 @@ def test_update_missing_preset_returns_404(auth_client):
     assert body["code"] == 404
 
 
+def test_update_rejects_explicit_null(auth_client):
+    created = auth_client.post("/style-presets", json=_payload()).json()["data"]
+    body = auth_client.patch(
+        f"/style-presets/{created['id']}",
+        json={"name": None},
+    ).json()
+    assert body["code"] == 400
+    assert "不能为 null" in body["message"]
+    persisted = auth_client.get("/style-presets").json()["data"][0]
+    assert persisted["name"] == "中像素"
+
+
 def test_style_preset_table_has_project_aligned_sprite_columns():
     assert StylePreset.__table__.c.sprite_width.name == "sprite_width"
     assert StylePreset.__table__.c.sprite_height.name == "sprite_height"

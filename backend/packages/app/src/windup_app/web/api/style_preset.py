@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -46,6 +46,15 @@ class StylePresetUpdate(BaseModel):
     sprite_height: int | None = Field(default=None, ge=32, le=2048)
     sort_order: int | None = None
     enabled: int | None = Field(default=None, ge=0, le=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_explicit_null(cls, data: object) -> object:
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if value is None:
+                    raise ValueError(f"{key} 不能为 null")
+        return data
 
 
 class StylePresetOut(BaseModel):
