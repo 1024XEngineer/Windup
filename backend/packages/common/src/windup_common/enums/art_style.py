@@ -67,6 +67,11 @@ _PROMPT_PHRASES = {
     ArtStyle.PIXEL: "pixel art",
     ArtStyle.CARTOON: "cartoon, bold clean outlines, flat cel shading",
     ArtStyle.HAND_DRAWN: "hand-drawn illustration, visible brush strokes, textured paper",
-    ArtStyle.REALISTIC: "painterly realism, no outlines, soft gradients and volumetric shading",
+    # 不写「no outlines」:这条通路没有 negative_prompt,模型不处理否定极性、只把名词
+    # latch 进画面,写「不要 X」等于点名要 X(与 ai_engine.prompt.lint 的否定式规则同一机制)。
+    ArtStyle.REALISTIC: (
+        "painterly realism, forms defined by light and shadow, "
+        "soft gradients and volumetric shading"
+    ),
     ArtStyle.UNSPECIFIED: "",
 }

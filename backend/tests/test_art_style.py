@@ -207,3 +207,14 @@ def test_a_non_pixel_legacy_style_still_reaches_the_prompt(auth_client, db_sessi
     cons = _load_constraints(db_session, created["id"])
     assert cons.style == "中世纪厚涂"
     assert cons.stylize == "none"
+
+
+@pytest.mark.parametrize("style", list(ArtStyle), ids=lambda s: s.value)
+def test_no_phrase_uses_a_negation(style):
+    """这条通路没有 negative_prompt。模型不处理否定极性、只把名词 latch 进画面,
+    所以「no outlines」是在点名要 outlines —— 与它想表达的正好相反。
+    """
+    from windup_ai_engine.prompt.lint import lint
+
+    errors = [i for i in lint(style.prompt_phrase, kind="still") if i.level == "error"]
+    assert errors == [], f"{style.value}: {[i.message for i in errors]}"
