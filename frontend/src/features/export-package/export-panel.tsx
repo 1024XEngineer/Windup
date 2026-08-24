@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 
 import type { ExportPackageModel } from './model'
 import {
@@ -23,6 +23,7 @@ export interface ExportButtonProps {
   model: ExportPackageModel
   exporter?: AssetExporter
   className?: string
+  icon?: ReactNode
   idleLabel?: string
   pill?: boolean
 }
@@ -146,6 +147,7 @@ export function ExportButton({
   model,
   exporter = defaultExporter,
   className = '',
+  icon,
   idleLabel,
   pill = false,
 }: ExportButtonProps) {
@@ -166,9 +168,14 @@ export function ExportButton({
         disabled={working}
         title={state.status === 'failure' ? state.message : undefined}
         onClick={() => void startExport()}
-        className={`${pill ? 'rounded-full' : 'rounded-lg'} border border-current px-3 py-2 text-xs font-semibold disabled:opacity-50 ${className}`}
+        className={`${pill ? 'rounded-full' : 'rounded-lg'} inline-flex min-h-10 items-center justify-center gap-2 border border-current px-3 py-2 text-xs font-semibold disabled:opacity-50 ${className}`}
       >
-        {label}
+        {icon ? (
+          <span aria-hidden="true" className="inline-flex shrink-0">
+            {icon}
+          </span>
+        ) : null}
+        <span>{label}</span>
       </button>
       {state.status === 'failure' ? (
         <span role="alert" className="max-w-64 text-[11px] font-medium leading-4 text-app-danger">
