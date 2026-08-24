@@ -126,7 +126,7 @@ function serviceFor(run: WorkflowRun | null, overrides: Partial<QuickStartMock> 
       return service
     }),
     continueWithUploadedTemplate: vi.fn(async () => run!),
-    startAction: vi.fn(async () => service),
+    addAction: vi.fn(async () => fallbackRun),
     getWorkflow: vi.fn(() => fallbackRun),
     subscribe: vi.fn(() => () => undefined),
     subscribeErrors: vi.fn(() => () => undefined),
@@ -1385,50 +1385,35 @@ describe('QuickStartPage', () => {
     expect(composer?.querySelector('[data-layout="quick-start-attachment-row"]')).toBeNull()
   })
 
-  it('adds an action to an existing character and reports submission errors', async () => {
-    const service = serviceFor(null)
-    const view = renderAt('/quick-start?characterId=character-1&outfitId=outfit-1', service)
-    fireEvent.change(screen.getByLabelText('动作描述'), { target: { value: '挥手' } })
-    fireEvent.click(screen.getByRole('button', { name: '开始生成新动作' }))
-    await waitFor(() =>
-      expect(service.startAction).toHaveBeenCalledWith(
-        { characterId: 'character-1', outfitId: 'outfit-1' },
-        '挥手',
-      ),
-    )
+  it('adds an action from the existing Quick Start run instead of creating another run', async () => {
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const service = serviceFor(run)
+    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service)
 
-    view.unmount()
-    const failed = serviceFor(null, {
-      startAction: vi.fn(async () => Promise.reject(new Error('动作创建失败'))),
-    })
-    renderAt('/quick-start?characterId=character-1&outfitId=outfit-1', failed)
-    fireEvent.change(screen.getByLabelText('动作描述'), { target: { value: '挥手' } })
-    fireEvent.click(screen.getByRole('button', { name: '开始生成新动作' }))
-    expect((await screen.findByRole('alert')).textContent).toContain('动作创建失败')
+    const input = await screen.findByRole('textbox', { name: '继续描述你的想法' })
+    const submit = screen.getByRole('button', { name: '发送' })
+    expect((submit as HTMLButtonElement).disabled).toBe(true)
+
+    fireEvent.change(input, { target: { value: '挥手' } })
+    await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(submit)
+
+    await waitFor(() => expect(service.addAction).toHaveBeenCalledWith('outfit-1', '挥手'))
   })
 
-  it('blocks an empty action description and says what to type instead', async () => {
-    // 空描述会被后端当成 custom 动作缺 custom_prompt 拒掉，回来的是一句
-    // "请求参数校验失败"。这里断言用户根本走不到那一步。
-    const service = serviceFor(null)
-    renderAt('/quick-start?characterId=character-1&outfitId=outfit-1', service)
+  it('reports add-action failures inside the existing Quick Start run', async () => {
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const service = serviceFor(run, {
+      addAction: vi.fn(async () => Promise.reject(new Error('动作生成暂时不可用'))),
+    })
+    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service)
 
-    const submit = screen.getByRole('button', { name: '开始生成新动作' })
-    expect((submit as HTMLButtonElement).disabled).toBe(true)
-    expect(screen.getByText('请先描述动作，例如：来回踱步')).toBeTruthy()
+    fireEvent.change(await screen.findByRole('textbox', { name: '继续描述你的想法' }), {
+      target: { value: '挥手' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
 
-    fireEvent.change(screen.getByLabelText('动作描述'), { target: { value: '   ' } })
-    expect((submit as HTMLButtonElement).disabled).toBe(true)
-    expect(screen.getByText('请先描述动作，例如：来回踱步')).toBeTruthy()
-    fireEvent.click(submit)
-    fireEvent.submit(submit.closest('form')!)
-    await waitFor(() => expect(service.startAction).not.toHaveBeenCalled())
-
-    fireEvent.change(screen.getByLabelText('动作描述'), { target: { value: '来回踱步' } })
-    expect((submit as HTMLButtonElement).disabled).toBe(false)
-    expect(screen.queryByText('请先描述动作，例如：来回踱步')).toBeNull()
-    fireEvent.click(submit)
-    await waitFor(() => expect(service.startAction).toHaveBeenCalledTimes(1))
+    expect((await screen.findByRole('alert')).textContent).toContain('动作生成暂时不可用')
   })
 
   it('recovers missing runs and returns to the creation entry', async () => {

@@ -290,7 +290,6 @@ export function QuickStartPage({
 }: QuickStartPageProps) {
   const { runId } = useParams()
   const location = useLocation()
-  const [searchParams] = useSearchParams()
   const authSession = useOptionalAuthSession()
   const activeRunUserId =
     providedActiveRunUserId ??
@@ -302,8 +301,6 @@ export function QuickStartPage({
   const consumeCreatedSession = useCallback((consumed: QuickStartSession) => {
     setCreatedSession((current) => (current === consumed ? null : current))
   }, [])
-  const characterId = searchParams.get('characterId')
-  const outfitId = searchParams.get('outfitId')
   return runId ? (
     <QuickStartRun
       key={runId}
@@ -314,12 +311,6 @@ export function QuickStartPage({
       onInitialSessionConsumed={consumeCreatedSession}
       activeRunUserId={activeRunUserId}
     />
-  ) : characterId && outfitId ? (
-    <QuickStartActionInput
-      service={activeService}
-      target={{ characterId, outfitId }}
-      onSessionCreated={setCreatedSession}
-    />
   ) : (
     <QuickStartInput
       key={location.key}
@@ -328,88 +319,6 @@ export function QuickStartPage({
       activeRunUserId={activeRunUserId}
       onSessionCreated={setCreatedSession}
     />
-  )
-}
-
-function QuickStartActionInput({
-  service,
-  target,
-  onSessionCreated,
-}: {
-  service: QuickStartEntryService
-  target: { characterId: string; outfitId: string }
-  onSessionCreated: (session: QuickStartSession) => void
-}) {
-  const navigate = useNavigate()
-  const [description, setDescription] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  // 空描述会被后端当成 custom 动作缺 custom_prompt 拒掉，回来的是一句
-  // "请求参数校验失败"；用户不该走到那一步，更不该只看到一个变灰的按钮。
-  const missingDescription = !description.trim()
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const prompt = description.trim()
-    if (!prompt || submitting || service.unavailableReason) return
-    setSubmitting(true)
-    setError(null)
-    try {
-      const session = await service.startAction(target, prompt)
-      onSessionCreated(session)
-      navigate(`/quick-start/${encodeURIComponent(session.runId)}`)
-    } catch (cause) {
-      setError(errorMessage(cause, '创建动作失败，请稍后重试'))
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <section className="min-h-[560px] border border-app-line bg-app-canvas p-6 text-app-ink sm:p-10">
-      <Link
-        to={playtestPath(target.characterId, target.outfitId)}
-        className="text-xs font-semibold text-app-muted hover:text-app-accent"
-      >
-        ← 返回当前预览台
-      </Link>
-      <div className="mx-auto mt-14 max-w-2xl">
-        <p className="font-mono text-[10px] font-bold text-app-muted">ADD ACTION</p>
-        <h1 className="mt-3 font-serif text-4xl">给当前角色增加动作</h1>
-        <p className="mt-3 text-sm text-app-muted">
-          新动作会追加到角色 {target.characterId} 的当前造型，不会新建角色或覆盖已有动作。
-        </p>
-        <form onSubmit={submit} className="mt-8 space-y-4">
-          <label className="block text-xs font-semibold text-app-ink-soft">
-            动作描述
-            <textarea
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder="例如：挥手打招呼、蹲下查看地面、举起画笔作画"
-              aria-describedby={missingDescription ? 'quick-start-action-hint' : undefined}
-              className="mt-2 min-h-32 w-full resize-y rounded-lg border border-app-line-strong bg-app-surface-raised p-4 text-base outline-none focus:border-app-accent"
-            />
-          </label>
-          {missingDescription ? (
-            <p id="quick-start-action-hint" className="text-sm text-app-muted">
-              请先描述动作，例如：来回踱步
-            </p>
-          ) : null}
-          {error ? (
-            <p role="alert" className="text-sm text-app-danger">
-              {error}
-            </p>
-          ) : null}
-          <button
-            type="submit"
-            disabled={missingDescription || submitting || Boolean(service.unavailableReason)}
-            className="min-h-11 rounded-lg bg-app-accent px-5 text-sm font-semibold text-app-on-accent disabled:opacity-50"
-          >
-            {submitting ? '正在开始生成…' : '开始生成新动作'}
-          </button>
-        </form>
-      </div>
-    </section>
   )
 }
 
@@ -1192,6 +1101,7 @@ function QuickStartRun({
 }) {
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams] = useSearchParams()
   const [session, setSession] = useState<QuickStartSession | null>(null)
   const [run, setRun] = useState<WorkflowRun | null>(null)
   const [restoring, setRestoring] = useState(true)
@@ -1211,6 +1121,7 @@ function QuickStartRun({
   const [publishing, setPublishing] = useState(false)
   const [confirmingCandidate, setConfirmingCandidate] = useState(false)
   const [confirmingFirstFrame, setConfirmingFirstFrame] = useState(false)
+  const [addingAction, setAddingAction] = useState(false)
   const agentConversationTurns = useMemo(
     () => readAgentRunConversation(activeRunUserId, runId),
     [activeRunUserId, runId],
@@ -1478,6 +1389,15 @@ function QuickStartRun({
     firstFrameCandidates,
     firstFrameSelections,
   )
+  const addActionIntent = searchParams.get('intent') === 'add-action'
+  const requestedOutfitId = searchParams.get('outfitId')
+  const canAddAction =
+    addActionIntent &&
+    !workflowIsActive &&
+    !workflowHasFailure(revision) &&
+    !isTemplateSelecting &&
+    !isFirstFrameSelecting &&
+    !publishing
 
   async function interrupt() {
     try {
@@ -1610,7 +1530,7 @@ function QuickStartRun({
     )
   }
 
-  function continueConversation(event: FormEvent<HTMLFormElement>) {
+  async function continueConversation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (workflowConflictRef.current) return
     if (isTemplateSelecting) {
@@ -1620,6 +1540,27 @@ function QuickStartRun({
     if (isFirstFrameSelecting) {
       void confirmFirstFrame()
       return
+    }
+    const prompt = actionDescription.trim()
+    if (!canAddAction || !prompt || !session || addingAction) return
+    setAddingAction(true)
+    clearWorkflowError()
+    try {
+      let outfitId = requestedOutfitId
+      if (!outfitId) {
+        const info = session.getCharacterInfo() ?? (await session.resolveCharacterInfo())
+        outfitId = info?.outfitId ?? null
+      }
+      if (!outfitId) throw new Error('没有找到要追加动作的角色造型')
+      const updated = await session.addAction(outfitId, prompt)
+      if (!mountedRef.current || activeSessionRef.current !== session) return
+      setRun(updated)
+      setActionDescription('')
+    } catch (cause) {
+      if (!mountedRef.current || activeSessionRef.current !== session) return
+      reportWorkflowError(cause, '新增动作失败，请稍后重试')
+    } finally {
+      if (mountedRef.current && activeSessionRef.current === session) setAddingAction(false)
     }
   }
 
@@ -1633,13 +1574,18 @@ function QuickStartRun({
         : '请先为每个方向选择一个动作首帧…'
       : workflowHasFailure(run)
         ? '这次未完成，可以新建一次创作…'
-        : canPublish
-          ? '确认保存后，还可以继续描述修改…'
-          : '制作中，完成后可以继续修改…'
+        : addActionIntent
+          ? addingAction || workflowIsActive
+            ? '正在生成新动作…'
+            : '描述要新增的动作…'
+          : canPublish
+            ? '确认保存后，还可以继续描述修改…'
+            : '制作中，完成后可以继续修改…'
 
   const composerCanSubmit =
     (isTemplateSelecting && templateSelectionComplete) ||
-    (isFirstFrameSelecting && firstFrameSelectionComplete)
+    (isFirstFrameSelecting && firstFrameSelectionComplete) ||
+    (canAddAction && Boolean(actionDescription.trim()) && !addingAction)
   const selectedTemplateUrl = templateStep?.selectedImageUrl
   const selectedFirstFrameUrl = firstFrameStep?.selectedFirstFrameUrl
   const requestedAction = firstFrameStep?.input.prompt || firstFrameStep?.input.name
