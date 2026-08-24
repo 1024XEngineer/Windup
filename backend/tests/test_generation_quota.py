@@ -208,6 +208,48 @@ def test_action_failure_releases_reserved_credit(session_factory):
         assert CreditReason.REFUND in _reasons(session, 1)
 
 
+def test_action_failure_redelivery_does_not_raise(session_factory):
+    """失败已解冻后 MQ 重投同一失败路径，不得再抛冻结额度不足。"""
+    with session_factory() as session:
+        _seed_account(session, 1)
+        session.commit()
+
+    service = AiGenerationService()
+
+    def _boom(_input):
+        raise RuntimeError("母版下载失败")
+
+    executor = ActionTaskExecutor(
+        generator=None,
+        fetch_master=_boom,
+        session_factory=session_factory,
+    )
+    action_input = CharacterActionInput(
+        character_id=1, action_type=ActionType.WALK, num_frames=2,
+    )
+    with session_factory() as session:
+        task = service.generate_character_action(session, user_id=1, input=action_input)
+        session.commit()
+        task_id = task.id
+
+    executor.run_action_task(task_id, action_input)
+    executor.run_action_task(task_id, action_input)
+
+    with session_factory() as session:
+        done = service.get_task(session, project_id=1, task_id=task_id)
+        account = _account(session, 1)
+        refunds = [
+            row for row in session.scalars(
+                select(CreditTransaction).where(CreditTransaction.user_id == 1)
+            )
+            if row.reason == CreditReason.REFUND
+        ]
+        assert done.status is TaskStatus.FAILED
+        assert account.frozen == 0
+        assert account.balance == quota_settings.register_gift_amount
+        assert len(refunds) == 1
+
+
 def test_generate_character_action_without_account_raises(session_factory):
     service = AiGenerationService()
     action_input = CharacterActionInput(
