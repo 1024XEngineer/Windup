@@ -10,6 +10,7 @@ from typing import Any
 from windup_app.server.mq.catalog import (
     EMAIL_HANDLER_RETRIES,
     MSG_TYPE_CHARACTER_ACTION,
+    MSG_TYPE_CHARACTER_ACTION_POLL,
     MSG_TYPE_CHARACTER_IMAGE,
     MSG_TYPE_VERIFICATION_CODE,
 )
@@ -133,12 +134,39 @@ def handle_generation(
         raise ValueError(f"未知生成任务类型: {task_type}")
 
 
+def handle_action_poll(
+    payload: dict[str, Any],
+    *,
+    resume_action_poll: Callable[..., Any],
+) -> None:
+    """RUNNING 是预期态:建单 worker 已 ACK,本消息只负责探一次。"""
+    task_id = int(payload["task_id"])
+    session = SessionLocal()
+    try:
+        task = task_repo.get_task(session, task_id)
+        if task is None:
+            logger.warning("轮询任务不存在 | task_id=%d", task_id)
+            return
+        if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+            logger.info("轮询任务已终态，跳过 | task_id=%d status=%s", task_id, task.status)
+            return
+        if not billing.has_open_freeze(session, task_id):
+            logger.warning("轮询任务无开放冻结，跳过 | task_id=%d", task_id)
+            return
+        input_payload = task.input_payload or {}
+        project_id = task.project_id
+    finally:
+        session.close()
+    resume_action_poll(task_id, _action_input(input_payload), project_id)
+
+
 def dispatch_handler(
     msg_type: str,
     payload: dict[str, Any],
     *,
     run_image_task: Callable[..., Any],
     run_action_task: Callable[..., Any],
+    resume_action_poll: Callable[..., Any] | None = None,
 ) -> None:
     if msg_type == MSG_TYPE_VERIFICATION_CODE:
         handle_verification_code(payload)
@@ -149,5 +177,10 @@ def dispatch_handler(
             run_image_task=run_image_task,
             run_action_task=run_action_task,
         )
+        return
+    if msg_type == MSG_TYPE_CHARACTER_ACTION_POLL:
+        if resume_action_poll is None:
+            raise RuntimeError("未注入 resume_action_poll")
+        handle_action_poll(payload, resume_action_poll=resume_action_poll)
         return
     raise ValueError(f"未知消息类型: {msg_type}")

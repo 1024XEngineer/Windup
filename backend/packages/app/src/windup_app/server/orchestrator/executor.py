@@ -1,7 +1,8 @@
 """动作生成后台编排(调 ai_engine)。
 
-编排链:``mark RUNNING → 取母版 → ai_engine 出帧 → 逐帧上传对象存储 → 写回结果/COMPLETED``。
-异常兜底为 FAILED,不抛。
+编排链:``短 session 标 RUNNING → 取母版 → ai_engine 出帧 → IO 池并行上传
+(与判官重叠) → 短 session 写回 COMPLETED``。异常兜底为 FAILED,不抛。
+生成期间不占 Postgres 连接,以便 worker 同时跑多路用户任务。
 
 **分层**:本模块调 ai_engine,故 web/worker **不得 import 本模块**(否则牵出 ai_engine,
 违反"入口层不经 ai_engine 直连"门禁)。由 bootstrap(composition root)import + 注入
@@ -13,12 +14,15 @@
 
 from __future__ import annotations
 
+import contextvars
 import dataclasses
 import logging
+import os
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from sqlalchemy.orm import Session
 
@@ -31,8 +35,9 @@ from windup_framework.gateway.registry import ModelRegistry
 from windup_framework.gateway.types import Scene
 from windup_framework.config.quality_gate import settings as gate_settings
 
-from windup_app.server.orchestrator import billing, quality_gate, task_repo
+from windup_app.server.orchestrator import billing, i2v_poll, quality_gate, task_repo
 from windup_app.server.orchestrator._failure import user_message
+from windup_app.server.orchestrator.i2v_poll import ActionAwaitingVideo
 from windup_app.server.orchestrator._fetch import fetch_own_media
 from windup_app.server.orchestrator.model import (
     ActionType,
@@ -48,6 +53,87 @@ if TYPE_CHECKING:
 logger = logging.getLogger("windup.generation.executor")
 
 _ACTION_RESULT = "character_action"  # task_repo._deserialize_result 按此标签反序列化
+
+
+class _PollSkip(Exception):
+    """续跑时任务已终态,直接 ACK。"""
+
+
+T = TypeVar("T")
+R = TypeVar("R")
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    return int(raw) if raw else default
+
+
+# 进程级 IO 池:上传 / 参考图下载 / 多图 gen_image 共用。
+# 必须从 handler 线程往里 submit,禁止在池内任务再 _io_map(同池会死锁)。
+_IO_POOL_SIZE = max(1, _env_int("WINDUP_IO_POOL_SIZE", 32))
+_io_pool_lock = threading.Lock()
+_io_pool: ThreadPoolExecutor | None = None
+
+
+def _shared_io_pool() -> ThreadPoolExecutor:
+    global _io_pool
+    if _io_pool is None:
+        with _io_pool_lock:
+            if _io_pool is None:
+                _io_pool = ThreadPoolExecutor(
+                    max_workers=_IO_POOL_SIZE,
+                    thread_name_prefix="windup-io",
+                )
+    return _io_pool
+
+
+def _submit_io(fn: Callable[[T], R], items: Sequence[T]) -> list[Future[R]]:
+    """把独立 IO 丢进共享池。每个任务一份 Context 快照——同一 Context 不能被两线程同时 enter。"""
+    pool = _shared_io_pool()
+    futs: list[Future[R]] = []
+    for item in items:
+        ctx = contextvars.copy_context()
+        futs.append(pool.submit(ctx.run, fn, item))
+    return futs
+
+
+def _io_map(fn: Callable[[T], R], items: Sequence[T]) -> list[R]:
+    if not items:
+        return []
+    if len(items) == 1:
+        return [fn(items[0])]
+    return [fut.result() for fut in _submit_io(fn, items)]
+
+
+def _upload_frames(upload: Callable[[bytes], str], pngs: Sequence[bytes]) -> list[str]:
+    """并行上传各帧,返回 URL 列表,下标与 ``pngs`` 对齐。
+
+    失败语义与串行相同:已成功的 PUT 会留在桶里(孤儿),任务仍 FAILED。
+    """
+    return _io_map(upload, pngs)
+
+
+def _using_session(
+    session: Session | None,
+    factory: Callable[[], Session],
+    fn: Callable[[Session], T],
+) -> T:
+    """自开的 session 只包住 fn:commit 后立刻 close,生成/上传期间不占连接池。
+
+    调用方传入的 session 不提交、不关闭(测试事务)。
+    """
+    if session is not None:
+        return fn(session)
+    owned = factory()
+    try:
+        out = fn(owned)
+        owned.commit()
+        return out
+    except Exception:
+        owned.rollback()
+        raise
+    finally:
+        owned.close()
 
 
 def _settle_credit(session: Session, task_id: int, *, success: bool) -> None:
@@ -255,54 +341,62 @@ class ActionTaskExecutor:
         """跑一个动作任务;异常兜底为 FAILED,不抛。
 
         先从 ``project`` 取全局约束(朝向/画风/尺寸/方向)再调 ai_engine。``session``
-        缺省时自开一个(后台场景);测试可传入自己的 session。
+        缺省时自开短 session(标 RUNNING / 写终态各一次),生成期间不占连接;
+        测试可传入自己的 session,则全程复用、不代为 commit。
         """
-        own = session is None
-        session = session or self._make_session()
         reset = None
         try:
-            task_repo.update_status(session, task_id, TaskStatus.RUNNING)
-            if own:
-                session.commit()
+            def _mark_running(s: Session) -> ProjectConstraints:
+                task_repo.update_status(s, task_id, TaskStatus.RUNNING)
+                return (self._fetch_constraints or _load_constraints)(s, project_id)
 
-            cons = (self._fetch_constraints or _load_constraints)(session, project_id)
+            cons = _using_session(session, self._make_session, _mark_running)
             reset = bind_call_context(
                 task_id=str(task_id),
                 start_from_model=_resolve_video_model(input.video_model),
             )
-            result = self._produce_action(input, cons)
-            task_repo.update_result(session, task_id, _ACTION_RESULT, result)
-            _settle_credit(session, task_id, success=True)
-            if own:
-                session.commit()
+            result = self._produce_action(input, cons, task_id=task_id)
+
+            def _complete(s: Session) -> None:
+                task_repo.update_result(s, task_id, _ACTION_RESULT, result)
+                _settle_credit(s, task_id, success=True)
+
+            _using_session(session, self._make_session, _complete)
+        except ActionAwaitingVideo:
+            logger.info("动作任务 %s 已提交 i2v,等待延迟轮询", task_id)
         except PromptRejected as exc:
             # 单独捕获而不是落进下面那个兜底:兜底只存 str(exc),``code`` 就丢了,server
             # 于是分不出"用户改一句话就能过的输入错"和"引擎故障",只能去解析异常文本。
             logger.info("动作任务 %s 的描述被措辞门禁拒绝: %s", task_id, exc.code.value)
-            task_repo.fail_task(
-                session, task_id, error_message=user_message(exc),
-            )
-            if own:
-                session.commit()
+            error_message = user_message(exc)
+
+            def _reject(s: Session) -> None:
+                task_repo.fail_task(s, task_id, error_message=error_message)
+
+            _using_session(session, self._make_session, _reject)
         except Exception as exc:  # noqa: BLE001 —— 兜底任何生成/上传/网络异常
             logger.exception("动作任务 %s 失败", task_id)
-            session.rollback()
-            task_repo.fail_task(
-                session, task_id, error_message=user_message(exc),
-            )
-            _settle_credit(session, task_id, success=False)
-            if own:
-                session.commit()
+            if session is not None:
+                session.rollback()
+            error_message = user_message(exc)
+
+            def _fail(s: Session) -> None:
+                task_repo.fail_task(s, task_id, error_message=error_message)
+                _settle_credit(s, task_id, success=False)
+
+            _using_session(session, self._make_session, _fail)
         finally:
             if reset is not None:
                 reset()
-            if own:
-                session.close()
 
     # -- 内部 --------------------------------------------------------------
 
     def _produce_action(
-        self, input: CharacterActionInput, cons: ProjectConstraints
+        self,
+        input: CharacterActionInput,
+        cons: ProjectConstraints,
+        *,
+        task_id: int,
     ) -> dict:
         """母版 → ai_engine 按项目尺寸出帧 → 逐帧上传 → 组结果 dict。
 
@@ -391,50 +485,180 @@ class ActionTaskExecutor:
                 ).generate_rendered(card, action, rigged, progress, canvas=canvas)
             else:
                 master = (self._fetch_master or self._download_master)(input)
-                generated = self._get_generator(
+                gen = self._get_generator(
                     _resolve_video_model(input.video_model), cons.directions
-                ).generate(card, action, master, progress, canvas=canvas)
+                )
+                # 注入的测试桩通常只有 generate()。生产装配且 VideoGateway 支持
+                # start_i2v 时,建单后把轮询丢进 ZSET,立刻让出 action worker。
+                can_defer = getattr(gen, "can_defer_i2v", None)
+                if hasattr(gen, "start_video") and (
+                    can_defer() if callable(can_defer) else True
+                ):
+                    job = gen.start_video(card, action, master, progress, canvas=canvas)
+                    i2v_poll.schedule(task_id, job, poll_count=0)
+                    raise ActionAwaitingVideo
+                generated = gen.generate(card, action, master, progress, canvas=canvas)
 
-            upload = self._upload or self._upload_frame
-            checked = [_require_size(png, cons.sprite_w, cons.sprite_h) for png in generated.frames]
-            frames = [
-                {"index": i, "image_url": upload(png), "duration_ms": dur}
-                for i, (png, dur) in enumerate(zip(checked, generated.durations))
-            ]
-            # quality / prompt_version 只落库记账,不在此处据成色改判决:交付/重试是产品
-            # 决策,该由读这本账的下游按阈值决定,任务状态仍只反映"生成流程是否跑完"。
-            result = {
-                "type": "character_action",
-                "action_type": input.action_type.value,
-                "direction": input.direction.value,
-                "frames": frames,
-                "quality": dataclasses.asdict(generated.quality),
-                "prompt_version": generated.prompt_version,
-            }
-            # 落位几何随产物一起交出:消费方要把帧画到画布上、判角色有没有站在地上,
-            # 而这条线的比例是对齐那一步的实参。前端此前抄了一份 0.92 自己算 —— 两份
-            # 常数只要有一次不同步,角色就不站在地上,而没有任何一道会红。
-            if generated.geometry is not None:
-                g = generated.geometry
-                result["geometry"] = {
-                    "canvas_width": g.canvas_w,
-                    "canvas_height": g.canvas_h,
-                    "anchor": {"x": g.anchor_x, "y": g.anchor_y},
-                    "foot_y": g.foot_y,
-                }
-            # master 为 None 时 review 按"没判"返回 None(三渲二路线没有可比的参照)。
-            decision = quality_gate.review(
-                self._get_judge(), checked, master, _judged_action(input)
-            )
-            if decision is not None:
-                result["judge"] = decision.as_payload()
-                if decision.blocked:
-                    # 帧已经生成、已经上传,钱早就花完了。拦在这里的意义只剩"不把坏产物当成
-                    # 交付物交出去";这也正是拦截档默认关着的原因。
-                    raise quality_gate.QualityBlocked(decision.problems)
-            return result
+            return self._deliver_generated(generated, input, cons, master)
         finally:
             reset_call()
+
+    def resume_action_poll(
+        self,
+        task_id: int,
+        input: CharacterActionInput,
+        project_id: int | None = None,
+        *,
+        session: Session | None = None,
+    ) -> None:
+        """延迟队列到期后探一次 i2v。仍在跑则再挂单;完成则抽帧交付。"""
+        reset = None
+        try:
+            def _mark_running(s: Session) -> ProjectConstraints:
+                task = task_repo.get_task(s, task_id)
+                if task is None:
+                    raise RuntimeError(f"任务 {task_id} 不存在")
+                if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+                    raise _PollSkip(f"任务 {task_id} 已终态")
+                return (self._fetch_constraints or _load_constraints)(s, project_id)
+
+            try:
+                cons = _using_session(session, self._make_session, _mark_running)
+            except _PollSkip:
+                return
+
+            reset = bind_call_context(
+                task_id=str(task_id),
+                start_from_model=_resolve_video_model(input.video_model),
+            )
+            gen = self._get_generator(
+                _resolve_video_model(input.video_model), cons.directions
+            )
+            reset_call = fresh_gateway_request()
+            try:
+                outcome = i2v_poll.inspect(task_id, poll_video=gen.poll_video)
+                if isinstance(outcome, i2v_poll.Waiting):
+                    return
+
+                card, action, canvas = self._action_spec(input, cons)
+                progress: ProgressPort = _LogProgress()
+                master = (self._fetch_master or self._download_master)(input)
+                generated = gen.finish_video(
+                    outcome.video, card, action, master, progress, canvas=canvas
+                )
+                result = self._deliver_generated(generated, input, cons, master)
+            finally:
+                reset_call()
+            i2v_poll.clear(task_id)
+
+            def _complete(s: Session) -> None:
+                task_repo.update_result(s, task_id, _ACTION_RESULT, result)
+                _settle_credit(s, task_id, success=True)
+
+            _using_session(session, self._make_session, _complete)
+        except PromptRejected as exc:
+            logger.info("动作任务 %s 的描述被措辞门禁拒绝: %s", task_id, exc.code.value)
+            error_message = user_message(exc)
+
+            def _reject(s: Session) -> None:
+                task_repo.fail_task(s, task_id, error_message=error_message)
+
+            _using_session(session, self._make_session, _reject)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("动作任务 %s 轮询失败", task_id)
+            if session is not None:
+                session.rollback()
+            error_message = user_message(exc)
+
+            def _fail(s: Session) -> None:
+                task_repo.fail_task(s, task_id, error_message=error_message)
+                _settle_credit(s, task_id, success=False)
+
+            _using_session(session, self._make_session, _fail)
+        finally:
+            if reset is not None:
+                reset()
+
+    def _action_spec(
+        self, input: CharacterActionInput, cons: ProjectConstraints
+    ) -> tuple[CharacterCard, ActionSpec, tuple[int, int]]:
+        if cons.directions > 1:
+            logger.info(
+                "项目要求 %s 方向，本任务只负责真实源方向 %s；镜像方向由资产层复用",
+                cons.directions,
+                input.direction.value,
+            )
+        desc_parts = [input.custom_prompt or "", direction_prompt(input.direction)]
+        if cons.style:
+            desc_parts.append(f"Art style: {cons.style}")
+        card = CharacterCard(
+            name=f"char-{input.character_id}",
+            desc=" ".join(desc_parts),
+            **({"stance": input.stance} if input.stance is not None else {}),
+        )
+        engine_action = _to_engine_action(input.action_type)
+        extra: dict[str, object] = {}
+        if engine_action is EngineActionType.CUSTOM:
+            cyclic = False if input.loop is None else bool(input.loop)
+            extra = {"custom_action": input.custom_prompt or "", "cyclic": cyclic}
+        action = ActionSpec(
+            action=engine_action,
+            poses=[""] * input.num_frames,
+            facing=cons.facing,
+            direction=input.direction,
+            stylize=cons.stylize,
+            **extra,
+        )
+        return card, action, (cons.sprite_w, cons.sprite_h)
+
+    def _deliver_generated(
+        self,
+        generated,
+        input: CharacterActionInput,
+        cons: ProjectConstraints,
+        master: bytes | None,
+    ) -> dict:
+        upload = self._upload or self._upload_frame
+        checked = [_require_size(png, cons.sprite_w, cons.sprite_h) for png in generated.frames]
+        # 上传与判官都是网络 IO 且互不依赖:判官读内存 bytes。handler 线程跑 review,
+        # IO 池跑 PUT,避免 32 帧传完再打一次视觉模型。
+        upload_futs = _submit_io(upload, checked) if len(checked) > 1 else None
+        decision = quality_gate.review(
+            self._get_judge(), checked, master, _judged_action(input)
+        )
+        urls = (
+            [fut.result() for fut in upload_futs]
+            if upload_futs is not None
+            else _upload_frames(upload, checked)
+        )
+        frames = [
+            {"index": i, "image_url": url, "duration_ms": dur}
+            for i, (url, dur) in enumerate(zip(urls, generated.durations))
+        ]
+        result = {
+            "type": "character_action",
+            "action_type": input.action_type.value,
+            "direction": input.direction.value,
+            "frames": frames,
+            "quality": dataclasses.asdict(generated.quality),
+            "prompt_version": generated.prompt_version,
+        }
+        # 落位几何随产物一起交出:消费方要把帧画到画布上、判角色有没有站在地上,
+        # 而这条线的比例是对齐那一步的实参。前端此前抄了一份 0.92 自己算 —— 两份
+        # 常数只要有一次不同步,角色就不站在地上,而没有任何一道会红。
+        if generated.geometry is not None:
+            g = generated.geometry
+            result["geometry"] = {
+                "canvas_width": g.canvas_w,
+                "canvas_height": g.canvas_h,
+                "anchor": {"x": g.anchor_x, "y": g.anchor_y},
+                "foot_y": g.foot_y,
+            }
+        if decision is not None:
+            result["judge"] = decision.as_payload()
+            if decision.blocked:
+                raise quality_gate.QualityBlocked(decision.problems)
+        return result
 
     def _get_judge(self) -> JudgePort | None:
         """闸口启用时懒建判官;未启用返回 ``None``,一次调用都不发。"""
@@ -599,6 +823,7 @@ class ImageTaskExecutor:
         self._upload = upload
         self._fetch_ref = fetch_ref
         self._session_factory = session_factory
+        self._assembly_lock = threading.Lock()
 
     def run_image_task(
         self,
@@ -608,44 +833,45 @@ class ImageTaskExecutor:
         *,
         session: Session | None = None,
     ) -> None:
-        own = session is None
-        session = session or self._make_session()
         reset = None
         try:
-            task_repo.update_status(session, task_id, TaskStatus.RUNNING)
-            if own:
-                session.commit()
-            cons = _load_constraints(session, project_id)  # 角色图也受项目约束
+            def _mark_running(s: Session) -> ProjectConstraints:
+                task_repo.update_status(s, task_id, TaskStatus.RUNNING)
+                return _load_constraints(s, project_id)
+
+            cons = _using_session(session, self._make_session, _mark_running)
             reset = bind_call_context(task_id=str(task_id))
             urls, quality = self._produce_image(input, cons)
-            task_repo.update_result(
-                session,
-                task_id,
-                _IMAGE_RESULT,
-                {
-                    "type": "character_image",
-                    "direction": input.direction.value,
-                    "image_urls": urls,
-                    "quality": quality,
-                },
-            )
-            _settle_credit(session, task_id, success=True)
-            if own:
-                session.commit()
+
+            def _complete(s: Session) -> None:
+                task_repo.update_result(
+                    s,
+                    task_id,
+                    _IMAGE_RESULT,
+                    {
+                        "type": "character_image",
+                        "direction": input.direction.value,
+                        "image_urls": urls,
+                        "quality": quality,
+                    },
+                )
+                _settle_credit(s, task_id, success=True)
+
+            _using_session(session, self._make_session, _complete)
         except Exception as exc:  # noqa: BLE001 —— 兜底
             logger.exception("图片任务 %s 失败", task_id)
-            session.rollback()
-            task_repo.fail_task(
-                session, task_id, error_message=user_message(exc),
-            )
-            _settle_credit(session, task_id, success=False)
-            if own:
-                session.commit()
+            if session is not None:
+                session.rollback()
+            error_message = user_message(exc)
+
+            def _fail(s: Session) -> None:
+                task_repo.fail_task(s, task_id, error_message=error_message)
+                _settle_credit(s, task_id, success=False)
+
+            _using_session(session, self._make_session, _fail)
         finally:
             if reset is not None:
                 reset()
-            if own:
-                session.close()
 
     def _produce_image(
         self, input: CharacterImageInput, cons: ProjectConstraints
@@ -661,19 +887,39 @@ class ImageTaskExecutor:
         refs: list[bytes] = []
         has_style_ref = False
 
+        def _is_url(url: str) -> bool:
+            return bool(url) and url.lower() not in ("null", "none", "")
+
         # 1. 角色参考图(用户传入,可选,做角色一致性约束)
         char_url = (input.reference_image_url or "").strip()
-        if char_url and char_url.lower() not in ("null", "none", ""):
-            refs.append(fetch(char_url))
-
         # 2. 风格参考图(项目级,有 sprite_sample_url 时走图生图模式)
         style_url = (cons.sprite_sample_url or "").strip()
-        if style_url and style_url.lower() not in ("null", "none", ""):
+        want_char = _is_url(char_url)
+        want_style = _is_url(style_url)
+
+        def _fetch_style(url: str) -> bytes | None:
             try:
-                refs.append(fetch(style_url))
-                has_style_ref = True
+                return fetch(url)
             except Exception:
-                pass  # 风格参考图下载失败不阻断
+                return None
+
+        if want_char and want_style:
+            char_bytes, style_bytes = _io_map(
+                lambda item: fetch(item[1]) if item[0] == "char" else _fetch_style(item[1]),
+                (("char", char_url), ("style", style_url)),
+            )
+            refs.append(char_bytes)
+            if style_bytes is not None:
+                refs.append(style_bytes)
+                has_style_ref = True
+        else:
+            if want_char:
+                refs.append(fetch(char_url))
+            if want_style:
+                style_bytes = _fetch_style(style_url)
+                if style_bytes is not None:
+                    refs.append(style_bytes)
+                    has_style_ref = True
 
         # 3. 构建提示词
         base = (
@@ -708,14 +954,20 @@ class ImageTaskExecutor:
         image_gen = self._get_image()
         matte = self._get_matte()
         upload = self._upload or self._upload_image
-        urls: list[str] = []
-        cut: list[Image.Image] = []
-        for _ in range(max(1, input.num_images)):
+
+        def _gen_one(_i: int) -> bytes:
             reset_call = fresh_gateway_request()
             try:
-                img = image_gen.gen_image(prompt, refs)
+                return image_gen.gen_image(prompt, refs)
             finally:
                 reset_call()
+
+        # 多张候选各自一次付费调用,彼此独立;ContextVar 由 _io_map 拷进 IO 线程。
+        raws = _io_map(_gen_one, range(max(1, input.num_images)))
+        # 抠图走 ONNX,同一会话不能并发 Run;上传再并行。
+        cut: list[Image.Image] = []
+        pngs: list[bytes] = []
+        for img in raws:
             # 提示词要的是浅灰底,交付的母版却必须是透明底:不在这里抠,灰底会一路带进
             # 预览、也会成为下一次图生图的参考底色(#430)。抠在缩放之前 —— u2netp 按模型
             # 原始分辨率分割,先缩再抠等于把一半可用像素丢掉再让它猜。
@@ -725,24 +977,31 @@ class ImageTaskExecutor:
             # 履约"的字段。模型本身不吃宽高,所以在这里落实。
             png = _fit_to(matte.cutout(img), input.width, input.height, smooth=True)
             cut.append(Image.open(io.BytesIO(png)).convert("RGBA"))
-            urls.append(upload(png))
+            pngs.append(png)
+        urls = _upload_frames(upload, pngs)
         # 同一份 alpha 顺手数一次主体数(#427):此前多主体母版要等下一个动作任务才留痕,
         # 而那时钱已经花在错的母版上了。只记账,不在此处判成败 —— 与动作那条同一立场。
         return urls, {"subject_blobs": list(subject_blobs(cut))}
 
     def _get_image(self):
-        if self._image is None:
-            from windup_framework.gateway import build_image_gateway
+        if self._image is not None:
+            return self._image
+        with self._assembly_lock:
+            if self._image is None:
+                from windup_framework.gateway import build_image_gateway
 
-            self._image = build_image_gateway()
-        return self._image
+                self._image = build_image_gateway()
+            return self._image
 
     def _get_matte(self):
-        if self._matte is None:
-            from windup_framework.providers import OnnxU2NetMatteProvider
+        if self._matte is not None:
+            return self._matte
+        with self._assembly_lock:
+            if self._matte is None:
+                from windup_framework.providers import OnnxU2NetMatteProvider
 
-            self._matte = OnnxU2NetMatteProvider()
-        return self._matte
+                self._matte = OnnxU2NetMatteProvider()
+            return self._matte
 
     def _download(self, url: str) -> bytes:
         # 同 _download_master:参考图 URL 由调用方给,必须走白名单取图。
@@ -771,5 +1030,6 @@ class ImageTaskExecutor:
 # 默认执行器(真实依赖);bootstrap 取 run_action_task / run_image_task 注入 app.state
 executor = ActionTaskExecutor()
 run_action_task = executor.run_action_task
+resume_action_poll = executor.resume_action_poll
 image_executor = ImageTaskExecutor()
 run_image_task = image_executor.run_image_task

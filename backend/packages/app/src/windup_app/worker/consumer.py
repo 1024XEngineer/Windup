@@ -13,11 +13,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from windup_app.server.mq.catalog import (
+    GENERATION_GROUP,
     MSG_TYPE_CHARACTER_ACTION,
+    MSG_TYPE_CHARACTER_ACTION_POLL,
     MSG_TYPE_CHARACTER_IMAGE,
     StreamSpec,
     generation_action_concurrency,
     generation_image_concurrency,
+    generation_poll_concurrency,
 )
 from windup_app.worker.handlers import HandlerDeferred, dispatch_handler
 from windup_framework.db.redis import get_redis
@@ -47,18 +50,30 @@ class StreamConsumer:
         run_image_task: Callable[..., Any],
         run_action_task: Callable[..., Any],
         stop_event: threading.Event,
+        resume_action_poll: Callable[..., Any] | None = None,
     ) -> None:
         self._config = config
         self._run_image_task = run_image_task
         self._run_action_task = run_action_task
+        self._resume_action_poll = resume_action_poll
         self._stop = stop_event
         self._consumer_name = f"{socket.gethostname()}-{threading.get_ident()}"
         self._executor = ThreadPoolExecutor(
             max_workers=config.concurrency,
             thread_name_prefix=f"windup-{config.group}",
         )
+        # poll 必须有自己的线程:共享池里 image 会在 acquire 前占满 worker。
+        self._poll_executor = (
+            ThreadPoolExecutor(
+                max_workers=generation_poll_concurrency(),
+                thread_name_prefix="windup-generation-poll",
+            )
+            if config.group == GENERATION_GROUP
+            else None
+        )
         self._image_sem = threading.Semaphore(generation_image_concurrency())
         self._action_sem = threading.Semaphore(generation_action_concurrency())
+        self._poll_sem = threading.Semaphore(generation_poll_concurrency())
         self._claim_cursor = "0-0"
         self._last_claim_at = 0.0
 
@@ -73,6 +88,8 @@ class StreamConsumer:
 
     def shutdown(self, *, wait_timeout: float = 30.0) -> None:
         self._executor.shutdown(wait=True, cancel_futures=False)
+        if self._poll_executor is not None:
+            self._poll_executor.shutdown(wait=True, cancel_futures=False)
 
     def _loop(self) -> None:
         redis_client = get_redis()
@@ -104,7 +121,7 @@ class StreamConsumer:
 
             for _stream, messages in batches:
                 for stream_id, fields in messages:
-                    self._executor.submit(self._process_message, stream_id, fields)
+                    self._submit_message(stream_id, fields)
 
     def _claim_idle(self, redis_client) -> None:
         while not self._stop.is_set():
@@ -117,9 +134,24 @@ class StreamConsumer:
             )
             self._claim_cursor = next_start
             for stream_id, fields in claimed:
-                self._executor.submit(self._process_message, stream_id, fields)
+                self._submit_message(stream_id, fields)
             if not claimed:
                 break
+
+    def _submit_message(self, stream_id: str, fields: dict[str, str]) -> None:
+        self._executor_for(fields).submit(self._process_message, stream_id, fields)
+
+    def _executor_for(self, fields: dict[str, str]) -> ThreadPoolExecutor:
+        poll = self._poll_executor
+        if poll is None:
+            return self._executor
+        try:
+            msg_type = str(mq_client.parse_envelope(fields)["type"])
+        except Exception:
+            return self._executor
+        if msg_type == MSG_TYPE_CHARACTER_ACTION_POLL:
+            return poll
+        return self._executor
 
     def _process_message(self, stream_id: str, fields: dict[str, str]) -> None:
         redis_client = get_redis()
@@ -165,6 +197,7 @@ class StreamConsumer:
                 payload,
                 run_image_task=self._run_image_task,
                 run_action_task=self._run_action_task,
+                resume_action_poll=self._resume_action_poll,
             )
 
             session = SessionLocal()
@@ -203,6 +236,8 @@ class StreamConsumer:
             return self._image_sem
         if msg_type == MSG_TYPE_CHARACTER_ACTION:
             return self._action_sem
+        if msg_type == MSG_TYPE_CHARACTER_ACTION_POLL:
+            return self._poll_sem
         return None
 
     def _defer_message(self, message_id: uuid.UUID | None) -> None:
@@ -263,5 +298,23 @@ def start_relay_loop(stop_event: threading.Event) -> threading.Thread:
                 logger.exception("relay 循环失败")
 
     thread = threading.Thread(target=_run, name="windup-mq-relay", daemon=True)
+    thread.start()
+    return thread
+
+
+def start_delayed_loop(stop_event: threading.Event) -> threading.Thread:
+    """把 ZSET 到期项促进到 Stream。不用 keyspace notification。"""
+
+    def _run() -> None:
+        from windup_framework.mq.config import DELAYED_TICK_SECONDS
+        from windup_framework.mq.delayed import promote_due_messages
+
+        while not stop_event.wait(timeout=max(1, DELAYED_TICK_SECONDS)):
+            try:
+                promote_due_messages()
+            except Exception:
+                logger.exception("延迟队列促进失败")
+
+    thread = threading.Thread(target=_run, name="windup-mq-delayed", daemon=True)
     thread.start()
     return thread

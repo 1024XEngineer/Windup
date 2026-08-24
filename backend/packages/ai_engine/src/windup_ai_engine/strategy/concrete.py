@@ -130,17 +130,57 @@ class VideoFrameStrategy(DerivationStrategy):
         master: bytes,
         progress: ProgressPort,
     ) -> list[bytes]:
-        # 帧数直接读契约字段:缺省值已收进 ActionSpec(DEFAULT_N_FRAMES),不再由本层
-        # 用 `or 8` 兜底 —— 那等于把契约的缺省值写在实现里,换条 strategy 就换个默认值。
-        n = action.n_frames
         # 进度文案里的枚举一律取 .value:Python 3.11+ 改了 str-mixin 枚举的 __format__,
         # f"{action.action}" 现在给的是 "ActionType.WALK" 而不是 "walk"(3.12.13 实测),
         # 而这串字会经 server 变成用户看到的 SSE 进度。
         progress.step("derive", 0, 3, f"{action.action.value}: i2v 生成视频")
-        # 母版按动作预处理:jump 要在顶部补空间,否则角色腾空时头顶顶出视频画面被裁
-        framed = prepare_master(master, action.action.value)
-        video = self._video.i2v(framed, self._build_prompt(action, card.stance), seconds=5)
+        video = self._submit_i2v(card, action, master)
+        return self.frames_from_video(video, card, action, master, progress)
 
+    def start_job(
+        self,
+        card: CharacterCard,
+        action: ActionSpec,
+        master: bytes,
+        progress: ProgressPort,
+    ):
+        """只建 i2v 单,把 job 交给延迟队列。"""
+        progress.step("derive", 0, 3, f"{action.action.value}: i2v 提交")
+        framed = prepare_master(master, action.action.value)
+        start = getattr(self._video, "start_i2v", None)
+        if start is None:
+            raise TypeError("当前 VideoProvider 不支持 start_i2v")
+        return start(framed, self._build_prompt(action, card.stance), seconds=5)
+
+    def poll_job(self, job_id: str, *, route_id: str | None = None) -> bytes | None:
+        """探一次。``None`` = 仍在跑;bytes = 成片;失败抛错。"""
+        poll = getattr(self._video, "poll_i2v", None)
+        if poll is None:
+            raise TypeError("当前 VideoProvider 不支持 poll_i2v")
+        snap = poll(job_id, route_id=route_id)
+        if snap.ok and snap.body:
+            return snap.body
+        if getattr(snap, "error_type", None) is None:
+            return None
+        raise RuntimeError(
+            f"i2v 轮询失败(HTTP {snap.http_status} {snap.error_type}): "
+            f"{snap.edge_fingerprint or snap.job_status or ''}"
+        )
+
+    def _submit_i2v(self, card: CharacterCard, action: ActionSpec, master: bytes) -> bytes:
+        framed = prepare_master(master, action.action.value)
+        return self._video.i2v(framed, self._build_prompt(action, card.stance), seconds=5)
+
+    def frames_from_video(
+        self,
+        video: bytes,
+        card: CharacterCard,
+        action: ActionSpec,
+        master: bytes,
+        progress: ProgressPort,
+    ) -> list[bytes]:
+        del card
+        n = action.n_frames
         dense = extract_all_frames_bytes(video)
         # 跨动作一致性:用视频首帧(=母版姿态)的角色高当共同定标基准。各动作都从同一母版
         # 起手,故此值一致 —— 否则各动作按自己最高帧定标,切状态时角色会忽大忽小。
