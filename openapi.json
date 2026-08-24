@@ -57,7 +57,7 @@
         "type": "string"
       },
       "ArtStyle": {
-        "description": "项目的美术风格。\n\n只有 ``PIXEL`` 改变管线行为(出帧吸附母版像素网格、颜色吸回母版色板),其余取值\n只进提示词。像素网格密度不在这一维 —— 它由目标分辨率定,两处各定一遍会打架。",
+        "description": "项目的美术风格。\n\n只有 ``PIXEL`` 改变管线行为(出帧吸附母版像素网格、颜色吸回母版色板),其余取值\n只进提示词。像素网格密度不在这一维 —— 它由目标分辨率定,两处各定一遍会打架。\n\n展示名与进提示词的短语不在这里,在 :mod:`windup_ai_engine.prompt.art_styles`:\n那是提示词内容,归措辞门禁管;本枚举只定管线契约,不该随文案一起改。",
         "enum": [
           "pixel",
           "cartoon",
@@ -67,6 +67,30 @@
         ],
         "title": "ArtStyle",
         "type": "string"
+      },
+      "ArtStyleOut": {
+        "description": "画风档位响应。``phrase`` 不出网:它是提示词内容,前端拿了只会诱发再抄一份。",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "label",
+          "hint"
+        ],
+        "title": "ArtStyleOut",
+        "type": "object"
       },
       "AssistantMessageResponse": {
         "properties": {
@@ -1493,6 +1517,65 @@
           }
         },
         "title": "ListResponse[ActionPresetOut]",
+        "type": "object"
+      },
+      "ListResponse_ArtStyleOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "description": "业务数据列表",
+            "items": {
+              "$ref": "#/components/schemas/ArtStyleOut"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "page": {
+            "default": 1,
+            "description": "当前页码,从 1 开始",
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "default": 0,
+            "description": "每页条数;0 表示不分页(全量)",
+            "minimum": 0.0,
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          },
+          "total": {
+            "default": 0,
+            "description": "数据总数;分页时为查询条件总数,不分页时为 len(data)",
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "ListResponse[ArtStyleOut]",
         "type": "object"
       },
       "ListResponse_CharacterOut_": {
@@ -3293,6 +3376,28 @@
         "summary": "Chat",
         "tags": [
           "ai"
+        ]
+      }
+    },
+    "/art-styles": {
+      "get": {
+        "description": "列出全部画风档位。",
+        "operationId": "list_art_styles_art_styles_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse_ArtStyleOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Art Styles",
+        "tags": [
+          "art-styles"
         ]
       }
     },

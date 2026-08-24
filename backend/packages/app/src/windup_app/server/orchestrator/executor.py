@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, TypeVar
 from sqlalchemy.orm import Session
 
 from windup_ai_engine.ports import PromptRejected
+from windup_ai_engine.prompt import phrase_for
 from windup_ai_engine.slicing.quality import subject_blobs
 from windup_common.directions import direction_prompt
 from windup_common.enums import ArtStyle
@@ -170,7 +171,7 @@ class ProjectConstraints:
     directions: int = 1  # directional_movement → 方向数(1/4/8)
     sprite_w: int = 256  # 输出/切帧尺寸(关键)
     sprite_h: int = 256
-    style: str = ""  # 进提示词的画风短语(ArtStyle.prompt_phrase)
+    style: str = ""  # 进提示词的画风短语(prompt.art_styles)
     stylize: str = "none"  # 像素化开关,只有 ArtStyle.PIXEL 打开
     sprite_sample_url: str = ""  # 项目风格参考图 URL
 
@@ -192,7 +193,7 @@ def _load_constraints(session: Session, project_id: int | None) -> ProjectConstr
         directions=_MOVEMENT_DIRECTIONS.get(p.directional_movement, 1),
         sprite_w=p.sprite_width,
         sprite_h=p.sprite_height,
-        style=art_style.prompt_phrase,
+        style=phrase_for(art_style),
         stylize="pixel" if art_style.wants_pixelation else "none",
         sprite_sample_url=p.sprite_sample_url or "",
     )

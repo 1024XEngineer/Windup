@@ -1,6 +1,7 @@
 """prompt:各动作的生成提示词与装配。"""
 
 from .actions import build_attack_prompt, build_idle_prompt
+from .art_styles import ART_STYLE_PRESETS, ArtStylePreset, phrase_for
 from .custom import MAX_ACTION_CHARS, build_custom_prompt
 from .jump import JUMP_PHASES, build_jump_prompt
 from .presets import ACTION_PRESETS, ActionPreset
@@ -12,6 +13,9 @@ from .walk import build_walk_prompt
 PROMPT_VERSION = "v1"
 
 __all__ = [
+    "ART_STYLE_PRESETS",
+    "ArtStylePreset",
+    "phrase_for",
     "build_walk_prompt",
     "JUMP_PHASES",
     "build_jump_prompt",

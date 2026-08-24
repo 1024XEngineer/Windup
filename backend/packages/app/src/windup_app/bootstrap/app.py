@@ -24,7 +24,9 @@ from windup_app.server.quota.model import CreditAccount, CreditTransaction, Invi
 from windup_app.server.user.model import User  # noqa: F401
 from windup_app.server.workflow_run.model import WorkflowRun  # noqa: F401
 from windup_app.server.action_preset import ACTION_PRESETS
+from windup_app.server.art_style_preset import ART_STYLE_PRESETS
 from windup_app.web.api.action_preset import router as action_preset_router
+from windup_app.web.api.art_style import router as art_style_router
 from windup_app.web.api.agent import router as agent_router
 from windup_framework.mq.model import MqMessage  # noqa: F401
 from windup_app.web.api.auth import router as auth_router
@@ -133,11 +135,13 @@ def create_app() -> FastAPI:
     app.include_router(render3d_router)
     app.include_router(agent_router)
     app.include_router(action_preset_router)
+    app.include_router(art_style_router)
     # 母版预检与建 3D 资产:web 层不能静态依赖 ai_engine,由 state 注入。
     app.state.precheck_master = precheck_master
     app.state.render3d_operations = default_operations()
     # 动作预设同理:文案住在 ai_engine 的提示词包里(归措辞门禁管),web 层够不着。
     app.state.action_presets = ACTION_PRESETS
+    app.state.art_style_presets = ART_STYLE_PRESETS
 
     # task_repo 状态变更时经 Redis Pub/Sub 推 SSE（worker publish → web subscribe → EventBus）
     task_repo.bind_task_event_publisher(RedisTaskEventBridge())

@@ -49,10 +49,12 @@ def test_only_pixel_turns_on_pixelation():
 
 def test_every_style_but_unspecified_carries_a_distinct_prompt_phrase():
     """三种非像素画风在管线里同走一条路,只有提示词能把它们分开。"""
-    phrases = [s.prompt_phrase for s in ArtStyle if s is not ArtStyle.UNSPECIFIED]
+    from windup_ai_engine.prompt import phrase_for
+
+    phrases = [phrase_for(s) for s in ArtStyle if s is not ArtStyle.UNSPECIFIED]
     assert all(phrases)
     assert len(set(phrases)) == len(phrases)
-    assert ArtStyle.UNSPECIFIED.prompt_phrase == ""
+    assert phrase_for(ArtStyle.UNSPECIFIED) == ""
 
 
 # -- 入参约束 ----------------------------------------------------------------
@@ -113,7 +115,7 @@ def test_patch_with_no_field_is_rejected(auth_client):
     "stored, stylize, phrase",
     [
         ("pixel", "pixel", "pixel art"),
-        ("cartoon", "none", ArtStyle.CARTOON.prompt_phrase),
+        ("cartoon", "none", "cartoon, bold clean outlines, flat cel shading"),
         ("像素风格", "pixel", "pixel art"),
         (None, "none", ""),
     ],
