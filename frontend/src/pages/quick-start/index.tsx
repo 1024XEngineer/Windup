@@ -9,7 +9,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react'
-import { ArrowUp, ImageSquare, X } from '@phosphor-icons/react'
+import { ArrowBendDownLeft, ArrowUp, ImageSquare, X } from '@phosphor-icons/react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 
 import {
@@ -265,12 +265,6 @@ function readAgentRunConversation(
   }
 }
 
-function planConfirmationCopy(assumptions: readonly string[]): string {
-  return assumptions.length > 0
-    ? `提示词优化已完成。\n默认处理：${assumptions.join('、')}。确认后点击发送。`
-    : '提示词优化已完成。请检查输入框，确认后点击发送。'
-}
-
 function playtestPath(characterId: string, outfitId: string, actionId?: string): string {
   const path = `/playtest/${encodeURIComponent(characterId)}/${encodeURIComponent(outfitId)}`
   return actionId ? `${path}?${new URLSearchParams({ actionId })}` : path
@@ -452,15 +446,16 @@ function QuickStartInput({
     },
   )
   const fileInput = useRef<HTMLInputElement>(null)
+  const promptInput = useRef<HTMLTextAreaElement>(null)
   const submitAbortController = useRef<AbortController | null>(null)
   const handoffTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const rewriteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const generationConfirmation = useRef<(() => void) | null>(null)
+  const generationConfirmation = useRef<((prompt: string) => void) | null>(null)
   const conversationTurnsRef = useRef(conversationTurns)
   const initialConversationLength = useRef(conversationTurns.length)
   const waitForGenerationConfirmation = useCallback(
     () =>
-      new Promise<void>((resolve) => {
+      new Promise<string>((resolve) => {
         generationConfirmation.current = resolve
       }),
     [],
@@ -541,32 +536,25 @@ function QuickStartInput({
       submitAbortController.current?.abort()
       if (handoffTimer.current) clearTimeout(handoffTimer.current)
       if (rewriteTimer.current) clearTimeout(rewriteTimer.current)
-      generationConfirmation.current?.()
+      generationConfirmation.current?.('')
       generationConfirmation.current = null
     },
     [],
   )
 
-  useEffect(() => {
+  function fillOptimizedPrompt() {
     const state = agentSession.state
-    if (state.status !== 'dispatching') return
+    if (state.status !== 'dispatching' || promptState === 'rewriting' || generationStarting) return
 
     setPrompt(state.optimizedPrompt)
     setPromptState('rewriting')
+    if (rewriteTimer.current) clearTimeout(rewriteTimer.current)
     rewriteTimer.current = setTimeout(() => {
       rewriteTimer.current = null
       setPromptState('ready')
-      appendConversationTurn({
-        role: 'assistant',
-        content: planConfirmationCopy(state.assumptions),
-      })
+      promptInput.current?.focus()
     }, PROMPT_REWRITE_MS)
-
-    return () => {
-      if (rewriteTimer.current) clearTimeout(rewriteTimer.current)
-      rewriteTimer.current = null
-    }
-  }, [agentSession.state, appendConversationTurn])
+  }
 
   function selectTemplateFile(event: ChangeEvent<HTMLInputElement>) {
     if (entryBusy) return
@@ -585,11 +573,12 @@ function QuickStartInput({
     const normalizedPrompt = prompt.trim()
 
     if (agentSession.state.status === 'dispatching' && promptState === 'ready') {
+      if (!normalizedPrompt) return
       const confirm = generationConfirmation.current
       if (!confirm) return
       generationConfirmation.current = null
       setPromptState('confirmed')
-      confirm()
+      confirm(normalizedPrompt)
       return
     }
 
@@ -659,7 +648,11 @@ function QuickStartInput({
   }
 
   const inputLocked =
-    submitting || agentPlanning || promptState === 'rewriting' || generationStarting
+    submitting ||
+    agentPlanning ||
+    promptState === 'rewriting' ||
+    generationStarting ||
+    (agentSession.state.status === 'dispatching' && promptState === 'collecting')
   const awaitingGenerationConfirmation =
     agentSession.state.status === 'dispatching' && promptState === 'ready'
   const buttonLabel = submitting
@@ -668,17 +661,20 @@ function QuickStartInput({
       ? '正在判断…'
       : promptState === 'rewriting'
         ? '优化中'
-        : awaitingGenerationConfirmation
-          ? '发送生成'
-          : generationStarting
-            ? '正在开始生成…'
-            : agentSession.state.status === 'restart-required'
-              ? '重新开始'
-              : agentSession.state.status === 'awaiting-input'
-                ? '继续'
-                : '生成角色'
-  const canSubmit =
-    awaitingGenerationConfirmation || Boolean(prompt.trim()) || Boolean(templateFile)
+        : agentSession.state.status === 'dispatching' && promptState === 'collecting'
+          ? '先填入提示词'
+          : awaitingGenerationConfirmation
+            ? '发送生成'
+            : generationStarting
+              ? '正在开始生成…'
+              : agentSession.state.status === 'restart-required'
+                ? '重新开始'
+                : agentSession.state.status === 'awaiting-input'
+                  ? '继续'
+                  : '生成角色'
+  const canSubmit = awaitingGenerationConfirmation
+    ? Boolean(prompt.trim())
+    : Boolean(prompt.trim()) || Boolean(templateFile)
 
   return (
     <section
@@ -741,6 +737,14 @@ function QuickStartInput({
                     ))}
                   </span>
                 </div>
+              ) : null}
+              {agentSession.state.status === 'dispatching' ? (
+                <PromptProposal
+                  summary={agentSession.state.optimizationSummary}
+                  prompt={agentSession.state.optimizedPrompt}
+                  disabled={promptState === 'rewriting' || generationStarting}
+                  onFill={fillOptimizedPrompt}
+                />
               ) : null}
               {agentSession.state.status === 'error' ? (
                 <div role="alert" data-conversation-kind="agent" className="min-w-0">
@@ -809,16 +813,19 @@ function QuickStartInput({
               hasConversation ? 'sm:grid-cols-[1fr_auto]' : 'sm:grid-cols-[1fr_auto_auto]'
             }`}
           >
-            <label className="relative min-w-0" htmlFor="quick-start-prompt">
+            <label
+              className="relative ml-2 min-w-0 overflow-hidden rounded-lg"
+              htmlFor="quick-start-prompt"
+            >
               <span className="sr-only">创作指令</span>
-              <input
+              <textarea
+                ref={promptInput}
                 id="quick-start-prompt"
-                type="text"
+                rows={1}
                 aria-label="创作指令"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
                 disabled={inputLocked}
-                readOnly={agentSession.state.status === 'dispatching'}
                 placeholder={
                   agentPlanning
                     ? 'Agent 正在整理…'
@@ -828,7 +835,7 @@ function QuickStartInput({
                         ? '描述动作，可留空生成待机动作…'
                         : '描述角色的外形、身份和气质…'
                 }
-                className={`h-10 w-full min-w-0 border-0 bg-transparent px-3 text-[15px] text-app-ink outline-none placeholder:text-app-faint ${
+                className={`min-h-10 max-h-40 w-full min-w-0 resize-none overflow-y-auto border-0 bg-transparent px-4 py-2.5 text-[15px] leading-5 text-app-ink outline-none [field-sizing:content] placeholder:text-app-faint ${
                   promptState === 'rewriting' ? 'text-transparent caret-transparent' : ''
                 }`}
               />
@@ -836,14 +843,14 @@ function QuickStartInput({
                 <span
                   data-prompt-rewrite
                   aria-hidden="true"
-                  className="quick-start-prompt-rewrite absolute inset-0 flex h-10 items-center overflow-hidden px-3 text-[15px] whitespace-nowrap text-app-ink"
+                  className="quick-start-prompt-rewrite absolute inset-0 flex min-h-10 max-h-40 items-start overflow-y-auto px-4 py-2.5 text-[15px] leading-5 text-app-ink"
                 >
                   <KineticCopyCycle
                     active
                     as="span"
                     messages={promptMessage}
                     motionMode="characters"
-                    className="quick-start-prompt-kinetic"
+                    className="quick-start-prompt-kinetic w-full"
                   />
                 </span>
               ) : null}
@@ -894,7 +901,7 @@ function QuickStartInput({
             <button
               type="submit"
               disabled={!canSubmit || entryBusy || Boolean(unavailableReason)}
-              className="inline-flex h-10 items-center gap-2 rounded-lg bg-app-accent px-4 text-sm font-bold whitespace-nowrap text-app-on-accent transition hover:bg-app-accent-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
+              className="inline-flex h-10 self-end items-center gap-2 rounded-lg bg-app-accent px-4 text-sm font-bold whitespace-nowrap text-app-on-accent transition hover:bg-app-accent-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
             >
               {buttonLabel}
               {!entryBusy ? <ArrowUp aria-hidden="true" size={16} weight="bold" /> : null}
@@ -917,6 +924,39 @@ function QuickStartInput({
         </div>
       </div>
     </section>
+  )
+}
+
+function PromptProposal({
+  summary,
+  prompt,
+  disabled,
+  onFill,
+}: {
+  summary: string
+  prompt: string
+  disabled: boolean
+  onFill: () => void
+}) {
+  return (
+    <div data-prompt-proposal data-conversation-kind="agent" className="min-w-0 space-y-3">
+      <AgentCopy lines={[summary]} />
+      <blockquote className="max-w-2xl font-serif text-base leading-7 text-app-ink">
+        {prompt}
+      </blockquote>
+      <button
+        type="button"
+        aria-label="填入输入框"
+        disabled={disabled}
+        onClick={onFill}
+        className="group inline-flex min-h-8 items-center gap-2 rounded-full pr-2 text-xs text-app-muted transition hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-45"
+      >
+        <span className="grid size-8 shrink-0 place-items-center rounded-full transition group-hover:bg-app-surface-muted">
+          <ArrowBendDownLeft aria-hidden="true" size={17} weight="bold" />
+        </span>
+        <span>填入输入框后，还可以继续修改</span>
+      </button>
+    </div>
   )
 }
 

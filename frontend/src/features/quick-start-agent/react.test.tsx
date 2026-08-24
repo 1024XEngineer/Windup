@@ -32,7 +32,7 @@ describe('useQuickStartAgent', () => {
             toolName: 'start_character_generation',
             input: {
               optimizedPrompt: '银发像素骑士，全身像',
-              assumptions: ['默认单角色', '默认横版视角'],
+              optimizationSummary: '我会保留银发骑士特征，并补全适合母版生成的全身描述。',
             },
           },
         ],
@@ -64,7 +64,7 @@ describe('useQuickStartAgent', () => {
       expect(result.current.state).toEqual({
         status: 'dispatching',
         optimizedPrompt: '银发像素骑士，全身像',
-        assumptions: ['默认单角色', '默认横版视角'],
+        optimizationSummary: '我会保留银发骑士特征，并补全适合母版生成的全身描述。',
       }),
     )
     expect(startCharacterGeneration).not.toHaveBeenCalled()
@@ -150,6 +150,30 @@ describe('useQuickStartAgent', () => {
     })
   })
 
+  it('does not expose Agent protocol details in the user-facing error state', async () => {
+    const planner = vi.fn(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'start_character_generation',
+          input: { optimizedPrompt: '像素骑士' },
+        },
+      ],
+    }))
+    const startCharacterGeneration = vi.fn(async () => ({ runId: 'run-agent' }))
+    const { result } = renderHook(() => useQuickStartAgent({ planner, startCharacterGeneration }))
+
+    await act(async () => {
+      await expect(result.current.submit('像素骑士')).rejects.toThrow('生成 Tool 参数字段无效')
+    })
+
+    expect(result.current.state).toEqual({
+      status: 'error',
+      message: '提示词优化没有完成，请重新发送',
+    })
+  })
+
   it('keeps the first successful clarification available after an initial Planner failure', async () => {
     const planner = vi
       .fn<(input: PlannerInput) => Promise<PlannerResult>>()
@@ -184,7 +208,10 @@ describe('useQuickStartAgent', () => {
         toolCalls: [
           {
             toolName: 'start_character_generation',
-            input: { optimizedPrompt: '银发像素骑士，全身像', assumptions: [] },
+            input: {
+              optimizedPrompt: '银发像素骑士，全身像',
+              optimizationSummary: '我会保留银发骑士特征，并整理为完整的全身母版描述。',
+            },
           },
         ],
       }),
@@ -211,7 +238,10 @@ describe('useQuickStartAgent', () => {
         toolCalls: [
           {
             toolName: 'start_character_generation',
-            input: { optimizedPrompt: '银发像素骑士，全身像', assumptions: [] },
+            input: {
+              optimizedPrompt: '银发像素骑士，全身像',
+              optimizationSummary: '我会保留银发骑士特征，并整理为完整的全身母版描述。',
+            },
           },
         ],
       },
