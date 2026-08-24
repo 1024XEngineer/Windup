@@ -164,6 +164,7 @@ export interface WorkflowController {
     nodeId: CharacterSetupWorkflowNode['id'],
     selectedImageUrl: string,
     characterId: string,
+    direction?: ActionDirection,
   ): Promise<void>
   confirmCharacterTemplate(
     nodeId: CharacterTemplateWorkflowNode['id'],
@@ -294,7 +295,7 @@ export function createWorkflowController({
   const regenerationKeys = new Set<string>()
   const settlements = new Map<string, Promise<WorkflowRun>>()
   const listeners = new Set<(workflow: WorkflowRun) => void>()
-  const sourceDirections = getDirectionProfile(directionalMovement).sourceDirections
+  const sourceDirections = getDirectionProfile(directionalMovement).generationDirections
 
   function selectedDirectionUrl(
     values: Partial<Record<ActionDirection, string>> | undefined,
@@ -564,12 +565,29 @@ export function createWorkflowController({
             )
           })
     const templateNode = findSingleDependentNode(advanced, nodeId, 'character-template')
+    const missingDirections = sourceDirections.filter(
+      (direction) =>
+        !selectedDirectionUrl(
+          templateNode.selectedImages,
+          templateNode.selectedImageUrl,
+          direction,
+        ),
+    )
     return submitDirectionalGenerations(
       templateNode.id,
       'character_template',
       (run, node, direction) => {
         if (node.type !== 'character-template') throw new Error('目标节点不是角色母版')
-        if (node.phase !== 'ready' && node.phase !== 'generating') {
+        const hasSelectedDirection = sourceDirections.some((sourceDirection) =>
+          Boolean(
+            selectedDirectionUrl(node.selectedImages, node.selectedImageUrl, sourceDirection),
+          ),
+        )
+        if (
+          node.phase !== 'ready' &&
+          node.phase !== 'generating' &&
+          !(node.phase === 'selecting' && hasSelectedDirection)
+        ) {
           throw new Error('角色母版节点当前不能开始生成')
         }
         const setupNode = findSingleDependencyNode(run, node, 'character-setup')
@@ -590,6 +608,7 @@ export function createWorkflowController({
         }
         return input
       },
+      missingDirections,
     )
   }
 
@@ -675,19 +694,28 @@ export function createWorkflowController({
     nodeId: CharacterSetupWorkflowNode['id'],
     selectedImageUrl: string,
     characterId: string,
+    direction: ActionDirection = 'east',
   ) {
     ensureRunning()
     const imageUrl = nonEmpty(selectedImageUrl, 'selectedImageUrl')
     const normalizedCharacterId = nonEmpty(characterId, 'characterId')
+    assertSourceDirection(direction, sourceDirections)
     return persist((run) => {
       const setupNode = findNode(run, nodeId)
       if (setupNode.type !== 'character-setup') throw new Error('目标节点不是角色设定')
-      if (setupNode.status !== 'active' || setupNode.phase !== 'configuring') {
-        throw new Error('角色设定节点当前不能使用上传母版')
-      }
       const templateNode = findSingleDependentNode(run, setupNode.id, 'character-template')
-      if (templateNode.status !== 'locked' || templateNode.phase !== 'ready') {
-        throw new Error('角色母版节点当前不能使用上传图片')
+      const isFirstUpload =
+        setupNode.status === 'active' &&
+        setupNode.phase === 'configuring' &&
+        templateNode.status === 'locked' &&
+        templateNode.phase === 'ready'
+      const isAdditionalDirection =
+        setupNode.status === 'passed' &&
+        setupNode.phase === 'completed' &&
+        templateNode.status === 'active' &&
+        templateNode.phase === 'selecting'
+      if (!isFirstUpload && !isAdditionalDirection) {
+        throw new Error('角色设定节点当前不能使用上传母版')
       }
       if (setupNode.input.characterId && setupNode.input.characterId !== normalizedCharacterId) {
         throw new Error('WorkflowRun 已绑定到另一角色，不能改绑')
@@ -705,16 +733,22 @@ export function createWorkflowController({
             }
           }
           if (node.id === templateNode.id) {
+            const selectedImages = {
+              ...(templateNode.selectedImages ?? {}),
+              [direction]: imageUrl,
+            }
+            const complete = sourceDirections.every((sourceDirection) => {
+              return Boolean(selectedImages[sourceDirection])
+            })
             return {
               ...templateNode,
-              selectedImageUrl: imageUrl,
-              // 上传的是一张通用母版，不代表它只属于 east；它会作为每个真实
-              // 源方向的生成约束，动作差异仍由 direction prompt 负责生成。
-              selectedImages: Object.fromEntries(
-                sourceDirections.map((sourceDirection) => [sourceDirection, imageUrl]),
-              ),
-              status: 'passed',
-              phase: 'completed',
+              selectedImageUrl:
+                direction === 'east'
+                  ? imageUrl
+                  : (templateNode.selectedImageUrl ?? selectedImages.east ?? null),
+              selectedImages,
+              status: complete ? 'passed' : 'active',
+              phase: complete ? 'completed' : 'selecting',
             }
           }
           return node
@@ -1286,10 +1320,17 @@ export function createWorkflowController({
     directions: readonly ActionDirection[] = sourceDirections,
   ): Promise<WorkflowRun> {
     if (directions.length === 0) throw new Error('项目没有可生成的真实源方向')
-    // 方向之间彼此独立，可以并行排队；每个任务仍有自己的 taskId、SSE 订阅和落库引用。
-    // 镜像方向没有进入 directions，因此不会触发模型调用或积分扣除。
-    const snapshots = await Promise.all(
+    // 方向之间彼此独立，可以并行排队；即使其中一个提交失败，也要等其它已创建任务
+    // 完成引用落库后再返回错误，避免刷新后遗失仍在执行的付费任务。
+    const results = await Promise.allSettled(
       directions.map((direction) => submitGeneration(nodeId, role, createInput, direction)),
+    )
+    const failed = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    )
+    if (failed) throw asError(failed.reason)
+    const snapshots = results.flatMap((result) =>
+      result.status === 'fulfilled' ? [result.value] : [],
     )
     return snapshots[snapshots.length - 1] ?? snapshot()
   }
