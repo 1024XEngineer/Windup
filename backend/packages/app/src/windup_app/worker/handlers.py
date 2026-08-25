@@ -104,14 +104,27 @@ def _action_input(payload: dict) -> CharacterActionInput:
 
 def _direction_set_input(payload: dict) -> CharacterDirectionSetInput:
     raw_num_images = payload.get("num_images")
+    raw_character_id = payload.get("character_id")
+    raw_reference_image_url = payload.get("reference_image_url")
+    raw_anchor_direction = payload.get("anchor_direction")
     return CharacterDirectionSetInput(
-        reference_image_url=payload.get("reference_image_url"),
+        character_id=int(raw_character_id) if raw_character_id is not None else None,
+        reference_image_url=(
+            str(raw_reference_image_url)
+            if raw_reference_image_url is not None
+            else None
+        ),
         prompt=payload.get("prompt") or "",
         negative_prompt=payload.get("negative_prompt") or "",
         width=int(payload.get("width") or 1024),
         height=int(payload.get("height") or 1024),
         num_images=int(raw_num_images) if raw_num_images is not None else None,
         directions=[ActionDirection(value) for value in payload.get("directions") or []],
+        anchor_direction=(
+            ActionDirection(raw_anchor_direction)
+            if raw_anchor_direction is not None
+            else None
+        ),
         billing_attempt=int(payload.get("billing_attempt") or 0),
     )
 

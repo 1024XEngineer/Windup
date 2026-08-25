@@ -8,6 +8,7 @@ import { Link, MemoryRouter, Route, Routes } from 'react-router'
 import {
   WorkflowRunConflictError,
   type Character,
+  type ActionDirection,
   type CharacterTemplateWorkflowNode,
   type Generation,
   type GenerationApis,
@@ -478,6 +479,33 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     await waitFor(() => expect(screen.queryByRole('textbox', { name: '角色描述' })).toBeNull())
   })
 
+  it('四向项目初次只提交三张 east 母版候选', async () => {
+    const createGeneration = vi.fn(async (input: { direction?: string }) => ({
+      id: `template-${input.direction ?? 'east'}`,
+      projectId: '1',
+      type: 'character_template' as const,
+      status: 'pending' as const,
+      result: null,
+      error: null,
+    }))
+    const project = { ...projectFixture(), directionalMovement: 'four-way' as const }
+    const session = createSession(workflowFixture(), {
+      project,
+      generationApis: generationApisFixture({
+        create: createGeneration as GenerationApis['create'],
+      }),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '生成角色候选' }))
+
+    await waitFor(() => expect(createGeneration).toHaveBeenCalledTimes(1))
+    expect(createGeneration).toHaveBeenCalledWith(
+      expect.objectContaining({ direction: 'east', candidateCount: 3 }),
+    )
+  })
+
   it('上传角色参考图期间禁止生成，成功后写回 WorkflowRun', async () => {
     const pendingUpload = deferred<MediaReference>()
     const uploadReferenceImage = vi.fn(() => pendingUpload.promise)
@@ -666,7 +694,45 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
   })
 
-  it('四向角色母版按真实源方向分组选择并逐一确认', async () => {
+  it('四向项目确认母版后才以该母版为参考生成其余方向且每向一张', async () => {
+    const createGeneration = vi.fn(async (input: { direction?: string }) => ({
+      id: `template-${input.direction}`,
+      projectId: '1',
+      type: 'character_template' as const,
+      status: 'pending' as const,
+      result: null,
+      error: null,
+    }))
+    const project = { ...projectFixture(), directionalMovement: 'four-way' as const }
+    const session = createSession(selectingTemplateWorkflow(4, 'template-east'), {
+      project,
+      generationApis: generationApisFixture({
+        create: createGeneration as GenerationApis['create'],
+        get: vi.fn().mockResolvedValue(characterGeneration('character')),
+      }),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+
+    renderEditor('/workflow-editor/42')
+
+    fireEvent.click(await screen.findByRole('button', { name: '选择角色候选 1' }))
+    fireEvent.click(await screen.findByRole('button', { name: '确认为定妆母版' }))
+
+    await waitFor(() => expect(createGeneration).toHaveBeenCalledTimes(3))
+    expect(createGeneration.mock.calls.map(([input]) => input.direction)).toEqual([
+      'west',
+      'north',
+      'south',
+    ])
+    for (const [input] of createGeneration.mock.calls) {
+      expect(input).toMatchObject({
+        candidateCount: 1,
+        referenceMedia: ['https://assets.windup.test/character.png'],
+      })
+    }
+  })
+
+  it('旧流程已提前生成多方向时不再允许把不同角色结果直接确认为方向集', async () => {
     const workflow = selectingTemplateWorkflow(4, 'template-east')
     workflow.nodes[1] = {
       ...(workflow.nodes[1] as CharacterTemplateWorkflowNode),
@@ -676,7 +742,9 @@ describe('WorkflowEditorPage real runtime boundary', () => {
         direction,
       })),
     }
+    const project = { ...projectFixture(), directionalMovement: 'four-way' as const }
     const session = createSession(workflow, {
+      project,
       generationApis: generationApisFixture({
         get: vi.fn(async (_projectId: string, taskId: string) => {
           const direction = taskId.replace('template-', '') as 'east' | 'west' | 'north' | 'south'
@@ -684,30 +752,46 @@ describe('WorkflowEditorPage real runtime boundary', () => {
         }) as GenerationApis['get'],
       }),
     })
-    session.project.directionalMovement = 'four-way'
-    const retryGenerationDirection = vi
-      .spyOn(session.controller, 'retryGenerationDirection')
-      .mockResolvedValue()
-    const confirmCharacterTemplate = vi.fn(
-      async (
-        _nodeId: string,
-        _selectedImageUrl: string,
-        _direction?: 'east' | 'west' | 'north' | 'south',
-      ) => characterFixture(),
-    )
-    session.confirmCharacterTemplate = confirmCharacterTemplate
     defaultSessionLoader.mockResolvedValue(session)
 
     renderEditor('/workflow-editor/42')
 
-    fireEvent.click(await screen.findByRole('button', { name: '重做北方向' }))
-    await waitFor(() =>
-      expect(retryGenerationDirection).toHaveBeenCalledWith('character-template', 'north', {
-        spriteWidth: 64,
-        spriteHeight: 64,
-        referenceMedia: [],
-      }),
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      '旧流程已在母版确认前生成多方向',
     )
+    expect(screen.getByRole('button', { name: '按新流程重新生成母版' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /选择.*角色候选/ })).toBeNull()
+  })
+
+  it('四向首帧在一个方向集合中展示并一次确认', async () => {
+    const workflow = selectingTemplateWorkflow(4, 'template-east')
+    workflow.nodes[1] = {
+      ...(workflow.nodes[1] as CharacterTemplateWorkflowNode),
+      selectedImageUrl: 'https://assets.windup.test/master.png',
+      selectedImages: { east: 'https://assets.windup.test/master.png' },
+      generations: (['east', 'west', 'north', 'south'] as const).map((direction) => ({
+        taskId: `template-${direction}`,
+        role: 'character_template',
+        direction,
+      })),
+    }
+    const project = { ...projectFixture(), directionalMovement: 'four-way' as const }
+    const session = createSession(workflow, {
+      project,
+      generationApis: generationApisFixture({
+        get: vi.fn(async (_projectId: string, taskId: string) => {
+          const direction = taskId.replace('template-', '') as 'east' | 'west' | 'north' | 'south'
+          return directionalCharacterGeneration(direction)
+        }) as GenerationApis['get'],
+      }),
+    })
+    session.confirmCharacterTemplate = async (nodeId, imageUrl, direction = 'east') => {
+      await session.controller.confirmCharacterTemplate(nodeId, imageUrl, 'character-1', direction)
+      return characterFixture()
+    }
+    defaultSessionLoader.mockResolvedValue(session)
+
+    renderEditor('/workflow-editor/42')
 
     for (const [direction, label] of [
       ['east', '东'],
@@ -716,19 +800,79 @@ describe('WorkflowEditorPage real runtime boundary', () => {
       ['south', '南'],
     ] as const) {
       expect(
-        (await screen.findByRole('img', { name: `${label}角色候选 1` })).getAttribute('src'),
-      ).toContain(`/${direction}.png`)
-      fireEvent.click(screen.getByRole('button', { name: `选择${label}角色候选 1` }))
+        (await screen.findByRole('img', { name: `${label}方向首帧` })).getAttribute('src'),
+      ).toContain(direction === 'east' ? '/master.png' : `/${direction}.png`)
     }
-    fireEvent.click(screen.getByRole('button', { name: '确认身份母版' }))
+    expect(screen.getByRole('group', { name: '四向首帧集合' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /选择.*角色候选/ })).toBeNull()
 
-    await waitFor(() => expect(confirmCharacterTemplate).toHaveBeenCalledTimes(4))
-    expect(confirmCharacterTemplate.mock.calls.map((call) => call[2])).toEqual([
+    fireEvent.click(screen.getByRole('button', { name: '确认方向集合' }))
+
+    await waitFor(() =>
+      expect(session.controller.getWorkflow().nodes[1]).toMatchObject({
+        status: 'passed',
+        phase: 'completed',
+        selectedImages: {
+          east: 'https://assets.windup.test/master.png',
+          west: 'https://assets.windup.test/west.png',
+          north: 'https://assets.windup.test/north.png',
+          south: 'https://assets.windup.test/south.png',
+        },
+      }),
+    )
+  })
+
+  it('八向首帧集合使用四列两行并完整展示八个方向', async () => {
+    const directions = [
       'east',
       'west',
       'north',
       'south',
-    ])
+      'north_east',
+      'north_west',
+      'south_east',
+      'south_west',
+    ] as const
+    const workflow = selectingTemplateWorkflow(4, 'template-east')
+    workflow.nodes[1] = {
+      ...(workflow.nodes[1] as CharacterTemplateWorkflowNode),
+      selectedImageUrl: 'https://assets.windup.test/master.png',
+      selectedImages: { east: 'https://assets.windup.test/master.png' },
+      generations: directions.map((direction) => ({
+        taskId: `template-${direction}`,
+        role: 'character_template',
+        direction,
+      })),
+    }
+    const project = { ...projectFixture(), directionalMovement: 'eight-way' as const }
+    const session = createSession(workflow, {
+      project,
+      generationApis: generationApisFixture({
+        get: vi.fn(async (_projectId: string, taskId: string) => {
+          const direction = taskId.replace('template-', '') as ActionDirection
+          return {
+            id: taskId,
+            projectId: '1',
+            type: 'character_template' as const,
+            status: 'completed' as const,
+            result: {
+              type: 'character_template' as const,
+              direction,
+              images: [{ url: `https://assets.windup.test/${direction}.png` }],
+            },
+            error: null,
+          }
+        }) as GenerationApis['get'],
+      }),
+    })
+    defaultSessionLoader.mockResolvedValue(session)
+
+    renderEditor('/workflow-editor/42')
+
+    const group = await screen.findByRole('group', { name: '八向首帧集合' })
+    expect(group.className).toContain('grid-cols-4')
+    expect(group.className).toContain('aspect-[2/1]')
+    expect(within(group).getAllByRole('img')).toHaveLength(8)
   })
 
   it('方向任务失败时只提供该源方向的重试入口', async () => {
@@ -739,6 +883,8 @@ describe('WorkflowEditorPage real runtime boundary', () => {
       status: 'failed',
       phase: 'generating',
       error: 'north provider failed',
+      selectedImageUrl: 'https://assets.windup.test/master.png',
+      selectedImages: { east: 'https://assets.windup.test/master.png' },
       generations: [
         { taskId: 'task-east', role: 'character_template' as const },
         { taskId: 'task-north', role: 'character_template' as const, direction: 'north' as const },
@@ -775,7 +921,6 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(retry).toHaveBeenCalledWith('character-template', 'north', {
       spriteWidth: 64,
       spriteHeight: 64,
-      referenceMedia: [],
     })
   })
 

@@ -160,12 +160,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
         })
       }
       try {
-        return await ensureAgent().confirmProposal(
-          proposalId,
-          prompt,
-          directionalMovement,
-          options,
-        )
+        return await ensureAgent().confirmProposal(proposalId, prompt, directionalMovement, options)
       } catch (cause) {
         if (mounted.current) {
           logAgentFailure(cause)

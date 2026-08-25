@@ -63,6 +63,10 @@ export interface QuickStartFailedDirection {
   direction: ActionDirection
 }
 
+export interface QuickStartResumeOptions {
+  automaticActionAdvance?: boolean
+}
+
 export interface QuickStartMediaApis {
   upload(file: File, category: 'reference-image', signal?: AbortSignal): Promise<MediaReference>
 }
@@ -72,7 +76,7 @@ export interface QuickStartSession {
   getWorkflow(): WorkflowRun
   subscribe(listener: (run: WorkflowRun) => void): () => void
   subscribeErrors(listener: (error: Error) => void): () => void
-  resume(): Promise<WorkflowRun>
+  resume(options?: QuickStartResumeOptions): Promise<WorkflowRun>
   interrupt(): Promise<WorkflowRun>
   dispose(): void
   continueWithUploadedTemplate(
@@ -640,10 +644,10 @@ export function createQuickStartService({
         listeners.add(listener)
         return () => listeners.delete(listener)
       },
-      async resume() {
+      async resume({ automaticActionAdvance = true } = {}) {
         disposed = false
         await controller.resume()
-        if (!disposed) ensureAutomaticAdvance()
+        if (!disposed && automaticActionAdvance) ensureAutomaticAdvance()
         return controller.getWorkflow()
       },
       async interrupt() {
@@ -728,13 +732,20 @@ export function createQuickStartService({
         const command = (async () => {
           const template = templateNode(controller.getWorkflow())
           const setup = setupNode(controller.getWorkflow())
-          const selectedImages = selectedDirections(controller, selection, {
+          const existingSelections: QuickStartDirectionSelections = {
             ...(template.selectedImageUrl ? { east: template.selectedImageUrl } : {}),
             ...(template.selectedImages ?? {}),
-          })
-          const selectedImageUrl = selectedImages.east!
+          }
+          const requestedSelections: QuickStartDirectionSelections = {
+            ...existingSelections,
+            ...(typeof selection === 'string' ? { east: selection } : selection),
+          }
+          const selectedImageUrl = requestedSelections.east
+          if (!selectedImageUrl) throw new Error('请先选择一张角色母版')
           let target: { characterId: string; outfitId: string }
+          const hasConfirmedMaster = Boolean(template.selectedImageUrl && setup.input.characterId)
           if (
+            hasConfirmedMaster &&
             template.status === 'active' &&
             template.phase === 'selecting' &&
             template.selectedImageUrl &&
@@ -755,6 +766,21 @@ export function createQuickStartService({
                 controller.confirmCharacterTemplate(template.id, selectedImageUrl, characterId),
             )
           }
+          const directions = generationDirectionsFor(controller)
+          if (!hasConfirmedMaster && directions.length > 1) {
+            const spriteSize =
+              knownSpriteSize ??
+              (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
+            await controller.generateCharacterTemplate(setup.id, {
+              spriteWidth: spriteSize.width,
+              spriteHeight: spriteSize.height,
+              sourceImageUrl: selectedImageUrl,
+              directions: directions.slice(1),
+              candidateCount: 1,
+            })
+            return controller.getWorkflow()
+          }
+          const selectedImages = selectedDirections(controller, requestedSelections)
           await confirmRemainingTemplateDirections(controller, target.characterId, selectedImages)
           const spriteSize =
             knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
@@ -1026,6 +1052,8 @@ export function createQuickStartService({
       await controller.generateCharacterTemplate('character-setup', {
         spriteWidth: project.spriteSize.width,
         spriteHeight: project.spriteSize.height,
+        directions: ['east'],
+        candidateCount: 3,
       })
       return createSession(controller, project.spriteSize)
     },

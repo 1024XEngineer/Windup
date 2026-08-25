@@ -168,6 +168,38 @@ def test_each_image_gets_its_own_reading():
     assert quality["subject_blobs"] == [2, 2, 2]
 
 
+def test_confirmed_master_is_sent_as_identity_reference_without_style_sample():
+    master = _master()
+    seen: dict[str, object] = {}
+
+    class _RecordingGen:
+        def gen_image(self, prompt, refs):
+            seen["prompt"] = prompt
+            seen["refs"] = refs
+            return master
+
+    executor = ImageTaskExecutor(
+        image=_RecordingGen(),
+        matte=_BackgroundMatte(),
+        upload=lambda _png: "https://cdn.example.com/result.png",
+        fetch_ref=lambda url: master if url == "https://cdn.example.com/master.png" else b"",
+    )
+
+    executor._produce_image(
+        CharacterImageInput(
+            reference_image_url="https://cdn.example.com/master.png",
+            prompt="像素风勇者",
+            width=64,
+            height=64,
+            num_images=1,
+        ),
+        _constraints(),
+    )
+
+    assert seen["refs"] == [master]
+    assert "preserve its identity" in str(seen["prompt"])
+
+
 def test_cutout_failure_fails_the_task_instead_of_delivering_gray():
     """抠不动时任务该红。静默交一张带灰底的母版正是 #430 本身,而且不可检测。"""
     class _Broken:
