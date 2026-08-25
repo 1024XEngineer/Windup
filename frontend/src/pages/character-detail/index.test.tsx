@@ -129,6 +129,60 @@ describe('CharacterDetailPage', () => {
     expect(scroller?.querySelector('ol')?.className).toContain('min-w-max')
   })
 
+  it('offers a mirrored west preview for legacy actions with only top-level frames', async () => {
+    const backend = createProjectAssetsBackend()
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      const response = await backend.fetch(input, init)
+      if (!request.url.endsWith('/characters/51')) return response
+
+      const payload = (await response.json()) as {
+        data: {
+          character_data: {
+            outfits: { actions: { id: string; sequences?: unknown[] }[] }[]
+          }
+        }
+        [key: string]: unknown
+      }
+      const walk = payload.data.character_data.outfits[0]?.actions.find(
+        (action) => action.id === 'walk',
+      )
+      delete walk?.sequences
+      return new Response(JSON.stringify(payload), {
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects/42/assets/51']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(await screen.findByRole('heading', { name: '轻装信使' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '展开行走' }))
+
+    const sequence = screen.getByRole('region', { name: '行走完整帧序列' })
+    const directions = within(sequence).getByRole('group', { name: '行走方向' })
+    expect(
+      within(directions)
+        .getAllByRole('radio')
+        .map((radio) => radio.getAttribute('value')),
+    ).toEqual(['east', 'west'])
+
+    fireEvent.click(within(directions).getByRole('radio', { name: '西' }))
+    const frames = within(sequence).getAllByRole('img')
+    expect(frames.map((frame) => frame.getAttribute('src'))).toEqual([
+      'https://cdn.windup.test/walk-01.png',
+      'https://cdn.windup.test/walk-02.png',
+      'https://cdn.windup.test/walk-03.png',
+    ])
+    expect(frames.every((frame) => frame.className.includes('-scale-x-100'))).toBe(true)
+  })
+
   it('allows adding an action when the character has directional templates without an outfit preview', async () => {
     const backend = createProjectAssetsBackend()
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')

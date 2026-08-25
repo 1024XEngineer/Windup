@@ -6,7 +6,9 @@ import {
   ACTION_DIRECTIONS,
   characterTemplateImages,
   characterApis,
+  getDirectionProfile,
   getOutfitPlayback,
+  resolveActionDirection,
   type Action,
   type ActionDirection,
   type Character,
@@ -45,14 +47,18 @@ function orderedFrames(frames: readonly Frame[]) {
 }
 
 function actionDirections(action: Action): readonly ActionDirection[] {
-  if (!action.sequences?.length) return ['east']
+  if (!action.sequences?.length) return getDirectionProfile('single').logicalDirections
   const available = new Set(action.sequences.map((sequence) => sequence.direction))
   return ACTION_DIRECTIONS.filter((direction) => available.has(direction))
 }
 
 function actionFrames(action: Action, direction: ActionDirection) {
   if (!action.sequences?.length) {
-    return { frames: orderedFrames(action.frames), mirrorX: false }
+    const resolution = resolveActionDirection(direction)
+    return {
+      frames: resolution.sourceDirection === 'east' ? orderedFrames(action.frames) : [],
+      mirrorX: resolution.mirrorX,
+    }
   }
 
   const sequence = action.sequences.find((item) => item.direction === direction)
