@@ -130,3 +130,13 @@ def test_poll_path_carries_the_job_id():
 
     assert (call.method, call.path) == ("GET", "/videos/job-9")
     assert call.headers["Authorization"] == "Bearer k"
+
+
+@pytest.mark.parametrize("body", ["[1, 2]", '"just a string"', "null"])
+def test_a_2xx_that_is_not_a_json_object_is_invalid_not_a_crash(body):
+    """同队列面:2xx 下的非对象 JSON 要收成 INVALID_RESPONSE,不能抛 AttributeError。"""
+    p = OpenAIVideoProtocol("k")
+    resp = httpx.Response(200, content=body, headers={"content-type": "application/json"})
+
+    assert p.parse_submit(resp).error_type is ModelErrorType.INVALID_RESPONSE
+    assert p.parse_poll(resp, "job-9").error_type is ModelErrorType.INVALID_RESPONSE
