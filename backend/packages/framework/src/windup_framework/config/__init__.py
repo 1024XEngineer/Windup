@@ -1,14 +1,10 @@
 """framework 配置。
 
-所有安全敏感字段(JWT_SECRET、POSTGRES_PASSWORD)均为必填项,
-Pydantic Settings 在模块导入(实例化)时即完成校验,缺失或不合规直接抛出
-``ValidationError`` — 进程在启动前失败(fail-fast)。
+各配置子模块首次使用时仍会立即完成 Pydantic 校验；包入口按需导入，避免只使用
+Provider 的独立工具被无关的数据库或存储凭据阻塞。
 """
 
-from windup_framework.config.database import DatabaseSettings, settings
-from windup_framework.config.jwt import JWTSettings, settings as jwt_settings
-from windup_framework.config.provider import AIProviderSettings, settings as provider_settings
-from windup_framework.config.storage import StorageSettings, settings as storage_settings
+from importlib import import_module
 
 __all__ = [
     "AIProviderSettings",
@@ -20,3 +16,24 @@ __all__ = [
     "jwt_settings",
     "storage_settings",
 ]
+
+_EXPORTS = {
+    "AIProviderSettings": ("windup_framework.config.provider", "AIProviderSettings"),
+    "DatabaseSettings": ("windup_framework.config.database", "DatabaseSettings"),
+    "JWTSettings": ("windup_framework.config.jwt", "JWTSettings"),
+    "StorageSettings": ("windup_framework.config.storage", "StorageSettings"),
+    "provider_settings": ("windup_framework.config.provider", "settings"),
+    "settings": ("windup_framework.config.database", "settings"),
+    "jwt_settings": ("windup_framework.config.jwt", "settings"),
+    "storage_settings": ("windup_framework.config.storage", "settings"),
+}
+
+
+def __getattr__(name: str):
+    try:
+        module_name, attribute = _EXPORTS[name]
+    except KeyError as exc:
+        raise AttributeError(name) from exc
+    value = getattr(import_module(module_name), attribute)
+    globals()[name] = value
+    return value
