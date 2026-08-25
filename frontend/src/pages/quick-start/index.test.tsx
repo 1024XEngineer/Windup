@@ -674,7 +674,7 @@ describe('QuickStartPage', () => {
     expect(composer.className).toContain('block')
     expect(composer.className).toContain('pl-4')
     expect(composer.className).toContain('pr-14')
-    expect(editingSurface?.className).toContain('rounded-[18px]')
+    expect(editingSurface?.className).toContain('rounded-app-surface')
     expect(editingSurface?.className).toContain('bg-app-surface-raised')
     expect(screen.getByRole('button', { name: '生成角色' }).className).toContain('rounded-full')
     expect(form?.className).toContain('flex-col')
@@ -1285,7 +1285,7 @@ describe('QuickStartPage', () => {
     expect(composer.getAttribute('data-position')).toBe('floating')
     expect(composer.className).toContain('absolute')
     expect(composer.className).toContain('sm:bottom-4')
-    expect(composer.querySelector('form')?.className).toContain('rounded-[18px]')
+    expect(composer.querySelector('form')?.className).toContain('rounded-app-surface')
     expect(agentTurns.length).toBeGreaterThanOrEqual(2)
     expect(userTurns.length).toBeGreaterThanOrEqual(2)
     expect(userTurns.every((turn) => turn.className.includes('w-fit'))).toBe(true)
@@ -1472,13 +1472,31 @@ describe('QuickStartPage', () => {
     expect(cards.every((card) => card.querySelector('img'))).toBeTruthy()
   })
 
-  it('matches generated cards to the composer radius and keeps image surfaces free of labels', async () => {
+  it('uses the shared surface radius for generated cards and keeps image surfaces free of labels', async () => {
     renderStateFixture('template-selecting')
 
     const cards = await screen.findAllByRole('button', { name: /选择角色方案/u })
 
-    expect(cards.every((card) => card.className.includes('rounded-2xl'))).toBe(true)
+    expect(cards.every((card) => card.className.includes('rounded-app-surface'))).toBe(true)
     expect(cards.every((card) => card.textContent === '')).toBe(true)
+  })
+
+  it('uses shared control and surface radii in the entry composer', async () => {
+    renderAt('/quick-start', serviceFor(null))
+
+    const prompt = await screen.findByRole('textbox', { name: '创作指令' })
+    const editingSurface = prompt.closest('label')
+    const uploadButton = screen.getByRole('button', { name: '添加母版' })
+    const directionButton = screen.getByRole('button', { name: '生成方向，当前单向' })
+
+    expect(editingSurface?.className).toContain('rounded-app-surface')
+    expect(uploadButton.className).toContain('rounded-app-compact')
+    expect(directionButton.className).toContain('rounded-app-control')
+
+    fireEvent.click(directionButton)
+    expect(screen.getByRole('group', { name: '生成方向设置' }).className).toContain(
+      'rounded-app-surface',
+    )
   })
 
   it('keeps equal candidate frames at the same size as confirmed assets', async () => {

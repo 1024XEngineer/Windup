@@ -54,6 +54,7 @@ import {
   GenerationPreviewCard,
   GenerationProgressCopy,
   KineticCopyCycle,
+  productPopoverClass,
   type KineticCopyMessage,
 } from '@/shared/ui'
 import {
@@ -471,7 +472,7 @@ function IconActionButton({
       disabled={disabled}
       onClick={onClick}
       data-icon-action
-      className={`group/action relative grid size-10 shrink-0 place-items-center rounded-lg transition focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-45 ${
+      className={`group/action relative grid size-10 shrink-0 place-items-center rounded-app-compact transition focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-45 ${
         accent
           ? 'bg-app-accent text-app-on-accent hover:bg-app-accent-hover'
           : 'text-app-muted hover:bg-app-surface-muted hover:text-app-accent'
@@ -481,7 +482,7 @@ function IconActionButton({
       <span
         id={tooltipId}
         role="tooltip"
-        className="pointer-events-none absolute top-full left-1/2 z-20 mt-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-app-ink px-2 py-1 text-[11px] font-medium text-app-canvas opacity-0 shadow-app-card transition group-hover/action:visible group-hover/action:opacity-100 group-focus-within/action:visible group-focus-within/action:opacity-100 invisible"
+        className="pointer-events-none absolute top-full left-1/2 z-20 mt-2 -translate-x-1/2 whitespace-nowrap rounded-app-compact bg-app-ink px-2 py-1 text-[11px] font-medium text-app-canvas opacity-0 shadow-app-card transition group-hover/action:visible group-hover/action:opacity-100 group-focus-within/action:visible group-focus-within/action:opacity-100 invisible"
       >
         {label}
       </span>
@@ -1185,7 +1186,7 @@ function QuickStartInput({
             className="quick-start-agent-composer relative flex flex-col"
           >
             <label
-              className="relative block min-h-[52px] min-w-0 overflow-hidden rounded-[18px] border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]"
+              className="relative block min-h-[52px] min-w-0 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]"
               htmlFor="quick-start-prompt"
             >
               <span className="sr-only">创作指令</span>
@@ -1291,7 +1292,7 @@ function QuickStartInput({
                       <div
                         role="menu"
                         aria-label="选择画风"
-                        className="quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid min-w-32 gap-1 rounded-[14px] border border-app-line bg-[var(--color-app-surface-raised)] p-1.5 opacity-100 shadow-app-panel"
+                        className={`${productPopoverClass} quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid min-w-32 gap-1 p-1.5 opacity-100`}
                       >
                         {ART_STYLE_OPTIONS.map((value) => (
                           <button
@@ -1300,7 +1301,7 @@ function QuickStartInput({
                             role="menuitemradio"
                             aria-checked={gameStyle === value}
                             onClick={() => chooseGameStyle(value)}
-                            className={`rounded-lg px-3 py-2 text-left text-xs transition ${
+                            className={`rounded-app-compact px-3 py-2 text-left text-xs transition ${
                               gameStyle === value
                                 ? 'bg-app-accent-soft text-app-accent'
                                 : 'text-app-ink-soft hover:bg-app-surface-muted'
@@ -1315,14 +1316,14 @@ function QuickStartInput({
                 </div>
               ) : null}
               {templateFile && !hasConversation ? (
-                <span className="absolute bottom-full left-3 mb-2 inline-flex max-w-56 items-center gap-1 rounded-lg bg-app-surface-raised px-2 py-1 text-xs text-app-ink-soft shadow-app-card">
+                <span className="absolute bottom-full left-3 mb-2 inline-flex max-w-56 items-center gap-1 rounded-app-compact bg-app-surface-raised px-2 py-1 text-xs text-app-ink-soft shadow-app-card">
                   <span className="truncate">{templateFile.name}</span>
                   <button
                     type="button"
                     aria-label="移除图片"
                     disabled={entryBusy}
                     onClick={removeTemplateFile}
-                    className="grid size-6 shrink-0 place-items-center rounded-md text-app-muted hover:text-app-accent"
+                    className="grid size-6 shrink-0 place-items-center rounded-app-compact text-app-muted hover:text-app-accent"
                   >
                     <X aria-hidden="true" size={13} weight="bold" />
                   </button>
@@ -1348,7 +1349,7 @@ function QuickStartInput({
                           setDirectionSliderValue(directionalMovementIndex)
                           setDirectionMenuOpen((open) => !open)
                         }}
-                        className="inline-flex h-10 items-center gap-1 rounded-lg px-3 text-sm font-medium text-app-ink-soft transition hover:bg-app-surface-muted hover:text-app-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:opacity-45"
+                        className="inline-flex h-10 items-center gap-1 rounded-app-control px-3 text-sm font-medium text-app-ink-soft transition hover:bg-app-surface-muted hover:text-app-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:opacity-45"
                       >
                         {DIRECTIONAL_MOVEMENT[directionalMovement]}
                         <CaretDown
@@ -1362,7 +1363,7 @@ function QuickStartInput({
                         <div
                           role="group"
                           aria-label="生成方向设置"
-                          className="quick-start-control-popover absolute right-0 bottom-full z-30 mb-3 w-72 rounded-[18px] border border-app-line-strong bg-[var(--color-app-surface-raised)] p-5 opacity-100 shadow-app-panel"
+                          className={`${productPopoverClass} quick-start-control-popover absolute right-0 bottom-full z-30 mb-3 w-72 p-5 opacity-100`}
                         >
                           <div className="mb-4 flex items-center justify-between">
                             <span className="text-sm text-app-muted">生成方向</span>
@@ -1429,14 +1430,14 @@ function QuickStartInput({
           </form>
 
           {unavailableReason ? (
-            <p className="mt-3 rounded-xl border border-app-warning-line bg-app-warning-soft px-4 py-3 text-sm text-app-warning">
+            <p className="mt-3 rounded-app-surface border border-app-warning-line bg-app-warning-soft px-4 py-3 text-sm text-app-warning">
               {unavailableReason}
             </p>
           ) : null}
           {error ? (
             <p
               role="alert"
-              className="mt-3 rounded-xl bg-app-danger px-4 py-3 text-sm text-app-danger-soft"
+              className="mt-3 rounded-app-surface bg-app-danger px-4 py-3 text-sm text-app-danger-soft"
             >
               {error}
             </p>
@@ -1574,7 +1575,7 @@ function UserTurn({ children }: { children: ReactNode }) {
   return (
     <div
       data-user-turn
-      className="ml-auto w-fit max-w-[78%] rounded-[1.15rem] rounded-br-md bg-app-surface-muted px-4 py-2.5 text-left text-sm leading-6 text-app-ink-soft"
+      className="ml-auto w-fit max-w-[78%] rounded-app-surface rounded-br-app-compact bg-app-surface-muted px-4 py-2.5 text-left text-sm leading-6 text-app-ink-soft"
     >
       <span>{children}</span>
     </div>
@@ -1683,7 +1684,7 @@ function DirectionCandidatePicker({
                   }
                   data-reveal="card"
                   style={{ '--reveal-index': displayIndex } as CSSProperties}
-                  className={`quick-start-reveal-card relative aspect-square overflow-hidden rounded-2xl border bg-app-surface-raised text-left transition duration-200 ${
+                  className={`quick-start-reveal-card relative aspect-square overflow-hidden rounded-app-surface border bg-app-surface-raised text-left transition duration-200 ${
                     chosen
                       ? 'border-app-accent ring-1 ring-app-accent'
                       : 'border-app-line hover:border-app-line-strong'
@@ -1721,14 +1722,14 @@ function DirectionFirstFrameStack({
       role="group"
       aria-label={`${directionCountLabel}首帧集合`}
       data-layout="direction-first-frame-stack"
-      className="grid aspect-square w-full max-w-xl grid-cols-2 gap-3 overflow-hidden rounded-[2rem] border border-app-line-strong bg-app-surface-muted p-4 shadow-app-card sm:p-5"
+      className="grid aspect-square w-full max-w-xl grid-cols-2 gap-3 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-muted p-4 shadow-app-card sm:p-5"
     >
       {directions.map((direction) => {
         const imageUrl = selections[direction]
         return imageUrl ? (
           <figure
             key={direction}
-            className="relative min-h-0 overflow-hidden rounded-2xl border border-app-line bg-app-surface-raised"
+            className="relative min-h-0 overflow-hidden rounded-app-control border border-app-line bg-app-surface-raised"
           >
             <AssetVisual
               src={imageUrl}
@@ -1744,7 +1745,7 @@ function DirectionFirstFrameStack({
             key={direction}
             role="status"
             aria-label={`${DIRECTION_LABELS[direction]}方向首帧生成中`}
-            className="grid min-h-0 place-items-center rounded-2xl border border-dashed border-app-line bg-app-surface-raised text-xs font-semibold text-app-muted"
+            className="grid min-h-0 place-items-center rounded-app-control border border-dashed border-app-line bg-app-surface-raised text-xs font-semibold text-app-muted"
           >
             {DIRECTION_LABELS[direction]}方向生成中
           </div>
@@ -2805,7 +2806,7 @@ function QuickStartRun({
         >
           <form
             onSubmit={continueConversation}
-            className="grid grid-cols-[1fr_auto] items-center gap-1.5 rounded-[18px] border border-app-line-strong bg-app-surface-raised/96 p-1.5 shadow-app-panel backdrop-blur-xl transition focus-within:border-app-accent"
+            className="grid grid-cols-[1fr_auto] items-center gap-1.5 rounded-app-surface border border-app-line-strong bg-app-surface-raised/96 p-1.5 shadow-app-panel backdrop-blur-xl transition focus-within:border-app-accent"
           >
             <label htmlFor="quick-start-continuation" className="min-w-0">
               <span className="sr-only">继续描述你的想法</span>

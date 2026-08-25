@@ -6,6 +6,7 @@ import type { QuotaApis } from '@/entities'
 import { readActiveRun, subscribeActiveRun } from '@/features/active-run'
 import { AUTH_SESSION_STORAGE_PREFIX, useAuthSession } from '@/features/auth-session'
 import { useQuotaBalance } from '@/features/quota'
+import { productControlClass, productMenuItemClass, productPopoverClass } from '@/shared/ui'
 import { PageBackButton } from './page-back-button'
 
 interface ProductNavigationItem {
@@ -295,7 +296,7 @@ export function AppHeader({
                     aria-hidden={activeRunMenuOpen ? undefined : true}
                     inert={!activeRunMenuOpen}
                     onAnimationEnd={finishActiveRunMenuMotion}
-                    className={`absolute top-[calc(100%+0.5rem)] left-1/2 grid min-w-44 origin-top -translate-x-1/2 overflow-hidden rounded-lg border border-app-ink/12 bg-app-surface-raised p-1.5 shadow-app-menu ${
+                    className={`${productPopoverClass} absolute top-[calc(100%+0.5rem)] left-1/2 grid min-w-44 origin-top -translate-x-1/2 overflow-hidden p-1.5 ${
                       activeRunMenuState === 'open'
                         ? 'visible app-header-account-menu-in'
                         : activeRunMenuState === 'closing'
@@ -306,7 +307,7 @@ export function AppHeader({
                     <Link
                       to={`/quick-start/${encodeURIComponent(activeRunId)}`}
                       onClick={closeActiveRunMenu}
-                      className="flex min-h-11 items-center gap-2 rounded-md px-3 text-[13px] text-app-ink-soft transition-colors hover:bg-app-accent-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
+                      className={`${productMenuItemClass} min-h-11 gap-2 text-app-ink-soft hover:text-app-accent`}
                     >
                       <span
                         aria-hidden="true"
@@ -317,7 +318,7 @@ export function AppHeader({
                     <Link
                       to={item.to}
                       onClick={closeActiveRunMenu}
-                      className="flex min-h-11 items-center rounded-md px-3 text-[13px] text-app-ink-soft transition-colors hover:bg-app-accent-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
+                      className={`${productMenuItemClass} min-h-11 text-app-ink-soft hover:text-app-accent`}
                     >
                       开始新的创作
                     </Link>
@@ -400,7 +401,7 @@ export function AppHeader({
                 aria-expanded={accountMenuOpen}
                 title={session.state.user.email}
                 onClick={toggleAccountMenu}
-                className={`inline-flex min-h-10 max-w-24 items-center gap-2 rounded-lg px-2.5 text-xs font-medium text-app-ink-soft transition-[color,background-color,transform] duration-150 ease-out hover:bg-app-accent-muted hover:text-app-accent active:translate-y-px active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent motion-reduce:transform-none sm:max-w-36 ${
+                className={`${productControlClass('chrome', 'max-w-24 gap-2 px-2.5 font-medium active:translate-y-px active:scale-[0.97] motion-reduce:transform-none sm:max-w-36')} ${
                   accountMenuOpen ? 'bg-app-accent-muted text-app-accent' : ''
                 }`}
               >
@@ -423,7 +424,7 @@ export function AppHeader({
                 aria-hidden={accountMenuOpen ? undefined : true}
                 inert={!accountMenuOpen}
                 onAnimationEnd={finishAccountMenuMotion}
-                className={`absolute top-[calc(100%+0.5rem)] right-0 grid min-w-44 origin-top-right overflow-hidden rounded-lg border border-app-ink/12 bg-app-surface-raised p-1.5 shadow-app-menu ${
+                className={`${productPopoverClass} absolute top-[calc(100%+0.5rem)] right-0 grid min-w-44 origin-top-right overflow-hidden p-1.5 ${
                   accountMenuState === 'open'
                     ? 'visible app-header-account-menu-in'
                     : accountMenuState === 'closing'
@@ -460,7 +461,7 @@ export function AppHeader({
                   aria-label="打开账号中心"
                   aria-current={pathname.startsWith('/account') ? 'page' : undefined}
                   onClick={() => setAccountMenuState('closing')}
-                  className="flex min-h-10 items-center rounded-md px-3 text-[13px] text-app-ink-soft transition-colors hover:bg-app-accent-muted focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-app-accent"
+                  className={`${productMenuItemClass} text-app-ink-soft`}
                 >
                   账号中心
                 </Link>
@@ -468,7 +469,7 @@ export function AppHeader({
                   type="button"
                   onClick={signOut}
                   aria-label="退出登录"
-                  className="flex min-h-10 items-center rounded-md px-3 text-left text-[13px] text-app-muted transition-colors hover:bg-app-accent-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-app-accent"
+                  className={`${productMenuItemClass} text-left text-app-muted hover:text-app-accent`}
                 >
                   退出登录
                 </button>

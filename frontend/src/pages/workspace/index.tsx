@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { FolderOpen, Plus } from '@phosphor-icons/react'
 import { Link } from 'react-router'
 
 import {
@@ -11,7 +12,7 @@ import {
   type WorkflowRun,
 } from '@/entities'
 import type { Paged } from '@/shared/pagination'
-import { Pagination } from '@/shared/ui'
+import { Pagination, productControlClass } from '@/shared/ui'
 
 import { WorkspaceEntranceVisual } from './visuals'
 import './workspace.css'
@@ -419,9 +420,11 @@ export function WorkspacePage() {
             {mode === 'projects' && projects !== null && projects.total > 0 ? (
               <ContextFooter className="shrink-0 pt-3">
                 <ContextLink to="/projects" aria-label="查看全部项目">
-                  查看全部项目
+                  <FolderOpen aria-hidden="true" size={16} weight="regular" />
+                  全部项目
                 </ContextLink>
                 <PrimaryContextLink to="/projects/new" aria-label="新建项目">
+                  <Plus aria-hidden="true" size={16} weight="bold" />
                   新建项目
                 </PrimaryContextLink>
               </ContextFooter>
@@ -974,10 +977,7 @@ function ContextFooter({ children, className = '' }: { children: ReactNode; clas
 
 function ContextLink({ children, ...props }: Omit<React.ComponentProps<typeof Link>, 'className'>) {
   return (
-    <Link
-      {...props}
-      className="inline-flex min-h-10 items-center rounded-full border border-app-line bg-app-surface-raised px-4 text-xs font-semibold text-app-ink-soft transition hover:border-app-line-strong hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
-    >
+    <Link {...props} className={productControlClass('chrome')}>
       {children}
     </Link>
   )
@@ -988,10 +988,7 @@ function PrimaryContextLink({
   ...props
 }: Omit<React.ComponentProps<typeof Link>, 'className'>) {
   return (
-    <Link
-      {...props}
-      className="inline-flex min-h-10 items-center rounded-full bg-app-accent px-4 text-xs font-semibold text-app-on-accent transition hover:bg-app-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
-    >
+    <Link {...props} className={productControlClass('accent')}>
       {children}
     </Link>
   )
