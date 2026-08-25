@@ -2584,8 +2584,22 @@ describe('QuickStartPage', () => {
   it('saves a completed animation without navigating and exposes both explicit destinations', async () => {
     const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'active' })
     const approved = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const exportModel: ExportPackageModel = {
+      stage: 'action-assets',
+      characterId: 'character-1',
+      characterName: '像素骑士',
+      characterImageUrl: '/master.png',
+      outfitId: 'outfit-1',
+      outfitName: '默认造型',
+      canvas: { width: 32, height: 40 },
+      source: { workflowRunId: run.id, generationIds: [] },
+      firstFrames: [],
+      actions: [],
+      playtest: null,
+    }
     const service = serviceFor(run, {
       approveReview: vi.fn(async () => approved),
+      getExportModel: vi.fn(async () => exportModel),
       getActionFrames: vi.fn(async () => [
         { index: 0, imageUrl: 'https://example.test/frame-0.png', durationMs: 80 },
         { index: 1, imageUrl: 'https://example.test/frame-1.png', durationMs: 80 },
@@ -2594,10 +2608,28 @@ describe('QuickStartPage', () => {
     const view = renderAt('/quick-start/run-1', service)
     await waitFor(() => expect(service.approveReview).toHaveBeenCalledWith())
     expect(screen.getByTestId('quick-start-run')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '跳转到资产工作台' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '跳转到 Play Test' })).toBeTruthy()
+    const assetWorkspaceAction = screen.getByRole('button', { name: '跳转到资产工作台' })
+    const playtestAction = screen.getByRole('button', { name: '跳转到 Play Test' })
+    const downloadAction = screen.getByRole('button', { name: '导出完整动作资产' })
+    const actionGroup = assetWorkspaceAction.closest('[data-agent-actions]')
 
-    fireEvent.click(screen.getByRole('button', { name: '跳转到资产工作台' }))
+    expect(
+      Array.from(actionGroup?.querySelectorAll('button') ?? []).map((button) =>
+        button.getAttribute('aria-label'),
+      ),
+    ).toEqual(['导出完整动作资产', '跳转到资产工作台', '跳转到 Play Test', '新建一次创作'])
+
+    for (const action of [assetWorkspaceAction, playtestAction]) {
+      expect(action.querySelector('svg')).toBeTruthy()
+      expect(action.querySelector('[role="tooltip"]')).toBeTruthy()
+      expect(action.className).not.toMatch(/\bborder(?:-\S+)?\b/)
+    }
+    expect(assetWorkspaceAction.querySelector('svg')?.getAttribute('data-icon')).toBe('asset-stack')
+    expect(playtestAction.querySelector('svg')?.getAttribute('data-icon')).toBe('playtest-play')
+    expect(downloadAction.className).not.toMatch(/\bbg-app-accent\b/)
+    expect(downloadAction.className).toContain('text-app-muted')
+
+    fireEvent.click(assetWorkspaceAction)
     expect(await screen.findByRole('heading', { name: '/projects/project-1/assets' })).toBeTruthy()
 
     view.unmount()
