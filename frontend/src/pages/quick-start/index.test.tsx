@@ -177,6 +177,53 @@ function serviceFor(run: WorkflowRun | null, overrides: Partial<QuickStartMock> 
 }
 
 describe('Quick Start workflow Agent', () => {
+  it('routes an unselected candidate refinement to the workflow Agent', async () => {
+    const run = workflow(setupAndTemplate())
+    const planner = vi.fn(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'refine_character_template',
+          input: { candidateId: 'candidate-2', adjustmentPrompt: '把牛角缩短' },
+        },
+      ],
+    }))
+    const service = serviceFor(run, {
+      getTemplateCandidates: vi.fn(async () =>
+        eastCandidates(
+          'https://example.test/character-1.png',
+          'https://example.test/character-2.png',
+          'https://example.test/character-3.png',
+        ),
+      ),
+      getWorkflowAgentContext: vi.fn(() => ({
+        availableTools: ['regenerate_character_template', 'refine_character_template'] as const,
+        characterTemplateCandidates: [
+          { id: 'candidate-1', position: 1 },
+          { id: 'candidate-2', position: 2 },
+          { id: 'candidate-3', position: 3 },
+        ],
+      })),
+    })
+    renderAt(`/quick-start/${run.id}`, service, agentFor({ planner }))
+
+    await screen.findAllByRole('button', { name: /选择角色方案/u })
+    const composer = screen.getByRole('textbox', { name: '继续描述你的想法' })
+    expect((composer as HTMLInputElement).disabled).toBe(false)
+    fireEvent.change(composer, { target: { value: '把第二张的牛角缩短' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() =>
+      expect(service.regenerateCharacterTemplate).toHaveBeenCalledWith(
+        'refine',
+        '把牛角缩短',
+        'candidate-2',
+      ),
+    )
+    expect(service.confirmCandidate).not.toHaveBeenCalled()
+  })
+
   it('routes a completed-run refinement through the current Controller session', async () => {
     const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
     const planner = vi.fn(async () => ({
@@ -1647,6 +1694,30 @@ describe('QuickStartPage', () => {
       { east: 'https://example.test/character-2.png' },
       '转身挥动风灯',
     )
+  })
+
+  it('returns to Agent conversation when the selected character candidate is clicked again', async () => {
+    const run = workflow(setupAndTemplate())
+    const service = serviceFor(run, {
+      getTemplateCandidates: vi.fn(async () =>
+        eastCandidates(
+          'https://example.test/character-1.png',
+          'https://example.test/character-2.png',
+          'https://example.test/character-3.png',
+        ),
+      ),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    const candidate = await screen.findByRole('button', { name: '选择角色方案 1' })
+    fireEvent.click(candidate)
+    expect(screen.getByPlaceholderText('描述这个角色接下来要做的动作…')).toBeTruthy()
+
+    fireEvent.click(candidate)
+
+    expect(candidate.getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByPlaceholderText('描述想调整的候选，或重新生成一批…')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '发送' })).toBeTruthy()
   })
 
   it('八向母版确认后完整展示八个同角色方向首帧', async () => {
