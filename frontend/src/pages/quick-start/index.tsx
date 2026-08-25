@@ -501,7 +501,7 @@ function AgentActions({
       data-agent-actions
       role="group"
       aria-label="相关操作"
-      className="flex w-fit max-w-full flex-wrap items-center gap-1 rounded-xl border border-app-line bg-app-surface/80 p-1"
+      className="flex w-fit max-w-full flex-wrap items-center gap-1"
     >
       {copyLabel && onCopy ? (
         <IconActionButton label={copyLabel} onClick={onCopy}>
@@ -517,7 +517,7 @@ function AgentActions({
         <ExportButton
           model={exportModel}
           iconOnly
-          className="border-transparent bg-app-accent text-app-on-accent hover:bg-app-accent-hover"
+          className="bg-app-accent text-app-on-accent hover:bg-app-accent-hover"
         />
       ) : null}
       {showNewCreation ? (

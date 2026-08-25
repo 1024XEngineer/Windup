@@ -176,7 +176,7 @@ export function ExportButton({
         onClick={() => void startExport()}
         className={
           iconOnly
-            ? `group/export-action relative grid size-10 shrink-0 place-items-center rounded-lg border border-current transition focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-50 ${className}`
+            ? `group/export-action relative grid size-10 shrink-0 place-items-center rounded-lg transition focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-50 ${className}`
             : `${pill ? 'rounded-full' : 'rounded-lg'} inline-flex min-h-10 items-center justify-center gap-2 border border-current px-3 py-2 text-xs font-semibold disabled:opacity-50 ${className}`
         }
       >
