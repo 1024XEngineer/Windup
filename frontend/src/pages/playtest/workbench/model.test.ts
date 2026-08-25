@@ -89,6 +89,56 @@ describe('createPlaytestModel', () => {
     ])
   })
 
+  it('keeps a locomotion cycle stable when the same motion has more sampled frames', () => {
+    const denseCharacter = structuredClone(character)
+    const walk = denseCharacter.outfits[0]!.actions[1]!
+    const denseFrames = Array.from({ length: 32 }, (_, index) => ({
+      index,
+      imageUrl: `/walk-${index}.png`,
+      durationMs: 125,
+    }))
+    walk.frameCount = 32
+    walk.frames = denseFrames
+    walk.sequences = [
+      {
+        direction: 'north',
+        sourceDirection: null,
+        mirrorX: false,
+        frameCount: 32,
+        frames: denseFrames,
+      },
+    ]
+
+    const result = createPlaytestModel(denseCharacter, 'outfit-default')
+    const mappedWalk = result.ok
+      ? result.model.actions.find((action) => action.id === 'walk')
+      : undefined
+
+    expect(mappedWalk?.frames).toHaveLength(32)
+    expect(mappedWalk?.frames.reduce((total, frame) => total + frame.durationMs, 0)).toBe(1000)
+    expect(
+      mappedWalk?.sequences?.north?.frames.reduce((total, frame) => total + frame.durationMs, 0),
+    ).toBe(1000)
+  })
+
+  it('preserves authored timing for non-locomotion actions with dense frames', () => {
+    const denseCharacter = structuredClone(character)
+    const idle = denseCharacter.outfits[0]!.actions[0]!
+    idle.frameCount = 32
+    idle.frames = Array.from({ length: 32 }, (_, index) => ({
+      index,
+      imageUrl: `/idle-${index}.png`,
+      durationMs: 125,
+    }))
+
+    const result = createPlaytestModel(denseCharacter, 'outfit-default')
+    const mappedIdle = result.ok
+      ? result.model.actions.find((action) => action.id === 'idle')
+      : undefined
+
+    expect(mappedIdle?.frames.reduce((total, frame) => total + frame.durationMs, 0)).toBe(4000)
+  })
+
   it('优先播放全部真实八向序列，不对任何方向应用镜像', () => {
     const directionalCharacter = structuredClone(character)
     const directions = [
