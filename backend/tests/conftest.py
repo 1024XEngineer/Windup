@@ -169,12 +169,17 @@ def client(engine):
     app = create_app()
     _disable_generation_execution(app)
     from windup_app.server.orchestrator import task_repo
-    from windup_app.web.api.generation import event_bus
+    from windup_app.web.api import generation as generation_api
 
-    task_repo.bind_event_bus(event_bus)
+    previous_session_local = generation_api.SessionLocal
+    generation_api.SessionLocal = session_local
+    task_repo.bind_event_bus(generation_api.event_bus)
     app.dependency_overrides[get_session] = override_get_session
-    yield TestClient(app)
-    app.dependency_overrides.clear()
+    try:
+        yield TestClient(app)
+    finally:
+        generation_api.SessionLocal = previous_session_local
+        app.dependency_overrides.clear()
 
 
 @pytest.fixture()
@@ -199,17 +204,22 @@ def auth_client(engine):
     app = create_app()
     _disable_generation_execution(app)
     from windup_app.server.orchestrator import task_repo
-    from windup_app.web.api.generation import event_bus
+    from windup_app.web.api import generation as generation_api
 
-    task_repo.bind_event_bus(event_bus)
+    previous_session_local = generation_api.SessionLocal
+    generation_api.SessionLocal = session_local
+    task_repo.bind_event_bus(generation_api.event_bus)
     app.dependency_overrides[get_session] = override_get_session
 
     # 生成测试用 token
     token = create_access_token(1, "test@example.com")
     client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
 
-    yield client
-    app.dependency_overrides.clear()
+    try:
+        yield client
+    finally:
+        generation_api.SessionLocal = previous_session_local
+        app.dependency_overrides.clear()
 
 
 @pytest.fixture()
@@ -231,16 +241,21 @@ def auth_client_b(engine):
     app = create_app()
     _disable_generation_execution(app)
     from windup_app.server.orchestrator import task_repo
-    from windup_app.web.api.generation import event_bus
+    from windup_app.web.api import generation as generation_api
 
-    task_repo.bind_event_bus(event_bus)
+    previous_session_local = generation_api.SessionLocal
+    generation_api.SessionLocal = session_local
+    task_repo.bind_event_bus(generation_api.event_bus)
     app.dependency_overrides[get_session] = override_get_session
 
     token = create_access_token(2, "other@example.com")
     client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
 
-    yield client
-    app.dependency_overrides.clear()
+    try:
+        yield client
+    finally:
+        generation_api.SessionLocal = previous_session_local
+        app.dependency_overrides.clear()
 
 
 # ── 三渲二 provider 的 fixture(随 provider3d 一起迁入)──────────────────

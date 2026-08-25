@@ -4338,7 +4338,7 @@
     },
     "/generation/tasks/{task_id}/stream": {
       "get": {
-        "description": "SSE:实时推送任务进度与最终结果。\n\n事件类型:\n  - ``progress``: 生成进度 (stage/current/total/note)\n  - ``completed``: 任务完成,携带最终结果\n  - ``partial``: 方向集部分失败,携带已成功方向与失败方向\n  - ``failed``: 任务失败,携带错误信息\n\n若客户端订阅时任务已处于终态,立即推送终态事件并关闭连接。\n\n归属是**两道**(2026-08-11 补齐,此前是一行 TODO):项目要属于当前用户\n(``_get_project_or_raise``),任务还要属于那个项目。只查项目不够 —— 任意已认证用户\n拿自己的 project_id 配上别人的 task_id 就能订阅到别人的流,而事件体里带 result,\n即最终帧的对象存储 URL。两道都必须在 ``subscribe`` **之前**:放之后的话越权请求仍会\n在 EventBus 上挂一个订阅者(照样收事件、只是响应体被丢弃),订阅表还会因为没人\nunsubscribe 而增长。",
+        "description": "SSE:实时推送任务进度与最终结果。\n\n事件类型:\n  - ``progress``: 生成进度 (stage/current/total/note)\n  - ``completed``: 任务完成,携带最终结果\n  - ``partial``: 方向集部分失败,携带已成功方向与失败方向\n  - ``failed``: 任务失败,携带错误信息\n\n若客户端订阅时任务已处于终态,立即推送终态事件并关闭连接。\n\n归属是**两道**(2026-08-11 补齐,此前是一行 TODO):项目要属于当前用户\n(``_get_project_or_raise``),任务还要属于那个项目。只查项目不够 —— 任意已认证用户\n拿自己的 project_id 配上别人的 task_id 就能订阅到别人的流,而事件体里带 result,\n即最终帧的对象存储 URL。两道都必须在 ``subscribe`` **之前**:放之后的话越权请求仍会\n在 EventBus 上挂一个订阅者(照样收事件、只是响应体被丢弃),订阅表还会因为没人\nunsubscribe 而增长。\n\n鉴权/读库走短 session(见 :func:`_load_stream_start`),推流期间不占连接池。",
         "operationId": "stream_task_generation_tasks__task_id__stream_get",
         "parameters": [
           {

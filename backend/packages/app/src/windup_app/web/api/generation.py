@@ -78,6 +78,31 @@ def _poll_terminal_snapshot(task_id: int, project_id: int) -> tuple[str, dict] |
         session.close()
 
 
+def _load_stream_start(
+    *,
+    user_id: int,
+    project_id: int,
+    task_id: int,
+) -> tuple[str | None, dict | None]:
+    """鉴权并读终态快照。短 session,返回后连接立刻归还。
+
+    不能 ``Depends(get_session)``:FastAPI 会把 session 握到 StreamingResponse
+    结束。压测里十几路进度流就能把 QueuePool(5+10) 打满,普通 ``GET /tasks/{id}``
+    跟着 30s timeout,前端直接报错。
+    """
+    session = SessionLocal()
+    try:
+        _get_project_or_raise(session, project_id, user_id)
+        task = task_repo.get_task(session, task_id)
+        if task is None or task.project_id != project_id:
+            raise BizException("任务不存在", code=BizCode.NOT_FOUND)
+        event = task_repo.terminal_event_for(task)
+        payload = task_repo.task_event_payload(task) if event is not None else None
+        return event, payload
+    finally:
+        session.close()
+
+
 class _EventBus:
     """任务进度内存发布-订阅。
 
@@ -583,7 +608,6 @@ async def stream_task(
     task_id: int,
     request: Request,
     project_id: int = Query(..., gt=0),
-    session: Session = Depends(get_session),
 ) -> StreamingResponse:
     """SSE:实时推送任务进度与最终结果。
 
@@ -601,16 +625,17 @@ async def stream_task(
     即最终帧的对象存储 URL。两道都必须在 ``subscribe`` **之前**:放之后的话越权请求仍会
     在 EventBus 上挂一个订阅者(照样收事件、只是响应体被丢弃),订阅表还会因为没人
     unsubscribe 而增长。
+
+    鉴权/读库走短 session(见 :func:`_load_stream_start`),推流期间不占连接池。
     """
     user_id = request.state.current_user.id
-    _get_project_or_raise(session, project_id, user_id)
-    task = task_repo.get_task(session, task_id)
-    if task is None or task.project_id != project_id:
-        raise BizException("任务不存在", code=BizCode.NOT_FOUND)
-
     # 终态快照要在订阅前读,订阅要紧跟其后 —— 两者之间若任务刚好终结,事件会丢。
     # 反过来(先订阅后读)则会重复发一次终态,客户端拿到两条 completed。
-    terminal_event = task_repo.terminal_event_for(task)
+    terminal_event, terminal_payload = _load_stream_start(
+        user_id=user_id,
+        project_id=project_id,
+        task_id=task_id,
+    )
 
     queue = await event_bus.subscribe(project_id, task_id)
     logger.debug("SSE 订阅: task_id=%d project_id=%d", task_id, project_id)
@@ -618,9 +643,7 @@ async def stream_task(
     async def _event_generator():
         try:
             if terminal_event is not None:
-                payload = json.dumps(
-                    task_repo.task_event_payload(task), ensure_ascii=False
-                )
+                payload = json.dumps(terminal_payload, ensure_ascii=False)
                 yield f"event: {terminal_event}\ndata: {payload}\n\n"
                 return
             while True:
