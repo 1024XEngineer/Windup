@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
 from windup_common.enums.model import ModelErrorType
@@ -29,10 +29,19 @@ from windup_framework.gateway.trace import (
     hash_bytes,
     hash_image_input,
 )
-from windup_framework.gateway.types import NextStep, Scene
+from windup_framework.gateway.types import AdapterResult, NextStep, Scene
 
 _DEFAULT_RETRY_AFTER_S = 2.0
 _SLEEP_CAP_S = 30.0
+
+
+@dataclass(frozen=True)
+class SubmittedVideoJob:
+    """建单成功、尚未跟单。``job_id`` 绑在 ``route_id`` 那条路上。"""
+
+    job_id: str
+    route_id: str
+    model: str
 
 
 def _utc_now() -> str:
@@ -51,13 +60,48 @@ class VideoGateway:
     def _adapter_for(self, route: GatewayRoute):
         return lookup_adapter(self._route_adapters, route, self._adapter)
 
+    def start_i2v(
+        self,
+        first_frame: bytes,
+        prompt: str,
+        seconds: int = 5,
+        size: str = "1280x720",
+    ) -> SubmittedVideoJob:
+        """只建单,不跟单。把 ``job_id`` 交给延迟队列再 ``poll_i2v``。"""
+        result = self.i2v(first_frame, prompt, seconds, size, follow=False)
+        if isinstance(result, SubmittedVideoJob):
+            return result
+        raise RuntimeError("video gateway start_i2v 未返回 job")
+
+    def poll_i2v(self, job_id: str, *, route_id: str | None = None) -> AdapterResult:
+        """单次探活。进行中 ``ok=False`` 且 ``error_type is None``;完成则带 mp4。"""
+        adapter = self._adapter
+        if route_id:
+            for route in self._routes:
+                if route.route_id == route_id:
+                    adapter = self._adapter_for(route)
+                    break
+            else:
+                mapped = self._route_adapters.get(route_id)
+                if mapped is not None:
+                    adapter = mapped
+        if hasattr(adapter, "inspect_job"):
+            snap = adapter.inspect_job(job_id)
+            if snap.ok and snap.job_status == "completed" and snap.edge_fingerprint:
+                if hasattr(adapter, "download_completed"):
+                    return adapter.download_completed(job_id, snap.edge_fingerprint)
+            return snap
+        return adapter.follow_job(job_id)
+
     def i2v(
         self,
         first_frame: bytes,
         prompt: str,
         seconds: int = 5,
         size: str = "1280x720",
-    ) -> bytes:
+        *,
+        follow: bool = True,
+    ) -> bytes | SubmittedVideoJob:
         ctx = current_call_context()
         request_id = ctx.request_id or str(uuid.uuid4())
         started = time.monotonic()
@@ -187,7 +231,8 @@ class VideoGateway:
                         submit_ms = int((time.monotonic() - submit_t0) * 1000)
                         if result.ok and result.job_id:
                             bound_job_id = result.job_id
-                            result = adapter.follow_job(bound_job_id)
+                            if follow:
+                                result = adapter.follow_job(bound_job_id)
                         elif result.ok:
                             result = replace(
                                 result,
@@ -195,8 +240,12 @@ class VideoGateway:
                                 error_type=ModelErrorType.INVALID_RESPONSE,
                                 body=b"",
                             )
-                    else:
+                    elif follow:
                         result = adapter.follow_job(bound_job_id)
+                    else:
+                        result = AdapterResult(
+                            ok=True, job_id=bound_job_id, maybe_billed=True
+                        )
 
                     ended_at = _utc_now()
                     attempt_latency_ms = int((time.monotonic() - attempt_t0) * 1000)
@@ -259,6 +308,12 @@ class VideoGateway:
                             model_index=model_index,
                             maybe_billed=maybe_billed,
                         )
+                        if not follow:
+                            return SubmittedVideoJob(
+                                job_id=bound_job_id or result.job_id or "",
+                                route_id=route.route_id,
+                                model=model,
+                            )
                         return result.body
 
                     error_type = result.error_type or ModelErrorType.UNKNOWN

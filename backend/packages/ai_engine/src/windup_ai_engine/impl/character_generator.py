@@ -128,6 +128,63 @@ class CharacterGenerator(CharacterGeneratorPort):
         )
         return self._finish(frames, action, route, progress, canvas)
 
+    def can_defer_i2v(self) -> bool:
+        strategy = self._by_route.get(GenRoute.VIDEO_I2V)
+        video = getattr(strategy, "_video", None)
+        return hasattr(strategy, "start_job") and hasattr(video, "start_i2v")
+
+    def start_video(
+        self,
+        card: CharacterCard,
+        action: ActionSpec,
+        master: bytes,
+        progress: ProgressPort,
+        canvas: tuple[int, int] | None = None,
+    ):
+        """花钱之前的预检 + 建 i2v 单,不跟单。"""
+        facts = check_master(master, canvas)
+        progress.step("precheck", _TICK_PRECHECK, _TOTAL, facts.note())
+        route = ROUTE_MATRIX[action.action]
+        progress.step("route", _TICK_ROUTE, _TOTAL, f"{action.action.value} → {route.value}")
+        strategy = self._pick(route, action)
+        start_job = getattr(strategy, "start_job", None)
+        if start_job is None:
+            raise TypeError(f"{route.value} 不支持异步建单")
+        return start_job(
+            card, action, master, _BandProgress(progress, _DERIVE_FROM, _DERIVE_TO)
+        )
+
+    def poll_video(self, job_id: str, *, route_id: str | None = None) -> bytes | None:
+        """walk/idle/attack/custom 共用 VIDEO_I2V 桶,按 job 探一次。"""
+        strategy = self._by_route.get(GenRoute.VIDEO_I2V)
+        if strategy is None:
+            raise NotImplementedError("未注入视频路线,无法轮询 i2v")
+        poll_job = getattr(strategy, "poll_job", None)
+        if poll_job is None:
+            raise TypeError("视频路线不支持 poll_job")
+        return poll_job(job_id, route_id=route_id)
+
+    def finish_video(
+        self,
+        video: bytes,
+        card: CharacterCard,
+        action: ActionSpec,
+        master: bytes,
+        progress: ProgressPort,
+        canvas: tuple[int, int] | None = None,
+    ) -> GeneratedAction:
+        """成片到位后走抽帧 / 抠图 / 最后一公里。"""
+        route = ROUTE_MATRIX[action.action]
+        progress.step("route", _TICK_ROUTE, _TOTAL, f"{action.action.value} → {route.value}")
+        strategy = self._pick(route, action)
+        frames_from = getattr(strategy, "frames_from_video", None)
+        if frames_from is None:
+            raise TypeError(f"{route.value} 不支持从成片续跑")
+        frames = frames_from(
+            video, card, action, master, _BandProgress(progress, _DERIVE_FROM, _DERIVE_TO)
+        )
+        return self._finish(frames, action, route, progress, canvas)
+
     def generate_rendered(
         self,
         card: CharacterCard,

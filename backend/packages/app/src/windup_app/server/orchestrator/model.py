@@ -78,8 +78,14 @@ class CharacterImageInput:
     width: int = 1024
     height: int = 1024
     # 候选数量由调用方决定；API 默认请求 3 张，并把可付费调用次数限制在 1–4。
-    num_images: int = 2
+    # ``None`` = 调用方没指定,在 __post_init__ 里解析成本层默认 2。解析放在这层
+    # 而不是各个构造点:MQ 重建时若另写一份默认值,缺省就会从 2 变成另一份数。
+    num_images: int | None = None
     direction: ActionDirection = ActionDirection.EAST
+
+    def __post_init__(self) -> None:
+        if self.num_images is None:
+            self.num_images = 2
 
 
 @dataclass

@@ -19,6 +19,8 @@ venv/
 .env
 .env.*
 !.env.example
+!.env.app.example
+!.env.db.example
 
 # Docker 数据
 data/

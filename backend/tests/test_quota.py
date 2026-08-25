@@ -217,6 +217,26 @@ class TestCaptureCredit:
         with pytest.raises(BizException, match="积分账户不存在"):
             quota_service.capture_credit(db_session, 99999, 10, "task:x", 10)
 
+    def test_capture_idempotent(self, db_session, quota_service, user_with_account):
+        uid = user_with_account.id
+        cost = quota_settings.generate_image_cost
+        quota_service.reserve_credit(db_session, uid, cost, "task:idem-c")
+        quota_service.capture_credit(db_session, uid, cost, "task:idem-c", cost)
+        quota_service.capture_credit(db_session, uid, cost, "task:idem-c", cost)
+
+        account = db_session.scalar(
+            select(CreditAccount).where(CreditAccount.user_id == uid)
+        )
+        assert account.frozen == 0
+        assert account.total_spent == cost
+        captured = db_session.scalars(
+            select(CreditTransaction).where(
+                CreditTransaction.ref_id == "task:idem-c",
+                CreditTransaction.reason == CreditReason.CAPTURED,
+            )
+        ).all()
+        assert len(captured) == 1
+
 
 # -- 预付费：解冻 -----------------------------------------------------------
 
@@ -265,6 +285,26 @@ class TestReleaseCredit:
     def test_release_nonexistent_account(self, db_session, quota_service):
         with pytest.raises(BizException, match="积分账户不存在"):
             quota_service.release_credit(db_session, 99999, 10, "task:x")
+
+    def test_release_idempotent(self, db_session, quota_service, user_with_account):
+        uid = user_with_account.id
+        cost = quota_settings.generate_image_cost
+        quota_service.reserve_credit(db_session, uid, cost, "task:idem-r")
+        quota_service.release_credit(db_session, uid, cost, "task:idem-r")
+        quota_service.release_credit(db_session, uid, cost, "task:idem-r")
+
+        account = db_session.scalar(
+            select(CreditAccount).where(CreditAccount.user_id == uid)
+        )
+        assert account.frozen == 0
+        assert account.balance == quota_settings.register_gift_amount
+        released = db_session.scalars(
+            select(CreditTransaction).where(
+                CreditTransaction.ref_id == "task:idem-r:release",
+                CreditTransaction.reason == CreditReason.REFUND,
+            )
+        ).all()
+        assert len(released) == 1
 
 
 # -- 入账 -------------------------------------------------------------------

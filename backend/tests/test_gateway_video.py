@@ -289,6 +289,51 @@ def test_success_is_not_rejected_when_maybe_billed_budget_full(monkeypatch):
     assert body.startswith(b"\x00\x00\x00\x18ftyp")
 
 
+def test_start_i2v_returns_job_without_follow():
+    ad = FakeVideoAdapter(
+        submits={
+            "kling-v2-5-turbo": [AdapterResult(ok=True, job_id="j-start", maybe_billed=True)],
+            "kling-v2-6": [],
+        },
+        follows={"j-start": MP4},
+    )
+    job = _video_gw(ad).start_i2v(b"frame", "walk")
+    assert job.job_id == "j-start"
+    assert job.model == "kling-v2-5-turbo"
+    assert ad.followed == []
+
+
+def test_poll_i2v_pending_then_download():
+    class _PollAdapter(FakeVideoAdapter):
+        def inspect_job(self, job_id):
+            self.followed.append(f"inspect:{job_id}")
+            return AdapterResult(
+                ok=True,
+                job_id=job_id,
+                job_status="completed",
+                edge_fingerprint="https://cdn.example.com/out.mp4",
+            )
+
+        def download_completed(self, job_id, url):
+            return AdapterResult(ok=True, body=b"mp4-bytes", job_id=job_id, job_status="completed")
+
+    ad = _PollAdapter(submits={}, follows={})
+    result = _video_gw(ad).poll_i2v("j-start")
+    assert result.ok
+    assert result.body == b"mp4-bytes"
+
+
+def test_poll_i2v_still_pending():
+    class _Pending(FakeVideoAdapter):
+        def inspect_job(self, job_id):
+            return AdapterResult(ok=False, job_id=job_id, maybe_billed=True, job_status="in_progress")
+
+    result = _video_gw(_Pending(submits={}, follows={})).poll_i2v("j1")
+    assert not result.ok
+    assert result.error_type is None
+    assert result.job_status == "in_progress"
+
+
 def test_submit_ok_without_job_id_is_invalid_response():
     no_id = AdapterResult(ok=True, body=b"")
     ad = FakeVideoAdapter(

@@ -230,6 +230,7 @@ def test_real_server_path_reaches_render3d_when_the_outfit_has_a_model():
             model_3d_url="https://cdn.example.com/outfits/hanfu.glb",
         ),
         ProjectConstraints(sprite_w=64, sprite_h=64),
+        task_id=1,
     )
 
     assert renderer.calls == 1, "三渲二没被走到 —— 路线选择又断了"
@@ -256,6 +257,7 @@ def test_real_server_path_stays_on_i2v_when_the_outfit_has_no_model():
                 outfit_id=OUTFIT, model_3d_url=None,
             ),
             ProjectConstraints(sprite_w=64, sprite_h=64),
+            task_id=1,
         )
     assert renderer.calls == 0
 

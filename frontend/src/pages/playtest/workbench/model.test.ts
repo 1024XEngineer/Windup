@@ -89,66 +89,47 @@ describe('createPlaytestModel', () => {
     ])
   })
 
-  it('resolves real and mirrored eight-way sequences without copying stored frames', () => {
+  it('优先播放全部真实八向序列，不对任何方向应用镜像', () => {
     const directionalCharacter = structuredClone(character)
-    directionalCharacter.outfits[0]!.actions[1]!.sequences = [
-      {
-        direction: 'east',
-        sourceDirection: null,
-        mirrorX: false,
-        frameCount: 2,
-        frames: [
-          { index: 1, imageUrl: '/walk-east-02.png', durationMs: 90 },
-          { index: 0, imageUrl: '/walk-east-01.png', durationMs: 90 },
-        ],
-      },
-      {
-        direction: 'west',
-        sourceDirection: 'east',
-        mirrorX: true,
-        frameCount: 2,
-        frames: [],
-      },
-      {
-        direction: 'north_east',
-        sourceDirection: null,
-        mirrorX: false,
-        frameCount: 1,
-        frames: [{ index: 0, imageUrl: '/walk-north-east-01.png', durationMs: 110 }],
-      },
-      {
-        direction: 'north_west',
-        sourceDirection: 'north_east',
-        mirrorX: true,
-        frameCount: 1,
-        frames: [],
-      },
-    ]
+    const directions = [
+      'east',
+      'west',
+      'north',
+      'south',
+      'north_east',
+      'north_west',
+      'south_east',
+      'south_west',
+    ] as const
+    directionalCharacter.outfits[0]!.actions[1]!.sequences = directions.map((direction, index) => ({
+      direction,
+      sourceDirection: null,
+      mirrorX: false,
+      frameCount: 2,
+      frames: [
+        { index: 1, imageUrl: `/walk-${direction}-02.png`, durationMs: 90 + index },
+        { index: 0, imageUrl: `/walk-${direction}-01.png`, durationMs: 90 + index },
+      ],
+    }))
 
     const result = createPlaytestModel(directionalCharacter, 'outfit-default')
     const walk = result.ok ? result.model.actions.find((action) => action.id === 'walk') : undefined
 
-    expect(walk?.sequences?.east).toEqual({
-      frames: [
-        { imageUrl: '/walk-east-01.png', durationMs: 90 },
-        { imageUrl: '/walk-east-02.png', durationMs: 90 },
-      ],
-      mirrorX: false,
-      sourceDirection: 'east',
-    })
+    expect(Object.keys(walk?.sequences ?? {})).toEqual(directions)
     expect(walk?.sequences?.west).toEqual({
       frames: [
-        { imageUrl: '/walk-east-01.png', durationMs: 90 },
-        { imageUrl: '/walk-east-02.png', durationMs: 90 },
+        { imageUrl: '/walk-west-01.png', durationMs: 91 },
+        { imageUrl: '/walk-west-02.png', durationMs: 91 },
       ],
-      mirrorX: true,
-      sourceDirection: 'east',
+      mirrorX: false,
+      sourceDirection: 'west',
     })
-    expect(walk?.sequences?.north_west).toEqual({
-      frames: [{ imageUrl: '/walk-north-east-01.png', durationMs: 110 }],
-      mirrorX: true,
-      sourceDirection: 'north_east',
-    })
+    for (const direction of directions) {
+      expect(walk?.sequences?.[direction]).toMatchObject({
+        mirrorX: false,
+        sourceDirection: direction,
+      })
+    }
   })
 
   it('treats legacy top-level frames as east and derives west', () => {

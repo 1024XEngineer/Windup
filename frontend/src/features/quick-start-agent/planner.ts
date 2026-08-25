@@ -44,6 +44,9 @@ export interface CreateAiSdkQuickStartPlannerOptions {
   generateText?: QuickStartGenerateText
 }
 
+// AI SDK 会在 messages 前加入一条 instructions system message；后端总上限为 16 条。
+const MAX_PLANNER_HISTORY_MESSAGES = 15
+
 const quickStartDecisionTool = tool({
   description:
     '返回本轮唯一决策：正常回复、一次必要澄清、无法继续的说明，或供用户选择采用的角色母版提示词提案。',
@@ -177,7 +180,7 @@ export function createAiSdkQuickStartPlanner({
       instructions: workflow
         ? quickStartWorkflowInstructions(workflow)
         : quickStartPlannerInstructions(clarificationUsed),
-      messages,
+      messages: messages.slice(-MAX_PLANNER_HISTORY_MESSAGES),
       tools,
       toolChoice: workflow ? 'auto' : 'required',
       maxRetries: 0,

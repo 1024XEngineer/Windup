@@ -37,8 +37,7 @@ from windup_app.server.character.model import Character, CharacterData
 from windup_app.server.orchestrator import task_repo
 from windup_app.server.mq.catalog import (
     GENERATION_STREAM,
-    MSG_TYPE_CHARACTER_ACTION,
-    MSG_TYPE_CHARACTER_IMAGE,
+    msg_type_for_generation,
 )
 from windup_app.server.orchestrator.service import service as generation_service
 from windup_app.server.orchestrator.model import (
@@ -371,11 +370,7 @@ def _publish_generation_after_commit(
     task_type: str,
 ) -> None:
     """注册 after_commit 回调:session 提交成功后再投递到 Redis Stream。"""
-    msg_type = (
-        MSG_TYPE_CHARACTER_IMAGE
-        if task_type == MSG_TYPE_CHARACTER_IMAGE
-        else MSG_TYPE_CHARACTER_ACTION
-    )
+    msg_type = msg_type_for_generation(task_type)
     message_id = publisher.enqueue(
         session,
         stream=GENERATION_STREAM,
