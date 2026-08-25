@@ -7,6 +7,7 @@
 ``main`` 是开发启动入口:``python -m windup_app`` 或 ``windup`` 命令。
 """
 
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -48,6 +49,20 @@ from windup_framework.sse.bridge import RedisTaskEventBridge, RedisTaskEventSubs
 def _env_flag(name: str) -> bool:
     """把环境变量解析为真正的布尔值:仅 1/true/yes/on(忽略大小写与空白)视为 True。"""
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _configure_logging() -> None:
+    """API 进程走 uvicorn factory，不会跑 worker 的 basicConfig。
+
+    不配这一步，windup.* 的 INFO 进不了 docker logs，线上只剩 access log。
+    """
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(levelname)s:%(name)s:%(message)s",
+        )
+    logging.getLogger("windup").setLevel(logging.INFO)
 
 
 
@@ -100,6 +115,7 @@ async def _lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    _configure_logging()
     app = FastAPI(title="windup", version="0.1.0", lifespan=_lifespan)
     app.state.mq_publisher = MqPublisher()
     app.state.chat_model_factory = create_chat_model
@@ -122,6 +138,7 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Request-Id"],
     )
     app.include_router(auth_router)
     app.include_router(project_router)

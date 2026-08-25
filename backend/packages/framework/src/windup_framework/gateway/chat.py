@@ -34,6 +34,9 @@ _DEFAULT_RETRY_AFTER_S = 2.0
 _SLEEP_CAP_S = 30.0
 
 
+_ERROR_MESSAGE_LIMIT = 2_000
+
+
 @dataclass(frozen=True)
 class ChatAdapterResult:
     ok: bool
@@ -43,6 +46,7 @@ class ChatAdapterResult:
     edge_fingerprint: str = ""
     retry_after_s: float | None = None
     provider_usage: object | None = None
+    error_message: str | None = None
 
 
 def _utc_now() -> str:
@@ -62,6 +66,64 @@ def _error_type_from_exception(exc: Exception) -> tuple[ModelErrorType, int | No
     from windup_framework.gateway.classify import classify_exception
 
     return classify_exception(exc)
+
+
+def _ok_adapter_result(value: Any) -> ChatAdapterResult:
+    return ChatAdapterResult(
+        ok=True,
+        value=value,
+        provider_usage=getattr(value, "usage_metadata", None),
+    )
+
+
+def _failed_adapter_result(exc: Exception) -> ChatAdapterResult:
+    error_type, status, edge = _error_type_from_exception(exc)
+    message = str(exc).strip() or type(exc).__name__
+    return ChatAdapterResult(
+        ok=False,
+        error_type=error_type,
+        http_status=status,
+        edge_fingerprint=edge,
+        error_message=message[:_ERROR_MESSAGE_LIMIT],
+    )
+
+
+def _message_finish_reason(value: Any) -> str | None:
+    metadata = getattr(value, "response_metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    reason = metadata.get("finish_reason")
+    return str(reason) if reason else None
+
+
+def _result_detail(
+    result: ChatAdapterResult,
+    *,
+    input_hash: str,
+    policy_next_step: str,
+    upstream_reached: str,
+    model_index: int | None = None,
+    retry_after_ms: int | None = None,
+    output_bytes: int | None = None,
+) -> AttemptDetail:
+    finish_reason = None
+    has_tool_calls = None
+    if result.ok:
+        finish_reason = _message_finish_reason(result.value)
+        has_tool_calls = bool(getattr(result.value, "tool_calls", None))
+    return AttemptDetail(
+        input_hash=input_hash,
+        output_bytes=output_bytes,
+        retry_after_ms=retry_after_ms,
+        edge_fingerprint=result.edge_fingerprint or None,
+        provider_usage=result.provider_usage,
+        policy_next_step=policy_next_step,
+        upstream_reached=upstream_reached,
+        model_index=model_index,
+        error_message=None if result.ok else result.error_message,
+        finish_reason=finish_reason,
+        has_tool_calls=has_tool_calls,
+    )
 
 
 class LangChainChatAdapter:
@@ -99,41 +161,22 @@ class LangChainChatAdapter:
 
     def invoke(self, messages: Any, *, model: str, **kwargs: Any) -> ChatAdapterResult:
         try:
-            return ChatAdapterResult(ok=True, value=self._client(model).invoke(messages, **kwargs))
+            return _ok_adapter_result(self._client(model).invoke(messages, **kwargs))
         except Exception as exc:
-            error_type, status, edge = _error_type_from_exception(exc)
-            return ChatAdapterResult(
-                ok=False,
-                error_type=error_type,
-                http_status=status,
-                edge_fingerprint=edge,
-            )
+            return _failed_adapter_result(exc)
 
     async def ainvoke(self, messages: Any, *, model: str, **kwargs: Any) -> ChatAdapterResult:
         try:
-            value = await self._client(model).ainvoke(messages, **kwargs)
-            return ChatAdapterResult(ok=True, value=value)
+            return _ok_adapter_result(await self._client(model).ainvoke(messages, **kwargs))
         except Exception as exc:
-            error_type, status, edge = _error_type_from_exception(exc)
-            return ChatAdapterResult(
-                ok=False,
-                error_type=error_type,
-                http_status=status,
-                edge_fingerprint=edge,
-            )
+            return _failed_adapter_result(exc)
 
     async def astream(self, messages: Any, *, model: str, **kwargs: Any):
         try:
             async for chunk in self._client(model).astream(messages, **kwargs):
-                yield ChatAdapterResult(ok=True, value=chunk)
+                yield _ok_adapter_result(chunk)
         except Exception as exc:
-            error_type, status, edge = _error_type_from_exception(exc)
-            yield ChatAdapterResult(
-                ok=False,
-                error_type=error_type,
-                http_status=status,
-                edge_fingerprint=edge,
-            )
+            yield _failed_adapter_result(exc)
 
 
 class ChatGateway:
@@ -288,7 +331,8 @@ class ChatGateway:
                                 attempt_latency_ms=attempt_latency_ms,
                                 total_latency_ms=total_ms(),
                                 maybe_billed=maybe_billed,
-                                detail=AttemptDetail(
+                                detail=_result_detail(
+                                    result,
                                     input_hash=input_hash,
                                     policy_next_step="fail",
                                     upstream_reached=upstream_reached_label(
@@ -325,15 +369,14 @@ class ChatGateway:
                                 attempt_latency_ms=attempt_latency_ms,
                                 total_latency_ms=total_ms(),
                                 maybe_billed=maybe_billed,
-                                detail=AttemptDetail(
+                                detail=_result_detail(
+                                    result,
                                     input_hash=input_hash,
-                                    output_bytes=len(str(result.value).encode()),
-                                    retry_after_ms=retry_after_ms,
-                                    edge_fingerprint=result.edge_fingerprint or None,
-                                    provider_usage=result.provider_usage,
                                     policy_next_step="success",
                                     upstream_reached="true",
                                     model_index=model_index,
+                                    retry_after_ms=retry_after_ms,
+                                    output_bytes=len(str(result.value).encode()),
                                 ),
                             )
                         )
@@ -393,16 +436,15 @@ class ChatGateway:
                             attempt_latency_ms=attempt_latency_ms,
                             total_latency_ms=total_ms(),
                             maybe_billed=maybe_billed,
-                            detail=AttemptDetail(
+                            detail=_result_detail(
+                                result,
                                 input_hash=input_hash,
-                                retry_after_ms=retry_after_ms,
-                                edge_fingerprint=result.edge_fingerprint or None,
-                                provider_usage=result.provider_usage,
                                 policy_next_step=policy_next_step,
                                 upstream_reached=upstream_reached_label(
                                     error_type, http_status=result.http_status
                                 ),
                                 model_index=model_index,
+                                retry_after_ms=retry_after_ms,
                             ),
                         )
                     )

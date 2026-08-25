@@ -96,12 +96,12 @@ def test_openai_connection_error_uses_connect_cause():
     assert status is None
 
 
-def test_openai_connection_error_does_not_mask_unknown_cause():
+def test_openai_connection_error_with_unknown_cause_is_unreached():
     req = httpx.Request("POST", "https://api.modelink.ai/v1/chat/completions")
     err = APIConnectionError(request=req)
     err.__cause__ = ValueError("hook failed")
     error_type, status, _ = classify_exception(err)
-    assert error_type is ModelErrorType.UNKNOWN
+    assert error_type is ModelErrorType.UNREACHED
     assert status is None
 
 

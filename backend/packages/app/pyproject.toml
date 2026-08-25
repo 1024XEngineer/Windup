@@ -12,6 +12,8 @@ dependencies = [
     "pydantic[email]>=2.7",
     "sqlalchemy>=2.0",
     "python-multipart>=0.0.9",
+    "numpy>=1.26",
+    "pillow>=10.4",
 ]
 
 [project.scripts]

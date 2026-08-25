@@ -25,6 +25,21 @@ export type QuickStartAgentState =
 
 export type UseQuickStartAgentOptions = CreateQuickStartAgentOptions
 
+function requestIdFromCause(cause: unknown): string | undefined {
+  if (!cause || typeof cause !== 'object') return undefined
+  const headers = (cause as { responseHeaders?: Record<string, string> }).responseHeaders
+  if (!headers) return undefined
+  return headers['x-request-id'] ?? headers['X-Request-Id']
+}
+
+function logAgentFailure(cause: unknown): void {
+  console.error('[quick-start-agent] 本轮失败', {
+    name: cause instanceof Error ? cause.name : typeof cause,
+    message: cause instanceof Error ? cause.message : String(cause),
+    requestId: requestIdFromCause(cause),
+  })
+}
+
 function errorMessage(cause: unknown): string {
   if (!(cause instanceof Error) || !cause.message) return 'Agent 暂时不可用，请稍后重试'
   if (
@@ -114,6 +129,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
         return result
       } catch (cause) {
         if (mounted.current && !(cause instanceof Error && cause.name === 'AbortError')) {
+          logAgentFailure(cause)
           setState({ status: 'error', message: errorMessage(cause) })
         }
         throw cause
@@ -145,7 +161,10 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
       try {
         return await ensureAgent().confirmProposal(proposalId, prompt, directionalMovement)
       } catch (cause) {
-        if (mounted.current) setState({ status: 'error', message: errorMessage(cause) })
+        if (mounted.current) {
+          logAgentFailure(cause)
+          setState({ status: 'error', message: errorMessage(cause) })
+        }
         throw cause
       } finally {
         running.current = false
@@ -210,6 +229,7 @@ export function useQuickStartWorkflowAgent({
         return result
       } catch (cause) {
         if (mounted.current && !(cause instanceof Error && cause.name === 'AbortError')) {
+          logAgentFailure(cause)
           setState({ status: 'error', message: errorMessage(cause) })
         }
         throw cause
