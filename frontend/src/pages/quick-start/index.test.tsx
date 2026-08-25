@@ -690,11 +690,11 @@ describe('QuickStartPage', () => {
     await waitFor(() => expect(readActiveRun('7')).toBe('run-1'))
   })
 
-  it('没有节点在生成时不留返回入口', async () => {
+  it('生成结束后等待用户选择时仍保留返回入口', async () => {
     renderStateFixture('template-selecting')
 
     await screen.findByTestId('quick-start-transcript')
-    expect(readActiveRun('7')).toBeNull()
+    expect(readActiveRun('7')).toBe('run-1')
   })
 
   it('reuses generation-copy typography and blur reveal for Agent replies without avatars', async () => {

@@ -120,15 +120,13 @@ export interface ActiveRunSnapshot {
 }
 
 /**
- * 按最新的工作流快照对齐指针。“进行中”取的是节点层面的生成态，与 Header 上
- * “有任务进行中”的说法同义；整条 Run 是否走完不在这里判断，那是用户自己的节奏。
+ * 按最新的工作流快照对齐指针。生成结束后的选择、审核仍是未完成创作，
+ * 因此以非归档的 active 节点为恢复边界，不把 generating 误当成唯一的进度。
  */
 export function syncActiveRun(userId: string, run: ActiveRunSnapshot | null): void {
   if (!run) return
-  const generating = run.nodes.some(
-    (node) => !node.deletedAt && node.status === 'active' && node.phase === 'generating',
-  )
-  if (generating) rememberActiveRun(userId, run.id)
+  const unfinished = run.nodes.some((node) => !node.deletedAt && node.status === 'active')
+  if (unfinished) rememberActiveRun(userId, run.id)
   else forgetActiveRun(userId, run.id)
 }
 
