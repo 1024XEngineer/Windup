@@ -74,7 +74,12 @@ describe('buildDirectionSheetCandidates', () => {
 
   it('源方向候选数量不一致时只返回完整卡片', () => {
     const sheets = buildDirectionSheetCandidates(
-      [candidate('east', 0), candidate('east', 1), candidate('north', 0)],
+      [
+        candidate('east', 0),
+        candidate('east', 1),
+        candidate('north', 0),
+        candidate('south', 0),
+      ],
       'four-way',
     )
 
