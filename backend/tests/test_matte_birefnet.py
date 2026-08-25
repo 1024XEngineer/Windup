@@ -132,3 +132,42 @@ def test_missing_model_downloads_to_the_cache_path(monkeypatch, tmp_path):
     p = BiRefNetMatteProvider(model_path=target)
     assert p._ensure_model() == target and target.exists()
     assert "BiRefNet" in called["url"]
+
+
+def test_union_with_u2net_is_on_by_default(monkeypatch):
+    """BiRefNet 单用会沿整条轮廓切掉角色的深色描边(实测丢主体 1,845 px 对 u2net 的 228)。
+    像素画的黑边是主体的一部分,不是抗锯齿,所以默认取两者并集。"""
+    called = {}
+
+    class _U2:
+        def cutout(self, frame):
+            called["hit"] = True
+            im = Image.open(io.BytesIO(frame)).convert("RGB")
+            a = np.zeros(im.size[::-1] + (4,), np.uint8)
+            a[..., :3] = np.asarray(im)
+            a[..., 3] = 255                      # u2net 说整幅都是主体
+            buf = io.BytesIO()
+            Image.fromarray(a, "RGBA").save(buf, "PNG")
+            return buf.getvalue()
+
+    # BiRefNet 全判背景;并集后应由 u2net 那份救回来
+    p, _ = _bind(monkeypatch, [np.zeros((1, 1, 1024, 1024), np.float32)])
+    p._u2net = _U2()
+    out = np.asarray(Image.open(io.BytesIO(p.cutout(_png()))).convert("RGBA"))
+    assert called.get("hit"), "默认没有走并集"
+    assert (out[:, :, 3] > 128).any(), "并集没有把 u2net 的主体救回来"
+
+
+def test_union_can_be_turned_off_for_single_model_evaluation(monkeypatch):
+    called = {}
+
+    class _U2:
+        def cutout(self, frame):
+            called["hit"] = True
+            return frame
+
+    p, _ = _bind(monkeypatch, [np.ones((1, 1, 1024, 1024), np.float32)])
+    p._union = False
+    p._u2net = _U2()
+    p.cutout(_png())
+    assert "hit" not in called, "关掉之后仍然调了 u2net"

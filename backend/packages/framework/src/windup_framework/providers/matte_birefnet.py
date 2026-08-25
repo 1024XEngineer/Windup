@@ -5,9 +5,18 @@
 肉眼在浅底上看不出,合到深底或参与降采样取色时就是一层灰雾。主体内部非实心像素 5,541 个,
 位置正是 ``matte`` 里那句"浅肤色角色的脸颊与小腿"所描述的老问题。
 
-BiRefNet 输入 1024×1024,同一帧上主体内部非实心降到 106 个(-98%)。代价是 CPU 6.0s/帧
-对 0.7s/帧,故本 provider 不替换 :class:`OnnxU2NetMatteProvider`,而是与它并存,由调用方
-按"这一帧值不值 6 秒"选择。
+BiRefNet 输入 1024×1024,同一帧上主体内部非实心降到 106 个(-98%)。**但它单用更差**:
+沿整条轮廓把角色自己的深色描边切掉了(丢主体 1,845 px 对 u2net 的 228),而像素画的黑边
+是主体的一部分,不是抗锯齿。故取两者逐像素较大 alpha —— 与本模块 u2netp+u2net 取 max
+同一思路:漏检位置不重叠时并集全胜。同一帧实测:
+
+    方案            IoU      丢主体   内部非实心
+    u2net         0.9769      228      5541
+    BiRefNet      0.9668     1845       106
+    两者并集       0.9764       53        91
+
+代价是 CPU 约 6s/帧 对 0.7s/帧,故本 provider 不替换 :class:`OnnxU2NetMatteProvider`,
+而是与它并存,由调用方按"这一帧值不值 6 秒"选择。
 
 RMBG-2.0 在公开评测上更强(90% 对 85%),但它是 CC BY-NC 4.0,商用需单独向 BRIA 购买
 授权;BiRefNet 是 MIT,可直接用。这是"可商用范围内最好的"。
@@ -51,9 +60,13 @@ class BiRefNetMatteProvider(MatteProvider):
     抄一份只会让"底色是什么"出现第二个真相源。
     """
 
-    def __init__(self, model_path: str | Path | None = None) -> None:
+    def __init__(self, model_path: str | Path | None = None, union_with_u2net: bool = True) -> None:
+        """``union_with_u2net`` 默认开:BiRefNet 单用会切掉角色的深色描边(见模块 docstring)。
+        关掉只在需要单独评测这一个模型时用。"""
         self._path = Path(model_path) if model_path else _CACHE
         self._session = None
+        self._union = union_with_u2net
+        self._u2net = None
 
     def _ensure_model(self) -> Path:
         if not self._path.exists():
@@ -91,6 +104,15 @@ class BiRefNetMatteProvider(MatteProvider):
         img = Image.open(io.BytesIO(frame)).convert("RGBA")
         rgb = np.asarray(img.convert("RGB"), dtype=np.float32)
         alpha = np.asarray(self._predict_mask(img), dtype=np.float32) / 255.0
+        if self._union:
+            if self._u2net is None:
+                from .matte import OnnxU2NetMatteProvider
+
+                self._u2net = OnnxU2NetMatteProvider()
+            other = np.asarray(
+                Image.open(io.BytesIO(self._u2net.cutout(frame))).convert("RGBA")
+            )[:, :, 3].astype(np.float32) / 255.0
+            alpha = np.maximum(alpha, other)
         alpha = alpha * _flat_bg_penalty(rgb)
         alpha = _fill_enclosed_holes(alpha, rgb)
         out = np.dstack([np.asarray(img.convert("RGB")), alpha * 255.0]).astype(np.uint8)
