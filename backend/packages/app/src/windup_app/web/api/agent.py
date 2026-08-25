@@ -22,8 +22,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
 from windup_framework.config.provider import settings as provider_settings
+from windup_framework.gateway import bind_call_context
 
 logger = logging.getLogger("windup.ai.proxy")
+REQUEST_ID_HEADER = "X-Request-Id"
 
 
 class RequestTooLargeError(HTTPException):
@@ -195,11 +197,27 @@ def _error_response(
     message: str,
     error_type: str,
     code: str,
+    request_id: str | None = None,
 ) -> JSONResponse:
-    return JSONResponse(
+    response = JSONResponse(
         status_code=status_code,
         content={"error": {"message": message, "type": error_type, "code": code}},
     )
+    if request_id:
+        response.headers[REQUEST_ID_HEADER] = request_id
+    return response
+
+
+def _completion_response(
+    payload: ChatCompletionResponse, request_id: str
+) -> JSONResponse:
+    response = JSONResponse(content=payload.model_dump(mode="json"))
+    response.headers[REQUEST_ID_HEADER] = request_id
+    return response
+
+
+def _exc_text(exc: BaseException, limit: int = 500) -> str:
+    return (str(exc).strip() or type(exc).__name__)[:limit]
 
 
 def _serialize_tool_calls(result: Any) -> list[ToolCallResponse] | None:
@@ -289,6 +307,8 @@ async def chat(
     _credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ):
     """Call the configured model once and return a non-streaming completion."""
+    request_id = str(uuid4())
+    user_id = request.state.current_user.id
     proxy_settings = provider_settings.model_copy(update={"max_retries": 0})
     model_kwargs: dict[str, Any] = {"max_tokens": MAX_OUTPUT_TOKENS}
     if body.temperature is not None:
@@ -297,13 +317,24 @@ async def chat(
     try:
         model = request.app.state.chat_model_factory(proxy_settings, **model_kwargs)
     except ValueError:
+        logger.warning(
+            "AI chat not configured request_id=%s user_id=%s", request_id, user_id
+        )
         return _error_response(
             503,
             message="AI 服务未配置",
             error_type="service_unavailable",
             code="ai_not_configured",
+            request_id=request_id,
         )
 
+    logger.info(
+        "AI chat started request_id=%s user_id=%s messages=%s tools=%s",
+        request_id,
+        user_id,
+        len(body.messages),
+        0 if not body.tools else len(body.tools),
+    )
     invoke_kwargs: dict[str, Any] = {}
     if body.tools:
         invoke_kwargs["tools"] = [
@@ -312,24 +343,66 @@ async def chat(
     if body.tool_choice is not None:
         invoke_kwargs["tool_choice"] = body.tool_choice
 
+    started = time.monotonic()
+    reset = bind_call_context(request_id=request_id, user_id=str(user_id))
     try:
         result = await model.ainvoke(
             [message.model_dump(exclude_none=True) for message in body.messages],
             **invoke_kwargs,
         )
-        configured_model = (
-            proxy_settings.chat_model or proxy_settings.model or "unknown"
-        )
-        return _serialize_completion(result, configured_model)
     except Exception as exc:
         logger.warning(
-            "AI chat provider failed user_id=%s error=%s",
-            request.state.current_user.id,
+            "AI chat upstream failed request_id=%s user_id=%s error_type=%s error=%s",
+            request_id,
+            user_id,
             type(exc).__name__,
+            _exc_text(exc),
         )
         return _error_response(
             502,
             message="AI 服务暂时不可用",
             error_type="upstream_error",
             code="ai_upstream_error",
+            request_id=request_id,
         )
+    finally:
+        reset()
+
+    try:
+        configured_model = (
+            proxy_settings.chat_model or proxy_settings.model or "unknown"
+        )
+        payload = _serialize_completion(result, configured_model)
+    except Exception as exc:
+        logger.warning(
+            "AI chat serialize failed request_id=%s user_id=%s error_type=%s error=%s",
+            request_id,
+            user_id,
+            type(exc).__name__,
+            _exc_text(exc),
+        )
+        return _error_response(
+            502,
+            message="AI 服务暂时不可用",
+            error_type="upstream_error",
+            code="ai_upstream_error",
+            request_id=request_id,
+        )
+
+    choice = payload.choices[0]
+    tool_count = 0 if not choice.message.tool_calls else len(choice.message.tool_calls)
+    logger.info(
+        "AI chat completed request_id=%s user_id=%s model=%s finish_reason=%s "
+        "tool_calls=%s latency_ms=%s",
+        request_id,
+        user_id,
+        payload.model,
+        choice.finish_reason,
+        tool_count,
+        int((time.monotonic() - started) * 1000),
+    )
+    if choice.finish_reason == "length":
+        logger.warning(
+            "AI chat truncated request_id=%s user_id=%s", request_id, user_id
+        )
+    return _completion_response(payload, request_id)

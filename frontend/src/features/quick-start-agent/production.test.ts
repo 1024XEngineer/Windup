@@ -76,6 +76,27 @@ describe('Quick Start Agent composition', () => {
     expect(secondRequest.headers.get('authorization')).toBe('Bearer fresh-token')
   })
 
+  it('logs status and request id when the Agent proxy is not ok', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const fetchFn = vi.fn<typeof fetch>(async () =>
+      new Response(JSON.stringify({ error: { message: 'AI 服务暂时不可用' } }), {
+        status: 502,
+        headers: { 'content-type': 'application/json', 'x-request-id': 'req-agent-1' },
+      }),
+    )
+    const proxyFetch = createAgentProxyFetch({ fetchFn })
+
+    const response = await proxyFetch('https://windup.test/api/ai/chat/completions', {
+      method: 'POST',
+    })
+
+    expect(response.status).toBe(502)
+    expect(consoleError).toHaveBeenCalledWith('[quick-start-agent] /ai/chat 失败', {
+      status: 502,
+      requestId: 'req-agent-1',
+    })
+  })
+
   it('forwards a tokenless GET response without invoking auth recovery', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ choices: [] }))
     const recoverUnauthorized = vi.fn(async () => true)

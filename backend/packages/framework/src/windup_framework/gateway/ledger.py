@@ -68,6 +68,10 @@ def _audit_extra(detail: AttemptDetail) -> dict | None:
         extra["upstream_reached"] = detail.upstream_reached
     if detail.model_index is not None:
         extra["model_index"] = detail.model_index
+    if detail.finish_reason:
+        extra["finish_reason"] = detail.finish_reason
+    if detail.has_tool_calls is not None:
+        extra["has_tool_calls"] = detail.has_tool_calls
     return extra or None
 
 
@@ -129,7 +133,9 @@ def persist_attempt(trace: AttemptTrace, *, session_factory=SessionLocal) -> Non
                     task_id=_int_or_none(trace.task_id),
                     job_status=detail.job_status,
                     edge_fingerprint=detail.edge_fingerprint,
-                    error_message=None,
+                    error_message=(
+                        detail.error_message[:2000] if detail.error_message else None
+                    ),
                     provider_request_id=None,
                     provider_usage=_json_or_none(detail.provider_usage),
                     input_hash=detail.input_hash,

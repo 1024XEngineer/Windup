@@ -24,6 +24,7 @@ COLD_FIELDS = {
     "input_hash", "output_hash", "output_bytes", "expected_bytes",
     "retry_after_ms", "submit_ms", "poll_ms", "download_ms", "poll_count",
     "resend_spent", "job_status", "edge_fingerprint", "provider_usage",
+    "error_message", "finish_reason", "has_tool_calls",
 }
 
 

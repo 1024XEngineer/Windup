@@ -18,6 +18,8 @@ import {
 } from '@/features/workflow-controller'
 import { getApiAccessToken, recoverApiUnauthorized, resolveApiBaseUrl } from '@/shared/api'
 
+const REQUEST_ID_HEADER = 'x-request-id'
+
 interface CreateAgentProxyFetchOptions {
   fetchFn?: typeof globalThis.fetch
   getAccessToken?: () => string | null | undefined
@@ -72,8 +74,23 @@ export function createAgentProxyFetch({
     }
 
     const response = await send()
-    if (response.status !== 401 || !(await recover())) return response
-    return send()
+    if (response.status === 401 && (await recover())) {
+      const replayed = await send()
+      if (!replayed.ok) {
+        console.error('[quick-start-agent] /ai/chat 失败', {
+          status: replayed.status,
+          requestId: replayed.headers.get(REQUEST_ID_HEADER),
+        })
+      }
+      return replayed
+    }
+    if (!response.ok) {
+      console.error('[quick-start-agent] /ai/chat 失败', {
+        status: response.status,
+        requestId: response.headers.get(REQUEST_ID_HEADER),
+      })
+    }
+    return response
   }
 }
 
