@@ -13,6 +13,7 @@ from windup_app.server.orchestrator.executor import (
     resume_action_poll,
     run_action_task,
     run_image_task,
+    run_direction_set_task,
 )
 from windup_app.server.orchestrator.recover import recover_orphaned_generation_tasks
 from windup_app.worker.consumer import StreamConsumer, start_delayed_loop, start_relay_loop
@@ -68,12 +69,14 @@ def main() -> None:
             email_stream_spec(),
             run_image_task=run_image_task,
             run_action_task=run_action_task,
+            run_direction_set_task=run_direction_set_task,
             stop_event=stop_event,
         ),
         StreamConsumer(
             generation_stream_spec(),
             run_image_task=run_image_task,
             run_action_task=run_action_task,
+            run_direction_set_task=run_direction_set_task,
             stop_event=stop_event,
             resume_action_poll=resume_action_poll,
         ),

@@ -162,6 +162,98 @@ def test_image_generation_accepts_real_north_west_for_eight_way_project(auth_cli
     assert body["data"]["input_payload"]["direction"] == "north_west"
 
 
+def test_direction_set_generation_derives_all_directions_from_project(auth_client):
+    project = _create_project(
+        auth_client,
+        name="八向方向集项目",
+        directional_movement=3,
+    )
+
+    body = auth_client.post(
+        "/generation/image-set",
+        json=_image_payload(project["id"], num_images=1),
+    ).json()
+
+    assert body["code"] == 200
+    assert body["data"]["task_type"] == "character_direction_set"
+    assert body["data"]["status"] == "pending"
+    assert body["data"]["input_payload"]["directions"] == [
+        "east",
+        "west",
+        "north",
+        "south",
+        "north_east",
+        "north_west",
+        "south_east",
+        "south_west",
+    ]
+
+
+def test_direction_set_retry_rejects_task_that_has_not_partially_failed(auth_client):
+    project = _create_project(auth_client)
+    submitted = auth_client.post(
+        "/generation/image-set",
+        json=_image_payload(project["id"], num_images=1),
+    ).json()["data"]
+
+    response = auth_client.post(
+        f"/generation/tasks/{submitted['id']}/retry-failed-directions",
+        params={"project_id": project["id"]},
+    )
+
+    assert response.json()["code"] == 400
+    assert "部分失败" in response.json()["message"]
+
+
+def test_direction_set_retry_publishes_a_new_attempt_message(auth_client, engine):
+    from windup_app.server.orchestrator import billing, task_repo
+    from windup_app.server.orchestrator.model import TaskStatus
+    from windup_framework.config.quota import settings as quota_settings
+
+    project = _create_project(auth_client)
+    submitted = auth_client.post(
+        "/generation/image-set",
+        json=_image_payload(project["id"], num_images=1),
+    ).json()["data"]
+    with sessionmaker(bind=engine)() as session:
+        task_repo.update_progress(
+            session,
+            submitted["id"],
+            "character_direction_set",
+            {
+                "type": "character_direction_set",
+                "directions": [
+                    {"direction": "east", "status": "completed", "image_urls": ["east"]},
+                    {"direction": "west", "status": "completed", "image_urls": ["west"]},
+                    {"direction": "north", "status": "failed", "image_urls": []},
+                    {"direction": "south", "status": "completed", "image_urls": ["south"]},
+                ],
+            },
+            status=TaskStatus.PARTIAL,
+        )
+        billing.capture_for_task(
+            session,
+            user_id=1,
+            task_id=submitted["id"],
+            actual_amount=3 * quota_settings.generate_image_cost,
+        )
+        session.commit()
+
+    publisher = auth_client.app.state.mq_publisher
+    publisher.reset_mock()
+    response = auth_client.post(
+        f"/generation/tasks/{submitted['id']}/retry-failed-directions",
+        params={"project_id": project["id"]},
+    )
+
+    data = response.json()["data"]
+    assert data["status"] == "pending"
+    assert data["input_payload"]["billing_attempt"] == 1
+    assert publisher.enqueue.call_args.kwargs["dedupe_key"] == (
+        f"generation:{submitted['id']}:retry:1"
+    )
+
+
 def test_action_character_must_belong_to_requested_project(auth_client):
     first_project = _create_project(auth_client, "项目一")
     second_project = _create_project(auth_client, "项目二")

@@ -91,6 +91,7 @@ def test_type_specs_register_pool_limit_and_recover():
 
 def test_msg_type_for_generation_skips_poll_types():
     assert msg_type_for_generation(MSG_TYPE_CHARACTER_IMAGE) == MSG_TYPE_CHARACTER_IMAGE
+    assert msg_type_for_generation("character_direction_set") == MSG_TYPE_CHARACTER_IMAGE
     assert msg_type_for_generation(MSG_TYPE_CHARACTER_ACTION) == MSG_TYPE_CHARACTER_ACTION
     with pytest.raises(ValueError, match="未知任务类型"):
         msg_type_for_generation(MSG_TYPE_CHARACTER_ACTION_POLL)

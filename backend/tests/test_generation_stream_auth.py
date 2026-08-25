@@ -137,6 +137,7 @@ def test_rejection_happens_before_subscribing(auth_client, session):
 
 @pytest.mark.parametrize(("status", "expected"), [
     (TaskStatus.COMPLETED, "event: completed"),
+    (TaskStatus.PARTIAL, "event: partial"),
     (TaskStatus.FAILED, "event: failed"),
 ])
 def test_already_terminal_task_gets_its_event_immediately(auth_client, session, status, expected):

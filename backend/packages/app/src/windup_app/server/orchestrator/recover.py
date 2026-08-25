@@ -45,7 +45,8 @@ def recover_orphaned_generation_tasks(
     ):
         if task.id is None:
             continue
-        if not billing.has_open_freeze(session, task.id):
+        attempt = billing.attempt_for_task(task.task_type, task.input_payload)
+        if not billing.has_open_freeze(session, task.id, attempt):
             _fail_unrecoverable(session, task)
             continue
         if task.status is TaskStatus.RUNNING:
@@ -86,7 +87,13 @@ def _fail_interrupted(session: Session, task: GenerationTask) -> None:
         TaskStatus.FAILED,
         error_message="进程中断，已解冻积分",
     )
-    billing.release_for_task(session, user_id=task.user_id, task_id=task.id)
+    attempt = billing.attempt_for_task(task.task_type, task.input_payload)
+    billing.release_for_task(
+        session,
+        user_id=task.user_id,
+        task_id=task.id,
+        attempt=attempt,
+    )
     logger.warning("孤儿 RUNNING 任务已失败解冻 | task_id=%s", task.id)
 
 
@@ -110,7 +117,7 @@ def _requeue_pending(
                 "task_id": task.id,
                 "task_type": task_type,
             },
-            dedupe_key=f"generation:{task.id}",
+            dedupe_key=_generation_dedupe_key(task),
         )
         publisher.register_after_commit(session, message_id)
     except Exception:
@@ -118,3 +125,12 @@ def _requeue_pending(
         _fail_interrupted(session, task)
         return
     logger.info("孤儿 PENDING 任务已重入队 | task_id=%s", task.id)
+
+
+def _generation_dedupe_key(task: GenerationTask) -> str:
+    attempt = billing.attempt_for_task(task.task_type, task.input_payload)
+    return (
+        f"generation:{task.id}"
+        if attempt == 0
+        else f"generation:{task.id}:retry:{attempt}"
+    )

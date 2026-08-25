@@ -17,9 +17,12 @@ from windup_app.server.orchestrator import billing, task_repo
 from windup_app.server.orchestrator.interface import GenerationService
 from windup_app.server.orchestrator.model import (
     CharacterActionInput,
+    CharacterDirectionSetInput,
+    CharacterDirectionSetOutput,
     CharacterImageInput,
     GenerationTask,
     GenerationType,
+    TaskStatus,
 )
 
 
@@ -40,6 +43,79 @@ class AiGenerationService(GenerationService):
             model_calls=max(1, input.num_images),
         )
         return task
+
+    def generate_character_direction_set(
+        self,
+        session: Session,
+        *,
+        user_id: int,
+        project_id: int,
+        input: CharacterDirectionSetInput,
+    ) -> GenerationTask:
+        if not input.directions:
+            raise ValueError("方向集不能为空")
+        input.billing_attempt = 0
+        task = task_repo.create_task(
+            session,
+            user_id=user_id,
+            project_id=project_id,
+            task_type=GenerationType.CHARACTER_DIRECTION_SET,
+            input_payload=dataclasses.asdict(input),
+        )
+        billing.reserve_for_task(
+            session,
+            user_id=user_id,
+            task_id=task.id,
+            task_type=task.task_type,
+            model_calls=len(input.directions) * max(1, input.num_images),
+        )
+        return task
+
+    def retry_failed_directions(
+        self,
+        session: Session,
+        *,
+        task: GenerationTask,
+    ) -> GenerationTask:
+        if (
+            task.task_type is not GenerationType.CHARACTER_DIRECTION_SET
+            or task.status not in (TaskStatus.PARTIAL, TaskStatus.FAILED)
+            or not isinstance(task.result, CharacterDirectionSetOutput)
+        ):
+            raise ValueError("只有部分失败的方向集任务可以重试")
+        failed = [
+            item
+            for item in task.result.directions
+            if item.status != TaskStatus.COMPLETED.value
+        ]
+        if not failed:
+            raise ValueError("没有可重试的失败方向")
+
+        payload = dict(task.input_payload or {})
+        attempt = int(payload.get("billing_attempt") or 0) + 1
+        payload["billing_attempt"] = attempt
+        billing.reserve_for_task(
+            session,
+            user_id=task.user_id,
+            task_id=task.id,
+            task_type=task.task_type,
+            model_calls=len(failed) * max(1, int(payload.get("num_images") or 1)),
+            attempt=attempt,
+        )
+        for item in failed:
+            item.status = TaskStatus.PENDING.value
+            item.error_message = None
+            item.image_urls = []
+            item.quality = None
+        task_repo.update_input_payload(session, task.id, payload)
+        task_repo.update_progress(
+            session,
+            task.id,
+            GenerationType.CHARACTER_DIRECTION_SET.value,
+            dataclasses.asdict(task.result),
+            status=TaskStatus.PENDING,
+        )
+        return task_repo.get_task(session, task.id)
 
     def generate_character_action(
         self, session: Session, *, user_id: int, project_id: int | None = None,
