@@ -206,13 +206,27 @@ def test_empty_image_then_fallback():
     assert ad.calls[-1] == "gemini-2.5-flash-image-alt"
 
 
-def test_success_trace_has_latency_and_null_cost_by_default(caplog):
+def test_success_trace_prices_by_model_when_cost_not_configured(caplog):
+    """没配 image_unit_cost 时按型号查牌价,而不是留空。
+
+    留空在单型号时无害,跨型号之后就不是了:主备单价能差一倍,成本记不上的方向随兜底
+    是否触发而变,事后无法回补。牌价单位是美元,与 ledger 给非空 cost 打的
+    ``cost_currency="USD"`` 对齐。
+    """
     caplog.set_level(logging.INFO, logger="windup.gateway")
     ad = FakeImageAdapter({"gemini-2.5-flash-image": [PNG]})
     gw = _make_gw(ad, image_fallbacks="")
     gw.gen_image("p", [])
     assert "total_latency_ms" in caplog.text
-    assert '"cost": null' in caplog.text or '"cost":null' in caplog.text
+    assert '"cost": 0.0387' in caplog.text or '"cost":0.0387' in caplog.text
+
+
+def test_explicit_unit_cost_overrides_the_model_price_table(caplog):
+    caplog.set_level(logging.INFO, logger="windup.gateway")
+    ad = FakeImageAdapter({"gemini-2.5-flash-image": [PNG]})
+    gw = _make_gw(ad, image_fallbacks="", image_unit_cost=0.5)
+    gw.gen_image("p", [])
+    assert '"cost": 0.5' in caplog.text or '"cost":0.5' in caplog.text
 
 
 def test_skip_open_model_circuit_sets_fallback_used(caplog):

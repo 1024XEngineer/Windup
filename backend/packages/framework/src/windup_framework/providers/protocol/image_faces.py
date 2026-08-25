@@ -1,0 +1,266 @@
+"""两条非 chat 面的生图通路。
+
+同一件事(提示词 [+ 参考图] → 一张图 bytes)在网关上有三种形状,型号决定走哪条:
+chat 面把图塞 ``messages[].content``、OpenAI 图像面直接回 ``data[].b64_json``、
+FAL 队列面要建单-轮询-取结果三段。形状写在代码里而不是配置里 —— 塞错字段不会立刻
+报错,任务照常 queued,直到生成阶段才 failed,而费用可能已经产生。
+"""
+from __future__ import annotations
+
+import base64
+import io
+import json
+
+import httpx
+
+from windup_common.enums.model import ModelErrorType
+from windup_framework.gateway.classify import (
+    classify_exception,
+    classify_http_response,
+    edge_fingerprint,
+    retry_after_seconds,
+)
+from windup_framework.gateway.types import AdapterResult
+
+from .fal_queue import IN_FLIGHT, gateway_root, queue_prefix
+
+__all__ = ["OpenAIImagesFace", "FalQueueImageFace", "MIN_IMAGE_BYTES", "IMAGE_SIZE"]
+
+#: 小于这个字节数的"图"当没拿到。0 字节的成功会被原样上传对象存储,变成用户看到的裂图。
+MIN_IMAGE_BYTES = 5000
+
+#: 出图尺寸。母版下游还要按项目精灵尺寸等比 contain,这里只需给一个可预期的方图。
+IMAGE_SIZE = "1024x1024"
+
+#: FAL 队列面的建单端点。文生图与图生图是两条路径,不能靠拼字符串猜 ——
+#: 猜中一条"存在但语义不同"的路径会正常出图、正常计费。
+FAL_IMAGE_ENDPOINTS: dict[str, tuple[str, str]] = {
+    "gemini-3.1-flash-image-preview": (
+        "fal-ai/gemini-3.1-flash-image-preview",
+        "fal-ai/gemini-3.1-flash-image-preview/edit",
+    ),
+}
+
+
+class UnknownFalImageModelError(ValueError):
+    """型号不在 :data:`FAL_IMAGE_ENDPOINTS` 里。"""
+
+
+def _transport(exc: BaseException) -> AdapterResult:
+    error_type, status, edge = classify_exception(exc)
+    return AdapterResult(
+        ok=False,
+        error_type=error_type,
+        http_status=status,
+        maybe_billed=error_type is ModelErrorType.MAYBE_BILLED,
+        edge_fingerprint=edge,
+    )
+
+
+def _http_failure(resp: httpx.Response, model: str, base_url: str) -> AdapterResult:
+    error_type = classify_http_response(resp.status_code, resp.text)
+    if resp.status_code in (400, 404):
+        edge = (
+            f"网关 {base_url} 拒绝了模型 {model!r}(HTTP {resp.status_code})。"
+            f"生图型号不出现在 GET /models 里,可用性只能靠真实调用确认。"
+            f"原始响应:{resp.text[:200]}"
+        )
+    else:
+        edge = edge_fingerprint(resp)
+    header = resp.headers.get("Retry-After")
+    return AdapterResult(
+        ok=False,
+        error_type=error_type,
+        http_status=resp.status_code,
+        maybe_billed=error_type is ModelErrorType.MAYBE_BILLED,
+        edge_fingerprint=edge,
+        retry_after_s=retry_after_seconds(header) if header else None,
+    )
+
+
+def _invalid(resp: httpx.Response, why: str) -> AdapterResult:
+    return AdapterResult(
+        ok=False,
+        error_type=ModelErrorType.INVALID_RESPONSE,
+        http_status=resp.status_code,
+        edge_fingerprint=why,
+    )
+
+
+def _sized(data: bytes, resp: httpx.Response) -> AdapterResult:
+    if len(data) < MIN_IMAGE_BYTES:
+        return _invalid(resp, f"图只有 {len(data)} 字节(下限 {MIN_IMAGE_BYTES})")
+    return AdapterResult(ok=True, body=data, http_status=resp.status_code)
+
+
+def _datauri(raw: bytes) -> str:
+    return "data:image/png;base64," + base64.b64encode(raw).decode()
+
+
+class OpenAIImagesFace:
+    """``/v1/images/generations`` 与 ``/v1/images/edits``,Bearer,同步回图。"""
+
+    def __init__(self, base_url: str, api_key: str, timeout: float) -> None:
+        self._base = base_url.rstrip("/")
+        self._key = api_key
+        self._timeout = timeout
+
+    def _client(self) -> httpx.Client:
+        return httpx.Client(
+            base_url=self._base,
+            headers={"Authorization": f"Bearer {self._key}"},
+            timeout=self._timeout,
+            transport=httpx.HTTPTransport(retries=2),
+        )
+
+    def submit_image(self, prompt: str, refs: list[bytes], model: str) -> AdapterResult:
+        with self._client() as client:
+            try:
+                resp = (
+                    self._edit(client, prompt, refs, model)
+                    if refs
+                    else self._generate(client, prompt, model)
+                )
+            except httpx.TransportError as exc:
+                return _transport(exc)
+            if not 200 <= resp.status_code < 300:
+                return _http_failure(resp, model, self._base)
+            return self._parse(client, resp)
+
+    def _generate(self, client: httpx.Client, prompt: str, model: str) -> httpx.Response:
+        return client.post(
+            "/images/generations",
+            json={"model": model, "prompt": prompt, "size": IMAGE_SIZE, "n": 1},
+        )
+
+    def _edit(
+        self, client: httpx.Client, prompt: str, refs: list[bytes], model: str
+    ) -> httpx.Response:
+        """图生图走 multipart,参考图作为文件字段 —— 这条路径尚未用真实调用验证过。"""
+        files = [("image[]", (f"ref{i}.png", io.BytesIO(r), "image/png"))
+                 for i, r in enumerate(refs)]
+        return client.post(
+            "/images/edits",
+            data={"model": model, "prompt": prompt, "size": IMAGE_SIZE, "n": "1"},
+            files=files,
+        )
+
+    def _parse(self, client: httpx.Client, resp: httpx.Response) -> AdapterResult:
+        try:
+            payload = resp.json()
+        except ValueError:
+            return _invalid(resp, "响应不是 JSON")
+        items = payload.get("data") if isinstance(payload, dict) else None
+        if not items:
+            return _invalid(resp, "响应里没有 data[]")
+        item = items[0]
+        if item.get("b64_json"):
+            return _sized(base64.b64decode(item["b64_json"]), resp)
+        url = item.get("url")
+        if not url:
+            return _invalid(resp, "data[0] 既无 b64_json 也无 url")
+        try:
+            got = client.get(url, headers={})
+        except httpx.TransportError as exc:
+            return _transport(exc)
+        if not 200 <= got.status_code < 300:
+            return _invalid(resp, f"取图失败 HTTP {got.status_code}")
+        return _sized(got.content, resp)
+
+
+class FalQueueImageFace:
+    """``/queue/*`` 生图,``Authorization: Key``,建单-轮询-取结果三段。
+
+    与视频的队列面共用前缀与在途状态判定,但产物字段不同(``images[]`` 而非 ``video``),
+    所以不复用 :class:`FalQueueVideoProtocol`。
+    """
+
+    def __init__(self, base_url: str, api_key: str, timeout: float, *, poll_s: float = 5.0,
+                 max_polls: int = 120) -> None:
+        self._root = gateway_root(base_url)
+        self._key = api_key
+        self._timeout = timeout
+        self._poll_s = poll_s
+        self._max_polls = max_polls
+
+    def _client(self) -> httpx.Client:
+        return httpx.Client(
+            base_url=self._root,
+            headers={"Authorization": f"Key {self._key}"},
+            timeout=self._timeout,
+            transport=httpx.HTTPTransport(retries=2),
+        )
+
+    def submit_image(self, prompt: str, refs: list[bytes], model: str) -> AdapterResult:
+        try:
+            gen_ep, edit_ep = FAL_IMAGE_ENDPOINTS[model]
+        except KeyError:
+            raise UnknownFalImageModelError(model) from None
+        endpoint = edit_ep if refs else gen_ep
+        body: dict = {"prompt": prompt, "num_images": 1}
+        if refs:
+            # 参考图以 data URI 进 image_urls —— 这条路径尚未用真实调用验证过。
+            body["image_urls"] = [_datauri(r) for r in refs]
+        with self._client() as client:
+            try:
+                resp = client.post(f"/queue/{endpoint}", json=body)
+            except httpx.TransportError as exc:
+                return _transport(exc)
+            if not 200 <= resp.status_code < 300:
+                return _http_failure(resp, model, self._root)
+            try:
+                job_id = resp.json().get("request_id")
+            except ValueError:
+                return _invalid(resp, "建单响应不是 JSON")
+            if not job_id:
+                return _invalid(resp, "建单响应里没有 request_id")
+            return self._follow(client, queue_prefix(endpoint), job_id, resp)
+
+    def _follow(
+        self, client: httpx.Client, prefix: str, job_id: str, submitted: httpx.Response
+    ) -> AdapterResult:
+        root = f"/queue/{prefix}/requests/{job_id}"
+        import time
+
+        for _ in range(self._max_polls):
+            try:
+                st = client.get(f"{root}/status")
+            except httpx.TransportError as exc:
+                return _transport(exc)
+            if not 200 <= st.status_code < 300:
+                return _http_failure(st, prefix, self._root)
+            try:
+                status = st.json().get("status")
+            except ValueError:
+                return _invalid(st, "轮询响应不是 JSON")
+            if status not in IN_FLIGHT:
+                break
+            time.sleep(self._poll_s)
+        else:
+            return AdapterResult(
+                ok=False,
+                error_type=ModelErrorType.TIMEOUT,
+                maybe_billed=True,
+                job_id=job_id,
+                edge_fingerprint=f"轮询 {self._max_polls} 次仍在途",
+            )
+        try:
+            res = client.get(root)
+        except httpx.TransportError as exc:
+            return _transport(exc)
+        if not 200 <= res.status_code < 300:
+            return _http_failure(res, prefix, self._root)
+        try:
+            images = res.json().get("images") or []
+        except ValueError:
+            return _invalid(res, "取结果响应不是 JSON")
+        url = images[0].get("url") if images else None
+        if not url:
+            return _invalid(res, f"结果里没有图片 URL:{json.dumps(res.json())[:200]}")
+        try:
+            got = client.get(url, headers={})
+        except httpx.TransportError as exc:
+            return _transport(exc)
+        if not 200 <= got.status_code < 300:
+            return _invalid(res, f"下载成品失败 HTTP {got.status_code}")
+        return _sized(got.content, submitted)

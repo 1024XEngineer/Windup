@@ -43,6 +43,7 @@ from windup_framework.gateway.types import AdapterResult
 
 from .interfaces import ImageProvider, VideoProvider
 from .protocol import HttpCall, VideoRequest
+from .protocol.image_faces import FalQueueImageFace, OpenAIImagesFace
 from .protocol.openai_video import OpenAIVideoProtocol
 
 logger = logging.getLogger("windup.providers.sufy")
@@ -397,7 +398,7 @@ def _download(client: httpx.Client, url: str, tries: int = 3) -> bytes:
 # 归档实测记录见项目参考资料（图生视频 API 实测文档）。
 
 
-DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image"
+DEFAULT_IMAGE_MODEL = "gpt-image-2"
 
 # "调用成功但没返回有效图"的下限。返回里可能带一个几十字节的占位串,当图存下去就是一个打不开的文件。
 _MIN_IMAGE_BYTES = 5000
@@ -610,6 +611,33 @@ class SufyImageProvider(ChatCompletionsFace, ImageProvider):
         model: str | None = None,
     ) -> None:
         super().__init__(config, model or config.image_model)
+
+    def _face(self, model: str):
+        """按登记的 family 取协议面;链上主备分属不同面时,靠这里而不是靠换 adapter。
+
+        网关每次把型号名传进 ``submit_image``,所以分派点必须在这里 —— 放到构造函数里
+        就变成"一个 provider 只会一种面",跨面兜底那一跳会用错形状发出去。
+        """
+        from windup_framework.gateway.registry import FAMILIES
+        from windup_framework.gateway.types import Family
+
+        family = FAMILIES.get(model, Family.IMAGE_CHAT_DATA_URI)
+        timeout = self._cfg.timeout * _IMAGE_TIMEOUT_MULTIPLIER
+        if family is Family.IMAGE_OPENAI_IMAGES:
+            return OpenAIImagesFace(
+                self._cfg.normalized_base_url, self._cfg.api_key, timeout
+            )
+        if family is Family.IMAGE_FAL_QUEUE:
+            return FalQueueImageFace(
+                self._cfg.normalized_base_url, self._cfg.api_key, timeout
+            )
+        return None
+
+    def submit_image(self, prompt: str, refs: list[bytes], model: str) -> AdapterResult:
+        face = self._face(model)
+        if face is None:
+            return super().submit_image(prompt, refs, model)
+        return face.submit_image(prompt, refs, model)
 
     def gen_image(self, prompt: str, refs: list[bytes]) -> bytes:
         """提示词 + 参考图 → 一张 PNG bytes。拿不到有效图就抛,不返回空 bytes。
