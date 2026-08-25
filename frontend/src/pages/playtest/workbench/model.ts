@@ -41,7 +41,10 @@ export type PlaytestModelResult =
   | { readonly ok: false; readonly reason: 'outfit_not_found' }
 
 const DEFAULT_FRAME_DURATION_MS = 100
-const MAX_LOCOMOTION_TIMING_SAMPLES = 8
+const DENSE_GENERATED_LOCOMOTION = {
+  walk: { frameCount: 32, frameDurationMs: 125, cycleDurationMs: 1000 },
+  run: { frameCount: 32, frameDurationMs: 90, cycleDurationMs: 720 },
+} as const
 
 function frameDuration(durationMs: number | null, fps: number): number {
   if (durationMs !== null && Number.isFinite(durationMs) && durationMs > 0) {
@@ -65,18 +68,31 @@ function playtestFrames(
   frames: readonly Frame[],
 ): readonly PlaytestFrame[] {
   const ordered = orderedFrames(frames)
-  const isLoopingLocomotion = action.loop && (action.type === 'walk' || action.type === 'run')
-  // walk/run 的高帧数是同一循环的密集采样，不是把更多低帧率姿势依次追加。
-  // 逐帧时长来自原先最多 8 个姿势的节奏口径；超过后按采样密度等比压缩，
-  // 否则 32 帧 walk 会从约 1 秒被拉成 4 秒，位移照常推进就会明显滑步。
-  const timingScale =
-    isLoopingLocomotion && ordered.length > MAX_LOCOMOTION_TIMING_SAMPLES
-      ? MAX_LOCOMOTION_TIMING_SAMPLES / ordered.length
-      : 1
-
-  return ordered.map((frame) => ({
+  const playbackFrames = ordered.map((frame) => ({
     imageUrl: frame.imageUrl,
-    durationMs: frameDuration(frame.durationMs, action.fps) * timingScale,
+    durationMs: frameDuration(frame.durationMs, action.fps),
+  }))
+  const denseTiming =
+    action.type === 'walk' || action.type === 'run'
+      ? DENSE_GENERATED_LOCOMOTION[action.type]
+      : undefined
+  // 只兼容生成器已知的坏形状：32 帧仍逐帧沿用稀疏 walk/run 时值。
+  // 帧数、循环性或任一时值不完全匹配时都尊重资产合同，不能把“超过 8 帧”
+  // 猜成密集采样，否则会误改用户已正确编排的 9/12/16/24/32 帧动作。
+  if (
+    !action.loop ||
+    denseTiming === undefined ||
+    playbackFrames.length !== denseTiming.frameCount ||
+    playbackFrames.some((frame) => frame.durationMs !== denseTiming.frameDurationMs)
+  ) {
+    return playbackFrames
+  }
+
+  const timingScale =
+    denseTiming.cycleDurationMs / (denseTiming.frameCount * denseTiming.frameDurationMs)
+  return playbackFrames.map((frame) => ({
+    ...frame,
+    durationMs: frame.durationMs * timingScale,
   }))
 }
 
