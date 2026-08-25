@@ -38,7 +38,7 @@ jobs:
           set -euo pipefail
           # 发版时机由「改 VERSION 的那个 PR」决定,不由提交类型自动进位:一批功能被
           # 拆成十个版本号时,版本号就不再表达「这一版带来了什么」,而部署只认 Release。
-          python3 backend/scripts/version_gate.py decide VERSION | tee -a "$GITHUB_OUTPUT"
+          python3 scripts/version_gate.py decide VERSION | tee -a "$GITHUB_OUTPUT"
 
       - name: Write release notes
         if: steps.ver.outputs.go == 'true'

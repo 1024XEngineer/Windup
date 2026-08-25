@@ -1,0 +1,47 @@
+name: Version
+
+# 发版相关的检查自成一条流水线,不挂在 Backend CI 里:VERSION 是产品版本,
+# 与后端 workspace 无关,放进去会让「改一行版本号」被后端的依赖安装与测试挡着。
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: version-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  version-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0        # 要比对已发布的 tag,浅 clone 拿不到
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 闸口自测
+        # 发版逻辑写错的代价不是一次红 CI,是一个指向错误提交的 tag,而部署只认 Release。
+        run: |
+          python -m pip install --quiet pytest==8.3.4
+          python -m pytest -q tests/test_version_gate.py
+
+      - name: 版本闸口
+        # 版本非法、或改动了 VERSION 却比已发布的最新版更低,在这里就红。
+        #
+        # 传基点上的 VERSION 是必须的:单调性约束的是「改 VERSION 这个动作」。不传的话,
+        # main 发布新版的那一刻,所有开着的 PR 会集体变红,而它们一个字都没改。
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha || github.event.before || '' }}"
+          prev=""
+          if [ -n "$base" ] && git cat-file -e "$base:VERSION" 2>/dev/null; then
+            prev="$(git show "$base:VERSION")"
+          fi
+          python3 scripts/version_gate.py check VERSION --previous "$prev"

@@ -66,10 +66,41 @@ def test_major_bump_is_accepted():
 
 def test_repo_version_file_is_valid_and_not_behind_any_shipped_tag():
     """钉住仓库里真实的那份 VERSION —— 它非法或落后时,该在 PR 阶段就红。"""
-    root = pathlib.Path(__file__).resolve().parents[2]
+    root = pathlib.Path(__file__).resolve().parents[1]
     text = (root / "VERSION").read_text(encoding="utf-8")
     vg.parse(text)                       # 非法即抛
-    assert vg.decide(text, TAGS + ["v" + text.strip()])["release"] is False
+    assert vg.decide(text, ["v" + text.strip()])["release"] is False
+
+
+def test_unchanged_version_passes_even_when_main_has_released_ahead():
+    """PR 开着期间 main 发了新版,这个 PR 不该因此变红 —— 它一个字都没改。
+
+    这条是被真实 CI 教出来的:2026-08-25 本改造的 PR 挂着时 main 自动发了 v0.32.2,
+    闸口把「VERSION 落后于最新 tag」判成了错误。
+    """
+    r = vg.check("0.32.1", TAGS + ["v0.32.2"], previous="0.32.1")
+    assert r["changed"] is False
+
+
+def test_changing_the_version_downwards_is_still_rejected():
+    with pytest.raises(vg.VersionError, match="低于已发布"):
+        vg.check("0.30.0", TAGS, previous="0.32.1")
+
+
+def test_changing_the_version_upwards_passes():
+    assert vg.check("0.33.0", TAGS, previous="0.32.1")["changed"] is True
+
+
+def test_no_previous_given_falls_back_to_comparing_against_tags():
+    """基点上还没有 VERSION 文件时(引入这套机制的那个 PR),仍按 tag 比。"""
+    with pytest.raises(vg.VersionError):
+        vg.check("0.30.0", TAGS, previous=None)
+
+
+def test_malformed_version_is_rejected_even_when_unchanged():
+    """格式永远校验:一个坏值不会因为「没人动过它」而变得可接受。"""
+    with pytest.raises(vg.VersionError):
+        vg.check("not-a-version", TAGS, previous="not-a-version")
 
 
 def test_check_mode_exits_nonzero_on_a_bad_version(tmp_path, monkeypatch):

@@ -51,6 +51,20 @@ def latest_release(tags: list[str]) -> tuple[int, int, int] | None:
     return max(seen) if seen else None
 
 
+def check(version_text: str, tags: list[str], previous: str | None = None) -> dict:
+    """PR 阶段的校验。
+
+    ``previous`` 是本 PR 基点上的 VERSION。它与当前一致时只校验格式,不比对 tag ——
+    单调性约束的是「改 VERSION 这个动作」,不是「VERSION 任何时刻都不低于最新 tag」。
+    按后者判会让所有开着的 PR 在 main 发新版的那一刻集体变红,而它们一个字都没改。
+    """
+    parse(version_text)
+    if previous is not None and previous.strip() and previous.strip() == version_text.strip():
+        return {"changed": False, "reason": "VERSION 未变更,只校验格式"}
+    d = decide(version_text, tags)
+    return {"changed": True, "reason": d["reason"]}
+
+
 def decide(version_text: str, tags: list[str]) -> dict:
     """回答发不发版。相等即「本次没有发版意图」,不是错误。"""
     cur = parse(version_text)
@@ -77,16 +91,19 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("mode", choices=["check", "decide"])
     ap.add_argument("path", nargs="?", default="VERSION")
+    ap.add_argument("--previous", default=None,
+                    help="本 PR 基点上的 VERSION 内容;与当前一致时只校验格式")
     args = ap.parse_args(argv)
     text = pathlib.Path(args.path).read_text(encoding="utf-8")
     try:
+        if args.mode == "check":
+            r = check(text, _tags(), args.previous)
+            print(f"VERSION {text.strip()} 合法;{r['reason']}")
+            return 0
         result = decide(text, _tags())
     except VersionError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
-    if args.mode == "check":
-        print(f"VERSION {text.strip()} 合法;{result['reason']}")
-        return 0
     print(f"go={str(result['release']).lower()}")
     print(f"next={result['tag']}")
     print(f"prev={result['prev']}")
