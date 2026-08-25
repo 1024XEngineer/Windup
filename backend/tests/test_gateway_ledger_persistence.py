@@ -55,6 +55,9 @@ def test_persist_attempt_splits_hot_and_detail_fields():
             detail=AttemptDetail(
                 edge_fingerprint="cf-ray=abc",
                 provider_usage={"total_tokens": 12},
+                error_message="upstream 429: quota exceeded",
+                finish_reason="length",
+                has_tool_calls=False,
             ),
         ),
         session_factory=session_factory,
@@ -75,3 +78,8 @@ def test_persist_attempt_splits_hot_and_detail_fields():
     assert str(hot.attempt_id) == attempt_id
     assert detail.edge_fingerprint == "cf-ray=abc"
     assert detail.provider_usage == {"total_tokens": 12}
+    assert detail.error_message == "upstream 429: quota exceeded"
+    assert detail.extra == {
+        "finish_reason": "length",
+        "has_tool_calls": False,
+    }

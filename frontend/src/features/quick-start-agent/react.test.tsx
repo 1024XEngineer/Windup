@@ -146,6 +146,7 @@ describe('useQuickStartAgent', () => {
   it.each(['生成提案参数字段无效', '请求参数无效'])(
     'keeps the internal protocol error %s out of the conversation',
     async (message) => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
       const planner = vi.fn(async () => {
         throw new Error(message)
       })
@@ -160,6 +161,11 @@ describe('useQuickStartAgent', () => {
       expect(result.current.state).toEqual({
         status: 'error',
         message: 'Agent 没有完成这次回复，请重新发送',
+      })
+      expect(consoleError).toHaveBeenCalledWith('[quick-start-agent] 本轮失败', {
+        name: 'Error',
+        message,
+        requestId: undefined,
       })
     },
   )
