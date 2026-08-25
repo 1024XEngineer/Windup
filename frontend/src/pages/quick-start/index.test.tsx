@@ -971,7 +971,7 @@ describe('QuickStartPage', () => {
 
   it('renders Markdown emphasis and lists in a Planner reply', async () => {
     const planner = vi.fn(async (_input: PlannerInput) => ({
-      text: '**建议先定住轮廓：**\n\n- 银色面具\n- 深色披风',
+      text: '**建议先定住轮廓：**\n\n- 银色面具\n- 深色披风\n\n[查看角色规范](https://example.com/guide)',
       finishReason: 'stop',
       toolCalls: [],
     }))
@@ -994,6 +994,7 @@ describe('QuickStartPage', () => {
     expect(reply.className).toContain('quick-start-agent-markdown--entering')
     expect(reply.querySelectorAll('.kinetic-copy-character').length).toBeGreaterThan(0)
     expect(bot?.querySelector('.kinetic-copy-character')).toBeNull()
+    expect(screen.getByRole('link', { name: '查看角色规范' })).toBeTruthy()
   })
 
   it('keeps the chosen art style across a page refresh', async () => {
@@ -1494,11 +1495,11 @@ describe('QuickStartPage', () => {
     renderAt('/quick-start', serviceFor(null))
 
     const prompt = await screen.findByRole('textbox', { name: '创作指令' })
-    const editingSurface = prompt.closest('label')
+    const composerSurface = prompt.closest('form')
     const uploadButton = screen.getByRole('button', { name: '添加母版' })
     const directionButton = screen.getByRole('button', { name: '生成方向，当前单向' })
 
-    expect(editingSurface?.className).toContain('rounded-app-surface')
+    expect(composerSurface?.className).toContain('rounded-app-surface')
     expect(uploadButton.className).toContain('rounded-app-compact')
     expect(directionButton.className).toContain('rounded-app-control')
 
