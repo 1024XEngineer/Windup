@@ -12,6 +12,7 @@ from windup_app.server.orchestrator.model import (
     CharacterDirectionSetInput,
     GenerationType,
     TaskStatus,
+    initial_direction_set_output,
 )
 from windup_app.server.orchestrator.service import AiGenerationService
 from windup_app.server.quota.model import CreditAccount
@@ -89,6 +90,27 @@ def test_direction_set_submission_does_not_charge_for_confirmed_master(
         ]
         assert task.input_payload["billing_attempt"] == 0
         assert account.frozen == 3 * quota_settings.generate_image_cost
+
+
+def test_direction_set_submission_rejects_legacy_compatibility_input(
+    direction_session_factory,
+):
+    service = AiGenerationService()
+    legacy_input = handlers._direction_set_input(
+        {
+            "reference_image_url": None,
+            "directions": ["east", "west", "north", "south"],
+        }
+    )
+
+    with direction_session_factory() as session:
+        with pytest.raises(ValueError, match="已确认角色母版"):
+            service.generate_character_direction_set(
+                session,
+                user_id=1,
+                project_id=7,
+                input=legacy_input,
+            )
 
 
 def test_direction_set_keeps_successes_and_only_retries_failed_direction(
@@ -193,6 +215,32 @@ def test_worker_dispatches_direction_set_to_aggregate_executor(
     assert seen[0][0] == task_id
     assert seen[0][1].directions == _four_way_input().directions
     assert seen[0][2] == 9
+
+
+def test_worker_decodes_pre_master_direction_set_payload_as_legacy_generation():
+    legacy_input = handlers._direction_set_input(
+        {
+            "reference_image_url": None,
+            "prompt": "像素风勇者",
+            "width": 64,
+            "height": 64,
+            "num_images": 1,
+            "directions": ["east", "west", "north", "south"],
+            "billing_attempt": 0,
+        }
+    )
+
+    assert legacy_input.character_id is None
+    assert legacy_input.anchor_direction is None
+    assert legacy_input.reference_image_url is None
+    assert [
+        item.status for item in initial_direction_set_output(legacy_input).directions
+    ] == [
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+    ]
 
 
 def test_direction_set_settlement_uses_frozen_price_not_current_price(

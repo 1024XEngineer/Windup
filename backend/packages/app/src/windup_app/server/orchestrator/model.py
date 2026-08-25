@@ -94,23 +94,27 @@ class CharacterImageInput:
 class CharacterDirectionSetInput:
     """基于已确认角色母版生成项目所需的其余真实方向。"""
 
-    character_id: int
-    reference_image_url: str
+    # 旧版方向集任务没有角色归属和锚点字段。它们只在 Worker 恢复时以 None
+    # 重建，继续执行原来约定的全部方向；所有新请求仍由 API 强制写入这两项。
+    character_id: int | None = None
+    reference_image_url: str | None = None
     prompt: str = ""
     negative_prompt: str = ""
     width: int = 1024
     height: int = 1024
     num_images: int | None = None
     directions: list[ActionDirection] = field(default_factory=list)
-    anchor_direction: ActionDirection = ActionDirection.EAST
+    anchor_direction: ActionDirection | None = ActionDirection.EAST
     billing_attempt: int = 0
 
     def __post_init__(self) -> None:
-        self.reference_image_url = self.reference_image_url.strip()
-        if not self.reference_image_url:
-            raise ValueError("方向集生成必须绑定已确认角色母版")
-        if self.anchor_direction not in self.directions:
-            raise ValueError("已确认母版方向必须属于项目方向集")
+        if self.reference_image_url is not None:
+            self.reference_image_url = self.reference_image_url.strip() or None
+        if self.character_id is not None:
+            if not self.reference_image_url:
+                raise ValueError("方向集生成必须绑定已确认角色母版")
+            if self.anchor_direction not in self.directions:
+                raise ValueError("已确认母版方向必须属于项目方向集")
         if self.num_images is None:
             self.num_images = 2
 
@@ -202,7 +206,7 @@ class CharacterDirectionSetOutput:
 def initial_direction_set_output(
     input: CharacterDirectionSetInput,
 ) -> CharacterDirectionSetOutput:
-    """把已确认母版作为锚点方向，只有其余方向需要调用 Provider。"""
+    """新任务跳过已确认锚点；没有锚点的旧任务继续生成全部方向。"""
 
     return CharacterDirectionSetOutput(
         directions=[

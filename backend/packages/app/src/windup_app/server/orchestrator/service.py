@@ -53,6 +53,12 @@ class AiGenerationService(GenerationService):
         project_id: int,
         input: CharacterDirectionSetInput,
     ) -> GenerationTask:
+        if (
+            input.character_id is None
+            or input.anchor_direction is None
+            or not input.reference_image_url
+        ):
+            raise ValueError("新方向集任务必须绑定已确认角色母版")
         if not input.directions:
             raise ValueError("方向集不能为空")
         input.billing_attempt = 0
