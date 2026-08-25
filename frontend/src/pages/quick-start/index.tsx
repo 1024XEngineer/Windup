@@ -1799,10 +1799,12 @@ function QuickStartRun({
         const updated = await target.regenerateCharacterTemplate('regenerate')
         if (mountedRef.current && activeSessionRef.current === target) setRun(updated)
       },
-      async refineCharacterTemplate(adjustmentPrompt) {
+      async refineCharacterTemplate(adjustmentPrompt, candidateId) {
         const target = activeSessionRef.current
         if (!target) throw new Error('当前生成会话尚未恢复')
-        const updated = await target.regenerateCharacterTemplate('refine', adjustmentPrompt)
+        const updated = candidateId
+          ? await target.regenerateCharacterTemplate('refine', adjustmentPrompt, candidateId)
+          : await target.regenerateCharacterTemplate('refine', adjustmentPrompt)
         if (mountedRef.current && activeSessionRef.current === target) setRun(updated)
       },
       async regenerateFirstFrame() {
@@ -2113,6 +2115,11 @@ function QuickStartRun({
   const templateSelectionComplete =
     templateDirections.length > 0 &&
     templateDirections.every((direction) => Boolean(templateSelections[direction]))
+  const candidateAgentMode =
+    isTemplateSelecting &&
+    candidates.length > 0 &&
+    !templateStep?.selectedImageUrl &&
+    Object.keys(selectedCandidates).length === 0
   const firstFrameSelectionComplete = allDirectionsSelected(
     firstFrameCandidates,
     firstFrameSelections,
@@ -2276,7 +2283,7 @@ function QuickStartRun({
   async function continueConversation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (workflowConflictRef.current) return
-    if (isTemplateSelecting) {
+    if (isTemplateSelecting && !candidateAgentMode) {
       void confirmSelection()
       return
     }
@@ -2308,7 +2315,7 @@ function QuickStartRun({
       }
       return
     }
-    if (!message || workflowIsActive || workflowAgentSession.busy) return
+    if (!message || (workflowIsActive && !candidateAgentMode) || workflowAgentSession.busy) return
     clearWorkflowError()
     appendRunConversationTurn({ role: 'user', content: message, scope: 'workflow' })
     setActionDescription('')
@@ -2326,9 +2333,11 @@ function QuickStartRun({
   }
 
   const composerPlaceholder = isTemplateSelecting
-    ? templateSelectionComplete
-      ? '描述这个角色接下来要做的动作…'
-      : '请先为每个方向选择一个角色方案…'
+    ? candidateAgentMode
+      ? '描述想调整的候选，或重新生成一批…'
+      : templateSelectionComplete
+        ? '描述这个角色接下来要做的动作…'
+        : '请先为每个方向选择一个角色方案…'
     : isFirstFrameSelecting
       ? firstFrameSelectionComplete
         ? '按发送确认这张首帧…'
@@ -2344,12 +2353,15 @@ function QuickStartRun({
             : '制作中，完成后可以继续修改…'
 
   const workflowAgentAvailable =
-    !workflowIsActive &&
+    (!workflowIsActive || candidateAgentMode) &&
     session !== null &&
     session.getWorkflowAgentContext().availableTools.length > 0
-  const workflowAgentMode = !isTemplateSelecting && !isFirstFrameSelecting && !addActionIntent
+  const workflowAgentMode =
+    candidateAgentMode || (!isTemplateSelecting && !isFirstFrameSelecting && !addActionIntent)
   const composerCanSubmit =
-    (isTemplateSelecting &&
+    (candidateAgentMode && workflowAgentAvailable && Boolean(actionDescription.trim())) ||
+    (!candidateAgentMode &&
+      isTemplateSelecting &&
       templateSelectionComplete &&
       (!isDirectionSetSelecting || Boolean(actionDescription.trim()))) ||
     (isFirstFrameSelecting && firstFrameSelectionComplete) ||
@@ -2358,7 +2370,10 @@ function QuickStartRun({
   const workflowComposerDisabled = addActionIntent
     ? !canAddAction || addingAction || workflowConflict
     : workflowAgentMode &&
-      (workflowIsActive || !workflowAgentAvailable || workflowAgentSession.busy || workflowConflict)
+      ((workflowIsActive && !candidateAgentMode) ||
+        !workflowAgentAvailable ||
+        workflowAgentSession.busy ||
+        workflowConflict)
   const selectedTemplateUrl = templateStep?.selectedImageUrl
   const selectedFirstFrameUrl = firstFrameStep?.selectedFirstFrameUrl
   const requestedAction = firstFrameStep?.input.prompt || firstFrameStep?.input.name
@@ -2452,7 +2467,14 @@ function QuickStartRun({
                     disabled={!isTemplateSelecting || confirmingCandidate || workflowConflict}
                     kind="角色方案"
                     onSelect={(direction, imageUrl) =>
-                      setSelectedCandidates((current) => ({ ...current, [direction]: imageUrl }))
+                      setSelectedCandidates((current) => {
+                        if (current[direction] !== imageUrl) {
+                          return { ...current, [direction]: imageUrl }
+                        }
+                        const next = { ...current }
+                        delete next[direction]
+                        return next
+                      })
                     }
                   />
                 </>
@@ -2771,7 +2793,7 @@ function QuickStartRun({
               label={
                 composerCanInterrupt
                   ? '中断自动制作'
-                  : isTemplateSelecting
+                  : isTemplateSelecting && !candidateAgentMode
                     ? isDirectionSetSelecting
                       ? '生成动作'
                       : '确认母版'
