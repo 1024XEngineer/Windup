@@ -8,6 +8,7 @@ FAL 队列面要建单-轮询-取结果三段。形状写在代码里而不是�
 from __future__ import annotations
 
 import base64
+import binascii
 import io
 import json
 
@@ -23,6 +24,7 @@ from windup_framework.gateway.classify import (
 from windup_framework.gateway.types import AdapterResult
 
 from .fal_queue import IN_FLIGHT, gateway_root, queue_prefix
+from .openai_video import json_object
 
 __all__ = ["OpenAIImagesFace", "FalQueueImageFace", "MIN_IMAGE_BYTES", "IMAGE_SIZE"]
 
@@ -146,16 +148,24 @@ class OpenAIImagesFace:
         )
 
     def _parse(self, client: httpx.Client, resp: httpx.Response) -> AdapterResult:
-        try:
-            payload = resp.json()
-        except ValueError:
-            return _invalid(resp, "响应不是 JSON")
-        items = payload.get("data") if isinstance(payload, dict) else None
-        if not items:
+        payload = json_object(resp)
+        if payload is None:
+            return _invalid(resp, "响应不是 JSON 对象")
+        items = payload.get("data")
+        if not isinstance(items, list) or not items:
             return _invalid(resp, "响应里没有 data[]")
         item = items[0]
+        # 元素不是对象也可能出现在 2xx 里(如 ``data: [1]``)。直接 .get() 会抛
+        # AttributeError,请求以未处理异常结束,而不是被收成 INVALID_RESPONSE 交给
+        # Gateway 判 —— 而此时费用已经产生。
+        if not isinstance(item, dict):
+            return _invalid(resp, f"data[0] 不是对象:{type(item).__name__}")
         if item.get("b64_json"):
-            return _sized(base64.b64decode(item["b64_json"]), resp)
+            try:
+                raw = base64.b64decode(item["b64_json"], validate=True)
+            except (binascii.Error, ValueError):
+                return _invalid(resp, "b64_json 不是合法的 base64")
+            return _sized(raw, resp)
         url = item.get("url")
         if not url:
             return _invalid(resp, "data[0] 既无 b64_json 也无 url")
@@ -208,10 +218,10 @@ class FalQueueImageFace:
                 return _transport(exc)
             if not 200 <= resp.status_code < 300:
                 return _http_failure(resp, model, self._root)
-            try:
-                job_id = resp.json().get("request_id")
-            except ValueError:
-                return _invalid(resp, "建单响应不是 JSON")
+            body_json = json_object(resp)
+            if body_json is None:
+                return _invalid(resp, "建单响应不是 JSON 对象")
+            job_id = body_json.get("request_id")
             if not job_id:
                 return _invalid(resp, "建单响应里没有 request_id")
             return self._follow(client, queue_prefix(endpoint), job_id, resp)
@@ -229,10 +239,10 @@ class FalQueueImageFace:
                 return _transport(exc)
             if not 200 <= st.status_code < 300:
                 return _http_failure(st, prefix, self._root)
-            try:
-                status = st.json().get("status")
-            except ValueError:
-                return _invalid(st, "轮询响应不是 JSON")
+            poll_json = json_object(st)
+            if poll_json is None:
+                return _invalid(st, "轮询响应不是 JSON 对象")
+            status = poll_json.get("status")
             if status not in IN_FLIGHT:
                 break
             time.sleep(self._poll_s)
@@ -250,13 +260,14 @@ class FalQueueImageFace:
             return _transport(exc)
         if not 200 <= res.status_code < 300:
             return _http_failure(res, prefix, self._root)
-        try:
-            images = res.json().get("images") or []
-        except ValueError:
-            return _invalid(res, "取结果响应不是 JSON")
-        url = images[0].get("url") if images else None
+        result_json = json_object(res)
+        if result_json is None:
+            return _invalid(res, "取结果响应不是 JSON 对象")
+        images = result_json.get("images")
+        first = images[0] if isinstance(images, list) and images else None
+        url = first.get("url") if isinstance(first, dict) else None
         if not url:
-            return _invalid(res, f"结果里没有图片 URL:{json.dumps(res.json())[:200]}")
+            return _invalid(res, f"结果里没有图片 URL:{json.dumps(result_json)[:200]}")
         try:
             got = client.get(url, headers={})
         except httpx.TransportError as exc:

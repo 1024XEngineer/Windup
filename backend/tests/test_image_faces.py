@@ -330,3 +330,55 @@ def test_fal_face_reports_a_drop_at_any_of_the_three_steps(marker):
     base = _queue_handler(["COMPLETED"])
     r = _face(FalQueueImageFace, _raise_on(marker, base), poll_s=0).submit_image("p", [], FLASH)
     assert not r.ok, f"{marker} 那一步断线被当成了成功"
+
+
+# ── 2xx 里的畸形形状:必须收成 INVALID_RESPONSE 交给 Gateway 判,不能抛出去 ──────
+# 抛出去的话请求以未处理异常结束,而此时费用已经产生。
+
+@pytest.mark.parametrize("payload", [None, [1, 2], "ok", 3])
+def test_openai_face_non_object_json_is_invalid_not_an_exception(payload):
+    r = _face(
+        OpenAIImagesFace, lambda req: httpx.Response(200, json=payload)
+    ).submit_image("p", [], "gpt-image-2")
+    assert not r.ok and r.error_type is ModelErrorType.INVALID_RESPONSE
+
+
+@pytest.mark.parametrize("data", [[1], ["x"], [None], "notalist", 5])
+def test_openai_face_non_object_data_item_is_invalid(data):
+    r = _face(
+        OpenAIImagesFace, lambda req: httpx.Response(200, json={"data": data})
+    ).submit_image("p", [], "gpt-image-2")
+    assert not r.ok and r.error_type is ModelErrorType.INVALID_RESPONSE
+
+
+def test_openai_face_invalid_base64_is_invalid_not_a_decode_crash():
+    r = _face(
+        OpenAIImagesFace,
+        lambda req: httpx.Response(200, json={"data": [{"b64_json": "!!!not base64!!!"}]}),
+    ).submit_image("p", [], "gpt-image-2")
+    assert not r.ok and "base64" in r.edge_fingerprint
+
+
+@pytest.mark.parametrize("payload", [None, [1], "queued"])
+def test_fal_face_non_object_submit_json_is_invalid(payload):
+    r = _face(
+        FalQueueImageFace, lambda req: httpx.Response(200, json=payload), poll_s=0
+    ).submit_image("p", [], FLASH)
+    assert not r.ok and r.error_type is ModelErrorType.INVALID_RESPONSE
+
+
+def test_fal_face_non_object_poll_json_is_invalid():
+    def handler(req):
+        if req.method == "POST":
+            return httpx.Response(200, json={"request_id": "req-1"})
+        return httpx.Response(200, json=["COMPLETED"])
+
+    r = _face(FalQueueImageFace, handler, poll_s=0).submit_image("p", [], FLASH)
+    assert not r.ok and r.error_type is ModelErrorType.INVALID_RESPONSE
+
+
+@pytest.mark.parametrize("images", [[1], ["u"], [None], "nope", {"url": "x"}])
+def test_fal_face_malformed_images_field_is_invalid(images):
+    face = _face(FalQueueImageFace, _queue_handler(["COMPLETED"], images=images), poll_s=0)
+    r = face.submit_image("p", [], FLASH)
+    assert not r.ok and r.error_type is ModelErrorType.INVALID_RESPONSE
