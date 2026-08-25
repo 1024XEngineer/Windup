@@ -41,6 +41,7 @@ export type PlaytestModelResult =
   | { readonly ok: false; readonly reason: 'outfit_not_found' }
 
 const DEFAULT_FRAME_DURATION_MS = 100
+const MAX_LOCOMOTION_TIMING_SAMPLES = 8
 
 function frameDuration(durationMs: number | null, fps: number): number {
   if (durationMs !== null && Number.isFinite(durationMs) && durationMs > 0) {
@@ -59,10 +60,23 @@ function orderedFrames(frames: readonly Frame[]): readonly Frame[] {
   return [...frames].sort((left, right) => left.index - right.index)
 }
 
-function playtestFrames(frames: readonly Frame[], fps: number): readonly PlaytestFrame[] {
-  return orderedFrames(frames).map((frame) => ({
+function playtestFrames(
+  action: Character['outfits'][number]['actions'][number],
+  frames: readonly Frame[],
+): readonly PlaytestFrame[] {
+  const ordered = orderedFrames(frames)
+  const isLoopingLocomotion = action.loop && (action.type === 'walk' || action.type === 'run')
+  // walk/run 的高帧数是同一循环的密集采样，不是把更多低帧率姿势依次追加。
+  // 逐帧时长来自原先最多 8 个姿势的节奏口径；超过后按采样密度等比压缩，
+  // 否则 32 帧 walk 会从约 1 秒被拉成 4 秒，位移照常推进就会明显滑步。
+  const timingScale =
+    isLoopingLocomotion && ordered.length > MAX_LOCOMOTION_TIMING_SAMPLES
+      ? MAX_LOCOMOTION_TIMING_SAMPLES / ordered.length
+      : 1
+
+  return ordered.map((frame) => ({
     imageUrl: frame.imageUrl,
-    durationMs: frameDuration(frame.durationMs, fps),
+    durationMs: frameDuration(frame.durationMs, action.fps) * timingScale,
   }))
 }
 
@@ -73,7 +87,7 @@ function playtestSequences(
 
   for (const sequence of action.sequences ?? []) {
     if (sequence.sourceDirection !== null) continue
-    const frames = playtestFrames(sequence.frames, action.fps)
+    const frames = playtestFrames(action, sequence.frames)
     if (frames.length === 0) continue
     sequences[sequence.direction] = {
       frames,
@@ -82,7 +96,7 @@ function playtestSequences(
     }
   }
 
-  const legacyEast = playtestFrames(action.frames, action.fps)
+  const legacyEast = playtestFrames(action, action.frames)
   if (sequences.east === undefined && legacyEast.length > 0) {
     sequences.east = { frames: legacyEast, sourceDirection: 'east', mirrorX: false }
     sequences.west = { frames: legacyEast, sourceDirection: 'east', mirrorX: true }
