@@ -166,6 +166,7 @@ type AgentConversationTurn =
       proposalId: string
       optimizedPrompt: string
       actionPrompt?: string
+      actionType?: 'walk'
       optimizationSummary: string
       proposalStatus: 'pending' | 'superseded' | 'adopted' | 'confirmed'
       scope?: 'workflow'
@@ -282,6 +283,9 @@ function readAgentConversation(
             ...('actionPrompt' in turn && typeof turn.actionPrompt === 'string'
               ? { actionPrompt: turn.actionPrompt }
               : {}),
+            ...('actionType' in turn && turn.actionType === 'walk'
+              ? { actionType: turn.actionType }
+              : {}),
             optimizationSummary: turn.optimizationSummary,
             proposalStatus: turn.proposalStatus,
             ...(scope ? { scope } : {}),
@@ -321,6 +325,7 @@ function createAgentSeed(turns: readonly AgentConversationTurn[]): {
             proposalId: pending.proposalId,
             optimizedPrompt: pending.optimizedPrompt,
             ...(pending.actionPrompt ? { actionPrompt: pending.actionPrompt } : {}),
+            ...(pending.actionType ? { actionType: pending.actionType } : {}),
             optimizationSummary: pending.optimizationSummary,
           }
         : null,
@@ -954,6 +959,7 @@ function QuickStartInput({
             proposalId: result.proposalId,
             optimizedPrompt: result.optimizedPrompt,
             ...(result.actionPrompt ? { actionPrompt: result.actionPrompt } : {}),
+            ...(result.actionType ? { actionType: result.actionType } : {}),
             optimizationSummary: result.optimizationSummary,
             proposalStatus: 'pending',
           })

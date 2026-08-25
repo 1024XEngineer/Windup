@@ -428,11 +428,11 @@ export function createQuickStartService({
     outfitId: string,
     actionDescription: string,
     spriteSize: Project['spriteSize'],
-    candidateCount?: 1,
+    options: { actionType?: 'walk'; candidateCount?: 1 } = {},
   ) {
     const prompt = actionDescription.trim()
     const name = boundedDisplayName(prompt, ACTION_DISPLAY_NAME_MAX_LENGTH) || '待机'
-    const type = inferGeneratableActionType(actionDescription)
+    const type = options.actionType ?? inferGeneratableActionType(actionDescription)
     await controller.addAction({ input: { outfitId, name, type, prompt: prompt || null, fps: 12 } })
     const run = controller.getWorkflow()
     const firstFrame = latestActionFirstFrame(run)
@@ -442,7 +442,7 @@ export function createQuickStartService({
     await controller.generateFirstFrame(firstFrame.id, {
       spriteWidth: spriteSize.width,
       spriteHeight: spriteSize.height,
-      ...(candidateCount ? { candidateCount } : {}),
+      ...(options.candidateCount ? { candidateCount: options.candidateCount } : {}),
     })
   }
 
@@ -701,7 +701,10 @@ export function createQuickStartService({
           }
           if (!outfitId) throw new Error('自动交付没有找到角色造型')
           const spriteSize = await resolveProjectSpriteSize(run.projectId)
-          await prepareAction(controller, outfitId, actionPrompt, spriteSize, 1)
+          await prepareAction(controller, outfitId, actionPrompt, spriteSize, {
+            actionType: automation.actionType,
+            candidateCount: 1,
+          })
           return true
         }
 
