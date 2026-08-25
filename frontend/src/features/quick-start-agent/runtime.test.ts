@@ -238,6 +238,30 @@ describe('createQuickStartAgent', () => {
     })
   })
 
+  it('carries the interpreted action into automatic delivery after one confirmation', async () => {
+    const { agent, startCharacterGeneration } = fixture(
+      decisionResult({
+        kind: 'proposal',
+        optimizedPrompt: '圆润可爱的卡皮巴拉，全身像',
+        actionPrompt: '开心地左右摇摆跳舞',
+        optimizationSummary: '我理解为一只正在开心跳舞的卡皮巴拉。',
+      }),
+    )
+    const proposal = await agent.start('生成一只跳舞的卡皮巴拉')
+    if (proposal.kind !== 'proposal') throw new Error('测试缺少提案')
+
+    await agent.confirmProposal(proposal.proposalId, proposal.optimizedPrompt, 'single', {
+      automaticDelivery: true,
+    })
+
+    expect(startCharacterGeneration).toHaveBeenCalledWith({
+      prompt: '圆润可爱的卡皮巴拉，全身像',
+      actionPrompt: '开心地左右摇摆跳舞',
+      directionalMovement: 'single',
+      automaticDelivery: true,
+    })
+  })
+
   it('restores a pending proposal without dispatching it', async () => {
     const planner = vi.fn<QuickStartPlanner>()
     const startCharacterGeneration = vi.fn<StartCharacterGenerationAction>(async () => ({

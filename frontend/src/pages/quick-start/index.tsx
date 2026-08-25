@@ -162,6 +162,7 @@ type AgentConversationTurn =
       kind: 'proposal'
       proposalId: string
       optimizedPrompt: string
+      actionPrompt?: string
       optimizationSummary: string
       proposalStatus: 'pending' | 'superseded' | 'adopted' | 'confirmed'
       scope?: 'workflow'
@@ -275,6 +276,9 @@ function readAgentConversation(
             kind: 'proposal',
             proposalId: turn.proposalId,
             optimizedPrompt: turn.optimizedPrompt,
+            ...('actionPrompt' in turn && typeof turn.actionPrompt === 'string'
+              ? { actionPrompt: turn.actionPrompt }
+              : {}),
             optimizationSummary: turn.optimizationSummary,
             proposalStatus: turn.proposalStatus,
             ...(scope ? { scope } : {}),
@@ -313,6 +317,7 @@ function createAgentSeed(turns: readonly AgentConversationTurn[]): {
         ? {
             proposalId: pending.proposalId,
             optimizedPrompt: pending.optimizedPrompt,
+            ...(pending.actionPrompt ? { actionPrompt: pending.actionPrompt } : {}),
             optimizationSummary: pending.optimizationSummary,
           }
         : null,
@@ -756,7 +761,7 @@ function QuickStartInput({
         ? {
             ...turn,
             content: confirmedPrompt
-              ? `${turn.optimizationSummary}\n\n提示词提案：${confirmedPrompt}`
+              ? `${turn.optimizationSummary}\n\n角色：${confirmedPrompt}${turn.actionPrompt ? `\n动作：${turn.actionPrompt}` : ''}`
               : turn.content,
             optimizedPrompt: confirmedPrompt ?? turn.optimizedPrompt,
             proposalStatus,
@@ -789,6 +794,24 @@ function QuickStartInput({
       setPromptState('ready')
       promptInput.current?.focus()
     }, PROMPT_REWRITE_MS)
+  }
+
+  async function confirmAutomaticProposal(proposalId: string) {
+    const state = agentSession.state
+    if (state.status !== 'proposal' || state.proposalId !== proposalId || generationStarting) {
+      return
+    }
+    setPromptState('confirmed')
+    try {
+      const result = await agentSession.confirmProposal(
+        state.optimizedPrompt,
+        directionalMovement,
+        { gameStyle, automaticDelivery: true },
+      )
+      if (result.kind === 'generated') await handoffGenerated(result)
+    } catch {
+      setPromptState('collecting')
+    }
   }
 
   function selectTemplateFile(event: ChangeEvent<HTMLInputElement>) {
@@ -903,10 +926,11 @@ function QuickStartInput({
         if (result.kind === 'proposal') {
           appendConversationTurn({
             role: 'assistant',
-            content: `${result.optimizationSummary}\n\n提示词提案：${result.optimizedPrompt}`,
+            content: `${result.optimizationSummary}\n\n角色：${result.optimizedPrompt}${result.actionPrompt ? `\n动作：${result.actionPrompt}` : ''}`,
             kind: 'proposal',
             proposalId: result.proposalId,
             optimizedPrompt: result.optimizedPrompt,
+            ...(result.actionPrompt ? { actionPrompt: result.actionPrompt } : {}),
             optimizationSummary: result.optimizationSummary,
             proposalStatus: 'pending',
           })
@@ -1042,6 +1066,7 @@ function QuickStartInput({
                     <PromptProposal
                       summary={turn.optimizationSummary}
                       prompt={turn.optimizedPrompt}
+                      actionPrompt={turn.actionPrompt}
                       status={turn.proposalStatus}
                       disabled={
                         turn.proposalStatus !== 'pending' ||
@@ -1050,6 +1075,7 @@ function QuickStartInput({
                         promptState === 'rewriting' ||
                         generationStarting
                       }
+                      onConfirm={() => void confirmAutomaticProposal(turn.proposalId)}
                       onFill={() => fillOptimizedPrompt(turn.proposalId)}
                     />
                   ) : (
@@ -1402,14 +1428,18 @@ function QuickStartInput({
 function PromptProposal({
   summary,
   prompt,
+  actionPrompt,
   status,
   disabled,
+  onConfirm,
   onFill,
 }: {
   summary: string
   prompt: string
+  actionPrompt?: string
   status: Extract<AgentConversationTurn, { kind: 'proposal' }>['proposalStatus']
   disabled: boolean
+  onConfirm: () => void
   onFill: () => void
 }) {
   return (
@@ -1418,19 +1448,31 @@ function PromptProposal({
       <blockquote className="max-w-2xl font-serif text-base leading-7 text-app-ink">
         {prompt}
       </blockquote>
+      {actionPrompt ? <p className="text-sm text-app-muted">动作：{actionPrompt}</p> : null}
       {status === 'pending' ? (
-        <button
-          type="button"
-          aria-label="填入输入框"
-          disabled={disabled}
-          onClick={onFill}
-          className="group inline-flex min-h-8 items-center gap-2 rounded-full pr-2 text-xs text-app-muted transition hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-45"
-        >
-          <span className="grid size-8 shrink-0 place-items-center rounded-full transition group-hover:bg-app-surface-muted">
-            <ArrowBendDownLeft aria-hidden="true" size={17} weight="bold" />
-          </span>
-          <span>填入输入框后，还可以继续修改</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            aria-label="确认并生成"
+            disabled={disabled}
+            onClick={onConfirm}
+            className="min-h-9 rounded-full bg-app-accent px-4 text-xs font-semibold text-app-canvas transition hover:bg-app-accent-hover disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            确认并生成
+          </button>
+          <button
+            type="button"
+            aria-label="填入输入框"
+            disabled={disabled}
+            onClick={onFill}
+            className="group inline-flex min-h-8 items-center gap-2 rounded-full pr-2 text-xs text-app-muted transition hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            <span className="grid size-8 shrink-0 place-items-center rounded-full transition group-hover:bg-app-surface-muted">
+              <ArrowBendDownLeft aria-hidden="true" size={17} weight="bold" />
+            </span>
+            <span>编辑后逐步确认</span>
+          </button>
+        </div>
       ) : status === 'superseded' ? (
         <p className="text-xs text-app-faint">已继续讨论</p>
       ) : status === 'adopted' ? (

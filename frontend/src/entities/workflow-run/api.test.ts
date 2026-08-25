@@ -205,6 +205,18 @@ describe('workflowRunApis', () => {
     expect(requestUrl).toBe('https://api.windup.test/workflow-runs/17')
   })
 
+  it('hydrates the persisted automatic delivery intent from the setup node', async () => {
+    const automaticNodes = structuredClone(nodes)
+    const setup = automaticNodes.find((node) => node.type === 'character-setup')
+    if (!setup || setup.type !== 'character-setup') throw new Error('测试缺少角色设定节点')
+    setup.automation = { mode: 'automatic', actionPrompt: '开心地左右摇摆跳舞' }
+    const apis = await loadWorkflowRunApis(async () =>
+      jsonResponse({ ...workflowRunDto, nodes: automaticNodes }),
+    )
+
+    await expect(apis.get('17')).resolves.toMatchObject({ nodes: automaticNodes })
+  })
+
   it('patches the complete node graph and uses the returned version', async () => {
     let request: Request | undefined
     const apis = await loadWorkflowRunApis(async (input, init) => {

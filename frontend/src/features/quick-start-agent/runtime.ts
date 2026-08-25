@@ -13,6 +13,7 @@ const QUICK_START_DECISION_FIELDS = new Set([
   'kind',
   'message',
   'optimizedPrompt',
+  'actionPrompt',
   'optimizationSummary',
 ])
 
@@ -45,6 +46,7 @@ export type QuickStartPlanner = (input: PlannerInput) => Promise<PlannerResult>
 
 export interface CharacterGenerationPlan {
   optimizedPrompt: string
+  actionPrompt?: string
   optimizationSummary: string
 }
 
@@ -70,6 +72,8 @@ export interface QuickStartAgentTurnOptions {
 export interface ConfirmProposalOptions {
   /** 画风原样透传给宿主；取值范围由宿主定义，本模块不认识业务对象。 */
   gameStyle?: string
+  /** 用户选择确认后由 Controller 自动交付，不再暴露中间候选选择。 */
+  automaticDelivery?: boolean
 }
 
 export interface QuickStartAgent {
@@ -87,8 +91,10 @@ export interface QuickStartAgent {
 /** 宿主从现有 WorkflowController 绑定出的单次生成动作；本 Feature 不拥有业务对象。 */
 export type StartCharacterGenerationAction = (input: {
   prompt: string
+  actionPrompt?: string
   directionalMovement?: QuickStartDirectionalMovement
   gameStyle?: string
+  automaticDelivery?: boolean
 }) => Promise<{ runId: string }>
 
 export interface CreateQuickStartAgentOptions {
@@ -169,7 +175,19 @@ export function parseCharacterGenerationPlan(value: unknown): CharacterGeneratio
   if (!optimizationSummary || optimizationSummary.length > MAX_OPTIMIZATION_SUMMARY_LENGTH) {
     throw new Error('生成提案的 optimizationSummary 无效')
   }
-  return { optimizedPrompt, optimizationSummary }
+  const actionPrompt =
+    typeof value.actionPrompt === 'string' ? value.actionPrompt.trim() : undefined
+  if (
+    value.actionPrompt !== undefined &&
+    (!actionPrompt || actionPrompt.length > MAX_PROMPT_LENGTH)
+  ) {
+    throw new Error('生成提案的 actionPrompt 无效')
+  }
+  return {
+    optimizedPrompt,
+    ...(actionPrompt ? { actionPrompt } : {}),
+    optimizationSummary,
+  }
 }
 
 export function parseQuickStartDecision(value: unknown): QuickStartDecision {
@@ -213,7 +231,8 @@ function abortError(): DOMException {
 }
 
 function proposalMessage(plan: CharacterGenerationPlan): string {
-  return `${plan.optimizationSummary}\n\n提示词提案：${plan.optimizedPrompt}`
+  const action = plan.actionPrompt ? `\n动作：${plan.actionPrompt}` : ''
+  return `${plan.optimizationSummary}\n\n角色：${plan.optimizedPrompt}${action}`
 }
 
 export function createQuickStartAgent({
@@ -276,6 +295,7 @@ export function createQuickStartAgent({
       const proposal: CharacterGenerationProposal = {
         proposalId: `proposal-${nextMessages.length}`,
         optimizedPrompt: decision.optimizedPrompt,
+        ...(decision.actionPrompt ? { actionPrompt: decision.actionPrompt } : {}),
         optimizationSummary: decision.optimizationSummary,
       }
       currentProposal = proposal
@@ -290,7 +310,7 @@ export function createQuickStartAgent({
     proposalId: string,
     prompt: string,
     directionalMovement: QuickStartDirectionalMovement = 'single',
-    { gameStyle }: ConfirmProposalOptions = {},
+    { gameStyle, automaticDelivery }: ConfirmProposalOptions = {},
   ): Promise<QuickStartAgentResult> {
     assertAuthorized()
     if (running) throw new Error('Planner 正在处理上一条输入')
@@ -309,8 +329,10 @@ export function createQuickStartAgent({
     try {
       const { runId } = await startCharacterGeneration({
         prompt: effectivePrompt,
+        ...(proposal.actionPrompt ? { actionPrompt: proposal.actionPrompt } : {}),
         directionalMovement,
         gameStyle,
+        ...(automaticDelivery ? { automaticDelivery: true } : {}),
       })
       return { kind: 'generated', runId, ...proposal, optimizedPrompt: effectivePrompt }
     } finally {

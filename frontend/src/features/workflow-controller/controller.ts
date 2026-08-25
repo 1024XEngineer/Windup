@@ -82,6 +82,8 @@ export interface GenerateFirstFrameOptions {
   sourceImageUrls?: Partial<Record<ActionDirection, GeneratedImage['url']>>
   /** 只影响本次请求的 prompt 覆盖值；不改写动作节点的原始输入。 */
   prompt?: string
+  /** 本阶段每个方向的候选数；自动交付固定为一张。 */
+  candidateCount?: ImageCandidateCount
 }
 
 export type RegenerationMode = 'regenerate' | 'refine'
@@ -121,6 +123,7 @@ export interface StartCharacterGenerationInput {
   prompt: string
   directionalMovement?: DirectionalMovement
   gameStyle?: ArtStyle
+  automaticDelivery?: { actionPrompt?: string }
 }
 
 export interface StartCharacterGenerationResult {
@@ -404,12 +407,14 @@ export function createWorkflowController({
     prompt,
     directionalMovement: selectedDirectionalMovement = 'single',
     gameStyle,
+    automaticDelivery,
   }: StartCharacterGenerationInput): Promise<StartCharacterGenerationResult> {
     ensureRunning()
     if (!prepareProject) {
       throw new Error('WorkflowController 未配置 Quick Start 项目准备能力')
     }
     const normalizedPrompt = nonEmpty(prompt, '角色描述')
+    const actionPrompt = automaticDelivery?.actionPrompt?.trim() || null
     const project = await prepareProject(normalizedPrompt, selectedDirectionalMovement, {
       gameStyle,
     })
@@ -428,6 +433,9 @@ export function createWorkflowController({
           generations: [],
           error: null,
           input: { prompt: normalizedPrompt, referenceMedia: [] },
+          ...(automaticDelivery
+            ? { automation: { mode: 'automatic' as const, actionPrompt } }
+            : {}),
         },
         {
           id: 'character-template',
@@ -445,6 +453,7 @@ export function createWorkflowController({
       spriteWidth: project.spriteSize.width,
       spriteHeight: project.spriteSize.height,
       directions: ['east'],
+      ...(automaticDelivery ? { candidateCount: 1 as const } : {}),
     })
     return { runId: requireWorkflow().id }
   }
@@ -834,6 +843,9 @@ export function createWorkflowController({
           spriteHeight: options.spriteHeight,
           referenceMedia: [sourceImage ?? (characterTemplateReference as MediaReference)],
           direction,
+          ...(options.candidateCount === undefined
+            ? {}
+            : { candidateCount: options.candidateCount }),
         }
         return input
       },
