@@ -5,14 +5,21 @@ name: Version
 # 两个 job 而不是一个,因为两件事的触发时机不同:
 #   gate    在 PR 上跑。VERSION 非法或回退要在合并前就红 —— 合进 main 之后才炸的话,
 #           坏的是一次已经在 main 上的提交,而部署只认 Release。
-#   release 等 Backend CI 绿之后跑。直接挂 push 会在测试未过时就发版(#334 第四节)。
+#   release 等**全部必需 CI**都绿之后跑。直接挂 push 会在测试未过时就发版(#334 第四节)。
 on:
   pull_request:
+  # 列两条 workflow 时是「任一完成即触发」而不是「全部完成」,所以先到的那条触发进来时
+  # 另一条可能还在跑甚至已经红了 —— 真正的门在下面 confirm-ci 那一步,这里只负责唤醒。
   workflow_run:
-    workflows: ["Backend CI"]
+    workflows: ["Backend CI", "Frontend CI"]
     types: [completed]
     branches: [main]
   workflow_dispatch:
+
+env:
+  # 必需绿的 workflow。带路径过滤的不能列进来:多数提交上它根本不会跑,
+  # 等一个不存在的结论会把发版永久卡死(Pixel grid reconstructor CI 即是此例)。
+  REQUIRED_WORKFLOWS: "Backend CI,Frontend CI"
 
 concurrency:
   group: version-${{ github.event.pull_request.number || 'main' }}
@@ -62,6 +69,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read      # 要读同一提交上其它 workflow 的结论
     steps:
       - uses: actions/checkout@v7
         with:
@@ -70,8 +78,31 @@ jobs:
           # main —— CI 绿之后又合进来的提交会一起被打进 tag,而它们一行都没跑过测试。
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
+      - name: 确认全部必需 CI 都绿
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          ok=true
+          runs="$(gh api "repos/${{ github.repository }}/actions/runs?head_sha=$SHA&per_page=100")"
+          IFS=, read -ra want <<< "$REQUIRED_WORKFLOWS"
+          for wf in "${want[@]}"; do
+            # 取该 workflow 在这个提交上**最后一次**运行的结论:重跑过的话,早先那次
+            # 的红不应该挡住已经修好的绿。
+            c="$(jq -r --arg n "$wf" \
+                 '[.workflow_runs[] | select(.name==$n)] | sort_by(.run_started_at) | last
+                  | if . == null then "未运行" else (.conclusion // "进行中") end' <<< "$runs")"
+            echo "$wf = $c"
+            [ "$c" = success ] || ok=false
+          done
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
+          [ "$ok" = true ] || echo "尚有必需 CI 未通过,本次不发版"
+
       - name: 读 VERSION 定版本
         id: ver
+        if: steps.ci.outputs.ok == 'true' 
         run: |
           set -euo pipefail
           # 发版时机由「改 VERSION 的那个 PR」决定,不由提交类型自动进位:一批功能被
@@ -79,7 +110,7 @@ jobs:
           python3 scripts/version_gate.py decide VERSION | tee -a "$GITHUB_OUTPUT"
 
       - name: 生成 Release notes
-        if: steps.ver.outputs.go == 'true'
+        if: steps.ci.outputs.ok == 'true' && steps.ver.outputs.go == 'true'
         run: |
           set -euo pipefail
           {
@@ -100,7 +131,7 @@ jobs:
           cat notes.md
 
       - name: 打 tag 并发布
-        if: steps.ver.outputs.go == 'true'
+        if: steps.ci.outputs.ok == 'true' && steps.ver.outputs.go == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           NEXT: ${{ steps.ver.outputs.next }}
