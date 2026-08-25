@@ -321,7 +321,9 @@ def test_chat_gateway_unknown_fails_without_retry():
     assert adapter.calls == ["gpt-4o-mini"]
 
 
-def test_chat_gateway_retries_openai_connection_error(monkeypatch, caplog):
+def test_chat_gateway_retries_openai_connection_error_with_unknown_cause(
+    monkeypatch, caplog
+):
     caplog.set_level(logging.INFO, logger="windup.gateway")
     req = httpx.Request("POST", "https://api.modelink.ai/v1/chat/completions")
     calls = {"n": 0}
@@ -333,7 +335,7 @@ def test_chat_gateway_retries_openai_connection_error(monkeypatch, caplog):
         async def ainvoke(self, messages, **kwargs):
             calls["n"] += 1
             if calls["n"] == 1:
-                cause = httpx.ConnectError("Connection error", request=req)
+                cause = RuntimeError("transport failed before response")
                 raise APIConnectionError(request=req) from cause
             return "pong"
 
