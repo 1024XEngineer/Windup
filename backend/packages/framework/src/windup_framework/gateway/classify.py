@@ -192,7 +192,6 @@ def classify_exception(exc: BaseException) -> tuple[ModelErrorType, int | None, 
         ):
             return ModelErrorType.UNREACHED, None, edge
     for item in chain:
-        if isinstance(item, APIConnectionError) and item.__cause__ is None:
-            if item.__suppress_context__ or item.__context__ is None:
-                return ModelErrorType.UNREACHED, None, edge
+        if isinstance(item, APIConnectionError):
+            return ModelErrorType.UNREACHED, None, edge
     return ModelErrorType.UNKNOWN, None, edge
