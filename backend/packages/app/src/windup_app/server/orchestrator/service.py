@@ -23,6 +23,7 @@ from windup_app.server.orchestrator.model import (
     GenerationTask,
     GenerationType,
     TaskStatus,
+    initial_direction_set_output,
 )
 
 
@@ -62,13 +63,26 @@ class AiGenerationService(GenerationService):
             task_type=GenerationType.CHARACTER_DIRECTION_SET,
             input_payload=dataclasses.asdict(input),
         )
-        billing.reserve_for_task(
-            session,
-            user_id=user_id,
-            task_id=task.id,
-            task_type=task.task_type,
-            model_calls=len(input.directions) * max(1, input.num_images),
+        generated_direction_count = sum(
+            direction is not input.anchor_direction for direction in input.directions
         )
+        if generated_direction_count:
+            billing.reserve_for_task(
+                session,
+                user_id=user_id,
+                task_id=task.id,
+                task_type=task.task_type,
+                model_calls=generated_direction_count * max(1, input.num_images),
+            )
+        else:
+            task_repo.update_progress(
+                session,
+                task.id,
+                GenerationType.CHARACTER_DIRECTION_SET.value,
+                dataclasses.asdict(initial_direction_set_output(input)),
+                status=TaskStatus.COMPLETED,
+            )
+            task = task_repo.get_task(session, task.id)
         return task
 
     def retry_failed_directions(

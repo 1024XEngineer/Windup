@@ -475,8 +475,14 @@
         "type": "object"
       },
       "CharacterDirectionSetGenerateRequest": {
-        "description": "一次提交项目规格要求的全部角色母版方向。",
+        "additionalProperties": false,
+        "description": "基于角色已确认母版生成项目规格要求的其余方向。",
         "properties": {
+          "character_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Character Id",
+            "type": "integer"
+          },
           "height": {
             "default": 1024,
             "maximum": 2048.0,
@@ -506,17 +512,6 @@
             "title": "Prompt",
             "type": "string"
           },
-          "reference_image_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reference Image Url"
-          },
           "width": {
             "default": 1024,
             "maximum": 2048.0,
@@ -526,7 +521,8 @@
           }
         },
         "required": [
-          "project_id"
+          "project_id",
+          "character_id"
         ],
         "title": "CharacterDirectionSetGenerateRequest",
         "type": "object"

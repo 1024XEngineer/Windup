@@ -21,6 +21,9 @@ from windup_framework.config.quota import settings as quota_settings
 from windup_framework.db.base import Base
 
 
+_MASTER_URL = "https://cdn.example.com/masters/confirmed-east.png"
+
+
 @pytest.fixture
 def direction_session_factory():
     engine = create_engine(
@@ -47,6 +50,8 @@ def direction_session_factory():
 
 def _four_way_input() -> CharacterDirectionSetInput:
     return CharacterDirectionSetInput(
+        character_id=42,
+        reference_image_url=_MASTER_URL,
         prompt="像素风勇者",
         width=64,
         height=64,
@@ -60,7 +65,7 @@ def _four_way_input() -> CharacterDirectionSetInput:
     )
 
 
-def test_direction_set_submission_reserves_all_planned_calls(
+def test_direction_set_submission_does_not_charge_for_confirmed_master(
     direction_session_factory,
 ):
     service = AiGenerationService()
@@ -83,7 +88,7 @@ def test_direction_set_submission_reserves_all_planned_calls(
             "south",
         ]
         assert task.input_payload["billing_attempt"] == 0
-        assert account.frozen == 4 * quota_settings.generate_image_cost
+        assert account.frozen == 3 * quota_settings.generate_image_cost
 
 
 def test_direction_set_keeps_successes_and_only_retries_failed_direction(
@@ -95,6 +100,8 @@ def test_direction_set_keeps_successes_and_only_retries_failed_direction(
     class _ImageExecutor:
         def _produce_image(self, input, _constraints):
             nonlocal fail_north
+            if input.reference_image_url != _MASTER_URL:
+                raise RuntimeError("direction generation lost confirmed master")
             calls.append(input.direction)
             if input.direction is ActionDirection.NORTH and fail_north:
                 raise RuntimeError("north provider failed")
@@ -127,10 +134,11 @@ def test_direction_set_keeps_successes_and_only_retries_failed_direction(
         assert partial.status is TaskStatus.PARTIAL
         by_direction = {item.direction: item for item in partial.result.directions}
         assert by_direction[ActionDirection.EAST].status == "completed"
+        assert by_direction[ActionDirection.EAST].image_urls == [_MASTER_URL]
         assert by_direction[ActionDirection.NORTH].status == "failed"
         assert by_direction[ActionDirection.NORTH].image_urls == []
         assert account.frozen == 0
-        assert account.total_spent == 3 * quota_settings.generate_image_cost
+        assert account.total_spent == 2 * quota_settings.generate_image_cost
 
         retry = service.retry_failed_directions(session, task=partial)
         assert retry.status is TaskStatus.PENDING
@@ -149,14 +157,13 @@ def test_direction_set_keeps_successes_and_only_retries_failed_direction(
     assert done.status is TaskStatus.COMPLETED
     assert all(item.status == "completed" for item in done.result.directions)
     assert calls == [
-        ActionDirection.EAST,
         ActionDirection.WEST,
         ActionDirection.NORTH,
         ActionDirection.SOUTH,
         ActionDirection.NORTH,
     ]
     assert account.frozen == 0
-    assert account.total_spent == 4 * quota_settings.generate_image_cost
+    assert account.total_spent == 3 * quota_settings.generate_image_cost
 
 
 def test_worker_dispatches_direction_set_to_aggregate_executor(
@@ -196,6 +203,8 @@ def test_direction_set_settlement_uses_frozen_price_not_current_price(
 
     class _ImageExecutor:
         def _produce_image(self, input, _constraints):
+            if input.reference_image_url != _MASTER_URL:
+                raise RuntimeError("direction generation lost confirmed master")
             return [f"https://cdn.example.com/{input.direction.value}.png"], None
 
     service = AiGenerationService()
@@ -220,4 +229,4 @@ def test_direction_set_settlement_uses_frozen_price_not_current_price(
             select(CreditAccount).where(CreditAccount.user_id == 1)
         )
 
-    assert account.total_spent == 4 * initial_price
+    assert account.total_spent == 3 * initial_price

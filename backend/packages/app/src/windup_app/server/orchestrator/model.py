@@ -92,18 +92,25 @@ class CharacterImageInput:
 
 @dataclass
 class CharacterDirectionSetInput:
-    """按项目规格生成一整套角色母版；方向集合只能由服务端确定。"""
+    """基于已确认角色母版生成项目所需的其余真实方向。"""
 
-    reference_image_url: str | None = None
+    character_id: int
+    reference_image_url: str
     prompt: str = ""
     negative_prompt: str = ""
     width: int = 1024
     height: int = 1024
     num_images: int | None = None
     directions: list[ActionDirection] = field(default_factory=list)
+    anchor_direction: ActionDirection = ActionDirection.EAST
     billing_attempt: int = 0
 
     def __post_init__(self) -> None:
+        self.reference_image_url = self.reference_image_url.strip()
+        if not self.reference_image_url:
+            raise ValueError("方向集生成必须绑定已确认角色母版")
+        if self.anchor_direction not in self.directions:
+            raise ValueError("已确认母版方向必须属于项目方向集")
         if self.num_images is None:
             self.num_images = 2
 
@@ -190,6 +197,31 @@ class CharacterDirectionSetOutput:
 
     type: str = "character_direction_set"
     directions: list[DirectionImageResult] = field(default_factory=list)
+
+
+def initial_direction_set_output(
+    input: CharacterDirectionSetInput,
+) -> CharacterDirectionSetOutput:
+    """把已确认母版作为锚点方向，只有其余方向需要调用 Provider。"""
+
+    return CharacterDirectionSetOutput(
+        directions=[
+            DirectionImageResult(
+                direction=direction,
+                status=(
+                    TaskStatus.COMPLETED.value
+                    if direction is input.anchor_direction
+                    else TaskStatus.PENDING.value
+                ),
+                image_urls=(
+                    [input.reference_image_url]
+                    if direction is input.anchor_direction
+                    else []
+                ),
+            )
+            for direction in input.directions
+        ]
+    )
 
 
 @dataclass
