@@ -491,6 +491,12 @@ describe('QuickStartPage', () => {
     expect(actions.every((button) => button.querySelector('svg'))).toBe(true)
     expect(actions.every((button) => button.querySelector('[role="tooltip"]'))).toBe(true)
 
+    const relatedActions = actions[0]?.closest<HTMLElement>('[data-agent-actions]')
+    expect(relatedActions?.className).not.toMatch(/\b(border|bg-app-surface\/80|p-1)\b/)
+    expect(
+      actions.slice(0, 3).every((button) => !button.className.match(/\bborder(?:-\S+)?\b/)),
+    ).toBe(true)
+
     fireEvent.click(actions[0]!)
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith('像素骑士'))
   })
