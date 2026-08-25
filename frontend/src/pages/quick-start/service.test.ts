@@ -347,7 +347,7 @@ describe('createQuickStartService', () => {
           generations: [],
           error: null,
           input: { prompt: '圆润可爱的卡皮巴拉，全身像', referenceMedia: [] },
-          automation: { mode: 'automatic', actionPrompt: '开心地左右摇摆跳舞' },
+          automation: { mode: 'automatic', actionPrompt: '轻快地向前行走' },
         },
         {
           id: 'character-template',
@@ -361,6 +361,11 @@ describe('createQuickStartService', () => {
         },
       ],
     }
+    const setup = run.nodes.find((node) => node.type === 'character-setup')
+    if (!setup || setup.type !== 'character-setup' || !setup.automation) {
+      throw new Error('测试缺少自动交付意图')
+    }
+    Object.assign(setup.automation, { actionType: 'walk' })
     const workflowRunApis = createWorkflowRunApis([run])
     const generationApis = automaticDeliveryGenerationApis()
     const onAsyncError = vi.fn()
@@ -393,15 +398,23 @@ describe('createQuickStartService', () => {
       expect.objectContaining({ type: 'first_frame', candidateCount: 1 }),
     )
     expect(generationApis.create).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'first_frame', actionType: 'walk' }),
+    )
+    expect(generationApis.create).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'complete_animation',
-        prompt: '开心地左右摇摆跳舞',
+        actionType: 'walk',
+        prompt: '轻快地向前行走',
       }),
     )
     expect(session.getWorkflow().nodes.find((node) => node.type === 'review')).toMatchObject({
       status: 'active',
       phase: 'reviewing',
     })
+    await session.approveReview()
+    expect(character.outfits.flatMap((outfit) => outfit.actions)).toEqual([
+      expect.objectContaining({ type: 'walk', name: '轻快地向前行走' }),
+    ])
   })
 
   it('自动交付没有动作时确认唯一母版后停止', async () => {
