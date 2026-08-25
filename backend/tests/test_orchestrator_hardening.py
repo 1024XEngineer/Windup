@@ -367,6 +367,7 @@ def test_fetch_rejects_when_content_length_lies(monkeypatch):
 
 @pytest.mark.parametrize(("status", "expected"), [
     (TaskStatus.COMPLETED, "completed"),
+    (TaskStatus.PARTIAL, "partial"),
     (TaskStatus.FAILED, "failed"),
     (TaskStatus.RUNNING, "task_update"),
 ])

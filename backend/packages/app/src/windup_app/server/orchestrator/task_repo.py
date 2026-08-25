@@ -19,7 +19,9 @@ from sqlalchemy.orm import Session
 
 from windup_app.server.orchestrator.model import (
     CharacterActionOutput,
+    CharacterDirectionSetOutput,
     CharacterImageOutput,
+    DirectionImageResult,
     GenerationTask,
     GenerationTaskRecord,
     GenerationType,
@@ -58,6 +60,7 @@ def bind_event_bus(event_bus) -> None:
 # EventSource 会每 3 秒重连、每次重收同一条 completed(2026-08-10 机器审逮到)。
 _STATUS_EVENT = {
     TaskStatus.COMPLETED.value: "completed",
+    TaskStatus.PARTIAL.value: "partial",
     TaskStatus.FAILED.value: "failed",
 }
 
@@ -210,6 +213,38 @@ def update_result(
     _publish_task_update(task_id, _record_to_domain(record))
 
 
+def update_progress(
+    session: Session,
+    task_id: int,
+    result_type: str,
+    result: dict,
+    *,
+    status: TaskStatus = TaskStatus.RUNNING,
+    error_message: str | None = None,
+) -> None:
+    """保存可恢复的中间结果，不把任务强制改成 completed。"""
+    record = session.get(GenerationTaskRecord, task_id)
+    if record is None:
+        return
+    record.result_type = result_type
+    record.result = result
+    record.status = status.value
+    record.error_message = error_message
+    record.update_at = datetime.now(timezone.utc)
+    session.flush()
+    _publish_task_update(task_id, _record_to_domain(record))
+
+
+def update_input_payload(session: Session, task_id: int, input_payload: dict) -> None:
+    """更新可重试任务的执行轮次等持久化入参。"""
+    record = session.get(GenerationTaskRecord, task_id)
+    if record is None:
+        return
+    record.input_payload = input_payload
+    record.update_at = datetime.now(timezone.utc)
+    session.flush()
+
+
 # ── 读取 ─────────────────────────────────────────────────────────────────
 
 
@@ -272,7 +307,7 @@ def _record_to_domain(record: GenerationTaskRecord) -> GenerationTask:
 def _deserialize_result(
     result_type: str | None,
     raw: dict | None,
-) -> CharacterImageOutput | CharacterActionOutput | None:
+) -> CharacterImageOutput | CharacterDirectionSetOutput | CharacterActionOutput | None:
     """根据 ``result_type`` 将 JSON dict 反序列化为对应的 dataclass。"""
     if raw is None or result_type is None:
         return None
@@ -305,5 +340,19 @@ def _deserialize_result(
             # 落库再读回的这条路上漏掉它，查询接口与断线重连拿到的已完成任务就没有几何，
             # 前端只能回落到自己那份常数 —— 而实时事件那条路是好的，两条路给出不同的导出结果。
             geometry=raw.get("geometry"),
+        )
+    if result_type == "character_direction_set":
+        return CharacterDirectionSetOutput(
+            type=raw.get("type", "character_direction_set"),
+            directions=[
+                DirectionImageResult(
+                    direction=ActionDirection(item["direction"]),
+                    status=item.get("status", TaskStatus.PENDING.value),
+                    image_urls=list(item.get("image_urls") or []),
+                    quality=item.get("quality"),
+                    error_message=item.get("error_message"),
+                )
+                for item in raw.get("directions", [])
+            ],
         )
     return None

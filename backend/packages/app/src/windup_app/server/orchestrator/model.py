@@ -25,6 +25,7 @@ class GenerationType(StrEnum):
     """生成任务类型——每新增一种生成能力，在此加一个成员。"""
 
     CHARACTER_IMAGE = "character_image"  # 角色参考图
+    CHARACTER_DIRECTION_SET = "character_direction_set"  # 一次生成项目所需全部母版方向
     CHARACTER_ACTION = "character_action"  # 角色动作帧序列
 
 
@@ -62,6 +63,7 @@ class TaskStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
+    PARTIAL = "partial"
     FAILED = "failed"
 
 
@@ -82,6 +84,24 @@ class CharacterImageInput:
     # 而不是各个构造点:MQ 重建时若另写一份默认值,缺省就会从 2 变成另一份数。
     num_images: int | None = None
     direction: ActionDirection = ActionDirection.EAST
+
+    def __post_init__(self) -> None:
+        if self.num_images is None:
+            self.num_images = 2
+
+
+@dataclass
+class CharacterDirectionSetInput:
+    """按项目规格生成一整套角色母版；方向集合只能由服务端确定。"""
+
+    reference_image_url: str | None = None
+    prompt: str = ""
+    negative_prompt: str = ""
+    width: int = 1024
+    height: int = 1024
+    num_images: int | None = None
+    directions: list[ActionDirection] = field(default_factory=list)
+    billing_attempt: int = 0
 
     def __post_init__(self) -> None:
         if self.num_images is None:
@@ -154,6 +174,25 @@ class CharacterImageOutput:
 
 
 @dataclass
+class DirectionImageResult:
+    """方向集中的一个独立方向；成功项在局部重试时保持不动。"""
+
+    direction: ActionDirection
+    status: str = TaskStatus.PENDING.value
+    image_urls: list[str] = field(default_factory=list)
+    quality: dict | None = None
+    error_message: str | None = None
+
+
+@dataclass
+class CharacterDirectionSetOutput:
+    """一个 task_id 下的 1/4/8 向母版生成进度与产物。"""
+
+    type: str = "character_direction_set"
+    directions: list[DirectionImageResult] = field(default_factory=list)
+
+
+@dataclass
 class CharacterActionFrame:
     """动作帧——前端写入 ``CharacterAction.frames[]``。"""
 
@@ -208,14 +247,23 @@ class GenerationTask:
     task_type: GenerationType = GenerationType.CHARACTER_IMAGE
     status: TaskStatus = TaskStatus.PENDING
     input_payload: dict | None = None
-    result: CharacterImageOutput | CharacterActionOutput | None = None
+    result: (
+        CharacterImageOutput
+        | CharacterDirectionSetOutput
+        | CharacterActionOutput
+        | None
+    ) = None
     error_message: str | None = None
     create_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     update_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
     def is_terminal(self) -> bool:
-        return self.status in (TaskStatus.COMPLETED, TaskStatus.FAILED)
+        return self.status in (
+            TaskStatus.COMPLETED,
+            TaskStatus.PARTIAL,
+            TaskStatus.FAILED,
+        )
 
 
 # -- ORM -----------------------------------------------------------------

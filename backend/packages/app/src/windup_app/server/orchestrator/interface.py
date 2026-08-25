@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from windup_app.server.orchestrator.model import (
     CharacterActionInput,
+    CharacterDirectionSetInput,
     CharacterImageInput,
     GenerationTask,
 )
@@ -57,6 +58,17 @@ class GenerationService(ABC):
         入参包含角色 ID、动作类型和参考素材；出参为 ``CharacterActionOutput``，
         前端拿到 ``frames[]`` 后回填 ``character_data.outfits[].actions[].frames[]``。
         """
+
+    @abstractmethod
+    def generate_character_direction_set(
+        self,
+        session: Session,
+        *,
+        user_id: int,
+        project_id: int,
+        input: CharacterDirectionSetInput,
+    ) -> GenerationTask:
+        """提交一个包含项目全部必需母版方向的任务。"""
 
     # -- 查询 ----------------------------------------------------------------
 

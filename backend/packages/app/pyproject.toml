@@ -16,7 +16,6 @@ dependencies = [
 
 [project.scripts]
 windup = "windup_app.bootstrap.app:main"
-windup-accept-full-directions = "windup_app.acceptance.full_direction_provider:main"
 
 [tool.uv.sources]
 windup-common = { workspace = true }

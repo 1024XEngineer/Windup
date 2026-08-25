@@ -18,6 +18,7 @@ from windup_app.server.orchestrator import billing, task_repo
 from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
+    CharacterDirectionSetInput,
     CharacterImageInput,
     GenerationType,
     TaskStatus,
@@ -101,11 +102,26 @@ def _action_input(payload: dict) -> CharacterActionInput:
     )
 
 
+def _direction_set_input(payload: dict) -> CharacterDirectionSetInput:
+    raw_num_images = payload.get("num_images")
+    return CharacterDirectionSetInput(
+        reference_image_url=payload.get("reference_image_url"),
+        prompt=payload.get("prompt") or "",
+        negative_prompt=payload.get("negative_prompt") or "",
+        width=int(payload.get("width") or 1024),
+        height=int(payload.get("height") or 1024),
+        num_images=int(raw_num_images) if raw_num_images is not None else None,
+        directions=[ActionDirection(value) for value in payload.get("directions") or []],
+        billing_attempt=int(payload.get("billing_attempt") or 0),
+    )
+
+
 def handle_generation(
     payload: dict[str, Any],
     *,
     run_image_task: Callable[..., Any],
     run_action_task: Callable[..., Any],
+    run_direction_set_task: Callable[..., Any] | None = None,
 ) -> None:
     task_id = int(payload["task_id"])
     task_type = str(payload.get("task_type") or "")
@@ -116,13 +132,14 @@ def handle_generation(
         if task is None:
             logger.warning("生成任务不存在 | task_id=%d", task_id)
             return
-        if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+        if task.is_terminal:
             logger.info("任务已终态，跳过执行 | task_id=%d status=%s", task_id, task.status)
             return
         if task.status is TaskStatus.RUNNING:
             logger.info("任务 RUNNING 中，延后重试 | task_id=%d", task_id)
             raise HandlerDeferred(f"task {task_id} still running")
-        if not billing.has_open_freeze(session, task_id):
+        billing_attempt = billing.attempt_for_task(task.task_type, task.input_payload)
+        if not billing.has_open_freeze(session, task_id, billing_attempt):
             logger.warning("任务无开放冻结，跳过 | task_id=%d", task_id)
             return
 
@@ -133,6 +150,10 @@ def handle_generation(
 
     if task_type == GenerationType.CHARACTER_IMAGE.value:
         run_image_task(task_id, _image_input(input_payload), project_id)
+    elif task_type == GenerationType.CHARACTER_DIRECTION_SET.value:
+        if run_direction_set_task is None:
+            raise RuntimeError("未注入 run_direction_set_task")
+        run_direction_set_task(task_id, _direction_set_input(input_payload), project_id)
     elif task_type == GenerationType.CHARACTER_ACTION.value:
         run_action_task(task_id, _action_input(input_payload), project_id)
     else:
@@ -172,6 +193,7 @@ def dispatch_handler(
     run_image_task: Callable[..., Any],
     run_action_task: Callable[..., Any],
     resume_action_poll: Callable[..., Any] | None = None,
+    run_direction_set_task: Callable[..., Any] | None = None,
 ) -> None:
     handler = HANDLERS.get(msg_type)
     if handler is None:
@@ -181,6 +203,7 @@ def dispatch_handler(
         run_image_task=run_image_task,
         run_action_task=run_action_task,
         resume_action_poll=resume_action_poll,
+        run_direction_set_task=run_direction_set_task,
     )
 
 
@@ -193,12 +216,14 @@ def _dispatch_generation(
     *,
     run_image_task: Callable[..., Any],
     run_action_task: Callable[..., Any],
+    run_direction_set_task: Callable[..., Any] | None = None,
     **_deps: Any,
 ) -> None:
     handle_generation(
         payload,
         run_image_task=run_image_task,
         run_action_task=run_action_task,
+        run_direction_set_task=run_direction_set_task,
     )
 
 

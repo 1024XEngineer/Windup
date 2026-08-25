@@ -25,7 +25,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from sqlalchemy.orm import Session
 
 from windup_common.enums.biz_code import BizCode
-from windup_common.directions import ActionDirection, is_required_direction
+from windup_common.directions import (
+    ActionDirection,
+    is_required_direction,
+    required_directions_for_movement,
+)
 from windup_common.exceptions import BizException
 from windup_common.models import CharacterStance
 from windup_common.result import Response
@@ -34,7 +38,7 @@ from windup_framework.db.session import SessionLocal
 from windup_framework.mq.publisher import MqPublisher
 
 from windup_app.server.character.model import Character, CharacterData
-from windup_app.server.orchestrator import task_repo
+from windup_app.server.orchestrator import billing, task_repo
 from windup_app.server.mq.catalog import (
     GENERATION_STREAM,
     msg_type_for_generation,
@@ -43,6 +47,7 @@ from windup_app.server.orchestrator.service import service as generation_service
 from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
+    CharacterDirectionSetInput,
     CharacterImageInput,
     GenerationTask,
 )
@@ -61,7 +66,7 @@ router = APIRouter(prefix="/generation", tags=["generation"])
 _HEARTBEAT_TIMEOUT = 30.0
 
 # 终态事件
-_TERMINAL_EVENTS = {"completed", "failed"}
+_TERMINAL_EVENTS = {"completed", "partial", "failed"}
 
 
 def _poll_terminal_snapshot(task_id: int, project_id: int) -> tuple[str, dict] | None:
@@ -175,6 +180,18 @@ class CharacterImageGenerateRequest(BaseModel):
     height: int = Field(default=1024, ge=64, le=2048)
     num_images: int = Field(default=3, ge=1, le=4)
     direction: ActionDirection = ActionDirection.EAST
+
+
+class CharacterDirectionSetGenerateRequest(BaseModel):
+    """一次提交项目规格要求的全部角色母版方向。"""
+
+    project_id: int = Field(gt=0)
+    reference_image_url: str | None = None
+    prompt: str = ""
+    negative_prompt: str = ""
+    width: int = Field(default=1024, ge=64, le=2048)
+    height: int = Field(default=1024, ge=64, le=2048)
+    num_images: int = Field(default=3, ge=1, le=4)
 
 
 class CharacterActionGenerateRequest(BaseModel):
@@ -368,6 +385,7 @@ def _publish_generation_after_commit(
     *,
     task_id: int,
     task_type: str,
+    dedupe_key: str | None = None,
 ) -> None:
     """注册 after_commit 回调:session 提交成功后再投递到 Redis Stream。"""
     msg_type = msg_type_for_generation(task_type)
@@ -376,7 +394,7 @@ def _publish_generation_after_commit(
         stream=GENERATION_STREAM,
         msg_type=msg_type,
         payload={"task_id": task_id, "task_type": task_type},
-        dedupe_key=f"generation:{task_id}",
+        dedupe_key=dedupe_key or f"generation:{task_id}",
     )
     publisher.register_after_commit(session, message_id)
 
@@ -416,6 +434,42 @@ def submit_image_generation(
         task_type=task.task_type.value,
     )
     return Response.success(_task_to_out(task), message="任务已提交")
+
+
+@router.post("/image-set", response_model=Response[GenerationTaskOut])
+def submit_direction_set_generation(
+    body: CharacterDirectionSetGenerateRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[GenerationTaskOut]:
+    """提交一个方向集任务；方向集合由项目规格唯一决定。"""
+    user_id = request.state.current_user.id
+    project = _get_project_or_raise(session, body.project_id, user_id)
+    _validate_project_size(project, body.width, body.height)
+    input_data = CharacterDirectionSetInput(
+        reference_image_url=body.reference_image_url,
+        prompt=body.prompt,
+        negative_prompt=body.negative_prompt,
+        width=body.width,
+        height=body.height,
+        num_images=body.num_images,
+        directions=list(
+            required_directions_for_movement(project.directional_movement)
+        ),
+    )
+    task = generation_service.generate_character_direction_set(
+        session,
+        user_id=user_id,
+        project_id=body.project_id,
+        input=input_data,
+    )
+    _publish_generation_after_commit(
+        session,
+        request.app.state.mq_publisher,
+        task_id=task.id,
+        task_type=task.task_type.value,
+    )
+    return Response.success(_task_to_out(task), message="方向集任务已提交")
 
 
 @router.post("/action", response_model=Response[GenerationTaskOut])
@@ -481,6 +535,39 @@ def get_task(
     return Response.success(_task_to_out(task))
 
 
+@router.post(
+    "/tasks/{task_id}/retry-failed-directions",
+    response_model=Response[GenerationTaskOut],
+)
+def retry_failed_directions(
+    task_id: int,
+    project_id: int = Query(..., gt=0),
+    request: Request = None,
+    session: Session = Depends(get_session),
+) -> Response[GenerationTaskOut]:
+    """只重试方向集内的失败方向；已成功方向不再执行和计费。"""
+    user_id = request.state.current_user.id
+    _get_project_or_raise(session, project_id, user_id)
+    task = task_repo.get_task_by_user(session, user_id, task_id)
+    if task is None or task.project_id != project_id:
+        raise BizException("任务不存在", code=BizCode.NOT_FOUND)
+    try:
+        restarted = generation_service.retry_failed_directions(session, task=task)
+    except ValueError as exc:
+        raise BizException(str(exc), code=BizCode.BAD_REQUEST) from exc
+    _publish_generation_after_commit(
+        session,
+        request.app.state.mq_publisher,
+        task_id=restarted.id,
+        task_type=restarted.task_type.value,
+        dedupe_key=(
+            f"generation:{restarted.id}:retry:"
+            f"{billing.attempt_for_task(restarted.task_type, restarted.input_payload)}"
+        ),
+    )
+    return Response.success(_task_to_out(restarted), message="失败方向已重新提交")
+
+
 @router.get("/tasks/{task_id}/stream")
 async def stream_task(
     task_id: int,
@@ -493,6 +580,7 @@ async def stream_task(
     事件类型:
       - ``progress``: 生成进度 (stage/current/total/note)
       - ``completed``: 任务完成,携带最终结果
+      - ``partial``: 方向集部分失败,携带已成功方向与失败方向
       - ``failed``: 任务失败,携带错误信息
 
     若客户端订阅时任务已处于终态,立即推送终态事件并关闭连接。

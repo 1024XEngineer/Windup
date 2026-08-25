@@ -132,6 +132,9 @@ def types_for_stream(stream: str) -> tuple[TypeSpec, ...]:
 
 def msg_type_for_generation(task_type: str) -> str:
     """PENDING 重入队 / API 投递用的 msg_type。轮询类型没有 recover_as。"""
+    if task_type == "character_direction_set":
+        # 方向集仍是图片工作负载，共用图片池与背压，不另开一倍并发。
+        return MSG_TYPE_CHARACTER_IMAGE
     for spec in type_specs():
         if spec.recover_as == task_type:
             return spec.msg_type

@@ -30,7 +30,8 @@ def release_stale_pending_tasks() -> int:
         for record in rows:
             if record.id is None:
                 continue
-            if not billing.has_open_freeze(session, record.id):
+            attempt = billing.attempt_for_task(record.task_type, record.input_payload)
+            if not billing.has_open_freeze(session, record.id, attempt):
                 continue
             task_repo.update_status(
                 session,
@@ -42,6 +43,7 @@ def release_stale_pending_tasks() -> int:
                 session,
                 user_id=record.user_id,
                 task_id=record.id,
+                attempt=attempt,
             )
             released += 1
             logger.warning("PENDING 排队超时已解冻 | task_id=%s", record.id)

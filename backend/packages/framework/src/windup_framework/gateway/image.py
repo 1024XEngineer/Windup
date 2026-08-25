@@ -387,7 +387,7 @@ class ImageGateway:
             trace.ended_at = _utc_now()
         if trace.price_version is None:
             trace.price_version = self._settings.price_version
-        emit(trace, ledger_enabled=self._settings.gateway_ledger_enabled)
+        emit(trace)
 
 
 def build_image_gateway(config=None, *, adapter=None, circuit=None) -> ImageGateway:

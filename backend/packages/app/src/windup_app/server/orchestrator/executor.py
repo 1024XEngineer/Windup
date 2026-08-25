@@ -39,7 +39,11 @@ from windup_app.server.orchestrator._fetch import fetch_own_media
 from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
+    CharacterDirectionSetInput,
+    CharacterDirectionSetOutput,
     CharacterImageInput,
+    DirectionImageResult,
+    GenerationType,
     TaskStatus,
 )
 
@@ -965,9 +969,207 @@ class ImageTaskExecutor:
         return SessionLocal()
 
 
+_DIRECTION_SET_RESULT = GenerationType.CHARACTER_DIRECTION_SET.value
+
+
+class DirectionSetTaskExecutor:
+    """在一个正式任务内编排项目所需全部母版方向。"""
+
+    def __init__(
+        self,
+        *,
+        image_executor: ImageTaskExecutor,
+        session_factory: Callable[[], Session] | None = None,
+    ) -> None:
+        self._image_executor = image_executor
+        self._session_factory = session_factory
+
+    def run_direction_set_task(
+        self,
+        task_id: int,
+        input: CharacterDirectionSetInput,
+        project_id: int | None = None,
+    ) -> None:
+        attempt = 0
+        try:
+            def _start(s: Session):
+                task = task_repo.get_task(s, task_id)
+                if task is None:
+                    raise ValueError(f"方向集任务不存在: {task_id}")
+                payload = task.input_payload or {}
+                current_attempt = int(payload.get("billing_attempt") or 0)
+                previous = (
+                    task.result
+                    if isinstance(task.result, CharacterDirectionSetOutput)
+                    else CharacterDirectionSetOutput(
+                        directions=[
+                            DirectionImageResult(direction=direction)
+                            for direction in input.directions
+                        ]
+                    )
+                )
+                task_repo.update_progress(
+                    s,
+                    task_id,
+                    _DIRECTION_SET_RESULT,
+                    dataclasses.asdict(previous),
+                    status=TaskStatus.RUNNING,
+                )
+                return current_attempt, previous, _load_constraints(s, project_id)
+
+            attempt, output, constraints = generation_io.using_session(
+                None,
+                self._make_session,
+                _start,
+            )
+            newly_completed = 0
+            attempted_directions = 0
+
+            for item in output.directions:
+                if item.status == TaskStatus.COMPLETED.value:
+                    continue
+                attempted_directions += 1
+                item.status = TaskStatus.RUNNING.value
+                item.error_message = None
+                self._save_progress(task_id, output)
+                image_input = CharacterImageInput(
+                    reference_image_url=input.reference_image_url,
+                    prompt=input.prompt,
+                    negative_prompt=input.negative_prompt,
+                    width=input.width,
+                    height=input.height,
+                    num_images=input.num_images,
+                    direction=item.direction,
+                )
+                try:
+                    reset = bind_call_context(
+                        task_id=f"{task_id}:{item.direction.value}:attempt:{attempt}"
+                    )
+                    try:
+                        urls, quality = self._image_executor._produce_image(
+                            image_input,
+                            constraints,
+                        )
+                    finally:
+                        reset()
+                except Exception as exc:  # noqa: BLE001 —— 单方向失败不抹掉其它方向
+                    logger.exception(
+                        "方向集任务 %s 的 %s 方向失败",
+                        task_id,
+                        item.direction.value,
+                    )
+                    item.status = TaskStatus.FAILED.value
+                    item.image_urls = []
+                    item.quality = None
+                    item.error_message = user_message(exc)
+                else:
+                    item.status = TaskStatus.COMPLETED.value
+                    item.image_urls = urls
+                    item.quality = quality
+                    item.error_message = None
+                    newly_completed += 1
+                self._save_progress(task_id, output)
+
+            all_completed = all(
+                item.status == TaskStatus.COMPLETED.value
+                for item in output.directions
+            )
+            successful_calls = newly_completed * max(1, input.num_images)
+            planned_calls = attempted_directions * max(1, input.num_images)
+
+            def _finish(s: Session) -> None:
+                task = task_repo.get_task(s, task_id)
+                if task is not None and billing.has_open_freeze(s, task_id, attempt):
+                    frozen_amount = billing.frozen_amount_for_task(s, task_id, attempt)
+                    actual_amount = (
+                        frozen_amount * successful_calls // planned_calls
+                        if planned_calls
+                        else 0
+                    )
+                    billing.capture_for_task(
+                        s,
+                        user_id=task.user_id,
+                        task_id=task_id,
+                        attempt=attempt,
+                        actual_amount=actual_amount,
+                    )
+                if all_completed:
+                    task_repo.update_result(
+                        s,
+                        task_id,
+                        _DIRECTION_SET_RESULT,
+                        dataclasses.asdict(output),
+                    )
+                else:
+                    task_repo.update_progress(
+                        s,
+                        task_id,
+                        _DIRECTION_SET_RESULT,
+                        dataclasses.asdict(output),
+                        status=TaskStatus.PARTIAL,
+                        error_message="部分方向生成失败，可只重试失败方向。",
+                    )
+
+            generation_io.using_session(None, self._make_session, _finish)
+        except Exception as exc:  # noqa: BLE001 —— 任务级兜底
+            logger.exception("方向集任务 %s 编排失败", task_id)
+            error_message = user_message(exc)
+
+            def _fail(s: Session) -> None:
+                task = task_repo.get_task(s, task_id)
+                if task is None or task.status is TaskStatus.COMPLETED:
+                    return
+                failed_attempt = billing.attempt_for_task(
+                    task.task_type,
+                    task.input_payload,
+                )
+                if task.task_type is GenerationType.CHARACTER_DIRECTION_SET:
+                    task_repo.update_status(
+                        s,
+                        task_id,
+                        TaskStatus.FAILED,
+                        error_message=error_message,
+                    )
+                else:
+                    task_repo.fail_task(s, task_id, error_message=error_message)
+                if billing.has_open_freeze(s, task_id, failed_attempt):
+                    billing.release_for_task(
+                        s,
+                        user_id=task.user_id,
+                        task_id=task_id,
+                        attempt=failed_attempt,
+                    )
+
+            generation_io.using_session(None, self._make_session, _fail)
+
+    def _save_progress(
+        self,
+        task_id: int,
+        output: CharacterDirectionSetOutput,
+    ) -> None:
+        def _save(s: Session) -> None:
+            task_repo.update_progress(
+                s,
+                task_id,
+                _DIRECTION_SET_RESULT,
+                dataclasses.asdict(output),
+            )
+
+        generation_io.using_session(None, self._make_session, _save)
+
+    def _make_session(self) -> Session:
+        if self._session_factory is not None:
+            return self._session_factory()
+        from windup_framework.db.session import SessionLocal
+
+        return SessionLocal()
+
+
 # 默认执行器(真实依赖);bootstrap 取 run_action_task / run_image_task 注入 app.state
 executor = ActionTaskExecutor()
 run_action_task = executor.run_action_task
 resume_action_poll = executor.resume_action_poll
 image_executor = ImageTaskExecutor()
 run_image_task = image_executor.run_image_task
+direction_set_executor = DirectionSetTaskExecutor(image_executor=image_executor)
+run_direction_set_task = direction_set_executor.run_direction_set_task

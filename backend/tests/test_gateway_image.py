@@ -1,7 +1,5 @@
 import json
 import logging
-import sys
-from types import ModuleType, SimpleNamespace
 
 import pytest
 from windup_common.enums.model import ModelErrorType
@@ -215,24 +213,6 @@ def test_success_trace_has_latency_and_null_cost_by_default(caplog):
     gw.gen_image("p", [])
     assert "total_latency_ms" in caplog.text
     assert '"cost": null' in caplog.text or '"cost":null' in caplog.text
-
-
-def test_gateway_config_can_disable_ledger_persistence(monkeypatch):
-    ledger = ModuleType("windup_framework.gateway.ledger")
-
-    def fail_if_persisted(_trace):
-        raise AssertionError("ledger persistence must stay disabled")
-
-    ledger.persist_attempt = fail_if_persisted
-    monkeypatch.setitem(sys.modules, "windup_framework.gateway.ledger", ledger)
-    monkeypatch.setattr(
-        "windup_framework.gateway.trace.provider_settings",
-        SimpleNamespace(price_version="test", gateway_ledger_enabled=True),
-    )
-    adapter = FakeImageAdapter({"gemini-2.5-flash-image": [PNG]})
-    gateway = _make_gw(adapter, gateway_ledger_enabled=False)
-
-    assert gateway.gen_image("p", []).startswith(b"\x89PNG")
 
 
 def test_skip_open_model_circuit_sets_fallback_used(caplog):
