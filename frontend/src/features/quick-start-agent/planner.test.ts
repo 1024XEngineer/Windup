@@ -27,6 +27,32 @@ describe('quickStartPlannerInstructions', () => {
 })
 
 describe('createAiSdkQuickStartPlanner', () => {
+  it('treats the selected art style as fixed context when drafting prompts', async () => {
+    const generate = vi.fn<QuickStartGenerateText>(async () => ({
+      text: '可以继续。',
+      finishReason: 'stop',
+      toolCalls: [],
+    }))
+    const planner = createAiSdkQuickStartPlanner({
+      baseURL: 'https://api.windup.test/ai/v1',
+      generateText: generate,
+    })
+
+    await planner({
+      messages: [{ role: 'user', content: '一个住在云端的机械师' }],
+      clarificationUsed: false,
+      artStyle: '像素',
+    })
+
+    expect(generate.mock.calls[0]?.[0].instructions).toContain('用户当前选择的画风是「像素」')
+
+    await planner({
+      messages: [{ role: 'user', content: '一个住在云端的机械师' }],
+      clarificationUsed: false,
+    })
+    expect(generate.mock.calls[1]?.[0].instructions).not.toContain('用户当前选择的画风')
+  })
+
   it('uses one schema-only Tool, non-streaming generateText, and no SDK retries', async () => {
     const signal = new AbortController().signal
     const generate = vi.fn<QuickStartGenerateText>(async () => ({
