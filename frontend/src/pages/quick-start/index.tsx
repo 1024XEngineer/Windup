@@ -1474,15 +1474,17 @@ function PromptProposal({
       {actionPrompt ? <p className="text-sm text-app-muted">动作：{actionPrompt}</p> : null}
       {status === 'pending' ? (
         <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            aria-label="确认并生成"
-            disabled={disabled}
-            onClick={onConfirm}
-            className="min-h-9 rounded-full bg-app-accent px-4 text-xs font-semibold text-app-canvas transition hover:bg-app-accent-hover disabled:cursor-not-allowed disabled:opacity-45"
-          >
-            确认并生成
-          </button>
+          {actionPrompt ? (
+            <button
+              type="button"
+              aria-label="确认并生成"
+              disabled={disabled}
+              onClick={onConfirm}
+              className="min-h-9 rounded-full bg-app-accent px-4 text-xs font-semibold text-app-canvas transition hover:bg-app-accent-hover disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              确认并生成
+            </button>
+          ) : null}
           <button
             type="button"
             aria-label="填入输入框"

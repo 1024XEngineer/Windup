@@ -1156,6 +1156,7 @@ describe('QuickStartPage', () => {
     const optimizedCopy = proposal?.querySelector('blockquote')
     expect(optimizedCopy?.className).not.toContain('border-l')
     expect(optimizedCopy?.className).not.toContain('pl-4')
+    expect(screen.queryByRole('button', { name: '确认并生成' })).toBeNull()
     const fill = screen.getByRole('button', { name: '填入输入框' })
     expect(fill.className).not.toContain('border')
     expect(fill.textContent).toContain('编辑后逐步确认')
