@@ -72,7 +72,7 @@ def fit_first_frame(
 
 
 def first_frame_datauri(frame: bytes, size: str) -> str:
-    """首帧 → base64 dataURI(本面专用;FAL 队列面不吃 dataURI)。"""
+    """首帧 → base64 dataURI。FAL 队列面同样吃这个形状,故两面共用。"""
     return "data:image/jpeg;base64," + base64.b64encode(fit_first_frame(frame, size)).decode()
 
 
@@ -103,6 +103,20 @@ def http_error(
     )
 
 
+def json_object(resp: httpx.Response) -> dict | None:
+    """2xx 响应里的 JSON 对象;不是对象就返回 ``None``。
+
+    只挡解码失败不够:上游在 2xx 下返回合法的数组 / 字符串 / ``null`` 时,
+    直接 ``.get()`` 会抛 ``AttributeError``,请求以未处理异常结束,
+    而不是被收成 ``INVALID_RESPONSE`` 交给 Gateway 判。
+    """
+    try:
+        payload = resp.json()
+    except ValueError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 class OpenAIVideoProtocol:
     """鉴权头由本层产出而不由厂商层统一注入 —— 写错时的响应与"模型不存在"难以区分。"""
 
@@ -131,14 +145,13 @@ class OpenAIVideoProtocol:
     def parse_submit(self, resp: httpx.Response) -> AdapterResult:
         if not (200 <= resp.status_code < 300):
             return http_error(resp)
-        try:
-            payload = resp.json()
-        except ValueError:
+        payload = json_object(resp)
+        if payload is None:
             return AdapterResult(
                 ok=False,
                 error_type=ModelErrorType.INVALID_RESPONSE,
                 http_status=resp.status_code,
-                edge_fingerprint="响应不是 JSON",
+                edge_fingerprint="响应不是 JSON 对象",
             )
         jid = payload.get("id")
         if not jid:
@@ -163,16 +176,15 @@ class OpenAIVideoProtocol:
         """未完成时 ``error_type`` 为 ``None`` 且 ``ok`` 为假 —— adapter 据此继续轮询。"""
         if not (200 <= resp.status_code < 300):
             return http_error(resp, job_id=job_id, phase="follow")
-        try:
-            st = resp.json()
-        except ValueError:
+        st = json_object(resp)
+        if st is None:
             return AdapterResult(
                 ok=False,
                 error_type=ModelErrorType.INVALID_RESPONSE,
                 http_status=resp.status_code,
                 job_id=job_id,
                 maybe_billed=True,
-                edge_fingerprint="轮询响应不是 JSON",
+                edge_fingerprint="轮询响应不是 JSON 对象",
             )
         status = st.get("status")
         if status == "completed":
@@ -197,3 +209,7 @@ class OpenAIVideoProtocol:
 
     def build_fetch(self, job_id: str) -> HttpCall | None:
         return None
+
+    def parse_fetch(self, resp: httpx.Response, job_id: str) -> AdapterResult:
+        """本面的取结果地址就是轮询地址,所以两步解析是同一个。"""
+        return self.parse_poll(resp, job_id)

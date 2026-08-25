@@ -39,7 +39,9 @@ class VideoRequest:
 class JobProtocol(Protocol):
     """建单 → 轮询 → 取结果。各协议面的差别只在路径、鉴权与字段名,形状同构。
 
-    ``build_fetch`` 返回 ``None`` 表示该面的产物地址已在轮询响应里,无需再取一次。
+    ``build_fetch`` 返回 ``None`` 表示该面的产物地址已在轮询响应里,无需再取一次;
+    返回 ``HttpCall`` 的面把成败留到 ``parse_fetch`` 才揭晓,``parse_poll`` 的 ``ok``
+    此时只表示轮询到此为止。
     """
 
     def build_submit(self, req: VideoRequest) -> HttpCall: ...
@@ -51,3 +53,5 @@ class JobProtocol(Protocol):
     def parse_poll(self, resp: httpx.Response, job_id: str) -> AdapterResult: ...
 
     def build_fetch(self, job_id: str) -> HttpCall | None: ...
+
+    def parse_fetch(self, resp: httpx.Response, job_id: str) -> AdapterResult: ...
