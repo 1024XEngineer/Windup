@@ -1574,14 +1574,28 @@ function animateMarkdownCharacters(
   if (Array.isArray(node)) {
     return node.map((child) => animateMarkdownCharacters(child, counter))
   }
-  if (!isValidElement<{ children?: ReactNode }>(node)) return node
+  if (!isValidElement<AnimatedMarkdownElementProps>(node)) return node
 
-  const element = node as ReactElement<{ children?: ReactNode }>
+  const element = node as ReactElement<AnimatedMarkdownElementProps>
+  const accessibleProps =
+    element.type === 'a' ? { 'aria-label': markdownTextContent(element.props.children) } : undefined
   return cloneElement(
     element,
-    undefined,
+    accessibleProps,
     animateMarkdownCharacters(element.props.children, counter),
   )
+}
+
+type AnimatedMarkdownElementProps = {
+  children?: ReactNode
+  'aria-label'?: string
+}
+
+function markdownTextContent(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(markdownTextContent).join('')
+  if (!isValidElement<AnimatedMarkdownElementProps>(node)) return ''
+  return markdownTextContent(node.props.children)
 }
 
 function QuickStartAgentBot({ placement }: { placement: 'title' | 'thinking' | 'answer' }) {
