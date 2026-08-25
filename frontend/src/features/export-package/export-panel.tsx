@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { ArrowClockwise, Check, CircleNotch, DownloadSimple } from '@phosphor-icons/react'
 
 import type { ExportPackageModel } from './model'
@@ -24,6 +24,7 @@ export interface ExportButtonProps {
   model: ExportPackageModel
   exporter?: AssetExporter
   className?: string
+  icon?: ReactNode
   idleLabel?: string
   pill?: boolean
   iconOnly?: boolean
@@ -148,6 +149,7 @@ export function ExportButton({
   model,
   exporter = defaultExporter,
   className = '',
+  icon,
   idleLabel,
   pill = false,
   iconOnly = false,
@@ -175,7 +177,7 @@ export function ExportButton({
         className={
           iconOnly
             ? `group/export-action relative grid size-10 shrink-0 place-items-center rounded-lg border border-current transition focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-50 ${className}`
-            : `${pill ? 'rounded-full' : 'rounded-lg'} border border-current px-3 py-2 text-xs font-semibold disabled:opacity-50 ${className}`
+            : `${pill ? 'rounded-full' : 'rounded-lg'} inline-flex min-h-10 items-center justify-center gap-2 border border-current px-3 py-2 text-xs font-semibold disabled:opacity-50 ${className}`
         }
       >
         {iconOnly ? (
@@ -198,7 +200,14 @@ export function ExportButton({
             </span>
           </>
         ) : (
-          label
+          <>
+            {icon ? (
+              <span aria-hidden="true" className="inline-flex shrink-0">
+                {icon}
+              </span>
+            ) : null}
+            <span>{label}</span>
+          </>
         )}
       </button>
       {state.status === 'failure' ? (

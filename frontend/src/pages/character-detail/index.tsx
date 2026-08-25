@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Graph, Lightning, Plus, X } from '@phosphor-icons/react'
+import { DownloadSimple, Graph, GridFour, Lightning, Play, Plus, X } from '@phosphor-icons/react'
 import { Link, useOutletContext, useParams } from 'react-router'
 
 import {
@@ -18,7 +18,7 @@ import {
   type Project,
 } from '@/entities'
 import { createCharacterExportModel, ExportButton } from '@/features/export-package'
-import { AssetPreviewSurface } from '@/shared/ui'
+import { PixelPerfectWorkbench } from '@/features/pixel-perfect'
 
 const ACTION_TYPE_LABELS: Record<string, string> = {
   walk: '行走',
@@ -26,6 +26,9 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
   attack: '攻击',
   custom: '自定义',
 }
+
+const ASSET_ACTION_SECONDARY =
+  'inline-flex min-h-10 items-center justify-center gap-2 rounded-full border border-app-line bg-app-surface-raised px-5 text-xs font-semibold text-app-ink-soft transition-colors hover:border-app-line-strong hover:bg-app-surface-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent'
 
 const DIRECTION_LABELS: Record<ActionDirection, string> = {
   east: '东',
@@ -97,6 +100,7 @@ export function CharacterDetailPage() {
   const project = useOutletContext<Project>()
   const [character, setCharacter] = useState<Character | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [pixelPerfectOpen, setPixelPerfectOpen] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -109,6 +113,7 @@ export function CharacterDetailPage() {
 
     setCharacter(null)
     setError(null)
+    setPixelPerfectOpen(false)
     void characterApis.get(characterId).then(
       (nextCharacter) => {
         if (!active) return
@@ -142,11 +147,12 @@ export function CharacterDetailPage() {
 
   const name = characterName(character)
   const selectedOutfit = character.outfits[0] ?? null
+  const titlePreviewUrl = selectedOutfit?.previewUrl ?? null
   const canPlaytest = selectedOutfit ? getOutfitPlayback(selectedOutfit).playable : false
 
   return (
     <section aria-labelledby="character-title" className="p-4 lg:px-6 lg:py-5">
-      <header className="border-b border-app-line pb-5">
+      <header className="relative overflow-hidden border-b border-app-line pb-5">
         <Link
           to={`/projects/${projectId}/assets`}
           className="text-xs text-app-muted transition-colors hover:text-app-accent"
@@ -154,27 +160,51 @@ export function CharacterDetailPage() {
           ← 返回资产库
         </Link>
         <div className="mt-5 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-[0.68rem] tracking-[0.12em] text-app-faint">
-              {project.name} / 角色资产
-            </p>
+          <div className="relative z-10 min-w-0 shrink-0">
             <h2
               id="character-title"
-              className="mt-1 font-serif text-3xl font-medium tracking-[-0.04em] text-app-ink"
+              className="font-serif text-3xl font-medium tracking-[-0.04em] text-app-ink"
             >
               {name}
             </h2>
+            {selectedOutfit && titlePreviewUrl ? (
+              <img
+                src={titlePreviewUrl}
+                alt={`${name}的${selectedOutfit.name}预览`}
+                loading="eager"
+                decoding="async"
+                fetchPriority="high"
+                className="pointer-events-none absolute bottom-[-4.5rem] left-[calc(100%+0.5rem)] hidden h-44 w-44 max-w-none object-contain opacity-85 sm:block [image-rendering:pixelated]"
+              />
+            ) : null}
           </div>
-          <div className="flex flex-wrap items-start gap-2 sm:justify-end">
+          <div
+            role="group"
+            aria-label="角色资产操作"
+            className="relative z-10 flex flex-wrap items-center gap-2 sm:justify-end"
+          >
             {selectedOutfit ? (
               <CharacterExport project={project} character={character} outfit={selectedOutfit} />
+            ) : null}
+            {selectedOutfit && canPlaytest ? (
+              <button
+                type="button"
+                aria-expanded={pixelPerfectOpen}
+                aria-controls="pixel-perfect-workbench"
+                onClick={() => setPixelPerfectOpen((current) => !current)}
+                className={ASSET_ACTION_SECONDARY}
+              >
+                <GridFour size={15} weight="bold" aria-hidden="true" />
+                完美像素化
+              </button>
             ) : null}
             {selectedOutfit && canPlaytest ? (
               <Link
                 to={`/playtest/${character.id}/${selectedOutfit.id}`}
                 aria-label="在预览台打开当前造型"
-                className="inline-flex min-h-10 items-center rounded-full bg-app-accent px-5 text-xs font-semibold text-app-on-accent transition-colors hover:bg-app-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
+                className="inline-flex min-h-10 items-center gap-2 rounded-full border border-app-accent bg-app-accent px-5 text-xs font-semibold text-app-on-accent transition-colors hover:border-app-accent-hover hover:bg-app-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
               >
+                <Play size={15} weight="fill" aria-hidden="true" />
                 在预览台打开
               </Link>
             ) : null}
@@ -188,9 +218,10 @@ export function CharacterDetailPage() {
         </div>
       ) : (
         <>
-          <div className="mt-3">
-            <OutfitMaster character={character} outfit={selectedOutfit} />
-          </div>
+          <CharacterTemplateDirections character={character} />
+          {pixelPerfectOpen ? (
+            <PixelPerfectWorkbench id="pixel-perfect-workbench" actions={selectedOutfit.actions} />
+          ) : null}
           <ActionList key={selectedOutfit.id} character={character} outfit={selectedOutfit} />
         </>
       )}
@@ -233,85 +264,52 @@ function CharacterExport({
     <ExportButton
       model={result.model}
       idleLabel="导出资产包"
+      icon={<DownloadSimple size={15} weight="bold" />}
       pill
-      className="inline-flex min-h-10 items-center border-app-line px-5 text-xs font-semibold text-app-ink-soft transition-colors hover:border-app-line-strong hover:text-app-accent"
+      className={ASSET_ACTION_SECONDARY}
     />
   )
 }
 
-function OutfitMaster({ character, outfit }: { character: Character; outfit: Outfit }) {
+function CharacterTemplateDirections({ character }: { character: Character }) {
   const name = characterName(character)
   const directionalTemplates = resolvedCharacterTemplates(character.templates)
+  if (directionalTemplates.length === 0) return null
   return (
-    <section aria-labelledby="outfit-master-title" className="grid min-w-0 gap-4 py-2">
-      <div className="flex min-w-0 items-center gap-4">
-        {directionalTemplates.length === 0 ? (
-          <div className="h-28 w-28 shrink-0 sm:h-32 sm:w-32">
-            <AssetPreviewSurface
-              previewUrl={outfit.previewUrl}
-              previewAlt={`${name}的${outfit.name}预览`}
-              priority
-              className="h-full"
+    <section
+      aria-label="角色母版方向"
+      className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8"
+    >
+      {directionalTemplates.map((template, index) => (
+        <figure
+          key={template.direction}
+          className="overflow-hidden rounded-xl border border-app-line bg-app-surface-raised"
+        >
+          <div className="aspect-square bg-app-surface-muted p-2">
+            <img
+              src={template.imageUrl}
+              alt={`${name}${DIRECTION_LABELS[template.direction]}方向母版`}
+              loading={index === 0 ? 'eager' : 'lazy'}
+              decoding="async"
+              fetchPriority={index === 0 ? 'high' : 'auto'}
+              className={`h-full w-full object-contain [image-rendering:pixelated] ${template.mirrorX ? '-scale-x-100' : ''}`}
             />
           </div>
-        ) : null}
-        <div className="min-w-0 flex-1">
-          <h3
-            id="outfit-master-title"
-            className="text-lg font-semibold tracking-[-0.03em] text-app-ink"
-          >
-            {outfit.name}
-          </h3>
-          <p className="mt-2 text-[0.7rem] font-medium text-app-muted">
-            {outfit.actions.length} 个动作
-            {directionalTemplates.length > 0 ? ` · ${directionalTemplates.length} 个角色方向` : ''}
-          </p>
-        </div>
-      </div>
-
-      {directionalTemplates.length > 0 ? (
-        <section
-          aria-label="角色母版方向"
-          className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8"
-        >
-          {directionalTemplates.map((template, index) => (
-            <figure
-              key={template.direction}
-              className="overflow-hidden rounded-xl border border-app-line bg-app-surface-raised"
-            >
-              <div className="aspect-square bg-app-surface-muted p-2">
-                <img
-                  src={template.imageUrl}
-                  alt={`${name}${DIRECTION_LABELS[template.direction]}方向母版`}
-                  loading={index === 0 ? 'eager' : 'lazy'}
-                  decoding="async"
-                  fetchPriority={index === 0 ? 'high' : 'auto'}
-                  className={`h-full w-full object-contain [image-rendering:pixelated] ${template.mirrorX ? '-scale-x-100' : ''}`}
-                />
-              </div>
-              <figcaption className="border-t border-app-line px-2 py-1.5 text-center text-[0.68rem] font-semibold text-app-muted">
-                {DIRECTION_LABELS[template.direction]}
-              </figcaption>
-            </figure>
-          ))}
-        </section>
-      ) : null}
+          <figcaption className="border-t border-app-line px-2 py-1.5 text-center text-[0.68rem] font-semibold text-app-muted">
+            {DIRECTION_LABELS[template.direction]}
+          </figcaption>
+        </figure>
+      ))}
     </section>
   )
 }
 
 function ActionList({ character, outfit }: { character: Character; outfit: Outfit }) {
   const [selectedActionId, setSelectedActionId] = useState<string | null>(null)
-  const [selectedDirection, setSelectedDirection] = useState<ActionDirection>('east')
+  const [revealedActionId, setRevealedActionId] = useState<string | null>(null)
   const [entryOpen, setEntryOpen] = useState(false)
-  const selectedAction = outfit.actions.find((action) => action.id === selectedActionId) ?? null
-  const selectedActionDirections = selectedAction ? actionDirections(selectedAction) : []
-  const activeDirection = selectedActionDirections.includes(selectedDirection)
-    ? selectedDirection
-    : (selectedActionDirections[0] ?? 'east')
-  const selectedActionFrames = selectedAction
-    ? actionFrames(selectedAction, activeDirection)
-    : { frames: [], mirrorX: false }
+  const displayedActions = outfit.actions
+  const selectedAction = displayedActions.find((action) => action.id === selectedActionId) ?? null
   const templateImages = characterTemplateImages(character.templates)
   const canCreateAction = Boolean(
     templateImages.east || outfit.previewUrl || character.referenceImageUrl,
@@ -325,11 +323,8 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
   const workflowEditorPath = `/workflow-editor/${encodeURIComponent(character.workflowRunId)}`
 
   return (
-    <section aria-labelledby="action-list-title" className="mt-3">
-      <div className="flex items-end justify-between gap-4">
-        <h3 id="action-list-title" className="text-lg font-semibold text-app-ink">
-          动作与帧
-        </h3>
+    <section aria-label="角色动作" className="mt-3">
+      <div className="flex justify-end">
         <div className="flex items-center gap-3">
           <span className="text-[0.7rem] text-app-faint">点击卡片展开完整帧</span>
           <button
@@ -410,7 +405,7 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
         </div>
       ) : null}
 
-      {outfit.actions.length === 0 ? (
+      {displayedActions.length === 0 ? (
         <div className="mt-4 rounded-[1.5rem] border border-dashed border-app-line bg-app-surface-raised p-7">
           <h4 className="font-semibold text-app-ink">这个造型还没有动作</h4>
           <p className="mt-2 text-sm leading-6 text-app-muted">生成并保存动作后会显示在这里。</p>
@@ -419,36 +414,47 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
         <>
           <div
             aria-label="动作卡组"
-            className="mt-2 flex min-h-44 items-start overflow-x-auto px-2 pb-4 pt-3"
+            className="mt-2 flex flex-wrap items-start gap-y-3 px-3 pb-5 pt-4"
           >
-            {outfit.actions.map((action, index) => {
+            {displayedActions.map((action, actionIndex) => {
               const expanded = selectedAction?.id === action.id
+              const rendersFramePanel = revealedActionId === action.id
               const previewFrame = actionFrames(action, 'east').frames[0]
+              const collapsedActions = selectedAction
+                ? displayedActions.filter((item) => item.id !== selectedAction.id)
+                : displayedActions
+              const stackIndex = expanded
+                ? 0
+                : collapsedActions.findIndex((item) => item.id === action.id)
               return (
                 <article
                   key={action.id}
                   aria-label={`动作 ${action.name}`}
-                  className={`group relative w-44 shrink-0 transition-[transform,margin] duration-500 ease-[cubic-bezier(.2,.9,.25,1)] ${index ? '-ml-9' : ''} ${expanded ? '-translate-y-1 rotate-0' : index % 2 ? 'translate-y-1 rotate-[2deg]' : 'rotate-[-2deg]'}`}
-                  style={{ zIndex: expanded ? outfit.actions.length + 1 : index + 1 }}
+                  className={`group relative shrink-0 overflow-hidden rounded-[1.35rem] border-[1.5px] bg-app-surface-muted transition-[width,transform,margin,border-color] duration-500 ease-[cubic-bezier(.2,.9,.25,1)] motion-reduce:transition-none ${rendersFramePanel ? 'grid grid-cols-1 sm:grid-cols-[11rem_minmax(0,1fr)] lg:grid-cols-[13rem_minmax(0,1fr)]' : ''} ${expanded ? 'order-first w-full -translate-y-1 rotate-0 border-app-accent' : `w-44 border-app-line hover:border-app-line-strong lg:w-52 ${selectedAction ? 'order-last' : ''} ${stackIndex > 0 ? '-ml-4 lg:-ml-8' : ''} ${actionIndex % 2 ? 'translate-y-1 rotate-[1.2deg]' : 'rotate-[-1.2deg]'}`}`}
+                  style={{ zIndex: expanded ? displayedActions.length + 1 : actionIndex + 1 }}
                 >
                   <button
                     type="button"
                     aria-label={`${expanded ? '收起' : '展开'}${action.name}`}
                     aria-expanded={expanded}
                     onClick={() => {
-                      setSelectedActionId(expanded ? null : action.id)
-                      if (!expanded) setSelectedDirection(actionDirections(action)[0] ?? 'east')
+                      if (expanded) {
+                        setSelectedActionId(null)
+                        return
+                      }
+                      setRevealedActionId(action.id)
+                      setSelectedActionId(action.id)
                     }}
-                    className={`block w-full overflow-hidden rounded-[1.4rem] border bg-app-surface-raised text-left transition duration-500 group-hover:-translate-y-2 ${expanded ? 'border-app-accent ring-4 ring-app-accent-soft' : 'border-app-line'}`}
+                    className={`relative block w-full overflow-hidden bg-app-surface-muted text-left transition duration-300 ease-[cubic-bezier(.16,1,.3,1)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-app-accent motion-reduce:transition-none ${expanded ? 'min-h-72' : 'aspect-[4/5]'}`}
                   >
-                    <div className="relative aspect-[16/10] overflow-hidden bg-app-surface-muted">
+                    <div className="absolute inset-0 overflow-hidden bg-app-surface-muted">
                       {previewFrame ? (
                         <img
                           src={previewFrame.imageUrl}
                           alt={`${action.name}帧预览`}
                           loading="lazy"
                           decoding="async"
-                          className="h-full w-full object-contain p-2 [image-rendering:pixelated]"
+                          className="h-full w-full object-contain p-3 pb-16 [image-rendering:pixelated] transition-transform duration-300 ease-[cubic-bezier(.16,1,.3,1)] motion-reduce:transition-none group-hover:-translate-y-1 group-hover:scale-[1.035]"
                         />
                       ) : (
                         <span className="grid h-full place-items-center text-xs text-app-muted">
@@ -456,112 +462,105 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
                         </span>
                       )}
                     </div>
-                    <div className="p-3">
+                    <div className="absolute inset-x-0 bottom-0 p-4 text-app-ink">
                       <div className="flex items-center justify-between gap-3">
-                        <h4 className="font-semibold text-app-ink">{action.name}</h4>
+                        <h4 className="text-base font-semibold tracking-[-0.02em]">
+                          {action.name}
+                        </h4>
                         <span className="text-sm text-app-muted">{expanded ? '−' : '↗'}</span>
                       </div>
-                      <p className="mt-1 text-xs text-app-faint">
+                      <p className="mt-1.5 truncate text-[0.68rem] text-app-muted">
                         {actionTypeLabel(action.type)} · {action.fps} FPS · {action.frameCount} 帧 ·{' '}
                         {action.loop ? '循环' : '单次'}
                       </p>
                     </div>
                   </button>
+                  {rendersFramePanel ? (
+                    <ActionFramePanel action={action} expanded={expanded} />
+                  ) : null}
                 </article>
               )
             })}
           </div>
-
-          {selectedAction ? (
-            <section
-              aria-label={`${selectedAction.name}完整帧序列`}
-              className="action-reveal grid gap-5 border-t border-app-line py-5 lg:grid-cols-[10rem_minmax(0,1fr)]"
-            >
-              <div>
-                <p className="text-[0.68rem] font-medium tracking-[0.12em] text-app-faint">
-                  当前动作
-                </p>
-                <h4 className="mt-1 text-lg font-semibold tracking-[-0.025em] text-app-ink">
-                  {selectedAction.name}
-                </h4>
-                <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-xs">
-                  <dt className="text-app-faint">类型</dt>
-                  <dd className="text-app-ink-soft">{actionTypeLabel(selectedAction.type)}</dd>
-                  <dt className="text-app-faint">帧率</dt>
-                  <dd className="tabular-nums text-app-ink-soft">{selectedAction.fps} FPS</dd>
-                  <dt className="text-app-faint">帧数</dt>
-                  <dd className="tabular-nums text-app-ink-soft">
-                    {selectedActionFrames.frames.length}
-                  </dd>
-                  <dt className="text-app-faint">播放</dt>
-                  <dd className="text-app-ink-soft">{selectedAction.loop ? '循环' : '单次'}</dd>
-                </dl>
-              </div>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <h5 className="text-sm font-semibold text-app-ink">帧序列</h5>
-                  <span className="text-[0.68rem] tabular-nums text-app-faint">
-                    {selectedActionFrames.frames.length} 帧
-                  </span>
-                </div>
-                {selectedActionDirections.length > 1 ? (
-                  <fieldset
-                    aria-label={`${selectedAction.name}方向`}
-                    className="mt-3 flex flex-wrap gap-1.5"
-                  >
-                    <legend className="sr-only">选择动作方向</legend>
-                    {selectedActionDirections.map((direction) => (
-                      <label
-                        key={direction}
-                        className={`cursor-pointer rounded-full border px-3 py-1.5 text-xs font-semibold transition focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-app-accent ${
-                          activeDirection === direction
-                            ? 'border-app-accent bg-app-accent-soft text-app-accent'
-                            : 'border-app-line text-app-muted hover:border-app-line-strong hover:text-app-ink'
-                        }`}
-                      >
-                        <input
-                          type="radio"
-                          name={`action-direction-${selectedAction.id}`}
-                          value={direction}
-                          checked={activeDirection === direction}
-                          onChange={() => setSelectedDirection(direction)}
-                          className="sr-only"
-                        />
-                        {DIRECTION_LABELS[direction]}
-                      </label>
-                    ))}
-                  </fieldset>
-                ) : null}
-                <div className="mt-3 overflow-x-auto pb-2">
-                  <ol className="flex min-w-max gap-3">
-                    {selectedActionFrames.frames.map((frame) => (
-                      <li key={`${selectedAction.id}-${frame.index}`} className="w-24 shrink-0">
-                        <div className="overflow-hidden rounded-lg border border-app-line bg-app-surface-muted">
-                          <img
-                            src={frame.imageUrl}
-                            alt={`${selectedAction.name}${DIRECTION_LABELS[activeDirection]}方向第 ${frame.index + 1} 帧`}
-                            loading="lazy"
-                            decoding="async"
-                            className={`aspect-square w-full object-contain p-1.5 [image-rendering:pixelated] ${selectedActionFrames.mirrorX ? '-scale-x-100' : ''}`}
-                          />
-                        </div>
-                        <div className="mt-2 flex items-center justify-between gap-1 text-[0.65rem] tabular-nums text-app-faint">
-                          <span>#{String(frame.index + 1).padStart(2, '0')}</span>
-                          <span>
-                            {frame.durationMs === null
-                              ? `按 ${selectedAction.fps} FPS`
-                              : `${frame.durationMs} ms`}
-                          </span>
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-              </div>
-            </section>
-          ) : null}
         </>
       )}
+    </section>
+  )
+}
+
+function ActionFramePanel({ action, expanded }: { action: Action; expanded: boolean }) {
+  const directions = actionDirections(action)
+  const [selectedDirection, setSelectedDirection] = useState<ActionDirection>(
+    directions[0] ?? 'east',
+  )
+  const activeDirection = directions.includes(selectedDirection)
+    ? selectedDirection
+    : (directions[0] ?? 'east')
+  const { frames, mirrorX } = actionFrames(action, activeDirection)
+
+  return (
+    <section
+      aria-label={`${action.name}完整帧序列`}
+      aria-hidden={!expanded}
+      className={`min-w-0 overflow-hidden transition-[height,padding,opacity] duration-200 motion-reduce:transition-none ${expanded ? 'h-full border-t border-app-line p-4 opacity-100 sm:border-t-0 sm:border-l' : 'h-0 border-0 p-0 opacity-0 pointer-events-none'}`}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-[0.65rem] font-medium tracking-[0.12em] text-app-faint">帧序列</p>
+          <p className="mt-1 text-xs text-app-muted">
+            {actionTypeLabel(action.type)} · {action.fps} FPS · {action.loop ? '循环' : '单次'}
+          </p>
+        </div>
+        <span className="text-[0.68rem] tabular-nums text-app-faint">{frames.length} 帧</span>
+      </div>
+      {directions.length > 1 ? (
+        <fieldset aria-label={`${action.name}方向`} className="mt-3 flex flex-wrap gap-1.5">
+          <legend className="sr-only">选择动作方向</legend>
+          {directions.map((direction) => (
+            <label
+              key={direction}
+              className={`cursor-pointer rounded-full border px-3 py-1.5 text-xs font-semibold transition focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-app-accent ${
+                activeDirection === direction
+                  ? 'border-app-accent bg-app-accent-soft text-app-accent'
+                  : 'border-app-line text-app-muted hover:border-app-line-strong hover:text-app-ink'
+              }`}
+            >
+              <input
+                type="radio"
+                name={`action-direction-${action.id}`}
+                value={direction}
+                checked={activeDirection === direction}
+                onChange={() => setSelectedDirection(direction)}
+                className="sr-only"
+              />
+              {DIRECTION_LABELS[direction]}
+            </label>
+          ))}
+        </fieldset>
+      ) : null}
+      <div className="mt-4 max-h-52 overflow-y-auto pr-1 pb-2">
+        <ol className="grid grid-cols-[repeat(auto-fill,minmax(5.5rem,7rem))] gap-x-2.5 gap-y-3">
+          {frames.map((frame) => (
+            <li key={`${action.id}-${activeDirection}-${frame.index}`} className="min-w-0">
+              <div className="overflow-hidden rounded-lg border border-app-line bg-app-canvas">
+                <img
+                  src={frame.imageUrl}
+                  alt={`${action.name}${DIRECTION_LABELS[activeDirection]}方向第 ${frame.index + 1} 帧`}
+                  loading="lazy"
+                  decoding="async"
+                  className={`aspect-square w-full object-contain p-1.5 [image-rendering:pixelated] ${mirrorX ? '-scale-x-100' : ''}`}
+                />
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-1 text-[0.62rem] tabular-nums text-app-faint">
+                <span>#{String(frame.index + 1).padStart(2, '0')}</span>
+                <span>
+                  {frame.durationMs === null ? `按 ${action.fps} FPS` : `${frame.durationMs} ms`}
+                </span>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </div>
     </section>
   )
 }
