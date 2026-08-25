@@ -52,25 +52,27 @@ export function buildDirectionSheetCandidates(
 ): readonly DirectionSheetCandidate[] {
   const profile = getDirectionProfile(movement)
   const byDirection = sourceCandidatesByDirection(candidates)
-  return completeCandidateIndices(profile.sourceDirections, byDirection).map((index) => {
+  const generationDirections = profile.generationDirections
+  return completeCandidateIndices(generationDirections, byDirection).map((index) => {
     const selections = Object.fromEntries(
-      profile.sourceDirections.map((direction) => [
-        direction,
-        byDirection.get(direction)!.get(index)!,
-      ]),
+      generationDirections.map((direction) => [direction, byDirection.get(direction)!.get(index)!]),
     ) as QuickStartDirectionSelections
     const cells = Object.fromEntries(
       ACTION_DIRECTIONS.map((direction) => {
         const isLogicalDirection = profile.logicalDirections.includes(direction)
         const resolved = resolveActionDirection(direction)
-        const imageUrl = isLogicalDirection ? (selections[resolved.sourceDirection] ?? null) : null
+        const directImageUrl = selections[direction]
+        const imageUrl = isLogicalDirection
+          ? (directImageUrl ?? selections[resolved.sourceDirection] ?? null)
+          : null
+        const sourceDirection = directImageUrl ? direction : resolved.sourceDirection
         return [
           direction,
           {
             direction,
             imageUrl,
-            sourceDirection: resolved.sourceDirection,
-            mirrorX: imageUrl !== null && resolved.mirrorX,
+            sourceDirection,
+            mirrorX: imageUrl !== null && !directImageUrl && resolved.mirrorX,
             empty: imageUrl === null,
           } satisfies DirectionSheetCell,
         ]

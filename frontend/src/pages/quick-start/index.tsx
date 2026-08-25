@@ -2244,7 +2244,6 @@ function QuickStartRun({
       : allDirectionsSelected(firstFrameCandidates, firstFrameSelections)
   const firstFrameConfirmLabel =
     firstFrameSheets.length > 0 ? '确认候选帧，生成完整动作' : '确认首帧，生成完整动作'
-  const addActionIntent = searchParams.get('intent') === 'add-action'
   const requestedOutfitId = searchParams.get('outfitId')
   const canAddAction =
     addActionIntent &&

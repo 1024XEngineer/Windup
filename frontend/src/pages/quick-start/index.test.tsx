@@ -2450,6 +2450,7 @@ describe('QuickStartPage', () => {
     await waitFor(() =>
       expect(service.confirmFirstFrame).toHaveBeenCalledWith({
         east: 'east-1.png',
+        west: 'west-1.png',
         north: 'north-1.png',
         south: 'south-1.png',
       }),
@@ -2463,10 +2464,13 @@ describe('QuickStartPage', () => {
         async () =>
           [
             { direction: 'east', index: 0, imageUrl: 'east-1.png' },
+            { direction: 'west', index: 0, imageUrl: 'west-1.png' },
             { direction: 'north', index: 0, imageUrl: 'north-1.png' },
             { direction: 'south', index: 0, imageUrl: 'south-1.png' },
             { direction: 'north_east', index: 0, imageUrl: 'north-east-1.png' },
+            { direction: 'north_west', index: 0, imageUrl: 'north-west-1.png' },
             { direction: 'south_east', index: 0, imageUrl: 'south-east-1.png' },
+            { direction: 'south_west', index: 0, imageUrl: 'south-west-1.png' },
           ] satisfies readonly QuickStartCandidate[],
       ),
     })
@@ -2481,10 +2485,13 @@ describe('QuickStartPage', () => {
     await waitFor(() =>
       expect(service.confirmFirstFrame).toHaveBeenCalledWith({
         east: 'east-1.png',
+        west: 'west-1.png',
         north: 'north-1.png',
         south: 'south-1.png',
         north_east: 'north-east-1.png',
+        north_west: 'north-west-1.png',
         south_east: 'south-east-1.png',
+        south_west: 'south-west-1.png',
       }),
     )
   })

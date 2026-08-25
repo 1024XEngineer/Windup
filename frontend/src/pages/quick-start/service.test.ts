@@ -1915,6 +1915,7 @@ describe('createQuickStartService', () => {
     })
 
     const session = await service.start('四向骑士')
+    expect(session.getDirectionalMovement?.()).toBe('four-way')
     await vi.waitFor(async () => {
       await expect(session.getTemplateCandidates()).resolves.toEqual([
         { direction: 'east', index: 0, imageUrl: 'east-character_template-1.png' },
