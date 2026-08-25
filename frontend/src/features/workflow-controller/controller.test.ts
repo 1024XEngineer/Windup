@@ -280,7 +280,9 @@ describe('WorkflowController', () => {
       controller.startCharacterGeneration({ prompt: '  银发像素骑士  ' }),
     ).resolves.toEqual({ runId: 'run-1' })
 
-    expect(prepareProject).toHaveBeenCalledWith('银发像素骑士', 'single')
+    expect(prepareProject).toHaveBeenCalledWith('银发像素骑士', 'single', {
+      gameStyle: undefined,
+    })
     expect(workflow.apis.create).toHaveBeenCalledWith({
       projectId: 'project-agent',
       nodes: [
@@ -327,7 +329,9 @@ describe('WorkflowController', () => {
       directionalMovement: 'four-way',
     })
 
-    expect(prepareProject).toHaveBeenCalledWith('四向像素骑士', 'four-way')
+    expect(prepareProject).toHaveBeenCalledWith('四向像素骑士', 'four-way', {
+      gameStyle: undefined,
+    })
     expect(generation.apis.create).toHaveBeenCalledTimes(1)
     expect(vi.mocked(generation.apis.create).mock.calls.map(([input]) => input.direction)).toEqual([
       'east',

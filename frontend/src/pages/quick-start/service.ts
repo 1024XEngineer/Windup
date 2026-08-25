@@ -27,6 +27,7 @@ import {
   createAutoPrepareProject,
   createWorkflowController,
   type PrepareQuickStartProject,
+  type PrepareQuickStartProjectOptions,
   type WorkflowController,
 } from '@/features/workflow-controller'
 import { createProgressiveExportModel, type ExportPackageModel } from '@/features/export-package'
@@ -40,7 +41,7 @@ import {
 } from '@/features/quick-start-agent/runtime'
 
 export { createAutoPrepareProject }
-export type { PrepareQuickStartProject }
+export type { PrepareQuickStartProject, PrepareQuickStartProjectOptions }
 
 export interface QuickStartFrame {
   index: number
@@ -118,12 +119,17 @@ export interface QuickStartSession {
 
 export interface QuickStartEntryService {
   readonly unavailableReason: string | null
-  start(prompt: string, directionalMovement?: DirectionalMovement): Promise<QuickStartSession>
+  start(
+    prompt: string,
+    directionalMovement?: DirectionalMovement,
+    options?: PrepareQuickStartProjectOptions,
+  ): Promise<QuickStartSession>
   startWithUploadedTemplate(
     file: File,
     actionDescription: string,
     signal?: AbortSignal,
     directionalMovement?: DirectionalMovement,
+    options?: PrepareQuickStartProjectOptions,
   ): Promise<QuickStartSession>
   open(runId: WorkflowRun['id']): Promise<QuickStartSession>
 }
@@ -1031,10 +1037,10 @@ export function createQuickStartService({
   return {
     unavailableReason: null,
 
-    async start(prompt, directionalMovement = 'single') {
+    async start(prompt, directionalMovement = 'single', options) {
       const normalizedPrompt = prompt.trim()
       if (!normalizedPrompt) throw new Error('请先描述想要创建的角色')
-      const project = await prepareProject(normalizedPrompt, directionalMovement)
+      const project = await prepareProject(normalizedPrompt, directionalMovement, options)
       const projectDirectionalMovement = project.directionalMovement ?? directionalMovement
       projectSpriteSizes.set(project.id, project.spriteSize)
       projectDirectionalMovements.set(project.id, projectDirectionalMovement)
@@ -1057,11 +1063,12 @@ export function createQuickStartService({
       actionDescription,
       signal,
       directionalMovement = 'single',
+      options,
     ) {
       if (!mediaApis) throw new Error('媒体上传服务尚未配置，不能使用角色母版')
       const prompt = actionDescription.trim() || file.name.trim()
       if (!prompt) throw new Error('请提供动作描述或有效的图片文件')
-      const project = await prepareProject(prompt, directionalMovement)
+      const project = await prepareProject(prompt, directionalMovement, options)
       const projectDirectionalMovement = project.directionalMovement ?? directionalMovement
       projectSpriteSizes.set(project.id, project.spriteSize)
       projectDirectionalMovements.set(project.id, projectDirectionalMovement)

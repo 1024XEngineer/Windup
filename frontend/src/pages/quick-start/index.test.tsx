@@ -816,6 +816,44 @@ describe('QuickStartPage', () => {
     ])
   })
 
+  it('keeps the chosen art style across a page refresh', async () => {
+    // 画风选择器在有对话之后就隐藏了；不随草稿存住的话，刷新后它悄悄回到「不指定」，
+    // 用户看不见也改不了，最终建出来的项目画风是错的。
+    const service = serviceFor(null)
+    const agent = agentFor({
+      planner: vi.fn(async () => ({
+        text: '想保留哪个特征？',
+        finishReason: 'stop',
+        toolCalls: [],
+      })),
+    })
+    window.history.replaceState(null, '', '/quick-start')
+    const firstView = renderInBrowserHistory(service, agent)
+
+    fireEvent.change(screen.getByLabelText('画风'), { target: { value: 'pixel' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '一个住在云端的机械师。' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+    expect(await screen.findByText('想保留哪个特征？')).toBeTruthy()
+
+    const draftId = window.history.state?.windupQuickStartAgentDraftId
+    const key = `windup.quick-start.agent-chat.v2:draft:7:${draftId}`
+    expect(window.sessionStorage.getItem(key)).toContain('"gameStyle":"pixel"')
+
+    firstView.unmount()
+    renderInBrowserHistory(service, agent)
+    expect(screen.getByText('想保留哪个特征？')).toBeTruthy()
+
+    // 再发一句触发重新持久化：状态若已被重置成「不指定」，这次就会把它写回去。
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '再补一句。' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '继续' }))
+    await screen.findByText('再补一句。')
+    expect(window.sessionStorage.getItem(key)).toContain('"gameStyle":"pixel"')
+  })
+
   it('moves the Agent draft into a run-scoped sidecar when generation starts', async () => {
     vi.useFakeTimers()
     const createdRun = workflow(setupAndTemplate({ phase: 'generating' }), 'run-created')
@@ -974,6 +1012,7 @@ describe('QuickStartPage', () => {
     expect(startCharacterGeneration).toHaveBeenCalledWith({
       prompt: '云端工坊的银发机械师，佩戴黄铜护目镜',
       directionalMovement: 'single',
+      gameStyle: 'unspecified',
     })
   })
 
@@ -1617,6 +1656,7 @@ describe('QuickStartPage', () => {
       expect(startCharacterGeneration).toHaveBeenCalledWith({
         prompt: '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色',
         directionalMovement: 'single',
+        gameStyle: 'unspecified',
       }),
     )
     expect(service.start).not.toHaveBeenCalled()
@@ -1636,6 +1676,7 @@ describe('QuickStartPage', () => {
         '挥手',
         expect.any(AbortSignal),
         'eight-way',
+        { gameStyle: 'unspecified' },
       ),
     )
   })

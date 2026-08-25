@@ -80,10 +80,27 @@ def test_created_project_reports_the_chosen_style(auth_client):
     assert created["game_style"] == "pixel"
 
 
-def test_unspecified_is_stored_as_null(auth_client):
-    """现有前端把这一列原样显示,写字面量会让「不指定」四个字变成 unspecified。"""
+def test_unspecified_is_stored_as_null(auth_client, db_session):
+    """库里存 NULL 而不是字面量;响应侧再归一成枚举交给前端。"""
+    from windup_app.server.project.model import Project
+
     created = auth_client.post("/projects", json=_payload()).json()["data"]
-    assert created["game_style"] is None
+    assert created["game_style"] == "unspecified"
+    assert db_session.get(Project, created["id"]).game_style is None
+
+
+def test_reading_a_legacy_row_reports_the_branch_it_takes(auth_client, db_session):
+    """存量存的是自由文本,不归一的话前端会把「像素风格」显示成不指定。"""
+    from windup_app.server.project.model import Project
+
+    created = auth_client.post("/projects", json=_payload()).json()["data"]
+    project = db_session.get(Project, created["id"])
+    project.game_style = "像素风格"
+    db_session.commit()
+
+    body = auth_client.get(f"/projects/{created['id']}").json()
+    assert body["code"] == 200
+    assert body["data"]["game_style"] == "pixel"
 
 
 # -- 改画风 ------------------------------------------------------------------
@@ -218,3 +235,15 @@ def test_no_phrase_uses_a_negation(style):
 
     errors = [i for i in lint(style.prompt_phrase, kind="still") if i.level == "error"]
     assert errors == [], f"{style.value}: {[i.message for i in errors]}"
+
+
+def test_reading_a_non_pixel_legacy_row_tells_the_truth(auth_client, db_session):
+    """接口不能说「没设画风」而生成时又在用那段文字 —— 认不出的原样交出去。"""
+    from windup_app.server.project.model import Project
+
+    created = auth_client.post("/projects", json=_payload()).json()["data"]
+    db_session.get(Project, created["id"]).game_style = "中世纪厚涂"
+    db_session.commit()
+
+    body = auth_client.get(f"/projects/{created['id']}").json()
+    assert body["data"]["game_style"] == "中世纪厚涂"

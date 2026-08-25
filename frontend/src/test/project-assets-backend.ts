@@ -23,7 +23,7 @@ const projectDtos: ProjectDto[] = [
     directional_movement: 2,
     sprite_width: 64,
     sprite_height: 64,
-    game_style: '低饱和像素绘本',
+    game_style: 'pixel',
     sprite_sample_url: null,
     preview_url: 'https://cdn.windup.test/messenger-outfit.png',
     create_at: '2026-08-01T08:00:00Z',
@@ -307,7 +307,7 @@ export function createProjectAssetsBackend({
         }
         project.project_name = body.project_name
         project.update_at = '2026-08-07T00:00:00Z'
-        return response(project, '重命名成功')
+        return response(project, '修改成功')
       }
       if (request.method === 'DELETE' && project) {
         projects = projects.filter((item) => item.id !== projectId)

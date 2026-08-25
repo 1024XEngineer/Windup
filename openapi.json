@@ -2107,10 +2107,10 @@
           "game_style": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/ArtStyle"
               },
               {
-                "type": "null"
+                "type": "string"
               }
             ],
             "title": "Game Style"
@@ -2206,10 +2206,10 @@
           "game_style": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/ArtStyle"
               },
               {
-                "type": "null"
+                "type": "string"
               }
             ],
             "title": "Game Style"

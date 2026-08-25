@@ -145,6 +145,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
     async (
       prompt: string,
       directionalMovement: QuickStartDirectionalMovement = 'single',
+      options?: { gameStyle?: string },
     ): Promise<QuickStartAgentResult> => {
       if (running.current) throw new Error('Planner 正在处理上一条输入')
       if (state.status !== 'proposal') throw new Error('提示词提案已失效')
@@ -159,7 +160,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
         })
       }
       try {
-        return await ensureAgent().confirmProposal(proposalId, prompt, directionalMovement)
+        return await ensureAgent().confirmProposal(proposalId, prompt, directionalMovement, options)
       } catch (cause) {
         if (mounted.current) {
           logAgentFailure(cause)

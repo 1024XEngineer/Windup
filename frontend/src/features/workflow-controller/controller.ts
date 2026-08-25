@@ -30,6 +30,7 @@ import type {
   DirectionalMovement,
 } from '@/entities'
 import {
+  type ArtStyle,
   getDirectionProfile,
   isImageCandidateCount,
   ProjectNameConflictError,
@@ -106,14 +107,20 @@ export interface ApplyGenerationResultInput {
   generation: Generation
 }
 
+export interface PrepareQuickStartProjectOptions {
+  gameStyle?: ArtStyle
+}
+
 export type PrepareQuickStartProject = (
   prompt: string,
   directionalMovement?: DirectionalMovement,
+  options?: PrepareQuickStartProjectOptions,
 ) => Promise<Pick<Project, 'id' | 'spriteSize'> & Partial<Pick<Project, 'directionalMovement'>>>
 
 export interface StartCharacterGenerationInput {
   prompt: string
   directionalMovement?: DirectionalMovement
+  gameStyle?: ArtStyle
 }
 
 export interface StartCharacterGenerationResult {
@@ -250,7 +257,7 @@ function boundedProjectName(value: string, maxLength: number): string {
 export function createAutoPrepareProject(
   projectApis: Pick<ProjectApis, 'create'>,
 ): PrepareQuickStartProject {
-  return async (prompt, directionalMovement = 'single') => {
+  return async (prompt, directionalMovement = 'single', options) => {
     const normalizedPrompt = prompt.trim().replace(/\s+/gu, ' ') || '未命名项目'
     let lastConflict: unknown
 
@@ -265,6 +272,7 @@ export function createAutoPrepareProject(
           perspective: 'side',
           directionalMovement,
           spriteSize: { width: 256, height: 256 },
+          gameStyle: options?.gameStyle,
         })
         return {
           id: project.id,
@@ -395,13 +403,16 @@ export function createWorkflowController({
   async function startCharacterGeneration({
     prompt,
     directionalMovement: selectedDirectionalMovement = 'single',
+    gameStyle,
   }: StartCharacterGenerationInput): Promise<StartCharacterGenerationResult> {
     ensureRunning()
     if (!prepareProject) {
       throw new Error('WorkflowController 未配置 Quick Start 项目准备能力')
     }
     const normalizedPrompt = nonEmpty(prompt, '角色描述')
-    const project = await prepareProject(normalizedPrompt, selectedDirectionalMovement)
+    const project = await prepareProject(normalizedPrompt, selectedDirectionalMovement, {
+      gameStyle,
+    })
     generationDirections = getDirectionProfile(
       project.directionalMovement ?? selectedDirectionalMovement,
     ).generationDirections

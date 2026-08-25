@@ -183,7 +183,7 @@ describe('ProjectsPage', () => {
     expect(previewProject.textContent).toContain('08/04')
     expect(previewProject.textContent).toContain('横版视角 · 四向')
     expect(previewProject.textContent).toContain('64 × 64 px')
-    expect(previewProject.textContent).toContain('低饱和像素绘本')
+    expect(previewProject.textContent).toContain('像素')
     expect(screen.queryByText('项目名称')).toBeNull()
     expect(screen.queryByRole('link', { name: /查看角色/ })).toBeNull()
     const gallery = screen.getByRole('heading', { name: '最近项目 · 02' }).closest('section')
