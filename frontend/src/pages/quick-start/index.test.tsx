@@ -674,19 +674,16 @@ describe('QuickStartPage', () => {
     expect(composer.className).toContain('block')
     expect(composer.className).toContain('pl-4')
     expect(composer.className).toContain('pr-14')
-    expect(form?.className).toContain('rounded-app-surface')
-    expect(form?.className).toContain('border-app-line-strong')
-    expect(form?.className).toContain('bg-app-surface-raised')
-    expect(form?.className).toContain('shadow-app-panel')
-    expect(editingSurface?.className).not.toContain('border-app-line-strong')
-    expect(editingSurface?.className).not.toContain('bg-app-surface-raised')
-    expect(editingSurface?.className).not.toContain('shadow-app-panel')
+    expect(editingSurface?.className).toContain('rounded-app-surface')
+    expect(editingSurface?.className).toContain('bg-app-surface-raised')
     expect(screen.getByRole('button', { name: '生成角色' }).className).toContain('rounded-full')
     expect(form?.className).toContain('flex-col')
     expect(controls?.className).toContain('order-first')
-    expect(controls?.className).not.toContain('mb-2')
+    expect(controls?.className).toContain('mb-2')
     expect(screen.getByRole('button', { name: '生成角色' }).className).toContain('bottom-[6px]')
-    expect(form?.className).toContain('focus-within:shadow-[var(--shadow-app-composer-focus)]')
+    expect(editingSurface?.className).toContain(
+      'focus-within:shadow-[var(--shadow-app-composer-focus)]',
+    )
   })
 
   it('submits the entry with Enter', async () => {
@@ -1148,6 +1145,16 @@ describe('QuickStartPage', () => {
 
     const composer = screen.getByTestId('quick-start-composer')
     const input = screen.getByRole('textbox', { name: '创作指令' }) as HTMLTextAreaElement
+    const conversationForm = input.closest('form')
+    const conversationSurface = input.closest('label')
+    const conversationControls = composer.querySelector(
+      '[data-layout="quick-start-composer-controls"]',
+    )
+    expect(conversationForm?.className).toContain('grid-cols-[1fr_auto]')
+    expect(conversationSurface?.className).not.toContain('border-app-line-strong')
+    expect(conversationSurface?.className).not.toContain('shadow-app-panel')
+    expect(conversationControls?.className).toContain('hidden')
+    expect(conversationForm?.querySelector('button')?.className).not.toContain('absolute')
     expect(input.tagName).toBe('TEXTAREA')
     expect(input.rows).toBe(1)
     expect(input.className).toContain('[field-sizing:content]')
@@ -1495,11 +1502,11 @@ describe('QuickStartPage', () => {
     renderAt('/quick-start', serviceFor(null))
 
     const prompt = await screen.findByRole('textbox', { name: '创作指令' })
-    const composerSurface = prompt.closest('form')
+    const editingSurface = prompt.closest('label')
     const uploadButton = screen.getByRole('button', { name: '添加母版' })
     const directionButton = screen.getByRole('button', { name: '生成方向，当前单向' })
 
-    expect(composerSurface?.className).toContain('rounded-app-surface')
+    expect(editingSurface?.className).toContain('rounded-app-surface')
     expect(uploadButton.className).toContain('rounded-app-compact')
     expect(directionButton.className).toContain('rounded-app-control')
 
