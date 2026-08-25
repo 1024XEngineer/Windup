@@ -13,8 +13,8 @@
 图像走 OpenAI 兼容的 ``/chat/completions``(:class:`SufyImageProvider`),参考图以 data URI
 塞进 ``content`` 数组 —— 与视频的提交-轮询-下载三段式完全不同的调用形状。
 
-**网关上还有另一套 FAL 队列面**(veo / seedance / vidu 只在那一面)。曾实现过,但因为
-从未被真实调用过而移除,见本文件中段那条注释里记下的两个实测事实。
+**网关上还有另一套 FAL 队列面**(veo / seedance / vidu 只在那一面),协议实现在
+:mod:`.protocol.fal_queue`;本 provider 尚未接它。
 
 型号与 key / base_url 均由 ``AIProviderSettings`` 注入,provider 内不读 env;哪个模型吃
 什么请求字段属该模型的 API 事实,写在代码里而不是配置里(填错只会在生成阶段才 failed,
@@ -138,6 +138,31 @@ class SufyVideoProvider(VideoProvider):
                 return _transport_result(exc)
         return self._protocol.parse_submit(resp)
 
+    def inspect_job(self, job_id: str) -> AdapterResult:
+        """单次 GET 任务状态,不 sleep、不下载。
+
+        completed: ``ok=True``,视频 URL 放 ``edge_fingerprint``(Gateway poll 靠这个
+        去 ``download_completed``)。进行中: ``ok=False``,``error_type is None``。
+        """
+        with self._client() as client:
+            resp = _poll_get(client, self._protocol.build_poll(job_id))
+        parsed = self._protocol.parse_poll(resp, job_id)
+        if parsed.error_type is not None:
+            return parsed
+        if parsed.ok:
+            url = parsed.result_url
+            if not url:
+                return AdapterResult(
+                    ok=False,
+                    error_type=ModelErrorType.INVALID_RESPONSE,
+                    job_id=job_id,
+                    maybe_billed=True,
+                    job_status="completed",
+                    edge_fingerprint="completed 但没有视频 URL",
+                )
+            return replace(parsed, edge_fingerprint=url)
+        return parsed
+
     def follow_job(self, job_id: str) -> AdapterResult:
         """轮询已建单据 + 下载。poll GET 522/525 该次再试 1 次,不新开单。"""
         poll_t0 = time.monotonic()
@@ -153,74 +178,70 @@ class SufyVideoProvider(VideoProvider):
                 download_ms=download_ms,
             )
 
-        with self._client() as client:
-            url = None
-            last_status: str | None = None
-            # 先短后长,而不是每次都睡满 ``poll_interval``。此前第一次查询也要等满一个
-            # 间隔:60 秒的间隔下,一段 20 秒就绪的视频要到第 60 秒才被发现,纯白等。
-            # 退避到上限后与原来一致,所以对慢任务不增加网关压力。
-            # 次数与时间双上限。只用时间会让"永不完成"这类用例必须真等满预算
-            # (实测把一条 0.01 秒的用例拖成 60 秒);只用次数则退避变快之后预算被提前
-            # 耗光。两者取先到的那个。
-            budget = max(1, int(self._max_min * 60 // self._poll))
-            deadline = time.monotonic() + self._max_min * 60
-            wait = self._first_poll_after
-            for _ in range(budget):
-                if time.monotonic() >= deadline:
-                    break
-                time.sleep(wait)
-                wait = min(wait * 2, self._poll)
-                resp = _poll_get(client, self._protocol.build_poll(job_id))
-                poll_count += 1
-                parsed = self._protocol.parse_poll(resp, job_id)
-                if parsed.error_type is not None:
-                    return with_poll(parsed)
-                last_status = parsed.job_status
-                if parsed.ok:
-                    url = parsed.result_url
-                    break
-            poll_ms = int((time.monotonic() - poll_t0) * 1000)
-            if not url:
-                return replace(
-                    AdapterResult(
-                        ok=False,
-                        error_type=ModelErrorType.TIMEOUT,
-                        job_id=job_id,
-                        maybe_billed=True,
-                        job_status=last_status or "timeout",
-                    ),
-                    poll_ms=poll_ms,
-                    poll_count=poll_count,
-                )
-            try:
-                download_t0 = time.monotonic()
-                body = _download(client, url)
-                download_ms = int((time.monotonic() - download_t0) * 1000)
-            except RuntimeError as exc:
-                return replace(
-                    AdapterResult(
-                        ok=False,
-                        error_type=ModelErrorType.MAYBE_BILLED,
-                        job_id=job_id,
-                        maybe_billed=True,
-                        job_status="completed",
-                        edge_fingerprint=str(exc),
-                    ),
-                    poll_ms=poll_ms,
-                    poll_count=poll_count,
-                )
+        url = None
+        last_status: str | None = None
+        # 先短后长,而不是每次都睡满 ``poll_interval``。此前第一次查询也要等满一个
+        # 间隔:60 秒的间隔下,一段 20 秒就绪的视频要到第 60 秒才被发现,纯白等。
+        # 退避到上限后与原来一致,所以对慢任务不增加网关压力。
+        # 次数与时间双上限。只用时间会让"永不完成"这类用例必须真等满预算
+        # (实测把一条 0.01 秒的用例拖成 60 秒);只用次数则退避变快之后预算被提前
+        # 耗光。两者取先到的那个。
+        budget = max(1, int(self._max_min * 60 // self._poll))
+        deadline = time.monotonic() + self._max_min * 60
+        wait = self._first_poll_after
+        for _ in range(budget):
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(wait)
+            wait = min(wait * 2, self._poll)
+            snap = self.inspect_job(job_id)
+            poll_count += 1
+            last_status = snap.job_status
+            if snap.ok and snap.job_status == "completed":
+                url = snap.edge_fingerprint
+                break
+            if snap.error_type is not None:
+                return with_poll(snap)
+        poll_ms = int((time.monotonic() - poll_t0) * 1000)
+        if not url:
             return replace(
                 AdapterResult(
-                    ok=True,
-                    body=body,
+                    ok=False,
+                    error_type=ModelErrorType.TIMEOUT,
                     job_id=job_id,
                     maybe_billed=True,
-                    job_status="completed",
+                    job_status=last_status or "timeout",
                 ),
                 poll_ms=poll_ms,
                 poll_count=poll_count,
-                download_ms=download_ms,
             )
+        downloaded = self.download_completed(job_id, url)
+        return with_poll(downloaded, download_ms=downloaded.download_ms)
+
+    def download_completed(self, job_id: str, url: str) -> AdapterResult:
+        """按 inspect 拿到的 URL 下载 mp4,不轮询。"""
+        try:
+            download_t0 = time.monotonic()
+            with self._client() as client:
+                body = _download(client, url)
+            download_ms = int((time.monotonic() - download_t0) * 1000)
+        except RuntimeError as exc:
+            return AdapterResult(
+                ok=False,
+                error_type=ModelErrorType.MAYBE_BILLED,
+                job_id=job_id,
+                maybe_billed=True,
+                job_status="completed",
+                edge_fingerprint=str(exc),
+            )
+        return AdapterResult(
+            ok=True,
+            body=body,
+            job_id=job_id,
+            maybe_billed=True,
+            job_status="completed",
+            download_ms=download_ms,
+        )
 
     def i2v(
         self, first_frame: bytes, prompt: str, seconds: int = 5, size: str = "1280x720"
@@ -340,9 +361,11 @@ def _download(client: httpx.Client, url: str, tries: int = 3) -> bytes:
 
 # ── FAL 队列面 ──────────────────────────────────────────────────────────────
 # 2026-08-07 拉网关 OpenAPI spec 核对得到:平台的 22 个图生视频端点全在 /queue/ 下,
-# 首帧字段一律是 URL 形态(image_url / start_image_url),同日实测送 dataURI 无一能用。
-# (spec 里 seedance / vidu-q3 / kling-v3-turbo 三家的字段说明写着"URL 或 base64",
-#  与实测冲突,未复验。本实现一律只发公网 URL —— 那是 22 个端点的共同解。)
+# 首帧字段一律是 URL 形态(image_url / start_image_url)。字段名虽叫 *_url,值可以是
+# base64 dataURI —— 2026-08-24 实测三个端点:kling-video/o1 喂纯品红图,产物首帧
+# 平均 RGB (255,1,201);vidu/q1 与 veo3.1 喂纯中灰图,产物首帧同为纯中灰。故两面共用
+# 同一套首帧编码,不需要 bytes → 公网 URL 的上传器。
+# (seedance-2.0 未验:它的输入尺寸下限是 14px,那次探针的图只有 8px 被上游拒。)
 #
 # 每家有三样东西不一样,而且**没有一条能靠拼字符串猜出来**,所以下面是一张硬表:
 #   1. 提交路径:型号段各不相同(o3 / v3 / v3/turbo / v2.6 / v2.5-turbo / o1),

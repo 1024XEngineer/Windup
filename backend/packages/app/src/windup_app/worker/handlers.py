@@ -10,6 +10,7 @@ from typing import Any
 from windup_app.server.mq.catalog import (
     EMAIL_HANDLER_RETRIES,
     MSG_TYPE_CHARACTER_ACTION,
+    MSG_TYPE_CHARACTER_ACTION_POLL,
     MSG_TYPE_CHARACTER_IMAGE,
     MSG_TYPE_VERIFICATION_CODE,
 )
@@ -21,8 +22,9 @@ from windup_app.server.orchestrator.model import (
     GenerationType,
     TaskStatus,
 )
-from windup_common.directions import ActionDirection
 from windup_app.server.user.service import VERIFY_CODE_KEY
+from windup_common.directions import ActionDirection
+from windup_common.models import CharacterStance
 from windup_framework.db.redis import get_redis
 from windup_framework.db.session import SessionLocal
 from windup_framework.providers.email import email_provider
@@ -62,13 +64,16 @@ def handle_verification_code(payload: dict[str, Any]) -> None:
 
 
 def _image_input(payload: dict) -> CharacterImageInput:
+    # 张数缺失时原样传 None,交给入参自己的默认值:在这里兜一个数就是第二份约定,
+    # 它与 CharacterImageInput 分叉时同一请求经不经过 MQ 出图张数不同,没有一处会红。
+    raw_num_images = payload.get("num_images")
     return CharacterImageInput(
         reference_image_url=payload.get("reference_image_url"),
         prompt=payload.get("prompt") or "",
         negative_prompt=payload.get("negative_prompt") or "",
         width=int(payload.get("width") or 1024),
         height=int(payload.get("height") or 1024),
-        num_images=int(payload.get("num_images") or 1),
+        num_images=int(raw_num_images) if raw_num_images is not None else None,
         direction=ActionDirection(payload.get("direction") or ActionDirection.EAST.value),
     )
 
@@ -91,6 +96,7 @@ def _action_input(payload: dict) -> CharacterActionInput:
         video_model=payload.get("video_model"),
         outfit_id=payload.get("outfit_id"),
         model_3d_url=payload.get("model_3d_url"),
+        stance=CharacterStance(payload["stance"]) if payload.get("stance") else None,
         direction=ActionDirection(payload.get("direction") or ActionDirection.EAST.value),
     )
 
@@ -133,21 +139,83 @@ def handle_generation(
         raise ValueError(f"未知生成任务类型: {task_type}")
 
 
+def handle_action_poll(
+    payload: dict[str, Any],
+    *,
+    resume_action_poll: Callable[..., Any],
+) -> None:
+    """RUNNING 是预期态:建单 worker 已 ACK,本消息只负责探一次。"""
+    task_id = int(payload["task_id"])
+    session = SessionLocal()
+    try:
+        task = task_repo.get_task(session, task_id)
+        if task is None:
+            logger.warning("轮询任务不存在 | task_id=%d", task_id)
+            return
+        if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+            logger.info("轮询任务已终态，跳过 | task_id=%d status=%s", task_id, task.status)
+            return
+        if not billing.has_open_freeze(session, task_id):
+            logger.warning("轮询任务无开放冻结，跳过 | task_id=%d", task_id)
+            return
+        input_payload = task.input_payload or {}
+        project_id = task.project_id
+    finally:
+        session.close()
+    resume_action_poll(task_id, _action_input(input_payload), project_id)
+
+
 def dispatch_handler(
     msg_type: str,
     payload: dict[str, Any],
     *,
     run_image_task: Callable[..., Any],
     run_action_task: Callable[..., Any],
+    resume_action_poll: Callable[..., Any] | None = None,
 ) -> None:
-    if msg_type == MSG_TYPE_VERIFICATION_CODE:
-        handle_verification_code(payload)
-        return
-    if msg_type in (MSG_TYPE_CHARACTER_IMAGE, MSG_TYPE_CHARACTER_ACTION):
-        handle_generation(
-            payload,
-            run_image_task=run_image_task,
-            run_action_task=run_action_task,
-        )
-        return
-    raise ValueError(f"未知消息类型: {msg_type}")
+    handler = HANDLERS.get(msg_type)
+    if handler is None:
+        raise ValueError(f"未知消息类型: {msg_type}")
+    handler(
+        payload,
+        run_image_task=run_image_task,
+        run_action_task=run_action_task,
+        resume_action_poll=resume_action_poll,
+    )
+
+
+def _dispatch_verification_code(payload: dict[str, Any], **_deps: Any) -> None:
+    handle_verification_code(payload)
+
+
+def _dispatch_generation(
+    payload: dict[str, Any],
+    *,
+    run_image_task: Callable[..., Any],
+    run_action_task: Callable[..., Any],
+    **_deps: Any,
+) -> None:
+    handle_generation(
+        payload,
+        run_image_task=run_image_task,
+        run_action_task=run_action_task,
+    )
+
+
+def _dispatch_action_poll(
+    payload: dict[str, Any],
+    *,
+    resume_action_poll: Callable[..., Any] | None = None,
+    **_deps: Any,
+) -> None:
+    if resume_action_poll is None:
+        raise RuntimeError("未注入 resume_action_poll")
+    handle_action_poll(payload, resume_action_poll=resume_action_poll)
+
+
+HANDLERS: dict[str, Callable[..., None]] = {
+    MSG_TYPE_VERIFICATION_CODE: _dispatch_verification_code,
+    MSG_TYPE_CHARACTER_IMAGE: _dispatch_generation,
+    MSG_TYPE_CHARACTER_ACTION: _dispatch_generation,
+    MSG_TYPE_CHARACTER_ACTION_POLL: _dispatch_action_poll,
+}

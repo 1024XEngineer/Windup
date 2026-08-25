@@ -448,6 +448,42 @@ describe('QuickStartPage', () => {
     expect(await screen.findByRole('button', { name: '导出角色母版' })).toBeTruthy()
   })
 
+  it('renders real Chat History actions as SVG controls with accessible tooltips', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn(async () => undefined) },
+    })
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const exportModel: ExportPackageModel = {
+      stage: 'action-assets',
+      characterId: 'character-1',
+      characterName: '像素骑士',
+      characterImageUrl: '/master.png',
+      outfitId: 'outfit-1',
+      outfitName: '默认造型',
+      canvas: { width: 32, height: 40 },
+      source: { workflowRunId: run.id, generationIds: [] },
+      firstFrames: [],
+      actions: [],
+      playtest: null,
+    }
+    renderAt(
+      `/quick-start/${run.id}`,
+      serviceFor(run, { getExportModel: vi.fn(async () => exportModel) }),
+    )
+
+    const actions = await Promise.all(
+      ['复制提示词', '导出完整动作资产', '新建一次创作', '发送'].map((name) =>
+        screen.findByRole('button', { name }),
+      ),
+    )
+    expect(actions.every((button) => button.querySelector('svg'))).toBe(true)
+    expect(actions.every((button) => button.querySelector('[role="tooltip"]'))).toBe(true)
+
+    fireEvent.click(actions[0]!)
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith('像素骑士'))
+  })
+
   it('reserves the fixed app header height before the creation entry', () => {
     const entry = renderAt('/quick-start', serviceFor(null))
     const entrySection = entry.getByLabelText('创作指令').closest('section')
@@ -644,7 +680,8 @@ describe('QuickStartPage', () => {
     expect(screen.queryByText('CURRENT STATUS')).toBeNull()
     expect(screen.queryByText('WORKFLOW RUN')).toBeNull()
     expect(screen.queryByText(/STEPS PASSED/u)).toBeNull()
-    expect(screen.getByRole('button', { name: '中断自动制作' })).toBeTruthy()
+    const continueButton = screen.getByRole('button', { name: '确认选择，继续下一步' })
+    expect(continueButton.querySelector('svg')).toBeTruthy()
   })
 
   it('生成进行中时为 Header 留下返回入口，走完就清掉', async () => {
@@ -961,14 +998,15 @@ describe('QuickStartPage', () => {
     expect(transcript.querySelector('[data-agent-identity]')).toBeNull()
   })
 
-  it('keeps the composer shape stable while the Agent is working', async () => {
+  it('keeps the composer shape stable while generation can be interrupted', async () => {
     renderStateFixture('action-generating')
 
     const composer = await screen.findByTestId('quick-start-composer')
-    const send = screen.getByRole('button', { name: '发送' })
+    const interrupt = screen.getByRole('button', { name: '中断自动制作' })
 
     expect(composer).toBeTruthy()
-    expect(send.hasAttribute('disabled')).toBe(true)
+    expect(interrupt.querySelector('svg')).toBeTruthy()
+    expect(interrupt.hasAttribute('disabled')).toBe(false)
   })
 
   it('scrolls only the transcript region when new Agent output arrives', async () => {
@@ -1314,6 +1352,8 @@ describe('QuickStartPage', () => {
     const directionalCandidates = [
       { direction: 'east', index: 0, imageUrl: 'east-1.png' },
       { direction: 'east', index: 1, imageUrl: 'east-2.png' },
+      { direction: 'west', index: 0, imageUrl: 'west-1.png' },
+      { direction: 'west', index: 1, imageUrl: 'west-2.png' },
       { direction: 'north', index: 0, imageUrl: 'north-1.png' },
       { direction: 'north', index: 1, imageUrl: 'north-2.png' },
       { direction: 'south', index: 0, imageUrl: 'south-1.png' },
@@ -1327,6 +1367,8 @@ describe('QuickStartPage', () => {
     const submit = await screen.findByRole('button', { name: '确认选择，继续下一步' })
     fireEvent.click(await screen.findByRole('button', { name: '选择东方向角色方案 2' }))
     expect(submit.hasAttribute('disabled')).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '选择西方向角色方案 2' }))
+    expect(submit.hasAttribute('disabled')).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: '选择北方向角色方案 1' }))
     expect(submit.hasAttribute('disabled')).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: '选择南方向角色方案 2' }))
@@ -1335,10 +1377,43 @@ describe('QuickStartPage', () => {
 
     await waitFor(() =>
       expect(service.confirmCandidate).toHaveBeenCalledWith(
-        { east: 'east-2.png', north: 'north-1.png', south: 'south-2.png' },
+        {
+          east: 'east-2.png',
+          west: 'west-2.png',
+          north: 'north-1.png',
+          south: 'south-2.png',
+        },
         '',
       ),
     )
+  })
+
+  it('八向角色候选完整展示全部八个独立方向', async () => {
+    const selectingRun = workflow(setupAndTemplate())
+    const directions = [
+      ['east', '东'],
+      ['west', '西'],
+      ['north', '北'],
+      ['south', '南'],
+      ['north_east', '东北'],
+      ['north_west', '西北'],
+      ['south_east', '东南'],
+      ['south_west', '西南'],
+    ] as const
+    const service = serviceFor(selectingRun, {
+      getTemplateCandidates: vi.fn(async () =>
+        directions.map(([direction]) => ({
+          direction,
+          index: 0,
+          imageUrl: `${direction}.png`,
+        })),
+      ),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    for (const [, label] of directions) {
+      expect(await screen.findByRole('region', { name: `${label}方向角色方案候选` })).toBeTruthy()
+    }
   })
 
   it('keeps the natural-language creation entry visible when no run is selected', () => {
@@ -2071,6 +2146,8 @@ describe('QuickStartPage', () => {
           [
             { direction: 'east', index: 0, imageUrl: 'east-1.png' },
             { direction: 'east', index: 1, imageUrl: 'east-2.png' },
+            { direction: 'west', index: 0, imageUrl: 'west-1.png' },
+            { direction: 'west', index: 1, imageUrl: 'west-2.png' },
             { direction: 'north', index: 0, imageUrl: 'north-1.png' },
             { direction: 'north', index: 1, imageUrl: 'north-2.png' },
             { direction: 'south', index: 0, imageUrl: 'south-1.png' },
@@ -2082,6 +2159,8 @@ describe('QuickStartPage', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: '选择东方向动作首帧 1' }))
     expect(screen.queryByRole('button', { name: '确认首帧，生成完整动作' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '选择西方向动作首帧 2' }))
+    expect(screen.queryByRole('button', { name: '确认首帧，生成完整动作' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '选择北方向动作首帧 2' }))
     expect(screen.queryByRole('button', { name: '确认首帧，生成完整动作' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '选择南方向动作首帧 1' }))
@@ -2090,6 +2169,7 @@ describe('QuickStartPage', () => {
     await waitFor(() =>
       expect(service.confirmFirstFrame).toHaveBeenCalledWith({
         east: 'east-1.png',
+        west: 'west-2.png',
         north: 'north-2.png',
         south: 'south-1.png',
       }),
@@ -2250,7 +2330,9 @@ describe('QuickStartPage', () => {
       interrupt: vi.fn(async () => Promise.reject(new Error('无法中断'))),
     })
     renderAt('/quick-start/run-1', service)
-    fireEvent.click(await screen.findByRole('button', { name: '中断自动制作' }))
+    const interrupt = await screen.findByRole('button', { name: '中断自动制作' })
+    expect(interrupt.querySelector('svg')).toBeTruthy()
+    fireEvent.click(interrupt)
     await waitFor(() => expect(service.interrupt).toHaveBeenCalledWith())
     expect((await screen.findByRole('alert')).textContent).toContain('无法中断')
   })

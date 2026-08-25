@@ -261,6 +261,7 @@ def _capture_spec(**input_kw) -> ActionSpec:
                 **input_kw,
             ),
             ProjectConstraints(sprite_w=64, sprite_h=64),
+            task_id=1,
         )
     return gen.specs[0]
 

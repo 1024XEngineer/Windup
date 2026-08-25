@@ -9,6 +9,12 @@ export const REFINE_FIRST_FRAME_TOOL = 'refine_first_frame' as const
 const MAX_PROMPT_LENGTH = 4_000
 const MAX_MESSAGE_LENGTH = 2_000
 const MAX_OPTIMIZATION_SUMMARY_LENGTH = 600
+const QUICK_START_DECISION_FIELDS = new Set([
+  'kind',
+  'message',
+  'optimizedPrompt',
+  'optimizationSummary',
+])
 
 export interface PlannerMessage {
   role: 'user' | 'assistant'
@@ -131,9 +137,7 @@ export function parseCharacterGenerationPlan(value: unknown): CharacterGeneratio
   if (!isRecord(value)) throw new Error('生成提案参数必须是对象')
   const keys = Object.keys(value)
   if (
-    keys.some(
-      (key) => key !== 'kind' && key !== 'optimizedPrompt' && key !== 'optimizationSummary',
-    ) ||
+    keys.some((key) => !QUICK_START_DECISION_FIELDS.has(key)) ||
     (keys.includes('kind') && value.kind !== 'proposal') ||
     !keys.includes('optimizedPrompt') ||
     !keys.includes('optimizationSummary')
@@ -156,14 +160,14 @@ export function parseCharacterGenerationPlan(value: unknown): CharacterGeneratio
 
 export function parseQuickStartDecision(value: unknown): QuickStartDecision {
   if (!isRecord(value)) throw new Error('Planner 决策必须是对象')
+  const keys = Object.keys(value)
   if (value.kind === 'proposal') {
     return { kind: 'proposal', ...parseCharacterGenerationPlan(value) }
   }
   if (value.kind !== 'reply' && value.kind !== 'clarification' && value.kind !== 'blocked') {
     throw new Error('Planner 决策类型无效')
   }
-  const keys = Object.keys(value)
-  if (keys.some((key) => key !== 'kind' && key !== 'message') || !keys.includes('message')) {
+  if (keys.some((key) => !QUICK_START_DECISION_FIELDS.has(key)) || !keys.includes('message')) {
     throw new Error('Planner 文字决策字段无效')
   }
   return { kind: value.kind, message: parseMessage(value.message) }

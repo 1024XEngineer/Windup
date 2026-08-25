@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type {
+  ActionDirection,
   Character,
   CharacterApis,
   DirectionalMovement,
@@ -162,6 +163,32 @@ describe('Character asset publisher', () => {
         'four-way',
       ),
     ).toThrow('完整动画方向 west 的生成结果不可发布')
+  })
+
+  it('八向导出保留八个独立序列，不生成镜像占位', () => {
+    const directions = [
+      'east',
+      'west',
+      'north',
+      'south',
+      'north_east',
+      'north_west',
+      'south_east',
+      'south_west',
+    ] as const
+
+    const sequences = exportFeature.createActionSequences(
+      directions.map((direction) =>
+        directionalAnimationFixture(`generation-${direction}`, direction, direction),
+      ),
+      'eight-way',
+    )
+
+    expect(sequences.map((sequence) => sequence.direction)).toEqual(directions)
+    expect(sequences.every((sequence) => sequence.sourceDirection === null)).toBe(true)
+    expect(sequences.every((sequence) => !sequence.mirrorX && sequence.frames.length === 1)).toBe(
+      true,
+    )
   })
 
   it('拒绝未携带任何生成结果的发布请求', async () => {
@@ -351,7 +378,7 @@ function completeAnimationFixture(): Generation<'complete_animation'> {
 
 function directionalAnimationFixture(
   id: string,
-  direction: 'east' | 'west' | 'north' | 'south',
+  direction: ActionDirection,
   prefix: string,
 ): Generation<'complete_animation'> {
   return {

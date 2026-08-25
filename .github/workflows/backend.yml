@@ -4,9 +4,12 @@ on:
   push:
   pull_request:
 
-# 同一 ref 新 run 取消旧的,省额度
+# 分支和 PR 上,同一 ref 新 run 取消旧的,省额度。
+# main 例外:每个 commit 单独成组。main 上所有 push 共用一个 ref,连着合几个 PR 时
+# 先合的 run 会被后合的掐掉,提交页面留下的是「取消」(显示成红叉),而不是这个 commit
+# 自己的 CI 结论——真挂了也看不出来。加 sha 让每个合入点各自跑完。
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: true
 
 # 开源项目最小权限

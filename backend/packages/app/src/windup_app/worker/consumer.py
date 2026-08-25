@@ -14,10 +14,13 @@ from typing import Any
 
 from windup_app.server.mq.catalog import (
     MSG_TYPE_CHARACTER_ACTION,
+    MSG_TYPE_CHARACTER_ACTION_POLL,
     MSG_TYPE_CHARACTER_IMAGE,
+    POOL_POLL,
+    POOL_SHARED,
     StreamSpec,
-    generation_action_concurrency,
-    generation_image_concurrency,
+    type_spec,
+    types_for_stream,
 )
 from windup_app.worker.handlers import HandlerDeferred, dispatch_handler
 from windup_framework.db.redis import get_redis
@@ -47,18 +50,38 @@ class StreamConsumer:
         run_image_task: Callable[..., Any],
         run_action_task: Callable[..., Any],
         stop_event: threading.Event,
+        resume_action_poll: Callable[..., Any] | None = None,
     ) -> None:
         self._config = config
         self._run_image_task = run_image_task
         self._run_action_task = run_action_task
+        self._resume_action_poll = resume_action_poll
         self._stop = stop_event
         self._consumer_name = f"{socket.gethostname()}-{threading.get_ident()}"
-        self._executor = ThreadPoolExecutor(
-            max_workers=config.concurrency,
-            thread_name_prefix=f"windup-{config.group}",
-        )
-        self._image_sem = threading.Semaphore(generation_image_concurrency())
-        self._action_sem = threading.Semaphore(generation_action_concurrency())
+        self._executors: dict[str, ThreadPoolExecutor] = {}
+        self._semaphores: dict[str, threading.Semaphore] = {}
+        pool_sizes: dict[str, int] = {}
+        for spec in types_for_stream(config.stream):
+            pool_sizes[spec.pool] = pool_sizes.get(spec.pool, 0) + spec.concurrency
+            if spec.limit:
+                self._semaphores[spec.msg_type] = threading.Semaphore(spec.concurrency)
+        if not pool_sizes:
+            pool_sizes[POOL_SHARED] = config.concurrency
+        for pool_name, size in pool_sizes.items():
+            prefix = (
+                f"windup-{config.group}"
+                if pool_name == POOL_SHARED
+                else f"windup-{config.group}-{pool_name}"
+            )
+            self._executors[pool_name] = ThreadPoolExecutor(
+                max_workers=max(1, size),
+                thread_name_prefix=prefix,
+            )
+        self._executor = self._executors[POOL_SHARED]
+        self._poll_executor = self._executors.get(POOL_POLL)
+        self._image_sem = self._semaphores.get(MSG_TYPE_CHARACTER_IMAGE)
+        self._action_sem = self._semaphores.get(MSG_TYPE_CHARACTER_ACTION)
+        self._poll_sem = self._semaphores.get(MSG_TYPE_CHARACTER_ACTION_POLL)
         self._claim_cursor = "0-0"
         self._last_claim_at = 0.0
 
@@ -72,7 +95,8 @@ class StreamConsumer:
         return thread
 
     def shutdown(self, *, wait_timeout: float = 30.0) -> None:
-        self._executor.shutdown(wait=True, cancel_futures=False)
+        for executor in self._executors.values():
+            executor.shutdown(wait=True, cancel_futures=False)
 
     def _loop(self) -> None:
         redis_client = get_redis()
@@ -104,7 +128,7 @@ class StreamConsumer:
 
             for _stream, messages in batches:
                 for stream_id, fields in messages:
-                    self._executor.submit(self._process_message, stream_id, fields)
+                    self._submit_message(stream_id, fields)
 
     def _claim_idle(self, redis_client) -> None:
         while not self._stop.is_set():
@@ -117,9 +141,22 @@ class StreamConsumer:
             )
             self._claim_cursor = next_start
             for stream_id, fields in claimed:
-                self._executor.submit(self._process_message, stream_id, fields)
+                self._submit_message(stream_id, fields)
             if not claimed:
                 break
+
+    def _submit_message(self, stream_id: str, fields: dict[str, str]) -> None:
+        self._executor_for(fields).submit(self._process_message, stream_id, fields)
+
+    def _executor_for(self, fields: dict[str, str]) -> ThreadPoolExecutor:
+        try:
+            msg_type = str(mq_client.parse_envelope(fields)["type"])
+        except Exception:
+            return self._executor
+        spec = type_spec(msg_type)
+        if spec is None or spec.pool == POOL_SHARED:
+            return self._executor
+        return self._executors.get(spec.pool, self._executor)
 
     def _process_message(self, stream_id: str, fields: dict[str, str]) -> None:
         redis_client = get_redis()
@@ -165,6 +202,7 @@ class StreamConsumer:
                 payload,
                 run_image_task=self._run_image_task,
                 run_action_task=self._run_action_task,
+                resume_action_poll=self._resume_action_poll,
             )
 
             session = SessionLocal()
@@ -199,11 +237,7 @@ class StreamConsumer:
                 sem.release()
 
     def _semaphore_for(self, msg_type: str) -> threading.Semaphore | None:
-        if msg_type == MSG_TYPE_CHARACTER_IMAGE:
-            return self._image_sem
-        if msg_type == MSG_TYPE_CHARACTER_ACTION:
-            return self._action_sem
-        return None
+        return self._semaphores.get(msg_type)
 
     def _defer_message(self, message_id: uuid.UUID | None) -> None:
         """释放 processing 认领但不 XACK，留 PEL 待 XAUTOCLAIM 重投。"""
@@ -263,5 +297,23 @@ def start_relay_loop(stop_event: threading.Event) -> threading.Thread:
                 logger.exception("relay 循环失败")
 
     thread = threading.Thread(target=_run, name="windup-mq-relay", daemon=True)
+    thread.start()
+    return thread
+
+
+def start_delayed_loop(stop_event: threading.Event) -> threading.Thread:
+    """把 ZSET 到期项促进到 Stream。不用 keyspace notification。"""
+
+    def _run() -> None:
+        from windup_framework.mq.config import DELAYED_TICK_SECONDS
+        from windup_framework.mq.delayed import promote_due_messages
+
+        while not stop_event.wait(timeout=max(1, DELAYED_TICK_SECONDS)):
+            try:
+                promote_due_messages()
+            except Exception:
+                logger.exception("延迟队列促进失败")
+
+    thread = threading.Thread(target=_run, name="windup-mq-delayed", daemon=True)
     thread.start()
     return thread

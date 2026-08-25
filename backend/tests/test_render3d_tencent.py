@@ -111,7 +111,10 @@ def test_model3d_refuses_to_spend_by_default(cloud):
     p = TencentModel3DProvider(CREDS)
     with pytest.raises(SpendNotAuthorizedError) as e:
         p.image_to_3d(b"\x89PNG fake")
-    assert "20 积分" in str(e.value) and "¥2.4" in str(e.value)   # 报价必须写在异常里
+    # 报价写在异常里,但只给积分 —— 人民币是我们付给供应商的成本,不是用户的价钱,
+    # 而本仓是公开仓。同一条判据见 test_render3d_asset_endpoints 里的出参断言。
+    assert "20 积分" in str(e.value)
+    assert "¥" not in str(e.value), "人民币成本不出现在任何对外文案里"
     assert fake.calls == []                                       # 一个请求都没发出去
 
 
@@ -142,11 +145,12 @@ def test_unknown_motion_name_dies_before_the_spend_gate(cloud):
 
 
 def test_quotes_are_pure_computation():
-    assert TencentModel3DProvider(CREDS).quote() == (20, 2.4)
-    assert TencentModel3DProvider(CREDS, generate_type="Geometry").quote() == (15, 1.8)
-    assert TencentModel3DProvider(CREDS, enable_pbr=True).quote() == (30, 3.6)
-    assert TencentModel3DProvider(CREDS).quote(n_views=3) == (30, 3.6)
-    assert TencentAutoRigProvider(Uploader(), CREDS).quote() == (10, 1.2)
+    """报价只出积分。换算人民币要用供应商单价,那个数不该留在公开仓里。"""
+    assert TencentModel3DProvider(CREDS).quote() == 20
+    assert TencentModel3DProvider(CREDS, generate_type="Geometry").quote() == 15
+    assert TencentModel3DProvider(CREDS, enable_pbr=True).quote() == 30
+    assert TencentModel3DProvider(CREDS).quote(n_views=3) == 30
+    assert TencentAutoRigProvider(Uploader(), CREDS).quote() == 10
 
 
 def test_unknown_generate_type_dies_at_construction():

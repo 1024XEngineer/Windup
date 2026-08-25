@@ -45,6 +45,24 @@ const projectDtos: ProjectDto[] = [
   },
 ]
 
+const fullDirections = ['east', 'west', 'north', 'south'] as const
+
+function realDirectionSequences(
+  frames: readonly { index: number; image_url: string; duration_ms: number | null }[],
+) {
+  return fullDirections.map((direction) => ({
+    direction,
+    source_direction: null,
+    mirror_x: false,
+    frame_count: frames.length,
+    frames: frames.map((frame) => ({
+      ...frame,
+      image_url:
+        direction === 'east' ? frame.image_url : `${frame.image_url}?direction=${direction}`,
+    })),
+  }))
+}
+
 const characterDtos = [
   {
     id: 51,
@@ -81,6 +99,18 @@ const characterDtos = [
                   duration_ms: 125,
                 },
               ],
+              sequences: realDirectionSequences([
+                {
+                  index: 0,
+                  image_url: 'https://cdn.windup.test/idle-01.png',
+                  duration_ms: null,
+                },
+                {
+                  index: 1,
+                  image_url: 'https://cdn.windup.test/idle-02.png',
+                  duration_ms: 125,
+                },
+              ]),
             },
             {
               id: 'walk',
@@ -106,6 +136,23 @@ const characterDtos = [
                   duration_ms: 100,
                 },
               ],
+              sequences: realDirectionSequences([
+                {
+                  index: 2,
+                  image_url: 'https://cdn.windup.test/walk-03.png',
+                  duration_ms: 100,
+                },
+                {
+                  index: 0,
+                  image_url: 'https://cdn.windup.test/walk-01.png',
+                  duration_ms: null,
+                },
+                {
+                  index: 1,
+                  image_url: 'https://cdn.windup.test/walk-02.png',
+                  duration_ms: 100,
+                },
+              ]),
             },
           ],
         },

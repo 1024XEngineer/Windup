@@ -7,6 +7,7 @@ CharacterGenerator(视频 provider / matte / 抽帧全部桩替,不联网、不�
 from __future__ import annotations
 
 import io
+import threading
 
 import pytest
 from PIL import Image
@@ -24,7 +25,12 @@ from windup_app.server.orchestrator.model import (
     GenerationType,
     TaskStatus,
 )
-from windup_app.server.orchestrator.executor import ActionTaskExecutor
+from windup_app.server.orchestrator.executor import (
+    ActionTaskExecutor,
+    ProjectConstraints,
+)
+from windup_app.server.orchestrator.generation_io import upload_frames
+from windup_ai_engine.ports import ActionQuality, GeneratedAction
 from windup_app.server.orchestrator.service import AiGenerationService
 from windup_ai_engine.impl import CharacterGenerator
 from windup_ai_engine.strategy.concrete import VideoFrameStrategy
@@ -89,12 +95,88 @@ def _real_offline_generator(monkeypatch) -> CharacterGenerator:
     )
 
 
-def test_action_task_runs_end_to_end(session_factory, monkeypatch):
-    uploaded: list[bytes] = []
+def test_upload_frames_preserves_index_when_later_frames_finish_first():
+    """pool.map 必须按下标对齐;完成顺序乱了也不能把 URL 填错格。"""
+    finished: list[int] = []
+    lock = threading.Lock()
+    first_may_finish = threading.Event()
 
     def _upload(png: bytes) -> str:
-        uploaded.append(png)
-        return f"https://cdn.example.com/frame-{len(uploaded)}.png"
+        i = png[0]
+        if i == 0:
+            assert first_may_finish.wait(timeout=2)
+        with lock:
+            finished.append(i)
+        if i != 0:
+            first_may_finish.set()
+        return f"https://cdn.example.com/f{i}.png"
+
+    urls = upload_frames(_upload, [bytes([i]) for i in range(4)])
+    assert urls == [f"https://cdn.example.com/f{i}.png" for i in range(4)]
+    assert finished and finished[0] != 0
+
+
+def test_upload_frames_single_does_not_need_a_pool():
+    assert upload_frames(lambda png: f"u-{png.decode()}", [b"a"]) == ["u-a"]
+    assert upload_frames(lambda png: "u", []) == []
+
+
+def test_action_task_opens_a_fresh_session_after_generate(session_factory):
+    """生成期间必须把连接还回池,否则 16+8 路并发会把 15 连接打满。"""
+    opens: list[int] = []
+    inner = session_factory
+
+    def counting():
+        opens.append(1)
+        return inner()
+
+    class _Gen:
+        def generate(self, *args, **kwargs):
+            assert len(opens) == 1, "produce 开始时 RUNNING 那次 session 应已关闭并归还"
+            png = _tiny_png()
+            return GeneratedAction(
+                frames=[png],
+                durations=[80],
+                quality=ActionQuality(
+                    motion_scale=0.0,
+                    dead_frames=(),
+                    loop_seam=None,
+                    limbs={},
+                    subject_blobs=(1,),
+                ),
+                prompt_version="test",
+            )
+
+    service = AiGenerationService()
+    executor = ActionTaskExecutor(
+        generator=_Gen(),
+        upload=lambda png: "https://cdn.example.com/f.png",
+        fetch_master=lambda _input: _tiny_png(),
+        session_factory=counting,
+        fetch_constraints=lambda _s, _pid: ProjectConstraints(sprite_w=64, sprite_h=96),
+    )
+    action_input = CharacterActionInput(
+        character_id=1, action_type=ActionType.WALK, num_frames=1,
+    )
+    with session_factory() as s:
+        task = service.generate_character_action(s, user_id=1, input=action_input)
+        s.commit()
+        task_id = task.id
+    executor.run_action_task(task_id, action_input)
+    assert len(opens) == 2
+
+
+def test_action_task_runs_end_to_end(session_factory, monkeypatch):
+    uploaded: list[bytes] = []
+    n = 0
+    lock = threading.Lock()
+
+    def _upload(png: bytes) -> str:
+        nonlocal n
+        with lock:
+            n += 1
+            uploaded.append(png)
+            return f"https://cdn.example.com/frame-{n}.png"
 
     service = AiGenerationService()
     executor = ActionTaskExecutor(
@@ -468,3 +550,298 @@ def test_engine_frame_of_wrong_size_fails_instead_of_being_rescaled(session_fact
     assert done.status is TaskStatus.FAILED, "尺寸对不上必须失败,不能悄悄缩放交付"
     # 尺寸不符是生成侧缺陷、用户改不动,故用户侧只给通用文案;期望尺寸留在日志里。
     assert done.error_message and "512" not in done.error_message
+
+
+def test_action_task_parks_i2v_and_stays_running(session_factory, monkeypatch):
+    parked: list[dict] = []
+
+    class _AsyncGen:
+        def start_video(self, *args, **kwargs):
+            return {"job_id": "job-park", "route_id": "primary", "model": "kling-v2-5-turbo"}
+
+        def generate(self, *args, **kwargs):
+            raise AssertionError("有 start_video 时不该走阻塞 generate")
+
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.i2v_poll.schedule",
+        lambda task_id, job, **kw: parked.append({"task_id": task_id, "job": job, **kw}),
+    )
+    service = AiGenerationService()
+    executor = ActionTaskExecutor(
+        generator=_AsyncGen(),
+        fetch_master=lambda _input: _tiny_png(),
+        session_factory=session_factory,
+        fetch_constraints=lambda _s, _pid: ProjectConstraints(sprite_w=64, sprite_h=96),
+    )
+    action_input = CharacterActionInput(
+        character_id=1, action_type=ActionType.WALK, num_frames=1,
+    )
+    with session_factory() as s:
+        task = service.generate_character_action(s, user_id=1, input=action_input)
+        s.commit()
+        task_id = task.id
+    executor.run_action_task(task_id, action_input)
+    assert parked and parked[0]["job"]["job_id"] == "job-park"
+    with session_factory() as s:
+        done = service.get_task(s, project_id=1, task_id=task_id)
+    assert done.status is TaskStatus.RUNNING
+
+
+def test_resume_action_poll_finishes_when_video_ready(session_factory, monkeypatch):
+    png = _tiny_png()
+
+    class _AsyncGen:
+        def poll_video(self, job_id, route_id=None):
+            assert job_id == "job-ready"
+            return b"mp4"
+
+        def finish_video(self, video, *args, **kwargs):
+            assert video == b"mp4"
+            return GeneratedAction(
+                frames=[png],
+                durations=[80],
+                quality=ActionQuality(
+                    motion_scale=0.2,
+                    dead_frames=(),
+                    loop_seam=None,
+                    limbs={},
+                    subject_blobs=(1,),
+                ),
+                prompt_version="test",
+            )
+
+    import time as _time
+
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.i2v_poll.load_i2v_state",
+        lambda task_id: {
+            "job_id": "job-ready",
+            "poll_count": 0,
+            "next_wait": 5.0,
+            "started_at": _time.time(),
+            "route_id": "primary",
+            "model": "kling-v2-5-turbo",
+        },
+    )
+    monkeypatch.setattr("windup_app.server.orchestrator.i2v_poll.clear", lambda task_id: None)
+    service = AiGenerationService()
+    executor = ActionTaskExecutor(
+        generator=_AsyncGen(),
+        upload=lambda _png: "https://cdn.example.com/f.png",
+        fetch_master=lambda _input: png,
+        session_factory=session_factory,
+        fetch_constraints=lambda _s, _pid: ProjectConstraints(sprite_w=64, sprite_h=96),
+    )
+    action_input = CharacterActionInput(
+        character_id=1, action_type=ActionType.WALK, num_frames=1,
+    )
+    with session_factory() as s:
+        task = service.generate_character_action(s, user_id=1, input=action_input)
+        s.commit()
+        task_id = task.id
+        from windup_app.server.orchestrator import task_repo
+        task_repo.update_status(s, task_id, TaskStatus.RUNNING)
+        s.commit()
+    executor.resume_action_poll(task_id, action_input)
+    with session_factory() as s:
+        done = service.get_task(s, project_id=1, task_id=task_id)
+    assert done.status is TaskStatus.COMPLETED
+    assert done.result.frames[0].image_url.startswith("https://")
+
+
+def test_resume_action_poll_does_not_fetch_master_while_pending(
+    session_factory, monkeypatch,
+):
+    """未成片时只 inspect,取母版失败不得把仍在上游跑的任务标 FAILED。"""
+    fetched: list[int] = []
+    parked: list[int] = []
+
+    class _AsyncGen:
+        def poll_video(self, job_id, route_id=None):
+            return None
+
+        def finish_video(self, *args, **kwargs):
+            raise AssertionError("未成片不该 finish")
+
+    import time as _time
+
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.i2v_poll.load_i2v_state",
+        lambda task_id: {
+            "job_id": "job-pending",
+            "poll_count": 0,
+            "next_wait": 5.0,
+            "started_at": _time.time(),
+            "route_id": "primary",
+            "model": "kling-v2-5-turbo",
+        },
+    )
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.i2v_poll.schedule",
+        lambda task_id, job, **kw: parked.append(task_id),
+    )
+
+    def _boom(_input):
+        fetched.append(1)
+        raise RuntimeError("对象存储瞬时失败")
+
+    service = AiGenerationService()
+    executor = ActionTaskExecutor(
+        generator=_AsyncGen(),
+        fetch_master=_boom,
+        session_factory=session_factory,
+        fetch_constraints=lambda _s, _pid: ProjectConstraints(sprite_w=64, sprite_h=96),
+    )
+    action_input = CharacterActionInput(
+        character_id=1, action_type=ActionType.WALK, num_frames=1,
+    )
+    with session_factory() as s:
+        task = service.generate_character_action(s, user_id=1, input=action_input)
+        s.commit()
+        task_id = task.id
+        from windup_app.server.orchestrator import task_repo
+        task_repo.update_status(s, task_id, TaskStatus.RUNNING)
+        s.commit()
+    executor.resume_action_poll(task_id, action_input)
+    assert fetched == []
+    assert parked == [task_id]
+    with session_factory() as s:
+        done = service.get_task(s, project_id=1, task_id=task_id)
+    assert done.status is TaskStatus.RUNNING
+
+
+def test_resume_action_poll_completes_after_credit_already_released(
+    session_factory, monkeypatch,
+):
+    """失败已解冻后，成片轮询仍写成 completed，不得再抛冻结额度不足。"""
+    png = _tiny_png()
+
+    class _AsyncGen:
+        def poll_video(self, job_id, route_id=None):
+            return b"mp4"
+
+        def finish_video(self, video, *args, **kwargs):
+            return GeneratedAction(
+                frames=[png],
+                durations=[80],
+                quality=ActionQuality(
+                    motion_scale=0.2,
+                    dead_frames=(),
+                    loop_seam=None,
+                    limbs={},
+                    subject_blobs=(1,),
+                ),
+                prompt_version="test",
+            )
+
+    import time as _time
+    from windup_app.server.orchestrator import billing, task_repo
+
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.i2v_poll.load_i2v_state",
+        lambda task_id: {
+            "job_id": "job-ready",
+            "poll_count": 0,
+            "next_wait": 5.0,
+            "started_at": _time.time(),
+            "route_id": "primary",
+            "model": "kling-v2-5-turbo",
+        },
+    )
+    monkeypatch.setattr("windup_app.server.orchestrator.i2v_poll.clear", lambda task_id: None)
+    service = AiGenerationService()
+    executor = ActionTaskExecutor(
+        generator=_AsyncGen(),
+        upload=lambda _png: "https://cdn.example.com/f.png",
+        fetch_master=lambda _input: png,
+        session_factory=session_factory,
+        fetch_constraints=lambda _s, _pid: ProjectConstraints(sprite_w=64, sprite_h=96),
+    )
+    action_input = CharacterActionInput(
+        character_id=1, action_type=ActionType.WALK, num_frames=1,
+    )
+    with session_factory() as s:
+        task = service.generate_character_action(s, user_id=1, input=action_input)
+        s.commit()
+        task_id = task.id
+        task_repo.update_status(s, task_id, TaskStatus.RUNNING)
+        billing.release_for_task(s, user_id=1, task_id=task_id)
+        s.commit()
+    executor.resume_action_poll(task_id, action_input)
+    with session_factory() as s:
+        done = service.get_task(s, project_id=1, task_id=task_id)
+        from windup_app.server.quota.model import CreditAccount
+        from sqlalchemy import select
+        account = s.scalar(select(CreditAccount).where(CreditAccount.user_id == 1))
+    assert done.status is TaskStatus.COMPLETED
+    assert account.frozen == 0
+    assert account.total_spent == 0
+
+
+def test_resume_action_poll_timeout_without_video_fails(session_factory, monkeypatch):
+    class _AsyncGen:
+        def poll_video(self, job_id, route_id=None):
+            return None
+
+        def finish_video(self, *args, **kwargs):
+            raise AssertionError("未成片不该 finish")
+
+    import time as _time
+    from windup_app.server.orchestrator import task_repo
+
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.i2v_poll.load_i2v_state",
+        lambda task_id: {
+            "job_id": "job-late",
+            "poll_count": 8,
+            "next_wait": 60.0,
+            "started_at": _time.time() - 10_000,
+            "route_id": "primary",
+            "model": "kling-v2-5-turbo",
+        },
+    )
+    service = AiGenerationService()
+    executor = ActionTaskExecutor(
+        generator=_AsyncGen(),
+        fetch_master=lambda _input: _tiny_png(),
+        session_factory=session_factory,
+        fetch_constraints=lambda _s, _pid: ProjectConstraints(sprite_w=64, sprite_h=96),
+    )
+    action_input = CharacterActionInput(
+        character_id=1, action_type=ActionType.WALK, num_frames=1,
+    )
+    with session_factory() as s:
+        task = service.generate_character_action(s, user_id=1, input=action_input)
+        s.commit()
+        task_id = task.id
+        task_repo.update_status(s, task_id, TaskStatus.RUNNING)
+        s.commit()
+    executor.resume_action_poll(task_id, action_input)
+    with session_factory() as s:
+        done = service.get_task(s, project_id=1, task_id=task_id)
+    assert done.status is TaskStatus.FAILED
+
+
+def test_close_failed_does_not_overwrite_completed(session_factory):
+    from windup_app.server.orchestrator import billing, task_repo
+    from windup_app.server.orchestrator.executor import _close_failed
+
+    service = AiGenerationService()
+    with session_factory() as s:
+        task = service.generate_character_action(
+            s, user_id=1,
+            input=CharacterActionInput(
+                character_id=1, action_type=ActionType.WALK, num_frames=1,
+            ),
+        )
+        s.commit()
+        task_repo.update_result(
+            s, task.id, "character_action",
+            {"type": "character_action", "frames": []},
+        )
+        billing.capture_for_task(s, user_id=1, task_id=task.id)
+        _close_failed(s, task.id, "生成没能完成，请稍后重试。若反复失败请联系我们。")
+        s.commit()
+        done = task_repo.get_task(s, task.id)
+    assert done.status is TaskStatus.COMPLETED
+    assert done.result is not None

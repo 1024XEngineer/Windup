@@ -164,6 +164,16 @@ class SqlAlchemyQuotaService(QuotaService):
         session.add(txn)
         return txn
 
+    def _txn_for(
+        self, session: Session, ref_id: str, reason: int
+    ) -> CreditTransaction | None:
+        return session.scalar(
+            select(CreditTransaction).where(
+                CreditTransaction.ref_id == ref_id,
+                CreditTransaction.reason == reason,
+            )
+        )
+
     # -- 预付费：冻结 / 扣减 / 解冻 ----------------------------------------
 
     def reserve_credit(
@@ -211,8 +221,12 @@ class SqlAlchemyQuotaService(QuotaService):
         """预付费扣减：frozen -= frozen_amount, total_spent += actual_amount。
 
         若 actual_amount < frozen_amount，差额退回 balance。
+        同一 ``ref_id`` 已有 CAPTURED 流水则跳过（MQ 重投幂等）。
         """
         account = self._get_account_for_update(session, user_id)
+        if self._txn_for(session, ref_id, int(CreditReason.CAPTURED)) is not None:
+            logger.info("[WINDUP] 积分扣减已落地，跳过 | ref_id=%s", ref_id)
+            return
 
         if account.frozen < frozen_amount:
             raise BizException(
@@ -267,8 +281,14 @@ class SqlAlchemyQuotaService(QuotaService):
     def release_credit(
         self, session: Session, user_id: int, amount: int, ref_id: str
     ) -> None:
-        """预付费解冻：frozen -= amount, balance += amount。"""
+        """预付费解冻：frozen -= amount, balance += amount。
+
+        同一 ``ref_id`` 已有解冻流水则跳过（MQ 重投幂等）。
+        """
         account = self._get_account_for_update(session, user_id)
+        if self._txn_for(session, f"{ref_id}:release", int(CreditReason.REFUND)) is not None:
+            logger.info("[WINDUP] 积分解冻已落地，跳过 | ref_id=%s", ref_id)
+            return
 
         if account.frozen < amount:
             raise BizException(
