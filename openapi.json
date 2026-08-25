@@ -56,6 +56,18 @@
         "title": "ActionType",
         "type": "string"
       },
+      "ArtStyle": {
+        "description": "项目的美术风格。\n\n只有 ``PIXEL`` 改变管线行为(出帧吸附母版像素网格、颜色吸回母版色板),其余取值\n只进提示词。像素网格密度不在这一维 —— 它由目标分辨率定,两处各定一遍会打架。",
+        "enum": [
+          "pixel",
+          "cartoon",
+          "hand_drawn",
+          "realistic",
+          "unspecified"
+        ],
+        "title": "ArtStyle",
+        "type": "string"
+      },
       "AssistantMessageResponse": {
         "properties": {
           "content": {
@@ -2020,12 +2032,13 @@
           "game_style": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/ArtStyle"
               },
               {
-                "type": "null"
+                "type": "string"
               }
             ],
+            "default": "unspecified",
             "title": "Game Style"
           },
           "project_name": {
@@ -2265,20 +2278,38 @@
         "title": "ProjectOut",
         "type": "object"
       },
-      "ProjectRename": {
-        "description": "重命名项目请求。",
+      "ProjectPatch": {
+        "description": "改项目请求;只改传上来的那些字段。",
         "properties": {
+          "game_style": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtStyle"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Game Style"
+          },
           "project_name": {
-            "maxLength": 20,
-            "minLength": 1,
-            "title": "Project Name",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Name"
           }
         },
-        "required": [
-          "project_name"
-        ],
-        "title": "ProjectRename",
+        "title": "ProjectPatch",
         "type": "object"
       },
       "RefreshRequest": {
@@ -4590,7 +4621,7 @@
         ]
       },
       "patch": {
-        "operationId": "rename_project_projects__project_id__patch",
+        "operationId": "update_project_projects__project_id__patch",
         "parameters": [
           {
             "in": "path",
@@ -4606,7 +4637,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ProjectRename"
+                "$ref": "#/components/schemas/ProjectPatch"
               }
             }
           },
@@ -4634,7 +4665,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Rename Project",
+        "summary": "Update Project",
         "tags": [
           "projects"
         ]
