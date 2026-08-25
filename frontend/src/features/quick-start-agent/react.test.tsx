@@ -191,6 +191,47 @@ describe('useQuickStartAgent', () => {
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
     expect(startCharacterGeneration).not.toHaveBeenCalled()
   })
+
+  it('stops pending planning from the composer and returns to idle', async () => {
+    let finishFirstPlanning!: (result: PlannerResult) => void
+    const planner = vi
+      .fn()
+      .mockImplementationOnce(
+        async (_input: PlannerInput) =>
+          new Promise<PlannerResult>((resolve) => {
+            finishFirstPlanning = resolve
+          }),
+      )
+      .mockResolvedValueOnce({ text: '可以继续。', finishReason: 'stop', toolCalls: [] })
+    const startCharacterGeneration = vi.fn(async () => ({ runId: 'run-agent' }))
+    const { result } = renderHook(() => useQuickStartAgent({ planner, startCharacterGeneration }))
+
+    let pending!: Promise<unknown>
+    act(() => {
+      pending = result.current.submit('银发骑士')
+    })
+    expect(result.current.state).toEqual({ status: 'planning' })
+
+    act(() => result.current.cancel())
+    await waitFor(() => expect(result.current.state).toEqual({ status: 'idle' }))
+    let retryResult!: Awaited<ReturnType<typeof result.current.submit>>
+    await act(async () => {
+      retryResult = await result.current.submit('银发骑士')
+    })
+    expect(retryResult).toMatchObject({
+      kind: 'message',
+      message: '可以继续。',
+    })
+    act(() => finishFirstPlanning({ text: '过期回复。', finishReason: 'stop', toolCalls: [] }))
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(result.current.state).toMatchObject({
+      status: 'awaiting-input',
+      message: '可以继续。',
+    })
+    expect(planner).toHaveBeenCalledTimes(2)
+    expect(startCharacterGeneration).not.toHaveBeenCalled()
+  })
 })
 
 describe('useQuickStartWorkflowAgent', () => {
