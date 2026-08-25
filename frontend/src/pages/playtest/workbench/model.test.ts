@@ -119,6 +119,84 @@ describe('createPlaytestModel', () => {
     expect(
       mappedWalk?.sequences?.north?.frames.reduce((total, frame) => total + frame.durationMs, 0),
     ).toBe(1000)
+    expect(mappedWalk?.sequences?.west).toMatchObject({
+      mirrorX: true,
+      sourceDirection: 'east',
+    })
+    expect(mappedWalk?.sequences?.west?.frames).toBe(mappedWalk?.sequences?.east?.frames)
+  })
+
+  it('normalizes the known 32-frame run output to its denser cycle', () => {
+    const denseCharacter = structuredClone(character)
+    const run = denseCharacter.outfits[0]!.actions[1]!
+    run.type = 'run'
+    run.frameCount = 32
+    run.frames = Array.from({ length: 32 }, (_, index) => ({
+      index,
+      imageUrl: `/run-${index}.png`,
+      durationMs: 90,
+    }))
+
+    const result = createPlaytestModel(denseCharacter, 'outfit-default')
+    const mappedRun = result.ok
+      ? result.model.actions.find((action) => action.id === 'walk')
+      : undefined
+
+    expect(mappedRun?.frames.reduce((total, frame) => total + frame.durationMs, 0)).toBe(720)
+  })
+
+  it('does not reinterpret other frame counts or already-correct dense timing', () => {
+    const variants = [
+      {
+        frameCount: 16,
+        durationMs: 125,
+        expectedCycleMs: 2000,
+      },
+      {
+        frameCount: 32,
+        durationMs: 31.25,
+        expectedCycleMs: 1000,
+      },
+    ]
+
+    for (const variant of variants) {
+      const variantCharacter = structuredClone(character)
+      const walk = variantCharacter.outfits[0]!.actions[1]!
+      walk.frameCount = variant.frameCount
+      walk.frames = Array.from({ length: variant.frameCount }, (_, index) => ({
+        index,
+        imageUrl: `/walk-${index}.png`,
+        durationMs: variant.durationMs,
+      }))
+
+      const result = createPlaytestModel(variantCharacter, 'outfit-default')
+      const mappedWalk = result.ok
+        ? result.model.actions.find((action) => action.id === 'walk')
+        : undefined
+
+      expect(mappedWalk?.frames.reduce((total, frame) => total + frame.durationMs, 0)).toBe(
+        variant.expectedCycleMs,
+      )
+    }
+  })
+
+  it('preserves dense locomotion timing when the action is not looping', () => {
+    const oneShotCharacter = structuredClone(character)
+    const walk = oneShotCharacter.outfits[0]!.actions[1]!
+    walk.loop = false
+    walk.frameCount = 32
+    walk.frames = Array.from({ length: 32 }, (_, index) => ({
+      index,
+      imageUrl: `/walk-${index}.png`,
+      durationMs: 125,
+    }))
+
+    const result = createPlaytestModel(oneShotCharacter, 'outfit-default')
+    const mappedWalk = result.ok
+      ? result.model.actions.find((action) => action.id === 'walk')
+      : undefined
+
+    expect(mappedWalk?.frames.reduce((total, frame) => total + frame.durationMs, 0)).toBe(4000)
   })
 
   it('preserves authored timing for non-locomotion actions with dense frames', () => {
