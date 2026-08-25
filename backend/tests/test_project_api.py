@@ -5,7 +5,12 @@
 ``timestamp`` 默认省略)与 400/404 业务码路径。
 """
 
+from types import SimpleNamespace
+
 from sqlalchemy import event
+
+from windup_app.server.character import cleanup as character_cleanup
+from windup_app.web.api import project as project_api
 
 
 def _payload(**overrides):
@@ -300,63 +305,82 @@ def test_delete_not_found_returns_404(auth_client):
     assert resp.json()["code"] == 404
 
 
-def test_delete_rejected_when_project_has_characters(auth_client):
+def test_delete_cascades_all_characters_and_cleans_media(auth_client, monkeypatch):
+    deleted_keys = []
+    monkeypatch.setattr(
+        character_cleanup.storage_settings,
+        "bucket_domain",
+        "https://assets.windup.test",
+    )
+    monkeypatch.setattr(
+        project_api,
+        "media_service",
+        SimpleNamespace(delete=deleted_keys.append),
+        raising=False,
+    )
     created = auth_client.post(
-        "/projects", json=_payload(project_name="有角色")
+        "/projects",
+        json=_payload(project_name="有角色", directional_movement=1),
     ).json()["data"]
-    character = auth_client.post(
+    draft = auth_client.post(
         "/characters",
         json={
             "project_id": created["id"],
             "workflow_run_id": 348,
-            "name": "挂载角色",
-            "description": "阻止删项目",
+            "name": "草稿角色",
+            "reference_image_url": (
+                "https://assets.windup.test/media/reference-image/draft.source.png"
+            ),
         },
-    ).json()
-
-    assert character["code"] == 200
-
-    resp = auth_client.delete(f"/projects/{created['id']}")
-
-    body = resp.json()
-    assert body["code"] == 400
-    assert body["message"] == "项目下仍有角色，无法删除"
-    assert body["data"] is None
-    assert auth_client.get(f"/projects/{created['id']}").json()["code"] == 200
-    assert (
-        auth_client.get(f"/characters/{character['data']['id']}").json()["code"] == 200
-    )
-
-
-def test_delete_rejected_when_character_arrives_after_empty_check(
-    auth_client, monkeypatch
-):
-    """模拟检查与删除之间插入角色：应用层已看见空项目，数据库仍应拦住删除。"""
-    created = auth_client.post("/projects", json=_payload(project_name="竞态")).json()[
-        "data"
-    ]
-    character = auth_client.post(
+    ).json()["data"]
+    published = auth_client.post(
         "/characters",
         json={
             "project_id": created["id"],
             "workflow_run_id": 349,
-            "name": "后插入",
-            "description": "检查之后才出现",
+            "name": "已发布角色",
+            "character_data": {
+                "version": 1,
+                "outfits": [
+                    {
+                        "id": "outfit-1",
+                        "name": "常态",
+                        "actions": [
+                            {
+                                "id": "idle",
+                                "type": "idle",
+                                "name": "待机",
+                                "frame_count": 1,
+                                "frames": [
+                                    {
+                                        "index": 0,
+                                        "image_url": (
+                                            "https://assets.windup.test/"
+                                            "media/action-frame/idle.png"
+                                        ),
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
         },
-    ).json()
-    assert character["code"] == 200
-
-    monkeypatch.setattr(
-        "windup_app.web.api.project.character_service.project_has_characters",
-        lambda session, project_id: False,
-    )
+    ).json()["data"]
 
     resp = auth_client.delete(f"/projects/{created['id']}")
 
     body = resp.json()
-    assert body["code"] == 400
-    assert body["message"] == "项目下仍有角色，无法删除"
-    assert auth_client.get(f"/projects/{created['id']}").json()["code"] == 200
-    assert (
-        auth_client.get(f"/characters/{character['data']['id']}").json()["code"] == 200
+    assert body["code"] == 200
+    assert body["message"] == "删除成功"
+    assert body["data"] is None
+    assert auth_client.get(f"/projects/{created['id']}").json()["code"] == 404
+    assert auth_client.get(f"/characters/{draft['id']}").json()["code"] == 404
+    assert auth_client.get(f"/characters/{published['id']}").json()["code"] == 404
+    assert sorted(deleted_keys) == sorted(
+        [
+            "media/reference-image/draft.source.png",
+            "media/reference-image/draft.card.webp",
+            "media/action-frame/idle.png",
+        ]
     )
