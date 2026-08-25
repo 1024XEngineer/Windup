@@ -73,6 +73,7 @@ describe('useQuickStartAgent', () => {
     })
     expect(startCharacterGeneration).toHaveBeenCalledWith({
       prompt: '银发像素骑士，全身像，深蓝斗篷',
+      directionalMovement: 'single',
     })
   })
 
