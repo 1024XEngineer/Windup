@@ -96,11 +96,21 @@ def estimate_cost(
     seconds: int,
     image_unit_cost: float | None = None,
     video_unit_cost_per_second: float | None = None,
+    model: str | None = None,
 ) -> float | None:
+    """``image_unit_cost`` 显式配置优先,否则按型号查美元牌价表。
+
+    出图链上主备型号单价可以差一倍,再用单值记账会把成本算错,而错的方向随兜底是否
+    触发而变 —— 不是一个固定偏差,事后无法回补。
+    """
     if not billed:
         return None
     if scene == Scene.CHARACTER_IMAGE:
-        return image_unit_cost
+        if image_unit_cost is not None:
+            return image_unit_cost
+        from windup_framework.gateway.registry import IMAGE_UNIT_COST_USD
+
+        return IMAGE_UNIT_COST_USD.get(model or "")
     if scene == Scene.CHARACTER_ACTION:
         if video_unit_cost_per_second is None:
             return None
