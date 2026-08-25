@@ -708,3 +708,140 @@ def test_resume_action_poll_does_not_fetch_master_while_pending(
     with session_factory() as s:
         done = service.get_task(s, project_id=1, task_id=task_id)
     assert done.status is TaskStatus.RUNNING
+
+
+def test_resume_action_poll_completes_after_credit_already_released(
+    session_factory, monkeypatch,
+):
+    """失败已解冻后，成片轮询仍写成 completed，不得再抛冻结额度不足。"""
+    png = _tiny_png()
+
+    class _AsyncGen:
+        def poll_video(self, job_id, route_id=None):
+            return b"mp4"
+
+        def finish_video(self, video, *args, **kwargs):
+            return GeneratedAction(
+                frames=[png],
+                durations=[80],
+                quality=ActionQuality(
+                    motion_scale=0.2,
+                    dead_frames=(),
+                    loop_seam=None,
+                    limbs={},
+                    subject_blobs=(1,),
+                ),
+                prompt_version="test",
+            )
+
+    import time as _time
+    from windup_app.server.orchestrator import billing, task_repo
+
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.i2v_poll.load_i2v_state",
+        lambda task_id: {
+            "job_id": "job-ready",
+            "poll_count": 0,
+            "next_wait": 5.0,
+            "started_at": _time.time(),
+            "route_id": "primary",
+            "model": "kling-v2-5-turbo",
+        },
+    )
+    monkeypatch.setattr("windup_app.server.orchestrator.i2v_poll.clear", lambda task_id: None)
+    service = AiGenerationService()
+    executor = ActionTaskExecutor(
+        generator=_AsyncGen(),
+        upload=lambda _png: "https://cdn.example.com/f.png",
+        fetch_master=lambda _input: png,
+        session_factory=session_factory,
+        fetch_constraints=lambda _s, _pid: ProjectConstraints(sprite_w=64, sprite_h=96),
+    )
+    action_input = CharacterActionInput(
+        character_id=1, action_type=ActionType.WALK, num_frames=1,
+    )
+    with session_factory() as s:
+        task = service.generate_character_action(s, user_id=1, input=action_input)
+        s.commit()
+        task_id = task.id
+        task_repo.update_status(s, task_id, TaskStatus.RUNNING)
+        billing.release_for_task(s, user_id=1, task_id=task_id)
+        s.commit()
+    executor.resume_action_poll(task_id, action_input)
+    with session_factory() as s:
+        done = service.get_task(s, project_id=1, task_id=task_id)
+        from windup_app.server.quota.model import CreditAccount
+        from sqlalchemy import select
+        account = s.scalar(select(CreditAccount).where(CreditAccount.user_id == 1))
+    assert done.status is TaskStatus.COMPLETED
+    assert account.frozen == 0
+    assert account.total_spent == 0
+
+
+def test_resume_action_poll_timeout_without_video_fails(session_factory, monkeypatch):
+    class _AsyncGen:
+        def poll_video(self, job_id, route_id=None):
+            return None
+
+        def finish_video(self, *args, **kwargs):
+            raise AssertionError("未成片不该 finish")
+
+    import time as _time
+    from windup_app.server.orchestrator import task_repo
+
+    monkeypatch.setattr(
+        "windup_app.server.orchestrator.i2v_poll.load_i2v_state",
+        lambda task_id: {
+            "job_id": "job-late",
+            "poll_count": 8,
+            "next_wait": 60.0,
+            "started_at": _time.time() - 10_000,
+            "route_id": "primary",
+            "model": "kling-v2-5-turbo",
+        },
+    )
+    service = AiGenerationService()
+    executor = ActionTaskExecutor(
+        generator=_AsyncGen(),
+        fetch_master=lambda _input: _tiny_png(),
+        session_factory=session_factory,
+        fetch_constraints=lambda _s, _pid: ProjectConstraints(sprite_w=64, sprite_h=96),
+    )
+    action_input = CharacterActionInput(
+        character_id=1, action_type=ActionType.WALK, num_frames=1,
+    )
+    with session_factory() as s:
+        task = service.generate_character_action(s, user_id=1, input=action_input)
+        s.commit()
+        task_id = task.id
+        task_repo.update_status(s, task_id, TaskStatus.RUNNING)
+        s.commit()
+    executor.resume_action_poll(task_id, action_input)
+    with session_factory() as s:
+        done = service.get_task(s, project_id=1, task_id=task_id)
+    assert done.status is TaskStatus.FAILED
+
+
+def test_close_failed_does_not_overwrite_completed(session_factory):
+    from windup_app.server.orchestrator import billing, task_repo
+    from windup_app.server.orchestrator.executor import _close_failed
+
+    service = AiGenerationService()
+    with session_factory() as s:
+        task = service.generate_character_action(
+            s, user_id=1,
+            input=CharacterActionInput(
+                character_id=1, action_type=ActionType.WALK, num_frames=1,
+            ),
+        )
+        s.commit()
+        task_repo.update_result(
+            s, task.id, "character_action",
+            {"type": "character_action", "frames": []},
+        )
+        billing.capture_for_task(s, user_id=1, task_id=task.id)
+        _close_failed(s, task.id, "生成没能完成，请稍后重试。若反复失败请联系我们。")
+        s.commit()
+        done = task_repo.get_task(s, task.id)
+    assert done.status is TaskStatus.COMPLETED
+    assert done.result is not None

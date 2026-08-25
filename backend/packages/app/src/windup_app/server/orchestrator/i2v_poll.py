@@ -103,32 +103,38 @@ def inspect(
     *,
     poll_video: Callable[..., bytes | None],
 ) -> Ready | Waiting:
-    """探一次上游。未完成则再挂单并返回 Waiting;完成则返回 Ready。"""
+    """探一次上游。未完成则再挂单并返回 Waiting;完成则返回 Ready。
+
+    超时也先 poll 一次：成片已就绪就交付，避免网关最终成功却把任务写成失败。
+    等待态被其它轮询清掉时返回 Waiting，不把任务打失败。
+    """
     state = load_i2v_state(task_id)
     if state is None or not state.get("job_id"):
-        raise RuntimeError(f"任务 {task_id} 没有 i2v 状态,无法续跑轮询")
+        logger.info("任务 %s 无 i2v 状态，视为已被其它轮询接管", task_id)
+        return Waiting()
 
     elapsed = time.time() - float(state["started_at"] or 0)
-    if elapsed >= I2V_MAX_WAIT_S:
-        raise RuntimeError("i2v 未取得视频 URL(超时或失败)")
+    timed_out = elapsed >= I2V_MAX_WAIT_S
 
     route_id = state.get("route_id") or None
     video = poll_video(state["job_id"], route_id=route_id)
-    if video is None:
-        nxt = min(float(state["next_wait"]) * 2, I2V_POLL_INTERVAL_S)
-        schedule(
-            task_id,
-            {
-                "job_id": state["job_id"],
-                "route_id": state.get("route_id") or "",
-                "model": state.get("model") or "",
-            },
-            poll_count=int(state["poll_count"]) + 1,
-            next_wait=nxt,
-            started_at=float(state["started_at"]),
-        )
-        return Waiting()
-    return Ready(video=video, route_id=route_id)
+    if video is not None:
+        return Ready(video=video, route_id=route_id)
+    if timed_out:
+        raise RuntimeError("i2v 未取得视频 URL(超时或失败)")
+    nxt = min(float(state["next_wait"]) * 2, I2V_POLL_INTERVAL_S)
+    schedule(
+        task_id,
+        {
+            "job_id": state["job_id"],
+            "route_id": state.get("route_id") or "",
+            "model": state.get("model") or "",
+        },
+        poll_count=int(state["poll_count"]) + 1,
+        next_wait=nxt,
+        started_at=float(state["started_at"]),
+    )
+    return Waiting()
 
 
 def clear(task_id: int) -> None:

@@ -137,14 +137,27 @@ def _using_session(
 
 
 def _settle_credit(session: Session, task_id: int, *, success: bool) -> None:
-    """任务终态时结清预付费：成功扣减，失败解冻。"""
+    """任务终态时结清预付费：成功扣减，失败解冻。无开放冻结则跳过。"""
     task = task_repo.get_task(session, task_id)
     if task is None or task.id is None:
+        return
+    if not billing.has_open_freeze(session, task.id):
         return
     if success:
         billing.capture_for_task(session, user_id=task.user_id, task_id=task.id)
     else:
         billing.release_for_task(session, user_id=task.user_id, task_id=task.id)
+
+
+def _close_failed(session: Session, task_id: int, error_message: str) -> None:
+    """失败终态：已 COMPLETED 的产物不被并发/重投的失败路径覆盖。"""
+    task = task_repo.get_task(session, task_id)
+    if task is None or task.id is None:
+        return
+    if task.status is TaskStatus.COMPLETED:
+        return
+    task_repo.fail_task(session, task_id, error_message=error_message)
+    _settle_credit(session, task_id, success=False)
 
 
 # ── 项目全局约束(Project 表)→ 统合喂给生成逻辑 ─────────────────────────
@@ -381,8 +394,7 @@ class ActionTaskExecutor:
             error_message = user_message(exc)
 
             def _fail(s: Session) -> None:
-                task_repo.fail_task(s, task_id, error_message=error_message)
-                _settle_credit(s, task_id, success=False)
+                _close_failed(s, task_id, error_message)
 
             _using_session(session, self._make_session, _fail)
         finally:
@@ -570,8 +582,7 @@ class ActionTaskExecutor:
             error_message = user_message(exc)
 
             def _fail(s: Session) -> None:
-                task_repo.fail_task(s, task_id, error_message=error_message)
-                _settle_credit(s, task_id, success=False)
+                _close_failed(s, task_id, error_message)
 
             _using_session(session, self._make_session, _fail)
         finally:
@@ -864,8 +875,7 @@ class ImageTaskExecutor:
             error_message = user_message(exc)
 
             def _fail(s: Session) -> None:
-                task_repo.fail_task(s, task_id, error_message=error_message)
-                _settle_credit(s, task_id, success=False)
+                _close_failed(s, task_id, error_message)
 
             _using_session(session, self._make_session, _fail)
         finally:
