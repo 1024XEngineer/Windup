@@ -239,23 +239,7 @@ describe('createUserApis', () => {
     unregister()
   })
 
-  it.each([
-    ['current-user', (apis: ReturnType<typeof createUserApis>) => apis.me(), tokenResponse.user],
-    [
-      'nickname-update',
-      (apis: ReturnType<typeof createUserApis>) => apis.updateNickname('New Reader'),
-      tokenResponse.user,
-    ],
-    [
-      'password-change',
-      (apis: ReturnType<typeof createUserApis>) =>
-        apis.changePassword({
-          oldPassword: 'password-123',
-          newPassword: 'new-password-123',
-        }),
-      null,
-    ],
-  ])('recovers and replays protected %s requests', async (_label, invoke, data) => {
+  it('recovers and replays protected GET requests', async () => {
     const recover = vi.fn(async () => true)
     const unregister = registerApiUnauthorizedRecovery(recover)
     const fetchFn = vi
@@ -266,14 +250,54 @@ describe('createUserApis', () => {
         }),
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ code: 200, message: 'ok', data }), { status: 200 }),
+        new Response(JSON.stringify({ code: 200, message: 'ok', data: tokenResponse.user }), {
+          status: 200,
+        }),
       )
     const apis = createUserApis({ baseUrl: 'https://api.windup.test', fetchFn })
 
     try {
-      await invoke(apis)
+      await expect(apis.me()).resolves.toMatchObject({ id: '7', email: 'reader@example.com' })
       expect(recover).toHaveBeenCalledTimes(1)
       expect(fetchFn).toHaveBeenCalledTimes(2)
+    } finally {
+      unregister()
+    }
+  })
+
+  it.each([
+    [
+      'nickname-update',
+      (apis: ReturnType<typeof createUserApis>) => apis.updateNickname('New Reader'),
+    ],
+    [
+      'password-change',
+      (apis: ReturnType<typeof createUserApis>) =>
+        apis.changePassword({
+          oldPassword: 'password-123',
+          newPassword: 'new-password-123',
+        }),
+    ],
+  ])('recovers the session but does not replay protected %s requests', async (_label, invoke) => {
+    const recover = vi.fn(async () => true)
+    const unregister = registerApiUnauthorizedRecovery(recover)
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: 401, message: 'access token expired', data: null }), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: 200, message: 'ok', data: null }), { status: 200 }),
+      )
+    const apis = createUserApis({ baseUrl: 'https://api.windup.test', fetchFn })
+
+    try {
+      await expect(invoke(apis)).rejects.toMatchObject({ kind: 'business', code: 401 })
+      // token 已刷新，手动重试可以成功；但写请求本身不自动重放。
+      expect(recover).toHaveBeenCalledTimes(1)
+      expect(fetchFn).toHaveBeenCalledTimes(1)
     } finally {
       unregister()
     }
