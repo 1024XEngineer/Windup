@@ -307,7 +307,7 @@ describe('WorkflowController', () => {
     })
   })
 
-  it('按 Quick Start 选择的四向模式创建项目并提交全部四个方向', async () => {
+  it('按 Quick Start 选择四向项目时仍只提交三张东向母版候选', async () => {
     const workflow = createWorkflowApis()
     const generation = createGenerationHarness()
     const prepareProject = vi.fn(async () => ({
@@ -328,12 +328,9 @@ describe('WorkflowController', () => {
     })
 
     expect(prepareProject).toHaveBeenCalledWith('四向像素骑士', 'four-way')
-    expect(generation.apis.create).toHaveBeenCalledTimes(4)
+    expect(generation.apis.create).toHaveBeenCalledTimes(1)
     expect(vi.mocked(generation.apis.create).mock.calls.map(([input]) => input.direction)).toEqual([
       'east',
-      'west',
-      'north',
-      'south',
     ])
   })
 
@@ -1564,7 +1561,7 @@ describe('WorkflowController', () => {
     })
     expect(incomplete.controller.getWorkflow().nodes[1]).toMatchObject({
       status: 'active',
-      phase: 'generating',
+      phase: 'selecting',
     })
   })
 

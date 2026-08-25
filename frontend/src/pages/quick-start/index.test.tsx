@@ -324,11 +324,13 @@ function renderInBrowserHistory(
   )
 }
 
-async function confirmAgentGeneration() {
+async function confirmAgentGeneration(movement: '单向' | '四向' | '八向' = '单向') {
   const fill = await screen.findByRole('button', { name: '填入输入框' })
   fireEvent.click(fill)
   const send = await screen.findByRole('button', { name: '发送生成' })
   fireEvent.click(send)
+  await act(async () => undefined)
+  fireEvent.click(await screen.findByRole('button', { name: movement }))
   await act(async () => undefined)
 }
 
@@ -680,7 +682,7 @@ describe('QuickStartPage', () => {
     expect(screen.queryByText('CURRENT STATUS')).toBeNull()
     expect(screen.queryByText('WORKFLOW RUN')).toBeNull()
     expect(screen.queryByText(/STEPS PASSED/u)).toBeNull()
-    const continueButton = screen.getByRole('button', { name: '确认选择，继续下一步' })
+    const continueButton = screen.getByRole('button', { name: '确认母版' })
     expect(continueButton.querySelector('svg')).toBeTruthy()
   })
 
@@ -818,6 +820,8 @@ describe('QuickStartPage', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '发送生成' }))
     await act(async () => undefined)
+    fireEvent.click(screen.getByRole('button', { name: '单向' }))
+    await act(async () => undefined)
     await act(async () => vi.advanceTimersByTime(460))
 
     const runConversation = window.localStorage.getItem(
@@ -935,9 +939,15 @@ describe('QuickStartPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '发送生成' }))
     await act(async () => undefined)
+    expect(screen.getByText('最后确认一下：需要单向、四向还是八向？')).toBeTruthy()
+    expect(input.hasAttribute('disabled')).toBe(true)
+    expect(startCharacterGeneration).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '八向' }))
+    await act(async () => undefined)
     expect(startCharacterGeneration).toHaveBeenCalledWith({
       prompt: '云端工坊的银发机械师，佩戴黄铜护目镜',
-      directionalMovement: 'single',
+      directionalMovement: 'eight-way',
     })
   })
 
@@ -1201,6 +1211,52 @@ describe('QuickStartPage', () => {
     expect(choices.every((choice) => !choice.className.includes('row-span-2'))).toBe(true)
   })
 
+  it('母版确认后把四向首帧堆叠在一个大方框内且不再逐方向选择', async () => {
+    const run = workflow(
+      setupAndTemplate({
+        selectedImageUrl: 'east.png',
+        selectedImages: { east: 'east.png' },
+        status: 'active',
+        phase: 'selecting',
+        generations: [
+          { taskId: 'template-east', role: 'character_template' },
+          { taskId: 'template-west', role: 'character_template', direction: 'west' },
+          { taskId: 'template-north', role: 'character_template', direction: 'north' },
+          { taskId: 'template-south', role: 'character_template', direction: 'south' },
+        ],
+      }),
+    )
+    renderAt(
+      '/quick-start/run-1',
+      serviceFor(run, {
+        getTemplateCandidates: vi.fn(
+          async () =>
+            [
+              { direction: 'east', index: 0, imageUrl: 'east.png' },
+              { direction: 'west', index: 0, imageUrl: 'west.png' },
+              { direction: 'north', index: 0, imageUrl: 'north.png' },
+              { direction: 'south', index: 0, imageUrl: 'south.png' },
+            ] satisfies readonly QuickStartCandidate[],
+        ),
+      }),
+    )
+
+    const directionSet = await screen.findByRole('group', { name: '四向首帧集合' })
+    expect(directionSet.getAttribute('data-layout')).toBe('direction-first-frame-stack')
+    await waitFor(() => expect(directionSet.querySelectorAll('img')).toHaveLength(4))
+    expect(screen.getByRole('img', { name: '东方向首帧' })).toBeTruthy()
+    expect(screen.getByRole('img', { name: '西方向首帧' })).toBeTruthy()
+    expect(screen.getByRole('img', { name: '北方向首帧' })).toBeTruthy()
+    expect(screen.getByRole('img', { name: '南方向首帧' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /选择.*角色方案/u })).toBeNull()
+    const generateAction = screen.getByRole('button', { name: '生成动作' })
+    expect(generateAction.hasAttribute('disabled')).toBe(true)
+    fireEvent.change(screen.getByRole('textbox', { name: '继续描述你的想法' }), {
+      target: { value: '挥手' },
+    })
+    expect(generateAction.hasAttribute('disabled')).toBe(false)
+  })
+
   it.each([
     ['template-generating', '角色图生成画布', 'grid-cols-3'],
     ['first-selecting', '动作首帧候选 1', 'grid-cols-3'],
@@ -1259,6 +1315,8 @@ describe('QuickStartPage', () => {
     await act(async () => vi.advanceTimersByTimeAsync(760))
     expect(screen.getByRole('button', { name: '发送生成' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '发送生成' }))
+    await act(async () => undefined)
+    fireEvent.click(screen.getByRole('button', { name: '单向' }))
     await act(async () => undefined)
 
     const entry = screen.getByLabelText('创作指令').closest('[data-layout="quick-start-entry"]')
@@ -1329,14 +1387,12 @@ describe('QuickStartPage', () => {
       '你选择了角色方案 2',
     )
     expect(screen.getByPlaceholderText('描述这个角色接下来要做的动作…')).toBeTruthy()
-    expect(
-      screen.getByRole('button', { name: '确认选择，继续下一步' }).hasAttribute('disabled'),
-    ).toBe(false)
+    expect(screen.getByRole('button', { name: '确认母版' }).hasAttribute('disabled')).toBe(false)
 
     fireEvent.change(screen.getByLabelText('继续描述你的想法'), {
       target: { value: '转身挥动风灯' },
     })
-    fireEvent.click(screen.getByRole('button', { name: '确认选择，继续下一步' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认母版' }))
     await act(async () => undefined)
 
     const transcript = screen.getByTestId('quick-start-transcript').textContent ?? ''
@@ -1348,49 +1404,7 @@ describe('QuickStartPage', () => {
     )
   })
 
-  it('四向角色候选全部选定后才提交逐方向选择', async () => {
-    const selectingRun = workflow(setupAndTemplate())
-    const directionalCandidates = [
-      { direction: 'east', index: 0, imageUrl: 'east-1.png' },
-      { direction: 'east', index: 1, imageUrl: 'east-2.png' },
-      { direction: 'west', index: 0, imageUrl: 'west-1.png' },
-      { direction: 'west', index: 1, imageUrl: 'west-2.png' },
-      { direction: 'north', index: 0, imageUrl: 'north-1.png' },
-      { direction: 'north', index: 1, imageUrl: 'north-2.png' },
-      { direction: 'south', index: 0, imageUrl: 'south-1.png' },
-      { direction: 'south', index: 1, imageUrl: 'south-2.png' },
-    ] satisfies readonly QuickStartCandidate[]
-    const service = serviceFor(selectingRun, {
-      getTemplateCandidates: vi.fn(async () => directionalCandidates),
-    })
-    renderAt('/quick-start/run-1', service)
-
-    const submit = await screen.findByRole('button', { name: '确认选择，继续下一步' })
-    fireEvent.click(await screen.findByRole('button', { name: '选择东方向角色方案 2' }))
-    expect(submit.hasAttribute('disabled')).toBe(true)
-    fireEvent.click(screen.getByRole('button', { name: '选择西方向角色方案 2' }))
-    expect(submit.hasAttribute('disabled')).toBe(true)
-    fireEvent.click(screen.getByRole('button', { name: '选择北方向角色方案 1' }))
-    expect(submit.hasAttribute('disabled')).toBe(true)
-    fireEvent.click(screen.getByRole('button', { name: '选择南方向角色方案 2' }))
-    expect(submit.hasAttribute('disabled')).toBe(false)
-    fireEvent.click(submit)
-
-    await waitFor(() =>
-      expect(service.confirmCandidate).toHaveBeenCalledWith(
-        {
-          east: 'east-2.png',
-          west: 'west-2.png',
-          north: 'north-1.png',
-          south: 'south-2.png',
-        },
-        '',
-      ),
-    )
-  })
-
-  it('八向角色候选完整展示全部八个独立方向', async () => {
-    const selectingRun = workflow(setupAndTemplate())
+  it('八向母版确认后完整展示八个同角色方向首帧', async () => {
     const directions = [
       ['east', '东'],
       ['west', '西'],
@@ -1401,6 +1415,17 @@ describe('QuickStartPage', () => {
       ['south_east', '东南'],
       ['south_west', '西南'],
     ] as const
+    const selectingRun = workflow(
+      setupAndTemplate({
+        selectedImageUrl: 'east.png',
+        selectedImages: { east: 'east.png' },
+        generations: directions.map(([direction]) => ({
+          taskId: `template-${direction}`,
+          role: 'character_template' as const,
+          ...(direction === 'east' ? {} : { direction }),
+        })),
+      }),
+    )
     const service = serviceFor(selectingRun, {
       getTemplateCandidates: vi.fn(async () =>
         directions.map(([direction]) => ({
@@ -1413,8 +1438,9 @@ describe('QuickStartPage', () => {
     renderAt('/quick-start/run-1', service)
 
     for (const [, label] of directions) {
-      expect(await screen.findByRole('region', { name: `${label}方向角色方案候选` })).toBeTruthy()
+      expect(await screen.findByRole('img', { name: `${label}方向首帧` })).toBeTruthy()
     }
+    expect(screen.getByRole('group', { name: '八向首帧集合' })).toBeTruthy()
   })
 
   it('keeps the natural-language creation entry visible when no run is selected', () => {
@@ -1559,12 +1585,11 @@ describe('QuickStartPage', () => {
     const agent = agentFor({ startCharacterGeneration })
     const view = renderAt('/quick-start', service, agent)
 
-    expect((screen.getByRole('radio', { name: '单向' }) as HTMLInputElement).checked).toBe(true)
-    fireEvent.click(screen.getByRole('radio', { name: '四向' }))
+    expect(screen.queryByRole('radio', { name: '单向' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /16-bit 日式 RPG/u }))
     fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
     expect(startCharacterGeneration).not.toHaveBeenCalled()
-    await confirmAgentGeneration()
+    await confirmAgentGeneration('四向')
     await waitFor(() =>
       expect(startCharacterGeneration).toHaveBeenCalledWith({
         prompt: '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色',
@@ -1576,9 +1601,9 @@ describe('QuickStartPage', () => {
     view.unmount()
     renderAt('/quick-start', service)
     const file = new File(['pixels'], 'hero.png', { type: 'image/png' })
-    fireEvent.click(screen.getByRole('radio', { name: '八向' }))
     fireEvent.click(screen.getByRole('button', { name: '添加母版' }))
     fireEvent.change(screen.getByLabelText('上传角色母版'), { target: { files: [file] } })
+    fireEvent.click(screen.getByRole('radio', { name: '八向' }))
     expect(screen.getByText('hero.png')).toBeTruthy()
     fireEvent.change(screen.getByLabelText('创作指令'), { target: { value: '挥手' } })
     fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
@@ -1764,7 +1789,7 @@ describe('QuickStartPage', () => {
     ).toBe('true')
 
     fireEvent.change(screen.getByLabelText('继续描述你的想法'), { target: { value: '挥手' } })
-    fireEvent.click(screen.getByRole('button', { name: '确认选择，继续下一步' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认母版' }))
     await waitFor(() =>
       expect(service.confirmCandidate).toHaveBeenCalledWith(
         { east: 'https://example.test/candidate.png' },
@@ -1788,14 +1813,14 @@ describe('QuickStartPage', () => {
     renderAt('/quick-start/run-1?source=test#selection', service)
 
     fireEvent.click(await screen.findByRole('img', { name: '角色图候选 1' }))
-    fireEvent.click(screen.getByRole('button', { name: '确认选择，继续下一步' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认母版' }))
 
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toContain('工作流已在其他位置更新，请加载最新版本后继续。')
     expect(screen.getByRole('link', { name: '加载最新版本' }).getAttribute('href')).toBe(
       '/quick-start/run-1?source=test#selection',
     )
-    const confirm = screen.getByRole('button', { name: '确认选择，继续下一步' })
+    const confirm = screen.getByRole('button', { name: '确认母版' })
     expect((confirm as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(confirm)
     expect(service.confirmCandidate).toHaveBeenCalledTimes(1)

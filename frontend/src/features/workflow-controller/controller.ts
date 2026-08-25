@@ -15,6 +15,7 @@ import type {
   GenerationEvent,
   GenerationExpectation,
   GeneratedImage,
+  ImageCandidateCount,
   MediaReference,
   Project,
   ProjectApis,
@@ -57,6 +58,10 @@ export interface GenerateCharacterTemplateOptions {
   prompt?: string
   /** 手动编辑器提交时覆盖 configuring 节点的初始输入；节点通过后不再改写。 */
   input?: WorkflowCharacterInput
+  /** 只提交本阶段需要的真实源方向；缺省仍按项目完整方向集生成。 */
+  directions?: readonly ActionDirection[]
+  /** 本阶段每个方向的候选数；母版三选一，派生方向通常每向一张。 */
+  candidateCount?: ImageCandidateCount
 }
 
 export interface GenerateActionOptions {
@@ -428,6 +433,7 @@ export function createWorkflowController({
     await generateCharacterTemplate('character-setup', {
       spriteWidth: project.spriteSize.width,
       spriteHeight: project.spriteSize.height,
+      directions: ['east'],
     })
     return { runId: requireWorkflow().id }
   }
@@ -571,7 +577,11 @@ export function createWorkflowController({
             )
           })
     const templateNode = findSingleDependentNode(advanced, nodeId, 'character-template')
-    const missingDirections = generationDirections.filter(
+    const requestedDirections = options.directions ?? generationDirections
+    for (const direction of requestedDirections) {
+      assertGenerationDirection(direction, generationDirections)
+    }
+    const missingDirections = requestedDirections.filter(
       (direction) =>
         !selectedDirectionUrl(
           templateNode.selectedImages,
@@ -611,6 +621,9 @@ export function createWorkflowController({
           spriteWidth: options.spriteWidth,
           spriteHeight: options.spriteHeight,
           direction,
+          ...(options.candidateCount === undefined
+            ? {}
+            : { candidateCount: options.candidateCount }),
         }
         return input
       },
@@ -1552,7 +1565,17 @@ export function createWorkflowController({
     }
 
     const role = reference.role
-    const hasAllExpectedReferences = generationDirections.every((direction) =>
+    const roleDirections = node.generations
+      .filter((item) => item.role === role)
+      .map((item) => generationReferenceDirection(item))
+    const expectedDirections =
+      node.type === 'character-template' &&
+      !selectedDirectionUrl(node.selectedImages, node.selectedImageUrl, 'east') &&
+      roleDirections.length === 1 &&
+      roleDirections[0] === 'east'
+        ? (['east'] as const)
+        : generationDirections
+    const hasAllExpectedReferences = expectedDirections.every((direction) =>
       node.generations.some(
         (item) => item.role === role && generationReferenceDirection(item) === direction,
       ),
