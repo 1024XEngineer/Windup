@@ -1,4 +1,6 @@
 import {
+  cloneElement,
+  isValidElement,
   useCallback,
   useEffect,
   useMemo,
@@ -8,6 +10,7 @@ import {
   type CSSProperties,
   type ChangeEvent,
   type FormEvent,
+  type ReactElement,
   type ReactNode,
 } from 'react'
 import { flushSync } from 'react-dom'
@@ -23,7 +26,7 @@ import {
   Stop,
   X,
 } from '@phosphor-icons/react'
-import Markdown from 'markdown-to-jsx'
+import Markdown, { compiler } from 'markdown-to-jsx'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 
 import {
@@ -1183,10 +1186,10 @@ function QuickStartInput({
             onSubmit={(event) => void submit(event)}
             autoComplete="off"
             data-prompt-state={promptState}
-            className="quick-start-agent-composer relative flex flex-col"
+            className="quick-start-agent-composer relative flex flex-col rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]"
           >
             <label
-              className="relative block min-h-[52px] min-w-0 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]"
+              className="relative block min-h-[52px] min-w-0 overflow-hidden"
               htmlFor="quick-start-prompt"
             >
               <span className="sr-only">创作指令</span>
@@ -1264,7 +1267,7 @@ function QuickStartInput({
             />
             <div
               data-layout="quick-start-composer-controls"
-              className="order-first mb-2 flex min-h-10 items-center justify-between gap-3 px-1"
+              className="order-first flex min-h-10 items-center justify-between gap-3 px-2 pt-1"
             >
               {!hasConversation ? (
                 <div className="flex items-center gap-1">
@@ -1515,6 +1518,7 @@ function AgentCopy({
   animate?: boolean
 }) {
   const copy = lines.join('\n')
+  const animatedCopy = animateMarkdownCharacters(compiler(copy))
 
   return (
     <div
@@ -1522,17 +1526,61 @@ function AgentCopy({
       aria-label={lines.join(' ')}
       className={`quick-start-agent-copy grid grid-cols-[2rem_minmax(0,1fr)] items-start gap-3 font-serif ${
         tone === 'danger' ? 'text-app-danger' : 'text-app-ink-soft'
-      } ${animate ? 'quick-start-agent-copy--entering' : ''}`}
+      }`}
     >
       <QuickStartAgentBot placement="answer" />
       <div
         aria-label="Agent 回答"
         data-agent-markdown
-        className="quick-start-agent-markdown min-w-0"
+        className={`quick-start-agent-markdown min-w-0 ${
+          animate ? 'quick-start-agent-markdown--entering' : ''
+        }`}
       >
-        <Markdown>{copy}</Markdown>
+        {animate ? (
+          <>
+            <span className="sr-only" data-agent-copy-text>
+              {copy}
+            </span>
+            {animatedCopy}
+          </>
+        ) : (
+          <Markdown>{copy}</Markdown>
+        )}
       </div>
     </div>
+  )
+}
+
+function animateMarkdownCharacters(
+  node: ReactNode,
+  counter: { value: number } = { value: 0 },
+): ReactNode {
+  if (typeof node === 'string' || typeof node === 'number') {
+    return Array.from(String(node)).map((character) => {
+      const characterIndex = counter.value
+      counter.value += 1
+      return (
+        <span
+          key={characterIndex}
+          aria-hidden="true"
+          className="kinetic-copy-character"
+          style={{ '--kinetic-copy-character-index': characterIndex } as CSSProperties}
+        >
+          {character === ' ' ? '\u00a0' : character}
+        </span>
+      )
+    })
+  }
+  if (Array.isArray(node)) {
+    return node.map((child) => animateMarkdownCharacters(child, counter))
+  }
+  if (!isValidElement<{ children?: ReactNode }>(node)) return node
+
+  const element = node as ReactElement<{ children?: ReactNode }>
+  return cloneElement(
+    element,
+    undefined,
+    animateMarkdownCharacters(element.props.children, counter),
   )
 }
 
