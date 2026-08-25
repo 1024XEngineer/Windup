@@ -325,13 +325,11 @@ function renderInBrowserHistory(
   )
 }
 
-async function confirmAgentGeneration(movement: '单向' | '四向' | '八向' = '单向') {
+async function confirmAgentGeneration() {
   const fill = await screen.findByRole('button', { name: '填入输入框' })
   fireEvent.click(fill)
   const send = await screen.findByRole('button', { name: '发送生成' })
   fireEvent.click(send)
-  await act(async () => undefined)
-  fireEvent.click(await screen.findByRole('button', { name: movement }))
   await act(async () => undefined)
 }
 
@@ -853,8 +851,6 @@ describe('QuickStartPage', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '发送生成' }))
     await act(async () => undefined)
-    fireEvent.click(screen.getByRole('button', { name: '单向' }))
-    await act(async () => undefined)
     await act(async () => vi.advanceTimersByTime(460))
 
     const runConversation = window.localStorage.getItem(
@@ -915,7 +911,7 @@ describe('QuickStartPage', () => {
     expect(window.localStorage.getItem(legacyKey)).toBeNull()
   })
 
-  it('keeps the proposal in chat until the user fills, edits, and sends it', async () => {
+  it('sends the edited proposal without asking the Agent for a direction', async () => {
     vi.useFakeTimers()
     const service = serviceFor(null)
     const startCharacterGeneration = vi.fn(() => new Promise<{ runId: string }>(() => undefined))
@@ -972,15 +968,12 @@ describe('QuickStartPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '发送生成' }))
     await act(async () => undefined)
-    expect(screen.getByText('最后确认一下：需要单向、四向还是八向？')).toBeTruthy()
+    expect(screen.queryByText('最后确认一下：需要单向、四向还是八向？')).toBeNull()
+    expect(screen.queryByLabelText('选择生成方向')).toBeNull()
     expect(input.hasAttribute('disabled')).toBe(true)
-    expect(startCharacterGeneration).not.toHaveBeenCalled()
-
-    fireEvent.click(screen.getByRole('button', { name: '八向' }))
-    await act(async () => undefined)
     expect(startCharacterGeneration).toHaveBeenCalledWith({
       prompt: '云端工坊的银发机械师，佩戴黄铜护目镜',
-      directionalMovement: 'eight-way',
+      directionalMovement: 'single',
     })
   })
 
@@ -1349,8 +1342,6 @@ describe('QuickStartPage', () => {
     expect(screen.getByRole('button', { name: '发送生成' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '发送生成' }))
     await act(async () => undefined)
-    fireEvent.click(screen.getByRole('button', { name: '单向' }))
-    await act(async () => undefined)
 
     const entry = screen.getByLabelText('创作指令').closest('[data-layout="quick-start-entry"]')
     expect(entry?.getAttribute('data-transition')).toBe('leaving')
@@ -1621,11 +1612,11 @@ describe('QuickStartPage', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
     expect(startCharacterGeneration).not.toHaveBeenCalled()
-    await confirmAgentGeneration('四向')
+    await confirmAgentGeneration()
     await waitFor(() =>
       expect(startCharacterGeneration).toHaveBeenCalledWith({
         prompt: '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色',
-        directionalMovement: 'four-way',
+        directionalMovement: 'single',
       }),
     )
     expect(service.start).not.toHaveBeenCalled()
