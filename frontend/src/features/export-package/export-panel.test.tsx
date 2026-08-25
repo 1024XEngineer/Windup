@@ -205,4 +205,12 @@ describe('ExportPanel', () => {
     const button = screen.getByRole('button', { name: '导出资产包' })
     expect(button.className).toContain('rounded-full')
   })
+
+  it('紧凑导出按钮支持带 tooltip 的 SVG 图标形态', () => {
+    render(<ExportButton model={model} iconOnly />)
+
+    const button = screen.getByRole('button', { name: '导出完整动作资产' })
+    expect(button.querySelector('svg')).toBeTruthy()
+    expect(button.querySelector('[role="tooltip"]')?.textContent).toBe('导出完整动作资产')
+  })
 })
