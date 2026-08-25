@@ -40,6 +40,12 @@ function logAgentFailure(cause: unknown): void {
   })
 }
 
+function isAbortError(cause: unknown): boolean {
+  return (
+    typeof cause === 'object' && cause !== null && 'name' in cause && cause.name === 'AbortError'
+  )
+}
+
 function errorMessage(cause: unknown): string {
   if (!(cause instanceof Error) || !cause.message) return 'Agent 暂时不可用，请稍后重试'
   if (
@@ -114,7 +120,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
         const runTurn = started.current ? activeAgent.continue : activeAgent.start
         started.current = true
         const result = await runTurn(input, { signal: controller.signal })
-        if (mounted.current) {
+        if (mounted.current && abortController.current === controller) {
           if (result.kind === 'message') {
             setState({
               status: 'awaiting-input',
@@ -128,17 +134,25 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
         }
         return result
       } catch (cause) {
-        if (mounted.current && !(cause instanceof Error && cause.name === 'AbortError')) {
+        const isCurrent = abortController.current === controller
+        if (isAbortError(cause) && isCurrent) {
+          agent.current?.revoke()
+          agent.current = null
+          started.current = Boolean(initialMessages?.length)
+          if (mounted.current) setState({ status: 'idle' })
+        } else if (!isAbortError(cause) && isCurrent && mounted.current) {
           logAgentFailure(cause)
           setState({ status: 'error', message: errorMessage(cause) })
         }
         throw cause
       } finally {
-        running.current = false
-        if (abortController.current === controller) abortController.current = null
+        if (abortController.current === controller) {
+          running.current = false
+          abortController.current = null
+        }
       }
     },
-    [ensureAgent],
+    [ensureAgent, initialMessages],
   )
 
   const confirmProposal = useCallback(
@@ -174,11 +188,23 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
     [ensureAgent, state],
   )
 
+  const cancel = useCallback(() => {
+    if (!running.current) return
+    abortController.current?.abort()
+    agent.current?.revoke()
+    agent.current = null
+    started.current = Boolean(initialMessages?.length)
+    abortController.current = null
+    running.current = false
+    if (mounted.current) setState({ status: 'idle' })
+  }, [initialMessages])
+
   return {
     state,
     busy: state.status === 'planning' || state.status === 'dispatching',
     submit,
     confirmProposal,
+    cancel,
   }
 }
 
