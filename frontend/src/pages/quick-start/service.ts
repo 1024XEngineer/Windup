@@ -3,6 +3,7 @@ import {
   createGenerationApis,
   createMediaApis,
   projectApis,
+  pixelPerfectApis as defaultPixelPerfectApis,
   workflowRunApis,
   characterTemplatesFromImages,
   getDirectionProfile,
@@ -16,6 +17,7 @@ import {
   type MediaReference,
   type Project,
   type ProjectApis,
+  type PixelPerfectApis,
   type DirectionalMovement,
   type WorkflowNode,
   type WorkflowRun,
@@ -47,6 +49,13 @@ export interface QuickStartFrame {
   index: number
   imageUrl: string
   durationMs: number | null
+}
+
+export interface QuickStartPixelPerfectFrame {
+  index: number
+  blob: Blob
+  durationMs: number | null
+  sourceImageUrl?: string
 }
 
 export interface QuickStartCandidate {
@@ -99,6 +108,10 @@ export interface QuickStartSession {
   resolveCharacterInfo(): Promise<{ characterId: string; outfitId: string } | null>
   getTemplateCandidates(): Promise<readonly QuickStartCandidate[]>
   getActionFrames(): Promise<readonly QuickStartFrame[]>
+  /** 只生成当前会话预览，不写回 WorkflowRun 或角色资产。 */
+  pixelPerfectActionFrames?(
+    frames: readonly QuickStartFrame[],
+  ): Promise<readonly QuickStartPixelPerfectFrame[]>
   getFailedGenerationDirections(): Promise<readonly QuickStartFailedDirection[]>
   retryGenerationDirection(
     nodeId: WorkflowNode['id'],
@@ -140,6 +153,7 @@ export interface CreateQuickStartServiceOptions {
   prepareProject: PrepareQuickStartProject
   /** 为已有项目继续生成动作时读取图片接口要求的精灵尺寸。 */
   projectApis: Pick<ProjectApis, 'get'>
+  pixelPerfectApis?: Pick<PixelPerfectApis, 'reconstruct'>
   characterApis?: CharacterApis
   mediaApis?: QuickStartMediaApis
   onAsyncError?: (error: Error) => void
@@ -174,6 +188,7 @@ export function createQuickStartService({
   generationApis,
   prepareProject,
   projectApis,
+  pixelPerfectApis = defaultPixelPerfectApis,
   characterApis,
   mediaApis,
   onAsyncError = (error) => console.error('[quick-start] 异步工作流错误', error),
@@ -1129,6 +1144,25 @@ export function createQuickStartService({
               durationMs: frame.durationMs,
             }))
           : []
+      },
+      async pixelPerfectActionFrames(frames) {
+        const run = controller.getWorkflow()
+        const spriteSize = knownSpriteSize ?? (await resolveProjectSpriteSize(run.projectId))
+        return Promise.all(
+          frames.map(async (frame) => {
+            const result = await pixelPerfectApis.reconstruct({
+              imageUrl: frame.imageUrl,
+              cols: spriteSize.width,
+              rows: spriteSize.height,
+            })
+            return {
+              index: frame.index,
+              blob: result.blob,
+              durationMs: frame.durationMs,
+              sourceImageUrl: frame.imageUrl,
+            }
+          }),
+        )
       },
       async getExportModel() {
         if (!characterApis) return null
