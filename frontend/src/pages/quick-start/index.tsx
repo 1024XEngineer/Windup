@@ -15,8 +15,8 @@ import {
   ArrowBendDownLeft,
   ArrowClockwise,
   ArrowUp,
+  CaretDown,
   CopySimple,
-  ImageSquare,
   PlusCircle,
   Stop,
   X,
@@ -441,6 +441,7 @@ function IconActionButton({
   onClick,
   type = 'button',
   className = '',
+  expanded,
   children,
 }: {
   label: string
@@ -449,6 +450,7 @@ function IconActionButton({
   onClick?: () => void
   type?: 'button' | 'submit'
   className?: string
+  expanded?: boolean
   children: ReactNode
 }) {
   const tooltipId = useId()
@@ -458,6 +460,7 @@ function IconActionButton({
       type={type}
       aria-label={label}
       aria-describedby={tooltipId}
+      aria-expanded={expanded}
       disabled={disabled}
       onClick={onClick}
       data-icon-action
@@ -476,6 +479,52 @@ function IconActionButton({
         {label}
       </span>
     </button>
+  )
+}
+
+function MasterFrameIcon() {
+  return (
+    <svg
+      data-icon="master-frame"
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width="24"
+      height="24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M7.25 5.5h10.5a1.75 1.75 0 0 1 1.75 1.75v9.5a1.75 1.75 0 0 1-1.75 1.75H7.25a1.75 1.75 0 0 1-1.75-1.75v-9.5A1.75 1.75 0 0 1 7.25 5.5Z" />
+      <path
+        d="M5.5 8H4.75A1.75 1.75 0 0 0 3 9.75v8.5A1.75 1.75 0 0 0 4.75 20h10.5A1.75 1.75 0 0 0 17 18.5"
+        opacity="0.58"
+      />
+      <path d="m8.25 15.5 2.45-2.65a.75.75 0 0 1 1.1-.02l1.45 1.45 1.2-1.2a.75.75 0 0 1 1.08.02l1.97 2.4" />
+      <circle cx="15.75" cy="9.25" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+function StyleTileIcon() {
+  return (
+    <svg
+      data-icon="style-tile"
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width="22"
+      height="22"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="4.25" y="4.25" width="15.5" height="15.5" rx="3.25" />
+      <path d="M12 7.75c.38 2.42 1.83 3.87 4.25 4.25-2.42.38-3.87 1.83-4.25 4.25-.38-2.42-1.83-3.87-4.25-4.25 2.42-.38 3.87-1.83 4.25-4.25Z" />
+      <circle cx="17.25" cy="6.75" r=".75" fill="currentColor" stroke="none" />
+    </svg>
   )
 }
 
@@ -575,6 +624,7 @@ function QuickStartInput({
   const fileInput = useRef<HTMLInputElement>(null)
   const promptInput = useRef<HTMLTextAreaElement>(null)
   const submitAbortController = useRef<AbortController | null>(null)
+  const pendingPrompt = useRef<string | null>(null)
   const handoffTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const rewriteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const conversationTurnsRef = useRef(conversationTurns)
@@ -596,6 +646,7 @@ function QuickStartInput({
     promptState === 'rewriting' ||
     promptState === 'direction' ||
     generationStarting
+  const entryCanInterrupt = submitting || agentPlanning
   const hasPrompt = Boolean(prompt.trim())
   const hasConversation = conversationTurns.length > 0
   const showConversation = hasConversation || agentThinking || agentSession.state.status === 'error'
@@ -752,6 +803,43 @@ function QuickStartInput({
     if (fileInput.current) fileInput.current.value = ''
   }
 
+  function chooseGameStyle(next: ArtStyle) {
+    setGameStyle(next)
+    setStyleMenuOpen(false)
+    const draftId = draftIdRef.current
+    if (draftId) {
+      writeAgentConversation(
+        'sessionStorage',
+        agentDraftConversationStorageKey(activeRunUserId, draftId),
+        { turns: conversationTurnsRef.current, gameStyle: next },
+      )
+    }
+  }
+
+  function stopEntryWork() {
+    agentSession.cancel()
+    submitAbortController.current?.abort()
+    submitAbortController.current = null
+    if (handoffTimer.current) clearTimeout(handoffTimer.current)
+    handoffTimer.current = null
+    if (pendingPrompt.current) {
+      const restoredPrompt = pendingPrompt.current
+      setPrompt(restoredPrompt)
+      const turns = conversationTurnsRef.current
+      const lastTurn = turns.at(-1)
+      if (lastTurn?.role === 'user' && lastTurn.content === restoredPrompt) {
+        const nextTurns = turns.slice(0, -1)
+        conversationTurnsRef.current = nextTurns
+        setConversationTurns(nextTurns)
+        persistDraftConversation(nextTurns)
+      }
+    }
+    pendingPrompt.current = null
+    setSubmitting(false)
+    setRevealingFirstAgentTurn(false)
+    setEntryTransition('idle')
+  }
+
   async function handoffGenerated(
     result: Extract<QuickStartAgentResult, { kind: 'generated' }>,
   ): Promise<void> {
@@ -798,9 +886,11 @@ function QuickStartInput({
       const userTurn: AgentConversationTurn = { role: 'user', content: normalizedPrompt }
       if (hasConversation) appendConversationTurn(userTurn)
       else await revealFirstAgentTurn(userTurn)
+      pendingPrompt.current = normalizedPrompt
       setPrompt('')
       try {
         const result = await agentSession.submit(normalizedPrompt)
+        pendingPrompt.current = null
         setRevealingFirstAgentTurn(false)
         if (result.kind === 'message') {
           appendConversationTurn({
@@ -905,6 +995,13 @@ function QuickStartInput({
   const canSubmit = awaitingGenerationConfirmation
     ? Boolean(prompt.trim())
     : Boolean(prompt.trim()) || Boolean(templateFile)
+  const [styleMenuOpen, setStyleMenuOpen] = useState(false)
+  const [directionMenuOpen, setDirectionMenuOpen] = useState(false)
+  const [directionDragging, setDirectionDragging] = useState(false)
+  const [directionSliderValue, setDirectionSliderValue] = useState(() =>
+    QUICK_START_DIRECTIONAL_MOVEMENTS.indexOf(directionalMovement),
+  )
+  const directionalMovementIndex = QUICK_START_DIRECTIONAL_MOVEMENTS.indexOf(directionalMovement)
 
   return (
     <section
@@ -916,7 +1013,7 @@ function QuickStartInput({
       <div
         data-layout="quick-start-entry"
         data-transition={entryTransition}
-        className="relative z-10 grid min-h-[calc(100dvh-3.5rem)] grid-rows-[1fr_auto] gap-6 px-5 py-6 sm:px-8 sm:pb-8 sm:pt-10"
+        className="relative z-10 grid h-[calc(100dvh-3.5rem)] grid-rows-[1fr_auto] gap-6 px-5 py-6 sm:px-8 sm:pb-4 sm:pt-10"
       >
         <div
           data-layout="quick-start-entry-stage"
@@ -1025,7 +1122,7 @@ function QuickStartInput({
         <div
           data-testid="quick-start-composer"
           data-layout="quick-start-composer"
-          data-position="floating"
+          data-position="bottom"
           data-prompt-state={promptState}
           className={`mx-auto w-full max-w-3xl self-end transition-[opacity,transform,filter] duration-[460ms] ease-[cubic-bezier(0.55,0,1,0.45)] motion-reduce:transition-none ${
             entryTransition === 'leaving'
@@ -1033,45 +1130,14 @@ function QuickStartInput({
               : 'translate-y-0 opacity-100 blur-0'
           }`}
         >
-          {templateFile ? (
-            <fieldset
-              aria-label="角色方向"
-              disabled={entryBusy}
-              className="mb-2 flex items-center justify-end gap-1.5 text-xs"
-            >
-              <legend className="mr-1 text-app-muted">生成方向</legend>
-              {QUICK_START_DIRECTIONAL_MOVEMENTS.map((movement) => (
-                <label
-                  key={movement}
-                  className={`relative cursor-pointer rounded-full border px-3 py-1.5 font-semibold transition focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-app-accent ${
-                    directionalMovement === movement
-                      ? 'border-app-accent bg-app-accent-soft text-app-accent'
-                      : 'border-app-line bg-app-surface/70 text-app-muted hover:border-app-line-strong hover:text-app-ink'
-                  } ${entryBusy ? 'cursor-not-allowed opacity-50' : ''}`}
-                >
-                  <input
-                    type="radio"
-                    name="quick-start-directional-movement"
-                    value={movement}
-                    checked={directionalMovement === movement}
-                    onChange={() => setDirectionalMovement(movement)}
-                    className="sr-only"
-                  />
-                  {DIRECTIONAL_MOVEMENT[movement]}
-                </label>
-              ))}
-            </fieldset>
-          ) : null}
           <form
             onSubmit={(event) => void submit(event)}
             autoComplete="off"
             data-prompt-state={promptState}
-            className={`quick-start-agent-composer grid items-center gap-1.5 overflow-hidden rounded-xl border border-app-line-strong bg-app-surface-raised p-1.5 shadow-app-panel transition-shadow focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)] ${
-              hasConversation ? 'sm:grid-cols-[1fr_auto]' : 'sm:grid-cols-[1fr_auto_auto]'
-            }`}
+            className="quick-start-agent-composer relative flex flex-col"
           >
             <label
-              className="relative ml-2 min-w-0 overflow-hidden rounded-lg"
+              className="relative block min-h-[52px] min-w-0 overflow-hidden rounded-[18px] border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]"
               htmlFor="quick-start-prompt"
             >
               <span className="sr-only">创作指令</span>
@@ -1083,6 +1149,13 @@ function QuickStartInput({
                 aria-label="创作指令"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' || event.metaKey || event.nativeEvent.isComposing) {
+                    return
+                  }
+                  event.preventDefault()
+                  event.currentTarget.form?.requestSubmit()
+                }}
                 disabled={inputLocked}
                 placeholder={
                   agentPlanning
@@ -1093,7 +1166,7 @@ function QuickStartInput({
                         ? '描述动作，可留空生成待机动作…'
                         : '描述角色的外形、身份和气质…'
                 }
-                className={`block min-h-10 max-h-40 w-full min-w-0 resize-none overflow-y-auto border-0 bg-transparent px-4 py-2.5 text-[15px] leading-5 text-app-ink outline-none [field-sizing:content] placeholder:text-app-faint ${
+                className={`block min-h-[52px] max-h-40 w-full min-w-0 resize-none overflow-y-auto border-0 bg-transparent py-[14px] pr-14 pl-4 text-[15px] leading-6 text-app-ink outline-none [field-sizing:content] placeholder:text-app-faint ${
                   promptState === 'rewriting' ? 'text-transparent caret-transparent' : ''
                 }`}
               />
@@ -1101,7 +1174,7 @@ function QuickStartInput({
                 <span
                   data-prompt-rewrite
                   aria-hidden="true"
-                  className="quick-start-prompt-rewrite absolute inset-0 flex min-h-10 max-h-40 items-start overflow-y-auto px-4 py-2.5 text-[15px] leading-5 text-app-ink"
+                  className="quick-start-prompt-rewrite absolute inset-0 flex min-h-[52px] max-h-40 items-start overflow-y-auto py-[14px] pr-14 pl-4 text-[15px] leading-6 text-app-ink"
                 >
                   <KineticCopyCycle
                     active
@@ -1113,7 +1186,24 @@ function QuickStartInput({
                 </span>
               ) : null}
             </label>
-
+            <button
+              type={entryCanInterrupt ? 'button' : 'submit'}
+              aria-label={entryCanInterrupt ? '停止生成' : buttonLabel}
+              title={entryCanInterrupt ? '停止生成' : buttonLabel}
+              onClick={entryCanInterrupt ? stopEntryWork : undefined}
+              disabled={
+                entryCanInterrupt ? false : !canSubmit || entryBusy || Boolean(unavailableReason)
+              }
+              className={`absolute right-[6px] bottom-[6px] z-10 grid size-10 place-items-center rounded-full border-0 text-app-canvas transition-[opacity,transform,background] duration-150 hover:-translate-y-px active:scale-95 disabled:cursor-default disabled:opacity-25 ${
+                entryCanInterrupt ? 'bg-app-ink' : 'bg-app-accent hover:bg-app-accent-hover'
+              }`}
+            >
+              {entryCanInterrupt ? (
+                <Stop aria-hidden="true" size={16} weight="fill" />
+              ) : (
+                <ArrowUp aria-hidden="true" size={19} weight="bold" />
+              )}
+            </button>
             <input
               ref={fileInput}
               type="file"
@@ -1123,76 +1213,171 @@ function QuickStartInput({
               className="sr-only"
               onChange={selectTemplateFile}
             />
-            {templateFile ? (
-              <span className="flex h-10 min-w-0 max-w-56 items-center rounded-lg bg-app-surface-muted text-xs text-app-ink-soft">
-                <button
-                  type="button"
-                  aria-label={`更换母版 ${templateFile.name}`}
-                  disabled={entryBusy}
-                  onClick={() => fileInput.current?.click()}
-                  className="inline-flex h-full min-w-0 items-center gap-2 rounded-l-lg px-2.5 font-semibold transition hover:bg-app-surface hover:text-app-accent focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
-                >
-                  <ImageSquare aria-hidden="true" size={16} weight="duotone" />
-                  <span className="max-w-32 truncate">{templateFile.name}</span>
-                </button>
-                <button
-                  type="button"
-                  aria-label="移除图片"
-                  disabled={entryBusy}
-                  onClick={removeTemplateFile}
-                  className="grid size-8 shrink-0 place-items-center rounded-md text-app-muted transition hover:bg-app-surface hover:text-app-accent focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
-                >
-                  <X aria-hidden="true" size={14} weight="bold" />
-                </button>
-              </span>
-            ) : !hasConversation ? (
-              <button
-                type="button"
-                disabled={entryBusy}
-                onClick={() => fileInput.current?.click()}
-                className="inline-flex h-10 items-center gap-2 rounded-lg px-3 text-xs font-semibold whitespace-nowrap text-app-muted transition hover:bg-app-surface-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
-              >
-                <ImageSquare aria-hidden="true" size={17} weight="duotone" />
-                添加母版
-              </button>
-            ) : null}
-            {!hasConversation ? (
-              <label className="inline-flex h-10 items-center gap-1.5 rounded-lg px-2 text-xs font-semibold whitespace-nowrap text-app-muted">
-                画风
-                <select
-                  value={gameStyle}
-                  disabled={entryBusy}
-                  aria-label="画风"
-                  onChange={(event) => {
-                    const next = event.target.value as ArtStyle
-                    setGameStyle(next)
-                    const draftId = draftIdRef.current
-                    if (draftId) {
-                      writeAgentConversation(
-                        'sessionStorage',
-                        agentDraftConversationStorageKey(activeRunUserId, draftId),
-                        { turns: conversationTurnsRef.current, gameStyle: next },
-                      )
-                    }
-                  }}
-                  className="rounded-md border border-app-line bg-app-surface px-2 py-1 text-xs text-app-ink-soft outline-none focus-visible:border-app-accent"
-                >
-                  {ART_STYLE_OPTIONS.map((value) => (
-                    <option key={value} value={value}>
-                      {ART_STYLE[value]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            <button
-              type="submit"
-              disabled={!canSubmit || entryBusy || Boolean(unavailableReason)}
-              className="inline-flex h-10 self-end items-center gap-2 rounded-lg bg-app-accent px-4 text-sm font-bold whitespace-nowrap text-app-on-accent transition hover:bg-app-accent-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
+            <div
+              data-layout="quick-start-composer-controls"
+              className="order-first mb-2 flex min-h-10 items-center justify-between gap-3 px-1"
             >
-              {buttonLabel}
-              {!entryBusy ? <ArrowUp aria-hidden="true" size={16} weight="bold" /> : null}
-            </button>
+              {!hasConversation ? (
+                <div className="flex items-center gap-1">
+                  <IconActionButton
+                    label={templateFile ? `更换母版 ${templateFile.name}` : '添加母版'}
+                    disabled={entryBusy}
+                    onClick={() => fileInput.current?.click()}
+                    className={templateFile ? 'text-app-accent' : ''}
+                  >
+                    <MasterFrameIcon />
+                  </IconActionButton>
+                  <div className="relative">
+                    <IconActionButton
+                      label={`选择画风，当前${ART_STYLE[gameStyle]}`}
+                      disabled={entryBusy}
+                      onClick={() => {
+                        setDirectionMenuOpen(false)
+                        setStyleMenuOpen((open) => !open)
+                      }}
+                      expanded={styleMenuOpen}
+                    >
+                      <StyleTileIcon />
+                    </IconActionButton>
+                    {styleMenuOpen ? (
+                      <div
+                        role="menu"
+                        aria-label="选择画风"
+                        className="quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid min-w-32 gap-1 rounded-[14px] border border-app-line bg-[var(--color-app-surface-raised)] p-1.5 opacity-100 shadow-app-panel"
+                      >
+                        {ART_STYLE_OPTIONS.map((value) => (
+                          <button
+                            key={value}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={gameStyle === value}
+                            onClick={() => chooseGameStyle(value)}
+                            className={`rounded-lg px-3 py-2 text-left text-xs transition ${
+                              gameStyle === value
+                                ? 'bg-app-accent-soft text-app-accent'
+                                : 'text-app-ink-soft hover:bg-app-surface-muted'
+                            }`}
+                          >
+                            {ART_STYLE[value]}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+              {templateFile && !hasConversation ? (
+                <span className="absolute bottom-full left-3 mb-2 inline-flex max-w-56 items-center gap-1 rounded-lg bg-app-surface-raised px-2 py-1 text-xs text-app-ink-soft shadow-app-card">
+                  <span className="truncate">{templateFile.name}</span>
+                  <button
+                    type="button"
+                    aria-label="移除图片"
+                    disabled={entryBusy}
+                    onClick={removeTemplateFile}
+                    className="grid size-6 shrink-0 place-items-center rounded-md text-app-muted hover:text-app-accent"
+                  >
+                    <X aria-hidden="true" size={13} weight="bold" />
+                  </button>
+                </span>
+              ) : null}
+              <div className="flex items-center gap-1">
+                {!hasConversation ? (
+                  <>
+                    <span
+                      data-testid="quick-start-selected-style"
+                      className="max-w-28 truncate px-2 text-sm font-medium text-app-muted"
+                    >
+                      {ART_STYLE[gameStyle]}
+                    </span>
+                    <div className="relative">
+                      <button
+                        type="button"
+                        aria-label={`生成方向，当前${DIRECTIONAL_MOVEMENT[directionalMovement]}`}
+                        aria-expanded={directionMenuOpen}
+                        disabled={entryBusy}
+                        onClick={() => {
+                          setStyleMenuOpen(false)
+                          setDirectionSliderValue(directionalMovementIndex)
+                          setDirectionMenuOpen((open) => !open)
+                        }}
+                        className="inline-flex h-10 items-center gap-1 rounded-lg px-3 text-sm font-medium text-app-ink-soft transition hover:bg-app-surface-muted hover:text-app-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:opacity-45"
+                      >
+                        {DIRECTIONAL_MOVEMENT[directionalMovement]}
+                        <CaretDown
+                          aria-hidden="true"
+                          size={14}
+                          weight="bold"
+                          className={`transition-transform duration-200 motion-reduce:transition-none ${directionMenuOpen ? 'rotate-180' : ''}`}
+                        />
+                      </button>
+                      {directionMenuOpen ? (
+                        <div
+                          role="group"
+                          aria-label="生成方向设置"
+                          className="quick-start-control-popover absolute right-0 bottom-full z-30 mb-3 w-72 rounded-[18px] border border-app-line-strong bg-[var(--color-app-surface-raised)] p-5 opacity-100 shadow-app-panel"
+                        >
+                          <div className="mb-4 flex items-center justify-between">
+                            <span className="text-sm text-app-muted">生成方向</span>
+                            <strong
+                              key={directionalMovement}
+                              className="quick-start-direction-value text-sm font-semibold text-app-ink"
+                            >
+                              {DIRECTIONAL_MOVEMENT[directionalMovement]}
+                            </strong>
+                          </div>
+                          <div className="mb-2 flex justify-between text-xs text-app-muted">
+                            <span>单向</span>
+                            <span>八向</span>
+                          </div>
+                          <div
+                            data-dragging={directionDragging ? 'true' : 'false'}
+                            className="quick-start-direction-slider-wrap"
+                            style={
+                              {
+                                '--quick-start-direction-progress': `${directionSliderValue * 50}%`,
+                              } as CSSProperties
+                            }
+                          >
+                            <input
+                              type="range"
+                              min="0"
+                              max="2"
+                              step="0.01"
+                              value={directionSliderValue}
+                              aria-label="生成方向"
+                              aria-valuetext={DIRECTIONAL_MOVEMENT[directionalMovement]}
+                              onPointerDown={() => setDirectionDragging(true)}
+                              onPointerUp={(event) => {
+                                const index = Math.round(Number(event.currentTarget.value))
+                                setDirectionDragging(false)
+                                setDirectionSliderValue(index)
+                                setDirectionalMovement(
+                                  QUICK_START_DIRECTIONAL_MOVEMENTS[index] ?? 'single',
+                                )
+                              }}
+                              onPointerCancel={() => setDirectionDragging(false)}
+                              onBlur={(event) => {
+                                const index = Math.round(Number(event.currentTarget.value))
+                                setDirectionDragging(false)
+                                setDirectionSliderValue(index)
+                              }}
+                              onChange={(event) => {
+                                const value = Number(event.target.value)
+                                setDirectionSliderValue(value)
+                                setDirectionalMovement(
+                                  QUICK_START_DIRECTIONAL_MOVEMENTS[Math.round(value)] ?? 'single',
+                                )
+                              }}
+                              className="quick-start-direction-slider"
+                            />
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </div>
           </form>
 
           {unavailableReason ? (
@@ -2563,11 +2748,11 @@ function QuickStartRun({
         <footer
           data-testid="quick-start-composer"
           data-position="floating"
-          className="absolute right-5 bottom-4 left-5 z-10 mx-auto w-auto max-w-3xl sm:right-8 sm:bottom-6 sm:left-8"
+          className="absolute right-5 bottom-4 left-5 z-10 mx-auto w-auto max-w-3xl sm:right-8 sm:bottom-4 sm:left-8"
         >
           <form
             onSubmit={continueConversation}
-            className="grid grid-cols-[1fr_auto] items-center gap-1.5 rounded-2xl border border-app-line-strong bg-app-surface-raised/96 p-1.5 shadow-app-panel backdrop-blur-xl transition focus-within:border-app-accent"
+            className="grid grid-cols-[1fr_auto] items-center gap-1.5 rounded-[18px] border border-app-line-strong bg-app-surface-raised/96 p-1.5 shadow-app-panel backdrop-blur-xl transition focus-within:border-app-accent"
           >
             <label htmlFor="quick-start-continuation" className="min-w-0">
               <span className="sr-only">继续描述你的想法</span>
@@ -2601,7 +2786,7 @@ function QuickStartRun({
                     (workflowAgentMode && workflowAgentSession.busy)
               }
               accent
-              className="active:scale-[0.98] disabled:opacity-35"
+              className="!rounded-full active:scale-[0.98] disabled:opacity-35"
             >
               {composerCanInterrupt ? (
                 <Stop aria-hidden="true" size={18} weight="bold" />

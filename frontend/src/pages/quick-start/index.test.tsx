@@ -1,5 +1,13 @@
 import { StrictMode } from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import { BrowserRouter, MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -515,11 +523,12 @@ describe('QuickStartPage', () => {
     const entryLayout = entrySection?.querySelector('[data-layout="quick-start-entry"]')
     const composer = entrySection?.querySelector('[data-layout="quick-start-composer"]')
 
-    expect(entryLayout?.className).toContain('min-h-[calc(100dvh-3.5rem)]')
+    expect(entryLayout?.className).toContain('h-[calc(100dvh-3.5rem)]')
     expect(entryLayout?.className).toContain('grid-rows-[1fr_auto]')
+    expect(entryLayout?.className).toContain('sm:pb-4')
     expect(composer?.className).toContain('max-w-3xl')
     expect(composer?.querySelector('form')).toBeTruthy()
-    expect(composer?.querySelector('form')?.className).toContain('sm:grid-cols-[1fr_auto_auto]')
+    expect(composer?.querySelector('form')?.className).toContain('relative')
     expect(entrySection?.querySelector('[data-layout="quick-start-starters"]')).toBeNull()
     expect(screen.queryByRole('button', { name: /16-bit 日式 RPG/u })).toBeNull()
     expect(screen.queryByRole('button', { name: /暗黑哥特像素/u })).toBeNull()
@@ -649,20 +658,174 @@ describe('QuickStartPage', () => {
     renderAt('/quick-start', serviceFor(null))
     const composer = screen.getByRole('textbox', { name: '创作指令' })
     const editingSurface = composer.closest('label')
+    const form = composer.closest('form')
+    const controls = form?.querySelector('[data-layout="quick-start-composer-controls"]')
 
     expect(composer.tagName).toBe('TEXTAREA')
     expect((composer as HTMLTextAreaElement).rows).toBe(1)
-    expect(composer.className).toContain('min-h-10')
+    expect(composer.className).toContain('min-h-[52px]')
     expect(composer.className).toContain('[field-sizing:content]')
     expect(composer.className).toContain('block')
-    expect(composer.className).toContain('px-4')
-    expect(editingSurface?.className).toContain('ml-2')
-    expect(editingSurface?.className).toContain('rounded-lg')
-    expect(editingSurface?.className).not.toContain('bg-app-surface')
-    expect(screen.getByRole('button', { name: '生成角色' }).className).toContain('self-end')
-    expect(composer.closest('form')?.className).toContain(
+    expect(composer.className).toContain('pl-4')
+    expect(composer.className).toContain('pr-14')
+    expect(editingSurface?.className).toContain('rounded-[18px]')
+    expect(editingSurface?.className).toContain('bg-app-surface-raised')
+    expect(screen.getByRole('button', { name: '生成角色' }).className).toContain('rounded-full')
+    expect(form?.className).toContain('flex-col')
+    expect(controls?.className).toContain('order-first')
+    expect(controls?.className).toContain('mb-2')
+    expect(screen.getByRole('button', { name: '生成角色' }).className).toContain('bottom-[6px]')
+    expect(editingSurface?.className).toContain(
       'focus-within:shadow-[var(--shadow-app-composer-focus)]',
     )
+  })
+
+  it('submits the entry with Enter', async () => {
+    const planner = vi.fn(async () => ({
+      text: '收到。',
+      finishReason: 'stop' as const,
+      toolCalls: [],
+    }))
+    renderAt('/quick-start', serviceFor(null), agentFor({ planner }))
+    const composer = screen.getByRole('textbox', { name: '创作指令' })
+
+    fireEvent.change(composer, { target: { value: '银发骑士' } })
+    const enter = createEvent.keyDown(composer, { key: 'Enter', code: 'Enter' })
+    fireEvent(composer, enter)
+
+    expect(enter.defaultPrevented).toBe(true)
+    await waitFor(() => expect(planner).toHaveBeenCalledTimes(1))
+  })
+
+  it('leaves Command+Enter available for a textarea newline', () => {
+    const planner = vi.fn()
+    renderAt('/quick-start', serviceFor(null), agentFor({ planner }))
+    const composer = screen.getByRole('textbox', { name: '创作指令' })
+
+    fireEvent.change(composer, { target: { value: '银发骑士' } })
+    const commandEnter = createEvent.keyDown(composer, {
+      key: 'Enter',
+      code: 'Enter',
+      metaKey: true,
+    })
+    fireEvent(composer, commandEnter)
+
+    expect(commandEnter.defaultPrevented).toBe(false)
+    expect(planner).not.toHaveBeenCalled()
+  })
+
+  it('does not submit Enter while an IME composition is active', () => {
+    const planner = vi.fn()
+    renderAt('/quick-start', serviceFor(null), agentFor({ planner }))
+    const composer = screen.getByRole('textbox', { name: '创作指令' })
+
+    fireEvent.change(composer, { target: { value: '银发骑士' } })
+    const composingEnter = createEvent.keyDown(composer, {
+      key: 'Enter',
+      code: 'Enter',
+      isComposing: true,
+    })
+    fireEvent(composer, composingEnter)
+
+    expect(composingEnter.defaultPrevented).toBe(false)
+    expect(planner).not.toHaveBeenCalled()
+  })
+
+  it('restores one editable prompt after stopping Agent planning', async () => {
+    const planning = deferred<PlannerResult>()
+    const planner = vi
+      .fn()
+      .mockImplementationOnce(async () => planning.promise)
+      .mockResolvedValueOnce({ text: '可以继续。', finishReason: 'stop', toolCalls: [] })
+    renderAt('/quick-start', serviceFor(null), agentFor({ planner }))
+    const composer = screen.getByRole('textbox', { name: '创作指令' }) as HTMLTextAreaElement
+
+    fireEvent.change(composer, { target: { value: '银发骑士' } })
+    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: '停止生成' }))
+
+    await waitFor(() => {
+      expect(composer.disabled).toBe(false)
+      expect(composer.value).toBe('银发骑士')
+    })
+    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' })
+
+    await waitFor(() => expect(planner).toHaveBeenCalledTimes(2))
+    planning.resolve({ text: '过期回复。', finishReason: 'stop', toolCalls: [] })
+    expect(await screen.findByText('可以继续。')).toBeTruthy()
+    const userTurns = Array.from(
+      screen.getByTestId('quick-start-transcript').querySelectorAll('[data-user-turn]'),
+    ).filter((turn) => turn.textContent === '银发骑士')
+    expect(userTurns).toHaveLength(1)
+  })
+
+  it('aborts uploaded-template startup and restores its prompt', async () => {
+    let startupSignal: AbortSignal | null = null
+    const service = serviceFor(null, {
+      startWithUploadedTemplate: vi.fn(
+        async (_file, _prompt, signal) =>
+          new Promise<QuickStartSession>((_resolve, reject) => {
+            startupSignal = signal
+            signal.addEventListener('abort', () =>
+              reject(new DOMException('aborted', 'AbortError')),
+            )
+          }),
+      ),
+    })
+    renderAt('/quick-start', service)
+    const composer = screen.getByRole('textbox', { name: '创作指令' }) as HTMLTextAreaElement
+    const file = new File(['pixels'], 'hero.png', { type: 'image/png' })
+
+    fireEvent.change(screen.getByLabelText('上传角色母版'), { target: { files: [file] } })
+    fireEvent.change(composer, { target: { value: '挥手' } })
+    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: '停止生成' }))
+
+    await waitFor(() => {
+      expect(startupSignal?.aborted).toBe(true)
+      expect(composer.disabled).toBe(false)
+      expect(composer.value).toBe('挥手')
+    })
+  })
+
+  it('uses a larger template icon and shows the selected art style on the right', () => {
+    renderAt('/quick-start', serviceFor(null))
+
+    const template = screen.getByRole('button', { name: '添加母版' })
+    const style = screen.getByRole('button', { name: '选择画风，当前不指定' })
+    const send = screen.getByRole('button', { name: '生成角色' })
+
+    expect(template.querySelector('svg')).toBeTruthy()
+    expect(template.querySelector('svg')?.getAttribute('data-icon')).toBe('master-frame')
+    expect(template.querySelector('svg')?.getAttribute('width')).toBe('24')
+    expect(style.querySelector('svg')?.getAttribute('data-icon')).toBe('style-tile')
+    expect(screen.getByTestId('quick-start-selected-style').textContent).toBe('不指定')
+    expect(send.querySelector('svg')).toBeTruthy()
+    expect(template.textContent).toBe('添加母版')
+    expect(style.getAttribute('aria-expanded')).toBe('false')
+    expect(send.className).toContain('rounded-full')
+  })
+
+  it('opens generation direction as an animated slider control below the composer', () => {
+    renderAt('/quick-start', serviceFor(null))
+
+    const direction = screen.getByRole('button', { name: '生成方向，当前单向' })
+    expect(direction.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(direction)
+
+    const panel = screen.getByRole('group', { name: '生成方向设置' })
+    const slider = screen.getByRole('slider', { name: '生成方向' }) as HTMLInputElement
+    expect(direction.getAttribute('aria-expanded')).toBe('true')
+    expect(panel.className).toContain('z-30')
+    expect(panel.querySelector('canvas')).toBeNull()
+    expect(panel.querySelector('[data-direction-shader]')).toBeNull()
+    expect(panel.querySelector('.quick-start-direction-ticks')).toBeNull()
+    expect(slider.value).toBe('0')
+    fireEvent.change(slider, { target: { value: '0.6' } })
+    expect(slider.value).toBe('0.6')
+    expect(screen.getByRole('button', { name: '生成方向，当前四向' })).toBeTruthy()
+    fireEvent.pointerUp(slider, { target: { value: '0.6' } })
+    expect(slider.value).toBe('1')
   })
 
   it('keeps browser form history out of the creation composer', () => {
@@ -832,7 +995,8 @@ describe('QuickStartPage', () => {
     window.history.replaceState(null, '', '/quick-start')
     const firstView = renderInBrowserHistory(service, agent)
 
-    fireEvent.change(screen.getByLabelText('画风'), { target: { value: 'pixel' } })
+    fireEvent.click(screen.getByRole('button', { name: '选择画风，当前不指定' }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: '像素' }))
     fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
       target: { value: '一个住在云端的机械师。' },
     })
@@ -1075,6 +1239,8 @@ describe('QuickStartPage', () => {
     expect(scrollRegion?.contains(composer)).toBe(false)
     expect(composer.getAttribute('data-position')).toBe('floating')
     expect(composer.className).toContain('absolute')
+    expect(composer.className).toContain('sm:bottom-4')
+    expect(composer.querySelector('form')?.className).toContain('rounded-[18px]')
     expect(agentTurns.length).toBeGreaterThanOrEqual(2)
     expect(userTurns.length).toBeGreaterThanOrEqual(2)
     expect(userTurns.every((turn) => turn.className.includes('w-fit'))).toBe(true)
@@ -1090,6 +1256,7 @@ describe('QuickStartPage', () => {
     expect(composer).toBeTruthy()
     expect(interrupt.querySelector('svg')).toBeTruthy()
     expect(interrupt.hasAttribute('disabled')).toBe(false)
+    expect(interrupt.className).toContain('rounded-full')
   })
 
   it('scrolls only the transcript region when new Agent output arrives', async () => {
@@ -1654,7 +1821,10 @@ describe('QuickStartPage', () => {
     const agent = agentFor({ startCharacterGeneration })
     const view = renderAt('/quick-start', service, agent)
 
-    expect(screen.queryByRole('radio', { name: '单向' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '生成方向，当前单向' }))
+    fireEvent.change(screen.getByRole('slider', { name: '生成方向' }), {
+      target: { value: '1' },
+    })
     fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
       target: { value: '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色' },
     })
@@ -1673,9 +1843,12 @@ describe('QuickStartPage', () => {
     view.unmount()
     renderAt('/quick-start', service)
     const file = new File(['pixels'], 'hero.png', { type: 'image/png' })
+    fireEvent.click(screen.getByRole('button', { name: '生成方向，当前单向' }))
+    fireEvent.change(screen.getByRole('slider', { name: '生成方向' }), {
+      target: { value: '2' },
+    })
     fireEvent.click(screen.getByRole('button', { name: '添加母版' }))
     fireEvent.change(screen.getByLabelText('上传角色母版'), { target: { files: [file] } })
-    fireEvent.click(screen.getByRole('radio', { name: '八向' }))
     expect(screen.getByText('hero.png')).toBeTruthy()
     fireEvent.change(screen.getByLabelText('创作指令'), { target: { value: '挥手' } })
     fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
