@@ -35,6 +35,14 @@ html:has(.landing-page) {
   }
 }
 
+.landing-hero-product-window[data-expanding='true'] .landing-hero-product-window__surface {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  border-radius: var(--hero-window-radius);
+  box-shadow: 0 30px 80px rgb(53 58 49 / var(--hero-window-shadow-alpha));
+}
+
 @media (prefers-reduced-motion: reduce) {
   html:has(.landing-page) {
     scroll-behavior: auto;

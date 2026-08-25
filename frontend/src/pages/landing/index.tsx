@@ -506,6 +506,72 @@ function GenerationPipeline() {
 export function LandingPage() {
   const session = useAuthSession()
   const startPath = session.state.status === 'guest' ? creationEntry : '/workspace'
+  const heroProductWindowRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    const root = heroProductWindowRef.current
+    if (!root) return
+
+    let animationFrame = 0
+
+    const restoreOriginalCard = () => {
+      delete root.dataset.expanding
+      root.style.removeProperty('--hero-window-progress')
+      root.style.removeProperty('--hero-window-radius')
+      root.style.removeProperty('--hero-window-shadow-alpha')
+      root.style.removeProperty('height')
+      root.style.removeProperty('max-width')
+      root.style.removeProperty('width')
+    }
+
+    const updateProgress = () => {
+      animationFrame = 0
+
+      if (
+        window.innerWidth < 640 ||
+        (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
+      ) {
+        restoreOriginalCard()
+        return
+      }
+
+      const distance = Math.max(window.innerHeight * 0.8, 1)
+      const progress = clampProgress(window.scrollY / distance)
+      if (progress <= 0) {
+        restoreOriginalCard()
+        return
+      }
+
+      const collapsedWidth = Math.min(window.innerWidth * 0.8, 72 * 16)
+      const collapsedHeight = collapsedWidth / 2
+      const width = collapsedWidth + (window.innerWidth - collapsedWidth) * progress
+      const height = collapsedHeight + (window.innerHeight - collapsedHeight) * progress
+
+      root.dataset.expanding = 'true'
+      root.style.setProperty('--hero-window-progress', progress.toFixed(4))
+      root.style.setProperty('--hero-window-radius', `${16 * (1 - progress)}px`)
+      root.style.setProperty('--hero-window-shadow-alpha', `${0.18 * (1 - progress)}`)
+      root.style.width = `${width}px`
+      root.style.height = `${height}px`
+      root.style.maxWidth = 'none'
+    }
+
+    const scheduleProgressUpdate = () => {
+      if (animationFrame) return
+      animationFrame = window.requestAnimationFrame(updateProgress)
+    }
+
+    updateProgress()
+    window.addEventListener('scroll', scheduleProgressUpdate, { passive: true })
+    window.addEventListener('resize', scheduleProgressUpdate)
+
+    return () => {
+      window.removeEventListener('scroll', scheduleProgressUpdate)
+      window.removeEventListener('resize', scheduleProgressUpdate)
+      if (animationFrame) window.cancelAnimationFrame(animationFrame)
+      restoreOriginalCard()
+    }
+  }, [])
 
   return (
     <div className="landing-page min-h-[100dvh] bg-paper text-ink">
@@ -514,7 +580,7 @@ export function LandingPage() {
       <main>
         <section
           aria-label="Windup 首屏"
-          className="relative isolate min-h-[100svh] overflow-hidden text-[#252520] [background:linear-gradient(180deg,rgb(247_246_240/0.82),rgb(237_239_231/0.92)),#f2f1ea] sm:min-h-[calc(80dvh_+_min(40vw,_36rem))]"
+          className="relative isolate min-h-[100svh] overflow-hidden text-[#252520] [background:linear-gradient(180deg,rgb(247_246_240/0.82),rgb(237_239_231/0.92)),#f2f1ea] sm:min-h-[180svh]"
         >
           <div
             aria-hidden="true"
@@ -570,10 +636,13 @@ export function LandingPage() {
             </Link>
           </div>
 
-          <figure className="relative z-20 mx-auto mt-16 w-[calc(100%_-_2rem)] max-w-[72rem] transform-gpu sm:absolute sm:top-[80dvh] sm:left-1/2 sm:mx-0 sm:mt-0 sm:w-[80%] sm:-translate-x-1/2">
+          <figure
+            ref={heroProductWindowRef}
+            className="landing-hero-product-window relative z-20 mx-auto mt-16 w-[calc(100%_-_2rem)] max-w-[72rem] transform-gpu sm:absolute sm:top-[80dvh] sm:left-1/2 sm:mx-0 sm:mt-0 sm:w-[80%] sm:-translate-x-1/2"
+          >
             <div
               data-testid="workflow-editor-placeholder"
-              className="aspect-[2/1] overflow-hidden rounded-2xl border border-[#c9c8c0] bg-[#f9f8f3] shadow-[0_30px_80px_rgba(53,58,49,0.18)]"
+              className="landing-hero-product-window__surface aspect-[2/1] overflow-hidden rounded-2xl border border-[#c9c8c0] bg-[#f9f8f3] shadow-[0_30px_80px_rgba(53,58,49,0.18)]"
             />
           </figure>
         </section>
