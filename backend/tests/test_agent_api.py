@@ -256,6 +256,7 @@ def test_ai_chat_rejects_oversized_history_before_provider(auth_client):
     response = auth_client.post("/ai/chat", json=_request_body(messages=messages))
 
     assert response.status_code == 422
+    assert response.headers["x-request-id"]
     assert response.json()["error"]["code"] == "invalid_request"
     assert calls == 0
 
@@ -276,6 +277,7 @@ def test_ai_chat_rejects_oversized_body_before_provider(auth_client):
     )
 
     assert response.status_code == 413
+    assert response.headers["x-request-id"]
     assert response.json()["error"]["code"] == "request_too_large"
     assert calls == 0
 
@@ -306,6 +308,7 @@ async def test_ai_chat_rejects_chunked_body_before_json_parse():
         response = await async_client.post("/ai/chat", content=chunks())
 
     assert response.status_code == 413
+    assert response.headers["x-request-id"]
     assert response.json()["error"]["code"] == "request_too_large"
 
 

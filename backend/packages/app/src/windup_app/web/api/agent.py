@@ -26,6 +26,16 @@ from windup_framework.gateway import bind_call_context
 
 logger = logging.getLogger("windup.ai.proxy")
 REQUEST_ID_HEADER = "X-Request-Id"
+_REQUEST_ID_STATE = "ai_request_id"
+
+
+def _request_id_for(request: Request) -> str:
+    existing = getattr(request.state, _REQUEST_ID_STATE, None)
+    if isinstance(existing, str) and existing:
+        return existing
+    request_id = str(uuid4())
+    setattr(request.state, _REQUEST_ID_STATE, request_id)
+    return request_id
 
 
 class RequestTooLargeError(HTTPException):
@@ -42,6 +52,7 @@ class OpenAICompatibleRoute(APIRoute):
         original = super().get_route_handler()
 
         async def route_handler(request: Request) -> Response:
+            request_id = _request_id_for(request)
             content_length = request.headers.get("content-length")
             if content_length is not None:
                 try:
@@ -51,6 +62,7 @@ class OpenAICompatibleRoute(APIRoute):
                             message="请求体超过 64 KiB 上限",
                             error_type="invalid_request_error",
                             code="request_too_large",
+                            request_id=request_id,
                         )
                 except ValueError:
                     pass
@@ -76,6 +88,7 @@ class OpenAICompatibleRoute(APIRoute):
                     message="请求体超过 64 KiB 上限",
                     error_type="invalid_request_error",
                     code="request_too_large",
+                    request_id=request_id,
                 )
             except RequestValidationError:
                 return _error_response(
@@ -83,6 +96,7 @@ class OpenAICompatibleRoute(APIRoute):
                     message="请求参数无效",
                     error_type="invalid_request_error",
                     code="invalid_request",
+                    request_id=request_id,
                 )
 
         return route_handler
@@ -307,7 +321,7 @@ async def chat(
     _credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ):
     """Call the configured model once and return a non-streaming completion."""
-    request_id = str(uuid4())
+    request_id = _request_id_for(request)
     user_id = request.state.current_user.id
     proxy_settings = provider_settings.model_copy(update={"max_retries": 0})
     model_kwargs: dict[str, Any] = {"max_tokens": MAX_OUTPUT_TOKENS}
