@@ -900,6 +900,7 @@ describe('QuickStartPage', () => {
     await act(async () => undefined)
     expect(startCharacterGeneration).toHaveBeenCalledWith({
       prompt: '云端工坊的银发机械师，佩戴黄铜护目镜',
+      directionalMovement: 'single',
     })
   })
 
@@ -1520,6 +1521,8 @@ describe('QuickStartPage', () => {
     const agent = agentFor({ startCharacterGeneration })
     const view = renderAt('/quick-start', service, agent)
 
+    expect((screen.getByRole('radio', { name: '单向' }) as HTMLInputElement).checked).toBe(true)
+    fireEvent.click(screen.getByRole('radio', { name: '四向' }))
     fireEvent.click(screen.getByRole('button', { name: /16-bit 日式 RPG/u }))
     fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
     expect(startCharacterGeneration).not.toHaveBeenCalled()
@@ -1527,6 +1530,7 @@ describe('QuickStartPage', () => {
     await waitFor(() =>
       expect(startCharacterGeneration).toHaveBeenCalledWith({
         prompt: '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色',
+        directionalMovement: 'four-way',
       }),
     )
     expect(service.start).not.toHaveBeenCalled()
@@ -1534,6 +1538,7 @@ describe('QuickStartPage', () => {
     view.unmount()
     renderAt('/quick-start', service)
     const file = new File(['pixels'], 'hero.png', { type: 'image/png' })
+    fireEvent.click(screen.getByRole('radio', { name: '八向' }))
     fireEvent.click(screen.getByRole('button', { name: '添加母版' }))
     fireEvent.change(screen.getByLabelText('上传角色母版'), { target: { files: [file] } })
     expect(screen.getByText('hero.png')).toBeTruthy()
@@ -1544,6 +1549,7 @@ describe('QuickStartPage', () => {
         file,
         '挥手',
         expect.any(AbortSignal),
+        'eight-way',
       ),
     )
   })

@@ -16,6 +16,8 @@ const QUICK_START_DECISION_FIELDS = new Set([
   'optimizationSummary',
 ])
 
+export type QuickStartDirectionalMovement = 'single' | 'four-way' | 'eight-way'
+
 export interface PlannerMessage {
   role: 'user' | 'assistant'
   content: string
@@ -68,13 +70,18 @@ export interface QuickStartAgentTurnOptions {
 export interface QuickStartAgent {
   start(input: string, options?: QuickStartAgentTurnOptions): Promise<QuickStartAgentResult>
   continue(input: string, options?: QuickStartAgentTurnOptions): Promise<QuickStartAgentResult>
-  confirmProposal(proposalId: string, prompt: string): Promise<QuickStartAgentResult>
+  confirmProposal(
+    proposalId: string,
+    prompt: string,
+    directionalMovement?: QuickStartDirectionalMovement,
+  ): Promise<QuickStartAgentResult>
   revoke(): void
 }
 
 /** 宿主从现有 WorkflowController 绑定出的单次生成动作；本 Feature 不拥有业务对象。 */
 export type StartCharacterGenerationAction = (input: {
   prompt: string
+  directionalMovement?: QuickStartDirectionalMovement
 }) => Promise<{ runId: string }>
 
 export interface CreateQuickStartAgentOptions {
@@ -275,6 +282,7 @@ export function createQuickStartAgent({
   async function confirmProposal(
     proposalId: string,
     prompt: string,
+    directionalMovement: QuickStartDirectionalMovement = 'single',
   ): Promise<QuickStartAgentResult> {
     assertAuthorized()
     if (running) throw new Error('Planner 正在处理上一条输入')
@@ -291,7 +299,10 @@ export function createQuickStartAgent({
     const proposal = currentProposal
     currentProposal = null
     try {
-      const { runId } = await startCharacterGeneration({ prompt: effectivePrompt })
+      const { runId } = await startCharacterGeneration({
+        prompt: effectivePrompt,
+        directionalMovement,
+      })
       return { kind: 'generated', runId, ...proposal, optimizedPrompt: effectivePrompt }
     } finally {
       running = false

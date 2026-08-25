@@ -280,7 +280,7 @@ describe('WorkflowController', () => {
       controller.startCharacterGeneration({ prompt: '  银发像素骑士  ' }),
     ).resolves.toEqual({ runId: 'run-1' })
 
-    expect(prepareProject).toHaveBeenCalledWith('银发像素骑士')
+    expect(prepareProject).toHaveBeenCalledWith('银发像素骑士', 'single')
     expect(workflow.apis.create).toHaveBeenCalledWith({
       projectId: 'project-agent',
       nodes: [
@@ -305,6 +305,36 @@ describe('WorkflowController', () => {
       spriteHeight: 256,
       direction: 'east',
     })
+  })
+
+  it('按 Quick Start 选择的四向模式创建项目并提交全部四个方向', async () => {
+    const workflow = createWorkflowApis()
+    const generation = createGenerationHarness()
+    const prepareProject = vi.fn(async () => ({
+      id: 'project-four-way',
+      spriteSize: { width: 256, height: 256 },
+      directionalMovement: 'four-way' as const,
+    }))
+    const controller = createWorkflowController({
+      workflowRunApis: workflow.apis,
+      generationApis: generation.apis,
+      prepareProject,
+      onAsyncError: () => undefined,
+    })
+
+    await controller.startCharacterGeneration({
+      prompt: '四向像素骑士',
+      directionalMovement: 'four-way',
+    })
+
+    expect(prepareProject).toHaveBeenCalledWith('四向像素骑士', 'four-way')
+    expect(generation.apis.create).toHaveBeenCalledTimes(4)
+    expect(vi.mocked(generation.apis.create).mock.calls.map(([input]) => input.direction)).toEqual([
+      'east',
+      'west',
+      'north',
+      'south',
+    ])
   })
 
   it('未注入项目准备能力时拒绝 Quick Start 生成命令', async () => {
