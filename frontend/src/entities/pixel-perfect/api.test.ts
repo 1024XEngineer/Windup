@@ -157,6 +157,68 @@ describe('PixelPerfectApis.process', () => {
   })
 })
 
+describe('PixelPerfectApis.reconstruct', () => {
+  it('sends the project sprite size as the explicit reconstruction grid', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8000')
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      calls.push({ url, init })
+      if (url === 'https://cdn.example.com/actions/dance-0.png') {
+        return imageResponse(['source'], 'image/png')
+      }
+      return new Response(new Blob(['reconstructed'], { type: 'image/png' }), {
+        headers: {
+          'content-type': 'image/png',
+          'content-disposition': 'attachment; filename="pixel-perfect.png"',
+          'x-pixel-cols': '64',
+          'x-pixel-rows': '64',
+          'x-pixel-visible-colors': '12',
+        },
+      })
+    }) as typeof fetch
+
+    const result = await createPixelPerfectApis(fetchFn).reconstruct({
+      imageUrl: 'https://cdn.example.com/actions/dance-0.png',
+      cols: 64,
+      rows: 64,
+    })
+
+    expect(await result.blob.text()).toBe('reconstructed')
+    expect(result.metadata).toEqual({ cols: 64, rows: 64, visibleColors: 12 })
+    expect(calls[1]!.url).toBe('http://127.0.0.1:8000/tools/pixel-perfect/reconstruct')
+    const form = calls[1]!.init?.body as FormData
+    expect([...form.keys()]).toEqual(['file', 'cols', 'rows', 'structure_colors'])
+    expect(form.get('cols')).toBe('64')
+    expect(form.get('rows')).toBe('64')
+    expect(form.get('structure_colors')).toBe('16')
+  })
+
+  it('accepts a transparent reconstruction with no visible colors', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8000')
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) =>
+      String(input).startsWith('https://cdn.example.com/')
+        ? imageResponse(['source'], 'image/png')
+        : new Response(new Blob(['transparent'], { type: 'image/png' }), {
+            headers: {
+              'content-type': 'image/png',
+              'x-pixel-cols': '64',
+              'x-pixel-rows': '64',
+              'x-pixel-visible-colors': '0',
+            },
+          }),
+    ) as typeof fetch
+
+    await expect(
+      createPixelPerfectApis(fetchFn).reconstruct({
+        imageUrl: 'https://cdn.example.com/transparent.png',
+        cols: 64,
+        rows: 64,
+      }),
+    ).resolves.toMatchObject({ metadata: { visibleColors: 0 } })
+  })
+})
+
 function imageResponse(parts: BlobPart[], type: string): Response {
   return new Response(new Blob(parts, { type }), {
     status: 200,
