@@ -1422,6 +1422,7 @@ function QuickStartRun({
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams] = useSearchParams()
+  const addActionIntent = searchParams.get('intent') === 'add-action'
   const [session, setSession] = useState<QuickStartSession | null>(null)
   const [run, setRun] = useState<WorkflowRun | null>(null)
   const [restoring, setRestoring] = useState(true)
@@ -1574,7 +1575,9 @@ function QuickStartRun({
           clearWorkflowError()
         }
       })
-      const resumed = await nextSession.resume()
+      const resumed = addActionIntent
+        ? await nextSession.resume({ automaticActionAdvance: false })
+        : await nextSession.resume()
       if (active) {
         setRun(resumed)
         clearWorkflowError()
@@ -1606,6 +1609,7 @@ function QuickStartRun({
       }
     }
   }, [
+    addActionIntent,
     activeRunUserId,
     clearWorkflowError,
     onInitialSessionConsumed,
@@ -1765,7 +1769,6 @@ function QuickStartRun({
     firstFrameCandidates,
     firstFrameSelections,
   )
-  const addActionIntent = searchParams.get('intent') === 'add-action'
   const requestedOutfitId = searchParams.get('outfitId')
   const canAddAction =
     addActionIntent &&

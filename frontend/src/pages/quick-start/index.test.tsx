@@ -1689,6 +1689,8 @@ describe('QuickStartPage', () => {
 
     const input = await screen.findByRole('textbox', { name: '继续描述你的想法' })
     const submit = screen.getByRole('button', { name: '发送' })
+    expect(service.resume).toHaveBeenCalledWith({ automaticActionAdvance: false })
+    expect(service.addAction).not.toHaveBeenCalled()
     expect((submit as HTMLButtonElement).disabled).toBe(true)
 
     fireEvent.change(input, { target: { value: '挥手' } })
