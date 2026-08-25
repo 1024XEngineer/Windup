@@ -329,7 +329,9 @@ describe('WorkflowController', () => {
       directionalMovement: 'four-way',
     })
 
-    expect(prepareProject).toHaveBeenCalledWith('四向像素骑士', 'four-way')
+    expect(prepareProject).toHaveBeenCalledWith('四向像素骑士', 'four-way', {
+      gameStyle: undefined,
+    })
     expect(generation.apis.create).toHaveBeenCalledTimes(4)
     expect(vi.mocked(generation.apis.create).mock.calls.map(([input]) => input.direction)).toEqual([
       'east',

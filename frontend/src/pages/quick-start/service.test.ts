@@ -1101,7 +1101,7 @@ describe('createQuickStartService', () => {
       'four-way',
     )
 
-    expect(prepareProject).toHaveBeenCalledWith('挥手', 'four-way')
+    expect(prepareProject).toHaveBeenCalledWith('挥手', 'four-way', undefined)
     const calls = vi.mocked(generationApis.create).mock.calls.map(([input]) => input)
     expect(
       calls.filter((input) => input.type === 'character_template').map((input) => input.direction),
