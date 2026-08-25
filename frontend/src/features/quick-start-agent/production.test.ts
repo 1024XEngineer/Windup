@@ -224,6 +224,7 @@ describe('Quick Start Agent composition', () => {
         actionPrompt: '挥剑',
         directionalMovement: 'single',
         automaticDelivery: true,
+        suggestPixelPerfect: true,
       }),
     ).resolves.toEqual({ runId: 'run-agent' })
 
@@ -239,6 +240,7 @@ describe('Quick Start Agent composition', () => {
       directionalMovement: 'single',
       gameStyle: undefined,
       automaticDelivery: { actionPrompt: '挥剑' },
+      suggestPixelPerfect: true,
     })
     expect(dispose).toHaveBeenCalledTimes(1)
   })

@@ -16,6 +16,8 @@ describe('quickStartPlannerInstructions', () => {
     expect(firstTurn).toContain('proposal 只是提案，不代表用户授权生成')
     expect(firstTurn).toContain('角色和动作')
     expect(firstTurn).toContain('actionPrompt')
+    expect(firstTurn).toContain('suggestPixelPerfect')
+    expect(firstTurn).toContain('明确表达像素风素材意图')
     expect(firstTurn).toContain('不得只靠关键词')
     expect(firstTurn).toContain('对话轮数永远不是 proposal 的触发条件')
     expect(firstTurn).toContain('咨询或元对话必须用 reply')
