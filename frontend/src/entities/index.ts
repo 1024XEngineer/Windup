@@ -122,6 +122,15 @@ export type {
 export { createMediaApis } from './media/api'
 export type { MediaApis, MediaCategory, MediaReference } from './media'
 
+/* 完美像素化 —— 匿名读取素材，调用本地二进制工具并返回检测结果。 */
+export { createPixelPerfectApis, pixelPerfectApis } from './pixel-perfect'
+export type {
+  PixelPerfectApis,
+  PixelPerfectMetadata,
+  PixelPerfectProcessInput,
+  PixelPerfectResult,
+} from './pixel-perfect'
+
 /* 工作流 —— 前端管理节点，后端只持久化完整 nodes 文档 */
 export { WorkflowRunConflictError, workflowRunApis } from './workflow-run'
 export type {

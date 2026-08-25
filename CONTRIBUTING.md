@@ -54,6 +54,15 @@ git checkout -b <分支名>
 - 生产部署必须先发版本:打 Tag → 创建 Release(写清变更内容)→ 部署。**任何部署只认 Release。**
 - 生产部署暂为手动,由发布人唯一执行;CD 自动化另立 Issue 跟进。
 
+**怎么发一版**:把根目录 `VERSION` 改成新版本号,单独提一个 PR。合入且 Backend CI
+通过后,自动打 `v{VERSION}` 并创建 Release,notes 由上一个 tag 到本次提交的 commit
+自动分组生成。`VERSION` 没变的 PR 不会产生任何 tag 与 Release。
+
+- 版本号按语义化版本自己定:破坏性变更进 major,新功能进 minor,其余进 patch。
+- `VERSION` 非法或低于已发布的最新版,Backend CI 直接失败,不会留到发版那一刻。
+- 后端各包 `pyproject.toml` 与前端 `package.json` 里的 `version` 是包版本,与产品版本
+  是两件事,不随发版改动。
+
 ## 规范本身
 
 本文档经 [#334](https://github.com/1024XEngineer/Windup/issues/334) 团队确认后生效。需要修改时,先开 Issue 讨论,达成一致后更新本文档。

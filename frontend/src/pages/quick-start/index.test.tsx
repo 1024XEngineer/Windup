@@ -17,6 +17,7 @@ import { QuickStartPage } from './index'
 
 afterEach(() => {
   cleanup()
+  Reflect.deleteProperty(document, 'startViewTransition')
   window.localStorage.clear()
   window.sessionStorage.clear()
   window.history.replaceState(null, '', '/')
@@ -508,26 +509,21 @@ describe('QuickStartPage', () => {
     expect(entry.className).not.toContain('shadow-app-page')
   })
 
-  it('uses a centered creation desk with style prompts before the composer', () => {
+  it('uses a centered creation desk without preset style cards', () => {
     const entry = renderAt('/quick-start', serviceFor(null))
     const entrySection = entry.getByLabelText('创作指令').closest('section')
     const entryLayout = entrySection?.querySelector('[data-layout="quick-start-entry"]')
     const composer = entrySection?.querySelector('[data-layout="quick-start-composer"]')
-    const starters = entrySection?.querySelector('[data-layout="quick-start-starters"]')
 
     expect(entryLayout?.className).toContain('min-h-[calc(100dvh-3.5rem)]')
     expect(entryLayout?.className).toContain('grid-rows-[1fr_auto]')
     expect(composer?.className).toContain('max-w-3xl')
     expect(composer?.querySelector('form')).toBeTruthy()
     expect(composer?.querySelector('form')?.className).toContain('sm:grid-cols-[1fr_auto_auto]')
-    expect(starters).toBeTruthy()
-    expect(
-      Boolean(
-        starters &&
-        composer &&
-        starters.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING,
-      ),
-    ).toBe(true)
+    expect(entrySection?.querySelector('[data-layout="quick-start-starters"]')).toBeNull()
+    expect(screen.queryByRole('button', { name: /16-bit 日式 RPG/u })).toBeNull()
+    expect(screen.queryByRole('button', { name: /暗黑哥特像素/u })).toBeNull()
+    expect(screen.queryByRole('button', { name: /温暖手绘像素/u })).toBeNull()
   })
 
   it('removes non-actionable explanatory copy from the creation workspace', () => {
@@ -592,37 +588,61 @@ describe('QuickStartPage', () => {
     expect(heading.textContent).toBe('用文字塑造你的角色……')
   })
 
-  it('keeps style prompt space stable while dissolving the cards once creation begins', () => {
+  it('shows the animated Agent mark above the entry title', () => {
     const entry = renderAt('/quick-start', serviceFor(null))
-    const entrySection = entry.getByLabelText('创作指令').closest('section')
-    const starters = entrySection?.querySelector('[data-layout="quick-start-starters"]')
+    const heading = screen.getByRole('heading', { name: '想做一个什么角色？' })
+    const bot = entry.container.querySelector('[data-quick-start-agent-bot]')
 
-    expect(screen.getByRole('heading', { name: '想做一个什么角色？' })).toBeTruthy()
-    expect(starters?.querySelectorAll('img')).toHaveLength(0)
-    expect(screen.getByRole('button', { name: /16-bit 日式 RPG/u })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /暗黑哥特像素/u })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /温暖手绘像素/u })).toBeTruthy()
-
-    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
-      target: { value: '戴银色面具的游侠' },
-    })
-    expect(entrySection?.querySelector('[data-layout="quick-start-starters"]')).toBe(starters)
-    expect(starters?.getAttribute('data-presence')).toBe('hidden')
-    expect(starters?.getAttribute('aria-hidden')).toBe('true')
-    expect(screen.queryByRole('button', { name: /暗黑哥特像素/u })).toBeNull()
+    expect(bot).toBeTruthy()
+    expect(
+      Boolean(bot && bot.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING),
+    ).toBe(true)
   })
 
-  it('offers style prompts only, without the retired role-example shortcuts', () => {
-    renderAt('/quick-start', serviceFor(null))
-
-    // 入口只保留三张风格卡：角色样例会让人误以为这些形象是现成资产。
-    expect(screen.queryByRole('button', { name: '像素守夜人' })).toBeNull()
-    expect(screen.queryByRole('button', { name: '轻装信使' })).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: /16-bit 日式 RPG/u }))
-    expect((screen.getByRole('textbox', { name: '创作指令' }) as HTMLInputElement).value).toBe(
-      '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色',
+  it('moves the title bot into the first Agent turn with a shared-element transition', async () => {
+    const planning = deferred<PlannerResult>()
+    const transitionReady = deferred<void>()
+    const startViewTransition = vi.fn((update: () => void) => {
+      update()
+      return { ready: transitionReady.promise }
+    })
+    Object.defineProperty(document, 'startViewTransition', {
+      configurable: true,
+      value: startViewTransition,
+    })
+    const view = renderAt(
+      '/quick-start',
+      serviceFor(null),
+      agentFor({ planner: vi.fn(() => planning.promise) }),
     )
+
+    expect(
+      view.container.querySelector('[data-quick-start-agent-bot][data-placement="title"]'),
+    ).toBeTruthy()
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '住在云端的机械师' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+
+    await waitFor(() => expect(startViewTransition).toHaveBeenCalledTimes(1))
+    expect(
+      (screen.getByRole('textbox', { name: '创作指令' }) as HTMLTextAreaElement).disabled,
+    ).toBe(true)
+    transitionReady.resolve()
+    const thinking = await screen.findByRole('status', { name: 'Agent 正在思考' })
+    expect(
+      thinking.querySelector('[data-quick-start-agent-bot][data-placement="thinking"]'),
+    ).toBeTruthy()
+    expect(
+      thinking
+        .querySelector('[data-quick-start-agent-bot][data-placement="thinking"]')
+        ?.getAttribute('data-transition-mode'),
+    ).toBe('shared')
+    expect(
+      view.container.querySelector('[data-quick-start-agent-bot][data-placement="title"]'),
+    ).toBeNull()
+
+    planning.resolve({ text: '收到。', finishReason: 'stop', toolCalls: [] })
   })
 
   it('keeps the entry composer compact without a textarea baseline gap', () => {
@@ -692,37 +712,29 @@ describe('QuickStartPage', () => {
     await waitFor(() => expect(readActiveRun('7')).toBe('run-1'))
   })
 
-  it('没有节点在生成时不留返回入口', async () => {
+  it('生成结束后等待用户选择时仍保留返回入口', async () => {
     renderStateFixture('template-selecting')
 
     await screen.findByTestId('quick-start-transcript')
-    expect(readActiveRun('7')).toBeNull()
+    expect(readActiveRun('7')).toBe('run-1')
   })
 
-  it('reuses generation-copy typography and blur reveal for Agent replies without avatars', async () => {
+  it('renders Agent replies with the animated bot and Markdown structure', async () => {
     renderStateFixture('action-generating')
 
     const transcript = await screen.findByTestId('quick-start-transcript')
     const agentCopies = Array.from(transcript.querySelectorAll<HTMLElement>('[data-agent-copy]'))
-    const standaloneAvatar = Array.from(transcript.querySelectorAll('span')).find(
-      (element) => element.textContent === 'W',
-    )
 
     expect(agentCopies.length).toBeGreaterThan(0)
     expect(
       agentCopies.every((copy) => {
-        const motion = copy.querySelector<HTMLElement>('[data-copy-motion-mode="characters"]')
         return (
           copy.className.includes('font-serif') &&
-          copy.className.includes('generation-progress-copy--conversation') &&
-          motion &&
-          !motion.className.includes('generation-progress-copy') &&
-          copy.querySelectorAll('.kinetic-copy-character').length > 0 &&
-          copy.querySelectorAll('[data-agent-character]').length === 0
+          copy.querySelector('[data-quick-start-agent-bot]') &&
+          copy.querySelector('[data-agent-markdown]')
         )
       }),
     ).toBe(true)
-    expect(standaloneAvatar).toBeUndefined()
   })
 
   it('keeps an unbound Agent draft in its current Quick Start history entry', async () => {
@@ -783,6 +795,27 @@ describe('QuickStartPage', () => {
 
     expect(screen.queryByText('我想做一个住在云端的机械师。')).toBeNull()
     expect(screen.queryByText('可以。你最想保留哪个外观特征？')).toBeNull()
+  })
+
+  it('renders Markdown emphasis and lists in a Planner reply', async () => {
+    const planner = vi.fn(async (_input: PlannerInput) => ({
+      text: '**建议先定住轮廓：**\n\n- 银色面具\n- 深色披风',
+      finishReason: 'stop',
+      toolCalls: [],
+    }))
+    renderAt('/quick-start', serviceFor(null), agentFor({ planner }))
+
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '帮我整理这个角色。' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+
+    const reply = await screen.findByLabelText('Agent 回答')
+    expect(reply.querySelector('strong')?.textContent).toBe('建议先定住轮廓：')
+    expect(Array.from(reply.querySelectorAll('li')).map((item) => item.textContent)).toEqual([
+      '银色面具',
+      '深色披风',
+    ])
   })
 
   it('moves the Agent draft into a run-scoped sidecar when generation starts', async () => {
@@ -1345,7 +1378,7 @@ describe('QuickStartPage', () => {
     const transcript = await screen.findByTestId('quick-start-transcript')
     const topLevelText = Array.from(transcript.children).map(
       (element) =>
-        element.querySelector('[data-agent-copy] [aria-label]')?.getAttribute('aria-label') ??
+        element.querySelector('[data-agent-copy]')?.getAttribute('aria-label') ??
         element.textContent ??
         '',
     )
@@ -1451,11 +1484,8 @@ describe('QuickStartPage', () => {
     )
 
     expect(screen.getByRole('textbox', { name: '创作指令' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: /16-bit 日式 RPG/u }))
-    expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe(
-      '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色',
-    )
-    expect(screen.queryByRole('button', { name: /暗黑哥特像素/u })).toBeNull()
+    expect(screen.queryByRole('button', { name: /16-bit 日式 RPG/u })).toBeNull()
+    expect(screen.getByRole('heading', { name: '想做一个什么角色？' })).toBeTruthy()
   })
 
   it('asks once, then presents a user-facing proposal without internal assumptions', async () => {
@@ -1586,7 +1616,9 @@ describe('QuickStartPage', () => {
     const view = renderAt('/quick-start', service, agent)
 
     expect(screen.queryByRole('radio', { name: '单向' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: /16-bit 日式 RPG/u }))
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色' },
+    })
     fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
     expect(startCharacterGeneration).not.toHaveBeenCalled()
     await confirmAgentGeneration('四向')
@@ -1687,6 +1719,8 @@ describe('QuickStartPage', () => {
 
     const input = await screen.findByRole('textbox', { name: '继续描述你的想法' })
     const submit = screen.getByRole('button', { name: '发送' })
+    expect(service.resume).toHaveBeenCalledWith({ automaticActionAdvance: false })
+    expect(service.addAction).not.toHaveBeenCalled()
     expect((submit as HTMLButtonElement).disabled).toBe(true)
 
     fireEvent.change(input, { target: { value: '挥手' } })

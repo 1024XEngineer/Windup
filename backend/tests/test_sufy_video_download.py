@@ -236,8 +236,11 @@ def _image_provider(handler):
     from windup_framework.config.provider import AIProviderSettings
     from windup_framework.providers.sufy import SufyImageProvider
 
+    # 本组用例钉的是 chat 面那条通路,型号必须显式给 —— 默认型号已换成走
+    # /v1/images 面的 gpt-image-2,不指定就会绕开这里打的桩。
     p = SufyImageProvider(
         config=AIProviderSettings(base_url="https://gw.example.com/v1", api_key="k"),
+        model="gemini-2.5-flash-image",
     )
     client = httpx.Client(
         base_url="https://gw.example.com/v1",

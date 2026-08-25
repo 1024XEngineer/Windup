@@ -241,7 +241,7 @@ def test_rename_success_persists_the_new_name(auth_client):
 
     body = resp.json()
     assert body["code"] == 200
-    assert body["message"] == "重命名成功"
+    assert body["message"] == "修改成功"
     assert body["data"]["project_name"] == "重命名后"
     persisted = auth_client.get(f"/projects/{created['id']}").json()["data"]
     assert persisted["project_name"] == "重命名后"

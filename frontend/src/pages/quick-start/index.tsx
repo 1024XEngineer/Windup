@@ -10,6 +10,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react'
+import { flushSync } from 'react-dom'
 import {
   ArrowBendDownLeft,
   ArrowClockwise,
@@ -20,6 +21,7 @@ import {
   Stop,
   X,
 } from '@phosphor-icons/react'
+import Markdown from 'markdown-to-jsx'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 
 import {
@@ -65,24 +67,6 @@ export type {
   QuickStartEntryService,
   QuickStartSession,
 } from './service'
-
-const STYLE_PROMPTS = [
-  {
-    title: '16-bit 日式 RPG',
-    detail: '清晰轮廓 · 明亮配色',
-    prompt: '16-bit 日式 RPG 像素风，清晰轮廓，明亮配色',
-  },
-  {
-    title: '暗黑哥特像素',
-    detail: '低饱和 · 强烈明暗',
-    prompt: '暗黑哥特像素风，低饱和配色，强烈明暗对比',
-  },
-  {
-    title: '温暖手绘像素',
-    detail: '柔和色彩 · 纸张质感',
-    prompt: '温暖手绘像素风，柔和配色，细腻纸张质感',
-  },
-] as const
 
 const QUICK_START_DIRECTIONAL_MOVEMENTS: readonly DirectionalMovement[] = [
   'single',
@@ -542,6 +526,7 @@ function QuickStartInput({
   const [confirmedPrompt, setConfirmedPrompt] = useState<string | null>(null)
   const [templateFile, setTemplateFile] = useState<File | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [revealingFirstAgentTurn, setRevealingFirstAgentTurn] = useState(false)
   const [entryTransition, setEntryTransition] = useState<'idle' | 'leaving'>('idle')
   const [promptState, setPromptState] = useState<
     'collecting' | 'rewriting' | 'ready' | 'direction' | 'confirmed'
@@ -575,18 +560,17 @@ function QuickStartInput({
   })
   const unavailableReason = service.unavailableReason
   const agentPlanning = agentSession.state.status === 'planning'
+  const agentThinking = agentPlanning || revealingFirstAgentTurn
   const generationStarting = promptState === 'confirmed'
   const entryBusy =
     submitting ||
-    agentPlanning ||
+    agentThinking ||
     promptState === 'rewriting' ||
     promptState === 'direction' ||
     generationStarting
   const hasPrompt = Boolean(prompt.trim())
   const hasConversation = conversationTurns.length > 0
-  const showStylePrompts =
-    !hasPrompt && !templateFile && !hasConversation && agentSession.state.status === 'idle'
-  const showConversation = hasConversation || agentPlanning || agentSession.state.status === 'error'
+  const showConversation = hasConversation || agentThinking || agentSession.state.status === 'error'
   const promptMessage = useMemo<readonly KineticCopyMessage[]>(
     () => [{ lines: [prompt] }],
     [prompt],
@@ -643,6 +627,36 @@ function QuickStartInput({
     },
     [persistDraftConversation],
   )
+
+  async function revealFirstAgentTurn(turn: AgentConversationTurn) {
+    const transitionDocument = document as Document & {
+      startViewTransition?: (update: () => void) => { ready: Promise<void> }
+    }
+    const reducedMotion =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const titleBot = document.querySelector('[data-quick-start-agent-bot][data-placement="title"]')
+    const update = () => {
+      appendConversationTurn(turn)
+      setRevealingFirstAgentTurn(true)
+    }
+
+    if (!titleBot || reducedMotion || !transitionDocument.startViewTransition) {
+      update()
+      return
+    }
+
+    let updated = false
+    try {
+      const transition = transitionDocument.startViewTransition(() => {
+        updated = true
+        flushSync(update)
+      })
+      await transition.ready
+    } catch {
+      if (!updated) update()
+    }
+  }
 
   useEffect(
     () => () => {
@@ -753,10 +767,13 @@ function QuickStartInput({
       if (agentSession.state.status === 'proposal') {
         updateProposalStatus(agentSession.state.proposalId, 'superseded')
       }
-      appendConversationTurn({ role: 'user', content: normalizedPrompt })
+      const userTurn: AgentConversationTurn = { role: 'user', content: normalizedPrompt }
+      if (hasConversation) appendConversationTurn(userTurn)
+      else await revealFirstAgentTurn(userTurn)
       setPrompt('')
       try {
         const result = await agentSession.submit(normalizedPrompt)
+        setRevealingFirstAgentTurn(false)
         if (result.kind === 'message') {
           appendConversationTurn({
             role: 'assistant',
@@ -777,6 +794,7 @@ function QuickStartInput({
           })
         }
       } catch (cause) {
+        setRevealingFirstAgentTurn(false)
         if (!(cause instanceof Error && cause.name === 'AbortError')) {
           setEntryTransition('idle')
           setPromptState('collecting')
@@ -836,7 +854,7 @@ function QuickStartInput({
 
   const inputLocked =
     submitting ||
-    agentPlanning ||
+    agentThinking ||
     promptState === 'rewriting' ||
     promptState === 'direction' ||
     generationStarting
@@ -916,14 +934,15 @@ function QuickStartInput({
                   )}
                 </div>
               ))}
-              {agentPlanning ? (
+              {agentThinking ? (
                 <div
                   data-conversation-kind="agent"
                   data-agent-loading
                   role="status"
                   aria-label="Agent 正在思考"
-                  className="quick-start-agent-loading min-w-0"
+                  className="quick-start-agent-loading grid min-w-0 grid-cols-[2rem_auto] gap-3"
                 >
+                  <QuickStartAgentBot placement="thinking" />
                   <span aria-hidden="true" className="quick-start-agent-loading-dots">
                     {[0, 1, 2].map((dot) => (
                       <span
@@ -957,42 +976,18 @@ function QuickStartInput({
             </div>
           ) : (
             <>
-              <KineticCopyCycle
-                active={!templateFile && !entryBusy}
-                as="h1"
-                ariaLabel="想做一个什么角色？"
-                motionMode="characters"
-                firstCycleMs={2_400}
-                loopStartIndex={1}
-                messages={hasPrompt ? ROLE_DEFAULT_MESSAGE : ROLE_IDEA_MESSAGES}
-                className="min-h-12 text-center font-serif text-[clamp(1.75rem,4vw,2.65rem)] leading-none font-medium tracking-[-0.045em]"
-              />
-
-              <div
-                data-layout="quick-start-starters"
-                data-presence={showStylePrompts ? 'visible' : 'hidden'}
-                aria-hidden={!showStylePrompts}
-                className={`grid gap-2 transition-[opacity,transform,filter] duration-[460ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none sm:grid-cols-3 ${
-                  showStylePrompts
-                    ? 'translate-y-0 scale-100 opacity-100 blur-0'
-                    : 'pointer-events-none -translate-y-2 scale-[0.985] opacity-0 blur-[6px]'
-                }`}
-              >
-                {STYLE_PROMPTS.map((stylePrompt) => (
-                  <button
-                    key={stylePrompt.title}
-                    type="button"
-                    disabled={!showStylePrompts}
-                    aria-label={`${stylePrompt.title}：${stylePrompt.detail}`}
-                    onClick={() => setPrompt(stylePrompt.prompt)}
-                    className="group grid min-h-16 content-center gap-1 rounded-xl border border-app-line bg-app-surface/70 px-4 py-3 text-left transition duration-200 hover:-translate-y-0.5 hover:border-app-line-strong hover:bg-app-surface-raised hover:shadow-app-card focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent motion-reduce:transform-none"
-                  >
-                    <strong className="text-sm font-semibold text-app-ink">
-                      {stylePrompt.title}
-                    </strong>
-                    <span className="text-[11px] text-app-muted">{stylePrompt.detail}</span>
-                  </button>
-                ))}
+              <div className="grid justify-items-center gap-5">
+                <QuickStartAgentBot placement="title" />
+                <KineticCopyCycle
+                  active={!templateFile && !entryBusy}
+                  as="h1"
+                  ariaLabel="想做一个什么角色？"
+                  motionMode="characters"
+                  firstCycleMs={2_400}
+                  loopStartIndex={1}
+                  messages={hasPrompt ? ROLE_DEFAULT_MESSAGE : ROLE_IDEA_MESSAGES}
+                  className="min-h-12 text-center font-serif text-[clamp(1.75rem,4vw,2.65rem)] leading-none font-medium tracking-[-0.045em]"
+                />
               </div>
             </>
           )}
@@ -1212,29 +1207,59 @@ function AgentCopy({
   animate?: boolean
 }) {
   const copy = lines.join('\n')
-  const messages = useMemo<readonly KineticCopyMessage[]>(
-    () => [{ lines: copy.split('\n') }],
-    [copy],
-  )
 
   return (
     <div
       data-agent-copy
       aria-label={lines.join(' ')}
-      className={`quick-start-agent-copy generation-progress-copy generation-progress-copy--conversation font-serif ${
+      className={`quick-start-agent-copy grid grid-cols-[2rem_minmax(0,1fr)] items-start gap-3 font-serif ${
         tone === 'danger' ? 'text-app-danger' : 'text-app-ink-soft'
-      }`}
+      } ${animate ? 'quick-start-agent-copy--entering' : ''}`}
     >
-      <span aria-hidden="true" className="sr-only">
-        {lines.join(' ')}
-      </span>
-      <KineticCopyCycle
-        active={animate}
-        messages={messages}
-        motionMode="characters"
-        className="quick-start-agent-copy font-serif"
-      />
+      <QuickStartAgentBot placement="answer" />
+      <div
+        aria-label="Agent 回答"
+        data-agent-markdown
+        className="quick-start-agent-markdown min-w-0"
+      >
+        <Markdown>{copy}</Markdown>
+      </div>
     </div>
+  )
+}
+
+function QuickStartAgentBot({ placement }: { placement: 'title' | 'thinking' | 'answer' }) {
+  const transitionMode =
+    typeof document !== 'undefined' && 'startViewTransition' in document ? 'shared' : 'fallback'
+  return (
+    <span
+      aria-hidden="true"
+      data-quick-start-agent-bot
+      data-placement={placement}
+      data-transition-mode={transitionMode}
+      className="quick-start-agent-bot"
+    >
+      <svg fill="none" viewBox="0 0 24 24">
+        <g className="quick-start-agent-bot__face">
+          <rect
+            className="quick-start-agent-bot__frame"
+            height="14"
+            stroke="currentColor"
+            strokeWidth="2"
+            vectorEffect="non-scaling-stroke"
+            width="16"
+            x="4"
+            y="5"
+          />
+          <g className="quick-start-agent-bot__gaze">
+            <g className="quick-start-agent-bot__blink" fill="currentColor">
+              <rect className="quick-start-agent-bot__eye" height="3" width="3" x="8" y="10" />
+              <rect className="quick-start-agent-bot__eye" height="3" width="3" x="13" y="10" />
+            </g>
+          </g>
+        </g>
+      </svg>
+    </span>
   )
 }
 
@@ -1484,6 +1509,7 @@ function QuickStartRun({
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams] = useSearchParams()
+  const addActionIntent = searchParams.get('intent') === 'add-action'
   const [session, setSession] = useState<QuickStartSession | null>(null)
   const [run, setRun] = useState<WorkflowRun | null>(null)
   const [restoring, setRestoring] = useState(true)
@@ -1636,7 +1662,9 @@ function QuickStartRun({
           clearWorkflowError()
         }
       })
-      const resumed = await nextSession.resume()
+      const resumed = addActionIntent
+        ? await nextSession.resume({ automaticActionAdvance: false })
+        : await nextSession.resume()
       if (active) {
         setRun(resumed)
         clearWorkflowError()
@@ -1668,6 +1696,7 @@ function QuickStartRun({
       }
     }
   }, [
+    addActionIntent,
     activeRunUserId,
     clearWorkflowError,
     onInitialSessionConsumed,
@@ -1845,7 +1874,6 @@ function QuickStartRun({
     firstFrameCandidates,
     firstFrameSelections,
   )
-  const addActionIntent = searchParams.get('intent') === 'add-action'
   const requestedOutfitId = searchParams.get('outfitId')
   const canAddAction =
     addActionIntent &&

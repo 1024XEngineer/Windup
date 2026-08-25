@@ -49,7 +49,7 @@ afterEach(() => {
 })
 
 describe('ActiveRunMonitor', () => {
-  it('离开 Quick Start 后继续对齐终态并清除入口', async () => {
+  it('离开 Quick Start 后进入选择阶段仍保留入口', async () => {
     const harness = monitorService()
     rememberActiveRun('7', '42')
     render(<ActiveRunMonitor userId="7" pathname="/workspace" service={harness.service} />)
@@ -57,8 +57,8 @@ describe('ActiveRunMonitor', () => {
     await waitFor(() => expect(harness.service.open).toHaveBeenCalledWith('42'))
     act(() => harness.publish(run('selecting')))
 
-    await waitFor(() => expect(readActiveRun('7')).toBeNull())
-    expect(harness.dispose).toHaveBeenCalledOnce()
+    expect(readActiveRun('7')).toBe('42')
+    expect(harness.dispose).not.toHaveBeenCalled()
   })
 
   it('当前任务页面自己持有 session 时不重复恢复', async () => {
@@ -85,8 +85,11 @@ describe('ActiveRunMonitor', () => {
     expect(harness.session.resume).not.toHaveBeenCalled()
   })
 
-  it('初始快照已经结束时立即清除入口并释放 session', async () => {
-    const harness = monitorService(run('selecting'))
+  it('初始快照已经完成时立即清除入口并释放 session', async () => {
+    const harness = monitorService({
+      id: '42',
+      nodes: [{ status: 'passed', phase: 'completed', deletedAt: null }],
+    })
     rememberActiveRun('7', '42')
 
     render(<ActiveRunMonitor userId="7" pathname="/workspace" service={harness.service} />)

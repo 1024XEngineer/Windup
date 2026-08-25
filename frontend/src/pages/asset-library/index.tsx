@@ -51,7 +51,7 @@ export function AssetLibraryPage() {
   return (
     <section aria-labelledby="asset-library-title" className="min-h-full min-w-0">
       <div className="p-6 lg:p-8">
-        <header className="mb-7 border-b border-app-line pb-6">
+        <header className="mb-7 pb-6">
           <Link
             to="/projects"
             className="text-xs font-medium text-app-muted underline decoration-app-line underline-offset-4 hover:text-app-accent"
@@ -60,7 +60,7 @@ export function AssetLibraryPage() {
           </Link>
           <h2
             id="asset-library-title"
-            className="mt-3 font-serif text-[clamp(2.15rem,4vw,3.5rem)] font-medium leading-none tracking-[-0.05em] text-app-ink"
+            className="mt-3 font-serif text-3xl font-medium leading-none tracking-[-0.04em] text-app-ink"
           >
             {project.name}
           </h2>
@@ -103,7 +103,7 @@ function CharacterGrid({
   if (characters.length === 0) return <EmptyState />
 
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-4">
+    <div className="grid gap-x-4 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
       {characters.map((character, index) => {
         const name = characterName(character)
         return (

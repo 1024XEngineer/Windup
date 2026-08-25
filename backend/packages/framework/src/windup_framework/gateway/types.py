@@ -15,8 +15,23 @@ class Scene(str, Enum):
 class Family(str, Enum):
     CHAT_COMPLETIONS = "chat.completions"
     IMAGE_CHAT_DATA_URI = "image.chat_data_uri"
+    IMAGE_OPENAI_IMAGES = "image.openai_images"
+    IMAGE_FAL_QUEUE = "image.fal_queue"
     VIDEO_INPUT_REFERENCE = "video.input_reference"
     VIDEO_IMAGE_LIST = "video.image_list"
+
+
+#: 每个 scene 允许出现哪些 family。链上混不同 family 是合法的 —— 兜底型号与主型号
+#: 分属不同协议面时,它仍是同一个 scene 的同一件事;拒绝的只是把出图型号配进视频链
+#: 这种类别错误。
+SCENE_FAMILIES: dict[Scene, frozenset[Family]] = {
+    Scene.CHARACTER_IMAGE: frozenset({
+        Family.IMAGE_CHAT_DATA_URI,
+        Family.IMAGE_OPENAI_IMAGES,
+        Family.IMAGE_FAL_QUEUE,
+    }),
+    Scene.CHARACTER_ACTION: frozenset({Family.VIDEO_INPUT_REFERENCE}),
+}
 
 
 class NextStep(str, Enum):

@@ -217,6 +217,7 @@ class ImageGateway:
                         seconds=0,
                         image_unit_cost=self._settings.image_unit_cost,
                         video_unit_cost_per_second=self._settings.video_unit_cost_per_second,
+                        model=model,
                     )
                     retry_after_ms = (
                         int(result.retry_after_s * 1000)

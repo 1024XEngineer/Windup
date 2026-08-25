@@ -11,7 +11,7 @@ rollback,故本实现只 ``flush``(把变更发到当前事务、取回生成的
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from windup_app.server.project.interface import ProjectService
+from windup_app.server.project.interface import UNSET, ProjectService, UnsetType
 from windup_app.server.project.model import Project
 from windup_app.server.character.model import Character
 
@@ -126,10 +126,18 @@ class SqlAlchemyProjectService(ProjectService):
                 )
         return previews
 
-    def rename_project(
-        self, session: Session, project: Project, *, project_name: str
+    def update_project(
+        self,
+        session: Session,
+        project: Project,
+        *,
+        project_name: str | None = None,
+        game_style: str | None | UnsetType = UNSET,
     ) -> Project:
-        project.project_name = project_name
+        if project_name is not None:
+            project.project_name = project_name
+        if not isinstance(game_style, UnsetType):
+            project.game_style = game_style
         session.flush()
         return project
 
