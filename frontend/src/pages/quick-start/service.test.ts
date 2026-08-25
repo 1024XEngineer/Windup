@@ -6,6 +6,7 @@ import type {
   GenerationApis,
   MediaReference,
   ProjectApis,
+  PixelPerfectApis,
   WorkflowRun,
   WorkflowRunApis,
 } from '@/entities'
@@ -1563,6 +1564,36 @@ describe('createQuickStartService', () => {
     expect(character.outfits[0]!.actions[0]!.frames).toEqual([
       { index: 7, imageUrl: 'frame-7.png', durationMs: 83 },
       { index: 9, imageUrl: 'frame-9.png', durationMs: null },
+    ])
+  })
+
+  it('reconstructs every current action frame against the project sprite grid', async () => {
+    const run = actionRun()
+    const reconstruct = vi.fn<PixelPerfectApis['reconstruct']>(async ({ imageUrl }) => ({
+      blob: new Blob([imageUrl], { type: 'image/png' }),
+      filename: 'pixel-perfect.png',
+      metadata: { cols: 64, rows: 80, visibleColors: 12 },
+    }))
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis: completedAnimationGenerationApis(),
+      prepareProject: vi.fn(),
+      projectApis: projectReader({ width: 64, height: 80 }),
+      pixelPerfectApis: { reconstruct },
+    })
+    const session = await service.open(run.id)
+    const frames = [
+      { index: 0, imageUrl: 'frame-0.png', durationMs: 80 },
+      { index: 1, imageUrl: 'frame-1.png', durationMs: null },
+    ]
+
+    await expect(session.pixelPerfectActionFrames?.(frames)).resolves.toEqual([
+      expect.objectContaining({ index: 0, durationMs: 80, blob: expect.any(Blob) }),
+      expect.objectContaining({ index: 1, durationMs: null, blob: expect.any(Blob) }),
+    ])
+    expect(reconstruct.mock.calls.map(([input]) => input)).toEqual([
+      { imageUrl: 'frame-0.png', cols: 64, rows: 80 },
+      { imageUrl: 'frame-1.png', cols: 64, rows: 80 },
     ])
   })
 
