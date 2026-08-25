@@ -68,6 +68,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
   const {
     planner,
     startCharacterGeneration,
+    artStyle,
     initialMessages,
     initialClarificationUsed,
     initialProposal,
@@ -88,18 +89,20 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
       agent.current?.revoke()
       agent.current = null
     }
-  }, [initialMessages, planner, startCharacterGeneration])
+  }, [artStyle, initialMessages, planner, startCharacterGeneration])
 
   const ensureAgent = useCallback(() => {
     agent.current ??= createQuickStartAgent({
       planner,
       startCharacterGeneration,
+      artStyle,
       initialMessages,
       initialClarificationUsed,
       initialProposal,
     })
     return agent.current
   }, [
+    artStyle,
     initialClarificationUsed,
     initialMessages,
     initialProposal,
