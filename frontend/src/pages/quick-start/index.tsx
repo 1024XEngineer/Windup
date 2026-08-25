@@ -543,6 +543,7 @@ function QuickStartInput({
   const navigate = useNavigate()
   const [prompt, setPrompt] = useState('')
   const [directionalMovement, setDirectionalMovement] = useState<DirectionalMovement>('single')
+  const [confirmedPrompt, setConfirmedPrompt] = useState<string | null>(null)
   const [templateFile, setTemplateFile] = useState<File | null>(null)
   const [gameStyle, setGameStyle] = useState<ArtStyle>(() => {
     const draftId = readAgentDraftId()
@@ -556,7 +557,7 @@ function QuickStartInput({
   const [revealingFirstAgentTurn, setRevealingFirstAgentTurn] = useState(false)
   const [entryTransition, setEntryTransition] = useState<'idle' | 'leaving'>('idle')
   const [promptState, setPromptState] = useState<
-    'collecting' | 'rewriting' | 'ready' | 'confirmed'
+    'collecting' | 'rewriting' | 'ready' | 'direction' | 'confirmed'
   >('collecting')
   const [error, setError] = useState<string | null>(null)
   const draftIdRef = useRef(readAgentDraftId())
@@ -589,7 +590,12 @@ function QuickStartInput({
   const agentPlanning = agentSession.state.status === 'planning'
   const agentThinking = agentPlanning || revealingFirstAgentTurn
   const generationStarting = promptState === 'confirmed'
-  const entryBusy = submitting || agentThinking || promptState === 'rewriting' || generationStarting
+  const entryBusy =
+    submitting ||
+    agentThinking ||
+    promptState === 'rewriting' ||
+    promptState === 'direction' ||
+    generationStarting
   const hasPrompt = Boolean(prompt.trim())
   const hasConversation = conversationTurns.length > 0
   const showConversation = hasConversation || agentThinking || agentSession.state.status === 'error'
@@ -771,16 +777,14 @@ function QuickStartInput({
 
     if (agentSession.state.status === 'proposal' && promptState === 'ready') {
       if (!normalizedPrompt) return
+      setConfirmedPrompt(normalizedPrompt)
       setPrompt('')
-      setPromptState('confirmed')
-      try {
-        const result = await agentSession.confirmProposal(normalizedPrompt, directionalMovement, {
-          gameStyle,
-        })
-        if (result.kind === 'generated') await handoffGenerated(result)
-      } catch {
-        setPromptState('ready')
-      }
+      setPromptState('direction')
+      appendConversationTurn({
+        role: 'assistant',
+        content: '最后确认一下：需要单向、四向还是八向？',
+        kind: 'clarification',
+      })
       return
     }
 
@@ -864,8 +868,25 @@ function QuickStartInput({
     }
   }
 
+  async function chooseDirectionalMovement(movement: DirectionalMovement) {
+    if (!confirmedPrompt || promptState !== 'direction') return
+    setDirectionalMovement(movement)
+    appendConversationTurn({ role: 'user', content: DIRECTIONAL_MOVEMENT[movement] })
+    setPromptState('confirmed')
+    try {
+      const result = await agentSession.confirmProposal(confirmedPrompt, movement, { gameStyle })
+      if (result.kind === 'generated') await handoffGenerated(result)
+    } catch {
+      setPromptState('direction')
+    }
+  }
+
   const inputLocked =
-    submitting || agentThinking || promptState === 'rewriting' || generationStarting
+    submitting ||
+    agentThinking ||
+    promptState === 'rewriting' ||
+    promptState === 'direction' ||
+    generationStarting
   const awaitingGenerationConfirmation =
     agentSession.state.status === 'proposal' && promptState === 'ready'
   const buttonLabel = submitting
@@ -965,6 +986,20 @@ function QuickStartInput({
               {agentSession.state.status === 'error' ? (
                 <div role="alert" data-conversation-kind="agent" className="min-w-0">
                   <AgentCopy lines={[agentSession.state.message]} tone="danger" />
+                </div>
+              ) : null}
+              {promptState === 'direction' ? (
+                <div className="flex flex-wrap gap-2" aria-label="选择生成方向">
+                  {QUICK_START_DIRECTIONAL_MOVEMENTS.map((movement) => (
+                    <button
+                      key={movement}
+                      type="button"
+                      onClick={() => void chooseDirectionalMovement(movement)}
+                      className="rounded-full border border-app-line bg-app-surface-raised px-4 py-2 text-sm font-semibold text-app-ink transition hover:border-app-accent hover:text-app-accent"
+                    >
+                      {DIRECTIONAL_MOVEMENT[movement]}
+                    </button>
+                  ))}
                 </div>
               ) : null}
             </div>
