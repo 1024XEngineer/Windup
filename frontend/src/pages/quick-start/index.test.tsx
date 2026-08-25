@@ -674,16 +674,19 @@ describe('QuickStartPage', () => {
     expect(composer.className).toContain('block')
     expect(composer.className).toContain('pl-4')
     expect(composer.className).toContain('pr-14')
-    expect(editingSurface?.className).toContain('rounded-app-surface')
-    expect(editingSurface?.className).toContain('bg-app-surface-raised')
+    expect(form?.className).toContain('rounded-app-surface')
+    expect(form?.className).toContain('border-app-line-strong')
+    expect(form?.className).toContain('bg-app-surface-raised')
+    expect(form?.className).toContain('shadow-app-panel')
+    expect(editingSurface?.className).not.toContain('border-app-line-strong')
+    expect(editingSurface?.className).not.toContain('bg-app-surface-raised')
+    expect(editingSurface?.className).not.toContain('shadow-app-panel')
     expect(screen.getByRole('button', { name: '生成角色' }).className).toContain('rounded-full')
     expect(form?.className).toContain('flex-col')
     expect(controls?.className).toContain('order-first')
-    expect(controls?.className).toContain('mb-2')
+    expect(controls?.className).not.toContain('mb-2')
     expect(screen.getByRole('button', { name: '生成角色' }).className).toContain('bottom-[6px]')
-    expect(editingSurface?.className).toContain(
-      'focus-within:shadow-[var(--shadow-app-composer-focus)]',
-    )
+    expect(form?.className).toContain('focus-within:shadow-[var(--shadow-app-composer-focus)]')
   })
 
   it('submits the entry with Enter', async () => {
@@ -980,11 +983,17 @@ describe('QuickStartPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
 
     const reply = await screen.findByLabelText('Agent 回答')
+    const agentCopy = reply.closest('[data-agent-copy]')
+    const bot = agentCopy?.querySelector('[data-quick-start-agent-bot]')
     expect(reply.querySelector('strong')?.textContent).toBe('建议先定住轮廓：')
     expect(Array.from(reply.querySelectorAll('li')).map((item) => item.textContent)).toEqual([
       '银色面具',
       '深色披风',
     ])
+    expect(agentCopy?.className).not.toContain('quick-start-agent-copy--entering')
+    expect(reply.className).toContain('quick-start-agent-markdown--entering')
+    expect(reply.querySelectorAll('.kinetic-copy-character').length).toBeGreaterThan(0)
+    expect(bot?.querySelector('.kinetic-copy-character')).toBeNull()
   })
 
   it('keeps the chosen art style across a page refresh', async () => {
