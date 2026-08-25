@@ -17,7 +17,9 @@ import {
   ArrowUp,
   CaretDown,
   CopySimple,
+  Play,
   PlusCircle,
+  Stack,
   Stop,
   X,
 } from '@phosphor-icons/react'
@@ -532,6 +534,9 @@ function AgentActions({
   copyLabel,
   onCopy,
   exportModel,
+  onOpenAssetWorkspace,
+  onOpenPlaytest,
+  playtestDisabled = false,
   onNewCreation,
   onRegenerate,
   regenerateDisabled = false,
@@ -540,6 +545,9 @@ function AgentActions({
   copyLabel?: string
   onCopy?: () => void
   exportModel?: ExportPackageModel | null
+  onOpenAssetWorkspace?: () => void
+  onOpenPlaytest?: () => void
+  playtestDisabled?: boolean
   onNewCreation: () => void
   onRegenerate?: () => void
   regenerateDisabled?: boolean
@@ -566,8 +574,22 @@ function AgentActions({
         <ExportButton
           model={exportModel}
           iconOnly
-          className="bg-app-accent text-app-on-accent hover:bg-app-accent-hover"
+          className="text-app-muted hover:bg-app-surface-muted hover:text-app-accent"
         />
+      ) : null}
+      {onOpenAssetWorkspace ? (
+        <IconActionButton label="跳转到资产工作台" onClick={onOpenAssetWorkspace}>
+          <Stack data-icon="asset-stack" aria-hidden="true" size={18} weight="bold" />
+        </IconActionButton>
+      ) : null}
+      {onOpenPlaytest ? (
+        <IconActionButton
+          label="跳转到 Play Test"
+          onClick={onOpenPlaytest}
+          disabled={playtestDisabled}
+        >
+          <Play data-icon="playtest-play" aria-hidden="true" size={18} weight="fill" />
+        </IconActionButton>
       ) : null}
       {showNewCreation ? (
         <IconActionButton label="新建一次创作" onClick={onNewCreation}>
@@ -2617,27 +2639,6 @@ function QuickStartRun({
                           className="quick-start-generated-image aspect-square w-full rounded-2xl border border-app-line bg-app-surface-muted object-contain [image-rendering:pixelated]"
                         />
                       </div>
-                      {reviewStep?.status === 'passed' ? (
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              navigate(`/projects/${encodeURIComponent(revision.projectId)}/assets`)
-                            }
-                            className="rounded-lg border border-app-line-strong px-3 py-1.5 text-xs font-semibold text-app-ink-soft transition hover:border-app-accent hover:text-app-accent"
-                          >
-                            跳转到资产工作台
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void openPlaytest()}
-                            disabled={workflowConflict}
-                            className="rounded-lg border border-app-line-strong px-3 py-1.5 text-xs font-semibold text-app-ink-soft transition hover:border-app-accent hover:text-app-accent"
-                          >
-                            跳转到 Play Test
-                          </button>
-                        </div>
-                      ) : null}
                       <div className="flex max-w-full gap-1.5 overflow-x-auto pb-1">
                         {actionFrames.map((frame, index) => (
                           <AssetVisual
@@ -2682,9 +2683,19 @@ function QuickStartRun({
                       </div>
                     </>
                   )}
-                  {isActionFailed || actionExportModel ? (
+                  {isActionFailed || actionExportModel || reviewStep?.status === 'passed' ? (
                     <AgentActions
                       exportModel={actionExportModel}
+                      onOpenAssetWorkspace={
+                        reviewStep?.status === 'passed'
+                          ? () =>
+                              navigate(`/projects/${encodeURIComponent(revision.projectId)}/assets`)
+                          : undefined
+                      }
+                      onOpenPlaytest={
+                        reviewStep?.status === 'passed' ? () => void openPlaytest() : undefined
+                      }
+                      playtestDisabled={workflowConflict}
                       onNewCreation={() => navigate('/quick-start')}
                       showNewCreation={actionTurnIsCurrent}
                     />
