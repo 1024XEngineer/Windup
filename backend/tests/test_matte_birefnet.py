@@ -158,6 +158,15 @@ def test_union_with_u2net_is_on_by_default(monkeypatch):
     assert (out[:, :, 3] > 128).any(), "并集没有把 u2net 的主体救回来"
 
 
+def test_exported_from_the_providers_public_api():
+    """装配代码走 `from windup_framework.providers import ...`;只在子模块里定义等于
+    调用方拿不到它,只能绕过公共 API 引内部路径。"""
+    import windup_framework.providers as pv
+
+    assert pv.BiRefNetMatteProvider is BiRefNetMatteProvider
+    assert "BiRefNetMatteProvider" in pv.__all__
+
+
 def test_union_can_be_turned_off_for_single_model_evaluation(monkeypatch):
     called = {}
 
