@@ -2423,7 +2423,7 @@ describe('QuickStartPage', () => {
     expect(screen.queryByRole('img', { name: /动作首帧候选/u })).toBeNull()
   })
 
-  it('四向动作首帧全部选定后才确认并生成完整动作', async () => {
+  it('四向动作首帧选择一张方向候选卡后直接确认并生成完整动作', async () => {
     const run = actionWorkflow({ firstStatus: 'active', firstPhase: 'selecting' })
     const service = serviceFor(run, {
       getFirstFrameCandidates: vi.fn(
@@ -2442,20 +2442,15 @@ describe('QuickStartPage', () => {
     })
     renderAt('/quick-start/run-1', service)
 
-    fireEvent.click(await screen.findByRole('button', { name: '选择东方向动作首帧 1' }))
-    expect(screen.queryByRole('button', { name: '确认首帧，生成完整动作' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: '选择西方向动作首帧 2' }))
-    expect(screen.queryByRole('button', { name: '确认首帧，生成完整动作' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: '选择北方向动作首帧 2' }))
-    expect(screen.queryByRole('button', { name: '确认首帧，生成完整动作' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: '选择南方向动作首帧 1' }))
-    fireEvent.click(screen.getByRole('button', { name: '确认首帧，生成完整动作' }))
+    expect(screen.queryByRole('button', { name: '选择东方向动作首帧 1' })).toBeNull()
+    expect(await screen.findByLabelText('西北方向为空')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: '选择动作首帧方向候选 1' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认候选帧，生成完整动作' }))
 
     await waitFor(() =>
       expect(service.confirmFirstFrame).toHaveBeenCalledWith({
         east: 'east-1.png',
-        west: 'west-2.png',
-        north: 'north-2.png',
+        north: 'north-1.png',
         south: 'south-1.png',
       }),
     )
