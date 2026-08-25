@@ -138,10 +138,27 @@ describe('按工作流快照同步指针', () => {
     expect(readActiveRun('7')).toBe('42')
   })
 
-  it('没有节点在生成时清除这条任务', () => {
+  it('生成结束后等待用户选择时仍保留这条任务', () => {
     rememberActiveRun('7', '42')
 
     syncActiveRun('7', { id: '42', nodes: [node({ phase: 'selecting' })] })
+
+    expect(readActiveRun('7')).toBe('42')
+  })
+
+  it('等待用户审核时仍保留这条任务', () => {
+    syncActiveRun('7', { id: '42', nodes: [node({ phase: 'reviewing' })] })
+
+    expect(readActiveRun('7')).toBe('42')
+  })
+
+  it('所有节点完成后清除这条任务', () => {
+    rememberActiveRun('7', '42')
+
+    syncActiveRun('7', {
+      id: '42',
+      nodes: [node({ status: 'passed', phase: 'completed' })],
+    })
 
     expect(readActiveRun('7')).toBeNull()
   })
