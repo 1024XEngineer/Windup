@@ -260,10 +260,10 @@ def test_action_frame_upload_does_not_write_a_thumbnail(monkeypatch):
 
 @patch("windup_app.web.api.character.media_service")
 def test_delete_character_cleans_card_thumbnails(mock_media_service, monkeypatch, auth_client):
-    import windup_app.web.api.character as character_api
+    import windup_app.server.character.cleanup as character_cleanup
 
     monkeypatch.setattr(
-        character_api.storage_settings,
+        character_cleanup.storage_settings,
         "bucket_domain",
         "https://cdn.windup.test",
     )

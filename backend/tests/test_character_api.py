@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from windup_app.server.character import cleanup as character_cleanup
 from windup_app.web.api import character as character_api
 from windup_app.server.character.model import Character
 from windup_app.server.character.service import service as character_service
@@ -148,7 +149,7 @@ def test_character_model_defaults_to_draft(db_session):
 def test_extract_object_keys_includes_directional_action_frames(monkeypatch):
     """删除角色时只清理真实方向帧，不为镜像方向重复清理。"""
     monkeypatch.setattr(
-        character_api,
+        character_cleanup,
         "storage_settings",
         SimpleNamespace(download_base="https://assets.example.com"),
     )

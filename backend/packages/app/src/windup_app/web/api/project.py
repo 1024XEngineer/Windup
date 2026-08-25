@@ -14,7 +14,9 @@ from windup_common.exceptions import BizException
 from windup_common.result import ListResponse, Response
 from windup_framework.db import get_session
 
+from windup_app.server.character.cleanup import extract_object_keys
 from windup_app.server.character.service import service as character_service
+from windup_app.server.media.service import service as media_service
 from windup_app.server.project.interface import UNSET
 from windup_app.server.project.service import service
 
@@ -239,13 +241,37 @@ def delete_project(
     project = service.get_project(session, project_id, for_update=True)
     if project is None or project.user_id != request.state.current_user.id:
         raise BizException("项目不存在", code=BizCode.NOT_FOUND)
-    if character_service.project_has_characters(session, project_id):
-        raise BizException("项目下仍有角色，无法删除", code=BizCode.BAD_REQUEST)
+    characters = []
+    page = 1
+    while True:
+        items, total = character_service.list_characters(
+            session,
+            project_id=project_id,
+            page=page,
+            page_size=100,
+        )
+        characters.extend(items)
+        if len(characters) >= total:
+            break
+        page += 1
+
+    object_keys = list(
+        dict.fromkeys(
+            key for character in characters for key in extract_object_keys(character)
+        )
+    )
     try:
+        for character in characters:
+            character_service.delete_character(session, character.id)
         service.delete_project(session, project_id)
     except IntegrityError:
         session.rollback()
         raise BizException(
             "项目下仍有角色，无法删除", code=BizCode.BAD_REQUEST
         ) from None
+    for key in object_keys:
+        try:
+            media_service.delete(key)
+        except Exception:
+            logger.warning("[WINDUP] 媒体清理失败(已跳过) | key=%s", key, exc_info=True)
     return Response.success(None, message="删除成功")
