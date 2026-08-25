@@ -124,6 +124,8 @@ export interface StartCharacterGenerationInput {
   directionalMovement?: DirectionalMovement
   gameStyle?: ArtStyle
   automaticDelivery?: { actionPrompt?: string }
+  /** 仅记录 Agent 的像素素材意图，生成阶段不据此改变原图。 */
+  suggestPixelPerfect?: boolean
 }
 
 export interface StartCharacterGenerationResult {
@@ -408,6 +410,7 @@ export function createWorkflowController({
     directionalMovement: selectedDirectionalMovement = 'single',
     gameStyle,
     automaticDelivery,
+    suggestPixelPerfect = false,
   }: StartCharacterGenerationInput): Promise<StartCharacterGenerationResult> {
     ensureRunning()
     if (!prepareProject) {
@@ -433,6 +436,7 @@ export function createWorkflowController({
           generations: [],
           error: null,
           input: { prompt: normalizedPrompt, referenceMedia: [] },
+          ...(suggestPixelPerfect ? { pixelPerfectSuggested: true } : {}),
           ...(automaticDelivery
             ? { automation: { mode: 'automatic' as const, actionPrompt } }
             : {}),

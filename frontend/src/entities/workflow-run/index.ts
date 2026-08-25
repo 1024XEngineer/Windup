@@ -74,6 +74,8 @@ export interface CharacterSetupWorkflowNode extends WorkflowNodeBase {
   phase: 'configuring' | 'completed'
   input: WorkflowCharacterInput
   automation?: WorkflowAutomationIntent
+  /** Agent 曾判断为明确像素素材意图；旧 Run 缺省时视为 false。 */
+  pixelPerfectSuggested?: boolean
 }
 
 /** 角色母版卡片；生成候选图并保存用户最终确认的母版。 */
