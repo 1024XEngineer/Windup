@@ -1097,14 +1097,16 @@ export function createWorkflowController({
         (run, node, retryDirection) => {
           if (node.type === 'character-template') {
             const setupNode = findSingleDependencyNode(run, node, 'character-setup')
+            const confirmedMaster = generatedImageReference(node.selectedImageUrl ?? undefined)
             const input: CharacterTemplateGenerationInput = {
               type: 'character_template',
               projectId: run.projectId,
               prompt: setupNode.input.prompt,
-              referenceMedia: setupNode.input.referenceMedia,
+              referenceMedia: confirmedMaster ? [confirmedMaster] : setupNode.input.referenceMedia,
               spriteWidth: options.spriteWidth,
               spriteHeight: options.spriteHeight,
               direction: retryDirection,
+              candidateCount: confirmedMaster ? 1 : 3,
             }
             return input
           }

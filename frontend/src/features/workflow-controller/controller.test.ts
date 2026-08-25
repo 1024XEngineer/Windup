@@ -1658,6 +1658,50 @@ describe('WorkflowController', () => {
     })
   })
 
+  it('已确认母版后的方向重试继续锁定母版且只生成一张', async () => {
+    const run = createRun([
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({
+        status: 'failed',
+        phase: 'generating',
+        error: 'north provider failed',
+        selectedImageUrl: 'east-master.png',
+        selectedImages: { east: 'east-master.png' },
+        generations: [
+          { taskId: 'task-east', role: 'character_template' },
+          { taskId: 'task-north', role: 'character_template', direction: 'north' },
+        ],
+      }),
+    ])
+    const { controller, generation } = createController(run, 'four-way')
+    generation.snapshots.set('task-east', {
+      id: 'task-east',
+      projectId: '1',
+      type: 'character_template',
+      status: 'completed',
+      result: {
+        type: 'character_template',
+        direction: 'east',
+        images: [{ url: 'east-master.png' }],
+      },
+      error: null,
+    })
+
+    await controller.retryGenerationDirection('template-1', 'north', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+
+    expect(generation.apis.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: 'character_template',
+        direction: 'north',
+        candidateCount: 1,
+        referenceMedia: ['east-master.png'],
+      }),
+    )
+  })
+
   it('动作首帧只重试失败方向并使用同方向角色母版', async () => {
     const run = createRun([
       setupNode({ status: 'passed', phase: 'completed' }),

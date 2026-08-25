@@ -568,6 +568,8 @@ function CharacterSetupContent({
             input.controller.generateCharacterTemplate(node.id, {
               spriteWidth: input.project.spriteSize.width,
               spriteHeight: input.project.spriteSize.height,
+              directions: ['east'],
+              candidateCount: 3,
               input: {
                 prompt,
                 referenceMedia: node.input.referenceMedia,
@@ -607,6 +609,8 @@ function CharacterTemplateContent({
             input.controller.generateCharacterTemplate(setupNode.id, {
               spriteWidth: input.project.spriteSize.width,
               spriteHeight: input.project.spriteSize.height,
+              directions: ['east'],
+              candidateCount: 3,
             }),
           )
         }}
@@ -617,7 +621,47 @@ function CharacterTemplateContent({
   }
   if (node.phase === 'selecting') {
     const directions = getDirectionProfile(input.project.directionalMovement).generationDirections
-    const groups = directions.map((direction) => {
+    const masterConfirmed = Boolean(node.selectedImageUrl)
+    const hasPrematureDirectionTasks = node.generations.some(
+      (reference) =>
+        reference.role === 'character_template' && (reference.direction ?? 'east') !== 'east',
+    )
+    if (!masterConfirmed && hasPrematureDirectionTasks) {
+      const setupNode = findDependency(input.run, node, 'character-setup')
+      return (
+        <div className={CARD_STACK}>
+          <p role="alert" className={CARD_SUMMARY}>
+            旧流程已在母版确认前生成多方向，不能保证是同一个角色。请按新流程重新生成母版。
+          </p>
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={branchBusy || !setupNode}
+            onClick={() => {
+              if (!setupNode) return
+              input.setSelectedImages((selected) => {
+                const next = { ...selected }
+                for (const direction of directions) delete next[selectionKey(node.id, direction)]
+                return next
+              })
+              input.runCommand(branchKey, async () => {
+                await input.controller.restartFromNode(node.id)
+                await input.controller.generateCharacterTemplate(setupNode.id, {
+                  spriteWidth: input.project.spriteSize.width,
+                  spriteHeight: input.project.spriteSize.height,
+                  directions: ['east'],
+                  candidateCount: 3,
+                })
+              })
+            }}
+          >
+            按新流程重新生成母版
+          </button>
+        </div>
+      )
+    }
+    const visibleDirections = masterConfirmed ? directions : (['east'] as const)
+    const groups = visibleDirections.map((direction) => {
       const result =
         input.generations[generationKey(node.id, 'character_template', direction)]?.result
       return {
@@ -625,102 +669,135 @@ function CharacterTemplateContent({
         images: result?.type === 'character_template' ? result.images : [],
       }
     })
-    const allSelected = groups.every(({ direction, images }) => {
-      const selected = input.selectedImages[selectionKey(node.id, direction)]
-      return images.some((image) => image.url === selected)
-    })
-    const singleSelectedImageUrl =
-      directions.length === 1
-        ? (groups[0]?.images.find(
-            (image) => image.url === input.selectedImages[selectionKey(node.id, directions[0]!)],
-          )?.url ?? null)
-        : null
-    return (
-      <div className={CARD_STACK}>
-        {groups.map(({ direction, images }) => (
-          <div key={direction} className="grid gap-2">
-            <p className={CARD_TEXT}>方向：{directionLabel(direction)}</p>
-            <div className="grid grid-cols-2 gap-[7px]">
-              {images.map((image, index) => (
-                <button
-                  type="button"
-                  key={image.url}
-                  className={THUMB_BUTTON}
-                  aria-label={`${directions.length === 1 ? '选择角色候选' : `选择${directionLabel(direction)}角色候选`} ${index + 1}`}
-                  aria-pressed={
-                    input.selectedImages[selectionKey(node.id, direction)] === image.url
-                  }
-                  onClick={() =>
-                    input.setSelectedImages((selected) => ({
-                      ...selected,
-                      [selectionKey(node.id, direction)]: image.url,
-                    }))
-                  }
-                >
-                  <WorkflowImage
-                    src={image.url}
-                    alt={`${directions.length === 1 ? '角色候选' : `${directionLabel(direction)}角色候选`} ${index + 1}`}
-                    variant="thumbnail"
-                  />
-                </button>
-              ))}
-            </div>
-            {directions.length > 1 ? (
+    if (!masterConfirmed) {
+      const images = groups[0]?.images ?? []
+      const selectedImageUrl =
+        images.find((image) => image.url === input.selectedImages[selectionKey(node.id, 'east')])
+          ?.url ?? null
+      return (
+        <div className={CARD_STACK}>
+          <div className="grid grid-cols-2 gap-[7px]">
+            {images.map((image, index) => (
               <button
                 type="button"
-                className={CARD_BUTTON}
-                disabled={branchBusy}
+                key={image.url}
+                className={THUMB_BUTTON}
+                aria-label={`选择角色候选 ${index + 1}`}
+                aria-pressed={input.selectedImages[selectionKey(node.id, 'east')] === image.url}
                 onClick={() =>
-                  input.runCommand(branchKey, () =>
-                    input.controller.retryGenerationDirection(node.id, direction, {
-                      spriteWidth: input.project.spriteSize.width,
-                      spriteHeight: input.project.spriteSize.height,
-                      referenceMedia: [],
-                    }),
-                  )
+                  input.setSelectedImages((selected) => ({
+                    ...selected,
+                    [selectionKey(node.id, 'east')]: image.url,
+                  }))
                 }
               >
-                重做{directionLabel(direction)}方向
+                <WorkflowImage src={image.url} alt={`角色候选 ${index + 1}`} variant="thumbnail" />
               </button>
-            ) : null}
+            ))}
           </div>
-        ))}
-        {directions.length === 1 ? (
-          singleSelectedImageUrl ? (
+          {selectedImageUrl ? (
             <MasterGate
               node={node}
               input={input}
-              imageUrl={singleSelectedImageUrl}
+              imageUrl={selectedImageUrl}
               branchKey={branchKey}
               branchBusy={branchBusy}
             />
           ) : (
             <p className={CARD_TEXT}>先选一张候选，再决定是否把它定为母版。</p>
-          )
-        ) : (
-          <button
-            type="button"
-            className={CARD_BUTTON}
-            disabled={!allSelected || branchBusy}
-            onClick={() =>
-              input.runCommand(branchKey, async () => {
-                let character: Character | null = null
-                for (const direction of directions) {
-                  const selectedImageUrl = input.selectedImages[selectionKey(node.id, direction)]
-                  if (!selectedImageUrl) throw new Error(`请选择${directionLabel(direction)}候选`)
-                  character = await input.confirmCharacterTemplate(
-                    node.id,
-                    selectedImageUrl,
-                    direction,
-                  )
-                }
-                if (character) input.setCharacter(character)
-              })
-            }
-          >
-            确认身份母版
-          </button>
-        )}
+          )}
+        </div>
+      )
+    }
+
+    const directionImages = Object.fromEntries(
+      directions.map((direction) => {
+        if (direction === 'east') {
+          return [direction, node.selectedImages?.east ?? node.selectedImageUrl]
+        }
+        const group = groups.find((candidate) => candidate.direction === direction)
+        return [direction, group?.images.length === 1 ? group.images[0]!.url : null]
+      }),
+    ) as Partial<Record<ActionDirection, string | null>>
+    const directionSetComplete = directions.every((direction) => directionImages[direction])
+    const directionCountLabel = directions.length === 8 ? '八向' : '四向'
+    return (
+      <div className={CARD_STACK}>
+        <p className={CARD_TEXT}>所有方向均基于已确认母版生成，每个方向一张。</p>
+        <div
+          role="group"
+          aria-label={`${directionCountLabel}首帧集合`}
+          data-layout="direction-first-frame-stack"
+          className={`grid w-full gap-2 overflow-hidden rounded-xl border border-app-line-strong bg-app-surface-muted p-2 ${
+            directions.length === 8 ? 'aspect-[2/1] grid-cols-4' : 'aspect-square grid-cols-2'
+          }`}
+        >
+          {directions.map((direction) => {
+            const imageUrl = directionImages[direction]
+            return imageUrl ? (
+              <figure
+                key={direction}
+                className="relative m-0 min-h-0 overflow-hidden rounded-lg border border-app-line bg-app-surface-raised"
+              >
+                <WorkflowImage
+                  src={imageUrl}
+                  alt={`${directionLabel(direction)}方向首帧`}
+                  variant="thumbnail"
+                />
+                <figcaption className="absolute bottom-1 left-1 rounded-full bg-app-canvas/85 px-1.5 py-0.5 text-[8px] font-bold text-app-ink">
+                  {directionLabel(direction)}
+                </figcaption>
+              </figure>
+            ) : (
+              <div
+                key={direction}
+                role="status"
+                aria-label={`${directionLabel(direction)}方向首帧生成中`}
+                className="grid min-h-0 place-items-center rounded-lg border border-dashed border-app-line bg-app-surface-raised text-[9px] font-semibold text-app-muted"
+              >
+                {directionLabel(direction)}方向生成中
+              </div>
+            )
+          })}
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {directions.slice(1).map((direction) => (
+            <button
+              type="button"
+              key={direction}
+              className={CARD_BUTTON_SECONDARY}
+              disabled={branchBusy}
+              onClick={() =>
+                input.runCommand(branchKey, () =>
+                  input.controller.retryGenerationDirection(node.id, direction, {
+                    spriteWidth: input.project.spriteSize.width,
+                    spriteHeight: input.project.spriteSize.height,
+                  }),
+                )
+              }
+            >
+              重做{directionLabel(direction)}方向
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className={CARD_BUTTON}
+          disabled={!directionSetComplete || branchBusy}
+          onClick={() =>
+            input.runCommand(branchKey, async () => {
+              let character: Character | null = null
+              for (const direction of directions.slice(1)) {
+                const imageUrl = directionImages[direction]
+                if (!imageUrl) throw new Error(`${directionLabel(direction)}方向尚未生成完成`)
+                character = await input.confirmCharacterTemplate(node.id, imageUrl, direction)
+              }
+              if (character) input.setCharacter(character)
+            })
+          }
+        >
+          确认方向集合
+        </button>
       </div>
     )
   }
@@ -866,6 +943,19 @@ function MasterGate({
           input.runCommand(branchKey, async () => {
             const character = await input.confirmCharacterTemplate(node.id, imageUrl)
             input.setCharacter(character)
+            const directions = getDirectionProfile(
+              input.project.directionalMovement,
+            ).generationDirections
+            if (directions.length > 1) {
+              if (!setupNode) throw new Error('身份母版缺少角色设定')
+              await input.controller.generateCharacterTemplate(setupNode.id, {
+                spriteWidth: input.project.spriteSize.width,
+                spriteHeight: input.project.spriteSize.height,
+                sourceImageUrl: imageUrl,
+                directions: directions.slice(1),
+                candidateCount: 1,
+              })
+            }
           })
         }
       >
@@ -889,6 +979,8 @@ function MasterGate({
             await input.controller.generateCharacterTemplate(setupNode.id, {
               spriteWidth: input.project.spriteSize.width,
               spriteHeight: input.project.spriteSize.height,
+              directions: ['east'],
+              candidateCount: 3,
             })
           })
         }}
@@ -1605,7 +1697,6 @@ function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInpu
                   input.controller.retryGenerationDirection(node.id, direction, {
                     spriteWidth: input.project.spriteSize.width,
                     spriteHeight: input.project.spriteSize.height,
-                    referenceMedia: [],
                   }),
                 )
               }
