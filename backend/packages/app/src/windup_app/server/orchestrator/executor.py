@@ -14,15 +14,12 @@
 
 from __future__ import annotations
 
-import contextvars
 import dataclasses
 import logging
-import os
 import threading
-from collections.abc import Callable, Sequence
-from concurrent.futures import Future, ThreadPoolExecutor
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
@@ -35,7 +32,7 @@ from windup_framework.gateway.registry import ModelRegistry
 from windup_framework.gateway.types import Scene
 from windup_framework.config.quality_gate import settings as gate_settings
 
-from windup_app.server.orchestrator import billing, i2v_poll, quality_gate, task_repo
+from windup_app.server.orchestrator import billing, generation_io, i2v_poll, quality_gate, task_repo
 from windup_app.server.orchestrator._failure import user_message
 from windup_app.server.orchestrator.i2v_poll import ActionAwaitingVideo
 from windup_app.server.orchestrator._fetch import fetch_own_media
@@ -59,92 +56,28 @@ class _PollSkip(Exception):
     """续跑时任务已终态,直接 ACK。"""
 
 
-T = TypeVar("T")
-R = TypeVar("R")
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name, "").strip()
-    return int(raw) if raw else default
-
-
-# 进程级 IO 池:上传 / 参考图下载 / 多图 gen_image 共用。
-# 必须从 handler 线程往里 submit,禁止在池内任务再 _io_map(同池会死锁)。
-_IO_POOL_SIZE = max(1, _env_int("WINDUP_IO_POOL_SIZE", 32))
-_io_pool_lock = threading.Lock()
-_io_pool: ThreadPoolExecutor | None = None
-
-
-def _shared_io_pool() -> ThreadPoolExecutor:
-    global _io_pool
-    if _io_pool is None:
-        with _io_pool_lock:
-            if _io_pool is None:
-                _io_pool = ThreadPoolExecutor(
-                    max_workers=_IO_POOL_SIZE,
-                    thread_name_prefix="windup-io",
-                )
-    return _io_pool
-
-
-def _submit_io(fn: Callable[[T], R], items: Sequence[T]) -> list[Future[R]]:
-    """把独立 IO 丢进共享池。每个任务一份 Context 快照——同一 Context 不能被两线程同时 enter。"""
-    pool = _shared_io_pool()
-    futs: list[Future[R]] = []
-    for item in items:
-        ctx = contextvars.copy_context()
-        futs.append(pool.submit(ctx.run, fn, item))
-    return futs
-
-
-def _io_map(fn: Callable[[T], R], items: Sequence[T]) -> list[R]:
-    if not items:
-        return []
-    if len(items) == 1:
-        return [fn(items[0])]
-    return [fut.result() for fut in _submit_io(fn, items)]
-
-
-def _upload_frames(upload: Callable[[bytes], str], pngs: Sequence[bytes]) -> list[str]:
-    """并行上传各帧,返回 URL 列表,下标与 ``pngs`` 对齐。
-
-    失败语义与串行相同:已成功的 PUT 会留在桶里(孤儿),任务仍 FAILED。
-    """
-    return _io_map(upload, pngs)
-
-
-def _using_session(
-    session: Session | None,
-    factory: Callable[[], Session],
-    fn: Callable[[Session], T],
-) -> T:
-    """自开的 session 只包住 fn:commit 后立刻 close,生成/上传期间不占连接池。
-
-    调用方传入的 session 不提交、不关闭(测试事务)。
-    """
-    if session is not None:
-        return fn(session)
-    owned = factory()
-    try:
-        out = fn(owned)
-        owned.commit()
-        return out
-    except Exception:
-        owned.rollback()
-        raise
-    finally:
-        owned.close()
-
-
 def _settle_credit(session: Session, task_id: int, *, success: bool) -> None:
-    """任务终态时结清预付费：成功扣减，失败解冻。"""
+    """任务终态时结清预付费：成功扣减，失败解冻。无开放冻结则跳过。"""
     task = task_repo.get_task(session, task_id)
     if task is None or task.id is None:
+        return
+    if not billing.has_open_freeze(session, task.id):
         return
     if success:
         billing.capture_for_task(session, user_id=task.user_id, task_id=task.id)
     else:
         billing.release_for_task(session, user_id=task.user_id, task_id=task.id)
+
+
+def _close_failed(session: Session, task_id: int, error_message: str) -> None:
+    """失败终态：已 COMPLETED 的产物不被并发/重投的失败路径覆盖。"""
+    task = task_repo.get_task(session, task_id)
+    if task is None or task.id is None:
+        return
+    if task.status is TaskStatus.COMPLETED:
+        return
+    task_repo.fail_task(session, task_id, error_message=error_message)
+    _settle_credit(session, task_id, success=False)
 
 
 # ── 项目全局约束(Project 表)→ 统合喂给生成逻辑 ─────────────────────────
@@ -350,7 +283,7 @@ class ActionTaskExecutor:
                 task_repo.update_status(s, task_id, TaskStatus.RUNNING)
                 return (self._fetch_constraints or _load_constraints)(s, project_id)
 
-            cons = _using_session(session, self._make_session, _mark_running)
+            cons = generation_io.using_session(session, self._make_session, _mark_running)
             reset = bind_call_context(
                 task_id=str(task_id),
                 start_from_model=_resolve_video_model(input.video_model),
@@ -361,7 +294,7 @@ class ActionTaskExecutor:
                 task_repo.update_result(s, task_id, _ACTION_RESULT, result)
                 _settle_credit(s, task_id, success=True)
 
-            _using_session(session, self._make_session, _complete)
+            generation_io.using_session(session, self._make_session, _complete)
         except ActionAwaitingVideo:
             logger.info("动作任务 %s 已提交 i2v,等待延迟轮询", task_id)
         except PromptRejected as exc:
@@ -373,7 +306,7 @@ class ActionTaskExecutor:
             def _reject(s: Session) -> None:
                 task_repo.fail_task(s, task_id, error_message=error_message)
 
-            _using_session(session, self._make_session, _reject)
+            generation_io.using_session(session, self._make_session, _reject)
         except Exception as exc:  # noqa: BLE001 —— 兜底任何生成/上传/网络异常
             logger.exception("动作任务 %s 失败", task_id)
             if session is not None:
@@ -381,10 +314,9 @@ class ActionTaskExecutor:
             error_message = user_message(exc)
 
             def _fail(s: Session) -> None:
-                task_repo.fail_task(s, task_id, error_message=error_message)
-                _settle_credit(s, task_id, success=False)
+                _close_failed(s, task_id, error_message)
 
-            _using_session(session, self._make_session, _fail)
+            generation_io.using_session(session, self._make_session, _fail)
         finally:
             if reset is not None:
                 reset()
@@ -401,9 +333,8 @@ class ActionTaskExecutor:
         """母版 → ai_engine 按项目尺寸出帧 → 逐帧上传 → 组结果 dict。
 
         项目约束落实:``facing`` 随视角、``stylize`` 随画风(像素游戏→像素化)、
-        输出帧尺寸随 ``sprite_w×sprite_h``。四向/八向项目由上层为每个真实源方向
-        创建独立任务；本任务只生成 ``input.direction``，左右镜像由资产层复用，避免
-        为镜像方向重复调用模型和扣费。
+        输出帧尺寸随 ``sprite_w×sprite_h``。四向/八向项目由上层为每个必需方向
+        创建独立任务；本任务只生成 ``input.direction``，不会用镜像替代西向或斜向。
 
         **尺寸是传给引擎的,不是拿到帧再缩的。** 这里曾对每帧再做一次
         ``_fit_to(png, sprite_w, sprite_h)``:引擎恒出 256,项目要 512 就等于二次
@@ -414,7 +345,7 @@ class ActionTaskExecutor:
         """
         if cons.directions > 1:
             logger.info(
-                "项目要求 %s 方向，本任务只负责真实源方向 %s；镜像方向由资产层复用",
+                "项目要求 %s 方向，本任务负责独立方向 %s",
                 cons.directions,
                 input.direction.value,
             )
@@ -523,7 +454,7 @@ class ActionTaskExecutor:
                 return (self._fetch_constraints or _load_constraints)(s, project_id)
 
             try:
-                cons = _using_session(session, self._make_session, _mark_running)
+                cons = generation_io.using_session(session, self._make_session, _mark_running)
             except _PollSkip:
                 return
 
@@ -555,7 +486,7 @@ class ActionTaskExecutor:
                 task_repo.update_result(s, task_id, _ACTION_RESULT, result)
                 _settle_credit(s, task_id, success=True)
 
-            _using_session(session, self._make_session, _complete)
+            generation_io.using_session(session, self._make_session, _complete)
         except PromptRejected as exc:
             logger.info("动作任务 %s 的描述被措辞门禁拒绝: %s", task_id, exc.code.value)
             error_message = user_message(exc)
@@ -563,7 +494,7 @@ class ActionTaskExecutor:
             def _reject(s: Session) -> None:
                 task_repo.fail_task(s, task_id, error_message=error_message)
 
-            _using_session(session, self._make_session, _reject)
+            generation_io.using_session(session, self._make_session, _reject)
         except Exception as exc:  # noqa: BLE001
             logger.exception("动作任务 %s 轮询失败", task_id)
             if session is not None:
@@ -571,10 +502,9 @@ class ActionTaskExecutor:
             error_message = user_message(exc)
 
             def _fail(s: Session) -> None:
-                task_repo.fail_task(s, task_id, error_message=error_message)
-                _settle_credit(s, task_id, success=False)
+                _close_failed(s, task_id, error_message)
 
-            _using_session(session, self._make_session, _fail)
+            generation_io.using_session(session, self._make_session, _fail)
         finally:
             if reset is not None:
                 reset()
@@ -622,14 +552,14 @@ class ActionTaskExecutor:
         checked = [_require_size(png, cons.sprite_w, cons.sprite_h) for png in generated.frames]
         # 上传与判官都是网络 IO 且互不依赖:判官读内存 bytes。handler 线程跑 review,
         # IO 池跑 PUT,避免 32 帧传完再打一次视觉模型。
-        upload_futs = _submit_io(upload, checked) if len(checked) > 1 else None
+        upload_futs = generation_io.submit_io(upload, checked) if len(checked) > 1 else None
         decision = quality_gate.review(
             self._get_judge(), checked, master, _judged_action(input)
         )
         urls = (
             [fut.result() for fut in upload_futs]
             if upload_futs is not None
-            else _upload_frames(upload, checked)
+            else generation_io.upload_frames(upload, checked)
         )
         frames = [
             {"index": i, "image_url": url, "duration_ms": dur}
@@ -839,7 +769,7 @@ class ImageTaskExecutor:
                 task_repo.update_status(s, task_id, TaskStatus.RUNNING)
                 return _load_constraints(s, project_id)
 
-            cons = _using_session(session, self._make_session, _mark_running)
+            cons = generation_io.using_session(session, self._make_session, _mark_running)
             reset = bind_call_context(task_id=str(task_id))
             urls, quality = self._produce_image(input, cons)
 
@@ -857,7 +787,7 @@ class ImageTaskExecutor:
                 )
                 _settle_credit(s, task_id, success=True)
 
-            _using_session(session, self._make_session, _complete)
+            generation_io.using_session(session, self._make_session, _complete)
         except Exception as exc:  # noqa: BLE001 —— 兜底
             logger.exception("图片任务 %s 失败", task_id)
             if session is not None:
@@ -865,10 +795,9 @@ class ImageTaskExecutor:
             error_message = user_message(exc)
 
             def _fail(s: Session) -> None:
-                task_repo.fail_task(s, task_id, error_message=error_message)
-                _settle_credit(s, task_id, success=False)
+                _close_failed(s, task_id, error_message)
 
-            _using_session(session, self._make_session, _fail)
+            generation_io.using_session(session, self._make_session, _fail)
         finally:
             if reset is not None:
                 reset()
@@ -904,7 +833,7 @@ class ImageTaskExecutor:
                 return None
 
         if want_char and want_style:
-            char_bytes, style_bytes = _io_map(
+            char_bytes, style_bytes = generation_io.io_map(
                 lambda item: fetch(item[1]) if item[0] == "char" else _fetch_style(item[1]),
                 (("char", char_url), ("style", style_url)),
             )
@@ -962,8 +891,8 @@ class ImageTaskExecutor:
             finally:
                 reset_call()
 
-        # 多张候选各自一次付费调用,彼此独立;ContextVar 由 _io_map 拷进 IO 线程。
-        raws = _io_map(_gen_one, range(max(1, input.num_images)))
+        # 多张候选各自一次付费调用,彼此独立;ContextVar 由 io_map 拷进 IO 线程。
+        raws = generation_io.io_map(_gen_one, range(max(1, input.num_images)))
         # 抠图走 ONNX,同一会话不能并发 Run;上传再并行。
         cut: list[Image.Image] = []
         pngs: list[bytes] = []
@@ -978,7 +907,7 @@ class ImageTaskExecutor:
             png = _fit_to(matte.cutout(img), input.width, input.height, smooth=True)
             cut.append(Image.open(io.BytesIO(png)).convert("RGBA"))
             pngs.append(png)
-        urls = _upload_frames(upload, pngs)
+        urls = generation_io.upload_frames(upload, pngs)
         # 同一份 alpha 顺手数一次主体数(#427):此前多主体母版要等下一个动作任务才留痕,
         # 而那时钱已经花在错的母版上了。只记账,不在此处判成败 —— 与动作那条同一立场。
         return urls, {"subject_blobs": list(subject_blobs(cut))}

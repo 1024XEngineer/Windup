@@ -1,0 +1,97 @@
+# ── Windup 数据层部署（独立 DB 服务器专用）─────────────────────────
+# 用于把 Postgres / Redis 单独部署到一台数据库服务器上，
+# 应用服务器（前后端 + 网关）通过内网/公网 TCP 连接过来。
+#
+# 使用方式:
+#   启动:   docker compose -f docker-compose.db.yml up -d
+#   日志:   docker compose -f docker-compose.db.yml logs -f [service]
+#   停止:   docker compose -f docker-compose.db.yml down
+#   清数据: docker compose -f docker-compose.db.yml down -v  (⚠️ 删除数据)
+#
+# ⚠️ 与单机版 docker-compose.yml 的关键差异：
+#   1. 两个服务都对外发布端口（应用在另一台机器，走 TCP 而非 Docker 内网）。
+#   2. Redis 端口一旦对网络暴露，必须设密码（--requirepass），否则等于裸奔。
+#   3. 应用服务器的 .env 里 REDIS_URL / POSTGRES_HOST 要改成本机 DB 服务器的地址。
+#
+# 建议：用云厂商安全组 / 防火墙把 5432、6379 只放行给应用服务器 IP，
+#       不要直接对公网开放。
+
+services:
+  # ── Redis 缓存（验证码 / refresh_token / MQ）──
+  redis:
+    image: redis:7-alpine
+    container_name: windup-redis
+    restart: unless-stopped
+    # 网络暴露后必须带密码。密码从 .env 的 REDIS_PASSWORD 读取。
+    # 2C4G 小机：给 Redis 内存上限（默认无上限，会吃到 OOM 被内核杀）。
+    # 本机数据都是短命缓存（验证码/token/MQ），正常只有几十 MB，256mb 是保护机器的安全阀。
+    # allkeys-lru：万一真满了，LRU 淘汰最久未用的键，保证 Redis 不会拖垮整机。
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:?REDIS_PASSWORD 必填，勿裸奔}
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+    ports:
+      - "${REDIS_EXTERNAL_PORT:-6379}:6379"
+    volumes:
+      - ${REDIS_DATA_DIR:-./data/redis}:/data
+    healthcheck:
+      # redis-cli 未鉴权 ping 会被拒；带上密码。
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      # 供 healthcheck 内 $$REDIS_PASSWORD 展开
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD 必填，勿裸奔}
+    networks:
+      - windup-db-net
+
+  # ── PostgreSQL 数据库 ──
+  postgres:
+    image: postgres:16-alpine
+    container_name: windup-postgres
+    restart: unless-stopped
+    # 2C4G 小机：收敛连接上限与内存占用。默认 max_connections=100、
+    # shared_buffers=128MB 在 4GB 内存下偏浪费/偏激进，这里显式收紧。
+    # 应用侧连接池合计上限约 20（web+worker 各 5+5），50 留足余量。
+    command:
+      - -c
+      - max_connections=50
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=2GB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - work_mem=8MB
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-root}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 必填}
+      POSTGRES_DB: ${POSTGRES_DB:-windup}
+    ports:
+      # 沿用单机版的外部端口 7856，应用侧 POSTGRES_PORT 保持一致即可。
+      - "${POSTGRES_EXTERNAL_PORT:-7856}:5432"
+    volumes:
+      - ${POSTGRES_DATA_DIR:-./data/postgres}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-root} -d ${POSTGRES_DB:-windup}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - windup-db-net
+
+networks:
+  windup-db-net:
+    driver: bridge
+    # 与单机版同样的 MTU 处理：宿主机链路 MTU 1480，compose 自建网络默认 1500，
+    # 大包被丢会表现为连接超时。保守设 1450。
+    driver_opts:
+      com.docker.network.driver.mtu: "1450"

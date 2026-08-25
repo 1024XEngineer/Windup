@@ -105,11 +105,51 @@ def test_submit_image_generation_reserves_prepaid_credit(auth_client, db_session
 
     account = _account(db_session, 1)
     db_session.refresh(account)
-    assert account.frozen == quota_settings.generate_image_cost
-    assert account.balance == quota_settings.register_gift_amount - quota_settings.generate_image_cost
+    frozen = quota_settings.generate_image_cost * 3
+    assert account.frozen == frozen
+    assert account.balance == quota_settings.register_gift_amount - frozen
     assert _reasons(db_session, 1) == [CreditReason.FROZEN]
     txn = db_session.scalar(select(CreditTransaction).where(CreditTransaction.user_id == 1))
     assert txn.ref_id == f"task:{task_id}"
+
+
+def test_submit_image_generation_reserves_per_requested_image(auth_client, db_session):
+    _seed_account(db_session, 1)
+    db_session.commit()
+
+    project = auth_client.post(
+        "/projects",
+        json={
+            "project_name": "按张计费",
+            "character_perspective": 1,
+            "directional_movement": 2,
+            "sprite_width": 64,
+            "sprite_height": 64,
+        },
+    ).json()["data"]
+
+    one = auth_client.post(
+        "/generation/image",
+        json={
+            "project_id": project["id"], "prompt": "勇者",
+            "width": 64, "height": 64, "num_images": 1,
+        },
+    )
+    four = auth_client.post(
+        "/generation/image",
+        json={
+            "project_id": project["id"], "prompt": "勇者",
+            "width": 64, "height": 64, "num_images": 4,
+        },
+    )
+    assert one.json()["data"] is not None, one.json()
+    assert four.json()["data"] is not None, four.json()
+
+    account = _account(db_session, 1)
+    db_session.refresh(account)
+    frozen = quota_settings.generate_image_cost * 5
+    assert account.frozen == frozen
+    assert account.balance == quota_settings.register_gift_amount - frozen
 
 
 def test_submit_rejects_when_credit_is_insufficient(auth_client, db_session):
@@ -140,6 +180,35 @@ def test_submit_rejects_when_credit_is_insufficient(auth_client, db_session):
     assert account.balance == 1
     assert account.frozen == 0
     assert db_session.scalar(select(CreditTransaction).where(CreditTransaction.user_id == 1)) is None
+
+
+def test_submit_rejects_when_credit_covers_one_image_but_not_three(auth_client, db_session):
+    _seed_account(db_session, 1, balance=quota_settings.generate_image_cost)
+    db_session.commit()
+
+    project = auth_client.post(
+        "/projects",
+        json={
+            "project_name": "一张的钱不够三张",
+            "character_perspective": 1,
+            "directional_movement": 2,
+            "sprite_width": 64,
+            "sprite_height": 64,
+        },
+    ).json()["data"]
+
+    response = auth_client.post(
+        "/generation/image",
+        json={"project_id": project["id"], "prompt": "勇者", "width": 64, "height": 64},
+    )
+    body = response.json()
+    assert body["code"] == 400
+    assert "积分不足" in body["message"]
+
+    account = _account(db_session, 1)
+    db_session.refresh(account)
+    assert account.balance == quota_settings.generate_image_cost
+    assert account.frozen == 0
 
 
 def test_action_success_captures_reserved_credit(session_factory):
@@ -206,6 +275,48 @@ def test_action_failure_releases_reserved_credit(session_factory):
         assert account.total_spent == 0
         assert account.balance == quota_settings.register_gift_amount
         assert CreditReason.REFUND in _reasons(session, 1)
+
+
+def test_action_failure_redelivery_does_not_raise(session_factory):
+    """失败已解冻后 MQ 重投同一失败路径，不得再抛冻结额度不足。"""
+    with session_factory() as session:
+        _seed_account(session, 1)
+        session.commit()
+
+    service = AiGenerationService()
+
+    def _boom(_input):
+        raise RuntimeError("母版下载失败")
+
+    executor = ActionTaskExecutor(
+        generator=None,
+        fetch_master=_boom,
+        session_factory=session_factory,
+    )
+    action_input = CharacterActionInput(
+        character_id=1, action_type=ActionType.WALK, num_frames=2,
+    )
+    with session_factory() as session:
+        task = service.generate_character_action(session, user_id=1, input=action_input)
+        session.commit()
+        task_id = task.id
+
+    executor.run_action_task(task_id, action_input)
+    executor.run_action_task(task_id, action_input)
+
+    with session_factory() as session:
+        done = service.get_task(session, project_id=1, task_id=task_id)
+        account = _account(session, 1)
+        refunds = [
+            row for row in session.scalars(
+                select(CreditTransaction).where(CreditTransaction.user_id == 1)
+            )
+            if row.reason == CreditReason.REFUND
+        ]
+        assert done.status is TaskStatus.FAILED
+        assert account.frozen == 0
+        assert account.balance == quota_settings.register_gift_amount
+        assert len(refunds) == 1
 
 
 def test_generate_character_action_without_account_raises(session_factory):
@@ -363,11 +474,15 @@ def test_recover_fails_and_unfreezes_running_orphans(session_factory):
         assert CreditReason.REFUND in _reasons(session, 1)
 
 
-def test_prepaid_cost_by_task_type():
-    assert billing.prepaid_cost(GenerationType.CHARACTER_IMAGE) == quota_settings.generate_image_cost
-    assert billing.prepaid_cost(GenerationType.CHARACTER_ACTION) == quota_settings.generate_action_cost
+def test_prepaid_cost_scales_with_model_calls():
+    unit = quota_settings.generate_image_cost
+    assert billing.prepaid_cost(GenerationType.CHARACTER_IMAGE, 1) == unit
+    assert billing.prepaid_cost(GenerationType.CHARACTER_IMAGE, 3) == unit * 3
+    assert billing.prepaid_cost(GenerationType.CHARACTER_ACTION, 1) == quota_settings.generate_action_cost
+    with pytest.raises(ValueError, match="model_calls"):
+        billing.prepaid_cost(GenerationType.CHARACTER_IMAGE, 0)
     with pytest.raises(ValueError, match="未知生成类型"):
-        billing.prepaid_cost("not-a-type")  # type: ignore[arg-type]
+        billing.prepaid_cost("not-a-type", 1)  # type: ignore[arg-type]
 
 
 def test_frozen_amount_missing_raises(session_factory):
@@ -409,7 +524,7 @@ def test_image_success_captures_reserved_credit(session_factory):
     executor._produce_image = lambda _input, _cons: (
         ["https://cdn.example.com/img.png"], {"subject_blobs": [1]},
     )
-    image_input = CharacterImageInput(prompt="勇者", width=64, height=64)
+    image_input = CharacterImageInput(prompt="勇者", width=64, height=64, num_images=3)
     with session_factory() as session:
         task = AiGenerationService().generate_character_image(
             session, user_id=1, input=image_input,
@@ -424,7 +539,7 @@ def test_image_success_captures_reserved_credit(session_factory):
         account = _account(session, 1)
         assert done.status is TaskStatus.COMPLETED
         assert account.frozen == 0
-        assert account.total_spent == quota_settings.generate_image_cost
+        assert account.total_spent == quota_settings.generate_image_cost * 3
         assert CreditReason.CAPTURED in _reasons(session, 1)
 
 

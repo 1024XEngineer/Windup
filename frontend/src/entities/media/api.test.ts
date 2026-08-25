@@ -33,24 +33,15 @@ describe('MediaApis.upload', () => {
     expect(new Headers(init.headers).get('authorization')).toBe('Bearer access-token')
   })
 
-  it('登录令牌过期时刷新令牌并重放同一次上传', async () => {
+  it('登录令牌过期时刷新会话但不自动重放上传请求', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8000')
     let accessToken = 'expired-token'
     const authorizations: (string | null)[] = []
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       authorizations.push(new Request(input, init).headers.get('authorization'))
-      if (authorizations.length === 1) {
-        return new Response(JSON.stringify({ code: 401, message: '登录状态已过期', data: null }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-      return jsonResponse({
-        url: 'https://cdn.example.com/media/reference.png',
-        object_key: 'media/general/reference.png',
-        filename: 'reference.png',
-        content_type: 'image/png',
-        size: 4,
+      return new Response(JSON.stringify({ code: 401, message: '登录状态已过期', data: null }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
       })
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -61,15 +52,17 @@ describe('MediaApis.upload', () => {
     })
 
     try {
-      await expect(createMediaApis().upload(imageFile())).resolves.toBe(
-        'https://cdn.example.com/media/reference.png',
-      )
+      await expect(createMediaApis().upload(imageFile())).rejects.toMatchObject({
+        kind: 'business',
+        code: 401,
+      })
     } finally {
       unregisterRecovery()
       unregisterToken()
     }
 
-    expect(authorizations).toEqual(['Bearer expired-token', 'Bearer renewed-token'])
+    // 会话已恢复（token 刷新），但 POST 上传不自动重放，避免重复写入。
+    expect(authorizations).toEqual(['Bearer expired-token'])
   })
   it('把图片和默认查询分类交给后端，并返回经过校验的媒体引用', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8000')

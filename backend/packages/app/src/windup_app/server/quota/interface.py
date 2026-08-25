@@ -49,6 +49,7 @@ class QuotaService(ABC):
         """预付费扣减：冻结转消耗。
 
         若 actual_amount < frozen_amount，差额自动退回可用余额。
+        同一 ``ref_id`` 已扣减过则跳过。
 
         :raises BizException: 冻结额度不足。
         """
@@ -58,6 +59,8 @@ class QuotaService(ABC):
         self, session: Session, user_id: int, amount: int, ref_id: str
     ) -> None:
         """预付费解冻：冻结退回可用余额（任务失败时调用）。
+
+        同一 ``ref_id`` 已解冻过则跳过。
 
         :raises BizException: 冻结额度不足。
         """
