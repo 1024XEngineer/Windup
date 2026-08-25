@@ -25,6 +25,24 @@ IMAGE_UNIT_COST_USD: dict[str, float] = {
 }
 
 
+def candidate_models(chain: tuple[str, ...], count: int) -> tuple[str, ...]:
+    """一次任务的多张候选各自用哪个型号。
+
+    与兜底链正交:兜底是"前一个失败了才换",这里是"同一次任务里同时用不同型号"。
+    同型号出 N 张时,候选之间的差异只来自采样随机性,用户挑中哪张不携带任何型号信息;
+    跨型号之后那一次挑选就是一条偏好数据,而这条数据零额外成本。
+
+    规则是最后一张交给链上第二个型号,其余走主型号 —— 多数张保持主型号的稳定表现,
+    同时只要不止一张就一定有一张来自另一条协议面。链上只有一个型号时全部用它。
+    """
+    if not chain:
+        return ()
+    n = max(1, count)
+    if n == 1 or len(chain) == 1:
+        return (chain[0],) * n
+    return (chain[0],) * (n - 1) + (chain[1],)
+
+
 class RegistryError(ValueError):
     pass
 

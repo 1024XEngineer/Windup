@@ -889,15 +889,25 @@ class ImageTaskExecutor:
         matte = self._get_matte()
         upload = self._upload or self._upload_image
 
-        def _gen_one(_i: int) -> bytes:
-            reset_call = fresh_gateway_request()
+        from windup_framework.gateway.registry import ModelRegistry, candidate_models
+        from windup_framework.gateway.types import Scene
+
+        n_images = max(1, input.num_images)
+        spread = candidate_models(
+            ModelRegistry.from_settings().chain(Scene.CHARACTER_IMAGE), n_images
+        )
+
+        def _gen_one(i: int) -> bytes:
+            # 每张候选指定自己的起始型号,Gateway 仍会按链轮转兜底 —— 指定的是"从谁开始",
+            # 不是"只能用谁"。
+            reset_call = fresh_gateway_request(start_from_model=spread[i])
             try:
                 return image_gen.gen_image(prompt, refs)
             finally:
                 reset_call()
 
         # 多张候选各自一次付费调用,彼此独立;ContextVar 由 io_map 拷进 IO 线程。
-        raws = generation_io.io_map(_gen_one, range(max(1, input.num_images)))
+        raws = generation_io.io_map(_gen_one, range(n_images))
         # 抠图走 ONNX,同一会话不能并发 Run;上传再并行。
         cut: list[Image.Image] = []
         pngs: list[bytes] = []
