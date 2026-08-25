@@ -147,6 +147,7 @@ export function createProductionQuickStartAgentDependencies(
           prompt: input.prompt,
           directionalMovement: input.directionalMovement,
           gameStyle,
+          ...(input.suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
           ...(input.automaticDelivery
             ? {
                 automaticDelivery: {
