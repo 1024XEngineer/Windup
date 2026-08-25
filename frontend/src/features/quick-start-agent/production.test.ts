@@ -78,11 +78,12 @@ describe('Quick Start Agent composition', () => {
 
   it('logs status and request id when the Agent proxy is not ok', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    const fetchFn = vi.fn<typeof fetch>(async () =>
-      new Response(JSON.stringify({ error: { message: 'AI 服务暂时不可用' } }), {
-        status: 502,
-        headers: { 'content-type': 'application/json', 'x-request-id': 'req-agent-1' },
-      }),
+    const fetchFn = vi.fn<typeof fetch>(
+      async () =>
+        new Response(JSON.stringify({ error: { message: 'AI 服务暂时不可用' } }), {
+          status: 502,
+          headers: { 'content-type': 'application/json', 'x-request-id': 'req-agent-1' },
+        }),
     )
     const proxyFetch = createAgentProxyFetch({ fetchFn })
 
