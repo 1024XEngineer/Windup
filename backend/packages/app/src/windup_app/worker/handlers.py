@@ -173,19 +173,49 @@ def dispatch_handler(
     run_action_task: Callable[..., Any],
     resume_action_poll: Callable[..., Any] | None = None,
 ) -> None:
-    if msg_type == MSG_TYPE_VERIFICATION_CODE:
-        handle_verification_code(payload)
-        return
-    if msg_type in (MSG_TYPE_CHARACTER_IMAGE, MSG_TYPE_CHARACTER_ACTION):
-        handle_generation(
-            payload,
-            run_image_task=run_image_task,
-            run_action_task=run_action_task,
-        )
-        return
-    if msg_type == MSG_TYPE_CHARACTER_ACTION_POLL:
-        if resume_action_poll is None:
-            raise RuntimeError("未注入 resume_action_poll")
-        handle_action_poll(payload, resume_action_poll=resume_action_poll)
-        return
-    raise ValueError(f"未知消息类型: {msg_type}")
+    handler = HANDLERS.get(msg_type)
+    if handler is None:
+        raise ValueError(f"未知消息类型: {msg_type}")
+    handler(
+        payload,
+        run_image_task=run_image_task,
+        run_action_task=run_action_task,
+        resume_action_poll=resume_action_poll,
+    )
+
+
+def _dispatch_verification_code(payload: dict[str, Any], **_deps: Any) -> None:
+    handle_verification_code(payload)
+
+
+def _dispatch_generation(
+    payload: dict[str, Any],
+    *,
+    run_image_task: Callable[..., Any],
+    run_action_task: Callable[..., Any],
+    **_deps: Any,
+) -> None:
+    handle_generation(
+        payload,
+        run_image_task=run_image_task,
+        run_action_task=run_action_task,
+    )
+
+
+def _dispatch_action_poll(
+    payload: dict[str, Any],
+    *,
+    resume_action_poll: Callable[..., Any] | None = None,
+    **_deps: Any,
+) -> None:
+    if resume_action_poll is None:
+        raise RuntimeError("未注入 resume_action_poll")
+    handle_action_poll(payload, resume_action_poll=resume_action_poll)
+
+
+HANDLERS: dict[str, Callable[..., None]] = {
+    MSG_TYPE_VERIFICATION_CODE: _dispatch_verification_code,
+    MSG_TYPE_CHARACTER_IMAGE: _dispatch_generation,
+    MSG_TYPE_CHARACTER_ACTION: _dispatch_generation,
+    MSG_TYPE_CHARACTER_ACTION_POLL: _dispatch_action_poll,
+}
