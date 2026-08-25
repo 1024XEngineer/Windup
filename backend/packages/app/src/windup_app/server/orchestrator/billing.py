@@ -1,6 +1,7 @@
 """生成任务的预付费积分：提交冻结，成功扣减，失败解冻。
 
 ``ref_id`` 固定为 ``task:{task_id}``，与流水表 ``(ref_id, reason)`` 唯一约束对齐。
+冻结额 = 该模态单价 × 本任务计划的上游模型调用次数。
 结算金额一律取提交时写入的 FROZEN 流水，不读当前定价。
 """
 
@@ -23,11 +24,14 @@ def credit_ref_id(task_id: int) -> str:
     return f"task:{task_id}"
 
 
-def prepaid_cost(task_type: GenerationType) -> int:
+def prepaid_cost(task_type: GenerationType, model_calls: int) -> int:
+    """单价 × 本任务计划的上游模型调用次数。"""
+    if model_calls < 1:
+        raise ValueError(f"model_calls 必须 >= 1, 得到 {model_calls}")
     if task_type is GenerationType.CHARACTER_IMAGE:
-        return quota_settings.generate_image_cost
+        return quota_settings.generate_image_cost * model_calls
     if task_type is GenerationType.CHARACTER_ACTION:
-        return quota_settings.generate_action_cost
+        return quota_settings.generate_action_cost * model_calls
     raise ValueError(f"未知生成类型: {task_type}")
 
 
@@ -71,9 +75,10 @@ def has_open_freeze(session: Session, task_id: int) -> bool:
 
 def reserve_for_task(
     session: Session, *, user_id: int, task_id: int, task_type: GenerationType,
+    model_calls: int,
 ) -> None:
     quota_service.reserve_credit(
-        session, user_id, prepaid_cost(task_type), credit_ref_id(task_id),
+        session, user_id, prepaid_cost(task_type, model_calls), credit_ref_id(task_id),
     )
 
 

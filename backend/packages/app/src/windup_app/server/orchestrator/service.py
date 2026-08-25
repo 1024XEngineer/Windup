@@ -37,6 +37,7 @@ class AiGenerationService(GenerationService):
         )
         billing.reserve_for_task(
             session, user_id=user_id, task_id=task.id, task_type=task.task_type,
+            model_calls=max(1, input.num_images),
         )
         return task
 
@@ -52,6 +53,7 @@ class AiGenerationService(GenerationService):
         )
         billing.reserve_for_task(
             session, user_id=user_id, task_id=task.id, task_type=task.task_type,
+            model_calls=1,
         )
         return task
 
