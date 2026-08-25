@@ -128,8 +128,14 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
               messageKind: result.messageKind,
             })
           } else if (result.kind === 'proposal') {
-            const { proposalId, optimizedPrompt, optimizationSummary } = result
-            setState({ status: 'proposal', proposalId, optimizedPrompt, optimizationSummary })
+            const { proposalId, optimizedPrompt, actionPrompt, optimizationSummary } = result
+            setState({
+              status: 'proposal',
+              proposalId,
+              optimizedPrompt,
+              ...(actionPrompt ? { actionPrompt } : {}),
+              optimizationSummary,
+            })
           }
         }
         return result
@@ -159,17 +165,18 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
     async (
       prompt: string,
       directionalMovement: QuickStartDirectionalMovement = 'single',
-      options?: { gameStyle?: string },
+      options?: { gameStyle?: string; automaticDelivery?: boolean },
     ): Promise<QuickStartAgentResult> => {
       if (running.current) throw new Error('Planner 正在处理上一条输入')
       if (state.status !== 'proposal') throw new Error('提示词提案已失效')
       running.current = true
-      const { proposalId, optimizedPrompt, optimizationSummary } = state
+      const { proposalId, optimizedPrompt, actionPrompt, optimizationSummary } = state
       if (mounted.current) {
         setState({
           status: 'dispatching',
           proposalId,
           optimizedPrompt,
+          ...(actionPrompt ? { actionPrompt } : {}),
           optimizationSummary,
         })
       }

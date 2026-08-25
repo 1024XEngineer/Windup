@@ -143,7 +143,18 @@ export function createProductionQuickStartAgentDependencies(
         onAsyncError: reportError,
       })
       try {
-        return await controller.startCharacterGeneration({ prompt: input.prompt, gameStyle })
+        return await controller.startCharacterGeneration({
+          prompt: input.prompt,
+          directionalMovement: input.directionalMovement,
+          gameStyle,
+          ...(input.automaticDelivery
+            ? {
+                automaticDelivery: {
+                  ...(input.actionPrompt ? { actionPrompt: input.actionPrompt } : {}),
+                },
+              }
+            : {}),
+        })
       } finally {
         controller.dispose()
       }

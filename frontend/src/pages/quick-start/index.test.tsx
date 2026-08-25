@@ -1158,7 +1158,7 @@ describe('QuickStartPage', () => {
     expect(optimizedCopy?.className).not.toContain('pl-4')
     const fill = screen.getByRole('button', { name: '填入输入框' })
     expect(fill.className).not.toContain('border')
-    expect(fill.textContent).toContain('填入输入框后，还可以继续修改')
+    expect(fill.textContent).toContain('编辑后逐步确认')
     fireEvent.click(fill)
 
     expect(composer.dataset.promptState).toBe('rewriting')
@@ -1191,6 +1191,45 @@ describe('QuickStartPage', () => {
       directionalMovement: 'eight-way',
       gameStyle: 'unspecified',
     })
+  })
+
+  it('confirms a character action once and starts automatic delivery without direction confirmation', async () => {
+    const startCharacterGeneration = vi.fn(async () => ({ runId: 'run-created' }))
+    const planner = vi.fn(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'quick_start_decision',
+          input: {
+            kind: 'proposal',
+            optimizedPrompt: '圆润可爱的卡皮巴拉，全身像',
+            actionPrompt: '开心地左右摇摆跳舞',
+            optimizationSummary: '我理解为一只正在开心跳舞的卡皮巴拉。',
+          },
+        },
+      ],
+    }))
+    renderAt('/quick-start', serviceFor(null), { planner, startCharacterGeneration })
+
+    fireEvent.change(screen.getByLabelText('创作指令'), {
+      target: { value: '生成一只跳舞的卡皮巴拉' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+
+    expect(await screen.findByText('动作：开心地左右摇摆跳舞')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '确认并生成' }))
+
+    await vi.waitFor(() =>
+      expect(startCharacterGeneration).toHaveBeenCalledWith({
+        prompt: '圆润可爱的卡皮巴拉，全身像',
+        actionPrompt: '开心地左右摇摆跳舞',
+        directionalMovement: 'single',
+        gameStyle: 'unspecified',
+        automaticDelivery: true,
+      }),
+    )
+    expect(screen.queryByText('最后确认一下：需要单向、四向还是八向？')).toBeNull()
   })
 
   it('keeps a proposal optional when the user continues the conversation', async () => {

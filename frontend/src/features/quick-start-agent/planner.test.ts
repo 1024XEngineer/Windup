@@ -14,6 +14,8 @@ describe('quickStartPlannerInstructions', () => {
     expect(firstTurn).toContain('最多问一个')
     expect(firstTurn).toContain('直接生成')
     expect(firstTurn).toContain('proposal 只是提案，不代表用户授权生成')
+    expect(firstTurn).toContain('角色和动作')
+    expect(firstTurn).toContain('actionPrompt')
     expect(firstTurn).toContain('不得只靠关键词')
     expect(firstTurn).toContain('对话轮数永远不是 proposal 的触发条件')
     expect(firstTurn).toContain('咨询或元对话必须用 reply')

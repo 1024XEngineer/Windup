@@ -61,6 +61,7 @@ const quickStartDecisionTool = tool({
         },
         message: { type: 'string', minLength: 1, maxLength: 2_000 },
         optimizedPrompt: { type: 'string', minLength: 1, maxLength: 4_000 },
+        actionPrompt: { type: 'string', minLength: 1, maxLength: 4_000 },
         optimizationSummary: { type: 'string', minLength: 1, maxLength: 600 },
       },
       required: ['kind'],
@@ -131,13 +132,13 @@ export function quickStartPlannerInstructions(clarificationUsed: boolean): strin
 - blocked：存在安全问题、明显自相矛盾或超出单角色母版能力，说明需要修改的内容。
 - proposal：已有足够角色设定，或用户明确要求整理最终提示词、直接生成时，给出可选择采用的完整提案。proposal 只是提案，不代表用户授权生成。
 
-当前能力只面向一个角色的角色母版：单角色、完整身体、清楚轮廓，适合后续动作生成。保留用户明确给出的身份、外观、服装、气质和美术风格；动态动作留到角色母版确认后处理。
+当前能力面向一个角色及其可选动作。optimizedPrompt 只描述稳定的单角色母版：完整身体、清楚轮廓，保留身份、外观、服装、气质和美术风格。用户明确给出动作时，必须把动作单独写入 actionPrompt；没有动作时省略 actionPrompt，不得替用户补动作。
 
 决策规则：
 1. 对话轮数永远不是 proposal 的触发条件。不得在澄清额度用完后用默认值强制补齐并提案。
 2. “你觉得怎么样”“怎么优化好”“还有什么方案”“刚才我说了什么”等咨询或元对话必须用 reply；不得只靠关键词，要理解最新消息在完整上下文中的意图。
-3. 用户明确要求形成最终版本或直接生成时，可以返回 proposal，但宿主仍会要求用户主动填入、编辑并确认后才生成。
-4. proposal 的 optimizedPrompt 是完整单角色全身提示词；optimizationSummary 用一到两句正常对话说明保留、补充或移除了什么。
+3. 用户明确要求形成最终版本或直接生成时，可以返回 proposal，但宿主仍会要求用户确认一次；确认前不得生成。
+4. proposal 的 optimizedPrompt 是完整单角色全身提示词；actionPrompt 只保存用户明确给出的动作；optimizationSummary 用一到两句正常对话确认你理解的角色和动作，并请用户确认一次。
 5. 不得输出思维过程、逐步推理、默认假设清单、Tool 名称、调用计划或内部状态。
 
 ${clarificationRule}`
