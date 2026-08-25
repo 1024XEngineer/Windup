@@ -3,8 +3,10 @@
 import asyncio
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
+from windup_app.server.quota.model import CreditAccount
 from windup_app.web.api.generation import GenerationTaskOut, _EventBus
 
 from conftest import seed_credit_account
@@ -34,13 +36,19 @@ def _create_project(
     ).json()["data"]
 
 
-def _create_character(auth_client, project_id: int) -> dict:
+def _create_character(
+    auth_client,
+    project_id: int,
+    *,
+    reference_image_url: str | None = None,
+) -> dict:
     return auth_client.post(
         "/characters",
         json={
             "project_id": project_id,
             "workflow_run_id": 1,
             "name": "勇者",
+            "reference_image_url": reference_image_url,
         },
     ).json()["data"]
 
@@ -52,6 +60,12 @@ def _image_payload(project_id: int, **overrides) -> dict:
         "width": 64,
         "height": 64,
     }
+    payload.update(overrides)
+    return payload
+
+
+def _direction_set_payload(project_id: int, character_id: int, **overrides) -> dict:
+    payload = _image_payload(project_id, character_id=character_id)
     payload.update(overrides)
     return payload
 
@@ -168,15 +182,22 @@ def test_direction_set_generation_derives_all_directions_from_project(auth_clien
         name="八向方向集项目",
         directional_movement=3,
     )
+    character = _create_character(
+        auth_client,
+        project["id"],
+        reference_image_url=_MASTER_URL,
+    )
 
     body = auth_client.post(
         "/generation/image-set",
-        json=_image_payload(project["id"], num_images=1),
+        json=_direction_set_payload(project["id"], character["id"], num_images=1),
     ).json()
 
     assert body["code"] == 200
     assert body["data"]["task_type"] == "character_direction_set"
     assert body["data"]["status"] == "pending"
+    assert body["data"]["input_payload"]["character_id"] == character["id"]
+    assert body["data"]["input_payload"]["reference_image_url"] == _MASTER_URL
     assert body["data"]["input_payload"]["directions"] == [
         "east",
         "west",
@@ -189,11 +210,75 @@ def test_direction_set_generation_derives_all_directions_from_project(auth_clien
     ]
 
 
+def test_direction_set_without_confirmed_master_is_rejected_before_queueing(auth_client):
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+    publisher = auth_client.app.state.mq_publisher
+    publisher.reset_mock()
+
+    response = auth_client.post(
+        "/generation/image-set",
+        json=_direction_set_payload(project["id"], character["id"], num_images=1),
+    )
+
+    assert response.json()["code"] == 400
+    assert "请先选择并确认角色母版" in response.json()["message"]
+    publisher.enqueue.assert_not_called()
+
+
+def test_single_direction_set_reuses_master_without_queueing_or_charging(
+    auth_client,
+    engine,
+):
+    project = _create_project(
+        auth_client,
+        name="单向项目",
+        directional_movement=1,
+    )
+    character = _create_character(
+        auth_client,
+        project["id"],
+        reference_image_url=_MASTER_URL,
+    )
+    publisher = auth_client.app.state.mq_publisher
+    publisher.reset_mock()
+
+    response = auth_client.post(
+        "/generation/image-set",
+        json=_direction_set_payload(project["id"], character["id"], num_images=1),
+    ).json()
+
+    with sessionmaker(bind=engine)() as session:
+        account = session.scalar(
+            select(CreditAccount).where(CreditAccount.user_id == 1)
+        )
+
+    assert response["code"] == 200
+    assert response["data"]["status"] == "completed"
+    assert response["data"]["result"]["directions"] == [
+        {
+            "direction": "east",
+            "status": "completed",
+            "image_urls": [_MASTER_URL],
+            "quality": None,
+            "error_message": None,
+        }
+    ]
+    assert account.frozen == 0
+    assert account.total_spent == 0
+    publisher.enqueue.assert_not_called()
+
+
 def test_direction_set_retry_rejects_task_that_has_not_partially_failed(auth_client):
     project = _create_project(auth_client)
+    character = _create_character(
+        auth_client,
+        project["id"],
+        reference_image_url=_MASTER_URL,
+    )
     submitted = auth_client.post(
         "/generation/image-set",
-        json=_image_payload(project["id"], num_images=1),
+        json=_direction_set_payload(project["id"], character["id"], num_images=1),
     ).json()["data"]
 
     response = auth_client.post(
@@ -211,9 +296,14 @@ def test_direction_set_retry_publishes_a_new_attempt_message(auth_client, engine
     from windup_framework.config.quota import settings as quota_settings
 
     project = _create_project(auth_client)
+    character = _create_character(
+        auth_client,
+        project["id"],
+        reference_image_url=_MASTER_URL,
+    )
     submitted = auth_client.post(
         "/generation/image-set",
-        json=_image_payload(project["id"], num_images=1),
+        json=_direction_set_payload(project["id"], character["id"], num_images=1),
     ).json()["data"]
     with sessionmaker(bind=engine)() as session:
         task_repo.update_progress(
@@ -235,7 +325,7 @@ def test_direction_set_retry_publishes_a_new_attempt_message(auth_client, engine
             session,
             user_id=1,
             task_id=submitted["id"],
-            actual_amount=3 * quota_settings.generate_image_cost,
+            actual_amount=2 * quota_settings.generate_image_cost,
         )
         session.commit()
 

@@ -12,6 +12,7 @@ from windup_app.server.orchestrator.model import (
     CharacterDirectionSetInput,
     GenerationType,
     TaskStatus,
+    initial_direction_set_output,
 )
 from windup_app.server.orchestrator.service import AiGenerationService
 from windup_app.server.quota.model import CreditAccount
@@ -19,6 +20,9 @@ from windup_app.worker import handlers
 from windup_common.directions import ActionDirection
 from windup_framework.config.quota import settings as quota_settings
 from windup_framework.db.base import Base
+
+
+_MASTER_URL = "https://cdn.example.com/masters/confirmed-east.png"
 
 
 @pytest.fixture
@@ -47,6 +51,8 @@ def direction_session_factory():
 
 def _four_way_input() -> CharacterDirectionSetInput:
     return CharacterDirectionSetInput(
+        character_id=42,
+        reference_image_url=_MASTER_URL,
         prompt="像素风勇者",
         width=64,
         height=64,
@@ -60,7 +66,7 @@ def _four_way_input() -> CharacterDirectionSetInput:
     )
 
 
-def test_direction_set_submission_reserves_all_planned_calls(
+def test_direction_set_submission_does_not_charge_for_confirmed_master(
     direction_session_factory,
 ):
     service = AiGenerationService()
@@ -83,7 +89,28 @@ def test_direction_set_submission_reserves_all_planned_calls(
             "south",
         ]
         assert task.input_payload["billing_attempt"] == 0
-        assert account.frozen == 4 * quota_settings.generate_image_cost
+        assert account.frozen == 3 * quota_settings.generate_image_cost
+
+
+def test_direction_set_submission_rejects_legacy_compatibility_input(
+    direction_session_factory,
+):
+    service = AiGenerationService()
+    legacy_input = handlers._direction_set_input(
+        {
+            "reference_image_url": None,
+            "directions": ["east", "west", "north", "south"],
+        }
+    )
+
+    with direction_session_factory() as session:
+        with pytest.raises(ValueError, match="已确认角色母版"):
+            service.generate_character_direction_set(
+                session,
+                user_id=1,
+                project_id=7,
+                input=legacy_input,
+            )
 
 
 def test_direction_set_keeps_successes_and_only_retries_failed_direction(
@@ -95,6 +122,8 @@ def test_direction_set_keeps_successes_and_only_retries_failed_direction(
     class _ImageExecutor:
         def _produce_image(self, input, _constraints):
             nonlocal fail_north
+            if input.reference_image_url != _MASTER_URL:
+                raise RuntimeError("direction generation lost confirmed master")
             calls.append(input.direction)
             if input.direction is ActionDirection.NORTH and fail_north:
                 raise RuntimeError("north provider failed")
@@ -127,10 +156,11 @@ def test_direction_set_keeps_successes_and_only_retries_failed_direction(
         assert partial.status is TaskStatus.PARTIAL
         by_direction = {item.direction: item for item in partial.result.directions}
         assert by_direction[ActionDirection.EAST].status == "completed"
+        assert by_direction[ActionDirection.EAST].image_urls == [_MASTER_URL]
         assert by_direction[ActionDirection.NORTH].status == "failed"
         assert by_direction[ActionDirection.NORTH].image_urls == []
         assert account.frozen == 0
-        assert account.total_spent == 3 * quota_settings.generate_image_cost
+        assert account.total_spent == 2 * quota_settings.generate_image_cost
 
         retry = service.retry_failed_directions(session, task=partial)
         assert retry.status is TaskStatus.PENDING
@@ -149,14 +179,13 @@ def test_direction_set_keeps_successes_and_only_retries_failed_direction(
     assert done.status is TaskStatus.COMPLETED
     assert all(item.status == "completed" for item in done.result.directions)
     assert calls == [
-        ActionDirection.EAST,
         ActionDirection.WEST,
         ActionDirection.NORTH,
         ActionDirection.SOUTH,
         ActionDirection.NORTH,
     ]
     assert account.frozen == 0
-    assert account.total_spent == 4 * quota_settings.generate_image_cost
+    assert account.total_spent == 3 * quota_settings.generate_image_cost
 
 
 def test_worker_dispatches_direction_set_to_aggregate_executor(
@@ -188,6 +217,32 @@ def test_worker_dispatches_direction_set_to_aggregate_executor(
     assert seen[0][2] == 9
 
 
+def test_worker_decodes_pre_master_direction_set_payload_as_legacy_generation():
+    legacy_input = handlers._direction_set_input(
+        {
+            "reference_image_url": None,
+            "prompt": "像素风勇者",
+            "width": 64,
+            "height": 64,
+            "num_images": 1,
+            "directions": ["east", "west", "north", "south"],
+            "billing_attempt": 0,
+        }
+    )
+
+    assert legacy_input.character_id is None
+    assert legacy_input.anchor_direction is None
+    assert legacy_input.reference_image_url is None
+    assert [
+        item.status for item in initial_direction_set_output(legacy_input).directions
+    ] == [
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+    ]
+
+
 def test_direction_set_settlement_uses_frozen_price_not_current_price(
     direction_session_factory,
     monkeypatch,
@@ -196,6 +251,8 @@ def test_direction_set_settlement_uses_frozen_price_not_current_price(
 
     class _ImageExecutor:
         def _produce_image(self, input, _constraints):
+            if input.reference_image_url != _MASTER_URL:
+                raise RuntimeError("direction generation lost confirmed master")
             return [f"https://cdn.example.com/{input.direction.value}.png"], None
 
     service = AiGenerationService()
@@ -220,4 +277,4 @@ def test_direction_set_settlement_uses_frozen_price_not_current_price(
             select(CreditAccount).where(CreditAccount.user_id == 1)
         )
 
-    assert account.total_spent == 4 * initial_price
+    assert account.total_spent == 3 * initial_price

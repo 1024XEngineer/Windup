@@ -208,10 +208,11 @@ class CharacterImageGenerateRequest(BaseModel):
 
 
 class CharacterDirectionSetGenerateRequest(BaseModel):
-    """一次提交项目规格要求的全部角色母版方向。"""
+    """基于角色已确认母版生成项目规格要求的其余方向。"""
 
+    model_config = ConfigDict(extra="forbid")
     project_id: int = Field(gt=0)
-    reference_image_url: str | None = None
+    character_id: int = Field(gt=0)
     prompt: str = ""
     negative_prompt: str = ""
     width: int = Field(default=1024, ge=64, le=2048)
@@ -471,8 +472,16 @@ def submit_direction_set_generation(
     user_id = request.state.current_user.id
     project = _get_project_or_raise(session, body.project_id, user_id)
     _validate_project_size(project, body.width, body.height)
+    character = _get_character_or_raise(session, body.character_id, body.project_id)
+    confirmed_master = (character.reference_image_url or "").strip()
+    if not confirmed_master:
+        raise BizException(
+            "请先选择并确认角色母版，再生成四向或八向角色",
+            code=BizCode.BAD_REQUEST,
+        )
     input_data = CharacterDirectionSetInput(
-        reference_image_url=body.reference_image_url,
+        character_id=character.id,
+        reference_image_url=confirmed_master,
         prompt=body.prompt,
         negative_prompt=body.negative_prompt,
         width=body.width,
@@ -488,12 +497,13 @@ def submit_direction_set_generation(
         project_id=body.project_id,
         input=input_data,
     )
-    _publish_generation_after_commit(
-        session,
-        request.app.state.mq_publisher,
-        task_id=task.id,
-        task_type=task.task_type.value,
-    )
+    if not task.is_terminal:
+        _publish_generation_after_commit(
+            session,
+            request.app.state.mq_publisher,
+            task_id=task.id,
+            task_type=task.task_type.value,
+        )
     return Response.success(_task_to_out(task), message="方向集任务已提交")
 
 

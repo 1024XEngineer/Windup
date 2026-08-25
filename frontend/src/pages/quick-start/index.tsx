@@ -523,12 +523,13 @@ function QuickStartInput({
   const navigate = useNavigate()
   const [prompt, setPrompt] = useState('')
   const [directionalMovement, setDirectionalMovement] = useState<DirectionalMovement>('single')
+  const [confirmedPrompt, setConfirmedPrompt] = useState<string | null>(null)
   const [templateFile, setTemplateFile] = useState<File | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [revealingFirstAgentTurn, setRevealingFirstAgentTurn] = useState(false)
   const [entryTransition, setEntryTransition] = useState<'idle' | 'leaving'>('idle')
   const [promptState, setPromptState] = useState<
-    'collecting' | 'rewriting' | 'ready' | 'confirmed'
+    'collecting' | 'rewriting' | 'ready' | 'direction' | 'confirmed'
   >('collecting')
   const [error, setError] = useState<string | null>(null)
   const draftIdRef = useRef(readAgentDraftId())
@@ -561,7 +562,12 @@ function QuickStartInput({
   const agentPlanning = agentSession.state.status === 'planning'
   const agentThinking = agentPlanning || revealingFirstAgentTurn
   const generationStarting = promptState === 'confirmed'
-  const entryBusy = submitting || agentThinking || promptState === 'rewriting' || generationStarting
+  const entryBusy =
+    submitting ||
+    agentThinking ||
+    promptState === 'rewriting' ||
+    promptState === 'direction' ||
+    generationStarting
   const hasPrompt = Boolean(prompt.trim())
   const hasConversation = conversationTurns.length > 0
   const showConversation = hasConversation || agentThinking || agentSession.state.status === 'error'
@@ -743,13 +749,14 @@ function QuickStartInput({
 
     if (agentSession.state.status === 'proposal' && promptState === 'ready') {
       if (!normalizedPrompt) return
-      setPromptState('confirmed')
-      try {
-        const result = await agentSession.confirmProposal(normalizedPrompt, directionalMovement)
-        if (result.kind === 'generated') await handoffGenerated(result)
-      } catch {
-        setPromptState('ready')
-      }
+      setConfirmedPrompt(normalizedPrompt)
+      setPrompt('')
+      setPromptState('direction')
+      appendConversationTurn({
+        role: 'assistant',
+        content: '最后确认一下：需要单向、四向还是八向？',
+        kind: 'clarification',
+      })
       return
     }
 
@@ -832,8 +839,25 @@ function QuickStartInput({
     }
   }
 
+  async function chooseDirectionalMovement(movement: DirectionalMovement) {
+    if (!confirmedPrompt || promptState !== 'direction') return
+    setDirectionalMovement(movement)
+    appendConversationTurn({ role: 'user', content: DIRECTIONAL_MOVEMENT[movement] })
+    setPromptState('confirmed')
+    try {
+      const result = await agentSession.confirmProposal(confirmedPrompt, movement)
+      if (result.kind === 'generated') await handoffGenerated(result)
+    } catch {
+      setPromptState('direction')
+    }
+  }
+
   const inputLocked =
-    submitting || agentPlanning || promptState === 'rewriting' || generationStarting
+    submitting ||
+    agentThinking ||
+    promptState === 'rewriting' ||
+    promptState === 'direction' ||
+    generationStarting
   const awaitingGenerationConfirmation =
     agentSession.state.status === 'proposal' && promptState === 'ready'
   const buttonLabel = submitting
@@ -935,6 +959,20 @@ function QuickStartInput({
                   <AgentCopy lines={[agentSession.state.message]} tone="danger" />
                 </div>
               ) : null}
+              {promptState === 'direction' ? (
+                <div className="flex flex-wrap gap-2" aria-label="选择生成方向">
+                  {QUICK_START_DIRECTIONAL_MOVEMENTS.map((movement) => (
+                    <button
+                      key={movement}
+                      type="button"
+                      onClick={() => void chooseDirectionalMovement(movement)}
+                      className="rounded-full border border-app-line bg-app-surface-raised px-4 py-2 text-sm font-semibold text-app-ink transition hover:border-app-accent hover:text-app-accent"
+                    >
+                      {DIRECTIONAL_MOVEMENT[movement]}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : (
             <>
@@ -966,33 +1004,35 @@ function QuickStartInput({
               : 'translate-y-0 opacity-100 blur-0'
           }`}
         >
-          <fieldset
-            aria-label="角色方向"
-            disabled={entryBusy}
-            className="mb-2 flex items-center justify-end gap-1.5 text-xs"
-          >
-            <legend className="mr-1 text-app-muted">生成方向</legend>
-            {QUICK_START_DIRECTIONAL_MOVEMENTS.map((movement) => (
-              <label
-                key={movement}
-                className={`relative cursor-pointer rounded-full border px-3 py-1.5 font-semibold transition focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-app-accent ${
-                  directionalMovement === movement
-                    ? 'border-app-accent bg-app-accent-soft text-app-accent'
-                    : 'border-app-line bg-app-surface/70 text-app-muted hover:border-app-line-strong hover:text-app-ink'
-                } ${entryBusy ? 'cursor-not-allowed opacity-50' : ''}`}
-              >
-                <input
-                  type="radio"
-                  name="quick-start-directional-movement"
-                  value={movement}
-                  checked={directionalMovement === movement}
-                  onChange={() => setDirectionalMovement(movement)}
-                  className="sr-only"
-                />
-                {DIRECTIONAL_MOVEMENT[movement]}
-              </label>
-            ))}
-          </fieldset>
+          {templateFile ? (
+            <fieldset
+              aria-label="角色方向"
+              disabled={entryBusy}
+              className="mb-2 flex items-center justify-end gap-1.5 text-xs"
+            >
+              <legend className="mr-1 text-app-muted">生成方向</legend>
+              {QUICK_START_DIRECTIONAL_MOVEMENTS.map((movement) => (
+                <label
+                  key={movement}
+                  className={`relative cursor-pointer rounded-full border px-3 py-1.5 font-semibold transition focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-app-accent ${
+                    directionalMovement === movement
+                      ? 'border-app-accent bg-app-accent-soft text-app-accent'
+                      : 'border-app-line bg-app-surface/70 text-app-muted hover:border-app-line-strong hover:text-app-ink'
+                  } ${entryBusy ? 'cursor-not-allowed opacity-50' : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name="quick-start-directional-movement"
+                    value={movement}
+                    checked={directionalMovement === movement}
+                    onChange={() => setDirectionalMovement(movement)}
+                    className="sr-only"
+                  />
+                  {DIRECTIONAL_MOVEMENT[movement]}
+                </label>
+              ))}
+            </fieldset>
+          ) : null}
           <form
             onSubmit={(event) => void submit(event)}
             autoComplete="off"
@@ -1356,6 +1396,53 @@ function DirectionCandidatePicker({
           </div>
         </section>
       ))}
+    </div>
+  )
+}
+
+function DirectionFirstFrameStack({
+  directions,
+  selections,
+}: {
+  directions: readonly QuickStartCandidate['direction'][]
+  selections: QuickStartDirectionSelections
+}) {
+  const directionCountLabel =
+    directions.length === 8 ? '八向' : directions.length === 4 ? '四向' : '单向'
+  return (
+    <div
+      role="group"
+      aria-label={`${directionCountLabel}首帧集合`}
+      data-layout="direction-first-frame-stack"
+      className="grid aspect-square w-full max-w-xl grid-cols-2 gap-3 overflow-hidden rounded-[2rem] border border-app-line-strong bg-app-surface-muted p-4 shadow-app-card sm:p-5"
+    >
+      {directions.map((direction) => {
+        const imageUrl = selections[direction]
+        return imageUrl ? (
+          <figure
+            key={direction}
+            className="relative min-h-0 overflow-hidden rounded-2xl border border-app-line bg-app-surface-raised"
+          >
+            <AssetVisual
+              src={imageUrl}
+              alt={`${DIRECTION_LABELS[direction]}方向首帧`}
+              className="h-full w-full object-contain [image-rendering:pixelated]"
+            />
+            <figcaption className="absolute bottom-2 left-2 rounded-full bg-app-canvas/85 px-2 py-1 text-[10px] font-bold text-app-ink backdrop-blur-sm">
+              {DIRECTION_LABELS[direction]}
+            </figcaption>
+          </figure>
+        ) : (
+          <div
+            key={direction}
+            role="status"
+            aria-label={`${DIRECTION_LABELS[direction]}方向首帧生成中`}
+            className="grid min-h-0 place-items-center rounded-2xl border border-dashed border-app-line bg-app-surface-raised text-xs font-semibold text-app-muted"
+          >
+            {DIRECTION_LABELS[direction]}方向生成中
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -1746,15 +1833,31 @@ function QuickStartRun({
   const isTemplateFailed = templateStep?.status === 'failed'
   const isTemplateSelecting =
     templateStep?.status === 'active' && templateStep.phase === 'selecting'
+  const isDirectionSetSelecting = isTemplateSelecting && Boolean(templateStep?.selectedImageUrl)
   const isFirstFrameSelecting =
     firstFrameStep?.status === 'active' && firstFrameStep.phase === 'selecting'
   const isFirstFrameFailed = firstFrameStep?.status === 'failed'
   const composerCanInterrupt = workflowIsActive && !isTemplateSelecting && !isFirstFrameSelecting
   const candidateGroups = groupCandidates(candidates)
   const firstFrameCandidateGroups = groupCandidates(firstFrameCandidates)
+  const templateDirections = Array.from(
+    new Set(
+      templateStep?.generations
+        .filter((reference) => reference.role === 'character_template')
+        .map((reference) => reference.direction ?? 'east') ?? [],
+    ),
+  )
+  const singletonDirectionSelections = templateStep?.selectedImageUrl
+    ? Object.fromEntries(
+        candidateGroups
+          .filter((group) => group.items.length === 1)
+          .map((group) => [group.direction, group.items[0]!.imageUrl]),
+      )
+    : {}
   const templateSelections: QuickStartDirectionSelections = {
     ...(templateStep?.selectedImageUrl ? { east: templateStep.selectedImageUrl } : {}),
     ...(templateStep?.selectedImages ?? {}),
+    ...singletonDirectionSelections,
     ...selectedCandidates,
   }
   const firstFrameSelections: QuickStartDirectionSelections = {
@@ -1764,7 +1867,9 @@ function QuickStartRun({
     ...(firstFrameStep?.selectedFirstFrameUrls ?? {}),
     ...selectedFirstFrames,
   }
-  const templateSelectionComplete = allDirectionsSelected(candidates, templateSelections)
+  const templateSelectionComplete =
+    templateDirections.length > 0 &&
+    templateDirections.every((direction) => Boolean(templateSelections[direction]))
   const firstFrameSelectionComplete = allDirectionsSelected(
     firstFrameCandidates,
     firstFrameSelections,
@@ -2001,7 +2106,9 @@ function QuickStartRun({
     session.getWorkflowAgentContext().availableTools.length > 0
   const workflowAgentMode = !isTemplateSelecting && !isFirstFrameSelecting && !addActionIntent
   const composerCanSubmit =
-    (isTemplateSelecting && templateSelectionComplete) ||
+    (isTemplateSelecting &&
+      templateSelectionComplete &&
+      (!isDirectionSetSelecting || Boolean(actionDescription.trim()))) ||
     (isFirstFrameSelecting && firstFrameSelectionComplete) ||
     (canAddAction && Boolean(actionDescription.trim()) && !addingAction) ||
     (workflowAgentMode && workflowAgentAvailable && Boolean(actionDescription.trim()))
@@ -2065,7 +2172,24 @@ function QuickStartRun({
             </div>
 
             <AgentTurn step="character-template" current={characterTurnIsCurrent}>
-              {isTemplateSelecting && candidates.length ? (
+              {isTemplateSelecting && templateStep?.selectedImageUrl ? (
+                <>
+                  <AgentCopy
+                    lines={[
+                      templateSelectionComplete
+                        ? `已生成 ${templateDirections.length} 个方向的首帧集合。`
+                        : '正在根据已确认母版生成方向首帧集合。',
+                      templateSelectionComplete
+                        ? '描述角色接下来的动作，发送后开始动作生成。'
+                        : '全部方向会保持同一个角色造型。',
+                    ]}
+                  />
+                  <DirectionFirstFrameStack
+                    directions={templateDirections}
+                    selections={templateSelections}
+                  />
+                </>
+              ) : isTemplateSelecting && candidates.length ? (
                 <>
                   <AgentCopy
                     lines={[
@@ -2405,7 +2529,9 @@ function QuickStartRun({
                 composerCanInterrupt
                   ? '中断自动制作'
                   : isTemplateSelecting
-                    ? '确认选择，继续下一步'
+                    ? isDirectionSetSelecting
+                      ? '生成动作'
+                      : '确认母版'
                     : '发送'
               }
               onClick={composerCanInterrupt ? () => void interrupt() : undefined}

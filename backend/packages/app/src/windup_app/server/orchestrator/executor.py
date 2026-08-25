@@ -43,9 +43,9 @@ from windup_app.server.orchestrator.model import (
     CharacterDirectionSetInput,
     CharacterDirectionSetOutput,
     CharacterImageInput,
-    DirectionImageResult,
     GenerationType,
     TaskStatus,
+    initial_direction_set_output,
 )
 
 if TYPE_CHECKING:
@@ -869,8 +869,9 @@ class ImageTaskExecutor:
             parts.append(f"Art style: {cons.style}.")
         parts.append("Plain light-gray background, no shadow.")
 
-        # 图生图模式:明确标注两张图的各自用途
-        if has_style_ref:
+        # 图生图模式:明确标注参考图用途。只有角色母版、没有项目风格图时同样必须写明
+        # 身份约束，否则 Provider 虽收到图片，仍可能把它当普通构图参考重新设计角色。
+        if want_char and has_style_ref:
             prefix = (
                 "This is an image-to-image task. "
                 "The first image is the CHARACTER reference — preserve its identity. "
@@ -878,6 +879,13 @@ class ImageTaskExecutor:
                 "color palette, and rendering technique. "
             )
             parts.insert(0, prefix)
+        elif want_char:
+            parts.insert(
+                0,
+                "This is an image-to-image task. The first image is the confirmed "
+                "CHARACTER master — preserve its identity, face, body proportions, "
+                "outfit, colors, and accessories exactly. ",
+            )
 
         prompt = " ".join(parts)
 
@@ -1001,12 +1009,7 @@ class DirectionSetTaskExecutor:
                 previous = (
                     task.result
                     if isinstance(task.result, CharacterDirectionSetOutput)
-                    else CharacterDirectionSetOutput(
-                        directions=[
-                            DirectionImageResult(direction=direction)
-                            for direction in input.directions
-                        ]
-                    )
+                    else initial_direction_set_output(input)
                 )
                 task_repo.update_progress(
                     s,

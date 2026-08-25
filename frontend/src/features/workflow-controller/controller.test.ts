@@ -307,7 +307,7 @@ describe('WorkflowController', () => {
     })
   })
 
-  it('按 Quick Start 选择的四向模式创建项目并提交全部四个方向', async () => {
+  it('按 Quick Start 选择四向项目时仍只提交三张东向母版候选', async () => {
     const workflow = createWorkflowApis()
     const generation = createGenerationHarness()
     const prepareProject = vi.fn(async () => ({
@@ -328,12 +328,9 @@ describe('WorkflowController', () => {
     })
 
     expect(prepareProject).toHaveBeenCalledWith('四向像素骑士', 'four-way')
-    expect(generation.apis.create).toHaveBeenCalledTimes(4)
+    expect(generation.apis.create).toHaveBeenCalledTimes(1)
     expect(vi.mocked(generation.apis.create).mock.calls.map(([input]) => input.direction)).toEqual([
       'east',
-      'west',
-      'north',
-      'south',
     ])
   })
 
@@ -1564,7 +1561,7 @@ describe('WorkflowController', () => {
     })
     expect(incomplete.controller.getWorkflow().nodes[1]).toMatchObject({
       status: 'active',
-      phase: 'generating',
+      phase: 'selecting',
     })
   })
 
@@ -1659,6 +1656,50 @@ describe('WorkflowController', () => {
         { taskId: 'task-5', role: 'character_template', direction: 'north' },
       ],
     })
+  })
+
+  it('已确认母版后的方向重试继续锁定母版且只生成一张', async () => {
+    const run = createRun([
+      setupNode({ status: 'passed', phase: 'completed' }),
+      templateNode({
+        status: 'failed',
+        phase: 'generating',
+        error: 'north provider failed',
+        selectedImageUrl: 'east-master.png',
+        selectedImages: { east: 'east-master.png' },
+        generations: [
+          { taskId: 'task-east', role: 'character_template' },
+          { taskId: 'task-north', role: 'character_template', direction: 'north' },
+        ],
+      }),
+    ])
+    const { controller, generation } = createController(run, 'four-way')
+    generation.snapshots.set('task-east', {
+      id: 'task-east',
+      projectId: '1',
+      type: 'character_template',
+      status: 'completed',
+      result: {
+        type: 'character_template',
+        direction: 'east',
+        images: [{ url: 'east-master.png' }],
+      },
+      error: null,
+    })
+
+    await controller.retryGenerationDirection('template-1', 'north', {
+      spriteWidth: 64,
+      spriteHeight: 64,
+    })
+
+    expect(generation.apis.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: 'character_template',
+        direction: 'north',
+        candidateCount: 1,
+        referenceMedia: ['east-master.png'],
+      }),
+    )
   })
 
   it('动作首帧只重试失败方向并使用同方向角色母版', async () => {
