@@ -96,11 +96,31 @@ describe('CharacterDetailPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '展开行走' }))
 
     const sequence = screen.getByRole('region', { name: '行走完整帧序列' })
+    const directions = within(sequence).getByRole('group', { name: '行走方向' })
+    expect(
+      within(directions)
+        .getAllByRole('radio')
+        .map((radio) => radio.getAttribute('value')),
+    ).toEqual(['east', 'west', 'north', 'south'])
+    expect(
+      (within(directions).getByRole('radio', { name: '东' }) as HTMLInputElement).checked,
+    ).toBe(true)
     const frames = within(sequence).getAllByRole('img')
     expect(frames.map((frame) => frame.getAttribute('src'))).toEqual([
       'https://cdn.windup.test/walk-01.png',
       'https://cdn.windup.test/walk-02.png',
       'https://cdn.windup.test/walk-03.png',
+    ])
+
+    fireEvent.click(within(directions).getByRole('radio', { name: '西' }))
+    expect(
+      within(sequence)
+        .getAllByRole('img')
+        .map((frame) => frame.getAttribute('src')),
+    ).toEqual([
+      'https://cdn.windup.test/walk-01.png?direction=west',
+      'https://cdn.windup.test/walk-02.png?direction=west',
+      'https://cdn.windup.test/walk-03.png?direction=west',
     ])
     expect(within(sequence).queryByRole('button', { name: '保存为动作模板' })).toBeNull()
     expect(screen.queryByText('动作模板后端未提供')).toBeNull()
@@ -144,6 +164,87 @@ describe('CharacterDetailPage', () => {
 
     expect(await screen.findByRole('heading', { name: '待定角色' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '增加动作' }).hasAttribute('disabled')).toBe(false)
+  })
+
+  it('shows every persisted eight-way character template on the outfit master', async () => {
+    const backend = createProjectAssetsBackend()
+    const directions = [
+      ['east', '东'],
+      ['west', '西'],
+      ['north', '北'],
+      ['south', '南'],
+      ['north_east', '东北'],
+      ['north_west', '西北'],
+      ['south_east', '东南'],
+      ['south_west', '西南'],
+    ] as const
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      const response = await backend.fetch(input, init)
+      if (!request.url.endsWith('/characters/51')) return response
+
+      const payload = (await response.json()) as {
+        data: { character_data: { templates?: unknown[] } }
+        [key: string]: unknown
+      }
+      payload.data.character_data.templates = directions.map(([direction]) => ({
+        direction,
+        source_direction: null,
+        mirror_x: false,
+        image_url: `https://cdn.windup.test/template-${direction}.png`,
+      }))
+      return new Response(JSON.stringify(payload), {
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects/42/assets/51']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(await screen.findByRole('heading', { name: '轻装信使' })).toBeTruthy()
+    const templates = screen.getByRole('region', { name: '角色母版方向' })
+    expect(
+      within(templates)
+        .getAllByRole('img')
+        .map((image) => image.getAttribute('alt')),
+    ).toEqual(directions.map(([, label]) => `轻装信使${label}方向母版`))
+  })
+
+  it('keeps Playtest available when real frames exist only in directional sequences', async () => {
+    const backend = createProjectAssetsBackend()
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      const response = await backend.fetch(input, init)
+      if (!request.url.endsWith('/characters/51')) return response
+
+      const payload = (await response.json()) as {
+        data: { character_data: { outfits: { actions: { frames: unknown[] }[] }[] } }
+        [key: string]: unknown
+      }
+      for (const action of payload.data.character_data.outfits[0]?.actions ?? []) {
+        action.frames = []
+      }
+      return new Response(JSON.stringify(payload), {
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects/42/assets/51']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(await screen.findByRole('link', { name: '在预览台打开当前造型' })).toBeTruthy()
   })
 
   it('preserves the Outfit level when no Action exists', async () => {

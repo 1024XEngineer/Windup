@@ -3,10 +3,15 @@ import { Graph, Lightning, Plus, X } from '@phosphor-icons/react'
 import { Link, useOutletContext, useParams } from 'react-router'
 
 import {
+  ACTION_DIRECTIONS,
   characterTemplateImages,
   characterApis,
+  getOutfitPlayback,
   type Action,
+  type ActionDirection,
   type Character,
+  type CharacterTemplate,
+  type Frame,
   type Outfit,
   type Project,
 } from '@/entities'
@@ -20,12 +25,61 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
   custom: '自定义',
 }
 
+const DIRECTION_LABELS: Record<ActionDirection, string> = {
+  east: '东',
+  west: '西',
+  north: '北',
+  south: '南',
+  north_east: '东北',
+  north_west: '西北',
+  south_east: '东南',
+  south_west: '西南',
+}
+
 function actionTypeLabel(type: string) {
   return ACTION_TYPE_LABELS[type] ?? type
 }
 
-function orderedFrames(action: Action) {
-  return [...action.frames].sort((left, right) => left.index - right.index)
+function orderedFrames(frames: readonly Frame[]) {
+  return [...frames].sort((left, right) => left.index - right.index)
+}
+
+function actionDirections(action: Action): readonly ActionDirection[] {
+  if (!action.sequences?.length) return ['east']
+  const available = new Set(action.sequences.map((sequence) => sequence.direction))
+  return ACTION_DIRECTIONS.filter((direction) => available.has(direction))
+}
+
+function actionFrames(action: Action, direction: ActionDirection) {
+  if (!action.sequences?.length) {
+    return { frames: orderedFrames(action.frames), mirrorX: false }
+  }
+
+  const sequence = action.sequences.find((item) => item.direction === direction)
+  if (!sequence) return { frames: [], mirrorX: false }
+  if (sequence.sourceDirection === null) {
+    return { frames: orderedFrames(sequence.frames), mirrorX: false }
+  }
+  const source = action.sequences.find((item) => item.direction === sequence.sourceDirection)
+  return { frames: orderedFrames(source?.frames ?? []), mirrorX: sequence.mirrorX }
+}
+
+function resolvedCharacterTemplates(templates: readonly CharacterTemplate[] = []) {
+  const byDirection = new Map(templates.map((template) => [template.direction, template]))
+  return ACTION_DIRECTIONS.flatMap((direction) => {
+    const template = byDirection.get(direction)
+    if (!template) return []
+    const source =
+      template.sourceDirection === null ? template : byDirection.get(template.sourceDirection)
+    if (!source?.imageUrl) return []
+    return [
+      {
+        direction,
+        imageUrl: source.imageUrl,
+        mirrorX: template.mirrorX,
+      },
+    ]
+  })
 }
 
 function characterName(character: Character) {
@@ -82,7 +136,7 @@ export function CharacterDetailPage() {
 
   const name = characterName(character)
   const selectedOutfit = character.outfits[0] ?? null
-  const canPlaytest = selectedOutfit?.actions.some((action) => action.frames.length > 0) ?? false
+  const canPlaytest = selectedOutfit ? getOutfitPlayback(selectedOutfit).playable : false
 
   return (
     <section aria-labelledby="character-title" className="p-4 lg:px-6 lg:py-5">
@@ -181,35 +235,77 @@ function CharacterExport({
 
 function OutfitMaster({ character, outfit }: { character: Character; outfit: Outfit }) {
   const name = characterName(character)
+  const directionalTemplates = resolvedCharacterTemplates(character.templates)
   return (
-    <section aria-labelledby="outfit-master-title" className="flex min-w-0 items-center gap-4 py-2">
-      <div className="h-28 w-28 shrink-0 sm:h-32 sm:w-32">
-        <AssetPreviewSurface
-          previewUrl={outfit.previewUrl}
-          previewAlt={`${name}的${outfit.name}预览`}
-          priority
-          className="h-full"
-        />
+    <section aria-labelledby="outfit-master-title" className="grid min-w-0 gap-4 py-2">
+      <div className="flex min-w-0 items-center gap-4">
+        {directionalTemplates.length === 0 ? (
+          <div className="h-28 w-28 shrink-0 sm:h-32 sm:w-32">
+            <AssetPreviewSurface
+              previewUrl={outfit.previewUrl}
+              previewAlt={`${name}的${outfit.name}预览`}
+              priority
+              className="h-full"
+            />
+          </div>
+        ) : null}
+        <div className="min-w-0 flex-1">
+          <h3
+            id="outfit-master-title"
+            className="text-lg font-semibold tracking-[-0.03em] text-app-ink"
+          >
+            {outfit.name}
+          </h3>
+          <p className="mt-2 text-[0.7rem] font-medium text-app-muted">
+            {outfit.actions.length} 个动作
+            {directionalTemplates.length > 0 ? ` · ${directionalTemplates.length} 个角色方向` : ''}
+          </p>
+        </div>
       </div>
-      <div className="min-w-0 flex-1">
-        <h3
-          id="outfit-master-title"
-          className="text-lg font-semibold tracking-[-0.03em] text-app-ink"
+
+      {directionalTemplates.length > 0 ? (
+        <section
+          aria-label="角色母版方向"
+          className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8"
         >
-          {outfit.name}
-        </h3>
-        <p className="mt-2 text-[0.7rem] font-medium text-app-muted">
-          {outfit.actions.length} 个动作
-        </p>
-      </div>
+          {directionalTemplates.map((template, index) => (
+            <figure
+              key={template.direction}
+              className="overflow-hidden rounded-xl border border-app-line bg-app-surface-raised"
+            >
+              <div className="aspect-square bg-app-surface-muted p-2">
+                <img
+                  src={template.imageUrl}
+                  alt={`${name}${DIRECTION_LABELS[template.direction]}方向母版`}
+                  loading={index === 0 ? 'eager' : 'lazy'}
+                  decoding="async"
+                  fetchPriority={index === 0 ? 'high' : 'auto'}
+                  className={`h-full w-full object-contain [image-rendering:pixelated] ${template.mirrorX ? '-scale-x-100' : ''}`}
+                />
+              </div>
+              <figcaption className="border-t border-app-line px-2 py-1.5 text-center text-[0.68rem] font-semibold text-app-muted">
+                {DIRECTION_LABELS[template.direction]}
+              </figcaption>
+            </figure>
+          ))}
+        </section>
+      ) : null}
     </section>
   )
 }
 
 function ActionList({ character, outfit }: { character: Character; outfit: Outfit }) {
   const [selectedActionId, setSelectedActionId] = useState<string | null>(null)
+  const [selectedDirection, setSelectedDirection] = useState<ActionDirection>('east')
   const [entryOpen, setEntryOpen] = useState(false)
   const selectedAction = outfit.actions.find((action) => action.id === selectedActionId) ?? null
+  const selectedActionDirections = selectedAction ? actionDirections(selectedAction) : []
+  const activeDirection = selectedActionDirections.includes(selectedDirection)
+    ? selectedDirection
+    : (selectedActionDirections[0] ?? 'east')
+  const selectedActionFrames = selectedAction
+    ? actionFrames(selectedAction, activeDirection)
+    : { frames: [], mirrorX: false }
   const templateImages = characterTemplateImages(character.templates)
   const canCreateAction = Boolean(
     templateImages.east || outfit.previewUrl || character.referenceImageUrl,
@@ -321,7 +417,7 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
           >
             {outfit.actions.map((action, index) => {
               const expanded = selectedAction?.id === action.id
-              const previewFrame = orderedFrames(action)[0]
+              const previewFrame = actionFrames(action, 'east').frames[0]
               return (
                 <article
                   key={action.id}
@@ -333,7 +429,10 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
                     type="button"
                     aria-label={`${expanded ? '收起' : '展开'}${action.name}`}
                     aria-expanded={expanded}
-                    onClick={() => setSelectedActionId(expanded ? null : action.id)}
+                    onClick={() => {
+                      setSelectedActionId(expanded ? null : action.id)
+                      if (!expanded) setSelectedDirection(actionDirections(action)[0] ?? 'east')
+                    }}
                     className={`block w-full overflow-hidden rounded-[1.4rem] border bg-app-surface-raised text-left transition duration-500 group-hover:-translate-y-2 ${expanded ? 'border-app-accent ring-4 ring-app-accent-soft' : 'border-app-line'}`}
                   >
                     <div className="relative aspect-[16/10] overflow-hidden bg-app-surface-muted">
@@ -385,29 +484,59 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
                   <dt className="text-app-faint">帧率</dt>
                   <dd className="tabular-nums text-app-ink-soft">{selectedAction.fps} FPS</dd>
                   <dt className="text-app-faint">帧数</dt>
-                  <dd className="tabular-nums text-app-ink-soft">{selectedAction.frameCount}</dd>
+                  <dd className="tabular-nums text-app-ink-soft">
+                    {selectedActionFrames.frames.length}
+                  </dd>
                   <dt className="text-app-faint">播放</dt>
                   <dd className="text-app-ink-soft">{selectedAction.loop ? '循环' : '单次'}</dd>
                 </dl>
               </div>
               <div className="min-w-0">
-                <div className="flex items-baseline justify-between gap-4">
+                <div className="flex flex-wrap items-center justify-between gap-4">
                   <h5 className="text-sm font-semibold text-app-ink">帧序列</h5>
                   <span className="text-[0.68rem] tabular-nums text-app-faint">
-                    {selectedAction.frameCount} 帧
+                    {selectedActionFrames.frames.length} 帧
                   </span>
                 </div>
+                {selectedActionDirections.length > 1 ? (
+                  <fieldset
+                    aria-label={`${selectedAction.name}方向`}
+                    className="mt-3 flex flex-wrap gap-1.5"
+                  >
+                    <legend className="sr-only">选择动作方向</legend>
+                    {selectedActionDirections.map((direction) => (
+                      <label
+                        key={direction}
+                        className={`cursor-pointer rounded-full border px-3 py-1.5 text-xs font-semibold transition focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-app-accent ${
+                          activeDirection === direction
+                            ? 'border-app-accent bg-app-accent-soft text-app-accent'
+                            : 'border-app-line text-app-muted hover:border-app-line-strong hover:text-app-ink'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name={`action-direction-${selectedAction.id}`}
+                          value={direction}
+                          checked={activeDirection === direction}
+                          onChange={() => setSelectedDirection(direction)}
+                          className="sr-only"
+                        />
+                        {DIRECTION_LABELS[direction]}
+                      </label>
+                    ))}
+                  </fieldset>
+                ) : null}
                 <div className="mt-3 overflow-x-auto pb-2">
                   <ol className="flex min-w-max gap-3">
-                    {orderedFrames(selectedAction).map((frame) => (
+                    {selectedActionFrames.frames.map((frame) => (
                       <li key={`${selectedAction.id}-${frame.index}`} className="w-24 shrink-0">
                         <div className="overflow-hidden rounded-lg border border-app-line bg-app-surface-muted">
                           <img
                             src={frame.imageUrl}
-                            alt={`${selectedAction.name}第 ${frame.index + 1} 帧`}
+                            alt={`${selectedAction.name}${DIRECTION_LABELS[activeDirection]}方向第 ${frame.index + 1} 帧`}
                             loading="lazy"
                             decoding="async"
-                            className="aspect-square w-full object-contain p-1.5 [image-rendering:pixelated]"
+                            className={`aspect-square w-full object-contain p-1.5 [image-rendering:pixelated] ${selectedActionFrames.mirrorX ? '-scale-x-100' : ''}`}
                           />
                         </div>
                         <div className="mt-2 flex items-center justify-between gap-1 text-[0.65rem] tabular-nums text-app-faint">
