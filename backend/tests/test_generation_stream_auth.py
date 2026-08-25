@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from sqlalchemy.orm import sessionmaker
 
 from windup_app.server.orchestrator import task_repo
 from windup_app.server.orchestrator.model import GenerationType, TaskStatus
@@ -238,6 +239,50 @@ def test_terminal_snapshot_returns_payload_for_completed_task(session):
 def test_terminal_snapshot_ignores_non_terminal(session):
     task_id = _make_task(session, user_id=1, project_id=42, status=TaskStatus.RUNNING)
     assert task_repo.terminal_snapshot(session, task_id, project_id=42) is None
+
+
+def test_stream_start_closes_session_before_returning(engine, session):
+    """SSE 预检必须归还连接,否则压测十几路进度流打满 QueuePool,前端报错。"""
+    from conftest import insert_project
+    from windup_app.web.api import generation as gen
+
+    project = insert_project(session, user_id=1)
+    session.commit()
+    task_id = _make_task(
+        session,
+        user_id=1,
+        project_id=project.id,
+        status=TaskStatus.COMPLETED,
+    )
+
+    closed: list[bool] = []
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    def SessionLocal():
+        inner = factory()
+        orig = inner.close
+
+        def close():
+            closed.append(True)
+            orig()
+
+        inner.close = close
+        return inner
+
+    previous = gen.SessionLocal
+    gen.SessionLocal = SessionLocal
+    try:
+        event, payload = gen._load_stream_start(
+            user_id=1,
+            project_id=project.id,
+            task_id=task_id,
+        )
+    finally:
+        gen.SessionLocal = previous
+
+    assert event == "completed"
+    assert payload is not None and payload["id"] == task_id
+    assert closed == [True]
 
 
 # ── ③ project_id 为空的任务发不出事件，要记 warning 而不是静默丢 ──────────────
