@@ -108,6 +108,7 @@ export interface QuickStartSession {
   regenerateCharacterTemplate(
     mode: 'regenerate' | 'refine',
     adjustmentPrompt?: string,
+    candidateId?: string,
   ): Promise<WorkflowRun>
   regenerateFirstFrame(
     mode: 'regenerate' | 'refine',
@@ -628,6 +629,11 @@ export function createQuickStartService({
   ): QuickStartSession {
     let stopAutomaticAdvance: (() => void) | null = null
     let candidateCommand: Promise<WorkflowRun> | null = null
+    let candidateBatch = 0
+    let characterCandidateUrls = new Map<string, string>()
+    let characterTemplateCandidates: NonNullable<
+      WorkflowAgentContext['characterTemplateCandidates']
+    > = []
     let disposed = false
 
     const ensureAutomaticAdvance = () => {
@@ -846,11 +852,18 @@ export function createQuickStartService({
         const run = controller.getWorkflow()
         const availableTools: WorkflowAgentContext['availableTools'][number][] = []
         const template = run.nodes.find((node) => node.type === 'character-template')
-        if (
+        const hasUnconfirmedCandidates =
           template?.type === 'character-template' &&
-          template.status === 'passed' &&
-          template.phase === 'completed' &&
-          template.selectedImageUrl
+          template.status === 'active' &&
+          template.phase === 'selecting' &&
+          !template.selectedImageUrl &&
+          characterTemplateCandidates.length > 0
+        if (
+          hasUnconfirmedCandidates ||
+          (template?.type === 'character-template' &&
+            template.status === 'passed' &&
+            template.phase === 'completed' &&
+            template.selectedImageUrl)
         ) {
           availableTools.push(REGENERATE_CHARACTER_TEMPLATE_TOOL, REFINE_CHARACTER_TEMPLATE_TOOL)
         }
@@ -863,18 +876,34 @@ export function createQuickStartService({
         ) {
           availableTools.push(REGENERATE_FIRST_FRAME_TOOL, REFINE_FIRST_FRAME_TOOL)
         }
-        return { availableTools }
+        return {
+          availableTools,
+          ...(hasUnconfirmedCandidates ? { characterTemplateCandidates } : {}),
+        }
       },
-      async regenerateCharacterTemplate(mode, adjustmentPrompt) {
+      async regenerateCharacterTemplate(mode, adjustmentPrompt, candidateId) {
         const run = controller.getWorkflow()
         const template = templateNode(run)
+        const isCandidateSelection =
+          template.status === 'active' &&
+          template.phase === 'selecting' &&
+          !template.selectedImageUrl
+        const sourceImageUrl = candidateId ? characterCandidateUrls.get(candidateId) : undefined
+        if (isCandidateSelection && mode === 'refine' && !sourceImageUrl) {
+          throw new Error('候选图标识无效')
+        }
         const spriteSize =
           knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
+        if (isCandidateSelection) {
+          characterCandidateUrls = new Map()
+          characterTemplateCandidates = []
+        }
         await controller.regenerateCharacterTemplate(template.id, {
           spriteWidth: spriteSize.width,
           spriteHeight: spriteSize.height,
           mode,
           ...(adjustmentPrompt === undefined ? {} : { adjustmentPrompt }),
+          ...(sourceImageUrl === undefined ? {} : { sourceImageUrl }),
         })
         return controller.getWorkflow()
       },
@@ -990,7 +1019,25 @@ export function createQuickStartService({
       resolveCharacterInfo: () => resolveCharacterInfo(controller),
       async getTemplateCandidates() {
         const template = templateNode(controller.getWorkflow())
-        return candidatesByDirection(controller, template.id, 'character_template')
+        const candidates = await candidatesByDirection(
+          controller,
+          template.id,
+          'character_template',
+        )
+        if (
+          template.status === 'active' &&
+          template.phase === 'selecting' &&
+          !template.selectedImageUrl
+        ) {
+          const batch = ++candidateBatch
+          characterCandidateUrls = new Map()
+          characterTemplateCandidates = candidates.map((candidate, index) => {
+            const id = `candidate-${batch}-${index + 1}`
+            characterCandidateUrls.set(id, candidate.imageUrl)
+            return { id, position: index + 1 }
+          })
+        }
+        return candidates
       },
       async getActionFrames() {
         const fullFrame = latestFullFrame(controller.getWorkflow())
