@@ -41,6 +41,10 @@ export type PlaytestModelResult =
   | { readonly ok: false; readonly reason: 'outfit_not_found' }
 
 const DEFAULT_FRAME_DURATION_MS = 100
+const DENSE_GENERATED_LOCOMOTION = {
+  walk: { frameCount: 32, frameDurationMs: 125, cycleDurationMs: 1000 },
+  run: { frameCount: 32, frameDurationMs: 90, cycleDurationMs: 720 },
+} as const
 
 function frameDuration(durationMs: number | null, fps: number): number {
   if (durationMs !== null && Number.isFinite(durationMs) && durationMs > 0) {
@@ -59,10 +63,36 @@ function orderedFrames(frames: readonly Frame[]): readonly Frame[] {
   return [...frames].sort((left, right) => left.index - right.index)
 }
 
-function playtestFrames(frames: readonly Frame[], fps: number): readonly PlaytestFrame[] {
-  return orderedFrames(frames).map((frame) => ({
+function playtestFrames(
+  action: Character['outfits'][number]['actions'][number],
+  frames: readonly Frame[],
+): readonly PlaytestFrame[] {
+  const ordered = orderedFrames(frames)
+  const playbackFrames = ordered.map((frame) => ({
     imageUrl: frame.imageUrl,
-    durationMs: frameDuration(frame.durationMs, fps),
+    durationMs: frameDuration(frame.durationMs, action.fps),
+  }))
+  const denseTiming =
+    action.type === 'walk' || action.type === 'run'
+      ? DENSE_GENERATED_LOCOMOTION[action.type]
+      : undefined
+  // 只兼容生成器已知的坏形状：32 帧仍逐帧沿用稀疏 walk/run 时值。
+  // 帧数、循环性或任一时值不完全匹配时都尊重资产合同，不能把“超过 8 帧”
+  // 猜成密集采样，否则会误改用户已正确编排的 9/12/16/24/32 帧动作。
+  if (
+    !action.loop ||
+    denseTiming === undefined ||
+    ordered.length !== denseTiming.frameCount ||
+    ordered.some((frame) => frame.durationMs !== denseTiming.frameDurationMs)
+  ) {
+    return playbackFrames
+  }
+
+  const timingScale =
+    denseTiming.cycleDurationMs / (denseTiming.frameCount * denseTiming.frameDurationMs)
+  return playbackFrames.map((frame) => ({
+    ...frame,
+    durationMs: frame.durationMs * timingScale,
   }))
 }
 
@@ -73,7 +103,7 @@ function playtestSequences(
 
   for (const sequence of action.sequences ?? []) {
     if (sequence.sourceDirection !== null) continue
-    const frames = playtestFrames(sequence.frames, action.fps)
+    const frames = playtestFrames(action, sequence.frames)
     if (frames.length === 0) continue
     sequences[sequence.direction] = {
       frames,
@@ -82,7 +112,7 @@ function playtestSequences(
     }
   }
 
-  const legacyEast = playtestFrames(action.frames, action.fps)
+  const legacyEast = playtestFrames(action, action.frames)
   if (sequences.east === undefined && legacyEast.length > 0) {
     sequences.east = { frames: legacyEast, sourceDirection: 'east', mirrorX: false }
     sequences.west = { frames: legacyEast, sourceDirection: 'east', mirrorX: true }
