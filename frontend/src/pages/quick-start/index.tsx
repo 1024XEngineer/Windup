@@ -23,8 +23,10 @@ import {
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 
 import {
+  DIRECTIONAL_MOVEMENT,
   type ActionFirstFrameWorkflowNode,
   type CharacterTemplateWorkflowNode,
+  type DirectionalMovement,
   type WorkflowRun,
   WorkflowRunConflictError,
 } from '@/entities'
@@ -81,6 +83,12 @@ const STYLE_PROMPTS = [
     prompt: '温暖手绘像素风，柔和配色，细腻纸张质感',
   },
 ] as const
+
+const QUICK_START_DIRECTIONAL_MOVEMENTS: readonly DirectionalMovement[] = [
+  'single',
+  'four-way',
+  'eight-way',
+]
 
 const ROLE_IDEAS = [
   '银色卷发、戴星形单片眼镜的裁缝',
@@ -530,6 +538,7 @@ function QuickStartInput({
 }) {
   const navigate = useNavigate()
   const [prompt, setPrompt] = useState('')
+  const [directionalMovement, setDirectionalMovement] = useState<DirectionalMovement>('single')
   const [templateFile, setTemplateFile] = useState<File | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [entryTransition, setEntryTransition] = useState<'idle' | 'leaving'>('idle')
@@ -722,7 +731,7 @@ function QuickStartInput({
       if (!normalizedPrompt) return
       setPromptState('confirmed')
       try {
-        const result = await agentSession.confirmProposal(normalizedPrompt)
+        const result = await agentSession.confirmProposal(normalizedPrompt, directionalMovement)
         if (result.kind === 'generated') await handoffGenerated(result)
       } catch {
         setPromptState('ready')
@@ -779,6 +788,7 @@ function QuickStartInput({
         templateFile,
         normalizedPrompt,
         abortController.signal,
+        directionalMovement,
       )
       const handoffPromise = new Promise<void>((resolve) => {
         handoffTimer.current = setTimeout(() => {
@@ -961,6 +971,33 @@ function QuickStartInput({
               : 'translate-y-0 opacity-100 blur-0'
           }`}
         >
+          <fieldset
+            aria-label="角色方向"
+            disabled={entryBusy}
+            className="mb-2 flex items-center justify-end gap-1.5 text-xs"
+          >
+            <legend className="mr-1 text-app-muted">生成方向</legend>
+            {QUICK_START_DIRECTIONAL_MOVEMENTS.map((movement) => (
+              <label
+                key={movement}
+                className={`relative cursor-pointer rounded-full border px-3 py-1.5 font-semibold transition focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-app-accent ${
+                  directionalMovement === movement
+                    ? 'border-app-accent bg-app-accent-soft text-app-accent'
+                    : 'border-app-line bg-app-surface/70 text-app-muted hover:border-app-line-strong hover:text-app-ink'
+                } ${entryBusy ? 'cursor-not-allowed opacity-50' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="quick-start-directional-movement"
+                  value={movement}
+                  checked={directionalMovement === movement}
+                  onChange={() => setDirectionalMovement(movement)}
+                  className="sr-only"
+                />
+                {DIRECTIONAL_MOVEMENT[movement]}
+              </label>
+            ))}
+          </fieldset>
           <form
             onSubmit={(event) => void submit(event)}
             autoComplete="off"

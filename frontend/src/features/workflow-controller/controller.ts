@@ -103,10 +103,12 @@ export interface ApplyGenerationResultInput {
 
 export type PrepareQuickStartProject = (
   prompt: string,
+  directionalMovement?: DirectionalMovement,
 ) => Promise<Pick<Project, 'id' | 'spriteSize'> & Partial<Pick<Project, 'directionalMovement'>>>
 
 export interface StartCharacterGenerationInput {
   prompt: string
+  directionalMovement?: DirectionalMovement
 }
 
 export interface StartCharacterGenerationResult {
@@ -243,7 +245,7 @@ function boundedProjectName(value: string, maxLength: number): string {
 export function createAutoPrepareProject(
   projectApis: Pick<ProjectApis, 'create'>,
 ): PrepareQuickStartProject {
-  return async (prompt) => {
+  return async (prompt, directionalMovement = 'single') => {
     const normalizedPrompt = prompt.trim().replace(/\s+/gu, ' ') || '未命名项目'
     let lastConflict: unknown
 
@@ -256,7 +258,7 @@ export function createAutoPrepareProject(
         const project = await projectApis.create({
           name: `${base}${suffix}`,
           perspective: 'side',
-          directionalMovement: 'single',
+          directionalMovement,
           spriteSize: { width: 256, height: 256 },
         })
         return {
@@ -295,7 +297,7 @@ export function createWorkflowController({
   const regenerationKeys = new Set<string>()
   const settlements = new Map<string, Promise<WorkflowRun>>()
   const listeners = new Set<(workflow: WorkflowRun) => void>()
-  const generationDirections = getDirectionProfile(directionalMovement).generationDirections
+  let generationDirections = getDirectionProfile(directionalMovement).generationDirections
 
   function selectedDirectionUrl(
     values: Partial<Record<ActionDirection, string>> | undefined,
@@ -387,13 +389,17 @@ export function createWorkflowController({
 
   async function startCharacterGeneration({
     prompt,
+    directionalMovement: selectedDirectionalMovement = 'single',
   }: StartCharacterGenerationInput): Promise<StartCharacterGenerationResult> {
     ensureRunning()
     if (!prepareProject) {
       throw new Error('WorkflowController 未配置 Quick Start 项目准备能力')
     }
     const normalizedPrompt = nonEmpty(prompt, '角色描述')
-    const project = await prepareProject(normalizedPrompt)
+    const project = await prepareProject(normalizedPrompt, selectedDirectionalMovement)
+    generationDirections = getDirectionProfile(
+      project.directionalMovement ?? selectedDirectionalMovement,
+    ).generationDirections
     await create({
       projectId: project.id,
       nodes: [

@@ -222,7 +222,7 @@ describe('createQuickStartAgent', () => {
     if (proposal.kind !== 'proposal') throw new Error('测试缺少提案')
 
     await expect(
-      agent.confirmProposal(proposal.proposalId, '完整身体的银发像素骑士，深蓝斗篷'),
+      agent.confirmProposal(proposal.proposalId, '完整身体的银发像素骑士，深蓝斗篷', 'eight-way'),
     ).resolves.toMatchObject({
       kind: 'generated',
       runId: 'run-1',
@@ -234,6 +234,7 @@ describe('createQuickStartAgent', () => {
     expect(startCharacterGeneration).toHaveBeenCalledTimes(1)
     expect(startCharacterGeneration).toHaveBeenCalledWith({
       prompt: '完整身体的银发像素骑士，深蓝斗篷',
+      directionalMovement: 'eight-way',
     })
   })
 

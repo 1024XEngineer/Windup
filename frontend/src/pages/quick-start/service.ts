@@ -16,6 +16,7 @@ import {
   type MediaReference,
   type Project,
   type ProjectApis,
+  type DirectionalMovement,
   type WorkflowNode,
   type WorkflowRun,
   type WorkflowRunApis,
@@ -113,11 +114,12 @@ export interface QuickStartSession {
 
 export interface QuickStartEntryService {
   readonly unavailableReason: string | null
-  start(prompt: string): Promise<QuickStartSession>
+  start(prompt: string, directionalMovement?: DirectionalMovement): Promise<QuickStartSession>
   startWithUploadedTemplate(
     file: File,
     actionDescription: string,
     signal?: AbortSignal,
+    directionalMovement?: DirectionalMovement,
   ): Promise<QuickStartSession>
   open(runId: WorkflowRun['id']): Promise<QuickStartSession>
 }
@@ -1003,18 +1005,17 @@ export function createQuickStartService({
   return {
     unavailableReason: null,
 
-    async start(prompt) {
+    async start(prompt, directionalMovement = 'single') {
       const normalizedPrompt = prompt.trim()
       if (!normalizedPrompt) throw new Error('请先描述想要创建的角色')
-      const project = await prepareProject(normalizedPrompt)
+      const project = await prepareProject(normalizedPrompt, directionalMovement)
+      const projectDirectionalMovement = project.directionalMovement ?? directionalMovement
       projectSpriteSizes.set(project.id, project.spriteSize)
-      if (project.directionalMovement) {
-        projectDirectionalMovements.set(project.id, project.directionalMovement)
-      }
+      projectDirectionalMovements.set(project.id, projectDirectionalMovement)
       const controller = await createRun(
         project.id,
         workflowNodes(normalizedPrompt),
-        project.directionalMovement,
+        projectDirectionalMovement,
       )
       await controller.generateCharacterTemplate('character-setup', {
         spriteWidth: project.spriteSize.width,
@@ -1023,20 +1024,24 @@ export function createQuickStartService({
       return createSession(controller, project.spriteSize)
     },
 
-    async startWithUploadedTemplate(file, actionDescription, signal) {
+    async startWithUploadedTemplate(
+      file,
+      actionDescription,
+      signal,
+      directionalMovement = 'single',
+    ) {
       if (!mediaApis) throw new Error('媒体上传服务尚未配置，不能使用角色母版')
       const prompt = actionDescription.trim() || file.name.trim()
       if (!prompt) throw new Error('请提供动作描述或有效的图片文件')
-      const project = await prepareProject(prompt)
+      const project = await prepareProject(prompt, directionalMovement)
+      const projectDirectionalMovement = project.directionalMovement ?? directionalMovement
       projectSpriteSizes.set(project.id, project.spriteSize)
-      if (project.directionalMovement) {
-        projectDirectionalMovements.set(project.id, project.directionalMovement)
-      }
+      projectDirectionalMovements.set(project.id, projectDirectionalMovement)
       const templateReference = await mediaApis.upload(file, 'reference-image', signal)
       const controller = await createRun(
         project.id,
         workflowNodes(prompt, [templateReference]),
-        project.directionalMovement,
+        projectDirectionalMovement,
       )
       await controller.updateCharacterSetup('character-setup', {
         prompt,
@@ -1048,9 +1053,7 @@ export function createQuickStartService({
         (setupId, characterId) =>
           controller.acceptUploadedCharacterTemplate(setupId, templateReference, characterId),
       )
-      const directions = getDirectionProfile(
-        project.directionalMovement ?? 'single',
-      ).generationDirections
+      const directions = getDirectionProfile(projectDirectionalMovement).generationDirections
       if (directions.length > 1) {
         await controller.generateCharacterTemplate('character-setup', {
           spriteWidth: project.spriteSize.width,

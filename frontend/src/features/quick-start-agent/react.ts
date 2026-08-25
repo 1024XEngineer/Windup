@@ -6,6 +6,7 @@ import {
   type CharacterGenerationProposal,
   type CreateQuickStartAgentOptions,
   type QuickStartAgentResult,
+  type QuickStartDirectionalMovement,
   type CreateQuickStartWorkflowAgentOptions,
   type WorkflowAgentToolName,
 } from './runtime'
@@ -125,7 +126,10 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
   )
 
   const confirmProposal = useCallback(
-    async (prompt: string): Promise<QuickStartAgentResult> => {
+    async (
+      prompt: string,
+      directionalMovement: QuickStartDirectionalMovement = 'single',
+    ): Promise<QuickStartAgentResult> => {
       if (running.current) throw new Error('Planner 正在处理上一条输入')
       if (state.status !== 'proposal') throw new Error('提示词提案已失效')
       running.current = true
@@ -139,7 +143,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
         })
       }
       try {
-        return await ensureAgent().confirmProposal(proposalId, prompt)
+        return await ensureAgent().confirmProposal(proposalId, prompt, directionalMovement)
       } catch (cause) {
         if (mounted.current) setState({ status: 'error', message: errorMessage(cause) })
         throw cause
