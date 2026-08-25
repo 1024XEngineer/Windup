@@ -127,7 +127,9 @@ function hasValidAutomationIntent(value: unknown): boolean {
     (isRecord(value) &&
       value.mode === 'automatic' &&
       isNullableString(value.actionPrompt) &&
-      (value.actionPrompt === null || value.actionPrompt.trim().length > 0))
+      (value.actionPrompt === null || value.actionPrompt.trim().length > 0) &&
+      (value.actionType === undefined ||
+        (value.actionType === 'walk' && value.actionPrompt !== null)))
   )
 }
 
