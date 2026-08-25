@@ -3,10 +3,17 @@ import { DownloadSimple, Graph, GridFour, Lightning, Play, Plus, X } from '@phos
 import { Link, useOutletContext, useParams } from 'react-router'
 
 import {
+  ACTION_DIRECTIONS,
   characterTemplateImages,
   characterApis,
+  getDirectionProfile,
+  getOutfitPlayback,
+  resolveActionDirection,
   type Action,
+  type ActionDirection,
   type Character,
+  type CharacterTemplate,
+  type Frame,
   type Outfit,
   type Project,
 } from '@/entities'
@@ -23,12 +30,65 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
 const ASSET_ACTION_SECONDARY =
   'inline-flex min-h-10 items-center justify-center gap-2 rounded-full border border-app-line bg-app-surface-raised px-5 text-xs font-semibold text-app-ink-soft transition-colors hover:border-app-line-strong hover:bg-app-surface-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent'
 
+const DIRECTION_LABELS: Record<ActionDirection, string> = {
+  east: '东',
+  west: '西',
+  north: '北',
+  south: '南',
+  north_east: '东北',
+  north_west: '西北',
+  south_east: '东南',
+  south_west: '西南',
+}
+
 function actionTypeLabel(type: string) {
   return ACTION_TYPE_LABELS[type] ?? type
 }
 
-function orderedFrames(action: Action) {
-  return [...action.frames].sort((left, right) => left.index - right.index)
+function orderedFrames(frames: readonly Frame[]) {
+  return [...frames].sort((left, right) => left.index - right.index)
+}
+
+function actionDirections(action: Action): readonly ActionDirection[] {
+  if (!action.sequences?.length) return getDirectionProfile('single').logicalDirections
+  const available = new Set(action.sequences.map((sequence) => sequence.direction))
+  return ACTION_DIRECTIONS.filter((direction) => available.has(direction))
+}
+
+function actionFrames(action: Action, direction: ActionDirection) {
+  if (!action.sequences?.length) {
+    const resolution = resolveActionDirection(direction)
+    return {
+      frames: resolution.sourceDirection === 'east' ? orderedFrames(action.frames) : [],
+      mirrorX: resolution.mirrorX,
+    }
+  }
+
+  const sequence = action.sequences.find((item) => item.direction === direction)
+  if (!sequence) return { frames: [], mirrorX: false }
+  if (sequence.sourceDirection === null) {
+    return { frames: orderedFrames(sequence.frames), mirrorX: false }
+  }
+  const source = action.sequences.find((item) => item.direction === sequence.sourceDirection)
+  return { frames: orderedFrames(source?.frames ?? []), mirrorX: sequence.mirrorX }
+}
+
+function resolvedCharacterTemplates(templates: readonly CharacterTemplate[] = []) {
+  const byDirection = new Map(templates.map((template) => [template.direction, template]))
+  return ACTION_DIRECTIONS.flatMap((direction) => {
+    const template = byDirection.get(direction)
+    if (!template) return []
+    const source =
+      template.sourceDirection === null ? template : byDirection.get(template.sourceDirection)
+    if (!source?.imageUrl) return []
+    return [
+      {
+        direction,
+        imageUrl: source.imageUrl,
+        mirrorX: template.mirrorX,
+      },
+    ]
+  })
 }
 
 function characterName(character: Character) {
@@ -88,7 +148,7 @@ export function CharacterDetailPage() {
   const name = characterName(character)
   const selectedOutfit = character.outfits[0] ?? null
   const titlePreviewUrl = selectedOutfit?.previewUrl ?? null
-  const canPlaytest = selectedOutfit?.actions.some((action) => action.frames.length > 0) ?? false
+  const canPlaytest = selectedOutfit ? getOutfitPlayback(selectedOutfit).playable : false
 
   return (
     <section aria-labelledby="character-title" className="p-4 lg:px-6 lg:py-5">
@@ -158,6 +218,7 @@ export function CharacterDetailPage() {
         </div>
       ) : (
         <>
+          <CharacterTemplateDirections character={character} />
           {pixelPerfectOpen ? (
             <PixelPerfectWorkbench id="pixel-perfect-workbench" actions={selectedOutfit.actions} />
           ) : null}
@@ -207,6 +268,39 @@ function CharacterExport({
       pill
       className={ASSET_ACTION_SECONDARY}
     />
+  )
+}
+
+function CharacterTemplateDirections({ character }: { character: Character }) {
+  const name = characterName(character)
+  const directionalTemplates = resolvedCharacterTemplates(character.templates)
+  if (directionalTemplates.length === 0) return null
+  return (
+    <section
+      aria-label="角色母版方向"
+      className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8"
+    >
+      {directionalTemplates.map((template, index) => (
+        <figure
+          key={template.direction}
+          className="overflow-hidden rounded-xl border border-app-line bg-app-surface-raised"
+        >
+          <div className="aspect-square bg-app-surface-muted p-2">
+            <img
+              src={template.imageUrl}
+              alt={`${name}${DIRECTION_LABELS[template.direction]}方向母版`}
+              loading={index === 0 ? 'eager' : 'lazy'}
+              decoding="async"
+              fetchPriority={index === 0 ? 'high' : 'auto'}
+              className={`h-full w-full object-contain [image-rendering:pixelated] ${template.mirrorX ? '-scale-x-100' : ''}`}
+            />
+          </div>
+          <figcaption className="border-t border-app-line px-2 py-1.5 text-center text-[0.68rem] font-semibold text-app-muted">
+            {DIRECTION_LABELS[template.direction]}
+          </figcaption>
+        </figure>
+      ))}
+    </section>
   )
 }
 
@@ -325,7 +419,7 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
             {displayedActions.map((action, actionIndex) => {
               const expanded = selectedAction?.id === action.id
               const rendersFramePanel = revealedActionId === action.id
-              const previewFrame = orderedFrames(action)[0]
+              const previewFrame = actionFrames(action, 'east').frames[0]
               const collapsedActions = selectedAction
                 ? displayedActions.filter((item) => item.id !== selectedAction.id)
                 : displayedActions
@@ -395,6 +489,15 @@ function ActionList({ character, outfit }: { character: Character; outfit: Outfi
 }
 
 function ActionFramePanel({ action, expanded }: { action: Action; expanded: boolean }) {
+  const directions = actionDirections(action)
+  const [selectedDirection, setSelectedDirection] = useState<ActionDirection>(
+    directions[0] ?? 'east',
+  )
+  const activeDirection = directions.includes(selectedDirection)
+    ? selectedDirection
+    : (directions[0] ?? 'east')
+  const { frames, mirrorX } = actionFrames(action, activeDirection)
+
   return (
     <section
       aria-label={`${action.name}完整帧序列`}
@@ -408,19 +511,44 @@ function ActionFramePanel({ action, expanded }: { action: Action; expanded: bool
             {actionTypeLabel(action.type)} · {action.fps} FPS · {action.loop ? '循环' : '单次'}
           </p>
         </div>
-        <span className="text-[0.68rem] tabular-nums text-app-faint">{action.frameCount} 帧</span>
+        <span className="text-[0.68rem] tabular-nums text-app-faint">{frames.length} 帧</span>
       </div>
+      {directions.length > 1 ? (
+        <fieldset aria-label={`${action.name}方向`} className="mt-3 flex flex-wrap gap-1.5">
+          <legend className="sr-only">选择动作方向</legend>
+          {directions.map((direction) => (
+            <label
+              key={direction}
+              className={`cursor-pointer rounded-full border px-3 py-1.5 text-xs font-semibold transition focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-app-accent ${
+                activeDirection === direction
+                  ? 'border-app-accent bg-app-accent-soft text-app-accent'
+                  : 'border-app-line text-app-muted hover:border-app-line-strong hover:text-app-ink'
+              }`}
+            >
+              <input
+                type="radio"
+                name={`action-direction-${action.id}`}
+                value={direction}
+                checked={activeDirection === direction}
+                onChange={() => setSelectedDirection(direction)}
+                className="sr-only"
+              />
+              {DIRECTION_LABELS[direction]}
+            </label>
+          ))}
+        </fieldset>
+      ) : null}
       <div className="mt-4 max-h-52 overflow-y-auto pr-1 pb-2">
         <ol className="grid grid-cols-[repeat(auto-fill,minmax(5.5rem,7rem))] gap-x-2.5 gap-y-3">
-          {orderedFrames(action).map((frame) => (
-            <li key={`${action.id}-${frame.index}`} className="min-w-0">
+          {frames.map((frame) => (
+            <li key={`${action.id}-${activeDirection}-${frame.index}`} className="min-w-0">
               <div className="overflow-hidden rounded-lg border border-app-line bg-app-canvas">
                 <img
                   src={frame.imageUrl}
-                  alt={`${action.name}第 ${frame.index + 1} 帧`}
+                  alt={`${action.name}${DIRECTION_LABELS[activeDirection]}方向第 ${frame.index + 1} 帧`}
                   loading="lazy"
                   decoding="async"
-                  className="aspect-square w-full object-contain p-1.5 [image-rendering:pixelated]"
+                  className={`aspect-square w-full object-contain p-1.5 [image-rendering:pixelated] ${mirrorX ? '-scale-x-100' : ''}`}
                 />
               </div>
               <div className="mt-2 flex items-center justify-between gap-1 text-[0.62rem] tabular-nums text-app-faint">

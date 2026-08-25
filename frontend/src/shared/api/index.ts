@@ -4,6 +4,11 @@ export type ApiRequestOptions = Omit<RequestInit, 'body'> & {
   body?: BodyInit | null
   json?: unknown
   query?: Record<string, ApiQueryValue>
+  /**
+   * 写请求默认不在 401 恢复后自动重放（非幂等方法重放可能重复创建资源）；
+   * 调用方确认后端语义可安全重放时显式声明。
+   */
+  replayAfterAuth?: boolean
 }
 
 /** 后端 ListResponse 解包后的传输结果。 */
@@ -231,9 +236,22 @@ export function createApiClient({
     }
   }
 
+  /** RFC 9110 语义上无副作用的方法；重放它们不会改变服务端状态。 */
+  const REPLAYABLE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+
+  /**
+   * 401 后是否自动重放本次请求：
+   * - ReadableStream 等一次性 body 无法重新消费，禁止重放；
+   * - 默认只重放安全方法（GET/HEAD/OPTIONS），写请求重复执行可能造成
+   *   重复创建等副作用，须由调用方显式声明 replayAfterAuth；
+   * - 未声明 method 视为 GET。
+   */
   function canReplay(options: ApiRequestOptions | undefined): boolean {
     const body = options?.body
-    return !(typeof ReadableStream !== 'undefined' && body instanceof ReadableStream)
+    if (typeof ReadableStream !== 'undefined' && body instanceof ReadableStream) return false
+    if (options?.replayAfterAuth) return true
+    const method = options?.method?.toUpperCase() ?? 'GET'
+    return REPLAYABLE_METHODS.has(method)
   }
 
   async function receiveEnvelope(
@@ -250,8 +268,7 @@ export function createApiClient({
       recoverUnauthorized &&
       response.status === 200 &&
       envelope.code === 401 &&
-      recovery &&
-      canReplay(options)
+      recovery
     ) {
       let recovered = false
       try {
@@ -259,7 +276,9 @@ export function createApiClient({
       } catch {
         // 恢复失败仍应向调用方交付原始 401，而不是泄漏 refresh 的错误。
       }
-      if (recovered) return receiveEnvelope(path, options, true)
+      // 会话恢复总是执行，让 token 重新生效；但只有可重放的请求才自动重放，
+      // 写请求即使恢复了会话也返回原始 401，由用户手动重试，避免重复执行副作用。
+      if (recovered && canReplay(options)) return receiveEnvelope(path, options, true)
     }
 
     return { response, envelope }

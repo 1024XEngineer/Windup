@@ -10,8 +10,10 @@ on:
 permissions:
   contents: read
 
+# main 上每个 commit 单独成组,理由同 backend.yml:main 的 push 共用一个 ref,
+# 连续合并会让先合的 run 被后合的取消,红叉掩盖掉真实结论。
 concurrency:
-  group: frontend-ci-${{ github.event.pull_request.number || github.ref }}
+  group: frontend-ci-${{ github.event.pull_request.number || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: true
 
 jobs:

@@ -768,6 +768,25 @@ describe('createQuickStartService', () => {
     )
   })
 
+  it('creates the Quick Start project with the selected directional movement', async () => {
+    const create = vi.fn(async (input) => ({
+      id: 'project-eight-way',
+      ...input,
+      description: null,
+      createdAt: '2026-08-25T00:00:00Z',
+      updatedAt: '2026-08-25T00:00:00Z',
+    }))
+    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
+
+    await expect(prepare('八向像素骑士', 'eight-way')).resolves.toMatchObject({
+      id: 'project-eight-way',
+      directionalMovement: 'eight-way',
+    })
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ directionalMovement: 'eight-way' }),
+    )
+  })
+
   it('uses a readable number when the generated project name already exists', async () => {
     const create = vi
       .fn()
@@ -1051,6 +1070,11 @@ describe('createQuickStartService', () => {
 
   it('四向上传单张母版后只生成其余方向，等待用户逐方向确认再创建动作', async () => {
     const generationApis = pendingGenerationApis()
+    const prepareProject = vi.fn(async () => ({
+      id: 'project-1',
+      spriteSize: { width: 256, height: 256 },
+      directionalMovement: 'four-way' as const,
+    }))
     let savedCharacter = characterFixture({
       description: '挥手',
       referenceImageUrl: 'https://example.test/template.png',
@@ -1066,19 +1090,18 @@ describe('createQuickStartService', () => {
       mediaApis: {
         upload: vi.fn(async () => 'https://example.test/template.png' as MediaReference),
       },
-      prepareProject: async () => ({
-        id: 'project-1',
-        spriteSize: { width: 256, height: 256 },
-        directionalMovement: 'four-way' as const,
-      }),
+      prepareProject,
       projectApis: projectReader(undefined, 'four-way'),
     })
 
     const session = await service.startWithUploadedTemplate(
       new File(['pixels'], 'hero.png', { type: 'image/png' }),
       '挥手',
+      undefined,
+      'four-way',
     )
 
+    expect(prepareProject).toHaveBeenCalledWith('挥手', 'four-way')
     const calls = vi.mocked(generationApis.create).mock.calls.map(([input]) => input)
     expect(
       calls.filter((input) => input.type === 'character_template').map((input) => input.direction),
@@ -2082,6 +2105,89 @@ describe('createQuickStartService', () => {
       expect.objectContaining({ id: 'outfit-default', previewUrl: selectedImageUrl }),
     ])
     expect(characterApis.update).toHaveBeenCalledOnce()
+  })
+
+  it('现有四向角色仍缺真实西向母版时阻止创建新动作', async () => {
+    const character = characterFixture({
+      id: 'character-existing',
+      workflowRunId: 'old-run',
+      name: '老角色',
+      referenceImageUrl: 'existing.png',
+      outfits: [
+        {
+          id: 'outfit-existing',
+          characterId: 'character-existing',
+          name: '默认造型',
+          description: null,
+          previewUrl: 'existing.png',
+          model3dUrl: null,
+          actions: [],
+        },
+      ],
+    })
+    Object.assign(character, {
+      templates: [
+        {
+          direction: 'east',
+          sourceDirection: null,
+          mirrorX: false,
+          imageUrl: 'existing.png',
+        },
+        {
+          direction: 'west',
+          sourceDirection: 'east',
+          mirrorX: true,
+          imageUrl: null,
+        },
+        {
+          direction: 'north',
+          sourceDirection: null,
+          mirrorX: false,
+          imageUrl: 'existing-north.png',
+        },
+        {
+          direction: 'south',
+          sourceDirection: null,
+          mirrorX: false,
+          imageUrl: 'existing-south.png',
+        },
+      ],
+    })
+    const nodes = setupNodes(character.id, 'existing.png')
+    Object.assign(nodes[1], {
+      selectedImages: {
+        east: 'existing.png',
+        north: 'existing-north.png',
+        south: 'existing-south.png',
+      },
+    })
+    const run: WorkflowRun = {
+      id: 'old-run',
+      projectId: character.projectId,
+      version: 1,
+      storageStatus: 'active',
+      nodes,
+    }
+    const generationApis = pendingGenerationApis()
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      characterApis: {
+        get: vi.fn(async () => character),
+        listByProject: vi.fn(async () => ({ items: [character], total: 1, page: 1, pageSize: 20 })),
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      } as unknown as CharacterApis,
+      projectApis: projectReader(undefined, 'four-way'),
+      prepareProject: vi.fn(),
+    })
+
+    const session = await service.open(run.id)
+    await expect(session.addAction('outfit-existing', '向北行走')).rejects.toThrow(
+      '角色母版尚未确认方向 west',
+    )
+    expect(generationApis.create).not.toHaveBeenCalled()
   })
 
   it('keeps a custom action display name bounded while preserving its full prompt', async () => {

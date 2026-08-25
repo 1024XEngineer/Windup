@@ -267,6 +267,7 @@ def test_langchain_adapter_maps_status_code(monkeypatch):
     assert not r.ok
     assert r.error_type is ModelErrorType.RATE_LIMIT
     assert r.http_status == 429
+    assert r.error_message == "quota"
 
 
 def test_langchain_adapter_maps_response_status(monkeypatch):

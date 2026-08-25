@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from conftest import seed_credit_account
 from windup_app.server.mq.catalog import (
     MSG_TYPE_CHARACTER_ACTION,
+    MSG_TYPE_CHARACTER_ACTION_POLL,
     MSG_TYPE_CHARACTER_IMAGE,
     MSG_TYPE_VERIFICATION_CODE,
 )
@@ -35,6 +36,7 @@ from windup_app.worker.handlers import (
 )
 from windup_app.worker.pending_timeout import release_stale_pending_tasks
 from windup_common.directions import ActionDirection
+from windup_common.models import CharacterStance
 from windup_framework.db.base import Base
 from windup_framework.mq.config import MAX_CONSUME_ATTEMPTS
 from windup_framework.mq.model import MqMessage
@@ -409,6 +411,7 @@ def test_handle_generation_dispatches_action_task(db_session, engine, monkeypatc
             action_type=ActionType.WALK,
             num_frames=4,
             direction=ActionDirection.SOUTH,
+            stance=CharacterStance.QUADRUPED,
         ),
     )
     db_session.commit()
@@ -422,6 +425,7 @@ def test_handle_generation_dispatches_action_task(db_session, engine, monkeypatc
     run_action.assert_called_once()
     assert run_action.call_args.args[0] == task.id
     assert run_action.call_args.args[1].direction is ActionDirection.SOUTH
+    assert run_action.call_args.args[1].stance is CharacterStance.QUADRUPED
 
 
 def test_handle_generation_unknown_type_raises(db_session, engine, monkeypatch):
@@ -444,6 +448,24 @@ def test_handle_generation_unknown_type_raises(db_session, engine, monkeypatch):
             run_image_task=MagicMock(),
             run_action_task=MagicMock(),
         )
+
+
+def test_dispatch_handler_routes_action_poll(monkeypatch):
+    called = {"ok": False}
+
+    monkeypatch.setattr(
+        "windup_app.worker.handlers.handle_action_poll",
+        lambda payload, **kwargs: called.update(ok=True, payload=payload),
+    )
+
+    dispatch_handler(
+        "character_action_poll",
+        {"task_id": 9, "task_type": "character_action", "poll_count": 1},
+        run_image_task=MagicMock(),
+        run_action_task=MagicMock(),
+        resume_action_poll=MagicMock(),
+    )
+    assert called["ok"] is True
 
 
 def test_dispatch_handler_routes_character_action(monkeypatch):
@@ -720,6 +742,149 @@ def test_consumer_action_message_uses_action_semaphore(
     redis_mock.xack.assert_called_once()
 
 
+def test_consumer_routes_poll_to_reserved_executor():
+    consumer = StreamConsumer(
+        ConsumerConfig(stream="windup:stream:generation", group="generation", concurrency=2),
+        run_image_task=MagicMock(),
+        run_action_task=MagicMock(),
+        stop_event=threading.Event(),
+    )
+    try:
+        poll_fields = {
+            "data": json.dumps({
+                "v": 1,
+                "id": str(uuid.uuid4()),
+                "type": MSG_TYPE_CHARACTER_ACTION_POLL,
+                "payload": {"task_id": 1},
+            })
+        }
+        image_fields = {
+            "data": json.dumps({
+                "v": 1,
+                "id": str(uuid.uuid4()),
+                "type": MSG_TYPE_CHARACTER_IMAGE,
+                "payload": {"task_id": 1},
+            })
+        }
+        assert consumer._poll_executor is not None
+        assert consumer._executor_for(poll_fields) is consumer._poll_executor
+        assert consumer._executor_for(image_fields) is consumer._executor
+    finally:
+        consumer.shutdown()
+
+
+def test_consumer_routes_new_dedicated_pool_from_registry(monkeypatch):
+    """加 type 只改 catalog 注册表时,consumer 提交路径不必再写特判。"""
+    from windup_app.server.mq.catalog import TypeSpec, type_specs as live_specs
+
+    extra = TypeSpec(
+        msg_type="character_probe",
+        stream="windup:stream:generation",
+        pool="probe",
+        concurrency=1,
+        limit=True,
+    )
+    current = live_specs()
+    monkeypatch.setattr(
+        "windup_app.server.mq.catalog.type_specs",
+        lambda: (*current, extra),
+    )
+
+    consumer = StreamConsumer(
+        ConsumerConfig(stream="windup:stream:generation", group="generation", concurrency=2),
+        run_image_task=MagicMock(),
+        run_action_task=MagicMock(),
+        stop_event=threading.Event(),
+    )
+    try:
+        fields = {
+            "data": json.dumps({
+                "v": 1,
+                "id": str(uuid.uuid4()),
+                "type": "character_probe",
+                "payload": {"task_id": 1},
+            })
+        }
+        assert "probe" in consumer._executors
+        assert consumer._executor_for(fields) is consumer._executors["probe"]
+        assert consumer._semaphore_for("character_probe") is not None
+        assert consumer._executor_for(fields) is not consumer._executor
+    finally:
+        consumer.shutdown()
+
+
+def test_poll_message_runs_while_image_workers_are_busy(
+    engine, worker_session, monkeypatch,
+):
+    monkeypatch.setenv("WINDUP_MQ_GENERATION_IMAGE_CONCURRENCY", "1")
+    monkeypatch.setenv("WINDUP_MQ_GENERATION_POLL_CONCURRENCY", "1")
+    _patch_worker_session_local(monkeypatch, engine)
+
+    image_id = uuid.uuid4()
+    poll_id = uuid.uuid4()
+    mq_repo.insert_pending(
+        worker_session,
+        message_id=image_id,
+        dedupe_key=f"generation:image:{image_id}",
+        stream="windup:stream:generation",
+        msg_type=MSG_TYPE_CHARACTER_IMAGE,
+        payload={"task_id": 1, "task_type": "character_image"},
+    )
+    mq_repo.mark_published(worker_session, image_id, "i-0")
+    mq_repo.insert_pending(
+        worker_session,
+        message_id=poll_id,
+        dedupe_key=f"generation:poll:{poll_id}",
+        stream="windup:stream:generation",
+        msg_type=MSG_TYPE_CHARACTER_ACTION_POLL,
+        payload={"task_id": 2, "task_type": "character_action"},
+    )
+    mq_repo.mark_published(worker_session, poll_id, "p-0")
+    worker_session.commit()
+
+    redis_mock = MagicMock()
+    monkeypatch.setattr("windup_app.worker.consumer.get_redis", lambda: redis_mock)
+
+    image_started = threading.Event()
+    image_release = threading.Event()
+    poll_ran = threading.Event()
+
+    def dispatch(msg_type, payload, **kwargs):
+        if msg_type == MSG_TYPE_CHARACTER_IMAGE:
+            image_started.set()
+            assert image_release.wait(timeout=5)
+        elif msg_type == MSG_TYPE_CHARACTER_ACTION_POLL:
+            poll_ran.set()
+
+    monkeypatch.setattr("windup_app.worker.consumer.dispatch_handler", dispatch)
+
+    consumer = StreamConsumer(
+        ConsumerConfig(stream="windup:stream:generation", group="generation", concurrency=1),
+        run_image_task=MagicMock(),
+        run_action_task=MagicMock(),
+        stop_event=threading.Event(),
+        resume_action_poll=MagicMock(),
+    )
+    try:
+        consumer._submit_message("i-0", {"data": json.dumps({
+            "v": 1,
+            "id": str(image_id),
+            "type": MSG_TYPE_CHARACTER_IMAGE,
+            "payload": {"task_id": 1, "task_type": "character_image"},
+        })})
+        assert image_started.wait(timeout=5)
+        consumer._submit_message("p-0", {"data": json.dumps({
+            "v": 1,
+            "id": str(poll_id),
+            "type": MSG_TYPE_CHARACTER_ACTION_POLL,
+            "payload": {"task_id": 2, "task_type": "character_action"},
+        })})
+        assert poll_ran.wait(timeout=5), "poll 应在 image 占满共享池时仍能执行"
+    finally:
+        image_release.set()
+        consumer.shutdown()
+
+
 def test_release_stale_pending_tasks_unfreezes(db_session, engine, monkeypatch):
     from windup_app.server.mq.catalog import GENERATION_PENDING_MAX_AGE_SECONDS
     from windup_app.server.orchestrator.model import GenerationTaskRecord
@@ -733,7 +898,10 @@ def test_release_stale_pending_tasks_unfreezes(db_session, engine, monkeypatch):
         task_type=GenerationType.CHARACTER_IMAGE,
         input_payload={"prompt": "old"},
     )
-    billing.reserve_for_task(db_session, user_id=1, task_id=task.id, task_type=GenerationType.CHARACTER_IMAGE)
+    billing.reserve_for_task(
+        db_session, user_id=1, task_id=task.id,
+        task_type=GenerationType.CHARACTER_IMAGE, model_calls=1,
+    )
     record = db_session.get(GenerationTaskRecord, task.id)
     record.create_at = datetime.now(timezone.utc) - timedelta(
         seconds=GENERATION_PENDING_MAX_AGE_SECONDS + 60,
@@ -765,7 +933,10 @@ def test_recover_skips_fresh_running_tasks(db_session, engine, monkeypatch):
         task_type=GenerationType.CHARACTER_IMAGE,
         input_payload={"prompt": "running"},
     )
-    billing.reserve_for_task(db_session, user_id=1, task_id=task.id, task_type=GenerationType.CHARACTER_IMAGE)
+    billing.reserve_for_task(
+        db_session, user_id=1, task_id=task.id,
+        task_type=GenerationType.CHARACTER_IMAGE, model_calls=1,
+    )
     task_repo.update_status(db_session, task.id, TaskStatus.RUNNING)
     record = db_session.get(GenerationTaskRecord, task.id)
     record.update_at = datetime.now(timezone.utc)
@@ -914,9 +1085,6 @@ def test_consumer_acquires_generation_semaphore(engine, worker_session, monkeypa
     consumer._process_message("2-0", {"data": json.dumps(envelope)})
 
     redis_mock.xack.assert_called_once()
-
-
-
 def test_action_input_takes_frames_from_the_convention():
     """MQ 重建入参时缺帧数就按动作类型取,不在这层兜一个自己的数。
 
@@ -938,3 +1106,25 @@ def test_action_input_keeps_the_stored_frame_count():
     rebuilt = _action_input({"character_id": 1, "action_type": "idle", "num_frames": 20})
 
     assert rebuilt.num_frames == 20
+
+
+def test_image_input_uses_model_default_when_payload_omits_num_images():
+    """MQ 重建入参时缺张数就用 CharacterImageInput 自己的默认值,不在这层另写一份。
+
+    生产走的就是这条重建路径:这里兜 1 而入参默认是 2 时,同一请求经不经过 MQ
+    出图张数不同,费用跟着偏,没有一处会红。
+    """
+    from windup_app.worker.handlers import _image_input
+
+    rebuilt = _image_input({"prompt": "hero"})
+
+    assert rebuilt.num_images == CharacterImageInput().num_images
+
+
+def test_image_input_keeps_explicit_zero_num_images():
+    """显式 0 与没传必须能区分:or 会把 0 吃成另一份默认值。"""
+    from windup_app.worker.handlers import _image_input
+
+    rebuilt = _image_input({"prompt": "hero", "num_images": 0})
+
+    assert rebuilt.num_images == 0

@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
+import { ArrowClockwise, Check, CircleNotch, DownloadSimple } from '@phosphor-icons/react'
 
 import type { ExportPackageModel } from './model'
 import {
@@ -26,6 +27,7 @@ export interface ExportButtonProps {
   icon?: ReactNode
   idleLabel?: string
   pill?: boolean
+  iconOnly?: boolean
 }
 
 type ExportState =
@@ -150,8 +152,10 @@ export function ExportButton({
   icon,
   idleLabel,
   pill = false,
+  iconOnly = false,
 }: ExportButtonProps) {
   const { state, working, startExport } = useExportAction(model, exporter)
+  const tooltipId = useId()
   const label =
     state.status === 'working'
       ? PHASE_LABELS[state.phase]
@@ -166,16 +170,45 @@ export function ExportButton({
       <button
         type="button"
         disabled={working}
+        aria-label={iconOnly ? label : undefined}
+        aria-describedby={iconOnly ? tooltipId : undefined}
         title={state.status === 'failure' ? state.message : undefined}
         onClick={() => void startExport()}
-        className={`${pill ? 'rounded-full' : 'rounded-lg'} inline-flex min-h-10 items-center justify-center gap-2 border border-current px-3 py-2 text-xs font-semibold disabled:opacity-50 ${className}`}
+        className={
+          iconOnly
+            ? `group/export-action relative grid size-10 shrink-0 place-items-center rounded-lg border border-current transition focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-50 ${className}`
+            : `${pill ? 'rounded-full' : 'rounded-lg'} inline-flex min-h-10 items-center justify-center gap-2 border border-current px-3 py-2 text-xs font-semibold disabled:opacity-50 ${className}`
+        }
       >
-        {icon ? (
-          <span aria-hidden="true" className="inline-flex shrink-0">
-            {icon}
-          </span>
-        ) : null}
-        <span>{label}</span>
+        {iconOnly ? (
+          <>
+            {state.status === 'working' ? (
+              <CircleNotch aria-hidden="true" size={18} weight="bold" className="animate-spin" />
+            ) : state.status === 'success' ? (
+              <Check aria-hidden="true" size={18} weight="bold" />
+            ) : state.status === 'failure' ? (
+              <ArrowClockwise aria-hidden="true" size={18} weight="bold" />
+            ) : (
+              <DownloadSimple aria-hidden="true" size={18} weight="bold" />
+            )}
+            <span
+              id={tooltipId}
+              role="tooltip"
+              className="pointer-events-none invisible absolute top-full left-1/2 z-20 mt-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-app-ink px-2 py-1 text-[11px] font-medium text-app-canvas opacity-0 shadow-app-card transition group-hover/export-action:visible group-hover/export-action:opacity-100 group-focus-within/export-action:visible group-focus-within/export-action:opacity-100"
+            >
+              {label}
+            </span>
+          </>
+        ) : (
+          <>
+            {icon ? (
+              <span aria-hidden="true" className="inline-flex shrink-0">
+                {icon}
+              </span>
+            ) : null}
+            <span>{label}</span>
+          </>
+        )}
       </button>
       {state.status === 'failure' ? (
         <span role="alert" className="max-w-64 text-[11px] font-medium leading-4 text-app-danger">

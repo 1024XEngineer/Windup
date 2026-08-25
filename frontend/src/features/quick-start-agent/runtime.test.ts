@@ -55,7 +55,7 @@ describe('Planner decisions', () => {
 
   it.each([
     [{ kind: 'reply', message: '' }, 'Planner 的文字决策无效'],
-    [{ kind: 'reply', message: '可以', optimizedPrompt: '多余字段' }, 'Planner 文字决策字段无效'],
+    [{ kind: 'reply', message: '可以', unexpected: '多余字段' }, 'Planner 文字决策字段无效'],
     [
       { kind: 'proposal', optimizedPrompt: '骑士', optimizationSummary: '' },
       '生成提案的 optimizationSummary 无效',
@@ -63,6 +63,21 @@ describe('Planner decisions', () => {
     [{ kind: 'unknown', message: '未知' }, 'Planner 决策类型无效'],
   ])('rejects malformed decision %#', (input, message) => {
     expect(() => parseQuickStartDecision(input)).toThrow(message)
+  })
+
+  it('ignores schema-declared fields that do not belong to the selected decision branch', () => {
+    expect(
+      parseQuickStartDecision({
+        kind: 'proposal',
+        message: '下面是整理后的提案。',
+        optimizedPrompt: '银发像素骑士全身像',
+        optimizationSummary: '我会保留银发骑士特征。',
+      }),
+    ).toEqual({
+      kind: 'proposal',
+      optimizedPrompt: '银发像素骑士全身像',
+      optimizationSummary: '我会保留银发骑士特征。',
+    })
   })
 
   it('fails closed for text-only, duplicate, or unknown decisions', () => {
@@ -207,7 +222,7 @@ describe('createQuickStartAgent', () => {
     if (proposal.kind !== 'proposal') throw new Error('测试缺少提案')
 
     await expect(
-      agent.confirmProposal(proposal.proposalId, '完整身体的银发像素骑士，深蓝斗篷'),
+      agent.confirmProposal(proposal.proposalId, '完整身体的银发像素骑士，深蓝斗篷', 'eight-way'),
     ).resolves.toMatchObject({
       kind: 'generated',
       runId: 'run-1',
@@ -219,6 +234,7 @@ describe('createQuickStartAgent', () => {
     expect(startCharacterGeneration).toHaveBeenCalledTimes(1)
     expect(startCharacterGeneration).toHaveBeenCalledWith({
       prompt: '完整身体的银发像素骑士，深蓝斗篷',
+      directionalMovement: 'eight-way',
     })
   })
 

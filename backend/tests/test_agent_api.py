@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import Callable
 from functools import partial
 from typing import Any
@@ -212,6 +213,7 @@ def test_ai_chat_returns_text_from_real_provider(
         "completion_tokens": 8,
         "total_tokens": 20,
     }
+    assert response.headers["x-request-id"]
     assert provider_requests[0]["model"] == "server-model"
     assert provider_requests[0]["max_completion_tokens"] == 1_024
     assert provider_requests[0]["stream"] is False
@@ -254,6 +256,7 @@ def test_ai_chat_rejects_oversized_history_before_provider(auth_client):
     response = auth_client.post("/ai/chat", json=_request_body(messages=messages))
 
     assert response.status_code == 422
+    assert response.headers["x-request-id"]
     assert response.json()["error"]["code"] == "invalid_request"
     assert calls == 0
 
@@ -274,6 +277,7 @@ def test_ai_chat_rejects_oversized_body_before_provider(auth_client):
     )
 
     assert response.status_code == 413
+    assert response.headers["x-request-id"]
     assert response.json()["error"]["code"] == "request_too_large"
     assert calls == 0
 
@@ -304,6 +308,7 @@ async def test_ai_chat_rejects_chunked_body_before_json_parse():
         response = await async_client.post("/ai/chat", content=chunks())
 
     assert response.status_code == 413
+    assert response.headers["x-request-id"]
     assert response.json()["error"]["code"] == "request_too_large"
 
 
@@ -318,6 +323,7 @@ def test_ai_chat_reports_missing_configuration(auth_client, monkeypatch):
     response = auth_client.post("/ai/chat", json=_request_body())
 
     assert response.status_code == 503
+    assert response.headers["x-request-id"]
     assert response.json()["error"] == {
         "message": "AI 服务未配置",
         "type": "service_unavailable",
@@ -328,7 +334,9 @@ def test_ai_chat_reports_missing_configuration(auth_client, monkeypatch):
 def test_ai_chat_does_not_retry_upstream_failures(
     auth_client,
     install_openai_provider: Callable[..., list[dict[str, Any]]],
+    caplog,
 ):
+    caplog.set_level(logging.INFO, logger="windup.ai.proxy")
     provider_requests = install_openai_provider(
         auth_client,
         (500, {"error": {"message": "provider unavailable"}}),
@@ -337,9 +345,75 @@ def test_ai_chat_does_not_retry_upstream_failures(
     response = auth_client.post("/ai/chat", json=_request_body())
 
     assert response.status_code == 502
+    request_id = response.headers["x-request-id"]
+    assert request_id
     assert response.json()["error"] == {
         "message": "AI 服务暂时不可用",
         "type": "upstream_error",
         "code": "ai_upstream_error",
     }
     assert len(provider_requests) == 1
+    assert any(
+        "AI chat upstream failed" in record.message and request_id in record.message
+        for record in caplog.records
+        if record.name == "windup.ai.proxy"
+    )
+
+
+def test_ai_chat_binds_user_and_request_id_into_gateway_trace(
+    auth_client,
+    install_openai_provider: Callable[..., list[dict[str, Any]]],
+    caplog,
+):
+    caplog.set_level(logging.INFO)
+    install_openai_provider(auth_client, _text_completion())
+
+    response = auth_client.post("/ai/chat", json=_request_body())
+
+    request_id = response.headers["x-request-id"]
+    assert response.status_code == 200
+    proxy_logs = [r.message for r in caplog.records if r.name == "windup.ai.proxy"]
+    assert any(f"AI chat started request_id={request_id} user_id=1" in msg for msg in proxy_logs)
+    assert any(
+        f"AI chat completed request_id={request_id} user_id=1" in msg
+        and "finish_reason=stop" in msg
+        for msg in proxy_logs
+    )
+    traces = [
+        json.loads(r.message)
+        for r in caplog.records
+        if r.name == "windup.gateway" and r.message.startswith("{")
+    ]
+    assert traces
+    assert traces[-1]["request_id"] == request_id
+    assert traces[-1]["user_id"] == "1"
+    assert traces[-1]["outcome"] == "success"
+
+
+class _UnserializableChatResult:
+    invalid_tool_calls = ["broken"]
+    tool_calls = None
+    content = "hi"
+    response_metadata = {}
+    usage_metadata = None
+    id = "chatcmpl-bad"
+
+
+def test_ai_chat_logs_serialize_failure_after_upstream_success(auth_client, caplog):
+    caplog.set_level(logging.INFO, logger="windup.ai.proxy")
+
+    class _Gateway:
+        async def ainvoke(self, *_args: Any, **_kwargs: Any):
+            return _UnserializableChatResult()
+
+    auth_client.app.state.chat_model_factory = lambda *_args, **_kwargs: _Gateway()
+
+    response = auth_client.post("/ai/chat", json=_request_body())
+
+    assert response.status_code == 502
+    request_id = response.headers["x-request-id"]
+    assert any(
+        "AI chat serialize failed" in record.message and request_id in record.message
+        for record in caplog.records
+        if record.name == "windup.ai.proxy"
+    )

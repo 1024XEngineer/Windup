@@ -33,6 +33,9 @@ class AttemptDetail:
     policy_next_step: str | None = None
     upstream_reached: str | None = None
     model_index: int | None = None
+    error_message: str | None = None
+    finish_reason: str | None = None
+    has_tool_calls: bool | None = None
 
 
 @dataclass

@@ -9,6 +9,14 @@ export const REFINE_FIRST_FRAME_TOOL = 'refine_first_frame' as const
 const MAX_PROMPT_LENGTH = 4_000
 const MAX_MESSAGE_LENGTH = 2_000
 const MAX_OPTIMIZATION_SUMMARY_LENGTH = 600
+const QUICK_START_DECISION_FIELDS = new Set([
+  'kind',
+  'message',
+  'optimizedPrompt',
+  'optimizationSummary',
+])
+
+export type QuickStartDirectionalMovement = 'single' | 'four-way' | 'eight-way'
 
 export interface PlannerMessage {
   role: 'user' | 'assistant'
@@ -62,13 +70,18 @@ export interface QuickStartAgentTurnOptions {
 export interface QuickStartAgent {
   start(input: string, options?: QuickStartAgentTurnOptions): Promise<QuickStartAgentResult>
   continue(input: string, options?: QuickStartAgentTurnOptions): Promise<QuickStartAgentResult>
-  confirmProposal(proposalId: string, prompt: string): Promise<QuickStartAgentResult>
+  confirmProposal(
+    proposalId: string,
+    prompt: string,
+    directionalMovement?: QuickStartDirectionalMovement,
+  ): Promise<QuickStartAgentResult>
   revoke(): void
 }
 
 /** 宿主从现有 WorkflowController 绑定出的单次生成动作；本 Feature 不拥有业务对象。 */
 export type StartCharacterGenerationAction = (input: {
   prompt: string
+  directionalMovement?: QuickStartDirectionalMovement
 }) => Promise<{ runId: string }>
 
 export interface CreateQuickStartAgentOptions {
@@ -131,9 +144,7 @@ export function parseCharacterGenerationPlan(value: unknown): CharacterGeneratio
   if (!isRecord(value)) throw new Error('生成提案参数必须是对象')
   const keys = Object.keys(value)
   if (
-    keys.some(
-      (key) => key !== 'kind' && key !== 'optimizedPrompt' && key !== 'optimizationSummary',
-    ) ||
+    keys.some((key) => !QUICK_START_DECISION_FIELDS.has(key)) ||
     (keys.includes('kind') && value.kind !== 'proposal') ||
     !keys.includes('optimizedPrompt') ||
     !keys.includes('optimizationSummary')
@@ -156,14 +167,14 @@ export function parseCharacterGenerationPlan(value: unknown): CharacterGeneratio
 
 export function parseQuickStartDecision(value: unknown): QuickStartDecision {
   if (!isRecord(value)) throw new Error('Planner 决策必须是对象')
+  const keys = Object.keys(value)
   if (value.kind === 'proposal') {
     return { kind: 'proposal', ...parseCharacterGenerationPlan(value) }
   }
   if (value.kind !== 'reply' && value.kind !== 'clarification' && value.kind !== 'blocked') {
     throw new Error('Planner 决策类型无效')
   }
-  const keys = Object.keys(value)
-  if (keys.some((key) => key !== 'kind' && key !== 'message') || !keys.includes('message')) {
+  if (keys.some((key) => !QUICK_START_DECISION_FIELDS.has(key)) || !keys.includes('message')) {
     throw new Error('Planner 文字决策字段无效')
   }
   return { kind: value.kind, message: parseMessage(value.message) }
@@ -271,6 +282,7 @@ export function createQuickStartAgent({
   async function confirmProposal(
     proposalId: string,
     prompt: string,
+    directionalMovement: QuickStartDirectionalMovement = 'single',
   ): Promise<QuickStartAgentResult> {
     assertAuthorized()
     if (running) throw new Error('Planner 正在处理上一条输入')
@@ -287,7 +299,10 @@ export function createQuickStartAgent({
     const proposal = currentProposal
     currentProposal = null
     try {
-      const { runId } = await startCharacterGeneration({ prompt: effectivePrompt })
+      const { runId } = await startCharacterGeneration({
+        prompt: effectivePrompt,
+        directionalMovement,
+      })
       return { kind: 'generated', runId, ...proposal, optimizedPrompt: effectivePrompt }
     } finally {
       running = false

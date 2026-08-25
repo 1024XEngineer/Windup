@@ -4,17 +4,29 @@ import {
   useMemo,
   useRef,
   useState,
+  useId,
   type CSSProperties,
   type ChangeEvent,
   type FormEvent,
   type ReactNode,
 } from 'react'
-import { ArrowBendDownLeft, ArrowUp, ImageSquare, X } from '@phosphor-icons/react'
+import {
+  ArrowBendDownLeft,
+  ArrowClockwise,
+  ArrowUp,
+  CopySimple,
+  ImageSquare,
+  PlusCircle,
+  Stop,
+  X,
+} from '@phosphor-icons/react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 
 import {
+  DIRECTIONAL_MOVEMENT,
   type ActionFirstFrameWorkflowNode,
   type CharacterTemplateWorkflowNode,
+  type DirectionalMovement,
   type WorkflowRun,
   WorkflowRunConflictError,
 } from '@/entities'
@@ -71,6 +83,12 @@ const STYLE_PROMPTS = [
     prompt: '温暖手绘像素风，柔和配色，细腻纸张质感',
   },
 ] as const
+
+const QUICK_START_DIRECTIONAL_MOVEMENTS: readonly DirectionalMovement[] = [
+  'single',
+  'four-way',
+  'eight-way',
+]
 
 const ROLE_IDEAS = [
   '银色卷发、戴星形单片眼镜的裁缝',
@@ -389,6 +407,7 @@ export function QuickStartPage({
   const consumeCreatedSession = useCallback((consumed: QuickStartSession) => {
     setCreatedSession((current) => (current === consumed ? null : current))
   }, [])
+
   return runId ? (
     <QuickStartRun
       key={runId}
@@ -411,6 +430,101 @@ export function QuickStartPage({
   )
 }
 
+function IconActionButton({
+  label,
+  accent = false,
+  disabled = false,
+  onClick,
+  type = 'button',
+  className = '',
+  children,
+}: {
+  label: string
+  accent?: boolean
+  disabled?: boolean
+  onClick?: () => void
+  type?: 'button' | 'submit'
+  className?: string
+  children: ReactNode
+}) {
+  const tooltipId = useId()
+
+  return (
+    <button
+      type={type}
+      aria-label={label}
+      aria-describedby={tooltipId}
+      disabled={disabled}
+      onClick={onClick}
+      data-icon-action
+      className={`group/action relative grid size-10 shrink-0 place-items-center rounded-lg transition focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-45 ${
+        accent
+          ? 'bg-app-accent text-app-on-accent hover:bg-app-accent-hover'
+          : 'text-app-muted hover:bg-app-surface-muted hover:text-app-accent'
+      } ${className}`}
+    >
+      {children}
+      <span
+        id={tooltipId}
+        role="tooltip"
+        className="pointer-events-none absolute top-full left-1/2 z-20 mt-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-app-ink px-2 py-1 text-[11px] font-medium text-app-canvas opacity-0 shadow-app-card transition group-hover/action:visible group-hover/action:opacity-100 group-focus-within/action:visible group-focus-within/action:opacity-100 invisible"
+      >
+        {label}
+      </span>
+    </button>
+  )
+}
+
+function AgentActions({
+  copyLabel,
+  onCopy,
+  exportModel,
+  onNewCreation,
+  onRegenerate,
+  regenerateDisabled = false,
+  showNewCreation = true,
+}: {
+  copyLabel?: string
+  onCopy?: () => void
+  exportModel?: ExportPackageModel | null
+  onNewCreation: () => void
+  onRegenerate?: () => void
+  regenerateDisabled?: boolean
+  showNewCreation?: boolean
+}) {
+  return (
+    <div
+      data-agent-actions
+      role="group"
+      aria-label="相关操作"
+      className="flex w-fit max-w-full flex-wrap items-center gap-1 rounded-xl border border-app-line bg-app-surface/80 p-1"
+    >
+      {copyLabel && onCopy ? (
+        <IconActionButton label={copyLabel} onClick={onCopy}>
+          <CopySimple aria-hidden="true" size={18} weight="bold" />
+        </IconActionButton>
+      ) : null}
+      {onRegenerate ? (
+        <IconActionButton label="重新生成" onClick={onRegenerate} disabled={regenerateDisabled}>
+          <ArrowClockwise aria-hidden="true" size={18} weight="bold" />
+        </IconActionButton>
+      ) : null}
+      {exportModel ? (
+        <ExportButton
+          model={exportModel}
+          iconOnly
+          className="border-transparent bg-app-accent text-app-on-accent hover:bg-app-accent-hover"
+        />
+      ) : null}
+      {showNewCreation ? (
+        <IconActionButton label="新建一次创作" onClick={onNewCreation}>
+          <PlusCircle aria-hidden="true" size={18} weight="bold" />
+        </IconActionButton>
+      ) : null}
+    </div>
+  )
+}
+
 function QuickStartInput({
   service,
   agent,
@@ -424,6 +538,7 @@ function QuickStartInput({
 }) {
   const navigate = useNavigate()
   const [prompt, setPrompt] = useState('')
+  const [directionalMovement, setDirectionalMovement] = useState<DirectionalMovement>('single')
   const [templateFile, setTemplateFile] = useState<File | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [entryTransition, setEntryTransition] = useState<'idle' | 'leaving'>('idle')
@@ -616,7 +731,7 @@ function QuickStartInput({
       if (!normalizedPrompt) return
       setPromptState('confirmed')
       try {
-        const result = await agentSession.confirmProposal(normalizedPrompt)
+        const result = await agentSession.confirmProposal(normalizedPrompt, directionalMovement)
         if (result.kind === 'generated') await handoffGenerated(result)
       } catch {
         setPromptState('ready')
@@ -673,6 +788,7 @@ function QuickStartInput({
         templateFile,
         normalizedPrompt,
         abortController.signal,
+        directionalMovement,
       )
       const handoffPromise = new Promise<void>((resolve) => {
         handoffTimer.current = setTimeout(() => {
@@ -855,6 +971,33 @@ function QuickStartInput({
               : 'translate-y-0 opacity-100 blur-0'
           }`}
         >
+          <fieldset
+            aria-label="角色方向"
+            disabled={entryBusy}
+            className="mb-2 flex items-center justify-end gap-1.5 text-xs"
+          >
+            <legend className="mr-1 text-app-muted">生成方向</legend>
+            {QUICK_START_DIRECTIONAL_MOVEMENTS.map((movement) => (
+              <label
+                key={movement}
+                className={`relative cursor-pointer rounded-full border px-3 py-1.5 font-semibold transition focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-app-accent ${
+                  directionalMovement === movement
+                    ? 'border-app-accent bg-app-accent-soft text-app-accent'
+                    : 'border-app-line bg-app-surface/70 text-app-muted hover:border-app-line-strong hover:text-app-ink'
+                } ${entryBusy ? 'cursor-not-allowed opacity-50' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="quick-start-directional-movement"
+                  value={movement}
+                  checked={directionalMovement === movement}
+                  onChange={() => setDirectionalMovement(movement)}
+                  className="sr-only"
+                />
+                {DIRECTIONAL_MOVEMENT[movement]}
+              </label>
+            ))}
+          </fieldset>
           <form
             onSubmit={(event) => void submit(event)}
             autoComplete="off"
@@ -1274,12 +1417,14 @@ function QuickStartRun({
   const [confirmingCandidate, setConfirmingCandidate] = useState(false)
   const [confirmingFirstFrame, setConfirmingFirstFrame] = useState(false)
   const [addingAction, setAddingAction] = useState(false)
+  const [promptCopied, setPromptCopied] = useState(false)
   const initialAgentConversation = useRef(readAgentRunConversation(activeRunUserId, runId)).current
   const [agentConversationTurns, setAgentConversationTurns] = useState(initialAgentConversation)
   const agentConversationTurnsRef = useRef(agentConversationTurns)
   const initialWorkflowAgentSeed = useRef(createAgentSeed(initialAgentConversation)).current
   const automaticPublishAttempt = useRef<string | null>(null)
   const transcriptScrollRegion = useRef<HTMLElement>(null)
+  const promptCopyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const workflowConflictRef = useRef(false)
   const initialSessionRef = useRef(initialSession)
   const activeSessionRef = useRef<QuickStartSession | null>(null)
@@ -1356,6 +1501,7 @@ function QuickStartRun({
     return () => {
       mountedRef.current = false
       activeSessionRef.current = null
+      if (promptCopyTimer.current) clearTimeout(promptCopyTimer.current)
     }
   }, [])
 
@@ -1568,11 +1714,13 @@ function QuickStartRun({
   )
   const workflowIsActive = workflowHasActiveNode && !workflowHasFailure(revision)
   const isActionFailed = actionStep?.status === 'failed'
+  const isTemplateFailed = templateStep?.status === 'failed'
   const isTemplateSelecting =
     templateStep?.status === 'active' && templateStep.phase === 'selecting'
   const isFirstFrameSelecting =
     firstFrameStep?.status === 'active' && firstFrameStep.phase === 'selecting'
   const isFirstFrameFailed = firstFrameStep?.status === 'failed'
+  const composerCanInterrupt = workflowIsActive && !isTemplateSelecting && !isFirstFrameSelecting
   const candidateGroups = groupCandidates(candidates)
   const firstFrameCandidateGroups = groupCandidates(firstFrameCandidates)
   const templateSelections: QuickStartDirectionSelections = {
@@ -1607,6 +1755,23 @@ function QuickStartRun({
       setRun(await session.interrupt())
     } catch (cause) {
       reportWorkflowError(cause, '中断自动制作失败')
+    }
+  }
+
+  async function copyWorkflowPrompt() {
+    const prompt = workflowPrompt(revision)
+    if (!prompt) return
+    try {
+      await navigator.clipboard.writeText(prompt)
+      if (!mountedRef.current) return
+      setPromptCopied(true)
+      if (promptCopyTimer.current) clearTimeout(promptCopyTimer.current)
+      promptCopyTimer.current = setTimeout(() => {
+        promptCopyTimer.current = null
+        if (mountedRef.current) setPromptCopied(false)
+      }, 1_600)
+    } catch (cause) {
+      reportWorkflowError(cause, '复制提示词失败，请稍后重试')
     }
   }
 
@@ -1822,6 +1987,10 @@ function QuickStartRun({
   const characterTurnIsCurrent = !firstFrameStep
   const firstFrameTurnIsCurrent = Boolean(firstFrameStep) && actionStep?.status === 'locked'
   const actionTurnIsCurrent = Boolean(actionStep && actionStep.status !== 'locked')
+  const characterExportModel = exportModel?.stage === 'character' ? exportModel : null
+  const firstFrameExportModel = exportModel?.stage === 'first-frame' ? exportModel : null
+  const actionExportModel =
+    exportModel?.stage === 'action-assets' || exportModel?.stage === 'playtest' ? exportModel : null
   const entryAgentConversationTurns = agentConversationTurns.filter(
     (turn) => turn.scope !== 'workflow',
   )
@@ -1891,14 +2060,6 @@ function QuickStartRun({
                       setSelectedCandidates((current) => ({ ...current, [direction]: imageUrl }))
                     }
                   />
-                  <button
-                    type="button"
-                    onClick={() => void regenerate()}
-                    disabled={workflowConflict}
-                    className="w-fit rounded-xl border border-app-line-strong px-4 py-2 text-xs font-semibold text-app-ink-soft transition hover:border-app-accent hover:text-app-accent"
-                  >
-                    重新生成
-                  </button>
                 </>
               ) : templateStep?.status === 'passed' && selectedTemplateUrl ? (
                 <>
@@ -1936,6 +2097,19 @@ function QuickStartRun({
                   </div>
                 </>
               )}
+              {workflowPrompt(revision) ? (
+                <AgentActions
+                  copyLabel={promptCopied ? '已复制提示词' : '复制提示词'}
+                  onCopy={() => void copyWorkflowPrompt()}
+                  exportModel={characterExportModel}
+                  onNewCreation={() => navigate('/quick-start')}
+                  onRegenerate={
+                    candidates.length || isTemplateFailed ? () => void regenerate() : undefined
+                  }
+                  regenerateDisabled={workflowConflict}
+                  showNewCreation={characterTurnIsCurrent}
+                />
+              ) : null}
             </AgentTurn>
 
             {firstFrameStep ? (
@@ -2016,6 +2190,13 @@ function QuickStartRun({
                       </div>
                     </>
                   )}
+                  {isFirstFrameFailed || firstFrameExportModel ? (
+                    <AgentActions
+                      exportModel={firstFrameExportModel}
+                      onNewCreation={() => navigate('/quick-start')}
+                      showNewCreation={firstFrameTurnIsCurrent}
+                    />
+                  ) : null}
                 </AgentTurn>
               </>
             ) : null}
@@ -2106,6 +2287,13 @@ function QuickStartRun({
                       </div>
                     </>
                   )}
+                  {isActionFailed || actionExportModel ? (
+                    <AgentActions
+                      exportModel={actionExportModel}
+                      onNewCreation={() => navigate('/quick-start')}
+                      showNewCreation={actionTurnIsCurrent}
+                    />
+                  ) : null}
                 </AgentTurn>
               </>
             ) : null}
@@ -2167,33 +2355,6 @@ function QuickStartRun({
           data-position="floating"
           className="absolute right-5 bottom-4 left-5 z-10 mx-auto w-auto max-w-3xl sm:right-8 sm:bottom-6 sm:left-8"
         >
-          <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
-            {exportModel ? (
-              <ExportButton
-                model={exportModel}
-                className="border-app-accent bg-app-accent text-app-on-accent hover:bg-app-accent-hover"
-              />
-            ) : null}
-            {workflowIsActive ? (
-              <button
-                type="button"
-                onClick={() => void interrupt()}
-                disabled={workflowConflict}
-                className="rounded-lg border border-app-line-strong bg-app-surface-raised/96 px-3 py-2 text-xs font-semibold text-app-ink-soft backdrop-blur-xl transition hover:border-app-accent hover:text-app-accent"
-              >
-                中断自动制作
-              </button>
-            ) : null}
-            {candidates.length || workflowHasFailure(revision) ? (
-              <button
-                type="button"
-                onClick={() => navigate('/quick-start')}
-                className="rounded-lg border border-app-line-strong bg-app-surface-raised/96 px-3 py-2 text-xs font-semibold text-app-ink-soft backdrop-blur-xl transition hover:border-app-accent hover:text-app-accent"
-              >
-                新建一次创作
-              </button>
-            ) : null}
-          </div>
           <form
             onSubmit={continueConversation}
             className="grid grid-cols-[1fr_auto] items-center gap-1.5 rounded-2xl border border-app-line-strong bg-app-surface-raised/96 p-1.5 shadow-app-panel backdrop-blur-xl transition focus-within:border-app-accent"
@@ -2210,18 +2371,32 @@ function QuickStartRun({
                 className="h-10 w-full min-w-0 border-0 bg-transparent px-3 text-[15px] text-app-ink outline-none placeholder:text-app-faint"
               />
             </label>
-            <button
-              type="submit"
-              aria-label={isTemplateSelecting ? '确认选择，继续下一步' : '发送'}
-              disabled={
-                !composerCanSubmit ||
-                workflowConflict ||
-                (workflowAgentMode && workflowAgentSession.busy)
+            <IconActionButton
+              type={composerCanInterrupt ? 'button' : 'submit'}
+              label={
+                composerCanInterrupt
+                  ? '中断自动制作'
+                  : isTemplateSelecting
+                    ? '确认选择，继续下一步'
+                    : '发送'
               }
-              className="grid h-10 w-10 place-items-center rounded-lg bg-app-accent text-app-on-accent transition hover:bg-app-accent-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-35"
+              onClick={composerCanInterrupt ? () => void interrupt() : undefined}
+              disabled={
+                composerCanInterrupt
+                  ? workflowConflict
+                  : !composerCanSubmit ||
+                    workflowConflict ||
+                    (workflowAgentMode && workflowAgentSession.busy)
+              }
+              accent
+              className="active:scale-[0.98] disabled:opacity-35"
             >
-              <ArrowUp aria-hidden="true" size={16} weight="bold" />
-            </button>
+              {composerCanInterrupt ? (
+                <Stop aria-hidden="true" size={18} weight="bold" />
+              ) : (
+                <ArrowUp aria-hidden="true" size={18} weight="bold" />
+              )}
+            </IconActionButton>
           </form>
         </footer>
       </div>

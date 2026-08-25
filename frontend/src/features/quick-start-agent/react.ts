@@ -6,6 +6,7 @@ import {
   type CharacterGenerationProposal,
   type CreateQuickStartAgentOptions,
   type QuickStartAgentResult,
+  type QuickStartDirectionalMovement,
   type CreateQuickStartWorkflowAgentOptions,
   type WorkflowAgentToolName,
 } from './runtime'
@@ -24,10 +25,25 @@ export type QuickStartAgentState =
 
 export type UseQuickStartAgentOptions = CreateQuickStartAgentOptions
 
+function requestIdFromCause(cause: unknown): string | undefined {
+  if (!cause || typeof cause !== 'object') return undefined
+  const headers = (cause as { responseHeaders?: Record<string, string> }).responseHeaders
+  if (!headers) return undefined
+  return headers['x-request-id'] ?? headers['X-Request-Id']
+}
+
+function logAgentFailure(cause: unknown): void {
+  console.error('[quick-start-agent] 本轮失败', {
+    name: cause instanceof Error ? cause.name : typeof cause,
+    message: cause instanceof Error ? cause.message : String(cause),
+    requestId: requestIdFromCause(cause),
+  })
+}
+
 function errorMessage(cause: unknown): string {
   if (!(cause instanceof Error) || !cause.message) return 'Agent 暂时不可用，请稍后重试'
   if (
-    /Tool|Planner|quick_start_decision|optimizedPrompt|optimizationSummary|生成授权/u.test(
+    /Tool|Planner|quick_start_decision|optimizedPrompt|optimizationSummary|生成提案|请求参数无效|生成授权/u.test(
       cause.message,
     )
   ) {
@@ -113,6 +129,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
         return result
       } catch (cause) {
         if (mounted.current && !(cause instanceof Error && cause.name === 'AbortError')) {
+          logAgentFailure(cause)
           setState({ status: 'error', message: errorMessage(cause) })
         }
         throw cause
@@ -125,7 +142,10 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
   )
 
   const confirmProposal = useCallback(
-    async (prompt: string): Promise<QuickStartAgentResult> => {
+    async (
+      prompt: string,
+      directionalMovement: QuickStartDirectionalMovement = 'single',
+    ): Promise<QuickStartAgentResult> => {
       if (running.current) throw new Error('Planner 正在处理上一条输入')
       if (state.status !== 'proposal') throw new Error('提示词提案已失效')
       running.current = true
@@ -139,9 +159,12 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
         })
       }
       try {
-        return await ensureAgent().confirmProposal(proposalId, prompt)
+        return await ensureAgent().confirmProposal(proposalId, prompt, directionalMovement)
       } catch (cause) {
-        if (mounted.current) setState({ status: 'error', message: errorMessage(cause) })
+        if (mounted.current) {
+          logAgentFailure(cause)
+          setState({ status: 'error', message: errorMessage(cause) })
+        }
         throw cause
       } finally {
         running.current = false
@@ -206,6 +229,7 @@ export function useQuickStartWorkflowAgent({
         return result
       } catch (cause) {
         if (mounted.current && !(cause instanceof Error && cause.name === 'AbortError')) {
+          logAgentFailure(cause)
           setState({ status: 'error', message: errorMessage(cause) })
         }
         throw cause
