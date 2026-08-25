@@ -26,8 +26,8 @@ class QuotaSettings(BaseSettings):
     invite_code_ttl_days: int = 30          # 邀请码有效期（天）
 
     # -- 生成任务 -----------------------------------------------------------
-    generate_image_cost: int = 10           # 生成角色参考图
-    generate_action_cost: int = 50          # 生成角色动作
+    generate_image_cost: int = 10           # 每次上游图片模型调用
+    generate_action_cost: int = 50          # 每次上游视频模型调用
 
 
 settings = QuotaSettings()

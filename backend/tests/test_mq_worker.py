@@ -858,7 +858,10 @@ def test_release_stale_pending_tasks_unfreezes(db_session, engine, monkeypatch):
         task_type=GenerationType.CHARACTER_IMAGE,
         input_payload={"prompt": "old"},
     )
-    billing.reserve_for_task(db_session, user_id=1, task_id=task.id, task_type=GenerationType.CHARACTER_IMAGE)
+    billing.reserve_for_task(
+        db_session, user_id=1, task_id=task.id,
+        task_type=GenerationType.CHARACTER_IMAGE, model_calls=1,
+    )
     record = db_session.get(GenerationTaskRecord, task.id)
     record.create_at = datetime.now(timezone.utc) - timedelta(
         seconds=GENERATION_PENDING_MAX_AGE_SECONDS + 60,
@@ -890,7 +893,10 @@ def test_recover_skips_fresh_running_tasks(db_session, engine, monkeypatch):
         task_type=GenerationType.CHARACTER_IMAGE,
         input_payload={"prompt": "running"},
     )
-    billing.reserve_for_task(db_session, user_id=1, task_id=task.id, task_type=GenerationType.CHARACTER_IMAGE)
+    billing.reserve_for_task(
+        db_session, user_id=1, task_id=task.id,
+        task_type=GenerationType.CHARACTER_IMAGE, model_calls=1,
+    )
     task_repo.update_status(db_session, task.id, TaskStatus.RUNNING)
     record = db_session.get(GenerationTaskRecord, task.id)
     record.update_at = datetime.now(timezone.utc)
