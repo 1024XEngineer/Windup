@@ -10,13 +10,19 @@ loop),一次性动作裁动作区间。像素化 / 对齐 / 打包在 :mod:`..po
 注意它**仍然不参与选帧** —— 那条消融结论没变,见 :func:`.loop.pick_cycle`。
 """
 
-from .extract import extract_all_frames_bytes, extract_frames_bytes
-from .loop import find_period, pick_cycle
+from .extract import (
+    extract_all_frames_bytes,
+    extract_frames_at,
+    extract_frames_bytes,
+    extract_preview_frames,
+)
+from .loop import find_period, pick_cycle, pick_cycle_indices
 from .oneshot import (
     find_motion_span,
     first_action_end,
     foot_line_series,
     pick_oneshot,
+    pick_oneshot_indices,
     split_jump_phases,
 )
 from .quality import (
@@ -30,8 +36,11 @@ from .quality import (
 __all__ = [
     "extract_frames_bytes",
     "extract_all_frames_bytes",
+    "extract_preview_frames",
+    "extract_frames_at",
     "find_period",
     "pick_cycle",
+    "pick_cycle_indices",
     # 交付成色的四个读数(汇成 ports.ActionQuality;其余 quality.* 仍是内部诊断)
     "dead_frame_indices",
     "limb_motion",
@@ -42,5 +51,6 @@ __all__ = [
     "first_action_end",
     "foot_line_series",
     "pick_oneshot",
+    "pick_oneshot_indices",
     "split_jump_phases",
 ]

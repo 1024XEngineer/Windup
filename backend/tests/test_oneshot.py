@@ -9,6 +9,7 @@ from windup_ai_engine.slicing import (
     first_action_end,
     foot_line_series,
     pick_oneshot,
+    pick_oneshot_indices,
     split_jump_phases,
 )
 
@@ -149,6 +150,15 @@ def test_pick_oneshot_returns_exactly_n_for_every_legal_n():
 def test_pick_oneshot_passthrough_when_n_equals_len():
     frames = _jump_sequence()
     assert pick_oneshot(frames, len(frames)) is frames
+
+
+def test_pick_oneshot_indices_match_pick_oneshot_identities():
+    frames = _jump_sequence()
+    for n in (1, 6, len(frames)):
+        out = pick_oneshot(frames, n, kind="airborne")
+        idx = pick_oneshot_indices(frames, n, kind="airborne")
+        assert len(idx) == n
+        assert all(out[j] is frames[i] for j, i in enumerate(idx))
 
 
 def test_pick_oneshot_frames_are_distinct_source_frames_in_order():

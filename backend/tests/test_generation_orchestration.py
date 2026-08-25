@@ -88,8 +88,12 @@ def _real_offline_generator(monkeypatch) -> CharacterGenerator:
         for i in range(24)
     ]
     monkeypatch.setattr(
-        "windup_ai_engine.strategy.concrete.extract_all_frames_bytes",
-        lambda video, cap=150: dense,
+        "windup_ai_engine.strategy.concrete.extract_preview_frames",
+        lambda video, cap=150, size=48: (dense, list(range(len(dense)))),
+    )
+    monkeypatch.setattr(
+        "windup_ai_engine.strategy.concrete.extract_frames_at",
+        lambda video, indices: [dense[i] for i in indices],
     )
     return CharacterGenerator(
         {GenRoute.VIDEO_I2V: VideoFrameStrategy(_StubVideo(), _StubMatte())}
@@ -876,8 +880,15 @@ def _pixel_master() -> bytes:
 def _delivered_colors(game_style: str | None, session_factory, monkeypatch) -> int:
     """建一个该画风的项目,跑完一条动作任务,数交付帧的色数。"""
     monkeypatch.setattr(
-        "windup_ai_engine.strategy.concrete.extract_all_frames_bytes",
-        lambda video, cap=150: [_gradient_frame(i % 6) for i in range(24)],
+        "windup_ai_engine.strategy.concrete.extract_preview_frames",
+        lambda video, cap=150, size=48: (
+            [_gradient_frame(i % 6) for i in range(24)],
+            list(range(24)),
+        ),
+    )
+    monkeypatch.setattr(
+        "windup_ai_engine.strategy.concrete.extract_frames_at",
+        lambda video, indices: [_gradient_frame(i % 6) for i in indices],
     )
     with session_factory() as s:
         project = Project(

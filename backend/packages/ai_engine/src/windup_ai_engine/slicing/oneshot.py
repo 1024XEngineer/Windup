@@ -22,6 +22,7 @@ __all__ = [
     "find_motion_span",
     "first_action_end",
     "pick_oneshot",
+    "pick_oneshot_indices",
     "split_jump_phases",
     "foot_line_series",
 ]
@@ -163,6 +164,28 @@ def _widen_span(start: int, end: int, n: int, total: int) -> tuple[int, int]:
     return max(0, end - n + 1), end                # 右边撞到尾部时把缺口退回左边
 
 
+def pick_oneshot_indices(
+    frames: list[Image.Image], n: int, first_only: bool = True, kind: str = "swing"
+) -> list[int]:
+    """与 :func:`pick_oneshot` 同一套裁区间 / 关键姿势判据,只返回源下标。"""
+    _check_kind(kind)                              # first_only=False 时不走 first_action_end,这里兜住
+    if n <= 0:
+        # 2026-08-10 实测:n<=0 原本静默返回 [](range(n) 为空,连除零都不报),"成功"地交出零帧。
+        raise ValueError(f"n 必须 >= 1,收到 {n}")
+    if len(frames) < n:
+        raise ValueError(f"源帧不足:请求 {n} 帧,只有 {len(frames)} 帧")
+    if len(frames) == n:
+        return list(range(n))
+    start, end = find_motion_span(frames)
+    if first_only:
+        end = max(start + 1, first_action_end(frames, start, end, kind=kind))
+    start, end = _widen_span(start, end, n, len(frames))
+    span = frames[start : end + 1]
+    if n == 1:                                     # n=1 撞下面的 /(n-1) 除零(机器审 P1,2026-08-10 复现)
+        return [start + _key_pose(span, kind)]
+    return [start + round(i * (len(span) - 1) / (n - 1)) for i in range(n)]
+
+
 def pick_oneshot(
     frames: list[Image.Image], n: int, first_only: bool = True, kind: str = "swing"
 ) -> list[Image.Image]:
@@ -173,23 +196,10 @@ def pick_oneshot(
 
     返回长度**恒等于** ``n``;源帧不够 n 帧则报错,不静默少给。
     """
-    _check_kind(kind)                              # first_only=False 时不走 first_action_end,这里兜住
-    if n <= 0:
-        # 2026-08-10 实测:n<=0 原本静默返回 [](range(n) 为空,连除零都不报),"成功"地交出零帧。
-        raise ValueError(f"n 必须 >= 1,收到 {n}")
-    if len(frames) < n:
-        raise ValueError(f"源帧不足:请求 {n} 帧,只有 {len(frames)} 帧")
-    if len(frames) == n:
+    idx = pick_oneshot_indices(frames, n, first_only=first_only, kind=kind)
+    if n == len(frames):
         return frames
-    start, end = find_motion_span(frames)
-    if first_only:
-        end = max(start + 1, first_action_end(frames, start, end, kind=kind))
-    start, end = _widen_span(start, end, n, len(frames))
-    span = frames[start : end + 1]
-    if n == 1:                                     # n=1 撞下面的 /(n-1) 除零(机器审 P1,2026-08-10 复现)
-        return [span[_key_pose(span, kind)]]
-    idx = [round(i * (len(span) - 1) / (n - 1)) for i in range(n)]
-    return [span[i] for i in idx]
+    return [frames[i] for i in idx]
 
 
 def _subject_rows(frame: Image.Image, alpha_thr: int = 128, bg_tol: int = 60) -> np.ndarray:

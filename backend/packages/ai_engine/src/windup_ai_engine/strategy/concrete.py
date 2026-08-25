@@ -33,7 +33,12 @@ from windup_ai_engine._imgio import to_png as _png
 from windup_ai_engine.master_prep import prepare_master
 from windup_ai_engine.ports import ProgressPort, PromptAdapterPort, PromptRejected
 from windup_ai_engine.postprocess import master_pixel_spec, pixelate_frames
-from windup_ai_engine.slicing import extract_all_frames_bytes, pick_cycle, pick_oneshot
+from windup_ai_engine.slicing import (
+    extract_frames_at,
+    extract_preview_frames,
+    pick_cycle_indices,
+    pick_oneshot_indices,
+)
 from windup_ai_engine.prompt import (
     build_attack_prompt,
     build_custom_prompt,
@@ -181,29 +186,62 @@ class VideoFrameStrategy(DerivationStrategy):
     ) -> list[bytes]:
         del card
         n = action.n_frames
-        dense = extract_all_frames_bytes(video)
-        # 跨动作一致性:用视频首帧(=母版姿态)的角色高当共同定标基准。各动作都从同一母版
-        # 起手,故此值一致 —— 否则各动作按自己最高帧定标,切状态时角色会忽大忽小。
-        ref_h = None
-        if dense:
-            _first = _img(self._matte.cutout(_png(dense[0])))
-            _ys, _ = np.where(np.asarray(_first)[:, :, 3] > 128)
-            ref_h = float(_ys.max() - _ys.min()) if len(_ys) else None
+        previews, src_idx = extract_preview_frames(video)
         if is_cyclic(action):
             progress.step("derive", 1, 3, f"步态周期取 {n} 帧(无缝 loop)+ 抠图")
-            picked = pick_cycle(dense, n)  # 单周期闭环(#21)
+            local = pick_cycle_indices(previews, n)
         else:
             progress.step("derive", 1, 3, f"裁动作区间取 {n} 帧(不闭环)+ 抠图")
             kind = "airborne" if action.action is ActionType.JUMP else "swing"
-            picked = pick_oneshot(dense, n, kind=kind)  # 一次性动作:裁起止
-        cut = [_img(self._matte.cutout(_png(im))) for im in picked]
+            local = pick_oneshot_indices(previews, n, kind=kind)
+        del previews
+        wanted = [src_idx[i] for i in local]
+        need_ref = action.stylize is not Stylize.NONE
+        order = list(dict.fromkeys(([0] if need_ref else []) + wanted))
+        full = extract_frames_at(video, order)
+        by_src = dict(zip(order, full, strict=True))
+        del full
+
+        # 跨动作一致性:用视频首帧(=母版姿态)的角色高当共同定标基准。各动作都从同一母版
+        # 起手,故此值一致 —— 否则各动作按自己最高帧定标,切状态时角色会忽大忽小。
+        ref_h = None
+        matted0 = None
+        if need_ref:
+            raw0 = by_src.pop(0)
+            png0 = self._matte.cutout(_png(raw0))
+            del raw0
+            cut0 = _img(png0)
+            del png0
+            _ys, _ = np.where(np.asarray(cut0)[:, :, 3] > 128)
+            ref_h = float(_ys.max() - _ys.min()) if len(_ys) else None
+            if 0 in wanted:
+                matted0 = cut0
+            else:
+                del cut0
+
+        none = action.stylize is Stylize.NONE
+        cut_png: list[bytes] = []
+        cut: list = []
+        for src in wanted:
+            if src == 0 and matted0 is not None:
+                cut.append(matted0)
+                matted0 = None
+                continue
+            raw = by_src.pop(src)
+            png = self._matte.cutout(_png(raw))
+            del raw
+            if none:
+                cut_png.append(png)
+            else:
+                cut.append(_img(png))
+        by_src.clear()
 
         # 风格化按需(见 ActionSpec.stylize):none=保留 i2v 画风(插画/伪 3D 角色);
         # pixel=像素化。原生像素角色**按母版规格**做:吸附母版像素网格 + 锁母版色板,
         # 顺带消掉首帧 JPG / H.264 在硬边留下的灰颗粒(实测:通用降采样+量化反而更糊)。
-        if action.stylize is Stylize.NONE:
+        if none:
             progress.step("derive", 2, 3, "保留 i2v 画风(不像素化)")
-            return [_png(im) for im in cut]
+            return cut_png
 
         target_h, palette = action.pixel_h, None
         try:

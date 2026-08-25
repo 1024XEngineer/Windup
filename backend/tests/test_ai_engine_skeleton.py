@@ -94,8 +94,12 @@ def _offline_video_strategy(monkeypatch, video=None) -> VideoFrameStrategy:
     """离线版 VideoFrameStrategy:抽帧被顶替,不解码 mp4 / 不联网 / 不花钱。"""
     dense = [Image.open(io.BytesIO(_tiny_png(shift=i % 6))).convert("RGBA") for i in range(24)]
     monkeypatch.setattr(
-        "windup_ai_engine.strategy.concrete.extract_all_frames_bytes",
-        lambda video, cap=150: dense,
+        "windup_ai_engine.strategy.concrete.extract_preview_frames",
+        lambda video, cap=150, size=48: (dense, list(range(len(dense)))),
+    )
+    monkeypatch.setattr(
+        "windup_ai_engine.strategy.concrete.extract_frames_at",
+        lambda video, indices: [dense[i] for i in indices],
     )
 
     class _StubVideo:

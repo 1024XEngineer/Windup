@@ -13,7 +13,7 @@ from PIL import Image
 from ._frames import SMALL as _SMALL
 from ._frames import gray as _gray
 
-__all__ = ["find_period", "pick_cycle"]
+__all__ = ["find_period", "pick_cycle", "pick_cycle_indices"]
 
 
 def _deskew(gs: list[np.ndarray]) -> list[np.ndarray]:
@@ -80,6 +80,64 @@ def _offsets(P: int, n: int) -> list[int]:
     return [round(k * P / n) for k in range(n)]
 
 
+def pick_cycle_indices(frames: list[Image.Image], n: int) -> list[int]:
+    """与 :func:`pick_cycle` 同一套周期/接缝判据,只返回源下标。
+
+    生产路径用下标再解一遍全分辨率帧,避免把 150 张 720p 常驻到选完。
+    """
+    if n <= 0:
+        # n<=0 没有合法语义。检出周期时 `_offsets(P, 0)` 会走到空 idx 再 IndexError;
+        # 测不到周期时旧实现静默返回 [] —— 后者更危险,入口显式拒绝。
+        raise ValueError(f"n 必须 >= 1,收到 {n}")
+    total = len(frames)
+    if total < n:
+        # 源帧不够就报错,不再原样返回:长度不足且不报错,下游 frame_durations 按实际长度现算,
+        # 帧数与时长表自洽,server 看不出异常,用户拿到的是一段没走完的循环。
+        raise ValueError(f"源帧不足:请求 {n} 帧,只有 {total} 帧")
+    if total == n:
+        return list(range(total))
+    M = _dmat(_deskew(_gray(frames)))
+    if n == 1:
+        # 单帧"循环"没有接缝也没有相位,整套周期/接缝机制全部失效。显式取 medoid:
+        # 与全片平均姿态最近的一帧 = 循环停留最久的相位,比 frames[0](i2v 首帧是母版静立姿)
+        # 更能代表这个循环。
+        return [int(np.argmin(M.mean(1)))]
+    adj = np.array([M[i, i + 1] for i in range(total - 1)])
+    scale = float(np.median(adj))
+
+    pmin = max(6, min(n, total // 6))
+    pmax = min(total - 3, max(pmin + 2, int(total * 0.6)))
+    got = _prominent_period(_curve(M, pmin, pmax), scale)
+    if got is None or got[1] < 0.25:
+        return [round(k * (total - 1) / n) for k in range(n)]
+
+    p = got[0]
+    cands = []
+    for k in range(1, 4):
+        P = k * p
+        if P > total - 2:
+            break
+        offs = _offsets(P, n)
+        if len(set(offs)) < n:
+            continue
+        best = None
+        for i0 in range(total - P):
+            idx = [i0 + o for o in offs]
+            a = float(np.mean([M[idx[j], idx[j + 1]] for j in range(n - 1)]))
+            if a < 0.5 * scale:
+                continue
+            score = M[idx[-1], idx[0]] / max(a, 1e-6)
+            if best is None or score < best[0]:
+                best = (score, idx)
+        if best:
+            cands.append((k, best[0], best[1]))
+    if not cands:
+        return [round(k * (total - 1) / n) for k in range(n)]
+    ok = [c for c in cands if c[1] <= 1.2]
+    pick = ok[0] if ok else min(cands, key=lambda c: c[1])
+    return list(pick[2])
+
+
 def pick_cycle(frames: list[Image.Image], n: int) -> list[Image.Image]:
     """从密集帧里抽正好一个步态周期的 N 帧(无缝 loop)。返回长度恒等于 ``n``。
 
@@ -113,62 +171,7 @@ def pick_cycle(frames: list[Image.Image], n: int) -> list[Image.Image]:
     形状、波及所有调用方,而今天还没有任何调用方会依据"原因"改变行为。等真有调用方要按
     原因给不同提示时,再让本函数返回 ``(frames, reason)``。
     """
-    # n<=0 没有合法语义(要 0 帧的动画不存在),且两条出路都是坏的(2026-08-10 实测):
-    # 检出周期时 `_offsets(P, 0)` 交出空 offsets,一路走到 `M[idx[-1], idx[0]]` 抛 IndexError;
-    # 测不到周期时(单调曲线)直接静默返回 [] —— 后者更危险,故在入口显式拒绝。
-    # (机器审说这里除零并不准确:`range(n)` 为空,`k*P/n` 根本没被求值。)
-    if n <= 0:
-        raise ValueError(f"n 必须 >= 1,收到 {n}")
-    total = len(frames)
-    if total < n:
-        # 源帧不够就报错,不再原样返回:长度不足且不报错,下游 frame_durations 按实际长度现算,
-        # 帧数与时长表自洽,server 看不出异常,用户拿到的是一段没走完的循环。
-        raise ValueError(f"源帧不足:请求 {n} 帧,只有 {total} 帧")
-    if total == n:
+    idx = pick_cycle_indices(frames, n)
+    if n == len(frames):
         return frames
-    M = _dmat(_deskew(_gray(frames)))
-    if n == 1:
-        # 单帧"循环"没有接缝也没有相位,下面整套周期/接缝机制全部失效(实测 n=1 时窗口内相邻差
-        # 是空均值 = nan,`a < 0.5*scale` 与接缝评分双双被 nan 短路,靠比较运算的意外结果才
-        # 返回 frames[0])。显式取 medoid:与全片平均姿态最近的一帧 = 循环停留最久的相位,
-        # 比 frames[0](i2v 的首帧是母版静立姿,单看读不出"在走")更能代表这个循环。
-        return [frames[int(np.argmin(M.mean(1)))]]
-    adj = np.array([M[i, i + 1] for i in range(total - 1)])
-    scale = float(np.median(adj))
-
-    pmin = max(6, min(n, total // 6))
-    pmax = min(total - 3, max(pmin + 2, int(total * 0.6)))
-    got = _prominent_period(_curve(M, pmin, pmax), scale)
-    if got is None or got[1] < 0.25:                       # 测不到可信周期 → 不硬闭环
-        idx = [round(k * (total - 1) / n) for k in range(n)]
-        return [frames[i] for i in idx]
-
-    p = got[0]
-    cands = []
-    for k in range(1, 4):                                  # 在基周期的整数倍里复选
-        P = k * p
-        if P > total - 2:
-            break
-        offs = _offsets(P, n)
-        if len(set(offs)) < n:                             # 该倍数取不出 n 个不同相位
-            continue
-        best = None
-        for i0 in range(total - P):
-            idx = [i0 + o for o in offs]
-            a = float(np.mean([M[idx[j], idx[j + 1]] for j in range(n - 1)]))
-            if a < 0.5 * scale:                            # 窗口几乎不动(i2v 尾部常停顿)→ 弃
-                continue
-            score = M[idx[-1], idx[0]] / max(a, 1e-6)      # 归一化接缝
-            if best is None or score < best[0]:
-                best = (score, idx)
-        if best:
-            cands.append((k, best[0], best[1]))
-    if not cands:
-        idx = [round(k * (total - 1) / n) for k in range(n)]
-        return [frames[i] for i in idx]
-    # 倍数越大 = 一个 loop 里塞进越多周期 = 每周期帧数越少(动作变糙),故**优先最小倍数**:
-    # 取第一个"已经闭合"的倍数(归一化接缝 <= 1.2,即末→首的跳幅不超过一个正常帧间步长),
-    # 都不闭合才退而取最优 —— 这一条专治"取到半周期 → 接缝处左右腿瞬间互换"。
-    ok = [c for c in cands if c[1] <= 1.2]
-    pick = ok[0] if ok else min(cands, key=lambda c: c[1])
-    return [frames[i] for i in pick[2]]
+    return [frames[i] for i in idx]
