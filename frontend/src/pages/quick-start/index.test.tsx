@@ -2443,7 +2443,7 @@ describe('QuickStartPage', () => {
     renderAt('/quick-start/run-1', service)
 
     expect(screen.queryByRole('button', { name: '选择东方向动作首帧 1' })).toBeNull()
-    expect(await screen.findByLabelText('西北方向为空')).toBeTruthy()
+    expect((await screen.findAllByLabelText('西北方向为空')).length).toBeGreaterThan(0)
     fireEvent.click(await screen.findByRole('button', { name: '选择动作首帧方向候选 1' }))
     fireEvent.click(screen.getByRole('button', { name: '确认候选帧，生成完整动作' }))
 
@@ -2452,6 +2452,39 @@ describe('QuickStartPage', () => {
         east: 'east-1.png',
         north: 'north-1.png',
         south: 'south-1.png',
+      }),
+    )
+  })
+
+  it('八向动作首帧候选卡填满八个方向并按一套源图确认', async () => {
+    const run = actionWorkflow({ firstStatus: 'active', firstPhase: 'selecting' })
+    const service = serviceFor(run, {
+      getFirstFrameCandidates: vi.fn(
+        async () =>
+          [
+            { direction: 'east', index: 0, imageUrl: 'east-1.png' },
+            { direction: 'north', index: 0, imageUrl: 'north-1.png' },
+            { direction: 'south', index: 0, imageUrl: 'south-1.png' },
+            { direction: 'north_east', index: 0, imageUrl: 'north-east-1.png' },
+            { direction: 'south_east', index: 0, imageUrl: 'south-east-1.png' },
+          ] satisfies readonly QuickStartCandidate[],
+      ),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    expect(await screen.findByRole('button', { name: '选择动作首帧方向候选 1' })).toBeTruthy()
+    expect(await screen.findAllByLabelText('西北方向')).toHaveLength(1)
+    expect(await screen.findAllByLabelText('西南方向')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: '选择动作首帧方向候选 1' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认候选帧，生成完整动作' }))
+
+    await waitFor(() =>
+      expect(service.confirmFirstFrame).toHaveBeenCalledWith({
+        east: 'east-1.png',
+        north: 'north-1.png',
+        south: 'south-1.png',
+        north_east: 'north-east-1.png',
+        south_east: 'south-east-1.png',
       }),
     )
   })
