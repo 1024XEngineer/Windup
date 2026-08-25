@@ -1186,10 +1186,18 @@ function QuickStartInput({
             onSubmit={(event) => void submit(event)}
             autoComplete="off"
             data-prompt-state={promptState}
-            className="quick-start-agent-composer relative flex flex-col rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]"
+            className={
+              hasConversation
+                ? 'quick-start-agent-composer grid grid-cols-[1fr_auto] items-center gap-1.5 overflow-hidden rounded-xl border border-app-line-strong bg-app-surface-raised p-1.5 shadow-app-panel transition-shadow focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]'
+                : 'quick-start-agent-composer relative flex flex-col'
+            }
           >
             <label
-              className="relative block min-h-[52px] min-w-0 overflow-hidden"
+              className={
+                hasConversation
+                  ? 'relative ml-2 min-w-0 overflow-hidden rounded-lg'
+                  : 'relative block min-h-[52px] min-w-0 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]'
+              }
               htmlFor="quick-start-prompt"
             >
               <span className="sr-only">创作指令</span>
@@ -1218,15 +1226,21 @@ function QuickStartInput({
                         ? '描述动作，可留空生成待机动作…'
                         : '描述角色的外形、身份和气质…'
                 }
-                className={`block min-h-[52px] max-h-40 w-full min-w-0 resize-none overflow-y-auto border-0 bg-transparent py-[14px] pr-14 pl-4 text-[15px] leading-6 text-app-ink outline-none [field-sizing:content] placeholder:text-app-faint ${
-                  promptState === 'rewriting' ? 'text-transparent caret-transparent' : ''
-                }`}
+                className={`block max-h-40 w-full min-w-0 resize-none overflow-y-auto border-0 bg-transparent text-[15px] text-app-ink outline-none [field-sizing:content] placeholder:text-app-faint ${
+                  hasConversation
+                    ? 'min-h-10 px-4 py-2.5 leading-5'
+                    : 'min-h-[52px] py-[14px] pr-14 pl-4 leading-6'
+                } ${promptState === 'rewriting' ? 'text-transparent caret-transparent' : ''}`}
               />
               {promptState === 'rewriting' ? (
                 <span
                   data-prompt-rewrite
                   aria-hidden="true"
-                  className="quick-start-prompt-rewrite absolute inset-0 flex min-h-[52px] max-h-40 items-start overflow-y-auto py-[14px] pr-14 pl-4 text-[15px] leading-6 text-app-ink"
+                  className={`quick-start-prompt-rewrite absolute inset-0 flex max-h-40 items-start overflow-y-auto text-[15px] text-app-ink ${
+                    hasConversation
+                      ? 'min-h-10 px-4 py-2.5 leading-5'
+                      : 'min-h-[52px] py-[14px] pr-14 pl-4 leading-6'
+                  }`}
                 >
                   <KineticCopyCycle
                     active
@@ -1246,14 +1260,21 @@ function QuickStartInput({
               disabled={
                 entryCanInterrupt ? false : !canSubmit || entryBusy || Boolean(unavailableReason)
               }
-              className={`absolute right-[6px] bottom-[6px] z-10 grid size-10 place-items-center rounded-full border-0 text-app-canvas transition-[opacity,transform,background] duration-150 hover:-translate-y-px active:scale-95 disabled:cursor-default disabled:opacity-25 ${
-                entryCanInterrupt ? 'bg-app-ink' : 'bg-app-accent hover:bg-app-accent-hover'
-              }`}
+              className={`z-10 grid place-items-center border-0 text-app-canvas transition-[opacity,transform,background] duration-150 hover:-translate-y-px active:scale-95 disabled:cursor-default disabled:opacity-25 ${
+                hasConversation
+                  ? 'h-10 min-w-10 rounded-lg px-3'
+                  : 'absolute right-[6px] bottom-[6px] size-10 rounded-full'
+              } ${entryCanInterrupt ? 'bg-app-ink' : 'bg-app-accent hover:bg-app-accent-hover'}`}
             >
               {entryCanInterrupt ? (
                 <Stop aria-hidden="true" size={16} weight="fill" />
               ) : (
-                <ArrowUp aria-hidden="true" size={19} weight="bold" />
+                <span className="inline-flex items-center gap-2">
+                  {hasConversation ? (
+                    <span className="text-sm font-bold">{buttonLabel}</span>
+                  ) : null}
+                  <ArrowUp aria-hidden="true" size={hasConversation ? 16 : 19} weight="bold" />
+                </span>
               )}
             </button>
             <input
@@ -1267,7 +1288,9 @@ function QuickStartInput({
             />
             <div
               data-layout="quick-start-composer-controls"
-              className="order-first flex min-h-10 items-center justify-between gap-3 px-2 pt-1"
+              className={`order-first mb-2 min-h-10 items-center justify-between gap-3 px-1 ${
+                hasConversation ? 'hidden' : 'flex'
+              }`}
             >
               {!hasConversation ? (
                 <div className="flex items-center gap-1">
