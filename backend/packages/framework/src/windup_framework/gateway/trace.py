@@ -114,7 +114,7 @@ def hash_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def emit(trace: AttemptTrace) -> None:
+def emit(trace: AttemptTrace, *, ledger_enabled: bool | None = None) -> None:
     ctx = current_call_context()
     if not trace.attempt_id:
         trace.attempt_id = str(uuid.uuid4())
@@ -125,7 +125,9 @@ def emit(trace: AttemptTrace) -> None:
     if trace.price_version is None:
         trace.price_version = provider_settings.price_version
     logger.info("%s", json.dumps(trace.as_dict(), ensure_ascii=False, default=str))
-    if provider_settings.gateway_ledger_enabled:
+    if ledger_enabled is None:
+        ledger_enabled = provider_settings.gateway_ledger_enabled
+    if ledger_enabled:
         from windup_framework.gateway.ledger import persist_attempt
 
         persist_attempt(trace)
