@@ -82,8 +82,8 @@ function playtestFrames(
   if (
     !action.loop ||
     denseTiming === undefined ||
-    playbackFrames.length !== denseTiming.frameCount ||
-    playbackFrames.some((frame) => frame.durationMs !== denseTiming.frameDurationMs)
+    ordered.length !== denseTiming.frameCount ||
+    ordered.some((frame) => frame.durationMs !== denseTiming.frameDurationMs)
   ) {
     return playbackFrames
   }

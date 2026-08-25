@@ -180,6 +180,27 @@ describe('createPlaytestModel', () => {
     }
   })
 
+  it('requires the known dense timing to be explicit on every source frame', () => {
+    const authoredCharacter = structuredClone(character)
+    const walk = authoredCharacter.outfits[0]!.actions[1]!
+    walk.fps = 8
+    walk.frameCount = 32
+    walk.frames = Array.from({ length: 32 }, (_, index) => ({
+      index,
+      imageUrl: `/walk-${index}.png`,
+      durationMs: index === 17 ? null : 125,
+    }))
+
+    const result = createPlaytestModel(authoredCharacter, 'outfit-default')
+    const mappedWalk = result.ok
+      ? result.model.actions.find((action) => action.id === 'walk')
+      : undefined
+
+    expect(mappedWalk?.frames.map((frame) => frame.durationMs)).toEqual(
+      Array.from({ length: 32 }, () => 125),
+    )
+  })
+
   it('preserves dense locomotion timing when the action is not looping', () => {
     const oneShotCharacter = structuredClone(character)
     const walk = oneShotCharacter.outfits[0]!.actions[1]!
