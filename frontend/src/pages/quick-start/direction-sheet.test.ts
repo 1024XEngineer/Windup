@@ -3,7 +3,10 @@ import { describe, expect, it } from 'vitest'
 import type { QuickStartCandidate } from './service'
 import { buildDirectionSheetCandidates } from './direction-sheet'
 
-function candidate(direction: QuickStartCandidate['direction'], index: number): QuickStartCandidate {
+function candidate(
+  direction: QuickStartCandidate['direction'],
+  index: number,
+): QuickStartCandidate {
   return { direction, index, imageUrl: `${direction}-${index}.png` }
 }
 
@@ -74,12 +77,7 @@ describe('buildDirectionSheetCandidates', () => {
 
   it('源方向候选数量不一致时只返回完整卡片', () => {
     const sheets = buildDirectionSheetCandidates(
-      [
-        candidate('east', 0),
-        candidate('east', 1),
-        candidate('north', 0),
-        candidate('south', 0),
-      ],
+      [candidate('east', 0), candidate('east', 1), candidate('north', 0), candidate('south', 0)],
       'four-way',
     )
 

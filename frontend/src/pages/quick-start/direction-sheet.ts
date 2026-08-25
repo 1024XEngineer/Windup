@@ -40,7 +40,9 @@ function completeCandidateIndices(
   if (!firstDirection) return []
   const indices = [...(byDirection.get(firstDirection)?.keys() ?? [])]
   return indices
-    .filter((index) => sourceDirections.every((direction) => byDirection.get(direction)?.has(index)))
+    .filter((index) =>
+      sourceDirections.every((direction) => byDirection.get(direction)?.has(index)),
+    )
     .sort((left, right) => left - right)
 }
 
@@ -52,13 +54,16 @@ export function buildDirectionSheetCandidates(
   const byDirection = sourceCandidatesByDirection(candidates)
   return completeCandidateIndices(profile.sourceDirections, byDirection).map((index) => {
     const selections = Object.fromEntries(
-      profile.sourceDirections.map((direction) => [direction, byDirection.get(direction)!.get(index)!]),
+      profile.sourceDirections.map((direction) => [
+        direction,
+        byDirection.get(direction)!.get(index)!,
+      ]),
     ) as QuickStartDirectionSelections
     const cells = Object.fromEntries(
       ACTION_DIRECTIONS.map((direction) => {
         const isLogicalDirection = profile.logicalDirections.includes(direction)
         const resolved = resolveActionDirection(direction)
-        const imageUrl = isLogicalDirection ? selections[resolved.sourceDirection] ?? null : null
+        const imageUrl = isLogicalDirection ? (selections[resolved.sourceDirection] ?? null) : null
         return [
           direction,
           {
