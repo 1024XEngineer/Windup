@@ -8,6 +8,7 @@ import {
   REGENERATE_FIRST_FRAME_TOOL,
   parseQuickStartDecision,
   QUICK_START_DECISION_TOOL,
+  validatePlannerTerminal,
   type PlannerInput,
   type PlannerResult,
   type QuickStartDecision,
@@ -30,6 +31,15 @@ interface GenerateTextOptionsLike {
   toolChoice: 'auto' | 'required'
   maxRetries: 0
   abortSignal?: AbortSignal
+  repairToolCall?: (options: {
+    toolCall: { toolCallId: string; toolName: string; input: string; [key: string]: unknown }
+    error: Error
+  }) => Promise<{
+    toolCallId: string
+    toolName: string
+    input: string
+    [key: string]: unknown
+  } | null>
 }
 
 export type QuickStartGenerateText = (
@@ -64,7 +74,18 @@ const quickStartDecisionTool = tool({
         actionPrompt: { type: 'string', minLength: 1, maxLength: 4_000 },
         optimizationSummary: { type: 'string', minLength: 1, maxLength: 600 },
       },
-      required: ['kind'],
+      oneOf: [
+        {
+          properties: { kind: { type: 'string', enum: ['proposal'] } },
+          required: ['kind', 'optimizedPrompt', 'optimizationSummary'],
+        },
+        {
+          properties: {
+            kind: { type: 'string', enum: ['reply', 'clarification', 'blocked'] },
+          },
+          required: ['kind', 'message'],
+        },
+      ],
     },
     {
       validate(value) {
@@ -118,6 +139,91 @@ const workflowTools = {
     description: '用户要求基于已确认的动作首帧修改姿态、朝向或动作起始细节时使用。',
     inputSchema: refinementToolSchema,
   }),
+}
+
+function recordInput(value: unknown): Record<string, unknown> | null {
+  if (typeof value === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(value)
+      return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null
+    } catch {
+      return null
+    }
+  }
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function deterministicDecisionRepair(value: unknown): Record<string, unknown> | null {
+  const input = recordInput(value)
+  if (!input) return null
+  const message = typeof input.message === 'string' ? input.message.trim() : ''
+  const candidate =
+    input.kind === 'proposal' && !input.optimizationSummary && message
+      ? { ...input, optimizationSummary: message }
+      : input
+  try {
+    parseQuickStartDecision(candidate)
+    return candidate
+  } catch {
+    return null
+  }
+}
+
+function fallbackPlannerResult(
+  result: PlannerResult,
+  messages: PlannerInput['messages'],
+): PlannerResult {
+  try {
+    validatePlannerTerminal(result)
+    return result
+  } catch {
+    const call = result.toolCalls[0]
+    const input = recordInput(call?.input)
+    if (call?.toolName === QUICK_START_DECISION_TOOL && input?.kind === 'proposal') {
+      const latestUserInput = messages
+        .findLast((message) => message.role === 'user')
+        ?.content.trim()
+      const optimizedPrompt =
+        typeof input.optimizedPrompt === 'string' && input.optimizedPrompt.trim()
+          ? input.optimizedPrompt.trim().slice(0, 4_000)
+          : latestUserInput?.slice(0, 4_000)
+      if (optimizedPrompt) {
+        const suppliedSummary =
+          typeof input.optimizationSummary === 'string' && input.optimizationSummary.trim()
+            ? input.optimizationSummary.trim()
+            : typeof input.message === 'string' && input.message.trim()
+              ? input.message.trim()
+              : ''
+        return {
+          text: '',
+          finishReason: 'tool-calls',
+          toolCalls: [
+            {
+              toolName: QUICK_START_DECISION_TOOL,
+              input: {
+                kind: 'proposal',
+                optimizedPrompt,
+                optimizationSummary:
+                  suppliedSummary.slice(0, 600) ||
+                  '我先完整保留了你的原始描述，你可以直接采用或继续补充细节。',
+              },
+            },
+          ],
+        }
+      }
+    }
+
+    const message = typeof input?.message === 'string' ? input.message.trim() : ''
+    return {
+      text: message.slice(0, 2_000) || '请再补充一个最想保留的角色特征，我会继续整理。',
+      finishReason: 'stop',
+      toolCalls: [],
+    }
+  }
 }
 
 export function quickStartPlannerInstructions(clarificationUsed: boolean): string {
@@ -176,18 +282,49 @@ export function createAiSdkQuickStartPlanner({
           workflow.availableTools.map((name: WorkflowAgentToolName) => [name, workflowTools[name]]),
         )
       : { [QUICK_START_DECISION_TOOL]: quickStartDecisionTool }
+    const instructions = workflow
+      ? quickStartWorkflowInstructions(workflow)
+      : quickStartPlannerInstructions(clarificationUsed)
+    const history = messages.slice(-MAX_PLANNER_HISTORY_MESSAGES)
     const result = await generateText({
       model,
-      instructions: workflow
-        ? quickStartWorkflowInstructions(workflow)
-        : quickStartPlannerInstructions(clarificationUsed),
-      messages: messages.slice(-MAX_PLANNER_HISTORY_MESSAGES),
+      instructions,
+      messages: history,
       tools,
       toolChoice: workflow ? 'auto' : 'required',
       maxRetries: 0,
       abortSignal: signal,
+      repairToolCall: workflow
+        ? undefined
+        : async ({ toolCall, error }) => {
+            if (toolCall.toolName !== QUICK_START_DECISION_TOOL) return null
+            const repairedInput = deterministicDecisionRepair(toolCall.input)
+            if (repairedInput) {
+              return { ...toolCall, input: JSON.stringify(repairedInput) }
+            }
+
+            const repairResult = await generateText({
+              model,
+              instructions: `${instructions}\n\n上一份 Tool 参数没有通过合同校验。只修复参数结构，不改变用户意图。`,
+              messages: [
+                ...history.slice(-(MAX_PLANNER_HISTORY_MESSAGES - 1)),
+                {
+                  role: 'user',
+                  content: `请重新返回合法的 ${QUICK_START_DECISION_TOOL} 参数。上一份参数：${String(toolCall.input).slice(0, 6_000)}。校验错误：${error.message}`,
+                },
+              ],
+              tools,
+              toolChoice: 'required',
+              maxRetries: 0,
+              abortSignal: signal,
+            })
+            const repairedCall = repairResult.toolCalls.find(
+              (call) => call.toolName === QUICK_START_DECISION_TOOL,
+            )
+            return repairedCall ? { ...toolCall, input: JSON.stringify(repairedCall.input) } : null
+          },
     })
-    return {
+    const plannerResult: PlannerResult = {
       text: result.text,
       finishReason: result.finishReason,
       toolCalls: result.toolCalls.map((call) => ({
@@ -195,5 +332,6 @@ export function createAiSdkQuickStartPlanner({
         input: call.input,
       })),
     }
+    return workflow ? plannerResult : fallbackPlannerResult(plannerResult, messages)
   }
 }
