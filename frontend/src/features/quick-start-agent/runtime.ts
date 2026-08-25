@@ -67,6 +67,11 @@ export interface QuickStartAgentTurnOptions {
   signal?: AbortSignal
 }
 
+export interface ConfirmProposalOptions {
+  /** 画风原样透传给宿主；取值范围由宿主定义，本模块不认识业务对象。 */
+  gameStyle?: string
+}
+
 export interface QuickStartAgent {
   start(input: string, options?: QuickStartAgentTurnOptions): Promise<QuickStartAgentResult>
   continue(input: string, options?: QuickStartAgentTurnOptions): Promise<QuickStartAgentResult>
@@ -74,6 +79,7 @@ export interface QuickStartAgent {
     proposalId: string,
     prompt: string,
     directionalMovement?: QuickStartDirectionalMovement,
+    options?: ConfirmProposalOptions,
   ): Promise<QuickStartAgentResult>
   revoke(): void
 }
@@ -82,6 +88,7 @@ export interface QuickStartAgent {
 export type StartCharacterGenerationAction = (input: {
   prompt: string
   directionalMovement?: QuickStartDirectionalMovement
+  gameStyle?: string
 }) => Promise<{ runId: string }>
 
 export interface CreateQuickStartAgentOptions {
@@ -283,6 +290,7 @@ export function createQuickStartAgent({
     proposalId: string,
     prompt: string,
     directionalMovement: QuickStartDirectionalMovement = 'single',
+    { gameStyle }: ConfirmProposalOptions = {},
   ): Promise<QuickStartAgentResult> {
     assertAuthorized()
     if (running) throw new Error('Planner 正在处理上一条输入')
@@ -302,6 +310,7 @@ export function createQuickStartAgent({
       const { runId } = await startCharacterGeneration({
         prompt: effectivePrompt,
         directionalMovement,
+        gameStyle,
       })
       return { kind: 'generated', runId, ...proposal, optimizedPrompt: effectivePrompt }
     } finally {
