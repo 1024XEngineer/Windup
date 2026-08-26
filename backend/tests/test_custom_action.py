@@ -309,6 +309,27 @@ def test_concurrent_first_requests_build_one_shared_provider_set(monkeypatch):
     assert next(iter(gens)) is ex._get_generator()
 
 
+def test_injected_matte_is_not_replaced_on_assemble(monkeypatch):
+    """worker bind_matte 之后,装配桶不得再 new 一套 ONNX。"""
+    import windup_framework.gateway as gateway
+    from windup_framework import providers
+
+    from windup_app.server.orchestrator.executor import ActionTaskExecutor
+
+    sent = object()
+
+    def _boom(*_a, **_k):
+        raise AssertionError("不该再构造 OnnxU2NetMatteProvider")
+
+    monkeypatch.setattr(providers, "OnnxU2NetMatteProvider", _boom)
+    monkeypatch.setattr(gateway, "build_image_gateway", lambda **_k: object())
+    monkeypatch.setattr(gateway, "build_video_gateway", lambda **_k: object())
+
+    ex = ActionTaskExecutor(matte=sent)
+    ex._assemble(4)
+    assert ex._matte is sent
+
+
 # ── ⑥ 骨架不得夹带姿态前提(游泳/潜水/飞行都不着地不直立)─────────────────────
 
 # "着地 / 直立 / 双足"对 walk/idle/attack/jump 成立,对任意动作不成立。骨架里写了它们,

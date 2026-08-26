@@ -245,6 +245,7 @@ class ActionTaskExecutor:
         fetch_constraints: Callable[[Session, int | None], ProjectConstraints]
         | None = None,
         session_factory: Callable[[], Session] | None = None,
+        matte: MatteProvider | None = None,
     ) -> None:
         self._generator = generator  # None → 懒加载真实装配(一套共享 Gateway)
         # 选哪个 kling 是 Gateway 读 start_from_model 的事,不分模型桶。
@@ -254,7 +255,8 @@ class ActionTaskExecutor:
         self._by_model: dict[int, CharacterGeneratorPort] = {}
         # 抠图 / 图生图与视频 Gateway 无关方向分桶,所有桶共用一份:每个抠图实例
         # 都会惰性加载一份 ONNX 会话,按桶各建等于把同一个模型在进程里装多次。
-        self._matte: MatteProvider | None = None
+        # worker 预热后经 bind_matte 注入,避免 warmup() 丢一套再在这里 new 一套。
+        self._matte: MatteProvider | None = matte
         self._image: ImageProvider | None = None
         # 判官同样与视频模型无关,故不分桶。缺省 None 时**不建**实例:建了就意味着每个
         # 任务多一次付费调用,那要由 QUALITY_GATE_ENABLED 显式打开,见 _get_judge。
@@ -1186,3 +1188,9 @@ image_executor = ImageTaskExecutor()
 run_image_task = image_executor.run_image_task
 direction_set_executor = DirectionSetTaskExecutor(image_executor=image_executor)
 run_direction_set_task = direction_set_executor.run_direction_set_task
+
+
+def bind_matte(matte: MatteProvider) -> None:
+    """worker 预热后注入:动作与出图共用同一套 ONNX 会话,不再 warmup 丢一套再 new。"""
+    executor._matte = matte
+    image_executor._matte = matte
