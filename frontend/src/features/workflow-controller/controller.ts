@@ -33,12 +33,8 @@ import {
   type ArtStyle,
   getDirectionProfile,
   isImageCandidateCount,
-  ProjectNameConflictError,
   WorkflowRunConflictError,
 } from '@/entities'
-
-const PROJECT_NAME_MAX_LENGTH = 20
-const QUICK_START_PROJECT_NAME_ATTEMPTS = 100
 
 export interface AddActionInput {
   /** 首帧节点 ID；完整动画和审核节点在此 ID 后追加稳定后缀。 */
@@ -252,45 +248,22 @@ interface PendingGenerationAttachment {
   generation: Generation
 }
 
-function boundedProjectName(value: string, maxLength: number): string {
-  const characters = Array.from(value)
-  return characters.length > maxLength
-    ? `${characters.slice(0, maxLength - 1).join('')}…`
-    : characters.join('')
-}
-
 export function createAutoPrepareProject(
   projectApis: Pick<ProjectApis, 'create'>,
 ): PrepareQuickStartProject {
   return async (prompt, directionalMovement = 'single', options) => {
-    const normalizedPrompt = prompt.trim().replace(/\s+/gu, ' ') || '未命名项目'
-    let lastConflict: unknown
-
-    for (let sequence = 1; sequence <= QUICK_START_PROJECT_NAME_ATTEMPTS; sequence += 1) {
-      const suffix = sequence === 1 ? '' : ` ${sequence}`
-      const maxBaseLength = PROJECT_NAME_MAX_LENGTH - Array.from(suffix).length
-      const base = boundedProjectName(normalizedPrompt, maxBaseLength)
-
-      try {
-        const project = await projectApis.create({
-          name: `${base}${suffix}`,
-          perspective: 'side',
-          directionalMovement,
-          spriteSize: { width: 256, height: 256 },
-          gameStyle: options?.gameStyle,
-        })
-        return {
-          id: project.id,
-          spriteSize: project.spriteSize,
-          directionalMovement: project.directionalMovement,
-        }
-      } catch (error) {
-        if (!(error instanceof ProjectNameConflictError)) throw error
-        lastConflict = error
-      }
+    const project = await projectApis.create({
+      nameContext: prompt.trim().replace(/\s+/gu, ' '),
+      perspective: 'side',
+      directionalMovement,
+      spriteSize: { width: 256, height: 256 },
+      gameStyle: options?.gameStyle,
+    })
+    return {
+      id: project.id,
+      spriteSize: project.spriteSize,
+      directionalMovement: project.directionalMovement,
     }
-
-    throw lastConflict
   }
 }
 
