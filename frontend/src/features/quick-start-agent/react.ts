@@ -170,7 +170,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
     async (
       prompt: string,
       directionalMovement: QuickStartDirectionalMovement = 'single',
-      options?: { gameStyle?: string; automaticDelivery?: boolean },
+      options?: { gameStyle?: string; projectId?: string; automaticDelivery?: boolean },
     ): Promise<QuickStartAgentResult> => {
       if (running.current) throw new Error('Planner 正在处理上一条输入')
       if (state.status !== 'proposal') throw new Error('提示词提案已失效')

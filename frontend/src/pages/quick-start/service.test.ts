@@ -1148,6 +1148,34 @@ describe('createQuickStartService', () => {
     )
   })
 
+  it('reuses an existing project instead of creating another one', async () => {
+    const existingProject = {
+      id: 'project-existing',
+      workflowId: null,
+      name: '星海计划',
+      perspective: 'side' as const,
+      directionalMovement: 'four-way' as const,
+      spriteSize: { width: 128, height: 192 },
+      gameStyle: 'pixel' as const,
+      sampleImageUrl: null,
+      createdAt: '2026-08-25T00:00:00Z',
+      updatedAt: '2026-08-25T00:00:00Z',
+    }
+    const create = vi.fn()
+    const get = vi.fn(async () => existingProject)
+    const prepare = createAutoPrepareProject({ create, get } as unknown as ProjectApis)
+
+    await expect(prepare('银发骑士', 'single', { projectId: existingProject.id })).resolves.toEqual(
+      {
+        id: existingProject.id,
+        directionalMovement: 'four-way',
+        spriteSize: { width: 128, height: 192 },
+      },
+    )
+    expect(get).toHaveBeenCalledWith(existingProject.id)
+    expect(create).not.toHaveBeenCalled()
+  })
+
   it('uses a readable number when the generated project name already exists', async () => {
     const create = vi
       .fn()

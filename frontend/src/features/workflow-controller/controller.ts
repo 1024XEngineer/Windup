@@ -111,6 +111,8 @@ export interface ApplyGenerationResultInput {
 
 export interface PrepareQuickStartProjectOptions {
   gameStyle?: ArtStyle
+  /** 传入时复用已有项目；缺省时保持 Quick Start 自动建项目。 */
+  projectId?: Project['id']
 }
 
 export type PrepareQuickStartProject = (
@@ -123,6 +125,7 @@ export interface StartCharacterGenerationInput {
   prompt: string
   directionalMovement?: DirectionalMovement
   gameStyle?: ArtStyle
+  projectId?: Project['id']
   automaticDelivery?: { actionPrompt?: string; actionType?: 'walk' }
 }
 
@@ -258,9 +261,17 @@ function boundedProjectName(value: string, maxLength: number): string {
 }
 
 export function createAutoPrepareProject(
-  projectApis: Pick<ProjectApis, 'create'>,
+  projectApis: Pick<ProjectApis, 'create' | 'get'>,
 ): PrepareQuickStartProject {
   return async (prompt, directionalMovement = 'single', options) => {
+    if (options?.projectId) {
+      const project = await projectApis.get(options.projectId)
+      return {
+        id: project.id,
+        spriteSize: project.spriteSize,
+        directionalMovement: project.directionalMovement,
+      }
+    }
     const normalizedPrompt = prompt.trim().replace(/\s+/gu, ' ') || '未命名项目'
     let lastConflict: unknown
 
@@ -407,6 +418,7 @@ export function createWorkflowController({
     prompt,
     directionalMovement: selectedDirectionalMovement = 'single',
     gameStyle,
+    projectId,
     automaticDelivery,
   }: StartCharacterGenerationInput): Promise<StartCharacterGenerationResult> {
     ensureRunning()
@@ -418,6 +430,7 @@ export function createWorkflowController({
     const actionType = actionPrompt ? automaticDelivery?.actionType : undefined
     const project = await prepareProject(normalizedPrompt, selectedDirectionalMovement, {
       gameStyle,
+      projectId,
     })
     generationDirections = getDirectionProfile(
       project.directionalMovement ?? selectedDirectionalMovement,
