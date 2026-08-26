@@ -21,6 +21,9 @@ from windup_app.server.orchestrator.model import (
     CharacterActionOutput,
     CharacterDirectionSetOutput,
     CharacterImageOutput,
+    CharacterViewSheetCandidate,
+    CharacterViewSheetCell,
+    CharacterViewSheetOutput,
     DirectionImageResult,
     GenerationTask,
     GenerationTaskRecord,
@@ -337,7 +340,13 @@ def _record_to_domain(record: GenerationTaskRecord) -> GenerationTask:
 def _deserialize_result(
     result_type: str | None,
     raw: dict | None,
-) -> CharacterImageOutput | CharacterDirectionSetOutput | CharacterActionOutput | None:
+) -> (
+    CharacterImageOutput
+    | CharacterDirectionSetOutput
+    | CharacterViewSheetOutput
+    | CharacterActionOutput
+    | None
+):
     """根据 ``result_type`` 将 JSON dict 反序列化为对应的 dataclass。"""
     if raw is None or result_type is None:
         return None
@@ -384,5 +393,32 @@ def _deserialize_result(
                 )
                 for item in raw.get("directions", [])
             ],
+        )
+    if result_type in (
+        GenerationType.CHARACTER_FOUR_VIEW.value,
+        GenerationType.CHARACTER_EIGHT_VIEW.value,
+    ):
+        return CharacterViewSheetOutput(
+            type=raw.get("type", result_type),
+            sheets=[
+                CharacterViewSheetCandidate(
+                    sheet_url=item["sheet_url"],
+                    cells=[
+                        CharacterViewSheetCell(
+                            direction=ActionDirection(cell["direction"]),
+                            image_url=cell["image_url"],
+                            source_direction=(
+                                ActionDirection(cell["source_direction"])
+                                if cell.get("source_direction")
+                                else None
+                            ),
+                            mirror_x=bool(cell.get("mirror_x")),
+                        )
+                        for cell in item.get("cells") or []
+                    ],
+                )
+                for item in raw.get("sheets") or []
+            ],
+            quality=raw.get("quality"),
         )
     return None

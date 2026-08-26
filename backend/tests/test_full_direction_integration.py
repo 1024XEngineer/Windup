@@ -20,7 +20,7 @@ from windup_app.server.orchestrator.executor import (
 from windup_app.server.orchestrator.model import GenerationTaskRecord, TaskStatus
 from windup_app.server.quota.model import CreditAccount
 from windup_app.worker.handlers import handle_generation
-from windup_common.directions import ActionDirection
+from windup_common.directions import ActionDirection, required_directions_for_movement
 from windup_common.models import CharacterStance
 from windup_framework.config.quota import settings as quota_settings
 
@@ -88,7 +88,7 @@ def test_eight_way_http_tasks_reach_worker_as_eight_real_results_and_settle_each
     engine,
     monkeypatch,
 ):
-    directions = tuple(ActionDirection)
+    directions = required_directions_for_movement(3)
     initial_balance = quota_settings.generate_action_cost * len(directions) + 100
     seed_credit_account(db_session, 1, balance=initial_balance)
     db_session.commit()
@@ -171,7 +171,7 @@ def test_eight_way_image_tasks_call_provider_with_eight_direction_locks_and_sett
     engine,
     monkeypatch,
 ):
-    directions = tuple(ActionDirection)
+    directions = required_directions_for_movement(3)
     initial_balance = quota_settings.generate_image_cost * len(directions) + 100
     seed_credit_account(db_session, 1, balance=initial_balance)
     db_session.commit()

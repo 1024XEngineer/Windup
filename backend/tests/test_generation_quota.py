@@ -478,6 +478,8 @@ def test_prepaid_cost_scales_with_model_calls():
     unit = quota_settings.generate_image_cost
     assert billing.prepaid_cost(GenerationType.CHARACTER_IMAGE, 1) == unit
     assert billing.prepaid_cost(GenerationType.CHARACTER_IMAGE, 3) == unit * 3
+    assert billing.prepaid_cost(GenerationType.CHARACTER_FOUR_VIEW, 2) == unit * 2
+    assert billing.prepaid_cost(GenerationType.CHARACTER_EIGHT_VIEW, 4) == unit * 4
     assert billing.prepaid_cost(GenerationType.CHARACTER_ACTION, 1) == quota_settings.generate_action_cost
     with pytest.raises(ValueError, match="model_calls"):
         billing.prepaid_cost(GenerationType.CHARACTER_IMAGE, 0)

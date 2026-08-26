@@ -130,36 +130,32 @@ def test_action_generation_uses_token_user_without_body_user_id(auth_client):
     assert body["data"]["status"] == "pending"
 
 
-def test_image_generation_accepts_real_west_for_four_way_project(auth_client):
+def test_image_generation_rejects_west_for_four_way_project(auth_client):
     project = _create_project(auth_client)
 
-    response = auth_client.post(
+    body = auth_client.post(
         "/generation/image",
         json=_image_payload(project["id"], direction="west"),
-    )
+    ).json()
 
-    body = response.json()
-    assert body["code"] == 200
-    assert body["data"]["status"] == "pending"
-    assert body["data"]["input_payload"]["direction"] == "west"
+    assert body["code"] == 400
+    assert "west" in body["message"]
 
 
-def test_action_generation_accepts_real_west_for_four_way_project(auth_client):
+def test_action_generation_rejects_west_for_four_way_project(auth_client):
     project = _create_project(auth_client)
     character = _create_character(auth_client, project["id"])
 
-    response = auth_client.post(
+    body = auth_client.post(
         "/generation/action",
         json=_action_payload(project["id"], character["id"], direction="west"),
-    )
+    ).json()
 
-    body = response.json()
-    assert body["code"] == 200
-    assert body["data"]["status"] == "pending"
-    assert body["data"]["input_payload"]["direction"] == "west"
+    assert body["code"] == 400
+    assert "west" in body["message"]
 
 
-def test_image_generation_accepts_real_north_west_for_eight_way_project(auth_client):
+def test_image_generation_rejects_north_west_for_eight_way_project(auth_client):
     project = _create_project(
         auth_client,
         name="八向生成项目",
@@ -171,9 +167,8 @@ def test_image_generation_accepts_real_north_west_for_eight_way_project(auth_cli
         json=_image_payload(project["id"], direction="north_west"),
     ).json()
 
-    assert body["code"] == 200
-    assert body["data"]["status"] == "pending"
-    assert body["data"]["input_payload"]["direction"] == "north_west"
+    assert body["code"] == 400
+    assert "north_west" in body["message"]
 
 
 def test_direction_set_generation_derives_all_directions_from_project(auth_client):
@@ -200,13 +195,10 @@ def test_direction_set_generation_derives_all_directions_from_project(auth_clien
     assert body["data"]["input_payload"]["reference_image_url"] == _MASTER_URL
     assert body["data"]["input_payload"]["directions"] == [
         "east",
-        "west",
         "north",
         "south",
         "north_east",
-        "north_west",
         "south_east",
-        "south_west",
     ]
 
 
@@ -342,6 +334,133 @@ def test_direction_set_retry_publishes_a_new_attempt_message(auth_client, engine
     assert publisher.enqueue.call_args.kwargs["dedupe_key"] == (
         f"generation:{submitted['id']}:retry:1"
     )
+
+
+def _view_sheet_payload(project_id: int, character_id: int, **overrides) -> dict:
+    payload = {
+        "project_id": project_id,
+        "character_id": character_id,
+        "width": 64,
+        "height": 64,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_four_view_copies_confirmed_master_and_shares_image_queue(auth_client):
+    project = _create_project(auth_client)
+    character = _create_character(
+        auth_client,
+        project["id"],
+        reference_image_url=_MASTER_URL,
+    )
+    publisher = auth_client.app.state.mq_publisher
+    publisher.reset_mock()
+
+    body = auth_client.post(
+        "/generation/four-view",
+        json=_view_sheet_payload(project["id"], character["id"]),
+    ).json()
+
+    assert body["code"] == 200
+    assert body["data"]["task_type"] == "character_four_view"
+    assert body["data"]["status"] == "pending"
+    assert body["data"]["input_payload"]["reference_image_url"] == _MASTER_URL
+    assert body["data"]["input_payload"]["anchor_direction"] == "south"
+    assert body["data"]["input_payload"]["num_images"] == 1
+    assert "direction" not in body["data"]["input_payload"]
+    assert publisher.enqueue.call_args.kwargs["msg_type"] == "character_image"
+    assert publisher.enqueue.call_args.kwargs["payload"]["task_type"] == "character_four_view"
+
+
+def test_four_view_without_confirmed_master_is_rejected_before_queueing(auth_client):
+    project = _create_project(auth_client)
+    character = _create_character(auth_client, project["id"])
+    publisher = auth_client.app.state.mq_publisher
+    publisher.reset_mock()
+
+    response = auth_client.post(
+        "/generation/four-view",
+        json=_view_sheet_payload(project["id"], character["id"]),
+    )
+
+    assert response.json()["code"] == 400
+    assert "请先选择并确认角色母版" in response.json()["message"]
+    publisher.enqueue.assert_not_called()
+
+
+def test_four_view_rejects_unidirectional_project(auth_client):
+    project = _create_project(auth_client, name="单向", directional_movement=1)
+    character = _create_character(
+        auth_client, project["id"], reference_image_url=_MASTER_URL,
+    )
+    publisher = auth_client.app.state.mq_publisher
+    publisher.reset_mock()
+
+    response = auth_client.post(
+        "/generation/four-view",
+        json=_view_sheet_payload(project["id"], character["id"]),
+    )
+
+    assert response.json()["code"] == 400
+    assert "当前项目不是四向" in response.json()["message"]
+    publisher.enqueue.assert_not_called()
+
+
+def test_eight_view_rejects_four_way_project(auth_client):
+    project = _create_project(auth_client)
+    character = _create_character(
+        auth_client, project["id"], reference_image_url=_MASTER_URL,
+    )
+
+    response = auth_client.post(
+        "/generation/eight-view",
+        json=_view_sheet_payload(project["id"], character["id"]),
+    )
+
+    assert response.json()["code"] == 400
+    assert "当前项目不是八向" in response.json()["message"]
+
+
+def test_eight_view_submits_on_eight_way_project(auth_client):
+    project = _create_project(
+        auth_client, name="八向 sheet", directional_movement=3,
+    )
+    character = _create_character(
+        auth_client, project["id"], reference_image_url=_MASTER_URL,
+    )
+
+    body = auth_client.post(
+        "/generation/eight-view",
+        json=_view_sheet_payload(project["id"], character["id"]),
+    ).json()
+
+    assert body["code"] == 200
+    assert body["data"]["task_type"] == "character_eight_view"
+    assert body["data"]["input_payload"]["anchor_direction"] == "south"
+
+
+def test_view_sheet_rejects_client_supplied_reference_url(auth_client):
+    project = _create_project(auth_client)
+    character = _create_character(
+        auth_client, project["id"], reference_image_url=_MASTER_URL,
+    )
+
+    publisher = auth_client.app.state.mq_publisher
+    publisher.reset_mock()
+    response = auth_client.post(
+        "/generation/four-view",
+        json=_view_sheet_payload(
+            project["id"],
+            character["id"],
+            reference_image_url="https://evil.example/not-the-master.png",
+        ),
+    )
+
+    body = response.json()
+    assert body["code"] == 400
+    assert "reference_image_url" in body["message"] or "Extra" in body["message"]
+    publisher.enqueue.assert_not_called()
 
 
 def test_action_character_must_belong_to_requested_project(auth_client):

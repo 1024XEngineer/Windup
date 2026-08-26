@@ -316,6 +316,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     renderEditor('/workflow-editor/42')
 
     const image = await screen.findByRole('img', { name: '已确认身份母版' })
+    image.addEventListener('load', (event) => event.stopImmediatePropagation())
     fireEvent.error(image)
 
     expect(await screen.findByText('图片加载失败')).toBeTruthy()

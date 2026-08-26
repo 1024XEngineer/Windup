@@ -1238,3 +1238,6 @@ def bind_matte(matte: MatteProvider) -> None:
     """worker 预热后注入:动作与出图共用同一套 ONNX 会话,不再 warmup 丢一套再 new。"""
     executor._matte = matte
     image_executor._matte = matte
+    from windup_app.server.orchestrator.view_sheet_executor import view_sheet_executor
+
+    view_sheet_executor._matte = matte
