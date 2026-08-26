@@ -2066,11 +2066,29 @@
             "default": "unspecified",
             "title": "Game Style"
           },
+          "name_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name Context"
+          },
           "project_name": {
-            "maxLength": 20,
-            "minLength": 1,
-            "title": "Project Name",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Name"
           },
           "sprite_height": {
             "maximum": 2048.0,
@@ -2108,7 +2126,6 @@
           }
         },
         "required": [
-          "project_name",
           "character_perspective",
           "directional_movement",
           "sprite_width",
