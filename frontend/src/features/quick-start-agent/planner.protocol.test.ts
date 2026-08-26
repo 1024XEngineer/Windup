@@ -44,7 +44,16 @@ describe('AI SDK OpenAI-compatible protocol fixture', () => {
       tool_choice: 'required',
     })
     expect(captured.stream).toBeUndefined()
-    expect((captured.tools as unknown[] | undefined)?.length).toBe(1)
+    const tools = captured.tools as
+      | Array<{ function?: { parameters?: { oneOf?: Array<{ required?: string[] }> } } }>
+      | undefined
+    expect(tools).toHaveLength(1)
+    expect(tools?.[0]?.function?.parameters?.oneOf).toEqual([
+      expect.objectContaining({
+        required: ['kind', 'optimizedPrompt', 'optimizationSummary'],
+      }),
+      expect.objectContaining({ required: ['kind', 'message'] }),
+    ])
   })
 
   it('parses one standard Tool Call and normalizes its finish reason', async () => {
@@ -92,7 +101,59 @@ describe('AI SDK OpenAI-compatible protocol fixture', () => {
     })
   })
 
-  it('rejects a Tool Call whose arguments fail the declared schema', async () => {
+  it('declares candidate handles for an indexed character refinement', async () => {
+    let requestBody: Record<string, unknown> | null = null
+    const planner = createAiSdkQuickStartPlanner({
+      baseURL: 'https://api.windup.test/ai/v1',
+      fetch: vi.fn(async (input, init) => {
+        requestBody = JSON.parse(await new Request(input, init).text())
+        return completion({
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-refine-candidate',
+                type: 'function',
+                function: {
+                  name: 'refine_character_template',
+                  arguments: '{"candidateId":"candidate-2","adjustmentPrompt":"把牛角缩短"}',
+                },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        })
+      }),
+    })
+
+    await expect(
+      planner({
+        messages: [{ role: 'user', content: '把第二张的牛角缩短' }],
+        clarificationUsed: false,
+        workflow: {
+          availableTools: ['regenerate_character_template', 'refine_character_template'],
+          characterTemplateCandidates: [
+            { id: 'candidate-1', position: 1 },
+            { id: 'candidate-2', position: 2 },
+            { id: 'candidate-3', position: 3 },
+          ],
+        },
+      }),
+    ).resolves.toEqual({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'refine_character_template',
+          input: { candidateId: 'candidate-2', adjustmentPrompt: '把牛角缩短' },
+        },
+      ],
+    })
+    expect(JSON.stringify(requestBody)).toContain('第 2 张对应 candidate-2')
+  })
+
+  it('repairs the production proposal shape when the summary is returned as message', async () => {
     const planner = createAiSdkQuickStartPlanner({
       baseURL: 'https://api.windup.test/ai/v1',
       fetch: vi.fn(async () =>
@@ -102,11 +163,12 @@ describe('AI SDK OpenAI-compatible protocol fixture', () => {
             content: null,
             tool_calls: [
               {
-                id: 'call-invalid',
+                id: 'call-production-shape',
                 type: 'function',
                 function: {
-                  name: 'start_character_generation',
-                  arguments: '{"optimizedPrompt":"","optimizationSummary":"我会整理角色描述。"}',
+                  name: 'quick_start_decision',
+                  arguments:
+                    '{"kind":"proposal","message":"我保留了斗篷骑士的核心特征。","optimizedPrompt":"披着深色斗篷的全身骑士"}',
                 },
               },
             ],
@@ -116,12 +178,123 @@ describe('AI SDK OpenAI-compatible protocol fixture', () => {
       ),
     })
 
+    await expect(
+      planner({
+        messages: [{ role: 'user', content: '生成一个披着斗篷的骑士' }],
+        clarificationUsed: false,
+      }),
+    ).resolves.toEqual({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'quick_start_decision',
+          input: {
+            kind: 'proposal',
+            optimizedPrompt: '披着深色斗篷的全身骑士',
+            optimizationSummary: '我保留了斗篷骑士的核心特征。',
+          },
+        },
+      ],
+    })
+  })
+
+  it('re-asks once for an irreparable Tool Call and returns the repaired proposal', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(
+        completion({
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-invalid',
+                type: 'function',
+                function: {
+                  name: 'quick_start_decision',
+                  arguments: '{"kind":"proposal","message":"已经整理好了。"}',
+                },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        }),
+      )
+      .mockResolvedValueOnce(
+        completion({
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-repaired',
+                type: 'function',
+                function: {
+                  name: 'quick_start_decision',
+                  arguments:
+                    '{"kind":"proposal","optimizedPrompt":"披着斗篷的全身骑士","optimizationSummary":"补齐了完整的角色母版描述。"}',
+                },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        }),
+      )
+    const planner = createAiSdkQuickStartPlanner({
+      baseURL: 'https://api.windup.test/ai/v1',
+      fetch,
+    })
+
     const result = await planner({
-      messages: [{ role: 'user', content: '直接生成' }],
+      messages: [{ role: 'user', content: '生成一个披着斗篷的骑士' }],
       clarificationUsed: false,
     })
 
-    expect(() => validatePlannerTerminal(result)).toThrow('生成提案的 optimizedPrompt 无效')
+    expect(validatePlannerTerminal(result)).toEqual({
+      kind: 'proposal',
+      optimizedPrompt: '披着斗篷的全身骑士',
+      optimizationSummary: '补齐了完整的角色母版描述。',
+    })
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('falls back to a confirmable original prompt after one failed repair', async () => {
+    const invalid = () =>
+      completion({
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call-still-invalid',
+              type: 'function',
+              function: {
+                name: 'quick_start_decision',
+                arguments: '{"kind":"proposal"}',
+              },
+            },
+          ],
+        },
+        finish_reason: 'tool_calls',
+      })
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => invalid())
+    const planner = createAiSdkQuickStartPlanner({
+      baseURL: 'https://api.windup.test/ai/v1',
+      fetch,
+    })
+
+    const result = await planner({
+      messages: [{ role: 'user', content: '生成一个披着斗篷的骑士' }],
+      clarificationUsed: false,
+    })
+
+    expect(validatePlannerTerminal(result)).toEqual({
+      kind: 'proposal',
+      optimizedPrompt: '生成一个披着斗篷的骑士',
+      optimizationSummary: '我先完整保留了你的原始描述，你可以直接采用或继续补充细节。',
+    })
+    expect(fetch).toHaveBeenCalledTimes(2)
   })
 
   it('surfaces a standard 401 and honors cancellation', async () => {

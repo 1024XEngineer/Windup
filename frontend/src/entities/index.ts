@@ -23,13 +23,18 @@ export type {
 
 /* 项目 —— 全局约束：视角、朝向、精灵尺寸、画风 */
 export {
+  ART_STYLE,
+  ART_STYLE_HINT,
+  ART_STYLE_OPTIONS,
   CHARACTER_PERSPECTIVE,
+  isArtStyle,
   DIRECTIONAL_MOVEMENT,
   ProjectHasCharactersError,
   ProjectNameConflictError,
 } from './project'
 export { projectApis } from './project'
 export type {
+  ArtStyle,
   CharacterPerspective,
   CreateProjectInput,
   DirectionalMovement,
@@ -128,6 +133,9 @@ export type {
   PixelPerfectApis,
   PixelPerfectMetadata,
   PixelPerfectProcessInput,
+  PixelPerfectReconstructInput,
+  PixelPerfectReconstructMetadata,
+  PixelPerfectReconstructResult,
   PixelPerfectResult,
 } from './pixel-perfect'
 

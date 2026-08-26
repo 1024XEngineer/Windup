@@ -108,6 +108,35 @@
         "title": "AssistantMessageResponse",
         "type": "object"
       },
+      "Body_reconstruct_pixel_grid_tools_pixel_perfect_reconstruct_post": {
+        "properties": {
+          "cols": {
+            "title": "Cols",
+            "type": "integer"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "rows": {
+            "title": "Rows",
+            "type": "integer"
+          },
+          "structure_colors": {
+            "default": 16,
+            "title": "Structure Colors",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file",
+          "cols",
+          "rows"
+        ],
+        "title": "Body_reconstruct_pixel_grid_tools_pixel_perfect_reconstruct_post",
+        "type": "object"
+      },
       "Body_upload_media_media_upload_post": {
         "properties": {
           "file": {
@@ -2037,11 +2066,29 @@
             "default": "unspecified",
             "title": "Game Style"
           },
+          "name_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name Context"
+          },
           "project_name": {
-            "maxLength": 20,
-            "minLength": 1,
-            "title": "Project Name",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Name"
           },
           "sprite_height": {
             "maximum": 2048.0,
@@ -2079,7 +2126,6 @@
           }
         },
         "required": [
-          "project_name",
           "character_perspective",
           "directional_movement",
           "sprite_width",
@@ -2107,10 +2153,10 @@
           "game_style": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/ArtStyle"
               },
               {
-                "type": "null"
+                "type": "string"
               }
             ],
             "title": "Game Style"
@@ -2206,10 +2252,10 @@
           "game_style": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/ArtStyle"
               },
               {
-                "type": "null"
+                "type": "string"
               }
             ],
             "title": "Game Style"
@@ -5107,6 +5153,41 @@
         "summary": "Precheck Master",
         "tags": [
           "render3d"
+        ]
+      }
+    },
+    "/tools/pixel-perfect/reconstruct": {
+      "post": {
+        "description": "按项目声明的精灵网格重建 PNG/JPEG，不执行网格猜测或资产写入。",
+        "operationId": "reconstruct_pixel_grid_tools_pixel_perfect_reconstruct_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_reconstruct_pixel_grid_tools_pixel_perfect_reconstruct_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reconstruct Pixel Grid",
+        "tags": [
+          "pixel-perfect"
         ]
       }
     },

@@ -280,7 +280,9 @@ describe('WorkflowController', () => {
       controller.startCharacterGeneration({ prompt: '  银发像素骑士  ' }),
     ).resolves.toEqual({ runId: 'run-1' })
 
-    expect(prepareProject).toHaveBeenCalledWith('银发像素骑士', 'single')
+    expect(prepareProject).toHaveBeenCalledWith('银发像素骑士', 'single', {
+      gameStyle: undefined,
+    })
     expect(workflow.apis.create).toHaveBeenCalledWith({
       projectId: 'project-agent',
       nodes: [
@@ -307,6 +309,74 @@ describe('WorkflowController', () => {
     })
   })
 
+  it('为 Agent 自动交付持久化动作意图并只生成一个母版候选', async () => {
+    const workflow = createWorkflowApis()
+    const generation = createGenerationHarness()
+    const controller = createWorkflowController({
+      workflowRunApis: workflow.apis,
+      generationApis: generation.apis,
+      prepareProject: vi.fn(async () => ({
+        id: 'project-agent',
+        spriteSize: { width: 256, height: 256 },
+      })),
+      onAsyncError: () => undefined,
+    })
+
+    await controller.startCharacterGeneration({
+      prompt: '背着邮包的像素邮差，全身像',
+      automaticDelivery: { actionPrompt: '轻快地向前行走', actionType: 'walk' },
+    })
+
+    expect(workflow.apis.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nodes: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'character-setup',
+            automation: {
+              mode: 'automatic',
+              actionPrompt: '轻快地向前行走',
+              actionType: 'walk',
+            },
+          }),
+        ]),
+      }),
+    )
+    expect(generation.apis.create).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'character_template', candidateCount: 1 }),
+    )
+  })
+
+  it('persists the Agent pixel-art suggestion on the setup node', async () => {
+    const workflow = createWorkflowApis()
+    const generation = createGenerationHarness()
+    const controller = createWorkflowController({
+      workflowRunApis: workflow.apis,
+      generationApis: generation.apis,
+      prepareProject: vi.fn(async () => ({
+        id: 'project-agent',
+        spriteSize: { width: 64, height: 64 },
+      })),
+      onAsyncError: () => undefined,
+    })
+
+    await controller.startCharacterGeneration({
+      prompt: '魔幻像素风战士',
+      suggestPixelPerfect: true,
+      automaticDelivery: { actionPrompt: '疯狂跳舞' },
+    })
+
+    expect(workflow.apis.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nodes: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'character-setup',
+            pixelPerfectSuggested: true,
+          }),
+        ]),
+      }),
+    )
+  })
+
   it('按 Quick Start 选择四向项目时仍只提交三张东向母版候选', async () => {
     const workflow = createWorkflowApis()
     const generation = createGenerationHarness()
@@ -327,7 +397,9 @@ describe('WorkflowController', () => {
       directionalMovement: 'four-way',
     })
 
-    expect(prepareProject).toHaveBeenCalledWith('四向像素骑士', 'four-way')
+    expect(prepareProject).toHaveBeenCalledWith('四向像素骑士', 'four-way', {
+      gameStyle: undefined,
+    })
     expect(generation.apis.create).toHaveBeenCalledTimes(1)
     expect(vi.mocked(generation.apis.create).mock.calls.map(([input]) => input.direction)).toEqual([
       'east',

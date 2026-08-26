@@ -5,7 +5,37 @@
 ``timestamp`` 默认省略)与 400/404 业务码路径。
 """
 
+from types import SimpleNamespace
+
+import pytest
 from sqlalchemy import event
+
+from windup_app.server.character import cleanup as character_cleanup
+from windup_app.web.api import project as project_api
+
+
+class _FakeProjectNamer:
+    def __init__(self, result="雾港计划", error=None):
+        self.result = result
+        self.error = error
+        self.calls = []
+
+    def name_from_description(self, description):
+        self.calls.append(description)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+@pytest.fixture(autouse=True)
+def _inject_fake_project_namer():
+    project_service = project_api.service
+    original = getattr(project_service, "_namer", None)
+    project_service._namer = _FakeProjectNamer()
+    try:
+        yield
+    finally:
+        project_service._namer = original
 
 
 def _payload(**overrides):
@@ -36,6 +66,64 @@ def test_create_success(auth_client):
     assert body["data"]["project_name"] == "新建"
     assert body["data"]["create_at"]
     assert "timestamp" not in body
+
+
+def test_create_without_name_extracts_project_title(auth_client):
+    description = "一位提着风灯、披深色斗篷的像素守夜人"
+
+    resp = auth_client.post(
+        "/projects",
+        json=_payload(project_name=None, name_context=description),
+    )
+
+    assert resp.json()["code"] == 200
+    assert resp.json()["data"]["project_name"] == "雾港计划"
+    assert project_api.service._namer.calls == [description]
+
+
+def test_create_with_explicit_name_skips_project_namer(auth_client):
+    resp = auth_client.post(
+        "/projects",
+        json=_payload(project_name="用户项目", name_context="角色描述"),
+    )
+
+    assert resp.json()["data"]["project_name"] == "用户项目"
+    assert project_api.service._namer.calls == []
+
+
+def test_create_automatic_duplicate_uses_readable_sequence(auth_client):
+    project_api.service._namer = _FakeProjectNamer(result="雾" * 20)
+    payload = _payload(project_name=None, name_context="同一份角色描述")
+
+    first = auth_client.post("/projects", json=payload).json()
+    second = auth_client.post("/projects", json=payload).json()
+
+    assert first["data"]["project_name"] == "雾" * 20
+    assert second["data"]["project_name"] == f"{'雾' * 17}… 2"
+    assert len(second["data"]["project_name"]) == 20
+
+
+def test_create_namer_failure_falls_back_to_description(auth_client):
+    project_api.service._namer = _FakeProjectNamer(error=RuntimeError("timeout"))
+    description = "这是一段超过二十个字的角色描述用来作为项目名称兜底"
+
+    resp = auth_client.post(
+        "/projects",
+        json=_payload(project_name=None, name_context=description),
+    )
+
+    assert resp.json()["code"] == 200
+    assert resp.json()["data"]["project_name"] == description[:20]
+
+
+def test_create_without_name_or_context_uses_unnamed_fallback(auth_client):
+    resp = auth_client.post(
+        "/projects",
+        json=_payload(project_name=None, name_context=None),
+    )
+
+    assert resp.json()["code"] == 200
+    assert resp.json()["data"]["project_name"] == "未命名项目"
 
 
 def test_create_duplicate_name_returns_400(auth_client):
@@ -300,63 +388,82 @@ def test_delete_not_found_returns_404(auth_client):
     assert resp.json()["code"] == 404
 
 
-def test_delete_rejected_when_project_has_characters(auth_client):
+def test_delete_cascades_all_characters_and_cleans_media(auth_client, monkeypatch):
+    deleted_keys = []
+    monkeypatch.setattr(
+        character_cleanup.storage_settings,
+        "bucket_domain",
+        "https://assets.windup.test",
+    )
+    monkeypatch.setattr(
+        project_api,
+        "media_service",
+        SimpleNamespace(delete=deleted_keys.append),
+        raising=False,
+    )
     created = auth_client.post(
-        "/projects", json=_payload(project_name="有角色")
+        "/projects",
+        json=_payload(project_name="有角色", directional_movement=1),
     ).json()["data"]
-    character = auth_client.post(
+    draft = auth_client.post(
         "/characters",
         json={
             "project_id": created["id"],
             "workflow_run_id": 348,
-            "name": "挂载角色",
-            "description": "阻止删项目",
+            "name": "草稿角色",
+            "reference_image_url": (
+                "https://assets.windup.test/media/reference-image/draft.source.png"
+            ),
         },
-    ).json()
-
-    assert character["code"] == 200
-
-    resp = auth_client.delete(f"/projects/{created['id']}")
-
-    body = resp.json()
-    assert body["code"] == 400
-    assert body["message"] == "项目下仍有角色，无法删除"
-    assert body["data"] is None
-    assert auth_client.get(f"/projects/{created['id']}").json()["code"] == 200
-    assert (
-        auth_client.get(f"/characters/{character['data']['id']}").json()["code"] == 200
-    )
-
-
-def test_delete_rejected_when_character_arrives_after_empty_check(
-    auth_client, monkeypatch
-):
-    """模拟检查与删除之间插入角色：应用层已看见空项目，数据库仍应拦住删除。"""
-    created = auth_client.post("/projects", json=_payload(project_name="竞态")).json()[
-        "data"
-    ]
-    character = auth_client.post(
+    ).json()["data"]
+    published = auth_client.post(
         "/characters",
         json={
             "project_id": created["id"],
             "workflow_run_id": 349,
-            "name": "后插入",
-            "description": "检查之后才出现",
+            "name": "已发布角色",
+            "character_data": {
+                "version": 1,
+                "outfits": [
+                    {
+                        "id": "outfit-1",
+                        "name": "常态",
+                        "actions": [
+                            {
+                                "id": "idle",
+                                "type": "idle",
+                                "name": "待机",
+                                "frame_count": 1,
+                                "frames": [
+                                    {
+                                        "index": 0,
+                                        "image_url": (
+                                            "https://assets.windup.test/"
+                                            "media/action-frame/idle.png"
+                                        ),
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
         },
-    ).json()
-    assert character["code"] == 200
-
-    monkeypatch.setattr(
-        "windup_app.web.api.project.character_service.project_has_characters",
-        lambda session, project_id: False,
-    )
+    ).json()["data"]
 
     resp = auth_client.delete(f"/projects/{created['id']}")
 
     body = resp.json()
-    assert body["code"] == 400
-    assert body["message"] == "项目下仍有角色，无法删除"
-    assert auth_client.get(f"/projects/{created['id']}").json()["code"] == 200
-    assert (
-        auth_client.get(f"/characters/{character['data']['id']}").json()["code"] == 200
+    assert body["code"] == 200
+    assert body["message"] == "删除成功"
+    assert body["data"] is None
+    assert auth_client.get(f"/projects/{created['id']}").json()["code"] == 404
+    assert auth_client.get(f"/characters/{draft['id']}").json()["code"] == 404
+    assert auth_client.get(f"/characters/{published['id']}").json()["code"] == 404
+    assert sorted(deleted_keys) == sorted(
+        [
+            "media/reference-image/draft.source.png",
+            "media/reference-image/draft.card.webp",
+            "media/action-frame/idle.png",
+        ]
     )

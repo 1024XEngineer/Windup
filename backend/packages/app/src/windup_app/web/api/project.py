@@ -14,8 +14,11 @@ from windup_common.exceptions import BizException
 from windup_common.result import ListResponse, Response
 from windup_framework.db import get_session
 
+from windup_app.server.character.cleanup import extract_object_keys
 from windup_app.server.character.service import service as character_service
+from windup_app.server.media.service import service as media_service
 from windup_app.server.project.interface import UNSET
+from windup_app.server.project.naming import numbered_project_name, resolve_project_name
 from windup_app.server.project.service import service
 
 logger = logging.getLogger("windup.project.api")
@@ -53,7 +56,8 @@ class ProjectCreate(BaseModel):
     """创建项目请求。"""
 
     workflow_id: int | None = None
-    project_name: str = Field(min_length=1, max_length=20)
+    project_name: str | None = Field(default=None, min_length=1, max_length=20)
+    name_context: str | None = None
     character_perspective: int = Field(ge=1, le=3)
     directional_movement: int = Field(ge=1, le=3)
     sprite_width: int = Field(ge=32, le=2048)
@@ -97,10 +101,27 @@ class ProjectOut(BaseModel):
     directional_movement: int
     sprite_width: int
     sprite_height: int
-    game_style: str | None
+    game_style: ArtStyle | str
     sprite_sample_url: str | None
     create_at: datetime
     update_at: datetime
+
+    @field_validator("game_style", mode="before")
+    @classmethod
+    def _normalize_style(cls, value: object) -> ArtStyle | str:
+        """库里既有枚举码也有存量自由文本。
+
+        认得出的归一成枚举码,认不出的**原样交出去** —— 压成 ``UNSPECIFIED`` 会让接口
+        与生成时实际用的画风对不上:库里存着「中世纪厚涂」、提示词里也用着它,而接口说
+        这个项目没设画风。
+        """
+        if not isinstance(value, str) or not value.strip():
+            return ArtStyle.UNSPECIFIED
+        text = value.strip()
+        try:
+            return ArtStyle(text)
+        except ValueError:
+            return ArtStyle.PIXEL if ArtStyle.from_stored(text) is ArtStyle.PIXEL else text
 
 
 class ProjectListOut(ProjectOut):
@@ -116,28 +137,39 @@ def create_project(
     session: Session = Depends(get_session),
 ) -> Response[ProjectOut]:
     user_id = request.state.current_user.id
-    if service.project_name_exists(
-        session, user_id=user_id, project_name=body.project_name
-    ):
-        logger.warning(
-            "[WINDUP] 创建拒绝-名称重复 | user_id=%s project_name=%s",
-            user_id,
-            body.project_name,
-        )
-        raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST)
-    try:
-        fields = body.model_dump()
-        fields["game_style"] = _stored_style(body.game_style)
-        project = service.create_project(session, user_id=user_id, **fields)
-    except IntegrityError:
-        logger.warning(
-            "[WINDUP] 创建拒绝-并发冲突 | user_id=%s project_name=%s",
-            user_id,
-            body.project_name,
-        )
-        session.rollback()
-        raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST) from None
-    return Response.success(ProjectOut.model_validate(project), message="创建成功")
+    automatic_name = not (body.project_name or "").strip()
+    base_name = resolve_project_name(body.project_name, body.name_context, service._namer)
+    fields = body.model_dump(exclude={"project_name", "name_context"})
+    fields["game_style"] = _stored_style(body.game_style)
+
+    for sequence in range(1, 101 if automatic_name else 2):
+        project_name = numbered_project_name(base_name, sequence)
+        if service.project_name_exists(
+            session, user_id=user_id, project_name=project_name
+        ):
+            if automatic_name:
+                continue
+            logger.warning(
+                "[WINDUP] 创建拒绝-名称重复 | user_id=%s project_name=%s",
+                user_id,
+                project_name,
+            )
+            raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST)
+        try:
+            project = service.create_project(
+                session, user_id=user_id, project_name=project_name, **fields
+            )
+            return Response.success(ProjectOut.model_validate(project), message="创建成功")
+        except IntegrityError:
+            logger.warning(
+                "[WINDUP] 创建并发重名 | user_id=%s project_name=%s",
+                user_id,
+                project_name,
+            )
+            session.rollback()
+            if not automatic_name:
+                break
+    raise BizException("项目名称已存在", code=BizCode.BAD_REQUEST)
 
 
 @router.get("", response_model=ListResponse[ProjectListOut])
@@ -222,13 +254,37 @@ def delete_project(
     project = service.get_project(session, project_id, for_update=True)
     if project is None or project.user_id != request.state.current_user.id:
         raise BizException("项目不存在", code=BizCode.NOT_FOUND)
-    if character_service.project_has_characters(session, project_id):
-        raise BizException("项目下仍有角色，无法删除", code=BizCode.BAD_REQUEST)
+    characters = []
+    page = 1
+    while True:
+        items, total = character_service.list_characters(
+            session,
+            project_id=project_id,
+            page=page,
+            page_size=100,
+        )
+        characters.extend(items)
+        if len(characters) >= total:
+            break
+        page += 1
+
+    object_keys = list(
+        dict.fromkeys(
+            key for character in characters for key in extract_object_keys(character)
+        )
+    )
     try:
+        for character in characters:
+            character_service.delete_character(session, character.id)
         service.delete_project(session, project_id)
     except IntegrityError:
         session.rollback()
         raise BizException(
             "项目下仍有角色，无法删除", code=BizCode.BAD_REQUEST
         ) from None
+    for key in object_keys:
+        try:
+            media_service.delete(key)
+        except Exception:
+            logger.warning("[WINDUP] 媒体清理失败(已跳过) | key=%s", key, exc_info=True)
     return Response.success(None, message="删除成功")

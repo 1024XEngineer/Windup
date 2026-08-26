@@ -2,10 +2,14 @@ import { useRef, useState, type FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 
 import {
+  ART_STYLE,
+  ART_STYLE_HINT,
+  ART_STYLE_OPTIONS,
   CHARACTER_PERSPECTIVE,
   DIRECTIONAL_MOVEMENT,
   projectApis,
   workflowRunApis,
+  type ArtStyle,
   type CharacterPerspective,
   type DirectionalMovement,
   type Project,
@@ -31,17 +35,12 @@ const SPRITE_MAX = 2048
 /** 常用档位只是快捷填充，用户仍可以填这三档之外的任意合法宽高。 */
 const SPRITE_PRESETS = [128, 256, 512]
 
-/**
- * 画风约束的长度上限只存在于前端：后端 `game_style` 是没有长度约束的 Text。
- * 定这个数是为了让它维持在「一句风格描述」的量级，不是契约要求。
- */
-const GAME_STYLE_MAX_LENGTH = 240
-
 /** 创建真实项目；首页画布入口与项目中心的新建按钮共用这一页。 */
 export function ProjectCreatePage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const opensWorkflowEditor = searchParams.get('entry') === 'workflow-editor'
+  const returnsToQuickStart = searchParams.get('entry') === 'quick-start'
   /**
    * 能不能建项目只取决于有没有登录：后端 `/projects` 不在鉴权白名单里，
    * 归属也从 access token 里取。登录模块尚未接入时没有人注册 provider，
@@ -54,7 +53,7 @@ export function ProjectCreatePage() {
   const [directionalMovement, setDirectionalMovement] = useState<DirectionalMovement>('single')
   const [spriteWidth, setSpriteWidth] = useState('256')
   const [spriteHeight, setSpriteHeight] = useState('256')
-  const [gameStyle, setGameStyle] = useState('')
+  const [gameStyle, setGameStyle] = useState<ArtStyle>('unspecified')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [createdProject, setCreatedProject] = useState<Project | null>(null)
@@ -88,7 +87,7 @@ export function ProjectCreatePage() {
           perspective,
           directionalMovement,
           spriteSize: { width, height },
-          gameStyle: gameStyle.trim() || null,
+          gameStyle,
         })
         if (opensWorkflowEditor) setCreatedProject(project)
       }
@@ -98,6 +97,10 @@ export function ProjectCreatePage() {
           nodes: initialWorkflowNodes(),
         })
         navigate(`/workflow-editor/${encodeURIComponent(workflow.id)}`)
+        return
+      }
+      if (returnsToQuickStart) {
+        navigate(`/quick-start?${new URLSearchParams({ projectId: project.id })}`)
         return
       }
       navigate(`/projects/${project.id}`)
@@ -264,18 +267,24 @@ export function ProjectCreatePage() {
 
           <div className="grid gap-2">
             <label className="text-xs font-semibold text-app-ink-soft" htmlFor="project-style">
-              画风约束
+              画风
             </label>
-            <textarea
+            <select
               id="project-style"
-              rows={3}
               value={gameStyle}
               disabled={createdProject !== null}
-              maxLength={GAME_STYLE_MAX_LENGTH}
-              placeholder="例如：低饱和像素风、细长比例、深灰旅行服"
-              onChange={(event) => setGameStyle(event.target.value)}
-              className="resize-none rounded-xl border border-app-line bg-app-surface px-4 py-3 text-sm outline-none focus-visible:border-app-accent"
-            />
+              onChange={(event) => setGameStyle(event.target.value as ArtStyle)}
+              className="rounded-xl border border-app-line bg-app-surface px-4 py-3 text-sm outline-none focus-visible:border-app-accent"
+            >
+              {ART_STYLE_OPTIONS.map((value) => (
+                <option key={value} value={value}>
+                  {ART_STYLE[value]}
+                </option>
+              ))}
+            </select>
+            <small className="text-[11px] leading-5 text-app-muted">
+              {ART_STYLE_HINT[gameStyle]}
+            </small>
           </div>
 
           {error ? (
@@ -297,7 +306,9 @@ export function ProjectCreatePage() {
                   ? createdProject
                     ? '项目已经创建；重试只会继续创建工作流，不会重复创建项目。'
                     : '创建项目和初始工作流后，直接进入工作流画布。'
-                  : '创建后进入该项目的资产工作区。'
+                  : returnsToQuickStart
+                    ? '创建后返回 Quick Start，并将新项目作为角色生成约束。'
+                    : '创建后进入该项目的资产工作区。'
                 : '创建项目需要先登录。登录模块尚未接入，创建入口暂时保持关闭。'}
             </small>
             <button

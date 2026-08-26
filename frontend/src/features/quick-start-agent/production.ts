@@ -1,4 +1,5 @@
 import {
+  isArtStyle,
   createAuthenticatedGenerationApis,
   projectApis,
   workflowRunApis,
@@ -133,6 +134,7 @@ export function createProductionQuickStartAgentDependencies(
       return planner(input)
     },
     async startCharacterGeneration(input) {
+      const gameStyle = isArtStyle(input.gameStyle) ? input.gameStyle : undefined
       generationApis ??= createAuthenticatedGenerationApis()
       const controller = createController({
         workflowRunApis: runApis,
@@ -141,7 +143,21 @@ export function createProductionQuickStartAgentDependencies(
         onAsyncError: reportError,
       })
       try {
-        return await controller.startCharacterGeneration(input)
+        return await controller.startCharacterGeneration({
+          prompt: input.prompt,
+          directionalMovement: input.directionalMovement,
+          gameStyle,
+          projectId: input.projectId,
+          ...(input.suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
+          ...(input.automaticDelivery
+            ? {
+                automaticDelivery: {
+                  ...(input.actionPrompt ? { actionPrompt: input.actionPrompt } : {}),
+                  ...(input.actionType ? { actionType: input.actionType } : {}),
+                },
+              }
+            : {}),
+        })
       } finally {
         controller.dispose()
       }

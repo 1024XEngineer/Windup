@@ -17,7 +17,9 @@ from windup_ai_engine.slicing.extract import (
     _extract_frames,
     _frame_count,
     _uniform_indices,
+    extract_frames_at,
     extract_frames_bytes,
+    extract_preview_frames,
 )
 
 
@@ -112,6 +114,85 @@ def test_bytes_entry_point_streams_too(video, monkeypatch):
     monkeypatch.setattr(extract_mod.tempfile, "TemporaryDirectory", _forbidden)
     with open(video, "rb") as f:
         assert len(extract_frames_bytes(f.read(), 4)) == 4
+
+
+def test_preview_frames_are_48px_and_keep_source_indices(video):
+    """Pass A 只留 48×48,下标仍指向源视频,不能先解成 720p 再缩。"""
+    with open(video, "rb") as f:
+        previews, src_idx = extract_preview_frames(f.read(), cap=150, size=48)
+    assert src_idx == list(range(20))
+    assert len(previews) == 20
+    assert all(p.size == (48, 48) and p.mode == "RGB" for p in previews)
+
+
+def test_extract_frames_at_returns_the_requested_ramp_frames(video):
+    """Pass B 按下标取全分辨率帧,不是前 n 帧。"""
+    with open(video, "rb") as f:
+        frames = extract_frames_at(f.read(), [0, 10, 19])
+    assert len(frames) == 3
+    assert all(f.size == (64, 64) and f.mode == "RGBA" for f in frames)
+    greys = [int(np.asarray(f.convert("L")).mean()) for f in frames]
+    assert greys[0] < greys[1] < greys[2], greys
+    assert greys[0] < 30, greys[0]
+    assert greys[-1] > 200, greys[-1]
+
+
+def test_preview_and_at_do_not_materialise_via_imread(video, monkeypatch):
+    import imageio.v3 as iio
+
+    monkeypatch.setattr(iio, "imread", _forbidden)
+    with open(video, "rb") as f:
+        data = f.read()
+    previews, src_idx = extract_preview_frames(data, size=48)
+    assert len(previews) == len(src_idx) == 20
+    assert extract_frames_at(data, [0, 19])[0].mode == "RGBA"
+
+
+def test_ffmpeg_fallback_selects_only_needed_frames(video, monkeypatch):
+    """冷路径禁止把整段导出成全分辨率 PNG;只 select 要的下标。"""
+    import imageio.v3 as iio
+    import subprocess
+
+    monkeypatch.setattr(iio, "improps", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no pyav")))
+    monkeypatch.setattr(iio, "imiter", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no pyav")))
+
+    seen: list[list[str]] = []
+    real = subprocess.run
+
+    def spy(args, **kw):
+        seen.append(list(args))
+        return real(args, **kw)
+
+    monkeypatch.setattr(subprocess, "run", spy)
+    frames = _extract_frames(video, 4)
+    assert len(frames) == 4
+    png_cmds = [c for c in seen if any(str(a).endswith(".png") for a in c)]
+    assert png_cmds, seen
+    assert all("-vf" in c for c in png_cmds), png_cmds
+    assert any(any("select=" in str(a) for a in c) for c in png_cmds), png_cmds
+
+
+def test_ffmpeg_preview_fallback_stays_small(video, monkeypatch):
+    """预览冷路径可以落小 PNG,但不能解成全分辨率。"""
+    import imageio.v3 as iio
+
+    monkeypatch.setattr(iio, "improps", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no pyav")))
+    monkeypatch.setattr(iio, "imiter", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no pyav")))
+    with open(video, "rb") as f:
+        previews, src_idx = extract_preview_frames(f.read(), size=48)
+    assert src_idx == list(range(20))
+    assert all(p.size == (48, 48) and p.mode == "RGB" for p in previews)
+
+
+def test_ffmpeg_frames_at_fallback_keeps_requested_order(video, monkeypatch):
+    import imageio.v3 as iio
+
+    monkeypatch.setattr(iio, "improps", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no pyav")))
+    monkeypatch.setattr(iio, "imiter", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no pyav")))
+    with open(video, "rb") as f:
+        frames = extract_frames_at(f.read(), [19, 0])
+    greys = [int(np.asarray(f.convert("L")).mean()) for f in frames]
+    assert greys[0] > 200 and greys[1] < 30, greys
 
 
 def test_bundled_ffmpeg_is_used_when_pyav_cannot_decode(video, monkeypatch):

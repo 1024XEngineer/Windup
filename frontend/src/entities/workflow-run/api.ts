@@ -121,6 +121,18 @@ function hasValidCharacterInput(value: unknown): boolean {
   )
 }
 
+function hasValidAutomationIntent(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (isRecord(value) &&
+      value.mode === 'automatic' &&
+      isNullableString(value.actionPrompt) &&
+      (value.actionPrompt === null || value.actionPrompt.trim().length > 0) &&
+      (value.actionType === undefined ||
+        (value.actionType === 'walk' && value.actionPrompt !== null)))
+  )
+}
+
 function hasValidActionInput(value: unknown): boolean {
   if (!isRecord(value)) return false
   return (
@@ -144,6 +156,9 @@ function isCharacterSetupNode(value: unknown): value is CharacterSetupWorkflowNo
     hasValidCommonNodeFields(value) &&
     ['configuring', 'completed'].includes(String(value.phase)) &&
     hasValidCharacterInput(value.input) &&
+    hasValidAutomationIntent(value.automation) &&
+    (value.pixelPerfectSuggested === undefined ||
+      typeof value.pixelPerfectSuggested === 'boolean') &&
     hasOnlyGenerationRole(value, null)
   )
 }

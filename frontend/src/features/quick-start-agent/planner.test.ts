@@ -14,6 +14,12 @@ describe('quickStartPlannerInstructions', () => {
     expect(firstTurn).toContain('最多问一个')
     expect(firstTurn).toContain('直接生成')
     expect(firstTurn).toContain('proposal 只是提案，不代表用户授权生成')
+    expect(firstTurn).toContain('角色和动作')
+    expect(firstTurn).toContain('actionPrompt')
+    expect(firstTurn).toContain('suggestPixelPerfect')
+    expect(firstTurn).toContain('明确表达像素风素材意图')
+    expect(firstTurn).toContain('actionType: "walk"')
+    expect(firstTurn).toContain('行走或跑步')
     expect(firstTurn).toContain('不得只靠关键词')
     expect(firstTurn).toContain('对话轮数永远不是 proposal 的触发条件')
     expect(firstTurn).toContain('咨询或元对话必须用 reply')
@@ -25,6 +31,32 @@ describe('quickStartPlannerInstructions', () => {
 })
 
 describe('createAiSdkQuickStartPlanner', () => {
+  it('treats the selected art style as fixed context when drafting prompts', async () => {
+    const generate = vi.fn<QuickStartGenerateText>(async () => ({
+      text: '可以继续。',
+      finishReason: 'stop',
+      toolCalls: [],
+    }))
+    const planner = createAiSdkQuickStartPlanner({
+      baseURL: 'https://api.windup.test/ai/v1',
+      generateText: generate,
+    })
+
+    await planner({
+      messages: [{ role: 'user', content: '一个住在云端的机械师' }],
+      clarificationUsed: false,
+      artStyle: '像素',
+    })
+
+    expect(generate.mock.calls[0]?.[0].instructions).toContain('用户当前选择的画风是「像素」')
+
+    await planner({
+      messages: [{ role: 'user', content: '一个住在云端的机械师' }],
+      clarificationUsed: false,
+    })
+    expect(generate.mock.calls[1]?.[0].instructions).not.toContain('用户当前选择的画风')
+  })
+
   it('uses one schema-only Tool, non-streaming generateText, and no SDK retries', async () => {
     const signal = new AbortController().signal
     const generate = vi.fn<QuickStartGenerateText>(async () => ({

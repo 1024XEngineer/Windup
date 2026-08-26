@@ -6,6 +6,7 @@ import type {
   GenerationApis,
   MediaReference,
   ProjectApis,
+  PixelPerfectApis,
   WorkflowRun,
   WorkflowRunApis,
 } from '@/entities'
@@ -16,7 +17,7 @@ import {
   createRealQuickStartService,
   type QuickStartMediaApis,
 } from './service'
-import { ProjectNameConflictError, WorkflowRunConflictError } from '@/entities'
+import { WorkflowRunConflictError } from '@/entities'
 import { registerApiAccessTokenProvider } from '@/shared/api'
 
 function createWorkflowRunApis(initialRuns: readonly WorkflowRun[] = []): WorkflowRunApis {
@@ -80,6 +81,71 @@ function pendingGenerationApis(): GenerationApis {
       error: null,
     })),
     subscribe: vi.fn(() => () => undefined),
+  }
+}
+
+function automaticDeliveryGenerationApis(): GenerationApis {
+  const tasks = new Map<string, Awaited<ReturnType<GenerationApis['create']>>>()
+  tasks.set('task-template', {
+    id: 'task-template',
+    projectId: 'project-1',
+    type: 'character_template',
+    status: 'completed',
+    result: {
+      type: 'character_template',
+      images: [{ url: 'template.png' }],
+    },
+    error: null,
+  })
+  let sequence = 0
+  return {
+    create: vi.fn(async (input) => {
+      const id = `task-auto-${++sequence}`
+      const task =
+        input.type === 'complete_animation'
+          ? {
+              id,
+              projectId: input.projectId,
+              type: input.type,
+              status: 'completed' as const,
+              result: {
+                type: input.type,
+                frames: [{ index: 0, url: 'dance-1.png', durationMs: 80 }],
+              },
+              error: null,
+            }
+          : {
+              id,
+              projectId: input.projectId,
+              type: input.type,
+              status: 'completed' as const,
+              result: {
+                type: input.type,
+                images: [{ url: input.type === 'first_frame' ? 'first.png' : 'template.png' }],
+              },
+              error: null,
+            }
+      tasks.set(id, task)
+      return structuredClone(task)
+    }) as GenerationApis['create'],
+    get: vi.fn(async (_projectId, id) => structuredClone(tasks.get(id)!)),
+    subscribe: vi.fn((...args: unknown[]) => {
+      const id = String(args[1])
+      const listener = (typeof args[2] === 'function' ? args[2] : args[3]) as (
+        event: unknown,
+      ) => void
+      const task = tasks.get(id)!
+      queueMicrotask(() =>
+        listener({
+          taskId: id,
+          type: task.type,
+          status: task.status,
+          result: task.result,
+          error: task.error,
+        }),
+      )
+      return () => undefined
+    }) as GenerationApis['subscribe'],
   }
 }
 
@@ -266,6 +332,152 @@ function actionRun(firstFramePending = false): WorkflowRun {
 }
 
 describe('createQuickStartService', () => {
+  it('恢复自动交付 Run 后用唯一母版和唯一首帧推进到完整动画', async () => {
+    const run: WorkflowRun = {
+      id: 'run-auto',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: [
+        {
+          id: 'character-setup',
+          type: 'character-setup',
+          status: 'passed',
+          phase: 'completed',
+          dependsOnNodeIds: [],
+          generations: [],
+          error: null,
+          input: { prompt: '圆润可爱的卡皮巴拉，全身像', referenceMedia: [] },
+          automation: { mode: 'automatic', actionPrompt: '轻快地向前行走' },
+        },
+        {
+          id: 'character-template',
+          type: 'character-template',
+          status: 'active',
+          phase: 'selecting',
+          dependsOnNodeIds: ['character-setup'],
+          generations: [{ taskId: 'task-template', role: 'character_template' }],
+          error: null,
+          selectedImageUrl: null,
+        },
+      ],
+    }
+    const setup = run.nodes.find((node) => node.type === 'character-setup')
+    if (!setup || setup.type !== 'character-setup' || !setup.automation) {
+      throw new Error('测试缺少自动交付意图')
+    }
+    Object.assign(setup.automation, { actionType: 'walk' })
+    const workflowRunApis = createWorkflowRunApis([run])
+    const generationApis = automaticDeliveryGenerationApis()
+    const onAsyncError = vi.fn()
+    let character = characterFixture({
+      workflowRunId: run.id,
+      name: '卡皮巴拉',
+      referenceImageUrl: null,
+    })
+    const service = createQuickStartService({
+      workflowRunApis,
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+      characterApis: mutableCharacterApis(
+        () => character,
+        (value) => (character = value),
+      ),
+      onAsyncError,
+    })
+
+    const session = await service.open(run.id)
+    await session.resume()
+
+    await vi.waitFor(() => {
+      expect(
+        session.getWorkflow().nodes.find((node) => node.type === 'action-full-frame')?.status,
+      ).toBe('passed')
+    })
+    expect(generationApis.create).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'first_frame', candidateCount: 1 }),
+    )
+    expect(generationApis.create).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'first_frame', actionType: 'walk' }),
+    )
+    expect(generationApis.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'complete_animation',
+        actionType: 'walk',
+        prompt: '轻快地向前行走',
+      }),
+    )
+    expect(session.getWorkflow().nodes.find((node) => node.type === 'review')).toMatchObject({
+      status: 'active',
+      phase: 'reviewing',
+    })
+    await session.approveReview()
+    expect(character.outfits.flatMap((outfit) => outfit.actions)).toEqual([
+      expect.objectContaining({ type: 'walk', name: '轻快地向前行走' }),
+    ])
+  })
+
+  it('自动交付没有动作时确认唯一母版后停止', async () => {
+    const run: WorkflowRun = {
+      id: 'run-character-auto',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: [
+        {
+          id: 'character-setup',
+          type: 'character-setup',
+          status: 'passed',
+          phase: 'completed',
+          dependsOnNodeIds: [],
+          generations: [],
+          error: null,
+          input: { prompt: '圆润可爱的卡皮巴拉，全身像', referenceMedia: [] },
+          automation: { mode: 'automatic', actionPrompt: null },
+        },
+        {
+          id: 'character-template',
+          type: 'character-template',
+          status: 'active',
+          phase: 'selecting',
+          dependsOnNodeIds: ['character-setup'],
+          generations: [{ taskId: 'task-template', role: 'character_template' }],
+          error: null,
+          selectedImageUrl: null,
+        },
+      ],
+    }
+    const generationApis = automaticDeliveryGenerationApis()
+    const onAsyncError = vi.fn()
+    let character = characterFixture({ workflowRunId: run.id, referenceImageUrl: null })
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+      characterApis: mutableCharacterApis(
+        () => character,
+        (value) => (character = value),
+      ),
+      onAsyncError,
+    })
+
+    const session = await service.open(run.id)
+    await session.resume()
+
+    await vi.waitFor(() =>
+      expect(
+        session.getWorkflow().nodes.find((node) => node.type === 'character-template'),
+      ).toMatchObject({ status: 'passed', phase: 'completed', selectedImageUrl: 'template.png' }),
+    )
+    expect(session.getWorkflow().nodes.some((node) => node.type === 'action-first-frame')).toBe(
+      false,
+    )
+    expect(generationApis.create).not.toHaveBeenCalled()
+    expect(onAsyncError).not.toHaveBeenCalled()
+  })
+
   it('四向 Quick Start 在用户选定母版前只创建东向三候选任务', async () => {
     const generationApis = pendingGenerationApis()
     const service = createQuickStartService({
@@ -452,6 +664,87 @@ describe('createQuickStartService', () => {
         'regenerate_first_frame',
         'refine_first_frame',
       ],
+    })
+  })
+
+  it('候选态向 Agent 暴露顺序句柄并按句柄微调指定图片', async () => {
+    const run: WorkflowRun = {
+      id: 'run-candidates',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(null, null),
+    }
+    const generationApis: GenerationApis = {
+      create: vi.fn(async (input) => ({
+        id: 'task-refined',
+        projectId: input.projectId,
+        type: input.type,
+        status: 'pending' as const,
+        result: null,
+        error: null,
+      })),
+      get: vi.fn(async (projectId, id) =>
+        id === 'task-template'
+          ? {
+              id,
+              projectId,
+              type: 'character_template' as const,
+              status: 'completed' as const,
+              result: {
+                type: 'character_template' as const,
+                direction: 'east' as const,
+                images: [
+                  { url: 'candidate-1.png' },
+                  { url: 'candidate-2.png' },
+                  { url: 'candidate-3.png' },
+                ],
+              },
+              error: null,
+            }
+          : {
+              id,
+              projectId,
+              type: 'character_template' as const,
+              status: 'pending' as const,
+              result: null,
+              error: null,
+            },
+      ),
+      subscribe: vi.fn(() => () => undefined),
+    }
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader({ width: 96, height: 128 }),
+    })
+    const session = await service.open(run.id)
+
+    await expect(session.getTemplateCandidates()).resolves.toHaveLength(3)
+    const context = session.getWorkflowAgentContext()
+    expect(context.availableTools).toEqual([
+      'regenerate_character_template',
+      'refine_character_template',
+    ])
+    expect(context.characterTemplateCandidates?.map(({ position }) => position)).toEqual([1, 2, 3])
+    expect(context.characterTemplateCandidates).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ imageUrl: expect.anything() })]),
+    )
+    const secondCandidateId = context.characterTemplateCandidates?.[1]?.id
+    expect(secondCandidateId).toBeTruthy()
+
+    await session.regenerateCharacterTemplate('refine', '把牛角缩短', secondCandidateId)
+
+    expect(generationApis.create).toHaveBeenCalledWith({
+      type: 'character_template',
+      projectId: 'project-1',
+      prompt: '像素骑士\n把牛角缩短',
+      referenceMedia: ['candidate-2.png'],
+      spriteWidth: 96,
+      spriteHeight: 128,
+      direction: 'east',
+      candidateCount: 3,
     })
   })
 
@@ -892,7 +1185,7 @@ describe('createQuickStartService', () => {
     )
   })
 
-  it('creates a readable bounded project name without a hash suffix', async () => {
+  it('sends the character description as project naming context', async () => {
     const create = vi.fn(async (input) => ({
       id: 'project-1',
       ...input,
@@ -907,15 +1200,14 @@ describe('createQuickStartService', () => {
       directionalMovement: 'single',
       spriteSize: { width: 256, height: 256 },
     })
-    const createdName = create.mock.calls[0]?.[0].name
-    expect(Array.from(createdName ?? '')).toHaveLength(20)
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: '一位名字特别长的像素角色设定用于验证截…',
+        nameContext: '一位名字特别长的像素角色设定用于验证截断继续',
         perspective: 'side',
         directionalMovement: 'single',
       }),
     )
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty('name')
   })
 
   it('creates the Quick Start project with the selected directional movement', async () => {
@@ -937,50 +1229,35 @@ describe('createQuickStartService', () => {
     )
   })
 
-  it('uses a readable number when the generated project name already exists', async () => {
-    const create = vi
-      .fn()
-      .mockRejectedValueOnce(new ProjectNameConflictError())
-      .mockResolvedValueOnce({
-        id: 'project-2',
-        name: '会挥剑的像素骑士 2',
-        spriteSize: { width: 256, height: 256 },
-      })
-    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
-
-    await expect(prepare('会挥剑的像素骑士')).resolves.toEqual({
-      id: 'project-2',
-      spriteSize: { width: 256, height: 256 },
-    })
-    expect(create).toHaveBeenNthCalledWith(1, expect.objectContaining({ name: '会挥剑的像素骑士' }))
-    expect(create).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ name: '会挥剑的像素骑士 2' }),
-    )
-  })
-
-  it('continues to the next readable project name after five conflicts', async () => {
-    const create = vi.fn()
-    for (let sequence = 1; sequence <= 5; sequence += 1) {
-      create.mockRejectedValueOnce(new ProjectNameConflictError())
+  it('reuses an existing project instead of creating another one', async () => {
+    const existingProject = {
+      id: 'project-existing',
+      workflowId: null,
+      name: '星海计划',
+      perspective: 'side' as const,
+      directionalMovement: 'four-way' as const,
+      spriteSize: { width: 128, height: 192 },
+      gameStyle: 'pixel' as const,
+      sampleImageUrl: null,
+      createdAt: '2026-08-25T00:00:00Z',
+      updatedAt: '2026-08-25T00:00:00Z',
     }
-    create.mockResolvedValueOnce({
-      id: 'project-6',
-      name: '像素骑士 6',
-      spriteSize: { width: 256, height: 256 },
-    })
-    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
+    const create = vi.fn()
+    const get = vi.fn(async () => existingProject)
+    const prepare = createAutoPrepareProject({ create, get } as unknown as ProjectApis)
 
-    await expect(prepare('像素骑士')).resolves.toEqual({
-      id: 'project-6',
-      spriteSize: { width: 256, height: 256 },
-    })
-
-    expect(create).toHaveBeenCalledTimes(6)
-    expect(create).toHaveBeenNthCalledWith(6, expect.objectContaining({ name: '像素骑士 6' }))
+    await expect(prepare('银发骑士', 'single', { projectId: existingProject.id })).resolves.toEqual(
+      {
+        id: existingProject.id,
+        directionalMovement: 'four-way',
+        spriteSize: { width: 128, height: 192 },
+      },
+    )
+    expect(get).toHaveBeenCalledWith(existingProject.id)
+    expect(create).not.toHaveBeenCalled()
   })
 
-  it('uses a readable fallback for an empty project prompt', async () => {
+  it('leaves the empty-context fallback to the backend naming contract', async () => {
     const create = vi.fn(async (input) => ({
       id: 'project-fallback',
       ...input,
@@ -990,7 +1267,7 @@ describe('createQuickStartService', () => {
 
     await prepare('   ')
 
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({ name: '未命名项目' }))
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ nameContext: '' }))
   })
 
   it('does not retry project creation errors other than name conflicts', async () => {
@@ -1009,39 +1286,6 @@ describe('createQuickStartService', () => {
 
     await expect(prepare('像素骑士')).rejects.toBe(unrelatedError)
     expect(create).toHaveBeenCalledTimes(1)
-  })
-
-  it('keeps long numbered project names readable within the backend limit', async () => {
-    const create = vi
-      .fn()
-      .mockRejectedValueOnce(new ProjectNameConflictError())
-      .mockResolvedValueOnce({
-        id: 'project-long-2',
-        name: '一位名字特别长的像素角色设定用于验… 2',
-        spriteSize: { width: 256, height: 256 },
-      })
-    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
-
-    await prepare('一位名字特别长的像素角色设定用于验证截断继续')
-
-    expect(create).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ name: '一位名字特别长的像素角色设定用于验证截…' }),
-    )
-    expect(create).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ name: '一位名字特别长的像素角色设定用于验… 2' }),
-    )
-    expect(Array.from(create.mock.calls[1]?.[0].name ?? '')).toHaveLength(20)
-  })
-
-  it('stops after a bounded number of conflicting project names', async () => {
-    const conflict = new ProjectNameConflictError()
-    const create = vi.fn().mockRejectedValue(conflict)
-    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
-
-    await expect(prepare('像素骑士')).rejects.toBe(conflict)
-    expect(create).toHaveBeenCalledTimes(100)
   })
 
   it('creates one persisted node graph and starts the character image task', async () => {
@@ -1251,7 +1495,7 @@ describe('createQuickStartService', () => {
       'four-way',
     )
 
-    expect(prepareProject).toHaveBeenCalledWith('挥手', 'four-way')
+    expect(prepareProject).toHaveBeenCalledWith('挥手', 'four-way', undefined)
     const calls = vi.mocked(generationApis.create).mock.calls.map(([input]) => input)
     expect(
       calls.filter((input) => input.type === 'character_template').map((input) => input.direction),
@@ -1366,6 +1610,82 @@ describe('createQuickStartService', () => {
       { index: 7, imageUrl: 'frame-7.png', durationMs: 83 },
       { index: 9, imageUrl: 'frame-9.png', durationMs: null },
     ])
+  })
+
+  it('reconstructs every current action frame against the project sprite grid', async () => {
+    const run = actionRun()
+    const reconstruct = vi.fn<PixelPerfectApis['reconstruct']>(async ({ imageUrl }) => ({
+      blob: new Blob([imageUrl], { type: 'image/png' }),
+      filename: 'pixel-perfect.png',
+      metadata: { cols: 64, rows: 80, visibleColors: 12 },
+    }))
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis: completedAnimationGenerationApis(),
+      prepareProject: vi.fn(),
+      projectApis: projectReader({ width: 64, height: 80 }),
+      pixelPerfectApis: { reconstruct },
+    })
+    const session = await service.open(run.id)
+    const frames = [
+      { index: 0, imageUrl: 'frame-0.png', durationMs: 80 },
+      { index: 1, imageUrl: 'frame-1.png', durationMs: null },
+    ]
+
+    await expect(session.pixelPerfectActionFrames?.(frames)).resolves.toEqual([
+      expect.objectContaining({ index: 0, durationMs: 80, blob: expect.any(Blob) }),
+      expect.objectContaining({ index: 1, durationMs: null, blob: expect.any(Blob) }),
+    ])
+    expect(reconstruct.mock.calls.map(([input]) => input)).toEqual([
+      { imageUrl: 'frame-0.png', cols: 64, rows: 80 },
+      { imageUrl: 'frame-1.png', cols: 64, rows: 80 },
+    ])
+  })
+
+  it('caps concurrent reconstruction requests and keeps the frame order', async () => {
+    const run = actionRun()
+    const pending: (() => void)[] = []
+    let inFlight = 0
+    let peakInFlight = 0
+    const reconstruct = vi.fn<PixelPerfectApis['reconstruct']>(async ({ imageUrl }) => {
+      inFlight += 1
+      peakInFlight = Math.max(peakInFlight, inFlight)
+      await new Promise<void>((resolve) => pending.push(resolve))
+      inFlight -= 1
+      return {
+        blob: new Blob([imageUrl], { type: 'image/png' }),
+        filename: 'pixel-perfect.png',
+        metadata: { cols: 64, rows: 80, visibleColors: 12 },
+      }
+    })
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis: completedAnimationGenerationApis(),
+      prepareProject: vi.fn(),
+      projectApis: projectReader({ width: 64, height: 80 }),
+      pixelPerfectApis: { reconstruct },
+    })
+    const session = await service.open(run.id)
+    const frames = Array.from({ length: 8 }, (_, index) => ({
+      index,
+      imageUrl: `frame-${index}.png`,
+      durationMs: 80,
+    }))
+
+    const processed = session.pixelPerfectActionFrames!(frames)
+    // 后进先出地放行，完成顺序与入参顺序错开，才能验证结果没有跟着完成顺序走。
+    while (pending.length > 0) {
+      pending.pop()!()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+
+    await expect(processed).resolves.toEqual(
+      frames.map((frame) =>
+        expect.objectContaining({ index: frame.index, sourceImageUrl: frame.imageUrl }),
+      ),
+    )
+    expect(peakInFlight).toBe(3)
+    expect(reconstruct).toHaveBeenCalledTimes(frames.length)
   })
 
   it('Quick Start 四向审核发布时保留全部方向序列', async () => {
@@ -1915,6 +2235,7 @@ describe('createQuickStartService', () => {
     })
 
     const session = await service.start('四向骑士')
+    expect(session.getDirectionalMovement?.()).toBe('four-way')
     await vi.waitFor(async () => {
       await expect(session.getTemplateCandidates()).resolves.toEqual([
         { direction: 'east', index: 0, imageUrl: 'east-character_template-1.png' },

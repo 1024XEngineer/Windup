@@ -218,9 +218,17 @@ describe('Quick Start Agent composition', () => {
       generationApis: {} as GenerationApis,
     })
 
-    await expect(
-      dependencies.startCharacterGeneration({ prompt: '银发像素骑士' }),
-    ).resolves.toEqual({ runId: 'run-agent' })
+    const input = {
+      prompt: '银发像素骑士',
+      actionPrompt: '向前行走',
+      actionType: 'walk' as const,
+      directionalMovement: 'single' as const,
+      automaticDelivery: true,
+      suggestPixelPerfect: true,
+    }
+    await expect(dependencies.startCharacterGeneration(input)).resolves.toEqual({
+      runId: 'run-agent',
+    })
 
     expect(createController).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -229,7 +237,13 @@ describe('Quick Start Agent composition', () => {
         generationApis: expect.anything(),
       }),
     )
-    expect(startCharacterGeneration).toHaveBeenCalledWith({ prompt: '银发像素骑士' })
+    expect(startCharacterGeneration).toHaveBeenCalledWith({
+      prompt: '银发像素骑士',
+      directionalMovement: 'single',
+      gameStyle: undefined,
+      automaticDelivery: { actionPrompt: '向前行走', actionType: 'walk' },
+      suggestPixelPerfect: true,
+    })
     expect(dispose).toHaveBeenCalledTimes(1)
   })
 

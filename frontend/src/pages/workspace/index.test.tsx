@@ -255,6 +255,24 @@ describe('WorkspacePage', () => {
     expect(screen.getByRole('link', { name: '新建项目' }).getAttribute('href')).toBe(
       '/projects/new',
     )
+    expect(screen.getByRole('link', { name: '查看全部项目' }).className).toContain(
+      'rounded-app-control',
+    )
+    expect(screen.getByRole('link', { name: '查看全部项目' }).className).not.toContain(
+      'rounded-full',
+    )
+    expect(screen.getByRole('link', { name: '新建项目' }).className).toContain(
+      'rounded-app-control',
+    )
+    expect(screen.getByRole('link', { name: '查看全部项目' }).className.split(' ')).not.toContain(
+      'border',
+    )
+    expect(screen.getByRole('link', { name: '新建项目' }).className.split(' ')).not.toContain(
+      'border',
+    )
+    expect(screen.getByRole('link', { name: '查看全部项目' }).querySelector('svg')).toBeTruthy()
+    expect(screen.getByRole('link', { name: '新建项目' }).querySelector('svg')).toBeTruthy()
+    expect(screen.getByRole('link', { name: '查看全部项目' }).textContent).toBe('全部项目')
   })
 
   it('announces project loading before the first page resolves', async () => {

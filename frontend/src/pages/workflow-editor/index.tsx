@@ -11,6 +11,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useParams } from 'react-router'
 
 import {
+  projectApis,
+  type ArtStyle,
   type ActionPreset,
   type ActionFirstFrameWorkflowNode,
   type ActionDirection,
@@ -139,6 +141,10 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
   const [actionMenuLevel, setActionMenuLevel] = useState<ActionMenuLevel>('root')
   const [selectedOutfitId, setSelectedOutfitId] = useState<string | null>(null)
   const [canvasNodeState, setCanvasNodeState] = useState<WorkflowCardNode[]>([])
+  /** 画风改完只影响后续生成，重拉整个 session 太重，本页自己记住新值。 */
+  const [gameStyleOverride, setGameStyleOverride] = useState<ArtStyle | null>(null)
+  const [gameStyleSaving, setGameStyleSaving] = useState(false)
+  const [gameStyleError, setGameStyleError] = useState<string | null>(null)
   const [actionPresets, setActionPresets] = useState<ActionPreset[] | null>(null)
   const [actionPresetError, setActionPresetError] = useState<string | null>(null)
 
@@ -272,11 +278,15 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
     return <EditorBoundary message="正在恢复 WorkflowRun" />
   }
 
-  const visibleError = error ?? resumeError ?? generationReadError
+  const visibleError = error ?? resumeError ?? generationReadError ?? gameStyleError
 
   return (
     <WorkflowEditorView
-      project={session.project}
+      project={
+        gameStyleOverride === null
+          ? session.project
+          : { ...session.project, gameStyle: gameStyleOverride }
+      }
       run={run}
       nodes={canvasNodes}
       edges={projected.edges}
@@ -286,6 +296,21 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
       generationReadError={!error && !resumeError ? generationReadError : null}
       reloadTo={`${location.pathname}${location.search}${location.hash}`}
       onRetryGenerations={retryGenerations}
+      gameStyleSaving={gameStyleSaving}
+      onGameStyleChange={async (gameStyle) => {
+        // 先落库再改显示：反过来的话保存失败会让画布显示新画风、而生成仍按旧画风走，
+        // 两者不一致且没有一处会报错。保存期间禁用选择器，避免连点排队。
+        setGameStyleSaving(true)
+        setGameStyleError(null)
+        try {
+          await projectApis.setGameStyle(session.project.id, gameStyle)
+          setGameStyleOverride(gameStyle)
+        } catch (cause) {
+          setGameStyleError(errorMessage(cause, '保存画风失败'))
+        } finally {
+          setGameStyleSaving(false)
+        }
+      }}
       onNodesChange={onNodesChange}
     />
   )

@@ -40,6 +40,12 @@ function logAgentFailure(cause: unknown): void {
   })
 }
 
+function isAbortError(cause: unknown): boolean {
+  return (
+    typeof cause === 'object' && cause !== null && 'name' in cause && cause.name === 'AbortError'
+  )
+}
+
 function errorMessage(cause: unknown): string {
   if (!(cause instanceof Error) || !cause.message) return 'Agent 暂时不可用，请稍后重试'
   if (
@@ -62,6 +68,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
   const {
     planner,
     startCharacterGeneration,
+    artStyle,
     initialMessages,
     initialClarificationUsed,
     initialProposal,
@@ -82,18 +89,20 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
       agent.current?.revoke()
       agent.current = null
     }
-  }, [initialMessages, planner, startCharacterGeneration])
+  }, [artStyle, initialMessages, planner, startCharacterGeneration])
 
   const ensureAgent = useCallback(() => {
     agent.current ??= createQuickStartAgent({
       planner,
       startCharacterGeneration,
+      artStyle,
       initialMessages,
       initialClarificationUsed,
       initialProposal,
     })
     return agent.current
   }, [
+    artStyle,
     initialClarificationUsed,
     initialMessages,
     initialProposal,
@@ -114,7 +123,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
         const runTurn = started.current ? activeAgent.continue : activeAgent.start
         started.current = true
         const result = await runTurn(input, { signal: controller.signal })
-        if (mounted.current) {
+        if (mounted.current && abortController.current === controller) {
           if (result.kind === 'message') {
             setState({
               status: 'awaiting-input',
@@ -122,44 +131,78 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
               messageKind: result.messageKind,
             })
           } else if (result.kind === 'proposal') {
-            const { proposalId, optimizedPrompt, optimizationSummary } = result
-            setState({ status: 'proposal', proposalId, optimizedPrompt, optimizationSummary })
+            const {
+              proposalId,
+              optimizedPrompt,
+              actionPrompt,
+              actionType,
+              optimizationSummary,
+              suggestPixelPerfect,
+            } = result
+            setState({
+              status: 'proposal',
+              proposalId,
+              optimizedPrompt,
+              ...(actionPrompt ? { actionPrompt } : {}),
+              ...(actionType ? { actionType } : {}),
+              optimizationSummary,
+              ...(suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
+            })
           }
         }
         return result
       } catch (cause) {
-        if (mounted.current && !(cause instanceof Error && cause.name === 'AbortError')) {
+        const isCurrent = abortController.current === controller
+        if (isAbortError(cause) && isCurrent) {
+          agent.current?.revoke()
+          agent.current = null
+          started.current = Boolean(initialMessages?.length)
+          if (mounted.current) setState({ status: 'idle' })
+        } else if (!isAbortError(cause) && isCurrent && mounted.current) {
           logAgentFailure(cause)
           setState({ status: 'error', message: errorMessage(cause) })
         }
         throw cause
       } finally {
-        running.current = false
-        if (abortController.current === controller) abortController.current = null
+        if (abortController.current === controller) {
+          running.current = false
+          abortController.current = null
+        }
       }
     },
-    [ensureAgent],
+    [ensureAgent, initialMessages],
   )
 
   const confirmProposal = useCallback(
     async (
       prompt: string,
       directionalMovement: QuickStartDirectionalMovement = 'single',
+      options?: { gameStyle?: string; projectId?: string; automaticDelivery?: boolean },
     ): Promise<QuickStartAgentResult> => {
       if (running.current) throw new Error('Planner 正在处理上一条输入')
       if (state.status !== 'proposal') throw new Error('提示词提案已失效')
       running.current = true
-      const { proposalId, optimizedPrompt, optimizationSummary } = state
+      const {
+        proposalId,
+        optimizedPrompt,
+        actionPrompt,
+        actionType,
+        optimizationSummary,
+        suggestPixelPerfect,
+      } = state
       if (mounted.current) {
         setState({
           status: 'dispatching',
           proposalId,
           optimizedPrompt,
+          ...(actionPrompt ? { actionPrompt } : {}),
+          ...(actionType ? { actionType } : {}),
           optimizationSummary,
+          ...(suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
         })
       }
       try {
-        return await ensureAgent().confirmProposal(proposalId, prompt, directionalMovement)
+        return await ensureAgent().confirmProposal(proposalId, prompt, directionalMovement, options)
       } catch (cause) {
         if (mounted.current) {
           logAgentFailure(cause)
@@ -173,11 +216,23 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
     [ensureAgent, state],
   )
 
+  const cancel = useCallback(() => {
+    if (!running.current) return
+    abortController.current?.abort()
+    agent.current?.revoke()
+    agent.current = null
+    started.current = Boolean(initialMessages?.length)
+    abortController.current = null
+    running.current = false
+    if (mounted.current) setState({ status: 'idle' })
+  }, [initialMessages])
+
   return {
     state,
     busy: state.status === 'planning' || state.status === 'dispatching',
     submit,
     confirmProposal,
+    cancel,
   }
 }
 

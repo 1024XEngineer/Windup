@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MemoryRouter, Route, Routes, useParams } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router'
 
 import { AppRoutes } from '@/app'
 import { ProjectCreatePage } from '@/pages/project-create'
@@ -92,6 +92,11 @@ function WorkflowDestination() {
   return <h1>Workflow Editor {runId}</h1>
 }
 
+function QuickStartDestination() {
+  const location = useLocation()
+  return <h1>{`${location.pathname}${location.search}`}</h1>
+}
+
 async function renderWorkflowProjectCreate() {
   const result = render(
     <AuthenticatedAuthSession>
@@ -173,7 +178,7 @@ describe('ProjectCreatePage', () => {
     fireEvent.change(screen.getByLabelText('游戏视角'), { target: { value: 'top-down' } })
     fireEvent.change(screen.getByLabelText('朝向'), { target: { value: 'eight-way' } })
     fireEvent.click(screen.getByRole('button', { name: '512 × 512' }))
-    fireEvent.change(screen.getByLabelText('画风约束'), { target: { value: '低饱和像素绘本' } })
+    fireEvent.change(screen.getByLabelText('画风'), { target: { value: 'pixel' } })
     fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
 
     expect(await screen.findByRole('heading', { name: '雾港来信' })).toBeTruthy()
@@ -186,10 +191,31 @@ describe('ProjectCreatePage', () => {
       directional_movement: 3,
       sprite_width: 512,
       sprite_height: 512,
-      game_style: '低饱和像素绘本',
+      game_style: 'pixel',
     })
     // 归属由后端从 JWT 取；请求体再带 user_id 就等于宣称可以替别人建项目。
     expect(Object.hasOwn(body, 'user_id')).toBe(false)
+  })
+
+  it('从 Quick Start 手动新建项目后返回并选中新项目', async () => {
+    const backend = installBackend()
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects/new?entry=quick-start']}>
+          <Routes>
+            <Route path="/projects/new" element={<ProjectCreatePage />} />
+            <Route path="/quick-start" element={<QuickStartDestination />} />
+          </Routes>
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+    await screen.findByRole('button', { name: '创建项目' })
+
+    fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '雾港来信' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
+
+    expect(await screen.findByRole('heading', { name: '/quick-start?projectId=4242' })).toBeTruthy()
+    expect(creationRequests(backend)).toHaveLength(1)
   })
 
   it('没有登录凭证时先进入登录面板，不挂载创建页面', async () => {
@@ -217,11 +243,11 @@ describe('ProjectCreatePage', () => {
     await renderProjectCreate()
 
     fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '点灯人 · MVP' } })
-    fireEvent.change(screen.getByLabelText('画风约束'), { target: { value: '低饱和像素绘本' } })
+    fireEvent.change(screen.getByLabelText('画风'), { target: { value: 'pixel' } })
     fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
 
     expect((await screen.findByRole('alert')).textContent).toBe('项目名称已存在')
-    expect((screen.getByLabelText('画风约束') as HTMLTextAreaElement).value).toBe('低饱和像素绘本')
+    expect((screen.getByLabelText('画风') as HTMLSelectElement).value).toBe('pixel')
   })
 
   it('连续点击创建只发出一次请求', async () => {

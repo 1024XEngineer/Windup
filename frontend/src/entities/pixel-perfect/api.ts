@@ -9,10 +9,13 @@ import type {
   PixelPerfectApis,
   PixelPerfectMetadata,
   PixelPerfectProcessInput,
+  PixelPerfectReconstructInput,
+  PixelPerfectReconstructResult,
   PixelPerfectResult,
 } from '.'
 
 const PIXEL_PERFECT_PATH = '/tools/pixel-perfect'
+const RECONSTRUCT_PATH = `${PIXEL_PERFECT_PATH}/reconstruct`
 const OUTPUT_FILENAME = 'pixel-perfect.png'
 
 interface ErrorEnvelope {
@@ -26,6 +29,93 @@ export function createPixelPerfectApis(fetchFn: typeof fetch = globalThis.fetch)
     async process({ imageUrl }: PixelPerfectProcessInput): Promise<PixelPerfectResult> {
       const sourceFile = await downloadSourceImage(fetchFn, imageUrl)
       return sendPixelPerfectRequest(fetchFn, sourceFile)
+    },
+    async reconstruct({
+      imageUrl,
+      cols,
+      rows,
+    }: PixelPerfectReconstructInput): Promise<PixelPerfectReconstructResult> {
+      const sourceFile = await downloadSourceImage(fetchFn, imageUrl)
+      return sendReconstructRequest(fetchFn, sourceFile, cols, rows)
+    },
+  }
+}
+
+async function sendReconstructRequest(
+  fetchFn: typeof fetch,
+  file: File,
+  cols: number,
+  rows: number,
+  replayed = false,
+): Promise<PixelPerfectReconstructResult> {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('cols', String(cols))
+  formData.append('rows', String(rows))
+  formData.append('structure_colors', '16')
+  const headers = new Headers()
+  const accessToken = getApiAccessToken()
+  if (accessToken) headers.set('authorization', `Bearer ${accessToken}`)
+
+  let response: Response
+  try {
+    response = await fetchFn(`${resolveApiBaseUrl()}${RECONSTRUCT_PATH}`, {
+      method: 'POST',
+      headers,
+      body: formData,
+      credentials: 'include',
+    })
+  } catch (cause) {
+    throw new ApiError('完美像素请求失败', { kind: 'network', cause })
+  }
+
+  const contentType = normalizeContentType(response.headers.get('content-type'))
+  if (contentType === 'application/json') {
+    const envelope = await readErrorEnvelope(response)
+    if (!replayed && envelope.code === 401 && (await recoverApiUnauthorized())) {
+      return sendReconstructRequest(fetchFn, file, cols, rows, true)
+    }
+    throw new ApiError(envelope.message || '完美像素请求失败', {
+      kind: response.ok ? 'business' : 'http',
+      code: response.ok ? envelope.code : undefined,
+      status: response.status,
+      data: envelope.data,
+    })
+  }
+  if (!replayed && response.status === 401 && (await recoverApiUnauthorized())) {
+    return sendReconstructRequest(fetchFn, file, cols, rows, true)
+  }
+  if (!response.ok) {
+    throw new ApiError(`完美像素请求失败（HTTP ${response.status}）`, {
+      kind: 'http',
+      status: response.status,
+    })
+  }
+  if (contentType !== 'image/png') {
+    throw new ApiError('完美像素接口没有返回 PNG 图片', {
+      kind: 'invalid-response',
+      status: response.status,
+    })
+  }
+
+  const metadata = {
+    cols: positiveInteger(response.headers.get('x-pixel-cols')),
+    rows: positiveInteger(response.headers.get('x-pixel-rows')),
+    visibleColors: nonNegativeInteger(response.headers.get('x-pixel-visible-colors')),
+  }
+  if (metadata.cols === null || metadata.rows === null || metadata.visibleColors === null) {
+    throw new ApiError('完美像素接口返回的重建信息无效', {
+      kind: 'invalid-response',
+      status: response.status,
+    })
+  }
+  return {
+    blob: await response.blob(),
+    filename: responseFilename(response.headers.get('content-disposition')),
+    metadata: {
+      cols: metadata.cols,
+      rows: metadata.rows,
+      visibleColors: metadata.visibleColors,
     },
   }
 }
@@ -185,6 +275,12 @@ function positiveInteger(value: string | null): number | null {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
 }
 
+function nonNegativeInteger(value: string | null): number | null {
+  if (value === null || !/^\d+$/u.test(value)) return null
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) ? parsed : null
+}
+
 function positiveNumber(value: string | null): number | null {
   if (value === null || value.trim() === '') return null
   const parsed = Number(value)
@@ -221,4 +317,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export const pixelPerfectApis: PixelPerfectApis = {
   process: (input) => createPixelPerfectApis().process(input),
+  reconstruct: (input) => createPixelPerfectApis().reconstruct(input),
 }

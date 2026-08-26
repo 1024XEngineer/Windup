@@ -4,6 +4,7 @@ import { Link } from 'react-router'
 
 import assetLibraryArtwork from '@/assets/workspace/asset-library.png'
 import {
+  ART_STYLE,
   CHARACTER_PERSPECTIVE,
   DIRECTIONAL_MOVEMENT,
   projectApis,
@@ -293,7 +294,7 @@ function ProjectGalleryTile({
   return (
     <article
       style={{ '--project-card-order': motionOrder } as CSSProperties}
-      className="projects-card-enter group/tile relative min-w-0"
+      className="group/tile relative min-w-0"
     >
       <Link
         to={`/projects/${project.id}/assets`}
@@ -313,7 +314,7 @@ function ProjectGalleryTile({
           {project.spriteSize.height} px
         </p>
         <p className="mt-1 truncate px-0.5 font-mono text-[0.65rem] tracking-[0.02em] text-app-faint">
-          {project.gameStyle || '未设置游戏风格'}
+          {ART_STYLE[project.gameStyle]}
         </p>
       </Link>
       <ProjectActions project={project} onRename={onRename} onDelete={onDelete} />

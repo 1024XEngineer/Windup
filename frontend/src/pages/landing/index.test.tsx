@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 
 import expectedBirdLeft from '@/assets/landing/illustrations/gongbi-tit-flight-up.webp'
@@ -11,6 +11,7 @@ import { LandingPage } from './index'
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
+  vi.unstubAllGlobals()
 })
 
 describe('LandingPage', () => {
@@ -36,6 +37,60 @@ describe('LandingPage', () => {
       expect(image.getAttribute('fetchpriority')).toBe('high')
     }
     expect(within(hero).queryByTestId('landing-brand-bird')).toBeNull()
+  })
+
+  it('只在滚动后接管原始产品卡片，并在回到顶部时完整交还原样式', async () => {
+    const animationFrames: FrameRequestCallback[] = []
+    const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      animationFrames.push(callback)
+      return animationFrames.length
+    })
+    vi.stubGlobal('requestAnimationFrame', requestAnimationFrame)
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1_200 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 1_000 })
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 0, writable: true })
+
+    const { unmount } = render(
+      <GuestAuthSession>
+        <MemoryRouter>
+          <LandingPage />
+        </MemoryRouter>
+      </GuestAuthSession>,
+    )
+
+    const surface = await screen
+      .findAllByTestId('workflow-editor-placeholder')
+      .then(([first]) => first)
+    const productWindow = surface.parentElement as HTMLElement
+
+    expect(productWindow.style.width).toBe('')
+    expect(productWindow.style.height).toBe('')
+    expect(productWindow.dataset.expanding).toBeUndefined()
+    expect(surface.className).toContain('rounded-2xl')
+    expect(surface.className).toContain('shadow-[0_30px_80px_rgba(53,58,49,0.18)]')
+
+    window.scrollY = 400
+    fireEvent.scroll(window)
+    act(() => animationFrames.splice(0).forEach((callback) => callback(0)))
+
+    expect(productWindow.style.getPropertyValue('--hero-window-progress')).toBe('0.5000')
+    expect(productWindow.style.width).toBe('1080px')
+    expect(productWindow.style.height).toBe('740px')
+    expect(productWindow.dataset.expanding).toBe('true')
+
+    window.scrollY = 0
+    fireEvent.scroll(window)
+    act(() => animationFrames.splice(0).forEach((callback) => callback(0)))
+
+    expect(productWindow.style.width).toBe('')
+    expect(productWindow.style.height).toBe('')
+    expect(productWindow.dataset.expanding).toBeUndefined()
+
+    unmount()
+    const frameCountAfterUnmount = requestAnimationFrame.mock.calls.length
+    fireEvent.scroll(window)
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(frameCountAfterUnmount)
   })
 
   it('让访客先理解产品，再通过明确的登录与创作入口进入产品', async () => {

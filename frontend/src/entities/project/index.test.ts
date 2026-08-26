@@ -60,7 +60,7 @@ describe('projectApis', () => {
           perspective: 'isometric',
           directionalMovement: 'four-way',
           spriteSize: { width: 64, height: 96 },
-          gameStyle: null,
+          gameStyle: 'unspecified',
           sampleImageUrl: 'https://cdn.windup.test/style.png',
           previewUrl: 'https://cdn.windup.test/project-preview.png',
           createdAt: '2026-08-01T08:00:00Z',
@@ -87,7 +87,7 @@ describe('projectApis', () => {
       perspective: 'isometric',
       directionalMovement: 'four-way',
       spriteSize: { width: 64, height: 96 },
-      gameStyle: null,
+      gameStyle: 'unspecified',
       sampleImageUrl: 'https://cdn.windup.test/style.png',
     })
 
@@ -100,9 +100,30 @@ describe('projectApis', () => {
       directional_movement: 2,
       sprite_width: 64,
       sprite_height: 96,
-      game_style: null,
+      game_style: 'unspecified',
       sprite_sample_url: 'https://cdn.windup.test/style.png',
     })
+  })
+
+  it('serializes project naming context without fabricating a project name', async () => {
+    let request: Request | undefined
+    const { projectApis } = await loadProjectApis(async (input, init) => {
+      request = new Request(input, init)
+      return jsonResponse({ ...projectDto, project_name: '雾港计划' })
+    })
+
+    await projectApis.create({
+      nameContext: '一位提着风灯、披深色斗篷的像素守夜人',
+      perspective: 'side',
+      directionalMovement: 'single',
+      spriteSize: { width: 256, height: 256 },
+    })
+
+    const body = await request?.json()
+    expect(body).toMatchObject({
+      name_context: '一位提着风灯、披深色斗篷的像素守夜人',
+    })
+    expect(body).not.toHaveProperty('project_name')
   })
 
   it('requests one Project by its backend resource path', async () => {

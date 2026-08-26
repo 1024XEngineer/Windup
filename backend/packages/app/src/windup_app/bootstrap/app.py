@@ -18,9 +18,11 @@ from windup_framework.gateway.models import AIGatewayAttempt, AIGatewayAttemptDe
 
 # 模型导入：触发 Base.metadata 注册，确保 create_all 能发现所有表
 from windup_ai_engine.impl.character_namer import LangChainCharacterNamer
+from windup_ai_engine.impl.project_namer import LangChainProjectNamer
 from windup_app.server.character.model import Character  # noqa: F401
 from windup_app.server.character.service import service as character_service
 from windup_app.server.project.model import Project  # noqa: F401
+from windup_app.server.project.service import service as project_service
 from windup_app.server.quota.model import CreditAccount, CreditTransaction, InviteCode, InviteRecord  # noqa: F401
 from windup_app.server.user.model import User  # noqa: F401
 from windup_app.server.workflow_run.model import WorkflowRun  # noqa: F401
@@ -34,6 +36,7 @@ from windup_app.server.orchestrator import task_repo
 from windup_app.server.orchestrator.render3d_service import default_operations, precheck_master
 from windup_app.web.api.generation import router as generation_router
 from windup_app.web.api.media import router as media_router
+from windup_app.web.api.pixel_perfect import router as pixel_perfect_router
 from windup_app.web.api.project import router as project_router
 from windup_app.web.api.quota import router as quota_router
 from windup_app.web.api.render3d import router as render3d_router
@@ -124,6 +127,8 @@ def create_app() -> FastAPI:
     # 测试若已注入假 namer，不要覆盖。
     if character_service._namer is None:
         character_service._namer = LangChainCharacterNamer()
+    if project_service._namer is None:
+        project_service._namer = LangChainProjectNamer()
 
     @app.get("/health", include_in_schema=False)
     def health() -> dict[str, str]:
@@ -138,7 +143,13 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["X-Request-Id"],
+        expose_headers=[
+            "X-Request-Id",
+            "Content-Disposition",
+            "X-Pixel-Cols",
+            "X-Pixel-Rows",
+            "X-Pixel-Visible-Colors",
+        ],
     )
     app.include_router(auth_router)
     app.include_router(project_router)
@@ -150,6 +161,7 @@ def create_app() -> FastAPI:
     app.include_router(render3d_router)
     app.include_router(agent_router)
     app.include_router(action_preset_router)
+    app.include_router(pixel_perfect_router)
     # 母版预检与建 3D 资产:web 层不能静态依赖 ai_engine,由 state 注入。
     app.state.precheck_master = precheck_master
     app.state.render3d_operations = default_operations()
