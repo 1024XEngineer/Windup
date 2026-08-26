@@ -6,6 +6,7 @@ import type {
   GenerationApis,
   MediaReference,
   ProjectApis,
+  PixelPerfectApis,
   WorkflowRun,
   WorkflowRunApis,
 } from '@/entities'
@@ -1577,6 +1578,82 @@ describe('createQuickStartService', () => {
       { index: 7, imageUrl: 'frame-7.png', durationMs: 83 },
       { index: 9, imageUrl: 'frame-9.png', durationMs: null },
     ])
+  })
+
+  it('reconstructs every current action frame against the project sprite grid', async () => {
+    const run = actionRun()
+    const reconstruct = vi.fn<PixelPerfectApis['reconstruct']>(async ({ imageUrl }) => ({
+      blob: new Blob([imageUrl], { type: 'image/png' }),
+      filename: 'pixel-perfect.png',
+      metadata: { cols: 64, rows: 80, visibleColors: 12 },
+    }))
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis: completedAnimationGenerationApis(),
+      prepareProject: vi.fn(),
+      projectApis: projectReader({ width: 64, height: 80 }),
+      pixelPerfectApis: { reconstruct },
+    })
+    const session = await service.open(run.id)
+    const frames = [
+      { index: 0, imageUrl: 'frame-0.png', durationMs: 80 },
+      { index: 1, imageUrl: 'frame-1.png', durationMs: null },
+    ]
+
+    await expect(session.pixelPerfectActionFrames?.(frames)).resolves.toEqual([
+      expect.objectContaining({ index: 0, durationMs: 80, blob: expect.any(Blob) }),
+      expect.objectContaining({ index: 1, durationMs: null, blob: expect.any(Blob) }),
+    ])
+    expect(reconstruct.mock.calls.map(([input]) => input)).toEqual([
+      { imageUrl: 'frame-0.png', cols: 64, rows: 80 },
+      { imageUrl: 'frame-1.png', cols: 64, rows: 80 },
+    ])
+  })
+
+  it('caps concurrent reconstruction requests and keeps the frame order', async () => {
+    const run = actionRun()
+    const pending: (() => void)[] = []
+    let inFlight = 0
+    let peakInFlight = 0
+    const reconstruct = vi.fn<PixelPerfectApis['reconstruct']>(async ({ imageUrl }) => {
+      inFlight += 1
+      peakInFlight = Math.max(peakInFlight, inFlight)
+      await new Promise<void>((resolve) => pending.push(resolve))
+      inFlight -= 1
+      return {
+        blob: new Blob([imageUrl], { type: 'image/png' }),
+        filename: 'pixel-perfect.png',
+        metadata: { cols: 64, rows: 80, visibleColors: 12 },
+      }
+    })
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis: completedAnimationGenerationApis(),
+      prepareProject: vi.fn(),
+      projectApis: projectReader({ width: 64, height: 80 }),
+      pixelPerfectApis: { reconstruct },
+    })
+    const session = await service.open(run.id)
+    const frames = Array.from({ length: 8 }, (_, index) => ({
+      index,
+      imageUrl: `frame-${index}.png`,
+      durationMs: 80,
+    }))
+
+    const processed = session.pixelPerfectActionFrames!(frames)
+    // 后进先出地放行，完成顺序与入参顺序错开，才能验证结果没有跟着完成顺序走。
+    while (pending.length > 0) {
+      pending.pop()!()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+
+    await expect(processed).resolves.toEqual(
+      frames.map((frame) =>
+        expect.objectContaining({ index: frame.index, sourceImageUrl: frame.imageUrl }),
+      ),
+    )
+    expect(peakInFlight).toBe(3)
+    expect(reconstruct).toHaveBeenCalledTimes(frames.length)
   })
 
   it('Quick Start 四向审核发布时保留全部方向序列', async () => {

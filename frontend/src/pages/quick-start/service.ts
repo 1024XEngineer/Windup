@@ -3,6 +3,7 @@ import {
   createGenerationApis,
   createMediaApis,
   projectApis,
+  pixelPerfectApis as defaultPixelPerfectApis,
   workflowRunApis,
   characterTemplatesFromImages,
   getDirectionProfile,
@@ -17,6 +18,7 @@ import {
   type MediaReference,
   type Project,
   type ProjectApis,
+  type PixelPerfectApis,
   type WorkflowNode,
   type WorkflowRun,
   type WorkflowRunApis,
@@ -47,6 +49,13 @@ export interface QuickStartFrame {
   index: number
   imageUrl: string
   durationMs: number | null
+}
+
+export interface QuickStartPixelPerfectFrame {
+  index: number
+  blob: Blob
+  durationMs: number | null
+  sourceImageUrl?: string
 }
 
 export interface QuickStartCandidate {
@@ -101,6 +110,10 @@ export interface QuickStartSession {
   resolveCharacterInfo(): Promise<{ characterId: string; outfitId: string } | null>
   getTemplateCandidates(): Promise<readonly QuickStartCandidate[]>
   getActionFrames(): Promise<readonly QuickStartFrame[]>
+  /** 只生成当前会话预览，不写回 WorkflowRun 或角色资产。 */
+  pixelPerfectActionFrames?(
+    frames: readonly QuickStartFrame[],
+  ): Promise<readonly QuickStartPixelPerfectFrame[]>
   getFailedGenerationDirections(): Promise<readonly QuickStartFailedDirection[]>
   retryGenerationDirection(
     nodeId: WorkflowNode['id'],
@@ -142,6 +155,7 @@ export interface CreateQuickStartServiceOptions {
   prepareProject: PrepareQuickStartProject
   /** 为已有项目继续生成动作时读取图片接口要求的精灵尺寸。 */
   projectApis: Pick<ProjectApis, 'get'>
+  pixelPerfectApis?: Pick<PixelPerfectApis, 'reconstruct'>
   characterApis?: CharacterApis
   mediaApis?: QuickStartMediaApis
   onAsyncError?: (error: Error) => void
@@ -156,6 +170,37 @@ function boundedDisplayName(value: string, maxLength: number): string {
   return characters.length > maxLength
     ? `${characters.slice(0, maxLength - 1).join('')}…`
     : characters.join('')
+}
+
+/**
+ * 完整动作动辄几十帧，多方向导出还会把各方向的帧并进同一批；逐帧重建在后端是 CPU 与内存密集的
+ * 同步任务，一次点击把全部帧同时打过去会占满线程池并把单机内存顶爆。这里限制同时在途的请求数。
+ */
+const PIXEL_PERFECT_CONCURRENCY = 3
+
+/** 有上限的并发映射：结果按输入顺序返回，任一项失败即停止取新任务并抛出。 */
+async function mapWithConcurrency<Input, Output>(
+  items: readonly Input[],
+  limit: number,
+  run: (item: Input, index: number) => Promise<Output>,
+): Promise<Output[]> {
+  const results = new Array<Output>(items.length)
+  let cursor = 0
+  let failed = false
+  const worker = async () => {
+    while (!failed && cursor < items.length) {
+      const index = cursor
+      cursor += 1
+      try {
+        results[index] = await run(items[index]!, index)
+      } catch (cause) {
+        failed = true
+        throw cause
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
 }
 
 function inferGeneratableActionType(description: string): GeneratableActionType {
@@ -176,6 +221,7 @@ export function createQuickStartService({
   generationApis,
   prepareProject,
   projectApis,
+  pixelPerfectApis = defaultPixelPerfectApis,
   characterApis,
   mediaApis,
   onAsyncError = (error) => console.error('[quick-start] 异步工作流错误', error),
@@ -1136,6 +1182,23 @@ export function createQuickStartService({
               durationMs: frame.durationMs,
             }))
           : []
+      },
+      async pixelPerfectActionFrames(frames) {
+        const run = controller.getWorkflow()
+        const spriteSize = knownSpriteSize ?? (await resolveProjectSpriteSize(run.projectId))
+        return mapWithConcurrency(frames, PIXEL_PERFECT_CONCURRENCY, async (frame) => {
+          const result = await pixelPerfectApis.reconstruct({
+            imageUrl: frame.imageUrl,
+            cols: spriteSize.width,
+            rows: spriteSize.height,
+          })
+          return {
+            index: frame.index,
+            blob: result.blob,
+            durationMs: frame.durationMs,
+            sourceImageUrl: frame.imageUrl,
+          }
+        })
       },
       async getExportModel() {
         if (!characterApis) return null

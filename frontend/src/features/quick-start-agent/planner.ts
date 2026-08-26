@@ -74,6 +74,7 @@ const quickStartDecisionTool = tool({
         actionPrompt: { type: 'string', minLength: 1, maxLength: 4_000 },
         actionType: { type: 'string', enum: ['walk'] },
         optimizationSummary: { type: 'string', minLength: 1, maxLength: 600 },
+        suggestPixelPerfect: { type: 'boolean' },
       },
       oneOf: [
         {
@@ -211,6 +212,7 @@ function fallbackPlannerResult(
                 optimizationSummary:
                   suppliedSummary.slice(0, 600) ||
                   '我先完整保留了你的原始描述，你可以直接采用或继续补充细节。',
+                suggestPixelPerfect: input.suggestPixelPerfect === true,
               },
             },
           ],
@@ -254,7 +256,8 @@ ${artStyleContext}
 2. “你觉得怎么样”“怎么优化好”“还有什么方案”“刚才我说了什么”等咨询或元对话必须用 reply；不得只靠关键词，要理解最新消息在完整上下文中的意图。
 3. 用户明确要求形成最终版本或直接生成时，可以返回 proposal，但宿主仍会要求用户确认一次；确认前不得生成。
 4. proposal 的 optimizedPrompt 是完整单角色全身提示词；actionPrompt 只保存用户明确给出的动作；optimizationSummary 用一到两句正常对话确认你理解的角色和动作，并请用户确认一次。
-5. 不得输出思维过程、逐步推理、默认假设清单、Tool 名称、调用计划或内部状态。
+5. proposal 必须给出 suggestPixelPerfect。只有用户明确表达像素风素材意图，例如 pixel art 或像素游戏素材时才为 true；不得只靠出现“游戏”“精灵”“复古”等关键词猜测。这个判断只供生成完成后的可选提示使用，不要在回复里提及。
+6. 不得输出思维过程、逐步推理、默认假设清单、Tool 名称、调用计划或内部状态。
 
 ${clarificationRule}`
 }

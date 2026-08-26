@@ -16,6 +16,7 @@ const QUICK_START_DECISION_FIELDS = new Set([
   'actionPrompt',
   'actionType',
   'optimizationSummary',
+  'suggestPixelPerfect',
 ])
 
 export type QuickStartDirectionalMovement = 'single' | 'four-way' | 'eight-way'
@@ -54,6 +55,8 @@ export interface CharacterGenerationPlan {
   /** 仅在 Agent 明确认出行走/跑步位移时附带；不做通用动作分类。 */
   actionType?: QuickStartActionType
   optimizationSummary: string
+  /** Planner 对明确像素素材意图的静默判断；缺省按否处理以兼容旧提案。 */
+  suggestPixelPerfect?: boolean
 }
 
 export interface CharacterGenerationProposal extends CharacterGenerationPlan {
@@ -102,6 +105,7 @@ export type StartCharacterGenerationAction = (input: {
   directionalMovement?: QuickStartDirectionalMovement
   gameStyle?: string
   automaticDelivery?: boolean
+  suggestPixelPerfect?: boolean
 }) => Promise<{ runId: string }>
 
 export interface CreateQuickStartAgentOptions {
@@ -191,6 +195,9 @@ export function parseCharacterGenerationPlan(value: unknown): CharacterGeneratio
   ) {
     throw new Error('生成提案的 actionPrompt 无效')
   }
+  if (value.suggestPixelPerfect !== undefined && typeof value.suggestPixelPerfect !== 'boolean') {
+    throw new Error('生成提案的 suggestPixelPerfect 无效')
+  }
   const actionType = value.actionType === 'walk' ? value.actionType : undefined
   if (value.actionType !== undefined && (!actionType || !actionPrompt)) {
     throw new Error('生成提案的 actionType 无效')
@@ -200,6 +207,7 @@ export function parseCharacterGenerationPlan(value: unknown): CharacterGeneratio
     ...(actionPrompt ? { actionPrompt } : {}),
     ...(actionType ? { actionType } : {}),
     optimizationSummary,
+    ...(value.suggestPixelPerfect === true ? { suggestPixelPerfect: true } : {}),
   }
 }
 
@@ -312,6 +320,7 @@ export function createQuickStartAgent({
         ...(decision.actionPrompt ? { actionPrompt: decision.actionPrompt } : {}),
         ...(decision.actionType ? { actionType: decision.actionType } : {}),
         optimizationSummary: decision.optimizationSummary,
+        ...(decision.suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
       }
       currentProposal = proposal
       messages = [...nextMessages, { role: 'assistant', content: proposalMessage(proposal) }]
@@ -349,6 +358,7 @@ export function createQuickStartAgent({
         directionalMovement,
         gameStyle,
         ...(automaticDelivery ? { automaticDelivery: true } : {}),
+        ...(proposal.suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
       })
       return { kind: 'generated', runId, ...proposal, optimizedPrompt: effectivePrompt }
     } finally {

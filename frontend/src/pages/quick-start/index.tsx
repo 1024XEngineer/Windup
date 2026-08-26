@@ -15,7 +15,6 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import {
-  ArrowBendDownLeft,
   ArrowClockwise,
   ArrowUp,
   CaretDown,
@@ -28,6 +27,8 @@ import {
 } from '@phosphor-icons/react'
 import Markdown, { compiler } from 'markdown-to-jsx'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
+import { InlineArrowAction } from './inline-arrow-action'
+import { PixelPerfectVersionSwitch, type PixelPerfectVersion } from './pixel-perfect-version-switch'
 
 import {
   ART_STYLE,
@@ -173,6 +174,7 @@ type AgentConversationTurn =
       actionPrompt?: string
       actionType?: 'walk'
       optimizationSummary: string
+      suggestPixelPerfect?: boolean
       proposalStatus: 'pending' | 'superseded' | 'adopted' | 'confirmed'
       scope?: 'workflow'
     }
@@ -292,6 +294,7 @@ function readAgentConversation(
               ? { actionType: turn.actionType }
               : {}),
             optimizationSummary: turn.optimizationSummary,
+            suggestPixelPerfect: 'suggestPixelPerfect' in turn && turn.suggestPixelPerfect === true,
             proposalStatus: turn.proposalStatus,
             ...(scope ? { scope } : {}),
           },
@@ -332,6 +335,7 @@ function createAgentSeed(turns: readonly AgentConversationTurn[]): {
             ...(pending.actionPrompt ? { actionPrompt: pending.actionPrompt } : {}),
             ...(pending.actionType ? { actionType: pending.actionType } : {}),
             optimizationSummary: pending.optimizationSummary,
+            suggestPixelPerfect: pending.suggestPixelPerfect,
           }
         : null,
   }
@@ -550,6 +554,7 @@ function AgentActions({
   copyLabel,
   onCopy,
   exportModel,
+  exportLabel,
   onOpenAssetWorkspace,
   onOpenPlaytest,
   playtestDisabled = false,
@@ -561,6 +566,7 @@ function AgentActions({
   copyLabel?: string
   onCopy?: () => void
   exportModel?: ExportPackageModel | null
+  exportLabel?: string
   onOpenAssetWorkspace?: () => void
   onOpenPlaytest?: () => void
   playtestDisabled?: boolean
@@ -589,6 +595,7 @@ function AgentActions({
       {exportModel ? (
         <ExportButton
           model={exportModel}
+          idleLabel={exportLabel}
           iconOnly
           className="text-app-muted hover:bg-app-surface-muted hover:text-app-accent"
         />
@@ -967,6 +974,7 @@ function QuickStartInput({
             ...(result.actionPrompt ? { actionPrompt: result.actionPrompt } : {}),
             ...(result.actionType ? { actionType: result.actionType } : {}),
             optimizationSummary: result.optimizationSummary,
+            suggestPixelPerfect: result.suggestPixelPerfect,
             proposalStatus: 'pending',
           })
         }
@@ -1520,18 +1528,9 @@ function PromptProposal({
               确认并生成
             </button>
           ) : null}
-          <button
-            type="button"
-            aria-label="填入输入框"
-            disabled={disabled}
-            onClick={onFill}
-            className="group inline-flex min-h-8 items-center gap-2 rounded-full pr-2 text-xs text-app-muted transition hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-45"
-          >
-            <span className="grid size-8 shrink-0 place-items-center rounded-full transition group-hover:bg-app-surface-muted">
-              <ArrowBendDownLeft aria-hidden="true" size={17} weight="bold" />
-            </span>
-            <span>编辑后逐步确认</span>
-          </button>
+          <InlineArrowAction aria-label="填入输入框" disabled={disabled} onClick={onFill}>
+            编辑后逐步确认
+          </InlineArrowAction>
         </div>
       ) : status === 'superseded' ? (
         <p className="text-xs text-app-faint">已继续讨论</p>
@@ -1957,6 +1956,53 @@ function GenerationCanvas({ label }: { label: string }) {
   return <GenerationPreviewCard label={label} />
 }
 
+function pixelPerfectSources(
+  model: ExportPackageModel | null,
+  actionId: string | undefined,
+  fallback: readonly QuickStartFrame[],
+): readonly QuickStartFrame[] {
+  const action = actionId ? model?.actions.find((item) => item.id === actionId) : null
+  if (!action) return fallback
+  const unique = new Map<string, QuickStartFrame>()
+  for (const sequence of action.sequences) {
+    for (const frame of sequence.frames) {
+      if (!unique.has(frame.imageUrl)) {
+        unique.set(frame.imageUrl, {
+          index: unique.size,
+          imageUrl: frame.imageUrl,
+          durationMs: frame.durationMs,
+        })
+      }
+    }
+  }
+  return [...unique.values()]
+}
+
+function pixelPerfectExportModel(
+  model: ExportPackageModel | null,
+  actionId: string | undefined,
+  replacements: ReadonlyMap<string, string>,
+): ExportPackageModel | null {
+  if (!model || !actionId) return model
+  return {
+    ...model,
+    actions: model.actions.map((action) =>
+      action.id !== actionId
+        ? action
+        : {
+            ...action,
+            sequences: action.sequences.map((sequence) => ({
+              ...sequence,
+              frames: sequence.frames.map((frame) => ({
+                ...frame,
+                imageUrl: replacements.get(frame.imageUrl) ?? frame.imageUrl,
+              })),
+            })),
+          },
+    ),
+  }
+}
+
 function RestoringConversation({ turns }: { turns: readonly AgentConversationTurn[] }) {
   return (
     <section className="relative min-h-screen overflow-hidden bg-app-canvas pt-14 text-app-ink">
@@ -2029,6 +2075,12 @@ function QuickStartRun({
     [],
   )
   const [actionFrames, setActionFrames] = useState<readonly QuickStartFrame[]>([])
+  const [pixelPerfectFrames, setPixelPerfectFrames] = useState<readonly QuickStartFrame[]>([])
+  const [pixelPerfectStatus, setPixelPerfectStatus] = useState<'idle' | 'working' | 'ready'>('idle')
+  const [actionVersion, setActionVersion] = useState<PixelPerfectVersion>('original')
+  const [pixelPerfectReplacementEntries, setPixelPerfectReplacementEntries] = useState<
+    readonly (readonly [string, string])[]
+  >([])
   const [failedDirections, setFailedDirections] = useState<readonly QuickStartFailedDirection[]>([])
   const [retryingDirection, setRetryingDirection] = useState<string | null>(null)
   const [exportModel, setExportModel] = useState<ExportPackageModel | null>(null)
@@ -2052,6 +2104,7 @@ function QuickStartRun({
     timer: ReturnType<typeof setTimeout>
   } | null>(null)
   const mountedRef = useRef(true)
+  const pixelPerfectUrlsRef = useRef<readonly string[]>([])
   const workflowAgentActions = useMemo<WorkflowAgentActions>(
     () => ({
       getContext: () =>
@@ -2100,6 +2153,92 @@ function QuickStartRun({
     setError(null)
     setWorkflowConflict(false)
   }, [])
+  const releasePixelPerfectUrls = useCallback(() => {
+    for (const url of pixelPerfectUrlsRef.current) URL.revokeObjectURL(url)
+    pixelPerfectUrlsRef.current = []
+  }, [])
+
+  // 像素化要跑几十秒，期间用户可以继续追加动作；记住当前动作，回来时才能判断结果还算不算数。
+  const currentActionId = run ? latestActionStep(run)?.id : undefined
+  const currentActionIdRef = useRef(currentActionId)
+
+  useEffect(() => {
+    if (currentActionIdRef.current === currentActionId) return
+    currentActionIdRef.current = currentActionId
+    // 动作换了：旧动作的像素帧既不该继续显示，也不该被导出模型引用。
+    releasePixelPerfectUrls()
+    setPixelPerfectFrames([])
+    setPixelPerfectReplacementEntries([])
+    setPixelPerfectStatus('idle')
+    setActionVersion('original')
+  }, [currentActionId, releasePixelPerfectUrls])
+
+  const startPixelPerfect = useCallback(async () => {
+    const target = session
+    const processFrames = target?.pixelPerfectActionFrames
+    if (
+      !target ||
+      !processFrames ||
+      pixelPerfectStatus === 'working' ||
+      actionFrames.length === 0
+    ) {
+      return
+    }
+    const requestActionId = currentActionId
+    const sources = pixelPerfectSources(exportModel, requestActionId, actionFrames)
+    setPixelPerfectStatus('working')
+    setActionVersion('original')
+    releasePixelPerfectUrls()
+    setPixelPerfectFrames([])
+    setPixelPerfectReplacementEntries([])
+    clearWorkflowError()
+    try {
+      const reconstructed = await processFrames(sources)
+      if (!mountedRef.current || activeSessionRef.current !== target) return
+      // 请求期间动作被换过：这批帧不属于当前画面，丢弃比错配到新动作上安全。
+      if (currentActionIdRef.current !== requestActionId) {
+        setPixelPerfectStatus('idle')
+        return
+      }
+      const urls = reconstructed.map((frame) => URL.createObjectURL(frame.blob))
+      pixelPerfectUrlsRef.current = urls
+      const replacements = reconstructed.map(
+        (frame, index) =>
+          [frame.sourceImageUrl ?? sources[index]?.imageUrl ?? '', urls[index]!] as const,
+      )
+      const replacementMap = new Map(replacements.filter(([source]) => Boolean(source)))
+      setPixelPerfectReplacementEntries(replacements)
+      setPixelPerfectFrames(
+        actionFrames.map((frame, index) => {
+          const matchedIndex = reconstructed.findIndex(
+            (candidate) => candidate.index === frame.index,
+          )
+          return {
+            ...frame,
+            imageUrl:
+              replacementMap.get(frame.imageUrl) ??
+              urls[matchedIndex >= 0 ? matchedIndex : index] ??
+              frame.imageUrl,
+          }
+        }),
+      )
+      setPixelPerfectStatus('ready')
+    } catch (cause) {
+      releasePixelPerfectUrls()
+      if (!mountedRef.current || activeSessionRef.current !== target) return
+      setPixelPerfectStatus('idle')
+      reportWorkflowError(cause, '完美像素化失败，请稍后重试')
+    }
+  }, [
+    actionFrames,
+    clearWorkflowError,
+    currentActionId,
+    exportModel,
+    pixelPerfectStatus,
+    releasePixelPerfectUrls,
+    reportWorkflowError,
+    session,
+  ])
 
   const appendRunConversationTurn = useCallback(
     (turn: AgentConversationTurn) => {
@@ -2121,8 +2260,9 @@ function QuickStartRun({
       mountedRef.current = false
       activeSessionRef.current = null
       if (promptCopyTimer.current) clearTimeout(promptCopyTimer.current)
+      releasePixelPerfectUrls()
     }
-  }, [])
+  }, [releasePixelPerfectUrls])
 
   // 用户会在生成的几分钟里离开这个页面，Header 靠这个指针提供返回入口。
   useEffect(() => {
@@ -2139,6 +2279,11 @@ function QuickStartRun({
     setRun(null)
     setSelectedCandidates({})
     setSelectedFirstFrames({})
+    releasePixelPerfectUrls()
+    setPixelPerfectFrames([])
+    setPixelPerfectReplacementEntries([])
+    setPixelPerfectStatus('idle')
+    setActionVersion('original')
     workflowConflictRef.current = false
     setError(null)
     setWorkflowConflict(false)
@@ -2207,6 +2352,7 @@ function QuickStartRun({
     clearWorkflowError,
     onInitialSessionConsumed,
     reportWorkflowError,
+    releasePixelPerfectUrls,
     runId,
     service,
   ])
@@ -2657,6 +2803,19 @@ function QuickStartRun({
   const firstFrameExportModel = exportModel?.stage === 'first-frame' ? exportModel : null
   const actionExportModel =
     exportModel?.stage === 'action-assets' || exportModel?.stage === 'playtest' ? exportModel : null
+  const setupStep = revision.nodes.find((node) => node.type === 'character-setup')
+  const pixelPerfectReady = pixelPerfectStatus === 'ready' && pixelPerfectFrames.length > 0
+  const visibleActionFrames =
+    pixelPerfectReady && actionVersion === 'pixel-perfect' ? pixelPerfectFrames : actionFrames
+  const pixelPerfectVersionModel = pixelPerfectExportModel(
+    actionExportModel,
+    actionStep?.id,
+    new Map(pixelPerfectReplacementEntries),
+  )
+  const visibleVersionExportModel =
+    actionVersion === 'pixel-perfect' ? pixelPerfectVersionModel : actionExportModel
+  const visibleVersionExportLabel =
+    actionVersion === 'pixel-perfect' ? '导出完美像素版' : '导出原图'
   const entryAgentConversationTurns = agentConversationTurns.filter(
     (turn) => turn.scope !== 'workflow',
   )
@@ -2924,7 +3083,7 @@ function QuickStartRun({
                         className="grid w-full max-w-2xl grid-cols-3 gap-3"
                       >
                         <FrameAnimationPlayer
-                          frames={actionFrames}
+                          frames={visibleActionFrames}
                           alt="完整动作预览"
                           fps={firstFrameStep?.input.fps}
                           loop
@@ -2935,7 +3094,7 @@ function QuickStartRun({
                         />
                       </div>
                       <div className="flex max-w-full gap-1.5 overflow-x-auto pb-1">
-                        {actionFrames.map((frame, index) => (
+                        {visibleActionFrames.map((frame, index) => (
                           <AssetVisual
                             key={`${frame.imageUrl}:${index}`}
                             src={frame.imageUrl}
@@ -2957,6 +3116,42 @@ function QuickStartRun({
                         <p className="text-sm font-medium text-app-accent">角色已经保存到资产库</p>
                       ) : canPublish ? (
                         <p className="text-sm text-app-muted">正在保存角色…</p>
+                      ) : null}
+                      {reviewStep?.status === 'passed' &&
+                      setupStep?.pixelPerfectSuggested &&
+                      pixelPerfectStatus === 'idle' ? (
+                        <div className="grid w-fit gap-1">
+                          <p
+                            data-pixel-perfect-explanation
+                            className="max-w-2xl font-serif text-base leading-7 text-app-ink"
+                          >
+                            我还可以把这些帧重新对齐到像素网格，让边缘和色块更干净。
+                          </p>
+                          <InlineArrowAction
+                            aria-label="开始完美像素化"
+                            data-pixel-perfect-suggestion
+                            onClick={() => void startPixelPerfect()}
+                          >
+                            开始完美像素化
+                          </InlineArrowAction>
+                        </div>
+                      ) : null}
+                      {pixelPerfectStatus === 'working' ? (
+                        <div className="grid gap-3 pt-2">
+                          <GenerationProgressCopy label="完美像素化进度" kind="pixel-perfect" />
+                          <div
+                            data-layout="agent-result-set"
+                            className="grid w-full max-w-2xl grid-cols-3 gap-3"
+                          >
+                            <GenerationCanvas label="完美像素化生成画布" />
+                          </div>
+                        </div>
+                      ) : null}
+                      {pixelPerfectReady ? (
+                        <PixelPerfectVersionSwitch
+                          value={actionVersion}
+                          onChange={setActionVersion}
+                        />
                       ) : null}
                     </>
                   ) : isActionFailed ? (
@@ -2980,7 +3175,8 @@ function QuickStartRun({
                   )}
                   {isActionFailed || actionExportModel || reviewStep?.status === 'passed' ? (
                     <AgentActions
-                      exportModel={actionExportModel}
+                      exportModel={visibleVersionExportModel}
+                      exportLabel={pixelPerfectReady ? visibleVersionExportLabel : undefined}
                       onOpenAssetWorkspace={
                         reviewStep?.status === 'passed'
                           ? () =>

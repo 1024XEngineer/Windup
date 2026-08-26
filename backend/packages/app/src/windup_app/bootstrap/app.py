@@ -34,6 +34,7 @@ from windup_app.server.orchestrator import task_repo
 from windup_app.server.orchestrator.render3d_service import default_operations, precheck_master
 from windup_app.web.api.generation import router as generation_router
 from windup_app.web.api.media import router as media_router
+from windup_app.web.api.pixel_perfect import router as pixel_perfect_router
 from windup_app.web.api.project import router as project_router
 from windup_app.web.api.quota import router as quota_router
 from windup_app.web.api.render3d import router as render3d_router
@@ -138,7 +139,13 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["X-Request-Id"],
+        expose_headers=[
+            "X-Request-Id",
+            "Content-Disposition",
+            "X-Pixel-Cols",
+            "X-Pixel-Rows",
+            "X-Pixel-Visible-Colors",
+        ],
     )
     app.include_router(auth_router)
     app.include_router(project_router)
@@ -150,6 +157,7 @@ def create_app() -> FastAPI:
     app.include_router(render3d_router)
     app.include_router(agent_router)
     app.include_router(action_preset_router)
+    app.include_router(pixel_perfect_router)
     # 母版预检与建 3D 资产:web 层不能静态依赖 ai_engine,由 state 注入。
     app.state.precheck_master = precheck_master
     app.state.render3d_operations = default_operations()

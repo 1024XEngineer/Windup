@@ -346,6 +346,37 @@ describe('WorkflowController', () => {
     )
   })
 
+  it('persists the Agent pixel-art suggestion on the setup node', async () => {
+    const workflow = createWorkflowApis()
+    const generation = createGenerationHarness()
+    const controller = createWorkflowController({
+      workflowRunApis: workflow.apis,
+      generationApis: generation.apis,
+      prepareProject: vi.fn(async () => ({
+        id: 'project-agent',
+        spriteSize: { width: 64, height: 64 },
+      })),
+      onAsyncError: () => undefined,
+    })
+
+    await controller.startCharacterGeneration({
+      prompt: '魔幻像素风战士',
+      suggestPixelPerfect: true,
+      automaticDelivery: { actionPrompt: '疯狂跳舞' },
+    })
+
+    expect(workflow.apis.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nodes: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'character-setup',
+            pixelPerfectSuggested: true,
+          }),
+        ]),
+      }),
+    )
+  })
+
   it('按 Quick Start 选择四向项目时仍只提交三张东向母版候选', async () => {
     const workflow = createWorkflowApis()
     const generation = createGenerationHarness()

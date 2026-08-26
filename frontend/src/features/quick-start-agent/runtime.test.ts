@@ -271,6 +271,32 @@ describe('createQuickStartAgent', () => {
     })
   })
 
+  it('silently carries explicit pixel-art intent into the confirmed generation', async () => {
+    const { agent, startCharacterGeneration } = fixture(
+      decisionResult({
+        kind: 'proposal',
+        optimizedPrompt: '魔幻像素风战士，全身像',
+        actionPrompt: '疯狂跳舞',
+        optimizationSummary: '我会保留像素风格和疯狂跳舞动作。',
+        suggestPixelPerfect: true,
+      }),
+    )
+    const proposal = await agent.start('生成一个疯狂跳舞的魔幻像素风战士')
+    if (proposal.kind !== 'proposal') throw new Error('测试缺少提案')
+
+    await agent.confirmProposal(proposal.proposalId, proposal.optimizedPrompt, 'single', {
+      automaticDelivery: true,
+    })
+
+    expect(startCharacterGeneration).toHaveBeenCalledWith({
+      prompt: '魔幻像素风战士，全身像',
+      actionPrompt: '疯狂跳舞',
+      directionalMovement: 'single',
+      automaticDelivery: true,
+      suggestPixelPerfect: true,
+    })
+  })
+
   it('rejects unsupported Agent action markers', () => {
     expect(() =>
       parseQuickStartDecision({

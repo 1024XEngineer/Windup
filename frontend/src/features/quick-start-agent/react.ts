@@ -131,8 +131,14 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
               messageKind: result.messageKind,
             })
           } else if (result.kind === 'proposal') {
-            const { proposalId, optimizedPrompt, actionPrompt, actionType, optimizationSummary } =
-              result
+            const {
+              proposalId,
+              optimizedPrompt,
+              actionPrompt,
+              actionType,
+              optimizationSummary,
+              suggestPixelPerfect,
+            } = result
             setState({
               status: 'proposal',
               proposalId,
@@ -140,6 +146,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
               ...(actionPrompt ? { actionPrompt } : {}),
               ...(actionType ? { actionType } : {}),
               optimizationSummary,
+              ...(suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
             })
           }
         }
@@ -175,7 +182,14 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
       if (running.current) throw new Error('Planner 正在处理上一条输入')
       if (state.status !== 'proposal') throw new Error('提示词提案已失效')
       running.current = true
-      const { proposalId, optimizedPrompt, actionPrompt, actionType, optimizationSummary } = state
+      const {
+        proposalId,
+        optimizedPrompt,
+        actionPrompt,
+        actionType,
+        optimizationSummary,
+        suggestPixelPerfect,
+      } = state
       if (mounted.current) {
         setState({
           status: 'dispatching',
@@ -184,6 +198,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
           ...(actionPrompt ? { actionPrompt } : {}),
           ...(actionType ? { actionType } : {}),
           optimizationSummary,
+          ...(suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
         })
       }
       try {

@@ -133,6 +133,9 @@ export type {
   PixelPerfectApis,
   PixelPerfectMetadata,
   PixelPerfectProcessInput,
+  PixelPerfectReconstructInput,
+  PixelPerfectReconstructMetadata,
+  PixelPerfectReconstructResult,
   PixelPerfectResult,
 } from './pixel-perfect'
 

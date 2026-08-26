@@ -16,6 +16,8 @@ describe('quickStartPlannerInstructions', () => {
     expect(firstTurn).toContain('proposal 只是提案，不代表用户授权生成')
     expect(firstTurn).toContain('角色和动作')
     expect(firstTurn).toContain('actionPrompt')
+    expect(firstTurn).toContain('suggestPixelPerfect')
+    expect(firstTurn).toContain('明确表达像素风素材意图')
     expect(firstTurn).toContain('actionType: "walk"')
     expect(firstTurn).toContain('行走或跑步')
     expect(firstTurn).toContain('不得只靠关键词')

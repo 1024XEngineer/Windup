@@ -1195,6 +1195,7 @@ describe('QuickStartPage', () => {
     expect(screen.queryByRole('button', { name: '确认并生成' })).toBeNull()
     const fill = screen.getByRole('button', { name: '填入输入框' })
     expect(fill.className).not.toContain('border')
+    expect(fill.hasAttribute('data-inline-arrow-action')).toBe(true)
     expect(fill.textContent).toContain('编辑后逐步确认')
     fireEvent.click(fill)
 
@@ -1499,6 +1500,168 @@ describe('QuickStartPage', () => {
     await act(async () => vi.advanceTimersByTime(1))
     expect(preview.getAttribute('src')).toBe('https://example.test/action-2.png')
     expect(firstThumbnail.getAttribute('src')).toBe('https://example.test/action-1.png')
+  })
+
+  it('offers optional pixel-perfect processing only for a persisted pixel-art intent', async () => {
+    const suggested = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const setup = suggested.nodes.find((node) => node.type === 'character-setup')
+    if (!setup || setup.type !== 'character-setup') throw new Error('测试缺少角色设定节点')
+    setup.pixelPerfectSuggested = true
+    const originalFrames = [
+      { index: 0, imageUrl: 'https://example.test/original-0.png', durationMs: 80 },
+      { index: 1, imageUrl: 'https://example.test/original-1.png', durationMs: 80 },
+    ]
+    const exportModel: ExportPackageModel = {
+      stage: 'action-assets',
+      characterId: 'character-1',
+      characterName: '像素骑士',
+      characterImageUrl: '/master.png',
+      outfitId: 'outfit-1',
+      outfitName: '默认造型',
+      canvas: { width: 32, height: 32 },
+      source: { workflowRunId: suggested.id, generationIds: [] },
+      firstFrames: [],
+      actions: [
+        {
+          id: 'action-full',
+          name: '挥手',
+          type: 'custom',
+          fps: 12,
+          sequences: [
+            {
+              direction: 'south',
+              expectedFrameCount: originalFrames.length,
+              loop: true,
+              anchor: { x: 0.5, y: 0.9 },
+              footY: 28,
+              qualityStatus: 'passed',
+              frames: originalFrames,
+            },
+          ],
+        },
+      ],
+      playtest: null,
+    }
+    const pixelPerfectActionFrames = vi.fn(async () => [
+      { index: 0, blob: new Blob(['pixel-0'], { type: 'image/png' }), durationMs: 80 },
+      { index: 1, blob: new Blob(['pixel-1'], { type: 'image/png' }), durationMs: 80 },
+    ])
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi
+        .fn()
+        .mockReturnValueOnce('blob:https://windup.test/pixel-0')
+        .mockReturnValueOnce('blob:https://windup.test/pixel-1'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    const service = serviceFor(suggested, {
+      getActionFrames: vi.fn(async () => originalFrames),
+      getExportModel: vi.fn(async () => exportModel),
+      pixelPerfectActionFrames,
+    })
+    renderAt('/quick-start/run-1', service)
+
+    const explanation = await screen.findByText(
+      '我还可以把这些帧重新对齐到像素网格，让边缘和色块更干净。',
+    )
+    expect(explanation.hasAttribute('data-pixel-perfect-explanation')).toBe(true)
+    expect(explanation.className).toContain('font-serif')
+    const suggestion = screen.getByRole('button', { name: '开始完美像素化' })
+    expect(suggestion.hasAttribute('data-pixel-perfect-suggestion')).toBe(true)
+    expect(suggestion.hasAttribute('data-inline-arrow-action')).toBe(true)
+    expect(suggestion.querySelector('svg')).toBeTruthy()
+    fireEvent.click(suggestion)
+
+    expect(await screen.findByLabelText('完美像素化进度')).toBeTruthy()
+    await waitFor(() => expect(pixelPerfectActionFrames).toHaveBeenCalledWith(originalFrames))
+    const pixelVersion = await screen.findByRole('button', { name: '查看完美像素版' })
+    fireEvent.click(pixelVersion)
+
+    expect(screen.getByRole('img', { name: '完整动作预览' }).getAttribute('src')).toBe(
+      'blob:https://windup.test/pixel-0',
+    )
+    expect(pixelVersion.closest('[data-pixel-perfect-comparison]')?.children).toHaveLength(2)
+    expect(
+      screen.getByRole('button', { name: '导出完美像素版' }).closest('[data-agent-actions]'),
+    ).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '查看原图' }))
+    expect(screen.getByRole('img', { name: '完整动作预览' }).getAttribute('src')).toBe(
+      'https://example.test/original-0.png',
+    )
+    expect(screen.getByRole('button', { name: '导出原图' })).toBeTruthy()
+  })
+
+  it('discards pixel-perfect frames when the action changed while processing', async () => {
+    const suggested = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const setup = suggested.nodes.find((node) => node.type === 'character-setup')
+    if (!setup || setup.type !== 'character-setup') throw new Error('测试缺少角色设定节点')
+    setup.pixelPerfectSuggested = true
+    const originalFrames = [
+      { index: 0, imageUrl: 'https://example.test/original-0.png', durationMs: 80 },
+    ]
+    let releaseReconstruction: (() => void) | null = null
+    const pixelPerfectActionFrames = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        releaseReconstruction = resolve
+      })
+      return [{ index: 0, blob: new Blob(['pixel-0'], { type: 'image/png' }), durationMs: 80 }]
+    })
+    const createObjectURL = vi.fn(() => 'blob:https://windup.test/pixel-0')
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    let publishRun: ((next: WorkflowRun) => void) | null = null
+    const service = serviceFor(suggested, {
+      getActionFrames: vi.fn(async () => originalFrames),
+      pixelPerfectActionFrames,
+      subscribe: vi.fn((listener: (next: WorkflowRun) => void) => {
+        publishRun = listener
+        return () => undefined
+      }),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    fireEvent.click(await screen.findByRole('button', { name: '开始完美像素化' }))
+    expect(await screen.findByLabelText('完美像素化进度')).toBeTruthy()
+
+    // 像素化还在跑，用户已经追加了下一个动作。
+    const withNextAction: WorkflowRun = {
+      ...suggested,
+      nodes: [
+        ...suggested.nodes,
+        {
+          id: 'action-full-2',
+          type: 'action-full-frame',
+          status: 'active',
+          phase: 'generating',
+          dependsOnNodeIds: ['method'],
+          generations: [{ taskId: 'full-task-2', role: 'complete_animation' }],
+          error: null,
+        },
+      ],
+    }
+    await act(async () => publishRun?.(withNextAction))
+    await act(async () => releaseReconstruction?.())
+
+    expect(createObjectURL).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: '查看完美像素版' })).toBeNull()
+  })
+
+  it('does not offer pixel-perfect processing without the persisted intent', async () => {
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    renderAt(
+      '/quick-start/run-1',
+      serviceFor(run, {
+        getActionFrames: vi.fn(async () => [
+          { index: 0, imageUrl: 'https://example.test/original.png', durationMs: 80 },
+        ]),
+      }),
+    )
+
+    await screen.findByText('角色已经保存到资产库')
+    expect(
+      screen.queryByText('我还可以把这些帧重新对齐到像素网格，让边缘和色块更干净。'),
+    ).toBeNull()
+    expect(screen.queryByRole('button', { name: '开始完美像素化' })).toBeNull()
   })
 
   it('reveals generated candidate frames with staggered motion', async () => {

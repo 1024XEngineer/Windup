@@ -108,6 +108,35 @@
         "title": "AssistantMessageResponse",
         "type": "object"
       },
+      "Body_reconstruct_pixel_grid_tools_pixel_perfect_reconstruct_post": {
+        "properties": {
+          "cols": {
+            "title": "Cols",
+            "type": "integer"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "rows": {
+            "title": "Rows",
+            "type": "integer"
+          },
+          "structure_colors": {
+            "default": 16,
+            "title": "Structure Colors",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file",
+          "cols",
+          "rows"
+        ],
+        "title": "Body_reconstruct_pixel_grid_tools_pixel_perfect_reconstruct_post",
+        "type": "object"
+      },
       "Body_upload_media_media_upload_post": {
         "properties": {
           "file": {
@@ -5107,6 +5136,41 @@
         "summary": "Precheck Master",
         "tags": [
           "render3d"
+        ]
+      }
+    },
+    "/tools/pixel-perfect/reconstruct": {
+      "post": {
+        "description": "按项目声明的精灵网格重建 PNG/JPEG，不执行网格猜测或资产写入。",
+        "operationId": "reconstruct_pixel_grid_tools_pixel_perfect_reconstruct_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_reconstruct_pixel_grid_tools_pixel_perfect_reconstruct_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reconstruct Pixel Grid",
+        "tags": [
+          "pixel-perfect"
         ]
       }
     },
