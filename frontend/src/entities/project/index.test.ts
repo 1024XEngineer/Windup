@@ -105,6 +105,27 @@ describe('projectApis', () => {
     })
   })
 
+  it('serializes project naming context without fabricating a project name', async () => {
+    let request: Request | undefined
+    const { projectApis } = await loadProjectApis(async (input, init) => {
+      request = new Request(input, init)
+      return jsonResponse({ ...projectDto, project_name: '雾港计划' })
+    })
+
+    await projectApis.create({
+      nameContext: '一位提着风灯、披深色斗篷的像素守夜人',
+      perspective: 'side',
+      directionalMovement: 'single',
+      spriteSize: { width: 256, height: 256 },
+    })
+
+    const body = await request?.json()
+    expect(body).toMatchObject({
+      name_context: '一位提着风灯、披深色斗篷的像素守夜人',
+    })
+    expect(body).not.toHaveProperty('project_name')
+  })
+
   it('requests one Project by its backend resource path', async () => {
     let requestUrl = ''
     const { projectApis } = await loadProjectApis(async (input) => {
