@@ -69,9 +69,9 @@ describe('AppRoutes authentication boundary', () => {
       </GuestAuthSession>,
     )
 
-    expect(await screen.findByRole('heading', { name: 'Windup 使用手册', level: 1 })).toBeTruthy()
-    expect(screen.getByRole('article', { name: 'Windup 使用手册' })).toBeTruthy()
-    expect(screen.getByRole('navigation', { name: '使用手册目录' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Windup 使用指南', level: 1 })).toBeTruthy()
+    expect(screen.getByRole('article', { name: 'Windup 使用指南' })).toBeTruthy()
+    expect(screen.getByRole('navigation', { name: '使用指南章节' })).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Quick Start' }).getAttribute('href')).toBe(
       '#quick-start',
     )
