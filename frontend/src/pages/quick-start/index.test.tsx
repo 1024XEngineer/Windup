@@ -1453,7 +1453,13 @@ describe('QuickStartPage', () => {
       return element!
     })
     expect(userTurn.className).toContain('select-text')
-    fireEvent.click(within(userTurn).getByRole('button', { name: '复制消息' }))
+    const userMessageBubble = within(userTurn)
+      .getByText('银发机械师')
+      .closest<HTMLElement>('[data-user-message-bubble]')
+    const userCopyButton = within(userTurn).getByRole('button', { name: '复制消息' })
+    expect(userMessageBubble).toBeTruthy()
+    expect(userMessageBubble?.contains(userCopyButton)).toBe(false)
+    fireEvent.click(userCopyButton)
     await waitFor(() => expect(writeText).toHaveBeenNthCalledWith(1, '银发机械师'))
     expect(within(userTurn).getByRole('button', { name: '已复制消息' })).toBeTruthy()
 
@@ -1471,12 +1477,7 @@ describe('QuickStartPage', () => {
     expect(within(proposal).getByRole('button', { name: '已复制提示词提案' })).toBeTruthy()
   })
 
-  it('allows selecting and copying a regular Agent reply', async () => {
-    const writeText = vi.fn(async () => undefined)
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText },
-    })
+  it('keeps a regular Agent reply selectable without a copy action', async () => {
     const planner = vi.fn(async () => ({
       text: '请再补充角色的服装颜色。',
       finishReason: 'stop' as const,
@@ -1493,33 +1494,7 @@ describe('QuickStartPage', () => {
     expect(reply.className).toContain('select-text')
     const agentCopy = reply.closest<HTMLElement>('[data-agent-copy]')
     expect(agentCopy).toBeTruthy()
-    fireEvent.click(within(agentCopy!).getByRole('button', { name: '复制 Agent 回复' }))
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith('请再补充角色的服装颜色。'))
-  })
-
-  it('shows a contextual status when copying an Agent reply fails', async () => {
-    const writeText = vi.fn(async () => Promise.reject(new Error('denied')))
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText },
-    })
-    const planner = vi.fn(async () => ({
-      text: '请再补充角色的服装颜色。',
-      finishReason: 'stop' as const,
-      toolCalls: [],
-    }))
-    renderAt('/quick-start', serviceFor(null), agentFor({ planner }))
-
-    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
-      target: { value: '银发机械师' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
-
-    const reply = await screen.findByLabelText('Agent 回答')
-    const agentCopy = reply.closest<HTMLElement>('[data-agent-copy]')
-    fireEvent.click(within(agentCopy!).getByRole('button', { name: '复制 Agent 回复' }))
-
-    expect((await within(agentCopy!).findByRole('status')).textContent).toBe('复制 Agent 回复失败')
+    expect(within(agentCopy!).queryByRole('button', { name: '复制 Agent 回复' })).toBeNull()
   })
 
   it('starts with the slider direction after the user edits and sends the proposal', async () => {
