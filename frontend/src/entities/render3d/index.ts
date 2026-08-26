@@ -109,6 +109,9 @@ export interface BakeCompletion {
   sampleTimes: number[]
 }
 
+/** 角色体型。决定这条路线能不能给它绑骨；与后端 `CharacterStance` 同一取值域。 */
+export type CharacterStance = 'biped' | 'quadruped' | 'serpentine'
+
 export interface Render3DApis {
   /** 零成本母版预检。**不触发任何按次计费调用**,确认闸上可以随便调。 */
   precheckMaster(
@@ -116,8 +119,17 @@ export interface Render3DApis {
     canvas?: { width: number; height: number },
   ): Promise<MasterPrecheckReport>
   getOutfitAsset(characterId: string, outfitId: string): Promise<Render3DAsset>
-  /** 触发图生 3D。**按次计费**,只能由用户的显式操作调用。 */
-  buildOutfitAsset(characterId: string, outfitId: string): Promise<Render3DAsset>
+  /**
+   * 触发图生 3D。**按次计费**,只能由用户的显式操作调用。
+   *
+   * ``stance`` 必填、无默认:自动绑骨只支持双足,而四足/无肢从模型几何判不出来
+   * (实测归档模型的包围盒比例完全重叠)。给默认值等于把"没声明"当成"双足"。
+   */
+  buildOutfitAsset(
+    characterId: string,
+    outfitId: string,
+    stance: CharacterStance,
+  ): Promise<Render3DAsset>
   /** 人看过模型点头 → 继续绑骨。 */
   approveOutfitAsset(characterId: string, outfitId: string): Promise<Render3DAsset>
   /** 模型不合格 → 丢弃重来。 */

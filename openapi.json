@@ -200,6 +200,19 @@
         "title": "Body_upload_media_media_upload_post",
         "type": "object"
       },
+      "BuildAssetRequest": {
+        "description": "建 3D 资产的入参。\n\n``stance`` 必填、无默认:自动绑骨只支持双足,而四足/无肢从模型几何判不出来\n(实测归档模型的包围盒比例完全重叠)。给默认值等于把「没声明」当成「双足」放行。",
+        "properties": {
+          "stance": {
+            "$ref": "#/components/schemas/CharacterStance"
+          }
+        },
+        "required": [
+          "stance"
+        ],
+        "title": "BuildAssetRequest",
+        "type": "object"
+      },
       "ChangePasswordRequest": {
         "description": "修改密码请求。",
         "properties": {
@@ -5633,6 +5646,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildAssetRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {

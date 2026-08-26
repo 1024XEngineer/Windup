@@ -40,6 +40,7 @@ import {
   type ExportPackageModel,
 } from '@/features/export-package'
 import { FrameAnimationPlayer, GenerationPreviewCard, GenerationProgressCopy } from '@/shared/ui'
+import { Render3DAssetPanel } from './render3d-panel'
 import { loadDefaultActionPresets, type WorkflowEditorSession } from './runtime'
 import { useWorkflowEditorSession } from './use-workflow-editor-session'
 import { WorkflowEditorView, type WorkflowCardNode } from './workflow-editor-view'
@@ -837,6 +838,14 @@ function CharacterTemplateContent({
         <span className="text-center text-[11px] text-[var(--color-app-muted)]">身份已锁定</span>
         <div className="grid gap-2" role="group" aria-label="角色母版操作">
           {outfit ? <NodeExportButton model={input.exportModels.get(outfit.id)} /> : null}
+          {outfit ? (
+            <Render3DAssetPanelHost
+              input={input}
+              outfitId={outfit.id}
+              masterUrl={node.selectedImageUrl}
+              disabled={branchBusy}
+            />
+          ) : null}
           <div className="grid grid-cols-2 gap-2" role="group" aria-label="调整角色母版">
             <button
               type="button"
@@ -1044,6 +1053,32 @@ function useMasterPrecheck(input: ProjectionInput, imageUrl: string): MasterPrec
   }, [height, imageUrl, render3d, width])
 
   return state
+}
+
+/** 把母版预检接到面板上。面板只吃结果，不知道预检怎么来的。 */
+function Render3DAssetPanelHost({
+  input,
+  outfitId,
+  masterUrl,
+  disabled,
+}: {
+  input: ProjectionInput
+  outfitId: string
+  masterUrl: string
+  disabled: boolean
+}) {
+  const precheck = useMasterPrecheck(input, masterUrl)
+  const characterId = input.character?.id
+  if (!characterId) return null
+  return (
+    <Render3DAssetPanel
+      render3d={input.render3d}
+      characterId={characterId}
+      outfitId={outfitId}
+      precheck={precheck.status === 'done' ? precheck.report : null}
+      disabled={disabled}
+    />
+  )
 }
 
 const WARNING_TITLE: Record<MasterWarning['code'], string> = {

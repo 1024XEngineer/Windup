@@ -93,7 +93,7 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('WorkflowEditorPage real runtime boundary', () => {
-  it('身份母版只展示现有操作，并让加号菜单专注于生成动作', async () => {
+  it('身份母版展示导出、调整与 3D 资产入口，加号菜单专注于生成动作', async () => {
     const character = characterFixture()
     character.outfits[0] = {
       ...character.outfits[0]!,
@@ -112,7 +112,9 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     })
     expect(within(secondaryActions).getByRole('button', { name: '重新生成角色母版' })).toBeTruthy()
     expect(within(secondaryActions).getByRole('button', { name: '微调角色母版' })).toBeTruthy()
-    expect(screen.queryByText(/3D 资产/)).toBeNull()
+    // #486 当时把 3D 入口撤了，理由是 worker 镜像缺 node/playwright、点进去必然抛错；
+    // 依赖在 #517 补齐、出帧又在 #717 改到浏览器之后，那条理由不成立了（#518）。
+    expect(await within(primaryActions).findByRole('group', { name: '3D 资产' })).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: '添加动作分支' }))
     const actionMenu = screen.getByRole('menu', { name: '新增节点' })

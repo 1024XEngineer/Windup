@@ -29,6 +29,7 @@ from windup_ai_engine.master_check import check_master
 from windup_ai_engine.ports import MasterRejected
 
 from windup_app.server.orchestrator._fetch import FetchNotAllowed, fetch_own_media
+from windup_common.models import CharacterStance
 from windup_app.server.orchestrator.render3d_assets import (
     AUTORIG_CREDITS,
     BUILD_CREDITS,
@@ -45,11 +46,19 @@ from windup_app.server.orchestrator.render3d_assets import (
 
 logger = logging.getLogger("windup.render3d.service")
 
+# 拒绝文案里用得着的中文名。放这里而不是塞进枚举:枚举是给措辞门禁用的,
+# 这几个字只服务于这一条拒绝理由。
+_STANCE_LABEL = {
+    CharacterStance.QUADRUPED: "四足",
+    CharacterStance.SERPENTINE: "无肢(蛇形)",
+}
+
 __all__ = [
     "PHASE_BUILDING", "PHASE_FAILED", "PHASE_RIGGING",
     "FetchNotAllowed", "MasterPrecheckFailed", "Render3DAssetOperations",
     "SpendNotAuthorized", "default_operations", "precheck_master",
     "precheck_master_bytes",
+    "StanceNotRiggable",
 ]
 
 # 落点里存"绑骨模型的公网 URL"用的键前缀。与模型 bytes 同一个 store,是因为两者的
@@ -94,6 +103,19 @@ def precheck_master_bytes(master: bytes, canvas: tuple[int, int] | None = None) 
 def precheck_master(master_url: str, canvas: tuple[int, int] | None = None) -> dict:
     """:func:`precheck_master_bytes` 的 URL 版。取图受限于自家对象存储,见 ``_fetch``。"""
     return precheck_master_bytes(fetch_own_media(master_url), canvas)
+
+
+class StanceNotRiggable(ValueError):
+    """体型不在自动绑骨的能力范围内 —— **在花钱之前**拒。
+
+    为什么按声明拦而不是从模型几何判:实测拿全部归档 GLB 量过,四足与人形的包围盒比例
+    完全重叠(狼 Z/Y=1.47,而混元人形原始产物 3.19~4.47,比狼还大),因为管线不同阶段的
+    模型量纲不一样。几何上判不出来,只能让调用方声明。
+
+    为什么必须拦而不是"建了再说":自动绑骨对非双足**不报错**,它会漏认被遮挡的肢体,
+    那条肢体在每一帧保持同一姿势,而 ``motion_scale``、死帧数、``loop_seam``、帧数时长
+    成色**全部正常**,一道闸都不会红。用户拿到的是"有条腿是根柱子"的动画且不知情。
+    """
 
 
 class MasterPrecheckFailed(ValueError):
@@ -172,13 +194,21 @@ class Render3DAssetOperations:
         }
 
     # ── 三个动作 ─────────────────────────────────────────────────────────
-    def build(self, outfit_key: str, master_url: str) -> dict:
-        """① 图生 3D。**这一步开始花钱**,所以只在两个前提都成立时才起:
-        该造型确实还什么都没有,且母版过得了零成本预检。
+    def build(self, outfit_key: str, master_url: str, stance: CharacterStance) -> dict:
+        """① 图生 3D。**这一步开始花钱**,所以只在三个前提都成立时才起:
+        该造型确实还什么都没有、体型能绑骨、且母版过得了零成本预检。
 
         预检不过就在这里拒:母版不合格 → 模型必然不合格,而模型改不动只能重生成。
         警告不拦 —— 它们已经在母版确认闸上给人看过,人点了"就用这张"就是他的决定。
+
+        ``stance`` **无默认值**:替调用方兜成双足的话,"没给"与"明确给了双足"从这里起
+        就分不开,而分不开的代价是四足角色照样被放行去绑骨(见 :class:`StanceNotRiggable`)。
         """
+        if stance is not CharacterStance.BIPED:
+            raise StanceNotRiggable(
+                f"{_STANCE_LABEL.get(stance, stance.value)}角色目前无法绑定骨骼,三渲二这条"
+                "路线只支持双足人形。这一步没有扣费,可以改走视频路线。"
+            )
         if not self._builder.may_build_assets:
             raise SpendNotAuthorized(
                 f"本部署未开启建 3D 资产(需 WINDUP_RENDER3D_ALLOW_SPEND)。建一次 "
@@ -376,8 +406,8 @@ class _LazyOperations:
     def view(self, outfit_key: str) -> dict:
         return self._ops().view(outfit_key)
 
-    def build(self, outfit_key: str, master_url: str) -> dict:
-        return self._ops().build(outfit_key, master_url)
+    def build(self, outfit_key: str, master_url: str, stance: CharacterStance) -> dict:
+        return self._ops().build(outfit_key, master_url, stance)
 
     def approve(self, outfit_key: str, master_url: str) -> dict:
         return self._ops().approve(outfit_key, master_url)
