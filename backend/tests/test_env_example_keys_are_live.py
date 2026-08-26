@@ -31,6 +31,8 @@ _INFRA_KEYS = frozenset({
     "WINDUP_IO_POOL_SIZE",
     "WINDUP_GENERATION_PENDING_MAX_AGE", "WINDUP_GENERATION_RUNNING_STALE_SECONDS",
     "WINDUP_SSE_REDIS_CHANNEL",
+    # windup_framework.providers.matte._refine_enabled:os.environ,不走 BaseSettings
+    "WINDUP_MATTE_REFINE",
     # render3d._tc3.TencentCredentials.resolve:环境变量 → 加锁文件,不走 BaseSettings
     "TENCENT_SECRET_ID", "TENCENT_SECRET_KEY", "TENCENT_REGION",
 })
