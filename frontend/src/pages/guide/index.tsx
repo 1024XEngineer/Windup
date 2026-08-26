@@ -1,6 +1,7 @@
 import { ArrowRight, Lifebuoy, PaperPlaneTilt } from '@phosphor-icons/react'
 import { Link } from 'react-router'
 
+import headerCharacter from '@/assets/guide/header-character.webp'
 import assetLibraryArtwork from '@/assets/workspace/asset-library.png'
 import playtestArtwork from '@/assets/workspace/playtest.png'
 import workflowArtwork from '@/assets/workspace/workflow.png'
@@ -70,7 +71,17 @@ export function GuidePage() {
       <main className="min-h-[100dvh] bg-app-canvas pb-20 pt-28 text-app-ink sm:pt-32">
         <article aria-labelledby="guide-title" className="w-full px-5 sm:px-8 lg:px-12 xl:px-16">
           <header className="grid border-b border-app-line pb-9 md:grid-cols-[13.5rem_minmax(0,1fr)] md:gap-12 xl:gap-16">
-            <div className="hidden md:block" aria-hidden="true" />
+            <div
+              className="relative hidden min-h-[14rem] items-start justify-center md:flex"
+              aria-hidden="true"
+            >
+              <img
+                src={headerCharacter}
+                alt=""
+                className="pointer-events-none absolute -top-6 -left-7 h-64 w-64 max-w-none object-contain saturate-[0.74]"
+                style={{ imageRendering: 'pixelated' }}
+              />
+            </div>
             <div>
               <p className="text-meta font-semibold text-app-faint">使用指南</p>
               <h1
@@ -191,10 +202,12 @@ export function GuidePage() {
                         id={`${chapter.id}-${topicIndex + 1}`}
                         className="space-y-2"
                       >
-                        <h3 className="text-subtitle font-semibold text-app-ink-soft">
-                          {topic.title}
-                        </h3>
-                        <p className="text-body text-app-muted">{topic.description}</p>
+                        <p className="text-body leading-7 text-app-muted">
+                          <strong className="font-semibold text-app-ink-soft">
+                            {topic.title}：
+                          </strong>
+                          {topic.description}
+                        </p>
                         {topic.bullets?.map((bullet) => (
                           <p key={bullet} className="text-body text-app-ink-soft">
                             {bullet}
