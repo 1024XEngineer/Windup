@@ -1191,11 +1191,28 @@ function QuickStartInput({
     : Boolean(prompt.trim()) || Boolean(templateFile)
   const styleMenu = useProductPopoverMotion()
   const directionMenu = useProductPopoverMotion()
+  const projectMenuRoot = useRef<HTMLDivElement>(null)
+  const directionMenuRoot = useRef<HTMLDivElement>(null)
   const [directionDragging, setDirectionDragging] = useState(false)
   const [directionSliderValue, setDirectionSliderValue] = useState(() =>
     QUICK_START_DIRECTIONAL_MOVEMENTS.indexOf(directionalMovement),
   )
   const directionalMovementIndex = QUICK_START_DIRECTIONAL_MOVEMENTS.indexOf(directionalMovement)
+
+  useEffect(() => {
+    if (!projectMenuOpen && !directionMenu.expanded) return
+    function closeMenusOnOutsidePress(event: PointerEvent) {
+      const target = event.target as Node
+      if (projectMenuOpen && !projectMenuRoot.current?.contains(target)) {
+        setProjectMenuOpen(false)
+      }
+      if (directionMenu.expanded && !directionMenuRoot.current?.contains(target)) {
+        directionMenu.close()
+      }
+    }
+    document.addEventListener('pointerdown', closeMenusOnOutsidePress)
+    return () => document.removeEventListener('pointerdown', closeMenusOnOutsidePress)
+  }, [directionMenu, projectMenuOpen])
 
   return (
     <section
@@ -1464,7 +1481,7 @@ function QuickStartInput({
                     </div>
                   </>
                 ) : null}
-                <div className="relative order-first">
+                <div ref={projectMenuRoot} className="relative order-first">
                   <button
                     type="button"
                     aria-label={`选择项目，当前${selectedProject?.name ?? '自动创建'}`}
@@ -1559,7 +1576,7 @@ function QuickStartInput({
                 >
                   {ART_STYLE[gameStyle]}
                 </span>
-                <div className="relative">
+                <div ref={directionMenuRoot} className="relative">
                   <button
                     type="button"
                     aria-label={`生成方向，当前${DIRECTIONAL_MOVEMENT[directionalMovement]}`}
