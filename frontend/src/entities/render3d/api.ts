@@ -1,6 +1,7 @@
 import { createApiClient, getApiAccessToken, type ApiClient } from '@/shared/api'
 
 import type {
+  BakeJob,
   MasterFacts,
   MasterPrecheckReport,
   MasterRejectCode,
@@ -28,6 +29,9 @@ const REJECT_CODES = new Set<MasterRejectCode>([
 ])
 
 const WARNING_CODES = new Set<MasterWarningCode>(['limbs_fused', 'extra_component'])
+
+/** 与出帧台的材质表同一份。多一个少一个都会让下游在渲完之后才抛。 */
+const BAKE_MATERIALS = new Set(['cel', 'lit', 'clay', 'toon', 'orig'])
 
 const ASSET_STATES = new Set<Render3DAssetState>([
   'absent',
@@ -146,6 +150,29 @@ function parseAsset(value: unknown): Render3DAsset {
   }
 }
 
+function parseBakeJob(value: unknown): BakeJob {
+  const raw = requireRecord(value, '出帧任务')
+  const material = requireString(raw.material, 'material')
+  // 材质在这里就校验:出帧台对认不出的取值当场抛,而那时候已经把模型下下来了。
+  if (!BAKE_MATERIALS.has(material)) {
+    throw new Render3DContractError(`material 未知：${material}`)
+  }
+  return {
+    taskId: requireNumber(raw.task_id, 'task_id'),
+    modelUrl: requireString(raw.model_url, 'model_url'),
+    clip: requireString(raw.clip, 'clip'),
+    direction: requireString(raw.direction, 'direction'),
+    cameraYaw: requireNumber(raw.camera_yaw, 'camera_yaw'),
+    frames: requireNumber(raw.frames, 'frames'),
+    width: requireNumber(raw.width, 'width'),
+    height: requireNumber(raw.height, 'height'),
+    material,
+    minCoverage: requireNumber(raw.min_coverage, 'min_coverage'),
+    deadlineAt: requireNumber(raw.deadline_at, 'deadline_at'),
+    received: requireNumber(raw.received, 'received'),
+  }
+}
+
 function outfitPath(characterId: string, outfitId: string): string {
   return `/render3d/characters/${encodeURIComponent(characterId)}/outfits/${encodeURIComponent(outfitId)}`
 }
@@ -198,6 +225,44 @@ export function createRender3DApis(client: ApiClient = defaultClient()): Render3
         }),
       )
     },
+
+    async getBakeJob(taskId) {
+      try {
+        return parseBakeJob(await client.request<unknown>(`/render3d/bake/${taskId}`))
+      } catch (error) {
+        // 契约不符要炸,"没有登记"是正常结果:任务不走三渲二、或已经收口了。
+        if (error instanceof Render3DContractError) throw error
+        return null
+      }
+    },
+
+    async putBakeFrame(taskId, index, png) {
+      const form = new FormData()
+      // 不手动设置 Content-Type,浏览器会为 FormData 自动附加 boundary。
+      form.append('file', png, `f${String(index).padStart(2, '0')}.png`)
+      const raw = requireRecord(
+        await client.request<unknown>(`/render3d/bake/${taskId}/frames/${index}`, {
+          method: 'POST',
+          body: form,
+        }),
+        '交帧结果',
+      )
+      return requireNumber(raw.received, 'received')
+    },
+
+    async completeBake(taskId, completion) {
+      await client.request<unknown>(`/render3d/bake/${taskId}/complete`, {
+        method: 'POST',
+        json: { clip: completion.clip, sample_times: completion.sampleTimes },
+      })
+    },
+
+    async failBake(taskId, reason) {
+      await client.request<unknown>(`/render3d/bake/${taskId}/fail`, {
+        method: 'POST',
+        json: { reason },
+      })
+    },
   }
 }
 
@@ -215,4 +280,8 @@ export const render3DApis: Render3DApis = {
     createRender3DApis().approveOutfitAsset(characterId, outfitId),
   discardOutfitAsset: (characterId, outfitId) =>
     createRender3DApis().discardOutfitAsset(characterId, outfitId),
+  getBakeJob: (taskId) => createRender3DApis().getBakeJob(taskId),
+  putBakeFrame: (taskId, index, png) => createRender3DApis().putBakeFrame(taskId, index, png),
+  completeBake: (taskId, completion) => createRender3DApis().completeBake(taskId, completion),
+  failBake: (taskId, reason) => createRender3DApis().failBake(taskId, reason),
 }

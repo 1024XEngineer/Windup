@@ -88,24 +88,61 @@ def _payload_with_frames(project_id: int, **overrides):
     return base
 
 
-def _directional_data(directions: list[str]) -> dict:
+def _complete_directional_data(movement: int) -> dict:
+    from windup_common.directions import (
+        compass_directions_for_movement,
+        required_directions_for_movement,
+    )
+
+    sources = {direction.value for direction in required_directions_for_movement(movement)}
+    directions = [
+        direction.value for direction in compass_directions_for_movement(movement)
+    ]
+    return _directional_data(directions, sources=sources)
+
+
+def _directional_data(directions: list[str], *, sources: set[str] | None = None) -> dict:
     def frame(direction: str) -> dict:
         return {
             "index": 0,
             "image_url": f"https://example.com/{direction}-0.png",
         }
 
+    def template(direction: str) -> dict:
+        if sources is not None and direction not in sources:
+            return {
+                "direction": direction,
+                "source_direction": _MIRROR_SOURCES[direction],
+                "mirror_x": True,
+                "image_url": None,
+            }
+        return {
+            "direction": direction,
+            "source_direction": None,
+            "mirror_x": False,
+            "image_url": f"https://example.com/{direction}.png",
+        }
+
+    def sequence(direction: str) -> dict:
+        if sources is not None and direction not in sources:
+            return {
+                "direction": direction,
+                "source_direction": _MIRROR_SOURCES[direction],
+                "mirror_x": True,
+                "frame_count": 1,
+                "frames": [],
+            }
+        return {
+            "direction": direction,
+            "source_direction": None,
+            "mirror_x": False,
+            "frame_count": 1,
+            "frames": [frame(direction)],
+        }
+
     return {
         "version": 2,
-        "templates": [
-            {
-                "direction": direction,
-                "source_direction": None,
-                "mirror_x": False,
-                "image_url": f"https://example.com/{direction}.png",
-            }
-            for direction in directions
-        ],
+        "templates": [template(direction) for direction in directions],
         "outfits": [
             {
                 "id": "outfit-1",
@@ -117,21 +154,19 @@ def _directional_data(directions: list[str]) -> dict:
                         "name": "待机",
                         "frame_count": 1,
                         "frames": [frame("east")],
-                        "sequences": [
-                            {
-                                "direction": direction,
-                                "source_direction": None,
-                                "mirror_x": False,
-                                "frame_count": 1,
-                                "frames": [frame(direction)],
-                            }
-                            for direction in directions
-                        ],
+                        "sequences": [sequence(direction) for direction in directions],
                     }
                 ],
             }
         ],
     }
+
+
+_MIRROR_SOURCES = {
+    "west": "east",
+    "north_west": "north_east",
+    "south_west": "south_east",
+}
 
 
 def test_character_model_defaults_to_draft(db_session):
@@ -921,18 +956,14 @@ def test_update_rejects_published_version_one_asset_in_multi_direction_project(
 
 
 @pytest.mark.parametrize(
-    ("movement", "directions", "missing"),
+    ("movement", "drop", "missing"),
     [
-        (2, ["east", "north", "south"], "west"),
-        (
-            3,
-            ["east", "west", "north", "south", "north_east", "south_east"],
-            "north_west",
-        ),
+        (2, "west", "west"),
+        (3, "north_west", "north_west"),
     ],
 )
 def test_update_rejects_published_version_two_assets_with_missing_real_directions(
-    auth_client, movement, directions, missing
+    auth_client, movement, drop, missing
 ):
     project = _create_project(
         auth_client,
@@ -943,37 +974,31 @@ def test_update_rejects_published_version_two_assets_with_missing_real_direction
         "/characters",
         json=_payload(project["id"]),
     ).json()["data"]
+    character_data = _complete_directional_data(movement)
+    character_data["templates"] = [
+        template
+        for template in character_data["templates"]
+        if template["direction"] != drop
+    ]
+    action = character_data["outfits"][0]["actions"][0]
+    action["sequences"] = [
+        sequence
+        for sequence in action["sequences"]
+        if sequence["direction"] != drop
+    ]
 
     body = auth_client.patch(
         f"/characters/{created['id']}",
-        json={"character_data": _directional_data(directions)},
+        json={"character_data": character_data},
     ).json()
 
     assert body["code"] == 400
     assert missing in body["message"]
 
 
-@pytest.mark.parametrize(
-    ("movement", "directions"),
-    [
-        (2, ["east", "west", "north", "south"]),
-        (
-            3,
-            [
-                "east",
-                "west",
-                "north",
-                "south",
-                "north_east",
-                "north_west",
-                "south_east",
-                "south_west",
-            ],
-        ),
-    ],
-)
+@pytest.mark.parametrize("movement", [2, 3])
 def test_update_accepts_complete_version_two_multi_direction_assets(
-    auth_client, movement, directions
+    auth_client, movement
 ):
     project = _create_project(
         auth_client,
@@ -987,9 +1012,7 @@ def test_update_accepts_complete_version_two_multi_direction_assets(
 
     response = auth_client.patch(
         f"/characters/{created['id']}",
-        json={
-            "character_data": _directional_data(directions)
-        },
+        json={"character_data": _complete_directional_data(movement)},
     )
 
     assert response.status_code == 200

@@ -359,6 +359,75 @@ export function characterTemplatesFromImages(
   })
 }
 
+/** 将 PR 758 sheet 候选转换为角色合同：镜像格只保存来源关系，不保存翻转图 URL。 */
+export function characterTemplatesFromViewSheetCells(
+  cells: readonly {
+    direction: ActionDirection
+    imageUrl: string
+    sourceDirection: ActionDirection | null
+    mirrorX: boolean
+  }[],
+): CharacterTemplate[] {
+  const expectedDirections =
+    cells.length === 4
+      ? (['east', 'west', 'north', 'south'] as const)
+      : cells.length === 8
+        ? ACTION_DIRECTIONS
+        : null
+  const presentDirections = new Set(cells.map((cell) => cell.direction))
+  if (
+    expectedDirections === null ||
+    presentDirections.size !== expectedDirections.length ||
+    expectedDirections.some((direction) => !presentDirections.has(direction))
+  ) {
+    throw new TypeError('方向 sheet 的格子集合不符合四向/八向规格')
+  }
+  const mirrorSources: Partial<Record<ActionDirection, ActionDirection>> = {
+    west: 'east',
+    ...(cells.length === 8
+      ? { north_west: 'north_east' as const, south_west: 'south_east' as const }
+      : {}),
+  }
+  if (
+    cells.some((cell) => {
+      const expectedSourceDirection = mirrorSources[cell.direction] ?? null
+      return (
+        cell.sourceDirection !== expectedSourceDirection ||
+        cell.mirrorX !== (expectedSourceDirection !== null)
+      )
+    })
+  ) {
+    throw new TypeError('方向 sheet 镜像关系不符合四向/八向规格')
+  }
+  const directions = new Set<ActionDirection>()
+  const templates = cells.map((cell) => {
+    if (directions.has(cell.direction)) throw new TypeError('方向 sheet 包含重复方向')
+    directions.add(cell.direction)
+    const imageUrl = cell.imageUrl.trim()
+    if (!imageUrl) throw new TypeError('方向 sheet 格子缺少图片')
+    if (
+      cell.mirrorX !== (cell.sourceDirection !== null) ||
+      cell.sourceDirection === cell.direction
+    ) {
+      throw new TypeError('方向 sheet 镜像关系无效')
+    }
+    return {
+      direction: cell.direction,
+      sourceDirection: cell.sourceDirection,
+      mirrorX: cell.mirrorX,
+      imageUrl: cell.mirrorX ? null : imageUrl,
+    }
+  })
+  return mapCharacterTemplates(
+    templates.map((template) => ({
+      direction: template.direction,
+      source_direction: template.sourceDirection,
+      mirror_x: template.mirrorX,
+      image_url: template.imageUrl,
+    })),
+  )
+}
+
 /** 只还原真实源图；镜像方向由消费方根据关系生成。 */
 export function characterTemplateImages(
   templates: readonly CharacterTemplate[] = [],

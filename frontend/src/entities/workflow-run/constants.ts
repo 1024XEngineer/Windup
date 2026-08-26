@@ -27,6 +27,8 @@ export const WORKFLOW_NODE_PHASES = [
 /** 与 Generation.type 使用同一组词，避免恢复任务时再做第二套名称转换。 */
 export const WORKFLOW_GENERATION_ROLES = [
   'character_template',
+  'character_four_view',
+  'character_eight_view',
   'first_frame',
   'complete_animation',
 ] as const

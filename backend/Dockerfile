@@ -59,9 +59,13 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
 # 启动命令
 CMD ["uvicorn", "windup_app.bootstrap.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
 
-# ── 阶段 2b: 出帧运行时（三渲二，只有 worker 需要）──
+# ── 阶段 2b: 出帧运行时（三渲二的服务端渲，回退路径）──
 # 出帧段是「起本地 HTTP 服务 → node + playwright 驱动出帧台 → 读回 PNG」，
 # 所以 node / playwright / three 是硬依赖，缺任何一个该路线在运行时才报错。
+#
+# 默认已不再构建它：应用机 4 核无 GPU，只能走 SwiftShader 软件光栅（实测峰值想吃 7.6
+# 个核），而这一层让 worker 镜像从 820MB 涨到 2.53GB（其中 /ms-playwright 656MB）。
+# 出帧改由用户浏览器承担（#714）；本阶段留给 WINDUP_RENDER3D_CLIENT_BAKE=0 的回退。
 FROM runtime-base AS runtime-render3d
 
 ARG PLAYWRIGHT_VERSION=1.62.1

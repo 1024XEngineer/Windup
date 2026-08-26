@@ -8,7 +8,6 @@ import { Link, MemoryRouter, Route, Routes } from 'react-router'
 import {
   WorkflowRunConflictError,
   type Character,
-  type ActionDirection,
   type CharacterTemplateWorkflowNode,
   type Generation,
   type GenerationApis,
@@ -316,6 +315,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     renderEditor('/workflow-editor/42')
 
     const image = await screen.findByRole('img', { name: '已确认身份母版' })
+    image.addEventListener('load', (event) => event.stopImmediatePropagation())
     fireEvent.error(image)
 
     expect(await screen.findByText('图片加载失败')).toBeTruthy()
@@ -479,7 +479,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     await waitFor(() => expect(screen.queryByRole('textbox', { name: '角色描述' })).toBeNull())
   })
 
-  it('四向项目初次只提交三张 east 母版候选', async () => {
+  it('四向项目初次只提交三张 south 母版候选', async () => {
     const createGeneration = vi.fn(async (input: { direction?: string }) => ({
       id: `template-${input.direction ?? 'east'}`,
       projectId: '1',
@@ -502,7 +502,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
 
     await waitFor(() => expect(createGeneration).toHaveBeenCalledTimes(1))
     expect(createGeneration).toHaveBeenCalledWith(
-      expect.objectContaining({ direction: 'east', candidateCount: 3 }),
+      expect.objectContaining({ direction: 'south', candidateCount: 3 }),
     )
   })
 
@@ -685,6 +685,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
       expect(confirmCharacterTemplate).toHaveBeenCalledWith(
         'character-template',
         'https://assets.windup.test/character.png',
+        'east',
       ),
     )
     expect(await screen.findByRole('button', { name: '导出角色母版' })).toBeTruthy()
@@ -694,21 +695,23 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
   })
 
-  it('四向项目确认母版后才以该母版为参考生成其余方向且每向一张', async () => {
-    const createGeneration = vi.fn(async (input: { direction?: string }) => ({
-      id: `template-${input.direction}`,
+  it('四向项目确认南向母版后只提交一个四视图 sheet 任务', async () => {
+    const createGeneration = vi.fn(async (input: { type: Generation['type'] }) => ({
+      id: `task-${input.type}`,
       projectId: '1',
-      type: 'character_template' as const,
+      type: input.type,
       status: 'pending' as const,
       result: null,
       error: null,
     }))
     const project = { ...projectFixture(), directionalMovement: 'four-way' as const }
-    const session = createSession(selectingTemplateWorkflow(4, 'template-east'), {
+    const workflow = selectingTemplateWorkflow(4, 'template-south')
+    ;(workflow.nodes[1] as CharacterTemplateWorkflowNode).generations[0]!.direction = 'south'
+    const session = createSession(workflow, {
       project,
       generationApis: generationApisFixture({
         create: createGeneration as GenerationApis['create'],
-        get: vi.fn().mockResolvedValue(characterGeneration('character')),
+        get: vi.fn().mockResolvedValue(directionalCharacterGeneration('south')),
       }),
     })
     defaultSessionLoader.mockResolvedValue(session)
@@ -718,18 +721,15 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     fireEvent.click(await screen.findByRole('button', { name: '选择角色候选 1' }))
     fireEvent.click(await screen.findByRole('button', { name: '确认为定妆母版' }))
 
-    await waitFor(() => expect(createGeneration).toHaveBeenCalledTimes(3))
-    expect(createGeneration.mock.calls.map(([input]) => input.direction)).toEqual([
-      'west',
-      'north',
-      'south',
-    ])
-    for (const [input] of createGeneration.mock.calls) {
-      expect(input).toMatchObject({
+    await waitFor(() => expect(createGeneration).toHaveBeenCalledTimes(1))
+    expect(createGeneration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'character_four_view',
+        characterId: '9',
         candidateCount: 1,
-        referenceMedia: ['https://assets.windup.test/character.png'],
-      })
-    }
+        referenceMedia: [],
+      }),
+    )
   })
 
   it('旧流程已提前生成多方向时不再允许把不同角色结果直接确认为方向集', async () => {
@@ -763,49 +763,40 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     expect(screen.queryByRole('button', { name: /选择.*角色候选/ })).toBeNull()
   })
 
-  it('四向首帧在一个方向集合中展示并一次确认', async () => {
-    const workflow = selectingTemplateWorkflow(4, 'template-east')
+  it('四向 sheet 的四张独立图片在一个方向集合中展示并一次确认', async () => {
+    const workflow = selectingTemplateWorkflow(4, 'template-south')
     workflow.nodes[1] = {
       ...(workflow.nodes[1] as CharacterTemplateWorkflowNode),
-      selectedImageUrl: 'https://assets.windup.test/master.png',
-      selectedImages: { east: 'https://assets.windup.test/master.png' },
-      generations: (['east', 'west', 'north', 'south'] as const).map((direction) => ({
-        taskId: `template-${direction}`,
-        role: 'character_template',
-        direction,
-      })),
+      selectedImageUrl: 'https://assets.windup.test/south.png',
+      selectedImages: { south: 'https://assets.windup.test/south.png' },
+      generations: [
+        { taskId: 'template-south', role: 'character_template', direction: 'south' },
+        { taskId: 'view-sheet', role: 'character_four_view' },
+      ],
     }
     const project = { ...projectFixture(), directionalMovement: 'four-way' as const }
     const session = createSession(workflow, {
       project,
       generationApis: generationApisFixture({
-        get: vi.fn(async (_projectId: string, taskId: string) => {
-          const direction = taskId.replace('template-', '') as 'east' | 'west' | 'north' | 'south'
-          return directionalCharacterGeneration(direction)
-        }) as GenerationApis['get'],
+        get: vi.fn(async (_projectId: string, taskId: string) =>
+          taskId === 'view-sheet'
+            ? viewSheetGeneration('character_four_view')
+            : directionalCharacterGeneration('south'),
+        ) as GenerationApis['get'],
       }),
     })
-    session.confirmCharacterTemplate = async (nodeId, imageUrl, direction = 'east') => {
-      await session.controller.confirmCharacterTemplate(nodeId, imageUrl, 'character-1', direction)
-      return characterFixture()
-    }
     defaultSessionLoader.mockResolvedValue(session)
 
     renderEditor('/workflow-editor/42')
 
-    for (const [direction, label] of [
-      ['east', '东'],
-      ['west', '西'],
-      ['north', '北'],
-      ['south', '南'],
-    ] as const) {
-      expect(
-        (await screen.findByRole('img', { name: `${label}方向首帧` })).getAttribute('src'),
-      ).toContain(direction === 'east' ? '/master.png' : `/${direction}.png`)
-    }
-    expect(screen.getByRole('group', { name: '四向首帧集合' })).toBeTruthy()
+    const candidate = await screen.findByRole('button', { name: '选择方向立绘候选 1' })
+    expect(within(candidate).getAllByRole('img')).toHaveLength(4)
+    expect(
+      within(candidate).getByRole('img', { name: '西方向角色母版' }).getAttribute('src'),
+    ).toContain('/west.png')
     expect(screen.queryByRole('button', { name: /选择.*角色候选/ })).toBeNull()
 
+    fireEvent.click(candidate)
     fireEvent.click(screen.getByRole('button', { name: '确认方向集合' }))
 
     await waitFor(() =>
@@ -813,7 +804,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
         status: 'passed',
         phase: 'completed',
         selectedImages: {
-          east: 'https://assets.windup.test/master.png',
+          east: 'https://assets.windup.test/east.png',
           west: 'https://assets.windup.test/west.png',
           north: 'https://assets.windup.test/north.png',
           south: 'https://assets.windup.test/south.png',
@@ -822,54 +813,34 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
   })
 
-  it('八向首帧集合使用九宫格并将中心留空', async () => {
-    const directions = [
-      'east',
-      'west',
-      'north',
-      'south',
-      'north_east',
-      'north_west',
-      'south_east',
-      'south_west',
-    ] as const
-    const workflow = selectingTemplateWorkflow(4, 'template-east')
+  it('八向 sheet 使用九宫格并将中心留空', async () => {
+    const workflow = selectingTemplateWorkflow(4, 'template-south')
     workflow.nodes[1] = {
       ...(workflow.nodes[1] as CharacterTemplateWorkflowNode),
-      selectedImageUrl: 'https://assets.windup.test/master.png',
-      selectedImages: { east: 'https://assets.windup.test/master.png' },
-      generations: directions.map((direction) => ({
-        taskId: `template-${direction}`,
-        role: 'character_template',
-        direction,
-      })),
+      selectedImageUrl: 'https://assets.windup.test/south.png',
+      selectedImages: { south: 'https://assets.windup.test/south.png' },
+      generations: [
+        { taskId: 'template-south', role: 'character_template', direction: 'south' },
+        { taskId: 'view-sheet', role: 'character_eight_view' },
+      ],
     }
     const project = { ...projectFixture(), directionalMovement: 'eight-way' as const }
     const session = createSession(workflow, {
       project,
       generationApis: generationApisFixture({
-        get: vi.fn(async (_projectId: string, taskId: string) => {
-          const direction = taskId.replace('template-', '') as ActionDirection
-          return {
-            id: taskId,
-            projectId: '1',
-            type: 'character_template' as const,
-            status: 'completed' as const,
-            result: {
-              type: 'character_template' as const,
-              direction,
-              images: [{ url: `https://assets.windup.test/${direction}.png` }],
-            },
-            error: null,
-          }
-        }) as GenerationApis['get'],
+        get: vi.fn(async (_projectId: string, taskId: string) =>
+          taskId === 'view-sheet'
+            ? viewSheetGeneration('character_eight_view')
+            : directionalCharacterGeneration('south'),
+        ) as GenerationApis['get'],
       }),
     })
     defaultSessionLoader.mockResolvedValue(session)
 
     renderEditor('/workflow-editor/42')
 
-    const group = await screen.findByRole('group', { name: '八向首帧集合' })
+    const candidate = await screen.findByRole('button', { name: '选择方向立绘候选 1' })
+    const group = within(candidate).getByRole('group', { name: '八向角色母版集合' })
     expect(group.className).toContain('grid-cols-3')
     expect(group.className).toContain('aspect-square')
     expect(within(group).getAllByRole('img')).toHaveLength(8)
@@ -886,7 +857,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
         north: 'https://assets.windup.test/north.png',
         south: 'https://assets.windup.test/south.png',
       },
-      selectedImageUrl: 'https://assets.windup.test/east.png',
+      selectedImageUrl: 'https://assets.windup.test/south.png',
     }
     defaultSessionLoader.mockResolvedValue(
       createSession(workflow, {
@@ -1279,7 +1250,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     Object.assign(firstFrame, {
       status: 'active',
       phase: 'selecting',
-      generations: (['east', 'west', 'north', 'south'] as const).map((direction) => ({
+      generations: (['east', 'north', 'south'] as const).map((direction) => ({
         taskId: `first-${direction}`,
         role: 'first_frame' as const,
         direction,
@@ -1304,7 +1275,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
       project,
       generationApis: generationApisFixture({
         get: vi.fn(async (_projectId: string, taskId: string) => {
-          const direction = taskId.replace('first-', '') as 'east' | 'west' | 'north' | 'south'
+          const direction = taskId.replace('first-', '') as 'east' | 'north' | 'south'
           return {
             id: taskId,
             projectId: '1',
@@ -1334,7 +1305,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
       }),
     )
     expect(screen.getByRole('img', { name: '北动作首帧候选 1' })).toBeTruthy()
-    expect(screen.getByRole('img', { name: '西动作首帧候选 1' })).toBeTruthy()
+    expect(screen.queryByRole('img', { name: '西动作首帧候选 1' })).toBeNull()
   })
 
   it('八向动作首帧完成态展示八张独立图片并将中心留空', async () => {
@@ -2113,8 +2084,13 @@ function createSession(
     uploadReferenceImage:
       options.uploadReferenceImage ??
       vi.fn(() => Promise.reject(new Error('媒体上传服务尚未装配'))),
-    confirmCharacterTemplate: async (nodeId, selectedImageUrl) => {
-      await controller.confirmCharacterTemplate(nodeId, selectedImageUrl, 'character-1')
+    confirmCharacterTemplate: async (nodeId, selectedImageUrl, direction = 'east') => {
+      const character = options.character ?? characterFixture()
+      await controller.confirmCharacterTemplate(nodeId, selectedImageUrl, character.id, direction)
+      return character
+    },
+    confirmCharacterViewSheet: async (nodeId, candidate) => {
+      await controller.confirmCharacterViewSheet(nodeId, candidate.cells)
       return options.character ?? characterFixture()
     },
     publishReviewedAction:
@@ -2449,6 +2425,77 @@ function directionalCharacterGeneration(
       type: 'character_template',
       direction,
       images: [{ url: `https://assets.windup.test/${direction}.png` }],
+    },
+    error: null,
+  }
+}
+
+function viewSheetGeneration(
+  type: 'character_four_view' | 'character_eight_view',
+): Generation<'character_four_view' | 'character_eight_view'> {
+  const cells = [
+    {
+      direction: 'south' as const,
+      imageUrl: 'https://assets.windup.test/south.png',
+      sourceDirection: null,
+      mirrorX: false,
+    },
+    {
+      direction: 'east' as const,
+      imageUrl: 'https://assets.windup.test/east.png',
+      sourceDirection: null,
+      mirrorX: false,
+    },
+    {
+      direction: 'north' as const,
+      imageUrl: 'https://assets.windup.test/north.png',
+      sourceDirection: null,
+      mirrorX: false,
+    },
+    {
+      direction: 'west' as const,
+      imageUrl: 'https://assets.windup.test/west.png',
+      sourceDirection: 'east' as const,
+      mirrorX: true,
+    },
+    ...(type === 'character_eight_view'
+      ? [
+          {
+            direction: 'north_east' as const,
+            imageUrl: 'https://assets.windup.test/north_east.png',
+            sourceDirection: null,
+            mirrorX: false,
+          },
+          {
+            direction: 'north_west' as const,
+            imageUrl: 'https://assets.windup.test/north_west.png',
+            sourceDirection: 'north_east' as const,
+            mirrorX: true,
+          },
+          {
+            direction: 'south_east' as const,
+            imageUrl: 'https://assets.windup.test/south_east.png',
+            sourceDirection: null,
+            mirrorX: false,
+          },
+          {
+            direction: 'south_west' as const,
+            imageUrl: 'https://assets.windup.test/south_west.png',
+            sourceDirection: 'south_east' as const,
+            mirrorX: true,
+          },
+        ]
+      : []),
+  ]
+  return {
+    id: 'view-sheet',
+    projectId: '1',
+    type,
+    status: 'completed',
+    result: {
+      type,
+      sheets: [{ sheetUrl: 'https://assets.windup.test/sheet.png', cells }],
+      quality: null,
     },
     error: null,
   }

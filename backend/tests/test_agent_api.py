@@ -221,6 +221,30 @@ def test_ai_chat_returns_text_from_real_provider(
     assert "max_tokens" not in provider_requests[0]
 
 
+def test_ai_chat_forwards_multimodal_user_content(
+    auth_client,
+    install_openai_provider: Callable[..., list[dict[str, Any]]],
+):
+    provider_requests = install_openai_provider(auth_client, _text_completion())
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "参考这张图片创建角色"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://cdn.windup.test/hero.png"},
+                },
+            ],
+        }
+    ]
+
+    response = auth_client.post("/ai/chat", json=_request_body(messages=messages))
+
+    assert response.status_code == 200
+    assert provider_requests[0]["messages"] == messages
+
+
 def test_ai_chat_preserves_one_tool_call_from_real_provider(
     auth_client,
     install_openai_provider: Callable[..., list[dict[str, Any]]],
@@ -300,6 +324,24 @@ def test_ai_chat_rejects_oversized_history_before_provider(auth_client):
 
     assert response.status_code == 422
     assert response.headers["x-request-id"]
+    assert response.json()["error"]["code"] == "invalid_request"
+    assert calls == 0
+
+
+def test_ai_chat_rejects_oversized_plain_text_before_provider(auth_client):
+    calls = 0
+
+    def forbidden_factory(*_args: Any, **_kwargs: Any):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("oversized message reached the paid provider")
+
+    auth_client.app.state.chat_model_factory = forbidden_factory
+    messages = [{"role": "user", "content": "x" * 8_001}]
+
+    response = auth_client.post("/ai/chat", json=_request_body(messages=messages))
+
+    assert response.status_code == 422
     assert response.json()["error"]["code"] == "invalid_request"
     assert calls == 0
 

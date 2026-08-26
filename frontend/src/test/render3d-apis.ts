@@ -1,4 +1,4 @@
-import type { MasterPrecheckReport, Render3DApis, Render3DAsset } from '@/entities'
+import type { BakeJob, MasterPrecheckReport, Render3DApis, Render3DAsset } from '@/entities'
 
 /**
  * 三渲二资产的测试替身。
@@ -46,6 +46,25 @@ export function absentAsset(overrides: Partial<Render3DAsset> = {}): Render3DAss
   }
 }
 
+/** 一个刚挂出来的出帧任务。数字取自实测口径:竖屏 1536×2560、8 帧、覆盖率阈值 0.005。 */
+export function bakeJob(overrides: Partial<BakeJob> = {}): BakeJob {
+  return {
+    taskId: 1,
+    modelUrl: 'https://media.example.com/media/model-3d/rigged.glb',
+    clip: 'walk',
+    direction: 'e',
+    cameraYaw: 0,
+    frames: 8,
+    width: 1536,
+    height: 2560,
+    material: 'cel',
+    minCoverage: 0.005,
+    deadlineAt: 4_102_444_800,
+    received: 0,
+    ...overrides,
+  }
+}
+
 export function stubRender3DApis(overrides: Partial<Render3DApis> = {}): Render3DApis {
   return {
     precheckMaster: async () => acceptedReport(),
@@ -53,6 +72,10 @@ export function stubRender3DApis(overrides: Partial<Render3DApis> = {}): Render3
     buildOutfitAsset: async () => absentAsset({ state: 'awaiting_review' }),
     approveOutfitAsset: async () => absentAsset({ state: 'ready' }),
     discardOutfitAsset: async () => absentAsset(),
+    getBakeJob: async () => null,
+    putBakeFrame: async () => 1,
+    completeBake: async () => undefined,
+    failBake: async () => undefined,
     ...overrides,
   }
 }

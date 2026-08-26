@@ -5,6 +5,8 @@ import type {
   ActionGenerationMethodWorkflowNode,
   ActionDirection,
   CharacterTemplateGenerationInput,
+  CharacterViewSheetCell,
+  CharacterViewSheetGenerationInput,
   CharacterSetupWorkflowNode,
   CharacterTemplateWorkflowNode,
   CompleteAnimationGenerationInput,
@@ -69,6 +71,15 @@ export interface GenerateActionOptions {
   prompt?: string
 }
 
+export interface GenerateCharacterViewSheetOptions {
+  characterId: string
+  prompt: string
+  negativePrompt?: string
+  spriteWidth: number
+  spriteHeight: number
+  candidateCount?: ImageCandidateCount
+}
+
 export interface GenerateFirstFrameOptions {
   spriteWidth: number
   spriteHeight: number
@@ -121,6 +132,8 @@ export type PrepareQuickStartProject = (
 
 export interface StartCharacterGenerationInput {
   prompt: string
+  /** 用户在 Agent 对话中上传的原始图片；与优化后的文字共同约束角色母版。 */
+  referenceMedia?: readonly MediaReference[]
   directionalMovement?: DirectionalMovement
   gameStyle?: ArtStyle
   projectId?: Project['id']
@@ -150,6 +163,11 @@ export interface CreateWorkflowControllerOptions {
   onAsyncError: (error: Error) => void
   /** 项目方向模式；缺省按旧单向 WorkflowRun 兼容。 */
   directionalMovement?: DirectionalMovement
+  /**
+   * 三渲二出帧在浏览器里跑（#714）。缺省用真实实现；测试注入替身，避免在 jsdom 里
+   * 起 WebGL。返回 false 表示这条任务不需要浏览器出帧（走 i2v 或已收口）。
+   */
+  runClientBake?: (taskId: Generation['id']) => Promise<boolean>
 }
 
 /**
@@ -195,6 +213,14 @@ export interface WorkflowController {
     selectedImageUrl: string,
     characterId: string,
     direction?: ActionDirection,
+  ): Promise<void>
+  generateCharacterViewSheet(
+    nodeId: CharacterTemplateWorkflowNode['id'],
+    options: GenerateCharacterViewSheetOptions,
+  ): Promise<void>
+  confirmCharacterViewSheet(
+    nodeId: CharacterTemplateWorkflowNode['id'],
+    cells: readonly CharacterViewSheetCell[],
   ): Promise<void>
   generateFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
@@ -284,6 +310,15 @@ export function createAutoPrepareProject(
   }
 }
 
+/**
+ * 三渲二出帧的默认实现。**动态 import** —— three.js 只有这条路线用得着,静态引进来
+ * 会让每个进首页的用户都先下一份它。
+ */
+async function defaultRunClientBake(taskId: Generation['id']): Promise<boolean> {
+  const { attachClientBake } = await import('@/features/client-bake/attach')
+  return attachClientBake(Number(taskId))
+}
+
 export function createWorkflowController({
   workflow,
   workflowRunApis,
@@ -293,6 +328,7 @@ export function createWorkflowController({
   prepareProject,
   onAsyncError,
   directionalMovement = 'single',
+  runClientBake = defaultRunClientBake,
 }: CreateWorkflowControllerOptions): WorkflowController {
   let current = workflow ? structuredClone(workflow) : null
   let interrupted = false
@@ -305,7 +341,8 @@ export function createWorkflowController({
   const regenerationKeys = new Set<string>()
   const settlements = new Map<string, Promise<WorkflowRun>>()
   const listeners = new Set<(workflow: WorkflowRun) => void>()
-  let generationDirections = getDirectionProfile(directionalMovement).generationDirections
+  let currentDirectionalMovement = directionalMovement
+  let generationDirections = getDirectionProfile(directionalMovement).sourceDirections
 
   function selectedDirectionUrl(
     values: Partial<Record<ActionDirection, string>> | undefined,
@@ -397,6 +434,7 @@ export function createWorkflowController({
 
   async function startCharacterGeneration({
     prompt,
+    referenceMedia = [],
     directionalMovement: selectedDirectionalMovement = 'single',
     gameStyle,
     projectId,
@@ -417,7 +455,8 @@ export function createWorkflowController({
     })
     generationDirections = getDirectionProfile(
       project.directionalMovement ?? selectedDirectionalMovement,
-    ).generationDirections
+    ).sourceDirections
+    currentDirectionalMovement = project.directionalMovement ?? selectedDirectionalMovement
     await create({
       projectId: project.id,
       nodes: [
@@ -429,7 +468,7 @@ export function createWorkflowController({
           dependsOnNodeIds: [],
           generations: [],
           error: null,
-          input: { prompt: normalizedPrompt, referenceMedia: [] },
+          input: { prompt: normalizedPrompt, referenceMedia: [...referenceMedia] },
           ...(suggestPixelPerfect ? { pixelPerfectSuggested: true } : {}),
           ...(automaticDelivery
             ? {
@@ -457,7 +496,7 @@ export function createWorkflowController({
     await generateCharacterTemplate('character-setup', {
       spriteWidth: project.spriteSize.width,
       spriteHeight: project.spriteSize.height,
-      directions: ['east'],
+      directions: [currentDirectionalMovement === 'single' ? 'east' : 'south'],
       ...(automaticDelivery ? { candidateCount: 1 as const } : {}),
     })
     return { runId: requireWorkflow().id }
@@ -696,7 +735,10 @@ export function createWorkflowController({
             return {
               ...templateNode,
               selectedImageUrl:
-                direction === 'east'
+                direction === 'east' ||
+                (direction === 'south' &&
+                  currentDirectionalMovement !== 'single' &&
+                  !templateNode.selectedImageUrl)
                   ? imageUrl
                   : (templateNode.selectedImageUrl ?? selectedImages.east ?? null),
               selectedImages,
@@ -707,6 +749,111 @@ export function createWorkflowController({
           return node
         }),
       })
+    })
+  }
+
+  function generateCharacterViewSheet(
+    nodeId: CharacterTemplateWorkflowNode['id'],
+    options: GenerateCharacterViewSheetOptions,
+  ) {
+    ensureRunning()
+    if (currentDirectionalMovement === 'single') {
+      return Promise.reject(new Error('单向项目不需要生成方向 sheet'))
+    }
+    ensurePositiveInteger(options.spriteWidth, 'spriteWidth')
+    ensurePositiveInteger(options.spriteHeight, 'spriteHeight')
+    const candidateCount = options.candidateCount ?? 1
+    const role =
+      currentDirectionalMovement === 'four-way'
+        ? ('character_four_view' as const)
+        : ('character_eight_view' as const)
+    return submitGeneration(nodeId, role, (run, node) => {
+      if (node.type !== 'character-template') throw new Error('目标节点不是角色母版')
+      if (node.phase !== 'selecting' || !node.selectedImageUrl) {
+        throw new Error('必须先确认南向正视母版')
+      }
+      const setupNode = findSingleDependencyNode(run, node, 'character-setup')
+      const characterId = nonEmpty(options.characterId, 'characterId')
+      if (setupNode.input.characterId !== characterId) {
+        throw new Error('方向 sheet 与 WorkflowRun 绑定的角色不一致')
+      }
+      const input: CharacterViewSheetGenerationInput = {
+        type:
+          currentDirectionalMovement === 'four-way'
+            ? 'character_four_view'
+            : 'character_eight_view',
+        projectId: run.projectId,
+        characterId,
+        prompt: options.prompt,
+        ...(options.negativePrompt === undefined ? {} : { negativePrompt: options.negativePrompt }),
+        referenceMedia: [],
+        spriteWidth: options.spriteWidth,
+        spriteHeight: options.spriteHeight,
+        candidateCount,
+      }
+      return input
+    })
+  }
+
+  function confirmCharacterViewSheet(
+    nodeId: CharacterTemplateWorkflowNode['id'],
+    cells: readonly CharacterViewSheetCell[],
+  ) {
+    ensureRunning()
+    if (currentDirectionalMovement === 'single') {
+      return Promise.reject(new Error('单向项目不能确认方向 sheet'))
+    }
+    const expectedDirections = getDirectionProfile(currentDirectionalMovement).logicalDirections
+    const byDirection = new Map(cells.map((cell) => [cell.direction, cell]))
+    if (
+      cells.length !== expectedDirections.length ||
+      expectedDirections.some((direction) => !byDirection.has(direction))
+    ) {
+      return Promise.reject(new Error('方向 sheet 的格子集合与项目方向模式不一致'))
+    }
+    const south = byDirection.get('south')
+    if (!south || south.mirrorX || south.sourceDirection !== null) {
+      return Promise.reject(new Error('方向 sheet 缺少真实南向正视母版'))
+    }
+    const mirrorSources: Partial<Record<ActionDirection, ActionDirection>> = {
+      west: 'east',
+      ...(currentDirectionalMovement === 'eight-way'
+        ? { north_west: 'north_east' as const, south_west: 'south_east' as const }
+        : {}),
+    }
+    if (
+      expectedDirections.some((direction) => {
+        const cell = byDirection.get(direction)!
+        const expectedSourceDirection = mirrorSources[direction] ?? null
+        return (
+          cell.sourceDirection !== expectedSourceDirection ||
+          cell.mirrorX !== (expectedSourceDirection !== null)
+        )
+      })
+    ) {
+      return Promise.reject(new Error('方向 sheet 的镜像关系与项目方向模式不一致'))
+    }
+    const selectedImages = Object.fromEntries(
+      expectedDirections.map((direction) => [direction, byDirection.get(direction)!.imageUrl]),
+    ) as Partial<Record<ActionDirection, string>>
+    return persist((run) => {
+      const node = findNode(run, nodeId)
+      if (node.type !== 'character-template') throw new Error('目标节点不是角色母版')
+      if (node.status !== 'active' || node.phase !== 'selecting' || !node.selectedImageUrl) {
+        throw new Error('角色母版节点当前不能确认方向 sheet')
+      }
+      if (selectedImages.south !== node.selectedImageUrl) {
+        throw new Error('方向 sheet 的南向格与已确认母版不一致')
+      }
+      return unlockReadyNodes(
+        replaceNode(run, {
+          ...node,
+          selectedImages,
+          status: 'passed',
+          phase: 'completed',
+          error: null,
+        }),
+      )
     })
   }
 
@@ -787,7 +934,10 @@ export function createWorkflowController({
             return {
               ...templateNode,
               selectedImageUrl:
-                direction === 'east'
+                direction === 'east' ||
+                (direction === 'south' &&
+                  currentDirectionalMovement !== 'single' &&
+                  !templateNode.selectedImageUrl)
                   ? imageUrl
                   : (templateNode.selectedImageUrl ?? selectedImages.east ?? null),
               selectedImages,
@@ -1504,7 +1654,12 @@ export function createWorkflowController({
       const run = requireWorkflow()
       const node = findNode(run, nodeId)
       const reference = node.generations.find((item) => item.taskId === taskId)
-      const expectation = generationExpectationForNode(run, node, reference?.direction)
+      const expectation = generationExpectationForNode(
+        run,
+        node,
+        reference?.direction,
+        reference?.role,
+      )
       if (!expectation) throw new Error(`${nodeId} 不是生成节点`)
       const stop = generationApis.subscribe(
         run.projectId,
@@ -1528,6 +1683,13 @@ export function createWorkflowController({
       const latest = await generationApis.get(requireWorkflow().projectId, taskId, expectation)
       if (latest.status === 'completed' || latest.status === 'failed') {
         await settleGeneration(nodeId, taskId, latest)
+        return
+      }
+      if (expectation.type === 'complete_animation') {
+        // 三渲二把出帧挂给浏览器：渲完交回后端，终态仍由上面那条订阅收。这里不另立
+        // 状态机，出帧失败也由 runner 报给后端，任务照常走失败终态。
+        // 只问整段动作那一类：母版与首帧走生图，不经出帧台。
+        void runClientBake(taskId).catch((cause: unknown) => onAsyncError(asError(cause)))
       }
     } catch (cause) {
       stopSubscription(key)
@@ -1586,12 +1748,15 @@ export function createWorkflowController({
       before,
       node,
       generationReferenceDirection(reference),
+      reference.role,
     )
     if (!expectation) return snapshot()
 
     // 方向是任务契约的一部分。服务端返回了错误方向时不能把它静默挂到当前方向，
     // 否则四向/八向资产会在导入 Playtest 后出现“名称对得上、画面却错位”的问题。
     if (
+      reference.role !== 'character_four_view' &&
+      reference.role !== 'character_eight_view' &&
       generation.status === 'completed' &&
       generationDirectionOf(generation) !== generationReferenceDirection(reference)
     ) {
@@ -1608,12 +1773,13 @@ export function createWorkflowController({
       .filter((item) => item.role === role)
       .map((item) => generationReferenceDirection(item))
     const expectedDirections =
-      node.type === 'character-template' &&
-      !selectedDirectionUrl(node.selectedImages, node.selectedImageUrl, 'east') &&
-      roleDirections.length === 1 &&
-      roleDirections[0] === 'east'
+      role === 'character_four_view' || role === 'character_eight_view'
         ? (['east'] as const)
-        : generationDirections
+        : node.type === 'character-template' &&
+            !node.selectedImageUrl &&
+            roleDirections.length === 1
+          ? roleDirections
+          : generationDirections
     const hasAllExpectedReferences = expectedDirections.every((direction) =>
       node.generations.some(
         (item) => item.role === role && generationReferenceDirection(item) === direction,
@@ -1629,7 +1795,7 @@ export function createWorkflowController({
           : generationApis.get(
               before.projectId,
               item.taskId,
-              generationExpectationForNode(before, node, item.direction)!,
+              generationExpectationForNode(before, node, item.direction, item.role)!,
             ),
       ),
     )
@@ -1665,6 +1831,8 @@ export function createWorkflowController({
       if (
         allGenerations.some(
           (item, index) =>
+            node.generations[index]!.role !== 'character_four_view' &&
+            node.generations[index]!.role !== 'character_eight_view' &&
             generationDirectionOf(item) !== generationReferenceDirection(node.generations[index]!),
         )
       ) {
@@ -1687,6 +1855,12 @@ export function createWorkflowController({
     const invalid = generationResultError(node, generation)
     if (invalid) return failNode(run, node, invalid)
     if (reference.role === 'character_template' && node.type === 'character-template') {
+      return replaceNode(run, { ...node, phase: 'selecting', error: null })
+    }
+    if (
+      (reference.role === 'character_four_view' || reference.role === 'character_eight_view') &&
+      node.type === 'character-template'
+    ) {
       return replaceNode(run, { ...node, phase: 'selecting', error: null })
     }
     if (reference.role === 'first_frame' && node.type === 'action-first-frame') {
@@ -1776,7 +1950,12 @@ export function createWorkflowController({
     const references = node.generations.filter((item) => item.role === role)
     return Promise.all(
       references.map((reference) => {
-        const expectation = generationExpectationForNode(run, node, reference.direction)
+        const expectation = generationExpectationForNode(
+          run,
+          node,
+          reference.direction,
+          reference.role,
+        )
         return expectation
           ? generationApis.get(run.projectId, reference.taskId, expectation)
           : Promise.reject(new Error(`${nodeId} 不是生成节点`))
@@ -1820,6 +1999,8 @@ export function createWorkflowController({
     updateCharacterSetup: asCommand(updateCharacterSetup),
     acceptUploadedCharacterTemplate: asCommand(acceptUploadedCharacterTemplate),
     confirmCharacterTemplate: asCommand(confirmCharacterTemplate),
+    generateCharacterViewSheet: asCommand(generateCharacterViewSheet),
+    confirmCharacterViewSheet: asCommand(confirmCharacterViewSheet),
     generateFirstFrame: asCommand(generateFirstFrame),
     regenerateFirstFrame: asCommand(regenerateFirstFrame),
     confirmFirstFrame: asCommand(confirmFirstFrame),
@@ -1971,7 +2152,14 @@ function assertNodeCanRun(run: WorkflowRun, node: WorkflowNode) {
 }
 
 function generationRoleForNode(node: WorkflowNode): WorkflowGenerationRole | null {
-  if (node.type === 'character-template') return 'character_template'
+  if (node.type === 'character-template') {
+    return (
+      node.generations.find(
+        (reference) =>
+          reference.role === 'character_four_view' || reference.role === 'character_eight_view',
+      )?.role ?? 'character_template'
+    )
+  }
   if (node.type === 'action-first-frame') return 'first_frame'
   if (node.type === 'action-full-frame') return 'complete_animation'
   return null
@@ -1979,6 +2167,13 @@ function generationRoleForNode(node: WorkflowNode): WorkflowGenerationRole | nul
 
 function generationResultError(node: WorkflowNode, generation: Generation): string | null {
   if (node.type === 'character-template') {
+    if (
+      (generation.type === 'character_four_view' || generation.type === 'character_eight_view') &&
+      generation.result?.type === generation.type &&
+      generation.result.sheets.length > 0
+    ) {
+      return null
+    }
     return generation.type === 'character_template' &&
       generation.result?.type === 'character_template' &&
       isImageCandidateCount(generation.result.images.length)
@@ -2014,11 +2209,17 @@ function generationExpectationForNode(
   run: WorkflowRun,
   node: WorkflowNode,
   direction?: ActionDirection,
+  role?: WorkflowGenerationRole | null,
 ): WorkflowGenerationExpectation | null {
   const withDirection = <T extends WorkflowGenerationExpectation>(expectation: T): T => {
     return direction === undefined ? expectation : ({ ...expectation, direction } as T)
   }
-  if (node.type === 'character-template') return withDirection({ type: 'character_template' })
+  if (node.type === 'character-template') {
+    if (role === 'character_four_view' || role === 'character_eight_view') {
+      return { type: role }
+    }
+    return withDirection({ type: 'character_template' })
+  }
   if (node.type === 'action-first-frame') {
     return withDirection({ type: 'first_frame', actionType: node.input.type })
   }
@@ -2031,7 +2232,12 @@ function generationExpectationForNode(
 }
 
 function assertGenerationRoleMatchesNode(node: WorkflowNode, role: WorkflowGenerationRole) {
-  if (generationRoleForNode(node) !== role) {
+  const matchesCharacterTemplate =
+    node.type === 'character-template' &&
+    (role === 'character_template' ||
+      role === 'character_four_view' ||
+      role === 'character_eight_view')
+  if (!matchesCharacterTemplate && generationRoleForNode(node) !== role) {
     throw new Error(`生成任务 ${role} 不能绑定到 ${node.type} 节点`)
   }
 }

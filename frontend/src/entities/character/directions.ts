@@ -16,7 +16,7 @@ export type ActionDirection = (typeof ACTION_DIRECTIONS)[number]
 export interface DirectionProfile {
   readonly generationDirections: readonly ActionDirection[]
   readonly derivedDirections: readonly ResolvedActionDirection[]
-  /** @deprecated 工作流迁移到 generationDirections 后删除。 */
+  /** 与 generationDirections 同义；保留给已有消费方。 */
   readonly sourceDirections: readonly ActionDirection[]
   readonly logicalDirections: readonly ActionDirection[]
 }
@@ -40,14 +40,18 @@ const DIRECTION_PROFILES: Record<DirectionalMovement, DirectionProfile> = {
     logicalDirections: ['east', 'west'],
   },
   'four-way': {
-    generationDirections: ['east', 'west', 'north', 'south'],
-    derivedDirections: [],
+    generationDirections: ['east', 'north', 'south'],
+    derivedDirections: [{ direction: 'west', sourceDirection: 'east', mirrorX: true }],
     sourceDirections: ['east', 'north', 'south'],
     logicalDirections: ['east', 'west', 'north', 'south'],
   },
   'eight-way': {
-    generationDirections: ACTION_DIRECTIONS,
-    derivedDirections: [],
+    generationDirections: ['east', 'north', 'south', 'north_east', 'south_east'],
+    derivedDirections: [
+      { direction: 'west', sourceDirection: 'east', mirrorX: true },
+      { direction: 'north_west', sourceDirection: 'north_east', mirrorX: true },
+      { direction: 'south_west', sourceDirection: 'south_east', mirrorX: true },
+    ],
     sourceDirections: ['east', 'north', 'south', 'north_east', 'south_east'],
     logicalDirections: ACTION_DIRECTIONS,
   },

@@ -192,9 +192,15 @@ function fallbackPlannerResult(
     const call = result.toolCalls[0]
     const input = recordInput(call?.input)
     if (call?.toolName === QUICK_START_DECISION_TOOL && input?.kind === 'proposal') {
-      const latestUserInput = messages
-        .findLast((message) => message.role === 'user')
-        ?.content.trim()
+      const latestUserContent = messages.findLast((message) => message.role === 'user')?.content
+      const latestUserInput =
+        typeof latestUserContent === 'string'
+          ? latestUserContent.trim()
+          : latestUserContent
+              ?.filter((part) => part.type === 'text')
+              .map((part) => part.text)
+              .join('\n')
+              .trim()
       const optimizedPrompt =
         typeof input.optimizedPrompt === 'string' && input.optimizedPrompt.trim()
           ? input.optimizedPrompt.trim().slice(0, 4_000)
@@ -257,6 +263,8 @@ ${artStyleContext}
 
 当前能力面向一个角色及其可选动作。optimizedPrompt 只描述一个角色实例的稳定身份、完整身体、清楚轮廓、外观、服装、气质和美术风格。方向数量由宿主的方向控件单独传递；不得加入多视图、转面表、精灵表或宫格构图。用户明确给出动作时，必须把动作单独写入 actionPrompt；没有动作时省略 actionPrompt，不得替用户补动作。动作明确匹配待机、行走、攻击或跳跃时，分别返回 actionType: "idle"、"walk"、"attack" 或 "jump"，让生成复用已有优化管线；匹配不到时省略 actionType。只要动作会让角色整体发生空间位移，额外返回 locomotion: true；原地动作省略 locomotion。两项判断互相独立。
 
+用户消息可能附带一张参考图片。你必须直接查看图片并与文字作为同一条输入理解：图片不包含清晰的单个角色、角色主体无法辨认或明显不适合作为角色生成参考时，用 blocked 说明原因；信息不足但可以补充时用 clarification。图片有效时，提案描述要保留图中可见的角色身份与外观，但图片仍会由生成管线独立作为原始参考，不能声称仅凭文字已经替代原图。
+
 决策规则：
 1. 对话轮数永远不是 proposal 的触发条件。不得在澄清额度用完后用默认值强制补齐并提案。
 2. “你觉得怎么样”“怎么优化好”“还有什么方案”“刚才我说了什么”等咨询或元对话必须用 reply；不得只靠关键词，要理解最新消息在完整上下文中的意图。
@@ -303,6 +311,9 @@ export function createAiSdkQuickStartPlanner({
     name: 'windup-agent-proxy',
     baseURL: baseURL.replace(/\/+$/u, ''),
     fetch,
+    // Quick Start 只传媒体服务已经落库的 HTTP(S) 引用；保留 URL 可避免 SDK
+    // 先下载图片再内联 base64，突破 /ai/chat 的有界请求合同。
+    supportedUrls: () => ({ 'image/*': [/^https?:\/\//u] }),
   })
   const model = provider.chatModel(modelId)
 

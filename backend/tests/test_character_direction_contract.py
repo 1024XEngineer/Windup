@@ -76,23 +76,61 @@ def _data(version: int, templates: list[dict], sequences: list[dict]) -> Charact
     )
 
 
-def test_version_two_four_way_accepts_real_west_frames():
-    directions = ["east", "west", "north", "south"]
-    data = _data(
+_FOUR_SOURCES = ["east", "north", "south"]
+_EIGHT_SOURCES = ["east", "north", "south", "north_east", "south_east"]
+_EIGHT_MIRRORS = [
+    ("west", "east"),
+    ("north_west", "north_east"),
+    ("south_west", "south_east"),
+]
+
+
+def _four_way_complete() -> CharacterData:
+    return _data(
         2,
-        [_real_template(direction) for direction in directions],
-        [_real_sequence(direction) for direction in directions],
+        [_real_template(direction) for direction in _FOUR_SOURCES]
+        + [_mirror_template("west", "east")],
+        [_real_sequence(direction) for direction in _FOUR_SOURCES]
+        + [_mirror_sequence("west", "east")],
     )
 
+
+def _eight_way_complete() -> CharacterData:
+    return _data(
+        2,
+        [_real_template(direction) for direction in _EIGHT_SOURCES]
+        + [_mirror_template(dst, src) for dst, src in _EIGHT_MIRRORS],
+        [_real_sequence(direction) for direction in _EIGHT_SOURCES]
+        + [_mirror_sequence(dst, src) for dst, src in _EIGHT_MIRRORS],
+    )
+
+
+def test_version_two_four_way_accepts_west_as_east_mirror():
+    data = _four_way_complete()
+
     validate_character_directions(data, movement=2, require_complete=True)
-    west = data.outfits[0].actions[0].sequences[1]
-    assert west.direction == "west"
-    assert west.source_direction is None
-    assert west.mirror_x is False
-    assert west.frames[0].image_url.endswith("west-0.png")
+    west = next(
+        sequence
+        for sequence in data.outfits[0].actions[0].sequences
+        if sequence.direction == "west"
+    )
+    assert west.source_direction == "east"
+    assert west.mirror_x is True
+    assert west.frames == []
 
 
-def test_version_two_four_way_mirror_is_readable_but_not_complete():
+def test_version_two_four_way_rejects_real_west():
+    data = _data(
+        2,
+        [_real_template(direction) for direction in [*_FOUR_SOURCES, "west"]],
+        [_real_sequence(direction) for direction in [*_FOUR_SOURCES, "west"]],
+    )
+
+    with pytest.raises(ValueError, match="west"):
+        validate_character_directions(data, movement=2, require_complete=True)
+
+
+def test_version_two_four_way_mirror_without_sources_is_readable_but_not_complete():
     data = _data(
         2,
         [_real_template("east"), _mirror_template("west", "east")],
@@ -100,8 +138,12 @@ def test_version_two_four_way_mirror_is_readable_but_not_complete():
     )
 
     validate_character_directions(data, movement=2, require_complete=False)
-    with pytest.raises(ValueError, match="west"):
+    with pytest.raises(ValueError, match="north"):
         validate_character_directions(data, movement=2, require_complete=True)
+
+
+def test_version_two_eight_way_accepts_diagonal_mirrors():
+    validate_character_directions(_eight_way_complete(), movement=3, require_complete=True)
 
 
 def test_version_one_west_mirror_round_trips_unchanged():
@@ -127,11 +169,12 @@ def test_version_two_single_keeps_east_to_west_mirror_compatibility():
 
 
 def test_version_two_four_way_rejects_specification_external_real_direction():
-    directions = ["east", "west", "north", "south", "north_east"]
     data = _data(
         2,
-        [_real_template(direction) for direction in directions],
-        [_real_sequence(direction) for direction in directions],
+        [_real_template(direction) for direction in _FOUR_SOURCES]
+        + [_mirror_template("west", "east"), _real_template("north_east")],
+        [_real_sequence(direction) for direction in _FOUR_SOURCES]
+        + [_mirror_sequence("west", "east"), _real_sequence("north_east")],
     )
 
     with pytest.raises(ValueError, match="north_east"):
@@ -190,12 +233,12 @@ def test_version_two_single_rejects_non_west_derived_direction():
         validate_character_directions(data, movement=1, require_complete=True)
 
 
-def test_version_two_four_way_reports_missing_action_direction_after_complete_templates():
-    required = ["east", "west", "north", "south"]
+def test_version_two_four_way_reports_missing_action_mirror_after_complete_templates():
     data = _data(
         2,
-        [_real_template(direction) for direction in required],
-        [_real_sequence(direction) for direction in required if direction != "west"],
+        [_real_template(direction) for direction in _FOUR_SOURCES]
+        + [_mirror_template("west", "east")],
+        [_real_sequence(direction) for direction in _FOUR_SOURCES],
     )
 
     with pytest.raises(ValueError, match="west"):
@@ -203,11 +246,12 @@ def test_version_two_four_way_reports_missing_action_direction_after_complete_te
 
 
 def test_version_two_four_way_rejects_specification_external_action_direction():
-    required = ["east", "west", "north", "south"]
     data = _data(
         2,
-        [_real_template(direction) for direction in required],
-        [_real_sequence(direction) for direction in [*required, "north_east"]],
+        [_real_template(direction) for direction in _FOUR_SOURCES]
+        + [_mirror_template("west", "east")],
+        [_real_sequence(direction) for direction in _FOUR_SOURCES]
+        + [_mirror_sequence("west", "east"), _real_sequence("north_east")],
     )
 
     with pytest.raises(ValueError, match="north_east"):

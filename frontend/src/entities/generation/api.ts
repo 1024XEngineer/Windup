@@ -58,6 +58,7 @@ interface GenerationTaskDto {
   inputPayload: Record<string, unknown> | null
   result: Record<string, unknown> | null
   errorMessage: string | null
+  queueAhead?: number
 }
 
 type BackendGenerationType =
@@ -113,6 +114,14 @@ function dtoNullableString(value: unknown, field: string): string | null {
   if (value === null) return null
   if (typeof value !== 'string') throw new GenerationApiError(`生成任务 ${field} 无效`, 200)
   return value
+}
+
+function dtoQueueAhead(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new GenerationApiError('生成任务 queue_ahead 无效', 200)
+  }
+  return value as number
 }
 
 function backendTaskType(value: unknown): BackendGenerationType {
@@ -201,6 +210,7 @@ function parseTaskDto(value: unknown): GenerationTaskDto {
     inputPayload,
     result: dtoNullableRecord(value.result, 'result'),
     errorMessage: dtoNullableString(value.error_message, 'error_message'),
+    queueAhead: dtoQueueAhead(value.queue_ahead),
   }
 }
 
@@ -352,6 +362,12 @@ function mapViewSheetResult(
           'south_east',
           'south_west',
         ])
+  const mirrorSources: Partial<Record<ActionDirection, ActionDirection>> = {
+    west: 'east',
+    ...(expectation.type === 'character_eight_view'
+      ? { north_west: 'north_east' as const, south_west: 'south_east' as const }
+      : {}),
+  }
   const sheets = result.sheets.map((rawSheet) => {
     if (!isRecord(rawSheet) || !Array.isArray(rawSheet.cells)) {
       throw new GenerationApiError('立绘 sheet 候选无效', 200)
@@ -372,12 +388,13 @@ function mapViewSheetResult(
       if (sourceDirection === undefined) {
         throw new GenerationApiError('立绘 sheet cell source_direction 无效', 200)
       }
+      const expectedSourceDirection = mirrorSources[direction] ?? null
       if (
         typeof rawCell.mirror_x !== 'boolean' ||
-        rawCell.mirror_x !== (sourceDirection !== null) ||
-        sourceDirection === direction
+        rawCell.mirror_x !== (expectedSourceDirection !== null) ||
+        sourceDirection !== expectedSourceDirection
       ) {
-        throw new GenerationApiError('立绘 sheet cell 镜像关系无效', 200)
+        throw new GenerationApiError('立绘 sheet cell 镜像关系不符合方向规格', 200)
       }
       return {
         direction,
@@ -699,6 +716,7 @@ function mapTask(
         declaredFrameCount(dto.inputPayload, resolvedExpectation),
       ),
       error: dto.errorMessage,
+      ...(dto.queueAhead === undefined ? {} : { queueAhead: dto.queueAhead }),
     },
     ...(candidateCount === undefined ? {} : { candidateCount }),
   }
@@ -843,6 +861,7 @@ function mapEvent<TType extends GenerationTaskType>(
       ? null
       : dtoNullableString(value.error_message, 'error_message')
   validateStatusError(status, error)
+  const queueAhead = dtoQueueAhead(value.queue_ahead)
   return {
     taskId: String(taskId),
     type: expectation.type,
@@ -855,6 +874,7 @@ function mapEvent<TType extends GenerationTaskType>(
       inputPayload === undefined ? undefined : declaredFrameCount(inputPayload, expectation),
     ),
     error,
+    ...(queueAhead === undefined ? {} : { queueAhead }),
   }
 }
 
@@ -1060,6 +1080,17 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
       let terminalHandled = false
       let stopStream: () => void = () => undefined
 
+      // GET 快照和 SSE 事件共用同一份订阅契约：降级轮询与重连对账也要带上队列位置。
+      const eventFromSnapshot = (generation: Generation<GenerationTaskType>) =>
+        ({
+          taskId: generation.id,
+          type: generation.type,
+          status: generation.status,
+          result: generation.result,
+          error: generation.error,
+          ...(generation.queueAhead === undefined ? {} : { queueAhead: generation.queueAhead }),
+        }) as GenerationEvent
+
       const pollUntilTerminal = async () => {
         if (polling) return
         polling = true
@@ -1067,13 +1098,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
           try {
             const generation = await apis.get(projectId, id, expectation)
             if (pollingController.signal.aborted) return
-            onEvent({
-              taskId: generation.id,
-              type: generation.type,
-              status: generation.status,
-              result: generation.result,
-              error: generation.error,
-            } as GenerationEvent)
+            onEvent(eventFromSnapshot(generation))
             if (isTerminalStatus(generation.status)) {
               return
             }
@@ -1095,13 +1120,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
           if (pollingController.signal.aborted || terminalHandled) return
           const terminal = isTerminalStatus(generation.status)
           if (terminal) terminalHandled = true
-          onEvent({
-            taskId: generation.id,
-            type: generation.type,
-            status: generation.status,
-            result: generation.result,
-            error: generation.error,
-          } as GenerationEvent)
+          onEvent(eventFromSnapshot(generation))
           if (terminal) {
             stopStream()
           }

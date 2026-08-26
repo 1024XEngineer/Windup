@@ -102,7 +102,6 @@ describe('Character asset publisher', () => {
     const fullFrame = workflow.nodes.find((node) => node.type === 'action-full-frame')!
     fullFrame.generations = [
       { taskId: 'generation-east', role: 'complete_animation', direction: 'east' },
-      { taskId: 'generation-west', role: 'complete_animation', direction: 'west' },
       { taskId: 'generation-north', role: 'complete_animation', direction: 'north' },
       { taskId: 'generation-south', role: 'complete_animation', direction: 'south' },
     ]
@@ -113,7 +112,6 @@ describe('Character asset publisher', () => {
       reviewNodeId: 'action-walk:review',
       generations: [
         directionalAnimationFixture('generation-east', 'east', 'east'),
-        directionalAnimationFixture('generation-west', 'west', 'west'),
         directionalAnimationFixture('generation-north', 'north', 'north'),
         directionalAnimationFixture('generation-south', 'south', 'south'),
       ],
@@ -130,10 +128,10 @@ describe('Character asset publisher', () => {
       },
       {
         direction: 'west',
-        sourceDirection: null,
-        mirrorX: false,
+        sourceDirection: 'east',
+        mirrorX: true,
         frameCount: 1,
-        frames: [{ index: 0, imageUrl: 'west-0.png', durationMs: 80 }],
+        frames: [],
       },
       {
         direction: 'north',
@@ -157,16 +155,16 @@ describe('Character asset publisher', () => {
       exportFeature.createActionSequences(
         [
           directionalAnimationFixture('generation-east', 'east', 'east'),
-          directionalAnimationFixture('generation-north', 'north', 'north'),
           directionalAnimationFixture('generation-south', 'south', 'south'),
         ],
         'four-way',
       ),
-    ).toThrow('完整动画方向 west 的生成结果不可发布')
+    ).toThrow('完整动画方向 north 的生成结果不可发布')
   })
 
-  it('八向导出保留八个独立序列，不生成镜像占位', () => {
-    const directions = [
+  it('八向导出保留五个真实源序列并补齐三个镜像关系', () => {
+    const sourceDirections = ['east', 'north', 'south', 'north_east', 'south_east'] as const
+    const logicalDirections = [
       'east',
       'west',
       'north',
@@ -178,17 +176,36 @@ describe('Character asset publisher', () => {
     ] as const
 
     const sequences = exportFeature.createActionSequences(
-      directions.map((direction) =>
+      sourceDirections.map((direction) =>
         directionalAnimationFixture(`generation-${direction}`, direction, direction),
       ),
       'eight-way',
     )
 
-    expect(sequences.map((sequence) => sequence.direction)).toEqual(directions)
-    expect(sequences.every((sequence) => sequence.sourceDirection === null)).toBe(true)
-    expect(sequences.every((sequence) => !sequence.mirrorX && sequence.frames.length === 1)).toBe(
-      true,
-    )
+    expect(sequences.map((sequence) => sequence.direction)).toEqual(logicalDirections)
+    expect(
+      sequences
+        .filter((sequence) => sourceDirections.includes(sequence.direction as never))
+        .every(
+          (sequence) =>
+            sequence.sourceDirection === null && !sequence.mirrorX && sequence.frames.length === 1,
+        ),
+    ).toBe(true)
+    expect(sequences.find((sequence) => sequence.direction === 'west')).toMatchObject({
+      sourceDirection: 'east',
+      mirrorX: true,
+      frames: [],
+    })
+    expect(sequences.find((sequence) => sequence.direction === 'north_west')).toMatchObject({
+      sourceDirection: 'north_east',
+      mirrorX: true,
+      frames: [],
+    })
+    expect(sequences.find((sequence) => sequence.direction === 'south_west')).toMatchObject({
+      sourceDirection: 'south_east',
+      mirrorX: true,
+      frames: [],
+    })
   })
 
   it('拒绝未携带任何生成结果的发布请求', async () => {

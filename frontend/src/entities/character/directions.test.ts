@@ -42,20 +42,32 @@ describe('direction profiles', () => {
     ])
   })
 
-  it('requires four independent generation directions for four-way projects', () => {
+  it('uses three sources and derives west for four-way projects', () => {
     const profile = getDirectionProfile('four-way')
 
-    expect(profile.generationDirections).toEqual(['east', 'west', 'north', 'south'])
+    expect(profile.generationDirections).toEqual(['east', 'north', 'south'])
     expect(profile.logicalDirections).toEqual(['east', 'west', 'north', 'south'])
-    expect(profile.derivedDirections).toEqual([])
+    expect(profile.derivedDirections).toEqual([
+      { direction: 'west', sourceDirection: 'east', mirrorX: true },
+    ])
   })
 
-  it('requires all eight independent generation directions for eight-way projects', () => {
+  it('uses five sources and derives west-facing diagonals for eight-way projects', () => {
     const profile = getDirectionProfile('eight-way')
 
-    expect(profile.generationDirections).toEqual(ACTION_DIRECTIONS)
+    expect(profile.generationDirections).toEqual([
+      'east',
+      'north',
+      'south',
+      'north_east',
+      'south_east',
+    ])
     expect(profile.logicalDirections).toEqual(ACTION_DIRECTIONS)
-    expect(profile.derivedDirections).toEqual([])
+    expect(profile.derivedDirections).toEqual([
+      { direction: 'west', sourceDirection: 'east', mirrorX: true },
+      { direction: 'north_west', sourceDirection: 'north_east', mirrorX: true },
+      { direction: 'south_west', sourceDirection: 'south_east', mirrorX: true },
+    ])
   })
 })
 

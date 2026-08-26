@@ -80,6 +80,35 @@ export interface Render3DAsset {
   cost: Render3DAssetCost
 }
 
+/**
+ * 一个待浏览器出帧的任务(#714)。字段与后端 `RenderPlan` 一一对应 —— 出帧参数只有
+ * 一份真相源,前端不推导也不补默认值:朝向、材质、画布、帧数任何一项在两边分叉都
+ * 不会报错,只会安静地渲出另一个东西。
+ */
+export interface BakeJob {
+  taskId: number
+  /** 绑骨模型地址,由后端校验过在自家对象存储上。**浏览器直接拉,不经应用机。** */
+  modelUrl: string
+  clip: string
+  direction: string
+  cameraYaw: number
+  frames: number
+  width: number
+  height: number
+  material: string
+  /** 低于它判空帧。与后端同一口径,自己不要另定一个。 */
+  minCoverage: number
+  /** 期限(epoch 秒)。到点后端按超时收口,不必前端自己计时。 */
+  deadlineAt: number
+  /** 后端已收到的帧数,用于断线后接着传。 */
+  received: number
+}
+
+export interface BakeCompletion {
+  clip: string
+  sampleTimes: number[]
+}
+
 export interface Render3DApis {
   /** 零成本母版预检。**不触发任何按次计费调用**,确认闸上可以随便调。 */
   precheckMaster(
@@ -93,4 +122,10 @@ export interface Render3DApis {
   approveOutfitAsset(characterId: string, outfitId: string): Promise<Render3DAsset>
   /** 模型不合格 → 丢弃重来。 */
   discardOutfitAsset(characterId: string, outfitId: string): Promise<Render3DAsset>
+  /** 取该任务的出帧参数;没有登记说明不需要浏览器出帧(或已收口)。 */
+  getBakeJob(taskId: number): Promise<BakeJob | null>
+  putBakeFrame(taskId: number, index: number, png: Blob): Promise<number>
+  completeBake(taskId: number, completion: BakeCompletion): Promise<void>
+  /** 渲不出来就早报,别等期限耗完 —— 那笔冻结的积分一直挂着。 */
+  failBake(taskId: number, reason: string): Promise<void>
 }

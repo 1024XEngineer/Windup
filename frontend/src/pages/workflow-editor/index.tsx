@@ -21,6 +21,7 @@ import {
   type Character,
   type CharacterSetupWorkflowNode,
   type CharacterTemplateWorkflowNode,
+  type CharacterViewSheetCandidate,
   type Generation,
   type MasterPrecheckReport,
   type MasterWarning,
@@ -204,6 +205,11 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
             run,
             controller: session.controller,
             confirmCharacterTemplate: session.confirmCharacterTemplate,
+            confirmCharacterViewSheet:
+              session.confirmCharacterViewSheet ??
+              (async () => {
+                throw new Error('当前会话不支持方向 sheet 确认，请刷新后重试')
+              }),
             uploadReferenceImage: session.uploadReferenceImage,
             publishReviewedAction: session.publishReviewedAction,
             project: session.project,
@@ -335,6 +341,10 @@ interface ProjectionInput {
     nodeId: CharacterTemplateWorkflowNode['id'],
     selectedImageUrl: string,
     direction?: ActionDirection,
+  ): Promise<Character>
+  confirmCharacterViewSheet(
+    nodeId: CharacterTemplateWorkflowNode['id'],
+    candidate: CharacterViewSheetCandidate,
   ): Promise<Character>
   uploadReferenceImage(file: File, signal?: AbortSignal): Promise<MediaReference>
   publishReviewedAction(reviewNodeId: ReviewWorkflowNode['id']): Promise<Character>
@@ -654,7 +664,7 @@ function CharacterSetupContent({
             input.controller.generateCharacterTemplate(node.id, {
               spriteWidth: input.project.spriteSize.width,
               spriteHeight: input.project.spriteSize.height,
-              directions: ['east'],
+              directions: [input.project.directionalMovement === 'single' ? 'east' : 'south'],
               candidateCount: 3,
               input: {
                 prompt,
@@ -695,7 +705,7 @@ function CharacterTemplateContent({
             input.controller.generateCharacterTemplate(setupNode.id, {
               spriteWidth: input.project.spriteSize.width,
               spriteHeight: input.project.spriteSize.height,
-              directions: ['east'],
+              directions: [input.project.directionalMovement === 'single' ? 'east' : 'south'],
               candidateCount: 3,
             }),
           )
@@ -707,10 +717,13 @@ function CharacterTemplateContent({
   }
   if (node.phase === 'selecting') {
     const directions = getDirectionProfile(input.project.directionalMovement).generationDirections
+    const anchorDirection: ActionDirection =
+      input.project.directionalMovement === 'single' ? 'east' : 'south'
     const masterConfirmed = Boolean(node.selectedImageUrl)
     const hasPrematureDirectionTasks = node.generations.some(
       (reference) =>
-        reference.role === 'character_template' && (reference.direction ?? 'east') !== 'east',
+        reference.role === 'character_template' &&
+        (reference.direction ?? 'east') !== anchorDirection,
     )
     if (!masterConfirmed && hasPrematureDirectionTasks) {
       const setupNode = findDependency(input.run, node, 'character-setup')
@@ -735,7 +748,7 @@ function CharacterTemplateContent({
                 await input.controller.generateCharacterTemplate(setupNode.id, {
                   spriteWidth: input.project.spriteSize.width,
                   spriteHeight: input.project.spriteSize.height,
-                  directions: ['east'],
+                  directions: [anchorDirection],
                   candidateCount: 3,
                 })
               })
@@ -746,7 +759,7 @@ function CharacterTemplateContent({
         </div>
       )
     }
-    const visibleDirections = masterConfirmed ? directions : (['east'] as const)
+    const visibleDirections = masterConfirmed ? directions : ([anchorDirection] as const)
     const groups = visibleDirections.map((direction) => {
       const result =
         input.generations[generationKey(node.id, 'character_template', direction)]?.result
@@ -758,8 +771,9 @@ function CharacterTemplateContent({
     if (!masterConfirmed) {
       const images = groups[0]?.images ?? []
       const selectedImageUrl =
-        images.find((image) => image.url === input.selectedImages[selectionKey(node.id, 'east')])
-          ?.url ?? null
+        images.find(
+          (image) => image.url === input.selectedImages[selectionKey(node.id, anchorDirection)],
+        )?.url ?? null
       return (
         <div className={CARD_STACK}>
           <div className="grid grid-cols-2 gap-[7px]">
@@ -769,11 +783,13 @@ function CharacterTemplateContent({
                 key={image.url}
                 className={THUMB_BUTTON}
                 aria-label={`选择角色候选 ${index + 1}`}
-                aria-pressed={input.selectedImages[selectionKey(node.id, 'east')] === image.url}
+                aria-pressed={
+                  input.selectedImages[selectionKey(node.id, anchorDirection)] === image.url
+                }
                 onClick={() =>
                   input.setSelectedImages((selected) => ({
                     ...selected,
-                    [selectionKey(node.id, 'east')]: image.url,
+                    [selectionKey(node.id, anchorDirection)]: image.url,
                   }))
                 }
               >
@@ -796,96 +812,60 @@ function CharacterTemplateContent({
       )
     }
 
-    const directionImages = Object.fromEntries(
-      directions.map((direction) => {
-        if (direction === 'east') {
-          return [direction, node.selectedImages?.east ?? node.selectedImageUrl]
-        }
-        const group = groups.find((candidate) => candidate.direction === direction)
-        return [direction, group?.images.length === 1 ? group.images[0]!.url : null]
-      }),
-    ) as Partial<Record<ActionDirection, string | null>>
-    const directionSetComplete = directions.every((direction) => directionImages[direction])
-    const directionCountLabel = directions.length === 8 ? '八向' : '四向'
-    const layout = getDirectionGridLayout(input.project.directionalMovement)
-    const columnClass = layout.columns === 3 ? 'grid-cols-3' : 'grid-cols-2'
+    const sheetRole =
+      input.project.directionalMovement === 'four-way'
+        ? ('character_four_view' as const)
+        : ('character_eight_view' as const)
+    const result = input.generations[generationKey(node.id, sheetRole, 'east')]?.result
+    const sheets = result?.type === sheetRole ? result.sheets : []
+    const selectedSheetUrl = input.selectedImages[selectionKey(node.id, 'east')]
+    const selectedSheet = sheets.find((sheet) => sheet.sheetUrl === selectedSheetUrl) ?? null
+    if (sheets.length === 0) {
+      return <p className={CARD_TEXT}>方向立绘已经生成，正在读取候选结果…</p>
+    }
     return (
       <div className={CARD_STACK}>
-        <p className={CARD_TEXT}>所有方向均基于已确认母版生成，每个方向一张。</p>
-        <div
-          role="group"
-          aria-label={`${directionCountLabel}首帧集合`}
-          data-layout="direction-first-frame-stack"
-          className={`grid aspect-square w-full ${columnClass} gap-2 overflow-hidden rounded-xl border border-app-line-strong bg-app-surface-muted p-2`}
-        >
-          {layout.cells.map((direction, index) => {
-            if (!direction) {
-              return (
-                <div key={`empty-${index}`} aria-label="八向宫格中心留空" className="min-h-0" />
-              )
-            }
-            const imageUrl = directionImages[direction]
-            return imageUrl ? (
-              <figure
-                key={direction}
-                className="relative m-0 min-h-0 overflow-hidden rounded-lg border border-app-line bg-app-surface-raised"
+        <p className={CARD_TEXT}>选择一套方向立绘；每个格子都是独立图片，镜像关系沿用 PR 758。</p>
+        <div className="grid gap-2">
+          {sheets.map((sheet, index) => {
+            const images = Object.fromEntries(
+              sheet.cells.map((cell) => [cell.direction, cell.imageUrl]),
+            ) as Partial<Record<ActionDirection, string>>
+            return (
+              <button
+                type="button"
+                key={sheet.sheetUrl}
+                className={`${THUMB_BUTTON} p-2`}
+                aria-label={`选择方向立绘候选 ${index + 1}`}
+                aria-pressed={selectedSheetUrl === sheet.sheetUrl}
+                onClick={() =>
+                  input.setSelectedImages((selected) => ({
+                    ...selected,
+                    [selectionKey(node.id, 'east')]: sheet.sheetUrl,
+                  }))
+                }
               >
-                <WorkflowImage
-                  src={imageUrl}
-                  alt={`${directionLabel(direction)}方向首帧`}
-                  variant="thumbnail"
+                <DirectionAssetGrid
+                  movement={input.project.directionalMovement}
+                  images={images}
+                  kind="角色母版"
+                  singleAlt="方向立绘候选"
                 />
-                <figcaption className="absolute bottom-1 left-1 rounded-full bg-app-canvas/85 px-1.5 py-0.5 text-[8px] font-bold text-app-ink">
-                  {directionLabel(direction)}
-                </figcaption>
-              </figure>
-            ) : (
-              <div
-                key={direction}
-                role="status"
-                aria-label={`${directionLabel(direction)}方向首帧生成中`}
-                className="grid min-h-0 place-items-center rounded-lg border border-dashed border-app-line bg-app-surface-raised text-[9px] font-semibold text-app-muted"
-              >
-                {directionLabel(direction)}方向生成中
-              </div>
+              </button>
             )
           })}
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          {directions.slice(1).map((direction) => (
-            <button
-              type="button"
-              key={direction}
-              className={CARD_BUTTON_SECONDARY}
-              disabled={branchBusy}
-              onClick={() =>
-                input.runCommand(branchKey, () =>
-                  input.controller.retryGenerationDirection(node.id, direction, {
-                    spriteWidth: input.project.spriteSize.width,
-                    spriteHeight: input.project.spriteSize.height,
-                  }),
-                )
-              }
-            >
-              重做{directionLabel(direction)}方向
-            </button>
-          ))}
         </div>
         <button
           type="button"
           className={CARD_BUTTON}
-          disabled={!directionSetComplete || branchBusy}
-          onClick={() =>
+          disabled={!selectedSheet || branchBusy}
+          onClick={() => {
+            if (!selectedSheet) return
             input.runCommand(branchKey, async () => {
-              let character: Character | null = null
-              for (const direction of directions.slice(1)) {
-                const imageUrl = directionImages[direction]
-                if (!imageUrl) throw new Error(`${directionLabel(direction)}方向尚未生成完成`)
-                character = await input.confirmCharacterTemplate(node.id, imageUrl, direction)
-              }
-              if (character) input.setCharacter(character)
+              const character = await input.confirmCharacterViewSheet(node.id, selectedSheet)
+              input.setCharacter(character)
             })
-          }
+          }}
         >
           确认方向集合
         </button>
@@ -1037,18 +1017,24 @@ function MasterGate({
         title={rejected ? precheck.report.detail : undefined}
         onClick={() =>
           input.runCommand(branchKey, async () => {
-            const character = await input.confirmCharacterTemplate(node.id, imageUrl)
+            const anchorDirection =
+              input.project.directionalMovement === 'single' ? 'east' : 'south'
+            const character = await input.confirmCharacterTemplate(
+              node.id,
+              imageUrl,
+              anchorDirection,
+            )
             input.setCharacter(character)
             const directions = getDirectionProfile(
               input.project.directionalMovement,
             ).generationDirections
             if (directions.length > 1) {
               if (!setupNode) throw new Error('身份母版缺少角色设定')
-              await input.controller.generateCharacterTemplate(setupNode.id, {
+              await input.controller.generateCharacterViewSheet(node.id, {
+                characterId: character.id,
+                prompt: setupNode.input.prompt,
                 spriteWidth: input.project.spriteSize.width,
                 spriteHeight: input.project.spriteSize.height,
-                sourceImageUrl: imageUrl,
-                directions: directions.slice(1),
                 candidateCount: 1,
               })
             }
@@ -1075,7 +1061,7 @@ function MasterGate({
             await input.controller.generateCharacterTemplate(setupNode.id, {
               spriteWidth: input.project.spriteSize.width,
               spriteHeight: input.project.spriteSize.height,
-              directions: ['east'],
+              directions: [input.project.directionalMovement === 'single' ? 'east' : 'south'],
               candidateCount: 3,
             })
           })
