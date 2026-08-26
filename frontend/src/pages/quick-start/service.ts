@@ -11,12 +11,12 @@ import {
   type CharacterApis,
   type ActionDirection,
   type CharacterSetupWorkflowNode,
+  type DirectionalMovement,
   type GenerationApis,
   type Generation,
   type MediaReference,
   type Project,
   type ProjectApis,
-  type DirectionalMovement,
   type WorkflowNode,
   type WorkflowRun,
   type WorkflowRunApis,
@@ -73,6 +73,8 @@ export interface QuickStartMediaApis {
 
 export interface QuickStartSession {
   readonly runId: WorkflowRun['id']
+  /** 当前 Run 所属项目的方向模式，用于恢复时稳定渲染候选布局。 */
+  readonly getDirectionalMovement?: () => DirectionalMovement
   getWorkflow(): WorkflowRun
   subscribe(listener: (run: WorkflowRun) => void): () => void
   subscribeErrors(listener: (error: Error) => void): () => void
@@ -754,6 +756,8 @@ export function createQuickStartService({
 
     return {
       runId: controller.getWorkflow().id,
+      getDirectionalMovement: () =>
+        projectDirectionalMovements.get(controller.getWorkflow().projectId) ?? 'single',
       getWorkflow: () => controller.getWorkflow(),
       subscribe: (listener) => controller.subscribe(listener),
       subscribeErrors(listener) {
