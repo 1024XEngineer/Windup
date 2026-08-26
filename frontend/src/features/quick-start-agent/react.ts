@@ -136,6 +136,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
               optimizedPrompt,
               actionPrompt,
               actionType,
+              locomotion,
               optimizationSummary,
               suggestPixelPerfect,
             } = result
@@ -145,6 +146,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
               optimizedPrompt,
               ...(actionPrompt ? { actionPrompt } : {}),
               ...(actionType ? { actionType } : {}),
+              ...(locomotion ? { locomotion } : {}),
               optimizationSummary,
               ...(suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
             })
@@ -187,6 +189,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
         optimizedPrompt,
         actionPrompt,
         actionType,
+        locomotion,
         optimizationSummary,
         suggestPixelPerfect,
       } = state
@@ -197,6 +200,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
           optimizedPrompt,
           ...(actionPrompt ? { actionPrompt } : {}),
           ...(actionType ? { actionType } : {}),
+          ...(locomotion ? { locomotion } : {}),
           optimizationSummary,
           ...(suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
         })

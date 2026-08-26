@@ -15,6 +15,7 @@ export interface PlaytestAction {
   readonly id: string
   readonly name: string
   readonly type: ActionType
+  readonly locomotion?: true
   /** 一次性动作播完停在末帧；只有循环动作才回到首帧。 */
   readonly loop: boolean
   /** 每个逻辑方向解析到真实源帧和渲染镜像标记。 */
@@ -34,6 +35,11 @@ export function hasPlayableFrames(action: PlaytestAction): boolean {
     action.frames.length > 0 ||
     Object.values(action.sequences ?? {}).some((playback) => (playback?.frames.length ?? 0) > 0)
   )
+}
+
+/** 新资产使用显式语义；walk/run 保留为旧资产兼容入口。 */
+export function isLocomotionAction(action: PlaytestAction): boolean {
+  return action.locomotion === true || action.type === 'walk' || action.type === 'run'
 }
 
 export type PlaytestModelResult =
@@ -155,6 +161,7 @@ export function createPlaytestModel(character: Character, outfitId: string): Pla
             id: action.id,
             name: action.name,
             type: action.type,
+            ...(action.locomotion ? { locomotion: action.locomotion } : {}),
             loop: action.loop,
             sequences,
             frames: fallbackFrames,

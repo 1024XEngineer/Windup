@@ -55,6 +55,8 @@ export interface Action {
   outfitId: Outfit['id']
   name: string
   type: ActionType
+  /** 动作是否会让角色整体发生空间位移；旧资产缺省为 false。 */
+  locomotion?: true
   loop: boolean
   fps: number
   frameCount: number
@@ -163,6 +165,7 @@ interface CharacterActionDto {
   id: string
   type: string
   name: string
+  locomotion?: boolean
   loop: boolean
   fps: number
   frame_count: number
@@ -373,6 +376,7 @@ function mapAction(dto: CharacterActionDto, outfitId: string): Action {
     outfitId,
     name: dto.name,
     type: dto.type,
+    ...(dto.locomotion === true ? { locomotion: true as const } : {}),
     loop: dto.loop,
     fps: dto.fps,
     frameCount: dto.frame_count,
@@ -439,6 +443,7 @@ function toActionDto(action: Action): CharacterActionDto {
     id: action.id,
     type: action.type,
     name: action.name,
+    ...(action.locomotion ? { locomotion: action.locomotion } : {}),
     loop: action.loop,
     fps: action.fps,
     frame_count: action.frameCount,

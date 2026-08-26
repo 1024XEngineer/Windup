@@ -184,7 +184,8 @@ type AgentConversationTurn =
       proposalId: string
       optimizedPrompt: string
       actionPrompt?: string
-      actionType?: 'walk'
+      actionType?: 'idle' | 'walk' | 'attack' | 'jump'
+      locomotion?: true
       optimizationSummary: string
       suggestPixelPerfect?: boolean
       proposalStatus: 'pending' | 'superseded' | 'adopted' | 'confirmed'
@@ -335,8 +336,15 @@ function readAgentConversation(
             ...('actionPrompt' in turn && typeof turn.actionPrompt === 'string'
               ? { actionPrompt: turn.actionPrompt }
               : {}),
-            ...('actionType' in turn && turn.actionType === 'walk'
+            ...('actionType' in turn &&
+            (turn.actionType === 'idle' ||
+              turn.actionType === 'walk' ||
+              turn.actionType === 'attack' ||
+              turn.actionType === 'jump')
               ? { actionType: turn.actionType }
+              : {}),
+            ...('locomotion' in turn && turn.locomotion === true
+              ? { locomotion: true as const }
               : {}),
             optimizationSummary: turn.optimizationSummary,
             suggestPixelPerfect: 'suggestPixelPerfect' in turn && turn.suggestPixelPerfect === true,
@@ -379,6 +387,7 @@ function createAgentSeed(turns: readonly AgentConversationTurn[]): {
             optimizedPrompt: pending.optimizedPrompt,
             ...(pending.actionPrompt ? { actionPrompt: pending.actionPrompt } : {}),
             ...(pending.actionType ? { actionType: pending.actionType } : {}),
+            ...(pending.locomotion ? { locomotion: pending.locomotion } : {}),
             optimizationSummary: pending.optimizationSummary,
             suggestPixelPerfect: pending.suggestPixelPerfect,
           }
@@ -1107,6 +1116,7 @@ function QuickStartInput({
             optimizedPrompt: result.optimizedPrompt,
             ...(result.actionPrompt ? { actionPrompt: result.actionPrompt } : {}),
             ...(result.actionType ? { actionType: result.actionType } : {}),
+            ...(result.locomotion ? { locomotion: result.locomotion } : {}),
             optimizationSummary: result.optimizationSummary,
             suggestPixelPerfect: result.suggestPixelPerfect,
             proposalStatus: 'pending',
@@ -1306,10 +1316,18 @@ function QuickStartInput({
             onSubmit={(event) => void submit(event)}
             autoComplete="off"
             data-prompt-state={promptState}
-            className="quick-start-agent-composer relative flex flex-col"
+            className={`quick-start-agent-composer relative flex flex-col ${
+              hasConversation
+                ? 'rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]'
+                : ''
+            }`}
           >
             <label
-              className="relative block min-h-[52px] min-w-0 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]"
+              className={`relative block min-h-[52px] min-w-0 overflow-hidden ${
+                hasConversation
+                  ? ''
+                  : 'rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]'
+              }`}
               htmlFor="quick-start-prompt"
             >
               <span className="sr-only">创作指令</span>

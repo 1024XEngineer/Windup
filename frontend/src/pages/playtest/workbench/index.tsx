@@ -8,7 +8,7 @@ import {
   resolvePlaytestActionBindings,
   type PlaytestControlKey,
 } from './bindings'
-import { createPlaytestModel, type PlaytestModel } from './model'
+import { createPlaytestModel, isLocomotionAction, type PlaytestModel } from './model'
 import {
   PLAYTEST_COMMANDS,
   readPlaytestPreferences,
@@ -154,7 +154,7 @@ function PlaytestExperience({
     preferences,
     keyboardEnabled: capturing === null,
   })
-  const locomotion = model.actions.find((action) => action.type === 'walk' || action.type === 'run')
+  const locomotion = model.actions.find(isLocomotionAction)
   const actionChoices = useMemo(() => {
     const choices = new Map<string, string>()
     for (const action of model.actions) {
