@@ -3,6 +3,7 @@ import type { ActionDirection, DirectionalMovement } from '@/entities'
 import type { PlaytestActionBindings, PlaytestControlKey } from '../bindings'
 import {
   hasPlayableFrames,
+  isLocomotionAction,
   type PlaytestAction,
   type PlaytestFrame,
   type PlaytestPlayback,
@@ -166,10 +167,6 @@ function frameDurationMs(frames: readonly PlaytestFrame[], frameIndex: number): 
   return Math.max(1, frames[frameIndex]?.durationMs ?? 1)
 }
 
-function isLocomotionAction(action: PlaytestAction): boolean {
-  return action.type === 'walk' || action.type === 'run'
-}
-
 function cardinalFacing(direction: MovementDirection): Facing {
   if (direction === 'up') return 'north'
   if (direction === 'down') return 'south'
@@ -210,7 +207,9 @@ export function setMovementInput(
   if (runtime.held[direction] === pressed) return runtime
 
   const activeAction = actionById(actions, runtime.actionId)
-  const locomotion = actionByType(actions, 'walk') ?? actionByType(actions, 'run')
+  const locomotion = actions.find(
+    (action) => isLocomotionAction(action) && hasPlayableFrames(action),
+  )
   const directionAction = locomotion ?? activeAction
   const held = { ...runtime.held, [direction]: pressed }
   const heldOrder = pressed
