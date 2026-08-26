@@ -81,6 +81,8 @@ export interface QuickStartAgentTurnOptions {
 export interface ConfirmProposalOptions {
   /** 画风原样透传给宿主；取值范围由宿主定义，本模块不认识业务对象。 */
   gameStyle?: string
+  /** 宿主选择的已有项目；缺省时继续自动创建项目。 */
+  projectId?: string
   /** 用户选择确认后由 Controller 自动交付，不再暴露中间候选选择。 */
   automaticDelivery?: boolean
 }
@@ -104,6 +106,7 @@ export type StartCharacterGenerationAction = (input: {
   actionType?: QuickStartActionType
   directionalMovement?: QuickStartDirectionalMovement
   gameStyle?: string
+  projectId?: string
   automaticDelivery?: boolean
   suggestPixelPerfect?: boolean
 }) => Promise<{ runId: string }>
@@ -336,7 +339,7 @@ export function createQuickStartAgent({
     proposalId: string,
     prompt: string,
     directionalMovement: QuickStartDirectionalMovement = 'single',
-    { gameStyle, automaticDelivery }: ConfirmProposalOptions = {},
+    { gameStyle, projectId, automaticDelivery }: ConfirmProposalOptions = {},
   ): Promise<QuickStartAgentResult> {
     assertAuthorized()
     if (running) throw new Error('Planner 正在处理上一条输入')
@@ -359,6 +362,7 @@ export function createQuickStartAgent({
         ...(proposal.actionType ? { actionType: proposal.actionType } : {}),
         directionalMovement,
         gameStyle,
+        projectId,
         ...(automaticDelivery ? { automaticDelivery: true } : {}),
         ...(proposal.suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
       })

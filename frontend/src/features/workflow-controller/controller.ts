@@ -109,6 +109,8 @@ export interface ApplyGenerationResultInput {
 
 export interface PrepareQuickStartProjectOptions {
   gameStyle?: ArtStyle
+  /** 传入时复用已有项目；缺省时保持 Quick Start 自动建项目。 */
+  projectId?: Project['id']
 }
 
 export type PrepareQuickStartProject = (
@@ -121,6 +123,7 @@ export interface StartCharacterGenerationInput {
   prompt: string
   directionalMovement?: DirectionalMovement
   gameStyle?: ArtStyle
+  projectId?: Project['id']
   automaticDelivery?: { actionPrompt?: string; actionType?: 'walk' }
   /** 仅记录 Agent 的像素素材意图，生成阶段不据此改变原图。 */
   suggestPixelPerfect?: boolean
@@ -251,9 +254,17 @@ interface PendingGenerationAttachment {
 }
 
 export function createAutoPrepareProject(
-  projectApis: Pick<ProjectApis, 'create'>,
+  projectApis: Pick<ProjectApis, 'create' | 'get'>,
 ): PrepareQuickStartProject {
   return async (prompt, directionalMovement = 'single', options) => {
+    if (options?.projectId) {
+      const project = await projectApis.get(options.projectId)
+      return {
+        id: project.id,
+        spriteSize: project.spriteSize,
+        directionalMovement: project.directionalMovement,
+      }
+    }
     const project = await projectApis.create({
       nameContext: prompt.trim().replace(/\s+/gu, ' '),
       perspective: 'side',
@@ -384,6 +395,7 @@ export function createWorkflowController({
     prompt,
     directionalMovement: selectedDirectionalMovement = 'single',
     gameStyle,
+    projectId,
     automaticDelivery,
     suggestPixelPerfect = false,
   }: StartCharacterGenerationInput): Promise<StartCharacterGenerationResult> {
@@ -396,6 +408,7 @@ export function createWorkflowController({
     const actionType = actionPrompt ? automaticDelivery?.actionType : undefined
     const project = await prepareProject(normalizedPrompt, selectedDirectionalMovement, {
       gameStyle,
+      projectId,
     })
     generationDirections = getDirectionProfile(
       project.directionalMovement ?? selectedDirectionalMovement,

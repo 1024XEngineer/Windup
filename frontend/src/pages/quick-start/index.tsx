@@ -18,8 +18,11 @@ import {
   ArrowClockwise,
   ArrowUp,
   CaretDown,
+  Check,
   CopySimple,
+  FolderOpen,
   Play,
+  Plus,
   PlusCircle,
   Stack,
   Stop,
@@ -42,6 +45,9 @@ import {
   type DirectionalMovement,
   type WorkflowRun,
   WorkflowRunConflictError,
+  projectApis as defaultProjectApis,
+  type Project,
+  type ProjectApis,
 } from '@/entities'
 import { forgetActiveRun, isMissingActiveRunError, syncActiveRun } from '@/features/active-run'
 import { useOptionalAuthSession } from '@/features/auth-session'
@@ -183,6 +189,7 @@ type AgentConversationRecord = {
   turns: readonly AgentConversationTurn[]
   /** 入口处选的画风；不随草稿存住的话，刷新后画风选择器已隐藏而值悄悄回到不指定。 */
   gameStyle?: ArtStyle
+  projectId?: string | null
 }
 
 type AgentConversationStorageName = 'localStorage' | 'sessionStorage'
@@ -223,6 +230,18 @@ function readAgentDraftGameStyle(key: string): ArtStyle {
     return isArtStyle(parsed.gameStyle) ? parsed.gameStyle : 'unspecified'
   } catch {
     return 'unspecified'
+  }
+}
+
+function readAgentDraftProjectId(key: string): string | null {
+  try {
+    const stored = window.sessionStorage.getItem(key)
+    if (!stored) return null
+    const parsed: unknown = JSON.parse(stored)
+    if (typeof parsed !== 'object' || parsed === null || !('projectId' in parsed)) return null
+    return typeof parsed.projectId === 'string' && parsed.projectId ? parsed.projectId : null
+  } catch {
+    return null
   }
 }
 
@@ -412,6 +431,7 @@ export interface QuickStartPageProps {
   activeRunUserId?: string
   /** app 组合层注入 Planner 与绑定到现有 WorkflowController 的唯一写 action。 */
   agent: CreateQuickStartAgentOptions
+  projectApis?: Pick<ProjectApis, 'list' | 'get'>
 }
 
 /** Quick Start 独立完成 AI 入口；它不跳转 Workflow Editor。 */
@@ -419,6 +439,7 @@ export function QuickStartPage({
   service,
   activeRunUserId: providedActiveRunUserId,
   agent,
+  projectApis = defaultProjectApis,
 }: QuickStartPageProps) {
   const { runId } = useParams()
   const location = useLocation()
@@ -452,6 +473,7 @@ export function QuickStartPage({
       agent={agent}
       activeRunUserId={activeRunUserId}
       onSessionCreated={setCreatedSession}
+      projectApis={projectApis}
     />
   )
 }
@@ -628,13 +650,16 @@ function QuickStartInput({
   agent,
   activeRunUserId,
   onSessionCreated,
+  projectApis,
 }: {
   service: QuickStartEntryService
   agent: CreateQuickStartAgentOptions
   activeRunUserId: string | null
   onSessionCreated: (session: QuickStartSession) => void
+  projectApis: Pick<ProjectApis, 'list' | 'get'>
 }) {
   const navigate = useNavigate()
+  const [entrySearchParams] = useSearchParams()
   const [prompt, setPrompt] = useState('')
   const [directionalMovement, setDirectionalMovement] = useState<DirectionalMovement>('single')
   const [confirmedPrompt, setConfirmedPrompt] = useState<string | null>(null)
@@ -645,6 +670,19 @@ function QuickStartInput({
       ? readAgentDraftGameStyle(agentDraftConversationStorageKey(activeRunUserId, draftId))
       : 'unspecified'
   })
+  const [projectId, setProjectId] = useState<string | null>(() => {
+    const requestedProjectId = entrySearchParams.get('projectId')
+    if (requestedProjectId) return requestedProjectId
+    const draftId = readAgentDraftId()
+    return draftId
+      ? readAgentDraftProjectId(agentDraftConversationStorageKey(activeRunUserId, draftId))
+      : null
+  })
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null)
+  const [projects, setProjects] = useState<readonly Project[]>([])
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false)
+  const projectIdRef = useRef(projectId)
+  projectIdRef.current = projectId
   const gameStyleRef = useRef(gameStyle)
   gameStyleRef.current = gameStyle
   const [submitting, setSubmitting] = useState(false)
@@ -716,11 +754,60 @@ function QuickStartInput({
       writeAgentConversation(
         'sessionStorage',
         agentDraftConversationStorageKey(activeRunUserId, draftId),
-        { turns, gameStyle: gameStyleRef.current },
+        { turns, gameStyle: gameStyleRef.current, projectId: projectIdRef.current },
       )
     },
     [activeRunUserId, ensureDraftId],
   )
+
+  useEffect(() => {
+    let cancelled = false
+    const restoredId = projectIdRef.current
+    void Promise.all([
+      projectApis.list({ page: 1, pageSize: 3 }),
+      restoredId ? projectApis.get(restoredId) : Promise.resolve(null),
+    ]).then(
+      ([result, restoredProject]) => {
+        if (cancelled) return
+        setProjects(result.items)
+        if (restoredId && restoredProject && projectIdRef.current === restoredId) {
+          setSelectedProject(restoredProject)
+          setDirectionalMovement(restoredProject.directionalMovement)
+          setGameStyle(restoredProject.gameStyle)
+        }
+      },
+      () => {
+        if (!cancelled) {
+          setProjects([])
+          setProjectId(null)
+          setSelectedProject(null)
+        }
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [projectApis])
+
+  function chooseProject(project: Project | null) {
+    setProjectMenuOpen(false)
+    setProjectId(project?.id ?? null)
+    setSelectedProject(project)
+    if (project) {
+      setDirectionalMovement(project.directionalMovement)
+      setGameStyle(project.gameStyle)
+    }
+    const draftId = ensureDraftId()
+    writeAgentConversation(
+      'sessionStorage',
+      agentDraftConversationStorageKey(activeRunUserId, draftId),
+      {
+        turns: conversationTurnsRef.current,
+        gameStyle: project?.gameStyle ?? gameStyleRef.current,
+        projectId: project?.id ?? null,
+      },
+    )
+  }
 
   const persistRunConversation = useCallback(
     (turns: readonly AgentConversationTurn[], runId: string) => {
@@ -847,7 +934,7 @@ function QuickStartInput({
       const result = await agentSession.confirmProposal(
         state.optimizedPrompt,
         directionalMovement,
-        { gameStyle, automaticDelivery: true },
+        { gameStyle, automaticDelivery: true, ...(projectId ? { projectId } : {}) },
       )
       if (result.kind === 'generated') await handoffGenerated(result)
     } catch {
@@ -875,7 +962,7 @@ function QuickStartInput({
       writeAgentConversation(
         'sessionStorage',
         agentDraftConversationStorageKey(activeRunUserId, draftId),
-        { turns: conversationTurnsRef.current, gameStyle: next },
+        { turns: conversationTurnsRef.current, gameStyle: next, projectId: projectIdRef.current },
       )
     }
   }
@@ -999,7 +1086,7 @@ function QuickStartInput({
         normalizedPrompt,
         abortController.signal,
         directionalMovement,
-        { gameStyle },
+        { gameStyle, ...(projectId ? { projectId } : {}) },
       )
       const handoffPromise = new Promise<void>((resolve) => {
         handoffTimer.current = setTimeout(() => {
@@ -1031,7 +1118,10 @@ function QuickStartInput({
     appendConversationTurn({ role: 'user', content: DIRECTIONAL_MOVEMENT[movement] })
     setPromptState('confirmed')
     try {
-      const result = await agentSession.confirmProposal(confirmedPrompt, movement, { gameStyle })
+      const result = await agentSession.confirmProposal(confirmedPrompt, movement, {
+        gameStyle,
+        ...(projectId ? { projectId } : {}),
+      })
       if (result.kind === 'generated') await handoffGenerated(result)
     } catch {
       setPromptState('direction')
@@ -1299,7 +1389,7 @@ function QuickStartInput({
                   <div className="relative">
                     <IconActionButton
                       label={`选择画风，当前${ART_STYLE[gameStyle]}`}
-                      disabled={entryBusy}
+                      disabled={entryBusy || Boolean(selectedProject)}
                       onClick={() => {
                         setDirectionMenuOpen(false)
                         setStyleMenuOpen((open) => !open)
@@ -1333,6 +1423,77 @@ function QuickStartInput({
                       </div>
                     ) : null}
                   </div>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      aria-label={`选择项目，当前${selectedProject?.name ?? '自动创建'}`}
+                      aria-expanded={projectMenuOpen}
+                      disabled={entryBusy}
+                      onClick={() => {
+                        setStyleMenuOpen(false)
+                        setDirectionMenuOpen(false)
+                        setProjectMenuOpen((open) => !open)
+                      }}
+                      className="inline-flex h-10 max-w-44 items-center gap-1 rounded-app-control px-3 text-sm font-medium text-app-ink-soft transition hover:bg-app-surface-muted hover:text-app-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:opacity-45"
+                    >
+                      <span className="truncate">{selectedProject?.name ?? '自动创建'}</span>
+                      <CaretDown
+                        aria-hidden="true"
+                        size={14}
+                        weight="bold"
+                        className={projectMenuOpen ? 'rotate-180' : ''}
+                      />
+                    </button>
+                    {projectMenuOpen ? (
+                      <div
+                        role="menu"
+                        aria-label="选择项目"
+                        className={`${productPopoverClass} quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid min-w-40 gap-1 p-1.5 opacity-100`}
+                      >
+                        {projects.map((project) => (
+                          <button
+                            key={project.id}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={projectId === project.id}
+                            onClick={() => chooseProject(project)}
+                            className={`flex items-center gap-2 rounded-app-compact px-3 py-2 text-left text-xs transition ${projectId === project.id ? 'bg-app-accent-soft text-app-accent' : 'text-app-ink-soft hover:bg-app-surface-muted'}`}
+                          >
+                            <FolderOpen aria-hidden="true" size={15} weight="regular" />
+                            <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                            {projectId === project.id ? (
+                              <Check aria-hidden="true" size={14} weight="bold" />
+                            ) : null}
+                          </button>
+                        ))}
+                        <div className="my-1 border-t border-app-line" />
+                        <Link
+                          to="/projects/new?entry=quick-start"
+                          role="menuitem"
+                          onClick={() => setProjectMenuOpen(false)}
+                          className="flex items-center gap-2 rounded-app-compact px-3 py-2 text-xs text-app-ink-soft transition hover:bg-app-surface-muted"
+                        >
+                          <Plus aria-hidden="true" size={15} weight="bold" />
+                          新建项目
+                        </Link>
+                        <button
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={projectId === null}
+                          onClick={() => chooseProject(null)}
+                          className={`flex items-center gap-2 rounded-app-compact px-3 py-2 text-left text-xs transition ${projectId === null ? 'bg-app-accent-soft text-app-accent' : 'text-app-ink-soft hover:bg-app-surface-muted'}`}
+                        >
+                          <span aria-hidden="true" className="w-[15px] text-center">
+                            ×
+                          </span>
+                          <span className="flex-1">自动创建</span>
+                          {projectId === null ? (
+                            <Check aria-hidden="true" size={14} weight="bold" />
+                          ) : null}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               ) : null}
               {templateFile && !hasConversation ? (
@@ -1363,7 +1524,7 @@ function QuickStartInput({
                         type="button"
                         aria-label={`生成方向，当前${DIRECTIONAL_MOVEMENT[directionalMovement]}`}
                         aria-expanded={directionMenuOpen}
-                        disabled={entryBusy}
+                        disabled={entryBusy || Boolean(selectedProject)}
                         onClick={() => {
                           setStyleMenuOpen(false)
                           setDirectionSliderValue(directionalMovementIndex)

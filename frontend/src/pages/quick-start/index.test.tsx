@@ -12,7 +12,12 @@ import { BrowserRouter, MemoryRouter, Route, Routes, useLocation, useNavigate } 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { QuickStartCandidate, QuickStartEntryService, QuickStartSession } from './service'
-import { WorkflowRunConflictError, type WorkflowRun } from '@/entities'
+import {
+  WorkflowRunConflictError,
+  type Project,
+  type ProjectApis,
+  type WorkflowRun,
+} from '@/entities'
 import { ApiError } from '@/shared/api'
 import type { ExportPackageModel } from '@/features/export-package'
 import { readActiveRun, rememberActiveRun } from '@/features/active-run'
@@ -337,10 +342,31 @@ function agentFor(
   }
 }
 
+const existingProject: Project = {
+  id: '42',
+  workflowId: null,
+  name: '星海计划',
+  perspective: 'side',
+  directionalMovement: 'four-way',
+  spriteSize: { width: 128, height: 192 },
+  gameStyle: 'pixel',
+  sampleImageUrl: null,
+  createdAt: '2026-08-25T00:00:00Z',
+  updatedAt: '2026-08-25T00:00:00Z',
+}
+
+function projectReader(project: Project = existingProject): Pick<ProjectApis, 'list' | 'get'> {
+  return {
+    list: vi.fn(async () => ({ items: [project], total: 1, page: 1, pageSize: 20 })),
+    get: vi.fn(async () => project),
+  }
+}
+
 function renderAt(
   path: string,
   service: QuickStartEntryService,
   agent: CreateQuickStartAgentOptions = agentFor(),
+  projects: Pick<ProjectApis, 'list' | 'get'> = projectReader(),
 ) {
   function PlaytestLocation() {
     const location = useLocation()
@@ -351,11 +377,25 @@ function renderAt(
       <Routes>
         <Route
           path="/quick-start"
-          element={<QuickStartPage service={service} activeRunUserId="7" agent={agent} />}
+          element={
+            <QuickStartPage
+              service={service}
+              activeRunUserId="7"
+              agent={agent}
+              projectApis={projects}
+            />
+          }
         />
         <Route
           path="/quick-start/:runId"
-          element={<QuickStartPage service={service} activeRunUserId="7" agent={agent} />}
+          element={
+            <QuickStartPage
+              service={service}
+              activeRunUserId="7"
+              agent={agent}
+              projectApis={projects}
+            />
+          }
         />
         <Route path="/projects/:projectId/assets" element={<PlaytestLocation />} />
         <Route path="/playtest/:characterId/:outfitId" element={<PlaytestLocation />} />
@@ -862,6 +902,69 @@ describe('QuickStartPage', () => {
     expect(template.textContent).toBe('添加母版')
     expect(style.getAttribute('aria-expanded')).toBe('false')
     expect(send.className).toContain('rounded-full')
+  })
+
+  it('defaults to automatic project creation and can target an existing project', async () => {
+    const startCharacterGeneration = vi.fn(async () => ({ runId: 'run-created' }))
+    const planner = vi.fn(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'quick_start_decision',
+          input: {
+            kind: 'proposal',
+            optimizedPrompt: '银发骑士，全身像',
+            actionPrompt: '向前行走',
+            actionType: 'walk',
+            optimizationSummary: '整理角色与动作描述。',
+          },
+        },
+      ],
+    }))
+    const projects = projectReader()
+    renderAt('/quick-start', serviceFor(null), { planner, startCharacterGeneration }, projects)
+
+    await waitFor(() => expect(projects.list).toHaveBeenCalledWith({ page: 1, pageSize: 3 }))
+
+    const project = screen.getByRole('button', { name: '选择项目，当前自动创建' })
+    fireEvent.click(project)
+    expect(screen.getByRole('menuitem', { name: '新建项目' }).getAttribute('href')).toBe(
+      '/projects/new?entry=quick-start',
+    )
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: '星海计划' }))
+
+    expect(screen.getByRole('button', { name: '选择项目，当前星海计划' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '生成方向，当前四向' })).toBeTruthy()
+    expect(screen.getByTestId('quick-start-selected-style').textContent).toBe('像素')
+
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '银发骑士向前行走' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+    fireEvent.click(await screen.findByRole('button', { name: '确认并生成' }))
+
+    await waitFor(() =>
+      expect(startCharacterGeneration).toHaveBeenCalledWith({
+        prompt: '银发骑士，全身像',
+        actionPrompt: '向前行走',
+        actionType: 'walk',
+        directionalMovement: 'four-way',
+        gameStyle: 'pixel',
+        automaticDelivery: true,
+        projectId: '42',
+      }),
+    )
+  })
+
+  it('restores a newly created project from the Quick Start return URL', async () => {
+    const projects = projectReader()
+    renderAt('/quick-start?projectId=42', serviceFor(null), agentFor(), projects)
+
+    expect(await screen.findByRole('button', { name: '选择项目，当前星海计划' })).toBeTruthy()
+    expect(projects.get).toHaveBeenCalledWith('42')
+    expect(screen.getByRole('button', { name: '生成方向，当前四向' })).toBeTruthy()
+    expect(screen.getByTestId('quick-start-selected-style').textContent).toBe('像素')
   })
 
   it('opens generation direction as an animated slider control below the composer', () => {
