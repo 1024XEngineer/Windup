@@ -195,6 +195,8 @@ type AgentConversationRecord = {
   turns: readonly AgentConversationTurn[]
   /** 入口处选的画风；不随草稿存住的话，刷新后画风选择器已隐藏而值悄悄回到不指定。 */
   gameStyle?: ArtStyle
+  /** 入口滑块选的方向；进入对话后控件锁定，刷新时必须恢复原值。 */
+  directionalMovement?: DirectionalMovement
   projectId?: string | null
 }
 
@@ -236,6 +238,24 @@ function readAgentDraftGameStyle(key: string): ArtStyle {
     return isArtStyle(parsed.gameStyle) ? parsed.gameStyle : 'unspecified'
   } catch {
     return 'unspecified'
+  }
+}
+
+function readAgentDraftDirectionalMovement(key: string): DirectionalMovement {
+  try {
+    const stored = window.sessionStorage.getItem(key)
+    if (!stored) return 'single'
+    const parsed: unknown = JSON.parse(stored)
+    if (typeof parsed !== 'object' || parsed === null || !('directionalMovement' in parsed)) {
+      return 'single'
+    }
+    return QUICK_START_DIRECTIONAL_MOVEMENTS.includes(
+      parsed.directionalMovement as DirectionalMovement,
+    )
+      ? (parsed.directionalMovement as DirectionalMovement)
+      : 'single'
+  } catch {
+    return 'single'
   }
 }
 
@@ -678,8 +698,16 @@ function QuickStartInput({
   const navigate = useNavigate()
   const [entrySearchParams] = useSearchParams()
   const [prompt, setPrompt] = useState('')
-  const [directionalMovement, setDirectionalMovement] = useState<DirectionalMovement>('single')
-  const [confirmedPrompt, setConfirmedPrompt] = useState<string | null>(null)
+  const [directionalMovement, setDirectionalMovement] = useState<DirectionalMovement>(() => {
+    const draftId = readAgentDraftId()
+    return draftId
+      ? readAgentDraftDirectionalMovement(
+          agentDraftConversationStorageKey(activeRunUserId, draftId),
+        )
+      : 'single'
+  })
+  const directionalMovementRef = useRef(directionalMovement)
+  directionalMovementRef.current = directionalMovement
   const [templateFile, setTemplateFile] = useState<File | null>(null)
   const [gameStyle, setGameStyle] = useState<ArtStyle>(() => {
     const draftId = readAgentDraftId()
@@ -706,7 +734,7 @@ function QuickStartInput({
   const [revealingFirstAgentTurn, setRevealingFirstAgentTurn] = useState(false)
   const [entryTransition, setEntryTransition] = useState<'idle' | 'leaving'>('idle')
   const [promptState, setPromptState] = useState<
-    'collecting' | 'rewriting' | 'ready' | 'direction' | 'confirmed'
+    'collecting' | 'rewriting' | 'ready' | 'confirmed'
   >('collecting')
   const [error, setError] = useState<string | null>(null)
   const draftIdRef = useRef(readAgentDraftId())
@@ -741,12 +769,7 @@ function QuickStartInput({
   const agentPlanning = agentSession.state.status === 'planning'
   const agentThinking = agentPlanning || revealingFirstAgentTurn
   const generationStarting = promptState === 'confirmed'
-  const entryBusy =
-    submitting ||
-    agentThinking ||
-    promptState === 'rewriting' ||
-    promptState === 'direction' ||
-    generationStarting
+  const entryBusy = submitting || agentThinking || promptState === 'rewriting' || generationStarting
   const entryCanInterrupt = submitting || agentPlanning
   const hasPrompt = Boolean(prompt.trim())
   const hasConversation = conversationTurns.length > 0
@@ -764,14 +787,20 @@ function QuickStartInput({
     return draftId
   }, [])
 
-  const persistDraftConversation = useCallback(
-    (turns: readonly AgentConversationTurn[]) => {
+  const persistAgentDraft = useCallback(
+    (updates: Partial<AgentConversationRecord> = {}) => {
+      const turns = updates.turns ?? conversationTurnsRef.current
       conversationTurnsRef.current = turns
       const draftId = ensureDraftId()
       writeAgentConversation(
         'sessionStorage',
         agentDraftConversationStorageKey(activeRunUserId, draftId),
-        { turns, gameStyle: gameStyleRef.current, projectId: projectIdRef.current },
+        {
+          turns,
+          gameStyle: updates.gameStyle ?? gameStyleRef.current,
+          directionalMovement: updates.directionalMovement ?? directionalMovementRef.current,
+          projectId: updates.projectId === undefined ? projectIdRef.current : updates.projectId,
+        },
       )
     },
     [activeRunUserId, ensureDraftId],
@@ -807,23 +836,22 @@ function QuickStartInput({
   }, [projectApis])
 
   function chooseProject(project: Project | null) {
+    const nextProjectId = project?.id ?? null
     setProjectMenuOpen(false)
-    setProjectId(project?.id ?? null)
+    projectIdRef.current = nextProjectId
+    setProjectId(nextProjectId)
     setSelectedProject(project)
     if (project) {
+      directionalMovementRef.current = project.directionalMovement
+      gameStyleRef.current = project.gameStyle
       setDirectionalMovement(project.directionalMovement)
       setGameStyle(project.gameStyle)
     }
-    const draftId = ensureDraftId()
-    writeAgentConversation(
-      'sessionStorage',
-      agentDraftConversationStorageKey(activeRunUserId, draftId),
-      {
-        turns: conversationTurnsRef.current,
-        gameStyle: project?.gameStyle ?? gameStyleRef.current,
-        projectId: project?.id ?? null,
-      },
-    )
+    persistAgentDraft({
+      gameStyle: project?.gameStyle ?? gameStyleRef.current,
+      directionalMovement: project?.directionalMovement ?? directionalMovementRef.current,
+      projectId: nextProjectId,
+    })
   }
 
   const persistRunConversation = useCallback(
@@ -852,9 +880,9 @@ function QuickStartInput({
       const next = [...conversationTurnsRef.current, turn]
       conversationTurnsRef.current = next
       setConversationTurns(next)
-      persistDraftConversation(next)
+      persistAgentDraft({ turns: next })
     },
-    [persistDraftConversation],
+    [persistAgentDraft],
   )
 
   async function revealFirstAgentTurn(turn: AgentConversationTurn) {
@@ -915,7 +943,7 @@ function QuickStartInput({
     )
     conversationTurnsRef.current = next
     setConversationTurns(next)
-    persistDraftConversation(next)
+    persistAgentDraft({ turns: next })
     return next
   }
 
@@ -972,16 +1000,16 @@ function QuickStartInput({
   }
 
   function chooseGameStyle(next: ArtStyle) {
+    gameStyleRef.current = next
     setGameStyle(next)
     styleMenu.close()
-    const draftId = draftIdRef.current
-    if (draftId) {
-      writeAgentConversation(
-        'sessionStorage',
-        agentDraftConversationStorageKey(activeRunUserId, draftId),
-        { turns: conversationTurnsRef.current, gameStyle: next, projectId: projectIdRef.current },
-      )
-    }
+    persistAgentDraft({ gameStyle: next })
+  }
+
+  function chooseDirectionalMovement(next: DirectionalMovement) {
+    directionalMovementRef.current = next
+    setDirectionalMovement(next)
+    persistAgentDraft({ directionalMovement: next })
   }
 
   function stopEntryWork() {
@@ -999,7 +1027,7 @@ function QuickStartInput({
         const nextTurns = turns.slice(0, -1)
         conversationTurnsRef.current = nextTurns
         setConversationTurns(nextTurns)
-        persistDraftConversation(nextTurns)
+        persistAgentDraft({ turns: nextTurns })
       }
     }
     pendingPrompt.current = null
@@ -1033,14 +1061,16 @@ function QuickStartInput({
 
     if (agentSession.state.status === 'proposal' && promptState === 'ready') {
       if (!normalizedPrompt) return
-      setConfirmedPrompt(normalizedPrompt)
-      setPrompt('')
-      setPromptState('direction')
-      appendConversationTurn({
-        role: 'assistant',
-        content: '最后确认一下：需要单向、四向还是八向？',
-        kind: 'clarification',
-      })
+      setPromptState('confirmed')
+      try {
+        const result = await agentSession.confirmProposal(normalizedPrompt, directionalMovement, {
+          gameStyle,
+          ...(projectId ? { projectId } : {}),
+        })
+        if (result.kind === 'generated') await handoffGenerated(result)
+      } catch {
+        setPromptState('ready')
+      }
       return
     }
 
@@ -1129,28 +1159,8 @@ function QuickStartInput({
     }
   }
 
-  async function chooseDirectionalMovement(movement: DirectionalMovement) {
-    if (!confirmedPrompt || promptState !== 'direction') return
-    setDirectionalMovement(movement)
-    appendConversationTurn({ role: 'user', content: DIRECTIONAL_MOVEMENT[movement] })
-    setPromptState('confirmed')
-    try {
-      const result = await agentSession.confirmProposal(confirmedPrompt, movement, {
-        gameStyle,
-        ...(projectId ? { projectId } : {}),
-      })
-      if (result.kind === 'generated') await handoffGenerated(result)
-    } catch {
-      setPromptState('direction')
-    }
-  }
-
   const inputLocked =
-    submitting ||
-    agentThinking ||
-    promptState === 'rewriting' ||
-    promptState === 'direction' ||
-    generationStarting
+    submitting || agentThinking || promptState === 'rewriting' || generationStarting
   const awaitingGenerationConfirmation =
     agentSession.state.status === 'proposal' && promptState === 'ready'
   const buttonLabel = submitting
@@ -1259,20 +1269,6 @@ function QuickStartInput({
               {agentSession.state.status === 'error' ? (
                 <div role="alert" data-conversation-kind="agent" className="min-w-0">
                   <AgentCopy lines={[agentSession.state.message]} tone="danger" />
-                </div>
-              ) : null}
-              {promptState === 'direction' ? (
-                <div className="flex flex-wrap gap-2" aria-label="选择生成方向">
-                  {QUICK_START_DIRECTIONAL_MOVEMENTS.map((movement) => (
-                    <button
-                      key={movement}
-                      type="button"
-                      onClick={() => void chooseDirectionalMovement(movement)}
-                      className="rounded-full border border-app-line bg-app-surface-raised px-4 py-2 text-sm font-semibold text-app-ink transition hover:border-app-accent hover:text-app-accent"
-                    >
-                      {DIRECTIONAL_MOVEMENT[movement]}
-                    </button>
-                  ))}
                 </div>
               ) : null}
             </div>
@@ -1613,7 +1609,7 @@ function QuickStartInput({
                             const index = Math.round(Number(event.currentTarget.value))
                             setDirectionDragging(false)
                             setDirectionSliderValue(index)
-                            setDirectionalMovement(
+                            chooseDirectionalMovement(
                               QUICK_START_DIRECTIONAL_MOVEMENTS[index] ?? 'single',
                             )
                           }}
@@ -1626,7 +1622,7 @@ function QuickStartInput({
                           onChange={(event) => {
                             const value = Number(event.target.value)
                             setDirectionSliderValue(value)
-                            setDirectionalMovement(
+                            chooseDirectionalMovement(
                               QUICK_START_DIRECTIONAL_MOVEMENTS[Math.round(value)] ?? 'single',
                             )
                           }}
@@ -1704,7 +1700,7 @@ function PromptProposal({
             </button>
           ) : null}
           <InlineArrowAction aria-label="填入输入框" disabled={disabled} onClick={onFill}>
-            编辑后逐步确认
+            编辑后发送生成
           </InlineArrowAction>
         </div>
       ) : status === 'superseded' ? (
