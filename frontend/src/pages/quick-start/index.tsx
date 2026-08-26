@@ -667,6 +667,7 @@ function QuickStartInput({
   const initialAgentSeed = useRef(createAgentSeed(conversationTurns)).current
   const agentSession = useQuickStartAgent({
     ...agent,
+    ...(gameStyle === 'unspecified' ? {} : { artStyle: ART_STYLE[gameStyle] }),
     initialMessages: initialAgentSeed.messages,
     initialClarificationUsed: initialAgentSeed.clarificationUsed,
     initialProposal: initialAgentSeed.pendingProposal,

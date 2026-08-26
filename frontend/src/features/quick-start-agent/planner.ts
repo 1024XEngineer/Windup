@@ -227,11 +227,19 @@ function fallbackPlannerResult(
   }
 }
 
-export function quickStartPlannerInstructions(clarificationUsed: boolean): string {
+export function quickStartPlannerInstructions(
+  clarificationUsed: boolean,
+  artStyle?: string,
+): string {
   const clarificationRule = clarificationUsed
     ? '本草稿已经问过一次必要澄清，不得因为轮数强制生成，也不得再问第二个澄清问题；信息不足时用 reply 说明可继续补充，存在硬冲突时用 blocked。'
     : '本草稿尚未问过必要澄清。只有缺少会实质改变角色母版的关键信息时，才可以用 clarification 问一个最关键的问题。'
+  const artStyleContext = artStyle
+    ? `用户当前选择的画风是「${artStyle}」。这是宿主已经确定的生成约束；拟写提示词时不得使用与它冲突的画风描述，也不要修改或重新选择画风。`
+    : ''
   return `你是 Windup Quick Start 的轻量 Planner。你只理解当前草稿、回复用户，并在合适时给出角色母版提示词提案；你不执行生成，也不参与生成后的流程。
+
+${artStyleContext}
 
 每轮必须调用一次 ${QUICK_START_DECISION_TOOL}，并只返回一个决策：
 - reply：闲聊、回顾历史、评价、比较方案、解释或继续讨论。reply 不消耗澄清额度。
@@ -277,7 +285,13 @@ export function createAiSdkQuickStartPlanner({
   })
   const model = provider.chatModel(modelId)
 
-  return async ({ messages, clarificationUsed, workflow, signal }): Promise<PlannerResult> => {
+  return async ({
+    messages,
+    clarificationUsed,
+    artStyle,
+    workflow,
+    signal,
+  }): Promise<PlannerResult> => {
     const tools = workflow
       ? Object.fromEntries(
           workflow.availableTools.map((name: WorkflowAgentToolName) => [name, workflowTools[name]]),
@@ -285,7 +299,7 @@ export function createAiSdkQuickStartPlanner({
       : { [QUICK_START_DECISION_TOOL]: quickStartDecisionTool }
     const instructions = workflow
       ? quickStartWorkflowInstructions(workflow)
-      : quickStartPlannerInstructions(clarificationUsed)
+      : quickStartPlannerInstructions(clarificationUsed, artStyle)
     const history = messages.slice(-MAX_PLANNER_HISTORY_MESSAGES)
     const result = await generateText({
       model,

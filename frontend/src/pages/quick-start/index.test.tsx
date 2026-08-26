@@ -1026,6 +1026,25 @@ describe('QuickStartPage', () => {
     expect(window.sessionStorage.getItem(key)).toContain('"gameStyle":"pixel"')
   })
 
+  it('passes the chosen art style into every Agent planning turn', async () => {
+    const planner = vi.fn(async (_input: PlannerInput) => ({
+      text: '想保留哪个特征？',
+      finishReason: 'stop',
+      toolCalls: [],
+    }))
+    renderAt('/quick-start', serviceFor(null), agentFor({ planner }))
+
+    fireEvent.click(screen.getByRole('button', { name: '选择画风，当前不指定' }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: '像素' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '一个住在云端的机械师。' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+
+    await waitFor(() => expect(planner).toHaveBeenCalledTimes(1))
+    expect(planner.mock.calls[0]?.[0]).toMatchObject({ artStyle: '像素' })
+  })
+
   it('moves the Agent draft into a run-scoped sidecar when generation starts', async () => {
     vi.useFakeTimers()
     const createdRun = workflow(setupAndTemplate({ phase: 'generating' }), 'run-created')
