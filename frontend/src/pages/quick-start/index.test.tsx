@@ -175,6 +175,7 @@ function serviceFor(run: WorkflowRun | null, overrides: Partial<QuickStartMock> 
     resolveCharacterInfo: vi.fn(async () => ({ characterId: 'character-1', outfitId: 'outfit-1' })),
     getTemplateCandidates: vi.fn(async () => []),
     getActionFrames: vi.fn(async () => []),
+    getQueueAhead: vi.fn(async () => 0),
     getExportModel: vi.fn(async () => null),
     ...overrides,
   }
@@ -3283,6 +3284,20 @@ describe('QuickStartPage', () => {
       expect(await screen.findByLabelText(new RegExp(label, 'u'))).toBeTruthy()
       view.unmount()
     }
+  })
+
+  it('只在当前生成任务排队时把前方任务数附在闪烁提示后', async () => {
+    const run = workflow(setupAndTemplate({ phase: 'generating' }))
+    const service = serviceFor(run, { getQueueAhead: vi.fn(async () => 2) })
+
+    renderAt('/quick-start/run-1', service)
+
+    const progress = await screen.findByLabelText('角色生成进度，排队中，前方还有 2 个任务')
+    await waitFor(() =>
+      expect(progress.textContent?.replaceAll('\u00a0', ' ')).toBe(
+        '勾勒角色轮廓（排队中，前方还有 2 个任务）',
+      ),
+    )
   })
 
   it('只重试 Quick Start 中失败的源方向', async () => {
