@@ -13,6 +13,7 @@ export { createQuotaApis, quotaApis } from './quota'
 export type {
   CreateQuotaApisOptions,
   CreditAccount,
+  CreditRedemptionResult,
   CreditTransaction,
   InviteCode,
   CreditTransactionDirection,
@@ -90,6 +91,7 @@ export {
 export type {
   CharacterTemplateGenerationInput,
   CharacterTemplateGenerationResult,
+  CharacterDirectionSetGenerationResult,
   CompleteAnimationGenerationInput,
   CompleteAnimationGenerationResult,
   FirstFrameGenerationInput,
@@ -98,14 +100,17 @@ export type {
   Generation,
   GenerationApis,
   GenerationEvent,
+  GenerationProgress,
   GenerationExpectation,
   GenerationInput,
   GenerationResult,
   GenerationResultFor,
+  GenerationTaskType,
   GenerationType,
   ImageCandidateCount,
   SequenceGeometry,
   TaskStatus,
+  WorkflowGenerationExpectation,
 } from './generation'
 export type { GenerationApiConfig, GenerationTransport } from './generation/api'
 

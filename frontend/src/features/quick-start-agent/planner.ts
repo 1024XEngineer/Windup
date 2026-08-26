@@ -72,7 +72,8 @@ const quickStartDecisionTool = tool({
         message: { type: 'string', minLength: 1, maxLength: 2_000 },
         optimizedPrompt: { type: 'string', minLength: 1, maxLength: 4_000 },
         actionPrompt: { type: 'string', minLength: 1, maxLength: 4_000 },
-        actionType: { type: 'string', enum: ['walk'] },
+        actionType: { type: 'string', enum: ['idle', 'walk', 'attack', 'jump'] },
+        locomotion: { type: 'boolean', enum: [true] },
         optimizationSummary: { type: 'string', minLength: 1, maxLength: 600 },
         suggestPixelPerfect: { type: 'boolean' },
       },
@@ -110,7 +111,7 @@ const regenerateToolSchema = jsonSchema<Record<string, never>>({
   properties: {},
 })
 
-const refinementToolSchema = jsonSchema<{ adjustmentPrompt: string }>({
+const refinementToolSchema = jsonSchema<{ adjustmentPrompt: string; candidateId?: string }>({
   type: 'object',
   additionalProperties: false,
   properties: {
@@ -119,6 +120,11 @@ const refinementToolSchema = jsonSchema<{ adjustmentPrompt: string }>({
       minLength: 1,
       maxLength: 4_000,
       description: '只描述相对上一版需要改变的内容，不重复角色或动作的完整原始描述。',
+    },
+    candidateId: {
+      type: 'string',
+      minLength: 1,
+      description: '候选态微调时填写宿主提供的候选句柄；已确认结果不填写。',
     },
   },
   required: ['adjustmentPrompt'],
@@ -249,7 +255,7 @@ ${artStyleContext}
 - blocked：存在安全问题、明显自相矛盾或超出单角色母版能力，说明需要修改的内容。
 - proposal：已有足够角色设定，或用户明确要求整理最终提示词、直接生成时，给出可选择采用的完整提案。proposal 只是提案，不代表用户授权生成。
 
-当前能力面向一个角色及其可选动作。optimizedPrompt 只描述稳定的单角色母版：完整身体、清楚轮廓，保留身份、外观、服装、气质和美术风格。用户明确给出动作时，必须把动作单独写入 actionPrompt；没有动作时省略 actionPrompt，不得替用户补动作。动作明确属于行走或跑步位移时额外返回 actionType: "walk"；其他动作省略 actionType，不做完整动作分类。
+当前能力面向一个角色及其可选动作。optimizedPrompt 只描述稳定的单角色母版：完整身体、清楚轮廓，保留身份、外观、服装、气质和美术风格。用户明确给出动作时，必须把动作单独写入 actionPrompt；没有动作时省略 actionPrompt，不得替用户补动作。动作明确匹配待机、行走、攻击或跳跃时，分别返回 actionType: "idle"、"walk"、"attack" 或 "jump"，让生成复用已有优化管线；匹配不到时省略 actionType。只要动作会让角色整体发生空间位移，额外返回 locomotion: true；原地动作省略 locomotion。两项判断互相独立。
 
 决策规则：
 1. 对话轮数永远不是 proposal 的触发条件。不得在澄清额度用完后用默认值强制补齐并提案。
@@ -263,14 +269,26 @@ ${clarificationRule}`
 }
 
 function quickStartWorkflowInstructions(context: WorkflowAgentContext): string {
-  const targets = context.availableTools.some((name) => name.includes('character_template'))
-    ? context.availableTools.some((name) => name.includes('first_frame'))
-      ? '已确认的角色母版和动作首帧'
-      : '已确认的角色母版'
-    : '已确认的动作首帧'
+  const candidates = context.characterTemplateCandidates ?? []
+  const candidateMapping = candidates.length
+    ? `当前有 ${candidates.length} 张未确认的角色候选：${candidates
+        .map((candidate) => `第 ${candidate.position} 张对应 ${candidate.id}`)
+        .join(
+          '，',
+        )}。用户要求重新生成整批时调用角色母版 regenerate Tool；用户按序号指定某张进行修改时，调用角色母版 refine Tool，并同时填写 candidateId 和 adjustmentPrompt。用户要求微调却没有指出候选时，直接回复询问要修改第几张，不调用 Tool。`
+    : ''
+  const targets = candidates.length
+    ? '未确认的角色候选'
+    : context.availableTools.some((name) => name.includes('character_template'))
+      ? context.availableTools.some((name) => name.includes('first_frame'))
+        ? '已确认的角色母版和动作首帧'
+        : '已确认的角色母版'
+      : '已确认的动作首帧'
   return `你是 Windup 生成流程中的轻量 Agent。当前可修改：${targets}。宿主只会在生成任务停止、结果允许修改时调用你。
 
 用户明确要求重新生成时，选择与目标对应的 regenerate Tool；重新生成不携带修改描述。用户给出相对上一版的具体修改时，选择对应的 refine Tool，并把具体变化写入 adjustmentPrompt。用户意图含糊、没有说明修改对象或只是在讨论时，直接用简短中文回复澄清，不调用 Tool。否定、引用或假设语境不得触发 Tool。
+
+${candidateMapping}
 
 每轮最多调用一个 Tool。不得输出思维过程、Tool 名称、内部状态或调用计划。所有实际修改由宿主绑定的 WorkflowController 完成。`
 }

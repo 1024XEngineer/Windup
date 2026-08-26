@@ -18,5 +18,11 @@ export type { KineticCopyCycleProps, KineticCopyMessage } from './kinetic-copy-c
 export { PixelMatrix } from './pixel-matrix'
 export { FrameAnimationPlayer } from './frame-animation-player'
 export type { FrameAnimationFrame, FrameAnimationPlayerProps } from './frame-animation-player'
-export { productControlClass, productMenuItemClass, productPopoverClass } from './product-control'
-export type { ProductControlVariant } from './product-control'
+export {
+  productControlClass,
+  productMenuItemClass,
+  productPopoverClass,
+  productPopoverMotionClass,
+} from './product-control'
+export type { ProductControlVariant, ProductPopoverMotionState } from './product-control'
+export { useProductPopoverMotion } from './product-popover-motion'

@@ -86,6 +86,12 @@ class QuotaService(ABC):
     ) -> None:
         """入账：增加可用余额与累计获得。"""
 
+    @abstractmethod
+    def redeem_code(
+        self, session: Session, user_id: int, code: str
+    ) -> tuple[int, CreditAccountView]:
+        """兑换一次性积分码，返回入账数量和更新后的账户。"""
+
     # -- 流水查询 ---------------------------------------------------------
 
     @abstractmethod

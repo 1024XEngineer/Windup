@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { productControlClass, productMenuItemClass, productPopoverClass } from './product-control'
+import {
+  productControlClass,
+  productMenuItemClass,
+  productPopoverClass,
+  productPopoverMotionClass,
+} from './product-control'
 
 describe('product control styles', () => {
   it('keeps primary and secondary actions on the same control geometry', () => {
@@ -24,5 +29,11 @@ describe('product control styles', () => {
     expect(productPopoverClass).toContain('rounded-app-surface')
     expect(productPopoverClass).toContain('border-app-line-strong')
     expect(productMenuItemClass).toContain('rounded-app-compact')
+  })
+
+  it('shares one scale-fade motion contract across product popovers', () => {
+    expect(productPopoverMotionClass('open')).toContain('product-popover-in')
+    expect(productPopoverMotionClass('closing')).toContain('product-popover-out')
+    expect(productPopoverMotionClass('closed')).toContain('product-popover-closed')
   })
 })

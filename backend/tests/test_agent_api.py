@@ -242,6 +242,49 @@ def test_ai_chat_preserves_one_tool_call_from_real_provider(
     }
 
 
+def test_ai_chat_accepts_multiple_tool_definitions_for_one_turn(
+    auth_client,
+    install_openai_provider: Callable[..., list[dict[str, Any]]],
+):
+    provider_requests = install_openai_provider(auth_client, _text_completion())
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "regenerate_character_template",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "refine_character_template",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "candidateId": {"type": "string"},
+                        "adjustmentPrompt": {"type": "string"},
+                    },
+                    "required": ["candidateId", "adjustmentPrompt"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+    ]
+
+    response = auth_client.post("/ai/chat", json=_request_body(tools=tools))
+
+    assert response.status_code == 200
+    assert [tool["function"]["name"] for tool in provider_requests[0]["tools"]] == [
+        "regenerate_character_template",
+        "refine_character_template",
+    ]
+
+
 def test_ai_chat_rejects_oversized_history_before_provider(auth_client):
     calls = 0
 
@@ -373,7 +416,10 @@ def test_ai_chat_binds_user_and_request_id_into_gateway_trace(
     request_id = response.headers["x-request-id"]
     assert response.status_code == 200
     proxy_logs = [r.message for r in caplog.records if r.name == "windup.ai.proxy"]
-    assert any(f"AI chat started request_id={request_id} user_id=1" in msg for msg in proxy_logs)
+    assert any(
+        f"AI chat started request_id={request_id} user_id=1" in msg
+        for msg in proxy_logs
+    )
     assert any(
         f"AI chat completed request_id={request_id} user_id=1" in msg
         and "finish_reason=stop" in msg

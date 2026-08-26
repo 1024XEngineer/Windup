@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ExportPackageModel } from './model'
-import { ExportButton, ExportPanel } from './export-panel'
+import { AssetVersionExportButton, ExportButton, ExportPanel } from './export-panel'
 
 const model = {
   stage: 'action-assets',
@@ -212,5 +212,121 @@ describe('ExportPanel', () => {
     const button = screen.getByRole('button', { name: '导出完整动作资产' })
     expect(button.querySelector('svg')).toBeTruthy()
     expect(button.querySelector('[role="tooltip"]')?.textContent).toBe('导出完整动作资产')
+  })
+
+  it('有完美像素版时先选择下载版本，再导出命名清晰的单个资产包', async () => {
+    const pixelPerfectModel = {
+      ...model,
+      actions: model.actions.map((action) => ({
+        ...action,
+        sequences: action.sequences.map((sequence) => ({
+          ...sequence,
+          frames: sequence.frames.map((frame) => ({
+            ...frame,
+            imageUrl: '/pixel-perfect-walk.png',
+          })),
+        })),
+      })),
+    } satisfies ExportPackageModel
+    const exporter = vi.fn().mockResolvedValue({
+      blob: new Blob(['zip'], { type: 'application/zip' }),
+      filename: 'windup-Aster-character-1.zip',
+    })
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn(() => 'blob:versioned-export'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    const downloads: string[] = []
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        downloads.push(this.download)
+      })
+
+    render(
+      <AssetVersionExportButton
+        originalModel={model}
+        pixelPerfectModel={pixelPerfectModel}
+        exporter={exporter}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '选择下载版本' }))
+    const menu = screen.getByRole('menu', { name: '选择下载版本' })
+    expect(menu.className).toContain('rounded-app-surface')
+    expect(screen.getByRole('menuitem', { name: /原始资产/u })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: /完美像素版/u })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: /全部下载/u })).toBeTruthy()
+    expect(screen.queryByText('保留生成时的原始画面')).toBeNull()
+    expect(screen.queryByText('使用像素网格重建结果')).toBeNull()
+    expect(screen.queryByText('分别下载两套 ZIP 资产包')).toBeNull()
+
+    fireEvent.click(screen.getByRole('menuitem', { name: /完美像素版/u }))
+
+    await waitFor(() =>
+      expect(exporter).toHaveBeenCalledWith(pixelPerfectModel, expect.any(Function)),
+    )
+    expect(click).toHaveBeenCalledTimes(1)
+    expect(downloads).toEqual(['windup-Aster-character-1-pixel-perfect.zip'])
+    expect(screen.queryByRole('menu', { name: '选择下载版本' })).toBeNull()
+  })
+
+  it('全部下载会分别导出原始资产与完美像素版', async () => {
+    const pixelPerfectModel = { ...model, characterImageUrl: '/pixel-perfect-master.png' }
+    const exporter = vi.fn().mockResolvedValue({
+      blob: new Blob(['zip'], { type: 'application/zip' }),
+      filename: 'windup-Aster-character-1.zip',
+    })
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn().mockReturnValueOnce('blob:original').mockReturnValueOnce('blob:pixel-perfect'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    const downloads: string[] = []
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(
+      function (this: HTMLAnchorElement) {
+        downloads.push(this.download)
+      },
+    )
+
+    render(
+      <AssetVersionExportButton
+        originalModel={model}
+        pixelPerfectModel={pixelPerfectModel}
+        exporter={exporter}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '选择下载版本' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /全部下载/u }))
+
+    await waitFor(() => expect(exporter).toHaveBeenCalledTimes(2))
+    expect(exporter.mock.calls.map(([requestedModel]) => requestedModel)).toEqual([
+      model,
+      pixelPerfectModel,
+    ])
+    expect(downloads).toEqual([
+      'windup-Aster-character-1-original.zip',
+      'windup-Aster-character-1-pixel-perfect.zip',
+    ])
+  })
+
+  it('下载版本菜单支持 Escape 关闭并把焦点还给下载按钮', async () => {
+    render(<AssetVersionExportButton originalModel={model} pixelPerfectModel={model} />)
+
+    const trigger = screen.getByRole('button', { name: '选择下载版本' })
+    fireEvent.click(trigger)
+    const original = screen.getByRole('menuitem', { name: /原始资产/u })
+    await waitFor(() => expect(document.activeElement).toBe(original))
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    const closingMenu = screen.getByTestId('asset-version-menu')
+    expect(closingMenu.getAttribute('data-state')).toBe('closing')
+    expect(closingMenu.className).toContain('product-popover-out')
+    expect(document.activeElement).toBe(trigger)
+    fireEvent.animationEnd(closingMenu)
+    await waitFor(() => expect(screen.queryByTestId('asset-version-menu')).toBeNull())
   })
 })

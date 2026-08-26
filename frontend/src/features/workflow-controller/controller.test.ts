@@ -324,7 +324,11 @@ describe('WorkflowController', () => {
 
     await controller.startCharacterGeneration({
       prompt: '背着邮包的像素邮差，全身像',
-      automaticDelivery: { actionPrompt: '轻快地向前行走', actionType: 'walk' },
+      automaticDelivery: {
+        actionPrompt: '轻快地向前行走',
+        actionType: 'walk',
+        locomotion: true,
+      },
     })
 
     expect(workflow.apis.create).toHaveBeenCalledWith(
@@ -336,6 +340,7 @@ describe('WorkflowController', () => {
               mode: 'automatic',
               actionPrompt: '轻快地向前行走',
               actionType: 'walk',
+              locomotion: true,
             },
           }),
         ]),

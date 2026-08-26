@@ -15,12 +15,13 @@ const QUICK_START_DECISION_FIELDS = new Set([
   'optimizedPrompt',
   'actionPrompt',
   'actionType',
+  'locomotion',
   'optimizationSummary',
   'suggestPixelPerfect',
 ])
 
 export type QuickStartDirectionalMovement = 'single' | 'four-way' | 'eight-way'
-export type QuickStartActionType = 'walk'
+export type QuickStartActionType = 'idle' | 'walk' | 'attack' | 'jump'
 
 export interface PlannerMessage {
   role: 'user' | 'assistant'
@@ -52,8 +53,10 @@ export type QuickStartPlanner = (input: PlannerInput) => Promise<PlannerResult>
 export interface CharacterGenerationPlan {
   optimizedPrompt: string
   actionPrompt?: string
-  /** 仅在 Agent 明确认出行走/跑步位移时附带；不做通用动作分类。 */
+  /** 仅在动作明确匹配已有优化管线时附带。 */
   actionType?: QuickStartActionType
+  /** 仅在动作会让角色整体发生空间位移时附带。 */
+  locomotion?: true
   optimizationSummary: string
   /** Planner 对明确像素素材意图的静默判断；缺省按否处理以兼容旧提案。 */
   suggestPixelPerfect?: boolean
@@ -81,6 +84,8 @@ export interface QuickStartAgentTurnOptions {
 export interface ConfirmProposalOptions {
   /** 画风原样透传给宿主；取值范围由宿主定义，本模块不认识业务对象。 */
   gameStyle?: string
+  /** 宿主选择的已有项目；缺省时继续自动创建项目。 */
+  projectId?: string
   /** 用户选择确认后由 Controller 自动交付，不再暴露中间候选选择。 */
   automaticDelivery?: boolean
 }
@@ -102,8 +107,10 @@ export type StartCharacterGenerationAction = (input: {
   prompt: string
   actionPrompt?: string
   actionType?: QuickStartActionType
+  locomotion?: true
   directionalMovement?: QuickStartDirectionalMovement
   gameStyle?: string
+  projectId?: string
   automaticDelivery?: boolean
   suggestPixelPerfect?: boolean
 }) => Promise<{ runId: string }>
@@ -125,12 +132,14 @@ export type WorkflowAgentToolName =
 
 export interface WorkflowAgentContext {
   availableTools: readonly WorkflowAgentToolName[]
+  /** 当前未确认角色候选的稳定句柄；Agent 只识别顺序，不接收图片内容或 URL。 */
+  characterTemplateCandidates?: readonly { id: string; position: number }[]
 }
 
 export interface WorkflowAgentActions {
   getContext(): WorkflowAgentContext
   regenerateCharacterTemplate(): Promise<void>
-  refineCharacterTemplate(adjustmentPrompt: string): Promise<void>
+  refineCharacterTemplate(adjustmentPrompt: string, candidateId?: string): Promise<void>
   regenerateFirstFrame(): Promise<void>
   refineFirstFrame(adjustmentPrompt: string): Promise<void>
 }
@@ -198,14 +207,25 @@ export function parseCharacterGenerationPlan(value: unknown): CharacterGeneratio
   if (value.suggestPixelPerfect !== undefined && typeof value.suggestPixelPerfect !== 'boolean') {
     throw new Error('生成提案的 suggestPixelPerfect 无效')
   }
-  const actionType = value.actionType === 'walk' ? value.actionType : undefined
+  const actionType =
+    value.actionType === 'idle' ||
+    value.actionType === 'walk' ||
+    value.actionType === 'attack' ||
+    value.actionType === 'jump'
+      ? value.actionType
+      : undefined
   if (value.actionType !== undefined && (!actionType || !actionPrompt)) {
     throw new Error('生成提案的 actionType 无效')
+  }
+  const locomotion = value.locomotion === true ? true : undefined
+  if (value.locomotion !== undefined && (!locomotion || !actionPrompt)) {
+    throw new Error('生成提案的 locomotion 无效')
   }
   return {
     optimizedPrompt,
     ...(actionPrompt ? { actionPrompt } : {}),
     ...(actionType ? { actionType } : {}),
+    ...(locomotion ? { locomotion } : {}),
     optimizationSummary,
     ...(value.suggestPixelPerfect === true ? { suggestPixelPerfect: true } : {}),
   }
@@ -319,6 +339,7 @@ export function createQuickStartAgent({
         optimizedPrompt: decision.optimizedPrompt,
         ...(decision.actionPrompt ? { actionPrompt: decision.actionPrompt } : {}),
         ...(decision.actionType ? { actionType: decision.actionType } : {}),
+        ...(decision.locomotion ? { locomotion: decision.locomotion } : {}),
         optimizationSummary: decision.optimizationSummary,
         ...(decision.suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
       }
@@ -334,7 +355,7 @@ export function createQuickStartAgent({
     proposalId: string,
     prompt: string,
     directionalMovement: QuickStartDirectionalMovement = 'single',
-    { gameStyle, automaticDelivery }: ConfirmProposalOptions = {},
+    { gameStyle, projectId, automaticDelivery }: ConfirmProposalOptions = {},
   ): Promise<QuickStartAgentResult> {
     assertAuthorized()
     if (running) throw new Error('Planner 正在处理上一条输入')
@@ -355,8 +376,10 @@ export function createQuickStartAgent({
         prompt: effectivePrompt,
         ...(proposal.actionPrompt ? { actionPrompt: proposal.actionPrompt } : {}),
         ...(proposal.actionType ? { actionType: proposal.actionType } : {}),
+        ...(proposal.locomotion ? { locomotion: proposal.locomotion } : {}),
         directionalMovement,
         gameStyle,
+        projectId,
         ...(automaticDelivery ? { automaticDelivery: true } : {}),
         ...(proposal.suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
       })
@@ -388,16 +411,22 @@ interface WorkflowActionTerminal {
   kind: 'action'
   action: WorkflowAgentToolName
   adjustmentPrompt?: string
+  candidateId?: string
 }
 
 function parseWorkflowActionInput(
   action: WorkflowAgentToolName,
   value: unknown,
+  context: WorkflowAgentContext,
 ): WorkflowActionTerminal {
   if (!isRecord(value)) throw new Error('工作流 Tool 参数必须是对象')
   if (action === REFINE_CHARACTER_TEMPLATE_TOOL || action === REFINE_FIRST_FRAME_TOOL) {
+    const candidates = context.characterTemplateCandidates ?? []
+    const acceptsCandidate = action === REFINE_CHARACTER_TEMPLATE_TOOL && candidates.length > 0
     if (
-      Object.keys(value).some((key) => key !== 'adjustmentPrompt') ||
+      Object.keys(value).some(
+        (key) => key !== 'adjustmentPrompt' && (!acceptsCandidate || key !== 'candidateId'),
+      ) ||
       !Object.hasOwn(value, 'adjustmentPrompt')
     ) {
       throw new Error('微调 Tool 参数字段无效')
@@ -407,7 +436,12 @@ function parseWorkflowActionInput(
     if (!adjustmentPrompt || adjustmentPrompt.length > MAX_PROMPT_LENGTH) {
       throw new Error('微调描述无效')
     }
-    return { kind: 'action', action, adjustmentPrompt }
+    if (!acceptsCandidate) return { kind: 'action', action, adjustmentPrompt }
+    const candidateId = typeof value.candidateId === 'string' ? value.candidateId.trim() : ''
+    if (!candidateId || !candidates.some((candidate) => candidate.id === candidateId)) {
+      throw new Error('候选图标识无效')
+    }
+    return { kind: 'action', action, adjustmentPrompt, candidateId }
   }
   if (Object.keys(value).length > 0) throw new Error('重新生成 Tool 不接受参数')
   return { kind: 'action', action }
@@ -429,7 +463,7 @@ function validateWorkflowPlannerTerminal(
   if (!action || !context.availableTools.includes(action)) {
     throw new Error('当前流程不能执行该操作')
   }
-  return parseWorkflowActionInput(action, call.input)
+  return parseWorkflowActionInput(action, call.input, context)
 }
 
 function workflowActionMessage(action: WorkflowAgentToolName): string {
@@ -495,7 +529,11 @@ export function createQuickStartWorkflowAgent({
           await actions.regenerateCharacterTemplate()
           break
         case REFINE_CHARACTER_TEMPLATE_TOOL:
-          await actions.refineCharacterTemplate(terminal.adjustmentPrompt!)
+          if (terminal.candidateId) {
+            await actions.refineCharacterTemplate(terminal.adjustmentPrompt!, terminal.candidateId)
+          } else {
+            await actions.refineCharacterTemplate(terminal.adjustmentPrompt!)
+          }
           break
         case REGENERATE_FIRST_FRAME_TOOL:
           await actions.regenerateFirstFrame()

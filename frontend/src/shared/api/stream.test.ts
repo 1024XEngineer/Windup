@@ -166,7 +166,7 @@ describe('createEventStreamSubscriber', () => {
   })
 
   it.each([
-    [new Response(null, { status: 503 }), 'SSE 请求失败（HTTP 503）'],
+    [new Response(null, { status: 400 }), 'SSE 请求失败（HTTP 400）'],
     [new Response('plain text'), 'SSE 响应类型无效'],
     [
       new Response(null, { headers: { 'content-type': 'text/event-stream' } }),
@@ -188,6 +188,93 @@ describe('createEventStreamSubscriber', () => {
     await vi.waitFor(() =>
       expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message })),
     )
+  })
+
+  it.each([429, 500, 502, 503, 504])('HTTP %s 后自动重连', async (status) => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status }))
+      .mockResolvedValueOnce(eventStreamResponse('{"status":"completed"}'))
+    const onError = vi.fn()
+    const subscriber = createEventStreamSubscriber({
+      fetchFn,
+      getAccessToken: () => null,
+      reconnectDelayMs: 0,
+    })
+
+    await new Promise<void>((resolve) => {
+      subscriber('https://api.test/stream', {
+        eventName: 'task_update',
+        onEvent() {
+          resolve()
+          return true
+        },
+        onError,
+      })
+    })
+
+    expect(fetchFn).toHaveBeenCalledTimes(2)
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ status, retryable: true }))
+  })
+
+  it('建连超时后中止本次请求并自动重连', async () => {
+    let firstSignal: AbortSignal | undefined
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(async (_input, init) => {
+        firstSignal = init?.signal as AbortSignal
+        return new Promise<Response>(() => undefined)
+      })
+      .mockResolvedValueOnce(eventStreamResponse('{"status":"completed"}'))
+    const subscriber = createEventStreamSubscriber({
+      fetchFn,
+      getAccessToken: () => null,
+      reconnectDelayMs: 0,
+      connectTimeoutMs: 1,
+    })
+
+    await new Promise<void>((resolve) => {
+      subscriber('https://api.test/stream', {
+        eventName: 'task_update',
+        onEvent() {
+          resolve()
+          return true
+        },
+        onError: () => undefined,
+      })
+    })
+
+    expect(firstSignal?.aborted).toBe(true)
+    expect(fetchFn).toHaveBeenCalledTimes(2)
+  })
+
+  it('已建立的流长时间无数据时自动重连', async () => {
+    const silent = new Response(new ReadableStream<Uint8Array>({ start: () => undefined }), {
+      headers: { 'content-type': 'text/event-stream' },
+    })
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(silent)
+      .mockResolvedValueOnce(eventStreamResponse('{"status":"completed"}'))
+    const subscriber = createEventStreamSubscriber({
+      fetchFn,
+      getAccessToken: () => null,
+      reconnectDelayMs: 0,
+      inactivityTimeoutMs: 1,
+    })
+
+    await new Promise<void>((resolve) => {
+      subscriber('https://api.test/stream', {
+        eventName: 'task_update',
+        onEvent() {
+          resolve()
+          return true
+        },
+        onError: () => undefined,
+      })
+    })
+
+    expect(fetchFn).toHaveBeenCalledTimes(2)
   })
 
   it('刷新失败后报告 401，且不会重复刷新', async () => {
@@ -304,6 +391,56 @@ describe('createEventStreamSubscriber', () => {
       fetchFn,
       getAccessToken: () => null,
       reconnectDelayMs: 100,
+      connectTimeoutMs: 0,
+      inactivityTimeoutMs: 0,
+    })
+
+    try {
+      await new Promise<void>((resolve) => {
+        subscriber('https://api.test/stream', {
+          eventName: 'task_update',
+          onEvent() {
+            resolve()
+            return true
+          },
+          onError: () => undefined,
+        })
+      })
+
+      expect(delays).toEqual([75, 150, 300])
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
+  it('握手成功但流立即关闭时仍持续增加退避', async () => {
+    const delays: number[] = []
+    const originalSetTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
+      handler: TimerHandler,
+      ms?: number,
+      ...rest: unknown[]
+    ) => {
+      delays.push(Number(ms))
+      return originalSetTimeout(handler as () => void, 0, ...rest)
+    }) as typeof globalThis.setTimeout)
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    const emptyStream = () =>
+      new Response(new ReadableStream<Uint8Array>({ start: (controller) => controller.close() }), {
+        headers: { 'content-type': 'text/event-stream' },
+      })
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(emptyStream())
+      .mockResolvedValueOnce(emptyStream())
+      .mockResolvedValueOnce(emptyStream())
+      .mockResolvedValueOnce(eventStreamResponse('{"status":"completed"}'))
+    const subscriber = createEventStreamSubscriber({
+      fetchFn,
+      getAccessToken: () => null,
+      reconnectDelayMs: 100,
+      connectTimeoutMs: 0,
+      inactivityTimeoutMs: 0,
     })
 
     try {

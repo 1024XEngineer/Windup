@@ -1,5 +1,5 @@
 /** 将预览台当前角色资产打包下载；与发布到资产库是两件事。 */
-export { ExportButton, ExportPanel } from './export-panel'
+export { AssetVersionExportButton, ExportButton, ExportPanel } from './export-panel'
 export type { ExportButtonProps, ExportPanelProps } from './export-panel'
 export type {
   ExportAction,

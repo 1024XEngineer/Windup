@@ -370,6 +370,7 @@ def test_directional_only_action_is_published_and_roundtrips(auth_client):
                             "id": "walk-1",
                             "type": "walk",
                             "name": "四向行走",
+                            "locomotion": True,
                             "frame_count": 0,
                             "frames": [],
                             "sequences": [
@@ -404,6 +405,7 @@ def test_directional_only_action_is_published_and_roundtrips(auth_client):
     fetched = auth_client.get(f"/characters/{created['id']}").json()["data"]
 
     assert created["status"] == CharacterStatus.PUBLISHED
+    assert fetched["character_data"]["outfits"][0]["actions"][0]["locomotion"] is True
     assert fetched["character_data"]["outfits"][0]["actions"][0]["sequences"] == [
         {
             "direction": "east",

@@ -105,17 +105,17 @@ body,
   animation: app-header-back-strip 220ms cubic-bezier(0.65, 0, 0.35, 1) both;
 }
 
-@keyframes app-header-account-menu-in {
+@keyframes product-popover-in {
   0% {
     opacity: 0;
-    transform: translate3d(0, -8px, 0) scale(0.82);
+    transform: translate3d(0, var(--product-popover-shift-y, -8px), 0) scale(0.82);
   }
   56% {
     opacity: 1;
-    transform: translate3d(0, 1.5px, 0) scale(1.025);
+    transform: translate3d(0, calc(var(--product-popover-shift-y, -8px) * -0.1875), 0) scale(1.025);
   }
   78% {
-    transform: translate3d(0, -0.5px, 0) scale(0.996);
+    transform: translate3d(0, calc(var(--product-popover-shift-y, -8px) * 0.0625), 0) scale(0.996);
   }
   100% {
     opacity: 1;
@@ -123,33 +123,40 @@ body,
   }
 }
 
-.app-header-account-menu-in,
-.app-header-account-menu-out {
+.product-popover-in,
+.product-popover-out {
   backface-visibility: hidden;
   will-change: opacity, transform;
 }
 
-.app-header-account-menu-in {
-  animation: app-header-account-menu-in 340ms cubic-bezier(0.22, 0.8, 0.25, 1) both;
+.product-popover-in {
+  animation: product-popover-in 220ms cubic-bezier(0.22, 0.8, 0.25, 1) both;
 }
 
-@keyframes app-header-account-menu-out {
+@keyframes product-popover-out {
   0% {
     opacity: 1;
     transform: translate3d(0, 0, 0) scale(1);
   }
-  38% {
-    opacity: 1;
-    transform: translate3d(0, 1px, 0) scale(1.015);
-  }
   100% {
     opacity: 0;
-    transform: translate3d(0, -8px, 0) scale(0.82);
+    transform: translate3d(0, var(--product-popover-shift-y, -8px), 0) scale(0.82);
   }
 }
 
-.app-header-account-menu-out {
-  animation: app-header-account-menu-out 260ms cubic-bezier(0.55, 0, 1, 0.45) both;
+.product-popover-out {
+  animation: product-popover-out 110ms cubic-bezier(0.55, 0, 1, 0.45) both;
+}
+
+.product-popover-closed {
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  transform: translate3d(0, var(--product-popover-shift-y, -8px), 0) scale(0.82);
+}
+
+[data-popover-placement='top'] {
+  --product-popover-shift-y: 8px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -164,12 +171,12 @@ body,
     animation-delay: 0ms;
   }
 
-  .app-header-account-menu-in {
+  .product-popover-in {
     animation: none;
   }
 
-  .app-header-account-menu-out {
-    animation: app-header-account-menu-out 0.01ms both;
+  .product-popover-out {
+    animation: product-popover-out 0.01ms both;
   }
 }
 
@@ -332,16 +339,16 @@ body,
 }
 
 .project-preview-image {
-  opacity: 0;
-  transform: scale(0.985);
+  opacity: 0.35;
+  filter: blur(12px);
   transition:
     opacity 320ms cubic-bezier(0.16, 1, 0.3, 1),
-    transform 560ms cubic-bezier(0.16, 1, 0.3, 1);
+    filter 420ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .project-preview-image-ready {
   opacity: 1;
-  transform: scale(1);
+  filter: blur(0);
 }
 
 .project-preview-message span {

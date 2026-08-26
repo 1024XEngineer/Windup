@@ -23,6 +23,7 @@ class CreditReason(IntEnum):
     REFUND = 6             # 退款 / 回退 / 解冻退回
     FROZEN = 7             # 预付费冻结（占用余额）
     CAPTURED = 8    # 预付费实际扣减（冻结转消耗）
+    REDEMPTION = 9  # 兑换码入账
     # AGENT_TOKEN = 9        # Agent token 消耗（后付费）先不实现后付费场景
 
 
@@ -34,4 +35,3 @@ class BillingMode(IntEnum):
 
     PREPAID = 0    # 预付费（生成任务：冻结→扣减/解冻）
     # POSTPAID = 1   # 后付费（Agent token：用完再扣）
-

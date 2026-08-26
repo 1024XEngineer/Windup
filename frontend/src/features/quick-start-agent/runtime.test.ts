@@ -238,7 +238,7 @@ describe('createQuickStartAgent', () => {
     })
   })
 
-  it('carries the interpreted action into automatic delivery after one confirmation', async () => {
+  it('carries optimized action type and locomotion into automatic delivery', async () => {
     const { agent, startCharacterGeneration } = fixture({
       text: '',
       finishReason: 'tool-calls',
@@ -250,6 +250,7 @@ describe('createQuickStartAgent', () => {
             optimizedPrompt: '背着邮包的像素邮差，全身像',
             actionPrompt: '轻快地向前行走',
             actionType: 'walk',
+            locomotion: true,
             optimizationSummary: '我理解为一名正在向前行走的邮差。',
           },
         },
@@ -266,6 +267,7 @@ describe('createQuickStartAgent', () => {
       prompt: '背着邮包的像素邮差，全身像',
       actionPrompt: '轻快地向前行走',
       actionType: 'walk',
+      locomotion: true,
       directionalMovement: 'single',
       automaticDelivery: true,
     })
@@ -295,6 +297,31 @@ describe('createQuickStartAgent', () => {
       automaticDelivery: true,
       suggestPixelPerfect: true,
     })
+  })
+
+  it('keeps locomotion independent from optimized action types', () => {
+    expect(
+      parseQuickStartDecision({
+        kind: 'proposal',
+        optimizedPrompt: '轻装像素信使全身像',
+        actionPrompt: '向前翻滚一段距离',
+        locomotion: true,
+        optimizationSummary: '我会保留信使和向前翻滚动作。',
+      }),
+    ).toMatchObject({
+      kind: 'proposal',
+      actionPrompt: '向前翻滚一段距离',
+      locomotion: true,
+    })
+    expect(
+      parseQuickStartDecision({
+        kind: 'proposal',
+        optimizedPrompt: '持剑像素骑士全身像',
+        actionPrompt: '原地挥剑攻击',
+        actionType: 'attack',
+        optimizationSummary: '我会保留骑士和原地攻击动作。',
+      }),
+    ).toMatchObject({ kind: 'proposal', actionType: 'attack' })
   })
 
   it('rejects unsupported Agent action markers', () => {
@@ -428,6 +455,39 @@ describe('createQuickStartWorkflowAgent', () => {
         ],
       }),
     )
+  })
+
+  it('routes a candidate refinement to the exact candidate exposed in context', async () => {
+    const planner = vi.fn<QuickStartPlanner>(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'refine_character_template',
+          input: {
+            candidateId: 'candidate-2',
+            adjustmentPrompt: '把牛角缩短',
+          },
+        },
+      ],
+    }))
+    const actions = workflowActions()
+    actions.getContext = () => ({
+      availableTools: ['regenerate_character_template', 'refine_character_template'],
+      characterTemplateCandidates: [
+        { id: 'candidate-1', position: 1 },
+        { id: 'candidate-2', position: 2 },
+        { id: 'candidate-3', position: 3 },
+      ],
+    })
+    const agent = createQuickStartWorkflowAgent({ planner, actions })
+
+    await expect(agent.submit('把第二张的牛角缩短')).resolves.toEqual({
+      kind: 'action',
+      action: 'refine_character_template',
+      message: '已提交角色母版微调。',
+    })
+    expect(actions.refineCharacterTemplate).toHaveBeenCalledWith('把牛角缩短', 'candidate-2')
   })
 
   it('rejects an action that the current Controller snapshot does not allow', async () => {

@@ -123,6 +123,7 @@ export interface QuickStartSession {
   regenerateCharacterTemplate(
     mode: 'regenerate' | 'refine',
     adjustmentPrompt?: string,
+    candidateId?: string,
   ): Promise<WorkflowRun>
   regenerateFirstFrame(
     mode: 'regenerate' | 'refine',
@@ -310,13 +311,17 @@ export function createQuickStartService({
   ): Promise<QuickStartCandidate[]> {
     const result: QuickStartCandidate[] = []
     for (const generation of await controller.getGenerations(nodeId, role)) {
+      const generationResult = generation.result
       const images =
-        role === 'character_template' && generation.result?.type === 'character_template'
-          ? generation.result.images
-          : role === 'first_frame' && generation.result?.type === 'first_frame'
-            ? generation.result.images
+        role === 'character_template' && generationResult?.type === 'character_template'
+          ? generationResult.images
+          : role === 'first_frame' && generationResult?.type === 'first_frame'
+            ? generationResult.images
             : []
-      const direction = generation.result?.direction ?? 'east'
+      const direction =
+        generationResult?.type === 'character_template' || generationResult?.type === 'first_frame'
+          ? (generationResult.direction ?? 'east')
+          : 'east'
       images.forEach((image, index) => result.push({ direction, index, imageUrl: image.url }))
     }
     return result
@@ -476,12 +481,25 @@ export function createQuickStartService({
     outfitId: string,
     actionDescription: string,
     spriteSize: Project['spriteSize'],
-    options: { actionType?: 'walk'; candidateCount?: 1 } = {},
+    options: {
+      actionType?: Exclude<GeneratableActionType, 'custom'>
+      locomotion?: true
+      candidateCount?: 1
+    } = {},
   ) {
     const prompt = actionDescription.trim()
     const name = boundedDisplayName(prompt, ACTION_DISPLAY_NAME_MAX_LENGTH) || '待机'
     const type = options.actionType ?? inferGeneratableActionType(actionDescription)
-    await controller.addAction({ input: { outfitId, name, type, prompt: prompt || null, fps: 12 } })
+    await controller.addAction({
+      input: {
+        outfitId,
+        name,
+        type,
+        prompt: prompt || null,
+        fps: 12,
+        ...(options.locomotion ? { locomotion: options.locomotion } : {}),
+      },
+    })
     const run = controller.getWorkflow()
     const firstFrame = latestActionFirstFrame(run)
     if (!firstFrame || firstFrame.type !== 'action-first-frame') {
@@ -751,6 +769,7 @@ export function createQuickStartService({
           const spriteSize = await resolveProjectSpriteSize(run.projectId)
           await prepareAction(controller, outfitId, actionPrompt, spriteSize, {
             actionType: automation.actionType,
+            locomotion: automation.locomotion,
             candidateCount: 1,
           })
           return true
@@ -797,6 +816,11 @@ export function createQuickStartService({
     let stopAutomaticAdvance: (() => void) | null = null
     let stopAutomaticDelivery: (() => void) | null = null
     let candidateCommand: Promise<WorkflowRun> | null = null
+    let candidateBatch = 0
+    let characterCandidateUrls = new Map<string, string>()
+    let characterTemplateCandidates: NonNullable<
+      WorkflowAgentContext['characterTemplateCandidates']
+    > = []
     let disposed = false
 
     const ensureAutomaticAdvance = () => {
@@ -1024,11 +1048,18 @@ export function createQuickStartService({
         const run = controller.getWorkflow()
         const availableTools: WorkflowAgentContext['availableTools'][number][] = []
         const template = run.nodes.find((node) => node.type === 'character-template')
-        if (
+        const hasUnconfirmedCandidates =
           template?.type === 'character-template' &&
-          template.status === 'passed' &&
-          template.phase === 'completed' &&
-          template.selectedImageUrl
+          template.status === 'active' &&
+          template.phase === 'selecting' &&
+          !template.selectedImageUrl &&
+          characterTemplateCandidates.length > 0
+        if (
+          hasUnconfirmedCandidates ||
+          (template?.type === 'character-template' &&
+            template.status === 'passed' &&
+            template.phase === 'completed' &&
+            template.selectedImageUrl)
         ) {
           availableTools.push(REGENERATE_CHARACTER_TEMPLATE_TOOL, REFINE_CHARACTER_TEMPLATE_TOOL)
         }
@@ -1041,18 +1072,34 @@ export function createQuickStartService({
         ) {
           availableTools.push(REGENERATE_FIRST_FRAME_TOOL, REFINE_FIRST_FRAME_TOOL)
         }
-        return { availableTools }
+        return {
+          availableTools,
+          ...(hasUnconfirmedCandidates ? { characterTemplateCandidates } : {}),
+        }
       },
-      async regenerateCharacterTemplate(mode, adjustmentPrompt) {
+      async regenerateCharacterTemplate(mode, adjustmentPrompt, candidateId) {
         const run = controller.getWorkflow()
         const template = templateNode(run)
+        const isCandidateSelection =
+          template.status === 'active' &&
+          template.phase === 'selecting' &&
+          !template.selectedImageUrl
+        const sourceImageUrl = candidateId ? characterCandidateUrls.get(candidateId) : undefined
+        if (isCandidateSelection && mode === 'refine' && !sourceImageUrl) {
+          throw new Error('候选图标识无效')
+        }
         const spriteSize =
           knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
+        if (isCandidateSelection) {
+          characterCandidateUrls = new Map()
+          characterTemplateCandidates = []
+        }
         await controller.regenerateCharacterTemplate(template.id, {
           spriteWidth: spriteSize.width,
           spriteHeight: spriteSize.height,
           mode,
           ...(adjustmentPrompt === undefined ? {} : { adjustmentPrompt }),
+          ...(sourceImageUrl === undefined ? {} : { sourceImageUrl }),
         })
         return controller.getWorkflow()
       },
@@ -1104,6 +1151,7 @@ export function createQuickStartService({
           name: firstFrame.input.name,
           loop: true,
           type: firstFrame.input.type,
+          ...(firstFrame.input.locomotion ? { locomotion: firstFrame.input.locomotion } : {}),
           fps: firstFrame.input.fps,
           frameCount: eastSequence.frameCount,
           frames: eastSequence.frames,
@@ -1168,7 +1216,25 @@ export function createQuickStartService({
       resolveCharacterInfo: () => resolveCharacterInfo(controller),
       async getTemplateCandidates() {
         const template = templateNode(controller.getWorkflow())
-        return candidatesByDirection(controller, template.id, 'character_template')
+        const candidates = await candidatesByDirection(
+          controller,
+          template.id,
+          'character_template',
+        )
+        if (
+          template.status === 'active' &&
+          template.phase === 'selecting' &&
+          !template.selectedImageUrl
+        ) {
+          const batch = ++candidateBatch
+          characterCandidateUrls = new Map()
+          characterTemplateCandidates = candidates.map((candidate, index) => {
+            const id = `candidate-${batch}-${index + 1}`
+            characterCandidateUrls.set(id, candidate.imageUrl)
+            return { id, position: index + 1 }
+          })
+        }
+        return candidates
       },
       async getActionFrames() {
         const fullFrame = latestFullFrame(controller.getWorkflow())
