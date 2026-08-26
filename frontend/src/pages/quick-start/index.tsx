@@ -2074,7 +2074,19 @@ function DirectionCandidatePicker({
   )
 }
 
-function DirectionFirstFrameStack({
+const DIRECTION_SHEET_LAYOUT: readonly (ActionDirection | null)[] = [
+  'north_west',
+  'north',
+  'north_east',
+  'west',
+  null,
+  'east',
+  'south_west',
+  'south',
+  'south_east',
+]
+
+function DirectionFirstFrameGrid({
   directions,
   selections,
 }: {
@@ -2083,14 +2095,39 @@ function DirectionFirstFrameStack({
 }) {
   const directionCountLabel =
     directions.length === 8 ? '八向' : directions.length === 4 ? '四向' : '单向'
+  const isSingleDirection = directions.length === 1
+  const layoutDirections = isSingleDirection ? directions : DIRECTION_SHEET_LAYOUT
+  const expectedDirections = new Set(directions)
   return (
     <div
       role="group"
       aria-label={`${directionCountLabel}首帧集合`}
-      data-layout="direction-first-frame-stack"
-      className="grid aspect-square w-full max-w-xl grid-cols-2 gap-3 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-muted p-4 shadow-app-card sm:p-5"
+      data-layout={
+        isSingleDirection ? 'direction-first-frame-single' : 'direction-first-frame-grid'
+      }
+      className={`grid aspect-square w-full max-w-xl gap-2 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-muted p-4 shadow-app-card sm:p-5 ${
+        isSingleDirection ? 'grid-cols-1' : 'grid-cols-3'
+      }`}
     >
-      {directions.map((direction) => {
+      {layoutDirections.map((direction, cellIndex) => {
+        if (!direction) {
+          return (
+            <div
+              key={`center-${cellIndex}`}
+              aria-label="中心留空"
+              className="rounded-xl border border-dashed border-app-line/40 bg-app-canvas/20"
+            />
+          )
+        }
+        if (!expectedDirections.has(direction)) {
+          return (
+            <div
+              key={direction}
+              aria-label={`${DIRECTION_LABELS[direction]}方向为空`}
+              className="rounded-xl border border-dashed border-app-line/30 bg-app-canvas/20"
+            />
+          )
+        }
         const imageUrl = selections[direction]
         return imageUrl ? (
           <figure
@@ -2120,18 +2157,6 @@ function DirectionFirstFrameStack({
     </div>
   )
 }
-
-const DIRECTION_SHEET_LAYOUT: readonly (ActionDirection | null)[] = [
-  'north_west',
-  'north',
-  'north_east',
-  'west',
-  null,
-  'east',
-  'south_west',
-  'south',
-  'south_east',
-]
 
 function DirectionSheetCandidatePicker({
   sheets,
@@ -3165,7 +3190,7 @@ function QuickStartRun({
                         : '全部方向会保持同一个角色造型。',
                     ]}
                   />
-                  <DirectionFirstFrameStack
+                  <DirectionFirstFrameGrid
                     directions={templateDirections}
                     selections={templateSelections}
                   />
