@@ -23,7 +23,9 @@ export interface Project {
  */
 export interface CreateProjectInput {
   workflowId?: string | null
-  name: string
+  /** 手动创建时显式提供；Quick Start 改由后端从 nameContext 提取项目标题。 */
+  name?: string
+  nameContext?: string
   perspective: CharacterPerspective
   directionalMovement: DirectionalMovement
   spriteSize: { width: number; height: number }
@@ -233,6 +235,7 @@ export const projectApis: ProjectApis = {
                 ? null
                 : toBackendId(input.workflowId, 'workflowId'),
           project_name: input.name,
+          name_context: input.nameContext,
           character_perspective: perspectiveToDto[input.perspective],
           directional_movement: movementToDto[input.directionalMovement],
           sprite_width: input.spriteSize.width,
