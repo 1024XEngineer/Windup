@@ -1372,130 +1372,132 @@ function QuickStartInput({
             />
             <div
               data-layout="quick-start-composer-controls"
-              className={`order-first mb-2 min-h-10 items-center justify-between gap-3 px-1 ${
-                hasConversation ? 'hidden' : 'flex'
-              }`}
+              className="order-first mb-2 flex min-h-10 items-center justify-between gap-3 px-1"
             >
-              {!hasConversation ? (
-                <div className="flex items-center gap-1">
-                  <IconActionButton
-                    label={templateFile ? `更换母版 ${templateFile.name}` : '添加母版'}
-                    disabled={entryBusy}
-                    onClick={() => fileInput.current?.click()}
-                    className={templateFile ? 'text-app-accent' : ''}
-                  >
-                    <MasterFrameIcon />
-                  </IconActionButton>
-                  <div className="relative">
+              <div className="flex items-center gap-1">
+                {!hasConversation ? (
+                  <>
                     <IconActionButton
-                      label={`选择画风，当前${ART_STYLE[gameStyle]}`}
-                      disabled={entryBusy || Boolean(selectedProject)}
-                      onClick={() => {
-                        setDirectionMenuOpen(false)
-                        setStyleMenuOpen((open) => !open)
-                      }}
-                      expanded={styleMenuOpen}
-                    >
-                      <StyleTileIcon />
-                    </IconActionButton>
-                    {styleMenuOpen ? (
-                      <div
-                        role="menu"
-                        aria-label="选择画风"
-                        className={`${productPopoverClass} quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid min-w-32 gap-1 p-1.5 opacity-100`}
-                      >
-                        {ART_STYLE_OPTIONS.map((value) => (
-                          <button
-                            key={value}
-                            type="button"
-                            role="menuitemradio"
-                            aria-checked={gameStyle === value}
-                            onClick={() => chooseGameStyle(value)}
-                            className={`rounded-app-compact px-3 py-2 text-left text-xs transition ${
-                              gameStyle === value
-                                ? 'bg-app-accent-soft text-app-accent'
-                                : 'text-app-ink-soft hover:bg-app-surface-muted'
-                            }`}
-                          >
-                            {ART_STYLE[value]}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="relative">
-                    <button
-                      type="button"
-                      aria-label={`选择项目，当前${selectedProject?.name ?? '自动创建'}`}
-                      aria-expanded={projectMenuOpen}
+                      label={templateFile ? `更换母版 ${templateFile.name}` : '添加母版'}
                       disabled={entryBusy}
-                      onClick={() => {
-                        setStyleMenuOpen(false)
-                        setDirectionMenuOpen(false)
-                        setProjectMenuOpen((open) => !open)
-                      }}
-                      className="inline-flex h-10 max-w-44 items-center gap-1 rounded-app-control px-3 text-sm font-medium text-app-ink-soft transition hover:bg-app-surface-muted hover:text-app-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:opacity-45"
+                      onClick={() => fileInput.current?.click()}
+                      className={templateFile ? 'text-app-accent' : ''}
                     >
-                      <span className="truncate">{selectedProject?.name ?? '自动创建'}</span>
+                      <MasterFrameIcon />
+                    </IconActionButton>
+                    <div className="relative">
+                      <IconActionButton
+                        label={`选择画风，当前${ART_STYLE[gameStyle]}`}
+                        disabled={entryBusy || Boolean(selectedProject)}
+                        onClick={() => {
+                          setDirectionMenuOpen(false)
+                          setStyleMenuOpen((open) => !open)
+                        }}
+                        expanded={styleMenuOpen}
+                      >
+                        <StyleTileIcon />
+                      </IconActionButton>
+                      {styleMenuOpen ? (
+                        <div
+                          role="menu"
+                          aria-label="选择画风"
+                          className={`${productPopoverClass} quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid min-w-32 gap-1 p-1.5 opacity-100`}
+                        >
+                          {ART_STYLE_OPTIONS.map((value) => (
+                            <button
+                              key={value}
+                              type="button"
+                              role="menuitemradio"
+                              aria-checked={gameStyle === value}
+                              onClick={() => chooseGameStyle(value)}
+                              className={`rounded-app-compact px-3 py-2 text-left text-xs transition ${
+                                gameStyle === value
+                                  ? 'bg-app-accent-soft text-app-accent'
+                                  : 'text-app-ink-soft hover:bg-app-surface-muted'
+                              }`}
+                            >
+                              {ART_STYLE[value]}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </>
+                ) : null}
+                <div className="relative order-first">
+                  <button
+                    type="button"
+                    aria-label={`选择项目，当前${selectedProject?.name ?? '自动创建'}`}
+                    aria-expanded={projectMenuOpen}
+                    disabled={entryBusy || hasConversation}
+                    onClick={() => {
+                      setStyleMenuOpen(false)
+                      setDirectionMenuOpen(false)
+                      setProjectMenuOpen((open) => !open)
+                    }}
+                    className={`inline-flex h-10 max-w-44 items-center gap-1 rounded-app-control px-3 text-sm font-medium text-app-ink-soft transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent ${hasConversation ? 'pointer-events-none disabled:opacity-100' : 'hover:bg-app-surface-muted hover:text-app-ink disabled:opacity-45'}`}
+                  >
+                    <span className="truncate">{selectedProject?.name ?? '自动创建'}</span>
+                    {!hasConversation ? (
                       <CaretDown
                         aria-hidden="true"
                         size={14}
                         weight="bold"
                         className={projectMenuOpen ? 'rotate-180' : ''}
                       />
-                    </button>
-                    {projectMenuOpen ? (
-                      <div
-                        role="menu"
-                        aria-label="选择项目"
-                        className={`${productPopoverClass} quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid min-w-40 gap-1 p-1.5 opacity-100`}
-                      >
-                        {projects.map((project) => (
-                          <button
-                            key={project.id}
-                            type="button"
-                            role="menuitemradio"
-                            aria-checked={projectId === project.id}
-                            onClick={() => chooseProject(project)}
-                            className={`flex items-center gap-2 rounded-app-compact px-3 py-2 text-left text-xs transition ${projectId === project.id ? 'bg-app-accent-soft text-app-accent' : 'text-app-ink-soft hover:bg-app-surface-muted'}`}
-                          >
-                            <FolderOpen aria-hidden="true" size={15} weight="regular" />
-                            <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                            {projectId === project.id ? (
-                              <Check aria-hidden="true" size={14} weight="bold" />
-                            ) : null}
-                          </button>
-                        ))}
-                        <div className="my-1 border-t border-app-line" />
-                        <Link
-                          to="/projects/new?entry=quick-start"
-                          role="menuitem"
-                          onClick={() => setProjectMenuOpen(false)}
-                          className="flex items-center gap-2 rounded-app-compact px-3 py-2 text-xs text-app-ink-soft transition hover:bg-app-surface-muted"
-                        >
-                          <Plus aria-hidden="true" size={15} weight="bold" />
-                          新建项目
-                        </Link>
+                    ) : null}
+                  </button>
+                  {projectMenuOpen && !hasConversation ? (
+                    <div
+                      role="menu"
+                      aria-label="选择项目"
+                      className={`${productPopoverClass} quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid min-w-40 gap-1 p-1.5 opacity-100`}
+                    >
+                      {projects.map((project) => (
                         <button
+                          key={project.id}
                           type="button"
                           role="menuitemradio"
-                          aria-checked={projectId === null}
-                          onClick={() => chooseProject(null)}
-                          className={`flex items-center gap-2 rounded-app-compact px-3 py-2 text-left text-xs transition ${projectId === null ? 'bg-app-accent-soft text-app-accent' : 'text-app-ink-soft hover:bg-app-surface-muted'}`}
+                          aria-checked={projectId === project.id}
+                          onClick={() => chooseProject(project)}
+                          className={`flex items-center gap-2 rounded-app-compact px-3 py-2 text-left text-xs transition ${projectId === project.id ? 'bg-app-accent-soft text-app-accent' : 'text-app-ink-soft hover:bg-app-surface-muted'}`}
                         >
-                          <span aria-hidden="true" className="w-[15px] text-center">
-                            ×
-                          </span>
-                          <span className="flex-1">自动创建</span>
-                          {projectId === null ? (
+                          <FolderOpen aria-hidden="true" size={15} weight="regular" />
+                          <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                          {projectId === project.id ? (
                             <Check aria-hidden="true" size={14} weight="bold" />
                           ) : null}
                         </button>
-                      </div>
-                    ) : null}
-                  </div>
+                      ))}
+                      <div className="my-1 border-t border-app-line" />
+                      <Link
+                        to="/projects/new?entry=quick-start"
+                        role="menuitem"
+                        onClick={() => setProjectMenuOpen(false)}
+                        className="flex items-center gap-2 rounded-app-compact px-3 py-2 text-xs text-app-ink-soft transition hover:bg-app-surface-muted"
+                      >
+                        <Plus aria-hidden="true" size={15} weight="bold" />
+                        新建项目
+                      </Link>
+                      <button
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={projectId === null}
+                        onClick={() => chooseProject(null)}
+                        className={`flex items-center gap-2 rounded-app-compact px-3 py-2 text-left text-xs transition ${projectId === null ? 'bg-app-accent-soft text-app-accent' : 'text-app-ink-soft hover:bg-app-surface-muted'}`}
+                      >
+                        <span aria-hidden="true" className="w-[15px] text-center">
+                          ×
+                        </span>
+                        <span className="flex-1">自动创建</span>
+                        {projectId === null ? (
+                          <Check aria-hidden="true" size={14} weight="bold" />
+                        ) : null}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
+              </div>
               {templateFile && !hasConversation ? (
                 <span className="absolute bottom-full left-3 mb-2 inline-flex max-w-56 items-center gap-1 rounded-app-compact bg-app-surface-raised px-2 py-1 text-xs text-app-ink-soft shadow-app-card">
                   <span className="truncate">{templateFile.name}</span>
@@ -1511,101 +1513,99 @@ function QuickStartInput({
                 </span>
               ) : null}
               <div className="flex items-center gap-1">
-                {!hasConversation ? (
-                  <>
-                    <span
-                      data-testid="quick-start-selected-style"
-                      className="max-w-28 truncate px-2 text-sm font-medium text-app-muted"
+                <span
+                  data-testid="quick-start-selected-style"
+                  className="max-w-28 truncate px-2 text-sm font-medium text-app-muted"
+                >
+                  {ART_STYLE[gameStyle]}
+                </span>
+                <div className="relative">
+                  <button
+                    type="button"
+                    aria-label={`生成方向，当前${DIRECTIONAL_MOVEMENT[directionalMovement]}`}
+                    aria-expanded={directionMenuOpen}
+                    disabled={entryBusy || Boolean(selectedProject) || hasConversation}
+                    onClick={() => {
+                      setStyleMenuOpen(false)
+                      setDirectionSliderValue(directionalMovementIndex)
+                      setDirectionMenuOpen((open) => !open)
+                    }}
+                    className={`inline-flex h-10 items-center gap-1 rounded-app-control px-3 text-sm font-medium text-app-ink-soft transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent ${hasConversation ? 'pointer-events-none disabled:opacity-100' : 'hover:bg-app-surface-muted hover:text-app-ink disabled:opacity-45'}`}
+                  >
+                    {DIRECTIONAL_MOVEMENT[directionalMovement]}
+                    {!hasConversation ? (
+                      <CaretDown
+                        aria-hidden="true"
+                        size={14}
+                        weight="bold"
+                        className={`transition-transform duration-200 motion-reduce:transition-none ${directionMenuOpen ? 'rotate-180' : ''}`}
+                      />
+                    ) : null}
+                  </button>
+                  {directionMenuOpen && !hasConversation ? (
+                    <div
+                      role="group"
+                      aria-label="生成方向设置"
+                      className={`${productPopoverClass} quick-start-control-popover absolute right-0 bottom-full z-30 mb-3 w-72 p-5 opacity-100`}
                     >
-                      {ART_STYLE[gameStyle]}
-                    </span>
-                    <div className="relative">
-                      <button
-                        type="button"
-                        aria-label={`生成方向，当前${DIRECTIONAL_MOVEMENT[directionalMovement]}`}
-                        aria-expanded={directionMenuOpen}
-                        disabled={entryBusy || Boolean(selectedProject)}
-                        onClick={() => {
-                          setStyleMenuOpen(false)
-                          setDirectionSliderValue(directionalMovementIndex)
-                          setDirectionMenuOpen((open) => !open)
-                        }}
-                        className="inline-flex h-10 items-center gap-1 rounded-app-control px-3 text-sm font-medium text-app-ink-soft transition hover:bg-app-surface-muted hover:text-app-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:opacity-45"
-                      >
-                        {DIRECTIONAL_MOVEMENT[directionalMovement]}
-                        <CaretDown
-                          aria-hidden="true"
-                          size={14}
-                          weight="bold"
-                          className={`transition-transform duration-200 motion-reduce:transition-none ${directionMenuOpen ? 'rotate-180' : ''}`}
-                        />
-                      </button>
-                      {directionMenuOpen ? (
-                        <div
-                          role="group"
-                          aria-label="生成方向设置"
-                          className={`${productPopoverClass} quick-start-control-popover absolute right-0 bottom-full z-30 mb-3 w-72 p-5 opacity-100`}
+                      <div className="mb-4 flex items-center justify-between">
+                        <span className="text-sm text-app-muted">生成方向</span>
+                        <strong
+                          key={directionalMovement}
+                          className="quick-start-direction-value text-sm font-semibold text-app-ink"
                         >
-                          <div className="mb-4 flex items-center justify-between">
-                            <span className="text-sm text-app-muted">生成方向</span>
-                            <strong
-                              key={directionalMovement}
-                              className="quick-start-direction-value text-sm font-semibold text-app-ink"
-                            >
-                              {DIRECTIONAL_MOVEMENT[directionalMovement]}
-                            </strong>
-                          </div>
-                          <div className="mb-2 flex justify-between text-xs text-app-muted">
-                            <span>单向</span>
-                            <span>八向</span>
-                          </div>
-                          <div
-                            data-dragging={directionDragging ? 'true' : 'false'}
-                            className="quick-start-direction-slider-wrap"
-                            style={
-                              {
-                                '--quick-start-direction-progress': `${directionSliderValue * 50}%`,
-                              } as CSSProperties
-                            }
-                          >
-                            <input
-                              type="range"
-                              min="0"
-                              max="2"
-                              step="0.01"
-                              value={directionSliderValue}
-                              aria-label="生成方向"
-                              aria-valuetext={DIRECTIONAL_MOVEMENT[directionalMovement]}
-                              onPointerDown={() => setDirectionDragging(true)}
-                              onPointerUp={(event) => {
-                                const index = Math.round(Number(event.currentTarget.value))
-                                setDirectionDragging(false)
-                                setDirectionSliderValue(index)
-                                setDirectionalMovement(
-                                  QUICK_START_DIRECTIONAL_MOVEMENTS[index] ?? 'single',
-                                )
-                              }}
-                              onPointerCancel={() => setDirectionDragging(false)}
-                              onBlur={(event) => {
-                                const index = Math.round(Number(event.currentTarget.value))
-                                setDirectionDragging(false)
-                                setDirectionSliderValue(index)
-                              }}
-                              onChange={(event) => {
-                                const value = Number(event.target.value)
-                                setDirectionSliderValue(value)
-                                setDirectionalMovement(
-                                  QUICK_START_DIRECTIONAL_MOVEMENTS[Math.round(value)] ?? 'single',
-                                )
-                              }}
-                              className="quick-start-direction-slider"
-                            />
-                          </div>
-                        </div>
-                      ) : null}
+                          {DIRECTIONAL_MOVEMENT[directionalMovement]}
+                        </strong>
+                      </div>
+                      <div className="mb-2 flex justify-between text-xs text-app-muted">
+                        <span>单向</span>
+                        <span>八向</span>
+                      </div>
+                      <div
+                        data-dragging={directionDragging ? 'true' : 'false'}
+                        className="quick-start-direction-slider-wrap"
+                        style={
+                          {
+                            '--quick-start-direction-progress': `${directionSliderValue * 50}%`,
+                          } as CSSProperties
+                        }
+                      >
+                        <input
+                          type="range"
+                          min="0"
+                          max="2"
+                          step="0.01"
+                          value={directionSliderValue}
+                          aria-label="生成方向"
+                          aria-valuetext={DIRECTIONAL_MOVEMENT[directionalMovement]}
+                          onPointerDown={() => setDirectionDragging(true)}
+                          onPointerUp={(event) => {
+                            const index = Math.round(Number(event.currentTarget.value))
+                            setDirectionDragging(false)
+                            setDirectionSliderValue(index)
+                            setDirectionalMovement(
+                              QUICK_START_DIRECTIONAL_MOVEMENTS[index] ?? 'single',
+                            )
+                          }}
+                          onPointerCancel={() => setDirectionDragging(false)}
+                          onBlur={(event) => {
+                            const index = Math.round(Number(event.currentTarget.value))
+                            setDirectionDragging(false)
+                            setDirectionSliderValue(index)
+                          }}
+                          onChange={(event) => {
+                            const value = Number(event.target.value)
+                            setDirectionSliderValue(value)
+                            setDirectionalMovement(
+                              QUICK_START_DIRECTIONAL_MOVEMENTS[Math.round(value)] ?? 'single',
+                            )
+                          }}
+                          className="quick-start-direction-slider"
+                        />
+                      </div>
                     </div>
-                  </>
-                ) : null}
+                  ) : null}
+                </div>
               </div>
             </div>
           </form>

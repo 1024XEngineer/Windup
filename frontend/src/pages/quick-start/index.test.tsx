@@ -1431,7 +1431,20 @@ describe('QuickStartPage', () => {
     expect(conversationSurface?.className).toContain('rounded-app-surface')
     expect(conversationSurface?.className).toContain('border-app-line-strong')
     expect(conversationSurface?.className).toContain('shadow-app-panel')
-    expect(conversationControls?.className).toContain('hidden')
+    expect(conversationControls?.className).toContain('flex')
+    expect(
+      (
+        screen.getByRole('button', {
+          name: '选择项目，当前自动创建',
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true)
+    expect(screen.getByTestId('quick-start-selected-style').textContent).toBe('不指定')
+    expect(
+      (screen.getByRole('button', { name: '生成方向，当前单向' }) as HTMLButtonElement).disabled,
+    ).toBe(true)
+    expect(screen.queryByRole('button', { name: '添加母版' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '选择画风，当前不指定' })).toBeNull()
     const conversationSubmit = screen.getByRole('button', { name: '继续' })
     expect(conversationSubmit.className).toContain('absolute')
     expect(conversationSubmit.className).toContain('rounded-full')
@@ -1957,11 +1970,17 @@ describe('QuickStartPage', () => {
     const prompt = await screen.findByRole('textbox', { name: '创作指令' })
     const editingSurface = prompt.closest('label')
     const uploadButton = screen.getByRole('button', { name: '添加母版' })
+    const styleButton = screen.getByRole('button', { name: '选择画风，当前不指定' })
+    const projectButton = screen.getByRole('button', { name: '选择项目，当前自动创建' })
     const directionButton = screen.getByRole('button', { name: '生成方向，当前单向' })
 
     expect(editingSurface?.className).toContain('rounded-app-surface')
     expect(uploadButton.className).toContain('rounded-app-compact')
     expect(directionButton.className).toContain('rounded-app-control')
+    expect(projectButton.parentElement?.className).toContain('order-first')
+    expect(
+      uploadButton.compareDocumentPosition(styleButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
 
     fireEvent.click(directionButton)
     expect(screen.getByRole('group', { name: '生成方向设置' }).className).toContain(
