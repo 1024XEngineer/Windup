@@ -123,7 +123,7 @@ export interface StartCharacterGenerationInput {
   prompt: string
   directionalMovement?: DirectionalMovement
   gameStyle?: ArtStyle
-  automaticDelivery?: { actionPrompt?: string }
+  automaticDelivery?: { actionPrompt?: string; actionType?: 'walk' }
 }
 
 export interface StartCharacterGenerationResult {
@@ -415,6 +415,7 @@ export function createWorkflowController({
     }
     const normalizedPrompt = nonEmpty(prompt, '角色描述')
     const actionPrompt = automaticDelivery?.actionPrompt?.trim() || null
+    const actionType = actionPrompt ? automaticDelivery?.actionType : undefined
     const project = await prepareProject(normalizedPrompt, selectedDirectionalMovement, {
       gameStyle,
     })
@@ -434,7 +435,13 @@ export function createWorkflowController({
           error: null,
           input: { prompt: normalizedPrompt, referenceMedia: [] },
           ...(automaticDelivery
-            ? { automation: { mode: 'automatic' as const, actionPrompt } }
+            ? {
+                automation: {
+                  mode: 'automatic' as const,
+                  actionPrompt,
+                  ...(actionType ? { actionType } : {}),
+                },
+              }
             : {}),
         },
         {

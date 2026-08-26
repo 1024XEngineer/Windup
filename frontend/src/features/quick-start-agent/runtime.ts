@@ -14,10 +14,12 @@ const QUICK_START_DECISION_FIELDS = new Set([
   'message',
   'optimizedPrompt',
   'actionPrompt',
+  'actionType',
   'optimizationSummary',
 ])
 
 export type QuickStartDirectionalMovement = 'single' | 'four-way' | 'eight-way'
+export type QuickStartActionType = 'walk'
 
 export interface PlannerMessage {
   role: 'user' | 'assistant'
@@ -47,6 +49,8 @@ export type QuickStartPlanner = (input: PlannerInput) => Promise<PlannerResult>
 export interface CharacterGenerationPlan {
   optimizedPrompt: string
   actionPrompt?: string
+  /** 仅在 Agent 明确认出行走/跑步位移时附带；不做通用动作分类。 */
+  actionType?: QuickStartActionType
   optimizationSummary: string
 }
 
@@ -92,6 +96,7 @@ export interface QuickStartAgent {
 export type StartCharacterGenerationAction = (input: {
   prompt: string
   actionPrompt?: string
+  actionType?: QuickStartActionType
   directionalMovement?: QuickStartDirectionalMovement
   gameStyle?: string
   automaticDelivery?: boolean
@@ -183,9 +188,14 @@ export function parseCharacterGenerationPlan(value: unknown): CharacterGeneratio
   ) {
     throw new Error('生成提案的 actionPrompt 无效')
   }
+  const actionType = value.actionType === 'walk' ? value.actionType : undefined
+  if (value.actionType !== undefined && (!actionType || !actionPrompt)) {
+    throw new Error('生成提案的 actionType 无效')
+  }
   return {
     optimizedPrompt,
     ...(actionPrompt ? { actionPrompt } : {}),
+    ...(actionType ? { actionType } : {}),
     optimizationSummary,
   }
 }
@@ -296,6 +306,7 @@ export function createQuickStartAgent({
         proposalId: `proposal-${nextMessages.length}`,
         optimizedPrompt: decision.optimizedPrompt,
         ...(decision.actionPrompt ? { actionPrompt: decision.actionPrompt } : {}),
+        ...(decision.actionType ? { actionType: decision.actionType } : {}),
         optimizationSummary: decision.optimizationSummary,
       }
       currentProposal = proposal
@@ -330,6 +341,7 @@ export function createQuickStartAgent({
       const { runId } = await startCharacterGeneration({
         prompt: effectivePrompt,
         ...(proposal.actionPrompt ? { actionPrompt: proposal.actionPrompt } : {}),
+        ...(proposal.actionType ? { actionType: proposal.actionType } : {}),
         directionalMovement,
         gameStyle,
         ...(automaticDelivery ? { automaticDelivery: true } : {}),

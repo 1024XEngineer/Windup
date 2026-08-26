@@ -66,6 +66,8 @@ export interface WorkflowAutomationIntent {
   mode: 'automatic'
   /** 没有动作时只交付角色母版；有动作时继续推进到完整动画。 */
   actionPrompt: string | null
+  /** Agent 明确认出的行走类位移动作；缺省时沿用 Quick Start 原有推断。 */
+  actionType?: 'walk'
 }
 
 /** 角色资料卡片；只保存用户输入，不承担图片生成。 */

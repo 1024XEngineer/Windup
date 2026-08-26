@@ -1205,8 +1205,9 @@ describe('QuickStartPage', () => {
           input: {
             kind: 'proposal',
             optimizedPrompt: '圆润可爱的卡皮巴拉，全身像',
-            actionPrompt: '开心地左右摇摆跳舞',
-            optimizationSummary: '我理解为一只正在开心跳舞的卡皮巴拉。',
+            actionPrompt: '轻快地向前行走',
+            actionType: 'walk',
+            optimizationSummary: '我理解为一只正在向前行走的卡皮巴拉。',
           },
         },
       ],
@@ -1218,13 +1219,18 @@ describe('QuickStartPage', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
 
-    expect(await screen.findByText('动作：开心地左右摇摆跳舞')).toBeTruthy()
+    expect(await screen.findByText('动作：轻快地向前行走')).toBeTruthy()
+    const draftId = window.history.state?.windupQuickStartAgentDraftId
+    expect(
+      window.sessionStorage.getItem(`windup.quick-start.agent-chat.v2:draft:7:${draftId}`),
+    ).toContain('"actionType":"walk"')
     fireEvent.click(screen.getByRole('button', { name: '确认并生成' }))
 
     await vi.waitFor(() =>
       expect(startCharacterGeneration).toHaveBeenCalledWith({
         prompt: '圆润可爱的卡皮巴拉，全身像',
-        actionPrompt: '开心地左右摇摆跳舞',
+        actionPrompt: '轻快地向前行走',
+        actionType: 'walk',
         directionalMovement: 'single',
         gameStyle: 'unspecified',
         automaticDelivery: true,

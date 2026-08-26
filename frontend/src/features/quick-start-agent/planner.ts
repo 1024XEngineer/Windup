@@ -72,6 +72,7 @@ const quickStartDecisionTool = tool({
         message: { type: 'string', minLength: 1, maxLength: 2_000 },
         optimizedPrompt: { type: 'string', minLength: 1, maxLength: 4_000 },
         actionPrompt: { type: 'string', minLength: 1, maxLength: 4_000 },
+        actionType: { type: 'string', enum: ['walk'] },
         optimizationSummary: { type: 'string', minLength: 1, maxLength: 600 },
       },
       oneOf: [
@@ -238,7 +239,7 @@ export function quickStartPlannerInstructions(clarificationUsed: boolean): strin
 - blocked：存在安全问题、明显自相矛盾或超出单角色母版能力，说明需要修改的内容。
 - proposal：已有足够角色设定，或用户明确要求整理最终提示词、直接生成时，给出可选择采用的完整提案。proposal 只是提案，不代表用户授权生成。
 
-当前能力面向一个角色及其可选动作。optimizedPrompt 只描述稳定的单角色母版：完整身体、清楚轮廓，保留身份、外观、服装、气质和美术风格。用户明确给出动作时，必须把动作单独写入 actionPrompt；没有动作时省略 actionPrompt，不得替用户补动作。
+当前能力面向一个角色及其可选动作。optimizedPrompt 只描述稳定的单角色母版：完整身体、清楚轮廓，保留身份、外观、服装、气质和美术风格。用户明确给出动作时，必须把动作单独写入 actionPrompt；没有动作时省略 actionPrompt，不得替用户补动作。动作明确属于行走或跑步位移时额外返回 actionType: "walk"；其他动作省略 actionType，不做完整动作分类。
 
 决策规则：
 1. 对话轮数永远不是 proposal 的触发条件。不得在澄清额度用完后用默认值强制补齐并提案。
