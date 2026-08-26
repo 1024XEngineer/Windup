@@ -18,6 +18,8 @@ import {
   ArrowClockwise,
   ArrowUp,
   CaretDown,
+  CaretLeft,
+  CaretRight,
   Check,
   CopySimple,
   FolderOpen,
@@ -36,11 +38,16 @@ import { PixelPerfectVersionSwitch, type PixelPerfectVersion } from './pixel-per
 import {
   ART_STYLE,
   ART_STYLE_OPTIONS,
+  CHARACTER_STATUS,
   DIRECTIONAL_MOVEMENT,
+  characterApis as defaultCharacterApis,
   isArtStyle,
   type ActionDirection,
   type ActionFirstFrameWorkflowNode,
   type ArtStyle,
+  type CharacterApis,
+  type CharacterSummary,
+  type CharacterSummaryApis,
   type CharacterTemplateWorkflowNode,
   type DirectionalMovement,
   type WorkflowRun,
@@ -505,6 +512,7 @@ export interface QuickStartPageProps {
   /** app 组合层注入 Planner 与绑定到现有 WorkflowController 的唯一写 action。 */
   agent: CreateQuickStartAgentOptions
   projectApis?: Pick<ProjectApis, 'list' | 'get'>
+  characterApis?: Pick<CharacterApis & CharacterSummaryApis, 'get' | 'listSummariesByProject'>
 }
 
 /** Quick Start 独立完成 AI 入口；它不跳转 Workflow Editor。 */
@@ -513,6 +521,7 @@ export function QuickStartPage({
   activeRunUserId: providedActiveRunUserId,
   agent,
   projectApis = defaultProjectApis,
+  characterApis = defaultCharacterApis,
 }: QuickStartPageProps) {
   const { runId } = useParams()
   const location = useLocation()
@@ -546,6 +555,7 @@ export function QuickStartPage({
       agent={agent}
       activeRunUserId={activeRunUserId}
       projectApis={projectApis}
+      characterApis={characterApis}
     />
   )
 }
@@ -733,11 +743,13 @@ function QuickStartInput({
   agent,
   activeRunUserId,
   projectApis,
+  characterApis,
 }: {
   service: QuickStartEntryService
   agent: CreateQuickStartAgentOptions
   activeRunUserId: string | null
   projectApis: Pick<ProjectApis, 'list' | 'get'>
+  characterApis: Pick<CharacterApis & CharacterSummaryApis, 'get' | 'listSummariesByProject'>
 }) {
   const navigate = useNavigate()
   const [entrySearchParams] = useSearchParams()
@@ -770,6 +782,13 @@ function QuickStartInput({
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [projects, setProjects] = useState<readonly Project[]>([])
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
+  const [projectMenuProject, setProjectMenuProject] = useState<Project | null>(null)
+  const [projectCharacters, setProjectCharacters] = useState<readonly CharacterSummary[] | null>(
+    null,
+  )
+  const [projectCharactersError, setProjectCharactersError] = useState<string | null>(null)
+  const [openingCharacterId, setOpeningCharacterId] = useState<string | null>(null)
+  const projectCharactersRequest = useRef(0)
   const projectIdRef = useRef(projectId)
   projectIdRef.current = projectId
   const gameStyleRef = useRef(gameStyle)
@@ -896,6 +915,54 @@ function QuickStartInput({
       directionalMovement: project?.directionalMovement ?? directionalMovementRef.current,
       projectId: nextProjectId,
     })
+  }
+
+  async function openProjectCharacters(project: Project) {
+    const request = projectCharactersRequest.current + 1
+    projectCharactersRequest.current = request
+    setProjectMenuProject(project)
+    setProjectCharacters(null)
+    setProjectCharactersError(null)
+    try {
+      const result = await characterApis.listSummariesByProject(project.id, {
+        page: 1,
+        pageSize: 8,
+        status: CHARACTER_STATUS.PUBLISHED,
+      })
+      if (projectCharactersRequest.current === request) setProjectCharacters(result.items)
+    } catch {
+      if (projectCharactersRequest.current === request) {
+        setProjectCharacters([])
+        setProjectCharactersError('角色列表暂时无法读取')
+      }
+    }
+  }
+
+  function returnToProjects() {
+    projectCharactersRequest.current += 1
+    setProjectMenuProject(null)
+    setProjectCharacters(null)
+    setProjectCharactersError(null)
+  }
+
+  async function openCharacterForAction(summary: CharacterSummary) {
+    if (openingCharacterId) return
+    setOpeningCharacterId(summary.id)
+    setProjectCharactersError(null)
+    try {
+      const character = await characterApis.get(summary.id)
+      const outfit = character.outfits[0]
+      if (!outfit) throw new Error('这个角色还没有可用造型')
+      navigate(
+        `/quick-start/${encodeURIComponent(character.workflowRunId)}?${new URLSearchParams({
+          intent: 'add-action',
+          outfitId: outfit.id,
+        })}`,
+      )
+    } catch (cause) {
+      setProjectCharactersError(cause instanceof Error ? cause.message : '角色暂时无法读取')
+      setOpeningCharacterId(null)
+    }
   }
 
   const persistRunConversation = useCallback(
@@ -1513,7 +1580,12 @@ function QuickStartInput({
                     onClick={() => {
                       styleMenu.close()
                       directionMenu.close()
-                      setProjectMenuOpen((open) => !open)
+                      if (projectMenuOpen) {
+                        setProjectMenuOpen(false)
+                      } else {
+                        returnToProjects()
+                        setProjectMenuOpen(true)
+                      }
                     }}
                     className={`inline-flex h-10 max-w-44 items-center gap-1 rounded-app-control px-3 text-sm font-medium text-app-ink-soft transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent ${hasConversation ? 'pointer-events-none disabled:opacity-100' : 'hover:bg-app-surface-muted hover:text-app-ink disabled:opacity-45'}`}
                   >
@@ -1530,50 +1602,113 @@ function QuickStartInput({
                   {projectMenuOpen && !hasConversation ? (
                     <div
                       role="menu"
-                      aria-label="选择项目"
-                      className={`${productPopoverClass} quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid min-w-40 gap-1 p-1.5 opacity-100`}
+                      aria-label={
+                        projectMenuProject ? `选择${projectMenuProject.name}中的角色` : '选择项目'
+                      }
+                      className={`${productPopoverClass} quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid w-[19rem] max-w-[calc(100vw-2rem)] gap-1 p-1.5 opacity-100`}
                     >
-                      {projects.map((project) => (
-                        <button
-                          key={project.id}
-                          type="button"
-                          role="menuitemradio"
-                          aria-checked={projectId === project.id}
-                          onClick={() => chooseProject(project)}
-                          className={`flex items-center gap-2 rounded-app-compact px-3 py-2 text-left text-xs transition ${projectId === project.id ? 'bg-app-accent-soft text-app-accent' : 'text-app-ink-soft hover:bg-app-surface-muted'}`}
-                        >
-                          <FolderOpen aria-hidden="true" size={15} weight="regular" />
-                          <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                          {projectId === project.id ? (
-                            <Check aria-hidden="true" size={14} weight="bold" />
+                      {projectMenuProject ? (
+                        <>
+                          <button
+                            type="button"
+                            aria-label="返回项目列表"
+                            onClick={returnToProjects}
+                            className="flex min-w-0 items-center gap-2 rounded-app-compact px-3 py-2 text-left text-xs font-semibold text-app-ink transition hover:bg-app-surface-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
+                          >
+                            <CaretLeft aria-hidden="true" size={15} weight="bold" />
+                            <span className="truncate">{projectMenuProject.name}</span>
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={projectId === projectMenuProject.id}
+                            onClick={() => chooseProject(projectMenuProject)}
+                            className={`flex items-center gap-2 rounded-app-compact px-3 py-2.5 text-left text-xs transition ${projectId === projectMenuProject.id ? 'bg-app-accent-soft text-app-accent' : 'text-app-ink-soft hover:bg-app-surface-muted'}`}
+                          >
+                            <Plus aria-hidden="true" size={15} weight="bold" />
+                            <span className="min-w-0 flex-1">在此项目中新建角色</span>
+                            {projectId === projectMenuProject.id ? (
+                              <Check aria-hidden="true" size={14} weight="bold" />
+                            ) : null}
+                          </button>
+                          <div className="px-3 pt-1">
+                            <p className="text-[0.68rem] font-medium text-app-faint">
+                              或为已有角色新增动作
+                            </p>
+                          </div>
+                          {projectCharacters === null ? (
+                            <p role="status" className="px-3 py-3 text-xs text-app-muted">
+                              正在读取角色…
+                            </p>
+                          ) : projectCharacters.length === 0 && !projectCharactersError ? (
+                            <p className="px-3 py-3 text-xs text-app-muted">此项目还没有角色</p>
+                          ) : (
+                            projectCharacters.map((character) => {
+                              const name = character.name ?? '未命名角色'
+                              return (
+                                <button
+                                  key={character.id}
+                                  type="button"
+                                  role="menuitem"
+                                  aria-label={`为${name}新增动作，${character.actionCount === 0 ? '暂无动作' : `已有 ${character.actionCount} 个动作`}`}
+                                  disabled={openingCharacterId !== null}
+                                  onClick={() => void openCharacterForAction(character)}
+                                  className="flex items-center gap-2 rounded-app-compact px-3 py-2 text-left text-xs text-app-ink-soft transition hover:bg-app-surface-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:opacity-45"
+                                >
+                                  <span className="min-w-0 flex-1 truncate">{name}</span>
+                                  <CaretRight aria-hidden="true" size={14} weight="bold" />
+                                </button>
+                              )
+                            })
+                          )}
+                          {projectCharactersError ? (
+                            <p role="alert" className="px-3 py-2 text-xs text-app-danger">
+                              {projectCharactersError}
+                            </p>
                           ) : null}
-                        </button>
-                      ))}
-                      <div className="my-1 border-t border-app-line" />
-                      <Link
-                        to="/projects/new?entry=quick-start"
-                        role="menuitem"
-                        onClick={() => setProjectMenuOpen(false)}
-                        className="flex items-center gap-2 rounded-app-compact px-3 py-2 text-xs text-app-ink-soft transition hover:bg-app-surface-muted"
-                      >
-                        <Plus aria-hidden="true" size={15} weight="bold" />
-                        新建项目
-                      </Link>
-                      <button
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={projectId === null}
-                        onClick={() => chooseProject(null)}
-                        className={`flex items-center gap-2 rounded-app-compact px-3 py-2 text-left text-xs transition ${projectId === null ? 'bg-app-accent-soft text-app-accent' : 'text-app-ink-soft hover:bg-app-surface-muted'}`}
-                      >
-                        <span aria-hidden="true" className="w-[15px] text-center">
-                          ×
-                        </span>
-                        <span className="flex-1">自动创建</span>
-                        {projectId === null ? (
-                          <Check aria-hidden="true" size={14} weight="bold" />
-                        ) : null}
-                      </button>
+                        </>
+                      ) : (
+                        <>
+                          {projects.map((project) => (
+                            <button
+                              key={project.id}
+                              type="button"
+                              role="menuitem"
+                              onClick={() => void openProjectCharacters(project)}
+                              className="flex items-center gap-2 rounded-app-compact px-3 py-2 text-left text-xs text-app-ink-soft transition hover:bg-app-surface-muted"
+                            >
+                              <FolderOpen aria-hidden="true" size={15} weight="regular" />
+                              <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                              <CaretRight aria-hidden="true" size={14} weight="bold" />
+                            </button>
+                          ))}
+                          <div className="my-1 border-t border-app-line" />
+                          <Link
+                            to="/projects/new?entry=quick-start"
+                            role="menuitem"
+                            onClick={() => setProjectMenuOpen(false)}
+                            className="flex items-center gap-2 rounded-app-compact px-3 py-2 text-xs text-app-ink-soft transition hover:bg-app-surface-muted"
+                          >
+                            <Plus aria-hidden="true" size={15} weight="bold" />
+                            新建项目
+                          </Link>
+                          <button
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={projectId === null}
+                            onClick={() => chooseProject(null)}
+                            className={`flex items-center gap-2 rounded-app-compact px-3 py-2 text-left text-xs transition ${projectId === null ? 'bg-app-accent-soft text-app-accent' : 'text-app-ink-soft hover:bg-app-surface-muted'}`}
+                          >
+                            <span aria-hidden="true" className="w-[15px] text-center">
+                              ×
+                            </span>
+                            <span className="flex-1">自动创建</span>
+                            {projectId === null ? (
+                              <Check aria-hidden="true" size={14} weight="bold" />
+                            ) : null}
+                          </button>
+                        </>
+                      )}
                     </div>
                   ) : null}
                 </div>
