@@ -60,6 +60,23 @@ describe('AppRoutes authentication boundary', () => {
     expect(workspaceEntry.getAttribute('href')).toBe('/workspace')
   })
 
+  it('serves the in-product guide publicly with navigable workflow sections', async () => {
+    render(
+      <GuestAuthSession>
+        <MemoryRouter initialEntries={['/guide']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </GuestAuthSession>,
+    )
+
+    expect(await screen.findByRole('heading', { name: 'Windup 使用手册', level: 1 })).toBeTruthy()
+    expect(screen.getByRole('navigation', { name: '使用手册目录' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Quick Start' }).getAttribute('href')).toBe(
+      '#quick-start',
+    )
+    expect(screen.getByRole('link', { name: '使用手册' }).getAttribute('href')).toBe('/guide')
+  })
+
   it('protects the workspace home and preserves it as the login return path', async () => {
     render(
       <GuestAuthSession>

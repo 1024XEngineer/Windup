@@ -181,6 +181,12 @@ describe('LandingPage', () => {
     const header = document.querySelector<HTMLElement>('header[data-layout="unified"]')
 
     expect(header).not.toBeNull()
+    const guideEntry = within(header!).getByRole('link', { name: '使用手册' })
+    const githubEntry = within(header!).getByRole('link', { name: 'GitHub' })
+    expect(guideEntry.getAttribute('href')).toBe('/guide')
+    expect(
+      guideEntry.compareDocumentPosition(githubEntry) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
     expect(within(header!).getByRole('link', { name: 'GitHub' }).getAttribute('href')).toBe(
       'https://github.com/1024XEngineer/Windup',
     )

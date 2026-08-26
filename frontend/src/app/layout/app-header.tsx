@@ -535,6 +535,12 @@ function MarketingHeaderView({ session, wave, onWave }: MarketingHeaderViewProps
           aria-label="账号"
           className="relative ml-auto flex shrink-0 items-center gap-1 sm:gap-6"
         >
+          <Link
+            to="/guide"
+            className="hidden min-h-11 items-center text-body font-medium text-app-muted transition-colors hover:text-app-accent focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent xl:inline-flex"
+          >
+            使用手册
+          </Link>
           <a
             href={githubRepository}
             target="_blank"
