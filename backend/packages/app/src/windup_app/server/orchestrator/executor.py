@@ -662,7 +662,7 @@ class ActionTaskExecutor:
                 start_from_model=_resolve_video_model(input.video_model),
             )
             card, action, canvas = self._action_spec(input, cons)
-            progress: ProgressPort = _LogProgress()
+            progress: ProgressPort = _TaskProgress(task_id=task_id, project_id=project_id)
             generated = self._get_generator(
                 _resolve_video_model(input.video_model), cons.directions
             ).finish_rendered(frames, card, action, progress, canvas=canvas)
