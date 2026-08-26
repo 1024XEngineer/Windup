@@ -201,6 +201,12 @@
             "title": "Id",
             "type": "string"
           },
+          "locomotion": {
+            "default": false,
+            "description": "是否会让角色整体发生空间位移",
+            "title": "Locomotion",
+            "type": "boolean"
+          },
           "loop": {
             "default": false,
             "description": "是否循环播放",

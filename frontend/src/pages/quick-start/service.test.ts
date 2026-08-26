@@ -366,7 +366,7 @@ describe('createQuickStartService', () => {
     if (!setup || setup.type !== 'character-setup' || !setup.automation) {
       throw new Error('测试缺少自动交付意图')
     }
-    Object.assign(setup.automation, { actionType: 'walk' })
+    Object.assign(setup.automation, { actionType: 'walk', locomotion: true })
     const workflowRunApis = createWorkflowRunApis([run])
     const generationApis = automaticDeliveryGenerationApis()
     const onAsyncError = vi.fn()
@@ -414,7 +414,7 @@ describe('createQuickStartService', () => {
     })
     await session.approveReview()
     expect(character.outfits.flatMap((outfit) => outfit.actions)).toEqual([
-      expect.objectContaining({ type: 'walk', name: '轻快地向前行走' }),
+      expect.objectContaining({ type: 'walk', name: '轻快地向前行走', locomotion: true }),
     ])
   })
 

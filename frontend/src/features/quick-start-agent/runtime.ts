@@ -15,12 +15,13 @@ const QUICK_START_DECISION_FIELDS = new Set([
   'optimizedPrompt',
   'actionPrompt',
   'actionType',
+  'locomotion',
   'optimizationSummary',
   'suggestPixelPerfect',
 ])
 
 export type QuickStartDirectionalMovement = 'single' | 'four-way' | 'eight-way'
-export type QuickStartActionType = 'walk'
+export type QuickStartActionType = 'idle' | 'walk' | 'attack' | 'jump'
 
 export interface PlannerMessage {
   role: 'user' | 'assistant'
@@ -52,8 +53,10 @@ export type QuickStartPlanner = (input: PlannerInput) => Promise<PlannerResult>
 export interface CharacterGenerationPlan {
   optimizedPrompt: string
   actionPrompt?: string
-  /** 仅在 Agent 明确认出行走/跑步位移时附带；不做通用动作分类。 */
+  /** 仅在动作明确匹配已有优化管线时附带。 */
   actionType?: QuickStartActionType
+  /** 仅在动作会让角色整体发生空间位移时附带。 */
+  locomotion?: true
   optimizationSummary: string
   /** Planner 对明确像素素材意图的静默判断；缺省按否处理以兼容旧提案。 */
   suggestPixelPerfect?: boolean
@@ -104,6 +107,7 @@ export type StartCharacterGenerationAction = (input: {
   prompt: string
   actionPrompt?: string
   actionType?: QuickStartActionType
+  locomotion?: true
   directionalMovement?: QuickStartDirectionalMovement
   gameStyle?: string
   projectId?: string
@@ -203,14 +207,25 @@ export function parseCharacterGenerationPlan(value: unknown): CharacterGeneratio
   if (value.suggestPixelPerfect !== undefined && typeof value.suggestPixelPerfect !== 'boolean') {
     throw new Error('生成提案的 suggestPixelPerfect 无效')
   }
-  const actionType = value.actionType === 'walk' ? value.actionType : undefined
+  const actionType =
+    value.actionType === 'idle' ||
+    value.actionType === 'walk' ||
+    value.actionType === 'attack' ||
+    value.actionType === 'jump'
+      ? value.actionType
+      : undefined
   if (value.actionType !== undefined && (!actionType || !actionPrompt)) {
     throw new Error('生成提案的 actionType 无效')
+  }
+  const locomotion = value.locomotion === true ? true : undefined
+  if (value.locomotion !== undefined && (!locomotion || !actionPrompt)) {
+    throw new Error('生成提案的 locomotion 无效')
   }
   return {
     optimizedPrompt,
     ...(actionPrompt ? { actionPrompt } : {}),
     ...(actionType ? { actionType } : {}),
+    ...(locomotion ? { locomotion } : {}),
     optimizationSummary,
     ...(value.suggestPixelPerfect === true ? { suggestPixelPerfect: true } : {}),
   }
@@ -324,6 +339,7 @@ export function createQuickStartAgent({
         optimizedPrompt: decision.optimizedPrompt,
         ...(decision.actionPrompt ? { actionPrompt: decision.actionPrompt } : {}),
         ...(decision.actionType ? { actionType: decision.actionType } : {}),
+        ...(decision.locomotion ? { locomotion: decision.locomotion } : {}),
         optimizationSummary: decision.optimizationSummary,
         ...(decision.suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
       }
@@ -360,6 +376,7 @@ export function createQuickStartAgent({
         prompt: effectivePrompt,
         ...(proposal.actionPrompt ? { actionPrompt: proposal.actionPrompt } : {}),
         ...(proposal.actionType ? { actionType: proposal.actionType } : {}),
+        ...(proposal.locomotion ? { locomotion: proposal.locomotion } : {}),
         directionalMovement,
         gameStyle,
         projectId,

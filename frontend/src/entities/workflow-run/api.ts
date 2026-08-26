@@ -129,7 +129,10 @@ function hasValidAutomationIntent(value: unknown): boolean {
       isNullableString(value.actionPrompt) &&
       (value.actionPrompt === null || value.actionPrompt.trim().length > 0) &&
       (value.actionType === undefined ||
-        (value.actionType === 'walk' && value.actionPrompt !== null)))
+        (['idle', 'walk', 'attack', 'jump'].includes(String(value.actionType)) &&
+          value.actionPrompt !== null)) &&
+      (value.locomotion === undefined ||
+        (value.locomotion === true && value.actionPrompt !== null)))
   )
 }
 
@@ -145,7 +148,8 @@ function hasValidActionInput(value: unknown): boolean {
     isNullableString(value.prompt) &&
     typeof value.fps === 'number' &&
     Number.isFinite(value.fps) &&
-    value.fps > 0
+    value.fps > 0 &&
+    (value.locomotion === undefined || value.locomotion === true)
   )
 }
 

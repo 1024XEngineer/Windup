@@ -72,7 +72,8 @@ const quickStartDecisionTool = tool({
         message: { type: 'string', minLength: 1, maxLength: 2_000 },
         optimizedPrompt: { type: 'string', minLength: 1, maxLength: 4_000 },
         actionPrompt: { type: 'string', minLength: 1, maxLength: 4_000 },
-        actionType: { type: 'string', enum: ['walk'] },
+        actionType: { type: 'string', enum: ['idle', 'walk', 'attack', 'jump'] },
+        locomotion: { type: 'boolean', enum: [true] },
         optimizationSummary: { type: 'string', minLength: 1, maxLength: 600 },
         suggestPixelPerfect: { type: 'boolean' },
       },
@@ -254,7 +255,7 @@ ${artStyleContext}
 - blocked：存在安全问题、明显自相矛盾或超出单角色母版能力，说明需要修改的内容。
 - proposal：已有足够角色设定，或用户明确要求整理最终提示词、直接生成时，给出可选择采用的完整提案。proposal 只是提案，不代表用户授权生成。
 
-当前能力面向一个角色及其可选动作。optimizedPrompt 只描述稳定的单角色母版：完整身体、清楚轮廓，保留身份、外观、服装、气质和美术风格。用户明确给出动作时，必须把动作单独写入 actionPrompt；没有动作时省略 actionPrompt，不得替用户补动作。动作明确属于行走或跑步位移时额外返回 actionType: "walk"；其他动作省略 actionType，不做完整动作分类。
+当前能力面向一个角色及其可选动作。optimizedPrompt 只描述稳定的单角色母版：完整身体、清楚轮廓，保留身份、外观、服装、气质和美术风格。用户明确给出动作时，必须把动作单独写入 actionPrompt；没有动作时省略 actionPrompt，不得替用户补动作。动作明确匹配待机、行走、攻击或跳跃时，分别返回 actionType: "idle"、"walk"、"attack" 或 "jump"，让生成复用已有优化管线；匹配不到时省略 actionType。只要动作会让角色整体发生空间位移，额外返回 locomotion: true；原地动作省略 locomotion。两项判断互相独立。
 
 决策规则：
 1. 对话轮数永远不是 proposal 的触发条件。不得在澄清额度用完后用默认值强制补齐并提案。

@@ -1607,6 +1607,7 @@ describe('QuickStartPage', () => {
             optimizedPrompt: '圆润可爱的卡皮巴拉，全身像',
             actionPrompt: '轻快地向前行走',
             actionType: 'walk',
+            locomotion: true,
             optimizationSummary: '我理解为一只正在向前行走的卡皮巴拉。',
           },
         },
@@ -1624,6 +1625,9 @@ describe('QuickStartPage', () => {
     expect(
       window.sessionStorage.getItem(`windup.quick-start.agent-chat.v2:draft:7:${draftId}`),
     ).toContain('"actionType":"walk"')
+    expect(
+      window.sessionStorage.getItem(`windup.quick-start.agent-chat.v2:draft:7:${draftId}`),
+    ).toContain('"locomotion":true')
     fireEvent.click(screen.getByRole('button', { name: '确认并生成' }))
 
     await vi.waitFor(() =>
@@ -1631,6 +1635,7 @@ describe('QuickStartPage', () => {
         prompt: '圆润可爱的卡皮巴拉，全身像',
         actionPrompt: '轻快地向前行走',
         actionType: 'walk',
+        locomotion: true,
         directionalMovement: 'single',
         gameStyle: 'unspecified',
         automaticDelivery: true,
