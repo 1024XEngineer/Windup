@@ -72,14 +72,14 @@ export function GuidePage() {
           <header className="grid border-b border-app-line pb-9 md:grid-cols-[13.5rem_minmax(0,1fr)] md:gap-12 xl:gap-16">
             <div className="hidden md:block" aria-hidden="true" />
             <div>
-              <p className="text-xs font-semibold tracking-[0.08em] text-app-faint">使用指南</p>
+              <p className="text-meta font-semibold text-app-faint">使用指南</p>
               <h1
                 id="guide-title"
-                className="mt-3 text-[2.25rem] leading-[1.16] font-extrabold tracking-[-0.035em] text-app-ink sm:text-[2.75rem]"
+                className="mt-3 font-serif text-[2.4rem] leading-[1.18] font-semibold tracking-[-0.04em] text-app-ink sm:text-[2.8rem]"
               >
                 Windup 使用指南
               </h1>
-              <p className="mt-4 max-w-4xl text-base leading-7 text-app-muted">
+              <p className="mt-4 max-w-4xl text-lead text-app-muted">
                 从建立项目开始，完成角色母版、方向首帧和动作，再到预览与导出。这份指南按实际制作顺序说明每一步。
               </p>
               <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-3">
@@ -103,13 +103,13 @@ export function GuidePage() {
           <div className="grid gap-10 pt-8 md:grid-cols-[13.5rem_minmax(0,1fr)] md:gap-12 xl:gap-16">
             <aside className="md:sticky md:top-28 md:self-start md:border-r md:border-app-line md:pr-7 xl:pr-8">
               <nav aria-label="使用指南章节">
-                <p className="text-xs font-semibold text-app-ink-soft">本页内容</p>
+                <p className="text-meta font-semibold text-app-ink-soft">本页内容</p>
                 <ol className="mt-3 grid grid-cols-2 gap-x-4 gap-y-0.5 sm:grid-cols-4 md:grid-cols-1">
                   {guideChapters.map((chapter) => (
                     <li key={chapter.id}>
                       <a
                         href={`#${chapter.id}`}
-                        className="group flex min-h-9 items-center gap-2.5 py-1.5 text-[13px] leading-5 text-app-muted transition-colors hover:text-app-accent focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
+                        className="group flex min-h-9 items-center gap-2.5 py-1.5 text-body text-app-muted transition-colors hover:text-app-accent focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
                       >
                         <span aria-hidden="true" className="font-mono text-[10px] text-app-faint">
                           {chapter.index}
@@ -122,13 +122,13 @@ export function GuidePage() {
               </nav>
 
               <div className="mt-7 hidden border-t border-app-line pt-5 md:block">
-                <p className="text-xs font-semibold text-app-ink-soft">快速入口</p>
+                <p className="text-meta font-semibold text-app-ink-soft">快速入口</p>
                 <ul className="mt-2 space-y-0.5">
                   {quickLinks.map((link) => (
                     <li key={link.to}>
                       <Link
                         to={link.to}
-                        className="inline-flex min-h-8 items-center gap-1.5 text-[13px] text-app-muted transition-colors hover:text-app-accent focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
+                        className="inline-flex min-h-8 items-center gap-1.5 text-body text-app-muted transition-colors hover:text-app-accent focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
                       >
                         {link.label}
                         <ArrowRight aria-hidden="true" size={12} />
@@ -152,13 +152,11 @@ export function GuidePage() {
                   </p>
                   <h2
                     id={`${chapter.id}-title`}
-                    className="mt-2 text-[1.65rem] leading-tight font-bold tracking-[-0.025em] text-app-ink sm:text-[1.85rem]"
+                    className="mt-2 font-serif text-[1.75rem] leading-[1.35] font-semibold tracking-[-0.03em] text-app-ink sm:text-[2rem]"
                   >
                     {chapter.title}
                   </h2>
-                  <p className="mt-3 max-w-[52rem] text-[15px] leading-7 text-app-muted">
-                    {chapter.summary}
-                  </p>
+                  <p className="mt-3 max-w-[52rem] text-body text-app-muted">{chapter.summary}</p>
 
                   {chapter.id === 'quick-start' ? <QuickStartComposerPreview /> : null}
 
@@ -193,12 +191,12 @@ export function GuidePage() {
                         id={`${chapter.id}-${topicIndex + 1}`}
                         className="space-y-2"
                       >
-                        <h3 className="text-base font-bold leading-6 text-app-ink-soft">
+                        <h3 className="text-subtitle font-semibold text-app-ink-soft">
                           {topic.title}
                         </h3>
-                        <p className="text-sm leading-7 text-app-muted">{topic.description}</p>
+                        <p className="text-body text-app-muted">{topic.description}</p>
                         {topic.bullets?.map((bullet) => (
-                          <p key={bullet} className="text-sm leading-7 text-app-ink-soft">
+                          <p key={bullet} className="text-body text-app-ink-soft">
                             {bullet}
                           </p>
                         ))}
