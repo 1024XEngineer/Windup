@@ -66,8 +66,11 @@ class ImageGateway:
 
         chain = list(self._registry.chain(Scene.CHARACTER_IMAGE))
         if ctx.start_from_model and ctx.start_from_model in chain:
+            # 轮转而不是截断:候选铺开会把最后一个型号指给某一张候选,截断的话那一张
+            # 一旦上游整体不可用就没有任何兜底,而其余候选还好好的 —— 一次任务里
+            # 单张失败与整任务失败是两回事。
             start_i = chain.index(ctx.start_from_model)
-            models = chain[start_i:]
+            models = chain[start_i:] + chain[:start_i]
         else:
             start_i = 0
             models = chain

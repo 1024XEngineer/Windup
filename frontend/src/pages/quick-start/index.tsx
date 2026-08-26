@@ -1,4 +1,6 @@
 import {
+  cloneElement,
+  isValidElement,
   useCallback,
   useEffect,
   useMemo,
@@ -8,6 +10,7 @@ import {
   type CSSProperties,
   type ChangeEvent,
   type FormEvent,
+  type ReactElement,
   type ReactNode,
 } from 'react'
 import { flushSync } from 'react-dom'
@@ -17,11 +20,13 @@ import {
   ArrowUp,
   CaretDown,
   CopySimple,
+  Play,
   PlusCircle,
+  Stack,
   Stop,
   X,
 } from '@phosphor-icons/react'
-import Markdown from 'markdown-to-jsx'
+import Markdown, { compiler } from 'markdown-to-jsx'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 
 import {
@@ -29,6 +34,7 @@ import {
   ART_STYLE_OPTIONS,
   DIRECTIONAL_MOVEMENT,
   isArtStyle,
+  type ActionDirection,
   type ActionFirstFrameWorkflowNode,
   type ArtStyle,
   type CharacterTemplateWorkflowNode,
@@ -52,6 +58,7 @@ import {
   GenerationPreviewCard,
   GenerationProgressCopy,
   KineticCopyCycle,
+  productPopoverClass,
   type KineticCopyMessage,
 } from '@/shared/ui'
 import {
@@ -63,6 +70,7 @@ import {
   type QuickStartFrame,
   type QuickStartSession,
 } from './service'
+import { buildDirectionSheetCandidates, type DirectionSheetCandidate } from './direction-sheet'
 import './quick-start-motion.css'
 
 export type {
@@ -162,6 +170,8 @@ type AgentConversationTurn =
       kind: 'proposal'
       proposalId: string
       optimizedPrompt: string
+      actionPrompt?: string
+      actionType?: 'walk'
       optimizationSummary: string
       proposalStatus: 'pending' | 'superseded' | 'adopted' | 'confirmed'
       scope?: 'workflow'
@@ -275,6 +285,12 @@ function readAgentConversation(
             kind: 'proposal',
             proposalId: turn.proposalId,
             optimizedPrompt: turn.optimizedPrompt,
+            ...('actionPrompt' in turn && typeof turn.actionPrompt === 'string'
+              ? { actionPrompt: turn.actionPrompt }
+              : {}),
+            ...('actionType' in turn && turn.actionType === 'walk'
+              ? { actionType: turn.actionType }
+              : {}),
             optimizationSummary: turn.optimizationSummary,
             proposalStatus: turn.proposalStatus,
             ...(scope ? { scope } : {}),
@@ -313,6 +329,8 @@ function createAgentSeed(turns: readonly AgentConversationTurn[]): {
         ? {
             proposalId: pending.proposalId,
             optimizedPrompt: pending.optimizedPrompt,
+            ...(pending.actionPrompt ? { actionPrompt: pending.actionPrompt } : {}),
+            ...(pending.actionType ? { actionType: pending.actionType } : {}),
             optimizationSummary: pending.optimizationSummary,
           }
         : null,
@@ -464,7 +482,7 @@ function IconActionButton({
       disabled={disabled}
       onClick={onClick}
       data-icon-action
-      className={`group/action relative grid size-10 shrink-0 place-items-center rounded-lg transition focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-45 ${
+      className={`group/action relative grid size-10 shrink-0 place-items-center rounded-app-compact transition focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-45 ${
         accent
           ? 'bg-app-accent text-app-on-accent hover:bg-app-accent-hover'
           : 'text-app-muted hover:bg-app-surface-muted hover:text-app-accent'
@@ -474,7 +492,7 @@ function IconActionButton({
       <span
         id={tooltipId}
         role="tooltip"
-        className="pointer-events-none absolute top-full left-1/2 z-20 mt-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-app-ink px-2 py-1 text-[11px] font-medium text-app-canvas opacity-0 shadow-app-card transition group-hover/action:visible group-hover/action:opacity-100 group-focus-within/action:visible group-focus-within/action:opacity-100 invisible"
+        className="pointer-events-none absolute top-full left-1/2 z-20 mt-2 -translate-x-1/2 whitespace-nowrap rounded-app-compact bg-app-ink px-2 py-1 text-[11px] font-medium text-app-canvas opacity-0 shadow-app-card transition group-hover/action:visible group-hover/action:opacity-100 group-focus-within/action:visible group-focus-within/action:opacity-100 invisible"
       >
         {label}
       </span>
@@ -532,6 +550,9 @@ function AgentActions({
   copyLabel,
   onCopy,
   exportModel,
+  onOpenAssetWorkspace,
+  onOpenPlaytest,
+  playtestDisabled = false,
   onNewCreation,
   onRegenerate,
   regenerateDisabled = false,
@@ -540,6 +561,9 @@ function AgentActions({
   copyLabel?: string
   onCopy?: () => void
   exportModel?: ExportPackageModel | null
+  onOpenAssetWorkspace?: () => void
+  onOpenPlaytest?: () => void
+  playtestDisabled?: boolean
   onNewCreation: () => void
   onRegenerate?: () => void
   regenerateDisabled?: boolean
@@ -566,8 +590,22 @@ function AgentActions({
         <ExportButton
           model={exportModel}
           iconOnly
-          className="bg-app-accent text-app-on-accent hover:bg-app-accent-hover"
+          className="text-app-muted hover:bg-app-surface-muted hover:text-app-accent"
         />
+      ) : null}
+      {onOpenAssetWorkspace ? (
+        <IconActionButton label="跳转到资产工作台" onClick={onOpenAssetWorkspace}>
+          <Stack data-icon="asset-stack" aria-hidden="true" size={18} weight="bold" />
+        </IconActionButton>
+      ) : null}
+      {onOpenPlaytest ? (
+        <IconActionButton
+          label="跳转到 Play Test"
+          onClick={onOpenPlaytest}
+          disabled={playtestDisabled}
+        >
+          <Play data-icon="playtest-play" aria-hidden="true" size={18} weight="fill" />
+        </IconActionButton>
       ) : null}
       {showNewCreation ? (
         <IconActionButton label="新建一次创作" onClick={onNewCreation}>
@@ -632,6 +670,7 @@ function QuickStartInput({
   const initialAgentSeed = useRef(createAgentSeed(conversationTurns)).current
   const agentSession = useQuickStartAgent({
     ...agent,
+    ...(gameStyle === 'unspecified' ? {} : { artStyle: ART_STYLE[gameStyle] }),
     initialMessages: initialAgentSeed.messages,
     initialClarificationUsed: initialAgentSeed.clarificationUsed,
     initialProposal: initialAgentSeed.pendingProposal,
@@ -756,7 +795,7 @@ function QuickStartInput({
         ? {
             ...turn,
             content: confirmedPrompt
-              ? `${turn.optimizationSummary}\n\n提示词提案：${confirmedPrompt}`
+              ? `${turn.optimizationSummary}\n\n角色：${confirmedPrompt}${turn.actionPrompt ? `\n动作：${turn.actionPrompt}` : ''}`
               : turn.content,
             optimizedPrompt: confirmedPrompt ?? turn.optimizedPrompt,
             proposalStatus,
@@ -789,6 +828,24 @@ function QuickStartInput({
       setPromptState('ready')
       promptInput.current?.focus()
     }, PROMPT_REWRITE_MS)
+  }
+
+  async function confirmAutomaticProposal(proposalId: string) {
+    const state = agentSession.state
+    if (state.status !== 'proposal' || state.proposalId !== proposalId || generationStarting) {
+      return
+    }
+    setPromptState('confirmed')
+    try {
+      const result = await agentSession.confirmProposal(
+        state.optimizedPrompt,
+        directionalMovement,
+        { gameStyle, automaticDelivery: true },
+      )
+      if (result.kind === 'generated') await handoffGenerated(result)
+    } catch {
+      setPromptState('collecting')
+    }
   }
 
   function selectTemplateFile(event: ChangeEvent<HTMLInputElement>) {
@@ -903,10 +960,12 @@ function QuickStartInput({
         if (result.kind === 'proposal') {
           appendConversationTurn({
             role: 'assistant',
-            content: `${result.optimizationSummary}\n\n提示词提案：${result.optimizedPrompt}`,
+            content: `${result.optimizationSummary}\n\n角色：${result.optimizedPrompt}${result.actionPrompt ? `\n动作：${result.actionPrompt}` : ''}`,
             kind: 'proposal',
             proposalId: result.proposalId,
             optimizedPrompt: result.optimizedPrompt,
+            ...(result.actionPrompt ? { actionPrompt: result.actionPrompt } : {}),
+            ...(result.actionType ? { actionType: result.actionType } : {}),
             optimizationSummary: result.optimizationSummary,
             proposalStatus: 'pending',
           })
@@ -1042,6 +1101,7 @@ function QuickStartInput({
                     <PromptProposal
                       summary={turn.optimizationSummary}
                       prompt={turn.optimizedPrompt}
+                      actionPrompt={turn.actionPrompt}
                       status={turn.proposalStatus}
                       disabled={
                         turn.proposalStatus !== 'pending' ||
@@ -1050,6 +1110,7 @@ function QuickStartInput({
                         promptState === 'rewriting' ||
                         generationStarting
                       }
+                      onConfirm={() => void confirmAutomaticProposal(turn.proposalId)}
                       onFill={() => fillOptimizedPrompt(turn.proposalId)}
                     />
                   ) : (
@@ -1134,10 +1195,18 @@ function QuickStartInput({
             onSubmit={(event) => void submit(event)}
             autoComplete="off"
             data-prompt-state={promptState}
-            className="quick-start-agent-composer relative flex flex-col"
+            className={
+              hasConversation
+                ? 'quick-start-agent-composer grid grid-cols-[1fr_auto] items-center gap-1.5 overflow-hidden rounded-xl border border-app-line-strong bg-app-surface-raised p-1.5 shadow-app-panel transition-shadow focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]'
+                : 'quick-start-agent-composer relative flex flex-col'
+            }
           >
             <label
-              className="relative block min-h-[52px] min-w-0 overflow-hidden rounded-[18px] border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]"
+              className={
+                hasConversation
+                  ? 'relative ml-2 min-w-0 overflow-hidden rounded-lg'
+                  : 'relative block min-h-[52px] min-w-0 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]'
+              }
               htmlFor="quick-start-prompt"
             >
               <span className="sr-only">创作指令</span>
@@ -1166,15 +1235,21 @@ function QuickStartInput({
                         ? '描述动作，可留空生成待机动作…'
                         : '描述角色的外形、身份和气质…'
                 }
-                className={`block min-h-[52px] max-h-40 w-full min-w-0 resize-none overflow-y-auto border-0 bg-transparent py-[14px] pr-14 pl-4 text-[15px] leading-6 text-app-ink outline-none [field-sizing:content] placeholder:text-app-faint ${
-                  promptState === 'rewriting' ? 'text-transparent caret-transparent' : ''
-                }`}
+                className={`block max-h-40 w-full min-w-0 resize-none overflow-y-auto border-0 bg-transparent text-[15px] text-app-ink outline-none [field-sizing:content] placeholder:text-app-faint ${
+                  hasConversation
+                    ? 'min-h-10 px-4 py-2.5 leading-5'
+                    : 'min-h-[52px] py-[14px] pr-14 pl-4 leading-6'
+                } ${promptState === 'rewriting' ? 'text-transparent caret-transparent' : ''}`}
               />
               {promptState === 'rewriting' ? (
                 <span
                   data-prompt-rewrite
                   aria-hidden="true"
-                  className="quick-start-prompt-rewrite absolute inset-0 flex min-h-[52px] max-h-40 items-start overflow-y-auto py-[14px] pr-14 pl-4 text-[15px] leading-6 text-app-ink"
+                  className={`quick-start-prompt-rewrite absolute inset-0 flex max-h-40 items-start overflow-y-auto text-[15px] text-app-ink ${
+                    hasConversation
+                      ? 'min-h-10 px-4 py-2.5 leading-5'
+                      : 'min-h-[52px] py-[14px] pr-14 pl-4 leading-6'
+                  }`}
                 >
                   <KineticCopyCycle
                     active
@@ -1194,14 +1269,21 @@ function QuickStartInput({
               disabled={
                 entryCanInterrupt ? false : !canSubmit || entryBusy || Boolean(unavailableReason)
               }
-              className={`absolute right-[6px] bottom-[6px] z-10 grid size-10 place-items-center rounded-full border-0 text-app-canvas transition-[opacity,transform,background] duration-150 hover:-translate-y-px active:scale-95 disabled:cursor-default disabled:opacity-25 ${
-                entryCanInterrupt ? 'bg-app-ink' : 'bg-app-accent hover:bg-app-accent-hover'
-              }`}
+              className={`z-10 grid place-items-center border-0 text-app-canvas transition-[opacity,transform,background] duration-150 hover:-translate-y-px active:scale-95 disabled:cursor-default disabled:opacity-25 ${
+                hasConversation
+                  ? 'h-10 min-w-10 rounded-lg px-3'
+                  : 'absolute right-[6px] bottom-[6px] size-10 rounded-full'
+              } ${entryCanInterrupt ? 'bg-app-ink' : 'bg-app-accent hover:bg-app-accent-hover'}`}
             >
               {entryCanInterrupt ? (
                 <Stop aria-hidden="true" size={16} weight="fill" />
               ) : (
-                <ArrowUp aria-hidden="true" size={19} weight="bold" />
+                <span className="inline-flex items-center gap-2">
+                  {hasConversation ? (
+                    <span className="text-sm font-bold">{buttonLabel}</span>
+                  ) : null}
+                  <ArrowUp aria-hidden="true" size={hasConversation ? 16 : 19} weight="bold" />
+                </span>
               )}
             </button>
             <input
@@ -1215,7 +1297,9 @@ function QuickStartInput({
             />
             <div
               data-layout="quick-start-composer-controls"
-              className="order-first mb-2 flex min-h-10 items-center justify-between gap-3 px-1"
+              className={`order-first mb-2 min-h-10 items-center justify-between gap-3 px-1 ${
+                hasConversation ? 'hidden' : 'flex'
+              }`}
             >
               {!hasConversation ? (
                 <div className="flex items-center gap-1">
@@ -1243,7 +1327,7 @@ function QuickStartInput({
                       <div
                         role="menu"
                         aria-label="选择画风"
-                        className="quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid min-w-32 gap-1 rounded-[14px] border border-app-line bg-[var(--color-app-surface-raised)] p-1.5 opacity-100 shadow-app-panel"
+                        className={`${productPopoverClass} quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid min-w-32 gap-1 p-1.5 opacity-100`}
                       >
                         {ART_STYLE_OPTIONS.map((value) => (
                           <button
@@ -1252,7 +1336,7 @@ function QuickStartInput({
                             role="menuitemradio"
                             aria-checked={gameStyle === value}
                             onClick={() => chooseGameStyle(value)}
-                            className={`rounded-lg px-3 py-2 text-left text-xs transition ${
+                            className={`rounded-app-compact px-3 py-2 text-left text-xs transition ${
                               gameStyle === value
                                 ? 'bg-app-accent-soft text-app-accent'
                                 : 'text-app-ink-soft hover:bg-app-surface-muted'
@@ -1267,14 +1351,14 @@ function QuickStartInput({
                 </div>
               ) : null}
               {templateFile && !hasConversation ? (
-                <span className="absolute bottom-full left-3 mb-2 inline-flex max-w-56 items-center gap-1 rounded-lg bg-app-surface-raised px-2 py-1 text-xs text-app-ink-soft shadow-app-card">
+                <span className="absolute bottom-full left-3 mb-2 inline-flex max-w-56 items-center gap-1 rounded-app-compact bg-app-surface-raised px-2 py-1 text-xs text-app-ink-soft shadow-app-card">
                   <span className="truncate">{templateFile.name}</span>
                   <button
                     type="button"
                     aria-label="移除图片"
                     disabled={entryBusy}
                     onClick={removeTemplateFile}
-                    className="grid size-6 shrink-0 place-items-center rounded-md text-app-muted hover:text-app-accent"
+                    className="grid size-6 shrink-0 place-items-center rounded-app-compact text-app-muted hover:text-app-accent"
                   >
                     <X aria-hidden="true" size={13} weight="bold" />
                   </button>
@@ -1300,7 +1384,7 @@ function QuickStartInput({
                           setDirectionSliderValue(directionalMovementIndex)
                           setDirectionMenuOpen((open) => !open)
                         }}
-                        className="inline-flex h-10 items-center gap-1 rounded-lg px-3 text-sm font-medium text-app-ink-soft transition hover:bg-app-surface-muted hover:text-app-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:opacity-45"
+                        className="inline-flex h-10 items-center gap-1 rounded-app-control px-3 text-sm font-medium text-app-ink-soft transition hover:bg-app-surface-muted hover:text-app-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:opacity-45"
                       >
                         {DIRECTIONAL_MOVEMENT[directionalMovement]}
                         <CaretDown
@@ -1314,7 +1398,7 @@ function QuickStartInput({
                         <div
                           role="group"
                           aria-label="生成方向设置"
-                          className="quick-start-control-popover absolute right-0 bottom-full z-30 mb-3 w-72 rounded-[18px] border border-app-line-strong bg-[var(--color-app-surface-raised)] p-5 opacity-100 shadow-app-panel"
+                          className={`${productPopoverClass} quick-start-control-popover absolute right-0 bottom-full z-30 mb-3 w-72 p-5 opacity-100`}
                         >
                           <div className="mb-4 flex items-center justify-between">
                             <span className="text-sm text-app-muted">生成方向</span>
@@ -1381,14 +1465,14 @@ function QuickStartInput({
           </form>
 
           {unavailableReason ? (
-            <p className="mt-3 rounded-xl border border-app-warning-line bg-app-warning-soft px-4 py-3 text-sm text-app-warning">
+            <p className="mt-3 rounded-app-surface border border-app-warning-line bg-app-warning-soft px-4 py-3 text-sm text-app-warning">
               {unavailableReason}
             </p>
           ) : null}
           {error ? (
             <p
               role="alert"
-              className="mt-3 rounded-xl bg-app-danger px-4 py-3 text-sm text-app-danger-soft"
+              className="mt-3 rounded-app-surface bg-app-danger px-4 py-3 text-sm text-app-danger-soft"
             >
               {error}
             </p>
@@ -1402,14 +1486,18 @@ function QuickStartInput({
 function PromptProposal({
   summary,
   prompt,
+  actionPrompt,
   status,
   disabled,
+  onConfirm,
   onFill,
 }: {
   summary: string
   prompt: string
+  actionPrompt?: string
   status: Extract<AgentConversationTurn, { kind: 'proposal' }>['proposalStatus']
   disabled: boolean
+  onConfirm: () => void
   onFill: () => void
 }) {
   return (
@@ -1418,19 +1506,33 @@ function PromptProposal({
       <blockquote className="max-w-2xl font-serif text-base leading-7 text-app-ink">
         {prompt}
       </blockquote>
+      {actionPrompt ? <p className="text-sm text-app-muted">动作：{actionPrompt}</p> : null}
       {status === 'pending' ? (
-        <button
-          type="button"
-          aria-label="填入输入框"
-          disabled={disabled}
-          onClick={onFill}
-          className="group inline-flex min-h-8 items-center gap-2 rounded-full pr-2 text-xs text-app-muted transition hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-45"
-        >
-          <span className="grid size-8 shrink-0 place-items-center rounded-full transition group-hover:bg-app-surface-muted">
-            <ArrowBendDownLeft aria-hidden="true" size={17} weight="bold" />
-          </span>
-          <span>填入输入框后，还可以继续修改</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          {actionPrompt ? (
+            <button
+              type="button"
+              aria-label="确认并生成"
+              disabled={disabled}
+              onClick={onConfirm}
+              className="min-h-9 rounded-full bg-app-accent px-4 text-xs font-semibold text-app-canvas transition hover:bg-app-accent-hover disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              确认并生成
+            </button>
+          ) : null}
+          <button
+            type="button"
+            aria-label="填入输入框"
+            disabled={disabled}
+            onClick={onFill}
+            className="group inline-flex min-h-8 items-center gap-2 rounded-full pr-2 text-xs text-app-muted transition hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            <span className="grid size-8 shrink-0 place-items-center rounded-full transition group-hover:bg-app-surface-muted">
+              <ArrowBendDownLeft aria-hidden="true" size={17} weight="bold" />
+            </span>
+            <span>编辑后逐步确认</span>
+          </button>
+        </div>
       ) : status === 'superseded' ? (
         <p className="text-xs text-app-faint">已继续讨论</p>
       ) : status === 'adopted' ? (
@@ -1450,6 +1552,7 @@ function AgentCopy({
   animate?: boolean
 }) {
   const copy = lines.join('\n')
+  const animatedCopy = animateMarkdownCharacters(compiler(copy))
 
   return (
     <div
@@ -1457,18 +1560,76 @@ function AgentCopy({
       aria-label={lines.join(' ')}
       className={`quick-start-agent-copy grid grid-cols-[2rem_minmax(0,1fr)] items-start gap-3 font-serif ${
         tone === 'danger' ? 'text-app-danger' : 'text-app-ink-soft'
-      } ${animate ? 'quick-start-agent-copy--entering' : ''}`}
+      }`}
     >
       <QuickStartAgentBot placement="answer" />
       <div
         aria-label="Agent 回答"
         data-agent-markdown
-        className="quick-start-agent-markdown min-w-0"
+        className={`quick-start-agent-markdown min-w-0 ${
+          animate ? 'quick-start-agent-markdown--entering' : ''
+        }`}
       >
-        <Markdown>{copy}</Markdown>
+        {animate ? (
+          <>
+            <span className="sr-only" data-agent-copy-text>
+              {copy}
+            </span>
+            {animatedCopy}
+          </>
+        ) : (
+          <Markdown>{copy}</Markdown>
+        )}
       </div>
     </div>
   )
+}
+
+function animateMarkdownCharacters(
+  node: ReactNode,
+  counter: { value: number } = { value: 0 },
+): ReactNode {
+  if (typeof node === 'string' || typeof node === 'number') {
+    return Array.from(String(node)).map((character) => {
+      const characterIndex = counter.value
+      counter.value += 1
+      return (
+        <span
+          key={characterIndex}
+          aria-hidden="true"
+          className="kinetic-copy-character"
+          style={{ '--kinetic-copy-character-index': characterIndex } as CSSProperties}
+        >
+          {character === ' ' ? '\u00a0' : character}
+        </span>
+      )
+    })
+  }
+  if (Array.isArray(node)) {
+    return node.map((child) => animateMarkdownCharacters(child, counter))
+  }
+  if (!isValidElement<AnimatedMarkdownElementProps>(node)) return node
+
+  const element = node as ReactElement<AnimatedMarkdownElementProps>
+  const accessibleProps =
+    element.type === 'a' ? { 'aria-label': markdownTextContent(element.props.children) } : undefined
+  return cloneElement(
+    element,
+    accessibleProps,
+    animateMarkdownCharacters(element.props.children, counter),
+  )
+}
+
+type AnimatedMarkdownElementProps = {
+  children?: ReactNode
+  'aria-label'?: string
+}
+
+function markdownTextContent(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(markdownTextContent).join('')
+  if (!isValidElement<AnimatedMarkdownElementProps>(node)) return ''
+  return markdownTextContent(node.props.children)
 }
 
 function QuickStartAgentBot({ placement }: { placement: 'title' | 'thinking' | 'answer' }) {
@@ -1510,7 +1671,7 @@ function UserTurn({ children }: { children: ReactNode }) {
   return (
     <div
       data-user-turn
-      className="ml-auto w-fit max-w-[78%] rounded-[1.15rem] rounded-br-md bg-app-surface-muted px-4 py-2.5 text-left text-sm leading-6 text-app-ink-soft"
+      className="ml-auto w-fit max-w-[78%] rounded-app-surface rounded-br-app-compact bg-app-surface-muted px-4 py-2.5 text-left text-sm leading-6 text-app-ink-soft"
     >
       <span>{children}</span>
     </div>
@@ -1629,7 +1790,7 @@ function DirectionCandidatePicker({
                   }
                   data-reveal="card"
                   style={{ '--reveal-index': displayIndex } as CSSProperties}
-                  className={`quick-start-reveal-card relative aspect-square overflow-hidden rounded-2xl border bg-app-surface-raised text-left transition duration-200 ${
+                  className={`quick-start-reveal-card relative aspect-square overflow-hidden rounded-app-surface border bg-app-surface-raised text-left transition duration-200 ${
                     chosen
                       ? 'border-app-accent ring-1 ring-app-accent'
                       : 'border-app-line hover:border-app-line-strong'
@@ -1667,14 +1828,14 @@ function DirectionFirstFrameStack({
       role="group"
       aria-label={`${directionCountLabel}首帧集合`}
       data-layout="direction-first-frame-stack"
-      className="grid aspect-square w-full max-w-xl grid-cols-2 gap-3 overflow-hidden rounded-[2rem] border border-app-line-strong bg-app-surface-muted p-4 shadow-app-card sm:p-5"
+      className="grid aspect-square w-full max-w-xl grid-cols-2 gap-3 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-muted p-4 shadow-app-card sm:p-5"
     >
       {directions.map((direction) => {
         const imageUrl = selections[direction]
         return imageUrl ? (
           <figure
             key={direction}
-            className="relative min-h-0 overflow-hidden rounded-2xl border border-app-line bg-app-surface-raised"
+            className="relative min-h-0 overflow-hidden rounded-app-control border border-app-line bg-app-surface-raised"
           >
             <AssetVisual
               src={imageUrl}
@@ -1690,10 +1851,112 @@ function DirectionFirstFrameStack({
             key={direction}
             role="status"
             aria-label={`${DIRECTION_LABELS[direction]}方向首帧生成中`}
-            className="grid min-h-0 place-items-center rounded-2xl border border-dashed border-app-line bg-app-surface-raised text-xs font-semibold text-app-muted"
+            className="grid min-h-0 place-items-center rounded-app-control border border-dashed border-app-line bg-app-surface-raised text-xs font-semibold text-app-muted"
           >
             {DIRECTION_LABELS[direction]}方向生成中
           </div>
+        )
+      })}
+    </div>
+  )
+}
+
+const DIRECTION_SHEET_LAYOUT: readonly (ActionDirection | null)[] = [
+  'north_west',
+  'north',
+  'north_east',
+  'west',
+  null,
+  'east',
+  'south_west',
+  'south',
+  'south_east',
+]
+
+function DirectionSheetCandidatePicker({
+  sheets,
+  selectedIndex,
+  disabled,
+  kind,
+  onSelect,
+  interactive = true,
+}: {
+  sheets: readonly DirectionSheetCandidate[]
+  selectedIndex: number | null
+  disabled: boolean
+  kind: '角色方案' | '动作首帧'
+  onSelect?: (sheet: DirectionSheetCandidate) => void
+  interactive?: boolean
+}) {
+  return (
+    <div
+      data-direction-sheet-picker="true"
+      data-layout="agent-result-set"
+      className="grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2"
+    >
+      {sheets.map((sheet, sheetIndex) => {
+        const chosen = selectedIndex === sheet.index
+        return (
+          <button
+            key={sheet.index}
+            type="button"
+            aria-label={`选择${kind}方向候选 ${sheetIndex + 1}`}
+            aria-pressed={chosen}
+            disabled={disabled || !interactive}
+            onClick={() => onSelect?.(sheet)}
+            data-asset-choice="true"
+            data-direction-sheet-index={sheet.index}
+            data-reveal="card"
+            style={{ '--reveal-index': sheetIndex } as CSSProperties}
+            className={`quick-start-reveal-card relative overflow-hidden rounded-2xl border bg-app-surface-raised p-3 text-left transition duration-200 ${
+              chosen
+                ? 'border-app-accent ring-1 ring-app-accent'
+                : 'border-app-line hover:border-app-line-strong'
+            } disabled:cursor-default disabled:hover:border-app-line`}
+          >
+            <span className="mb-2 block text-xs font-bold text-app-muted">
+              方向候选 {sheetIndex + 1}
+            </span>
+            <span className="grid aspect-square grid-cols-3 overflow-hidden rounded-xl bg-app-surface-muted">
+              {DIRECTION_SHEET_LAYOUT.map((direction, cellIndex) => {
+                if (!direction) {
+                  return (
+                    <span
+                      key={`empty-center-${cellIndex}`}
+                      aria-hidden="true"
+                      className="border border-app-line/30 bg-app-canvas/20"
+                    />
+                  )
+                }
+                const cell = sheet.cells[direction]
+                if (cell.empty || !cell.imageUrl) {
+                  return (
+                    <span
+                      key={direction}
+                      aria-label={`${DIRECTION_LABELS[direction]}方向为空`}
+                      className="border border-app-line/30 bg-app-canvas/20"
+                    />
+                  )
+                }
+                return (
+                  <span
+                    key={direction}
+                    aria-label={`${DIRECTION_LABELS[direction]}方向`}
+                    className="flex min-h-0 items-center justify-center overflow-hidden border border-app-line/30 bg-app-surface-muted p-1"
+                  >
+                    <AssetVisual
+                      src={cell.imageUrl}
+                      alt={`${DIRECTION_LABELS[direction]}方向${kind}`}
+                      priority={sheetIndex === 0}
+                      className={`h-full w-full object-contain [image-rendering:pixelated] ${
+                        cell.mirrorX ? '-scale-x-100' : ''
+                      }`}
+                    />
+                  </span>
+                )
+              })}
+            </span>
+          </button>
         )
       })}
     </div>
@@ -2118,6 +2381,21 @@ function QuickStartRun({
           .map((group) => [group.direction, group.items[0]!.imageUrl]),
       )
     : {}
+  const firstFrameMovement: DirectionalMovement =
+    session?.getDirectionalMovement?.() ??
+    (firstFrameCandidateGroups.some((group) =>
+      ['north_west', 'south_west', 'north_east', 'south_east'].includes(group.direction),
+    )
+      ? 'eight-way'
+      : firstFrameCandidateGroups.some((group) =>
+            ['west', 'north', 'south'].includes(group.direction),
+          )
+        ? 'four-way'
+        : 'single')
+  const firstFrameSheets =
+    firstFrameMovement === 'single'
+      ? []
+      : buildDirectionSheetCandidates(firstFrameCandidates, firstFrameMovement)
   const templateSelections: QuickStartDirectionSelections = {
     ...(templateStep?.selectedImageUrl ? { east: templateStep.selectedImageUrl } : {}),
     ...(templateStep?.selectedImages ?? {}),
@@ -2139,10 +2417,18 @@ function QuickStartRun({
     candidates.length > 0 &&
     !templateStep?.selectedImageUrl &&
     Object.keys(selectedCandidates).length === 0
-  const firstFrameSelectionComplete = allDirectionsSelected(
-    firstFrameCandidates,
-    firstFrameSelections,
-  )
+  const selectedFirstFrameSheetIndex =
+    firstFrameSheets.find((sheet) =>
+      Object.entries(sheet.selections).every(
+        ([direction, imageUrl]) => firstFrameSelections[direction as ActionDirection] === imageUrl,
+      ),
+    )?.index ?? null
+  const firstFrameSelectionComplete =
+    firstFrameSheets.length > 0
+      ? selectedFirstFrameSheetIndex !== null
+      : allDirectionsSelected(firstFrameCandidates, firstFrameSelections)
+  const firstFrameConfirmLabel =
+    firstFrameSheets.length > 0 ? '确认候选帧，生成完整动作' : '确认首帧，生成完整动作'
   const requestedOutfitId = searchParams.get('outfitId')
   const canAddAction =
     addActionIntent &&
@@ -2360,7 +2646,9 @@ function QuickStartRun({
     : isFirstFrameSelecting
       ? firstFrameSelectionComplete
         ? '按发送确认这张首帧…'
-        : '请先为每个方向选择一个动作首帧…'
+        : firstFrameSheets.length > 0
+          ? '请先选择一套方向动作首帧…'
+          : '请先为每个方向选择一个动作首帧…'
       : addActionIntent
         ? addingAction || workflowHasActiveNode
           ? '正在生成新动作…'
@@ -2562,34 +2850,53 @@ function QuickStartRun({
                       <AgentCopy
                         lines={[
                           isFirstFrameSelecting
-                            ? firstFrameCandidateGroups.length > 1
-                              ? `已生成 ${firstFrameCandidateGroups.length} 个方向的动作起始姿态。`
-                              : `已生成 ${firstFrameCandidates.length} 个动作起始姿态。`
+                            ? firstFrameSheets.length > 0
+                              ? `已生成 ${firstFrameSheets.length} 套方向动作起始姿态。`
+                              : firstFrameCandidateGroups.length > 1
+                                ? `已生成 ${firstFrameCandidateGroups.length} 个方向的动作起始姿态。`
+                                : `已生成 ${firstFrameCandidates.length} 个动作起始姿态。`
                             : '动作首帧',
                           isFirstFrameSelecting
-                            ? firstFrameCandidateGroups.length > 1
-                              ? '为每个方向选择一个起始姿态，随后生成完整动作。'
-                              : '选择一个起始姿态，随后生成完整动作。'
+                            ? firstFrameSheets.length > 0
+                              ? '选择一套方向首帧，随后生成完整动作。'
+                              : firstFrameCandidateGroups.length > 1
+                                ? '为每个方向选择一个起始姿态，随后生成完整动作。'
+                                : '选择一个起始姿态，随后生成完整动作。'
                             : '动作起始姿态已确认。',
                         ]}
                       />
-                      <DirectionCandidatePicker
-                        candidates={firstFrameCandidates}
-                        selections={firstFrameSelections}
-                        disabled={
-                          !isFirstFrameSelecting ||
-                          confirmingFirstFrame ||
-                          workflowConflict ||
-                          workflowAgentSession.busy
-                        }
-                        kind="动作首帧"
-                        onSelect={(direction, imageUrl) =>
-                          setSelectedFirstFrames((current) => ({
-                            ...current,
-                            [direction]: imageUrl,
-                          }))
-                        }
-                      />
+                      {firstFrameSheets.length > 0 ? (
+                        <DirectionSheetCandidatePicker
+                          sheets={firstFrameSheets}
+                          selectedIndex={selectedFirstFrameSheetIndex}
+                          disabled={
+                            !isFirstFrameSelecting ||
+                            confirmingFirstFrame ||
+                            workflowConflict ||
+                            workflowAgentSession.busy
+                          }
+                          kind="动作首帧"
+                          onSelect={(sheet) => setSelectedFirstFrames({ ...sheet.selections })}
+                        />
+                      ) : (
+                        <DirectionCandidatePicker
+                          candidates={firstFrameCandidates}
+                          selections={firstFrameSelections}
+                          disabled={
+                            !isFirstFrameSelecting ||
+                            confirmingFirstFrame ||
+                            workflowConflict ||
+                            workflowAgentSession.busy
+                          }
+                          kind="动作首帧"
+                          onSelect={(direction, imageUrl) =>
+                            setSelectedFirstFrames((current) => ({
+                              ...current,
+                              [direction]: imageUrl,
+                            }))
+                          }
+                        />
+                      )}
                       {firstFrameSelectionComplete ? (
                         <button
                           type="button"
@@ -2597,23 +2904,36 @@ function QuickStartRun({
                           disabled={confirmingFirstFrame || workflowConflict}
                           className="w-fit rounded-xl bg-app-accent px-5 py-2.5 text-sm font-bold text-app-on-accent disabled:opacity-50"
                         >
-                          {confirmingFirstFrame ? '正在确认…' : '确认首帧，生成完整动作'}
+                          {confirmingFirstFrame ? '正在确认…' : firstFrameConfirmLabel}
                         </button>
                       ) : null}
                     </>
-                  ) : firstFrameStep.status === 'passed' && selectedFirstFrameUrl ? (
+                  ) : firstFrameStep.status === 'passed' &&
+                    (selectedFirstFrameUrl || Object.keys(firstFrameSelections).length > 0) ? (
                     <>
                       <AgentCopy lines={['动作起始姿态已确认。']} />
-                      <div
-                        data-layout="agent-result-set"
-                        className="grid w-full max-w-2xl grid-cols-3 gap-3"
-                      >
-                        <AssetVisual
-                          src={selectedFirstFrameUrl}
-                          alt="已选择的动作首帧"
-                          className="aspect-square w-full rounded-2xl border border-app-line bg-app-surface-muted object-contain [image-rendering:pixelated]"
+                      {firstFrameSheets.length > 0 ? (
+                        <DirectionSheetCandidatePicker
+                          sheets={firstFrameSheets.filter(
+                            (sheet) => sheet.index === selectedFirstFrameSheetIndex,
+                          )}
+                          selectedIndex={selectedFirstFrameSheetIndex}
+                          disabled
+                          interactive={false}
+                          kind="动作首帧"
                         />
-                      </div>
+                      ) : selectedFirstFrameUrl ? (
+                        <div
+                          data-layout="agent-result-set"
+                          className="grid w-full max-w-2xl grid-cols-3 gap-3"
+                        >
+                          <AssetVisual
+                            src={selectedFirstFrameUrl}
+                            alt="已选择的动作首帧"
+                            className="aspect-square w-full rounded-2xl border border-app-line bg-app-surface-muted object-contain [image-rendering:pixelated]"
+                          />
+                        </div>
+                      ) : null}
                     </>
                   ) : isFirstFrameFailed ? (
                     <>
@@ -2666,27 +2986,6 @@ function QuickStartRun({
                           className="quick-start-generated-image aspect-square w-full rounded-2xl border border-app-line bg-app-surface-muted object-contain [image-rendering:pixelated]"
                         />
                       </div>
-                      {reviewStep?.status === 'passed' ? (
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              navigate(`/projects/${encodeURIComponent(revision.projectId)}/assets`)
-                            }
-                            className="rounded-lg border border-app-line-strong px-3 py-1.5 text-xs font-semibold text-app-ink-soft transition hover:border-app-accent hover:text-app-accent"
-                          >
-                            跳转到资产工作台
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void openPlaytest()}
-                            disabled={workflowConflict}
-                            className="rounded-lg border border-app-line-strong px-3 py-1.5 text-xs font-semibold text-app-ink-soft transition hover:border-app-accent hover:text-app-accent"
-                          >
-                            跳转到 Play Test
-                          </button>
-                        </div>
-                      ) : null}
                       <div className="flex max-w-full gap-1.5 overflow-x-auto pb-1">
                         {actionFrames.map((frame, index) => (
                           <AssetVisual
@@ -2731,9 +3030,19 @@ function QuickStartRun({
                       </div>
                     </>
                   )}
-                  {isActionFailed || actionExportModel ? (
+                  {isActionFailed || actionExportModel || reviewStep?.status === 'passed' ? (
                     <AgentActions
                       exportModel={actionExportModel}
+                      onOpenAssetWorkspace={
+                        reviewStep?.status === 'passed'
+                          ? () =>
+                              navigate(`/projects/${encodeURIComponent(revision.projectId)}/assets`)
+                          : undefined
+                      }
+                      onOpenPlaytest={
+                        reviewStep?.status === 'passed' ? () => void openPlaytest() : undefined
+                      }
+                      playtestDisabled={workflowConflict}
                       onNewCreation={() => navigate('/quick-start')}
                       showNewCreation={actionTurnIsCurrent}
                     />
@@ -2801,7 +3110,7 @@ function QuickStartRun({
         >
           <form
             onSubmit={continueConversation}
-            className="grid grid-cols-[1fr_auto] items-center gap-1.5 rounded-[18px] border border-app-line-strong bg-app-surface-raised/96 p-1.5 shadow-app-panel backdrop-blur-xl transition focus-within:border-app-accent"
+            className="grid grid-cols-[1fr_auto] items-center gap-1.5 rounded-app-surface border border-app-line-strong bg-app-surface-raised/96 p-1.5 shadow-app-panel backdrop-blur-xl transition focus-within:border-app-accent"
           >
             <label htmlFor="quick-start-continuation" className="min-w-0">
               <span className="sr-only">继续描述你的想法</span>

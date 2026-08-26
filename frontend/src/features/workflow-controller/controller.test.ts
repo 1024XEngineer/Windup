@@ -309,6 +309,43 @@ describe('WorkflowController', () => {
     })
   })
 
+  it('为 Agent 自动交付持久化动作意图并只生成一个母版候选', async () => {
+    const workflow = createWorkflowApis()
+    const generation = createGenerationHarness()
+    const controller = createWorkflowController({
+      workflowRunApis: workflow.apis,
+      generationApis: generation.apis,
+      prepareProject: vi.fn(async () => ({
+        id: 'project-agent',
+        spriteSize: { width: 256, height: 256 },
+      })),
+      onAsyncError: () => undefined,
+    })
+
+    await controller.startCharacterGeneration({
+      prompt: '背着邮包的像素邮差，全身像',
+      automaticDelivery: { actionPrompt: '轻快地向前行走', actionType: 'walk' },
+    })
+
+    expect(workflow.apis.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nodes: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'character-setup',
+            automation: {
+              mode: 'automatic',
+              actionPrompt: '轻快地向前行走',
+              actionType: 'walk',
+            },
+          }),
+        ]),
+      }),
+    )
+    expect(generation.apis.create).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'character_template', candidateCount: 1 }),
+    )
+  })
+
   it('按 Quick Start 选择四向项目时仍只提交三张东向母版候选', async () => {
     const workflow = createWorkflowApis()
     const generation = createGenerationHarness()

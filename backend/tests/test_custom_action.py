@@ -105,8 +105,12 @@ def _offline_strategy(monkeypatch, spy: list[str]):
     """离线 VideoFrameStrategy:抽帧被顶替,不联网不花钱;记下送进 i2v 的提示词。"""
     dense = [Image.open(io.BytesIO(_png(i % 6))).convert("RGBA") for i in range(24)]
     monkeypatch.setattr(
-        "windup_ai_engine.strategy.concrete.extract_all_frames_bytes",
-        lambda video, cap=150: dense,
+        "windup_ai_engine.strategy.concrete.extract_preview_frames",
+        lambda video, cap=150, size=48: (dense, list(range(len(dense)))),
+    )
+    monkeypatch.setattr(
+        "windup_ai_engine.strategy.concrete.extract_frames_at",
+        lambda video, indices: [dense[i] for i in indices],
     )
 
     class _SpyVideo:
@@ -303,6 +307,27 @@ def test_concurrent_first_requests_build_one_shared_provider_set(monkeypatch):
     gens = {got[i] for i in range(len(models))}
     assert len(gens) == 1, "不同 video_model 的并发请求该拿到同一个 generator"
     assert next(iter(gens)) is ex._get_generator()
+
+
+def test_injected_matte_is_not_replaced_on_assemble(monkeypatch):
+    """worker bind_matte 之后,装配桶不得再 new 一套 ONNX。"""
+    import windup_framework.gateway as gateway
+    from windup_framework import providers
+
+    from windup_app.server.orchestrator.executor import ActionTaskExecutor
+
+    sent = object()
+
+    def _boom(*_a, **_k):
+        raise AssertionError("不该再构造 OnnxU2NetMatteProvider")
+
+    monkeypatch.setattr(providers, "OnnxU2NetMatteProvider", _boom)
+    monkeypatch.setattr(gateway, "build_image_gateway", lambda **_k: object())
+    monkeypatch.setattr(gateway, "build_video_gateway", lambda **_k: object())
+
+    ex = ActionTaskExecutor(matte=sent)
+    ex._assemble(4)
+    assert ex._matte is sent
 
 
 # ── ⑥ 骨架不得夹带姿态前提(游泳/潜水/飞行都不着地不直立)─────────────────────

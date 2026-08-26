@@ -1128,3 +1128,29 @@ def test_image_input_keeps_explicit_zero_num_images():
     rebuilt = _image_input({"prompt": "hero", "num_images": 0})
 
     assert rebuilt.num_images == 0
+
+
+def test_warmup_injects_one_matte_into_both_executors(monkeypatch):
+    """预热实例必须交给动作/出图执行器,不能 warmup 完丢掉再各 new 一套。"""
+    from windup_app.bootstrap import worker as w
+    from windup_app.server.orchestrator import executor as ex
+
+    class _Fake:
+        warmed = False
+
+        def warmup(self):
+            self.warmed = True
+
+    fake = _Fake()
+    monkeypatch.setattr(
+        "windup_framework.providers.OnnxU2NetMatteProvider", lambda *a, **k: fake
+    )
+    prev_a, prev_i = ex.executor._matte, ex.image_executor._matte
+    try:
+        w._warmup_local_inference()
+        assert fake.warmed is True
+        assert ex.executor._matte is fake
+        assert ex.image_executor._matte is fake
+    finally:
+        ex.executor._matte = prev_a
+        ex.image_executor._matte = prev_i

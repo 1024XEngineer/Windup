@@ -11,12 +11,12 @@ import {
   type CharacterApis,
   type ActionDirection,
   type CharacterSetupWorkflowNode,
+  type DirectionalMovement,
   type GenerationApis,
   type Generation,
   type MediaReference,
   type Project,
   type ProjectApis,
-  type DirectionalMovement,
   type WorkflowNode,
   type WorkflowRun,
   type WorkflowRunApis,
@@ -73,6 +73,8 @@ export interface QuickStartMediaApis {
 
 export interface QuickStartSession {
   readonly runId: WorkflowRun['id']
+  /** 当前 Run 所属项目的方向模式，用于恢复时稳定渲染候选布局。 */
+  readonly getDirectionalMovement?: () => DirectionalMovement
   getWorkflow(): WorkflowRun
   subscribe(listener: (run: WorkflowRun) => void): () => void
   subscribeErrors(listener: (error: Error) => void): () => void
@@ -429,10 +431,11 @@ export function createQuickStartService({
     outfitId: string,
     actionDescription: string,
     spriteSize: Project['spriteSize'],
+    options: { actionType?: 'walk'; candidateCount?: 1 } = {},
   ) {
     const prompt = actionDescription.trim()
     const name = boundedDisplayName(prompt, ACTION_DISPLAY_NAME_MAX_LENGTH) || '待机'
-    const type = inferGeneratableActionType(actionDescription)
+    const type = options.actionType ?? inferGeneratableActionType(actionDescription)
     await controller.addAction({ input: { outfitId, name, type, prompt: prompt || null, fps: 12 } })
     const run = controller.getWorkflow()
     const firstFrame = latestActionFirstFrame(run)
@@ -442,6 +445,7 @@ export function createQuickStartService({
     await controller.generateFirstFrame(firstFrame.id, {
       spriteWidth: spriteSize.width,
       spriteHeight: spriteSize.height,
+      ...(options.candidateCount ? { candidateCount: options.candidateCount } : {}),
     })
   }
 
@@ -623,11 +627,130 @@ export function createQuickStartService({
     }
   }
 
+  function startAutomaticDelivery(controller: WorkflowController): () => void {
+    let advancing = false
+    let stopped = false
+
+    const advance = (run: WorkflowRun) => {
+      if (advancing || stopped) return
+      const setup = setupNode(run)
+      const automation = setup.automation
+      if (automation?.mode !== 'automatic') return
+
+      const template = templateNode(run)
+      const firstFrame = latestActionFirstFrame(run)
+      const shouldConfirmTemplate = template.status === 'active' && template.phase === 'selecting'
+      const shouldConfirmFirstFrame =
+        firstFrame?.type === 'action-first-frame' &&
+        firstFrame.status === 'active' &&
+        firstFrame.phase === 'selecting'
+      if (!shouldConfirmTemplate && !shouldConfirmFirstFrame) return
+
+      advancing = true
+      void (async (): Promise<boolean> => {
+        if (shouldConfirmTemplate) {
+          const candidates = await candidatesByDirection(
+            controller,
+            template.id,
+            'character_template',
+          )
+          const selections = Object.fromEntries(
+            candidates.map((candidate) => [candidate.direction, candidate.imageUrl]),
+          ) as QuickStartDirectionSelections
+          const east = selections.east
+          if (!east) return false
+
+          let characterId = setup.input.characterId ?? null
+          let outfitId: string | null = null
+          if (!template.selectedImageUrl || !characterId) {
+            const target = await persistCharacterTemplate(
+              controller,
+              east,
+              (_setupId, selectedCharacterId) =>
+                controller.confirmCharacterTemplate(template.id, east, selectedCharacterId),
+            )
+            characterId = target.characterId
+            outfitId = target.outfitId
+            const directions = generationDirectionsFor(controller)
+            if (directions.length > 1) {
+              const spriteSize = await resolveProjectSpriteSize(run.projectId)
+              await controller.generateCharacterTemplate(setup.id, {
+                spriteWidth: spriteSize.width,
+                spriteHeight: spriteSize.height,
+                sourceImageUrl: east,
+                directions: directions.slice(1),
+                candidateCount: 1,
+              })
+              return true
+            }
+          } else if (generationDirectionsFor(controller).length > 1) {
+            const selectedImages = selectedDirections(controller, selections, {
+              east: template.selectedImageUrl,
+              ...(template.selectedImages ?? {}),
+            })
+            await confirmRemainingTemplateDirections(controller, characterId, selectedImages)
+          }
+
+          const actionPrompt = automation.actionPrompt?.trim()
+          if (!actionPrompt) return true
+          if (latestActionFirstFrame(controller.getWorkflow())) return true
+          if (!outfitId) {
+            if (!characterApis || !characterId) throw new Error('角色服务尚未配置，不能自动交付')
+            const character = await characterApis.get(characterId)
+            outfitId =
+              character.outfits.find((item) => item.previewUrl === east)?.id ??
+              character.outfits.find((item) => item.id === 'outfit-default')?.id ??
+              null
+          }
+          if (!outfitId) throw new Error('自动交付没有找到角色造型')
+          const spriteSize = await resolveProjectSpriteSize(run.projectId)
+          await prepareAction(controller, outfitId, actionPrompt, spriteSize, {
+            actionType: automation.actionType,
+            candidateCount: 1,
+          })
+          return true
+        }
+
+        if (shouldConfirmFirstFrame && firstFrame) {
+          const candidates = await candidatesByDirection(controller, firstFrame.id, 'first_frame')
+          const selections = Object.fromEntries(
+            candidates.map((candidate) => [candidate.direction, candidate.imageUrl]),
+          ) as QuickStartDirectionSelections
+          await confirmAllFirstFrameDirections(controller, firstFrame.id, selections)
+          return true
+        }
+        return false
+      })().then(
+        (changed) => {
+          advancing = false
+          if (!stopped && changed) advance(controller.getWorkflow())
+        },
+        (cause: unknown) => {
+          advancing = false
+          if (stopped) return
+          stopped = true
+          reportControllerError(
+            controller,
+            cause instanceof Error ? cause : new Error('Quick Start 自动交付失败'),
+          )
+        },
+      )
+    }
+
+    const stop = controller.subscribe(advance)
+    advance(controller.getWorkflow())
+    return () => {
+      stopped = true
+      stop()
+    }
+  }
+
   function createSession(
     controller: WorkflowController,
     knownSpriteSize?: Project['spriteSize'],
   ): QuickStartSession {
     let stopAutomaticAdvance: (() => void) | null = null
+    let stopAutomaticDelivery: (() => void) | null = null
     let candidateCommand: Promise<WorkflowRun> | null = null
     let candidateBatch = 0
     let characterCandidateUrls = new Map<string, string>()
@@ -642,6 +765,8 @@ export function createQuickStartService({
 
     return {
       runId: controller.getWorkflow().id,
+      getDirectionalMovement: () =>
+        projectDirectionalMovements.get(controller.getWorkflow().projectId) ?? 'single',
       getWorkflow: () => controller.getWorkflow(),
       subscribe: (listener) => controller.subscribe(listener),
       subscribeErrors(listener) {
@@ -653,19 +778,26 @@ export function createQuickStartService({
       async resume({ automaticActionAdvance = true } = {}) {
         disposed = false
         await controller.resume()
-        if (!disposed && automaticActionAdvance) ensureAutomaticAdvance()
+        if (!disposed && automaticActionAdvance) {
+          ensureAutomaticAdvance()
+          stopAutomaticDelivery ??= startAutomaticDelivery(controller)
+        }
         return controller.getWorkflow()
       },
       async interrupt() {
         await controller.interrupt()
         stopAutomaticAdvance?.()
         stopAutomaticAdvance = null
+        stopAutomaticDelivery?.()
+        stopAutomaticDelivery = null
         return controller.getWorkflow()
       },
       dispose() {
         disposed = true
         stopAutomaticAdvance?.()
         stopAutomaticAdvance = null
+        stopAutomaticDelivery?.()
+        stopAutomaticDelivery = null
         controllerErrorChannels.get(controller)?.listeners.clear()
         controller.dispose()
       },

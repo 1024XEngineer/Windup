@@ -83,6 +83,71 @@ function pendingGenerationApis(): GenerationApis {
   }
 }
 
+function automaticDeliveryGenerationApis(): GenerationApis {
+  const tasks = new Map<string, Awaited<ReturnType<GenerationApis['create']>>>()
+  tasks.set('task-template', {
+    id: 'task-template',
+    projectId: 'project-1',
+    type: 'character_template',
+    status: 'completed',
+    result: {
+      type: 'character_template',
+      images: [{ url: 'template.png' }],
+    },
+    error: null,
+  })
+  let sequence = 0
+  return {
+    create: vi.fn(async (input) => {
+      const id = `task-auto-${++sequence}`
+      const task =
+        input.type === 'complete_animation'
+          ? {
+              id,
+              projectId: input.projectId,
+              type: input.type,
+              status: 'completed' as const,
+              result: {
+                type: input.type,
+                frames: [{ index: 0, url: 'dance-1.png', durationMs: 80 }],
+              },
+              error: null,
+            }
+          : {
+              id,
+              projectId: input.projectId,
+              type: input.type,
+              status: 'completed' as const,
+              result: {
+                type: input.type,
+                images: [{ url: input.type === 'first_frame' ? 'first.png' : 'template.png' }],
+              },
+              error: null,
+            }
+      tasks.set(id, task)
+      return structuredClone(task)
+    }) as GenerationApis['create'],
+    get: vi.fn(async (_projectId, id) => structuredClone(tasks.get(id)!)),
+    subscribe: vi.fn((...args: unknown[]) => {
+      const id = String(args[1])
+      const listener = (typeof args[2] === 'function' ? args[2] : args[3]) as (
+        event: unknown,
+      ) => void
+      const task = tasks.get(id)!
+      queueMicrotask(() =>
+        listener({
+          taskId: id,
+          type: task.type,
+          status: task.status,
+          result: task.result,
+          error: task.error,
+        }),
+      )
+      return () => undefined
+    }) as GenerationApis['subscribe'],
+  }
+}
+
 function completedAnimationGenerationApis(): GenerationApis {
   return {
     create: vi.fn(),
@@ -266,6 +331,152 @@ function actionRun(firstFramePending = false): WorkflowRun {
 }
 
 describe('createQuickStartService', () => {
+  it('恢复自动交付 Run 后用唯一母版和唯一首帧推进到完整动画', async () => {
+    const run: WorkflowRun = {
+      id: 'run-auto',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: [
+        {
+          id: 'character-setup',
+          type: 'character-setup',
+          status: 'passed',
+          phase: 'completed',
+          dependsOnNodeIds: [],
+          generations: [],
+          error: null,
+          input: { prompt: '圆润可爱的卡皮巴拉，全身像', referenceMedia: [] },
+          automation: { mode: 'automatic', actionPrompt: '轻快地向前行走' },
+        },
+        {
+          id: 'character-template',
+          type: 'character-template',
+          status: 'active',
+          phase: 'selecting',
+          dependsOnNodeIds: ['character-setup'],
+          generations: [{ taskId: 'task-template', role: 'character_template' }],
+          error: null,
+          selectedImageUrl: null,
+        },
+      ],
+    }
+    const setup = run.nodes.find((node) => node.type === 'character-setup')
+    if (!setup || setup.type !== 'character-setup' || !setup.automation) {
+      throw new Error('测试缺少自动交付意图')
+    }
+    Object.assign(setup.automation, { actionType: 'walk' })
+    const workflowRunApis = createWorkflowRunApis([run])
+    const generationApis = automaticDeliveryGenerationApis()
+    const onAsyncError = vi.fn()
+    let character = characterFixture({
+      workflowRunId: run.id,
+      name: '卡皮巴拉',
+      referenceImageUrl: null,
+    })
+    const service = createQuickStartService({
+      workflowRunApis,
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+      characterApis: mutableCharacterApis(
+        () => character,
+        (value) => (character = value),
+      ),
+      onAsyncError,
+    })
+
+    const session = await service.open(run.id)
+    await session.resume()
+
+    await vi.waitFor(() => {
+      expect(
+        session.getWorkflow().nodes.find((node) => node.type === 'action-full-frame')?.status,
+      ).toBe('passed')
+    })
+    expect(generationApis.create).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'first_frame', candidateCount: 1 }),
+    )
+    expect(generationApis.create).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'first_frame', actionType: 'walk' }),
+    )
+    expect(generationApis.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'complete_animation',
+        actionType: 'walk',
+        prompt: '轻快地向前行走',
+      }),
+    )
+    expect(session.getWorkflow().nodes.find((node) => node.type === 'review')).toMatchObject({
+      status: 'active',
+      phase: 'reviewing',
+    })
+    await session.approveReview()
+    expect(character.outfits.flatMap((outfit) => outfit.actions)).toEqual([
+      expect.objectContaining({ type: 'walk', name: '轻快地向前行走' }),
+    ])
+  })
+
+  it('自动交付没有动作时确认唯一母版后停止', async () => {
+    const run: WorkflowRun = {
+      id: 'run-character-auto',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: [
+        {
+          id: 'character-setup',
+          type: 'character-setup',
+          status: 'passed',
+          phase: 'completed',
+          dependsOnNodeIds: [],
+          generations: [],
+          error: null,
+          input: { prompt: '圆润可爱的卡皮巴拉，全身像', referenceMedia: [] },
+          automation: { mode: 'automatic', actionPrompt: null },
+        },
+        {
+          id: 'character-template',
+          type: 'character-template',
+          status: 'active',
+          phase: 'selecting',
+          dependsOnNodeIds: ['character-setup'],
+          generations: [{ taskId: 'task-template', role: 'character_template' }],
+          error: null,
+          selectedImageUrl: null,
+        },
+      ],
+    }
+    const generationApis = automaticDeliveryGenerationApis()
+    const onAsyncError = vi.fn()
+    let character = characterFixture({ workflowRunId: run.id, referenceImageUrl: null })
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+      characterApis: mutableCharacterApis(
+        () => character,
+        (value) => (character = value),
+      ),
+      onAsyncError,
+    })
+
+    const session = await service.open(run.id)
+    await session.resume()
+
+    await vi.waitFor(() =>
+      expect(
+        session.getWorkflow().nodes.find((node) => node.type === 'character-template'),
+      ).toMatchObject({ status: 'passed', phase: 'completed', selectedImageUrl: 'template.png' }),
+    )
+    expect(session.getWorkflow().nodes.some((node) => node.type === 'action-first-frame')).toBe(
+      false,
+    )
+    expect(generationApis.create).not.toHaveBeenCalled()
+    expect(onAsyncError).not.toHaveBeenCalled()
+  })
+
   it('四向 Quick Start 在用户选定母版前只创建东向三候选任务', async () => {
     const generationApis = pendingGenerationApis()
     const service = createQuickStartService({
@@ -1996,6 +2207,7 @@ describe('createQuickStartService', () => {
     })
 
     const session = await service.start('四向骑士')
+    expect(session.getDirectionalMovement?.()).toBe('four-way')
     await vi.waitFor(async () => {
       await expect(session.getTemplateCandidates()).resolves.toEqual([
         { direction: 'east', index: 0, imageUrl: 'east-character_template-1.png' },

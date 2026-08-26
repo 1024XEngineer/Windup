@@ -141,6 +141,10 @@ describe('AppHeader 进行中任务入口', () => {
     const entry = await screen.findByRole('button', { name: '创作，有任务进行中' })
     expect(entry.getAttribute('aria-expanded')).toBe('false')
     expect(screen.queryByRole('link', { name: '创作' })).toBeNull()
+
+    fireEvent.click(entry)
+    expect(screen.getByTestId('active-run-menu').className).toContain('rounded-app-surface')
+    expect(screen.getByTestId('active-run-menu').className).toContain('border-app-line-strong')
   })
 
   it('任务在同一标签页开始后，入口无需刷新就出现', async () => {
@@ -524,6 +528,12 @@ describe('AppHeader', () => {
     renderHeader('/workspace', createApis(), undefined, quota)
 
     fireEvent.click(await screen.findByRole('button', { name: '打开账号菜单' }))
+
+    expect(screen.getByRole('button', { name: '打开账号菜单' }).className).toContain(
+      'rounded-app-control',
+    )
+    expect(screen.getByTestId('account-menu').className).toContain('rounded-app-surface')
+    expect(screen.getByTestId('account-menu').className).toContain('border-app-line-strong')
 
     await waitFor(() => expect(quota.getBalance).toHaveBeenCalledTimes(1))
     expect(screen.getByText('可用积分')).toBeTruthy()
