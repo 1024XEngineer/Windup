@@ -30,6 +30,10 @@ __all__ = [
 
 _KINDS = ("swing", "airborne")
 
+# 脚线回地容差按画高归一。6px 是 720p i2v 上的轻微抖动;48×48 预览若仍用 6px,
+# 等于约 12.5% 画高,下降段会提前被当成落地。
+_AIRBORNE_LAND_REL = 6.0 / 720.0
+
 
 def _check_kind(kind: str) -> None:
     """未知 ``kind`` 直接报错,不静默回落到 ``swing``。
@@ -68,17 +72,23 @@ def find_motion_span(frames: list[Image.Image], rel_thr: float = 0.25) -> tuple[
     return start, end
 
 
-def _airborne_end(frames: list[Image.Image], start: int, end: int, tol: float = 6.0) -> int:
+def _land_tol_px(frame: Image.Image) -> float:
+    """回地容差(像素)= 720p 上 6px 所占画高比例 × 当前帧高。"""
+    return _AIRBORNE_LAND_REL * max(frame.size[1], 1)
+
+
+def _airborne_end(frames: list[Image.Image], start: int, end: int) -> int:
     """腾空类(jump)的结束:脚线越过最高点后**首次回到地面**。
 
     几何信号,明确无歧义 —— 比任何"能量安静"判据都稳。
+    容差随画高缩放,选帧吃 48×48 预览时仍等价于源分辨率上约 6px。
     """
     y = foot_line_series(frames[start : end + 1])
     if len(y) < 4:
         return end
     apex = int(np.argmin(y))
     ground = float(np.median([y[0], y[-1]]))
-    back = np.flatnonzero(y[apex:] >= ground - tol)
+    back = np.flatnonzero(y[apex:] >= ground - _land_tol_px(frames[start]))
     return min(end, start + apex + int(back[0]) + 2) if len(back) else end
 
 

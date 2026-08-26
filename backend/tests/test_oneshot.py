@@ -12,6 +12,7 @@ from windup_ai_engine.slicing import (
     pick_oneshot_indices,
     split_jump_phases,
 )
+from windup_ai_engine.slicing._frames import SMALL
 
 
 def _figure_at(y_bottom: int, size: int = 64, h: int = 20) -> Image.Image:
@@ -173,6 +174,38 @@ def test_pick_oneshot_frames_are_distinct_source_frames_in_order():
             pos = [next(i for i, f in enumerate(frames) if f is o) for o in out]
             assert pos == sorted(pos), (n, pos)
             assert len(set(pos)) == n, (n, pos)         # 无重复帧
+
+
+def _long_descent_jump(size: int) -> list[Image.Image]:
+    """长下降 + 落地后再起跳:固定 6px 容差在小图上会提前截断,按画高缩放则不应。"""
+    ground = round(size * 0.78)
+    apex = round(size * 0.22)
+    crouch = min(size - 1, ground + max(1, size // 32))
+    fig_h = max(6, size // 5)
+    n_fall = 12
+    fall = [round(apex + (ground - apex) * i / n_fall) for i in range(1, n_fall)]
+    ys = (
+        [ground] * 4
+        + [crouch, crouch]
+        + [round(apex + (ground - apex) * 0.35), round(apex + (ground - apex) * 0.12), apex, apex]
+        + fall
+        + [ground] * 3
+        + [crouch, round((apex + ground) / 2), apex]
+    )
+    return [_figure_at(y, size=size, h=fig_h) for y in ys]
+
+
+def test_airborne_pick_indices_match_fullres_and_48_preview():
+    """生产路径 Pass A 是 48×48;jump 下标必须与全分辨率选帧一致,不能提前截下降段。"""
+    src = _long_descent_jump(192)
+    preview = [f.resize((SMALL, SMALL), Image.NEAREST) for f in src]
+    assert first_action_end(src, *find_motion_span(src), kind="airborne") == first_action_end(
+        preview, *find_motion_span(preview), kind="airborne"
+    )
+    for n in (6, 8, 12):
+        assert pick_oneshot_indices(src, n, kind="airborne") == pick_oneshot_indices(
+            preview, n, kind="airborne"
+        )
 
 
 def test_unknown_kind_is_rejected():
