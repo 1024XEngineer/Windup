@@ -1,26 +1,37 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { PlaytestFrame } from './model'
-import type { Facing, StageBounds } from './runtime/runtime'
+import type { StageBounds } from './runtime/runtime'
 
 export interface PlaytestStageProps {
   readonly frame: PlaytestFrame | null
   readonly x: number
-  readonly facing: Facing
+  readonly y: number
+  readonly mirrorX: boolean
   readonly onBoundsChange: (bounds: StageBounds) => void
 }
 
-export function PlaytestStage({ frame, x, facing, onBoundsChange }: PlaytestStageProps) {
+export function PlaytestStage({ frame, x, y, mirrorX, onBoundsChange }: PlaytestStageProps) {
   const stageRef = useRef<HTMLDivElement>(null)
   const characterRef = useRef<HTMLImageElement>(null)
+  const [failedImageUrl, setFailedImageUrl] = useState<string | null>(null)
+  const [retryToken, setRetryToken] = useState(0)
 
   const measureBounds = useCallback(() => {
     const stageWidth = stageRef.current?.getBoundingClientRect().width ?? 0
+    const stageHeight = stageRef.current?.getBoundingClientRect().height ?? 0
     const characterWidth = characterRef.current?.getBoundingClientRect().width ?? 0
+    const characterHeight = characterRef.current?.getBoundingClientRect().height ?? 0
     if (stageWidth <= 0) return
 
-    const limit = Math.max(0, (stageWidth - characterWidth) / 2 - 28)
-    onBoundsChange({ minX: -limit, maxX: limit })
+    const horizontalLimit = Math.max(0, (stageWidth - characterWidth) / 2 - 28)
+    const verticalLimit = Math.max(0, (stageHeight - characterHeight) / 2 - 44)
+    onBoundsChange({
+      minX: -horizontalLimit,
+      maxX: horizontalLimit,
+      minY: -verticalLimit,
+      maxY: verticalLimit,
+    })
   }, [onBoundsChange])
 
   useEffect(() => {
@@ -36,11 +47,22 @@ export function PlaytestStage({ frame, x, facing, onBoundsChange }: PlaytestStag
     return () => observer.disconnect()
   }, [measureBounds])
 
+  useEffect(() => {
+    setFailedImageUrl(null)
+  }, [frame?.imageUrl])
+
+  const retryFrame = () => {
+    setFailedImageUrl(null)
+    setRetryToken((token) => token + 1)
+  }
+
+  const frameFailed = frame !== null && failedImageUrl === frame.imageUrl
+
   return (
     <div
       ref={stageRef}
       role="region"
-      aria-label="试玩舞台"
+      aria-label="预览舞台"
       className="relative h-full min-h-[520px] overflow-hidden rounded-[1.8rem] border border-black/5 bg-[#eee] shadow-[0_24px_70px_rgba(22,29,25,0.12)]"
       style={{
         backgroundImage:
@@ -63,20 +85,42 @@ export function PlaytestStage({ frame, x, facing, onBoundsChange }: PlaytestStag
         <p className="absolute inset-0 grid place-items-center text-xs tracking-[0.16em] text-[#6f746f]">
           暂无可播放帧
         </p>
+      ) : frameFailed ? (
+        <div
+          role="alert"
+          className="absolute inset-0 grid place-items-center px-6 text-center text-app-ink-soft"
+        >
+          <div className="rounded-3xl border border-app-surface-raised/70 bg-app-surface/80 px-6 py-5 shadow-app-float backdrop-blur-sm">
+            <p className="text-sm font-medium">当前帧加载失败</p>
+            <button
+              type="button"
+              onClick={retryFrame}
+              className="mt-3 rounded-full border border-app-line bg-app-surface-raised px-4 py-2 text-xs font-medium transition hover:-translate-y-0.5 hover:border-app-line-strong hover:shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent motion-reduce:transform-none"
+            >
+              重试当前帧
+            </button>
+          </div>
+        </div>
       ) : (
         <img
+          key={`${frame.imageUrl}:${retryToken}`}
           ref={characterRef}
           src={frame.imageUrl}
           alt=""
           aria-hidden="true"
           draggable={false}
+          loading="eager"
+          decoding="async"
+          fetchPriority="high"
           onLoad={measureBounds}
+          onError={() => setFailedImageUrl(frame.imageUrl)}
           className="pointer-events-none absolute left-1/2 w-[clamp(150px,22vw,256px)] select-none object-contain [image-rendering:pixelated] drop-shadow-[0_14px_9px_rgba(27,25,20,0.18)] will-change-transform"
           style={{
             bottom: 'calc(50% - 18px)',
             // 居中和位移合并在这一处。Tailwind v4 的 -translate-x-1/2 走独立的 translate 属性，
             // 与 transform 叠加而不是覆盖，两处都写会让静止位置左偏半个精灵宽。
-            transform: `translate3d(calc(-50% + ${x}px), 0, 0) scaleX(${facing})`,
+            transform: `translate3d(calc(-50% + ${x}px), ${y}px, 0) scaleX(${mirrorX ? -1 : 1})`,
+            zIndex: Math.round(y + 1000),
           }}
         />
       )}

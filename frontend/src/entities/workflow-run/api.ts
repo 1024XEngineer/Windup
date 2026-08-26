@@ -16,6 +16,15 @@ import {
   WORKFLOW_NODE_STATUSES,
   WORKFLOW_RUN_STORAGE_STATUSES,
 } from './constants'
+import { isActionDirection } from '../character/directions'
+
+/** 当前 WorkflowRun 已被其他请求更新，调用方需要重新读取后再继续修改。 */
+export class WorkflowRunConflictError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'WorkflowRunConflictError'
+  }
+}
 
 interface WorkflowRunDto {
   id: number
@@ -42,7 +51,19 @@ function isGenerationRef(value: unknown): boolean {
     isRecord(value) &&
     typeof value.taskId === 'string' &&
     value.taskId.length > 0 &&
-    isMember(value.role, WORKFLOW_GENERATION_ROLES)
+    isMember(value.role, WORKFLOW_GENERATION_ROLES) &&
+    (value.direction === undefined || isActionDirection(value.direction))
+  )
+}
+
+function isDirectionalSelectionMap(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (isRecord(value) &&
+      Object.entries(value).every(
+        ([direction, imageUrl]) =>
+          isActionDirection(direction) && typeof imageUrl === 'string' && imageUrl.length > 0,
+      ))
   )
 }
 
@@ -93,9 +114,22 @@ function hasValidCharacterInput(value: unknown): boolean {
       (typeof value.name === 'string' &&
         value.name.trim().length > 0 &&
         value.name.length <= 20)) &&
+    (value.characterId === undefined || isNullableString(value.characterId)) &&
     typeof value.prompt === 'string' &&
     Array.isArray(value.referenceMedia) &&
     value.referenceMedia.every((item) => typeof item === 'string')
+  )
+}
+
+function hasValidAutomationIntent(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (isRecord(value) &&
+      value.mode === 'automatic' &&
+      isNullableString(value.actionPrompt) &&
+      (value.actionPrompt === null || value.actionPrompt.trim().length > 0) &&
+      (value.actionType === undefined ||
+        (value.actionType === 'walk' && value.actionPrompt !== null)))
   )
 }
 
@@ -122,6 +156,9 @@ function isCharacterSetupNode(value: unknown): value is CharacterSetupWorkflowNo
     hasValidCommonNodeFields(value) &&
     ['configuring', 'completed'].includes(String(value.phase)) &&
     hasValidCharacterInput(value.input) &&
+    hasValidAutomationIntent(value.automation) &&
+    (value.pixelPerfectSuggested === undefined ||
+      typeof value.pixelPerfectSuggested === 'boolean') &&
     hasOnlyGenerationRole(value, null)
   )
 }
@@ -134,8 +171,10 @@ function isCharacterTemplateNode(value: unknown): value is CharacterTemplateWork
     ['ready', 'generating', 'selecting', 'completed'].includes(String(value.phase)) &&
     hasOnlyGenerationRole(value, 'character_template') &&
     isNullableString(value.selectedImageUrl) &&
+    isDirectionalSelectionMap(value.selectedImages) &&
     (value.phase !== 'completed' ||
-      (typeof value.selectedImageUrl === 'string' && value.selectedImageUrl.length > 0))
+      (typeof value.selectedImageUrl === 'string' && value.selectedImageUrl.length > 0) ||
+      (isRecord(value.selectedImages) && Object.keys(value.selectedImages).length > 0))
   )
 }
 
@@ -148,8 +187,11 @@ function isActionFirstFrameNode(value: unknown): value is ActionFirstFrameWorkfl
     hasValidActionInput(value.input) &&
     hasOnlyGenerationRole(value, 'first_frame') &&
     isNullableString(value.selectedFirstFrameUrl) &&
+    isDirectionalSelectionMap(value.selectedFirstFrameUrls) &&
     (value.phase !== 'completed' ||
-      (typeof value.selectedFirstFrameUrl === 'string' && value.selectedFirstFrameUrl.length > 0))
+      (typeof value.selectedFirstFrameUrl === 'string' && value.selectedFirstFrameUrl.length > 0) ||
+      (isRecord(value.selectedFirstFrameUrls) &&
+        Object.keys(value.selectedFirstFrameUrls).length > 0))
   )
 }
 
@@ -159,6 +201,8 @@ function isActionFullFrameNode(value: unknown): value is ActionFullFrameWorkflow
     value.type === 'action-full-frame' &&
     hasValidCommonNodeFields(value) &&
     ['ready', 'generating', 'completed'].includes(String(value.phase)) &&
+    (value.input === undefined ||
+      (isRecord(value.input) && isNullableString(value.input.prompt))) &&
     hasOnlyGenerationRole(value, 'complete_animation')
   )
 }
@@ -272,8 +316,8 @@ function getApiClient() {
   return createApiClient({ getAccessToken: getApiAccessToken })
 }
 
-/** 精确对应后端已公开的 CRUD；不声明尚未提供的列表或按 Character 查询。 */
-export const workflowRunApis: WorkflowRunApis = {
+/** 精确对应后端已公开的 CRUD 与项目内分页列表；不声明尚未提供的按 Character 查询。 */
+export const workflowRunApis: WorkflowRunApis & Required<Pick<WorkflowRunApis, 'listByProject'>> = {
   async create(input) {
     return mapWorkflowRun(
       await getApiClient().request<WorkflowRunDto>('/workflow-runs', {
@@ -282,18 +326,38 @@ export const workflowRunApis: WorkflowRunApis = {
       }),
     )
   },
+  async listByProject(projectId, query = {}) {
+    const result = await getApiClient().requestList<WorkflowRunDto>('/workflow-runs', {
+      query: {
+        project_id: toBackendId(projectId, 'projectId'),
+        page: query.page,
+        page_size: query.pageSize,
+      },
+    })
+    return { ...result, items: result.items.map(mapWorkflowRun) }
+  },
   async get(id) {
     return mapWorkflowRun(
       await getApiClient().request<WorkflowRunDto>(`/workflow-runs/${encodeURIComponent(id)}`),
     )
   },
   async update(run) {
-    return mapWorkflowRun(
-      await getApiClient().request<WorkflowRunDto>(`/workflow-runs/${encodeURIComponent(run.id)}`, {
-        method: 'PATCH',
-        json: { nodes: run.nodes, status: run.storageStatus },
-      }),
-    )
+    try {
+      return mapWorkflowRun(
+        await getApiClient().request<WorkflowRunDto>(
+          `/workflow-runs/${encodeURIComponent(run.id)}`,
+          {
+            method: 'PATCH',
+            json: { nodes: run.nodes, status: run.storageStatus, version: run.version },
+          },
+        ),
+      )
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.kind === 'business' && cause.code === 409) {
+        throw new WorkflowRunConflictError(cause.message, { cause })
+      }
+      throw cause
+    }
   },
   async remove(id) {
     await getApiClient().request<null>(`/workflow-runs/${encodeURIComponent(id)}`, {

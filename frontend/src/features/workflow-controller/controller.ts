@@ -3,6 +3,7 @@ import type {
   ActionFullFrameWorkflowNode,
   ActionGenerationMethod,
   ActionGenerationMethodWorkflowNode,
+  ActionDirection,
   CharacterTemplateGenerationInput,
   CharacterSetupWorkflowNode,
   CharacterTemplateWorkflowNode,
@@ -12,7 +13,12 @@ import type {
   Generation,
   GenerationApis,
   GenerationEvent,
+  GenerationExpectation,
+  GeneratedImage,
+  ImageCandidateCount,
   MediaReference,
+  Project,
+  ProjectApis,
   ReviewWorkflowNode,
   WorkflowActionInput,
   WorkflowCharacterInput,
@@ -21,9 +27,14 @@ import type {
   WorkflowNode,
   WorkflowRun,
   WorkflowRunApis,
+  DirectionalMovement,
 } from '@/entities'
-
-const COMPLETE_ANIMATION_FRAME_COUNT = 32
+import {
+  type ArtStyle,
+  getDirectionProfile,
+  isImageCandidateCount,
+  WorkflowRunConflictError,
+} from '@/entities'
 
 export interface AddActionInput {
   /** 首帧节点 ID；完整动画和审核节点在此 ID 后追加稳定后缀。 */
@@ -36,20 +47,87 @@ export interface AddActionInput {
 export interface GenerateCharacterTemplateOptions {
   spriteWidth: number
   spriteHeight: number
+  /** 重生成时用上一版图片约束本次结果；不覆盖角色设定中的原始参考素材。 */
+  sourceImageUrl?: GeneratedImage['url']
+  /** 多方向微调时，每个源方向必须使用自己上一版的已确认图片。 */
+  sourceImageUrls?: Partial<Record<ActionDirection, GeneratedImage['url']>>
+  /** 只影响本次请求的 prompt 覆盖值；不改写角色设定节点的原始输入。 */
+  prompt?: string
   /** 手动编辑器提交时覆盖 configuring 节点的初始输入；节点通过后不再改写。 */
   input?: WorkflowCharacterInput
+  /** 只提交本阶段需要的真实源方向；缺省仍按项目完整方向集生成。 */
+  directions?: readonly ActionDirection[]
+  /** 本阶段每个方向的候选数；母版三选一，派生方向通常每向一张。 */
+  candidateCount?: ImageCandidateCount
 }
 
 export interface GenerateActionOptions {
   characterId: string
   /** 由上传/媒体边界提供，Controller 不把展示 URL 冒充 MediaReference。 */
   referenceMedia: readonly MediaReference[]
+  /** 完整动画自己的动作过程描述，不读取动作首帧描述。 */
+  prompt?: string
+}
+
+export interface GenerateFirstFrameOptions {
+  spriteWidth: number
+  spriteHeight: number
+  /** 重生成时用上一版首帧约束本次结果；不改写已确认的角色母版。 */
+  sourceImageUrl?: GeneratedImage['url']
+  /** 多方向微调时，每个源方向必须使用自己上一版的已确认首帧。 */
+  sourceImageUrls?: Partial<Record<ActionDirection, GeneratedImage['url']>>
+  /** 只影响本次请求的 prompt 覆盖值；不改写动作节点的原始输入。 */
+  prompt?: string
+  /** 本阶段每个方向的候选数；自动交付固定为一张。 */
+  candidateCount?: ImageCandidateCount
+}
+
+export type RegenerationMode = 'regenerate' | 'refine'
+
+export interface RegenerateImageOptions {
+  spriteWidth: number
+  spriteHeight: number
+  mode: RegenerationMode
+  /** 微调时追加到原始描述的临时说明；重新生成模式下不得提交。 */
+  adjustmentPrompt?: string
+  /** 候选态微调时由宿主句柄解析出的参考图；Controller 不接触候选序号。 */
+  sourceImageUrl?: GeneratedImage['url']
+}
+
+export interface RetryGenerationDirectionOptions {
+  spriteWidth: number
+  spriteHeight: number
+  /** 完整动画重试时沿用调用入口持有的额外参考媒体；图片任务忽略此字段。 */
+  referenceMedia?: readonly MediaReference[]
 }
 
 export interface ApplyGenerationResultInput {
   nodeId: WorkflowNode['id']
   taskId: Generation['id']
   generation: Generation
+}
+
+export interface PrepareQuickStartProjectOptions {
+  gameStyle?: ArtStyle
+}
+
+export type PrepareQuickStartProject = (
+  prompt: string,
+  directionalMovement?: DirectionalMovement,
+  options?: PrepareQuickStartProjectOptions,
+) => Promise<Pick<Project, 'id' | 'spriteSize'> & Partial<Pick<Project, 'directionalMovement'>>>
+
+export interface StartCharacterGenerationInput {
+  prompt: string
+  directionalMovement?: DirectionalMovement
+  gameStyle?: ArtStyle
+  automaticDelivery?: { actionPrompt?: string; actionType?: 'walk' }
+  /** 仅记录 Agent 的像素素材意图，生成阶段不据此改变原图。 */
+  suggestPixelPerfect?: boolean
+}
+
+export interface StartCharacterGenerationResult {
+  runId: WorkflowRun['id']
 }
 
 export interface CreateWorkflowControllerOptions {
@@ -59,8 +137,12 @@ export interface CreateWorkflowControllerOptions {
   generationApis: GenerationApis
   createId?: () => string
   now?: () => string
+  /** 只有纯文本入口需要；调用时机仍由 Controller 的生成命令持有。 */
+  prepareProject?: PrepareQuickStartProject
   /** SSE 回调无法 await，异步保存错误通过此处交给装配层展示或记录。 */
   onAsyncError: (error: Error) => void
+  /** 项目方向模式；缺省按旧单向 WorkflowRun 兼容。 */
+  directionalMovement?: DirectionalMovement
 }
 
 /**
@@ -71,6 +153,10 @@ export interface CreateWorkflowControllerOptions {
  */
 export interface WorkflowController {
   create(input: CreateWorkflowRunInput): Promise<void>
+  /** 从纯文本入口创建一条 Run 并提交角色母版生成；提交后不参与后续流程。 */
+  startCharacterGeneration(
+    input: StartCharacterGenerationInput,
+  ): Promise<StartCharacterGenerationResult>
   /** 页面首次读取当前快照；后续变化统一通过 subscribe 接收。 */
   getWorkflow(): WorkflowRun
   subscribe(listener: (workflow: WorkflowRun) => void): () => void
@@ -81,17 +167,40 @@ export interface WorkflowController {
     nodeId: CharacterSetupWorkflowNode['id'],
     options: GenerateCharacterTemplateOptions,
   ): Promise<void>
+  regenerateCharacterTemplate(
+    nodeId: CharacterTemplateWorkflowNode['id'],
+    options: RegenerateImageOptions,
+  ): Promise<void>
+  /** 仅在入口节点尚未提交时修改角色描述和参考媒体。 */
+  updateCharacterSetup(
+    nodeId: CharacterSetupWorkflowNode['id'],
+    input: Pick<WorkflowCharacterInput, 'prompt' | 'referenceMedia'>,
+  ): Promise<void>
+  /** 使用用户上传的角色母版，显式跳过角色候选图生成。 */
+  acceptUploadedCharacterTemplate(
+    nodeId: CharacterSetupWorkflowNode['id'],
+    selectedImageUrl: string,
+    characterId: string,
+    direction?: ActionDirection,
+  ): Promise<void>
   confirmCharacterTemplate(
     nodeId: CharacterTemplateWorkflowNode['id'],
     selectedImageUrl: string,
+    characterId: string,
+    direction?: ActionDirection,
   ): Promise<void>
   generateFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
-    options: GenerateActionOptions,
+    options: GenerateFirstFrameOptions,
+  ): Promise<void>
+  regenerateFirstFrame(
+    nodeId: ActionFirstFrameWorkflowNode['id'],
+    options: RegenerateImageOptions,
   ): Promise<void>
   confirmFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
     selectedFirstFrameUrl: string,
+    direction?: ActionDirection,
   ): Promise<void>
   selectActionGenerationMethod(
     nodeId: ActionGenerationMethodWorkflowNode['id'],
@@ -115,6 +224,14 @@ export interface WorkflowController {
     nodeId: WorkflowNode['id'],
     role: WorkflowGenerationRole,
   ): Promise<Generation | null>
+  /** 读取同一节点下各真实源方向的任务结果。 */
+  getGenerations(nodeId: WorkflowNode['id'], role: WorkflowGenerationRole): Promise<Generation[]>
+  /** 只替换一个失败或待选源方向的任务，保留同节点其它方向的引用与结果。 */
+  retryGenerationDirection(
+    nodeId: WorkflowNode['id'],
+    direction: ActionDirection,
+    options: RetryGenerationDirectionOptions,
+  ): Promise<void>
   dispose(): void
 }
 
@@ -127,8 +244,29 @@ interface ActiveSubscription {
 interface PendingGenerationAttachment {
   nodeId: WorkflowNode['id']
   role: WorkflowGenerationRole
+  direction: ActionDirection
   expectedEpoch: number
+  regeneration: boolean
   generation: Generation
+}
+
+export function createAutoPrepareProject(
+  projectApis: Pick<ProjectApis, 'create'>,
+): PrepareQuickStartProject {
+  return async (prompt, directionalMovement = 'single', options) => {
+    const project = await projectApis.create({
+      nameContext: prompt.trim().replace(/\s+/gu, ' '),
+      perspective: 'side',
+      directionalMovement,
+      spriteSize: { width: 256, height: 256 },
+      gameStyle: options?.gameStyle,
+    })
+    return {
+      id: project.id,
+      spriteSize: project.spriteSize,
+      directionalMovement: project.directionalMovement,
+    }
+  }
 }
 
 export function createWorkflowController({
@@ -137,7 +275,9 @@ export function createWorkflowController({
   generationApis,
   createId = createBrowserSafeId,
   now = () => new Date().toISOString(),
+  prepareProject,
   onAsyncError,
+  directionalMovement = 'single',
 }: CreateWorkflowControllerOptions): WorkflowController {
   let current = workflow ? structuredClone(workflow) : null
   let interrupted = false
@@ -147,8 +287,18 @@ export function createWorkflowController({
   const subscriptions = new Map<string, ActiveSubscription>()
   const nodeEpochs = new Map<WorkflowNode['id'], number>()
   const unattachedGenerations = new Map<string, PendingGenerationAttachment>()
+  const regenerationKeys = new Set<string>()
   const settlements = new Map<string, Promise<WorkflowRun>>()
   const listeners = new Set<(workflow: WorkflowRun) => void>()
+  let generationDirections = getDirectionProfile(directionalMovement).generationDirections
+
+  function selectedDirectionUrl(
+    values: Partial<Record<ActionDirection, string>> | undefined,
+    legacyEastUrl: string | null | undefined,
+    direction: ActionDirection,
+  ) {
+    return values?.[direction] ?? (direction === 'east' ? legacyEastUrl : undefined)
+  }
 
   function requireWorkflow(): WorkflowRun {
     if (!current) throw new Error('WorkflowController 尚未绑定 WorkflowRun')
@@ -194,8 +344,19 @@ export function createWorkflowController({
       const candidate = transform(before)
       if (candidate === before) return structuredClone(before)
 
-      // 只有后端确认保存后才替换内存快照；失败时页面不会看到“假成功”。
-      const saved = await workflowRunApis.update(candidate)
+      // 只有更新响应或回读结果确认已落库后才替换内存快照，避免页面显示“假成功”。
+      let saved: WorkflowRun
+      try {
+        saved = await workflowRunApis.update(candidate)
+      } catch (cause) {
+        try {
+          const latest = await workflowRunApis.get(candidate.id)
+          if (!hasSamePersistedState(candidate, latest)) throw cause
+          saved = latest
+        } catch {
+          throw cause
+        }
+      }
       current = structuredClone(saved)
       notifyListeners()
       return structuredClone(saved)
@@ -217,6 +378,70 @@ export function createWorkflowController({
 
   function getWorkflow() {
     return snapshot()
+  }
+
+  async function startCharacterGeneration({
+    prompt,
+    directionalMovement: selectedDirectionalMovement = 'single',
+    gameStyle,
+    automaticDelivery,
+    suggestPixelPerfect = false,
+  }: StartCharacterGenerationInput): Promise<StartCharacterGenerationResult> {
+    ensureRunning()
+    if (!prepareProject) {
+      throw new Error('WorkflowController 未配置 Quick Start 项目准备能力')
+    }
+    const normalizedPrompt = nonEmpty(prompt, '角色描述')
+    const actionPrompt = automaticDelivery?.actionPrompt?.trim() || null
+    const actionType = actionPrompt ? automaticDelivery?.actionType : undefined
+    const project = await prepareProject(normalizedPrompt, selectedDirectionalMovement, {
+      gameStyle,
+    })
+    generationDirections = getDirectionProfile(
+      project.directionalMovement ?? selectedDirectionalMovement,
+    ).generationDirections
+    await create({
+      projectId: project.id,
+      nodes: [
+        {
+          id: 'character-setup',
+          type: 'character-setup',
+          status: 'active',
+          phase: 'configuring',
+          dependsOnNodeIds: [],
+          generations: [],
+          error: null,
+          input: { prompt: normalizedPrompt, referenceMedia: [] },
+          ...(suggestPixelPerfect ? { pixelPerfectSuggested: true } : {}),
+          ...(automaticDelivery
+            ? {
+                automation: {
+                  mode: 'automatic' as const,
+                  actionPrompt,
+                  ...(actionType ? { actionType } : {}),
+                },
+              }
+            : {}),
+        },
+        {
+          id: 'character-template',
+          type: 'character-template',
+          status: 'locked',
+          phase: 'ready',
+          dependsOnNodeIds: ['character-setup'],
+          generations: [],
+          error: null,
+          selectedImageUrl: null,
+        },
+      ],
+    })
+    await generateCharacterTemplate('character-setup', {
+      spriteWidth: project.spriteSize.width,
+      spriteHeight: project.spriteSize.height,
+      directions: ['east'],
+      ...(automaticDelivery ? { candidateCount: 1 as const } : {}),
+    })
+    return { runId: requireWorkflow().id }
   }
 
   function setCharacterName(
@@ -279,6 +504,7 @@ export function createWorkflowController({
         dependsOnNodeIds: [methodId],
         generations: [],
         error: null,
+        input: { prompt: null },
       }
       const methodNode: ActionGenerationMethodWorkflowNode = {
         id: methodId,
@@ -357,93 +583,616 @@ export function createWorkflowController({
             )
           })
     const templateNode = findSingleDependentNode(advanced, nodeId, 'character-template')
-    return submitGeneration(templateNode.id, 'character_template', (run, node) => {
-      if (node.type !== 'character-template') throw new Error('目标节点不是角色母版')
-      if (node.phase !== 'ready') throw new Error('角色母版节点当前不能开始生成')
-      const setupNode = findSingleDependencyNode(run, node, 'character-setup')
-      const input: CharacterTemplateGenerationInput = {
-        type: 'character_template',
-        projectId: run.projectId,
-        prompt: setupNode.input.prompt,
-        referenceMedia: setupNode.input.referenceMedia,
-        spriteWidth: options.spriteWidth,
-        spriteHeight: options.spriteHeight,
-      }
-      return input
-    })
+    const requestedDirections = options.directions ?? generationDirections
+    for (const direction of requestedDirections) {
+      assertGenerationDirection(direction, generationDirections)
+    }
+    const missingDirections = requestedDirections.filter(
+      (direction) =>
+        !selectedDirectionUrl(
+          templateNode.selectedImages,
+          templateNode.selectedImageUrl,
+          direction,
+        ),
+    )
+    return submitDirectionalGenerations(
+      templateNode.id,
+      'character_template',
+      (run, node, direction) => {
+        if (node.type !== 'character-template') throw new Error('目标节点不是角色母版')
+        const hasSelectedDirection = generationDirections.some((generationDirection) =>
+          Boolean(
+            selectedDirectionUrl(node.selectedImages, node.selectedImageUrl, generationDirection),
+          ),
+        )
+        if (
+          node.phase !== 'ready' &&
+          node.phase !== 'generating' &&
+          !(node.phase === 'selecting' && hasSelectedDirection)
+        ) {
+          throw new Error('角色母版节点当前不能开始生成')
+        }
+        const setupNode = findSingleDependencyNode(run, node, 'character-setup')
+        const sourceImage = generatedImageReference(
+          options.sourceImageUrls?.[direction] ?? options.sourceImageUrl,
+        )
+        const input: CharacterTemplateGenerationInput = {
+          type: 'character_template',
+          projectId: run.projectId,
+          prompt:
+            options.prompt === undefined
+              ? setupNode.input.prompt
+              : nonEmpty(options.prompt, 'prompt'),
+          referenceMedia: sourceImage ? [sourceImage] : setupNode.input.referenceMedia,
+          spriteWidth: options.spriteWidth,
+          spriteHeight: options.spriteHeight,
+          direction,
+          ...(options.candidateCount === undefined
+            ? {}
+            : { candidateCount: options.candidateCount }),
+        }
+        return input
+      },
+      missingDirections,
+    )
   }
 
   function confirmCharacterTemplate(
     nodeId: CharacterTemplateWorkflowNode['id'],
     selectedImageUrl: string,
+    characterId: string,
+    direction: ActionDirection = 'east',
   ) {
     ensureRunning()
     const imageUrl = nonEmpty(selectedImageUrl, 'selectedImageUrl')
+    const normalizedCharacterId = nonEmpty(characterId, 'characterId')
+    assertGenerationDirection(direction, generationDirections)
+    return persist((run) => {
+      const templateNode = findNode(run, nodeId)
+      if (templateNode.type !== 'character-template') throw new Error('目标节点不是角色母版')
+      if (templateNode.status !== 'active' || templateNode.phase !== 'selecting') {
+        throw new Error('角色母版节点当前不能确认候选图')
+      }
+      const setupNode = findSingleDependencyNode(run, templateNode, 'character-setup')
+      if (setupNode.input.characterId && setupNode.input.characterId !== normalizedCharacterId) {
+        throw new Error('WorkflowRun 已绑定到另一角色，不能改绑')
+      }
+      return unlockReadyNodes({
+        ...run,
+        nodes: run.nodes.map((node) => {
+          if (node.id === setupNode.id) {
+            return {
+              ...setupNode,
+              input: { ...setupNode.input, characterId: normalizedCharacterId },
+            }
+          }
+          if (node.id === templateNode.id) {
+            const selectedImages = {
+              ...(templateNode.selectedImages ?? {}),
+              [direction]: imageUrl,
+            }
+            const complete = generationDirections.every((generationDirection) => {
+              return Boolean(selectedImages[generationDirection])
+            })
+            return {
+              ...templateNode,
+              selectedImageUrl:
+                direction === 'east'
+                  ? imageUrl
+                  : (templateNode.selectedImageUrl ?? selectedImages.east ?? null),
+              selectedImages,
+              phase: complete ? 'completed' : 'selecting',
+              status: complete ? 'passed' : 'active',
+            }
+          }
+          return node
+        }),
+      })
+    })
+  }
+
+  function updateCharacterSetup(
+    nodeId: CharacterSetupWorkflowNode['id'],
+    input: Pick<WorkflowCharacterInput, 'prompt' | 'referenceMedia'>,
+  ) {
+    ensureRunning()
+    const prompt = nonEmpty(input.prompt, 'prompt')
     return persist((run) =>
       updateNode(run, nodeId, (node) => {
-        if (node.type !== 'character-template') throw new Error('目标节点不是角色母版')
-        if (node.status !== 'active' || node.phase !== 'selecting') {
-          throw new Error('角色母版节点当前不能确认候选图')
+        if (node.type !== 'character-setup') throw new Error('目标节点不是角色设定')
+        if (node.status !== 'active' || node.phase !== 'configuring') {
+          throw new Error('角色设定节点当前不能修改')
         }
-        return unlockReadyNodes({
-          ...run,
-          nodes: run.nodes.map((item) =>
-            item.id === node.id
-              ? { ...node, selectedImageUrl: imageUrl, phase: 'completed', status: 'passed' }
-              : item,
-          ),
+        return replaceNode(run, {
+          ...node,
+          input: {
+            ...node.input,
+            prompt,
+            referenceMedia: [...input.referenceMedia],
+          },
         })
       }),
     )
   }
 
+  function acceptUploadedCharacterTemplate(
+    nodeId: CharacterSetupWorkflowNode['id'],
+    selectedImageUrl: string,
+    characterId: string,
+    direction: ActionDirection = 'east',
+  ) {
+    ensureRunning()
+    const imageUrl = nonEmpty(selectedImageUrl, 'selectedImageUrl')
+    const normalizedCharacterId = nonEmpty(characterId, 'characterId')
+    assertGenerationDirection(direction, generationDirections)
+    return persist((run) => {
+      const setupNode = findNode(run, nodeId)
+      if (setupNode.type !== 'character-setup') throw new Error('目标节点不是角色设定')
+      const templateNode = findSingleDependentNode(run, setupNode.id, 'character-template')
+      const isFirstUpload =
+        setupNode.status === 'active' &&
+        setupNode.phase === 'configuring' &&
+        templateNode.status === 'locked' &&
+        templateNode.phase === 'ready'
+      const isAdditionalDirection =
+        setupNode.status === 'passed' &&
+        setupNode.phase === 'completed' &&
+        templateNode.status === 'active' &&
+        templateNode.phase === 'selecting'
+      if (!isFirstUpload && !isAdditionalDirection) {
+        throw new Error('角色设定节点当前不能使用上传母版')
+      }
+      if (setupNode.input.characterId && setupNode.input.characterId !== normalizedCharacterId) {
+        throw new Error('WorkflowRun 已绑定到另一角色，不能改绑')
+      }
+      return unlockReadyNodes({
+        ...run,
+        nodes: run.nodes.map((node) => {
+          if (node.id === setupNode.id) {
+            return {
+              ...setupNode,
+              status: 'passed',
+              phase: 'completed',
+              error: null,
+              input: { ...setupNode.input, characterId: normalizedCharacterId },
+            }
+          }
+          if (node.id === templateNode.id) {
+            const selectedImages = {
+              ...(templateNode.selectedImages ?? {}),
+              [direction]: imageUrl,
+            }
+            const complete = generationDirections.every((generationDirection) => {
+              return Boolean(selectedImages[generationDirection])
+            })
+            return {
+              ...templateNode,
+              selectedImageUrl:
+                direction === 'east'
+                  ? imageUrl
+                  : (templateNode.selectedImageUrl ?? selectedImages.east ?? null),
+              selectedImages,
+              status: complete ? 'passed' : 'active',
+              phase: complete ? 'completed' : 'selecting',
+            }
+          }
+          return node
+        }),
+      })
+    })
+  }
+
   function generateFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
-    options: GenerateActionOptions,
+    options: GenerateFirstFrameOptions,
   ) {
-    const characterId = nonEmpty(options.characterId, 'characterId')
-    return submitGeneration(nodeId, 'first_frame', (run, node) => {
-      if (node.type !== 'action-first-frame') throw new Error('目标节点不是动作首帧')
-      if (node.phase !== 'configuring') throw new Error('动作首帧节点当前不能生成')
-      const templateNode = findSingleDependencyNode(run, node, 'character-template')
-      if (!templateNode.selectedImageUrl) throw new Error('角色母版尚未确认')
-      // 该 URL 来自已校验的 Generation 结果，符合当前后端 reference_image_urls 契约。
-      const characterTemplateReference = templateNode.selectedImageUrl as MediaReference
-      const input: FirstFrameGenerationInput = {
-        type: 'first_frame',
-        projectId: run.projectId,
-        characterId,
-        outfitId: node.input.outfitId,
-        actionType: node.input.type,
-        prompt: node.input.prompt,
-        referenceMedia: [...new Set([characterTemplateReference, ...options.referenceMedia])],
+    const before = requireWorkflow()
+    const targetNode = findNode(before, nodeId)
+    if (targetNode.type !== 'action-first-frame') throw new Error('目标节点不是动作首帧')
+    const targetTemplate = findSingleDependencyNode(before, targetNode, 'character-template')
+    for (const direction of generationDirections) {
+      if (
+        !selectedDirectionUrl(
+          targetTemplate.selectedImages,
+          targetTemplate.selectedImageUrl,
+          direction,
+        )
+      ) {
+        throw new Error(`角色母版尚未确认方向 ${direction}`)
       }
-      return input
+    }
+    return submitDirectionalGenerations(
+      nodeId,
+      'first_frame',
+      (run, node, direction) => {
+        if (node.type !== 'action-first-frame') throw new Error('目标节点不是动作首帧')
+        if (node.phase !== 'configuring') throw new Error('动作首帧节点当前不能生成')
+        const templateNode = findSingleDependencyNode(run, node, 'character-template')
+        const characterTemplateReference = selectedDirectionUrl(
+          templateNode.selectedImages,
+          templateNode.selectedImageUrl,
+          direction,
+        )
+        if (!characterTemplateReference) throw new Error(`角色母版尚未确认方向 ${direction}`)
+        const sourceImage = generatedImageReference(
+          options.sourceImageUrls?.[direction] ?? options.sourceImageUrl,
+        )
+        const input: FirstFrameGenerationInput = {
+          type: 'first_frame',
+          projectId: run.projectId,
+          actionType: node.input.type,
+          prompt:
+            options.prompt === undefined
+              ? node.input.prompt?.trim() || node.input.name
+              : nonEmpty(options.prompt, 'prompt'),
+          spriteWidth: options.spriteWidth,
+          spriteHeight: options.spriteHeight,
+          referenceMedia: [sourceImage ?? (characterTemplateReference as MediaReference)],
+          direction,
+          ...(options.candidateCount === undefined
+            ? {}
+            : { candidateCount: options.candidateCount }),
+        }
+        return input
+      },
+      generationDirections,
+    )
+  }
+
+  async function regenerateCharacterTemplate(
+    nodeId: CharacterTemplateWorkflowNode['id'],
+    options: RegenerateImageOptions,
+  ): Promise<WorkflowRun> {
+    ensurePositiveInteger(options.spriteWidth, 'spriteWidth')
+    ensurePositiveInteger(options.spriteHeight, 'spriteHeight')
+    const before = requireWorkflow()
+    const templateNode = findNode(before, nodeId)
+    if (templateNode.type !== 'character-template') throw new Error('目标节点不是角色母版')
+    const isCompletedTemplate =
+      templateNode.status === 'passed' &&
+      templateNode.phase === 'completed' &&
+      Boolean(templateNode.selectedImageUrl)
+    const isCandidateSelection =
+      templateNode.status === 'active' &&
+      templateNode.phase === 'selecting' &&
+      !templateNode.selectedImageUrl
+    if (!isCompletedTemplate && !isCandidateSelection) {
+      throw new Error('角色母版当前不能重新生成')
+    }
+    const setupNode = findSingleDependencyNode(before, templateNode, 'character-setup')
+    const prompt = adjustedPrompt(setupNode.input.prompt, options)
+    const sourceImageUrls =
+      options.mode === 'refine'
+        ? isCandidateSelection
+          ? { east: nonEmpty(options.sourceImageUrl ?? '', 'sourceImageUrl') }
+          : Object.fromEntries(
+              generationDirections.map((direction) => {
+                const imageUrl = selectedDirectionUrl(
+                  templateNode.selectedImages,
+                  templateNode.selectedImageUrl,
+                  direction,
+                )
+                if (!imageUrl) throw new Error(`角色母版尚未确认方向 ${direction}`)
+                return [direction, imageUrl]
+              }),
+            )
+        : undefined
+    const requestedDirections = isCandidateSelection ? (['east'] as const) : generationDirections
+    const keys = requestedDirections.map((direction) =>
+      generationKey(nodeId, 'character_template', direction),
+    )
+    const pending = keys.flatMap((key) => {
+      const attachment = unattachedGenerations.get(key)
+      return attachment?.regeneration ? [attachment] : []
     })
+    await restartFromNode(nodeId)
+    return runRegenerationAttempt(before, nodeId, keys, pending, () => {
+      return generateCharacterTemplate(setupNode.id, {
+        spriteWidth: options.spriteWidth,
+        spriteHeight: options.spriteHeight,
+        sourceImageUrls,
+        prompt,
+        directions: requestedDirections,
+        ...(isCandidateSelection ? { candidateCount: 3 as const } : {}),
+      })
+    })
+  }
+
+  async function regenerateFirstFrame(
+    nodeId: ActionFirstFrameWorkflowNode['id'],
+    options: RegenerateImageOptions,
+  ): Promise<WorkflowRun> {
+    ensurePositiveInteger(options.spriteWidth, 'spriteWidth')
+    ensurePositiveInteger(options.spriteHeight, 'spriteHeight')
+    const before = requireWorkflow()
+    const firstFrameNode = findNode(before, nodeId)
+    if (firstFrameNode.type !== 'action-first-frame') throw new Error('目标节点不是动作首帧')
+    if (
+      firstFrameNode.status !== 'passed' ||
+      firstFrameNode.phase !== 'completed' ||
+      !firstFrameNode.selectedFirstFrameUrl
+    ) {
+      throw new Error('动作首帧当前不能重新生成')
+    }
+    const basePrompt = firstFrameNode.input.prompt?.trim() || firstFrameNode.input.name
+    const prompt = adjustedPrompt(basePrompt, options)
+    const sourceImageUrls =
+      options.mode === 'refine'
+        ? Object.fromEntries(
+            generationDirections.map((direction) => {
+              const imageUrl = selectedDirectionUrl(
+                firstFrameNode.selectedFirstFrameUrls,
+                firstFrameNode.selectedFirstFrameUrl,
+                direction,
+              )
+              if (!imageUrl) throw new Error(`动作首帧尚未确认方向 ${direction}`)
+              return [direction, imageUrl]
+            }),
+          )
+        : undefined
+    const keys = generationDirections.map((direction) =>
+      generationKey(nodeId, 'first_frame', direction),
+    )
+    const pending = keys.flatMap((key) => {
+      const attachment = unattachedGenerations.get(key)
+      return attachment?.regeneration ? [attachment] : []
+    })
+    await restartFromNode(nodeId)
+    return runRegenerationAttempt(before, nodeId, keys, pending, () => {
+      return generateFirstFrame(nodeId, {
+        spriteWidth: options.spriteWidth,
+        spriteHeight: options.spriteHeight,
+        sourceImageUrls,
+        prompt,
+      })
+    })
+  }
+
+  async function runRegenerationAttempt(
+    before: WorkflowRun,
+    nodeId: WorkflowNode['id'],
+    keys: readonly string[],
+    pending: readonly PendingGenerationAttachment[],
+    generate: () => Promise<WorkflowRun>,
+  ): Promise<WorkflowRun> {
+    try {
+      for (const attachment of pending) {
+        const retryAttachment = { ...attachment, expectedEpoch: nodeEpoch(nodeId) }
+        const key = generationKey(
+          retryAttachment.nodeId,
+          retryAttachment.role,
+          retryAttachment.direction,
+        )
+        unattachedGenerations.set(key, retryAttachment)
+        await attachGeneration(retryAttachment)
+      }
+      keys.forEach((key) => regenerationKeys.add(key))
+      return await generate()
+    } catch (cause) {
+      try {
+        await rollbackRegeneration(before, nodeId)
+      } catch (rollbackCause) {
+        throw createRegenerationRecoveryError(cause, rollbackCause)
+      }
+      throw cause
+    } finally {
+      keys.forEach((key) => regenerationKeys.delete(key))
+    }
+  }
+
+  /**
+   * 重新生成必须先回退节点才能提交请求，提交失败时把回退过的节点还原成用户确认过的样子。
+   * 不还原的话这条执行线会丢掉已接受的图片：重新生成还能从原始输入重来，微调却连参考图
+   * 和临时描述都没有了，用户只能拿一张全新的图重新对齐。
+   *
+   * 还原本身失败由调用方转换成 WorkflowRun 冲突，页面必须先刷新快照，不能继续使用不完整状态。
+   */
+  async function rollbackRegeneration(before: WorkflowRun, nodeId: WorkflowNode['id']) {
+    const affectedIds = collectDescendantIds(before.nodes, nodeId)
+    const restored = new Map(
+      before.nodes.filter((node) => affectedIds.has(node.id)).map((node) => [node.id, node]),
+    )
+    for (const [key, pending] of unattachedGenerations) {
+      const belongsToAffectedBranch = [...affectedIds].some((affectedId) =>
+        key.startsWith(`${affectedId}:`),
+      )
+      if (belongsToAffectedBranch && !pending.regeneration) {
+        unattachedGenerations.delete(key)
+      }
+    }
+    await persist((latest) => ({
+      ...latest,
+      nodes: normalizeAvailability(latest.nodes.map((node) => restored.get(node.id) ?? node)),
+    }))
   }
 
   function confirmFirstFrame(
     nodeId: ActionFirstFrameWorkflowNode['id'],
     selectedFirstFrameUrl: string,
+    direction: ActionDirection = 'east',
   ) {
     ensureRunning()
     const imageUrl = nonEmpty(selectedFirstFrameUrl, 'selectedFirstFrameUrl')
+    assertGenerationDirection(direction, generationDirections)
     return persist((run) =>
       updateNode(run, nodeId, (node) => {
         if (node.type !== 'action-first-frame') throw new Error('目标节点不是动作首帧')
         if (node.status !== 'active' || node.phase !== 'selecting') {
           throw new Error('动作首帧节点当前不能确认首帧')
         }
+        const selectedFirstFrameUrls = {
+          ...(node.selectedFirstFrameUrls ?? {}),
+          [direction]: imageUrl,
+        }
+        const complete = generationDirections.every((generationDirection) =>
+          Boolean(selectedFirstFrameUrls[generationDirection]),
+        )
         return unlockReadyNodes(
           replaceNode(run, {
             ...node,
-            selectedFirstFrameUrl: imageUrl,
-            status: 'passed',
-            phase: 'completed',
+            selectedFirstFrameUrl:
+              direction === 'east'
+                ? imageUrl
+                : (node.selectedFirstFrameUrl ?? node.selectedFirstFrameUrls?.east ?? null),
+            selectedFirstFrameUrls,
+            status: complete ? 'passed' : 'active',
+            phase: complete ? 'completed' : 'selecting',
           }),
         )
       }),
     )
+  }
+
+  async function retryGenerationDirection(
+    nodeId: WorkflowNode['id'],
+    direction: ActionDirection,
+    options: RetryGenerationDirectionOptions,
+  ): Promise<WorkflowRun> {
+    ensureRunning()
+    assertGenerationDirection(direction, generationDirections)
+    const before = requireWorkflow()
+    const originalNode = structuredClone(findNode(before, nodeId))
+    const role = generationRoleForNode(originalNode)
+    if (!role) throw new Error('目标节点不是生成节点')
+    if (originalNode.status !== 'failed' && originalNode.phase !== 'selecting') {
+      throw new Error('当前方向不能重新生成')
+    }
+    const reference = originalNode.generations.find(
+      (item) => item.role === role && generationReferenceDirection(item) === direction,
+    )
+    if (!reference) throw new Error(`方向 ${direction} 没有可替换的生成任务`)
+    if (originalNode.type !== 'action-full-frame') {
+      ensurePositiveInteger(options.spriteWidth, 'spriteWidth')
+      ensurePositiveInteger(options.spriteHeight, 'spriteHeight')
+    }
+
+    stopSubscription(subscriptionKey(nodeId, reference.taskId))
+    await persist((run) => {
+      const node = findNode(run, nodeId)
+      const generations = node.generations.filter((item) => item.taskId !== reference.taskId)
+      if (node.type === 'character-template') {
+        const selectedImages = { ...(node.selectedImages ?? {}) }
+        delete selectedImages[direction]
+        return replaceNode(run, {
+          ...node,
+          status: 'active',
+          phase: 'generating',
+          generations,
+          selectedImageUrl: direction === 'east' ? null : node.selectedImageUrl,
+          selectedImages,
+          error: null,
+        })
+      }
+      if (node.type === 'action-first-frame') {
+        const selectedFirstFrameUrls = { ...(node.selectedFirstFrameUrls ?? {}) }
+        delete selectedFirstFrameUrls[direction]
+        return replaceNode(run, {
+          ...node,
+          status: 'active',
+          phase: 'generating',
+          generations,
+          selectedFirstFrameUrl: direction === 'east' ? null : node.selectedFirstFrameUrl,
+          selectedFirstFrameUrls,
+          error: null,
+        })
+      }
+      if (node.type === 'action-full-frame') {
+        return replaceNode(run, {
+          ...node,
+          status: 'active',
+          phase: 'generating',
+          generations,
+          error: null,
+        })
+      }
+      throw new Error('目标节点不是生成节点')
+    })
+
+    try {
+      await submitGeneration(
+        nodeId,
+        role,
+        (run, node, retryDirection) => {
+          if (node.type === 'character-template') {
+            const setupNode = findSingleDependencyNode(run, node, 'character-setup')
+            const confirmedMaster = generatedImageReference(node.selectedImageUrl ?? undefined)
+            const input: CharacterTemplateGenerationInput = {
+              type: 'character_template',
+              projectId: run.projectId,
+              prompt: setupNode.input.prompt,
+              referenceMedia: confirmedMaster ? [confirmedMaster] : setupNode.input.referenceMedia,
+              spriteWidth: options.spriteWidth,
+              spriteHeight: options.spriteHeight,
+              direction: retryDirection,
+              candidateCount: confirmedMaster ? 1 : 3,
+            }
+            return input
+          }
+          if (node.type === 'action-first-frame') {
+            const templateNode = findSingleDependencyNode(run, node, 'character-template')
+            const templateUrl = selectedDirectionUrl(
+              templateNode.selectedImages,
+              templateNode.selectedImageUrl,
+              retryDirection,
+            )
+            if (!templateUrl) throw new Error(`角色母版尚未确认方向 ${retryDirection}`)
+            const input: FirstFrameGenerationInput = {
+              type: 'first_frame',
+              projectId: run.projectId,
+              actionType: node.input.type,
+              prompt: node.input.prompt?.trim() || node.input.name,
+              spriteWidth: options.spriteWidth,
+              spriteHeight: options.spriteHeight,
+              referenceMedia: [templateUrl as MediaReference],
+              direction: retryDirection,
+            }
+            return input
+          }
+          if (node.type === 'action-full-frame') {
+            const methodNode = findSingleDependencyNode(run, node, 'action-generation-method')
+            if (!methodNode.method) throw new Error('尚未选择动作生成方式')
+            const firstFrameNode = findSingleDependencyNode(run, methodNode, 'action-first-frame')
+            const templateNode = findSingleDependencyNode(run, firstFrameNode, 'character-template')
+            const setupNode = findSingleDependencyNode(run, templateNode, 'character-setup')
+            const characterId = nonEmpty(setupNode.input.characterId ?? '', 'characterId')
+            const firstFrameUrl = selectedDirectionUrl(
+              firstFrameNode.selectedFirstFrameUrls,
+              firstFrameNode.selectedFirstFrameUrl,
+              retryDirection,
+            )
+            if (!firstFrameUrl) throw new Error(`动作首帧尚未确认方向 ${retryDirection}`)
+            const input: CompleteAnimationGenerationInput = {
+              type: 'complete_animation',
+              projectId: run.projectId,
+              characterId,
+              outfitId: firstFrameNode.input.outfitId,
+              method: methodNode.method,
+              actionType: firstFrameNode.input.type,
+              firstFrameUrl,
+              prompt:
+                node.input === undefined
+                  ? firstFrameNode.input.prompt
+                  : nonEmpty(node.input.prompt ?? '', '完整动作描述'),
+              referenceMedia: options.referenceMedia ?? [],
+              direction: retryDirection,
+            }
+            return input
+          }
+          throw new Error('目标节点不是生成节点')
+        },
+        direction,
+      )
+    } catch (cause) {
+      const currentNode = findNode(requireWorkflow(), nodeId)
+      const attachedRetry = currentNode.generations.some(
+        (item) => role === item.role && generationReferenceDirection(item) === direction,
+      )
+      if (!attachedRetry) await persist((run) => replaceNode(run, originalNode))
+      throw cause
+    }
+    // 新任务已经持久化后不能再回滚，否则恢复订阅的瞬时失败会遗失付费任务引用。
+    // 刷新后的失败节点不会自动恢复订阅，因此这里单独恢复其它仍在运行的方向。
+    return resume()
   }
 
   function selectActionGenerationMethod(
@@ -469,33 +1218,65 @@ export function createWorkflowController({
     )
   }
 
-  function generateCompleteAnimation(
+  async function generateCompleteAnimation(
     nodeId: ActionFullFrameWorkflowNode['id'],
     options: GenerateActionOptions,
   ) {
     const characterId = nonEmpty(options.characterId, 'characterId')
-    return submitGeneration(nodeId, 'complete_animation', (run, node) => {
-      if (node.type !== 'action-full-frame') throw new Error('目标节点不是完整动画')
-      if (node.phase !== 'ready') throw new Error('完整动画节点当前不能生成')
-      const methodNode = findSingleDependencyNode(run, node, 'action-generation-method')
-      if (!methodNode.method) throw new Error('尚未选择动作生成方式')
-      if (methodNode.method === '3d-to-2d') {
-        throw new Error('3D 转 2D 接口尚未提供，暂时不能开始生成')
+    const before = requireWorkflow()
+    const targetNode = findNode(before, nodeId)
+    if (targetNode.type !== 'action-full-frame') throw new Error('目标节点不是完整动画')
+    const targetMethod = findSingleDependencyNode(before, targetNode, 'action-generation-method')
+    const targetFirstFrame = findSingleDependencyNode(before, targetMethod, 'action-first-frame')
+    for (const direction of generationDirections) {
+      if (
+        !selectedDirectionUrl(
+          targetFirstFrame.selectedFirstFrameUrls,
+          targetFirstFrame.selectedFirstFrameUrl,
+          direction,
+        )
+      ) {
+        throw new Error(`动作首帧尚未确认方向 ${direction}`)
       }
-      const firstFrameNode = findSingleDependencyNode(run, methodNode, 'action-first-frame')
-      if (!firstFrameNode.selectedFirstFrameUrl) throw new Error('动作首帧尚未确认')
-      const input: CompleteAnimationGenerationInput = {
-        type: 'complete_animation',
-        projectId: run.projectId,
-        characterId,
-        outfitId: firstFrameNode.input.outfitId,
-        actionType: firstFrameNode.input.type,
-        firstFrameUrl: firstFrameNode.selectedFirstFrameUrl,
-        prompt: firstFrameNode.input.prompt,
-        referenceMedia: options.referenceMedia,
-      }
-      return input
-    })
+    }
+    const prompt = completeAnimationPrompt(targetNode, targetFirstFrame, options.prompt)
+    await persist((run) =>
+      updateNode(run, nodeId, (node) => {
+        if (node.type !== 'action-full-frame') throw new Error('目标节点不是完整动画')
+        return replaceNode(run, { ...node, input: { prompt } })
+      }),
+    )
+    return submitDirectionalGenerations(
+      nodeId,
+      'complete_animation',
+      (run, node, direction) => {
+        if (node.type !== 'action-full-frame') throw new Error('目标节点不是完整动画')
+        if (node.phase !== 'ready') throw new Error('完整动画节点当前不能生成')
+        const methodNode = findSingleDependencyNode(run, node, 'action-generation-method')
+        if (!methodNode.method) throw new Error('尚未选择动作生成方式')
+        const firstFrameNode = findSingleDependencyNode(run, methodNode, 'action-first-frame')
+        const firstFrameUrl = selectedDirectionUrl(
+          firstFrameNode.selectedFirstFrameUrls,
+          firstFrameNode.selectedFirstFrameUrl,
+          direction,
+        )
+        if (!firstFrameUrl) throw new Error(`动作首帧尚未确认方向 ${direction}`)
+        const input: CompleteAnimationGenerationInput = {
+          type: 'complete_animation',
+          projectId: run.projectId,
+          characterId,
+          outfitId: firstFrameNode.input.outfitId,
+          method: methodNode.method,
+          actionType: firstFrameNode.input.type,
+          firstFrameUrl,
+          prompt: nonEmpty(node.input?.prompt ?? '', '完整动作描述'),
+          referenceMedia: options.referenceMedia,
+          direction,
+        }
+        return input
+      },
+      generationDirections,
+    )
   }
 
   function approveReview(nodeId: ReviewWorkflowNode['id']) {
@@ -541,10 +1322,15 @@ export function createWorkflowController({
   function submitGeneration(
     nodeId: WorkflowNode['id'],
     role: WorkflowGenerationRole,
-    createInput: (run: WorkflowRun, node: WorkflowNode) => Parameters<GenerationApis['create']>[0],
+    createInput: (
+      run: WorkflowRun,
+      node: WorkflowNode,
+      direction: ActionDirection,
+    ) => Parameters<GenerationApis['create']>[0],
+    direction: ActionDirection = 'east',
   ): Promise<WorkflowRun> {
     ensureRunning()
-    const key = `${nodeId}:${role}`
+    const key = generationKey(nodeId, role, direction)
     const active = submissions.get(key)
     if (active) return active
 
@@ -554,6 +1340,7 @@ export function createWorkflowController({
       role,
       expectedEpoch,
       createInput,
+      direction,
     ).finally(() => {
       if (submissions.get(key) === submission) submissions.delete(key)
     })
@@ -561,17 +1348,50 @@ export function createWorkflowController({
     return submission
   }
 
+  async function submitDirectionalGenerations(
+    nodeId: WorkflowNode['id'],
+    role: WorkflowGenerationRole,
+    createInput: (
+      run: WorkflowRun,
+      node: WorkflowNode,
+      direction: ActionDirection,
+    ) => Parameters<GenerationApis['create']>[0],
+    directions: readonly ActionDirection[] = generationDirections,
+  ): Promise<WorkflowRun> {
+    if (directions.length === 0) throw new Error('项目没有可生成的真实源方向')
+    // 方向之间彼此独立，可以并行排队；即使其中一个提交失败，也要等其它已创建任务
+    // 完成引用落库后再返回错误，避免刷新后遗失仍在执行的付费任务。
+    const results = await Promise.allSettled(
+      directions.map((direction) => submitGeneration(nodeId, role, createInput, direction)),
+    )
+    const failed = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    )
+    if (failed) throw asError(failed.reason)
+    const snapshots = results.flatMap((result) =>
+      result.status === 'fulfilled' ? [result.value] : [],
+    )
+    return snapshots[snapshots.length - 1] ?? snapshot()
+  }
+
   async function performGenerationSubmission(
     nodeId: WorkflowNode['id'],
     role: WorkflowGenerationRole,
     expectedEpoch: number,
-    createInput: (run: WorkflowRun, node: WorkflowNode) => Parameters<GenerationApis['create']>[0],
+    createInput: (
+      run: WorkflowRun,
+      node: WorkflowNode,
+      direction: ActionDirection,
+    ) => Parameters<GenerationApis['create']>[0],
+    direction: ActionDirection,
   ): Promise<WorkflowRun> {
     const before = requireWorkflow()
     const node = findNode(before, nodeId)
     assertNodeCanRun(before, node)
-    const key = `${nodeId}:${role}`
-    const existing = node.generations.find((item) => item.role === role)
+    const key = generationKey(nodeId, role, direction)
+    const existing = node.generations.find(
+      (item) => item.role === role && generationReferenceDirection(item) === direction,
+    )
     if (existing) {
       await watchGeneration(node.id, existing.taskId)
       return snapshot()
@@ -583,14 +1403,21 @@ export function createWorkflowController({
     }
     if (pendingAttachment) unattachedGenerations.delete(key)
 
-    const generation = await generationApis.create(createInput(before, node))
+    const generation = await generationApis.create(createInput(before, node, direction))
     if (generation.projectId !== before.projectId) {
       throw new Error('Generation 与 WorkflowRun 不属于同一项目')
     }
     // 重做发生在请求等待期间时，任务可以留在后端，但绝不能再挂回新的节点执行线。
     if (nodeEpoch(nodeId) !== expectedEpoch) return snapshot()
 
-    const attachment = { nodeId, role, expectedEpoch, generation }
+    const attachment = {
+      nodeId,
+      role,
+      direction,
+      expectedEpoch,
+      regeneration: regenerationKeys.has(key),
+      generation,
+    }
     unattachedGenerations.set(key, attachment)
     return attachGeneration(attachment)
   }
@@ -598,10 +1425,11 @@ export function createWorkflowController({
   async function attachGeneration({
     nodeId,
     role,
+    direction,
     expectedEpoch,
     generation,
   }: PendingGenerationAttachment): Promise<WorkflowRun> {
-    const key = `${nodeId}:${role}`
+    const key = generationKey(nodeId, role, direction)
     if (nodeEpoch(nodeId) !== expectedEpoch) {
       if (unattachedGenerations.get(key)?.generation.id === generation.id) {
         unattachedGenerations.delete(key)
@@ -611,24 +1439,39 @@ export function createWorkflowController({
     const attached = await persist((latest) => {
       if (nodeEpoch(nodeId) !== expectedEpoch) return latest
       const latestNode = findNode(latest, nodeId)
-      if (latestNode.generations.some((item) => item.role === role)) return latest
+      if (
+        latestNode.generations.some(
+          (item) => item.role === role && generationReferenceDirection(item) === direction,
+        )
+      ) {
+        return latest
+      }
       assertNodeCanRun(latest, latestNode)
-      return replaceNode(latest, attachGenerationReference(latestNode, generation.id, role))
+      return replaceNode(
+        latest,
+        attachGenerationReference(latestNode, generation.id, role, direction),
+      )
     })
     const attachedReference = findNode(attached, nodeId).generations.find(
-      (item) => item.role === role,
+      (item) => item.role === role && generationReferenceDirection(item) === direction,
     )
-    if (unattachedGenerations.get(key)?.generation.id === generation.id) {
-      unattachedGenerations.delete(key)
+    const forgetPendingAttachment = () => {
+      if (unattachedGenerations.get(key)?.generation.id === generation.id) {
+        unattachedGenerations.delete(key)
+      }
     }
     if (attachedReference?.taskId !== generation.id) {
+      forgetPendingAttachment()
       return attached
     }
 
     if (generation.status === 'completed' || generation.status === 'failed') {
-      return applyGenerationResult({ nodeId, taskId: generation.id, generation })
+      const settled = await applyGenerationResult({ nodeId, taskId: generation.id, generation })
+      forgetPendingAttachment()
+      return settled
     }
     await watchGeneration(nodeId, generation.id)
+    forgetPendingAttachment()
     return snapshot()
   }
 
@@ -639,20 +1482,31 @@ export function createWorkflowController({
 
     subscriptions.set(key, { nodeId, taskId, stop: () => undefined })
     try {
-      const stop = generationApis.subscribe(requireWorkflow().projectId, taskId, (event) => {
-        if (event.taskId !== taskId || event.status === 'pending' || event.status === 'running') {
-          return
-        }
-        void settleGeneration(nodeId, taskId, event).catch((cause: unknown) => {
-          onAsyncError(asError(cause))
-        })
-      })
+      const run = requireWorkflow()
+      const node = findNode(run, nodeId)
+      const reference = node.generations.find((item) => item.taskId === taskId)
+      const expectation = generationExpectationForNode(run, node, reference?.direction)
+      if (!expectation) throw new Error(`${nodeId} 不是生成节点`)
+      const stop = generationApis.subscribe(
+        run.projectId,
+        taskId,
+        expectation,
+        (event) => {
+          if (event.taskId !== taskId || event.status === 'pending' || event.status === 'running') {
+            return
+          }
+          void settleGeneration(nodeId, taskId, event).catch((cause: unknown) => {
+            onAsyncError(asError(cause))
+          })
+        },
+        (error) => onAsyncError(error),
+      )
       const registered = subscriptions.get(key)
       if (registered) subscriptions.set(key, { ...registered, stop })
       else stop()
 
       // 先订阅再查询，关闭“GET 看到运行中，订阅前任务已结束”的丢事件窗口。
-      const latest = await generationApis.get(requireWorkflow().projectId, taskId)
+      const latest = await generationApis.get(requireWorkflow().projectId, taskId, expectation)
       if (latest.status === 'completed' || latest.status === 'failed') {
         await settleGeneration(nodeId, taskId, latest)
       }
@@ -699,12 +1553,69 @@ export function createWorkflowController({
     return applyGenerationResult({ nodeId, taskId, generation: normalized })
   }
 
-  function applyGenerationResult({
+  async function applyGenerationResult({
     nodeId,
     taskId,
     generation,
   }: ApplyGenerationResultInput): Promise<WorkflowRun> {
     if (interrupted) return Promise.resolve(snapshot())
+    const before = requireWorkflow()
+    const node = findNode(before, nodeId)
+    const reference = node.generations.find((item) => item.taskId === taskId)
+    if (!reference) return snapshot()
+    const expectation = generationExpectationForNode(
+      before,
+      node,
+      generationReferenceDirection(reference),
+    )
+    if (!expectation) return snapshot()
+
+    // 方向是任务契约的一部分。服务端返回了错误方向时不能把它静默挂到当前方向，
+    // 否则四向/八向资产会在导入 Playtest 后出现“名称对得上、画面却错位”的问题。
+    if (
+      generation.status === 'completed' &&
+      generationDirectionOf(generation) !== generationReferenceDirection(reference)
+    ) {
+      return persist((run) => {
+        const currentNode = findNode(run, nodeId)
+        return currentNode.status === 'active'
+          ? failNode(run, currentNode, '生成结果方向与 WorkflowRun 任务方向不一致')
+          : run
+      })
+    }
+
+    const role = reference.role
+    const roleDirections = node.generations
+      .filter((item) => item.role === role)
+      .map((item) => generationReferenceDirection(item))
+    const expectedDirections =
+      node.type === 'character-template' &&
+      !selectedDirectionUrl(node.selectedImages, node.selectedImageUrl, 'east') &&
+      roleDirections.length === 1 &&
+      roleDirections[0] === 'east'
+        ? (['east'] as const)
+        : generationDirections
+    const hasAllExpectedReferences = expectedDirections.every((direction) =>
+      node.generations.some(
+        (item) => item.role === role && generationReferenceDirection(item) === direction,
+      ),
+    )
+
+    // 一个节点现在可能挂着 1/3/5 条任务。结算当前任务时重新读取同节点其余
+    // 任务，只有全部完成才允许节点进入 selecting/completed；刷新恢复也走同一规则。
+    const allGenerations = await Promise.all(
+      node.generations.map((item) =>
+        item.taskId === taskId
+          ? generation
+          : generationApis.get(
+              before.projectId,
+              item.taskId,
+              generationExpectationForNode(before, node, item.direction)!,
+            ),
+      ),
+    )
+    const failed = allGenerations.find((item) => item.status === 'failed')
+    const allCompleted = allGenerations.every((item) => item.status === 'completed')
     return persist((run) => {
       if (generation.id !== taskId || generation.projectId !== run.projectId) return run
       const node = findNode(run, nodeId)
@@ -721,6 +1632,29 @@ export function createWorkflowController({
           error: generation.error?.trim() || '生成任务失败',
         })
       }
+      if (failed) {
+        return replaceNode(run, {
+          ...node,
+          status: 'failed',
+          error: failed.error?.trim() || '方向生成任务失败',
+        })
+      }
+      if (!hasAllExpectedReferences) {
+        return replaceNode(run, { ...node, phase: 'generating', error: null })
+      }
+      if (!allCompleted) return replaceNode(run, { ...node, phase: 'generating', error: null })
+      if (
+        allGenerations.some(
+          (item, index) =>
+            generationDirectionOf(item) !== generationReferenceDirection(node.generations[index]!),
+        )
+      ) {
+        return failNode(run, node, '生成结果方向与 WorkflowRun 任务方向不一致')
+      }
+      const invalidGeneration = allGenerations
+        .map((item) => generationResultError(node, item))
+        .find((message): message is string => message !== null)
+      if (invalidGeneration) return failNode(run, node, invalidGeneration)
       return applyCompletedGeneration(run, node, reference, generation)
     })
   }
@@ -731,43 +1665,16 @@ export function createWorkflowController({
     reference: WorkflowGenerationRef,
     generation: Generation,
   ): WorkflowRun {
-    if (reference.role === 'character_template') {
-      if (
-        node.type !== 'character-template' ||
-        generation.type !== 'character_template' ||
-        generation.result?.type !== 'character_template' ||
-        generation.result.images.length === 0
-      ) {
-        return failNode(run, node, '角色候选图结果格式无效')
-      }
+    const invalid = generationResultError(node, generation)
+    if (invalid) return failNode(run, node, invalid)
+    if (reference.role === 'character_template' && node.type === 'character-template') {
       return replaceNode(run, { ...node, phase: 'selecting', error: null })
     }
-
-    if (reference.role === 'first_frame') {
-      if (
-        node.type !== 'action-first-frame' ||
-        generation.type !== 'first_frame' ||
-        generation.result?.type !== 'first_frame' ||
-        !generation.result.image.url
-      ) {
-        return failNode(run, node, '动作首帧结果格式无效')
-      }
+    if (reference.role === 'first_frame' && node.type === 'action-first-frame') {
       return replaceNode(run, { ...node, phase: 'selecting', error: null })
     }
-
-    if (
-      node.type !== 'action-full-frame' ||
-      generation.type !== 'complete_animation' ||
-      generation.result?.type !== 'complete_animation'
-    ) {
-      return failNode(run, node, '完整动画结果格式无效')
-    }
-    if (generation.result.frames.length !== COMPLETE_ANIMATION_FRAME_COUNT) {
-      return failNode(
-        run,
-        node,
-        `完整动画应为 ${COMPLETE_ANIMATION_FRAME_COUNT} 帧，实际为 ${generation.result.frames.length} 帧`,
-      )
+    if (reference.role !== 'complete_animation' || node.type !== 'action-full-frame') {
+      return failNode(run, node, '生成任务角色不匹配')
     }
     return unlockReadyNodes(
       replaceNode(run, { ...node, status: 'passed', phase: 'completed', error: null }),
@@ -784,8 +1691,9 @@ export function createWorkflowController({
       if (node.deletedAt || node.status !== 'active' || !isGeneratingPhase(node)) return []
       const role = generationRoleForNode(node)
       if (!role) return []
-      const reference = node.generations.find((item) => item.role === role)
-      return reference ? [{ nodeId: node.id, taskId: reference.taskId }] : []
+      return node.generations
+        .filter((item) => item.role === role)
+        .map((reference) => ({ nodeId: node.id, taskId: reference.taskId }))
     })
     await Promise.all(tasks.map((task) => watchGeneration(task.nodeId, task.taskId)))
     return snapshot()
@@ -835,9 +1743,26 @@ export function createWorkflowController({
   }
 
   async function getGeneration(nodeId: WorkflowNode['id'], role: WorkflowGenerationRole) {
+    const generations = await getGenerations(nodeId, role)
+    return (
+      generations.find((generation) => generationDirectionOf(generation) === 'east') ??
+      generations[0] ??
+      null
+    )
+  }
+
+  async function getGenerations(nodeId: WorkflowNode['id'], role: WorkflowGenerationRole) {
     const run = requireWorkflow()
-    const reference = findNode(run, nodeId).generations.find((item) => item.role === role)
-    return reference ? generationApis.get(run.projectId, reference.taskId) : null
+    const node = findNode(run, nodeId)
+    const references = node.generations.filter((item) => item.role === role)
+    return Promise.all(
+      references.map((reference) => {
+        const expectation = generationExpectationForNode(run, node, reference.direction)
+        return expectation
+          ? generationApis.get(run.projectId, reference.taskId, expectation)
+          : Promise.reject(new Error(`${nodeId} 不是生成节点`))
+      }),
+    )
   }
 
   function stopSubscription(key: string) {
@@ -866,13 +1791,18 @@ export function createWorkflowController({
 
   return {
     create: asCommand(create),
+    startCharacterGeneration,
     getWorkflow,
     subscribe,
     setCharacterName: asCommand(setCharacterName),
     addAction: asCommand(addAction),
     generateCharacterTemplate: asCommand(generateCharacterTemplate),
+    regenerateCharacterTemplate: asCommand(regenerateCharacterTemplate),
+    updateCharacterSetup: asCommand(updateCharacterSetup),
+    acceptUploadedCharacterTemplate: asCommand(acceptUploadedCharacterTemplate),
     confirmCharacterTemplate: asCommand(confirmCharacterTemplate),
     generateFirstFrame: asCommand(generateFirstFrame),
+    regenerateFirstFrame: asCommand(regenerateFirstFrame),
     confirmFirstFrame: asCommand(confirmFirstFrame),
     selectActionGenerationMethod: asCommand(selectActionGenerationMethod),
     generateCompleteAnimation: asCommand(generateCompleteAnimation),
@@ -883,8 +1813,30 @@ export function createWorkflowController({
     restartFromNode: asCommand(restartFromNode),
     applyGenerationResult: asCommand(applyGenerationResult),
     getGeneration,
+    getGenerations,
+    retryGenerationDirection: asCommand(retryGenerationDirection),
     dispose,
   }
+}
+
+function hasSamePersistedState(expected: WorkflowRun, actual: WorkflowRun) {
+  return (
+    expected.id === actual.id &&
+    expected.projectId === actual.projectId &&
+    expected.storageStatus === actual.storageStatus &&
+    JSON.stringify(canonicalizeJson(expected.nodes)) ===
+      JSON.stringify(canonicalizeJson(actual.nodes))
+  )
+}
+
+function canonicalizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeJson)
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, canonicalizeJson(item)]),
+  )
 }
 
 function asCommand<TArgs extends unknown[]>(
@@ -1006,6 +1958,59 @@ function generationRoleForNode(node: WorkflowNode): WorkflowGenerationRole | nul
   return null
 }
 
+function generationResultError(node: WorkflowNode, generation: Generation): string | null {
+  if (node.type === 'character-template') {
+    return generation.type === 'character_template' &&
+      generation.result?.type === 'character_template' &&
+      isImageCandidateCount(generation.result.images.length)
+      ? null
+      : '角色候选图结果格式无效'
+  }
+
+  if (node.type === 'action-first-frame') {
+    return generation.type === 'first_frame' &&
+      generation.result?.type === 'first_frame' &&
+      isImageCandidateCount(generation.result.images.length) &&
+      generation.result.images.every((image) => Boolean(image.url))
+      ? null
+      : '动作首帧结果格式无效'
+  }
+
+  if (node.type === 'action-full-frame') {
+    if (
+      generation.type !== 'complete_animation' ||
+      generation.result?.type !== 'complete_animation'
+    ) {
+      return '完整动画结果格式无效'
+    }
+    // 帧数是否合乎该动作类型的约定，由 generation 适配器按任务声明的 num_frames 判；
+    // 这里再写一个数就是第二份约定，各动作帧数不同时它会把合规结果判成失败。
+    return generation.result.frames.length > 0 ? null : '完整动画结果没有帧'
+  }
+
+  return '当前节点不能绑定生成结果'
+}
+
+function generationExpectationForNode(
+  run: WorkflowRun,
+  node: WorkflowNode,
+  direction?: ActionDirection,
+): GenerationExpectation | null {
+  const withDirection = <T extends GenerationExpectation>(expectation: T): T => {
+    return direction === undefined ? expectation : ({ ...expectation, direction } as T)
+  }
+  if (node.type === 'character-template') return withDirection({ type: 'character_template' })
+  if (node.type === 'action-first-frame') {
+    return withDirection({ type: 'first_frame', actionType: node.input.type })
+  }
+  if (node.type === 'action-full-frame') {
+    const methodNode = findSingleDependencyNode(run, node, 'action-generation-method')
+    const firstFrameNode = findSingleDependencyNode(run, methodNode, 'action-first-frame')
+    return withDirection({ type: 'complete_animation', actionType: firstFrameNode.input.type })
+  }
+  return null
+}
+
 function assertGenerationRoleMatchesNode(node: WorkflowNode, role: WorkflowGenerationRole) {
   if (generationRoleForNode(node) !== role) {
     throw new Error(`生成任务 ${role} 不能绑定到 ${node.type} 节点`)
@@ -1016,11 +2021,15 @@ function attachGenerationReference(
   node: WorkflowNode,
   taskId: Generation['id'],
   role: WorkflowGenerationRole,
+  direction: ActionDirection = 'east',
 ): WorkflowNode {
   assertGenerationRoleMatchesNode(node, role)
   const update = {
     phase: 'generating' as const,
-    generations: [...node.generations, { taskId, role }],
+    generations: [
+      ...node.generations,
+      direction === 'east' ? { taskId, role } : { taskId, role, direction },
+    ],
     error: null,
   }
   if (node.type === 'character-template') return { ...node, ...update }
@@ -1095,6 +2104,7 @@ function resetNode(node: WorkflowNode): WorkflowNode {
       generations: [],
       error: null,
       selectedImageUrl: null,
+      selectedImages: undefined,
     }
   }
   if (node.type === 'action-first-frame') {
@@ -1105,6 +2115,7 @@ function resetNode(node: WorkflowNode): WorkflowNode {
       generations: [],
       error: null,
       selectedFirstFrameUrl: null,
+      selectedFirstFrameUrls: undefined,
     }
   }
   if (node.type === 'action-generation-method') {
@@ -1127,10 +2138,69 @@ function subscriptionKey(nodeId: string, taskId: string) {
   return `${nodeId}:${taskId}`
 }
 
+function generationKey(nodeId: string, role: WorkflowGenerationRole, direction: ActionDirection) {
+  return `${nodeId}:${role}:${direction}`
+}
+
+function generationReferenceDirection(reference: WorkflowGenerationRef): ActionDirection {
+  return reference.direction ?? 'east'
+}
+
+function assertGenerationDirection(
+  direction: ActionDirection,
+  generationDirections: readonly ActionDirection[],
+) {
+  if (!generationDirections.includes(direction)) {
+    throw new Error(`方向 ${direction} 是镜像方向，不能单独生成或确认`)
+  }
+}
+
+function generationDirectionOf(generation: Generation): ActionDirection {
+  const result = generation.result
+  return result && 'direction' in result && result.direction !== undefined
+    ? result.direction
+    : 'east'
+}
+
 function nonEmpty(value: string, field: string) {
   const normalized = value.trim()
   if (!normalized) throw new Error(`${field} 不能为空`)
   return normalized
+}
+
+function completeAnimationPrompt(
+  fullFrameNode: ActionFullFrameWorkflowNode,
+  firstFrameNode: ActionFirstFrameWorkflowNode,
+  override: string | undefined,
+) {
+  if (override !== undefined) return nonEmpty(override, '完整动作描述')
+  if (fullFrameNode.input !== undefined) {
+    return nonEmpty(fullFrameNode.input.prompt ?? '', '完整动作描述')
+  }
+  return firstFrameNode.input.prompt?.trim() || firstFrameNode.input.name
+}
+
+function generatedImageReference(value: GeneratedImage['url'] | undefined) {
+  return value === undefined ? undefined : (nonEmpty(value, 'sourceImageUrl') as MediaReference)
+}
+
+function adjustedPrompt(basePrompt: string, options: RegenerateImageOptions) {
+  const base = nonEmpty(basePrompt, 'prompt')
+  if (options.mode === 'regenerate') {
+    if (options.adjustmentPrompt?.trim()) throw new Error('重新生成不能携带微调描述')
+    return base
+  }
+  if (options.mode !== 'refine') throw new Error('不支持的重新生成模式')
+  return `${base}\n${nonEmpty(options.adjustmentPrompt ?? '', 'adjustmentPrompt')}`
+}
+
+function createRegenerationRecoveryError(originalCause: unknown, rollbackCause: unknown) {
+  const original = asError(originalCause)
+  const rollback = asError(rollbackCause)
+  return new WorkflowRunConflictError(
+    `重新生成失败：${original.message}；恢复原有工作流失败：${rollback.message}，请加载最新版本后重试`,
+    { cause: rollback },
+  )
 }
 
 function ensurePositiveInteger(value: number, field: string) {

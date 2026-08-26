@@ -1,6 +1,7 @@
-import type { ActionType } from '../character'
+import type { ActionDirection, ActionType } from '../character'
 import type { Generation } from '../generation'
 import type { MediaReference } from '../media'
+import type { Paged, PageQuery } from '@/shared/pagination'
 import {
   WORKFLOW_GENERATION_ROLES,
   WORKFLOW_NODE_PHASES,
@@ -15,13 +16,18 @@ export type WorkflowNodeStatus = (typeof WORKFLOW_NODE_STATUSES)[number]
 export type WorkflowNodePhase = (typeof WORKFLOW_NODE_PHASES)[number]
 export type WorkflowGenerationRole = (typeof WORKFLOW_GENERATION_ROLES)[number]
 
-/** 动作资产的生产路线；3D 转 2D 接口尚未提供，但选择必须随 WorkflowRun 落库。 */
+/**
+ * 动作资产的生产路线。3D 转 2D（三渲二）只在所选造型已有绑骨 3D 模型时可选——
+ * 判据是 `Outfit.model3dUrl`，没有资产就不提供这个选项。
+ */
 export type ActionGenerationMethod = 'video-cropping' | '3d-to-2d'
 
 /** 一个节点对后端 GenerationTask 的引用；节点可关联零个、一个或多个任务。 */
 export interface WorkflowGenerationRef {
   taskId: Generation['id']
   role: WorkflowGenerationRole
+  /** 源方向任务；旧数据缺省时按 east 解释。镜像方向不会出现任务引用。 */
+  direction?: ActionDirection
 }
 
 interface WorkflowNodeBase {
@@ -46,8 +52,22 @@ interface WorkflowNodeBase {
 export interface WorkflowCharacterInput {
   /** 用户填写或后端提取的最终角色名称；旧数据可以没有该字段。 */
   name?: string | null
+  /**
+   * 当前节点图所属的 Character。后端只原样持久化 nodes，因此前端用它在项目列表中定位角色的唯一 Run。
+   * 旧 Run 可能没有该字段；读取方必须兼容未绑定状态。
+   */
+  characterId?: string | null
   prompt: string
   referenceMedia: readonly MediaReference[]
+}
+
+/** Quick Start 已获一次性授权后需要恢复的自动交付目标；流程状态仍以节点图为准。 */
+export interface WorkflowAutomationIntent {
+  mode: 'automatic'
+  /** 没有动作时只交付角色母版；有动作时继续推进到完整动画。 */
+  actionPrompt: string | null
+  /** Agent 明确认出的行走类位移动作；缺省时沿用 Quick Start 原有推断。 */
+  actionType?: 'walk'
 }
 
 /** 角色资料卡片；只保存用户输入，不承担图片生成。 */
@@ -55,6 +75,9 @@ export interface CharacterSetupWorkflowNode extends WorkflowNodeBase {
   type: 'character-setup'
   phase: 'configuring' | 'completed'
   input: WorkflowCharacterInput
+  automation?: WorkflowAutomationIntent
+  /** Agent 曾判断为明确像素素材意图；旧 Run 缺省时视为 false。 */
+  pixelPerfectSuggested?: boolean
 }
 
 /** 角色母版卡片；生成候选图并保存用户最终确认的母版。 */
@@ -62,6 +85,8 @@ export interface CharacterTemplateWorkflowNode extends WorkflowNodeBase {
   type: 'character-template'
   phase: 'ready' | 'generating' | 'selecting' | 'completed'
   selectedImageUrl: string | null
+  /** 各真实源方向最终确认的母版；selectedImageUrl 保留为 east 兼容字段。 */
+  selectedImages?: Partial<Record<ActionDirection, string>>
 }
 
 export interface WorkflowActionInput {
@@ -78,6 +103,8 @@ export interface ActionFirstFrameWorkflowNode extends WorkflowNodeBase {
   phase: 'configuring' | 'generating' | 'selecting' | 'completed'
   input: WorkflowActionInput
   selectedFirstFrameUrl: string | null
+  /** 各真实源方向最终确认的首帧；selectedFirstFrameUrl 保留为 east 兼容字段。 */
+  selectedFirstFrameUrls?: Partial<Record<ActionDirection, string>>
 }
 
 /** 首帧确认后选择完整动画的生产路线。 */
@@ -91,6 +118,8 @@ export interface ActionGenerationMethodWorkflowNode extends WorkflowNodeBase {
 export interface ActionFullFrameWorkflowNode extends WorkflowNodeBase {
   type: 'action-full-frame'
   phase: 'ready' | 'generating' | 'completed'
+  /** 完整动画自己的动作过程描述；旧 Run 没有该字段。 */
+  input?: { prompt: string | null }
 }
 
 /** 只负责核验完整动画；审核通过不等于下载或导出。 */
@@ -115,7 +144,7 @@ export type WorkflowNode =
 export interface WorkflowRun {
   id: string
   projectId: string
-  /** 后端乐观版本号，每次 PATCH 后使用响应中的新值。 */
+  /** 后端乐观锁版本；更新时原样回传，保存成功后使用响应中的新版本。 */
   version: number
   /** 后端资源状态，仅表示正常或软删除。 */
   storageStatus: WorkflowRunStorageStatus
@@ -130,9 +159,11 @@ export interface CreateWorkflowRunInput {
 
 export interface WorkflowRunApis {
   create(input: CreateWorkflowRunInput): Promise<WorkflowRun>
+  /** 后端只返回未软删除的运行记录。 */
+  listByProject?(projectId: string, query?: PageQuery): Promise<Paged<WorkflowRun>>
   get(id: WorkflowRun['id']): Promise<WorkflowRun>
   update(run: WorkflowRun): Promise<WorkflowRun>
   remove(id: WorkflowRun['id']): Promise<void>
 }
 
-export { workflowRunApis } from './api'
+export { WorkflowRunConflictError, workflowRunApis } from './api'

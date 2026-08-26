@@ -1,15 +1,45 @@
 """角色 CRUD API 集成测试。"""
 
+from types import SimpleNamespace
 
-def _create_project(auth_client, name: str = "默认项目") -> dict:
+import pytest
+
+from windup_app.server.character import cleanup as character_cleanup
+from windup_app.web.api import character as character_api
+from windup_app.server.character.model import Character
+from windup_app.server.character.service import service as character_service
+from windup_common.enums.character import CharacterStatus
+
+
+class _FakeNamer:
+    def name_from_description(self, description: str) -> str:
+        return f"名:{description}"[:20]
+
+
+@pytest.fixture(autouse=True)
+def _inject_fake_character_namer():
+    original = character_service._namer
+    character_service._namer = _FakeNamer()
+    try:
+        yield
+    finally:
+        character_service._namer = original
+
+
+def _create_project(
+    auth_client, name: str = "默认项目", directional_movement: int = 1
+) -> dict:
     """创建一个项目并返回响应 data。"""
-    return auth_client.post("/projects", json={
-        "project_name": name,
-        "character_perspective": 1,
-        "directional_movement": 2,
-        "sprite_width": 64,
-        "sprite_height": 64,
-    }).json()["data"]
+    return auth_client.post(
+        "/projects",
+        json={
+            "project_name": name,
+            "character_perspective": 1,
+            "directional_movement": directional_movement,
+            "sprite_width": 64,
+            "sprite_height": 64,
+        },
+    ).json()["data"]
 
 
 def _payload(project_id: int, **overrides):
@@ -24,7 +54,294 @@ def _payload(project_id: int, **overrides):
     return base
 
 
+def _payload_with_frames(project_id: int, **overrides):
+    """构造包含真实帧的创建角色请求体。"""
+    base = {
+        "project_id": project_id,
+        "workflow_run_id": 1,
+        "name": "有帧角色",
+        "description": "包含真实帧",
+        "character_data": {
+            "outfits": [
+                {
+                    "id": "outfit-1",
+                    "name": "默认造型",
+                    "actions": [
+                        {
+                            "id": "action-1",
+                            "type": "idle",
+                            "name": "待机",
+                            "frame_count": 1,
+                            "frames": [
+                                {
+                                    "index": 0,
+                                    "image_url": "https://example.com/frame.png",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+    base.update(overrides)
+    return base
+
+
+def _directional_data(directions: list[str]) -> dict:
+    def frame(direction: str) -> dict:
+        return {
+            "index": 0,
+            "image_url": f"https://example.com/{direction}-0.png",
+        }
+
+    return {
+        "version": 2,
+        "templates": [
+            {
+                "direction": direction,
+                "source_direction": None,
+                "mirror_x": False,
+                "image_url": f"https://example.com/{direction}.png",
+            }
+            for direction in directions
+        ],
+        "outfits": [
+            {
+                "id": "outfit-1",
+                "name": "默认造型",
+                "actions": [
+                    {
+                        "id": "idle",
+                        "type": "idle",
+                        "name": "待机",
+                        "frame_count": 1,
+                        "frames": [frame("east")],
+                        "sequences": [
+                            {
+                                "direction": direction,
+                                "source_direction": None,
+                                "mirror_x": False,
+                                "frame_count": 1,
+                                "frames": [frame(direction)],
+                            }
+                            for direction in directions
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def test_character_model_defaults_to_draft(db_session):
+    """非 API 写入也不得把尚无真实动作帧的角色默认为已发布。"""
+    from conftest import insert_project
+
+    project = insert_project(db_session)
+    character = Character(project_id=project.id, workflow_run_id=999, character_data={})
+    db_session.add(character)
+    db_session.flush()
+
+    assert character.status == CharacterStatus.DRAFT
+
+
+def test_extract_object_keys_includes_directional_action_frames(monkeypatch):
+    """删除角色时只清理真实方向帧，不为镜像方向重复清理。"""
+    monkeypatch.setattr(
+        character_cleanup,
+        "storage_settings",
+        SimpleNamespace(download_base="https://assets.example.com"),
+    )
+    character = Character(
+        project_id=1,
+        workflow_run_id=1,
+        reference_image_url="https://assets.example.com/characters/reference.png",
+        character_data={
+            "templates": [
+                {
+                    "direction": "east",
+                    "source_direction": None,
+                    "mirror_x": False,
+                    "image_url": "https://assets.example.com/characters/reference.png",
+                },
+                {
+                    "direction": "west",
+                    "source_direction": "east",
+                    "mirror_x": True,
+                    "image_url": None,
+                },
+                {
+                    "direction": "north",
+                    "source_direction": None,
+                    "mirror_x": False,
+                    "image_url": "https://assets.example.com/characters/north.png",
+                },
+            ],
+            "outfits": [
+                {
+                    "preview_url": "https://assets.example.com/outfits/preview.png",
+                    "actions": [
+                        {
+                            "frames": [
+                                {
+                                    "image_url": "https://assets.example.com/actions/legacy.png",
+                                }
+                            ],
+                            "sequences": [
+                                {
+                                    "direction": "north",
+                                    "source_direction": None,
+                                    "mirror_x": False,
+                                    "frames": [
+                                        {
+                                            "image_url": "https://assets.example.com/actions/north.png",
+                                        }
+                                    ],
+                                },
+                                {
+                                    "direction": "west",
+                                    "source_direction": "east",
+                                    "mirror_x": True,
+                                    "frames": [],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    assert character_api._extract_object_keys(character) == [
+        "characters/reference.png",
+        "characters/north.png",
+        "outfits/preview.png",
+        "actions/legacy.png",
+        "actions/north.png",
+    ]
+
+
 # -- POST /characters --------------------------------------------------------
+
+
+def test_directional_character_templates_roundtrip(auth_client):
+    project = _create_project(auth_client)
+    templates = [
+        {
+            "direction": "east",
+            "source_direction": None,
+            "mirror_x": False,
+            "image_url": "https://example.com/template-east.png",
+        },
+        {
+            "direction": "west",
+            "source_direction": "east",
+            "mirror_x": True,
+            "image_url": None,
+        },
+        {
+            "direction": "north",
+            "source_direction": None,
+            "mirror_x": False,
+            "image_url": "https://example.com/template-north.png",
+        },
+    ]
+    payload = _payload(
+        project["id"],
+        reference_image_url="https://example.com/template-east.png",
+        character_data={"templates": templates, "outfits": []},
+    )
+
+    created = auth_client.post("/characters", json=payload).json()["data"]
+    fetched = auth_client.get(f"/characters/{created['id']}").json()["data"]
+
+    assert fetched["character_data"]["templates"] == templates
+
+
+@pytest.mark.parametrize(
+    "templates",
+    [
+        [
+            {
+                "direction": "east",
+                "source_direction": None,
+                "mirror_x": True,
+                "image_url": "https://example.com/template-east.png",
+            }
+        ],
+        [
+            {
+                "direction": "east",
+                "source_direction": None,
+                "mirror_x": False,
+                "image_url": " ",
+            }
+        ],
+        [
+            {
+                "direction": "west",
+                "source_direction": "east",
+                "mirror_x": False,
+                "image_url": None,
+            }
+        ],
+        [
+            {
+                "direction": "east",
+                "source_direction": None,
+                "mirror_x": False,
+                "image_url": "https://example.com/template-east.png",
+            },
+            {
+                "direction": "west",
+                "source_direction": "east",
+                "mirror_x": True,
+                "image_url": "https://example.com/template-west.png",
+            },
+        ],
+        [
+            {
+                "direction": "east",
+                "source_direction": None,
+                "mirror_x": False,
+                "image_url": "https://example.com/template-east.png",
+            },
+            {
+                "direction": "east",
+                "source_direction": None,
+                "mirror_x": False,
+                "image_url": "https://example.com/template-east-2.png",
+            },
+        ],
+        [
+            {
+                "direction": "west",
+                "source_direction": "east",
+                "mirror_x": True,
+                "image_url": None,
+            }
+        ],
+    ],
+    ids=[
+        "source-mirror-flags",
+        "source-empty-image",
+        "mirror-flags",
+        "mirror-image",
+        "duplicate",
+        "missing-source",
+    ],
+)
+def test_rejects_invalid_directional_character_templates(auth_client, templates):
+    project = _create_project(auth_client)
+    payload = _payload(
+        project["id"],
+        character_data={"templates": templates, "outfits": []},
+    )
+
+    response = auth_client.post("/characters", json=payload).json()
+
+    assert response["code"] == 400
 
 
 def test_create_with_name(auth_client):
@@ -39,23 +356,239 @@ def test_create_with_name(auth_client):
     assert body["data"]["project_id"] == project["id"]
 
 
+def test_directional_only_action_is_published_and_roundtrips(auth_client):
+    project = _create_project(auth_client)
+    payload = _payload(
+        project["id"],
+        character_data={
+            "outfits": [
+                {
+                    "id": "outfit-1",
+                    "name": "四向造型",
+                    "actions": [
+                        {
+                            "id": "walk-1",
+                            "type": "walk",
+                            "name": "四向行走",
+                            "frame_count": 0,
+                            "frames": [],
+                            "sequences": [
+                                {
+                                    "direction": "east",
+                                    "source_direction": None,
+                                    "mirror_x": False,
+                                    "frame_count": 1,
+                                    "frames": [
+                                        {
+                                            "index": 0,
+                                            "image_url": "https://example.com/walk-east.png",
+                                        }
+                                    ],
+                                },
+                                {
+                                    "direction": "west",
+                                    "source_direction": "east",
+                                    "mirror_x": True,
+                                    "frame_count": 1,
+                                    "frames": [],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    created = auth_client.post("/characters", json=payload).json()["data"]
+    fetched = auth_client.get(f"/characters/{created['id']}").json()["data"]
+
+    assert created["status"] == CharacterStatus.PUBLISHED
+    assert fetched["character_data"]["outfits"][0]["actions"][0]["sequences"] == [
+        {
+            "direction": "east",
+            "source_direction": None,
+            "mirror_x": False,
+            "frame_count": 1,
+            "frames": [
+                {
+                    "index": 0,
+                    "image_url": "https://example.com/walk-east.png",
+                    "duration_ms": None,
+                }
+            ],
+        },
+        {
+            "direction": "west",
+            "source_direction": "east",
+            "mirror_x": True,
+            "frame_count": 1,
+            "frames": [],
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    "sequences",
+    [
+        [
+            {
+                "direction": "east",
+                "source_direction": None,
+                "mirror_x": False,
+                "frame_count": 1,
+                "frames": [{"index": 0, "image_url": "https://example.com/east.png"}],
+            },
+            {
+                "direction": "east",
+                "source_direction": None,
+                "mirror_x": False,
+                "frame_count": 1,
+                "frames": [{"index": 0, "image_url": "https://example.com/east-2.png"}],
+            },
+        ],
+        [
+            {
+                "direction": "south",
+                "source_direction": None,
+                "mirror_x": False,
+                "frame_count": 1,
+                "frames": [{"index": 0, "image_url": "https://example.com/south.png"}],
+            },
+                {
+                    "direction": "north",
+                    "source_direction": "north",
+                    "mirror_x": True,
+                "frame_count": 1,
+                "frames": [],
+            },
+        ],
+        [
+            {
+                "direction": "west",
+                "source_direction": "east",
+                "mirror_x": True,
+                "frame_count": 1,
+                "frames": [],
+            },
+        ],
+        [
+            {
+                "direction": "east",
+                "source_direction": None,
+                "mirror_x": False,
+                "frame_count": 1,
+                "frames": [{"index": 0, "image_url": "https://example.com/east.png"}],
+            },
+            {
+                "direction": "west",
+                "source_direction": "east",
+                "mirror_x": True,
+                "frame_count": 1,
+                "frames": [{"index": 0, "image_url": "https://example.com/west.png"}],
+            },
+        ],
+        [
+            {
+                "direction": "east",
+                "source_direction": None,
+                "mirror_x": False,
+                "frame_count": 2,
+                "frames": [{"index": 0, "image_url": "https://example.com/east.png"}],
+            },
+        ],
+        [
+            {
+                "direction": "east",
+                "source_direction": None,
+                "mirror_x": False,
+                "frame_count": 1,
+                "frames": [{"index": 1, "image_url": "https://example.com/east.png"}],
+            },
+        ],
+        [
+            {
+                "direction": "west",
+                "source_direction": "east",
+                "mirror_x": False,
+                "frame_count": 1,
+                "frames": [],
+            },
+        ],
+        [
+            {
+                "direction": "east",
+                "source_direction": None,
+                "mirror_x": False,
+                "frame_count": 1,
+                "frames": [{"index": 0, "image_url": "https://example.com/east.png"}],
+            },
+            {
+                "direction": "west",
+                "source_direction": "east",
+                "mirror_x": True,
+                "frame_count": 2,
+                "frames": [],
+            },
+        ],
+    ],
+    ids=[
+        "duplicate",
+        "self-source",
+        "missing-source",
+        "derived-frames",
+        "source-frame-count",
+        "source-frame-index",
+        "mirror-flags",
+        "mirror-frame-count",
+    ],
+)
+def test_rejects_invalid_directional_sequence_relations(auth_client, sequences):
+    project = _create_project(auth_client)
+    payload = _payload_with_frames(project["id"])
+    action = payload["character_data"]["outfits"][0]["actions"][0]
+    action["frames"] = []
+    action["frame_count"] = 0
+    action["sequences"] = sequences
+
+    response = auth_client.post("/characters", json=payload).json()
+
+    assert response["code"] == 400
+
+
 def test_create_without_name(auth_client):
     project = _create_project(auth_client)
     resp = auth_client.post("/characters", json=_payload(project["id"], name=None))
 
     assert resp.json()["code"] == 200
-    assert resp.json()["data"]["name"] is None
+    assert resp.json()["data"]["name"] == "名:主角"
 
 
 def test_create_name_roundtrip(auth_client):
     """名称持久化后可通过 GET 读回。"""
     project = _create_project(auth_client)
     created = auth_client.post(
-        "/characters", json=_payload(project["id"], name="小精灵"),
+        "/characters",
+        json=_payload(project["id"], name="小精灵"),
     ).json()["data"]
 
     resp = auth_client.get(f"/characters/{created['id']}")
     assert resp.json()["data"]["name"] == "小精灵"
+
+
+def test_create_same_workflow_run_returns_existing_character(auth_client):
+    project = _create_project(auth_client)
+    payload = _payload(project["id"], workflow_run_id=42)
+
+    first = auth_client.post("/characters", json=payload).json()
+    second = auth_client.post("/characters", json=payload).json()
+    listed = auth_client.get("/characters", params={"project_id": project["id"]}).json()
+
+    assert first["code"] == 200
+    assert second["code"] == 200
+    assert second["data"]["id"] == first["data"]["id"]
+    assert listed["total"] == 1
+    assert [character["id"] for character in listed["data"]] == [first["data"]["id"]]
 
 
 # -- 跨用户权限校验 -------------------------------------------------------------
@@ -68,6 +601,27 @@ def test_create_under_other_users_project_returns_404(auth_client, auth_client_b
 
     assert resp.json()["code"] == 404
     assert resp.json()["message"] == "项目不存在"
+
+
+def test_create_same_workflow_run_under_another_project_returns_404(
+    auth_client,
+    auth_client_b,
+):
+    project_a = _create_project(auth_client, "用户 A 项目")
+    project_b = _create_project(auth_client_b, "用户 B 项目")
+    created = auth_client.post(
+        "/characters",
+        json=_payload(project_a["id"], workflow_run_id=42),
+    ).json()["data"]
+
+    resp = auth_client_b.post(
+        "/characters",
+        json=_payload(project_b["id"], workflow_run_id=42),
+    )
+
+    assert resp.json()["code"] == 404
+    assert resp.json()["data"] is None
+    assert auth_client.get(f"/characters/{created['id']}").json()["code"] == 200
 
 
 def test_list_other_users_project_characters_returns_404(auth_client, auth_client_b):
@@ -85,7 +639,8 @@ def test_get_other_users_character_returns_404(auth_client, auth_client_b):
     """用户 B 不能查看用户 A 的角色。"""
     project = _create_project(auth_client)
     created = auth_client.post(
-        "/characters", json=_payload(project["id"]),
+        "/characters",
+        json=_payload(project["id"]),
     ).json()["data"]
 
     resp = auth_client_b.get(f"/characters/{created['id']}")
@@ -98,11 +653,13 @@ def test_update_other_users_character_returns_404(auth_client, auth_client_b):
     """用户 B 不能修改用户 A 的角色。"""
     project = _create_project(auth_client)
     created = auth_client.post(
-        "/characters", json=_payload(project["id"]),
+        "/characters",
+        json=_payload(project["id"]),
     ).json()["data"]
 
     resp = auth_client_b.patch(
-        f"/characters/{created['id']}", json={"name": "黑化"},
+        f"/characters/{created['id']}",
+        json={"name": "黑化"},
     )
 
     assert resp.json()["code"] == 404
@@ -113,10 +670,361 @@ def test_delete_other_users_character_returns_404(auth_client, auth_client_b):
     """用户 B 不能删除用户 A 的角色。"""
     project = _create_project(auth_client)
     created = auth_client.post(
-        "/characters", json=_payload(project["id"]),
+        "/characters",
+        json=_payload(project["id"]),
     ).json()["data"]
 
     resp = auth_client_b.delete(f"/characters/{created['id']}")
 
     assert resp.json()["code"] == 404
     assert resp.json()["message"] == "角色不存在"
+
+
+# -- 角色发布状态过滤 ---------------------------------------------------------
+
+
+def test_create_character_without_frames_is_draft(auth_client):
+    """没有真实帧的角色应自动标记为草稿(status=0)。"""
+    project = _create_project(auth_client)
+    resp = auth_client.post("/characters", json=_payload(project["id"]))
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["status"] == 0
+
+
+def test_create_character_with_frames_is_published(auth_client):
+    """包含真实帧的角色应自动标记为已发布(status=1)。"""
+    project = _create_project(auth_client)
+    resp = auth_client.post("/characters", json=_payload_with_frames(project["id"]))
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["status"] == 1
+
+
+def test_list_characters_filter_by_status(auth_client):
+    """按 status 过滤角色列表。"""
+    project = _create_project(auth_client)
+    # 创建草稿角色
+    auth_client.post("/characters", json=_payload(project["id"], workflow_run_id=1))
+    # 创建已发布角色
+    auth_client.post(
+        "/characters", json=_payload_with_frames(project["id"], workflow_run_id=2)
+    )
+
+    # 查询已发布角色
+    resp = auth_client.get(
+        "/characters", params={"project_id": project["id"], "status": 1}
+    )
+    data = resp.json()
+    assert data["code"] == 200
+    assert data["total"] == 1
+    assert len(data["data"]) == 1
+    assert data["data"][0]["status"] == 1
+
+    # 查询草稿角色
+    resp = auth_client.get(
+        "/characters", params={"project_id": project["id"], "status": 0}
+    )
+    data = resp.json()
+    assert data["code"] == 200
+    assert data["total"] == 1
+    assert len(data["data"]) == 1
+    assert data["data"][0]["status"] == 0
+
+
+def test_list_characters_without_status_returns_all(auth_client):
+    """不传 status 参数时返回所有角色。"""
+    project = _create_project(auth_client)
+    auth_client.post("/characters", json=_payload(project["id"], workflow_run_id=1))
+    auth_client.post(
+        "/characters", json=_payload_with_frames(project["id"], workflow_run_id=2)
+    )
+
+    resp = auth_client.get("/characters", params={"project_id": project["id"]})
+    data = resp.json()
+    assert data["code"] == 200
+    assert data["total"] == 2
+    assert len(data["data"]) == 2
+
+
+def test_list_character_summaries_omits_asset_tree(auth_client):
+    project = _create_project(auth_client)
+    auth_client.post(
+        "/characters",
+        json=_payload_with_frames(
+            project["id"],
+            workflow_run_id=12,
+            character_data={
+                "version": 1,
+                "outfits": [
+                    {
+                        "id": "outfit-1",
+                        "name": "常态",
+                        "preview_url": "https://example.com/preview.png",
+                        "actions": [
+                            {
+                                "id": "idle",
+                                "type": "idle",
+                                "name": "待机",
+                                "frame_count": 1,
+                                "frames": [
+                                    {
+                                        "index": 0,
+                                        "image_url": "https://example.com/private-frame.png",
+                                    }
+                                ],
+                            },
+                            {
+                                "id": "walk",
+                                "type": "walk",
+                                "name": "行走",
+                                "frame_count": 1,
+                                "frames": [
+                                    {
+                                        "index": 0,
+                                        "image_url": "https://example.com/private-walk.png",
+                                    }
+                                ],
+                            },
+                        ],
+                    }
+                ],
+            },
+        ),
+    )
+
+    body = auth_client.get(
+        "/characters/summaries",
+        params={"project_id": project["id"], "status": 1},
+    ).json()
+
+    assert body["code"] == 200
+    assert body["total"] == 1
+    assert body["data"] == [
+        {
+            "id": body["data"][0]["id"],
+            "project_id": project["id"],
+            "name": "有帧角色",
+            "status": 1,
+            "preview_url": "https://example.com/preview.png",
+            "outfit_name": "常态",
+            "outfit_count": 1,
+            "action_count": 2,
+        }
+    ]
+    assert "character_data" not in body["data"][0]
+    assert "private-frame.png" not in str(body)
+
+
+def test_list_character_summaries_preserves_project_ownership(
+    auth_client, auth_client_b
+):
+    project = _create_project(auth_client)
+
+    body = auth_client_b.get(
+        "/characters/summaries", params={"project_id": project["id"]}
+    ).json()
+
+    assert body["code"] == 404
+    assert body["message"] == "项目不存在"
+
+
+def test_update_character_data_recalculates_status(auth_client):
+    """更新 character_data 后应自动重新计算 status。"""
+    project = _create_project(auth_client)
+    created = auth_client.post(
+        "/characters",
+        json=_payload(project["id"]),
+    ).json()["data"]
+
+    # 初始为草稿
+    assert created["status"] == 0
+
+    # 更新为包含帧的数据
+    resp = auth_client.patch(
+        f"/characters/{created['id']}",
+        json={
+            "character_data": {
+                "outfits": [
+                    {
+                        "id": "outfit-1",
+                        "name": "默认造型",
+                        "actions": [
+                            {
+                                "id": "action-1",
+                                "type": "idle",
+                                "name": "待机",
+                                "frame_count": 1,
+                                "frames": [
+                                    {
+                                        "index": 0,
+                                        "image_url": "https://example.com/frame.png",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["status"] == 1
+
+
+@pytest.mark.parametrize("movement", [2, 3])
+def test_create_rejects_published_version_one_asset_in_multi_direction_project(
+    auth_client, movement
+):
+    project = _create_project(
+        auth_client,
+        name=f"旧版创建项目-{movement}",
+        directional_movement=movement,
+    )
+    character_data = _payload_with_frames(project["id"])["character_data"]
+    character_data["version"] = 1
+
+    body = auth_client.post(
+        "/characters",
+        json=_payload(project["id"], character_data=character_data),
+    ).json()
+
+    assert body["code"] == 400
+    assert "旧版镜像资产" in body["message"]
+
+
+@pytest.mark.parametrize("movement", [2, 3])
+def test_update_rejects_published_version_one_asset_in_multi_direction_project(
+    auth_client, movement
+):
+    project = _create_project(
+        auth_client,
+        name=f"旧版更新项目-{movement}",
+        directional_movement=movement,
+    )
+    created = auth_client.post(
+        "/characters",
+        json=_payload(project["id"]),
+    ).json()["data"]
+    character_data = _payload_with_frames(project["id"])["character_data"]
+    character_data["version"] = 1
+
+    body = auth_client.patch(
+        f"/characters/{created['id']}",
+        json={"character_data": character_data},
+    ).json()
+
+    assert body["code"] == 400
+    assert "旧版镜像资产" in body["message"]
+
+
+@pytest.mark.parametrize(
+    ("movement", "directions", "missing"),
+    [
+        (2, ["east", "north", "south"], "west"),
+        (
+            3,
+            ["east", "west", "north", "south", "north_east", "south_east"],
+            "north_west",
+        ),
+    ],
+)
+def test_update_rejects_published_version_two_assets_with_missing_real_directions(
+    auth_client, movement, directions, missing
+):
+    project = _create_project(
+        auth_client,
+        name=f"缺方向项目-{movement}",
+        directional_movement=movement,
+    )
+    created = auth_client.post(
+        "/characters",
+        json=_payload(project["id"]),
+    ).json()["data"]
+
+    body = auth_client.patch(
+        f"/characters/{created['id']}",
+        json={"character_data": _directional_data(directions)},
+    ).json()
+
+    assert body["code"] == 400
+    assert missing in body["message"]
+
+
+@pytest.mark.parametrize(
+    ("movement", "directions"),
+    [
+        (2, ["east", "west", "north", "south"]),
+        (
+            3,
+            [
+                "east",
+                "west",
+                "north",
+                "south",
+                "north_east",
+                "north_west",
+                "south_east",
+                "south_west",
+            ],
+        ),
+    ],
+)
+def test_update_accepts_complete_version_two_multi_direction_assets(
+    auth_client, movement, directions
+):
+    project = _create_project(
+        auth_client,
+        name=f"完整多向项目-{movement}",
+        directional_movement=movement,
+    )
+    created = auth_client.post(
+        "/characters",
+        json=_payload(project["id"]),
+    ).json()["data"]
+
+    response = auth_client.patch(
+        f"/characters/{created['id']}",
+        json={
+            "character_data": _directional_data(directions)
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == 1
+
+
+def test_create_rejects_incomplete_published_version_two_asset(auth_client):
+    project = _create_project(
+        auth_client,
+        name="创建缺方向项目",
+        directional_movement=2,
+    )
+
+    body = auth_client.post(
+        "/characters",
+        json=_payload(
+            project["id"],
+            character_data=_directional_data(["east", "north", "south"]),
+        ),
+    ).json()
+
+    assert body["code"] == 400
+    assert "west" in body["message"]
+
+
+def test_update_character_with_null_character_data(auth_client):
+    """更新 character_data 为 null 时应返回 400 错误。"""
+    project = _create_project(auth_client)
+    created = auth_client.post(
+        "/characters",
+        json=_payload_with_frames(project["id"]),
+    ).json()["data"]
+
+    # 更新 character_data 为 null
+    resp = auth_client.patch(
+        f"/characters/{created['id']}",
+        json={"character_data": None},
+    )
+    assert resp.json()["code"] == 400
+    assert resp.json()["message"] == "character_data 不能为 null"

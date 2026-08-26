@@ -1,10 +1,12 @@
 """Postgres 数据库连接配置。
 
 从环境变量(或 ``.env``)读取,字段前缀 ``POSTGRES_``。
-本地开发默认值对应 Docker 容器 root/admin123@localhost:4000。
+
+``password`` 为必填项,无代码默认值 — 缺失时 Pydantic 在实例化阶段直接抛出
+``ValidationError``。本地开发请在 ``.env`` 或 ``.env.dev`` 中显式配置。
 """
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -23,11 +25,21 @@ class DatabaseSettings(BaseSettings):
     host: str = "localhost"
     port: int = 4000
     user: str = "root"
-    password: str = "admin123"
+    password: str = Field(...)          # 必填,无默认值
     db: str = Field(default="windup")
     pool_size: int = 5
     max_overflow: int = 10
     pool_pre_ping: bool = True
+
+    @field_validator("password")
+    @classmethod
+    def _check_password_not_trivial(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError(
+                "POSTGRES_PASSWORD 长度不足 8 字符。"
+                "请使用强密码以保障数据库安全。"
+            )
+        return v
 
     @property
     def url(self) -> str:

@@ -15,6 +15,16 @@ from sqlalchemy.orm import Session
 from windup_app.server.project.model import Project
 
 
+class UnsetType:
+    """「这个字段没出现在请求里」——与「显式传了 null」区分开。"""
+
+    def __repr__(self) -> str:
+        return "UNSET"
+
+
+UNSET = UnsetType()
+
+
 class ProjectService(ABC):
     """项目 CRUD 用例的抽象边界。"""
 
@@ -27,18 +37,47 @@ class ProjectService(ABC):
         """
 
     @abstractmethod
-    def project_name_exists(self, session: Session, *, user_id: int, project_name: str) -> bool:
+    def project_name_exists(
+        self, session: Session, *, user_id: int, project_name: str
+    ) -> bool:
         """判断用户下的项目名称是否已存在。"""
 
     @abstractmethod
-    def get_project(self, session: Session, project_id: int) -> Project | None:
-        """按 ID 查询项目。"""
+    def get_project(
+        self, session: Session, project_id: int, *, for_update: bool = False
+    ) -> Project | None:
+        """按 ID 查询项目。
+
+        ``for_update`` 为真时对项目行加 ``SELECT ... FOR UPDATE``，供角色创建与
+        项目删除互斥，避免检查与写入之间插入角色。
+        """
 
     @abstractmethod
     def list_projects(
         self, session: Session, *, page: int, page_size: int, user_id: int | None = None
     ) -> tuple[list[Project], int]:
         """分页查询项目,返回 (当前页数据, 总数)。"""
+
+    @abstractmethod
+    def list_project_previews(
+        self, session: Session, project_ids: list[int], *, character_limit: int
+    ) -> dict[int, str | None]:
+        """一次查询当前页项目的资产预览，结果包含所有传入项目 ID。"""
+
+    @abstractmethod
+    def update_project(
+        self,
+        session: Session,
+        project: Project,
+        *,
+        project_name: str | None = None,
+        game_style: str | None | UnsetType = UNSET,
+    ) -> Project:
+        """改已完成归属校验的项目。
+
+        ``game_style`` 用哨兵而不是 ``None`` 区分「没传」与「显式清空」:画风的
+        「不指定」落库就是 NULL,拿 None 当「不动」会让它永远清不掉。
+        """
 
     @abstractmethod
     def delete_project(self, session: Session, project_id: int) -> bool:

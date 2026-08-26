@@ -7,41 +7,6 @@
 #   重新构建: docker compose up -d --build
 
 services:
-  # ── Redis 缓存（验证码 / refresh_token） ──
-  redis:
-    image: redis:7-alpine
-    container_name: windup-redis
-    restart: unless-stopped
-    volumes:
-      - ${REDIS_DATA_DIR:-./data/redis}:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - windup-net
-
-  # ── PostgreSQL 数据库 ──
-  postgres:
-    image: postgres:16-alpine
-    container_name: windup-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-root}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-W1ndup@2026!Secure}
-      POSTGRES_DB: ${POSTGRES_DB:-windup}
-    ports:
-      - "${POSTGRES_EXTERNAL_PORT:-7856}:5432"
-    volumes:
-      - ${POSTGRES_DATA_DIR:-./data/postgres}:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-root} -d ${POSTGRES_DB:-windup}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - windup-net
 
   # ── 后端 API 服务 ──
   backend:
@@ -50,20 +15,29 @@ services:
       dockerfile: Dockerfile
     container_name: windup-backend
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     env_file:
       - .env
-    environment:
-      # 容器内部通信用 Docker 主机名，覆盖 .env 中的本地开发值
-      REDIS_URL: redis://redis:6379/0
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
     ports:
       - "${WINDUP_PORT:-8000}:8000"
+    networks:
+      - windup-net
+
+  # ── Worker（MQ 消费：邮件 + 生成调度） ──
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      # 出帧依赖只装进 worker：backend 不出帧，不该背 700MB 量级的浏览器
+      target: runtime-render3d
+    container_name: windup-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: ["python", "-m", "windup_app.worker"]
+    healthcheck:
+      disable: true
+    # 4C8G:挡住 worker 把 sshd 一起 OOM。更大机器可调高。见 #690。
+    mem_limit: 5g
     networks:
       - windup-net
 

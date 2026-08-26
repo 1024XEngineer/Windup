@@ -44,4 +44,7 @@ forbidden_modules = ["windup_ai_engine"]
 
 # ── pytest 配置 ─────────────────────────────────────────────────────
 [tool.pytest.ini_options]
+markers = [
+    "slow: 要真实产物或浏览器,缺件时显式 skip",
+]
 addopts = "--cov=packages --cov-report=term-missing"

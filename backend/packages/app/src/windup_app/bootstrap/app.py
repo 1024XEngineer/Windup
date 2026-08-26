@@ -7,32 +7,65 @@
 ``main`` 是开发启动入口:``python -m windup_app`` 或 ``windup`` 命令。
 """
 
+import logging
 import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from windup_framework.db import Base, engine
+from windup_framework.gateway.models import AIGatewayAttempt, AIGatewayAttemptDetail  # noqa: F401
 
 # 模型导入：触发 Base.metadata 注册，确保 create_all 能发现所有表
+from windup_ai_engine.impl.character_namer import LangChainCharacterNamer
+from windup_ai_engine.impl.project_namer import LangChainProjectNamer
 from windup_app.server.character.model import Character  # noqa: F401
+from windup_app.server.character.service import service as character_service
 from windup_app.server.project.model import Project  # noqa: F401
+from windup_app.server.project.service import service as project_service
+from windup_app.server.quota.model import CreditAccount, CreditTransaction, InviteCode, InviteRecord  # noqa: F401
 from windup_app.server.user.model import User  # noqa: F401
 from windup_app.server.workflow_run.model import WorkflowRun  # noqa: F401
+from windup_app.server.action_preset import ACTION_PRESETS
+from windup_app.web.api.action_preset import router as action_preset_router
+from windup_app.web.api.agent import router as agent_router
+from windup_framework.mq.model import MqMessage  # noqa: F401
 from windup_app.web.api.auth import router as auth_router
 from windup_app.web.api.character import router as character_router
+from windup_app.server.orchestrator import task_repo
+from windup_app.server.orchestrator.render3d_service import default_operations, precheck_master
 from windup_app.web.api.generation import router as generation_router
 from windup_app.web.api.media import router as media_router
+from windup_app.web.api.pixel_perfect import router as pixel_perfect_router
 from windup_app.web.api.project import router as project_router
+from windup_app.web.api.quota import router as quota_router
+from windup_app.web.api.render3d import router as render3d_router
 from windup_app.web.api.workflow_run import router as workflow_run_router
 from windup_app.web.handler.exception_handlers import register_exception_handlers
 from windup_app.web.middleware.auth import AuthMiddleware
-from windup_app.web.middleware.ratelimit import RateLimitMiddleware
+from windup_framework.mq.publisher import MqPublisher
+from windup_framework.mq.relay import relay_pending_messages
+from windup_framework.providers import create_chat_model
+from windup_framework.sse.bridge import RedisTaskEventBridge, RedisTaskEventSubscriber
 
 
 def _env_flag(name: str) -> bool:
     """把环境变量解析为真正的布尔值:仅 1/true/yes/on(忽略大小写与空白)视为 True。"""
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _configure_logging() -> None:
+    """API 进程走 uvicorn factory，不会跑 worker 的 basicConfig。
+
+    不配这一步，windup.* 的 INFO 进不了 docker logs，线上只剩 access log。
+    """
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(levelname)s:%(name)s:%(message)s",
+        )
+    logging.getLogger("windup").setLevel(logging.INFO)
 
 
 
@@ -41,7 +74,7 @@ def _cors_origins() -> list[str]:
 
     不配这个中间件的话，浏览器会把前端的**所有**请求拦在预检那一步
     （OPTIONS 返回 405、响应无 access-control-* 头），后端日志里连请求都看不到。
-    默认值覆盖本地 dev server 与 Vercel 预览域名。
+    默认值仅覆盖本地 dev server；远程来源必须显式配置。
     """
     raw = os.getenv("WINDUP_CORS_ORIGINS", "").strip()
     if raw:
@@ -53,9 +86,9 @@ def _cors_origins() -> list[str]:
 def _cors_origin_regex() -> str | None:
     """CORS 正则匹配的额外来源，WINDUP_CORS_ORIGIN_REGEX 覆盖。
 
-    默认允许所有 Vercel 预览域名。
+    默认不允许正则来源，避免信任任意第三方托管子域名。
     """
-    return os.getenv("WINDUP_CORS_ORIGIN_REGEX", r"https://.*\.vercel\.app").strip() or None
+    return os.getenv("WINDUP_CORS_ORIGIN_REGEX", "").strip() or None
 
 
 def print_banner() -> None:
@@ -65,17 +98,44 @@ def print_banner() -> None:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    """应用启动时建表 + 打印 banner,关闭时无特殊处理。"""
+    """应用启动时建表，关闭时停止 SSE Subscriber。"""
     Base.metadata.create_all(engine)
     print_banner()
-    yield
+    from windup_app.web.api.generation import event_bus
+
+    subscriber = RedisTaskEventSubscriber(
+        lambda project_id, task_id, event, data: event_bus.publish(
+            project_id, task_id, event, data,
+        ),
+    )
+    subscriber.start()
+    app.state.sse_subscriber = subscriber
+    relay_pending_messages()
+    try:
+        yield
+    finally:
+        subscriber.stop()
 
 
 def create_app() -> FastAPI:
+    _configure_logging()
     app = FastAPI(title="windup", version="0.1.0", lifespan=_lifespan)
-    # 中间件（add_middleware 后加的先执行：请求先进 CORS → 再进 RateLimit → 再进 Auth → 最后到路由）
+    app.state.mq_publisher = MqPublisher()
+    app.state.chat_model_factory = create_chat_model
+    # 起名器在 composition root 注入,避免 web→character.service 碰到 ai_engine。
+    # LangChainCharacterNamer 构造期不创建 ChatOpenAI；缺 AI_API_KEY 时应用仍能启动。
+    # 测试若已注入假 namer，不要覆盖。
+    if character_service._namer is None:
+        character_service._namer = LangChainCharacterNamer()
+    if project_service._namer is None:
+        project_service._namer = LangChainProjectNamer()
+
+    @app.get("/health", include_in_schema=False)
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    # 中间件（add_middleware 后加的先执行：请求先进 CORS → 再进 Auth → 最后到路由）
     app.add_middleware(AuthMiddleware)
-    app.add_middleware(RateLimitMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
@@ -83,6 +143,13 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=[
+            "X-Request-Id",
+            "Content-Disposition",
+            "X-Pixel-Cols",
+            "X-Pixel-Rows",
+            "X-Pixel-Visible-Colors",
+        ],
     )
     app.include_router(auth_router)
     app.include_router(project_router)
@@ -90,6 +157,19 @@ def create_app() -> FastAPI:
     app.include_router(workflow_run_router)
     app.include_router(media_router)
     app.include_router(generation_router)
+    app.include_router(quota_router)
+    app.include_router(render3d_router)
+    app.include_router(agent_router)
+    app.include_router(action_preset_router)
+    app.include_router(pixel_perfect_router)
+    # 母版预检与建 3D 资产:web 层不能静态依赖 ai_engine,由 state 注入。
+    app.state.precheck_master = precheck_master
+    app.state.render3d_operations = default_operations()
+    # 动作预设同理:文案住在 ai_engine 的提示词包里(归措辞门禁管),web 层够不着。
+    app.state.action_presets = ACTION_PRESETS
+
+    # task_repo 状态变更时经 Redis Pub/Sub 推 SSE（worker publish → web subscribe → EventBus）
+    task_repo.bind_task_event_publisher(RedisTaskEventBridge())
     register_exception_handlers(app)
     return app
 

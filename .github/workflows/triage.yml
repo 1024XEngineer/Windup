@@ -1,0 +1,47 @@
+name: Triage issues and pull requests
+
+on:
+  issues:
+    types: [opened]
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+permissions: {}
+
+jobs:
+  associate-issue-metadata:
+    name: Associate milestone, label, and type
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Triage issue
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const triageIssue = require('./.github/scripts/triage-issue.cjs')
+            await triageIssue({ github, context, core })
+
+  check-pull-request-issue:
+    name: Check linked issue
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Warn about missing issue
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const checkPullRequestIssue = require('./.github/scripts/check-pr-issue.cjs')
+            await checkPullRequestIssue({ github, context, core })

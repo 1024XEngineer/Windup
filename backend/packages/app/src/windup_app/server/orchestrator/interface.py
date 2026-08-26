@@ -22,8 +22,11 @@ API 层只依赖本模块定义的抽象。具体实现（AI 引擎调用、任�
 
 from abc import ABC, abstractmethod
 
+from sqlalchemy.orm import Session
+
 from windup_app.server.orchestrator.model import (
     CharacterActionInput,
+    CharacterDirectionSetInput,
     CharacterImageInput,
     GenerationTask,
 )
@@ -35,7 +38,10 @@ class GenerationService(ABC):
     # -- 任务提交 ------------------------------------------------------------
 
     @abstractmethod
-    def generate_character_image(self, input: CharacterImageInput) -> GenerationTask:
+    def generate_character_image(
+        self, session: Session, *, user_id: int,
+        project_id: int | None, input: CharacterImageInput,
+    ) -> GenerationTask:
         """提交角色图片生成任务。
 
         入参包含参考图 URL 和 prompt 等参数；出参为 ``CharacterImageOutput``，
@@ -43,17 +49,33 @@ class GenerationService(ABC):
         """
 
     @abstractmethod
-    def generate_character_action(self, input: CharacterActionInput) -> GenerationTask:
+    def generate_character_action(
+        self, session: Session, *, user_id: int,
+        project_id: int | None, input: CharacterActionInput,
+    ) -> GenerationTask:
         """提交角色动作生成任务。
 
         入参包含角色 ID、动作类型和参考素材；出参为 ``CharacterActionOutput``，
         前端拿到 ``frames[]`` 后回填 ``character_data.outfits[].actions[].frames[]``。
         """
 
+    @abstractmethod
+    def generate_character_direction_set(
+        self,
+        session: Session,
+        *,
+        user_id: int,
+        project_id: int,
+        input: CharacterDirectionSetInput,
+    ) -> GenerationTask:
+        """提交一个包含项目全部必需母版方向的任务。"""
+
     # -- 查询 ----------------------------------------------------------------
 
     @abstractmethod
-    def get_task(self, project_id: int, task_id: int) -> GenerationTask | None:
+    def get_task(
+        self, session: Session, project_id: int, task_id: int,
+    ) -> GenerationTask | None:
         """查询任务状态与结果。
 
         返回完整的 ``GenerationTask``，前端根据 ``status`` 判断是否完成，

@@ -93,6 +93,7 @@ async function expectState(value: string) {
 afterEach(() => {
   cleanup()
   clearRefreshToken()
+  window.sessionStorage.clear()
   currentSession = null
   vi.useRealTimers()
 })
@@ -145,6 +146,7 @@ describe('AuthSessionProvider', () => {
             email: 'reader@example.com',
             password: 'password-123',
             code: '123456',
+            inviteCode: 'AB23CD45',
           })
         } else if (method === 'login') {
           await session().login({
@@ -163,6 +165,7 @@ describe('AuthSessionProvider', () => {
   )
 
   it('clears local state before best-effort logout finishes and never restores it on failure', async () => {
+    window.sessionStorage.setItem('windup.auth-session.invite-hint-seen.v1', '1')
     const logout = deferred<void>()
     const apis = createApis()
     apis.logout.mockReturnValue(logout.promise)
@@ -175,6 +178,7 @@ describe('AuthSessionProvider', () => {
       logoutPromise = session().logout()
     })
     await expectState('guest:logged-out:')
+    expect(window.sessionStorage.getItem('windup.auth-session.invite-hint-seen.v1')).toBeNull()
     expect(getApiAccessToken()).toBeNull()
     expect(window.localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY)).toBeNull()
     expect(apis.logout).toHaveBeenCalledWith('refresh-token')

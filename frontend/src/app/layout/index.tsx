@@ -1,28 +1,47 @@
 import type { ReactNode } from 'react'
-import { Outlet } from 'react-router'
+import { Outlet, useLocation } from 'react-router'
 
 import { AccountPanel } from '@/features/account-panel'
 import { SessionExpiredNotice } from '@/features/auth-guard'
+import { useAuthSession } from '@/features/auth-session'
+import { ActiveRunMonitor } from './active-run-monitor'
 import { AppHeader } from './app-header'
-
-/** 跨页面常驻导航属于应用外壳，由 app 层统一承载。 */
+import { RouteMotionSurface } from '../route-motion'
 
 export interface AppShellProps {
   /** 渲染在全局导航下方的当前路由页面。 */
   children: ReactNode
 }
 
-/** 全站外壳，全局导航常驻。 */
+/** 登录产品外壳；只服务工作台与受保护业务页。 */
 export function AppShell({ children }: AppShellProps) {
+  const { pathname } = useLocation()
+  const session = useAuthSession()
   return (
-    <div className="min-h-screen bg-white text-slate-900">
+    <div className="min-h-screen overflow-x-clip bg-app-canvas text-app-ink">
+      {session.state.status === 'authenticated' ? (
+        <ActiveRunMonitor userId={session.state.user.id} pathname={pathname} />
+      ) : null}
       <AppHeader />
       {/*
         外壳只管顶栏。页面自己决定宽度与留白，不在这里统一夹到屏幕中间，
         也不按 pathname 分支给不同页面配不同容器。
         顶栏悬浮不占布局高度，内容页的避让由 PageContainer 统一让出，满幅页面自己让。
       */}
-      <main className="w-full">{children}</main>
+      <RouteMotionSurface as="main" className="w-full">
+        {children}
+      </RouteMotionSurface>
+      <AccountPanel />
+      <SessionExpiredNotice />
+    </div>
+  )
+}
+
+/** 公开页面外壳只提供认证面板与会话提醒，宣传导航由 LandingPage 自己组合。 */
+export function MarketingShell({ children }: AppShellProps) {
+  return (
+    <div className="min-h-[100dvh] overflow-x-clip bg-[#f6f8f3] text-[#1d2920]">
+      <RouteMotionSurface>{children}</RouteMotionSurface>
       <AccountPanel />
       <SessionExpiredNotice />
     </div>
@@ -38,5 +57,13 @@ export function AppShellRoute() {
     <AppShell>
       <Outlet />
     </AppShell>
+  )
+}
+
+export function MarketingShellRoute() {
+  return (
+    <MarketingShell>
+      <Outlet />
+    </MarketingShell>
   )
 }

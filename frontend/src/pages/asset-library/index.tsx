@@ -1,20 +1,21 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, useOutletContext, useParams } from 'react-router'
 
-import { characterApis, type Character } from '@/entities'
+import { CHARACTER_STATUS, characterApis, type CharacterSummary, type Project } from '@/entities'
 import type { Paged } from '@/shared/pagination'
-import { Pagination } from '@/shared/ui'
+import { AssetPreviewCard, Pagination } from '@/shared/ui'
 
 const CHARACTER_PAGE_SIZE = 24
 
-function characterName(character: Character) {
+function characterName(character: CharacterSummary) {
   return character.name ?? '未命名角色'
 }
 
 export function AssetLibraryPage() {
   const { projectId } = useParams()
+  const project = useOutletContext<Project>()
   const [pageNumber, setPageNumber] = useState(1)
-  const [charactersPage, setCharactersPage] = useState<Paged<Character> | null>(null)
+  const [charactersPage, setCharactersPage] = useState<Paged<CharacterSummary> | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -29,9 +30,10 @@ export function AssetLibraryPage() {
     setCharactersPage(null)
     setError(null)
     void characterApis
-      .listByProject(projectId, {
+      .listSummariesByProject(projectId, {
         page: pageNumber,
         pageSize: CHARACTER_PAGE_SIZE,
+        status: CHARACTER_STATUS.PUBLISHED,
       })
       .then(
         (page) => {
@@ -48,30 +50,33 @@ export function AssetLibraryPage() {
 
   return (
     <section aria-labelledby="asset-library-title" className="min-h-full min-w-0">
-      <h2 id="asset-library-title" className="sr-only">
-        角色
-      </h2>
       <div className="p-6 lg:p-8">
-        <div className="mb-4 flex justify-end">
-          <button
-            type="button"
-            aria-label="新建角色"
-            disabled
-            title="角色生成应进入 Workflow Editor"
-            className="cursor-not-allowed rounded-full border border-[#cbd1c8] px-4 py-2 text-xs font-semibold text-[#858c84]"
+        <header className="mb-7 pb-6">
+          <Link
+            to="/projects"
+            className="text-xs font-medium text-app-muted underline decoration-app-line underline-offset-4 hover:text-app-accent"
           >
-            ＋ 新建角色
-          </button>
-        </div>
+            返回项目中心
+          </Link>
+          <h2
+            id="asset-library-title"
+            className="mt-3 font-serif text-3xl font-medium leading-none tracking-[-0.04em] text-app-ink"
+          >
+            {project.name}
+          </h2>
+          <p className="mt-2 text-sm text-app-muted">
+            {charactersPage === null ? '正在读取角色资产' : `${charactersPage.total} 个角色`}
+          </p>
+        </header>
         {error ? (
           <p
             role="alert"
-            className="mt-6 rounded-xl border border-[#d8c7bd] bg-[#fff8f2] p-5 text-sm text-[#7a3f2a]"
+            className="mt-6 rounded-xl border border-app-danger-line bg-app-danger-soft p-5 text-sm text-app-danger"
           >
             {error}
           </p>
         ) : charactersPage === null ? (
-          <p className="mt-8 text-sm text-[#70766f]">正在建立资产索引…</p>
+          <p className="mt-8 text-sm text-app-muted">正在建立资产索引…</p>
         ) : (
           <>
             <CharacterGrid projectId={projectId ?? ''} characters={charactersPage.items} />
@@ -88,54 +93,34 @@ export function AssetLibraryPage() {
   )
 }
 
-function CharacterGrid({ projectId, characters }: { projectId: string; characters: Character[] }) {
+function CharacterGrid({
+  projectId,
+  characters,
+}: {
+  projectId: string
+  characters: CharacterSummary[]
+}) {
   if (characters.length === 0) return <EmptyState />
 
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-4">
-      {characters.map((character) => {
+    <div className="grid gap-x-4 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+      {characters.map((character, index) => {
         const name = characterName(character)
-        const outfit = character.outfits[0]
-        const actionCount = character.outfits.reduce((sum, item) => sum + item.actions.length, 0)
         return (
-          <Link
+          <AssetPreviewCard
             key={character.id}
             to={`/projects/${projectId}/assets/${character.id}`}
-            aria-label={`查看角色 ${name}`}
-            className="group overflow-hidden rounded-[1.25rem] border border-[#d7dbd4] bg-white transition hover:border-[#9ca79c]"
-          >
-            <div className="relative aspect-[4/3] overflow-hidden bg-[#f0f2ed]">
-              {outfit?.previewUrl ? (
-                <img
-                  src={outfit.previewUrl}
-                  alt={`${name}的${outfit.name}预览`}
-                  className="h-full w-full object-contain p-5 [image-rendering:pixelated] transition group-hover:scale-[1.025]"
-                />
-              ) : (
-                <div className="grid h-full place-items-center bg-[linear-gradient(135deg,#eef0eb_25%,#f7f7f4_25%,#f7f7f4_50%,#eef0eb_50%,#eef0eb_75%,#f7f7f4_75%)] bg-[length:24px_24px]">
-                  <span className="rounded-full border border-[#d7dbd4] bg-white px-2.5 py-1 text-xs font-medium text-[#677068]">
-                    暂无造型预览
-                  </span>
-                </div>
-              )}
-            </div>
-            <div className="p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="font-semibold text-[#242a24]">{name}</h3>
-                  <p className="mt-1 text-xs text-[#767d75]">{outfit?.name ?? '尚未创建造型'}</p>
-                </div>
-                <span aria-hidden="true" className="text-[#899189]">
-                  ↗
-                </span>
-              </div>
-              <div className="mt-4 flex gap-2 border-t border-[#ecefe9] pt-3 text-xs text-[#697169]">
-                <span>{character.outfits.length} 套造型</span>
-                <span>·</span>
-                <span>{actionCount} 个动作</span>
-              </div>
-            </div>
-          </Link>
+            ariaLabel={`查看角色 ${name}`}
+            title={name}
+            subtitle={character.outfitName ?? '尚未创建造型'}
+            trailing="↗"
+            footer={`${character.outfitCount} 套造型 · ${character.actionCount} 个动作`}
+            previewUrl={character.previewUrl}
+            previewAlt={`${name}的${character.outfitName ?? '造型'}预览`}
+            thumbnail
+            eager={index < 4}
+            priority={index === 0}
+          />
         )
       })}
     </div>
@@ -144,9 +129,9 @@ function CharacterGrid({ projectId, characters }: { projectId: string; character
 
 function EmptyState() {
   return (
-    <div className="mt-5 rounded-[1.25rem] border border-dashed border-[#cbd1c8] bg-[#f8f9f6] p-7">
-      <h3 className="font-semibold text-[#252a25]">这个项目还没有角色</h3>
-      <p className="mt-2 text-sm text-[#6d736c]">角色会在创建工作流确认后进入这里。</p>
+    <div className="mt-5 rounded-[1.25rem] border border-dashed border-app-line bg-app-surface-raised p-7">
+      <h3 className="font-semibold text-app-ink">这个项目还没有角色</h3>
+      <p className="mt-2 text-sm text-app-muted">角色会在创建工作流确认后进入这里。</p>
     </div>
   )
 }

@@ -14,10 +14,13 @@ import type { AuthTokens, User, UserApis } from '@/entities'
 import { registerApiAccessTokenProvider, registerApiUnauthorizedRecovery } from '@/shared/api'
 import {
   REFRESH_TOKEN_STORAGE_KEY,
+  clearAuthSessionScopedStorage,
   clearRefreshToken,
   loadRefreshToken,
   saveRefreshToken,
 } from './session-storage'
+
+export { AUTH_SESSION_STORAGE_PREFIX } from './session-storage'
 
 export type AuthGuestReason = null | 'logged-out' | 'session-expired' | 'password-changed'
 
@@ -97,6 +100,7 @@ export function AuthSessionProvider({ apis, children }: AuthSessionProviderProps
       accessTokenRef.current = null
       refreshTokenRef.current = null
       if (persist) clearRefreshToken()
+      clearAuthSessionScopedStorage()
       setAccessTokenVersion((version) => version + 1)
       updateState({ status: 'guest', user: null, reason })
     },
@@ -391,6 +395,11 @@ export function useAuthSession(): AuthSessionValue {
   const session = useContext(AuthSessionContext)
   if (!session) throw new Error('useAuthSession 必须在 AuthSessionProvider 内使用')
   return session
+}
+
+/** 允许可独立渲染的业务页读取会话；生产外壳存在时仍返回同一份 AuthSession。 */
+export function useOptionalAuthSession(): AuthSessionValue | null {
+  return useContext(AuthSessionContext)
 }
 
 function getRefreshTime(accessToken: string | null): number | null {

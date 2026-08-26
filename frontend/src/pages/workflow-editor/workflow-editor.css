@@ -5,18 +5,14 @@
   3. 关键帧动画。
 */
 
-.workflow-editor-shell {
-  --editor-ink: #1d1d1f;
-  --editor-muted: #737378;
-  --editor-paper: #dfe3df;
-  --editor-line: rgb(27 38 30 / 20%);
-  --editor-shadow: 0 14px 36px rgb(30 39 32 / 13%), 0 2px 5px rgb(30 39 32 / 8%);
-}
-
 /* 画布底纹：radial-gradient 平铺，工具类写不出来。 */
 .workflow-editor-canvas {
-  background-color: var(--editor-paper);
-  background-image: radial-gradient(circle, rgb(46 62 50 / 18%) 1px, transparent 1.25px);
+  background-color: var(--color-app-canvas);
+  background-image: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--color-app-accent) 18%, transparent) 1px,
+    transparent 1.25px
+  );
   background-size: 21px 21px;
 }
 
@@ -24,26 +20,39 @@
 
 .workflow-editor-canvas .react-flow__controls {
   overflow: hidden;
-  border: 1px solid rgb(36 49 39 / 12%);
+  border: 1px solid color-mix(in srgb, var(--color-app-ink) 12%, transparent);
   border-radius: 10px;
-  background: rgb(249 250 247 / 90%);
-  box-shadow: 0 8px 24px rgb(31 40 33 / 9%);
+  background: color-mix(in srgb, var(--color-app-surface-raised) 90%, transparent);
+  box-shadow: var(--shadow-app-menu);
   backdrop-filter: blur(14px);
 }
 
 .workflow-editor-canvas .react-flow__controls-button {
-  border-color: var(--editor-line);
-  color: var(--editor-ink);
-  background: rgb(255 255 255 / 76%);
+  border-color: var(--color-app-line);
+  color: var(--color-app-ink);
+  background: color-mix(in srgb, var(--color-app-surface-raised) 76%, transparent);
+  transition:
+    color 150ms ease,
+    background-color 150ms ease,
+    transform 150ms ease;
+}
+
+.workflow-editor-canvas .react-flow__controls-button:hover {
+  color: var(--color-app-accent);
+  background: var(--color-app-accent-muted);
+}
+
+.workflow-editor-canvas .react-flow__controls-button:active {
+  transform: scale(0.94);
 }
 
 .workflow-editor-canvas .react-flow__handle {
-  top: 38px;
-  width: 22px;
-  height: 22px;
-  border: 4px solid #f5f7f4;
-  background: #68836e;
-  box-shadow: 0 0 0 1px #435849;
+  top: 25px;
+  width: 16px;
+  height: 16px;
+  border: 3px solid var(--color-app-surface);
+  background: var(--color-app-line-strong);
+  box-shadow: 0 0 0 1px var(--color-app-accent);
 }
 
 /*
@@ -51,26 +60,68 @@
   颜色写在这里而不是节点数据里，改配色只动这一处。
 */
 .workflow-editor-canvas .workflow-edge--confirmed path {
-  stroke: #69866f;
-  stroke-width: 3;
+  stroke: var(--color-app-line-strong);
+  stroke-width: 2;
 }
 
 .workflow-editor-canvas .workflow-edge--flowing path {
-  stroke: rgb(72 101 80 / 42%);
-  stroke-width: 3;
-  stroke-dasharray: 9 8;
+  stroke: color-mix(in srgb, var(--color-app-accent) 42%, transparent);
+  stroke-width: 2;
+  stroke-dasharray: 7 7;
   animation: workflow-edge-flow 900ms linear infinite;
   will-change: stroke-dashoffset;
 }
 
+.workflow-image-skeleton {
+  background: linear-gradient(
+    100deg,
+    var(--color-app-surface-muted) 18%,
+    var(--color-app-surface-raised) 46%,
+    var(--color-app-surface-muted) 74%
+  );
+  background-size: 220% 100%;
+  animation: workflow-image-shimmer 1.2s ease-in-out infinite;
+}
+
+.workflow-status-pulse {
+  animation: workflow-status-pulse 1.2s ease-in-out infinite;
+}
+
 @keyframes workflow-edge-flow {
   to {
-    stroke-dashoffset: -17;
+    stroke-dashoffset: -14;
+  }
+}
+
+@keyframes workflow-image-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@keyframes workflow-status-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.82);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .workflow-editor-canvas .workflow-edge--flowing path {
+  .workflow-editor-canvas .workflow-edge--flowing path,
+  .workflow-image-skeleton,
+  .workflow-status-pulse {
     animation: none;
+  }
+
+  .workflow-editor-canvas .react-flow__controls-button {
+    transition: none;
   }
 }

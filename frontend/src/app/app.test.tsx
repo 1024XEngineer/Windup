@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, useLocation } from 'react-router'
 
 import type { AuthTokens, UserApis } from '@/entities'
@@ -23,10 +23,12 @@ function LocationProbe() {
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
+  vi.useRealTimers()
+  vi.restoreAllMocks()
 })
 
 describe('AppRoutes authentication boundary', () => {
-  it('keeps the home page available to guests', async () => {
+  it('keeps the public landing page available to guests', async () => {
     render(
       <GuestAuthSession>
         <MemoryRouter initialEntries={['/']}>
@@ -36,9 +38,64 @@ describe('AppRoutes authentication boundary', () => {
     )
 
     expect(await screen.findByRole('heading', { name: /让你的角色/ })).toBeTruthy()
+    const loginEntry = screen.getByRole('link', { name: '登录' })
+    expect(loginEntry.closest('header')?.getAttribute('data-surface')).toBe('borderless-glass')
+    expect(screen.getByRole('link', { name: '注册' })).toBeTruthy()
+    expect(screen.queryByRole('navigation', { name: '宣传页导航' })).toBeNull()
+    expect(screen.queryByRole('navigation', { name: '产品导航' })).toBeNull()
   })
 
-  it('redirects a guest before rendering a protected product page and preserves its return path', async () => {
+  it('keeps authenticated users on the public landing page until they enter the workspace', async () => {
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    const workspaceEntry = await screen.findByRole('link', { name: '进入工作台' })
+    expect(workspaceEntry.closest('header')?.getAttribute('data-surface')).toBe('borderless-glass')
+    expect(screen.queryByRole('navigation', { name: '宣传页导航' })).toBeNull()
+    expect(workspaceEntry.getAttribute('href')).toBe('/workspace')
+  })
+
+  it('protects the workspace home and preserves it as the login return path', async () => {
+    render(
+      <GuestAuthSession>
+        <MemoryRouter initialEntries={['/workspace']}>
+          <AppRoutes />
+          <LocationProbe />
+        </MemoryRouter>
+      </GuestAuthSession>,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/?account=login&returnTo=%2Fworkspace',
+      ),
+    )
+    expect(screen.queryByRole('heading', { name: '工作台' })).toBeNull()
+  })
+
+  it('serves the workspace from its dedicated protected route', async () => {
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/workspace']}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+
+    expect(await screen.findByRole('heading', { name: '工作台' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: /让你的角色/ })).toBeNull()
+    expect(screen.getByRole('navigation', { name: '产品导航' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '返回 Windup 工作台' }).getAttribute('href')).toBe(
+      '/workspace',
+    )
+  })
+
+  it('redirects a guest before rendering Quick Start and preserves its return path', async () => {
     render(
       <GuestAuthSession>
         <MemoryRouter initialEntries={['/quick-start?draft=1#setup']}>
@@ -53,7 +110,25 @@ describe('AppRoutes authentication boundary', () => {
         '/?account=login&returnTo=%2Fquick-start%3Fdraft%3D1%23setup',
       ),
     )
-    expect(screen.queryByRole('heading', { name: '快速开始' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: '想做一个什么角色？' })).toBeNull()
+  })
+
+  it('redirects a guest from the PlayTest entry and preserves that return path', async () => {
+    render(
+      <GuestAuthSession>
+        <MemoryRouter initialEntries={['/playtest']}>
+          <AppRoutes />
+          <LocationProbe />
+        </MemoryRouter>
+      </GuestAuthSession>,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/?account=login&returnTo=%2Fplaytest',
+      ),
+    )
+    expect(screen.queryByRole('heading', { name: '选择可预览资产' })).toBeNull()
   })
 
   it('protects direct account-center visits and returns there after login', async () => {
@@ -92,13 +167,13 @@ describe('AppRoutes authentication boundary', () => {
       </AuthSessionProvider>,
     )
 
-    expect(screen.queryByRole('heading', { name: '快速开始' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: '想做一个什么角色？' })).toBeNull()
     expect(screen.getByTestId('location').textContent).toBe('/quick-start')
 
     const restoredTokens = await baseApis.refresh('stored-refresh-token')
     await act(async () => resolveRefresh(restoredTokens))
 
-    expect(await screen.findByRole('heading', { name: '快速开始' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '想做一个什么角色？' })).toBeTruthy()
   })
 
   it('renders protected product pages for an authenticated session', async () => {
@@ -110,7 +185,7 @@ describe('AppRoutes authentication boundary', () => {
       </AuthenticatedAuthSession>,
     )
 
-    expect(await screen.findByRole('heading', { name: '快速开始' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '想做一个什么角色？' })).toBeTruthy()
   })
 
   it('tells the user when restoring the session fails instead of becoming a silent guest', async () => {
@@ -135,7 +210,7 @@ describe('AppRoutes authentication boundary', () => {
       </AuthSessionProvider>,
     )
 
-    expect((await screen.findByRole('alert')).textContent).toContain('登录状态已过期，请重新登录。')
+    expect(await screen.findByText('登录状态已过期，请重新登录。')).toBeTruthy()
     expect(screen.getByRole('link', { name: '重新登录' }).getAttribute('href')).toBe(
       '/?account=login&returnTo=%2F',
     )
@@ -165,19 +240,17 @@ describe('AppRoutes authentication boundary', () => {
     )
 
     expect(await screen.findByRole('dialog', { name: '登录 Windup' })).toBeTruthy()
-    fireEvent.keyDown(document, { key: 'Escape' })
-    await waitFor(() =>
-      expect(screen.getByTestId('location').textContent).toBe(
-        '/?returnTo=%2Fquick-start%3Fdraft%3D1%23setup',
-      ),
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByRole('button', { name: '关闭账号面板' }))
+    await act(async () => vi.runOnlyPendingTimersAsync())
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/?returnTo=%2Fquick-start%3Fdraft%3D1%23setup',
     )
+    vi.useRealTimers()
 
     fireEvent.click(screen.getByRole('link', { name: '重新登录' }))
-
-    await waitFor(() =>
-      expect(screen.getByTestId('location').textContent).toBe(
-        '/?account=login&returnTo=%2Fquick-start%3Fdraft%3D1%23setup',
-      ),
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/?account=login&returnTo=%2Fquick-start%3Fdraft%3D1%23setup',
     )
   })
 })

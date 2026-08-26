@@ -1,11 +1,22 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { Link, MemoryRouter } from 'react-router'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AppRoutes } from '@/app'
 import { AuthenticatedAuthSession } from '@/test/auth-session'
 import { createProjectAssetsBackend } from '@/test/project-assets-backend'
+
+import { readRecentPreviews, rememberRecentPreview } from './recent-previews'
+
+vi.mock('./recent-previews', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./recent-previews')>()
+  return { ...actual, getRecentPreviewOwnerId: () => '7' }
+})
+
+beforeEach(() => {
+  window.localStorage.clear()
+})
 
 afterEach(() => {
   cleanup()
@@ -22,13 +33,14 @@ function freezeAnimationFrame() {
   vi.stubGlobal('cancelAnimationFrame', () => undefined)
 }
 
-function renderPlaytest(path: string, fetchFn?: typeof globalThis.fetch) {
+function renderPlaytest(path: string, fetchFn?: typeof globalThis.fetch, switchTo?: string) {
   freezeAnimationFrame()
   vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
   vi.stubGlobal('fetch', fetchFn ?? createProjectAssetsBackend().fetch)
   return render(
     <AuthenticatedAuthSession>
       <MemoryRouter initialEntries={[path]}>
+        {switchTo ? <Link to={switchTo}>切换到另一条预览</Link> : null}
         <AppRoutes />
       </MemoryRouter>
     </AuthenticatedAuthSession>,
@@ -36,7 +48,7 @@ function renderPlaytest(path: string, fetchFn?: typeof globalThis.fetch) {
 }
 
 function stageFrameUrl() {
-  return screen.getByRole('region', { name: '试玩舞台' }).querySelector('img')?.getAttribute('src')
+  return screen.getByRole('region', { name: '预览舞台' }).querySelector('img')?.getAttribute('src')
 }
 
 describe('PlaytestPage', () => {
@@ -46,16 +58,33 @@ describe('PlaytestPage', () => {
     expect(await screen.findByRole('heading', { name: '51 · 常态造型' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '绑定动作：呼吸待机' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '绑定动作：行走' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '导出Playtest 运行包' })).toBeTruthy()
+    await waitFor(() =>
+      expect(readRecentPreviews('7', window.localStorage)[0]).toMatchObject({
+        characterId: '51',
+        outfitId: 'outfit-default',
+        projectId: '42',
+      }),
+    )
   })
 
   it('plays frames in backend index order, not array order', async () => {
     renderPlaytest('/playtest/51/outfit-default')
 
     expect(await screen.findByRole('heading', { name: '51 · 常态造型' })).toBeTruthy()
+    const walkButton = await screen.findByRole('button', { name: '绑定动作：行走' })
     // 后端给的 walk 帧顺序是 index 2、0、1；照数组播会从 walk-03 起步。
-    fireEvent.click(screen.getByRole('button', { name: '绑定动作：行走' }))
+    fireEvent.click(walkButton)
 
-    expect(stageFrameUrl()).toBe('https://cdn.windup.test/walk-01.png')
+    // 先等绑定态（aria-pressed），再读舞台帧。覆盖率下 waitFor 默认 1s 会把重试耗在整页 HTML 上，
+    // 点了行走却仍断言到 idle-01，Frontend CI 就会红。
+    await waitFor(
+      () => {
+        expect(walkButton.getAttribute('aria-pressed')).toBe('true')
+        expect(stageFrameUrl()).toBe('https://cdn.windup.test/walk-01.png')
+      },
+      { timeout: 4000 },
+    )
   })
 
   it('starts on the idle action when the route names none', async () => {
@@ -72,16 +101,112 @@ describe('PlaytestPage', () => {
     expect(stageFrameUrl()).toBe('https://cdn.windup.test/walk-01.png')
   })
 
+  it('uses the project movement mode to play an eight-way diagonal sequence', async () => {
+    const backend = createProjectAssetsBackend()
+    const directionalFetch: typeof globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init)
+      const response = await backend.fetch(input, init)
+      const path = new URL(request.url).pathname
+      if (path !== '/projects/42' && path !== '/characters/51') return response
+      const body = (await response.json()) as { data: Record<string, unknown> }
+      if (path === '/projects/42') body.data.directional_movement = 3
+      if (path === '/characters/51') {
+        const data = body.data as {
+          character_data: {
+            outfits: Array<{
+              actions: Array<{
+                id: string
+                frames: Array<{ index: number; image_url: string; duration_ms: number | null }>
+                sequences?: unknown[]
+              }>
+            }>
+          }
+        }
+        const walk = data.character_data.outfits[0]!.actions.find((action) => action.id === 'walk')!
+        walk.sequences = [
+          {
+            direction: 'east',
+            source_direction: null,
+            mirror_x: false,
+            frame_count: walk.frames.length,
+            frames: walk.frames,
+          },
+          {
+            direction: 'west',
+            source_direction: 'east',
+            mirror_x: true,
+            frame_count: walk.frames.length,
+            frames: [],
+          },
+          ...['north', 'south', 'north_east', 'south_east'].map((direction) => ({
+            direction,
+            source_direction: null,
+            mirror_x: false,
+            frame_count: 1,
+            frames: [
+              {
+                index: 0,
+                image_url: `https://cdn.windup.test/walk-${direction}.png`,
+                duration_ms: 100,
+              },
+            ],
+          })),
+          {
+            direction: 'north_west',
+            source_direction: 'north_east',
+            mirror_x: true,
+            frame_count: 1,
+            frames: [],
+          },
+          {
+            direction: 'south_west',
+            source_direction: 'south_east',
+            mirror_x: true,
+            frame_count: 1,
+            frames: [],
+          },
+        ]
+      }
+      return new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } })
+    }
+    renderPlaytest('/playtest/51/outfit-default?actionId=walk', directionalFetch)
+    expect(await screen.findByRole('heading', { name: '51 · 常态造型' })).toBeTruthy()
+
+    const right = screen.getByRole('button', { name: '向右移动' })
+    const up = screen.getByRole('button', { name: '向上移动' })
+    Object.assign(right, { setPointerCapture: vi.fn() })
+    Object.assign(up, { setPointerCapture: vi.fn() })
+    fireEvent.pointerDown(right, { pointerId: 1 })
+    fireEvent.pointerDown(up, { pointerId: 2 })
+
+    await waitFor(() => expect(stageFrameUrl()).toBe('https://cdn.windup.test/walk-north_east.png'))
+  })
+
   it('reports a missing outfit instead of falling back to another one', async () => {
     renderPlaytest('/playtest/51/outfit-missing')
 
-    expect(await screen.findByText('找不到指定造型，无法进入试玩。')).toBeTruthy()
+    expect(await screen.findByText('找不到指定造型，无法进入预览台。')).toBeTruthy()
   })
 
   it('maps the business not-found code to a stable message', async () => {
+    rememberRecentPreview(
+      '7',
+      {
+        characterId: '9999',
+        outfitId: 'outfit-default',
+        characterName: '已删除角色',
+        outfitName: '常态造型',
+        projectId: '42',
+        projectName: '点灯人 · MVP',
+        previewUrl: null,
+        lastOpenedAt: 1,
+      },
+      window.localStorage,
+    )
     renderPlaytest('/playtest/9999/outfit-default')
 
     expect(await screen.findByText('角色不存在')).toBeTruthy()
+    await waitFor(() => expect(readRecentPreviews('7', window.localStorage)).toEqual([]))
   })
 
   it('does not mislabel a transport failure as not found', async () => {
@@ -92,10 +217,60 @@ describe('PlaytestPage', () => {
     expect(await screen.findByText('角色读取失败')).toBeTruthy()
   })
 
+  it('keeps the previous recent record when the next routed character fails to load', async () => {
+    const backend = createProjectAssetsBackend()
+    const fetchWithFailedNextCharacter: typeof globalThis.fetch = (input, init) => {
+      const path = new URL(new Request(input, init).url).pathname
+      if (path === '/characters/52') return Promise.reject(new TypeError('network unavailable'))
+      return backend.fetch(input, init)
+    }
+
+    renderPlaytest(
+      '/playtest/51/outfit-default',
+      fetchWithFailedNextCharacter,
+      '/playtest/52/outfit-default',
+    )
+    expect(await screen.findByRole('heading', { name: '51 · 常态造型' })).toBeTruthy()
+    await waitFor(() =>
+      expect(readRecentPreviews('7', window.localStorage).map((item) => item.characterId)).toEqual([
+        '51',
+      ]),
+    )
+
+    fireEvent.click(screen.getByRole('link', { name: '切换到另一条预览' }))
+
+    expect(await screen.findByText('角色读取失败')).toBeTruthy()
+    expect(readRecentPreviews('7', window.localStorage).map((item) => item.characterId)).toEqual([
+      '51',
+    ])
+  })
+
   it('shows an empty stage for an outfit whose actions have no frames', async () => {
     renderPlaytest('/playtest/52/outfit-draft')
 
     expect(await screen.findByRole('heading', { name: '52 · 未命名造型' })).toBeTruthy()
     expect(screen.getByText('暂无可播放帧')).toBeTruthy()
+  })
+
+  it('旧资产缺少角色母版时仍可试玩，但不显示无效导出入口', async () => {
+    const backend = createProjectAssetsBackend()
+    const fetchWithoutMaster: typeof globalThis.fetch = async (input, init) => {
+      const response = await backend.fetch(input, init)
+      if (new URL(new Request(input, init).url).pathname !== '/characters/51') return response
+      const body = (await response.json()) as {
+        data: {
+          reference_image_url: string | null
+          character_data: { outfits: Array<{ preview_url: string | null }> }
+        }
+      }
+      body.data.reference_image_url = null
+      body.data.character_data.outfits[0]!.preview_url = null
+      return new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } })
+    }
+
+    renderPlaytest('/playtest/51/outfit-default', fetchWithoutMaster)
+
+    expect(await screen.findByRole('heading', { name: '51 · 常态造型' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '导出Playtest 运行包' })).toBeNull()
   })
 })

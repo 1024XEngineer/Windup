@@ -10,6 +10,7 @@ const projectDto = {
   sprite_height: 96,
   game_style: null,
   sprite_sample_url: 'https://cdn.windup.test/style.png',
+  preview_url: 'https://cdn.windup.test/project-preview.png',
   create_at: '2026-08-01T08:00:00Z',
   update_at: '2026-08-02T09:30:00Z',
 }
@@ -23,7 +24,7 @@ afterEach(() => {
 async function loadProjectApis(fetchFn: typeof fetch) {
   vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
   vi.stubGlobal('fetch', fetchFn)
-  return (await import('./index')).projectApis
+  return import('./index')
 }
 
 function jsonResponse(data: unknown) {
@@ -35,7 +36,7 @@ function jsonResponse(data: unknown) {
 describe('projectApis', () => {
   it('maps the paged Project response and pagination query', async () => {
     let request: Request | undefined
-    const projectApis = await loadProjectApis(async (input, init) => {
+    const { projectApis } = await loadProjectApis(async (input, init) => {
       request = new Request(input, init)
       return new Response(
         JSON.stringify({
@@ -59,8 +60,9 @@ describe('projectApis', () => {
           perspective: 'isometric',
           directionalMovement: 'four-way',
           spriteSize: { width: 64, height: 96 },
-          gameStyle: null,
+          gameStyle: 'unspecified',
           sampleImageUrl: 'https://cdn.windup.test/style.png',
+          previewUrl: 'https://cdn.windup.test/project-preview.png',
           createdAt: '2026-08-01T08:00:00Z',
           updatedAt: '2026-08-02T09:30:00Z',
         },
@@ -74,7 +76,7 @@ describe('projectApis', () => {
 
   it('serializes CreateProjectInput to the backend request body', async () => {
     let request: Request | undefined
-    const projectApis = await loadProjectApis(async (input, init) => {
+    const { projectApis } = await loadProjectApis(async (input, init) => {
       request = new Request(input, init)
       return jsonResponse(projectDto)
     })
@@ -85,7 +87,7 @@ describe('projectApis', () => {
       perspective: 'isometric',
       directionalMovement: 'four-way',
       spriteSize: { width: 64, height: 96 },
-      gameStyle: null,
+      gameStyle: 'unspecified',
       sampleImageUrl: 'https://cdn.windup.test/style.png',
     })
 
@@ -98,14 +100,35 @@ describe('projectApis', () => {
       directional_movement: 2,
       sprite_width: 64,
       sprite_height: 96,
-      game_style: null,
+      game_style: 'unspecified',
       sprite_sample_url: 'https://cdn.windup.test/style.png',
     })
   })
 
+  it('serializes project naming context without fabricating a project name', async () => {
+    let request: Request | undefined
+    const { projectApis } = await loadProjectApis(async (input, init) => {
+      request = new Request(input, init)
+      return jsonResponse({ ...projectDto, project_name: '雾港计划' })
+    })
+
+    await projectApis.create({
+      nameContext: '一位提着风灯、披深色斗篷的像素守夜人',
+      perspective: 'side',
+      directionalMovement: 'single',
+      spriteSize: { width: 256, height: 256 },
+    })
+
+    const body = await request?.json()
+    expect(body).toMatchObject({
+      name_context: '一位提着风灯、披深色斗篷的像素守夜人',
+    })
+    expect(body).not.toHaveProperty('project_name')
+  })
+
   it('requests one Project by its backend resource path', async () => {
     let requestUrl = ''
-    const projectApis = await loadProjectApis(async (input) => {
+    const { projectApis } = await loadProjectApis(async (input) => {
       requestUrl = String(input)
       return jsonResponse(projectDto)
     })
@@ -115,9 +138,28 @@ describe('projectApis', () => {
     expect(requestUrl).toBe('https://api.windup.test/projects/42')
   })
 
+  it('renames one Project through the backend resource path', async () => {
+    let request: Request | undefined
+    const renamedDto = { ...projectDto, project_name: '新项目名' }
+    const { projectApis } = await loadProjectApis(async (input, init) => {
+      request = new Request(input, init)
+      return jsonResponse(renamedDto)
+    })
+
+    await expect(projectApis.rename('42', '新项目名')).resolves.toMatchObject({
+      id: '42',
+      name: '新项目名',
+    })
+    expect(request?.url).toBe('https://api.windup.test/projects/42')
+    expect(request?.method).toBe('PATCH')
+    await expect(request?.json()).resolves.toEqual({
+      project_name: '新项目名',
+    })
+  })
+
   it('uses the access-token provider registered at the shared HTTP boundary', async () => {
     let authorization: string | null = null
-    const projectApis = await loadProjectApis(async (input, init) => {
+    const { projectApis } = await loadProjectApis(async (input, init) => {
       authorization = new Request(input, init).headers.get('authorization')
       return jsonResponse(projectDto)
     })
@@ -132,7 +174,7 @@ describe('projectApis', () => {
 
   it('deletes one Project through the backend resource path', async () => {
     let request: Request | undefined
-    const projectApis = await loadProjectApis(async (input, init) => {
+    const { projectApis } = await loadProjectApis(async (input, init) => {
       request = new Request(input, init)
       return jsonResponse(null)
     })
@@ -140,5 +182,39 @@ describe('projectApis', () => {
     await expect(projectApis.remove('42')).resolves.toBeUndefined()
     expect(request?.url).toBe('https://api.windup.test/projects/42')
     expect(request?.method).toBe('DELETE')
+  })
+
+  it('maps the backend project-name conflict contract to a stable domain error', async () => {
+    const { ProjectNameConflictError, projectApis } = await loadProjectApis(
+      async () =>
+        new Response(JSON.stringify({ code: 400, message: '项目名称已存在', data: null }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+
+    await expect(
+      projectApis.create({
+        name: '点灯人',
+        perspective: 'side',
+        directionalMovement: 'single',
+        spriteSize: { width: 256, height: 256 },
+      }),
+    ).rejects.toBeInstanceOf(ProjectNameConflictError)
+
+    await expect(projectApis.rename('42', '点灯人')).rejects.toBeInstanceOf(
+      ProjectNameConflictError,
+    )
+  })
+
+  it('maps the backend in-use project contract to a stable domain error', async () => {
+    const { ProjectHasCharactersError, projectApis } = await loadProjectApis(
+      async () =>
+        new Response(
+          JSON.stringify({ code: 400, message: '项目下仍有角色，无法删除', data: null }),
+          { headers: { 'content-type': 'application/json' } },
+        ),
+    )
+
+    await expect(projectApis.remove('42')).rejects.toBeInstanceOf(ProjectHasCharactersError)
   })
 })

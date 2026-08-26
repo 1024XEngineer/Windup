@@ -1,23 +1,53 @@
 import type {
+  ActionPreset,
   Character,
   CharacterApis,
+  ActionDirection,
   GenerationApis,
+  MediaApis,
+  MediaReference,
   Project,
   ProjectApis,
+  CharacterSetupWorkflowNode,
+  CharacterTemplateWorkflowNode,
+  Render3DApis,
   ReviewWorkflowNode,
+  WorkflowRun,
   WorkflowRunApis,
 } from '@/entities'
-import { characterApis, projectApis, workflowRunApis } from '@/entities'
+import {
+  actionPresetApis,
+  characterApis,
+  createAuthenticatedGenerationApis,
+  createMediaApis,
+  projectApis,
+  render3DApis,
+  workflowRunApis,
+} from '@/entities'
 import { createCharacterAssetPublisher } from '@/features/export'
 import { createWorkflowController, type WorkflowController } from '@/features/workflow-controller'
+import { createCharacterTemplateConfirmer } from './character-template-confirmation'
 
 export interface WorkflowEditorSession {
   controller: WorkflowController
   project: Project
   /** 后端用 workflow_run_id 建立的唯一角色；尚未产出正式角色时为 null。 */
   character: Character | null
-  /** 幂等发布动作资产；审核节点仍由页面随后通过 Controller 推进。 */
+  /** 确认身份母版，并在首次确认时创建可继续生成动作的 Character。 */
+  confirmCharacterTemplate(
+    nodeId: CharacterTemplateWorkflowNode['id'],
+    selectedImageUrl: string,
+    direction?: ActionDirection,
+  ): Promise<Character>
+  /** 上传角色生成约束图；页面不接触 multipart 协议或用途枚举。 */
+  uploadReferenceImage(file: File, signal?: AbortSignal): Promise<MediaReference>
+  /** 幂等发布动作资产，并与审核节点的保存作为一个用户命令处理。 */
   publishReviewedAction(reviewNodeId: ReviewWorkflowNode['id']): Promise<Character>
+  /**
+   * 母版预检与建 3D 资产。两者都挂在会话上而不是页面直连适配器，理由与其余能力一致：
+   * 页面只消费会话，替身注入才有单一入口。
+   */
+  render3d: Render3DApis
   subscribeErrors(listener: (error: Error) => void): () => void
   dispose(): void
 }
@@ -25,8 +55,10 @@ export interface WorkflowEditorSession {
 export interface RealWorkflowEditorDependencies {
   workflowRunApis: WorkflowRunApis
   generationApis: GenerationApis
+  mediaApis: Pick<MediaApis, 'upload'>
   projectApis: Pick<ProjectApis, 'get'>
-  characterApis: Pick<CharacterApis, 'listByProject' | 'update'>
+  characterApis: Pick<CharacterApis, 'get' | 'listByProject' | 'create' | 'update' | 'remove'>
+  render3d: Render3DApis
   onAsyncError(error: Error): void
 }
 
@@ -39,9 +71,16 @@ export async function createRealWorkflowEditorSession(
   dependencies: RealWorkflowEditorDependencies,
 ): Promise<WorkflowEditorSession> {
   const workflow = await dependencies.workflowRunApis.get(runId)
+  const setup = workflow.nodes.find(
+    (node): node is CharacterSetupWorkflowNode =>
+      node.type === 'character-setup' && !node.deletedAt,
+  )
+  const explicitCharacterId = setup?.input.characterId
   const [project, loadedCharacter] = await Promise.all([
     dependencies.projectApis.get(workflow.projectId),
-    loadWorkflowCharacter(dependencies.characterApis, workflow.projectId, workflow.id),
+    explicitCharacterId
+      ? loadExplicitCharacter(dependencies.characterApis, workflow.projectId, explicitCharacterId)
+      : loadWorkflowCharacter(dependencies.characterApis, workflow.projectId, workflow.id),
   ])
   let currentCharacter = loadedCharacter
   const errorListeners = new Set<(error: Error) => void>()
@@ -64,13 +103,72 @@ export async function createRealWorkflowEditorSession(
     workflowRunApis: dependencies.workflowRunApis,
     generationApis: dependencies.generationApis,
     onAsyncError: reportAsyncError,
+    directionalMovement: project.directionalMovement,
   })
   const publisher = createCharacterAssetPublisher(dependencies.characterApis)
+  async function shouldRollbackWorkflowChange(isPersisted: (latest: WorkflowRun) => boolean) {
+    try {
+      return !isPersisted(await dependencies.workflowRunApis.get(workflow.id))
+    } catch (reconcileCause) {
+      reportAsyncError(
+        reconcileCause instanceof Error
+          ? reconcileCause
+          : new Error('WorkflowRun 保存结果对账失败'),
+      )
+      // 无法确认 PATCH 是否已落库时保留幂等资产，避免删掉已被 Run 引用的数据。
+      return false
+    }
+  }
+
+  async function restorePublishedAction(
+    original: Character,
+    published: Character,
+    actionId: string,
+  ) {
+    try {
+      return await dependencies.characterApis.update({
+        ...original,
+        dataVersion: published.dataVersion,
+      })
+    } catch {
+      // Character 又被并发更新时，在最新资产树上只恢复本命令触及的 Action。
+      const latest = await dependencies.characterApis.get(original.id)
+      const originalAction = original.outfits
+        .flatMap((outfit) => outfit.actions)
+        .find((action) => action.id === actionId)
+      return dependencies.characterApis.update({
+        ...latest,
+        outfits: latest.outfits.map((outfit) => ({
+          ...outfit,
+          actions: [
+            ...outfit.actions.filter((action) => action.id !== actionId),
+            ...(originalAction?.outfitId === outfit.id ? [originalAction] : []),
+          ],
+        })),
+      })
+    }
+  }
+
+  const confirmCharacterTemplate = createCharacterTemplateConfirmer({
+    controller,
+    characterApis: dependencies.characterApis,
+    getCurrentCharacter: () => currentCharacter,
+    setCurrentCharacter: (character) => {
+      currentCharacter = character
+    },
+    shouldRollbackWorkflowChange,
+    reportAsyncError,
+  })
 
   return {
     controller,
     project,
     character: loadedCharacter,
+    render3d: dependencies.render3d,
+    uploadReferenceImage(file, signal) {
+      return dependencies.mediaApis.upload(file, 'reference-image', signal)
+    },
+    confirmCharacterTemplate,
     async publishReviewedAction(reviewNodeId) {
       if (!currentCharacter) throw new Error('当前 WorkflowRun 尚未关联 Character')
       const currentWorkflow = controller.getWorkflow()
@@ -80,16 +178,54 @@ export async function createRealWorkflowEditorSession(
         throw new Error(`${reviewNode.id} 必须且只能依赖一个完整动画节点`)
       }
       const fullFrameNodeId = reviewNode.dependsOnNodeIds[0]!
-      const generation = await controller.getGeneration(fullFrameNodeId, 'complete_animation')
-      if (!generation) throw new Error('完整动画生成结果不存在')
+      const fullFrameNode = currentWorkflow.nodes.find((node) => node.id === fullFrameNodeId)
+      const methodNode = currentWorkflow.nodes.find((node) =>
+        fullFrameNode?.dependsOnNodeIds.includes(node.id),
+      )
+      const firstFrameNode = currentWorkflow.nodes.find((node) =>
+        methodNode?.dependsOnNodeIds.includes(node.id),
+      )
+      if (!firstFrameNode || firstFrameNode.type !== 'action-first-frame') {
+        throw new Error('完整动画缺少动作首帧节点')
+      }
+      const generations = await controller.getGenerations(fullFrameNodeId, 'complete_animation')
+      if (generations.length === 0) throw new Error('完整动画生成结果不存在')
 
-      currentCharacter = await publisher.publishReviewedAction({
-        character: currentCharacter,
+      const originalCharacter = structuredClone(currentCharacter)
+      const publishedCharacter = await publisher.publishReviewedAction({
+        character: originalCharacter,
         workflow: currentWorkflow,
         reviewNodeId,
-        generation,
+        generations,
+        directionalMovement: project.directionalMovement,
       })
-      return currentCharacter
+      try {
+        await controller.approveReview(reviewNodeId)
+        currentCharacter = publishedCharacter
+        return publishedCharacter
+      } catch (cause) {
+        const shouldRollback = await shouldRollbackWorkflowChange((latest) => {
+          const latestReview = latest.nodes.find((node) => node.id === reviewNodeId)
+          return latestReview?.type === 'review' && latestReview.status === 'passed'
+        })
+        if (shouldRollback) {
+          try {
+            currentCharacter = await restorePublishedAction(
+              originalCharacter,
+              publishedCharacter,
+              firstFrameNode.id,
+            )
+          } catch (rollbackCause) {
+            currentCharacter = publishedCharacter
+            reportAsyncError(
+              rollbackCause instanceof Error
+                ? rollbackCause
+                : new Error('审核冲突后恢复角色资产失败'),
+            )
+          }
+        }
+        throw cause
+      }
     },
     subscribeErrors(listener) {
       errorListeners.add(listener)
@@ -102,31 +238,38 @@ export async function createRealWorkflowEditorSession(
   }
 }
 
-/**
- * main 已提供真实 WorkflowRun、Project 与 Character 适配器；Generation 只有公开接口，
- * 尚无可合入的 HTTP 实现。这里明确拒绝生成，避免用演示数据污染正式 WorkflowRun。
- */
+/** 使用生产 Generation 适配器恢复并推进单条 WorkflowRun。 */
 export function createDefaultRealWorkflowEditorSession(
   runId: string,
 ): Promise<WorkflowEditorSession> {
   return createRealWorkflowEditorSession(runId, {
     workflowRunApis,
-    generationApis: createUnavailableGenerationApis(),
+    generationApis: createAuthenticatedGenerationApis(),
+    mediaApis: createMediaApis(),
     projectApis,
     characterApis,
+    render3d: render3DApis,
     onAsyncError: () => undefined,
   })
 }
 
-export function createUnavailableGenerationApis(): GenerationApis {
-  const unavailable = () =>
-    Promise.reject(new Error('GenerationApis 尚未接入真实后端，不能执行或恢复生成任务'))
+/**
+ * 读后端的动作预设。和会话走同一条注入路径 —— 页面不直连适配器，替身注入只有这一个入口。
+ */
+export function loadDefaultActionPresets(signal?: AbortSignal): Promise<ActionPreset[]> {
+  return actionPresetApis.list(signal)
+}
 
-  return {
-    create: unavailable as GenerationApis['create'],
-    get: unavailable,
-    subscribe: () => () => undefined,
+async function loadExplicitCharacter(
+  apis: Pick<CharacterApis, 'get'>,
+  projectId: Project['id'],
+  characterId: Character['id'],
+): Promise<Character> {
+  const character = await apis.get(characterId)
+  if (character.projectId !== projectId) {
+    throw new Error(`角色 ${characterId} 不属于 WorkflowRun 所在项目`)
   }
+  return character
 }
 
 async function loadWorkflowCharacter(

@@ -33,10 +33,26 @@ class CharacterService(ABC):
         """按 ID 查询角色。"""
 
     @abstractmethod
+    def get_character_by_workflow_run(
+        self,
+        session: Session,
+        workflow_run_id: int,
+    ) -> Character | None:
+        """按 WorkflowRun ID 查询唯一角色。"""
+
+    @abstractmethod
     def list_characters(
         self, session: Session, *, project_id: int, page: int, page_size: int,
+        status: int | None = None,
     ) -> tuple[list[Character], int]:
-        """分页查询项目下的角色列表，返回 (当前页数据, 总数)。"""
+        """分页查询项目下的角色列表，返回 (当前页数据, 总数)。
+
+        ``status``: 可选，按发布状态过滤（0=草稿，1=已发布）。
+        """
+
+    @abstractmethod
+    def project_has_characters(self, session: Session, project_id: int) -> bool:
+        """判断项目下是否仍挂载角色（草稿或已发布均算）。"""
 
     @abstractmethod
     def update_character(self, session: Session, character_id: int, **fields) -> Character | None:

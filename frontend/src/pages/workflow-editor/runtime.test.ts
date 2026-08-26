@@ -4,13 +4,31 @@ import type {
   Character,
   Generation,
   GenerationApis,
+  MediaApis,
+  MediaReference,
   Project,
   WorkflowRun,
   WorkflowRunApis,
 } from '@/entities'
-import { createRealWorkflowEditorSession, createUnavailableGenerationApis } from './runtime'
+import { WorkflowRunConflictError } from '@/entities'
+import { registerApiAccessTokenProvider, registerApiUnauthorizedRecovery } from '@/shared/api'
+import { createDefaultRealWorkflowEditorSession, createRealWorkflowEditorSession } from './runtime'
+import { stubRender3DApis } from '@/test/render3d-apis'
 
 describe('createRealWorkflowEditorSession', () => {
+  it('通过公开 MediaApis 上传角色参考图并固定用途分类', async () => {
+    const uploaded = 'https://assets.windup.test/reference.png' as MediaReference
+    const mediaApis: Pick<MediaApis, 'upload'> = {
+      upload: vi.fn().mockResolvedValue(uploaded),
+    }
+    const { session } = await createCharacterTemplateSession({ mediaApis })
+    const file = new File(['pixels'], 'reference.png', { type: 'image/png' })
+    const controller = new AbortController()
+
+    await expect(session.uploadReferenceImage(file, controller.signal)).resolves.toBe(uploaded)
+    expect(mediaApis.upload).toHaveBeenCalledWith(file, 'reference-image', controller.signal)
+  })
+
   it('只用主仓库公开接口恢复 WorkflowRun 并装配 Controller', async () => {
     const workflow = workflowFixture()
     const project = projectFixture()
@@ -43,12 +61,17 @@ describe('createRealWorkflowEditorSession', () => {
           page: 2,
           pageSize: 100,
         }),
+      create: vi.fn(),
+      get: vi.fn(),
       update: vi.fn(),
+      remove: vi.fn(),
     }
 
     const session = await createRealWorkflowEditorSession('42', {
       workflowRunApis,
       generationApis,
+      mediaApis: { upload: vi.fn() },
+      render3d: stubRender3DApis(),
       projectApis,
       characterApis,
       onAsyncError: vi.fn(),
@@ -80,7 +103,10 @@ describe('createRealWorkflowEditorSession', () => {
         page: 1,
         pageSize: 100,
       }),
+      create: vi.fn(),
+      get: vi.fn(),
       update: vi.fn(),
+      remove: vi.fn(),
     }
 
     await expect(
@@ -96,11 +122,107 @@ describe('createRealWorkflowEditorSession', () => {
           get: vi.fn(),
           subscribe: vi.fn(() => () => undefined),
         },
+        mediaApis: { upload: vi.fn() },
+        render3d: stubRender3DApis(),
         projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
         characterApis,
         onAsyncError: vi.fn(),
       }),
     ).rejects.toThrow('WorkflowRun 42 关联了多个角色')
+  })
+
+  it('新增动作 Run 按节点中的 characterId 恢复原角色', async () => {
+    const character = { ...characterFixture(), workflowRunId: 'original-run' }
+    const workflow = {
+      ...workflowFixture(),
+      id: 'new-action-run',
+      nodes: [
+        {
+          ...workflowFixture().nodes[0]!,
+          status: 'passed' as const,
+          phase: 'completed' as const,
+          input: {
+            characterId: character.id,
+            prompt: '冒险家',
+            referenceMedia: ['https://assets.windup.test/master.png' as MediaReference],
+          },
+        },
+      ],
+    }
+    const getCharacter = vi.fn().mockResolvedValue(character)
+    const listByProject = vi.fn()
+
+    const session = await createRealWorkflowEditorSession('new-action-run', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(workflow),
+        update: vi.fn(async (run) => ({ ...structuredClone(run), version: run.version + 1 })),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn(),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      render3d: stubRender3DApis(),
+      characterApis: {
+        get: getCharacter,
+        listByProject,
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      },
+      onAsyncError: vi.fn(),
+    })
+
+    expect(getCharacter).toHaveBeenCalledWith(character.id)
+    expect(listByProject).not.toHaveBeenCalled()
+    expect(session.character).toEqual(character)
+  })
+
+  it('拒绝把节点显式绑定的角色跨项目载入编辑器', async () => {
+    const workflow = {
+      ...workflowFixture(),
+      nodes: [
+        {
+          ...workflowFixture().nodes[0]!,
+          input: {
+            characterId: '9',
+            prompt: '冒险家',
+            referenceMedia: [],
+          },
+        },
+      ],
+    }
+
+    await expect(
+      createRealWorkflowEditorSession('42', {
+        workflowRunApis: {
+          create: vi.fn(),
+          get: vi.fn().mockResolvedValue(workflow),
+          update: vi.fn(),
+          remove: vi.fn(),
+        },
+        generationApis: {
+          create: vi.fn() as GenerationApis['create'],
+          get: vi.fn(),
+          subscribe: vi.fn(() => () => undefined),
+        },
+        mediaApis: { upload: vi.fn() },
+        projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+        render3d: stubRender3DApis(),
+        characterApis: {
+          get: vi.fn().mockResolvedValue({ ...characterFixture(), projectId: 'other-project' }),
+          listByProject: vi.fn(),
+          create: vi.fn(),
+          update: vi.fn(),
+          remove: vi.fn(),
+        },
+        onAsyncError: vi.fn(),
+      }),
+    ).rejects.toThrow('角色 9 不属于 WorkflowRun 所在项目')
   })
 
   it('把 Controller 异步错误同时交给装配层和页面订阅者', async () => {
@@ -118,6 +240,8 @@ describe('createRealWorkflowEditorSession', () => {
         get: vi.fn(),
         subscribe: vi.fn(() => () => undefined),
       },
+      mediaApis: { upload: vi.fn() },
+      render3d: stubRender3DApis(),
       projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
       characterApis: {
         listByProject: vi.fn().mockResolvedValue({
@@ -126,7 +250,10 @@ describe('createRealWorkflowEditorSession', () => {
           page: 1,
           pageSize: 100,
         }),
+        create: vi.fn(),
+        get: vi.fn(),
         update: vi.fn(),
+        remove: vi.fn(),
       },
       onAsyncError,
     })
@@ -146,7 +273,322 @@ describe('createRealWorkflowEditorSession', () => {
     expect(pageError).toHaveBeenCalledWith(expect.objectContaining({ message: '异步保存回调失败' }))
   })
 
-  it('发布 Character 动作资产后由调用方单独推进审核节点', async () => {
+  it('确认身份母版时为尚未绑定角色的 WorkflowRun 创建 Character 和默认造型', async () => {
+    const workflow = selectingCharacterTemplateWorkflowFixture()
+    const create = vi.fn().mockResolvedValue(characterFixture())
+    const update = vi.fn(async (character: Character) => structuredClone(character))
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(workflow),
+        update: vi.fn(async (run) => ({ ...structuredClone(run), version: run.version + 1 })),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn(),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      render3d: stubRender3DApis(),
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({
+          items: [],
+          total: 0,
+          page: 1,
+          pageSize: 100,
+        }),
+        create,
+        get: vi.fn(),
+        update,
+        remove: vi.fn(),
+      },
+      onAsyncError: vi.fn(),
+    })
+
+    const character = await session.confirmCharacterTemplate(
+      'template',
+      'https://assets.windup.test/master.png',
+    )
+
+    expect(create).toHaveBeenCalledWith({
+      projectId: '1',
+      workflowRunId: '42',
+      description: '冒险家',
+      referenceImageUrl: 'https://assets.windup.test/master.png',
+    })
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: '9',
+        templates: [
+          {
+            direction: 'east',
+            sourceDirection: null,
+            mirrorX: false,
+            imageUrl: 'https://assets.windup.test/master.png',
+          },
+          {
+            direction: 'west',
+            sourceDirection: 'east',
+            mirrorX: true,
+            imageUrl: null,
+          },
+        ],
+        outfits: [
+          expect.objectContaining({
+            id: 'outfit-default',
+            characterId: '9',
+            name: '常态造型',
+            previewUrl: 'https://assets.windup.test/master.png',
+            actions: [],
+          }),
+        ],
+      }),
+    )
+    expect(character.outfits).toHaveLength(1)
+    expect(
+      session.controller.getWorkflow().nodes.find((node) => node.id === 'template'),
+    ).toMatchObject({ status: 'passed', phase: 'completed' })
+  })
+
+  it('四向流程先确认北向母版时用该图创建默认造型', async () => {
+    const { session, update } = await createCharacterTemplateSession({
+      directionalMovement: 'four-way',
+    })
+
+    await session.confirmCharacterTemplate(
+      'template',
+      'https://assets.windup.test/north-master.png',
+      'north',
+    )
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceImageUrl: 'https://assets.windup.test/north-master.png',
+        outfits: [
+          expect.objectContaining({
+            previewUrl: 'https://assets.windup.test/north-master.png',
+          }),
+        ],
+      }),
+    )
+  })
+
+  it('拒绝用空图片确认身份母版', async () => {
+    const { session, create } = await createCharacterTemplateSession()
+
+    await expect(session.confirmCharacterTemplate('template', '   ')).rejects.toThrow(
+      '必须选择角色母版',
+    )
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('新建 Character 后 Run 冲突时删除未绑定的孤儿角色', async () => {
+    const { session, remove } = await createCharacterTemplateSession({
+      workflowRunUpdate: vi
+        .fn()
+        .mockRejectedValue(new WorkflowRunConflictError('执行记录版本冲突')),
+    })
+
+    await expect(
+      session.confirmCharacterTemplate('template', 'https://assets.windup.test/master.png'),
+    ).rejects.toBeInstanceOf(WorkflowRunConflictError)
+
+    expect(remove).toHaveBeenCalledWith('9')
+    expect(session.controller.getWorkflow().nodes).toEqual(
+      selectingCharacterTemplateWorkflowFixture().nodes,
+    )
+  })
+
+  it('无法回读 Run 确认保存结果时保留可幂等 Character', async () => {
+    const workflow = selectingCharacterTemplateWorkflowFixture()
+    const reconcileError = new Error('WorkflowRun 回读失败')
+    const getRun = vi.fn().mockResolvedValueOnce(workflow).mockRejectedValue(reconcileError)
+    const remove = vi.fn()
+    const onAsyncError = vi.fn()
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: getRun,
+        update: vi.fn().mockRejectedValue(new WorkflowRunConflictError('执行记录版本冲突')),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn(),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 100 }),
+        create: vi.fn().mockResolvedValue(characterFixture()),
+        get: vi.fn(),
+        update: vi.fn(async (character) => structuredClone(character)),
+        remove,
+      },
+      render3d: stubRender3DApis(),
+      onAsyncError,
+    })
+
+    await expect(
+      session.confirmCharacterTemplate('template', 'https://assets.windup.test/master.png'),
+    ).rejects.toBeInstanceOf(WorkflowRunConflictError)
+
+    expect(remove).not.toHaveBeenCalled()
+    expect(onAsyncError).toHaveBeenCalledWith(reconcileError)
+  })
+
+  it('拒绝确认当前不可选择的身份母版节点', async () => {
+    const { session, create } = await createCharacterTemplateSession()
+
+    await expect(
+      session.confirmCharacterTemplate('missing', 'https://assets.windup.test/master.png'),
+    ).rejects.toThrow('角色母版节点当前不能确认')
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('拒绝确认缺少角色设定依赖的身份母版', async () => {
+    const workflow = selectingCharacterTemplateWorkflowFixture()
+    workflow.nodes = workflow.nodes.filter((node) => node.type !== 'character-setup')
+    const { session, create } = await createCharacterTemplateSession({ workflow })
+
+    await expect(
+      session.confirmCharacterTemplate('template', 'https://assets.windup.test/master.png'),
+    ).rejects.toThrow('角色母版缺少角色设定')
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('已有 Character 和造型时仍持久化已确认的方向母版', async () => {
+    const existing = characterWithOutfitFixture()
+    const { session, create, update } = await createCharacterTemplateSession({
+      characters: [existing],
+    })
+
+    const character = await session.confirmCharacterTemplate(
+      'template',
+      'https://assets.windup.test/master.png',
+    )
+
+    expect(character).toMatchObject({
+      templates: [
+        {
+          direction: 'east',
+          sourceDirection: null,
+          mirrorX: false,
+          imageUrl: 'https://assets.windup.test/master.png',
+        },
+        {
+          direction: 'west',
+          sourceDirection: 'east',
+          mirrorX: true,
+          imageUrl: null,
+        },
+      ],
+    })
+    expect(create).not.toHaveBeenCalled()
+    expect(update).toHaveBeenCalledOnce()
+    expect(
+      session.controller.getWorkflow().nodes.find((node) => node.id === 'template'),
+    ).toMatchObject({ status: 'passed', phase: 'completed' })
+  })
+
+  it('已有 Character 新增造型后 Run 冲突时恢复修改前的角色资产', async () => {
+    const existing = characterFixture()
+    const updates: Character[] = []
+    const workflow = selectingCharacterTemplateWorkflowFixture()
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(workflow),
+        update: vi.fn().mockRejectedValue(new WorkflowRunConflictError('执行记录版本冲突')),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn(),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({
+          items: [existing],
+          total: 1,
+          page: 1,
+          pageSize: 100,
+        }),
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(existing),
+        update: vi.fn(async (character) => {
+          updates.push(structuredClone(character))
+          return { ...structuredClone(character), dataVersion: character.dataVersion + 1 }
+        }),
+        remove: vi.fn(),
+      },
+      render3d: stubRender3DApis(),
+      onAsyncError: vi.fn(),
+    })
+
+    await expect(
+      session.confirmCharacterTemplate('template', 'https://assets.windup.test/master.png'),
+    ).rejects.toBeInstanceOf(WorkflowRunConflictError)
+
+    expect(updates).toHaveLength(2)
+    expect(updates[0]!.outfits).toHaveLength(1)
+    expect(updates[1]).toMatchObject({ dataVersion: 2, outfits: [] })
+    expect(session.controller.getWorkflow().nodes).toEqual(workflow.nodes)
+  })
+
+  it('身份母版冲突且角色回滚失败时上报恢复错误', async () => {
+    const existing = characterFixture()
+    const workflow = selectingCharacterTemplateWorkflowFixture()
+    const rollbackError = new Error('角色资产恢复失败')
+    const onAsyncError = vi.fn()
+    let updateCount = 0
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(workflow),
+        update: vi.fn().mockRejectedValue(new WorkflowRunConflictError('执行记录版本冲突')),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn(),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({
+          items: [existing],
+          total: 1,
+          page: 1,
+          pageSize: 100,
+        }),
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(existing),
+        update: vi.fn(async (character) => {
+          updateCount += 1
+          if (updateCount > 1) throw rollbackError
+          return { ...structuredClone(character), dataVersion: character.dataVersion + 1 }
+        }),
+        remove: vi.fn(),
+      },
+      render3d: stubRender3DApis(),
+      onAsyncError,
+    })
+
+    await expect(
+      session.confirmCharacterTemplate('template', 'https://assets.windup.test/master.png'),
+    ).rejects.toBeInstanceOf(WorkflowRunConflictError)
+
+    expect(onAsyncError).toHaveBeenCalledWith(rollbackError)
+  })
+
+  it('发布 Character 动作资产并在同一会话内推进审核节点', async () => {
     const events: string[] = []
     const workflow = reviewingWorkflowFixture()
     const session = await createRealWorkflowEditorSession('42', {
@@ -164,6 +606,8 @@ describe('createRealWorkflowEditorSession', () => {
         get: vi.fn().mockResolvedValue(completeAnimationFixture()),
         subscribe: vi.fn(() => () => undefined),
       },
+      mediaApis: { upload: vi.fn() },
+      render3d: stubRender3DApis(),
       projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
       characterApis: {
         listByProject: vi.fn().mockResolvedValue({
@@ -172,44 +616,551 @@ describe('createRealWorkflowEditorSession', () => {
           page: 1,
           pageSize: 100,
         }),
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(characterWithOutfitFixture()),
         update: vi.fn(async (character) => {
           events.push('publish')
           return structuredClone(character)
         }),
+        remove: vi.fn(),
       },
       onAsyncError: vi.fn(),
     })
 
     const published = await session.publishReviewedAction('action-walk:review')
 
-    expect(events).toEqual(['publish'])
+    expect(events).toEqual(['publish', 'approve'])
     expect(published.outfits[0]?.actions).toEqual([
       expect.objectContaining({ id: 'action-walk', frameCount: 2 }),
     ])
     expect(
       session.controller.getWorkflow().nodes.find((node) => node.id === 'action-walk:review'),
-    ).toMatchObject({ status: 'active', phase: 'reviewing' })
-
-    await session.controller.approveReview('action-walk:review')
-
-    expect(events).toEqual(['publish', 'approve'])
-    expect(
-      session.controller.getWorkflow().nodes.find((node) => node.id === 'action-walk:review'),
     ).toMatchObject({ status: 'passed', phase: 'completed' })
   })
-})
 
-describe('createUnavailableGenerationApis', () => {
-  it('在 main 尚无 Generation HTTP 适配器时明确失败，不返回演示结果', async () => {
-    const apis = createUnavailableGenerationApis()
+  it('四向审核发布时把全部方向写入同一个 Character 动作', async () => {
+    const workflow = reviewingWorkflowFixture()
+    const fullFrame = workflow.nodes.find((node) => node.type === 'action-full-frame')!
+    fullFrame.generations = [
+      { taskId: 'generation-east', role: 'complete_animation', direction: 'east' },
+      { taskId: 'generation-west', role: 'complete_animation', direction: 'west' },
+      { taskId: 'generation-north', role: 'complete_animation', direction: 'north' },
+      { taskId: 'generation-south', role: 'complete_animation', direction: 'south' },
+    ]
+    const generations = new Map([
+      ['generation-east', directionalAnimationFixture('generation-east', 'east')],
+      ['generation-west', directionalAnimationFixture('generation-west', 'west')],
+      ['generation-north', directionalAnimationFixture('generation-north', 'north')],
+      ['generation-south', directionalAnimationFixture('generation-south', 'south')],
+    ])
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(workflow),
+        update: vi.fn(async (run) => ({ ...structuredClone(run), version: run.version + 1 })),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn(async (_projectId, id) => structuredClone(generations.get(id)!)),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      render3d: stubRender3DApis(),
+      projectApis: {
+        get: vi.fn().mockResolvedValue({
+          ...projectFixture(),
+          directionalMovement: 'four-way',
+        }),
+      },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({
+          items: [characterWithOutfitFixture()],
+          total: 1,
+          page: 1,
+          pageSize: 100,
+        }),
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(characterWithOutfitFixture()),
+        update: vi.fn(async (character) => structuredClone(character)),
+        remove: vi.fn(),
+      },
+      onAsyncError: vi.fn(),
+    })
 
-    await expect(apis.create(characterGenerationInput())).rejects.toThrow(
-      'GenerationApis 尚未接入真实后端',
+    const published = await session.publishReviewedAction('action-walk:review')
+
+    expect(published.outfits[0]?.actions[0]?.sequences?.map((item) => item.direction)).toEqual([
+      'east',
+      'west',
+      'north',
+      'south',
+    ])
+  })
+
+  it('拒绝发布缺少动作首帧依赖的完整动画', async () => {
+    const workflow = reviewingWorkflowFixture()
+    workflow.nodes = workflow.nodes.filter((node) => node.type !== 'action-first-frame')
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(workflow),
+        update: vi.fn(),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn(),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({
+          items: [characterWithOutfitFixture()],
+          total: 1,
+          page: 1,
+          pageSize: 100,
+        }),
+        create: vi.fn(),
+        get: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      },
+      render3d: stubRender3DApis(),
+      onAsyncError: vi.fn(),
+    })
+
+    await expect(session.publishReviewedAction('action-walk:review')).rejects.toThrow(
+      '完整动画缺少动作首帧节点',
     )
-    await expect(apis.get('1', '9')).rejects.toThrow('GenerationApis 尚未接入真实后端')
-    expect(() => apis.subscribe('1', '9', vi.fn())).not.toThrow()
+  })
+
+  it('拒绝发布没有生成任务引用的完整动画', async () => {
+    const workflow = reviewingWorkflowFixture()
+    const fullFrame = workflow.nodes.find((node) => node.type === 'action-full-frame')!
+    fullFrame.generations = []
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(workflow),
+        update: vi.fn(),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn(),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({
+          items: [characterWithOutfitFixture()],
+          total: 1,
+          page: 1,
+          pageSize: 100,
+        }),
+        create: vi.fn(),
+        get: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      },
+      render3d: stubRender3DApis(),
+      onAsyncError: vi.fn(),
+    })
+
+    await expect(session.publishReviewedAction('action-walk:review')).rejects.toThrow(
+      '完整动画生成结果不存在',
+    )
+  })
+
+  it('审核 Run 已落库但响应丢失时保留已发布的动作资产', async () => {
+    let savedWorkflow = reviewingWorkflowFixture()
+    let savedCharacter = characterWithOutfitFixture()
+    const updateCharacter = vi.fn(async (character: Character) => {
+      savedCharacter = { ...structuredClone(character), dataVersion: character.dataVersion + 1 }
+      return structuredClone(savedCharacter)
+    })
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn(async () => structuredClone(savedWorkflow)),
+        update: vi.fn(async (run) => {
+          savedWorkflow = { ...structuredClone(run), version: run.version + 1 }
+          throw new Error('网络响应丢失')
+        }),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn().mockResolvedValue(completeAnimationFixture()),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        get: vi.fn(async () => structuredClone(savedCharacter)),
+        listByProject: vi.fn().mockResolvedValue({
+          items: [savedCharacter],
+          total: 1,
+          page: 1,
+          pageSize: 100,
+        }),
+        create: vi.fn(),
+        update: updateCharacter,
+        remove: vi.fn(),
+      },
+      render3d: stubRender3DApis(),
+      onAsyncError: vi.fn(),
+    })
+
+    await expect(session.publishReviewedAction('action-walk:review')).resolves.toMatchObject({
+      id: savedCharacter.id,
+    })
+
+    expect(updateCharacter).toHaveBeenCalledTimes(1)
+    expect(savedCharacter.outfits[0]!.actions).toEqual([
+      expect.objectContaining({ id: 'action-walk' }),
+    ])
+    expect(savedWorkflow.nodes.find((node) => node.id === 'action-walk:review')).toMatchObject({
+      status: 'passed',
+    })
+    expect(
+      session.controller.getWorkflow().nodes.find((node) => node.id === 'action-walk:review'),
+    ).toMatchObject({ status: 'passed' })
+  })
+
+  it('其他客户端已完成同一审核时当前 409 不撤销已发布动作', async () => {
+    const initialWorkflow = reviewingWorkflowFixture()
+    const latestWorkflow = structuredClone(initialWorkflow)
+    const latestSetup = latestWorkflow.nodes.find((node) => node.type === 'character-setup')
+    const latestReview = latestWorkflow.nodes.find((node) => node.type === 'review')
+    if (!latestSetup || latestSetup.type !== 'character-setup' || !latestReview) {
+      throw new Error('测试工作流缺少节点')
+    }
+    latestSetup.input = { ...latestSetup.input, name: '并发客户端改名' }
+    latestReview.status = 'passed'
+    latestReview.phase = 'completed'
+    latestWorkflow.version += 1
+    let character = characterWithOutfitFixture()
+    const updateCharacter = vi.fn(async (next: Character) => {
+      character = { ...structuredClone(next), dataVersion: next.dataVersion + 1 }
+      return structuredClone(character)
+    })
+    const getRun = vi.fn().mockResolvedValueOnce(initialWorkflow).mockResolvedValue(latestWorkflow)
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: getRun,
+        update: vi.fn().mockRejectedValue(new WorkflowRunConflictError('执行记录版本冲突')),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn().mockResolvedValue(completeAnimationFixture()),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        get: vi.fn(async () => structuredClone(character)),
+        listByProject: vi.fn().mockResolvedValue({
+          items: [character],
+          total: 1,
+          page: 1,
+          pageSize: 100,
+        }),
+        create: vi.fn(),
+        update: updateCharacter,
+        remove: vi.fn(),
+      },
+      render3d: stubRender3DApis(),
+      onAsyncError: vi.fn(),
+    })
+
+    await expect(session.publishReviewedAction('action-walk:review')).rejects.toBeInstanceOf(
+      WorkflowRunConflictError,
+    )
+
+    expect(updateCharacter).toHaveBeenCalledTimes(1)
+    expect(character.outfits[0]!.actions).toEqual([expect.objectContaining({ id: 'action-walk' })])
+  })
+
+  it('动作资产发布后 Run 冲突时恢复修改前的 Character', async () => {
+    const original = characterWithOutfitFixture()
+    const originalAction = {
+      id: 'action-walk',
+      outfitId: 'outfit-default',
+      name: '原行走动作',
+      type: 'walk' as const,
+      loop: true,
+      fps: 8,
+      frameCount: 0,
+      frames: [],
+    }
+    original.outfits[0]!.actions = [originalAction]
+    const updates: Character[] = []
+    let published: Character | null = null
+    const unrelatedAction = {
+      id: 'action-jump',
+      outfitId: 'outfit-default',
+      name: '跳跃',
+      type: 'jump',
+      loop: false,
+      fps: 12,
+      frameCount: 0,
+      frames: [],
+    }
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(reviewingWorkflowFixture()),
+        update: vi.fn().mockRejectedValue(new WorkflowRunConflictError('执行记录版本冲突')),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn().mockResolvedValue(completeAnimationFixture()),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({
+          items: [original],
+          total: 1,
+          page: 1,
+          pageSize: 100,
+        }),
+        create: vi.fn(),
+        get: vi.fn(async () => ({
+          ...(published ?? original),
+          dataVersion: 3,
+          outfits: (published ?? original).outfits.map((outfit) => ({
+            ...outfit,
+            actions: [...outfit.actions, unrelatedAction],
+          })),
+        })),
+        update: vi.fn(async (character) => {
+          updates.push(structuredClone(character))
+          if (updates.length === 2) throw new Error('Character 版本冲突')
+          const saved = { ...structuredClone(character), dataVersion: character.dataVersion + 1 }
+          if (updates.length === 1) published = saved
+          return saved
+        }),
+        remove: vi.fn(),
+      },
+      render3d: stubRender3DApis(),
+      onAsyncError: vi.fn(),
+    })
+
+    await expect(session.publishReviewedAction('action-walk:review')).rejects.toBeInstanceOf(
+      WorkflowRunConflictError,
+    )
+
+    expect(updates).toHaveLength(3)
+    expect(updates[0]!.outfits[0]!.actions).toHaveLength(1)
+    expect(updates[1]).toMatchObject({ dataVersion: 2, outfits: original.outfits })
+    expect(updates[2]!.outfits[0]!.actions).toHaveLength(2)
+    expect(updates[2]!.outfits[0]!.actions).toEqual(
+      expect.arrayContaining([unrelatedAction, originalAction]),
+    )
+    expect(
+      session.controller.getWorkflow().nodes.find((node) => node.id === 'action-walk:review'),
+    ).toMatchObject({ status: 'active', phase: 'reviewing' })
+  })
+
+  it('审核冲突且动作资产无法回滚时保留发布结果并上报错误', async () => {
+    const workflow = reviewingWorkflowFixture()
+    const original = characterWithOutfitFixture()
+    const rollbackError = new Error('动作资产恢复失败')
+    const onAsyncError = vi.fn()
+    let published: Character | null = null
+    let updateCount = 0
+    const session = await createRealWorkflowEditorSession('42', {
+      workflowRunApis: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(workflow),
+        update: vi.fn().mockRejectedValue(new WorkflowRunConflictError('执行记录版本冲突')),
+        remove: vi.fn(),
+      },
+      generationApis: {
+        create: vi.fn() as GenerationApis['create'],
+        get: vi.fn().mockResolvedValue(completeAnimationFixture()),
+        subscribe: vi.fn(() => () => undefined),
+      },
+      mediaApis: { upload: vi.fn() },
+      projectApis: { get: vi.fn().mockResolvedValue(projectFixture()) },
+      characterApis: {
+        listByProject: vi.fn().mockResolvedValue({
+          items: [original],
+          total: 1,
+          page: 1,
+          pageSize: 100,
+        }),
+        create: vi.fn(),
+        get: vi.fn(async () => structuredClone(published ?? original)),
+        update: vi.fn(async (character) => {
+          updateCount += 1
+          if (updateCount > 1) throw rollbackError
+          const saved = { ...structuredClone(character), dataVersion: character.dataVersion + 1 }
+          published = saved
+          return structuredClone(saved)
+        }),
+        remove: vi.fn(),
+      },
+      render3d: stubRender3DApis(),
+      onAsyncError,
+    })
+
+    await expect(session.publishReviewedAction('action-walk:review')).rejects.toBeInstanceOf(
+      WorkflowRunConflictError,
+    )
+
+    expect(onAsyncError).toHaveBeenCalledWith(rollbackError)
   })
 })
+
+describe('createDefaultRealWorkflowEditorSession', () => {
+  it('使用真实 Generation 接口恢复任务，并在业务 401 后携带新 token 重放一次', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
+    let accessToken = 'expired-token'
+    const unregisterToken = registerApiAccessTokenProvider(() => accessToken)
+    const recover = vi.fn(async () => {
+      accessToken = 'refreshed-token'
+      return true
+    })
+    const unregisterRecovery = registerApiUnauthorizedRecovery(recover)
+    const generationTokens: Array<string | null> = []
+    const workflow = selectingCharacterTemplateWorkflowFixture()
+    workflow.nodes[1]!.generations = [{ taskId: '91', role: 'character_template' }]
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url === 'https://api.windup.test/workflow-runs/42') {
+        return apiSuccess({
+          id: 42,
+          project_id: 1,
+          nodes: workflow.nodes,
+          status: 'active',
+          version: 4,
+        })
+      }
+      if (url === 'https://api.windup.test/projects/1') {
+        return apiSuccess({
+          id: 1,
+          workflow_id: null,
+          project_name: '正式项目',
+          character_perspective: 1,
+          directional_movement: 1,
+          sprite_width: 64,
+          sprite_height: 64,
+          game_style: null,
+          sprite_sample_url: null,
+          create_at: '2026-08-10T00:00:00.000Z',
+          update_at: '2026-08-10T00:00:00.000Z',
+        })
+      }
+      if (url === 'https://api.windup.test/characters?project_id=1&page=1&page_size=100') {
+        return apiSuccess([], { total: 0, page: 1, page_size: 100 })
+      }
+      if (url === 'https://api.windup.test/generation/tasks/91?project_id=1') {
+        generationTokens.push(new Headers(init?.headers).get('authorization'))
+        if (generationTokens.length === 1) {
+          return new Response(
+            JSON.stringify({ code: 401, message: 'access token expired', data: null }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        return apiSuccess({
+          id: 91,
+          project_id: 1,
+          task_type: 'character_image',
+          status: 'failed',
+          input_payload: { num_images: 3 },
+          result: null,
+          error_message: 'provider unavailable',
+        })
+      }
+      throw new Error(`意外请求：${url}`)
+    })
+
+    try {
+      const session = await createDefaultRealWorkflowEditorSession('42')
+
+      await expect(
+        session.controller.getGeneration('template', 'character_template'),
+      ).resolves.toMatchObject({
+        id: '91',
+        projectId: '1',
+        type: 'character_template',
+        status: 'failed',
+        error: 'provider unavailable',
+      })
+      expect(recover).toHaveBeenCalledOnce()
+      expect(generationTokens).toEqual(['Bearer expired-token', 'Bearer refreshed-token'])
+      session.dispose()
+    } finally {
+      fetchSpy.mockRestore()
+      unregisterRecovery()
+      unregisterToken()
+      vi.unstubAllEnvs()
+    }
+  })
+})
+
+async function createCharacterTemplateSession(
+  options: {
+    workflow?: WorkflowRun
+    characters?: Character[]
+    mediaApis?: Pick<MediaApis, 'upload'>
+    workflowRunUpdate?: WorkflowRunApis['update']
+    directionalMovement?: Project['directionalMovement']
+  } = {},
+) {
+  const workflow = options.workflow ?? selectingCharacterTemplateWorkflowFixture()
+  const characters = options.characters ?? []
+  const create = vi.fn().mockResolvedValue(characterFixture())
+  const update = vi.fn(async (character: Character) => structuredClone(character))
+  const remove = vi.fn()
+  const session = await createRealWorkflowEditorSession('42', {
+    workflowRunApis: {
+      create: vi.fn(),
+      get: vi.fn().mockResolvedValue(workflow),
+      update:
+        options.workflowRunUpdate ??
+        vi.fn(async (run) => ({ ...structuredClone(run), version: run.version + 1 })),
+      remove: vi.fn(),
+    },
+    generationApis: {
+      create: vi.fn() as GenerationApis['create'],
+      get: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+    },
+    projectApis: {
+      get: vi.fn().mockResolvedValue({
+        ...projectFixture(),
+        directionalMovement: options.directionalMovement ?? 'single',
+      }),
+    },
+    characterApis: {
+      listByProject: vi.fn().mockResolvedValue({
+        items: characters,
+        total: characters.length,
+        page: 1,
+        pageSize: 100,
+      }),
+      create,
+      get: vi.fn().mockResolvedValue(characters[0] ?? characterFixture()),
+      update,
+      remove,
+    },
+    mediaApis: options.mediaApis ?? { upload: vi.fn() },
+    render3d: stubRender3DApis(),
+    onAsyncError: vi.fn(),
+  })
+  return { session, create, update, remove }
+}
 
 function workflowFixture(): WorkflowRun {
   return {
@@ -240,7 +1191,7 @@ function projectFixture(): Project {
     perspective: 'side',
     directionalMovement: 'single',
     spriteSize: { width: 64, height: 64 },
-    gameStyle: null,
+    gameStyle: 'unspecified',
     sampleImageUrl: null,
     createdAt: '2026-08-10T00:00:00.000Z',
     updatedAt: '2026-08-10T00:00:00.000Z',
@@ -271,7 +1222,39 @@ function characterWithOutfitFixture(): Character {
         name: '常态造型',
         description: null,
         previewUrl: null,
+        model3dUrl: null,
         actions: [],
+      },
+    ],
+  }
+}
+
+function selectingCharacterTemplateWorkflowFixture(): WorkflowRun {
+  return {
+    id: '42',
+    projectId: '1',
+    version: 4,
+    storageStatus: 'active',
+    nodes: [
+      {
+        id: 'setup',
+        type: 'character-setup',
+        status: 'passed',
+        phase: 'completed',
+        dependsOnNodeIds: [],
+        generations: [],
+        error: null,
+        input: { prompt: '冒险家', referenceMedia: [] },
+      },
+      {
+        id: 'template',
+        type: 'character-template',
+        status: 'active',
+        phase: 'selecting',
+        dependsOnNodeIds: ['setup'],
+        generations: [{ taskId: 'character-task', role: 'character_template' }],
+        error: null,
+        selectedImageUrl: null,
       },
     ],
   }
@@ -370,13 +1353,24 @@ function completeAnimationFixture(): Generation<'complete_animation'> {
   }
 }
 
-function characterGenerationInput() {
+function directionalAnimationFixture(
+  id: string,
+  direction: 'east' | 'west' | 'north' | 'south',
+): Generation<'complete_animation'> {
   return {
-    type: 'character_template' as const,
-    projectId: '1',
-    prompt: '冒险家',
-    spriteWidth: 64,
-    spriteHeight: 64,
-    referenceMedia: [],
+    ...completeAnimationFixture(),
+    id,
+    result: {
+      type: 'complete_animation',
+      direction,
+      frames: [{ index: 0, url: `${direction}.png`, durationMs: 80 }],
+    },
   }
+}
+
+function apiSuccess(data: unknown, extra: Record<string, unknown> = {}) {
+  return new Response(JSON.stringify({ code: 200, message: 'success', data, ...extra }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  })
 }

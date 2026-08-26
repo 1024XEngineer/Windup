@@ -1,5 +1,7 @@
 import type { ActionType } from '../character'
+import type { ActionDirection } from '../character'
 import type { MediaReference } from '../media'
+import type { ActionGenerationMethod } from '../workflow-run'
 
 /**
  * Generation 是业务数据，不是「调用图片生成能力」。
@@ -24,10 +26,12 @@ export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed'
  */
 export type GenerationType = 'character_template' | 'first_frame' | 'complete_animation'
 
+export type ImageCandidateCount = 1 | 2 | 3 | 4
+
 export type GenerationExpectation =
-  | { type: 'character_template' }
-  | { type: 'first_frame'; actionType: ActionType }
-  | { type: 'complete_animation'; actionType: ActionType }
+  | { type: 'character_template'; direction?: ActionDirection }
+  | { type: 'first_frame'; actionType: ActionType; direction?: ActionDirection }
+  | { type: 'complete_animation'; actionType: ActionType; direction?: ActionDirection }
 
 interface GenerationInputBase {
   projectId: string
@@ -43,16 +47,25 @@ export interface CharacterTemplateGenerationInput extends GenerationInputBase {
   /** 必须与 Project 的精灵尺寸一致，后端会在提交时校验。 */
   spriteWidth: number
   spriteHeight: number
+  /** 当前任务生成的真实源方向；旧调用缺省时按 east 兼容。 */
+  direction?: ActionDirection
+  /** 每个方向生成的候选数；缺省为 3，后端允许 1–4。 */
+  candidateCount?: ImageCandidateCount
 }
 
-/** 指定角色造型下的动作首帧生成；不能只绑定 Character。 */
+/** 基于已确认角色母版生成动作首帧候选图。 */
 export interface FirstFrameGenerationInput extends GenerationInputBase {
   type: 'first_frame'
-  characterId: string
-  outfitId: string
   actionType: ActionType
-  /** 自定义动作或额外动作要求；没有时为 null。 */
-  prompt: string | null
+  /** 动作描述；没有额外描述时由 Controller 使用动作名称。 */
+  prompt: string
+  /** 必须与 Project 的精灵尺寸一致，后端会在提交时校验。 */
+  spriteWidth: number
+  spriteHeight: number
+  /** 首帧必须与角色母版使用同一个真实源方向。 */
+  direction?: ActionDirection
+  /** 每个方向生成的候选数；缺省为 3，后端允许 1–4。 */
+  candidateCount?: ImageCandidateCount
 }
 
 /** 以已确认首帧为起点生成完整动画。 */
@@ -60,10 +73,25 @@ export interface CompleteAnimationGenerationInput extends GenerationInputBase {
   type: 'complete_animation'
   characterId: string
   outfitId: string
+  /**
+   * 用户选定的生成路线。必填而不是从"这个造型有没有 3D 资产"推断：后端把
+   * `outfit_id` 在场与否当成三渲二的唯一判据，无条件发送等于替用户选了路线——
+   * 造型一旦建过 3D 资产，点"视频裁剪"也会被静默改成三渲二。
+   */
+  method: ActionGenerationMethod
   actionType: ActionType
   /** 已确认的生成首帧 URL。 */
   firstFrameUrl: string
   prompt: string | null
+  /**
+   * 这个动作是否循环播放。`actionType: 'custom'` 时后端据此决定抽帧走单周期闭环还是裁区间。
+   *
+   * 省略时后端按**一次性**兜底 —— 失败代价不对称：把一次性动作误当循环会让末帧接回首帧
+   * 抽搐、产物不可用；反之只是不无缝闭环、产物仍可用。所以能给就给。
+   */
+  loop?: boolean
+  /** 完整动作的真实源方向；镜像方向不创建动画任务。 */
+  direction?: ActionDirection
 }
 
 export type GenerationInput =
@@ -85,17 +113,33 @@ export interface GeneratedFrame extends GeneratedImage {
 /** 结果按 type 分别定义，不共用一个 urls 数组。 */
 export interface CharacterTemplateGenerationResult {
   type: 'character_template'
+  direction?: ActionDirection
   images: readonly GeneratedImage[]
 }
 
 export interface FirstFrameGenerationResult {
   type: 'first_frame'
-  image: GeneratedImage
+  /** 同一图片任务生成的 1–4 张动作首帧候选。 */
+  direction?: ActionDirection
+  images: readonly GeneratedImage[]
+}
+
+/** 交付帧的落位几何，由后端按对齐时的实参报出。 */
+export interface SequenceGeometry {
+  canvasWidth: number
+  canvasHeight: number
+  /** 左上原点、y 轴向下的 0-1 归一化坐标。 */
+  anchor: { x: number; y: number }
+  /** 脚底线距画布顶部的像素值。 */
+  footY: number
 }
 
 export interface CompleteAnimationGenerationResult {
   type: 'complete_animation'
+  direction?: ActionDirection
   frames: readonly GeneratedFrame[]
+  /** 旧任务没有这一段；缺失时消费方不能当成"用默认值"，只能明示回落。 */
+  geometry?: SequenceGeometry
 }
 
 export type GenerationResult =

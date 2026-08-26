@@ -1,0 +1,50 @@
+html:has(.landing-page) {
+  scroll-behavior: smooth;
+}
+
+@media (max-width: 1023px) {
+  .landing-page {
+    --text-display: clamp(2.25rem, 10vw, 3rem);
+    --text-title: clamp(1.75rem, 8vw, 2.25rem);
+    --text-lead: 1rem;
+    --text-subtitle: 1.125rem;
+  }
+}
+
+@keyframes landing-rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes capability-copy-in {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.landing-hero-product-window[data-expanding='true'] .landing-hero-product-window__surface {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  border-radius: var(--hero-window-radius);
+  box-shadow: 0 30px 80px rgb(53 58 49 / var(--hero-window-shadow-alpha));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:has(.landing-page) {
+    scroll-behavior: auto;
+  }
+}

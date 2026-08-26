@@ -1,33 +1,56 @@
+import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 
-import { useAuthSession } from '@/features/auth-session'
+import { quotaApis as defaultQuotaApis } from '@/entities'
+import type { QuotaApis } from '@/entities'
+import { readActiveRun, subscribeActiveRun } from '@/features/active-run'
+import { AUTH_SESSION_STORAGE_PREFIX, useAuthSession } from '@/features/auth-session'
+import { useQuotaBalance } from '@/features/quota'
+import { productControlClass, productMenuItemClass, productPopoverClass } from '@/shared/ui'
+import { PageBackButton } from './page-back-button'
 
 interface ProductNavigationItem {
+  motionKey: string
   to: string
   label: string
   compactLabel?: string
   isActive: (pathname: string) => boolean
 }
 
-/**
- * 三个入口对应三种去处：回首页、看已有资产、做新东西。
- * 07-31 定稿版还有一个 Playtest 项，这里没有搬——本仓库的预览路由是
- * /playtest/:characterId/:outfitId，没有角色和造型就构造不出可用地址，
- * 顶栏给不出一个恒定的链接。等预览有了落地入口再加回来。
- */
+type AccountMenuState = 'closed' | 'open' | 'closing'
+
+export interface AppHeaderProps {
+  quotaApis?: QuotaApis
+  variant?: 'product' | 'marketing'
+}
+
+const accountMenuExitDurationMs = 260
+const inviteHintStorageKey = `${AUTH_SESSION_STORAGE_PREFIX}invite-hint-seen.v1`
+
+/** 四个入口对应四种去处：回首页、看资产、做新东西、核验已完成的造型。 */
 const productNavigation: ProductNavigationItem[] = [
   {
-    to: '/',
+    motionKey: 'home',
+    to: '/workspace',
     label: '首页',
-    isActive: (pathname) => pathname === '/',
+    isActive: (pathname) => pathname === '/workspace',
   },
   {
+    motionKey: 'projects',
     to: '/projects',
     label: '项目资产',
     compactLabel: '项目',
     isActive: (pathname) => pathname.startsWith('/projects'),
   },
   {
+    motionKey: 'playtest',
+    to: '/playtest',
+    label: '预览台',
+    isActive: (pathname) => pathname.startsWith('/playtest'),
+  },
+  // 排在末位：有任务在跑时这一项会换成小机器人，夹在导航中间会把另外三项挤开。
+  {
+    motionKey: 'create',
     to: '/quick-start',
     label: '创作',
     isActive: (pathname) =>
@@ -35,66 +58,274 @@ const productNavigation: ProductNavigationItem[] = [
   },
 ]
 
-/** 左侧标牌上的第二行，随所在区域变化，让用户知道自己在哪一片。 */
-function getWorkspaceLabel(pathname: string): { title: string; detail: string } {
-  if (pathname.startsWith('/account')) {
-    return { title: '账号中心', detail: '资料与登录安全' }
-  }
-
-  if (pathname.startsWith('/projects') || pathname.startsWith('/playtest')) {
-    return { title: '项目资产', detail: '角色、造型与动作' }
-  }
-
-  if (pathname.startsWith('/quick-start') || pathname.startsWith('/workflow-editor')) {
-    return { title: '创作工作流', detail: '设定、生成与审核' }
-  }
-
-  return { title: '角色资产工作台', detail: 'Windup' }
+function navItemClassName(active: boolean, waving: boolean): string {
+  return `relative inline-flex min-h-11 items-center px-1.5 text-[12px] font-medium whitespace-nowrap transition-colors after:absolute after:inset-x-1.5 after:bottom-0 after:h-[2px] after:origin-center after:bg-app-accent after:transition-transform focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent sm:px-3 sm:text-[13px] sm:after:inset-x-3 ${
+    active
+      ? 'text-app-accent after:scale-x-100'
+      : 'text-app-muted after:scale-x-0 hover:text-app-accent'
+  } ${waving ? 'app-header-text-wave' : ''}`
 }
 
 /**
- * 跨页面悬浮 Bar 知道产品路由，因此属于 app 外壳，不下沉到 shared/ui。
- * 它读 pathname 只用于高亮当前项与切换标牌文案，不据此决定自己出不出现——
- * 谁带外壳是路由表的事，见 app.tsx。
- * 悬浮不占布局高度，页面顶部留白由页面或 PageContainer 自己让出。
+ * 有任务在跑时跟在"创作"右边的小机器人：圆脸加两只眼，眼睛左右张望。
+ * 顶掉文字试过一版：这一项会在图标和文字之间来回换形态，读起来像换了个入口。
+ * 颜色继承文字色，所以选中态和 hover 都不用另外配色。
  */
-export function AppHeader() {
+function ActiveRunBot() {
+  return (
+    <span aria-hidden="true" data-active-run-bot className="inline-flex shrink-0 align-middle">
+      <svg viewBox="0 0 24 24" className="h-[1.15rem] w-[1.15rem]" fill="none">
+        <rect x="4" y="5" width="16" height="14" stroke="currentColor" strokeWidth="2" />
+        {/* 两层分开：外层管看哪儿，内层管眨眼，合在一起会互相覆盖 transform。 */}
+        <g className="app-header-bot-gaze">
+          <g className="app-header-bot-blink" fill="currentColor">
+            <rect x="8" y="10" width="3" height="3" />
+            <rect x="13" y="10" width="3" height="3" />
+          </g>
+        </g>
+      </svg>
+    </span>
+  )
+}
+
+function WaveText({ playId, text }: { playId: number; text: string }) {
+  return (
+    <span key={playId} aria-hidden="true" className="whitespace-pre">
+      {[...text].map((character, index, characters) => (
+        <span
+          key={`${character}-${index}`}
+          data-wave-last={index === characters.length - 1 ? 'true' : undefined}
+          className="app-header-wave-glyph inline-block"
+          style={{ animationDelay: `${index * 26}ms` }}
+        >
+          {character}
+        </span>
+      ))}
+    </span>
+  )
+}
+
+/**
+ * 跨页面顶栏知道产品路由，因此属于 app 外壳，不下沉到 shared/ui。
+ * 品牌、主导航和账号共用一个平面，避免三个功能层被误读成彼此独立的卡片。
+ */
+export function AppHeader({
+  quotaApis = defaultQuotaApis,
+  variant = 'product',
+}: AppHeaderProps = {}) {
   const { pathname, search, hash } = useLocation()
   const navigate = useNavigate()
   const session = useAuthSession()
-  const workspace = getWorkspaceLabel(pathname)
+  const [accountMenuState, setAccountMenuState] = useState<AccountMenuState>('closed')
+  const [inviteHintVisible, setInviteHintVisible] = useState(false)
+  const accountMenuOpen = accountMenuState === 'open'
+  const creditBalance = useQuotaBalance(
+    accountMenuState !== 'closed' && session.state.status === 'authenticated',
+    quotaApis,
+  )
+  const [wave, setWave] = useState({ entry: '', playId: 0 })
+  const activeRunUserId = session.state.status === 'authenticated' ? session.state.user.id : null
+  const [activeRunId, setActiveRunId] = useState<string | null>(null)
+  const [activeRunMenuState, setActiveRunMenuState] = useState<AccountMenuState>('closed')
+  const activeRunMenuOpen = activeRunMenuState === 'open'
   const accountEntry = `/?${new URLSearchParams({
     account: 'login',
     returnTo: `${pathname}${search}${hash}`,
   })}`
 
+  useEffect(() => {
+    if (!activeRunUserId) {
+      setActiveRunId(null)
+      return
+    }
+    const refresh = () => setActiveRunId(readActiveRun(activeRunUserId))
+    refresh()
+    return subscribeActiveRun(activeRunUserId, refresh)
+  }, [activeRunUserId])
+
+  useEffect(() => {
+    if (accountMenuState !== 'closing') {
+      return
+    }
+
+    const timer = window.setTimeout(() => setAccountMenuState('closed'), accountMenuExitDurationMs)
+    return () => window.clearTimeout(timer)
+  }, [accountMenuState])
+
+  useEffect(() => {
+    if (pathname !== '/workspace' || session.state.status !== 'authenticated') {
+      setInviteHintVisible(false)
+      return
+    }
+
+    if (window.sessionStorage.getItem(inviteHintStorageKey) === '1') return
+
+    window.sessionStorage.setItem(inviteHintStorageKey, '1')
+    setInviteHintVisible(true)
+
+    const timer = window.setTimeout(() => {
+      setInviteHintVisible(false)
+    }, 15_000)
+
+    return () => window.clearTimeout(timer)
+  }, [pathname, session.state.status])
+
   function signOut() {
+    window.sessionStorage.removeItem(inviteHintStorageKey)
     const returnHome = () => navigate('/', { replace: true })
     void session.logout().then(returnHome, returnHome)
   }
 
+  function toggleAccountMenu() {
+    dismissInviteHint()
+    setAccountMenuState((state) => (state === 'open' ? 'closing' : 'open'))
+  }
+
+  function dismissInviteHint() {
+    window.sessionStorage.setItem(inviteHintStorageKey, '1')
+    setInviteHintVisible(false)
+  }
+
+  function finishAccountMenuMotion() {
+    if (accountMenuState === 'closing') {
+      setAccountMenuState('closed')
+    }
+  }
+
+  function toggleActiveRunMenu() {
+    setActiveRunMenuState((state) => (state === 'open' ? 'closing' : 'open'))
+  }
+
+  function closeActiveRunMenu() {
+    setActiveRunMenuState((state) => (state === 'open' ? 'closing' : state))
+  }
+
+  function finishActiveRunMenuMotion() {
+    if (activeRunMenuState === 'closing') {
+      setActiveRunMenuState('closed')
+    }
+  }
+
+  function playTextWave(entry: string) {
+    setWave(({ playId }) => ({ entry, playId: playId + 1 }))
+  }
+
+  if (variant === 'marketing') {
+    return <MarketingHeaderView session={session} wave={wave} onWave={playTextWave} />
+  }
+
   return (
-    <header className="pointer-events-none fixed inset-x-0 top-3.5 z-50 flex items-start justify-between gap-2 px-3 text-[#1c231e] sm:gap-4 sm:px-[18px]">
-      <div className="pointer-events-auto flex min-h-[3.625rem] min-w-0 items-center gap-3 rounded-xl border border-[#171817]/14 bg-[#dfe3df] px-2.5 py-[7px] sm:min-w-[min(26rem,42vw)] sm:px-3.5">
-        <Link
-          to="/"
-          aria-label="返回 Windup 首页"
-          className="flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-2 text-[#1c231e] focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#284331] sm:min-w-0 sm:justify-start md:border-r md:border-[#2d3b31]/12 md:pr-3"
+    <header
+      data-layout="unified"
+      data-surface="frosted-bar"
+      className="fixed inset-x-0 top-0 z-50 border-b border-app-ink/10 bg-transparent text-app-ink shadow-app-header backdrop-blur-xl"
+    >
+      <div className="relative mx-auto grid min-h-14 w-full max-w-[90rem] grid-cols-[auto_1fr_auto] items-center gap-4 px-4 sm:px-6 lg:px-8">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Link
+            to="/workspace"
+            aria-label="返回 Windup 工作台"
+            data-motion="text-wave"
+            onClick={() => playTextWave('brand')}
+            className={`flex min-h-11 shrink-0 items-center gap-2.5 pr-1 text-app-ink focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent max-[360px]:hidden ${
+              wave.entry === 'brand' ? 'app-header-text-wave' : ''
+            }`}
+          >
+            <img src="/windup-mark.svg" alt="" className="h-7 w-7" />
+            <strong className="hidden font-serif text-[1.0625rem] leading-none sm:inline">
+              <WaveText playId={wave.entry === 'brand' ? wave.playId : 0} text="Windup" />
+            </strong>
+          </Link>
+          <PageBackButton />
+        </div>
+
+        <nav
+          aria-label="产品导航"
+          className="absolute left-1/2 flex -translate-x-1/2 items-stretch gap-0 sm:gap-1"
         >
-          <img src="/windup-mark.svg" alt="" className="h-[1.6875rem] w-[1.6875rem]" />
-          <strong className="hidden font-serif text-base leading-none sm:inline">Windup</strong>
-        </Link>
-
-        <span className="hidden min-w-0 gap-0.5 md:grid">
-          <strong className="truncate text-[11px] font-semibold">{workspace.title}</strong>
-          <small className="truncate text-[8px] text-[#737d75]">{workspace.detail}</small>
-        </span>
-      </div>
-
-      <div className="pointer-events-auto flex min-h-[3.625rem] min-w-0 items-center gap-1 rounded-xl border border-[#171817]/14 bg-[#dfe3df] p-[7px]">
-        <nav aria-label="产品导航" className="flex min-w-0 items-center gap-[3px]">
           {productNavigation.map((item) => {
             const active = item.isActive(pathname)
+            const playId = wave.entry === item.motionKey ? wave.playId : 0
+            const label = item.compactLabel ? (
+              <>
+                <span className="hidden md:inline">
+                  <WaveText playId={playId} text={item.label} />
+                </span>
+                <span className="md:hidden">
+                  <WaveText playId={playId} text={item.compactLabel} />
+                </span>
+              </>
+            ) : (
+              <WaveText playId={playId} text={item.label} />
+            )
+            const className = navItemClassName(active, wave.entry === item.motionKey)
+
+            // 有任务在跑时，创作入口先展开一层：新建和返回各占一项，
+            // 直接跳回旧任务会让用户没有开始下一次创作的地方。
+            if (item.motionKey === 'create' && activeRunId) {
+              return (
+                <div key={item.to} className="relative flex items-stretch">
+                  <button
+                    type="button"
+                    aria-label="创作，有任务进行中"
+                    aria-expanded={activeRunMenuOpen}
+                    aria-current={active ? 'page' : undefined}
+                    data-motion="text-wave"
+                    onClick={() => {
+                      playTextWave(item.motionKey)
+                      toggleActiveRunMenu()
+                    }}
+                    className={className}
+                  >
+                    {/* 红点贴内容而不是贴按钮：按钮左右有 padding，挂在按钮上会飘到相邻项那边去。 */}
+                    <span className="relative inline-flex items-center gap-1.5">
+                      {label}
+                      <ActiveRunBot />
+                      <span
+                        aria-hidden="true"
+                        data-active-run-dot
+                        className="absolute -top-0.5 -right-1.5 h-1.5 w-1.5 rounded-full bg-app-danger"
+                      />
+                    </span>
+                  </button>
+
+                  <div
+                    data-testid="active-run-menu"
+                    data-state={activeRunMenuState}
+                    data-motion="scale-fade"
+                    aria-hidden={activeRunMenuOpen ? undefined : true}
+                    inert={!activeRunMenuOpen}
+                    onAnimationEnd={finishActiveRunMenuMotion}
+                    className={`${productPopoverClass} absolute top-[calc(100%+0.5rem)] left-1/2 grid min-w-44 origin-top -translate-x-1/2 overflow-hidden p-1.5 ${
+                      activeRunMenuState === 'open'
+                        ? 'visible app-header-account-menu-in'
+                        : activeRunMenuState === 'closing'
+                          ? 'visible pointer-events-none app-header-account-menu-out'
+                          : 'invisible pointer-events-none -translate-y-2 scale-[0.82] opacity-0'
+                    }`}
+                  >
+                    <Link
+                      to={`/quick-start/${encodeURIComponent(activeRunId)}`}
+                      onClick={closeActiveRunMenu}
+                      className={`${productMenuItemClass} min-h-11 gap-2 text-app-ink-soft hover:text-app-accent`}
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="h-1.5 w-1.5 shrink-0 rounded-full bg-app-danger"
+                      />
+                      返回进行中的任务
+                    </Link>
+                    <Link
+                      to={item.to}
+                      onClick={closeActiveRunMenu}
+                      className={`${productMenuItemClass} min-h-11 text-app-ink-soft hover:text-app-accent`}
+                    >
+                      开始新的创作
+                    </Link>
+                  </div>
+                </div>
+              )
+            }
 
             return (
               <Link
@@ -102,33 +333,21 @@ export function AppHeader() {
                 to={item.to}
                 aria-label={item.label}
                 aria-current={active ? 'page' : undefined}
-                style={{ fontSize: '13px', fontWeight: 600 }}
-                className={`inline-flex min-h-11 items-center rounded-[0.5625rem] px-2.5 whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#284331] ${
-                  active
-                    ? 'bg-[#dce9df] text-[#284331]'
-                    : 'text-[#5b655d] hover:bg-[#e7eee8] hover:text-[#26372c]'
-                }`}
+                data-motion="text-wave"
+                onClick={() => playTextWave(item.motionKey)}
+                className={className}
               >
-                {item.compactLabel ? (
-                  <>
-                    <span className="hidden sm:inline">{item.label}</span>
-                    <span className="sm:hidden">{item.compactLabel}</span>
-                  </>
-                ) : (
-                  item.label
-                )}
+                {label}
               </Link>
             )
           })}
         </nav>
 
-        <span aria-hidden="true" className="mx-0.5 h-7 w-px shrink-0 bg-[#2d3b31]/14" />
-
-        <div aria-label="账号" className="flex min-w-0 items-center gap-1">
+        <div aria-label="账号" className="relative col-start-3 ml-auto shrink-0">
           {session.state.status === 'booting' ? (
             <span
               aria-label="正在恢复登录状态"
-              className="inline-grid min-h-11 min-w-11 place-items-center text-sm text-[#778078] sm:min-w-20"
+              className="inline-grid min-h-11 min-w-11 place-items-center text-sm text-app-faint"
             >
               …
             </span>
@@ -136,31 +355,227 @@ export function AppHeader() {
             <Link
               to={accountEntry}
               aria-label="登录 / 注册"
-              className="inline-flex min-h-11 items-center rounded-[0.5625rem] border border-[#2d3b31]/14 bg-white/35 px-3 text-[13px] font-semibold whitespace-nowrap text-[#34483a] transition-colors hover:border-[#2d3b31]/22 hover:bg-[#edf2ed] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#284331]"
+              className="inline-flex min-h-10 items-center rounded-lg border border-app-ink/14 bg-app-surface-raised/45 px-3 text-[13px] font-medium whitespace-nowrap text-app-ink-soft transition-colors hover:bg-app-surface-raised/75 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
             >
               <span className="hidden sm:inline">登录 / 注册</span>
               <span className="sm:hidden">登录</span>
             </Link>
           ) : (
-            <div className="flex min-w-0 items-center overflow-hidden rounded-[0.5625rem] border border-[#2d3b31]/14 bg-white/35">
-              <Link
-                to="/account"
-                aria-label="打开账号中心"
-                aria-current={pathname.startsWith('/account') ? 'page' : undefined}
-                title={session.state.user.email}
-                className="inline-flex min-h-11 max-w-16 items-center truncate px-3 text-xs font-semibold text-[#34483a] transition-colors hover:bg-[#dce9df] hover:text-[#26372c] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#284331] sm:max-w-28"
-              >
-                {session.state.user.nickname || session.state.user.email}
-              </Link>
+            <>
+              {inviteHintVisible ? (
+                <div
+                  role="status"
+                  aria-label="邀请奖励提示"
+                  className="absolute top-[calc(100%+0.7rem)] right-0 z-10 w-[min(15rem,calc(100vw-2rem))] rounded-lg border border-app-ink/12 bg-app-surface-raised px-3.5 py-3 text-left shadow-app-menu before:absolute before:-top-1.5 before:right-5 before:h-3 before:w-3 before:rotate-45 before:border-l before:border-t before:border-app-ink/12 before:bg-app-surface-raised"
+                >
+                  <div className="relative flex items-start gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium leading-5 text-app-ink-soft">
+                        邀请成功，双方各得 200 积分
+                      </p>
+                      <p className="mt-0.5 text-[11px] leading-4 text-app-faint">
+                        每日前 3 次邀请可得奖励
+                      </p>
+                      <Link
+                        to="/account?section=invite"
+                        onClick={dismissInviteHint}
+                        className="mt-1 inline-flex text-[12px] text-app-muted underline decoration-app-ink/20 underline-offset-2 transition-colors hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
+                      >
+                        去看看邀请奖励
+                      </Link>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="关闭邀请奖励提示"
+                      onClick={dismissInviteHint}
+                      className="-mr-1 -mt-1 grid h-6 w-6 shrink-0 place-items-center rounded-md text-sm leading-none text-app-faint transition-colors hover:bg-app-ink/5 hover:text-app-ink-soft focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <button
                 type="button"
-                onClick={signOut}
-                aria-label="退出登录"
-                className="inline-flex min-h-11 min-w-11 items-center justify-center border-l border-[#2d3b31]/12 px-2.5 text-xs font-semibold text-[#68736a] transition-colors hover:bg-[#dce9df] hover:text-[#26372c] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#284331]"
+                aria-label="打开账号菜单"
+                aria-expanded={accountMenuOpen}
+                title={session.state.user.email}
+                onClick={toggleAccountMenu}
+                className={`${productControlClass('chrome', 'max-w-24 gap-2 px-2.5 font-medium active:translate-y-px active:scale-[0.97] motion-reduce:transform-none sm:max-w-36')} ${
+                  accountMenuOpen ? 'bg-app-accent-muted text-app-accent' : ''
+                }`}
               >
-                退出
+                <span
+                  className={`grid h-7 w-7 shrink-0 place-items-center rounded-full bg-app-accent-muted font-serif text-[11px] text-app-accent transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none ${
+                    accountMenuOpen ? 'scale-110' : 'scale-100'
+                  }`}
+                >
+                  {(session.state.user.nickname || session.state.user.email).slice(0, 1)}
+                </span>
+                <span className="hidden truncate sm:inline">
+                  {session.state.user.nickname || session.state.user.email}
+                </span>
               </button>
-            </div>
+
+              <div
+                data-testid="account-menu"
+                data-state={accountMenuState}
+                data-motion="scale-fade"
+                aria-hidden={accountMenuOpen ? undefined : true}
+                inert={!accountMenuOpen}
+                onAnimationEnd={finishAccountMenuMotion}
+                className={`${productPopoverClass} absolute top-[calc(100%+0.5rem)] right-0 grid min-w-44 origin-top-right overflow-hidden p-1.5 ${
+                  accountMenuState === 'open'
+                    ? 'visible app-header-account-menu-in'
+                    : accountMenuState === 'closing'
+                      ? 'visible pointer-events-none app-header-account-menu-out'
+                      : 'invisible pointer-events-none -translate-y-2 scale-[0.82] opacity-0'
+                }`}
+              >
+                <div
+                  aria-label="积分余额"
+                  className="flex min-h-11 items-center justify-between gap-4 border-b border-app-ink/10 px-3 pb-1 text-[13px]"
+                >
+                  <span className="text-app-muted">可用积分</span>
+                  <output aria-live="polite" className="font-mono font-semibold text-app-accent">
+                    {creditBalance.status === 'ready' ? (
+                      <>
+                        {creditBalance.account.balance}
+                        <span className="ml-1 font-sans text-[11px] font-normal text-app-faint">
+                          积分
+                        </span>
+                      </>
+                    ) : creditBalance.status === 'error' ? (
+                      <span className="font-sans text-[12px] font-normal text-app-faint">
+                        积分暂不可用
+                      </span>
+                    ) : (
+                      <span className="font-sans text-[12px] font-normal text-app-faint">
+                        查询中…
+                      </span>
+                    )}
+                  </output>
+                </div>
+                <Link
+                  to="/account"
+                  aria-label="打开账号中心"
+                  aria-current={pathname.startsWith('/account') ? 'page' : undefined}
+                  onClick={() => setAccountMenuState('closing')}
+                  className={`${productMenuItemClass} text-app-ink-soft`}
+                >
+                  账号中心
+                </Link>
+                <button
+                  type="button"
+                  onClick={signOut}
+                  aria-label="退出登录"
+                  className={`${productMenuItemClass} text-left text-app-muted hover:text-app-accent`}
+                >
+                  退出登录
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </header>
+  )
+}
+
+interface MarketingHeaderViewProps {
+  session: ReturnType<typeof useAuthSession>
+  wave: { entry: string; playId: number }
+  onWave: (entry: string) => void
+}
+
+const marketingLoginEntry = `/?${new URLSearchParams({
+  account: 'login',
+  returnTo: '/workspace',
+})}`
+
+const marketingRegisterEntry = `/?${new URLSearchParams({
+  account: 'register',
+  returnTo: '/workspace',
+})}`
+
+const githubRepository = 'https://github.com/1024XEngineer/Windup'
+
+/**
+ * 公开主页的顶栏悬在首屏画布上，只保留品牌与账号入口。
+ * 半透明底色负责托住文字，边界交给背景模糊表达，避免把首屏切成上下两块。
+ */
+function MarketingHeaderView({ session, wave, onWave }: MarketingHeaderViewProps) {
+  return (
+    <header
+      data-layout="unified"
+      data-surface="borderless-glass"
+      className="fixed inset-x-0 top-0 z-50 bg-paper/28 text-ink backdrop-blur-[18px] backdrop-saturate-[0.82]"
+    >
+      <div className="relative mx-auto flex min-h-18 w-full max-w-[82rem] items-center justify-between px-5 sm:min-h-21 sm:px-8 lg:px-12">
+        <Link
+          to="/"
+          aria-label="返回 Windup 宣传页"
+          data-motion="text-wave"
+          onClick={() => onWave('brand')}
+          className={`flex min-h-11 shrink-0 items-center gap-2.5 pr-1 text-app-ink focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent ${
+            wave.entry === 'brand' ? 'app-header-text-wave' : ''
+          }`}
+        >
+          <img src="/windup-mark.svg" alt="" className="h-7 w-7" />
+          <strong className="font-serif text-lg leading-none">
+            <WaveText playId={wave.entry === 'brand' ? wave.playId : 0} text="Windup" />
+          </strong>
+          <span aria-hidden="true" className="hidden h-4 w-px bg-rule lg:block" />
+          <span className="hidden truncate text-meta text-ink-faint lg:block">
+            2D 角色资产工作台
+          </span>
+        </Link>
+
+        <div
+          aria-label="账号"
+          className="relative ml-auto flex shrink-0 items-center gap-1 sm:gap-6"
+        >
+          <a
+            href={githubRepository}
+            target="_blank"
+            rel="noreferrer"
+            className="hidden min-h-11 items-center text-body font-medium text-app-muted transition-colors hover:text-app-accent focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-app-accent xl:inline-flex"
+          >
+            GitHub
+          </a>
+          {session.state.status === 'booting' ? (
+            <span
+              aria-label="正在恢复登录状态"
+              className="inline-grid min-h-11 min-w-11 place-items-center text-sm text-app-faint"
+            >
+              …
+            </span>
+          ) : session.state.status === 'guest' ? (
+            <>
+              <Link
+                to={marketingLoginEntry}
+                aria-label="登录"
+                className="inline-flex min-h-11 items-center rounded-lg px-2 text-body font-medium whitespace-nowrap text-app-ink-soft transition-colors hover:bg-app-accent-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent sm:px-3"
+              >
+                登录
+              </Link>
+              <Link
+                to={marketingRegisterEntry}
+                aria-label="注册"
+                className="inline-flex min-h-11 items-center rounded-lg bg-app-ink px-3 text-body font-medium whitespace-nowrap text-app-surface-raised transition-colors hover:bg-app-ink-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent sm:px-4"
+              >
+                注册
+              </Link>
+            </>
+          ) : (
+            <Link
+              to="/workspace"
+              aria-label="进入工作台"
+              className="inline-flex min-h-11 items-center rounded-lg bg-app-ink px-3 text-body font-medium whitespace-nowrap text-app-surface-raised transition-colors hover:bg-app-ink-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent sm:px-4"
+            >
+              <span className="hidden sm:inline">进入工作台</span>
+              <span className="sm:hidden">进入</span>
+            </Link>
           )}
         </div>
       </div>

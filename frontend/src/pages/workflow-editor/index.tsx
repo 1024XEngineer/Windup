@@ -1,72 +1,55 @@
 import {
-  Controls,
   Handle,
   Position,
-  ReactFlow,
   applyNodeChanges,
   type Edge,
-  type Node,
   type NodeChange,
   type NodeProps,
-  useReactFlow,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { useParams } from 'react-router'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useLocation, useParams } from 'react-router'
 
 import {
-  CHARACTER_PERSPECTIVE,
-  DIRECTIONAL_MOVEMENT,
+  projectApis,
+  type ArtStyle,
+  type ActionPreset,
   type ActionFirstFrameWorkflowNode,
+  type ActionDirection,
   type ActionFullFrameWorkflowNode,
   type ActionGenerationMethodWorkflowNode,
   type Character,
   type CharacterSetupWorkflowNode,
   type CharacterTemplateWorkflowNode,
   type Generation,
+  type MasterPrecheckReport,
+  type MasterWarning,
+  type MediaReference,
   type Project,
+  type Render3DApis,
   type ReviewWorkflowNode,
   type WorkflowGenerationRole,
   type WorkflowNode,
   type WorkflowRun,
+  getDirectionProfile,
 } from '@/entities'
 import type { WorkflowController } from '@/features/workflow-controller'
-import { createDefaultRealWorkflowEditorSession, type WorkflowEditorSession } from './runtime'
+import {
+  createProgressiveExportModel,
+  ExportButton,
+  type ExportPackageModel,
+} from '@/features/export-package'
+import { FrameAnimationPlayer, GenerationPreviewCard, GenerationProgressCopy } from '@/shared/ui'
+import { loadDefaultActionPresets, type WorkflowEditorSession } from './runtime'
+import { useWorkflowEditorSession } from './use-workflow-editor-session'
+import { WorkflowEditorView, type WorkflowCardNode } from './workflow-editor-view'
 import './workflow-editor.css'
 
 export interface WorkflowEditorPageProps {
   loadSession?: (runId: string) => Promise<WorkflowEditorSession>
 }
 
-type WorkflowCardData = {
-  title: string
-  eyebrow: string
-  status: WorkflowNode['status']
-  content: ReactNode
-}
-
-type WorkflowCardNode = Node<WorkflowCardData, 'workflow-card'>
-type ActionMenuLevel = 'root' | 'outfits' | 'actions'
-
-/**
- * 菜单里的预设动作。label 只用于展示，name 是落进 WorkflowRun 的动作名——
- * 两者分开写，改菜单文案不会连带改掉已经落库的数据。
- */
-const ACTION_PRESETS = [
-  {
-    type: 'idle',
-    label: 'Idle 待机',
-    name: '待机',
-    prompt: '平稳呼吸，重心轻微起伏',
-  },
-  { type: 'walk', label: 'Walk 行走', name: '行走', prompt: '轻快地向前行走' },
-  {
-    type: 'attack',
-    label: 'Attack 攻击',
-    name: '攻击',
-    prompt: '蓄力后向前攻击并回到准备姿态',
-  },
-] as const
+type ActionMenuLevel = 'root' | 'outfits' | 'actions' | 'custom'
 
 const ACTION_PRESET_HINT = '预设动作 · 逐帧生成'
 
@@ -78,47 +61,54 @@ const SHARED_BRANCH = 'shared'
   搬成工具类后写在这里，好处是能看见哪些元素共用同一套外观，而不是被选择器隐式波及。
   nodrag/nopan/nowheel 是 React Flow 的约定类：让卡片内的交互不被画布手势吞掉。
 */
-const CARD_STACK = 'grid gap-[17px] nodrag nopan nowheel'
+const CARD_STACK = 'grid gap-3 nodrag nopan nowheel'
+
+const CARD_BUTTON_BASE =
+  'min-h-9 rounded-lg border px-3 py-2 text-[11px] font-semibold transition-[color,background-color,border-color,transform,box-shadow] ' +
+  'duration-150 ease-out focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent ' +
+  'enabled:active:translate-y-px enabled:active:scale-[0.98] motion-reduce:transform-none disabled:cursor-not-allowed ' +
+  'disabled:border-app-line disabled:bg-app-surface-muted disabled:text-app-faint'
 
 const CARD_BUTTON =
-  'min-h-[42px] rounded-lg border border-[#34533d] bg-[#34533d] px-3 py-[9px] text-[11px] ' +
-  'font-[750] text-[#edf4ee] enabled:hover:border-[#263f2e] enabled:hover:bg-[#263f2e] ' +
-  'aria-pressed:border-[#263f2e] aria-pressed:bg-[#263f2e] disabled:cursor-not-allowed ' +
-  'disabled:border-[#e2e5e1] disabled:bg-[#e2e5e1] disabled:text-[#969d97]'
+  `${CARD_BUTTON_BASE} border-app-accent bg-app-accent text-app-on-accent ` +
+  'enabled:hover:border-app-accent-hover enabled:hover:bg-app-accent-hover enabled:hover:shadow-app-menu ' +
+  'aria-pressed:border-app-accent-hover aria-pressed:bg-app-accent-hover'
+
+const CARD_BUTTON_SECONDARY =
+  `${CARD_BUTTON_BASE} border-app-line-strong bg-app-surface-raised text-app-ink-soft ` +
+  'enabled:hover:border-app-accent enabled:hover:bg-app-accent-muted enabled:hover:text-app-accent'
 
 /** 缩略图按钮：沿用卡片按钮的尺寸约定，但换成浅底，让图片自己当主角。 */
 const THUMB_BUTTON =
-  'min-h-[42px] rounded-lg border border-[var(--editor-line)] bg-[#fbfcfb] p-1 ' +
-  'aria-pressed:border-[var(--editor-ink)] aria-pressed:bg-white ' +
-  'aria-pressed:shadow-[0_0_0_2px_rgb(31_35_41_/_12%)] disabled:cursor-not-allowed'
-
-const THUMB_IMAGE = 'block aspect-square w-full rounded-lg object-cover'
-
-/** 已确认的母版/首帧：像素资产按原样放大，不做平滑。 */
-const MASTER_IMAGE =
-  'block aspect-square w-full rounded-xl border border-[var(--editor-line)] bg-[#f6f7f6] ' +
-  'object-cover [image-rendering:pixelated]'
+  'min-h-[42px] rounded-[10px] border border-[var(--color-app-line)] bg-app-surface-raised p-1 ' +
+  'transition-[border-color,background-color,transform,box-shadow] duration-150 ease-out ' +
+  'hover:border-app-line-strong active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 ' +
+  'focus-visible:outline-app-accent motion-reduce:transform-none aria-pressed:border-app-accent ' +
+  'aria-pressed:bg-app-surface-raised aria-pressed:shadow-[0_0_0_2px_var(--color-app-accent-soft)] ' +
+  'disabled:cursor-not-allowed'
 
 const CARD_SUMMARY =
-  'm-0 rounded-[10px] border border-[var(--editor-line)] bg-[#f6f7f6] px-3 py-2.5 ' +
-  'text-[11px] leading-[1.6] text-[var(--editor-muted)]'
+  'm-0 rounded-lg bg-app-accent-muted px-3 py-2 text-[11px] leading-[1.55] text-app-ink-soft'
 
-const CARD_TEXT = 'm-0 text-[11px] leading-[1.6] text-[var(--editor-muted)]'
+const CARD_TEXT = 'm-0 text-[11px] leading-[1.6] text-[var(--color-app-muted)]'
+
+/** 三渲二只对已有绑骨模型的造型开放；页面不再提供创建 3D 资产的入口。 */
+const RENDER3D_UNAVAILABLE_HINT = '该造型暂无绑骨 3D 模型，暂不能使用三渲二。'
 
 /** 加号菜单里的条目：撑满菜单宽度的两行文字，跟卡片主按钮完全不同。 */
 const MENU_ITEM =
   'flex min-h-0 cursor-pointer flex-col gap-0.5 border-0 px-3 py-[9px] text-left ' +
-  'text-[var(--editor-ink)] not-first:border-t not-first:border-t-[rgb(31_35_41_/_6%)] ' +
-  'enabled:hover:bg-[#f2f4f2] disabled:cursor-not-allowed disabled:opacity-45'
+  'text-[var(--color-app-ink)] not-first:border-t not-first:border-t-app-line ' +
+  'enabled:hover:bg-app-accent-muted disabled:cursor-not-allowed disabled:opacity-45'
 
 /**
  * 菜单里的头一条：返回上一级，或 root 层的主入口。比其余条目弱一档，
  * 原样式靠 :first-child 选择器实现，这里改成显式挂类，位置换了也不会失灵。
  */
-const MENU_ITEM_LEAD = 'font-medium text-[var(--editor-muted)]'
+const MENU_ITEM_LEAD = 'font-medium text-[var(--color-app-muted)]'
 
 const MENU_ITEM_TITLE = 'text-xs font-semibold'
-const MENU_ITEM_HINT = 'text-[10px] text-[var(--editor-muted)]'
+const MENU_ITEM_HINT = 'text-[10px] text-[var(--color-app-muted)]'
 
 const nodeTypes = { 'workflow-card': WorkflowCard }
 
@@ -128,136 +118,83 @@ const nodeTypes = { 'workflow-card': WorkflowCard }
  */
 export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}) {
   const { runId } = useParams<{ runId: string }>()
-  const [session, setSession] = useState<WorkflowEditorSession | null>(null)
-  const [character, setCharacter] = useState<Character | null>(null)
-  const [run, setRun] = useState<WorkflowRun | null>(null)
-  const [generations, setGenerations] = useState<Record<string, Generation | null>>({})
+  const location = useLocation()
+  const { state, retryGenerations, runCommand, setCharacter } = useWorkflowEditorSession(
+    runId,
+    loadSession,
+  )
+  const {
+    session,
+    character,
+    run,
+    generations,
+    busyBranches,
+    error,
+    workflowConflict,
+    resumeError,
+    generationReadError,
+  } = state
   const [selectedImages, setSelectedImages] = useState<Record<string, string>>({})
+  const [setupPromptDrafts, setSetupPromptDrafts] = useState<Record<string, string>>({})
+  const [actionPromptDraft, setActionPromptDraft] = useState('')
   const [actionMenuOpen, setActionMenuOpen] = useState(false)
   const [actionMenuLevel, setActionMenuLevel] = useState<ActionMenuLevel>('root')
   const [selectedOutfitId, setSelectedOutfitId] = useState<string | null>(null)
-  /** 正在执行命令的分支。必须是集合：并行分支各自持锁，后起的不能顶掉先起的。 */
-  const [busyBranches, setBusyBranches] = useState<ReadonlySet<string>>(() => new Set())
-  const [error, setError] = useState<string | null>(null)
-  const [resumeError, setResumeError] = useState<string | null>(null)
-  const [generationReadError, setGenerationReadError] = useState<string | null>(null)
-  const [canvasNodes, setCanvasNodes] = useState<WorkflowCardNode[]>([])
-  /** 当前会话的有效期。换 WorkflowRun 就 abort，所有异步回调只认这一个信号。 */
-  const sessionAbortRef = useRef<AbortController | null>(null)
-  /** 最近一次生成结果读取。同一会话内被新的读取顶掉时 abort，避免旧结果盖住新结果。 */
-  const latestReadAbortRef = useRef<AbortController | null>(null)
-  /** 已到终态的生成结果，按 taskId 记住，避免每次推进都重拉一遍。 */
-  const settledGenerationsRef = useRef(new Map<Generation['id'], Generation>())
+  const [canvasNodeState, setCanvasNodeState] = useState<WorkflowCardNode[]>([])
+  /** 画风改完只影响后续生成，重拉整个 session 太重，本页自己记住新值。 */
+  const [gameStyleOverride, setGameStyleOverride] = useState<ArtStyle | null>(null)
+  const [gameStyleSaving, setGameStyleSaving] = useState(false)
+  const [gameStyleError, setGameStyleError] = useState<string | null>(null)
+  const [actionPresets, setActionPresets] = useState<ActionPreset[] | null>(null)
+  const [actionPresetError, setActionPresetError] = useState<string | null>(null)
 
-  const requestGenerations = useCallback(
-    (targetSession: WorkflowEditorSession, targetRun: WorkflowRun, sessionSignal: AbortSignal) => {
-      latestReadAbortRef.current?.abort()
-      const readAbort = new AbortController()
-      latestReadAbortRef.current = readAbort
-      const outdated = () => sessionSignal.aborted || readAbort.signal.aborted
-      void readGenerations(targetSession.controller, targetRun, settledGenerationsRef.current)
-        .then((results) => {
-          if (outdated()) return
-          setGenerations(results)
-          setGenerationReadError(null)
-        })
-        .catch((cause: unknown) => {
-          if (outdated()) return
-          setGenerationReadError(errorMessage(cause, '读取生成结果失败'))
-        })
-    },
-    [],
-  )
-
-  const runCommand = useCallback(
-    (branchKey: string, command: () => Promise<void>) => {
-      // 同一分支内互斥，防重复提交；别的分支照常能操作，也不会被这条命令解锁。
-      if (busyBranches.has(branchKey)) return
-      const sessionSignal = sessionAbortRef.current?.signal
-      setBusyBranches((current) => new Set(current).add(branchKey))
-      setError(null)
-      void command()
-        .catch((cause: unknown) => {
-          if (sessionSignal?.aborted) return
-          setError(errorMessage(cause, '工作流命令执行失败'))
-        })
-        .finally(() => {
-          if (sessionSignal?.aborted) return
-          setBusyBranches((current) => {
-            if (!current.has(branchKey)) return current
-            const next = new Set(current)
-            next.delete(branchKey)
-            return next
-          })
-        })
-    },
-    [busyBranches],
-  )
+  // 预设文案的唯一真相源在后端（它归措辞门禁管），这里只读一次。菜单打开前就取，
+  // 免得用户点开看到空的再等一次网络往返。
+  useEffect(() => {
+    const abort = new AbortController()
+    loadDefaultActionPresets(abort.signal)
+      .then((presets) => setActionPresets(presets))
+      .catch((cause: unknown) => {
+        if (abort.signal.aborted) return
+        setActionPresetError(errorMessage(cause, '读取动作预设失败'))
+      })
+    return () => abort.abort()
+  }, [])
 
   useEffect(() => {
-    const sessionAbort = new AbortController()
-    sessionAbortRef.current = sessionAbort
-    latestReadAbortRef.current?.abort()
-    settledGenerationsRef.current = new Map()
-    setSession(null)
-    setCharacter(null)
-    setRun(null)
-    setGenerations({})
     setSelectedImages({})
+    setSetupPromptDrafts({})
+    setActionPromptDraft('')
     setActionMenuOpen(false)
     setActionMenuLevel('root')
     setSelectedOutfitId(null)
-    setBusyBranches(new Set())
-    setError(null)
-    setResumeError(null)
-    setGenerationReadError(null)
-    setCanvasNodes([])
-    if (!runId) return
+    setCanvasNodeState([])
+  }, [runId])
 
-    let loaded: WorkflowEditorSession | null = null
-    let unsubscribe: () => void = () => undefined
-    let unsubscribeErrors: () => void = () => undefined
-    const loader = loadSession ?? createDefaultRealWorkflowEditorSession
-    const signal = sessionAbort.signal
-
-    void loader(runId)
-      .then(async (nextSession) => {
-        if (signal.aborted) {
-          nextSession.dispose()
-          return
-        }
-        loaded = nextSession
-        setSession(nextSession)
-        setCharacter(nextSession.character)
-        unsubscribeErrors = nextSession.subscribeErrors((nextError) => {
-          if (signal.aborted) return
-          setError(errorMessage(nextError, '工作流异步处理失败'))
-        })
-        unsubscribe = nextSession.controller.subscribe((nextRun) => {
-          if (signal.aborted) return
-          setRun(nextRun)
-          requestGenerations(nextSession, nextRun, signal)
-        })
-        try {
-          await nextSession.controller.resume()
-        } catch (cause: unknown) {
-          if (signal.aborted) return
-          setResumeError(errorMessage(cause, '恢复 WorkflowRun 失败'))
-        }
-      })
-      .catch((cause: unknown) => {
-        if (signal.aborted) return
-        setError(errorMessage(cause, '恢复 WorkflowRun 失败'))
-      })
-
-    return () => {
-      sessionAbort.abort()
-      latestReadAbortRef.current?.abort()
-      unsubscribe()
-      unsubscribeErrors()
-      loaded?.dispose()
+  const exportModels = useMemo(() => {
+    const models = new Map<string, ExportPackageModel>()
+    if (!character || !run || !session) return models
+    const completedGenerations = Object.values(generations).filter(
+      (generation): generation is Generation => generation !== null,
+    )
+    for (const outfit of character.outfits) {
+      try {
+        models.set(
+          outfit.id,
+          createProgressiveExportModel({
+            project: session.project,
+            character,
+            outfitId: outfit.id,
+            run,
+            generations: completedGenerations,
+          }),
+        )
+      } catch {
+        // 造型未达到最低导出条件时不显示导出入口。
+      }
     }
-  }, [loadSession, requestGenerations, runId])
+    return models
+  }, [character, generations, run, session])
 
   const projected = useMemo(
     () =>
@@ -265,17 +202,27 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
         ? projectCanvas({
             run,
             controller: session.controller,
+            confirmCharacterTemplate: session.confirmCharacterTemplate,
+            uploadReferenceImage: session.uploadReferenceImage,
             publishReviewedAction: session.publishReviewedAction,
             project: session.project,
+            render3d: session.render3d,
             character,
             generations,
+            exportModels,
             selectedImages,
+            setupPromptDrafts,
+            actionPromptDraft,
             actionMenuOpen,
             actionMenuLevel,
+            actionPresets,
+            actionPresetError,
             selectedOutfitId,
             busyBranches,
             resumeBlocked: Boolean(resumeError),
             setSelectedImages,
+            setSetupPromptDrafts,
+            setActionPromptDraft,
             setActionMenuOpen,
             setActionMenuLevel,
             setSelectedOutfitId,
@@ -286,42 +233,37 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
     [
       actionMenuOpen,
       actionMenuLevel,
+      actionPresets,
+      actionPresetError,
+      actionPromptDraft,
       busyBranches,
       character,
+      exportModels,
       generations,
       run,
       runCommand,
       resumeError,
       selectedImages,
+      setCharacter,
+      setupPromptDrafts,
       selectedOutfitId,
       session,
     ],
   )
 
-  useEffect(() => {
-    setCanvasNodes((previous) =>
-      projected.nodes.map((node) => ({
-        ...node,
-        position: previous.find((candidate) => candidate.id === node.id)?.position ?? node.position,
-      })),
-    )
-  }, [projected.nodes])
-
-  useEffect(() => {
-    if (
-      resumeError &&
-      run &&
-      !run.nodes.some(
-        (node) => !node.deletedAt && node.status === 'active' && node.phase === 'generating',
-      )
-    ) {
-      setResumeError(null)
-    }
-  }, [resumeError, run])
+  // React Flow gesture state (position, selection and measurements) is local, while node content
+  // must come from the current render. Keeping content in an effect-synchronized copy leaves
+  // controlled textareas one render behind and can reset an in-progress IME composition.
+  const canvasNodes = useMemo(
+    () => mergeCanvasNodes(projected.nodes, canvasNodeState),
+    [canvasNodeState, projected.nodes],
+  )
 
   function onNodesChange(changes: NodeChange<WorkflowCardNode>[]) {
     const safeChanges = changes.filter((change) => change.type !== 'remove')
-    setCanvasNodes((nodes) => applyNodeChanges(safeChanges, nodes))
+    setCanvasNodeState((nodes) =>
+      applyNodeChanges(safeChanges, mergeCanvasNodes(projected.nodes, nodes)),
+    )
   }
 
   if (!runId) {
@@ -336,121 +278,96 @@ export function WorkflowEditorPage({ loadSession }: WorkflowEditorPageProps = {}
     return <EditorBoundary message="正在恢复 WorkflowRun" />
   }
 
-  const constraints = [
-    CHARACTER_PERSPECTIVE[session.project.perspective],
-    DIRECTIONAL_MOVEMENT[session.project.directionalMovement],
-    `${session.project.spriteSize.width} × ${session.project.spriteSize.height}`,
-    session.project.gameStyle ?? '未设置画风',
-  ]
-  const visibleError = error ?? resumeError ?? generationReadError
+  const visibleError = error ?? resumeError ?? generationReadError ?? gameStyleError
 
   return (
-    <div className="workflow-editor-shell fixed inset-0 z-30 overflow-hidden bg-[var(--editor-paper)] text-[var(--editor-ink)]">
-      <aside
-        className="pointer-events-none absolute bottom-[18px] left-[18px] z-15 grid min-w-[250px] max-w-[min(380px,calc(100vw-112px))] gap-1 rounded-[10px] border border-[rgb(36_49_39_/_12%)] bg-[rgb(249_250_247_/_90%)] px-[15px] py-3 shadow-[0_8px_24px_rgb(31_40_33_/_9%)] backdrop-blur-[14px]"
-        aria-label="当前项目"
-      >
-        <div>
-          <p className="m-0 mb-[5px] text-[8px] font-extrabold tracking-[0.12em] text-[#7b827b]">
-            PROJECT
-          </p>
-          <h1 className="m-0 text-sm font-bold text-[#29342c]">{session.project.name}</h1>
-        </div>
-        <p className="m-0 overflow-hidden text-ellipsis whitespace-nowrap text-[9px] leading-[1.5] text-[#777f78]">
-          {constraints.join(' · ')}
-        </p>
-        <div className="mt-1 flex items-center justify-between gap-3">
-          <span className="rounded-full border border-[rgb(61_83_67_/_12%)] bg-[rgb(255_255_255_/_72%)] px-[7px] py-[3px] text-[8px] font-bold text-[var(--editor-ink)]">
-            真实 WorkflowRun 接口
-          </span>
-          <small className="font-mono text-[8px] font-bold text-[var(--editor-muted)]">
-            Run {run.id} · v{run.version}
-          </small>
-        </div>
-      </aside>
-      {visibleError ? (
-        <div
-          className="absolute left-1/2 top-[150px] z-10 flex -translate-x-1/2 items-center gap-3 border border-[#b66e62] bg-[#f7e9e5] px-[14px] py-2.5 text-xs text-[#7b3027]"
-          role="alert"
-        >
-          <span>{visibleError}</span>
-          {!error && !resumeError && generationReadError ? (
-            <button
-              type="button"
-              className="rounded-md border border-current bg-transparent px-2 py-[5px] font-bold text-inherit"
-              onClick={() => {
-                const signal = sessionAbortRef.current?.signal
-                if (signal) requestGenerations(session, run, signal)
-              }}
-            >
-              重试读取生成结果
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-      <section className="workflow-editor-canvas absolute inset-0" aria-label="WorkflowRun 画布">
-        <ReactFlow<WorkflowCardNode>
-          nodes={canvasNodes}
-          edges={projected.edges}
-          nodeTypes={nodeTypes}
-          onNodesChange={onNodesChange}
-          nodesDraggable
-          nodesConnectable={false}
-          edgesReconnectable={false}
-          elementsSelectable
-          deleteKeyCode={null}
-          fitView
-          fitViewOptions={{ padding: 0.14, maxZoom: 0.82 }}
-          minZoom={0.3}
-          maxZoom={1.2}
-        >
-          <FitViewOnNodeSetChange nodeIds={canvasNodes.map((node) => node.id)} />
-          <Controls position="bottom-right" showInteractive={false} />
-        </ReactFlow>
-      </section>
-    </div>
+    <WorkflowEditorView
+      project={
+        gameStyleOverride === null
+          ? session.project
+          : { ...session.project, gameStyle: gameStyleOverride }
+      }
+      run={run}
+      nodes={canvasNodes}
+      edges={projected.edges}
+      nodeTypes={nodeTypes}
+      error={visibleError}
+      workflowConflict={workflowConflict}
+      generationReadError={!error && !resumeError ? generationReadError : null}
+      reloadTo={`${location.pathname}${location.search}${location.hash}`}
+      onRetryGenerations={retryGenerations}
+      gameStyleSaving={gameStyleSaving}
+      onGameStyleChange={async (gameStyle) => {
+        // 先落库再改显示：反过来的话保存失败会让画布显示新画风、而生成仍按旧画风走，
+        // 两者不一致且没有一处会报错。保存期间禁用选择器，避免连点排队。
+        setGameStyleSaving(true)
+        setGameStyleError(null)
+        try {
+          await projectApis.setGameStyle(session.project.id, gameStyle)
+          setGameStyleOverride(gameStyle)
+        } catch (cause) {
+          setGameStyleError(errorMessage(cause, '保存画风失败'))
+        } finally {
+          setGameStyleSaving(false)
+        }
+      }}
+      onNodesChange={onNodesChange}
+    />
   )
 }
 
-/**
- * 只有画布上的节点增减时才重新取景，让新长出来的分支进入视野。
- * 节点内容变化（生成结果到达、状态推进、版本号增加）一律不动视角——
- * 用户拖过、缩放过的位置是他自己选的，命令执行不该把它拽回全景。
- *
- * 延迟一帧再取景：新节点要等 React Flow 量完尺寸，立刻调会按旧尺寸算错取景框。
- */
-function FitViewOnNodeSetChange({ nodeIds }: { nodeIds: string[] }) {
-  const { fitView } = useReactFlow()
-  const signature = nodeIds.join(',')
-  useEffect(() => {
-    if (!signature) return
-    const timer = window.setTimeout(() => {
-      void fitView({ padding: 0.14, maxZoom: 0.82, duration: 180 })
-    }, 32)
-    return () => window.clearTimeout(timer)
-  }, [fitView, signature])
-  return null
+function mergeCanvasNodes(
+  projectedNodes: WorkflowCardNode[],
+  canvasNodeState: WorkflowCardNode[],
+): WorkflowCardNode[] {
+  const stateById = new Map(canvasNodeState.map((node) => [node.id, node]))
+  return projectedNodes.map((node) => {
+    const state = stateById.get(node.id)
+    return state ? { ...state, ...node, position: state.position } : node
+  })
 }
 
 interface ProjectionInput {
   run: WorkflowRun
   controller: WorkflowController
+  confirmCharacterTemplate(
+    nodeId: CharacterTemplateWorkflowNode['id'],
+    selectedImageUrl: string,
+    direction?: ActionDirection,
+  ): Promise<Character>
+  uploadReferenceImage(file: File, signal?: AbortSignal): Promise<MediaReference>
   publishReviewedAction(reviewNodeId: ReviewWorkflowNode['id']): Promise<Character>
   project: Project
   character: Character | null
+  /** 母版预检与已有 3D 资产判定；页面不直连适配器，替身注入只有会话这一个入口。 */
+  render3d: Render3DApis
   generations: Record<string, Generation | null>
+  exportModels: ReadonlyMap<string, ExportPackageModel>
   selectedImages: Record<string, string>
+  setupPromptDrafts: Record<string, string>
+  actionPromptDraft: string
   actionMenuOpen: boolean
   actionMenuLevel: ActionMenuLevel
+  /** 后端预设。null = 还没拿到（加载中或失败），与"拿到了但是空表"必须分得开。 */
+  actionPresets: ActionPreset[] | null
+  actionPresetError: string | null
   selectedOutfitId: string | null
   busyBranches: ReadonlySet<string>
   resumeBlocked: boolean
   setSelectedImages: React.Dispatch<React.SetStateAction<Record<string, string>>>
+  setSetupPromptDrafts: React.Dispatch<React.SetStateAction<Record<string, string>>>
+  setActionPromptDraft(value: string): void
   setActionMenuOpen(open: boolean): void
   setActionMenuLevel(level: ActionMenuLevel): void
   setSelectedOutfitId(outfitId: string | null): void
   setCharacter(character: Character): void
-  runCommand(branchKey: string, command: () => Promise<void>): void
+  runCommand(branchKey: string, command: () => Promise<void>, onSuccess?: () => void): void
+}
+
+function NodeExportButton({ model }: { model: ExportPackageModel | undefined }) {
+  return model ? (
+    <ExportButton model={model} className={`${CARD_BUTTON_SECONDARY} nodrag nopan nowheel`} />
+  ) : null
 }
 
 /** 卡片自己所属的分支；命令与禁用判断都以它为准。 */
@@ -514,8 +431,65 @@ function contentFor(node: WorkflowNode, input: ProjectionInput): ReactNode {
   }
   if (node.type === 'action-first-frame') return <FirstFrameContent node={node} input={input} />
   if (node.type === 'action-generation-method') return <MethodContent node={node} input={input} />
-  if (node.type === 'action-full-frame') return <AnimationContent node={node} input={input} />
+  if (node.type === 'action-full-frame') {
+    return <AnimationContent key={`${input.run.id}:${node.id}`} node={node} input={input} />
+  }
   return <ReviewContent node={node} input={input} />
+}
+
+type WorkflowImageVariant = 'master' | 'thumbnail' | 'frame'
+
+/** 图片先占住最终版面，再从骨架淡入，避免远程资产到达时把节点和连线一起顶动。 */
+function WorkflowImage({
+  src,
+  alt,
+  variant,
+}: {
+  src: string
+  alt: string
+  variant: WorkflowImageVariant
+}) {
+  const [state, setState] = useState<'loading' | 'loaded' | 'failed'>('loading')
+
+  useEffect(() => setState('loading'), [src])
+
+  const frameClass =
+    variant === 'master'
+      ? 'aspect-square rounded-[10px] border border-app-line bg-app-surface'
+      : variant === 'thumbnail'
+        ? 'aspect-square rounded-md bg-app-surface'
+        : 'aspect-square rounded border border-app-line bg-app-surface'
+  const imageClass =
+    variant === 'master' ? 'object-contain p-2 [image-rendering:pixelated]' : 'object-cover'
+
+  return (
+    <span
+      data-workflow-image-shape="square"
+      className={`relative block w-full overflow-hidden ${frameClass}`}
+    >
+      {state === 'loading' ? (
+        <span
+          role="status"
+          aria-label={`正在加载${alt}`}
+          className="workflow-image-skeleton absolute inset-0"
+        />
+      ) : null}
+      {state === 'failed' ? (
+        <span className="absolute inset-0 grid place-items-center px-2 text-center text-[10px] text-app-faint">
+          图片加载失败
+        </span>
+      ) : null}
+      <img
+        className={`absolute inset-0 block h-full w-full transition-opacity duration-200 ease-out motion-reduce:transition-none ${imageClass} ${
+          state === 'loaded' ? 'opacity-100' : 'opacity-0'
+        }`}
+        src={src}
+        alt={alt}
+        onLoad={() => setState('loaded')}
+        onError={() => setState('failed')}
+      />
+    </span>
+  )
 }
 
 function CharacterSetupContent({
@@ -527,38 +501,100 @@ function CharacterSetupContent({
 }) {
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
-  const [prompt, setPrompt] = useState(node.input.prompt)
-  useEffect(() => setPrompt(node.input.prompt), [node.id, node.input.prompt])
+  const prompt = input.setupPromptDrafts[node.id] ?? node.input.prompt
+  const [uploadingReference, setUploadingReference] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const uploadAbortRef = useRef<AbortController | null>(null)
+
+  useEffect(() => () => uploadAbortRef.current?.abort(), [])
+
+  function uploadReferenceImage(file: File) {
+    const uploadAbort = new AbortController()
+    uploadAbortRef.current = uploadAbort
+    setUploadingReference(true)
+    setUploadError(null)
+    void input
+      .uploadReferenceImage(file, uploadAbort.signal)
+      .then((reference) => {
+        if (uploadAbort.signal.aborted) return
+        return input.controller.updateCharacterSetup(node.id, {
+          prompt,
+          referenceMedia: [reference],
+        })
+      })
+      .catch((cause: unknown) => {
+        if (uploadAbort.signal.aborted) return
+        setUploadError(errorMessage(cause, '上传参考图失败'))
+      })
+      .finally(() => {
+        if (uploadAbort.signal.aborted) return
+        uploadAbortRef.current = null
+        setUploadingReference(false)
+      })
+  }
 
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.status === 'passed') return <p className={CARD_SUMMARY}>角色描述已确认</p>
   return (
     <div className={CARD_STACK}>
       <label className="grid gap-[7px]">
-        <span className="text-[9px] font-[750] text-[#626b64]">角色描述</span>
+        <span className="text-[9px] font-[750] text-app-muted">角色描述</span>
         <textarea
           aria-label="角色描述"
           rows={4}
-          className="min-h-[84px] w-full resize-y rounded-lg border border-[var(--editor-line)] bg-[#fbfcfb] px-3 py-2.5 font-[inherit] text-[11px] leading-[1.55] text-[var(--editor-ink)] focus:border-[#69866f] focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-[rgb(105_134_111_/_18%)]"
+          className="min-h-[84px] w-full resize-y rounded-lg border border-[var(--color-app-line)] bg-app-surface-raised px-3 py-2.5 font-[inherit] text-[11px] leading-[1.55] text-[var(--color-app-ink)] focus:border-app-accent focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-app-accent-soft"
           value={prompt}
-          disabled={branchBusy}
-          onChange={(event) => setPrompt(event.target.value)}
+          disabled={branchBusy || uploadingReference}
+          onChange={(event) => {
+            const value = event.target.value
+            input.setSetupPromptDrafts((drafts) => ({ ...drafts, [node.id]: value }))
+          }}
         />
         {node.input.referenceMedia.length > 0 ? (
-          <small className="text-[9px] font-[750] text-[#626b64]">
+          <small className="text-[9px] font-[750] text-app-muted">
             已关联 {node.input.referenceMedia.length} 个参考媒体
           </small>
         ) : null}
       </label>
+      <div className="grid gap-[7px]">
+        <span className="text-[9px] font-[750] text-app-muted">角色参考图（选填）</span>
+        <input
+          type="file"
+          accept="image/*"
+          aria-label="角色参考图"
+          className="block w-full rounded-lg border border-[var(--color-app-line)] bg-app-surface text-[10px] text-[var(--color-app-muted)] file:mr-3 file:border-0 file:border-r file:border-[var(--color-app-line)] file:bg-transparent file:px-3 file:py-2 file:text-[10px] file:font-[700] file:text-[var(--color-app-ink)]"
+          disabled={branchBusy || uploadingReference}
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0]
+            event.currentTarget.value = ''
+            if (file) uploadReferenceImage(file)
+          }}
+        />
+        {uploadingReference ? (
+          <small role="status" className="text-[9px] font-[750] text-app-muted">
+            正在上传参考图…
+          </small>
+        ) : null}
+        {uploadError ? (
+          <p
+            role="alert"
+            className="m-0 rounded-lg border border-app-danger-line bg-app-danger-soft px-2.5 py-2 text-[9px] leading-[1.5] text-app-danger"
+          >
+            {uploadError}
+          </p>
+        ) : null}
+      </div>
       <button
         type="button"
         className={CARD_BUTTON}
-        disabled={branchBusy || !prompt.trim()}
+        disabled={branchBusy || uploadingReference || !prompt.trim()}
         onClick={() =>
           input.runCommand(branchKey, () =>
             input.controller.generateCharacterTemplate(node.id, {
               spriteWidth: input.project.spriteSize.width,
               spriteHeight: input.project.spriteSize.height,
+              directions: ['east'],
+              candidateCount: 3,
               input: {
                 prompt,
                 referenceMedia: node.input.referenceMedia,
@@ -582,6 +618,8 @@ function CharacterTemplateContent({
 }) {
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
+  const [refining, setRefining] = useState(false)
+  const [adjustmentPrompt, setAdjustmentPrompt] = useState('')
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.phase === 'ready' && node.status === 'active') {
     const setupNode = findDependency(input.run, node, 'character-setup')
@@ -596,6 +634,8 @@ function CharacterTemplateContent({
             input.controller.generateCharacterTemplate(setupNode.id, {
               spriteWidth: input.project.spriteSize.width,
               spriteHeight: input.project.spriteSize.height,
+              directions: ['east'],
+              candidateCount: 3,
             }),
           )
         }}
@@ -605,54 +645,268 @@ function CharacterTemplateContent({
     )
   }
   if (node.phase === 'selecting') {
-    const result = input.generations[generationKey(node.id, 'character_template')]?.result
-    const images = result?.type === 'character_template' ? result.images : []
-    const selectedImageUrl =
-      images.find((image) => image.url === input.selectedImages[node.id])?.url ?? null
+    const directions = getDirectionProfile(input.project.directionalMovement).generationDirections
+    const masterConfirmed = Boolean(node.selectedImageUrl)
+    const hasPrematureDirectionTasks = node.generations.some(
+      (reference) =>
+        reference.role === 'character_template' && (reference.direction ?? 'east') !== 'east',
+    )
+    if (!masterConfirmed && hasPrematureDirectionTasks) {
+      const setupNode = findDependency(input.run, node, 'character-setup')
+      return (
+        <div className={CARD_STACK}>
+          <p role="alert" className={CARD_SUMMARY}>
+            旧流程已在母版确认前生成多方向，不能保证是同一个角色。请按新流程重新生成母版。
+          </p>
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={branchBusy || !setupNode}
+            onClick={() => {
+              if (!setupNode) return
+              input.setSelectedImages((selected) => {
+                const next = { ...selected }
+                for (const direction of directions) delete next[selectionKey(node.id, direction)]
+                return next
+              })
+              input.runCommand(branchKey, async () => {
+                await input.controller.restartFromNode(node.id)
+                await input.controller.generateCharacterTemplate(setupNode.id, {
+                  spriteWidth: input.project.spriteSize.width,
+                  spriteHeight: input.project.spriteSize.height,
+                  directions: ['east'],
+                  candidateCount: 3,
+                })
+              })
+            }}
+          >
+            按新流程重新生成母版
+          </button>
+        </div>
+      )
+    }
+    const visibleDirections = masterConfirmed ? directions : (['east'] as const)
+    const groups = visibleDirections.map((direction) => {
+      const result =
+        input.generations[generationKey(node.id, 'character_template', direction)]?.result
+      return {
+        direction,
+        images: result?.type === 'character_template' ? result.images : [],
+      }
+    })
+    if (!masterConfirmed) {
+      const images = groups[0]?.images ?? []
+      const selectedImageUrl =
+        images.find((image) => image.url === input.selectedImages[selectionKey(node.id, 'east')])
+          ?.url ?? null
+      return (
+        <div className={CARD_STACK}>
+          <div className="grid grid-cols-2 gap-[7px]">
+            {images.map((image, index) => (
+              <button
+                type="button"
+                key={image.url}
+                className={THUMB_BUTTON}
+                aria-label={`选择角色候选 ${index + 1}`}
+                aria-pressed={input.selectedImages[selectionKey(node.id, 'east')] === image.url}
+                onClick={() =>
+                  input.setSelectedImages((selected) => ({
+                    ...selected,
+                    [selectionKey(node.id, 'east')]: image.url,
+                  }))
+                }
+              >
+                <WorkflowImage src={image.url} alt={`角色候选 ${index + 1}`} variant="thumbnail" />
+              </button>
+            ))}
+          </div>
+          {selectedImageUrl ? (
+            <MasterGate
+              node={node}
+              input={input}
+              imageUrl={selectedImageUrl}
+              branchKey={branchKey}
+              branchBusy={branchBusy}
+            />
+          ) : (
+            <p className={CARD_TEXT}>先选一张候选，再决定是否把它定为母版。</p>
+          )}
+        </div>
+      )
+    }
+
+    const directionImages = Object.fromEntries(
+      directions.map((direction) => {
+        if (direction === 'east') {
+          return [direction, node.selectedImages?.east ?? node.selectedImageUrl]
+        }
+        const group = groups.find((candidate) => candidate.direction === direction)
+        return [direction, group?.images.length === 1 ? group.images[0]!.url : null]
+      }),
+    ) as Partial<Record<ActionDirection, string | null>>
+    const directionSetComplete = directions.every((direction) => directionImages[direction])
+    const directionCountLabel = directions.length === 8 ? '八向' : '四向'
     return (
       <div className={CARD_STACK}>
-        <div className="grid grid-cols-2 gap-[7px]">
-          {images.map((image, index) => (
+        <p className={CARD_TEXT}>所有方向均基于已确认母版生成，每个方向一张。</p>
+        <div
+          role="group"
+          aria-label={`${directionCountLabel}首帧集合`}
+          data-layout="direction-first-frame-stack"
+          className={`grid w-full gap-2 overflow-hidden rounded-xl border border-app-line-strong bg-app-surface-muted p-2 ${
+            directions.length === 8 ? 'aspect-[2/1] grid-cols-4' : 'aspect-square grid-cols-2'
+          }`}
+        >
+          {directions.map((direction) => {
+            const imageUrl = directionImages[direction]
+            return imageUrl ? (
+              <figure
+                key={direction}
+                className="relative m-0 min-h-0 overflow-hidden rounded-lg border border-app-line bg-app-surface-raised"
+              >
+                <WorkflowImage
+                  src={imageUrl}
+                  alt={`${directionLabel(direction)}方向首帧`}
+                  variant="thumbnail"
+                />
+                <figcaption className="absolute bottom-1 left-1 rounded-full bg-app-canvas/85 px-1.5 py-0.5 text-[8px] font-bold text-app-ink">
+                  {directionLabel(direction)}
+                </figcaption>
+              </figure>
+            ) : (
+              <div
+                key={direction}
+                role="status"
+                aria-label={`${directionLabel(direction)}方向首帧生成中`}
+                className="grid min-h-0 place-items-center rounded-lg border border-dashed border-app-line bg-app-surface-raised text-[9px] font-semibold text-app-muted"
+              >
+                {directionLabel(direction)}方向生成中
+              </div>
+            )
+          })}
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {directions.slice(1).map((direction) => (
             <button
               type="button"
-              key={image.url}
-              className={THUMB_BUTTON}
-              aria-label={`选择角色候选 ${index + 1}`}
-              aria-pressed={selectedImageUrl === image.url}
+              key={direction}
+              className={CARD_BUTTON_SECONDARY}
+              disabled={branchBusy}
               onClick={() =>
-                input.setSelectedImages((selected) => ({
-                  ...selected,
-                  [node.id]: image.url,
-                }))
+                input.runCommand(branchKey, () =>
+                  input.controller.retryGenerationDirection(node.id, direction, {
+                    spriteWidth: input.project.spriteSize.width,
+                    spriteHeight: input.project.spriteSize.height,
+                  }),
+                )
               }
             >
-              <img className={THUMB_IMAGE} src={image.url} alt={`角色候选 ${index + 1}`} />
+              重做{directionLabel(direction)}方向
             </button>
           ))}
         </div>
         <button
           type="button"
           className={CARD_BUTTON}
-          disabled={!selectedImageUrl || branchBusy}
+          disabled={!directionSetComplete || branchBusy}
           onClick={() =>
-            input.runCommand(branchKey, () =>
-              input.controller.confirmCharacterTemplate(node.id, selectedImageUrl!),
-            )
+            input.runCommand(branchKey, async () => {
+              let character: Character | null = null
+              for (const direction of directions.slice(1)) {
+                const imageUrl = directionImages[direction]
+                if (!imageUrl) throw new Error(`${directionLabel(direction)}方向尚未生成完成`)
+                character = await input.confirmCharacterTemplate(node.id, imageUrl, direction)
+              }
+              if (character) input.setCharacter(character)
+            })
           }
         >
-          确认身份母版
+          确认方向集合
         </button>
       </div>
     )
   }
   if (node.status === 'passed' && node.selectedImageUrl) {
+    const outfit =
+      input.character?.outfits.find(
+        (candidate) => candidate.previewUrl === node.selectedImageUrl,
+      ) ?? input.character?.outfits[0]
     return (
       <div className={CARD_STACK}>
-        <img className={MASTER_IMAGE} src={node.selectedImageUrl} alt="已确认身份母版" />
-        <span className="text-center text-[11px] text-[var(--editor-muted)]">身份已锁定</span>
+        <WorkflowImage src={node.selectedImageUrl} alt="已确认身份母版" variant="master" />
+        <span className="text-center text-[11px] text-[var(--color-app-muted)]">身份已锁定</span>
+        <div className="grid gap-2" role="group" aria-label="角色母版操作">
+          {outfit ? <NodeExportButton model={input.exportModels.get(outfit.id)} /> : null}
+          <div className="grid grid-cols-2 gap-2" role="group" aria-label="调整角色母版">
+            <button
+              type="button"
+              className={CARD_BUTTON_SECONDARY}
+              aria-label="重新生成角色母版"
+              disabled={branchBusy}
+              onClick={() =>
+                input.runCommand(branchKey, () =>
+                  input.controller.regenerateCharacterTemplate(node.id, {
+                    spriteWidth: input.project.spriteSize.width,
+                    spriteHeight: input.project.spriteSize.height,
+                    mode: 'regenerate',
+                  }),
+                )
+              }
+            >
+              重新生成
+            </button>
+            <button
+              type="button"
+              className={CARD_BUTTON_SECONDARY}
+              aria-label="微调角色母版"
+              aria-expanded={refining}
+              disabled={branchBusy}
+              onClick={() => setRefining((active) => !active)}
+            >
+              微调
+            </button>
+          </div>
+          {refining ? (
+            <div className="grid gap-2">
+              <textarea
+                aria-label="角色母版微调描述"
+                rows={3}
+                className="min-h-[64px] w-full resize-y rounded-lg border border-[var(--color-app-line)] bg-app-surface-raised px-3 py-2.5 font-[inherit] text-[11px] leading-[1.55] text-[var(--color-app-ink)] focus:border-app-accent focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-app-accent-soft"
+                value={adjustmentPrompt}
+                disabled={branchBusy}
+                onChange={(event) => setAdjustmentPrompt(event.target.value)}
+              />
+              <button
+                type="button"
+                className={CARD_BUTTON}
+                disabled={branchBusy || !adjustmentPrompt.trim()}
+                onClick={() => {
+                  const prompt = adjustmentPrompt.trim()
+                  if (!prompt) return
+                  input.runCommand(
+                    branchKey,
+                    () =>
+                      input.controller.regenerateCharacterTemplate(node.id, {
+                        spriteWidth: input.project.spriteSize.width,
+                        spriteHeight: input.project.spriteSize.height,
+                        mode: 'refine',
+                        adjustmentPrompt: prompt,
+                      }),
+                    () => {
+                      setRefining(false)
+                      setAdjustmentPrompt('')
+                    },
+                  )
+                }}
+              >
+                提交角色母版微调
+              </button>
+            </div>
+          ) : null}
+        </div>
         <button
           type="button"
-          className="absolute -bottom-4 -right-4 z-8 grid h-8 min-h-8 w-8 place-items-center rounded-full border border-[var(--editor-ink)] bg-white p-0 text-[15px] leading-none text-[var(--editor-ink)] shadow-[var(--editor-shadow)] hover:bg-[var(--editor-ink)] hover:text-white"
+          className="absolute -bottom-3.5 -right-3.5 z-8 grid h-8 min-h-8 w-8 place-items-center rounded-full border border-app-line-strong bg-app-surface-raised p-0 text-[15px] leading-none text-app-accent shadow-app-menu transition-[color,background-color,border-color,transform,box-shadow] duration-150 ease-out hover:border-app-accent hover:bg-app-accent-muted hover:shadow-app-card active:translate-y-px active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent motion-reduce:transform-none"
           aria-label="添加动作分支"
           onClick={() => {
             input.setActionMenuLevel('root')
@@ -663,7 +917,7 @@ function CharacterTemplateContent({
           ＋
         </button>
         {input.actionMenuOpen ? (
-          <div className="absolute left-[calc(100%+24px)] top-[calc(100%-16px)] z-7 flex min-w-[190px] flex-col overflow-hidden rounded-xl border border-[var(--editor-line)] bg-white shadow-[var(--editor-shadow)]">
+          <div className="absolute left-[calc(100%+24px)] top-[calc(100%-16px)] z-7 flex min-w-[190px] flex-col overflow-hidden rounded-xl border border-[var(--color-app-line)] bg-app-surface-raised shadow-[var(--shadow-app-panel)]">
             <ActionMenu input={input} templateNodeId={node.id} />
           </div>
         ) : null}
@@ -671,6 +925,170 @@ function CharacterTemplateContent({
     )
   }
   return <StatusText node={node} input={input} />
+}
+
+/**
+ * 母版确认闸：挑中候选之后、把它当母版用之前的那个停点。
+ *
+ * 为什么这道闸值得存在：一张母版约 ¥0.29，图生 3D 一次 ¥2.40，而混元的模型**生成即
+ * 最终**（拓扑、绑点在生成那一步定死，事后改不动）。母版不合格 → 模型必然不合格 →
+ * 只能整个重来。所以要在最便宜的位置纠错，而不是等模型出来再看。
+ *
+ * 候选缩略图本身承担人工选择，选中边框就是唯一选择反馈；闸内只保留后端 master_check
+ * 的旁证和确认操作，不再重复放一张大图把节点撑长。
+ */
+function MasterGate({
+  node,
+  input,
+  imageUrl,
+  branchKey,
+  branchBusy,
+}: {
+  node: CharacterTemplateWorkflowNode
+  input: ProjectionInput
+  imageUrl: string
+  branchKey: string
+  branchBusy: boolean
+}) {
+  const precheck = useMasterPrecheck(input, imageUrl)
+  const setupNode = findDependency(input.run, node, 'character-setup')
+  const rejected = precheck.status === 'done' && !precheck.report.accepted
+
+  return (
+    <div className={CARD_STACK}>
+      <MasterPrecheckReadout state={precheck} />
+      <button
+        type="button"
+        className={CARD_BUTTON}
+        // 预检的判据是近似的（面积比、连通块数），会误判；它拦下来的图未必真不能用。
+        // 所以拒绝只改文案不改可用性——把"这张不行"的决定权留给看得见图的人。
+        disabled={branchBusy}
+        title={rejected ? precheck.report.detail : undefined}
+        onClick={() =>
+          input.runCommand(branchKey, async () => {
+            const character = await input.confirmCharacterTemplate(node.id, imageUrl)
+            input.setCharacter(character)
+            const directions = getDirectionProfile(
+              input.project.directionalMovement,
+            ).generationDirections
+            if (directions.length > 1) {
+              if (!setupNode) throw new Error('身份母版缺少角色设定')
+              await input.controller.generateCharacterTemplate(setupNode.id, {
+                spriteWidth: input.project.spriteSize.width,
+                spriteHeight: input.project.spriteSize.height,
+                sourceImageUrl: imageUrl,
+                directions: directions.slice(1),
+                candidateCount: 1,
+              })
+            }
+          })
+        }
+      >
+        确认为定妆母版
+      </button>
+      <button
+        type="button"
+        className={CARD_BUTTON}
+        disabled={branchBusy || !setupNode}
+        onClick={() => {
+          if (!setupNode) return
+          input.setSelectedImages((selected) => {
+            const next = { ...selected }
+            delete next[node.id]
+            return next
+          })
+          // 先复位再重生成：不复位的话新的三张会挂在一个仍处于 selecting 的节点上，
+          // 页面会把旧的选择当成对新候选的选择。
+          input.runCommand(branchKey, async () => {
+            await input.controller.restartFromNode(node.id)
+            await input.controller.generateCharacterTemplate(setupNode.id, {
+              spriteWidth: input.project.spriteSize.width,
+              spriteHeight: input.project.spriteSize.height,
+              directions: ['east'],
+              candidateCount: 3,
+            })
+          })
+        }}
+      >
+        重新生成三张
+      </button>
+    </div>
+  )
+}
+
+type MasterPrecheckState =
+  | { status: 'loading' }
+  | { status: 'done'; report: MasterPrecheckReport }
+  | { status: 'error'; message: string }
+
+/** 预检失败不影响确认：它是旁证，不是准入条件。判据坏了不该连带把人挡在外面。 */
+function useMasterPrecheck(input: ProjectionInput, imageUrl: string): MasterPrecheckState {
+  const [state, setState] = useState<MasterPrecheckState>({ status: 'loading' })
+  const { render3d } = input
+  const { width, height } = input.project.spriteSize
+
+  useEffect(() => {
+    let cancelled = false
+    setState({ status: 'loading' })
+    void render3d
+      .precheckMaster(imageUrl, { width, height })
+      .then((report) => {
+        if (!cancelled) setState({ status: 'done', report })
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) setState({ status: 'error', message: errorMessage(cause, '母版预检失败') })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [height, imageUrl, render3d, width])
+
+  return state
+}
+
+const WARNING_TITLE: Record<MasterWarning['code'], string> = {
+  limbs_fused: '双腿可能粘连',
+  extra_component: '画面里还有别的东西',
+}
+
+function MasterPrecheckReadout({ state }: { state: MasterPrecheckState }) {
+  if (state.status === 'loading') {
+    return (
+      <p className={CARD_SUMMARY} role="status">
+        正在预检母版…
+      </p>
+    )
+  }
+  if (state.status === 'error') {
+    return (
+      <p className={CARD_SUMMARY}>
+        母版预检没跑成：{state.message}。这不影响确认，但下一步的形态问题得你自己看。
+      </p>
+    )
+  }
+  const { report } = state
+  if (!report.accepted) {
+    return (
+      <p
+        role="alert"
+        className="m-0 rounded-[10px] border border-app-danger-line bg-app-danger-soft px-3 py-2.5 text-[11px] leading-[1.6] text-app-danger"
+      >
+        这张不能用：{report.detail}
+      </p>
+    )
+  }
+  return (
+    <div className={CARD_STACK}>
+      <p className={CARD_SUMMARY}>{report.detail}</p>
+      {report.warnings.map((warning) => (
+        <p key={warning.code} className={CARD_SUMMARY}>
+          <b>{WARNING_TITLE[warning.code]}</b>
+          <br />
+          {warning.detail}
+        </p>
+      ))}
+    </div>
+  )
 }
 
 function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templateNodeId: string }) {
@@ -681,7 +1099,7 @@ function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templat
 
   if (input.actionMenuLevel === 'root') {
     return (
-      <div className="contents">
+      <div className="contents" role="menu" aria-label="新增节点">
         <button
           type="button"
           className={`${MENU_ITEM} ${MENU_ITEM_LEAD}`}
@@ -696,14 +1114,6 @@ function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templat
           }}
         >
           <b className={MENU_ITEM_TITLE}>生成动作 ›</b>
-        </button>
-        <button type="button" className={MENU_ITEM} disabled>
-          <b className={MENU_ITEM_TITLE}>生成静态资产</b>
-          <small className={MENU_ITEM_HINT}>本期不做，需单独提案</small>
-        </button>
-        <button type="button" className={MENU_ITEM} disabled>
-          <b className={MENU_ITEM_TITLE}>导出</b>
-          <small className={MENU_ITEM_HINT}>完成审核后打包动作</small>
         </button>
       </div>
     )
@@ -738,6 +1148,59 @@ function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templat
     )
   }
 
+  if (input.actionMenuLevel === 'custom') {
+    const prompt = input.actionPromptDraft.trim()
+    return (
+      <div className="contents">
+        <button
+          type="button"
+          className={`${MENU_ITEM} ${MENU_ITEM_LEAD}`}
+          onClick={() => input.setActionMenuLevel('actions')}
+        >
+          ← 生成动作
+        </button>
+        <label className="flex flex-col gap-1.5 border-t border-app-line px-3 py-2.5 text-[10px] font-semibold text-app-muted">
+          动作描述
+          <textarea
+            aria-label="动作描述"
+            value={input.actionPromptDraft}
+            onChange={(event) => input.setActionPromptDraft(event.target.value)}
+            placeholder="例如：挥手打招呼、蹲下查看地面"
+            rows={3}
+            className="nodrag nopan nowheel min-h-20 resize-y rounded-md border border-app-line-strong bg-app-surface p-2 text-[11px] font-normal text-app-ink outline-none focus:border-app-accent"
+          />
+        </label>
+        <button
+          type="button"
+          className={MENU_ITEM}
+          disabled={!selectedOutfit || !prompt || branchBusy}
+          onClick={() => {
+            if (!selectedOutfit || !prompt) return
+            input.runCommand(SHARED_BRANCH, () =>
+              input.controller.addAction({
+                dependsOnNodeIds: [templateNodeId],
+                input: {
+                  outfitId: selectedOutfit.id,
+                  name: prompt,
+                  type: 'custom',
+                  prompt,
+                  fps: 12,
+                },
+              }),
+            )
+            input.setActionPromptDraft('')
+            input.setActionMenuOpen(false)
+            input.setActionMenuLevel('root')
+            input.setSelectedOutfitId(null)
+          }}
+        >
+          <b className={MENU_ITEM_TITLE}>开始生成</b>
+          <small className={MENU_ITEM_HINT}>创建自定义动作分支</small>
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div className="contents">
       <button
@@ -747,38 +1210,54 @@ function ActionMenu({ input, templateNodeId }: { input: ProjectionInput; templat
       >
         ← 生成动作
       </button>
-      {ACTION_PRESETS.map((preset) => (
-        <button
-          type="button"
-          key={preset.type}
-          className={MENU_ITEM}
-          disabled={!selectedOutfit || branchBusy}
-          onClick={() => {
-            if (!selectedOutfit) return
-            input.runCommand(SHARED_BRANCH, () =>
-              input.controller.addAction({
-                dependsOnNodeIds: [templateNodeId],
-                input: {
-                  outfitId: selectedOutfit.id,
-                  name: preset.name,
-                  type: preset.type,
-                  prompt: preset.prompt,
-                  fps: 12,
-                },
-              }),
-            )
-            input.setActionMenuOpen(false)
-            input.setActionMenuLevel('root')
-            input.setSelectedOutfitId(null)
-          }}
-        >
-          <b className={MENU_ITEM_TITLE}>{preset.label}</b>
-          <small className={MENU_ITEM_HINT}>{ACTION_PRESET_HINT}</small>
-        </button>
-      ))}
-      <button type="button" className={MENU_ITEM} disabled title="当前页面尚未提供动作描述输入">
+      {input.actionPresets === null ? (
+        // 拿不到就说拿不到,不退回一份前端副本兜底:那份副本正是本次要消除的东西,
+        // 而"菜单看起来正常、发出去的描述却是旧文案"比空菜单难查得多。
+        <p className={MENU_ITEM_HINT + ' px-3 py-[9px]'}>
+          {input.actionPresetError ?? '正在读取动作预设…'}
+        </p>
+      ) : (
+        input.actionPresets.map((preset) => (
+          <button
+            type="button"
+            key={preset.type}
+            className={MENU_ITEM}
+            disabled={!selectedOutfit || branchBusy}
+            onClick={() => {
+              if (!selectedOutfit) return
+              input.runCommand(SHARED_BRANCH, () =>
+                input.controller.addAction({
+                  dependsOnNodeIds: [templateNodeId],
+                  input: {
+                    outfitId: selectedOutfit.id,
+                    name: preset.name,
+                    type: preset.type,
+                    prompt: preset.description,
+                    fps: 12,
+                  },
+                }),
+              )
+              input.setActionMenuOpen(false)
+              input.setActionMenuLevel('root')
+              input.setSelectedOutfitId(null)
+            }}
+          >
+            <b className={MENU_ITEM_TITLE}>{preset.label}</b>
+            <small className={MENU_ITEM_HINT}>{ACTION_PRESET_HINT}</small>
+          </button>
+        ))
+      )}
+      <button
+        type="button"
+        className={MENU_ITEM}
+        disabled={!selectedOutfit || branchBusy}
+        onClick={() => {
+          input.setActionPromptDraft('')
+          input.setActionMenuLevel('custom')
+        }}
+      >
         <b className={MENU_ITEM_TITLE}>自定义动作</b>
-        <small className={MENU_ITEM_HINT}>描述输入尚未开放</small>
+        <small className={MENU_ITEM_HINT}>输入描述后生成</small>
       </button>
     </div>
   )
@@ -793,8 +1272,17 @@ function FirstFrameContent({
 }) {
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
-  const result = input.generations[generationKey(node.id, 'first_frame')]?.result
-  const image = result?.type === 'first_frame' ? result.image : null
+  const [refining, setRefining] = useState(false)
+  const [adjustmentPrompt, setAdjustmentPrompt] = useState('')
+  const directions = getDirectionProfile(input.project.directionalMovement).generationDirections
+  const groups = directions.map((direction) => {
+    const result = input.generations[generationKey(node.id, 'first_frame', direction)]?.result
+    return {
+      direction,
+      images: result?.type === 'first_frame' ? result.images : [],
+    }
+  })
+  const allImages = groups.flatMap(({ images }) => images)
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.phase === 'configuring') {
     const character = characterOwningOutfit(input.character, node.input.outfitId)
@@ -812,8 +1300,8 @@ function FirstFrameContent({
             if (!character) return
             input.runCommand(branchKey, () =>
               input.controller.generateFirstFrame(node.id, {
-                characterId: character.id,
-                referenceMedia: [],
+                spriteWidth: input.project.spriteSize.width,
+                spriteHeight: input.project.spriteSize.height,
               }),
             )
           }}
@@ -823,32 +1311,73 @@ function FirstFrameContent({
       </div>
     )
   }
-  if (node.phase === 'selecting' && image) {
-    const selectedImageUrl = input.selectedImages[node.id] === image.url ? image.url : null
+  if (node.phase === 'selecting' && allImages.length > 0) {
+    const allSelected = groups.every(({ direction, images }) => {
+      const selected = input.selectedImages[selectionKey(node.id, direction)]
+      return images.some((image) => image.url === selected)
+    })
     return (
       <div className={CARD_STACK}>
-        <button
-          type="button"
-          className={THUMB_BUTTON}
-          aria-label="选择动作首帧"
-          aria-pressed={selectedImageUrl === image.url}
-          onClick={() =>
-            input.setSelectedImages((selected) => ({
-              ...selected,
-              [node.id]: image.url,
-            }))
-          }
-        >
-          <img className={THUMB_IMAGE} src={image.url} alt="动作首帧候选" />
-        </button>
+        {groups.map(({ direction, images }) => (
+          <div key={direction} className="grid gap-2">
+            <p className={CARD_TEXT}>方向：{directionLabel(direction)}</p>
+            <div className="grid grid-cols-2 gap-[7px]">
+              {images.map((image, index) => (
+                <button
+                  key={image.url}
+                  type="button"
+                  className={THUMB_BUTTON}
+                  aria-label={`${directions.length === 1 ? '选择动作首帧' : `选择${directionLabel(direction)}动作首帧候选`} ${index + 1}`}
+                  aria-pressed={
+                    input.selectedImages[selectionKey(node.id, direction)] === image.url
+                  }
+                  onClick={() =>
+                    input.setSelectedImages((selected) => ({
+                      ...selected,
+                      [selectionKey(node.id, direction)]: image.url,
+                    }))
+                  }
+                >
+                  <WorkflowImage
+                    src={image.url}
+                    alt={`${directions.length === 1 ? '动作首帧候选' : `${directionLabel(direction)}动作首帧候选`} ${index + 1}`}
+                    variant="thumbnail"
+                  />
+                </button>
+              ))}
+            </div>
+            {directions.length > 1 ? (
+              <button
+                type="button"
+                className={CARD_BUTTON}
+                disabled={branchBusy}
+                onClick={() =>
+                  input.runCommand(branchKey, () =>
+                    input.controller.retryGenerationDirection(node.id, direction, {
+                      spriteWidth: input.project.spriteSize.width,
+                      spriteHeight: input.project.spriteSize.height,
+                      referenceMedia: [],
+                    }),
+                  )
+                }
+              >
+                重做{directionLabel(direction)}方向
+              </button>
+            ) : null}
+          </div>
+        ))}
         <button
           type="button"
           className={CARD_BUTTON}
-          disabled={!selectedImageUrl || branchBusy}
+          disabled={!allSelected || branchBusy}
           onClick={() =>
-            input.runCommand(branchKey, () =>
-              input.controller.confirmFirstFrame(node.id, selectedImageUrl!),
-            )
+            input.runCommand(branchKey, async () => {
+              for (const direction of directions) {
+                const selectedImageUrl = input.selectedImages[selectionKey(node.id, direction)]
+                if (!selectedImageUrl) throw new Error(`请选择${directionLabel(direction)}首帧`)
+                await input.controller.confirmFirstFrame(node.id, selectedImageUrl, direction)
+              }
+            })
           }
         >
           确认动作首帧
@@ -856,8 +1385,79 @@ function FirstFrameContent({
       </div>
     )
   }
-  if (node.phase === 'completed' && node.selectedFirstFrameUrl) {
-    return <img className={MASTER_IMAGE} src={node.selectedFirstFrameUrl} alt="已确认动作首帧" />
+  if (node.phase === 'completed' && (node.selectedFirstFrameUrl || node.selectedFirstFrameUrls)) {
+    const selectedImageUrl =
+      node.selectedFirstFrameUrls?.east ?? node.selectedFirstFrameUrl ?? undefined
+    if (!selectedImageUrl) return <StatusText node={node} input={input} />
+    return (
+      <div className={CARD_STACK}>
+        <WorkflowImage src={selectedImageUrl} alt="已确认动作首帧" variant="master" />
+        <div className="grid gap-2">
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={branchBusy}
+            onClick={() =>
+              input.runCommand(branchKey, () =>
+                input.controller.regenerateFirstFrame(node.id, {
+                  spriteWidth: input.project.spriteSize.width,
+                  spriteHeight: input.project.spriteSize.height,
+                  mode: 'regenerate',
+                }),
+              )
+            }
+          >
+            重新生成动作首帧
+          </button>
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={branchBusy}
+            onClick={() => setRefining((active) => !active)}
+          >
+            微调动作首帧
+          </button>
+          {refining ? (
+            <div className="grid gap-2">
+              <textarea
+                aria-label="动作首帧微调描述"
+                rows={3}
+                className="min-h-[64px] w-full resize-y rounded-lg border border-[var(--color-app-line)] bg-app-surface-raised px-3 py-2.5 font-[inherit] text-[11px] leading-[1.55] text-[var(--color-app-ink)] focus:border-app-accent focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-app-accent-soft"
+                value={adjustmentPrompt}
+                disabled={branchBusy}
+                onChange={(event) => setAdjustmentPrompt(event.target.value)}
+              />
+              <button
+                type="button"
+                className={CARD_BUTTON}
+                disabled={branchBusy || !adjustmentPrompt.trim()}
+                onClick={() => {
+                  const prompt = adjustmentPrompt.trim()
+                  if (!prompt) return
+                  input.runCommand(
+                    branchKey,
+                    () =>
+                      input.controller.regenerateFirstFrame(node.id, {
+                        spriteWidth: input.project.spriteSize.width,
+                        spriteHeight: input.project.spriteSize.height,
+                        mode: 'refine',
+                        adjustmentPrompt: prompt,
+                      }),
+                    () => {
+                      setRefining(false)
+                      setAdjustmentPrompt('')
+                    },
+                  )
+                }}
+              >
+                提交动作首帧微调
+              </button>
+            </div>
+          ) : null}
+        </div>
+        <NodeExportButton model={input.exportModels.get(node.input.outfitId)} />
+      </div>
+    )
   }
   return <StatusText node={node} input={input} />
 }
@@ -872,8 +1472,17 @@ function MethodContent({
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
   if (node.status === 'failed') return <StatusText node={node} input={input} />
-  if (node.phase === 'completed') return <p className={CARD_SUMMARY}>视频裁剪</p>
+  if (node.phase === 'completed') {
+    return <p className={CARD_SUMMARY}>{node.method === '3d-to-2d' ? '三渲二' : '视频裁剪'}</p>
+  }
   if (node.status !== 'active') return <StatusText node={node} input={input} />
+
+  const firstFrameNode = findDependency(input.run, node, 'action-first-frame')
+  const outfit = firstFrameNode
+    ? input.character?.outfits.find((candidate) => candidate.id === firstFrameNode.input.outfitId)
+    : null
+  const render3dReady = Boolean(outfit?.model3dUrl)
+
   return (
     <div className={CARD_STACK}>
       <button
@@ -888,9 +1497,20 @@ function MethodContent({
       >
         视频裁剪
       </button>
-      <button type="button" className={CARD_BUTTON} disabled title="后端接口尚未提供">
-        3D 转 2D · 尚未开放
+      <button
+        type="button"
+        className={CARD_BUTTON}
+        disabled={branchBusy || !render3dReady}
+        title={render3dReady ? undefined : RENDER3D_UNAVAILABLE_HINT}
+        onClick={() =>
+          input.runCommand(branchKey, () =>
+            input.controller.selectActionGenerationMethod(node.id, '3d-to-2d'),
+          )
+        }
+      >
+        三渲二{render3dReady ? '' : ' · 需先建 3D 模型'}
       </button>
+      {render3dReady ? null : <p className={CARD_TEXT}>{RENDER3D_UNAVAILABLE_HINT}</p>}
     </div>
   )
 }
@@ -904,8 +1524,16 @@ function AnimationContent({
 }) {
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
-  const result = input.generations[generationKey(node.id, 'complete_animation')]?.result
-  const frames = result?.type === 'complete_animation' ? result.frames : []
+  const [promptDraft, setPromptDraft] = useState(node.input?.prompt ?? '')
+  const directions = getDirectionProfile(input.project.directionalMovement).generationDirections
+  const groups = directions.map((direction) => {
+    const result =
+      input.generations[generationKey(node.id, 'complete_animation', direction)]?.result
+    return {
+      direction,
+      frames: result?.type === 'complete_animation' ? result.frames : [],
+    }
+  })
   if (node.status === 'failed') return <StatusText node={node} input={input} />
   if (node.phase === 'ready' && node.status === 'active') {
     // 依赖链是 首帧 → 生产方式 → 完整动画，所以要往上翻两层才拿得到首帧的造型。
@@ -917,35 +1545,72 @@ function AnimationContent({
       ? characterOwningOutfit(input.character, firstFrameNode.input.outfitId)
       : null
     return (
-      <button
-        type="button"
-        className={`${CARD_BUTTON} nodrag nopan nowheel`}
-        disabled={!character || branchBusy}
-        onClick={() => {
-          if (!character) return
-          input.runCommand(branchKey, () =>
-            input.controller.generateCompleteAnimation(node.id, {
-              characterId: character.id,
-              referenceMedia: [],
-            }),
-          )
-        }}
-      >
-        生成完整动画
-      </button>
+      <div className={CARD_STACK}>
+        <textarea
+          aria-label="完整动作描述"
+          rows={4}
+          className="min-h-[76px] w-full resize-y rounded-lg border border-[var(--color-app-line)] bg-app-surface-raised px-3 py-2.5 font-[inherit] text-[11px] leading-[1.55] text-[var(--color-app-ink)] focus:border-app-accent focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-app-accent-soft"
+          placeholder="描述动作过程、节奏、幅度与收势，例如：向前挥拳，击中后自然收势"
+          value={promptDraft}
+          disabled={branchBusy}
+          onChange={(event) => setPromptDraft(event.target.value)}
+        />
+        <p className={CARD_TEXT}>该描述仅用于完整动画，不会覆盖动作首帧描述。</p>
+        <button
+          type="button"
+          className={`${CARD_BUTTON} nodrag nopan nowheel`}
+          disabled={!character || branchBusy || !promptDraft.trim()}
+          onClick={() => {
+            if (!character) return
+            const prompt = promptDraft.trim()
+            if (!prompt) return
+            input.runCommand(branchKey, () =>
+              input.controller.generateCompleteAnimation(node.id, {
+                characterId: character.id,
+                referenceMedia: [],
+                prompt,
+              }),
+            )
+          }}
+        >
+          生成完整动画
+        </button>
+      </div>
     )
   }
-  if (node.phase === 'completed' && frames.length) {
+  if (
+    node.phase === 'completed' &&
+    groups.some(({ frames: directionFrames }) => directionFrames.length)
+  ) {
+    const methodNode = findDependency(input.run, node, 'action-generation-method')
+    const firstFrameNode = methodNode
+      ? findDependency(input.run, methodNode, 'action-first-frame')
+      : null
     return (
-      <div className="nodrag nopan nowheel grid max-h-40 grid-cols-8 gap-[3px] overflow-auto">
-        {frames.map((frame, index) => (
-          <img
-            key={`${frame.url}-${index}`}
-            className="block aspect-square w-full rounded border border-[var(--editor-line)] object-cover"
-            src={frame.url}
-            alt={`动画帧 ${index + 1}`}
-          />
+      <div className={CARD_STACK}>
+        {groups.map(({ direction, frames: directionFrames }) => (
+          <div key={direction} className="grid gap-1.5">
+            <p className={CARD_TEXT}>方向：{directionLabel(direction)}</p>
+            <FrameAnimationPlayer
+              frames={directionFrames.map((frame) => ({
+                index: frame.index,
+                imageUrl: frame.url,
+                durationMs: frame.durationMs,
+              }))}
+              fps={firstFrameNode?.input.fps}
+              alt={
+                groups.length === 1 ? '完整动画预览' : `${directionLabel(direction)}完整动画预览`
+              }
+              loop
+              className="nodrag nopan nowheel aspect-square w-full rounded-[10px] border border-app-line bg-app-surface object-contain p-2 [image-rendering:pixelated]"
+              loading="eager"
+              decoding="async"
+            />
+          </div>
         ))}
+        {firstFrameNode ? (
+          <NodeExportButton model={input.exportModels.get(firstFrameNode.input.outfitId)} />
+        ) : null}
       </div>
     )
   }
@@ -956,7 +1621,21 @@ function ReviewContent({ node, input }: { node: ReviewWorkflowNode; input: Proje
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
   if (node.status === 'failed') return <StatusText node={node} input={input} />
-  if (node.phase === 'completed') return <p className={CARD_SUMMARY}>审核已通过</p>
+  if (node.phase === 'completed') {
+    const fullFrame = findDependency(input.run, node, 'action-full-frame')
+    const method = fullFrame
+      ? findDependency(input.run, fullFrame, 'action-generation-method')
+      : null
+    const firstFrame = method ? findDependency(input.run, method, 'action-first-frame') : null
+    return (
+      <div className={CARD_STACK}>
+        <p className={CARD_SUMMARY}>审核已通过</p>
+        {firstFrame ? (
+          <NodeExportButton model={input.exportModels.get(firstFrame.input.outfitId)} />
+        ) : null}
+      </div>
+    )
+  }
   if (node.status !== 'active') return <StatusText node={node} input={input} />
   return (
     <div className={CARD_STACK}>
@@ -969,7 +1648,6 @@ function ReviewContent({ node, input }: { node: ReviewWorkflowNode; input: Proje
           input.runCommand(branchKey, async () => {
             const character = await input.publishReviewedAction(node.id)
             input.setCharacter(character)
-            await input.controller.approveReview(node.id)
           })
         }
       >
@@ -979,23 +1657,29 @@ function ReviewContent({ node, input }: { node: ReviewWorkflowNode; input: Proje
   )
 }
 
-function WorkflowCard({ data }: NodeProps<WorkflowCardNode>) {
+function WorkflowCard({ data, selected }: NodeProps<WorkflowCardNode>) {
   return (
     <article
+      aria-label={data.title}
       className={[
-        'w-[368px] overflow-visible rounded-xl border border-[var(--editor-line)] bg-[rgba(249,250,247,0.98)] shadow-[var(--editor-shadow)]',
+        'w-[296px] overflow-visible rounded-[10px] border bg-app-surface-raised/98 transition-[border-color,box-shadow,opacity] duration-150 ease-out',
+        selected
+          ? 'border-app-accent shadow-app-card'
+          : 'border-app-line shadow-app-menu hover:border-app-line-strong',
         data.status === 'failed' ? 'border-dashed' : 'border-solid',
-        data.status === 'locked' ? 'opacity-45' : '',
+        data.status === 'locked' ? 'opacity-60' : '',
       ].join(' ')}
     >
       <Handle type="target" position={Position.Left} isConnectable={false} />
-      <header className="workflow-card__handle grid min-h-[62px] cursor-grab select-none content-center gap-0.5 rounded-t-[11px] bg-[#26352b] px-[18px] py-3 text-[#f2f5f1] active:cursor-grabbing">
-        <span className="text-[8px] font-extrabold tracking-[0.12em] text-[#aebcb1]">
+      <header className="workflow-card__handle flex min-h-[50px] cursor-grab select-none items-center gap-2 px-3.5 py-2.5 active:cursor-grabbing">
+        <span className="font-mono text-[9px] font-bold leading-none text-app-muted">
           {data.eyebrow}
         </span>
-        <strong className="text-sm font-bold">{data.title}</strong>
+        <strong className="text-[13px] font-semibold text-app-ink-soft">{data.title}</strong>
       </header>
-      <div className="rounded-b-[11px] bg-[rgba(249,250,247,0.98)] p-[21px]">{data.content}</div>
+      <div className="rounded-b-[9px] bg-app-surface-raised/98 px-3.5 pb-3.5 pt-1">
+        {data.content}
+      </div>
       <Handle type="source" position={Position.Right} isConnectable={false} />
     </article>
   )
@@ -1004,6 +1688,20 @@ function WorkflowCard({ data }: NodeProps<WorkflowCardNode>) {
 function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInput }) {
   const branchKey = branchKeyOf(node, input)
   const branchBusy = input.busyBranches.has(branchKey)
+  const generationRole =
+    node.type === 'character-template'
+      ? 'character_template'
+      : node.type === 'action-first-frame'
+        ? 'first_frame'
+        : node.type === 'action-full-frame'
+          ? 'complete_animation'
+          : null
+  const failedDirections = generationRole
+    ? getDirectionProfile(input.project.directionalMovement).generationDirections.filter(
+        (direction) =>
+          input.generations[generationKey(node.id, generationRole, direction)]?.status === 'failed',
+      )
+    : []
   const resumeBlocked =
     input.resumeBlocked && node.status === 'active' && node.phase === 'generating'
   if (node.status === 'failed' || resumeBlocked) {
@@ -1012,33 +1710,75 @@ function StatusText({ node, input }: { node: WorkflowNode; input: ProjectionInpu
         <p className={CARD_SUMMARY}>
           {node.status === 'failed' ? (node.error ?? '生成失败') : '生成任务恢复失败'}
         </p>
-        <button
-          type="button"
-          className={CARD_BUTTON}
-          disabled={branchBusy}
-          onClick={() => {
-            input.setSelectedImages({})
-            input.runCommand(branchKey, () => input.controller.restartFromNode(node.id))
-          }}
-        >
-          从此节点重做
-        </button>
+        {failedDirections.length > 0 ? (
+          failedDirections.map((direction) => (
+            <button
+              type="button"
+              key={direction}
+              className={CARD_BUTTON}
+              disabled={branchBusy}
+              onClick={() =>
+                input.runCommand(branchKey, () =>
+                  input.controller.retryGenerationDirection(node.id, direction, {
+                    spriteWidth: input.project.spriteSize.width,
+                    spriteHeight: input.project.spriteSize.height,
+                  }),
+                )
+              }
+            >
+              重试{directionLabel(direction)}方向
+            </button>
+          ))
+        ) : (
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={branchBusy}
+            onClick={() => {
+              input.setSelectedImages({})
+              input.runCommand(branchKey, () => input.controller.restartFromNode(node.id))
+            }}
+          >
+            从此节点重做
+          </button>
+        )}
       </div>
     )
   }
-  const label =
-    node.status === 'locked' ? '等待上游节点' : node.phase === 'generating' ? '生成中…' : '处理中…'
+  if (node.phase === 'generating') {
+    const feedback =
+      node.type === 'character-template'
+        ? (['character-template', '身份母版生成进度', '身份母版生成预览'] as const)
+        : node.type === 'action-first-frame'
+          ? (['action-first-frame', '动作首帧生成进度', '动作首帧生成预览'] as const)
+          : (['action-full-frame', '完整动作生成进度', '完整动作生成预览'] as const)
+    return (
+      <div className={`${CARD_STACK} justify-items-center`}>
+        <GenerationProgressCopy kind={feedback[0]} label={feedback[1]} placement="node" />
+        <GenerationPreviewCard label={feedback[2]} radius="node" size="candidate" />
+      </div>
+    )
+  }
+  const label = node.status === 'locked' ? '等待上游节点' : '处理中…'
+  if (node.status === 'active' && label === '处理中…') {
+    return (
+      <p role="status" className={`${CARD_SUMMARY} flex items-center gap-2`}>
+        <span className="workflow-status-pulse h-1.5 w-1.5 shrink-0 rounded-full bg-app-accent" />
+        {label}
+      </p>
+    )
+  }
   return <p className={CARD_SUMMARY}>{label}</p>
 }
 
 function EditorBoundary({ message }: { message: string }) {
   return (
-    <div className="grid min-h-screen place-content-center gap-2 bg-[#dfe3df] text-center">
-      <p className="m-0 text-[10px] font-extrabold tracking-[0.16em] text-[#737378]">
+    <div className="grid min-h-screen place-content-center gap-2 bg-app-canvas text-center">
+      <p className="m-0 text-[10px] font-extrabold tracking-[0.16em] text-app-muted">
         MANUAL WORKFLOW
       </p>
       <h1 className="m-0 text-3xl font-semibold">工作流编辑器</h1>
-      <span className="m-0 text-[13px] text-[#737378]">{message}</span>
+      <span className="m-0 text-[13px] text-app-muted">{message}</span>
     </div>
   )
 }
@@ -1047,36 +1787,30 @@ function EditorBoundary({ message }: { message: string }) {
  * 一个节点可以同时挂多个角色的生成任务，所以字典的键必须带上角色，
  * 只用节点 ID 会让后读到的那条静默覆盖前一条。已删节点不再读取。
  */
-function generationKey(nodeId: WorkflowNode['id'], role: WorkflowGenerationRole) {
-  return `${nodeId}:${role}`
+function generationKey(
+  nodeId: WorkflowNode['id'],
+  role: WorkflowGenerationRole,
+  direction: ActionDirection = 'east',
+) {
+  return direction === 'east' ? `${nodeId}:${role}` : `${nodeId}:${role}:${direction}`
 }
 
-/**
- * 读取节点的生成结果。WorkflowRun 每推进一步都会 emit，而已经到终态的任务不会再变，
- * 所以按 taskId 记住它们；只有还在跑的任务才值得重新问后端。
- */
-async function readGenerations(
-  controller: WorkflowController,
-  run: WorkflowRun,
-  settled: Map<Generation['id'], Generation>,
-): Promise<Record<string, Generation | null>> {
-  const entries = await Promise.all(
-    run.nodes
-      .filter((node) => !node.deletedAt)
-      .flatMap((node) =>
-        node.generations.map(async (reference) => {
-          const key = generationKey(node.id, reference.role)
-          const cached = settled.get(reference.taskId)
-          if (cached) return [key, cached] as const
-          const generation = await controller.getGeneration(node.id, reference.role)
-          if (generation && (generation.status === 'completed' || generation.status === 'failed')) {
-            settled.set(generation.id, generation)
-          }
-          return [key, generation] as const
-        }),
-      ),
-  )
-  return Object.fromEntries(entries)
+function selectionKey(nodeId: WorkflowNode['id'], direction: ActionDirection) {
+  return direction === 'east' ? nodeId : `${nodeId}:${direction}`
+}
+
+function directionLabel(direction: ActionDirection) {
+  const labels: Record<ActionDirection, string> = {
+    east: '东',
+    west: '西',
+    north: '北',
+    south: '南',
+    north_east: '东北',
+    north_west: '西北',
+    south_east: '东南',
+    south_west: '西南',
+  }
+  return labels[direction]
 }
 
 /**
@@ -1103,28 +1837,28 @@ function branchIndexFor(branchKey: string, actionRootIds: string[]): number {
 
 function positionFor(type: WorkflowNode['type'], branchIndex: number) {
   const x: Record<WorkflowNode['type'], number> = {
-    'character-setup': 70,
-    'character-template': 510,
-    'action-first-frame': 950,
-    'action-generation-method': 1390,
-    'action-full-frame': 1820,
-    review: 2250,
+    'character-setup': 60,
+    'character-template': 400,
+    'action-first-frame': 740,
+    'action-generation-method': 1080,
+    'action-full-frame': 1420,
+    review: 1760,
   }
   const isActionBranch = type.startsWith('action') || type === 'review'
   return {
     x: x[type],
-    y: isActionBranch ? 60 + branchIndex * 510 : 280,
+    y: isActionBranch ? 48 + branchIndex * 380 : 218,
   }
 }
 
 /** 卡片抬头文案。序号是流程顺序，与 positionFor 的横向排布一致。 */
 const CARD_LABELS: Record<WorkflowNode['type'], { eyebrow: string; title: string }> = {
-  'character-setup': { eyebrow: '01 · ORIGIN', title: '角色设定' },
-  'character-template': { eyebrow: '02 · MASTER', title: '身份母版' },
-  'action-first-frame': { eyebrow: '03 · FIRST FRAME', title: '动作首帧' },
-  'action-generation-method': { eyebrow: '04 · METHOD', title: '生产方式' },
-  'action-full-frame': { eyebrow: '05 · ANIMATION', title: '完整动画' },
-  review: { eyebrow: '06 · REVIEW', title: '动画审核' },
+  'character-setup': { eyebrow: '01', title: '角色设定' },
+  'character-template': { eyebrow: '02', title: '身份母版' },
+  'action-first-frame': { eyebrow: '03', title: '动作首帧' },
+  'action-generation-method': { eyebrow: '04', title: '生产方式' },
+  'action-full-frame': { eyebrow: '05', title: '完整动画' },
+  review: { eyebrow: '06', title: '动画审核' },
 }
 
 /**

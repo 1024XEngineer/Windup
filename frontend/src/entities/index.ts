@@ -4,10 +4,37 @@
 export { createUserApis, userApis } from './user'
 export type { AuthTokens, CreateUserApisOptions, SendCodePurpose, User, UserApis } from './user'
 
+/* 动作预设 —— 菜单文案与生成描述，唯一真相源在后端 */
+export { actionPresetApis, ActionPresetContractError } from './action-preset/api'
+export type { ActionPreset, ActionPresetApis } from './action-preset'
+
+/* 积分 —— 读取当前用户的可用余额与账本汇总 */
+export { createQuotaApis, quotaApis } from './quota'
+export type {
+  CreateQuotaApisOptions,
+  CreditAccount,
+  CreditTransaction,
+  InviteCode,
+  CreditTransactionDirection,
+  QuotaApis,
+  QuotaTransactionFilters,
+  QuotaTransactionPageQuery,
+} from './quota'
+
 /* 项目 —— 全局约束：视角、朝向、精灵尺寸、画风 */
-export { CHARACTER_PERSPECTIVE, DIRECTIONAL_MOVEMENT } from './project'
+export {
+  ART_STYLE,
+  ART_STYLE_HINT,
+  ART_STYLE_OPTIONS,
+  CHARACTER_PERSPECTIVE,
+  isArtStyle,
+  DIRECTIONAL_MOVEMENT,
+  ProjectHasCharactersError,
+  ProjectNameConflictError,
+} from './project'
 export { projectApis } from './project'
 export type {
+  ArtStyle,
   CharacterPerspective,
   CreateProjectInput,
   DirectionalMovement,
@@ -19,20 +46,47 @@ export type {
 /* 角色 —— 资产本体；造型、动作、帧都在这棵树里 */
 export type {
   Action,
+  ActionDirection,
+  ActionSequence,
   ActionType,
   Character,
   CharacterApis,
+  CharacterSummaryApis,
+  CharacterSummary,
+  CharacterPageQuery,
+  CharacterPublicationStatus,
+  CharacterStatus,
+  CharacterTemplate,
   CreateCharacterInput,
   Frame,
   Outfit,
 } from './character'
-export { characterApis } from './character'
+export {
+  CHARACTER_STATUS,
+  characterApis,
+  characterTemplateImages,
+  characterTemplatesFromImages,
+} from './character'
+export {
+  ACTION_DIRECTIONS,
+  getDirectionProfile,
+  isActionDirection,
+  resolveActionDirection,
+} from './character/directions'
+export type { DirectionProfile, ResolvedActionDirection } from './character/directions'
+export { getOutfitPlayback } from './character/outfit-playback'
 
 /* 动作模板 —— 能跨角色复用的配方 */
 export type { ActionTemplate, ActionTemplateApis } from './action-template'
 
 /* 生成 —— 业务数据，不是「调用生成能力」 */
-export { createGenerationApis, GenerationApiError } from './generation/api'
+export {
+  createAuthenticatedGenerationApis,
+  createGenerationApis,
+  GenerationApiError,
+  IMAGE_CANDIDATE_COUNT,
+  isImageCandidateCount,
+} from './generation/api'
 export type {
   CharacterTemplateGenerationInput,
   CharacterTemplateGenerationResult,
@@ -49,16 +103,44 @@ export type {
   GenerationResult,
   GenerationResultFor,
   GenerationType,
+  ImageCandidateCount,
+  SequenceGeometry,
   TaskStatus,
 } from './generation'
 export type { GenerationApiConfig, GenerationTransport } from './generation/api'
+
+/* 三渲二资产 —— 母版预检结果与造型级 3D 模型的建造状态 */
+export { createRender3DApis, render3DApis, Render3DContractError } from './render3d/api'
+export type {
+  MasterFacts,
+  MasterPrecheckReport,
+  MasterRejectCode,
+  MasterWarning,
+  MasterWarningCode,
+  Render3DApis,
+  Render3DAsset,
+  Render3DAssetCost,
+  Render3DAssetState,
+} from './render3d'
 
 /* 媒体上传 —— 页面只依赖公开工厂与不透明引用，不处理 multipart 协议。 */
 export { createMediaApis } from './media/api'
 export type { MediaApis, MediaCategory, MediaReference } from './media'
 
+/* 完美像素化 —— 匿名读取素材，调用本地二进制工具并返回检测结果。 */
+export { createPixelPerfectApis, pixelPerfectApis } from './pixel-perfect'
+export type {
+  PixelPerfectApis,
+  PixelPerfectMetadata,
+  PixelPerfectProcessInput,
+  PixelPerfectReconstructInput,
+  PixelPerfectReconstructMetadata,
+  PixelPerfectReconstructResult,
+  PixelPerfectResult,
+} from './pixel-perfect'
+
 /* 工作流 —— 前端管理节点，后端只持久化完整 nodes 文档 */
-export { workflowRunApis } from './workflow-run'
+export { WorkflowRunConflictError, workflowRunApis } from './workflow-run'
 export type {
   ActionFirstFrameWorkflowNode,
   ActionFullFrameWorkflowNode,

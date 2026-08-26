@@ -10,6 +10,7 @@ venv/
 # IDE
 .idea/
 .vscode/
+.repo_memory/
 
 # 系统文件
 .DS_Store
@@ -18,6 +19,7 @@ venv/
 .env
 .env.*
 !.env.example
+!.env.db.example
 
 # Docker 数据
 data/

@@ -20,6 +20,7 @@ const character: Character = {
       name: '常态造型',
       description: null,
       previewUrl: null,
+      model3dUrl: null,
       actions: [
         {
           id: 'idle',
@@ -63,6 +64,18 @@ describe('createPlaytestModel', () => {
       loop: true,
       // durationMs 为 null 时按所属动作的 fps 换算，不用前端常量顶上。
       frames: [{ imageUrl: '/idle-01.png', durationMs: 125 }],
+      sequences: {
+        east: {
+          frames: [{ imageUrl: '/idle-01.png', durationMs: 125 }],
+          mirrorX: false,
+          sourceDirection: 'east',
+        },
+        west: {
+          frames: [{ imageUrl: '/idle-01.png', durationMs: 125 }],
+          mirrorX: true,
+          sourceDirection: 'east',
+        },
+      },
     })
   })
 
@@ -74,6 +87,210 @@ describe('createPlaytestModel', () => {
       '/walk-02.png',
       '/walk-03.png',
     ])
+  })
+
+  it('keeps a locomotion cycle stable when the same motion has more sampled frames', () => {
+    const denseCharacter = structuredClone(character)
+    const walk = denseCharacter.outfits[0]!.actions[1]!
+    const denseFrames = Array.from({ length: 32 }, (_, index) => ({
+      index,
+      imageUrl: `/walk-${index}.png`,
+      durationMs: 125,
+    }))
+    walk.frameCount = 32
+    walk.frames = denseFrames
+    walk.sequences = [
+      {
+        direction: 'north',
+        sourceDirection: null,
+        mirrorX: false,
+        frameCount: 32,
+        frames: denseFrames,
+      },
+    ]
+
+    const result = createPlaytestModel(denseCharacter, 'outfit-default')
+    const mappedWalk = result.ok
+      ? result.model.actions.find((action) => action.id === 'walk')
+      : undefined
+
+    expect(mappedWalk?.frames).toHaveLength(32)
+    expect(mappedWalk?.frames.reduce((total, frame) => total + frame.durationMs, 0)).toBe(1000)
+    expect(
+      mappedWalk?.sequences?.north?.frames.reduce((total, frame) => total + frame.durationMs, 0),
+    ).toBe(1000)
+    expect(mappedWalk?.sequences?.west).toMatchObject({
+      mirrorX: true,
+      sourceDirection: 'east',
+    })
+    expect(mappedWalk?.sequences?.west?.frames).toBe(mappedWalk?.sequences?.east?.frames)
+  })
+
+  it('normalizes the known 32-frame run output to its denser cycle', () => {
+    const denseCharacter = structuredClone(character)
+    const run = denseCharacter.outfits[0]!.actions[1]!
+    run.type = 'run'
+    run.frameCount = 32
+    run.frames = Array.from({ length: 32 }, (_, index) => ({
+      index,
+      imageUrl: `/run-${index}.png`,
+      durationMs: 90,
+    }))
+
+    const result = createPlaytestModel(denseCharacter, 'outfit-default')
+    const mappedRun = result.ok
+      ? result.model.actions.find((action) => action.id === 'walk')
+      : undefined
+
+    expect(mappedRun?.frames.reduce((total, frame) => total + frame.durationMs, 0)).toBe(720)
+  })
+
+  it('does not reinterpret other frame counts or already-correct dense timing', () => {
+    const variants = [
+      {
+        frameCount: 16,
+        durationMs: 125,
+        expectedCycleMs: 2000,
+      },
+      {
+        frameCount: 32,
+        durationMs: 31.25,
+        expectedCycleMs: 1000,
+      },
+    ]
+
+    for (const variant of variants) {
+      const variantCharacter = structuredClone(character)
+      const walk = variantCharacter.outfits[0]!.actions[1]!
+      walk.frameCount = variant.frameCount
+      walk.frames = Array.from({ length: variant.frameCount }, (_, index) => ({
+        index,
+        imageUrl: `/walk-${index}.png`,
+        durationMs: variant.durationMs,
+      }))
+
+      const result = createPlaytestModel(variantCharacter, 'outfit-default')
+      const mappedWalk = result.ok
+        ? result.model.actions.find((action) => action.id === 'walk')
+        : undefined
+
+      expect(mappedWalk?.frames.reduce((total, frame) => total + frame.durationMs, 0)).toBe(
+        variant.expectedCycleMs,
+      )
+    }
+  })
+
+  it('requires the known dense timing to be explicit on every source frame', () => {
+    const authoredCharacter = structuredClone(character)
+    const walk = authoredCharacter.outfits[0]!.actions[1]!
+    walk.fps = 8
+    walk.frameCount = 32
+    walk.frames = Array.from({ length: 32 }, (_, index) => ({
+      index,
+      imageUrl: `/walk-${index}.png`,
+      durationMs: index === 17 ? null : 125,
+    }))
+
+    const result = createPlaytestModel(authoredCharacter, 'outfit-default')
+    const mappedWalk = result.ok
+      ? result.model.actions.find((action) => action.id === 'walk')
+      : undefined
+
+    expect(mappedWalk?.frames.map((frame) => frame.durationMs)).toEqual(
+      Array.from({ length: 32 }, () => 125),
+    )
+  })
+
+  it('preserves dense locomotion timing when the action is not looping', () => {
+    const oneShotCharacter = structuredClone(character)
+    const walk = oneShotCharacter.outfits[0]!.actions[1]!
+    walk.loop = false
+    walk.frameCount = 32
+    walk.frames = Array.from({ length: 32 }, (_, index) => ({
+      index,
+      imageUrl: `/walk-${index}.png`,
+      durationMs: 125,
+    }))
+
+    const result = createPlaytestModel(oneShotCharacter, 'outfit-default')
+    const mappedWalk = result.ok
+      ? result.model.actions.find((action) => action.id === 'walk')
+      : undefined
+
+    expect(mappedWalk?.frames.reduce((total, frame) => total + frame.durationMs, 0)).toBe(4000)
+  })
+
+  it('preserves authored timing for non-locomotion actions with dense frames', () => {
+    const denseCharacter = structuredClone(character)
+    const idle = denseCharacter.outfits[0]!.actions[0]!
+    idle.frameCount = 32
+    idle.frames = Array.from({ length: 32 }, (_, index) => ({
+      index,
+      imageUrl: `/idle-${index}.png`,
+      durationMs: 125,
+    }))
+
+    const result = createPlaytestModel(denseCharacter, 'outfit-default')
+    const mappedIdle = result.ok
+      ? result.model.actions.find((action) => action.id === 'idle')
+      : undefined
+
+    expect(mappedIdle?.frames.reduce((total, frame) => total + frame.durationMs, 0)).toBe(4000)
+  })
+
+  it('优先播放全部真实八向序列，不对任何方向应用镜像', () => {
+    const directionalCharacter = structuredClone(character)
+    const directions = [
+      'east',
+      'west',
+      'north',
+      'south',
+      'north_east',
+      'north_west',
+      'south_east',
+      'south_west',
+    ] as const
+    directionalCharacter.outfits[0]!.actions[1]!.sequences = directions.map((direction, index) => ({
+      direction,
+      sourceDirection: null,
+      mirrorX: false,
+      frameCount: 2,
+      frames: [
+        { index: 1, imageUrl: `/walk-${direction}-02.png`, durationMs: 90 + index },
+        { index: 0, imageUrl: `/walk-${direction}-01.png`, durationMs: 90 + index },
+      ],
+    }))
+
+    const result = createPlaytestModel(directionalCharacter, 'outfit-default')
+    const walk = result.ok ? result.model.actions.find((action) => action.id === 'walk') : undefined
+
+    expect(Object.keys(walk?.sequences ?? {})).toEqual(directions)
+    expect(walk?.sequences?.west).toEqual({
+      frames: [
+        { imageUrl: '/walk-west-01.png', durationMs: 91 },
+        { imageUrl: '/walk-west-02.png', durationMs: 91 },
+      ],
+      mirrorX: false,
+      sourceDirection: 'west',
+    })
+    for (const direction of directions) {
+      expect(walk?.sequences?.[direction]).toMatchObject({
+        mirrorX: false,
+        sourceDirection: direction,
+      })
+    }
+  })
+
+  it('treats legacy top-level frames as east and derives west', () => {
+    const result = createPlaytestModel(character, 'outfit-default')
+    const walk = result.ok ? result.model.actions.find((action) => action.id === 'walk') : undefined
+
+    expect(walk?.sequences?.east?.frames.map((frame) => frame.imageUrl)).toEqual([
+      '/walk-01.png',
+      '/walk-02.png',
+      '/walk-03.png',
+    ])
+    expect(walk?.sequences?.west).toMatchObject({ mirrorX: true, sourceDirection: 'east' })
   })
 
   it('drops actions that have no frames to play', () => {
@@ -99,5 +316,64 @@ describe('createPlaytestModel', () => {
     const result = createPlaytestModel(tinyDurationCharacter, 'outfit-default')
 
     expect(result.ok && result.model.actions[0]?.frames[0]?.durationMs).toBe(1)
+  })
+
+  it('keeps a north-only sequence out of the legacy side-frame field', () => {
+    const directionalCharacter = structuredClone(character)
+    const idle = directionalCharacter.outfits[0]!.actions[0]!
+    idle.frames = []
+    idle.fps = 0
+    idle.sequences = [
+      {
+        direction: 'north',
+        sourceDirection: null,
+        mirrorX: false,
+        frameCount: 1,
+        frames: [{ index: 0, imageUrl: '/idle-north.png', durationMs: null }],
+      },
+    ]
+
+    const result = createPlaytestModel(directionalCharacter, 'outfit-default')
+    const mappedIdle = result.ok
+      ? result.model.actions.find((action) => action.id === 'idle')
+      : undefined
+
+    expect(mappedIdle?.frames).toEqual([])
+    expect(mappedIdle?.sequences?.north?.frames).toEqual([
+      { imageUrl: '/idle-north.png', durationMs: 100 },
+    ])
+  })
+
+  it('does not invent playback for empty sources or mirrors whose source is missing', () => {
+    const malformed = structuredClone(character)
+    const idle = malformed.outfits[0]!.actions[0]!
+    idle.sequences = [
+      {
+        direction: 'north',
+        sourceDirection: null,
+        mirrorX: false,
+        frameCount: 0,
+        frames: [],
+      },
+    ]
+    const walk = malformed.outfits[0]!.actions[1]!
+    walk.frames = []
+    walk.sequences = [
+      {
+        direction: 'west',
+        sourceDirection: 'east',
+        mirrorX: true,
+        frameCount: 1,
+        frames: [{ index: 0, imageUrl: '/invalid-derived-frame.png', durationMs: 100 }],
+      },
+    ]
+
+    const result = createPlaytestModel(malformed, 'outfit-default')
+    const mappedWalk = result.ok
+      ? result.model.actions.find((action) => action.id === 'walk')
+      : undefined
+
+    expect(mappedWalk?.sequences).toEqual({})
+    expect(mappedWalk?.frames).toEqual([])
   })
 })

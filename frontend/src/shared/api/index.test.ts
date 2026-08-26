@@ -4,6 +4,7 @@ import {
   ApiError,
   createApiClient,
   getApiAccessToken,
+  recoverApiUnauthorized,
   registerApiAccessTokenProvider,
   registerApiUnauthorizedRecovery,
 } from './index'
@@ -11,6 +12,16 @@ import {
 afterEach(() => vi.unstubAllEnvs())
 
 describe('createApiClient', () => {
+  it('exposes registered unauthorized recovery without leaking failures', async () => {
+    expect(await recoverApiUnauthorized()).toBe(false)
+    const unregister = registerApiUnauthorizedRecovery(async () => true)
+    expect(await recoverApiUnauthorized()).toBe(true)
+    unregister()
+    const unregisterFailure = registerApiUnauthorizedRecovery(async () => Promise.reject('nope'))
+    expect(await recoverApiUnauthorized()).toBe(false)
+    unregisterFailure()
+  })
+
   it('reads the latest registered token provider and restores the previous provider', () => {
     const unregisterFirst = registerApiAccessTokenProvider(() => 'first-token')
     const unregisterSecond = registerApiAccessTokenProvider(() => 'second-token')
@@ -174,6 +185,64 @@ describe('createApiClient', () => {
     })
     expect(recover).toHaveBeenCalledTimes(1)
     expect(fetchFn).toHaveBeenCalledTimes(2)
+    unregister()
+  })
+
+  it.each(['POST', 'PUT', 'PATCH', 'DELETE'])(
+    '刷新会话但不自动重放 %s 等非幂等请求',
+    async (method) => {
+      const recover = vi.fn(async () => true)
+      const unregister = registerApiUnauthorizedRecovery(recover)
+      const fetchFn = vi.fn(
+        async () =>
+          new Response(JSON.stringify({ code: 401, message: '登录状态已过期', data: null }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+      )
+      const client = createApiClient({ baseUrl: 'https://api.windup.test', fetchFn })
+
+      await expect(
+        client.request('/resources', { method, json: { name: 'sample' } }),
+      ).rejects.toMatchObject({ kind: 'business', code: 401 })
+      // 会话恢复照常执行（token 已刷新），只是不再自动重放本次写请求。
+      expect(recover).toHaveBeenCalledTimes(1)
+      expect(fetchFn).toHaveBeenCalledTimes(1)
+      unregister()
+    },
+  )
+
+  it('按显式声明重放写请求', async () => {
+    let accessToken = 'expired-token'
+    const authorizations: (string | null)[] = []
+    const unregister = registerApiUnauthorizedRecovery(async () => {
+      accessToken = 'renewed-token'
+      return true
+    })
+    const client = createApiClient({
+      baseUrl: 'https://api.windup.test',
+      getAccessToken: () => accessToken,
+      fetchFn: async (input, init) => {
+        authorizations.push(new Request(input, init).headers.get('authorization'))
+        const payload =
+          authorizations.length === 1
+            ? { code: 401, message: '登录状态已过期', data: null }
+            : { code: 200, message: 'success', data: { id: 7 } }
+        return new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      },
+    })
+
+    await expect(
+      client.request('/resources', {
+        method: 'POST',
+        json: { name: 'sample' },
+        replayAfterAuth: true,
+      }),
+    ).resolves.toEqual({ id: 7 })
+    expect(authorizations).toEqual(['Bearer expired-token', 'Bearer renewed-token'])
     unregister()
   })
 

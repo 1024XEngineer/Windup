@@ -113,6 +113,7 @@ describe('workflowRunApis', () => {
           generations: [{ taskId: 'task-template', role: 'character_template' }],
           error: null,
           selectedImageUrl: 'https://img/knight.png',
+          selectedImages: { east: 'https://img/knight.png' },
         },
         {
           id: 'first-frame-1',
@@ -124,6 +125,7 @@ describe('workflowRunApis', () => {
           error: null,
           input: { outfitId: 'outfit-1', name: 'walk', type: 'walk', prompt: null, fps: 12 },
           selectedFirstFrameUrl: 'https://img/walk-first.png',
+          selectedFirstFrameUrls: { east: 'https://img/walk-first.png' },
         },
         {
           id: 'generation-method-1',
@@ -143,6 +145,7 @@ describe('workflowRunApis', () => {
           dependsOnNodeIds: ['generation-method-1'],
           generations: [{ taskId: 'task-animation', role: 'complete_animation' }],
           error: null,
+          input: { prompt: '向前行走并自然摆臂' },
         },
         {
           id: 'review-1',
@@ -163,7 +166,11 @@ describe('workflowRunApis', () => {
         { type: 'character-template', dependsOnNodeIds: ['setup-1'] },
         { type: 'action-first-frame', dependsOnNodeIds: ['template-1'] },
         { type: 'action-generation-method', dependsOnNodeIds: ['first-frame-1'] },
-        { type: 'action-full-frame', dependsOnNodeIds: ['generation-method-1'] },
+        {
+          type: 'action-full-frame',
+          dependsOnNodeIds: ['generation-method-1'],
+          input: { prompt: '向前行走并自然摆臂' },
+        },
         { type: 'review', dependsOnNodeIds: ['full-frame-1'] },
       ],
     })
@@ -198,6 +205,31 @@ describe('workflowRunApis', () => {
     expect(requestUrl).toBe('https://api.windup.test/workflow-runs/17')
   })
 
+  it('hydrates the persisted automatic delivery intent from the setup node', async () => {
+    const automaticNodes = structuredClone(nodes)
+    const setup = automaticNodes.find((node) => node.type === 'character-setup')
+    if (!setup || setup.type !== 'character-setup') throw new Error('测试缺少角色设定节点')
+    setup.automation = { mode: 'automatic', actionPrompt: '轻快地向前行走' }
+    Object.assign(setup.automation, { actionType: 'walk' })
+    const apis = await loadWorkflowRunApis(async () =>
+      jsonResponse({ ...workflowRunDto, nodes: automaticNodes }),
+    )
+
+    await expect(apis.get('17')).resolves.toMatchObject({ nodes: automaticNodes })
+  })
+
+  it('hydrates the persisted pixel-perfect suggestion from the setup node', async () => {
+    const suggestedNodes = structuredClone(nodes)
+    const setup = suggestedNodes.find((node) => node.type === 'character-setup')
+    if (!setup || setup.type !== 'character-setup') throw new Error('测试缺少角色设定节点')
+    setup.pixelPerfectSuggested = true
+    const apis = await loadWorkflowRunApis(async () =>
+      jsonResponse({ ...workflowRunDto, nodes: suggestedNodes }),
+    )
+
+    await expect(apis.get('17')).resolves.toMatchObject({ nodes: suggestedNodes })
+  })
+
   it('patches the complete node graph and uses the returned version', async () => {
     let request: Request | undefined
     const apis = await loadWorkflowRunApis(async (input, init) => {
@@ -212,8 +244,50 @@ describe('workflowRunApis', () => {
       nodes,
     })
     expect(request?.method).toBe('PATCH')
-    await expect(request?.json()).resolves.toEqual({ nodes, status: 'active' })
+    await expect(request?.json()).resolves.toEqual({ nodes, status: 'active', version: 3 })
     expect(updated.version).toBe(4)
+  })
+
+  it('exposes a version conflict as a workflow-run domain error', async () => {
+    const apis = await loadWorkflowRunApis(
+      async () =>
+        new Response(
+          JSON.stringify({ code: 409, message: '执行记录版本冲突，请刷新后重试', data: null }),
+          { headers: { 'content-type': 'application/json' } },
+        ),
+    )
+
+    await expect(
+      apis.update({
+        id: '17',
+        projectId: '42',
+        version: 3,
+        storageStatus: 'active',
+        nodes,
+      }),
+    ).rejects.toMatchObject({
+      name: 'WorkflowRunConflictError',
+      message: '执行记录版本冲突，请刷新后重试',
+    })
+  })
+
+  it('preserves non-conflict API errors from an update', async () => {
+    const apis = await loadWorkflowRunApis(
+      async () =>
+        new Response(JSON.stringify({ code: 500, message: '保存失败', data: null }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+
+    await expect(
+      apis.update({
+        id: '17',
+        projectId: '42',
+        version: 3,
+        storageStatus: 'active',
+        nodes,
+      }),
+    ).rejects.toMatchObject({ name: 'ApiError', code: 500, message: '保存失败' })
   })
 
   it('soft deletes through the backend DELETE endpoint', async () => {
@@ -262,6 +336,22 @@ describe('workflowRunApis', () => {
         ...workflowRunDto,
         nodes: nodes.map((node) =>
           node.id === 'walk-full-frame' ? { ...node, deletedAt: '' } : node,
+        ),
+      }),
+    )
+
+    await expect(apis.get('17')).rejects.toMatchObject({
+      name: 'ApiError',
+      kind: 'invalid-response',
+    })
+  })
+
+  it('拒绝完整动画节点中非文本类型的独立动作描述', async () => {
+    const apis = await loadWorkflowRunApis(async () =>
+      jsonResponse({
+        ...workflowRunDto,
+        nodes: nodes.map((node) =>
+          node.id === 'walk-full-frame' ? { ...node, input: { prompt: 42 } } : node,
         ),
       }),
     )
@@ -355,5 +445,54 @@ describe('workflowRunApis', () => {
       name: 'ApiError',
       kind: 'invalid-response',
     })
+  })
+
+  it('lists project runs and preserves the character binding', async () => {
+    let requestUrl = ''
+    const setupNode = nodes[0]
+    if (setupNode?.type !== 'character-setup') throw new Error('test fixture is invalid')
+    const listedRun = {
+      ...workflowRunDto,
+      nodes: [
+        {
+          ...setupNode,
+          input: { ...setupNode.input, characterId: 'character-7' },
+        },
+      ],
+    }
+    const apis = await loadWorkflowRunApis(async (input) => {
+      requestUrl = String(input)
+      return new Response(
+        JSON.stringify({
+          code: 200,
+          message: 'success',
+          data: [listedRun],
+          total: 1,
+          page: 2,
+          page_size: 10,
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      )
+    })
+
+    await expect(apis.listByProject('42', { page: 2, pageSize: 10 })).resolves.toMatchObject({
+      items: [
+        {
+          id: '17',
+          nodes: [
+            {
+              type: 'character-setup',
+              input: { characterId: 'character-7' },
+            },
+          ],
+        },
+      ],
+      total: 1,
+      page: 2,
+      pageSize: 10,
+    })
+    expect(requestUrl).toBe(
+      'https://api.windup.test/workflow-runs?project_id=42&page=2&page_size=10',
+    )
   })
 })
