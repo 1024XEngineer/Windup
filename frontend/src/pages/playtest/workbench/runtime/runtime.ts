@@ -207,15 +207,22 @@ export function setMovementInput(
   if (runtime.held[direction] === pressed) return runtime
 
   const activeAction = actionById(actions, runtime.actionId)
-  const locomotion = actions.find(
-    (action) => isLocomotionAction(action) && hasPlayableFrames(action),
-  )
-  const directionAction = locomotion ?? activeAction
   const held = { ...runtime.held, [direction]: pressed }
   const heldOrder = pressed
     ? [...runtime.heldOrder, direction]
     : runtime.heldOrder.filter((heldDirection) => heldDirection !== direction)
   const nextFacing = facingForHeld(held, heldOrder, runtime.movementMode, runtime.facing)
+  // 用户已经切到某个可位移动作时，方向键该驱动它本身；只有它没有这个朝向的帧才回落到资产里其他位移动作。
+  const activeLocomotion =
+    activeAction !== undefined &&
+    isLocomotionAction(activeAction) &&
+    (framesForFacing(activeAction, nextFacing)?.length ?? 0) > 0
+      ? activeAction
+      : undefined
+  const locomotion =
+    activeLocomotion ??
+    actions.find((action) => isLocomotionAction(action) && hasPlayableFrames(action))
+  const directionAction = locomotion ?? activeAction
   if (
     pressed &&
     (directionAction === undefined ||
