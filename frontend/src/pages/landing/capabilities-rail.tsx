@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 
 import { usePrefersReducedMotion } from '@/shared/hooks'
 import { calculateCapabilitiesRailProgress } from './capabilities-rail-model'
+import { WalkingCharacterPreview } from './walking-character-preview'
 
 const capabilities = [
   {
@@ -68,20 +69,24 @@ export function CapabilitiesRail() {
       ref={sectionRef}
       id="capabilities"
       aria-labelledby="capabilities-heading"
-      className="relative overflow-hidden scroll-mt-28 border-b border-rule pt-28"
+      className="relative overflow-hidden scroll-mt-28 border-b border-rule pt-16"
     >
-      <div className="mx-auto w-full max-w-[82rem] px-8 lg:px-12">
-        <h2 id="capabilities-heading" className="max-w-[7.4em] text-display text-ink">
-          角色做出来，还要留下来、跑起来。
-        </h2>
-        <p className="mt-6 max-w-[28em] text-lead text-ink-muted">
-          资产库保存角色的全部来路，预览台检验动作真正的样子，工作流画布让质量不靠一次碰运气。
-        </p>
+      <div className="mx-auto grid w-full max-w-[82rem] items-center gap-10 px-8 lg:grid-cols-[minmax(0,1fr)_24rem] lg:px-12">
+        <div>
+          <h2 id="capabilities-heading" className="max-w-[7.4em] text-display text-ink">
+            角色做出来，还要留下来、跑起来。
+          </h2>
+          <p className="mt-6 max-w-[28em] text-lead text-ink-muted">
+            资产库保存角色的全部来路，预览台检验动作真正的样子，工作流画布让质量不靠一次碰运气。
+          </p>
+        </div>
+
+        <WalkingCharacterPreview />
       </div>
 
       <div
         ref={viewportRef}
-        className="mt-14 overflow-hidden border-y border-rule bg-paper-sunken max-lg:snap-x max-lg:snap-mandatory max-lg:overflow-x-auto motion-reduce:snap-x motion-reduce:snap-mandatory motion-reduce:overflow-x-auto"
+        className="mt-6 overflow-hidden border-y border-rule bg-paper-sunken max-lg:snap-x max-lg:snap-mandatory max-lg:overflow-x-auto motion-reduce:snap-x motion-reduce:snap-mandatory motion-reduce:overflow-x-auto"
       >
         <div
           ref={trackRef}
