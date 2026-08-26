@@ -1597,6 +1597,52 @@ describe('createQuickStartService', () => {
     ])
   })
 
+  it('caps concurrent reconstruction requests and keeps the frame order', async () => {
+    const run = actionRun()
+    const pending: (() => void)[] = []
+    let inFlight = 0
+    let peakInFlight = 0
+    const reconstruct = vi.fn<PixelPerfectApis['reconstruct']>(async ({ imageUrl }) => {
+      inFlight += 1
+      peakInFlight = Math.max(peakInFlight, inFlight)
+      await new Promise<void>((resolve) => pending.push(resolve))
+      inFlight -= 1
+      return {
+        blob: new Blob([imageUrl], { type: 'image/png' }),
+        filename: 'pixel-perfect.png',
+        metadata: { cols: 64, rows: 80, visibleColors: 12 },
+      }
+    })
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis: completedAnimationGenerationApis(),
+      prepareProject: vi.fn(),
+      projectApis: projectReader({ width: 64, height: 80 }),
+      pixelPerfectApis: { reconstruct },
+    })
+    const session = await service.open(run.id)
+    const frames = Array.from({ length: 8 }, (_, index) => ({
+      index,
+      imageUrl: `frame-${index}.png`,
+      durationMs: 80,
+    }))
+
+    const processed = session.pixelPerfectActionFrames!(frames)
+    // 后进先出地放行，完成顺序与入参顺序错开，才能验证结果没有跟着完成顺序走。
+    while (pending.length > 0) {
+      pending.pop()!()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+
+    await expect(processed).resolves.toEqual(
+      frames.map((frame) =>
+        expect.objectContaining({ index: frame.index, sourceImageUrl: frame.imageUrl }),
+      ),
+    )
+    expect(peakInFlight).toBe(3)
+    expect(reconstruct).toHaveBeenCalledTimes(frames.length)
+  })
+
   it('Quick Start 四向审核发布时保留全部方向序列', async () => {
     const run = actionRun()
     const fullFrame = run.nodes.find((node) => node.type === 'action-full-frame')!

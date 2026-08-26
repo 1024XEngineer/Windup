@@ -1548,6 +1548,61 @@ describe('QuickStartPage', () => {
     expect(screen.getByRole('button', { name: '导出原图' })).toBeTruthy()
   })
 
+  it('discards pixel-perfect frames when the action changed while processing', async () => {
+    const suggested = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const setup = suggested.nodes.find((node) => node.type === 'character-setup')
+    if (!setup || setup.type !== 'character-setup') throw new Error('测试缺少角色设定节点')
+    setup.pixelPerfectSuggested = true
+    const originalFrames = [
+      { index: 0, imageUrl: 'https://example.test/original-0.png', durationMs: 80 },
+    ]
+    let releaseReconstruction: (() => void) | null = null
+    const pixelPerfectActionFrames = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        releaseReconstruction = resolve
+      })
+      return [{ index: 0, blob: new Blob(['pixel-0'], { type: 'image/png' }), durationMs: 80 }]
+    })
+    const createObjectURL = vi.fn(() => 'blob:https://windup.test/pixel-0')
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    let publishRun: ((next: WorkflowRun) => void) | null = null
+    const service = serviceFor(suggested, {
+      getActionFrames: vi.fn(async () => originalFrames),
+      pixelPerfectActionFrames,
+      subscribe: vi.fn((listener: (next: WorkflowRun) => void) => {
+        publishRun = listener
+        return () => undefined
+      }),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    fireEvent.click(await screen.findByRole('button', { name: '开始完美像素化' }))
+    expect(await screen.findByLabelText('完美像素化进度')).toBeTruthy()
+
+    // 像素化还在跑，用户已经追加了下一个动作。
+    const withNextAction: WorkflowRun = {
+      ...suggested,
+      nodes: [
+        ...suggested.nodes,
+        {
+          id: 'action-full-2',
+          type: 'action-full-frame',
+          status: 'active',
+          phase: 'generating',
+          dependsOnNodeIds: ['method'],
+          generations: [{ taskId: 'full-task-2', role: 'complete_animation' }],
+          error: null,
+        },
+      ],
+    }
+    await act(async () => publishRun?.(withNextAction))
+    await act(async () => releaseReconstruction?.())
+
+    expect(createObjectURL).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: '查看完美像素版' })).toBeNull()
+  })
+
   it('does not offer pixel-perfect processing without the persisted intent', async () => {
     const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
     renderAt(
