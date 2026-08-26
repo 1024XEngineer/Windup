@@ -14,7 +14,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { QuickStartCandidate, QuickStartEntryService, QuickStartSession } from './service'
 import {
+  CHARACTER_STATUS,
   WorkflowRunConflictError,
+  type Character,
+  type CharacterApis,
+  type CharacterSummaryApis,
   type Project,
   type ProjectApis,
   type WorkflowRun,
@@ -410,18 +414,116 @@ function projectReader(project: Project = existingProject): Pick<ProjectApis, 'l
   }
 }
 
+const existingCharacter: Character = {
+  id: '7',
+  projectId: existingProject.id,
+  workflowRunId: '77',
+  name: '星光法师',
+  description: '银发、蓝色斗篷的像素法师',
+  referenceImageUrl: 'https://cdn.windup.test/star-mage.png',
+  templates: [
+    {
+      direction: 'east',
+      sourceDirection: null,
+      mirrorX: false,
+      imageUrl: 'https://cdn.windup.test/star-mage.png',
+    },
+  ],
+  dataVersion: 1,
+  status: CHARACTER_STATUS.PUBLISHED,
+  outfits: [
+    {
+      id: 'outfit-default',
+      characterId: '7',
+      name: '默认造型',
+      description: null,
+      previewUrl: 'https://cdn.windup.test/star-mage.png',
+      model3dUrl: null,
+      actions: [
+        {
+          id: 'idle',
+          outfitId: 'outfit-default',
+          name: '待机',
+          type: 'idle',
+          loop: true,
+          fps: 12,
+          frameCount: 1,
+          frames: [],
+        },
+        {
+          id: 'walk',
+          outfitId: 'outfit-default',
+          name: '行走',
+          type: 'walk',
+          loop: true,
+          fps: 12,
+          frameCount: 1,
+          frames: [],
+        },
+        {
+          id: 'wave',
+          outfitId: 'outfit-default',
+          name: '挥手',
+          type: 'custom',
+          loop: false,
+          fps: 12,
+          frameCount: 1,
+          frames: [],
+        },
+      ],
+    },
+  ],
+}
+
+function characterReader(
+  character: Character = existingCharacter,
+): Pick<CharacterApis & CharacterSummaryApis, 'get' | 'listSummariesByProject'> {
+  return {
+    get: vi.fn(async () => character),
+    listSummariesByProject: vi.fn(async () => ({
+      items: [
+        {
+          id: character.id,
+          projectId: character.projectId,
+          name: character.name,
+          status: character.status,
+          previewUrl: character.outfits[0]?.previewUrl ?? null,
+          outfitName: character.outfits[0]?.name ?? null,
+          outfitCount: character.outfits.length,
+          actionCount: character.outfits.reduce(
+            (total, outfit) => total + outfit.actions.length,
+            0,
+          ),
+        },
+      ],
+      total: 1,
+      page: 1,
+      pageSize: 8,
+    })),
+  }
+}
+
 function renderAt(
   path: string,
   service: QuickStartEntryService,
   agent: CreateQuickStartAgentOptions = agentFor(),
   projects: Pick<ProjectApis, 'list' | 'get'> = projectReader(),
+  characters: Pick<
+    CharacterApis & CharacterSummaryApis,
+    'get' | 'listSummariesByProject'
+  > = characterReader(),
 ) {
   function PlaytestLocation() {
     const location = useLocation()
     return <h1>{`${location.pathname}${location.search}`}</h1>
   }
+  function LocationProbe() {
+    const location = useLocation()
+    return <output data-testid="location-probe">{`${location.pathname}${location.search}`}</output>
+  }
   return render(
     <MemoryRouter initialEntries={[path]}>
+      <LocationProbe />
       <Routes>
         <Route
           path="/quick-start"
@@ -431,6 +533,7 @@ function renderAt(
               activeRunUserId="7"
               agent={agent}
               projectApis={projects}
+              characterApis={characters}
             />
           }
         />
@@ -442,6 +545,7 @@ function renderAt(
               activeRunUserId="7"
               agent={agent}
               projectApis={projects}
+              characterApis={characters}
             />
           }
         />
@@ -981,7 +1085,8 @@ describe('QuickStartPage', () => {
     expect(screen.getByRole('menuitem', { name: '新建项目' }).getAttribute('href')).toBe(
       '/projects/new?entry=quick-start',
     )
-    fireEvent.click(await screen.findByRole('menuitemradio', { name: '星海计划' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '星海计划' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: '在此项目中新建角色' }))
 
     expect(screen.getByRole('button', { name: '选择项目，当前星海计划' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '生成方向，当前四向' })).toBeTruthy()
@@ -1003,6 +1108,75 @@ describe('QuickStartPage', () => {
         automaticDelivery: true,
         projectId: '42',
       }),
+    )
+  })
+
+  it('drills from a project into new-character and existing-character choices', async () => {
+    const characters = characterReader()
+    renderAt('/quick-start', serviceFor(null), agentFor(), projectReader(), characters)
+
+    fireEvent.click(screen.getByRole('button', { name: '选择项目，当前自动创建' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '星海计划' }))
+
+    expect(await screen.findByRole('menu', { name: '选择星海计划中的角色' })).toBeTruthy()
+    expect(screen.getByRole('menuitemradio', { name: '在此项目中新建角色' })).toBeTruthy()
+    expect(screen.getByText('或为已有角色新增动作')).toBeTruthy()
+    const characterItem = screen.getByRole('menuitem', {
+      name: '为星光法师新增动作，已有 3 个动作',
+    })
+    expect(characterItem).toBeTruthy()
+    expect(characterItem.querySelector('img')).toBeNull()
+    expect(characters.listSummariesByProject).toHaveBeenCalledWith('42', {
+      page: 1,
+      pageSize: 100,
+      status: CHARACTER_STATUS.PUBLISHED,
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '返回项目列表' }))
+    expect(screen.getByRole('menu', { name: '选择项目' })).toBeTruthy()
+  })
+
+  it('tells the user when a project has more characters than one page', async () => {
+    const characters = characterReader()
+    characters.listSummariesByProject = vi.fn(async () => ({
+      items: [
+        {
+          id: '77',
+          projectId: '42',
+          name: '星光法师',
+          status: CHARACTER_STATUS.PUBLISHED,
+          previewUrl: null,
+          outfitName: '默认造型',
+          outfitCount: 1,
+          actionCount: 3,
+          updatedAt: '2026-08-26T00:00:00Z',
+        },
+      ],
+      total: 137,
+      page: 1,
+      pageSize: 100,
+    }))
+    renderAt('/quick-start', serviceFor(null), agentFor(), projectReader(), characters)
+
+    fireEvent.click(screen.getByRole('button', { name: '选择项目，当前自动创建' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '星海计划' }))
+
+    expect(await screen.findByText('仅显示前 1 个角色，其余请在资产库中打开')).toBeTruthy()
+  })
+
+  it('opens the existing character workflow when choosing it for a new action', async () => {
+    renderAt('/quick-start', serviceFor(null))
+
+    fireEvent.click(screen.getByRole('button', { name: '选择项目，当前自动创建' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '星海计划' }))
+    fireEvent.click(
+      await screen.findByRole('menuitem', { name: '为星光法师新增动作，已有 3 个动作' }),
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location-probe').textContent).toBe(
+        '/quick-start/77?intent=add-action&outfitId=outfit-default',
+      ),
     )
   })
 
