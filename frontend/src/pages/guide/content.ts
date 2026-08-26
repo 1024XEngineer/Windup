@@ -1,3 +1,8 @@
+export interface GuideAction {
+  label: string
+  to: string
+}
+
 export interface GuideTopic {
   title: string
   description: string
@@ -12,39 +17,40 @@ export interface GuideChapter {
   title: string
   summary: string
   topics: readonly GuideTopic[]
-  note?: string
+  action?: GuideAction
+  tip?: string
 }
 
 export const guideChapters: readonly GuideChapter[] = [
   {
     id: 'getting-started',
     index: '01',
-    navLabel: '第一次使用',
-    title: '先建立一条稳定的创作起点',
-    summary: '账号、项目和基础画面约束只需设置一次，后续角色和动作都会沿用。',
+    navLabel: '开始使用',
+    title: '先建项目，再开始制作角色',
+    summary: '项目会保存游戏视角、方向、精灵尺寸和画风，让同一项目里的角色保持统一。',
+    action: { label: '新建项目', to: '/projects/new' },
     topics: [
       {
-        title: '注册与登录',
-        description: '从页面右上角进入账号面板，可以使用邮箱验证码或密码登录。',
+        title: '注册或登录',
+        description: '点击页面右上角的“注册”或“登录”，可以使用邮箱验证码或密码进入。',
         bullets: [
-          '注册验证码为 6 位，有效期 5 分钟；重新发送前需等待 60 秒。',
-          '密码长度为 8–128 位，昵称可在账号页继续修改。',
-          '没有邀请码可直接注册；从邀请链接进入时会自动带入邀请码。',
+          '从邀请链接进入时，邀请码会自动填写。',
+          '昵称、密码和积分记录可以稍后在账号页管理。',
         ],
       },
       {
-        title: '创建项目',
-        description: '项目决定角色资产的生产边界，建议在第一次生成前确认基础设置。',
+        title: '填写项目设置',
+        description: '输入项目名称，然后选择适合游戏的视角、方向、尺寸与画风。',
         bullets: [
-          '选择横版、俯视或 2.5D 游戏视角。',
-          '选择单向、四向或八向，并设置 32–2048 像素的精灵尺寸。',
-          '选择像素、卡通、手绘、写实或不指定画风。',
+          '方向可选单向、四向或八向。',
+          '常用精灵尺寸为 128×128、256×256 和 512×512。',
+          '像素、卡通、手绘和写实会影响后续生成效果。',
         ],
       },
       {
-        title: '推荐路线',
-        description: '首次使用时，按一条完整链路走完最容易理解 Windup。',
-        example: '新建项目 → 描述角色 → 选择母版 → 确认方向首帧 → 生成动作 → 预览 → 导出',
+        title: '第一次推荐这样做',
+        description: '先完整走通一次角色制作，再回来增加动作或细调结果。',
+        example: '新建项目 → 创建角色 → 选择母版 → 确认方向首帧 → 生成动作 → 试玩 → 导出',
       },
     ],
   },
@@ -52,90 +58,83 @@ export const guideChapters: readonly GuideChapter[] = [
     id: 'quick-start',
     index: '02',
     navLabel: 'Quick Start',
-    title: '用一次对话完成标准制作流程',
-    summary: 'Quick Start 适合快速创作，并与 Workflow Editor 共用同一份可恢复工作流。',
+    title: '描述你想要的角色，按引导完成生成',
+    summary: '适合第一次使用或希望快速完成标准流程的用户。',
+    action: { label: '开始创建角色', to: '/quick-start' },
     topics: [
       {
-        title: '发送消息之前',
-        description: '先选择项目、角色母版、画风和方向数量。第一轮开始后这些条件会锁定。',
+        title: '设置创作条件',
+        description: '发送第一条消息前，选择项目、画风和方向；也可以上传已有角色图片作为母版。',
         bullets: [
-          '已有项目会继承项目画风和方向设置。',
-          '上传角色母版后，输入框用于描述动作；留空时默认制作待机动作。',
-          '没有项目时可以保留“自动创建”。',
+          '选择已有项目时，会自动使用项目的画风和方向。',
+          '没有项目时保留“自动创建”即可。',
+          '上传母版后，直接描述想新增的动作。',
         ],
       },
       {
-        title: '描述并确认角色',
-        description: '写清身份、外形、服装、道具和画面风格，Agent 会整理为可编辑提案。',
+        title: '写清角色特征',
+        description: '尽量包含身份、发型、服装、配色、道具和整体气质。',
         example: '年轻的港口信使，短银发，深蓝短外套和红围巾，全身像，适合 2D RPG。',
       },
       {
-        title: '选择同一个母版',
-        description: '先从三张候选中确定角色，再基于这张母版生成多方向首帧。',
+        title: '先选择角色母版',
+        description: '从候选中选出最满意的一张，再由它生成四向或八向首帧。',
         bullets: [
-          '检查发型、服装、配色和道具是否一致。',
-          '确认全身完整、脚部未裁切、背景和文字不会干扰主体。',
-          '某个方向失败时只重试该方向，成功结果会保留。',
+          '确认发型、服装、颜色和道具符合描述。',
+          '检查全身是否完整，脚部是否被裁切。',
+          '多方向应保持为同一个角色，只改变朝向。',
         ],
       },
       {
-        title: '生成完整动作',
-        description: '确认动作首帧后继续生成完整帧，可播放、像素化、导出或继续增加动作。',
+        title: '继续生成动作',
+        description: '描述动作并确认首帧，Windup 会继续生成完整动画。',
         example: '轻快向前行走，红围巾随步伐轻微摆动，双臂自然摆动。',
       },
     ],
-    note: '中断自动制作只停止当前页面推进和订阅，不等于取消后端任务。重新打开记录后会从已保存的任务恢复。',
+    tip: '如果中途离开，重新打开同一条创作记录即可继续；不要重复提交已经开始的步骤。',
   },
   {
     id: 'workflow-editor',
     index: '03',
-    navLabel: 'Workflow Editor',
-    title: '逐节点审核并局部重试',
-    summary: '需要人工控制时，在工作流画布中处理角色设定、母版、动作首帧、生成方式和审核。',
+    navLabel: '工作流编辑器',
+    title: '需要更多控制时，逐个节点处理',
+    summary: '适合想单独重做母版、首帧、完整动画或审核结果的用户。',
+    action: { label: '新建工作流项目', to: '/projects/new?entry=workflow-editor' },
     topics: [
       {
-        title: '共享角色基础',
-        description: '角色设定和角色母版由所有动作共用，每条动作分支独立生成。',
+        title: '按顺序完成节点',
+        description: '节点会按照前后依赖排列，完成上一步后再继续下一步。',
         example: '角色设定 → 角色母版 → 动作首帧 → 生成方式 → 完整动画 → 动画审核',
       },
       {
-        title: '节点操作',
-        description: '按依赖顺序完成节点，审核通过后资产才进入完成状态。',
-        bullets: [
-          '角色母版可重新生成，也可填写微调描述后再次生成。',
-          '动作首帧需要为所有必需方向选择候选。',
-          '视频裁剪是通用路线；三渲二只对已有绑骨 3D 模型的造型开放。',
-        ],
+        title: '一个角色增加多个动作',
+        description: '角色设定和母版会被复用，每个动作拥有自己的首帧、动画和审核结果。',
       },
       {
-        title: '失败与重做',
-        description: '先阅读节点错误；多方向任务可只重试失败方向，旧任务的迟到结果不会覆盖新结果。',
+        title: '只重做不满意的部分',
+        description: '节点失败或结果不满意时，在对应节点重新生成；多方向可以只重试失败方向。',
       },
     ],
   },
   {
     id: 'assets',
     index: '04',
-    navLabel: '角色资产',
-    title: '把角色、造型和动作留在项目里',
-    summary: '资产库展示真实保存的角色母版、方向、动作与逐帧序列。',
+    navLabel: '项目资产',
+    title: '管理角色、造型、动作和每一帧',
+    summary: '制作完成的内容会保存在项目资产中，之后可以继续增加动作、试玩或导出。',
+    action: { label: '查看项目资产', to: '/projects' },
     topics: [
       {
-        title: '查看与管理',
-        description: '进入项目后选择角色，可以切换造型、动作和方向，并展开完整帧序列。',
-        bullets: [
-          '项目可重命名；项目下仍有角色时不能删除。',
-          '多方向动作可在卡片和完整帧区域切换当前方向。',
-        ],
+        title: '查看角色详情',
+        description: '打开项目并选择角色，可以查看母版、造型、动作和完整帧序列。',
       },
       {
         title: '增加动作',
-        description:
-          '已有母版的角色可以通过 Quick Start 或 Workflow Editor 继续制作动作，不会创建另一套角色。',
+        description: '已有角色母版时，点击“增加动作”，选择 Quick Start 或工作流编辑器继续。',
       },
       {
-        title: '完美像素化',
-        description: '可播放动作可以进一步整理像素网格与色板；切换动作不会把旧任务结果套到新动作。',
+        title: '整理像素效果',
+        description: '像素素材可以使用“完美像素化”，进一步统一像素网格和颜色。',
       },
     ],
   },
@@ -143,28 +142,26 @@ export const guideChapters: readonly GuideChapter[] = [
     id: 'playtest',
     index: '05',
     navLabel: '预览台',
-    title: '用真实动作帧试玩角色',
-    summary: '预览台只读取已保存且可播放的动作，不会修改角色资产或工作流。',
+    title: '亲手控制角色，检查动作效果',
+    summary: '选择已经包含动作帧的造型，在浏览器中测试移动、待机和动作切换。',
+    action: { label: '进入预览台', to: '/playtest' },
     topics: [
       {
-        title: '进入预览',
-        description: '可从角色详情、Quick Start 完成页、工作台或最近预览记录进入。',
-        bullets: [
-          '角色必须已有造型，且至少一个动作包含真实帧。',
-          '资源加载失败时使用“重试当前帧”，页面不会用占位图伪装成功。',
-        ],
+        title: '打开可以试玩的角色',
+        description: '可从角色详情、Quick Start 完成页或预览台最近记录进入。',
+        bullets: ['角色至少需要一个带真实帧的动作。', '图片加载失败时点击“重试当前帧”。'],
       },
       {
         title: '默认键位',
-        description: 'WASD 移动，Space 为主动作，左 Shift 为次动作。斜向速度会自动归一化。',
+        description: 'WASD 控制移动，Space 触发主动作，左 Shift 触发次动作。',
       },
       {
-        title: '自定义绑定',
-        description:
-          '点击键帽后按下目标键；冲突时交换键位，Escape 取消，Delete 或 Backspace 清除动作键。',
+        title: '修改键位',
+        description: '点击键帽后按下新键；发生冲突时会交换原有键位。',
         bullets: [
-          '键位按账号隔离，但只保存在当前浏览器。',
-          '换设备、无痕窗口或清理浏览器数据后需要重新设置。',
+          'Escape 取消本次修改。',
+          'Delete 或 Backspace 清除动作键。',
+          '键位保存在当前浏览器，换设备后需要重新设置。',
         ],
       },
     ],
@@ -172,73 +169,48 @@ export const guideChapters: readonly GuideChapter[] = [
   {
     id: 'export',
     index: '06',
-    navLabel: '导出资产',
-    title: '把完成结果带进游戏项目',
-    summary: '浏览器会检查素材、生成图片并打包 ZIP，不会修改服务器中的原始资产。',
+    navLabel: '导出',
+    title: '把角色素材下载到游戏项目',
+    summary: '在角色详情或制作完成页点击“导出资产包”，浏览器会整理并下载 ZIP。',
+    action: { label: '选择要导出的角色', to: '/projects' },
     topics: [
       {
-        title: '导出内容',
-        description: '按当前完成阶段打包母版、首帧、透明 PNG、Sprite Sheet 和描述文件。',
-        bullets: [
-          'meta.json 描述动画，schema.json 描述资产契约。',
-          '达到试玩阶段时会包含 playtest.json。',
-          '资源包内附 README.md，便于在游戏项目中识别目录。',
-        ],
+        title: '资源包包含什么',
+        description:
+          '根据角色完成情况，资源包会包含母版、首帧、透明 PNG、Sprite Sheet 和动画说明文件。',
       },
       {
-        title: '导出前检查',
-        description: '帧序号、声明帧数、透明通道、图片尺寸或资源读取不一致时会阻止导出。',
-        bullets: ['按页面给出的具体错误修复资产后，点击“重新导出”。'],
+        title: '导出失败怎么办',
+        description: '按照页面提示检查缺失帧、图片尺寸、透明通道或资源读取问题，修复后重新导出。',
+      },
+      {
+        title: '导出不会改变资产',
+        description: '下载操作只整理现有素材，不会修改角色、动作或项目设置。',
       },
     ],
-    note: '当前通用包支持 PNG、Sprite Sheet、JSON 和 ZIP；Cocos Creator 原生 .anim、.meta、UUID 与一键导入插件尚未进入主流程。',
   },
   {
-    id: 'account',
+    id: 'help',
     index: '07',
-    navLabel: '账号与积分',
-    title: '管理资料、登录安全和邀请奖励',
-    summary: '账号页集中管理昵称、密码、积分流水与个人邀请信息。',
+    navLabel: '常见问题',
+    title: '遇到问题时，先从当前步骤恢复',
+    summary: '大多数中断、方向失败和页面冲突都不需要从头生成。',
     topics: [
       {
-        title: '个人资料与安全',
-        description: '昵称长度为 1–50 个字符；修改密码后当前会话退出，需要重新登录。',
+        title: '刷新后任务还在吗？',
+        description: '重新打开同一条创作或工作流记录，页面会读取已经保存的进度。',
       },
       {
-        title: '积分账户',
-        description: '查看余额和流水，并按变动方向、业务类型与时间范围筛选。',
+        title: '某一个方向失败了？',
+        description: '点击该方向旁的重试按钮，已经成功的方向会继续保留。',
       },
       {
-        title: '邀请奖励',
-        description: '复制邀请码或专属链接。成功邀请后双方获得积分，每日奖励次数以账号页规则为准。',
-      },
-    ],
-  },
-  {
-    id: 'troubleshooting',
-    index: '08',
-    navLabel: '恢复与排查',
-    title: '任务没有消失，只是需要回到正确入口',
-    summary: '刷新、并发编辑和方向失败都有明确恢复路径，不需要重复提交整个任务。',
-    topics: [
-      {
-        title: '刷新后如何恢复？',
-        description:
-          '重新打开同一条 Quick Start 或 Workflow Editor 记录，系统会读取已有任务 ID 和最新状态。',
+        title: '提示版本冲突？',
+        description: '点击“加载最新版本”，避免用旧页面覆盖另一标签页刚刚保存的结果。',
       },
       {
-        title: '出现版本冲突？',
-        description:
-          '说明同一工作流已在其他标签页或设备更新。选择“加载最新版本”，不要用旧页面覆盖新结果。',
-      },
-      {
-        title: '单个方向失败？',
-        description: '使用方向旁的重试按钮，只重新提交失败源方向，其他成功方向保持不变。',
-      },
-      {
-        title: '当前能力边界',
-        description:
-          'History 尚未注册产品入口；三渲二不负责创建 3D 模型；Playtest 键位不做跨设备云同步。',
+        title: '无法进入预览台？',
+        description: '确认角色已有造型，并且当前造型至少包含一个带真实帧的动作。',
       },
     ],
   },

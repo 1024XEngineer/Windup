@@ -17,6 +17,7 @@ const productColorConsumers = [
   '../../pages/project-detail/index.tsx',
   '../../pages/asset-library/index.tsx',
   '../../pages/character-detail/index.tsx',
+  '../../pages/guide/index.tsx',
   '../../pages/quick-start/index.tsx',
   '../../pages/workflow-editor/index.tsx',
   '../../pages/workflow-editor/workflow-editor.css',

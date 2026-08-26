@@ -75,6 +75,24 @@ describe('AppRoutes authentication boundary', () => {
       '#quick-start',
     )
     expect(screen.getByRole('link', { name: '使用手册' }).getAttribute('href')).toBe('/guide')
+    expect(screen.getByRole('link', { name: '新建项目' }).getAttribute('href')).toBe(
+      '/projects/new',
+    )
+    expect(
+      screen
+        .getAllByRole('link', { name: '开始创建角色' })
+        .every((link) => link.getAttribute('href') === '/quick-start'),
+    ).toBe(true)
+    expect(
+      screen
+        .getAllByRole('link', { name: '查看项目资产' })
+        .every((link) => link.getAttribute('href') === '/projects'),
+    ).toBe(true)
+    expect(
+      screen
+        .getAllByRole('link', { name: '进入预览台' })
+        .every((link) => link.getAttribute('href') === '/playtest'),
+    ).toBe(true)
   })
 
   it('protects the workspace home and preserves it as the login return path', async () => {
