@@ -47,6 +47,7 @@ export type PlaytestModelResult =
   | { readonly ok: false; readonly reason: 'outfit_not_found' }
 
 const DEFAULT_FRAME_DURATION_MS = 100
+const IDLE_FRAME_DURATION_MS = Math.round(1000 / 12)
 const DENSE_GENERATED_LOCOMOTION = {
   walk: { frameCount: 32, frameDurationMs: 125, cycleDurationMs: 1000 },
   run: { frameCount: 32, frameDurationMs: 90, cycleDurationMs: 720 },
@@ -76,7 +77,10 @@ function playtestFrames(
   const ordered = orderedFrames(frames)
   const playbackFrames = ordered.map((frame) => ({
     imageUrl: frame.imageUrl,
-    durationMs: frameDuration(frame.durationMs, action.fps),
+    durationMs:
+      action.type === 'idle'
+        ? IDLE_FRAME_DURATION_MS
+        : frameDuration(frame.durationMs, action.fps),
   }))
   const denseTiming =
     action.type === 'walk' || action.type === 'run'

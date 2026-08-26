@@ -62,16 +62,15 @@ describe('createPlaytestModel', () => {
       name: '待机',
       type: 'idle',
       loop: true,
-      // durationMs 为 null 时按所属动作的 fps 换算，不用前端常量顶上。
-      frames: [{ imageUrl: '/idle-01.png', durationMs: 125 }],
+      frames: [{ imageUrl: '/idle-01.png', durationMs: 83 }],
       sequences: {
         east: {
-          frames: [{ imageUrl: '/idle-01.png', durationMs: 125 }],
+          frames: [{ imageUrl: '/idle-01.png', durationMs: 83 }],
           mirrorX: false,
           sourceDirection: 'east',
         },
         west: {
-          frames: [{ imageUrl: '/idle-01.png', durationMs: 125 }],
+          frames: [{ imageUrl: '/idle-01.png', durationMs: 83 }],
           mirrorX: true,
           sourceDirection: 'east',
         },
@@ -223,6 +222,7 @@ describe('createPlaytestModel', () => {
   it('preserves authored timing for non-locomotion actions with dense frames', () => {
     const denseCharacter = structuredClone(character)
     const idle = denseCharacter.outfits[0]!.actions[0]!
+    idle.type = 'attack'
     idle.frameCount = 32
     idle.frames = Array.from({ length: 32 }, (_, index) => ({
       index,
@@ -236,6 +236,20 @@ describe('createPlaytestModel', () => {
       : undefined
 
     expect(mappedIdle?.frames.reduce((total, frame) => total + frame.durationMs, 0)).toBe(4000)
+  })
+
+  it('plays idle actions at 12 fps instead of retaining slow generated frame timing', () => {
+    const idleCharacter = structuredClone(character)
+    const idle = idleCharacter.outfits[0]!.actions[0]!
+    idle.frames = [
+      { index: 0, imageUrl: '/idle-0.png', durationMs: 125 },
+      { index: 1, imageUrl: '/idle-1.png', durationMs: 125 },
+    ]
+
+    const result = createPlaytestModel(idleCharacter, 'outfit-default')
+    const mappedIdle = result.ok ? result.model.actions[0] : undefined
+
+    expect(mappedIdle?.frames.map((frame) => frame.durationMs)).toEqual([83, 83])
   })
 
   it('优先播放全部真实八向序列，不对任何方向应用镜像', () => {
@@ -311,6 +325,7 @@ describe('createPlaytestModel', () => {
 
   it('clamps an unusably short frame duration before it reaches the animation loop', () => {
     const tinyDurationCharacter = structuredClone(character)
+    tinyDurationCharacter.outfits[0]!.actions[0]!.type = 'attack'
     tinyDurationCharacter.outfits[0]!.actions[0]!.frames[0]!.durationMs = 0.001
 
     const result = createPlaytestModel(tinyDurationCharacter, 'outfit-default')
@@ -340,7 +355,7 @@ describe('createPlaytestModel', () => {
 
     expect(mappedIdle?.frames).toEqual([])
     expect(mappedIdle?.sequences?.north?.frames).toEqual([
-      { imageUrl: '/idle-north.png', durationMs: 100 },
+      { imageUrl: '/idle-north.png', durationMs: 83 },
     ])
   })
 
