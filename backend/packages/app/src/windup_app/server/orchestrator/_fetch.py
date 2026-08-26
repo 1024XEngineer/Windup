@@ -24,7 +24,7 @@ import httpx
 
 from windup_framework.config.storage import settings as storage_settings
 
-__all__ = ["MAX_FETCH_BYTES", "FetchNotAllowed", "fetch_own_media"]
+__all__ = ["MAX_FETCH_BYTES", "FetchNotAllowed", "fetch_own_media", "is_own_media"]
 
 # 单张图的上限。母版是 1024² 级的 PNG（实测 860~970 KB），16 MiB 留了足够余量，
 # 又不至于让一个恶意 URL 拖垮 worker 内存。
@@ -69,3 +69,13 @@ def fetch_own_media(url: str, *, timeout: float = 30.0) -> bytes:
                     )
                 chunks.append(chunk)
     return b"".join(chunks)
+
+
+def is_own_media(url: str) -> bool:
+    """URL 是否落在自家对象存储上 —— 与 :func:`fetch_own_media` 同一条白名单,不取内容。
+
+    出帧交给浏览器后,模型由**浏览器**去拉;服务端仍要在把地址发出去之前校验它,
+    否则等于让任意 URL 借用户的浏览器和登录态发一次请求。
+    """
+    base = storage_settings.download_base
+    return bool(base) and url.startswith(f"{base}/")

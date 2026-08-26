@@ -220,10 +220,15 @@ function createGenerationHarness() {
   return { apis, emit, listeners, snapshots }
 }
 
-function createController(run = createRun(), directionalMovement: DirectionalMovement = 'single') {
+function createController(
+  run = createRun(),
+  directionalMovement: DirectionalMovement = 'single',
+  runClientBake?: (taskId: string) => Promise<boolean>,
+) {
   const workflow = createWorkflowApis(run)
   const generation = createGenerationHarness()
   const asyncErrors: Error[] = []
+  const bakedTasks: string[] = []
   const controller = createWorkflowController({
     workflow: run,
     workflowRunApis: workflow.apis,
@@ -232,8 +237,16 @@ function createController(run = createRun(), directionalMovement: DirectionalMov
     now: () => '2026-08-09T00:00:00.000Z',
     onAsyncError: (error) => asyncErrors.push(error),
     directionalMovement,
+    // 默认注入空实现:真实现会动态 import three.js 并起 WebGL,jsdom 里跑不了,
+    // 而且只有一条用例关心它。
+    runClientBake:
+      runClientBake ??
+      (async (taskId) => {
+        bakedTasks.push(String(taskId))
+        return false
+      }),
   })
-  return { controller, workflow, generation, asyncErrors }
+  return { controller, workflow, generation, asyncErrors, bakedTasks }
 }
 
 function completedAnimationEvent(taskId = 'task-2'): GenerationEvent {
@@ -4044,5 +4057,55 @@ describe('WorkflowController', () => {
       actionType: 'walk',
     })
     expect(controller.getWorkflow().nodes[4].phase).toBe('generating')
+  })
+})
+
+describe('三渲二出帧交给浏览器', () => {
+  it('整段动作开始跑之后，问一次这条任务要不要浏览器出帧', async () => {
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: 'https://img/first.png',
+      }),
+      generationMethodNode({ status: 'passed', phase: 'completed', method: '3d-to-2d' }),
+      fullFrameNode({ status: 'active' }),
+      reviewNode(),
+    ])
+    const { controller, bakedTasks } = createController(run)
+
+    await controller.generateCompleteAnimation('action-walk:action-full-frame', {
+      characterId: 'character-backend-1',
+      referenceMedia: [],
+    })
+    await flushAsyncWork()
+
+    expect(bakedTasks).toHaveLength(1)
+  })
+
+  it('出帧失败交给 onAsyncError，不把这条 Run 卡死', async () => {
+    const run = createRun([
+      ...completedCharacterNodes(),
+      firstFrameNode({
+        status: 'passed',
+        phase: 'completed',
+        selectedFirstFrameUrl: 'https://img/first.png',
+      }),
+      generationMethodNode({ status: 'passed', phase: 'completed', method: '3d-to-2d' }),
+      fullFrameNode({ status: 'active' }),
+      reviewNode(),
+    ])
+    const { controller, asyncErrors } = createController(run, 'single', async () => {
+      throw new Error('WebGL 上下文创建失败')
+    })
+
+    await controller.generateCompleteAnimation('action-walk:action-full-frame', {
+      characterId: 'character-backend-1',
+      referenceMedia: [],
+    })
+    await flushAsyncWork()
+
+    expect(asyncErrors.map((error) => error.message)).toContain('WebGL 上下文创建失败')
   })
 })

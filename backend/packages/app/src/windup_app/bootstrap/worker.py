@@ -11,6 +11,7 @@ from windup_app.server.mq.catalog import all_stream_specs, email_stream_spec, ge
 from windup_app.server.orchestrator import task_repo
 from windup_app.server.orchestrator.executor import (
     bind_matte,
+    resume_action_client_bake,
     resume_action_poll,
     run_action_task,
     run_image_task,
@@ -83,6 +84,7 @@ def main() -> None:
             run_view_sheet_task=run_view_sheet_task,
             stop_event=stop_event,
             resume_action_poll=resume_action_poll,
+            resume_action_client_bake=resume_action_client_bake,
         ),
     ]
     threads = [consumer.start() for consumer in consumers]

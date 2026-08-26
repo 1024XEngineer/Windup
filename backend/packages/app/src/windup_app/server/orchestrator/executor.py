@@ -17,6 +17,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -33,10 +34,18 @@ from windup_framework.gateway.registry import ModelRegistry
 from windup_framework.gateway.types import Scene
 from windup_framework.config.quality_gate import settings as gate_settings
 
-from windup_app.server.orchestrator import billing, generation_io, i2v_poll, quality_gate, task_repo
+from windup_app.server.orchestrator import (
+    billing,
+    client_bake,
+    generation_io,
+    i2v_poll,
+    quality_gate,
+    task_repo,
+)
 from windup_app.server.orchestrator._failure import user_message
 from windup_app.server.orchestrator.i2v_poll import ActionAwaitingVideo
-from windup_app.server.orchestrator._fetch import fetch_own_media
+from windup_app.server.orchestrator._fetch import FetchNotAllowed, fetch_own_media, is_own_media
+from windup_app.server.orchestrator.client_bake import ActionAwaitingClientBake
 from windup_app.server.orchestrator.model import (
     ActionType,
     CharacterActionInput,
@@ -341,6 +350,8 @@ class ActionTaskExecutor:
             generation_io.using_session(session, self._make_session, _complete)
         except ActionAwaitingVideo:
             logger.info("动作任务 %s 已提交 i2v,等待延迟轮询", task_id)
+        except ActionAwaitingClientBake:
+            logger.info("动作任务 %s 已把出帧挂给浏览器,等它交帧", task_id)
         except PromptRejected as exc:
             # 单独捕获而不是落进下面那个兜底:兜底只存 str(exc),``code`` 就丢了,server
             # 于是分不出"用户改一句话就能过的输入错"和"引擎故障",只能去解析异常文本。
@@ -449,6 +460,39 @@ class ActionTaskExecutor:
             # 三渲二那支不取母版,而出口的判官闸口要拿它当参照 —— 不先置 None 的话那支会
             # 撞 UnboundLocalError,而它只在有 3D 资产的造型上触发。
             master: bytes | None = None
+            if model_url and client_bake.enabled():
+                # 出帧交给浏览器:**模型一个字节都不经过应用机**。原路径要
+                # fetch_own_media 把整份 GLB 拉进 worker 内存(还卡在 16MiB 上限上),
+                # 再起 node + Chromium 软件光栅渲一遍 —— 那两样在这条分支上都不发生。
+                if not is_own_media(model_url):
+                    raise FetchNotAllowed(
+                        f"3D 模型地址不在自家对象存储上:{model_url[:80]!r}"
+                    )
+                plan = self._get_generator(
+                    _resolve_video_model(input.video_model), cons.directions
+                ).plan_rendered(action)
+                deadline = client_bake.open_job(
+                    task_id,
+                    client_bake.ClientBakeSpec(
+                        model_url=model_url,
+                        clip=plan.clip,
+                        direction=plan.direction,
+                        camera_yaw=plan.camera_yaw,
+                        frames=plan.frames,
+                        width=plan.width,
+                        height=plan.height,
+                        material=plan.material,
+                        min_coverage=plan.min_coverage,
+                    ),
+                )
+                logger.info(
+                    "[gen] 造型 %s 走三渲二,出帧挂给浏览器(%s 朝向 × %d 帧,%.0fs 内交)",
+                    input.outfit_id or "?",
+                    plan.direction,
+                    plan.frames,
+                    deadline - time.time(),
+                )
+                raise ActionAwaitingClientBake
             if model_url:
                 rigged = (self._fetch_model3d or self._download_model3d)(model_url)
                 logger.info(
@@ -550,6 +594,91 @@ class ActionTaskExecutor:
             logger.exception("动作任务 %s 轮询失败", task_id)
             if session is not None:
                 session.rollback()
+            error_message = user_message(exc)
+
+            def _fail(s: Session) -> None:
+                _close_failed(s, task_id, error_message)
+
+            generation_io.using_session(session, self._make_session, _fail)
+        finally:
+            if reset is not None:
+                reset()
+
+    def resume_action_client_bake(
+        self,
+        task_id: int,
+        input: CharacterActionInput,
+        project_id: int | None = None,
+        *,
+        reason: str = client_bake.REASON_FRAMES,
+        detail: str = "",
+        session: Session | None = None,
+    ) -> None:
+        """浏览器那一侧有结果了:交回帧、自报失败,或到期未交。
+
+        三种入口收在同一个方法里,是因为它们改的是同一条任务的同一个终态;分开写会
+        让"超时"这一支漏掉解冻(积分冻着、任务永远 RUNNING)。
+        """
+        reset = None
+        try:
+            def _mark_running(s: Session) -> ProjectConstraints:
+                task = task_repo.get_task(s, task_id)
+                if task is None:
+                    raise RuntimeError(f"任务 {task_id} 不存在")
+                if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+                    raise _PollSkip(f"任务 {task_id} 已终态")
+                return (self._fetch_constraints or _load_constraints)(s, project_id)
+
+            try:
+                cons = generation_io.using_session(session, self._make_session, _mark_running)
+            except _PollSkip:
+                client_bake.clear(task_id)
+                return
+
+            loaded = client_bake.load_spec(task_id)
+            if loaded is None:
+                # 登记已经不在了:要么另一条消息已经收口,要么状态过期。不重复判失败。
+                logger.info("动作任务 %s 没有待出帧登记,跳过", task_id)
+                return
+            spec, _deadline = loaded
+
+            if reason != client_bake.REASON_FRAMES:
+                message = (
+                    f"浏览器出帧超时({client_bake.DEADLINE_S:.0f}s 未交帧)"
+                    if reason == client_bake.REASON_TIMEOUT
+                    else f"浏览器出帧失败:{detail or '未给出原因'}"
+                )
+                client_bake.clear(task_id)
+
+                def _fail_client(s: Session) -> None:
+                    _close_failed(s, task_id, message)
+
+                generation_io.using_session(session, self._make_session, _fail_client)
+                return
+
+            frames = client_bake.collect_frames(task_id, spec.frames)
+            reset = bind_call_context(
+                task_id=str(task_id),
+                start_from_model=_resolve_video_model(input.video_model),
+            )
+            card, action, canvas = self._action_spec(input, cons)
+            progress: ProgressPort = _LogProgress()
+            generated = self._get_generator(
+                _resolve_video_model(input.video_model), cons.directions
+            ).finish_rendered(frames, card, action, progress, canvas=canvas)
+            result = self._deliver_generated(generated, input, cons, None)
+            client_bake.clear(task_id)
+
+            def _complete(s: Session) -> None:
+                task_repo.update_result(s, task_id, _ACTION_RESULT, result)
+                _settle_credit(s, task_id, success=True)
+
+            generation_io.using_session(session, self._make_session, _complete)
+        except Exception as exc:  # noqa: BLE001 —— 兜底后处理/上传/网络异常
+            logger.exception("动作任务 %s 的浏览器出帧收口失败", task_id)
+            if session is not None:
+                session.rollback()
+            client_bake.clear(task_id)
             error_message = user_message(exc)
 
             def _fail(s: Session) -> None:
@@ -732,20 +861,36 @@ class ActionTaskExecutor:
             route = GenRoute.RENDER_3D
 
             def __init__(self) -> None:
-                self._inner: DerivationStrategy | None = None
+                self._plain: DerivationStrategy | None = None
+                self._with_stage: DerivationStrategy | None = None
+
+            def _build(self, renderer):
+                from windup_ai_engine.strategy.concrete import RenderFrameStrategy
+
+                return RenderFrameStrategy(renderer, directions=renderer_directions)
+
+            def _no_stage(self):
+                """出帧参数与后处理两条路都用不到出帧台,**不要**顺手把它 import 进来:
+                worker 镜像里没有 node / Chromium 时,那一行 import 本身还能过,真正的
+                代价是把 700MB 量级的运行时依赖重新变成部署前提。"""
+                if self._plain is None:
+                    self._plain = self._build(None)
+                return self._plain
+
+            def plan(self, action):
+                return self._no_stage().plan(action)
+
+            def frames_from_client(self, frames, card, action, progress):
+                return self._no_stage().frames_from_client(frames, card, action, progress)
 
             def derive(self, card, action, source, progress):
-                if self._inner is None:
-                    from windup_ai_engine.strategy.concrete import RenderFrameStrategy
+                if self._with_stage is None:
                     from windup_framework.providers.render3d import (
                         LocalSpriteRenderProvider,
                     )
 
-                    self._inner = RenderFrameStrategy(
-                        LocalSpriteRenderProvider(),
-                        directions=renderer_directions,
-                    )
-                return self._inner.derive(card, action, source, progress)
+                    self._with_stage = self._build(LocalSpriteRenderProvider())
+                return self._with_stage.derive(card, action, source, progress)
 
         return _LazyRenderStrategy()
 
@@ -1228,6 +1373,7 @@ class DirectionSetTaskExecutor:
 executor = ActionTaskExecutor()
 run_action_task = executor.run_action_task
 resume_action_poll = executor.resume_action_poll
+resume_action_client_bake = executor.resume_action_client_bake
 image_executor = ImageTaskExecutor()
 run_image_task = image_executor.run_image_task
 direction_set_executor = DirectionSetTaskExecutor(image_executor=image_executor)

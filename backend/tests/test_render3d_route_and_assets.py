@@ -207,12 +207,17 @@ def _real_generator(renderer) -> CharacterGenerator:
     })
 
 
-def test_real_server_path_reaches_render3d_when_the_outfit_has_a_model():
+def test_real_server_path_reaches_render3d_when_the_outfit_has_a_model(monkeypatch):
     """造型带 model_3d_url → 编排层真的走到渲帧策略,而不是 i2v。
 
     这条钉的正是"路线永不可达"那个缺陷:它只断言**编排层自己**选对了路线,
     没有任何替身代替这一步。
+
+    显式关掉浏览器出帧(#714):默认路径已经改成把出帧挂给浏览器,而本用例的被测对象是
+    **服务端渲**那一支(过渡机与 `WINDUP_RENDER3D_CLIENT_BAKE=0` 回退仍走它)。
+    默认路径另有用例。
     """
+    monkeypatch.setenv("WINDUP_RENDER3D_CLIENT_BAKE", "0")
     renderer = _FakeRenderer()
     executor = ActionTaskExecutor(
         generator=_real_generator(renderer),

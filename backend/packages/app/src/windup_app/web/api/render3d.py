@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,7 @@ from windup_common.result import Response
 from windup_framework.db import get_session
 
 from windup_app.server.character.model import Character, CharacterData
+from windup_app.server.orchestrator import client_bake, task_repo
 from windup_app.server.orchestrator._failure import user_message
 from windup_app.server.character.service import service as character_service
 from windup_app.web.api.character import get_character_with_auth
@@ -195,3 +196,119 @@ def discard_outfit_asset(
     except ValueError as exc:
         raise BizException(user_message(exc), code=BizCode.BAD_REQUEST) from exc
     return Response.success(view, message="已丢弃待审模型")
+
+
+# ── 浏览器出帧(#714)────────────────────────────────────────────────────────
+# 出帧那一段在用户浏览器里跑:应用机不起 Chromium、不做软件光栅、模型一个字节都不经过它。
+# 本段四个端点只搬运与校验,渲染参数由 ai_engine 的 RenderPlan 定,这里不重写一份。
+
+
+class BakeCompleteRequest(BaseModel):
+    """浏览器自报交齐了。帧本身已逐帧 POST 上来,这里只带回可对账的采样信息。"""
+
+    clip: str = Field(..., min_length=1)
+    sample_times: list[float] = Field(default_factory=list)
+
+
+class BakeFailRequest(BaseModel):
+    """浏览器自报渲不出来(WebGL 起不来 / 模型加载失败 / 用户关了页面前的兜底)。"""
+
+    reason: str = Field(default="", max_length=200)
+
+
+def _own_task_or_raise(session: Session, request: Request, task_id: int):
+    """出帧任务必须属于当前用户 —— 帧是产物,谁都能往里塞就等于谁都能改别人的交付。"""
+    task = task_repo.get_task_by_user(session, request.state.current_user.id, task_id)
+    if task is None:
+        raise BizException("任务不存在", code=BizCode.NOT_FOUND)
+    return task
+
+
+@router.get("/bake/{task_id}", response_model=Response[dict])
+def get_bake_job(
+    task_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[dict]:
+    """取这个任务的出帧参数。没有登记就是不需要浏览器出帧(或已收口)。"""
+    _own_task_or_raise(session, request, task_id)
+    view = client_bake.public_view(task_id)
+    if view is None:
+        raise BizException("该任务没有待浏览器出帧的登记", code=BizCode.NOT_FOUND)
+    return Response.success(view)
+
+
+@router.post("/bake/{task_id}/frames/{index}", response_model=Response[dict])
+async def put_bake_frame(
+    task_id: int,
+    index: int,
+    request: Request,
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+) -> Response[dict]:
+    """收一帧 PNG。逐帧收而不是一次收一整包:32 帧一起传要几十 MB 的请求体常驻内存。"""
+    _own_task_or_raise(session, request, task_id)
+    data = bytearray()
+    while True:
+        chunk = await file.read(64 * 1024)
+        if not chunk:
+            break
+        if len(data) + len(chunk) > client_bake.MAX_FRAME_BYTES:
+            raise BizException(
+                f"单帧超过上限 {client_bake.MAX_FRAME_BYTES // 1024} KB",
+                code=BizCode.BAD_REQUEST,
+            )
+        data.extend(chunk)
+    try:
+        received = client_bake.put_frame(task_id, index, bytes(data))
+    except client_bake.ClientBakeError as exc:
+        raise BizException(str(exc), code=BizCode.BAD_REQUEST) from exc
+    return Response.success({"task_id": task_id, "index": index, "received": received})
+
+
+@router.post("/bake/{task_id}/complete", response_model=Response[dict])
+def complete_bake(
+    task_id: int,
+    body: BakeCompleteRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[dict]:
+    """帧交齐 → 交回 worker 续跑后处理。
+
+    **不信前端说交齐了**:这里按登记的帧数点数,少一帧就不放行 —— 少给的后果是一段
+    步子没走完的动作,而帧数、时长、成色在下游全都自洽,没有一道会红。
+    """
+    _own_task_or_raise(session, request, task_id)
+    loaded = client_bake.load_spec(task_id)
+    if loaded is None:
+        raise BizException("该任务没有待浏览器出帧的登记", code=BizCode.NOT_FOUND)
+    spec, _deadline = loaded
+    if body.clip != spec.clip:
+        raise BizException(
+            f"交回的片段是 {body.clip!r},登记的是 {spec.clip!r}", code=BizCode.BAD_REQUEST
+        )
+    try:
+        client_bake.collect_frames(task_id, spec.frames)
+    except client_bake.ClientBakeError as exc:
+        raise BizException(str(exc), code=BizCode.BAD_REQUEST) from exc
+    client_bake.schedule_resume(task_id)
+    return Response.success(
+        {"task_id": task_id, "frames": spec.frames}, message="帧已交齐,继续后处理"
+    )
+
+
+@router.post("/bake/{task_id}/fail", response_model=Response[dict])
+def fail_bake(
+    task_id: int,
+    body: BakeFailRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[dict]:
+    """浏览器自报渲不出来。早报早失败、早解冻,不必等到期限耗完。"""
+    _own_task_or_raise(session, request, task_id)
+    if client_bake.load_spec(task_id) is None:
+        raise BizException("该任务没有待浏览器出帧的登记", code=BizCode.NOT_FOUND)
+    client_bake.schedule_resume(
+        task_id, reason=client_bake.REASON_CLIENT_FAILED, detail=body.reason
+    )
+    return Response.success({"task_id": task_id}, message="已记为出帧失败")

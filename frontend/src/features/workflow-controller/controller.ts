@@ -152,6 +152,11 @@ export interface CreateWorkflowControllerOptions {
   onAsyncError: (error: Error) => void
   /** 项目方向模式；缺省按旧单向 WorkflowRun 兼容。 */
   directionalMovement?: DirectionalMovement
+  /**
+   * 三渲二出帧在浏览器里跑（#714）。缺省用真实实现；测试注入替身，避免在 jsdom 里
+   * 起 WebGL。返回 false 表示这条任务不需要浏览器出帧（走 i2v 或已收口）。
+   */
+  runClientBake?: (taskId: Generation['id']) => Promise<boolean>
 }
 
 /**
@@ -286,6 +291,15 @@ export function createAutoPrepareProject(
   }
 }
 
+/**
+ * 三渲二出帧的默认实现。**动态 import** —— three.js 只有这条路线用得着,静态引进来
+ * 会让每个进首页的用户都先下一份它。
+ */
+async function defaultRunClientBake(taskId: Generation['id']): Promise<boolean> {
+  const { attachClientBake } = await import('@/features/client-bake/attach')
+  return attachClientBake(Number(taskId))
+}
+
 export function createWorkflowController({
   workflow,
   workflowRunApis,
@@ -295,6 +309,7 @@ export function createWorkflowController({
   prepareProject,
   onAsyncError,
   directionalMovement = 'single',
+  runClientBake = defaultRunClientBake,
 }: CreateWorkflowControllerOptions): WorkflowController {
   let current = workflow ? structuredClone(workflow) : null
   let interrupted = false
@@ -1531,6 +1546,13 @@ export function createWorkflowController({
       const latest = await generationApis.get(requireWorkflow().projectId, taskId, expectation)
       if (latest.status === 'completed' || latest.status === 'failed') {
         await settleGeneration(nodeId, taskId, latest)
+        return
+      }
+      if (expectation.type === 'complete_animation') {
+        // 三渲二把出帧挂给浏览器：渲完交回后端，终态仍由上面那条订阅收。这里不另立
+        // 状态机，出帧失败也由 runner 报给后端，任务照常走失败终态。
+        // 只问整段动作那一类：母版与首帧走生图，不经出帧台。
+        void runClientBake(taskId).catch((cause: unknown) => onAsyncError(asError(cause)))
       }
     } catch (cause) {
       stopSubscription(key)
