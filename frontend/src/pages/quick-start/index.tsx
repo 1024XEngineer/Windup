@@ -199,13 +199,20 @@ const AGENT_CONVERSATION_STORAGE_KEY = 'windup.quick-start.agent-chat.v2'
 const LEGACY_AGENT_CONVERSATION_STORAGE_KEY = 'windup.quick-start.agent-chat.v1'
 const AGENT_DRAFT_HISTORY_STATE_KEY = 'windupQuickStartAgentDraftId'
 
+type AgentConversationScope = 'workflow' | 'add-action'
+
 type AgentConversationTurn =
-  | { role: 'user'; content: string; referenceMedia?: readonly string[]; scope?: 'workflow' }
+  | {
+      role: 'user'
+      content: string
+      referenceMedia?: readonly string[]
+      scope?: AgentConversationScope
+    }
   | {
       role: 'assistant'
       content: string
       kind: 'reply' | 'clarification' | 'blocked'
-      scope?: 'workflow'
+      scope?: AgentConversationScope
     }
   | {
       role: 'assistant'
@@ -220,7 +227,7 @@ type AgentConversationTurn =
       suggestPixelPerfect?: boolean
       referenceMedia?: readonly string[]
       proposalStatus: 'pending' | 'superseded' | 'adopted' | 'confirmed'
-      scope?: 'workflow'
+      scope?: AgentConversationScope
     }
 
 type AgentConversationRecord = {
@@ -336,7 +343,10 @@ function readAgentConversation(
       ) {
         return []
       }
-      const scope = 'scope' in turn && turn.scope === 'workflow' ? 'workflow' : undefined
+      const scope =
+        'scope' in turn && (turn.scope === 'workflow' || turn.scope === 'add-action')
+          ? turn.scope
+          : undefined
       if (turn.role === 'user') {
         const referenceMedia =
           'referenceMedia' in turn &&
@@ -2626,6 +2636,7 @@ function QuickStartRun({
   const location = useLocation()
   const [searchParams] = useSearchParams()
   const addActionIntent = searchParams.get('intent') === 'add-action'
+  const requestedOutfitId = searchParams.get('outfitId')
   const [session, setSession] = useState<QuickStartSession | null>(null)
   const [run, setRun] = useState<WorkflowRun | null>(null)
   const [restoring, setRestoring] = useState(true)
@@ -2661,7 +2672,12 @@ function QuickStartRun({
   const initialAgentConversation = useRef(readAgentRunConversation(activeRunUserId, runId)).current
   const [agentConversationTurns, setAgentConversationTurns] = useState(initialAgentConversation)
   const agentConversationTurnsRef = useRef(agentConversationTurns)
-  const initialWorkflowAgentSeed = useRef(createAgentSeed(initialAgentConversation)).current
+  const initialWorkflowAgentSeed = useRef(
+    createAgentSeed(initialAgentConversation.filter((turn) => turn.scope !== 'add-action')),
+  ).current
+  const initialAddActionAgentSeed = useRef(
+    createAgentSeed(initialAgentConversation.filter((turn) => turn.scope === 'add-action')),
+  ).current
   const automaticPublishAttempt = useRef<string | null>(null)
   const transcriptScrollRegion = useRef<HTMLElement>(null)
   const promptCopyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -2711,6 +2727,45 @@ function QuickStartRun({
     planner: agent.planner,
     actions: workflowAgentActions,
     initialMessages: initialWorkflowAgentSeed.messages,
+  })
+  const appendActionToCurrentRun = useCallback(
+    async (input: {
+      prompt: string
+      actionPrompt?: string
+      actionType?: 'idle' | 'walk' | 'attack' | 'jump'
+      locomotion?: true
+    }) => {
+      const target = activeSessionRef.current
+      if (!target) throw new Error('当前生成会话尚未恢复')
+      let outfitId = requestedOutfitId
+      if (!outfitId) {
+        const info = target.getCharacterInfo() ?? (await target.resolveCharacterInfo())
+        outfitId = info?.outfitId ?? null
+      }
+      if (!outfitId) throw new Error('没有找到要追加动作的角色造型')
+      const actionPrompt = input.actionPrompt?.trim()
+      if (!actionPrompt) throw new Error('Agent 提案缺少新增动作')
+      const updated = await target.addAction(outfitId, actionPrompt, {
+        ...(input.actionType ? { actionType: input.actionType } : {}),
+        ...(input.locomotion ? { locomotion: input.locomotion } : {}),
+      })
+      if (mountedRef.current && activeSessionRef.current === target) setRun(updated)
+      return { runId: target.runId }
+    },
+    [requestedOutfitId],
+  )
+  const addActionCharacterPrompt = run ? workflowPrompt(run) : ''
+  const addActionContext = useMemo(
+    () => ({ characterPrompt: addActionCharacterPrompt }),
+    [addActionCharacterPrompt],
+  )
+  const addActionAgentSession = useQuickStartAgent({
+    planner: agent.planner,
+    startCharacterGeneration: appendActionToCurrentRun,
+    addActionContext,
+    initialMessages: initialAddActionAgentSeed.messages,
+    initialClarificationUsed: initialAddActionAgentSeed.clarificationUsed,
+    initialProposal: initialAddActionAgentSeed.pendingProposal,
   })
   const reportWorkflowError = useCallback((cause: unknown, fallback: string) => {
     const presented = presentWorkflowError(cause, fallback)
@@ -3200,7 +3255,6 @@ function QuickStartRun({
       : allDirectionsSelected(firstFrameCandidates, firstFrameSelections)
   const firstFrameConfirmLabel =
     firstFrameSheets.length > 0 ? '确认候选帧，生成完整动作' : '确认首帧，生成完整动作'
-  const requestedOutfitId = searchParams.get('outfitId')
   const canAddAction =
     addActionIntent &&
     !workflowHasActiveNode &&
@@ -3360,6 +3414,44 @@ function QuickStartRun({
     )
   }
 
+  function updateAddActionProposalStatus(
+    proposalId: string,
+    proposalStatus: Extract<AgentConversationTurn, { kind: 'proposal' }>['proposalStatus'],
+  ) {
+    const next = agentConversationTurnsRef.current.map((turn) =>
+      turn.role === 'assistant' &&
+      turn.kind === 'proposal' &&
+      turn.scope === 'add-action' &&
+      turn.proposalId === proposalId
+        ? { ...turn, proposalStatus }
+        : turn,
+    )
+    agentConversationTurnsRef.current = next
+    setAgentConversationTurns(next)
+    writeAgentConversation('localStorage', agentRunConversationStorageKey(activeRunUserId, runId), {
+      turns: next,
+    })
+  }
+
+  async function confirmAddActionProposal(proposalId: string) {
+    const state = addActionAgentSession.state
+    if (state.status !== 'proposal' || state.proposalId !== proposalId || addingAction) return
+    setAddingAction(true)
+    clearWorkflowError()
+    try {
+      await addActionAgentSession.confirmProposal(
+        state.optimizedPrompt,
+        session?.getDirectionalMovement?.() ?? 'single',
+      )
+      updateAddActionProposalStatus(proposalId, 'confirmed')
+      setActionDescription('')
+    } catch (cause) {
+      reportWorkflowError(cause, '新增动作失败，请稍后重试')
+    } finally {
+      if (mountedRef.current) setAddingAction(false)
+    }
+  }
+
   async function continueConversation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (workflowConflictRef.current) return
@@ -3374,24 +3466,37 @@ function QuickStartRun({
     const message = actionDescription.trim()
     if (addActionIntent) {
       if (!canAddAction || !message || !session || addingAction) return
-      setAddingAction(true)
       clearWorkflowError()
+      appendRunConversationTurn({ role: 'user', content: message, scope: 'add-action' })
+      setActionDescription('')
       try {
-        let outfitId = requestedOutfitId
-        if (!outfitId) {
-          const info = session.getCharacterInfo() ?? (await session.resolveCharacterInfo())
-          outfitId = info?.outfitId ?? null
+        const result = await addActionAgentSession.submit(message)
+        if (result.kind === 'message') {
+          appendRunConversationTurn({
+            role: 'assistant',
+            content: result.message,
+            kind: result.messageKind,
+            scope: 'add-action',
+          })
+        } else if (result.kind === 'proposal') {
+          appendRunConversationTurn({
+            role: 'assistant',
+            content: `${result.optimizationSummary}\n\n角色：${result.optimizedPrompt}${result.actionPrompt ? `\n动作：${result.actionPrompt}` : ''}`,
+            kind: 'proposal',
+            proposalId: result.proposalId,
+            optimizedPrompt: result.optimizedPrompt,
+            ...(result.actionPrompt ? { actionPrompt: result.actionPrompt } : {}),
+            ...(result.actionType ? { actionType: result.actionType } : {}),
+            ...(result.locomotion ? { locomotion: result.locomotion } : {}),
+            optimizationSummary: result.optimizationSummary,
+            suggestPixelPerfect: result.suggestPixelPerfect,
+            proposalStatus: 'pending',
+            scope: 'add-action',
+          })
         }
-        if (!outfitId) throw new Error('没有找到要追加动作的角色造型')
-        const updated = await session.addAction(outfitId, message)
-        if (!mountedRef.current || activeSessionRef.current !== session) return
-        setRun(updated)
-        setActionDescription('')
       } catch (cause) {
         if (!mountedRef.current || activeSessionRef.current !== session) return
-        reportWorkflowError(cause, '新增动作失败，请稍后重试')
-      } finally {
-        if (mountedRef.current && activeSessionRef.current === session) setAddingAction(false)
+        reportWorkflowError(cause, 'Agent 暂时无法整理新增动作')
       }
       return
     }
@@ -3447,10 +3552,13 @@ function QuickStartRun({
       templateSelectionComplete &&
       (!isDirectionSetSelecting || Boolean(actionDescription.trim()))) ||
     (isFirstFrameSelecting && firstFrameSelectionComplete) ||
-    (canAddAction && Boolean(actionDescription.trim()) && !addingAction) ||
+    (canAddAction &&
+      Boolean(actionDescription.trim()) &&
+      !addingAction &&
+      !addActionAgentSession.busy) ||
     (workflowAgentMode && workflowAgentAvailable && Boolean(actionDescription.trim()))
   const workflowComposerDisabled = addActionIntent
-    ? !canAddAction || addingAction || workflowConflict
+    ? !canAddAction || addingAction || addActionAgentSession.busy || workflowConflict
     : workflowAgentMode &&
       ((workflowIsActive && !candidateAgentMode) ||
         !workflowAgentAvailable ||
@@ -3475,11 +3583,12 @@ function QuickStartRun({
     actionStep?.id,
     new Map(pixelPerfectReplacementEntries),
   )
-  const entryAgentConversationTurns = agentConversationTurns.filter(
-    (turn) => turn.scope !== 'workflow',
-  )
+  const entryAgentConversationTurns = agentConversationTurns.filter((turn) => !turn.scope)
   const workflowAgentConversationTurns = agentConversationTurns.filter(
     (turn) => turn.scope === 'workflow',
+  )
+  const addActionAgentConversationTurns = agentConversationTurns.filter(
+    (turn) => turn.scope === 'add-action',
   )
   const workflowAgentConversation = workflowAgentConversationTurns.map((turn, index) => (
     <div
@@ -3498,6 +3607,32 @@ function QuickStartRun({
     workflowAgentSession.state.status === 'action' &&
     (workflowAgentSession.state.action === 'regenerate_character_template' ||
       workflowAgentSession.state.action === 'refine_character_template')
+  const addActionAgentConversation = addActionAgentConversationTurns.map((turn, index) => (
+    <div
+      key={`${turn.role}:add-action:${index}:${turn.content}`}
+      data-conversation-kind="agent"
+      className="min-w-0"
+    >
+      {turn.role === 'user' ? (
+        <UserTurn>{turn.content}</UserTurn>
+      ) : turn.kind === 'proposal' ? (
+        <PromptProposal
+          summary={turn.optimizationSummary}
+          prompt={turn.optimizedPrompt}
+          actionPrompt={turn.actionPrompt}
+          status={turn.proposalStatus}
+          disabled={addingAction || addActionAgentSession.busy || workflowConflict}
+          onConfirm={() => void confirmAddActionProposal(turn.proposalId)}
+          onFill={() => {
+            updateAddActionProposalStatus(turn.proposalId, 'adopted')
+            setActionDescription(turn.actionPrompt ?? '')
+          }}
+        />
+      ) : (
+        <AgentCopy lines={turn.content.split('\n')} />
+      )}
+    </div>
+  ))
 
   return (
     <section className="relative min-h-screen overflow-hidden bg-app-canvas pt-14 text-app-ink">
@@ -3657,6 +3792,8 @@ function QuickStartRun({
                 />
               ) : null}
             </AgentTurn>
+
+            {addActionAgentConversation}
 
             {firstFrameStep ? (
               <>

@@ -48,6 +48,7 @@ export interface PlannerInput {
   clarificationUsed: boolean
   /** 用户在宿主中选择的画风；Planner 只把它当作拟写提示词时的既定约束。 */
   artStyle?: string
+  addActionContext?: { characterPrompt: string }
   workflow?: WorkflowAgentContext
   signal?: AbortSignal
 }
@@ -127,6 +128,8 @@ export interface CreateQuickStartAgentOptions {
   planner: QuickStartPlanner
   startCharacterGeneration: StartCharacterGenerationAction
   artStyle?: string
+  /** 已有角色新增动作时的只读角色约束；只交给 Planner，不写入 WorkflowRun。 */
+  addActionContext?: { characterPrompt: string }
   initialMessages?: readonly PlannerMessage[]
   initialClarificationUsed?: boolean
   initialProposal?: CharacterGenerationProposal | null
@@ -319,6 +322,7 @@ export function createQuickStartAgent({
   planner,
   startCharacterGeneration,
   artStyle,
+  addActionContext,
   initialMessages = [],
   initialClarificationUsed = false,
   initialProposal = null,
@@ -364,7 +368,13 @@ export function createQuickStartAgent({
       // runtime 也必须保留同一历史，避免刷新前后得到不同上下文。
       messages = nextMessages
       const decision = validatePlannerTerminal(
-        await planner({ messages: nextMessages, clarificationUsed, artStyle, signal }),
+        await planner({
+          messages: nextMessages,
+          clarificationUsed,
+          artStyle,
+          addActionContext,
+          signal,
+        }),
       )
       if (signal?.aborted) {
         revoked = true
