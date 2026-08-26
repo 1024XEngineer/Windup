@@ -1692,7 +1692,7 @@ function PromptProposal({
 }) {
   return (
     <div data-prompt-proposal data-conversation-kind="agent" className="min-w-0 space-y-3">
-      <AgentCopy lines={[summary]} copyable={false} />
+      <AgentCopy lines={[summary]} />
       <div className="relative max-w-2xl pb-8">
         <blockquote className="cursor-text select-text font-serif text-base leading-7 text-app-ink">
           {prompt}
@@ -1734,12 +1734,10 @@ function AgentCopy({
   lines,
   tone = 'default',
   animate = true,
-  copyable = true,
 }: {
   lines: readonly string[]
   tone?: 'default' | 'danger'
   animate?: boolean
-  copyable?: boolean
 }) {
   const copy = lines.join('\n')
   const animatedCopy = animateMarkdownCharacters(compiler(copy))
@@ -1753,7 +1751,7 @@ function AgentCopy({
       }`}
     >
       <QuickStartAgentBot placement="answer" />
-      <div className={`relative min-w-0 ${copyable ? 'pb-8' : ''}`}>
+      <div className="min-w-0">
         <div
           aria-label="Agent 回答"
           data-agent-markdown
@@ -1772,13 +1770,6 @@ function AgentCopy({
             <Markdown>{copy}</Markdown>
           )}
         </div>
-        {copyable ? (
-          <ConversationCopyButton
-            text={copy}
-            label="复制 Agent 回复"
-            className="absolute right-0 bottom-0"
-          />
-        ) : null}
       </div>
     </div>
   )
@@ -1938,15 +1929,16 @@ function UserTurn({ children }: { children: ReactNode }) {
   return (
     <div
       data-user-turn
-      className="relative ml-auto w-fit max-w-[78%] cursor-text select-text rounded-app-surface rounded-br-app-compact bg-app-surface-muted px-4 pt-2.5 pr-10 pb-8 text-left text-sm leading-6 text-app-ink-soft"
+      className="ml-auto flex w-fit max-w-[78%] flex-col items-end gap-1 select-text"
     >
-      <span>{children}</span>
+      <div
+        data-user-message-bubble
+        className="cursor-text rounded-app-surface rounded-br-app-compact bg-app-surface-muted px-4 py-2.5 text-left text-sm leading-6 text-app-ink-soft"
+      >
+        <span>{children}</span>
+      </div>
       {copyText ? (
-        <ConversationCopyButton
-          text={copyText}
-          label="复制消息"
-          className="absolute right-1.5 bottom-1.5"
-        />
+        <ConversationCopyButton text={copyText} label="复制消息" className="shrink-0" />
       ) : null}
     </div>
   )
