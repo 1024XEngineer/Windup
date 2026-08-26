@@ -17,7 +17,7 @@
 2. `validateExportPackageModel` 检查角色、画布、生成记录、帧数、质量状态、锚点和脚底线。
 3. `createAssetExportPlan` 为每个动作方向生成稳定目录与三位连续帧名。
 4. `exportGameAssets` 读取透明 PNG，并检查图片尺寸是否与统一画布一致。
-5. 浏览器生成 Sprite Sheet，最后写入动画 `meta.json`、`schema.json`、README 与 ZIP。
+5. 浏览器生成 Sprite Sheet 与逐动作方向 GIF 预览，最后写入动画 `meta.json`、`schema.json`、README 与 ZIP。
 6. 可选 target 只在 `targets/<target-id>/` 下追加引擎文件，不修改通用层。
 
 ## 导出结构
@@ -31,11 +31,14 @@ Aster-character-1-Explorer-outfit-1/
   README.md
   frames/Walk/Walk_000.png
   atlas/Walk.png
+  preview/Walk.gif
   playtest.json
   targets/<target-id>/...
 ```
 
 `meta.json` 的坐标原点在左上角，y 轴向下。`anchor` 是 0-1 归一化坐标，`foot_y` 是从画布顶部开始计算的像素值。
+
+`preview/*.gif` 使用动作的逐帧时长和循环设置，只用于快速查看。GIF 最多 256 色且只支持一位透明度，游戏引擎仍应读取 `frames/*.png` 或 `atlas/*.png`。
 
 ## 为什么缺一帧就全部失败
 

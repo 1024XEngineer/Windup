@@ -20,6 +20,7 @@
     "@phosphor-icons/react": "^2.1.10",
     "@xyflow/react": "^12.11.2",
     "ai": "^7.0.68",
+    "gifenc": "^1.0.3",
     "markdown-to-jsx": "^9.10.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

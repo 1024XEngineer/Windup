@@ -2,7 +2,7 @@ import exportSchemaText from './export-package.schema.json?raw'
 import { EXPORT_STAGES } from './model'
 import type { ExportPackageModel } from './model'
 
-export const EXPORT_PACKAGE_SCHEMA_VERSION = '1.1.0'
+export const EXPORT_PACKAGE_SCHEMA_VERSION = '1.2.0'
 export const EXPORT_PACKAGE_JSON_SCHEMA_TEXT = exportSchemaText
 
 export interface GenericExportFrame {
@@ -19,6 +19,7 @@ export interface GenericExportAction {
   frames: readonly GenericExportFrame[]
   anchor: { x: number; y: number }
   foot_y: number
+  preview_gif: string
   atlas: {
     file: string
     cols: number
