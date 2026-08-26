@@ -1078,7 +1078,7 @@ describe('QuickStartPage', () => {
     const projects = projectReader()
     renderAt('/quick-start', serviceFor(null), { planner, startCharacterGeneration }, projects)
 
-    await waitFor(() => expect(projects.list).toHaveBeenCalledWith({ page: 1, pageSize: 3 }))
+    await waitFor(() => expect(projects.list).toHaveBeenCalledWith({ page: 1, pageSize: 100 }))
 
     const project = screen.getByRole('button', { name: '选择项目，当前自动创建' })
     fireEvent.click(project)
@@ -1136,24 +1136,74 @@ describe('QuickStartPage', () => {
     expect(screen.getByRole('menu', { name: '选择项目' })).toBeTruthy()
   })
 
-  it('tells the user when a project has more characters than one page', async () => {
+  it('loads every project page and filters the visible project list', async () => {
+    const secondProject: Project = {
+      ...existingProject,
+      id: '43',
+      name: '测试项目',
+    }
+    const projects = projectReader()
+    projects.list = vi.fn(async ({ page = 1 }) =>
+      page === 1
+        ? {
+            items: Array.from({ length: 100 }, (_, index) => ({
+              ...existingProject,
+              id: String(index + 1),
+              name: index === 0 ? existingProject.name : `项目 ${index + 1}`,
+            })),
+            total: 101,
+            page: 1,
+            pageSize: 100,
+          }
+        : { items: [secondProject], total: 101, page: 2, pageSize: 100 },
+    )
+    renderAt('/quick-start', serviceFor(null), agentFor(), projects)
+
+    fireEvent.click(screen.getByRole('button', { name: '选择项目，当前自动创建' }))
+
+    expect(await screen.findByRole('menuitem', { name: '测试项目' })).toBeTruthy()
+    expect(projects.list).toHaveBeenNthCalledWith(2, { page: 2, pageSize: 100 })
+
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索项目' }), {
+      target: { value: '测试' },
+    })
+
+    expect(screen.getByRole('menuitem', { name: '测试项目' })).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: '星海计划' })).toBeNull()
+    expect(screen.getByRole('menuitem', { name: '新建项目' })).toBeTruthy()
+  })
+
+  it('loads every character page into the scrollable character list', async () => {
     const characters = characterReader()
-    characters.listSummariesByProject = vi.fn(async () => ({
-      items: [
-        {
-          id: '77',
-          projectId: '42',
-          name: '星光法师',
-          status: CHARACTER_STATUS.PUBLISHED,
-          previewUrl: null,
-          outfitName: '默认造型',
-          outfitCount: 1,
-          actionCount: 3,
-          updatedAt: '2026-08-26T00:00:00Z',
-        },
-      ],
-      total: 137,
-      page: 1,
+    characters.listSummariesByProject = vi.fn(async (_projectId, { page = 1 }) => ({
+      items:
+        page === 1
+          ? Array.from({ length: 100 }, (_, index) => ({
+              id: String(index + 1),
+              projectId: '42',
+              name: index === 0 ? '星光法师' : `角色 ${index + 1}`,
+              status: CHARACTER_STATUS.PUBLISHED,
+              previewUrl: null,
+              outfitName: '默认造型',
+              outfitCount: 1,
+              actionCount: 3,
+              updatedAt: '2026-08-26T00:00:00Z',
+            }))
+          : [
+              {
+                id: '101',
+                projectId: '42',
+                name: '森林邮差',
+                status: CHARACTER_STATUS.PUBLISHED,
+                previewUrl: null,
+                outfitName: '默认造型',
+                outfitCount: 1,
+                actionCount: 3,
+                updatedAt: '2026-08-26T00:00:00Z',
+              },
+            ],
+      total: 101,
+      page,
       pageSize: 100,
     }))
     renderAt('/quick-start', serviceFor(null), agentFor(), projectReader(), characters)
@@ -1161,7 +1211,15 @@ describe('QuickStartPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '选择项目，当前自动创建' }))
     fireEvent.click(await screen.findByRole('menuitem', { name: '星海计划' }))
 
-    expect(await screen.findByText('仅显示前 1 个角色，其余请在资产库中打开')).toBeTruthy()
+    expect(
+      await screen.findByRole('menuitem', { name: '为森林邮差新增动作，已有 3 个动作' }),
+    ).toBeTruthy()
+    expect(characters.listSummariesByProject).toHaveBeenNthCalledWith(2, '42', {
+      page: 2,
+      pageSize: 100,
+      status: CHARACTER_STATUS.PUBLISHED,
+    })
+    expect(screen.queryByText(/仅显示前/)).toBeNull()
   })
 
   it('opens the existing character workflow when choosing it for a new action', async () => {

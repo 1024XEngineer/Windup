@@ -23,6 +23,7 @@ import {
   Check,
   CopySimple,
   FolderOpen,
+  MagnifyingGlass,
   Play,
   Plus,
   PlusCircle,
@@ -171,7 +172,24 @@ const ROLE_DEFAULT_MESSAGE: readonly KineticCopyMessage[] = [
 ]
 
 /** 角色选择菜单一次取满后端允许的最大一页；再多的项目在菜单里给出明确提示而不是静默截断。 */
-const CHARACTER_MENU_PAGE_SIZE = 100
+const SELECTOR_PAGE_SIZE = 100
+
+async function readAllSelectorPages<T>(
+  readPage: (
+    page: number,
+    pageSize: number,
+  ) => Promise<{
+    items: readonly T[]
+    total: number
+  }>,
+): Promise<readonly T[]> {
+  const items: T[] = []
+  for (let page = 1; ; page += 1) {
+    const result = await readPage(page, SELECTOR_PAGE_SIZE)
+    items.push(...result.items)
+    if (items.length >= result.total || result.items.length === 0) return items
+  }
+}
 const ENTRY_HANDOFF_MS = 460
 const PROMPT_REWRITE_MS = 760
 const AGENT_CONVERSATION_STORAGE_KEY = 'windup.quick-start.agent-chat.v2'
@@ -783,12 +801,12 @@ function QuickStartInput({
   })
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [projects, setProjects] = useState<readonly Project[]>([])
+  const [projectSearch, setProjectSearch] = useState('')
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
   const [projectMenuProject, setProjectMenuProject] = useState<Project | null>(null)
   const [projectCharacters, setProjectCharacters] = useState<readonly CharacterSummary[] | null>(
     null,
   )
-  const [projectCharactersTotal, setProjectCharactersTotal] = useState(0)
   const [projectCharactersError, setProjectCharactersError] = useState<string | null>(null)
   const [openingCharacterId, setOpeningCharacterId] = useState<string | null>(null)
   const projectCharactersRequest = useRef(0)
@@ -844,6 +862,12 @@ function QuickStartInput({
     () => [{ lines: [prompt] }],
     [prompt],
   )
+  const filteredProjects = useMemo(() => {
+    const query = projectSearch.trim().toLocaleLowerCase()
+    return query
+      ? projects.filter((project) => project.name.toLocaleLowerCase().includes(query))
+      : projects
+  }, [projectSearch, projects])
 
   const ensureDraftId = useCallback(() => {
     const current = draftIdRef.current
@@ -876,12 +900,12 @@ function QuickStartInput({
     let cancelled = false
     const restoredId = projectIdRef.current
     void Promise.all([
-      projectApis.list({ page: 1, pageSize: 3 }),
+      readAllSelectorPages((page, pageSize) => projectApis.list({ page, pageSize })),
       restoredId ? projectApis.get(restoredId) : Promise.resolve(null),
     ]).then(
-      ([result, restoredProject]) => {
+      ([loadedProjects, restoredProject]) => {
         if (cancelled) return
-        setProjects(result.items)
+        setProjects(loadedProjects)
         if (restoredId && restoredProject && projectIdRef.current === restoredId) {
           setSelectedProject(restoredProject)
           setDirectionalMovement(restoredProject.directionalMovement)
@@ -927,19 +951,19 @@ function QuickStartInput({
     setProjectCharacters(null)
     setProjectCharactersError(null)
     try {
-      const result = await characterApis.listSummariesByProject(project.id, {
-        page: 1,
-        pageSize: CHARACTER_MENU_PAGE_SIZE,
-        status: CHARACTER_STATUS.PUBLISHED,
-      })
+      const characters = await readAllSelectorPages((page, pageSize) =>
+        characterApis.listSummariesByProject(project.id, {
+          page,
+          pageSize,
+          status: CHARACTER_STATUS.PUBLISHED,
+        }),
+      )
       if (projectCharactersRequest.current === request) {
-        setProjectCharacters(result.items)
-        setProjectCharactersTotal(result.total)
+        setProjectCharacters(characters)
       }
     } catch {
       if (projectCharactersRequest.current === request) {
         setProjectCharacters([])
-        setProjectCharactersTotal(0)
         setProjectCharactersError('角色列表暂时无法读取')
       }
     }
@@ -949,7 +973,6 @@ function QuickStartInput({
     projectCharactersRequest.current += 1
     setProjectMenuProject(null)
     setProjectCharacters(null)
-    setProjectCharactersTotal(0)
     setProjectCharactersError(null)
   }
 
@@ -1592,6 +1615,7 @@ function QuickStartInput({
                         setProjectMenuOpen(false)
                       } else {
                         returnToProjects()
+                        setProjectSearch('')
                         setProjectMenuOpen(true)
                       }
                     }}
@@ -1613,7 +1637,7 @@ function QuickStartInput({
                       aria-label={
                         projectMenuProject ? `选择${projectMenuProject.name}中的角色` : '选择项目'
                       }
-                      className={`${productPopoverClass} quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid w-[19rem] max-w-[calc(100vw-2rem)] gap-1 p-1.5 opacity-100`}
+                      className={`${productPopoverClass} quick-start-control-popover absolute bottom-full left-0 z-30 mb-5 grid w-[19rem] max-w-[calc(100vw-2rem)] gap-1 p-1.5 opacity-100`}
                     >
                       {projectMenuProject ? (
                         <>
@@ -1651,7 +1675,7 @@ function QuickStartInput({
                           ) : projectCharacters.length === 0 && !projectCharactersError ? (
                             <p className="px-3 py-3 text-xs text-app-muted">此项目还没有角色</p>
                           ) : (
-                            <div className="grid max-h-56 gap-1 overflow-y-auto">
+                            <div className="grid max-h-[7.75rem] gap-1 overflow-y-auto">
                               {projectCharacters.map((character) => {
                                 const name = character.name ?? '未命名角色'
                                 return (
@@ -1671,12 +1695,6 @@ function QuickStartInput({
                               })}
                             </div>
                           )}
-                          {projectCharacters !== null &&
-                          projectCharactersTotal > projectCharacters.length ? (
-                            <p className="px-3 pb-2 text-[0.68rem] text-app-faint">
-                              仅显示前 {projectCharacters.length} 个角色，其余请在资产库中打开
-                            </p>
-                          ) : null}
                           {projectCharactersError ? (
                             <p role="alert" className="px-3 py-2 text-xs text-app-danger">
                               {projectCharactersError}
@@ -1685,20 +1703,37 @@ function QuickStartInput({
                         </>
                       ) : (
                         <>
-                          {projects.map((project) => (
-                            <button
-                              key={project.id}
-                              type="button"
-                              role="menuitem"
-                              onClick={() => void openProjectCharacters(project)}
-                              className="flex items-center gap-2 rounded-app-compact px-3 py-2 text-left text-xs text-app-ink-soft transition hover:bg-app-surface-muted"
-                            >
-                              <FolderOpen aria-hidden="true" size={15} weight="regular" />
-                              <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                              <CaretRight aria-hidden="true" size={14} weight="bold" />
-                            </button>
-                          ))}
-                          <div className="my-1 border-t border-app-line" />
+                          <label className="flex items-center gap-2 px-3 py-2 text-app-muted">
+                            <MagnifyingGlass aria-hidden="true" size={14} weight="regular" />
+                            <input
+                              type="search"
+                              aria-label="搜索项目"
+                              value={projectSearch}
+                              onChange={(event) => setProjectSearch(event.target.value)}
+                              placeholder="搜索项目"
+                              className="min-w-0 flex-1 bg-transparent text-xs text-app-ink outline-none placeholder:text-app-faint"
+                            />
+                          </label>
+                          <div className="grid max-h-[7.75rem] gap-1 overflow-y-auto">
+                            {filteredProjects.length === 0 ? (
+                              <p className="px-3 py-3 text-xs text-app-muted">未找到项目</p>
+                            ) : (
+                              filteredProjects.map((project) => (
+                                <button
+                                  key={project.id}
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => void openProjectCharacters(project)}
+                                  className="flex items-center gap-2 rounded-app-compact px-3 py-2 text-left text-xs text-app-ink-soft transition hover:bg-app-surface-muted"
+                                >
+                                  <FolderOpen aria-hidden="true" size={15} weight="regular" />
+                                  <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                                  <CaretRight aria-hidden="true" size={14} weight="bold" />
+                                </button>
+                              ))
+                            )}
+                          </div>
+                          <div className="-mt-1 border-t border-app-line" />
                           <Link
                             to="/projects/new?entry=quick-start"
                             role="menuitem"
