@@ -391,7 +391,11 @@ def test_terminal_states_publish_terminal_event_names(status, expected, monkeypa
     monkeypatch.setattr(R, "_task_event_publisher", _Publisher())
     # 必须带 project_id：EventBus 按 (project_id, task_id) 索引，_publish_task_update
     # 对 project_id 为空的任务会记 warning 并早退（发到没人听的键上等于静默失败）。
-    R._publish_task_update(1, GenerationTask(
+    class _Session:
+        def scalar(self, *_a, **_k):
+            return 0
+
+    R._publish_task_update(_Session(), 1, GenerationTask(
         id=1, user_id=1, project_id=42,
         task_type=GenerationType.CHARACTER_ACTION, status=status,
     ))

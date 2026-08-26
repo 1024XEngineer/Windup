@@ -143,6 +143,25 @@ describe('createGenerationApis', () => {
     })
   })
 
+  it('pending 任务带上 queue_ahead', async () => {
+    const request = vi.fn(async (_url: string, _init?: RequestInit) =>
+      success(
+        taskData({
+          status: 'pending',
+          result: null,
+          queue_ahead: 3,
+        }),
+      ),
+    )
+    const apis = createGenerationApis({
+      baseUrl: 'https://api.test/',
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+    const generation = await apis.get('42', '91', { type: 'character_template' })
+    expect(generation.status).toBe('pending')
+    expect(generation.queueAhead).toBe(3)
+  })
+
   it.each([1, 2, 3, 4] as const)('允许调用方显式请求 %i 张图片候选', async (candidateCount) => {
     const request = vi.fn(async (_url: string, _init?: RequestInit) =>
       success(

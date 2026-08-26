@@ -56,6 +56,7 @@ interface GenerationTaskDto {
   inputPayload: Record<string, unknown> | null
   result: Record<string, unknown> | null
   errorMessage: string | null
+  queueAhead?: number
 }
 
 type BackendGenerationType = 'character_image' | 'character_action'
@@ -102,6 +103,14 @@ function dtoNullableString(value: unknown, field: string): string | null {
   if (value === null) return null
   if (typeof value !== 'string') throw new GenerationApiError(`生成任务 ${field} 无效`, 200)
   return value
+}
+
+function dtoQueueAhead(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new GenerationApiError('生成任务 queue_ahead 无效', 200)
+  }
+  return value as number
 }
 
 function backendTaskType(value: unknown): BackendGenerationType {
@@ -168,6 +177,7 @@ function parseTaskDto(value: unknown): GenerationTaskDto {
     inputPayload,
     result: dtoNullableRecord(value.result, 'result'),
     errorMessage: dtoNullableString(value.error_message, 'error_message'),
+    queueAhead: dtoQueueAhead(value.queue_ahead),
   }
 }
 
@@ -507,6 +517,7 @@ function mapTask(
         declaredFrameCount(dto.inputPayload, resolvedExpectation),
       ),
       error: dto.errorMessage,
+      ...(dto.queueAhead === undefined ? {} : { queueAhead: dto.queueAhead }),
     },
     ...(candidateCount === undefined ? {} : { candidateCount }),
   }
@@ -600,6 +611,7 @@ function mapEvent<TType extends GenerationType>(
       ? null
       : dtoNullableString(value.error_message, 'error_message')
   validateStatusError(status, error)
+  const queueAhead = dtoQueueAhead(value.queue_ahead)
   return {
     taskId: String(taskId),
     type: expectation.type,
@@ -612,6 +624,7 @@ function mapEvent<TType extends GenerationType>(
       inputPayload === undefined ? undefined : declaredFrameCount(inputPayload, expectation),
     ),
     error,
+    ...(queueAhead === undefined ? {} : { queueAhead }),
   }
 }
 

@@ -171,6 +171,8 @@ export interface Generation<TType extends GenerationType = GenerationType> {
   result: GenerationResult | null
   /** status 为 failed 时有值。 */
   error: string | null
+  /** pending/running 时前面还有几单未完成；缺省表示后端没给。 */
+  queueAhead?: number
 }
 
 /**

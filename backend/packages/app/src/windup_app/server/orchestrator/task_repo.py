@@ -14,7 +14,7 @@ import dataclasses
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from windup_app.server.orchestrator.model import (
@@ -65,7 +65,30 @@ _STATUS_EVENT = {
 }
 
 
-def task_event_payload(task: GenerationTask) -> dict:
+def count_queue_ahead(session: Session, task_id: int) -> int:
+    """比本任务更早、尚未结束的生成任务条数（pending + running）。"""
+    n = session.scalar(
+        select(func.count())
+        .select_from(GenerationTaskRecord)
+        .where(
+            GenerationTaskRecord.id < task_id,
+            GenerationTaskRecord.status.in_((
+                TaskStatus.PENDING.value,
+                TaskStatus.RUNNING.value,
+            )),
+        )
+    )
+    return int(n or 0)
+
+
+def queue_ahead_for(session: Session, task: GenerationTask) -> int:
+    """终态不再排队；pending/running 才报前面还有几单。"""
+    if task.status in (TaskStatus.COMPLETED, TaskStatus.PARTIAL, TaskStatus.FAILED):
+        return 0
+    return count_queue_ahead(session, task.id)
+
+
+def task_event_payload(task: GenerationTask, session: Session | None = None) -> dict:
     """SSE 事件体。**只有这一份实现**。
 
     抽成公开函数是因为有第二个发送点:SSE 端点在订阅时若发现任务已是终态,要立即补发
@@ -81,6 +104,7 @@ def task_event_payload(task: GenerationTask) -> dict:
         "input_payload": task.input_payload,
         "result": dataclasses.asdict(task.result) if task.result else None,
         "error_message": task.error_message,
+        "queue_ahead": queue_ahead_for(session, task) if session is not None else 0,
     }
 
 
@@ -101,10 +125,10 @@ def terminal_snapshot(
     event = terminal_event_for(task)
     if event is None:
         return None
-    return event, task_event_payload(task)
+    return event, task_event_payload(task, session)
 
 
-def _publish_task_update(task_id: int, task: GenerationTask) -> None:
+def _publish_task_update(session: Session, task_id: int, task: GenerationTask) -> None:
     """将完整 task 推送到 EventBus（若有订阅者）。
 
     EventBus 的键是 ``(project_id, task_id)``(主线 #110:同一 task_id 在不同项目下互不
@@ -126,7 +150,7 @@ def _publish_task_update(task_id: int, task: GenerationTask) -> None:
         task.project_id,
         task_id,
         event,
-        task_event_payload(task),
+        task_event_payload(task, session),
     )
 
 
@@ -169,7 +193,7 @@ def update_status(
     record.error_message = error_message
     record.update_at = datetime.now(timezone.utc)
     session.flush()
-    _publish_task_update(task_id, _record_to_domain(record))
+    _publish_task_update(session, task_id, _record_to_domain(record))
 
 
 def fail_task(
@@ -192,7 +216,7 @@ def fail_task(
     record.result = None
     record.update_at = datetime.now(timezone.utc)
     session.flush()
-    _publish_task_update(task_id, _record_to_domain(record))
+    _publish_task_update(session, task_id, _record_to_domain(record))
 
 
 def update_result(
@@ -210,7 +234,7 @@ def update_result(
     record.status = TaskStatus.COMPLETED.value
     record.update_at = datetime.now(timezone.utc)
     session.flush()
-    _publish_task_update(task_id, _record_to_domain(record))
+    _publish_task_update(session, task_id, _record_to_domain(record))
 
 
 def update_progress(
@@ -232,7 +256,7 @@ def update_progress(
     record.error_message = error_message
     record.update_at = datetime.now(timezone.utc)
     session.flush()
-    _publish_task_update(task_id, _record_to_domain(record))
+    _publish_task_update(session, task_id, _record_to_domain(record))
 
 
 def update_input_payload(session: Session, task_id: int, input_payload: dict) -> None:

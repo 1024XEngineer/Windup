@@ -1439,6 +1439,11 @@
             ],
             "title": "Project Id"
           },
+          "queue_ahead": {
+            "default": 0,
+            "title": "Queue Ahead",
+            "type": "integer"
+          },
           "result": {
             "anyOf": [
               {
