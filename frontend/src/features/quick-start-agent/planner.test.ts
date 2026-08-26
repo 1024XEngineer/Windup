@@ -7,6 +7,14 @@ import {
 } from './planner'
 
 describe('quickStartPlannerInstructions', () => {
+  it('keeps direction count and grid composition out of optimizedPrompt', () => {
+    const instructions = quickStartPlannerInstructions(false, '像素艺术')
+
+    expect(instructions).toContain('optimizedPrompt 只描述一个角色实例')
+    expect(instructions).toContain('方向数量由宿主的方向控件单独传递')
+    expect(instructions).toContain('不得加入多视图、转面表、精灵表或宫格构图')
+  })
+
   it('separates conversation, optional proposals, and generation authorization', () => {
     const firstTurn = quickStartPlannerInstructions(false)
     const laterTurn = quickStartPlannerInstructions(true)
