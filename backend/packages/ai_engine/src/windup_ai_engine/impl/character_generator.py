@@ -144,6 +144,7 @@ class CharacterGenerator(CharacterGeneratorPort):
             if route is GenRoute.VIDEO_I2V else None
         )
         return self._finish(frames, action, route, progress, canvas, render_spec)
+        return self._finish(frames, action, route, progress, canvas, strategy)
 
     def can_defer_i2v(self) -> bool:
         strategy = self._by_route.get(GenRoute.VIDEO_I2V)
@@ -207,6 +208,7 @@ class CharacterGenerator(CharacterGeneratorPort):
         )
         render_spec = _video_render_spec(master, facts, action)
         return self._finish(frames, action, route, progress, canvas, render_spec)
+        return self._finish(frames, action, route, progress, canvas, strategy)
 
     def generate_rendered(
         self,
@@ -228,7 +230,7 @@ class CharacterGenerator(CharacterGeneratorPort):
         frames = strategy.derive(
             card, action, rigged_model, _BandProgress(progress, _DERIVE_FROM, _DERIVE_TO)
         )
-        return self._finish(frames, action, route, progress, canvas)
+        return self._finish(frames, action, route, progress, canvas, strategy)
 
     def plan_rendered(self, action: ActionSpec) -> RenderPlan:
         """三渲二该渲什么。出帧交给浏览器时,server 把这份参数原样发给它。"""
@@ -256,7 +258,7 @@ class CharacterGenerator(CharacterGeneratorPort):
         produced = frames_from(
             frames, card, action, _BandProgress(progress, _DERIVE_FROM, _DERIVE_TO)
         )
-        return self._finish(produced, action, route, progress, canvas)
+        return self._finish(produced, action, route, progress, canvas, strategy)
 
     # ── 两个入口共用的部分 ────────────────────────────────────────────────
     def _pick(self, route: GenRoute, action: ActionSpec) -> DerivationStrategy:
@@ -276,6 +278,7 @@ class CharacterGenerator(CharacterGeneratorPort):
         progress: ProgressPort,
         canvas: tuple[int, int] | None,
         render_spec: _LastMileRenderSpec | None = None,
+        strategy: DerivationStrategy | None = None,
     ) -> GeneratedAction:
         """出帧之后的公共尾段:帧数对账 → 脚线对齐 → 量成色 → 出参。
 
@@ -316,6 +319,11 @@ class CharacterGenerator(CharacterGeneratorPort):
             ),
             quality=quality,
             prompt_version=PROMPT_VERSION,
+            # 只有三渲二那条 strategy 会留下这两样;i2v / 逐帧路线上恒为 None。
+            # getattr 而不是 isinstance:两个入口共用 _finish,而 strategy 的具体类型
+            # 由 bootstrap 装配决定,在这里按类型分支等于把装配表复制一份进来。
+            rig=getattr(strategy, "_last_rig", None),
+            root_motion=getattr(strategy, "_last_root_motion", None),
         )
 
     def _assess(self, frames: list[Image.Image], action: ActionSpec) -> ActionQuality:

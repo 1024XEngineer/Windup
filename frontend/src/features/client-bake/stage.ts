@@ -31,6 +31,8 @@ export interface StageRigInfo {
   loader: string
   rootBone: string | null
   bones: number
+  /** 骨名列表。挂点的来源——武器握持按骨名定位，不必重新标定。 */
+  boneNames: string[]
   skinned: number
   verts: number
   orthoH: number
@@ -70,6 +72,8 @@ export class BakeStage {
   private rootBone: string | null = null
   private loader = 'gltf'
   private probe: HTMLCanvasElement | null = null
+  private rootMotion: Record<string, Array<[number, number]>> = {}
+  private scale = 1
 
   private constructor(options: StageOptions) {
     if (!isStageMaterial(options.material)) {
@@ -150,7 +154,8 @@ export class BakeStage {
     if (!Number.isFinite(rawH) || rawH <= 0) {
       throw new StageError('模型包围盒量不出高度 —— 空模型或坏 GLB')
     }
-    this.model.scale.setScalar(1.0 / rawH)
+    this.scale = 1.0 / rawH
+    this.model.scale.setScalar(this.scale)
     this.model.updateMatrixWorld(true)
     box = new THREE.Box3().setFromObject(this.model)
     this.model.position.y -= box.min.y
@@ -248,10 +253,23 @@ export class BakeStage {
     const values = track.values
     const x0 = values[0]
     const z0 = values[2]
+    // 压平之前先把位移抽出来存着 —— 压平是为了让帧原地不动,位移本身仍是产物的一部分,
+    // 引擎侧要靠它让角色真的走起来(#774:此前算完即丢)。单位与归一化口径一致。
+    const disp: Array<[number, number]> = []
     for (let i = 0; i < values.length; i += 3) {
+      disp.push([
+        +((values[i] - x0) * this.scale).toFixed(5),
+        +((values[i + 2] - z0) * this.scale).toFixed(5),
+      ])
       values[i] = x0
       values[i + 2] = z0
     }
+    this.rootMotion[clip.name] = disp
+  }
+
+  /** 本片段的逐帧 (dx, dz)。片段没有根骨位置轨时为空数组。 */
+  rootMotionOf(clip: string): Array<[number, number]> {
+    return this.rootMotion[clip] ?? []
   }
 
   /**
@@ -353,8 +371,12 @@ export class BakeStage {
     let bones = 0
     let skinned = 0
     let verts = 0
+    const boneNames: string[] = []
     this.model.traverse((node) => {
-      if ((node as THREE.Bone).isBone) bones++
+      if ((node as THREE.Bone).isBone) {
+        bones++
+        boneNames.push(node.name)
+      }
       const mesh = node as THREE.SkinnedMesh
       if (mesh.isSkinnedMesh) skinned++
       if (mesh.isMesh) verts += mesh.geometry.attributes.position.count
@@ -363,6 +385,7 @@ export class BakeStage {
       loader: this.loader,
       rootBone: this.rootBone,
       bones,
+      boneNames,
       skinned,
       verts,
       orthoH: +this.orthoH.toFixed(4),

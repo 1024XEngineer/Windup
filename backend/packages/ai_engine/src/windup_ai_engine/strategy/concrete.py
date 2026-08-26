@@ -31,7 +31,13 @@ from windup_framework.providers import ImageProvider, MatteProvider, VideoProvid
 from windup_ai_engine._imgio import from_png as _img
 from windup_ai_engine._imgio import to_png as _png
 from windup_ai_engine.master_prep import prepare_master
-from windup_ai_engine.ports import ProgressPort, PromptAdapterPort, PromptRejected, RenderPlan
+from windup_ai_engine.ports import (
+    ProgressPort,
+    PromptAdapterPort,
+    PromptRejected,
+    RenderPlan,
+    RigFacts,
+)
 from windup_ai_engine.postprocess import master_pixel_spec, pixelate_frames
 from windup_ai_engine.slicing import (
     extract_frames_at,
@@ -307,6 +313,23 @@ class PerFrameStrategy(DerivationStrategy):
 # 才是正面(奶白胸腹与口鼻可见,浅色像素占比 21.0%),s 是背面(8.5%)。两者主体像素数
 # 几乎相同,靠轮廓分不出正反,而单元测试也逮不到 —— 朝向错了但帧数、时长、成色全部正常。
 # 改这张表之前先渲一遍再量。
+def _root_motion_of(sheet, clip: str) -> list[tuple[float, float]] | None:
+    """从出帧台的 ``root_motion`` 里取本片段那一条。
+
+    出帧台按片段名归档(一个模型自带多个预设动作),这里只要当前渲的那一段。
+    形状是 ``{"unit":..., "times":[...], "disp":[[dx,dz],...], "total_span":...}``,
+    只取 ``disp`` —— 时长由 ``frame_durations`` 另算,``unit`` 是常量写在字段注释里。
+    """
+    raw = (sheet.root_motion or {}) if isinstance(sheet.root_motion, dict) else {}
+    entry = raw.get(clip) if isinstance(raw, dict) else None
+    if not isinstance(entry, dict):
+        return None
+    disp = entry.get("disp")
+    if not isinstance(disp, list):
+        return None
+    return [(float(x), float(z)) for x, z in disp if isinstance(x, (int, float))]
+
+
 def _coverage(png: bytes) -> float:
     """一帧的非透明像素占比。**与出帧台 ``__coverage`` 同一口径**:先缩到 128 宽再数
     ``alpha > 8`` —— 两边算法不同的话,客户端自检过了服务端再判一次会无故打回。
@@ -368,6 +391,9 @@ class RenderFrameStrategy(DerivationStrategy):
         self._material = material
         self._size = size or RENDER_SIZE
         self._min_coverage = min_coverage
+        # 最近一次出帧读到的骨架事实与位移轨,由 _finish 取走(见 derive)。
+        self._last_rig: RigFacts | None = None
+        self._last_root_motion: list[tuple[float, float]] | None = None
 
     def derive(
         self,
@@ -427,6 +453,19 @@ class RenderFrameStrategy(DerivationStrategy):
         # 而 ``want`` 恒非 None → ``direction`` 恒传入 → 出帧台恒把方向表裁成单条,
         # 那条分支在生产里无条件不成立。留着会让人以为多朝向已经算好了只是没带出来。
         progress.step("derive", 1, 3, f"朝向 {chosen.direction} 共 {len(frames)} 帧")
+
+        # 出帧台读到的骨架事实与根骨位移轨此前算完即丢(#774)。留在实例上由
+        # CharacterGenerator._finish 取走 —— derive 的返回类型是帧列表,是两个入口
+        # (服务端渲 / 浏览器渲)共用的形状,不为这一条改它。
+        self._last_rig = RigFacts(
+            bones=sheet.rig.bones,
+            root_bone=sheet.rig.root_bone,
+            bone_names=tuple(getattr(sheet.rig, "bone_names", ()) or ()),
+            skinned_meshes=sheet.rig.skinned_meshes,
+            vertices=sheet.rig.vertices,
+            available_clips=dict(sheet.available_clips or {}),
+        )
+        self._last_root_motion = _root_motion_of(sheet, plan.clip)
 
         return self._stylize(frames, action, progress)
 

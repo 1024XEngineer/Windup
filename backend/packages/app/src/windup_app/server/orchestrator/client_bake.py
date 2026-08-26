@@ -158,6 +158,42 @@ def collect_frames(task_id: int, expected: int) -> list[bytes]:
     return frames
 
 
+#: 浏览器交回的派生资产（骨架事实 + 根骨位移轨）在 Redis 里的字段名。
+#: 与帧分开存：帧是逐个 POST 上来的大对象，这两样是交齐那一刻一次性带回的小 JSON。
+_DERIVED_FIELD = "derived"
+
+
+def save_derived(
+    task_id: int,
+    *,
+    rig: dict | None = None,
+    root_motion: list | None = None,
+) -> None:
+    """存下浏览器交回的骨架事实与根骨位移轨（#774）。
+
+    两样都可空：出帧台读不出根骨位置轨时 ``root_motion`` 就是空的，那是模型本来就没有
+    位移，不是故障。
+    """
+    if rig is None and root_motion is None:
+        return
+    payload = json.dumps({"rig": rig, "root_motion": root_motion}, ensure_ascii=False)
+    redis_client = get_redis()
+    redis_client.hset(_key(task_id), _DERIVED_FIELD, payload)
+    redis_client.expire(_key(task_id), STATE_TTL_S)
+
+
+def load_derived(task_id: int) -> tuple[dict | None, list | None]:
+    """取回 :func:`save_derived` 存的两样；没有就是 (None, None)。"""
+    raw = get_redis().hget(_key(task_id), _DERIVED_FIELD)
+    if not raw:
+        return None, None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None, None
+    return data.get("rig"), data.get("root_motion")
+
+
 def clear(task_id: int) -> None:
     get_redis().delete(_key(task_id), _frames_key(task_id))
 

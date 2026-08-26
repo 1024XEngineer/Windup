@@ -254,11 +254,28 @@ def discard_outfit_asset(
 # 本段四个端点只搬运与校验,渲染参数由 ai_engine 的 RenderPlan 定,这里不重写一份。
 
 
+class BakeRigFacts(BaseModel):
+    """浏览器出帧台读到的骨架事实。**记录用,不是判据** —— 以骨数/命名当闸已被实测推翻。"""
+
+    bones: int = Field(default=0, ge=0)
+    root_bone: str | None = None
+    bone_names: list[str] = Field(default_factory=list)
+    skinned_meshes: int = Field(default=0, ge=0)
+    vertices: int = Field(default=0, ge=0)
+    available_clips: dict[str, float] = Field(default_factory=dict)
+
+
 class BakeCompleteRequest(BaseModel):
-    """浏览器自报交齐了。帧本身已逐帧 POST 上来,这里只带回可对账的采样信息。"""
+    """浏览器自报交齐了。帧本身已逐帧 POST 上来,这里带回可对账的采样信息与派生资产。
+
+    ``rig`` / ``root_motion`` 与服务端渲那条交回的是同一批数(#774):两条路存下来的
+    资产必须一样,否则同一造型走哪条路建出来的东西不同,而没有一处会红。
+    """
 
     clip: str = Field(..., min_length=1)
     sample_times: list[float] = Field(default_factory=list)
+    rig: BakeRigFacts | None = None
+    root_motion: list[tuple[float, float]] | None = None
 
 
 class BakeFailRequest(BaseModel):
@@ -342,6 +359,11 @@ def complete_bake(
         client_bake.collect_frames(task_id, spec.frames)
     except client_bake.ClientBakeError as exc:
         raise BizException(str(exc), code=BizCode.BAD_REQUEST) from exc
+    client_bake.save_derived(
+        task_id,
+        rig=body.rig.model_dump() if body.rig else None,
+        root_motion=[list(pair) for pair in body.root_motion] if body.root_motion else None,
+    )
     client_bake.schedule_resume(task_id)
     return Response.success(
         {"task_id": task_id, "frames": spec.frames}, message="帧已交齐,继续后处理"
