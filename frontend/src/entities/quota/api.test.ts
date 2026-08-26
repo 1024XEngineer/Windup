@@ -125,6 +125,31 @@ describe('createQuotaApis', () => {
     expect(request).toHaveBeenNthCalledWith(1, '/quota/invite/generate', { method: 'POST' })
   })
 
+  it('提交兑换码并映射入账后的积分账户', async () => {
+    request.mockResolvedValue({ credited: 1000, account: accountResponse })
+
+    const apis = createQuotaApis({ client })
+
+    await expect(apis.redeemCode(' wu-abcd-efgh ')).resolves.toEqual({
+      credited: 1000,
+      account: {
+        id: '11',
+        userId: '7',
+        balance: 90,
+        frozen: 10,
+        totalEarned: 150,
+        totalSpent: 50,
+        createdAt: '2026-08-12T01:02:03Z',
+        updatedAt: '2026-08-17T01:02:03Z',
+      },
+    })
+    expect(request).toHaveBeenCalledWith('/quota/redeem', {
+      method: 'POST',
+      json: { code: ' wu-abcd-efgh ' },
+      replayAfterAuth: false,
+    })
+  })
+
   it('将方向、原因和时间范围作为服务端筛选参数', async () => {
     requestList.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 50 })
 

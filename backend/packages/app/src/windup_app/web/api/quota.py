@@ -4,6 +4,7 @@
 --------
 GET  /quota/balance          查询积分余额
 GET  /quota/transactions     查询积分流水（分页）
+POST /quota/redeem            兑换一次性积分码
 GET  /quota/invite/code      获取我的邀请码
 POST /quota/invite/generate  签发新邀请码
 """
@@ -73,6 +74,19 @@ class InviteCodeOut(BaseModel):
     update_at: datetime
 
 
+class RedeemCodeIn(BaseModel):
+    """积分兑换码提交参数。"""
+
+    code: str
+
+
+class RedeemCodeOut(BaseModel):
+    """积分兑换结果及刷新账户所需的最新汇总。"""
+
+    credited: int
+    account: CreditAccountOut
+
+
 # -- 端点 ----------------------------------------------------------------
 
 
@@ -123,6 +137,25 @@ def list_transactions(
         total=total,
         page=page,
         page_size=page_size,
+    )
+
+
+@router.post("/redeem", response_model=Response[RedeemCodeOut])
+def redeem_code(
+    payload: RedeemCodeIn,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[RedeemCodeOut]:
+    """兑换一次性积分码；账户、兑换码和流水共用一个事务。"""
+    credited, account = service.redeem_code(
+        session, request.state.current_user.id, payload.code
+    )
+    return Response.success(
+        RedeemCodeOut(
+            credited=credited,
+            account=CreditAccountOut.model_validate(account),
+        ),
+        message=f"已到账 {credited:,} 积分",
     )
 
 

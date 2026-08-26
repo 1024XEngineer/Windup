@@ -6,6 +6,7 @@
 """
 
 from datetime import datetime, timezone
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
@@ -15,8 +16,12 @@ from windup_common.enums.quota import CreditReason
 from windup_framework.config.quota import settings as quota_settings
 from windup_common.exceptions import BizException
 
-from windup_app.server.quota.model import CreditAccount, CreditTransaction
-from windup_app.server.quota.service import SqlAlchemyQuotaService
+from windup_app.server.quota.model import (
+    CreditAccount,
+    CreditRedemptionCode,
+    CreditTransaction,
+)
+from windup_app.server.quota.service import SqlAlchemyQuotaService, redemption_code_hash
 
 
 @pytest.fixture()
@@ -77,6 +82,25 @@ def auth_quota_client(engine, user_with_account):
 
     yield client
     app.dependency_overrides.clear()
+
+
+def add_redemption_code(
+    db_session: Session,
+    code: str = "WUABCDEFGHJKLM",
+    *,
+    amount: int = 1000,
+    expires_at=None,
+    redeemed_by=None,
+) -> CreditRedemptionCode:
+    row = CreditRedemptionCode(
+        code_hash=redemption_code_hash(code),
+        amount=amount,
+        expires_at=expires_at,
+        redeemed_by=redeemed_by,
+    )
+    db_session.add(row)
+    db_session.flush()
+    return row
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -356,6 +380,123 @@ class TestCredit:
     def test_credit_nonexistent_account(self, db_session, quota_service):
         with pytest.raises(BizException, match="积分账户不存在"):
             quota_service.credit(db_session, 99999, 50, CreditReason.ADMIN_ADJUST)
+
+
+class TestRedeemCode:
+    def test_redeem_does_not_credit_when_database_claim_loses_race(
+        self, quota_service, monkeypatch
+    ):
+        account = CreditAccount(
+            id=11,
+            user_id=1,
+            balance=100,
+            frozen=0,
+            total_earned=100,
+            total_spent=0,
+        )
+        redemption = CreditRedemptionCode(
+            id=21,
+            code_hash=redemption_code_hash("WUABCDEFGHJKLM"),
+            amount=1000,
+        )
+        fake_session = Mock(spec=Session)
+        fake_session.scalar.return_value = redemption
+        fake_session.execute.return_value.rowcount = 0
+        monkeypatch.setattr(
+            quota_service, "_get_account_for_update", lambda _session, _user_id: account
+        )
+
+        with pytest.raises(BizException, match="兑换码无效或已使用"):
+            quota_service.redeem_code(fake_session, 1, "WUABCDEFGHJKLM")
+
+        assert account.balance == 100
+        assert account.total_earned == 100
+        fake_session.add.assert_not_called()
+
+    def test_redeem_adds_balance_and_writes_reasoned_transaction(
+        self, db_session, quota_service, user_with_account
+    ):
+        code = "WUABCDEFGHJKLM"
+        redemption = add_redemption_code(db_session, code)
+
+        credited, account = quota_service.redeem_code(
+            db_session, user_with_account.id, code
+        )
+
+        assert credited == 1000
+        assert account.balance == quota_settings.register_gift_amount + 1000
+        assert account.total_earned == quota_settings.register_gift_amount + 1000
+        assert (
+            db_session.get(CreditRedemptionCode, redemption.id).redeemed_by
+            == user_with_account.id
+        )
+        txn = db_session.scalar(
+            select(CreditTransaction).where(
+                CreditTransaction.ref_id == f"redemption:{redemption.id}",
+                CreditTransaction.reason == CreditReason.REDEMPTION,
+            )
+        )
+        assert txn is not None
+        assert txn.delta == 1000
+
+    def test_redeem_same_code_twice_is_idempotent_for_same_user(
+        self, db_session, quota_service, user_with_account
+    ):
+        code = "WUABCDEFGHJKLM"
+        add_redemption_code(db_session, code)
+
+        first = quota_service.redeem_code(db_session, user_with_account.id, code)
+        second = quota_service.redeem_code(db_session, user_with_account.id, code)
+
+        assert first[0] == second[0] == 1000
+        assert (
+            first[1].balance
+            == second[1].balance
+            == quota_settings.register_gift_amount + 1000
+        )
+        assert first[1].total_earned == second[1].total_earned
+        assert (
+            db_session.scalar(
+                select(CreditTransaction).where(
+                    CreditTransaction.reason == CreditReason.REDEMPTION
+                )
+            )
+            is not None
+        )
+        assert (
+            db_session.scalar(
+                select(CreditTransaction).where(
+                    CreditTransaction.reason == CreditReason.REDEMPTION
+                )
+            ).delta
+            == 1000
+        )
+
+    def test_redeem_rejects_expired_code_without_changing_account(
+        self, db_session, quota_service, user_with_account
+    ):
+        code = "WUABCDEFGHJKLM"
+        add_redemption_code(
+            db_session,
+            code,
+            expires_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        )
+
+        with pytest.raises(BizException, match="兑换码无效或已使用"):
+            quota_service.redeem_code(db_session, user_with_account.id, code)
+
+        account = db_session.scalar(
+            select(CreditAccount).where(CreditAccount.user_id == 1)
+        )
+        assert account.balance == quota_settings.register_gift_amount
+        assert (
+            db_session.scalars(
+                select(CreditTransaction).where(
+                    CreditTransaction.reason == CreditReason.REDEMPTION
+                )
+            ).all()
+            == []
+        )
 
 
 # -- 流水查询 ---------------------------------------------------------------
@@ -645,6 +786,37 @@ class TestQuotaAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert data["code"] == 401
+
+    def test_redeem_invalid_code_returns_business_error(self, auth_quota_client):
+        """兑换无效兑换码时不应落账，并返回可读业务错误。"""
+        resp = auth_quota_client.post(
+            "/quota/redeem",
+            json={"code": "WU-INVALID-CODE"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["code"] == 400
+        assert resp.json()["message"] == "兑换码无效或已使用"
+
+    def test_redeem_valid_code_returns_updated_account(
+        self, auth_quota_client, db_session, user_with_account
+    ):
+        add_redemption_code(db_session)
+        db_session.commit()
+
+        resp = auth_quota_client.post(
+            "/quota/redeem",
+            json={"code": "WU-ABCD-EFGH-JKLM"},
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["code"] == 200
+        assert data["data"]["credited"] == 1000
+        assert (
+            data["data"]["account"]["balance"]
+            == quota_settings.register_gift_amount + 1000
+        )
 
 
 def _gift_account(session: Session, user_id: int) -> None:

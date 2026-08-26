@@ -2354,6 +2354,38 @@
         "title": "ProjectPatch",
         "type": "object"
       },
+      "RedeemCodeIn": {
+        "description": "积分兑换码提交参数。",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "RedeemCodeIn",
+        "type": "object"
+      },
+      "RedeemCodeOut": {
+        "description": "积分兑换结果及刷新账户所需的最新汇总。",
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/CreditAccountOut"
+          },
+          "credited": {
+            "title": "Credited",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "credited",
+          "account"
+        ],
+        "title": "RedeemCodeOut",
+        "type": "object"
+      },
       "RefreshRequest": {
         "description": "刷新 token 请求。",
         "properties": {
@@ -2739,6 +2771,48 @@
           }
         },
         "title": "Response[ProjectOut]",
+        "type": "object"
+      },
+      "Response_RedeemCodeOut_": {
+        "properties": {
+          "code": {
+            "default": 200,
+            "description": "业务状态码:成功 200,失败非 200",
+            "title": "Code",
+            "type": "integer"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RedeemCodeOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "业务数据"
+          },
+          "message": {
+            "default": "success",
+            "description": "提示信息",
+            "title": "Message",
+            "type": "string"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "响应时间;默认不携带,不携带时省略",
+            "title": "Timestamp"
+          }
+        },
+        "title": "Response[RedeemCodeOut]",
         "type": "object"
       },
       "Response_TokenResponse_": {
@@ -4774,6 +4848,48 @@
           }
         },
         "summary": "Generate Invite Code",
+        "tags": [
+          "quota"
+        ]
+      }
+    },
+    "/quota/redeem": {
+      "post": {
+        "description": "兑换一次性积分码；账户、兑换码和流水共用一个事务。",
+        "operationId": "redeem_code_quota_redeem_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedeemCodeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_RedeemCodeOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Redeem Code",
         "tags": [
           "quota"
         ]

@@ -39,6 +39,11 @@ interface InviteCodeDto {
   update_at: string
 }
 
+interface CreditRedemptionResultDto {
+  credited: number
+  account: CreditAccountDto
+}
+
 export interface CreateQuotaApisOptions extends ApiClientOptions {
   client?: ApiClient
 }
@@ -109,6 +114,14 @@ export function createQuotaApis(options: CreateQuotaApisOptions = {}): QuotaApis
       )
       return { ...result, items: result.items.map(toCreditTransaction) }
     },
+    async redeemCode(code: string) {
+      const result = await protectedClient.request<CreditRedemptionResultDto>('/quota/redeem', {
+        method: 'POST',
+        json: { code },
+        replayAfterAuth: false,
+      })
+      return { credited: result.credited, account: toCreditAccount(result.account) }
+    },
     async getInviteCode() {
       return toInviteCode(await protectedClient.request<InviteCodeDto>('/quota/invite/code'))
     },
@@ -131,6 +144,7 @@ function getDefaultApis(): QuotaApis {
 export const quotaApis: QuotaApis = {
   getBalance: () => getDefaultApis().getBalance(),
   listTransactions: (query) => getDefaultApis().listTransactions(query),
+  redeemCode: (code) => getDefaultApis().redeemCode(code),
   getInviteCode: () => getDefaultApis().getInviteCode(),
   generateInviteCode: () => getDefaultApis().generateInviteCode(),
 }

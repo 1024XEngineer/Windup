@@ -13,6 +13,7 @@ export { createQuotaApis, quotaApis } from './quota'
 export type {
   CreateQuotaApisOptions,
   CreditAccount,
+  CreditRedemptionResult,
   CreditTransaction,
   InviteCode,
   CreditTransactionDirection,
