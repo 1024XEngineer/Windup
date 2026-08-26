@@ -170,6 +170,8 @@ const ROLE_DEFAULT_MESSAGE: readonly KineticCopyMessage[] = [
   { lines: ['用文字塑造你的角色……'], className: 'text-app-ink' },
 ]
 
+/** 角色选择菜单一次取满后端允许的最大一页；再多的项目在菜单里给出明确提示而不是静默截断。 */
+const CHARACTER_MENU_PAGE_SIZE = 100
 const ENTRY_HANDOFF_MS = 460
 const PROMPT_REWRITE_MS = 760
 const AGENT_CONVERSATION_STORAGE_KEY = 'windup.quick-start.agent-chat.v2'
@@ -786,6 +788,7 @@ function QuickStartInput({
   const [projectCharacters, setProjectCharacters] = useState<readonly CharacterSummary[] | null>(
     null,
   )
+  const [projectCharactersTotal, setProjectCharactersTotal] = useState(0)
   const [projectCharactersError, setProjectCharactersError] = useState<string | null>(null)
   const [openingCharacterId, setOpeningCharacterId] = useState<string | null>(null)
   const projectCharactersRequest = useRef(0)
@@ -926,13 +929,17 @@ function QuickStartInput({
     try {
       const result = await characterApis.listSummariesByProject(project.id, {
         page: 1,
-        pageSize: 8,
+        pageSize: CHARACTER_MENU_PAGE_SIZE,
         status: CHARACTER_STATUS.PUBLISHED,
       })
-      if (projectCharactersRequest.current === request) setProjectCharacters(result.items)
+      if (projectCharactersRequest.current === request) {
+        setProjectCharacters(result.items)
+        setProjectCharactersTotal(result.total)
+      }
     } catch {
       if (projectCharactersRequest.current === request) {
         setProjectCharacters([])
+        setProjectCharactersTotal(0)
         setProjectCharactersError('角色列表暂时无法读取')
       }
     }
@@ -942,6 +949,7 @@ function QuickStartInput({
     projectCharactersRequest.current += 1
     setProjectMenuProject(null)
     setProjectCharacters(null)
+    setProjectCharactersTotal(0)
     setProjectCharactersError(null)
   }
 
@@ -1643,24 +1651,32 @@ function QuickStartInput({
                           ) : projectCharacters.length === 0 && !projectCharactersError ? (
                             <p className="px-3 py-3 text-xs text-app-muted">此项目还没有角色</p>
                           ) : (
-                            projectCharacters.map((character) => {
-                              const name = character.name ?? '未命名角色'
-                              return (
-                                <button
-                                  key={character.id}
-                                  type="button"
-                                  role="menuitem"
-                                  aria-label={`为${name}新增动作，${character.actionCount === 0 ? '暂无动作' : `已有 ${character.actionCount} 个动作`}`}
-                                  disabled={openingCharacterId !== null}
-                                  onClick={() => void openCharacterForAction(character)}
-                                  className="flex items-center gap-2 rounded-app-compact px-3 py-2 text-left text-xs text-app-ink-soft transition hover:bg-app-surface-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:opacity-45"
-                                >
-                                  <span className="min-w-0 flex-1 truncate">{name}</span>
-                                  <CaretRight aria-hidden="true" size={14} weight="bold" />
-                                </button>
-                              )
-                            })
+                            <div className="grid max-h-56 gap-1 overflow-y-auto">
+                              {projectCharacters.map((character) => {
+                                const name = character.name ?? '未命名角色'
+                                return (
+                                  <button
+                                    key={character.id}
+                                    type="button"
+                                    role="menuitem"
+                                    aria-label={`为${name}新增动作，${character.actionCount === 0 ? '暂无动作' : `已有 ${character.actionCount} 个动作`}`}
+                                    disabled={openingCharacterId !== null}
+                                    onClick={() => void openCharacterForAction(character)}
+                                    className="flex items-center gap-2 rounded-app-compact px-3 py-2 text-left text-xs text-app-ink-soft transition hover:bg-app-surface-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:opacity-45"
+                                  >
+                                    <span className="min-w-0 flex-1 truncate">{name}</span>
+                                    <CaretRight aria-hidden="true" size={14} weight="bold" />
+                                  </button>
+                                )
+                              })}
+                            </div>
                           )}
+                          {projectCharacters !== null &&
+                          projectCharactersTotal > projectCharacters.length ? (
+                            <p className="px-3 pb-2 text-[0.68rem] text-app-faint">
+                              仅显示前 {projectCharacters.length} 个角色，其余请在资产库中打开
+                            </p>
+                          ) : null}
                           {projectCharactersError ? (
                             <p role="alert" className="px-3 py-2 text-xs text-app-danger">
                               {projectCharactersError}
