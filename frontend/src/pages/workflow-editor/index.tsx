@@ -31,6 +31,7 @@ import {
   type WorkflowGenerationRole,
   type WorkflowNode,
   type WorkflowRun,
+  getDirectionGridLayout,
   getDirectionProfile,
 } from '@/entities'
 import type { WorkflowController } from '@/features/workflow-controller'
@@ -492,6 +493,66 @@ function WorkflowImage({
   )
 }
 
+function DirectionAssetGrid({
+  movement,
+  images,
+  kind,
+  singleAlt,
+}: {
+  movement: Project['directionalMovement']
+  images: Partial<Record<ActionDirection, string | null | undefined>>
+  kind: '角色母版' | '动作首帧'
+  singleAlt: string
+}) {
+  const layout = getDirectionGridLayout(movement)
+  const eastImage = images.east
+  if (layout.columns === 1) {
+    return eastImage ? <WorkflowImage src={eastImage} alt={singleAlt} variant="master" /> : null
+  }
+
+  const directionCountLabel = layout.columns === 3 ? '八向' : '四向'
+  const columnClass = layout.columns === 3 ? 'grid-cols-3' : 'grid-cols-2'
+  return (
+    <div
+      role="group"
+      aria-label={`${directionCountLabel}${kind}集合`}
+      data-layout="direction-asset-grid"
+      className={`grid aspect-square w-full ${columnClass} gap-2 overflow-hidden rounded-xl border border-app-line-strong bg-app-surface-muted p-2`}
+    >
+      {layout.cells.map((direction, index) => {
+        if (!direction) {
+          return <div key={`empty-${index}`} aria-label="八向宫格中心留空" className="min-h-0" />
+        }
+        const imageUrl = images[direction]
+        return imageUrl ? (
+          <figure
+            key={direction}
+            className="relative m-0 min-h-0 overflow-hidden rounded-lg border border-app-line bg-app-surface-raised"
+          >
+            <WorkflowImage
+              src={imageUrl}
+              alt={`${directionLabel(direction)}方向${kind}`}
+              variant="thumbnail"
+            />
+            <figcaption className="absolute bottom-1 left-1 rounded-full bg-app-canvas/85 px-1.5 py-0.5 text-[8px] font-bold text-app-ink">
+              {directionLabel(direction)}
+            </figcaption>
+          </figure>
+        ) : (
+          <div
+            key={direction}
+            role="status"
+            aria-label={`${directionLabel(direction)}方向${kind}缺失`}
+            className="grid min-h-0 place-items-center rounded-lg border border-dashed border-app-line bg-app-surface-raised text-[9px] font-semibold text-app-muted"
+          >
+            {directionLabel(direction)}方向缺失
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function CharacterSetupContent({
   node,
   input,
@@ -746,6 +807,8 @@ function CharacterTemplateContent({
     ) as Partial<Record<ActionDirection, string | null>>
     const directionSetComplete = directions.every((direction) => directionImages[direction])
     const directionCountLabel = directions.length === 8 ? '八向' : '四向'
+    const layout = getDirectionGridLayout(input.project.directionalMovement)
+    const columnClass = layout.columns === 3 ? 'grid-cols-3' : 'grid-cols-2'
     return (
       <div className={CARD_STACK}>
         <p className={CARD_TEXT}>所有方向均基于已确认母版生成，每个方向一张。</p>
@@ -753,11 +816,14 @@ function CharacterTemplateContent({
           role="group"
           aria-label={`${directionCountLabel}首帧集合`}
           data-layout="direction-first-frame-stack"
-          className={`grid w-full gap-2 overflow-hidden rounded-xl border border-app-line-strong bg-app-surface-muted p-2 ${
-            directions.length === 8 ? 'aspect-[2/1] grid-cols-4' : 'aspect-square grid-cols-2'
-          }`}
+          className={`grid aspect-square w-full ${columnClass} gap-2 overflow-hidden rounded-xl border border-app-line-strong bg-app-surface-muted p-2`}
         >
-          {directions.map((direction) => {
+          {layout.cells.map((direction, index) => {
+            if (!direction) {
+              return (
+                <div key={`empty-${index}`} aria-label="八向宫格中心留空" className="min-h-0" />
+              )
+            }
             const imageUrl = directionImages[direction]
             return imageUrl ? (
               <figure
@@ -833,7 +899,12 @@ function CharacterTemplateContent({
       ) ?? input.character?.outfits[0]
     return (
       <div className={CARD_STACK}>
-        <WorkflowImage src={node.selectedImageUrl} alt="已确认身份母版" variant="master" />
+        <DirectionAssetGrid
+          movement={input.project.directionalMovement}
+          images={{ east: node.selectedImageUrl, ...node.selectedImages }}
+          kind="角色母版"
+          singleAlt="已确认身份母版"
+        />
         <span className="text-center text-[11px] text-[var(--color-app-muted)]">身份已锁定</span>
         <div className="grid gap-2" role="group" aria-label="角色母版操作">
           {outfit ? <NodeExportButton model={input.exportModels.get(outfit.id)} /> : null}
@@ -1386,12 +1457,19 @@ function FirstFrameContent({
     )
   }
   if (node.phase === 'completed' && (node.selectedFirstFrameUrl || node.selectedFirstFrameUrls)) {
-    const selectedImageUrl =
-      node.selectedFirstFrameUrls?.east ?? node.selectedFirstFrameUrl ?? undefined
-    if (!selectedImageUrl) return <StatusText node={node} input={input} />
+    const selectedImages = {
+      east: node.selectedFirstFrameUrls?.east ?? node.selectedFirstFrameUrl ?? undefined,
+      ...node.selectedFirstFrameUrls,
+    }
+    if (!selectedImages.east) return <StatusText node={node} input={input} />
     return (
       <div className={CARD_STACK}>
-        <WorkflowImage src={selectedImageUrl} alt="已确认动作首帧" variant="master" />
+        <DirectionAssetGrid
+          movement={input.project.directionalMovement}
+          images={selectedImages}
+          kind="动作首帧"
+          singleAlt="已确认动作首帧"
+        />
         <div className="grid gap-2">
           <button
             type="button"

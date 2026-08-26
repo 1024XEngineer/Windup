@@ -822,7 +822,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
   })
 
-  it('八向首帧集合使用四列两行并完整展示八个方向', async () => {
+  it('八向首帧集合使用九宫格并将中心留空', async () => {
     const directions = [
       'east',
       'west',
@@ -870,9 +870,47 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     renderEditor('/workflow-editor/42')
 
     const group = await screen.findByRole('group', { name: '八向首帧集合' })
-    expect(group.className).toContain('grid-cols-4')
-    expect(group.className).toContain('aspect-[2/1]')
+    expect(group.className).toContain('grid-cols-3')
+    expect(group.className).toContain('aspect-square')
     expect(within(group).getAllByRole('img')).toHaveLength(8)
+    expect(within(group).getByLabelText('八向宫格中心留空')).toBeTruthy()
+  })
+
+  it('四向角色母版完成态展示四张独立图片', async () => {
+    const workflow = completedTemplateWorkflow('42')
+    workflow.nodes[1] = {
+      ...(workflow.nodes[1] as CharacterTemplateWorkflowNode),
+      selectedImages: {
+        east: 'https://assets.windup.test/east.png',
+        west: 'https://assets.windup.test/west.png',
+        north: 'https://assets.windup.test/north.png',
+        south: 'https://assets.windup.test/south.png',
+      },
+      selectedImageUrl: 'https://assets.windup.test/east.png',
+    }
+    defaultSessionLoader.mockResolvedValue(
+      createSession(workflow, {
+        project: { ...projectFixture(), directionalMovement: 'four-way' },
+      }),
+    )
+
+    renderEditor('/workflow-editor/42')
+
+    const group = await screen.findByRole('group', { name: '四向角色母版集合' })
+    expect(group.className).toContain('grid-cols-2')
+    expect(within(group).getAllByRole('img')).toHaveLength(4)
+    expect(
+      within(group)
+        .getAllByRole('img')
+        .map((image) => image.getAttribute('src')),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('/east.png'),
+        expect.stringContaining('/west.png'),
+        expect.stringContaining('/north.png'),
+        expect.stringContaining('/south.png'),
+      ]),
+    )
   })
 
   it('方向任务失败时只提供该源方向的重试入口', async () => {
@@ -1297,6 +1335,57 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     )
     expect(screen.getByRole('img', { name: '北动作首帧候选 1' })).toBeTruthy()
     expect(screen.getByRole('img', { name: '西动作首帧候选 1' })).toBeTruthy()
+  })
+
+  it('八向动作首帧完成态展示八张独立图片并将中心留空', async () => {
+    const directions = [
+      'east',
+      'west',
+      'north',
+      'south',
+      'north_east',
+      'north_west',
+      'south_east',
+      'south_west',
+    ] as const
+    const workflow = reviewingActionWorkflow()
+    const firstFrame = workflow.nodes.find((node) => node.type === 'action-first-frame')
+    if (!firstFrame || firstFrame.type !== 'action-first-frame') throw new Error('missing frame')
+    firstFrame.selectedFirstFrameUrls = Object.fromEntries(
+      directions.map((direction) => [
+        direction,
+        `https://assets.windup.test/first-${direction}.png`,
+      ]),
+    )
+    firstFrame.selectedFirstFrameUrl = 'https://assets.windup.test/first-east.png'
+    defaultSessionLoader.mockResolvedValue(
+      createSession(workflow, {
+        project: { ...projectFixture(), directionalMovement: 'eight-way' },
+      }),
+    )
+
+    renderEditor('/workflow-editor/42')
+
+    const group = await screen.findByRole('group', { name: '八向动作首帧集合' })
+    expect(group.className).toContain('grid-cols-3')
+    expect(within(group).getAllByRole('img')).toHaveLength(8)
+    expect(within(group).getByLabelText('八向宫格中心留空')).toBeTruthy()
+    for (const [direction, label] of [
+      ['east', '东'],
+      ['west', '西'],
+      ['north', '北'],
+      ['south', '南'],
+      ['north_east', '东北'],
+      ['north_west', '西北'],
+      ['south_east', '东南'],
+      ['south_west', '西南'],
+    ] as const) {
+      expect(
+        within(group)
+          .getByRole('img', { name: `${label}方向动作首帧` })
+          .getAttribute('src'),
+      ).toContain(`/first-${direction}.png`)
+    }
   })
 
   it('该造型没有 3D 资产时禁用三渲二选项并给出原因', async () => {
