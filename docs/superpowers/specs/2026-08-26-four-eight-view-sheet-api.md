@@ -28,18 +28,6 @@
 
 东向是侧视，必须从图生图出，不能复用正视母版。
 
-## 与 PerfectPixel Studio 的对齐（立绘，不是动作条带）
-
-[PerfectPixel Studio](https://github.com/gykim80/perfectpixel-studio) 的 `genDirectionSet` 是某个动作的 21:9 条带（south 条带当运动时序参考）。本接口是**站立立绘 sheet**（south 定妆当身份锚）。动作 i2v、洋红抠图、DP 切帧、`[base, south条带]` 双参考**不对齐**。
-
-立绘借这几样：
-
-- **方向提示词**：`view_sheet.md` 源方向节用他们的 facing 三件套（Required view / Body / Visibility）。身份节带 `Facing direction lock (overrides …)` 和 `Never drift back toward a front view`。正面母版只提供身份，本张改成该机位。
-- **定妆构图**：`## master`（特征核对、放松站立、约占画布高度 3/4）。灰底 + u2net，不写 `#FF00FF`。
-- **像素合同**：`## pixel` 加厚为 32–64px 放大感 / 1px 描边 / 色块；抠图后仍按母版 `master_pixel_spec` 吸附网格。
-- **站立 QC（InspectFrames 口径）**：源格在抠图后、吸附/对齐前检查。空图、非背面且母版有透明时直方图交 `< 0.40`、east 高对齐后宽度仍 ≥ 母版 85%（画成了正面）记 Error。贴边只记 Hint。失败把英文 RetryHints 拼进下一轮提示词，每格最多 3 次；三次仍失败则留分数最好的一张，不把整张 sheet 判失败。north / NE 跳过身份（背面直方图会误报）。读数仍写入 `quality.identity_sim`。
-- **5+3 镜像**：与发布契约一致；前端 `generationDirections` 等于源方向，west / NW / SW 走 `derivedDirections`。
-
 ## 和现有两个口像什么、不像什么
 
 **信封一样。** 提交立刻返回 `GenerationTaskOut`；进度和终态走：
@@ -86,7 +74,7 @@ POST /generation/eight-view
 
 单向项目（`directional_movement == 1`）不要打这两个口：母版本身就是唯一朝向。规格对不上 → `400`。
 
-`POST /generation/image-set` 不再作为产品路径扩能力；旧任务仍可查询/恢复。本接口 **没有** `retry-failed-directions`：缺一格不能局部补，失败整单重提。源格内部的 QC 重试（最多 3 次、失败留最好的一张）是执行器自己的事，不是这条 HTTP。
+`POST /generation/image-set` 不再作为产品路径扩能力；旧任务仍可查询/恢复。本接口 **没有** `retry-failed-directions`：sheet 是一张图，失败整单重提，不按格局部重试。
 
 ## 请求
 
@@ -200,7 +188,7 @@ POST /generation/eight-view
 | (0,2) | south_west | `(0, 2h)` |
 | (1,1) | 空 | — |
 
-四向只贴 north / west / east / south 四格。八向再贴四个对角。贴格前按南向母版不透明包围盒统一身高和脚线（水平对主体中心）；镜像跟源格走，不另算一套。拼装只贴已经 `w×h` 的 PNG，不再二次缩放。
+四向只贴 north / west / east / south 四格。八向再贴四个对角。脚底已在各格 `w×h` 内对齐，拼装不再二次对齐。
 
 
 `quality` 与 image 同口径：只记账，不参与前端回填，本层不据此判成败。没有读数时为 `null`。
@@ -218,7 +206,7 @@ POST /generation/eight-view
 - 四向：每张候选 **2** 次（east、north；south 复用正视母版）
 - 八向：每张候选 **4** 次（east、north、north_east、south_east）
 
-镜像不计费。格内 QC 重试（每源格最多 3 次）吃在这笔冻结里，不把冻额乘 3。失败整单解冻；成功按实际上游调用结算，口径与现有 image 预付费相同（提交时冻、终态 capture/release）。
+镜像不计费。失败整单解冻；成功按实际上游调用结算，口径与现有 image 预付费相同（提交时冻、终态 capture/release）。
 
 ## 确认之后怎么接到动作
 
