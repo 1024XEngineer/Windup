@@ -3,6 +3,7 @@ import {
   createGenerationApis,
   createMediaApis,
   projectApis,
+  pixelPerfectApis as defaultPixelPerfectApis,
   workflowRunApis,
   characterTemplatesFromImages,
   getDirectionProfile,
@@ -17,6 +18,7 @@ import {
   type MediaReference,
   type Project,
   type ProjectApis,
+  type PixelPerfectApis,
   type WorkflowNode,
   type WorkflowRun,
   type WorkflowRunApis,
@@ -47,6 +49,13 @@ export interface QuickStartFrame {
   index: number
   imageUrl: string
   durationMs: number | null
+}
+
+export interface QuickStartPixelPerfectFrame {
+  index: number
+  blob: Blob
+  durationMs: number | null
+  sourceImageUrl?: string
 }
 
 export interface QuickStartCandidate {
@@ -101,6 +110,10 @@ export interface QuickStartSession {
   resolveCharacterInfo(): Promise<{ characterId: string; outfitId: string } | null>
   getTemplateCandidates(): Promise<readonly QuickStartCandidate[]>
   getActionFrames(): Promise<readonly QuickStartFrame[]>
+  /** 只生成当前会话预览，不写回 WorkflowRun 或角色资产。 */
+  pixelPerfectActionFrames?(
+    frames: readonly QuickStartFrame[],
+  ): Promise<readonly QuickStartPixelPerfectFrame[]>
   getFailedGenerationDirections(): Promise<readonly QuickStartFailedDirection[]>
   retryGenerationDirection(
     nodeId: WorkflowNode['id'],
@@ -110,6 +123,7 @@ export interface QuickStartSession {
   regenerateCharacterTemplate(
     mode: 'regenerate' | 'refine',
     adjustmentPrompt?: string,
+    candidateId?: string,
   ): Promise<WorkflowRun>
   regenerateFirstFrame(
     mode: 'regenerate' | 'refine',
@@ -142,6 +156,7 @@ export interface CreateQuickStartServiceOptions {
   prepareProject: PrepareQuickStartProject
   /** 为已有项目继续生成动作时读取图片接口要求的精灵尺寸。 */
   projectApis: Pick<ProjectApis, 'get'>
+  pixelPerfectApis?: Pick<PixelPerfectApis, 'reconstruct'>
   characterApis?: CharacterApis
   mediaApis?: QuickStartMediaApis
   onAsyncError?: (error: Error) => void
@@ -156,6 +171,37 @@ function boundedDisplayName(value: string, maxLength: number): string {
   return characters.length > maxLength
     ? `${characters.slice(0, maxLength - 1).join('')}…`
     : characters.join('')
+}
+
+/**
+ * 完整动作动辄几十帧，多方向导出还会把各方向的帧并进同一批；逐帧重建在后端是 CPU 与内存密集的
+ * 同步任务，一次点击把全部帧同时打过去会占满线程池并把单机内存顶爆。这里限制同时在途的请求数。
+ */
+const PIXEL_PERFECT_CONCURRENCY = 3
+
+/** 有上限的并发映射：结果按输入顺序返回，任一项失败即停止取新任务并抛出。 */
+async function mapWithConcurrency<Input, Output>(
+  items: readonly Input[],
+  limit: number,
+  run: (item: Input, index: number) => Promise<Output>,
+): Promise<Output[]> {
+  const results = new Array<Output>(items.length)
+  let cursor = 0
+  let failed = false
+  const worker = async () => {
+    while (!failed && cursor < items.length) {
+      const index = cursor
+      cursor += 1
+      try {
+        results[index] = await run(items[index]!, index)
+      } catch (cause) {
+        failed = true
+        throw cause
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
 }
 
 function inferGeneratableActionType(description: string): GeneratableActionType {
@@ -176,6 +222,7 @@ export function createQuickStartService({
   generationApis,
   prepareProject,
   projectApis,
+  pixelPerfectApis = defaultPixelPerfectApis,
   characterApis,
   mediaApis,
   onAsyncError = (error) => console.error('[quick-start] 异步工作流错误', error),
@@ -751,6 +798,11 @@ export function createQuickStartService({
     let stopAutomaticAdvance: (() => void) | null = null
     let stopAutomaticDelivery: (() => void) | null = null
     let candidateCommand: Promise<WorkflowRun> | null = null
+    let candidateBatch = 0
+    let characterCandidateUrls = new Map<string, string>()
+    let characterTemplateCandidates: NonNullable<
+      WorkflowAgentContext['characterTemplateCandidates']
+    > = []
     let disposed = false
 
     const ensureAutomaticAdvance = () => {
@@ -978,11 +1030,18 @@ export function createQuickStartService({
         const run = controller.getWorkflow()
         const availableTools: WorkflowAgentContext['availableTools'][number][] = []
         const template = run.nodes.find((node) => node.type === 'character-template')
-        if (
+        const hasUnconfirmedCandidates =
           template?.type === 'character-template' &&
-          template.status === 'passed' &&
-          template.phase === 'completed' &&
-          template.selectedImageUrl
+          template.status === 'active' &&
+          template.phase === 'selecting' &&
+          !template.selectedImageUrl &&
+          characterTemplateCandidates.length > 0
+        if (
+          hasUnconfirmedCandidates ||
+          (template?.type === 'character-template' &&
+            template.status === 'passed' &&
+            template.phase === 'completed' &&
+            template.selectedImageUrl)
         ) {
           availableTools.push(REGENERATE_CHARACTER_TEMPLATE_TOOL, REFINE_CHARACTER_TEMPLATE_TOOL)
         }
@@ -995,18 +1054,34 @@ export function createQuickStartService({
         ) {
           availableTools.push(REGENERATE_FIRST_FRAME_TOOL, REFINE_FIRST_FRAME_TOOL)
         }
-        return { availableTools }
+        return {
+          availableTools,
+          ...(hasUnconfirmedCandidates ? { characterTemplateCandidates } : {}),
+        }
       },
-      async regenerateCharacterTemplate(mode, adjustmentPrompt) {
+      async regenerateCharacterTemplate(mode, adjustmentPrompt, candidateId) {
         const run = controller.getWorkflow()
         const template = templateNode(run)
+        const isCandidateSelection =
+          template.status === 'active' &&
+          template.phase === 'selecting' &&
+          !template.selectedImageUrl
+        const sourceImageUrl = candidateId ? characterCandidateUrls.get(candidateId) : undefined
+        if (isCandidateSelection && mode === 'refine' && !sourceImageUrl) {
+          throw new Error('候选图标识无效')
+        }
         const spriteSize =
           knownSpriteSize ?? (await resolveProjectSpriteSize(controller.getWorkflow().projectId))
+        if (isCandidateSelection) {
+          characterCandidateUrls = new Map()
+          characterTemplateCandidates = []
+        }
         await controller.regenerateCharacterTemplate(template.id, {
           spriteWidth: spriteSize.width,
           spriteHeight: spriteSize.height,
           mode,
           ...(adjustmentPrompt === undefined ? {} : { adjustmentPrompt }),
+          ...(sourceImageUrl === undefined ? {} : { sourceImageUrl }),
         })
         return controller.getWorkflow()
       },
@@ -1122,7 +1197,25 @@ export function createQuickStartService({
       resolveCharacterInfo: () => resolveCharacterInfo(controller),
       async getTemplateCandidates() {
         const template = templateNode(controller.getWorkflow())
-        return candidatesByDirection(controller, template.id, 'character_template')
+        const candidates = await candidatesByDirection(
+          controller,
+          template.id,
+          'character_template',
+        )
+        if (
+          template.status === 'active' &&
+          template.phase === 'selecting' &&
+          !template.selectedImageUrl
+        ) {
+          const batch = ++candidateBatch
+          characterCandidateUrls = new Map()
+          characterTemplateCandidates = candidates.map((candidate, index) => {
+            const id = `candidate-${batch}-${index + 1}`
+            characterCandidateUrls.set(id, candidate.imageUrl)
+            return { id, position: index + 1 }
+          })
+        }
+        return candidates
       },
       async getActionFrames() {
         const fullFrame = latestFullFrame(controller.getWorkflow())
@@ -1136,6 +1229,23 @@ export function createQuickStartService({
               durationMs: frame.durationMs,
             }))
           : []
+      },
+      async pixelPerfectActionFrames(frames) {
+        const run = controller.getWorkflow()
+        const spriteSize = knownSpriteSize ?? (await resolveProjectSpriteSize(run.projectId))
+        return mapWithConcurrency(frames, PIXEL_PERFECT_CONCURRENCY, async (frame) => {
+          const result = await pixelPerfectApis.reconstruct({
+            imageUrl: frame.imageUrl,
+            cols: spriteSize.width,
+            rows: spriteSize.height,
+          })
+          return {
+            index: frame.index,
+            blob: result.blob,
+            durationMs: frame.durationMs,
+            sourceImageUrl: frame.imageUrl,
+          }
+        })
       },
       async getExportModel() {
         if (!characterApis) return null

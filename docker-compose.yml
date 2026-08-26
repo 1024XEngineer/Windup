@@ -36,6 +36,8 @@ services:
     command: ["python", "-m", "windup_app.worker"]
     healthcheck:
       disable: true
+    # 4C8G:挡住 worker 把 sshd 一起 OOM。更大机器可调高。见 #690。
+    mem_limit: 5g
     networks:
       - windup-net
 

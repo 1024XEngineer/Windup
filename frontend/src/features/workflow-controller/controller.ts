@@ -33,12 +33,8 @@ import {
   type ArtStyle,
   getDirectionProfile,
   isImageCandidateCount,
-  ProjectNameConflictError,
   WorkflowRunConflictError,
 } from '@/entities'
-
-const PROJECT_NAME_MAX_LENGTH = 20
-const QUICK_START_PROJECT_NAME_ATTEMPTS = 100
 
 export interface AddActionInput {
   /** 首帧节点 ID；完整动画和审核节点在此 ID 后追加稳定后缀。 */
@@ -94,6 +90,8 @@ export interface RegenerateImageOptions {
   mode: RegenerationMode
   /** 微调时追加到原始描述的临时说明；重新生成模式下不得提交。 */
   adjustmentPrompt?: string
+  /** 候选态微调时由宿主句柄解析出的参考图；Controller 不接触候选序号。 */
+  sourceImageUrl?: GeneratedImage['url']
 }
 
 export interface RetryGenerationDirectionOptions {
@@ -127,6 +125,8 @@ export interface StartCharacterGenerationInput {
   gameStyle?: ArtStyle
   projectId?: Project['id']
   automaticDelivery?: { actionPrompt?: string; actionType?: 'walk' }
+  /** 仅记录 Agent 的像素素材意图，生成阶段不据此改变原图。 */
+  suggestPixelPerfect?: boolean
 }
 
 export interface StartCharacterGenerationResult {
@@ -253,13 +253,6 @@ interface PendingGenerationAttachment {
   generation: Generation
 }
 
-function boundedProjectName(value: string, maxLength: number): string {
-  const characters = Array.from(value)
-  return characters.length > maxLength
-    ? `${characters.slice(0, maxLength - 1).join('')}…`
-    : characters.join('')
-}
-
 export function createAutoPrepareProject(
   projectApis: Pick<ProjectApis, 'create' | 'get'>,
 ): PrepareQuickStartProject {
@@ -272,34 +265,18 @@ export function createAutoPrepareProject(
         directionalMovement: project.directionalMovement,
       }
     }
-    const normalizedPrompt = prompt.trim().replace(/\s+/gu, ' ') || '未命名项目'
-    let lastConflict: unknown
-
-    for (let sequence = 1; sequence <= QUICK_START_PROJECT_NAME_ATTEMPTS; sequence += 1) {
-      const suffix = sequence === 1 ? '' : ` ${sequence}`
-      const maxBaseLength = PROJECT_NAME_MAX_LENGTH - Array.from(suffix).length
-      const base = boundedProjectName(normalizedPrompt, maxBaseLength)
-
-      try {
-        const project = await projectApis.create({
-          name: `${base}${suffix}`,
-          perspective: 'side',
-          directionalMovement,
-          spriteSize: { width: 256, height: 256 },
-          gameStyle: options?.gameStyle,
-        })
-        return {
-          id: project.id,
-          spriteSize: project.spriteSize,
-          directionalMovement: project.directionalMovement,
-        }
-      } catch (error) {
-        if (!(error instanceof ProjectNameConflictError)) throw error
-        lastConflict = error
-      }
+    const project = await projectApis.create({
+      nameContext: prompt.trim().replace(/\s+/gu, ' '),
+      perspective: 'side',
+      directionalMovement,
+      spriteSize: { width: 256, height: 256 },
+      gameStyle: options?.gameStyle,
+    })
+    return {
+      id: project.id,
+      spriteSize: project.spriteSize,
+      directionalMovement: project.directionalMovement,
     }
-
-    throw lastConflict
   }
 }
 
@@ -420,6 +397,7 @@ export function createWorkflowController({
     gameStyle,
     projectId,
     automaticDelivery,
+    suggestPixelPerfect = false,
   }: StartCharacterGenerationInput): Promise<StartCharacterGenerationResult> {
     ensureRunning()
     if (!prepareProject) {
@@ -447,6 +425,7 @@ export function createWorkflowController({
           generations: [],
           error: null,
           input: { prompt: normalizedPrompt, referenceMedia: [] },
+          ...(suggestPixelPerfect ? { pixelPerfectSuggested: true } : {}),
           ...(automaticDelivery
             ? {
                 automation: {
@@ -882,30 +861,37 @@ export function createWorkflowController({
     const before = requireWorkflow()
     const templateNode = findNode(before, nodeId)
     if (templateNode.type !== 'character-template') throw new Error('目标节点不是角色母版')
-    if (
-      templateNode.status !== 'passed' ||
-      templateNode.phase !== 'completed' ||
+    const isCompletedTemplate =
+      templateNode.status === 'passed' &&
+      templateNode.phase === 'completed' &&
+      Boolean(templateNode.selectedImageUrl)
+    const isCandidateSelection =
+      templateNode.status === 'active' &&
+      templateNode.phase === 'selecting' &&
       !templateNode.selectedImageUrl
-    ) {
+    if (!isCompletedTemplate && !isCandidateSelection) {
       throw new Error('角色母版当前不能重新生成')
     }
     const setupNode = findSingleDependencyNode(before, templateNode, 'character-setup')
     const prompt = adjustedPrompt(setupNode.input.prompt, options)
     const sourceImageUrls =
       options.mode === 'refine'
-        ? Object.fromEntries(
-            generationDirections.map((direction) => {
-              const imageUrl = selectedDirectionUrl(
-                templateNode.selectedImages,
-                templateNode.selectedImageUrl,
-                direction,
-              )
-              if (!imageUrl) throw new Error(`角色母版尚未确认方向 ${direction}`)
-              return [direction, imageUrl]
-            }),
-          )
+        ? isCandidateSelection
+          ? { east: nonEmpty(options.sourceImageUrl ?? '', 'sourceImageUrl') }
+          : Object.fromEntries(
+              generationDirections.map((direction) => {
+                const imageUrl = selectedDirectionUrl(
+                  templateNode.selectedImages,
+                  templateNode.selectedImageUrl,
+                  direction,
+                )
+                if (!imageUrl) throw new Error(`角色母版尚未确认方向 ${direction}`)
+                return [direction, imageUrl]
+              }),
+            )
         : undefined
-    const keys = generationDirections.map((direction) =>
+    const requestedDirections = isCandidateSelection ? (['east'] as const) : generationDirections
+    const keys = requestedDirections.map((direction) =>
       generationKey(nodeId, 'character_template', direction),
     )
     const pending = keys.flatMap((key) => {
@@ -919,6 +905,8 @@ export function createWorkflowController({
         spriteHeight: options.spriteHeight,
         sourceImageUrls,
         prompt,
+        directions: requestedDirections,
+        ...(isCandidateSelection ? { candidateCount: 3 as const } : {}),
       })
     })
   }

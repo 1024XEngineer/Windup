@@ -218,6 +218,18 @@ describe('workflowRunApis', () => {
     await expect(apis.get('17')).resolves.toMatchObject({ nodes: automaticNodes })
   })
 
+  it('hydrates the persisted pixel-perfect suggestion from the setup node', async () => {
+    const suggestedNodes = structuredClone(nodes)
+    const setup = suggestedNodes.find((node) => node.type === 'character-setup')
+    if (!setup || setup.type !== 'character-setup') throw new Error('测试缺少角色设定节点')
+    setup.pixelPerfectSuggested = true
+    const apis = await loadWorkflowRunApis(async () =>
+      jsonResponse({ ...workflowRunDto, nodes: suggestedNodes }),
+    )
+
+    await expect(apis.get('17')).resolves.toMatchObject({ nodes: suggestedNodes })
+  })
+
   it('patches the complete node graph and uses the returned version', async () => {
     let request: Request | undefined
     const apis = await loadWorkflowRunApis(async (input, init) => {

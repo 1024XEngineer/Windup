@@ -5,6 +5,7 @@ export type GenerationProgressKind =
   | 'character-template'
   | 'action-first-frame'
   | 'action-full-frame'
+  | 'pixel-perfect'
 
 const GENERATION_PROGRESS_MESSAGES: Record<GenerationProgressKind, readonly KineticCopyMessage[]> =
   {
@@ -31,6 +32,14 @@ const GENERATION_PROGRESS_MESSAGES: Record<GenerationProgressKind, readonly Kine
       { lines: ['检查手脚的衔接'] },
       { lines: ['让起落自然一点'] },
       { lines: ['调整动作幅度'] },
+    ],
+    'pixel-perfect': [
+      { lines: ['对齐像素网格'] },
+      { lines: ['整理轮廓边缘'] },
+      { lines: ['归拢相近颜色'] },
+      { lines: ['保留透明边界'] },
+      { lines: ['逐帧检查细节'] },
+      { lines: ['准备像素版本'] },
     ],
   }
 

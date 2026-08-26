@@ -182,6 +182,53 @@ function serviceFor(run: WorkflowRun | null, overrides: Partial<QuickStartMock> 
 }
 
 describe('Quick Start workflow Agent', () => {
+  it('routes an unselected candidate refinement to the workflow Agent', async () => {
+    const run = workflow(setupAndTemplate())
+    const planner = vi.fn(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'refine_character_template',
+          input: { candidateId: 'candidate-2', adjustmentPrompt: '把牛角缩短' },
+        },
+      ],
+    }))
+    const service = serviceFor(run, {
+      getTemplateCandidates: vi.fn(async () =>
+        eastCandidates(
+          'https://example.test/character-1.png',
+          'https://example.test/character-2.png',
+          'https://example.test/character-3.png',
+        ),
+      ),
+      getWorkflowAgentContext: vi.fn(() => ({
+        availableTools: ['regenerate_character_template', 'refine_character_template'] as const,
+        characterTemplateCandidates: [
+          { id: 'candidate-1', position: 1 },
+          { id: 'candidate-2', position: 2 },
+          { id: 'candidate-3', position: 3 },
+        ],
+      })),
+    })
+    renderAt(`/quick-start/${run.id}`, service, agentFor({ planner }))
+
+    await screen.findAllByRole('button', { name: /选择角色方案/u })
+    const composer = screen.getByRole('textbox', { name: '继续描述你的想法' })
+    expect((composer as HTMLInputElement).disabled).toBe(false)
+    fireEvent.change(composer, { target: { value: '把第二张的牛角缩短' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() =>
+      expect(service.regenerateCharacterTemplate).toHaveBeenCalledWith(
+        'refine',
+        '把牛角缩短',
+        'candidate-2',
+      ),
+    )
+    expect(service.confirmCandidate).not.toHaveBeenCalled()
+  })
+
   it('routes a completed-run refinement through the current Controller session', async () => {
     const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
     const planner = vi.fn(async () => ({
@@ -788,7 +835,12 @@ describe('QuickStartPage', () => {
 
     fireEvent.change(composer, { target: { value: '银发骑士' } })
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' })
-    fireEvent.click(await screen.findByRole('button', { name: '停止生成' }))
+    const stop = await screen.findByRole('button', { name: '停止生成' })
+    expect(stop.className).toContain('rounded-full')
+    expect(stop.className).toContain('bg-app-accent')
+    expect(stop.className).not.toContain('bg-app-ink')
+    expect(stop.textContent).toBe('')
+    fireEvent.click(stop)
 
     await waitFor(() => {
       expect(composer.disabled).toBe(false)
@@ -1272,14 +1324,21 @@ describe('QuickStartPage', () => {
     const conversationControls = composer.querySelector(
       '[data-layout="quick-start-composer-controls"]',
     )
-    expect(conversationForm?.className).toContain('grid-cols-[1fr_auto]')
-    expect(conversationSurface?.className).not.toContain('border-app-line-strong')
-    expect(conversationSurface?.className).not.toContain('shadow-app-panel')
+    expect(conversationForm?.className).toContain('relative')
+    expect(conversationForm?.className).toContain('flex-col')
+    expect(conversationSurface?.className).toContain('rounded-app-surface')
+    expect(conversationSurface?.className).toContain('border-app-line-strong')
+    expect(conversationSurface?.className).toContain('shadow-app-panel')
     expect(conversationControls?.className).toContain('hidden')
-    expect(conversationForm?.querySelector('button')?.className).not.toContain('absolute')
+    const conversationSubmit = screen.getByRole('button', { name: '继续' })
+    expect(conversationSubmit.className).toContain('absolute')
+    expect(conversationSubmit.className).toContain('rounded-full')
+    expect(conversationSubmit.textContent).toBe('')
     expect(input.tagName).toBe('TEXTAREA')
     expect(input.rows).toBe(1)
     expect(input.className).toContain('[field-sizing:content]')
+    expect(input.className).toContain('min-h-[52px]')
+    expect(input.className).toContain('pr-14')
     expect(input.value).toBe('')
     expect(
       screen.getByText('我会保留角色的核心特征，并整理成适合母版生成的完整描述。'),
@@ -1298,6 +1357,7 @@ describe('QuickStartPage', () => {
     expect(screen.queryByRole('button', { name: '确认并生成' })).toBeNull()
     const fill = screen.getByRole('button', { name: '填入输入框' })
     expect(fill.className).not.toContain('border')
+    expect(fill.hasAttribute('data-inline-arrow-action')).toBe(true)
     expect(fill.textContent).toContain('编辑后逐步确认')
     fireEvent.click(fill)
 
@@ -1604,6 +1664,168 @@ describe('QuickStartPage', () => {
     expect(firstThumbnail.getAttribute('src')).toBe('https://example.test/action-1.png')
   })
 
+  it('offers optional pixel-perfect processing only for a persisted pixel-art intent', async () => {
+    const suggested = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const setup = suggested.nodes.find((node) => node.type === 'character-setup')
+    if (!setup || setup.type !== 'character-setup') throw new Error('测试缺少角色设定节点')
+    setup.pixelPerfectSuggested = true
+    const originalFrames = [
+      { index: 0, imageUrl: 'https://example.test/original-0.png', durationMs: 80 },
+      { index: 1, imageUrl: 'https://example.test/original-1.png', durationMs: 80 },
+    ]
+    const exportModel: ExportPackageModel = {
+      stage: 'action-assets',
+      characterId: 'character-1',
+      characterName: '像素骑士',
+      characterImageUrl: '/master.png',
+      outfitId: 'outfit-1',
+      outfitName: '默认造型',
+      canvas: { width: 32, height: 32 },
+      source: { workflowRunId: suggested.id, generationIds: [] },
+      firstFrames: [],
+      actions: [
+        {
+          id: 'action-full',
+          name: '挥手',
+          type: 'custom',
+          fps: 12,
+          sequences: [
+            {
+              direction: 'south',
+              expectedFrameCount: originalFrames.length,
+              loop: true,
+              anchor: { x: 0.5, y: 0.9 },
+              footY: 28,
+              qualityStatus: 'passed',
+              frames: originalFrames,
+            },
+          ],
+        },
+      ],
+      playtest: null,
+    }
+    const pixelPerfectActionFrames = vi.fn(async () => [
+      { index: 0, blob: new Blob(['pixel-0'], { type: 'image/png' }), durationMs: 80 },
+      { index: 1, blob: new Blob(['pixel-1'], { type: 'image/png' }), durationMs: 80 },
+    ])
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi
+        .fn()
+        .mockReturnValueOnce('blob:https://windup.test/pixel-0')
+        .mockReturnValueOnce('blob:https://windup.test/pixel-1'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    const service = serviceFor(suggested, {
+      getActionFrames: vi.fn(async () => originalFrames),
+      getExportModel: vi.fn(async () => exportModel),
+      pixelPerfectActionFrames,
+    })
+    renderAt('/quick-start/run-1', service)
+
+    const explanation = await screen.findByText(
+      '我还可以把这些帧重新对齐到像素网格，让边缘和色块更干净。',
+    )
+    expect(explanation.hasAttribute('data-pixel-perfect-explanation')).toBe(true)
+    expect(explanation.className).toContain('font-serif')
+    const suggestion = screen.getByRole('button', { name: '开始完美像素化' })
+    expect(suggestion.hasAttribute('data-pixel-perfect-suggestion')).toBe(true)
+    expect(suggestion.hasAttribute('data-inline-arrow-action')).toBe(true)
+    expect(suggestion.querySelector('svg')).toBeTruthy()
+    fireEvent.click(suggestion)
+
+    expect(await screen.findByLabelText('完美像素化进度')).toBeTruthy()
+    await waitFor(() => expect(pixelPerfectActionFrames).toHaveBeenCalledWith(originalFrames))
+    const pixelVersion = await screen.findByRole('button', { name: '查看完美像素版' })
+    fireEvent.click(pixelVersion)
+
+    expect(screen.getByRole('img', { name: '完整动作预览' }).getAttribute('src')).toBe(
+      'blob:https://windup.test/pixel-0',
+    )
+    expect(pixelVersion.closest('[data-pixel-perfect-comparison]')?.children).toHaveLength(2)
+    expect(
+      screen.getByRole('button', { name: '导出完美像素版' }).closest('[data-agent-actions]'),
+    ).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '查看原图' }))
+    expect(screen.getByRole('img', { name: '完整动作预览' }).getAttribute('src')).toBe(
+      'https://example.test/original-0.png',
+    )
+    expect(screen.getByRole('button', { name: '导出原图' })).toBeTruthy()
+  })
+
+  it('discards pixel-perfect frames when the action changed while processing', async () => {
+    const suggested = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const setup = suggested.nodes.find((node) => node.type === 'character-setup')
+    if (!setup || setup.type !== 'character-setup') throw new Error('测试缺少角色设定节点')
+    setup.pixelPerfectSuggested = true
+    const originalFrames = [
+      { index: 0, imageUrl: 'https://example.test/original-0.png', durationMs: 80 },
+    ]
+    let releaseReconstruction: (() => void) | null = null
+    const pixelPerfectActionFrames = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        releaseReconstruction = resolve
+      })
+      return [{ index: 0, blob: new Blob(['pixel-0'], { type: 'image/png' }), durationMs: 80 }]
+    })
+    const createObjectURL = vi.fn(() => 'blob:https://windup.test/pixel-0')
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    let publishRun: ((next: WorkflowRun) => void) | null = null
+    const service = serviceFor(suggested, {
+      getActionFrames: vi.fn(async () => originalFrames),
+      pixelPerfectActionFrames,
+      subscribe: vi.fn((listener: (next: WorkflowRun) => void) => {
+        publishRun = listener
+        return () => undefined
+      }),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    fireEvent.click(await screen.findByRole('button', { name: '开始完美像素化' }))
+    expect(await screen.findByLabelText('完美像素化进度')).toBeTruthy()
+
+    // 像素化还在跑，用户已经追加了下一个动作。
+    const withNextAction: WorkflowRun = {
+      ...suggested,
+      nodes: [
+        ...suggested.nodes,
+        {
+          id: 'action-full-2',
+          type: 'action-full-frame',
+          status: 'active',
+          phase: 'generating',
+          dependsOnNodeIds: ['method'],
+          generations: [{ taskId: 'full-task-2', role: 'complete_animation' }],
+          error: null,
+        },
+      ],
+    }
+    await act(async () => publishRun?.(withNextAction))
+    await act(async () => releaseReconstruction?.())
+
+    expect(createObjectURL).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: '查看完美像素版' })).toBeNull()
+  })
+
+  it('does not offer pixel-perfect processing without the persisted intent', async () => {
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    renderAt(
+      '/quick-start/run-1',
+      serviceFor(run, {
+        getActionFrames: vi.fn(async () => [
+          { index: 0, imageUrl: 'https://example.test/original.png', durationMs: 80 },
+        ]),
+      }),
+    )
+
+    await screen.findByText('角色已经保存到资产库')
+    expect(
+      screen.queryByText('我还可以把这些帧重新对齐到像素网格，让边缘和色块更干净。'),
+    ).toBeNull()
+    expect(screen.queryByRole('button', { name: '开始完美像素化' })).toBeNull()
+  })
+
   it('reveals generated candidate frames with staggered motion', async () => {
     renderStateFixture('template-selecting')
 
@@ -1850,6 +2072,100 @@ describe('QuickStartPage', () => {
       { east: 'https://example.test/character-2.png' },
       '转身挥动风灯',
     )
+  })
+
+  it('returns to Agent conversation when the selected character candidate is clicked again', async () => {
+    const run = workflow(setupAndTemplate())
+    const service = serviceFor(run, {
+      getTemplateCandidates: vi.fn(async () =>
+        eastCandidates(
+          'https://example.test/character-1.png',
+          'https://example.test/character-2.png',
+          'https://example.test/character-3.png',
+        ),
+      ),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    const candidate = await screen.findByRole('button', { name: '选择角色方案 1' })
+    fireEvent.click(candidate)
+    expect(screen.getByPlaceholderText('描述这个角色接下来要做的动作…')).toBeTruthy()
+
+    fireEvent.click(candidate)
+
+    expect(candidate.getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByPlaceholderText('描述想调整的候选，或重新生成一批…')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '发送' })).toBeTruthy()
+  })
+
+  it('locks candidate cards while the Agent is regenerating them', async () => {
+    const run = workflow(setupAndTemplate())
+    const service = serviceFor(run, {
+      getTemplateCandidates: vi.fn(async () =>
+        eastCandidates(
+          'https://example.test/character-1.png',
+          'https://example.test/character-2.png',
+        ),
+      ),
+      getWorkflowAgentContext: vi.fn(() => ({
+        availableTools: ['regenerate_character_template', 'refine_character_template'] as const,
+      })),
+    })
+    renderAt(
+      '/quick-start/run-1',
+      service,
+      agentFor({
+        planner: vi.fn<CreateQuickStartAgentOptions['planner']>(() => new Promise(() => {})),
+      }),
+    )
+
+    const candidate = await screen.findByRole('button', { name: '选择角色方案 1' })
+    expect(candidate.hasAttribute('disabled')).toBe(false)
+
+    fireEvent.change(screen.getByLabelText('继续描述你的想法'), {
+      target: { value: '重新生成一批' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => expect(candidate.hasAttribute('disabled')).toBe(true))
+  })
+
+  it('drops a candidate selection that the newest batch no longer contains', async () => {
+    const run = workflow(setupAndTemplate())
+    let batch = eastCandidates(
+      'https://example.test/character-1.png',
+      'https://example.test/character-2.png',
+    )
+    let publishRun: ((next: WorkflowRun) => void) | null = null
+    const service = serviceFor(run, {
+      getTemplateCandidates: vi.fn(async () => batch),
+      subscribe: vi.fn((listener: (next: WorkflowRun) => void) => {
+        publishRun = listener
+        return () => undefined
+      }),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    fireEvent.click(await screen.findByRole('button', { name: '选择角色方案 2' }))
+    expect(
+      screen.getByRole('button', { name: '选择角色方案 2' }).getAttribute('aria-pressed'),
+    ).toBe('true')
+
+    // Agent 重新生成后换了一批候选，旧的那张已经不在了。
+    batch = eastCandidates(
+      'https://example.test/character-4.png',
+      'https://example.test/character-5.png',
+    )
+    await act(async () => publishRun?.({ ...run, nodes: [...run.nodes] }))
+
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole('button', { name: /选择角色方案/u })
+          .every((card) => card.getAttribute('aria-pressed') === 'false'),
+      ).toBe(true),
+    )
+    expect(screen.getByPlaceholderText('描述想调整的候选，或重新生成一批…')).toBeTruthy()
   })
 
   it('八向母版确认后完整展示八个同角色方向首帧', async () => {

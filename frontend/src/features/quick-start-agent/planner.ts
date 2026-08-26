@@ -74,6 +74,7 @@ const quickStartDecisionTool = tool({
         actionPrompt: { type: 'string', minLength: 1, maxLength: 4_000 },
         actionType: { type: 'string', enum: ['walk'] },
         optimizationSummary: { type: 'string', minLength: 1, maxLength: 600 },
+        suggestPixelPerfect: { type: 'boolean' },
       },
       oneOf: [
         {
@@ -109,7 +110,7 @@ const regenerateToolSchema = jsonSchema<Record<string, never>>({
   properties: {},
 })
 
-const refinementToolSchema = jsonSchema<{ adjustmentPrompt: string }>({
+const refinementToolSchema = jsonSchema<{ adjustmentPrompt: string; candidateId?: string }>({
   type: 'object',
   additionalProperties: false,
   properties: {
@@ -118,6 +119,11 @@ const refinementToolSchema = jsonSchema<{ adjustmentPrompt: string }>({
       minLength: 1,
       maxLength: 4_000,
       description: '只描述相对上一版需要改变的内容，不重复角色或动作的完整原始描述。',
+    },
+    candidateId: {
+      type: 'string',
+      minLength: 1,
+      description: '候选态微调时填写宿主提供的候选句柄；已确认结果不填写。',
     },
   },
   required: ['adjustmentPrompt'],
@@ -211,6 +217,7 @@ function fallbackPlannerResult(
                 optimizationSummary:
                   suppliedSummary.slice(0, 600) ||
                   '我先完整保留了你的原始描述，你可以直接采用或继续补充细节。',
+                suggestPixelPerfect: input.suggestPixelPerfect === true,
               },
             },
           ],
@@ -254,20 +261,33 @@ ${artStyleContext}
 2. “你觉得怎么样”“怎么优化好”“还有什么方案”“刚才我说了什么”等咨询或元对话必须用 reply；不得只靠关键词，要理解最新消息在完整上下文中的意图。
 3. 用户明确要求形成最终版本或直接生成时，可以返回 proposal，但宿主仍会要求用户确认一次；确认前不得生成。
 4. proposal 的 optimizedPrompt 是完整单角色全身提示词；actionPrompt 只保存用户明确给出的动作；optimizationSummary 用一到两句正常对话确认你理解的角色和动作，并请用户确认一次。
-5. 不得输出思维过程、逐步推理、默认假设清单、Tool 名称、调用计划或内部状态。
+5. proposal 必须给出 suggestPixelPerfect。只有用户明确表达像素风素材意图，例如 pixel art 或像素游戏素材时才为 true；不得只靠出现“游戏”“精灵”“复古”等关键词猜测。这个判断只供生成完成后的可选提示使用，不要在回复里提及。
+6. 不得输出思维过程、逐步推理、默认假设清单、Tool 名称、调用计划或内部状态。
 
 ${clarificationRule}`
 }
 
 function quickStartWorkflowInstructions(context: WorkflowAgentContext): string {
-  const targets = context.availableTools.some((name) => name.includes('character_template'))
-    ? context.availableTools.some((name) => name.includes('first_frame'))
-      ? '已确认的角色母版和动作首帧'
-      : '已确认的角色母版'
-    : '已确认的动作首帧'
+  const candidates = context.characterTemplateCandidates ?? []
+  const candidateMapping = candidates.length
+    ? `当前有 ${candidates.length} 张未确认的角色候选：${candidates
+        .map((candidate) => `第 ${candidate.position} 张对应 ${candidate.id}`)
+        .join(
+          '，',
+        )}。用户要求重新生成整批时调用角色母版 regenerate Tool；用户按序号指定某张进行修改时，调用角色母版 refine Tool，并同时填写 candidateId 和 adjustmentPrompt。用户要求微调却没有指出候选时，直接回复询问要修改第几张，不调用 Tool。`
+    : ''
+  const targets = candidates.length
+    ? '未确认的角色候选'
+    : context.availableTools.some((name) => name.includes('character_template'))
+      ? context.availableTools.some((name) => name.includes('first_frame'))
+        ? '已确认的角色母版和动作首帧'
+        : '已确认的角色母版'
+      : '已确认的动作首帧'
   return `你是 Windup 生成流程中的轻量 Agent。当前可修改：${targets}。宿主只会在生成任务停止、结果允许修改时调用你。
 
 用户明确要求重新生成时，选择与目标对应的 regenerate Tool；重新生成不携带修改描述。用户给出相对上一版的具体修改时，选择对应的 refine Tool，并把具体变化写入 adjustmentPrompt。用户意图含糊、没有说明修改对象或只是在讨论时，直接用简短中文回复澄清，不调用 Tool。否定、引用或假设语境不得触发 Tool。
+
+${candidateMapping}
 
 每轮最多调用一个 Tool。不得输出思维过程、Tool 名称、内部状态或调用计划。所有实际修改由宿主绑定的 WorkflowController 完成。`
 }

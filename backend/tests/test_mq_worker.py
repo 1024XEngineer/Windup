@@ -1128,3 +1128,81 @@ def test_image_input_keeps_explicit_zero_num_images():
     rebuilt = _image_input({"prompt": "hero", "num_images": 0})
 
     assert rebuilt.num_images == 0
+
+
+def test_warmup_injects_one_matte_into_both_executors(monkeypatch):
+    """预热实例必须交给动作/出图执行器,不能 warmup 完丢掉再各 new 一套。"""
+    from windup_app.bootstrap import worker as w
+    from windup_app.server.orchestrator import executor as ex
+
+    class _Fake:
+        warmed = False
+
+        def warmup(self):
+            self.warmed = True
+
+    fake = _Fake()
+    monkeypatch.setattr(
+        "windup_framework.providers.OnnxU2NetMatteProvider", lambda *a, **k: fake
+    )
+    prev_a, prev_i = ex.executor._matte, ex.image_executor._matte
+    try:
+        w._warmup_local_inference()
+        assert fake.warmed is True
+        assert ex.executor._matte is fake
+        assert ex.image_executor._matte is fake
+    finally:
+        ex.executor._matte = prev_a
+        ex.image_executor._matte = prev_i
+
+
+def test_consumer_trims_heap_after_image_not_email(engine, worker_session, monkeypatch):
+    """出图结束 trim 堆;邮件路径不碰 malloc_trim。"""
+    _patch_worker_session_local(monkeypatch, engine)
+    trimmed: list[int] = []
+    monkeypatch.setattr(
+        "windup_app.worker.consumer.release_inference_scratch",
+        lambda: trimmed.append(1),
+    )
+    monkeypatch.setattr("windup_app.worker.consumer.get_redis", lambda: MagicMock())
+    monkeypatch.setattr("windup_app.worker.consumer.dispatch_handler", lambda *_a, **_k: None)
+
+    email_id = _published_message(worker_session)
+    email = StreamConsumer(
+        ConsumerConfig(stream="windup:stream:email", group="email", concurrency=1),
+        run_image_task=MagicMock(),
+        run_action_task=MagicMock(),
+        stop_event=threading.Event(),
+    )
+    email._process_message("1-0", {"data": json.dumps({
+        "v": 1,
+        "id": str(email_id),
+        "type": MSG_TYPE_VERIFICATION_CODE,
+        "payload": {"email": "a@x.com", "purpose": "login"},
+    })})
+    assert trimmed == []
+
+    image_id = uuid.uuid4()
+    mq_repo.insert_pending(
+        worker_session,
+        message_id=image_id,
+        dedupe_key=f"generation:image:{image_id}",
+        stream="windup:stream:generation",
+        msg_type=MSG_TYPE_CHARACTER_IMAGE,
+        payload={"task_id": 1, "task_type": "character_image"},
+    )
+    mq_repo.mark_published(worker_session, image_id, "i-0")
+    worker_session.commit()
+    gen = StreamConsumer(
+        ConsumerConfig(stream="windup:stream:generation", group="generation", concurrency=1),
+        run_image_task=MagicMock(),
+        run_action_task=MagicMock(),
+        stop_event=threading.Event(),
+    )
+    gen._process_message("i-0", {"data": json.dumps({
+        "v": 1,
+        "id": str(image_id),
+        "type": MSG_TYPE_CHARACTER_IMAGE,
+        "payload": {"task_id": 1, "task_type": "character_image"},
+    })})
+    assert trimmed == [1]

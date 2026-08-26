@@ -224,6 +224,7 @@ describe('Quick Start Agent composition', () => {
       actionType: 'walk' as const,
       directionalMovement: 'single' as const,
       automaticDelivery: true,
+      suggestPixelPerfect: true,
     }
     await expect(dependencies.startCharacterGeneration(input)).resolves.toEqual({
       runId: 'run-agent',
@@ -241,6 +242,7 @@ describe('Quick Start Agent composition', () => {
       directionalMovement: 'single',
       gameStyle: undefined,
       automaticDelivery: { actionPrompt: '向前行走', actionType: 'walk' },
+      suggestPixelPerfect: true,
     })
     expect(dispose).toHaveBeenCalledTimes(1)
   })

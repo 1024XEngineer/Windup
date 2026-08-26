@@ -16,6 +16,7 @@ const QUICK_START_DECISION_FIELDS = new Set([
   'actionPrompt',
   'actionType',
   'optimizationSummary',
+  'suggestPixelPerfect',
 ])
 
 export type QuickStartDirectionalMovement = 'single' | 'four-way' | 'eight-way'
@@ -54,6 +55,8 @@ export interface CharacterGenerationPlan {
   /** 仅在 Agent 明确认出行走/跑步位移时附带；不做通用动作分类。 */
   actionType?: QuickStartActionType
   optimizationSummary: string
+  /** Planner 对明确像素素材意图的静默判断；缺省按否处理以兼容旧提案。 */
+  suggestPixelPerfect?: boolean
 }
 
 export interface CharacterGenerationProposal extends CharacterGenerationPlan {
@@ -105,6 +108,7 @@ export type StartCharacterGenerationAction = (input: {
   gameStyle?: string
   projectId?: string
   automaticDelivery?: boolean
+  suggestPixelPerfect?: boolean
 }) => Promise<{ runId: string }>
 
 export interface CreateQuickStartAgentOptions {
@@ -124,12 +128,14 @@ export type WorkflowAgentToolName =
 
 export interface WorkflowAgentContext {
   availableTools: readonly WorkflowAgentToolName[]
+  /** 当前未确认角色候选的稳定句柄；Agent 只识别顺序，不接收图片内容或 URL。 */
+  characterTemplateCandidates?: readonly { id: string; position: number }[]
 }
 
 export interface WorkflowAgentActions {
   getContext(): WorkflowAgentContext
   regenerateCharacterTemplate(): Promise<void>
-  refineCharacterTemplate(adjustmentPrompt: string): Promise<void>
+  refineCharacterTemplate(adjustmentPrompt: string, candidateId?: string): Promise<void>
   regenerateFirstFrame(): Promise<void>
   refineFirstFrame(adjustmentPrompt: string): Promise<void>
 }
@@ -194,6 +200,9 @@ export function parseCharacterGenerationPlan(value: unknown): CharacterGeneratio
   ) {
     throw new Error('生成提案的 actionPrompt 无效')
   }
+  if (value.suggestPixelPerfect !== undefined && typeof value.suggestPixelPerfect !== 'boolean') {
+    throw new Error('生成提案的 suggestPixelPerfect 无效')
+  }
   const actionType = value.actionType === 'walk' ? value.actionType : undefined
   if (value.actionType !== undefined && (!actionType || !actionPrompt)) {
     throw new Error('生成提案的 actionType 无效')
@@ -203,6 +212,7 @@ export function parseCharacterGenerationPlan(value: unknown): CharacterGeneratio
     ...(actionPrompt ? { actionPrompt } : {}),
     ...(actionType ? { actionType } : {}),
     optimizationSummary,
+    ...(value.suggestPixelPerfect === true ? { suggestPixelPerfect: true } : {}),
   }
 }
 
@@ -315,6 +325,7 @@ export function createQuickStartAgent({
         ...(decision.actionPrompt ? { actionPrompt: decision.actionPrompt } : {}),
         ...(decision.actionType ? { actionType: decision.actionType } : {}),
         optimizationSummary: decision.optimizationSummary,
+        ...(decision.suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
       }
       currentProposal = proposal
       messages = [...nextMessages, { role: 'assistant', content: proposalMessage(proposal) }]
@@ -353,6 +364,7 @@ export function createQuickStartAgent({
         gameStyle,
         projectId,
         ...(automaticDelivery ? { automaticDelivery: true } : {}),
+        ...(proposal.suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
       })
       return { kind: 'generated', runId, ...proposal, optimizedPrompt: effectivePrompt }
     } finally {
@@ -382,16 +394,22 @@ interface WorkflowActionTerminal {
   kind: 'action'
   action: WorkflowAgentToolName
   adjustmentPrompt?: string
+  candidateId?: string
 }
 
 function parseWorkflowActionInput(
   action: WorkflowAgentToolName,
   value: unknown,
+  context: WorkflowAgentContext,
 ): WorkflowActionTerminal {
   if (!isRecord(value)) throw new Error('工作流 Tool 参数必须是对象')
   if (action === REFINE_CHARACTER_TEMPLATE_TOOL || action === REFINE_FIRST_FRAME_TOOL) {
+    const candidates = context.characterTemplateCandidates ?? []
+    const acceptsCandidate = action === REFINE_CHARACTER_TEMPLATE_TOOL && candidates.length > 0
     if (
-      Object.keys(value).some((key) => key !== 'adjustmentPrompt') ||
+      Object.keys(value).some(
+        (key) => key !== 'adjustmentPrompt' && (!acceptsCandidate || key !== 'candidateId'),
+      ) ||
       !Object.hasOwn(value, 'adjustmentPrompt')
     ) {
       throw new Error('微调 Tool 参数字段无效')
@@ -401,7 +419,12 @@ function parseWorkflowActionInput(
     if (!adjustmentPrompt || adjustmentPrompt.length > MAX_PROMPT_LENGTH) {
       throw new Error('微调描述无效')
     }
-    return { kind: 'action', action, adjustmentPrompt }
+    if (!acceptsCandidate) return { kind: 'action', action, adjustmentPrompt }
+    const candidateId = typeof value.candidateId === 'string' ? value.candidateId.trim() : ''
+    if (!candidateId || !candidates.some((candidate) => candidate.id === candidateId)) {
+      throw new Error('候选图标识无效')
+    }
+    return { kind: 'action', action, adjustmentPrompt, candidateId }
   }
   if (Object.keys(value).length > 0) throw new Error('重新生成 Tool 不接受参数')
   return { kind: 'action', action }
@@ -423,7 +446,7 @@ function validateWorkflowPlannerTerminal(
   if (!action || !context.availableTools.includes(action)) {
     throw new Error('当前流程不能执行该操作')
   }
-  return parseWorkflowActionInput(action, call.input)
+  return parseWorkflowActionInput(action, call.input, context)
 }
 
 function workflowActionMessage(action: WorkflowAgentToolName): string {
@@ -489,7 +512,11 @@ export function createQuickStartWorkflowAgent({
           await actions.regenerateCharacterTemplate()
           break
         case REFINE_CHARACTER_TEMPLATE_TOOL:
-          await actions.refineCharacterTemplate(terminal.adjustmentPrompt!)
+          if (terminal.candidateId) {
+            await actions.refineCharacterTemplate(terminal.adjustmentPrompt!, terminal.candidateId)
+          } else {
+            await actions.refineCharacterTemplate(terminal.adjustmentPrompt!)
+          }
           break
         case REGENERATE_FIRST_FRAME_TOOL:
           await actions.regenerateFirstFrame()

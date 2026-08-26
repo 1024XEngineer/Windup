@@ -157,6 +157,8 @@ function isCharacterSetupNode(value: unknown): value is CharacterSetupWorkflowNo
     ['configuring', 'completed'].includes(String(value.phase)) &&
     hasValidCharacterInput(value.input) &&
     hasValidAutomationIntent(value.automation) &&
+    (value.pixelPerfectSuggested === undefined ||
+      typeof value.pixelPerfectSuggested === 'boolean') &&
     hasOnlyGenerationRole(value, null)
   )
 }
