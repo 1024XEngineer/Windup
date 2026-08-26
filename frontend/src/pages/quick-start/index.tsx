@@ -51,7 +51,11 @@ import {
 } from '@/entities'
 import { forgetActiveRun, isMissingActiveRunError, syncActiveRun } from '@/features/active-run'
 import { useOptionalAuthSession } from '@/features/auth-session'
-import { ExportButton, type ExportPackageModel } from '@/features/export-package'
+import {
+  AssetVersionExportButton,
+  ExportButton,
+  type ExportPackageModel,
+} from '@/features/export-package'
 import { useQuickStartAgent, useQuickStartWorkflowAgent } from '@/features/quick-start-agent/react'
 import type {
   CharacterGenerationProposal,
@@ -66,6 +70,8 @@ import {
   GenerationProgressCopy,
   KineticCopyCycle,
   productPopoverClass,
+  productPopoverMotionClass,
+  useProductPopoverMotion,
   type KineticCopyMessage,
 } from '@/shared/ui'
 import {
@@ -577,6 +583,7 @@ function AgentActions({
   onCopy,
   exportModel,
   exportLabel,
+  versionedExportModels,
   onOpenAssetWorkspace,
   onOpenPlaytest,
   playtestDisabled = false,
@@ -589,6 +596,10 @@ function AgentActions({
   onCopy?: () => void
   exportModel?: ExportPackageModel | null
   exportLabel?: string
+  versionedExportModels?: {
+    original: ExportPackageModel
+    pixelPerfect: ExportPackageModel
+  }
   onOpenAssetWorkspace?: () => void
   onOpenPlaytest?: () => void
   playtestDisabled?: boolean
@@ -614,7 +625,13 @@ function AgentActions({
           <ArrowClockwise aria-hidden="true" size={18} weight="bold" />
         </IconActionButton>
       ) : null}
-      {exportModel ? (
+      {versionedExportModels ? (
+        <AssetVersionExportButton
+          originalModel={versionedExportModels.original}
+          pixelPerfectModel={versionedExportModels.pixelPerfect}
+          className="text-app-muted hover:bg-app-surface-muted hover:text-app-accent"
+        />
+      ) : exportModel ? (
         <ExportButton
           model={exportModel}
           idleLabel={exportLabel}
@@ -956,7 +973,7 @@ function QuickStartInput({
 
   function chooseGameStyle(next: ArtStyle) {
     setGameStyle(next)
-    setStyleMenuOpen(false)
+    styleMenu.close()
     const draftId = draftIdRef.current
     if (draftId) {
       writeAgentConversation(
@@ -1152,8 +1169,8 @@ function QuickStartInput({
   const canSubmit = awaitingGenerationConfirmation
     ? Boolean(prompt.trim())
     : Boolean(prompt.trim()) || Boolean(templateFile)
-  const [styleMenuOpen, setStyleMenuOpen] = useState(false)
-  const [directionMenuOpen, setDirectionMenuOpen] = useState(false)
+  const styleMenu = useProductPopoverMotion()
+  const directionMenu = useProductPopoverMotion()
   const [directionDragging, setDirectionDragging] = useState(false)
   const [directionSliderValue, setDirectionSliderValue] = useState(() =>
     QUICK_START_DIRECTIONAL_MOVEMENTS.indexOf(directionalMovement),
@@ -1390,18 +1407,25 @@ function QuickStartInput({
                         label={`选择画风，当前${ART_STYLE[gameStyle]}`}
                         disabled={entryBusy || Boolean(selectedProject)}
                         onClick={() => {
-                          setDirectionMenuOpen(false)
-                          setStyleMenuOpen((open) => !open)
+                          directionMenu.close()
+                          styleMenu.toggle()
                         }}
-                        expanded={styleMenuOpen}
+                        expanded={styleMenu.expanded}
                       >
                         <StyleTileIcon />
                       </IconActionButton>
-                      {styleMenuOpen ? (
+                      {styleMenu.mounted ? (
                         <div
+                          data-testid="quick-start-style-menu"
+                          data-state={styleMenu.state}
+                          data-motion="scale-fade"
+                          data-popover-placement="top"
                           role="menu"
                           aria-label="选择画风"
-                          className={`${productPopoverClass} quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid min-w-32 gap-1 p-1.5 opacity-100`}
+                          aria-hidden={styleMenu.expanded ? undefined : true}
+                          inert={!styleMenu.expanded}
+                          onAnimationEnd={styleMenu.finish}
+                          className={`${productPopoverClass} quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid min-w-32 gap-1 p-1.5 ${productPopoverMotionClass(styleMenu.state)}`}
                         >
                           {ART_STYLE_OPTIONS.map((value) => (
                             <button
@@ -1431,8 +1455,8 @@ function QuickStartInput({
                     aria-expanded={projectMenuOpen}
                     disabled={entryBusy || hasConversation}
                     onClick={() => {
-                      setStyleMenuOpen(false)
-                      setDirectionMenuOpen(false)
+                      styleMenu.close()
+                      directionMenu.close()
                       setProjectMenuOpen((open) => !open)
                     }}
                     className={`inline-flex h-10 max-w-44 items-center gap-1 rounded-app-control px-3 text-sm font-medium text-app-ink-soft transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent ${hasConversation ? 'pointer-events-none disabled:opacity-100' : 'hover:bg-app-surface-muted hover:text-app-ink disabled:opacity-45'}`}
@@ -1523,12 +1547,12 @@ function QuickStartInput({
                   <button
                     type="button"
                     aria-label={`生成方向，当前${DIRECTIONAL_MOVEMENT[directionalMovement]}`}
-                    aria-expanded={directionMenuOpen}
+                    aria-expanded={directionMenu.expanded}
                     disabled={entryBusy || Boolean(selectedProject) || hasConversation}
                     onClick={() => {
-                      setStyleMenuOpen(false)
+                      styleMenu.close()
                       setDirectionSliderValue(directionalMovementIndex)
-                      setDirectionMenuOpen((open) => !open)
+                      directionMenu.toggle()
                     }}
                     className={`inline-flex h-10 items-center gap-1 rounded-app-control px-3 text-sm font-medium text-app-ink-soft transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent ${hasConversation ? 'pointer-events-none disabled:opacity-100' : 'hover:bg-app-surface-muted hover:text-app-ink disabled:opacity-45'}`}
                   >
@@ -1538,15 +1562,21 @@ function QuickStartInput({
                         aria-hidden="true"
                         size={14}
                         weight="bold"
-                        className={`transition-transform duration-200 motion-reduce:transition-none ${directionMenuOpen ? 'rotate-180' : ''}`}
+                        className={`transition-transform duration-200 motion-reduce:transition-none ${directionMenu.expanded ? 'rotate-180' : ''}`}
                       />
                     ) : null}
                   </button>
-                  {directionMenuOpen && !hasConversation ? (
+                  {directionMenu.mounted && !hasConversation ? (
                     <div
+                      data-state={directionMenu.state}
+                      data-motion="scale-fade"
+                      data-popover-placement="top"
                       role="group"
                       aria-label="生成方向设置"
-                      className={`${productPopoverClass} quick-start-control-popover absolute right-0 bottom-full z-30 mb-3 w-72 p-5 opacity-100`}
+                      aria-hidden={directionMenu.expanded ? undefined : true}
+                      inert={!directionMenu.expanded}
+                      onAnimationEnd={directionMenu.finish}
+                      className={`${productPopoverClass} quick-start-control-popover absolute right-0 bottom-full z-30 mb-3 w-72 p-5 ${productPopoverMotionClass(directionMenu.state)}`}
                     >
                       <div className="mb-4 flex items-center justify-between">
                         <span className="text-sm text-app-muted">生成方向</span>
@@ -3077,10 +3107,6 @@ function QuickStartRun({
     actionStep?.id,
     new Map(pixelPerfectReplacementEntries),
   )
-  const visibleVersionExportModel =
-    actionVersion === 'pixel-perfect' ? pixelPerfectVersionModel : actionExportModel
-  const visibleVersionExportLabel =
-    actionVersion === 'pixel-perfect' ? '导出完美像素版' : '导出原图'
   const entryAgentConversationTurns = agentConversationTurns.filter(
     (turn) => turn.scope !== 'workflow',
   )
@@ -3458,8 +3484,15 @@ function QuickStartRun({
                   )}
                   {isActionFailed || actionExportModel || reviewStep?.status === 'passed' ? (
                     <AgentActions
-                      exportModel={visibleVersionExportModel}
-                      exportLabel={pixelPerfectReady ? visibleVersionExportLabel : undefined}
+                      exportModel={actionExportModel}
+                      versionedExportModels={
+                        pixelPerfectReady && actionExportModel && pixelPerfectVersionModel
+                          ? {
+                              original: actionExportModel,
+                              pixelPerfect: pixelPerfectVersionModel,
+                            }
+                          : undefined
+                      }
                       onOpenAssetWorkspace={
                         reviewStep?.status === 'passed'
                           ? () =>
