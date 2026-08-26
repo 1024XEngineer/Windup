@@ -37,6 +37,7 @@ import {
   ART_STYLE,
   ART_STYLE_OPTIONS,
   DIRECTIONAL_MOVEMENT,
+  getDirectionGridLayout,
   isArtStyle,
   type ActionDirection,
   type ActionFirstFrameWorkflowNode,
@@ -2107,30 +2108,28 @@ function DirectionCandidatePicker({
   )
 }
 
-const DIRECTION_SHEET_LAYOUT: readonly (ActionDirection | null)[] = [
-  'north_west',
-  'north',
-  'north_east',
-  'west',
-  null,
-  'east',
-  'south_west',
-  'south',
-  'south_east',
-]
+function movementForDirections(directions: readonly ActionDirection[]): DirectionalMovement {
+  if (directions.length >= 8) return 'eight-way'
+  if (directions.length >= 4) return 'four-way'
+  return 'single'
+}
 
 function DirectionFirstFrameGrid({
   directions,
   selections,
+  singleAlt,
 }: {
   directions: readonly QuickStartCandidate['direction'][]
   selections: QuickStartDirectionSelections
+  singleAlt?: string
 }) {
+  const movement = movementForDirections(directions)
+  const layout = getDirectionGridLayout(movement)
   const directionCountLabel =
-    directions.length === 8 ? '八向' : directions.length === 4 ? '四向' : '单向'
-  const isSingleDirection = directions.length === 1
-  const layoutDirections = isSingleDirection ? directions : DIRECTION_SHEET_LAYOUT
-  const expectedDirections = new Set(directions)
+    movement === 'eight-way' ? '八向' : movement === 'four-way' ? '四向' : '单向'
+  const isSingleDirection = movement === 'single'
+  const gridColumns =
+    layout.columns === 1 ? 'grid-cols-1' : layout.columns === 2 ? 'grid-cols-2' : 'grid-cols-3'
   return (
     <div
       role="group"
@@ -2139,25 +2138,16 @@ function DirectionFirstFrameGrid({
         isSingleDirection ? 'direction-first-frame-single' : 'direction-first-frame-grid'
       }
       className={`grid aspect-square w-full max-w-xl gap-2 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-muted p-4 shadow-app-card sm:p-5 ${
-        isSingleDirection ? 'grid-cols-1' : 'grid-cols-3'
+        gridColumns
       }`}
     >
-      {layoutDirections.map((direction, cellIndex) => {
+      {layout.cells.map((direction, cellIndex) => {
         if (!direction) {
           return (
             <div
               key={`center-${cellIndex}`}
               aria-label="中心留空"
               className="rounded-xl border border-dashed border-app-line/40 bg-app-canvas/20"
-            />
-          )
-        }
-        if (!expectedDirections.has(direction)) {
-          return (
-            <div
-              key={direction}
-              aria-label={`${DIRECTION_LABELS[direction]}方向为空`}
-              className="rounded-xl border border-dashed border-app-line/30 bg-app-canvas/20"
             />
           )
         }
@@ -2169,7 +2159,11 @@ function DirectionFirstFrameGrid({
           >
             <AssetVisual
               src={imageUrl}
-              alt={`${DIRECTION_LABELS[direction]}方向首帧`}
+              alt={
+                isSingleDirection && singleAlt
+                  ? singleAlt
+                  : `${DIRECTION_LABELS[direction]}方向首帧`
+              }
               className="h-full w-full object-contain [image-rendering:pixelated]"
             />
             <figcaption className="absolute bottom-2 left-2 rounded-full bg-app-canvas/85 px-2 py-1 text-[10px] font-bold text-app-ink backdrop-blur-sm">
@@ -2193,6 +2187,7 @@ function DirectionFirstFrameGrid({
 
 function DirectionSheetCandidatePicker({
   sheets,
+  movement,
   selectedIndex,
   disabled,
   kind,
@@ -2200,12 +2195,15 @@ function DirectionSheetCandidatePicker({
   interactive = true,
 }: {
   sheets: readonly DirectionSheetCandidate[]
+  movement: DirectionalMovement
   selectedIndex: number | null
   disabled: boolean
   kind: '角色方案' | '动作首帧'
   onSelect?: (sheet: DirectionSheetCandidate) => void
   interactive?: boolean
 }) {
+  const layout = getDirectionGridLayout(movement)
+  const gridColumns = layout.columns === 2 ? 'grid-cols-2' : 'grid-cols-3'
   return (
     <div
       data-direction-sheet-picker="true"
@@ -2235,8 +2233,10 @@ function DirectionSheetCandidatePicker({
             <span className="mb-2 block text-xs font-bold text-app-muted">
               方向候选 {sheetIndex + 1}
             </span>
-            <span className="grid aspect-square grid-cols-3 overflow-hidden rounded-xl bg-app-surface-muted">
-              {DIRECTION_SHEET_LAYOUT.map((direction, cellIndex) => {
+            <span
+              className={`grid aspect-square ${gridColumns} overflow-hidden rounded-xl bg-app-surface-muted`}
+            >
+              {layout.cells.map((direction, cellIndex) => {
                 if (!direction) {
                   return (
                     <span
@@ -2839,6 +2839,13 @@ function QuickStartRun({
         .map((reference) => reference.direction ?? 'east') ?? [],
     ),
   )
+  const firstFrameDirections = Array.from(
+    new Set(
+      firstFrameStep?.generations
+        .filter((reference) => reference.role === 'first_frame')
+        .map((reference) => reference.direction ?? 'east') ?? [],
+    ),
+  )
   const singletonDirectionSelections = templateStep?.selectedImageUrl
     ? Object.fromEntries(
         candidateGroups
@@ -2847,16 +2854,18 @@ function QuickStartRun({
       )
     : {}
   const firstFrameMovement: DirectionalMovement =
-    session?.getDirectionalMovement?.() ??
-    (firstFrameCandidateGroups.some((group) =>
-      ['north_west', 'south_west', 'north_east', 'south_east'].includes(group.direction),
-    )
-      ? 'eight-way'
-      : firstFrameCandidateGroups.some((group) =>
-            ['west', 'north', 'south'].includes(group.direction),
-          )
-        ? 'four-way'
-        : 'single')
+    firstFrameDirections.length > 1
+      ? movementForDirections(firstFrameDirections)
+      : (session?.getDirectionalMovement?.() ??
+        (firstFrameCandidateGroups.some((group) =>
+          ['north_west', 'south_west', 'north_east', 'south_east'].includes(group.direction),
+        )
+          ? 'eight-way'
+          : firstFrameCandidateGroups.some((group) =>
+                ['west', 'north', 'south'].includes(group.direction),
+              )
+            ? 'four-way'
+            : 'single'))
   const firstFrameSheets =
     firstFrameMovement === 'single'
       ? []
@@ -3267,16 +3276,11 @@ function QuickStartRun({
               ) : templateStep?.status === 'passed' && selectedTemplateUrl ? (
                 <>
                   <AgentCopy lines={['角色方案已确认。']} />
-                  <div
-                    data-layout="agent-result-set"
-                    className="grid w-full max-w-2xl grid-cols-3 gap-3"
-                  >
-                    <AssetVisual
-                      src={selectedTemplateUrl}
-                      alt="已选择的角色"
-                      className="aspect-square w-full rounded-2xl border border-app-line bg-app-surface-muted object-contain [image-rendering:pixelated]"
-                    />
-                  </div>
+                  <DirectionFirstFrameGrid
+                    directions={templateDirections.length > 0 ? templateDirections : ['east']}
+                    selections={templateSelections}
+                    singleAlt="已选择的角色"
+                  />
                 </>
               ) : workflowHasFailure(revision) ? (
                 <>
@@ -3342,6 +3346,7 @@ function QuickStartRun({
                       {firstFrameSheets.length > 0 ? (
                         <DirectionSheetCandidatePicker
                           sheets={firstFrameSheets}
+                          movement={firstFrameMovement}
                           selectedIndex={selectedFirstFrameSheetIndex}
                           disabled={
                             !isFirstFrameSelecting ||
@@ -3386,28 +3391,13 @@ function QuickStartRun({
                     (selectedFirstFrameUrl || Object.keys(firstFrameSelections).length > 0) ? (
                     <>
                       <AgentCopy lines={['动作起始姿态已确认。']} />
-                      {firstFrameSheets.length > 0 ? (
-                        <DirectionSheetCandidatePicker
-                          sheets={firstFrameSheets.filter(
-                            (sheet) => sheet.index === selectedFirstFrameSheetIndex,
-                          )}
-                          selectedIndex={selectedFirstFrameSheetIndex}
-                          disabled
-                          interactive={false}
-                          kind="动作首帧"
-                        />
-                      ) : selectedFirstFrameUrl ? (
-                        <div
-                          data-layout="agent-result-set"
-                          className="grid w-full max-w-2xl grid-cols-3 gap-3"
-                        >
-                          <AssetVisual
-                            src={selectedFirstFrameUrl}
-                            alt="已选择的动作首帧"
-                            className="aspect-square w-full rounded-2xl border border-app-line bg-app-surface-muted object-contain [image-rendering:pixelated]"
-                          />
-                        </div>
-                      ) : null}
+                      <DirectionFirstFrameGrid
+                        directions={
+                          firstFrameDirections.length > 0 ? firstFrameDirections : ['east']
+                        }
+                        selections={firstFrameSelections}
+                        singleAlt="已选择的动作首帧"
+                      />
                     </>
                   ) : isFirstFrameFailed ? (
                     <>

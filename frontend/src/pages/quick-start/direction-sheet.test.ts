@@ -69,6 +69,13 @@ describe('buildDirectionSheetCandidates', () => {
     )
 
     expect(sheets).toHaveLength(1)
+    expect(sheets[0]?.selections).toEqual({
+      east: 'east-0.png',
+      west: 'west-0.png',
+      north: 'north-0.png',
+      south: 'south-0.png',
+    })
+    expect(new Set(Object.values(sheets[0]!.selections)).size).toBe(4)
     expect(sheets[0]?.cells).toMatchObject({
       east: { imageUrl: 'east-0.png', empty: false },
       west: { imageUrl: 'west-0.png', mirrorX: false, empty: false },
