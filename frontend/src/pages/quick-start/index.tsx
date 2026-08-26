@@ -1385,6 +1385,51 @@ function QuickStartInput({
             >
               {!hasConversation ? (
                 <div className="flex items-center gap-1">
+                  <IconActionButton
+                    label={templateFile ? `更换母版 ${templateFile.name}` : '添加母版'}
+                    disabled={entryBusy}
+                    onClick={() => fileInput.current?.click()}
+                    className={templateFile ? 'text-app-accent' : ''}
+                  >
+                    <MasterFrameIcon />
+                  </IconActionButton>
+                  <div className="relative">
+                    <IconActionButton
+                      label={`选择画风，当前${ART_STYLE[gameStyle]}`}
+                      disabled={entryBusy || Boolean(selectedProject)}
+                      onClick={() => {
+                        setDirectionMenuOpen(false)
+                        setStyleMenuOpen((open) => !open)
+                      }}
+                      expanded={styleMenuOpen}
+                    >
+                      <StyleTileIcon />
+                    </IconActionButton>
+                    {styleMenuOpen ? (
+                      <div
+                        role="menu"
+                        aria-label="选择画风"
+                        className={`${productPopoverClass} quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid min-w-32 gap-1 p-1.5 opacity-100`}
+                      >
+                        {ART_STYLE_OPTIONS.map((value) => (
+                          <button
+                            key={value}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={gameStyle === value}
+                            onClick={() => chooseGameStyle(value)}
+                            className={`rounded-app-compact px-3 py-2 text-left text-xs transition ${
+                              gameStyle === value
+                                ? 'bg-app-accent-soft text-app-accent'
+                                : 'text-app-ink-soft hover:bg-app-surface-muted'
+                            }`}
+                          >
+                            {ART_STYLE[value]}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                   <div className="relative">
                     <button
                       type="button"
@@ -1431,51 +1476,6 @@ function QuickStartInput({
                             className={`rounded-app-compact px-3 py-2 text-left text-xs transition ${projectId === project.id ? 'bg-app-accent-soft text-app-accent' : 'text-app-ink-soft hover:bg-app-surface-muted'}`}
                           >
                             {project.name}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                  <IconActionButton
-                    label={templateFile ? `更换母版 ${templateFile.name}` : '添加母版'}
-                    disabled={entryBusy}
-                    onClick={() => fileInput.current?.click()}
-                    className={templateFile ? 'text-app-accent' : ''}
-                  >
-                    <MasterFrameIcon />
-                  </IconActionButton>
-                  <div className="relative">
-                    <IconActionButton
-                      label={`选择画风，当前${ART_STYLE[gameStyle]}`}
-                      disabled={entryBusy || Boolean(selectedProject)}
-                      onClick={() => {
-                        setDirectionMenuOpen(false)
-                        setStyleMenuOpen((open) => !open)
-                      }}
-                      expanded={styleMenuOpen}
-                    >
-                      <StyleTileIcon />
-                    </IconActionButton>
-                    {styleMenuOpen ? (
-                      <div
-                        role="menu"
-                        aria-label="选择画风"
-                        className={`${productPopoverClass} quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid min-w-32 gap-1 p-1.5 opacity-100`}
-                      >
-                        {ART_STYLE_OPTIONS.map((value) => (
-                          <button
-                            key={value}
-                            type="button"
-                            role="menuitemradio"
-                            aria-checked={gameStyle === value}
-                            onClick={() => chooseGameStyle(value)}
-                            className={`rounded-app-compact px-3 py-2 text-left text-xs transition ${
-                              gameStyle === value
-                                ? 'bg-app-accent-soft text-app-accent'
-                                : 'text-app-ink-soft hover:bg-app-surface-muted'
-                            }`}
-                          >
-                            {ART_STYLE[value]}
                           </button>
                         ))}
                       </div>
