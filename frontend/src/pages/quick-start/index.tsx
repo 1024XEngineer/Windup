@@ -1306,10 +1306,18 @@ function QuickStartInput({
             onSubmit={(event) => void submit(event)}
             autoComplete="off"
             data-prompt-state={promptState}
-            className="quick-start-agent-composer relative flex flex-col"
+            className={`quick-start-agent-composer relative flex flex-col ${
+              hasConversation
+                ? 'rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]'
+                : ''
+            }`}
           >
             <label
-              className="relative block min-h-[52px] min-w-0 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]"
+              className={`relative block min-h-[52px] min-w-0 overflow-hidden ${
+                hasConversation
+                  ? ''
+                  : 'rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]'
+              }`}
               htmlFor="quick-start-prompt"
             >
               <span className="sr-only">创作指令</span>
