@@ -190,7 +190,7 @@ describe('asset export', () => {
       new TextDecoder().decode(playtestEntries.get(`${root}/playtest.json`)),
     )
     expect(playtest).toEqual({
-      schema_version: '1.1.0',
+      schema_version: '1.2.0',
       initial_action_id: 'walk-abcdef12',
       action_ids: ['walk-abcdef12'],
     })
@@ -226,7 +226,7 @@ describe('asset export', () => {
     expect(plan[0]?.frames[8]?.filename).toBe('Walk-Forward-south_008.png')
   })
 
-  it('生成通用目录、透明 PNG、图集、README、Schema 和可校验的动画 meta.json', async () => {
+  it('为每个动作方向生成可识别的 GIF 预览，并在 meta.json 中声明路径', async () => {
     const phases: string[] = []
     const result = await exportGameAssets(model, {
       runtime: runtime(),
@@ -242,14 +242,18 @@ describe('asset export', () => {
     expect(names).toContain(`${root}/schema.json`)
     expect(names).toContain(`${root}/README.md`)
     expect(names).toContain(`${root}/atlas/Walk-Forward-south.png`)
+    expect(names).toContain(`${root}/preview/Walk-Forward-south.gif`)
     expect(names.filter((name) => name.includes('/frames/'))).toHaveLength(9)
+
+    const gif = entries.get(`${root}/preview/Walk-Forward-south.gif`)
+    expect(new TextDecoder().decode(gif?.slice(0, 6))).toBe('GIF89a')
 
     const meta = JSON.parse(new TextDecoder().decode(entries.get(`${root}/meta.json`)))
     const schema = JSON.parse(EXPORT_PACKAGE_JSON_SCHEMA_TEXT)
     const validate = new Ajv2020().compile(schema)
     expect(validate(meta), JSON.stringify(validate.errors)).toBe(true)
     expect(meta).toMatchObject({
-      schema_version: '1.1.0',
+      schema_version: '1.2.0',
       character: { id: 'character-1', name: 'Aster' },
       canvas: { w: 32, h: 40 },
       source: { workflow_run_id: 'run-1', generation_ids: ['generation-1'] },
@@ -260,9 +264,9 @@ describe('asset export', () => {
       loop: true,
       anchor: { x: 0.5, y: 0.9 },
       foot_y: 36,
+      preview_gif: 'preview/Walk-Forward-south.gif',
       atlas: { cols: 8, rows: 2, cell: { w: 32, h: 40 } },
     })
-    expect(names.some((name) => name.endsWith('.gif'))).toBe(false)
   })
 
   it('把 Outfit 标识写入包名，避免同一 Character 的不同造型互相覆盖', async () => {
@@ -446,6 +450,47 @@ describe('asset export', () => {
     await expect(exportGameAssets(model, { runtime: testRuntime })).rejects.toThrow(
       'atlas: PNG 编码失败',
     )
+  })
+
+  it('GIF 编码失败时指出预览路径并释放动作帧', async () => {
+    const closes: Array<ReturnType<typeof vi.fn>> = []
+    const testRuntime: AssetExportRuntime = {
+      ...runtime(),
+      decodeFrame: vi.fn(async () => {
+        const close = vi.fn()
+        closes.push(close)
+        return {
+          source: {} as CanvasImageSource,
+          width: 32,
+          height: 40,
+          close,
+        }
+      }),
+      createCanvas: vi.fn((width, height) => {
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        Object.defineProperty(canvas, 'getContext', {
+          value: () => ({
+            clearRect: vi.fn(),
+            drawImage: vi.fn(),
+            getImageData: vi.fn(() => {
+              throw new Error('pixel access denied')
+            }),
+          }),
+        })
+        Object.defineProperty(canvas, 'toBlob', {
+          value: (callback: BlobCallback) => callback(new Blob(['atlas'], { type: 'image/png' })),
+        })
+        return canvas
+      }),
+    }
+
+    await expect(exportGameAssets(model, { runtime: testRuntime })).rejects.toThrow(
+      'preview/Walk-Forward-south.gif: GIF 编码失败（pixel access denied）',
+    )
+    expect(closes).toHaveLength(11)
+    expect(closes.every((close) => close.mock.calls.length === 1)).toBe(true)
   })
 
   it('target 只能写入安全且不重复的相对路径', async () => {

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://windup.local/schemas/export-package-1.1.0.json",
+  "$id": "https://windup.local/schemas/export-package-1.2.0.json",
   "title": "Windup Generic Export Package",
   "type": "object",
   "additionalProperties": false,
@@ -16,7 +16,7 @@
     "source"
   ],
   "properties": {
-    "schema_version": { "const": "1.1.0" },
+    "schema_version": { "const": "1.2.0" },
     "stage": { "enum": ["character", "first-frame", "action-assets", "playtest"] },
     "character": {
       "type": "object",
@@ -60,6 +60,7 @@
           "frames",
           "anchor",
           "foot_y",
+          "preview_gif",
           "atlas"
         ],
         "properties": {
@@ -91,6 +92,7 @@
             }
           },
           "foot_y": { "type": "integer", "minimum": 0 },
+          "preview_gif": { "type": "string", "pattern": "^preview/.+\\.gif$" },
           "atlas": {
             "type": "object",
             "additionalProperties": false,
