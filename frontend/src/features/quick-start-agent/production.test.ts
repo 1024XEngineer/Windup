@@ -222,6 +222,7 @@ describe('Quick Start Agent composition', () => {
       prompt: '银发像素骑士',
       actionPrompt: '向前行走',
       actionType: 'walk' as const,
+      locomotion: true as const,
       directionalMovement: 'single' as const,
       automaticDelivery: true,
       suggestPixelPerfect: true,
@@ -241,7 +242,7 @@ describe('Quick Start Agent composition', () => {
       prompt: '银发像素骑士',
       directionalMovement: 'single',
       gameStyle: undefined,
-      automaticDelivery: { actionPrompt: '向前行走', actionType: 'walk' },
+      automaticDelivery: { actionPrompt: '向前行走', actionType: 'walk', locomotion: true },
       suggestPixelPerfect: true,
     })
     expect(dispose).toHaveBeenCalledTimes(1)
