@@ -24,6 +24,7 @@ import type {
   ImageCandidateCount,
   SequenceGeometry,
   TaskStatus,
+  ViewSheetGenerationType,
 } from '.'
 import { isActionDirection, type ActionDirection } from '@/entities/character/directions'
 
@@ -60,7 +61,12 @@ interface GenerationTaskDto {
   queueAhead?: number
 }
 
-type BackendGenerationType = 'character_image' | 'character_direction_set' | 'character_action'
+type BackendGenerationType =
+  | 'character_image'
+  | 'character_direction_set'
+  | 'character_four_view'
+  | 'character_eight_view'
+  | 'character_action'
 
 const TASK_STATUSES = new Set<TaskStatus>(['pending', 'running', 'completed', 'partial', 'failed'])
 const DIRECTION_TASK_STATUSES = new Set(['pending', 'running', 'completed', 'failed'])
@@ -122,6 +128,8 @@ function backendTaskType(value: unknown): BackendGenerationType {
   if (
     value !== 'character_image' &&
     value !== 'character_direction_set' &&
+    value !== 'character_four_view' &&
+    value !== 'character_eight_view' &&
     value !== 'character_action'
   ) {
     throw new GenerationApiError('生成任务 task_type 无效', 200)
@@ -208,6 +216,7 @@ function parseTaskDto(value: unknown): GenerationTaskDto {
 
 function expectedBackendType(type: GenerationTaskType): BackendGenerationType {
   if (type === 'complete_animation') return 'character_action'
+  if (type === 'character_four_view' || type === 'character_eight_view') return type
   return type === 'character_direction_set' ? 'character_direction_set' : 'character_image'
 }
 
@@ -323,6 +332,87 @@ function mapDirectionSetResult(result: Record<string, unknown>): GenerationResul
     }
   })
   return { type: 'character_direction_set', directions }
+}
+
+function mapViewSheetResult(
+  result: Record<string, unknown>,
+  expectation: Extract<GenerationExpectation, { type: ViewSheetGenerationType }>,
+  expectedCandidateCount?: ImageCandidateCount,
+): GenerationResult {
+  if (result.type !== expectation.type || !Array.isArray(result.sheets)) {
+    throw new GenerationApiError('立绘 sheet 结果无效', 200)
+  }
+  if (
+    result.sheets.length === 0 ||
+    !isImageCandidateCount(result.sheets.length) ||
+    (expectedCandidateCount !== undefined && result.sheets.length !== expectedCandidateCount)
+  ) {
+    throw new GenerationApiError('立绘 sheet 候选数量无效', 200)
+  }
+  const requiredDirections =
+    expectation.type === 'character_four_view'
+      ? new Set<ActionDirection>(['east', 'west', 'north', 'south'])
+      : new Set<ActionDirection>([
+          'east',
+          'west',
+          'north',
+          'south',
+          'north_east',
+          'north_west',
+          'south_east',
+          'south_west',
+        ])
+  const mirrorSources: Partial<Record<ActionDirection, ActionDirection>> = {
+    west: 'east',
+    ...(expectation.type === 'character_eight_view'
+      ? { north_west: 'north_east' as const, south_west: 'south_east' as const }
+      : {}),
+  }
+  const sheets = result.sheets.map((rawSheet) => {
+    if (!isRecord(rawSheet) || !Array.isArray(rawSheet.cells)) {
+      throw new GenerationApiError('立绘 sheet 候选无效', 200)
+    }
+    const sheetUrl = nonEmptyString(rawSheet.sheet_url, '立绘 sheet 结果 sheet_url')
+    const seen = new Set<ActionDirection>()
+    const cells = rawSheet.cells.map((rawCell) => {
+      if (!isRecord(rawCell)) throw new GenerationApiError('立绘 sheet cell 无效', 200)
+      const direction = taskDirection(rawCell.direction, '立绘 sheet cell direction')
+      if (direction === undefined || seen.has(direction) || !requiredDirections.has(direction)) {
+        throw new GenerationApiError('立绘 sheet cell 方向缺失、重复或超出规格', 200)
+      }
+      seen.add(direction)
+      const sourceDirection =
+        rawCell.source_direction === null
+          ? null
+          : taskDirection(rawCell.source_direction, '立绘 sheet cell source_direction')
+      if (sourceDirection === undefined) {
+        throw new GenerationApiError('立绘 sheet cell source_direction 无效', 200)
+      }
+      const expectedSourceDirection = mirrorSources[direction] ?? null
+      if (
+        typeof rawCell.mirror_x !== 'boolean' ||
+        rawCell.mirror_x !== (expectedSourceDirection !== null) ||
+        sourceDirection !== expectedSourceDirection
+      ) {
+        throw new GenerationApiError('立绘 sheet cell 镜像关系不符合方向规格', 200)
+      }
+      return {
+        direction,
+        imageUrl: nonEmptyString(rawCell.image_url, '立绘 sheet cell image_url'),
+        sourceDirection,
+        mirrorX: rawCell.mirror_x,
+      }
+    })
+    if (seen.size !== requiredDirections.size) {
+      throw new GenerationApiError('立绘 sheet cell 方向不完整', 200)
+    }
+    return { sheetUrl, cells }
+  })
+  return {
+    type: expectation.type,
+    sheets,
+    quality: dtoNullableRecord(result.quality, '立绘 sheet 结果 quality'),
+  }
 }
 
 /**
@@ -461,6 +551,14 @@ function mapResult(
     }
     return mapDirectionSetResult(result)
   }
+  if (expectation.type === 'character_four_view' || expectation.type === 'character_eight_view') {
+    if (status !== 'completed') {
+      if (result !== null) throw new GenerationApiError('非完成 sheet 任务不应携带 result', 200)
+      return null
+    }
+    if (result === null) throw new GenerationApiError('完成 sheet 任务缺少 result', 200)
+    return mapViewSheetResult(result, expectation, expectedCandidateCount)
+  }
   if (status !== 'completed') {
     if (result !== null) {
       throw new GenerationApiError('非完成任务不应携带 result', 200)
@@ -505,6 +603,14 @@ function validateInputPayload(
     }
     return candidateCount
   }
+  if (expectation.type === 'character_four_view' || expectation.type === 'character_eight_view') {
+    const candidateCount = imageCandidateCount(inputPayload.num_images, '生成任务 num_images', 200)
+    dtoPositiveInteger(inputPayload.character_id, '生成任务 character_id')
+    if (expectedCandidateCount !== undefined && candidateCount !== expectedCandidateCount) {
+      throw new GenerationApiError('sheet 任务 num_images 与请求不一致', 200)
+    }
+    return candidateCount
+  }
   if (expectation.type !== 'complete_animation') {
     const candidateCount = imageCandidateCount(inputPayload.num_images, '生成任务 num_images', 200)
     if (expectedCandidateCount !== undefined && candidateCount !== expectedCandidateCount) {
@@ -535,6 +641,9 @@ function validateInputPayload(
 
 function inferExpectation(dto: GenerationTaskDto): GenerationExpectation {
   if (dto.taskType === 'character_direction_set') return { type: 'character_direction_set' }
+  if (dto.taskType === 'character_four_view' || dto.taskType === 'character_eight_view') {
+    return { type: dto.taskType }
+  }
   const direction = dto.inputPayload
     ? taskDirection(dto.inputPayload.direction, '生成任务 direction')
     : undefined
@@ -785,7 +894,11 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
   const candidateCounts = new Map<string, ImageCandidateCount>()
 
   async function post<TType extends GenerationType>(
-    path: '/generation/image' | '/generation/action',
+    path:
+      | '/generation/image'
+      | '/generation/four-view'
+      | '/generation/eight-view'
+      | '/generation/action',
     projectId: number,
     expectation: Extract<GenerationExpectation, { type: TType }>,
     body: Record<string, unknown>,
@@ -808,6 +921,28 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
   const apis: GenerationApis = {
     async create<T extends GenerationInput>(input: T): Promise<Generation<T['type']>> {
       const projectId = inputPositiveInteger(input.projectId, 'projectId')
+      if (input.type === 'character_four_view' || input.type === 'character_eight_view') {
+        const expectation = { type: input.type } as const
+        const candidateCount = imageCandidateCount(input.candidateCount ?? 1, 'candidateCount')
+        const generation = await post(
+          input.type === 'character_four_view' ? '/generation/four-view' : '/generation/eight-view',
+          projectId,
+          expectation,
+          {
+            project_id: projectId,
+            character_id: inputPositiveInteger(input.characterId, 'characterId'),
+            prompt: input.prompt,
+            negative_prompt: input.negativePrompt ?? '',
+            width: inputPositiveInteger(input.spriteWidth, 'spriteWidth'),
+            height: inputPositiveInteger(input.spriteHeight, 'spriteHeight'),
+            num_images: candidateCount,
+          },
+          candidateCount,
+        )
+        expectations.set(generation.id, expectation)
+        candidateCounts.set(generation.id, candidateCount)
+        return generation as Generation<T['type']>
+      }
       if (input.type === 'complete_animation') {
         const referenceImageUrls = references(input)
         // 这两道拦在 HTTP 之前。后端各有一道最后防线，但它回给用户的是

@@ -67,14 +67,20 @@ export {
   characterApis,
   characterTemplateImages,
   characterTemplatesFromImages,
+  characterTemplatesFromViewSheetCells,
 } from './character'
 export {
   ACTION_DIRECTIONS,
+  getDirectionGridLayout,
   getDirectionProfile,
   isActionDirection,
   resolveActionDirection,
 } from './character/directions'
-export type { DirectionProfile, ResolvedActionDirection } from './character/directions'
+export type {
+  DirectionGridLayout,
+  DirectionProfile,
+  ResolvedActionDirection,
+} from './character/directions'
 export { getOutfitPlayback } from './character/outfit-playback'
 
 /* 动作模板 —— 能跨角色复用的配方 */
@@ -92,6 +98,10 @@ export type {
   CharacterTemplateGenerationInput,
   CharacterTemplateGenerationResult,
   CharacterDirectionSetGenerationResult,
+  CharacterViewSheetCandidate,
+  CharacterViewSheetCell,
+  CharacterViewSheetGenerationInput,
+  CharacterViewSheetGenerationResult,
   CompleteAnimationGenerationInput,
   CompleteAnimationGenerationResult,
   FirstFrameGenerationInput,
@@ -107,6 +117,7 @@ export type {
   GenerationResultFor,
   GenerationTaskType,
   GenerationType,
+  ViewSheetGenerationType,
   ImageCandidateCount,
   SequenceGeometry,
   TaskStatus,

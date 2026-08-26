@@ -106,6 +106,16 @@ function hasOnlyGenerationRole(value: Record<string, unknown>, role: string | nu
   )
 }
 
+function hasOnlyGenerationRoles(value: Record<string, unknown>, roles: readonly string[]): boolean {
+  if (!Array.isArray(value.generations)) return false
+  const refs = value.generations.filter(isRecord)
+  return (
+    refs.length === value.generations.length &&
+    refs.every((reference) => roles.includes(String(reference.role))) &&
+    new Set(refs.map((reference) => reference.taskId)).size === refs.length
+  )
+}
+
 function hasValidCharacterInput(value: unknown): boolean {
   if (!isRecord(value)) return false
   return (
@@ -173,7 +183,11 @@ function isCharacterTemplateNode(value: unknown): value is CharacterTemplateWork
     value.type === 'character-template' &&
     hasValidCommonNodeFields(value) &&
     ['ready', 'generating', 'selecting', 'completed'].includes(String(value.phase)) &&
-    hasOnlyGenerationRole(value, 'character_template') &&
+    hasOnlyGenerationRoles(value, [
+      'character_template',
+      'character_four_view',
+      'character_eight_view',
+    ]) &&
     isNullableString(value.selectedImageUrl) &&
     isDirectionalSelectionMap(value.selectedImages) &&
     (value.phase !== 'completed' ||

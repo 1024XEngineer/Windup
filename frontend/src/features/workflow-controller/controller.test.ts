@@ -422,7 +422,7 @@ describe('WorkflowController', () => {
     )
   })
 
-  it('按 Quick Start 选择四向项目时仍只提交三张东向母版候选', async () => {
+  it('按 Quick Start 选择四向项目时只提交三张南向正视母版候选', async () => {
     const workflow = createWorkflowApis()
     const generation = createGenerationHarness()
     const prepareProject = vi.fn(async () => ({
@@ -447,8 +447,120 @@ describe('WorkflowController', () => {
     })
     expect(generation.apis.create).toHaveBeenCalledTimes(1)
     expect(vi.mocked(generation.apis.create).mock.calls.map(([input]) => input.direction)).toEqual([
-      'east',
+      'south',
     ])
+  })
+
+  it('uses the merged view-sheet contract for a four-way character and confirms one whole candidate', async () => {
+    const run = createRun([
+      setupNode({
+        status: 'passed',
+        phase: 'completed',
+        input: {
+          prompt: '四向像素骑士',
+          referenceMedia: [],
+          characterId: '7',
+        },
+      }),
+      templateNode({
+        status: 'active',
+        phase: 'selecting',
+        selectedImageUrl: 'https://img/south.png',
+        selectedImages: { south: 'https://img/south.png' },
+      }),
+    ])
+    const { controller, generation } = createController(run, 'four-way')
+
+    await controller.generateCharacterViewSheet('template-1', {
+      characterId: '7',
+      prompt: '四向像素骑士',
+      spriteWidth: 64,
+      spriteHeight: 96,
+    })
+
+    expect(generation.apis.create).toHaveBeenCalledWith({
+      type: 'character_four_view',
+      projectId: '1',
+      characterId: '7',
+      prompt: '四向像素骑士',
+      referenceMedia: [],
+      spriteWidth: 64,
+      spriteHeight: 96,
+      candidateCount: 1,
+    })
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+      phase: 'generating',
+      generations: expect.arrayContaining([
+        expect.objectContaining({ taskId: 'task-1', role: 'character_four_view' }),
+      ]),
+    })
+
+    const cells = [
+      {
+        direction: 'south' as const,
+        imageUrl: 'https://img/south.png',
+        sourceDirection: null,
+        mirrorX: false,
+      },
+      {
+        direction: 'east' as const,
+        imageUrl: 'https://img/east.png',
+        sourceDirection: null,
+        mirrorX: false,
+      },
+      {
+        direction: 'north' as const,
+        imageUrl: 'https://img/north.png',
+        sourceDirection: null,
+        mirrorX: false,
+      },
+      {
+        direction: 'west' as const,
+        imageUrl: 'https://img/west.png',
+        sourceDirection: 'east' as const,
+        mirrorX: true,
+      },
+    ]
+    generation.emit({
+      taskId: 'task-1',
+      type: 'character_four_view',
+      status: 'completed',
+      result: {
+        type: 'character_four_view',
+        sheets: [{ sheetUrl: 'https://img/sheet.png', cells }],
+        quality: null,
+      },
+      error: null,
+    })
+    await flushAsyncWork()
+
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+      status: 'active',
+      phase: 'selecting',
+    })
+
+    await expect(
+      controller.confirmCharacterViewSheet(
+        'template-1',
+        cells.map((cell) =>
+          cell.direction === 'west' ? { ...cell, sourceDirection: 'north' as const } : cell,
+        ),
+      ),
+    ).rejects.toThrow('方向 sheet 的镜像关系与项目方向模式不一致')
+
+    await controller.confirmCharacterViewSheet('template-1', cells)
+
+    expect(controller.getWorkflow().nodes[1]).toMatchObject({
+      status: 'passed',
+      phase: 'completed',
+      selectedImageUrl: 'https://img/south.png',
+      selectedImages: {
+        south: 'https://img/south.png',
+        east: 'https://img/east.png',
+        north: 'https://img/north.png',
+        west: 'https://img/west.png',
+      },
+    })
   })
 
   it('未注入项目准备能力时拒绝 Quick Start 生成命令', async () => {
@@ -500,45 +612,25 @@ describe('WorkflowController', () => {
     ])
   })
 
-  it('多方向项目只把上传母版记入指定方向，全部方向上传后才完成节点', async () => {
+  it('多方向项目把上传的南向图登记为方向 sheet 的已确认母版', async () => {
     const { controller } = createController(createRun(), 'four-way')
 
     await controller.acceptUploadedCharacterTemplate(
       'setup-1',
-      'https://img/east.png',
+      'https://img/south.png',
       'character-1',
-      'east',
+      'south',
     )
 
     expect(controller.getWorkflow().nodes[1]).toMatchObject({
       status: 'active',
       phase: 'selecting',
-      selectedImageUrl: 'https://img/east.png',
-      selectedImages: { east: 'https://img/east.png' },
-    })
-
-    for (const direction of ['west', 'north', 'south'] as const) {
-      await controller.acceptUploadedCharacterTemplate(
-        'setup-1',
-        `https://img/${direction}.png`,
-        'character-1',
-        direction,
-      )
-    }
-
-    expect(controller.getWorkflow().nodes[1]).toMatchObject({
-      status: 'passed',
-      phase: 'completed',
-      selectedImages: {
-        east: 'https://img/east.png',
-        west: 'https://img/west.png',
-        north: 'https://img/north.png',
-        south: 'https://img/south.png',
-      },
+      selectedImageUrl: 'https://img/south.png',
+      selectedImages: { south: 'https://img/south.png' },
     })
   })
 
-  it('多方向项目上传东向母版后只生成其余缺失方向', async () => {
+  it('显式补源方向时跳过已经上传的东向图片', async () => {
     const { controller, generation } = createController(createRun(), 'four-way')
     await controller.acceptUploadedCharacterTemplate(
       'setup-1',
@@ -550,11 +642,11 @@ describe('WorkflowController', () => {
     await controller.generateCharacterTemplate('setup-1', {
       spriteWidth: 64,
       spriteHeight: 64,
+      directions: ['east', 'north', 'south'],
     })
 
-    expect(generation.apis.create).toHaveBeenCalledTimes(3)
+    expect(generation.apis.create).toHaveBeenCalledTimes(2)
     expect(vi.mocked(generation.apis.create).mock.calls.map(([input]) => input.direction)).toEqual([
-      'west',
       'north',
       'south',
     ])
@@ -1180,12 +1272,9 @@ describe('WorkflowController', () => {
   })
 
   it.each([
-    ['four-way', ['east', 'west', 'north', 'south']],
-    [
-      'eight-way',
-      ['east', 'west', 'north', 'south', 'north_east', 'north_west', 'south_east', 'south_west'],
-    ],
-  ] as const)('按项目方向为 %s 创建全部真实方向的候选任务', async (movement, directions) => {
+    ['four-way', ['east', 'north', 'south']],
+    ['eight-way', ['east', 'north', 'south', 'north_east', 'south_east']],
+  ] as const)('按项目方向为 %s 创建全部源方向的候选任务', async (movement, directions) => {
     const { controller, generation } = createController(createRun(), movement)
 
     await controller.generateCharacterTemplate('setup-1', {
@@ -1226,8 +1315,8 @@ describe('WorkflowController', () => {
     const originalCreate = create.getMockImplementation()!
     const finishSuccessfulCreates: Array<() => void> = []
     create.mockImplementation((input) => {
-      if (input.direction === 'west') {
-        return Promise.reject(new Error('west submit failed'))
+      if (input.direction === 'north') {
+        return Promise.reject(new Error('north submit failed'))
       }
       return new Promise((resolve) => {
         finishSuccessfulCreates.push(() => void resolve(originalCreate(input)))
@@ -1246,15 +1335,14 @@ describe('WorkflowController', () => {
 
     expect(requestState).toBe('pending')
     finishSuccessfulCreates.forEach((finish) => finish())
-    await expect(generationRequest).rejects.toThrow('west submit failed')
+    await expect(generationRequest).rejects.toThrow('north submit failed')
 
     expect(controller.getWorkflow().nodes[1]).toMatchObject({
       status: 'active',
       phase: 'generating',
       generations: [
         { taskId: 'task-1', role: 'character_template' },
-        { taskId: 'task-2', role: 'character_template', direction: 'north' },
-        { taskId: 'task-3', role: 'character_template', direction: 'south' },
+        { taskId: 'task-2', role: 'character_template', direction: 'south' },
       ],
     })
 
@@ -1264,12 +1352,12 @@ describe('WorkflowController', () => {
       spriteHeight: 64,
     })
 
-    expect(create).toHaveBeenCalledTimes(5)
-    expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ direction: 'west' }))
-    expect(controller.getWorkflow().nodes[1]?.generations).toHaveLength(4)
+    expect(create).toHaveBeenCalledTimes(4)
+    expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ direction: 'north' }))
+    expect(controller.getWorkflow().nodes[1]?.generations).toHaveLength(3)
   })
 
-  it('四向首帧必须逐方向确认，不能用东向选择冒充其它方向', async () => {
+  it('四向动作只为三个源方向生成并逐方向确认首帧', async () => {
     const run = createRun([
       setupNode({ status: 'passed', phase: 'completed' }),
       templateNode({
@@ -1278,7 +1366,6 @@ describe('WorkflowController', () => {
         selectedImageUrl: 'https://img/east.png',
         selectedImages: {
           east: 'https://img/east.png',
-          west: 'https://img/west.png',
           north: 'https://img/north.png',
           south: 'https://img/south.png',
         },
@@ -1291,7 +1378,7 @@ describe('WorkflowController', () => {
       spriteWidth: 64,
       spriteHeight: 64,
     })
-    for (const [index, direction] of ['east', 'west', 'north', 'south'].entries()) {
+    for (const [index, direction] of ['east', 'north', 'south'].entries()) {
       generation.emit({
         taskId: `task-${index + 1}`,
         type: 'first_frame',
@@ -1307,12 +1394,11 @@ describe('WorkflowController', () => {
     await flushAsyncWork()
 
     await controller.confirmFirstFrame('action-walk', 'east-1', 'east')
-    await controller.confirmFirstFrame('action-walk', 'west-1', 'west')
     await controller.confirmFirstFrame('action-walk', 'north-1', 'north')
     expect(controller.getWorkflow().nodes.find((node) => node.id === 'action-walk')).toMatchObject({
       status: 'active',
       phase: 'selecting',
-      selectedFirstFrameUrls: { east: 'east-1', west: 'west-1', north: 'north-1' },
+      selectedFirstFrameUrls: { east: 'east-1', north: 'north-1' },
     })
 
     await controller.confirmFirstFrame('action-walk', 'south-1', 'south')
@@ -1321,7 +1407,6 @@ describe('WorkflowController', () => {
       phase: 'completed',
       selectedFirstFrameUrls: {
         east: 'east-1',
-        west: 'west-1',
         north: 'north-1',
         south: 'south-1',
       },
@@ -1414,7 +1499,7 @@ describe('WorkflowController', () => {
 
     await expect(
       controller.generateFirstFrame('action-walk', { spriteWidth: 64, spriteHeight: 64 }),
-    ).rejects.toThrow('角色母版尚未确认方向 west')
+    ).rejects.toThrow('角色母版尚未确认方向 north')
 
     expect(generation.apis.create).not.toHaveBeenCalled()
   })
@@ -1438,7 +1523,7 @@ describe('WorkflowController', () => {
         characterId: 'character-1',
         referenceMedia: [],
       }),
-    ).rejects.toThrow('动作首帧尚未确认方向 west')
+    ).rejects.toThrow('动作首帧尚未确认方向 north')
 
     expect(generation.apis.create).not.toHaveBeenCalled()
   })
@@ -1513,7 +1598,7 @@ describe('WorkflowController', () => {
     ).rejects.toThrow('尚未选择动作生成方式')
   })
 
-  it('四向允许确认西向、拒绝超规格斜向，并在服务端返回错误方向时终止节点', async () => {
+  it('四向允许确认源方向、拒绝镜像与超规格方向，并在服务端返回错误方向时终止节点', async () => {
     const confirmation = createController(
       createRun([
         setupNode({ status: 'passed', phase: 'completed' }),
@@ -1524,13 +1609,21 @@ describe('WorkflowController', () => {
 
     await confirmation.controller.confirmCharacterTemplate(
       'template-1',
-      'west.png',
+      'north.png',
       'character-1',
-      'west',
+      'north',
     )
     expect(confirmation.controller.getWorkflow().nodes[1]).toMatchObject({
-      selectedImages: { west: 'west.png' },
+      selectedImages: { north: 'north.png' },
     })
+    await expect(
+      confirmation.controller.confirmCharacterTemplate(
+        'template-1',
+        'west.png',
+        'character-1',
+        'west',
+      ),
+    ).rejects.toThrow('方向 west 是镜像方向，不能单独生成或确认')
     await expect(
       confirmation.controller.confirmCharacterTemplate(
         'template-1',
@@ -1736,7 +1829,7 @@ describe('WorkflowController', () => {
       spriteWidth: 64,
       spriteHeight: 64,
     })
-    for (const [index, direction] of ['east', 'west', 'north', 'south'].entries()) {
+    for (const [index, direction] of ['east', 'north', 'south'].entries()) {
       generation.emit({
         taskId: `task-${index + 1}`,
         type: 'character_template',
@@ -1746,7 +1839,7 @@ describe('WorkflowController', () => {
             ? null
             : {
                 type: 'character_template',
-                direction: direction as 'east' | 'west' | 'south',
+                direction: direction as 'east' | 'south',
                 images: [{ url: `${direction}-1.png` }, { url: `${direction}-2.png` }],
               },
         error: direction === 'north' ? 'north provider failed' : null,
@@ -1759,7 +1852,7 @@ describe('WorkflowController', () => {
       spriteHeight: 64,
     })
 
-    expect(generation.apis.create).toHaveBeenCalledTimes(5)
+    expect(generation.apis.create).toHaveBeenCalledTimes(4)
     expect(generation.apis.create).toHaveBeenLastCalledWith(
       expect.objectContaining({ type: 'character_template', direction: 'north' }),
     )
@@ -1768,9 +1861,8 @@ describe('WorkflowController', () => {
       phase: 'generating',
       generations: [
         { taskId: 'task-1', role: 'character_template' },
-        { taskId: 'task-2', role: 'character_template', direction: 'west' },
-        { taskId: 'task-4', role: 'character_template', direction: 'south' },
-        { taskId: 'task-5', role: 'character_template', direction: 'north' },
+        { taskId: 'task-3', role: 'character_template', direction: 'south' },
+        { taskId: 'task-4', role: 'character_template', direction: 'north' },
       ],
     })
   })
@@ -3800,7 +3892,6 @@ describe('WorkflowController', () => {
         selectedImageUrl: 'east-template.png',
         selectedImages: {
           east: 'east-template.png',
-          west: 'west-template.png',
           north: 'north-template.png',
           south: 'south-template.png',
         },
@@ -3822,7 +3913,6 @@ describe('WorkflowController', () => {
       })),
     ).toEqual([
       { direction: 'east', referenceMedia: ['east-template.png'] },
-      { direction: 'west', referenceMedia: ['west-template.png'] },
       { direction: 'north', referenceMedia: ['north-template.png'] },
       { direction: 'south', referenceMedia: ['south-template.png'] },
     ])
@@ -3837,7 +3927,6 @@ describe('WorkflowController', () => {
         selectedImageUrl: 'east-template.png',
         selectedImages: {
           east: 'east-template.png',
-          west: 'west-template.png',
           north: 'north-template.png',
           south: 'south-template.png',
         },
@@ -3848,7 +3937,6 @@ describe('WorkflowController', () => {
         selectedFirstFrameUrl: 'east-frame.png',
         selectedFirstFrameUrls: {
           east: 'east-frame.png',
-          west: 'west-frame.png',
           north: 'north-frame.png',
           south: 'south-frame.png',
         },
@@ -3873,7 +3961,6 @@ describe('WorkflowController', () => {
       })),
     ).toEqual([
       { direction: 'east', referenceMedia: ['east-frame.png'] },
-      { direction: 'west', referenceMedia: ['west-frame.png'] },
       { direction: 'north', referenceMedia: ['north-frame.png'] },
       { direction: 'south', referenceMedia: ['south-frame.png'] },
     ])

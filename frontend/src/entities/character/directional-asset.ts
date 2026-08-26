@@ -29,6 +29,27 @@ function missingDirections(
   return required.filter((direction) => !actual.has(direction))
 }
 
+function invalidDerivedDirections(
+  required: readonly {
+    direction: ActionDirection
+    sourceDirection: ActionDirection
+    mirrorX: boolean
+  }[],
+  items: readonly {
+    direction: ActionDirection
+    sourceDirection: ActionDirection | null
+    mirrorX: boolean
+  }[],
+): ActionDirection[] {
+  const byDirection = new Map(items.map((item) => [item.direction, item]))
+  return required.flatMap((expected) => {
+    const actual = byDirection.get(expected.direction)
+    return actual?.sourceDirection === expected.sourceDirection && actual.mirrorX
+      ? []
+      : [expected.direction]
+  })
+}
+
 export function validateDirectionalAsset(
   version: number,
   movement: DirectionalMovement,
@@ -40,12 +61,16 @@ export function validateDirectionalAsset(
   }
 
   const profile = getDirectionProfile(movement)
-  const required = profile.generationDirections
+  const required = profile.sourceDirections
   const allowed = new Set(profile.logicalDirections)
   const problems: string[] = []
   const missingTemplates = missingDirections(required, realDirections(templates))
   if (missingTemplates.length > 0) {
     problems.push(`角色母版缺少真实方向：${missingTemplates.join('、')}`)
+  }
+  const invalidTemplateMirrors = invalidDerivedDirections(profile.derivedDirections, templates)
+  if (invalidTemplateMirrors.length > 0) {
+    problems.push(`角色母版缺少镜像方向：${invalidTemplateMirrors.join('、')}`)
   }
   const unexpectedTemplates = templates
     .map((template) => template.direction)
@@ -58,6 +83,13 @@ export function validateDirectionalAsset(
     const missing = missingDirections(required, realDirections(action.sequences ?? []))
     if (missing.length > 0) {
       problems.push(`动作 ${action.id} 缺少真实方向：${missing.join('、')}`)
+    }
+    const invalidMirrors = invalidDerivedDirections(
+      profile.derivedDirections,
+      action.sequences ?? [],
+    )
+    if (invalidMirrors.length > 0) {
+      problems.push(`动作 ${action.id} 缺少镜像方向：${invalidMirrors.join('、')}`)
     }
     const unexpected = (action.sequences ?? [])
       .map((sequence) => sequence.direction)

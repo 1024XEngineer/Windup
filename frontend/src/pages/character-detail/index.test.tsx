@@ -267,6 +267,13 @@ describe('CharacterDetailPage', () => {
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init)
       const response = await backend.fetch(input, init)
+      if (request.url.endsWith('/projects/42')) {
+        const payload = (await response.json()) as { data: { directional_movement: number } }
+        payload.data.directional_movement = 3
+        return new Response(JSON.stringify(payload), {
+          headers: { 'content-type': 'application/json' },
+        })
+      }
       if (!request.url.endsWith('/characters/51')) return response
 
       const payload = (await response.json()) as {
@@ -294,11 +301,18 @@ describe('CharacterDetailPage', () => {
 
     expect(await screen.findByRole('heading', { name: '轻装信使' })).toBeTruthy()
     const templates = screen.getByRole('region', { name: '角色母版方向' })
+    expect(templates.className).toContain('grid-cols-3')
+    expect(templates.children).toHaveLength(9)
+    expect(within(templates).getByLabelText('八向宫格中心留空')).toBeTruthy()
     expect(
       within(templates)
         .getAllByRole('img')
         .map((image) => image.getAttribute('alt')),
-    ).toEqual(directions.map(([, label]) => `轻装信使${label}方向母版`))
+    ).toEqual(
+      ['西北', '北', '东北', '西', '东', '西南', '南', '东南'].map(
+        (label) => `轻装信使${label}方向母版`,
+      ),
+    )
   })
 
   it('keeps Playtest available when real frames exist only in directional sequences', async () => {

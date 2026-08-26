@@ -1,6 +1,35 @@
 import { describe, expect, it } from 'vitest'
 
-import { ACTION_DIRECTIONS, getDirectionProfile, resolveActionDirection } from './directions'
+import {
+  ACTION_DIRECTIONS,
+  getDirectionGridLayout,
+  getDirectionProfile,
+  resolveActionDirection,
+} from './directions'
+
+describe('direction grid layouts', () => {
+  it('maps single, four-way, and eight-way assets to their display grids', () => {
+    expect(getDirectionGridLayout('single')).toEqual({ columns: 1, cells: ['east'] })
+    expect(getDirectionGridLayout('four-way')).toEqual({
+      columns: 2,
+      cells: ['north', 'south', 'west', 'east'],
+    })
+    expect(getDirectionGridLayout('eight-way')).toEqual({
+      columns: 3,
+      cells: [
+        'north_west',
+        'north',
+        'north_east',
+        'west',
+        null,
+        'east',
+        'south_west',
+        'south',
+        'south_east',
+      ],
+    })
+  })
+})
 
 describe('direction profiles', () => {
   it('generates east and derives west for single-direction projects', () => {
@@ -13,20 +42,32 @@ describe('direction profiles', () => {
     ])
   })
 
-  it('requires four independent generation directions for four-way projects', () => {
+  it('uses three sources and derives west for four-way projects', () => {
     const profile = getDirectionProfile('four-way')
 
-    expect(profile.generationDirections).toEqual(['east', 'west', 'north', 'south'])
+    expect(profile.generationDirections).toEqual(['east', 'north', 'south'])
     expect(profile.logicalDirections).toEqual(['east', 'west', 'north', 'south'])
-    expect(profile.derivedDirections).toEqual([])
+    expect(profile.derivedDirections).toEqual([
+      { direction: 'west', sourceDirection: 'east', mirrorX: true },
+    ])
   })
 
-  it('requires all eight independent generation directions for eight-way projects', () => {
+  it('uses five sources and derives west-facing diagonals for eight-way projects', () => {
     const profile = getDirectionProfile('eight-way')
 
-    expect(profile.generationDirections).toEqual(ACTION_DIRECTIONS)
+    expect(profile.generationDirections).toEqual([
+      'east',
+      'north',
+      'south',
+      'north_east',
+      'south_east',
+    ])
     expect(profile.logicalDirections).toEqual(ACTION_DIRECTIONS)
-    expect(profile.derivedDirections).toEqual([])
+    expect(profile.derivedDirections).toEqual([
+      { direction: 'west', sourceDirection: 'east', mirrorX: true },
+      { direction: 'north_west', sourceDirection: 'north_east', mirrorX: true },
+      { direction: 'south_west', sourceDirection: 'south_east', mirrorX: true },
+    ])
   })
 })
 

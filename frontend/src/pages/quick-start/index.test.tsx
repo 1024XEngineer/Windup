@@ -16,6 +16,7 @@ import type { QuickStartCandidate, QuickStartEntryService, QuickStartSession } f
 import {
   CHARACTER_STATUS,
   WorkflowRunConflictError,
+  type CharacterViewSheetCandidate,
   type Character,
   type CharacterApis,
   type CharacterSummaryApis,
@@ -360,6 +361,38 @@ describe('Quick Start workflow Agent', () => {
 
 function eastCandidates(...imageUrls: string[]): readonly QuickStartCandidate[] {
   return imageUrls.map((imageUrl, index) => ({ direction: 'east', index, imageUrl }))
+}
+
+function viewSheetCandidate(movement: 'four-way' | 'eight-way'): CharacterViewSheetCandidate {
+  const sourceDirections =
+    movement === 'four-way'
+      ? (['south', 'east', 'north'] as const)
+      : (['south', 'east', 'north', 'north_east', 'south_east'] as const)
+  const mirrors =
+    movement === 'four-way'
+      ? ([['west', 'east']] as const)
+      : ([
+          ['west', 'east'],
+          ['north_west', 'north_east'],
+          ['south_west', 'south_east'],
+        ] as const)
+  return {
+    sheetUrl: `${movement}-sheet.png`,
+    cells: [
+      ...sourceDirections.map((direction) => ({
+        direction,
+        imageUrl: `${direction}.png`,
+        sourceDirection: null,
+        mirrorX: false,
+      })),
+      ...mirrors.map(([direction, sourceDirection]) => ({
+        direction,
+        imageUrl: `${direction}.png`,
+        sourceDirection,
+        mirrorX: true,
+      })),
+    ],
+  }
 }
 
 function deferred<T>() {
@@ -2414,52 +2447,37 @@ describe('QuickStartPage', () => {
     expect(screen.queryByLabelText('西方向为空')).toBeNull()
   })
 
-  it('母版确认后把四向首帧放入中心留空的九宫格且不再逐方向选择', async () => {
+  it('母版确认后把四向首帧放入四宫格且不再逐方向选择', async () => {
     const run = workflow(
       setupAndTemplate({
-        selectedImageUrl: 'east.png',
-        selectedImages: { east: 'east.png' },
+        selectedImageUrl: 'south.png',
+        selectedImages: { south: 'south.png' },
         status: 'active',
         phase: 'selecting',
         generations: [
-          { taskId: 'template-east', role: 'character_template' },
-          { taskId: 'template-west', role: 'character_template', direction: 'west' },
-          { taskId: 'template-north', role: 'character_template', direction: 'north' },
           { taskId: 'template-south', role: 'character_template', direction: 'south' },
+          { taskId: 'view-sheet', role: 'character_four_view' },
         ],
       }),
     )
     renderAt(
       '/quick-start/run-1',
       serviceFor(run, {
-        getTemplateCandidates: vi.fn(
-          async () =>
-            [
-              { direction: 'east', index: 0, imageUrl: 'east.png' },
-              { direction: 'west', index: 0, imageUrl: 'west.png' },
-              { direction: 'north', index: 0, imageUrl: 'north.png' },
-              { direction: 'south', index: 0, imageUrl: 'south.png' },
-            ] satisfies readonly QuickStartCandidate[],
-        ),
+        getDirectionalMovement: vi.fn(() => 'four-way' as const),
+        getTemplateViewSheetCandidates: vi.fn(async () => [viewSheetCandidate('four-way')]),
       }),
     )
 
-    const directionSet = await screen.findByRole('group', { name: '四向首帧集合' })
-    expect(directionSet.getAttribute('data-layout')).toBe('direction-first-frame-grid')
-    expect(directionSet.className).toContain('grid-cols-3')
-    expect(directionSet.children).toHaveLength(9)
-    expect(screen.getByLabelText('中心留空')).toBeTruthy()
-    expect(screen.getByLabelText('西北方向为空')).toBeTruthy()
-    expect(screen.getByLabelText('东北方向为空')).toBeTruthy()
-    expect(screen.getByLabelText('西南方向为空')).toBeTruthy()
-    expect(screen.getByLabelText('东南方向为空')).toBeTruthy()
-    await waitFor(() => expect(directionSet.querySelectorAll('img')).toHaveLength(4))
-    expect(screen.getByRole('img', { name: '东方向首帧' })).toBeTruthy()
-    expect(screen.getByRole('img', { name: '西方向首帧' })).toBeTruthy()
-    expect(screen.getByRole('img', { name: '北方向首帧' })).toBeTruthy()
-    expect(screen.getByRole('img', { name: '南方向首帧' })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /选择.*角色方案/u })).toBeNull()
+    const directionSet = await screen.findByRole('button', { name: '选择角色方案方向候选 1' })
+    expect(within(directionSet).getAllByRole('img')).toHaveLength(4)
+    expect(within(directionSet).getByRole('img', { name: '东方向角色方案' })).toBeTruthy()
+    expect(within(directionSet).getByRole('img', { name: '西方向角色方案' })).toBeTruthy()
+    expect(within(directionSet).getByRole('img', { name: '北方向角色方案' })).toBeTruthy()
+    expect(within(directionSet).getByRole('img', { name: '南方向角色方案' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /选择(?:东|西|北|南)方向角色方案/u })).toBeNull()
     const generateAction = screen.getByRole('button', { name: '生成动作' })
+    expect(generateAction.hasAttribute('disabled')).toBe(true)
+    fireEvent.click(directionSet)
     expect(generateAction.hasAttribute('disabled')).toBe(true)
     fireEvent.change(screen.getByRole('textbox', { name: '继续描述你的想法' }), {
       target: { value: '挥手' },
@@ -2719,34 +2737,101 @@ describe('QuickStartPage', () => {
     ] as const
     const selectingRun = workflow(
       setupAndTemplate({
-        selectedImageUrl: 'east.png',
-        selectedImages: { east: 'east.png' },
-        generations: directions.map(([direction]) => ({
-          taskId: `template-${direction}`,
-          role: 'character_template' as const,
-          ...(direction === 'east' ? {} : { direction }),
-        })),
+        selectedImageUrl: 'south.png',
+        selectedImages: { south: 'south.png' },
+        generations: [
+          { taskId: 'template-south', role: 'character_template', direction: 'south' },
+          { taskId: 'view-sheet', role: 'character_eight_view' },
+        ],
       }),
     )
     const service = serviceFor(selectingRun, {
-      getTemplateCandidates: vi.fn(async () =>
-        directions.map(([direction]) => ({
-          direction,
-          index: 0,
-          imageUrl: `${direction}.png`,
-        })),
-      ),
+      getDirectionalMovement: vi.fn(() => 'eight-way' as const),
+      getTemplateViewSheetCandidates: vi.fn(async () => [viewSheetCandidate('eight-way')]),
     })
     renderAt('/quick-start/run-1', service)
 
+    const directionSet = await screen.findByRole('button', { name: '选择角色方案方向候选 1' })
     for (const [, label] of directions) {
-      expect(await screen.findByRole('img', { name: `${label}方向首帧` })).toBeTruthy()
+      expect(within(directionSet).getByRole('img', { name: `${label}方向角色方案` })).toBeTruthy()
     }
-    const directionSet = screen.getByRole('group', { name: '八向首帧集合' })
-    expect(directionSet.getAttribute('data-layout')).toBe('direction-first-frame-grid')
-    expect(directionSet.className).toContain('grid-cols-3')
-    expect(directionSet.children).toHaveLength(9)
-    expect(screen.getByLabelText('中心留空')).toBeTruthy()
+    expect(within(directionSet).getAllByRole('img')).toHaveLength(8)
+  })
+
+  it('角色方向集合确认完成后仍显示四张独立图片', async () => {
+    const run = workflow(
+      setupAndTemplate({
+        selectedImageUrl: 'south.png',
+        selectedImages: {
+          east: 'east.png',
+          west: 'west.png',
+          north: 'north.png',
+          south: 'south.png',
+        },
+        status: 'passed',
+        phase: 'completed',
+        generations: [
+          { taskId: 'template-east', role: 'character_template', direction: 'east' },
+          { taskId: 'template-west', role: 'character_template', direction: 'west' },
+          { taskId: 'template-north', role: 'character_template', direction: 'north' },
+          { taskId: 'template-south', role: 'character_template', direction: 'south' },
+        ],
+      }),
+    )
+
+    renderAt(
+      '/quick-start/run-1',
+      serviceFor(run, { getDirectionalMovement: vi.fn(() => 'four-way' as const) }),
+    )
+
+    const grid = await screen.findByRole('group', { name: '四向首帧集合' })
+    expect(within(grid).getAllByRole('img')).toHaveLength(4)
+    expect(grid.className).toContain('grid-cols-2')
+    expect(within(grid).queryByLabelText('中心留空')).toBeNull()
+  })
+
+  it('动作首帧确认完成后仍显示八张独立图片和空中心', async () => {
+    const directions = [
+      'east',
+      'west',
+      'north',
+      'south',
+      'north_east',
+      'north_west',
+      'south_east',
+      'south_west',
+    ] as const
+    const base = actionWorkflow()
+    const run = {
+      ...base,
+      nodes: base.nodes.map((node) =>
+        node.type === 'action-first-frame'
+          ? {
+              ...node,
+              selectedFirstFrameUrl: 'first-east.png',
+              selectedFirstFrameUrls: Object.fromEntries(
+                directions.map((direction) => [direction, `first-${direction}.png`]),
+              ),
+              generations: directions.map((direction) => ({
+                taskId: `first-${direction}`,
+                role: 'first_frame' as const,
+                direction,
+              })),
+            }
+          : node,
+      ),
+    } satisfies WorkflowRun
+
+    renderAt(
+      '/quick-start/run-1',
+      serviceFor(run),
+      agentFor(),
+      projectReader({ ...existingProject, directionalMovement: 'eight-way' }),
+    )
+
+    const grid = await screen.findByRole('group', { name: '八向首帧集合' })
+    expect(within(grid).getAllByRole('img')).toHaveLength(8)
+    expect(within(grid).getByLabelText('中心留空')).toBeTruthy()
   })
 
   it('keeps the natural-language creation entry visible when no run is selected', () => {
@@ -3527,8 +3612,6 @@ describe('QuickStartPage', () => {
           [
             { direction: 'east', index: 0, imageUrl: 'east-1.png' },
             { direction: 'east', index: 1, imageUrl: 'east-2.png' },
-            { direction: 'west', index: 0, imageUrl: 'west-1.png' },
-            { direction: 'west', index: 1, imageUrl: 'west-2.png' },
             { direction: 'north', index: 0, imageUrl: 'north-1.png' },
             { direction: 'north', index: 1, imageUrl: 'north-2.png' },
             { direction: 'south', index: 0, imageUrl: 'south-1.png' },
@@ -3539,14 +3622,15 @@ describe('QuickStartPage', () => {
     renderAt('/quick-start/run-1', service)
 
     expect(screen.queryByRole('button', { name: '选择东方向动作首帧 1' })).toBeNull()
-    expect((await screen.findAllByLabelText('西北方向为空')).length).toBeGreaterThan(0)
-    fireEvent.click(await screen.findByRole('button', { name: '选择动作首帧方向候选 1' }))
+    const sheet = await screen.findByRole('button', { name: '选择动作首帧方向候选 1' })
+    expect(within(sheet).getAllByRole('img')).toHaveLength(4)
+    expect(within(sheet).queryByLabelText('西北方向为空')).toBeNull()
+    fireEvent.click(sheet)
     fireEvent.click(screen.getByRole('button', { name: '确认候选帧，生成完整动作' }))
 
     await waitFor(() =>
       expect(service.confirmFirstFrame).toHaveBeenCalledWith({
         east: 'east-1.png',
-        west: 'west-1.png',
         north: 'north-1.png',
         south: 'south-1.png',
       }),
@@ -3560,13 +3644,10 @@ describe('QuickStartPage', () => {
         async () =>
           [
             { direction: 'east', index: 0, imageUrl: 'east-1.png' },
-            { direction: 'west', index: 0, imageUrl: 'west-1.png' },
             { direction: 'north', index: 0, imageUrl: 'north-1.png' },
             { direction: 'south', index: 0, imageUrl: 'south-1.png' },
             { direction: 'north_east', index: 0, imageUrl: 'north-east-1.png' },
-            { direction: 'north_west', index: 0, imageUrl: 'north-west-1.png' },
             { direction: 'south_east', index: 0, imageUrl: 'south-east-1.png' },
-            { direction: 'south_west', index: 0, imageUrl: 'south-west-1.png' },
           ] satisfies readonly QuickStartCandidate[],
       ),
     })
@@ -3581,13 +3662,10 @@ describe('QuickStartPage', () => {
     await waitFor(() =>
       expect(service.confirmFirstFrame).toHaveBeenCalledWith({
         east: 'east-1.png',
-        west: 'west-1.png',
         north: 'north-1.png',
         south: 'south-1.png',
         north_east: 'north-east-1.png',
-        north_west: 'north-west-1.png',
         south_east: 'south-east-1.png',
-        south_west: 'south-west-1.png',
       }),
     )
   })
