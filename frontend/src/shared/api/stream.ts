@@ -74,11 +74,7 @@ function parseRecord(block: string): SseRecord | null {
   return data.length === 0 ? null : { event, data: data.join('\n') }
 }
 
-function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  onTimeout: () => void,
-): Promise<T> {
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => void): Promise<T> {
   if (timeoutMs <= 0) return promise
   return new Promise<T>((resolve, reject) => {
     let settled = false
@@ -266,17 +262,12 @@ export function createEventStreamSubscriber(
           attemptedUnauthorizedRecovery = false
           if (reconnecting) options.onReconnect?.()
           let stable = false
-          const terminal = await readEventStream(
-            response,
-            options,
-            inactivityTimeoutMs,
-            () => {
-              if (stable) return
-              stable = true
-              // 收到完整事件或 heartbeat 才算连接稳定；只有响应头不能清零退避。
-              failures = 0
-            },
-          )
+          const terminal = await readEventStream(response, options, inactivityTimeoutMs, () => {
+            if (stable) return
+            stable = true
+            // 收到完整事件或 heartbeat 才算连接稳定；只有响应头不能清零退避。
+            failures = 0
+          })
           if (terminal || controller.signal.aborted) return
           throw connectionError()
         } catch (cause) {

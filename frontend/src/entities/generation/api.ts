@@ -59,18 +59,9 @@ interface GenerationTaskDto {
   errorMessage: string | null
 }
 
-type BackendGenerationType =
-  | 'character_image'
-  | 'character_direction_set'
-  | 'character_action'
+type BackendGenerationType = 'character_image' | 'character_direction_set' | 'character_action'
 
-const TASK_STATUSES = new Set<TaskStatus>([
-  'pending',
-  'running',
-  'completed',
-  'partial',
-  'failed',
-])
+const TASK_STATUSES = new Set<TaskStatus>(['pending', 'running', 'completed', 'partial', 'failed'])
 const DIRECTION_TASK_STATUSES = new Set(['pending', 'running', 'completed', 'failed'])
 const ACTION_TYPES = new Set(['walk', 'idle', 'attack', 'jump', 'custom'])
 const RETRYABLE_QUERY_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
@@ -153,7 +144,12 @@ async function readData(response: Response): Promise<unknown> {
     )
   }
   if (!isRecord(raw)) {
-    throw new GenerationApiError('生成接口响应不是对象', response.status, undefined, response.status)
+    throw new GenerationApiError(
+      '生成接口响应不是对象',
+      response.status,
+      undefined,
+      response.status,
+    )
   }
 
   const envelope: ResponseEnvelope = {
@@ -933,6 +929,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
       const expectedCandidateCount = candidateCounts.get(id)
       const pollingController = new AbortController()
       let polling = false
+      let terminalHandled = false
       let stopStream: () => void = () => undefined
 
       const pollUntilTerminal = async () => {
@@ -967,7 +964,9 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
         if (pollingController.signal.aborted) return
         try {
           const generation = await apis.get(projectId, id, expectation)
-          if (pollingController.signal.aborted) return
+          if (pollingController.signal.aborted || terminalHandled) return
+          const terminal = isTerminalStatus(generation.status)
+          if (terminal) terminalHandled = true
           onEvent({
             taskId: generation.id,
             type: generation.type,
@@ -975,11 +974,11 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
             result: generation.result,
             error: generation.error,
           } as GenerationEvent)
-          if (isTerminalStatus(generation.status)) {
+          if (terminal) {
             stopStream()
           }
         } catch (cause) {
-          if (pollingController.signal.aborted) return
+          if (pollingController.signal.aborted || terminalHandled) return
           if (!isRetryableQueryError(cause)) {
             onError(cause instanceof Error ? cause : new GenerationApiError('重连后任务对账失败'))
           }
@@ -994,6 +993,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
         {
           eventName: ['task_update', 'progress', 'completed', 'partial', 'failed'],
           onEvent(data, eventName) {
+            if (terminalHandled) return true
             const event = mapEvent(
               parseEventData(data),
               numericProjectId,
@@ -1002,8 +1002,10 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
               eventName,
               expectedCandidateCount,
             )
+            const terminal = isTerminalStatus(event.status)
+            if (terminal) terminalHandled = true
             onEvent(event as GenerationEvent)
-            return isTerminalStatus(event.status)
+            return terminal
           },
           onError(error) {
             if (

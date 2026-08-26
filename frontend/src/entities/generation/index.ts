@@ -211,10 +211,9 @@ export interface GenerationProgress {
  * 不含 projectId：后端事件 payload 只有 task_id、task_type、status，
  * 以及完成时的 result 和失败时的 error_message。
  */
-export interface GenerationEvent<TType extends GenerationTaskType = GenerationTaskType> extends Omit<
-  Generation<TType>,
-  'id' | 'projectId'
-> {
+export interface GenerationEvent<
+  TType extends GenerationTaskType = GenerationTaskType,
+> extends Omit<Generation<TType>, 'id' | 'projectId'> {
   /** 对应 Generation.id，字段名沿用后端事件里的 task_id。 */
   taskId: Generation['id']
   /** 仅 progress 事件携带；状态快照与终态事件不包含。 */

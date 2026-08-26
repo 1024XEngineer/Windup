@@ -1132,6 +1132,45 @@ describe('createGenerationApis', () => {
     expect(onEvent).not.toHaveBeenCalled()
   })
 
+  it('SSE 已交付终态后忽略较晚返回的重连对账快照', async () => {
+    let streamOptions: EventStreamOptions | undefined
+    let resolveRequest: ((response: Response) => void) | undefined
+    const request = vi.fn(
+      async () =>
+        new Promise<Response>((resolve) => {
+          resolveRequest = resolve
+        }),
+    )
+    const apis = createGenerationApis({
+      baseUrl: 'https://api.test',
+      transport: {
+        request,
+        stream: vi.fn((_url: string, options: NonNullable<typeof streamOptions>) => {
+          streamOptions = options
+          return vi.fn()
+        }),
+      },
+    })
+    const onEvent = vi.fn()
+
+    apis.subscribe('42', '91', { type: 'character_template' }, onEvent, vi.fn())
+    streamOptions?.onReconnect?.()
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce())
+    streamOptions?.onEvent(JSON.stringify(taskData()), 'completed')
+    resolveRequest?.(
+      success(
+        taskData({
+          status: 'running',
+          result: null,
+        }),
+      ),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(onEvent).toHaveBeenCalledOnce()
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }))
+  })
+
   it('重连对账请求失败前取消订阅时不再报告错误', async () => {
     let streamOptions: EventStreamOptions | undefined
     let rejectRequest: ((reason: unknown) => void) | undefined
