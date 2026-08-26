@@ -9,6 +9,7 @@ ORM 模型
 
     windup_credit_account    积分账户（每用户一行）
     windup_credit_transaction  积分流水（不可变账本）
+    windup_credit_redemption_code  一次性积分兑换码
     windup_invite_code       邀请码
     windup_invite_record     邀请记录
     windup_token_usage       Token 用量记录
@@ -107,6 +108,38 @@ class CreditTransaction(Base):
     balance_after: Mapped[int] = mapped_column(
         BigInteger().with_variant(Integer, "sqlite"),
         nullable=False,
+    )
+    create_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
+class CreditRedemptionCode(Base):
+    """一次性积分兑换码；只保存摘要，避免数据库泄露兑换明文。"""
+
+    __tablename__ = "windup_credit_redemption_code"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    code_hash: Mapped[str] = mapped_column(
+        String(64), unique=True, index=True, nullable=False
+    )
+    amount: Mapped[int] = mapped_column(Integer, nullable=False, default=1000)
+    redeemed_by: Mapped[int | None] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        index=True,
+        nullable=True,
+    )
+    redeemed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     create_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

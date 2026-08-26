@@ -46,4 +46,7 @@ def test_every_action_direction_has_an_independent_provider_prompt_lock():
     assert len(set(prompts.values())) == len(ActionDirection)
     for direction, prompt in prompts.items():
         assert direction.value.replace("_", "-") in prompt.lower()
+        assert "throughout every frame" in prompt.lower()
+        assert "maintain this heading" in prompt.lower()
+        assert "rotate" not in prompt.lower()
         assert "do not turn" in prompt.lower()

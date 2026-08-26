@@ -311,13 +311,17 @@ export function createQuickStartService({
   ): Promise<QuickStartCandidate[]> {
     const result: QuickStartCandidate[] = []
     for (const generation of await controller.getGenerations(nodeId, role)) {
+      const generationResult = generation.result
       const images =
-        role === 'character_template' && generation.result?.type === 'character_template'
-          ? generation.result.images
-          : role === 'first_frame' && generation.result?.type === 'first_frame'
-            ? generation.result.images
+        role === 'character_template' && generationResult?.type === 'character_template'
+          ? generationResult.images
+          : role === 'first_frame' && generationResult?.type === 'first_frame'
+            ? generationResult.images
             : []
-      const direction = generation.result?.direction ?? 'east'
+      const direction =
+        generationResult?.type === 'character_template' || generationResult?.type === 'first_frame'
+          ? (generationResult.direction ?? 'east')
+          : 'east'
       images.forEach((image, index) => result.push({ direction, index, imageUrl: image.url }))
     }
     return result

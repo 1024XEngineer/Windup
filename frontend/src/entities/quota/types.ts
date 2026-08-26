@@ -46,9 +46,16 @@ export interface InviteCode {
   updatedAt: string
 }
 
+/** 兑换码入账结果；account 是本次事务提交后的最新账户快照。 */
+export interface CreditRedemptionResult {
+  credited: number
+  account: CreditAccount
+}
+
 export interface QuotaApis {
   getBalance(): Promise<CreditAccount>
   listTransactions(query?: QuotaTransactionPageQuery): Promise<Paged<CreditTransaction>>
+  redeemCode(code: string): Promise<CreditRedemptionResult>
   getInviteCode(): Promise<InviteCode>
   generateInviteCode(): Promise<InviteCode>
 }

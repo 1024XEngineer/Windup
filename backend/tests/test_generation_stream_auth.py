@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -239,6 +240,53 @@ def test_terminal_snapshot_returns_payload_for_completed_task(session):
 def test_terminal_snapshot_ignores_non_terminal(session):
     task_id = _make_task(session, user_id=1, project_id=42, status=TaskStatus.RUNNING)
     assert task_repo.terminal_snapshot(session, task_id, project_id=42) is None
+
+
+def test_stream_sends_heartbeat_before_terminal_snapshot_poll(monkeypatch):
+    """代理空闲边界前先发心跳，较慢的数据库兜底查询不能阻塞保活。"""
+    from windup_app.web.api import generation as gen
+
+    polls: list[tuple[int, int]] = []
+
+    def poll(task_id: int, project_id: int):
+        polls.append((task_id, project_id))
+        return "completed", {"id": task_id}
+
+    monkeypatch.setattr(gen, "_poll_terminal_snapshot", poll)
+
+    class _ConnectedRequest:
+        async def is_disconnected(self):
+            return False
+
+    async def scenario():
+        queue = asyncio.Queue()
+        events = gen._stream_events(
+            request=_ConnectedRequest(),
+            queue=queue,
+            task_id=7,
+            project_id=42,
+            heartbeat_seconds=0.001,
+            terminal_poll_seconds=0,
+        )
+        first = await anext(events)
+        assert polls == []
+        second = await anext(events)
+        await events.aclose()
+        return first, second
+
+    first, second = asyncio.run(scenario())
+    assert first == ": heartbeat\n\n"
+    assert second.startswith("event: completed\n")
+    assert polls == [(7, 42)]
+
+
+def test_sse_interval_rejects_nan_and_infinity(monkeypatch):
+    from windup_app.web.api import generation as gen
+
+    monkeypatch.setenv("WINDUP_TEST_INTERVAL", "nan")
+    assert gen._positive_interval("WINDUP_TEST_INTERVAL", 10.0) == 10.0
+    monkeypatch.setenv("WINDUP_TEST_INTERVAL", "inf")
+    assert gen._positive_interval("WINDUP_TEST_INTERVAL", 10.0) == 10.0
 
 
 def test_stream_start_closes_session_before_returning(engine, session):

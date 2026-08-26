@@ -51,7 +51,11 @@ import {
 } from '@/entities'
 import { forgetActiveRun, isMissingActiveRunError, syncActiveRun } from '@/features/active-run'
 import { useOptionalAuthSession } from '@/features/auth-session'
-import { ExportButton, type ExportPackageModel } from '@/features/export-package'
+import {
+  AssetVersionExportButton,
+  ExportButton,
+  type ExportPackageModel,
+} from '@/features/export-package'
 import { useQuickStartAgent, useQuickStartWorkflowAgent } from '@/features/quick-start-agent/react'
 import type {
   CharacterGenerationProposal,
@@ -66,6 +70,8 @@ import {
   GenerationProgressCopy,
   KineticCopyCycle,
   productPopoverClass,
+  productPopoverMotionClass,
+  useProductPopoverMotion,
   type KineticCopyMessage,
 } from '@/shared/ui'
 import {
@@ -189,6 +195,8 @@ type AgentConversationRecord = {
   turns: readonly AgentConversationTurn[]
   /** 入口处选的画风；不随草稿存住的话，刷新后画风选择器已隐藏而值悄悄回到不指定。 */
   gameStyle?: ArtStyle
+  /** 入口滑块选的方向；进入对话后控件锁定，刷新时必须恢复原值。 */
+  directionalMovement?: DirectionalMovement
   projectId?: string | null
 }
 
@@ -230,6 +238,24 @@ function readAgentDraftGameStyle(key: string): ArtStyle {
     return isArtStyle(parsed.gameStyle) ? parsed.gameStyle : 'unspecified'
   } catch {
     return 'unspecified'
+  }
+}
+
+function readAgentDraftDirectionalMovement(key: string): DirectionalMovement {
+  try {
+    const stored = window.sessionStorage.getItem(key)
+    if (!stored) return 'single'
+    const parsed: unknown = JSON.parse(stored)
+    if (typeof parsed !== 'object' || parsed === null || !('directionalMovement' in parsed)) {
+      return 'single'
+    }
+    return QUICK_START_DIRECTIONAL_MOVEMENTS.includes(
+      parsed.directionalMovement as DirectionalMovement,
+    )
+      ? (parsed.directionalMovement as DirectionalMovement)
+      : 'single'
+  } catch {
+    return 'single'
   }
 }
 
@@ -577,6 +603,7 @@ function AgentActions({
   onCopy,
   exportModel,
   exportLabel,
+  versionedExportModels,
   onOpenAssetWorkspace,
   onOpenPlaytest,
   playtestDisabled = false,
@@ -589,6 +616,10 @@ function AgentActions({
   onCopy?: () => void
   exportModel?: ExportPackageModel | null
   exportLabel?: string
+  versionedExportModels?: {
+    original: ExportPackageModel
+    pixelPerfect: ExportPackageModel
+  }
   onOpenAssetWorkspace?: () => void
   onOpenPlaytest?: () => void
   playtestDisabled?: boolean
@@ -614,7 +645,13 @@ function AgentActions({
           <ArrowClockwise aria-hidden="true" size={18} weight="bold" />
         </IconActionButton>
       ) : null}
-      {exportModel ? (
+      {versionedExportModels ? (
+        <AssetVersionExportButton
+          originalModel={versionedExportModels.original}
+          pixelPerfectModel={versionedExportModels.pixelPerfect}
+          className="text-app-muted hover:bg-app-surface-muted hover:text-app-accent"
+        />
+      ) : exportModel ? (
         <ExportButton
           model={exportModel}
           idleLabel={exportLabel}
@@ -661,8 +698,16 @@ function QuickStartInput({
   const navigate = useNavigate()
   const [entrySearchParams] = useSearchParams()
   const [prompt, setPrompt] = useState('')
-  const [directionalMovement, setDirectionalMovement] = useState<DirectionalMovement>('single')
-  const [confirmedPrompt, setConfirmedPrompt] = useState<string | null>(null)
+  const [directionalMovement, setDirectionalMovement] = useState<DirectionalMovement>(() => {
+    const draftId = readAgentDraftId()
+    return draftId
+      ? readAgentDraftDirectionalMovement(
+          agentDraftConversationStorageKey(activeRunUserId, draftId),
+        )
+      : 'single'
+  })
+  const directionalMovementRef = useRef(directionalMovement)
+  directionalMovementRef.current = directionalMovement
   const [templateFile, setTemplateFile] = useState<File | null>(null)
   const [gameStyle, setGameStyle] = useState<ArtStyle>(() => {
     const draftId = readAgentDraftId()
@@ -689,7 +734,7 @@ function QuickStartInput({
   const [revealingFirstAgentTurn, setRevealingFirstAgentTurn] = useState(false)
   const [entryTransition, setEntryTransition] = useState<'idle' | 'leaving'>('idle')
   const [promptState, setPromptState] = useState<
-    'collecting' | 'rewriting' | 'ready' | 'direction' | 'confirmed'
+    'collecting' | 'rewriting' | 'ready' | 'confirmed'
   >('collecting')
   const [error, setError] = useState<string | null>(null)
   const draftIdRef = useRef(readAgentDraftId())
@@ -724,12 +769,7 @@ function QuickStartInput({
   const agentPlanning = agentSession.state.status === 'planning'
   const agentThinking = agentPlanning || revealingFirstAgentTurn
   const generationStarting = promptState === 'confirmed'
-  const entryBusy =
-    submitting ||
-    agentThinking ||
-    promptState === 'rewriting' ||
-    promptState === 'direction' ||
-    generationStarting
+  const entryBusy = submitting || agentThinking || promptState === 'rewriting' || generationStarting
   const entryCanInterrupt = submitting || agentPlanning
   const hasPrompt = Boolean(prompt.trim())
   const hasConversation = conversationTurns.length > 0
@@ -747,14 +787,20 @@ function QuickStartInput({
     return draftId
   }, [])
 
-  const persistDraftConversation = useCallback(
-    (turns: readonly AgentConversationTurn[]) => {
+  const persistAgentDraft = useCallback(
+    (updates: Partial<AgentConversationRecord> = {}) => {
+      const turns = updates.turns ?? conversationTurnsRef.current
       conversationTurnsRef.current = turns
       const draftId = ensureDraftId()
       writeAgentConversation(
         'sessionStorage',
         agentDraftConversationStorageKey(activeRunUserId, draftId),
-        { turns, gameStyle: gameStyleRef.current, projectId: projectIdRef.current },
+        {
+          turns,
+          gameStyle: updates.gameStyle ?? gameStyleRef.current,
+          directionalMovement: updates.directionalMovement ?? directionalMovementRef.current,
+          projectId: updates.projectId === undefined ? projectIdRef.current : updates.projectId,
+        },
       )
     },
     [activeRunUserId, ensureDraftId],
@@ -790,23 +836,22 @@ function QuickStartInput({
   }, [projectApis])
 
   function chooseProject(project: Project | null) {
+    const nextProjectId = project?.id ?? null
     setProjectMenuOpen(false)
-    setProjectId(project?.id ?? null)
+    projectIdRef.current = nextProjectId
+    setProjectId(nextProjectId)
     setSelectedProject(project)
     if (project) {
+      directionalMovementRef.current = project.directionalMovement
+      gameStyleRef.current = project.gameStyle
       setDirectionalMovement(project.directionalMovement)
       setGameStyle(project.gameStyle)
     }
-    const draftId = ensureDraftId()
-    writeAgentConversation(
-      'sessionStorage',
-      agentDraftConversationStorageKey(activeRunUserId, draftId),
-      {
-        turns: conversationTurnsRef.current,
-        gameStyle: project?.gameStyle ?? gameStyleRef.current,
-        projectId: project?.id ?? null,
-      },
-    )
+    persistAgentDraft({
+      gameStyle: project?.gameStyle ?? gameStyleRef.current,
+      directionalMovement: project?.directionalMovement ?? directionalMovementRef.current,
+      projectId: nextProjectId,
+    })
   }
 
   const persistRunConversation = useCallback(
@@ -835,9 +880,9 @@ function QuickStartInput({
       const next = [...conversationTurnsRef.current, turn]
       conversationTurnsRef.current = next
       setConversationTurns(next)
-      persistDraftConversation(next)
+      persistAgentDraft({ turns: next })
     },
-    [persistDraftConversation],
+    [persistAgentDraft],
   )
 
   async function revealFirstAgentTurn(turn: AgentConversationTurn) {
@@ -898,7 +943,7 @@ function QuickStartInput({
     )
     conversationTurnsRef.current = next
     setConversationTurns(next)
-    persistDraftConversation(next)
+    persistAgentDraft({ turns: next })
     return next
   }
 
@@ -955,16 +1000,16 @@ function QuickStartInput({
   }
 
   function chooseGameStyle(next: ArtStyle) {
+    gameStyleRef.current = next
     setGameStyle(next)
-    setStyleMenuOpen(false)
-    const draftId = draftIdRef.current
-    if (draftId) {
-      writeAgentConversation(
-        'sessionStorage',
-        agentDraftConversationStorageKey(activeRunUserId, draftId),
-        { turns: conversationTurnsRef.current, gameStyle: next, projectId: projectIdRef.current },
-      )
-    }
+    styleMenu.close()
+    persistAgentDraft({ gameStyle: next })
+  }
+
+  function chooseDirectionalMovement(next: DirectionalMovement) {
+    directionalMovementRef.current = next
+    setDirectionalMovement(next)
+    persistAgentDraft({ directionalMovement: next })
   }
 
   function stopEntryWork() {
@@ -982,7 +1027,7 @@ function QuickStartInput({
         const nextTurns = turns.slice(0, -1)
         conversationTurnsRef.current = nextTurns
         setConversationTurns(nextTurns)
-        persistDraftConversation(nextTurns)
+        persistAgentDraft({ turns: nextTurns })
       }
     }
     pendingPrompt.current = null
@@ -1016,14 +1061,16 @@ function QuickStartInput({
 
     if (agentSession.state.status === 'proposal' && promptState === 'ready') {
       if (!normalizedPrompt) return
-      setConfirmedPrompt(normalizedPrompt)
-      setPrompt('')
-      setPromptState('direction')
-      appendConversationTurn({
-        role: 'assistant',
-        content: '最后确认一下：需要单向、四向还是八向？',
-        kind: 'clarification',
-      })
+      setPromptState('confirmed')
+      try {
+        const result = await agentSession.confirmProposal(normalizedPrompt, directionalMovement, {
+          gameStyle,
+          ...(projectId ? { projectId } : {}),
+        })
+        if (result.kind === 'generated') await handoffGenerated(result)
+      } catch {
+        setPromptState('ready')
+      }
       return
     }
 
@@ -1112,28 +1159,8 @@ function QuickStartInput({
     }
   }
 
-  async function chooseDirectionalMovement(movement: DirectionalMovement) {
-    if (!confirmedPrompt || promptState !== 'direction') return
-    setDirectionalMovement(movement)
-    appendConversationTurn({ role: 'user', content: DIRECTIONAL_MOVEMENT[movement] })
-    setPromptState('confirmed')
-    try {
-      const result = await agentSession.confirmProposal(confirmedPrompt, movement, {
-        gameStyle,
-        ...(projectId ? { projectId } : {}),
-      })
-      if (result.kind === 'generated') await handoffGenerated(result)
-    } catch {
-      setPromptState('direction')
-    }
-  }
-
   const inputLocked =
-    submitting ||
-    agentThinking ||
-    promptState === 'rewriting' ||
-    promptState === 'direction' ||
-    generationStarting
+    submitting || agentThinking || promptState === 'rewriting' || generationStarting
   const awaitingGenerationConfirmation =
     agentSession.state.status === 'proposal' && promptState === 'ready'
   const buttonLabel = submitting
@@ -1152,8 +1179,8 @@ function QuickStartInput({
   const canSubmit = awaitingGenerationConfirmation
     ? Boolean(prompt.trim())
     : Boolean(prompt.trim()) || Boolean(templateFile)
-  const [styleMenuOpen, setStyleMenuOpen] = useState(false)
-  const [directionMenuOpen, setDirectionMenuOpen] = useState(false)
+  const styleMenu = useProductPopoverMotion()
+  const directionMenu = useProductPopoverMotion()
   const [directionDragging, setDirectionDragging] = useState(false)
   const [directionSliderValue, setDirectionSliderValue] = useState(() =>
     QUICK_START_DIRECTIONAL_MOVEMENTS.indexOf(directionalMovement),
@@ -1242,20 +1269,6 @@ function QuickStartInput({
               {agentSession.state.status === 'error' ? (
                 <div role="alert" data-conversation-kind="agent" className="min-w-0">
                   <AgentCopy lines={[agentSession.state.message]} tone="danger" />
-                </div>
-              ) : null}
-              {promptState === 'direction' ? (
-                <div className="flex flex-wrap gap-2" aria-label="选择生成方向">
-                  {QUICK_START_DIRECTIONAL_MOVEMENTS.map((movement) => (
-                    <button
-                      key={movement}
-                      type="button"
-                      onClick={() => void chooseDirectionalMovement(movement)}
-                      className="rounded-full border border-app-line bg-app-surface-raised px-4 py-2 text-sm font-semibold text-app-ink transition hover:border-app-accent hover:text-app-accent"
-                    >
-                      {DIRECTIONAL_MOVEMENT[movement]}
-                    </button>
-                  ))}
                 </div>
               ) : null}
             </div>
@@ -1390,18 +1403,25 @@ function QuickStartInput({
                         label={`选择画风，当前${ART_STYLE[gameStyle]}`}
                         disabled={entryBusy || Boolean(selectedProject)}
                         onClick={() => {
-                          setDirectionMenuOpen(false)
-                          setStyleMenuOpen((open) => !open)
+                          directionMenu.close()
+                          styleMenu.toggle()
                         }}
-                        expanded={styleMenuOpen}
+                        expanded={styleMenu.expanded}
                       >
                         <StyleTileIcon />
                       </IconActionButton>
-                      {styleMenuOpen ? (
+                      {styleMenu.mounted ? (
                         <div
+                          data-testid="quick-start-style-menu"
+                          data-state={styleMenu.state}
+                          data-motion="scale-fade"
+                          data-popover-placement="top"
                           role="menu"
                           aria-label="选择画风"
-                          className={`${productPopoverClass} quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid min-w-32 gap-1 p-1.5 opacity-100`}
+                          aria-hidden={styleMenu.expanded ? undefined : true}
+                          inert={!styleMenu.expanded}
+                          onAnimationEnd={styleMenu.finish}
+                          className={`${productPopoverClass} quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid min-w-32 gap-1 p-1.5 ${productPopoverMotionClass(styleMenu.state)}`}
                         >
                           {ART_STYLE_OPTIONS.map((value) => (
                             <button
@@ -1431,8 +1451,8 @@ function QuickStartInput({
                     aria-expanded={projectMenuOpen}
                     disabled={entryBusy || hasConversation}
                     onClick={() => {
-                      setStyleMenuOpen(false)
-                      setDirectionMenuOpen(false)
+                      styleMenu.close()
+                      directionMenu.close()
                       setProjectMenuOpen((open) => !open)
                     }}
                     className={`inline-flex h-10 max-w-44 items-center gap-1 rounded-app-control px-3 text-sm font-medium text-app-ink-soft transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent ${hasConversation ? 'pointer-events-none disabled:opacity-100' : 'hover:bg-app-surface-muted hover:text-app-ink disabled:opacity-45'}`}
@@ -1523,12 +1543,12 @@ function QuickStartInput({
                   <button
                     type="button"
                     aria-label={`生成方向，当前${DIRECTIONAL_MOVEMENT[directionalMovement]}`}
-                    aria-expanded={directionMenuOpen}
+                    aria-expanded={directionMenu.expanded}
                     disabled={entryBusy || Boolean(selectedProject) || hasConversation}
                     onClick={() => {
-                      setStyleMenuOpen(false)
+                      styleMenu.close()
                       setDirectionSliderValue(directionalMovementIndex)
-                      setDirectionMenuOpen((open) => !open)
+                      directionMenu.toggle()
                     }}
                     className={`inline-flex h-10 items-center gap-1 rounded-app-control px-3 text-sm font-medium text-app-ink-soft transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent ${hasConversation ? 'pointer-events-none disabled:opacity-100' : 'hover:bg-app-surface-muted hover:text-app-ink disabled:opacity-45'}`}
                   >
@@ -1538,15 +1558,21 @@ function QuickStartInput({
                         aria-hidden="true"
                         size={14}
                         weight="bold"
-                        className={`transition-transform duration-200 motion-reduce:transition-none ${directionMenuOpen ? 'rotate-180' : ''}`}
+                        className={`transition-transform duration-200 motion-reduce:transition-none ${directionMenu.expanded ? 'rotate-180' : ''}`}
                       />
                     ) : null}
                   </button>
-                  {directionMenuOpen && !hasConversation ? (
+                  {directionMenu.mounted && !hasConversation ? (
                     <div
+                      data-state={directionMenu.state}
+                      data-motion="scale-fade"
+                      data-popover-placement="top"
                       role="group"
                       aria-label="生成方向设置"
-                      className={`${productPopoverClass} quick-start-control-popover absolute right-0 bottom-full z-30 mb-3 w-72 p-5 opacity-100`}
+                      aria-hidden={directionMenu.expanded ? undefined : true}
+                      inert={!directionMenu.expanded}
+                      onAnimationEnd={directionMenu.finish}
+                      className={`${productPopoverClass} quick-start-control-popover absolute right-0 bottom-full z-30 mb-3 w-72 p-5 ${productPopoverMotionClass(directionMenu.state)}`}
                     >
                       <div className="mb-4 flex items-center justify-between">
                         <span className="text-sm text-app-muted">生成方向</span>
@@ -1583,7 +1609,7 @@ function QuickStartInput({
                             const index = Math.round(Number(event.currentTarget.value))
                             setDirectionDragging(false)
                             setDirectionSliderValue(index)
-                            setDirectionalMovement(
+                            chooseDirectionalMovement(
                               QUICK_START_DIRECTIONAL_MOVEMENTS[index] ?? 'single',
                             )
                           }}
@@ -1596,7 +1622,7 @@ function QuickStartInput({
                           onChange={(event) => {
                             const value = Number(event.target.value)
                             setDirectionSliderValue(value)
-                            setDirectionalMovement(
+                            chooseDirectionalMovement(
                               QUICK_START_DIRECTIONAL_MOVEMENTS[Math.round(value)] ?? 'single',
                             )
                           }}
@@ -1674,7 +1700,7 @@ function PromptProposal({
             </button>
           ) : null}
           <InlineArrowAction aria-label="填入输入框" disabled={disabled} onClick={onFill}>
-            编辑后逐步确认
+            编辑后发送生成
           </InlineArrowAction>
         </div>
       ) : status === 'superseded' ? (
@@ -2044,7 +2070,19 @@ function DirectionCandidatePicker({
   )
 }
 
-function DirectionFirstFrameStack({
+const DIRECTION_SHEET_LAYOUT: readonly (ActionDirection | null)[] = [
+  'north_west',
+  'north',
+  'north_east',
+  'west',
+  null,
+  'east',
+  'south_west',
+  'south',
+  'south_east',
+]
+
+function DirectionFirstFrameGrid({
   directions,
   selections,
 }: {
@@ -2053,14 +2091,39 @@ function DirectionFirstFrameStack({
 }) {
   const directionCountLabel =
     directions.length === 8 ? '八向' : directions.length === 4 ? '四向' : '单向'
+  const isSingleDirection = directions.length === 1
+  const layoutDirections = isSingleDirection ? directions : DIRECTION_SHEET_LAYOUT
+  const expectedDirections = new Set(directions)
   return (
     <div
       role="group"
       aria-label={`${directionCountLabel}首帧集合`}
-      data-layout="direction-first-frame-stack"
-      className="grid aspect-square w-full max-w-xl grid-cols-2 gap-3 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-muted p-4 shadow-app-card sm:p-5"
+      data-layout={
+        isSingleDirection ? 'direction-first-frame-single' : 'direction-first-frame-grid'
+      }
+      className={`grid aspect-square w-full max-w-xl gap-2 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-muted p-4 shadow-app-card sm:p-5 ${
+        isSingleDirection ? 'grid-cols-1' : 'grid-cols-3'
+      }`}
     >
-      {directions.map((direction) => {
+      {layoutDirections.map((direction, cellIndex) => {
+        if (!direction) {
+          return (
+            <div
+              key={`center-${cellIndex}`}
+              aria-label="中心留空"
+              className="rounded-xl border border-dashed border-app-line/40 bg-app-canvas/20"
+            />
+          )
+        }
+        if (!expectedDirections.has(direction)) {
+          return (
+            <div
+              key={direction}
+              aria-label={`${DIRECTION_LABELS[direction]}方向为空`}
+              className="rounded-xl border border-dashed border-app-line/30 bg-app-canvas/20"
+            />
+          )
+        }
         const imageUrl = selections[direction]
         return imageUrl ? (
           <figure
@@ -2090,18 +2153,6 @@ function DirectionFirstFrameStack({
     </div>
   )
 }
-
-const DIRECTION_SHEET_LAYOUT: readonly (ActionDirection | null)[] = [
-  'north_west',
-  'north',
-  'north_east',
-  'west',
-  null,
-  'east',
-  'south_west',
-  'south',
-  'south_east',
-]
 
 function DirectionSheetCandidatePicker({
   sheets,
@@ -3077,10 +3128,6 @@ function QuickStartRun({
     actionStep?.id,
     new Map(pixelPerfectReplacementEntries),
   )
-  const visibleVersionExportModel =
-    actionVersion === 'pixel-perfect' ? pixelPerfectVersionModel : actionExportModel
-  const visibleVersionExportLabel =
-    actionVersion === 'pixel-perfect' ? '导出完美像素版' : '导出原图'
   const entryAgentConversationTurns = agentConversationTurns.filter(
     (turn) => turn.scope !== 'workflow',
   )
@@ -3139,7 +3186,7 @@ function QuickStartRun({
                         : '全部方向会保持同一个角色造型。',
                     ]}
                   />
-                  <DirectionFirstFrameStack
+                  <DirectionFirstFrameGrid
                     directions={templateDirections}
                     selections={templateSelections}
                   />
@@ -3458,8 +3505,15 @@ function QuickStartRun({
                   )}
                   {isActionFailed || actionExportModel || reviewStep?.status === 'passed' ? (
                     <AgentActions
-                      exportModel={visibleVersionExportModel}
-                      exportLabel={pixelPerfectReady ? visibleVersionExportLabel : undefined}
+                      exportModel={actionExportModel}
+                      versionedExportModels={
+                        pixelPerfectReady && actionExportModel && pixelPerfectVersionModel
+                          ? {
+                              original: actionExportModel,
+                              pixelPerfect: pixelPerfectVersionModel,
+                            }
+                          : undefined
+                      }
                       onOpenAssetWorkspace={
                         reviewStep?.status === 'passed'
                           ? () =>

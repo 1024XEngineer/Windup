@@ -6,7 +6,13 @@ import type { QuotaApis } from '@/entities'
 import { readActiveRun, subscribeActiveRun } from '@/features/active-run'
 import { AUTH_SESSION_STORAGE_PREFIX, useAuthSession } from '@/features/auth-session'
 import { useQuotaBalance } from '@/features/quota'
-import { productControlClass, productMenuItemClass, productPopoverClass } from '@/shared/ui'
+import {
+  productControlClass,
+  productMenuItemClass,
+  productPopoverClass,
+  productPopoverMotionClass,
+  useProductPopoverMotion,
+} from '@/shared/ui'
 import { PageBackButton } from './page-back-button'
 
 interface ProductNavigationItem {
@@ -17,14 +23,11 @@ interface ProductNavigationItem {
   isActive: (pathname: string) => boolean
 }
 
-type AccountMenuState = 'closed' | 'open' | 'closing'
-
 export interface AppHeaderProps {
   quotaApis?: QuotaApis
   variant?: 'product' | 'marketing'
 }
 
-const accountMenuExitDurationMs = 260
 const inviteHintStorageKey = `${AUTH_SESSION_STORAGE_PREFIX}invite-hint-seen.v1`
 
 /** 四个入口对应四种去处：回首页、看资产、做新东西、核验已完成的造型。 */
@@ -116,18 +119,16 @@ export function AppHeader({
   const { pathname, search, hash } = useLocation()
   const navigate = useNavigate()
   const session = useAuthSession()
-  const [accountMenuState, setAccountMenuState] = useState<AccountMenuState>('closed')
+  const accountMenu = useProductPopoverMotion()
   const [inviteHintVisible, setInviteHintVisible] = useState(false)
-  const accountMenuOpen = accountMenuState === 'open'
   const creditBalance = useQuotaBalance(
-    accountMenuState !== 'closed' && session.state.status === 'authenticated',
+    accountMenu.mounted && session.state.status === 'authenticated',
     quotaApis,
   )
   const [wave, setWave] = useState({ entry: '', playId: 0 })
   const activeRunUserId = session.state.status === 'authenticated' ? session.state.user.id : null
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
-  const [activeRunMenuState, setActiveRunMenuState] = useState<AccountMenuState>('closed')
-  const activeRunMenuOpen = activeRunMenuState === 'open'
+  const activeRunMenu = useProductPopoverMotion()
   const accountEntry = `/?${new URLSearchParams({
     account: 'login',
     returnTo: `${pathname}${search}${hash}`,
@@ -142,15 +143,6 @@ export function AppHeader({
     refresh()
     return subscribeActiveRun(activeRunUserId, refresh)
   }, [activeRunUserId])
-
-  useEffect(() => {
-    if (accountMenuState !== 'closing') {
-      return
-    }
-
-    const timer = window.setTimeout(() => setAccountMenuState('closed'), accountMenuExitDurationMs)
-    return () => window.clearTimeout(timer)
-  }, [accountMenuState])
 
   useEffect(() => {
     if (pathname !== '/workspace' || session.state.status !== 'authenticated') {
@@ -178,7 +170,7 @@ export function AppHeader({
 
   function toggleAccountMenu() {
     dismissInviteHint()
-    setAccountMenuState((state) => (state === 'open' ? 'closing' : 'open'))
+    accountMenu.toggle()
   }
 
   function dismissInviteHint() {
@@ -187,23 +179,19 @@ export function AppHeader({
   }
 
   function finishAccountMenuMotion() {
-    if (accountMenuState === 'closing') {
-      setAccountMenuState('closed')
-    }
+    accountMenu.finish()
   }
 
   function toggleActiveRunMenu() {
-    setActiveRunMenuState((state) => (state === 'open' ? 'closing' : 'open'))
+    activeRunMenu.toggle()
   }
 
   function closeActiveRunMenu() {
-    setActiveRunMenuState((state) => (state === 'open' ? 'closing' : state))
+    activeRunMenu.close()
   }
 
   function finishActiveRunMenuMotion() {
-    if (activeRunMenuState === 'closing') {
-      setActiveRunMenuState('closed')
-    }
+    activeRunMenu.finish()
   }
 
   function playTextWave(entry: string) {
@@ -268,7 +256,7 @@ export function AppHeader({
                   <button
                     type="button"
                     aria-label="创作，有任务进行中"
-                    aria-expanded={activeRunMenuOpen}
+                    aria-expanded={activeRunMenu.expanded}
                     aria-current={active ? 'page' : undefined}
                     data-motion="text-wave"
                     onClick={() => {
@@ -291,18 +279,14 @@ export function AppHeader({
 
                   <div
                     data-testid="active-run-menu"
-                    data-state={activeRunMenuState}
+                    data-state={activeRunMenu.state}
                     data-motion="scale-fade"
-                    aria-hidden={activeRunMenuOpen ? undefined : true}
-                    inert={!activeRunMenuOpen}
+                    aria-hidden={activeRunMenu.expanded ? undefined : true}
+                    inert={!activeRunMenu.expanded}
                     onAnimationEnd={finishActiveRunMenuMotion}
-                    className={`${productPopoverClass} absolute top-[calc(100%+0.5rem)] left-1/2 grid min-w-44 origin-top -translate-x-1/2 overflow-hidden p-1.5 ${
-                      activeRunMenuState === 'open'
-                        ? 'visible app-header-account-menu-in'
-                        : activeRunMenuState === 'closing'
-                          ? 'visible pointer-events-none app-header-account-menu-out'
-                          : 'invisible pointer-events-none -translate-y-2 scale-[0.82] opacity-0'
-                    }`}
+                    className={`${productPopoverClass} absolute top-[calc(100%+0.5rem)] left-1/2 grid min-w-44 origin-top -translate-x-1/2 overflow-hidden p-1.5 ${productPopoverMotionClass(
+                      activeRunMenu.state,
+                    )}`}
                   >
                     <Link
                       to={`/quick-start/${encodeURIComponent(activeRunId)}`}
@@ -398,16 +382,16 @@ export function AppHeader({
               <button
                 type="button"
                 aria-label="打开账号菜单"
-                aria-expanded={accountMenuOpen}
+                aria-expanded={accountMenu.expanded}
                 title={session.state.user.email}
                 onClick={toggleAccountMenu}
                 className={`${productControlClass('chrome', 'max-w-24 gap-2 px-2.5 font-medium active:translate-y-px active:scale-[0.97] motion-reduce:transform-none sm:max-w-36')} ${
-                  accountMenuOpen ? 'bg-app-accent-muted text-app-accent' : ''
+                  accountMenu.expanded ? 'bg-app-accent-muted text-app-accent' : ''
                 }`}
               >
                 <span
                   className={`grid h-7 w-7 shrink-0 place-items-center rounded-full bg-app-accent-muted font-serif text-[11px] text-app-accent transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none ${
-                    accountMenuOpen ? 'scale-110' : 'scale-100'
+                    accountMenu.expanded ? 'scale-110' : 'scale-100'
                   }`}
                 >
                   {(session.state.user.nickname || session.state.user.email).slice(0, 1)}
@@ -419,18 +403,14 @@ export function AppHeader({
 
               <div
                 data-testid="account-menu"
-                data-state={accountMenuState}
+                data-state={accountMenu.state}
                 data-motion="scale-fade"
-                aria-hidden={accountMenuOpen ? undefined : true}
-                inert={!accountMenuOpen}
+                aria-hidden={accountMenu.expanded ? undefined : true}
+                inert={!accountMenu.expanded}
                 onAnimationEnd={finishAccountMenuMotion}
-                className={`${productPopoverClass} absolute top-[calc(100%+0.5rem)] right-0 grid min-w-44 origin-top-right overflow-hidden p-1.5 ${
-                  accountMenuState === 'open'
-                    ? 'visible app-header-account-menu-in'
-                    : accountMenuState === 'closing'
-                      ? 'visible pointer-events-none app-header-account-menu-out'
-                      : 'invisible pointer-events-none -translate-y-2 scale-[0.82] opacity-0'
-                }`}
+                className={`${productPopoverClass} absolute top-[calc(100%+0.5rem)] right-0 grid min-w-44 origin-top-right overflow-hidden p-1.5 ${productPopoverMotionClass(
+                  accountMenu.state,
+                )}`}
               >
                 <div
                   aria-label="积分余额"
@@ -460,7 +440,7 @@ export function AppHeader({
                   to="/account"
                   aria-label="打开账号中心"
                   aria-current={pathname.startsWith('/account') ? 'page' : undefined}
-                  onClick={() => setAccountMenuState('closing')}
+                  onClick={accountMenu.close}
                   className={`${productMenuItemClass} text-app-ink-soft`}
                 >
                   账号中心

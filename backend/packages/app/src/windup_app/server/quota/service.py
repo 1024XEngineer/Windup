@@ -11,13 +11,14 @@ rollback，故本实现只 ``flush``（把变更发到当前事务、取回生�
 - 入账（赠送/奖励）：余额 + 累计获得同步递增
 """
 
+import hashlib
 import logging
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -29,6 +30,7 @@ from windup_app.server.quota.interface import QuotaService
 from windup_app.server.quota.model import (
     CreditAccount,
     CreditAccountView,
+    CreditRedemptionCode,
     CreditTransaction,
     CreditTransactionView,
     InviteCode,
@@ -43,6 +45,7 @@ logger = logging.getLogger("windup.quota.service")
 _INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 _INVITE_CODE_LENGTH = 8
 _INVITE_CODE_RE = re.compile(rf"^[{re.escape(_INVITE_ALPHABET)}]{{4,16}}$")
+_REDEMPTION_CODE_RE = re.compile(r"^WU[A-Z0-9]{12}$")
 
 
 def normalize_invite_code(code: str) -> str:
@@ -55,6 +58,19 @@ def parse_invite_code(code: str) -> str:
     if _INVITE_CODE_RE.fullmatch(normalized) is None:
         raise BizException("邀请码无效", code=BizCode.BAD_REQUEST)
     return normalized
+
+
+def normalize_redemption_code(code: str) -> str:
+    """把展示用分隔符去掉后转成兑换码的规范形式。"""
+    normalized = re.sub(r"[-\s]", "", code.strip().upper())
+    if _REDEMPTION_CODE_RE.fullmatch(normalized) is None:
+        raise BizException("兑换码无效或已使用", code=BizCode.BAD_REQUEST)
+    return normalized
+
+
+def redemption_code_hash(code: str) -> str:
+    """兑换码由高熵随机串生成，摘要足以阻断数据库明文泄露。"""
+    return hashlib.sha256(normalize_redemption_code(code).encode("ascii")).hexdigest()
 
 
 def _new_invite_code() -> str:
@@ -362,6 +378,69 @@ class SqlAlchemyQuotaService(QuotaService):
             reason,
             account.balance,
         )
+
+    def redeem_code(
+        self, session: Session, user_id: int, code: str
+    ) -> tuple[int, CreditAccountView]:
+        """原子占用兑换码并将额度写入不可变积分账本。"""
+        code_hash = redemption_code_hash(code)
+        account = self._get_account_for_update(session, user_id)
+        redemption = session.scalar(
+            select(CreditRedemptionCode).where(
+                CreditRedemptionCode.code_hash == code_hash
+            )
+        )
+        if redemption is None:
+            raise BizException("兑换码无效或已使用", code=BizCode.BAD_REQUEST)
+        if redemption.expires_at is not None and _is_expired(redemption.expires_at):
+            raise BizException("兑换码无效或已使用", code=BizCode.BAD_REQUEST)
+
+        ref_id = f"redemption:{redemption.id}"
+        if redemption.redeemed_by is not None:
+            if (
+                redemption.redeemed_by == user_id
+                and self._txn_for(session, ref_id, int(CreditReason.REDEMPTION))
+                is not None
+            ):
+                return redemption.amount, _to_account_view(account)
+            raise BizException("兑换码无效或已使用", code=BizCode.BAD_REQUEST)
+
+        redeemed_at = _now()
+        claimed = session.execute(
+            update(CreditRedemptionCode)
+            .where(
+                CreditRedemptionCode.id == redemption.id,
+                CreditRedemptionCode.redeemed_by.is_(None),
+                or_(
+                    CreditRedemptionCode.expires_at.is_(None),
+                    CreditRedemptionCode.expires_at > redeemed_at,
+                ),
+            )
+            .values(redeemed_by=user_id, redeemed_at=redeemed_at)
+        )
+        if claimed.rowcount != 1:
+            raise BizException("兑换码无效或已使用", code=BizCode.BAD_REQUEST)
+        session.expire(redemption, ["redeemed_by", "redeemed_at"])
+        account.balance += redemption.amount
+        account.total_earned += redemption.amount
+        session.flush()
+        self._write_txn(
+            session,
+            user_id,
+            redemption.amount,
+            CreditReason.REDEMPTION,
+            BillingMode.PREPAID,
+            account.balance,
+            ref_id,
+        )
+        logger.info(
+            "[WINDUP] 兑换码入账 | user_id=%s redemption_id=%s amount=%s balance=%s",
+            user_id,
+            redemption.id,
+            redemption.amount,
+            account.balance,
+        )
+        return redemption.amount, _to_account_view(account)
 
     # -- 流水查询 ---------------------------------------------------------
 

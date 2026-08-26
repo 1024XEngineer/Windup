@@ -130,6 +130,36 @@ def _publish_task_update(task_id: int, task: GenerationTask) -> None:
     )
 
 
+def publish_progress(
+    *,
+    project_id: int | None,
+    task_id: int,
+    stage: str,
+    current: int,
+    total: int,
+    note: str = "",
+) -> None:
+    """发布不落库的瞬时进度；任务状态仍由任务快照负责断线恢复。"""
+    if _task_event_publisher is None:
+        return
+    if project_id is None:
+        logger.warning("任务 %d 没有 project_id，SSE progress 无法投递", task_id)
+        return
+    _task_event_publisher.publish(
+        project_id,
+        task_id,
+        "progress",
+        {
+            "task_id": task_id,
+            "project_id": project_id,
+            "stage": stage,
+            "current": current,
+            "total": total,
+            "note": note,
+        },
+    )
+
+
 # ── 写入 ─────────────────────────────────────────────────────────────────
 
 

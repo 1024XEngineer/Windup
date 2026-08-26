@@ -17,6 +17,8 @@ import asyncio
 import dataclasses
 import json
 import logging
+import math
+import os
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -62,8 +64,25 @@ router = APIRouter(prefix="/generation", tags=["generation"])
 # EventBus（任务进度推送）
 # ══════════════════════════════════════════════════════════════════════════════
 
-# 心跳间隔(秒)
-_HEARTBEAT_TIMEOUT = 30.0
+def _positive_interval(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("%s=%r 不是秒数，使用默认值 %.1f", name, raw, default)
+        return default
+    if not math.isfinite(value) or value <= 0:
+        logger.warning("%s=%r 必须大于 0，使用默认值 %.1f", name, raw, default)
+        return default
+    return value
+
+
+# 心跳必须明显短于常见的 30 秒代理空闲断连边界；终态查库仍保持低频。
+_HEARTBEAT_SECONDS = _positive_interval("WINDUP_SSE_HEARTBEAT_SECONDS", 10.0)
+_TERMINAL_POLL_SECONDS = _positive_interval("WINDUP_SSE_TERMINAL_POLL_SECONDS", 30.0)
+_SUBSCRIBER_QUEUE_CAPACITY = 64
 
 # 终态事件
 _TERMINAL_EVENTS = {"completed", "partial", "failed"}
@@ -114,7 +133,10 @@ class _EventBus:
     回到那个 loop 上再入队(2026-08-10 机器审逮到)。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, queue_capacity: int = _SUBSCRIBER_QUEUE_CAPACITY) -> None:
+        if queue_capacity <= 0:
+            raise ValueError("queue_capacity 必须大于 0")
+        self._queue_capacity = queue_capacity
         # 键是 (project_id, task_id):同一个 task_id 在不同项目下互不串流(主线 #110)。
         # 值是 (queue, 它所属的 loop):不同订阅者可能来自不同 loop(多 worker / 测试里的
         # 临时 loop),不能只存一个全局 loop —— 见 publish 里的 call_soon_threadsafe。
@@ -123,9 +145,28 @@ class _EventBus:
         ] = defaultdict(list)
 
     async def subscribe(self, project_id: int, task_id: int) -> asyncio.Queue:
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=self._queue_capacity)
         self._queues[(project_id, task_id)].append((queue, asyncio.get_running_loop()))
         return queue
+
+    @staticmethod
+    def _enqueue_latest(
+        queue: asyncio.Queue,
+        item: tuple[str, dict],
+        task_id: int,
+    ) -> None:
+        if queue.full():
+            try:
+                dropped_event, _ = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            else:
+                logger.warning(
+                    "SSE 订阅者消费过慢，丢弃最旧事件 task_id=%d event=%s",
+                    task_id,
+                    dropped_event,
+                )
+        queue.put_nowait(item)
 
     async def unsubscribe(
         self,
@@ -166,16 +207,69 @@ class _EventBus:
                 # 同一个 loop 内:直接入队。**不能一律走 call_soon_threadsafe** —— 那是
                 # 异步调度,要等 loop 下一次迭代才真入队,于是"publish 完立刻 get_nowait"
                 # 会拿到空队列(主线 #110 的隔离用例正是这么写的)。
-                queue.put_nowait((event, data))
+                self._enqueue_latest(queue, (event, data), task_id)
                 continue
             try:
-                loop.call_soon_threadsafe(queue.put_nowait, (event, data))
+                loop.call_soon_threadsafe(
+                    self._enqueue_latest,
+                    queue,
+                    (event, data),
+                    task_id,
+                )
             except RuntimeError:
                 # loop 已关闭(客户端断连后请求 loop 结束)。丢弃即可 —— 没有订阅者在等
                 # 这条消息,而任务状态本身已落库,重连后靠 GET /tasks/{id} 取。
                 logger.debug(
                     "SSE loop 已关闭,丢弃事件 task_id=%d event=%s", task_id, event
                 )
+
+
+async def _stream_events(
+    *,
+    request: Request,
+    queue: asyncio.Queue,
+    task_id: int,
+    project_id: int,
+    heartbeat_seconds: float = _HEARTBEAT_SECONDS,
+    terminal_poll_seconds: float = _TERMINAL_POLL_SECONDS,
+):
+    """输出实时事件；进度可丢，终态由低频数据库快照保证最终一致。"""
+    loop = asyncio.get_running_loop()
+    next_terminal_poll = loop.time() + terminal_poll_seconds
+    while True:
+        if await request.is_disconnected():
+            logger.debug("SSE 客户端断开: task_id=%d", task_id)
+            return
+        try:
+            event, data = await asyncio.wait_for(queue.get(), timeout=heartbeat_seconds)
+        except asyncio.TimeoutError:
+            # 先保活再查库，避免慢查询把连接推过代理的空闲断连边界。
+            yield ": heartbeat\n\n"
+            if loop.time() < next_terminal_poll:
+                continue
+            next_terminal_poll = loop.time() + terminal_poll_seconds
+            polled = await asyncio.to_thread(
+                _poll_terminal_snapshot,
+                task_id,
+                project_id,
+            )
+            if polled is None:
+                continue
+            event, data = polled
+            payload = json.dumps(data, ensure_ascii=False)
+            yield f"event: {event}\ndata: {payload}\n\n"
+            logger.debug(
+                "SSE 终态快照查库命中: task_id=%d event=%s",
+                task_id,
+                event,
+            )
+            return
+
+        payload = json.dumps(data, ensure_ascii=False)
+        yield f"event: {event}\ndata: {payload}\n\n"
+        if event in _TERMINAL_EVENTS:
+            logger.debug("SSE 终态: task_id=%d event=%s", task_id, event)
+            return
 
 
 # 全局实例，挂到 app.state.event_bus
@@ -646,37 +740,13 @@ async def stream_task(
                 payload = json.dumps(terminal_payload, ensure_ascii=False)
                 yield f"event: {terminal_event}\ndata: {payload}\n\n"
                 return
-            while True:
-                if await request.is_disconnected():
-                    logger.debug("SSE 客户端断开: task_id=%d", task_id)
-                    break
-                try:
-                    event, data = await asyncio.wait_for(
-                        queue.get(),
-                        timeout=_HEARTBEAT_TIMEOUT,
-                    )
-                    payload = json.dumps(data, ensure_ascii=False)
-                    yield f"event: {event}\ndata: {payload}\n\n"
-                    if event in _TERMINAL_EVENTS:
-                        logger.debug("SSE 终态: task_id=%d event=%s", task_id, event)
-                        break
-                except asyncio.TimeoutError:
-                    polled = await asyncio.to_thread(
-                        _poll_terminal_snapshot,
-                        task_id,
-                        project_id,
-                    )
-                    if polled is not None:
-                        event, data = polled
-                        payload = json.dumps(data, ensure_ascii=False)
-                        yield f"event: {event}\ndata: {payload}\n\n"
-                        logger.debug(
-                            "SSE heartbeat 查库命中终态: task_id=%d event=%s",
-                            task_id,
-                            event,
-                        )
-                        break
-                    yield ": heartbeat\n\n"
+            async for message in _stream_events(
+                request=request,
+                queue=queue,
+                task_id=task_id,
+                project_id=project_id,
+            ):
+                yield message
         finally:
             await event_bus.unsubscribe(project_id, task_id, queue)
             logger.debug("SSE 取消订阅: task_id=%d", task_id)

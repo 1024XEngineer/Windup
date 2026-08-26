@@ -493,6 +493,23 @@ def test_unsubscribe_removes_only_that_queue():
     asyncio.run(scenario())
 
 
+def test_slow_sse_subscriber_keeps_latest_events_in_a_bounded_queue():
+    """慢客户端不能无限吃内存，且终态应挤掉最旧的进度而不是被丢弃。"""
+    bus = _EventBus(queue_capacity=2)
+
+    async def scenario():
+        queue = await bus.subscribe(42, 3)
+        bus.publish(42, 3, "progress", {"sequence": 1})
+        bus.publish(42, 3, "progress", {"sequence": 2})
+        bus.publish(42, 3, "completed", {"sequence": 3})
+        return await queue.get(), await queue.get(), queue.qsize()
+
+    first, second, remaining = asyncio.run(scenario())
+    assert first == ("progress", {"sequence": 2})
+    assert second == ("completed", {"sequence": 3})
+    assert remaining == 0
+
+
 # ── ⑤ 付费循环必须有上界 ─────────────────────────────────────────────────
 
 

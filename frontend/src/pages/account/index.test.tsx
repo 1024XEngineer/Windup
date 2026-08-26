@@ -189,6 +189,111 @@ describe('AccountPage', () => {
     expect(screen.getByText('-12')).toBeTruthy()
   })
 
+  it('从积分账户右上角打开兑换码对话框，并在关闭后归还焦点', async () => {
+    vi.spyOn(quotaApis, 'getBalance').mockResolvedValue({
+      id: '11',
+      userId: '7',
+      balance: 90,
+      frozen: 0,
+      totalEarned: 100,
+      totalSpent: 10,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+    vi.spyOn(quotaApis, 'listTransactions').mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 20,
+    })
+
+    renderAccount()
+    fireEvent.click(await screen.findByRole('button', { name: '积分账户' }))
+    const trigger = await screen.findByRole('button', { name: '填写积分兑换码' })
+
+    fireEvent.click(trigger)
+    const dialog = screen.getByRole('dialog', { name: '兑换积分' })
+    expect(screen.getByLabelText('兑换码')).toBeTruthy()
+    expect(document.activeElement).toBe(dialog)
+
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: '兑换积分' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('兑换成功后显示入账积分并刷新账户与流水', async () => {
+    const initialAccount = {
+      id: '11',
+      userId: '7',
+      balance: 90,
+      frozen: 0,
+      totalEarned: 100,
+      totalSpent: 10,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    }
+    const redeemedAccount = {
+      ...initialAccount,
+      balance: 1090,
+      totalEarned: 1100,
+      updatedAt: '2026-08-17T02:03:04Z',
+    }
+    const getBalance = vi
+      .spyOn(quotaApis, 'getBalance')
+      .mockResolvedValueOnce(initialAccount)
+      .mockResolvedValue(redeemedAccount)
+    const listTransactions = vi
+      .spyOn(quotaApis, 'listTransactions')
+      .mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 })
+    const redeemCode = vi
+      .spyOn(quotaApis, 'redeemCode')
+      .mockResolvedValue({ credited: 1000, account: redeemedAccount })
+
+    renderAccount()
+    fireEvent.click(await screen.findByRole('button', { name: '积分账户' }))
+    fireEvent.click(await screen.findByRole('button', { name: '填写积分兑换码' }))
+    fireEvent.change(screen.getByLabelText('兑换码'), {
+      target: { value: '  WU-ABCD-EFGH  ' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '确认兑换' }))
+
+    await waitFor(() => expect(redeemCode).toHaveBeenCalledWith('WU-ABCD-EFGH'))
+    expect(await screen.findByText('+1,000')).toBeTruthy()
+    await waitFor(() => expect(getBalance).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(listTransactions).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText('1,090')).toBeTruthy()
+  })
+
+  it('兑换失败时显示后端错误并保留输入', async () => {
+    vi.spyOn(quotaApis, 'getBalance').mockResolvedValue({
+      id: '11',
+      userId: '7',
+      balance: 90,
+      frozen: 0,
+      totalEarned: 100,
+      totalSpent: 10,
+      createdAt: '2026-08-12T01:02:03Z',
+      updatedAt: '2026-08-17T01:02:03Z',
+    })
+    vi.spyOn(quotaApis, 'listTransactions').mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 20,
+    })
+    vi.spyOn(quotaApis, 'redeemCode').mockRejectedValue(new Error('兑换码无效或已使用'))
+
+    renderAccount()
+    fireEvent.click(await screen.findByRole('button', { name: '积分账户' }))
+    fireEvent.click(await screen.findByRole('button', { name: '填写积分兑换码' }))
+    const input = screen.getByLabelText('兑换码')
+    fireEvent.change(input, { target: { value: 'WU-USED-CODE' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认兑换' }))
+
+    expect((await screen.findByRole('alert')).textContent).toContain('兑换码无效或已使用')
+    expect((input as HTMLInputElement).value).toBe('WU-USED-CODE')
+  })
+
   it('在账号中心直接管理邀请奖励', async () => {
     vi.spyOn(quotaApis, 'getBalance').mockResolvedValue({
       id: '11',

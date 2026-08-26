@@ -112,6 +112,20 @@ class ProjectConstraints:
     sprite_sample_url: str = ""  # 项目风格参考图 URL
 
 
+def _image_view_prompt(cons: ProjectConstraints) -> str:
+    """避免多方向角色被项目默认侧视角锁成同一朝向。"""
+
+    if cons.directions <= 1:
+        return f"{cons.view}, full body head to feet, centered."
+    projection = "" if cons.perspective == 1 else f"{cons.view}. "
+    return (
+        f"{projection}Use one fixed game-sprite camera and projection for the whole direction set. "
+        "Rotate the character, not the camera, to the requested compass direction. "
+        "Keep body proportions, pose, scale, framing, and ground contact identical. "
+        "Full body head to feet, centered."
+    )
+
+
 def _load_constraints(session: Session, project_id: int | None) -> ProjectConstraints:
     """查 Project 组装全局约束;无 project_id / 查不到 → 缺省。"""
     if project_id is None:
@@ -185,11 +199,23 @@ def _require_size(png: bytes, w: int, h: int) -> bytes:
     return png
 
 
-class _LogProgress:
-    """进度上报占位:MVP 无 SSE,记日志即可。"""
+class _TaskProgress:
+    """同时记录日志并把引擎进度送入任务 SSE 桥。"""
+
+    def __init__(self, *, task_id: int, project_id: int | None) -> None:
+        self._task_id = task_id
+        self._project_id = project_id
 
     def step(self, stage: str, i: int, total: int, note: str = "") -> None:
         logger.info("[gen] %s %s/%s %s", stage, i, total, note)
+        task_repo.publish_progress(
+            project_id=self._project_id,
+            task_id=self._task_id,
+            stage=stage,
+            current=i,
+            total=total,
+            note=note,
+        )
 
 
 def _resolve_video_model(name: str | None) -> str | None:
@@ -286,16 +312,27 @@ class ActionTaskExecutor:
         """
         reset = None
         try:
-            def _mark_running(s: Session) -> ProjectConstraints:
+            def _mark_running(s: Session) -> tuple[ProjectConstraints, int | None]:
                 task_repo.update_status(s, task_id, TaskStatus.RUNNING)
-                return (self._fetch_constraints or _load_constraints)(s, project_id)
+                task = task_repo.get_task(s, task_id)
+                if task is None:
+                    raise RuntimeError(f"任务 {task_id} 不存在")
+                constraints = (self._fetch_constraints or _load_constraints)(s, project_id)
+                return constraints, task.project_id
 
-            cons = generation_io.using_session(session, self._make_session, _mark_running)
+            cons, task_project_id = generation_io.using_session(
+                session, self._make_session, _mark_running
+            )
             reset = bind_call_context(
                 task_id=str(task_id),
                 start_from_model=_resolve_video_model(input.video_model),
             )
-            result = self._produce_action(input, cons, task_id=task_id)
+            result = self._produce_action(
+                input,
+                cons,
+                task_id=task_id,
+                project_id=task_project_id,
+            )
 
             def _complete(s: Session) -> None:
                 task_repo.update_result(s, task_id, _ACTION_RESULT, result)
@@ -336,6 +373,7 @@ class ActionTaskExecutor:
         cons: ProjectConstraints,
         *,
         task_id: int,
+        project_id: int | None = None,
     ) -> dict:
         """母版 → ai_engine 按项目尺寸出帧 → 逐帧上传 → 组结果 dict。
 
@@ -392,7 +430,7 @@ class ActionTaskExecutor:
             stylize=cons.stylize,
             **extra,
         )
-        progress: ProgressPort = _LogProgress()
+        progress: ProgressPort = _TaskProgress(task_id=task_id, project_id=project_id)
         canvas = (cons.sprite_w, cons.sprite_h)
 
         reset_call = fresh_gateway_request()
@@ -452,16 +490,19 @@ class ActionTaskExecutor:
         """延迟队列到期后探一次 i2v。仍在跑则再挂单;完成则抽帧交付。"""
         reset = None
         try:
-            def _mark_running(s: Session) -> ProjectConstraints:
+            def _mark_running(s: Session) -> tuple[ProjectConstraints, int | None]:
                 task = task_repo.get_task(s, task_id)
                 if task is None:
                     raise RuntimeError(f"任务 {task_id} 不存在")
                 if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
                     raise _PollSkip(f"任务 {task_id} 已终态")
-                return (self._fetch_constraints or _load_constraints)(s, project_id)
+                constraints = (self._fetch_constraints or _load_constraints)(s, project_id)
+                return constraints, task.project_id
 
             try:
-                cons = generation_io.using_session(session, self._make_session, _mark_running)
+                cons, task_project_id = generation_io.using_session(
+                    session, self._make_session, _mark_running
+                )
             except _PollSkip:
                 return
 
@@ -479,7 +520,10 @@ class ActionTaskExecutor:
                     return
 
                 card, action, canvas = self._action_spec(input, cons)
-                progress: ProgressPort = _LogProgress()
+                progress: ProgressPort = _TaskProgress(
+                    task_id=task_id,
+                    project_id=task_project_id,
+                )
                 master = (self._fetch_master or self._download_master)(input)
                 generated = gen.finish_video(
                     outcome.video, card, action, master, progress, canvas=canvas
@@ -864,7 +908,7 @@ class ImageTaskExecutor:
         )
         parts = [
             base,
-            f"{cons.view}, full body head to feet, centered.",
+            _image_view_prompt(cons),
             direction_prompt(input.direction),
         ]
         if cons.style:
