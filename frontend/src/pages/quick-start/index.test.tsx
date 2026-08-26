@@ -1719,6 +1719,37 @@ describe('QuickStartPage', () => {
     expect(choices.every((choice) => !choice.className.includes('row-span-2'))).toBe(true)
   })
 
+  it('单向母版使用单格大预览，不渲染九宫格空位', async () => {
+    const run = workflow(
+      setupAndTemplate({
+        selectedImageUrl: 'east.png',
+        selectedImages: { east: 'east.png' },
+        status: 'active',
+        phase: 'selecting',
+        generations: [{ taskId: 'template-east', role: 'character_template' }],
+      }),
+    )
+    renderAt(
+      '/quick-start/run-1',
+      serviceFor(run, {
+        getTemplateCandidates: vi.fn(
+          async () =>
+            [
+              { direction: 'east', index: 0, imageUrl: 'east.png' },
+            ] satisfies readonly QuickStartCandidate[],
+        ),
+      }),
+    )
+
+    const directionSet = await screen.findByRole('group', { name: '单向首帧集合' })
+    expect(directionSet.getAttribute('data-layout')).toBe('direction-first-frame-single')
+    expect(directionSet.className).toContain('grid-cols-1')
+    expect(directionSet.children).toHaveLength(1)
+    expect(screen.getByRole('img', { name: '东方向首帧' })).toBeTruthy()
+    expect(screen.queryByLabelText('中心留空')).toBeNull()
+    expect(screen.queryByLabelText('西方向为空')).toBeNull()
+  })
+
   it('母版确认后把四向首帧放入中心留空的九宫格且不再逐方向选择', async () => {
     const run = workflow(
       setupAndTemplate({

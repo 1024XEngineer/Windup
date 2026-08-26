@@ -39,14 +39,14 @@ def is_required_direction(movement: int, direction: ActionDirection) -> bool:
 
 
 _DIRECTION_PROMPTS: dict[ActionDirection, str] = {
-    ActionDirection.EAST: "Show a strict right-facing side profile toward east.",
-    ActionDirection.WEST: "Show a strict left-facing side profile toward west.",
-    ActionDirection.NORTH: "Show a full back view facing away from the viewer toward north.",
-    ActionDirection.SOUTH: "Show a full front view facing the viewer toward south.",
-    ActionDirection.NORTH_EAST: "Show a back-right three-quarter view toward north-east.",
-    ActionDirection.NORTH_WEST: "Show a back-left three-quarter view toward north-west.",
-    ActionDirection.SOUTH_EAST: "Show a front-right three-quarter view toward south-east.",
-    ActionDirection.SOUTH_WEST: "Show a front-left three-quarter view toward south-west.",
+    ActionDirection.EAST: "The character's screen-space heading points to the right edge of the frame (east).",
+    ActionDirection.WEST: "The character's screen-space heading points to the left edge of the frame (west).",
+    ActionDirection.NORTH: "The character's screen-space heading points to the top edge of the frame (north).",
+    ActionDirection.SOUTH: "The character's screen-space heading points to the bottom edge of the frame (south).",
+    ActionDirection.NORTH_EAST: "The character's screen-space heading points to the upper-right corner of the frame (north-east).",
+    ActionDirection.NORTH_WEST: "The character's screen-space heading points to the upper-left corner of the frame (north-west).",
+    ActionDirection.SOUTH_EAST: "The character's screen-space heading points to the lower-right corner of the frame (south-east).",
+    ActionDirection.SOUTH_WEST: "The character's screen-space heading points to the lower-left corner of the frame (south-west).",
 }
 
 
@@ -54,5 +54,8 @@ def direction_prompt(direction: ActionDirection) -> str:
     """返回给图片/视频模型的强方向锁，避免模型自行转身。"""
 
     return (
-        f"{_DIRECTION_PROMPTS[direction]} Keep this direction unchanged; do not turn."
+        f"{_DIRECTION_PROMPTS[direction]} Keep the camera position, angle, and "
+        "projection unchanged. Throughout every frame, the character remains oriented "
+        "to this screen-space heading. The body, head, torso, hips, and feet maintain "
+        "this heading. Do not turn or drift toward another direction."
     )

@@ -1824,15 +1824,21 @@ function DirectionFirstFrameGrid({
 }) {
   const directionCountLabel =
     directions.length === 8 ? '八向' : directions.length === 4 ? '四向' : '单向'
+  const isSingleDirection = directions.length === 1
+  const layoutDirections = isSingleDirection ? directions : DIRECTION_SHEET_LAYOUT
   const expectedDirections = new Set(directions)
   return (
     <div
       role="group"
       aria-label={`${directionCountLabel}首帧集合`}
-      data-layout="direction-first-frame-grid"
-      className="grid aspect-square w-full max-w-xl grid-cols-3 gap-2 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-muted p-4 shadow-app-card sm:p-5"
+      data-layout={
+        isSingleDirection ? 'direction-first-frame-single' : 'direction-first-frame-grid'
+      }
+      className={`grid aspect-square w-full max-w-xl gap-2 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-muted p-4 shadow-app-card sm:p-5 ${
+        isSingleDirection ? 'grid-cols-1' : 'grid-cols-3'
+      }`}
     >
-      {DIRECTION_SHEET_LAYOUT.map((direction, cellIndex) => {
+      {layoutDirections.map((direction, cellIndex) => {
         if (!direction) {
           return (
             <div

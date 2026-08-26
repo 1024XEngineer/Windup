@@ -202,21 +202,21 @@ def test_confirmed_master_is_sent_as_identity_reference_without_style_sample():
 
 
 @pytest.mark.parametrize(
-    ("direction", "orientation"),
+    ("direction", "heading"),
     [
-        (ActionDirection.EAST, "strict right-facing side profile"),
-        (ActionDirection.WEST, "strict left-facing side profile"),
-        (ActionDirection.NORTH, "full back view"),
-        (ActionDirection.SOUTH, "full front view"),
-        (ActionDirection.NORTH_EAST, "back-right three-quarter view"),
-        (ActionDirection.NORTH_WEST, "back-left three-quarter view"),
-        (ActionDirection.SOUTH_EAST, "front-right three-quarter view"),
-        (ActionDirection.SOUTH_WEST, "front-left three-quarter view"),
+        (ActionDirection.EAST, "right edge of the frame"),
+        (ActionDirection.WEST, "left edge of the frame"),
+        (ActionDirection.NORTH, "top edge of the frame"),
+        (ActionDirection.SOUTH, "bottom edge of the frame"),
+        (ActionDirection.NORTH_EAST, "upper-right corner of the frame"),
+        (ActionDirection.NORTH_WEST, "upper-left corner of the frame"),
+        (ActionDirection.SOUTH_EAST, "lower-right corner of the frame"),
+        (ActionDirection.SOUTH_WEST, "lower-left corner of the frame"),
     ],
 )
-def test_multidirectional_master_prompt_rotates_character_without_side_view_conflict(
+def test_multidirectional_master_prompt_uses_projection_neutral_screen_heading(
     direction,
-    orientation,
+    heading,
 ):
     master = _master()
     seen: dict[str, str] = {}
@@ -252,7 +252,16 @@ def test_multidirectional_master_prompt_rotates_character_without_side_view_conf
     prompt = seen["prompt"].lower()
     assert "side view, horizontal side-scroller" not in prompt
     assert "rotate the character, not the camera" in prompt
-    assert orientation in prompt
+    assert heading in prompt
+    assert not any(
+        camera_view in prompt
+        for camera_view in (
+            "side profile",
+            "front view",
+            "back view",
+            "three-quarter view",
+        )
+    )
 
 
 @pytest.mark.parametrize(
