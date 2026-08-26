@@ -149,6 +149,7 @@ export function createProductionQuickStartAgentDependencies(
           referenceMedia: input.referenceMedia as readonly MediaReference[] | undefined,
           directionalMovement: input.directionalMovement,
           gameStyle,
+          autoPixelate: input.autoPixelate,
           projectId: input.projectId,
           ...(input.suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
           ...(input.automaticDelivery

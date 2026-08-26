@@ -23,6 +23,7 @@ import {
   Check,
   CopySimple,
   FolderOpen,
+  GridFour,
   MagnifyingGlass,
   Play,
   Plus,
@@ -227,6 +228,8 @@ type AgentConversationRecord = {
   turns: readonly AgentConversationTurn[]
   /** 入口处选的画风；不随草稿存住的话，刷新后画风选择器已隐藏而值悄悄回到不指定。 */
   gameStyle?: ArtStyle
+  /** 默认开启；关闭时保留像素风提示词，只跳过自动像素后处理。 */
+  autoPixelate?: boolean
   /** 入口滑块选的方向；进入对话后控件锁定，刷新时必须恢复原值。 */
   directionalMovement?: DirectionalMovement
   projectId?: string | null
@@ -270,6 +273,22 @@ function readAgentDraftGameStyle(key: string): ArtStyle {
     return isArtStyle(parsed.gameStyle) ? parsed.gameStyle : 'unspecified'
   } catch {
     return 'unspecified'
+  }
+}
+
+function readAgentDraftAutoPixelate(key: string): boolean {
+  try {
+    const stored = window.sessionStorage.getItem(key)
+    if (!stored) return true
+    const parsed: unknown = JSON.parse(stored)
+    return !(
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      'autoPixelate' in parsed &&
+      parsed.autoPixelate === false
+    )
+  } catch {
+    return true
   }
 }
 
@@ -591,6 +610,7 @@ function IconActionButton({
   type = 'button',
   className = '',
   expanded,
+  pressed,
   children,
 }: {
   label: string
@@ -600,6 +620,7 @@ function IconActionButton({
   type?: 'button' | 'submit'
   className?: string
   expanded?: boolean
+  pressed?: boolean
   children: ReactNode
 }) {
   const tooltipId = useId()
@@ -610,6 +631,7 @@ function IconActionButton({
       aria-label={label}
       aria-describedby={tooltipId}
       aria-expanded={expanded}
+      aria-pressed={pressed}
       disabled={disabled}
       onClick={onClick}
       data-icon-action
@@ -794,6 +816,12 @@ function QuickStartInput({
       ? readAgentDraftGameStyle(agentDraftConversationStorageKey(activeRunUserId, draftId))
       : 'unspecified'
   })
+  const [autoPixelate, setAutoPixelate] = useState(() => {
+    const draftId = readAgentDraftId()
+    return draftId
+      ? readAgentDraftAutoPixelate(agentDraftConversationStorageKey(activeRunUserId, draftId))
+      : true
+  })
   const [projectId, setProjectId] = useState<string | null>(() => {
     const requestedProjectId = entrySearchParams.get('projectId')
     if (requestedProjectId) return requestedProjectId
@@ -817,6 +845,8 @@ function QuickStartInput({
   projectIdRef.current = projectId
   const gameStyleRef = useRef(gameStyle)
   gameStyleRef.current = gameStyle
+  const autoPixelateRef = useRef(autoPixelate)
+  autoPixelateRef.current = autoPixelate
   const [submitting, setSubmitting] = useState(false)
   const [revealingFirstAgentTurn, setRevealingFirstAgentTurn] = useState(false)
   const [entryTransition, setEntryTransition] = useState<'idle' | 'leaving'>('idle')
@@ -891,6 +921,7 @@ function QuickStartInput({
         {
           turns,
           gameStyle: updates.gameStyle ?? gameStyleRef.current,
+          autoPixelate: updates.autoPixelate ?? autoPixelateRef.current,
           directionalMovement: updates.directionalMovement ?? directionalMovementRef.current,
           projectId: updates.projectId === undefined ? projectIdRef.current : updates.projectId,
         },
@@ -913,6 +944,7 @@ function QuickStartInput({
           setSelectedProject(restoredProject)
           setDirectionalMovement(restoredProject.directionalMovement)
           setGameStyle(restoredProject.gameStyle)
+          setAutoPixelate(restoredProject.autoPixelate ?? true)
         }
       },
       () => {
@@ -939,9 +971,12 @@ function QuickStartInput({
       gameStyleRef.current = project.gameStyle
       setDirectionalMovement(project.directionalMovement)
       setGameStyle(project.gameStyle)
+      autoPixelateRef.current = project.autoPixelate ?? true
+      setAutoPixelate(project.autoPixelate ?? true)
     }
     persistAgentDraft({
       gameStyle: project?.gameStyle ?? gameStyleRef.current,
+      autoPixelate: project?.autoPixelate ?? autoPixelateRef.current,
       directionalMovement: project?.directionalMovement ?? directionalMovementRef.current,
       projectId: nextProjectId,
     })
@@ -1124,7 +1159,12 @@ function QuickStartInput({
       const result = await agentSession.confirmProposal(
         state.optimizedPrompt,
         directionalMovement,
-        { gameStyle, automaticDelivery: true, ...(projectId ? { projectId } : {}) },
+        {
+          gameStyle,
+          ...(gameStyle === 'pixel' ? { autoPixelate } : {}),
+          automaticDelivery: true,
+          ...(projectId ? { projectId } : {}),
+        },
       )
       if (result.kind === 'generated') await handoffGenerated(result)
     } catch {
@@ -1149,6 +1189,13 @@ function QuickStartInput({
     setGameStyle(next)
     styleMenu.close()
     persistAgentDraft({ gameStyle: next })
+  }
+
+  function toggleAutoPixelate() {
+    const next = !autoPixelateRef.current
+    autoPixelateRef.current = next
+    setAutoPixelate(next)
+    persistAgentDraft({ autoPixelate: next })
   }
 
   function chooseDirectionalMovement(next: DirectionalMovement) {
@@ -1210,6 +1257,7 @@ function QuickStartInput({
       try {
         const result = await agentSession.confirmProposal(normalizedPrompt, directionalMovement, {
           gameStyle,
+          ...(gameStyle === 'pixel' ? { autoPixelate } : {}),
           ...(projectId ? { projectId } : {}),
         })
         if (result.kind === 'generated') await handoffGenerated(result)
@@ -1603,6 +1651,22 @@ function QuickStartInput({
                         </div>
                       ) : null}
                     </div>
+                    {gameStyle === 'pixel' ? (
+                      <IconActionButton
+                        label={`自动完美像素化：${autoPixelate ? '已开启' : '已关闭'}`}
+                        disabled={entryBusy}
+                        pressed={autoPixelate}
+                        onClick={toggleAutoPixelate}
+                        className={autoPixelate ? 'text-app-accent' : ''}
+                      >
+                        <GridFour
+                          data-icon="auto-pixelate"
+                          aria-hidden="true"
+                          size={21}
+                          weight={autoPixelate ? 'fill' : 'regular'}
+                        />
+                      </IconActionButton>
+                    ) : null}
                   </>
                 ) : null}
                 <div ref={projectMenuRoot} className="relative order-first">
@@ -2674,6 +2738,8 @@ function QuickStartRun({
   } | null>(null)
   const mountedRef = useRef(true)
   const pixelPerfectUrlsRef = useRef<readonly string[]>([])
+  // 恢复会先展示旧快照再等待 resume；用序号避免迟到的成功清理抹掉期间产生的用户错误。
+  const workflowErrorEpochRef = useRef(0)
   const workflowAgentActions = useMemo<WorkflowAgentActions>(
     () => ({
       getContext: () =>
@@ -2715,12 +2781,14 @@ function QuickStartRun({
   const reportWorkflowError = useCallback((cause: unknown, fallback: string) => {
     const presented = presentWorkflowError(cause, fallback)
     if (workflowConflictRef.current && !presented.conflict) return
+    workflowErrorEpochRef.current += 1
     workflowConflictRef.current ||= presented.conflict
     setError(presented.message)
     setWorkflowConflict(workflowConflictRef.current)
   }, [])
   const clearWorkflowError = useCallback(() => {
     if (workflowConflictRef.current) return
+    workflowErrorEpochRef.current += 1
     setError(null)
     setWorkflowConflict(false)
   }, [])
@@ -2868,8 +2936,10 @@ function QuickStartRun({
     setPixelPerfectStatus('idle')
     setActionVersion('original')
     workflowConflictRef.current = false
+    workflowErrorEpochRef.current += 1
     setError(null)
     setWorkflowConflict(false)
+    const restoreErrorEpoch = workflowErrorEpochRef.current
 
     void (async () => {
       const providedSession = initialSessionRef.current
@@ -2901,7 +2971,7 @@ function QuickStartRun({
         : await nextSession.resume()
       if (active) {
         setRun(resumed)
-        clearWorkflowError()
+        if (workflowErrorEpochRef.current === restoreErrorEpoch) clearWorkflowError()
         setRestoring(false)
       }
     })().catch((cause) => {

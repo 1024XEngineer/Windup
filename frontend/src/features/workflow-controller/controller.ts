@@ -120,6 +120,7 @@ export interface ApplyGenerationResultInput {
 
 export interface PrepareQuickStartProjectOptions {
   gameStyle?: ArtStyle
+  autoPixelate?: boolean
   /** 传入时复用已有项目；缺省时保持 Quick Start 自动建项目。 */
   projectId?: Project['id']
 }
@@ -136,6 +137,7 @@ export interface StartCharacterGenerationInput {
   referenceMedia?: readonly MediaReference[]
   directionalMovement?: DirectionalMovement
   gameStyle?: ArtStyle
+  autoPixelate?: boolean
   projectId?: Project['id']
   automaticDelivery?: {
     actionPrompt?: string
@@ -284,11 +286,17 @@ interface PendingGenerationAttachment {
 }
 
 export function createAutoPrepareProject(
-  projectApis: Pick<ProjectApis, 'create' | 'get'>,
+  projectApis: Pick<ProjectApis, 'create' | 'get' | 'setAutoPixelate'>,
 ): PrepareQuickStartProject {
   return async (prompt, directionalMovement = 'single', options) => {
     if (options?.projectId) {
-      const project = await projectApis.get(options.projectId)
+      let project = await projectApis.get(options.projectId)
+      if (
+        options.autoPixelate !== undefined &&
+        (project.autoPixelate ?? true) !== options.autoPixelate
+      ) {
+        project = await projectApis.setAutoPixelate(project.id, options.autoPixelate)
+      }
       return {
         id: project.id,
         spriteSize: project.spriteSize,
@@ -301,6 +309,7 @@ export function createAutoPrepareProject(
       directionalMovement,
       spriteSize: { width: 256, height: 256 },
       gameStyle: options?.gameStyle,
+      autoPixelate: options?.autoPixelate,
     })
     return {
       id: project.id,
@@ -437,6 +446,7 @@ export function createWorkflowController({
     referenceMedia = [],
     directionalMovement: selectedDirectionalMovement = 'single',
     gameStyle,
+    autoPixelate,
     projectId,
     automaticDelivery,
     suggestPixelPerfect = false,
@@ -451,6 +461,7 @@ export function createWorkflowController({
     const locomotion = actionPrompt ? automaticDelivery?.locomotion : undefined
     const project = await prepareProject(normalizedPrompt, selectedDirectionalMovement, {
       gameStyle,
+      ...(autoPixelate === undefined ? {} : { autoPixelate }),
       projectId,
     })
     generationDirections = getDirectionProfile(
@@ -469,7 +480,7 @@ export function createWorkflowController({
           generations: [],
           error: null,
           input: { prompt: normalizedPrompt, referenceMedia: [...referenceMedia] },
-          ...(suggestPixelPerfect ? { pixelPerfectSuggested: true } : {}),
+          ...(suggestPixelPerfect || autoPixelate === false ? { pixelPerfectSuggested: true } : {}),
           ...(automaticDelivery
             ? {
                 automation: {

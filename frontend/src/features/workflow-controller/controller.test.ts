@@ -322,6 +322,42 @@ describe('WorkflowController', () => {
     })
   })
 
+  it('keeps pixel style while opting out of automatic pixelation', async () => {
+    const workflow = createWorkflowApis()
+    const generation = createGenerationHarness()
+    const prepareProject = vi.fn(async () => ({
+      id: 'project-native-pixel',
+      spriteSize: { width: 256, height: 256 },
+    }))
+    const controller = createWorkflowController({
+      workflowRunApis: workflow.apis,
+      generationApis: generation.apis,
+      prepareProject,
+      onAsyncError: () => undefined,
+    })
+
+    await controller.startCharacterGeneration({
+      prompt: '银发像素骑士',
+      gameStyle: 'pixel',
+      autoPixelate: false,
+    })
+
+    expect(prepareProject).toHaveBeenCalledWith('银发像素骑士', 'single', {
+      gameStyle: 'pixel',
+      autoPixelate: false,
+    })
+    expect(workflow.apis.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nodes: expect.arrayContaining([
+          expect.objectContaining({
+            id: 'character-setup',
+            pixelPerfectSuggested: true,
+          }),
+        ]),
+      }),
+    )
+  })
+
   it('uses the uploaded reference when Agent starts character generation', async () => {
     const workflow = createWorkflowApis()
     const generation = createGenerationHarness()

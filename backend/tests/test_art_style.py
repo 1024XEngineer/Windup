@@ -80,6 +80,20 @@ def test_created_project_reports_the_chosen_style(auth_client):
     assert created["game_style"] == "pixel"
 
 
+def test_pixel_project_can_disable_automatic_pixelation(auth_client, db_session):
+    """关闭后仍保留 pixel art 提示词，但生成后处理必须走原生分支。"""
+    from windup_app.server.orchestrator.executor import _load_constraints
+
+    created = auth_client.post(
+        "/projects", json=_payload(game_style="pixel", auto_pixelate=False)
+    ).json()["data"]
+
+    assert created["auto_pixelate"] is False
+    constraints = _load_constraints(db_session, created["id"])
+    assert constraints.style == "pixel art"
+    assert constraints.stylize == "none"
+
+
 def test_unspecified_is_stored_as_null(auth_client, db_session):
     """库里存 NULL 而不是字面量;响应侧再归一成枚举交给前端。"""
     from windup_app.server.project.model import Project

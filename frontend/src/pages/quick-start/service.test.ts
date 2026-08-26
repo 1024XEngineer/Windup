@@ -1293,6 +1293,25 @@ describe('createQuickStartService', () => {
     )
   })
 
+  it('creates a pixel project without automatic pixelation when the user turns it off', async () => {
+    const create = vi.fn(async (input) => ({
+      id: 'project-native-pixel',
+      ...input,
+      createdAt: '2026-08-27T00:00:00Z',
+      updatedAt: '2026-08-27T00:00:00Z',
+    }))
+    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
+
+    await prepare('原生像素角色', 'single', {
+      gameStyle: 'pixel',
+      autoPixelate: false,
+    })
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ gameStyle: 'pixel', autoPixelate: false }),
+    )
+  })
+
   it('reuses an existing project instead of creating another one', async () => {
     const existingProject = {
       id: 'project-existing',

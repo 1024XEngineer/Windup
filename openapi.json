@@ -2230,6 +2230,11 @@
       "ProjectCreate": {
         "description": "创建项目请求。",
         "properties": {
+          "auto_pixelate": {
+            "default": true,
+            "title": "Auto Pixelate",
+            "type": "boolean"
+          },
           "character_perspective": {
             "maximum": 3.0,
             "minimum": 1.0,
@@ -2325,6 +2330,10 @@
       "ProjectListOut": {
         "description": "项目列表项；预览是读取投影，不写回 Project。",
         "properties": {
+          "auto_pixelate": {
+            "title": "Auto Pixelate",
+            "type": "boolean"
+          },
           "character_perspective": {
             "title": "Character Perspective",
             "type": "integer"
@@ -2413,6 +2422,7 @@
           "sprite_width",
           "sprite_height",
           "game_style",
+          "auto_pixelate",
           "sprite_sample_url",
           "create_at",
           "update_at",
@@ -2424,6 +2434,10 @@
       "ProjectOut": {
         "description": "项目响应。",
         "properties": {
+          "auto_pixelate": {
+            "title": "Auto Pixelate",
+            "type": "boolean"
+          },
           "character_perspective": {
             "title": "Character Perspective",
             "type": "integer"
@@ -2501,6 +2515,7 @@
           "sprite_width",
           "sprite_height",
           "game_style",
+          "auto_pixelate",
           "sprite_sample_url",
           "create_at",
           "update_at"
@@ -2511,6 +2526,17 @@
       "ProjectPatch": {
         "description": "改项目请求;只改传上来的那些字段。",
         "properties": {
+          "auto_pixelate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Pixelate"
+          },
           "game_style": {
             "anyOf": [
               {

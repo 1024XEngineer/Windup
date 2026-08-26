@@ -63,6 +63,7 @@ class ProjectCreate(BaseModel):
     sprite_width: int = Field(ge=32, le=2048)
     sprite_height: int = Field(ge=32, le=2048)
     game_style: ArtStyle | str = ArtStyle.UNSPECIFIED
+    auto_pixelate: bool = True
     sprite_sample_url: str | None = None
 
     @field_validator("game_style", mode="before")
@@ -77,6 +78,7 @@ class ProjectPatch(BaseModel):
 
     project_name: str | None = Field(default=None, min_length=1, max_length=20)
     game_style: ArtStyle | str | None = None
+    auto_pixelate: bool | None = None
 
     _accept_legacy = field_validator("game_style", mode="before")(
         _legacy_style_or_none
@@ -84,7 +86,11 @@ class ProjectPatch(BaseModel):
 
     @model_validator(mode="after")
     def _at_least_one(self) -> "ProjectPatch":
-        if self.project_name is None and self.game_style is None:
+        if (
+            self.project_name is None
+            and self.game_style is None
+            and self.auto_pixelate is None
+        ):
             raise ValueError("至少要改一个字段")
         return self
 
@@ -102,6 +108,7 @@ class ProjectOut(BaseModel):
     sprite_width: int
     sprite_height: int
     game_style: ArtStyle | str
+    auto_pixelate: bool
     sprite_sample_url: str | None
     create_at: datetime
     update_at: datetime
@@ -238,6 +245,7 @@ def update_project(
             game_style=(
                 UNSET if body.game_style is None else _stored_style(body.game_style)
             ),
+            auto_pixelate=(UNSET if body.auto_pixelate is None else body.auto_pixelate),
         )
     except IntegrityError:
         session.rollback()

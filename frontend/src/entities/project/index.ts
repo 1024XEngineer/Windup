@@ -10,6 +10,8 @@ export interface Project {
   directionalMovement: DirectionalMovement
   spriteSize: { width: number; height: number }
   gameStyle: ArtStyle
+  /** 像素风仍进提示词；此开关只决定生成管线是否自动做像素后处理。 */
+  autoPixelate?: boolean
   sampleImageUrl: string | null
   /** 项目列表已经解析好的卡片预览；详情响应不承诺提供。 */
   previewUrl?: string | null
@@ -30,6 +32,7 @@ export interface CreateProjectInput {
   directionalMovement: DirectionalMovement
   spriteSize: { width: number; height: number }
   gameStyle?: ArtStyle
+  autoPixelate?: boolean
   sampleImageUrl?: string | null
 }
 
@@ -112,6 +115,7 @@ export interface ProjectApis {
   create(input: CreateProjectInput): Promise<Project>
   rename(id: Project['id'], name: string): Promise<Project>
   setGameStyle(id: Project['id'], gameStyle: ArtStyle): Promise<Project>
+  setAutoPixelate(id: Project['id'], enabled: boolean): Promise<Project>
   remove(id: Project['id']): Promise<void>
 }
 
@@ -124,6 +128,7 @@ interface ProjectDto {
   sprite_width: number
   sprite_height: number
   game_style: string | null
+  auto_pixelate: boolean
   sprite_sample_url: string | null
   preview_url?: string | null
   create_at: string
@@ -195,6 +200,7 @@ function mapProject(dto: ProjectDto): Project {
     ),
     spriteSize: { width: dto.sprite_width, height: dto.sprite_height },
     gameStyle: artStyleFromDto(dto.game_style),
+    autoPixelate: dto.auto_pixelate,
     sampleImageUrl: dto.sprite_sample_url,
     previewUrl: dto.preview_url ?? dto.sprite_sample_url,
     createdAt: dto.create_at,
@@ -241,6 +247,7 @@ export const projectApis: ProjectApis = {
           sprite_width: input.spriteSize.width,
           sprite_height: input.spriteSize.height,
           game_style: input.gameStyle,
+          auto_pixelate: input.autoPixelate,
           sprite_sample_url: input.sampleImageUrl,
         },
       })
@@ -286,6 +293,15 @@ export const projectApis: ProjectApis = {
       await getApiClient().request<ProjectDto>(`/projects/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         json: { game_style: gameStyle },
+      }),
+    )
+  },
+
+  async setAutoPixelate(id, enabled) {
+    return mapProject(
+      await getApiClient().request<ProjectDto>(`/projects/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        json: { auto_pixelate: enabled },
       }),
     )
   },

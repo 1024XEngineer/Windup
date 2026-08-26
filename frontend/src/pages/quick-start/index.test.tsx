@@ -1138,6 +1138,7 @@ describe('QuickStartPage', () => {
         actionType: 'walk',
         directionalMovement: 'four-way',
         gameStyle: 'pixel',
+        autoPixelate: true,
         automaticDelivery: true,
         projectId: '42',
       }),
@@ -1614,6 +1615,23 @@ describe('QuickStartPage', () => {
     expect(JSON.parse(window.sessionStorage.getItem(key) ?? '{}')).toMatchObject({
       gameStyle: 'pixel',
       directionalMovement: 'eight-way',
+    })
+  })
+
+  it('lets a pixel-style draft turn off automatic perfect pixelation', () => {
+    renderAt('/quick-start', serviceFor(null), agentFor())
+
+    fireEvent.click(screen.getByRole('button', { name: '选择画风，当前不指定' }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: '像素' }))
+    const toggle = screen.getByRole('button', { name: '自动完美像素化：已开启' })
+    fireEvent.click(toggle)
+
+    expect(screen.getByRole('button', { name: '自动完美像素化：已关闭' })).toBeTruthy()
+    const draftId = window.history.state?.windupQuickStartAgentDraftId
+    const key = `windup.quick-start.agent-chat.v2:draft:7:${draftId}`
+    expect(JSON.parse(window.sessionStorage.getItem(key) ?? '{}')).toMatchObject({
+      gameStyle: 'pixel',
+      autoPixelate: false,
     })
   })
 
@@ -3168,6 +3186,32 @@ describe('QuickStartPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain('动作生成暂时不可用')
+  })
+
+  it('keeps an add-action error visible when run restoration finishes late', async () => {
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const resumed = deferred<WorkflowRun>()
+    const service = serviceFor(run, {
+      resume: vi.fn(() => resumed.promise),
+      addAction: vi.fn(async () => Promise.reject(new Error('动作生成暂时不可用'))),
+    })
+    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service)
+
+    const input = await screen.findByRole('textbox', { name: '继续描述你的想法' })
+    await waitFor(() =>
+      expect(service.resume).toHaveBeenCalledWith({ automaticActionAdvance: false }),
+    )
+    fireEvent.change(input, { target: { value: '挥手' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => expect(service.addAction).toHaveBeenCalledWith('outfit-1', '挥手'))
+    expect((await screen.findByRole('alert')).textContent).toContain('动作生成暂时不可用')
+
+    await act(async () => {
+      resumed.resolve(run)
+      await resumed.promise
+    })
+    expect(screen.getByRole('alert').textContent).toContain('动作生成暂时不可用')
   })
 
   it('recovers missing runs and returns to the creation entry', async () => {
