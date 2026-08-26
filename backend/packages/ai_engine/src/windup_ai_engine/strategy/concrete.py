@@ -31,7 +31,7 @@ from windup_framework.providers import ImageProvider, MatteProvider, VideoProvid
 from windup_ai_engine._imgio import from_png as _img
 from windup_ai_engine._imgio import to_png as _png
 from windup_ai_engine.master_prep import prepare_master
-from windup_ai_engine.ports import ProgressPort, PromptAdapterPort, PromptRejected
+from windup_ai_engine.ports import ProgressPort, PromptAdapterPort, PromptRejected, RenderPlan
 from windup_ai_engine.postprocess import master_pixel_spec, pixelate_frames
 from windup_ai_engine.slicing import (
     extract_frames_at,
@@ -302,6 +302,19 @@ class PerFrameStrategy(DerivationStrategy):
 # 才是正面(奶白胸腹与口鼻可见,浅色像素占比 21.0%),s 是背面(8.5%)。两者主体像素数
 # 几乎相同,靠轮廓分不出正反,而单元测试也逮不到 —— 朝向错了但帧数、时长、成色全部正常。
 # 改这张表之前先渲一遍再量。
+def _coverage(png: bytes) -> float:
+    """一帧的非透明像素占比。**与出帧台 ``__coverage`` 同一口径**:先缩到 128 宽再数
+    ``alpha > 8`` —— 两边算法不同的话,客户端自检过了服务端再判一次会无故打回。
+    """
+    image = _img(png)
+    if image.mode != "RGBA":
+        return 1.0
+    width = 128
+    height = max(1, round(image.height / image.width * width))
+    alpha = np.asarray(image.resize((width, height)).getchannel("A"))
+    return float((alpha > 8).sum()) / float(width * height)
+
+
 _FACING_TO_DIRECTION: dict[Facing, str] = {
     Facing.SIDE: "e",  # yaw=0°,角色朝画面右(与出帧台 faces="right" 同口径)
     Facing.FRONT: "n",  # yaw=90°,身体正对观者
@@ -331,20 +344,25 @@ class RenderFrameStrategy(DerivationStrategy):
 
     def __init__(
         self,
-        renderer: SpriteRenderProvider,
+        renderer: SpriteRenderProvider | None = None,
         *,
         directions: int = 4,
         material: str = "cel",
         size: tuple[int, int] | None = None,
+        min_coverage: float = 0.005,
     ) -> None:
         # 出帧台的 provider 包只在这条路线上用得着(它连着 node + 浏览器)。在模块顶层
         # import 会让走 i2v / 逐帧的部署也必须装齐它,而这两条路线一行都用不到。
         from windup_framework.providers.render3d import RENDER_SIZE
 
+        # 出帧交给浏览器时这里恒为 None:worker 不装 node / Chromium,只做后处理。
+        # 缺省不报错,是因为 plan / frames_from_client 两条路都用不到渲染器;真去
+        # derive 才炸,那时候的报错才指得准。
         self._renderer = renderer
         self._directions = directions
         self._material = material
         self._size = size or RENDER_SIZE
+        self._min_coverage = min_coverage
 
     def derive(
         self,
@@ -361,12 +379,13 @@ class RenderFrameStrategy(DerivationStrategy):
                 "server 侧应在调用前确认该造型的 3D 资产可读。"
             )
 
-        # 新请求按真实源方向取序列；旧的三渲二调用没有 direction 时，继续按
-        # facing 选择序列，不能把缺省值误当成 east。
-        if action.direction is None:
-            want = _FACING_TO_DIRECTION.get(action.facing, "e")
-        else:
-            want = _ACTION_DIRECTION_TO_RENDERER[action.direction.value]
+        if self._renderer is None:
+            raise RuntimeError(
+                "三渲二没有注入出帧台。出帧已交给浏览器时不该走到这里(见 "
+                "WINDUP_RENDER3D_CLIENT_BAKE);要在服务端渲就注入 SpriteRenderProvider。"
+            )
+        plan = self.plan(action)
+        want = plan.direction
         progress.step(
             "derive",
             0,
@@ -404,6 +423,71 @@ class RenderFrameStrategy(DerivationStrategy):
         # 那条分支在生产里无条件不成立。留着会让人以为多朝向已经算好了只是没带出来。
         progress.step("derive", 1, 3, f"朝向 {chosen.direction} 共 {len(frames)} 帧")
 
+        return self._stylize(frames, action, progress)
+
+    def plan(self, action: ActionSpec) -> RenderPlan:
+        """这个动作该渲什么 —— 朝向、材质、画布、帧数、空帧阈值。
+
+        朝向解析留在 strategy 里而不是让调用方各算各的:新请求按真实源方向取序列,
+        旧的三渲二调用没有 ``direction`` 时继续按 ``facing`` 选,把缺省值误当成 east
+        的后果是角色朝反方向走,而帧数、时长、成色全都正常。
+        """
+        from windup_framework.providers.render3d import DIRECTIONS_4, DIRECTIONS_8
+
+        if action.direction is None:
+            want = _FACING_TO_DIRECTION.get(action.facing, "e")
+        else:
+            want = _ACTION_DIRECTION_TO_RENDERER[action.direction.value]
+        table = DIRECTIONS_8 if self._directions == 8 else DIRECTIONS_4
+        if want not in table:
+            raise ValueError(f"朝向 {want!r} 不属于当前 {self._directions} 向项目")
+        return RenderPlan(
+            clip=action.action.value,
+            direction=want,
+            camera_yaw=float(table[want]),
+            frames=action.n_frames,
+            width=self._size[0],
+            height=self._size[1],
+            material=self._material,
+            min_coverage=self._min_coverage,
+        )
+
+    def frames_from_client(
+        self,
+        frames: list[bytes],
+        card: CharacterCard,
+        action: ActionSpec,
+        progress: ProgressPort,
+    ) -> list[bytes]:
+        """浏览器渲好的序列帧 → 像素化。**闸口与服务端渲一模一样,一道不减。**
+
+        空帧自检必须在服务端再做一次:客户端自报的覆盖率只是它的说法,而出帧台在
+        角色出画 / 片段选错时会安静地产出全透明帧,外面照样以为成功了。
+        """
+        plan = self.plan(action)
+        if len(frames) != plan.frames:
+            raise ValueError(
+                f"浏览器交回 {len(frames)} 帧,契约要 {plan.frames} 帧"
+                f"(动作 {action.action.value}、朝向 {plan.direction})。"
+            )
+        progress.step("derive", 0, 3, f"浏览器交回 {len(frames)} 帧({plan.direction} 朝向)")
+        empty = [
+            f"第 {i} 帧覆盖率 {cov:.5f}"
+            for i, cov in enumerate(_coverage(f) for f in frames)
+            if cov < plan.min_coverage
+        ]
+        if empty:
+            raise ValueError(
+                f"浏览器交回的帧几乎全透明({len(empty)}/{len(frames)}):{'; '.join(empty[:4])}。"
+                "角色出画或片段选错都会产出这种帧,不能当成功交付。"
+            )
+        progress.step("derive", 1, 3, f"空帧自检通过(阈值 {plan.min_coverage})")
+        return self._stylize(frames, action, progress)
+
+    def _stylize(
+        self, frames: list[bytes], action: ActionSpec, progress: ProgressPort
+    ) -> list[bytes]:
+        """出帧之后的画风处理。服务端渲与浏览器渲共用同一份,不复制。"""
         # 3D 帧本来就是透明底,**不套抠图**:去白边那一步会把浅灰甲当漏白吃掉。
         # 像素化仍按 ActionSpec 走。
         if action.stylize is Stylize.NONE:

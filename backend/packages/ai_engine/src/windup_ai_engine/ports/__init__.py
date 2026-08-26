@@ -276,6 +276,25 @@ class GeneratedAction:
     prompt_version: str = field(kw_only=True)
 
 
+@dataclass(frozen=True)
+class RenderPlan:
+    """三渲二出帧的全部参数 —— 无论谁来渲,都按这一份。
+
+    出帧那一段可以在 worker 里跑(Playwright),也可以交给用户浏览器跑(#714)。
+    参数在两处各写一份的话,同一个动作在两条路上会渲出不同的东西,而帧数、时长、
+    成色全都正常,没有任何一道会红。
+    """
+
+    clip: str
+    direction: str
+    camera_yaw: float
+    frames: int
+    width: int
+    height: int
+    material: str
+    min_coverage: float
+
+
 # ---- 出门那道闸的仪器:判官(server 注入实现,framework 层有一个)----
 # 与 ``ActionQuality`` 分工不同:那三个数由本地像素算出来,零成本、量的是帧**之间**的
 # 关系;判官量的是一帧画面**里**有什么,要花一次付费调用,且本地算不出来 —— 像素统计
@@ -358,6 +377,33 @@ class CharacterGeneratorPort(Protocol):
         Raises:
             NotImplementedError: 没注入 ``GenRoute.RENDER_3D`` 的 strategy。
             ValueError: 模型渲不出请求朝向 / 产出帧数对不上契约。
+        """
+        ...
+
+    def plan_rendered(self, action: ActionSpec) -> RenderPlan:
+        """三渲二出帧参数。**不渲,只回答"该渲什么"**。
+
+        出帧交给浏览器时,server 要先把这份参数发给它;交给 worker 时,同一份参数由
+        :meth:`generate_rendered` 内部消费。两条路共用一份,是因为朝向、材质、画布、
+        帧数任何一项分叉都不会报错,只会安静地渲出另一个东西。
+        """
+        ...
+
+    def finish_rendered(
+        self,
+        frames: list[bytes],
+        card: CharacterCard,
+        action: ActionSpec,
+        progress: ProgressPort,
+        canvas: tuple[int, int] | None = None,
+    ) -> GeneratedAction:
+        """吃已渲好的序列帧(浏览器交回的),续跑像素化与最后一公里。
+
+        与 :meth:`generate_rendered` 的区别只在谁渲的;**闸口一道不减** —— 帧数对账、
+        空帧自检、脚线对齐、成色测量仍在服务端做,不因为帧来自客户端就放行。
+
+        Raises:
+            ValueError: 帧数对不上契约 / 几乎全透明 / 不是 PNG。
         """
         ...
 

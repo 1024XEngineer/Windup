@@ -39,6 +39,7 @@ MSG_TYPE_VERIFICATION_CODE = "verification_code"
 MSG_TYPE_CHARACTER_IMAGE = "character_image"
 MSG_TYPE_CHARACTER_ACTION = "character_action"
 MSG_TYPE_CHARACTER_ACTION_POLL = "character_action_poll"
+MSG_TYPE_CHARACTER_ACTION_CLIENT_BAKE = "character_action_client_bake"
 
 POOL_SHARED = "shared"
 POOL_POLL = "poll"
@@ -111,6 +112,13 @@ def type_specs() -> tuple[TypeSpec, ...]:
         ),
         TypeSpec(
             msg_type=MSG_TYPE_CHARACTER_ACTION_POLL,
+            stream=GENERATION_STREAM,
+            pool=POOL_POLL,
+            concurrency=generation_poll_concurrency(),
+            limit=True,
+        ),
+        TypeSpec(
+            msg_type=MSG_TYPE_CHARACTER_ACTION_CLIENT_BAKE,
             stream=GENERATION_STREAM,
             pool=POOL_POLL,
             concurrency=generation_poll_concurrency(),

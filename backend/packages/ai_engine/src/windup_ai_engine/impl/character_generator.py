@@ -25,6 +25,7 @@ from windup_ai_engine.ports import (
     CharacterGeneratorPort,
     GeneratedAction,
     ProgressPort,
+    RenderPlan,
     SequenceGeometry,
 )
 from windup_ai_engine.postprocess import FOOT_LINE, align_bottom_center, frame_durations
@@ -206,6 +207,34 @@ class CharacterGenerator(CharacterGeneratorPort):
             card, action, rigged_model, _BandProgress(progress, _DERIVE_FROM, _DERIVE_TO)
         )
         return self._finish(frames, action, route, progress, canvas)
+
+    def plan_rendered(self, action: ActionSpec) -> RenderPlan:
+        """三渲二该渲什么。出帧交给浏览器时,server 把这份参数原样发给它。"""
+        strategy = self._pick(GenRoute.RENDER_3D, action)
+        plan = getattr(strategy, "plan", None)
+        if plan is None:
+            raise TypeError("RENDER_3D 路线不支持出帧计划")
+        return plan(action)
+
+    def finish_rendered(
+        self,
+        frames: list[bytes],
+        card: CharacterCard,
+        action: ActionSpec,
+        progress: ProgressPort,
+        canvas: tuple[int, int] | None = None,
+    ) -> GeneratedAction:
+        """浏览器渲好的帧到位后续跑像素化与最后一公里。"""
+        route = GenRoute.RENDER_3D
+        progress.step("route", _TICK_ROUTE, _TOTAL, f"{action.action.value} → {route.value}")
+        strategy = self._pick(route, action)
+        frames_from = getattr(strategy, "frames_from_client", None)
+        if frames_from is None:
+            raise TypeError(f"{route.value} 不支持从客户端帧续跑")
+        produced = frames_from(
+            frames, card, action, _BandProgress(progress, _DERIVE_FROM, _DERIVE_TO)
+        )
+        return self._finish(produced, action, route, progress, canvas)
 
     # ── 两个入口共用的部分 ────────────────────────────────────────────────
     def _pick(self, route: GenRoute, action: ActionSpec) -> DerivationStrategy:
