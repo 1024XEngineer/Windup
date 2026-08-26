@@ -9,6 +9,8 @@ const stage = vi.hoisted(() => ({
   yaw: null as number | null,
   disposed: 0,
   grabError: null as Error | null,
+  createError: null as Error | null,
+  createdContexts: 0,
 }))
 
 vi.mock('./stage', async () => {
@@ -16,24 +18,32 @@ vi.mock('./stage', async () => {
   return {
     ...actual,
     BakeStage: {
-      create: vi.fn(async () => ({
-        availableClips: () => stage.clips,
-        setCamYaw: (deg: number) => {
-          stage.yaw = deg
-        },
-        setup: (clip: string, i: number, n: number) => {
-          stage.setups.push([clip, i, n])
-          return i * 0.1
-        },
-        coverage: () => stage.coverage,
-        grab: async () => {
-          if (stage.grabError) throw stage.grabError
-          return new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: 'image/png' })
-        },
-        dispose: () => {
+      create: vi.fn(async () => {
+        stage.createdContexts++
+        if (stage.createError) {
+          // 真实现在 load 失败时会先 dispose 再抛;替身照做,否则这条用例测不到东西。
           stage.disposed++
-        },
-      })),
+          throw stage.createError
+        }
+        return {
+          availableClips: () => stage.clips,
+          setCamYaw: (deg: number) => {
+            stage.yaw = deg
+          },
+          setup: (clip: string, i: number, n: number) => {
+            stage.setups.push([clip, i, n])
+            return i * 0.1
+          },
+          coverage: () => stage.coverage,
+          grab: async () => {
+            if (stage.grabError) throw stage.grabError
+            return new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: 'image/png' })
+          },
+          dispose: () => {
+            stage.disposed++
+          },
+        }
+      }),
     },
   }
 })
@@ -47,6 +57,8 @@ beforeEach(() => {
   stage.yaw = null
   stage.disposed = 0
   stage.grabError = null
+  stage.createError = null
+  stage.createdContexts = 0
 })
 
 describe('浏览器出帧驱动', () => {
@@ -158,6 +170,21 @@ describe('浏览器出帧驱动', () => {
     stage.grabError = new Error('炸了')
     await expect(runClientBake({ job: bakeJob(), apis: stubRender3DApis() })).rejects.toThrow()
     expect(stage.disposed).toBe(1)
+  })
+
+  it('模型加载失败照样上报,不当成"没这回事"', async () => {
+    // 上下文有没有真的释放在这里测不到(jsdom 没有 WebGL,桩里 dispose 是我自己调的)。
+    // 这条只钉运行时行为:建台失败要抛出去、要报给后端,不能把任务悬着。
+    stage.createError = new Error('Bad glTF')
+    let failed = ''
+    const apis = stubRender3DApis({
+      failBake: async (_taskId, reason) => {
+        failed = reason
+      },
+    })
+    await expect(runClientBake({ job: bakeJob(), apis })).rejects.toThrow('Bad glTF')
+    expect(failed).toBe('Bad glTF')
+    expect(stage.createdContexts).toBe(1)
   })
 
   it('逐帧回报进度', async () => {

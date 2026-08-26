@@ -91,8 +91,16 @@ export class BakeStage {
   }
 
   static async create(options: StageOptions): Promise<BakeStage> {
+    // 构造函数里就拿到了 WebGL 上下文,而 load 会因为模型坏 / 没动画 / 归一化量不出高度
+    // 而抛。抛出去的话调用方手里还是 null,dispose 永远轮不到 —— 用户重试几次就把浏览器
+    // 的上下文配额耗光,之后连本来能出的帧也出不了。
     const stage = new BakeStage(options)
-    await stage.load(options.modelUrl)
+    try {
+      await stage.load(options.modelUrl)
+    } catch (error) {
+      stage.dispose()
+      throw error
+    }
     return stage
   }
 
