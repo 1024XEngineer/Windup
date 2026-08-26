@@ -108,6 +108,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 MAX_REQUEST_BYTES = 64 * 1_024
 MAX_MESSAGES = 16
 MAX_MESSAGE_CHARS = 8_000
+MAX_TOOLS = 4
 MAX_OUTPUT_TOKENS = 1_024
 
 
@@ -151,7 +152,10 @@ class ChatRequest(BaseModel):
 
     model: str | None = Field(default=None, max_length=128)
     messages: list[ChatMessage] = Field(min_length=1, max_length=MAX_MESSAGES)
-    tools: list[ToolDefinition] | None = Field(default=None, max_length=1)
+    # The workflow Agent may choose one action from character and first-frame
+    # tools in the same turn; the provider response is still normalized to one
+    # tool call below.
+    tools: list[ToolDefinition] | None = Field(default=None, max_length=MAX_TOOLS)
     tool_choice: Literal["auto", "none", "required"] | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
     stream: Literal[False] = False

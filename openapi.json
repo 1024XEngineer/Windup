@@ -1193,7 +1193,7 @@
                 "items": {
                   "$ref": "#/components/schemas/ToolDefinition"
                 },
-                "maxItems": 1,
+                "maxItems": 4,
                 "type": "array"
               },
               {
