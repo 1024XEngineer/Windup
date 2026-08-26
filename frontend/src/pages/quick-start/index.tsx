@@ -19,8 +19,11 @@ import {
   ArrowClockwise,
   ArrowUp,
   CaretDown,
+  Check,
   CopySimple,
+  FolderOpen,
   Play,
+  Plus,
   PlusCircle,
   Stack,
   Stop,
@@ -649,6 +652,7 @@ function QuickStartInput({
   projectApis: Pick<ProjectApis, 'list' | 'get'>
 }) {
   const navigate = useNavigate()
+  const [entrySearchParams] = useSearchParams()
   const [prompt, setPrompt] = useState('')
   const [directionalMovement, setDirectionalMovement] = useState<DirectionalMovement>('single')
   const [confirmedPrompt, setConfirmedPrompt] = useState<string | null>(null)
@@ -660,6 +664,8 @@ function QuickStartInput({
       : 'unspecified'
   })
   const [projectId, setProjectId] = useState<string | null>(() => {
+    const requestedProjectId = entrySearchParams.get('projectId')
+    if (requestedProjectId) return requestedProjectId
     const draftId = readAgentDraftId()
     return draftId
       ? readAgentDraftProjectId(agentDraftConversationStorageKey(activeRunUserId, draftId))
@@ -749,24 +755,26 @@ function QuickStartInput({
 
   useEffect(() => {
     let cancelled = false
-    void projectApis.list({ page: 1, pageSize: 100 }).then(
-      (result) => {
+    const restoredId = projectIdRef.current
+    void Promise.all([
+      projectApis.list({ page: 1, pageSize: 3 }),
+      restoredId ? projectApis.get(restoredId) : Promise.resolve(null),
+    ]).then(
+      ([result, restoredProject]) => {
         if (cancelled) return
         setProjects(result.items)
-        const restoredId = projectIdRef.current
-        if (restoredId) {
-          const project = result.items.find((item) => item.id === restoredId)
-          if (project) {
-            setSelectedProject(project)
-            setDirectionalMovement(project.directionalMovement)
-            setGameStyle(project.gameStyle)
-          } else {
-            setProjectId(null)
-          }
+        if (restoredId && restoredProject && projectIdRef.current === restoredId) {
+          setSelectedProject(restoredProject)
+          setDirectionalMovement(restoredProject.directionalMovement)
+          setGameStyle(restoredProject.gameStyle)
         }
       },
       () => {
-        if (!cancelled) setProjects([])
+        if (!cancelled) {
+          setProjects([])
+          setProjectId(null)
+          setSelectedProject(null)
+        }
       },
     )
     return () => {
@@ -1457,15 +1465,6 @@ function QuickStartInput({
                         aria-label="选择项目"
                         className={`${productPopoverClass} quick-start-control-popover absolute bottom-full left-0 z-30 mb-3 grid min-w-40 gap-1 p-1.5 opacity-100`}
                       >
-                        <button
-                          type="button"
-                          role="menuitemradio"
-                          aria-checked={projectId === null}
-                          onClick={() => chooseProject(null)}
-                          className={`rounded-app-compact px-3 py-2 text-left text-xs transition ${projectId === null ? 'bg-app-accent-soft text-app-accent' : 'text-app-ink-soft hover:bg-app-surface-muted'}`}
-                        >
-                          自动创建
-                        </button>
                         {projects.map((project) => (
                           <button
                             key={project.id}
@@ -1473,11 +1472,40 @@ function QuickStartInput({
                             role="menuitemradio"
                             aria-checked={projectId === project.id}
                             onClick={() => chooseProject(project)}
-                            className={`rounded-app-compact px-3 py-2 text-left text-xs transition ${projectId === project.id ? 'bg-app-accent-soft text-app-accent' : 'text-app-ink-soft hover:bg-app-surface-muted'}`}
+                            className={`flex items-center gap-2 rounded-app-compact px-3 py-2 text-left text-xs transition ${projectId === project.id ? 'bg-app-accent-soft text-app-accent' : 'text-app-ink-soft hover:bg-app-surface-muted'}`}
                           >
-                            {project.name}
+                            <FolderOpen aria-hidden="true" size={15} weight="regular" />
+                            <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                            {projectId === project.id ? (
+                              <Check aria-hidden="true" size={14} weight="bold" />
+                            ) : null}
                           </button>
                         ))}
+                        <div className="my-1 border-t border-app-line" />
+                        <Link
+                          to="/projects/new?entry=quick-start"
+                          role="menuitem"
+                          onClick={() => setProjectMenuOpen(false)}
+                          className="flex items-center gap-2 rounded-app-compact px-3 py-2 text-xs text-app-ink-soft transition hover:bg-app-surface-muted"
+                        >
+                          <Plus aria-hidden="true" size={15} weight="bold" />
+                          新建项目
+                        </Link>
+                        <button
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={projectId === null}
+                          onClick={() => chooseProject(null)}
+                          className={`flex items-center gap-2 rounded-app-compact px-3 py-2 text-left text-xs transition ${projectId === null ? 'bg-app-accent-soft text-app-accent' : 'text-app-ink-soft hover:bg-app-surface-muted'}`}
+                        >
+                          <span aria-hidden="true" className="w-[15px] text-center">
+                            ×
+                          </span>
+                          <span className="flex-1">自动创建</span>
+                          {projectId === null ? (
+                            <Check aria-hidden="true" size={14} weight="bold" />
+                          ) : null}
+                        </button>
                       </div>
                     ) : null}
                   </div>

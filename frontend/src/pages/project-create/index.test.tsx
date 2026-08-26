@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MemoryRouter, Route, Routes, useParams } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router'
 
 import { AppRoutes } from '@/app'
 import { ProjectCreatePage } from '@/pages/project-create'
@@ -90,6 +90,11 @@ function installWorkflowBackend(failWorkflowAttempts = 0) {
 function WorkflowDestination() {
   const { runId } = useParams()
   return <h1>Workflow Editor {runId}</h1>
+}
+
+function QuickStartDestination() {
+  const location = useLocation()
+  return <h1>{`${location.pathname}${location.search}`}</h1>
 }
 
 async function renderWorkflowProjectCreate() {
@@ -190,6 +195,27 @@ describe('ProjectCreatePage', () => {
     })
     // 归属由后端从 JWT 取；请求体再带 user_id 就等于宣称可以替别人建项目。
     expect(Object.hasOwn(body, 'user_id')).toBe(false)
+  })
+
+  it('从 Quick Start 手动新建项目后返回并选中新项目', async () => {
+    const backend = installBackend()
+    render(
+      <AuthenticatedAuthSession>
+        <MemoryRouter initialEntries={['/projects/new?entry=quick-start']}>
+          <Routes>
+            <Route path="/projects/new" element={<ProjectCreatePage />} />
+            <Route path="/quick-start" element={<QuickStartDestination />} />
+          </Routes>
+        </MemoryRouter>
+      </AuthenticatedAuthSession>,
+    )
+    await screen.findByRole('button', { name: '创建项目' })
+
+    fireEvent.change(screen.getByLabelText('项目名称'), { target: { value: '雾港来信' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建项目' }))
+
+    expect(await screen.findByRole('heading', { name: '/quick-start?projectId=4242' })).toBeTruthy()
+    expect(creationRequests(backend)).toHaveLength(1)
   })
 
   it('没有登录凭证时先进入登录面板，不挂载创建页面', async () => {
