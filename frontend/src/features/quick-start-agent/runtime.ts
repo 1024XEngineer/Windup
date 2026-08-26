@@ -15,16 +15,21 @@ const QUICK_START_DECISION_FIELDS = new Set([
   'optimizedPrompt',
   'actionPrompt',
   'actionType',
+  'locomotion',
   'optimizationSummary',
   'suggestPixelPerfect',
 ])
 
 export type QuickStartDirectionalMovement = 'single' | 'four-way' | 'eight-way'
-export type QuickStartActionType = 'walk'
+export type QuickStartActionType = 'idle' | 'walk' | 'attack' | 'jump'
+
+export type PlannerMessageContent =
+  | string
+  | readonly ({ type: 'text'; text: string } | { type: 'image'; image: URL })[]
 
 export interface PlannerMessage {
   role: 'user' | 'assistant'
-  content: string
+  content: PlannerMessageContent
 }
 
 export interface PlannerToolCall {
@@ -52,8 +57,10 @@ export type QuickStartPlanner = (input: PlannerInput) => Promise<PlannerResult>
 export interface CharacterGenerationPlan {
   optimizedPrompt: string
   actionPrompt?: string
-  /** 仅在 Agent 明确认出行走/跑步位移时附带；不做通用动作分类。 */
+  /** 仅在动作明确匹配已有优化管线时附带。 */
   actionType?: QuickStartActionType
+  /** 仅在动作会让角色整体发生空间位移时附带。 */
+  locomotion?: true
   optimizationSummary: string
   /** Planner 对明确像素素材意图的静默判断；缺省按否处理以兼容旧提案。 */
   suggestPixelPerfect?: boolean
@@ -61,6 +68,8 @@ export interface CharacterGenerationPlan {
 
 export interface CharacterGenerationProposal extends CharacterGenerationPlan {
   proposalId: string
+  /** 用户上传并由 Agent 看过的原始图片；确认后继续约束母版 Generation。 */
+  referenceMedia?: readonly string[]
 }
 
 export type QuickStartDecision =
@@ -76,6 +85,7 @@ export type QuickStartAgentResult =
 
 export interface QuickStartAgentTurnOptions {
   signal?: AbortSignal
+  referenceMedia?: readonly string[]
 }
 
 export interface ConfirmProposalOptions {
@@ -104,11 +114,13 @@ export type StartCharacterGenerationAction = (input: {
   prompt: string
   actionPrompt?: string
   actionType?: QuickStartActionType
+  locomotion?: true
   directionalMovement?: QuickStartDirectionalMovement
   gameStyle?: string
   projectId?: string
   automaticDelivery?: boolean
   suggestPixelPerfect?: boolean
+  referenceMedia?: readonly string[]
 }) => Promise<{ runId: string }>
 
 export interface CreateQuickStartAgentOptions {
@@ -203,14 +215,25 @@ export function parseCharacterGenerationPlan(value: unknown): CharacterGeneratio
   if (value.suggestPixelPerfect !== undefined && typeof value.suggestPixelPerfect !== 'boolean') {
     throw new Error('生成提案的 suggestPixelPerfect 无效')
   }
-  const actionType = value.actionType === 'walk' ? value.actionType : undefined
+  const actionType =
+    value.actionType === 'idle' ||
+    value.actionType === 'walk' ||
+    value.actionType === 'attack' ||
+    value.actionType === 'jump'
+      ? value.actionType
+      : undefined
   if (value.actionType !== undefined && (!actionType || !actionPrompt)) {
     throw new Error('生成提案的 actionType 无效')
+  }
+  const locomotion = value.locomotion === true ? true : undefined
+  if (value.locomotion !== undefined && (!locomotion || !actionPrompt)) {
+    throw new Error('生成提案的 locomotion 无效')
   }
   return {
     optimizedPrompt,
     ...(actionPrompt ? { actionPrompt } : {}),
     ...(actionType ? { actionType } : {}),
+    ...(locomotion ? { locomotion } : {}),
     optimizationSummary,
     ...(value.suggestPixelPerfect === true ? { suggestPixelPerfect: true } : {}),
   }
@@ -261,6 +284,37 @@ function proposalMessage(plan: CharacterGenerationPlan): string {
   return `${plan.optimizationSummary}\n\n角色：${plan.optimizedPrompt}${action}`
 }
 
+function normalizeReferenceMedia(values: readonly string[] | undefined): readonly string[] {
+  if (!values?.length) return []
+  return values.map((value) => {
+    const normalized = value.trim()
+    const url = new URL(normalized)
+    if ((url.protocol !== 'https:' && url.protocol !== 'http:') || normalized.length > 2_048) {
+      throw new Error('上传图片引用无效')
+    }
+    return normalized
+  })
+}
+
+function referenceMediaFromMessages(messages: readonly PlannerMessage[]): readonly string[] {
+  const content = messages.findLast(
+    (message) => message.role === 'user' && Array.isArray(message.content),
+  )?.content
+  if (!Array.isArray(content)) return []
+  return content.flatMap((part) => (part.type === 'image' ? [part.image.toString()] : []))
+}
+
+function userMessage(input: string, referenceMedia: readonly string[]): PlannerMessage {
+  if (referenceMedia.length === 0) return { role: 'user', content: input }
+  return {
+    role: 'user',
+    content: [
+      { type: 'text', text: input },
+      ...referenceMedia.map((image) => ({ type: 'image' as const, image: new URL(image) })),
+    ],
+  }
+}
+
 export function createQuickStartAgent({
   planner,
   startCharacterGeneration,
@@ -276,6 +330,8 @@ export function createQuickStartAgent({
   let running = false
   let messages: PlannerMessage[] = [...initialMessages]
   let currentProposal = initialProposal
+  let currentReferenceMedia =
+    initialProposal?.referenceMedia ?? referenceMediaFromMessages(initialMessages)
 
   function assertAuthorized() {
     if (revoked) throw new Error('生成授权已失效')
@@ -284,7 +340,7 @@ export function createQuickStartAgent({
 
   async function runTurn(
     input: string,
-    { signal }: QuickStartAgentTurnOptions = {},
+    { signal, referenceMedia }: QuickStartAgentTurnOptions = {},
   ): Promise<QuickStartAgentResult> {
     assertAuthorized()
     if (running) throw new Error('Planner 正在处理上一条输入')
@@ -298,9 +354,11 @@ export function createQuickStartAgent({
     running = true
     currentProposal = null
     try {
+      const nextReferenceMedia = normalizeReferenceMedia(referenceMedia)
+      if (nextReferenceMedia.length > 0) currentReferenceMedia = nextReferenceMedia
       const nextMessages: PlannerMessage[] = [
         ...messages,
-        { role: 'user', content: normalizedInput },
+        userMessage(normalizedInput, nextReferenceMedia),
       ]
       // 用户点击发送后，页面已经展示并持久化这条消息；即使 Planner 失败，
       // runtime 也必须保留同一历史，避免刷新前后得到不同上下文。
@@ -324,8 +382,10 @@ export function createQuickStartAgent({
         optimizedPrompt: decision.optimizedPrompt,
         ...(decision.actionPrompt ? { actionPrompt: decision.actionPrompt } : {}),
         ...(decision.actionType ? { actionType: decision.actionType } : {}),
+        ...(decision.locomotion ? { locomotion: decision.locomotion } : {}),
         optimizationSummary: decision.optimizationSummary,
         ...(decision.suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
+        ...(currentReferenceMedia.length > 0 ? { referenceMedia: [...currentReferenceMedia] } : {}),
       }
       currentProposal = proposal
       messages = [...nextMessages, { role: 'assistant', content: proposalMessage(proposal) }]
@@ -360,11 +420,13 @@ export function createQuickStartAgent({
         prompt: effectivePrompt,
         ...(proposal.actionPrompt ? { actionPrompt: proposal.actionPrompt } : {}),
         ...(proposal.actionType ? { actionType: proposal.actionType } : {}),
+        ...(proposal.locomotion ? { locomotion: proposal.locomotion } : {}),
         directionalMovement,
         gameStyle,
         projectId,
         ...(automaticDelivery ? { automaticDelivery: true } : {}),
         ...(proposal.suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
+        ...(proposal.referenceMedia?.length ? { referenceMedia: proposal.referenceMedia } : {}),
       })
       return { kind: 'generated', runId, ...proposal, optimizedPrompt: effectivePrompt }
     } finally {

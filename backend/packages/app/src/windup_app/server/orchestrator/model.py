@@ -26,6 +26,8 @@ class GenerationType(StrEnum):
 
     CHARACTER_IMAGE = "character_image"  # 角色参考图
     CHARACTER_DIRECTION_SET = "character_direction_set"  # 一次生成项目所需全部母版方向
+    CHARACTER_FOUR_VIEW = "character_four_view"  # 四向立绘 sheet
+    CHARACTER_EIGHT_VIEW = "character_eight_view"  # 八向立绘 sheet
     CHARACTER_ACTION = "character_action"  # 角色动作帧序列
 
 
@@ -117,6 +119,36 @@ class CharacterDirectionSetInput:
                 raise ValueError("已确认母版方向必须属于项目方向集")
         if self.num_images is None:
             self.num_images = 2
+
+
+# 每张 sheet 候选要新生成的源方向数:south 正视复用已确认母版,镜像方向翻转上传不调模型。
+FOUR_VIEW_MODEL_CALLS_PER_SHEET = 2  # east / north
+EIGHT_VIEW_MODEL_CALLS_PER_SHEET = 4  # east / north / north_east / south_east
+
+
+@dataclass
+class CharacterViewSheetInput:
+    """四向 / 八向立绘 sheet 入参。两口字段相同,task_type 由提交方法决定。"""
+
+    character_id: int
+    reference_image_url: str
+    prompt: str = ""
+    negative_prompt: str = ""
+    width: int = 1024
+    height: int = 1024
+    # ``None`` = 调用方没指定。默认 1:sheet 比单张立绘贵,不沿用 image 的默认 3。
+    num_images: int | None = None
+    # 已确认母版必须是正视图,对应南向格。东向是侧视,本任务要图生图。
+    anchor_direction: ActionDirection = ActionDirection.SOUTH
+
+    def __post_init__(self) -> None:
+        self.reference_image_url = (self.reference_image_url or "").strip()
+        if not self.reference_image_url:
+            raise ValueError("立绘 sheet 生成必须绑定已确认角色母版")
+        if self.anchor_direction is not ActionDirection.SOUTH:
+            raise ValueError("立绘 sheet 锚点必须是 south（正视图）")
+        if self.num_images is None:
+            self.num_images = 1
 
 
 @dataclass
@@ -229,6 +261,52 @@ def initial_direction_set_output(
 
 
 @dataclass
+class CharacterViewSheetCell:
+    """sheet 上的一格。生成结果里每个方向都有已上传 URL。
+
+    镜像格是源图水平翻转后重新上传,不是 ``image_url=null``。
+    回填 ``templates[]`` 时镜像行仍只记 ``source_direction`` / ``mirror_x``,
+    不把这张翻转图写成独立母版。
+    """
+
+    direction: ActionDirection
+    image_url: str
+    source_direction: ActionDirection | None = None
+    mirror_x: bool = False
+
+    def __post_init__(self) -> None:
+        self.image_url = (self.image_url or "").strip()
+        if not self.image_url:
+            raise ValueError("立绘格子必须有 image_url")
+        if self.mirror_x != (self.source_direction is not None):
+            raise ValueError("镜像格必须同时给出 source_direction 与 mirror_x")
+        if self.source_direction is not None and self.source_direction == self.direction:
+            raise ValueError("格子不能镜像自身")
+
+
+@dataclass
+class CharacterViewSheetCandidate:
+    """一张 sheet 候选:3×3 罗盘整图 URL + 有朝向的原图 URL(空槽不进 cells)。"""
+
+    sheet_url: str
+    cells: list[CharacterViewSheetCell] = field(default_factory=list)
+
+
+@dataclass
+class CharacterViewSheetOutput:
+    """四向 / 八向立绘 sheet 结果。``type`` 与 ``task_type`` 相同。
+
+    每张候选 = 3×3 ``sheet_url`` + 有朝向的 ``image_url``（镜像格是翻转后上传）。
+    四向只填十字四格;空槽不进 ``cells``。
+    确认后源方向回填 ``character_data.templates[]``；镜像行只记关系。
+    """
+
+    type: str
+    sheets: list[CharacterViewSheetCandidate] = field(default_factory=list)
+    quality: dict | None = None
+
+
+@dataclass
 class CharacterActionFrame:
     """动作帧——前端写入 ``CharacterAction.frames[]``。"""
 
@@ -286,6 +364,7 @@ class GenerationTask:
     result: (
         CharacterImageOutput
         | CharacterDirectionSetOutput
+        | CharacterViewSheetOutput
         | CharacterActionOutput
         | None
     ) = None

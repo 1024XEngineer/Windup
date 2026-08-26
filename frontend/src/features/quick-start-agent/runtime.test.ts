@@ -238,7 +238,33 @@ describe('createQuickStartAgent', () => {
     })
   })
 
-  it('carries the interpreted action into automatic delivery after one confirmation', async () => {
+  it('keeps an uploaded image in the Agent turn and confirmed generation', async () => {
+    const { agent, planner, startCharacterGeneration } = fixture()
+    const proposal = await agent.start('参考这张图片创建角色', {
+      referenceMedia: ['https://cdn.windup.test/hero.png'],
+    })
+    if (proposal.kind !== 'proposal') throw new Error('测试缺少提案')
+
+    expect(planner.mock.calls[0]?.[0].messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '参考这张图片创建角色' },
+          { type: 'image', image: new URL('https://cdn.windup.test/hero.png') },
+        ],
+      },
+    ])
+
+    await agent.confirmProposal(proposal.proposalId, proposal.optimizedPrompt)
+
+    expect(startCharacterGeneration).toHaveBeenCalledWith({
+      prompt: proposal.optimizedPrompt,
+      directionalMovement: 'single',
+      referenceMedia: ['https://cdn.windup.test/hero.png'],
+    })
+  })
+
+  it('carries optimized action type and locomotion into automatic delivery', async () => {
     const { agent, startCharacterGeneration } = fixture({
       text: '',
       finishReason: 'tool-calls',
@@ -250,6 +276,7 @@ describe('createQuickStartAgent', () => {
             optimizedPrompt: '背着邮包的像素邮差，全身像',
             actionPrompt: '轻快地向前行走',
             actionType: 'walk',
+            locomotion: true,
             optimizationSummary: '我理解为一名正在向前行走的邮差。',
           },
         },
@@ -266,6 +293,7 @@ describe('createQuickStartAgent', () => {
       prompt: '背着邮包的像素邮差，全身像',
       actionPrompt: '轻快地向前行走',
       actionType: 'walk',
+      locomotion: true,
       directionalMovement: 'single',
       automaticDelivery: true,
     })
@@ -295,6 +323,31 @@ describe('createQuickStartAgent', () => {
       automaticDelivery: true,
       suggestPixelPerfect: true,
     })
+  })
+
+  it('keeps locomotion independent from optimized action types', () => {
+    expect(
+      parseQuickStartDecision({
+        kind: 'proposal',
+        optimizedPrompt: '轻装像素信使全身像',
+        actionPrompt: '向前翻滚一段距离',
+        locomotion: true,
+        optimizationSummary: '我会保留信使和向前翻滚动作。',
+      }),
+    ).toMatchObject({
+      kind: 'proposal',
+      actionPrompt: '向前翻滚一段距离',
+      locomotion: true,
+    })
+    expect(
+      parseQuickStartDecision({
+        kind: 'proposal',
+        optimizedPrompt: '持剑像素骑士全身像',
+        actionPrompt: '原地挥剑攻击',
+        actionType: 'attack',
+        optimizationSummary: '我会保留骑士和原地攻击动作。',
+      }),
+    ).toMatchObject({ kind: 'proposal', actionType: 'attack' })
   })
 
   it('rejects unsupported Agent action markers', () => {

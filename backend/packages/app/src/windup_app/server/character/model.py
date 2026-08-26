@@ -19,6 +19,7 @@
             └── actions[]         list[CharacterAction]: 动作列表
                 ├── id            str: 动作稳定 ID
                 ├── type          "idle" | "walk" | "attack" | "custom"
+                ├── locomotion    bool: 是否会让角色整体发生空间位移
                 ├── name          str: 动作显示名称
                 ├── loop          bool: 是否循环播放
                 ├── fps           float: 播放帧率
@@ -201,6 +202,7 @@ class CharacterAction(BaseModel):
     id: str = Field(..., description="动作稳定 ID")
     type: str = Field(..., description="动作类型: idle / walk / attack / custom")
     name: str = Field(..., description="动作显示名称")
+    locomotion: bool = Field(default=False, description="是否会让角色整体发生空间位移")
     loop: bool = Field(default=False, description="是否循环播放")
     fps: float = Field(default=12, gt=0, description="播放帧率")
     frame_count: int = Field(ge=0, description="帧数")

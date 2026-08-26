@@ -20,6 +20,9 @@ from windup_app.server.orchestrator.model import (
     CharacterDirectionSetInput,
     CharacterDirectionSetOutput,
     CharacterImageInput,
+    CharacterViewSheetInput,
+    EIGHT_VIEW_MODEL_CALLS_PER_SHEET,
+    FOUR_VIEW_MODEL_CALLS_PER_SHEET,
     GenerationTask,
     GenerationType,
     TaskStatus,
@@ -42,6 +45,66 @@ class AiGenerationService(GenerationService):
         billing.reserve_for_task(
             session, user_id=user_id, task_id=task.id, task_type=task.task_type,
             model_calls=max(1, input.num_images),
+        )
+        return task
+
+    def generate_character_four_view(
+        self,
+        session: Session,
+        *,
+        user_id: int,
+        project_id: int,
+        input: CharacterViewSheetInput,
+    ) -> GenerationTask:
+        return self._submit_view_sheet(
+            session,
+            user_id=user_id,
+            project_id=project_id,
+            input=input,
+            task_type=GenerationType.CHARACTER_FOUR_VIEW,
+            model_calls_per_sheet=FOUR_VIEW_MODEL_CALLS_PER_SHEET,
+        )
+
+    def generate_character_eight_view(
+        self,
+        session: Session,
+        *,
+        user_id: int,
+        project_id: int,
+        input: CharacterViewSheetInput,
+    ) -> GenerationTask:
+        return self._submit_view_sheet(
+            session,
+            user_id=user_id,
+            project_id=project_id,
+            input=input,
+            task_type=GenerationType.CHARACTER_EIGHT_VIEW,
+            model_calls_per_sheet=EIGHT_VIEW_MODEL_CALLS_PER_SHEET,
+        )
+
+    def _submit_view_sheet(
+        self,
+        session: Session,
+        *,
+        user_id: int,
+        project_id: int,
+        input: CharacterViewSheetInput,
+        task_type: GenerationType,
+        model_calls_per_sheet: int,
+    ) -> GenerationTask:
+        task = task_repo.create_task(
+            session,
+            user_id=user_id,
+            project_id=project_id,
+            task_type=task_type,
+            input_payload=dataclasses.asdict(input),
+        )
+        billing.reserve_for_task(
+            session,
+            user_id=user_id,
+            task_id=task.id,
+            task_type=task.task_type,
+            model_calls=max(1, input.num_images or 1) * model_calls_per_sheet,
         )
         return task
 

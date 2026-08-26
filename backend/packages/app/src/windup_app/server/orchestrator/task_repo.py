@@ -21,6 +21,9 @@ from windup_app.server.orchestrator.model import (
     CharacterActionOutput,
     CharacterDirectionSetOutput,
     CharacterImageOutput,
+    CharacterViewSheetCandidate,
+    CharacterViewSheetCell,
+    CharacterViewSheetOutput,
     DirectionImageResult,
     GenerationTask,
     GenerationTaskRecord,
@@ -127,6 +130,36 @@ def _publish_task_update(task_id: int, task: GenerationTask) -> None:
         task_id,
         event,
         task_event_payload(task),
+    )
+
+
+def publish_progress(
+    *,
+    project_id: int | None,
+    task_id: int,
+    stage: str,
+    current: int,
+    total: int,
+    note: str = "",
+) -> None:
+    """发布不落库的瞬时进度；任务状态仍由任务快照负责断线恢复。"""
+    if _task_event_publisher is None:
+        return
+    if project_id is None:
+        logger.warning("任务 %d 没有 project_id，SSE progress 无法投递", task_id)
+        return
+    _task_event_publisher.publish(
+        project_id,
+        task_id,
+        "progress",
+        {
+            "task_id": task_id,
+            "project_id": project_id,
+            "stage": stage,
+            "current": current,
+            "total": total,
+            "note": note,
+        },
     )
 
 
@@ -307,7 +340,13 @@ def _record_to_domain(record: GenerationTaskRecord) -> GenerationTask:
 def _deserialize_result(
     result_type: str | None,
     raw: dict | None,
-) -> CharacterImageOutput | CharacterDirectionSetOutput | CharacterActionOutput | None:
+) -> (
+    CharacterImageOutput
+    | CharacterDirectionSetOutput
+    | CharacterViewSheetOutput
+    | CharacterActionOutput
+    | None
+):
     """根据 ``result_type`` 将 JSON dict 反序列化为对应的 dataclass。"""
     if raw is None or result_type is None:
         return None
@@ -354,5 +393,32 @@ def _deserialize_result(
                 )
                 for item in raw.get("directions", [])
             ],
+        )
+    if result_type in (
+        GenerationType.CHARACTER_FOUR_VIEW.value,
+        GenerationType.CHARACTER_EIGHT_VIEW.value,
+    ):
+        return CharacterViewSheetOutput(
+            type=raw.get("type", result_type),
+            sheets=[
+                CharacterViewSheetCandidate(
+                    sheet_url=item["sheet_url"],
+                    cells=[
+                        CharacterViewSheetCell(
+                            direction=ActionDirection(cell["direction"]),
+                            image_url=cell["image_url"],
+                            source_direction=(
+                                ActionDirection(cell["source_direction"])
+                                if cell.get("source_direction")
+                                else None
+                            ),
+                            mirror_x=bool(cell.get("mirror_x")),
+                        )
+                        for cell in item.get("cells") or []
+                    ],
+                )
+                for item in raw.get("sheets") or []
+            ],
+            quality=raw.get("quality"),
         )
     return None

@@ -210,7 +210,7 @@ describe('workflowRunApis', () => {
     const setup = automaticNodes.find((node) => node.type === 'character-setup')
     if (!setup || setup.type !== 'character-setup') throw new Error('测试缺少角色设定节点')
     setup.automation = { mode: 'automatic', actionPrompt: '轻快地向前行走' }
-    Object.assign(setup.automation, { actionType: 'walk' })
+    Object.assign(setup.automation, { actionType: 'walk', locomotion: true })
     const apis = await loadWorkflowRunApis(async () =>
       jsonResponse({ ...workflowRunDto, nodes: automaticNodes }),
     )

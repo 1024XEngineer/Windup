@@ -27,8 +27,10 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-      # 出帧依赖只装进 worker：backend 不出帧，不该背 700MB 量级的浏览器
-      target: runtime-render3d
+      # 三渲二出帧已交给用户浏览器（#714），worker 只做后处理，不再需要 node/Chromium/three。
+      # 过渡机要回退到服务端渲（WINDUP_RENDER3D_CLIENT_BAKE=0）时，把这个变量设成
+      # runtime-render3d 重建——两者必须同时改，只关开关不换镜像会在出帧那一步才报错。
+      target: ${WINDUP_WORKER_TARGET:-runtime}
     container_name: windup-worker
     restart: unless-stopped
     env_file:

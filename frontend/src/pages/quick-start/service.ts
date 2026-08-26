@@ -110,6 +110,8 @@ export interface QuickStartSession {
   resolveCharacterInfo(): Promise<{ characterId: string; outfitId: string } | null>
   getTemplateCandidates(): Promise<readonly QuickStartCandidate[]>
   getActionFrames(): Promise<readonly QuickStartFrame[]>
+  /** 当前活跃生成步骤里，排在最靠后的任务前方还有多少个任务。 */
+  getQueueAhead(): Promise<number>
   /** 只生成当前会话预览，不写回 WorkflowRun 或角色资产。 */
   pixelPerfectActionFrames?(
     frames: readonly QuickStartFrame[],
@@ -135,6 +137,8 @@ export interface QuickStartSession {
 
 export interface QuickStartEntryService {
   readonly unavailableReason: string | null
+  /** 上传为 Agent 与角色母版 Generation 共用的原始参考，不创建 WorkflowRun。 */
+  uploadReferenceImage(file: File, signal?: AbortSignal): Promise<MediaReference>
   start(
     prompt: string,
     directionalMovement?: DirectionalMovement,
@@ -311,13 +315,17 @@ export function createQuickStartService({
   ): Promise<QuickStartCandidate[]> {
     const result: QuickStartCandidate[] = []
     for (const generation of await controller.getGenerations(nodeId, role)) {
+      const generationResult = generation.result
       const images =
-        role === 'character_template' && generation.result?.type === 'character_template'
-          ? generation.result.images
-          : role === 'first_frame' && generation.result?.type === 'first_frame'
-            ? generation.result.images
+        role === 'character_template' && generationResult?.type === 'character_template'
+          ? generationResult.images
+          : role === 'first_frame' && generationResult?.type === 'first_frame'
+            ? generationResult.images
             : []
-      const direction = generation.result?.direction ?? 'east'
+      const direction =
+        generationResult?.type === 'character_template' || generationResult?.type === 'first_frame'
+          ? (generationResult.direction ?? 'east')
+          : 'east'
       images.forEach((image, index) => result.push({ direction, index, imageUrl: image.url }))
     }
     return result
@@ -477,12 +485,25 @@ export function createQuickStartService({
     outfitId: string,
     actionDescription: string,
     spriteSize: Project['spriteSize'],
-    options: { actionType?: 'walk'; candidateCount?: 1 } = {},
+    options: {
+      actionType?: Exclude<GeneratableActionType, 'custom'>
+      locomotion?: true
+      candidateCount?: 1
+    } = {},
   ) {
     const prompt = actionDescription.trim()
     const name = boundedDisplayName(prompt, ACTION_DISPLAY_NAME_MAX_LENGTH) || '待机'
     const type = options.actionType ?? inferGeneratableActionType(actionDescription)
-    await controller.addAction({ input: { outfitId, name, type, prompt: prompt || null, fps: 12 } })
+    await controller.addAction({
+      input: {
+        outfitId,
+        name,
+        type,
+        prompt: prompt || null,
+        fps: 12,
+        ...(options.locomotion ? { locomotion: options.locomotion } : {}),
+      },
+    })
     const run = controller.getWorkflow()
     const firstFrame = latestActionFirstFrame(run)
     if (!firstFrame || firstFrame.type !== 'action-first-frame') {
@@ -752,6 +773,7 @@ export function createQuickStartService({
           const spriteSize = await resolveProjectSpriteSize(run.projectId)
           await prepareAction(controller, outfitId, actionPrompt, spriteSize, {
             actionType: automation.actionType,
+            locomotion: automation.locomotion,
             candidateCount: 1,
           })
           return true
@@ -891,6 +913,33 @@ export function createQuickStartService({
         }
         ensureAutomaticAdvance()
         return controller.getWorkflow()
+      },
+      async getQueueAhead() {
+        const activeNode = controller
+          .getWorkflow()
+          .nodes.find(
+            (node) =>
+              !node.deletedAt &&
+              node.status === 'active' &&
+              node.phase === 'generating' &&
+              (node.type === 'character-template' ||
+                node.type === 'action-first-frame' ||
+                node.type === 'action-full-frame'),
+          )
+        if (!activeNode) return 0
+        const role =
+          activeNode.type === 'character-template'
+            ? 'character_template'
+            : activeNode.type === 'action-first-frame'
+              ? 'first_frame'
+              : 'complete_animation'
+        const generations = await controller.getGenerations(activeNode.id, role)
+        return Math.max(
+          0,
+          ...generations
+            .filter((generation) => generation.status === 'pending')
+            .map((generation) => generation.queueAhead ?? 0),
+        )
       },
       async addAction(outfitId, actionDescription) {
         const prompt = actionDescription.trim()
@@ -1133,6 +1182,7 @@ export function createQuickStartService({
           name: firstFrame.input.name,
           loop: true,
           type: firstFrame.input.type,
+          ...(firstFrame.input.locomotion ? { locomotion: firstFrame.input.locomotion } : {}),
           fps: firstFrame.input.fps,
           frameCount: eastSequence.frameCount,
           frames: eastSequence.frames,
@@ -1278,6 +1328,11 @@ export function createQuickStartService({
 
   return {
     unavailableReason: null,
+
+    async uploadReferenceImage(file, signal) {
+      if (!mediaApis) throw new Error('媒体上传服务尚未配置，不能使用角色参考图')
+      return mediaApis.upload(file, 'reference-image', signal)
+    },
 
     async start(prompt, directionalMovement = 'single', options) {
       const normalizedPrompt = prompt.trim()

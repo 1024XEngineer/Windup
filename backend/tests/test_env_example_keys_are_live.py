@@ -35,6 +35,9 @@ _INFRA_KEYS = frozenset({
     "WINDUP_MATTE_REFINE",
     # render3d._tc3.TencentCredentials.resolve:环境变量 → 加锁文件,不走 BaseSettings
     "TENCENT_SECRET_ID", "TENCENT_SECRET_KEY", "TENCENT_REGION",
+    # orchestrator.client_bake / docker-compose 的构建目标,都是 os.getenv
+    "WINDUP_RENDER3D_CLIENT_BAKE", "WINDUP_RENDER3D_CLIENT_BAKE_DEADLINE_S",
+    "WINDUP_WORKER_TARGET",
 })
 
 

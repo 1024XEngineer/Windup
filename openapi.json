@@ -108,6 +108,55 @@
         "title": "AssistantMessageResponse",
         "type": "object"
       },
+      "BakeCompleteRequest": {
+        "description": "浏览器自报交齐了。帧本身已逐帧 POST 上来,这里只带回可对账的采样信息。",
+        "properties": {
+          "clip": {
+            "minLength": 1,
+            "title": "Clip",
+            "type": "string"
+          },
+          "sample_times": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Sample Times",
+            "type": "array"
+          }
+        },
+        "required": [
+          "clip"
+        ],
+        "title": "BakeCompleteRequest",
+        "type": "object"
+      },
+      "BakeFailRequest": {
+        "description": "浏览器自报渲不出来(WebGL 起不来 / 模型加载失败 / 用户关了页面前的兜底)。",
+        "properties": {
+          "reason": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "title": "BakeFailRequest",
+        "type": "object"
+      },
+      "Body_put_bake_frame_render3d_bake__task_id__frames__index__post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_put_bake_frame_render3d_bake__task_id__frames__index__post",
+        "type": "object"
+      },
       "Body_reconstruct_pixel_grid_tools_pixel_perfect_reconstruct_post": {
         "properties": {
           "cols": {
@@ -200,6 +249,12 @@
             "description": "动作稳定 ID",
             "title": "Id",
             "type": "string"
+          },
+          "locomotion": {
+            "default": false,
+            "description": "是否会让角色整体发生空间位移",
+            "title": "Locomotion",
+            "type": "boolean"
           },
           "loop": {
             "default": false,
@@ -992,6 +1047,59 @@
         "title": "CharacterUpdate",
         "type": "object"
       },
+      "CharacterViewSheetGenerateRequest": {
+        "additionalProperties": false,
+        "description": "四向 / 八向立绘 sheet。两口字段相同,朝向集合由路径决定。",
+        "properties": {
+          "character_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Character Id",
+            "type": "integer"
+          },
+          "height": {
+            "default": 1024,
+            "maximum": 2048.0,
+            "minimum": 64.0,
+            "title": "Height",
+            "type": "integer"
+          },
+          "negative_prompt": {
+            "default": "",
+            "title": "Negative Prompt",
+            "type": "string"
+          },
+          "num_images": {
+            "default": 1,
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Num Images",
+            "type": "integer"
+          },
+          "project_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Project Id",
+            "type": "integer"
+          },
+          "prompt": {
+            "default": "",
+            "title": "Prompt",
+            "type": "string"
+          },
+          "width": {
+            "default": 1024,
+            "maximum": 2048.0,
+            "minimum": 64.0,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "character_id"
+        ],
+        "title": "CharacterViewSheetGenerateRequest",
+        "type": "object"
+      },
       "ChatChoiceResponse": {
         "properties": {
           "finish_reason": {
@@ -1061,6 +1169,43 @@
         "title": "ChatCompletionResponse",
         "type": "object"
       },
+      "ChatImageContentPart": {
+        "additionalProperties": false,
+        "description": "One uploaded HTTP(S) image reference; inline base64 remains disallowed.",
+        "properties": {
+          "image_url": {
+            "$ref": "#/components/schemas/ChatImageUrl"
+          },
+          "type": {
+            "const": "image_url",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "image_url"
+        ],
+        "title": "ChatImageContentPart",
+        "type": "object"
+      },
+      "ChatImageUrl": {
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "pattern": "^https?://",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "ChatImageUrl",
+        "type": "object"
+      },
       "ChatMessage": {
         "additionalProperties": false,
         "description": "One OpenAI-compatible message kept by the browser.",
@@ -1070,6 +1215,26 @@
               {
                 "maxLength": 8000,
                 "type": "string"
+              },
+              {
+                "items": {
+                  "discriminator": {
+                    "mapping": {
+                      "image_url": "#/components/schemas/ChatImageContentPart",
+                      "text": "#/components/schemas/ChatTextContentPart"
+                    },
+                    "propertyName": "type"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ChatTextContentPart"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ChatImageContentPart"
+                    }
+                  ]
+                },
+                "type": "array"
               },
               {
                 "type": "null"
@@ -1187,7 +1352,7 @@
                 "items": {
                   "$ref": "#/components/schemas/ToolDefinition"
                 },
-                "maxItems": 1,
+                "maxItems": 4,
                 "type": "array"
               },
               {
@@ -1201,6 +1366,29 @@
           "messages"
         ],
         "title": "ChatRequest",
+        "type": "object"
+      },
+      "ChatTextContentPart": {
+        "additionalProperties": false,
+        "description": "Bounded text inside one multimodal user message.",
+        "properties": {
+          "text": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "const": "text",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "text"
+        ],
+        "title": "ChatTextContentPart",
         "type": "object"
       },
       "ChatUsageResponse": {
@@ -4266,6 +4454,90 @@
         ]
       }
     },
+    "/generation/eight-view": {
+      "post": {
+        "description": "提交八向立绘 sheet:正视母版转出八角,中心留空。",
+        "operationId": "submit_eight_view_generation_generation_eight_view_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CharacterViewSheetGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_GenerationTaskOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Eight View Generation",
+        "tags": [
+          "generation"
+        ]
+      }
+    },
+    "/generation/four-view": {
+      "post": {
+        "description": "提交四向立绘 sheet:正视母版转出十字四格,斜向留空。",
+        "operationId": "submit_four_view_generation_generation_four_view_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CharacterViewSheetGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_GenerationTaskOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Four View Generation",
+        "tags": [
+          "generation"
+        ]
+      }
+    },
     "/generation/image": {
       "post": {
         "description": "提交角色图片生成任务:建 PENDING 记录立即返回,实际图生图后台跑。",
@@ -5020,6 +5292,217 @@
         "summary": "List Transactions",
         "tags": [
           "quota"
+        ]
+      }
+    },
+    "/render3d/bake/{task_id}": {
+      "get": {
+        "description": "取这个任务的出帧参数。没有登记就是不需要浏览器出帧(或已收口)。",
+        "operationId": "get_bake_job_render3d_bake__task_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_dict_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Bake Job",
+        "tags": [
+          "render3d"
+        ]
+      }
+    },
+    "/render3d/bake/{task_id}/complete": {
+      "post": {
+        "description": "帧交齐 → 交回 worker 续跑后处理。\n\n**不信前端说交齐了**:这里按登记的帧数点数,少一帧就不放行 —— 少给的后果是一段\n步子没走完的动作,而帧数、时长、成色在下游全都自洽,没有一道会红。",
+        "operationId": "complete_bake_render3d_bake__task_id__complete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BakeCompleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_dict_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete Bake",
+        "tags": [
+          "render3d"
+        ]
+      }
+    },
+    "/render3d/bake/{task_id}/fail": {
+      "post": {
+        "description": "浏览器自报渲不出来。早报早失败、早解冻,不必等到期限耗完。",
+        "operationId": "fail_bake_render3d_bake__task_id__fail_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BakeFailRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_dict_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fail Bake",
+        "tags": [
+          "render3d"
+        ]
+      }
+    },
+    "/render3d/bake/{task_id}/frames/{index}": {
+      "post": {
+        "description": "收一帧 PNG。逐帧收而不是一次收一整包:32 帧一起传要几十 MB 的请求体常驻内存。",
+        "operationId": "put_bake_frame_render3d_bake__task_id__frames__index__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "title": "Index",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_put_bake_frame_render3d_bake__task_id__frames__index__post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_dict_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Bake Frame",
+        "tags": [
+          "render3d"
         ]
       }
     },

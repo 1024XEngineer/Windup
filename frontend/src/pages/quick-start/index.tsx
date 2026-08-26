@@ -173,7 +173,7 @@ const LEGACY_AGENT_CONVERSATION_STORAGE_KEY = 'windup.quick-start.agent-chat.v1'
 const AGENT_DRAFT_HISTORY_STATE_KEY = 'windupQuickStartAgentDraftId'
 
 type AgentConversationTurn =
-  | { role: 'user'; content: string; scope?: 'workflow' }
+  | { role: 'user'; content: string; referenceMedia?: readonly string[]; scope?: 'workflow' }
   | {
       role: 'assistant'
       content: string
@@ -187,9 +187,11 @@ type AgentConversationTurn =
       proposalId: string
       optimizedPrompt: string
       actionPrompt?: string
-      actionType?: 'walk'
+      actionType?: 'idle' | 'walk' | 'attack' | 'jump'
+      locomotion?: true
       optimizationSummary: string
       suggestPixelPerfect?: boolean
+      referenceMedia?: readonly string[]
       proposalStatus: 'pending' | 'superseded' | 'adopted' | 'confirmed'
       scope?: 'workflow'
     }
@@ -309,7 +311,23 @@ function readAgentConversation(
       }
       const scope = 'scope' in turn && turn.scope === 'workflow' ? 'workflow' : undefined
       if (turn.role === 'user') {
-        return [{ role: 'user', content: turn.content, ...(scope ? { scope } : {}) }]
+        const referenceMedia =
+          'referenceMedia' in turn &&
+          Array.isArray(turn.referenceMedia) &&
+          turn.referenceMedia.every(
+            (value: unknown) =>
+              typeof value === 'string' && value.length <= 2_048 && /^https?:\/\//u.test(value),
+          )
+            ? turn.referenceMedia
+            : []
+        return [
+          {
+            role: 'user',
+            content: turn.content,
+            ...(referenceMedia.length ? { referenceMedia } : {}),
+            ...(scope ? { scope } : {}),
+          },
+        ]
       }
       if (turn.role !== 'assistant') return []
 
@@ -338,11 +356,26 @@ function readAgentConversation(
             ...('actionPrompt' in turn && typeof turn.actionPrompt === 'string'
               ? { actionPrompt: turn.actionPrompt }
               : {}),
-            ...('actionType' in turn && turn.actionType === 'walk'
+            ...('actionType' in turn &&
+            (turn.actionType === 'idle' ||
+              turn.actionType === 'walk' ||
+              turn.actionType === 'attack' ||
+              turn.actionType === 'jump')
               ? { actionType: turn.actionType }
+              : {}),
+            ...('locomotion' in turn && turn.locomotion === true
+              ? { locomotion: true as const }
               : {}),
             optimizationSummary: turn.optimizationSummary,
             suggestPixelPerfect: 'suggestPixelPerfect' in turn && turn.suggestPixelPerfect === true,
+            ...('referenceMedia' in turn &&
+            Array.isArray(turn.referenceMedia) &&
+            turn.referenceMedia.every(
+              (value: unknown) =>
+                typeof value === 'string' && value.length <= 2_048 && /^https?:\/\//u.test(value),
+            )
+              ? { referenceMedia: turn.referenceMedia }
+              : {}),
             proposalStatus: turn.proposalStatus,
             ...(scope ? { scope } : {}),
           },
@@ -371,7 +404,19 @@ function createAgentSeed(turns: readonly AgentConversationTurn[]): {
       turn.role === 'assistant' && turn.kind === 'proposal' && turn.proposalStatus === 'pending',
   )
   return {
-    messages: turns.map(({ role, content }) => ({ role, content })),
+    messages: turns.map((turn) => ({
+      role: turn.role,
+      content:
+        turn.role === 'user' && turn.referenceMedia?.length
+          ? [
+              { type: 'text' as const, text: turn.content },
+              ...turn.referenceMedia.map((image) => ({
+                type: 'image' as const,
+                image: new URL(image),
+              })),
+            ]
+          : turn.content,
+    })),
     clarificationUsed: turns.some(
       (turn) => turn.role === 'assistant' && turn.kind === 'clarification',
     ),
@@ -382,8 +427,10 @@ function createAgentSeed(turns: readonly AgentConversationTurn[]): {
             optimizedPrompt: pending.optimizedPrompt,
             ...(pending.actionPrompt ? { actionPrompt: pending.actionPrompt } : {}),
             ...(pending.actionType ? { actionType: pending.actionType } : {}),
+            ...(pending.locomotion ? { locomotion: pending.locomotion } : {}),
             optimizationSummary: pending.optimizationSummary,
             suggestPixelPerfect: pending.suggestPixelPerfect,
+            ...(pending.referenceMedia?.length ? { referenceMedia: pending.referenceMedia } : {}),
           }
         : null,
   }
@@ -501,7 +548,6 @@ export function QuickStartPage({
       service={activeService}
       agent={agent}
       activeRunUserId={activeRunUserId}
-      onSessionCreated={setCreatedSession}
       projectApis={projectApis}
     />
   )
@@ -689,13 +735,11 @@ function QuickStartInput({
   service,
   agent,
   activeRunUserId,
-  onSessionCreated,
   projectApis,
 }: {
   service: QuickStartEntryService
   agent: CreateQuickStartAgentOptions
   activeRunUserId: string | null
-  onSessionCreated: (session: QuickStartSession) => void
   projectApis: Pick<ProjectApis, 'list' | 'get'>
 }) {
   const navigate = useNavigate()
@@ -1088,83 +1132,72 @@ function QuickStartInput({
 
     if ((!normalizedPrompt && !templateFile) || entryBusy || unavailableReason) return
 
-    if (!templateFile) {
-      setError(null)
+    setError(null)
+    const abortController = templateFile ? new AbortController() : null
+    if (abortController) {
+      submitAbortController.current = abortController
+      setSubmitting(true)
+    }
+    try {
+      const referenceMedia = templateFile
+        ? [await service.uploadReferenceImage(templateFile, abortController?.signal)]
+        : []
+      const effectivePrompt = normalizedPrompt || '请根据这张图片创建角色'
       if (agentSession.state.status === 'proposal') {
         updateProposalStatus(agentSession.state.proposalId, 'superseded')
       }
-      const userTurn: AgentConversationTurn = { role: 'user', content: normalizedPrompt }
+      const userTurn: AgentConversationTurn = {
+        role: 'user',
+        content: effectivePrompt,
+        ...(referenceMedia.length ? { referenceMedia } : {}),
+      }
       if (hasConversation) appendConversationTurn(userTurn)
       else await revealFirstAgentTurn(userTurn)
-      pendingPrompt.current = normalizedPrompt
+      pendingPrompt.current = effectivePrompt
       setPrompt('')
-      try {
-        const result = await agentSession.submit(normalizedPrompt)
-        pendingPrompt.current = null
-        setRevealingFirstAgentTurn(false)
-        if (result.kind === 'message') {
-          appendConversationTurn({
-            role: 'assistant',
-            content: result.message,
-            kind: result.messageKind,
-          })
-          return
-        }
-        if (result.kind === 'proposal') {
-          appendConversationTurn({
-            role: 'assistant',
-            content: `${result.optimizationSummary}\n\n角色：${result.optimizedPrompt}${result.actionPrompt ? `\n动作：${result.actionPrompt}` : ''}`,
-            kind: 'proposal',
-            proposalId: result.proposalId,
-            optimizedPrompt: result.optimizedPrompt,
-            ...(result.actionPrompt ? { actionPrompt: result.actionPrompt } : {}),
-            ...(result.actionType ? { actionType: result.actionType } : {}),
-            optimizationSummary: result.optimizationSummary,
-            suggestPixelPerfect: result.suggestPixelPerfect,
-            proposalStatus: 'pending',
-          })
-        }
-      } catch (cause) {
-        setRevealingFirstAgentTurn(false)
-        if (!(cause instanceof Error && cause.name === 'AbortError')) {
-          setEntryTransition('idle')
-          setPromptState('collecting')
-        }
-      }
-      return
-    }
 
-    const abortController = new AbortController()
-    submitAbortController.current = abortController
-    setSubmitting(true)
-    setEntryTransition('leaving')
-    setError(null)
-    try {
-      const sessionPromise = service.startWithUploadedTemplate(
-        templateFile,
-        normalizedPrompt,
-        abortController.signal,
-        directionalMovement,
-        { gameStyle, ...(projectId ? { projectId } : {}) },
-      )
-      const handoffPromise = new Promise<void>((resolve) => {
-        handoffTimer.current = setTimeout(() => {
-          handoffTimer.current = null
-          resolve()
-        }, ENTRY_HANDOFF_MS)
+      const result = await agentSession.submit(effectivePrompt, {
+        ...(referenceMedia.length ? { referenceMedia } : {}),
       })
-      const [session] = await Promise.all([sessionPromise, handoffPromise])
-      onSessionCreated(session)
-      navigate(`/quick-start/${encodeURIComponent(session.runId)}`)
+      pendingPrompt.current = null
+      setRevealingFirstAgentTurn(false)
+      if (templateFile) {
+        setTemplateFile(null)
+        if (fileInput.current) fileInput.current.value = ''
+      }
+      if (result.kind === 'message') {
+        appendConversationTurn({
+          role: 'assistant',
+          content: result.message,
+          kind: result.messageKind,
+        })
+        return
+      }
+      if (result.kind === 'proposal') {
+        appendConversationTurn({
+          role: 'assistant',
+          content: `${result.optimizationSummary}\n\n角色：${result.optimizedPrompt}${result.actionPrompt ? `\n动作：${result.actionPrompt}` : ''}`,
+          kind: 'proposal',
+          proposalId: result.proposalId,
+          optimizedPrompt: result.optimizedPrompt,
+          ...(result.actionPrompt ? { actionPrompt: result.actionPrompt } : {}),
+          ...(result.actionType ? { actionType: result.actionType } : {}),
+          ...(result.locomotion ? { locomotion: result.locomotion } : {}),
+          optimizationSummary: result.optimizationSummary,
+          suggestPixelPerfect: result.suggestPixelPerfect,
+          ...(result.referenceMedia?.length ? { referenceMedia: result.referenceMedia } : {}),
+          proposalStatus: 'pending',
+        })
+      }
     } catch (cause) {
-      if (!abortController.signal.aborted) {
-        if (handoffTimer.current) clearTimeout(handoffTimer.current)
-        handoffTimer.current = null
+      setRevealingFirstAgentTurn(false)
+      if (!(cause instanceof Error && cause.name === 'AbortError')) {
         setEntryTransition('idle')
-        setError(errorMessage(cause, '创建失败，请稍后重试'))
+        setPromptState('collecting')
+        if (templateFile) setError(errorMessage(cause, '图片提交失败，请稍后重试'))
       }
     } finally {
-      if (submitAbortController.current === abortController) {
+      if (abortController && submitAbortController.current === abortController) {
         submitAbortController.current = null
         if (!abortController.signal.aborted) setSubmitting(false)
       }
@@ -1193,11 +1226,28 @@ function QuickStartInput({
     : Boolean(prompt.trim()) || Boolean(templateFile)
   const styleMenu = useProductPopoverMotion()
   const directionMenu = useProductPopoverMotion()
+  const projectMenuRoot = useRef<HTMLDivElement>(null)
+  const directionMenuRoot = useRef<HTMLDivElement>(null)
   const [directionDragging, setDirectionDragging] = useState(false)
   const [directionSliderValue, setDirectionSliderValue] = useState(() =>
     QUICK_START_DIRECTIONAL_MOVEMENTS.indexOf(directionalMovement),
   )
   const directionalMovementIndex = QUICK_START_DIRECTIONAL_MOVEMENTS.indexOf(directionalMovement)
+
+  useEffect(() => {
+    if (!projectMenuOpen && !directionMenu.expanded) return
+    function closeMenusOnOutsidePress(event: PointerEvent) {
+      const target = event.target as Node
+      if (projectMenuOpen && !projectMenuRoot.current?.contains(target)) {
+        setProjectMenuOpen(false)
+      }
+      if (directionMenu.expanded && !directionMenuRoot.current?.contains(target)) {
+        directionMenu.close()
+      }
+    }
+    document.addEventListener('pointerdown', closeMenusOnOutsidePress)
+    return () => document.removeEventListener('pointerdown', closeMenusOnOutsidePress)
+  }, [directionMenu, projectMenuOpen])
 
   return (
     <section
@@ -1321,7 +1371,11 @@ function QuickStartInput({
             data-prompt-state={promptState}
             data-drag-active={templateDropTarget.isDragging}
             {...templateDropTarget.dropTargetProps}
-            className="quick-start-agent-composer relative flex flex-col"
+            className={`quick-start-agent-composer relative flex flex-col ${
+              hasConversation
+                ? 'mt-12 rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]'
+                : ''
+            }`}
           >
             {templateDropTarget.isDragging ? (
               <div className="pointer-events-none absolute inset-0 z-30 grid place-items-center rounded-app-surface border-2 border-dashed border-app-accent bg-app-surface-raised/95 text-sm font-semibold text-app-accent shadow-app-panel backdrop-blur-sm">
@@ -1329,7 +1383,11 @@ function QuickStartInput({
               </div>
             ) : null}
             <label
-              className="relative block min-h-[52px] min-w-0 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]"
+              className={`relative block min-h-[52px] min-w-0 overflow-hidden ${
+                hasConversation
+                  ? ''
+                  : 'rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]'
+              }`}
               htmlFor="quick-start-prompt"
             >
               <span className="sr-only">创作指令</span>
@@ -1405,7 +1463,9 @@ function QuickStartInput({
             />
             <div
               data-layout="quick-start-composer-controls"
-              className="order-first mb-2 flex min-h-10 items-center justify-between gap-3 px-1"
+              className={`mb-2 flex min-h-10 items-center justify-between gap-3 px-1 ${
+                hasConversation ? 'absolute right-0 bottom-full left-0' : 'order-first'
+              }`}
             >
               <div className="flex items-center gap-1">
                 {!hasConversation ? (
@@ -1464,7 +1524,7 @@ function QuickStartInput({
                     </div>
                   </>
                 ) : null}
-                <div className="relative order-first">
+                <div ref={projectMenuRoot} className="relative order-first">
                   <button
                     type="button"
                     aria-label={`选择项目，当前${selectedProject?.name ?? '自动创建'}`}
@@ -1559,7 +1619,7 @@ function QuickStartInput({
                 >
                   {ART_STYLE[gameStyle]}
                 </span>
-                <div className="relative">
+                <div ref={directionMenuRoot} className="relative">
                   <button
                     type="button"
                     aria-label={`生成方向，当前${DIRECTIONAL_MOVEMENT[directionalMovement]}`}
@@ -1699,7 +1759,7 @@ function PromptProposal({
 }) {
   return (
     <div data-prompt-proposal data-conversation-kind="agent" className="min-w-0 space-y-3">
-      <AgentCopy lines={[summary]} copyable={false} />
+      <AgentCopy lines={[summary]} />
       <div className="relative max-w-2xl pb-8">
         <blockquote className="cursor-text select-text font-serif text-base leading-7 text-app-ink">
           {prompt}
@@ -1741,12 +1801,10 @@ function AgentCopy({
   lines,
   tone = 'default',
   animate = true,
-  copyable = true,
 }: {
   lines: readonly string[]
   tone?: 'default' | 'danger'
   animate?: boolean
-  copyable?: boolean
 }) {
   const copy = lines.join('\n')
   const animatedCopy = animateMarkdownCharacters(compiler(copy))
@@ -1760,7 +1818,7 @@ function AgentCopy({
       }`}
     >
       <QuickStartAgentBot placement="answer" />
-      <div className={`relative min-w-0 ${copyable ? 'pb-8' : ''}`}>
+      <div className="min-w-0">
         <div
           aria-label="Agent 回答"
           data-agent-markdown
@@ -1779,13 +1837,6 @@ function AgentCopy({
             <Markdown>{copy}</Markdown>
           )}
         </div>
-        {copyable ? (
-          <ConversationCopyButton
-            text={copy}
-            label="复制 Agent 回复"
-            className="absolute right-0 bottom-0"
-          />
-        ) : null}
       </div>
     </div>
   )
@@ -1945,15 +1996,16 @@ function UserTurn({ children }: { children: ReactNode }) {
   return (
     <div
       data-user-turn
-      className="relative ml-auto w-fit max-w-[78%] cursor-text select-text rounded-app-surface rounded-br-app-compact bg-app-surface-muted px-4 pt-2.5 pr-10 pb-8 text-left text-sm leading-6 text-app-ink-soft"
+      className="ml-auto flex w-fit max-w-[78%] flex-col items-end gap-1 select-text"
     >
-      <span>{children}</span>
+      <div
+        data-user-message-bubble
+        className="cursor-text rounded-app-surface rounded-br-app-compact bg-app-surface-muted px-4 py-2.5 text-left text-sm leading-6 text-app-ink-soft"
+      >
+        <span>{children}</span>
+      </div>
       {copyText ? (
-        <ConversationCopyButton
-          text={copyText}
-          label="复制消息"
-          className="absolute right-1.5 bottom-1.5"
-        />
+        <ConversationCopyButton text={copyText} label="复制消息" className="shrink-0" />
       ) : null}
     </div>
   )
@@ -2095,7 +2147,19 @@ function DirectionCandidatePicker({
   )
 }
 
-function DirectionFirstFrameStack({
+const DIRECTION_SHEET_LAYOUT: readonly (ActionDirection | null)[] = [
+  'north_west',
+  'north',
+  'north_east',
+  'west',
+  null,
+  'east',
+  'south_west',
+  'south',
+  'south_east',
+]
+
+function DirectionFirstFrameGrid({
   directions,
   selections,
 }: {
@@ -2104,14 +2168,39 @@ function DirectionFirstFrameStack({
 }) {
   const directionCountLabel =
     directions.length === 8 ? '八向' : directions.length === 4 ? '四向' : '单向'
+  const isSingleDirection = directions.length === 1
+  const layoutDirections = isSingleDirection ? directions : DIRECTION_SHEET_LAYOUT
+  const expectedDirections = new Set(directions)
   return (
     <div
       role="group"
       aria-label={`${directionCountLabel}首帧集合`}
-      data-layout="direction-first-frame-stack"
-      className="grid aspect-square w-full max-w-xl grid-cols-2 gap-3 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-muted p-4 shadow-app-card sm:p-5"
+      data-layout={
+        isSingleDirection ? 'direction-first-frame-single' : 'direction-first-frame-grid'
+      }
+      className={`grid aspect-square w-full max-w-xl gap-2 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-muted p-4 shadow-app-card sm:p-5 ${
+        isSingleDirection ? 'grid-cols-1' : 'grid-cols-3'
+      }`}
     >
-      {directions.map((direction) => {
+      {layoutDirections.map((direction, cellIndex) => {
+        if (!direction) {
+          return (
+            <div
+              key={`center-${cellIndex}`}
+              aria-label="中心留空"
+              className="rounded-xl border border-dashed border-app-line/40 bg-app-canvas/20"
+            />
+          )
+        }
+        if (!expectedDirections.has(direction)) {
+          return (
+            <div
+              key={direction}
+              aria-label={`${DIRECTION_LABELS[direction]}方向为空`}
+              className="rounded-xl border border-dashed border-app-line/30 bg-app-canvas/20"
+            />
+          )
+        }
         const imageUrl = selections[direction]
         return imageUrl ? (
           <figure
@@ -2141,18 +2230,6 @@ function DirectionFirstFrameStack({
     </div>
   )
 }
-
-const DIRECTION_SHEET_LAYOUT: readonly (ActionDirection | null)[] = [
-  'north_west',
-  'north',
-  'north_east',
-  'west',
-  null,
-  'east',
-  'south_west',
-  'south',
-  'south_east',
-]
 
 function DirectionSheetCandidatePicker({
   sheets,
@@ -2367,6 +2444,7 @@ function QuickStartRun({
     [],
   )
   const [actionFrames, setActionFrames] = useState<readonly QuickStartFrame[]>([])
+  const [queueAhead, setQueueAhead] = useState(0)
   const [pixelPerfectFrames, setPixelPerfectFrames] = useState<readonly QuickStartFrame[]>([])
   const [pixelPerfectStatus, setPixelPerfectStatus] = useState<'idle' | 'working' | 'ready'>('idle')
   const [actionVersion, setActionVersion] = useState<PixelPerfectVersion>('original')
@@ -2582,6 +2660,7 @@ function QuickStartRun({
     setRun(null)
     setSelectedCandidates({})
     setSelectedFirstFrames({})
+    setQueueAhead(0)
     releasePixelPerfectUrls()
     setPixelPerfectFrames([])
     setPixelPerfectReplacementEntries([])
@@ -2667,6 +2746,7 @@ function QuickStartRun({
       setActionFrames([])
       setFailedDirections([])
       setExportModel(null)
+      setQueueAhead(0)
       return
     }
     const templateIsSelecting = run.nodes.some(
@@ -2688,17 +2768,26 @@ function QuickStartRun({
       session.getTemplateCandidates(),
       session.getFirstFrameCandidates(),
       session.getActionFrames(),
+      session.getQueueAhead(),
       session.getExportModel(),
       session.getFailedGenerationDirections(),
     ])
       .then(
-        ([nextCandidates, nextFirstFrameCandidates, nextFrames, nextExportModel, nextFailed]) => {
+        ([
+          nextCandidates,
+          nextFirstFrameCandidates,
+          nextFrames,
+          nextQueueAhead,
+          nextExportModel,
+          nextFailed,
+        ]) => {
           if (!active) return
           if (templateIsSelecting && nextCandidates.length > 0) setCandidates(nextCandidates)
           if (firstFrameIsSelecting && nextFirstFrameCandidates.length > 0) {
             setFirstFrameCandidates(nextFirstFrameCandidates)
           }
           if (nextFrames.length > 0) setActionFrames(nextFrames)
+          setQueueAhead(nextQueueAhead)
           setExportModel(nextExportModel)
           setFailedDirections(nextFailed)
         },
@@ -2710,6 +2799,26 @@ function QuickStartRun({
       active = false
     }
   }, [reportWorkflowError, run, session])
+
+  useEffect(() => {
+    if (!session || queueAhead <= 0) return
+    let active = true
+    const poll = () => {
+      void session
+        .getQueueAhead()
+        .then((nextQueueAhead) => {
+          if (active) setQueueAhead(nextQueueAhead)
+        })
+        .catch((cause) => {
+          if (active) reportWorkflowError(cause, '读取排队状态失败')
+        })
+    }
+    const interval = window.setInterval(poll, 2_000)
+    return () => {
+      active = false
+      window.clearInterval(interval)
+    }
+  }, [queueAhead, reportWorkflowError, session])
 
   const saveCompletedAction = useCallback(async () => {
     const targetSession = session
@@ -3134,6 +3243,23 @@ function QuickStartRun({
   const workflowAgentConversationTurns = agentConversationTurns.filter(
     (turn) => turn.scope === 'workflow',
   )
+  const workflowAgentConversation = workflowAgentConversationTurns.map((turn, index) => (
+    <div
+      key={`${turn.role}:workflow:${index}:${turn.content}`}
+      data-conversation-kind="agent"
+      className="min-w-0"
+    >
+      {turn.role === 'user' ? (
+        <UserTurn>{turn.content}</UserTurn>
+      ) : (
+        <AgentCopy lines={turn.content.split('\n')} />
+      )}
+    </div>
+  ))
+  const characterAgentContinuation =
+    workflowAgentSession.state.status === 'action' &&
+    (workflowAgentSession.state.action === 'regenerate_character_template' ||
+      workflowAgentSession.state.action === 'refine_character_template')
 
   return (
     <section className="relative min-h-screen overflow-hidden bg-app-canvas pt-14 text-app-ink">
@@ -3173,6 +3299,7 @@ function QuickStartRun({
               <UserTurn>{workflowPrompt(run) || '未命名角色创作'}</UserTurn>
             </div>
 
+            {characterAgentContinuation ? workflowAgentConversation : null}
             <AgentTurn step="character-template" current={characterTurnIsCurrent}>
               {isTemplateSelecting && templateStep?.selectedImageUrl ? (
                 <>
@@ -3186,7 +3313,7 @@ function QuickStartRun({
                         : '全部方向会保持同一个角色造型。',
                     ]}
                   />
-                  <DirectionFirstFrameStack
+                  <DirectionFirstFrameGrid
                     directions={templateDirections}
                     selections={templateSelections}
                   />
@@ -3254,7 +3381,11 @@ function QuickStartRun({
                 </>
               ) : (
                 <>
-                  <GenerationProgressCopy label="角色生成进度" kind="character-template" />
+                  <GenerationProgressCopy
+                    label="角色生成进度"
+                    kind="character-template"
+                    queueAhead={queueAhead}
+                  />
                   <div
                     data-layout="agent-result-set"
                     className="grid w-full max-w-2xl grid-cols-3 gap-3"
@@ -3382,7 +3513,11 @@ function QuickStartRun({
                     </>
                   ) : (
                     <>
-                      <GenerationProgressCopy label="动作首帧生成进度" kind="action-first-frame" />
+                      <GenerationProgressCopy
+                        label="动作首帧生成进度"
+                        kind="action-first-frame"
+                        queueAhead={queueAhead}
+                      />
                       <div
                         data-layout="agent-result-set"
                         className="grid w-full max-w-2xl grid-cols-3 gap-3"
@@ -3494,7 +3629,11 @@ function QuickStartRun({
                     </>
                   ) : (
                     <>
-                      <GenerationProgressCopy label="完整动作生成进度" kind="action-full-frame" />
+                      <GenerationProgressCopy
+                        label="完整动作生成进度"
+                        kind="action-full-frame"
+                        queueAhead={queueAhead}
+                      />
                       <div
                         data-layout="agent-result-set"
                         className="grid w-full max-w-2xl grid-cols-3 gap-3"
@@ -3549,19 +3688,7 @@ function QuickStartRun({
                 ) : null}
               </div>
             ) : null}
-            {workflowAgentConversationTurns.map((turn, index) => (
-              <div
-                key={`${turn.role}:workflow:${index}:${turn.content}`}
-                data-conversation-kind="agent"
-                className="min-w-0"
-              >
-                {turn.role === 'user' ? (
-                  <UserTurn>{turn.content}</UserTurn>
-                ) : (
-                  <AgentCopy lines={turn.content.split('\n')} />
-                )}
-              </div>
-            ))}
+            {characterAgentContinuation ? null : workflowAgentConversation}
             {workflowAgentSession.state.status === 'planning' ? (
               <div
                 data-conversation-kind="agent"

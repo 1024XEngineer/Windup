@@ -316,6 +316,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
     renderEditor('/workflow-editor/42')
 
     const image = await screen.findByRole('img', { name: '已确认身份母版' })
+    image.addEventListener('load', (event) => event.stopImmediatePropagation())
     fireEvent.error(image)
 
     expect(await screen.findByText('图片加载失败')).toBeTruthy()
@@ -994,7 +995,7 @@ describe('WorkflowEditorPage real runtime boundary', () => {
   })
 
   it('切换 WorkflowRun 后忽略上一条任务迟到的命令错误', async () => {
-    const pendingGeneration = deferred<Generation>()
+    const pendingGeneration = deferred<Generation<'character_template'>>()
     const createGeneration = vi.fn(() => pendingGeneration.promise)
     defaultSessionLoader
       .mockResolvedValueOnce(

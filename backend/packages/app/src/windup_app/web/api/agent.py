@@ -11,7 +11,7 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -19,7 +19,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from windup_framework.config.provider import settings as provider_settings
 from windup_framework.gateway import bind_call_context
@@ -108,7 +108,42 @@ bearer_scheme = HTTPBearer(auto_error=False)
 MAX_REQUEST_BYTES = 64 * 1_024
 MAX_MESSAGES = 16
 MAX_MESSAGE_CHARS = 8_000
+MAX_TOOLS = 4
 MAX_OUTPUT_TOKENS = 1_024
+
+
+class ChatTextContentPart(BaseModel):
+    """Bounded text inside one multimodal user message."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["text"]
+    text: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
+
+
+class ChatImageUrl(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(min_length=1, max_length=2_048, pattern=r"^https?://")
+
+
+class ChatImageContentPart(BaseModel):
+    """One uploaded HTTP(S) image reference; inline base64 remains disallowed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["image_url"]
+    image_url: ChatImageUrl
+
+
+ChatContentPart = Annotated[
+    ChatTextContentPart | ChatImageContentPart,
+    Field(discriminator="type"),
+]
+
+# The bound lives on the string branch itself: a union field cannot carry it,
+# and plain-text messages must stay as bounded as multimodal text parts.
+BoundedMessageText = Annotated[str, Field(max_length=MAX_MESSAGE_CHARS)]
 
 
 class ChatMessage(BaseModel):
@@ -117,9 +152,20 @@ class ChatMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     role: Literal["system", "user", "assistant", "tool"]
-    content: str | None = Field(default=None, max_length=MAX_MESSAGE_CHARS)
+    content: BoundedMessageText | list[ChatContentPart] | None = None
     tool_calls: list[dict[str, Any]] | None = Field(default=None, max_length=1)
     tool_call_id: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def bound_multimodal_user_content(self):
+        if isinstance(self.content, list):
+            if self.role != "user":
+                raise ValueError("only user messages may contain multimodal content")
+            if not self.content or len(self.content) > 2:
+                raise ValueError("multimodal user content must contain one or two parts")
+            if sum(isinstance(part, ChatImageContentPart) for part in self.content) != 1:
+                raise ValueError("multimodal user content must contain exactly one image")
+        return self
 
 
 class FunctionDefinition(BaseModel):
@@ -151,7 +197,10 @@ class ChatRequest(BaseModel):
 
     model: str | None = Field(default=None, max_length=128)
     messages: list[ChatMessage] = Field(min_length=1, max_length=MAX_MESSAGES)
-    tools: list[ToolDefinition] | None = Field(default=None, max_length=1)
+    # The workflow Agent may choose one action from character and first-frame
+    # tools in the same turn; the provider response is still normalized to one
+    # tool call below.
+    tools: list[ToolDefinition] | None = Field(default=None, max_length=MAX_TOOLS)
     tool_choice: Literal["auto", "none", "required"] | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
     stream: Literal[False] = False

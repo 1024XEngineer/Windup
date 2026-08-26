@@ -39,6 +39,7 @@ MSG_TYPE_VERIFICATION_CODE = "verification_code"
 MSG_TYPE_CHARACTER_IMAGE = "character_image"
 MSG_TYPE_CHARACTER_ACTION = "character_action"
 MSG_TYPE_CHARACTER_ACTION_POLL = "character_action_poll"
+MSG_TYPE_CHARACTER_ACTION_CLIENT_BAKE = "character_action_client_bake"
 
 POOL_SHARED = "shared"
 POOL_POLL = "poll"
@@ -116,6 +117,13 @@ def type_specs() -> tuple[TypeSpec, ...]:
             concurrency=generation_poll_concurrency(),
             limit=True,
         ),
+        TypeSpec(
+            msg_type=MSG_TYPE_CHARACTER_ACTION_CLIENT_BAKE,
+            stream=GENERATION_STREAM,
+            pool=POOL_POLL,
+            concurrency=generation_poll_concurrency(),
+            limit=True,
+        ),
     )
 
 
@@ -132,8 +140,13 @@ def types_for_stream(stream: str) -> tuple[TypeSpec, ...]:
 
 def msg_type_for_generation(task_type: str) -> str:
     """PENDING 重入队 / API 投递用的 msg_type。轮询类型没有 recover_as。"""
-    if task_type == "character_direction_set":
-        # 方向集仍是图片工作负载，共用图片池与背压，不另开一倍并发。
+    if task_type in (
+        "character_direction_set",
+        "character_four_view",
+        "character_eight_view",
+    ):
+        # 与单张立绘同一图像并发池。payload.task_type 才是执行器分叉,
+        # 不要另开 TypeSpec,否则会把线程池和信号量再加一倍。
         return MSG_TYPE_CHARACTER_IMAGE
     for spec in type_specs():
         if spec.recover_as == task_type:
