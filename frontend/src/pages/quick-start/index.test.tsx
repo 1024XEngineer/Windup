@@ -1515,11 +1515,11 @@ describe('QuickStartPage', () => {
     const conversationControls = composer.querySelector(
       '[data-layout="quick-start-composer-controls"]',
     )
-    expect(conversationForm?.className).toContain('rounded-app-surface')
-    expect(conversationForm?.className).toContain('border-app-line-strong')
-    expect(conversationForm?.className).toContain('shadow-app-panel')
-    expect(conversationSurface?.className).not.toContain('border-app-line-strong')
-    expect(conversationSurface?.className).not.toContain('shadow-app-panel')
+    expect(conversationForm?.className).not.toContain('border-app-line-strong')
+    expect(conversationForm?.className).not.toContain('shadow-app-panel')
+    expect(conversationSurface?.className).toContain('rounded-app-surface')
+    expect(conversationSurface?.className).toContain('border-app-line-strong')
+    expect(conversationSurface?.className).toContain('shadow-app-panel')
     expect(conversationControls?.className).toContain('flex')
     expect(
       (
