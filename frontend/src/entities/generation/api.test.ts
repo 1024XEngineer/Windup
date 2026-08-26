@@ -88,6 +88,54 @@ function directionSetTaskData(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function viewSheetTaskData(
+  type: 'character_four_view' | 'character_eight_view' = 'character_eight_view',
+  overrides: Record<string, unknown> = {},
+) {
+  const directions =
+    type === 'character_four_view'
+      ? (['east', 'west', 'north', 'south'] as const)
+      : ([
+          'east',
+          'west',
+          'north',
+          'south',
+          'north_east',
+          'north_west',
+          'south_east',
+          'south_west',
+        ] as const)
+  const mirrorSources: Partial<Record<(typeof directions)[number], string>> = {
+    west: 'east',
+    north_west: 'north_east',
+    south_west: 'south_east',
+  }
+  return {
+    id: 93,
+    project_id: 42,
+    task_type: type,
+    status: 'completed',
+    input_payload: { character_id: 7, num_images: 1, width: 64, height: 64 },
+    result: {
+      type,
+      sheets: [
+        {
+          sheet_url: 'https://cdn.test/sheet.png',
+          cells: directions.map((direction) => ({
+            direction,
+            image_url: `https://cdn.test/${direction}.png`,
+            source_direction: mirrorSources[direction] ?? null,
+            mirror_x: direction in mirrorSources,
+          })),
+        },
+      ],
+      quality: null,
+    },
+    error_message: null,
+    ...overrides,
+  }
+}
+
 function actionFrames(count: number) {
   return Array.from({ length: count }, (_, offset) => {
     const index = count - offset - 1
@@ -100,6 +148,114 @@ function actionFrames(count: number) {
 }
 
 describe('createGenerationApis', () => {
+  it.each([
+    ['character_four_view', '/generation/four-view'],
+    ['character_eight_view', '/generation/eight-view'],
+  ] as const)('按 %s 提交角色立绘 sheet 任务', async (type, path) => {
+    const request = vi.fn(async () => success(viewSheetTaskData(type)))
+    const apis = createGenerationApis({
+      baseUrl: 'https://api.test',
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    const generation = await apis.create({
+      type,
+      projectId: '42',
+      referenceMedia: [],
+      characterId: '7',
+      prompt: '保持围巾与长外套',
+      negativePrompt: '多个角色',
+      spriteWidth: 64,
+      spriteHeight: 64,
+      candidateCount: 1,
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      `https://api.test${path}`,
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          project_id: 42,
+          character_id: 7,
+          prompt: '保持围巾与长外套',
+          negative_prompt: '多个角色',
+          width: 64,
+          height: 64,
+          num_images: 1,
+        }),
+      }),
+    )
+    expect(generation.type).toBe(type)
+  })
+
+  it('查询八向 sheet 任务时保留每个 cell 的独立 URL 与镜像关系', async () => {
+    const apis = createGenerationApis({
+      transport: {
+        request: vi.fn(async () => success(viewSheetTaskData())),
+        stream: vi.fn(() => vi.fn()),
+      },
+    })
+
+    const generation = await apis.get('42', '93')
+
+    expect(generation).toMatchObject({
+      type: 'character_eight_view',
+      result: {
+        type: 'character_eight_view',
+        sheets: [
+          {
+            sheetUrl: 'https://cdn.test/sheet.png',
+            cells: expect.arrayContaining([
+              {
+                direction: 'east',
+                imageUrl: 'https://cdn.test/east.png',
+                sourceDirection: null,
+                mirrorX: false,
+              },
+              {
+                direction: 'west',
+                imageUrl: 'https://cdn.test/west.png',
+                sourceDirection: 'east',
+                mirrorX: true,
+              },
+            ]),
+          },
+        ],
+      },
+    })
+  })
+
+  it('SSE 完成事件交付八向 sheet 的全部 cells', () => {
+    let streamOptions: EventStreamOptions | undefined
+    const onEvent = vi.fn()
+    const apis = createGenerationApis({
+      transport: {
+        request: vi.fn(),
+        stream: vi.fn((_url, options) => {
+          streamOptions = options
+          return vi.fn()
+        }),
+      },
+    })
+
+    apis.subscribe('42', '93', { type: 'character_eight_view' }, onEvent, vi.fn())
+    const terminal = streamOptions?.onEvent(JSON.stringify(viewSheetTaskData()), 'completed')
+
+    expect(terminal).toBe(true)
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: '93',
+        type: 'character_eight_view',
+        result: expect.objectContaining({
+          sheets: [
+            expect.objectContaining({ cells: expect.arrayContaining([expect.any(Object)]) }),
+          ],
+        }),
+      }),
+    )
+    expect(onEvent.mock.calls[0]?.[0].result.sheets[0].cells).toHaveLength(8)
+  })
+
   it('生产适配器把 SSE 订阅接到配置的 API 地址', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.windup.test')
     const fetchFn = vi.fn(

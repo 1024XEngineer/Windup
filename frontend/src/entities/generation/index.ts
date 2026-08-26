@@ -24,7 +24,13 @@ export type TaskStatus = 'pending' | 'running' | 'completed' | 'partial' | 'fail
  * character_action 两种，character_template 和 first_frame 都落在 character_image 上。
  * 完整动画内部可含视频生成、截帧和多次图像处理，但对前端仍是一次 Generation。
  */
-export type GenerationType = 'character_template' | 'first_frame' | 'complete_animation'
+export type ViewSheetGenerationType = 'character_four_view' | 'character_eight_view'
+
+export type GenerationType =
+  | 'character_template'
+  | ViewSheetGenerationType
+  | 'first_frame'
+  | 'complete_animation'
 
 /** 后端任务快照还包含聚合方向集；它不属于前端逐阶段 create() 输入。 */
 export type GenerationTaskType = GenerationType | 'character_direction_set'
@@ -33,6 +39,8 @@ export type ImageCandidateCount = 1 | 2 | 3 | 4
 
 export type GenerationExpectation =
   | { type: 'character_template'; direction?: ActionDirection }
+  | { type: 'character_four_view' }
+  | { type: 'character_eight_view' }
   | { type: 'character_direction_set' }
   | { type: 'first_frame'; actionType: ActionType; direction?: ActionDirection }
   | { type: 'complete_animation'; actionType: ActionType; direction?: ActionDirection }
@@ -77,6 +85,21 @@ export interface FirstFrameGenerationInput extends GenerationInputBase {
   candidateCount?: ImageCandidateCount
 }
 
+/** 基于已写入 Character.reference_image_url 的正视定妆生成立绘方向集。 */
+interface CharacterViewSheetGenerationInputBase extends GenerationInputBase {
+  characterId: string
+  prompt: string
+  negativePrompt?: string
+  spriteWidth: number
+  spriteHeight: number
+  /** sheet 候选数，不是每个方向的图片数。 */
+  candidateCount?: ImageCandidateCount
+  direction?: never
+}
+
+export type CharacterViewSheetGenerationInput = CharacterViewSheetGenerationInputBase &
+  ({ type: 'character_four_view' } | { type: 'character_eight_view' })
+
 /** 以已确认首帧为起点生成完整动画。 */
 export interface CompleteAnimationGenerationInput extends GenerationInputBase {
   type: 'complete_animation'
@@ -105,6 +128,7 @@ export interface CompleteAnimationGenerationInput extends GenerationInputBase {
 
 export type GenerationInput =
   | CharacterTemplateGenerationInput
+  | CharacterViewSheetGenerationInput
   | FirstFrameGenerationInput
   | CompleteAnimationGenerationInput
 
@@ -149,6 +173,24 @@ export interface CharacterDirectionSetGenerationResult {
   directions: readonly DirectionGenerationResult[]
 }
 
+export interface CharacterViewSheetCell {
+  direction: ActionDirection
+  imageUrl: string
+  sourceDirection: ActionDirection | null
+  mirrorX: boolean
+}
+
+export interface CharacterViewSheetCandidate {
+  sheetUrl: string
+  cells: readonly CharacterViewSheetCell[]
+}
+
+export interface CharacterViewSheetGenerationResult {
+  type: ViewSheetGenerationType
+  sheets: readonly CharacterViewSheetCandidate[]
+  quality: Readonly<Record<string, unknown>> | null
+}
+
 /** 交付帧的落位几何，由后端按对齐时的实参报出。 */
 export interface SequenceGeometry {
   canvasWidth: number
@@ -170,15 +212,18 @@ export interface CompleteAnimationGenerationResult {
 export type GenerationResult =
   | CharacterTemplateGenerationResult
   | CharacterDirectionSetGenerationResult
+  | CharacterViewSheetGenerationResult
   | FirstFrameGenerationResult
   | CompleteAnimationGenerationResult
 
 export type GenerationResultFor<T extends GenerationInput> =
   T extends CharacterTemplateGenerationInput
     ? CharacterTemplateGenerationResult
-    : T extends FirstFrameGenerationInput
-      ? FirstFrameGenerationResult
-      : CompleteAnimationGenerationResult
+    : T extends CharacterViewSheetGenerationInput
+      ? CharacterViewSheetGenerationResult
+      : T extends FirstFrameGenerationInput
+        ? FirstFrameGenerationResult
+        : CompleteAnimationGenerationResult
 
 /**
  * 一次生成任务的完整快照，创建、查询和断线恢复都用它。
