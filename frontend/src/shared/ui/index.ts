@@ -26,3 +26,10 @@ export {
 } from './product-control'
 export type { ProductControlVariant, ProductPopoverMotionState } from './product-control'
 export { useProductPopoverMotion } from './product-popover-motion'
+export {
+  IMAGE_UPLOAD_ACCEPT,
+  IMAGE_UPLOAD_HINT,
+  imageUploadError,
+  useImageDropTarget,
+} from './image-drop-target'
+export type { ImageDropTargetOptions } from './image-drop-target'
