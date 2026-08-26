@@ -1128,12 +1128,40 @@ describe('QuickStartPage', () => {
     expect(characterItem.querySelector('img')).toBeNull()
     expect(characters.listSummariesByProject).toHaveBeenCalledWith('42', {
       page: 1,
-      pageSize: 8,
+      pageSize: 100,
       status: CHARACTER_STATUS.PUBLISHED,
     })
 
     fireEvent.click(screen.getByRole('button', { name: '返回项目列表' }))
     expect(screen.getByRole('menu', { name: '选择项目' })).toBeTruthy()
+  })
+
+  it('tells the user when a project has more characters than one page', async () => {
+    const characters = characterReader()
+    characters.listSummariesByProject = vi.fn(async () => ({
+      items: [
+        {
+          id: '77',
+          projectId: '42',
+          name: '星光法师',
+          status: CHARACTER_STATUS.PUBLISHED,
+          previewUrl: null,
+          outfitName: '默认造型',
+          outfitCount: 1,
+          actionCount: 3,
+          updatedAt: '2026-08-26T00:00:00Z',
+        },
+      ],
+      total: 137,
+      page: 1,
+      pageSize: 100,
+    }))
+    renderAt('/quick-start', serviceFor(null), agentFor(), projectReader(), characters)
+
+    fireEvent.click(screen.getByRole('button', { name: '选择项目，当前自动创建' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '星海计划' }))
+
+    expect(await screen.findByText('仅显示前 1 个角色，其余请在资产库中打开')).toBeTruthy()
   })
 
   it('opens the existing character workflow when choosing it for a new action', async () => {
