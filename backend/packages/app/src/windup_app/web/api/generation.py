@@ -300,7 +300,7 @@ class GenerationTaskOut(BaseModel):
     input_payload: dict | None = None
     result: dict | None = None
     error_message: str | None = None
-    # pending/running:比本任务更早且未结束的条数;终态为 0。
+    # pending:比本任务更早且未结束的条数;running/终态为 0。
     queue_ahead: int = 0
 
 

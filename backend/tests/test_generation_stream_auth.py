@@ -211,6 +211,10 @@ def test_queue_ahead_counts_earlier_unfinished_tasks(session):
     assert ahead == 1, "已完成的不算,只剩 second 还在 pending"
     done = task_repo.queue_ahead_for(session, task_repo.get_task(session, first))
     assert done == 0
+    task_repo.update_status(session, third, TaskStatus.RUNNING)
+    session.commit()
+    running = task_repo.queue_ahead_for(session, task_repo.get_task(session, third))
+    assert running == 0, "RUNNING 已在执行,不再报前面还有几单"
 
 
 @pytest.mark.parametrize("status", [TaskStatus.PENDING, TaskStatus.RUNNING])

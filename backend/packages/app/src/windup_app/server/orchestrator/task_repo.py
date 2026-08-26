@@ -82,8 +82,8 @@ def count_queue_ahead(session: Session, task_id: int) -> int:
 
 
 def queue_ahead_for(session: Session, task: GenerationTask) -> int:
-    """终态不再排队；pending/running 才报前面还有几单。"""
-    if task.status in (TaskStatus.COMPLETED, TaskStatus.PARTIAL, TaskStatus.FAILED):
+    """只有 pending 报前面还有几单；running 已在执行,为 0。"""
+    if task.status is not TaskStatus.PENDING:
         return 0
     return count_queue_ahead(session, task.id)
 
