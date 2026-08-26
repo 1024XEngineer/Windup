@@ -15,6 +15,46 @@ function completion(choice: Record<string, unknown>) {
 }
 
 describe('AI SDK OpenAI-compatible protocol fixture', () => {
+  it('serializes an uploaded reference as an image URL content part', async () => {
+    let requestBody: Record<string, unknown> | null = null
+    const planner = createAiSdkQuickStartPlanner({
+      baseURL: 'https://api.windup.test/ai/v1',
+      fetch: vi.fn(async (input, init) => {
+        requestBody = JSON.parse(await new Request(input, init).text())
+        return completion({
+          message: { role: 'assistant', content: '我会先判断这张图是否适合作为角色参考。' },
+          finish_reason: 'stop',
+        })
+      }),
+    })
+
+    await planner({
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: '参考这张图片创建角色' },
+            { type: 'image', image: new URL('https://cdn.windup.test/hero.png') },
+          ],
+        },
+      ],
+      clarificationUsed: false,
+    })
+
+    const capturedBody = requestBody as Record<string, unknown> | null
+    if (!capturedBody) throw new Error('planner request was not captured')
+    expect(capturedBody.messages).toEqual([
+      expect.objectContaining({ role: 'system' }),
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '参考这张图片创建角色' },
+          { type: 'image_url', image_url: { url: 'https://cdn.windup.test/hero.png' } },
+        ],
+      },
+    ])
+  })
+
   it('parses a standard text completion without a custom response parser', async () => {
     let requestBody: Record<string, unknown> | null = null
     const planner = createAiSdkQuickStartPlanner({
