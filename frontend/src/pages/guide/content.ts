@@ -177,7 +177,7 @@ export const guideChapters: readonly GuideChapter[] = [
       {
         title: '资源包包含什么',
         description:
-          '根据角色完成情况，资源包会包含母版、首帧、透明 PNG、Sprite Sheet 和动画说明文件。',
+          '根据角色完成情况，资源包会包含母版、首帧、透明 PNG、Sprite Sheet、逐动作方向 GIF 预览和动画说明文件。',
       },
       {
         title: '导出失败怎么办',
