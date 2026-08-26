@@ -1067,6 +1067,44 @@ describe('QuickStartPage', () => {
     })
   })
 
+  it('persists a slider-only direction change across a refresh', () => {
+    const service = serviceFor(null)
+    const agent = agentFor()
+    window.history.replaceState(null, '', '/quick-start')
+    const firstView = renderInBrowserHistory(service, agent)
+
+    fireEvent.click(screen.getByRole('button', { name: '生成方向，当前单向' }))
+    fireEvent.change(screen.getByRole('slider', { name: '生成方向' }), {
+      target: { value: '2' },
+    })
+
+    const draftId = window.history.state?.windupQuickStartAgentDraftId
+    const key = `windup.quick-start.agent-chat.v2:draft:7:${draftId}`
+    expect(window.sessionStorage.getItem(key)).toContain('"directionalMovement":"eight-way"')
+
+    firstView.unmount()
+    renderInBrowserHistory(service, agent)
+    expect(screen.getByRole('button', { name: '生成方向，当前八向' })).toBeTruthy()
+  })
+
+  it('preserves the slider direction when changing the draft art style', () => {
+    renderAt('/quick-start', serviceFor(null), agentFor())
+
+    fireEvent.click(screen.getByRole('button', { name: '生成方向，当前单向' }))
+    fireEvent.change(screen.getByRole('slider', { name: '生成方向' }), {
+      target: { value: '2' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '选择画风，当前不指定' }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: '像素' }))
+
+    const draftId = window.history.state?.windupQuickStartAgentDraftId
+    const key = `windup.quick-start.agent-chat.v2:draft:7:${draftId}`
+    expect(JSON.parse(window.sessionStorage.getItem(key) ?? '{}')).toMatchObject({
+      gameStyle: 'pixel',
+      directionalMovement: 'eight-way',
+    })
+  })
+
   it('passes the chosen art style into every Agent planning turn', async () => {
     const planner = vi.fn(async (_input: PlannerInput) => ({
       text: '想保留哪个特征？',

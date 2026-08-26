@@ -732,8 +732,9 @@ function QuickStartInput({
     return draftId
   }, [])
 
-  const persistDraftConversation = useCallback(
-    (turns: readonly AgentConversationTurn[]) => {
+  const persistAgentDraft = useCallback(
+    (updates: Partial<AgentConversationRecord> = {}) => {
+      const turns = updates.turns ?? conversationTurnsRef.current
       conversationTurnsRef.current = turns
       const draftId = ensureDraftId()
       writeAgentConversation(
@@ -741,8 +742,8 @@ function QuickStartInput({
         agentDraftConversationStorageKey(activeRunUserId, draftId),
         {
           turns,
-          gameStyle: gameStyleRef.current,
-          directionalMovement: directionalMovementRef.current,
+          gameStyle: updates.gameStyle ?? gameStyleRef.current,
+          directionalMovement: updates.directionalMovement ?? directionalMovementRef.current,
         },
       )
     },
@@ -775,9 +776,9 @@ function QuickStartInput({
       const next = [...conversationTurnsRef.current, turn]
       conversationTurnsRef.current = next
       setConversationTurns(next)
-      persistDraftConversation(next)
+      persistAgentDraft({ turns: next })
     },
-    [persistDraftConversation],
+    [persistAgentDraft],
   )
 
   async function revealFirstAgentTurn(turn: AgentConversationTurn) {
@@ -838,7 +839,7 @@ function QuickStartInput({
     )
     conversationTurnsRef.current = next
     setConversationTurns(next)
-    persistDraftConversation(next)
+    persistAgentDraft({ turns: next })
     return next
   }
 
@@ -895,16 +896,16 @@ function QuickStartInput({
   }
 
   function chooseGameStyle(next: ArtStyle) {
+    gameStyleRef.current = next
     setGameStyle(next)
     setStyleMenuOpen(false)
-    const draftId = draftIdRef.current
-    if (draftId) {
-      writeAgentConversation(
-        'sessionStorage',
-        agentDraftConversationStorageKey(activeRunUserId, draftId),
-        { turns: conversationTurnsRef.current, gameStyle: next },
-      )
-    }
+    persistAgentDraft({ gameStyle: next })
+  }
+
+  function chooseDirectionalMovement(next: DirectionalMovement) {
+    directionalMovementRef.current = next
+    setDirectionalMovement(next)
+    persistAgentDraft({ directionalMovement: next })
   }
 
   function stopEntryWork() {
@@ -922,7 +923,7 @@ function QuickStartInput({
         const nextTurns = turns.slice(0, -1)
         conversationTurnsRef.current = nextTurns
         setConversationTurns(nextTurns)
-        persistDraftConversation(nextTurns)
+        persistAgentDraft({ turns: nextTurns })
       }
     }
     pendingPrompt.current = null
@@ -1440,7 +1441,7 @@ function QuickStartInput({
                                 const index = Math.round(Number(event.currentTarget.value))
                                 setDirectionDragging(false)
                                 setDirectionSliderValue(index)
-                                setDirectionalMovement(
+                                chooseDirectionalMovement(
                                   QUICK_START_DIRECTIONAL_MOVEMENTS[index] ?? 'single',
                                 )
                               }}
@@ -1453,7 +1454,7 @@ function QuickStartInput({
                               onChange={(event) => {
                                 const value = Number(event.target.value)
                                 setDirectionSliderValue(value)
-                                setDirectionalMovement(
+                                chooseDirectionalMovement(
                                   QUICK_START_DIRECTIONAL_MOVEMENTS[Math.round(value)] ?? 'single',
                                 )
                               }}
