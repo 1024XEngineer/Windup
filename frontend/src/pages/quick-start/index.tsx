@@ -32,6 +32,7 @@ import Markdown, { compiler } from 'markdown-to-jsx'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { InlineArrowAction } from './inline-arrow-action'
 import { PixelPerfectVersionSwitch, type PixelPerfectVersion } from './pixel-perfect-version-switch'
+import { Render3DOption } from './render3d-option'
 
 import {
   ART_STYLE,
@@ -3342,6 +3343,7 @@ function QuickStartRun({
                       className="aspect-square w-full rounded-2xl border border-app-line bg-app-surface-muted object-contain [image-rendering:pixelated]"
                     />
                   </div>
+                  <Render3DOption session={session} />
                 </>
               ) : workflowHasFailure(revision) ? (
                 <>
