@@ -180,6 +180,25 @@ describe('createGenerationApis', () => {
     })
   })
 
+  it('把等待任务前方的队列数量映射到生成快照', async () => {
+    const request = vi.fn(async () =>
+      success(
+        taskData({
+          status: 'pending',
+          result: null,
+          queue_ahead: 3,
+        }),
+      ),
+    )
+    const apis = createGenerationApis({
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    const generation = await apis.get('42', '91', { type: 'character_template' })
+
+    expect(generation.queueAhead).toBe(3)
+  })
+
   it.each([1, 2, 3, 4] as const)('允许调用方显式请求 %i 张图片候选', async (candidateCount) => {
     const request = vi.fn(async (_url: string, _init?: RequestInit) =>
       success(
