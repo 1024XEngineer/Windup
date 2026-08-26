@@ -1720,6 +1720,76 @@ describe('QuickStartPage', () => {
     expect(screen.getByRole('button', { name: '发送' })).toBeTruthy()
   })
 
+  it('locks candidate cards while the Agent is regenerating them', async () => {
+    const run = workflow(setupAndTemplate())
+    const service = serviceFor(run, {
+      getTemplateCandidates: vi.fn(async () =>
+        eastCandidates(
+          'https://example.test/character-1.png',
+          'https://example.test/character-2.png',
+        ),
+      ),
+      getWorkflowAgentContext: vi.fn(() => ({
+        availableTools: ['regenerate_character_template', 'refine_character_template'] as const,
+      })),
+    })
+    renderAt(
+      '/quick-start/run-1',
+      service,
+      agentFor({
+        planner: vi.fn<CreateQuickStartAgentOptions['planner']>(() => new Promise(() => {})),
+      }),
+    )
+
+    const candidate = await screen.findByRole('button', { name: '选择角色方案 1' })
+    expect(candidate.hasAttribute('disabled')).toBe(false)
+
+    fireEvent.change(screen.getByLabelText('继续描述你的想法'), {
+      target: { value: '重新生成一批' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => expect(candidate.hasAttribute('disabled')).toBe(true))
+  })
+
+  it('drops a candidate selection that the newest batch no longer contains', async () => {
+    const run = workflow(setupAndTemplate())
+    let batch = eastCandidates(
+      'https://example.test/character-1.png',
+      'https://example.test/character-2.png',
+    )
+    let publishRun: ((next: WorkflowRun) => void) | null = null
+    const service = serviceFor(run, {
+      getTemplateCandidates: vi.fn(async () => batch),
+      subscribe: vi.fn((listener: (next: WorkflowRun) => void) => {
+        publishRun = listener
+        return () => undefined
+      }),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    fireEvent.click(await screen.findByRole('button', { name: '选择角色方案 2' }))
+    expect(
+      screen.getByRole('button', { name: '选择角色方案 2' }).getAttribute('aria-pressed'),
+    ).toBe('true')
+
+    // Agent 重新生成后换了一批候选，旧的那张已经不在了。
+    batch = eastCandidates(
+      'https://example.test/character-4.png',
+      'https://example.test/character-5.png',
+    )
+    await act(async () => publishRun?.({ ...run, nodes: [...run.nodes] }))
+
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole('button', { name: /选择角色方案/u })
+          .every((card) => card.getAttribute('aria-pressed') === 'false'),
+      ).toBe(true),
+    )
+    expect(screen.getByPlaceholderText('描述想调整的候选，或重新生成一批…')).toBeTruthy()
+  })
+
   it('八向母版确认后完整展示八个同角色方向首帧', async () => {
     const directions = [
       ['east', '东'],
