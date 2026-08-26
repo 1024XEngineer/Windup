@@ -366,6 +366,32 @@ describe('playtest runtime', () => {
     expect(advanced).toMatchObject({ actionId: 'roll-forward', x: 15 })
   })
 
+  it('keeps driving the selected locomotion action instead of the first walk', () => {
+    const mixedActions: readonly PlaytestAction[] = [
+      ...actions,
+      {
+        id: 'roll-forward',
+        name: '向前翻滚',
+        type: 'custom',
+        locomotion: true,
+        loop: true,
+        frames: [{ imageUrl: '/roll-1.png', durationMs: 100 }],
+      },
+    ]
+    const rolling = selectRuntimeAction(
+      createRuntime(mixedActions, 'idle'),
+      mixedActions,
+      'roll-forward',
+    )
+
+    const moving = setMovementInput(rolling, mixedActions, 'right', true)
+
+    expect(moving.actionId).toBe('roll-forward')
+    expect(advanceRuntime(moving, mixedActions, 100, { minX: -100, maxX: 100 }, 150).actionId).toBe(
+      'roll-forward',
+    )
+  })
+
   it('turns without moving when the active action is not walk or run', () => {
     const nonLocomotionActions = actions.filter((action) => action.type !== 'walk')
     const attacking = selectRuntimeAction(
