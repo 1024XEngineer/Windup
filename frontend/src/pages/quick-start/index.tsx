@@ -2385,6 +2385,7 @@ function QuickStartRun({
     [],
   )
   const [actionFrames, setActionFrames] = useState<readonly QuickStartFrame[]>([])
+  const [queueAhead, setQueueAhead] = useState(0)
   const [pixelPerfectFrames, setPixelPerfectFrames] = useState<readonly QuickStartFrame[]>([])
   const [pixelPerfectStatus, setPixelPerfectStatus] = useState<'idle' | 'working' | 'ready'>('idle')
   const [actionVersion, setActionVersion] = useState<PixelPerfectVersion>('original')
@@ -2600,6 +2601,7 @@ function QuickStartRun({
     setRun(null)
     setSelectedCandidates({})
     setSelectedFirstFrames({})
+    setQueueAhead(0)
     releasePixelPerfectUrls()
     setPixelPerfectFrames([])
     setPixelPerfectReplacementEntries([])
@@ -2685,6 +2687,7 @@ function QuickStartRun({
       setActionFrames([])
       setFailedDirections([])
       setExportModel(null)
+      setQueueAhead(0)
       return
     }
     const templateIsSelecting = run.nodes.some(
@@ -2706,17 +2709,26 @@ function QuickStartRun({
       session.getTemplateCandidates(),
       session.getFirstFrameCandidates(),
       session.getActionFrames(),
+      session.getQueueAhead(),
       session.getExportModel(),
       session.getFailedGenerationDirections(),
     ])
       .then(
-        ([nextCandidates, nextFirstFrameCandidates, nextFrames, nextExportModel, nextFailed]) => {
+        ([
+          nextCandidates,
+          nextFirstFrameCandidates,
+          nextFrames,
+          nextQueueAhead,
+          nextExportModel,
+          nextFailed,
+        ]) => {
           if (!active) return
           if (templateIsSelecting && nextCandidates.length > 0) setCandidates(nextCandidates)
           if (firstFrameIsSelecting && nextFirstFrameCandidates.length > 0) {
             setFirstFrameCandidates(nextFirstFrameCandidates)
           }
           if (nextFrames.length > 0) setActionFrames(nextFrames)
+          setQueueAhead(nextQueueAhead)
           setExportModel(nextExportModel)
           setFailedDirections(nextFailed)
         },
@@ -2728,6 +2740,26 @@ function QuickStartRun({
       active = false
     }
   }, [reportWorkflowError, run, session])
+
+  useEffect(() => {
+    if (!session || queueAhead <= 0) return
+    let active = true
+    const poll = () => {
+      void session
+        .getQueueAhead()
+        .then((nextQueueAhead) => {
+          if (active) setQueueAhead(nextQueueAhead)
+        })
+        .catch((cause) => {
+          if (active) reportWorkflowError(cause, '读取排队状态失败')
+        })
+    }
+    const interval = window.setInterval(poll, 2_000)
+    return () => {
+      active = false
+      window.clearInterval(interval)
+    }
+  }, [queueAhead, reportWorkflowError, session])
 
   const saveCompletedAction = useCallback(async () => {
     const targetSession = session
@@ -3272,7 +3304,11 @@ function QuickStartRun({
                 </>
               ) : (
                 <>
-                  <GenerationProgressCopy label="角色生成进度" kind="character-template" />
+                  <GenerationProgressCopy
+                    label="角色生成进度"
+                    kind="character-template"
+                    queueAhead={queueAhead}
+                  />
                   <div
                     data-layout="agent-result-set"
                     className="grid w-full max-w-2xl grid-cols-3 gap-3"
@@ -3400,7 +3436,11 @@ function QuickStartRun({
                     </>
                   ) : (
                     <>
-                      <GenerationProgressCopy label="动作首帧生成进度" kind="action-first-frame" />
+                      <GenerationProgressCopy
+                        label="动作首帧生成进度"
+                        kind="action-first-frame"
+                        queueAhead={queueAhead}
+                      />
                       <div
                         data-layout="agent-result-set"
                         className="grid w-full max-w-2xl grid-cols-3 gap-3"
@@ -3512,7 +3552,11 @@ function QuickStartRun({
                     </>
                   ) : (
                     <>
-                      <GenerationProgressCopy label="完整动作生成进度" kind="action-full-frame" />
+                      <GenerationProgressCopy
+                        label="完整动作生成进度"
+                        kind="action-full-frame"
+                        queueAhead={queueAhead}
+                      />
                       <div
                         data-layout="agent-result-set"
                         className="grid w-full max-w-2xl grid-cols-3 gap-3"
