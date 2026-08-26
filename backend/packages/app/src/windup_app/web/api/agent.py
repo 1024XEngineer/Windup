@@ -11,7 +11,7 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -19,7 +19,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from windup_framework.config.provider import settings as provider_settings
 from windup_framework.gateway import bind_call_context
@@ -111,15 +111,56 @@ MAX_MESSAGE_CHARS = 8_000
 MAX_OUTPUT_TOKENS = 1_024
 
 
+class ChatTextContentPart(BaseModel):
+    """Bounded text inside one multimodal user message."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["text"]
+    text: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
+
+
+class ChatImageUrl(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(min_length=1, max_length=2_048, pattern=r"^https?://")
+
+
+class ChatImageContentPart(BaseModel):
+    """One uploaded HTTP(S) image reference; inline base64 remains disallowed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["image_url"]
+    image_url: ChatImageUrl
+
+
+ChatContentPart = Annotated[
+    ChatTextContentPart | ChatImageContentPart,
+    Field(discriminator="type"),
+]
+
+
 class ChatMessage(BaseModel):
     """One OpenAI-compatible message kept by the browser."""
 
     model_config = ConfigDict(extra="forbid")
 
     role: Literal["system", "user", "assistant", "tool"]
-    content: str | None = Field(default=None, max_length=MAX_MESSAGE_CHARS)
+    content: str | list[ChatContentPart] | None = None
     tool_calls: list[dict[str, Any]] | None = Field(default=None, max_length=1)
     tool_call_id: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def bound_multimodal_user_content(self):
+        if isinstance(self.content, list):
+            if self.role != "user":
+                raise ValueError("only user messages may contain multimodal content")
+            if not self.content or len(self.content) > 2:
+                raise ValueError("multimodal user content must contain one or two parts")
+            if sum(isinstance(part, ChatImageContentPart) for part in self.content) != 1:
+                raise ValueError("multimodal user content must contain exactly one image")
+        return self
 
 
 class FunctionDefinition(BaseModel):

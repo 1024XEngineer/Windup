@@ -221,6 +221,30 @@ def test_ai_chat_returns_text_from_real_provider(
     assert "max_tokens" not in provider_requests[0]
 
 
+def test_ai_chat_forwards_multimodal_user_content(
+    auth_client,
+    install_openai_provider: Callable[..., list[dict[str, Any]]],
+):
+    provider_requests = install_openai_provider(auth_client, _text_completion())
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "参考这张图片创建角色"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://cdn.windup.test/hero.png"},
+                },
+            ],
+        }
+    ]
+
+    response = auth_client.post("/ai/chat", json=_request_body(messages=messages))
+
+    assert response.status_code == 200
+    assert provider_requests[0]["messages"] == messages
+
+
 def test_ai_chat_preserves_one_tool_call_from_real_provider(
     auth_client,
     install_openai_provider: Callable[..., list[dict[str, Any]]],
