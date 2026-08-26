@@ -998,6 +998,59 @@
         "title": "CharacterUpdate",
         "type": "object"
       },
+      "CharacterViewSheetGenerateRequest": {
+        "additionalProperties": false,
+        "description": "四向 / 八向立绘 sheet。两口字段相同,朝向集合由路径决定。",
+        "properties": {
+          "character_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Character Id",
+            "type": "integer"
+          },
+          "height": {
+            "default": 1024,
+            "maximum": 2048.0,
+            "minimum": 64.0,
+            "title": "Height",
+            "type": "integer"
+          },
+          "negative_prompt": {
+            "default": "",
+            "title": "Negative Prompt",
+            "type": "string"
+          },
+          "num_images": {
+            "default": 1,
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Num Images",
+            "type": "integer"
+          },
+          "project_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Project Id",
+            "type": "integer"
+          },
+          "prompt": {
+            "default": "",
+            "title": "Prompt",
+            "type": "string"
+          },
+          "width": {
+            "default": 1024,
+            "maximum": 2048.0,
+            "minimum": 64.0,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "character_id"
+        ],
+        "title": "CharacterViewSheetGenerateRequest",
+        "type": "object"
+      },
       "ChatChoiceResponse": {
         "properties": {
           "finish_reason": {
@@ -4347,6 +4400,90 @@
           }
         },
         "summary": "Submit Action Generation",
+        "tags": [
+          "generation"
+        ]
+      }
+    },
+    "/generation/eight-view": {
+      "post": {
+        "description": "提交八向立绘 sheet:正视母版转出八角,中心留空。",
+        "operationId": "submit_eight_view_generation_generation_eight_view_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CharacterViewSheetGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_GenerationTaskOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Eight View Generation",
+        "tags": [
+          "generation"
+        ]
+      }
+    },
+    "/generation/four-view": {
+      "post": {
+        "description": "提交四向立绘 sheet:正视母版转出十字四格,斜向留空。",
+        "operationId": "submit_four_view_generation_generation_four_view_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CharacterViewSheetGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_GenerationTaskOut_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Four View Generation",
         "tags": [
           "generation"
         ]
