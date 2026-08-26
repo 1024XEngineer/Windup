@@ -148,25 +148,31 @@ def test_master_smaller_than_canvas_is_scaled_up_not_pasted():
     assert foot == pytest.approx(want_foot, abs=0.01)
 
 
-def test_multi_subject_master_is_counted_at_the_image_exit():
-    """#427:两个主体在出图当场就留痕,不必等下一个动作任务。"""
-    _, _, quality = _run(_master(subjects=2))
+@pytest.mark.parametrize(("subjects", "count"), [(0, 0), (2, 2)])
+def test_invalid_subject_count_is_rejected_before_upload(subjects: int, count: int):
+    uploaded: list[bytes] = []
+    executor = ImageTaskExecutor(
+        image=_Gen(_master(subjects=subjects)),
+        matte=_BackgroundMatte(),
+        upload=lambda png: uploaded.append(png) or "https://cdn.example.com/result.png",
+    )
 
-    assert quality["subject_blobs"] == [2]
+    with pytest.raises(
+        ValueError,
+        match=rf"角色方向图必须且只能包含一个角色主体：候选1={count}",
+    ):
+        executor._produce_image(
+            CharacterImageInput(prompt="勇者", width=64, height=64, num_images=1),
+            _constraints(),
+        )
+
+    assert uploaded == []
 
 
 def test_single_subject_master_counts_one():
     _, _, quality = _run(_master(subjects=1))
 
     assert quality["subject_blobs"] == [1]
-
-
-def test_each_image_gets_its_own_reading():
-    """读数逐张给,不压成均值:一次出四张里只有一张是双主体,均值会把它抹平。"""
-    _, urls, quality = _run(_master(subjects=2), num_images=3)
-
-    assert len(urls) == 3
-    assert quality["subject_blobs"] == [2, 2, 2]
 
 
 def test_confirmed_master_is_sent_as_identity_reference_without_style_sample():
@@ -201,22 +207,52 @@ def test_confirmed_master_is_sent_as_identity_reference_without_style_sample():
     assert "preserve its identity" in str(seen["prompt"])
 
 
+def test_direction_request_requires_one_standalone_character_asset():
+    seen: dict[str, str] = {}
+
+    class _RecordingGen:
+        def gen_image(self, prompt, refs):
+            del refs
+            seen["prompt"] = prompt
+            return _master()
+
+    ImageTaskExecutor(
+        image=_RecordingGen(),
+        matte=_BackgroundMatte(),
+        upload=lambda _png: "https://cdn.example.com/result.png",
+    )._produce_image(
+        CharacterImageInput(
+            prompt="四向视图，朝上、朝下、朝左、朝右",
+            width=64,
+            height=64,
+            num_images=1,
+            direction=ActionDirection.WEST,
+        ),
+        ProjectConstraints(directions=4, sprite_w=64, sprite_h=64),
+    )
+
+    prompt = seen["prompt"].lower()
+    assert "one canvas" in prompt
+    assert "one centered full-body character instance" in prompt
+    assert "one standalone direction asset" in prompt
+
+
 @pytest.mark.parametrize(
-    ("direction", "heading"),
+    ("direction", "visible_surface"),
     [
-        (ActionDirection.EAST, "right edge of the frame"),
-        (ActionDirection.WEST, "left edge of the frame"),
-        (ActionDirection.NORTH, "top edge of the frame"),
-        (ActionDirection.SOUTH, "bottom edge of the frame"),
-        (ActionDirection.NORTH_EAST, "upper-right corner of the frame"),
-        (ActionDirection.NORTH_WEST, "upper-left corner of the frame"),
-        (ActionDirection.SOUTH_EAST, "lower-right corner of the frame"),
-        (ActionDirection.SOUTH_WEST, "lower-left corner of the frame"),
+        (ActionDirection.EAST, "right-facing side"),
+        (ActionDirection.WEST, "left-facing side"),
+        (ActionDirection.NORTH, "back of the head"),
+        (ActionDirection.SOUTH, "face and chest"),
+        (ActionDirection.NORTH_EAST, "back-right three-quarter"),
+        (ActionDirection.NORTH_WEST, "back-left three-quarter"),
+        (ActionDirection.SOUTH_EAST, "front-right three-quarter"),
+        (ActionDirection.SOUTH_WEST, "front-left three-quarter"),
     ],
 )
-def test_multidirectional_master_prompt_uses_projection_neutral_screen_heading(
+def test_multidirectional_master_prompt_keeps_projection_and_names_body_surface(
     direction,
-    heading,
+    visible_surface,
 ):
     master = _master()
     seen: dict[str, str] = {}
@@ -252,7 +288,7 @@ def test_multidirectional_master_prompt_uses_projection_neutral_screen_heading(
     prompt = seen["prompt"].lower()
     assert "side view, horizontal side-scroller" not in prompt
     assert "rotate the character, not the camera" in prompt
-    assert heading in prompt
+    assert visible_surface in prompt
     assert not any(
         camera_view in prompt
         for camera_view in (
@@ -320,12 +356,7 @@ def test_cutout_failure_fails_the_task_instead_of_delivering_gray():
         _run(_master(), matte=_Broken())
 
 
-def test_quality_reaches_the_task_result_over_http(session_factory):
-    """从建任务到读任务走真实链路:读数必须能被前端拿到。
-
-    直接构造 ``CharacterImageOutput`` 的测试证明不了这条 —— 它绕过了 executor 落库
-    与 ``task_repo`` 反序列化那两段,而字段漏在哪一段都会让接口那头恒为空。
-    """
+def test_invalid_subject_count_fails_the_task_before_upload(session_factory):
     with session_factory() as session:
         seed_credit_account(session, 1)
         session.commit()
@@ -338,18 +369,20 @@ def test_quality_reaches_the_task_result_over_http(session_factory):
         session.commit()
         task_id = task.id
 
+    uploaded: list[bytes] = []
     ImageTaskExecutor(
         image=_Gen(_master(subjects=2)),
         matte=_BackgroundMatte(),
-        upload=lambda _b: "https://cdn.example.com/m.png",
+        upload=lambda png: uploaded.append(png) or "https://cdn.example.com/m.png",
         session_factory=session_factory,
     ).run_image_task(task_id, image_input)
 
     with session_factory() as session:
         done = AiGenerationService().get_task(session, project_id=1, task_id=task_id)
 
-    assert done.status is TaskStatus.COMPLETED
-    assert done.result.quality == {"subject_blobs": [2]}
+    assert done.status is TaskStatus.FAILED
+    assert done.result is None
+    assert uploaded == []
 
 
 def test_multi_image_generation_keeps_slot_count_when_calls_overlap():

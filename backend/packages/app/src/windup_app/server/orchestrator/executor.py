@@ -126,6 +126,12 @@ def _image_view_prompt(cons: ProjectConstraints) -> str:
     )
 
 
+_SINGLE_DIRECTION_ASSET_PROMPT = (
+    "One canvas contains one centered full-body character instance at one scale. "
+    "This request produces one standalone direction asset for the requested orientation."
+)
+
+
 def _load_constraints(session: Session, project_id: int | None) -> ProjectConstraints:
     """查 Project 组装全局约束;无 project_id / 查不到 → 缺省。"""
     if project_id is None:
@@ -910,6 +916,7 @@ class ImageTaskExecutor:
             base,
             _image_view_prompt(cons),
             direction_prompt(input.direction),
+            _SINGLE_DIRECTION_ASSET_PROMPT,
         ]
         if cons.style:
             parts.append(f"Art style: {cons.style}.")
@@ -984,10 +991,20 @@ class ImageTaskExecutor:
             )
             cut.append(Image.open(io.BytesIO(png)).convert("RGBA"))
             pngs.append(png)
+        blob_counts = subject_blobs(cut)
+        invalid = [
+            (index, count)
+            for index, count in enumerate(blob_counts)
+            if count != 1
+        ]
+        if invalid:
+            summary = "、".join(
+                f"候选{index + 1}={count}" for index, count in invalid
+            )
+            raise ValueError(f"角色方向图必须且只能包含一个角色主体：{summary}")
+
         urls = generation_io.upload_frames(upload, pngs)
-        # 同一份 alpha 顺手数一次主体数(#427):此前多主体母版要等下一个动作任务才留痕,
-        # 而那时钱已经花在错的母版上了。只记账,不在此处判成败 —— 与动作那条同一立场。
-        return urls, {"subject_blobs": list(subject_blobs(cut))}
+        return urls, {"subject_blobs": list(blob_counts)}
 
     def _get_image(self):
         if self._image is not None:
