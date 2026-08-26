@@ -1,6 +1,9 @@
-import { ArrowRight, CheckCircle, Lifebuoy } from '@phosphor-icons/react'
+import { ArrowRight, Lifebuoy, PaperPlaneTilt } from '@phosphor-icons/react'
 import { Link } from 'react-router'
 
+import assetLibraryArtwork from '@/assets/workspace/asset-library.png'
+import playtestArtwork from '@/assets/workspace/playtest.png'
+import workflowArtwork from '@/assets/workspace/workflow.png'
 import { MarketingHeader } from '@/pages/landing/marketing-header'
 import { guideChapters } from './content'
 
@@ -11,6 +14,54 @@ const quickLinks = [
   { label: '查看项目资产', to: '/projects' },
   { label: '进入预览台', to: '/playtest' },
 ] as const
+
+const chapterArtwork: Partial<Record<string, { src: string; alt: string; caption: string }>> = {
+  'workflow-editor': {
+    src: workflowArtwork,
+    alt: '工作流编辑器对应的织机像素画',
+    caption: '工作流把角色母版、动作首帧、完整动画和审核结果留在同一条制作线上。',
+  },
+  assets: {
+    src: assetLibraryArtwork,
+    alt: '项目资产对应的素材册像素画',
+    caption: '项目资产保存角色、造型、动作和每一帧，之后可以继续制作或导出。',
+  },
+  playtest: {
+    src: playtestArtwork,
+    alt: '预览台对应的逐帧播放器像素画',
+    caption: '预览台读取项目中真实保存的动作帧，用来检查移动方向和播放衔接。',
+  },
+}
+
+function QuickStartComposerPreview() {
+  return (
+    <div className="my-7">
+      <p className="mb-3 text-xs font-semibold text-app-faint">Quick Start 输入示例</p>
+      <div className="relative rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]">
+        <label className="relative block min-h-[52px] min-w-0 overflow-hidden">
+          <span className="sr-only">创作指令示例</span>
+          <textarea
+            rows={2}
+            readOnly
+            aria-label="创作指令示例"
+            value="年轻的港口信使，短银发，深蓝短外套和红围巾，全身像，适合 2D RPG。"
+            className="block min-h-[76px] w-full min-w-0 resize-none border-0 bg-transparent py-[14px] pr-16 pl-4 text-[15px] leading-6 text-app-ink outline-none"
+          />
+        </label>
+        <Link
+          to="/quick-start"
+          aria-label="打开 Quick Start"
+          className="absolute right-[8px] bottom-[8px] grid size-10 place-items-center rounded-full border-0 bg-app-accent text-app-canvas transition-[transform,background] duration-150 hover:-translate-y-px hover:bg-app-accent-hover active:scale-95"
+        >
+          <PaperPlaneTilt aria-hidden="true" size={17} weight="fill" />
+        </Link>
+      </div>
+      <p className="mt-2 text-xs leading-5 text-app-faint">
+        写清身份、外形、服装、配色和整体气质，再发送给 Windup。
+      </p>
+    </div>
+  )
+}
 
 export function GuidePage() {
   return (
@@ -49,7 +100,7 @@ export function GuidePage() {
             </div>
           </header>
 
-          <div className="grid gap-10 pt-8 md:grid-cols-[12.5rem_minmax(0,45rem)] md:justify-center md:gap-10 xl:grid-cols-[13.5rem_minmax(0,45rem)] xl:gap-16">
+          <div className="grid gap-10 pt-8 md:grid-cols-[13.5rem_minmax(0,1fr)] md:gap-12 xl:gap-16">
             <aside className="md:sticky md:top-28 md:self-start md:border-r md:border-app-line md:pr-7 xl:pr-8">
               <nav aria-label="使用指南章节">
                 <p className="text-xs font-semibold text-app-ink-soft">本页内容</p>
@@ -105,9 +156,25 @@ export function GuidePage() {
                   >
                     {chapter.title}
                   </h2>
-                  <p className="mt-3 max-w-[42rem] text-[15px] leading-7 text-app-muted">
+                  <p className="mt-3 max-w-[52rem] text-[15px] leading-7 text-app-muted">
                     {chapter.summary}
                   </p>
+
+                  {chapter.id === 'quick-start' ? <QuickStartComposerPreview /> : null}
+
+                  {chapterArtwork[chapter.id] ? (
+                    <figure className="my-7 grid items-center gap-5 border-y border-app-line py-5 sm:grid-cols-[11rem_minmax(0,1fr)]">
+                      <img
+                        src={chapterArtwork[chapter.id]?.src}
+                        alt={chapterArtwork[chapter.id]?.alt}
+                        className="mx-auto h-36 w-36 object-contain"
+                        style={{ imageRendering: 'pixelated' }}
+                      />
+                      <figcaption className="text-sm leading-7 text-app-muted">
+                        {chapterArtwork[chapter.id]?.caption}
+                      </figcaption>
+                    </figure>
+                  ) : null}
 
                   {chapter.action ? (
                     <Link
@@ -119,55 +186,31 @@ export function GuidePage() {
                     </Link>
                   ) : null}
 
-                  <ol className="mt-7 space-y-7">
+                  <div className="mt-7 space-y-7">
                     {chapter.topics.map((topic, topicIndex) => (
-                      <li
+                      <div
                         key={topic.title}
-                        className="grid grid-cols-[1.75rem_minmax(0,1fr)] gap-3"
+                        id={`${chapter.id}-${topicIndex + 1}`}
+                        className="space-y-2"
                       >
-                        <span
-                          aria-hidden="true"
-                          className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-full border border-app-line-strong font-mono text-[10px] text-app-faint"
-                        >
-                          {topicIndex + 1}
-                        </span>
-                        <div>
-                          <h3 className="text-base font-bold leading-6 text-app-ink-soft">
-                            {topic.title}
-                          </h3>
-                          <p className="mt-1.5 text-sm leading-6 text-app-muted">
-                            {topic.description}
+                        <h3 className="text-base font-bold leading-6 text-app-ink-soft">
+                          {topic.title}
+                        </h3>
+                        <p className="text-sm leading-7 text-app-muted">{topic.description}</p>
+                        {topic.bullets?.map((bullet) => (
+                          <p key={bullet} className="text-sm leading-7 text-app-ink-soft">
+                            {bullet}
                           </p>
-                          {topic.bullets ? (
-                            <ul className="mt-3 space-y-2">
-                              {topic.bullets.map((bullet) => (
-                                <li
-                                  key={bullet}
-                                  className="flex gap-2.5 text-sm leading-6 text-app-ink-soft"
-                                >
-                                  <CheckCircle
-                                    aria-hidden="true"
-                                    className="mt-1 shrink-0 text-app-accent"
-                                    size={15}
-                                    weight="fill"
-                                  />
-                                  <span>{bullet}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          ) : null}
-                          {topic.example ? (
-                            <div className="mt-3 border-l-2 border-app-line-strong pl-3">
-                              <p className="text-[13px] leading-6 text-app-ink-soft">
-                                <span className="mr-2 font-semibold text-app-faint">示例</span>
-                                {topic.example}
-                              </p>
-                            </div>
-                          ) : null}
-                        </div>
-                      </li>
+                        ))}
+                        {topic.example ? (
+                          <p className="border-l-2 border-app-line-strong pl-3 text-[13px] leading-6 text-app-ink-soft">
+                            <span className="mr-2 font-semibold text-app-faint">例如</span>
+                            {topic.example}
+                          </p>
+                        ) : null}
+                      </div>
                     ))}
-                  </ol>
+                  </div>
 
                   {chapter.tip ? (
                     <div className="mt-7 flex gap-3 border-l-2 border-app-accent bg-app-accent-muted px-4 py-3 text-sm leading-6 text-app-ink-soft">
