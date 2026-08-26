@@ -968,7 +968,7 @@ describe('QuickStartPage', () => {
 
   it('renders Markdown emphasis and lists in a Planner reply', async () => {
     const planner = vi.fn(async (_input: PlannerInput) => ({
-      text: '**建议先定住轮廓：**\n\n- 银色面具\n- 深色披风',
+      text: '**建议先定住轮廓：**\n\n- 银色面具\n- 深色披风\n\n[查看角色规范](https://example.com/guide)',
       finishReason: 'stop',
       toolCalls: [],
     }))
@@ -980,11 +980,18 @@ describe('QuickStartPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
 
     const reply = await screen.findByLabelText('Agent 回答')
+    const agentCopy = reply.closest('[data-agent-copy]')
+    const bot = agentCopy?.querySelector('[data-quick-start-agent-bot]')
     expect(reply.querySelector('strong')?.textContent).toBe('建议先定住轮廓：')
     expect(Array.from(reply.querySelectorAll('li')).map((item) => item.textContent)).toEqual([
       '银色面具',
       '深色披风',
     ])
+    expect(agentCopy?.className).not.toContain('quick-start-agent-copy--entering')
+    expect(reply.className).toContain('quick-start-agent-markdown--entering')
+    expect(reply.querySelectorAll('.kinetic-copy-character').length).toBeGreaterThan(0)
+    expect(bot?.querySelector('.kinetic-copy-character')).toBeNull()
+    expect(screen.getByRole('link', { name: '查看角色规范' })).toBeTruthy()
   })
 
   it('keeps the chosen art style across a page refresh', async () => {
@@ -1157,6 +1164,16 @@ describe('QuickStartPage', () => {
 
     const composer = screen.getByTestId('quick-start-composer')
     const input = screen.getByRole('textbox', { name: '创作指令' }) as HTMLTextAreaElement
+    const conversationForm = input.closest('form')
+    const conversationSurface = input.closest('label')
+    const conversationControls = composer.querySelector(
+      '[data-layout="quick-start-composer-controls"]',
+    )
+    expect(conversationForm?.className).toContain('grid-cols-[1fr_auto]')
+    expect(conversationSurface?.className).not.toContain('border-app-line-strong')
+    expect(conversationSurface?.className).not.toContain('shadow-app-panel')
+    expect(conversationControls?.className).toContain('hidden')
+    expect(conversationForm?.querySelector('button')?.className).not.toContain('absolute')
     expect(input.tagName).toBe('TEXTAREA')
     expect(input.rows).toBe(1)
     expect(input.className).toContain('[field-sizing:content]')
