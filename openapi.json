@@ -1067,6 +1067,43 @@
         "title": "ChatCompletionResponse",
         "type": "object"
       },
+      "ChatImageContentPart": {
+        "additionalProperties": false,
+        "description": "One uploaded HTTP(S) image reference; inline base64 remains disallowed.",
+        "properties": {
+          "image_url": {
+            "$ref": "#/components/schemas/ChatImageUrl"
+          },
+          "type": {
+            "const": "image_url",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "image_url"
+        ],
+        "title": "ChatImageContentPart",
+        "type": "object"
+      },
+      "ChatImageUrl": {
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "pattern": "^https?://",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "ChatImageUrl",
+        "type": "object"
+      },
       "ChatMessage": {
         "additionalProperties": false,
         "description": "One OpenAI-compatible message kept by the browser.",
@@ -1076,6 +1113,26 @@
               {
                 "maxLength": 8000,
                 "type": "string"
+              },
+              {
+                "items": {
+                  "discriminator": {
+                    "mapping": {
+                      "image_url": "#/components/schemas/ChatImageContentPart",
+                      "text": "#/components/schemas/ChatTextContentPart"
+                    },
+                    "propertyName": "type"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ChatTextContentPart"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ChatImageContentPart"
+                    }
+                  ]
+                },
+                "type": "array"
               },
               {
                 "type": "null"
@@ -1207,6 +1264,29 @@
           "messages"
         ],
         "title": "ChatRequest",
+        "type": "object"
+      },
+      "ChatTextContentPart": {
+        "additionalProperties": false,
+        "description": "Bounded text inside one multimodal user message.",
+        "properties": {
+          "text": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "const": "text",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "text"
+        ],
+        "title": "ChatTextContentPart",
         "type": "object"
       },
       "ChatUsageResponse": {

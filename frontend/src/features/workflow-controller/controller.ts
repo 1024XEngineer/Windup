@@ -121,6 +121,8 @@ export type PrepareQuickStartProject = (
 
 export interface StartCharacterGenerationInput {
   prompt: string
+  /** 用户在 Agent 对话中上传的原始图片；与优化后的文字共同约束角色母版。 */
+  referenceMedia?: readonly MediaReference[]
   directionalMovement?: DirectionalMovement
   gameStyle?: ArtStyle
   projectId?: Project['id']
@@ -397,6 +399,7 @@ export function createWorkflowController({
 
   async function startCharacterGeneration({
     prompt,
+    referenceMedia = [],
     directionalMovement: selectedDirectionalMovement = 'single',
     gameStyle,
     projectId,
@@ -429,7 +432,7 @@ export function createWorkflowController({
           dependsOnNodeIds: [],
           generations: [],
           error: null,
-          input: { prompt: normalizedPrompt, referenceMedia: [] },
+          input: { prompt: normalizedPrompt, referenceMedia: [...referenceMedia] },
           ...(suggestPixelPerfect ? { pixelPerfectSuggested: true } : {}),
           ...(automaticDelivery
             ? {

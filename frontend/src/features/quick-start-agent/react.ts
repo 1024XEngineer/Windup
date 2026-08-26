@@ -111,7 +111,10 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
   ])
 
   const submit = useCallback(
-    async (input: string): Promise<QuickStartAgentResult> => {
+    async (
+      input: string,
+      options?: { referenceMedia?: readonly string[] },
+    ): Promise<QuickStartAgentResult> => {
       if (running.current) throw new Error('Planner 正在处理上一条输入')
       running.current = true
       const controller = new AbortController()
@@ -122,7 +125,10 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
         const activeAgent = ensureAgent()
         const runTurn = started.current ? activeAgent.continue : activeAgent.start
         started.current = true
-        const result = await runTurn(input, { signal: controller.signal })
+        const result = await runTurn(input, {
+          signal: controller.signal,
+          referenceMedia: options?.referenceMedia,
+        })
         if (mounted.current && abortController.current === controller) {
           if (result.kind === 'message') {
             setState({
@@ -139,6 +145,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
               locomotion,
               optimizationSummary,
               suggestPixelPerfect,
+              referenceMedia,
             } = result
             setState({
               status: 'proposal',
@@ -149,6 +156,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
               ...(locomotion ? { locomotion } : {}),
               optimizationSummary,
               ...(suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
+              ...(referenceMedia?.length ? { referenceMedia } : {}),
             })
           }
         }
@@ -192,6 +200,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
         locomotion,
         optimizationSummary,
         suggestPixelPerfect,
+        referenceMedia,
       } = state
       if (mounted.current) {
         setState({
@@ -203,6 +212,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
           ...(locomotion ? { locomotion } : {}),
           optimizationSummary,
           ...(suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
+          ...(referenceMedia?.length ? { referenceMedia } : {}),
         })
       }
       try {
