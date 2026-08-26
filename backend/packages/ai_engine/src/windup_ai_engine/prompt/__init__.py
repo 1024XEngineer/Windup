@@ -4,7 +4,12 @@ from .actions import build_attack_prompt, build_idle_prompt
 from .custom import MAX_ACTION_CHARS, build_custom_prompt
 from .jump import JUMP_PHASES, build_jump_prompt
 from .presets import ACTION_PRESETS, ActionPreset
-from .view_sheet import VIEW_SHEET_PROMPT_VERSION, build_view_sheet_prompt
+from .view_sheet import (
+    VIEW_SHEET_PROMPT_VERSION,
+    build_view_sheet_prompt,
+    master_pose_clause,
+    pixel_art_clause,
+)
 from .walk import build_walk_prompt
 
 # 改动本包任何一个 build_*_prompt 的输出(包括 prompts/*.md 模板)都必须连带把这个
@@ -25,4 +30,6 @@ __all__ = [
     "PROMPT_VERSION",
     "VIEW_SHEET_PROMPT_VERSION",
     "build_view_sheet_prompt",
+    "master_pose_clause",
+    "pixel_art_clause",
 ]

@@ -40,6 +40,8 @@ SECTIONS = {
         "identity",
         "pose",
         "framing",
+        "master",
+        "pixel",
         "elevation.side",
         "elevation.top-down",
         "elevation.isometric",

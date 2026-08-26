@@ -1,6 +1,8 @@
 """四向 / 八向立绘 sheet 编排。
 
-从已确认正视母版(south)图生图出源方向,镜像格水平翻转后上传,再拼一张 3×3 罗盘。
+从已确认正视母版(south)图生图出源方向;抠图后按 PerfectPixel 口径检查身份 /
+空图 / east 正面漂,失败把英文 Hint 喂进下一轮,最多 3 次,不行留最好的一张。
+镜像格水平翻转后上传,再拼一张 3×3 罗盘。
 不经过 ``ImageTaskExecutor._produce_image`` / ``DirectionSetTaskExecutor``。
 
 web **不得 import 本模块**(与 ``executor`` 同门禁:会牵出 ai_engine)。
@@ -18,7 +20,14 @@ from typing import TYPE_CHECKING
 from PIL import Image
 from sqlalchemy.orm import Session
 
+from windup_ai_engine.postprocess import master_pixel_spec, to_pixel_art
 from windup_ai_engine.prompt import build_view_sheet_prompt
+from windup_ai_engine.slicing.identity import (
+    STANDING_QC_ATTEMPTS,
+    identity_similarity,
+    inspect_standing_cell,
+    is_back_facing,
+)
 from windup_ai_engine.slicing.quality import subject_blobs
 from windup_common.directions import ActionDirection
 from windup_common.models import CharacterView
@@ -93,6 +102,86 @@ def flip_horizontal(png: bytes) -> bytes:
     buf = io.BytesIO()
     im.transpose(Image.FLIP_LEFT_RIGHT).save(buf, "PNG")
     return buf.getvalue()
+
+
+def _subject_box(im: Image.Image) -> tuple[int, int, int, int] | None:
+    """不透明包围盒,右/下为开区间。全透明返回 None。"""
+    return im.convert("RGBA").getchannel("A").getbbox()
+
+
+def pack_cell_to_master(
+    png: bytes,
+    master: Image.Image,
+    width: int,
+    height: int,
+    *,
+    nearest: bool,
+) -> bytes:
+    """把一格主体缩放到与南向母版同高,脚底与水平中心对齐后再写入 ``width``×``height``。
+
+    对应 PerfectPixel ``ExtractFrames`` 的公共缩放 + 基线,但标尺是已确认的 south
+    立绘,不是条带里最高的一帧。量不到包围盒时退回 ``_fit_to``。画布装不下时
+    先按画布收一档缩放,再夹进画布 —— 不改母版 URL,也不在拼 sheet 时二次缩放。
+    """
+    src = Image.open(io.BytesIO(png)).convert("RGBA")
+    master_rgba = master.convert("RGBA")
+    master_box = _subject_box(master_rgba)
+    src_box = _subject_box(src)
+    if master_box is None or src_box is None:
+        return _fit_to(png, width, height, smooth=not nearest)
+    mx0, my0, mx1, my1 = master_box
+    sx0, sy0, sx1, sy1 = src_box
+    sub_w, sub_h = sx1 - sx0, sy1 - sy0
+    master_h = my1 - my0
+    if sub_w < 1 or sub_h < 1 or master_h < 1:
+        return _fit_to(png, width, height, smooth=not nearest)
+    scale = min(master_h / sub_h, width / sub_w, height / sub_h)
+    new_w = max(1, round(sub_w * scale))
+    new_h = max(1, round(sub_h * scale))
+    crop = src.crop((sx0, sy0, sx1, sy1))
+    if (new_w, new_h) != (sub_w, sub_h):
+        crop = crop.resize(
+            (new_w, new_h),
+            Image.NEAREST if nearest else Image.LANCZOS,
+        )
+    left = round((mx0 + mx1) / 2 - new_w / 2)
+    top = my1 - new_h
+    if left < 0:
+        left = 0
+    elif left + new_w > width:
+        left = width - new_w
+    if top < 0:
+        top = 0
+    elif top + new_h > height:
+        top = height - new_h
+    canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    canvas.alpha_composite(crop, (left, top))
+    buf = io.BytesIO()
+    canvas.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def restore_pixel_cell(png: bytes, master: Image.Image, width: int, height: int) -> bytes:
+    """按正视母版的逻辑网格与色板吸附一格,再 contain 进精灵画布。
+
+    Perfect Pixel 的第二步是检测网格再采样;这里复用动作链路已有的
+    ``master_pixel_spec`` / ``to_pixel_art``,不另引 OpenCV。量不出网格时退回
+    NEAREST ``_fit_to``,与非像素路径的尺寸落实同一出口。
+    """
+    try:
+        logical_h, palette = master_pixel_spec(master)
+    except Exception:
+        return _fit_to(png, width, height, smooth=False)
+    if logical_h <= 8:
+        return _fit_to(png, width, height, smooth=False)
+    snapped = to_pixel_art(
+        Image.open(io.BytesIO(png)).convert("RGBA"),
+        target_h=logical_h,
+        palette=palette,
+    )
+    buf = io.BytesIO()
+    snapped.save(buf, "PNG")
+    return _fit_to(buf.getvalue(), width, height, smooth=False)
 
 
 def compose_compass_sheet(
@@ -247,26 +336,56 @@ class ViewSheetTaskExecutor:
         matte = self._get_matte()
         upload = self._upload or self._upload_image
         refs = [master_png]
+        south_im = Image.open(io.BytesIO(master_png)).convert("RGBA")
 
         def _gen_one(job: tuple[int, ActionDirection]) -> bytes:
             sheet_i, direction = job
-            reset_call = fresh_gateway_request(start_from_model=spread[sheet_i])
-            try:
-                prompt = build_view_sheet_prompt(direction, view=view, extra=extra)
-                return image_gen.gen_image(prompt, refs)
-            finally:
-                reset_call()
+            feedback = ""
+            best_cut: bytes | None = None
+            best_score = -10**9
+            for _attempt in range(STANDING_QC_ATTEMPTS):
+                reset_call = fresh_gateway_request(start_from_model=spread[sheet_i])
+                try:
+                    prompt = build_view_sheet_prompt(
+                        direction,
+                        view=view,
+                        extra=extra,
+                        stylize=cons.stylize,
+                        feedback=feedback,
+                    )
+                    raw = image_gen.gen_image(prompt, refs)
+                finally:
+                    reset_call()
+                cut = matte.cutout(raw)
+                insp = inspect_standing_cell(
+                    Image.open(io.BytesIO(cut)).convert("RGBA"),
+                    south_im,
+                    direction,
+                )
+                if insp.score > best_score:
+                    best_cut, best_score = cut, insp.score
+                if insp.ok:
+                    return cut
+                feedback = (
+                    "QUALITY CORRECTIONS detected by automated inspection "
+                    "(fix all of these): " + " ".join(insp.hints)
+                )
+            assert best_cut is not None
+            return best_cut
 
-        raws = generation_io.io_map(_gen_one, jobs)
+        cuts = generation_io.io_map(_gen_one, jobs)
         fitted: list[bytes] = []
         cut_images: list[Image.Image] = []
-        for raw in raws:
-            png = _fit_to(
-                matte.cutout(raw),
-                input.width,
-                input.height,
-                smooth=cons.stylize != "pixel",
-            )
+        for cut in cuts:
+            if cons.stylize == "pixel":
+                png = restore_pixel_cell(cut, south_im, input.width, input.height)
+                png = pack_cell_to_master(
+                    png, south_im, input.width, input.height, nearest=True,
+                )
+            else:
+                png = pack_cell_to_master(
+                    cut, south_im, input.width, input.height, nearest=False,
+                )
             cut_images.append(Image.open(io.BytesIO(png)).convert("RGBA"))
             fitted.append(png)
 
@@ -316,11 +435,23 @@ class ViewSheetTaskExecutor:
                 )
             sheets.append(CharacterViewSheetCandidate(sheet_url=sheet_url, cells=cells))
 
-        south_im = Image.open(io.BytesIO(master_png)).convert("RGBA")
+        identity_sim = []
+        for (_, direction), img in zip(jobs, cut_images, strict=True):
+            if is_back_facing(direction):
+                continue
+            identity_sim.append(
+                {
+                    "direction": direction.value,
+                    "sim": round(identity_similarity(img, south_im), 4),
+                }
+            )
         return CharacterViewSheetOutput(
             type=task_type.value,
             sheets=sheets,
-            quality={"subject_blobs": list(subject_blobs([south_im, *cut_images]))},
+            quality={
+                "subject_blobs": list(subject_blobs([south_im, *cut_images])),
+                "identity_sim": identity_sim,
+            },
         )
 
     def _get_image(self):

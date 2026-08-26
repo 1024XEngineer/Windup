@@ -27,6 +27,8 @@ def test_build_locks_identity_then_camera():
     assert text.index("FRONT-VIEW character master") < text.index("ninety-degree")
     assert "true side view" in text
     assert "Exactly one character" in text
+    assert "overrides any other facing" in text
+    assert "Never drift back toward a front view" in text
 
 
 def test_south_is_front_view_not_east_profile():
@@ -54,10 +56,43 @@ def test_extra_clause_appends_without_replacing_identity():
     assert "FRONT-VIEW character master" in text
 
 
+def test_pixel_stylize_appends_grid_clause_without_art_style_phrase():
+    text = build_view_sheet_prompt(ActionDirection.EAST, stylize="pixel")
+    assert "Chunky square pixels" in text
+    assert "six to eight solid colors" in text
+    assert "32-64px game sprite" in text
+    assert "Art style" not in text
+    bare = build_view_sheet_prompt(ActionDirection.EAST)
+    assert "Chunky square pixels" not in bare
+
+
+def test_source_directions_lock_pp_visibility():
+    east = build_view_sheet_prompt(ActionDirection.EAST)
+    north = build_view_sheet_prompt(ActionDirection.NORTH)
+    south = build_view_sheet_prompt(ActionDirection.SOUTH)
+    assert "left limbs fully hidden behind the body" in east
+    assert "face completely hidden" in north
+    assert "faces the viewer directly" in south
+    assert "It supplies identity only" in east
+
+
 def test_blank_extra_does_not_pad_the_prompt():
     bare = build_view_sheet_prompt(ActionDirection.NORTH)
     padded = build_view_sheet_prompt(ActionDirection.NORTH, extra="   ")
     assert bare == padded
+
+
+def test_feedback_appends_after_extra_without_replacing_identity():
+    text = build_view_sheet_prompt(
+        ActionDirection.EAST,
+        extra="idle stance",
+        feedback="Never drift back toward a front view.",
+    )
+    assert text.endswith("Never drift back toward a front view.")
+    assert text.index("FRONT-VIEW character master") < text.index("idle stance")
+    assert text.index("idle stance") < text.index("Never drift back toward a front view.")
+    bare = build_view_sheet_prompt(ActionDirection.EAST, extra="idle stance")
+    assert "Never drift back toward a front view." not in bare
 
 
 def test_illegal_direction_or_view_raises():

@@ -378,3 +378,28 @@ def test_multi_image_generation_keeps_slot_count_when_calls_overlap():
     assert len(urls) == 3
     assert quality["subject_blobs"] == [1, 1, 1]
     assert len(threads) > 1
+
+
+def test_pixel_project_image_prompt_includes_grid_clause():
+    """像素定妆走 Perfect Pixel 那套正面网格约束,不只丢一句 Art style: pixel art。"""
+    prompts: list[str] = []
+
+    class _Gen:
+        def gen_image(self, prompt, refs):
+            del refs
+            prompts.append(prompt)
+            return _master()
+
+    ImageTaskExecutor(
+        image=_Gen(),
+        matte=_BackgroundMatte(),
+        upload=lambda b: "u",
+    )._produce_image(
+        CharacterImageInput(prompt="勇者", width=64, height=64, num_images=1),
+        ProjectConstraints(sprite_w=64, sprite_h=64, stylize="pixel", style="pixel art"),
+    )
+    assert prompts
+    assert "Chunky square pixels" in prompts[0]
+    assert "Art style: pixel art" in prompts[0]
+    assert "three quarters of the canvas height" in prompts[0]
+    assert "hairstyle" in prompts[0]
