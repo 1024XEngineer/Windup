@@ -13,7 +13,7 @@ import type {
   Generation,
   GenerationApis,
   GenerationEvent,
-  GenerationExpectation,
+  WorkflowGenerationExpectation,
   GeneratedImage,
   ImageCandidateCount,
   MediaReference,
@@ -1995,8 +1995,8 @@ function generationExpectationForNode(
   run: WorkflowRun,
   node: WorkflowNode,
   direction?: ActionDirection,
-): GenerationExpectation | null {
-  const withDirection = <T extends GenerationExpectation>(expectation: T): T => {
+): WorkflowGenerationExpectation | null {
+  const withDirection = <T extends WorkflowGenerationExpectation>(expectation: T): T => {
     return direction === undefined ? expectation : ({ ...expectation, direction } as T)
   }
   if (node.type === 'character-template') return withDirection({ type: 'character_template' })

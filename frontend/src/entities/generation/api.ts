@@ -19,6 +19,7 @@ import type {
   GenerationExpectation,
   GenerationInput,
   GenerationResult,
+  GenerationTaskType,
   GenerationType,
   ImageCandidateCount,
   SequenceGeometry,
@@ -58,18 +59,31 @@ interface GenerationTaskDto {
   errorMessage: string | null
 }
 
-type BackendGenerationType = 'character_image' | 'character_action'
+type BackendGenerationType =
+  | 'character_image'
+  | 'character_direction_set'
+  | 'character_action'
 
-const TASK_STATUSES = new Set<TaskStatus>(['pending', 'running', 'completed', 'failed'])
+const TASK_STATUSES = new Set<TaskStatus>([
+  'pending',
+  'running',
+  'completed',
+  'partial',
+  'failed',
+])
+const DIRECTION_TASK_STATUSES = new Set(['pending', 'running', 'completed', 'failed'])
 const ACTION_TYPES = new Set(['walk', 'idle', 'attack', 'jump', 'custom'])
+const RETRYABLE_QUERY_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
 
 export class GenerationApiError extends Error {
   readonly code: number
+  readonly status: number | null
 
-  constructor(message: string, code = 0, options?: ErrorOptions) {
+  constructor(message: string, code = 0, options?: ErrorOptions, status: number | null = null) {
     super(message, options)
     this.name = 'GenerationApiError'
     this.code = code
+    this.status = status
   }
 }
 
@@ -105,7 +119,11 @@ function dtoNullableString(value: unknown, field: string): string | null {
 }
 
 function backendTaskType(value: unknown): BackendGenerationType {
-  if (value !== 'character_image' && value !== 'character_action') {
+  if (
+    value !== 'character_image' &&
+    value !== 'character_direction_set' &&
+    value !== 'character_action'
+  ) {
     throw new GenerationApiError('生成任务 task_type 无效', 200)
   }
   return value
@@ -131,10 +149,11 @@ async function readData(response: Response): Promise<unknown> {
       `生成接口返回了无法解析的响应（HTTP ${response.status}）`,
       response.status,
       { cause: error },
+      response.status,
     )
   }
   if (!isRecord(raw)) {
-    throw new GenerationApiError('生成接口响应不是对象', response.status)
+    throw new GenerationApiError('生成接口响应不是对象', response.status, undefined, response.status)
   }
 
   const envelope: ResponseEnvelope = {
@@ -143,15 +162,25 @@ async function readData(response: Response): Promise<unknown> {
     data: raw.data,
   }
   if (typeof envelope.code !== 'number') {
-    throw new GenerationApiError('生成接口响应缺少有效的 code', response.status)
+    throw new GenerationApiError(
+      '生成接口响应缺少有效的 code',
+      response.status,
+      undefined,
+      response.status,
+    )
   }
   const message =
     typeof envelope.message === 'string' ? envelope.message : `HTTP ${response.status}`
   if (!response.ok || envelope.code !== 200) {
-    throw new GenerationApiError(message, envelope.code)
+    throw new GenerationApiError(message, envelope.code, undefined, response.status)
   }
   if (envelope.data === null || envelope.data === undefined) {
-    throw new GenerationApiError('生成接口成功响应缺少 data', envelope.code)
+    throw new GenerationApiError(
+      '生成接口成功响应缺少 data',
+      envelope.code,
+      undefined,
+      response.status,
+    )
   }
   return envelope.data
 }
@@ -171,8 +200,9 @@ function parseTaskDto(value: unknown): GenerationTaskDto {
   }
 }
 
-function expectedBackendType(type: GenerationType): BackendGenerationType {
-  return type === 'complete_animation' ? 'character_action' : 'character_image'
+function expectedBackendType(type: GenerationTaskType): BackendGenerationType {
+  if (type === 'complete_animation') return 'character_action'
+  return type === 'character_direction_set' ? 'character_direction_set' : 'character_image'
 }
 
 export const IMAGE_CANDIDATE_COUNT = 3
@@ -245,6 +275,48 @@ function mapImageResult(
   return expectation.direction === undefined
     ? { type: expectation.type, images }
     : { type: expectation.type, direction: expectation.direction, images }
+}
+
+function mapDirectionSetResult(result: Record<string, unknown>): GenerationResult {
+  if (result.type !== 'character_direction_set' || !Array.isArray(result.directions)) {
+    throw new GenerationApiError('方向集结果无效', 200)
+  }
+  if (result.directions.length === 0) {
+    throw new GenerationApiError('方向集结果不能为空', 200)
+  }
+  const seen = new Set<ActionDirection>()
+  const directions = result.directions.map((raw) => {
+    if (!isRecord(raw)) throw new GenerationApiError('方向集结果项不是对象', 200)
+    const direction = taskDirection(raw.direction, '方向集结果 direction')
+    if (direction === undefined || seen.has(direction)) {
+      throw new GenerationApiError('方向集结果 direction 重复或缺失', 200)
+    }
+    seen.add(direction)
+    if (typeof raw.status !== 'string' || !DIRECTION_TASK_STATUSES.has(raw.status)) {
+      throw new GenerationApiError('方向集结果 status 无效', 200)
+    }
+    if (
+      !Array.isArray(raw.image_urls) ||
+      raw.image_urls.some((url) => typeof url !== 'string' || url.trim() === '')
+    ) {
+      throw new GenerationApiError('方向集结果 image_urls 无效', 200)
+    }
+    if (raw.status === 'completed' && raw.image_urls.length === 0) {
+      throw new GenerationApiError('已完成方向缺少图片', 200)
+    }
+    const error = dtoNullableString(raw.error_message, '方向集结果 error_message')
+    if (raw.status === 'failed' ? !error?.trim() : error !== null) {
+      throw new GenerationApiError('方向集结果 error_message 与状态不一致', 200)
+    }
+    return {
+      direction,
+      status: raw.status as 'pending' | 'running' | 'completed' | 'failed',
+      images: raw.image_urls.map((url) => ({ url: url as string })),
+      quality: dtoNullableRecord(raw.quality, '方向集结果 quality'),
+      error,
+    }
+  })
+  return { type: 'character_direction_set', directions }
 }
 
 /**
@@ -374,6 +446,15 @@ function mapResult(
   expectedCandidateCount?: ImageCandidateCount,
   frameCount?: number,
 ): GenerationResult | null {
+  if (expectation.type === 'character_direction_set') {
+    if (result === null) {
+      if (status === 'completed' || status === 'partial') {
+        throw new GenerationApiError('方向集终态任务缺少 result', 200)
+      }
+      return null
+    }
+    return mapDirectionSetResult(result)
+  }
   if (status !== 'completed') {
     if (result !== null) {
       throw new GenerationApiError('非完成任务不应携带 result', 200)
@@ -387,7 +468,7 @@ function mapResult(
 }
 
 function validateStatusError(status: TaskStatus, error: string | null): void {
-  if (status === 'failed') {
+  if (status === 'failed' || status === 'partial') {
     if (error === null || error.trim() === '') {
       throw new GenerationApiError('失败任务缺少 error_message', 200)
     }
@@ -405,6 +486,18 @@ function validateInputPayload(
 ): ImageCandidateCount | undefined {
   if (inputPayload === null) {
     throw new GenerationApiError('生成任务缺少 input_payload', 200)
+  }
+  if (expectation.type === 'character_direction_set') {
+    const candidateCount = imageCandidateCount(inputPayload.num_images, '生成任务 num_images', 200)
+    if (
+      !Array.isArray(inputPayload.directions) ||
+      inputPayload.directions.length === 0 ||
+      inputPayload.directions.some((direction) => !isActionDirection(direction)) ||
+      new Set(inputPayload.directions).size !== inputPayload.directions.length
+    ) {
+      throw new GenerationApiError('方向集任务 directions 无效', 200)
+    }
+    return candidateCount
   }
   if (expectation.type !== 'complete_animation') {
     const candidateCount = imageCandidateCount(inputPayload.num_images, '生成任务 num_images', 200)
@@ -435,6 +528,7 @@ function validateInputPayload(
 }
 
 function inferExpectation(dto: GenerationTaskDto): GenerationExpectation {
+  if (dto.taskType === 'character_direction_set') return { type: 'character_direction_set' }
   const direction = dto.inputPayload
     ? taskDirection(dto.inputPayload.direction, '生成任务 direction')
     : undefined
@@ -483,7 +577,7 @@ function mapTask(
   expectation?: GenerationExpectation,
   expectedTaskId?: number,
   expectedCandidateCount?: ImageCandidateCount,
-): { generation: Generation; candidateCount?: ImageCandidateCount } {
+): { generation: Generation<GenerationTaskType>; candidateCount?: ImageCandidateCount } {
   const dto = parseTaskDto(value)
   const resolvedExpectation = expectation ?? inferExpectation(dto)
   const candidateCount = validateTaskIdentity(
@@ -538,7 +632,13 @@ function eventTaskId(value: Record<string, unknown>): number {
 
 function eventStatus(value: Record<string, unknown>, eventName: string): TaskStatus {
   const impliedStatus =
-    eventName === 'completed' ? 'completed' : eventName === 'failed' ? 'failed' : null
+    eventName === 'completed'
+      ? 'completed'
+      : eventName === 'partial'
+        ? 'partial'
+        : eventName === 'failed'
+          ? 'failed'
+          : null
   if (value.status === undefined) {
     if (impliedStatus) return impliedStatus
     if (eventName === 'progress') return 'running'
@@ -563,7 +663,16 @@ function waitForPoll(delayMs: number, signal: AbortSignal): Promise<void> {
   })
 }
 
-function mapEvent<TType extends GenerationType>(
+function isTerminalStatus(status: TaskStatus): boolean {
+  return status === 'completed' || status === 'partial' || status === 'failed'
+}
+
+function isRetryableQueryError(cause: unknown): boolean {
+  if (!(cause instanceof GenerationApiError)) return true
+  return cause.status !== null && RETRYABLE_QUERY_STATUSES.has(cause.status)
+}
+
+function mapEvent<TType extends GenerationTaskType>(
   value: unknown,
   expectedProjectId: number,
   expectedTaskId: number,
@@ -575,6 +684,42 @@ function mapEvent<TType extends GenerationType>(
   const taskId = eventTaskId(value)
   if (taskId !== expectedTaskId) {
     throw new GenerationApiError(`task_update ID 与订阅的 ${expectedTaskId} 不一致`, 200)
+  }
+  if (eventName === 'progress') {
+    if (
+      value.project_id !== undefined &&
+      dtoPositiveInteger(value.project_id, 'project_id') !== expectedProjectId
+    ) {
+      throw new GenerationApiError('progress 不属于当前项目', 200)
+    }
+    if (typeof value.stage !== 'string' || value.stage.trim() === '') {
+      throw new GenerationApiError('progress stage 无效', 200)
+    }
+    if (!Number.isSafeInteger(value.current) || (value.current as number) < 0) {
+      throw new GenerationApiError('progress current 无效', 200)
+    }
+    if (!Number.isSafeInteger(value.total) || (value.total as number) <= 0) {
+      throw new GenerationApiError('progress total 无效', 200)
+    }
+    if ((value.current as number) > (value.total as number)) {
+      throw new GenerationApiError('progress current 不能超过 total', 200)
+    }
+    if (typeof value.note !== 'string') {
+      throw new GenerationApiError('progress note 无效', 200)
+    }
+    return {
+      taskId: String(taskId),
+      type: expectation.type,
+      status: 'running',
+      result: null,
+      error: null,
+      progress: {
+        stage: value.stage,
+        current: value.current as number,
+        total: value.total as number,
+        note: value.note,
+      },
+    } as GenerationEvent<TType>
   }
   if (backendTaskType(value.task_type) !== expectedBackendType(expectation.type)) {
     throw new GenerationApiError(`task_update 类型与 ${expectation.type} 不匹配`, 200)
@@ -760,7 +905,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
       )
       expectations.set(generation.id, resolvedExpectation)
       if (candidateCount !== undefined) candidateCounts.set(generation.id, candidateCount)
-      return generation
+      return generation as Generation
     },
 
     subscribe(
@@ -804,12 +949,15 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
               result: generation.result,
               error: generation.error,
             } as GenerationEvent)
-            if (generation.status === 'completed' || generation.status === 'failed') return
-          } catch (cause) {
-            if (!pollingController.signal.aborted) {
-              onError(cause instanceof Error ? cause : new GenerationApiError('任务轮询失败'))
+            if (isTerminalStatus(generation.status)) {
+              return
             }
-            return
+          } catch (cause) {
+            if (pollingController.signal.aborted) return
+            if (!isRetryableQueryError(cause)) {
+              onError(cause instanceof Error ? cause : new GenerationApiError('任务轮询失败'))
+              return
+            }
           }
           await waitForPoll(pollIntervalMs, pollingController.signal)
         }
@@ -827,10 +975,14 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
             result: generation.result,
             error: generation.error,
           } as GenerationEvent)
-          if (generation.status === 'completed' || generation.status === 'failed') stopStream()
+          if (isTerminalStatus(generation.status)) {
+            stopStream()
+          }
         } catch (cause) {
           if (pollingController.signal.aborted) return
-          onError(cause instanceof Error ? cause : new GenerationApiError('重连后任务对账失败'))
+          if (!isRetryableQueryError(cause)) {
+            onError(cause instanceof Error ? cause : new GenerationApiError('重连后任务对账失败'))
+          }
         }
       }
 
@@ -840,7 +992,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
           `/generation/tasks/${numericTaskId}/stream?project_id=${numericProjectId}`,
         ),
         {
-          eventName: ['task_update', 'progress', 'completed', 'failed'],
+          eventName: ['task_update', 'progress', 'completed', 'partial', 'failed'],
           onEvent(data, eventName) {
             const event = mapEvent(
               parseEventData(data),
@@ -851,7 +1003,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
               expectedCandidateCount,
             )
             onEvent(event as GenerationEvent)
-            return event.status === 'completed' || event.status === 'failed'
+            return isTerminalStatus(event.status)
           },
           onError(error) {
             if (
@@ -862,6 +1014,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
               void pollUntilTerminal()
               return
             }
+            if (error instanceof EventStreamError && error.retryable) return
             onError(error)
           },
           // 断线窗口内的事件不会被补发，重连后必须自己查一次当前状态，

@@ -16,7 +16,7 @@ import type { ActionGenerationMethod } from '../workflow-run'
  * 这里是单次生成任务的状态，那里是一个卡片的前端流程状态。
  * pending 表示已提交但尚未执行。
  */
-export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed'
+export type TaskStatus = 'pending' | 'running' | 'completed' | 'partial' | 'failed'
 
 /**
  * 生成对应的三个前端可见异步步骤。
@@ -26,12 +26,21 @@ export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed'
  */
 export type GenerationType = 'character_template' | 'first_frame' | 'complete_animation'
 
+/** 后端任务快照还包含聚合方向集；它不属于前端逐阶段 create() 输入。 */
+export type GenerationTaskType = GenerationType | 'character_direction_set'
+
 export type ImageCandidateCount = 1 | 2 | 3 | 4
 
 export type GenerationExpectation =
   | { type: 'character_template'; direction?: ActionDirection }
+  | { type: 'character_direction_set' }
   | { type: 'first_frame'; actionType: ActionType; direction?: ActionDirection }
   | { type: 'complete_animation'; actionType: ActionType; direction?: ActionDirection }
+
+export type WorkflowGenerationExpectation = Exclude<
+  GenerationExpectation,
+  { type: 'character_direction_set' }
+>
 
 interface GenerationInputBase {
   projectId: string
@@ -124,6 +133,22 @@ export interface FirstFrameGenerationResult {
   images: readonly GeneratedImage[]
 }
 
+export type DirectionGenerationStatus = 'pending' | 'running' | 'completed' | 'failed'
+
+export interface DirectionGenerationResult {
+  direction: ActionDirection
+  status: DirectionGenerationStatus
+  images: readonly GeneratedImage[]
+  quality: Readonly<Record<string, unknown>> | null
+  error: string | null
+}
+
+/** 一个可恢复、可局部重试的方向集快照；partial 时仍保留已经成功的方向。 */
+export interface CharacterDirectionSetGenerationResult {
+  type: 'character_direction_set'
+  directions: readonly DirectionGenerationResult[]
+}
+
 /** 交付帧的落位几何，由后端按对齐时的实参报出。 */
 export interface SequenceGeometry {
   canvasWidth: number
@@ -144,6 +169,7 @@ export interface CompleteAnimationGenerationResult {
 
 export type GenerationResult =
   | CharacterTemplateGenerationResult
+  | CharacterDirectionSetGenerationResult
   | FirstFrameGenerationResult
   | CompleteAnimationGenerationResult
 
@@ -161,7 +187,7 @@ export type GenerationResultFor<T extends GenerationInput> =
  * TType 在调用边界已知时保留精确类型；按 ID 恢复时用默认值，等运行时解析后再收窄。
  * 完成不代表工作流节点已通过，节点状态由 WorkflowNode 自己判定。
  */
-export interface Generation<TType extends GenerationType = GenerationType> {
+export interface Generation<TType extends GenerationTaskType = GenerationTaskType> {
   id: string
   projectId: string
   /** 与创建时的输入判别字段保持同一字面量类型。 */
@@ -173,17 +199,26 @@ export interface Generation<TType extends GenerationType = GenerationType> {
   error: string | null
 }
 
+export interface GenerationProgress {
+  stage: string
+  current: number
+  total: number
+  note: string
+}
+
 /**
  * 一条状态变更事件。
  * 不含 projectId：后端事件 payload 只有 task_id、task_type、status，
  * 以及完成时的 result 和失败时的 error_message。
  */
-export interface GenerationEvent<TType extends GenerationType = GenerationType> extends Omit<
+export interface GenerationEvent<TType extends GenerationTaskType = GenerationTaskType> extends Omit<
   Generation<TType>,
   'id' | 'projectId'
 > {
   /** 对应 Generation.id，字段名沿用后端事件里的 task_id。 */
   taskId: Generation['id']
+  /** 仅 progress 事件携带；状态快照与终态事件不包含。 */
+  progress?: GenerationProgress
 }
 
 /** Generation 对应的一组后端接口。服务端没有取消能力，因此这里不声明 cancel。 */
@@ -195,7 +230,7 @@ export interface GenerationApis {
    * projectId 不能从 id 推导，后端查询接口要求两者同时传入。
    */
   get(projectId: Generation['projectId'], id: Generation['id']): Promise<Generation>
-  get<TType extends GenerationType>(
+  get<TType extends GenerationTaskType>(
     projectId: Generation['projectId'],
     id: Generation['id'],
     expectation: Extract<GenerationExpectation, { type: TType }>,
@@ -206,7 +241,7 @@ export interface GenerationApis {
     id: Generation['id'],
     onEvent: (event: GenerationEvent) => void,
   ): () => void
-  subscribe<TType extends GenerationType>(
+  subscribe<TType extends GenerationTaskType>(
     projectId: Generation['projectId'],
     id: Generation['id'],
     expectation: Extract<GenerationExpectation, { type: TType }>,

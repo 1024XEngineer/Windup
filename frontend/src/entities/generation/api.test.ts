@@ -51,6 +51,43 @@ function taskData(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function directionSetTaskData(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 92,
+    project_id: 42,
+    task_type: 'character_direction_set',
+    status: 'partial',
+    input_payload: {
+      character_id: 7,
+      reference_image_url: 'https://cdn.test/master.png',
+      num_images: 3,
+      directions: ['east', 'north'],
+      anchor_direction: 'east',
+    },
+    result: {
+      type: 'character_direction_set',
+      directions: [
+        {
+          direction: 'east',
+          status: 'completed',
+          image_urls: ['https://cdn.test/master.png'],
+          quality: null,
+          error_message: null,
+        },
+        {
+          direction: 'north',
+          status: 'failed',
+          image_urls: [],
+          quality: null,
+          error_message: 'north provider failed',
+        },
+      ],
+    },
+    error_message: '部分方向生成失败，可只重试失败方向。',
+    ...overrides,
+  }
+}
+
 function actionFrames(count: number) {
   return Array.from({ length: count }, (_, offset) => {
     const index = count - offset - 1
@@ -805,7 +842,13 @@ describe('createGenerationApis', () => {
     )
 
     expect(subscribedUrl).toBe('https://api.test/generation/tasks/91/stream?project_id=42')
-    expect(streamOptions?.eventName).toEqual(['task_update', 'progress', 'completed', 'failed'])
+    expect(streamOptions?.eventName).toEqual([
+      'task_update',
+      'progress',
+      'completed',
+      'partial',
+      'failed',
+    ])
     expect(isTerminal).toBe(true)
     expect(onEvent).toHaveBeenCalledWith({
       taskId: '91',
@@ -824,6 +867,114 @@ describe('createGenerationApis', () => {
 
     unsubscribe()
     expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('订阅真实 progress 事件并保留阶段进度', () => {
+    let streamOptions: EventStreamOptions | undefined
+    const onEvent = vi.fn()
+    const apis = createGenerationApis({
+      transport: {
+        request: vi.fn(),
+        stream: vi.fn((_url, options) => {
+          streamOptions = options
+          return vi.fn()
+        }),
+      },
+    })
+    apis.subscribe('42', '91', { type: 'character_template' }, onEvent, vi.fn())
+
+    const isTerminal = streamOptions?.onEvent(
+      JSON.stringify({
+        task_id: 91,
+        project_id: 42,
+        stage: 'derive',
+        current: 1,
+        total: 3,
+        note: '抽帧',
+      }),
+      'progress',
+    )
+
+    expect(isTerminal).toBe(false)
+    expect(onEvent).toHaveBeenCalledWith({
+      taskId: '91',
+      type: 'character_template',
+      status: 'running',
+      result: null,
+      error: null,
+      progress: { stage: 'derive', current: 1, total: 3, note: '抽帧' },
+    })
+  })
+
+  it('查询方向集 partial 快照时保留成功方向和失败方向', async () => {
+    const apis = createGenerationApis({
+      transport: {
+        request: vi.fn(async () => success(directionSetTaskData())),
+        stream: vi.fn(() => vi.fn()),
+      },
+    })
+
+    const generation = await apis.get('42', '92')
+
+    expect(generation).toEqual({
+      id: '92',
+      projectId: '42',
+      type: 'character_direction_set',
+      status: 'partial',
+      result: {
+        type: 'character_direction_set',
+        directions: [
+          {
+            direction: 'east',
+            status: 'completed',
+            images: [{ url: 'https://cdn.test/master.png' }],
+            quality: null,
+            error: null,
+          },
+          {
+            direction: 'north',
+            status: 'failed',
+            images: [],
+            quality: null,
+            error: 'north provider failed',
+          },
+        ],
+      },
+      error: '部分方向生成失败，可只重试失败方向。',
+    })
+  })
+
+  it('订阅 partial 方向集事件后交付可重试结果并关闭流', () => {
+    let streamOptions: EventStreamOptions | undefined
+    const onEvent = vi.fn()
+    const apis = createGenerationApis({
+      transport: {
+        request: vi.fn(),
+        stream: vi.fn((_url, options) => {
+          streamOptions = options
+          return vi.fn()
+        }),
+      },
+    })
+
+    apis.subscribe('42', '92', { type: 'character_direction_set' }, onEvent, vi.fn())
+    const terminal = streamOptions?.onEvent(JSON.stringify(directionSetTaskData()), 'partial')
+
+    expect(streamOptions?.eventName).toContain('partial')
+    expect(terminal).toBe(true)
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: '92',
+        type: 'character_direction_set',
+        status: 'partial',
+        result: expect.objectContaining({
+          directions: expect.arrayContaining([
+            expect.objectContaining({ direction: 'east', status: 'completed' }),
+            expect.objectContaining({ direction: 'north', status: 'failed' }),
+          ]),
+        }),
+      }),
+    )
   })
 
   it('SSE 重连后补拉一次任务状态，交付断线窗口内错过的终态', async () => {
@@ -901,7 +1052,7 @@ describe('createGenerationApis', () => {
     expect(statuses).toEqual(['running', 'completed'])
   })
 
-  it('重连补拉遇到错误时报告，不把任务当作已结束', async () => {
+  it('重连补拉遇到临时网络错误时保持订阅且不提升为业务失败', async () => {
     let streamOptions: EventStreamOptions | undefined
     const apis = createGenerationApis({
       baseUrl: 'https://api.test',
@@ -920,9 +1071,10 @@ describe('createGenerationApis', () => {
 
     apis.subscribe('42', '91', { type: 'character_template' }, onEvent, onError)
     streamOptions?.onReconnect?.()
-    await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce())
+    await Promise.resolve()
 
     expect(onEvent).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
   })
 
   it('取消订阅后忽略尚未开始的重连对账', async () => {
@@ -1011,7 +1163,7 @@ describe('createGenerationApis', () => {
     expect(onError).not.toHaveBeenCalled()
   })
 
-  it('重连对账把非 Error 异常归一化后报告', async () => {
+  it('重连对账忽略非 Error 形式的临时传输异常', async () => {
     let streamOptions: EventStreamOptions | undefined
     const apis = createGenerationApis({
       baseUrl: 'https://api.test',
@@ -1029,9 +1181,9 @@ describe('createGenerationApis', () => {
 
     apis.subscribe('42', '91', { type: 'character_template' }, vi.fn(), onError)
     streamOptions?.onReconnect?.()
-    await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce())
+    await Promise.resolve()
 
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: '重连后任务对账失败' }))
+    expect(onError).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -1533,6 +1685,25 @@ describe('createGenerationApis', () => {
     expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }))
   })
 
+  it('传输层正在自动重连时不把临时断线提升为工作流失败', () => {
+    let onStreamError: ((error: Error) => void) | undefined
+    const apis = createGenerationApis({
+      transport: {
+        request: vi.fn(),
+        stream: vi.fn((_url, options) => {
+          onStreamError = options.onError
+          return vi.fn()
+        }),
+      },
+    })
+    const onError = vi.fn()
+
+    apis.subscribe('42', '91', { type: 'character_template' }, vi.fn(), onError)
+    onStreamError?.(new EventStreamError('SSE 连接中断，正在自动重连', true))
+
+    expect(onError).not.toHaveBeenCalled()
+  })
+
   it('SSE 路由缺失时轮询任务查询直到终态', async () => {
     const request = vi
       .fn()
@@ -1562,5 +1733,68 @@ describe('createGenerationApis', () => {
       ),
     )
     expect(request).toHaveBeenCalledTimes(2)
+  })
+
+  it('轮询降级遇到一次网络错误后继续查询直到终态', async () => {
+    const request = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('connection reset'))
+      .mockResolvedValueOnce(success(taskData({ status: 'running', result: null })))
+      .mockResolvedValueOnce(success(taskData()))
+    const onEvent = vi.fn()
+    const onError = vi.fn()
+    const apis = createGenerationApis({
+      pollIntervalMs: 1,
+      transport: {
+        request,
+        stream: vi.fn((_url, options) => {
+          queueMicrotask(() =>
+            options.onError(
+              new EventStreamError('SSE 请求失败（HTTP 404）', false, undefined, 404),
+            ),
+          )
+          return vi.fn()
+        }),
+      },
+    })
+
+    apis.subscribe('42', '91', { type: 'character_template' }, onEvent, onError)
+
+    await vi.waitFor(() =>
+      expect(onEvent).toHaveBeenLastCalledWith(
+        expect.objectContaining({ taskId: '91', status: 'completed' }),
+      ),
+    )
+    expect(request).toHaveBeenCalledTimes(3)
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('轮询降级不会把 HTTP 200 的业务错误当成 5xx 无限重试', async () => {
+    const request = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ code: 9999, message: '任务不可访问', data: null }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+    const onError = vi.fn()
+    const apis = createGenerationApis({
+      pollIntervalMs: 1,
+      transport: {
+        request,
+        stream: vi.fn((_url, options) => {
+          queueMicrotask(() =>
+            options.onError(
+              new EventStreamError('SSE 请求失败（HTTP 404）', false, undefined, 404),
+            ),
+          )
+          return vi.fn()
+        }),
+      },
+    })
+
+    apis.subscribe('42', '91', { type: 'character_template' }, vi.fn(), onError)
+
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce())
+    expect(request).toHaveBeenCalledOnce()
   })
 })
