@@ -285,6 +285,24 @@ def test_ai_chat_rejects_oversized_history_before_provider(auth_client):
     assert calls == 0
 
 
+def test_ai_chat_rejects_oversized_plain_text_before_provider(auth_client):
+    calls = 0
+
+    def forbidden_factory(*_args: Any, **_kwargs: Any):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("oversized message reached the paid provider")
+
+    auth_client.app.state.chat_model_factory = forbidden_factory
+    messages = [{"role": "user", "content": "x" * 8_001}]
+
+    response = auth_client.post("/ai/chat", json=_request_body(messages=messages))
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_request"
+    assert calls == 0
+
+
 def test_ai_chat_rejects_oversized_body_before_provider(auth_client):
     calls = 0
 
