@@ -60,12 +60,14 @@ class StreamConsumer:
         stop_event: threading.Event,
         resume_action_poll: Callable[..., Any] | None = None,
         run_direction_set_task: Callable[..., Any] | None = None,
+        run_view_sheet_task: Callable[..., Any] | None = None,
     ) -> None:
         self._config = config
         self._run_image_task = run_image_task
         self._run_action_task = run_action_task
         self._resume_action_poll = resume_action_poll
         self._run_direction_set_task = run_direction_set_task
+        self._run_view_sheet_task = run_view_sheet_task
         self._stop = stop_event
         self._consumer_name = f"{socket.gethostname()}-{threading.get_ident()}"
         self._executors: dict[str, ThreadPoolExecutor] = {}
@@ -215,6 +217,7 @@ class StreamConsumer:
                 run_action_task=self._run_action_task,
                 resume_action_poll=self._resume_action_poll,
                 run_direction_set_task=self._run_direction_set_task,
+                run_view_sheet_task=self._run_view_sheet_task,
             )
 
             session = SessionLocal()

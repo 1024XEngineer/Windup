@@ -42,6 +42,8 @@ def prepaid_cost(task_type: GenerationType, model_calls: int) -> int:
     if task_type in (
         GenerationType.CHARACTER_IMAGE,
         GenerationType.CHARACTER_DIRECTION_SET,
+        GenerationType.CHARACTER_FOUR_VIEW,
+        GenerationType.CHARACTER_EIGHT_VIEW,
     ):
         return quota_settings.generate_image_cost * model_calls
     if task_type is GenerationType.CHARACTER_ACTION:

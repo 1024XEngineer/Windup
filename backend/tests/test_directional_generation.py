@@ -7,6 +7,8 @@
 from windup_ai_engine.strategy.concrete import VideoFrameStrategy
 from windup_common.directions import (
     ActionDirection,
+    compass_directions_for_movement,
+    derived_direction_pairs_for_movement,
     required_directions_for_movement,
 )
 from windup_common.models import ActionSpec, ActionType, CharacterStance, Facing
@@ -16,17 +18,31 @@ def test_direction_profile_requires_one_four_or_eight_real_tasks():
     assert required_directions_for_movement(1) == (ActionDirection.EAST,)
     assert required_directions_for_movement(2) == (
         ActionDirection.EAST,
+        ActionDirection.NORTH,
+        ActionDirection.SOUTH,
+    )
+    assert required_directions_for_movement(3) == (
+        ActionDirection.EAST,
+        ActionDirection.NORTH,
+        ActionDirection.SOUTH,
+        ActionDirection.NORTH_EAST,
+        ActionDirection.SOUTH_EAST,
+    )
+
+
+def test_west_side_directions_are_mirrors_not_generation_sources():
+    assert ActionDirection.WEST not in required_directions_for_movement(2)
+    assert ActionDirection.NORTH_WEST not in required_directions_for_movement(3)
+    assert ActionDirection.SOUTH_WEST not in required_directions_for_movement(3)
+    assert derived_direction_pairs_for_movement(2) == (
+        (ActionDirection.WEST, ActionDirection.EAST),
+    )
+    assert compass_directions_for_movement(2) == (
+        ActionDirection.EAST,
         ActionDirection.WEST,
         ActionDirection.NORTH,
         ActionDirection.SOUTH,
     )
-    assert required_directions_for_movement(3) == tuple(ActionDirection)
-
-
-def test_west_side_directions_are_real_generation_sources_for_multi_direction_projects():
-    assert ActionDirection.WEST in required_directions_for_movement(2)
-    assert ActionDirection.NORTH_WEST in required_directions_for_movement(3)
-    assert ActionDirection.SOUTH_WEST in required_directions_for_movement(3)
 
 
 def test_every_action_direction_has_an_independent_provider_prompt_lock():

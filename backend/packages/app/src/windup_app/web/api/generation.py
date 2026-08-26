@@ -6,6 +6,8 @@
 端点一览
 --------
 POST /generation/image                     提交角色图片生成任务
+POST /generation/four-view                 提交四向立绘 sheet
+POST /generation/eight-view                提交八向立绘 sheet
 POST /generation/action                    提交角色动作生成任务
 GET  /generation/tasks/{task_id}           查询任务状态
 GET  /generation/tasks/{task_id}/stream    SSE 订阅任务进度
@@ -51,6 +53,7 @@ from windup_app.server.orchestrator.model import (
     CharacterActionInput,
     CharacterDirectionSetInput,
     CharacterImageInput,
+    CharacterViewSheetInput,
     GenerationTask,
 )
 from windup_app.server.project.model import Project
@@ -312,6 +315,20 @@ class CharacterDirectionSetGenerateRequest(BaseModel):
     width: int = Field(default=1024, ge=64, le=2048)
     height: int = Field(default=1024, ge=64, le=2048)
     num_images: int = Field(default=3, ge=1, le=4)
+
+
+class CharacterViewSheetGenerateRequest(BaseModel):
+    """四向 / 八向立绘 sheet。两口字段相同,朝向集合由路径决定。"""
+
+    model_config = ConfigDict(extra="forbid")
+    project_id: int = Field(gt=0)
+    character_id: int = Field(gt=0)
+    prompt: str = ""
+    negative_prompt: str = ""
+    width: int = Field(default=1024, ge=64, le=2048)
+    height: int = Field(default=1024, ge=64, le=2048)
+    # sheet 比单张立绘贵,默认 1,不沿用 image 的 3。
+    num_images: int = Field(default=1, ge=1, le=4)
 
 
 class CharacterActionGenerateRequest(BaseModel):
@@ -599,6 +616,82 @@ def submit_direction_set_generation(
             task_type=task.task_type.value,
         )
     return Response.success(_task_to_out(task), message="方向集任务已提交")
+
+
+def _submit_view_sheet(
+    body: CharacterViewSheetGenerateRequest,
+    request: Request,
+    session: Session,
+    *,
+    expected_movement: int,
+    label: str,
+    submit,
+) -> Response[GenerationTaskOut]:
+    user_id = request.state.current_user.id
+    project = _get_project_or_raise(session, body.project_id, user_id)
+    if project.directional_movement != expected_movement:
+        raise BizException(f"当前项目不是{label}", code=BizCode.BAD_REQUEST)
+    _validate_project_size(project, body.width, body.height)
+    character = _get_character_or_raise(session, body.character_id, body.project_id)
+    confirmed_master = (character.reference_image_url or "").strip()
+    if not confirmed_master:
+        raise BizException("请先选择并确认角色母版", code=BizCode.BAD_REQUEST)
+    input_data = CharacterViewSheetInput(
+        character_id=character.id,
+        reference_image_url=confirmed_master,
+        prompt=body.prompt,
+        negative_prompt=body.negative_prompt,
+        width=body.width,
+        height=body.height,
+        num_images=body.num_images,
+    )
+    task = submit(
+        session,
+        user_id=user_id,
+        project_id=body.project_id,
+        input=input_data,
+    )
+    _publish_generation_after_commit(
+        session,
+        request.app.state.mq_publisher,
+        task_id=task.id,
+        task_type=task.task_type.value,
+    )
+    return Response.success(_task_to_out(session, task), message="任务已提交")
+
+
+@router.post("/four-view", response_model=Response[GenerationTaskOut])
+def submit_four_view_generation(
+    body: CharacterViewSheetGenerateRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[GenerationTaskOut]:
+    """提交四向立绘 sheet:正视母版转出十字四格,斜向留空。"""
+    return _submit_view_sheet(
+        body,
+        request,
+        session,
+        expected_movement=2,
+        label="四向",
+        submit=generation_service.generate_character_four_view,
+    )
+
+
+@router.post("/eight-view", response_model=Response[GenerationTaskOut])
+def submit_eight_view_generation(
+    body: CharacterViewSheetGenerateRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Response[GenerationTaskOut]:
+    """提交八向立绘 sheet:正视母版转出八角,中心留空。"""
+    return _submit_view_sheet(
+        body,
+        request,
+        session,
+        expected_movement=3,
+        label="八向",
+        submit=generation_service.generate_character_eight_view,
+    )
 
 
 @router.post("/action", response_model=Response[GenerationTaskOut])

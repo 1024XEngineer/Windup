@@ -21,6 +21,7 @@ from windup_ai_engine.prompt import (
     build_walk_prompt,
 )
 from windup_ai_engine.prompt._md import PromptAssetError, load_doc, load_section
+from windup_common.directions import ActionDirection
 from windup_common.models import AttackArchetype
 
 BUILDERS = {
@@ -35,6 +36,15 @@ SECTIONS = {
     doc: ["side", "front"] for doc in ("walk.md", "jump.md", "idle.md")
 } | {
     "attack.md": [f"{a.value}.{f}" for a in AttackArchetype for f in ("side", "front")],
+    "view_sheet.md": [
+        "identity",
+        "pose",
+        "framing",
+        "elevation.side",
+        "elevation.top-down",
+        "elevation.isometric",
+        *[direction.value for direction in ActionDirection],
+    ],
 }
 
 
@@ -116,7 +126,7 @@ def test_two_code_fences_in_one_section_raise(tmp_path, monkeypatch):
         md.load_section("inline.md", "side")
 
 
-@pytest.mark.parametrize("doc", ["walk.md", "jump.md", "idle.md", "attack.md", "master_poses.md"])
+@pytest.mark.parametrize("doc", ["walk.md", "jump.md", "idle.md", "attack.md", "master_poses.md", "view_sheet.md"])
 def test_every_shipped_document_keeps_prose_and_data_separated(doc: str):
     """随包发的每一份 md,框内不含中文。"""
     from windup_ai_engine.prompt._md import load_doc
@@ -197,5 +207,5 @@ def test_markdown_assets_are_shipped_in_the_wheel(tmp_path):
     wheels = sorted(tmp_path.glob("*.whl"))
     assert wheels, "没产出 wheel"
     names = set(zipfile.ZipFile(wheels[-1]).namelist())
-    for md in ("walk.md", "jump.md", "idle.md", "attack.md", "master_poses.md"):
+    for md in ("walk.md", "jump.md", "idle.md", "attack.md", "master_poses.md", "view_sheet.md"):
         assert f"windup_ai_engine/prompt/prompts/{md}" in names, f"{md} 没进 wheel"
