@@ -219,6 +219,81 @@ def test_action_task_runs_end_to_end(session_factory, monkeypatch):
         assert frame.duration_ms is not None
 
 
+def test_action_progress_is_published_to_the_task_event_bridge(session_factory):
+    """引擎 ProgressPort 必须真正进入 SSE 桥，不能只写服务端日志。"""
+    from windup_app.server.orchestrator import task_repo
+    from windup_framework.sse.bridge import InProcessTaskEventBridge
+
+    class _ProgressGenerator:
+        def generate(self, _card, _action, _master, progress, *, canvas):
+            progress.step("derive", 1, 3, "抽帧")
+            return GeneratedAction(
+                frames=[_tiny_png()],
+                durations=[80],
+                quality=ActionQuality(
+                    motion_scale=0.0,
+                    dead_frames=(),
+                    loop_seam=None,
+                    limbs={},
+                    subject_blobs=(1,),
+                ),
+                prompt_version="test",
+            )
+
+    service = AiGenerationService()
+    action_input = CharacterActionInput(
+        character_id=1,
+        action_type=ActionType.WALK,
+        num_frames=1,
+    )
+    with session_factory() as session:
+        task = service.generate_character_action(
+            session,
+            user_id=1,
+            project_id=42,
+            input=action_input,
+        )
+        session.commit()
+        task_id = task.id
+
+    published: list[tuple[int, int, str, dict]] = []
+    previous = task_repo._task_event_publisher
+    task_repo.bind_task_event_publisher(
+        InProcessTaskEventBridge(lambda *args: published.append(args))
+    )
+    try:
+        executor = ActionTaskExecutor(
+            generator=_ProgressGenerator(),
+            upload=lambda _png: "https://cdn.example.com/frame.png",
+            fetch_master=lambda _input: _tiny_png(),
+            fetch_constraints=lambda _session, _project_id: ProjectConstraints(
+                sprite_w=64,
+                sprite_h=96,
+            ),
+            session_factory=session_factory,
+        )
+        executor.run_action_task(task_id, action_input, project_id=42)
+    finally:
+        task_repo._task_event_publisher = previous
+
+    progress_events = [item for item in published if item[2] == "progress"]
+    assert progress_events == [
+        (
+            42,
+            task_id,
+            "progress",
+            {
+                "task_id": task_id,
+                "project_id": 42,
+                "stage": "derive",
+                "current": 1,
+                "total": 3,
+                "note": "抽帧",
+            },
+        )
+    ]
+
+
 def test_quality_and_prompt_version_reach_the_persisted_result(session_factory, monkeypatch):
     """成色从生成到落库这条链路必须闭合,否则线上永远答不出"改完提示词到底有没有
     变好"(见 executor 里"只记账不判决"的说明)。

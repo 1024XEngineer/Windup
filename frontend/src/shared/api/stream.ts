@@ -23,6 +23,10 @@ export interface EventStreamSubscriberConfig {
   /** HTTP 401 时由认证会话尝试刷新；成功后只重放本次连接。 */
   recoverUnauthorized?: () => Promise<boolean>
   reconnectDelayMs?: number
+  /** 建立 HTTP 响应头的最长等待时间；0 表示禁用。 */
+  connectTimeoutMs?: number
+  /** 已建流连续无任何字节的最长等待时间；0 表示禁用。 */
+  inactivityTimeoutMs?: number
 }
 
 export class EventStreamError extends Error {
@@ -70,7 +74,35 @@ function parseRecord(block: string): SseRecord | null {
   return data.length === 0 ? null : { event, data: data.join('\n') }
 }
 
-async function readEventStream(response: Response, options: EventStreamOptions): Promise<boolean> {
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => void): Promise<T> {
+  if (timeoutMs <= 0) return promise
+  return new Promise<T>((resolve, reject) => {
+    let settled = false
+    const finish = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      callback()
+    }
+    const timer = setTimeout(() => {
+      finish(() => {
+        onTimeout()
+        reject(connectionError(new Error('SSE 等待数据超时')))
+      })
+    }, timeoutMs)
+    promise.then(
+      (value) => finish(() => resolve(value)),
+      (error: unknown) => finish(() => reject(error)),
+    )
+  })
+}
+
+async function readEventStream(
+  response: Response,
+  options: EventStreamOptions,
+  inactivityTimeoutMs: number,
+  onStableActivity: () => void,
+): Promise<boolean> {
   if (!response.body) throw new EventStreamError('SSE 响应缺少消息流')
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
@@ -93,7 +125,9 @@ async function readEventStream(response: Response, options: EventStreamOptions):
     while (true) {
       let chunk: ReadableStreamReadResult<Uint8Array>
       try {
-        chunk = await reader.read()
+        chunk = await withTimeout(reader.read(), inactivityTimeoutMs, () => {
+          void reader.cancel('SSE inactivity timeout')
+        })
       } catch (cause) {
         throw connectionError(cause)
       }
@@ -103,6 +137,7 @@ async function readEventStream(response: Response, options: EventStreamOptions):
       while (boundary) {
         const block = buffer.slice(0, boundary.index)
         buffer = buffer.slice(boundary.index + boundary[0].length)
+        onStableActivity()
         if (await deliver(block)) return true
         boundary = /\r?\n\r?\n/u.exec(buffer)
       }
@@ -122,6 +157,9 @@ async function readEventStream(response: Response, options: EventStreamOptions):
 }
 
 const MAX_RECONNECT_DELAY_MS = 30_000
+const DEFAULT_CONNECT_TIMEOUT_MS = 15_000
+const DEFAULT_INACTIVITY_TIMEOUT_MS = 30_000
+const RETRYABLE_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
 
 /**
  * 指数退避加抖动。服务端整体不可用时，固定间隔会让所有在线页面以同一节奏
@@ -155,6 +193,16 @@ export function createEventStreamSubscriber(
 ): EventStreamSubscriber {
   const fetchFn = config.fetchFn ?? globalThis.fetch
   const reconnectDelayMs = config.reconnectDelayMs ?? 1_000
+  const connectTimeoutMs = config.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS
+  const inactivityTimeoutMs = config.inactivityTimeoutMs ?? DEFAULT_INACTIVITY_TIMEOUT_MS
+  for (const [name, value] of [
+    ['connectTimeoutMs', connectTimeoutMs],
+    ['inactivityTimeoutMs', inactivityTimeoutMs],
+  ] as const) {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new EventStreamError(`${name} 必须是非负数`)
+    }
+  }
 
   return (url, options) => {
     const controller = new AbortController()
@@ -168,19 +216,27 @@ export function createEventStreamSubscriber(
         // 同样错过了断线窗口内的事件。
         const reconnecting = attempted
         attempted = true
+        const attemptController = new AbortController()
+        const abortAttempt = () => attemptController.abort(controller.signal.reason)
+        controller.signal.addEventListener('abort', abortAttempt, { once: true })
         try {
           const headers = new Headers({ Accept: 'text/event-stream' })
           const accessToken = config.getAccessToken()
           if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
           let response: Response
           try {
-            response = await fetchFn(url, {
-              method: 'GET',
-              headers,
-              credentials: 'include',
-              signal: controller.signal,
-            })
+            response = await withTimeout(
+              fetchFn(url, {
+                method: 'GET',
+                headers,
+                credentials: 'include',
+                signal: attemptController.signal,
+              }),
+              connectTimeoutMs,
+              () => attemptController.abort('SSE connect timeout'),
+            )
           } catch (cause) {
+            if (cause instanceof EventStreamError) throw cause
             throw connectionError(cause)
           }
 
@@ -195,7 +251,7 @@ export function createEventStreamSubscriber(
           if (!response.ok) {
             throw new EventStreamError(
               `SSE 请求失败（HTTP ${response.status}）`,
-              false,
+              RETRYABLE_HTTP_STATUSES.has(response.status),
               undefined,
               response.status,
             )
@@ -205,9 +261,13 @@ export function createEventStreamSubscriber(
           }
           attemptedUnauthorizedRecovery = false
           if (reconnecting) options.onReconnect?.()
-          // 流建立成功即视为服务端恢复，退避从头算起。
-          failures = 0
-          const terminal = await readEventStream(response, options)
+          let stable = false
+          const terminal = await readEventStream(response, options, inactivityTimeoutMs, () => {
+            if (stable) return
+            stable = true
+            // 收到完整事件或 heartbeat 才算连接稳定；只有响应头不能清零退避。
+            failures = 0
+          })
           if (terminal || controller.signal.aborted) return
           throw connectionError()
         } catch (cause) {
@@ -217,6 +277,8 @@ export function createEventStreamSubscriber(
           if (!(error instanceof EventStreamError) || !error.retryable) return
           await waitForReconnect(reconnectDelay(reconnectDelayMs, failures), controller.signal)
           failures += 1
+        } finally {
+          controller.signal.removeEventListener('abort', abortAttempt)
         }
       }
     }
