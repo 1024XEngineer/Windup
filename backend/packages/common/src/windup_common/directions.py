@@ -39,14 +39,34 @@ def is_required_direction(movement: int, direction: ActionDirection) -> bool:
 
 
 _DIRECTION_PROMPTS: dict[ActionDirection, str] = {
-    ActionDirection.EAST: "The character's screen-space heading points to the right edge of the frame (east).",
-    ActionDirection.WEST: "The character's screen-space heading points to the left edge of the frame (west).",
-    ActionDirection.NORTH: "The character's screen-space heading points to the top edge of the frame (north).",
-    ActionDirection.SOUTH: "The character's screen-space heading points to the bottom edge of the frame (south).",
-    ActionDirection.NORTH_EAST: "The character's screen-space heading points to the upper-right corner of the frame (north-east).",
-    ActionDirection.NORTH_WEST: "The character's screen-space heading points to the upper-left corner of the frame (north-west).",
-    ActionDirection.SOUTH_EAST: "The character's screen-space heading points to the lower-right corner of the frame (south-east).",
-    ActionDirection.SOUTH_WEST: "The character's screen-space heading points to the lower-left corner of the frame (south-west).",
+    ActionDirection.EAST: (
+        "The character has a right-facing side orientation (east); the face, torso, "
+        "hips, and feet point right."
+    ),
+    ActionDirection.WEST: (
+        "The character has a left-facing side orientation (west); the face, torso, "
+        "hips, and feet point left."
+    ),
+    ActionDirection.NORTH: (
+        "The character faces away (north); the back of the head, back, and backs of "
+        "the legs are the main visible surfaces."
+    ),
+    ActionDirection.SOUTH: (
+        "The character faces forward (south); the face and chest, abdomen, and fronts "
+        "of the legs are the main visible surfaces."
+    ),
+    ActionDirection.NORTH_EAST: (
+        "The character has a back-right three-quarter orientation (north-east)."
+    ),
+    ActionDirection.NORTH_WEST: (
+        "The character has a back-left three-quarter orientation (north-west)."
+    ),
+    ActionDirection.SOUTH_EAST: (
+        "The character has a front-right three-quarter orientation (south-east)."
+    ),
+    ActionDirection.SOUTH_WEST: (
+        "The character has a front-left three-quarter orientation (south-west)."
+    ),
 }
 
 
