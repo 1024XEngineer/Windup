@@ -33,7 +33,9 @@ REFERENCE_FIDELITY_LOCK = (
 
 def with_framing(body: str) -> str:
     """给一段动作正文接上构图与视频保真约束。"""
-    return f"{body} {SINGLE_SUBJECT_FRAMING} {REFERENCE_FIDELITY_LOCK}"
+    # SINGLE_SUBJECT_FRAMING 保持最终收口句:提示词适配器的契约会用它确认公共构图约束
+    # 没被自定义动作分支绕过。新增约束插在它之前,不改变这个既有边界。
+    return f"{body} {REFERENCE_FIDELITY_LOCK} {SINGLE_SUBJECT_FRAMING}"
 
 
 def with_direction_lock(body: str, direction: ActionDirection | None) -> str:
