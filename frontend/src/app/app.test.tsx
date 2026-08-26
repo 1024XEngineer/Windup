@@ -74,6 +74,8 @@ describe('AppRoutes authentication boundary', () => {
     expect(screen.getByRole('navigation', { name: '使用指南章节' })).toBeTruthy()
     expect(screen.getByRole('article').querySelectorAll('section ul')).toHaveLength(0)
     expect(screen.getByRole('article').querySelectorAll('section ol')).toHaveLength(0)
+    expect(screen.getByRole('article').querySelectorAll('section h3')).toHaveLength(0)
+    expect(screen.queryByRole('heading', { name: '注册或登录' })).toBeNull()
     expect(screen.getByRole('textbox', { name: '创作指令示例' })).toBeTruthy()
     expect(screen.getByRole('link', { name: '打开 Quick Start' }).getAttribute('href')).toBe(
       '/quick-start',
@@ -82,9 +84,8 @@ describe('AppRoutes authentication boundary', () => {
       '#quick-start',
     )
     expect(screen.getByRole('link', { name: '使用手册' }).getAttribute('href')).toBe('/guide')
-    expect(screen.getByRole('link', { name: '新建项目' }).getAttribute('href')).toBe(
-      '/projects/new',
-    )
+    expect(screen.queryByRole('link', { name: '新建项目' })).toBeNull()
+    expect(screen.getByRole('link', { name: '进入创作' }).getAttribute('href')).toBe('/quick-start')
     expect(
       screen
         .getAllByRole('link', { name: '开始创建角色' })
