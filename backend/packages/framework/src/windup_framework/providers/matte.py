@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import shutil
 import tempfile
+import threading
 import urllib.request
 from pathlib import Path
 
@@ -23,6 +25,13 @@ from PIL import Image
 from .interfaces import MatteProvider
 
 logger = logging.getLogger("windup.matte")
+
+# POLL>1 时两路 cutout 会并发 Run;CPU EP 允许并发,但默认 intra_op 吃满核、arena 叠两份。
+# 进程内串行 Run,吞吐靠多 worker 进程而不是同一进程里叠会话。
+_RUN_LOCK = threading.Lock()
+
+# 4C8G 可关全量 u2net(~176MB):WINDUP_MATTE_REFINE=0。浅肤色脸颊/小腿可能漏检。
+_REFINE_OFF = frozenset({"0", "false", "no", "off"})
 
 # u2netp:轻量版(~4.4MB)。rembg 官方 release 托管;国内不可达时可预置 model_path。
 _U2NETP_URL = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx"
@@ -67,6 +76,22 @@ _EDGE_SKIP = 2
 _CORNER = 12        # 每个角的采样块边长
 
 
+def _refine_enabled() -> bool:
+    return os.environ.get("WINDUP_MATTE_REFINE", "1").strip().lower() not in _REFINE_OFF
+
+
+def _ort_session(path: Path):
+    """CPU 会话:关 arena、intra_op=1,避免 4C8G 上预分配后 RSS 不回落。"""
+    import onnxruntime as ort
+
+    opt = ort.SessionOptions()
+    opt.enable_cpu_mem_arena = False
+    opt.intra_op_num_threads = 1
+    return ort.InferenceSession(
+        str(path), sess_options=opt, providers=["CPUExecutionProvider"]
+    )
+
+
 def _download_atomic(url: str, dest: Path) -> None:
     """下到同目录的临时文件,整个传完再原子改名。
 
@@ -89,7 +114,8 @@ def _download_atomic(url: str, dest: Path) -> None:
 
 def _saliency(session, tensor: np.ndarray) -> np.ndarray:
     """一个 u2net 会话的前向 → 归一化到 [0,1] 的二维显著性图。"""
-    pred = session.run(None, {session.get_inputs()[0].name: tensor})[0][:, 0, :, :]
+    with _RUN_LOCK:
+        pred = session.run(None, {session.get_inputs()[0].name: tensor})[0][:, 0, :, :]
     mi, ma = float(pred.min()), float(pred.max())
     return ((pred - mi) / max(ma - mi, 1e-6)).squeeze()
 
@@ -253,6 +279,15 @@ class OnnxU2NetMatteProvider(MatteProvider):
         self._model_path = Path(model_path) if model_path else _DEFAULT_CACHE
         self._model_url = model_url
         self._session = None  # 惰性
+        if (
+            refine_model_path is None
+            and refine_model_url is _U2NET_URL
+            and not _refine_enabled()
+        ):
+            refine_model_url = None
+            logger.warning(
+                "WINDUP_MATTE_REFINE 已关,只用轻量 u2netp —— 浅肤色脸颊与小腿可能被判成背景"
+            )
         self._refine_path = (
             Path(refine_model_path) if refine_model_path
             else (_REFINE_CACHE if refine_model_url else None)
@@ -271,16 +306,12 @@ class OnnxU2NetMatteProvider(MatteProvider):
         if self._refine_session is not None or self._refine_failed or self._refine_path is None:
             return self._refine_session
         try:
-            import onnxruntime as ort
-
             if not self._refine_path.exists():
                 if not self._refine_url:
                     raise FileNotFoundError(self._refine_path)
                 _download_atomic(self._refine_url, self._refine_path)
             try:
-                self._refine_session = ort.InferenceSession(
-                    str(self._refine_path), providers=["CPUExecutionProvider"]
-                )
+                self._refine_session = _ort_session(self._refine_path)
             except Exception:
                 # 建会话失败说明这个文件本身不可用(上一次下载留下的残片、或版本不合)。
                 # 留着它会让之后每次都跳过重下,所以就地删掉。
@@ -302,7 +333,7 @@ class OnnxU2NetMatteProvider(MatteProvider):
     def _get_session(self):
         if self._session is None:
             try:
-                import onnxruntime as ort  # 惰性:导入慢
+                import onnxruntime as ort  # noqa: F401 — 惰性:导入慢;会话构建见 _ort_session
             except ImportError as e:       # pragma: no cover - 取决于安装环境
                 # **不静默降级。** 这里曾在 ImportError 时回落到"取四角主色做 chroma-key",
                 # 有两个问题:①猜背景色 —— 白底母版四角就是白色,浅色角色(骨白/银甲)与背景
@@ -311,9 +342,7 @@ class OnnxU2NetMatteProvider(MatteProvider):
                     "onnxruntime 不可用，无法做主体抠图。请安装 onnxruntime"
                     "（注意 <1.24 才有 macOS Intel 轮子）。"
                 ) from e
-            self._session = ort.InferenceSession(
-                str(self._ensure_model()), providers=["CPUExecutionProvider"]
-            )
+            self._session = _ort_session(self._ensure_model())
         return self._session
 
     def _predict_mask(self, img: Image.Image) -> Image.Image:

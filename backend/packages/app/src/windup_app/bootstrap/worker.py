@@ -10,6 +10,7 @@ import time
 from windup_app.server.mq.catalog import all_stream_specs, email_stream_spec, generation_stream_spec
 from windup_app.server.orchestrator import task_repo
 from windup_app.server.orchestrator.executor import (
+    bind_matte,
     resume_action_poll,
     run_action_task,
     run_image_task,
@@ -124,7 +125,9 @@ def _warmup_local_inference() -> None:
     try:
         from windup_framework.providers import OnnxU2NetMatteProvider
 
-        OnnxU2NetMatteProvider().warmup()
+        matte = OnnxU2NetMatteProvider()
+        matte.warmup()
+        bind_matte(matte)
         logger.info("ONNX 抠图会话已预热")
     except Exception:
         logger.warning("ONNX 预热失败,首个抠图任务会再加载", exc_info=True)

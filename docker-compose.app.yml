@@ -1,0 +1,76 @@
+# ── Windup 应用层部署（独立应用服务器专用）──────────────────────────
+# 用于把 backend / worker / frontend 部署到一台服务器上，
+# Postgres / Redis 在另一台 DB 服务器（见 docker-compose.db.yml）。
+#
+# 使用方式:
+#   启动:   docker compose -f docker-compose.app.yml up -d --build
+#   日志:   docker compose -f docker-compose.app.yml logs -f [service]
+#   停止:   docker compose -f docker-compose.app.yml down
+#
+# ⚠️ 与单机版 docker-compose.yml 的差异：
+#   1. 不含 redis / postgres 服务 —— 数据库在远端 DB 服务器。
+#   2. 不再用 environment 写死 Docker 内网主机名（redis / postgres），
+#      连接信息全部来自 .env，指向 DB 服务器的真实地址。
+#   3. 应用服务器 .env 由 .env.example 复制而来，记得改
+#      POSTGRES_HOST / POSTGRES_PORT / POSTGRES_PASSWORD / REDIS_URL。
+
+services:
+  # ── 后端 API 服务 ──
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: windup-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${WINDUP_PORT:-8000}:8000"
+    networks:
+      - windup-net
+
+  # ── Worker（MQ 消费：邮件 + 生成调度） ──
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      # 出帧依赖只装进 worker：backend 不出帧，不该背 700MB 量级的浏览器
+      target: runtime-render3d
+    container_name: windup-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: ["python", "-m", "windup_app.worker"]
+    healthcheck:
+      disable: true
+    # 4C8G 应用机:挡住 worker 把 sshd 一起 OOM。见 #690。
+    mem_limit: 5g
+    networks:
+      - windup-net
+
+  # ── 前端静态产物构建任务 ──
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # 构建期烘进产物的后端地址，运行期改不动，所以放在 build.args 而非
+        # environment。默认相对路径 → 与页面同源 → 不产生跨域，后端不必配来源白名单。
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+    container_name: windup-frontend
+    restart: "no"
+    depends_on:
+      - backend
+    volumes:
+      # 构建命令直接写入宿主机 nginx 的站点目录；容器退出后产物仍保留。
+      - /var/www/react-windup:/var/www/react-windup
+    networks:
+      - windup-net
+
+networks:
+  windup-net:
+    driver: bridge
+    # 宿主机链路 MTU 是 1480（eno1），compose 自建网络不会继承 daemon 的 mtu 设置，
+    # 默认仍是 1500 → 大包被丢，表现为 TLS 握手超时（七牛上传域名连不上、pip 下载卡死）。
+    driver_opts:
+      com.docker.network.driver.mtu: "1450"

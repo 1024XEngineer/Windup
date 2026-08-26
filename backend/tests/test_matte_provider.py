@@ -617,3 +617,78 @@ def test_an_unusable_cached_model_is_removed_so_the_next_run_can_redownload(
     with caplog.at_level("WARNING"):
         assert prov._get_refine_session() is None
     assert not bad.exists(), "坏文件留在缓存里，下次还会跳过重下"
+
+
+def test_ort_session_disables_cpu_arena_and_limits_intra_op(monkeypatch, tmp_path):
+    """4C8G:关 CPU arena、intra_op=1,否则预分配后 RSS 不回落。"""
+    import sys
+    import types
+
+    captured: dict = {}
+
+    class _Opt:
+        def __init__(self):
+            self.enable_cpu_mem_arena = True
+            self.intra_op_num_threads = 0
+
+    def _session(path, sess_options=None, providers=None):
+        captured["arena"] = sess_options.enable_cpu_mem_arena
+        captured["threads"] = sess_options.intra_op_num_threads
+        captured["providers"] = providers
+        return _FakeSession()
+
+    monkeypatch.setitem(
+        sys.modules, "onnxruntime",
+        types.SimpleNamespace(SessionOptions=_Opt, InferenceSession=_session),
+    )
+    model = tmp_path / "u2netp.onnx"
+    model.write_bytes(b"x")
+    OnnxU2NetMatteProvider(model_path=model, refine_model_url=None)._get_session()
+    assert captured["arena"] is False
+    assert captured["threads"] == 1
+    assert captured["providers"] == ["CPUExecutionProvider"]
+
+
+def test_refine_env_off_skips_full_u2net(monkeypatch, caplog):
+    monkeypatch.setenv("WINDUP_MATTE_REFINE", "0")
+    with caplog.at_level("WARNING"):
+        p = OnnxU2NetMatteProvider()
+    assert p._refine_path is None
+    assert any("WINDUP_MATTE_REFINE" in r.message for r in caplog.records)
+
+
+def test_cutout_serializes_ort_run_across_threads(monkeypatch):
+    """POLL>1 时两路 cutout 不得并行 session.run。"""
+    import threading
+    import time
+
+    running = 0
+    max_running = 0
+    tally = threading.Lock()
+
+    class _Slow(_FakeSession):
+        def run(self, *a, **k):
+            nonlocal running, max_running
+            with tally:
+                running += 1
+                max_running = max(max_running, running)
+            time.sleep(0.05)
+            try:
+                return super().run(*a, **k)
+            finally:
+                with tally:
+                    running -= 1
+
+    p = _provider_with_fake_session(monkeypatch)
+    monkeypatch.setattr(p, "_get_session", lambda: _Slow())
+    monkeypatch.setattr(p, "_get_refine_session", lambda: None)
+
+    def _go():
+        p.cutout(_png())
+
+    threads = [threading.Thread(target=_go) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+    assert max_running == 1, f"ORT Run 叠了 {max_running} 路"
