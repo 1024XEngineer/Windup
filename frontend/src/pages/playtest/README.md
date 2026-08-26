@@ -16,7 +16,7 @@ Playtest 位于 `pages/playtest`，只依赖 `@/entities` 的 Character 公开�
 `@/shared/api` 的错误类型。页面不导入 features、不碰 Workflow 与 Generation，也不修改
 Character、Outfit、Action、Frame 或后端数据。这几条由 `playtest-boundaries.test.ts` 看着。
 
-`createPlaytestModel` 是页面内的窄适配器，只留下动作 ID、名称、类型、帧图片和播放时长。
+`createPlaytestModel` 是页面内的窄适配器，只留下动作 ID、名称、类型、位移语义、帧图片和播放时长。
 播放顺序按 `Frame.index` 排定，不用数组下标——后端整棵下发资产树，数组顺序没有契约保证。
 帧自己的 `durationMs` 优先，缺失时才按所属 Action 的 `fps` 换算；两者都不可用时使用第三级
 兜底 `DEFAULT_FRAME_DURATION_MS` 的 100ms。审核、导出、时间线和生成字段不进入运行时。
@@ -26,8 +26,8 @@ Character、Outfit、Action、Frame 或后端数据。这几条由 `playtest-bou
 - 页面绑定当前造型下全部有帧的动作，点击动作名可以直接切换。
 - 上、下、左、右、主动作和次动作共六个控制位都可修改。点击圆角键帽后按下目标物理键即可
   重新绑定；键位冲突时交换原键位，`Escape` 取消，`Delete` 或 `Backspace` 可清除动作键。
-- 默认键位是 W、S、A、D、Space 和左 Shift。四个方向键驱动四向或八向移动；只有当前动作
-  类型是 walk 或 run 时，角色才会按 150 px/s 连续移动，斜向速度保持归一化。
+- 默认键位是 W、S、A、D、Space 和左 Shift。四个方向键驱动四向或八向移动；显式标记为
+  `locomotion` 的动作会按 150 px/s 连续移动，旧资产的 walk/run 继续兼容，斜向速度保持归一化。
 - 主、次动作按 Action `type` 保存：默认把 jump 分配给主动作，把 crouch/duck/squat 归一为
   crouch 分配给次动作。切换角色或造型时会在新资产中重新查找同类型动作，不复用旧 Action ID。
 - 当前角色没有对应动作，或动作没有当前朝向的帧时，相关控制禁用；不会自动切换到有素材的
