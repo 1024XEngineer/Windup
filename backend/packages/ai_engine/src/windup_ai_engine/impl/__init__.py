@@ -2,5 +2,6 @@
 
 from .character_generator import CharacterGenerator
 from .character_namer import LangChainCharacterNamer
+from .project_namer import LangChainProjectNamer
 
-__all__ = ["CharacterGenerator", "LangChainCharacterNamer"]
+__all__ = ["CharacterGenerator", "LangChainCharacterNamer", "LangChainProjectNamer"]

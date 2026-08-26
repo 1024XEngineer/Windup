@@ -81,6 +81,8 @@ export interface QuickStartAgentTurnOptions {
 export interface ConfirmProposalOptions {
   /** 画风原样透传给宿主；取值范围由宿主定义，本模块不认识业务对象。 */
   gameStyle?: string
+  /** 宿主选择的已有项目；缺省时继续自动创建项目。 */
+  projectId?: string
   /** 用户选择确认后由 Controller 自动交付，不再暴露中间候选选择。 */
   automaticDelivery?: boolean
 }
@@ -104,6 +106,7 @@ export type StartCharacterGenerationAction = (input: {
   actionType?: QuickStartActionType
   directionalMovement?: QuickStartDirectionalMovement
   gameStyle?: string
+  projectId?: string
   automaticDelivery?: boolean
   suggestPixelPerfect?: boolean
 }) => Promise<{ runId: string }>
@@ -125,12 +128,14 @@ export type WorkflowAgentToolName =
 
 export interface WorkflowAgentContext {
   availableTools: readonly WorkflowAgentToolName[]
+  /** 当前未确认角色候选的稳定句柄；Agent 只识别顺序，不接收图片内容或 URL。 */
+  characterTemplateCandidates?: readonly { id: string; position: number }[]
 }
 
 export interface WorkflowAgentActions {
   getContext(): WorkflowAgentContext
   regenerateCharacterTemplate(): Promise<void>
-  refineCharacterTemplate(adjustmentPrompt: string): Promise<void>
+  refineCharacterTemplate(adjustmentPrompt: string, candidateId?: string): Promise<void>
   regenerateFirstFrame(): Promise<void>
   refineFirstFrame(adjustmentPrompt: string): Promise<void>
 }
@@ -334,7 +339,7 @@ export function createQuickStartAgent({
     proposalId: string,
     prompt: string,
     directionalMovement: QuickStartDirectionalMovement = 'single',
-    { gameStyle, automaticDelivery }: ConfirmProposalOptions = {},
+    { gameStyle, projectId, automaticDelivery }: ConfirmProposalOptions = {},
   ): Promise<QuickStartAgentResult> {
     assertAuthorized()
     if (running) throw new Error('Planner 正在处理上一条输入')
@@ -357,6 +362,7 @@ export function createQuickStartAgent({
         ...(proposal.actionType ? { actionType: proposal.actionType } : {}),
         directionalMovement,
         gameStyle,
+        projectId,
         ...(automaticDelivery ? { automaticDelivery: true } : {}),
         ...(proposal.suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
       })
@@ -388,16 +394,22 @@ interface WorkflowActionTerminal {
   kind: 'action'
   action: WorkflowAgentToolName
   adjustmentPrompt?: string
+  candidateId?: string
 }
 
 function parseWorkflowActionInput(
   action: WorkflowAgentToolName,
   value: unknown,
+  context: WorkflowAgentContext,
 ): WorkflowActionTerminal {
   if (!isRecord(value)) throw new Error('工作流 Tool 参数必须是对象')
   if (action === REFINE_CHARACTER_TEMPLATE_TOOL || action === REFINE_FIRST_FRAME_TOOL) {
+    const candidates = context.characterTemplateCandidates ?? []
+    const acceptsCandidate = action === REFINE_CHARACTER_TEMPLATE_TOOL && candidates.length > 0
     if (
-      Object.keys(value).some((key) => key !== 'adjustmentPrompt') ||
+      Object.keys(value).some(
+        (key) => key !== 'adjustmentPrompt' && (!acceptsCandidate || key !== 'candidateId'),
+      ) ||
       !Object.hasOwn(value, 'adjustmentPrompt')
     ) {
       throw new Error('微调 Tool 参数字段无效')
@@ -407,7 +419,12 @@ function parseWorkflowActionInput(
     if (!adjustmentPrompt || adjustmentPrompt.length > MAX_PROMPT_LENGTH) {
       throw new Error('微调描述无效')
     }
-    return { kind: 'action', action, adjustmentPrompt }
+    if (!acceptsCandidate) return { kind: 'action', action, adjustmentPrompt }
+    const candidateId = typeof value.candidateId === 'string' ? value.candidateId.trim() : ''
+    if (!candidateId || !candidates.some((candidate) => candidate.id === candidateId)) {
+      throw new Error('候选图标识无效')
+    }
+    return { kind: 'action', action, adjustmentPrompt, candidateId }
   }
   if (Object.keys(value).length > 0) throw new Error('重新生成 Tool 不接受参数')
   return { kind: 'action', action }
@@ -429,7 +446,7 @@ function validateWorkflowPlannerTerminal(
   if (!action || !context.availableTools.includes(action)) {
     throw new Error('当前流程不能执行该操作')
   }
-  return parseWorkflowActionInput(action, call.input)
+  return parseWorkflowActionInput(action, call.input, context)
 }
 
 function workflowActionMessage(action: WorkflowAgentToolName): string {
@@ -495,7 +512,11 @@ export function createQuickStartWorkflowAgent({
           await actions.regenerateCharacterTemplate()
           break
         case REFINE_CHARACTER_TEMPLATE_TOOL:
-          await actions.refineCharacterTemplate(terminal.adjustmentPrompt!)
+          if (terminal.candidateId) {
+            await actions.refineCharacterTemplate(terminal.adjustmentPrompt!, terminal.candidateId)
+          } else {
+            await actions.refineCharacterTemplate(terminal.adjustmentPrompt!)
+          }
           break
         case REGENERATE_FIRST_FRAME_TOOL:
           await actions.regenerateFirstFrame()

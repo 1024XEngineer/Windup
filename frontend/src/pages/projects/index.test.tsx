@@ -171,6 +171,7 @@ describe('ProjectsPage', () => {
     expect(await screen.findAllByRole('link', { name: /打开项目/ })).toHaveLength(2)
     const previewProject = screen.getByRole('link', { name: '打开项目 点灯人 · MVP' })
     expect(previewProject.getAttribute('href')).toBe('/projects/42/assets')
+    expect(previewProject.closest('article')?.classList.contains('projects-card-enter')).toBe(false)
     expect(screen.getByRole('heading', { name: '最近项目 · 02' })).toBeTruthy()
     const emptyProject = screen.getByRole('link', { name: '打开项目 空白海岸' })
     await waitFor(() => {

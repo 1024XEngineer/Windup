@@ -7,12 +7,18 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react'
 import { BrowserRouter, MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { QuickStartCandidate, QuickStartEntryService, QuickStartSession } from './service'
-import { WorkflowRunConflictError, type WorkflowRun } from '@/entities'
+import {
+  WorkflowRunConflictError,
+  type Project,
+  type ProjectApis,
+  type WorkflowRun,
+} from '@/entities'
 import { ApiError } from '@/shared/api'
 import type { ExportPackageModel } from '@/features/export-package'
 import { readActiveRun, rememberActiveRun } from '@/features/active-run'
@@ -177,6 +183,53 @@ function serviceFor(run: WorkflowRun | null, overrides: Partial<QuickStartMock> 
 }
 
 describe('Quick Start workflow Agent', () => {
+  it('routes an unselected candidate refinement to the workflow Agent', async () => {
+    const run = workflow(setupAndTemplate())
+    const planner = vi.fn(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'refine_character_template',
+          input: { candidateId: 'candidate-2', adjustmentPrompt: '把牛角缩短' },
+        },
+      ],
+    }))
+    const service = serviceFor(run, {
+      getTemplateCandidates: vi.fn(async () =>
+        eastCandidates(
+          'https://example.test/character-1.png',
+          'https://example.test/character-2.png',
+          'https://example.test/character-3.png',
+        ),
+      ),
+      getWorkflowAgentContext: vi.fn(() => ({
+        availableTools: ['regenerate_character_template', 'refine_character_template'] as const,
+        characterTemplateCandidates: [
+          { id: 'candidate-1', position: 1 },
+          { id: 'candidate-2', position: 2 },
+          { id: 'candidate-3', position: 3 },
+        ],
+      })),
+    })
+    renderAt(`/quick-start/${run.id}`, service, agentFor({ planner }))
+
+    await screen.findAllByRole('button', { name: /选择角色方案/u })
+    const composer = screen.getByRole('textbox', { name: '继续描述你的想法' })
+    expect((composer as HTMLInputElement).disabled).toBe(false)
+    fireEvent.change(composer, { target: { value: '把第二张的牛角缩短' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() =>
+      expect(service.regenerateCharacterTemplate).toHaveBeenCalledWith(
+        'refine',
+        '把牛角缩短',
+        'candidate-2',
+      ),
+    )
+    expect(service.confirmCandidate).not.toHaveBeenCalled()
+  })
+
   it('routes a completed-run refinement through the current Controller session', async () => {
     const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
     const planner = vi.fn(async () => ({
@@ -290,10 +343,31 @@ function agentFor(
   }
 }
 
+const existingProject: Project = {
+  id: '42',
+  workflowId: null,
+  name: '星海计划',
+  perspective: 'side',
+  directionalMovement: 'four-way',
+  spriteSize: { width: 128, height: 192 },
+  gameStyle: 'pixel',
+  sampleImageUrl: null,
+  createdAt: '2026-08-25T00:00:00Z',
+  updatedAt: '2026-08-25T00:00:00Z',
+}
+
+function projectReader(project: Project = existingProject): Pick<ProjectApis, 'list' | 'get'> {
+  return {
+    list: vi.fn(async () => ({ items: [project], total: 1, page: 1, pageSize: 20 })),
+    get: vi.fn(async () => project),
+  }
+}
+
 function renderAt(
   path: string,
   service: QuickStartEntryService,
   agent: CreateQuickStartAgentOptions = agentFor(),
+  projects: Pick<ProjectApis, 'list' | 'get'> = projectReader(),
 ) {
   function PlaytestLocation() {
     const location = useLocation()
@@ -304,11 +378,25 @@ function renderAt(
       <Routes>
         <Route
           path="/quick-start"
-          element={<QuickStartPage service={service} activeRunUserId="7" agent={agent} />}
+          element={
+            <QuickStartPage
+              service={service}
+              activeRunUserId="7"
+              agent={agent}
+              projectApis={projects}
+            />
+          }
         />
         <Route
           path="/quick-start/:runId"
-          element={<QuickStartPage service={service} activeRunUserId="7" agent={agent} />}
+          element={
+            <QuickStartPage
+              service={service}
+              activeRunUserId="7"
+              agent={agent}
+              projectApis={projects}
+            />
+          }
         />
         <Route path="/projects/:projectId/assets" element={<PlaytestLocation />} />
         <Route path="/playtest/:characterId/:outfitId" element={<PlaytestLocation />} />
@@ -746,7 +834,12 @@ describe('QuickStartPage', () => {
 
     fireEvent.change(composer, { target: { value: '银发骑士' } })
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' })
-    fireEvent.click(await screen.findByRole('button', { name: '停止生成' }))
+    const stop = await screen.findByRole('button', { name: '停止生成' })
+    expect(stop.className).toContain('rounded-full')
+    expect(stop.className).toContain('bg-app-accent')
+    expect(stop.className).not.toContain('bg-app-ink')
+    expect(stop.textContent).toBe('')
+    fireEvent.click(stop)
 
     await waitFor(() => {
       expect(composer.disabled).toBe(false)
@@ -808,6 +901,69 @@ describe('QuickStartPage', () => {
     expect(template.textContent).toBe('添加母版')
     expect(style.getAttribute('aria-expanded')).toBe('false')
     expect(send.className).toContain('rounded-full')
+  })
+
+  it('defaults to automatic project creation and can target an existing project', async () => {
+    const startCharacterGeneration = vi.fn(async () => ({ runId: 'run-created' }))
+    const planner = vi.fn(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'quick_start_decision',
+          input: {
+            kind: 'proposal',
+            optimizedPrompt: '银发骑士，全身像',
+            actionPrompt: '向前行走',
+            actionType: 'walk',
+            optimizationSummary: '整理角色与动作描述。',
+          },
+        },
+      ],
+    }))
+    const projects = projectReader()
+    renderAt('/quick-start', serviceFor(null), { planner, startCharacterGeneration }, projects)
+
+    await waitFor(() => expect(projects.list).toHaveBeenCalledWith({ page: 1, pageSize: 3 }))
+
+    const project = screen.getByRole('button', { name: '选择项目，当前自动创建' })
+    fireEvent.click(project)
+    expect(screen.getByRole('menuitem', { name: '新建项目' }).getAttribute('href')).toBe(
+      '/projects/new?entry=quick-start',
+    )
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: '星海计划' }))
+
+    expect(screen.getByRole('button', { name: '选择项目，当前星海计划' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '生成方向，当前四向' })).toBeTruthy()
+    expect(screen.getByTestId('quick-start-selected-style').textContent).toBe('像素')
+
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '银发骑士向前行走' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+    fireEvent.click(await screen.findByRole('button', { name: '确认并生成' }))
+
+    await waitFor(() =>
+      expect(startCharacterGeneration).toHaveBeenCalledWith({
+        prompt: '银发骑士，全身像',
+        actionPrompt: '向前行走',
+        actionType: 'walk',
+        directionalMovement: 'four-way',
+        gameStyle: 'pixel',
+        automaticDelivery: true,
+        projectId: '42',
+      }),
+    )
+  })
+
+  it('restores a newly created project from the Quick Start return URL', async () => {
+    const projects = projectReader()
+    renderAt('/quick-start?projectId=42', serviceFor(null), agentFor(), projects)
+
+    expect(await screen.findByRole('button', { name: '选择项目，当前星海计划' })).toBeTruthy()
+    expect(projects.get).toHaveBeenCalledWith('42')
+    expect(screen.getByRole('button', { name: '生成方向，当前四向' })).toBeTruthy()
+    expect(screen.getByTestId('quick-start-selected-style').textContent).toBe('像素')
   })
 
   it('opens generation direction as an animated slider control below the composer', () => {
@@ -1219,6 +1375,107 @@ describe('QuickStartPage', () => {
     expect(window.localStorage.getItem(legacyKey)).toBeNull()
   })
 
+  it('allows selecting and copying sent text and the optimized prompt', async () => {
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+    const planner = vi.fn(async () => ({
+      text: '',
+      finishReason: 'tool-calls' as const,
+      toolCalls: [
+        {
+          toolName: 'start_character_generation' as const,
+          input: {
+            optimizedPrompt: '银发机械师，佩戴黄铜护目镜，全身像',
+            optimizationSummary: '已整理为完整的角色母版描述。',
+          },
+        },
+      ],
+    }))
+    const view = renderAt('/quick-start', serviceFor(null), agentFor({ planner }))
+
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '银发机械师' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+
+    const userTurn = await waitFor(() => {
+      const element = view.container.querySelector<HTMLElement>('[data-user-turn]')
+      expect(element).toBeTruthy()
+      return element!
+    })
+    expect(userTurn.className).toContain('select-text')
+    fireEvent.click(within(userTurn).getByRole('button', { name: '复制消息' }))
+    await waitFor(() => expect(writeText).toHaveBeenNthCalledWith(1, '银发机械师'))
+    expect(within(userTurn).getByRole('button', { name: '已复制消息' })).toBeTruthy()
+
+    const proposal = await waitFor(() => {
+      const element = view.container.querySelector<HTMLElement>('[data-prompt-proposal]')
+      expect(element).toBeTruthy()
+      return element!
+    })
+    expect(proposal.querySelector('blockquote')?.className).toContain('select-text')
+    expect(within(proposal).queryByRole('button', { name: '复制 Agent 回复' })).toBeNull()
+    fireEvent.click(within(proposal).getByRole('button', { name: '复制提示词提案' }))
+    await waitFor(() =>
+      expect(writeText).toHaveBeenNthCalledWith(2, '银发机械师，佩戴黄铜护目镜，全身像'),
+    )
+    expect(within(proposal).getByRole('button', { name: '已复制提示词提案' })).toBeTruthy()
+  })
+
+  it('allows selecting and copying a regular Agent reply', async () => {
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+    const planner = vi.fn(async () => ({
+      text: '请再补充角色的服装颜色。',
+      finishReason: 'stop' as const,
+      toolCalls: [],
+    }))
+    renderAt('/quick-start', serviceFor(null), agentFor({ planner }))
+
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '银发机械师' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+
+    const reply = await screen.findByLabelText('Agent 回答')
+    expect(reply.className).toContain('select-text')
+    const agentCopy = reply.closest<HTMLElement>('[data-agent-copy]')
+    expect(agentCopy).toBeTruthy()
+    fireEvent.click(within(agentCopy!).getByRole('button', { name: '复制 Agent 回复' }))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('请再补充角色的服装颜色。'))
+  })
+
+  it('shows a contextual status when copying an Agent reply fails', async () => {
+    const writeText = vi.fn(async () => Promise.reject(new Error('denied')))
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+    const planner = vi.fn(async () => ({
+      text: '请再补充角色的服装颜色。',
+      finishReason: 'stop' as const,
+      toolCalls: [],
+    }))
+    renderAt('/quick-start', serviceFor(null), agentFor({ planner }))
+
+    fireEvent.change(screen.getByRole('textbox', { name: '创作指令' }), {
+      target: { value: '银发机械师' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+
+    const reply = await screen.findByLabelText('Agent 回答')
+    const agentCopy = reply.closest<HTMLElement>('[data-agent-copy]')
+    fireEvent.click(within(agentCopy!).getByRole('button', { name: '复制 Agent 回复' }))
+
+    expect((await within(agentCopy!).findByRole('status')).textContent).toBe('复制 Agent 回复失败')
+  })
+
   it('starts with the slider direction after the user edits and sends the proposal', async () => {
     vi.useFakeTimers()
     const service = serviceFor(null)
@@ -1243,14 +1500,34 @@ describe('QuickStartPage', () => {
     const conversationControls = composer.querySelector(
       '[data-layout="quick-start-composer-controls"]',
     )
-    expect(conversationForm?.className).toContain('grid-cols-[1fr_auto]')
-    expect(conversationSurface?.className).not.toContain('border-app-line-strong')
-    expect(conversationSurface?.className).not.toContain('shadow-app-panel')
-    expect(conversationControls?.className).toContain('hidden')
-    expect(conversationForm?.querySelector('button')?.className).not.toContain('absolute')
+    expect(conversationForm?.className).toContain('relative')
+    expect(conversationForm?.className).toContain('flex-col')
+    expect(conversationSurface?.className).toContain('rounded-app-surface')
+    expect(conversationSurface?.className).toContain('border-app-line-strong')
+    expect(conversationSurface?.className).toContain('shadow-app-panel')
+    expect(conversationControls?.className).toContain('flex')
+    expect(
+      (
+        screen.getByRole('button', {
+          name: '选择项目，当前自动创建',
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true)
+    expect(screen.getByTestId('quick-start-selected-style').textContent).toBe('不指定')
+    expect(
+      (screen.getByRole('button', { name: '生成方向，当前八向' }) as HTMLButtonElement).disabled,
+    ).toBe(true)
+    expect(screen.queryByRole('button', { name: '添加母版' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '选择画风，当前不指定' })).toBeNull()
+    const conversationSubmit = screen.getByRole('button', { name: '继续' })
+    expect(conversationSubmit.className).toContain('absolute')
+    expect(conversationSubmit.className).toContain('rounded-full')
+    expect(conversationSubmit.textContent).toBe('')
     expect(input.tagName).toBe('TEXTAREA')
     expect(input.rows).toBe(1)
     expect(input.className).toContain('[field-sizing:content]')
+    expect(input.className).toContain('min-h-[52px]')
+    expect(input.className).toContain('pr-14')
     expect(input.value).toBe('')
     expect(
       screen.getByText('我会保留角色的核心特征，并整理成适合母版生成的完整描述。'),
@@ -1764,11 +2041,17 @@ describe('QuickStartPage', () => {
     const prompt = await screen.findByRole('textbox', { name: '创作指令' })
     const editingSurface = prompt.closest('label')
     const uploadButton = screen.getByRole('button', { name: '添加母版' })
+    const styleButton = screen.getByRole('button', { name: '选择画风，当前不指定' })
+    const projectButton = screen.getByRole('button', { name: '选择项目，当前自动创建' })
     const directionButton = screen.getByRole('button', { name: '生成方向，当前单向' })
 
     expect(editingSurface?.className).toContain('rounded-app-surface')
     expect(uploadButton.className).toContain('rounded-app-compact')
     expect(directionButton.className).toContain('rounded-app-control')
+    expect(projectButton.parentElement?.className).toContain('order-first')
+    expect(
+      uploadButton.compareDocumentPosition(styleButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
 
     fireEvent.click(directionButton)
     expect(screen.getByRole('group', { name: '生成方向设置' }).className).toContain(
@@ -1979,6 +2262,100 @@ describe('QuickStartPage', () => {
       { east: 'https://example.test/character-2.png' },
       '转身挥动风灯',
     )
+  })
+
+  it('returns to Agent conversation when the selected character candidate is clicked again', async () => {
+    const run = workflow(setupAndTemplate())
+    const service = serviceFor(run, {
+      getTemplateCandidates: vi.fn(async () =>
+        eastCandidates(
+          'https://example.test/character-1.png',
+          'https://example.test/character-2.png',
+          'https://example.test/character-3.png',
+        ),
+      ),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    const candidate = await screen.findByRole('button', { name: '选择角色方案 1' })
+    fireEvent.click(candidate)
+    expect(screen.getByPlaceholderText('描述这个角色接下来要做的动作…')).toBeTruthy()
+
+    fireEvent.click(candidate)
+
+    expect(candidate.getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByPlaceholderText('描述想调整的候选，或重新生成一批…')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '发送' })).toBeTruthy()
+  })
+
+  it('locks candidate cards while the Agent is regenerating them', async () => {
+    const run = workflow(setupAndTemplate())
+    const service = serviceFor(run, {
+      getTemplateCandidates: vi.fn(async () =>
+        eastCandidates(
+          'https://example.test/character-1.png',
+          'https://example.test/character-2.png',
+        ),
+      ),
+      getWorkflowAgentContext: vi.fn(() => ({
+        availableTools: ['regenerate_character_template', 'refine_character_template'] as const,
+      })),
+    })
+    renderAt(
+      '/quick-start/run-1',
+      service,
+      agentFor({
+        planner: vi.fn<CreateQuickStartAgentOptions['planner']>(() => new Promise(() => {})),
+      }),
+    )
+
+    const candidate = await screen.findByRole('button', { name: '选择角色方案 1' })
+    expect(candidate.hasAttribute('disabled')).toBe(false)
+
+    fireEvent.change(screen.getByLabelText('继续描述你的想法'), {
+      target: { value: '重新生成一批' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => expect(candidate.hasAttribute('disabled')).toBe(true))
+  })
+
+  it('drops a candidate selection that the newest batch no longer contains', async () => {
+    const run = workflow(setupAndTemplate())
+    let batch = eastCandidates(
+      'https://example.test/character-1.png',
+      'https://example.test/character-2.png',
+    )
+    let publishRun: ((next: WorkflowRun) => void) | null = null
+    const service = serviceFor(run, {
+      getTemplateCandidates: vi.fn(async () => batch),
+      subscribe: vi.fn((listener: (next: WorkflowRun) => void) => {
+        publishRun = listener
+        return () => undefined
+      }),
+    })
+    renderAt('/quick-start/run-1', service)
+
+    fireEvent.click(await screen.findByRole('button', { name: '选择角色方案 2' }))
+    expect(
+      screen.getByRole('button', { name: '选择角色方案 2' }).getAttribute('aria-pressed'),
+    ).toBe('true')
+
+    // Agent 重新生成后换了一批候选，旧的那张已经不在了。
+    batch = eastCandidates(
+      'https://example.test/character-4.png',
+      'https://example.test/character-5.png',
+    )
+    await act(async () => publishRun?.({ ...run, nodes: [...run.nodes] }))
+
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole('button', { name: /选择角色方案/u })
+          .every((card) => card.getAttribute('aria-pressed') === 'false'),
+      ).toBe(true),
+    )
+    expect(screen.getByPlaceholderText('描述想调整的候选，或重新生成一批…')).toBeTruthy()
   })
 
   it('八向母版确认后完整展示八个同角色方向首帧', async () => {

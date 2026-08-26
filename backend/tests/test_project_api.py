@@ -7,10 +7,35 @@
 
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import event
 
 from windup_app.server.character import cleanup as character_cleanup
 from windup_app.web.api import project as project_api
+
+
+class _FakeProjectNamer:
+    def __init__(self, result="雾港计划", error=None):
+        self.result = result
+        self.error = error
+        self.calls = []
+
+    def name_from_description(self, description):
+        self.calls.append(description)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+@pytest.fixture(autouse=True)
+def _inject_fake_project_namer():
+    project_service = project_api.service
+    original = getattr(project_service, "_namer", None)
+    project_service._namer = _FakeProjectNamer()
+    try:
+        yield
+    finally:
+        project_service._namer = original
 
 
 def _payload(**overrides):
@@ -41,6 +66,64 @@ def test_create_success(auth_client):
     assert body["data"]["project_name"] == "新建"
     assert body["data"]["create_at"]
     assert "timestamp" not in body
+
+
+def test_create_without_name_extracts_project_title(auth_client):
+    description = "一位提着风灯、披深色斗篷的像素守夜人"
+
+    resp = auth_client.post(
+        "/projects",
+        json=_payload(project_name=None, name_context=description),
+    )
+
+    assert resp.json()["code"] == 200
+    assert resp.json()["data"]["project_name"] == "雾港计划"
+    assert project_api.service._namer.calls == [description]
+
+
+def test_create_with_explicit_name_skips_project_namer(auth_client):
+    resp = auth_client.post(
+        "/projects",
+        json=_payload(project_name="用户项目", name_context="角色描述"),
+    )
+
+    assert resp.json()["data"]["project_name"] == "用户项目"
+    assert project_api.service._namer.calls == []
+
+
+def test_create_automatic_duplicate_uses_readable_sequence(auth_client):
+    project_api.service._namer = _FakeProjectNamer(result="雾" * 20)
+    payload = _payload(project_name=None, name_context="同一份角色描述")
+
+    first = auth_client.post("/projects", json=payload).json()
+    second = auth_client.post("/projects", json=payload).json()
+
+    assert first["data"]["project_name"] == "雾" * 20
+    assert second["data"]["project_name"] == f"{'雾' * 17}… 2"
+    assert len(second["data"]["project_name"]) == 20
+
+
+def test_create_namer_failure_falls_back_to_description(auth_client):
+    project_api.service._namer = _FakeProjectNamer(error=RuntimeError("timeout"))
+    description = "这是一段超过二十个字的角色描述用来作为项目名称兜底"
+
+    resp = auth_client.post(
+        "/projects",
+        json=_payload(project_name=None, name_context=description),
+    )
+
+    assert resp.json()["code"] == 200
+    assert resp.json()["data"]["project_name"] == description[:20]
+
+
+def test_create_without_name_or_context_uses_unnamed_fallback(auth_client):
+    resp = auth_client.post(
+        "/projects",
+        json=_payload(project_name=None, name_context=None),
+    )
+
+    assert resp.json()["code"] == 200
+    assert resp.json()["data"]["project_name"] == "未命名项目"
 
 
 def test_create_duplicate_name_returns_400(auth_client):

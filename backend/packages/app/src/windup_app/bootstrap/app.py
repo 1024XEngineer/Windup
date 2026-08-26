@@ -18,9 +18,11 @@ from windup_framework.gateway.models import AIGatewayAttempt, AIGatewayAttemptDe
 
 # 模型导入：触发 Base.metadata 注册，确保 create_all 能发现所有表
 from windup_ai_engine.impl.character_namer import LangChainCharacterNamer
+from windup_ai_engine.impl.project_namer import LangChainProjectNamer
 from windup_app.server.character.model import Character  # noqa: F401
 from windup_app.server.character.service import service as character_service
 from windup_app.server.project.model import Project  # noqa: F401
+from windup_app.server.project.service import service as project_service
 from windup_app.server.quota.model import CreditAccount, CreditTransaction, InviteCode, InviteRecord  # noqa: F401
 from windup_app.server.user.model import User  # noqa: F401
 from windup_app.server.workflow_run.model import WorkflowRun  # noqa: F401
@@ -125,6 +127,8 @@ def create_app() -> FastAPI:
     # 测试若已注入假 namer，不要覆盖。
     if character_service._namer is None:
         character_service._namer = LangChainCharacterNamer()
+    if project_service._namer is None:
+        project_service._namer = LangChainProjectNamer()
 
     @app.get("/health", include_in_schema=False)
     def health() -> dict[str, str]:

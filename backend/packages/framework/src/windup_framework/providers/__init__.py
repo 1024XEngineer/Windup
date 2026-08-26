@@ -11,6 +11,7 @@ from windup_framework.providers.interfaces import (
     VideoProvider,
 )
 from windup_framework.providers.matte import OnnxU2NetMatteProvider
+from windup_framework.providers.matte_birefnet import BiRefNetMatteProvider
 from windup_framework.providers.sufy import (
     SufyImageProvider,
     SufyVideoProvider,
@@ -30,6 +31,7 @@ __all__ = [
     "SufyVideoProvider",
     # FAL 队列面的 i2v(现役接口形态);首帧要公网 URL,故与 uploader 成对出现
     "SufyImageProvider",
+    "BiRefNetMatteProvider",
     "OnnxU2NetMatteProvider",
     # Gateway 工厂(executor 从 windup_framework.gateway 取;此处再导出方便装配)
     "bind_call_context",

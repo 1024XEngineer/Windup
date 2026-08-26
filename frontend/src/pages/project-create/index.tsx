@@ -40,6 +40,7 @@ export function ProjectCreatePage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const opensWorkflowEditor = searchParams.get('entry') === 'workflow-editor'
+  const returnsToQuickStart = searchParams.get('entry') === 'quick-start'
   /**
    * 能不能建项目只取决于有没有登录：后端 `/projects` 不在鉴权白名单里，
    * 归属也从 access token 里取。登录模块尚未接入时没有人注册 provider，
@@ -96,6 +97,10 @@ export function ProjectCreatePage() {
           nodes: initialWorkflowNodes(),
         })
         navigate(`/workflow-editor/${encodeURIComponent(workflow.id)}`)
+        return
+      }
+      if (returnsToQuickStart) {
+        navigate(`/quick-start?${new URLSearchParams({ projectId: project.id })}`)
         return
       }
       navigate(`/projects/${project.id}`)
@@ -301,7 +306,9 @@ export function ProjectCreatePage() {
                   ? createdProject
                     ? '项目已经创建；重试只会继续创建工作流，不会重复创建项目。'
                     : '创建项目和初始工作流后，直接进入工作流画布。'
-                  : '创建后进入该项目的资产工作区。'
+                  : returnsToQuickStart
+                    ? '创建后返回 Quick Start，并将新项目作为角色生成约束。'
+                    : '创建后进入该项目的资产工作区。'
                 : '创建项目需要先登录。登录模块尚未接入，创建入口暂时保持关闭。'}
             </small>
             <button

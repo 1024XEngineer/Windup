@@ -17,7 +17,7 @@ import {
   createRealQuickStartService,
   type QuickStartMediaApis,
 } from './service'
-import { ProjectNameConflictError, WorkflowRunConflictError } from '@/entities'
+import { WorkflowRunConflictError } from '@/entities'
 import { registerApiAccessTokenProvider } from '@/shared/api'
 
 function createWorkflowRunApis(initialRuns: readonly WorkflowRun[] = []): WorkflowRunApis {
@@ -667,6 +667,87 @@ describe('createQuickStartService', () => {
     })
   })
 
+  it('候选态向 Agent 暴露顺序句柄并按句柄微调指定图片', async () => {
+    const run: WorkflowRun = {
+      id: 'run-candidates',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(null, null),
+    }
+    const generationApis: GenerationApis = {
+      create: vi.fn(async (input) => ({
+        id: 'task-refined',
+        projectId: input.projectId,
+        type: input.type,
+        status: 'pending' as const,
+        result: null,
+        error: null,
+      })),
+      get: vi.fn(async (projectId, id) =>
+        id === 'task-template'
+          ? {
+              id,
+              projectId,
+              type: 'character_template' as const,
+              status: 'completed' as const,
+              result: {
+                type: 'character_template' as const,
+                direction: 'east' as const,
+                images: [
+                  { url: 'candidate-1.png' },
+                  { url: 'candidate-2.png' },
+                  { url: 'candidate-3.png' },
+                ],
+              },
+              error: null,
+            }
+          : {
+              id,
+              projectId,
+              type: 'character_template' as const,
+              status: 'pending' as const,
+              result: null,
+              error: null,
+            },
+      ),
+      subscribe: vi.fn(() => () => undefined),
+    }
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader({ width: 96, height: 128 }),
+    })
+    const session = await service.open(run.id)
+
+    await expect(session.getTemplateCandidates()).resolves.toHaveLength(3)
+    const context = session.getWorkflowAgentContext()
+    expect(context.availableTools).toEqual([
+      'regenerate_character_template',
+      'refine_character_template',
+    ])
+    expect(context.characterTemplateCandidates?.map(({ position }) => position)).toEqual([1, 2, 3])
+    expect(context.characterTemplateCandidates).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ imageUrl: expect.anything() })]),
+    )
+    const secondCandidateId = context.characterTemplateCandidates?.[1]?.id
+    expect(secondCandidateId).toBeTruthy()
+
+    await session.regenerateCharacterTemplate('refine', '把牛角缩短', secondCandidateId)
+
+    expect(generationApis.create).toHaveBeenCalledWith({
+      type: 'character_template',
+      projectId: 'project-1',
+      prompt: '像素骑士\n把牛角缩短',
+      referenceMedia: ['candidate-2.png'],
+      spriteWidth: 96,
+      spriteHeight: 128,
+      direction: 'east',
+      candidateCount: 3,
+    })
+  })
+
   it('角色母版微调直接复用当前 Run 的 Controller 和上一版图片', async () => {
     const run = actionRun()
     const generationApis = pendingGenerationApis()
@@ -1104,7 +1185,7 @@ describe('createQuickStartService', () => {
     )
   })
 
-  it('creates a readable bounded project name without a hash suffix', async () => {
+  it('sends the character description as project naming context', async () => {
     const create = vi.fn(async (input) => ({
       id: 'project-1',
       ...input,
@@ -1119,15 +1200,14 @@ describe('createQuickStartService', () => {
       directionalMovement: 'single',
       spriteSize: { width: 256, height: 256 },
     })
-    const createdName = create.mock.calls[0]?.[0].name
-    expect(Array.from(createdName ?? '')).toHaveLength(20)
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: '一位名字特别长的像素角色设定用于验证截…',
+        nameContext: '一位名字特别长的像素角色设定用于验证截断继续',
         perspective: 'side',
         directionalMovement: 'single',
       }),
     )
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty('name')
   })
 
   it('creates the Quick Start project with the selected directional movement', async () => {
@@ -1149,50 +1229,35 @@ describe('createQuickStartService', () => {
     )
   })
 
-  it('uses a readable number when the generated project name already exists', async () => {
-    const create = vi
-      .fn()
-      .mockRejectedValueOnce(new ProjectNameConflictError())
-      .mockResolvedValueOnce({
-        id: 'project-2',
-        name: '会挥剑的像素骑士 2',
-        spriteSize: { width: 256, height: 256 },
-      })
-    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
-
-    await expect(prepare('会挥剑的像素骑士')).resolves.toEqual({
-      id: 'project-2',
-      spriteSize: { width: 256, height: 256 },
-    })
-    expect(create).toHaveBeenNthCalledWith(1, expect.objectContaining({ name: '会挥剑的像素骑士' }))
-    expect(create).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ name: '会挥剑的像素骑士 2' }),
-    )
-  })
-
-  it('continues to the next readable project name after five conflicts', async () => {
-    const create = vi.fn()
-    for (let sequence = 1; sequence <= 5; sequence += 1) {
-      create.mockRejectedValueOnce(new ProjectNameConflictError())
+  it('reuses an existing project instead of creating another one', async () => {
+    const existingProject = {
+      id: 'project-existing',
+      workflowId: null,
+      name: '星海计划',
+      perspective: 'side' as const,
+      directionalMovement: 'four-way' as const,
+      spriteSize: { width: 128, height: 192 },
+      gameStyle: 'pixel' as const,
+      sampleImageUrl: null,
+      createdAt: '2026-08-25T00:00:00Z',
+      updatedAt: '2026-08-25T00:00:00Z',
     }
-    create.mockResolvedValueOnce({
-      id: 'project-6',
-      name: '像素骑士 6',
-      spriteSize: { width: 256, height: 256 },
-    })
-    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
+    const create = vi.fn()
+    const get = vi.fn(async () => existingProject)
+    const prepare = createAutoPrepareProject({ create, get } as unknown as ProjectApis)
 
-    await expect(prepare('像素骑士')).resolves.toEqual({
-      id: 'project-6',
-      spriteSize: { width: 256, height: 256 },
-    })
-
-    expect(create).toHaveBeenCalledTimes(6)
-    expect(create).toHaveBeenNthCalledWith(6, expect.objectContaining({ name: '像素骑士 6' }))
+    await expect(prepare('银发骑士', 'single', { projectId: existingProject.id })).resolves.toEqual(
+      {
+        id: existingProject.id,
+        directionalMovement: 'four-way',
+        spriteSize: { width: 128, height: 192 },
+      },
+    )
+    expect(get).toHaveBeenCalledWith(existingProject.id)
+    expect(create).not.toHaveBeenCalled()
   })
 
-  it('uses a readable fallback for an empty project prompt', async () => {
+  it('leaves the empty-context fallback to the backend naming contract', async () => {
     const create = vi.fn(async (input) => ({
       id: 'project-fallback',
       ...input,
@@ -1202,7 +1267,7 @@ describe('createQuickStartService', () => {
 
     await prepare('   ')
 
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({ name: '未命名项目' }))
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ nameContext: '' }))
   })
 
   it('does not retry project creation errors other than name conflicts', async () => {
@@ -1221,39 +1286,6 @@ describe('createQuickStartService', () => {
 
     await expect(prepare('像素骑士')).rejects.toBe(unrelatedError)
     expect(create).toHaveBeenCalledTimes(1)
-  })
-
-  it('keeps long numbered project names readable within the backend limit', async () => {
-    const create = vi
-      .fn()
-      .mockRejectedValueOnce(new ProjectNameConflictError())
-      .mockResolvedValueOnce({
-        id: 'project-long-2',
-        name: '一位名字特别长的像素角色设定用于验… 2',
-        spriteSize: { width: 256, height: 256 },
-      })
-    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
-
-    await prepare('一位名字特别长的像素角色设定用于验证截断继续')
-
-    expect(create).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ name: '一位名字特别长的像素角色设定用于验证截…' }),
-    )
-    expect(create).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ name: '一位名字特别长的像素角色设定用于验… 2' }),
-    )
-    expect(Array.from(create.mock.calls[1]?.[0].name ?? '')).toHaveLength(20)
-  })
-
-  it('stops after a bounded number of conflicting project names', async () => {
-    const conflict = new ProjectNameConflictError()
-    const create = vi.fn().mockRejectedValue(conflict)
-    const prepare = createAutoPrepareProject({ create } as unknown as ProjectApis)
-
-    await expect(prepare('像素骑士')).rejects.toBe(conflict)
-    expect(create).toHaveBeenCalledTimes(100)
   })
 
   it('creates one persisted node graph and starts the character image task', async () => {

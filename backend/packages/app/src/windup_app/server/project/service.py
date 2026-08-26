@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from windup_app.server.project.interface import UNSET, ProjectService, UnsetType
 from windup_app.server.project.model import Project
+from windup_app.server.project.naming import ProjectNamer
 from windup_app.server.character.model import Character
 
 
@@ -38,6 +39,9 @@ def _character_preview(
 
 class SqlAlchemyProjectService(ProjectService):
     """基于 SQLAlchemy session 的项目 CRUD 实现。"""
+
+    def __init__(self, namer: ProjectNamer | None = None) -> None:
+        self._namer = namer
 
     def create_project(self, session: Session, **fields) -> Project:
         project = Project(**fields)
