@@ -1562,6 +1562,16 @@ function AssetVisual({
   )
 }
 
+/** 只保留仍在当前候选批次里的选择；没有变化时返回原对象，避免多余的状态更新。 */
+function keepAvailableSelections(
+  selections: QuickStartDirectionSelections,
+  candidates: readonly QuickStartCandidate[],
+): QuickStartDirectionSelections {
+  const available = new Set(candidates.map((candidate) => candidate.imageUrl))
+  const kept = Object.entries(selections).filter(([, imageUrl]) => available.has(imageUrl))
+  return kept.length === Object.keys(selections).length ? selections : Object.fromEntries(kept)
+}
+
 function DirectionCandidatePicker({
   candidates,
   selections,
@@ -1839,6 +1849,15 @@ function QuickStartRun({
     setError(null)
     setWorkflowConflict(false)
   }, [])
+
+  // Agent 重新生成后会换一批候选；旧批次的选择留着会让确认把已经失效的图提交上去。
+  useEffect(() => {
+    setSelectedCandidates((current) => keepAvailableSelections(current, candidates))
+  }, [candidates])
+
+  useEffect(() => {
+    setSelectedFirstFrames((current) => keepAvailableSelections(current, firstFrameCandidates))
+  }, [firstFrameCandidates])
 
   const appendRunConversationTurn = useCallback(
     (turn: AgentConversationTurn) => {
@@ -2464,7 +2483,12 @@ function QuickStartRun({
                   <DirectionCandidatePicker
                     candidates={candidates}
                     selections={templateSelections}
-                    disabled={!isTemplateSelecting || confirmingCandidate || workflowConflict}
+                    disabled={
+                      !isTemplateSelecting ||
+                      confirmingCandidate ||
+                      workflowConflict ||
+                      workflowAgentSession.busy
+                    }
                     kind="角色方案"
                     onSelect={(direction, imageUrl) =>
                       setSelectedCandidates((current) => {
@@ -2553,7 +2577,10 @@ function QuickStartRun({
                         candidates={firstFrameCandidates}
                         selections={firstFrameSelections}
                         disabled={
-                          !isFirstFrameSelecting || confirmingFirstFrame || workflowConflict
+                          !isFirstFrameSelecting ||
+                          confirmingFirstFrame ||
+                          workflowConflict ||
+                          workflowAgentSession.busy
                         }
                         kind="动作首帧"
                         onSelect={(direction, imageUrl) =>
