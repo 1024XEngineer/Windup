@@ -508,12 +508,12 @@ describe('AppHeader', () => {
     fireEvent.click(accountMenu)
     expect(menuSurface.getAttribute('data-state')).toBe('closing')
     expect(menuSurface.getAttribute('aria-hidden')).toBe('true')
-    expect(menuSurface.classList.contains('app-header-account-menu-out')).toBe(true)
+    expect(menuSurface.classList.contains('product-popover-out')).toBe(true)
     expect(menuSurface.classList.contains('invisible')).toBe(false)
     expect(screen.queryByRole('link', { name: '打开账号中心' })).toBeNull()
 
     await waitFor(() => expect(menuSurface.getAttribute('data-state')).toBe('closed'))
-    expect(menuSurface.classList.contains('invisible')).toBe(true)
+    expect(menuSurface.classList.contains('product-popover-closed')).toBe(true)
   })
 
   it('打开账号菜单时查询并展示最新可用积分', async () => {

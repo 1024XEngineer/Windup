@@ -968,6 +968,21 @@ describe('QuickStartPage', () => {
     expect(screen.getByTestId('quick-start-selected-style').textContent).toBe('像素')
   })
 
+  it('keeps the style menu mounted for the shared closing motion', () => {
+    renderAt('/quick-start', serviceFor(null))
+
+    const style = screen.getByRole('button', { name: '选择画风，当前不指定' })
+    fireEvent.click(style)
+    const menu = screen.getByTestId('quick-start-style-menu')
+    expect(menu.className).toContain('product-popover-in')
+
+    fireEvent.click(style)
+    expect(menu.getAttribute('data-state')).toBe('closing')
+    expect(menu.className).toContain('product-popover-out')
+    fireEvent.animationEnd(menu)
+    return waitFor(() => expect(screen.queryByTestId('quick-start-style-menu')).toBeNull())
+  })
+
   it('opens generation direction as an animated slider control below the composer', () => {
     renderAt('/quick-start', serviceFor(null))
 
@@ -1858,14 +1873,17 @@ describe('QuickStartPage', () => {
       'blob:https://windup.test/pixel-0',
     )
     expect(pixelVersion.closest('[data-pixel-perfect-comparison]')?.children).toHaveLength(2)
-    expect(
-      screen.getByRole('button', { name: '导出完美像素版' }).closest('[data-agent-actions]'),
-    ).toBeTruthy()
+    const exportVersions = screen.getByRole('button', { name: '选择下载版本' })
+    expect(exportVersions.closest('[data-agent-actions]')).toBeTruthy()
+    fireEvent.click(exportVersions)
+    expect(screen.getByRole('menuitem', { name: /原始资产/u })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: /完美像素版/u })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: /全部下载/u })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '查看原图' }))
     expect(screen.getByRole('img', { name: '完整动作预览' }).getAttribute('src')).toBe(
       'https://example.test/original-0.png',
     )
-    expect(screen.getByRole('button', { name: '导出原图' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '选择下载版本' })).toBeTruthy()
   })
 
   it('discards pixel-perfect frames when the action changed while processing', async () => {

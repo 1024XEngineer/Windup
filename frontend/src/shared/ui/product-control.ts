@@ -21,3 +21,11 @@ export const productPopoverClass =
 
 export const productMenuItemClass =
   'flex min-h-10 items-center rounded-app-compact px-3 text-[13px] transition-colors hover:bg-app-accent-muted focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-app-accent'
+
+export type ProductPopoverMotionState = 'closed' | 'open' | 'closing'
+
+export function productPopoverMotionClass(state: ProductPopoverMotionState): string {
+  if (state === 'open') return 'visible product-popover-in'
+  if (state === 'closing') return 'visible pointer-events-none product-popover-out'
+  return 'product-popover-closed'
+}
