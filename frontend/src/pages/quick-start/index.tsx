@@ -3218,6 +3218,23 @@ function QuickStartRun({
   const workflowAgentConversationTurns = agentConversationTurns.filter(
     (turn) => turn.scope === 'workflow',
   )
+  const workflowAgentConversation = workflowAgentConversationTurns.map((turn, index) => (
+    <div
+      key={`${turn.role}:workflow:${index}:${turn.content}`}
+      data-conversation-kind="agent"
+      className="min-w-0"
+    >
+      {turn.role === 'user' ? (
+        <UserTurn>{turn.content}</UserTurn>
+      ) : (
+        <AgentCopy lines={turn.content.split('\n')} />
+      )}
+    </div>
+  ))
+  const characterAgentContinuation =
+    workflowAgentSession.state.status === 'action' &&
+    (workflowAgentSession.state.action === 'regenerate_character_template' ||
+      workflowAgentSession.state.action === 'refine_character_template')
 
   return (
     <section className="relative min-h-screen overflow-hidden bg-app-canvas pt-14 text-app-ink">
@@ -3257,6 +3274,7 @@ function QuickStartRun({
               <UserTurn>{workflowPrompt(run) || '未命名角色创作'}</UserTurn>
             </div>
 
+            {characterAgentContinuation ? workflowAgentConversation : null}
             <AgentTurn step="character-template" current={characterTurnIsCurrent}>
               {isTemplateSelecting && templateStep?.selectedImageUrl ? (
                 <>
@@ -3645,19 +3663,7 @@ function QuickStartRun({
                 ) : null}
               </div>
             ) : null}
-            {workflowAgentConversationTurns.map((turn, index) => (
-              <div
-                key={`${turn.role}:workflow:${index}:${turn.content}`}
-                data-conversation-kind="agent"
-                className="min-w-0"
-              >
-                {turn.role === 'user' ? (
-                  <UserTurn>{turn.content}</UserTurn>
-                ) : (
-                  <AgentCopy lines={turn.content.split('\n')} />
-                )}
-              </div>
-            ))}
+            {characterAgentContinuation ? null : workflowAgentConversation}
             {workflowAgentSession.state.status === 'planning' ? (
               <div
                 data-conversation-kind="agent"
