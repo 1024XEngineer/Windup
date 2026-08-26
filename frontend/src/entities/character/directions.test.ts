@@ -1,6 +1,35 @@
 import { describe, expect, it } from 'vitest'
 
-import { ACTION_DIRECTIONS, getDirectionProfile, resolveActionDirection } from './directions'
+import {
+  ACTION_DIRECTIONS,
+  getDirectionGridLayout,
+  getDirectionProfile,
+  resolveActionDirection,
+} from './directions'
+
+describe('direction grid layouts', () => {
+  it('maps single, four-way, and eight-way assets to their display grids', () => {
+    expect(getDirectionGridLayout('single')).toEqual({ columns: 1, cells: ['east'] })
+    expect(getDirectionGridLayout('four-way')).toEqual({
+      columns: 2,
+      cells: ['north', 'south', 'west', 'east'],
+    })
+    expect(getDirectionGridLayout('eight-way')).toEqual({
+      columns: 3,
+      cells: [
+        'north_west',
+        'north',
+        'north_east',
+        'west',
+        null,
+        'east',
+        'south_west',
+        'south',
+        'south_east',
+      ],
+    })
+  })
+})
 
 describe('direction profiles', () => {
   it('generates east and derives west for single-direction projects', () => {

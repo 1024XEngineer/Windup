@@ -9,6 +9,8 @@ import {
 } from './directions'
 
 export type { ActionDirection } from './directions'
+export { getDirectionGridLayout } from './directions'
+export type { DirectionGridLayout } from './directions'
 export { validateDirectionalAsset, type DirectionalAssetValidation } from './directional-asset'
 
 /** PR #75 将动作类型定义为字符串；已知类型之外的后端扩展也应原样保留。 */

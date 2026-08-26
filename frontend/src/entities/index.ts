@@ -70,11 +70,16 @@ export {
 } from './character'
 export {
   ACTION_DIRECTIONS,
+  getDirectionGridLayout,
   getDirectionProfile,
   isActionDirection,
   resolveActionDirection,
 } from './character/directions'
-export type { DirectionProfile, ResolvedActionDirection } from './character/directions'
+export type {
+  DirectionGridLayout,
+  DirectionProfile,
+  ResolvedActionDirection,
+} from './character/directions'
 export { getOutfitPlayback } from './character/outfit-playback'
 
 /* 动作模板 —— 能跨角色复用的配方 */

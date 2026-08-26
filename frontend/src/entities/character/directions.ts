@@ -27,6 +27,11 @@ export interface ResolvedActionDirection {
   readonly mirrorX: boolean
 }
 
+export interface DirectionGridLayout {
+  readonly columns: 1 | 2 | 3
+  readonly cells: readonly (ActionDirection | null)[]
+}
+
 const DIRECTION_PROFILES: Record<DirectionalMovement, DirectionProfile> = {
   single: {
     generationDirections: ['east'],
@@ -48,6 +53,28 @@ const DIRECTION_PROFILES: Record<DirectionalMovement, DirectionProfile> = {
   },
 }
 
+const DIRECTION_GRID_LAYOUTS: Record<DirectionalMovement, DirectionGridLayout> = {
+  single: { columns: 1, cells: ['east'] },
+  'four-way': {
+    columns: 2,
+    cells: ['north', 'south', 'west', 'east'],
+  },
+  'eight-way': {
+    columns: 3,
+    cells: [
+      'north_west',
+      'north',
+      'north_east',
+      'west',
+      null,
+      'east',
+      'south_west',
+      'south',
+      'south_east',
+    ],
+  },
+}
+
 const MIRROR_SOURCES: Partial<Record<ActionDirection, ActionDirection>> = {
   west: 'east',
   north_west: 'north_east',
@@ -56,6 +83,10 @@ const MIRROR_SOURCES: Partial<Record<ActionDirection, ActionDirection>> = {
 
 export function getDirectionProfile(movement: DirectionalMovement): DirectionProfile {
   return DIRECTION_PROFILES[movement]
+}
+
+export function getDirectionGridLayout(movement: DirectionalMovement): DirectionGridLayout {
+  return DIRECTION_GRID_LAYOUTS[movement]
 }
 
 export function isActionDirection(value: unknown): value is ActionDirection {
