@@ -81,15 +81,29 @@ def _refine_enabled() -> bool:
 
 
 def _ort_session(path: Path):
-    """CPU 会话:关 arena、intra_op=1,避免 4C8G 上预分配后 RSS 不回落。"""
+    """CPU 会话:关 arena 与 mem_pattern、intra_op=1,避免预分配后 RSS 不回落。"""
     import onnxruntime as ort
 
     opt = ort.SessionOptions()
     opt.enable_cpu_mem_arena = False
+    opt.enable_mem_pattern = False
     opt.intra_op_num_threads = 1
     return ort.InferenceSession(
         str(path), sess_options=opt, providers=["CPUExecutionProvider"]
     )
+
+
+def release_inference_scratch() -> None:
+    """任务结束后把 glibc 空闲页还给 OS。不卸载 ONNX 会话。"""
+    import gc
+
+    gc.collect()
+    try:
+        import ctypes
+
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass
 
 
 def _download_atomic(url: str, dest: Path) -> None:

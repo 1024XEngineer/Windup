@@ -29,8 +29,16 @@ from windup_framework.mq import client as mq_client
 from windup_framework.mq.config import MAX_CONSUME_ATTEMPTS, PEL_CLAIM_INTERVAL_SECONDS
 from windup_framework.mq import repository as mq_repo
 from windup_framework.mq.repository import ConsumeClaimResult
+from windup_framework.providers.matte import release_inference_scratch
 
 logger = logging.getLogger("windup.worker.consumer")
+
+# 抠图/抽帧走这些类型。结束后 trim glibc 堆,会话留着给下一单。
+_TRIM_AFTER = frozenset({
+    MSG_TYPE_CHARACTER_IMAGE,
+    MSG_TYPE_CHARACTER_ACTION,
+    MSG_TYPE_CHARACTER_ACTION_POLL,
+})
 
 
 @dataclass(frozen=True)
@@ -164,6 +172,7 @@ class StreamConsumer:
         redis_client = get_redis()
         semaphores: list[threading.Semaphore] = []
         message_id: uuid.UUID | None = None
+        msg_type: str | None = None
         try:
             envelope = mq_client.parse_envelope(fields)
             message_id = uuid.UUID(str(envelope["id"]))
@@ -236,6 +245,8 @@ class StreamConsumer:
             )
             self._handle_failure(stream_id, fields, exc, message_id)
         finally:
+            if msg_type in _TRIM_AFTER:
+                release_inference_scratch()
             for sem in semaphores:
                 sem.release()
 
