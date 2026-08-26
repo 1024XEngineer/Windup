@@ -430,6 +430,39 @@ describe('createQuickStartWorkflowAgent', () => {
     )
   })
 
+  it('routes a candidate refinement to the exact candidate exposed in context', async () => {
+    const planner = vi.fn<QuickStartPlanner>(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'refine_character_template',
+          input: {
+            candidateId: 'candidate-2',
+            adjustmentPrompt: '把牛角缩短',
+          },
+        },
+      ],
+    }))
+    const actions = workflowActions()
+    actions.getContext = () => ({
+      availableTools: ['regenerate_character_template', 'refine_character_template'],
+      characterTemplateCandidates: [
+        { id: 'candidate-1', position: 1 },
+        { id: 'candidate-2', position: 2 },
+        { id: 'candidate-3', position: 3 },
+      ],
+    })
+    const agent = createQuickStartWorkflowAgent({ planner, actions })
+
+    await expect(agent.submit('把第二张的牛角缩短')).resolves.toEqual({
+      kind: 'action',
+      action: 'refine_character_template',
+      message: '已提交角色母版微调。',
+    })
+    expect(actions.refineCharacterTemplate).toHaveBeenCalledWith('把牛角缩短', 'candidate-2')
+  })
+
   it('rejects an action that the current Controller snapshot does not allow', async () => {
     const planner = vi.fn<QuickStartPlanner>(async () => ({
       text: '',

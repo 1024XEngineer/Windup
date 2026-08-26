@@ -90,6 +90,8 @@ export interface RegenerateImageOptions {
   mode: RegenerationMode
   /** 微调时追加到原始描述的临时说明；重新生成模式下不得提交。 */
   adjustmentPrompt?: string
+  /** 候选态微调时由宿主句柄解析出的参考图；Controller 不接触候选序号。 */
+  sourceImageUrl?: GeneratedImage['url']
 }
 
 export interface RetryGenerationDirectionOptions {
@@ -846,30 +848,37 @@ export function createWorkflowController({
     const before = requireWorkflow()
     const templateNode = findNode(before, nodeId)
     if (templateNode.type !== 'character-template') throw new Error('目标节点不是角色母版')
-    if (
-      templateNode.status !== 'passed' ||
-      templateNode.phase !== 'completed' ||
+    const isCompletedTemplate =
+      templateNode.status === 'passed' &&
+      templateNode.phase === 'completed' &&
+      Boolean(templateNode.selectedImageUrl)
+    const isCandidateSelection =
+      templateNode.status === 'active' &&
+      templateNode.phase === 'selecting' &&
       !templateNode.selectedImageUrl
-    ) {
+    if (!isCompletedTemplate && !isCandidateSelection) {
       throw new Error('角色母版当前不能重新生成')
     }
     const setupNode = findSingleDependencyNode(before, templateNode, 'character-setup')
     const prompt = adjustedPrompt(setupNode.input.prompt, options)
     const sourceImageUrls =
       options.mode === 'refine'
-        ? Object.fromEntries(
-            generationDirections.map((direction) => {
-              const imageUrl = selectedDirectionUrl(
-                templateNode.selectedImages,
-                templateNode.selectedImageUrl,
-                direction,
-              )
-              if (!imageUrl) throw new Error(`角色母版尚未确认方向 ${direction}`)
-              return [direction, imageUrl]
-            }),
-          )
+        ? isCandidateSelection
+          ? { east: nonEmpty(options.sourceImageUrl ?? '', 'sourceImageUrl') }
+          : Object.fromEntries(
+              generationDirections.map((direction) => {
+                const imageUrl = selectedDirectionUrl(
+                  templateNode.selectedImages,
+                  templateNode.selectedImageUrl,
+                  direction,
+                )
+                if (!imageUrl) throw new Error(`角色母版尚未确认方向 ${direction}`)
+                return [direction, imageUrl]
+              }),
+            )
         : undefined
-    const keys = generationDirections.map((direction) =>
+    const requestedDirections = isCandidateSelection ? (['east'] as const) : generationDirections
+    const keys = requestedDirections.map((direction) =>
       generationKey(nodeId, 'character_template', direction),
     )
     const pending = keys.flatMap((key) => {
@@ -883,6 +892,8 @@ export function createWorkflowController({
         spriteHeight: options.spriteHeight,
         sourceImageUrls,
         prompt,
+        directions: requestedDirections,
+        ...(isCandidateSelection ? { candidateCount: 3 as const } : {}),
       })
     })
   }

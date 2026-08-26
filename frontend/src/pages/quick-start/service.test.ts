@@ -667,6 +667,87 @@ describe('createQuickStartService', () => {
     })
   })
 
+  it('候选态向 Agent 暴露顺序句柄并按句柄微调指定图片', async () => {
+    const run: WorkflowRun = {
+      id: 'run-candidates',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(null, null),
+    }
+    const generationApis: GenerationApis = {
+      create: vi.fn(async (input) => ({
+        id: 'task-refined',
+        projectId: input.projectId,
+        type: input.type,
+        status: 'pending' as const,
+        result: null,
+        error: null,
+      })),
+      get: vi.fn(async (projectId, id) =>
+        id === 'task-template'
+          ? {
+              id,
+              projectId,
+              type: 'character_template' as const,
+              status: 'completed' as const,
+              result: {
+                type: 'character_template' as const,
+                direction: 'east' as const,
+                images: [
+                  { url: 'candidate-1.png' },
+                  { url: 'candidate-2.png' },
+                  { url: 'candidate-3.png' },
+                ],
+              },
+              error: null,
+            }
+          : {
+              id,
+              projectId,
+              type: 'character_template' as const,
+              status: 'pending' as const,
+              result: null,
+              error: null,
+            },
+      ),
+      subscribe: vi.fn(() => () => undefined),
+    }
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader({ width: 96, height: 128 }),
+    })
+    const session = await service.open(run.id)
+
+    await expect(session.getTemplateCandidates()).resolves.toHaveLength(3)
+    const context = session.getWorkflowAgentContext()
+    expect(context.availableTools).toEqual([
+      'regenerate_character_template',
+      'refine_character_template',
+    ])
+    expect(context.characterTemplateCandidates?.map(({ position }) => position)).toEqual([1, 2, 3])
+    expect(context.characterTemplateCandidates).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ imageUrl: expect.anything() })]),
+    )
+    const secondCandidateId = context.characterTemplateCandidates?.[1]?.id
+    expect(secondCandidateId).toBeTruthy()
+
+    await session.regenerateCharacterTemplate('refine', '把牛角缩短', secondCandidateId)
+
+    expect(generationApis.create).toHaveBeenCalledWith({
+      type: 'character_template',
+      projectId: 'project-1',
+      prompt: '像素骑士\n把牛角缩短',
+      referenceMedia: ['candidate-2.png'],
+      spriteWidth: 96,
+      spriteHeight: 128,
+      direction: 'east',
+      candidateCount: 3,
+    })
+  })
+
   it('角色母版微调直接复用当前 Run 的 Controller 和上一版图片', async () => {
     const run = actionRun()
     const generationApis = pendingGenerationApis()

@@ -101,6 +101,58 @@ describe('AI SDK OpenAI-compatible protocol fixture', () => {
     })
   })
 
+  it('declares candidate handles for an indexed character refinement', async () => {
+    let requestBody: Record<string, unknown> | null = null
+    const planner = createAiSdkQuickStartPlanner({
+      baseURL: 'https://api.windup.test/ai/v1',
+      fetch: vi.fn(async (input, init) => {
+        requestBody = JSON.parse(await new Request(input, init).text())
+        return completion({
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-refine-candidate',
+                type: 'function',
+                function: {
+                  name: 'refine_character_template',
+                  arguments: '{"candidateId":"candidate-2","adjustmentPrompt":"把牛角缩短"}',
+                },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        })
+      }),
+    })
+
+    await expect(
+      planner({
+        messages: [{ role: 'user', content: '把第二张的牛角缩短' }],
+        clarificationUsed: false,
+        workflow: {
+          availableTools: ['regenerate_character_template', 'refine_character_template'],
+          characterTemplateCandidates: [
+            { id: 'candidate-1', position: 1 },
+            { id: 'candidate-2', position: 2 },
+            { id: 'candidate-3', position: 3 },
+          ],
+        },
+      }),
+    ).resolves.toEqual({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'refine_character_template',
+          input: { candidateId: 'candidate-2', adjustmentPrompt: '把牛角缩短' },
+        },
+      ],
+    })
+    expect(JSON.stringify(requestBody)).toContain('第 2 张对应 candidate-2')
+  })
+
   it('repairs the production proposal shape when the summary is returned as message', async () => {
     const planner = createAiSdkQuickStartPlanner({
       baseURL: 'https://api.windup.test/ai/v1',
