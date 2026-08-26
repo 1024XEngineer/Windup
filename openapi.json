@@ -108,6 +108,55 @@
         "title": "AssistantMessageResponse",
         "type": "object"
       },
+      "BakeCompleteRequest": {
+        "description": "浏览器自报交齐了。帧本身已逐帧 POST 上来,这里只带回可对账的采样信息。",
+        "properties": {
+          "clip": {
+            "minLength": 1,
+            "title": "Clip",
+            "type": "string"
+          },
+          "sample_times": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Sample Times",
+            "type": "array"
+          }
+        },
+        "required": [
+          "clip"
+        ],
+        "title": "BakeCompleteRequest",
+        "type": "object"
+      },
+      "BakeFailRequest": {
+        "description": "浏览器自报渲不出来(WebGL 起不来 / 模型加载失败 / 用户关了页面前的兜底)。",
+        "properties": {
+          "reason": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "title": "BakeFailRequest",
+        "type": "object"
+      },
+      "Body_put_bake_frame_render3d_bake__task_id__frames__index__post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_put_bake_frame_render3d_bake__task_id__frames__index__post",
+        "type": "object"
+      },
       "Body_reconstruct_pixel_grid_tools_pixel_perfect_reconstruct_post": {
         "properties": {
           "cols": {
@@ -4887,6 +4936,217 @@
         "summary": "List Transactions",
         "tags": [
           "quota"
+        ]
+      }
+    },
+    "/render3d/bake/{task_id}": {
+      "get": {
+        "description": "取这个任务的出帧参数。没有登记就是不需要浏览器出帧(或已收口)。",
+        "operationId": "get_bake_job_render3d_bake__task_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_dict_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Bake Job",
+        "tags": [
+          "render3d"
+        ]
+      }
+    },
+    "/render3d/bake/{task_id}/complete": {
+      "post": {
+        "description": "帧交齐 → 交回 worker 续跑后处理。\n\n**不信前端说交齐了**:这里按登记的帧数点数,少一帧就不放行 —— 少给的后果是一段\n步子没走完的动作,而帧数、时长、成色在下游全都自洽,没有一道会红。",
+        "operationId": "complete_bake_render3d_bake__task_id__complete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BakeCompleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_dict_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete Bake",
+        "tags": [
+          "render3d"
+        ]
+      }
+    },
+    "/render3d/bake/{task_id}/fail": {
+      "post": {
+        "description": "浏览器自报渲不出来。早报早失败、早解冻,不必等到期限耗完。",
+        "operationId": "fail_bake_render3d_bake__task_id__fail_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BakeFailRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_dict_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fail Bake",
+        "tags": [
+          "render3d"
+        ]
+      }
+    },
+    "/render3d/bake/{task_id}/frames/{index}": {
+      "post": {
+        "description": "收一帧 PNG。逐帧收而不是一次收一整包:32 帧一起传要几十 MB 的请求体常驻内存。",
+        "operationId": "put_bake_frame_render3d_bake__task_id__frames__index__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "title": "Index",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_put_bake_frame_render3d_bake__task_id__frames__index__post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_dict_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Bake Frame",
+        "tags": [
+          "render3d"
         ]
       }
     },
