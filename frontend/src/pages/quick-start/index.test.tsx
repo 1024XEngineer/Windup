@@ -956,6 +956,19 @@ describe('QuickStartPage', () => {
     )
   })
 
+  it('closes the project menu when pressing outside the control', () => {
+    renderAt('/quick-start', serviceFor(null))
+
+    const project = screen.getByRole('button', { name: '选择项目，当前自动创建' })
+    fireEvent.click(project)
+    expect(screen.getByRole('menu', { name: '选择项目' })).toBeTruthy()
+
+    fireEvent.pointerDown(document.body)
+
+    expect(project.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('menu', { name: '选择项目' })).toBeNull()
+  })
+
   it('restores a newly created project from the Quick Start return URL', async () => {
     const projects = projectReader()
     renderAt('/quick-start?projectId=42', serviceFor(null), agentFor(), projects)
@@ -1001,6 +1014,19 @@ describe('QuickStartPage', () => {
     expect(screen.getByRole('button', { name: '生成方向，当前四向' })).toBeTruthy()
     fireEvent.pointerUp(slider, { target: { value: '0.6' } })
     expect(slider.value).toBe('1')
+  })
+
+  it('closes the direction control when pressing outside the control', () => {
+    renderAt('/quick-start', serviceFor(null))
+
+    const direction = screen.getByRole('button', { name: '生成方向，当前单向' })
+    fireEvent.click(direction)
+    const panel = screen.getByRole('group', { name: '生成方向设置' })
+
+    fireEvent.pointerDown(document.body)
+
+    expect(direction.getAttribute('aria-expanded')).toBe('false')
+    expect(panel.getAttribute('data-state')).toBe('closing')
   })
 
   it('keeps browser form history out of the creation composer', () => {
