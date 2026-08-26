@@ -332,6 +332,48 @@ function actionRun(firstFramePending = false): WorkflowRun {
 }
 
 describe('createQuickStartService', () => {
+  it('读取当前活跃生成步骤前方的任务数', async () => {
+    const run: WorkflowRun = {
+      id: 'run-queued',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: [
+        ...setupNodes(),
+        {
+          id: 'character-template',
+          type: 'character-template',
+          status: 'active',
+          phase: 'generating',
+          dependsOnNodeIds: ['character-setup'],
+          generations: [{ taskId: 'task-queued', role: 'character_template' }],
+          error: null,
+          selectedImageUrl: null,
+        },
+      ],
+    }
+    const generationApis = pendingGenerationApis()
+    generationApis.get = vi.fn(async () => ({
+      id: 'task-queued',
+      projectId: 'project-1',
+      type: 'character_template' as const,
+      status: 'pending' as const,
+      result: null,
+      error: null,
+      queueAhead: 4,
+    }))
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader(),
+    })
+
+    const session = await service.open(run.id)
+
+    await expect(session.getQueueAhead()).resolves.toBe(4)
+  })
+
   it('恢复自动交付 Run 后用唯一母版和唯一首帧推进到完整动画', async () => {
     const run: WorkflowRun = {
       id: 'run-auto',

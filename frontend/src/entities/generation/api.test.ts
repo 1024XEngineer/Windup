@@ -180,6 +180,25 @@ describe('createGenerationApis', () => {
     })
   })
 
+  it('把等待任务前方的队列数量映射到生成快照', async () => {
+    const request = vi.fn(async () =>
+      success(
+        taskData({
+          status: 'pending',
+          result: null,
+          queue_ahead: 3,
+        }),
+      ),
+    )
+    const apis = createGenerationApis({
+      transport: { request, stream: vi.fn(() => vi.fn()) },
+    })
+
+    const generation = await apis.get('42', '91', { type: 'character_template' })
+
+    expect(generation.queueAhead).toBe(3)
+  })
+
   it.each([1, 2, 3, 4] as const)('允许调用方显式请求 %i 张图片候选', async (candidateCount) => {
     const request = vi.fn(async (_url: string, _init?: RequestInit) =>
       success(
@@ -1004,6 +1023,32 @@ describe('createGenerationApis', () => {
     )
   })
 
+  it('重连对账保留 GET 快照里的排队位置', async () => {
+    let streamOptions: EventStreamOptions | undefined
+    const request = vi.fn(async () =>
+      success(taskData({ status: 'pending', result: null, queue_ahead: 2 })),
+    )
+    const apis = createGenerationApis({
+      baseUrl: 'https://api.test',
+      transport: {
+        request,
+        stream: vi.fn((_url: string, options: NonNullable<typeof streamOptions>) => {
+          streamOptions = options
+          return vi.fn()
+        }),
+      },
+    })
+    const onEvent = vi.fn()
+
+    apis.subscribe('42', '91', { type: 'character_template' }, onEvent, vi.fn())
+    streamOptions?.onReconnect?.()
+
+    await vi.waitFor(() => expect(onEvent).toHaveBeenCalledOnce())
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: '91', status: 'pending', queueAhead: 2 }),
+    )
+  })
+
   it('任务在 SSE 断线窗口内结束时，重连后仍然交付终态', async () => {
     const encoder = new TextEncoder()
     const runningThenDrop = new Response(
@@ -1772,6 +1817,41 @@ describe('createGenerationApis', () => {
       ),
     )
     expect(request).toHaveBeenCalledTimes(2)
+  })
+
+  it('轮询降级保留 GET 快照里的排队位置', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(success(taskData({ status: 'pending', result: null, queue_ahead: 4 })))
+      .mockResolvedValueOnce(success(taskData()))
+    const onEvent = vi.fn()
+    const apis = createGenerationApis({
+      pollIntervalMs: 1,
+      transport: {
+        request,
+        stream: vi.fn((_url, options) => {
+          queueMicrotask(() =>
+            options.onError(
+              new EventStreamError('SSE 请求失败（HTTP 404）', false, undefined, 404),
+            ),
+          )
+          return vi.fn()
+        }),
+      },
+    })
+
+    apis.subscribe('42', '91', { type: 'character_template' }, onEvent, vi.fn())
+
+    await vi.waitFor(() =>
+      expect(onEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: '91', status: 'pending', queueAhead: 4 }),
+      ),
+    )
+    await vi.waitFor(() =>
+      expect(onEvent).toHaveBeenLastCalledWith(
+        expect.objectContaining({ taskId: '91', status: 'completed' }),
+      ),
+    )
   })
 
   it('轮询降级遇到一次网络错误后继续查询直到终态', async () => {

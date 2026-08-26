@@ -57,6 +57,7 @@ interface GenerationTaskDto {
   inputPayload: Record<string, unknown> | null
   result: Record<string, unknown> | null
   errorMessage: string | null
+  queueAhead?: number
 }
 
 type BackendGenerationType = 'character_image' | 'character_direction_set' | 'character_action'
@@ -107,6 +108,14 @@ function dtoNullableString(value: unknown, field: string): string | null {
   if (value === null) return null
   if (typeof value !== 'string') throw new GenerationApiError(`生成任务 ${field} 无效`, 200)
   return value
+}
+
+function dtoQueueAhead(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new GenerationApiError('生成任务 queue_ahead 无效', 200)
+  }
+  return value as number
 }
 
 function backendTaskType(value: unknown): BackendGenerationType {
@@ -193,6 +202,7 @@ function parseTaskDto(value: unknown): GenerationTaskDto {
     inputPayload,
     result: dtoNullableRecord(value.result, 'result'),
     errorMessage: dtoNullableString(value.error_message, 'error_message'),
+    queueAhead: dtoQueueAhead(value.queue_ahead),
   }
 }
 
@@ -597,6 +607,7 @@ function mapTask(
         declaredFrameCount(dto.inputPayload, resolvedExpectation),
       ),
       error: dto.errorMessage,
+      ...(dto.queueAhead === undefined ? {} : { queueAhead: dto.queueAhead }),
     },
     ...(candidateCount === undefined ? {} : { candidateCount }),
   }
@@ -741,6 +752,7 @@ function mapEvent<TType extends GenerationTaskType>(
       ? null
       : dtoNullableString(value.error_message, 'error_message')
   validateStatusError(status, error)
+  const queueAhead = dtoQueueAhead(value.queue_ahead)
   return {
     taskId: String(taskId),
     type: expectation.type,
@@ -753,6 +765,7 @@ function mapEvent<TType extends GenerationTaskType>(
       inputPayload === undefined ? undefined : declaredFrameCount(inputPayload, expectation),
     ),
     error,
+    ...(queueAhead === undefined ? {} : { queueAhead }),
   }
 }
 
@@ -932,6 +945,17 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
       let terminalHandled = false
       let stopStream: () => void = () => undefined
 
+      // GET 快照和 SSE 事件共用同一份订阅契约：降级轮询与重连对账也要带上队列位置。
+      const eventFromSnapshot = (generation: Generation<GenerationTaskType>) =>
+        ({
+          taskId: generation.id,
+          type: generation.type,
+          status: generation.status,
+          result: generation.result,
+          error: generation.error,
+          ...(generation.queueAhead === undefined ? {} : { queueAhead: generation.queueAhead }),
+        }) as GenerationEvent
+
       const pollUntilTerminal = async () => {
         if (polling) return
         polling = true
@@ -939,13 +963,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
           try {
             const generation = await apis.get(projectId, id, expectation)
             if (pollingController.signal.aborted) return
-            onEvent({
-              taskId: generation.id,
-              type: generation.type,
-              status: generation.status,
-              result: generation.result,
-              error: generation.error,
-            } as GenerationEvent)
+            onEvent(eventFromSnapshot(generation))
             if (isTerminalStatus(generation.status)) {
               return
             }
@@ -967,13 +985,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
           if (pollingController.signal.aborted || terminalHandled) return
           const terminal = isTerminalStatus(generation.status)
           if (terminal) terminalHandled = true
-          onEvent({
-            taskId: generation.id,
-            type: generation.type,
-            status: generation.status,
-            result: generation.result,
-            error: generation.error,
-          } as GenerationEvent)
+          onEvent(eventFromSnapshot(generation))
           if (terminal) {
             stopStream()
           }

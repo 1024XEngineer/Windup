@@ -110,6 +110,8 @@ export interface QuickStartSession {
   resolveCharacterInfo(): Promise<{ characterId: string; outfitId: string } | null>
   getTemplateCandidates(): Promise<readonly QuickStartCandidate[]>
   getActionFrames(): Promise<readonly QuickStartFrame[]>
+  /** 当前活跃生成步骤里，排在最靠后的任务前方还有多少个任务。 */
+  getQueueAhead(): Promise<number>
   /** 只生成当前会话预览，不写回 WorkflowRun 或角色资产。 */
   pixelPerfectActionFrames?(
     frames: readonly QuickStartFrame[],
@@ -909,6 +911,33 @@ export function createQuickStartService({
         }
         ensureAutomaticAdvance()
         return controller.getWorkflow()
+      },
+      async getQueueAhead() {
+        const activeNode = controller
+          .getWorkflow()
+          .nodes.find(
+            (node) =>
+              !node.deletedAt &&
+              node.status === 'active' &&
+              node.phase === 'generating' &&
+              (node.type === 'character-template' ||
+                node.type === 'action-first-frame' ||
+                node.type === 'action-full-frame'),
+          )
+        if (!activeNode) return 0
+        const role =
+          activeNode.type === 'character-template'
+            ? 'character_template'
+            : activeNode.type === 'action-first-frame'
+              ? 'first_frame'
+              : 'complete_animation'
+        const generations = await controller.getGenerations(activeNode.id, role)
+        return Math.max(
+          0,
+          ...generations
+            .filter((generation) => generation.status === 'pending')
+            .map((generation) => generation.queueAhead ?? 0),
+        )
       },
       async addAction(outfitId, actionDescription) {
         const prompt = actionDescription.trim()

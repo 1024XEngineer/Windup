@@ -197,6 +197,8 @@ export interface Generation<TType extends GenerationTaskType = GenerationTaskTyp
   result: GenerationResult | null
   /** status 为 failed 时有值。 */
   error: string | null
+  /** pending 时前方仍占用生成队列的任务数；缺省表示后端尚未提供。 */
+  queueAhead?: number
 }
 
 export interface GenerationProgress {

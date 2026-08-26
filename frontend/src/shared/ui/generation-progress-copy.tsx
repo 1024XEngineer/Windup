@@ -1,3 +1,5 @@
+import { useMemo } from 'react'
+
 import { KineticCopyCycle, type KineticCopyMessage } from './kinetic-copy-cycle'
 import './generation-progress-copy.css'
 
@@ -47,6 +49,13 @@ export interface GenerationProgressCopyProps {
   kind: GenerationProgressKind
   label: string
   placement?: 'conversation' | 'node'
+  queueAhead?: number
+}
+
+function appendQueueStatus(message: KineticCopyMessage, suffix: string): KineticCopyMessage {
+  if (Array.isArray(message)) return message.map((line) => `${line}${suffix}`)
+  const copy = message as Exclude<KineticCopyMessage, readonly string[]>
+  return { ...copy, lines: copy.lines.map((line) => `${line}${suffix}`) }
 }
 
 /** 同一生成阶段在不同入口共用文案顺序、逐字进入和停留高光。 */
@@ -54,7 +63,21 @@ export function GenerationProgressCopy({
   kind,
   label,
   placement = 'conversation',
+  queueAhead,
 }: GenerationProgressCopyProps) {
+  const queueStatus =
+    typeof queueAhead === 'number' && queueAhead > 0
+      ? `（排队中，前方还有 ${queueAhead} 个任务）`
+      : ''
+  const messages = useMemo(
+    () =>
+      queueStatus
+        ? GENERATION_PROGRESS_MESSAGES[kind].map((message) =>
+            appendQueueStatus(message, queueStatus),
+          )
+        : GENERATION_PROGRESS_MESSAGES[kind],
+    [kind, queueStatus],
+  )
   return (
     <div
       data-generation-progress
@@ -63,8 +86,8 @@ export function GenerationProgressCopy({
     >
       <KineticCopyCycle
         active
-        ariaLabel={label}
-        messages={GENERATION_PROGRESS_MESSAGES[kind]}
+        ariaLabel={queueStatus ? `${label}，排队中，前方还有 ${queueAhead} 个任务` : label}
+        messages={messages}
         motionMode="characters"
         firstCycleMs={7_540}
         cycleMs={8_000}
