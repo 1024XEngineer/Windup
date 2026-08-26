@@ -68,35 +68,35 @@ export function GuidePage() {
     <>
       <MarketingHeader />
       <main className="min-h-[100dvh] bg-app-canvas pb-20 pt-28 text-app-ink sm:pt-32">
-        <article
-          aria-labelledby="guide-title"
-          className="mx-auto w-full max-w-[78rem] px-5 sm:px-8 lg:px-10"
-        >
-          <header className="border-b border-app-line pb-9">
-            <p className="text-xs font-semibold tracking-[0.08em] text-app-faint">使用指南</p>
-            <h1
-              id="guide-title"
-              className="mt-3 text-[2.25rem] leading-[1.16] font-extrabold tracking-[-0.035em] text-app-ink sm:text-[2.75rem]"
-            >
-              Windup 使用指南
-            </h1>
-            <p className="mt-4 max-w-3xl text-base leading-7 text-app-muted">
-              从建立项目开始，完成角色母版、方向首帧和动作，再到预览与导出。这份指南按实际制作顺序说明每一步。
-            </p>
-            <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-3">
-              <Link
-                to="/quick-start"
-                className="inline-flex min-h-10 items-center gap-2 rounded-app-control bg-app-accent px-4 text-sm font-semibold text-app-on-accent transition-colors hover:bg-app-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
+        <article aria-labelledby="guide-title" className="w-full px-5 sm:px-8 lg:px-12 xl:px-16">
+          <header className="grid border-b border-app-line pb-9 md:grid-cols-[13.5rem_minmax(0,1fr)] md:gap-12 xl:gap-16">
+            <div className="hidden md:block" aria-hidden="true" />
+            <div>
+              <p className="text-xs font-semibold tracking-[0.08em] text-app-faint">使用指南</p>
+              <h1
+                id="guide-title"
+                className="mt-3 text-[2.25rem] leading-[1.16] font-extrabold tracking-[-0.035em] text-app-ink sm:text-[2.75rem]"
               >
-                开始创建角色
-                <ArrowRight aria-hidden="true" size={15} weight="bold" />
-              </Link>
-              <Link
-                to="/workspace"
-                className="inline-flex min-h-10 items-center text-sm font-medium text-app-muted underline decoration-app-line-strong underline-offset-4 transition-colors hover:text-app-accent focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
-              >
-                返回工作台
-              </Link>
+                Windup 使用指南
+              </h1>
+              <p className="mt-4 max-w-4xl text-base leading-7 text-app-muted">
+                从建立项目开始，完成角色母版、方向首帧和动作，再到预览与导出。这份指南按实际制作顺序说明每一步。
+              </p>
+              <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-3">
+                <Link
+                  to="/quick-start"
+                  className="inline-flex min-h-10 items-center gap-2 rounded-app-control bg-app-accent px-4 text-sm font-semibold text-app-on-accent transition-colors hover:bg-app-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
+                >
+                  开始创建角色
+                  <ArrowRight aria-hidden="true" size={15} weight="bold" />
+                </Link>
+                <Link
+                  to="/workspace"
+                  className="inline-flex min-h-10 items-center text-sm font-medium text-app-muted underline decoration-app-line-strong underline-offset-4 transition-colors hover:text-app-accent focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
+                >
+                  返回工作台
+                </Link>
+              </div>
             </div>
           </header>
 
