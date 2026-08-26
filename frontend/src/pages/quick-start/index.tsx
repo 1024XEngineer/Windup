@@ -1318,7 +1318,7 @@ function QuickStartInput({
             data-prompt-state={promptState}
             className={`quick-start-agent-composer relative flex flex-col ${
               hasConversation
-                ? 'rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]'
+                ? 'mt-12 rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]'
                 : ''
             }`}
           >
@@ -1403,7 +1403,9 @@ function QuickStartInput({
             />
             <div
               data-layout="quick-start-composer-controls"
-              className="order-first mb-2 flex min-h-10 items-center justify-between gap-3 px-1"
+              className={`mb-2 flex min-h-10 items-center justify-between gap-3 px-1 ${
+                hasConversation ? 'absolute right-0 bottom-full left-0' : 'order-first'
+              }`}
             >
               <div className="flex items-center gap-1">
                 {!hasConversation ? (
