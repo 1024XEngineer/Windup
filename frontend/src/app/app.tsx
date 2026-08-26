@@ -21,6 +21,10 @@ const WorkflowEditorPage = lazy(() =>
   import('@/pages/workflow-editor').then(({ WorkflowEditorPage: Page }) => ({ default: Page })),
 )
 
+const GuidePage = lazy(() =>
+  import('@/pages/guide').then(({ GuidePage: Page }) => ({ default: Page })),
+)
+
 /**
  * 路由表与全局外壳。
  * 页面自己获取所需数据，不再由 app 层构造服务后逐层传入。
@@ -43,6 +47,14 @@ function LazyWorkflowEditorPage() {
   )
 }
 
+function LazyGuidePage() {
+  return (
+    <Suspense fallback={<div aria-label="正在加载使用手册" />}>
+      <GuidePage />
+    </Suspense>
+  )
+}
+
 function QuickStartRoute() {
   return <QuickStartPage agent={productionQuickStartAgentDependencies} />
 }
@@ -53,6 +65,7 @@ export function AppRoutes() {
     <Routes>
       <Route element={<MarketingShellRoute />}>
         <Route path="/" element={<LandingPage />} />
+        <Route path="/guide" element={<LazyGuidePage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
       <Route element={<ProtectedRoute />}>
