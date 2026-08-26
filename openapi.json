@@ -1111,6 +1111,7 @@
           "content": {
             "anyOf": [
               {
+                "maxLength": 8000,
                 "type": "string"
               },
               {

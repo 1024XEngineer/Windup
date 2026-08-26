@@ -140,6 +140,10 @@ ChatContentPart = Annotated[
     Field(discriminator="type"),
 ]
 
+# The bound lives on the string branch itself: a union field cannot carry it,
+# and plain-text messages must stay as bounded as multimodal text parts.
+BoundedMessageText = Annotated[str, Field(max_length=MAX_MESSAGE_CHARS)]
+
 
 class ChatMessage(BaseModel):
     """One OpenAI-compatible message kept by the browser."""
@@ -147,7 +151,7 @@ class ChatMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     role: Literal["system", "user", "assistant", "tool"]
-    content: str | list[ChatContentPart] | None = None
+    content: BoundedMessageText | list[ChatContentPart] | None = None
     tool_calls: list[dict[str, Any]] | None = Field(default=None, max_length=1)
     tool_call_id: str | None = Field(default=None, max_length=128)
 
