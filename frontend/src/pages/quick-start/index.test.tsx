@@ -232,6 +232,51 @@ describe('Quick Start workflow Agent', () => {
     expect(service.confirmCandidate).not.toHaveBeenCalled()
   })
 
+  it('continues character regeneration below the Agent acknowledgement', async () => {
+    const selectingRun = workflow(setupAndTemplate())
+    const generatingRun = workflow(
+      setupAndTemplate({
+        phase: 'generating',
+        generations: [{ taskId: 'replacement-task', role: 'character_template' }],
+      }),
+    )
+    const planner = vi.fn(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [{ toolName: 'regenerate_character_template', input: {} }],
+    }))
+    const service = serviceFor(selectingRun, {
+      getTemplateCandidates: vi.fn(async () =>
+        eastCandidates(
+          'https://example.test/character-1.png',
+          'https://example.test/character-2.png',
+          'https://example.test/character-3.png',
+        ),
+      ),
+      getWorkflowAgentContext: vi.fn(() => ({
+        availableTools: ['regenerate_character_template', 'refine_character_template'] as const,
+      })),
+      regenerateCharacterTemplate: vi.fn(async () => generatingRun),
+    })
+    renderAt(`/quick-start/${selectingRun.id}`, service, agentFor({ planner }))
+
+    await screen.findAllByRole('button', { name: /选择角色方案/u })
+    fireEvent.change(screen.getByLabelText('继续描述你的想法'), {
+      target: { value: '重新换一批吧' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    const acknowledgement = await screen.findByText('已提交角色母版重新生成。')
+    const progress = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>('[data-generation-progress]')
+      expect(element).toBeTruthy()
+      return element!
+    })
+    expect(
+      acknowledgement.compareDocumentPosition(progress) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
   it('routes a completed-run refinement through the current Controller session', async () => {
     const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
     const planner = vi.fn(async () => ({
