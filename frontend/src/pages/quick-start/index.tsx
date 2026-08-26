@@ -170,7 +170,7 @@ const LEGACY_AGENT_CONVERSATION_STORAGE_KEY = 'windup.quick-start.agent-chat.v1'
 const AGENT_DRAFT_HISTORY_STATE_KEY = 'windupQuickStartAgentDraftId'
 
 type AgentConversationTurn =
-  | { role: 'user'; content: string; scope?: 'workflow' }
+  | { role: 'user'; content: string; referenceMedia?: readonly string[]; scope?: 'workflow' }
   | {
       role: 'assistant'
       content: string
@@ -188,6 +188,7 @@ type AgentConversationTurn =
       locomotion?: true
       optimizationSummary: string
       suggestPixelPerfect?: boolean
+      referenceMedia?: readonly string[]
       proposalStatus: 'pending' | 'superseded' | 'adopted' | 'confirmed'
       scope?: 'workflow'
     }
@@ -307,7 +308,23 @@ function readAgentConversation(
       }
       const scope = 'scope' in turn && turn.scope === 'workflow' ? 'workflow' : undefined
       if (turn.role === 'user') {
-        return [{ role: 'user', content: turn.content, ...(scope ? { scope } : {}) }]
+        const referenceMedia =
+          'referenceMedia' in turn &&
+          Array.isArray(turn.referenceMedia) &&
+          turn.referenceMedia.every(
+            (value: unknown) =>
+              typeof value === 'string' && value.length <= 2_048 && /^https?:\/\//u.test(value),
+          )
+            ? turn.referenceMedia
+            : []
+        return [
+          {
+            role: 'user',
+            content: turn.content,
+            ...(referenceMedia.length ? { referenceMedia } : {}),
+            ...(scope ? { scope } : {}),
+          },
+        ]
       }
       if (turn.role !== 'assistant') return []
 
@@ -348,6 +365,14 @@ function readAgentConversation(
               : {}),
             optimizationSummary: turn.optimizationSummary,
             suggestPixelPerfect: 'suggestPixelPerfect' in turn && turn.suggestPixelPerfect === true,
+            ...('referenceMedia' in turn &&
+            Array.isArray(turn.referenceMedia) &&
+            turn.referenceMedia.every(
+              (value: unknown) =>
+                typeof value === 'string' && value.length <= 2_048 && /^https?:\/\//u.test(value),
+            )
+              ? { referenceMedia: turn.referenceMedia }
+              : {}),
             proposalStatus: turn.proposalStatus,
             ...(scope ? { scope } : {}),
           },
@@ -376,7 +401,19 @@ function createAgentSeed(turns: readonly AgentConversationTurn[]): {
       turn.role === 'assistant' && turn.kind === 'proposal' && turn.proposalStatus === 'pending',
   )
   return {
-    messages: turns.map(({ role, content }) => ({ role, content })),
+    messages: turns.map((turn) => ({
+      role: turn.role,
+      content:
+        turn.role === 'user' && turn.referenceMedia?.length
+          ? [
+              { type: 'text' as const, text: turn.content },
+              ...turn.referenceMedia.map((image) => ({
+                type: 'image' as const,
+                image: new URL(image),
+              })),
+            ]
+          : turn.content,
+    })),
     clarificationUsed: turns.some(
       (turn) => turn.role === 'assistant' && turn.kind === 'clarification',
     ),
@@ -390,6 +427,7 @@ function createAgentSeed(turns: readonly AgentConversationTurn[]): {
             ...(pending.locomotion ? { locomotion: pending.locomotion } : {}),
             optimizationSummary: pending.optimizationSummary,
             suggestPixelPerfect: pending.suggestPixelPerfect,
+            ...(pending.referenceMedia?.length ? { referenceMedia: pending.referenceMedia } : {}),
           }
         : null,
   }
@@ -507,7 +545,6 @@ export function QuickStartPage({
       service={activeService}
       agent={agent}
       activeRunUserId={activeRunUserId}
-      onSessionCreated={setCreatedSession}
       projectApis={projectApis}
     />
   )
@@ -695,13 +732,11 @@ function QuickStartInput({
   service,
   agent,
   activeRunUserId,
-  onSessionCreated,
   projectApis,
 }: {
   service: QuickStartEntryService
   agent: CreateQuickStartAgentOptions
   activeRunUserId: string | null
-  onSessionCreated: (session: QuickStartSession) => void
   projectApis: Pick<ProjectApis, 'list' | 'get'>
 }) {
   const navigate = useNavigate()
@@ -1085,84 +1120,72 @@ function QuickStartInput({
 
     if ((!normalizedPrompt && !templateFile) || entryBusy || unavailableReason) return
 
-    if (!templateFile) {
-      setError(null)
+    setError(null)
+    const abortController = templateFile ? new AbortController() : null
+    if (abortController) {
+      submitAbortController.current = abortController
+      setSubmitting(true)
+    }
+    try {
+      const referenceMedia = templateFile
+        ? [await service.uploadReferenceImage(templateFile, abortController?.signal)]
+        : []
+      const effectivePrompt = normalizedPrompt || '请根据这张图片创建角色'
       if (agentSession.state.status === 'proposal') {
         updateProposalStatus(agentSession.state.proposalId, 'superseded')
       }
-      const userTurn: AgentConversationTurn = { role: 'user', content: normalizedPrompt }
+      const userTurn: AgentConversationTurn = {
+        role: 'user',
+        content: effectivePrompt,
+        ...(referenceMedia.length ? { referenceMedia } : {}),
+      }
       if (hasConversation) appendConversationTurn(userTurn)
       else await revealFirstAgentTurn(userTurn)
-      pendingPrompt.current = normalizedPrompt
+      pendingPrompt.current = effectivePrompt
       setPrompt('')
-      try {
-        const result = await agentSession.submit(normalizedPrompt)
-        pendingPrompt.current = null
-        setRevealingFirstAgentTurn(false)
-        if (result.kind === 'message') {
-          appendConversationTurn({
-            role: 'assistant',
-            content: result.message,
-            kind: result.messageKind,
-          })
-          return
-        }
-        if (result.kind === 'proposal') {
-          appendConversationTurn({
-            role: 'assistant',
-            content: `${result.optimizationSummary}\n\n角色：${result.optimizedPrompt}${result.actionPrompt ? `\n动作：${result.actionPrompt}` : ''}`,
-            kind: 'proposal',
-            proposalId: result.proposalId,
-            optimizedPrompt: result.optimizedPrompt,
-            ...(result.actionPrompt ? { actionPrompt: result.actionPrompt } : {}),
-            ...(result.actionType ? { actionType: result.actionType } : {}),
-            ...(result.locomotion ? { locomotion: result.locomotion } : {}),
-            optimizationSummary: result.optimizationSummary,
-            suggestPixelPerfect: result.suggestPixelPerfect,
-            proposalStatus: 'pending',
-          })
-        }
-      } catch (cause) {
-        setRevealingFirstAgentTurn(false)
-        if (!(cause instanceof Error && cause.name === 'AbortError')) {
-          setEntryTransition('idle')
-          setPromptState('collecting')
-        }
-      }
-      return
-    }
 
-    const abortController = new AbortController()
-    submitAbortController.current = abortController
-    setSubmitting(true)
-    setEntryTransition('leaving')
-    setError(null)
-    try {
-      const sessionPromise = service.startWithUploadedTemplate(
-        templateFile,
-        normalizedPrompt,
-        abortController.signal,
-        directionalMovement,
-        { gameStyle, ...(projectId ? { projectId } : {}) },
-      )
-      const handoffPromise = new Promise<void>((resolve) => {
-        handoffTimer.current = setTimeout(() => {
-          handoffTimer.current = null
-          resolve()
-        }, ENTRY_HANDOFF_MS)
+      const result = await agentSession.submit(effectivePrompt, {
+        ...(referenceMedia.length ? { referenceMedia } : {}),
       })
-      const [session] = await Promise.all([sessionPromise, handoffPromise])
-      onSessionCreated(session)
-      navigate(`/quick-start/${encodeURIComponent(session.runId)}`)
+      pendingPrompt.current = null
+      setRevealingFirstAgentTurn(false)
+      if (templateFile) {
+        setTemplateFile(null)
+        if (fileInput.current) fileInput.current.value = ''
+      }
+      if (result.kind === 'message') {
+        appendConversationTurn({
+          role: 'assistant',
+          content: result.message,
+          kind: result.messageKind,
+        })
+        return
+      }
+      if (result.kind === 'proposal') {
+        appendConversationTurn({
+          role: 'assistant',
+          content: `${result.optimizationSummary}\n\n角色：${result.optimizedPrompt}${result.actionPrompt ? `\n动作：${result.actionPrompt}` : ''}`,
+          kind: 'proposal',
+          proposalId: result.proposalId,
+          optimizedPrompt: result.optimizedPrompt,
+          ...(result.actionPrompt ? { actionPrompt: result.actionPrompt } : {}),
+          ...(result.actionType ? { actionType: result.actionType } : {}),
+          ...(result.locomotion ? { locomotion: result.locomotion } : {}),
+          optimizationSummary: result.optimizationSummary,
+          suggestPixelPerfect: result.suggestPixelPerfect,
+          ...(result.referenceMedia?.length ? { referenceMedia: result.referenceMedia } : {}),
+          proposalStatus: 'pending',
+        })
+      }
     } catch (cause) {
-      if (!abortController.signal.aborted) {
-        if (handoffTimer.current) clearTimeout(handoffTimer.current)
-        handoffTimer.current = null
+      setRevealingFirstAgentTurn(false)
+      if (!(cause instanceof Error && cause.name === 'AbortError')) {
         setEntryTransition('idle')
-        setError(errorMessage(cause, '创建失败，请稍后重试'))
+        setPromptState('collecting')
+        if (templateFile) setError(errorMessage(cause, '图片提交失败，请稍后重试'))
       }
     } finally {
-      if (submitAbortController.current === abortController) {
+      if (abortController && submitAbortController.current === abortController) {
         submitAbortController.current = null
         if (!abortController.signal.aborted) setSubmitting(false)
       }

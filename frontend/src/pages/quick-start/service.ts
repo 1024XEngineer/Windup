@@ -135,6 +135,8 @@ export interface QuickStartSession {
 
 export interface QuickStartEntryService {
   readonly unavailableReason: string | null
+  /** 上传为 Agent 与角色母版 Generation 共用的原始参考，不创建 WorkflowRun。 */
+  uploadReferenceImage(file: File, signal?: AbortSignal): Promise<MediaReference>
   start(
     prompt: string,
     directionalMovement?: DirectionalMovement,
@@ -1297,6 +1299,11 @@ export function createQuickStartService({
 
   return {
     unavailableReason: null,
+
+    async uploadReferenceImage(file, signal) {
+      if (!mediaApis) throw new Error('媒体上传服务尚未配置，不能使用角色参考图')
+      return mediaApis.upload(file, 'reference-image', signal)
+    },
 
     async start(prompt, directionalMovement = 'single', options) {
       const normalizedPrompt = prompt.trim()

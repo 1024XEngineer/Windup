@@ -135,6 +135,7 @@ function serviceFor(run: WorkflowRun | null, overrides: Partial<QuickStartMock> 
     unavailableReason: null,
     runId: fallbackRun.id,
     start: vi.fn(async () => service),
+    uploadReferenceImage: vi.fn(async () => 'https://cdn.windup.test/hero.png' as never),
     startWithUploadedTemplate: vi.fn(async () => service),
     open: vi.fn(async () => {
       if (!run) throw new Error('not found')
@@ -856,20 +857,21 @@ describe('QuickStartPage', () => {
     expect(userTurns).toHaveLength(1)
   })
 
-  it('aborts uploaded-template startup and restores its prompt', async () => {
-    let startupSignal: AbortSignal | null = null
+  it('aborts reference upload before Agent planning and restores its prompt', async () => {
+    let uploadSignal: AbortSignal | null = null
+    const planner = vi.fn()
     const service = serviceFor(null, {
-      startWithUploadedTemplate: vi.fn(
-        async (_file, _prompt, signal) =>
-          new Promise<QuickStartSession>((_resolve, reject) => {
-            startupSignal = signal
+      uploadReferenceImage: vi.fn(
+        async (_file, signal) =>
+          new Promise<never>((_resolve, reject) => {
+            uploadSignal = signal ?? null
             signal.addEventListener('abort', () =>
               reject(new DOMException('aborted', 'AbortError')),
             )
           }),
       ),
     })
-    renderAt('/quick-start', service)
+    renderAt('/quick-start', service, agentFor({ planner }))
     const composer = screen.getByRole('textbox', { name: '创作指令' }) as HTMLTextAreaElement
     const file = new File(['pixels'], 'hero.png', { type: 'image/png' })
 
@@ -879,10 +881,12 @@ describe('QuickStartPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: '停止生成' }))
 
     await waitFor(() => {
-      expect(startupSignal?.aborted).toBe(true)
+      expect(uploadSignal?.aborted).toBe(true)
       expect(composer.disabled).toBe(false)
       expect(composer.value).toBe('挥手')
     })
+    expect(planner).not.toHaveBeenCalled()
+    expect(service.startWithUploadedTemplate).not.toHaveBeenCalled()
   })
 
   it('uses a larger template icon and shows the selected art style on the right', () => {
@@ -2595,7 +2599,7 @@ describe('QuickStartPage', () => {
     expect(view.queryByRole('img', { name: '角色图候选 1' })).toBeNull()
   })
 
-  it('submits both text and uploaded-template creation from the natural-language entry', async () => {
+  it('routes both text and uploaded references through the Agent entry', async () => {
     const service = serviceFor(null)
     const startCharacterGeneration = vi.fn(async () => ({ runId: 'run-new' }))
     const agent = agentFor({ startCharacterGeneration })
@@ -2621,7 +2625,26 @@ describe('QuickStartPage', () => {
     expect(service.start).not.toHaveBeenCalled()
 
     view.unmount()
-    renderAt('/quick-start', service)
+    const imagePlanner = vi.fn(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'quick_start_decision',
+          input: {
+            kind: 'proposal',
+            optimizedPrompt: '挥手的像素英雄，全身像',
+            actionPrompt: '挥手',
+            optimizationSummary: '图片适合作为单角色参考，我会保留角色外观并生成挥手动作。',
+          },
+        },
+      ],
+    }))
+    const imageGeneration = vi.fn(async () => ({ runId: 'run-new' }))
+    renderAt('/quick-start', service, {
+      planner: imagePlanner,
+      startCharacterGeneration: imageGeneration,
+    })
     const file = new File(['pixels'], 'hero.png', { type: 'image/png' })
     fireEvent.click(screen.getByRole('button', { name: '生成方向，当前单向' }))
     fireEvent.change(screen.getByRole('slider', { name: '生成方向' }), {
@@ -2632,14 +2655,30 @@ describe('QuickStartPage', () => {
     expect(screen.getByText('hero.png')).toBeTruthy()
     fireEvent.change(screen.getByLabelText('创作指令'), { target: { value: '挥手' } })
     fireEvent.click(screen.getByRole('button', { name: '生成角色' }))
+    await waitFor(() => expect(imagePlanner).toHaveBeenCalledTimes(1))
+    const imagePlannerInput = (imagePlanner.mock.calls as unknown as [PlannerInput][])[0]?.[0]
+    if (!imagePlannerInput) throw new Error('image planner was not called')
+    expect(imagePlannerInput.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '挥手' },
+          { type: 'image', image: new URL('https://cdn.windup.test/hero.png') },
+        ],
+      },
+    ])
+    expect(service.startWithUploadedTemplate).not.toHaveBeenCalled()
+    expect(imageGeneration).not.toHaveBeenCalled()
+
+    await confirmAgentGeneration()
     await waitFor(() =>
-      expect(service.startWithUploadedTemplate).toHaveBeenCalledWith(
-        file,
-        '挥手',
-        expect.any(AbortSignal),
-        'eight-way',
-        { gameStyle: 'unspecified' },
-      ),
+      expect(imageGeneration).toHaveBeenCalledWith({
+        prompt: '挥手的像素英雄，全身像',
+        actionPrompt: '挥手',
+        directionalMovement: 'eight-way',
+        gameStyle: 'unspecified',
+        referenceMedia: ['https://cdn.windup.test/hero.png'],
+      }),
     )
   })
 
