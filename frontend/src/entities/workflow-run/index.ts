@@ -66,8 +66,10 @@ export interface WorkflowAutomationIntent {
   mode: 'automatic'
   /** 没有动作时只交付角色母版；有动作时继续推进到完整动画。 */
   actionPrompt: string | null
-  /** Agent 明确认出的行走类位移动作；缺省时沿用 Quick Start 原有推断。 */
-  actionType?: 'walk'
+  /** Agent 明确认出的已有优化管线；缺省时沿用 Quick Start 原有推断。 */
+  actionType?: 'idle' | 'walk' | 'attack' | 'jump'
+  /** 动作会让角色整体发生空间位移；缺省表示原地或未知。 */
+  locomotion?: true
 }
 
 /** 角色资料卡片；只保存用户输入，不承担图片生成。 */
@@ -95,6 +97,8 @@ export interface WorkflowActionInput {
   type: ActionType
   prompt: string | null
   fps: number
+  /** 生成类型与试玩位移解耦；例如向前翻滚仍是 custom，但可以发生位移。 */
+  locomotion?: true
 }
 
 /** Action 的首帧卡片；每个 Action 都必须有一份独立输入和确认结果。 */
