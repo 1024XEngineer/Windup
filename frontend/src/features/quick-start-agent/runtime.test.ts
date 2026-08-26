@@ -238,6 +238,32 @@ describe('createQuickStartAgent', () => {
     })
   })
 
+  it('keeps an uploaded image in the Agent turn and confirmed generation', async () => {
+    const { agent, planner, startCharacterGeneration } = fixture()
+    const proposal = await agent.start('参考这张图片创建角色', {
+      referenceMedia: ['https://cdn.windup.test/hero.png'],
+    })
+    if (proposal.kind !== 'proposal') throw new Error('测试缺少提案')
+
+    expect(planner.mock.calls[0]?.[0].messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '参考这张图片创建角色' },
+          { type: 'image', image: new URL('https://cdn.windup.test/hero.png') },
+        ],
+      },
+    ])
+
+    await agent.confirmProposal(proposal.proposalId, proposal.optimizedPrompt)
+
+    expect(startCharacterGeneration).toHaveBeenCalledWith({
+      prompt: proposal.optimizedPrompt,
+      directionalMovement: 'single',
+      referenceMedia: ['https://cdn.windup.test/hero.png'],
+    })
+  })
+
   it('carries optimized action type and locomotion into automatic delivery', async () => {
     const { agent, startCharacterGeneration } = fixture({
       text: '',

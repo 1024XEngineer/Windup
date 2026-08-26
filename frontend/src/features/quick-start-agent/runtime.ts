@@ -23,9 +23,13 @@ const QUICK_START_DECISION_FIELDS = new Set([
 export type QuickStartDirectionalMovement = 'single' | 'four-way' | 'eight-way'
 export type QuickStartActionType = 'idle' | 'walk' | 'attack' | 'jump'
 
+export type PlannerMessageContent =
+  | string
+  | readonly ({ type: 'text'; text: string } | { type: 'image'; image: URL })[]
+
 export interface PlannerMessage {
   role: 'user' | 'assistant'
-  content: string
+  content: PlannerMessageContent
 }
 
 export interface PlannerToolCall {
@@ -64,6 +68,8 @@ export interface CharacterGenerationPlan {
 
 export interface CharacterGenerationProposal extends CharacterGenerationPlan {
   proposalId: string
+  /** 用户上传并由 Agent 看过的原始图片；确认后继续约束母版 Generation。 */
+  referenceMedia?: readonly string[]
 }
 
 export type QuickStartDecision =
@@ -79,6 +85,7 @@ export type QuickStartAgentResult =
 
 export interface QuickStartAgentTurnOptions {
   signal?: AbortSignal
+  referenceMedia?: readonly string[]
 }
 
 export interface ConfirmProposalOptions {
@@ -113,6 +120,7 @@ export type StartCharacterGenerationAction = (input: {
   projectId?: string
   automaticDelivery?: boolean
   suggestPixelPerfect?: boolean
+  referenceMedia?: readonly string[]
 }) => Promise<{ runId: string }>
 
 export interface CreateQuickStartAgentOptions {
@@ -276,6 +284,37 @@ function proposalMessage(plan: CharacterGenerationPlan): string {
   return `${plan.optimizationSummary}\n\n角色：${plan.optimizedPrompt}${action}`
 }
 
+function normalizeReferenceMedia(values: readonly string[] | undefined): readonly string[] {
+  if (!values?.length) return []
+  return values.map((value) => {
+    const normalized = value.trim()
+    const url = new URL(normalized)
+    if ((url.protocol !== 'https:' && url.protocol !== 'http:') || normalized.length > 2_048) {
+      throw new Error('上传图片引用无效')
+    }
+    return normalized
+  })
+}
+
+function referenceMediaFromMessages(messages: readonly PlannerMessage[]): readonly string[] {
+  const content = messages.findLast(
+    (message) => message.role === 'user' && Array.isArray(message.content),
+  )?.content
+  if (!Array.isArray(content)) return []
+  return content.flatMap((part) => (part.type === 'image' ? [part.image.toString()] : []))
+}
+
+function userMessage(input: string, referenceMedia: readonly string[]): PlannerMessage {
+  if (referenceMedia.length === 0) return { role: 'user', content: input }
+  return {
+    role: 'user',
+    content: [
+      { type: 'text', text: input },
+      ...referenceMedia.map((image) => ({ type: 'image' as const, image: new URL(image) })),
+    ],
+  }
+}
+
 export function createQuickStartAgent({
   planner,
   startCharacterGeneration,
@@ -291,6 +330,8 @@ export function createQuickStartAgent({
   let running = false
   let messages: PlannerMessage[] = [...initialMessages]
   let currentProposal = initialProposal
+  let currentReferenceMedia =
+    initialProposal?.referenceMedia ?? referenceMediaFromMessages(initialMessages)
 
   function assertAuthorized() {
     if (revoked) throw new Error('生成授权已失效')
@@ -299,7 +340,7 @@ export function createQuickStartAgent({
 
   async function runTurn(
     input: string,
-    { signal }: QuickStartAgentTurnOptions = {},
+    { signal, referenceMedia }: QuickStartAgentTurnOptions = {},
   ): Promise<QuickStartAgentResult> {
     assertAuthorized()
     if (running) throw new Error('Planner 正在处理上一条输入')
@@ -313,9 +354,11 @@ export function createQuickStartAgent({
     running = true
     currentProposal = null
     try {
+      const nextReferenceMedia = normalizeReferenceMedia(referenceMedia)
+      if (nextReferenceMedia.length > 0) currentReferenceMedia = nextReferenceMedia
       const nextMessages: PlannerMessage[] = [
         ...messages,
-        { role: 'user', content: normalizedInput },
+        userMessage(normalizedInput, nextReferenceMedia),
       ]
       // 用户点击发送后，页面已经展示并持久化这条消息；即使 Planner 失败，
       // runtime 也必须保留同一历史，避免刷新前后得到不同上下文。
@@ -342,6 +385,7 @@ export function createQuickStartAgent({
         ...(decision.locomotion ? { locomotion: decision.locomotion } : {}),
         optimizationSummary: decision.optimizationSummary,
         ...(decision.suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
+        ...(currentReferenceMedia.length > 0 ? { referenceMedia: [...currentReferenceMedia] } : {}),
       }
       currentProposal = proposal
       messages = [...nextMessages, { role: 'assistant', content: proposalMessage(proposal) }]
@@ -382,6 +426,7 @@ export function createQuickStartAgent({
         projectId,
         ...(automaticDelivery ? { automaticDelivery: true } : {}),
         ...(proposal.suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
+        ...(proposal.referenceMedia?.length ? { referenceMedia: proposal.referenceMedia } : {}),
       })
       return { kind: 'generated', runId, ...proposal, optimizedPrompt: effectivePrompt }
     } finally {
