@@ -4,6 +4,7 @@ import {
   projectApis,
   workflowRunApis,
   type GenerationApis,
+  type MediaReference,
   type WorkflowRunApis,
 } from '@/entities'
 import {
@@ -145,6 +146,7 @@ export function createProductionQuickStartAgentDependencies(
       try {
         return await controller.startCharacterGeneration({
           prompt: input.prompt,
+          referenceMedia: input.referenceMedia as readonly MediaReference[] | undefined,
           directionalMovement: input.directionalMovement,
           gameStyle,
           projectId: input.projectId,
