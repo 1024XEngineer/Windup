@@ -170,6 +170,37 @@ function boundedDisplayName(value: string, maxLength: number): string {
     : characters.join('')
 }
 
+/**
+ * 完整动作动辄几十帧，多方向导出还会把各方向的帧并进同一批；逐帧重建在后端是 CPU 与内存密集的
+ * 同步任务，一次点击把全部帧同时打过去会占满线程池并把单机内存顶爆。这里限制同时在途的请求数。
+ */
+const PIXEL_PERFECT_CONCURRENCY = 3
+
+/** 有上限的并发映射：结果按输入顺序返回，任一项失败即停止取新任务并抛出。 */
+async function mapWithConcurrency<Input, Output>(
+  items: readonly Input[],
+  limit: number,
+  run: (item: Input, index: number) => Promise<Output>,
+): Promise<Output[]> {
+  const results = new Array<Output>(items.length)
+  let cursor = 0
+  let failed = false
+  const worker = async () => {
+    while (!failed && cursor < items.length) {
+      const index = cursor
+      cursor += 1
+      try {
+        results[index] = await run(items[index]!, index)
+      } catch (cause) {
+        failed = true
+        throw cause
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
+}
+
 function inferGeneratableActionType(description: string): GeneratableActionType {
   const normalized = description.trim().toLowerCase()
   if (!normalized || /^(待机|站立|呼吸|idle|stand|breathe)$/u.test(normalized)) return 'idle'
@@ -1148,21 +1179,19 @@ export function createQuickStartService({
       async pixelPerfectActionFrames(frames) {
         const run = controller.getWorkflow()
         const spriteSize = knownSpriteSize ?? (await resolveProjectSpriteSize(run.projectId))
-        return Promise.all(
-          frames.map(async (frame) => {
-            const result = await pixelPerfectApis.reconstruct({
-              imageUrl: frame.imageUrl,
-              cols: spriteSize.width,
-              rows: spriteSize.height,
-            })
-            return {
-              index: frame.index,
-              blob: result.blob,
-              durationMs: frame.durationMs,
-              sourceImageUrl: frame.imageUrl,
-            }
-          }),
-        )
+        return mapWithConcurrency(frames, PIXEL_PERFECT_CONCURRENCY, async (frame) => {
+          const result = await pixelPerfectApis.reconstruct({
+            imageUrl: frame.imageUrl,
+            cols: spriteSize.width,
+            rows: spriteSize.height,
+          })
+          return {
+            index: frame.index,
+            blob: result.blob,
+            durationMs: frame.durationMs,
+            sourceImageUrl: frame.imageUrl,
+          }
+        })
       },
       async getExportModel() {
         if (!characterApis) return null

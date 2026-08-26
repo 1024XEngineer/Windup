@@ -1960,6 +1960,21 @@ function QuickStartRun({
     pixelPerfectUrlsRef.current = []
   }, [])
 
+  // 像素化要跑几十秒，期间用户可以继续追加动作；记住当前动作，回来时才能判断结果还算不算数。
+  const currentActionId = run ? latestActionStep(run)?.id : undefined
+  const currentActionIdRef = useRef(currentActionId)
+
+  useEffect(() => {
+    if (currentActionIdRef.current === currentActionId) return
+    currentActionIdRef.current = currentActionId
+    // 动作换了：旧动作的像素帧既不该继续显示，也不该被导出模型引用。
+    releasePixelPerfectUrls()
+    setPixelPerfectFrames([])
+    setPixelPerfectReplacementEntries([])
+    setPixelPerfectStatus('idle')
+    setActionVersion('original')
+  }, [currentActionId, releasePixelPerfectUrls])
+
   const startPixelPerfect = useCallback(async () => {
     const target = session
     const processFrames = target?.pixelPerfectActionFrames
@@ -1971,8 +1986,8 @@ function QuickStartRun({
     ) {
       return
     }
-    const currentActionId = run ? latestActionStep(run)?.id : undefined
-    const sources = pixelPerfectSources(exportModel, currentActionId, actionFrames)
+    const requestActionId = currentActionId
+    const sources = pixelPerfectSources(exportModel, requestActionId, actionFrames)
     setPixelPerfectStatus('working')
     setActionVersion('original')
     releasePixelPerfectUrls()
@@ -1982,6 +1997,11 @@ function QuickStartRun({
     try {
       const reconstructed = await processFrames(sources)
       if (!mountedRef.current || activeSessionRef.current !== target) return
+      // 请求期间动作被换过：这批帧不属于当前画面，丢弃比错配到新动作上安全。
+      if (currentActionIdRef.current !== requestActionId) {
+        setPixelPerfectStatus('idle')
+        return
+      }
       const urls = reconstructed.map((frame) => URL.createObjectURL(frame.blob))
       pixelPerfectUrlsRef.current = urls
       const replacements = reconstructed.map(
@@ -2014,11 +2034,11 @@ function QuickStartRun({
   }, [
     actionFrames,
     clearWorkflowError,
+    currentActionId,
     exportModel,
     pixelPerfectStatus,
     releasePixelPerfectUrls,
     reportWorkflowError,
-    run,
     session,
   ])
 
