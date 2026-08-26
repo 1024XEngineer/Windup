@@ -47,7 +47,7 @@ export interface GenerationProgressCopyProps {
   kind: GenerationProgressKind
   label: string
   placement?: 'conversation' | 'node'
-  /** pending 时前面还有几单；0 或缺省不展示。 */
+  /** pending 时前面还有几单别人未完成；0 或缺省不展示。 */
   queueAhead?: number
 }
 

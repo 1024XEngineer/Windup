@@ -201,19 +201,22 @@ def test_both_send_paths_use_the_same_payload_builder(session):
     assert set(task_repo.task_event_payload(task, session)) == _EVENT_KEYS
 
 
-def test_queue_ahead_counts_earlier_unfinished_tasks(session):
-    first = _make_task(session, user_id=1, project_id=42)
-    _make_task(session, user_id=1, project_id=42)
-    task_repo.update_status(session, first, TaskStatus.COMPLETED)
-    third = _make_task(session, user_id=1, project_id=42)
+def test_queue_ahead_counts_other_users_not_own(session):
+    own_done = _make_task(session, user_id=1, project_id=42)
+    own_pending = _make_task(session, user_id=1, project_id=42)
+    _make_task(session, user_id=2, project_id=99)
+    task_repo.update_status(session, own_done, TaskStatus.COMPLETED)
+    mine = _make_task(session, user_id=1, project_id=42)
     session.commit()
-    ahead = task_repo.queue_ahead_for(session, task_repo.get_task(session, third))
-    assert ahead == 1, "已完成的不算,只剩 second 还在 pending"
-    done = task_repo.queue_ahead_for(session, task_repo.get_task(session, first))
-    assert done == 0
-    task_repo.update_status(session, third, TaskStatus.RUNNING)
+    assert task_repo.queue_ahead_for(session, task_repo.get_task(session, own_pending)) == 0, (
+        "自己更早的 pending 不算排队"
+    )
+    ahead = task_repo.queue_ahead_for(session, task_repo.get_task(session, mine))
+    assert ahead == 1, "已完成的不算,自己更早的 pending 不算,只剩 other"
+    assert task_repo.queue_ahead_for(session, task_repo.get_task(session, own_done)) == 0
+    task_repo.update_status(session, mine, TaskStatus.RUNNING)
     session.commit()
-    running = task_repo.queue_ahead_for(session, task_repo.get_task(session, third))
+    running = task_repo.queue_ahead_for(session, task_repo.get_task(session, mine))
     assert running == 0, "RUNNING 已在执行,不再报前面还有几单"
 
 

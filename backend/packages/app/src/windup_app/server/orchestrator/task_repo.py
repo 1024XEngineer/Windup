@@ -65,13 +65,17 @@ _STATUS_EVENT = {
 }
 
 
-def count_queue_ahead(session: Session, task_id: int) -> int:
-    """比本任务更早、尚未结束的生成任务条数（pending + running）。"""
+def count_queue_ahead(session: Session, task_id: int, user_id: int) -> int:
+    """比本任务更早、尚未结束、且属于别人的条数（pending + running）。
+
+    自己连点几单不算排队；只有别人占着 worker 才报前面还有几单。
+    """
     n = session.scalar(
         select(func.count())
         .select_from(GenerationTaskRecord)
         .where(
             GenerationTaskRecord.id < task_id,
+            GenerationTaskRecord.user_id != user_id,
             GenerationTaskRecord.status.in_((
                 TaskStatus.PENDING.value,
                 TaskStatus.RUNNING.value,
@@ -82,10 +86,10 @@ def count_queue_ahead(session: Session, task_id: int) -> int:
 
 
 def queue_ahead_for(session: Session, task: GenerationTask) -> int:
-    """只有 pending 报前面还有几单；running 已在执行,为 0。"""
+    """只有 pending 且前面有别人的单才报；running / 仅自己的单为 0。"""
     if task.status is not TaskStatus.PENDING:
         return 0
-    return count_queue_ahead(session, task.id)
+    return count_queue_ahead(session, task.id, task.user_id)
 
 
 def task_event_payload(task: GenerationTask, session: Session | None = None) -> dict:
