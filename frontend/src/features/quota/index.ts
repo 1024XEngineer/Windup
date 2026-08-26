@@ -164,6 +164,7 @@ export const CREDIT_REASON_OPTIONS = [
   { value: 6, label: '退款 / 回退' },
   { value: 7, label: '积分冻结' },
   { value: 8, label: '实际扣减' },
+  { value: 9, label: '兑换码入账' },
 ] as const
 
 const reasonLabels: Readonly<Record<number, string>> = Object.fromEntries(
