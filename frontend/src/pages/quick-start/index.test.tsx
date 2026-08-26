@@ -748,7 +748,12 @@ describe('QuickStartPage', () => {
 
     fireEvent.change(composer, { target: { value: '银发骑士' } })
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' })
-    fireEvent.click(await screen.findByRole('button', { name: '停止生成' }))
+    const stop = await screen.findByRole('button', { name: '停止生成' })
+    expect(stop.className).toContain('rounded-full')
+    expect(stop.className).toContain('bg-app-accent')
+    expect(stop.className).not.toContain('bg-app-ink')
+    expect(stop.textContent).toBe('')
+    fireEvent.click(stop)
 
     await waitFor(() => {
       expect(composer.disabled).toBe(false)
@@ -1169,14 +1174,21 @@ describe('QuickStartPage', () => {
     const conversationControls = composer.querySelector(
       '[data-layout="quick-start-composer-controls"]',
     )
-    expect(conversationForm?.className).toContain('grid-cols-[1fr_auto]')
-    expect(conversationSurface?.className).not.toContain('border-app-line-strong')
-    expect(conversationSurface?.className).not.toContain('shadow-app-panel')
+    expect(conversationForm?.className).toContain('relative')
+    expect(conversationForm?.className).toContain('flex-col')
+    expect(conversationSurface?.className).toContain('rounded-app-surface')
+    expect(conversationSurface?.className).toContain('border-app-line-strong')
+    expect(conversationSurface?.className).toContain('shadow-app-panel')
     expect(conversationControls?.className).toContain('hidden')
-    expect(conversationForm?.querySelector('button')?.className).not.toContain('absolute')
+    const conversationSubmit = screen.getByRole('button', { name: '继续' })
+    expect(conversationSubmit.className).toContain('absolute')
+    expect(conversationSubmit.className).toContain('rounded-full')
+    expect(conversationSubmit.textContent).toBe('')
     expect(input.tagName).toBe('TEXTAREA')
     expect(input.rows).toBe(1)
     expect(input.className).toContain('[field-sizing:content]')
+    expect(input.className).toContain('min-h-[52px]')
+    expect(input.className).toContain('pr-14')
     expect(input.value).toBe('')
     expect(
       screen.getByText('我会保留角色的核心特征，并整理成适合母版生成的完整描述。'),
