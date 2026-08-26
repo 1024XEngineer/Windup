@@ -47,8 +47,6 @@ export interface GenerationProgressCopyProps {
   kind: GenerationProgressKind
   label: string
   placement?: 'conversation' | 'node'
-  /** pending 时前面还有几单别人未完成；0 或缺省不展示。 */
-  queueAhead?: number
 }
 
 /** 同一生成阶段在不同入口共用文案顺序、逐字进入和停留高光。 */
@@ -56,7 +54,6 @@ export function GenerationProgressCopy({
   kind,
   label,
   placement = 'conversation',
-  queueAhead,
 }: GenerationProgressCopyProps) {
   return (
     <div
@@ -64,11 +61,6 @@ export function GenerationProgressCopy({
       data-generation-progress-placement={placement}
       className="generation-progress-slot"
     >
-      {typeof queueAhead === 'number' && queueAhead > 0 ? (
-        <p role="status" className="m-0 text-center text-sm text-app-muted">
-          前面还有 {queueAhead} 单
-        </p>
-      ) : null}
       <KineticCopyCycle
         active
         ariaLabel={label}
