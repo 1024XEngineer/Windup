@@ -3188,6 +3188,32 @@ describe('QuickStartPage', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('动作生成暂时不可用')
   })
 
+  it('keeps an add-action error visible when run restoration finishes late', async () => {
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const resumed = deferred<WorkflowRun>()
+    const service = serviceFor(run, {
+      resume: vi.fn(() => resumed.promise),
+      addAction: vi.fn(async () => Promise.reject(new Error('动作生成暂时不可用'))),
+    })
+    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service)
+
+    const input = await screen.findByRole('textbox', { name: '继续描述你的想法' })
+    await waitFor(() =>
+      expect(service.resume).toHaveBeenCalledWith({ automaticActionAdvance: false }),
+    )
+    fireEvent.change(input, { target: { value: '挥手' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => expect(service.addAction).toHaveBeenCalledWith('outfit-1', '挥手'))
+    expect((await screen.findByRole('alert')).textContent).toContain('动作生成暂时不可用')
+
+    await act(async () => {
+      resumed.resolve(run)
+      await resumed.promise
+    })
+    expect(screen.getByRole('alert').textContent).toContain('动作生成暂时不可用')
+  })
+
   it('recovers missing runs and returns to the creation entry', async () => {
     const service = serviceFor(null)
     renderAt('/quick-start/missing', service)

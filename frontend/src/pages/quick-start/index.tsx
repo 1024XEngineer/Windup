@@ -2738,6 +2738,8 @@ function QuickStartRun({
   } | null>(null)
   const mountedRef = useRef(true)
   const pixelPerfectUrlsRef = useRef<readonly string[]>([])
+  // 恢复会先展示旧快照再等待 resume；用序号避免迟到的成功清理抹掉期间产生的用户错误。
+  const workflowErrorEpochRef = useRef(0)
   const workflowAgentActions = useMemo<WorkflowAgentActions>(
     () => ({
       getContext: () =>
@@ -2779,12 +2781,14 @@ function QuickStartRun({
   const reportWorkflowError = useCallback((cause: unknown, fallback: string) => {
     const presented = presentWorkflowError(cause, fallback)
     if (workflowConflictRef.current && !presented.conflict) return
+    workflowErrorEpochRef.current += 1
     workflowConflictRef.current ||= presented.conflict
     setError(presented.message)
     setWorkflowConflict(workflowConflictRef.current)
   }, [])
   const clearWorkflowError = useCallback(() => {
     if (workflowConflictRef.current) return
+    workflowErrorEpochRef.current += 1
     setError(null)
     setWorkflowConflict(false)
   }, [])
@@ -2932,8 +2936,10 @@ function QuickStartRun({
     setPixelPerfectStatus('idle')
     setActionVersion('original')
     workflowConflictRef.current = false
+    workflowErrorEpochRef.current += 1
     setError(null)
     setWorkflowConflict(false)
+    const restoreErrorEpoch = workflowErrorEpochRef.current
 
     void (async () => {
       const providedSession = initialSessionRef.current
@@ -2965,7 +2971,7 @@ function QuickStartRun({
         : await nextSession.resume()
       if (active) {
         setRun(resumed)
-        clearWorkflowError()
+        if (workflowErrorEpochRef.current === restoreErrorEpoch) clearWorkflowError()
         setRestoring(false)
       }
     })().catch((cause) => {
