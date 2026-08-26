@@ -294,7 +294,7 @@ function ProjectGalleryTile({
   return (
     <article
       style={{ '--project-card-order': motionOrder } as CSSProperties}
-      className="projects-card-enter group/tile relative min-w-0"
+      className="group/tile relative min-w-0"
     >
       <Link
         to={`/projects/${project.id}/assets`}

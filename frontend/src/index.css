@@ -332,16 +332,16 @@ body,
 }
 
 .project-preview-image {
-  opacity: 0;
-  transform: scale(0.985);
+  opacity: 0.35;
+  filter: blur(12px);
   transition:
     opacity 320ms cubic-bezier(0.16, 1, 0.3, 1),
-    transform 560ms cubic-bezier(0.16, 1, 0.3, 1);
+    filter 420ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .project-preview-image-ready {
   opacity: 1;
-  transform: scale(1);
+  filter: blur(0);
 }
 
 .project-preview-message span {
