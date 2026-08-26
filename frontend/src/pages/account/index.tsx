@@ -80,12 +80,13 @@ function CreditRedemptionDialog({
 
   useEffect(() => {
     const previouslyFocused = document.activeElement
+    const returnFocusTarget = returnFocusRef.current
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     dialogRef.current?.focus()
     return () => {
       document.body.style.overflow = previousOverflow
-      if (returnFocusRef.current) returnFocusRef.current.focus()
+      if (returnFocusTarget) returnFocusTarget.focus()
       else if (previouslyFocused instanceof HTMLElement) previouslyFocused.focus()
     }
   }, [returnFocusRef])
