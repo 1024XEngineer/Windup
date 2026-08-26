@@ -1,8 +1,18 @@
-import { useEffect, useId, useReducer, useRef, useState, type FormEvent } from 'react'
+import { Gift, X } from '@phosphor-icons/react'
+import {
+  useEffect,
+  useId,
+  useReducer,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
+} from 'react'
 import { useSearchParams } from 'react-router'
 
 import accountBadgeArtwork from '@/assets/account/illustrations/account-badge.webp'
-import type { User } from '@/entities'
+import { quotaApis, type CreditRedemptionResult, type User } from '@/entities'
 import { useAuthSession } from '@/features/auth-session'
 import {
   CREDIT_REASON_OPTIONS,
@@ -49,6 +59,178 @@ function formatCredits(value: number): string {
   return value.toLocaleString('zh-CN')
 }
 
+function CreditRedemptionDialog({
+  onClose,
+  onRedeemed,
+  returnFocusRef,
+}: {
+  onClose: () => void
+  onRedeemed: (result: CreditRedemptionResult) => void
+  returnFocusRef: RefObject<HTMLButtonElement | null>
+}) {
+  const dialogRef = useRef<HTMLElement>(null)
+  const titleId = useId()
+  const descriptionId = useId()
+  const codeId = useId()
+  const errorId = useId()
+  const [code, setCode] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<CreditRedemptionResult | null>(null)
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement
+    const returnFocusTarget = returnFocusRef.current
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    dialogRef.current?.focus()
+    return () => {
+      document.body.style.overflow = previousOverflow
+      if (returnFocusTarget) returnFocusTarget.focus()
+      else if (previouslyFocused instanceof HTMLElement) previouslyFocused.focus()
+    }
+  }, [returnFocusRef])
+
+  function handleDialogKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+    if (event.key === 'Escape') {
+      if (!submitting) onClose()
+      return
+    }
+    if (event.key !== 'Tab') return
+    const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )
+    if (!focusable?.length) return
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (
+      event.shiftKey &&
+      (document.activeElement === first || document.activeElement === dialogRef.current)
+    ) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
+
+  async function redeem(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (submitting) return
+    const normalizedCode = code.trim()
+    if (!normalizedCode) {
+      setError('请输入兑换码')
+      return
+    }
+
+    setSubmitting(true)
+    setError(null)
+    try {
+      const nextResult = await quotaApis.redeemCode(normalizedCode)
+      setResult(nextResult)
+      onRedeemed(nextResult)
+    } catch (requestError) {
+      setError(errorMessage(requestError))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] grid place-items-center overflow-y-auto overscroll-contain bg-app-ink/20 p-4 backdrop-blur-sm"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !submitting) onClose()
+      }}
+    >
+      <section
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        tabIndex={-1}
+        onKeyDown={handleDialogKeyDown}
+        className="w-full max-w-md rounded-2xl border border-app-line bg-app-surface-raised p-5 shadow-2xl outline-none sm:p-6"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 id={titleId} className="text-lg font-semibold tracking-[-0.02em] text-app-ink">
+              兑换积分
+            </h3>
+            <p id={descriptionId} className="mt-1.5 text-sm leading-6 text-app-muted">
+              输入兑换码，验证成功后积分会立即到账。
+            </p>
+          </div>
+          <button
+            type="button"
+            aria-label="关闭兑换积分"
+            disabled={submitting}
+            onClick={onClose}
+            className="grid size-11 shrink-0 place-items-center rounded-lg text-app-muted transition-colors hover:bg-app-surface-muted hover:text-app-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <X size={18} weight="bold" aria-hidden="true" />
+          </button>
+        </div>
+
+        {result ? (
+          <div className="mt-6">
+            <p className="text-xs font-medium tracking-[0.08em] text-app-muted">兑换成功</p>
+            <p className="mt-2 font-mono text-4xl font-semibold tracking-[-0.04em] text-app-accent">
+              +{formatCredits(result.credited)}
+            </p>
+            <p role="status" aria-live="polite" className="mt-2 text-sm text-app-muted">
+              当前可用积分 {formatCredits(result.account.balance)}
+            </p>
+            <button type="button" onClick={onClose} className="account-primary-button mt-6 w-full">
+              完成
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={redeem} className="mt-6">
+            <label htmlFor={codeId} className="text-sm font-medium text-app-ink-soft">
+              兑换码
+            </label>
+            <input
+              id={codeId}
+              name="credit-redemption-code"
+              type="text"
+              value={code}
+              maxLength={32}
+              autoComplete="off"
+              spellCheck={false}
+              aria-invalid={error ? 'true' : undefined}
+              aria-describedby={error ? errorId : descriptionId}
+              disabled={submitting}
+              onChange={(event) => {
+                setCode(event.target.value)
+                if (error) setError(null)
+              }}
+              placeholder="WU-XXXX-XXXX-XXXX"
+              className="account-field mt-2 font-mono tracking-[0.06em]"
+            />
+            <div className="mt-2 min-h-5">
+              {error && (
+                <p id={errorId} role="alert" className="text-sm text-app-danger">
+                  {error}
+                </p>
+              )}
+            </div>
+            <button
+              type="submit"
+              disabled={submitting || !code.trim()}
+              className="account-primary-button mt-4 w-full"
+            >
+              {submitting ? '正在兑换…' : '确认兑换'}
+            </button>
+          </form>
+        )}
+      </section>
+    </div>
+  )
+}
+
 function QuotaSection() {
   const balance = useQuotaBalance(true)
   const transactions = useQuotaTransactions(true)
@@ -58,6 +240,8 @@ function QuotaSection() {
   const [endDate, setEndDate] = useState('')
   const [pageSize, setPageSize] = useState('20')
   const [filterError, setFilterError] = useState<string | null>(null)
+  const [redemptionOpen, setRedemptionOpen] = useState(false)
+  const redemptionTriggerRef = useRef<HTMLButtonElement>(null)
   const account = balance.status === 'ready' ? balance.account : null
   const summaryRows: Array<[string, string]> = [
     ['可用积分', account ? formatCredits(account.balance) : '—'],
@@ -98,10 +282,33 @@ function QuotaSection() {
 
   return (
     <div>
-      <header>
-        <h2 className="text-xl font-semibold tracking-[-0.025em] text-app-ink-soft">积分账户</h2>
-        <p className="mt-1.5 text-sm text-app-muted">查看当前余额与最近的积分变动记录。</p>
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-semibold tracking-[-0.025em] text-app-ink-soft">积分账户</h2>
+          <p className="mt-1.5 text-sm text-app-muted">查看当前余额与最近的积分变动记录。</p>
+        </div>
+        <button
+          ref={redemptionTriggerRef}
+          type="button"
+          aria-label="填写积分兑换码"
+          title="填写积分兑换码"
+          onClick={() => setRedemptionOpen(true)}
+          className="grid size-11 shrink-0 place-items-center rounded-lg text-app-muted transition-colors hover:bg-app-surface-muted hover:text-app-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-app-accent"
+        >
+          <Gift size={19} weight="regular" aria-hidden="true" />
+        </button>
       </header>
+
+      {redemptionOpen && (
+        <CreditRedemptionDialog
+          onClose={() => setRedemptionOpen(false)}
+          returnFocusRef={redemptionTriggerRef}
+          onRedeemed={() => {
+            balance.reload()
+            transactions.reload()
+          }}
+        />
+      )}
 
       <dl className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {summaryRows.map(([label, value]) => (

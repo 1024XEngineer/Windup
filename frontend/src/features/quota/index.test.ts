@@ -45,6 +45,7 @@ function createQuotaApis(): QuotaApis & {
       page,
       pageSize,
     })),
+    redeemCode: vi.fn(async () => ({ credited: 1000, account })),
     getInviteCode: vi.fn(async () => ({
       code: 'AB23CD45',
       usedCount: 0,
@@ -171,6 +172,7 @@ describe('quota queries', () => {
       CREDIT_REASON_OPTIONS.map(({ label }) => label),
     )
     expect(getCreditReasonLabel(4)).toBe('生成角色动作')
+    expect(getCreditReasonLabel(9)).toBe('兑换码入账')
     expect(getCreditReasonLabel(99)).toBe('积分变动（原因码 99）')
     expect(formatCreditDateTime('not-a-date')).toBe('时间未知')
   })

@@ -25,6 +25,7 @@ from windup_app.server.character.model import Character
 from windup_app.server.project.model import Project
 from windup_app.server.quota.model import (
     CreditAccount,
+    CreditRedemptionCode,
     CreditTransaction,
     InviteCode,
     InviteRecord,
@@ -125,6 +126,7 @@ def engine():
             Character.__table__,
             WorkflowRun.__table__,
             CreditAccount.__table__,
+            CreditRedemptionCode.__table__,
             CreditTransaction.__table__,
             InviteCode.__table__,
             InviteRecord.__table__,
