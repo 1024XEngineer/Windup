@@ -620,7 +620,7 @@ def test_an_unusable_cached_model_is_removed_so_the_next_run_can_redownload(
 
 
 def test_ort_session_disables_cpu_arena_and_limits_intra_op(monkeypatch, tmp_path):
-    """4C8G:关 CPU arena、intra_op=1,否则预分配后 RSS 不回落。"""
+    """4C8G:关 CPU arena / mem_pattern、intra_op=1,否则预分配后 RSS 不回落。"""
     import sys
     import types
 
@@ -629,10 +629,12 @@ def test_ort_session_disables_cpu_arena_and_limits_intra_op(monkeypatch, tmp_pat
     class _Opt:
         def __init__(self):
             self.enable_cpu_mem_arena = True
+            self.enable_mem_pattern = True
             self.intra_op_num_threads = 0
 
     def _session(path, sess_options=None, providers=None):
         captured["arena"] = sess_options.enable_cpu_mem_arena
+        captured["pattern"] = sess_options.enable_mem_pattern
         captured["threads"] = sess_options.intra_op_num_threads
         captured["providers"] = providers
         return _FakeSession()
@@ -645,6 +647,7 @@ def test_ort_session_disables_cpu_arena_and_limits_intra_op(monkeypatch, tmp_pat
     model.write_bytes(b"x")
     OnnxU2NetMatteProvider(model_path=model, refine_model_url=None)._get_session()
     assert captured["arena"] is False
+    assert captured["pattern"] is False
     assert captured["threads"] == 1
     assert captured["providers"] == ["CPUExecutionProvider"]
 
@@ -692,3 +695,32 @@ def test_cutout_serializes_ort_run_across_threads(monkeypatch):
     for t in threads:
         t.join(timeout=5)
     assert max_running == 1, f"ORT Run 叠了 {max_running} 路"
+
+
+def test_release_inference_scratch_trims_glibc_heap(monkeypatch):
+    import ctypes
+
+    from windup_framework.providers.matte import release_inference_scratch
+
+    calls: list[int] = []
+
+    class _Lib:
+        @staticmethod
+        def malloc_trim(pad):
+            calls.append(pad)
+
+    monkeypatch.setattr(ctypes, "CDLL", lambda _name: _Lib())
+    release_inference_scratch()
+    assert calls == [0]
+
+
+def test_release_inference_scratch_ignores_missing_glibc(monkeypatch):
+    import ctypes
+
+    from windup_framework.providers.matte import release_inference_scratch
+
+    def _boom(_name):
+        raise OSError("no libc.so.6")
+
+    monkeypatch.setattr(ctypes, "CDLL", _boom)
+    release_inference_scratch()
