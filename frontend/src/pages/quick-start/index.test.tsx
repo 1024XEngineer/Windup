@@ -427,6 +427,26 @@ function agentFor(
   }
 }
 
+function addActionAgentFor(): CreateQuickStartAgentOptions {
+  return agentFor({
+    planner: vi.fn(async ({ messages, addActionContext }) => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'quick_start_decision',
+          input: {
+            kind: 'proposal',
+            optimizedPrompt: addActionContext?.characterPrompt ?? '',
+            actionPrompt: messages.at(-1)?.content ?? '',
+            optimizationSummary: '我会保留现有角色，只新增这条动作。',
+          },
+        },
+      ],
+    })),
+  })
+}
+
 const existingProject: Project = {
   id: '42',
   workflowId: null,
@@ -3113,10 +3133,30 @@ describe('QuickStartPage', () => {
     expect(composer?.querySelector('[data-layout="quick-start-attachment-row"]')).toBeNull()
   })
 
-  it('adds an action from the existing Quick Start run instead of creating another run', async () => {
+  it('confirms an Agent proposal before appending an action to the existing Run', async () => {
     const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
     const service = serviceFor(run)
-    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service)
+    const planner = vi.fn(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'quick_start_decision',
+          input: {
+            kind: 'proposal',
+            optimizedPrompt: '像素骑士',
+            actionPrompt: '向前翻滚一圈',
+            locomotion: true,
+            optimizationSummary: '我会保留现有骑士，只新增向前翻滚的位移动作。',
+          },
+        },
+      ],
+    }))
+    renderAt(
+      '/quick-start/run-1?intent=add-action&outfitId=outfit-1',
+      service,
+      agentFor({ planner }),
+    )
 
     const input = await screen.findByRole('textbox', { name: '继续描述你的想法' })
     const submit = screen.getByRole('button', { name: '发送' })
@@ -3124,11 +3164,67 @@ describe('QuickStartPage', () => {
     expect(service.addAction).not.toHaveBeenCalled()
     expect((submit as HTMLButtonElement).disabled).toBe(true)
 
-    fireEvent.change(input, { target: { value: '挥手' } })
+    fireEvent.change(input, { target: { value: '让他向前翻滚一圈' } })
     await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false))
     fireEvent.click(submit)
 
-    await waitFor(() => expect(service.addAction).toHaveBeenCalledWith('outfit-1', '挥手'))
+    expect(await screen.findByText('动作：向前翻滚一圈')).toBeTruthy()
+    expect(screen.getAllByText('让他向前翻滚一圈')).toHaveLength(1)
+    expect(service.addAction).not.toHaveBeenCalled()
+    expect(planner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        addActionContext: { characterPrompt: '像素骑士' },
+      }),
+    )
+    await waitFor(() => {
+      const sidecar = window.localStorage.getItem('windup.quick-start.agent-chat.v2:run:7:run-1')
+      expect(sidecar).toContain('"scope":"add-action"')
+      expect(sidecar).toContain('让他向前翻滚一圈')
+    })
+    expect(JSON.stringify(service.getWorkflow())).not.toContain('让他向前翻滚一圈')
+
+    fireEvent.click(screen.getByRole('button', { name: '确认并生成' }))
+
+    await waitFor(() =>
+      expect(service.addAction).toHaveBeenCalledWith('outfit-1', '向前翻滚一圈', {
+        locomotion: true,
+      }),
+    )
+    await waitFor(() => expect((input as HTMLTextAreaElement).disabled).toBe(false))
+    expect(service.start).not.toHaveBeenCalled()
+  })
+
+  it('keeps add-action clarification in Agent conversation without touching the Run', async () => {
+    const run = actionWorkflow({ fullStatus: 'passed', reviewStatus: 'passed' })
+    const service = serviceFor(run)
+    const planner = vi.fn(async () => ({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'quick_start_decision',
+          input: {
+            kind: 'clarification',
+            message: '这个翻滚需要向前位移，还是原地完成？',
+          },
+        },
+      ],
+    }))
+    renderAt(
+      '/quick-start/run-1?intent=add-action&outfitId=outfit-1',
+      service,
+      agentFor({ planner }),
+    )
+
+    fireEvent.change(await screen.findByRole('textbox', { name: '继续描述你的想法' }), {
+      target: { value: '让他翻滚' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText('这个翻滚需要向前位移，还是原地完成？')).toBeTruthy()
+    expect(service.addAction).not.toHaveBeenCalled()
+    expect(service.start).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: '确认并生成' })).toBeNull()
   })
 
   it('adds an action when an older action branch failed', async () => {
@@ -3144,7 +3240,7 @@ describe('QuickStartPage', () => {
       ...current.nodes.slice(2),
     ])
     const service = serviceFor(run)
-    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service)
+    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service, addActionAgentFor())
 
     const input = await screen.findByRole('textbox', { name: '继续描述你的想法' })
     fireEvent.change(input, { target: { value: '跳跃' } })
@@ -3152,7 +3248,8 @@ describe('QuickStartPage', () => {
     const submit = screen.getByRole('button', { name: '发送' })
     await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false))
     fireEvent.click(submit)
-    await waitFor(() => expect(service.addAction).toHaveBeenCalledWith('outfit-1', '跳跃'))
+    fireEvent.click(await screen.findByRole('button', { name: '确认并生成' }))
+    await waitFor(() => expect(service.addAction).toHaveBeenCalledWith('outfit-1', '跳跃', {}))
   })
 
   it('reports add-action failures inside the existing Quick Start run', async () => {
@@ -3160,12 +3257,13 @@ describe('QuickStartPage', () => {
     const service = serviceFor(run, {
       addAction: vi.fn(async () => Promise.reject(new Error('动作生成暂时不可用'))),
     })
-    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service)
+    renderAt('/quick-start/run-1?intent=add-action&outfitId=outfit-1', service, addActionAgentFor())
 
     fireEvent.change(await screen.findByRole('textbox', { name: '继续描述你的想法' }), {
       target: { value: '挥手' },
     })
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
+    fireEvent.click(await screen.findByRole('button', { name: '确认并生成' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain('动作生成暂时不可用')
   })
