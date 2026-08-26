@@ -402,7 +402,9 @@ export function createQuickStartService({
     }
   }
 
-  async function persistSelectedViewSheet(
+  async function confirmSelectedViewSheet(
+    controller: WorkflowController,
+    nodeId: WorkflowNode['id'],
     characterId: Character['id'],
     candidate: CharacterViewSheetCandidate,
   ) {
@@ -414,7 +416,34 @@ export function createQuickStartService({
     }
     const templates = characterTemplatesFromViewSheetCells(candidate.cells)
     const updated = await characterApis.update({ ...character, templates })
-    return updated
+    try {
+      await controller.confirmCharacterViewSheet(nodeId, candidate.cells)
+      return updated
+    } catch (cause) {
+      const shouldRollback = await shouldRollbackWorkflowChange(
+        controller.getWorkflow().id,
+        (latest) => {
+          const template = latest.nodes.find((node) => node.id === nodeId)
+          return template?.type === 'character-template' && template.status === 'passed'
+        },
+      )
+      if (shouldRollback) {
+        try {
+          await characterApis.update({
+            ...character,
+            dataVersion: updated.dataVersion,
+          })
+        } catch (rollbackCause) {
+          reportControllerError(
+            controller,
+            rollbackCause instanceof Error
+              ? rollbackCause
+              : new Error('方向 sheet 确认冲突后恢复角色资产失败'),
+          )
+        }
+      }
+      throw cause
+    }
   }
 
   async function confirmAllFirstFrameDirections(
@@ -795,8 +824,12 @@ export function createQuickStartService({
             const generation = await controller.getGeneration(template.id, role)
             const sheet = generation?.result?.type === role ? generation.result.sheets[0] : null
             if (!sheet) return false
-            const character = await persistSelectedViewSheet(characterId, sheet)
-            await controller.confirmCharacterViewSheet(template.id, sheet.cells)
+            const character = await confirmSelectedViewSheet(
+              controller,
+              template.id,
+              characterId,
+              sheet,
+            )
             outfitId =
               character.outfits.find((item) => item.previewUrl === template.selectedImageUrl)?.id ??
               character.outfits.find((item) => item.id === 'outfit-default')?.id ??
@@ -1025,8 +1058,12 @@ export function createQuickStartService({
             if (movement === 'single' || !hasConfirmedMaster || !setup.input.characterId) {
               throw new Error('必须先确认南向正视母版，才能选择方向 sheet')
             }
-            const character = await persistSelectedViewSheet(setup.input.characterId, selection)
-            await controller.confirmCharacterViewSheet(template.id, selection.cells)
+            const character = await confirmSelectedViewSheet(
+              controller,
+              template.id,
+              setup.input.characterId,
+              selection,
+            )
             const outfit =
               character.outfits.find((item) => item.previewUrl === template.selectedImageUrl) ??
               character.outfits.find((item) => item.id === 'outfit-default')

@@ -2432,6 +2432,66 @@ describe('createQuickStartService', () => {
     ).toMatchObject({ input: { prompt: '挥手' } })
   })
 
+  it('方向 sheet 的 WorkflowRun 确认失败时恢复 Character 原模板', async () => {
+    const run: WorkflowRun = {
+      id: 'run-view-sheet-rollback',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes('character-1', 'south-master.png'),
+    }
+    const template = run.nodes.find((node) => node.type === 'character-template')
+    if (!template || template.type !== 'character-template') throw new Error('missing template')
+    template.status = 'active'
+    template.phase = 'selecting'
+
+    const workflowRunApis = createWorkflowRunApis([run])
+    vi.spyOn(workflowRunApis, 'update').mockRejectedValue(
+      new WorkflowRunConflictError('执行记录版本冲突'),
+    )
+    const originalTemplates: NonNullable<Character['templates']> = [
+      {
+        direction: 'south',
+        sourceDirection: null,
+        mirrorX: false,
+        imageUrl: 'south-master.png',
+      },
+    ]
+    let character = characterFixture({
+      workflowRunId: run.id,
+      referenceImageUrl: 'south-master.png',
+      templates: originalTemplates,
+    })
+    const updateCharacter = vi.fn(async (next: Character) => {
+      character = { ...structuredClone(next), dataVersion: next.dataVersion + 1 }
+      return structuredClone(character)
+    })
+    const characterApis = mutableCharacterApis(
+      () => character,
+      (value) => (character = value),
+    )
+    characterApis.update = updateCharacter
+    const service = createQuickStartService({
+      workflowRunApis,
+      generationApis: pendingGenerationApis(),
+      characterApis,
+      prepareProject: vi.fn(),
+      projectApis: projectReader({ width: 256, height: 256 }, 'four-way'),
+    })
+    const session = await service.open(run.id)
+
+    await expect(
+      session.confirmCandidate(fourViewSheet('south-master.png'), '挥手'),
+    ).rejects.toBeInstanceOf(WorkflowRunConflictError)
+
+    expect(updateCharacter).toHaveBeenCalledTimes(2)
+    expect(updateCharacter.mock.calls[1]?.[0]).toMatchObject({
+      dataVersion: 2,
+      templates: originalTemplates,
+    })
+    expect(character.templates).toEqual(originalTemplates)
+  })
+
   it('Run 已落库但响应丢失时不删除已绑定的 Character', async () => {
     const run: WorkflowRun = {
       id: 'run-response-lost',
