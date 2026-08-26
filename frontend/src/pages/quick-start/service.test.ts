@@ -2833,6 +2833,42 @@ describe('createQuickStartService', () => {
     })
   })
 
+  it('uses confirmed Agent semantics when appending an action to the current Run', async () => {
+    const run: WorkflowRun = {
+      id: 'old-run',
+      projectId: 'project-1',
+      version: 1,
+      storageStatus: 'active',
+      nodes: setupNodes(),
+    }
+    const generationApis = pendingGenerationApis()
+    const service = createQuickStartService({
+      workflowRunApis: createWorkflowRunApis([run]),
+      generationApis,
+      projectApis: projectReader(),
+      prepareProject: vi.fn(),
+    })
+
+    const session = await service.open(run.id)
+    await session.addAction('outfit-existing', '向前翻滚一圈', {
+      locomotion: true,
+    })
+
+    expect(session.getWorkflow().id).toBe(run.id)
+    expect(
+      session.getWorkflow().nodes.find((node) => node.type === 'action-first-frame'),
+    ).toMatchObject({
+      input: {
+        prompt: '向前翻滚一圈',
+        type: 'custom',
+        locomotion: true,
+      },
+    })
+    expect(generationApis.create).toHaveBeenCalledWith(
+      expect.objectContaining({ actionType: 'custom', prompt: '向前翻滚一圈' }),
+    )
+  })
+
   it('Character 写入失败时重新打开已确认的母版节点', async () => {
     const character = characterFixture({
       id: 'orphan-character',

@@ -69,6 +69,7 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
     planner,
     startCharacterGeneration,
     artStyle,
+    addActionContext,
     initialMessages,
     initialClarificationUsed,
     initialProposal,
@@ -89,19 +90,21 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
       agent.current?.revoke()
       agent.current = null
     }
-  }, [artStyle, initialMessages, planner, startCharacterGeneration])
+  }, [addActionContext, artStyle, initialMessages, planner, startCharacterGeneration])
 
   const ensureAgent = useCallback(() => {
     agent.current ??= createQuickStartAgent({
       planner,
       startCharacterGeneration,
       artStyle,
+      addActionContext,
       initialMessages,
       initialClarificationUsed,
       initialProposal,
     })
     return agent.current
   }, [
+    addActionContext,
     artStyle,
     initialClarificationUsed,
     initialMessages,
@@ -221,7 +224,14 @@ export function useQuickStartAgent(options: UseQuickStartAgentOptions) {
         })
       }
       try {
-        return await ensureAgent().confirmProposal(proposalId, prompt, directionalMovement, options)
+        const result = await ensureAgent().confirmProposal(
+          proposalId,
+          prompt,
+          directionalMovement,
+          options,
+        )
+        if (mounted.current) setState({ status: 'idle' })
+        return result
       } catch (cause) {
         if (mounted.current) {
           logAgentFailure(cause)
