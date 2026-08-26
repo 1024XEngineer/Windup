@@ -945,6 +945,17 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
       let terminalHandled = false
       let stopStream: () => void = () => undefined
 
+      // GET 快照和 SSE 事件共用同一份订阅契约：降级轮询与重连对账也要带上队列位置。
+      const eventFromSnapshot = (generation: Generation<GenerationTaskType>) =>
+        ({
+          taskId: generation.id,
+          type: generation.type,
+          status: generation.status,
+          result: generation.result,
+          error: generation.error,
+          ...(generation.queueAhead === undefined ? {} : { queueAhead: generation.queueAhead }),
+        }) as GenerationEvent
+
       const pollUntilTerminal = async () => {
         if (polling) return
         polling = true
@@ -952,13 +963,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
           try {
             const generation = await apis.get(projectId, id, expectation)
             if (pollingController.signal.aborted) return
-            onEvent({
-              taskId: generation.id,
-              type: generation.type,
-              status: generation.status,
-              result: generation.result,
-              error: generation.error,
-            } as GenerationEvent)
+            onEvent(eventFromSnapshot(generation))
             if (isTerminalStatus(generation.status)) {
               return
             }
@@ -980,13 +985,7 @@ export function createGenerationApis(config: GenerationApiConfig): GenerationApi
           if (pollingController.signal.aborted || terminalHandled) return
           const terminal = isTerminalStatus(generation.status)
           if (terminal) terminalHandled = true
-          onEvent({
-            taskId: generation.id,
-            type: generation.type,
-            status: generation.status,
-            result: generation.result,
-            error: generation.error,
-          } as GenerationEvent)
+          onEvent(eventFromSnapshot(generation))
           if (terminal) {
             stopStream()
           }
