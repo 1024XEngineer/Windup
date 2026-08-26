@@ -1518,9 +1518,13 @@ describe('QuickStartPage', () => {
     expect(conversationForm?.className).toContain('rounded-app-surface')
     expect(conversationForm?.className).toContain('border-app-line-strong')
     expect(conversationForm?.className).toContain('shadow-app-panel')
+    expect(conversationForm?.className).toContain('mt-12')
     expect(conversationSurface?.className).not.toContain('border-app-line-strong')
     expect(conversationSurface?.className).not.toContain('shadow-app-panel')
     expect(conversationControls?.className).toContain('flex')
+    expect(conversationControls?.className).toContain('absolute')
+    expect(conversationControls?.className).toContain('bottom-full')
+    expect(conversationControls?.className).not.toContain('order-first')
     expect(
       (
         screen.getByRole('button', {
