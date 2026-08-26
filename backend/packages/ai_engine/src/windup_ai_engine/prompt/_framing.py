@@ -10,7 +10,12 @@ from __future__ import annotations
 
 from windup_common.directions import ActionDirection, direction_prompt
 
-__all__ = ["SINGLE_SUBJECT_FRAMING", "with_framing", "with_direction_lock"]
+__all__ = [
+    "REFERENCE_FIDELITY_LOCK",
+    "SINGLE_SUBJECT_FRAMING",
+    "with_framing",
+    "with_direction_lock",
+]
 
 # 攻击的两处留白(母版姿态要求 + 母版补边)让画面空得足以容下第二个主体。
 SINGLE_SUBJECT_FRAMING = (
@@ -18,10 +23,17 @@ SINGLE_SUBJECT_FRAMING = (
     "and the whole body stays inside the frame."
 )
 
+REFERENCE_FIDELITY_LOCK = (
+    "Preserve the reference character's exact face, hairstyle, clothing, accessories, "
+    "color palette, linework, silhouette, textures, and local details throughout every frame. "
+    "Use a locked camera with unchanged projection, framing, character scale, and canvas "
+    "occupancy throughout the video."
+)
+
 
 def with_framing(body: str) -> str:
-    """给一段动作正文接上构图约束。"""
-    return f"{body} {SINGLE_SUBJECT_FRAMING}"
+    """给一段动作正文接上构图与视频保真约束。"""
+    return f"{body} {SINGLE_SUBJECT_FRAMING} {REFERENCE_FIDELITY_LOCK}"
 
 
 def with_direction_lock(body: str, direction: ActionDirection | None) -> str:
