@@ -12,14 +12,16 @@ MVP 边界(与作者对齐):**只出帧 bytes + 逐帧时长**,不打包 sprite 
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 from PIL import Image
 
-from windup_common.models import ActionSpec, CharacterCard, GenRoute
+from windup_common.models import ActionSpec, CharacterCard, GenRoute, Stylize
 
 from windup_ai_engine._imgio import from_png as _img
 from windup_ai_engine._imgio import to_png as _png
-from windup_ai_engine.master_check import check_master
+from windup_ai_engine.master_check import MasterFacts, check_master
 from windup_ai_engine.ports import (
     ActionQuality,
     CharacterGeneratorPort,
@@ -28,7 +30,9 @@ from windup_ai_engine.ports import (
     RenderPlan,
     SequenceGeometry,
 )
-from windup_ai_engine.postprocess import FOOT_LINE, align_bottom_center, frame_durations
+from windup_ai_engine.postprocess import (
+    FOOT_LINE, align_bottom_center, detect_pixel_size, frame_durations,
+)
 from windup_ai_engine.postprocess.pack import ANCHOR_CENTROID, FILL_H
 from windup_ai_engine.prompt import PROMPT_VERSION
 from windup_ai_engine.slicing import (
@@ -61,6 +65,14 @@ _TICK_ROUTE = 1
 _DERIVE_FROM, _DERIVE_TO = 2, 7       # strategy 的 0..sub_total 映射到 [2, 7]
 _TICK_LASTMILE = 8
 _TICK_PACKAGE = 9
+
+
+@dataclass(frozen=True)
+class _LastMileRenderSpec:
+    """视频帧收口时从确认母版继承的两项视觉事实。"""
+
+    fill_h: float = FILL_H
+    resample: Image.Resampling = Image.Resampling.NEAREST
 
 
 class _BandProgress(ProgressPort):
@@ -127,7 +139,11 @@ class CharacterGenerator(CharacterGeneratorPort):
         frames = strategy.derive(
             card, action, master, _BandProgress(progress, _DERIVE_FROM, _DERIVE_TO)
         )
-        return self._finish(frames, action, route, progress, canvas)
+        render_spec = (
+            _video_render_spec(master, facts, action)
+            if route is GenRoute.VIDEO_I2V else None
+        )
+        return self._finish(frames, action, route, progress, canvas, render_spec)
 
     def can_defer_i2v(self) -> bool:
         strategy = self._by_route.get(GenRoute.VIDEO_I2V)
@@ -175,6 +191,9 @@ class CharacterGenerator(CharacterGeneratorPort):
         canvas: tuple[int, int] | None = None,
     ) -> GeneratedAction:
         """成片到位后走抽帧 / 抠图 / 最后一公里。"""
+        # 异步提交与收口可能落在不同进程,不能依赖 start_video 当时的内存事实。
+        # 母版仍是这次交付尺度的唯一来源,在此重新量一次再进入最后一公里。
+        facts = check_master(master, canvas)
         route = ROUTE_MATRIX[action.action]
         progress.step("route", _TICK_ROUTE, _TOTAL, f"{action.action.value} → {route.value}")
         strategy = self._pick(route, action)
@@ -184,7 +203,8 @@ class CharacterGenerator(CharacterGeneratorPort):
         frames = frames_from(
             video, card, action, master, _BandProgress(progress, _DERIVE_FROM, _DERIVE_TO)
         )
-        return self._finish(frames, action, route, progress, canvas)
+        render_spec = _video_render_spec(master, facts, action)
+        return self._finish(frames, action, route, progress, canvas, render_spec)
 
     def generate_rendered(
         self,
@@ -253,6 +273,7 @@ class CharacterGenerator(CharacterGeneratorPort):
         route: GenRoute,
         progress: ProgressPort,
         canvas: tuple[int, int] | None,
+        render_spec: _LastMileRenderSpec | None = None,
     ) -> GeneratedAction:
         """出帧之后的公共尾段:帧数对账 → 脚线对齐 → 量成色 → 出参。
 
@@ -273,7 +294,8 @@ class CharacterGenerator(CharacterGeneratorPort):
             )
 
         # 最后一公里:对齐成原地序列帧(直接对齐到调用方要的画布尺寸)
-        aligned = self._lastmile(frames, action, progress, canvas)
+        spec = render_spec or _LastMileRenderSpec()
+        aligned = self._lastmile(frames, action, progress, canvas, spec)
 
         # 量交付成色。在**对齐之后**量,量的是用户真正会看到的那组帧:抠图 / 像素化 /
         # 对齐都会改像素,在中间任何一步量出来的数都描述不了交付物。
@@ -287,7 +309,9 @@ class CharacterGenerator(CharacterGeneratorPort):
         return GeneratedAction(
             frames=[_png(im) for im in aligned],
             durations=frame_durations(action.action.value, len(aligned)),
-            geometry=_geometry_of(aligned[0], canvas, vertical_anchor(action)),
+            geometry=_geometry_of(
+                aligned[0], canvas, vertical_anchor(action), fill_h=spec.fill_h,
+            ),
             quality=quality,
             prompt_version=PROMPT_VERSION,
         )
@@ -318,6 +342,7 @@ class CharacterGenerator(CharacterGeneratorPort):
         action: ActionSpec,
         progress: ProgressPort,
         canvas: tuple[int, int] | None = None,
+        render_spec: _LastMileRenderSpec | None = None,
     ) -> list[Image.Image]:
         """对齐成原地序列帧(消除逐帧画布漂移,Issue #21);锚点随动作有无地面接触。
 
@@ -345,23 +370,48 @@ class CharacterGenerator(CharacterGeneratorPort):
         if bad:
             raise ValueError(f"strategy 产出了 {len(bad)}/{len(frames)} 个空帧，索引 {bad[:8]}")
         imgs = [_img(f) for f in frames]
+        spec = render_spec or _LastMileRenderSpec()
         # 参考姿态高 = 各帧包围盒高的中位数:比"最高帧"稳(不被举过头顶的武器带偏),
         # 各动作都以自身中位姿态定标,本体尺寸跨动作一致。
         hs = []
         for im in imgs:
             ys, _ = np.where(np.asarray(im)[:, :, 3] > 128)
             if len(ys):
-                hs.append(float(ys.max() - ys.min()))
+                hs.append(float(ys.max() - ys.min() + 1))
         # TODO(dev, #21): tail_match 循环闭合(净位移动作先锚点再匹配帧)
         ref = float(np.median(hs)) if hs else None
         if canvas is None:
-            return align_bottom_center(imgs, ref_height=ref, anchor=anchor)
+            return align_bottom_center(
+                imgs, ref_height=ref, anchor=anchor,
+                fill_h=spec.fill_h, resample=spec.resample,
+            )
         cw, ch = canvas
-        return align_bottom_center(imgs, cell=cw, cell_h=ch, ref_height=ref, anchor=anchor)
+        return align_bottom_center(
+            imgs, cell=cw, cell_h=ch, ref_height=ref, anchor=anchor,
+            fill_h=spec.fill_h, resample=spec.resample,
+        )
+
+
+def _video_render_spec(
+    master: bytes, facts: MasterFacts, action: ActionSpec,
+) -> _LastMileRenderSpec:
+    """把母版占幅与帧的像素语义带到视频交付收口。"""
+    _x0, y0, _x1, y1 = facts.subject_box
+    _master_w, master_h = facts.size
+    fill_h = min(FOOT_LINE, (y1 - y0) / master_h)
+
+    # 显式像素化后的帧必须按像素网格放大。原生分支只在母版能量出真实像素块时保留
+    # NEAREST;高分辨率伪像素/插画的检测值是 1,缩到交付尺寸时用 LANCZOS 保住纹理。
+    pixel_output = action.stylize is Stylize.PIXEL
+    if not pixel_output:
+        pixel_output = detect_pixel_size(_img(master)) > 1
+    resample = Image.Resampling.NEAREST if pixel_output else Image.Resampling.LANCZOS
+    return _LastMileRenderSpec(fill_h=fill_h, resample=resample)
 
 
 def _geometry_of(
-    frame: Image.Image, canvas: tuple[int, int] | None, anchor: str
+    frame: Image.Image, canvas: tuple[int, int] | None, anchor: str,
+    fill_h: float = FILL_H,
 ) -> SequenceGeometry:
     """交付帧的落位几何。取自对齐那一步用的同一组常量,不另立一份。
 
@@ -372,7 +422,7 @@ def _geometry_of(
     帧是按质心摆的、几何说的是脚线,消费方按它落位就会错开半个身高。
     """
     w, h = canvas if canvas else frame.size
-    y = FOOT_LINE - FILL_H / 2 if anchor == ANCHOR_CENTROID else FOOT_LINE
+    y = FOOT_LINE - fill_h / 2 if anchor == ANCHOR_CENTROID else FOOT_LINE
     return SequenceGeometry(
         canvas_w=w,
         canvas_h=h,
