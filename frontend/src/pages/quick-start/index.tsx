@@ -1,4 +1,6 @@
 import {
+  cloneElement,
+  isValidElement,
   useCallback,
   useEffect,
   useMemo,
@@ -8,6 +10,7 @@ import {
   type CSSProperties,
   type ChangeEvent,
   type FormEvent,
+  type ReactElement,
   type ReactNode,
 } from 'react'
 import { flushSync } from 'react-dom'
@@ -22,7 +25,7 @@ import {
   Stop,
   X,
 } from '@phosphor-icons/react'
-import Markdown from 'markdown-to-jsx'
+import Markdown, { compiler } from 'markdown-to-jsx'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { InlineArrowAction } from './inline-arrow-action'
 import { PixelPerfectVersionSwitch, type PixelPerfectVersion } from './pixel-perfect-version-switch'
@@ -32,6 +35,7 @@ import {
   ART_STYLE_OPTIONS,
   DIRECTIONAL_MOVEMENT,
   isArtStyle,
+  type ActionDirection,
   type ActionFirstFrameWorkflowNode,
   type ArtStyle,
   type CharacterTemplateWorkflowNode,
@@ -67,6 +71,7 @@ import {
   type QuickStartFrame,
   type QuickStartSession,
 } from './service'
+import { buildDirectionSheetCandidates, type DirectionSheetCandidate } from './direction-sheet'
 import './quick-start-motion.css'
 
 export type {
@@ -167,6 +172,7 @@ type AgentConversationTurn =
       proposalId: string
       optimizedPrompt: string
       actionPrompt?: string
+      actionType?: 'walk'
       optimizationSummary: string
       suggestPixelPerfect?: boolean
       proposalStatus: 'pending' | 'superseded' | 'adopted' | 'confirmed'
@@ -284,6 +290,9 @@ function readAgentConversation(
             ...('actionPrompt' in turn && typeof turn.actionPrompt === 'string'
               ? { actionPrompt: turn.actionPrompt }
               : {}),
+            ...('actionType' in turn && turn.actionType === 'walk'
+              ? { actionType: turn.actionType }
+              : {}),
             optimizationSummary: turn.optimizationSummary,
             suggestPixelPerfect: 'suggestPixelPerfect' in turn && turn.suggestPixelPerfect === true,
             proposalStatus: turn.proposalStatus,
@@ -324,6 +333,7 @@ function createAgentSeed(turns: readonly AgentConversationTurn[]): {
             proposalId: pending.proposalId,
             optimizedPrompt: pending.optimizedPrompt,
             ...(pending.actionPrompt ? { actionPrompt: pending.actionPrompt } : {}),
+            ...(pending.actionType ? { actionType: pending.actionType } : {}),
             optimizationSummary: pending.optimizationSummary,
             suggestPixelPerfect: pending.suggestPixelPerfect,
           }
@@ -667,6 +677,7 @@ function QuickStartInput({
   const initialAgentSeed = useRef(createAgentSeed(conversationTurns)).current
   const agentSession = useQuickStartAgent({
     ...agent,
+    ...(gameStyle === 'unspecified' ? {} : { artStyle: ART_STYLE[gameStyle] }),
     initialMessages: initialAgentSeed.messages,
     initialClarificationUsed: initialAgentSeed.clarificationUsed,
     initialProposal: initialAgentSeed.pendingProposal,
@@ -961,6 +972,7 @@ function QuickStartInput({
             proposalId: result.proposalId,
             optimizedPrompt: result.optimizedPrompt,
             ...(result.actionPrompt ? { actionPrompt: result.actionPrompt } : {}),
+            ...(result.actionType ? { actionType: result.actionType } : {}),
             optimizationSummary: result.optimizationSummary,
             suggestPixelPerfect: result.suggestPixelPerfect,
             proposalStatus: 'pending',
@@ -1191,10 +1203,18 @@ function QuickStartInput({
             onSubmit={(event) => void submit(event)}
             autoComplete="off"
             data-prompt-state={promptState}
-            className="quick-start-agent-composer relative flex flex-col"
+            className={
+              hasConversation
+                ? 'quick-start-agent-composer grid grid-cols-[1fr_auto] items-center gap-1.5 overflow-hidden rounded-xl border border-app-line-strong bg-app-surface-raised p-1.5 shadow-app-panel transition-shadow focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]'
+                : 'quick-start-agent-composer relative flex flex-col'
+            }
           >
             <label
-              className="relative block min-h-[52px] min-w-0 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]"
+              className={
+                hasConversation
+                  ? 'relative ml-2 min-w-0 overflow-hidden rounded-lg'
+                  : 'relative block min-h-[52px] min-w-0 overflow-hidden rounded-app-surface border border-app-line-strong bg-app-surface-raised shadow-app-panel transition-[border-color,box-shadow] focus-within:border-app-accent focus-within:shadow-[var(--shadow-app-composer-focus)]'
+              }
               htmlFor="quick-start-prompt"
             >
               <span className="sr-only">创作指令</span>
@@ -1223,15 +1243,21 @@ function QuickStartInput({
                         ? '描述动作，可留空生成待机动作…'
                         : '描述角色的外形、身份和气质…'
                 }
-                className={`block min-h-[52px] max-h-40 w-full min-w-0 resize-none overflow-y-auto border-0 bg-transparent py-[14px] pr-14 pl-4 text-[15px] leading-6 text-app-ink outline-none [field-sizing:content] placeholder:text-app-faint ${
-                  promptState === 'rewriting' ? 'text-transparent caret-transparent' : ''
-                }`}
+                className={`block max-h-40 w-full min-w-0 resize-none overflow-y-auto border-0 bg-transparent text-[15px] text-app-ink outline-none [field-sizing:content] placeholder:text-app-faint ${
+                  hasConversation
+                    ? 'min-h-10 px-4 py-2.5 leading-5'
+                    : 'min-h-[52px] py-[14px] pr-14 pl-4 leading-6'
+                } ${promptState === 'rewriting' ? 'text-transparent caret-transparent' : ''}`}
               />
               {promptState === 'rewriting' ? (
                 <span
                   data-prompt-rewrite
                   aria-hidden="true"
-                  className="quick-start-prompt-rewrite absolute inset-0 flex min-h-[52px] max-h-40 items-start overflow-y-auto py-[14px] pr-14 pl-4 text-[15px] leading-6 text-app-ink"
+                  className={`quick-start-prompt-rewrite absolute inset-0 flex max-h-40 items-start overflow-y-auto text-[15px] text-app-ink ${
+                    hasConversation
+                      ? 'min-h-10 px-4 py-2.5 leading-5'
+                      : 'min-h-[52px] py-[14px] pr-14 pl-4 leading-6'
+                  }`}
                 >
                   <KineticCopyCycle
                     active
@@ -1251,14 +1277,21 @@ function QuickStartInput({
               disabled={
                 entryCanInterrupt ? false : !canSubmit || entryBusy || Boolean(unavailableReason)
               }
-              className={`absolute right-[6px] bottom-[6px] z-10 grid size-10 place-items-center rounded-full border-0 text-app-canvas transition-[opacity,transform,background] duration-150 hover:-translate-y-px active:scale-95 disabled:cursor-default disabled:opacity-25 ${
-                entryCanInterrupt ? 'bg-app-ink' : 'bg-app-accent hover:bg-app-accent-hover'
-              }`}
+              className={`z-10 grid place-items-center border-0 text-app-canvas transition-[opacity,transform,background] duration-150 hover:-translate-y-px active:scale-95 disabled:cursor-default disabled:opacity-25 ${
+                hasConversation
+                  ? 'h-10 min-w-10 rounded-lg px-3'
+                  : 'absolute right-[6px] bottom-[6px] size-10 rounded-full'
+              } ${entryCanInterrupt ? 'bg-app-ink' : 'bg-app-accent hover:bg-app-accent-hover'}`}
             >
               {entryCanInterrupt ? (
                 <Stop aria-hidden="true" size={16} weight="fill" />
               ) : (
-                <ArrowUp aria-hidden="true" size={19} weight="bold" />
+                <span className="inline-flex items-center gap-2">
+                  {hasConversation ? (
+                    <span className="text-sm font-bold">{buttonLabel}</span>
+                  ) : null}
+                  <ArrowUp aria-hidden="true" size={hasConversation ? 16 : 19} weight="bold" />
+                </span>
               )}
             </button>
             <input
@@ -1272,7 +1305,9 @@ function QuickStartInput({
             />
             <div
               data-layout="quick-start-composer-controls"
-              className="order-first mb-2 flex min-h-10 items-center justify-between gap-3 px-1"
+              className={`order-first mb-2 min-h-10 items-center justify-between gap-3 px-1 ${
+                hasConversation ? 'hidden' : 'flex'
+              }`}
             >
               {!hasConversation ? (
                 <div className="flex items-center gap-1">
@@ -1482,15 +1517,17 @@ function PromptProposal({
       {actionPrompt ? <p className="text-sm text-app-muted">动作：{actionPrompt}</p> : null}
       {status === 'pending' ? (
         <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            aria-label="确认并生成"
-            disabled={disabled}
-            onClick={onConfirm}
-            className="min-h-9 rounded-full bg-app-accent px-4 text-xs font-semibold text-app-canvas transition hover:bg-app-accent-hover disabled:cursor-not-allowed disabled:opacity-45"
-          >
-            确认并生成
-          </button>
+          {actionPrompt ? (
+            <button
+              type="button"
+              aria-label="确认并生成"
+              disabled={disabled}
+              onClick={onConfirm}
+              className="min-h-9 rounded-full bg-app-accent px-4 text-xs font-semibold text-app-canvas transition hover:bg-app-accent-hover disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              确认并生成
+            </button>
+          ) : null}
           <InlineArrowAction aria-label="填入输入框" disabled={disabled} onClick={onFill}>
             编辑后逐步确认
           </InlineArrowAction>
@@ -1514,6 +1551,7 @@ function AgentCopy({
   animate?: boolean
 }) {
   const copy = lines.join('\n')
+  const animatedCopy = animateMarkdownCharacters(compiler(copy))
 
   return (
     <div
@@ -1521,18 +1559,76 @@ function AgentCopy({
       aria-label={lines.join(' ')}
       className={`quick-start-agent-copy grid grid-cols-[2rem_minmax(0,1fr)] items-start gap-3 font-serif ${
         tone === 'danger' ? 'text-app-danger' : 'text-app-ink-soft'
-      } ${animate ? 'quick-start-agent-copy--entering' : ''}`}
+      }`}
     >
       <QuickStartAgentBot placement="answer" />
       <div
         aria-label="Agent 回答"
         data-agent-markdown
-        className="quick-start-agent-markdown min-w-0"
+        className={`quick-start-agent-markdown min-w-0 ${
+          animate ? 'quick-start-agent-markdown--entering' : ''
+        }`}
       >
-        <Markdown>{copy}</Markdown>
+        {animate ? (
+          <>
+            <span className="sr-only" data-agent-copy-text>
+              {copy}
+            </span>
+            {animatedCopy}
+          </>
+        ) : (
+          <Markdown>{copy}</Markdown>
+        )}
       </div>
     </div>
   )
+}
+
+function animateMarkdownCharacters(
+  node: ReactNode,
+  counter: { value: number } = { value: 0 },
+): ReactNode {
+  if (typeof node === 'string' || typeof node === 'number') {
+    return Array.from(String(node)).map((character) => {
+      const characterIndex = counter.value
+      counter.value += 1
+      return (
+        <span
+          key={characterIndex}
+          aria-hidden="true"
+          className="kinetic-copy-character"
+          style={{ '--kinetic-copy-character-index': characterIndex } as CSSProperties}
+        >
+          {character === ' ' ? '\u00a0' : character}
+        </span>
+      )
+    })
+  }
+  if (Array.isArray(node)) {
+    return node.map((child) => animateMarkdownCharacters(child, counter))
+  }
+  if (!isValidElement<AnimatedMarkdownElementProps>(node)) return node
+
+  const element = node as ReactElement<AnimatedMarkdownElementProps>
+  const accessibleProps =
+    element.type === 'a' ? { 'aria-label': markdownTextContent(element.props.children) } : undefined
+  return cloneElement(
+    element,
+    accessibleProps,
+    animateMarkdownCharacters(element.props.children, counter),
+  )
+}
+
+type AnimatedMarkdownElementProps = {
+  children?: ReactNode
+  'aria-label'?: string
+}
+
+function markdownTextContent(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(markdownTextContent).join('')
+  if (!isValidElement<AnimatedMarkdownElementProps>(node)) return ''
+  return markdownTextContent(node.props.children)
 }
 
 function QuickStartAgentBot({ placement }: { placement: 'title' | 'thinking' | 'answer' }) {
@@ -1748,6 +1844,108 @@ function DirectionFirstFrameStack({
           >
             {DIRECTION_LABELS[direction]}方向生成中
           </div>
+        )
+      })}
+    </div>
+  )
+}
+
+const DIRECTION_SHEET_LAYOUT: readonly (ActionDirection | null)[] = [
+  'north_west',
+  'north',
+  'north_east',
+  'west',
+  null,
+  'east',
+  'south_west',
+  'south',
+  'south_east',
+]
+
+function DirectionSheetCandidatePicker({
+  sheets,
+  selectedIndex,
+  disabled,
+  kind,
+  onSelect,
+  interactive = true,
+}: {
+  sheets: readonly DirectionSheetCandidate[]
+  selectedIndex: number | null
+  disabled: boolean
+  kind: '角色方案' | '动作首帧'
+  onSelect?: (sheet: DirectionSheetCandidate) => void
+  interactive?: boolean
+}) {
+  return (
+    <div
+      data-direction-sheet-picker="true"
+      data-layout="agent-result-set"
+      className="grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2"
+    >
+      {sheets.map((sheet, sheetIndex) => {
+        const chosen = selectedIndex === sheet.index
+        return (
+          <button
+            key={sheet.index}
+            type="button"
+            aria-label={`选择${kind}方向候选 ${sheetIndex + 1}`}
+            aria-pressed={chosen}
+            disabled={disabled || !interactive}
+            onClick={() => onSelect?.(sheet)}
+            data-asset-choice="true"
+            data-direction-sheet-index={sheet.index}
+            data-reveal="card"
+            style={{ '--reveal-index': sheetIndex } as CSSProperties}
+            className={`quick-start-reveal-card relative overflow-hidden rounded-2xl border bg-app-surface-raised p-3 text-left transition duration-200 ${
+              chosen
+                ? 'border-app-accent ring-1 ring-app-accent'
+                : 'border-app-line hover:border-app-line-strong'
+            } disabled:cursor-default disabled:hover:border-app-line`}
+          >
+            <span className="mb-2 block text-xs font-bold text-app-muted">
+              方向候选 {sheetIndex + 1}
+            </span>
+            <span className="grid aspect-square grid-cols-3 overflow-hidden rounded-xl bg-app-surface-muted">
+              {DIRECTION_SHEET_LAYOUT.map((direction, cellIndex) => {
+                if (!direction) {
+                  return (
+                    <span
+                      key={`empty-center-${cellIndex}`}
+                      aria-hidden="true"
+                      className="border border-app-line/30 bg-app-canvas/20"
+                    />
+                  )
+                }
+                const cell = sheet.cells[direction]
+                if (cell.empty || !cell.imageUrl) {
+                  return (
+                    <span
+                      key={direction}
+                      aria-label={`${DIRECTION_LABELS[direction]}方向为空`}
+                      className="border border-app-line/30 bg-app-canvas/20"
+                    />
+                  )
+                }
+                return (
+                  <span
+                    key={direction}
+                    aria-label={`${DIRECTION_LABELS[direction]}方向`}
+                    className="flex min-h-0 items-center justify-center overflow-hidden border border-app-line/30 bg-app-surface-muted p-1"
+                  >
+                    <AssetVisual
+                      src={cell.imageUrl}
+                      alt={`${DIRECTION_LABELS[direction]}方向${kind}`}
+                      priority={sheetIndex === 0}
+                      className={`h-full w-full object-contain [image-rendering:pixelated] ${
+                        cell.mirrorX ? '-scale-x-100' : ''
+                      }`}
+                    />
+                  </span>
+                )
+              })}
+            </span>
+          </button>
         )
       })}
     </div>
@@ -2308,6 +2506,21 @@ function QuickStartRun({
           .map((group) => [group.direction, group.items[0]!.imageUrl]),
       )
     : {}
+  const firstFrameMovement: DirectionalMovement =
+    session?.getDirectionalMovement?.() ??
+    (firstFrameCandidateGroups.some((group) =>
+      ['north_west', 'south_west', 'north_east', 'south_east'].includes(group.direction),
+    )
+      ? 'eight-way'
+      : firstFrameCandidateGroups.some((group) =>
+            ['west', 'north', 'south'].includes(group.direction),
+          )
+        ? 'four-way'
+        : 'single')
+  const firstFrameSheets =
+    firstFrameMovement === 'single'
+      ? []
+      : buildDirectionSheetCandidates(firstFrameCandidates, firstFrameMovement)
   const templateSelections: QuickStartDirectionSelections = {
     ...(templateStep?.selectedImageUrl ? { east: templateStep.selectedImageUrl } : {}),
     ...(templateStep?.selectedImages ?? {}),
@@ -2324,10 +2537,18 @@ function QuickStartRun({
   const templateSelectionComplete =
     templateDirections.length > 0 &&
     templateDirections.every((direction) => Boolean(templateSelections[direction]))
-  const firstFrameSelectionComplete = allDirectionsSelected(
-    firstFrameCandidates,
-    firstFrameSelections,
-  )
+  const selectedFirstFrameSheetIndex =
+    firstFrameSheets.find((sheet) =>
+      Object.entries(sheet.selections).every(
+        ([direction, imageUrl]) => firstFrameSelections[direction as ActionDirection] === imageUrl,
+      ),
+    )?.index ?? null
+  const firstFrameSelectionComplete =
+    firstFrameSheets.length > 0
+      ? selectedFirstFrameSheetIndex !== null
+      : allDirectionsSelected(firstFrameCandidates, firstFrameSelections)
+  const firstFrameConfirmLabel =
+    firstFrameSheets.length > 0 ? '确认候选帧，生成完整动作' : '确认首帧，生成完整动作'
   const requestedOutfitId = searchParams.get('outfitId')
   const canAddAction =
     addActionIntent &&
@@ -2543,7 +2764,9 @@ function QuickStartRun({
     : isFirstFrameSelecting
       ? firstFrameSelectionComplete
         ? '按发送确认这张首帧…'
-        : '请先为每个方向选择一个动作首帧…'
+        : firstFrameSheets.length > 0
+          ? '请先选择一套方向动作首帧…'
+          : '请先为每个方向选择一个动作首帧…'
       : addActionIntent
         ? addingAction || workflowHasActiveNode
           ? '正在生成新动作…'
@@ -2740,31 +2963,47 @@ function QuickStartRun({
                       <AgentCopy
                         lines={[
                           isFirstFrameSelecting
-                            ? firstFrameCandidateGroups.length > 1
-                              ? `已生成 ${firstFrameCandidateGroups.length} 个方向的动作起始姿态。`
-                              : `已生成 ${firstFrameCandidates.length} 个动作起始姿态。`
+                            ? firstFrameSheets.length > 0
+                              ? `已生成 ${firstFrameSheets.length} 套方向动作起始姿态。`
+                              : firstFrameCandidateGroups.length > 1
+                                ? `已生成 ${firstFrameCandidateGroups.length} 个方向的动作起始姿态。`
+                                : `已生成 ${firstFrameCandidates.length} 个动作起始姿态。`
                             : '动作首帧',
                           isFirstFrameSelecting
-                            ? firstFrameCandidateGroups.length > 1
-                              ? '为每个方向选择一个起始姿态，随后生成完整动作。'
-                              : '选择一个起始姿态，随后生成完整动作。'
+                            ? firstFrameSheets.length > 0
+                              ? '选择一套方向首帧，随后生成完整动作。'
+                              : firstFrameCandidateGroups.length > 1
+                                ? '为每个方向选择一个起始姿态，随后生成完整动作。'
+                                : '选择一个起始姿态，随后生成完整动作。'
                             : '动作起始姿态已确认。',
                         ]}
                       />
-                      <DirectionCandidatePicker
-                        candidates={firstFrameCandidates}
-                        selections={firstFrameSelections}
-                        disabled={
-                          !isFirstFrameSelecting || confirmingFirstFrame || workflowConflict
-                        }
-                        kind="动作首帧"
-                        onSelect={(direction, imageUrl) =>
-                          setSelectedFirstFrames((current) => ({
-                            ...current,
-                            [direction]: imageUrl,
-                          }))
-                        }
-                      />
+                      {firstFrameSheets.length > 0 ? (
+                        <DirectionSheetCandidatePicker
+                          sheets={firstFrameSheets}
+                          selectedIndex={selectedFirstFrameSheetIndex}
+                          disabled={
+                            !isFirstFrameSelecting || confirmingFirstFrame || workflowConflict
+                          }
+                          kind="动作首帧"
+                          onSelect={(sheet) => setSelectedFirstFrames({ ...sheet.selections })}
+                        />
+                      ) : (
+                        <DirectionCandidatePicker
+                          candidates={firstFrameCandidates}
+                          selections={firstFrameSelections}
+                          disabled={
+                            !isFirstFrameSelecting || confirmingFirstFrame || workflowConflict
+                          }
+                          kind="动作首帧"
+                          onSelect={(direction, imageUrl) =>
+                            setSelectedFirstFrames((current) => ({
+                              ...current,
+                              [direction]: imageUrl,
+                            }))
+                          }
+                        />
+                      )}
                       {firstFrameSelectionComplete ? (
                         <button
                           type="button"
@@ -2772,23 +3011,36 @@ function QuickStartRun({
                           disabled={confirmingFirstFrame || workflowConflict}
                           className="w-fit rounded-xl bg-app-accent px-5 py-2.5 text-sm font-bold text-app-on-accent disabled:opacity-50"
                         >
-                          {confirmingFirstFrame ? '正在确认…' : '确认首帧，生成完整动作'}
+                          {confirmingFirstFrame ? '正在确认…' : firstFrameConfirmLabel}
                         </button>
                       ) : null}
                     </>
-                  ) : firstFrameStep.status === 'passed' && selectedFirstFrameUrl ? (
+                  ) : firstFrameStep.status === 'passed' &&
+                    (selectedFirstFrameUrl || Object.keys(firstFrameSelections).length > 0) ? (
                     <>
                       <AgentCopy lines={['动作起始姿态已确认。']} />
-                      <div
-                        data-layout="agent-result-set"
-                        className="grid w-full max-w-2xl grid-cols-3 gap-3"
-                      >
-                        <AssetVisual
-                          src={selectedFirstFrameUrl}
-                          alt="已选择的动作首帧"
-                          className="aspect-square w-full rounded-2xl border border-app-line bg-app-surface-muted object-contain [image-rendering:pixelated]"
+                      {firstFrameSheets.length > 0 ? (
+                        <DirectionSheetCandidatePicker
+                          sheets={firstFrameSheets.filter(
+                            (sheet) => sheet.index === selectedFirstFrameSheetIndex,
+                          )}
+                          selectedIndex={selectedFirstFrameSheetIndex}
+                          disabled
+                          interactive={false}
+                          kind="动作首帧"
                         />
-                      </div>
+                      ) : selectedFirstFrameUrl ? (
+                        <div
+                          data-layout="agent-result-set"
+                          className="grid w-full max-w-2xl grid-cols-3 gap-3"
+                        >
+                          <AssetVisual
+                            src={selectedFirstFrameUrl}
+                            alt="已选择的动作首帧"
+                            className="aspect-square w-full rounded-2xl border border-app-line bg-app-surface-muted object-contain [image-rendering:pixelated]"
+                          />
+                        </div>
+                      ) : null}
                     </>
                   ) : isFirstFrameFailed ? (
                     <>

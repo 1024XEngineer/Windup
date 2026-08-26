@@ -12,13 +12,13 @@ import {
   type CharacterApis,
   type ActionDirection,
   type CharacterSetupWorkflowNode,
+  type DirectionalMovement,
   type GenerationApis,
   type Generation,
   type MediaReference,
   type Project,
   type ProjectApis,
   type PixelPerfectApis,
-  type DirectionalMovement,
   type WorkflowNode,
   type WorkflowRun,
   type WorkflowRunApis,
@@ -82,6 +82,8 @@ export interface QuickStartMediaApis {
 
 export interface QuickStartSession {
   readonly runId: WorkflowRun['id']
+  /** 当前 Run 所属项目的方向模式，用于恢复时稳定渲染候选布局。 */
+  readonly getDirectionalMovement?: () => DirectionalMovement
   getWorkflow(): WorkflowRun
   subscribe(listener: (run: WorkflowRun) => void): () => void
   subscribeErrors(listener: (error: Error) => void): () => void
@@ -474,11 +476,11 @@ export function createQuickStartService({
     outfitId: string,
     actionDescription: string,
     spriteSize: Project['spriteSize'],
-    candidateCount?: 1,
+    options: { actionType?: 'walk'; candidateCount?: 1 } = {},
   ) {
     const prompt = actionDescription.trim()
     const name = boundedDisplayName(prompt, ACTION_DISPLAY_NAME_MAX_LENGTH) || '待机'
-    const type = inferGeneratableActionType(actionDescription)
+    const type = options.actionType ?? inferGeneratableActionType(actionDescription)
     await controller.addAction({ input: { outfitId, name, type, prompt: prompt || null, fps: 12 } })
     const run = controller.getWorkflow()
     const firstFrame = latestActionFirstFrame(run)
@@ -488,7 +490,7 @@ export function createQuickStartService({
     await controller.generateFirstFrame(firstFrame.id, {
       spriteWidth: spriteSize.width,
       spriteHeight: spriteSize.height,
-      ...(candidateCount ? { candidateCount } : {}),
+      ...(options.candidateCount ? { candidateCount: options.candidateCount } : {}),
     })
   }
 
@@ -747,7 +749,10 @@ export function createQuickStartService({
           }
           if (!outfitId) throw new Error('自动交付没有找到角色造型')
           const spriteSize = await resolveProjectSpriteSize(run.projectId)
-          await prepareAction(controller, outfitId, actionPrompt, spriteSize, 1)
+          await prepareAction(controller, outfitId, actionPrompt, spriteSize, {
+            actionType: automation.actionType,
+            candidateCount: 1,
+          })
           return true
         }
 
@@ -800,6 +805,8 @@ export function createQuickStartService({
 
     return {
       runId: controller.getWorkflow().id,
+      getDirectionalMovement: () =>
+        projectDirectionalMovements.get(controller.getWorkflow().projectId) ?? 'single',
       getWorkflow: () => controller.getWorkflow(),
       subscribe: (listener) => controller.subscribe(listener),
       subscribeErrors(listener) {

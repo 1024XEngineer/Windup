@@ -14,11 +14,13 @@ const QUICK_START_DECISION_FIELDS = new Set([
   'message',
   'optimizedPrompt',
   'actionPrompt',
+  'actionType',
   'optimizationSummary',
   'suggestPixelPerfect',
 ])
 
 export type QuickStartDirectionalMovement = 'single' | 'four-way' | 'eight-way'
+export type QuickStartActionType = 'walk'
 
 export interface PlannerMessage {
   role: 'user' | 'assistant'
@@ -39,6 +41,8 @@ export interface PlannerResult {
 export interface PlannerInput {
   messages: readonly PlannerMessage[]
   clarificationUsed: boolean
+  /** 用户在宿主中选择的画风；Planner 只把它当作拟写提示词时的既定约束。 */
+  artStyle?: string
   workflow?: WorkflowAgentContext
   signal?: AbortSignal
 }
@@ -48,6 +52,8 @@ export type QuickStartPlanner = (input: PlannerInput) => Promise<PlannerResult>
 export interface CharacterGenerationPlan {
   optimizedPrompt: string
   actionPrompt?: string
+  /** 仅在 Agent 明确认出行走/跑步位移时附带；不做通用动作分类。 */
+  actionType?: QuickStartActionType
   optimizationSummary: string
   /** Planner 对明确像素素材意图的静默判断；缺省按否处理以兼容旧提案。 */
   suggestPixelPerfect?: boolean
@@ -95,6 +101,7 @@ export interface QuickStartAgent {
 export type StartCharacterGenerationAction = (input: {
   prompt: string
   actionPrompt?: string
+  actionType?: QuickStartActionType
   directionalMovement?: QuickStartDirectionalMovement
   gameStyle?: string
   automaticDelivery?: boolean
@@ -104,6 +111,7 @@ export type StartCharacterGenerationAction = (input: {
 export interface CreateQuickStartAgentOptions {
   planner: QuickStartPlanner
   startCharacterGeneration: StartCharacterGenerationAction
+  artStyle?: string
   initialMessages?: readonly PlannerMessage[]
   initialClarificationUsed?: boolean
   initialProposal?: CharacterGenerationProposal | null
@@ -190,9 +198,14 @@ export function parseCharacterGenerationPlan(value: unknown): CharacterGeneratio
   if (value.suggestPixelPerfect !== undefined && typeof value.suggestPixelPerfect !== 'boolean') {
     throw new Error('生成提案的 suggestPixelPerfect 无效')
   }
+  const actionType = value.actionType === 'walk' ? value.actionType : undefined
+  if (value.actionType !== undefined && (!actionType || !actionPrompt)) {
+    throw new Error('生成提案的 actionType 无效')
+  }
   return {
     optimizedPrompt,
     ...(actionPrompt ? { actionPrompt } : {}),
+    ...(actionType ? { actionType } : {}),
     optimizationSummary,
     ...(value.suggestPixelPerfect === true ? { suggestPixelPerfect: true } : {}),
   }
@@ -246,6 +259,7 @@ function proposalMessage(plan: CharacterGenerationPlan): string {
 export function createQuickStartAgent({
   planner,
   startCharacterGeneration,
+  artStyle,
   initialMessages = [],
   initialClarificationUsed = false,
   initialProposal = null,
@@ -287,7 +301,7 @@ export function createQuickStartAgent({
       // runtime 也必须保留同一历史，避免刷新前后得到不同上下文。
       messages = nextMessages
       const decision = validatePlannerTerminal(
-        await planner({ messages: nextMessages, clarificationUsed, signal }),
+        await planner({ messages: nextMessages, clarificationUsed, artStyle, signal }),
       )
       if (signal?.aborted) {
         revoked = true
@@ -304,6 +318,7 @@ export function createQuickStartAgent({
         proposalId: `proposal-${nextMessages.length}`,
         optimizedPrompt: decision.optimizedPrompt,
         ...(decision.actionPrompt ? { actionPrompt: decision.actionPrompt } : {}),
+        ...(decision.actionType ? { actionType: decision.actionType } : {}),
         optimizationSummary: decision.optimizationSummary,
         ...(decision.suggestPixelPerfect ? { suggestPixelPerfect: true } : {}),
       }
@@ -339,6 +354,7 @@ export function createQuickStartAgent({
       const { runId } = await startCharacterGeneration({
         prompt: effectivePrompt,
         ...(proposal.actionPrompt ? { actionPrompt: proposal.actionPrompt } : {}),
+        ...(proposal.actionType ? { actionType: proposal.actionType } : {}),
         directionalMovement,
         gameStyle,
         ...(automaticDelivery ? { automaticDelivery: true } : {}),

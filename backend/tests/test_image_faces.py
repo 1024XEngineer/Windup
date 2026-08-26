@@ -382,3 +382,110 @@ def test_fal_face_malformed_images_field_is_invalid(images):
     face = _face(FalQueueImageFace, _queue_handler(["COMPLETED"], images=images), poll_s=0)
     r = face.submit_image("p", [], FLASH)
     assert not r.ok and r.error_type is ModelErrorType.INVALID_RESPONSE
+
+
+# ── 建单之后:任何失败都不能让 Gateway 重新建单 ─────────────────────────────
+# 到那一步 FAL 已经收下任务、可能在计费。通用 _transport 会分成 UNREACHED 且
+# maybe_billed=False，而 Gateway 对第一次 UNREACHED 是 RETRY_SAME —— 一次瞬时断线
+# 就会 POST 出第二个付费任务，而第一个还在跑。
+
+def _submitted_then(handler):
+    """建单成功，之后按 handler 处理。"""
+    def h(req):
+        if req.method == "POST":
+            return httpx.Response(200, json={"request_id": "req-1"})
+        return handler(req)
+    return h
+
+
+@pytest.mark.parametrize("marker", ["/status", "/requests/req-1", "cdn.example.com"])
+def test_drop_after_submit_is_marked_billed_and_keeps_the_job_id(marker):
+    base = _queue_handler(["COMPLETED"])
+    r = _face(FalQueueImageFace, _raise_on(marker, base), poll_s=0).submit_image("p", [], FLASH)
+    assert not r.ok
+    assert r.maybe_billed, f"{marker} 断线没标 maybe_billed，Gateway 会重新建单"
+    assert r.error_type is ModelErrorType.MAYBE_BILLED
+    assert r.job_id == "req-1", "丢了 job_id，无从续查那个已计费的任务"
+
+
+def test_http_failure_after_submit_keeps_the_job_id():
+    r = _face(FalQueueImageFace, _submitted_then(lambda q: httpx.Response(500, text="boom")),
+              poll_s=0).submit_image("p", [], FLASH)
+    assert not r.ok and r.job_id == "req-1"
+
+
+def test_malformed_result_after_submit_keeps_the_job_id():
+    face = _face(FalQueueImageFace, _queue_handler(["COMPLETED"], images=[]), poll_s=0)
+    r = face.submit_image("p", [], FLASH)
+    assert not r.ok and r.job_id == "req-1"
+
+
+def test_timeout_keeps_the_job_id_too():
+    face = _face(FalQueueImageFace, _queue_handler(["IN_QUEUE"] * 10), poll_s=0, max_polls=2)
+    r = face.submit_image("p", [], FLASH)
+    assert not r.ok and r.maybe_billed and r.job_id == "req-1"
+
+
+# ── 取成品图不能把网关凭证发给 CDN ────────────────────────────────────────
+# headers={} 只与 client 默认头合并、不删除 Authorization。这个 URL 来自网关响应，
+# 正常指向 CDN、异常可以是任意地址 —— 等于把 API key 交出去。
+
+def _capture_auth(store):
+    def h(req):
+        if req.method == "POST":
+            return httpx.Response(200, json={"request_id": "req-1"})
+        if req.url.path.endswith("/status"):
+            return httpx.Response(200, json={"status": "COMPLETED"})
+        if "/requests/" in req.url.path:
+            return httpx.Response(200, json={"images": [{"url": "https://cdn.elsewhere.test/a.png"}]})
+        store["auth"] = req.headers.get("Authorization")
+        store["host"] = req.url.host
+        return httpx.Response(200, content=PNG)
+    return h
+
+
+def test_fal_face_strips_credentials_when_fetching_from_another_origin():
+    store = {}
+    r = _face(FalQueueImageFace, _capture_auth(store), poll_s=0).submit_image("p", [], FLASH)
+    assert r.ok
+    assert store["host"] == "cdn.elsewhere.test"
+    assert store.get("auth") is None, f"API key 被发给了 CDN: {store.get('auth')!r}"
+
+
+def test_openai_face_strips_credentials_when_fetching_from_another_origin():
+    store = {}
+
+    def h(req):
+        if req.url.path.endswith("/images/generations"):
+            return httpx.Response(200, json={"data": [{"url": "https://cdn.elsewhere.test/a.png"}]})
+        store["auth"] = req.headers.get("Authorization")
+        store["host"] = req.url.host
+        return httpx.Response(200, content=PNG)
+
+    r = _face(OpenAIImagesFace, h).submit_image("p", [], "gpt-image-2")
+    assert r.ok and store["host"] == "cdn.elsewhere.test"
+    assert store.get("auth") is None, f"API key 被发给了 CDN: {store.get('auth')!r}"
+
+
+def test_same_origin_download_keeps_credentials():
+    """网关也会签发自家域名下的链接，那条路径摘了头就是 401。
+
+    这里要自己带上 Authorization 建 client —— 上面 `_face` 那个桩为了简单没设默认头，
+    用它测「摘不摘」只会永远读到 None。
+    """
+    store = {}
+
+    def h(req):
+        if req.url.path.endswith("/images/generations"):
+            return httpx.Response(200, json={"data": [{"url": "https://gw.example.com/v1/dl/a.png"}]})
+        store["auth"] = req.headers.get("Authorization")
+        return httpx.Response(200, content=PNG)
+
+    face = OpenAIImagesFace("https://gw.example.com/v1", "k", 10.0)
+    face._client = lambda: httpx.Client(
+        base_url="https://gw.example.com/v1",
+        headers={"Authorization": "Bearer k"},
+        transport=httpx.MockTransport(h),
+    )
+    r = face.submit_image("p", [], "gpt-image-2")
+    assert r.ok and store.get("auth") == "Bearer k", "同源下载不该摘凭证"

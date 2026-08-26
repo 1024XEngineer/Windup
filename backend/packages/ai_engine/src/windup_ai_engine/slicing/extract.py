@@ -8,17 +8,25 @@
 
 from __future__ import annotations
 
+import glob
 import io
 import logging
 import os
+import re
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 
 from PIL import Image
 
 logger = logging.getLogger("windup.ai_engine.extract")
 
-__all__ = ["extract_frames_bytes", "extract_all_frames_bytes"]
+__all__ = [
+    "extract_frames_bytes",
+    "extract_all_frames_bytes",
+    "extract_preview_frames",
+    "extract_frames_at",
+]
 
 _PYAV = {"plugin": "pyav"}
 _PYAV_BYTES = {"plugin": "pyav", "extension": ".mp4"}
@@ -30,8 +38,24 @@ def extract_frames_bytes(video: bytes, n: int) -> list[Image.Image]:
 
 
 def extract_all_frames_bytes(video: bytes, cap: int = 150) -> list[Image.Image]:
-    """抽视频全部帧（至多 ``cap``，均匀降采样），供周期检测用。"""
+    """抽视频全部帧（至多 ``cap``，均匀降采样）。测试 / 冷路径;生产走两遍解码。"""
     return _extract_frames(video, cap)
+
+
+def extract_preview_frames(
+    video: bytes, cap: int = 150, size: int = 48
+) -> tuple[list[Image.Image], list[int]]:
+    """Pass A:流式解码后立刻缩到 ``size``×``size`` RGB,丢掉全分辨率。
+
+    返回 ``(previews, src_idx)``:预览帧与各自在源视频里的下标。均匀取样口径与
+    :func:`extract_all_frames_bytes` 相同。选帧算法吃这批小图即可,不必常驻 150 张 720p。
+    """
+    return _extract_preview(video, cap, size)
+
+
+def extract_frames_at(video: bytes, indices: Sequence[int]) -> list[Image.Image]:
+    """Pass B:只把指定源下标解成全分辨率 RGBA。返回顺序与 ``indices`` 一致。"""
+    return _extract_at(video, list(indices))
 
 
 def _uniform_indices(total: int, n: int) -> list[int]:
@@ -74,6 +98,64 @@ def _frame_count(source, kw: dict | None = None) -> int:
     return total
 
 
+def _as_pil(frame, *, preview: bool, size: int) -> Image.Image:
+    im = Image.fromarray(frame)
+    if preview:
+        return im.convert("RGB").resize((size, size))
+    return im.convert("RGBA")
+
+
+def _pyav_take(
+    handle, kw: dict, indices: Sequence[int], *, preview: bool, size: int = 48
+) -> dict[int, Image.Image] | None:
+    """按源下标从已打开的 pyav 流取帧。缺帧返回 None,让调用方回退 ffmpeg。"""
+    import imageio.v3 as iio
+
+    wanted = set(indices)
+    if not wanted:
+        return {}
+    found: dict[int, Image.Image] = {}
+    for i, frame in enumerate(iio.imiter(handle, **kw)):
+        if i in wanted:
+            found[i] = _as_pil(frame, preview=preview, size=size)
+            if len(found) == len(wanted):
+                break
+    if len(found) != len(wanted):
+        return None
+    return found
+
+
+def _extract_preview(
+    source: str | bytes, cap: int, size: int
+) -> tuple[list[Image.Image], list[int]]:
+    handle, kw = _pyav_source(source)
+    try:
+        total = _frame_count(handle, kw)
+        if total <= 0:
+            raise RuntimeError("视频无可解码帧")
+        src_idx = _uniform_indices(total, cap)
+        _rewind(handle)
+        found = _pyav_take(handle, kw, src_idx, preview=True, size=size)
+        if found is not None:
+            return [found[i] for i in src_idx], src_idx
+    except Exception:                                   # noqa: BLE001 - 兜底到 ffmpeg
+        logger.warning("imageio 预览抽帧失败,回退系统 ffmpeg", exc_info=True)
+    return _ffmpeg_preview(source, cap, size)
+
+
+def _extract_at(source: str | bytes, indices: list[int]) -> list[Image.Image]:
+    if not indices:
+        return []
+    handle, kw = _pyav_source(source)
+    try:
+        found = _pyav_take(handle, kw, indices, preview=False)
+        if found is not None:
+            return [found[i] for i in indices]
+    except Exception:                                   # noqa: BLE001 - 兜底到 ffmpeg
+        logger.warning("imageio 定点抽帧失败,回退系统 ffmpeg", exc_info=True)
+    return _ffmpeg_at(source, indices)
+
+
 def _extract_frames(source: str | bytes, n: int) -> list[Image.Image]:
     """从视频均匀抽 ``n`` 帧。优先 imageio(流式),回退系统 ffmpeg。
 
@@ -86,22 +168,14 @@ def _extract_frames(source: str | bytes, n: int) -> list[Image.Image]:
     """
     handle, kw = _pyav_source(source)
     try:
-        import imageio.v3 as iio
-
         total = _frame_count(handle, kw)
         if total <= 0:
             raise RuntimeError("视频无可解码帧")
+        idx = _uniform_indices(total, n)
         _rewind(handle)
-        wanted = set(_uniform_indices(total, n))
-        out: list[Image.Image] = []
-        for i, frame in enumerate(iio.imiter(handle, **kw)):
-            if i in wanted:
-                # convert 之后原始 ndarray 就可以被回收;不持有 frame 本身。
-                out.append(Image.fromarray(frame).convert("RGBA"))
-                if len(out) == len(wanted):
-                    break
-        if out:
-            return out
+        found = _pyav_take(handle, kw, idx, preview=False)
+        if found is not None:
+            return [found[i] for i in idx]
     except Exception:                                   # noqa: BLE001 - 兜底到 ffmpeg
         # 不静默:这个 except 曾把"我们自己算错下标"和"环境里没装 imageio"混为一谈,
         # 两者都表现为悄悄换用 ffmpeg 分支、产出看着正常的帧。至少留一条日志。
@@ -110,27 +184,98 @@ def _extract_frames(source: str | bytes, n: int) -> list[Image.Image]:
     return _ffmpeg_extract(source, n)
 
 
-def _ffmpeg_extract(source: str | bytes, n: int) -> list[Image.Image]:
-    """仅 pyav 失败时走。会把整段导出成 PNG,只应是冷路径。"""
-    import glob
-    import subprocess
+def _video_path(source: str | bytes, tmp: str) -> str:
+    if isinstance(source, str):
+        return source
+    path = str(Path(tmp) / "source.mp4")
+    Path(path).write_bytes(source)
+    return path
+
+
+def _ffmpeg_exe() -> str:
     from imageio_ffmpeg import get_ffmpeg_exe
 
+    return get_ffmpeg_exe()
+
+
+def _ffmpeg_run(args: list[str]) -> None:
+    import subprocess
+
+    subprocess.run(args, capture_output=True, check=True)
+
+
+def _ffmpeg_count(video_path: str) -> int:
+    """解码计数,不落 PNG。比把整段导出成全分辨率 PNG 再 len(files) 便宜。"""
+    import subprocess
+
+    proc = subprocess.run(
+        [_ffmpeg_exe(), "-i", video_path, "-vsync", "0", "-f", "null", "-"],
+        capture_output=True,
+    )
+    text = (proc.stderr or b"").decode("utf-8", errors="replace")
+    hits = re.findall(r"frame=\s*(\d+)", text)
+    if not hits or int(hits[-1]) <= 0:
+        raise RuntimeError("抽帧失败:视频无可解码帧")
+    return int(hits[-1])
+
+
+def _select_filter(indices: Sequence[int]) -> str:
+    """只留下这些源下标。逗号按 ffmpeg filtergraph 规则转义。"""
+    uniq = sorted(set(indices))
+    select = "+".join(f"eq(n\\,{i})" for i in uniq)
+    return f"select={select},setpts=N/TB"
+
+
+def _load_pngs(files: list[str]) -> list[Image.Image]:
+    return [Image.open(p).convert("RGBA").copy() for p in files]
+
+
+def _ffmpeg_at_path(video_path: str, tmp: str, indices: list[int]) -> list[Image.Image]:
+    uniq = sorted(set(indices))
+    if not uniq:
+        return []
+    pattern = os.path.join(tmp, "f_%04d.png")
+    _ffmpeg_run(
+        [_ffmpeg_exe(), "-y", "-i", video_path, "-vf", _select_filter(uniq),
+         "-vsync", "vfr", pattern],
+    )
+    files = sorted(glob.glob(os.path.join(tmp, "f_*.png")))
+    if len(files) != len(uniq):
+        raise RuntimeError(
+            f"抽帧失败:要 {len(uniq)} 帧,ffmpeg 交出 {len(files)} 帧"
+        )
+    by_n = {n: im for n, im in zip(uniq, _load_pngs(files))}
+    return [by_n[i] for i in indices]
+
+
+def _ffmpeg_at(source: str | bytes, indices: list[int]) -> list[Image.Image]:
     with tempfile.TemporaryDirectory() as tmp:
-        if isinstance(source, str):
-            video_path = source
-        else:
-            video_path = str(Path(tmp) / "source.mp4")
-            Path(video_path).write_bytes(source)
-        subprocess.run(
-            [get_ffmpeg_exe(), "-y", "-i", video_path, "-vsync", "0",
-             os.path.join(tmp, "f_%04d.png")],
-            capture_output=True,
-            check=True,
+        return _ffmpeg_at_path(_video_path(source, tmp), tmp, indices)
+
+
+def _ffmpeg_preview(
+    source: str | bytes, cap: int, size: int
+) -> tuple[list[Image.Image], list[int]]:
+    """冷路径:整段缩到小图再均匀取。小 PNG 常驻可接受,禁止落全分辨率。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        video_path = _video_path(source, tmp)
+        pattern = os.path.join(tmp, "f_%04d.png")
+        _ffmpeg_run(
+            [_ffmpeg_exe(), "-y", "-i", video_path,
+             "-vf", f"scale={size}:{size}", "-vsync", "0", pattern],
         )
         files = sorted(glob.glob(os.path.join(tmp, "f_*.png")))
         if not files:
             raise RuntimeError("抽帧失败:视频无可解码帧")
-        m = min(n, len(files))
-        idx = [round(i * (len(files) - 1) / max(1, m - 1)) for i in range(m)]
-        return [Image.open(files[i]).convert("RGBA").copy() for i in idx]
+        src_idx = _uniform_indices(len(files), cap)
+        previews = [Image.open(files[i]).convert("RGB").copy() for i in src_idx]
+        return previews, src_idx
+
+
+def _ffmpeg_extract(source: str | bytes, n: int) -> list[Image.Image]:
+    """仅 pyav 失败时走。按均匀下标 ``select``,不把整段导出成全分辨率 PNG。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        video_path = _video_path(source, tmp)
+        total = _ffmpeg_count(video_path)
+        idx = _uniform_indices(total, n)
+        return _ffmpeg_at_path(video_path, tmp, idx)

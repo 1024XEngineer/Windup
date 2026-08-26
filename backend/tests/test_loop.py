@@ -3,7 +3,7 @@
 import pytest
 from PIL import Image
 
-from windup_ai_engine.slicing import find_period, pick_cycle
+from windup_ai_engine.slicing import find_period, pick_cycle, pick_cycle_indices
 
 
 def _periodic_frames(period: int, cycles: int) -> list[Image.Image]:
@@ -79,6 +79,16 @@ def test_pick_cycle_returns_exactly_n_distinct_frames_for_every_legal_n():
             assert len(out) == n, n
             pos = [next(i for i, f in enumerate(frames) if f is o) for o in out]
             assert len(set(pos)) == n, (n, pos)
+
+
+def test_pick_cycle_indices_match_pick_cycle_identities():
+    """下标 API 与旧的帧列表 API 指向同一组源帧对象。"""
+    for frames in (_periodic_frames(period=8, cycles=5), _ramp_frames()):
+        for n in (1, 8, len(frames)):
+            out = pick_cycle(frames, n)
+            idx = pick_cycle_indices(frames, n)
+            assert len(idx) == n
+            assert all(out[j] is frames[i] for j, i in enumerate(idx))
 
 
 def test_pick_cycle_closes_the_loop():

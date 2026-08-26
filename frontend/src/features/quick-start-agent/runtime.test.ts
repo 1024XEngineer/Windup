@@ -239,15 +239,23 @@ describe('createQuickStartAgent', () => {
   })
 
   it('carries the interpreted action into automatic delivery after one confirmation', async () => {
-    const { agent, startCharacterGeneration } = fixture(
-      decisionResult({
-        kind: 'proposal',
-        optimizedPrompt: '圆润可爱的卡皮巴拉，全身像',
-        actionPrompt: '开心地左右摇摆跳舞',
-        optimizationSummary: '我理解为一只正在开心跳舞的卡皮巴拉。',
-      }),
-    )
-    const proposal = await agent.start('生成一只跳舞的卡皮巴拉')
+    const { agent, startCharacterGeneration } = fixture({
+      text: '',
+      finishReason: 'tool-calls',
+      toolCalls: [
+        {
+          toolName: 'quick_start_decision',
+          input: {
+            kind: 'proposal',
+            optimizedPrompt: '背着邮包的像素邮差，全身像',
+            actionPrompt: '轻快地向前行走',
+            actionType: 'walk',
+            optimizationSummary: '我理解为一名正在向前行走的邮差。',
+          },
+        },
+      ],
+    })
+    const proposal = await agent.start('生成一个向前行走的邮差')
     if (proposal.kind !== 'proposal') throw new Error('测试缺少提案')
 
     await agent.confirmProposal(proposal.proposalId, proposal.optimizedPrompt, 'single', {
@@ -255,8 +263,9 @@ describe('createQuickStartAgent', () => {
     })
 
     expect(startCharacterGeneration).toHaveBeenCalledWith({
-      prompt: '圆润可爱的卡皮巴拉，全身像',
-      actionPrompt: '开心地左右摇摆跳舞',
+      prompt: '背着邮包的像素邮差，全身像',
+      actionPrompt: '轻快地向前行走',
+      actionType: 'walk',
       directionalMovement: 'single',
       automaticDelivery: true,
     })
@@ -286,6 +295,18 @@ describe('createQuickStartAgent', () => {
       automaticDelivery: true,
       suggestPixelPerfect: true,
     })
+  })
+
+  it('rejects unsupported Agent action markers', () => {
+    expect(() =>
+      parseQuickStartDecision({
+        kind: 'proposal',
+        optimizedPrompt: '像素骑士全身像',
+        actionPrompt: '向前冲刺',
+        actionType: 'sprint',
+        optimizationSummary: '我会保留骑士和冲刺动作。',
+      }),
+    ).toThrow('生成提案的 actionType 无效')
   })
 
   it('restores a pending proposal without dispatching it', async () => {

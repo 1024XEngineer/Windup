@@ -67,8 +67,13 @@
   animation: quick-start-agent-bot-blink 4.3s cubic-bezier(0.4, 0, 0.55, 1) infinite;
 }
 
-.quick-start-agent-copy--entering {
-  animation: quick-start-agent-answer-enter 680ms cubic-bezier(0.16, 1, 0.3, 1) both;
+.quick-start-agent-markdown--entering .kinetic-copy-character {
+  opacity: 0;
+  filter: blur(4px);
+  transform: translate3d(0, 0.42em, 0);
+  animation: kinetic-copy-character-enter 520ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: calc(90ms + min(var(--kinetic-copy-character-index) * 18ms, 420ms));
+  will-change: opacity, transform, filter;
 }
 
 .quick-start-agent-markdown {
@@ -195,19 +200,6 @@
   }
   95% {
     transform: scaleY(0.12);
-  }
-}
-
-@keyframes quick-start-agent-answer-enter {
-  from {
-    opacity: 0;
-    filter: blur(7px);
-    transform: translate3d(-12px, 10px, 0) scale(0.985);
-  }
-  to {
-    opacity: 1;
-    filter: blur(0);
-    transform: translate3d(0, 0, 0) scale(1);
   }
 }
 
@@ -463,8 +455,14 @@
   .quick-start-agent-bot__face,
   .quick-start-agent-bot__gaze,
   .quick-start-agent-bot__frame,
-  .quick-start-agent-bot__blink,
-  .quick-start-agent-copy--entering {
+  .quick-start-agent-bot__blink {
+    animation: none;
+    filter: none;
+    transform: none;
+  }
+
+  .quick-start-agent-markdown--entering .kinetic-copy-character {
+    opacity: 1;
     animation: none;
     filter: none;
     transform: none;

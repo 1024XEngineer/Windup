@@ -152,6 +152,7 @@ export function createProductionQuickStartAgentDependencies(
             ? {
                 automaticDelivery: {
                   ...(input.actionPrompt ? { actionPrompt: input.actionPrompt } : {}),
+                  ...(input.actionType ? { actionType: input.actionType } : {}),
                 },
               }
             : {}),

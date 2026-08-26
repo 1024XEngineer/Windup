@@ -270,8 +270,12 @@ def _spec(action: str, *, cyclic: bool = False) -> ActionSpec:
 def _offline(monkeypatch, adapter=None) -> tuple[VideoFrameStrategy, _SpyVideo]:
     dense = [Image.open(io.BytesIO(_png())).convert("RGBA") for _ in range(24)]
     monkeypatch.setattr(
-        "windup_ai_engine.strategy.concrete.extract_all_frames_bytes",
-        lambda video, cap=150: dense,
+        "windup_ai_engine.strategy.concrete.extract_preview_frames",
+        lambda video, cap=150, size=48: (dense, list(range(len(dense)))),
+    )
+    monkeypatch.setattr(
+        "windup_ai_engine.strategy.concrete.extract_frames_at",
+        lambda video, indices: [dense[i] for i in indices],
     )
     video = _SpyVideo()
     return VideoFrameStrategy(video, _Matte(), adapter), video

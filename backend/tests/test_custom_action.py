@@ -105,8 +105,12 @@ def _offline_strategy(monkeypatch, spy: list[str]):
     """离线 VideoFrameStrategy:抽帧被顶替,不联网不花钱;记下送进 i2v 的提示词。"""
     dense = [Image.open(io.BytesIO(_png(i % 6))).convert("RGBA") for i in range(24)]
     monkeypatch.setattr(
-        "windup_ai_engine.strategy.concrete.extract_all_frames_bytes",
-        lambda video, cap=150: dense,
+        "windup_ai_engine.strategy.concrete.extract_preview_frames",
+        lambda video, cap=150, size=48: (dense, list(range(len(dense)))),
+    )
+    monkeypatch.setattr(
+        "windup_ai_engine.strategy.concrete.extract_frames_at",
+        lambda video, indices: [dense[i] for i in indices],
     )
 
     class _SpyVideo:

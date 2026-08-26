@@ -123,7 +123,7 @@ export interface StartCharacterGenerationInput {
   prompt: string
   directionalMovement?: DirectionalMovement
   gameStyle?: ArtStyle
-  automaticDelivery?: { actionPrompt?: string }
+  automaticDelivery?: { actionPrompt?: string; actionType?: 'walk' }
   /** 仅记录 Agent 的像素素材意图，生成阶段不据此改变原图。 */
   suggestPixelPerfect?: boolean
 }
@@ -418,6 +418,7 @@ export function createWorkflowController({
     }
     const normalizedPrompt = nonEmpty(prompt, '角色描述')
     const actionPrompt = automaticDelivery?.actionPrompt?.trim() || null
+    const actionType = actionPrompt ? automaticDelivery?.actionType : undefined
     const project = await prepareProject(normalizedPrompt, selectedDirectionalMovement, {
       gameStyle,
     })
@@ -438,7 +439,13 @@ export function createWorkflowController({
           input: { prompt: normalizedPrompt, referenceMedia: [] },
           ...(suggestPixelPerfect ? { pixelPerfectSuggested: true } : {}),
           ...(automaticDelivery
-            ? { automation: { mode: 'automatic' as const, actionPrompt } }
+            ? {
+                automation: {
+                  mode: 'automatic' as const,
+                  actionPrompt,
+                  ...(actionType ? { actionType } : {}),
+                },
+              }
             : {}),
         },
         {

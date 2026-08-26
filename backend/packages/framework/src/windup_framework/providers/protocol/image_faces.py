@@ -11,6 +11,7 @@ import base64
 import binascii
 import io
 import json
+from dataclasses import replace
 
 import httpx
 
@@ -80,6 +81,25 @@ def _http_failure(resp: httpx.Response, model: str, base_url: str) -> AdapterRes
     )
 
 
+def _billed(exc: BaseException, job_id: str) -> AdapterResult:
+    """建单之后的失败:必须带上 job_id 并标 MAYBE_BILLED。
+
+    到这一步 FAL 已经收下任务、可能在计费。通用 ``_transport`` 会把典型读断线分成
+    ``UNREACHED`` 且 ``maybe_billed=False``,而 Gateway 对第一次 UNREACHED 是 RETRY_SAME
+    —— 于是轮询/取结果/下载任一步的瞬时断线都会重新 POST 建第二个任务,而第一个还在跑、
+    照样收钱。标 MAYBE_BILLED 才能让 Gateway 走不重发的那条分支。
+    """
+    error_type, status, edge = classify_exception(exc)
+    return AdapterResult(
+        ok=False,
+        error_type=ModelErrorType.MAYBE_BILLED,
+        http_status=status,
+        maybe_billed=True,
+        job_id=job_id,
+        edge_fingerprint=f"建单后失败(job={job_id}),不重新建单:{edge}",
+    )
+
+
 def _invalid(resp: httpx.Response, why: str) -> AdapterResult:
     return AdapterResult(
         ok=False,
@@ -97,6 +117,19 @@ def _sized(data: bytes, resp: httpx.Response) -> AdapterResult:
 
 def _datauri(raw: bytes) -> str:
     return "data:image/png;base64," + base64.b64encode(raw).decode()
+
+
+def _fetch_result(client: httpx.Client, url: str) -> httpx.Response:
+    """取成品图。跨源目标要摘掉 client 级凭证。
+
+    ``headers={}`` 不够:httpx 把它与 client 默认头**合并**而不是替换,``Authorization``
+    照样发出去。而这个 URL 来自网关响应,正常指向 CDN、异常可以是任意地址 —— 等于把
+    API key 交给那个域名。同源时必须保留:网关也会签发自家域名下的下载链接。
+    判定复用 ``sufy._download_request``,不在这里造第二份同源逻辑。
+    """
+    from ..sufy import _download_request
+
+    return client.send(_download_request(client, url))
 
 
 class OpenAIImagesFace:
@@ -170,7 +203,7 @@ class OpenAIImagesFace:
         if not url:
             return _invalid(resp, "data[0] 既无 b64_json 也无 url")
         try:
-            got = client.get(url, headers={})
+            got = _fetch_result(client, url)
         except httpx.TransportError as exc:
             return _transport(exc)
         if not 200 <= got.status_code < 300:
@@ -236,12 +269,12 @@ class FalQueueImageFace:
             try:
                 st = client.get(f"{root}/status")
             except httpx.TransportError as exc:
-                return _transport(exc)
+                return _billed(exc, job_id)
             if not 200 <= st.status_code < 300:
-                return _http_failure(st, prefix, self._root)
+                return replace(_http_failure(st, prefix, self._root), job_id=job_id)
             poll_json = json_object(st)
             if poll_json is None:
-                return _invalid(st, "轮询响应不是 JSON 对象")
+                return replace(_invalid(st, "轮询响应不是 JSON 对象"), job_id=job_id)
             status = poll_json.get("status")
             if status not in IN_FLIGHT:
                 break
@@ -257,21 +290,23 @@ class FalQueueImageFace:
         try:
             res = client.get(root)
         except httpx.TransportError as exc:
-            return _transport(exc)
+            return _billed(exc, job_id)
         if not 200 <= res.status_code < 300:
-            return _http_failure(res, prefix, self._root)
+            return replace(_http_failure(res, prefix, self._root), job_id=job_id)
         result_json = json_object(res)
         if result_json is None:
-            return _invalid(res, "取结果响应不是 JSON 对象")
+            return replace(_invalid(res, "取结果响应不是 JSON 对象"), job_id=job_id)
         images = result_json.get("images")
         first = images[0] if isinstance(images, list) and images else None
         url = first.get("url") if isinstance(first, dict) else None
         if not url:
-            return _invalid(res, f"结果里没有图片 URL:{json.dumps(result_json)[:200]}")
+            return replace(
+                _invalid(res, f"结果里没有图片 URL:{json.dumps(result_json)[:200]}"), job_id=job_id
+            )
         try:
-            got = client.get(url, headers={})
+            got = _fetch_result(client, url)
         except httpx.TransportError as exc:
-            return _transport(exc)
+            return _billed(exc, job_id)
         if not 200 <= got.status_code < 300:
-            return _invalid(res, f"下载成品失败 HTTP {got.status_code}")
+            return replace(_invalid(res, f"下载成品失败 HTTP {got.status_code}"), job_id=job_id)
         return _sized(got.content, submitted)
