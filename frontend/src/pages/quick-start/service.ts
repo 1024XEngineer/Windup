@@ -477,12 +477,25 @@ export function createQuickStartService({
     outfitId: string,
     actionDescription: string,
     spriteSize: Project['spriteSize'],
-    options: { actionType?: 'walk'; candidateCount?: 1 } = {},
+    options: {
+      actionType?: Exclude<GeneratableActionType, 'custom'>
+      locomotion?: true
+      candidateCount?: 1
+    } = {},
   ) {
     const prompt = actionDescription.trim()
     const name = boundedDisplayName(prompt, ACTION_DISPLAY_NAME_MAX_LENGTH) || '待机'
     const type = options.actionType ?? inferGeneratableActionType(actionDescription)
-    await controller.addAction({ input: { outfitId, name, type, prompt: prompt || null, fps: 12 } })
+    await controller.addAction({
+      input: {
+        outfitId,
+        name,
+        type,
+        prompt: prompt || null,
+        fps: 12,
+        ...(options.locomotion ? { locomotion: options.locomotion } : {}),
+      },
+    })
     const run = controller.getWorkflow()
     const firstFrame = latestActionFirstFrame(run)
     if (!firstFrame || firstFrame.type !== 'action-first-frame') {
@@ -752,6 +765,7 @@ export function createQuickStartService({
           const spriteSize = await resolveProjectSpriteSize(run.projectId)
           await prepareAction(controller, outfitId, actionPrompt, spriteSize, {
             actionType: automation.actionType,
+            locomotion: automation.locomotion,
             candidateCount: 1,
           })
           return true
@@ -1133,6 +1147,7 @@ export function createQuickStartService({
           name: firstFrame.input.name,
           loop: true,
           type: firstFrame.input.type,
+          ...(firstFrame.input.locomotion ? { locomotion: firstFrame.input.locomotion } : {}),
           fps: firstFrame.input.fps,
           frameCount: eastSequence.frameCount,
           frames: eastSequence.frames,
