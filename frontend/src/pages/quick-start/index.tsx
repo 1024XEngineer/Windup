@@ -178,7 +178,8 @@ type AgentConversationTurn =
       proposalId: string
       optimizedPrompt: string
       actionPrompt?: string
-      actionType?: 'walk'
+      actionType?: 'idle' | 'walk' | 'attack' | 'jump'
+      locomotion?: true
       optimizationSummary: string
       suggestPixelPerfect?: boolean
       proposalStatus: 'pending' | 'superseded' | 'adopted' | 'confirmed'
@@ -309,8 +310,15 @@ function readAgentConversation(
             ...('actionPrompt' in turn && typeof turn.actionPrompt === 'string'
               ? { actionPrompt: turn.actionPrompt }
               : {}),
-            ...('actionType' in turn && turn.actionType === 'walk'
+            ...('actionType' in turn &&
+            (turn.actionType === 'idle' ||
+              turn.actionType === 'walk' ||
+              turn.actionType === 'attack' ||
+              turn.actionType === 'jump')
               ? { actionType: turn.actionType }
+              : {}),
+            ...('locomotion' in turn && turn.locomotion === true
+              ? { locomotion: true as const }
               : {}),
             optimizationSummary: turn.optimizationSummary,
             suggestPixelPerfect: 'suggestPixelPerfect' in turn && turn.suggestPixelPerfect === true,
@@ -353,6 +361,7 @@ function createAgentSeed(turns: readonly AgentConversationTurn[]): {
             optimizedPrompt: pending.optimizedPrompt,
             ...(pending.actionPrompt ? { actionPrompt: pending.actionPrompt } : {}),
             ...(pending.actionType ? { actionType: pending.actionType } : {}),
+            ...(pending.locomotion ? { locomotion: pending.locomotion } : {}),
             optimizationSummary: pending.optimizationSummary,
             suggestPixelPerfect: pending.suggestPixelPerfect,
           }
@@ -1060,6 +1069,7 @@ function QuickStartInput({
             optimizedPrompt: result.optimizedPrompt,
             ...(result.actionPrompt ? { actionPrompt: result.actionPrompt } : {}),
             ...(result.actionType ? { actionType: result.actionType } : {}),
+            ...(result.locomotion ? { locomotion: result.locomotion } : {}),
             optimizationSummary: result.optimizationSummary,
             suggestPixelPerfect: result.suggestPixelPerfect,
             proposalStatus: 'pending',
